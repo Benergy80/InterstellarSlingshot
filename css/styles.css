@@ -1,0 +1,763 @@
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Rajdhani:wght@300;400;500;600;700&family=Share+Tech+Mono&display=swap');
+
+body {
+    font-family: 'Rajdhani', sans-serif;
+    background: radial-gradient(ellipse at center, #0a0a0a 0%, #000000 100%);
+    overflow: hidden;
+    cursor: none;
+}
+
+/* Enhanced cursor management for UI interaction */
+body.ui-mode {
+    cursor: auto !important;
+}
+
+.ui-panel {
+    cursor: auto !important;
+    pointer-events: auto !important;
+}
+
+.ui-panel * {
+    pointer-events: auto !important;
+}
+
+.ui-panel button,
+.ui-panel .space-btn,
+.ui-panel .small-control-btn,
+.ui-panel .planet-card {
+    cursor: auto !important;
+}
+
+/* Ensure crosshair doesn't interfere with UI */
+.crosshair.ui-hidden {
+    pointer-events: auto !important;
+    opacity: 0.1 !important;
+    z-index: 10 !important;
+}
+
+.cyber-title {
+    font-family: 'Orbitron', monospace;
+    font-weight: 900;
+    letter-spacing: 3px;
+}
+
+.mono-text {
+    font-family: 'Share Tech Mono', monospace;
+}
+
+/* Enhanced UI panels */
+.ui-panel {
+    background: linear-gradient(135deg, rgba(15, 23, 42, 0.3) 0%, rgba(30, 41, 59, 0.3) 100%);
+    backdrop-filter: blur(2px);
+    border: 1px solid rgba(0,150,255,0.5);
+    box-shadow: 
+        0 12px 40px rgba(0, 150, 255, 0.3),
+        inset 0 1px 0 rgba(0,150,255,0.4),
+        inset 0 -1px 0 rgba(0,150,255,0.2);
+    transform-style: preserve-3d;
+    perspective: 1200px;
+    cursor: auto !important;
+    pointer-events: auto !important;
+}
+
+.ui-panel.title-header {
+    transform: perspective(1000px) rotateX(-6deg) translateZ(8px);
+    border-radius: 25px;
+    box-shadow: 
+        0 20px 60px rgba(0, 150, 255, 0.5),
+        inset 0 2px 15px rgba(0,150,255,0.3),
+        inset 0 -2px 15px rgba(0,150,255,0.2);
+    min-width: 300px;
+}
+
+.ui-panel.top-left {
+    transform: perspective(1000px) rotateY(8deg) rotateX(-4deg) translateZ(10px);
+    border-radius: 0 20px 20px 0;
+    box-shadow: 
+        0 15px 50px rgba(0, 150, 255, 0.4),
+        inset 2px 0 10px rgba(0,150,255,0.2);
+    top: 14px;
+}
+
+.ui-panel.bottom-left {
+    transform: perspective(1000px) rotateY(6deg) rotateX(2deg) translateZ(8px);
+    border-radius: 0 20px 20px 0;
+    box-shadow: 
+        0 12px 40px rgba(0, 150, 255, 0.35),
+        inset 2px 0 8px rgba(0,150,255,0.18);
+}
+
+.ui-panel.top-right {
+    transform: perspective(1000px) rotateY(-8deg) rotateX(-4deg) translateZ(10px);
+    border-radius: 20px 0 0 20px;
+    box-shadow: 
+        0 15px 50px rgba(0, 150, 255, 0.4),
+        inset -2px 0 10px rgba(0,150,255,0.2);
+    top: 14px;
+}
+
+.ui-panel.bottom-right {
+    transform: perspective(1000px) rotateY(-6deg) rotateX(3deg) translateZ(5px);
+    border-radius: 20px 0 0 20px;
+    box-shadow: 
+        0 10px 30px rgba(0, 150, 255, 0.3),
+        inset -2px 0 8px rgba(0,150,255,0.15);
+}
+
+.curved-element {
+    transform: perspective(800px) rotateX(-2deg);
+    text-shadow: 0 0 8px rgba(0,150,255,0.6);
+}
+
+.glow-text {
+    text-shadow: 
+        0 0 8px rgba(0,150,255,0.9), 
+        0 0 16px rgba(0,150,255,0.7),
+        0 0 24px rgba(0,150,255,0.5);
+}
+
+.planet-card {
+    cursor: auto !important;
+    pointer-events: auto !important;
+    /* ... rest of the styles ... */
+}
+
+.planet-card * {
+    pointer-events: auto !important;
+    cursor: auto !important;
+}
+
+.planet-card:hover {
+    cursor: auto !important;
+    transform: perspective(600px) rotateX(-1deg) translateY(-2px) scale(1.02);
+    box-shadow: 0 8px 25px rgba(0,150,255,0.4);
+    border-color: rgba(0,255,150,0.6);
+}
+
+.planet-card.selected {
+    border-color: rgba(0,255,150,0.8);
+    box-shadow: 0 8px 25px rgba(0,255,150,0.5);
+    background: linear-gradient(135deg, rgba(0,255,150,0.2) 0%, rgba(30, 41, 59, 0.7) 100%);
+    cursor: auto !important;
+}
+
+.pulse {
+    animation: pulse 2s infinite;
+}
+
+/* Crosshair behind UI panels */
+.ui-panel:hover ~ .crosshair,
+.ui-panel:hover + .crosshair {
+    opacity: 0.2;
+    z-index: 10;
+}
+
+@keyframes pulse {
+    0% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.7; transform: scale(1.05); }
+    100% { opacity: 1; transform: scale(1); }
+}
+
+/* Damage and visual effects */
+@keyframes damageFlash {
+    0% { opacity: 0; }
+    20% { opacity: 1; }
+    100% { opacity: 0; }
+}
+
+@keyframes screenShake {
+    0% { transform: translate(0); }
+    10% { transform: translate(-2px, -2px); }
+    20% { transform: translate(2px, -2px); }
+    30% { transform: translate(-2px, 2px); }
+    40% { transform: translate(2px, 2px); }
+    50% { transform: translate(-1px, -1px); }
+    60% { transform: translate(1px, -1px); }
+    70% { transform: translate(-1px, 1px); }
+    80% { transform: translate(1px, 1px); }
+    90% { transform: translate(0); }
+    100% { transform: translate(0); }
+}
+
+/* Rocket Orbit Loading Animation */
+.rocket-orbit-loader {
+    width: 80px;
+    height: 80px;
+    position: relative;
+    margin: 0 auto 20px;
+}
+
+.rocket-orbit-loader::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 16px;
+    height: 16px;
+    background: radial-gradient(circle, #00ffff 0%, #00ccff 70%, transparent 100%);
+    border-radius: 50%;
+    box-shadow: 0 0 15px #00ffff, 0 0 30px #00ccff;
+}
+
+.rocket {
+    position: absolute;
+    top: 0;
+    left: 50%;
+    width: 24px;
+    height: 24px;
+    background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%2300ccff'%3E%3Cpath d='M12 2.5c0 0 4.5 2.04 4.5 10.5 0 2.49-1.04 5.57-1.6 7H9.1c-.56-1.43-1.6-4.51-1.6-7C7.5 4.54 12 2.5 12 2.5zm2 8.5c0-1.1-.9-2-2-2s-2 .9-2 2 .9 2 2 2 2-.9 2-2zm-6.31 9.52c-.48-1.23-1.52-4.17-1.67-6.87l-1.13.75c-.56.38-.89 1-.89 1.67v3.67c0 .69.36 1.3.89 1.67l1.13.75c.15-.64.31-1.29.48-1.92.13-.5.27-1 .42-1.47zm12.31 0v-3.67c0-.67-.33-1.29-.89-1.67l-1.13-.75c-.15 2.7-1.2 5.64-1.67 6.87.15.47.29.97.42 1.47.17.63.33 1.28.48 1.92l1.13-.75c.53-.37.89-.98.89-1.67z'/%3E%3C/svg%3E") no-repeat center center;
+    background-size: contain;
+    animation: rocket-orbit 4s linear infinite;
+    transform-origin: 50% 40px;
+}
+
+@keyframes rocket-orbit {
+    0% {
+        transform: translateX(-50%) rotate(0deg) translateY(-40px) rotate(0deg);
+    }
+    25% {
+        transform: translateX(-50%) rotate(90deg) translateY(-40px) rotate(-90deg);
+    }
+    50% {
+        transform: translateX(-50%) rotate(180deg) translateY(-40px) rotate(-180deg);
+    }
+    75% {
+        transform: translateX(-50%) rotate(270deg) translateY(-40px) rotate(-270deg);
+    }
+    100% {
+        transform: translateX(-50%) rotate(360deg) translateY(-40px) rotate(-360deg);
+    }
+}
+
+.loading-bar {
+    background: linear-gradient(90deg, #0066ff 0%, #00ccff 50%, #00ffcc 100%);
+    background-size: 200% 100%;
+    animation: shimmer 2s infinite;
+    transform: perspective(400px) rotateX(-1deg);
+}
+
+.hull-bar {
+    background: linear-gradient(90deg, #ff0066 0%, #ff6600 50%, #00ff66 100%);
+    background-size: 200% 100%;
+    animation: shimmer 2s infinite;
+    transform: perspective(400px) rotateX(-1deg);
+}
+
+@keyframes shimmer {
+    0% { background-position: -200% 0; }
+    100% { background-position: 200% 0; }
+}
+
+.cyberpunk-bg {
+    background: 
+        linear-gradient(45deg, rgba(0,150,255,0.1) 0%, transparent 50%),
+        linear-gradient(-45deg, rgba(255,0,150,0.1) 0%, transparent 50%),
+        linear-gradient(135deg, rgba(0,255,150,0.1) 0%, transparent 50%);
+    animation: cyberpunk-flow 8s ease-in-out infinite;
+}
+
+@keyframes cyberpunk-flow {
+    0%, 100% { 
+        background-position: 0% 0%, 100% 100%, 0% 100%;
+        filter: hue-rotate(0deg);
+    }
+    50% { 
+        background-position: 100% 100%, 0% 0%, 100% 0%;
+        filter: hue-rotate(60deg);
+    }
+}
+
+.crosshair {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%) perspective(600px) rotateX(-2deg) translateZ(20px);
+    width: 28px;
+    height: 28px;
+    border: 2px solid rgba(0,255,150,0.9);
+    border-radius: 50%;
+    pointer-events: none;
+    z-index: 45;
+    box-shadow: 
+        0 0 15px rgba(0,255,150,0.7),
+        inset 0 0 15px rgba(0,255,150,0.4),
+        0 0 5px rgba(255,255,255,0.3);
+    transition: all 0.3s ease;
+}
+
+.crosshair.enemy-target {
+    border-color: rgba(255,50,50,0.9);
+    box-shadow: 
+        0 0 15px rgba(255,50,50,0.7),
+        inset 0 0 15px rgba(255,50,50,0.4),
+        0 0 5px rgba(255,100,100,0.3);
+}
+
+.crosshair.target-locked {
+    border-color: rgba(255,255,0,0.9);
+    box-shadow: 
+        0 0 15px rgba(255,255,0,0.7),
+        inset 0 0 15px rgba(255,255,0,0.4),
+        0 0 5px rgba(255,255,150,0.3);
+    transform: translate(-50%, -50%) scale(1.2);
+}
+
+.crosshair.target-locked.enemy-target {
+    border-color: rgba(255,150,0,0.9);
+    box-shadow: 
+        0 0 15px rgba(255,150,0,0.7),
+        inset 0 0 15px rgba(255,150,0,0.4),
+        0 0 5px rgba(255,200,100,0.3);
+}
+
+.crosshair::before,
+.crosshair::after {
+    content: '';
+    position: absolute;
+    background: rgba(0,255,150,0.9);
+    box-shadow: 0 0 8px rgba(0,255,150,0.7);
+    transition: all 0.3s ease;
+}
+
+.crosshair.enemy-target::before,
+.crosshair.enemy-target::after {
+    background: rgba(255,50,50,0.9);
+    box-shadow: 0 0 8px rgba(255,50,50,0.7);
+}
+
+.crosshair.target-locked::before,
+.crosshair.target-locked::after {
+    background: rgba(255,255,0,0.9);
+    box-shadow: 0 0 8px rgba(255,255,0,0.7);
+}
+
+.crosshair.target-locked.enemy-target::before,
+.crosshair.target-locked.enemy-target::after {
+    background: rgba(255,150,0,0.9);
+    box-shadow: 0 0 8px rgba(255,150,0,0.7);
+}
+
+.crosshair::before {
+    top: 50%;
+    left: -8px;
+    right: -8px;
+    height: 1px;
+    transform: translateY(-50%);
+}
+
+.crosshair::after {
+    left: 50%;
+    top: -8px;
+    bottom: -8px;
+    width: 1px;
+    transform: translateX(-50%);
+}
+/* Asteroid targeting crosshair */
+.crosshair.asteroid-targeted {
+    border-color: rgba(255,102,0,0.9) !important; /* Orange color for asteroids */
+    box-shadow: 
+        0 0 15px rgba(255,102,0,0.7),
+        inset 0 0 15px rgba(255,102,0,0.4),
+        0 0 5px rgba(255,150,100,0.3);
+}
+
+.crosshair.asteroid-targeted::before,
+.crosshair.asteroid-targeted::after {
+    background: rgba(255,102,0,0.9) !important;
+    box-shadow: 0 0 8px rgba(255,102,0,0.7) !important;
+}
+
+/* --- INSERTED FIX --- */
+#gameContainer {
+  position: relative;
+}
+
+#gameCanvas {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  display: block;
+  pointer-events: none; /* Allow clicks to pass through to UI elements */
+}
+
+/* Ensure UI panels can receive clicks */
+.ui-panel {
+  pointer-events: auto !important;
+  z-index: 20 !important;
+}
+
+.ui-panel * {
+  pointer-events: auto !important;
+}
+
+.cyberpunk-bg {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+}
+/* --- END FIX --- */
+
+/* Enhanced laser effects */
+.laser-beam {
+    position: absolute;
+    width: 2px;
+    background: linear-gradient(to bottom, transparent, currentColor, transparent);
+    border-radius: 1px;
+    pointer-events: none;
+    z-index: 15;
+    box-shadow: 0 0 4px currentColor, 0 0 8px currentColor;
+    animation: laser-pulse 0.3s ease-out forwards;
+}
+
+@keyframes laser-pulse {
+    0% { 
+        opacity: 1; 
+        transform: scaleX(1) scaleY(1);
+        filter: brightness(2);
+    }
+    50% {
+        transform: scaleX(1.5) scaleY(1);
+        filter: brightness(1.5);
+    }
+    100% { 
+        opacity: 0; 
+        transform: scaleX(0.5) scaleY(1);
+        filter: brightness(0.5);
+    }
+}
+
+/* Simple hyperspace effect */
+.star-trail {
+    position: absolute;
+    width: 2px;
+    height: 2px;
+    background: rgba(255,255,255,0.8);
+    border-radius: 50%;
+    animation: hyperspace-trail 0.3s linear infinite;
+}
+
+@keyframes hyperspaceJump {
+    0% { 
+        opacity: 0;
+        transform: scale(0.1);
+    }
+    20% {
+        opacity: 0.5;
+        transform: scale(0.3);
+    }
+    60% {
+        opacity: 1;
+        transform: scale(1.5);
+    }
+    100% { 
+        opacity: 0;
+        transform: scale(3);
+    }
+}
+
+@keyframes streakExpand {
+    0% { 
+        transform: rotate(var(--rotation, 0deg)) scaleX(0);
+        opacity: 0;
+    }
+    20% {
+        opacity: 1;
+    }
+    100% { 
+        transform: rotate(var(--rotation, 0deg)) scaleX(1);
+        opacity: 0;
+    }
+}
+
+.hyperspace-tunnel {
+    animation: hyperspaceJump 2s ease-in-out forwards;
+}
+
+.hyperspace-streak {
+    animation: streakExpand 1.5s ease-out forwards;
+}
+
+@keyframes hyperspace-stretch {
+    0% { 
+        transform: rotate(var(--rotation, 0deg)) scaleX(0);
+        opacity: 0;
+    }
+    20% {
+        opacity: 1;
+    }
+    100% { 
+        transform: rotate(var(--rotation, 0deg)) scaleX(1);
+        opacity: 0;
+    }
+}
+
+.hyperspace-line {
+    animation: hyperspace-stretch 0.8s ease-out forwards;
+}
+
+@keyframes hyperspace-trail {
+    from { 
+        transform: scale(0.1);
+        opacity: 1;
+    }
+    to { 
+        transform: scale(2) translateZ(-1000px);
+        opacity: 0;
+    }
+}
+
+@keyframes starTrailExpand {
+    0% { 
+        transform: scale(1) translateX(0);
+        opacity: 0.8;
+    }
+    50% {
+        transform: scale(1.5) translateX(200px);
+        opacity: 1;
+    }
+    100% { 
+        transform: scale(0.5) translateX(400px);
+        opacity: 0;
+    }
+}
+
+.round-map {
+    width: 220px;
+    height: 220px;
+    border-radius: 50%;
+    position: relative;
+    overflow: hidden;
+    border: 3px solid rgba(0,150,255,0.6);
+    box-shadow: 
+        0 0 30px rgba(0,150,255,0.4),
+        inset 0 0 30px rgba(0,0,0,0.6),
+        inset 0 0 5px rgba(0,150,255,0.3);
+    transform: perspective(800px) rotateX(-3deg) translateZ(5px);
+}
+
+.map-grid {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    opacity: 0.3;
+}
+
+.map-grid-line {
+    position: absolute;
+    background: rgba(0,150,255,0.4);
+}
+
+.map-grid-line.vertical {
+    width: 1px;
+    height: 100%;
+}
+
+.map-grid-line.horizontal {
+    width: 100%;
+    height: 1px;
+}
+
+.compass-ring {
+    position: absolute;
+    inset: -15px;
+    border: 2px solid rgba(0,255,150,0.5);
+    border-radius: 50%;
+    pointer-events: none;
+    box-shadow: 0 0 10px rgba(0,255,150,0.3);
+}
+
+.compass-needle {
+    position: absolute;
+    top: 8px;
+    left: 50%;
+    transform: translateX(-50%) rotate(var(--rotation, 0deg));
+    width: 0;
+    height: 0;
+    border-left: 5px solid transparent;
+    border-right: 5px solid transparent;
+    border-bottom: 18px solid rgba(255,200,0,0.9);
+    transform-origin: 50% 95px;
+    filter: drop-shadow(0 0 5px rgba(255,200,0,0.7));
+    z-index: 10;
+}
+
+.map-direction-arrow {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 20px;
+    height: 20px;
+    transform: translate(-50%, -50%) rotate(var(--direction, 0deg));
+    pointer-events: none;
+    z-index: 15;
+}
+
+.map-direction-arrow::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 0;
+    height: 0;
+    border-left: 6px solid transparent;
+    border-right: 6px solid transparent;
+    border-bottom: 16px solid rgba(0,255,150,0.9);
+    transform: translate(-50%, -50%);
+    filter: drop-shadow(0 0 5px rgba(0,255,150,0.7));
+}
+
+.map-toggle-btn {
+    position: absolute;
+    top: 5px;
+    left: 5px;
+    background: rgba(0,150,255,0.7);
+    border: 1px solid rgba(0,255,200,0.5);
+    border-radius: 15px;
+    color: white;
+    font-size: 10px;
+    padding: 4px 8px;
+    cursor: auto;
+    transition: all 0.2s ease;
+}
+
+.map-toggle-btn:hover {
+    background: rgba(0,200,255,0.9);
+    box-shadow: 0 0 8px rgba(0,255,200,0.5);
+}
+
+#eventHorizonWarning {
+    animation: eventHorizonShake 0.5s infinite;
+    background: linear-gradient(45deg, rgba(255,255,0,0.3), rgba(255,200,0,0.3));
+    color: rgba(255, 255, 255, 0.95);
+    border-radius: 15px;
+    padding: 20px;
+    border: 2px solid rgba(255,255,0,0.4);
+    backdrop-filter: blur(3px);
+}
+
+@keyframes eventHorizonShake {
+    0% { transform: translate(-50%, -50%) translateX(0); }
+    25% { transform: translate(-50%, -50%) translateX(-3px); }
+    75% { transform: translate(-50%, -50%) translateX(3px); }
+    100% { transform: translate(-50%, -50%) translateX(0); }
+}
+
+.space-btn {
+    background: linear-gradient(135deg, rgba(0,150,255,0.2), rgba(0,100,200,0.3));
+    border: 1px solid rgba(0,150,255,0.5);
+    color: rgba(0,255,200,0.9);
+    font-family: 'Orbitron', monospace;
+    transition: all 0.3s ease;
+    backdrop-filter: blur(5px);
+    transform: perspective(600px) rotateX(-2deg);
+    box-shadow: 
+        0 4px 15px rgba(0,150,255,0.2),
+        inset 0 1px 0 rgba(0,150,255,0.3);
+}
+
+.space-btn:hover {
+    background: linear-gradient(135deg, rgba(0,200,255,0.3), rgba(0,150,255,0.4));
+    border-color: rgba(0,255,200,0.7);
+    box-shadow: 
+        0 0 20px rgba(0,255,200,0.4),
+        0 6px 20px rgba(0,150,255,0.3),
+        inset 0 1px 0 rgba(0,255,200,0.4);
+    transform: perspective(600px) rotateX(-2deg) translateY(-1px);
+}
+
+.achievement-icon {
+    width: 32px;
+    height: 32px;
+    background: 
+        linear-gradient(45deg, transparent 30%, rgba(0,255,200,0.3) 50%, transparent 70%),
+        linear-gradient(-45deg, transparent 30%, rgba(0,150,255,0.3) 50%, transparent 70%);
+    border: 2px solid rgba(0,255,200,0.6);
+    border-radius: 8px;
+    position: relative;
+    animation: trophy-glow 2s ease-in-out infinite;
+}
+
+.achievement-icon::before {
+    content: '';
+    position: absolute;
+    inset: 4px;
+    background: 
+        radial-gradient(circle at 30% 30%, rgba(0,255,200,0.6) 0%, transparent 50%),
+        radial-gradient(circle at 70% 70%, rgba(0,150,255,0.6) 0%, transparent 50%);
+    border-radius: 4px;
+}
+
+@keyframes trophy-glow {
+    0%, 100% { 
+        box-shadow: 0 0 10px rgba(0,255,200,0.3);
+        transform: scale(1);
+    }
+    50% { 
+        box-shadow: 0 0 20px rgba(0,255,200,0.6);
+        transform: scale(1.05);
+    }
+}
+
+.enemy-indicator {
+    position: absolute;
+    width: 8px;
+    height: 8px;
+    background: radial-gradient(circle, rgba(255,50,50,0.9) 0%, rgba(150,0,0,0.7) 100%);
+    border: 1px solid rgba(255,100,100,0.8);
+    border-radius: 50%;
+    animation: enemy-pulse 1.5s ease-in-out infinite;
+    pointer-events: none;
+}
+
+@keyframes enemy-pulse {
+    0%, 100% { transform: scale(1); opacity: 0.8; }
+    50% { transform: scale(1.5); opacity: 1; }
+}
+
+.enemy-counter {
+    position: absolute;
+    top: 5px;
+    right: 5px;
+    background: rgba(255,0,0,0.8);
+    color: white;
+    border-radius: 10px;
+    padding: 2px 6px;
+    font-size: 10px;
+    font-weight: bold;
+    min-width: 16px;
+    text-align: center;
+}
+
+.galaxy-indicator {
+    position: relative;
+    cursor: auto;
+    transition: all 0.3s ease;
+}
+
+.galaxy-indicator:hover {
+    transform: translate(-50%, -50%) scale(1.2);
+    z-index: 10;
+}
+
+/* Firework celebration effects for boss victories */
+.firework-particle {
+    position: fixed !important;
+    pointer-events: none !important;
+    z-index: 1000 !important;
+    border-radius: 50% !important;
+}
+
+/* Enhanced Mission Command Alert for victory messages */
+#missionCommandAlert {
+    max-width: 600px !important; /* Wider for victory messages */
+}
+
+#missionCommandText {
+    white-space: normal !important;
+    word-wrap: break-word !important;
+    line-height: 1.4 !important;
+    max-height: 200px !important;
+    overflow-y: auto !important;
+}

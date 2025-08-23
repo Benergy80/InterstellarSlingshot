@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interstellar Slingshot - A Gravitational Space Explorer by ChiLab</title>
+    
+    <!-- External Dependencies -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.11.4/gsap.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    
+    <!-- Game Styles -->
+    <link rel="stylesheet" href="css/styles.css">
+    <style>
+        /* Additional CSS from attached file - Mission Command Alert and Controls */
+        
+        /* Title flashing effect for gravity well alert */
+        .title-flash {
+            animation: titleFlash 0.5s ease-in-out infinite alternate;
+        }
+
+        @keyframes titleFlash {
+            0% { 
+                color: #22d3ee;
+                text-shadow: 
+                    0 0 8px rgba(0,150,255,0.9), 
+                    0 0 16px rgba(0,150,255,0.7),
+                    0 0 24px rgba(0,150,255,0.5);
+            }
+            100% { 
+                color: #fbbf24;
+                text-shadow: 
+                    0 0 8px rgba(251,191,36,0.9), 
+                    0 0 16px rgba(251,191,36,0.7),
+                    0 0 24px rgba(251,191,36,0.5);
+            }
+        }
+
+        /* Mission Command Alert - Positioned in Lower Third of Screen */
+/* UPDATED: Made transparent like other UI panels */
+.mission-command-alert {
+    background: linear-gradient(135deg, rgba(15, 23, 42, 0.3) 0%, rgba(30, 41, 59, 0.3) 100%);
+    backdrop-filter: blur(2px);
+    border: 1px solid rgba(0, 150, 255, 0.5);
+    border-radius: 15px;
+    box-shadow: 
+        0 12px 40px rgba(0, 150, 255, 0.3),
+        inset 0 1px 0 rgba(0,150,255,0.4),
+        inset 0 -1px 0 rgba(0,150,255,0.2);
+    cursor: auto !important;
+    pointer-events: auto !important;
+    transform-style: preserve-3d;
+    perspective: 1200px;
+    transform: perspective(1000px) rotateX(-2deg) translateZ(5px);
+}
+
+/* Ensure mouse visibility over tutorial notifications */
+.mission-command-alert * {
+    cursor: auto !important;
+    pointer-events: auto !important;
+}
+
+/* Achievement Popup Priority - Ensure it appears above all other elements */
+#achievementPopup {
+    z-index: 999 !important; /* Maximum priority */
+    position: fixed !important; /* Ensure it's positioned relative to viewport */
+    pointer-events: auto !important;
+}
+
+#achievementPopup.hidden {
+    display: none !important;
+}
+
+#achievementPopup:not(.hidden) {
+    display: block !important;
+}
+
+        /* Small control buttons */
+        .small-control-btn {
+            background: linear-gradient(135deg, rgba(0,150,255,0.15), rgba(0,100,200,0.2));
+            border: 1px solid rgba(0,150,255,0.4);
+            color: rgba(0,255,200,0.8);
+            font-size: 11px;
+            padding: 4px 8px;
+            border-radius: 4px;
+            cursor: auto;
+            transition: all 0.3s ease;
+            backdrop-filter: blur(3px);
+        }
+
+        .small-control-btn:hover {
+            background: linear-gradient(135deg, rgba(0,200,255,0.25), rgba(0,150,255,0.3));
+            border-color: rgba(0,255,200,0.6);
+            box-shadow: 0 0 10px rgba(0,255,200,0.3);
+        }
+
+        .small-control-btn.muted {
+            background: linear-gradient(135deg, rgba(150,0,0,0.15), rgba(200,0,0,0.2));
+            border-color: rgba(255,50,50,0.4);
+            color: rgba(255,150,150,0.8);
+        }
+
+        .small-control-btn.paused {
+            background: linear-gradient(135deg, rgba(255,150,0,0.15), rgba(255,100,0,0.2));
+            border-color: rgba(255,150,0,0.4);
+            color: rgba(255,200,100,0.8);
+        }
+
+        /* Enhanced hyperspace star stretch effect - Radial lines from center */
+        @keyframes starStretch {
+            0% { 
+                transform: scale(1) rotate(var(--rotation, 0deg));
+                opacity: 1;
+                width: 2px;
+                height: 2px;
+            }
+            25% {
+                transform: scale(10, 1) rotate(var(--rotation, 0deg));
+                opacity: 0.9;
+                width: 20px;
+                height: 2px;
+            }
+            50% {
+                transform: scale(50, 1) rotate(var(--rotation, 0deg));
+                opacity: 0.7;
+                width: 100px;
+                height: 2px;
+            }
+            75% {
+                transform: scale(100, 1) rotate(var(--rotation, 0deg));
+                opacity: 0.4;
+                width: 200px;
+                height: 2px;
+            }
+            100% { 
+                transform: scale(200, 1) rotate(var(--rotation, 0deg));
+                opacity: 0;
+                width: 400px;
+                height: 2px;
+            }
+        }
+
+        .hyperspace-star {
+            position: absolute;
+            width: 2px;
+            height: 2px;
+            background: white;
+            border-radius: 50%;
+            animation: starStretch 1.2s ease-out forwards;
+            transform-origin: center;
+            box-shadow: 0 0 4px rgba(255, 255, 255, 0.8);
+        }
+
+        /* Combat effects */
+        @keyframes fadeToWhite {
+            0% { opacity: 0; }
+            100% { opacity: 1; background: white; }
+        }
+
+        /* Central blast animation for emergency warp */
+        @keyframes centralBlast {
+            0% { 
+                transform: translate(-50%, -50%) scale(0);
+                opacity: 1;
+            }
+            50% {
+                transform: translate(-50%, -50%) scale(1);
+                opacity: 0.8;
+            }
+            100% { 
+                transform: translate(-50%, -50%) scale(3);
+                opacity: 0;
+            }
+        }
+
+        /* Hyperspace line stretch for emergency warp */
+        @keyframes hyperspace-stretch {
+            0% { 
+                transform: rotate(var(--rotation, 0deg)) scaleX(0);
+                opacity: 0;
+            }
+            20% {
+                opacity: 1;
+            }
+            100% { 
+                transform: rotate(var(--rotation, 0deg)) scaleX(1);
+                opacity: 0;
+            }
+        }
+        
+        /* Tutorial styling - Green ORBITRON font */
+#missionCommandAlert h2,
+#missionCommandText {
+    font-family: 'Orbitron', monospace !important;
+    color: #00ff88 !important;
+    text-shadow: 0 0 8px rgba(0,255,136,0.6), 0 0 16px rgba(0,255,136,0.3) !important;
+}
+
+#missionCommandAlert h2 {
+    font-size: 1.5rem !important;
+    font-weight: 700 !important;
+    letter-spacing: 2px !important;
+}
+
+#missionCommandText {
+    font-size: 1rem !important;
+    line-height: 1.6 !important;
+}
+    </style>
+</head>
+<body class="text-white">
+    <div class="cyberpunk-bg"></div>
+    <div class="crosshair" id="crosshair"></div>
+    
+    <!-- Main Game Container -->
+    <div id="gameContainer" class="relative w-full h-screen">
+        <!-- Title Header -->
+        <div class="absolute top-4 left-1/2 transform -translate-x-1/2 ui-panel title-header rounded-lg p-4 z-10" style="left: 50%; transform: translateX(-50%);">
+            <h1 class="text-2xl font-bold text-cyan-400 glow-text cyber-title curved-element" id="gameTitle">INTERSTELLAR SLINGSHOT</h1>
+            <div class="text-xs text-center text-gray-400 mt-1 opacity-80">A Gravitational Space Explorer by ChiLab</div>
+        </div>
+
+        <!-- Flight Controls Panel (Top Left) -->
+        <div class="absolute top-14 left-4 ui-panel top-left rounded-lg p-3 z-10">
+            <h3 class="text-sm font-bold text-cyan-400 glow-text mb-2 cyber-title curved-element">FLIGHT CONTROLS</h3>
+            <div class="text-xs text-gray-300 opacity-80 curved-element mb-3">
+    <strong>FLIGHT CONTROLS:</strong><br>
+    ↑↓: Pitch (Nose Up/Down)<br>
+    ←→: Yaw (Turn Left/Right)<br>
+    Q/E: Roll (Bank Left/Right)<br>
+    W/S: Throttle (Forward/Reverse)<br>
+    A/D: Strafe (Left/Right Thrusters)<br>
+    <strong>WEAPONS & NAV:</strong><br>
+    Space: Fire | Tab: Cycle Targets<br>
+    Enter: Auto-nav/Slingshot<br>
+    Option: Target Lock | O: Emergency Warp<br>
+    X: Brake/Stop
+</div>
+            <!-- Added Mute and Pause buttons -->
+            <div class="flex gap-2 mt-2">
+                <button id="muteBtn" class="small-control-btn">
+                    <i class="fas fa-volume-up mr-1" id="muteIcon"></i>Mute
+                </button>
+                <button id="pauseBtn" class="small-control-btn">
+                    <i class="fas fa-pause mr-1" id="pauseIcon"></i>Pause
+                </button>
+            </div>
+        </div>
+
+        <!-- Status Panel (Bottom Left) -->
+        <div class="absolute bottom-4 left-4 ui-panel bottom-left rounded-lg p-3 z-10">
+            <h3 class="text-sm font-bold text-cyan-400 glow-text mb-2 cyber-title curved-element">SHIP STATUS</h3>
+            <div class="space-y-2 text-sm curved-element">
+                <div class="curved-element">Velocity: <span id="velocity" class="text-green-400 font-mono">0.0 km/s</span></div>
+                <div class="curved-element">Distance: <span id="distance" class="text-yellow-400 font-mono">0.0 ly</span></div>
+                <div class="curved-element">Energy: <div class="w-32 h-2 bg-gray-800 rounded border border-cyan-400"><div id="energyBar" class="loading-bar h-full rounded" style="width: 100%"></div></div></div>
+                <div class="curved-element">Hull: <div class="w-32 h-2 bg-gray-800 rounded border border-green-400"><div id="hullBar" class="hull-bar h-full rounded" style="width: 100%"></div></div></div>
+                <div class="curved-element">Emergency Warp: <span id="emergencyWarpCount" class="text-cyan-400 font-mono">5</span></div>
+                <div class="curved-element">Location: <span id="location" class="text-purple-400">Local Galaxy</span></div>
+                <div class="curved-element">Weapons: <span id="weaponStatus" class="text-green-400">ARMED</span></div>
+                <div class="curved-element">Target Lock: <span id="targetLockStatus" class="text-gray-400">INACTIVE</span></div>
+                <div id="targetInfo" class="text-orange-400 curved-element">Target: None</div>
+                <div id="galaxyProgress" class="text-cyan-400 curved-element">Galaxies Cleared: <span id="galaxiesCleared">0</span>/8</div>
+                <div id="enemyDetector" class="text-red-400 curved-element hidden">Hostiles in Region: <span id="enemyCount">0</span></div>
+            </div>
+        </div>
+        
+        <!-- Navigation Panel -->
+        <div class="absolute top-14 right-4 ui-panel top-right rounded-lg p-4 z-10 max-w-sm">
+            <div class="flex justify-between items-center mb-3">
+                <h3 class="text-lg font-bold text-cyan-400 glow-text">Navigation System</h3>
+                <button id="toggleOrbitsBtn" class="space-btn rounded px-2 py-1 text-xs">
+                    <i class="fas fa-circle-notch mr-1"></i>Orbits ON
+                </button>
+            </div>
+            
+            <div id="blackHoleWarningHUD" class="hidden bg-yellow-900 bg-opacity-80 border border-yellow-400 rounded p-2 mb-3 text-center">
+                <div class="text-yellow-300 text-sm font-bold">⚠ EVENT HORIZON PROXIMITY ⚠</div>
+                <div id="blackHoleDistanceHUD" class="text-yellow-100 text-xs"></div>
+            </div>
+            
+            <div id="availableTargets" class="space-y-2 max-h-40 overflow-y-auto">
+                <!-- Dynamic content will be inserted here -->
+            </div>
+            
+            <button id="autoNavigateBtn" class="w-full mt-4 space-btn rounded px-4 py-2 disabled:opacity-50 disabled:cursor-not-allowed">
+                <i class="fas fa-crosshairs mr-2"></i>Auto-Navigate to Target
+            </button>
+            <button id="warpBtn" class="w-full mt-2 space-btn rounded px-4 py-2 disabled:opacity-50 disabled:cursor-not-allowed">
+                <i class="fas fa-rocket mr-2"></i>Slingshot Status
+            </button>
+        </div>
+
+        <!-- Enhanced Round Galaxy Map -->
+        <div class="absolute bottom-4 right-4 ui-panel bottom-right rounded-lg p-4 z-10">
+            <div class="flex justify-between items-center mb-2">
+                <h3 class="text-sm font-bold text-cyan-400 glow-text">Map</h3>
+                <button id="mapViewToggle" class="space-btn rounded px-2 py-1 text-xs">
+    Galactic View
+</button>
+            </div>
+            <div class="round-map cyberpunk-bg" id="galaxyMap">
+                <!-- Map Toggle Button -->
+                <div class="map-toggle-btn" id="mapToggle" title="Toggle Map Mode">
+                    GAL
+                </div>
+                
+                <!-- Grid overlay -->
+                <div class="map-grid" id="mapGrid">
+                    <!-- Grid lines will be generated by JavaScript -->
+                </div>
+                
+                <div class="compass-ring"></div>
+                <div class="compass-needle hidden" id="compassNeedle"></div>
+                
+                <!-- Map direction arrow (shows player facing direction in galactic view) -->
+                <div class="map-direction-arrow" id="mapDirectionArrow"></div>
+                
+                <!-- Player position indicator (always centered) -->
+                <div id="playerMapPosition" class="absolute text-green-400 text-lg font-bold" style="top: 50%; left: 50%; transform: translate(-50%, -50%); filter: drop-shadow(0 0 3px #00ff96);">▲</div>
+                
+                <!-- Target indicator -->
+                <div id="targetMapPosition" class="absolute w-3 h-3 bg-red-400 rounded-full hidden" style="box-shadow: 0 0 6px #ef4444; animation: pulse 1s infinite;"></div>
+            </div>
+            <div class="text-xs text-gray-300 mt-2 opacity-80">
+                <div class="flex items-center gap-2">
+                    <div class="text-green-400">▲</div>
+                    <span>You</span>
+                    <div class="w-2 h-2 bg-red-400 rounded-full ml-2"></div>
+                    <span>Target</span>
+                    <div class="w-3 h-1 bg-yellow-400 ml-2"></div>
+                    <span>Compass → Sgr A*</span>
+                </div>
+                <div class="text-xs text-purple-300 mt-1">8 Known Galaxies + Unexplored Space</div>
+                <div class="text-xs text-green-300 mt-1" id="mapViewStatus">Galaxy View</div>
+            </div>
+        </div>
+        
+        <!-- Enhanced Event Horizon Warning -->
+        <div id="eventHorizonWarning" class="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 hidden z-40">
+            <div class="text-center">
+                <div class="text-6xl mb-4">⚠</div>
+                <h2 class="text-3xl font-bold mb-2">EVENT HORIZON APPROACHING</h2>
+                <p class="mb-2">Use the black hole's gravity to slingshot across the universe!</p>
+                <div class="text-sm">Warning Distance: 400 units | Auto-Warp at 160 units</div>
+            </div>
+        </div>
+        
+        <!-- Mission Command Alert - Positioned closer to bottom of screen -->
+        <div id="missionCommandAlert" class="absolute mission-command-alert p-6 max-w-lg hidden z-50" style="top: 85%; left: 50%; transform: translate(-50%, -50%);">
+            <div class="text-center">
+                <!-- REMOVED: Icon div -->
+                <h2 class="text-xl font-bold text-cyan-400 mb-2">MISSION COMMAND</h2>
+                <div id="missionCommandText" class="text-gray-300 mb-4"></div>
+            </div>
+        </div>
+        
+        <!-- Loading Screen -->
+        <div id="loadingScreen" class="absolute inset-0 bg-black bg-opacity-95 flex items-center justify-center z-50">
+            <div class="text-center">
+                <div class="rocket-orbit-loader">
+                    <div class="rocket"></div>
+                </div>
+                <h1 class="text-4xl font-bold text-cyan-400 mb-4 glow-text cyber-title">INTERSTELLAR SLINGSHOT</h1>
+                <p class="text-gray-300 mb-2 mono-text">A Gravitational Space Explorer by ChiLab</p>
+                <p class="text-gray-400 mb-6 mono-text">Initializing enhanced 3D space navigation system...</p>
+                <div class="w-64 h-2 bg-gray-800 rounded mx-auto border border-cyan-400">
+                    <div id="loadingBar" class="loading-bar h-full rounded" style="width: 0%"></div>
+                </div>
+                <p id="loadingText" class="text-sm text-gray-400 mt-2 mono-text">Starting enhanced systems...</p>
+            </div>
+        </div>
+        
+<!-- Enhanced Achievement Popup - HIGHEST Z-INDEX to appear above everything -->
+        <div id="achievementPopup" class="absolute bottom-4 left-1/2 transform -translate-x-1/2 ui-panel rounded-lg p-4 hidden z-70">
+            <div class="flex items-center space-x-3">
+                <div class="achievement-icon"></div>
+                <div>
+                    <h4 class="font-bold text-cyan-400 glow-text">Achievement Unlocked!</h4>
+                    <p id="achievementText" class="text-sm text-gray-300"></p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tutorial Overlay (from project knowledge) -->
+        <div id="tutorialOverlay" class="absolute inset-0 bg-black bg-opacity-90 flex items-center justify-center z-60 hidden">
+            <div class="ui-panel rounded-lg p-8 max-w-2xl">
+                <h2 class="text-3xl font-bold text-cyan-400 glow-text cyber-title mb-6">FLIGHT TRAINING</h2>
+                <div id="tutorialContent">
+                    <div class="space-y-4 text-gray-300">
+                        <h3 class="text-xl text-cyan-400 glow-text">Basic Controls</h3>
+                        <div class="grid grid-cols-2 gap-4 text-sm">
+                            <div>
+                                <div class="text-yellow-400 font-bold">Movement</div>
+                                <div>WASD: Thrust in all directions</div>
+                                <div>Arrows: Look around</div>
+                                <div>Q/E: Roll left/right</div>
+                            </div>
+                            <div>
+                                <div class="text-yellow-400 font-bold">Combat</div>
+                                <div>Space: Fire weapons</div>
+                                <div>Option: Target lock</div>
+                                <div>Tab: Cycle targets</div>
+                            </div>
+                        </div>
+                        <h3 class="text-xl text-cyan-400 glow-text">Advanced</h3>
+                        <div class="text-sm">
+                            <div><span class="text-yellow-400">Enter:</span> Auto-nav or Slingshot near planets</div>
+                            <div><span class="text-yellow-400">O:</span> Emergency Warp (5 uses)</div>
+                            <div><span class="text-yellow-400">X:</span> Brake/Stop</div>
+                        </div>
+                    </div>
+                </div>
+                <button id="tutorialNext" class="w-full mt-6 space-btn rounded px-6 py-3">
+                    <i class="fas fa-arrow-right mr-2"></i>Next
+                </button>
+            </div>
+        </div>
+
+        <!-- Boss Warning -->
+        <div id="bossWarning" class="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 hidden z-50">
+            <div class="text-center ui-panel rounded-lg p-6">
+                <div class="text-6xl mb-4 pulse">⚠</div>
+                <h2 class="text-3xl font-bold text-red-400 mb-2 glow-text">BOSS ENCOUNTER</h2>
+                <p id="bossName" class="text-xl text-yellow-400 mb-2"></p>
+                <p class="text-gray-300">Eliminate all support ships first!</p>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Game Scripts - Load in dependency order (CRITICAL: game-core.js MUST load last) -->
+    <script src="js/game-objects.js"></script>
+<script src="js/game-ui.js"></script>        <!-- MOVE THIS BEFORE game-physics.js -->
+<script src="js/game-physics.js"></script>    <!-- Now this can use gameOver function -->
+<script src="js/game-controls.js"></script>
+<script src="js/game-intro.js"></script>
+<script src="js/game-core.js"></script>
+        <!-- SINGLE BOOTSTRAP CALL - Simplified initialization -->
+    <script>
+      window.addEventListener('load', () => {
+        console.log('🚀 Starting Interstellar Slingshot...');
+        
+        const initialize = () => {
+          try {
+            // Check if all required systems are available
+            if (typeof gameState === 'undefined') {
+              console.log('⏳ Waiting for gameState...');
+              setTimeout(initialize, 50);
+              return;
+            }
+            
+            if (typeof setupEnhancedEventListeners === 'undefined') {
+              console.log('⏳ Waiting for game controls...');
+              setTimeout(initialize, 50);
+              return;
+            }
+            
+            console.log('✅ All systems loaded, initializing game...');
+            
+            // Use the intro sequence version if available, otherwise fallback to normal start
+            if (typeof startGameWithIntro === 'function') {
+              console.log('🎬 Starting with intro sequence...');
+              startGameWithIntro();
+            } else if (typeof startGame === 'function') {
+              console.log('🎮 Starting normal game...');
+              startGame();
+              
+              // Initialize controls after game starts
+              if (typeof initControls === 'function') {
+                setTimeout(initControls, 500);
+              } else if (typeof setupEnhancedEventListeners === 'function') {
+                setTimeout(setupEnhancedEventListeners, 500);
+              }
+            } else {
+              console.error('❌ No game start function found');
+            }
+            
+          } catch (error) {
+    console.error('❌ Initialization error:', error);
+    // DISABLED: Retry mechanism was causing double initialization
+    // setTimeout(initialize, 200);
+  }
+        };
+        
+        // Start initialization after a brief delay
+        setTimeout(initialize, 100);
+      });
+    </script>
+</body>
+</html>
