@@ -14,382 +14,9 @@
     <!-- Game Styles -->
     <link rel="stylesheet" href="css/styles.css">
     <style>
-        /* Z-INDEX HIERARCHY:
-           1: Canvas (pointer-events: none)
-           90: Crosshair
-           100: UI Panels
-           105: Title Header
-           250: Event Horizon, Boss Warning, Mission Command
-           300: Tutorial, Game Over, Victory Overlays
-           999: Achievement Popup
-           9999: Intro Buttons (Start/Skip) - HIGHEST except loading
-           10000: Loading Screen (highest during loading)
-        */
+        /* Additional CSS from attached file - Mission Command Alert and Controls */
         
-        /* FUNDAMENTAL BODY STYLING - CRITICAL */
-        @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Rajdhani:wght@300;400;500;600;700&family=Share+Tech+Mono&display=swap');
-        
-        body {
-            font-family: 'Rajdhani', sans-serif;
-            background: radial-gradient(ellipse at center, #0a0a0a 0%, #000000 100%);
-            overflow: hidden;
-            cursor: none;
-            margin: 0;
-            padding: 0;
-        }
-
-        /* CRITICAL FIX: Enhanced cursor management for UI interaction */
-        body.ui-mode {
-            cursor: auto !important;
-        }
-
-        body.intro-active {
-            cursor: auto !important;
-        }
-
-        body.intro-active * {
-            cursor: auto !important;
-        }
-
-        /* Game Container Positioning */
-        #gameContainer {
-            position: relative;
-            width: 100vw;
-            height: 100vh;
-        }
-        
-        /* But allow UI elements within to receive clicks */
-        #gameContainer .ui-panel,
-        #gameContainer button,
-        #gameContainer .intro-start-btn,
-        #gameContainer #introStartBtn,
-        #gameContainer #skipIntroBtn {
-            pointer-events: auto !important;
-        }
-
-        /* CRITICAL FIX: Canvas positioning to allow UI clicks */
-        #canvasContainer {
-            position: absolute !important;
-            top: 0 !important;
-            left: 0 !important;
-            width: 100% !important;
-            height: 100% !important;
-            z-index: 1 !important;
-            pointer-events: none !important;
-        }
-
-        #canvasContainer canvas,
-        #gameCanvas,
-        canvas {
-            pointer-events: none !important;
-            z-index: 1 !important;
-        }
-        
-        /* Force all Three.js canvas elements to not capture events */
-        #gameContainer > canvas {
-            pointer-events: none !important;
-            z-index: 1 !important;
-        }
-
-        /* CRITICAL FIX: Core UI Panel Base Styling - Ensure consistent transparency */
-        .ui-panel {
-            position: fixed !important; /* Changed from absolute to fixed */
-            background: linear-gradient(135deg, rgba(15, 23, 42, 0.3) 0%, rgba(30, 41, 59, 0.3) 100%) !important;
-            backdrop-filter: blur(2px) !important;
-            border: 1px solid rgba(0,150,255,0.5) !important;
-            box-shadow: 
-                0 12px 40px rgba(0, 150, 255, 0.3),
-                inset 0 1px 0 rgba(0,150,255,0.4),
-                inset 0 -1px 0 rgba(0,150,255,0.2) !important;
-            transform-style: preserve-3d;
-            perspective: 1200px;
-            cursor: auto !important;
-            pointer-events: auto !important;
-            z-index: 100 !important;
-            display: block !important;
-            visibility: visible !important;
-            opacity: 1 !important;
-        }
-        
-        /* UI hover detection for cursor switching */
-        .ui-panel:hover ~ #crosshair {
-            display: none !important;
-        }
-        
-        /* Force UI panels to have proper transparency */
-        .ui-panel > * {
-            background: transparent !important;
-        }
-        
-        /* Ensure text content maintains proper color without background */
-        .ui-panel .space-y-2,
-        .ui-panel .text-sm,
-        .ui-panel .text-xs,
-        .ui-panel .text-lg,
-        .ui-panel .curved-element,
-        .ui-panel h3 {
-            background: transparent !important;
-        }
-        
-        /* Ensure ALL interactive elements can receive clicks */
-        button,
-        .button,
-        .btn,
-        .space-btn,
-        .small-control-btn,
-        .planet-card,
-        .intro-start-btn,
-        #introStartBtn,
-        #skipIntroBtn,
-        #muteBtn,
-        #pauseBtn,
-        #toggleOrbitsBtn,
-        #autoNavigateBtn,
-        #warpBtn,
-        #mapViewToggle,
-        #tutorialNext {
-            pointer-events: auto !important;
-            cursor: pointer !important;
-            position: relative !important;
-            z-index: inherit !important;
-        }
-
-        /* Ensure all UI panel content is clickable */
-        .ui-panel * {
-            pointer-events: auto !important;
-            cursor: auto !important;
-        }
-
-        .ui-panel button,
-        .ui-panel .space-btn,
-        .ui-panel .small-control-btn,
-        .ui-panel .planet-card {
-            cursor: pointer !important;
-            pointer-events: auto !important;
-        }
-
-        /* SPECIFIC PANEL POSITIONING - Using exact pixel values */
-        .ui-panel.title-header {
-            position: fixed !important;
-            top: 16px !important;
-            left: 50% !important;
-            transform: translateX(-50%) perspective(1000px) rotateX(-6deg) translateZ(8px) !important;
-            border-radius: 25px;
-            box-shadow: 
-                0 20px 60px rgba(0, 150, 255, 0.5),
-                inset 0 2px 15px rgba(0,150,255,0.3),
-                inset 0 -2px 15px rgba(0,150,255,0.2);
-            min-width: 300px;
-            padding: 16px;
-            z-index: 105 !important;
-        }
-
-        .ui-panel.top-left {
-            position: fixed !important;
-            top: 56px !important;
-            left: 16px !important;
-            transform: perspective(1000px) rotateY(8deg) rotateX(-4deg) translateZ(10px);
-            border-radius: 0 20px 20px 0;
-            box-shadow: 
-                0 15px 50px rgba(0, 150, 255, 0.4),
-                inset 2px 0 10px rgba(0,150,255,0.2);
-            padding: 12px;
-            max-width: 280px;
-        }
-
-        .ui-panel.bottom-left {
-            position: fixed !important;
-            bottom: 16px !important;
-            left: 16px !important;
-            transform: perspective(1000px) rotateY(6deg) rotateX(2deg) translateZ(8px);
-            border-radius: 0 20px 20px 0;
-            box-shadow: 
-                0 12px 40px rgba(0, 150, 255, 0.35),
-                inset 2px 0 8px rgba(0,150,255,0.18);
-            padding: 12px;
-            max-width: 300px;
-        }
-
-        .ui-panel.top-right {
-            position: fixed !important;
-            top: 56px !important;
-            right: 16px !important;
-            transform: perspective(1000px) rotateY(-8deg) rotateX(-4deg) translateZ(10px);
-            border-radius: 20px 0 0 20px;
-            box-shadow: 
-                0 15px 50px rgba(0, 150, 255, 0.4),
-                inset -2px 0 10px rgba(0,150,255,0.2);
-            padding: 16px;
-            max-width: 384px;
-        }
-
-        .ui-panel.bottom-right {
-            position: fixed !important;
-            bottom: 16px !important;
-            right: 16px !important;
-            transform: perspective(1000px) rotateY(-6deg) rotateX(2deg) translateZ(8px);
-            border-radius: 20px 0 0 20px;
-            box-shadow: 
-                0 12px 40px rgba(0, 150, 255, 0.35),
-                inset -2px 0 8px rgba(0,150,255,0.18);
-            padding: 16px;
-        }
-
-        /* Show UI during loading on desktop only */
-        body:not(.mobile-active) #loadingScreen ~ .ui-panel {
-            display: block !important;
-            opacity: 0.7 !important;
-            z-index: 9998 !important;
-        }
-
-        /* Text styling */
-        .cyber-title {
-            font-family: 'Orbitron', monospace;
-            font-weight: 900;
-            letter-spacing: 3px;
-        }
-
-        .mono-text {
-            font-family: 'Share Tech Mono', monospace;
-        }
-
-        .glow-text {
-            text-shadow: 
-                0 0 8px rgba(0,150,255,0.9), 
-                0 0 16px rgba(0,150,255,0.7),
-                0 0 24px rgba(0,150,255,0.5);
-        }
-
-        .curved-element {
-            transform: perspective(800px) rotateX(-2deg);
-            text-shadow: 0 0 8px rgba(0,150,255,0.6);
-        }
-
-        /* Crosshair styling */
-        .crosshair {
-            position: fixed;
-            width: 16px;
-            height: 16px;
-            border: 2px solid rgba(0, 255, 0, 0.8);
-            border-radius: 50%;
-            pointer-events: none;
-            z-index: 90;
-            transform: translate(-50%, -50%);
-            box-shadow: 
-                0 0 20px rgba(0, 255, 0, 0.6),
-                inset 0 0 20px rgba(0, 255, 0, 0.3);
-        }
-
-        .crosshair::before,
-        .crosshair::after {
-            content: '';
-            position: absolute;
-            background: rgba(0, 255, 0, 0.8);
-            box-shadow: 0 0 8px rgba(0, 255, 0, 0.7);
-        }
-
-        .crosshair::before {
-            top: 50%;
-            left: -8px;
-            right: -8px;
-            height: 1px;
-            transform: translateY(-50%);
-        }
-
-        .crosshair::after {
-            left: 50%;
-            top: -8px;
-            bottom: -8px;
-            width: 1px;
-            transform: translateX(-50%);
-        }
-
-        /* Ensure crosshair doesn't interfere with UI */
-        .crosshair.ui-hidden {
-            opacity: 0.1 !important;
-            z-index: 10 !important;
-        }
-
-        /* Loading Screen */
-        #loadingScreen {
-            position: fixed !important;
-            top: 0 !important;
-            left: 0 !important;
-            right: 0 !important;
-            bottom: 0 !important;
-            width: 100vw !important;
-            height: 100vh !important;
-            background: #000000 !important;
-            background: radial-gradient(ellipse at center, #0a0a0a 0%, #000000 100%) !important;
-            display: flex !important;
-            align-items: center !important;
-            justify-content: center !important;
-            z-index: 10000 !important; /* Highest z-index during loading */
-        }
-
-        /* Rocket orbit loader animation */
-        .rocket-orbit-loader {
-            width: 80px;
-            height: 80px;
-            position: relative;
-            margin: 0 auto 20px;
-        }
-
-        .rocket-orbit-loader::before {
-            content: '';
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            width: 16px;
-            height: 16px;
-            background: radial-gradient(circle, #00ffff 0%, #00ccff 70%, transparent 100%);
-            border-radius: 50%;
-            box-shadow: 0 0 15px #00ffff, 0 0 30px #00ccff;
-        }
-
-        /* Fixed rocket with fins */
-        .rocket {
-            position: absolute;
-            top: 0;
-            left: 50%;
-            width: 24px;
-            height: 24px;
-            background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%2300ccff'%3E%3Cpath d='M12 2c0 0-4 1-4 9.5 0 2 .5 3.5 1 4.5L7.5 18.5c-.3.3-.5.7-.5 1.1 0 .8.7 1.4 1.5 1.4h1l.5 2h4l.5-2h1c.8 0 1.5-.6 1.5-1.4 0-.4-.2-.8-.5-1.1L15 16c.5-1 1-2.5 1-4.5C16 3 12 2 12 2zm0 4c1.1 0 2 .9 2 2s-.9 2-2 2-2-.9-2-2 .9-2 2-2z'/%3E%3Cpath d='M7 13l-3 3v2l3-3v-2zm10 0l3 3v2l-3-3v-2z' opacity='0.8'/%3E%3C/svg%3E") no-repeat center center;
-            background-size: contain;
-            animation: rocket-orbit 4s linear infinite;
-            transform-origin: 50% 40px;
-        }
-
-        @keyframes rocket-orbit {
-            0% { transform: translateX(-50%) rotate(0deg) translateY(-40px) rotate(0deg); }
-            25% { transform: translateX(-50%) rotate(90deg) translateY(-40px) rotate(-90deg); }
-            50% { transform: translateX(-50%) rotate(180deg) translateY(-40px) rotate(-180deg); }
-            75% { transform: translateX(-50%) rotate(270deg) translateY(-40px) rotate(-270deg); }
-            100% { transform: translateX(-50%) rotate(360deg) translateY(-40px) rotate(-360deg); }
-        }
-
-        /* Progress bars */
-        .loading-bar {
-            background: linear-gradient(90deg, #0066ff 0%, #00ccff 50%, #00ffcc 100%);
-            background-size: 200% 100%;
-            animation: shimmer 2s infinite;
-            transform: perspective(400px) rotateX(-1deg);
-        }
-
-        .hull-bar {
-            background: linear-gradient(90deg, #ff0066 0%, #ff6600 50%, #00ff66 100%);
-            background-size: 200% 100%;
-            animation: shimmer 2s infinite;
-            transform: perspective(400px) rotateX(-1deg);
-        }
-
-        @keyframes shimmer {
-            0% { background-position: -200% 0; }
-            100% { background-position: 200% 0; }
-        }
-
-        /* Title flashing effect */
+        /* Title flashing effect for gravity well alert */
         .title-flash {
             animation: titleFlash 0.5s ease-in-out infinite alternate;
         }
@@ -411,484 +38,270 @@
             }
         }
 
-        /* Mission Command Alert */
+        /* Mission Command Alert - Positioned in Lower Third of Screen */
+        /* UPDATED: Made transparent like other UI panels */
         .mission-command-alert {
-            position: fixed !important;
-            background: linear-gradient(135deg, rgba(15, 23, 42, 0.3) 0%, rgba(30, 41, 59, 0.3) 100%) !important;
-            backdrop-filter: blur(2px) !important;
-            border: 1px solid rgba(0, 150, 255, 0.5) !important;
+            background: linear-gradient(135deg, rgba(15, 23, 42, 0.3) 0%, rgba(30, 41, 59, 0.3) 100%);
+            backdrop-filter: blur(2px);
+            border: 1px solid rgba(0, 150, 255, 0.5);
             border-radius: 15px;
             box-shadow: 
                 0 12px 40px rgba(0, 150, 255, 0.3),
                 inset 0 1px 0 rgba(0,150,255,0.4),
-                inset 0 -1px 0 rgba(0,150,255,0.2) !important;
+                inset 0 -1px 0 rgba(0,150,255,0.2);
             cursor: auto !important;
             pointer-events: auto !important;
             transform-style: preserve-3d;
             perspective: 1200px;
             transform: perspective(1000px) rotateX(-2deg) translateZ(5px);
-            z-index: 250 !important;
         }
 
+        /* Ensure mouse visibility over tutorial notifications */
         .mission-command-alert * {
             cursor: auto !important;
             pointer-events: auto !important;
         }
 
-        /* Achievement Popup Priority */
+        /* Achievement Popup Priority - Ensure it appears above all other elements */
         #achievementPopup {
-            z-index: 999 !important;
-            position: fixed !important;
-            pointer-events: auto !important;
-        }
-
-        #achievementPopup.hidden {
-            display: none !important;
-        }
-
-        #achievementPopup:not(.hidden) {
-            display: block !important;
-        }
-
-        /* Control buttons */
-        .small-control-btn {
-            background: linear-gradient(135deg, rgba(0,150,255,0.15), rgba(0,100,200,0.2));
-            border: 1px solid rgba(0,150,255,0.4);
-            color: rgba(0,255,200,0.8);
-            font-size: 11px;
-            padding: 4px 8px;
-            border-radius: 4px;
-            cursor: pointer !important;
-            transition: all 0.3s ease;
-            backdrop-filter: blur(3px);
-        }
-
-        .small-control-btn:hover {
-            background: linear-gradient(135deg, rgba(0,200,255,0.25), rgba(0,150,255,0.3));
-            border-color: rgba(0,255,200,0.6);
-            box-shadow: 0 0 10px rgba(0,255,200,0.3);
-        }
-
-        .small-control-btn.muted {
-            background: linear-gradient(135deg, rgba(150,0,0,0.15), rgba(200,0,0,0.2));
-            border-color: rgba(255,50,50,0.4);
-            color: rgba(255,150,150,0.8);
-        }
-
-        .small-control-btn.paused {
-            background: linear-gradient(135deg, rgba(255,150,0,0.15), rgba(255,100,0,0.2));
-            border-color: rgba(255,150,0,0.4);
-            color: rgba(255,200,100,0.8);
-        }
-
-        /* Space button styling */
-        .space-btn {
-            background: linear-gradient(135deg, rgba(0,150,255,0.2), rgba(0,100,200,0.3));
-            border: 1px solid rgba(0,150,255,0.5);
-            color: rgba(0,255,200,0.9);
-            font-family: 'Orbitron', monospace;
-            transition: all 0.3s ease;
-            backdrop-filter: blur(5px);
-            transform: perspective(600px) rotateX(-2deg);
-            box-shadow: 
-                0 4px 15px rgba(0,150,255,0.2),
-                inset 0 1px 0 rgba(0,150,255,0.3);
-            cursor: pointer !important;
-        }
-
-        .space-btn:hover {
-            background: linear-gradient(135deg, rgba(0,200,255,0.3), rgba(0,150,255,0.4));
-            border-color: rgba(0,255,200,0.7);
-            box-shadow: 
-                0 0 20px rgba(0,255,200,0.4),
-                0 6px 20px rgba(0,150,255,0.3),
-                inset 0 1px 0 rgba(0,255,200,0.4);
-            transform: perspective(600px) rotateX(-2deg) translateY(-1px);
-        }
-
-        /* Planet card styling */
-        .planet-card {
-            background: linear-gradient(135deg, rgba(30, 41, 59, 0.7) 0%, rgba(30, 41, 59, 0.9) 100%);
-            border: 1px solid rgba(0,150,255,0.3);
-            border-radius: 8px;
-            padding: 0.5rem;
-            cursor: pointer !important;
-            transition: all 0.3s ease;
-            transform: perspective(600px) rotateX(-1deg);
-        }
-
-        .planet-card:hover {
-            transform: perspective(600px) rotateX(-1deg) translateY(-2px) scale(1.02);
-            box-shadow: 0 8px 25px rgba(0,150,255,0.4);
-            border-color: rgba(0,255,150,0.6);
-        }
-
-        .planet-card.selected {
-            border-color: rgba(0,255,150,0.8);
-            box-shadow: 0 8px 25px rgba(0,255,150,0.5);
-            background: linear-gradient(135deg, rgba(0,255,150,0.2) 0%, rgba(30, 41, 59, 0.7) 100%);
-        }
-
-        /* Pulse animation */
-        .pulse {
-            animation: pulse 2s infinite;
-        }
-
-        @keyframes pulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.6; }
-        }
-
-        /* Intro-specific styles */
-        body.intro-active #gameCanvas {
-            cursor: auto !important;
-        }
-
-        /* CRITICAL: Ensure ALL overlays don't block clicks */
-        #introCountdownOverlay,
-        #introFadeOverlay,
-        #atmosphereFadeOverlay,
-        #skipSceneFade,
-        .fade-overlay,
-        .overlay,
-        div[id*="Overlay"]:not(#tutorialOverlay):not(#gameOverOverlay):not(#victoryOverlay) {
-            pointer-events: none !important;
-        }
-        
-        /* Force Three.js renderer container to not block */
-        #canvasContainer > *,
-        #gameContainer > canvas,
-        .three-canvas {
-            pointer-events: none !important;
-            z-index: 1 !important;
-        }
-        
-        /* Start button styling - Fixed z-index and pointer-events */
-        .intro-start-btn,
-        #introStartBtn {
-            background: linear-gradient(135deg, rgba(0,255,150,0.2), rgba(0,200,255,0.3));
-            border: 3px solid rgba(0,255,150,0.8);
-            border-radius: 15px;
-            padding: 20px 40px;
-            cursor: pointer !important;
-            pointer-events: auto !important;
-            transition: all 0.3s ease;
-            animation: startButtonFlash 1.5s ease-in-out infinite;
-            box-shadow: 
-                0 0 30px rgba(0,255,150,0.5),
-                inset 0 0 20px rgba(0,255,150,0.2);
-            z-index: 500 !important;
+            z-index: 999 !important; /* Maximum priority */
             position: fixed !important;
         }
-        
-        /* Debug: Visual indicator for clickable elements */
-        #introStartBtn,
-        #skipIntroBtn {
-            outline: 2px solid rgba(255, 255, 0, 0.5) !important;
-        }
-        
-        #introStartBtn:hover,
-        #skipIntroBtn:hover {
-            outline: 2px solid rgba(255, 255, 0, 1) !important;
-            transform: scale(1.05);
-        }
-        
-        /* Skip button styling */
-        #skipIntroBtn {
-            position: fixed !important;
-            z-index: 500 !important;
-            pointer-events: auto !important;
-            cursor: pointer !important;
+
+        /* Achievement unlock animation */
+        @keyframes achievementSlide {
+            0% { transform: translate(-50%, 100px); opacity: 0; }
+            20% { transform: translate(-50%, 0); opacity: 1; }
+            80% { transform: translate(-50%, 0); opacity: 1; }
+            100% { transform: translate(-50%, -20px); opacity: 0; }
         }
 
-        @keyframes startButtonFlash {
-            0%, 100% { 
-                box-shadow: 0 0 30px rgba(0,255,150,0.5), inset 0 0 20px rgba(0,255,150,0.2);
-                transform: scale(1);
-            }
-            50% { 
-                box-shadow: 0 0 50px rgba(0,255,150,0.8), inset 0 0 30px rgba(0,255,150,0.4);
-                transform: scale(1.05);
-            }
+        .achievement-animate {
+            animation: achievementSlide 4s ease-in-out;
         }
 
-        /* Hyperspace effect */
-        @keyframes starStretch {
+        /* Victory/game over screen */
+        #gameOverScreen {
+            backdrop-filter: blur(8px);
+            background: linear-gradient(135deg, rgba(0,0,0,0.8) 0%, rgba(0,20,40,0.9) 100%);
+        }
+
+        /* Enhanced star field effects */
+        .star {
+            position: absolute;
+            width: 2px;
+            height: 2px;
+            background: white;
+            border-radius: 50%;
+            animation: starStretch 1.2s ease-out forwards;
+            transform-origin: center;
+            box-shadow: 0 0 4px rgba(255, 255, 255, 0.8);
+        }
+
+        /* Combat effects */
+        @keyframes fadeToWhite {
+            0% { opacity: 0; }
+            100% { opacity: 1; background: white; }
+        }
+
+        /* Central blast animation for emergency warp */
+        @keyframes centralBlast {
             0% { 
-                transform: scale(1) rotate(var(--rotation, 0deg));
+                transform: translate(-50%, -50%) scale(0);
                 opacity: 1;
-                width: 2px;
-                height: 2px;
-            }
-            25% {
-                transform: scale(10, 1) rotate(var(--rotation, 0deg));
-                opacity: 0.9;
-                width: 20px;
-                height: 2px;
             }
             50% {
-                transform: scale(50, 1) rotate(var(--rotation, 0deg));
-                opacity: 0.7;
-                width: 100px;
-                height: 2px;
-            }
-            75% {
-                transform: scale(100, 1) rotate(var(--rotation, 0deg));
-                opacity: 0.4;
-                width: 200px;
-                height: 2px;
+                transform: translate(-50%, -50%) scale(1);
+                opacity: 0.8;
             }
             100% { 
-                transform: scale(200, 1) rotate(var(--rotation, 0deg));
+                transform: translate(-50%, -50%) scale(3);
                 opacity: 0;
-                width: 400px;
-                height: 2px;
             }
         }
 
-        .hyperspace-star {
-            position: absolute;
-            background: rgba(255,255,255,0.9);
-            border-radius: 50%;
-            animation: starStretch 0.6s ease-out forwards;
-        }
-
-        /* ==== MOBILE-ONLY STYLES ==== */
-        /* Hide UI panels during intro on mobile */
-        body.mobile-active.intro-active .ui-panel {
-            display: none !important;
-        }
-
-        /* Hide UI during loading on mobile */
-        body.mobile-active #loadingScreen ~ .ui-panel {
-            display: none !important;
+        /* Hyperspace line stretch for emergency warp */
+        @keyframes hyperspace-stretch {
+            0% { 
+                transform: rotate(var(--rotation, 0deg)) scaleX(0);
+                opacity: 0;
+            }
+            20% {
+                opacity: 1;
+            }
+            100% { 
+                transform: rotate(var(--rotation, 0deg)) scaleX(1);
+                opacity: 0;
+            }
         }
         
-        .mobile-overlay {
+        /* Tutorial styling - Green ORBITRON font */
+        #missionCommandAlert h2,
+        #missionCommandText {
+            font-family: 'Orbitron', monospace !important;
+            color: #00ff88 !important;
+            text-shadow: 0 0 8px rgba(0,255,136,0.6), 0 0 16px rgba(0,255,136,0.3) !important;
+        }
+
+        #missionCommandAlert h2 {
+            font-size: 1.5rem !important;
+            font-weight: 700 !important;
+            letter-spacing: 2px !important;
+        }
+
+        #missionCommandText {
+            font-size: 1rem !important;
+            line-height: 1.6 !important;
+        }
+
+        /* MINIMAL MOBILE ADDITIONS - Only hide UI on mobile and add control buttons */
+        @media (max-width: 768px), (hover: none) {
+            /* Hide all desktop UI panels on mobile */
+            .ui-panel {
+                display: none !important;
+            }
+            
+            /* Show mobile controls */
+            .mobile-controls {
+                display: flex !important;
+            }
+            
+            /* Make crosshair more visible on mobile */
+            .crosshair {
+                width: 32px !important;
+                height: 32px !important;
+                border-width: 2px !important;
+                border-color: rgba(0, 255, 0, 0.9) !important;
+            }
+            
+            /* Enable touch controls */
+            body {
+                cursor: auto !important;
+                touch-action: pan-x pan-y;
+            }
+
+            #gameCanvas {
+                touch-action: none;
+            }
+        }
+
+        /* Mobile control styles */
+        .mobile-controls {
             position: fixed;
-            inset: 0;
-            z-index: 2000;
-            display: none;
-            pointer-events: none;
-        }
-        
-        body.mobile-active .mobile-overlay {
-            display: block !important;
-        }
-        
-        .mobile-overlay * {
-            pointer-events: auto;
-        }
-        
-        /* Enhanced crosshair for mobile */
-        .crosshair.mobile-enhanced {
-            width: 48px !important;
-            height: 48px !important;
-            border-width: 3px !important;
-        }
-        
-        .mobile-touch-zone {
-            position: absolute;
-            inset: 0;
-            z-index: 2001;
-            background: transparent;
-            touch-action: none;
-        }
-        
-        .mobile-hud {
-            position: absolute;
-            top: 20px;
-            left: 20px;
-            right: 20px;
-            display: flex;
-            justify-content: space-between;
-            z-index: 2010;
-        }
-        
-        .mobile-stat {
-            background: linear-gradient(135deg, rgba(15, 23, 42, 0.3), rgba(30, 41, 59, 0.3));
-            backdrop-filter: blur(2px);
-            border: 1px solid rgba(0,150,255,0.5);
-            border-radius: 20px;
-            padding: 8px 16px;
-            color: rgba(0, 255, 200, 0.9);
-            font-family: 'Orbitron', monospace;
-            font-size: 14px;
-            font-weight: 600;
-            box-shadow: 
-                0 4px 15px rgba(0,150,255,0.2),
-                inset 0 1px 0 rgba(0,150,255,0.3);
-        }
-        
-        .mobile-nav-button {
-            width: 48px;
-            height: 48px;
-            border-radius: 12px;
-            background: linear-gradient(135deg, rgba(0, 150, 255, 0.2), rgba(0, 100, 200, 0.3));
-            border: 2px solid rgba(0, 150, 255, 0.5);
-            color: rgba(0, 255, 200, 0.9);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 20px;
-            cursor: pointer;
-            backdrop-filter: blur(5px);
-            box-shadow: 
-                0 4px 15px rgba(0,150,255,0.2),
-                inset 0 1px 0 rgba(0,150,255,0.3);
-        }
-        
-        .mobile-buttons {
-            position: absolute;
             bottom: 20px;
             left: 50%;
             transform: translateX(-50%);
-            display: flex;
-            gap: 15px;
-            z-index: 2010;
+            display: none;
+            gap: 10px;
+            z-index: 100;
+            pointer-events: auto;
         }
-        
-        .mobile-button {
-            width: 64px;
-            height: 64px;
+
+        .mobile-btn {
+            width: 50px;
+            height: 50px;
             border-radius: 50%;
-            background: linear-gradient(135deg, rgba(0, 150, 255, 0.2), rgba(0, 100, 200, 0.3));
-            border: 2px solid rgba(0, 150, 255, 0.5);
-            color: rgba(0, 255, 200, 0.9);
+            background: linear-gradient(135deg, rgba(0, 150, 255, 0.8), rgba(0, 100, 200, 0.8));
+            border: 2px solid rgba(0, 200, 255, 0.6);
+            color: white;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 24px;
+            font-size: 18px;
             cursor: pointer;
-            transition: all 0.3s ease;
-            touch-action: manipulation;
-            backdrop-filter: blur(5px);
+            transition: all 0.2s ease;
+            font-family: 'Orbitron', monospace;
             box-shadow: 
-                0 4px 15px rgba(0,150,255,0.2),
-                inset 0 1px 0 rgba(0,150,255,0.3);
+                0 4px 15px rgba(0, 150, 255, 0.4),
+                inset 0 1px 0 rgba(255, 255, 255, 0.2);
         }
-        
-        .mobile-button:active {
-            transform: scale(0.9);
-            box-shadow: 
-                0 0 20px rgba(0,255,200,0.4),
-                0 6px 20px rgba(0,150,255,0.3),
-                inset 0 1px 0 rgba(0,255,200,0.4);
+
+        .mobile-btn:active {
+            transform: scale(0.95);
         }
-        
-        .mobile-button.primary {
-            width: 80px;
-            height: 80px;
-            background: linear-gradient(135deg, rgba(255, 50, 50, 0.2), rgba(200, 0, 0, 0.3));
-            border-color: rgba(255, 100, 100, 0.5);
-            color: rgba(255, 150, 150, 0.9);
+
+        .mobile-btn.fire {
+            width: 60px;
+            height: 60px;
+            background: linear-gradient(135deg, rgba(255, 50, 50, 0.8), rgba(200, 0, 0, 0.8));
+            border-color: rgba(255, 100, 100, 0.6);
         }
-        
-        .mobile-button.emergency {
-            background: linear-gradient(135deg, rgba(255, 150, 0, 0.2), rgba(200, 100, 0, 0.3));
-            border-color: rgba(255, 200, 0, 0.5);
-            color: rgba(255, 200, 100, 0.9);
-        }
-        
+
+        /* Mobile popup styles */
         .mobile-popup {
             position: fixed;
-            inset: 0;
-            background: rgba(0, 0, 0, 0.8);
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.85);
             backdrop-filter: blur(5px);
+            z-index: 200;
             display: none;
             align-items: center;
             justify-content: center;
-            z-index: 2050;
             padding: 20px;
         }
-        
-        .mobile-popup.show {
+
+        .mobile-popup.active {
             display: flex !important;
         }
-        
+
         .mobile-popup-content {
             background: linear-gradient(135deg, rgba(15, 23, 42, 0.95), rgba(30, 41, 59, 0.95));
             border: 2px solid rgba(0, 150, 255, 0.6);
-            border-radius: 20px;
-            padding: 24px;
+            border-radius: 15px;
+            padding: 20px;
             color: white;
             max-width: 90vw;
             max-height: 80vh;
             overflow-y: auto;
-        }
-        
-        .mobile-thrust-bar {
-            position: absolute;
-            top: 50%;
-            right: 20px;
-            transform: translateY(-50%);
-            width: 8px;
-            height: 120px;
-            background: rgba(50, 50, 50, 0.8);
-            border-radius: 4px;
-            border: 1px solid rgba(0, 150, 255, 0.5);
-            z-index: 2005;
-            display: none;
-        }
-        
-        body.mobile-active .mobile-thrust-bar {
-            display: block;
-        }
-        
-        .mobile-thrust-fill {
-            position: absolute;
-            bottom: 0;
-            left: 0;
-            right: 0;
-            background: linear-gradient(to top, #ff4500, #ffff00, #00ff00);
-            border-radius: 3px;
-            height: 100%;
-            transition: height 0.1s ease;
+            font-family: 'Orbitron', monospace;
+            box-shadow: 
+                0 20px 60px rgba(0, 150, 255, 0.4),
+                inset 0 2px 15px rgba(0,150,255,0.3);
         }
 
-        /* Text sizing adjustments */
-        .text-sm { font-size: 0.875rem; }
-        .text-xs { font-size: 0.75rem; }
-        .text-lg { font-size: 1.125rem; }
-        .text-xl { font-size: 1.25rem; }
-        .text-2xl { font-size: 1.5rem; }
-        .text-3xl { font-size: 1.875rem; }
-        .text-4xl { font-size: 2.25rem; }
-        .text-6xl { font-size: 3.75rem; }
-        .text-8xl { font-size: 6rem; }
+        .mobile-popup h3 {
+            color: rgba(0, 255, 200, 0.9);
+            text-shadow: 0 0 8px rgba(0, 255, 200, 0.6);
+            margin-bottom: 15px;
+            text-align: center;
+        }
+
+        .mobile-popup-close {
+            position: absolute;
+            top: 10px;
+            right: 15px;
+            background: none;
+            border: none;
+            color: rgba(255, 100, 100, 0.8);
+            font-size: 24px;
+            cursor: pointer;
+            width: 30px;
+            height: 30px;
+        }
     </style>
 </head>
-
-<body>
-    <!-- Game Container -->
-    <div id="gameContainer">
-        <!-- Canvas Container - Below everything -->
-        <div id="canvasContainer" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 1; pointer-events: none;"></div>
-        
-        <!-- UI Layer - Above canvas -->
-        <div id="uiLayer" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 50; pointer-events: none;">
-        
-        <!-- All UI elements below automatically have pointer-events: auto due to CSS -->
-        
-        <!-- Crosshair -->
-        <div id="crosshair" class="crosshair" style="left: 50%; top: 50%; pointer-events: none;"></div>
-
-        <!-- Title Header Panel -->
-        <div class="ui-panel title-header">
-            <h1 class="text-2xl font-bold text-cyan-400 glow-text text-center cyber-title">INTERSTELLAR SLINGSHOT</h1>
-            <div class="text-center text-sm mt-1 opacity-80">A Gravitational Space Explorer by ChiLab</div>
-            </div>
-        <!-- End UI Layer -->
-    </div>
-    <!-- End Game Container -->
+<body class="text-white">
+    <div class="cyberpunk-bg"></div>
+    <div class="crosshair" id="crosshair"></div>
+    
+    <!-- Main Game Container -->
+    <div id="gameContainer" class="relative w-full h-screen">
+        <!-- Title Header -->
+        <div class="absolute top-4 left-1/2 transform -translate-x-1/2 ui-panel title-header rounded-lg p-4 z-10" style="left: 50%; transform: translateX(-50%);">
+            <h1 class="text-2xl font-bold text-cyan-400 glow-text cyber-title curved-element" id="gameTitle">INTERSTELLAR SLINGSHOT</h1>
+            <div class="text-xs text-center text-gray-400 mt-1 opacity-80">A Gravitational Space Explorer by ChiLab</div>
+        </div>
 
         <!-- Flight Controls Panel (Top Left) -->
-        <div class="ui-panel top-left">
+        <div class="absolute top-14 left-4 ui-panel top-left rounded-lg p-3 z-10">
             <h3 class="text-sm font-bold text-cyan-400 glow-text mb-2 cyber-title curved-element">FLIGHT CONTROLS</h3>
             <div class="text-xs text-gray-300 opacity-80 curved-element mb-3">
                 <strong>FLIGHT CONTROLS:</strong><br>
-                â†‘â†“: Pitch (Nose Up/Down)<br>
-                â†â†’: Yaw (Turn Left/Right)<br>
+                ↑↓: Pitch (Nose Up/Down)<br>
+                ←→: Yaw (Turn Left/Right)<br>
                 Q/E: Roll (Bank Left/Right)<br>
                 W/S: Throttle (Forward/Reverse)<br>
                 A/D: Strafe (Left/Right Thrusters)<br>
@@ -898,6 +311,7 @@
                 Option: Target Lock | O: Emergency Warp<br>
                 X: Brake/Stop
             </div>
+            <!-- Added Mute and Pause buttons -->
             <div class="flex gap-2 mt-2">
                 <button id="muteBtn" class="small-control-btn">
                     <i class="fas fa-volume-up mr-1" id="muteIcon"></i>Mute
@@ -909,13 +323,13 @@
         </div>
 
         <!-- Status Panel (Bottom Left) -->
-        <div class="ui-panel bottom-left">
+        <div class="absolute bottom-4 left-4 ui-panel bottom-left rounded-lg p-3 z-10">
             <h3 class="text-sm font-bold text-cyan-400 glow-text mb-2 cyber-title curved-element">SHIP STATUS</h3>
             <div class="space-y-2 text-sm curved-element">
                 <div class="curved-element">Velocity: <span id="velocity" class="text-green-400 font-mono">0.0 km/s</span></div>
                 <div class="curved-element">Distance: <span id="distance" class="text-yellow-400 font-mono">0.0 ly</span></div>
-                <div class="curved-element">Energy: <div class="w-32 h-2 bg-gray-800 bg-opacity-50 rounded border border-cyan-400" style="display: inline-block;"><div id="energyBar" class="loading-bar h-full rounded" style="width: 100%"></div></div></div>
-                <div class="curved-element">Hull: <div class="w-32 h-2 bg-gray-800 bg-opacity-50 rounded border border-green-400" style="display: inline-block;"><div id="hullBar" class="hull-bar h-full rounded" style="width: 100%"></div></div></div>
+                <div class="curved-element">Energy: <div class="w-32 h-2 bg-gray-800 rounded border border-cyan-400"><div id="energyBar" class="loading-bar h-full rounded" style="width: 100%"></div></div></div>
+                <div class="curved-element">Hull: <div class="w-32 h-2 bg-gray-800 rounded border border-green-400"><div id="hullBar" class="hull-bar h-full rounded" style="width: 100%"></div></div></div>
                 <div class="curved-element">Emergency Warp: <span id="emergencyWarpCount" class="text-cyan-400 font-mono">5</span></div>
                 <div class="curved-element">Location: <span id="location" class="text-purple-400">Local Galaxy</span></div>
                 <div class="curved-element">Weapons: <span id="weaponStatus" class="text-green-400">ARMED</span></div>
@@ -927,7 +341,7 @@
         </div>
         
         <!-- Navigation Panel -->
-        <div class="ui-panel top-right">
+        <div class="absolute top-14 right-4 ui-panel top-right rounded-lg p-4 z-10 max-w-sm">
             <div class="flex justify-between items-center mb-3">
                 <h3 class="text-lg font-bold text-cyan-400 glow-text">Navigation System</h3>
                 <button id="toggleOrbitsBtn" class="space-btn rounded px-2 py-1 text-xs">
@@ -936,7 +350,7 @@
             </div>
             
             <div id="blackHoleWarningHUD" class="hidden bg-yellow-900 bg-opacity-80 border border-yellow-400 rounded p-2 mb-3 text-center">
-                <div class="text-yellow-300 text-sm font-bold">âš  EVENT HORIZON PROXIMITY âš </div>
+                <div class="text-yellow-300 text-sm font-bold">⚠️ EVENT HORIZON PROXIMITY ⚠️</div>
                 <div id="blackHoleDistanceHUD" class="text-yellow-100 text-xs"></div>
             </div>
             
@@ -953,53 +367,41 @@
         </div>
 
         <!-- Enhanced Round Galaxy Map -->
-        <div class="ui-panel bottom-right">
+        <div class="absolute bottom-4 right-4 ui-panel bottom-right rounded-lg p-4 z-10">
             <div class="flex justify-between items-center mb-2">
                 <h3 class="text-sm font-bold text-cyan-400 glow-text">Map</h3>
-                <button id="mapViewToggle" class="text-xs text-yellow-400 hover:text-yellow-300">Galactic View</button>
+                <button id="mapViewToggle" class="space-btn rounded px-2 py-1 text-xs">Galactic View</button>
             </div>
-            
-            <div id="galaxyMapContainer" class="relative">
-                <svg id="galaxyMap" width="200" height="200" class="border border-cyan-400 rounded-full bg-black bg-opacity-50">
-                    <defs>
-                        <radialGradient id="galaxyGradient" cx="50%" cy="50%" r="50%">
-                            <stop offset="0%" stop-color="rgba(0,150,255,0.3)"/>
-                            <stop offset="100%" stop-color="rgba(0,0,0,0.8)"/>
-                        </radialGradient>
-                    </defs>
-                    <circle cx="100" cy="100" r="98" fill="url(#galaxyGradient)" stroke="rgba(0,150,255,0.5)" stroke-width="2"/>
-                    
-                    <circle id="playerMarker" cx="100" cy="100" r="3" fill="#00ff00" stroke="#ffffff" stroke-width="1">
-                        <animate attributeName="r" values="3;5;3" dur="2s" repeatCount="indefinite"/>
-                    </circle>
-                    
-                    <circle id="targetMarker" cx="100" cy="100" r="0" fill="none" stroke="#ffff00" stroke-width="2" opacity="0">
-                        <animate attributeName="r" values="8;12;8" dur="1.5s" repeatCount="indefinite"/>
-                    </circle>
-                </svg>
+            <div class="relative w-32 h-32 bg-black rounded-full border border-cyan-400 overflow-hidden">
+                <canvas id="galaxyMap" width="128" height="128" class="absolute inset-0"></canvas>
+                <div id="playerDot" class="absolute w-2 h-2 bg-green-400 rounded-full glow" style="top: 50%; left: 50%; transform: translate(-50%, -50%);"></div>
+            </div>
+            <div class="text-xs text-center text-gray-400 mt-2">
+                <div>X: <span id="playerX">0</span> Y: <span id="playerY">0</span> Z: <span id="playerZ">0</span></div>
             </div>
         </div>
-        
-        <!-- Event Horizon Warning -->
-        <div id="eventHorizonWarning" class="absolute top-1/3 left-1/2 transform -translate-x-1/2 -translate-y-1/2 hidden" style="z-index: 250 !important;">
-            <div class="text-center ui-panel rounded-lg p-6" style="z-index: 251 !important;">
-                <div class="text-6xl mb-4 pulse">âš </div>
-                <h2 class="text-3xl font-bold text-yellow-400 mb-2 glow-text">EVENT HORIZON APPROACHING</h2>
+
+        <!-- Black hole event horizon warning -->
+        <div id="eventHorizonWarning" class="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 hidden z-40">
+            <div class="text-center ui-panel rounded-lg p-6 bg-red-900 bg-opacity-80 border-red-400">
+                <div class="text-6xl mb-4 pulse">⚠️</div>
+                <h2 class="text-3xl font-bold mb-2">EVENT HORIZON APPROACHING</h2>
                 <p class="mb-2">Use the black hole's gravity to slingshot across the universe!</p>
                 <div class="text-sm">Warning Distance: 400 units | Auto-Warp at 160 units</div>
             </div>
         </div>
         
-        <!-- Mission Command Alert -->
-        <div id="missionCommandAlert" class="mission-command-alert p-6 max-w-lg hidden" style="top: 85%; left: 50%; transform: translate(-50%, -50%); z-index: 250 !important;">
+        <!-- Mission Command Alert - Positioned closer to bottom of screen -->
+        <div id="missionCommandAlert" class="absolute mission-command-alert p-6 max-w-lg hidden z-50" style="top: 85%; left: 50%; transform: translate(-50%, -50%);">
             <div class="text-center">
-                <h2 class="text-xl font-bold text-cyan-400 mb-2 cyber-title">MISSION COMMAND</h2>
+                <!-- REMOVED: Icon div -->
+                <h2 class="text-xl font-bold text-cyan-400 mb-2">MISSION COMMAND</h2>
                 <div id="missionCommandText" class="text-gray-300 mb-4"></div>
             </div>
         </div>
         
         <!-- Loading Screen -->
-        <div id="loadingScreen">
+        <div id="loadingScreen" class="absolute inset-0 bg-black bg-opacity-95 flex items-center justify-center z-50">
             <div class="text-center">
                 <div class="rocket-orbit-loader">
                     <div class="rocket"></div>
@@ -1014,8 +416,8 @@
             </div>
         </div>
         
-        <!-- Achievement Popup -->
-        <div id="achievementPopup" class="absolute bottom-4 left-1/2 transform -translate-x-1/2 ui-panel rounded-lg p-4 hidden" style="z-index: 999 !important; pointer-events: auto !important;">
+        <!-- Enhanced Achievement Popup - HIGHEST Z-INDEX to appear above everything -->
+        <div id="achievementPopup" class="absolute bottom-4 left-1/2 transform -translate-x-1/2 ui-panel rounded-lg p-4 hidden z-70">
             <div class="flex items-center space-x-3">
                 <div class="achievement-icon"></div>
                 <div>
@@ -1026,8 +428,8 @@
         </div>
 
         <!-- Tutorial Overlay -->
-        <div id="tutorialOverlay" class="absolute inset-0 bg-black bg-opacity-90 flex items-center justify-center hidden" style="z-index: 300 !important;">
-            <div class="ui-panel rounded-lg p-8 max-w-2xl" style="z-index: 301 !important;">
+        <div id="tutorialOverlay" class="absolute inset-0 bg-black bg-opacity-90 flex items-center justify-center z-60 hidden">
+            <div class="ui-panel rounded-lg p-8 max-w-2xl">
                 <h2 class="text-3xl font-bold text-cyan-400 glow-text cyber-title mb-6">FLIGHT TRAINING</h2>
                 <div id="tutorialContent">
                     <div class="space-y-4 text-gray-300">
@@ -1061,707 +463,295 @@
         </div>
 
         <!-- Boss Warning -->
-        <div id="bossWarning" class="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 hidden" style="z-index: 250 !important;">
-            <div class="text-center ui-panel rounded-lg p-6" style="z-index: 251 !important;">
-                <div class="text-6xl mb-4 pulse">âš </div>
+        <div id="bossWarning" class="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 hidden z-50">
+            <div class="text-center ui-panel rounded-lg p-6">
+                <div class="text-6xl mb-4 pulse">⚠️</div>
                 <h2 class="text-3xl font-bold text-red-400 mb-2 glow-text">BOSS ENCOUNTER</h2>
                 <p id="bossName" class="text-xl text-yellow-400 mb-2"></p>
                 <p class="text-gray-300">Eliminate all support ships first!</p>
             </div>
         </div>
-
-        <!-- Game Over Screen -->
-        <div id="gameOverOverlay" class="absolute inset-0 bg-black bg-opacity-90 flex items-center justify-center hidden" style="z-index: 300 !important;">
-            <div class="text-center ui-panel rounded-lg p-8 max-w-md" style="z-index: 301 !important;">
-                <div class="text-6xl mb-4">ðŸ’¥</div>
-                <h2 class="text-3xl font-bold text-red-400 mb-4 glow-text cyber-title">MISSION FAILED</h2>
-                <div id="gameOverStats" class="text-left text-sm text-gray-300 mb-6">
-                    <div>Final Distance: <span id="finalDistance">0</span> light years</div>
-                    <div>Final Velocity: <span id="finalVelocity">0</span> km/s</div>
-                    <div>Energy Remaining: <span id="finalEnergy">0</span>%</div>
-                    <div>Hull Integrity: <span id="finalHull">0</span>%</div>
-                    <div>Galaxies Cleared: <span id="finalGalaxies">0</span>/8</div>
-                    <div>Emergency Warps Remaining: <span id="finalWarps">0</span></div>
-                </div>
-                <button onclick="location.reload()" class="space-btn rounded px-6 py-3">
-                    <i class="fas fa-redo mr-2"></i>Restart Mission
-                </button>
-            </div>
-        </div>
-
-        <!-- Victory Screen -->
-        <div id="victoryOverlay" class="absolute inset-0 bg-black bg-opacity-90 flex items-center justify-center hidden" style="z-index: 300 !important;">
-            <div class="text-center ui-panel rounded-lg p-8 max-w-md" style="z-index: 301 !important;">
-                <div class="text-6xl mb-4">ðŸ†</div>
-                <h2 class="text-3xl font-bold text-yellow-400 mb-4 glow-text cyber-title">MISSION COMPLETE!</h2>
-                <p class="text-gray-300 mb-6">You have successfully navigated the cosmos and cleared all hostile galaxies!</p>
-                <div id="victoryStats" class="text-left text-sm text-gray-300 mb-6">
-                    <div>Final Distance: <span id="victoryDistance">0</span> light years</div>
-                    <div>Final Velocity: <span id="victoryVelocity">0</span> km/s</div>
-                    <div>Energy Remaining: <span id="victoryEnergy">0</span>%</div>
-                    <div>Hull Integrity: <span id="victoryHull">0</span>%</div>
-                    <div>Galaxies Cleared: 8/8</div>
-                    <div>Emergency Warps Remaining: <span id="victoryWarps">0</span></div>
-                </div>
-                <button onclick="location.reload()" class="space-btn rounded px-6 py-3">
-                    <i class="fas fa-redo mr-2"></i>New Mission
-                </button>
-            </div>
-        </div>
     </div>
 
-    <!-- MOBILE OVERLAY - Completely separate, only appears on mobile -->
-    <div class="mobile-overlay" id="mobileGameOverlay">
-        <!-- Mobile Touch Zone -->
-        <div class="mobile-touch-zone" id="mobileTouchZone"></div>
-        
-        <!-- Mobile HUD -->
-        <div class="mobile-hud">
-            <div class="mobile-stat" id="mobileVelocityStat">0.0 km/s</div>
-            <div class="mobile-stat" id="mobileEnergyStat">100%</div>
-            <button class="mobile-nav-button" onclick="showMobileNavigation()">
-                <i class="fas fa-map"></i>
-            </button>
-        </div>
-        
-        <!-- Mobile Control Buttons -->
-        <div class="mobile-buttons">
-            <button class="mobile-button" onclick="showMobileStatus()" title="Status">
-                <i class="fas fa-tachometer-alt"></i>
-            </button>
-            <button class="mobile-button" onclick="mobileTargetCycle()" title="Target">
-                <i class="fas fa-bullseye"></i>
-            </button>
-            <button class="mobile-button primary" onclick="mobileFireWeapons()" title="Fire">
-                <i class="fas fa-crosshairs"></i>
-            </button>
-            <button class="mobile-button emergency" onclick="mobileEmergencyWarp()" title="Warp">
-                <i class="fas fa-rocket"></i>
-            </button>
-            <button class="mobile-button" onclick="showMobileControls()" title="Help">
-                <i class="fas fa-question"></i>
-            </button>
-        </div>
-        
-        <!-- Mobile Thrust Indicator -->
-        <div class="mobile-thrust-bar">
-            <div class="mobile-thrust-fill" id="mobileThrustFill"></div>
-        </div>
+    <!-- MOBILE CONTROLS - Only visible on mobile devices -->
+    <div class="mobile-controls">
+        <button class="mobile-btn" onclick="showMobilePanel('controls')" title="Flight Controls">
+            <i class="fas fa-gamepad"></i>
+        </button>
+        <button class="mobile-btn" onclick="showMobilePanel('status')" title="Ship Status">
+            <i class="fas fa-tachometer-alt"></i>
+        </button>
+        <button class="mobile-btn" onclick="showMobilePanel('navigation')" title="Navigation">
+            <i class="fas fa-compass"></i>
+        </button>
+        <button class="mobile-btn fire" onclick="mobileFireWeapon()" title="Fire Weapons">
+            <i class="fas fa-crosshairs"></i>
+        </button>
+        <button class="mobile-btn" onclick="mobileEmergencyWarp()" title="Emergency Warp">
+            <i class="fas fa-rocket"></i>
+        </button>
     </div>
 
-    <!-- Mobile Popups -->
-    <div class="mobile-popup" id="mobileNavigationPopup">
+    <!-- MOBILE POPUPS - Show desktop panel content on mobile -->
+    <div class="mobile-popup" id="controlsPopup">
         <div class="mobile-popup-content">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; border-bottom: 1px solid rgba(0, 150, 255, 0.3); padding-bottom: 15px;">
-                <h3 style="font-family: 'Orbitron', monospace; font-weight: 700; font-size: 20px; color: #00bfff;">NAVIGATION</h3>
-                <button onclick="hideMobileNavigation()" style="width: 32px; height: 32px; border: none; background: rgba(255, 50, 50, 0.8); color: white; border-radius: 50%; cursor: pointer; font-size: 16px;">&times;</button>
-            </div>
-            <div>
-                <h4 style="color: #00bfff; margin-bottom: 10px; font-family: 'Orbitron', monospace;">Available Targets</h4>
-                <div id="mobileTargetsList">
-                    <!-- Will be populated by JavaScript -->
-                </div>
-                <button onclick="mobileAutoNavigate()" style="width: 100%; height: 48px; background: linear-gradient(135deg, rgba(0, 150, 255, 0.8), rgba(0, 100, 200, 0.8)); border: 2px solid rgba(0, 200, 255, 0.6); color: white; border-radius: 12px; margin-top: 15px; cursor: pointer; font-family: 'Orbitron', monospace;">
-                    <i class="fas fa-route"></i> Auto-Navigate
-                </button>
+            <button class="mobile-popup-close" onclick="hideMobilePanel('controls')">&times;</button>
+            <h3>FLIGHT CONTROLS</h3>
+            <div style="font-size: 12px; line-height: 1.4;">
+                <strong>TOUCH CONTROLS:</strong><br>
+                • Drag screen: Look around<br>
+                • Tap fire button: Shoot<br>
+                • Use navigation panel for targets<br><br>
+                <strong>DESKTOP CONTROLS:</strong><br>
+                ↑↓: Pitch | ←→: Yaw | Q/E: Roll<br>
+                W/S: Throttle | A/D: Strafe<br>
+                Space: Fire | Tab: Cycle Targets<br>
+                Enter: Auto-nav/Slingshot<br>
+                Option: Target Lock | O: Emergency Warp
             </div>
         </div>
     </div>
 
-    <div class="mobile-popup" id="mobileStatusPopup">
+    <div class="mobile-popup" id="statusPopup">
         <div class="mobile-popup-content">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; border-bottom: 1px solid rgba(0, 150, 255, 0.3); padding-bottom: 15px;">
-                <h3 style="font-family: 'Orbitron', monospace; font-weight: 700; font-size: 20px; color: #00bfff;">SHIP STATUS</h3>
-                <button onclick="hideMobileStatus()" style="width: 32px; height: 32px; border: none; background: rgba(255, 50, 50, 0.8); color: white; border-radius: 50%; cursor: pointer; font-size: 16px;">&times;</button>
-            </div>
-            <div>
-                <div style="margin-bottom: 15px;">
-                    <label style="font-family: 'Orbitron', monospace; color: #00bfff;">Energy</label>
-                    <div style="width: 100%; height: 12px; background: rgba(50, 50, 50, 0.8); border-radius: 6px; margin: 8px 0; border: 1px solid rgba(0,150,255,0.5);">
-                        <div id="mobileEnergyBar" style="height: 100%; background: linear-gradient(90deg, #00bfff, #0080ff); border-radius: 5px; width: 100%; transition: width 0.3s ease;"></div>
-                    </div>
-                    <span id="mobileEnergyText" style="color: #00bfff;">100%</span>
-                </div>
-                <div style="margin-bottom: 15px;">
-                    <label style="font-family: 'Orbitron', monospace; color: #00ff00;">Hull</label>
-                    <div style="width: 100%; height: 12px; background: rgba(50, 50, 50, 0.8); border-radius: 6px; margin: 8px 0; border: 1px solid rgba(0,255,0,0.5);">
-                        <div id="mobileHullBar" style="height: 100%; background: linear-gradient(90deg, #00ff00, #008000); border-radius: 5px; width: 100%; transition: width 0.3s ease;"></div>
-                    </div>
-                    <span id="mobileHullText" style="color: #00ff00;">100%</span>
-                </div>
-                <div style="margin-bottom: 15px;">
-                    <label style="font-family: 'Orbitron', monospace; color: #ffff00;">Velocity</label>
-                    <div style="font-size: 18px; color: #ffff00;" id="mobileVelocityText">0.0 km/s</div>
-                </div>
-                <div>
-                    <label style="font-family: 'Orbitron', monospace; color: #00bfff;">Emergency Warps</label>
-                    <div style="font-size: 18px; color: #00bfff;" id="mobileWarpsText">5 remaining</div>
-                </div>
+            <button class="mobile-popup-close" onclick="hideMobilePanel('status')">&times;</button>
+            <h3>SHIP STATUS</h3>
+            <div style="font-size: 12px;">
+                <div style="margin-bottom: 8px;">Velocity: <span id="mobileVelocity" style="color: #4ade80;">0.0 km/s</span></div>
+                <div style="margin-bottom: 8px;">Distance: <span id="mobileDistance" style="color: #fbbf24;">0.0 ly</span></div>
+                <div style="margin-bottom: 8px;">Energy: <span id="mobileEnergy" style="color: #06b6d4;">100%</span></div>
+                <div style="margin-bottom: 8px;">Hull: <span id="mobileHull" style="color: #4ade80;">100%</span></div>
+                <div style="margin-bottom: 8px;">Emergency Warp: <span id="mobileWarpCount" style="color: #06b6d4;">5</span></div>
+                <div style="margin-bottom: 8px;">Location: <span id="mobileLocation" style="color: #a855f7;">Local Galaxy</span></div>
+                <div style="margin-bottom: 8px;">Target: <span id="mobileTarget" style="color: #f97316;">None</span></div>
+                <div>Galaxies Cleared: <span id="mobileGalaxies" style="color: #06b6d4;">0/8</span></div>
             </div>
         </div>
     </div>
 
-    <div class="mobile-popup" id="mobileControlsPopup">
+    <div class="mobile-popup" id="navigationPopup">
         <div class="mobile-popup-content">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; border-bottom: 1px solid rgba(0, 150, 255, 0.3); padding-bottom: 15px;">
-                <h3 style="font-family: 'Orbitron', monospace; font-weight: 700; font-size: 20px; color: #00bfff;">CONTROLS</h3>
-                <button onclick="hideMobileControls()" style="width: 32px; height: 32px; border: none; background: rgba(255, 50, 50, 0.8); color: white; border-radius: 50%; cursor: pointer; font-size: 16px;">&times;</button>
+            <button class="mobile-popup-close" onclick="hideMobilePanel('navigation')">&times;</button>
+            <h3>NAVIGATION</h3>
+            <div id="mobileTargetsList" style="max-height: 200px; overflow-y: auto; margin-bottom: 15px;">
+                <!-- Targets will be populated here -->
             </div>
-            <div>
-                <h4 style="color: #00bfff; margin-bottom: 10px; font-family: 'Orbitron', monospace;">Touch Controls</h4>
-                <div style="font-size: 14px; line-height: 1.6; margin-bottom: 20px;">
-                    <div><strong>Swipe:</strong> Look around space</div>
-                    <div><strong>Tap:</strong> Fire weapons</div>
-                    <div><strong>Thrust:</strong> Always on (automatic)</div>
-                </div>
-                <h4 style="color: #00bfff; margin-bottom: 10px; font-family: 'Orbitron', monospace;">Buttons</h4>
-                <div style="font-size: 14px; line-height: 1.6;">
-                    <div><i class="fas fa-tachometer-alt" style="color: #00bfff; width: 20px;"></i> Ship Status</div>
-                    <div><i class="fas fa-bullseye" style="color: #00bfff; width: 20px;"></i> Target Cycle</div>
-                    <div><i class="fas fa-crosshairs" style="color: #ff4500; width: 20px;"></i> Fire Weapons</div>
-                    <div><i class="fas fa-rocket" style="color: #ff8000; width: 20px;"></i> Emergency Warp</div>
-                    <div><i class="fas fa-map" style="color: #00bfff; width: 20px;"></i> Navigation</div>
-                </div>
-            </div>
+            <button onclick="mobileAutoNavigate()" style="width: 100%; padding: 8px; background: linear-gradient(135deg, rgba(0, 150, 255, 0.8), rgba(0, 100, 200, 0.8)); border: 1px solid rgba(0, 150, 255, 0.6); border-radius: 5px; color: white; cursor: pointer;">
+                Auto-Navigate
+            </button>
         </div>
     </div>
 
-    <!-- Game Scripts - Load in dependency order -->
+    <!-- Game Scripts - Load in dependency order (CRITICAL: game-core.js MUST load last) -->
     <script src="js/game-objects.js"></script>
-    <script src="js/game-ui.js"></script>
-    <script src="js/game-physics.js"></script>
+    <script src="js/game-ui.js"></script>        <!-- MOVE THIS BEFORE game-physics.js -->
+    <script src="js/game-physics.js"></script>    <!-- Now this can use gameOver function -->
     <script src="js/game-controls.js"></script>
     <script src="js/game-intro.js"></script>
     <script src="js/game-core.js"></script>
-    
-    <!-- Mobile Enhancement Script -->
+
+    <!-- MINIMAL MOBILE SCRIPT - Only basic mobile functionality -->
     <script>
-        // CRITICAL: Force UI to be clickable
-        function forceUIClickable() {
-            // Force canvas to not capture events
-            const canvases = document.querySelectorAll('canvas');
-            canvases.forEach(canvas => {
-                canvas.style.pointerEvents = 'none';
-                canvas.style.zIndex = '1';
-            });
-            
-            // Force container to allow pass-through
-            const gameContainer = document.getElementById('gameContainer');
-            if (gameContainer) {
-                // Don't set pointer-events on the container itself, only on canvas
-            }
-            
-            // Check what's blocking the buttons
-            const introBtn = document.getElementById('introStartBtn');
-            if (introBtn) {
-                const rect = introBtn.getBoundingClientRect();
-                const centerX = rect.left + rect.width / 2;
-                const centerY = rect.top + rect.height / 2;
-                const topElement = document.elementFromPoint(centerX, centerY);
-                
-                if (topElement && topElement !== introBtn && !introBtn.contains(topElement)) {
-                    console.log('Element blocking intro button:', topElement);
-                    if (topElement.tagName === 'CANVAS' || topElement.tagName === 'DIV') {
-                        topElement.style.pointerEvents = 'none';
-                    }
+        // Simple mobile panel management
+        function showMobilePanel(panelName) {
+            const popup = document.getElementById(panelName + 'Popup');
+            if (popup) {
+                // Update content before showing
+                if (panelName === 'status') {
+                    updateMobileStatus();
+                } else if (panelName === 'navigation') {
+                    updateMobileNavigation();
                 }
-                
-                introBtn.style.pointerEvents = 'auto';
-                introBtn.style.cursor = 'pointer';
-                introBtn.style.zIndex = '9999';
-                introBtn.style.position = 'fixed';
+                popup.classList.add('active');
             }
-            
-            const skipBtn = document.getElementById('skipIntroBtn');
-            if (skipBtn) {
-                const rect = skipBtn.getBoundingClientRect();
-                const centerX = rect.left + rect.width / 2;
-                const centerY = rect.top + rect.height / 2;
-                const topElement = document.elementFromPoint(centerX, centerY);
-                
-                if (topElement && topElement !== skipBtn && !skipBtn.contains(topElement)) {
-                    console.log('Element blocking skip button:', topElement);
-                    if (topElement.tagName === 'CANVAS' || topElement.tagName === 'DIV') {
-                        topElement.style.pointerEvents = 'none';
-                    }
-                }
-                
-                skipBtn.style.pointerEvents = 'auto';
-                skipBtn.style.cursor = 'pointer';
-                skipBtn.style.zIndex = '9999';
-                skipBtn.style.position = 'fixed';
+        }
+
+        function hideMobilePanel(panelName) {
+            const popup = document.getElementById(panelName + 'Popup');
+            if (popup) {
+                popup.classList.remove('active');
             }
+        }
+
+        function updateMobileStatus() {
+            if (typeof gameState === 'undefined') return;
             
-            // Force all UI panels to be clickable
-            const uiPanels = document.querySelectorAll('.ui-panel');
-            uiPanels.forEach(panel => {
-                panel.style.pointerEvents = 'auto';
-                panel.style.cursor = 'auto';
+            const updates = {
+                'mobileVelocity': gameState.velocity ? (gameState.velocity * 1000).toFixed(0) + ' km/s' : '0.0 km/s',
+                'mobileDistance': gameState.distance ? gameState.distance.toFixed(1) + ' ly' : '0.0 ly',
+                'mobileEnergy': gameState.energy ? Math.round(gameState.energy) + '%' : '100%',
+                'mobileHull': gameState.hull ? Math.round(gameState.hull) + '%' : '100%',
+                'mobileWarpCount': gameState.emergencyWarpCount || 5,
+                'mobileLocation': gameState.location || 'Local Galaxy',
+                'mobileTarget': gameState.currentTarget ? gameState.currentTarget.userData.name : 'None',
+                'mobileGalaxies': (gameState.galaxiesCleared || 0) + '/8'
+            };
+
+            Object.entries(updates).forEach(([id, value]) => {
+                const element = document.getElementById(id);
+                if (element) element.textContent = value;
             });
         }
-        
-        // Attach button handlers after they're created
-        function attachButtonHandlers() {
-            const introBtn = document.getElementById('introStartBtn');
-            if (introBtn && !introBtn.hasListener) {
-                introBtn.addEventListener('click', function(e) {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    console.log('Launch button clicked!');
-                    if (typeof beginLaunchSequence === 'function') {
-                        beginLaunchSequence();
+
+        function updateMobileNavigation() {
+            const targetsList = document.getElementById('mobileTargetsList');
+            if (!targetsList) return;
+
+            targetsList.innerHTML = '';
+            
+            // Get targets from desktop UI
+            const desktopTargets = document.getElementById('availableTargets');
+            if (desktopTargets) {
+                const targetButtons = desktopTargets.querySelectorAll('.planet-card, [onclick*="selectTarget"]');
+                targetButtons.forEach(btn => {
+                    const targetName = btn.textContent.trim();
+                    if (targetName) {
+                        const mobileBtn = document.createElement('div');
+                        mobileBtn.style.cssText = 'padding: 8px; margin: 4px 0; border: 1px solid rgba(0,150,255,0.5); border-radius: 5px; cursor: pointer; background: rgba(0,150,255,0.1);';
+                        mobileBtn.textContent = targetName;
+                        mobileBtn.onclick = () => {
+                            btn.click();
+                            hideMobilePanel('navigation');
+                        };
+                        targetsList.appendChild(mobileBtn);
                     }
                 });
-                introBtn.hasListener = true;
-                console.log('Launch button handler attached');
             }
             
-            const skipBtn = document.getElementById('skipIntroBtn');
-            if (skipBtn && !skipBtn.hasListener) {
-                skipBtn.addEventListener('click', function(e) {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    console.log('Skip button clicked!');
-                    if (typeof skipIntroSequence === 'function') {
-                        skipIntroSequence();
-                    }
-                });
-                skipBtn.hasListener = true;
-                console.log('Skip button handler attached');
-            }
-        }
-        
-        // Run attachment multiple times to catch dynamically created buttons
-        setTimeout(attachButtonHandlers, 100);
-        setTimeout(attachButtonHandlers, 500);
-        setTimeout(attachButtonHandlers, 1000);
-        setTimeout(attachButtonHandlers, 2000);
-        setInterval(attachButtonHandlers, 1000);
-        
-        // Also run forceUIClickable periodically
-        setTimeout(forceUIClickable, 100);
-        setTimeout(forceUIClickable, 500);
-        setTimeout(forceUIClickable, 1000);
-        setTimeout(forceUIClickable, 2000);
-        setInterval(forceUIClickable, 1000);
-        
-        // Mobile system that doesn't interfere with desktop
-        let mobileSystem = {
-            active: false,
-            touchData: { isDown: false, lastX: 0, lastY: 0, sensitivity: 0.002, tapRadius: 80 }
-        };
-        
-        // UI hover detection for cursor switching
-        function setupUIHoverDetection() {
-            const uiPanels = document.querySelectorAll('.ui-panel, #tutorialOverlay, #missionCommandAlert, #achievementPopup, #gameOverOverlay, #victoryOverlay, #bossWarning, #eventHorizonWarning');
-            const crosshair = document.getElementById('crosshair');
-            
-            uiPanels.forEach(panel => {
-                panel.addEventListener('mouseenter', () => {
-                    if (crosshair && !document.body.classList.contains('mobile-active')) {
-                        crosshair.style.display = 'none';
-                        document.body.style.cursor = 'auto';
-                    }
-                });
-                
-                panel.addEventListener('mouseleave', () => {
-                    if (crosshair && !document.body.classList.contains('mobile-active') && 
-                        !document.body.classList.contains('intro-active')) {
-                        crosshair.style.display = 'block';
-                        document.body.style.cursor = 'none';
-                    }
-                });
-            });
-        }
-        
-        // Prevent achievement notifications during intro
-        window.suppressAchievementsDuringIntro = true;
-        const originalShowAchievement = window.showAchievement;
-        window.showAchievement = function(title, description, playAchievementSound) {
-            if (window.suppressAchievementsDuringIntro && document.body.classList.contains('intro-active')) {
-                console.log('Achievement suppressed during intro:', title);
-                return;
-            }
-            if (originalShowAchievement) {
-                originalShowAchievement.call(this, title, description, playAchievementSound);
-            }
-        };
-        
-        // Also intercept playSound to prevent achievement popup
-        const originalPlaySound = window.playSound;
-        window.playSound = function(type, frequency, volume) {
-            // Don't show achievement popup when playing achievement sound during intro
-            if (type === 'achievement' && document.body.classList.contains('intro-active')) {
-                // Still play the sound but don't trigger achievement display
-                if (originalPlaySound) {
-                    originalPlaySound.call(this, type, frequency, volume);
-                }
-                return;
-            }
-            if (originalPlaySound) {
-                originalPlaySound.call(this, type, frequency, volume);
-            }
-        };
-
-        function initMobileSystem() {
-            // Detect mobile
-            const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || 
-                             window.innerWidth <= 768 || 'ontouchstart' in window;
-            
-            if (isMobile) {
-                console.log('ðŸ“± Activating mobile mode');
-                document.body.classList.add('mobile-active');
-                setupMobileTouchControls();
-                enableMobileFeatures();
-                mobileSystem.active = true;
+            if (targetsList.children.length === 0) {
+                targetsList.innerHTML = '<div style="text-align: center; opacity: 0.7;">No targets available</div>';
             }
         }
 
-        function setupMobileTouchControls() {
-            const touchZone = document.getElementById('mobileTouchZone');
-            const crosshair = document.getElementById('crosshair');
-            if (crosshair) crosshair.classList.add('mobile-enhanced');
-            
-            let isPointerDown = false;
-            let lastPos = { x: 0, y: 0 };
-            
-            touchZone.addEventListener('pointerdown', (e) => {
-                e.preventDefault();
-                isPointerDown = true;
-                lastPos = { x: e.clientX, y: e.clientY };
-                
-                // Check for center tap to fire
-                const centerX = window.innerWidth / 2;
-                const centerY = window.innerHeight / 2;
-                const distance = Math.sqrt(Math.pow(e.clientX - centerX, 2) + Math.pow(e.clientY - centerY, 2));
-                
-                if (distance < mobileSystem.touchData.tapRadius) {
-                    mobileFireWeapons();
-                }
-            });
-            
-            touchZone.addEventListener('pointermove', (e) => {
-                e.preventDefault();
-                
-                if (isPointerDown) {
-                    const deltaX = e.clientX - lastPos.x;
-                    const deltaY = e.clientY - lastPos.y;
-                    
-                    // Apply camera rotation
-                    if (typeof camera !== 'undefined' && typeof gameState !== 'undefined') {
-                        gameState.mouseMovementX = deltaX * mobileSystem.touchData.sensitivity;
-                        gameState.mouseMovementY = deltaY * mobileSystem.touchData.sensitivity;
-                        
-                        camera.rotation.y -= gameState.mouseMovementX;
-                        camera.rotation.x -= gameState.mouseMovementY;
-                        camera.rotation.x = Math.max(-Math.PI/2, Math.min(Math.PI/2, camera.rotation.x));
-                    }
-                    
-                    lastPos = { x: e.clientX, y: e.clientY };
-                }
-                
-                // Update crosshair
-                if (typeof gameState !== 'undefined' && gameState.crosshairTargeting) {
-                    gameState.crosshairX = e.clientX;
-                    gameState.crosshairY = e.clientY;
-                    crosshair.style.left = e.clientX + 'px';
-                    crosshair.style.top = e.clientY + 'px';
-                }
-            });
-            
-            touchZone.addEventListener('pointerup', (e) => {
-                e.preventDefault();
-                isPointerDown = false;
-            });
-            
-            touchZone.addEventListener('touchstart', (e) => e.preventDefault(), { passive: false });
-            touchZone.addEventListener('touchmove', (e) => e.preventDefault(), { passive: false });
-            touchZone.addEventListener('touchend', (e) => e.preventDefault(), { passive: false });
-        }
-
-        function enableMobileFeatures() {
-            if (typeof gameState !== 'undefined') {
-                gameState.crosshairTargeting = true;
-                gameState.autoTargeting = true;
-                gameState.autoThrust = true;
-                gameState.thrustActive = true;
-                console.log('ðŸ“± Mobile auto-features enabled');
-            }
-        }
-
-        // Mobile button functions
-        function mobileFireWeapons() {
-            if (typeof fireWeapon === 'function') {
-                fireWeapon();
-            } else if (typeof executeFiring === 'function') {
-                executeFiring();
-            }
-            
-            const crosshair = document.getElementById('crosshair');
-            if (crosshair) {
-                crosshair.style.borderColor = 'rgba(255, 50, 50, 1)';
-                setTimeout(() => crosshair.style.borderColor = '', 200);
-            }
-        }
-
-        function mobileTargetCycle() {
-            if (typeof cycleTarget === 'function') {
-                cycleTarget();
-            } else if (typeof handleTabKey === 'function') {
-                handleTabKey({ preventDefault: () => {} });
-            }
-        }
-
-        function mobileEmergencyWarp() {
-            if (typeof triggerEmergencyWarp === 'function') {
-                triggerEmergencyWarp();
-            } else if (typeof gameState !== 'undefined' && gameState.emergencyWarp && gameState.emergencyWarp.available > 0) {
-                gameState.emergencyWarp.available--;
-                gameState.emergencyWarp.active = true;
-                if (typeof showAchievement === 'function') {
-                    showAchievement('Emergency Warp', 'Warp engaged!');
-                }
+        function mobileFireWeapon() {
+            // Trigger weapon fire using existing system
+            if (typeof keys !== 'undefined') {
+                keys[' '] = true;
+                setTimeout(() => keys[' '] = false, 50);
             }
         }
 
         function mobileAutoNavigate() {
-            if (typeof gameState !== 'undefined' && gameState.currentTarget) {
-                if (typeof toggleAutoNavigate === 'function') {
-                    toggleAutoNavigate();
-                }
-                hideMobileNavigation();
+            // Trigger auto-navigation using existing system
+            const autoNavBtn = document.getElementById('autoNavigateBtn');
+            if (autoNavBtn) {
+                autoNavBtn.click();
+            }
+            hideMobilePanel('navigation');
+        }
+
+        function mobileEmergencyWarp() {
+            // Trigger emergency warp using existing system
+            if (typeof keys !== 'undefined') {
+                keys['o'] = true;
+                setTimeout(() => keys['o'] = false, 50);
             }
         }
 
-        // Mobile popup functions
-        function showMobileNavigation() {
-            document.getElementById('mobileNavigationPopup').classList.add('show');
-            updateMobileTargetsList();
-        }
-        
-        function hideMobileNavigation() {
-            document.getElementById('mobileNavigationPopup').classList.remove('show');
-        }
+        // Simple touch controls for camera movement
+        let touchStartX = 0;
+        let touchStartY = 0;
+        let isTouching = false;
 
-        function showMobileStatus() {
-            document.getElementById('mobileStatusPopup').classList.add('show');
-            updateMobileStatusData();
-        }
-        
-        function hideMobileStatus() {
-            document.getElementById('mobileStatusPopup').classList.remove('show');
-        }
-
-        function showMobileControls() {
-            document.getElementById('mobileControlsPopup').classList.add('show');
-        }
-        
-        function hideMobileControls() {
-            document.getElementById('mobileControlsPopup').classList.remove('show');
-        }
-
-        function updateMobileTargetsList() {
-            const list = document.getElementById('mobileTargetsList');
-            if (!list) return;
-            
-            list.innerHTML = '';
-            const desktopTargets = document.getElementById('availableTargets');
-            if (desktopTargets) {
-                const targets = desktopTargets.querySelectorAll('button, .planet-card, .target-btn');
-                targets.forEach(target => {
-                    const name = target.textContent || target.innerText;
-                    if (name && name.trim()) {
-                        const item = document.createElement('div');
-                        item.style.cssText = 'background: rgba(0,0,0,0.3); border: 1px solid rgba(0,150,255,0.3); border-radius: 8px; padding: 12px; margin: 8px 0; cursor: pointer;';
-                        item.innerHTML = `<div style="font-weight: 600; color: #00bfff; font-family: 'Orbitron', monospace;">${name.trim()}</div>`;
-                        item.onclick = () => {
-                            target.click();
-                            list.querySelectorAll('div').forEach(d => d.style.background = 'rgba(0,0,0,0.3)');
-                            item.style.background = 'rgba(0,150,255,0.2)';
-                        };
-                        list.appendChild(item);
-                    }
-                });
+        document.addEventListener('touchstart', (e) => {
+            if (e.target.id === 'gameCanvas' || e.target.closest('#gameContainer')) {
+                const touch = e.touches[0];
+                touchStartX = touch.clientX;
+                touchStartY = touch.clientY;
+                isTouching = true;
+                e.preventDefault();
             }
-        }
+        }, { passive: false });
 
-        function updateMobileStatusData() {
-            if (typeof gameState !== 'undefined') {
-                const energyBar = document.getElementById('mobileEnergyBar');
-                const hullBar = document.getElementById('mobileHullBar');
-                const energyText = document.getElementById('mobileEnergyText');
-                const hullText = document.getElementById('mobileHullText');
-                const velocityText = document.getElementById('mobileVelocityText');
-                const warpsText = document.getElementById('mobileWarpsText');
+        document.addEventListener('touchmove', (e) => {
+            if (isTouching && typeof camera !== 'undefined') {
+                const touch = e.touches[0];
+                const deltaX = touch.clientX - touchStartX;
+                const deltaY = touch.clientY - touchStartY;
                 
-                if (energyBar) energyBar.style.width = `${gameState.energy}%`;
-                if (hullBar) hullBar.style.width = `${gameState.hull}%`;
-                if (energyText) energyText.textContent = `${gameState.energy.toFixed(0)}%`;
-                if (hullText) hullText.textContent = `${gameState.hull.toFixed(0)}%`;
-                if (velocityText) velocityText.textContent = `${(gameState.velocity * 1000).toFixed(1)} km/s`;
-                if (warpsText) warpsText.textContent = `${gameState.emergencyWarp ? gameState.emergencyWarp.available : 5} remaining`;
-            }
-        }
-
-        function updateMobileUI() {
-            if (!mobileSystem.active) return;
-            
-            if (typeof gameState !== 'undefined') {
-                const velocityStat = document.getElementById('mobileVelocityStat');
-                const energyStat = document.getElementById('mobileEnergyStat');
-                const thrustFill = document.getElementById('mobileThrustFill');
+                // Apply camera rotation
+                camera.rotation.y -= deltaX * 0.005;
+                camera.rotation.x -= deltaY * 0.005;
                 
-                if (velocityStat) velocityStat.textContent = `${(gameState.velocity * 1000).toFixed(1)} km/s`;
-                if (energyStat) energyStat.textContent = `${gameState.energy.toFixed(0)}%`;
-                if (thrustFill && gameState.autoThrust) thrustFill.style.height = '100%';
+                // Clamp vertical rotation
+                camera.rotation.x = Math.max(-Math.PI/2, Math.min(Math.PI/2, camera.rotation.x));
+                
+                touchStartX = touch.clientX;
+                touchStartY = touch.clientY;
+                e.preventDefault();
             }
-        }
+        }, { passive: false });
 
-        // Close popups on outside click
+        document.addEventListener('touchend', () => {
+            isTouching = false;
+        });
+
+        // Close mobile popups when clicking outside
         document.addEventListener('click', (e) => {
             if (e.target.classList.contains('mobile-popup')) {
-                e.target.classList.remove('show');
+                e.target.classList.remove('active');
             }
         });
 
-        // Prevent zoom on double tap
-        let lastTouchEnd = 0;
-        document.addEventListener('touchend', function(e) {
-            const now = new Date().getTime();
-            if (now - lastTouchEnd <= 300) {
-                e.preventDefault();
+        // Update mobile status periodically
+        setInterval(() => {
+            const statusPopup = document.getElementById('statusPopup');
+            if (statusPopup && statusPopup.classList.contains('active')) {
+                updateMobileStatus();
             }
-            lastTouchEnd = now;
-        }, false);
-
-        // Hook into existing UI update
-        if (typeof window !== 'undefined') {
-            const originalUpdateUI = window.updateUI;
-            if (typeof originalUpdateUI === 'function') {
-                window.updateUI = function() {
-                    originalUpdateUI.apply(this, arguments);
-                    updateMobileUI();
-                };
-            }
-        }
-
-        console.log('ðŸ“± Mobile system ready');
+        }, 1000);
     </script>
-        
+
     <!-- SINGLE BOOTSTRAP CALL - Simplified initialization -->
     <script>
-      window.addEventListener('load', () => {
-        console.log('ðŸš€ Starting Interstellar Slingshot...');
-        
-        const initialize = () => {
-          try {
-            // Initialize mobile BEFORE game systems
-            initMobileSystem();
+        window.addEventListener('load', () => {
+            console.log('🚀 Starting Interstellar Slingshot...');
             
-            // Setup UI hover detection for cursor switching
-            setTimeout(() => {
-                setupUIHoverDetection();
-                console.log('ðŸ–±ï¸ UI hover detection initialized');
-                
-                // Debug: Log what element is receiving clicks
-                document.addEventListener('click', function(e) {
-                    console.log('Clicked element:', e.target, 'Classes:', e.target.className, 'ID:', e.target.id);
+            const initialize = () => {
+                try {
+                    // Check if all required systems are available
+                    if (typeof gameState === 'undefined') {
+                        console.log('⏳ Waiting for gameState...');
+                        setTimeout(initialize, 50);
+                        return;
+                    }
                     
-                    // Force button clicks to work
-                    if (e.target.id === 'introStartBtn' || e.target.closest('#introStartBtn')) {
-                        console.log('Force triggering launch sequence');
-                        if (typeof beginLaunchSequence === 'function') {
-                            beginLaunchSequence();
-                        }
+                    if (typeof setupEnhancedEventListeners === 'undefined') {
+                        console.log('⏳ Waiting for game controls...');
+                        setTimeout(initialize, 50);
+                        return;
                     }
-                    if (e.target.id === 'skipIntroBtn' || e.target.closest('#skipIntroBtn')) {
-                        console.log('Force triggering skip sequence');
-                        if (typeof skipIntroSequence === 'function') {
-                            skipIntroSequence();
+                    
+                    console.log('✅ All systems loaded, initializing game...');
+                    
+                    // Use the intro sequence version if available, otherwise fallback to normal start
+                    if (typeof startGameWithIntro === 'function') {
+                        console.log('🎬 Starting with intro sequence...');
+                        startGameWithIntro();
+                    } else if (typeof startGame === 'function') {
+                        console.log('🎮 Starting normal game...');
+                        startGame();
+                        
+                        // Initialize controls after game starts
+                        if (typeof initControls === 'function') {
+                            setTimeout(initControls, 500);
+                        } else if (typeof setupEnhancedEventListeners === 'function') {
+                            setTimeout(setupEnhancedEventListeners, 500);
                         }
+                    } else {
+                        console.error('❌ No game start function found');
                     }
-                }, true);
-                
-                // Force initial UI to be clickable
-                forceUIClickable();
-                
-                // Add keyboard shortcuts as fallback
-                document.addEventListener('keydown', function(e) {
-                    if (document.body.classList.contains('intro-active')) {
-                        if (e.key === 'Enter' || e.key === ' ') {
-                            console.log('Keyboard trigger for launch');
-                            if (typeof beginLaunchSequence === 'function') {
-                                beginLaunchSequence();
-                            }
-                        }
-                        if (e.key === 'Escape') {
-                            console.log('Keyboard trigger for skip');
-                            if (typeof skipIntroSequence === 'function') {
-                                skipIntroSequence();
-                            }
-                        }
-                    }
-                });
-            }, 1000);
-            
-            // Check if all required systems are available
-            if (typeof gameState === 'undefined') {
-              console.log('â³ Waiting for gameState...');
-              setTimeout(initialize, 50);
-              return;
-            }
-            
-            if (typeof setupEnhancedEventListeners === 'undefined') {
-              console.log('â³ Waiting for game controls...');
-              setTimeout(initialize, 50);
-              return;
-            }
-            
-            console.log('âœ… All systems loaded, initializing game...');
-            
-            // CRITICAL: Override Three.js canvas creation to ensure proper pointer-events
-            const originalAppendChild = HTMLElement.prototype.appendChild;
-            HTMLElement.prototype.appendChild = function(child) {
-                if (child && child.tagName === 'CANVAS') {
-                    child.style.pointerEvents = 'none';
-                    child.style.zIndex = '1';
-                    console.log('Canvas created - setting pointer-events to none');
+                    
+                } catch (error) {
+                    console.error('❌ Initialization error:', error);
+                    // DISABLED: Retry mechanism was causing double initialization
+                    // setTimeout(initialize, 200);
                 }
-                return originalAppendChild.call(this, child);
             };
             
-            // Disable achievement suppression after intro ends
-            setTimeout(() => {
-                window.suppressAchievementsDuringIntro = false;
-                document.body.classList.remove('intro-active');
-            }, 30000); // 30 seconds should be enough for intro
-            
-            // Use the intro sequence version if available, otherwise fallback to normal start
-            if (typeof startGameWithIntro === 'function') {
-              console.log('ðŸŽ¬ Starting with intro sequence...');
-              startGameWithIntro();
-            } else if (typeof startGame === 'function') {
-              console.log('ðŸŽ® Starting normal game...');
-              startGame();
-              
-              // Initialize controls after game starts
-              if (typeof initControls === 'function') {
-                setTimeout(initControls, 500);
-              } else if (typeof setupEnhancedEventListeners === 'function') {
-                setTimeout(setupEnhancedEventListeners, 500);
-              }
-            } else {
-              console.error('âŒ No game start function found');
-            }
-            
-          } catch (error) {
-            console.error('âŒ Initialization error:', error);
-          }
-        };
-        
-        // Start initialization after a brief delay
-        setTimeout(initialize, 100);
-      });
+            // Start initialization after a brief delay
+            setTimeout(initialize, 100);
+        });
     </script>
 </body>
 </html>
