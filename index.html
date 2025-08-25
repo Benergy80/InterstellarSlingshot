@@ -190,13 +190,22 @@
                 display: none !important;
             }
 
-            /* Hide mobile controls during intro */
-            body.intro-active .mobile-controls {
+            /* Hide mobile controls during intro and loading */
+            body.intro-active .mobile-controls,
+            #loadingScreen ~ .mobile-controls {
                 display: none !important;
             }
 
             body.intro-active .nav-panel-mobile {
                 display: none !important;
+            }
+
+            /* Mobile tutorial messages - position at top center */
+            @media (max-width: 768px), (hover: none) {
+                .mission-command-alert {
+                    top: 15% !important;
+                    transform: translate(-50%, -50%) !important;
+                }
             }
         }
 
@@ -216,9 +225,9 @@
             width: 50px;
             height: 50px;
             border-radius: 8px;
-            background: linear-gradient(135deg, rgba(15, 23, 42, 0.8), rgba(30, 41, 59, 0.8));
-            backdrop-filter: blur(5px);
-            border: 1px solid rgba(0, 150, 255, 0.6);
+            background: linear-gradient(135deg, rgba(15, 23, 42, 0.4), rgba(30, 41, 59, 0.4));
+            backdrop-filter: blur(8px);
+            border: 1px solid rgba(0, 150, 255, 0.5);
             color: rgba(0, 255, 200, 0.9);
             display: flex;
             align-items: center;
@@ -231,10 +240,12 @@
             box-shadow: 
                 0 4px 15px rgba(0, 150, 255, 0.3),
                 inset 0 1px 0 rgba(0, 150, 255, 0.4);
-            /* Add the same transform effects as UI panels */
+            /* Add the same curved transform effects as UI panels */
             transform-style: preserve-3d;
             perspective: 600px;
             transform: perspective(600px) rotateX(-2deg) translateZ(3px);
+            /* Add curved element filter */
+            filter: drop-shadow(0 0 8px rgba(0,150,255,0.6));
         }
 
         .mobile-btn:active {
@@ -250,14 +261,14 @@
         .mobile-btn.fire {
             width: 64px;
             height: 64px;
-            background: linear-gradient(135deg, rgba(255, 50, 50, 0.8), rgba(200, 0, 0, 0.8));
+            background: linear-gradient(135deg, rgba(255, 50, 50, 0.4), rgba(200, 0, 0, 0.4));
             border-color: rgba(255, 100, 100, 0.6);
             font-size: 20px;
             transform: perspective(600px) rotateX(-3deg) translateZ(5px);
         }
 
         .mobile-btn.fire:active {
-            background: linear-gradient(135deg, rgba(255, 100, 100, 0.9), rgba(255, 50, 50, 0.9));
+            background: linear-gradient(135deg, rgba(255, 100, 100, 0.6), rgba(255, 50, 50, 0.6));
             transform: perspective(600px) rotateX(-3deg) translateZ(2px) scale(0.92);
         }
 
@@ -269,8 +280,8 @@
             width: 80%;
             max-width: 300px;
             height: 100%;
-            background: linear-gradient(135deg, rgba(15, 23, 42, 0.95), rgba(30, 41, 59, 0.95));
-            backdrop-filter: blur(10px);
+            background: linear-gradient(135deg, rgba(15, 23, 42, 0.4), rgba(30, 41, 59, 0.4));
+            backdrop-filter: blur(15px);
             border-left: 2px solid rgba(0, 150, 255, 0.6);
             padding: 20px;
             z-index: 200;
@@ -279,6 +290,9 @@
             box-shadow: 
                 -10px 0 30px rgba(0, 150, 255, 0.3),
                 inset 1px 0 0 rgba(0, 150, 255, 0.4);
+            /* Add curved element styling */
+            transform-style: preserve-3d;
+            perspective: 1200px;
         }
 
         .nav-panel-mobile.active {
@@ -293,6 +307,8 @@
             text-align: center;
             border-bottom: 1px solid rgba(0, 150, 255, 0.3);
             padding-bottom: 10px;
+            /* Add curved element filter */
+            filter: drop-shadow(0 0 8px rgba(0,255,200,0.6));
         }
 
         /* Mobile popup styles */
@@ -302,8 +318,8 @@
             left: 0;
             right: 0;
             bottom: 0;
-            background: rgba(0, 0, 0, 0.85);
-            backdrop-filter: blur(5px);
+            background: rgba(0, 0, 0, 0.7);
+            backdrop-filter: blur(8px);
             z-index: 200;
             display: none;
             align-items: center;
@@ -316,8 +332,8 @@
         }
 
         .mobile-popup-content {
-            background: linear-gradient(135deg, rgba(15, 23, 42, 0.95), rgba(30, 41, 59, 0.95));
-            backdrop-filter: blur(10px);
+            background: linear-gradient(135deg, rgba(15, 23, 42, 0.4), rgba(30, 41, 59, 0.4));
+            backdrop-filter: blur(15px);
             border: 2px solid rgba(0, 150, 255, 0.6);
             border-radius: 15px;
             padding: 20px;
@@ -329,6 +345,10 @@
             box-shadow: 
                 0 20px 60px rgba(0, 150, 255, 0.4),
                 inset 0 2px 15px rgba(0,150,255,0.3);
+            /* Add curved styling */
+            transform-style: preserve-3d;
+            perspective: 1200px;
+            transform: perspective(1000px) rotateX(-2deg) translateZ(5px);
         }
 
         .mobile-popup h3 {
@@ -513,6 +533,17 @@
             </div>
         </div>
         
+        <!-- Enhanced Achievement Popup - HIGHEST Z-INDEX to appear above everything -->
+        <div id="achievementPopup" class="absolute bottom-4 left-1/2 transform -translate-x-1/2 ui-panel rounded-lg p-4 hidden z-70">
+            <div class="flex items-center space-x-3">
+                <div class="achievement-icon"></div>
+                <div>
+                    <h4 class="font-bold text-cyan-400 glow-text">Achievement Unlocked!</h4>
+                    <p id="achievementText" class="text-sm text-gray-300"></p>
+                </div>
+            </div>
+        </div>
+
         <!-- Tutorial Overlay -->
         <div id="tutorialOverlay" class="absolute inset-0 bg-black bg-opacity-90 flex items-center justify-center z-60 hidden">
             <div class="ui-panel rounded-lg p-8 max-w-2xl">
@@ -566,6 +597,11 @@
         </button>
         <button class="mobile-btn" onclick="showMobilePanel('status')" title="Ship Status">
             <i class="fas fa-tachometer-alt"></i>
+        </button>
+        
+        <!-- Forward thrust button -->
+        <button class="mobile-btn" onmousedown="startForwardThrust()" onmouseup="stopForwardThrust()" ontouchstart="startForwardThrust()" ontouchend="stopForwardThrust()" title="Forward Thrust">
+            <i class="fas fa-arrow-up"></i>
         </button>
         
         <!-- Fire button in center -->
@@ -668,7 +704,8 @@
         // Mobile settings
         let mobileSettings = {
             crosshairTargeting: true, // ON by default for mobile
-            targetMode: true // Target mode by default
+            targetMode: true, // Target mode by default
+            forwardThrust: false
         };
 
         // Initialize mobile settings
@@ -687,8 +724,108 @@
                         console.log('📱 Target mode activated for mobile');
                     }
                 }, 2000);
+
+                // Listen for launch button clicks to start music
+                setupMobileLaunchMusicTrigger();
             }
         });
+
+        // Setup music trigger for mobile launch button
+        function setupMobileLaunchMusicTrigger() {
+            // Look for the launch button and add music start
+            const observer = new MutationObserver((mutations) => {
+                mutations.forEach((mutation) => {
+                    mutation.addedNodes.forEach((node) => {
+                        if (node.nodeType === 1 && (node.classList?.contains('intro-start-btn') || node.textContent?.includes('LAUNCH'))) {
+                            console.log('📱 Found launch button, adding music trigger');
+                            const originalClick = node.onclick;
+                            node.onclick = function(e) {
+                                console.log('📱 Launch button clicked - starting music');
+                                
+                                // Start background music
+                                if (typeof startBackgroundMusic === 'function') {
+                                    setTimeout(() => {
+                                        startBackgroundMusic();
+                                        console.log('🎵 Background music started from mobile launch');
+                                    }, 500);
+                                }
+                                
+                                // Resume audio context
+                                if (typeof resumeAudioContext === 'function') {
+                                    resumeAudioContext();
+                                }
+                                
+                                // Call original function
+                                if (originalClick) {
+                                    originalClick.call(this, e);
+                                }
+                            };
+                        }
+                    });
+                });
+            });
+            
+            observer.observe(document.body, { childList: true, subtree: true });
+            
+            // Also check existing buttons
+            setTimeout(() => {
+                const existingLaunchBtn = document.querySelector('.intro-start-btn, [onclick*="launch"], [onclick*="LAUNCH"]');
+                if (existingLaunchBtn && !existingLaunchBtn.dataset.musicTriggerAdded) {
+                    console.log('📱 Adding music trigger to existing launch button');
+                    const originalClick = existingLaunchBtn.onclick;
+                    existingLaunchBtn.onclick = function(e) {
+                        console.log('📱 Launch button clicked - starting music');
+                        
+                        // Start background music
+                        if (typeof startBackgroundMusic === 'function') {
+                            setTimeout(() => {
+                                startBackgroundMusic();
+                                console.log('🎵 Background music started from mobile launch');
+                            }, 500);
+                        }
+                        
+                        // Resume audio context
+                        if (typeof resumeAudioContext === 'function') {
+                            resumeAudioContext();
+                        }
+                        
+                        // Call original function
+                        if (originalClick) {
+                            originalClick.call(this, e);
+                        }
+                    };
+                    existingLaunchBtn.dataset.musicTriggerAdded = 'true';
+                }
+            }, 1000);
+        }
+
+        // Forward thrust functions
+        function startForwardThrust() {
+            mobileSettings.forwardThrust = true;
+            
+            // Trigger W key for forward thrust
+            if (typeof keys !== 'undefined') {
+                keys.w = true;
+            }
+            
+            // Play sound
+            if (typeof playSound === 'function') {
+                playSound('thrust', 400, 0.1);
+            }
+            
+            console.log('📱 Forward thrust started');
+        }
+
+        function stopForwardThrust() {
+            mobileSettings.forwardThrust = false;
+            
+            // Stop W key
+            if (typeof keys !== 'undefined') {
+                keys.w = false;
+            }
+            
+            console.log('📱 Forward thrust stopped');
+        }
 
         // Simple mobile panel management
         function showMobilePanel(panelName) {
@@ -725,7 +862,9 @@
                 'mobileWarpCount': gameState.emergencyWarpCount || 5,
                 'mobileLocation': gameState.location || 'Local Galaxy',
                 'mobileTarget': gameState.currentTarget ? gameState.currentTarget.userData.name : 'None',
-                'mobileGalaxies': (gameState.galaxiesCleared || 0) + '/8'
+                'mobileGalaxies': (gameState.galaxiesCleared || 0) + '/8',
+                'mobileWeaponStatus': gameState.weapons?.cooldown > 0 ? 'COOLING' : 'ARMED',
+                'mobileTargetLock': gameState.targetLock?.active ? 'ACTIVE' : 'INACTIVE'
             };
 
             Object.entries(updates).forEach(([id, value]) => {
@@ -767,7 +906,7 @@
             }
         }
 
-        // Mobile auto-navigation
+        // Mobile auto-navigation - with panel collapse
         function mobileAutoNavigate() {
             // Use the existing auto-navigate system
             if (typeof toggleAutoNavigate === 'function') {
@@ -784,7 +923,10 @@
                 playSound('navigation', 1000, 0.15);
             }
             
-            hideNavPanel();
+            // Collapse navigation panel after auto-navigate
+            setTimeout(() => {
+                hideNavPanel();
+            }, 500);
         }
 
         // Mobile warp/slingshot action
@@ -840,7 +982,7 @@
             }
         }
 
-        // FIXED: Use real navigation system from game-ui.js
+        // ENHANCED: Use real navigation system from game-ui.js
         function updateMobileNavigation() {
             const mobileTargetsContainer = document.getElementById('mobileAvailableTargets');
             if (!mobileTargetsContainer) return;
@@ -861,21 +1003,25 @@
                 targetCards.forEach(card => {
                     const mobileCard = card.cloneNode(true);
                     
-                    // Add mobile-specific styling
+                    // Add mobile-specific styling with transparency
                     mobileCard.style.cssText += `
-                        background: linear-gradient(135deg, rgba(15, 23, 42, 0.8), rgba(30, 41, 59, 0.8));
-                        backdrop-filter: blur(5px);
+                        background: linear-gradient(135deg, rgba(15, 23, 42, 0.4), rgba(30, 41, 59, 0.4));
+                        backdrop-filter: blur(8px);
                         border: 1px solid rgba(0, 150, 255, 0.5);
                         margin-bottom: 8px;
                         font-family: 'Orbitron', monospace;
+                        transform: perspective(600px) rotateX(-1deg) translateZ(2px);
                     `;
                     
-                    // Copy click functionality
+                    // Copy click functionality with panel collapse
                     mobileCard.onclick = (e) => {
                         // Trigger the original card's click
                         card.click();
-                        // Close navigation panel
-                        hideNavPanel();
+                        
+                        // Auto-collapse navigation panel after selection
+                        setTimeout(() => {
+                            hideNavPanel();
+                        }, 300);
                         
                         // Play sound
                         if (typeof playSound === 'function') {
@@ -989,15 +1135,17 @@
                 if (!hasMoved && touchDuration < 300 && totalMovement < 15 && mobileSettings.crosshairTargeting) {
                     mobileFireWeapon();
                     
-                    // Visual feedback on crosshair
+                    // Enhanced visual feedback on crosshair
                     const crosshair = document.getElementById('crosshair');
                     if (crosshair) {
                         crosshair.style.borderColor = 'rgba(255, 100, 100, 1)';
                         crosshair.style.boxShadow = '0 0 25px rgba(255, 100, 100, 0.8)';
+                        crosshair.style.transform = 'translate(-50%, -50%) scale(1.3)';
                         
                         setTimeout(() => {
                             crosshair.style.borderColor = 'rgba(0, 255, 0, 0.9)';
                             crosshair.style.boxShadow = '0 0 15px rgba(0, 255, 0, 0.7)';
+                            crosshair.style.transform = 'translate(-50%, -50%) scale(1)';
                         }, 200);
                     }
                 }
@@ -1050,7 +1198,24 @@
             }
         });
 
-        // Update mobile status periodically
+        // Enhanced mobile death detection and mission failed screen
+        function checkMobileGameOver() {
+            if (typeof gameState !== 'undefined' && gameState.gameOver) {
+                // Ensure mobile sees mission failed screen
+                setTimeout(() => {
+                    const gameOverScreen = document.getElementById('gameOverScreen');
+                    if (!gameOverScreen) {
+                        console.log('📱 Creating mobile mission failed screen');
+                        // Force call gameOver function to show mission failed
+                        if (typeof gameOver === 'function') {
+                            gameOver('Hull integrity critical - ship destroyed!');
+                        }
+                    }
+                }, 500);
+            }
+        }
+
+        // Update mobile status and check for game over periodically
         setInterval(() => {
             const statusPopup = document.getElementById('statusPopup');
             if (statusPopup && statusPopup.classList.contains('active')) {
@@ -1062,27 +1227,53 @@
             if (navPanel && navPanel.classList.contains('active')) {
                 updateMobileNavigation();
             }
+            
+            // Check for mobile game over
+            checkMobileGameOver();
         }, 1000);
         
-        // Show mobile controls after intro completes
+        // Show mobile controls after intro completes - ENHANCED
         document.addEventListener('DOMContentLoaded', () => {
+            let introCompleted = false;
+            
             // Listen for when intro completes
             const observer = new MutationObserver((mutations) => {
                 mutations.forEach((mutation) => {
                     if (mutation.type === 'attributes' && mutation.attributeName === 'class') {
                         const body = document.body;
-                        if (!body.classList.contains('intro-active')) {
-                            // Intro has finished, show mobile controls
+                        if (!body.classList.contains('intro-active') && !introCompleted) {
+                            introCompleted = true;
+                            // Intro has finished, show mobile controls after launch sequence
                             setTimeout(() => {
-                                const mobileControls = document.querySelector('.mobile-controls');
-                                const navPanelMobile = document.querySelector('.nav-panel-mobile');
-                                if (mobileControls) {
-                                    mobileControls.style.display = 'flex';
+                                const loadingScreen = document.getElementById('loadingScreen');
+                                if (!loadingScreen || loadingScreen.style.display === 'none') {
+                                    const mobileControls = document.querySelector('.mobile-controls');
+                                    const navPanelMobile = document.querySelector('.nav-panel-mobile');
+                                    if (mobileControls) {
+                                        mobileControls.style.display = 'flex';
+                                        console.log('📱 Mobile controls now visible after launch sequence');
+                                    }
+                                    if (navPanelMobile) {
+                                        navPanelMobile.style.display = 'block';
+                                    }
+                                } else {
+                                    // Wait for loading screen to finish
+                                    const loadingObserver = new MutationObserver(() => {
+                                        if (loadingScreen.style.display === 'none') {
+                                            const mobileControls = document.querySelector('.mobile-controls');
+                                            const navPanelMobile = document.querySelector('.nav-panel-mobile');
+                                            if (mobileControls) {
+                                                mobileControls.style.display = 'flex';
+                                                console.log('📱 Mobile controls now visible after loading screen');
+                                            }
+                                            if (navPanelMobile) {
+                                                navPanelMobile.style.display = 'block';
+                                            }
+                                            loadingObserver.disconnect();
+                                        }
+                                    });
+                                    loadingObserver.observe(loadingScreen, { attributes: true, attributeFilter: ['style'] });
                                 }
-                                if (navPanelMobile) {
-                                    navPanelMobile.style.display = 'block';
-                                }
-                                console.log('📱 Mobile controls now visible after intro completion');
                             }, 1000);
                         }
                     }
@@ -1090,6 +1281,20 @@
             });
             
             observer.observe(document.body, { attributes: true });
+        });
+        
+        // Prevent accidental touch behaviors
+        document.addEventListener('touchstart', (e) => {
+            if (e.touches.length > 1) {
+                e.preventDefault();
+            }
+        }, { passive: false });
+        
+        // Handle potential mission failed scenarios
+        window.addEventListener('beforeunload', () => {
+            if (mobileSettings.forwardThrust) {
+                stopForwardThrust();
+            }
         });
     </script>
 
