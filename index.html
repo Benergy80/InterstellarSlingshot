@@ -189,6 +189,15 @@
             body.intro-active #achievementPopup {
                 display: none !important;
             }
+
+            /* Hide mobile controls during intro */
+            body.intro-active .mobile-controls {
+                display: none !important;
+            }
+
+            body.intro-active .nav-panel-mobile {
+                display: none !important;
+            }
         }
 
         /* Mobile control styles - Cyberpunk themed */
@@ -222,10 +231,14 @@
             box-shadow: 
                 0 4px 15px rgba(0, 150, 255, 0.3),
                 inset 0 1px 0 rgba(0, 150, 255, 0.4);
+            /* Add the same transform effects as UI panels */
+            transform-style: preserve-3d;
+            perspective: 600px;
+            transform: perspective(600px) rotateX(-2deg) translateZ(3px);
         }
 
         .mobile-btn:active {
-            transform: scale(0.95);
+            transform: perspective(600px) rotateX(-2deg) translateZ(1px) scale(0.95);
             background: linear-gradient(135deg, rgba(0, 200, 255, 0.3), rgba(0, 150, 255, 0.4));
             box-shadow: 
                 0 0 20px rgba(0, 255, 200, 0.4),
@@ -233,45 +246,20 @@
                 inset 0 1px 0 rgba(0, 255, 200, 0.4);
         }
 
-        /* D-Pad styling */
-        .dpad-container {
-            position: relative;
-            width: 120px;
-            height: 120px;
+        /* Fire button styling */
+        .mobile-btn.fire {
+            width: 64px;
+            height: 64px;
+            background: linear-gradient(135deg, rgba(255, 50, 50, 0.8), rgba(200, 0, 0, 0.8));
+            border-color: rgba(255, 100, 100, 0.6);
+            font-size: 20px;
+            transform: perspective(600px) rotateX(-3deg) translateZ(5px);
         }
 
-        .dpad-btn {
-            position: absolute;
-            width: 40px;
-            height: 40px;
-            border-radius: 4px;
-            background: linear-gradient(135deg, rgba(15, 23, 42, 0.9), rgba(30, 41, 59, 0.9));
-            backdrop-filter: blur(5px);
-            border: 1px solid rgba(0, 150, 255, 0.6);
-            color: rgba(0, 255, 200, 0.9);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-family: 'Orbitron', monospace;
-            font-size: 14px;
-            cursor: pointer;
-            transition: all 0.2s ease;
-            box-shadow: 
-                0 2px 8px rgba(0, 150, 255, 0.3),
-                inset 0 1px 0 rgba(0, 150, 255, 0.4);
+        .mobile-btn.fire:active {
+            background: linear-gradient(135deg, rgba(255, 100, 100, 0.9), rgba(255, 50, 50, 0.9));
+            transform: perspective(600px) rotateX(-3deg) translateZ(2px) scale(0.92);
         }
-
-        .dpad-btn:active {
-            background: linear-gradient(135deg, rgba(0, 200, 255, 0.4), rgba(0, 150, 255, 0.5));
-            box-shadow: 
-                0 0 15px rgba(0, 255, 200, 0.4),
-                inset 0 1px 0 rgba(0, 255, 200, 0.4);
-        }
-
-        .dpad-up { top: 0; left: 40px; }
-        .dpad-down { bottom: 0; left: 40px; }
-        .dpad-left { top: 40px; left: 0; }
-        .dpad-right { top: 40px; right: 0; }
 
         /* Navigation panel slide-in */
         .nav-panel-mobile {
@@ -591,35 +579,40 @@
             <i class="fas fa-tachometer-alt"></i>
         </button>
         
-        <!-- D-Pad for movement -->
-        <div class="dpad-container">
-            <button class="dpad-btn dpad-up" onmousedown="startDpadInput('up')" onmouseup="stopDpadInput('up')" ontouchstart="startDpadInput('up')" ontouchend="stopDpadInput('up')">
-                <i class="fas fa-chevron-up"></i>
-            </button>
-            <button class="dpad-btn dpad-down" onmousedown="startDpadInput('down')" onmouseup="stopDpadInput('down')" ontouchstart="startDpadInput('down')" ontouchend="stopDpadInput('down')">
-                <i class="fas fa-chevron-down"></i>
-            </button>
-            <button class="dpad-btn dpad-left" onmousedown="startDpadInput('left')" onmouseup="stopDpadInput('left')" ontouchstart="startDpadInput('left')" ontouchend="stopDpadInput('left')">
-                <i class="fas fa-chevron-left"></i>
-            </button>
-            <button class="dpad-btn dpad-right" onmousedown="startDpadInput('right')" onmouseup="stopDpadInput('right')" ontouchstart="startDpadInput('right')" ontouchend="stopDpadInput('right')">
-                <i class="fas fa-chevron-right"></i>
-            </button>
-        </div>
+        <!-- Fire button in center -->
+        <button class="mobile-btn fire" onclick="mobileFireWeapon()" title="Fire Weapons">
+            <i class="fas fa-crosshairs"></i>
+        </button>
         
+        <button class="mobile-btn" onclick="mobileBrakes()" title="Brakes">
+            <i class="fas fa-hand-paper"></i>
+        </button>
         <button class="mobile-btn" onclick="mobileEmergencyWarp()" title="Emergency Warp">
             <i class="fas fa-rocket"></i>
         </button>
     </div>
 
-    <!-- Mobile Navigation Panel (slides in from right) -->
+    <!-- Mobile Navigation Panel (slides in from right) - Uses real navigation panel -->
     <div class="nav-panel-mobile" id="navPanelMobile">
         <h3>Navigation System</h3>
-        <div id="mobileNavTargetsList" style="max-height: 60%; overflow-y: auto; margin-bottom: 15px;">
-            <!-- Targets will be populated here -->
+        <button id="mobileToggleOrbitsBtn" class="space-btn rounded px-2 py-1 text-xs mb-3 w-full">
+            <i class="fas fa-circle-notch mr-1"></i>Orbits ON
+        </button>
+        
+        <div id="mobileBlackHoleWarningHUD" class="hidden bg-yellow-900 bg-opacity-80 border border-yellow-400 rounded p-2 mb-3 text-center">
+            <div class="text-yellow-300 text-sm font-bold">⚠️ EVENT HORIZON PROXIMITY ⚠️</div>
+            <div id="mobileBlackHoleDistanceHUD" class="text-yellow-100 text-xs"></div>
         </div>
-        <button onclick="mobileAutoNavigate()" style="width: 100%; padding: 10px; background: linear-gradient(135deg, rgba(0, 150, 255, 0.8), rgba(0, 100, 200, 0.8)); border: 1px solid rgba(0, 150, 255, 0.6); border-radius: 8px; color: white; cursor: pointer; font-family: 'Orbitron', monospace;">
-            <i class="fas fa-crosshairs"></i> Auto-Navigate
+        
+        <div id="mobileAvailableTargets" style="max-height: 50%; overflow-y: auto; margin-bottom: 15px;">
+            <!-- This will be populated by populateTargets() -->
+        </div>
+        
+        <button id="mobileAutoNavigateBtn" onclick="mobileAutoNavigate()" class="w-full mt-2 space-btn rounded px-4 py-2 mb-2">
+            <i class="fas fa-crosshairs mr-2"></i>Auto-Navigate to Target
+        </button>
+        <button id="mobileWarpBtn" onclick="mobileWarpAction()" class="w-full space-btn rounded px-4 py-2">
+            <i class="fas fa-rocket mr-2"></i>Slingshot Status
         </button>
     </div>
 
@@ -681,25 +674,30 @@
     <script src="js/game-intro.js"></script>
     <script src="js/game-core.js"></script>
 
-    <!-- MINIMAL MOBILE SCRIPT - Only basic mobile functionality -->
+    <!-- MINIMAL MOBILE SCRIPT - Enhanced mobile functionality -->
     <script>
         // Mobile settings
         let mobileSettings = {
             crosshairTargeting: true, // ON by default for mobile
-            dpadInputs: {
-                up: false,
-                down: false,
-                left: false,
-                right: false
-            }
+            targetMode: true // Target mode by default
         };
 
         // Initialize mobile settings
         document.addEventListener('DOMContentLoaded', () => {
-            // Enable crosshair targeting by default on mobile
+            // Enable crosshair targeting and target mode by default on mobile
             if (window.innerWidth <= 768 || 'ontouchstart' in window) {
-                console.log('📱 Mobile device detected - enabling crosshair targeting');
+                console.log('📱 Mobile device detected - enabling crosshair targeting and target mode');
                 mobileSettings.crosshairTargeting = true;
+                mobileSettings.targetMode = true;
+                
+                // Set target mode when game starts
+                setTimeout(() => {
+                    if (typeof gameState !== 'undefined') {
+                        gameState.targetLock = gameState.targetLock || {};
+                        gameState.targetLock.active = true;
+                        console.log('📱 Target mode activated for mobile');
+                    }
+                }, 2000);
             }
         });
 
@@ -712,6 +710,11 @@
                     updateMobileStatus();
                 }
                 popup.classList.add('active');
+                
+                // Play sound
+                if (typeof playSound === 'function') {
+                    playSound('ui_click', 800, 0.1);
+                }
             }
         }
 
@@ -742,88 +745,102 @@
             });
         }
 
-        function updateMobileNavigation() {
-            const targetsList = document.getElementById('mobileNavTargetsList');
-            if (!targetsList) return;
-
-            targetsList.innerHTML = '';
-            
-            // Get targets from desktop UI
-            const desktopTargets = document.getElementById('availableTargets');
-            if (desktopTargets) {
-                const targetButtons = desktopTargets.querySelectorAll('.planet-card, [onclick*="selectTarget"]');
-                targetButtons.forEach(btn => {
-                    const targetName = btn.textContent.trim();
-                    if (targetName) {
-                        const mobileBtn = document.createElement('div');
-                        mobileBtn.style.cssText = 'padding: 10px; margin: 6px 0; border: 1px solid rgba(0,150,255,0.5); border-radius: 8px; cursor: pointer; background: linear-gradient(135deg, rgba(15, 23, 42, 0.8), rgba(30, 41, 59, 0.8)); backdrop-filter: blur(5px); font-family: Orbitron, monospace; font-size: 12px; color: rgba(0, 255, 200, 0.9);';
-                        mobileBtn.textContent = targetName;
-                        mobileBtn.onclick = () => {
-                            btn.click();
-                            hideNavPanel();
-                        };
-                        targetsList.appendChild(mobileBtn);
-                    }
-                });
-            }
-            
-            if (targetsList.children.length === 0) {
-                targetsList.innerHTML = '<div style="text-align: center; opacity: 0.7; font-family: Orbitron, monospace;">No targets available</div>';
-            }
-        }
-
-        // D-Pad input handling
-        function startDpadInput(direction) {
-            mobileSettings.dpadInputs[direction] = true;
-            
-            // Map D-pad to keyboard inputs
+        // Mobile weapon fire
+        function mobileFireWeapon() {
+            // Trigger weapon fire using existing system
             if (typeof keys !== 'undefined') {
-                switch(direction) {
-                    case 'up': keys['w'] = true; break;
-                    case 'down': keys['s'] = true; break;
-                    case 'left': keys['a'] = true; break;
-                    case 'right': keys['d'] = true; break;
-                }
+                keys.space = true;
+                setTimeout(() => keys.space = false, 100);
             }
-        }
-
-        function stopDpadInput(direction) {
-            mobileSettings.dpadInputs[direction] = false;
             
-            // Stop keyboard inputs
-            if (typeof keys !== 'undefined') {
-                switch(direction) {
-                    case 'up': keys['w'] = false; break;
-                    case 'down': keys['s'] = false; break;
-                    case 'left': keys['a'] = false; break;
-                    case 'right': keys['d'] = false; break;
-                }
+            // Play sound
+            if (typeof playSound === 'function') {
+                playSound('weapon', 800, 0.2);
             }
         }
 
+        // Mobile brakes function
+        function mobileBrakes() {
+            // Trigger brake using existing X key system
+            if (typeof keys !== 'undefined') {
+                keys.x = true;
+                setTimeout(() => keys.x = false, 200);
+            }
+            
+            // Play sound
+            if (typeof playSound === 'function') {
+                playSound('ui_click', 600, 0.1);
+            }
+            
+            // Visual feedback
+            if (typeof showAchievement === 'function') {
+                showAchievement('Brakes Engaged', 'Emergency deceleration activated');
+            }
+        }
+
+        // Mobile auto-navigation
         function mobileAutoNavigate() {
-            // Trigger auto-navigation using existing system
-            const autoNavBtn = document.getElementById('autoNavigateBtn');
-            if (autoNavBtn) {
-                autoNavBtn.click();
+            // Use the existing auto-navigate system
+            if (typeof toggleAutoNavigate === 'function') {
+                toggleAutoNavigate();
+            } else {
+                const autoNavBtn = document.getElementById('autoNavigateBtn');
+                if (autoNavBtn) {
+                    autoNavBtn.click();
+                }
             }
+            
+            // Play sound
+            if (typeof playSound === 'function') {
+                playSound('navigation', 1000, 0.15);
+            }
+            
             hideNavPanel();
         }
 
-        function mobileEmergencyWarp() {
-            // Trigger emergency warp using existing system
-            if (typeof keys !== 'undefined') {
-                keys['o'] = true;
-                setTimeout(() => keys['o'] = false, 50);
+        // Mobile warp/slingshot action
+        function mobileWarpAction() {
+            // Use existing slingshot system
+            if (typeof executeSlingshot === 'function') {
+                executeSlingshot();
+            } else {
+                // Fallback to Enter key
+                if (typeof keys !== 'undefined') {
+                    keys.Enter = true;
+                    setTimeout(() => keys.Enter = false, 100);
+                }
             }
+            
+            hideNavPanel();
         }
 
-        // Navigation panel management
+        // FIXED: Mobile emergency warp - use correct key format
+        function mobileEmergencyWarp() {
+            // FIXED: Use keys.o instead of keys['o'] to match game-physics.js
+            if (typeof keys !== 'undefined') {
+                keys.o = true;
+                setTimeout(() => keys.o = false, 100);
+            }
+            
+            // Play sound
+            if (typeof playSound === 'function') {
+                playSound('warp', 400, 0.3);
+            }
+            
+            console.log('📱 Mobile emergency warp triggered');
+        }
+
+        // Navigation panel management - use real navigation system
         function showNavPanel() {
             const navPanel = document.getElementById('navPanelMobile');
             if (navPanel) {
                 updateMobileNavigation();
                 navPanel.classList.add('active');
+                
+                // Play sound
+                if (typeof playSound === 'function') {
+                    playSound('ui_open', 1200, 0.1);
+                }
             }
         }
 
@@ -834,12 +851,105 @@
             }
         }
 
-        // Touch controls for camera movement and tap-to-fire
+        // FIXED: Use real navigation system from game-ui.js
+        function updateMobileNavigation() {
+            const mobileTargetsContainer = document.getElementById('mobileAvailableTargets');
+            if (!mobileTargetsContainer) return;
+
+            // Clear existing content
+            mobileTargetsContainer.innerHTML = '';
+            
+            // Use the real populateTargets function to get current targets
+            if (typeof populateTargets === 'function') {
+                populateTargets();
+            }
+            
+            // Copy the desktop navigation content
+            const desktopTargets = document.getElementById('availableTargets');
+            if (desktopTargets) {
+                // Clone each target card for mobile
+                const targetCards = desktopTargets.querySelectorAll('.planet-card');
+                targetCards.forEach(card => {
+                    const mobileCard = card.cloneNode(true);
+                    
+                    // Add mobile-specific styling
+                    mobileCard.style.cssText += `
+                        background: linear-gradient(135deg, rgba(15, 23, 42, 0.8), rgba(30, 41, 59, 0.8));
+                        backdrop-filter: blur(5px);
+                        border: 1px solid rgba(0, 150, 255, 0.5);
+                        margin-bottom: 8px;
+                        font-family: 'Orbitron', monospace;
+                    `;
+                    
+                    // Copy click functionality
+                    mobileCard.onclick = (e) => {
+                        // Trigger the original card's click
+                        card.click();
+                        // Close navigation panel
+                        hideNavPanel();
+                        
+                        // Play sound
+                        if (typeof playSound === 'function') {
+                            playSound('navigation', 900, 0.1);
+                        }
+                    };
+                    
+                    mobileTargetsContainer.appendChild(mobileCard);
+                });
+            }
+            
+            // Update mobile auto-navigate button state
+            const mobileAutoNavBtn = document.getElementById('mobileAutoNavigateBtn');
+            const desktopAutoNavBtn = document.getElementById('autoNavigateBtn');
+            if (mobileAutoNavBtn && desktopAutoNavBtn) {
+                mobileAutoNavBtn.innerHTML = desktopAutoNavBtn.innerHTML;
+                mobileAutoNavBtn.disabled = desktopAutoNavBtn.disabled;
+            }
+            
+            // Update mobile warp button state
+            const mobileWarpBtn = document.getElementById('mobileWarpBtn');
+            const desktopWarpBtn = document.getElementById('warpBtn');
+            if (mobileWarpBtn && desktopWarpBtn) {
+                mobileWarpBtn.innerHTML = desktopWarpBtn.innerHTML;
+                mobileWarpBtn.disabled = desktopWarpBtn.disabled;
+            }
+            
+            // Update orbit button
+            const mobileOrbitBtn = document.getElementById('mobileToggleOrbitsBtn');
+            const desktopOrbitBtn = document.getElementById('toggleOrbitsBtn');
+            if (mobileOrbitBtn && desktopOrbitBtn) {
+                mobileOrbitBtn.innerHTML = desktopOrbitBtn.innerHTML;
+                mobileOrbitBtn.onclick = () => desktopOrbitBtn.click();
+            }
+            
+            // Update black hole warning
+            const mobileBlackHoleWarning = document.getElementById('mobileBlackHoleWarningHUD');
+            const desktopBlackHoleWarning = document.getElementById('blackHoleWarningHUD');
+            if (mobileBlackHoleWarning && desktopBlackHoleWarning) {
+                if (desktopBlackHoleWarning.classList.contains('hidden')) {
+                    mobileBlackHoleWarning.classList.add('hidden');
+                } else {
+                    mobileBlackHoleWarning.classList.remove('hidden');
+                    const mobileDistance = document.getElementById('mobileBlackHoleDistanceHUD');
+                    const desktopDistance = document.getElementById('blackHoleDistanceHUD');
+                    if (mobileDistance && desktopDistance) {
+                        mobileDistance.textContent = desktopDistance.textContent;
+                    }
+                }
+            }
+            
+            if (mobileTargetsContainer.children.length === 0) {
+                mobileTargetsContainer.innerHTML = '<div style="text-align: center; opacity: 0.7; font-family: Orbitron, monospace; padding: 20px;">No targets available</div>';
+            }
+        }
+
+        // Enhanced touch controls for camera movement and tap-to-fire
         let touchStartX = 0;
         let touchStartY = 0;
         let isTouching = false;
         let touchStartTime = 0;
         let hasMoved = false;
+        let totalMovement = 0;
 
         document.addEventListener('touchstart', (e) => {
             // Only handle touches on the game canvas
@@ -850,6 +960,7 @@
                 touchStartTime = Date.now();
                 isTouching = true;
                 hasMoved = false;
+                totalMovement = 0;
                 e.preventDefault();
             }
         }, { passive: false });
@@ -860,8 +971,11 @@
                 const deltaX = touch.clientX - touchStartX;
                 const deltaY = touch.clientY - touchStartY;
                 
+                // Track total movement
+                totalMovement += Math.abs(deltaX) + Math.abs(deltaY);
+                
                 // Mark as moved if significant movement
-                if (Math.abs(deltaX) > 5 || Math.abs(deltaY) > 5) {
+                if (totalMovement > 10) {
                     hasMoved = true;
                 }
                 
@@ -882,12 +996,20 @@
             if (isTouching) {
                 const touchDuration = Date.now() - touchStartTime;
                 
-                // Fire weapon if it was a quick tap (not a drag)
-                if (!hasMoved && touchDuration < 300 && mobileSettings.crosshairTargeting) {
-                    // Trigger weapon fire at crosshair location
-                    if (typeof keys !== 'undefined') {
-                        keys[' '] = true;
-                        setTimeout(() => keys[' '] = false, 50);
+                // Fire weapon if it was a quick tap (not a drag) and crosshair targeting is enabled
+                if (!hasMoved && touchDuration < 300 && totalMovement < 15 && mobileSettings.crosshairTargeting) {
+                    mobileFireWeapon();
+                    
+                    // Visual feedback on crosshair
+                    const crosshair = document.getElementById('crosshair');
+                    if (crosshair) {
+                        crosshair.style.borderColor = 'rgba(255, 100, 100, 1)';
+                        crosshair.style.boxShadow = '0 0 25px rgba(255, 100, 100, 0.8)';
+                        
+                        setTimeout(() => {
+                            crosshair.style.borderColor = 'rgba(0, 255, 0, 0.9)';
+                            crosshair.style.boxShadow = '0 0 15px rgba(0, 255, 0, 0.7)';
+                        }, 200);
                     }
                 }
             }
@@ -902,8 +1024,8 @@
             const touch = e.touches[0];
             const screenWidth = window.innerWidth;
             
-            // Check if touch started near right edge (within 30px)
-            if (touch.clientX > screenWidth - 30) {
+            // Check if touch started near right edge (within 40px)
+            if (touch.clientX > screenWidth - 40) {
                 swipeStartX = touch.clientX;
                 isSwipeGesture = true;
             }
@@ -915,7 +1037,7 @@
                 const deltaX = swipeStartX - touch.clientX;
                 
                 // If swiped left significantly, show navigation panel
-                if (deltaX > 50) {
+                if (deltaX > 60) {
                     showNavPanel();
                     isSwipeGesture = false;
                 }
@@ -945,7 +1067,41 @@
             if (statusPopup && statusPopup.classList.contains('active')) {
                 updateMobileStatus();
             }
+            
+            // Update navigation panel if open
+            const navPanel = document.getElementById('navPanelMobile');
+            if (navPanel && navPanel.classList.contains('active')) {
+                updateMobileNavigation();
+            }
         }, 1000);
+        
+        // Show mobile controls after intro completes
+        document.addEventListener('DOMContentLoaded', () => {
+            // Listen for when intro completes
+            const observer = new MutationObserver((mutations) => {
+                mutations.forEach((mutation) => {
+                    if (mutation.type === 'attributes' && mutation.attributeName === 'class') {
+                        const body = document.body;
+                        if (!body.classList.contains('intro-active')) {
+                            // Intro has finished, show mobile controls
+                            setTimeout(() => {
+                                const mobileControls = document.querySelector('.mobile-controls');
+                                const navPanelMobile = document.querySelector('.nav-panel-mobile');
+                                if (mobileControls) {
+                                    mobileControls.style.display = 'flex';
+                                }
+                                if (navPanelMobile) {
+                                    navPanelMobile.style.display = 'block';
+                                }
+                                console.log('📱 Mobile controls now visible after intro completion');
+                            }, 1000);
+                        }
+                    }
+                });
+            });
+            
+            observer.observe(document.body, { attributes: true });
+        });
     </script>
 
     <!-- SINGLE BOOTSTRAP CALL - Simplified initialization -->
