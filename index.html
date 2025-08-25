@@ -172,6 +172,7 @@
                 height: 32px !important;
                 border-width: 2px !important;
                 border-color: rgba(0, 255, 0, 0.9) !important;
+                z-index: 150 !important;
             }
             
             /* Enable touch controls */
@@ -183,16 +184,21 @@
             #gameCanvas {
                 touch-action: none;
             }
+
+            /* Hide achievement popup during intro on mobile */
+            body.intro-active #achievementPopup {
+                display: none !important;
+            }
         }
 
-        /* Mobile control styles */
+        /* Mobile control styles - Cyberpunk themed */
         .mobile-controls {
             position: fixed;
             bottom: 20px;
             left: 50%;
             transform: translateX(-50%);
             display: none;
-            gap: 10px;
+            gap: 15px;
             z-index: 100;
             pointer-events: auto;
         }
@@ -200,31 +206,105 @@
         .mobile-btn {
             width: 50px;
             height: 50px;
-            border-radius: 50%;
-            background: linear-gradient(135deg, rgba(0, 150, 255, 0.8), rgba(0, 100, 200, 0.8));
-            border: 2px solid rgba(0, 200, 255, 0.6);
-            color: white;
+            border-radius: 8px;
+            background: linear-gradient(135deg, rgba(15, 23, 42, 0.8), rgba(30, 41, 59, 0.8));
+            backdrop-filter: blur(5px);
+            border: 1px solid rgba(0, 150, 255, 0.6);
+            color: rgba(0, 255, 200, 0.9);
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 18px;
+            font-size: 16px;
             cursor: pointer;
             transition: all 0.2s ease;
             font-family: 'Orbitron', monospace;
+            font-weight: 600;
             box-shadow: 
-                0 4px 15px rgba(0, 150, 255, 0.4),
-                inset 0 1px 0 rgba(255, 255, 255, 0.2);
+                0 4px 15px rgba(0, 150, 255, 0.3),
+                inset 0 1px 0 rgba(0, 150, 255, 0.4);
         }
 
         .mobile-btn:active {
             transform: scale(0.95);
+            background: linear-gradient(135deg, rgba(0, 200, 255, 0.3), rgba(0, 150, 255, 0.4));
+            box-shadow: 
+                0 0 20px rgba(0, 255, 200, 0.4),
+                0 6px 20px rgba(0, 150, 255, 0.3),
+                inset 0 1px 0 rgba(0, 255, 200, 0.4);
         }
 
-        .mobile-btn.fire {
-            width: 60px;
-            height: 60px;
-            background: linear-gradient(135deg, rgba(255, 50, 50, 0.8), rgba(200, 0, 0, 0.8));
-            border-color: rgba(255, 100, 100, 0.6);
+        /* D-Pad styling */
+        .dpad-container {
+            position: relative;
+            width: 120px;
+            height: 120px;
+        }
+
+        .dpad-btn {
+            position: absolute;
+            width: 40px;
+            height: 40px;
+            border-radius: 4px;
+            background: linear-gradient(135deg, rgba(15, 23, 42, 0.9), rgba(30, 41, 59, 0.9));
+            backdrop-filter: blur(5px);
+            border: 1px solid rgba(0, 150, 255, 0.6);
+            color: rgba(0, 255, 200, 0.9);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-family: 'Orbitron', monospace;
+            font-size: 14px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            box-shadow: 
+                0 2px 8px rgba(0, 150, 255, 0.3),
+                inset 0 1px 0 rgba(0, 150, 255, 0.4);
+        }
+
+        .dpad-btn:active {
+            background: linear-gradient(135deg, rgba(0, 200, 255, 0.4), rgba(0, 150, 255, 0.5));
+            box-shadow: 
+                0 0 15px rgba(0, 255, 200, 0.4),
+                inset 0 1px 0 rgba(0, 255, 200, 0.4);
+        }
+
+        .dpad-up { top: 0; left: 40px; }
+        .dpad-down { bottom: 0; left: 40px; }
+        .dpad-left { top: 40px; left: 0; }
+        .dpad-right { top: 40px; right: 0; }
+
+        /* Navigation panel slide-in */
+        .nav-panel-mobile {
+            position: fixed;
+            top: 0;
+            right: -100%;
+            width: 80%;
+            max-width: 300px;
+            height: 100%;
+            background: linear-gradient(135deg, rgba(15, 23, 42, 0.95), rgba(30, 41, 59, 0.95));
+            backdrop-filter: blur(10px);
+            border-left: 2px solid rgba(0, 150, 255, 0.6);
+            padding: 20px;
+            z-index: 200;
+            transition: right 0.3s ease;
+            overflow-y: auto;
+            box-shadow: 
+                -10px 0 30px rgba(0, 150, 255, 0.3),
+                inset 1px 0 0 rgba(0, 150, 255, 0.4);
+        }
+
+        .nav-panel-mobile.active {
+            right: 0;
+        }
+
+        .nav-panel-mobile h3 {
+            color: rgba(0, 255, 200, 0.9);
+            font-family: 'Orbitron', monospace;
+            text-shadow: 0 0 8px rgba(0, 255, 200, 0.6);
+            margin-bottom: 20px;
+            text-align: center;
+            border-bottom: 1px solid rgba(0, 150, 255, 0.3);
+            padding-bottom: 10px;
         }
 
         /* Mobile popup styles */
@@ -249,6 +329,7 @@
 
         .mobile-popup-content {
             background: linear-gradient(135deg, rgba(15, 23, 42, 0.95), rgba(30, 41, 59, 0.95));
+            backdrop-filter: blur(10px);
             border: 2px solid rgba(0, 150, 255, 0.6);
             border-radius: 15px;
             padding: 20px;
@@ -372,12 +453,40 @@
                 <h3 class="text-sm font-bold text-cyan-400 glow-text">Map</h3>
                 <button id="mapViewToggle" class="space-btn rounded px-2 py-1 text-xs">Galactic View</button>
             </div>
-            <div class="relative w-32 h-32 bg-black rounded-full border border-cyan-400 overflow-hidden">
-                <canvas id="galaxyMap" width="128" height="128" class="absolute inset-0"></canvas>
-                <div id="playerDot" class="absolute w-2 h-2 bg-green-400 rounded-full glow" style="top: 50%; left: 50%; transform: translate(-50%, -50%);"></div>
+            <div class="round-map cyberpunk-bg" id="galaxyMap">
+                <!-- Map Toggle Button -->
+                <div class="map-toggle-btn" id="mapToggle" title="Toggle Map Mode">
+                    GAL
+                </div>
+                
+                <!-- Grid overlay -->
+                <div class="map-grid" id="mapGrid">
+                    <!-- Grid lines will be generated by JavaScript -->
+                </div>
+                
+                <div class="compass-ring"></div>
+                <div class="compass-needle hidden" id="compassNeedle"></div>
+                
+                <!-- Map direction arrow (shows player facing direction in galactic view) -->
+                <div class="map-direction-arrow" id="mapDirectionArrow"></div>
+                
+                <!-- Player position indicator (always centered) -->
+                <div id="playerMapPosition" class="absolute text-green-400 text-lg font-bold" style="top: 50%; left: 50%; transform: translate(-50%, -50%); filter: drop-shadow(0 0 3px #00ff96);">▲</div>
+                
+                <!-- Target indicator -->
+                <div id="targetMapPosition" class="absolute w-3 h-3 bg-red-400 rounded-full hidden" style="box-shadow: 0 0 6px #ef4444; animation: pulse 1s infinite;"></div>
             </div>
-            <div class="text-xs text-center text-gray-400 mt-2">
-                <div>X: <span id="playerX">0</span> Y: <span id="playerY">0</span> Z: <span id="playerZ">0</span></div>
+            <div class="text-xs text-gray-300 mt-2 opacity-80">
+                <div class="flex items-center gap-2">
+                    <div class="text-green-400">▲</div>
+                    <span>You</span>
+                    <div class="w-2 h-2 bg-red-400 rounded-full ml-2"></div>
+                    <span>Target</span>
+                    <div class="w-3 h-1 bg-yellow-400 ml-2"></div>
+                    <span>Compass → Sgr A*</span>
+                </div>
+                <div class="text-xs text-purple-300 mt-1">8 Known Galaxies + Unexplored Space</div>
+                <div class="text-xs text-green-300 mt-1" id="mapViewStatus">Galaxy View</div>
             </div>
         </div>
 
@@ -481,14 +590,36 @@
         <button class="mobile-btn" onclick="showMobilePanel('status')" title="Ship Status">
             <i class="fas fa-tachometer-alt"></i>
         </button>
-        <button class="mobile-btn" onclick="showMobilePanel('navigation')" title="Navigation">
-            <i class="fas fa-compass"></i>
-        </button>
-        <button class="mobile-btn fire" onclick="mobileFireWeapon()" title="Fire Weapons">
-            <i class="fas fa-crosshairs"></i>
-        </button>
+        
+        <!-- D-Pad for movement -->
+        <div class="dpad-container">
+            <button class="dpad-btn dpad-up" onmousedown="startDpadInput('up')" onmouseup="stopDpadInput('up')" ontouchstart="startDpadInput('up')" ontouchend="stopDpadInput('up')">
+                <i class="fas fa-chevron-up"></i>
+            </button>
+            <button class="dpad-btn dpad-down" onmousedown="startDpadInput('down')" onmouseup="stopDpadInput('down')" ontouchstart="startDpadInput('down')" ontouchend="stopDpadInput('down')">
+                <i class="fas fa-chevron-down"></i>
+            </button>
+            <button class="dpad-btn dpad-left" onmousedown="startDpadInput('left')" onmouseup="stopDpadInput('left')" ontouchstart="startDpadInput('left')" ontouchend="stopDpadInput('left')">
+                <i class="fas fa-chevron-left"></i>
+            </button>
+            <button class="dpad-btn dpad-right" onmousedown="startDpadInput('right')" onmouseup="stopDpadInput('right')" ontouchstart="startDpadInput('right')" ontouchend="stopDpadInput('right')">
+                <i class="fas fa-chevron-right"></i>
+            </button>
+        </div>
+        
         <button class="mobile-btn" onclick="mobileEmergencyWarp()" title="Emergency Warp">
             <i class="fas fa-rocket"></i>
+        </button>
+    </div>
+
+    <!-- Mobile Navigation Panel (slides in from right) -->
+    <div class="nav-panel-mobile" id="navPanelMobile">
+        <h3>Navigation System</h3>
+        <div id="mobileNavTargetsList" style="max-height: 60%; overflow-y: auto; margin-bottom: 15px;">
+            <!-- Targets will be populated here -->
+        </div>
+        <button onclick="mobileAutoNavigate()" style="width: 100%; padding: 10px; background: linear-gradient(135deg, rgba(0, 150, 255, 0.8), rgba(0, 100, 200, 0.8)); border: 1px solid rgba(0, 150, 255, 0.6); border-radius: 8px; color: white; cursor: pointer; font-family: 'Orbitron', monospace;">
+            <i class="fas fa-crosshairs"></i> Auto-Navigate
         </button>
     </div>
 
@@ -552,6 +683,26 @@
 
     <!-- MINIMAL MOBILE SCRIPT - Only basic mobile functionality -->
     <script>
+        // Mobile settings
+        let mobileSettings = {
+            crosshairTargeting: true, // ON by default for mobile
+            dpadInputs: {
+                up: false,
+                down: false,
+                left: false,
+                right: false
+            }
+        };
+
+        // Initialize mobile settings
+        document.addEventListener('DOMContentLoaded', () => {
+            // Enable crosshair targeting by default on mobile
+            if (window.innerWidth <= 768 || 'ontouchstart' in window) {
+                console.log('📱 Mobile device detected - enabling crosshair targeting');
+                mobileSettings.crosshairTargeting = true;
+            }
+        });
+
         // Simple mobile panel management
         function showMobilePanel(panelName) {
             const popup = document.getElementById(panelName + 'Popup');
@@ -559,8 +710,6 @@
                 // Update content before showing
                 if (panelName === 'status') {
                     updateMobileStatus();
-                } else if (panelName === 'navigation') {
-                    updateMobileNavigation();
                 }
                 popup.classList.add('active');
             }
@@ -594,7 +743,7 @@
         }
 
         function updateMobileNavigation() {
-            const targetsList = document.getElementById('mobileTargetsList');
+            const targetsList = document.getElementById('mobileNavTargetsList');
             if (!targetsList) return;
 
             targetsList.innerHTML = '';
@@ -607,11 +756,11 @@
                     const targetName = btn.textContent.trim();
                     if (targetName) {
                         const mobileBtn = document.createElement('div');
-                        mobileBtn.style.cssText = 'padding: 8px; margin: 4px 0; border: 1px solid rgba(0,150,255,0.5); border-radius: 5px; cursor: pointer; background: rgba(0,150,255,0.1);';
+                        mobileBtn.style.cssText = 'padding: 10px; margin: 6px 0; border: 1px solid rgba(0,150,255,0.5); border-radius: 8px; cursor: pointer; background: linear-gradient(135deg, rgba(15, 23, 42, 0.8), rgba(30, 41, 59, 0.8)); backdrop-filter: blur(5px); font-family: Orbitron, monospace; font-size: 12px; color: rgba(0, 255, 200, 0.9);';
                         mobileBtn.textContent = targetName;
                         mobileBtn.onclick = () => {
                             btn.click();
-                            hideMobilePanel('navigation');
+                            hideNavPanel();
                         };
                         targetsList.appendChild(mobileBtn);
                     }
@@ -619,15 +768,36 @@
             }
             
             if (targetsList.children.length === 0) {
-                targetsList.innerHTML = '<div style="text-align: center; opacity: 0.7;">No targets available</div>';
+                targetsList.innerHTML = '<div style="text-align: center; opacity: 0.7; font-family: Orbitron, monospace;">No targets available</div>';
             }
         }
 
-        function mobileFireWeapon() {
-            // Trigger weapon fire using existing system
+        // D-Pad input handling
+        function startDpadInput(direction) {
+            mobileSettings.dpadInputs[direction] = true;
+            
+            // Map D-pad to keyboard inputs
             if (typeof keys !== 'undefined') {
-                keys[' '] = true;
-                setTimeout(() => keys[' '] = false, 50);
+                switch(direction) {
+                    case 'up': keys['w'] = true; break;
+                    case 'down': keys['s'] = true; break;
+                    case 'left': keys['a'] = true; break;
+                    case 'right': keys['d'] = true; break;
+                }
+            }
+        }
+
+        function stopDpadInput(direction) {
+            mobileSettings.dpadInputs[direction] = false;
+            
+            // Stop keyboard inputs
+            if (typeof keys !== 'undefined') {
+                switch(direction) {
+                    case 'up': keys['w'] = false; break;
+                    case 'down': keys['s'] = false; break;
+                    case 'left': keys['a'] = false; break;
+                    case 'right': keys['d'] = false; break;
+                }
             }
         }
 
@@ -637,7 +807,7 @@
             if (autoNavBtn) {
                 autoNavBtn.click();
             }
-            hideMobilePanel('navigation');
+            hideNavPanel();
         }
 
         function mobileEmergencyWarp() {
@@ -648,17 +818,38 @@
             }
         }
 
-        // Simple touch controls for camera movement
+        // Navigation panel management
+        function showNavPanel() {
+            const navPanel = document.getElementById('navPanelMobile');
+            if (navPanel) {
+                updateMobileNavigation();
+                navPanel.classList.add('active');
+            }
+        }
+
+        function hideNavPanel() {
+            const navPanel = document.getElementById('navPanelMobile');
+            if (navPanel) {
+                navPanel.classList.remove('active');
+            }
+        }
+
+        // Touch controls for camera movement and tap-to-fire
         let touchStartX = 0;
         let touchStartY = 0;
         let isTouching = false;
+        let touchStartTime = 0;
+        let hasMoved = false;
 
         document.addEventListener('touchstart', (e) => {
+            // Only handle touches on the game canvas
             if (e.target.id === 'gameCanvas' || e.target.closest('#gameContainer')) {
                 const touch = e.touches[0];
                 touchStartX = touch.clientX;
                 touchStartY = touch.clientY;
+                touchStartTime = Date.now();
                 isTouching = true;
+                hasMoved = false;
                 e.preventDefault();
             }
         }, { passive: false });
@@ -668,6 +859,11 @@
                 const touch = e.touches[0];
                 const deltaX = touch.clientX - touchStartX;
                 const deltaY = touch.clientY - touchStartY;
+                
+                // Mark as moved if significant movement
+                if (Math.abs(deltaX) > 5 || Math.abs(deltaY) > 5) {
+                    hasMoved = true;
+                }
                 
                 // Apply camera rotation
                 camera.rotation.y -= deltaX * 0.005;
@@ -682,12 +878,62 @@
             }
         }, { passive: false });
 
-        document.addEventListener('touchend', () => {
+        document.addEventListener('touchend', (e) => {
+            if (isTouching) {
+                const touchDuration = Date.now() - touchStartTime;
+                
+                // Fire weapon if it was a quick tap (not a drag)
+                if (!hasMoved && touchDuration < 300 && mobileSettings.crosshairTargeting) {
+                    // Trigger weapon fire at crosshair location
+                    if (typeof keys !== 'undefined') {
+                        keys[' '] = true;
+                        setTimeout(() => keys[' '] = false, 50);
+                    }
+                }
+            }
             isTouching = false;
         });
 
-        // Close mobile popups when clicking outside
+        // Swipe gesture for navigation panel (from right edge)
+        let swipeStartX = 0;
+        let isSwipeGesture = false;
+
+        document.addEventListener('touchstart', (e) => {
+            const touch = e.touches[0];
+            const screenWidth = window.innerWidth;
+            
+            // Check if touch started near right edge (within 30px)
+            if (touch.clientX > screenWidth - 30) {
+                swipeStartX = touch.clientX;
+                isSwipeGesture = true;
+            }
+        });
+
+        document.addEventListener('touchmove', (e) => {
+            if (isSwipeGesture) {
+                const touch = e.touches[0];
+                const deltaX = swipeStartX - touch.clientX;
+                
+                // If swiped left significantly, show navigation panel
+                if (deltaX > 50) {
+                    showNavPanel();
+                    isSwipeGesture = false;
+                }
+            }
+        });
+
+        document.addEventListener('touchend', () => {
+            isSwipeGesture = false;
+        });
+
+        // Close nav panel when touching outside
         document.addEventListener('click', (e) => {
+            const navPanel = document.getElementById('navPanelMobile');
+            if (navPanel && navPanel.classList.contains('active') && !navPanel.contains(e.target)) {
+                hideNavPanel();
+            }
+            
+            // Close mobile popups when clicking outside
             if (e.target.classList.contains('mobile-popup')) {
                 e.target.classList.remove('active');
             }
