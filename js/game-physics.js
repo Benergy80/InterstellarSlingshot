@@ -80,31 +80,38 @@ function updateEnhancedPhysics() {
     const collisionThreshold = 6; // DOUBLED
     
     // FIXED: Local space flight controls that respect auto-navigation
-    // Don't allow manual rotation when auto-navigation is orienting
-    const allowManualRotation = !gameState.autoNavigating || !gameState.autoNavOrienting;
-    
-    if (allowManualRotation) {
-        // Fixed flight controls - using local camera space (RESTORED)
-        if (keys.up) {
-            camera.rotateX(rotSpeed); // UP looks up
-            lastPitchInputTime = performance.now();
-        }
-        if (keys.down) {
-            camera.rotateX(-rotSpeed); // DOWN looks down
-            lastPitchInputTime = performance.now();
-        }
-        if (keys.left) {
-            camera.rotateY(rotSpeed);
-        }
-        if (keys.right) {
-            camera.rotateY(-rotSpeed); // Negative for correct direction
-        }
-        
-        // Update cameraRotation tracking for auto-leveling
-        cameraRotation.x = camera.rotation.x;
-        cameraRotation.y = camera.rotation.y;
-        cameraRotation.z = camera.rotation.z;
+// Don't allow manual rotation when auto-navigation is orienting
+const allowManualRotation = !gameState.autoNavigating || !gameState.autoNavOrienting;
+
+if (allowManualRotation) {
+    // Fixed flight controls - using local camera space (RESTORED)
+    if (keys.up) {
+        camera.rotateX(rotSpeed); // UP looks up
+        lastPitchInputTime = performance.now();
     }
+    if (keys.down) {
+        camera.rotateX(-rotSpeed); // DOWN looks down
+        lastPitchInputTime = performance.now();
+    }
+    if (keys.left) {
+        camera.rotateY(rotSpeed);
+    }
+    if (keys.right) {
+        camera.rotateY(-rotSpeed); // Negative for correct direction
+    }
+    
+    // Update cameraRotation tracking for auto-leveling
+    cameraRotation.x = camera.rotation.x;
+    cameraRotation.y = camera.rotation.y;
+    cameraRotation.z = camera.rotation.z;
+} else {
+    // FIXED: Apply auto-navigation rotations to actual camera
+    // When auto-navigating, orientTowardsTarget() updates cameraRotation values
+    // but we need to apply them to the actual camera
+    camera.rotation.x = cameraRotation.x;
+    camera.rotation.y = cameraRotation.y;
+    camera.rotation.z = cameraRotation.z;
+}
     
     // Roll controls always work (Q/E) - using world space for auto-leveling compatibility
     if (keys.q) {
@@ -482,43 +489,95 @@ function updateEnhancedPhysics() {
     camera.position.add(gameState.velocityVector);
     
     // Enhanced auto-navigation (DOUBLED distances)
-    if (gameState.autoNavigating && gameState.currentTarget && gameState.energy > 5) {
-        if (gameState.autoNavOrienting) {
-            const isOriented = orientTowardsTarget(gameState.currentTarget);
-            if (isOriented) {
-                gameState.autoNavOrienting = false;
+if (gameState.autoNavigating && gameState.currentTarget && gameState.energy > 5) {
+    if (gameState.autoNavOrienting) {
+        // LOCAL ORIENTATION FUNCTION - avoid cross-file dependencies
+        function orientTowardsTargetLocal(target) {
+            if (!target || typeof camera === 'undefined' || typeof cameraRotation === 'undefined') return false;
+            
+            const direction = new THREE.Vector3().subVectors(target.position, camera.position).normalize();
+            
+            const targetRotationY = Math.atan2(-direction.x, -direction.z);
+            const targetRotationX = Math.asin(direction.y);
+            
+            const rotLerpFactor = 0.08; // Faster orientation
+            const deltaY = targetRotationY - cameraRotation.y;
+            const deltaX = targetRotationX - cameraRotation.x;
+            
+            let adjustedDeltaY = deltaY;
+            if (Math.abs(deltaY) > Math.PI) {
+                adjustedDeltaY = deltaY > 0 ? deltaY - 2 * Math.PI : deltaY + 2 * Math.PI;
+            }
+            
+            cameraRotation.y += adjustedDeltaY * rotLerpFactor;
+            cameraRotation.x += deltaX * rotLerpFactor;
+            
+            const orientationThreshold = 0.05; // Tighter precision - about 3 degrees
+            const isOriented = Math.abs(adjustedDeltaY) < orientationThreshold && Math.abs(deltaX) < orientationThreshold;
+            
+            return isOriented;
+        }
+        
+        const isOriented = orientTowardsTargetLocal(gameState.currentTarget);
+        if (isOriented) {
+            gameState.autoNavOrienting = false;
+            if (typeof showAchievement === 'function') {
                 showAchievement('Target Acquired', 'Orientation complete - beginning approach');
             }
-        } else {
-            // Apply stronger forward thrust when not orienting
-            const targetDirection = new THREE.Vector3().subVectors(
-                gameState.currentTarget.position, 
-                camera.position
-            ).normalize();
+        }
+    } else {
+        // Apply stronger forward thrust when not orienting
+        const targetDirection = new THREE.Vector3().subVectors(
+            gameState.currentTarget.position, 
+            camera.position
+        ).normalize();
+        
+        // Increased thrust power for auto-navigation
+        gameState.velocityVector.addScaledVector(targetDirection, gameState.thrustPower * 0.8);
+        gameState.energy = Math.max(0, gameState.energy - 0.06);
+        
+        const targetDistance = camera.position.distanceTo(gameState.currentTarget.position);
+        
+        // Only re-orient if significantly off course (more than 15 degrees)
+        if (targetDistance > 100) {
+            const forwardDirection = new THREE.Vector3();
+            camera.getWorldDirection(forwardDirection);
+            const angle = forwardDirection.angleTo(targetDirection);
             
-            // Increased thrust power for auto-navigation
-            gameState.velocityVector.addScaledVector(targetDirection, gameState.thrustPower * 0.8);
-            gameState.energy = Math.max(0, gameState.energy - 0.06);
-            
-            const targetDistance = camera.position.distanceTo(gameState.currentTarget.position);
-            
-            // Only re-orient if significantly off course (more than 15 degrees)
-            if (targetDistance > 100) {
-                const forwardDirection = new THREE.Vector3();
-                camera.getWorldDirection(forwardDirection);
-                const angle = forwardDirection.angleTo(targetDirection);
-                
-                if (angle > 0.26) { // ~15 degrees in radians
-                    orientTowardsTarget(gameState.currentTarget);
+            if (angle > 0.26) { // ~15 degrees in radians
+                // Use local function to avoid dependency issues
+                function quickOrientToTarget(target) {
+                    if (!target || typeof cameraRotation === 'undefined') return;
+                    
+                    const direction = new THREE.Vector3().subVectors(target.position, camera.position).normalize();
+                    const targetRotationY = Math.atan2(-direction.x, -direction.z);
+                    const targetRotationX = Math.asin(direction.y);
+                    
+                    const rotLerpFactor = 0.08;
+                    const deltaY = targetRotationY - cameraRotation.y;
+                    const deltaX = targetRotationX - cameraRotation.x;
+                    
+                    let adjustedDeltaY = deltaY;
+                    if (Math.abs(deltaY) > Math.PI) {
+                        adjustedDeltaY = deltaY > 0 ? deltaY - 2 * Math.PI : deltaY + 2 * Math.PI;
+                    }
+                    
+                    cameraRotation.y += adjustedDeltaY * rotLerpFactor;
+                    cameraRotation.x += deltaX * rotLerpFactor;
                 }
+                
+                quickOrientToTarget(gameState.currentTarget);
             }
         }
-    } else if (gameState.autoNavigating && gameState.energy <= 5) {
-        gameState.autoNavigating = false;
-        gameState.autoNavOrienting = false;
+    }
+} else if (gameState.autoNavigating && gameState.energy <= 5) {
+    gameState.autoNavigating = false;
+    gameState.autoNavOrienting = false;
+    if (typeof showAchievement === 'function') {
         showAchievement('Energy Critical', 'Auto-navigation disabled - insufficient energy');
     }
-    
+}
+
     // Enhanced energy regeneration
     if (gameState.energy < 100) {
         gameState.energy = Math.min(100, gameState.energy + 0.06);
@@ -564,43 +623,6 @@ function destroyAsteroid(asteroid) {
     if (typeof gameState !== 'undefined' && gameState.currentTarget === asteroid) {
         gameState.currentTarget = null;
     }
-}
-
-function orientTowardsTarget(target) {
-    const direction = new THREE.Vector3().subVectors(target.position, camera.position).normalize();
-    
-    const targetRotationY = Math.atan2(-direction.x, -direction.z);
-    const targetRotationX = Math.asin(direction.y);
-    
-    const rotLerpFactor = 0.05;
-    const deltaY = targetRotationY - cameraRotation.y;
-    const deltaX = targetRotationX - cameraRotation.x;
-    
-    let adjustedDeltaY = deltaY;
-    if (Math.abs(deltaY) > Math.PI) {
-        adjustedDeltaY = deltaY > 0 ? deltaY - 2 * Math.PI : deltaY + 2 * Math.PI;
-    }
-    
-    cameraRotation.y += adjustedDeltaY * rotLerpFactor;
-    cameraRotation.x += deltaX * rotLerpFactor;
-    
-    const orientationThreshold = 0.087;
-    const isOriented = Math.abs(adjustedDeltaY) < orientationThreshold && Math.abs(deltaX) < orientationThreshold;
-    
-    return isOriented;
-}
-
-function executeSlingshot() {
-    let nearestPlanet = null;
-    let nearestDistance = Infinity;
-    
-    activePlanets.forEach(planet => {
-        const distance = camera.position.distanceTo(planet.position);
-        if (distance < 60 && distance < nearestDistance) { // DOUBLED from 30
-            nearestPlanet = planet;
-            nearestDistance = distance;
-        }
-    });
     
     if (nearestPlanet && gameState.energy >= 20 && !gameState.slingshot.active) {
         const planetMass = nearestPlanet.userData.mass || 1;
@@ -825,6 +847,143 @@ function createHyperspaceEffect() {
             
             setTimeout(() => trail.remove(), 300);
         }, i * 15);
+    }
+}
+
+function orientTowardsTarget(target) {
+    if (!target || typeof camera === 'undefined' || typeof cameraRotation === 'undefined') return false;
+    
+    const direction = new THREE.Vector3().subVectors(target.position, camera.position).normalize();
+    
+    const targetRotationY = Math.atan2(-direction.x, -direction.z);
+    const targetRotationX = Math.asin(direction.y);
+    
+    const rotLerpFactor = 0.05; // Smooth orientation speed
+    const deltaY = targetRotationY - cameraRotation.y;
+    const deltaX = targetRotationX - cameraRotation.x;
+    
+    // Handle rotation wrapping around ±π
+    let adjustedDeltaY = deltaY;
+    if (Math.abs(deltaY) > Math.PI) {
+        adjustedDeltaY = deltaY > 0 ? deltaY - 2 * Math.PI : deltaY + 2 * Math.PI;
+    }
+    
+    // Apply rotation changes
+    cameraRotation.y += adjustedDeltaY * rotLerpFactor;
+    cameraRotation.x += deltaX * rotLerpFactor;
+    
+    // Check if orientation is complete (within ~3 degrees)
+    const orientationThreshold = 0.05;
+    const isOriented = Math.abs(adjustedDeltaY) < orientationThreshold && Math.abs(deltaX) < orientationThreshold;
+    
+    return isOriented;
+}
+
+function executeSlingshot() {
+    let nearestPlanet = null;
+    let nearestDistance = Infinity;
+    
+    // Check active planets for slingshot opportunities
+    if (typeof activePlanets !== 'undefined' && activePlanets.length > 0) {
+        activePlanets.forEach(planet => {
+            if (!planet || !planet.userData || planet.userData.type === 'asteroid') return;
+            
+            const distance = camera.position.distanceTo(planet.position);
+            if (distance < 60 && distance < nearestDistance) { // Doubled range for doubled world
+                nearestPlanet = planet;
+                nearestDistance = distance;
+            }
+        });
+    }
+    
+    if (nearestPlanet && gameState.energy >= 20 && !gameState.slingshot.active) {
+        const planetMass = nearestPlanet.userData.mass || 1;
+        const planetRadius = nearestPlanet.geometry ? nearestPlanet.geometry.parameters.radius : 5;
+        
+        // Get forward direction from camera
+        const forwardDirection = new THREE.Vector3();
+        camera.getWorldDirection(forwardDirection);
+        
+        // Calculate direction to planet
+        const planetDirection = new THREE.Vector3().subVectors(
+            nearestPlanet.position, 
+            camera.position
+        ).normalize();
+        
+        // Create slingshot direction (perpendicular to planet direction)
+        const slingDirection = new THREE.Vector3().crossVectors(planetDirection, camera.up).normalize();
+        const slingshotDirection = forwardDirection.clone().add(slingDirection).normalize();
+        
+        // Calculate slingshot power based on planet properties
+        const slinghotPower = (planetMass * planetRadius) / 5; // Adjusted for doubled world
+        const baseVelocity = 3.0 + slinghotPower;
+        const boostVelocity = Math.min(baseVelocity, gameState.slingshot.maxSpeed);
+        
+        // Apply slingshot velocity
+        gameState.velocityVector.copy(slingshotDirection).multiplyScalar(boostVelocity);
+        gameState.energy = Math.max(5, gameState.energy - 20);
+        
+        // Set slingshot state
+        gameState.slingshot.active = true;
+        gameState.slingshot.timeRemaining = gameState.slingshot.duration;
+        
+        // Enhanced effects based on planet type and size
+        if (nearestPlanet.userData.type === 'blackhole') {
+            // Check if it's an interstellar slingshot
+            const targetGalaxy = findNearbyDistantGalaxy();
+            if (targetGalaxy && typeof executeInterstellarSlingshot === 'function') {
+                return executeInterstellarSlingshot(nearestPlanet);
+            }
+            
+            if (typeof showAchievement === 'function') {
+                showAchievement('Black Hole Slingshot', `EXTREME VELOCITY: ${(boostVelocity * 1000).toFixed(0)} km/s!`);
+            }
+            for (let i = 0; i < 8; i++) {
+                setTimeout(() => {
+                    if (typeof createHyperspaceEffect === 'function') createHyperspaceEffect();
+                }, i * 200);
+            }
+        } else if (nearestPlanet.userData.name === 'Jupiter' || planetRadius > 10) {
+            if (typeof showAchievement === 'function') {
+                showAchievement('Giant Planet Slingshot', `${nearestPlanet.userData.name}: ${(boostVelocity * 1000).toFixed(0)} km/s!`);
+            }
+            for (let i = 0; i < 4; i++) {
+                setTimeout(() => {
+                    if (typeof createHyperspaceEffect === 'function') createHyperspaceEffect();
+                }, i * 150);
+            }
+        } else {
+            if (typeof showAchievement === 'function') {
+                showAchievement('Gravitational Slingshot', `${nearestPlanet.userData.name}: ${(boostVelocity * 1000).toFixed(0)} km/s!`);
+            }
+            for (let i = 0; i < 2; i++) {
+                setTimeout(() => {
+                    if (typeof createHyperspaceEffect === 'function') createHyperspaceEffect();
+                }, i * 100);
+            }
+        }
+        
+        // Update distance traveled
+        gameState.distance += slinghotPower * 5;
+        if (typeof updateUI === 'function') updateUI();
+        
+        return true;
+    } else {
+        // Handle different failure cases
+        if (!nearestPlanet) {
+            if (typeof showAchievement === 'function') {
+                showAchievement('No Planet in Range', 'Move closer to a planet to execute slingshot');
+            }
+        } else if (gameState.energy < 20) {
+            if (typeof showAchievement === 'function') {
+                showAchievement('Insufficient Energy', 'Need 20+ energy for gravitational slingshot');
+            }
+        } else if (gameState.slingshot.active) {
+            if (typeof showAchievement === 'function') {
+                showAchievement('Slingshot Active', 'Already performing gravitational maneuver');
+            }
+        }
+        return false;
     }
 }
 
