@@ -155,7 +155,9 @@
         }
 
         /* MINIMAL MOBILE ADDITIONS - Only hide UI on mobile and add control buttons */
-        @media (max-width: 768px), (hover: none) {
+        @media (max-width: 768px) and (pointer: coarse), 
+       (max-width: 768px) and (hover: none), 
+       (pointer: coarse) and (hover: none) {
             /* Hide all desktop UI panels on mobile */
             .ui-panel {
                 display: none !important;
@@ -370,6 +372,22 @@
             width: 30px;
             height: 30px;
         }
+        
+        /* Force hide mobile controls on desktop - stronger override */
+@media (min-width: 769px) and (pointer: fine) and (hover: hover) {
+    .mobile-controls {
+        display: none !important;
+        visibility: hidden !important;
+    }
+    .nav-panel-mobile {
+        display: none !important;
+        visibility: hidden !important;
+    }
+    .mobile-popup {
+        display: none !important;
+        visibility: hidden !important;
+    }
+}
     </style>
 </head>
 <body class="text-white">
@@ -1221,12 +1239,34 @@
             checkMobileGameOver();
         }, 1000);
         
-        // Show mobile controls after intro completes - ENHANCED
-        document.addEventListener('DOMContentLoaded', () => {
-            let introCompleted = false;
-            
-            // Listen for when intro completes
-            const observer = new MutationObserver((mutations) => {
+        // Show mobile controls after intro completes - FIXED
+document.addEventListener('DOMContentLoaded', () => {
+    let introCompleted = false;
+    
+    function showMobileControlsIfMobile() {
+        // Only show on actual mobile devices
+        function isMobileDevice() {
+            const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+            const isNarrowScreen = window.innerWidth <= 768;
+            const isCoarsePointer = window.matchMedia("(pointer: coarse)").matches;
+            return isTouchDevice && (isNarrowScreen || isCoarsePointer);
+        }
+        
+        if (isMobileDevice()) {
+            const mobileControls = document.querySelector('.mobile-controls');
+            const navPanelMobile = document.querySelector('.nav-panel-mobile');
+            if (mobileControls) {
+                mobileControls.style.display = 'flex';
+                console.log('📱 Mobile controls now visible after sequence');
+            }
+            if (navPanelMobile) {
+                navPanelMobile.style.display = 'block';
+            }
+        }
+    }
+    
+    // Listen for when intro completes
+    const observer = new MutationObserver((mutations) => {
                 mutations.forEach((mutation) => {
                     if (mutation.type === 'attributes' && mutation.attributeName === 'class') {
                         const body = document.body;
@@ -1234,14 +1274,9 @@
                             introCompleted = true;
                             // Intro has finished, show mobile controls after launch sequence
                             setTimeout(() => {
-                                const loadingScreen = document.getElementById('loadingScreen');
-                                if (!loadingScreen || loadingScreen.style.display === 'none') {
-                                    const mobileControls = document.querySelector('.mobile-controls');
-                                    const navPanelMobile = document.querySelector('.nav-panel-mobile');
-                                    if (mobileControls) {
-                                        mobileControls.style.display = 'flex';
-                                        console.log('ðŸ“± Mobile controls now visible after launch sequence');
-                                    }
+    const loadingScreen = document.getElementById('loadingScreen');
+    if (!loadingScreen || loadingScreen.style.display === 'none') {
+        showMobileControlsIfMobile();
                                     if (navPanelMobile) {
                                         navPanelMobile.style.display = 'block';
                                     }
@@ -1286,57 +1321,35 @@
             }
         });
     </script>
+<script>
 
-    <!-- SINGLE BOOTSTRAP CALL - Simplified initialization -->
-    <script>
-        window.addEventListener('load', () => {
-            console.log('ðŸš€ Starting Interstellar Slingshot...');
-            
-            const initialize = () => {
-                try {
-                    // Check if all required systems are available
-                    if (typeof gameState === 'undefined') {
-                        console.log('â³ Waiting for gameState...');
-                        setTimeout(initialize, 50);
-                        return;
-                    }
-                    
-                    if (typeof setupEnhancedEventListeners === 'undefined') {
-                        console.log('â³ Waiting for game controls...');
-                        setTimeout(initialize, 50);
-                        return;
-                    }
-                    
-                    console.log('âœ… All systems loaded, initializing game...');
-                    
-                    // Use the intro sequence version if available, otherwise fallback to normal start
-                    if (typeof startGameWithIntro === 'function') {
-                        console.log('ðŸŽ¬ Starting with intro sequence...');
-                        startGameWithIntro();
-                    } else if (typeof startGame === 'function') {
-                        console.log('ðŸŽ® Starting normal game...');
-                        startGame();
-                        
-                        // Initialize controls after game starts
-                        if (typeof initControls === 'function') {
-                            setTimeout(initControls, 500);
-                        } else if (typeof setupEnhancedEventListeners === 'function') {
-                            setTimeout(setupEnhancedEventListeners, 500);
-                        }
-                    } else {
-                        console.error('âŒ No game start function found');
-                    }
-                    
-                } catch (error) {
-                    console.error('âŒ Initialization error:', error);
-                    // DISABLED: Retry mechanism was causing double initialization
-                    // setTimeout(initialize, 200);
-                }
-            };
-            
-            // Start initialization after a brief delay
-            setTimeout(initialize, 100);
-        });
+// Prevent multiple initialization
+let gameInitialized = false;
+
+window.addEventListener('load', () => {
+    if (gameInitialized) return;
+    gameInitialized = true;
+    
+    console.log('🚀 Starting Interstellar Slingshot...');
+    
+    // Simple timeout to ensure all scripts are loaded
+    setTimeout(() => {
+        try {
+            if (typeof startGameWithIntro === 'function') {
+                console.log('🎬 Starting with intro sequence...');
+                startGameWithIntro();
+            } else if (typeof startGame === 'function') {
+                console.log('🎮 Starting normal game...');
+                startGame();
+            } else {
+                console.error('❌ No game start function found');
+            }
+        } catch (error) {
+            console.error('❌ Initialization error:', error);
+        }
+    }, 100);
+});
+    
     </script>
 </body>
 </html>
