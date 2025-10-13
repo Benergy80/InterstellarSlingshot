@@ -1,4 +1,5 @@
 // Game Intro - Cinematic Launch Sequence from Earth
+// Adapted for Spherical Universe System
 // Creates an immersive first-person launch experience before normal gameplay begins
 // FIXED: Proper fade to black and fade in timing, enhanced cyberpunk mission command text
 
@@ -33,6 +34,7 @@ const introSequence = {
     shakeIntensity: 0,
     gameSetupStarted: false,
     orbitsCreated: false,
+    tutorialStarted: false,
     
     // UI state
     countdownValue: 10,
@@ -40,7 +42,8 @@ const introSequence = {
     
     // Audio state
     countdownAudio: null,
-    launched: false
+    launched: false,
+    startKeyHandler: null
 };
 
 // One-time intro system
@@ -62,7 +65,7 @@ function hasIntroBeenPlayed() {
 function markIntroAsPlayed() {
     try {
         localStorage.setItem(introPlayedKey, 'true');
-        console.log('ðŸŽ¬ Intro marked as played');
+        console.log('🏁 Intro marked as played');
     } catch (e) {
         console.warn('Could not save intro played state');
     }
@@ -71,7 +74,7 @@ function markIntroAsPlayed() {
 function resetIntroState() {
     try {
         localStorage.removeItem(introPlayedKey);
-        console.log('ðŸ”„ Intro state reset - will play again on next load');
+        console.log('🔄 Intro state reset - will play again on next load');
     } catch (e) {
         console.warn('Could not reset intro state');
     }
@@ -82,7 +85,7 @@ function resetIntroState() {
 // =============================================================================
 
 function startGameWithIntro() {
-    console.log('ðŸš€ Starting game with cinematic intro sequence...');
+    console.log('🚀 Starting game with cinematic intro sequence...');
     
     try {
         // Check if this is a restart (mission restart bypasses intro)
@@ -91,10 +94,10 @@ function startGameWithIntro() {
         // Check if intro has already been played OR if this is a restart
         if (hasIntroBeenPlayed() || isRestart) {
             if (isRestart) {
-                console.log('ðŸ”„ Game restart detected, skipping intro');
+                console.log('🔄 Game restart detected, skipping intro');
                 sessionStorage.removeItem('gameRestart'); // Clear restart flag
             } else {
-                console.log('â­ï¸ Intro already played, starting normal game');
+                console.log('⏭️ Intro already played, starting normal game');
             }
             
             // Show loading screen briefly, then start normal game
@@ -123,27 +126,22 @@ function startGameWithIntro() {
                 } else {
                     startControlledFadeSequence();
                 }
-            }, 6000); // 6 second loading delay
+            }, 3000); // 3 second loading delay (FAST)
             return;
         }
         
         // Show loading screen for 3 seconds first
-const loadingScreen = document.getElementById('loadingScreen');
-if (loadingScreen) {
-    loadingScreen.style.display = 'flex';
-    console.log('Loading screen shown for 3 seconds');
-}
+        const loadingScreen = document.getElementById('loadingScreen');
+        if (loadingScreen) {
+            loadingScreen.style.display = 'flex';
+            console.log('Loading screen shown for 3 seconds (FAST mode)');
+        }
 
-// ADD THIS LINE HERE - Start loading animation immediately
-startLoadingAnimation();
-// Setup intro content BEFORE Three.js init
-setupIntroContentFirst();
-
-// ADD THIS LINE HERE - Start loading animation immediately
-startLoadingAnimation();
-
-// Setup intro content BEFORE Three.js init
-setupIntroContentFirst();
+        // ADD THIS LINE HERE - Start loading animation immediately
+        startLoadingAnimation();
+        
+        // Setup intro content BEFORE Three.js init
+        setupIntroContentFirst();
         
         // Initialize Three.js during loading
         setTimeout(() => {
@@ -164,10 +162,10 @@ setupIntroContentFirst();
             } else {
                 startControlledFadeSequence();
             }
-        }, 6000); // 6 second loading delay - CHANGED FROM 2000
+        }, 3000); // 3 second loading delay (FAST) - CHANGED FROM 6000
         
     } catch (error) {
-        console.error('âŒ Error starting intro sequence:', error);
+        console.error('❌ Error starting intro sequence:', error);
         // Don't start normal game during intro - just show loading and retry
         const loadingScreen = document.getElementById('loadingScreen');
         if (loadingScreen && loadingScreen.style.display === 'none') {
@@ -185,7 +183,7 @@ function initializeThreeJSForIntro() {
     // Initialize basic Three.js components
     scene = new THREE.Scene();
     
-    camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 100000);
+    camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 250000);
     renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setSize(window.innerWidth, window.innerHeight);
     
@@ -223,12 +221,16 @@ function initializeThreeJSForIntro() {
             emergencyWarp: { available: 5 },
             weapons: { armed: true },
             currentTarget: null,
-            targetLock: { active: false, target: null }
+            targetLock: { active: false, target: null },
+            velocityVector: new THREE.Vector3(0, 0, 0)
         };
     } else {
         // Update existing gameState for intro
         gameState.gameStarted = false;
         gameState.location = 'Earth Surface - Launch Pad';
+        if (!gameState.velocityVector) {
+            gameState.velocityVector = new THREE.Vector3(0, 0, 0);
+        }
     }
     
     // Add basic lighting for intro
@@ -245,7 +247,7 @@ function initializeThreeJSForIntro() {
     createEarthAtmosphere();
     setupEarthSurfaceView();
     window.atmosphereCreated = true;
-    console.log('ðŸŒ¤ï¸ Earth atmosphere created (will be revealed during fade)');
+    console.log('🌤️ Earth atmosphere created (will be revealed during fade)');
     
     // IMMEDIATELY create black overlay to prevent flash
     const blackOverlay = document.createElement('div');
@@ -255,14 +257,14 @@ function initializeThreeJSForIntro() {
     blackOverlay.style.zIndex = '30'; // Above scene, below UI
     document.body.appendChild(blackOverlay);
     
-    console.log('âš« Black overlay created immediately to prevent flash');
+    console.log('⚫ Black overlay created immediately to prevent flash');
 }
 
 function initializeMinimalThreeJS() {
     // Initialize basic Three.js components for intro-skipped version
     scene = new THREE.Scene();
     
-    camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 100000);
+    camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 250000);
     renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.setClearColor(0x000000); // Start with black
@@ -290,12 +292,16 @@ function initializeMinimalThreeJS() {
             emergencyWarp: { available: 5 },
             weapons: { armed: true },
             currentTarget: null,
-            targetLock: { active: false, target: null }
+            targetLock: { active: false, target: null },
+            velocityVector: new THREE.Vector3(0, 0, 0)
         };
     } else {
         // Update existing gameState for intro
         gameState.gameStarted = false;
         gameState.location = 'Earth Surface - Launch Pad';
+        if (!gameState.velocityVector) {
+            gameState.velocityVector = new THREE.Vector3(0, 0, 0);
+        }
     }
     
     console.log('Minimal Three.js initialized for intro sequence');
@@ -308,23 +314,23 @@ function initializeMinimalThreeJS() {
 function startLoadingAnimation() {
     let progress = 0;
     const loadingTexts = [
-    "Starting enhanced systems...",
-    "Loading cosmic data (doubled scale)...", 
-    "Scanning galaxy coordinates...",
-    "Calculating orbital mechanics...",
-    "Calibrating gravitational sensors...",
-    "Initializing gravitational assist systems...",
-    "Preparing cyberpunk 3D environment...",
-    "Loading enhanced weapon systems...",
-    "Optimizing neural interface...",
-    "Setting up eerie space audio...",
-    "Synchronizing quantum drives...",
-    "Ready for enhanced launch!"
-];
+        "Starting enhanced systems...",
+        "Loading cosmic data (spherical universe)...", 
+        "Scanning galaxy coordinates...",
+        "Calculating orbital mechanics...",
+        "Calibrating gravitational sensors...",
+        "Initializing gravitational assist systems...",
+        "Preparing cyberpunk 3D environment...",
+        "Loading enhanced weapon systems...",
+        "Optimizing neural interface...",
+        "Setting up eerie space audio...",
+        "Synchronizing quantum drives...",
+        "Ready for enhanced launch!"
+    ];
     
     const interval = setInterval(() => {
-    progress += 0.8 + Math.random() * 1.2; // MUCH SLOWER - takes 6 seconds
-    progress = Math.min(progress, 100);
+        progress += 1.5 + Math.random() * 2.0; // FAST - takes ~3 seconds
+        progress = Math.min(progress, 100);
         
         const loadingBar = document.getElementById('loadingBar');
         const loadingText = document.getElementById('loadingText');
@@ -334,10 +340,10 @@ function startLoadingAnimation() {
         }
         
         // Update loading text based on progress
-        const textIndex = Math.floor(progress / 14.3); // 7 messages over 100% progress (for slower loading) / 12.5); // 8 messages over 100% progress
+        const textIndex = Math.floor(progress / 8.3); // 12 messages over 100% progress
         if (loadingText && textIndex < loadingTexts.length) {
             loadingText.textContent = loadingTexts[textIndex];
-            console.log(`ðŸ“Š Loading: ${progress.toFixed(0)}% - ${loadingTexts[textIndex]}`);
+            console.log(`📊 Loading: ${progress.toFixed(0)}% - ${loadingTexts[textIndex]}`);
         }
         
         if (progress >= 100) {
@@ -345,21 +351,28 @@ function startLoadingAnimation() {
             if (loadingText) {
                 loadingText.textContent = "Ready for enhanced launch!";
             }
-            console.log('ðŸš€ Loading animation completed');
+            console.log('🚀 Loading animation completed in ~3 seconds');
         }
-    }, 80); // Update every 80ms - slower updates
+    }, 60); // Update every 60ms - fast updates
     
-    console.log('ðŸš€ Loading bar animation started with progress text');
+    console.log('🚀 Loading bar animation started with FAST progress');
 }
 
 function startIntroSequence() {
     // This function now only handles the post-fade intro logic
     // Visual setup is handled by the controlled fade sequence
-    console.log('ðŸŽ® Intro sequence - post-fade setup');
+    console.log('🎬 Intro sequence - post-fade setup');
 }
 
 function startControlledFadeSequence() {
-    console.log('ðŸŽ® Starting controlled fade-in sequence...');
+    console.log('🎬 Starting controlled fade-in sequence...');
+    // NEW TIMELINE (FAST mode):
+    // T+0.0s: Loading starts (3 seconds)
+    // T+3.0s: Loading complete, screen fades to black (1 second)
+    // T+4.0s: Black screen, intro initializes
+    // T+4.5s: Background starts fading from black to sky (2.5 seconds)
+    // T+5.6s: Buttons appear (1 second after sky starts fading)
+    // T+7.0s: Sky fully revealed, ready for player input
     
     // Initialize intro with UI already visible (faded in during loading)
     initializeIntroWithVisibleUI();
@@ -369,7 +382,7 @@ function startControlledFadeSequence() {
     
     // Wait 0.5 seconds after loading screen disappears, then start background fade
     setTimeout(() => {
-        console.log('ðŸŒŒ Starting background fade 0.5s after loading screen disappeared...');
+        console.log('🌅 Starting background fade 0.5s after loading screen disappeared...');
         
         // Enable scene visuals now (but they'll fade in gradually)
         revealIntroScene();
@@ -378,15 +391,14 @@ function startControlledFadeSequence() {
         startBackgroundColorFade();
         
         // Buttons will now show automatically when sky transition completes
-// No additional delay needed
-console.log('âœ¨ Fade sequence initiated, buttons will appear when sky transition finishes');
-
+        // No additional delay needed
+        console.log('✨ Fade sequence initiated, buttons will appear when sky transition finishes');
         
-    }, 500); // T+3.5 seconds: Background fade starts 0.5s after loading screen disappears
+    }, 500); // T+0.5 seconds: Background fade starts 0.5s after loading screen disappears (total elapsed: 4.5s from start)
 }
 
 function setupIntroContentFirst() {
-    console.log('ðŸ“± Setting up intro content before Three.js...');
+    console.log('📋 Setting up intro content before Three.js...');
     
     // Hide crosshair immediately
     const crosshair = document.getElementById('crosshair');
@@ -413,7 +425,7 @@ function setupIntroContentFirst() {
     
     // Fade in ALL UI elements with IDENTICAL timing after 1 second
     setTimeout(() => {
-        console.log('ðŸ“± Fading in ALL UI elements with identical timing...');
+        console.log('📋 Fading in ALL UI elements with identical timing...');
         
         allUIPanels.forEach(panel => {
             // Set identical transition for ALL panels
@@ -435,13 +447,13 @@ function setupIntroContentFirst() {
         });
     }, 1000);
     
-    console.log('ðŸ“± Intro content setup complete, ready for Three.js init');
+    console.log('📋 Intro content setup complete, ready for Three.js init');
 }
 
 function ensureBasicUIPanelsExist() {
     // Make sure basic UI elements exist before updating them
     if (!document.getElementById('velocity')) {
-        console.log('ðŸ“± Creating basic UI panels for intro');
+        console.log('📋 Creating basic UI panels for intro');
         // Trigger basic UI creation if it doesn't exist
         if (typeof createBasicUI === 'function') {
             createBasicUI();
@@ -450,7 +462,7 @@ function ensureBasicUIPanelsExist() {
 }
 
 function startBackgroundColorFade() {
-    console.log('ðŸŽ¨ Starting black overlay fade to reveal atmosphere');
+    console.log('🎨 Starting black overlay fade to reveal atmosphere');
     
     // Find the existing black overlay (created during Three.js init)
     const blackOverlay = document.getElementById('atmosphereFadeOverlay');
@@ -468,14 +480,14 @@ function startBackgroundColorFade() {
         // Remove overlay after fade completes
         setTimeout(() => {
             blackOverlay.remove();
-            console.log('ðŸŽ¨ Black overlay fade complete - atmosphere revealed');
+            console.log('🎨 Black overlay fade complete - atmosphere revealed');
         }, 2500);
     }, 100); // Small delay to ensure transition is applied
     
     // ADD THIS: Show buttons 1 second after sky transition starts
     setTimeout(() => {
         showStartButton();
-        console.log('ðŸš€ Buttons fading in 1 second after sky transition started');
+        console.log('🚀 Buttons fading in 1 second after sky transition started');
     }, 1100); // 100ms (initial delay) + 1000ms = 1.1 seconds after sky transition starts
 }
 
@@ -502,7 +514,7 @@ function initializeIntroWithVisibleUI() {
     document.body.classList.add('intro-active');
     document.body.style.cursor = 'auto !important';
     
-    console.log('ðŸŽ® Intro initialized with black scene and VISIBLE UI');
+    console.log('🎬 Intro initialized with black scene and VISIBLE UI');
 }
 
 function setupIntroUIContent() {
@@ -534,8 +546,9 @@ function setupIntroUIContent() {
         }
     });
     
-    console.log(`ðŸ“± Intro UI content setup complete: ${allUIPanels.length} panels visible simultaneously`);
+    console.log(`📋 Intro UI content setup complete: ${allUIPanels.length} panels visible simultaneously`);
 }
+
 function setupIntroUIWithoutShowing() {
     // FIRST: Force hide crosshairs immediately and permanently
     const crosshair = document.getElementById('crosshair');
@@ -558,7 +571,7 @@ function setupIntroUIWithoutShowing() {
         panel.style.visibility = 'visible'; // But make sure they're not hidden
     });
     
-    console.log('ðŸ“± Intro UI setup complete but hidden for fade-in');
+    console.log('📋 Intro UI setup complete but hidden for fade-in');
 }
 
 function revealIntroScene() {
@@ -578,7 +591,7 @@ function revealIntroScene() {
     // Start intro animation loop
     animateIntroSequence();
     
-    console.log('ðŸŒŒ Intro scene revealed with persistent UI');
+    console.log('🌅 Intro scene revealed with persistent UI');
 }
 
 function showStartButton() {
@@ -602,7 +615,7 @@ function showStartButton() {
         introSequence.skipButton.style.opacity = '0.7';
     }
     
-    console.log('ðŸš€ Start button and skip button faded in');
+    console.log('🚀 Start button and skip button faded in');
 }
 
 // =============================================================================
@@ -680,7 +693,7 @@ function createEarthAtmosphere() {
     // Create atmosphere glow effect
     createAtmosphereGlow();
     
-    console.log('ðŸŒ¤ï¸ Earth atmosphere created');
+    console.log('🌤️ Earth atmosphere created');
 }
 
 function createCloudLayers() {
@@ -921,7 +934,6 @@ function createCountdownOverlay() {
     
     document.body.appendChild(countdownOverlay);
 }
-
 function createSkipButton() {
     const skipButton = document.createElement('button');
     skipButton.id = 'skipIntroBtn';
@@ -930,26 +942,26 @@ function createSkipButton() {
     skipButton.addEventListener('click', skipIntroSequence);
     
     // Apply space-btn styling with cyan colors
-skipButton.style.cssText = `
-    position: fixed !important;
-    bottom: 16px !important;
-    left: 50% !important;
-    transform: translateX(-50%) !important;
-    width: auto !important;
-    padding: 8px 16px !important;
-    background: linear-gradient(135deg, rgba(0,150,255,0.2), rgba(0,100,200,0.3)) !important;
-    backdrop-filter: blur(5px) !important;
-    border: 1px solid rgba(0,150,255,0.5) !important;
-    border-radius: 6px !important;
-    color: rgba(0,255,200,0.9) !important;
-    font-family: 'Orbitron', monospace !important;
-    font-size: 12px !important;
-    cursor: pointer !important;
-    opacity: 0 !important;
-    transition: all 0.3s ease !important;
-    z-index: 80 !important;
-    box-shadow: 0 4px 15px rgba(0,150,255,0.2), inset 0 1px 0 rgba(0,150,255,0.3) !important;
-`;
+    skipButton.style.cssText = `
+        position: fixed !important;
+        bottom: 16px !important;
+        left: 50% !important;
+        transform: translateX(-50%) !important;
+        width: auto !important;
+        padding: 8px 16px !important;
+        background: linear-gradient(135deg, rgba(0,150,255,0.2), rgba(0,100,200,0.3)) !important;
+        backdrop-filter: blur(5px) !important;
+        border: 1px solid rgba(0,150,255,0.5) !important;
+        border-radius: 6px !important;
+        color: rgba(0,255,200,0.9) !important;
+        font-family: 'Orbitron', monospace !important;
+        font-size: 12px !important;
+        cursor: pointer !important;
+        opacity: 0 !important;
+        transition: all 0.3s ease !important;
+        z-index: 80 !important;
+        box-shadow: 0 4px 15px rgba(0,150,255,0.2), inset 0 1px 0 rgba(0,150,255,0.3) !important;
+    `;
     
     skipButton.addEventListener('mouseenter', () => {
         skipButton.style.background = 'linear-gradient(135deg, rgba(0, 150, 0, 0.3) 0%, rgba(0, 200, 0, 0.3) 100%)';
@@ -959,11 +971,11 @@ skipButton.style.cssText = `
     });
     
     skipButton.addEventListener('mouseleave', () => {
-    skipButton.style.background = 'linear-gradient(135deg, rgba(0,150,255,0.2), rgba(0,100,200,0.3))';
-    skipButton.style.borderColor = 'rgba(0,150,255,0.5)';
-    skipButton.style.boxShadow = '0 4px 15px rgba(0,150,255,0.2), inset 0 1px 0 rgba(0,150,255,0.3)';
-    skipButton.style.color = 'rgba(0,255,200,0.9)';
-});
+        skipButton.style.background = 'linear-gradient(135deg, rgba(0,150,255,0.2), rgba(0,100,200,0.3))';
+        skipButton.style.borderColor = 'rgba(0,150,255,0.5)';
+        skipButton.style.boxShadow = '0 4px 15px rgba(0,150,255,0.2), inset 0 1px 0 rgba(0,150,255,0.3)';
+        skipButton.style.color = 'rgba(0,255,200,0.9)';
+    });
     
     document.body.appendChild(skipButton);
     introSequence.skipButton = skipButton;
@@ -1060,18 +1072,18 @@ function beginLaunchSequence() {
     }
     
     // Start countdown
-    console.log('⏰ Starting countdown...');
+    console.log('⏱️ Starting countdown...');
     
     // INITIALIZE AUDIO SYSTEM ON FIRST USER INTERACTION
     if (typeof initAudio === 'function') {
         initAudio();
-        console.log('ðŸ”Š Audio system initialized on user interaction');
+        console.log('🔊 Audio system initialized on user interaction');
     }
     
     // RESUME AUDIO CONTEXT (required for browsers)
     if (typeof resumeAudioContext === 'function') {
         resumeAudioContext();
-        console.log('ðŸ”Š Audio context resumed - all sound enabled');
+        console.log('🔊 Audio context resumed - all sound enabled');
     }
     
     // Play button sound (existing code - keep this)
@@ -1083,21 +1095,15 @@ function beginLaunchSequence() {
     if (typeof startBackgroundMusic === 'function') {
         setTimeout(() => {
             startBackgroundMusic();
-            console.log('ðŸŽµ Background music started during intro');
+            console.log('🎵 Background music started during intro');
         }, 500);
     }
     
     // CREATE ATMOSPHERE NOW - needed for liftoff animation (existing code - keep this)
     if (!window.atmosphereCreated) {
-        console.log('ðŸŒ¤ï¸ Creating atmosphere for liftoff animation...');
+        console.log('🌤️ Creating atmosphere for liftoff animation...');
         createEarthAtmosphere();
         window.atmosphereCreated = true;
-    }
-    
-    // Remove start button
-    if (introSequence.startButton) {
-        introSequence.startButton.remove();
-        introSequence.startButton = null;
     }
     
     // Make skip button fully visible
@@ -1108,11 +1114,12 @@ function beginLaunchSequence() {
     // Skip surface phase, go directly to countdown
     transitionToCountdown();
 }
+
 function startTitleFlashing() {
     const gameTitle = document.getElementById('gameTitle');
     if (gameTitle) {
         gameTitle.classList.add('title-flash');
-        console.log('ðŸŽ† Title flashing started during intro');
+        console.log('🎯 Title flashing started during intro');
     }
 }
 
@@ -1120,9 +1127,10 @@ function stopTitleFlashing() {
     const gameTitle = document.getElementById('gameTitle');
     if (gameTitle) {
         gameTitle.classList.remove('title-flash');
-        console.log('ðŸŽ† Title flashing stopped');
+        console.log('🎯 Title flashing stopped');
     }
 }
+
 // =============================================================================
 // ANIMATION AND PHASE MANAGEMENT
 // =============================================================================
@@ -1190,31 +1198,35 @@ function animateSurfacePhase(elapsed) {
     }
 }
 
-// Add this to your animateCountdownPhase() function to debug:
 function animateCountdownPhase(elapsed) {
     const progress = elapsed / introSequence.duration.countdown;
     
-    // Show countdown overlay
+    // Show countdown overlay WITH WIPE-DOWN EFFECT
     const overlay = document.getElementById('introCountdownOverlay');
     if (overlay && overlay.classList.contains('hidden')) {
         overlay.classList.remove('hidden');
-        // DEBUG: Log when overlay appears
-        console.log('ðŸ” DEBUG: Countdown overlay shown, z-index:', getComputedStyle(overlay).zIndex);
+        
+        // Trigger wipe-down animation from top to bottom
+        requestAnimationFrame(() => {
+            overlay.style.clipPath = 'inset(0 0 0 0)'; // Reveal full overlay
+        });
+        
+        console.log('🕐 Countdown overlay wiping down from top');
         
         // FORCE lower z-index immediately
         overlay.style.zIndex = '25';
         overlay.style.pointerEvents = 'none';
     }
     
-     // Update countdown timer
+    // Update countdown timer
     const newCountdown = Math.max(0, Math.ceil(10 - (elapsed / 1000)));
     if (newCountdown !== introSequence.countdownValue) {
         introSequence.countdownValue = newCountdown;
         updateCountdownDisplay(newCountdown);
         
-        // Play countdown tick sound
+        // Play countdown tick sound (very quiet)
         if (newCountdown > 0 && typeof playSound === 'function') {
-            playSound('achievement', 800, 0.05);  // QUIETER: was 0.1
+            playSound('achievement', 800, 0.02);
         }
     }
     
@@ -1291,7 +1303,7 @@ function animateTransitionPhase(elapsed) {
                 createOrbitLines();
             }
             introSequence.orbitsCreated = true;
-            console.log('ðŸŒŒ Orbit lines created during black screen');
+            console.log('🌅 Orbit lines created during black screen');
         }
     } else {
         // Slow fade in from black (remaining time)
@@ -1299,21 +1311,21 @@ function animateTransitionPhase(elapsed) {
         createFadeFromBlack(fadeInProgress);
     }
     
-// Fade out intro elements after game appears
-if (progress < 0.8) {
-    fadeOutIntroElements(progress / 0.8);
-}
+    // Fade out intro elements after game appears
+    if (progress < 0.8) {
+        fadeOutIntroElements(progress / 0.8);
+    }
 
-// Start tutorial once fade is mostly complete
-const fadeInProgress = (progress - 0.6) / 0.8;
-if (fadeInProgress > 0.8 && typeof startTutorial === 'function') {
-    // Tutorial will handle the final countdown text cleanup
-    setTimeout(startTutorial, 1000);
-}
+    // Start tutorial once fade is mostly complete
+    const fadeInProgress = (progress - 0.6) / 0.8;
+    if (fadeInProgress > 0.8 && typeof startTutorial === 'function') {
+        // Tutorial will handle the final countdown text cleanup
+        setTimeout(startTutorial, 1000);
+    }
     
     // Check for completion
     if (elapsed >= introSequence.duration.transition) {
-        console.log('ðŸ Transition phase complete');
+        console.log('🎬 Transition phase complete');
         introSequence.phase = 'complete';
     }
 }
@@ -1325,7 +1337,7 @@ if (fadeInProgress > 0.8 && typeof startTutorial === 'function') {
 function transitionToCountdown() {
     introSequence.phase = 'countdown';
     introSequence.phaseStartTime = Date.now();
-    console.log('ðŸ”¢ Intro phase: Countdown started');
+    console.log('⏱️ Intro phase: Countdown started');
     
     // Play launch preparation sound
     if (typeof playSound === 'function') {
@@ -1336,7 +1348,7 @@ function transitionToCountdown() {
 function transitionToLaunch() {
     introSequence.phase = 'launch';
     introSequence.phaseStartTime = Date.now();
-    console.log('ðŸš€ Intro phase: Launch initiated');
+    console.log('🚀 Intro phase: Launch initiated');
     
     // Update countdown display to show "LAUNCH"
     updateCountdownDisplay(0);
@@ -1345,11 +1357,27 @@ function transitionToLaunch() {
 function transitionToTransition() {
     introSequence.phase = 'transition';
     introSequence.phaseStartTime = Date.now();
-    console.log('ðŸŒŒ Intro phase: Transition to space');
+    console.log('🌅 Intro phase: Transition to space - screen will stay black for 3 seconds during setup');
+    
+    // Ensure fade overlay exists and is fully black
+    if (!introSequence.fadeOverlay) {
+        introSequence.fadeOverlay = document.createElement('div');
+        introSequence.fadeOverlay.id = 'introFadeOverlay';
+        introSequence.fadeOverlay.className = 'absolute inset-0 bg-black pointer-events-none';
+        introSequence.fadeOverlay.style.position = 'fixed';
+        introSequence.fadeOverlay.style.zIndex = '60';
+        introSequence.fadeOverlay.style.opacity = '1';
+        document.body.appendChild(introSequence.fadeOverlay);
+        console.log('🖤 Fade overlay created at transition start - fully black');
+    } else {
+        // Make sure it's fully opaque
+        introSequence.fadeOverlay.style.opacity = '1';
+        console.log('🖤 Fade overlay already exists - ensuring fully black');
+    }
 }
 
 function completeIntroSequence() {
-    console.log('âœ… Intro sequence complete - starting normal game');
+    console.log('✅ Intro sequence complete - starting normal game');
     
     // Clear intro UI protection flags
     if (typeof window !== 'undefined') {
@@ -1364,22 +1392,22 @@ function completeIntroSequence() {
     });
     
     // FORCE RESET ALL UI panel effects and transforms
-const uiPanels = document.querySelectorAll('.ui-panel, .title-header');
-uiPanels.forEach(panel => {
-    // Check if this is the title panel
-    if (panel.classList.contains('title-header')) {
-        // Reset title panel to its proper centered position
-        panel.style.transform = 'translateX(-50%)';
-    } else {
-        // Clear transforms for other panels
-        panel.style.transform = '';
-    }
-    
-    // Clear all other effects
-    panel.style.filter = '';
-    panel.style.opacity = '';
-    panel.style.animation = '';
-});
+    const uiPanels = document.querySelectorAll('.ui-panel, .title-header');
+    uiPanels.forEach(panel => {
+        // Check if this is the title panel
+        if (panel.classList.contains('title-header')) {
+            // Reset title panel to its proper centered position
+            panel.style.transform = 'translateX(-50%)';
+        } else {
+            // Clear transforms for other panels
+            panel.style.transform = '';
+        }
+        
+        // Clear all other effects
+        panel.style.filter = '';
+        panel.style.opacity = '';
+        panel.style.animation = '';
+    });
     
     // Mark intro as played
     markIntroAsPlayed();
@@ -1389,7 +1417,7 @@ uiPanels.forEach(panel => {
     
     // Ensure any remaining fade overlay is removed
     if (introSequence.fadeOverlay) {
-        console.log('ðŸ§¹ Force removing remaining fade overlay');
+        console.log('🧹 Force removing remaining fade overlay');
         introSequence.fadeOverlay.remove();
         introSequence.fadeOverlay = null;
     }
@@ -1441,55 +1469,45 @@ function updateCountdownDisplay(count) {
             timer.className = 'text-8xl font-bold text-cyan-400 glow-text cyber-title mb-4';
             
             // Play NASA-style countdown beep
+            if (count > 0 && audioContext && audioContext.state !== 'suspended') {
+                const oscillator = audioContext.createOscillator();
+                const gain = audioContext.createGain();
+                
+                oscillator.connect(gain);
+                gain.connect(audioContext.destination);
+                
+                oscillator.frequency.setValueAtTime(800, audioContext.currentTime);
+                oscillator.type = 'sine';
+                
+                gain.gain.setValueAtTime(0, audioContext.currentTime);
+                gain.gain.linearRampToValueAtTime(0.03, audioContext.currentTime + 0.02); // MUCH QUIETER: was 0.06
+                gain.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + 0.4);
+                
+                oscillator.start(audioContext.currentTime);
+                oscillator.stop(audioContext.currentTime + 0.4);
+            }
             
-            function playNASACountdownBeep(number) {
-    if (!audioContext || audioContext.state === 'suspended') return;
-    
-    // Create a classic NASA-style countdown beep
-    if (count > 0 && audioContext && audioContext.state !== 'suspended') {
-    const oscillator = audioContext.createOscillator();
-    const gain = audioContext.createGain();
-    
-    oscillator.connect(gain);
-    gain.connect(audioContext.destination);
-    
-    oscillator.frequency.setValueAtTime(800, audioContext.currentTime);
-    oscillator.type = 'sine';
-    
-    gain.gain.setValueAtTime(0, audioContext.currentTime);
-    gain.gain.linearRampToValueAtTime(0.06, audioContext.currentTime + 0.02); // QUIETER: was 0.12
-    gain.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + 0.4);
-    
-    oscillator.start(audioContext.currentTime);
-    oscillator.stop(audioContext.currentTime + 0.4);
-}
-    
-    // Add a subtle echo for "mission control" feel
-    setTimeout(() => {
-        if (!audioContext || audioContext.state === 'suspended') return;
-        
-        const echoOsc = audioContext.createOscillator();
-        const echoGain = audioContext.createGain();
-        
-        echoOsc.connect(echoGain);
-        echoGain.connect(audioContext.destination);
-        
-        echoOsc.frequency.setValueAtTime(800, audioContext.currentTime);
-        echoOsc.type = 'sine';
-        
-        echoGain.gain.setValueAtTime(0, audioContext.currentTime);
-        echoGain.gain.linearRampToValueAtTime(0.04, audioContext.currentTime + 0.01); // QUIETER: was 0.08
-        echoGain.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + 0.2);
-        
-        const echoStart = audioContext.currentTime;
-        echoOsc.start(echoStart);
-        echoOsc.stop(echoStart + 0.2);
-    }, 150); // 150ms delay for echo
-}
-            
-if (count > 0) {
-    playNASACountdownBeep(count);
-}
+            // Add a subtle echo for "mission control" feel
+            setTimeout(() => {
+                if (!audioContext || audioContext.state === 'suspended') return;
+                
+                const echoOsc = audioContext.createOscillator();
+                const echoGain = audioContext.createGain();
+                
+                echoOsc.connect(echoGain);
+                echoGain.connect(audioContext.destination);
+                
+                echoOsc.frequency.setValueAtTime(800, audioContext.currentTime);
+                echoOsc.type = 'sine';
+                
+                echoGain.gain.setValueAtTime(0, audioContext.currentTime);
+                echoGain.gain.linearRampToValueAtTime(0.015, audioContext.currentTime + 0.01); // MUCH QUIETER: was 0.04
+                echoGain.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + 0.2);
+                
+                const echoStart = audioContext.currentTime;
+                echoOsc.start(echoStart);
+                echoOsc.stop(echoStart + 0.2);
+            }, 150); // 150ms delay for echo
         } else {
             timer.textContent = 'LIFTOFF';
             timer.className = 'text-6xl font-bold text-orange-400 glow-text cyber-title mb-4';
@@ -1543,7 +1561,7 @@ if (count > 0) {
     }
     
     if (systemStatusEl && count > 0) {
-        systemStatusEl.textContent = count > 3 ? 'â—‹ Engine Ignition Ready' : 'â—‰ Engine Ignition Active';
+        systemStatusEl.textContent = count > 3 ? '▸ Engine Ignition Ready' : '▹ Engine Ignition Active';
         systemStatusEl.className = count > 3 ? 'text-cyan-400' : 'text-yellow-400';
         systemStatusEl.style.fontFamily = "'Share Tech Mono', monospace";
         systemStatusEl.style.textShadow = count > 3 ? '0 0 8px rgba(0,255,255,0.6)' : '0 0 8px rgba(255,255,0,0.6)';
@@ -1575,28 +1593,28 @@ function updateLaunchUI(progress) {
     }
     
     // EXTENDED: Longer ascent phase, much later orbital message
-if (timer && status) {
-    if (progress < 0.2) {
-        // Shorter liftoff phase (0-20%)
-        timer.textContent = 'LIFTOFF';
-        timer.style.opacity = '1';
-        status.textContent = 'ASCENDING TO ORBIT';
-        status.style.opacity = '1';
-    } else if (progress < 0.85) {
-        // MUCH LONGER ascent phase (20-85%)
-        timer.textContent = 'ASCENDING';
-        timer.style.opacity = '1';
-        status.textContent = 'GAINING ALTITUDE';
-        status.style.opacity = '1';
-    } else {
-        // ORBITING phase appears much later (85%+)
-        timer.textContent = 'ORBITING EARTH';
-        timer.className = 'text-6xl font-bold text-cyan-400 glow-text cyber-title mb-4';
-        timer.style.opacity = '1'; // Always visible
-        status.textContent = 'ATMOSPHERIC ESCAPE SUCCESSFUL';
-        status.style.opacity = '1'; // Always visible
+    if (timer && status) {
+        if (progress < 0.2) {
+            // Shorter liftoff phase (0-20%)
+            timer.textContent = 'LIFTOFF';
+            timer.style.opacity = '1';
+            status.textContent = 'ASCENDING TO ORBIT';
+            status.style.opacity = '1';
+        } else if (progress < 0.85) {
+            // MUCH LONGER ascent phase (20-85%)
+            timer.textContent = 'ASCENDING';
+            timer.style.opacity = '1';
+            status.textContent = 'GAINING ALTITUDE';
+            status.style.opacity = '1';
+        } else {
+            // ORBITING phase appears much later (85%+)
+            timer.textContent = 'ORBITING EARTH';
+            timer.className = 'text-6xl font-bold text-cyan-400 glow-text cyber-title mb-4';
+            timer.style.opacity = '1'; // Always visible
+            status.textContent = 'ATMOSPHERIC ESCAPE SUCCESSFUL';
+            status.style.opacity = '1'; // Always visible
+        }
     }
-}
     
     // Update target info
     const targetInfo = document.getElementById('targetInfo');
@@ -1649,7 +1667,7 @@ function triggerLaunchEffects() {
     // Keep your screen rumble effect
     createLaunchRumble();
     
-    console.log('ðŸš€ Launch effects triggered with enhanced rumble');
+    console.log('🚀 Launch effects triggered with enhanced rumble');
 }
 
 function transitionSkyToSpace(progress) {
@@ -1749,7 +1767,7 @@ function createLaunchRumble() {
             }
         }, 3000);
         
-        console.log('ðŸŽ® Launch rumble applied to canvas only (preserving UI z-index)');
+        console.log('🎬 Launch rumble applied to canvas only (preserving UI z-index)');
     }
 }
 
@@ -1762,66 +1780,112 @@ function createFadeToBlackDuringLaunch(fadeProgress) {
     if (!introSequence.fadeOverlay) {
         introSequence.fadeOverlay = document.createElement('div');
         introSequence.fadeOverlay.id = 'introFadeOverlay';
-        introSequence.fadeOverlay.className = 'absolute inset-0 bg-black pointer-events-none z-60';
+        introSequence.fadeOverlay.className = 'absolute inset-0 bg-black pointer-events-none';
+        introSequence.fadeOverlay.style.position = 'fixed';
+        introSequence.fadeOverlay.style.top = '0';
+        introSequence.fadeOverlay.style.left = '0';
+        introSequence.fadeOverlay.style.width = '100%';
+        introSequence.fadeOverlay.style.height = '100%';
+        introSequence.fadeOverlay.style.zIndex = '60'; // Above everything except countdown (z-65)
         introSequence.fadeOverlay.style.opacity = '0';
+        introSequence.fadeOverlay.style.backgroundColor = '#000000';
         document.body.appendChild(introSequence.fadeOverlay);
+        console.log('🖤 Fade overlay created during launch at 50% progress');
     }
     
     // Fade to black over the second half of launch
     const opacity = Math.min(1, fadeProgress);
     introSequence.fadeOverlay.style.opacity = opacity.toString();
     
-    // DEBUG: Check what's happening to countdown elements
-    const timer = document.getElementById('countdownTimer');
-    const overlay = document.getElementById('introCountdownOverlay');
-    if (timer && overlay) {
-        console.log(`Fade ${(opacity * 100).toFixed(0)}% - Timer opacity: ${timer.style.opacity}, Overlay opacity: ${overlay.style.opacity}, Overlay z-index: ${overlay.style.zIndex}`);
+    if (fadeProgress >= 0.99) {
+        console.log(`🖤 Fade to black complete: ${(opacity * 100).toFixed(0)}% - screen now fully black`);
     }
-    
-    console.log(`Fading to black during launch: ${(opacity * 100).toFixed(0)}%`);
 }
 
 function createFadeFromBlack(progress) {
     // Fade from black to reveal the game
-    if (introSequence.fadeOverlay) {
-        const opacity = Math.max(0, 1 - progress);
-        introSequence.fadeOverlay.style.opacity = opacity.toString();
-        
-        // Remove overlay when fully faded in
-        if (progress >= 1 && opacity <= 0) {
-            console.log('ðŸŒŸ Removing fade overlay - game should now be visible');
-            introSequence.fadeOverlay.remove();
-            introSequence.fadeOverlay = null;
-        }
+    if (!introSequence.fadeOverlay) {
+        console.warn('⚠️ Fade overlay missing during fade from black!');
+        return;
+    }
+    
+    const opacity = Math.max(0, 1 - progress);
+    introSequence.fadeOverlay.style.opacity = opacity.toString();
+    
+    // Log at key milestones
+    if (progress === 0) {
+        console.log('🌟 Starting fade from black (100% opacity)');
+    } else if (progress >= 0.25 && progress < 0.26) {
+        console.log('🌟 Fade from black: 25% - stars becoming visible');
+    } else if (progress >= 0.5 && progress < 0.51) {
+        console.log('🌟 Fade from black: 50% - game half visible');
+    } else if (progress >= 0.75 && progress < 0.76) {
+        console.log('🌟 Fade from black: 75% - almost complete');
+    }
+    
+    // Remove overlay when fully faded in
+    if (progress >= 1 && opacity <= 0) {
+        console.log('🌟 Fade from black COMPLETE - removing overlay, game fully visible');
+        introSequence.fadeOverlay.remove();
+        introSequence.fadeOverlay = null;
     }
 }
 
 function setupNormalGameContent() {
-    console.log('ðŸŒŒ Setting up normal game content during fade...');
+    console.log('🌅 Setting up normal game content during fade...');
     
     // Clear the intro scene
     scene.clear();
     
     // Re-add basic lighting
-    const ambientLight = new THREE.AmbientLight(0x333333, 0.2);
+    const ambientLight = new THREE.AmbientLight(0x333333, 0.4);
     scene.add(ambientLight);
     
-    // Create normal game content
-    if (typeof createEnhancedStarfield === 'function') {
-        createEnhancedStarfield();
+    // Create normal game content - ADAPTED FOR SPHERICAL UNIVERSE
+    if (typeof createOptimizedPlanets3D === 'function') {
+        createOptimizedPlanets3D();
     }
     
-    if (typeof createOptimizedPlanets === 'function') {
-        createOptimizedPlanets();
+    resetCameraToGamePosition();
+    console.log('📍 Camera reset to game position');
+    
+    // CRITICAL: Initialize cosmic features
+    if (typeof initializeCosmicFeatures === 'function') {
+        initializeCosmicFeatures();
+        console.log('🌌 Cosmic features initialized');
+    }
+    
+    // Create nebulas
+    if (typeof createNebulas === 'function') {
+        createNebulas();
+        console.log('☁️ Nebulas created');
+    }
+    
+    // Create asteroid belts
+    if (typeof createAsteroidBelts === 'function') {
+        createAsteroidBelts();
+        console.log('☄️ Asteroid belts created');
     }
     
     if (typeof createEnhancedComets === 'function') {
         createEnhancedComets();
+        console.log('☄️ Comets created');
+    }
+    
+    if (typeof createEnhancedWormholes === 'function') {
+        createEnhancedWormholes();
+        console.log('🌀 Wormholes created');
     }
     
     if (typeof createEnemies === 'function') {
         createEnemies();
+        console.log('👾 Enemies created');
     }
+    
+	if (typeof spawnBlackHoleGuardians === 'function') {
+        spawnBlackHoleGuardians();
+        console.log('🛡️ Black Hole Guardians spawned');
+	}
     
     // Initialize game state for normal gameplay
     if (typeof gameState !== 'undefined') {
@@ -1830,28 +1894,23 @@ function setupNormalGameContent() {
             gameState.velocityVector = new THREE.Vector3(0, 0, 0);
         }
     }
-    
-    // Reset camera to normal game position
-    resetCameraToGamePosition();
+
     
     // START THE GAME ANIMATION LOOP during black screen for seamless transition
     if (typeof animate === 'function') {
-        console.log('ðŸŽ® Starting game animation during black screen for seamless transition');
+        console.log('🎬 Starting game animation during black screen for seamless transition');
         animate(); // Start the normal game loop now
     }
     
-    // COMMENT OUT OR REMOVE THIS LINE:
-    // fadeCountdownTextForGameTransition();
-    
-    console.log('âœ¨ Normal game content setup complete with animation running');
+    console.log('✨ Normal game content setup complete with ALL features including cosmic phenomena');
 }
 function fadeCountdownTextForGameTransition() {
     // Don't fade immediately - wait for game to be visible first
     setTimeout(() => {
         const timer = document.getElementById('countdownTimer');
         const status = document.getElementById('countdownStatus');
-        const missionControl = document.getElementById('missionControl');           // â† ADD THIS
-        const systemStatus = document.getElementById('systemStatus');             // â† ADD THIS
+        const missionControl = document.getElementById('missionControl');
+        const systemStatus = document.getElementById('systemStatus');
         
         if (timer && status) {
             timer.style.transition = 'opacity 3s ease';
@@ -1859,7 +1918,7 @@ function fadeCountdownTextForGameTransition() {
             timer.style.opacity = '0';
             status.style.opacity = '0';
             
-            console.log('ðŸŒ Fading out "Orbiting Earth" text after game is visible');
+            console.log('🌅 Fading out "Orbiting Earth" text after game is visible');
         }
         
         // Also fade the mission control and system status text
@@ -1876,6 +1935,7 @@ function fadeCountdownTextForGameTransition() {
 }
 
 function resetCameraToGamePosition() {
+    // ADAPTED FOR SPHERICAL UNIVERSE
     // Reset camera to normal game position (matching createOptimizedPlanets)
     const localSystemOffset = { x: 2000, y: 0, z: 1200 }; // From createOptimizedPlanets
     camera.position.set(localSystemOffset.x + 160, localSystemOffset.y + 40, localSystemOffset.z);
@@ -1899,7 +1959,7 @@ function resetCameraToGamePosition() {
         gameState.velocityVector = orbitalDirection.multiplyScalar(gameState.minVelocity || 0.2);
     }
     
-    console.log('ðŸ“ Camera reset to normal game position');
+    console.log('📍 Camera reset to normal game position in spherical universe');
 }
 
 function fadeOutIntroElements(progress) {
@@ -1915,7 +1975,7 @@ function fadeOutIntroElements(progress) {
 // =============================================================================
 
 function skipIntroSequence() {
-    console.log('⭐️ Skipping intro sequence with proper game transition');
+    console.log('⏭️ Skipping intro sequence with proper game transition');
     
     // IMMEDIATELY remove skip button to prevent double-clicks/glitches
     if (introSequence.skipButton) {
@@ -1941,24 +2001,27 @@ function skipIntroSequence() {
         console.log('🔊 Audio context resumed during skip');
     }
     
-    // Create black overlay that covers 3D scene but NOT UI (slower fade)
+    // Create black overlay that fades to black over 1.2s
     createSkipSceneFade();
     
-    // Set up game content and start animation during black screen
-setTimeout(() => {
-    // Fade out launch button slowly before removing it
-    if (introSequence.startButton) {
-        introSequence.startButton.style.transition = 'opacity 1.5s ease-out';
-        introSequence.startButton.style.opacity = '0';
-        setTimeout(() => {
-            if (introSequence.startButton) {
-                introSequence.startButton.remove();
-                introSequence.startButton = null;
-                console.log('🗑️ Launch button faded out slowly and removed during black screen');
-            }
-        }, 1500);
-    }
+    // WAIT for fade to black to complete (1.2s) BEFORE setting up 3D scene
+    setTimeout(() => {
+        console.log('⚫ Fade to black complete - NOW setting up 3D scene');
         
+        // Fade out launch button slowly before removing it
+        if (introSequence.startButton) {
+            introSequence.startButton.style.transition = 'opacity 1.5s ease-out';
+            introSequence.startButton.style.opacity = '0';
+            setTimeout(() => {
+                if (introSequence.startButton) {
+                    introSequence.startButton.remove();
+                    introSequence.startButton = null;
+                    console.log('🗑️ Launch button removed during black screen');
+                }
+            }, 1500);
+        }
+        
+        // NOW set up game content while screen is black
         setupNormalGameContent();
         console.log('🌌 Game content setup complete, animation running during black screen');
         
@@ -1968,11 +2031,12 @@ setTimeout(() => {
             console.log('🛸 Orbit lines created during black screen');
         }
         
-        // Wait longer for everything to be fully running, then fade in the 3D scene
+        // Wait for game to fully initialize, then fade in the 3D scene
         setTimeout(() => {
             revealGameScene();
-        }, 1500); // Increased from 1000ms - give more time for orbit lines and game to settle
-    }, 500); // Slightly longer delay to ensure button fades with overlay
+        }, 1500); // Give game content time to settle
+        
+    }, 1300); // Wait 1300ms (slightly longer than 1.2s fade) before starting setup
 }
 
 function createSkipSceneFade() {
@@ -1982,14 +2046,14 @@ function createSkipSceneFade() {
     sceneFadeOverlay.className = 'absolute inset-0 bg-black pointer-events-none';
     sceneFadeOverlay.style.zIndex = '25'; // Above 3D scene (z-20) but below UI (z-50+)
     sceneFadeOverlay.style.opacity = '0';
-    sceneFadeOverlay.style.transition = 'opacity 1.2s ease-out'; // Slower fade to black
+    sceneFadeOverlay.style.transition = 'opacity 1.2s ease-out';
     document.body.appendChild(sceneFadeOverlay);
     
-    // Trigger fade to black with slower timing
-    setTimeout(() => {
+    // Trigger fade to black immediately
+    requestAnimationFrame(() => {
         sceneFadeOverlay.style.opacity = '1';
-        console.log('⚫ Skip intro: Scene fading to black slowly (Launch button fading with it)');
-    }, 50);
+        console.log('⚫ Skip intro: Scene fading to black (1.2s)');
+    });
     
     // Store reference for later removal
     window.skipSceneFade = sceneFadeOverlay;
@@ -2062,16 +2126,16 @@ function cleanupIntroElementsOnly() {
     }
     
     // Remove intro buttons (if not already removed)
-if (introSequence.startButton) {
-    introSequence.startButton.remove();
-    introSequence.startButton = null;
-}
+    if (introSequence.startButton) {
+        introSequence.startButton.remove();
+        introSequence.startButton = null;
+    }
 
-if (introSequence.skipButton) {
-    introSequence.skipButton.remove();
-    introSequence.skipButton = null;
-}
-// Note: Skip button should already be removed in skipIntroSequence()
+    if (introSequence.skipButton) {
+        introSequence.skipButton.remove();
+        introSequence.skipButton = null;
+    }
+    // Note: Skip button should already be removed in skipIntroSequence()
     
     // Reset intro sequence state
     introSequence.active = false;
@@ -2101,7 +2165,7 @@ function cleanupIntroElements() {
     
     // Force remove fade overlay if it still exists
     if (introSequence.fadeOverlay) {
-        console.log('ðŸ§¹ Force removing fade overlay during cleanup');
+        console.log('🧹 Force removing fade overlay during cleanup');
         introSequence.fadeOverlay.remove();
         introSequence.fadeOverlay = null;
     }
@@ -2109,12 +2173,12 @@ function cleanupIntroElements() {
     // Remove any remaining intro overlays by ID
     const fadeOverlay = document.getElementById('introFadeOverlay');
     if (fadeOverlay) {
-        console.log('ðŸ§¹ Removing fade overlay by ID');
+        console.log('🧹 Removing fade overlay by ID');
         fadeOverlay.remove();
     }
     
     // FORCE RESET ALL UI panel effects and transforms
-    const uiPanels = document.querySelectorAll('.ui-panel');
+    const uiPanels = document.querySelectorAll('.ui-panel, .title-header');
     uiPanels.forEach(panel => {
         // Check if this is the title panel
         if (panel.classList.contains('title-header')) {
@@ -2156,7 +2220,7 @@ function cleanupIntroElements() {
     // Remove UI overlays
     const overlay = document.getElementById('introCountdownOverlay');
     if (overlay) {
-        console.log('ðŸ§¹ Removing countdown overlay');
+        console.log('🧹 Removing countdown overlay');
         overlay.remove();
     }
     
@@ -2172,7 +2236,7 @@ function cleanupIntroElements() {
     // Show crosshair for normal gameplay
     const crosshair = document.getElementById('crosshair');
     if (crosshair) {
-        console.log('ðŸŽ¯ Showing crosshair for normal gameplay');
+        console.log('🎯 Showing crosshair for normal gameplay');
         crosshair.style.display = 'block';
         crosshair.style.opacity = '1';
     }
@@ -2202,7 +2266,7 @@ function cleanupIntroElements() {
     // ADD THIS: Stop title flashing when intro ends
     stopTitleFlashing();
     
-    console.log('ðŸ§¹ Intro elements cleaned up');
+    console.log('🧹 Intro elements cleaned up');
 }
 
 function restoreUIBlurEffects() {
@@ -2215,12 +2279,12 @@ function restoreUIBlurEffects() {
 }
 
 function startNormalGameplay() {
-    console.log('ðŸŽ® Finalizing normal gameplay start...');
+    console.log('🎬 Finalizing normal gameplay start...');
     
     // Show crosshair for normal gameplay
     const crosshair = document.getElementById('crosshair');
     if (crosshair) {
-        console.log('ðŸŽ¯ Making crosshair visible for gameplay');
+        console.log('🎯 Making crosshair visible for gameplay');
         crosshair.style.display = 'block';
         crosshair.style.opacity = '1';
         crosshair.style.visibility = 'visible';
@@ -2229,7 +2293,7 @@ function startNormalGameplay() {
     // Ensure any remaining fade overlays are gone
     const remainingOverlay = document.getElementById('introFadeOverlay');
     if (remainingOverlay) {
-        console.log('ðŸ§¹ Removing remaining fade overlay in startNormalGameplay');
+        console.log('🧹 Removing remaining fade overlay in startNormalGameplay');
         remainingOverlay.remove();
     }
     
@@ -2253,6 +2317,14 @@ function startNormalGameplay() {
         setupGalaxyMap();
     }
     
+    // ⭐ NEW: Update galaxy map to show initial location
+    if (typeof updateGalaxyMap === 'function') {
+        setTimeout(() => {
+            updateGalaxyMap();
+            console.log('🗺️ Initial galaxy location updated');
+        }, 500); // Small delay to ensure camera position is set
+    }
+    
     // Start normal animation loop if not already running
     if (typeof animate === 'function') {
         animate();
@@ -2263,7 +2335,7 @@ function startNormalGameplay() {
         setTimeout(startTutorial, 2000);
     }
     
-    console.log('ðŸŽ® Normal gameplay fully active - 3D space should now be visible');
+    console.log('🎬 Normal gameplay fully active - 3D space should now be visible');
 }
 
 // =============================================================================
@@ -2280,23 +2352,160 @@ function easeInOutCubic(x) {
 }
 
 // =============================================================================
-// WINDOW EXPORTS
+// CYBERPUNK SYNTH-WAVE INTRO SOUNDS
 // =============================================================================
 
-if (typeof window !== 'undefined') {
-    window.startGameWithIntro = startGameWithIntro;
-    window.skipIntroSequence = skipIntroSequence;
-    window.introSequence = introSequence;
+function playCountdownBeep(number) {
+    if (!audioContext || audioContext.state === 'suspended') return;
     
-    console.log('ðŸš€ Game intro system loaded');
+    const oscillator = audioContext.createOscillator();
+    const gain = audioContext.createGain();
+    const filter = audioContext.createBiquadFilter();
+    
+    oscillator.connect(filter);
+    filter.connect(gain);
+    gain.connect(audioContext.destination);
+    
+    // Higher pitch for lower numbers (building tension)
+    const frequency = 400 + (10 - number) * 100; // 400Hz to 1300Hz
+    oscillator.frequency.setValueAtTime(frequency, audioContext.currentTime);
+    
+    // Cyberpunk filter sweep
+    filter.type = 'lowpass';
+    filter.frequency.setValueAtTime(frequency * 4, audioContext.currentTime);
+    filter.Q.setValueAtTime(5, audioContext.currentTime);
+    
+    // Sharp attack, quick decay - QUIETER
+    gain.gain.setValueAtTime(0, audioContext.currentTime);
+    gain.gain.linearRampToValueAtTime(0.15, audioContext.currentTime + 0.01); // QUIETER: was 0.3
+    gain.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + 0.3);
+    
+    oscillator.type = 'sawtooth'; // Classic synth-wave sound
+    oscillator.start(audioContext.currentTime);
+    oscillator.stop(audioContext.currentTime + 0.3);
 }
 
-// =============================================================================
+function playBlastOffSound() {
+    if (!audioContext || audioContext.state === 'suspended') return;
+    
+    // Low frequency rumble
+    const rumbleOsc = audioContext.createOscillator();
+    const rumbleGain = audioContext.createGain();
+    rumbleOsc.connect(rumbleGain);
+    rumbleGain.connect(audioContext.destination);
+    
+    rumbleOsc.type = 'sawtooth';
+    rumbleOsc.frequency.setValueAtTime(40, audioContext.currentTime);
+    rumbleOsc.frequency.exponentialRampToValueAtTime(80, audioContext.currentTime + 2);
+    
+    rumbleGain.gain.setValueAtTime(0, audioContext.currentTime);
+    rumbleGain.gain.linearRampToValueAtTime(0.4, audioContext.currentTime + 0.1);
+    rumbleGain.gain.linearRampToValueAtTime(0.2, audioContext.currentTime + 3);
+    
+    // High frequency synth blast
+    const blastOsc = audioContext.createOscillator();
+    const blastGain = audioContext.createGain();
+    const blastFilter = audioContext.createBiquadFilter();
+    
+    blastOsc.connect(blastFilter);
+    blastFilter.connect(blastGain);
+    blastGain.connect(audioContext.destination);
+    
+    blastOsc.type = 'square';
+    blastOsc.frequency.setValueAtTime(1200, audioContext.currentTime);
+    blastOsc.frequency.exponentialRampToValueAtTime(2400, audioContext.currentTime + 0.5);
+    blastOsc.frequency.exponentialRampToValueAtTime(600, audioContext.currentTime + 2);
+    
+    blastFilter.type = 'bandpass';
+    blastFilter.frequency.setValueAtTime(1200, audioContext.currentTime);
+    blastFilter.Q.setValueAtTime(8, audioContext.currentTime);
+    
+    blastGain.gain.setValueAtTime(0, audioContext.currentTime);
+    blastGain.gain.linearRampToValueAtTime(0.25, audioContext.currentTime + 0.05);
+    blastGain.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + 2);
+    
+    const startTime = audioContext.currentTime;
+    rumbleOsc.start(startTime);
+    blastOsc.start(startTime);
+    rumbleOsc.stop(startTime + 3);
+    blastOsc.stop(startTime + 2);
+}
+
+function playLaunchRumbleSound() {
+    if (!audioContext || audioContext.state === 'suspended') return;
+    
+    // Create multiple oscillators for rich rumble with longer duration
+    for (let i = 0; i < 3; i++) {
+        const osc = audioContext.createOscillator();
+        const gain = audioContext.createGain();
+        const filter = audioContext.createBiquadFilter();
+        
+        osc.connect(filter);
+        filter.connect(gain);
+        gain.connect(audioContext.destination);
+        
+        // Different frequencies for each layer
+        const baseFreq = 30 + i * 15; // 30Hz, 45Hz, 60Hz
+        osc.frequency.setValueAtTime(baseFreq, audioContext.currentTime);
+        
+        // Random modulation for rumble effect over longer duration
+        osc.frequency.linearRampToValueAtTime(baseFreq * (1 + Math.random() * 0.5), audioContext.currentTime + 1);
+        osc.frequency.linearRampToValueAtTime(baseFreq * (1 + Math.random() * 0.3), audioContext.currentTime + 3);
+        osc.frequency.linearRampToValueAtTime(baseFreq * (1 + Math.random() * 0.2), audioContext.currentTime + 5);
+        
+        filter.type = 'lowpass';
+        filter.frequency.setValueAtTime(baseFreq * 4, audioContext.currentTime);
+        
+        osc.type = 'sawtooth';
+        gain.gain.setValueAtTime(0, audioContext.currentTime);
+        gain.gain.linearRampToValueAtTime(0.20 - i * 0.03, audioContext.currentTime + 0.1); // QUIETER: was 0.35
+        gain.gain.linearRampToValueAtTime(0.15 - i * 0.025, audioContext.currentTime + 2); // QUIETER: was 0.25
+        gain.gain.linearRampToValueAtTime(0.10 - i * 0.02, audioContext.currentTime + 4); // QUIETER: was 0.15
+        gain.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + 6);
+        
+        const startTime = audioContext.currentTime;
+        osc.start(startTime);
+        osc.stop(startTime + 6); // Extended to 6 seconds
+    }
+}
+
+function playCyberpunkAtmosphereSound() {
+    if (!audioContext || audioContext.state === 'suspended') return;
+    
+    // Ambient atmospheric pad
+    const padOsc = audioContext.createOscillator();
+    const padGain = audioContext.createGain();
+    const padFilter = audioContext.createBiquadFilter();
+    
+    padOsc.connect(padFilter);
+    padFilter.connect(padGain);
+    padGain.connect(audioContext.destination);
+    
+    padOsc.type = 'triangle';
+    padOsc.frequency.setValueAtTime(110, audioContext.currentTime); // Low A
+    
+    padFilter.type = 'lowpass';
+    padFilter.frequency.setValueAtTime(800, audioContext.currentTime);
+    padFilter.Q.setValueAtTime(3, audioContext.currentTime);
+    
+    // Slow filter sweep
+    padFilter.frequency.linearRampToValueAtTime(400, audioContext.currentTime + 5);
+    padFilter.frequency.linearRampToValueAtTime(1200, audioContext.currentTime + 10);
+    
+    padGain.gain.setValueAtTime(0, audioContext.currentTime);
+    padGain.gain.linearRampToValueAtTime(0.08, audioContext.currentTime + 2);
+    padGain.gain.linearRampToValueAtTime(0.05, audioContext.currentTime + 8);
+    padGain.gain.linearRampToValueAtTime(0, audioContext.currentTime + 10);
+    
+    const startTime = audioContext.currentTime;
+    padOsc.start(startTime);
+    padOsc.stop(startTime + 10);
+}
+
 // =============================================================================
 // CSS STYLES
 // =============================================================================
 
-// Add CSS for launch effects and start button with enhanced cyberpunk styling
 const introStyles = document.createElement('style');
 introStyles.textContent = `
     /* =============================================================================
@@ -2318,34 +2527,34 @@ introStyles.textContent = `
     }
     
     #skipIntroBtn {
-    z-index: 80 !important;
-    background: linear-gradient(135deg, rgba(0,150,255,0.2), rgba(0,100,200,0.3)) !important;
-    border: 1px solid rgba(0,150,255,0.5) !important;
-    color: rgba(0,255,200,0.9) !important;
-    font-family: 'Orbitron', monospace !important;
-    transition: all 0.3s ease !important;
-    backdrop-filter: blur(5px) !important;
-    transform: perspective(600px) rotateX(-2deg) translateX(-50%) !important;
-    box-shadow: 
-        0 4px 15px rgba(0,150,255,0.2),
-        inset 0 1px 0 rgba(0,150,255,0.3) !important;
-}
+        z-index: 80 !important;
+        background: linear-gradient(135deg, rgba(0,150,255,0.2), rgba(0,100,200,0.3)) !important;
+        border: 1px solid rgba(0,150,255,0.5) !important;
+        color: rgba(0,255,200,0.9) !important;
+        font-family: 'Orbitron', monospace !important;
+        transition: all 0.3s ease !important;
+        backdrop-filter: blur(5px) !important;
+        transform: perspective(600px) rotateX(-2deg) translateX(-50%) !important;
+        box-shadow: 
+            0 4px 15px rgba(0,150,255,0.2),
+            inset 0 1px 0 rgba(0,150,255,0.3) !important;
+    }
 
-#skipIntroBtn:hover {
-    background: linear-gradient(135deg, rgba(0,200,255,0.3), rgba(0,150,255,0.4)) !important;
-    border-color: rgba(0,255,200,0.7) !important;
-    box-shadow: 
-        0 0 20px rgba(0,255,200,0.4),
-        0 6px 20px rgba(0,150,255,0.3),
-        inset 0 1px 0 rgba(0,255,200,0.4) !important;
-    transform: perspective(600px) rotateX(-2deg) translateX(-50%) translateY(-1px) !important;
-}
+    #skipIntroBtn:hover {
+        background: linear-gradient(135deg, rgba(0,200,255,0.3), rgba(0,150,255,0.4)) !important;
+        border-color: rgba(0,255,200,0.7) !important;
+        box-shadow: 
+            0 0 20px rgba(0,255,200,0.4),
+            0 6px 20px rgba(0,150,255,0.3),
+            inset 0 1px 0 rgba(0,255,200,0.4) !important;
+        transform: perspective(600px) rotateX(-2deg) translateX(-50%) translateY(-1px) !important;
+    }
     
     /* Overlays - Higher z-index than fade overlay */
-#introCountdownOverlay {
-    z-index: 65 !important;
-    background: radial-gradient(ellipse at center, rgba(0,20,40,0.3) 0%, rgba(0,0,0,0.7) 100%);
-}
+    #introCountdownOverlay {
+        z-index: 65 !important;
+        background: radial-gradient(ellipse at center, rgba(0,20,40,0.3) 0%, rgba(0,0,0,0.7) 100%);
+    }
     
     #atmosphereFadeOverlay {
         z-index: 20 !important;
@@ -2536,190 +2745,20 @@ introStyles.textContent = `
         50% { opacity: 0.7; }
     }
 `;
-// =============================================================================
-// CYBERPUNK SYNTH-WAVE INTRO SOUNDS
-// =============================================================================
-
-function playCountdownBeep(number) {
-    if (!audioContext || audioContext.state === 'suspended') return;
-    
-    const oscillator = audioContext.createOscillator();
-    const gain = audioContext.createGain();
-    const filter = audioContext.createBiquadFilter();
-    
-    oscillator.connect(filter);
-    filter.connect(gain);
-    gain.connect(audioContext.destination);
-    
-    // Higher pitch for lower numbers (building tension)
-    const frequency = 400 + (10 - number) * 100; // 400Hz to 1300Hz
-    oscillator.frequency.setValueAtTime(frequency, audioContext.currentTime);
-    
-    // Cyberpunk filter sweep
-    filter.type = 'lowpass';
-    filter.frequency.setValueAtTime(frequency * 4, audioContext.currentTime);
-    filter.Q.setValueAtTime(5, audioContext.currentTime);
-    
-    // Sharp attack, quick decay
-    gain.gain.setValueAtTime(0, audioContext.currentTime);
-    gain.gain.linearRampToValueAtTime(0.3, audioContext.currentTime + 0.01);
-    gain.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + 0.3);
-    
-    oscillator.type = 'sawtooth'; // Classic synth-wave sound
-    oscillator.start(audioContext.currentTime);
-    oscillator.stop(audioContext.currentTime + 0.3);
-}
-
-function playBlastOffSound() {
-    if (!audioContext || audioContext.state === 'suspended') return;
-    
-    // Low frequency rumble
-    const rumbleOsc = audioContext.createOscillator();
-    const rumbleGain = audioContext.createGain();
-    rumbleOsc.connect(rumbleGain);
-    rumbleGain.connect(audioContext.destination);
-    
-    rumbleOsc.type = 'sawtooth';
-    rumbleOsc.frequency.setValueAtTime(40, audioContext.currentTime);
-    rumbleOsc.frequency.exponentialRampToValueAtTime(80, audioContext.currentTime + 2);
-    
-    rumbleGain.gain.setValueAtTime(0, audioContext.currentTime);
-    rumbleGain.gain.linearRampToValueAtTime(0.4, audioContext.currentTime + 0.1);
-    rumbleGain.gain.linearRampToValueAtTime(0.2, audioContext.currentTime + 3);
-    
-    // High frequency synth blast
-    const blastOsc = audioContext.createOscillator();
-    const blastGain = audioContext.createGain();
-    const blastFilter = audioContext.createBiquadFilter();
-    
-    blastOsc.connect(blastFilter);
-    blastFilter.connect(blastGain);
-    blastGain.connect(audioContext.destination);
-    
-    blastOsc.type = 'square';
-    blastOsc.frequency.setValueAtTime(1200, audioContext.currentTime);
-    blastOsc.frequency.exponentialRampToValueAtTime(2400, audioContext.currentTime + 0.5);
-    blastOsc.frequency.exponentialRampToValueAtTime(600, audioContext.currentTime + 2);
-    
-    blastFilter.type = 'bandpass';
-    blastFilter.frequency.setValueAtTime(1200, audioContext.currentTime);
-    blastFilter.Q.setValueAtTime(8, audioContext.currentTime);
-    
-    blastGain.gain.setValueAtTime(0, audioContext.currentTime);
-    blastGain.gain.linearRampToValueAtTime(0.25, audioContext.currentTime + 0.05);
-    blastGain.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + 2);
-    
-    const startTime = audioContext.currentTime;
-    rumbleOsc.start(startTime);
-    blastOsc.start(startTime);
-    rumbleOsc.stop(startTime + 3);
-    blastOsc.stop(startTime + 2);
-}
-
-function playLaunchRumbleSound() {
-    if (!audioContext || audioContext.state === 'suspended') return;
-    
-    // Create multiple oscillators for rich rumble with longer duration
-    for (let i = 0; i < 3; i++) {
-        const osc = audioContext.createOscillator();
-        const gain = audioContext.createGain();
-        const filter = audioContext.createBiquadFilter();
-        
-        osc.connect(filter);
-        filter.connect(gain);
-        gain.connect(audioContext.destination);
-        
-        // Different frequencies for each layer
-        const baseFreq = 30 + i * 15; // 30Hz, 45Hz, 60Hz
-        osc.frequency.setValueAtTime(baseFreq, audioContext.currentTime);
-        
-        // Random modulation for rumble effect over longer duration
-        osc.frequency.linearRampToValueAtTime(baseFreq * (1 + Math.random() * 0.5), audioContext.currentTime + 1);
-        osc.frequency.linearRampToValueAtTime(baseFreq * (1 + Math.random() * 0.3), audioContext.currentTime + 3);
-        osc.frequency.linearRampToValueAtTime(baseFreq * (1 + Math.random() * 0.2), audioContext.currentTime + 5);
-        
-        filter.type = 'lowpass';
-        filter.frequency.setValueAtTime(baseFreq * 4, audioContext.currentTime);
-        
-        osc.type = 'sawtooth';
-        gain.gain.setValueAtTime(0, audioContext.currentTime);
-        gain.gain.linearRampToValueAtTime(0.35 - i * 0.05, audioContext.currentTime + 0.1); // Build up
-        gain.gain.linearRampToValueAtTime(0.25 - i * 0.04, audioContext.currentTime + 2); // Sustain
-        gain.gain.linearRampToValueAtTime(0.15 - i * 0.03, audioContext.currentTime + 4); // Begin fade
-        gain.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + 6); // Long fade out
-        
-        const startTime = audioContext.currentTime;
-        osc.start(startTime);
-        osc.stop(startTime + 6); // Extended to 6 seconds
-    }
-}
-
-// ADD THE TITLE FLASHING FUNCTIONS HERE:
-function startTitleFlashing() {
-    const gameTitle = document.getElementById('gameTitle');
-    if (gameTitle) {
-        gameTitle.classList.add('title-flash');
-        console.log('ðŸŽ† Title flashing started during intro');
-    }
-}
-
-function stopTitleFlashing() {
-    const gameTitle = document.getElementById('gameTitle');
-    if (gameTitle) {
-        gameTitle.classList.remove('title-flash');
-        console.log('ðŸŽ† Title flashing stopped');
-    }
-}
-
-console.log('Game intro sequence system loaded successfully!');
-
-function playCyberpunkAtmosphereSound() {
-    if (!audioContext || audioContext.state === 'suspended') return;
-    
-    // Ambient atmospheric pad
-    const padOsc = audioContext.createOscillator();
-    const padGain = audioContext.createGain();
-    const padFilter = audioContext.createBiquadFilter();
-    
-    padOsc.connect(padFilter);
-    padFilter.connect(padGain);
-    padGain.connect(audioContext.destination);
-    
-    padOsc.type = 'triangle';
-    padOsc.frequency.setValueAtTime(110, audioContext.currentTime); // Low A
-    
-    padFilter.type = 'lowpass';
-    padFilter.frequency.setValueAtTime(800, audioContext.currentTime);
-    padFilter.Q.setValueAtTime(3, audioContext.currentTime);
-    
-    // Slow filter sweep
-    padFilter.frequency.linearRampToValueAtTime(400, audioContext.currentTime + 5);
-    padFilter.frequency.linearRampToValueAtTime(1200, audioContext.currentTime + 10);
-    
-    padGain.gain.setValueAtTime(0, audioContext.currentTime);
-    padGain.gain.linearRampToValueAtTime(0.08, audioContext.currentTime + 2);
-    padGain.gain.linearRampToValueAtTime(0.05, audioContext.currentTime + 8);
-    padGain.gain.linearRampToValueAtTime(0, audioContext.currentTime + 10);
-    
-    const startTime = audioContext.currentTime;
-    padOsc.start(startTime);
-    padOsc.stop(startTime + 10);
-}
-
-// This should come AFTER all the CSS and sound functions
 
 document.head.appendChild(introStyles);
 
-console.log('Game intro sequence system loaded successfully!');
+// =============================================================================
+// WINDOW EXPORTS
+// =============================================================================
 
-
-// ADD THE DEBUG CODE HERE:
-setTimeout(() => {
-    const timer = document.getElementById('countdownTimer');
-    const overlay = document.getElementById('introCountdownOverlay');
-    const fadeOverlay = document.getElementById('introFadeOverlay');
+if (typeof window !== 'undefined') {
+    window.startGameWithIntro = startGameWithIntro;
+    window.skipIntroSequence = skipIntroSequence;
+    window.introSequence = introSequence;
+    window.resetIntroState = resetIntroState;
     
-    if (timer) console.log('Timer parent:', timer.parentElement.parentElement.id);
-    if (overlay) console.log('Overlay parent:', overlay.parentElement);
-    if (fadeOverlay) console.log('Fade overlay parent:', fadeOverlay.parentElement);
-}, 5000);
+    console.log('🚀 Game intro system loaded - Spherical Universe Edition');
+}
+
+console.log('Game intro sequence system loaded successfully!')
