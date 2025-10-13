@@ -353,20 +353,6 @@ body.ui-mode {
     width: 1px;
     transform: translateX(-50%);
 }
-/* Asteroid targeting crosshair */
-.crosshair.asteroid-targeted {
-    border-color: rgba(255,102,0,0.9) !important; /* Orange color for asteroids */
-    box-shadow: 
-        0 0 15px rgba(255,102,0,0.7),
-        inset 0 0 15px rgba(255,102,0,0.4),
-        0 0 5px rgba(255,150,100,0.3);
-}
-
-.crosshair.asteroid-targeted::before,
-.crosshair.asteroid-targeted::after {
-    background: rgba(255,102,0,0.9) !important;
-    box-shadow: 0 0 8px rgba(255,102,0,0.7) !important;
-}
 
 /* --- INSERTED FIX --- */
 #gameContainer {
@@ -508,21 +494,6 @@ body.ui-mode {
     }
 }
 
-@keyframes starTrailExpand {
-    0% { 
-        transform: scale(1) translateX(0);
-        opacity: 0.8;
-    }
-    50% {
-        transform: scale(1.5) translateX(200px);
-        opacity: 1;
-    }
-    100% { 
-        transform: scale(0.5) translateX(400px);
-        opacity: 0;
-    }
-}
-
 .round-map {
     width: 220px;
     height: 220px;
@@ -594,6 +565,17 @@ body.ui-mode {
     z-index: 15;
 }
 
+/* Player position triangle - isosceles shape */
+#playerMapPosition {
+    width: 0 !important;
+    height: 0 !important;
+    border-left: 6px solid transparent !important;
+    border-right: 6px solid transparent !important;
+    border-bottom: 16px solid #00ff96 !important; /* Longer pointed triangle */
+    font-size: 0 !important; /* Hide the ▲ text */
+    line-height: 0 !important;
+}
+
 .map-direction-arrow::before {
     content: '';
     position: absolute;
@@ -633,7 +615,7 @@ body.ui-mode {
     color: rgba(255, 255, 255, 0.95);
     border-radius: 15px;
     padding: 20px;
-    border: 2px solid rgba(255,255,0,0.4);
+    border: 2px solid rgba(255,255,0,0.2);
     backdrop-filter: blur(3px);
 }
 
@@ -761,3 +743,117 @@ body.ui-mode {
     max-height: 200px !important;
     overflow-y: auto !important;
 }
+
+// =====================================================================
+// 3. ADD TO styles.css - Mobile Styles
+// =====================================================================
+
+const mobileStyles = `
+/* Mobile Mode Override */
+body.mobile-mode {
+    cursor: auto !important;
+    touch-action: manipulation;
+}
+
+body.mobile-mode .ui-panel.desktop-only {
+    display: none !important;
+}
+
+/* Enhanced mobile crosshair */
+.crosshair.mobile-crosshair {
+    width: 48px !important;
+    height: 48px !important;
+    border-width: 3px !important;
+    border-color: rgba(0, 255, 0, 1) !important;
+}
+
+.crosshair.mobile-crosshair::before {
+    left: -16px !important;
+    right: -16px !important;
+    height: 3px !important;
+}
+
+.crosshair.mobile-crosshair::after {
+    top: -16px !important;
+    bottom: -16px !important;
+    width: 3px !important;
+}
+
+/* Mobile UI visibility */
+.mobile-ui {
+    display: none;
+}
+
+body.mobile-mode .mobile-ui {
+    display: block !important;
+}
+
+/* Thrust always-on indicator */
+.thrust-indicator {
+    position: fixed;
+    top: 50%;
+    right: 20px;
+    transform: translateY(-50%);
+    width: 8px;
+    height: 120px;
+    background: rgba(50, 50, 50, 0.8);
+    border-radius: 4px;
+    border: 1px solid rgba(0, 150, 255, 0.5);
+    z-index: 25;
+}
+
+.thrust-fill {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background: linear-gradient(to top, #ff4500, #ffff00, #00ff00);
+    border-radius: 3px;
+    height: 100%;
+    transition: height 0.1s ease;
+}
+
+/* Mobile popup styles */
+.mobile-popup {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.8);
+    backdrop-filter: blur(5px);
+    z-index: 50;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+}
+
+.mobile-popup.active {
+    display: flex !important;
+}
+
+.popup-content {
+    background: linear-gradient(135deg, rgba(15, 23, 42, 0.95), rgba(30, 41, 59, 0.95));
+    border: 2px solid rgba(0, 150, 255, 0.6);
+    border-radius: 20px;
+    padding: 24px;
+    color: white;
+    max-width: 90vw;
+    max-height: 80vh;
+    overflow-y: auto;
+}
+
+@media (max-width: 768px) {
+    .mobile-btn {
+        width: 56px !important;
+        height: 56px !important;
+        font-size: 20px !important;
+    }
+    
+    .mobile-btn.primary {
+        width: 72px !important;
+        height: 72px !important;
+    }
+}
+`;
