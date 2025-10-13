@@ -7,16 +7,38 @@
     
     <!-- External Dependencies -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js" 
+            onload="console.log('✅ THREE.js r128 loaded')"
+            onerror="loadBackupTHREE()"></script>
+    
+    <script>
+    function loadBackupTHREE() {
+      console.log('🔄 Primary CDN failed, trying backup...');
+      const script = document.createElement('script');
+      script.src = 'https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js';
+      script.onload = () => console.log('✅ THREE.js loaded from backup');
+      script.onerror = () => console.error('❌ All THREE.js CDNs failed!');
+      document.head.appendChild(script);
+    }
+    
+    window.addEventListener('load', () => {
+      setTimeout(() => {
+        if (typeof THREE === 'undefined') {
+          console.warn('⚠️ THREE.js still not loaded, retrying...');
+          loadBackupTHREE();
+        } else {
+          console.log('✅ THREE.js confirmed. Version:', THREE.REVISION);
+        }
+      }, 1000);
+    });
+    </script>
+    
     <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.11.4/gsap.min.js"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     
-    <!-- Game Styles -->
     <link rel="stylesheet" href="css/styles.css">
     <style>
-        /* Additional CSS from attached file - Mission Command Alert and Controls */
-        
-        /* Title flashing effect for gravity well alert */
+        /* Title flashing effect */
         .title-flash {
             animation: titleFlash 0.5s ease-in-out infinite alternate;
         }
@@ -24,31 +46,21 @@
         @keyframes titleFlash {
             0% { 
                 color: #22d3ee;
-                text-shadow: 
-                    0 0 8px rgba(0,150,255,0.9), 
-                    0 0 16px rgba(0,150,255,0.7),
-                    0 0 24px rgba(0,150,255,0.5);
+                text-shadow: 0 0 8px rgba(0,150,255,0.9), 0 0 16px rgba(0,150,255,0.7), 0 0 24px rgba(0,150,255,0.5);
             }
             100% { 
                 color: #fbbf24;
-                text-shadow: 
-                    0 0 8px rgba(251,191,36,0.9), 
-                    0 0 16px rgba(251,191,36,0.7),
-                    0 0 24px rgba(251,191,36,0.5);
+                text-shadow: 0 0 8px rgba(251,191,36,0.9), 0 0 16px rgba(251,191,36,0.7), 0 0 24px rgba(251,191,36,0.5);
             }
         }
 
-        /* Mission Command Alert - Positioned in Lower Third of Screen */
-        /* UPDATED: Made transparent like other UI panels */
+        /* Mission Command Alert - GREEN ORBITRON */
         .mission-command-alert {
             background: linear-gradient(135deg, rgba(15, 23, 42, 0.3) 0%, rgba(30, 41, 59, 0.3) 100%);
             backdrop-filter: blur(2px);
             border: 1px solid rgba(0, 150, 255, 0.5);
             border-radius: 15px;
-            box-shadow: 
-                0 12px 40px rgba(0, 150, 255, 0.3),
-                inset 0 1px 0 rgba(0,150,255,0.4),
-                inset 0 -1px 0 rgba(0,150,255,0.2);
+            box-shadow: 0 12px 40px rgba(0, 150, 255, 0.3), inset 0 1px 0 rgba(0,150,255,0.4), inset 0 -1px 0 rgba(0,150,255,0.2);
             cursor: auto !important;
             pointer-events: auto !important;
             transform-style: preserve-3d;
@@ -56,85 +68,11 @@
             transform: perspective(1000px) rotateX(-2deg) translateZ(5px);
         }
 
-        /* Ensure mouse visibility over tutorial notifications */
         .mission-command-alert * {
             cursor: auto !important;
             pointer-events: auto !important;
         }
 
-        /* Achievement Popup Priority - Ensure it appears above all other elements */
-        #achievementPopup {
-            z-index: 999 !important; /* Maximum priority */
-            position: fixed !important;
-        }
-
-        /* Achievement unlock animation */
-        @keyframes achievementSlide {
-            0% { transform: translate(-50%, 100px); opacity: 0; }
-            20% { transform: translate(-50%, 0); opacity: 1; }
-            80% { transform: translate(-50%, 0); opacity: 1; }
-            100% { transform: translate(-50%, -20px); opacity: 0; }
-        }
-
-        .achievement-animate {
-            animation: achievementSlide 4s ease-in-out;
-        }
-
-        /* Victory/game over screen */
-        #gameOverScreen {
-            backdrop-filter: blur(8px);
-            background: linear-gradient(135deg, rgba(0,0,0,0.8) 0%, rgba(0,20,40,0.9) 100%);
-        }
-
-        /* Enhanced star field effects */
-        .star {
-            position: absolute;
-            width: 2px;
-            height: 2px;
-            background: white;
-            border-radius: 50%;
-            animation: starStretch 1.2s ease-out forwards;
-            transform-origin: center;
-            box-shadow: 0 0 4px rgba(255, 255, 255, 0.8);
-        }
-
-        /* Combat effects */
-        @keyframes fadeToWhite {
-            0% { opacity: 0; }
-            100% { opacity: 1; background: white; }
-        }
-
-        /* Central blast animation for emergency warp */
-        @keyframes centralBlast {
-            0% { 
-                transform: translate(-50%, -50%) scale(0);
-                opacity: 1;
-            }
-            50% {
-                transform: translate(-50%, -50%) scale(1);
-                opacity: 0.8;
-            }
-            100% { 
-                transform: translate(-50%, -50%) scale(3);
-                opacity: 0;
-            }
-        }
-
-        /* Hyperspace line stretch for emergency warp */
-        @keyframes hyperspace-stretch {
-            0% { 
-                transform: rotate(var(--rotation, 0deg)) scaleX(0);
-                opacity: 0;
-            }
-            20% {
-                opacity: 1;
-            }
-            100% { 
-                transform: rotate(var(--rotation, 0deg)) scaleX(1);
-                opacity: 0;
-            }
-        }
-        
         /* Tutorial styling - Green ORBITRON font */
         #missionCommandAlert h2,
         #missionCommandText {
@@ -154,21 +92,138 @@
             line-height: 1.6 !important;
         }
 
-        /* MINIMAL MOBILE ADDITIONS - Only hide UI on mobile and add control buttons */
+        /* Achievement Popup - HIDE DURING INTRO */
+        #achievementPopup {
+            z-index: 999 !important;
+            position: fixed !important;
+            pointer-events: auto !important;
+        }
+
+        /* CRITICAL: Hide achievement popup during intro */
+        body.intro-active #achievementPopup {
+            display: none !important;
+            visibility: hidden !important;
+            opacity: 0 !important;
+        }
+
+        @keyframes achievementSlide {
+            0% { transform: translate(-50%, 100px); opacity: 0; }
+            20% { transform: translate(-50%, 0); opacity: 1; }
+            80% { transform: translate(-50%, 0); opacity: 1; }
+            100% { transform: translate(-50%, -20px); opacity: 0; }
+        }
+
+        .achievement-animate {
+            animation: achievementSlide 4s ease-in-out;
+        }
+
+        /* Small control buttons */
+        .small-control-btn {
+            background: linear-gradient(135deg, rgba(0,150,255,0.15), rgba(0,100,200,0.2));
+            border: 1px solid rgba(0,150,255,0.4);
+            color: rgba(0,255,200,0.8);
+            font-size: 11px;
+            padding: 4px 8px;
+            border-radius: 4px;
+            cursor: auto;
+            transition: all 0.3s ease;
+            backdrop-filter: blur(3px);
+        }
+
+        .small-control-btn:hover {
+            background: linear-gradient(135deg, rgba(0,200,255,0.25), rgba(0,150,255,0.3));
+            border-color: rgba(0,255,200,0.6);
+            box-shadow: 0 0 10px rgba(0,255,200,0.3);
+        }
+
+        .small-control-btn.muted {
+            background: linear-gradient(135deg, rgba(150,0,0,0.15), rgba(200,0,0,0.2));
+            border-color: rgba(255,50,50,0.4);
+            color: rgba(255,150,150,0.8);
+        }
+
+        .small-control-btn.paused {
+            background: linear-gradient(135deg, rgba(255,150,0,0.15), rgba(255,100,0,0.2));
+            border-color: rgba(255,150,0,0.4);
+            color: rgba(255,200,100,0.8);
+        }
+
+        /* Combat effects */
+        @keyframes fadeToWhite {
+            0% { opacity: 0; }
+            100% { opacity: 1; background: white; }
+        }
+
+        @keyframes centralBlast {
+            0% { transform: translate(-50%, -50%) scale(0); opacity: 1; }
+            50% { transform: translate(-50%, -50%) scale(1); opacity: 0.8; }
+            100% { transform: translate(-50%, -50%) scale(3); opacity: 0; }
+        }
+
+        @keyframes hyperspace-stretch {
+            0% { transform: rotate(var(--rotation, 0deg)) scaleX(0); opacity: 0; }
+            20% { opacity: 1; }
+            100% { transform: rotate(var(--rotation, 0deg)) scaleX(1); opacity: 0; }
+        }
+
+        /* Enhanced star field effects */
+        .star {
+            position: absolute;
+            width: 2px;
+            height: 2px;
+            background: white;
+            border-radius: 50%;
+            animation: starStretch 1.2s ease-out forwards;
+            transform-origin: center;
+            box-shadow: 0 0 4px rgba(255, 255, 255, 0.8);
+        }
+
+        /* Thrust Indicator - Vertical meter on right side */
+        .thrust-indicator {
+            position: fixed;
+            right: 20px;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 12px;
+            height: 300px;
+            background: rgba(0, 0, 0, 0.5);
+            border: 2px solid rgba(0, 150, 255, 0.6);
+            border-radius: 6px;
+            z-index: 50;
+            pointer-events: none;
+            box-shadow: 0 0 15px rgba(0, 150, 255, 0.3), inset 0 0 10px rgba(0, 0, 0, 0.5);
+        }
+
+        .thrust-fill {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            background: linear-gradient(to top, #ff0066 0%, #ff6600 50%, #00ff66 100%);
+            border-radius: 4px;
+            transition: height 0.1s ease-out;
+            box-shadow: 0 0 10px rgba(0, 255, 150, 0.5), inset 0 0 5px rgba(255, 255, 255, 0.3);
+        }
+
+        .thrust-indicator::before {
+            content: 'THRUST';
+            position: absolute;
+            top: -25px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-family: 'Orbitron', monospace;
+            font-size: 10px;
+            color: rgba(0, 255, 200, 0.9);
+            text-shadow: 0 0 8px rgba(0, 255, 200, 0.6);
+            white-space: nowrap;
+        }
+
+        /* MOBILE STYLES */
         @media (max-width: 768px) and (pointer: coarse), 
-       (max-width: 768px) and (hover: none), 
-       (pointer: coarse) and (hover: none) {
-            /* Hide all desktop UI panels on mobile */
-            .ui-panel {
-                display: none !important;
-            }
-            
-            /* Show mobile controls */
-            .mobile-controls {
-                display: flex !important;
-            }
-            
-            /* Make crosshair more visible on mobile */
+               (max-width: 768px) and (hover: none), 
+               (pointer: coarse) and (hover: none) {
+            .ui-panel { display: none !important; }
+            .mobile-controls { display: flex !important; }
             .crosshair {
                 width: 32px !important;
                 height: 32px !important;
@@ -176,42 +231,22 @@
                 border-color: rgba(0, 255, 0, 0.9) !important;
                 z-index: 150 !important;
             }
-            
-            /* Enable touch controls */
             body {
                 cursor: auto !important;
                 touch-action: pan-x pan-y;
             }
-
-            #gameCanvas {
-                touch-action: none;
-            }
-
-            /* Hide achievement popup during intro on mobile */
-            body.intro-active #achievementPopup {
-                display: none !important;
-            }
-
-            /* Hide mobile controls during intro and loading */
+            #gameCanvas { touch-action: none; }
+            body.intro-active #achievementPopup,
             body.intro-active .mobile-controls,
-            #loadingScreen ~ .mobile-controls {
-                display: none !important;
-            }
-
             body.intro-active .nav-panel-mobile {
                 display: none !important;
             }
-
-            /* Mobile tutorial messages - position at top center */
-            @media (max-width: 768px), (hover: none) {
-                .mission-command-alert {
-                    top: 15% !important;
-                    transform: translate(-50%, -50%) !important;
-                }
+            .mission-command-alert {
+                top: 15% !important;
+                transform: translate(-50%, -50%) !important;
             }
         }
 
-        /* Mobile control styles - Cyberpunk themed */
         .mobile-controls {
             position: fixed;
             bottom: 20px;
@@ -239,27 +274,19 @@
             transition: all 0.2s ease;
             font-family: 'Orbitron', monospace;
             font-weight: 600;
-            box-shadow: 
-                0 4px 15px rgba(0, 150, 255, 0.3),
-                inset 0 1px 0 rgba(0, 150, 255, 0.4);
-            /* Add the same curved transform effects as UI panels */
+            box-shadow: 0 4px 15px rgba(0, 150, 255, 0.3), inset 0 1px 0 rgba(0, 150, 255, 0.4);
             transform-style: preserve-3d;
             perspective: 600px;
             transform: perspective(600px) rotateX(-2deg) translateZ(3px);
-            /* Add curved element filter */
             filter: drop-shadow(0 0 8px rgba(0,150,255,0.6));
         }
 
         .mobile-btn:active {
             transform: perspective(600px) rotateX(-2deg) translateZ(1px) scale(0.95);
             background: linear-gradient(135deg, rgba(0, 200, 255, 0.3), rgba(0, 150, 255, 0.4));
-            box-shadow: 
-                0 0 20px rgba(0, 255, 200, 0.4),
-                0 6px 20px rgba(0, 150, 255, 0.3),
-                inset 0 1px 0 rgba(0, 255, 200, 0.4);
+            box-shadow: 0 0 20px rgba(0, 255, 200, 0.4), 0 6px 20px rgba(0, 150, 255, 0.3), inset 0 1px 0 rgba(0, 255, 200, 0.4);
         }
 
-        /* Fire button styling */
         .mobile-btn.fire {
             width: 64px;
             height: 64px;
@@ -274,7 +301,6 @@
             transform: perspective(600px) rotateX(-3deg) translateZ(2px) scale(0.92);
         }
 
-        /* Navigation panel slide-in */
         .nav-panel-mobile {
             position: fixed;
             top: 0;
@@ -289,17 +315,12 @@
             z-index: 200;
             transition: right 0.3s ease;
             overflow-y: auto;
-            box-shadow: 
-                -10px 0 30px rgba(0, 150, 255, 0.3),
-                inset 1px 0 0 rgba(0, 150, 255, 0.4);
-            /* Add curved element styling */
+            box-shadow: -10px 0 30px rgba(0, 150, 255, 0.3), inset 1px 0 0 rgba(0, 150, 255, 0.4);
             transform-style: preserve-3d;
             perspective: 1200px;
         }
 
-        .nav-panel-mobile.active {
-            right: 0;
-        }
+        .nav-panel-mobile.active { right: 0; }
 
         .nav-panel-mobile h3 {
             color: rgba(0, 255, 200, 0.9);
@@ -309,11 +330,9 @@
             text-align: center;
             border-bottom: 1px solid rgba(0, 150, 255, 0.3);
             padding-bottom: 10px;
-            /* Add curved element filter */
             filter: drop-shadow(0 0 8px rgba(0,255,200,0.6));
         }
 
-        /* Mobile popup styles */
         .mobile-popup {
             position: fixed;
             top: 0;
@@ -329,9 +348,7 @@
             padding: 20px;
         }
 
-        .mobile-popup.active {
-            display: flex !important;
-        }
+        .mobile-popup.active { display: flex !important; }
 
         .mobile-popup-content {
             background: linear-gradient(135deg, rgba(15, 23, 42, 0.4), rgba(30, 41, 59, 0.4));
@@ -344,10 +361,7 @@
             max-height: 80vh;
             overflow-y: auto;
             font-family: 'Orbitron', monospace;
-            box-shadow: 
-                0 20px 60px rgba(0, 150, 255, 0.4),
-                inset 0 2px 15px rgba(0,150,255,0.3);
-            /* Add curved styling */
+            box-shadow: 0 20px 60px rgba(0, 150, 255, 0.4), inset 0 2px 15px rgba(0,150,255,0.3);
             transform-style: preserve-3d;
             perspective: 1200px;
             transform: perspective(1000px) rotateX(-2deg) translateZ(5px);
@@ -373,28 +387,20 @@
             height: 30px;
         }
         
-        /* Force hide mobile controls on desktop - stronger override */
-@media (min-width: 769px) and (pointer: fine) and (hover: hover) {
-    .mobile-controls {
-        display: none !important;
-        visibility: hidden !important;
-    }
-    .nav-panel-mobile {
-        display: none !important;
-        visibility: hidden !important;
-    }
-    .mobile-popup {
-        display: none !important;
-        visibility: hidden !important;
-    }
-}
+        @media (min-width: 769px) and (pointer: fine) and (hover: hover) {
+            .mobile-controls,
+            .nav-panel-mobile,
+            .mobile-popup {
+                display: none !important;
+                visibility: hidden !important;
+            }
+        }
     </style>
 </head>
 <body class="text-white">
     <div class="cyberpunk-bg"></div>
     <div class="crosshair" id="crosshair"></div>
     
-    <!-- Main Game Container -->
     <div id="gameContainer" class="relative w-full h-screen">
         <!-- Title Header -->
         <div class="absolute top-4 left-1/2 transform -translate-x-1/2 ui-panel title-header rounded-lg p-4 z-10" style="left: 50%; transform: translateX(-50%);">
@@ -402,23 +408,18 @@
             <div class="text-xs text-center text-gray-400 mt-1 opacity-80">A Gravitational Space Explorer by ChiLab</div>
         </div>
 
-        <!-- Flight Controls Panel (Top Left) -->
+        <!-- Flight Controls Panel -->
         <div class="absolute top-14 left-4 ui-panel top-left rounded-lg p-3 z-10">
             <h3 class="text-sm font-bold text-cyan-400 glow-text mb-2 cyber-title curved-element">FLIGHT CONTROLS</h3>
             <div class="text-xs text-gray-300 opacity-80 curved-element mb-3">
-                <strong>FLIGHT CONTROLS:</strong><br>
-                â†‘â†“: Pitch (Nose Up/Down)<br>
-                â†â†’: Yaw (Turn Left/Right)<br>
-                Q/E: Roll (Bank Left/Right)<br>
-                W/S: Throttle (Forward/Reverse)<br>
-                A/D: Strafe (Left/Right Thrusters)<br>
-                <strong>WEAPONS & NAV:</strong><br>
-                Space: Fire | Tab: Cycle Targets<br>
+                WASD: Thrust Forward/Left/Back/Right<br>
+                Arrow Keys: Look Up/Down/Left/Right<br>
+                Q/E: Roll Left/Right<br>
+                Space: Fire Weapons<br>
+                X: Brake/Stop | Tab: Cycle Targets<br>
                 Enter: Auto-nav/Slingshot<br>
-                Option: Target Lock | O: Emergency Warp<br>
-                X: Brake/Stop
+                Option: Target Lock | O: Emergency Warp
             </div>
-            <!-- Added Mute and Pause buttons -->
             <div class="flex gap-2 mt-2">
                 <button id="muteBtn" class="small-control-btn">
                     <i class="fas fa-volume-up mr-1" id="muteIcon"></i>Mute
@@ -429,7 +430,7 @@
             </div>
         </div>
 
-        <!-- Status Panel (Bottom Left) -->
+        <!-- Status Panel -->
         <div class="absolute bottom-4 left-4 ui-panel bottom-left rounded-lg p-3 z-10">
             <h3 class="text-sm font-bold text-cyan-400 glow-text mb-2 cyber-title curved-element">SHIP STATUS</h3>
             <div class="space-y-2 text-sm curved-element">
@@ -457,13 +458,11 @@
             </div>
             
             <div id="blackHoleWarningHUD" class="hidden bg-yellow-900 bg-opacity-80 border border-yellow-400 rounded p-2 mb-3 text-center">
-                <div class="text-yellow-300 text-sm font-bold">âš ï¸ EVENT HORIZON PROXIMITY âš ï¸</div>
+                <div class="text-yellow-300 text-sm font-bold">⚠️ EVENT HORIZON PROXIMITY ⚠️</div>
                 <div id="blackHoleDistanceHUD" class="text-yellow-100 text-xs"></div>
             </div>
             
-            <div id="availableTargets" class="space-y-2 max-h-40 overflow-y-auto">
-                <!-- Dynamic content will be inserted here -->
-            </div>
+            <div id="availableTargets" class="space-y-2 max-h-40 overflow-y-auto"></div>
             
             <button id="autoNavigateBtn" class="w-full mt-4 space-btn rounded px-4 py-2 disabled:opacity-50 disabled:cursor-not-allowed">
                 <i class="fas fa-crosshairs mr-2"></i>Auto-Navigate to Target
@@ -473,63 +472,48 @@
             </button>
         </div>
 
-        <!-- Enhanced Round Galaxy Map -->
+        <!-- Galaxy Map -->
         <div class="absolute bottom-4 right-4 ui-panel bottom-right rounded-lg p-4 z-10">
             <div class="flex justify-between items-center mb-2">
                 <h3 class="text-sm font-bold text-cyan-400 glow-text">Map</h3>
                 <button id="mapViewToggle" class="space-btn rounded px-2 py-1 text-xs">Galactic View</button>
             </div>
             <div class="round-map cyberpunk-bg" id="galaxyMap">
-                <!-- Map Toggle Button -->
-                <div class="map-toggle-btn" id="mapToggle" title="Toggle Map Mode">
-                    GAL
-                </div>
-                
-                <!-- Grid overlay -->
-                <div class="map-grid" id="mapGrid">
-                    <!-- Grid lines will be generated by JavaScript -->
-                </div>
-                
+                <div class="map-toggle-btn" id="mapToggle" title="Toggle Map Mode">GAL</div>
+                <div class="map-grid" id="mapGrid"></div>
                 <div class="compass-ring"></div>
                 <div class="compass-needle hidden" id="compassNeedle"></div>
-                
-                <!-- Map direction arrow (shows player facing direction in galactic view) -->
                 <div class="map-direction-arrow" id="mapDirectionArrow"></div>
-                
-                <!-- Player position indicator (always centered) -->
-                <div id="playerMapPosition" class="absolute text-green-400 text-lg font-bold" style="top: 50%; left: 50%; transform: translate(-50%, -50%); filter: drop-shadow(0 0 3px #00ff96);">â–²</div>
-                
-                <!-- Target indicator -->
+                <div id="playerMapPosition" class="absolute text-green-400 text-lg font-bold" style="top: 50%; left: 50%; transform: translate(-50%, -50%); filter: drop-shadow(0 0 3px #00ff96);">▲</div>
                 <div id="targetMapPosition" class="absolute w-3 h-3 bg-red-400 rounded-full hidden" style="box-shadow: 0 0 6px #ef4444; animation: pulse 1s infinite;"></div>
             </div>
             <div class="text-xs text-gray-300 mt-2 opacity-80">
                 <div class="flex items-center gap-2">
-                    <div class="text-green-400">â–²</div>
+                    <div class="text-green-400">▲</div>
                     <span>You</span>
                     <div class="w-2 h-2 bg-red-400 rounded-full ml-2"></div>
                     <span>Target</span>
                     <div class="w-3 h-1 bg-yellow-400 ml-2"></div>
-                    <span>Compass â†’ Sgr A*</span>
+                    <span>Compass → Sgr A*</span>
                 </div>
                 <div class="text-xs text-purple-300 mt-1">8 Known Galaxies + Unexplored Space</div>
                 <div class="text-xs text-green-300 mt-1" id="mapViewStatus">Galaxy View</div>
             </div>
         </div>
 
-        <!-- Black hole event horizon warning -->
+        <!-- Event Horizon Warning -->
         <div id="eventHorizonWarning" class="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 hidden z-40">
             <div class="text-center ui-panel rounded-lg p-6 bg-red-900 bg-opacity-80 border-red-400">
-                <div class="text-6xl mb-4 pulse">âš ï¸</div>
+                <div class="text-6xl mb-4 pulse">⚠️</div>
                 <h2 class="text-3xl font-bold mb-2">EVENT HORIZON APPROACHING</h2>
                 <p class="mb-2">Use the black hole's gravity to slingshot across the universe!</p>
                 <div class="text-sm">Warning Distance: 400 units | Auto-Warp at 160 units</div>
             </div>
         </div>
         
-        <!-- Mission Command Alert - Positioned closer to bottom of screen -->
+        <!-- Mission Command Alert -->
         <div id="missionCommandAlert" class="absolute mission-command-alert p-6 max-w-lg hidden z-50" style="top: 85%; left: 50%; transform: translate(-50%, -50%);">
             <div class="text-center">
-                <!-- REMOVED: Icon div -->
                 <h2 class="text-xl font-bold text-cyan-400 mb-2">MISSION COMMAND</h2>
                 <div id="missionCommandText" class="text-gray-300 mb-4"></div>
             </div>
@@ -548,6 +532,17 @@
                     <div id="loadingBar" class="loading-bar h-full rounded" style="width: 0%"></div>
                 </div>
                 <p id="loadingText" class="text-sm text-gray-400 mt-2 mono-text">Starting enhanced systems...</p>
+            </div>
+        </div>
+
+        <!-- Achievement Popup -->
+        <div id="achievementPopup" class="absolute bottom-4 left-1/2 transform -translate-x-1/2 ui-panel rounded-lg p-4 hidden z-70">
+            <div class="flex items-center space-x-3">
+                <div class="achievement-icon"></div>
+                <div>
+                    <h4 class="font-bold text-cyan-400 glow-text">Achievement Unlocked!</h4>
+                    <p id="achievementText" class="text-sm text-gray-300"></p>
+                </div>
             </div>
         </div>
 
@@ -589,7 +584,7 @@
         <!-- Boss Warning -->
         <div id="bossWarning" class="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 hidden z-50">
             <div class="text-center ui-panel rounded-lg p-6">
-                <div class="text-6xl mb-4 pulse">âš ï¸</div>
+                <div class="text-6xl mb-4 pulse">⚠️</div>
                 <h2 class="text-3xl font-bold text-red-400 mb-2 glow-text">BOSS ENCOUNTER</h2>
                 <p id="bossName" class="text-xl text-yellow-400 mb-2"></p>
                 <p class="text-gray-300">Eliminate all support ships first!</p>
@@ -597,7 +592,7 @@
         </div>
     </div>
 
-    <!-- MOBILE CONTROLS - Only visible on mobile devices -->
+    <!-- MOBILE CONTROLS -->
     <div class="mobile-controls">
         <button class="mobile-btn" onclick="showMobilePanel('controls')" title="Flight Controls">
             <i class="fas fa-gamepad"></i>
@@ -605,17 +600,12 @@
         <button class="mobile-btn" onclick="showMobilePanel('status')" title="Ship Status">
             <i class="fas fa-tachometer-alt"></i>
         </button>
-        
-        <!-- Forward thrust button -->
         <button class="mobile-btn" onmousedown="startForwardThrust()" onmouseup="stopForwardThrust()" ontouchstart="startForwardThrust()" ontouchend="stopForwardThrust()" title="Forward Thrust">
             <i class="fas fa-arrow-up"></i>
         </button>
-        
-        <!-- Fire button in center -->
         <button class="mobile-btn fire" onclick="mobileFireWeapon()" title="Fire Weapons">
             <i class="fas fa-crosshairs"></i>
         </button>
-        
         <button class="mobile-btn" onclick="mobileBrakes()" title="Brakes">
             <i class="fas fa-hand-paper"></i>
         </button>
@@ -624,7 +614,7 @@
         </button>
     </div>
 
-    <!-- Mobile Navigation Panel (slides in from right) - Uses real navigation panel -->
+    <!-- Mobile Navigation Panel -->
     <div class="nav-panel-mobile" id="navPanelMobile">
         <h3>Navigation System</h3>
         <button id="mobileToggleOrbitsBtn" class="space-btn rounded px-2 py-1 text-xs mb-3 w-full">
@@ -632,13 +622,11 @@
         </button>
         
         <div id="mobileBlackHoleWarningHUD" class="hidden bg-yellow-900 bg-opacity-80 border border-yellow-400 rounded p-2 mb-3 text-center">
-            <div class="text-yellow-300 text-sm font-bold">âš ï¸ EVENT HORIZON PROXIMITY âš ï¸</div>
+            <div class="text-yellow-300 text-sm font-bold">⚠️ EVENT HORIZON PROXIMITY ⚠️</div>
             <div id="mobileBlackHoleDistanceHUD" class="text-yellow-100 text-xs"></div>
         </div>
         
-        <div id="mobileAvailableTargets" style="max-height: 50%; overflow-y: auto; margin-bottom: 15px;">
-            <!-- This will be populated by populateTargets() -->
-        </div>
+        <div id="mobileAvailableTargets" style="max-height: 50%; overflow-y: auto; margin-bottom: 15px;"></div>
         
         <button id="mobileAutoNavigateBtn" onclick="mobileAutoNavigate()" class="w-full mt-2 space-btn rounded px-4 py-2 mb-2">
             <i class="fas fa-crosshairs mr-2"></i>Auto-Navigate to Target
@@ -648,18 +636,18 @@
         </button>
     </div>
 
-    <!-- MOBILE POPUPS - Show desktop panel content on mobile -->
+    <!-- MOBILE POPUPS -->
     <div class="mobile-popup" id="controlsPopup">
         <div class="mobile-popup-content">
             <button class="mobile-popup-close" onclick="hideMobilePanel('controls')">&times;</button>
             <h3>FLIGHT CONTROLS</h3>
             <div style="font-size: 12px; line-height: 1.4;">
                 <strong>TOUCH CONTROLS:</strong><br>
-                â€¢ Drag screen: Look around<br>
-                â€¢ Tap fire button: Shoot<br>
-                â€¢ Use navigation panel for targets<br><br>
+                • Drag screen: Look around<br>
+                • Tap fire button: Shoot<br>
+                • Use navigation panel for targets<br><br>
                 <strong>DESKTOP CONTROLS:</strong><br>
-                â†‘â†“: Pitch | â†â†’: Yaw | Q/E: Roll<br>
+                Arrows: Pitch/Yaw | Q/E: Roll<br>
                 W/S: Throttle | A/D: Strafe<br>
                 Space: Fire | Tab: Cycle Targets<br>
                 Enter: Auto-nav/Slingshot<br>
@@ -685,84 +673,55 @@
         </div>
     </div>
 
-    <div class="mobile-popup" id="navigationPopup">
-        <div class="mobile-popup-content">
-            <button class="mobile-popup-close" onclick="hideMobilePanel('navigation')">&times;</button>
-            <h3>NAVIGATION</h3>
-            <div id="mobileTargetsList" style="max-height: 200px; overflow-y: auto; margin-bottom: 15px;">
-                <!-- Targets will be populated here -->
-            </div>
-            <button onclick="mobileAutoNavigate()" style="width: 100%; padding: 8px; background: linear-gradient(135deg, rgba(0, 150, 255, 0.8), rgba(0, 100, 200, 0.8)); border: 1px solid rgba(0, 150, 255, 0.6); border-radius: 5px; color: white; cursor: pointer;">
-                Auto-Navigate
-            </button>
-        </div>
-    </div>
-
-    <!-- Game Scripts - Load in dependency order (CRITICAL: game-core.js MUST load last) -->
+    <!-- Game Scripts -->
+    <script src="js/cosmic-features.js"></script>
     <script src="js/game-objects.js"></script>
-    <script src="js/game-ui.js"></script>        <!-- MOVE THIS BEFORE game-physics.js -->
-    <script src="js/game-physics.js"></script>    <!-- Now this can use gameOver function -->
+    <script src="js/game-physics.js"></script>
+    <script src="js/game-ui.js"></script>
     <script src="js/game-controls.js"></script>
     <script src="js/game-intro.js"></script>
     <script src="js/game-core.js"></script>
 
-    <!-- MINIMAL MOBILE SCRIPT - Enhanced mobile functionality -->
+    <!-- MOBILE SCRIPT - ALL INLINE FROM INDEXX2.HTML -->
     <script>
         // Mobile settings
         let mobileSettings = {
-            crosshairTargeting: true, // ON by default for mobile
-            targetMode: true, // Target mode by default
+            crosshairTargeting: true,
+            targetMode: true,
             forwardThrust: false
         };
 
-        // Initialize mobile settings
         document.addEventListener('DOMContentLoaded', () => {
-            // Enable crosshair targeting and target mode by default on mobile
             if (window.innerWidth <= 768 || 'ontouchstart' in window) {
-                console.log('ðŸ“± Mobile device detected - enabling crosshair targeting and target mode');
+                console.log('📱 Mobile device detected');
                 mobileSettings.crosshairTargeting = true;
                 mobileSettings.targetMode = true;
                 
-                // Set target mode when game starts
                 setTimeout(() => {
                     if (typeof gameState !== 'undefined') {
                         gameState.targetLock = gameState.targetLock || {};
                         gameState.targetLock.active = true;
-                        console.log('ðŸ“± Target mode activated for mobile');
+                        console.log('📱 Target mode activated');
                     }
                 }, 2000);
 
-                // Listen for launch button clicks to start music
                 setupMobileLaunchMusicTrigger();
             }
         });
 
-        // Setup music trigger for mobile launch button
         function setupMobileLaunchMusicTrigger() {
-            // Look for the launch button and add music start
             const observer = new MutationObserver((mutations) => {
                 mutations.forEach((mutation) => {
                     mutation.addedNodes.forEach((node) => {
                         if (node.nodeType === 1 && (node.classList?.contains('intro-start-btn') || node.textContent?.includes('LAUNCH'))) {
-                            console.log('ðŸ“± Found launch button, adding music trigger');
                             const originalClick = node.onclick;
                             node.onclick = function(e) {
-                                console.log('ðŸ“± Launch button clicked - starting music');
-                                
-                                // Start background music
                                 if (typeof startBackgroundMusic === 'function') {
-                                    setTimeout(() => {
-                                        startBackgroundMusic();
-                                        console.log('ðŸŽµ Background music started from mobile launch');
-                                    }, 500);
+                                    setTimeout(() => startBackgroundMusic(), 500);
                                 }
-                                
-                                // Resume audio context
                                 if (typeof resumeAudioContext === 'function') {
                                     resumeAudioContext();
                                 }
-                                
-                                // Call original function
                                 if (originalClick) {
                                     originalClick.call(this, e);
                                 }
@@ -773,89 +732,31 @@
             });
             
             observer.observe(document.body, { childList: true, subtree: true });
-            
-            // Also check existing buttons
-            setTimeout(() => {
-                const existingLaunchBtn = document.querySelector('.intro-start-btn, [onclick*="launch"], [onclick*="LAUNCH"]');
-                if (existingLaunchBtn && !existingLaunchBtn.dataset.musicTriggerAdded) {
-                    console.log('ðŸ“± Adding music trigger to existing launch button');
-                    const originalClick = existingLaunchBtn.onclick;
-                    existingLaunchBtn.onclick = function(e) {
-                        console.log('ðŸ“± Launch button clicked - starting music');
-                        
-                        // Start background music
-                        if (typeof startBackgroundMusic === 'function') {
-                            setTimeout(() => {
-                                startBackgroundMusic();
-                                console.log('ðŸŽµ Background music started from mobile launch');
-                            }, 500);
-                        }
-                        
-                        // Resume audio context
-                        if (typeof resumeAudioContext === 'function') {
-                            resumeAudioContext();
-                        }
-                        
-                        // Call original function
-                        if (originalClick) {
-                            originalClick.call(this, e);
-                        }
-                    };
-                    existingLaunchBtn.dataset.musicTriggerAdded = 'true';
-                }
-            }, 1000);
         }
 
-        // Forward thrust functions
         function startForwardThrust() {
             mobileSettings.forwardThrust = true;
-            
-            // Trigger W key for forward thrust
-            if (typeof keys !== 'undefined') {
-                keys.w = true;
-            }
-            
-            // Play sound
-            if (typeof playSound === 'function') {
-                playSound('thrust', 400, 0.1);
-            }
-            
-            console.log('ðŸ“± Forward thrust started');
+            if (typeof keys !== 'undefined') keys.w = true;
+            if (typeof playSound === 'function') playSound('thrust', 400, 0.1);
         }
 
         function stopForwardThrust() {
             mobileSettings.forwardThrust = false;
-            
-            // Stop W key
-            if (typeof keys !== 'undefined') {
-                keys.w = false;
-            }
-            
-            console.log('ðŸ“± Forward thrust stopped');
+            if (typeof keys !== 'undefined') keys.w = false;
         }
 
-        // Simple mobile panel management
         function showMobilePanel(panelName) {
             const popup = document.getElementById(panelName + 'Popup');
             if (popup) {
-                // Update content before showing
-                if (panelName === 'status') {
-                    updateMobileStatus();
-                }
+                if (panelName === 'status') updateMobileStatus();
                 popup.classList.add('active');
-                
-                // Play sound
-                if (typeof playSound === 'function') {
-                    playSound('ui_click', 800, 0.1);
-                }
+                if (typeof playSound === 'function') playSound('ui_click', 800, 0.1);
             }
         }
 
         function hideMobilePanel(panelName) {
             const popup = document.getElementById(panelName + 'Popup');
-            if (popup) {
-                popup.classList.remove('active');
-            }
+            if (popup) popup.classList.remove('active');
         }
 
         function updateMobileStatus() {
@@ -869,9 +770,7 @@
                 'mobileWarpCount': gameState.emergencyWarpCount || 5,
                 'mobileLocation': gameState.location || 'Local Galaxy',
                 'mobileTarget': gameState.currentTarget ? gameState.currentTarget.userData.name : 'None',
-                'mobileGalaxies': (gameState.galaxiesCleared || 0) + '/8',
-                'mobileWeaponStatus': gameState.weapons?.cooldown > 0 ? 'COOLING' : 'ARMED',
-                'mobileTargetLock': gameState.targetLock?.active ? 'ACTIVE' : 'INACTIVE'
+                'mobileGalaxies': (gameState.galaxiesCleared || 0) + '/8'
             };
 
             Object.entries(updates).forEach(([id, value]) => {
@@ -880,137 +779,80 @@
             });
         }
 
-        // Mobile weapon fire
         function mobileFireWeapon() {
-            // Trigger weapon fire using existing system
             if (typeof keys !== 'undefined') {
                 keys.space = true;
                 setTimeout(() => keys.space = false, 100);
             }
-            
-            // Play sound
-            if (typeof playSound === 'function') {
-                playSound('weapon', 800, 0.2);
-            }
+            if (typeof playSound === 'function') playSound('weapon', 800, 0.2);
         }
 
-        // Mobile brakes function
         function mobileBrakes() {
-            // Trigger brake using existing X key system
             if (typeof keys !== 'undefined') {
                 keys.x = true;
                 setTimeout(() => keys.x = false, 200);
             }
-            
-            // Play sound
-            if (typeof playSound === 'function') {
-                playSound('ui_click', 600, 0.1);
-            }
-            
-            // Visual feedback
-            if (typeof showAchievement === 'function') {
-                showAchievement('Brakes Engaged', 'Emergency deceleration activated');
-            }
+            if (typeof playSound === 'function') playSound('ui_click', 600, 0.1);
         }
 
-        // Mobile auto-navigation - with panel collapse
         function mobileAutoNavigate() {
-            // Use the existing auto-navigate system
             if (typeof toggleAutoNavigate === 'function') {
                 toggleAutoNavigate();
             } else {
                 const autoNavBtn = document.getElementById('autoNavigateBtn');
-                if (autoNavBtn) {
-                    autoNavBtn.click();
-                }
+                if (autoNavBtn) autoNavBtn.click();
             }
-            
-            // Play sound
-            if (typeof playSound === 'function') {
-                playSound('navigation', 1000, 0.15);
-            }
-            
-            // Collapse navigation panel after auto-navigate
-            setTimeout(() => {
-                hideNavPanel();
-            }, 500);
+            if (typeof playSound === 'function') playSound('navigation', 1000, 0.15);
+            setTimeout(() => hideNavPanel(), 500);
         }
 
-        // Mobile warp/slingshot action
         function mobileWarpAction() {
-            // Use existing slingshot system
             if (typeof executeSlingshot === 'function') {
                 executeSlingshot();
             } else {
-                // Fallback to Enter key
                 if (typeof keys !== 'undefined') {
                     keys.Enter = true;
                     setTimeout(() => keys.Enter = false, 100);
                 }
             }
-            
             hideNavPanel();
         }
 
-        // FIXED: Mobile emergency warp - use correct key format
         function mobileEmergencyWarp() {
-            // FIXED: Use keys.o instead of keys['o'] to match game-physics.js
             if (typeof keys !== 'undefined') {
                 keys.o = true;
                 setTimeout(() => keys.o = false, 100);
             }
-            
-            // Play sound
-            if (typeof playSound === 'function') {
-                playSound('warp', 400, 0.3);
-            }
-            
-            console.log('ðŸ“± Mobile emergency warp triggered');
+            if (typeof playSound === 'function') playSound('warp', 400, 0.3);
         }
 
-        // Navigation panel management - use real navigation system
         function showNavPanel() {
             const navPanel = document.getElementById('navPanelMobile');
             if (navPanel) {
                 updateMobileNavigation();
                 navPanel.classList.add('active');
-                
-                // Play sound
-                if (typeof playSound === 'function') {
-                    playSound('ui_open', 1200, 0.1);
-                }
+                if (typeof playSound === 'function') playSound('ui_open', 1200, 0.1);
             }
         }
 
         function hideNavPanel() {
             const navPanel = document.getElementById('navPanelMobile');
-            if (navPanel) {
-                navPanel.classList.remove('active');
-            }
+            if (navPanel) navPanel.classList.remove('active');
         }
 
-        // ENHANCED: Use real navigation system from game-ui.js
         function updateMobileNavigation() {
             const mobileTargetsContainer = document.getElementById('mobileAvailableTargets');
             if (!mobileTargetsContainer) return;
 
-            // Clear existing content
             mobileTargetsContainer.innerHTML = '';
             
-            // Use the real populateTargets function to get current targets
-            if (typeof populateTargets === 'function') {
-                populateTargets();
-            }
+            if (typeof populateTargets === 'function') populateTargets();
             
-            // Copy the desktop navigation content
             const desktopTargets = document.getElementById('availableTargets');
             if (desktopTargets) {
-                // Clone each target card for mobile
                 const targetCards = desktopTargets.querySelectorAll('.planet-card');
                 targetCards.forEach(card => {
                     const mobileCard = card.cloneNode(true);
-                    
-                    // Add mobile-specific styling with transparency
                     mobileCard.style.cssText += `
                         background: linear-gradient(135deg, rgba(15, 23, 42, 0.4), rgba(30, 41, 59, 0.4));
                         backdrop-filter: blur(8px);
@@ -1019,28 +861,15 @@
                         font-family: 'Orbitron', monospace;
                         transform: perspective(600px) rotateX(-1deg) translateZ(2px);
                     `;
-                    
-                    // Copy click functionality with panel collapse
                     mobileCard.onclick = (e) => {
-                        // Trigger the original card's click
                         card.click();
-                        
-                        // Auto-collapse navigation panel after selection
-                        setTimeout(() => {
-                            hideNavPanel();
-                        }, 300);
-                        
-                        // Play sound
-                        if (typeof playSound === 'function') {
-                            playSound('navigation', 900, 0.1);
-                        }
+                        setTimeout(() => hideNavPanel(), 300);
+                        if (typeof playSound === 'function') playSound('navigation', 900, 0.1);
                     };
-                    
                     mobileTargetsContainer.appendChild(mobileCard);
                 });
             }
             
-            // Update mobile auto-navigate button state
             const mobileAutoNavBtn = document.getElementById('mobileAutoNavigateBtn');
             const desktopAutoNavBtn = document.getElementById('autoNavigateBtn');
             if (mobileAutoNavBtn && desktopAutoNavBtn) {
@@ -1048,7 +877,6 @@
                 mobileAutoNavBtn.disabled = desktopAutoNavBtn.disabled;
             }
             
-            // Update mobile warp button state
             const mobileWarpBtn = document.getElementById('mobileWarpBtn');
             const desktopWarpBtn = document.getElementById('warpBtn');
             if (mobileWarpBtn && desktopWarpBtn) {
@@ -1056,45 +884,16 @@
                 mobileWarpBtn.disabled = desktopWarpBtn.disabled;
             }
             
-            // Update orbit button
-            const mobileOrbitBtn = document.getElementById('mobileToggleOrbitsBtn');
-            const desktopOrbitBtn = document.getElementById('toggleOrbitsBtn');
-            if (mobileOrbitBtn && desktopOrbitBtn) {
-                mobileOrbitBtn.innerHTML = desktopOrbitBtn.innerHTML;
-                mobileOrbitBtn.onclick = () => desktopOrbitBtn.click();
-            }
-            
-            // Update black hole warning
-            const mobileBlackHoleWarning = document.getElementById('mobileBlackHoleWarningHUD');
-            const desktopBlackHoleWarning = document.getElementById('blackHoleWarningHUD');
-            if (mobileBlackHoleWarning && desktopBlackHoleWarning) {
-                if (desktopBlackHoleWarning.classList.contains('hidden')) {
-                    mobileBlackHoleWarning.classList.add('hidden');
-                } else {
-                    mobileBlackHoleWarning.classList.remove('hidden');
-                    const mobileDistance = document.getElementById('mobileBlackHoleDistanceHUD');
-                    const desktopDistance = document.getElementById('blackHoleDistanceHUD');
-                    if (mobileDistance && desktopDistance) {
-                        mobileDistance.textContent = desktopDistance.textContent;
-                    }
-                }
-            }
-            
             if (mobileTargetsContainer.children.length === 0) {
                 mobileTargetsContainer.innerHTML = '<div style="text-align: center; opacity: 0.7; font-family: Orbitron, monospace; padding: 20px;">No targets available</div>';
             }
         }
 
-        // Enhanced touch controls for camera movement and tap-to-fire
-        let touchStartX = 0;
-        let touchStartY = 0;
-        let isTouching = false;
-        let touchStartTime = 0;
-        let hasMoved = false;
-        let totalMovement = 0;
+        // Touch controls
+        let touchStartX = 0, touchStartY = 0, isTouching = false;
+        let touchStartTime = 0, hasMoved = false, totalMovement = 0;
 
         document.addEventListener('touchstart', (e) => {
-            // Only handle touches on the game canvas
             if (e.target.id === 'gameCanvas' || e.target.closest('#gameContainer')) {
                 const touch = e.touches[0];
                 touchStartX = touch.clientX;
@@ -1113,19 +912,11 @@
                 const deltaX = touch.clientX - touchStartX;
                 const deltaY = touch.clientY - touchStartY;
                 
-                // Track total movement
                 totalMovement += Math.abs(deltaX) + Math.abs(deltaY);
+                if (totalMovement > 10) hasMoved = true;
                 
-                // Mark as moved if significant movement
-                if (totalMovement > 10) {
-                    hasMoved = true;
-                }
-                
-                // Apply camera rotation
                 camera.rotation.y -= deltaX * 0.005;
                 camera.rotation.x -= deltaY * 0.005;
-                
-                // Clamp vertical rotation
                 camera.rotation.x = Math.max(-Math.PI/2, Math.min(Math.PI/2, camera.rotation.x));
                 
                 touchStartX = touch.clientX;
@@ -1138,11 +929,9 @@
             if (isTouching) {
                 const touchDuration = Date.now() - touchStartTime;
                 
-                // Fire weapon if it was a quick tap (not a drag) and crosshair targeting is enabled
                 if (!hasMoved && touchDuration < 300 && totalMovement < 15 && mobileSettings.crosshairTargeting) {
                     mobileFireWeapon();
                     
-                    // Enhanced visual feedback on crosshair
                     const crosshair = document.getElementById('crosshair');
                     if (crosshair) {
                         crosshair.style.borderColor = 'rgba(255, 100, 100, 1)';
@@ -1160,15 +949,12 @@
             isTouching = false;
         });
 
-        // Swipe gesture for navigation panel (from right edge)
-        let swipeStartX = 0;
-        let isSwipeGesture = false;
+        // Swipe gesture
+        let swipeStartX = 0, isSwipeGesture = false;
 
         document.addEventListener('touchstart', (e) => {
             const touch = e.touches[0];
             const screenWidth = window.innerWidth;
-            
-            // Check if touch started near right edge (within 40px)
             if (touch.clientX > screenWidth - 40) {
                 swipeStartX = touch.clientX;
                 isSwipeGesture = true;
@@ -1179,8 +965,6 @@
             if (isSwipeGesture) {
                 const touch = e.touches[0];
                 const deltaX = swipeStartX - touch.clientX;
-                
-                // If swiped left significantly, show navigation panel
                 if (deltaX > 60) {
                     showNavPanel();
                     isSwipeGesture = false;
@@ -1188,111 +972,69 @@
             }
         });
 
-        document.addEventListener('touchend', () => {
-            isSwipeGesture = false;
-        });
+        document.addEventListener('touchend', () => { isSwipeGesture = false; });
 
-        // Close nav panel when touching outside
         document.addEventListener('click', (e) => {
             const navPanel = document.getElementById('navPanelMobile');
             if (navPanel && navPanel.classList.contains('active') && !navPanel.contains(e.target)) {
                 hideNavPanel();
             }
-            
-            // Close mobile popups when clicking outside
             if (e.target.classList.contains('mobile-popup')) {
                 e.target.classList.remove('active');
             }
         });
 
-        // Enhanced mobile death detection and mission failed screen
-        function checkMobileGameOver() {
-            if (typeof gameState !== 'undefined' && gameState.gameOver) {
-                // Ensure mobile sees mission failed screen
-                setTimeout(() => {
-                    const gameOverScreen = document.getElementById('gameOverScreen');
-                    if (!gameOverScreen) {
-                        console.log('ðŸ“± Creating mobile mission failed screen');
-                        // Force call gameOver function to show mission failed
-                        if (typeof gameOver === 'function') {
-                            gameOver('Hull integrity critical - ship destroyed!');
-                        }
-                    }
-                }, 500);
-            }
-        }
-
-        // Update mobile status and check for game over periodically
         setInterval(() => {
             const statusPopup = document.getElementById('statusPopup');
             if (statusPopup && statusPopup.classList.contains('active')) {
                 updateMobileStatus();
             }
             
-            // Update navigation panel if open
             const navPanel = document.getElementById('navPanelMobile');
             if (navPanel && navPanel.classList.contains('active')) {
                 updateMobileNavigation();
             }
-            
-            // Check for mobile game over
-            checkMobileGameOver();
         }, 1000);
         
-        // Show mobile controls after intro completes - FIXED
-document.addEventListener('DOMContentLoaded', () => {
-    let introCompleted = false;
-    
-    function showMobileControlsIfMobile() {
-        // Only show on actual mobile devices
-        function isMobileDevice() {
-            const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
-            const isNarrowScreen = window.innerWidth <= 768;
-            const isCoarsePointer = window.matchMedia("(pointer: coarse)").matches;
-            return isTouchDevice && (isNarrowScreen || isCoarsePointer);
-        }
-        
-        if (isMobileDevice()) {
-            const mobileControls = document.querySelector('.mobile-controls');
-            const navPanelMobile = document.querySelector('.nav-panel-mobile');
-            if (mobileControls) {
-                mobileControls.style.display = 'flex';
-                console.log('📱 Mobile controls now visible after sequence');
+        // Show mobile controls after intro
+        document.addEventListener('DOMContentLoaded', () => {
+            let introCompleted = false;
+            
+            function showMobileControlsIfMobile() {
+                function isMobileDevice() {
+                    const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+                    const isNarrowScreen = window.innerWidth <= 768;
+                    const isCoarsePointer = window.matchMedia("(pointer: coarse)").matches;
+                    return isTouchDevice && (isNarrowScreen || isCoarsePointer);
+                }
+                
+                if (isMobileDevice()) {
+                    const mobileControls = document.querySelector('.mobile-controls');
+                    const navPanelMobile = document.querySelector('.nav-panel-mobile');
+                    if (mobileControls) {
+                        mobileControls.style.display = 'flex';
+                        console.log('📱 Mobile controls now visible');
+                    }
+                    if (navPanelMobile) {
+                        navPanelMobile.style.display = 'block';
+                    }
+                }
             }
-            if (navPanelMobile) {
-                navPanelMobile.style.display = 'block';
-            }
-        }
-    }
-    
-    // Listen for when intro completes
-    const observer = new MutationObserver((mutations) => {
+            
+            const observer = new MutationObserver((mutations) => {
                 mutations.forEach((mutation) => {
                     if (mutation.type === 'attributes' && mutation.attributeName === 'class') {
                         const body = document.body;
                         if (!body.classList.contains('intro-active') && !introCompleted) {
                             introCompleted = true;
-                            // Intro has finished, show mobile controls after launch sequence
                             setTimeout(() => {
-    const loadingScreen = document.getElementById('loadingScreen');
-    if (!loadingScreen || loadingScreen.style.display === 'none') {
-        showMobileControlsIfMobile();
-                                    if (navPanelMobile) {
-                                        navPanelMobile.style.display = 'block';
-                                    }
+                                const loadingScreen = document.getElementById('loadingScreen');
+                                if (!loadingScreen || loadingScreen.style.display === 'none') {
+                                    showMobileControlsIfMobile();
                                 } else {
-                                    // Wait for loading screen to finish
                                     const loadingObserver = new MutationObserver(() => {
                                         if (loadingScreen.style.display === 'none') {
-                                            const mobileControls = document.querySelector('.mobile-controls');
-                                            const navPanelMobile = document.querySelector('.nav-panel-mobile');
-                                            if (mobileControls) {
-                                                mobileControls.style.display = 'flex';
-                                                console.log('ðŸ“± Mobile controls now visible after loading screen');
-                                            }
-                                            if (navPanelMobile) {
-                                                navPanelMobile.style.display = 'block';
-                                            }
+                                            showMobileControlsIfMobile();
                                             loadingObserver.disconnect();
                                         }
                                     });
@@ -1306,50 +1048,48 @@ document.addEventListener('DOMContentLoaded', () => {
             
             observer.observe(document.body, { attributes: true });
         });
-        
-        // Prevent accidental touch behaviors
+
         document.addEventListener('touchstart', (e) => {
-            if (e.touches.length > 1) {
-                e.preventDefault();
-            }
+            if (e.touches.length > 1) e.preventDefault();
         }, { passive: false });
-        
-        // Handle potential mission failed scenarios
+
         window.addEventListener('beforeunload', () => {
-            if (mobileSettings.forwardThrust) {
-                stopForwardThrust();
-            }
+            if (mobileSettings.forwardThrust) stopForwardThrust();
         });
     </script>
-<script>
 
-// Prevent multiple initialization
-let gameInitialized = false;
+    <!-- Initialization -->
+    <script>
+        let gameInitialized = false;
 
-window.addEventListener('load', () => {
-    if (gameInitialized) return;
-    gameInitialized = true;
-    
-    console.log('🚀 Starting Interstellar Slingshot...');
-    
-    // Simple timeout to ensure all scripts are loaded
-    setTimeout(() => {
-        try {
-            if (typeof startGameWithIntro === 'function') {
-                console.log('🎬 Starting with intro sequence...');
-                startGameWithIntro();
-            } else if (typeof startGame === 'function') {
-                console.log('🎮 Starting normal game...');
-                startGame();
-            } else {
-                console.error('❌ No game start function found');
-            }
-        } catch (error) {
-            console.error('❌ Initialization error:', error);
-        }
-    }, 100);
-});
-    
+        window.addEventListener('load', () => {
+            if (gameInitialized) return;
+            gameInitialized = true;
+            
+            console.log('🚀 Starting Interstellar Slingshot...');
+            
+            setTimeout(() => {
+                try {
+                    if (typeof THREE === 'undefined') {
+                        console.log('⏳ Waiting for THREE.js...');
+                        setTimeout(arguments.callee, 100);
+                        return;
+                    }
+                    
+                    if (typeof startGameWithIntro === 'function') {
+                        console.log('🎬 Starting with intro sequence...');
+                        startGameWithIntro();
+                    } else if (typeof startGame === 'function') {
+                        console.log('🎮 Starting normal game...');
+                        startGame();
+                    } else {
+                        console.error('❌ No game start function found');
+                    }
+                } catch (error) {
+                    console.error('❌ Initialization error:', error);
+                }
+            }, 100);
+        });
     </script>
 </body>
 </html>
