@@ -12,6 +12,7 @@ function updateUI() {
     // Safety check for game state
     if (typeof gameState === 'undefined' || !gameState) return;
     
+    // FIXED: Properly define all UI elements at the start
     const velocityEl = document.getElementById('velocity');
     const distanceEl = document.getElementById('distance');
     const energyBarEl = document.getElementById('energyBar');
@@ -32,73 +33,73 @@ function updateUI() {
     if (locationEl) locationEl.textContent = gameState.location;
     
     // Enhanced hull display with dynamic color coding
-if (hullBarEl) {
-    const hullPercent = (gameState.hull / gameState.maxHull * 100);
-    hullBarEl.style.width = hullPercent + '%';
-    
-    // Enhanced color coding for hull
-    if (gameState.hull < 25) {
-        hullBarEl.style.background = 'linear-gradient(90deg, #ff0066 0%, #ff3366 100%)';
-    } else if (gameState.hull < 50) {
-        hullBarEl.style.background = 'linear-gradient(90deg, #ff6600 0%, #ff9933 100%)';
-    } else {
-        hullBarEl.style.background = 'linear-gradient(90deg, #ff0066 0%, #ff6600 50%, #00ff66 100%)';
+    if (hullBarEl) {
+        const hullPercent = (gameState.hull / gameState.maxHull * 100);
+        hullBarEl.style.width = hullPercent + '%';
+        
+        // Enhanced color coding for hull
+        if (gameState.hull < 25) {
+            hullBarEl.style.background = 'linear-gradient(90deg, #ff0066 0%, #ff3366 100%)';
+        } else if (gameState.hull < 50) {
+            hullBarEl.style.background = 'linear-gradient(90deg, #ff6600 0%, #ff9933 100%)';
+        } else {
+            hullBarEl.style.background = 'linear-gradient(90deg, #ff0066 0%, #ff6600 50%, #00ff66 100%)';
+        }
     }
     
     // ADDED: Cracked screen effect at 10% hull
-    if (gameState.hull <= 10 && !document.getElementById('criticalDamageOverlay')) {
-        const crackedOverlay = document.createElement('div');
-        crackedOverlay.id = 'criticalDamageOverlay';
-        crackedOverlay.style.cssText = `
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100vw;
-            height: 100vh;
-            pointer-events: none;
-            z-index: 35;
-            background-image: 
-                repeating-linear-gradient(
-                    0deg,
-                    transparent,
-                    transparent 2px,
-                    rgba(0, 255, 0, 0.03) 2px,
-                    rgba(0, 255, 0, 0.03) 4px
-                ),
-                repeating-linear-gradient(
-                    90deg,
-                    transparent,
-                    transparent 2px,
-                    rgba(255, 0, 0, 0.03) 2px,
-                    rgba(255, 0, 0, 0.03) 4px
-                ),
-                radial-gradient(circle at 30% 40%, transparent 20%, rgba(255,0,0,0.1) 50%),
-                radial-gradient(circle at 70% 60%, transparent 20%, rgba(255,0,0,0.1) 50%),
-                linear-gradient(45deg, transparent 40%, rgba(255,0,0,0.05) 41%, transparent 42%),
-                linear-gradient(-45deg, transparent 40%, rgba(255,0,0,0.05) 41%, transparent 42%);
-            animation: crtFlicker 0.15s infinite;
+if (gameState.hull <= 10 && !document.getElementById('criticalDamageOverlay')) {
+    const crackedOverlay = document.createElement('div');
+    crackedOverlay.id = 'criticalDamageOverlay';
+    crackedOverlay.style.cssText = `
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100vw;
+        height: 100vh;
+        pointer-events: none;
+        z-index: 35;
+        background-image: 
+            repeating-linear-gradient(
+                0deg,
+                transparent,
+                transparent 2px,
+                rgba(0, 255, 0, 0.03) 2px,
+                rgba(0, 255, 0, 0.03) 4px
+            ),
+            repeating-linear-gradient(
+                90deg,
+                transparent,
+                transparent 2px,
+                rgba(255, 0, 0, 0.03) 2px,
+                rgba(255, 0, 0, 0.03) 4px
+            ),
+            radial-gradient(circle at 30% 40%, transparent 20%, rgba(255,0,0,0.1) 50%),
+            radial-gradient(circle at 70% 60%, transparent 20%, rgba(255,0,0,0.1) 50%),
+            linear-gradient(45deg, transparent 40%, rgba(255,0,0,0.05) 41%, transparent 42%),
+            linear-gradient(-45deg, transparent 40%, rgba(255,0,0,0.05) 41%, transparent 42%);
+        animation: crtFlicker 0.15s infinite;
+    `;
+    document.body.appendChild(crackedOverlay);
+    
+    // Add CSS animation
+    if (!document.getElementById('crtFlickerStyle')) {
+        const style = document.createElement('style');
+        style.id = 'crtFlickerStyle';
+        style.textContent = `
+            @keyframes crtFlicker {
+                0% { opacity: 0.9; }
+                50% { opacity: 1; }
+                100% { opacity: 0.9; }
+            }
         `;
-        document.body.appendChild(crackedOverlay);
-        
-        // Add CSS animation
-        if (!document.getElementById('crtFlickerStyle')) {
-            const style = document.createElement('style');
-            style.id = 'crtFlickerStyle';
-            style.textContent = `
-                @keyframes crtFlicker {
-                    0% { opacity: 0.9; }
-                    50% { opacity: 1; }
-                    100% { opacity: 0.9; }
-                }
-            `;
-            document.head.appendChild(style);
-        }
-    } else if (gameState.hull > 10) {
-        // Remove cracked screen effect when hull is repaired
-        const overlay = document.getElementById('criticalDamageOverlay');
-        if (overlay) overlay.remove();
+        document.head.appendChild(style);
     }
-}  // <-- THIS CLOSING BRACE WAS MISSING!
+} else if (gameState.hull > 10) {
+    // Remove cracked screen effect when hull is repaired
+    const overlay = document.getElementById('criticalDamageOverlay');
+    if (overlay) overlay.remove();
+}
     
     // Enhanced Target Lock status with tutorial awareness
     if (targetLockStatusEl) {
@@ -118,80 +119,48 @@ if (hullBarEl) {
     
     // Enhanced weapon status with faster cooldown
     if (weaponStatusEl && gameState.weapons) {
-        if (gameState.weapons.cooldown > 0) {
-            weaponStatusEl.textContent = 'COOLING DOWN';
-            weaponStatusEl.className = 'text-yellow-400';
-            gameState.weapons.cooldown = Math.max(0, gameState.weapons.cooldown - 16.67);
-        } else if (gameState.weapons.energy < 10) {
-            weaponStatusEl.textContent = 'LOW ENERGY';
-            weaponStatusEl.className = 'text-red-400';
+        if (gameState.weapons.cooldownTime > 0) {
+            weaponStatusEl.textContent = `RECHARGING (${(gameState.weapons.cooldownTime / 1000).toFixed(1)}s)`;
+            weaponStatusEl.className = 'text-orange-400';
         } else {
             weaponStatusEl.textContent = 'ARMED';
             weaponStatusEl.className = 'text-green-400';
         }
     }
     
-    // Weapon energy regeneration
-    if (gameState.weapons && gameState.weapons.energy < 100) {
-        gameState.weapons.energy = Math.min(100, gameState.weapons.energy + 0.4); // Faster regeneration
-    }
-    
-    // Enhanced target info with comprehensive status display
+    // Enhanced target information display with special status indicators
     if (targetInfo) {
-        let targetInfoText = '';
-        let targetInfoClass = 'text-orange-400';
+        let targetInfoText = 'Target: None';
+        let targetInfoClass = 'text-gray-400';
         
-        // Tutorial status display - HIGHEST PRIORITY
-        if (typeof tutorialSystem !== 'undefined') {
-            if (tutorialSystem.active && !tutorialSystem.completed) {
-                const tutorialProgress = `TRAINING MODE (${tutorialSystem.currentStep}/${tutorialSystem.messages.length})`;
-                targetInfoText = tutorialProgress;
-                targetInfoClass = 'text-yellow-400';
-            } else if (tutorialSystem.completed) {
-                // Show enemies are now active (only for a few seconds after completion)
-                const timeSinceCompletion = Date.now() - (tutorialSystem.completionTime || 0);
-                if (timeSinceCompletion < 10000) { // Show for 10 seconds after completion
-                    targetInfoText = 'HOSTILES NOW ACTIVE!';
-                    targetInfoClass = 'text-red-400 pulse';
-                }
-            }
-        }
-        
-        // Base target information
         if (gameState.currentTarget) {
+            const target = gameState.currentTarget;
             const distance = typeof camera !== 'undefined' ? 
-                camera.position.distanceTo(gameState.currentTarget.position).toFixed(1) : '0';
-            const baseTargetText = `Target: ${gameState.currentTarget.userData.name} (${distance} units)`;
+                camera.position.distanceTo(target.position).toFixed(0) : '?';
             
-            if (targetInfoText) {
-                targetInfoText += ` | ${baseTargetText}`;
-            } else {
-                targetInfoText = baseTargetText;
-                targetInfoClass = 'text-green-400';
+            // Enhanced target display with faction info
+            let targetName = target.userData.name;
+            if (target.userData.faction && target.userData.type === 'enemy') {
+                targetName = `${target.userData.faction} Hostile`;
             }
-        } else if (!targetInfoText) {
-            targetInfoText = 'Target: None';
-            targetInfoClass = 'text-orange-400';
+            
+            targetInfoText = `Target: ${targetName} (${distance} units)`;
+            
+            // Color coding based on target type
+            if (target.userData.type === 'enemy') {
+                targetInfoClass = target.userData.isBoss ? 'text-red-500' : 'text-red-400';
+            } else if (target.userData.type === 'blackhole') {
+                targetInfoClass = 'text-purple-400';
+            } else if (target.userData.type === 'wormhole') {
+                targetInfoClass = 'text-pink-400';
+            } else if (target.userData.type === 'comet') {
+                targetInfoClass = 'text-cyan-400';
+            } else {
+                targetInfoClass = 'text-blue-400';
+            }
         }
         
-        // Show target lock info
-        if (gameState.targetLock && gameState.targetLock.active && gameState.targetLock.target && typeof camera !== 'undefined') {
-            const lockDistance = camera.position.distanceTo(gameState.targetLock.target.position).toFixed(1);
-            const lockText = `⚠ LOCKED: ${gameState.targetLock.target.userData.name} (${lockDistance} units)`;
-            targetInfoText += ` | ${lockText}`;
-            targetInfoClass = 'text-yellow-400 pulse';
-        }
-        
-        // Show black hole proximity warning (doubled distances)
-        if (gameState.eventHorizonWarning && gameState.eventHorizonWarning.active && 
-            gameState.eventHorizonWarning.blackHole && typeof camera !== 'undefined') {
-            const blackHoleDistance = camera.position.distanceTo(gameState.eventHorizonWarning.blackHole.position).toFixed(1);
-            const warningText = `▲ BLACK HOLE: ${blackHoleDistance} units`;
-            targetInfoText += ` | ${warningText}`;
-            targetInfoClass = 'text-yellow-400 pulse';
-        }
-        
-        // Enhanced status displays with doubled scale
+        // Add special status indicators
         if (gameState.emergencyWarp && gameState.emergencyWarp.active) {
             const warpTime = (gameState.emergencyWarp.timeRemaining / 1000).toFixed(1);
             targetInfoText += ` | WARP: ${warpTime}s`;
@@ -221,9 +190,7 @@ if (hullBarEl) {
             velocityEl.className = 'text-yellow-400 pulse font-mono';
         } else if (gameState.slingshot && gameState.slingshot.postSlingshot) {
             velocityEl.className = 'text-cyan-400 font-mono';
-        } else if (gameState.velocity >= 2.0) { // Interstellar speeds
-            velocityEl.className = 'text-purple-400 font-mono pulse';
-        } else if (gameState.velocity >= 1.0) { // High interstellar speeds
+        } else if (gameState.velocity >= 0.9) { // Doubled threshold
             velocityEl.className = 'text-red-400 font-mono';
         } else if (gameState.velocity >= 0.6) { // Doubled threshold
             velocityEl.className = 'text-yellow-400 font-mono';
@@ -232,6 +199,36 @@ if (hullBarEl) {
         } else {
             velocityEl.className = 'text-blue-400 font-mono';
         }
+    }
+}
+
+function updateCosmicEffectsUI() {
+    // Navigation jamming indicator
+    const navStatus = document.getElementById('navigationStatus');
+    if (navStatus && typeof gameState !== 'undefined') {
+        if (gameState.navigationJammed) {
+            navStatus.innerHTML = '<i class="fas fa-exclamation-triangle text-red-400"></i> Navigation Jammed!';
+            navStatus.className = 'text-red-400 font-mono';
+        } else {
+            navStatus.innerHTML = '<i class="fas fa-compass text-green-400"></i> Navigation Clear';
+            navStatus.className = 'text-green-400 font-mono';
+        }
+    }
+    
+    // Weapon power boost indicator
+    const weaponStatus = document.getElementById('weaponStatus');
+    if (weaponStatus && typeof gameState !== 'undefined' && gameState.weaponPowerBoost > 1.0) {
+        const boost = ((gameState.weaponPowerBoost - 1) * 100).toFixed(0);
+        weaponStatus.innerHTML = `<i class="fas fa-bolt text-yellow-400"></i> Weapon Power +${boost}%`;
+        weaponStatus.className = 'text-yellow-400 font-mono';
+    }
+    
+    // Concealment indicator
+    const concealmentStatus = document.getElementById('concealmentStatus');
+    if (concealmentStatus && typeof gameState !== 'undefined' && gameState.concealment > 0) {
+        const concealment = (gameState.concealment * 100).toFixed(0);
+        concealmentStatus.innerHTML = `<i class="fas fa-eye-slash text-blue-400"></i> Concealed ${concealment}%`;
+        concealmentStatus.className = 'text-blue-400 font-mono';
     }
 }
 
@@ -261,7 +258,7 @@ function updateAutoNavigateButton() {
 }
 
 // =============================================================================
-// ENHANCED TARGET SYSTEM - INTEGRATED WITH CONTROLS
+// ENHANCED TARGET SYSTEM - INTEGRATED WITH CONTROLS + COSMIC FEATURES
 // =============================================================================
 
 function populateTargets() {
@@ -272,11 +269,39 @@ function populateTargets() {
 
     // Enhanced targeting with better filtering - NO ASTEROIDS IN NAVIGATION (doubled ranges)
     const detectedWormholes = (typeof wormholes !== 'undefined') ? wormholes.filter(w => w.userData && w.userData.detected) : [];
+    
+    // ADD COSMIC FEATURES TO TARGETING - This is the main addition!
+    const cosmicTargets = [];
+    if (typeof cosmicFeatures !== 'undefined') {
+        // Add nearby cosmic features within detection range
+        cosmicTargets.push(...cosmicFeatures.pulsars.filter(p => camera.position.distanceTo(p.position) < 2000));
+        cosmicTargets.push(...cosmicFeatures.supernovas.filter(s => camera.position.distanceTo(s.position) < 3000));
+        cosmicTargets.push(...cosmicFeatures.dysonSpheres.filter(d => camera.position.distanceTo(d.position) < 4000));
+        cosmicTargets.push(...cosmicFeatures.ringworlds.filter(r => camera.position.distanceTo(r.position) < 4000));
+        cosmicTargets.push(...cosmicFeatures.spaceWhales.filter(w => camera.position.distanceTo(w.position) < 2000));
+        cosmicTargets.push(...cosmicFeatures.brownDwarfs.filter(bd => camera.position.distanceTo(bd.position) < 1500));
+        cosmicTargets.push(...cosmicFeatures.solarStorms.filter(ss => camera.position.distanceTo(ss.position) < 2500));
+        cosmicTargets.push(...cosmicFeatures.crystalFormations.filter(cf => camera.position.distanceTo(cf.position) < 1800));
+        cosmicTargets.push(...cosmicFeatures.plasmaStorms.filter(ps => camera.position.distanceTo(ps.position) < 2200));
+        cosmicTargets.push(...cosmicFeatures.roguePlanets.filter(rp => camera.position.distanceTo(rp.position) < 1600));
+        
+        // Dark matter nodes only show when very close (they're hard to detect)
+        cosmicTargets.push(...cosmicFeatures.darkMatterNodes.filter(dm => camera.position.distanceTo(dm.position) < 400));
+        
+    }
+    
     const allTargetableObjects = [
         ...(typeof planets !== 'undefined' ? planets.filter(p => p.userData && p.userData.name !== 'Earth' && p.userData.type !== 'asteroid') : []),
         ...detectedWormholes,
         ...(typeof comets !== 'undefined' ? comets.filter(c => camera.position.distanceTo(c.position) < 4000) : []), // Doubled range
-        ...(typeof enemies !== 'undefined' ? enemies.filter(e => e.userData && e.userData.health > 0 && camera.position.distanceTo(e.position) < 3000) : []) // Match enemy detector range
+        ...(typeof enemies !== 'undefined' ? enemies.filter(e => {
+            if (!e.userData || e.userData.health <= 0) return false;
+            const distance = camera.position.distanceTo(e.position);
+            // ⭐ CRITICAL: Guardians have extended detection range
+            const maxRange = e.userData.isBlackHoleGuardian ? 10000 : 3000;
+            return distance < maxRange;
+        }) : []),
+        ...cosmicTargets // ADD COSMIC FEATURES HERE!
     ];
 
     const nearbyObjects = allTargetableObjects.filter(obj => {
@@ -297,7 +322,7 @@ function populateTargets() {
         let typeDisplay = obj.userData.type;
         let typeColor = 'text-gray-400';
         
-        // Enhanced type display logic
+        // Enhanced type display logic - INCLUDING COSMIC FEATURES
         if (obj.userData.type === 'blackhole') {
             typeDisplay = obj.userData.isGalacticCore ? 'Galactic Core' : 'Black Hole';
             typeColor = 'text-red-400';
@@ -321,6 +346,44 @@ function populateTargets() {
             typeDisplay = 'Asteroid';
             typeColor = 'text-yellow-600';
         }
+        // NEW: Add cosmic feature type displays
+        else if (obj.userData.type === 'pulsar') {
+            typeDisplay = 'Pulsar';
+            typeColor = 'text-cyan-300';
+        } else if (obj.userData.type === 'supernova') {
+            typeDisplay = 'Supernova Remnant';
+            typeColor = 'text-orange-400';
+        } else if (obj.userData.type === 'dyson_sphere') {
+            typeDisplay = 'Dyson Sphere';
+            typeColor = 'text-purple-400';
+        } else if (obj.userData.type === 'ringworld') {
+            typeDisplay = 'Ringworld';
+            typeColor = 'text-purple-300';
+        } else if (obj.userData.type === 'space_whale') {
+            typeDisplay = 'Space Whale';
+            typeColor = 'text-blue-300';
+        } else if (obj.userData.type === 'brown_dwarf') {
+            typeDisplay = 'Brown Dwarf';
+            typeColor = 'text-amber-600';
+        } else if (obj.userData.type === 'dark_matter') {
+            typeDisplay = 'Dark Matter Node';
+            typeColor = 'text-purple-600';
+        } else if (obj.userData.type === 'solar_storm') {
+            typeDisplay = 'Solar Storm';
+            typeColor = 'text-red-300';
+        } else if (obj.userData.type === 'crystal_formation') {
+            typeDisplay = 'Crystal Formation';
+            typeColor = 'text-emerald-400';
+        } else if (obj.userData.type === 'plasma_storm') {
+            typeDisplay = 'Plasma Storm';
+            typeColor = 'text-fuchsia-400';
+        } else if (obj.userData.type === 'rogue_planet') {
+            typeDisplay = 'Rogue Planet';
+            typeColor = 'text-slate-400';
+        } else if (obj.userData.type === 'dust_cloud') {
+            typeDisplay = 'Dust Cloud';
+            typeColor = 'text-yellow-700';
+        }
         
         // Enhanced faction display
         let factionIndicator = '';
@@ -332,8 +395,14 @@ function populateTargets() {
         } else if (obj.userData.isLocal) {
             factionIndicator = ' (Sol System)';
         }
+        // NEW: Add cosmic feature specific indicators
+        else if (obj.userData.type === 'dyson_sphere' || obj.userData.type === 'ringworld') {
+            factionIndicator = ` (${obj.userData.ancientCivilization || obj.userData.species || 'Ancient'})`;
+        } else if (obj.userData.type === 'space_whale') {
+            factionIndicator = ' (Peaceful)';
+        }
         
-        // Enhanced status indicators
+        // Enhanced status indicators - INCLUDING COSMIC FEATURES (NO ICONS)
         let statusIndicator = '';
         if (obj.userData.type === 'wormhole' && obj.userData.isTemporary) {
             const timeLeft = ((obj.userData.lifeTime - obj.userData.age) / 1000).toFixed(0);
@@ -345,6 +414,32 @@ function populateTargets() {
             statusIndicator = ' ◆';
         } else if (obj.userData.type === 'asteroid') {
             statusIndicator = ' ◇';
+        }
+        // NEW: Cosmic feature status indicators (no icons)
+        else if (obj.userData.type === 'pulsar') {
+            statusIndicator = '';
+        } else if (obj.userData.type === 'supernova') {
+            statusIndicator = '';
+        } else if (obj.userData.type === 'dyson_sphere') {
+            statusIndicator = obj.userData.operationalStatus === 'Active' ? ' (Active)' : ' (Dormant)';
+        } else if (obj.userData.type === 'ringworld') {
+            statusIndicator = '';
+        } else if (obj.userData.type === 'space_whale') {
+            statusIndicator = '';
+        } else if (obj.userData.type === 'brown_dwarf') {
+            statusIndicator = '';
+        } else if (obj.userData.type === 'dark_matter') {
+            statusIndicator = '';
+        } else if (obj.userData.type === 'solar_storm') {
+            statusIndicator = '';
+        } else if (obj.userData.type === 'crystal_formation') {
+            statusIndicator = '';
+        } else if (obj.userData.type === 'plasma_storm') {
+            statusIndicator = '';
+        } else if (obj.userData.type === 'rogue_planet') {
+            statusIndicator = '';
+        } else if (obj.userData.type === 'dust_cloud') {
+            statusIndicator = '';
         }
         
         // Add target lock indicator
@@ -397,11 +492,11 @@ function populateTargets() {
             
             // Force UI update
             if (typeof updateUI === 'function') {
-    setTimeout(updateUI, 10);
-}
-if (typeof populateTargets === 'function') {
-    setTimeout(populateTargets, 20); // Refresh the planet cards to show selection
-}
+                setTimeout(updateUI, 10);
+            }
+            if (typeof populateTargets === 'function') {
+                setTimeout(populateTargets, 20); // Refresh the planet cards to show selection
+            }
         });
         
         container.appendChild(div);
@@ -515,9 +610,26 @@ function updateCrosshairTargeting() {
     const crosshair = document.getElementById('crosshair');
     if (!crosshair || typeof gameState === 'undefined' || typeof camera === 'undefined') return;
     
-    // FIXED: Don't interfere with navigation system when Option key is not affecting target lock
-    // Only handle crosshair positioning when target lock is actually active
-    if (!gameState.targetLock || !gameState.targetLock.active) {
+    // Check if enemy is in crosshairs (doubled range)
+    let enemyInSights = false;
+    const detectionRange = 400; // Doubled range
+    
+    // If target lock is active, use target lock position
+    if (gameState.targetLock && gameState.targetLock.active) {
+        crosshair.classList.add('target-locked');
+        
+        // Check if locked target is an enemy or asteroid
+        if (gameState.targetLock.target && 
+            (gameState.targetLock.target.userData.type === 'enemy' || 
+             gameState.targetLock.target.userData.type === 'asteroid')) {
+            enemyInSights = true;
+        }
+        
+        // Update crosshair position when target lock is active
+        crosshair.style.left = gameState.crosshairX + 'px';
+        crosshair.style.top = gameState.crosshairY + 'px';
+        
+    } else {
         crosshair.classList.remove('target-locked');
         
         // Manual targeting mode - crosshair follows mouse directly
@@ -526,11 +638,7 @@ function updateCrosshairTargeting() {
             gameState.crosshairY = gameState.mouseY;
         }
         
-        // Update crosshair position in manual mode
-        crosshair.style.left = gameState.crosshairX + 'px';
-        crosshair.style.top = gameState.crosshairY + 'px';
-        
-        // Check for enemies under crosshair (but don't affect navigation)
+        // Check for enemies under crosshair
         const mousePos = new THREE.Vector2(
             (gameState.crosshairX / window.innerWidth) * 2 - 1,
             -(gameState.crosshairY / window.innerHeight) * 2 + 1
@@ -539,83 +647,165 @@ function updateCrosshairTargeting() {
         const raycaster = new THREE.Raycaster();
         raycaster.setFromCamera(mousePos, camera);
         
-        // Check for enemies under crosshair (auto-targeting only targets enemies)
-        const enemyTargets = [];
+        // Check for enemies under crosshair (asteroids excluded from auto-targeting)
+        const targetableObjects = [];
         if (typeof enemies !== 'undefined') {
-            enemyTargets.push(...enemies.filter(e => e.userData && e.userData.health > 0));
+            targetableObjects.push(...enemies.filter(e => e.userData && e.userData.health > 0));
+        }
+        if (typeof planets !== 'undefined') {
+            targetableObjects.push(...planets.filter(p => p.userData && p.userData.type === 'asteroid' && p.userData.health > 0));
         }
         
-        // Separately check for asteroids when manually aiming (not auto-targeting)
-        let asteroidTargets = [];
-        if (typeof activePlanets !== 'undefined') {
-            asteroidTargets = activePlanets.filter(p => p.userData && p.userData.type === 'asteroid' && p.userData.health > 0);
-        }
-        
-        let enemyInSights = false;
-        let asteroidInSights = false;
-        const enemyDetectionRange = 400; // Doubled range for enemies
-        const asteroidDetectionRange = 200; // Shorter range for asteroids
-        
-        // Check for enemies (for auto-targeting)
-        enemyTargets.forEach(enemy => {
-            const distance = camera.position.distanceTo(enemy.position);
-            if (distance <= enemyDetectionRange) {
-                const intersects = raycaster.intersectObject(enemy);
+        targetableObjects.forEach(obj => {
+            const distance = camera.position.distanceTo(obj.position);
+            if (distance <= detectionRange) {
+                const intersects = raycaster.intersectObject(obj);
                 if (intersects.length > 0) {
                     enemyInSights = true;
                 }
             }
         });
         
-        // Check for asteroids when manually aiming (NOT for auto-targeting)
-        asteroidTargets.forEach(asteroid => {
-            const distance = camera.position.distanceTo(asteroid.position);
-            if (distance <= asteroidDetectionRange) {
-                const intersects = raycaster.intersectObject(asteroid);
-                if (intersects.length > 0) {
-                    asteroidInSights = true;
-                }
-            }
-        });
+        // Update crosshair position
+        crosshair.style.left = gameState.crosshairX + 'px';
+        crosshair.style.top = gameState.crosshairY + 'px';
+    }
+    
+    // Update crosshair color based on enemy detection
+    crosshair.classList.toggle('enemy-target', enemyInSights);
+    
+    // IMPROVED: Better UI detection that doesn't interfere with planet cards
+    // Temporarily hide crosshair to get element underneath
+    const originalVisibility = crosshair.style.visibility;
+    crosshair.style.visibility = 'hidden';
+
+    const elementUnder = document.elementFromPoint(gameState.mouseX, gameState.mouseY);
+    const isOverUI = elementUnder?.closest('.ui-panel');
+    const isOverPlanetCard = elementUnder?.closest('.planet-card');
+
+    // Restore crosshair visibility
+    crosshair.style.visibility = originalVisibility;
+
+    if (isOverUI) {
+        crosshair.style.opacity = '0.1';
+        crosshair.style.zIndex = '5';  // LOWER than UI panels (which are z-10 to z-20)
         
-        // Update crosshair visual state based on target detection
-        crosshair.classList.remove('enemy-targeted', 'asteroid-targeted');
-        if (enemyInSights) {
-            crosshair.classList.add('enemy-targeted');
-        } else if (asteroidInSights) {
-            crosshair.classList.add('asteroid-targeted');
+        // CRITICAL: Use pointer cursor for planet cards, auto for other UI
+        if (isOverPlanetCard) {
+            document.body.style.cursor = 'auto';
+        } else {
+            document.body.style.cursor = 'auto';
         }
-        
-        return; // Exit early when not in target lock mode - NO NAVIGATION INTERFERENCE
-    }
-    
-    // TARGET LOCK IS ACTIVE - Handle locked targeting mode
-    crosshair.classList.add('target-locked');
-    
-    let enemyInSights = false;
-    const detectionRange = 400; // Doubled range
-    
-    // Check if locked target is an enemy or asteroid
-    if (gameState.targetLock.target && 
-        (gameState.targetLock.target.userData.type === 'enemy' || 
-         gameState.targetLock.target.userData.type === 'asteroid')) {
-        enemyInSights = true;
-    }
-    
-    // Update crosshair position when target lock is active
-    crosshair.style.left = gameState.crosshairX + 'px';
-    crosshair.style.top = gameState.crosshairY + 'px';
-    
-    // Update crosshair visual state for locked target
-    if (enemyInSights) {
-        crosshair.classList.add('enemy-targeted');
     } else {
-        crosshair.classList.remove('enemy-targeted');
+        crosshair.style.opacity = '1';
+        crosshair.style.zIndex = '45';
+        document.body.style.cursor = 'none';
     }
 }
+
 // =============================================================================
 // GALAXY MAP SYSTEM - ENHANCED WITH BOSS TRACKING
 // =============================================================================
+
+// =============================================================================
+// HELPER FUNCTION - DETERMINE CURRENT GALAXY
+// =============================================================================
+
+function getCurrentGalaxyId() {
+    if (typeof camera === 'undefined') return -1;
+    
+    // ⭐ IMPROVED: Check distance to actual black holes first (most accurate)
+    if (typeof planets !== 'undefined') {
+        const galaxyBlackHoles = planets.filter(p => 
+            p.userData.type === 'blackhole' && 
+            p.userData.isGalacticCore === true &&
+            typeof p.userData.galaxyId === 'number'
+        );
+        
+        // Check if we're near any galaxy black hole
+        for (const blackHole of galaxyBlackHoles) {
+            const distance = camera.position.distanceTo(blackHole.position);
+            const detectionRadius = 20000; // Large radius around each black hole
+                        
+            if (distance < detectionRadius) {
+                return blackHole.userData.galaxyId;
+            }
+        }
+    }
+    
+    // Fallback: Use 3D galaxy center positions
+    const universeRadius = 40000;
+    
+    if (typeof getGalaxy3DPosition === 'function' && typeof galaxyTypes !== 'undefined') {
+        let closestGalaxy = -1;
+        let closestDistance = Infinity;
+        
+        for (let g = 0; g < 8; g++) {
+            const galaxyCenter = getGalaxy3DPosition(g);
+            const distance = camera.position.distanceTo(galaxyCenter);
+            
+            console.log(`Galaxy ${g} (${galaxyTypes[g]?.name}): distance=${distance.toFixed(0)}`);
+            
+            if (distance < closestDistance) {
+                closestDistance = distance;
+                closestGalaxy = g;
+            }
+        }
+        
+        const detectionThreshold = 20000; // Increased from 18000
+        
+        if (closestDistance < detectionThreshold) {
+            console.log(`✅ Inside Galaxy ${closestGalaxy} (${galaxyTypes[closestGalaxy]?.name}) - ${closestDistance.toFixed(0)} units from center`);
+            return closestGalaxy;
+        }
+    } 
+    // Final fallback to 2D map positions
+    else if (typeof galaxyMapPositions !== 'undefined') {
+        let closestGalaxy = -1;
+        let closestDistance = Infinity;
+        
+        for (let g = 0; g < 8; g++) {
+            const mapPos = galaxyMapPositions[g];
+            if (mapPos) {
+                const galaxyX = (mapPos.x - 0.5) * universeRadius * 2;
+                const galaxyZ = (mapPos.y - 0.5) * universeRadius * 2;
+                const galaxyY = 0;
+                const galaxyCenter = new THREE.Vector3(galaxyX, galaxyY, galaxyZ);
+                
+                const distance = camera.position.distanceTo(galaxyCenter);
+                
+                if (distance < closestDistance) {
+                    closestDistance = distance;
+                    closestGalaxy = g;
+                }
+            }
+        }
+        
+        const detectionThreshold = 20000;
+        if (closestDistance < detectionThreshold) {
+            return closestGalaxy;
+        }
+    }
+    
+    console.log('❌ Not in any galaxy - Unexplored Space');
+    return -1;
+}
+
+function getCurrentGalaxyName() {
+    const galaxyId = getCurrentGalaxyId();
+    
+    if (galaxyId === -1) {
+        return 'Unexplored Space';
+    } else if (galaxyId === 7) {
+        return 'Local Galaxy'; // Special case for starting galaxy
+    } else if (typeof galaxyTypes !== 'undefined' && galaxyTypes[galaxyId]) {
+        // ⭐ Use galaxy TYPE names (Spiral, Elliptical, etc.)
+        const galaxy = galaxyTypes[galaxyId];
+        return `${galaxy.name} Galaxy`;
+    }
+    
+    return 'Unknown Region';
+}
 
 function setupGalaxyMap() {
     const galaxyMap = document.getElementById('galaxyMap');
@@ -662,31 +852,15 @@ function setupGalaxyMap() {
         galaxyEl.style.transform = 'translate(-50%, -50%)';
         galaxyEl.textContent = (index + 1).toString();
         galaxyEl.title = `${galaxy.name} Galaxy (${galaxy.faction})`;
+        
+        // Mark cleared galaxies with green checkmark
+		if (bossDefeated || (typeof gameState !== 'undefined' && gameState.currentGalaxyEnemies && gameState.currentGalaxyEnemies[index] === 0)) {
+		galaxyEl.style.backgroundColor = '#22c55e'; // Green for cleared
+    	galaxyEl.style.border = '2px solid #86efac';
+    	galaxyEl.textContent = '✓';
+    	galaxyEl.title = `${galaxy.name} Galaxy (${galaxy.faction}) - LIBERATED`;
+		}
 
-        // Enemy counter with enhanced boss status
-        const enemyCounter = document.createElement('div');
-        enemyCounter.className = 'enemy-counter';
-        enemyCounter.id = `galaxy-${index}-enemies`;
-        enemyCounter.textContent = enemyCount;
-
-        // Enhanced color coding for status
-        if (enemyCount === 0 && bossDefeated) {
-            enemyCounter.style.backgroundColor = 'green';
-            enemyCounter.textContent = '✓';
-            enemyCounter.title = 'Galaxy Cleared';
-        } else if (bossSpawned && !bossDefeated) {
-            enemyCounter.style.backgroundColor = 'darkred';
-            enemyCounter.style.color = 'yellow';
-            enemyCounter.title = 'Boss Active';
-        } else if (enemyCount > 0) {
-            enemyCounter.style.backgroundColor = 'red';
-            enemyCounter.title = `${enemyCount} hostiles remaining`;
-        } else {
-            enemyCounter.style.backgroundColor = 'gray';
-            enemyCounter.title = 'No activity detected';
-        }
-
-        galaxyEl.appendChild(enemyCounter);
         galaxyMap.appendChild(galaxyEl);
     });
     
@@ -700,6 +874,10 @@ function setupGalaxyMap() {
     sgrAEl.textContent = '✦';
     sgrAEl.title = 'Sagittarius A* - Galactic Center';
     galaxyMap.appendChild(sgrAEl);
+    const existingGalaxyIndicator = document.getElementById('currentGalaxyIndicator');
+    if (existingGalaxyIndicator) {
+        existingGalaxyIndicator.remove();
+    }
 }
 
 function createMapGrid() {
@@ -731,28 +909,29 @@ function createMapGrid() {
 // =============================================================================
 
 function updateCompass() {
-    if (typeof camera === 'undefined') return;
+    if (typeof camera === 'undefined' || typeof planets === 'undefined') return;
     
-    // Compass functionality for distant Sagittarius A*
+    // Compass functionality - points to the LARGEST black hole (Sagittarius A*)
     const playerPos = camera.position;
-    const sgrAPos = new THREE.Vector3(0, 0, 0);
-    const direction = new THREE.Vector3().subVectors(sgrAPos, playerPos);
-    const distance = direction.length();
+    let sgrAPos = new THREE.Vector3(0, 0, 0); // Default to origin
     
-    // Show compass when Sagittarius A* is far away (doubled distance)
-    const compassElement = document.querySelector('.compass-needle');
-    if (compassElement) {
-        if (distance > 10000) { // Doubled distance
-            compassElement.classList.remove('hidden');
-            
-            // Convert to angle for CSS rotation
-            const angle = Math.atan2(direction.x, direction.z);
-            const degrees = (angle * 180 / Math.PI + 180) % 360;
-            
-            compassElement.style.setProperty('--rotation', `${degrees}deg`);
-        } else {
-            compassElement.classList.add('hidden');
-        }
+    // Find the LARGEST black hole in the local area
+    const localBlackHoles = planets.filter(p => 
+        p.userData && 
+        p.userData.type === 'blackhole' &&
+        (p.userData.isGalacticCenter === true || p.userData.isCompanionCore === true)
+    );
+    
+    if (localBlackHoles.length > 0) {
+        // Find the largest by mass (Sagittarius A* should be largest)
+        const largestBlackHole = localBlackHoles.reduce((largest, current) => {
+            const largestMass = largest.userData.mass || 0;
+            const currentMass = current.userData.mass || 0;
+            return currentMass > largestMass ? current : largest;
+        });
+        
+        sgrAPos = largestBlackHole.position.clone();
+        // console.log(`Compass pointing to: ${largestBlackHole.userData.name}`);
     }
 }
 
@@ -762,135 +941,131 @@ function updateGalaxyMap() {
     const playerMapPos = document.getElementById('playerMapPosition');
     const targetMapPos = document.getElementById('targetMapPosition');
     const mapDirectionArrow = document.getElementById('mapDirectionArrow');
-    const universeRadius = 40000; // Doubled
+    const universeRadius = 40000;
     
     if (!playerMapPos) return;
     
-    // Different behavior based on map view (doubled scale considerations)
     if (gameState.mapView === 'galactic') {
-        // In galactic view, show direction arrow at center and move galaxies relative to player
-        if (playerMapPos) playerMapPos.style.display = 'none';
-        if (mapDirectionArrow) {
-            mapDirectionArrow.style.display = 'block';
-            
-            // Update direction arrow rotation
-            const forward = new THREE.Vector3();
-            camera.getWorldDirection(forward);
-            const angle = Math.atan2(forward.x, -forward.z);
-            mapDirectionArrow.style.transform = `translate(-50%, -50%) rotate(${angle}rad)`;
-        }
-        
-        // Move all galaxy indicators relative to player position (doubled scale)
-        const playerMapX = camera.position.x / universeRadius;
-        const playerMapZ = camera.position.z / universeRadius;
-        
-        // Update galaxy positions relative to player
-        if (typeof galaxyTypes !== 'undefined' && typeof galaxyMapPositions !== 'undefined') {
-            galaxyTypes.forEach((galaxy, index) => {
-                const galaxyEl = document.querySelector(`.galaxy-indicator:nth-child(${index + 2})`);
-                if (!galaxyEl) return;
-                
-                const mapPos = galaxyMapPositions[index];
-                if (!mapPos) return;
-                
-                const relativeX = mapPos.x - 0.5 - playerMapX;
-                const relativeZ = mapPos.y - 0.5 - playerMapZ;
-                
-                const screenX = 50 + relativeX * 100;
-                const screenZ = 50 + relativeZ * 100;
-                
-                if (screenX >= 0 && screenX <= 100 && screenZ >= 0 && screenZ <= 100) {
-                    galaxyEl.style.left = `${screenX}%`;
-                    galaxyEl.style.top = `${screenZ}%`;
-                    galaxyEl.style.display = 'flex';
-                } else {
-                    galaxyEl.style.display = 'none';
-                }
-            });
-        }
-        
-        // Update Sagittarius A* position
-        const sgrAEl = document.querySelector('[title="Sagittarius A* - Galactic Center"]');
-        if (sgrAEl) {
-            const sgrARelativeX = -playerMapX;
-            const sgrARelativeZ = -playerMapZ;
-            const sgrAScreenX = 50 + sgrARelativeX * 100;
-            const sgrAScreenZ = 50 + sgrARelativeZ * 100;
-            
-            if (sgrAScreenX >= 0 && sgrAScreenX <= 100 && sgrAScreenZ >= 0 && sgrAScreenZ <= 100) {
-                sgrAEl.style.left = `${sgrAScreenX}%`;
-                sgrAEl.style.top = `${sgrAScreenZ}%`;
-                sgrAEl.style.display = 'flex';
-            } else {
-                sgrAEl.style.display = 'none';
-            }
-        }
-    } else {
-        // In universal view, show static galaxy positions and player arrow
-        if (playerMapPos) playerMapPos.style.display = 'block';
-        if (mapDirectionArrow) {
-            mapDirectionArrow.style.display = 'none';
-        }
-        
-        // Show player position relative to universe (doubled scale)
-        const playerMapX = (camera.position.x / universeRadius) + 0.5;
-        const playerMapZ = (camera.position.z / universeRadius) + 0.5;
-        
-        // Clamp player position to map bounds
-        const clampedX = Math.max(5, Math.min(95, playerMapX * 100));
-        const clampedZ = Math.max(5, Math.min(95, playerMapZ * 100));
-        
-        if (playerMapPos) {
-            playerMapPos.style.left = `${clampedX}%`;
-            playerMapPos.style.top = `${clampedZ}%`;
-            
-            // Rotate player arrow based on camera direction
-            const forward = new THREE.Vector3();
-            camera.getWorldDirection(forward);
-            const angle = Math.atan2(forward.x, -forward.z);
-            playerMapPos.style.transform = `translate(-50%, -50%) rotate(${angle}rad)`;
-        }
-        
-        // Show all galaxies in fixed positions
-        if (typeof galaxyTypes !== 'undefined' && typeof galaxyMapPositions !== 'undefined') {
-            galaxyTypes.forEach((galaxy, index) => {
-                const galaxyEl = document.querySelector(`.galaxy-indicator:nth-child(${index + 2})`);
-                if (!galaxyEl) return;
-                
-                const mapPos = galaxyMapPositions[index];
-                if (!mapPos) return;
-                
-                galaxyEl.style.left = `${mapPos.x * 100}%`;
-                galaxyEl.style.top = `${mapPos.y * 100}%`;
-                galaxyEl.style.display = 'flex';
-            });
-        }
-        
-        // Show Sagittarius A* in center
-        const sgrAEl = document.querySelector('[title="Sagittarius A* - Galactic Center"]');
-        if (sgrAEl) {
-            sgrAEl.style.left = '50%';
-            sgrAEl.style.top = '50%';
-            sgrAEl.style.display = 'flex';
-        }
+    // ========== GALACTIC VIEW ==========
+    // Show nearby targets as dots (radar-style)
+    
+    // Hide player triangle, show direction arrow at center
+    playerMapPos.style.display = 'none';
+    if (mapDirectionArrow) {
+        mapDirectionArrow.style.display = 'block';
+        const forward = new THREE.Vector3();
+        camera.getWorldDirection(forward);
+        const angle = Math.atan2(forward.x, -forward.z);
+        mapDirectionArrow.style.setProperty('--direction', `${angle}rad`);
     }
     
-    // Update target indicator (works for both views, doubled scale)
-    if (gameState.currentTarget && targetMapPos) {
-        let targetScreenX, targetScreenZ;
+    // Hide galaxy indicators and Sagittarius A*
+    const galaxyIndicators = document.querySelectorAll('.galaxy-indicator');
+    galaxyIndicators.forEach(el => el.style.display = 'none');
+    
+    const sgrAEl = document.querySelector('[title="Sagittarius A* - Galactic Center"]');
+    if (sgrAEl) sgrAEl.style.display = 'none';
+    
+    // Clear existing target dots
+    const existingTargetDots = document.querySelectorAll('.galactic-target-dot');
+    existingTargetDots.forEach(dot => dot.remove());
+    
+    // Show nearby objects as dots (enemies, planets, etc.)
+    const galaxyMap = document.getElementById('galaxyMap');
+    const radarRange = 5000; // Detection range for galactic view
+    
+    if (galaxyMap && typeof planets !== 'undefined' && typeof enemies !== 'undefined') {
+        // Collect all nearby targetable objects
+        const nearbyObjects = [];
         
-        if (gameState.mapView === 'galactic') {
-            const targetRelativeX = (gameState.currentTarget.position.x / universeRadius) - (camera.position.x / universeRadius);
-            const targetRelativeZ = (gameState.currentTarget.position.z / universeRadius) - (camera.position.z / universeRadius);
-            targetScreenX = 50 + targetRelativeX * 100;
-            targetScreenZ = 50 + targetRelativeZ * 100;
-        } else {
-            // Universal view - show target position in universe
-            const targetMapX = (gameState.currentTarget.position.x / universeRadius) + 0.5;
-            const targetMapZ = (gameState.currentTarget.position.z / universeRadius) + 0.5;
-            targetScreenX = targetMapX * 100;
-            targetScreenZ = targetMapZ * 100;
-        }
+        // Add nearby planets
+planets.forEach(planet => {
+    if (!planet || !planet.position) return;
+    
+    // FIXED: Get world position for asteroids in belt groups
+    const worldPos = new THREE.Vector3();
+    if (planet.userData.type === 'asteroid' && planet.parent) {
+        planet.getWorldPosition(worldPos);
+    } else {
+        worldPos.copy(planet.position);
+    }
+    
+    const distance = camera.position.distanceTo(worldPos);
+    if (distance < radarRange && distance > 10) { // Not too close
+        nearbyObjects.push({
+            position: worldPos,
+            type: planet.userData.type,
+            name: planet.userData.name,
+            distance: distance
+        });
+    }
+});
+        
+        // Add nearby enemies
+        enemies.forEach(enemy => {
+            if (!enemy || !enemy.position || !enemy.userData || enemy.userData.health <= 0) return;
+            const distance = camera.position.distanceTo(enemy.position);
+            if (distance < radarRange) {
+                nearbyObjects.push({
+                    position: enemy.position,
+                    type: 'enemy',
+                    name: enemy.userData.name,
+                    distance: distance,
+                    isBoss: enemy.userData.isBoss
+                });
+            }
+        });
+        
+        // Display objects as dots on map
+        nearbyObjects.forEach(obj => {
+            const relativeX = (obj.position.x - camera.position.x) / radarRange;
+            const relativeZ = (obj.position.z - camera.position.z) / radarRange;
+            
+            const screenX = 50 + relativeX * 50; // Scale to fit map
+            const screenZ = 50 + relativeZ * 50;
+            
+            // Only show if within map bounds
+            if (screenX >= 5 && screenX <= 95 && screenZ >= 5 && screenZ <= 95) {
+                const dot = document.createElement('div');
+                dot.className = 'galactic-target-dot absolute';
+                
+                // Color based on type
+                let dotColor = '#4488ff'; // Default blue for planets
+                let dotSize = '4px';
+                
+                if (obj.type === 'enemy') {
+                    dotColor = obj.isBoss ? '#ff00ff' : '#ff4444'; // Purple for boss, red for enemy
+                    dotSize = obj.isBoss ? '8px' : '6px';
+                } else if (obj.type === 'blackhole') {
+                    dotColor = '#000000';
+                    dotSize = '6px';
+                } else if (obj.type === 'star') {
+                    dotColor = '#ffff44';
+                    dotSize = '5px';
+                }
+                
+                dot.style.width = dotSize;
+                dot.style.height = dotSize;
+                dot.style.backgroundColor = dotColor;
+                dot.style.borderRadius = '50%';
+                dot.style.left = `${screenX}%`;
+                dot.style.top = `${screenZ}%`;
+                dot.style.transform = 'translate(-50%, -50%)';
+                dot.style.boxShadow = `0 0 4px ${dotColor}`;
+                dot.style.pointerEvents = 'none';
+                dot.title = `${obj.name} (${obj.distance.toFixed(0)} units)`;
+                
+                galaxyMap.appendChild(dot);
+            }
+        });
+    }
+    
+    // Update current target indicator
+    if (gameState.currentTarget && targetMapPos) {
+        const targetRelativeX = (gameState.currentTarget.position.x - camera.position.x) / radarRange;
+        const targetRelativeZ = (gameState.currentTarget.position.z - camera.position.z) / radarRange;
+        const targetScreenX = 50 + targetRelativeX * 50;
+        const targetScreenZ = 50 + targetRelativeZ * 50;
         
         if (targetScreenX >= 0 && targetScreenX <= 100 && targetScreenZ >= 0 && targetScreenZ <= 100) {
             targetMapPos.style.left = `${targetScreenX}%`;
@@ -902,13 +1077,166 @@ function updateGalaxyMap() {
     } else if (targetMapPos) {
         targetMapPos.classList.add('hidden');
     }
+        
+    } else {
+    // ========== UNIVERSAL VIEW ==========
+    
+    // CRITICAL: Clear galactic view target dots
+    const existingTargetDots = document.querySelectorAll('.galactic-target-dot');
+    existingTargetDots.forEach(dot => dot.remove());
+    
+    // **NEW: Also clear cosmic feature dots from previous render**
+    const existingCosmicDots = document.querySelectorAll('.cosmic-feature-dot');
+    existingCosmicDots.forEach(dot => dot.remove());
+    
+    // **NEW: Display major cosmic features on map**
+    if (typeof cosmicFeatures !== 'undefined') {
+        // Function to add cosmic feature dot
+        const addCosmicFeatureDot = (feature, color, size, icon) => {
+            if (!feature || !feature.position) return;
+            
+            const featureMapX = (feature.position.x / universeRadius) + 0.5;
+            const featureMapZ = (feature.position.z / universeRadius) + 0.5;
+            
+            // Only show if within map bounds
+            if (featureMapX >= 0 && featureMapX <= 1 && featureMapZ >= 0 && featureMapZ <= 1) {
+                const dot = document.createElement('div');
+                dot.className = 'cosmic-feature-dot absolute';
+                dot.style.width = size;
+                dot.style.height = size;
+                dot.style.backgroundColor = color;
+                dot.style.borderRadius = '50%';
+                dot.style.border = `1px solid ${color}`;
+                dot.style.left = `${featureMapX * 100}%`;
+                dot.style.top = `${featureMapZ * 100}%`;
+                dot.style.transform = 'translate(-50%, -50%)';
+                dot.style.boxShadow = `0 0 8px ${color}`;
+                dot.style.pointerEvents = 'none';
+                dot.style.zIndex = '5';
+                dot.innerHTML = `<span style="font-size: 10px;">${icon}</span>`;
+                dot.title = feature.userData.name || 'Cosmic Feature';
+                
+                galaxyMap.appendChild(dot);
+            }
+        };
+        
+        // Add Dyson Spheres (legendary - large purple)
+        if (cosmicFeatures.dysonSpheres) {
+            cosmicFeatures.dysonSpheres.forEach(dyson => {
+                addCosmicFeatureDot(dyson, '#aa44ff', '10px', '⚙️');
+            });
+        }
+        
+        // Add Supernovas (rare - large orange)
+        if (cosmicFeatures.supernovas) {
+            cosmicFeatures.supernovas.forEach(supernova => {
+                addCosmicFeatureDot(supernova, '#ff6600', '9px', '💥');
+            });
+        }
+        
+        // Add Pulsars (rare - medium cyan)
+        if (cosmicFeatures.pulsars) {
+            cosmicFeatures.pulsars.forEach(pulsar => {
+                addCosmicFeatureDot(pulsar, '#44eeff', '7px', '✨');
+            });
+        }
+        
+        // Add Plasma Storms (rare - medium purple)
+        if (cosmicFeatures.plasmaStorms) {
+            cosmicFeatures.plasmaStorms.forEach(storm => {
+                addCosmicFeatureDot(storm, '#cc44ff', '7px', '⚡');
+            });
+        }
+        
+        // Add Crystal Formations (rare - medium emerald)
+        if (cosmicFeatures.crystalFormations) {
+            cosmicFeatures.crystalFormations.forEach(crystal => {
+                addCosmicFeatureDot(crystal, '#44ff88', '7px', '💎');
+            });
+        }
+    }
+    
+    // Show player triangle, hide direction arrow
+    playerMapPos.style.display = 'block';
+    if (mapDirectionArrow) {
+        mapDirectionArrow.style.display = 'none';
+    }
+    
+    // Show player position in universe
+    const playerMapX = (camera.position.x / universeRadius) + 0.5;
+    const playerMapZ = (camera.position.z / universeRadius) + 0.5;
+    
+    const clampedX = Math.max(5, Math.min(95, playerMapX * 100));
+    const clampedZ = Math.max(5, Math.min(95, playerMapZ * 100));
+    
+    playerMapPos.style.left = `${clampedX}%`;
+    playerMapPos.style.top = `${clampedZ}%`;
+    
+    // Rotate triangle to show direction
+    const forward = new THREE.Vector3();
+    camera.getWorldDirection(forward);
+    const angle = Math.atan2(forward.x, -forward.z);
+    playerMapPos.style.transform = `translate(-50%, -50%) rotate(${angle}rad)`;
+    
+    // Show all galaxy indicators
+    const galaxyIndicators = document.querySelectorAll('.galaxy-indicator');
+    galaxyIndicators.forEach((el, index) => {
+        if (index < galaxyTypes.length && galaxyMapPositions[index]) {
+            const mapPos = galaxyMapPositions[index];
+            el.style.left = `${mapPos.x * 100}%`;
+            el.style.top = `${mapPos.y * 100}%`;
+            el.style.display = 'flex';
+        }
+    });
+    
+    // Show Sagittarius A* at center
+    const sgrAEl = document.querySelector('[title="Sagittarius A* - Galactic Center"]');
+    if (sgrAEl) {
+        sgrAEl.style.left = '50%';
+        sgrAEl.style.top = '50%';
+        sgrAEl.style.display = 'flex';
+    }
+    
+    // Hide target indicator in universal view
+    if (targetMapPos) {
+        targetMapPos.classList.add('hidden');
+    }
+}
     
     // Update view status display
     const viewStatusEl = document.getElementById('mapViewStatus');
     if (viewStatusEl) {
         viewStatusEl.textContent = gameState.mapView === 'galactic' ? 'Galaxy View' : 'Universal View';
     }
-}
+    
+    // ⭐ NEW: Update current galaxy name display
+    const currentGalaxyNameEl = document.getElementById('currentGalaxyName');
+    if (currentGalaxyNameEl && typeof getCurrentGalaxyName === 'function') {
+        const galaxyName = getCurrentGalaxyName();
+        currentGalaxyNameEl.textContent = galaxyName;
+        
+        // Color coding based on galaxy status
+        const galaxyId = getCurrentGalaxyId();
+        if (galaxyId >= 0 && galaxyId < 8) {
+            // Check if galaxy is cleared
+            const isCleared = (typeof bossSystem !== 'undefined' && 
+                             bossSystem.galaxyBossDefeated && 
+                             bossSystem.galaxyBossDefeated[galaxyId]) ||
+                            (typeof gameState !== 'undefined' && 
+                             gameState.currentGalaxyEnemies && 
+                             gameState.currentGalaxyEnemies[galaxyId] === 0);
+            
+            if (isCleared) {
+                currentGalaxyNameEl.className = 'text-green-400'; // Cleared galaxy
+            } else {
+                currentGalaxyNameEl.className = 'text-red-400'; // Hostile galaxy
+            }
+        } else {
+            // Unexplored space
+            currentGalaxyNameEl.className = 'text-cyan-400';
+        }
+    }
+}  // ⭐ This should be the closing brace of updateGalaxyMap()
 
 // =============================================================================
 // ORBIT LINES VISIBILITY CONTROL - INTEGRATED WITH CORE SYSTEM
@@ -1097,75 +1425,10 @@ function showVictoryScreen() {
 }
 
 function gameOver(reason) {
-    // Add white fade effect first (from old version)
-    const whiteFlash = document.createElement('div');
-    whiteFlash.style.cssText = `
-        position: fixed;
-        top: 0;
-        left: 0;
-        width: 100vw;
-        height: 100vh;
-        background: white;
-        z-index: 49;
-        opacity: 0;
-        pointer-events: none;
-    `;
-    document.body.appendChild(whiteFlash);
-    
-    // Animate to white
-    setTimeout(() => {
-        whiteFlash.style.transition = 'opacity 0.5s ease-in';
-        whiteFlash.style.opacity = '1';
-    }, 10);
-    
-    // After white flash, show game over screen
-    setTimeout(() => {
+    if (typeof gameState !== 'undefined') {
         gameState.gameOver = true;
-        gameState.velocityVector.set(0, 0, 0);
-        gameState.slingshot.active = false;
-        gameState.slingshot.postSlingshot = false;
-        gameState.emergencyWarp.active = false;
-        gameState.targetLock.active = false;
-        gameState.targetLock.target = null;
-        
-        cleanupEventHorizonEffects();
-        
-        // Fade out white
-        whiteFlash.style.transition = 'opacity 1s ease-out';
-        whiteFlash.style.opacity = '0';
-        setTimeout(() => whiteFlash.remove(), 1000);
-        
-        const gameOverOverlay = document.createElement('div');
-        gameOverOverlay.className = 'absolute inset-0 bg-black bg-opacity-95 flex items-center justify-center z-50 cyberpunk-bg';
-        gameOverOverlay.style.cursor = 'auto'; // Make mouse visible
-        gameOverOverlay.innerHTML = `
-            <div class="text-center ui-panel rounded-lg p-8" style="cursor: auto;">
-                <div class="text-6xl mb-4">◇</div>
-                <h1 class="text-4xl font-bold text-red-400 mb-4 glow-text cyber-title">MISSION FAILED</h1>
-                <p class="text-gray-300 mb-6">${reason}</p>
-                <div class="space-y-4">
-                    <div class="text-lg text-cyan-400 glow-text">Final Stats:</div>
-                    <div class="text-sm text-gray-300 space-y-1">
-                        <div>Distance Traveled: ${gameState.distance.toFixed(1)} light years</div>
-                        <div>Final Velocity: ${(gameState.velocity * 1000).toFixed(0)} km/s</div>
-                        <div>Energy Remaining: ${gameState.energy.toFixed(0)}%</div>
-                        <div>Hull Integrity: ${gameState.hull.toFixed(0)}%</div>
-                        <div>Enemies Destroyed: ${120 - enemies.length}</div>
-                        <div>Galaxies Cleared: ${gameState.galaxiesCleared}/8</div>
-                        <div>Emergency Warps Used: ${5 - gameState.emergencyWarp.available}</div>
-                    </div>
-                    <button onclick="location.reload()" class="mt-6 space-btn rounded px-6 py-3" style="cursor: pointer;">
-                        <i class="fas fa-redo mr-2"></i>Restart Mission
-                    </button>
-                </div>
-            </div>
-        `;
-        document.body.appendChild(gameOverOverlay);
-        
-        // Ensure mouse is visible and working
-        document.body.style.cursor = 'auto';
-        gameOverOverlay.style.pointerEvents = 'all';
-    }, 600); // Delay for white flash
+        gameState.gameStarted = false;
+    }
     
     // Stop all music
     if (typeof musicSystem !== 'undefined') {
@@ -1265,13 +1528,10 @@ function initializeUISystem() {
         gameState.crosshairX = gameState.mouseX;
         gameState.crosshairY = gameState.mouseY;
         
-        // FIXED: Initialize map view and button text correctly
-        gameState.mapView = 'galactic';
-        const mapViewToggle = document.getElementById('mapViewToggle');
-        if (mapViewToggle) {
-            mapViewToggle.textContent = 'Galactic View';
-        }
+        // Initialize map view if not set
+        if (!gameState.mapView) gameState.mapView = 'galactic';
     }
+    
     // Bind event listeners for UI elements that aren't handled by game-controls.js
     bindUIEventListeners();
     
@@ -1410,6 +1670,150 @@ function updateUIFromExternal(updateType, data) {
         default:
             console.warn('Unknown UI update type:', updateType);
             break;
+    }
+}
+
+function setupMobileUI() {
+    // Hide desktop panels on mobile
+    const desktopPanels = document.querySelectorAll('.ui-panel');
+    desktopPanels.forEach(panel => {
+        panel.classList.add('desktop-only');
+    });
+    
+    // Create mobile UI container
+    createMobileUIContainer();
+    createMobileTopBar();
+    createMobileControls();
+    createMobilePopups();
+}
+
+function createMobileUIContainer() {
+    const mobileUI = document.createElement('div');
+    mobileUI.className = 'mobile-ui';
+    mobileUI.id = 'mobileUI';
+    mobileUI.style.cssText = `
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        pointer-events: none;
+        z-index: 10;
+    `;
+    
+    document.body.appendChild(mobileUI);
+}
+
+function createMobileTopBar() {
+    const topBar = document.createElement('div');
+    topBar.className = 'mobile-top-bar';
+    topBar.style.cssText = `
+        position: fixed;
+        top: 20px;
+        left: 20px;
+        right: 20px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        z-index: 25;
+        pointer-events: auto;
+    `;
+    
+    topBar.innerHTML = `
+        <div class="mobile-info" style="background: linear-gradient(135deg, rgba(15, 23, 42, 0.9), rgba(30, 41, 59, 0.9)); backdrop-filter: blur(10px); border: 1px solid rgba(0,150,255,0.5); border-radius: 20px; padding: 8px 16px; color: white; font-size: 14px; font-weight: 600;">
+            <div id="mobileVelocity">0.0 km/s</div>
+        </div>
+        <div class="mobile-info" style="background: linear-gradient(135deg, rgba(15, 23, 42, 0.9), rgba(30, 41, 59, 0.9)); backdrop-filter: blur(10px); border: 1px solid rgba(0,150,255,0.5); border-radius: 20px; padding: 8px 16px; color: white; font-size: 14px; font-weight: 600;">
+            <div id="mobileEnergy">100%</div>
+        </div>
+        <button class="mobile-menu-btn" onclick="openMobilePopup('navigation')" style="width: 48px; height: 48px; border-radius: 12px; background: linear-gradient(135deg, rgba(0, 150, 255, 0.8), rgba(0, 100, 200, 0.8)); border: 2px solid rgba(0, 200, 255, 0.6); color: white; display: flex; align-items: center; justify-content: center; font-size: 20px; cursor: pointer;">
+            <i class="fas fa-map"></i>
+        </button>
+    `;
+    
+    document.getElementById('mobileUI').appendChild(topBar);
+}
+
+function createMobileControls() {
+    const controls = document.createElement('div');
+    controls.className = 'mobile-controls';
+    controls.style.cssText = `
+        position: fixed;
+        bottom: 20px;
+        left: 50%;
+        transform: translateX(-50%);
+        display: flex;
+        gap: 15px;
+        z-index: 30;
+        pointer-events: auto;
+    `;
+    
+    const buttonStyle = `width: 64px; height: 64px; border-radius: 50%; background: linear-gradient(135deg, rgba(0, 150, 255, 0.8), rgba(0, 100, 200, 0.8)); border: 2px solid rgba(0, 200, 255, 0.6); color: white; display: flex; align-items: center; justify-content: center; font-size: 24px; cursor: pointer; transition: all 0.2s ease; box-shadow: 0 4px 15px rgba(0, 150, 255, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.2);`;
+    
+    controls.innerHTML = `
+        <button class="mobile-btn" onclick="openMobilePopup('status')" style="${buttonStyle}" title="Ship Status">
+            <i class="fas fa-tachometer-alt"></i>
+        </button>
+        <button class="mobile-btn" onclick="mobileCycleTarget()" style="${buttonStyle}" title="Cycle Targets">
+            <i class="fas fa-bullseye"></i>
+        </button>
+        <button class="mobile-btn primary" onclick="handleMobileFire()" style="${buttonStyle} width: 80px; height: 80px; background: linear-gradient(135deg, rgba(255, 50, 50, 0.8), rgba(200, 0, 0, 0.8)); border-color: rgba(255, 100, 100, 0.6);" title="Fire Weapons">
+            <i class="fas fa-crosshairs"></i>
+        </button>
+        <button class="mobile-btn emergency" onclick="mobileEmergencyWarp()" style="${buttonStyle} background: linear-gradient(135deg, rgba(255, 150, 0, 0.8), rgba(200, 100, 0, 0.8)); border-color: rgba(255, 200, 0, 0.6);" title="Emergency Warp">
+            <i class="fas fa-rocket"></i>
+        </button>
+        <button class="mobile-btn" onclick="openMobilePopup('controls')" style="${buttonStyle}" title="Controls">
+            <i class="fas fa-cog"></i>
+        </button>
+    `;
+    
+    document.getElementById('mobileUI').appendChild(controls);
+}
+
+// Mobile button functions that interface with existing game functions
+function mobileCycleTarget() {
+    // Use existing tab targeting system
+    if (typeof cycleTarget === 'function') {
+        cycleTarget();
+    } else if (typeof gameState !== 'undefined' && typeof populateTargets === 'function') {
+        // Fallback target cycling
+        const targets = document.querySelectorAll('#availableTargets .target-btn');
+        if (targets.length > 0) {
+            targets[0].click();
+        }
+    }
+    
+    // Visual feedback
+    const crosshair = document.getElementById('crosshair');
+    if (crosshair) {
+        crosshair.style.boxShadow = '0 0 20px rgba(255, 255, 0, 0.8)';
+        setTimeout(() => {
+            crosshair.style.boxShadow = '0 0 20px rgba(0, 255, 0, 0.6), inset 0 0 20px rgba(0, 255, 0, 0.3)';
+        }, 300);
+    }
+}
+
+function mobileEmergencyWarp() {
+    // Interface with existing emergency warp system
+    if (typeof gameState !== 'undefined' && gameState.emergencyWarp && gameState.emergencyWarp.available > 0) {
+        // Use existing warp function
+        if (typeof triggerEmergencyWarp === 'function') {
+            triggerEmergencyWarp();
+        } else {
+            // Fallback warp
+            gameState.emergencyWarp.available--;
+            gameState.emergencyWarp.active = true;
+            if (typeof showAchievement === 'function') {
+                showAchievement('Emergency Warp', 'Warp drive engaged!');
+            }
+        }
+        
+        // Visual feedback
+        document.body.style.filter = 'brightness(2) blur(2px)';
+        setTimeout(() => {
+            document.body.style.filter = 'none';
+        }, 500);
     }
 }
 
