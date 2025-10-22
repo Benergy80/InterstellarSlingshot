@@ -1073,10 +1073,6 @@ if (frameDistance > 0.01) { // Only track significant movement
         gameState.emergencyWarp.timeRemaining = gameState.emergencyWarp.boostDuration;
         gameState.velocityVector.copy(forwardDirection).multiplyScalar(gameState.emergencyWarp.boostSpeed);
         
-        if (typeof showAchievement === 'function') {
-            showAchievement('Emergency Warp Activated!', `${gameState.emergencyWarp.boostSpeed * 1000} km/s for ${gameState.emergencyWarp.boostDuration/1000}s`);
-        }
-        
         for (let i = 0; i < 3; i++) {
             setTimeout(() => createHyperspaceEffect(), i * 200);
         }
@@ -1580,12 +1576,12 @@ window.transitionToRandomLocation = transitionToRandomLocation;
 // Enhanced orientation function for auto-navigation
 window.orientTowardsTarget = orientTowardsTarget;
 
-console.log('âœ… SPECIFICATION COMPLIANT Game Physics loaded');
-console.log('ðŸ›¸ Flight Controls: Direct camera.rotateX/Y/Z() for intuitive local space feel');
-console.log('âš¡ Energy System: W(0.12), S(0.04), A/D(0.06), B(0.12), B+Shift(0.15)');
-console.log('ðŸ’¥ Asteroid Functions: All destruction and collision functions restored');
-console.log('âš–ï¸ Auto-Leveling: OFF by default, toggle with L key');
-console.log('ðŸš€ Boost System: B(1.8x), B+Shift(2.5x), O(Emergency Warp)');
-console.log('ðŸŒ€ Black Hole Warp: H key (near black holes) - FIXED KEY CONFLICT');
-console.log('ðŸ“Š Physics: Constant motion, velocity damping, camera-relative movement');
-console.log('ðŸŽ¯ Auto-Navigation: Compatible with specification controls, auto-disengages at energy < 5');
+console.log('SPECIFICATION COMPLIANT Game Physics loaded');
+console.log('Flight Controls: Direct camera.rotateX/Y/Z() for intuitive local space feel');
+console.log('Energy System: W(0.12), S(0.04), A/D(0.06), B(0.12), B+Shift(0.15)');
+console.log('Asteroid Functions: All destruction and collision functions restored');
+console.log('Auto-Leveling: OFF by default, toggle with L key');
+console.log('Boost System: B(1.8x), B+Shift(2.5x), O(Emergency Warp)');
+console.log('Black Hole Warp: (near black holes) - FIXED KEY CONFLICT');
+console.log('Physics: Constant motion, velocity damping, camera-relative movement');
+console.log('Auto-Navigation: Compatible with specification controls, auto-disengages at energy < 5');
