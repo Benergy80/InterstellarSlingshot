@@ -27,10 +27,56 @@ function updateUI() {
     // Basic stats updates
     if (velocityEl) velocityEl.textContent = (gameState.velocity * 1000).toFixed(0) + ' km/s';
     if (distanceEl) distanceEl.textContent = gameState.distance.toFixed(1) + ' ly';
-    if (energyBarEl) energyBarEl.style.width = gameState.energy + '%';
-    if (emergencyWarpEl) emergencyWarpEl.textContent = gameState.emergencyWarp.available.toString();
-    if (galaxiesClearedEl) galaxiesClearedEl.textContent = gameState.galaxiesCleared.toString();
-    if (locationEl) locationEl.textContent = gameState.location;
+    if (energyBarEl) {
+    // First, always update the width to match current energy
+    const energyPercent = Math.max(0, Math.min(100, gameState.energy));
+    energyBarEl.style.width = energyPercent + '%';
+    
+    // Then apply visual effects if boosts are active
+    if (gameState.solarStormBoostActive || gameState.plasmaStormBoostActive) {
+        if (gameState.plasmaStormBoostActive) {
+            // Purple plasma storm boost
+            energyBarEl.style.background = 'linear-gradient(90deg, #8866ff 0%, #6644ff 50%, #aa88ff 100%)';
+            energyBarEl.style.boxShadow = '0 0 20px rgba(136, 102, 255, 0.9)';
+        } else {
+            // Yellow solar storm boost
+            energyBarEl.style.background = 'linear-gradient(90deg, #ffd700 0%, #ffff00 50%, #ffa500 100%)';
+            energyBarEl.style.boxShadow = '0 0 20px rgba(255, 215, 0, 0.8)';
+        }
+        
+        // Animate the bar
+        const pulseTime = Date.now() * 0.003;
+        const pulse = Math.sin(pulseTime) * 0.1 + 0.9;
+        energyBarEl.style.opacity = pulse;
+    } else {
+        // Normal energy bar appearance
+        energyBarEl.style.background = 'linear-gradient(90deg, #1e40af 0%, #3b82f6 50%, #60a5fa 100%)';
+        energyBarEl.style.boxShadow = 'none';
+        energyBarEl.style.opacity = '1';
+    }
+    
+    // Enhanced color coding based on energy level
+    if (energyPercent < 10) {
+        energyBarEl.style.background = 'linear-gradient(90deg, #dc2626 0%, #ef4444 100%)';
+    } else if (energyPercent < 25) {
+        energyBarEl.style.background = 'linear-gradient(90deg, #f59e0b 0%, #fbbf24 100%)';
+    }
+}
+
+// Show energy percentage text with boost indicator
+if (gameState.solarStormBoostActive || gameState.plasmaStormBoostActive) {
+    const timeLeft = Math.ceil(
+        (gameState.plasmaStormBoostActive ? gameState.plasmaStormBoostEndTime : gameState.solarStormBoostEndTime) 
+        - Date.now()
+    ) / 1000;
+    const boostType = gameState.plasmaStormBoostActive ? 'PLASMA' : 'SOLAR';
+    const boostColor = gameState.plasmaStormBoostActive ? '#8866ff' : '#ffd700';
+    
+    const energyDisplay = document.querySelector('#energyBar').parentElement.previousElementSibling;
+    if (energyDisplay) {
+        energyDisplay.innerHTML = `Energy: <span style="color: ${boostColor}; font-weight: bold; text-shadow: 0 0 10px ${boostColor};">${Math.round(gameState.energy)}% ⚡ ${boostType} (${timeLeft}s)</span>`;
+    }
+}
     
     // Enhanced hull display with dynamic color coding
     if (hullBarEl) {
@@ -256,6 +302,30 @@ function updateAutoNavigateButton() {
         }
     }
 }
+
+// Update floating status displays
+function updateMobileFloatingStatus() {
+    if (typeof gameState === 'undefined') return;
+    
+    const updates = {
+        'mobileFloatingVelocity': gameState.velocity ? (gameState.velocity * 1000).toFixed(0) + ' km/s' : '0.0 km/s',
+        'mobileFloatingDistance': gameState.distance ? gameState.distance.toFixed(1) + ' ly' : '0.0 ly',
+        'mobileFloatingEnergy': gameState.energy ? Math.round(gameState.energy) + '%' : '100%',
+        'mobileFloatingHull': gameState.hull ? Math.round(gameState.hull) + '%' : '100%'
+    };
+    
+    Object.entries(updates).forEach(([id, value]) => {
+        const element = document.getElementById(id);
+        if (element) element.textContent = value;
+    });
+}
+
+// Call this in your main game loop or animation frame
+setInterval(() => {
+    if (window.innerWidth <= 768) {
+        updateMobileFloatingStatus();
+    }
+}, 100);
 
 // =============================================================================
 // ENHANCED TARGET SYSTEM - INTEGRATED WITH CONTROLS + COSMIC FEATURES
@@ -1684,6 +1754,7 @@ function setupMobileUI() {
     createMobileUIContainer();
     createMobileTopBar();
     createMobileControls();
+    createMobileFloatingStatus(); // ADD THIS LINE
     createMobilePopups();
 }
 
@@ -1751,24 +1822,60 @@ function createMobileControls() {
     const buttonStyle = `width: 64px; height: 64px; border-radius: 50%; background: linear-gradient(135deg, rgba(0, 150, 255, 0.8), rgba(0, 100, 200, 0.8)); border: 2px solid rgba(0, 200, 255, 0.6); color: white; display: flex; align-items: center; justify-content: center; font-size: 24px; cursor: pointer; transition: all 0.2s ease; box-shadow: 0 4px 15px rgba(0, 150, 255, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.2);`;
     
     controls.innerHTML = `
-        <button class="mobile-btn" onclick="openMobilePopup('status')" style="${buttonStyle}" title="Ship Status">
-            <i class="fas fa-tachometer-alt"></i>
-        </button>
-        <button class="mobile-btn" onclick="mobileCycleTarget()" style="${buttonStyle}" title="Cycle Targets">
-            <i class="fas fa-bullseye"></i>
-        </button>
-        <button class="mobile-btn primary" onclick="handleMobileFire()" style="${buttonStyle} width: 80px; height: 80px; background: linear-gradient(135deg, rgba(255, 50, 50, 0.8), rgba(200, 0, 0, 0.8)); border-color: rgba(255, 100, 100, 0.6);" title="Fire Weapons">
-            <i class="fas fa-crosshairs"></i>
-        </button>
-        <button class="mobile-btn emergency" onclick="mobileEmergencyWarp()" style="${buttonStyle} background: linear-gradient(135deg, rgba(255, 150, 0, 0.8), rgba(200, 100, 0, 0.8)); border-color: rgba(255, 200, 0, 0.6);" title="Emergency Warp">
-            <i class="fas fa-rocket"></i>
-        </button>
-        <button class="mobile-btn" onclick="openMobilePopup('controls')" style="${buttonStyle}" title="Controls">
-            <i class="fas fa-cog"></i>
-        </button>
-    `;
+    <button class="mobile-btn" onclick="mobileCycleTarget()" style="${buttonStyle}" title="Cycle Targets">
+        <i class="fas fa-bullseye"></i>
+    </button>
+    <button class="mobile-btn primary" onclick="handleMobileFire()" style="${buttonStyle} width: 80px; height: 80px; background: linear-gradient(135deg, rgba(255, 50, 50, 0.8), rgba(200, 0, 0, 0.8)); border-color: rgba(255, 100, 100, 0.6);" title="Fire Weapons">
+        <i class="fas fa-crosshairs"></i>
+    </button>
+    <button class="mobile-btn emergency" onclick="mobileEmergencyWarp()" style="${buttonStyle} background: linear-gradient(135deg, rgba(255, 150, 0, 0.8), rgba(200, 100, 0, 0.8)); border-color: rgba(255, 200, 0, 0.6);" title="Emergency Warp">
+        <i class="fas fa-rocket"></i>
+    </button>
+    <button class="mobile-btn" onclick="openMobilePopup('controls')" style="${buttonStyle}" title="Controls">
+        <i class="fas fa-cog"></i>
+    </button>
+`;
+
     
     document.getElementById('mobileUI').appendChild(controls);
+}
+
+function createMobileFloatingStatus() {
+    const floatingStatus = document.createElement('div');
+    floatingStatus.className = 'mobile-floating-status';
+    floatingStatus.id = 'mobileFloatingStatus';
+    floatingStatus.style.cssText = `
+        position: fixed;
+        bottom: 100px;
+        left: 50%;
+        transform: translateX(-50%);
+        display: flex;
+        gap: 12px;
+        z-index: 20;
+        pointer-events: none;
+        font-family: 'Orbitron', monospace;
+    `;
+    
+    floatingStatus.innerHTML = `
+        <div class="mobile-stat-pill" style="background: linear-gradient(135deg, rgba(15, 23, 42, 0.85), rgba(30, 41, 59, 0.85)); backdrop-filter: blur(10px); border: 1px solid rgba(0, 150, 255, 0.5); border-radius: 20px; padding: 8px 14px; font-size: 13px; font-weight: 600; color: #4ade80; text-shadow: 0 0 8px rgba(74, 222, 128, 0.6);">
+            <i class="fas fa-tachometer-alt" style="margin-right: 6px; color: rgba(0, 200, 255, 0.8);"></i>
+            <span id="mobileFloatingVelocity">0.0 km/s</span>
+        </div>
+        <div class="mobile-stat-pill" style="background: linear-gradient(135deg, rgba(15, 23, 42, 0.85), rgba(30, 41, 59, 0.85)); backdrop-filter: blur(10px); border: 1px solid rgba(0, 150, 255, 0.5); border-radius: 20px; padding: 8px 14px; font-size: 13px; font-weight: 600; color: #fbbf24; text-shadow: 0 0 8px rgba(251, 191, 36, 0.6);">
+            <i class="fas fa-route" style="margin-right: 6px; color: rgba(251, 191, 36, 0.8);"></i>
+            <span id="mobileFloatingDistance">0.0 ly</span>
+        </div>
+        <div class="mobile-stat-pill" style="background: linear-gradient(135deg, rgba(15, 23, 42, 0.85), rgba(30, 41, 59, 0.85)); backdrop-filter: blur(10px); border: 1px solid rgba(0, 150, 255, 0.5); border-radius: 20px; padding: 8px 14px; font-size: 13px; font-weight: 600; color: #60a5fa; text-shadow: 0 0 8px rgba(96, 165, 250, 0.6);">
+            <i class="fas fa-bolt" style="margin-right: 6px; color: rgba(96, 165, 250, 0.8);"></i>
+            <span id="mobileFloatingEnergy">100%</span>
+        </div>
+        <div class="mobile-stat-pill" style="background: linear-gradient(135deg, rgba(15, 23, 42, 0.85), rgba(30, 41, 59, 0.85)); backdrop-filter: blur(10px); border: 1px solid rgba(0, 150, 255, 0.5); border-radius: 20px; padding: 8px 14px; font-size: 13px; font-weight: 600; color: #f87171; text-shadow: 0 0 8px rgba(248, 113, 113, 0.6);">
+            <i class="fas fa-shield-alt" style="margin-right: 6px; color: rgba(248, 113, 113, 0.8);"></i>
+            <span id="mobileFloatingHull">100%</span>
+        </div>
+    `;
+    
+    document.getElementById('mobileUI').appendChild(floatingStatus);
 }
 
 // Mobile button functions that interface with existing game functions
