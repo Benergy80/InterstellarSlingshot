@@ -873,9 +873,12 @@ function updateIntroStatusPanels() {
 function hideNonIntroElements() {
     // Hide achievement popup during intro
     const achievementPopup = document.getElementById('achievementPopup');
-    if (achievementPopup) {
-        achievementPopup.style.display = 'none';
-    }
+if (achievementPopup) {
+    achievementPopup.style.display = '';  // ⭐ Clear inline style instead of setting to 'block'
+    achievementPopup.style.visibility = '';
+    achievementPopup.style.opacity = '';
+    achievementPopup.classList.add('hidden');  // Start hidden, let showAchievement control it
+}
     
     // Hide tutorial alerts during intro
     const missionCommandAlert = document.getElementById('missionCommandAlert');
@@ -1861,6 +1864,17 @@ function setupNormalGameContent() {
         console.log('☁️ Nebulas created');
     }
     
+    // ⭐ ADD THIS NEW SECTION RIGHT HERE:
+    // Create enhanced planet clusters in nebulas (with delay to ensure nebulas exist)
+    setTimeout(() => {
+        if (typeof createEnhancedPlanetClustersInNebulas === 'function') {
+            console.log('🌟 Creating enhanced planet clusters within nebulas...');
+            createEnhancedPlanetClustersInNebulas();
+        } else {
+            console.warn('⚠️ createEnhancedPlanetClustersInNebulas not found');
+        }
+    }, 1000);
+    
     // Create asteroid belts
     if (typeof createAsteroidBelts === 'function') {
         createAsteroidBelts();
@@ -1999,6 +2013,14 @@ function skipIntroSequence() {
     if (typeof resumeAudioContext === 'function') {
         resumeAudioContext();
         console.log('🔊 Audio context resumed during skip');
+    }
+    
+    // START BACKGROUND MUSIC (FIXED: was missing!)
+    if (typeof startBackgroundMusic === 'function') {
+        setTimeout(() => {
+            startBackgroundMusic();
+            console.log('🎵 Background music started after skip intro');
+        }, 500);
     }
     
     // Create black overlay that fades to black over 1.2s
@@ -2244,10 +2266,16 @@ function cleanupIntroElements() {
     // Restore UI blur effects
     restoreUIBlurEffects();
     
-    // Restore normal UI elements
+    // ⭐ CRITICAL FIX: Restore achievement popup WITHOUT inline display style
     const achievementPopup = document.getElementById('achievementPopup');
     if (achievementPopup) {
-        achievementPopup.style.display = 'block';
+        // Clear ALL inline styles that could interfere
+        achievementPopup.style.display = '';  // ⭐ Clear inline style completely
+        achievementPopup.style.visibility = '';
+        achievementPopup.style.opacity = '';
+        // Start hidden, let showAchievement() control visibility via class
+        achievementPopup.classList.add('hidden');
+        console.log('✅ Achievement popup restored and ready for display');
     }
     
     // Re-enable tutorial system
