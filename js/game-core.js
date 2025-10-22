@@ -1,15 +1,11 @@
 // Game Core - Main initialization and game loop
-// Enhanced with doubled world scale, improved systems, and FIXED ORBITAL MECHANICS
-// CLEANED: Removed stub functions, simplified initialization, eliminated conflicts
-// STREAMLINED: Single initialization path, no competing systems
 
-console.log('Enhanced Interstellar Slingshot starting...');
+console.log('Interstellar Slingshot starting...');
 
 // =============================================================================
 // CORE GAME STATE - SINGLE INITIALIZATION POINT
 // =============================================================================
 
-// Enhanced Game State with doubled world scale - SINGLE SOURCE OF TRUTH
 const gameState = {
     velocity: 0,
     distance: 0,
@@ -32,12 +28,19 @@ const gameState = {
     gameStarted: false,
     warping: false,
     isBlackHoleWarping: false,
+    maxEnergy: 100,
+    solarStormBoostActive: false,
+    solarStormBoostEndTime: 0,
+    tenSecondWarningShown: false,
+    plasmaStormBoostActive: false,          // ⭐ NEW
+    plasmaStormBoostEndTime: 0,             // ⭐ NEW
+    plasmaTenSecondWarningShown: false,     // ⭐ NEW
     shipMass: 2.0, // Doubled mass for doubled world
     baseSpeed: 0.2, // Doubled for doubled world
     thrustPower: 0.01, // Doubled for doubled world
     wThrustMultiplier: 2.0, // W key gets 2x thrust
     minVelocity: 0.2, // Doubled for doubled world
-    maxVelocity: 1.0, // Doubled for doubled world
+    maxVelocity: 2.0, // Doubled for doubled world
     mapMode: 'galactic',
     mapView: 'galactic', // 'galactic', 'universal'
     galaxiesCleared: 0,
@@ -109,6 +112,7 @@ let wormholes = [];
 let comets = [];
 let asteroidBelts = [];
 let nebulaClouds = [];
+let nebulaGasClouds = []; 
 let enemies = [];
 let cameraRotation = { x: 0, y: 0, z: 0 }
 
@@ -431,14 +435,18 @@ function createSingleOrbitLine(planet, isLocal) {
         const orbitLine = new THREE.Mesh(orbitGeometry, orbitMaterial);
         
         // Position the orbit at the system center
-        orbitLine.position.set(systemCenter.x, systemCenter.y, systemCenter.z);
-        orbitLine.rotation.x = Math.PI / 2; // Rotate to horizontal plane
-        
-        // Add small random tilt for visual variety
-        if (!isLocal) {
-            orbitLine.rotation.y += (Math.random() - 0.5) * 0.2;
-            orbitLine.rotation.z += (Math.random() - 0.5) * 0.2;
-        }
+orbitLine.position.set(systemCenter.x, systemCenter.y, systemCenter.z);
+orbitLine.rotation.x = Math.PI / 2; // Rotate to horizontal plane
+
+// ✅ ENHANCED: Apply stored orbital tilt for local gateway systems
+if (planet.userData.isLocalGateway && planet.userData.orbitalTilt) {
+    orbitLine.rotation.y += planet.userData.orbitalTilt.z; // Z-tilt affects Y-rotation
+    orbitLine.rotation.z += planet.userData.orbitalTilt.x; // X-tilt affects Z-rotation
+} else if (!isLocal) {
+    // Add small random tilt for distant galaxies
+    orbitLine.rotation.y += (Math.random() - 0.5) * 0.2;
+    orbitLine.rotation.z += (Math.random() - 0.5) * 0.2;
+}
         
         // Set visibility
         orbitLine.visible = orbitLinesVisible;
@@ -623,10 +631,8 @@ function startGame() {
         createSpectacularClusteredNebulas();
     }
 }, 1000);
-            
-            
-            
-            // In your startGame() function, after calling createOptimizedPlanets3D():
+
+// In your startGame() function, after calling createOptimizedPlanets3D():
 setTimeout(() => {
     if (typeof createNebulas === 'function') {
         console.log('Creating first nebula layer...');
@@ -639,10 +645,35 @@ setTimeout(() => {
         }, 500);
     }
 }, 1000);
-            if (typeof createAsteroidBelts === 'function') {
-        		createAsteroidBelts();
-        		console.log('Asteroid belts created');
-    		}
+
+// ⭐ NEW: Create enhanced planet clusters AFTER all nebula layers
+setTimeout(() => {
+    if (typeof createEnhancedPlanetClustersInNebulas === 'function') {
+        console.log('🌟 Creating enhanced planet clusters within nebulas...');
+        createEnhancedPlanetClustersInNebulas();
+    } else {
+        console.warn('⚠️ createEnhancedPlanetClustersInNebulas function not found!');
+    }
+}, 3000); // Wait 3 seconds for all nebula layers to complete
+
+// ADD THIS NEW CODE RIGHT AFTER THE ABOVE:
+setTimeout(() => {
+    if (typeof createEnhancedPlanetClustersInNebulas === 'function') {
+        console.log('🌟 Creating enhanced planet clusters in nebulas...');
+        createEnhancedPlanetClustersInNebulas();
+    }
+}, 2000); // Wait for nebulas to be fully created first
+
+            // TEMPORARILY DISABLED: Asteroid creation on initial load
+// Asteroids will only be created during the intro sequence for better FPS
+/*
+if (typeof createAsteroidBelts === 'function') {
+    createAsteroidBelts();
+    console.log('Asteroid belts created');
+}
+*/
+console.log('⚠️ INITIAL ASTEROID LOAD DISABLED - Will load during intro sequence only');
+
             if (typeof createEnhancedComets === 'function') {
                 createEnhancedComets();
                 console.log('Enhanced comets created');
@@ -654,15 +685,11 @@ if (typeof createEnhancedWormholes === 'function') {
     console.log('Enhanced wormholes created');
 }
 
+// Create enemies for ALL galaxies on game start
 if (typeof createEnemies === 'function') {
     createEnemies();
-    console.log('Enemy ships created');
+    console.log('Enemy ships created for all galaxies');
 }
-            
-            if (typeof createEnemies === 'function') {
-                createEnemies();
-                console.log('Enemy ships created');
-            }
             
             // ADD THIS NEW CODE:
 if (typeof spawnBlackHoleGuardians === 'function') {
@@ -817,8 +844,13 @@ function animate() {
     gameState.frameCount++;
     
     if (gameState.paused) {
-        requestAnimationFrame(animate);
-        return; // Skip all game updates when paused
+        // Still render the scene when paused, just don't update game logic
+        if (stars) {
+            stars.rotation.x += 0.0001;
+            stars.rotation.y += 0.0002;
+        }
+        renderer.render(scene, camera);
+        return; // Skip all other game updates when paused
     }
     
     // PERFORMANCE: Monitor frame times and adjust quality
@@ -865,23 +897,72 @@ if (typeof animateNebulaBrownDwarfs !== 'undefined') {
     animateNebulaBrownDwarfs();
 }
     
-    // Pulse enemy glow for visibility
-if (typeof enemies !== 'undefined' && enemies.length > 0) {
-    const pulseTime = Date.now() * 0.002; // Pulse speed
-    const pulseFactor = 0.5 + Math.sin(pulseTime) * 0.5; // Oscillates between 0.5 and 1.5
-    
-    enemies.forEach(enemy => {
-        if (enemy && enemy.material && enemy.material.emissiveIntensity !== undefined) {
-            // Store base intensity if not already stored
-            if (enemy.userData.baseEmissiveIntensity === undefined) {
-                enemy.userData.baseEmissiveIntensity = enemy.material.emissiveIntensity;
-            }
-            
-            // Apply pulsing effect
-            enemy.material.emissiveIntensity = enemy.userData.baseEmissiveIntensity * (0.7 + pulseFactor * 0.6);
+    // ⭐ ENHANCED: Animate nebula gas clouds with individual pulsing per cloud
+if (typeof nebulaGasClouds !== 'undefined' && nebulaGasClouds.length > 0) {
+    nebulaGasClouds.forEach(cloudCluster => {
+        // Rotate entire cluster slowly
+        if (cloudCluster.rotation) {
+            cloudCluster.rotation.x += 0.0002;
+            cloudCluster.rotation.y += 0.0003;
+            cloudCluster.rotation.z += 0.0001;
         }
         
-        // Also pulse the glow mesh if it exists
+        // Animate each individual cloud in the cluster
+        if (cloudCluster.children && cloudCluster.children.length > 0) {
+            cloudCluster.children.forEach(cloud => {
+                if (cloud.userData && cloud.userData.pulseSpeed) {
+                    // Each cloud pulses at its own speed and phase
+                    const pulseTime = Date.now() * cloud.userData.pulseSpeed + cloud.userData.pulsePhase;
+                    const scale = 1 + Math.sin(pulseTime) * 0.08;
+                    cloud.scale.set(scale, scale, scale);
+                    
+                    // Also pulse opacity for breathing effect
+                    if (cloud.material && cloud.userData.baseOpacity) {
+                        const opacityPulse = Math.sin(pulseTime * 0.5) * 0.05;
+                        cloud.material.opacity = cloud.userData.baseOpacity + opacityPulse;
+                    }
+                }
+                
+                // Individual cloud rotation for wispy effect
+                if (cloud.rotation) {
+                    cloud.rotation.x += 0.0005;
+                    cloud.rotation.y += 0.0003;
+                }
+            });
+        }
+    });
+}
+
+// ⭐ NEW: Animate asteroid belts rotation
+if (typeof asteroidBelts !== 'undefined' && asteroidBelts.length > 0) {
+    asteroidBelts.forEach(belt => {
+        if (belt.userData.rotationSpeed && belt.rotation) {
+            belt.rotation.y += belt.userData.rotationSpeed;
+        }
+    });
+} 
+    
+// Pulse enemy glow for visibility - OPTIMIZED: Only nearby enemies
+if (typeof enemies !== 'undefined' && enemies.length > 0 && gameState.frameCount % 2 === 0) {
+    const pulseTime = Date.now() * 0.002;
+    const pulseFactor = 0.5 + Math.sin(pulseTime) * 0.5;
+    
+    // Only pulse enemies within visual range (3000 units)
+    const nearbyEnemies = enemies.filter(e => 
+        e.userData.health > 0 && 
+        camera.position.distanceTo(e.position) < 3000
+    );
+    
+    nearbyEnemies.forEach(enemy => {
+        // Pulse the main body opacity
+        if (enemy && enemy.material && enemy.material.opacity !== undefined) {
+            if (enemy.userData.baseOpacity === undefined) {
+                enemy.userData.baseOpacity = enemy.material.opacity;
+            }
+            enemy.material.opacity = enemy.userData.baseOpacity * (0.85 + pulseFactor * 0.3);
+        }
+        
+        // Pulse the glow mesh
         if (enemy.children && enemy.children[0]) {
             const glow = enemy.children[0];
             if (glow.material && glow.material.opacity !== undefined) {
@@ -1236,9 +1317,9 @@ if (typeof checkCosmicFeatureInteractions === 'function' && typeof camera !== 'u
 }
     
     // Enhanced enemy behavior update
-    if (typeof updateEnemyBehavior === 'function') {
-        updateEnemyBehavior();
-    }
+    if (gameState.frameCount % 2 === 0 && typeof updateEnemyBehavior === 'function') {
+    updateEnemyBehavior();
+}
     
     // Enhanced physics and controls for doubled world
     if (typeof updateEnhancedPhysics === 'function') {
@@ -1450,6 +1531,7 @@ if (typeof window !== 'undefined') {
     window.comets = comets;
     window.wormholes = wormholes;
     window.nebulaClouds = nebulaClouds;
+    window.nebulaGasClouds = nebulaGasClouds;
     window.orbitLines = orbitLines;
     
     window.createClusteredNebulas = createClusteredNebulas;
