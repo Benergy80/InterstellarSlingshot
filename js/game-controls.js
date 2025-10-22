@@ -311,6 +311,11 @@ function updateEnemyBehavior() {
         return;
     }
     
+    // PERFORMANCE: Only process enemies every other frame
+    if (gameState.frameCount % 2 !== 0) {
+        return;
+    }
+    
     // NEW: Don't activate enemies until tutorial is complete (IMPROVED DETECTION)
     if (typeof tutorialSystem !== 'undefined' && tutorialSystem.active && !tutorialSystem.completed) {
         // Tutorial is still active - enemies should be passive
@@ -443,8 +448,6 @@ function updateEnemyBehavior() {
             updatePatrolBehavior(enemy, camera.position, 0.2, Date.now() * 0.001);
         }
         
-        // Visual health updates
-        updateEnemyVisualHealth(enemy);
     });
     
     // Update combat status for UI
@@ -674,16 +677,11 @@ function isEnemyInLocalGalaxy(enemy) {
 }
 
 function updateEnemyVisualHealth(enemy) {
-    if (!enemy || !enemy.userData || !enemy.material) return;
-    
-    // Store original material properties if not already stored
-    if (!enemy.userData.originalMaterial) {
-        enemy.userData.originalMaterial = {
-            color: enemy.material.color.clone(),
-            emissive: enemy.material.emissive.clone(),
-            emissiveIntensity: enemy.material.emissiveIntensity || 0
-        };
-    }
+    // MeshBasicMaterial doesn't need health-based visual changes
+    // The translucent glowing appearance is enough
+    // This function is kept for compatibility but does nothing
+    return;
+
     
     // Calculate health percentage
     const currentHealthPercent = enemy.userData.health / enemy.userData.maxHealth;
@@ -809,8 +807,7 @@ function completeTutorial() {
     console.log('Tutorial completed - enemies now active');
 }
 
-// RESTORED: Working tutorial display (no typewriter effect)
-function showMissionCommandAlert(title, text) {
+function showMissionCommandAlert(title, text, isVictoryMessage = false) {
     const alertElement = document.getElementById('missionCommandAlert');
     const titleElement = alertElement ? alertElement.querySelector('h2') : null;
     const textElement = document.getElementById('missionCommandText');
@@ -824,36 +821,78 @@ function showMissionCommandAlert(title, text) {
     textElement.textContent = text;
     alertElement.classList.remove('hidden');
     
-    // Create OK button if it doesn't exist
-    let okButton = document.getElementById('missionCommandOK');
-    if (!okButton) {
-        okButton = document.createElement('button');
-        okButton.id = 'missionCommandOK';
-        okButton.className = 'mt-4 space-btn rounded px-6 py-2';
-        okButton.innerHTML = '<i class="fas fa-check mr-2"></i>Understood';
-        alertElement.querySelector('.text-center').appendChild(okButton);
+    // Get or create button container
+    const buttonContainer = alertElement.querySelector('.text-center');
+    if (!buttonContainer) return;
+    
+    // Clear existing buttons
+    const existingButtons = buttonContainer.querySelectorAll('button');
+    existingButtons.forEach(btn => btn.remove());
+    
+    // Determine if this is a tutorial message
+    const isTutorialActive = tutorialSystem && tutorialSystem.active && !tutorialSystem.completed;
+    
+    // Check if this is the final tutorial message
+    const isFinalTutorialMessage = title === "Final Orders";
+    
+    if (isTutorialActive && !isVictoryMessage) {
+        if (isFinalTutorialMessage) {
+            // Create UNDERSTOOD button for the final tutorial message
+            const understoodButton = document.createElement('button');
+            understoodButton.id = 'missionCommandUnderstood';
+            understoodButton.className = 'mt-4 space-btn rounded px-6 py-2';
+            understoodButton.innerHTML = '<i class="fas fa-check mr-2"></i>UNDERSTOOD';
+            understoodButton.style.background = 'linear-gradient(135deg, rgba(0, 150, 255, 0.8), rgba(0, 100, 200, 0.8))';
+            understoodButton.style.borderColor = 'rgba(0, 200, 255, 0.6)';
+            buttonContainer.appendChild(understoodButton);
+            
+            // UNDERSTOOD button completes tutorial and dismisses the message
+            understoodButton.onclick = () => {
+                alertElement.classList.add('hidden');
+                completeTutorial();
+            };
+        } else {
+            // Create SKIP TUTORIAL button for other tutorial messages
+            const skipButton = document.createElement('button');
+            skipButton.id = 'missionCommandSkip';
+            skipButton.className = 'mt-4 space-btn rounded px-6 py-2';
+            skipButton.innerHTML = '<i class="fas fa-forward mr-2"></i>SKIP TUTORIAL';
+            skipButton.style.background = 'linear-gradient(135deg, rgba(255, 150, 0, 0.8), rgba(200, 100, 0, 0.8))';
+            skipButton.style.borderColor = 'rgba(255, 200, 0, 0.6)';
+            buttonContainer.appendChild(skipButton);
+            
+            // SKIP TUTORIAL button immediately completes tutorial
+            skipButton.onclick = () => {
+                alertElement.classList.add('hidden');
+                
+                // Skip ALL remaining tutorial messages
+                if (tutorialSystem.active) {
+                    tutorialSystem.active = false;
+                    completeTutorial();
+                    showAchievement('Tutorial Skipped', 'All hostile forces are now active!');
+                }
+            };
+        }
+    } else {
+        // Create UNDERSTOOD button for victory messages and non-tutorial messages
+        const understoodButton = document.createElement('button');
+        understoodButton.id = 'missionCommandUnderstood';
+        understoodButton.className = 'mt-4 space-btn rounded px-6 py-2';
+        understoodButton.innerHTML = '<i class="fas fa-check mr-2"></i>UNDERSTOOD';
+        understoodButton.style.background = 'linear-gradient(135deg, rgba(0, 150, 255, 0.8), rgba(0, 100, 200, 0.8))';
+        understoodButton.style.borderColor = 'rgba(0, 200, 255, 0.6)';
+        buttonContainer.appendChild(understoodButton);
+        
+        // UNDERSTOOD button dismisses the message
+        understoodButton.onclick = () => {
+            alertElement.classList.add('hidden');
+        };
     }
     
-    playSound('achievement');
-    
-    // Auto-dismiss after 15 seconds or manual click
-    const timeoutId = setTimeout(() => {
-        alertElement.classList.add('hidden');
-        // Check if this was the last tutorial message
-        if (tutorialSystem.active && tutorialSystem.currentStep >= tutorialSystem.messages.length) {
-            completeTutorial();
-        }
-    }, 15000);
-    
-    okButton.onclick = () => {
-        clearTimeout(timeoutId);
-        alertElement.classList.add('hidden');
-        
-        // Check if this was the last tutorial message
-        if (tutorialSystem.active && tutorialSystem.currentStep >= tutorialSystem.messages.length) {
-            completeTutorial();
-        }
-    };
+    // Only play sound if not suppressed
+if (typeof gameState === 'undefined' || !gameState.suppressAchievements) {
+        playSound('achievement');
+}
 }
 
 // =============================================================================
@@ -950,7 +989,7 @@ function createAmbientSpaceMusic() {
     lfo2.frequency.setValueAtTime(0.1, audioContext.currentTime);
     lfo2Gain.gain.setValueAtTime(200, audioContext.currentTime);
     
-    // Mystery tone generator (RESTORED: Working random synth notes)
+    // Mystery tone generator (RESTORED from game-controlsX2.js)
     const mysteryOsc = audioContext.createOscillator();
     const mysteryGain = audioContext.createGain();
     const mysteryFilter = audioContext.createBiquadFilter();
@@ -973,7 +1012,7 @@ function createAmbientSpaceMusic() {
     lfo2.start(startTime);
     mysteryOsc.start(startTime);
     
-    // RESTORED: Working mystery tone scheduler
+    // RESTORED: Working mystery tone scheduler with proper volume
     function triggerMysteryTone() {
         if (!musicSystem.enabled || !musicSystem.backgroundMusic) return;
         
@@ -983,7 +1022,7 @@ function createAmbientSpaceMusic() {
         
         mysteryOsc.frequency.setValueAtTime(freq, now);
         mysteryGain.gain.setValueAtTime(0, now);
-        mysteryGain.gain.linearRampToValueAtTime(0.02, now + 2);
+        mysteryGain.gain.linearRampToValueAtTime(0.04, now + 2); // RESTORED: 0.04 for more presence
         mysteryGain.gain.linearRampToValueAtTime(0.001, now + 8);
         
         setTimeout(triggerMysteryTone, 8000 + Math.random() * 12000);
@@ -1108,6 +1147,13 @@ function createBattleMusic() {
 function switchToBattleMusic() {
     if (musicSystem.inBattle || !musicSystem.enabled) return;
     
+    // Resume audio context if suspended (critical for boss music)
+    if (audioContext && audioContext.state === 'suspended') {
+        audioContext.resume().then(() => {
+            console.log('AudioContext resumed for boss battle music');
+        });
+    }
+    
     musicSystem.inBattle = true;
     
     // Fade out ambient music
@@ -1116,12 +1162,20 @@ function switchToBattleMusic() {
         setTimeout(() => {
             if (musicSystem.backgroundMusic) {
                 musicSystem.backgroundMusic.stop();
+                musicSystem.backgroundMusic = null;
             }
             // Start battle music
             createBattleMusic();
             musicGain.gain.setValueAtTime(0.001, audioContext.currentTime);
             musicGain.gain.exponentialRampToValueAtTime(0.4, audioContext.currentTime + 0.5);
+            console.log('🎵 Boss battle music started!');
         }, 1000);
+    } else {
+        // No background music playing, start battle music immediately
+        createBattleMusic();
+        musicGain.gain.setValueAtTime(0.001, audioContext.currentTime);
+        musicGain.gain.exponentialRampToValueAtTime(0.4, audioContext.currentTime + 0.5);
+        console.log('🎵 Boss battle music started immediately!');
     }
 }
 
@@ -1530,7 +1584,7 @@ const fadeInterval = setInterval(() => {
 // ENHANCED VISUAL FEEDBACK: ENEMY HIT COLOR CHANGES
 // =============================================================================
 
-// ENHANCED: Enemy hit flash with color changes based on health
+// FIXED: Enemy hit flash that works with MeshBasicMaterial (no emissive properties)
 function flashEnemyHit(enemy, damage = 1) {
     if (!enemy || !enemy.material) return;
     
@@ -1538,68 +1592,45 @@ function flashEnemyHit(enemy, damage = 1) {
     if (!enemy.userData.originalMaterial) {
         enemy.userData.originalMaterial = {
             color: enemy.material.color.clone(),
-            emissive: enemy.material.emissive.clone(),
-            emissiveIntensity: enemy.material.emissiveIntensity
+            opacity: enemy.material.opacity || 1.0
         };
     }
     
     // Calculate health percentage
     const healthPercent = enemy.userData.health / enemy.userData.maxHealth;
     
-    // Color based on health percentage and hit
-    let hitColor, emissiveColor;
+    // Simple color flash based on health
+    let hitColor;
     if (healthPercent > 0.66) {
         // High health - bright red flash
         hitColor = new THREE.Color(1, 0.2, 0.2);
-        emissiveColor = new THREE.Color(1, 0, 0);
     } else if (healthPercent > 0.33) {
-        // Medium health - orange flash with more intensity
+        // Medium health - orange flash
         hitColor = new THREE.Color(1, 0.5, 0);
-        emissiveColor = new THREE.Color(1, 0.3, 0);
     } else {
-        // Low health - yellow/white flash, very intense
+        // Low health - yellow/white flash
         hitColor = new THREE.Color(1, 1, 0.2);
-        emissiveColor = new THREE.Color(1, 0.8, 0);
     }
     
-    // Apply hit effect
+    // Apply hit effect - just change color, keep opacity
+    const originalOpacity = enemy.material.opacity;
     enemy.material.color.copy(hitColor);
-    enemy.material.emissive.copy(emissiveColor);
-    enemy.material.emissiveIntensity = 0.8;
+    enemy.material.opacity = 0.9; // Slightly more opaque during hit
     
     // Clear any existing timeout
     if (enemy.userData.hitTimeout) {
         clearTimeout(enemy.userData.hitTimeout);
     }
     
-    // Return to health-based color after delay
+    // Return to original color after delay
     enemy.userData.hitTimeout = setTimeout(() => {
         if (enemy && enemy.material && enemy.userData.originalMaterial) {
-            // Set color based on current health
-            const currentHealthPercent = enemy.userData.health / enemy.userData.maxHealth;
-            
-            if (currentHealthPercent > 0.66) {
-                // High health - original color
-                enemy.material.color.copy(enemy.userData.originalMaterial.color);
-                enemy.material.emissive.copy(enemy.userData.originalMaterial.emissive);
-                enemy.material.emissiveIntensity = enemy.userData.originalMaterial.emissiveIntensity;
-            } else if (currentHealthPercent > 0.33) {
-                // Medium health - slightly damaged (darker, orange tint)
-                enemy.material.color.copy(enemy.userData.originalMaterial.color).multiplyScalar(0.8);
-                enemy.material.color.r = Math.min(1, enemy.material.color.r + 0.2);
-                enemy.material.emissive.set(0.1, 0.05, 0);
-                enemy.material.emissiveIntensity = 0.3;
-            } else {
-                // Low health - heavily damaged (much darker, red glow)
-                enemy.material.color.copy(enemy.userData.originalMaterial.color).multiplyScalar(0.5);
-                enemy.material.color.r = Math.min(1, enemy.material.color.r + 0.3);
-                enemy.material.emissive.set(0.2, 0, 0);
-                enemy.material.emissiveIntensity = 0.5;
-            }
+            // Always return to original color and opacity
+            enemy.material.color.copy(enemy.userData.originalMaterial.color);
+            enemy.material.opacity = enemy.userData.originalMaterial.opacity;
         }
     }, 150);
 }
-
 // =============================================================================
 // ENHANCED DIRECTIONAL DAMAGE EFFECTS FROM ADVANCED VERSION
 // =============================================================================
@@ -1871,7 +1902,6 @@ function initializeControlButtons() {
     }
 }
 
-    // Enhanced keyboard controls with pause key
     document.addEventListener('keydown', (e) => {
         // Add pause key handler
         if (e.key === 'p' || e.key === 'P') {
@@ -1880,7 +1910,7 @@ function initializeControlButtons() {
             return;
         }
         
-        if (gameState.paused) return;
+        if (gameState.paused) return;  // MAKE SURE THIS LINE EXISTS
         
         if (e.key === 'Tab' || e.key === 'Enter') {
             e.preventDefault();
@@ -1962,7 +1992,7 @@ function initializeControlButtons() {
     
     document.addEventListener('keyup', (e) => {
         // Don't process if paused
-        if (gamePaused) return;
+        if (gameState.paused) return;  // CORRECT VARIABLE
         
         const key = e.key.toLowerCase();
         if (key === 'w') keys.w = false;
@@ -2263,17 +2293,26 @@ function checkGalaxyClear() {
     let clearedGalaxyId = -1;
     let clearedGalaxyType = null;
     
-    // Check each galaxy for remaining enemies (INCLUDING GUARDIANS)
+    // Check each galaxy for remaining REGULAR enemies (excluding guardians and bosses)
     for (let g = 0; g < 8; g++) {
-        const galaxyEnemies = enemies.filter(enemy => 
+        // Count only regular enemies (not guardians, not bosses, not boss support)
+        const regularEnemies = enemies.filter(enemy => 
             enemy.userData && 
             enemy.userData.health > 0 && 
-            enemy.userData.galaxyId === g
-            // ⭐ INCLUDE ALL ENEMIES - guardians count toward galaxy clear
+            enemy.userData.galaxyId === g &&
+            !enemy.userData.isBoss &&
+            !enemy.userData.isBossSupport &&
+            !enemy.userData.isBlackHoleGuardian  // ⭐ EXCLUDE GUARDIANS
         );
         
-        // If this galaxy has no enemies and we haven't marked it as cleared
-        if (galaxyEnemies.length === 0 && gameState.currentGalaxyEnemies[g] > 0) {
+        // Check if boss has been defeated for this galaxy
+        const bossDefeated = (typeof bossSystem !== 'undefined' && bossSystem.galaxyBossDefeated[g]);
+        
+        // Galaxy is only "cleared" when:
+        // 1. All regular enemies are defeated
+        // 2. Boss has been defeated
+        // 3. We haven't already marked it as cleared
+        if (regularEnemies.length === 0 && bossDefeated && gameState.currentGalaxyEnemies[g] > 0) {
             clearedGalaxyId = g;
             clearedGalaxyType = galaxyTypes[g];
             gameState.currentGalaxyEnemies[g] = 0;
@@ -2281,53 +2320,36 @@ function checkGalaxyClear() {
         }
     }
     
-    // If we found a cleared galaxy
+    // If we found a cleared galaxy (regular enemies + boss defeated)
     if (clearedGalaxyId >= 0 && clearedGalaxyType) {
-        gameState.galaxiesCleared = (gameState.galaxiesCleared || 0) + 1;
+        // DO NOT increment galaxiesCleared yet - that happens after guardians
         
-        // Mark galaxy as cleared in boss system
+        // Mark boss as defeated
         if (typeof bossSystem !== 'undefined') {
             bossSystem.galaxyBossDefeated[clearedGalaxyId] = true;
-            // Also mark guardians as defeated
-            if (!bossSystem.galaxyGuardiansDefeated) {
-                bossSystem.galaxyGuardiansDefeated = {};
-            }
-            bossSystem.galaxyGuardiansDefeated[clearedGalaxyId] = true;
         }
         
-        // Play galaxy victory music
-        playGalaxyVictoryMusic();
+        // Play victory music
+        playBossVictoryMusic();
         
-        // Show achievement with galaxy name
-        showAchievement('Galaxy Liberated!', `${clearedGalaxyType.name} Galaxy (${clearedGalaxyType.faction}) completely liberated!`);
+        // Show intermediate achievement
+        showAchievement('Boss Defeated!', `${clearedGalaxyType.name} Galaxy boss eliminated! Guardians remain...`);
         
-        // Mission Control message with galaxy details
-        const remainingGalaxies = 8 - gameState.galaxiesCleared;
-        let missionControlMessage = '';
-        
-        if (remainingGalaxies > 0) {
-            missionControlMessage = `Excellent work, Captain! The ${clearedGalaxyType.name} Galaxy controlled by the ${clearedGalaxyType.faction} has been liberated. ${remainingGalaxies} hostile ${remainingGalaxies === 1 ? 'galaxy remains' : 'galaxies remain'}. Continue the mission!`;
-        } else {
-            missionControlMessage = `Outstanding, Captain! All hostile forces have been eliminated. The universe is safe thanks to your heroic efforts. Mission accomplished!`;
-        }
-        
+        // Mission Control message about guardians
         setTimeout(() => {
             if (typeof showMissionCommandAlert === 'function') {
-                showMissionCommandAlert('Mission Control', missionControlMessage);
+                showMissionCommandAlert('Mission Control', 
+                    `Well done, Captain! The ${clearedGalaxyType.name} Galaxy boss has been destroyed. Now eliminate the black hole guardians to fully liberate this galaxy!`, 
+                    true);
             }
         }, 2000);
         
-        // Refresh galaxy map to show cleared status
+        // Refresh galaxy map
         if (typeof setupGalaxyMap === 'function') {
             setupGalaxyMap();
         }
         
         refreshEnemyDifficulty();
-        
-        if (gameState.galaxiesCleared >= 8) {
-            showAchievement('Victory!', 'All galaxies cleared! Universe saved!');
-            playVictoryMusic();
-        }
     }
 }
 
@@ -2395,7 +2417,7 @@ function checkGuardianVictory() {
             
             setTimeout(() => {
                 if (typeof showMissionCommandAlert === 'function') {
-                    showMissionCommandAlert('Mission Control', missionControlMessage);
+                    showMissionCommandAlert('Mission Control', missionControlMessage, true);
                 }
             }, 2000);
             
@@ -2526,8 +2548,18 @@ function fireWeapon() {
 // PAUSE SYSTEM
 // =============================================================================
 
+// =============================================================================
+// PAUSE SYSTEM - FIXED
+// =============================================================================
+
 function togglePause() {
-    gameState.paused = !gameState.paused; // Use gameState instead of separate variable
+    // Use consistent state variable
+    if (typeof gameState === 'undefined') {
+        console.error('gameState not defined, cannot toggle pause');
+        return;
+    }
+    
+    gameState.paused = !gameState.paused;
     
     // Create pause overlay if it doesn't exist
     let pauseOverlay = document.getElementById('pauseOverlay');
@@ -2587,8 +2619,10 @@ function showAchievement(title, description, playAchievementSound = true) {
         'Training Complete',
         'BOSS DEFEATED!',
         'Galaxy Cleared!',
+        'Galaxy Liberated!',  // ⭐ Added
         'Victory!',
         'Enemy Destroyed!',
+        'Galaxy Discovery!',  // ⭐ Added
     ];
     
     // If tutorial is active and this achievement should be suppressed, just log it
@@ -2606,23 +2640,33 @@ function showAchievement(title, description, playAchievementSound = true) {
         achievementText.textContent = description;
         titleElement.textContent = title;
         
+        // ⭐ CRITICAL: Force clear any inline styles that might block visibility
+        popup.style.display = '';  // Clear inline display style
+        popup.style.visibility = ''; // Clear inline visibility style
+        popup.style.opacity = '';   // Clear inline opacity style
+        
         // Ensure high z-index to appear above tutorial
         popup.style.zIndex = '999'; // Maximum priority
         popup.classList.remove('hidden');
         
+        console.log(`✨ Achievement displaying: ${title}`);  // Debug log
+        
         // Longer display time for boss victories and important achievements
         const isImportant = alwaysCritical.includes(title);
-        const displayTime = isImportant ? 6000 : 4000; // 6 seconds for important, 4 for others
+        const displayTime = isImportant ? 6000 : 4000;
         
-        // Auto-hide after appropriate time
-        setTimeout(() => popup.classList.add('hidden'), displayTime);
+        // Play sound if requested
+        if (playAchievementSound && typeof playSound === 'function') {
+            playSound('achievement');
+        }
         
-        console.log(`Achievement: ${title} - ${description}`);
-    }
-    
-    // Play achievement sound if not in tutorial or if it's critical
-    if (playAchievementSound && (!tutorialActive || alwaysCritical.includes(title))) {
-        playSound('achievement');
+        // Auto-hide after display time
+        setTimeout(() => {
+            popup.classList.add('hidden');
+            console.log(`✅ Achievement hidden: ${title}`);  // Debug log
+        }, displayTime);
+    } else {
+        console.warn('Achievement popup elements not found:', { popup, achievementText, titleElement });
     }
 }
 
@@ -2717,6 +2761,10 @@ function cycleTargets() {
         showAchievement('No Targets', 'No objects detected in range');
         return;
     }
+    
+    if (typeof nebulaGasClouds !== 'undefined') {
+    allTargets.push(...nebulaGasClouds.filter(gc => camera.position.distanceTo(gc.position) < 3000));
+}
     
     let currentIndex = -1;
     if (gameState.currentTarget) {
