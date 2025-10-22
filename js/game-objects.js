@@ -181,6 +181,87 @@ function getRandomPositionInGalaxy3D(galaxyId) {
     );
 }
 
+// =============================================================================
+// ENHANCED ENEMY PLACEMENT SYSTEM - Multiple Placement Strategies
+// =============================================================================
+
+function getEnemyPlacementPosition(galaxyId, placementType = 'random') {
+    switch(placementType) {
+        case 'cosmic_feature':
+            return getEnemyPositionNearCosmicFeature(galaxyId);
+        case 'black_hole':
+            return getEnemyPositionNearBlackHole(galaxyId);
+        case 'random':
+        default:
+            return getRandomPositionInGalaxy3D(galaxyId);
+    }
+}
+
+function getEnemyPositionNearCosmicFeature(galaxyId) {
+    // Try to find cosmic features in this galaxy
+    const nearbyFeatures = [];
+    
+    if (typeof cosmicFeatures !== 'undefined') {
+        // Collect all cosmic features for this galaxy
+        const allFeatures = [
+            ...cosmicFeatures.pulsars.filter(p => p.userData && p.userData.galaxyId === galaxyId),
+            ...cosmicFeatures.supernovas.filter(s => s.userData && s.userData.galaxyId === galaxyId),
+            ...cosmicFeatures.dysonSpheres.filter(d => d.userData && d.userData.galaxyId === galaxyId),
+            ...cosmicFeatures.ringworlds.filter(r => r.userData && r.userData.galaxyId === galaxyId),
+            ...cosmicFeatures.solarStorms.filter(ss => ss.userData && ss.userData.galaxyId === galaxyId),
+            ...cosmicFeatures.crystalFormations.filter(cf => cf.userData && cf.userData.galaxyId === galaxyId),
+            ...cosmicFeatures.plasmaStorms.filter(ps => ps.userData && ps.userData.galaxyId === galaxyId),
+            ...cosmicFeatures.brownDwarfs.filter(bd => bd.userData && bd.userData.galaxyId === galaxyId)
+        ];
+        
+        nearbyFeatures.push(...allFeatures);
+    }
+    
+    // If cosmic features exist, spawn near one of them
+    if (nearbyFeatures.length > 0) {
+        const feature = nearbyFeatures[Math.floor(Math.random() * nearbyFeatures.length)];
+        const orbitRadius = 200 + Math.random() * 400; // Orbit between 200-600 units from feature
+        const angle = Math.random() * Math.PI * 2;
+        const heightVariation = (Math.random() - 0.5) * 200;
+        
+        return new THREE.Vector3(
+            feature.position.x + Math.cos(angle) * orbitRadius,
+            feature.position.y + heightVariation,
+            feature.position.z + Math.sin(angle) * orbitRadius
+        );
+    }
+    
+    // Fallback: use random position if no cosmic features exist
+    console.log(`No cosmic features found in galaxy ${galaxyId}, using random position`);
+    return getRandomPositionInGalaxy3D(galaxyId);
+}
+
+function getEnemyPositionNearBlackHole(galaxyId) {
+    // Find the black hole for this galaxy
+    const blackHole = planets.find(p => 
+        p.userData.type === 'blackhole' && 
+        p.userData.galaxyId === galaxyId &&
+        !p.userData.isLocalGateway
+    );
+    
+    if (blackHole) {
+        // Use similar logic to guardian placement
+        const orbitRadius = (blackHole.userData.warpThreshold || 600) + 200 + Math.random() * 400;
+        const angle = Math.random() * Math.PI * 2;
+        const heightVariation = (Math.random() - 0.5) * 300;
+        
+        return new THREE.Vector3(
+            blackHole.position.x + Math.cos(angle) * orbitRadius,
+            blackHole.position.y + heightVariation,
+            blackHole.position.z + Math.sin(angle) * orbitRadius
+        );
+    }
+    
+    // Fallback: use random position if no black hole found
+    console.log(`No black hole found in galaxy ${galaxyId}, using random position`);
+    return getRandomPositionInGalaxy3D(galaxyId);
+}
+
 // Fallback function for backwards compatibility
 function getGalaxyMapPosition(galaxyId) {
     return galaxyMapPositions[galaxyId] || { x: 0.5, y: 0.5 };
@@ -972,48 +1053,122 @@ try {
             name: 'Alpha System', 
             starColor: 0xffdd99, 
             starSize: 6,
-            offsetX: -1200, 
-            offsetY: 150, 
-            offsetZ: 800,
             planets: [
-                { distance: 90, size: 4, color: 0xff6644 },
-                { distance: 150, size: 6, color: 0x4488ff },
-                { distance: 240, size: 8, color: 0xaa66ff }
+                { 
+                    distance: 90, 
+                    size: 4, 
+                    color: 0xff6644,
+                    rings: false,
+                    moons: [
+                        { name: 'Alpha-1a', distance: 20, size: 1.0, color: 0xcccccc }
+                    ]
+                },
+                { 
+                    distance: 150, 
+                    size: 6, 
+                    color: 0x4488ff,
+                    rings: true,
+                    moons: [
+                        { name: 'Alpha-2a', distance: 28, size: 1.4, color: 0x88aaff },
+                        { name: 'Alpha-2b', distance: 40, size: 1.1, color: 0xaaaaaa }
+                    ]
+                },
+                { 
+                    distance: 240, 
+                    size: 8, 
+                    color: 0xaa66ff,
+                    rings: true,
+                    moons: [
+                        { name: 'Alpha-3a', distance: 32, size: 1.6, color: 0xbb88ff },
+                        { name: 'Alpha-3b', distance: 46, size: 1.3, color: 0x999999 }
+                    ]
+                }
             ]
         },
         { 
             name: 'Beta System', 
             starColor: 0xff8844, 
             starSize: 5,
-            offsetX: 1400, 
-            offsetY: -100, 
-            offsetZ: -900,
             planets: [
-                { distance: 70, size: 3.5, color: 0x88ff44 },
-                { distance: 130, size: 5.5, color: 0xff44aa }
+                { 
+                    distance: 70, 
+                    size: 3.5, 
+                    color: 0x88ff44,
+                    rings: false,
+                    moons: [
+                        { name: 'Beta-1a', distance: 18, size: 0.8, color: 0xbbbbbb }
+                    ]
+                },
+                { 
+                    distance: 130, 
+                    size: 5.5, 
+                    color: 0xff44aa,
+                    rings: true,
+                    moons: [
+                        { name: 'Beta-2a', distance: 26, size: 1.2, color: 0xff66bb },
+                        { name: 'Beta-2b', distance: 38, size: 1.0, color: 0xaaaaaa },
+                        { name: 'Beta-2c', distance: 52, size: 0.9, color: 0x888888 }
+                    ]
+                }
             ]
         },
         { 
             name: 'Gamma System', 
             starColor: 0xaaddff, 
             starSize: 7,
-            offsetX: -800, 
-            offsetY: 200, 
-            offsetZ: -1100,
             planets: [
-                { distance: 110, size: 7, color: 0xffaa44 },
-                { distance: 180, size: 4.5, color: 0x44ffaa },
-                { distance: 280, size: 9, color: 0xff8844 }
+                { 
+                    distance: 110, 
+                    size: 7, 
+                    color: 0xffaa44,
+                    rings: true,
+                    moons: [
+                        { name: 'Gamma-1a', distance: 30, size: 1.5, color: 0xffbb66 },
+                        { name: 'Gamma-1b', distance: 44, size: 1.2, color: 0xcccccc }
+                    ]
+                },
+                { 
+                    distance: 180, 
+                    size: 4.5, 
+                    color: 0x44ffaa,
+                    rings: false,
+                    moons: [
+                        { name: 'Gamma-2a', distance: 22, size: 0.9, color: 0x66ffbb }
+                    ]
+                },
+                { 
+                    distance: 280, 
+                    size: 9, 
+                    color: 0xff8844,
+                    rings: true,
+                    moons: [
+                        { name: 'Gamma-3a', distance: 36, size: 1.8, color: 0xffaa66 },
+                        { name: 'Gamma-3b', distance: 52, size: 1.4, color: 0xdddddd },
+                        { name: 'Gamma-3c', distance: 68, size: 1.1, color: 0xaaaaaa }
+                    ]
+                }
             ]
         }
     ];
     
     additionalSystems.forEach((systemData, sysIndex) => {
+        // ✅ FIXED: Random Y positioning between 500-2000 units above or below solar plane
+        const randomYOffset = (Math.random() > 0.5 ? 1 : -1) * (500 + Math.random() * 1500); // ±500 to ±2000
+        
+        // ✅ FIXED: Random Z positioning between -2000 and +2000 units
+        const randomZOffset = (Math.random() - 0.5) * 4000; // -2000 to +2000
+        
+        // Keep X positioning varied but more controlled
+        const baseXOffsets = [-1200, 1400, -800];
+        const randomXOffset = baseXOffsets[sysIndex] + (Math.random() - 0.5) * 400; // Add ±200 variation
+        
         const systemOffset = { 
-            x: localSystemOffset.x + systemData.offsetX, 
-            y: localSystemOffset.y + systemData.offsetY, 
-            z: localSystemOffset.z + systemData.offsetZ 
+            x: localSystemOffset.x + randomXOffset, 
+            y: localSystemOffset.y + randomYOffset, 
+            z: localSystemOffset.z + randomZOffset 
         };
+        
+        console.log(`Creating ${systemData.name} at offset: Y=${randomYOffset.toFixed(0)}, Z=${randomZOffset.toFixed(0)}`);
         
         // Create star
         const starGeometry = new THREE.SphereGeometry(systemData.starSize, 24, 24);
@@ -1070,11 +1225,73 @@ try {
             planets.push(planet);
             scene.add(planet);
             
-            console.log(`✅ Created ${planet.userData.name} in ${systemData.name}`);
+            // ✅ Add rings if specified
+            if (planetData.rings) {
+                const ringCount = 2 + Math.floor(Math.random() * 2); // 2-3 rings
+                
+                for (let r = 0; r < ringCount; r++) {
+                    const ringInner = planetData.size + 6 + r * 6;
+                    const ringOuter = ringInner + 4;
+                    const ringGeometry = new THREE.RingGeometry(ringInner, ringOuter, 32);
+                    const ringMaterial = new THREE.MeshBasicMaterial({ 
+                        color: 0xdddddd,
+                        transparent: true,
+                        opacity: 0.5 - r * 0.1,
+                        side: THREE.DoubleSide
+                    });
+                    const ring = new THREE.Mesh(ringGeometry, ringMaterial);
+                    ring.rotation.x = Math.PI / 2;
+                    ring.visible = true;
+                    ring.frustumCulled = false;
+                    
+                    planet.add(ring);
+                }
+                
+                console.log(`✅ Added ${ringCount} rings to ${planet.userData.name}`);
+            }
+            
+            // ✅ Add moons
+            if (planetData.moons && planetData.moons.length > 0) {
+                planetData.moons.forEach((moonData, moonIndex) => {
+                    try {
+                        const moonGeometry = new THREE.SphereGeometry(moonData.size, 12, 12);
+                        const moonMaterial = new THREE.MeshLambertMaterial({ 
+                            color: moonData.color,
+                            emissive: new THREE.Color(moonData.color).multiplyScalar(0.02)
+                        });
+                        const moon = new THREE.Mesh(moonGeometry, moonMaterial);
+                        moon.position.set(moonData.distance, 0, 0);
+                        moon.visible = true;
+                        moon.frustumCulled = false;
+                        
+                        moon.userData = { 
+                            name: moonData.name,
+                            type: 'moon',
+                            orbitRadius: moonData.distance,
+                            orbitSpeed: 0.1 + moonIndex * 0.02,
+                            orbitPhase: moonIndex * Math.PI * 0.5,
+                            parentPlanet: planet,
+                            mass: moonData.size * 2,
+                            gravity: moonData.size * 0.6,
+                            isLocal: true
+                        };
+                        
+                        planets.push(moon);
+                        scene.add(moon);
+                        
+                        console.log(`✅ Created moon: ${moonData.name} for ${planet.userData.name}`);
+                        
+                    } catch (moonError) {
+                        console.error(`❌ Error creating moon ${moonData.name}:`, moonError);
+                    }
+                });
+            }
+            
+            console.log(`✅ Created ${planet.userData.name} in ${systemData.name} with ${planetData.moons ? planetData.moons.length : 0} moon(s)`);
         });
     });
     
-    console.log('✅ Additional local star systems created');
+    console.log('✅ Additional local star systems created with rings, moons, and random 3D positioning');
     
 } catch (localSystemsError) {
     console.error('❌ Error creating additional local systems:', localSystemsError);
@@ -1360,10 +1577,10 @@ try {
     
     // Local gateway position
     const localGatewayPosition = {
-        x: localSystemOffset.x + 2600,
-        y: localSystemOffset.y,
-        z: localSystemOffset.z
-    };
+    x: localSystemOffset.x + 2600,
+    y: localSystemOffset.y - 3000,  // ✅ FIXED: Match the actual gateway Y position
+    z: localSystemOffset.z + 2000
+};
     
     const duneSystems = [
         {
@@ -1438,78 +1655,211 @@ try {
     ];
     
     duneSystems.forEach((systemData, sysIndex) => {
-        // Calculate system position orbiting the local gateway
-        const systemX = localGatewayPosition.x + Math.cos(systemData.orbitalAngle) * systemData.orbitalDistance;
-        const systemY = localGatewayPosition.y + (Math.random() - 0.5) * 100; // Small vertical variation
-        const systemZ = localGatewayPosition.z + Math.sin(systemData.orbitalAngle) * systemData.orbitalDistance;
+    // ✅ ENHANCED: Much larger vertical spacing (±400 to ±1000 units from gateway plane)
+    const verticalOffset = (Math.random() > 0.5 ? 1 : -1) * (400 + Math.random() * 600);
+    
+    // ✅ ENHANCED: Much more dramatic orbital plane tilts (up to ±30 degrees)
+    const orbitalTilt = {
+        x: (Math.random() - 0.5) * 1.0, // Tilt up to ±28.6 degrees around X-axis
+        z: (Math.random() - 0.5) * 1.0  // Tilt up to ±28.6 degrees around Z-axis
+    };
+    
+    // Calculate system position orbiting the local gateway
+    const systemX = localGatewayPosition.x + Math.cos(systemData.orbitalAngle) * systemData.orbitalDistance;
+    const systemY = localGatewayPosition.y + verticalOffset; // ✅ Use calculated vertical offset
+    const systemZ = localGatewayPosition.z + Math.sin(systemData.orbitalAngle) * systemData.orbitalDistance;
+    
+    const systemOffset = { 
+        x: systemX, 
+        y: systemY, 
+        z: systemZ,
+        tilt: orbitalTilt // ✅ Store tilt for later use
+    };
+    
+    console.log(`${systemData.name}: Y-offset=${verticalOffset.toFixed(0)}, Tilt=(${(orbitalTilt.x * 57.3).toFixed(1)}°, ${(orbitalTilt.z * 57.3).toFixed(1)}°)`);
+    
+    // Create star with emissive glow
+const starGeometry = new THREE.SphereGeometry(systemData.starSize, 24, 24);
+const starMaterial = new THREE.MeshBasicMaterial({ 
+    color: systemData.starColor
+});
+const star = new THREE.Mesh(starGeometry, starMaterial);
+star.position.set(systemOffset.x, systemOffset.y, systemOffset.z);
+star.visible = true;
+star.frustumCulled = false;
+
+// ✅ ADD POINT LIGHT to make star visible and illuminate nearby planets
+const starLight = new THREE.PointLight(
+    systemData.starColor, // Use star's color
+    3.0,  // Intensity - bright enough to see
+    800,  // Distance - light reaches to planets
+    1.0   // Decay
+);
+starLight.position.copy(star.position);
+starLight.castShadow = false;
+scene.add(starLight);
+
+// Store light reference for cleanup
+star.userData.light = starLight;
+
+star.userData = {
+    name: `${systemData.name} Star`,
+    type: 'star',
+    isLocalStar: false,
+    orbitRadius: 0, // ✅ FIXED: Stars should NOT orbit - they stay at systemOffset
+    orbitSpeed: 0,  // ✅ FIXED: No orbital movement
+    orbitPhase: 0,
+    systemCenter: null, // ✅ FIXED: No system center means no orbital motion
+    mass: systemData.starSize * 3,
+    gravity: systemData.starSize * 0.8,
+    isLocalGateway: true, // ✅ Brown orbit lines
+    rotationSpeed: 0.015,
+    orbitalTilt: orbitalTilt, // ✅ Store tilt in userData
+    light: starLight, // Store reference for updates
+    // ✅ ADD: Store original position for reference
+    fixedPosition: { x: systemOffset.x, y: systemOffset.y, z: systemOffset.z }
+};
+
+planets.push(star);
+scene.add(star);
+
+console.log(`✅ Created ${star.userData.name} orbiting local gateway with point light`);
+    
+    // Create planets for this system
+systemData.planets.forEach((planetData, pIndex) => {
+    const planetGeometry = new THREE.SphereGeometry(planetData.size, 20, 20);
+    const planetMaterial = new THREE.MeshLambertMaterial({ 
+        color: planetData.color,
+        emissive: new THREE.Color(planetData.color).multiplyScalar(0.05)
+    });
+    const planet = new THREE.Mesh(planetGeometry, planetMaterial);
+    
+    // ✅ ENHANCED: Apply orbital plane tilt to planet positions
+    const baseX = systemOffset.x + planetData.distance;
+    const baseY = systemOffset.y;
+    const baseZ = systemOffset.z;
+    
+    // Apply tilt transformation with more dramatic effect
+    const tiltedY = baseY + (planetData.distance * Math.sin(orbitalTilt.x));
+    const tiltedZ = baseZ + (planetData.distance * Math.sin(orbitalTilt.z));
+    
+    planet.position.set(baseX, tiltedY, tiltedZ);
+    planet.visible = true;
+    planet.frustumCulled = false;
+    
+    planet.userData = {
+        name: `${systemData.name}-${pIndex + 1}`,
+        type: 'planet',
+        isStatic: false,
+        orbitRadius: planetData.distance,
+        orbitSpeed: 0.012 + pIndex * 0.004,
+        orbitPhase: pIndex * Math.PI * 0.5,
+        systemCenter: { x: systemOffset.x, y: systemOffset.y, z: systemOffset.z },
+        mass: planetData.size * 2.5,
+        gravity: planetData.size * 0.8,
+        isLocalGateway: true, // ✅ Brown orbit lines
+        rotationSpeed: 0.02,
+        orbitalTilt: orbitalTilt
+    };
+    
+    planets.push(planet);
+    scene.add(planet);
+    
+    // ✅ ADD RINGS (30% chance for larger planets)
+    const ringChance = planetData.size > 10 ? 0.5 : 0.3;
+    if (Math.random() < ringChance) {
+        const ringCount = 2 + Math.floor(Math.random() * 2); // 2-3 rings
         
-        const systemOffset = { x: systemX, y: systemY, z: systemZ };
-        
-        // Create star
-        const starGeometry = new THREE.SphereGeometry(systemData.starSize, 24, 24);
-        const starMaterial = new THREE.MeshBasicMaterial({ color: systemData.starColor });
-        const star = new THREE.Mesh(starGeometry, starMaterial);
-        star.position.set(systemOffset.x, systemOffset.y, systemOffset.z);
-        star.visible = true;
-        star.frustumCulled = false;
-        
-        star.userData = {
-            name: `${systemData.name} Star`,
-            type: 'star',
-            isLocalStar: false,
-            orbitRadius: systemData.orbitalDistance, // Orbit around local gateway
-            orbitSpeed: 0.0008, // Slow orbit around the gateway
-            orbitPhase: systemData.orbitalAngle,
-            systemCenter: localGatewayPosition, // Orbits the local gateway!
-            mass: systemData.starSize * 3,
-            gravity: systemData.starSize * 0.8,
-            isLocal: true, // LOCAL system - green orbit lines!
-            rotationSpeed: 0.015
-        };
-        
-        planets.push(star);
-        scene.add(star);
-        
-        console.log(`✅ Created ${star.userData.name} orbiting local gateway`);
-        
-        // Create planets for this system
-        systemData.planets.forEach((planetData, pIndex) => {
-            const planetGeometry = new THREE.SphereGeometry(planetData.size, 20, 20);
-            const planetMaterial = new THREE.MeshLambertMaterial({ 
-                color: planetData.color,
-                emissive: new THREE.Color(planetData.color).multiplyScalar(0.05)
-            });
-            const planet = new THREE.Mesh(planetGeometry, planetMaterial);
-            planet.position.set(
-                systemOffset.x + planetData.distance,
-                systemOffset.y,
-                systemOffset.z
-            );
-            planet.visible = true;
-            planet.frustumCulled = false;
+        for (let r = 0; r < ringCount; r++) {
+            const ringInner = planetData.size + 6 + r * 6;
+            const ringOuter = ringInner + 4;
+            const ringGeometry = new THREE.RingGeometry(ringInner, ringOuter, 32);
             
-            planet.userData = {
-                name: `${systemData.name}-${pIndex + 1}`,
-                type: 'planet',
-                isStatic: false,
-                orbitRadius: planetData.distance,
-                orbitSpeed: 0.012 + pIndex * 0.004,
-                orbitPhase: pIndex * Math.PI * 0.5,
-                systemCenter: { x: systemOffset.x, y: systemOffset.y, z: systemOffset.z },
-                mass: planetData.size * 2.5,
-                gravity: planetData.size * 0.8,
-                isLocal: true, // LOCAL system - green orbit lines!
-                rotationSpeed: 0.02
+            // Use color variations based on system
+            const ringHue = new THREE.Color(planetData.color);
+            ringHue.offsetHSL(Math.random() * 0.1 - 0.05, -0.3, 0);
+            
+            const ringMaterial = new THREE.MeshBasicMaterial({ 
+                color: ringHue,
+                transparent: true,
+                opacity: 0.6 - r * 0.1,
+                side: THREE.DoubleSide
+            });
+            const ring = new THREE.Mesh(ringGeometry, ringMaterial);
+            ring.rotation.x = Math.PI / 2 + (Math.random() - 0.5) * 0.2; // Slight tilt variation
+            ring.visible = true;
+            ring.frustumCulled = false;
+            
+            planet.add(ring);
+        }
+        
+        console.log(`✅ Added ${ringCount} rings to ${planet.userData.name}`);
+    }
+    
+    // ✅ ADD MOONS (based on planet size)
+    let moonProbability = 0.2;
+    if (planetData.size > 8) moonProbability = 0.5;
+    if (planetData.size > 12) moonProbability = 0.7;
+    
+    if (Math.random() < moonProbability) {
+        let maxMoons = 1;
+        if (planetData.size > 8) maxMoons = 2;
+        if (planetData.size > 12) maxMoons = 3;
+        
+        const moonCount = 1 + Math.floor(Math.random() * maxMoons);
+        
+        for (let m = 0; m < moonCount; m++) {
+            const moonSize = planetData.size * (0.1 + Math.random() * 0.15);
+            const moonDistance = planetData.size + 20 + m * 15;
+            
+            const moonGeometry = new THREE.SphereGeometry(moonSize, 12, 12);
+            
+            // Moon colors - mostly gray with occasional variation
+            const moonHue = Math.random() < 0.7 ? 0 : new THREE.Color(planetData.color).getHSL({}).h;
+            const moonSat = Math.random() < 0.7 ? 0 : 0.2;
+            const moonLight = 0.4 + Math.random() * 0.3;
+            const moonColor = new THREE.Color().setHSL(moonHue, moonSat, moonLight);
+            
+            const moonMaterial = new THREE.MeshLambertMaterial({ 
+                color: moonColor,
+                emissive: new THREE.Color(moonColor).multiplyScalar(0.02)
+            });
+            
+            const moon = new THREE.Mesh(moonGeometry, moonMaterial);
+            moon.position.set(moonDistance, 0, 0);
+            moon.visible = true;
+            moon.frustumCulled = false;
+            
+            moon.userData = { 
+                name: `${systemData.name}-${pIndex + 1}-Moon-${m + 1}`,
+                type: 'moon',
+                orbitRadius: moonDistance,
+                orbitSpeed: 0.1 + m * 0.02,
+                orbitPhase: m * Math.PI * 0.5,
+                parentPlanet: planet,
+                mass: moonSize * 2,
+                gravity: moonSize * 0.6,
+                isLocalGateway: true
             };
             
-            planets.push(planet);
-            scene.add(planet);
-            
-            console.log(`✅ Created ${planet.userData.name} in ${systemData.name} (local gateway orbit)`);
-        });
-    });
+            planets.push(moon);
+            scene.add(moon);
+        }
+        
+        console.log(`✅ Added ${moonCount} moon(s) to ${planet.userData.name}`);
+    }
     
-    console.log('✅ Dune star systems created orbiting local gateway with green orbit lines');
+    console.log(`✅ Created ${planet.userData.name} in ${systemData.name} (local gateway orbit)`);
+});
+
+// ✅ ADD TENDRILS TO STARS (30% chance)
+if (Math.random() < 0.30 && typeof createSunSpikes === 'function') {
+    createSunSpikes(star);
+    console.log(`✅ Added plasma tendrils to ${star.userData.name}`);
+}
+});
+
+console.log('✅ Dune star systems created with dramatic vertical spacing and orbital tilts');
     
 } catch (duneSystemsError) {
     console.error('❌ Error creating Dune systems:', duneSystemsError);
@@ -1547,8 +1897,8 @@ try {
     // **UPDATED: Position 1500 units ABOVE the solar system plane**
     blackHole.position.set(
         localSystemOffset.x + 2600, 
-        localSystemOffset.y + 1500,  // **Changed from 0 to +1500**
-        localSystemOffset.z
+        localSystemOffset.y - 3000,  // **Changed from 0 to +1500**
+        localSystemOffset.z + 2000
     );
         blackHole.visible = true;
         blackHole.frustumCulled = false;
@@ -1977,8 +2327,8 @@ star.userData = {
                                 scene.add(star);
                             }
                             
-                            if (Math.random() < 0.15 && typeof createSunSpikes === 'function') {
-                                createSunSpikes(star);
+                            if (Math.random() < 0.20 && typeof createSunSpikes === 'function') {
+    							createSunSpikes(star);
                             }
                             
                             // Create 6-10 planets per system
@@ -2439,13 +2789,349 @@ function createSpectacularClusteredNebulas() {
     
     console.log('Triple-layered clustered nebulas with maximum color intermingling created!');
 }
+// =============================================================================
+// ENHANCED PLANET CLUSTERS - FROM EARLY VERSION
+// Creates rich planetary systems with rings, moons, and asteroid belts within nebulas
+// =============================================================================
 
+function createEnhancedPlanetClustersInNebulas() {
+    console.log('🌟 Creating enhanced planet clusters within nebulas...');
+    
+    if (typeof nebulaClouds === 'undefined' || nebulaClouds.length === 0) {
+        console.warn('⚠️ No nebulas found - creating planet clusters in space instead');
+    }
+    
+    const enhancedClusters = [];
+    const clustersPerNebula = 2; // 2 star systems per nebula
+    
+    // Create clusters within each nebula
+    nebulaClouds.forEach((nebula, nebulaIndex) => {
+        const nebulaPos = nebula.position;
+        const nebulaSize = nebula.userData.size || 2000;
+        
+        console.log(`  🌌 Processing Nebula ${nebulaIndex + 1}...`);
+        
+        for (let c = 0; c < clustersPerNebula; c++) {
+            // Position cluster within nebula bounds
+            const clusterDistance = (Math.random() * 0.6 + 0.2) * nebulaSize; // 20-80% from center
+            const clusterAngle = Math.random() * Math.PI * 2;
+            const clusterElevation = (Math.random() - 0.5) * Math.PI * 0.3;
+            
+            const clusterX = nebulaPos.x + clusterDistance * Math.cos(clusterAngle) * Math.cos(clusterElevation);
+            const clusterY = nebulaPos.y + clusterDistance * Math.sin(clusterElevation);
+            const clusterZ = nebulaPos.z + clusterDistance * Math.sin(clusterAngle) * Math.cos(clusterElevation);
+            
+            const clusterCenter = new THREE.Vector3(clusterX, clusterY, clusterZ);
+            
+            // Create central star
+            const starSize = 8 + Math.random() * 12;
+            const starGeometry = new THREE.SphereGeometry(starSize, 32, 32);
+            const starColor = nebula.userData.color || new THREE.Color().setHSL(Math.random(), 0.8, 0.6);
+            const starMaterial = new THREE.MeshBasicMaterial({ 
+                color: starColor,
+                transparent: true,
+                opacity: 0.9
+            });
+            const star = new THREE.Mesh(starGeometry, starMaterial);
+            star.position.copy(clusterCenter);
+            
+            // Add star glow
+            const glowGeometry = new THREE.SphereGeometry(starSize * 1.5, 32, 32);
+            const glowMaterial = new THREE.MeshBasicMaterial({
+                color: starColor,
+                transparent: true,
+                opacity: 0.3,
+                blending: THREE.AdditiveBlending
+            });
+            const starGlow = new THREE.Mesh(glowGeometry, glowMaterial);
+            star.add(starGlow);
+            
+            star.userData = {
+                name: `Nebula-${nebulaIndex + 1} Star System ${c + 1}`,
+                type: 'star',
+                mass: starSize * 2,
+                gravity: 3.0,
+                nebulaId: nebulaIndex,
+                clusterCenter: true
+            };
+            
+            star.visible = true;
+            star.frustumCulled = false;
+            scene.add(star);
+            planets.push(star);
+            
+            // Create 3-5 planets orbiting the star
+            const planetCount = 3 + Math.floor(Math.random() * 3);
+            
+            for (let p = 0; p < planetCount; p++) {
+                const planetSize = 2 + Math.random() * 6;
+                const planetGeometry = new THREE.SphereGeometry(planetSize, 32, 32);
+                const planetHue = (nebulaIndex / nebulaClouds.length) + Math.random() * 0.2;
+                const planetMaterial = new THREE.MeshBasicMaterial({ 
+                    color: new THREE.Color().setHSL(planetHue, 0.7, 0.5),
+                    transparent: true,
+                    opacity: 0.85
+                });
+                const planet = new THREE.Mesh(planetGeometry, planetMaterial);
+                
+                const orbitRadius = 100 + p * 80;
+                const orbitSpeed = 0.003 + Math.random() * 0.007;
+                const orbitPhase = Math.random() * Math.PI * 2;
+                const orbitTilt = (Math.random() - 0.5) * 0.3;
+                
+                planet.position.set(
+                    clusterX + Math.cos(orbitPhase) * orbitRadius,
+                    clusterY + Math.sin(orbitTilt) * orbitRadius * 0.2,
+                    clusterZ + Math.sin(orbitPhase) * orbitRadius
+                );
+                
+                planet.userData = {
+                    name: `Nebula-${nebulaIndex + 1} System ${c + 1} Planet ${String.fromCharCode(65 + p)}`,
+                    type: 'planet',
+                    orbitRadius: orbitRadius,
+                    orbitSpeed: orbitSpeed,
+                    orbitPhase: orbitPhase,
+                    orbitTilt: orbitTilt,
+                    systemCenter: clusterCenter.clone(),
+                    mass: planetSize * 1.5,
+                    gravity: 0.8 + Math.random() * 1.2,
+                    nebulaId: nebulaIndex,
+                    inNebula: true
+                };
+                
+                planet.visible = true;
+                planet.frustumCulled = false;
+                scene.add(planet);
+                planets.push(planet);
+                
+                // Add RING SYSTEMS to 40% of planets (increased from rare)
+                if (Math.random() < 0.4) {
+                    const ringCount = 1 + Math.floor(Math.random() * 4); // 1-4 rings
+                    
+                    for (let r = 0; r < ringCount; r++) {
+                        const ringInner = planetSize + 4 + r * 5;
+                        const ringOuter = ringInner + 2 + Math.random() * 4;
+                        const ringGeometry = new THREE.RingGeometry(ringInner, ringOuter, 64);
+                        const ringColor = new THREE.Color().setHSL(
+                            planetHue + 0.1 + r * 0.05, 
+                            0.5 - r * 0.1, 
+                            0.6 + r * 0.05
+                        );
+                        const ringMaterial = new THREE.MeshBasicMaterial({ 
+                            color: ringColor,
+                            transparent: true,
+                            opacity: 0.4 - r * 0.08,
+                            side: THREE.DoubleSide
+                        });
+                        const ring = new THREE.Mesh(ringGeometry, ringMaterial);
+                        ring.rotation.x = Math.PI / 2 + (Math.random() - 0.5) * 0.2;
+                        ring.rotation.z = (Math.random() - 0.5) * 0.1;
+                        planet.add(ring);
+                    }
+                    
+                    console.log(`    💍 Added ${ringCount} ring(s) to ${planet.userData.name}`);
+                }
+                
+                // Add MOON SYSTEMS to larger planets (50% chance if planet > 3 size)
+                if (planetSize > 3 && Math.random() < 0.5) {
+                    const moonCount = 1 + Math.floor(Math.random() * 3); // 1-3 moons
+                    
+                    for (let m = 0; m < moonCount; m++) {
+                        const moonSize = 0.5 + Math.random() * 1.5;
+                        const moonGeometry = new THREE.SphereGeometry(moonSize, 16, 16);
+                        const moonMaterial = new THREE.MeshBasicMaterial({ 
+                            color: new THREE.Color().setHSL(planetHue + 0.15, 0.4, 0.7),
+                            transparent: true,
+                            opacity: 0.8
+                        });
+                        const moon = new THREE.Mesh(moonGeometry, moonMaterial);
+                        
+                        const moonOrbitRadius = planetSize + 12 + m * 8;
+                        const moonOrbitSpeed = 0.015 + Math.random() * 0.025;
+                        const moonOrbitPhase = Math.random() * Math.PI * 2;
+                        
+                        moon.position.set(
+                            moonOrbitRadius * Math.cos(moonOrbitPhase),
+                            (Math.random() - 0.5) * 4,
+                            moonOrbitRadius * Math.sin(moonOrbitPhase)
+                        );
+                        
+                        moon.userData = {
+                            name: `${planet.userData.name} Moon ${m + 1}`,
+                            type: 'moon',
+                            orbitRadius: moonOrbitRadius,
+                            orbitSpeed: moonOrbitSpeed,
+                            orbitPhase: moonOrbitPhase,
+                            parentPlanet: planet,
+                            mass: moonSize,
+                            gravity: 0.3 + Math.random() * 0.5,
+                            nebulaId: nebulaIndex
+                        };
+                        
+                        moon.visible = true;
+                        moon.frustumCulled = false;
+                        planet.add(moon); // Add as child so it follows parent
+                        planets.push(moon);
+                    }
+                    
+                    console.log(`    🌙 Added ${moonCount} moon(s) to ${planet.userData.name}`);
+                }
+            }
+            
+            // Create NEBULA GAS CLOUDS around systems (50% chance, increased from 25%)
+if (Math.random() < 0.5) {
+    createNebulaGasCloud(clusterCenter, nebulaIndex, starColor);
+}
+
+// Also add ambient gas clouds throughout the nebula (2-4 per nebula)
+if (c === 0) { // Only on first cluster to avoid duplicates
+    const ambientCloudCount = 2 + Math.floor(Math.random() * 3); // 2-4 clouds
+    for (let ac = 0; ac < ambientCloudCount; ac++) {
+        const ambientDistance = (Math.random() * 0.7 + 0.3) * nebulaSize;
+        const ambientAngle = Math.random() * Math.PI * 2;
+        const ambientElevation = (Math.random() - 0.5) * Math.PI * 0.4;
+        
+        const ambientPos = new THREE.Vector3(
+            nebulaPos.x + ambientDistance * Math.cos(ambientAngle) * Math.cos(ambientElevation),
+            nebulaPos.y + ambientDistance * Math.sin(ambientElevation),
+            nebulaPos.z + ambientDistance * Math.sin(ambientAngle) * Math.cos(ambientElevation)
+        );
+        
+        createNebulaGasCloud(ambientPos, nebulaIndex, starColor);
+    }
+    console.log(`    🌫️ Added ${ambientCloudCount} ambient gas cloud clusters to nebula`);
+}
+            
+            enhancedClusters.push({
+                center: clusterCenter,
+                nebulaId: nebulaIndex,
+                systemId: c,
+                planetCount: planetCount
+            });
+        }
+    });
+    
+    console.log(`✅ Created ${enhancedClusters.length} enhanced planet clusters in nebulas`);
+    console.log(`   💫 Total new celestial objects: ${enhancedClusters.length * 4} (avg)`);
+}
+
+// =============================================================================
+// NEBULA GAS CLOUD CREATION - CLUSTERED VERSION
+// Creates 3-4 overlapping gas clouds for a more realistic nebula appearance
+// =============================================================================
+
+function createNebulaGasCloud(centerPos, nebulaId, starColor) {
+    const clusterSize = 3 + Math.floor(Math.random() * 2); // 3-4 clouds per cluster
+    
+    console.log(`    ☁️ Creating cluster of ${clusterSize} gas clouds for Nebula-${nebulaId + 1}`);
+    
+    // Create a group to hold all clouds in the cluster
+    const cloudCluster = new THREE.Group();
+    
+    for (let i = 0; i < clusterSize; i++) {
+        // Vary cloud sizes - smallest to largest
+        const sizeMultiplier = 0.6 + (i * 0.3); // 0.6x, 0.9x, 1.2x, 1.5x
+        const cloudSize = (120 + Math.random() * 180) * sizeMultiplier;
+        
+        const cloudGeometry = new THREE.SphereGeometry(cloudSize, 16, 16);
+        
+        // Vary colors slightly within the cluster
+        const colorVariation = starColor.clone();
+        colorVariation.offsetHSL(
+            (Math.random() - 0.5) * 0.15, // Hue variation
+            (Math.random() - 0.5) * 0.2,  // Saturation variation
+            (Math.random() - 0.5) * 0.15  // Lightness variation
+        );
+        
+        // Vary opacity - larger clouds are more transparent
+        const baseOpacity = 0.15 - (i * 0.02); // Decreases with each cloud
+        const cloudMaterial = new THREE.MeshBasicMaterial({
+            color: colorVariation,
+            transparent: true,
+            opacity: baseOpacity,
+            blending: THREE.AdditiveBlending
+        });
+        
+        const gasCloud = new THREE.Mesh(cloudGeometry, cloudMaterial);
+        
+        // Position clouds in overlapping cluster pattern
+        // First cloud at center, others scattered around
+        if (i === 0) {
+            // Center cloud - largest
+            gasCloud.position.set(0, 0, 0);
+        } else {
+            // Offset clouds create overlap
+            const offsetDistance = cloudSize * 0.5; // 50% overlap
+            const offsetAngle = (i / clusterSize) * Math.PI * 2;
+            const offsetElevation = (Math.random() - 0.5) * Math.PI * 0.3;
+            
+            gasCloud.position.set(
+                Math.cos(offsetAngle) * offsetDistance * Math.cos(offsetElevation),
+                Math.sin(offsetElevation) * offsetDistance * 0.5,
+                Math.sin(offsetAngle) * offsetDistance * Math.cos(offsetElevation)
+            );
+        }
+        
+        gasCloud.userData = {
+            name: `Nebula-${nebulaId + 1} Gas Cloud ${i + 1}`,
+            type: 'gas_cloud',
+            nebulaId: nebulaId,
+            cloudIndex: i,
+            size: cloudSize,
+            baseOpacity: baseOpacity,
+            pulseSpeed: 0.0003 + Math.random() * 0.0005,
+            pulsePhase: Math.random() * Math.PI * 2 // Different phase for each cloud
+        };
+        
+        gasCloud.visible = true;
+        gasCloud.frustumCulled = false;
+        
+        cloudCluster.add(gasCloud);
+    }
+    
+    // Position the entire cluster near the star system
+    const offsetX = (Math.random() - 0.5) * 400;
+    const offsetY = (Math.random() - 0.5) * 150;
+    const offsetZ = (Math.random() - 0.5) * 400;
+    
+    cloudCluster.position.set(
+        centerPos.x + offsetX,
+        centerPos.y + offsetY,
+        centerPos.z + offsetZ
+    );
+    
+    // Slight rotation for variety
+    cloudCluster.rotation.set(
+        Math.random() * Math.PI * 2,
+        Math.random() * Math.PI * 2,
+        Math.random() * Math.PI * 2
+    );
+    
+    cloudCluster.userData = {
+        name: `Nebula-${nebulaId + 1} Gas Cloud Cluster`,
+        type: 'gas_cloud_cluster',
+        nebulaId: nebulaId,
+        cloudCount: clusterSize
+    };
+    
+    cloudCluster.visible = true;
+    cloudCluster.frustumCulled = false;
+    scene.add(cloudCluster);
+    
+    // Track gas clouds for animation
+    if (typeof window.nebulaGasClouds === 'undefined') {
+        window.nebulaGasClouds = [];
+    }
+    window.nebulaGasClouds.push(cloudCluster);
+    
+    console.log(`      ✓ Added ${clusterSize} overlapping gas clouds (sizes: ${cloudCluster.children.map(c => c.userData.size.toFixed(0)).join(', ')} units)`);
+}
 // =============================================================================
 // ENHANCED ENEMY CREATION - DISTANCE-BASED SPAWNING
 // =============================================================================
 
 function createEnemies3D() {
-    console.log('Creating enemies for NEARBY galaxies only...');
+    console.log('Creating enemies for ALL galaxies on game start...');
     
     // Initialize currentGalaxyEnemies safely
     if (typeof gameState !== 'undefined') {
@@ -2454,31 +3140,17 @@ function createEnemies3D() {
         }
     }
     
-    // ⭐ PERFORMANCE: Only spawn enemies for nearby galaxies
-    const nearbyDistance = 25000; // Same as guardian distance check
+    // ✅ FIXED: Create enemies for ALL galaxies on initial game load
+    // The old system skipped distant galaxies, but this caused enemies to never spawn
     
-    // Create enemies for each galaxy (but only if nearby)
+    // Create enemies for each galaxy
     for (let g = 0; g < 8; g++) {
         const galaxyType = galaxyTypes[g];
         const galaxy3DCenter = getGalaxy3DPosition(g);
         
-        // Check distance to player
-        const distanceToPlayer = camera.position.distanceTo(galaxy3DCenter);
+        console.log(`Creating enemies for galaxy ${g} (${galaxyType.name}) at 3D position:`, galaxy3DCenter);
         
-        // Skip distant galaxies (they'll load via loadEnemiesForGalaxy when you warp)
-        if (distanceToPlayer > nearbyDistance) {
-            console.log(`⏭️ Skipping distant galaxy ${g} (${galaxyType.name}) - ${Math.floor(distanceToPlayer)} units away`);
-            
-            // Initialize count but don't spawn
-            if (typeof gameState !== 'undefined' && gameState.currentGalaxyEnemies) {
-                gameState.currentGalaxyEnemies[g] = galaxyEnemyLimits[g];
-            }
-            continue;
-        }
-        
-        console.log(`Creating enemies for nearby galaxy ${g} (${galaxyType.name}) at 3D position:`, galaxy3DCenter);
-        
-        // Spawn enemies scattered throughout the galaxy (using getRandomPositionInGalaxy3D)
+        // Spawn enemies scattered throughout the galaxy
         const enemiesPerGalaxy = galaxyEnemyLimits[g];
         if (typeof gameState !== 'undefined' && gameState.currentGalaxyEnemies) {
             gameState.currentGalaxyEnemies[g] = enemiesPerGalaxy;
@@ -2488,8 +3160,19 @@ function createEnemies3D() {
             const enemyGeometry = createEnemyGeometry(g);
             const shapeData = enemyShapes[g];
             
-            // Use getRandomPositionInGalaxy3D to scatter enemies throughout galaxy
-            const enemyPosition = getRandomPositionInGalaxy3D(g);
+            // Use different placement strategies for variety
+            let placementType;
+            const roll = Math.random();
+            
+            if (roll < 0.33) {
+                placementType = 'cosmic_feature';
+            } else if (roll < 0.66) {
+                placementType = 'black_hole';
+            } else {
+                placementType = 'random';
+            }
+            
+            const enemyPosition = getEnemyPlacementPosition(g, placementType);
             const distance = galaxy3DCenter.distanceTo(enemyPosition);
             
             const materials = createEnemyMaterial(shapeData, 'regular', distance);
@@ -2505,15 +3188,18 @@ function createEnemies3D() {
             enemy.add(glow);
             enemy.position.copy(enemyPosition);
             
+            // Determine if this enemy is in the local galaxy (galaxy 7)
+            const isLocal = (g === 7);
+            
             enemy.userData = {
                 name: `${galaxyType.faction} Hostile ${i + 1}`,
                 type: 'enemy',
-                health: getEnemyHealthForDifficulty(false, false, false),
-                maxHealth: getEnemyHealthForDifficulty(false, false, false),
+                health: getEnemyHealthForDifficulty(isLocal, false, false),
+                maxHealth: getEnemyHealthForDifficulty(isLocal, false, false),
                 speed: 0.8 + Math.random() * 1.5,
                 aggression: Math.random(),
                 patrolCenter: enemyPosition.clone(),
-                patrolRadius: distance,
+                patrolRadius: 2000 + Math.random() * 3000,
                 lastAttack: 0,
                 isActive: false,
                 visible: true,
@@ -2522,12 +3208,13 @@ function createEnemies3D() {
                 swarmTarget: null,
                 circlePhase: Math.random() * Math.PI * 2,
                 attackMode: 'patrol',
-                detectionRange: 1600,
-                firingRange: 240,
-                isLocal: false, // Distant galaxy enemy
+                detectionRange: isLocal ? 1200 : 1600,
+                firingRange: isLocal ? 180 : 240,
+                isLocal: isLocal,
                 isBoss: false,
                 isBossSupport: false,
-                position3D: enemyPosition.clone()
+                position3D: enemyPosition.clone(),
+                placementType: placementType
             };
             
             enemy.visible = true;
@@ -2536,6 +3223,14 @@ function createEnemies3D() {
             scene.add(enemy);
             enemies.push(enemy);
         }
+    }
+    
+    console.log(`✅ Created ${enemies.length} enemies across all galaxies`);
+    
+    // Log breakdown by galaxy
+    for (let g = 0; g < 8; g++) {
+        const count = enemies.filter(e => e.userData && e.userData.galaxyId === g).length;
+        console.log(`   Galaxy ${g} (${galaxyTypes[g].name}): ${count} enemies`);
     }
     
     // Create local galaxy enemies (Martian Pirates) - ALWAYS spawn these
@@ -2797,36 +3492,31 @@ function createEnemyGeometry(galaxyId) {
             return new THREE.ConeGeometry(2, 6, 6);
     }
 }
-// BEST OF BOTH WORLDS: Context-aware enemy rendering
+
+// BENPROOF.HTML EXACT VERSION - Semi-transparent glowing enemies
 function createEnemyMaterial(shapeData, enemyType, distance) {
-    const isClose = distance < 500;
     const isBoss = enemyType === 'boss';
-    const isLocal = enemyType === 'local';
     
-    // Base material with adjusted specifications from reference code
-    const enemyMaterial = new THREE.MeshStandardMaterial({
-        color: shapeData.color, // Pure color without brightness multiplier
-        roughness: isBoss ? 0.5 : 0.7, // Boss less rough, regular enemies more rough
-        metalness: isBoss ? 0.5 : 0.3, // Boss more metallic, regular enemies less
-        emissive: new THREE.Color(shapeData.color).multiplyScalar(isBoss ? 0.5 : 0.3), // Reduced emissive
-        emissiveIntensity: isBoss ? 1.0 : 0.5 // Boss brighter, regular enemies subtle glow
+    // Main enemy body - SEMI-TRANSPARENT!
+    const enemyMaterial = new THREE.MeshBasicMaterial({
+        color: shapeData.color,
+        transparent: true,  // ← KEY: Make the main body transparent
+        opacity: 0.6,       // ← KEY: 60% opacity makes it translucent
+        blending: THREE.NormalBlending  // Normal blending for the body
     });
     
-    // Glow effect with adjusted visibility
-    const glowIntensity = isClose ? 0.3 : 0.4; // Slightly reduced glow intensity
-    const glowScale = isClose ? 1.15 : (isBoss ? 1.3 : 1.2); // Boss has larger glow
-    
+    // Glow layer - bright and additive
     const glowMaterial = new THREE.MeshBasicMaterial({
         color: shapeData.color,
         transparent: true,
-        opacity: glowIntensity,
+        opacity: 0.4,  // Brighter glow
         blending: THREE.AdditiveBlending
     });
     
     return {
         enemyMaterial: enemyMaterial,
         glowMaterial: glowMaterial,
-        glowScale: glowScale
+        glowScale: isBoss ? 1.3 : 1.2
     };
 }
 
@@ -3530,135 +4220,6 @@ asteroidBelts.push(beltGroup);
     console.log(`✅ Created ${asteroidBelts.length} OPTIMIZED asteroid belts around actual black holes`);
 }
 
-function loadAsteroidsForGalaxy(galaxyId) {
-    console.log(`Loading OPTIMIZED asteroids for galaxy ${galaxyId}...`);
-    
-    initializeAsteroidResources();
-    
-    const existingBelts = asteroidBelts.filter(belt => belt.userData.galaxyId === galaxyId);
-    if (existingBelts.length > 0) {
-        console.log(`Galaxy ${galaxyId} already has ${existingBelts.length} asteroid belts`);
-        return;
-    }
-    
-    const galaxyType = galaxyTypes[galaxyId];
-    
-    // FIXED: Find the actual black hole for this galaxy
-    const blackHole = planets.find(p => 
-    p.userData.type === 'blackhole' && 
-    p.userData.galaxyId === galaxyId &&
-    !p.userData.isLocalGateway  // Only exclude the small local gateway
-);
-
-    
-    if (!blackHole) {
-        console.warn(`No black hole found for galaxy ${galaxyId}`);
-        return;
-    }
-    
-    const galaxyCenter = blackHole.position.clone();
-    console.log(`Loading asteroids for galaxy ${galaxyId} at black hole position:`, galaxyCenter);
-    
-    const beltCount = Math.random() > 0.5 ? 2 : 1;
-    
-    for (let b = 0; b < beltCount; b++) {
-        const beltGroup = new THREE.Group();
-        
-        const asteroidCount = 200 + Math.random() * 300;
-        const beltRadius = 1600 + Math.random() * 2400;
-        const beltWidth = 400 + Math.random() * 800;
-        
-        for (let j = 0; j < asteroidCount; j++) {
-    // Use shared resources
-    const geomIndex = Math.floor(Math.random() * 3);
-    const geometry = asteroidResources.geometries[geomIndex];
-    
-    const matIndex = Math.floor(Math.random() * asteroidResources.materials.length);
-    const material = asteroidResources.materials[matIndex];
-    
-    const asteroid = new THREE.Mesh(geometry, material);
-    
-    // INCREASED: Make asteroids 2-3x larger for visibility
-    const scale = 3 + Math.random() * 6; // Was 1-5, now 3-9
-    asteroid.scale.setScalar(scale);
-    
-    // CRITICAL: Disable frustum culling so distant asteroids stay visible
-    asteroid.frustumCulled = false;
-    
-    const ringAngle = (j / asteroidCount) * Math.PI * 2 + (Math.random() - 0.5) * 0.3;
-    const ringDistance = beltRadius + (Math.random() - 0.5) * beltWidth;
-    const ringHeight = (Math.random() - 0.5) * 200;
-    
-    asteroid.position.set(
-        Math.cos(ringAngle) * ringDistance,
-        ringHeight,
-        Math.sin(ringAngle) * ringDistance
-    );
-    
-    asteroid.rotation.set(
-        Math.random() * Math.PI * 2,
-        Math.random() * Math.PI * 2,
-        Math.random() * Math.PI * 2
-    );
-    
-    asteroid.userData = {
-        name: `${galaxyType.name} Asteroid ${j + 1}`,
-        type: 'asteroid',
-        health: 2,
-        maxHealth: 2,
-        orbitSpeed: 0.0005 + Math.random() * 0.001,
-        rotationSpeed: (Math.random() - 0.5) * 0.015,
-        beltCenter: galaxyCenter,
-        orbitRadius: ringDistance,
-        orbitPhase: ringAngle,
-        galaxyId: galaxyIndex, // or galaxyId for loadAsteroidsForGalaxy
-        isTargetable: true,
-        isDestructible: true,
-        beltGroup: beltGroup
-    };
-    
-    beltGroup.add(asteroid);
-    planets.push(asteroid);
-}
-
-// After the loop, ensure belt group is visible
-// OFFSET LOCAL GALAXY BELTS: Position above or below the solar system plane
-if (galaxyId === 7) {
-    // Local galaxy - offset significantly above or below
-    const yOffset = (Math.random() < 0.5 ? 1 : -1) * (600 + Math.random() * 400); // 600-1000 units offset
-    beltGroup.position.set(galaxyCenter.x, galaxyCenter.y + yOffset, galaxyCenter.z);
-    console.log(`✅ Local asteroid belt ${b + 1} offset ${yOffset > 0 ? 'ABOVE' : 'BELOW'} solar plane by ${Math.abs(yOffset).toFixed(0)} units`);
-} else {
-    beltGroup.position.copy(galaxyCenter);
-}
-beltGroup.visible = true; // Force visible
-beltGroup.frustumCulled = false; // Don't cull the entire group
-        
-        beltGroup.userData = {
-            name: `${galaxyType.name} Galaxy Asteroid Belt ${b + 1}`,
-            type: 'asteroidBelt',
-            center: galaxyCenter,
-            radius: beltRadius,
-            asteroidCount: asteroidCount,
-            galaxyId: galaxyId,
-            blackHolePosition: galaxyCenter.clone()
-        };
-        
-        scene.add(beltGroup);
-
-// ADD LIGHTING
-const beltLight = new THREE.PointLight(0xffffff, 4.0, 4000);
-beltLight.position.copy(galaxyCenter);
-scene.add(beltLight);
-beltGroup.userData.light = beltLight;
-
-asteroidBelts.push(beltGroup);
-        asteroidBelts.push(beltGroup);
-    }
-    
-    console.log(`✅ Loaded ${beltCount} OPTIMIZED asteroid belt(s) at galaxy ${galaxyId} black hole`);
-}
-
 // =============================================================================
 // DYNAMIC ENEMY LOADING FOR GALAXIES
 // =============================================================================
@@ -3700,8 +4261,22 @@ function loadEnemiesForGalaxy(galaxyId) {
         const enemyGeometry = createEnemyGeometry(galaxyId);
         const shapeData = enemyShapes[galaxyId];
         
-        // 3D positioning within galaxy
-        const enemyPosition = getRandomPositionInGalaxy3D(galaxyId);
+        // ENHANCED: Use different placement strategies for variety
+        let placementType;
+        const roll = Math.random();
+        
+        if (roll < 0.33) {
+            // 33% chance: spawn near cosmic features
+            placementType = 'cosmic_feature';
+        } else if (roll < 0.66) {
+            // 33% chance: spawn near black holes
+            placementType = 'black_hole';
+        } else {
+            // 34% chance: spawn randomly in galaxy
+            placementType = 'random';
+        }
+        
+        const enemyPosition = getEnemyPlacementPosition(galaxyId, placementType);
         const distance = galaxy3DCenter.distanceTo(enemyPosition);
         
         // Enhanced enemy creation with adaptive rendering
@@ -3744,7 +4319,8 @@ function loadEnemiesForGalaxy(galaxyId) {
             isLocal: false,
             isBoss: false,
             isBossSupport: false,
-            position3D: enemyPosition.clone()
+            position3D: enemyPosition.clone(),
+            placementType: placementType // Track how this enemy was placed
         };
         
         // Ensure visibility and prevent frustum culling
@@ -3759,44 +4335,107 @@ function loadEnemiesForGalaxy(galaxyId) {
 }
 
 function cleanupDistantEnemies(currentGalaxyId) {
-    if (typeof enemies === 'undefined' || typeof scene === 'undefined') return;
+    // ✅ DISABLED: Keep all enemies loaded across all galaxies
+    // This function is now a no-op to preserve enemies in all galaxies
+    // Performance optimization disabled in favor of gameplay experience
     
-    const enemiesToRemove = [];
+    console.log(`✅ Enemy cleanup disabled - all ${enemies.length} enemies preserved across galaxies`);
     
-    enemies.forEach((enemy, index) => {
-        if (!enemy || !enemy.userData) return;
-        
-        // Keep local galaxy enemies (galaxyId 7)
-        if (enemy.userData.galaxyId === 7) return;
-        
-        // Keep enemies in current galaxy
-        if (enemy.userData.galaxyId === currentGalaxyId) return;
-        
-        // CRITICAL FIX: NEVER remove black hole guardians!
-        if (enemy.userData.isBlackHoleGuardian === true) {
-            console.log(`Preserving guardian: ${enemy.userData.name} (galaxy ${enemy.userData.galaxyId})`);
-            return;
-        }
-        
-        // ALSO: Don't remove bosses or boss support
-        if (enemy.userData.isBoss || enemy.userData.isBossSupport) {
-            console.log(`Preserving boss/support: ${enemy.userData.name}`);
-            return;
-        }
-        
-        // Remove enemies from other galaxies
-        enemiesToRemove.push({ enemy, index });
-    });
-    
-    // Remove in reverse order to maintain array integrity
-    enemiesToRemove.reverse().forEach(({ enemy, index }) => {
-        scene.remove(enemy);
-        enemies.splice(index, 1);
-    });
-    
-    if (enemiesToRemove.length > 0) {
-        console.log(`Cleaned up ${enemiesToRemove.length} distant enemies`);
+    // Optional: Log enemy distribution for debugging
+    if (typeof enemies !== 'undefined') {
+        const distribution = {};
+        enemies.forEach(enemy => {
+            if (enemy.userData && enemy.userData.galaxyId !== undefined) {
+                distribution[enemy.userData.galaxyId] = (distribution[enemy.userData.galaxyId] || 0) + 1;
+            }
+        });
+        console.log('Enemy distribution by galaxy:', distribution);
     }
+    
+    // Function kept for compatibility but does nothing
+    return;
+}
+
+function cleanupDistantAsteroids(currentGalaxyId) {
+    console.log(`Cleaning up distant asteroids (keeping galaxy ${currentGalaxyId})...`);
+    
+    if (typeof asteroidBelts === 'undefined') {
+        console.warn('asteroidBelts array not found');
+        return;
+    }
+    
+    const cleanupDistance = 80000; // Same distance as creation threshold
+    const currentGalaxyCenter = getGalaxy3DPosition(currentGalaxyId);
+    
+    let removedBelts = 0;
+    let keptBelts = 0;
+    
+    // Iterate backwards to safely remove belts
+    for (let i = asteroidBelts.length - 1; i >= 0; i--) {
+        const belt = asteroidBelts[i];
+        
+        if (!belt || !belt.userData) continue;
+        
+        const beltGalaxyId = belt.userData.galaxyId;
+        
+        // Keep current galaxy and adjacent galaxies
+        if (beltGalaxyId === currentGalaxyId) {
+            keptBelts++;
+            continue;
+        }
+        
+        // Check distance from current position
+        const distanceToPlayer = camera.position.distanceTo(belt.position);
+        
+        if (distanceToPlayer > cleanupDistance) {
+            // Remove all asteroids from the belt
+            const asteroidCount = belt.children.length;
+            
+            // Remove each asteroid from scene arrays
+            for (let j = belt.children.length - 1; j >= 0; j--) {
+                const asteroid = belt.children[j];
+                
+                // Remove from planets array
+                const planetIndex = planets.indexOf(asteroid);
+                if (planetIndex > -1) {
+                    planets.splice(planetIndex, 1);
+                }
+                
+                // Remove from activePlanets array
+                const activeIndex = activePlanets.indexOf(asteroid);
+                if (activeIndex > -1) {
+                    activePlanets.splice(activeIndex, 1);
+                }
+                
+                // Dispose geometry and material if not shared
+                if (asteroid.geometry && asteroid.geometry.dispose) {
+                    // Don't dispose - these are shared resources
+                }
+                if (asteroid.material && asteroid.material.dispose) {
+                    // Don't dispose - these are shared resources
+                }
+            }
+            
+            // Remove the belt light if it exists
+            if (belt.userData.light) {
+                scene.remove(belt.userData.light);
+                belt.userData.light = null;
+            }
+            
+            // Remove belt from scene
+            scene.remove(belt);
+            
+            // Remove from asteroidBelts array
+            asteroidBelts.splice(i, 1);
+            
+            removedBelts++;
+            console.log(`  ♻️ Removed ${asteroidCount} asteroids from galaxy ${beltGalaxyId}`);
+        } else {
+            keptBelts++;
+        }
+    }
+    
+    console.log(`✅ Asteroid cleanup complete: removed ${removedBelts} belts, kept ${keptBelts} belts`);
 }
 
 // Animate brown dwarfs orbiting supernova cores
@@ -3849,9 +4488,9 @@ if (typeof window !== 'undefined') {
     
     // Add these exports
 	window.initializeAsteroidResources = initializeAsteroidResources;
-	window.loadAsteroidsForGalaxy = loadAsteroidsForGalaxy;
 	window.loadEnemiesForGalaxy = loadEnemiesForGalaxy;
 	window.cleanupDistantEnemies = cleanupDistantEnemies;
+	window.cleanupDistantAsteroids = cleanupDistantAsteroids;
 	window.spawnBlackHoleGuardians = spawnBlackHoleGuardians;
 	window.loadGuardiansForGalaxy = loadGuardiansForGalaxy;
 	window.animateNebulaBrownDwarfs = animateNebulaBrownDwarfs;
@@ -3882,6 +4521,8 @@ if (typeof window !== 'undefined') {
     window.galaxyMapPositions = galaxyMapPositions;
     window.enemyShapes = enemyShapes;
     window.galaxyEnemyLimits = galaxyEnemyLimits;
+    window.createEnhancedPlanetClustersInNebulas = createEnhancedPlanetClustersInNebulas;
+    window.createNebulaGasCloud = createNebulaGasCloud;
     
-    console.log('Enhanced game objects with fixed boss system and asteroid destruction loaded - All functions exported');
+    console.log('Enhanced game objects with planet clusters loaded');
 }
