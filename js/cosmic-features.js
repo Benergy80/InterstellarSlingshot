@@ -243,15 +243,28 @@ function createSupernovas() {
         
         // Supernova remnant core
         const coreGeometry = new THREE.SphereGeometry(15, 16, 16);
-const coreMaterial = new THREE.MeshStandardMaterial({
-    color: 0xffffff,
-    emissive: 0xffaa00,
-    emissiveIntensity: 2.0,
-    roughness: 0.2,
-    metalness: 0.5
-});
+        const coreMaterial = new THREE.MeshStandardMaterial({
+            color: 0xffffff,
+            emissive: 0xffaa00,
+            emissiveIntensity: 2.0,
+            roughness: 0.2,
+            metalness: 0.5
+        });
         const supernovaCore = new THREE.Mesh(coreGeometry, coreMaterial);
         supernovaCore.position.copy(position);
+        
+        // ⭐ ADD POWERFUL POINT LIGHT for supernova illumination
+        const supernovaLight = new THREE.PointLight(
+            0xffaa00,      // Orange-yellow supernova color
+            15.0,          // Very bright intensity
+            3000,          // Illumination range (3000 units)
+            1.5            // Light decay (higher = more dramatic falloff)
+        );
+        supernovaLight.position.copy(position);
+        supernovaLight.castShadow = false; // Performance optimization
+        scene.add(supernovaLight);
+        
+        console.log(`  💡 Added intense point light to supernova at`, position);
         
         // Expanding shockwave shells
         const shockwaveShells = [];
@@ -259,15 +272,17 @@ const coreMaterial = new THREE.MeshStandardMaterial({
             const shellRadius = 80 + (shell * 40);
             const shellGeometry = new THREE.SphereGeometry(shellRadius, 16, 16);
             const shellMaterial = new THREE.MeshBasicMaterial({
-                color: shell === 0 ? 0xff4400 : shell === 1 ? 0xff6600 : 0xff8800,
+                color: shell === 0 ? 0xff4400 : shell === 1 ? 0xff6622 : 0xff8844,
                 transparent: true,
-                opacity: 0.4 - (shell * 0.1),
-                wireframe: true
+                opacity: 0.3 - (shell * 0.08),
+                side: THREE.DoubleSide,
+                blending: THREE.AdditiveBlending
             });
             const shellMesh = new THREE.Mesh(shellGeometry, shellMaterial);
             shellMesh.userData = {
                 baseRadius: shellRadius,
-                expansionSpeed: 0.5 + shell * 0.2
+                expansionSpeed: 0.5 + (shell * 0.2),
+                waveIndex: shell
             };
             supernovaCore.add(shellMesh);
             shockwaveShells.push(shellMesh);
@@ -281,7 +296,7 @@ const coreMaterial = new THREE.MeshStandardMaterial({
         for (let i = 0; i < debrisCount; i++) {
             const radius = 100 + Math.random() * 200;
             const theta = Math.random() * Math.PI * 2;
-            const phi = Math.random() * Math.PI;
+            const phi = Math.acos(2 * Math.random() - 1);
             
             debrisVertices.push(
                 radius * Math.sin(phi) * Math.cos(theta),
@@ -291,12 +306,14 @@ const coreMaterial = new THREE.MeshStandardMaterial({
         }
         
         debrisGeometry.setAttribute('position', new THREE.Float32BufferAttribute(debrisVertices, 3));
+        
         const debrisMaterial = new THREE.PointsMaterial({
-            color: 0xffaa44,
+            color: 0xffcc66,
             size: 3,
             transparent: true,
             opacity: 0.8
         });
+        
         const debrisField = new THREE.Points(debrisGeometry, debrisMaterial);
         supernovaCore.add(debrisField);
         
@@ -304,11 +321,13 @@ const coreMaterial = new THREE.MeshStandardMaterial({
             name: `Supernova-${galaxyId}-${cosmicFeatures.supernovas.length}`,
             type: 'supernova',
             galaxyId: galaxyId,
-            expansionRate: 0.5 + Math.random() * 0.3,
-            energyOutput: 100 + Math.random() * 150,
+            age: Math.random() * 1000,
+            expansionSpeed: 1.0 + Math.random() * 2.0,
             radiationLevel: 80 + Math.random() * 40,
+            energyOutput: 100 + Math.random() * 100,
             shockwaveShells: shockwaveShells,
-            debrisField: debrisField
+            debrisField: debrisField,
+            pointLight: supernovaLight  // ⭐ Store reference to the light
         };
         
         supernovaCore.visible = true;
@@ -320,7 +339,7 @@ const coreMaterial = new THREE.MeshStandardMaterial({
         }
     });
     
-    console.log(`Created ${cosmicFeatures.supernovas.length} rare supernovas in distant galaxies`);
+    console.log(`Created ${cosmicFeatures.supernovas.length} rare supernovas with dynamic lighting`);
 }
 
 // =============================================================================
@@ -711,93 +730,110 @@ function createSolarStorms() {
         return;
     }
     
+    // GUARANTEED: Create 2-4 solar storms across distant galaxies
+    const targetStormCount = 2 + Math.floor(Math.random() * 3); // 2-4 storms guaranteed
+    let stormsCreated = 0;
+    const availableGalaxies = [];
+    
+    // Build list of available galaxies (excluding local galaxy ID 7)
     galaxyTypes.forEach((galaxyType, galaxyId) => {
-        // RARE: Only 35% chance per galaxy, skip local galaxy
-        if (Math.random() > 0.35 || galaxyId === 7) return;
-        
+        if (galaxyId !== 7) {
+            availableGalaxies.push(galaxyId);
+        }
+    });
+    
+    // Shuffle available galaxies
+    for (let i = availableGalaxies.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [availableGalaxies[i], availableGalaxies[j]] = [availableGalaxies[j], availableGalaxies[i]];
+    }
+    
+    // Create storms in the first N galaxies
+    for (let i = 0; i < Math.min(targetStormCount, availableGalaxies.length); i++) {
+        const galaxyId = availableGalaxies[i];
         const position = getCosmicFeaturePosition(galaxyId);
-        if (!position) return;
         
-        // Storm source (active star)
-        const stormSourceGeometry = new THREE.SphereGeometry(35, 16, 16);
-const stormSourceMaterial = new THREE.MeshStandardMaterial({
-    color: 0xff4400,
-    emissive: 0xff2200,
-    emissiveIntensity: 1.5,
-    roughness: 0.3,
-    metalness: 0.5
-});
-
-        const stormSource = new THREE.Mesh(stormSourceGeometry, stormSourceMaterial);
-        stormSource.position.copy(position);
+        if (!position) {
+            console.warn(`Could not get position for solar storm in galaxy ${galaxyId}`);
+            continue;
+        }
         
-        // Storm wave visualization
+        console.log(`⛈️ Creating solar storm in galaxy ${galaxyId} at position`, position);
+        
+        // Storm core
+        const stormGeometry = new THREE.SphereGeometry(25, 16, 16);
+        const stormMaterial = new THREE.MeshBasicMaterial({
+            color: 0xff3300,
+            transparent: true,
+            opacity: 0.6,
+            blending: THREE.AdditiveBlending
+        });
+        const stormCore = new THREE.Mesh(stormGeometry, stormMaterial);
+        stormCore.position.copy(position);
+        
+        // ⭐ ADD PULSING POINT LIGHT for solar storm illumination
+        const stormLight = new THREE.PointLight(
+            0xff3300,      // Red-orange storm color
+            12.0,          // Bright intensity
+            2500,          // Illumination range (2500 units)
+            1.8            // Light decay
+        );
+        stormLight.position.copy(position);
+        stormLight.castShadow = false;
+        
+        if (typeof scene !== 'undefined') {
+            scene.add(stormLight);
+            console.log(`  💡 Added pulsing point light to solar storm in galaxy ${galaxyId}`);
+        }
+        
+        // Electromagnetic waves
         const waveGroup = new THREE.Group();
         for (let wave = 0; wave < 5; wave++) {
-            const waveRadius = 80 + (wave * 40);
-            const waveGeometry = new THREE.SphereGeometry(waveRadius, 16, 8);
+            const waveRadius = 50 + (wave * 30);
+            const waveGeometry = new THREE.SphereGeometry(waveRadius, 16, 16);
             const waveMaterial = new THREE.MeshBasicMaterial({
-                color: wave % 2 === 0 ? 0xff6600 : 0xff4400,
+                color: 0xff6600,
                 transparent: true,
-                opacity: 0.3 - (wave * 0.05),
-                wireframe: true
+                opacity: 0.2 - (wave * 0.03),
+                side: THREE.DoubleSide,
+                blending: THREE.AdditiveBlending
             });
             const waveMesh = new THREE.Mesh(waveGeometry, waveMaterial);
             waveMesh.userData = {
-                expansionSpeed: 0.3 + wave * 0.1,
+                expansionSpeed: 1.5 + (wave * 0.3),
                 waveIndex: wave
             };
             waveGroup.add(waveMesh);
         }
-        stormSource.add(waveGroup);
+        stormCore.add(waveGroup);
         
-        // Plasma jets
-        const jetGroup = new THREE.Group();
-        for (let jet = 0; jet < 4; jet++) {
-            const jetGeometry = new THREE.ConeGeometry(8, 120, 8);
-            const jetMaterial = new THREE.MeshBasicMaterial({
-                color: 0xff8800,
-                transparent: true,
-                opacity: 0.6,
-                blending: THREE.AdditiveBlending
-            });
-            const jetMesh = new THREE.Mesh(jetGeometry, jetMaterial);
-            
-            const angle = (jet / 4) * Math.PI * 2;
-            jetMesh.position.set(
-                Math.cos(angle) * 50,
-                (jet % 2 === 0 ? 1 : -1) * 80,
-                Math.sin(angle) * 50
-            );
-            jetMesh.rotation.x = jet % 2 === 0 ? 0 : Math.PI;
-            
-            jetGroup.add(jetMesh);
-        }
-        stormSource.add(jetGroup);
-        
-        stormSource.userData = {
-            name: `Solar-Storm-${galaxyId}-${cosmicFeatures.solarStorms.length}`,
+        stormCore.userData = {
+            name: `Solar-Storm-${galaxyId}-${stormsCreated}`,
             type: 'solar_storm',
             galaxyId: galaxyId,
-            intensity: 0.5 + Math.random() * 0.5,
-            systemDamage: 20 + Math.random() * 30,
-            weaponBoost: 1.3 + Math.random() * 0.7,
-            effectRadius: 400 + Math.random() * 200,
+            intensity: 0.7 + Math.random() * 0.3,
+            stormCycle: Math.random() * Math.PI * 2,
+            radiationDamage: 5 + Math.random() * 10,
+            shieldDrain: 0.5 + Math.random() * 0.5,
+            weaponBoost: 1.5 + Math.random() * 0.5,
             waves: waveGroup,
-            jets: jetGroup,
-            stormCycle: Math.random() * Math.PI * 2
+            pointLight: stormLight,  // ⭐ Store reference to the light
+            baseLightIntensity: 12.0 // ⭐ Store base intensity for pulsing
         };
         
-        stormSource.visible = true;
-        stormSource.frustumCulled = false;
+        stormCore.visible = true;
+        stormCore.frustumCulled = false;
         
-        cosmicFeatures.solarStorms.push(stormSource);
+        cosmicFeatures.solarStorms.push(stormCore);
         if (typeof scene !== 'undefined') {
-            scene.add(stormSource);
+            scene.add(stormCore);
         }
-    });
+        
+        stormsCreated++;
+        console.log(`✅ Solar storm ${stormsCreated} created in galaxy ${galaxyId}`);
+    }
     
-    console.log(`Created ${cosmicFeatures.solarStorms.length} rare solar storms in distant galaxies`);
+    console.log(`⛈️ Created ${cosmicFeatures.solarStorms.length} solar storms with dynamic lighting (target was ${targetStormCount})`);
 }
 
 // =============================================================================
@@ -1222,17 +1258,42 @@ function createPlasmaStorms() {
         return;
     }
     
+    // GUARANTEED: Create 2-4 plasma storms across distant galaxies (same as solar storms)
+    const targetStormCount = 2 + Math.floor(Math.random() * 3); // 2-4 storms guaranteed
+    let stormsCreated = 0;
+    const availableGalaxies = [];
+    
+    // Build list of available galaxies (excluding local galaxy ID 7)
     galaxyTypes.forEach((galaxyType, galaxyId) => {
-        if (Math.random() > 0.2 || galaxyId === 7) return;
-        
+        if (galaxyId !== 7) {
+            availableGalaxies.push(galaxyId);
+        }
+    });
+    
+    // Shuffle available galaxies
+    for (let i = availableGalaxies.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [availableGalaxies[i], availableGalaxies[j]] = [availableGalaxies[j], availableGalaxies[i]];
+    }
+    
+    // Create storms in the first N galaxies
+    for (let i = 0; i < Math.min(targetStormCount, availableGalaxies.length); i++) {
+        const galaxyId = availableGalaxies[i];
         const position = getCosmicFeaturePosition(galaxyId);
-        if (!position) return;
+        
+        if (!position) {
+            console.warn(`Could not get position for plasma storm in galaxy ${galaxyId}`);
+            continue;
+        }
+        
+        console.log(`⚡ Creating plasma storm in galaxy ${galaxyId} at position`, position);
         
         // **UPDATED: Storm cloud 10x larger**
         const stormCloudGroup = new THREE.Group();
         const cloudSpheres = [];
         const sphereCount = 8 + Math.floor(Math.random() * 6);
         
+        // Create outer cloud spheres
         for (let sphere = 0; sphere < sphereCount; sphere++) {
             const sphereRadius = 150 + Math.random() * 250; // **10x larger (was 15-40)**
             const sphereGeometry = new THREE.SphereGeometry(sphereRadius, 16, 16);
@@ -1298,17 +1359,54 @@ function createPlasmaStorms() {
         }
         stormCloudGroup.add(tendrilGroup);
         
-        // **UPDATED: Central discharge 10x larger**
-        const dischargeGeometry = new THREE.SphereGeometry(250, 16, 16); // **10x larger (was 25)**
-        const dischargeMaterial = new THREE.MeshBasicMaterial({
+        // ⭐ NEW: Central energy core - glowing pulsing sphere (REPLACES wireframe discharge)
+        const coreGeometry = new THREE.SphereGeometry(250, 32, 32);
+        const coreMaterial = new THREE.MeshBasicMaterial({
+            color: 0x6644ff,
+            transparent: true,
+            opacity: 0.4,
+            blending: THREE.AdditiveBlending
+        });
+        const energyCore = new THREE.Mesh(coreGeometry, coreMaterial);
+        
+        // Add outer glow layer
+        const glowGeometry = new THREE.SphereGeometry(280, 32, 32);
+        const glowMaterial = new THREE.MeshBasicMaterial({
+            color: 0x8866ff,
+            transparent: true,
+            opacity: 0.2,
+            blending: THREE.AdditiveBlending
+        });
+        const glowSphere = new THREE.Mesh(glowGeometry, glowMaterial);
+        energyCore.add(glowSphere);
+        
+        // Add inner bright core
+        const innerCoreGeometry = new THREE.SphereGeometry(180, 32, 32);
+        const innerCoreMaterial = new THREE.MeshBasicMaterial({
             color: 0xffffff,
             transparent: true,
-            opacity: 0.1,
-            wireframe: true
+            opacity: 0.6,
+            blending: THREE.AdditiveBlending
         });
-        const discharge = new THREE.Mesh(dischargeGeometry, dischargeMaterial);
-        stormCloudGroup.add(discharge);
+        const innerCore = new THREE.Mesh(innerCoreGeometry, innerCoreMaterial);
+        energyCore.add(innerCore);
         
+        stormCloudGroup.add(energyCore);
+        
+        // ⭐ ADD POINT LIGHT for flickering lightning effect
+        const plasmaLight = new THREE.PointLight(
+            0x8866ff,      // Purple-blue plasma color
+            20.0,          // High intensity for dramatic effect
+            3000,          // Large range
+            2.0            // Decay
+        );
+        plasmaLight.position.copy(position);
+        plasmaLight.castShadow = false;
+        scene.add(plasmaLight);
+        
+        console.log(`  💡 Added flickering plasma light to storm at`, position);
+        
+        // ⭐ UPDATED: Store all new components in userData
         stormCloudGroup.userData = {
             name: `Plasma-Storm-${galaxyId}-${cosmicFeatures.plasmaStorms.length}`,
             type: 'plasma_storm',
@@ -1318,7 +1416,12 @@ function createPlasmaStorms() {
             energyOutput: 50 + Math.random() * 100,
             spheres: cloudSpheres,
             tendrils: tendrilGroup,
-            discharge: discharge,
+            energyCore: energyCore,           // ⭐ NEW: Store glowing core
+            glowSphere: glowSphere,            // ⭐ NEW: Store glow layer
+            innerCore: innerCore,              // ⭐ NEW: Store inner core
+            plasmaLight: plasmaLight,          // ⭐ NEW: Store point light
+            baseLightIntensity: 20.0,          // ⭐ NEW: Base intensity for flickering
+            lightningFlickerTime: 0,           // ⭐ NEW: Timer for lightning flicker
             direction: new THREE.Vector3(
                 (Math.random() - 0.5) * 0.5,
                 (Math.random() - 0.5) * 0.2,
@@ -1333,9 +1436,12 @@ function createPlasmaStorms() {
         if (typeof scene !== 'undefined') {
             scene.add(stormCloudGroup);
         }
-    });
+        
+        stormsCreated++;
+        console.log(`✅ Plasma storm ${stormsCreated} created in galaxy ${galaxyId}`);
+    }
     
-    console.log(`Created ${cosmicFeatures.plasmaStorms.length} rare plasma storms (10x scale) in distant galaxies`);
+    console.log(`⚡ Created ${cosmicFeatures.plasmaStorms.length} plasma storms with glowing cores and dynamic lighting (target was ${targetStormCount})`);
 }
 
 // =============================================================================
@@ -1374,43 +1480,56 @@ function updateCosmicFeatures() {
     
     // Update supernovas
     cosmicFeatures.supernovas.forEach(supernova => {
-        if (!supernova.userData || !supernova.userData.shockwaveShells) return;
-        
-        // Animate expanding shockwaves
-        supernova.userData.shockwaveShells.forEach(shell => {
-            const expansion = Math.sin(time * shell.userData.expansionSpeed) * 0.2;
-            const newRadius = shell.userData.baseRadius + expansion * 20;
-            shell.scale.setScalar(newRadius / shell.userData.baseRadius);
-        });
-        
-        // Rotate debris field
-        if (supernova.userData.debrisField) {
-            supernova.userData.debrisField.rotation.y += 0.01;
-        }
+    if (!supernova.userData || !supernova.userData.shockwaveShells) return;
+    
+    // Animate expanding shockwaves
+    supernova.userData.shockwaveShells.forEach(shell => {
+        const expansion = Math.sin(time * shell.userData.expansionSpeed) * 0.2;
+        const newRadius = shell.userData.baseRadius + expansion * 20;
+        shell.scale.setScalar(newRadius / shell.userData.baseRadius);
     });
+    
+    // Rotate debris field
+    if (supernova.userData.debrisField) {
+        supernova.userData.debrisField.rotation.y += 0.01;
+    }
+    
+    // ⭐ ANIMATE SUPERNOVA LIGHT - Pulsing effect
+    if (supernova.userData.pointLight) {
+        const pulseFactor = Math.sin(time * 2) * 0.3 + 1.0; // 0.7 to 1.3
+        supernova.userData.pointLight.intensity = 15.0 * pulseFactor;
+        
+        // Subtle color shift
+        const hueShift = Math.sin(time * 0.5) * 0.05;
+        supernova.userData.pointLight.color.setHSL(0.08 + hueShift, 1.0, 0.5);
+    }
+});
     
     // Update solar storms
     cosmicFeatures.solarStorms.forEach(storm => {
-        if (!storm.userData) return;
+    if (!storm.userData) return;
+    
+    storm.userData.stormCycle += 0.02;
+    const stormPulse = Math.sin(storm.userData.stormCycle);
+    
+    // Animate storm waves
+    if (storm.userData.waves) {
+        storm.userData.waves.children.forEach(wave => {
+            const expansion = Math.sin(time * wave.userData.expansionSpeed + wave.userData.waveIndex) * 0.3;
+            wave.scale.setScalar(1 + expansion);
+        });
+    }
+    
+    // ⭐ ANIMATE SOLAR STORM LIGHT - Dramatic pulsing
+    if (storm.userData.pointLight && storm.userData.baseLightIntensity) {
+        const intensePulse = Math.abs(Math.sin(time * 3)) * 0.6 + 0.6; // 0.6 to 1.2
+        storm.userData.pointLight.intensity = storm.userData.baseLightIntensity * intensePulse;
         
-        storm.userData.stormCycle += 0.02;
-        const stormPulse = Math.sin(storm.userData.stormCycle);
-        
-        // Animate storm waves
-        if (storm.userData.waves) {
-            storm.userData.waves.children.forEach(wave => {
-                const expansion = Math.sin(time * wave.userData.expansionSpeed + wave.userData.waveIndex) * 0.3;
-                wave.scale.setScalar(1 + expansion);
-            });
-        }
-        
-        // Animate plasma jets
-        if (storm.userData.jets) {
-            storm.userData.jets.children.forEach((jet, index) => {
-                jet.scale.y = 0.8 + Math.sin(time * 2 + index) * 0.4;
-            });
-        }
-    });
+        // Color flicker effect
+        const flickerHue = Math.sin(time * 5) * 0.03;
+        storm.userData.pointLight.color.setHSL(0.02 + flickerHue, 1.0, 0.5);
+    }
+});
     
     // Update rogue planets (movement)
     cosmicFeatures.roguePlanets.forEach(rogue => {
@@ -1473,25 +1592,87 @@ cosmicFeatures.plasmaStorms.forEach(storm => {
         storm.position.add(storm.userData.direction.clone().multiplyScalar(storm.userData.movementSpeed));
     }
     
-    // **ENHANCED: Animate lightning tendrils with flickering**
+    // ⭐ ANIMATE GLOWING ENERGY CORE - Pulsing effect
+    if (storm.userData.energyCore) {
+        const corePulse = Math.sin(time * 2) * 0.15 + 1.0; // 0.85 to 1.15
+        storm.userData.energyCore.scale.setScalar(corePulse);
+        
+        // Pulse core opacity
+        if (storm.userData.energyCore.material) {
+            storm.userData.energyCore.material.opacity = 0.3 + Math.sin(time * 3) * 0.15;
+        }
+    }
+    
+    // ⭐ ANIMATE GLOW SPHERE - Counter-pulse for depth
+    if (storm.userData.glowSphere) {
+        const glowPulse = Math.sin(time * 2.5 + Math.PI) * 0.12 + 1.0;
+        storm.userData.glowSphere.scale.setScalar(glowPulse);
+    }
+    
+    // ⭐ ANIMATE INNER CORE - Fast pulse
+    if (storm.userData.innerCore) {
+        const innerPulse = Math.sin(time * 4) * 0.2 + 1.0;
+        storm.userData.innerCore.scale.setScalar(innerPulse);
+        
+        if (storm.userData.innerCore.material) {
+            storm.userData.innerCore.material.opacity = 0.4 + Math.sin(time * 5) * 0.3;
+        }
+    }
+    
+    // ⭐ FLICKERING LIGHTNING EFFECT on point light
+    if (storm.userData.plasmaLight && storm.userData.baseLightIntensity) {
+        storm.userData.lightningFlickerTime += 0.1;
+        
+        // Random lightning flickers
+        if (Math.random() < 0.15) {
+            // Lightning flash!
+            storm.userData.plasmaLight.intensity = storm.userData.baseLightIntensity * (3.0 + Math.random() * 2.0);
+            
+            // Quick color flash to white
+            storm.userData.plasmaLight.color.setHex(0xffffff);
+            
+            // Return to normal after short delay
+            setTimeout(() => {
+                if (storm.userData.plasmaLight) {
+                    storm.userData.plasmaLight.color.setHex(0x8866ff);
+                }
+            }, 50);
+        } else {
+            // Normal pulsing
+            const lightPulse = Math.sin(time * 3) * 0.4 + 0.8; // 0.4 to 1.2
+            storm.userData.plasmaLight.intensity = storm.userData.baseLightIntensity * lightPulse;
+        }
+        
+        // Subtle color shift
+        const hueShift = Math.sin(time * 0.8) * 0.05;
+        if (!storm.userData.plasmaLight.color.equals(new THREE.Color(0xffffff))) {
+            storm.userData.plasmaLight.color.setHSL(0.7 + hueShift, 0.8, 0.5);
+        }
+    }
+    
+    // Animate cloud spheres
+    if (storm.userData.spheres) {
+        storm.userData.spheres.forEach((sphere, index) => {
+            const wobble = Math.sin(time * 2 + index) * 0.1 + 1.0;
+            sphere.scale.setScalar(wobble);
+        });
+    }
+    
+    // Animate lightning tendrils with flickering
     if (storm.userData.tendrils) {
         storm.userData.tendrils.children.forEach((tendril, index) => {
             if (!tendril.userData) return;
             
-            // Wiggle animation
-            const wiggle = Math.sin(time * tendril.userData.waveSpeed + index) * 0.3;
-            tendril.rotation.z = tendril.userData.baseAngle + wiggle;
-            
-            // **NEW: Flickering lightning effect**
-            const flicker = Math.sin(time * tendril.userData.flickerSpeed + index * 0.5);
-            tendril.material.opacity = tendril.userData.baseOpacity * (0.5 + Math.abs(flicker) * 0.5);
-            tendril.material.emissiveIntensity = 2.0 + flicker * 1.5;
-            
-            // **NEW: Random intense flashes**
-            if (Math.random() < 0.01) {
-                tendril.material.opacity = 1.0;
-                tendril.material.emissiveIntensity = 4.0;
+            // Flicker effect
+            if (Math.random() < 0.1) {
+                tendril.material.opacity = 0.8 + Math.random() * 0.2;
+            } else {
+                tendril.material.opacity = tendril.userData.baseOpacity || 0.6;
             }
+            
+            // Color pulse
+            const hue = 0.7 + Math.sin(time * 2 + index) * 0.1;
+            tendril.material.color.setHSL(hue, 1.0, 0.5);
         });
     }
 });
@@ -1521,70 +1702,520 @@ cosmicFeatures.plasmaStorms.forEach(storm => {
 // =============================================================================
 
 function checkCosmicFeatureInteractions(playerPosition, gameState) {
-    if (!playerPosition || !gameState) return;
+    if (typeof camera === 'undefined' || typeof gameState === 'undefined') return;
     
-    const checkDistance = 400;
+    const playerPos = camera.position;
     
-    // Check pulsar interference
+    // Check pulsars
     cosmicFeatures.pulsars.forEach(pulsar => {
-        const distance = playerPosition.distanceTo(pulsar.position);
-        if (distance < checkDistance) {
-            const interference = Math.max(0, 1 - distance / checkDistance);
-            if (interference > 0.5 && typeof gameState.navigationJammed !== 'undefined') {
+        const distance = playerPos.distanceTo(pulsar.position);
+        
+        if (distance < 800) {
+            // Navigation jamming
+            if (typeof gameState.navigationJammed === 'undefined') {
+                gameState.navigationJammed = false;
+            }
+            
+            if (!gameState.navigationJammed) {
                 gameState.navigationJammed = true;
                 if (typeof showAchievement === 'function') {
-                    showAchievement('Pulsar Interference!', 'Navigation systems disrupted');
+                    showAchievement('Pulsar Detected', 'Strong magnetic interference detected');
                 }
             }
+        } else if (gameState.navigationJammed) {
+            gameState.navigationJammed = false;
         }
     });
     
-    // Check supernova radiation
-    cosmicFeatures.supernovas.forEach(supernova => {
-        const distance = playerPosition.distanceTo(supernova.position);
-        if (distance < supernova.userData.radiationLevel * 10) {
-            const radiation = Math.max(0, 1 - distance / (supernova.userData.radiationLevel * 10));
-            if (radiation > 0.3 && typeof gameState.hull !== 'undefined') {
-                gameState.hull -= radiation * 0.5;
-                if (typeof showAchievement === 'function') {
-                    showAchievement('Radiation Exposure', 'Hull damage from supernova');
-                }
-            }
-        }
-    });
-    
-    // Check dark matter gravitational effects
-    cosmicFeatures.darkMatterNodes.forEach(node => {
-        const distance = playerPosition.distanceTo(node.position);
-        if (distance < 200) {
-            const gravityEffect = Math.max(0, 1 - distance / 200);
-            if (typeof gameState.velocityVector !== 'undefined' && gravityEffect > 0.2) {
-                const pullDirection = new THREE.Vector3().subVectors(node.position, playerPosition).normalize();
-                gameState.velocityVector.add(pullDirection.multiplyScalar(gravityEffect * 0.01));
-            }
-        }
-    });
-    
-    // Check solar storm effects
+    // ⭐ ENHANCED: Check solar storms - MASSIVE ENERGY BOOST
     cosmicFeatures.solarStorms.forEach(storm => {
-        const distance = playerPosition.distanceTo(storm.position);
-        if (distance < storm.userData.effectRadius) {
-            const intensity = Math.max(0, 1 - distance / storm.userData.effectRadius);
-            
-            // System damage
-            if (intensity > 0.4 && typeof gameState.hull !== 'undefined') {
-                gameState.hull -= storm.userData.systemDamage * intensity * 0.01;
+        const distance = playerPos.distanceTo(storm.position);
+        
+        // Outer warning zone (500-800 units)
+        if (distance < 800 && distance > 500) {
+            if (!storm.userData.warningShown) {
+                storm.userData.warningShown = true;
                 if (typeof showAchievement === 'function') {
-                    showAchievement('Solar Storm!', 'Hull integrity compromised');
+                    showAchievement('Solar Storm Approaching', 'Prepare for electromagnetic surge!');
+                }
+            }
+        } else if (distance > 800) {
+            storm.userData.warningShown = false;
+            storm.userData.insideStorm = false;
+        }
+        
+        // ⭐ INSIDE SOLAR STORM (within 500 units) - POWER BOOST!
+        if (distance < 500) {
+            // First time entering the storm
+            if (!storm.userData.insideStorm) {
+                storm.userData.insideStorm = true;
+                storm.userData.boostActivatedTime = Date.now();
+                storm.userData.stormEntryPosition = playerPos.clone();
+                
+                // ⭐ SUPERCHARGE ENERGY TO 300%
+                gameState.energy = 300;
+                gameState.maxEnergy = 300;
+                gameState.solarStormBoostActive = true;
+                gameState.solarStormBoostEndTime = Date.now() + 60000; // 1 minute
+                
+                // ⭐ REFILL ALL EMERGENCY WARPS
+                if (gameState.emergencyWarp) {
+                    gameState.emergencyWarp.available = 5;
+                }
+                
+                // Visual and audio feedback
+                if (typeof showAchievement === 'function') {
+                    showAchievement('⚡ SOLAR STORM SURGE! ⚡', 'Energy supercharged to 300%! Emergency warps refilled! (60 seconds)');
+                }
+                
+                if (typeof playSound === 'function') {
+                    playSound('powerup');
+                }
+                
+                // Create visual effect
+                createSolarStormChargeEffect();
+                
+                console.log('⚡ SOLAR STORM BOOST ACTIVATED!');
+                console.log('  Energy: 100% → 300%');
+                console.log('  Emergency Warps: Refilled to 5/5');
+                console.log('  Duration: 60 seconds');
+            }
+            
+            // While inside storm - maintain 300% energy
+            if (gameState.solarStormBoostActive) {
+                // Maintain max energy at 300
+                if (gameState.energy < 300) {
+                    gameState.energy = Math.min(300, gameState.energy + 5); // Rapid recharge
                 }
             }
             
             // Weapon power boost
             if (typeof gameState.weaponPowerBoost !== 'undefined') {
-                gameState.weaponPowerBoost = storm.userData.weaponBoost;
+                gameState.weaponPowerBoost = storm.userData.weaponBoost || 2.0;
+            }
+            
+            // Add storm particles effect
+            if (Math.random() < 0.1) {
+                createStormParticle(playerPos);
             }
         }
     });
+    
+    // ⭐ CHECK FOR SOLAR STORM BOOST EXPIRATION
+    if (gameState.solarStormBoostActive) {
+        const timeRemaining = gameState.solarStormBoostEndTime - Date.now();
+        
+        // Show countdown warnings
+        if (timeRemaining <= 10000 && timeRemaining > 9000 && !gameState.tenSecondWarningShown) {
+            gameState.tenSecondWarningShown = true;
+            if (typeof showAchievement === 'function') {
+                showAchievement('⚡ Boost Ending Soon', 'Solar storm boost expires in 10 seconds!');
+            }
+        }
+        
+        // Boost expired
+        if (timeRemaining <= 0) {
+            gameState.solarStormBoostActive = false;
+            gameState.maxEnergy = 100; // Reset to normal max
+            gameState.energy = Math.min(100, gameState.energy); // Cap at 100%
+            gameState.tenSecondWarningShown = false;
+            
+            if (typeof showAchievement === 'function') {
+                showAchievement('Solar Storm Boost Ended', 'Energy systems returned to normal');
+            }
+            
+            console.log('⚡ Solar storm boost expired - energy reset to normal (max 100%)');
+        }
+    }
+    
+    // ⭐ NEW: Check plasma storms - SAME MASSIVE ENERGY BOOST AS SOLAR STORMS
+cosmicFeatures.plasmaStorms.forEach(storm => {
+    const distance = playerPos.distanceTo(storm.position);
+    
+    // Outer warning zone (600-1000 units)
+    if (distance < 1000 && distance > 600) {
+        if (!storm.userData.warningShown) {
+            storm.userData.warningShown = true;
+            if (typeof showAchievement === 'function') {
+                showAchievement('Plasma Storm Detected', 'Massive energy field approaching!');
+            }
+        }
+    } else if (distance > 1000) {
+        storm.userData.warningShown = false;
+        storm.userData.insideStorm = false;
+    }
+    
+    // ⭐ INSIDE PLASMA STORM (within 600 units) - POWER BOOST!
+    if (distance < 600) {
+        // First time entering the storm
+        if (!storm.userData.insideStorm) {
+            storm.userData.insideStorm = true;
+            storm.userData.boostActivatedTime = Date.now();
+            storm.userData.stormEntryPosition = playerPos.clone();
+            
+            // ⭐ SUPERCHARGE ENERGY TO 300%
+            gameState.energy = 300;
+            gameState.maxEnergy = 300;
+            gameState.plasmaStormBoostActive = true;
+            gameState.plasmaStormBoostEndTime = Date.now() + 60000; // 1 minute
+            
+            // ⭐ REFILL ALL EMERGENCY WARPS
+            if (gameState.emergencyWarp) {
+                gameState.emergencyWarp.available = 5;
+            }
+            
+            // Visual and audio feedback
+            if (typeof showAchievement === 'function') {
+                showAchievement('⚡ PLASMA STORM SURGE! ⚡', 'Energy supercharged to 300%! Emergency warps refilled! (60 seconds)');
+            }
+            
+            if (typeof playSound === 'function') {
+                playSound('powerup');
+            }
+            
+            // Create visual effect (purple version)
+            createPlasmaStormChargeEffect();
+            
+            console.log('⚡ PLASMA STORM BOOST ACTIVATED!');
+            console.log('  Energy: 100% → 300%');
+            console.log('  Emergency Warps: Refilled to 5/5');
+            console.log('  Duration: 60 seconds');
+        }
+        
+        // While inside storm - maintain 300% energy
+        if (gameState.plasmaStormBoostActive) {
+            // Maintain max energy at 300
+            if (gameState.energy < 300) {
+                gameState.energy = Math.min(300, gameState.energy + 5); // Rapid recharge
+            }
+        }
+        
+        // Add plasma particles effect
+        if (Math.random() < 0.1) {
+            createPlasmaParticle(playerPos);
+        }
+    }
+});
+
+// ⭐ CHECK FOR PLASMA STORM BOOST EXPIRATION
+if (gameState.plasmaStormBoostActive) {
+    const timeRemaining = gameState.plasmaStormBoostEndTime - Date.now();
+    
+    // Show countdown warnings
+    if (timeRemaining <= 10000 && timeRemaining > 9000 && !gameState.plasmaTenSecondWarningShown) {
+        gameState.plasmaTenSecondWarningShown = true;
+        if (typeof showAchievement === 'function') {
+            showAchievement('⚡ Boost Ending Soon', 'Plasma storm boost expires in 10 seconds!');
+        }
+    }
+    
+    // Boost expired
+    if (timeRemaining <= 0) {
+        gameState.plasmaStormBoostActive = false;
+        gameState.maxEnergy = 100; // Reset to normal max
+        gameState.energy = Math.min(100, gameState.energy); // Cap at 100%
+        gameState.plasmaTenSecondWarningShown = false;
+        
+        if (typeof showAchievement === 'function') {
+            showAchievement('Plasma Storm Boost Ended', 'Energy systems returned to normal');
+        }
+        
+        console.log('⚡ Plasma storm boost expired - energy reset to normal (max 100%)');
+    }
+}
+
+// ⭐ COMBINED BOOST CHECK (if both active, they don't stack but maintain 300%)
+if (gameState.solarStormBoostActive || gameState.plasmaStormBoostActive) {
+    gameState.maxEnergy = 300;
+}
+    
+    // Check supernovas
+    cosmicFeatures.supernovas.forEach(supernova => {
+        const distance = playerPos.distanceTo(supernova.position);
+        
+        if (distance < 600) {
+            // Radiation damage
+            if (typeof gameState.hull !== 'undefined') {
+                const damage = (600 - distance) / 600 * 0.5;
+                gameState.hull = Math.max(0, gameState.hull - damage);
+                
+                if (Math.random() < 0.01) {
+                    if (typeof showAchievement === 'function') {
+                        showAchievement('Supernova Radiation', 'Hull taking radiation damage!');
+                    }
+                }
+            }
+        }
+    });
+    
+    // Check space whales
+    cosmicFeatures.spaceWhales.forEach(whale => {
+        const distance = playerPos.distanceTo(whale.position);
+        
+        if (distance < 300 && !whale.userData.encountered) {
+            whale.userData.encountered = true;
+            
+            if (typeof showAchievement === 'function') {
+                showAchievement('Space Whale Encounter', 'Legendary cosmic creature detected!');
+            }
+            
+            // Peaceful energy gift
+            gameState.energy = Math.min(gameState.maxEnergy || 100, gameState.energy + 50);
+        } else if (distance > 500) {
+            whale.userData.encountered = false;
+        }
+    });
+    
+    // Check crystal formations
+    cosmicFeatures.crystalFormations.forEach(formation => {
+        const distance = playerPos.distanceTo(formation.position);
+        
+        if (distance < 400) {
+            // Energy field effect
+            if (typeof gameState.shieldBonus === 'undefined') {
+                gameState.shieldBonus = 0;
+            }
+            gameState.shieldBonus = formation.userData.energyField * 0.01;
+        }
+    });
+}
+
+// =============================================================================
+// SOLAR STORM VISUAL EFFECTS
+// =============================================================================
+
+function createSolarStormChargeEffect() {
+    // Create pulsing screen effect
+    const chargeOverlay = document.createElement('div');
+    chargeOverlay.className = 'absolute inset-0 pointer-events-none';
+    chargeOverlay.style.zIndex = '30';
+    chargeOverlay.style.background = 'radial-gradient(circle, rgba(255, 215, 0, 0.3) 0%, transparent 70%)';
+    chargeOverlay.style.animation = 'solarChargePulse 2s ease-out';
+    document.body.appendChild(chargeOverlay);
+    
+    // Remove after animation
+    setTimeout(() => chargeOverlay.remove(), 2000);
+    
+    // Create particle burst around player
+    if (typeof camera !== 'undefined' && typeof scene !== 'undefined') {
+        const burstGeometry = new THREE.BufferGeometry();
+        const burstVertices = [];
+        const burstColors = [];
+        
+        for (let i = 0; i < 100; i++) {
+            const theta = Math.random() * Math.PI * 2;
+            const phi = Math.acos(2 * Math.random() - 1);
+            const radius = 20 + Math.random() * 30;
+            
+            burstVertices.push(
+                camera.position.x + radius * Math.sin(phi) * Math.cos(theta),
+                camera.position.y + radius * Math.cos(phi),
+                camera.position.z + radius * Math.sin(phi) * Math.sin(theta)
+            );
+            
+            // Electric yellow color
+            burstColors.push(1.0, 0.9 + Math.random() * 0.1, 0.0);
+        }
+        
+        burstGeometry.setAttribute('position', new THREE.Float32BufferAttribute(burstVertices, 3));
+        burstGeometry.setAttribute('color', new THREE.Float32BufferAttribute(burstColors, 3));
+        
+        const burstMaterial = new THREE.PointsMaterial({
+            size: 4,
+            vertexColors: true,
+            transparent: true,
+            opacity: 1.0,
+            blending: THREE.AdditiveBlending
+        });
+        
+        const burstParticles = new THREE.Points(burstGeometry, burstMaterial);
+        scene.add(burstParticles);
+        
+        // Animate and remove
+        let burstOpacity = 1.0;
+        const burstInterval = setInterval(() => {
+            burstOpacity -= 0.05;
+            burstMaterial.opacity = burstOpacity;
+            
+            if (burstOpacity <= 0) {
+                clearInterval(burstInterval);
+                scene.remove(burstParticles);
+                burstGeometry.dispose();
+                burstMaterial.dispose();
+            }
+        }, 50);
+    }
+}
+
+function createStormParticle(position) {
+    if (typeof scene === 'undefined') return;
+    
+    const particleGeometry = new THREE.SphereGeometry(2, 8, 8);
+    const particleMaterial = new THREE.MeshBasicMaterial({
+        color: 0xffff00,
+        transparent: true,
+        opacity: 0.8,
+        blending: THREE.AdditiveBlending
+    });
+    
+    const particle = new THREE.Mesh(particleGeometry, particleMaterial);
+    particle.position.set(
+        position.x + (Math.random() - 0.5) * 100,
+        position.y + (Math.random() - 0.5) * 100,
+        position.z + (Math.random() - 0.5) * 100
+    );
+    
+    scene.add(particle);
+    
+    // Fade out and remove
+    let opacity = 0.8;
+    const fadeInterval = setInterval(() => {
+        opacity -= 0.05;
+        particleMaterial.opacity = opacity;
+        
+        if (opacity <= 0) {
+            clearInterval(fadeInterval);
+            scene.remove(particle);
+            particleGeometry.dispose();
+            particleMaterial.dispose();
+        }
+    }, 50);
+}
+
+// Add CSS animation for charge effect
+if (typeof document !== 'undefined') {
+    const style = document.createElement('style');
+    style.textContent = `
+        @keyframes solarChargePulse {
+            0% { opacity: 0; transform: scale(0.5); }
+            50% { opacity: 1; transform: scale(1.2); }
+            100% { opacity: 0; transform: scale(1.5); }
+        }
+    `;
+    document.head.appendChild(style);
+}
+
+// =============================================================================
+// PLASMA STORM VISUAL EFFECTS
+// =============================================================================
+
+function createPlasmaStormChargeEffect() {
+    // Create pulsing screen effect (purple version)
+    const chargeOverlay = document.createElement('div');
+    chargeOverlay.className = 'absolute inset-0 pointer-events-none';
+    chargeOverlay.style.zIndex = '30';
+    chargeOverlay.style.background = 'radial-gradient(circle, rgba(136, 102, 255, 0.4) 0%, transparent 70%)';
+    chargeOverlay.style.animation = 'plasmaChargePulse 2s ease-out';
+    document.body.appendChild(chargeOverlay);
+    
+    // Remove after animation
+    setTimeout(() => chargeOverlay.remove(), 2000);
+    
+    // Create particle burst around player (purple/blue)
+    if (typeof camera !== 'undefined' && typeof scene !== 'undefined') {
+        const burstGeometry = new THREE.BufferGeometry();
+        const burstVertices = [];
+        const burstColors = [];
+        
+        for (let i = 0; i < 150; i++) {
+            const theta = Math.random() * Math.PI * 2;
+            const phi = Math.acos(2 * Math.random() - 1);
+            const radius = 20 + Math.random() * 40;
+            
+            burstVertices.push(
+                camera.position.x + radius * Math.sin(phi) * Math.cos(theta),
+                camera.position.y + radius * Math.cos(phi),
+                camera.position.z + radius * Math.sin(phi) * Math.sin(theta)
+            );
+            
+            // Purple-blue plasma colors
+            const colorChoice = Math.random();
+            if (colorChoice < 0.5) {
+                burstColors.push(0.53, 0.27, 1.0); // Purple
+            } else {
+                burstColors.push(0.27, 0.4, 1.0);  // Blue
+            }
+        }
+        
+        burstGeometry.setAttribute('position', new THREE.Float32BufferAttribute(burstVertices, 3));
+        burstGeometry.setAttribute('color', new THREE.Float32BufferAttribute(burstColors, 3));
+        
+        const burstMaterial = new THREE.PointsMaterial({
+            size: 5,
+            vertexColors: true,
+            transparent: true,
+            opacity: 1.0,
+            blending: THREE.AdditiveBlending
+        });
+        
+        const burstParticles = new THREE.Points(burstGeometry, burstMaterial);
+        scene.add(burstParticles);
+        
+        // Animate and remove
+        let burstOpacity = 1.0;
+        const burstInterval = setInterval(() => {
+            burstOpacity -= 0.05;
+            burstMaterial.opacity = burstOpacity;
+            
+            if (burstOpacity <= 0) {
+                clearInterval(burstInterval);
+                scene.remove(burstParticles);
+                burstGeometry.dispose();
+                burstMaterial.dispose();
+            }
+        }, 50);
+    }
+}
+
+function createPlasmaParticle(position) {
+    if (typeof scene === 'undefined') return;
+    
+    const particleGeometry = new THREE.SphereGeometry(2.5, 8, 8);
+    const particleMaterial = new THREE.MeshBasicMaterial({
+        color: Math.random() > 0.5 ? 0x8866ff : 0x6644ff,
+        transparent: true,
+        opacity: 0.9,
+        blending: THREE.AdditiveBlending
+    });
+    
+    const particle = new THREE.Mesh(particleGeometry, particleMaterial);
+    particle.position.set(
+        position.x + (Math.random() - 0.5) * 150,
+        position.y + (Math.random() - 0.5) * 150,
+        position.z + (Math.random() - 0.5) * 150
+    );
+    
+    scene.add(particle);
+    
+    // Fade out and remove
+    let opacity = 0.9;
+    const fadeInterval = setInterval(() => {
+        opacity -= 0.06;
+        particleMaterial.opacity = opacity;
+        
+        // Grow slightly as it fades
+        particle.scale.multiplyScalar(1.05);
+        
+        if (opacity <= 0) {
+            clearInterval(fadeInterval);
+            scene.remove(particle);
+            particleGeometry.dispose();
+            particleMaterial.dispose();
+        }
+    }, 50);
+}
+
+// Add CSS animation for plasma charge effect
+if (typeof document !== 'undefined') {
+    const style = document.createElement('style');
+    style.textContent = `
+        @keyframes plasmaChargePulse {
+            0% { opacity: 0; transform: scale(0.5); }
+            50% { opacity: 1; transform: scale(1.2); }
+            100% { opacity: 0; transform: scale(1.5); }
+        }
+    `;
+    document.head.appendChild(style);
 }
 
 // =============================================================================
