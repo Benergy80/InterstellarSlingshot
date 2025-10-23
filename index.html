@@ -5,29 +5,48 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Interstellar Slingshot - A Gravitational Space Explorer by ChiLab</title>
     
-    <!-- External Dependencies -->
+    <!-- External Dependencies with THREE.js Backup System -->
     <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- PRIMARY: Try the original CDN first -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js" 
-            onload="console.log('✅ THREE.js r128 loaded')"
+            onload="console.log('✅ THREE.js r128 loaded from primary CDN')"
             onerror="loadBackupTHREE()"></script>
     
+    <!-- BACKUP: Alternative CDNs if primary fails -->
     <script>
     function loadBackupTHREE() {
-      console.log('🔄 Primary CDN failed, trying backup...');
-      const script = document.createElement('script');
-      script.src = 'https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js';
-      script.onload = () => console.log('✅ THREE.js loaded from backup');
-      script.onerror = () => console.error('❌ All THREE.js CDNs failed!');
-      document.head.appendChild(script);
+      console.log('🔄 Primary CDN failed, trying backup CDNs...');
+      
+      const script1 = document.createElement('script');
+      script1.src = 'https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js';
+      script1.onload = function() {
+        console.log('✅ THREE.js r128 loaded from JSDelivr backup');
+      };
+      script1.onerror = function() {
+        console.log('❌ JSDelivr backup failed, trying unpkg...');
+        
+        const script2 = document.createElement('script');
+        script2.src = 'https://unpkg.com/three@0.128.0/build/three.min.js';
+        script2.onload = function() {
+          console.log('✅ THREE.js r128 loaded from unpkg backup');
+        };
+        script2.onerror = function() {
+          console.error('❌ All THREE.js CDNs failed!');
+          alert('Cannot load THREE.js library. Please check your internet connection.');
+        };
+        document.head.appendChild(script2);
+      };
+      document.head.appendChild(script1);
     }
     
     window.addEventListener('load', () => {
       setTimeout(() => {
         if (typeof THREE === 'undefined') {
-          console.warn('⚠️ THREE.js still not loaded, retrying...');
+          console.warn('⚠️ THREE.js still not detected after page load, making final attempt...');
           loadBackupTHREE();
         } else {
-          console.log('✅ THREE.js confirmed. Version:', THREE.REVISION);
+          console.log('✅ THREE.js confirmed loaded. Version:', THREE.REVISION);
         }
       }, 1000);
     });
@@ -36,9 +55,10 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.11.4/gsap.min.js"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     
+    <!-- Game Styles -->
     <link rel="stylesheet" href="css/styles.css">
     <style>
-        /* Title flashing effect */
+        /* Title flashing effect for gravity well alert */
         .title-flash {
             animation: titleFlash 0.5s ease-in-out infinite alternate;
         }
@@ -46,21 +66,30 @@
         @keyframes titleFlash {
             0% { 
                 color: #22d3ee;
-                text-shadow: 0 0 8px rgba(0,150,255,0.9), 0 0 16px rgba(0,150,255,0.7), 0 0 24px rgba(0,150,255,0.5);
+                text-shadow: 
+                    0 0 8px rgba(0,150,255,0.9), 
+                    0 0 16px rgba(0,150,255,0.7),
+                    0 0 24px rgba(0,150,255,0.5);
             }
             100% { 
                 color: #fbbf24;
-                text-shadow: 0 0 8px rgba(251,191,36,0.9), 0 0 16px rgba(251,191,36,0.7), 0 0 24px rgba(251,191,36,0.5);
+                text-shadow: 
+                    0 0 8px rgba(251,191,36,0.9), 
+                    0 0 16px rgba(251,191,36,0.7),
+                    0 0 24px rgba(251,191,36,0.5);
             }
         }
 
-        /* Mission Command Alert - GREEN ORBITRON */
+        /* Mission Command Alert - GREEN ORBITRON STYLING */
         .mission-command-alert {
             background: linear-gradient(135deg, rgba(15, 23, 42, 0.3) 0%, rgba(30, 41, 59, 0.3) 100%);
             backdrop-filter: blur(2px);
             border: 1px solid rgba(0, 150, 255, 0.5);
             border-radius: 15px;
-            box-shadow: 0 12px 40px rgba(0, 150, 255, 0.3), inset 0 1px 0 rgba(0,150,255,0.4), inset 0 -1px 0 rgba(0,150,255,0.2);
+            box-shadow: 
+                0 12px 40px rgba(0, 150, 255, 0.3),
+                inset 0 1px 0 rgba(0,150,255,0.4),
+                inset 0 -1px 0 rgba(0,150,255,0.2);
             cursor: auto !important;
             pointer-events: auto !important;
             transform-style: preserve-3d;
@@ -92,20 +121,36 @@
             line-height: 1.6 !important;
         }
 
-        /* Achievement Popup - HIDE DURING INTRO */
+        /* ADD THE MOBILE STYLES HERE */
+        @media (max-width: 768px) {
+            #missionCommandAlert {
+                max-width: 95% !important;
+                width: 95% !important;
+                padding: 24px !important;
+                left: 50% !important;
+                right: auto !important;
+            }
+            
+            #missionCommandAlert h2 {
+                font-size: 1.25rem !important;
+                margin-bottom: 12px !important;
+            }
+            
+            #missionCommandText {
+                font-size: 0.95rem !important;
+                line-height: 1.5 !important;
+                word-wrap: break-word !important;
+            }
+        }
+        
+        /* Achievement Popup Priority */
         #achievementPopup {
             z-index: 999 !important;
             position: fixed !important;
             pointer-events: auto !important;
         }
 
-        /* CRITICAL: Hide achievement popup during intro */
-        body.intro-active #achievementPopup {
-            display: none !important;
-            visibility: hidden !important;
-            opacity: 0 !important;
-        }
-
+        /* Achievement animations */
         @keyframes achievementSlide {
             0% { transform: translate(-50%, 100px); opacity: 0; }
             20% { transform: translate(-50%, 0); opacity: 1; }
@@ -148,82 +193,59 @@
             color: rgba(255,200,100,0.8);
         }
 
-        /* Combat effects */
+        /* Combat and warp effects */
         @keyframes fadeToWhite {
             0% { opacity: 0; }
             100% { opacity: 1; background: white; }
         }
 
         @keyframes centralBlast {
-            0% { transform: translate(-50%, -50%) scale(0); opacity: 1; }
-            50% { transform: translate(-50%, -50%) scale(1); opacity: 0.8; }
-            100% { transform: translate(-50%, -50%) scale(3); opacity: 0; }
+            0% { 
+                transform: translate(-50%, -50%) scale(0);
+                opacity: 1;
+            }
+            50% {
+                transform: translate(-50%, -50%) scale(1);
+                opacity: 0.8;
+            }
+            100% { 
+                transform: translate(-50%, -50%) scale(3);
+                opacity: 0;
+            }
         }
 
         @keyframes hyperspace-stretch {
-            0% { transform: rotate(var(--rotation, 0deg)) scaleX(0); opacity: 0; }
-            20% { opacity: 1; }
-            100% { transform: rotate(var(--rotation, 0deg)) scaleX(1); opacity: 0; }
+            0% { 
+                transform: rotate(var(--rotation, 0deg)) scaleX(0);
+                opacity: 0;
+            }
+            20% {
+                opacity: 1;
+            }
+            100% { 
+                transform: rotate(var(--rotation, 0deg)) scaleX(1);
+                opacity: 0;
+            }
         }
 
-        /* Enhanced star field effects */
-        .star {
-            position: absolute;
-            width: 2px;
-            height: 2px;
-            background: white;
-            border-radius: 50%;
-            animation: starStretch 1.2s ease-out forwards;
-            transform-origin: center;
-            box-shadow: 0 0 4px rgba(255, 255, 255, 0.8);
-        }
-
-        /* Thrust Indicator - Vertical meter on right side */
-        .thrust-indicator {
-            position: fixed;
-            right: 20px;
-            top: 50%;
-            transform: translateY(-50%);
-            width: 12px;
-            height: 300px;
-            background: rgba(0, 0, 0, 0.5);
-            border: 2px solid rgba(0, 150, 255, 0.6);
-            border-radius: 6px;
-            z-index: 50;
-            pointer-events: none;
-            box-shadow: 0 0 15px rgba(0, 150, 255, 0.3), inset 0 0 10px rgba(0, 0, 0, 0.5);
-        }
-
-        .thrust-fill {
-            position: absolute;
-            bottom: 0;
-            left: 0;
-            width: 100%;
-            background: linear-gradient(to top, #ff0066 0%, #ff6600 50%, #00ff66 100%);
-            border-radius: 4px;
-            transition: height 0.1s ease-out;
-            box-shadow: 0 0 10px rgba(0, 255, 150, 0.5), inset 0 0 5px rgba(255, 255, 255, 0.3);
-        }
-
-        .thrust-indicator::before {
-            content: 'THRUST';
-            position: absolute;
-            top: -25px;
-            left: 50%;
-            transform: translateX(-50%);
-            font-family: 'Orbitron', monospace;
-            font-size: 10px;
-            color: rgba(0, 255, 200, 0.9);
-            text-shadow: 0 0 8px rgba(0, 255, 200, 0.6);
-            white-space: nowrap;
-        }
-
-        /* MOBILE STYLES */
+        /* =============================================================================
+           MOBILE STYLES
+           ============================================================================= */
+        
         @media (max-width: 768px) and (pointer: coarse), 
                (max-width: 768px) and (hover: none), 
                (pointer: coarse) and (hover: none) {
-            .ui-panel { display: none !important; }
-            .mobile-controls { display: flex !important; }
+            /* Hide desktop UI on mobile */
+            .ui-panel {
+                display: none !important;
+            }
+            
+            /* Show mobile controls */
+            .mobile-controls {
+                display: flex !important;
+            }
+            
+            /* Enhanced mobile crosshair */
             .crosshair {
                 width: 32px !important;
                 height: 32px !important;
@@ -231,22 +253,32 @@
                 border-color: rgba(0, 255, 0, 0.9) !important;
                 z-index: 150 !important;
             }
+            
+            /* Enable touch controls */
             body {
                 cursor: auto !important;
                 touch-action: pan-x pan-y;
             }
-            #gameCanvas { touch-action: none; }
+
+            #gameCanvas {
+                touch-action: none;
+            }
+
+            /* Hide during intro */
             body.intro-active #achievementPopup,
             body.intro-active .mobile-controls,
             body.intro-active .nav-panel-mobile {
                 display: none !important;
             }
+
+            /* Mobile tutorial positioning */
             .mission-command-alert {
                 top: 15% !important;
                 transform: translate(-50%, -50%) !important;
             }
         }
 
+        /* Mobile control buttons */
         .mobile-controls {
             position: fixed;
             bottom: 20px;
@@ -274,7 +306,9 @@
             transition: all 0.2s ease;
             font-family: 'Orbitron', monospace;
             font-weight: 600;
-            box-shadow: 0 4px 15px rgba(0, 150, 255, 0.3), inset 0 1px 0 rgba(0, 150, 255, 0.4);
+            box-shadow: 
+                0 4px 15px rgba(0, 150, 255, 0.3),
+                inset 0 1px 0 rgba(0, 150, 255, 0.4);
             transform-style: preserve-3d;
             perspective: 600px;
             transform: perspective(600px) rotateX(-2deg) translateZ(3px);
@@ -284,7 +318,10 @@
         .mobile-btn:active {
             transform: perspective(600px) rotateX(-2deg) translateZ(1px) scale(0.95);
             background: linear-gradient(135deg, rgba(0, 200, 255, 0.3), rgba(0, 150, 255, 0.4));
-            box-shadow: 0 0 20px rgba(0, 255, 200, 0.4), 0 6px 20px rgba(0, 150, 255, 0.3), inset 0 1px 0 rgba(0, 255, 200, 0.4);
+            box-shadow: 
+                0 0 20px rgba(0, 255, 200, 0.4),
+                0 6px 20px rgba(0, 150, 255, 0.3),
+                inset 0 1px 0 rgba(0, 255, 200, 0.4);
         }
 
         .mobile-btn.fire {
@@ -301,6 +338,7 @@
             transform: perspective(600px) rotateX(-3deg) translateZ(2px) scale(0.92);
         }
 
+        /* Mobile navigation panel */
         .nav-panel-mobile {
             position: fixed;
             top: 0;
@@ -315,12 +353,16 @@
             z-index: 200;
             transition: right 0.3s ease;
             overflow-y: auto;
-            box-shadow: -10px 0 30px rgba(0, 150, 255, 0.3), inset 1px 0 0 rgba(0, 150, 255, 0.4);
+            box-shadow: 
+                -10px 0 30px rgba(0, 150, 255, 0.3),
+                inset 1px 0 0 rgba(0, 150, 255, 0.4);
             transform-style: preserve-3d;
             perspective: 1200px;
         }
 
-        .nav-panel-mobile.active { right: 0; }
+        .nav-panel-mobile.active {
+            right: 0;
+        }
 
         .nav-panel-mobile h3 {
             color: rgba(0, 255, 200, 0.9);
@@ -333,6 +375,7 @@
             filter: drop-shadow(0 0 8px rgba(0,255,200,0.6));
         }
 
+        /* Mobile popups */
         .mobile-popup {
             position: fixed;
             top: 0;
@@ -348,7 +391,9 @@
             padding: 20px;
         }
 
-        .mobile-popup.active { display: flex !important; }
+        .mobile-popup.active {
+            display: flex !important;
+        }
 
         .mobile-popup-content {
             background: linear-gradient(135deg, rgba(15, 23, 42, 0.4), rgba(30, 41, 59, 0.4));
@@ -361,7 +406,9 @@
             max-height: 80vh;
             overflow-y: auto;
             font-family: 'Orbitron', monospace;
-            box-shadow: 0 20px 60px rgba(0, 150, 255, 0.4), inset 0 2px 15px rgba(0,150,255,0.3);
+            box-shadow: 
+                0 20px 60px rgba(0, 150, 255, 0.4),
+                inset 0 2px 15px rgba(0,150,255,0.3);
             transform-style: preserve-3d;
             perspective: 1200px;
             transform: perspective(1000px) rotateX(-2deg) translateZ(5px);
@@ -387,6 +434,7 @@
             height: 30px;
         }
         
+        /* Force hide mobile on desktop */
         @media (min-width: 769px) and (pointer: fine) and (hover: hover) {
             .mobile-controls,
             .nav-panel-mobile,
@@ -401,6 +449,7 @@
     <div class="cyberpunk-bg"></div>
     <div class="crosshair" id="crosshair"></div>
     
+    <!-- Main Game Container -->
     <div id="gameContainer" class="relative w-full h-screen">
         <!-- Title Header -->
         <div class="absolute top-4 left-1/2 transform -translate-x-1/2 ui-panel title-header rounded-lg p-4 z-10" style="left: 50%; transform: translateX(-50%);">
@@ -408,7 +457,7 @@
             <div class="text-xs text-center text-gray-400 mt-1 opacity-80">A Gravitational Space Explorer by ChiLab</div>
         </div>
 
-        <!-- Flight Controls Panel -->
+        <!-- Flight Controls Panel (Top Left) -->
         <div class="absolute top-14 left-4 ui-panel top-left rounded-lg p-3 z-10">
             <h3 class="text-sm font-bold text-cyan-400 glow-text mb-2 cyber-title curved-element">FLIGHT CONTROLS</h3>
             <div class="text-xs text-gray-300 opacity-80 curved-element mb-3">
@@ -430,7 +479,7 @@
             </div>
         </div>
 
-        <!-- Status Panel -->
+        <!-- Status Panel (Bottom Left) -->
         <div class="absolute bottom-4 left-4 ui-panel bottom-left rounded-lg p-3 z-10">
             <h3 class="text-sm font-bold text-cyan-400 glow-text mb-2 cyber-title curved-element">SHIP STATUS</h3>
             <div class="space-y-2 text-sm curved-element">
@@ -462,7 +511,9 @@
                 <div id="blackHoleDistanceHUD" class="text-yellow-100 text-xs"></div>
             </div>
             
-            <div id="availableTargets" class="space-y-2 max-h-40 overflow-y-auto"></div>
+            <div id="availableTargets" class="space-y-2 max-h-40 overflow-y-auto">
+                <!-- Dynamic content will be inserted here -->
+            </div>
             
             <button id="autoNavigateBtn" class="w-full mt-4 space-btn rounded px-4 py-2 disabled:opacity-50 disabled:cursor-not-allowed">
                 <i class="fas fa-crosshairs mr-2"></i>Auto-Navigate to Target
@@ -472,7 +523,7 @@
             </button>
         </div>
 
-        <!-- Galaxy Map -->
+        <!-- Enhanced Round Galaxy Map -->
         <div class="absolute bottom-4 right-4 ui-panel bottom-right rounded-lg p-4 z-10">
             <div class="flex justify-between items-center mb-2">
                 <h3 class="text-sm font-bold text-cyan-400 glow-text">Map</h3>
@@ -501,23 +552,23 @@
             </div>
         </div>
 
-        <!-- Event Horizon Warning -->
+         <!-- Enhanced Event Horizon Warning -->
         <div id="eventHorizonWarning" class="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 hidden z-40">
-            <div class="text-center ui-panel rounded-lg p-6 bg-red-900 bg-opacity-80 border-red-400">
-                <div class="text-6xl mb-4 pulse">⚠️</div>
+            <div class="text-center">
+                <div class="text-6xl mb-4">⚠</div>
                 <h2 class="text-3xl font-bold mb-2">EVENT HORIZON APPROACHING</h2>
                 <p class="mb-2">Use the black hole's gravity to slingshot across the universe!</p>
                 <div class="text-sm">Warning Distance: 400 units | Auto-Warp at 160 units</div>
             </div>
         </div>
         
-        <!-- Mission Command Alert -->
-        <div id="missionCommandAlert" class="absolute mission-command-alert p-6 max-w-lg hidden z-50" style="top: 85%; left: 50%; transform: translate(-50%, -50%);">
-            <div class="text-center">
-                <h2 class="text-xl font-bold text-cyan-400 mb-2">MISSION COMMAND</h2>
-                <div id="missionCommandText" class="text-gray-300 mb-4"></div>
-            </div>
-        </div>
+        <!-- Mission Command Alert - Green ORBITRON Styling -->
+        <div id="missionCommandAlert" class="absolute mission-command-alert p-6 hidden z-50" style="top: 85%; left: 50%; transform: translate(-50%, -50%); max-width: 90%; width: 600px;">
+    <div class="text-center">
+        <h2 class="text-xl font-bold text-cyan-400 mb-2">MISSION COMMAND</h2>
+        <div id="missionCommandText" class="text-gray-300 mb-4"></div>
+    </div>
+</div>
         
         <!-- Loading Screen -->
         <div id="loadingScreen" class="absolute inset-0 bg-black bg-opacity-95 flex items-center justify-center z-50">
@@ -532,17 +583,6 @@
                     <div id="loadingBar" class="loading-bar h-full rounded" style="width: 0%"></div>
                 </div>
                 <p id="loadingText" class="text-sm text-gray-400 mt-2 mono-text">Starting enhanced systems...</p>
-            </div>
-        </div>
-
-        <!-- Achievement Popup -->
-        <div id="achievementPopup" class="absolute bottom-4 left-1/2 transform -translate-x-1/2 ui-panel rounded-lg p-4 hidden z-70">
-            <div class="flex items-center space-x-3">
-                <div class="achievement-icon"></div>
-                <div>
-                    <h4 class="font-bold text-cyan-400 glow-text">Achievement Unlocked!</h4>
-                    <p id="achievementText" class="text-sm text-gray-300"></p>
-                </div>
             </div>
         </div>
 
@@ -592,13 +632,19 @@
         </div>
     </div>
 
+<!-- Achievement Popup -->
+        <div id="achievementPopup" class="hidden fixed bottom-20 left-1/2 transform -translate-x-1/2 z-50 pointer-events-auto">
+            <div class="ui-panel rounded-lg p-4 text-center" style="min-width: 300px; background: linear-gradient(135deg, rgba(15, 23, 42, 0.95), rgba(30, 41, 59, 0.95)); backdrop-filter: blur(10px);">
+                <h4 class="text-lg font-bold text-cyan-400 glow-text mb-2 cyber-title">Achievement!</h4>
+                <p id="achievementText" class="text-sm text-gray-300"></p>
+            </div>
+        </div>
+    </div>
+
     <!-- MOBILE CONTROLS -->
     <div class="mobile-controls">
         <button class="mobile-btn" onclick="showMobilePanel('controls')" title="Flight Controls">
             <i class="fas fa-gamepad"></i>
-        </button>
-        <button class="mobile-btn" onclick="showMobilePanel('status')" title="Ship Status">
-            <i class="fas fa-tachometer-alt"></i>
         </button>
         <button class="mobile-btn" onmousedown="startForwardThrust()" onmouseup="stopForwardThrust()" ontouchstart="startForwardThrust()" ontouchend="stopForwardThrust()" title="Forward Thrust">
             <i class="fas fa-arrow-up"></i>
@@ -672,7 +718,7 @@
             </div>
         </div>
     </div>
-
+    
     <!-- Game Scripts -->
     <script src="js/cosmic-features.js"></script>
     <script src="js/game-objects.js"></script>
@@ -682,383 +728,10 @@
     <script src="js/game-intro.js"></script>
     <script src="js/game-core.js"></script>
 
-    <!-- MOBILE SCRIPT - ALL INLINE FROM INDEXX2.HTML -->
-    <script>
-        // Mobile settings
-        let mobileSettings = {
-            crosshairTargeting: true,
-            targetMode: true,
-            forwardThrust: false
-        };
+    <!-- Mobile Script -->
+    <script src="js/mobile-controls.js"></script>
 
-        document.addEventListener('DOMContentLoaded', () => {
-            if (window.innerWidth <= 768 || 'ontouchstart' in window) {
-                console.log('📱 Mobile device detected');
-                mobileSettings.crosshairTargeting = true;
-                mobileSettings.targetMode = true;
-                
-                setTimeout(() => {
-                    if (typeof gameState !== 'undefined') {
-                        gameState.targetLock = gameState.targetLock || {};
-                        gameState.targetLock.active = true;
-                        console.log('📱 Target mode activated');
-                    }
-                }, 2000);
-
-                setupMobileLaunchMusicTrigger();
-            }
-        });
-
-        function setupMobileLaunchMusicTrigger() {
-            const observer = new MutationObserver((mutations) => {
-                mutations.forEach((mutation) => {
-                    mutation.addedNodes.forEach((node) => {
-                        if (node.nodeType === 1 && (node.classList?.contains('intro-start-btn') || node.textContent?.includes('LAUNCH'))) {
-                            const originalClick = node.onclick;
-                            node.onclick = function(e) {
-                                if (typeof startBackgroundMusic === 'function') {
-                                    setTimeout(() => startBackgroundMusic(), 500);
-                                }
-                                if (typeof resumeAudioContext === 'function') {
-                                    resumeAudioContext();
-                                }
-                                if (originalClick) {
-                                    originalClick.call(this, e);
-                                }
-                            };
-                        }
-                    });
-                });
-            });
-            
-            observer.observe(document.body, { childList: true, subtree: true });
-        }
-
-        function startForwardThrust() {
-            mobileSettings.forwardThrust = true;
-            if (typeof keys !== 'undefined') keys.w = true;
-            if (typeof playSound === 'function') playSound('thrust', 400, 0.1);
-        }
-
-        function stopForwardThrust() {
-            mobileSettings.forwardThrust = false;
-            if (typeof keys !== 'undefined') keys.w = false;
-        }
-
-        function showMobilePanel(panelName) {
-            const popup = document.getElementById(panelName + 'Popup');
-            if (popup) {
-                if (panelName === 'status') updateMobileStatus();
-                popup.classList.add('active');
-                if (typeof playSound === 'function') playSound('ui_click', 800, 0.1);
-            }
-        }
-
-        function hideMobilePanel(panelName) {
-            const popup = document.getElementById(panelName + 'Popup');
-            if (popup) popup.classList.remove('active');
-        }
-
-        function updateMobileStatus() {
-            if (typeof gameState === 'undefined') return;
-            
-            const updates = {
-                'mobileVelocity': gameState.velocity ? (gameState.velocity * 1000).toFixed(0) + ' km/s' : '0.0 km/s',
-                'mobileDistance': gameState.distance ? gameState.distance.toFixed(1) + ' ly' : '0.0 ly',
-                'mobileEnergy': gameState.energy ? Math.round(gameState.energy) + '%' : '100%',
-                'mobileHull': gameState.hull ? Math.round(gameState.hull) + '%' : '100%',
-                'mobileWarpCount': gameState.emergencyWarpCount || 5,
-                'mobileLocation': gameState.location || 'Local Galaxy',
-                'mobileTarget': gameState.currentTarget ? gameState.currentTarget.userData.name : 'None',
-                'mobileGalaxies': (gameState.galaxiesCleared || 0) + '/8'
-            };
-
-            Object.entries(updates).forEach(([id, value]) => {
-                const element = document.getElementById(id);
-                if (element) element.textContent = value;
-            });
-        }
-
-        function mobileFireWeapon() {
-            if (typeof keys !== 'undefined') {
-                keys.space = true;
-                setTimeout(() => keys.space = false, 100);
-            }
-            if (typeof playSound === 'function') playSound('weapon', 800, 0.2);
-        }
-
-        function mobileBrakes() {
-            if (typeof keys !== 'undefined') {
-                keys.x = true;
-                setTimeout(() => keys.x = false, 200);
-            }
-            if (typeof playSound === 'function') playSound('ui_click', 600, 0.1);
-        }
-
-        function mobileAutoNavigate() {
-            if (typeof toggleAutoNavigate === 'function') {
-                toggleAutoNavigate();
-            } else {
-                const autoNavBtn = document.getElementById('autoNavigateBtn');
-                if (autoNavBtn) autoNavBtn.click();
-            }
-            if (typeof playSound === 'function') playSound('navigation', 1000, 0.15);
-            setTimeout(() => hideNavPanel(), 500);
-        }
-
-        function mobileWarpAction() {
-            if (typeof executeSlingshot === 'function') {
-                executeSlingshot();
-            } else {
-                if (typeof keys !== 'undefined') {
-                    keys.Enter = true;
-                    setTimeout(() => keys.Enter = false, 100);
-                }
-            }
-            hideNavPanel();
-        }
-
-        function mobileEmergencyWarp() {
-            if (typeof keys !== 'undefined') {
-                keys.o = true;
-                setTimeout(() => keys.o = false, 100);
-            }
-            if (typeof playSound === 'function') playSound('warp', 400, 0.3);
-        }
-
-        function showNavPanel() {
-            const navPanel = document.getElementById('navPanelMobile');
-            if (navPanel) {
-                updateMobileNavigation();
-                navPanel.classList.add('active');
-                if (typeof playSound === 'function') playSound('ui_open', 1200, 0.1);
-            }
-        }
-
-        function hideNavPanel() {
-            const navPanel = document.getElementById('navPanelMobile');
-            if (navPanel) navPanel.classList.remove('active');
-        }
-
-        function updateMobileNavigation() {
-            const mobileTargetsContainer = document.getElementById('mobileAvailableTargets');
-            if (!mobileTargetsContainer) return;
-
-            mobileTargetsContainer.innerHTML = '';
-            
-            if (typeof populateTargets === 'function') populateTargets();
-            
-            const desktopTargets = document.getElementById('availableTargets');
-            if (desktopTargets) {
-                const targetCards = desktopTargets.querySelectorAll('.planet-card');
-                targetCards.forEach(card => {
-                    const mobileCard = card.cloneNode(true);
-                    mobileCard.style.cssText += `
-                        background: linear-gradient(135deg, rgba(15, 23, 42, 0.4), rgba(30, 41, 59, 0.4));
-                        backdrop-filter: blur(8px);
-                        border: 1px solid rgba(0, 150, 255, 0.5);
-                        margin-bottom: 8px;
-                        font-family: 'Orbitron', monospace;
-                        transform: perspective(600px) rotateX(-1deg) translateZ(2px);
-                    `;
-                    mobileCard.onclick = (e) => {
-                        card.click();
-                        setTimeout(() => hideNavPanel(), 300);
-                        if (typeof playSound === 'function') playSound('navigation', 900, 0.1);
-                    };
-                    mobileTargetsContainer.appendChild(mobileCard);
-                });
-            }
-            
-            const mobileAutoNavBtn = document.getElementById('mobileAutoNavigateBtn');
-            const desktopAutoNavBtn = document.getElementById('autoNavigateBtn');
-            if (mobileAutoNavBtn && desktopAutoNavBtn) {
-                mobileAutoNavBtn.innerHTML = desktopAutoNavBtn.innerHTML;
-                mobileAutoNavBtn.disabled = desktopAutoNavBtn.disabled;
-            }
-            
-            const mobileWarpBtn = document.getElementById('mobileWarpBtn');
-            const desktopWarpBtn = document.getElementById('warpBtn');
-            if (mobileWarpBtn && desktopWarpBtn) {
-                mobileWarpBtn.innerHTML = desktopWarpBtn.innerHTML;
-                mobileWarpBtn.disabled = desktopWarpBtn.disabled;
-            }
-            
-            if (mobileTargetsContainer.children.length === 0) {
-                mobileTargetsContainer.innerHTML = '<div style="text-align: center; opacity: 0.7; font-family: Orbitron, monospace; padding: 20px;">No targets available</div>';
-            }
-        }
-
-        // Touch controls
-        let touchStartX = 0, touchStartY = 0, isTouching = false;
-        let touchStartTime = 0, hasMoved = false, totalMovement = 0;
-
-        document.addEventListener('touchstart', (e) => {
-            if (e.target.id === 'gameCanvas' || e.target.closest('#gameContainer')) {
-                const touch = e.touches[0];
-                touchStartX = touch.clientX;
-                touchStartY = touch.clientY;
-                touchStartTime = Date.now();
-                isTouching = true;
-                hasMoved = false;
-                totalMovement = 0;
-                e.preventDefault();
-            }
-        }, { passive: false });
-
-        document.addEventListener('touchmove', (e) => {
-            if (isTouching && typeof camera !== 'undefined') {
-                const touch = e.touches[0];
-                const deltaX = touch.clientX - touchStartX;
-                const deltaY = touch.clientY - touchStartY;
-                
-                totalMovement += Math.abs(deltaX) + Math.abs(deltaY);
-                if (totalMovement > 10) hasMoved = true;
-                
-                camera.rotation.y -= deltaX * 0.005;
-                camera.rotation.x -= deltaY * 0.005;
-                camera.rotation.x = Math.max(-Math.PI/2, Math.min(Math.PI/2, camera.rotation.x));
-                
-                touchStartX = touch.clientX;
-                touchStartY = touch.clientY;
-                e.preventDefault();
-            }
-        }, { passive: false });
-
-        document.addEventListener('touchend', (e) => {
-            if (isTouching) {
-                const touchDuration = Date.now() - touchStartTime;
-                
-                if (!hasMoved && touchDuration < 300 && totalMovement < 15 && mobileSettings.crosshairTargeting) {
-                    mobileFireWeapon();
-                    
-                    const crosshair = document.getElementById('crosshair');
-                    if (crosshair) {
-                        crosshair.style.borderColor = 'rgba(255, 100, 100, 1)';
-                        crosshair.style.boxShadow = '0 0 25px rgba(255, 100, 100, 0.8)';
-                        crosshair.style.transform = 'translate(-50%, -50%) scale(1.3)';
-                        
-                        setTimeout(() => {
-                            crosshair.style.borderColor = 'rgba(0, 255, 0, 0.9)';
-                            crosshair.style.boxShadow = '0 0 15px rgba(0, 255, 0, 0.7)';
-                            crosshair.style.transform = 'translate(-50%, -50%) scale(1)';
-                        }, 200);
-                    }
-                }
-            }
-            isTouching = false;
-        });
-
-        // Swipe gesture
-        let swipeStartX = 0, isSwipeGesture = false;
-
-        document.addEventListener('touchstart', (e) => {
-            const touch = e.touches[0];
-            const screenWidth = window.innerWidth;
-            if (touch.clientX > screenWidth - 40) {
-                swipeStartX = touch.clientX;
-                isSwipeGesture = true;
-            }
-        });
-
-        document.addEventListener('touchmove', (e) => {
-            if (isSwipeGesture) {
-                const touch = e.touches[0];
-                const deltaX = swipeStartX - touch.clientX;
-                if (deltaX > 60) {
-                    showNavPanel();
-                    isSwipeGesture = false;
-                }
-            }
-        });
-
-        document.addEventListener('touchend', () => { isSwipeGesture = false; });
-
-        document.addEventListener('click', (e) => {
-            const navPanel = document.getElementById('navPanelMobile');
-            if (navPanel && navPanel.classList.contains('active') && !navPanel.contains(e.target)) {
-                hideNavPanel();
-            }
-            if (e.target.classList.contains('mobile-popup')) {
-                e.target.classList.remove('active');
-            }
-        });
-
-        setInterval(() => {
-            const statusPopup = document.getElementById('statusPopup');
-            if (statusPopup && statusPopup.classList.contains('active')) {
-                updateMobileStatus();
-            }
-            
-            const navPanel = document.getElementById('navPanelMobile');
-            if (navPanel && navPanel.classList.contains('active')) {
-                updateMobileNavigation();
-            }
-        }, 1000);
-        
-        // Show mobile controls after intro
-        document.addEventListener('DOMContentLoaded', () => {
-            let introCompleted = false;
-            
-            function showMobileControlsIfMobile() {
-                function isMobileDevice() {
-                    const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
-                    const isNarrowScreen = window.innerWidth <= 768;
-                    const isCoarsePointer = window.matchMedia("(pointer: coarse)").matches;
-                    return isTouchDevice && (isNarrowScreen || isCoarsePointer);
-                }
-                
-                if (isMobileDevice()) {
-                    const mobileControls = document.querySelector('.mobile-controls');
-                    const navPanelMobile = document.querySelector('.nav-panel-mobile');
-                    if (mobileControls) {
-                        mobileControls.style.display = 'flex';
-                        console.log('📱 Mobile controls now visible');
-                    }
-                    if (navPanelMobile) {
-                        navPanelMobile.style.display = 'block';
-                    }
-                }
-            }
-            
-            const observer = new MutationObserver((mutations) => {
-                mutations.forEach((mutation) => {
-                    if (mutation.type === 'attributes' && mutation.attributeName === 'class') {
-                        const body = document.body;
-                        if (!body.classList.contains('intro-active') && !introCompleted) {
-                            introCompleted = true;
-                            setTimeout(() => {
-                                const loadingScreen = document.getElementById('loadingScreen');
-                                if (!loadingScreen || loadingScreen.style.display === 'none') {
-                                    showMobileControlsIfMobile();
-                                } else {
-                                    const loadingObserver = new MutationObserver(() => {
-                                        if (loadingScreen.style.display === 'none') {
-                                            showMobileControlsIfMobile();
-                                            loadingObserver.disconnect();
-                                        }
-                                    });
-                                    loadingObserver.observe(loadingScreen, { attributes: true, attributeFilter: ['style'] });
-                                }
-                            }, 1000);
-                        }
-                    }
-                });
-            });
-            
-            observer.observe(document.body, { attributes: true });
-        });
-
-        document.addEventListener('touchstart', (e) => {
-            if (e.touches.length > 1) e.preventDefault();
-        }, { passive: false });
-
-        window.addEventListener('beforeunload', () => {
-            if (mobileSettings.forwardThrust) stopForwardThrust();
-        });
-    </script>
-
-    <!-- Initialization -->
+    <!-- Initialization Script -->
     <script>
         let gameInitialized = false;
 
