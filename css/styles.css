@@ -615,7 +615,7 @@ body.ui-mode {
     color: rgba(255, 255, 255, 0.95);
     border-radius: 15px;
     padding: 20px;
-    border: 2px solid rgba(255,255,0,0.2);
+    border: 2px solid rgba(255,255,0,0.4);
     backdrop-filter: blur(3px);
 }
 
@@ -842,6 +842,31 @@ body.mobile-mode .mobile-ui {
     max-width: 90vw;
     max-height: 80vh;
     overflow-y: auto;
+}
+
+/* Tutorial Message Mobile Optimization */
+#missionCommandAlert {
+    max-width: 600px;
+    width: 90%;
+}
+
+@media (max-width: 768px) {
+    #missionCommandAlert {
+        max-width: 95% !important;
+        width: 95% !important;
+        padding: 24px !important;
+    }
+    
+    #missionCommandAlert h2 {
+        font-size: 1.25rem !important;
+        margin-bottom: 12px !important;
+    }
+    
+    #missionCommandText {
+        font-size: 0.95rem !important;
+        line-height: 1.5 !important;
+        word-wrap: break-word !important;
+    }
 }
 
 @media (max-width: 768px) {
