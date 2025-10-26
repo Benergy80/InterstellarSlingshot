@@ -307,11 +307,11 @@ function updateAutoNavigateButton() {
 function updateMobileFloatingStatus() {
     if (typeof gameState === 'undefined') return;
     
+    // MINIMAL STATUS: Only Hull, Energy, and Emergency Warps
     const updates = {
-        'mobileFloatingVelocity': gameState.velocity ? (gameState.velocity * 1000).toFixed(0) + ' km/s' : '0.0 km/s',
-        'mobileFloatingDistance': gameState.distance ? gameState.distance.toFixed(1) + ' ly' : '0.0 ly',
+        'mobileFloatingHull': gameState.hull ? Math.round(gameState.hull) + '%' : '100%',
         'mobileFloatingEnergy': gameState.energy ? Math.round(gameState.energy) + '%' : '100%',
-        'mobileFloatingHull': gameState.hull ? Math.round(gameState.hull) + '%' : '100%'
+        'mobileFloatingWarps': gameState.emergencyWarp?.available ?? (gameState.emergencyWarpCount || 5)
     };
     
     Object.entries(updates).forEach(([id, value]) => {
@@ -319,13 +319,6 @@ function updateMobileFloatingStatus() {
         if (element) element.textContent = value;
     });
 }
-
-// Call this in your main game loop or animation frame
-setInterval(() => {
-    if (window.innerWidth <= 768) {
-        updateMobileFloatingStatus();
-    }
-}, 100);
 
 // =============================================================================
 // ENHANCED TARGET SYSTEM - INTEGRATED WITH CONTROLS + COSMIC FEATURES
@@ -1664,6 +1657,11 @@ function updateAllUISystems() {
     
     // Victory condition check
     checkVictoryCondition();
+    
+    // Mobile UI updates
+    if (typeof updateMobileFloatingStatus === 'function') {
+        updateMobileFloatingStatus();
+    }
 }
 
 // =============================================================================
@@ -1859,9 +1857,19 @@ function createMobileUIContainer() {
         height: 100%;
         pointer-events: none;
         z-index: 10;
+        display: none;
     `;
     
     document.body.appendChild(mobileUI);
+    
+    // Show mobile UI only after game starts
+    const checkGameStarted = setInterval(() => {
+        if (typeof gameState !== 'undefined' && gameState.gameStarted && !document.body.classList.contains('intro-active')) {
+            mobileUI.style.display = 'block';
+            console.log('📱 Mobile UI now visible - game started');
+            clearInterval(checkGameStarted);
+        }
+    }, 500);
 }
 
 function createMobileTopBar() {
@@ -1943,32 +1951,108 @@ function createMobileFloatingStatus() {
         left: 50%;
         transform: translateX(-50%);
         display: flex;
-        gap: 12px;
+        gap: 10px;
         z-index: 20;
         pointer-events: none;
         font-family: 'Orbitron', monospace;
     `;
     
+    // MINIMAL STATUS: Only Hull, Energy, and Emergency Warps
     floatingStatus.innerHTML = `
-        <div class="mobile-stat-pill" style="background: linear-gradient(135deg, rgba(15, 23, 42, 0.85), rgba(30, 41, 59, 0.85)); backdrop-filter: blur(10px); border: 1px solid rgba(0, 150, 255, 0.5); border-radius: 20px; padding: 8px 14px; font-size: 13px; font-weight: 600; color: #4ade80; text-shadow: 0 0 8px rgba(74, 222, 128, 0.6);">
-            <i class="fas fa-tachometer-alt" style="margin-right: 6px; color: rgba(0, 200, 255, 0.8);"></i>
-            <span id="mobileFloatingVelocity">0.0 km/s</span>
+        <div class="mobile-stat-pill" style="background: linear-gradient(135deg, rgba(15, 23, 42, 0.85), rgba(30, 41, 59, 0.85)); backdrop-filter: blur(10px); border: 1px solid rgba(248, 113, 113, 0.5); border-radius: 20px; padding: 8px 14px; font-size: 13px; font-weight: 600; color: #f87171; text-shadow: 0 0 8px rgba(248, 113, 113, 0.6);">
+            <i class="fas fa-shield-alt" style="margin-right: 6px; color: rgba(248, 113, 113, 0.8);"></i>
+            <span id="mobileFloatingHull">100%</span>
         </div>
-        <div class="mobile-stat-pill" style="background: linear-gradient(135deg, rgba(15, 23, 42, 0.85), rgba(30, 41, 59, 0.85)); backdrop-filter: blur(10px); border: 1px solid rgba(0, 150, 255, 0.5); border-radius: 20px; padding: 8px 14px; font-size: 13px; font-weight: 600; color: #fbbf24; text-shadow: 0 0 8px rgba(251, 191, 36, 0.6);">
-            <i class="fas fa-route" style="margin-right: 6px; color: rgba(251, 191, 36, 0.8);"></i>
-            <span id="mobileFloatingDistance">0.0 ly</span>
-        </div>
-        <div class="mobile-stat-pill" style="background: linear-gradient(135deg, rgba(15, 23, 42, 0.85), rgba(30, 41, 59, 0.85)); backdrop-filter: blur(10px); border: 1px solid rgba(0, 150, 255, 0.5); border-radius: 20px; padding: 8px 14px; font-size: 13px; font-weight: 600; color: #60a5fa; text-shadow: 0 0 8px rgba(96, 165, 250, 0.6);">
+        <div class="mobile-stat-pill" style="background: linear-gradient(135deg, rgba(15, 23, 42, 0.85), rgba(30, 41, 59, 0.85)); backdrop-filter: blur(10px); border: 1px solid rgba(96, 165, 250, 0.5); border-radius: 20px; padding: 8px 14px; font-size: 13px; font-weight: 600; color: #60a5fa; text-shadow: 0 0 8px rgba(96, 165, 250, 0.6);">
             <i class="fas fa-bolt" style="margin-right: 6px; color: rgba(96, 165, 250, 0.8);"></i>
             <span id="mobileFloatingEnergy">100%</span>
         </div>
-        <div class="mobile-stat-pill" style="background: linear-gradient(135deg, rgba(15, 23, 42, 0.85), rgba(30, 41, 59, 0.85)); backdrop-filter: blur(10px); border: 1px solid rgba(0, 150, 255, 0.5); border-radius: 20px; padding: 8px 14px; font-size: 13px; font-weight: 600; color: #f87171; text-shadow: 0 0 8px rgba(248, 113, 113, 0.6);">
-            <i class="fas fa-shield-alt" style="margin-right: 6px; color: rgba(248, 113, 113, 0.8);"></i>
-            <span id="mobileFloatingHull">100%</span>
+        <div class="mobile-stat-pill" style="background: linear-gradient(135deg, rgba(15, 23, 42, 0.85), rgba(30, 41, 59, 0.85)); backdrop-filter: blur(10px); border: 1px solid rgba(251, 191, 36, 0.5); border-radius: 20px; padding: 8px 14px; font-size: 13px; font-weight: 600; color: #fbbf24; text-shadow: 0 0 8px rgba(251, 191, 36, 0.6);">
+            <i class="fas fa-rocket" style="margin-right: 6px; color: rgba(251, 191, 36, 0.8);"></i>
+            <span id="mobileFloatingWarps">5</span>
         </div>
     `;
     
     document.getElementById('mobileUI').appendChild(floatingStatus);
+}
+
+function updateMobileFloatingStatus() {
+    if (typeof gameState === 'undefined') return;
+    
+    const updates = {
+        'mobileFloatingVelocity': gameState.velocity ? (gameState.velocity * 1000).toFixed(0) + ' km/s' : '0.0 km/s',
+        'mobileFloatingDistance': gameState.distance ? gameState.distance.toFixed(1) + ' ly' : '0.0 ly',
+        'mobileFloatingEnergy': gameState.energy ? Math.round(gameState.energy) + '%' : '100%',
+        'mobileFloatingHull': gameState.hull ? Math.round(gameState.hull) + '%' : '100%'
+    };
+    
+    Object.entries(updates).forEach(([id, value]) => {
+        const element = document.getElementById(id);
+        if (element) element.textContent = value;
+    });
+}
+
+function createMobilePopups() {
+    const mobileUI = document.getElementById('mobileUI');
+    if (!mobileUI) return;
+    
+    // Create controls popup
+    const controlsPopup = document.createElement('div');
+    controlsPopup.className = 'mobile-popup';
+    controlsPopup.id = 'controlsPopup';
+    controlsPopup.innerHTML = `
+        <div class="mobile-popup-content">
+            <button class="mobile-popup-close" onclick="document.getElementById('controlsPopup').classList.remove('active')">&times;</button>
+            <h3>FLIGHT CONTROLS</h3>
+            <div style="font-size: 12px; line-height: 1.6;">
+                <strong>TOUCH CONTROLS:</strong><br>
+                • Drag screen: Look around<br>
+                • Tap fire button: Shoot<br>
+                • Use navigation panel for targets<br><br>
+                <strong>BUTTONS:</strong><br>
+                • 🎯 Cycle Targets<br>
+                • 🔥 Fire Weapons<br>
+                • 🚀 Emergency Warp<br>
+                • ⚙️ This Menu
+            </div>
+        </div>
+    `;
+    mobileUI.appendChild(controlsPopup);
+    
+    // Create status popup
+    const statusPopup = document.createElement('div');
+    statusPopup.className = 'mobile-popup';
+    statusPopup.id = 'statusPopup';
+    statusPopup.innerHTML = `
+        <div class="mobile-popup-content">
+            <button class="mobile-popup-close" onclick="document.getElementById('statusPopup').classList.remove('active')">&times;</button>
+            <h3>SHIP STATUS</h3>
+            <div style="font-size: 12px;">
+                <div style="margin-bottom: 8px;">Velocity: <span id="mobileStatusVelocity">0.0 km/s</span></div>
+                <div style="margin-bottom: 8px;">Distance: <span id="mobileStatusDistance">0.0 ly</span></div>
+                <div style="margin-bottom: 8px;">Energy: <span id="mobileStatusEnergy">100%</span></div>
+                <div style="margin-bottom: 8px;">Hull: <span id="mobileStatusHull">100%</span></div>
+                <div style="margin-bottom: 8px;">Location: <span id="mobileStatusLocation">Local Galaxy</span></div>
+            </div>
+        </div>
+    `;
+    mobileUI.appendChild(statusPopup);
+    
+    // Create navigation panel
+    const navPanel = document.createElement('div');
+    navPanel.className = 'nav-panel-mobile';
+    navPanel.id = 'navPanelMobile';
+    navPanel.innerHTML = `
+        <button class="mobile-popup-close" onclick="document.getElementById('navPanelMobile').classList.remove('active')" style="position: absolute; top: 10px; right: 10px; background: transparent; border: none; color: white; font-size: 30px; cursor: pointer;">&times;</button>
+        <h3>Navigation System</h3>
+        <div id="mobileAvailableTargets" style="max-height: 50%; overflow-y: auto; margin-bottom: 15px;"></div>
+        <button id="mobileAutoNavigateBtn" onclick="if(typeof mobileAutoNavigate === 'function') mobileAutoNavigate()" class="w-full mt-2 space-btn rounded px-4 py-2 mb-2">
+            <i class="fas fa-crosshairs mr-2"></i>Auto-Navigate to Target
+        </button>
+    `;
+    mobileUI.appendChild(navPanel);
+    
+    console.log('📱 Mobile popups created');
 }
 
 // Mobile button functions that interface with existing game functions
@@ -2017,6 +2101,83 @@ function mobileEmergencyWarp() {
     }
 }
 
+function handleMobileFire() {
+    console.log('📱 Mobile fire button pressed');
+    
+    // Ensure game is active
+    if (typeof gameState === 'undefined' || !gameState.gameStarted || gameState.gameOver) {
+        console.log('Fire blocked - game not active');
+        return;
+    }
+    
+    // Resume audio context if needed
+    if (typeof resumeAudioContext === 'function') {
+        resumeAudioContext();
+    }
+    
+    // Call the main fire weapon function
+    if (typeof fireWeapon === 'function') {
+        fireWeapon();
+        console.log('Fire weapon called successfully');
+    } else if (typeof keys !== 'undefined') {
+        // Fallback: simulate spacebar press
+        keys.space = true;
+        setTimeout(() => keys.space = false, 100);
+        console.log('Fire weapon via keys.space');
+    }
+    
+    // Visual feedback
+    const fireBtn = document.querySelector('.mobile-btn.primary');
+    if (fireBtn) {
+        fireBtn.style.transform = 'scale(0.92)';
+        setTimeout(() => {
+            fireBtn.style.transform = 'scale(1)';
+        }, 150);
+    }
+}
+
+function openMobilePopup(popupType) {
+    console.log(`📱 Opening mobile popup: ${popupType}`);
+    
+    // Don't open popups during intro
+    if (document.body.classList.contains('intro-active')) {
+        console.log('Popup blocked - intro active');
+        return;
+    }
+    
+    if (popupType === 'controls') {
+        const popup = document.getElementById('controlsPopup');
+        if (popup) {
+            popup.classList.add('active');
+            if (typeof playSound === 'function') {
+                playSound('ui_open', 1200, 0.1);
+            }
+        }
+    } else if (popupType === 'status') {
+        const popup = document.getElementById('statusPopup');
+        if (popup) {
+            if (typeof updateMobileStatus === 'function') {
+                updateMobileStatus();
+            }
+            popup.classList.add('active');
+            if (typeof playSound === 'function') {
+                playSound('ui_open', 1200, 0.1);
+            }
+        }
+    } else if (popupType === 'navigation') {
+        const navPanel = document.getElementById('navPanelMobile');
+        if (navPanel) {
+            if (typeof updateMobileNavigation === 'function') {
+                updateMobileNavigation();
+            }
+            navPanel.classList.add('active');
+            if (typeof playSound === 'function') {
+                playSound('ui_open', 1200, 0.1);
+            }
+        }
+    }
+}
+
 // =============================================================================
 // EXPORT FUNCTIONS FOR GLOBAL ACCESS
 // =============================================================================
@@ -2057,6 +2218,19 @@ if (typeof window !== 'undefined') {
     
     // Utility functions
     window.bindUIEventListeners = bindUIEventListeners;
+    
+    // Mobile UI functions
+    window.setupMobileUI = setupMobileUI;
+    window.createMobileUIContainer = createMobileUIContainer;
+    window.createMobileTopBar = createMobileTopBar;
+    window.createMobileControls = createMobileControls;
+    window.createMobileFloatingStatus = createMobileFloatingStatus;
+    window.createMobilePopups = createMobilePopups;
+    window.updateMobileFloatingStatus = updateMobileFloatingStatus;
+    window.mobileCycleTarget = mobileCycleTarget;
+    window.mobileEmergencyWarp = mobileEmergencyWarp;
+    window.handleMobileFire = handleMobileFire;
+    window.openMobilePopup = openMobilePopup;
     
     console.log('Enhanced Game UI loaded - All compatibility issues resolved!');
 }
