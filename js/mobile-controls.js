@@ -2,12 +2,16 @@
 // MOBILE CONTROLS - Complete Mobile Functionality
 // =============================================================================
 
-// Mobile settings
-let mobileSettings = {
-    crosshairTargeting: true,
-    targetMode: true,
-    forwardThrust: false
-};
+// Mobile settings - with safety check to prevent duplicate declarations
+if (typeof mobileSettings === 'undefined') {
+    var mobileSettings = {
+        crosshairTargeting: true,
+        targetMode: true,
+        forwardThrust: false
+    };
+} else {
+    console.log('📱 mobileSettings already declared, skipping initialization');
+}
 
 // Initialize mobile settings
 document.addEventListener('DOMContentLoaded', () => {
