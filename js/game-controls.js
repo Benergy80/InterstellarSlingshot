@@ -1949,7 +1949,14 @@ function initializeControlButtons() {
                 fireWeapon();
             }
         }
-        if (key === 'x') keys.x = true;
+        if (key === 'x') {
+            keys.x = true;
+            
+            // NEW: Stop warp speed starfield when braking
+            if (typeof toggleWarpSpeedStarfield === 'function') {
+                toggleWarpSpeedStarfield(false);
+            }
+        }
         if (key === 'b') keys.b = true;
         
         if (e.key === 'ArrowUp') keys.up = true;
@@ -2653,16 +2660,16 @@ function showAchievement(title, description, playAchievementSound = true) {
         popup.style.display = '';  // Clear inline display style
         popup.style.visibility = ''; // Clear inline visibility style
         popup.style.opacity = '';   // Clear inline opacity style
-        
-        // Ensure high z-index to appear above tutorial
         popup.style.zIndex = '999'; // Maximum priority
+        popup.style.position = 'fixed'; // Ensure it's always fixed
+        popup.style.pointerEvents = 'auto'; // Enable interaction
+        
         popup.classList.remove('hidden');
         
-        console.log(`✨ Achievement displaying: ${title}`);  // Debug log
+        console.log(`✨ Achievement displaying: ${title}`);
         
-        // Longer display time for boss victories and important achievements
-        const isImportant = alwaysCritical.includes(title);
-        const displayTime = isImportant ? 6000 : 4000;
+        // Longer display time for important achievements
+        const displayTime = 4000;
         
         // Play sound if requested
         if (playAchievementSound && typeof playSound === 'function') {
@@ -2672,7 +2679,7 @@ function showAchievement(title, description, playAchievementSound = true) {
         // Auto-hide after display time
         setTimeout(() => {
             popup.classList.add('hidden');
-            console.log(`✅ Achievement hidden: ${title}`);  // Debug log
+            console.log(`✅ Achievement hidden: ${title}`);
         }, displayTime);
     } else {
         console.warn('Achievement popup elements not found:', { popup, achievementText, titleElement });
@@ -2868,33 +2875,45 @@ function createTouchOverlay() {
     
     document.body.appendChild(overlay);
     
-    // Touch event handlers
+    // Touch event handlers - ONLY for camera look, NO tap-to-fire
     let isPointerDown = false;
     let lastPointerPos = { x: 0, y: 0 };
+    let hasMoved = false;
     
     overlay.addEventListener('pointerdown', (e) => {
+        // CRITICAL: Don't interfere with mobile UI buttons
+        if (e.target.closest('.mobile-btn') || 
+            e.target.closest('.mobile-controls') ||
+            e.target.closest('.mobile-popup') ||
+            e.target.closest('.nav-panel-mobile')) {
+            return; // Let button handlers take over
+        }
+        
         e.preventDefault();
         isPointerDown = true;
+        hasMoved = false;
         lastPointerPos = { x: e.clientX, y: e.clientY };
-        
-        // Tap to fire near center
-        const centerX = window.innerWidth / 2;
-        const centerY = window.innerHeight / 2;
-        const tapDistance = Math.sqrt(
-            Math.pow(e.clientX - centerX, 2) + Math.pow(e.clientY - centerY, 2)
-        );
-        
-        if (tapDistance < touchControls.fireRadius) {
-            handleMobileFire();
-        }
     });
     
     overlay.addEventListener('pointermove', (e) => {
+        // CRITICAL: Don't interfere with mobile UI buttons
+        if (e.target.closest('.mobile-btn') || 
+            e.target.closest('.mobile-controls') ||
+            e.target.closest('.mobile-popup') ||
+            e.target.closest('.nav-panel-mobile')) {
+            return;
+        }
+        
         e.preventDefault();
         
         if (isPointerDown) {
             const deltaX = e.clientX - lastPointerPos.x;
             const deltaY = e.clientY - lastPointerPos.y;
+            
+            // Track movement
+            if (Math.abs(deltaX) > 2 || Math.abs(deltaY) > 2) {
+                hasMoved = true;
+            }
             
             // Apply camera rotation
             handleMobileLook(deltaX, deltaY);
@@ -2909,8 +2928,17 @@ function createTouchOverlay() {
     });
     
     overlay.addEventListener('pointerup', (e) => {
+        // CRITICAL: Don't interfere with mobile UI buttons
+        if (e.target.closest('.mobile-btn') || 
+            e.target.closest('.mobile-controls') ||
+            e.target.closest('.mobile-popup') ||
+            e.target.closest('.nav-panel-mobile')) {
+            return;
+        }
+        
         e.preventDefault();
         isPointerDown = false;
+        hasMoved = false;
     });
     
     // Prevent default touch behaviors
@@ -3038,30 +3066,30 @@ function playEnhancedBlackHoleWarpSound() {
 
 // FIXED: Utility function to adjust minimum ship speed
 function initControls() {
-    console.log('initControls function called');
+    console.log('ðŸŽ® initControls function called');
     
     try {
         if (typeof setupEnhancedEventListeners === 'function') {
             setupEnhancedEventListeners();
-            console.log('Event listeners initialized');
+            console.log('âœ… Event listeners initialized');
         } else {
-            console.warn('setupEnhancedEventListeners not found');
+            console.warn('âš ï¸ setupEnhancedEventListeners not found');
         }
         
         if (typeof initAudio === 'function') {
             initAudio();
-            console.log('Audio initialized');
+            console.log('âœ… Audio initialized');
         }
         
         setTimeout(() => {
             if (typeof startTutorial === 'function') {
                 startTutorial();
-                console.log('Tutorial started');
+                console.log('âœ… Tutorial started');
             }
         }, 1000);
         
     } catch (error) {
-        console.error('Error in initControls:', error);
+        console.error('âŒ Error in initControls:', error);
     }
 }
 
@@ -3176,7 +3204,7 @@ if (typeof window !== 'undefined') {
     // Make music system available
     window.musicSystem = musicSystem;
     
-    console.log('Game Controls loaded - All functions exported');
+    console.log('âœ… Enhanced Game Controls loaded - All functions exported');
 }
 
-console.log('Game Controls script completed successfully!');
+console.log('ðŸ Game Controls script completed successfully!');
