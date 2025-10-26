@@ -546,14 +546,14 @@ function transitionToRandomLocation(sourceBlackHole) {
         
         // Determine galaxy location names
         const galaxyDiscoveryNames = [
-            'Andromeda Galaxy',      // 0 - Spiral (Federation)
-            'Messier 87',            // 1 - Elliptical (Klingon Empire)
-            'Triangulum Galaxy',     // 2 - Irregular (Rebel Alliance)
-            'Cartwheel Galaxy',      // 3 - Ring (Romulan Star Empire)
-            'Small Magellanic Cloud',// 4 - Dwarf (Galactic Empire)
-            'Sombrero Galaxy',       // 5 - Lenticular (Cardassian Union)
-            'Centaurus A',           // 6 - Quasar (Sith Empire)
-            'Local Group'            // 7 - Ancient/Local (Vulcan/Sol)
+            'Spiral Galaxy',         // 0 - Federation Space
+            'Elliptical Galaxy',     // 1 - Klingon Empire
+            'Irregular Galaxy',      // 2 - Rebel Alliance
+            'Ring Galaxy',           // 3 - Romulan Star Empire
+            'Dwarf Galaxy',          // 4 - Galactic Empire
+            'Lenticular Galaxy',     // 5 - Cardassian Union
+            'Quasar Galaxy',         // 6 - Sith Empire
+            'Sagittarius A'          // 7 - Vulcan High Command / Local
         ];
         
         // Determine which galaxy we warped to based on proximity
@@ -577,7 +577,7 @@ function transitionToRandomLocation(sourceBlackHole) {
             }
         }
         
-        // ⭐ Use the specific discovery name for the arrived galaxy
+        // Use the specific discovery name for the arrived galaxy
         const locationName = arrivedGalaxyId >= 0 && arrivedGalaxyId < galaxyDiscoveryNames.length 
             ? galaxyDiscoveryNames[arrivedGalaxyId]
             : 'Unknown Region';
@@ -614,7 +614,7 @@ if (arrivedGalaxyId >= 0 && typeof loadEnemiesForGalaxy === 'function') {
     }, 700); // Slight delay after asteroids
 }
 
-// ⭐ NEW: Load guardians for new galaxy
+// NEW: Load guardians for new galaxy
 if (arrivedGalaxyId >= 0 && typeof loadGuardiansForGalaxy === 'function') {
     setTimeout(() => {
         loadGuardiansForGalaxy(arrivedGalaxyId);
@@ -1066,15 +1066,21 @@ if (frameDistance > 0.01) { // Only track significant movement
         }
     }
     
-    // SPECIFICATION: Emergency Systems - O Key: Emergency warp
+     // SPECIFICATION: Emergency Systems - O Key: Emergency warp
     if (keys.o && gameState.emergencyWarp.available > 0 && !gameState.emergencyWarp.active) {
         gameState.emergencyWarp.available--;
         gameState.emergencyWarp.active = true;
         gameState.emergencyWarp.timeRemaining = gameState.emergencyWarp.boostDuration;
         gameState.velocityVector.copy(forwardDirection).multiplyScalar(gameState.emergencyWarp.boostSpeed);
         
+        // ✅ Activate BOTH visual effects
         for (let i = 0; i < 3; i++) {
             setTimeout(() => createHyperspaceEffect(), i * 200);
+        }
+        
+        // ✅ NEW: Activate 3D warp starfield
+        if (typeof toggleWarpSpeedStarfield === 'function') {
+            toggleWarpSpeedStarfield(true);
         }
         
         if (typeof playSound !== 'undefined') {
@@ -1082,12 +1088,18 @@ if (frameDistance > 0.01) { // Only track significant movement
         }
     }
     
-    // Enhanced Emergency warp timer with momentum coasting
+        // Enhanced Emergency warp timer with momentum coasting
 if (gameState.emergencyWarp.active) {
     gameState.emergencyWarp.timeRemaining -= 16.67;
     if (gameState.emergencyWarp.timeRemaining <= 0) {
         gameState.emergencyWarp.active = false;
         gameState.emergencyWarp.postWarp = true;  // NEW: Enter coasting phase
+        
+        // ✅ NEW: Deactivate 3D warp starfield
+        if (typeof toggleWarpSpeedStarfield === 'function') {
+            toggleWarpSpeedStarfield(false);
+        }
+        
         if (typeof showAchievement === 'function') {
             showAchievement('Emergency Warp Complete', 'Coasting on momentum - use X to brake');
         }
