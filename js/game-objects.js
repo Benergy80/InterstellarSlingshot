@@ -5018,7 +5018,6 @@ if (typeof window !== 'undefined') {
     window.createPlasmaTendril = createPlasmaTendril;
     window.isPositionTooClose = isPositionTooClose;
 	window.createEnemyMaterial = createEnemyMaterial;
-	window.getRandomGalaxyPosition = getRandomGalaxyPosition;
 	window.createGalaxyEnvironmentalEffects = createGalaxyEnvironmentalEffects;
 	window.updateCMBOpacity = updateCMBOpacity;
 	
