@@ -1222,7 +1222,40 @@ planets.forEach(planet => {
             });
         }
     }
-    
+
+// Add Nebulas with region names (large, with text labels)
+        if (typeof nebulaClouds !== 'undefined' && nebulaClouds.length > 0) {
+            nebulaClouds.forEach(nebula => {
+                if (!nebula || !nebula.position || !nebula.userData) return;
+                
+                const nebulaMapX = (nebula.position.x / universeRadius) + 0.5;
+                const nebulaMapZ = (nebula.position.z / universeRadius) + 0.5;
+                
+                // Only show if within map bounds
+                if (nebulaMapX >= 0 && nebulaMapX <= 1 && nebulaMapZ >= 0 && nebulaMapZ <= 1) {
+                    const nebulaDot = document.createElement('div');
+                    nebulaDot.className = 'cosmic-feature-dot nebula-indicator absolute';
+                    
+                    // Larger size for nebulas
+                    nebulaDot.style.width = '14px';
+                    nebulaDot.style.height = '14px';
+                    nebulaDot.style.backgroundColor = '#' + (nebula.userData.color ? nebula.userData.color.getHexString() : 'ff88cc');
+                    nebulaDot.style.borderRadius = '50%';
+                    nebulaDot.style.border = '2px solid rgba(255, 136, 204, 0.8)';
+                    nebulaDot.style.left = `${nebulaMapX * 100}%`;
+                    nebulaDot.style.top = `${nebulaMapZ * 100}%`;
+                    nebulaDot.style.transform = 'translate(-50%, -50%)';
+                    nebulaDot.style.boxShadow = `0 0 12px ${nebulaDot.style.backgroundColor}`;
+                    nebulaDot.style.pointerEvents = 'none';
+                    nebulaDot.style.zIndex = '6';
+                    nebulaDot.innerHTML = `<span style="font-size: 12px;">💫</span>`;
+                    nebulaDot.title = nebula.userData.mythicalName || nebula.userData.name || 'Nebula';
+                    
+                    galaxyMap.appendChild(nebulaDot);
+                }
+            });
+        }
+
     // Show player triangle, hide direction arrow
     playerMapPos.style.display = 'block';
     if (mapDirectionArrow) {
@@ -1358,7 +1391,29 @@ planets.forEach(planet => {
             }
         }
         
-        currentRegionEl.textContent = currentGalaxyName;
+        // NEW: Check if player is inside a nebula
+        let nebulaName = null;
+        if (typeof nebulaClouds !== 'undefined' && nebulaClouds.length > 0) {
+            const nebulaDetectionRange = 3000; // Distance to consider "inside" nebula
+            
+            nebulaClouds.forEach(nebula => {
+                if (!nebula || !nebula.userData) return;
+                const distance = camera.position.distanceTo(nebula.position);
+                
+                if (distance < nebulaDetectionRange) {
+                    nebulaName = nebula.userData.mythicalName || nebula.userData.name || 'Nebula';
+                }
+            });
+        }
+        
+        // Display nebula name if inside one, otherwise show galaxy name
+        if (nebulaName) {
+            currentRegionEl.textContent = `${nebulaName} - ${currentGalaxyName}`;
+            currentRegionEl.className = 'text-xs text-pink-300 font-semibold'; // Pink for nebula
+        } else {
+            currentRegionEl.textContent = currentGalaxyName;
+            currentRegionEl.className = 'text-xs text-cyan-300 font-semibold'; // Cyan for galaxy
+        }
     }
     
     // ⭐ NEW: Update current galaxy name display
@@ -1923,10 +1978,9 @@ function createMobileControls() {
         <i class="fas fa-bullseye"></i>
     </button>
     <button class="mobile-btn primary" 
-        onclick="handleMobileFire()" 
-        ontouchstart="handleMobileFire(); event.preventDefault();"
-        style="${buttonStyle} width: 80px; height: 80px; background: linear-gradient(135deg, rgba(255, 50, 50, 0.8), rgba(200, 0, 0, 0.8)); border-color: rgba(255, 100, 100, 0.6);" 
-        title="Fire Weapons">
+    ontouchstart="handleMobileFire(event); return false;"
+    style="${buttonStyle} width: 80px; height: 80px; border-radius: 50%; background: linear-gradient(135deg, rgba(255, 50, 50, 0.8), rgba(200, 0, 0, 0.8)); border-color: rgba(255, 100, 100, 0.6); box-shadow: 0 4px 15px rgba(255, 50, 50, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.2);" 
+    title="Fire Weapons">
     <i class="fas fa-crosshairs"></i>
 </button>
     <button class="mobile-btn emergency" onclick="mobileEmergencyWarp()" style="${buttonStyle} background: linear-gradient(135deg, rgba(255, 150, 0, 0.8), rgba(200, 100, 0, 0.8)); border-color: rgba(255, 200, 0, 0.6);" title="Emergency Warp">
@@ -1942,6 +1996,12 @@ function createMobileControls() {
 }
 
 function createMobileFloatingStatus() {
+    // Remove existing if present
+    const existing = document.getElementById('mobileFloatingStatus');
+    if (existing) {
+        existing.remove();
+    }
+    
     const floatingStatus = document.createElement('div');
     floatingStatus.className = 'mobile-floating-status';
     floatingStatus.id = 'mobileFloatingStatus';
@@ -1973,22 +2033,37 @@ function createMobileFloatingStatus() {
         </div>
     `;
     
-    document.getElementById('mobileUI').appendChild(floatingStatus);
+    const mobileUI = document.getElementById('mobileUI');
+    if (mobileUI) {
+        mobileUI.appendChild(floatingStatus);
+        console.log('📱 Mobile floating status created and appended');
+    } else {
+        // Fallback: append to body if mobileUI doesn't exist
+        document.body.appendChild(floatingStatus);
+        console.log('📱 Mobile floating status created (fallback to body)');
+    }
+    
+    // Initial update
+    setTimeout(() => {
+        updateMobileFloatingStatus();
+    }, 100);
 }
 
 function updateMobileFloatingStatus() {
     if (typeof gameState === 'undefined') return;
     
+    // MINIMAL STATUS: Only Hull, Energy, and Emergency Warps
     const updates = {
-        'mobileFloatingVelocity': gameState.velocity ? (gameState.velocity * 1000).toFixed(0) + ' km/s' : '0.0 km/s',
-        'mobileFloatingDistance': gameState.distance ? gameState.distance.toFixed(1) + ' ly' : '0.0 ly',
+        'mobileFloatingHull': gameState.hull ? Math.round(gameState.hull) + '%' : '100%',
         'mobileFloatingEnergy': gameState.energy ? Math.round(gameState.energy) + '%' : '100%',
-        'mobileFloatingHull': gameState.hull ? Math.round(gameState.hull) + '%' : '100%'
+        'mobileFloatingWarps': gameState.emergencyWarp?.available ?? 5
     };
     
     Object.entries(updates).forEach(([id, value]) => {
         const element = document.getElementById(id);
-        if (element) element.textContent = value;
+        if (element) {
+            element.textContent = value;
+        }
     });
 }
 
@@ -2101,7 +2176,23 @@ function mobileEmergencyWarp() {
     }
 }
 
-function handleMobileFire() {
+let lastFireTime = 0;
+const fireDebounceTime = 200; // 200ms cooldown
+
+function handleMobileFire(event) {
+    if (event) {
+        event.preventDefault();
+        event.stopPropagation();
+    }
+    
+    // Debounce to prevent double-firing
+    const now = Date.now();
+    if (now - lastFireTime < fireDebounceTime) {
+        console.log('Fire blocked - too soon after last fire');
+        return;
+    }
+    lastFireTime = now;
+    
     console.log('📱 Mobile fire button pressed');
     
     // Ensure game is active
@@ -2118,20 +2209,22 @@ function handleMobileFire() {
     // Call the main fire weapon function
     if (typeof fireWeapon === 'function') {
         fireWeapon();
-        console.log('Fire weapon called successfully');
+        console.log('✅ Fire weapon called successfully');
     } else if (typeof keys !== 'undefined') {
         // Fallback: simulate spacebar press
         keys.space = true;
         setTimeout(() => keys.space = false, 100);
-        console.log('Fire weapon via keys.space');
+        console.log('✅ Fire weapon via keys.space');
     }
     
     // Visual feedback
-    const fireBtn = document.querySelector('.mobile-btn.primary');
+    const fireBtn = document.querySelector('.mobile-btn.primary, .mobile-btn.fire');
     if (fireBtn) {
-        fireBtn.style.transform = 'scale(0.92)';
+        fireBtn.style.transform = 'scale(0.85)';
+        fireBtn.style.opacity = '0.8';
         setTimeout(() => {
             fireBtn.style.transform = 'scale(1)';
+            fireBtn.style.opacity = '1';
         }, 150);
     }
 }
