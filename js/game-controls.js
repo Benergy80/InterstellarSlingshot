@@ -3179,4 +3179,4 @@ if (typeof window !== 'undefined') {
     console.log('Game Controls loaded - All functions exported');
 }
 
-console.log('ðŸ Game Controls script completed successfully!');
+console.log('Game Controls script completed successfully!');
