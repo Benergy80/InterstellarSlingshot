@@ -267,7 +267,7 @@ function initializeMinimalThreeJS() {
     camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 250000);
     renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setSize(window.innerWidth, window.innerHeight);
-    renderer.setClearColor(0x000000); // Start with black
+    renderer.setClearColor(0x000003); // dark blue not black
     
     const gameContainer = document.getElementById('gameContainer');
     if (!gameContainer) {
@@ -1677,7 +1677,7 @@ function transitionSkyToSpace(progress) {
     // Transition sky color from blue to black
     if (introSequence.skyDome) {
         const startColor = new THREE.Color(0x87CEEB); // Sky blue
-        const endColor = new THREE.Color(0x000011);   // Space black
+        const endColor = new THREE.Color(0x000003);   // Space black
         
         const currentColor = startColor.clone().lerp(endColor, progress);
         renderer.setClearColor(currentColor);
@@ -1856,6 +1856,12 @@ function setupNormalGameContent() {
     if (typeof initializeCosmicFeatures === 'function') {
         initializeCosmicFeatures();
         console.log('🌌 Cosmic features initialized');
+    }
+    
+    // ✅ ADD THIS RIGHT HERE:
+    if (typeof createWarpSpeedStarfield === 'function') {
+        createWarpSpeedStarfield();
+        console.log('🚀 3D warp speed starfield created');
     }
     
     // Create nebulas
@@ -2284,7 +2290,7 @@ function cleanupIntroElements() {
     }
     
     // Reset renderer clear color
-    renderer.setClearColor(0x000011);
+    renderer.setClearColor(0x000003); //dark blue used to be (0x000011)
     
     // Reset intro state
     introSequence.active = false;
