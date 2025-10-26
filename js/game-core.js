@@ -119,6 +119,10 @@ let cameraRotation = { x: 0, y: 0, z: 0 }
 // Game state for pause functionality
 let gamePaused = false;
 
+// Emergency Warp brake handler
+let braking = false;
+let targetSpeed = 80; // start at full speed
+
 // Initialize orbit lines array
 let orbitLines = [];
 
@@ -587,7 +591,7 @@ function startGame() {
         camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 250000);
         renderer = new THREE.WebGLRenderer({ antialias: true });
         renderer.setSize(window.innerWidth, window.innerHeight);
-        renderer.setClearColor(0x000011);
+        renderer.setClearColor(0x000003);
         
         const gameContainer = document.getElementById('gameContainer');
         if (!gameContainer) {
@@ -732,6 +736,19 @@ if (typeof spawnBlackHoleGuardians === 'function') {
 if (typeof initializeCosmicFeatures === 'function') {
     initializeCosmicFeatures();
     console.log('Special cosmic features initialized');
+}
+
+// ✅ ADD THIS RIGHT HERE:
+if (typeof createWarpSpeedStarfield === 'function') {
+    createWarpSpeedStarfield();
+    console.log('🚀 3D warp speed starfield created');
+}
+// Enhance cosmic features for collision and slingshot support
+if (typeof enhanceCosmicFeaturesForGameplay === 'function') {
+    setTimeout(() => {
+        enhanceCosmicFeaturesForGameplay();
+        console.log('✅ Cosmic features enhanced for gameplay');
+    }, 500); // Small delay to ensure all features are created
 }
             // Create orbit lines after planets exist
             setTimeout(() => {
@@ -990,10 +1007,10 @@ if (typeof enemies !== 'undefined' && enemies.length > 0 && gameState.frameCount
         detectEnemiesInRegion();
     }
     
-    // ⭐ NEW: Update galaxy map regularly (every 60 frames = ~once per second)
-    if (gameState.frameCount % 60 === 0 && typeof updateGalaxyMap === 'function') {
-        updateGalaxyMap();
-    }
+    // OPTIMIZED: Update galaxy map less frequently (every 180 frames = ~once every 3 seconds)
+	if (gameState.frameCount % 60 === 0 && typeof updateGalaxyMap === 'function') {
+    updateGalaxyMap();
+	}
     
     // WEAPON ENERGY REGENERATION (ADD THIS)
     if (gameState.weapons.energy < 100) {
@@ -1007,7 +1024,7 @@ if (typeof enemies !== 'undefined' && enemies.length > 0 && gameState.frameCount
     
   // Rotate local galaxy stars around Sagittarius A*
 if (typeof localGalaxyStars !== 'undefined' && localGalaxyStars) {
-    localGalaxyStars.rotation.y += 0.0001; // Slow rotation around Y-axis
+    localGalaxyStars.rotation.y += 0.0003; // Slow rotation around Y-axis
 }
     
     // PERFORMANCE: Update orbit lines less frequently but more reliably
@@ -1023,6 +1040,16 @@ if (typeof localGalaxyStars !== 'undefined' && localGalaxyStars) {
 
     // FIXED: Call the enhanced orbital mechanics function
     updatePlanetOrbits();
+  
+  // NEW: Update warp speed starfield effect
+    if (typeof updateWarpSpeedStarfield === 'function') {
+        updateWarpSpeedStarfield();
+    }
+        
+    // NEW: Update CMB opacity based on distance from Sagittarius A and nebula proximity
+    if (typeof updateCMBOpacity === 'function') {
+        updateCMBOpacity();
+    }
     
     // PERFORMANCE: Update only expensive effects for active planets (tendrils, glows, etc.)
     activePlanets.forEach((planet) => {
@@ -1358,16 +1385,18 @@ if (planet.rotation && !planet.userData.isLocalStar) {
     planet.rotation.y += rotationSpeed;
 }
         
-        // FIXED: Enhanced orbital mechanics for ALL planets with orbital data - ADJUSTED SPEEDS
+         // FIXED: Enhanced orbital mechanics for ALL planets with orbital data - ADJUSTED SPEEDS
         if (planet.userData.orbitRadius > 0 && planet.userData.systemCenter) {
-            // ADJUSTED orbital speeds - 75% slower than previous version
+            // ADJUSTED orbital speeds with MUCH higher multipliers for visibility
             let baseSpeed = planet.userData.orbitSpeed || 0.015;
             
-            // Apply speed multipliers based on planet type and location (reduced from previous)
+            // FIXED: Apply MUCH higher speed multipliers for visible orbits
             if (planet.userData.isLocal) {
-                baseSpeed *= 1.25; // Reduced from 15x to 3.75x (75% slower)
+                baseSpeed *= 3.0; // INCREASED from 1.25
+            } else if (planet.userData.isDistant) {
+                baseSpeed *= 25.0; // CRITICAL: Distant planets need huge multiplier!
             } else {
-                baseSpeed *= 1.5; // Reduced from 20x to 5x (75% slower)
+                baseSpeed *= 5.0; // INCREASED from 1.5
             }
             
             // Additional speed boost for smaller orbits (closer planets should move faster)
@@ -1386,20 +1415,40 @@ if (planet.rotation && !planet.userData.isLocalStar) {
             
             planet.position.set(orbitX, orbitY, orbitZ);
             
+            // CRITICAL FIX: Update matrix for planets with matrixAutoUpdate disabled!
+            if (planet.matrixAutoUpdate === false) {
+                planet.updateMatrix();
+            }
+            
             // Debug logging for verification (only for first few frames and when close)
             const distanceToPlayer = camera.position.distanceTo(planet.position);
             if (gameState.frameCount < 100 && gameState.frameCount % 30 === 0 && distanceToPlayer < 2000) {
                 console.log(`Adjusted orbit update: ${planet.userData.name} at speed ${baseSpeed.toFixed(4)}`);
             }
-        } 
-        // Moon orbital mechanics (relative to parent planet) - adjusted speeds
+        }
+// Moon orbital mechanics (relative to parent planet) - LOCAL COORDINATES
 else if (planet.userData.parentPlanet && planet.userData.orbitRadius > 0) {
     // Ensure moon is always visible
     planet.visible = true;
     planet.frustumCulled = false;
     
+    // Check if moon is a child of its parent planet
+    const isChildOfParent = planet.parent === planet.userData.parentPlanet;
+    
     let moonSpeed = planet.userData.orbitSpeed || 0.1;
-    moonSpeed *= 2.0; // Reduced from 25x to 6.25x
+    
+    // FIXED: Speed adjustments based on moon type with proper distant galaxy handling
+    if (planet.userData.isLocal) {
+        moonSpeed *= 2.5; // Local system moons orbit faster
+    } else if (planet.userData.isLocalGateway) {
+        moonSpeed *= 2.8; // Local gateway system moons
+    } else if (planet.userData.nebulaId !== undefined) {
+        moonSpeed *= 1.8; // Nebula moons orbit at medium speed
+    } else if (planet.userData.isDistant) {
+        moonSpeed *= 10.0; // CRITICAL: Distant galaxy moons need MUCH higher multiplier
+    } else {
+        moonSpeed *= 5.0; // Default moon speed (increased from 2.0)
+    }
     
     const time = Date.now() * 0.001 * moonSpeed;
     const orbitPhase = planet.userData.orbitPhase || 0;
@@ -1407,10 +1456,15 @@ else if (planet.userData.parentPlanet && planet.userData.orbitRadius > 0) {
     const moonZ = Math.sin(time + orbitPhase) * planet.userData.orbitRadius;
     const moonY = Math.sin(time * 0.5 + orbitPhase) * 4;
     
-    // Position relative to parent planet's current position
-    if (planet.userData.parentPlanet.position) {
-        const parentPos = planet.userData.parentPlanet.position;
-        planet.position.set(parentPos.x + moonX, parentPos.y + moonY, parentPos.z + moonZ);
+    if (isChildOfParent) {
+        // ✅ CORRECT: Moon is a child, use LOCAL coordinates
+        planet.position.set(moonX, moonY, moonZ);
+    } else {
+        // ⚠️ FALLBACK: Moon is not a child, use WORLD coordinates
+        if (planet.userData.parentPlanet.position) {
+            const parentPos = planet.userData.parentPlanet.position;
+            planet.position.set(parentPos.x + moonX, parentPos.y + moonY, parentPos.z + moonZ);
+        }
     }
 }
     });
