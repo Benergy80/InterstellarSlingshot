@@ -636,25 +636,32 @@
     </div>
 
 <!-- Achievement Popup -->
-        <div id="achievementPopup" class="hidden fixed z-50 pointer-events-auto" style="bottom: 120px; left: 50%; transform: translateX(-50%); min-width: 300px; max-width: 90%;">
-    <div class="ui-panel rounded-lg p-4 text-center" style="background: linear-gradient(135deg, rgba(15, 23, 42, 0.95), rgba(30, 41, 59, 0.95)); backdrop-filter: blur(10px);">
+<div id="achievementPopup" class="hidden fixed bottom-20 left-1/2 transform -translate-x-1/2 pointer-events-auto" style="z-index: 999 !important;">
+    <div class="ui-panel rounded-lg p-4 text-center" style="min-width: 300px; background: linear-gradient(135deg, rgba(15, 23, 42, 0.95), rgba(30, 41, 59, 0.95)); backdrop-filter: blur(10px);">
         <h4 class="text-lg font-bold text-cyan-400 glow-text mb-2 cyber-title">Achievement!</h4>
         <p id="achievementText" class="text-sm text-gray-300"></p>
     </div>
 </div>
-
     <!-- MOBILE CONTROLS -->
     <div class="mobile-controls">
-        <button class="mobile-btn" onclick="showMobilePanel('controls')" title="Flight Controls">
-            <i class="fas fa-gamepad"></i>
-        </button>
+        <button class="mobile-btn" 
+    ontouchstart="mobileBrakesStart()" 
+    ontouchend="mobileBrakesEnd()"
+    onmousedown="mobileBrakesStart()" 
+    onmouseup="mobileBrakesEnd()"
+    title="Brakes (Hold)">
+    <i class="fas fa-hand-paper"></i>
+</button>
         <button class="mobile-btn" onmousedown="startForwardThrust()" onmouseup="stopForwardThrust()" ontouchstart="startForwardThrust()" ontouchend="stopForwardThrust()" title="Forward Thrust">
             <i class="fas fa-arrow-up"></i>
         </button>
-        <button class="mobile-btn fire" onclick="mobileFireWeapon()" title="Fire Weapons">
-            <i class="fas fa-crosshairs"></i>
-        </button>
-        <button class="mobile-btn" onclick="mobileBrakes()" title="Brakes">
+        <button class="mobile-btn primary" 
+    onclick="handleMobileFire(event)" 
+    ontouchstart="handleMobileFire(event)"
+    title="Fire Weapons">
+    <i class="fas fa-crosshairs"></i>
+</button>
+        <button class="mobile-btn" onclick="mobileBrakesStart()" title="Brakes">
             <i class="fas fa-hand-paper"></i>
         </button>
         <button class="mobile-btn" onclick="mobileEmergencyWarp()" title="Emergency Warp">
