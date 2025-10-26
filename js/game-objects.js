@@ -125,6 +125,52 @@ const galaxyMapPositions = [
     { x: 0.5, y: 0.5 }    // 8 (Sagittarius A* at center)
 ];
 
+// ✅ NEW: Convert 3D spherical coordinates to 2D map coordinates
+// Projects the spherical universe onto a flat circular map
+function convertSpherical3DTo2DMap(galaxyData) {
+    if (!galaxyData) return { x: 0.5, y: 0.5 };
+    
+    const phi = galaxyData.phi;
+    const theta = galaxyData.theta;
+    const distance = galaxyData.distance;
+    
+    // Map phi (azimuthal angle 0 to 2π) to horizontal position (0 to 1)
+    // Normalize phi to 0-1 range
+    let x = (phi / (Math.PI * 2)) % 1.0;
+    
+    // Map theta (polar angle 0 to π) to vertical position (0 to 1)
+    // theta = 0 is north pole (top), theta = π is south pole (bottom)
+    let y = theta / Math.PI;
+    
+    // Apply distance factor to pull closer galaxies toward center
+    // This creates a more realistic spherical projection
+    const centerX = 0.5;
+    const centerY = 0.5;
+    
+    // Pull toward center based on distance (closer = more centered)
+    const distanceFactor = distance; // 0.0 to 1.0
+    x = centerX + (x - centerX) * distanceFactor;
+    y = centerY + (y - centerY) * distanceFactor;
+    
+    return { x, y };
+}
+
+// ✅ NEW: Generate accurate 2D map positions from 3D spherical data
+function generateAccurateMapPositions() {
+    const accuratePositions = [];
+    
+    for (let i = 0; i < galaxy3DPositions.length; i++) {
+        const pos2D = convertSpherical3DTo2DMap(galaxy3DPositions[i]);
+        accuratePositions.push(pos2D);
+    }
+    
+    return accuratePositions;
+}
+
+// ✅ OVERRIDE: Replace old hardcoded positions with calculated positions
+// Uncomment the line below to use accurate positions
+// const galaxyMapPositions = generateAccurateMapPositions();
+
 function isPositionTooClose(position, minDistance) {
     // Safety check for planets array
     if (typeof planets === 'undefined' || !planets) {
@@ -345,13 +391,13 @@ const starWarsPlanets = ['Tatooine', 'Coruscant', 'Naboo', 'Endor', 'Hoth', 'Dag
 
 // Enhanced enemy shapes for different galaxies (enemy size remains the same)
 const enemyShapes = {
-    0: { geometry: 'cone', color: 0x4488ff },      // Federation - cone
-    1: { geometry: 'octahedron', color: 0xff8844 }, // Klingon - octahedron
-    2: { geometry: 'tetrahedron', color: 0x88ff44 }, // Rebel - tetrahedron
-    3: { geometry: 'cylinder', color: 0xff4488 },   // Romulan - cylinder
-    4: { geometry: 'sphere', color: 0x44ffff },     // Imperial - sphere
-    5: { geometry: 'box', color: 0xff44ff },        // Cardassian - box
-    6: { geometry: 'diamond', color: 0xff8888 },    // Sith - diamond
+    0: { geometry: 'cone', color: 0xff3333 },       // Federation - BRIGHT RED (vs blue galaxy)
+    1: { geometry: 'octahedron', color: 0x00ffff }, // Klingon - CYAN (vs orange galaxy)
+    2: { geometry: 'tetrahedron', color: 0xff00ff }, // Rebel - MAGENTA (vs green galaxy)
+    3: { geometry: 'cylinder', color: 0xffff00 },   // Romulan - YELLOW (vs pink galaxy)
+    4: { geometry: 'sphere', color: 0xff6600 },     // Imperial - ORANGE (vs cyan galaxy)
+    5: { geometry: 'box', color: 0x00ff00 },        // Cardassian - LIME GREEN (vs magenta galaxy)
+    6: { geometry: 'diamond', color: 0x0088ff },    // Sith - BLUE (vs red galaxy)
     7: { geometry: 'torus', color: 0xffaa88 }       // Vulcan - torus
 };
 
@@ -1946,6 +1992,136 @@ try {
     }
     
     // =============================================================================
+    // COSMIC MICROWAVE BACKGROUND (CMB) SKYBOX
+    // =============================================================================
+    
+    console.log('Creating cosmic background radiation skybox...');
+    
+    try {
+// Shader material for procedural cosmic background
+        const cosmicSkyboxMaterial = new THREE.ShaderMaterial({
+            uniforms: {
+                time: { value: 0 },
+                opacity: { value: 0.2 }  // Add opacity uniform for easy control
+            },
+            vertexShader: `
+                varying vec3 vPosition;
+                varying vec2 vUv;
+                
+                void main() {
+                    vPosition = position;
+                    vUv = uv;
+                    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                }
+            `,
+            fragmentShader: `
+                uniform float time;
+                uniform float opacity;
+                varying vec3 vPosition;
+                varying vec2 vUv;
+                
+                // Noise functions for cosmic texture
+                float random(vec2 st) {
+                    return fract(sin(dot(st.xy, vec2(12.9898,78.233))) * 43758.5453123);
+                }
+                
+                float noise(vec2 st) {
+                    vec2 i = floor(st);
+                    vec2 f = fract(st);
+                    float a = random(i);
+                    float b = random(i + vec2(1.0, 0.0));
+                    float c = random(i + vec2(0.0, 1.0));
+                    float d = random(i + vec2(1.0, 1.0));
+                    vec2 u = f * f * (3.0 - 2.0 * f);
+                    return mix(a, b, u.x) + (c - a)* u.y * (1.0 - u.x) + (d - b) * u.x * u.y;
+                }
+                
+                float fbm(vec2 st) {
+                    float value = 0.0;
+                    float amplitude = 0.5;
+                    float frequency = 2.0;
+                    for(int i = 0; i < 6; i++) {
+                        value += amplitude * noise(st * frequency);
+                        frequency *= 2.0;
+                        amplitude *= 0.5;
+                    }
+                    return value;
+                }
+                
+                void main() {
+                    // Create spherical coordinates for seamless wrapping
+                    vec3 direction = normalize(vPosition);
+                    float theta = atan(direction.z, direction.x);
+                    float phi = acos(direction.y);
+                    vec2 sphereUV = vec2(theta / (2.0 * 3.14159), phi / 3.14159);
+                    
+                    // Multi-scale noise for CMB-like structure
+                    vec2 uv1 = sphereUV * 3.0;
+                    vec2 uv2 = sphereUV * 8.0;
+                    vec2 uv3 = sphereUV * 20.0;
+                    
+                    float pattern1 = fbm(uv1);
+                    float pattern2 = fbm(uv2);
+                    float pattern3 = fbm(uv3);
+                    
+                    // Combine patterns for complex structure
+                    float combinedPattern = pattern1 * 0.5 + pattern2 * 0.3 + pattern3 * 0.2;
+                    
+                    // CMB color palette - BRIGHTENED for visibility test
+                    vec3 coldColor = vec3(0.5, 0.2, 0.7);      // Bright purple
+                    vec3 coolColor = vec3(0.3, 0.5, 1.0);      // Bright blue
+                    vec3 warmColor = vec3(1.0, 0.5, 0.7);      // Bright pink
+                    vec3 hotColor = vec3(1.0, 0.7, 0.3);       // Bright orange
+                    
+                    // Map noise to color gradient
+                    vec3 color;
+                    if (combinedPattern < 0.3) {
+                        color = mix(coldColor, coolColor, combinedPattern / 0.3);
+                    } else if (combinedPattern < 0.6) {
+                        color = mix(coolColor, warmColor, (combinedPattern - 0.3) / 0.3);
+                    } else {
+                        color = mix(warmColor, hotColor, (combinedPattern - 0.6) / 0.4);
+                    }
+                    
+                    // Add subtle variation
+                    float variation = noise(sphereUV * 50.0) * 0.2;
+                    color += vec3(variation);
+                    
+                    // Add faint stars/bright spots
+                    float stars = pow(noise(sphereUV * 800.0), 20.0) * 0.5;
+                    color += vec3(stars);
+                    
+                    gl_FragColor = vec4(color, opacity);  // Use opacity uniform
+                }
+            `,
+            transparent: true,         // Enable transparency
+            blending: THREE.AdditiveBlending,  // Try additive blending
+            side: THREE.BackSide,      // Render inside of sphere
+            depthWrite: false
+        });
+        
+        // Create massive sphere that encompasses the entire universe
+        const cosmicSkyboxGeometry = new THREE.SphereGeometry(200000, 64, 64);
+        const cosmicSkybox = new THREE.Mesh(cosmicSkyboxGeometry, cosmicSkyboxMaterial);
+        cosmicSkybox.renderOrder = -1; // Render behind everything
+        cosmicSkybox.visible = true;
+        cosmicSkybox.frustumCulled = false;
+        
+        scene.add(cosmicSkybox);
+        
+        // Store reference for animation
+        window.cosmicSkybox = cosmicSkybox;  // Store globally
+        if (typeof gameState !== 'undefined') {
+            gameState.cosmicSkybox = cosmicSkybox;
+        }
+        
+        console.log('✅ Cosmic microwave background skybox created');
+        
+    } catch (cosmicError) {
+        console.error('❌ Error creating cosmic background:', cosmicError);
+    }
+    
+    // =============================================================================
     // STARFIELD CREATION
     // =============================================================================
     
@@ -1955,7 +2131,7 @@ try {
         const starsGeometry = new THREE.BufferGeometry();
         const starsMaterial = new THREE.PointsMaterial({
             color: 0xffffff,
-            size: 1.5,
+            size: 1.0,
             transparent: true,
             opacity: 1.0,
             sizeAttenuation: true
@@ -1964,7 +2140,7 @@ try {
         const starsVertices = [];
         
         // Background stars
-        for (let i = 0; i < 3000; i++) {
+        for (let i = 0; i < 2500; i++) {
             const distanceFactor = 10 + Math.random() * 30;
             const x = (Math.random() - 0.5) * 4000 * distanceFactor;
             const y = (Math.random() - 0.5) * 1600 * distanceFactor;
@@ -1979,7 +2155,7 @@ try {
 const localGalaxyStarsGeometry = new THREE.BufferGeometry();
 const localGalaxyStarsMaterial = new THREE.PointsMaterial({
     color: 0xffffff,
-    size: 1.5,
+    size: 1.0,
     transparent: true,
     opacity: 1.0,
     sizeAttenuation: true
@@ -1988,7 +2164,7 @@ const localGalaxyStarsMaterial = new THREE.PointsMaterial({
 const localStarsVertices = [];
 
 // Local galaxy stars (8000 stars in spiral pattern)
-for (let i = 0; i < 8000; i++) {
+for (let i = 0; i < 6000; i++) {
     const armAngle = Math.random() * Math.PI * 2;
     const armDistance = Math.pow(Math.random(), 1.8) * 4000;
     const armWidth = 0.25;
@@ -2402,7 +2578,7 @@ star.userData = {
                                     else if (strangeRoll > 0.85) strangeness = 'ice';
                                     else if (strangeRoll > 0.80) strangeness = 'gas';
                                     
-                                    const orbitSpeed = 0.0001 + Math.random() * 0.0003;
+                                    const orbitSpeed = 0.001 + Math.random() * 0.003; //  INCREASED 10x: was 0.0001-0.0004, now 0.001-0.004
                                     const orbitPhase = Math.random() * Math.PI * 2;
                                     
                                     planet.userData = {
@@ -2464,63 +2640,65 @@ star.userData = {
                                         planet.userData.hasRings = true;
                                     }
                                     
-                                    // Add moons
-                                    let moonProbability = 0.15;
-                                    if (planetSize > 6) moonProbability = 0.4;
-                                    if (planetSize > 9) moonProbability = 0.6;
-                                    
-                                    if (Math.random() < moonProbability) {
-                                        let maxMoons = 1;
-                                        if (planetSize > 6) maxMoons = 2;
-                                        if (planetSize > 9) maxMoons = 4;
-                                        
-                                        const moonCount = 1 + Math.floor(Math.random() * maxMoons);
-                                        planet.userData.moonCount = moonCount;
-                                        
-                                        for (let m = 0; m < moonCount; m++) {
-                                            const moonSize = planetSize * (0.1 + Math.random() * 0.15);
-                                            const moonGeometry = new THREE.SphereGeometry(moonSize, 12, 12);
-                                            
-                                            const moonHue = Math.random() < 0.7 ? 0 : planetHue;
-                                            const moonSaturation = Math.random() < 0.7 ? 0.1 : 0.3;
-                                            const moonMaterial = new THREE.MeshLambertMaterial({ 
-                                                color: new THREE.Color().setHSL(moonHue, moonSaturation, 0.5 + Math.random() * 0.3),
-                                                emissive: new THREE.Color().setHSL(moonHue, moonSaturation * 0.5, 0.05)
-                                            });
-                                            
-                                            const moon = new THREE.Mesh(moonGeometry, moonMaterial);
-                                            
-                                            const moonOrbitRadius = planetSize + 15 + (m * 12) + Math.random() * 8;
-                                            const moonAngle = (m / moonCount) * Math.PI * 2;
-                                            
-                                            moon.position.set(
-                                                Math.cos(moonAngle) * moonOrbitRadius,
-                                                (Math.random() - 0.5) * 5,
-                                                Math.sin(moonAngle) * moonOrbitRadius
-                                            );
-                                            
-                                            moon.visible = true;
-                                            moon.frustumCulled = false;
-                                            
-                                            moon.userData = {
-                                                name: `${planet.userData.name} Moon ${m + 1}`,
-                                                type: 'moon',
-                                                parentPlanet: planet,
-                                                orbitRadius: moonOrbitRadius,
-                                                orbitSpeed: 0.002 + Math.random() * 0.003,
-                                                orbitPhase: moonAngle,
-                                                mass: moonSize * 0.5,
-                                                isDistant: true,
-                                                galaxyId: g
-                                            };
-                                            
-                                            planet.add(moon);
-                                            
-                                            if (planets && planets.push) {
-                                                planets.push(moon);
-                                            }
-                                        }
-                                    }
+                                    // Add moons - FIXED with parentPlanet reference
+let moonProbability = 0.35; //  INCREASED from 0.15
+if (planetSize > 6) moonProbability = 0.65; //  INCREASED from 0.4
+if (planetSize > 9) moonProbability = 0.85; //  INCREASED from 0.6
+
+if (Math.random() < moonProbability) {
+    const moonCount = 1 + Math.floor(Math.random() * 4); // ✅ INCREASED: Now 1-4 moons instead of 1-3
+    planet.userData.moonCount = moonCount;
+    
+    for (let m = 0; m < moonCount; m++) {
+        try {
+            const moonSize = 0.5 + Math.random() * 1.5;
+            const moonGeometry = new THREE.SphereGeometry(moonSize, 12, 12);
+            
+            const moonHue = (planetHue + 0.2 + Math.random() * 0.2) % 1;
+            const moonMaterial = new THREE.MeshLambertMaterial({
+                color: new THREE.Color().setHSL(moonHue, 0.3, 0.6),
+                emissive: new THREE.Color().setHSL(moonHue, 0.15, 0.05)
+            });
+            
+            const moon = new THREE.Mesh(moonGeometry, moonMaterial);
+            moon.visible = true;
+            moon.frustumCulled = false;
+            
+            const moonOrbitRadius = planetSize + 12 + m * 8;
+            const moonAngle = Math.random() * Math.PI * 2;
+            
+            moon.position.set(
+                moonOrbitRadius * Math.cos(moonAngle),
+                (Math.random() - 0.5) * 4,
+                moonOrbitRadius * Math.sin(moonAngle)
+            );
+            
+            // ⭐ CRITICAL FIX: Add parentPlanet reference with FASTER orbit speed
+            moon.userData = {
+                name: `${planet.userData.name} Moon ${m + 1}`,
+                type: 'moon',
+                orbitRadius: moonOrbitRadius,
+                orbitSpeed: 0.008 + Math.random() * 0.012, //  MUCH FASTER: 0.008-0.020 instead of 0.002-0.005
+                orbitPhase: moonAngle,
+                parentPlanet: planet,
+                mass: moonSize * 2,
+                gravity: moonSize * 0.6,
+                isDistant: true,
+                galaxyId: g
+            };
+            
+            planet.add(moon); // Moon is child of planet
+            
+            if (planets && planets.push) {
+                planets.push(moon);
+            }
+            
+            console.log(`      🌙 Added moon to ${planet.userData.name} in galaxy ${g}`);
+        } catch (moonError) {
+            console.error(`Error creating moon for planet in galaxy ${g}:`, moonError);
+        }
+    }
+}
                                     
                                 } catch (planetError) {
                                     console.error(`Error creating planet in system ${s} of galaxy ${g}:`, planetError);
@@ -2794,15 +2972,27 @@ function createSpectacularClusteredNebulas() {
 // Creates rich planetary systems with rings, moons, and asteroid belts within nebulas
 // =============================================================================
 
+// =============================================================================
+// ENHANCED PLANET CLUSTERS - MASSIVELY DIVERSE VERSION
+// Creates rich planetary systems with rings, moons, and asteroid belts within nebulas
+// Matches the vibrant planet cluster diversity from stellar_slingshot_enhanced_copy.html
+// =============================================================================
+
+// =============================================================================
+// ENHANCED PLANET CLUSTERS - MASSIVELY DIVERSE VERSION WITH LARGER PLANETS
+// Creates rich planetary systems with rings, moons, and asteroid belts within nebulas
+// ALL PLANETS support collision detection and gravitational slingshot assists
+// =============================================================================
+
 function createEnhancedPlanetClustersInNebulas() {
-    console.log('🌟 Creating enhanced planet clusters within nebulas...');
+    console.log('🌟 Creating MASSIVELY DIVERSE enhanced planet clusters within nebulas...');
     
     if (typeof nebulaClouds === 'undefined' || nebulaClouds.length === 0) {
         console.warn('⚠️ No nebulas found - creating planet clusters in space instead');
     }
     
     const enhancedClusters = [];
-    const clustersPerNebula = 2; // 2 star systems per nebula
+    const clustersPerNebula = 3; // 3 star systems per nebula
     
     // Create clusters within each nebula
     nebulaClouds.forEach((nebula, nebulaIndex) => {
@@ -2813,7 +3003,7 @@ function createEnhancedPlanetClustersInNebulas() {
         
         for (let c = 0; c < clustersPerNebula; c++) {
             // Position cluster within nebula bounds
-            const clusterDistance = (Math.random() * 0.6 + 0.2) * nebulaSize; // 20-80% from center
+            const clusterDistance = (Math.random() * 0.6 + 0.2) * nebulaSize;
             const clusterAngle = Math.random() * Math.PI * 2;
             const clusterElevation = (Math.random() - 0.5) * Math.PI * 0.3;
             
@@ -2823,8 +3013,8 @@ function createEnhancedPlanetClustersInNebulas() {
             
             const clusterCenter = new THREE.Vector3(clusterX, clusterY, clusterZ);
             
-            // Create central star
-            const starSize = 8 + Math.random() * 12;
+            // Create central star - LARGER
+            const starSize = 15 + Math.random() * 20; // Was 8-20, now 15-35
             const starGeometry = new THREE.SphereGeometry(starSize, 32, 32);
             const starColor = nebula.userData.color || new THREE.Color().setHSL(Math.random(), 0.8, 0.6);
             const starMaterial = new THREE.MeshBasicMaterial({ 
@@ -2849,8 +3039,8 @@ function createEnhancedPlanetClustersInNebulas() {
             star.userData = {
                 name: `Nebula-${nebulaIndex + 1} Star System ${c + 1}`,
                 type: 'star',
-                mass: starSize * 2,
-                gravity: 3.0,
+                mass: starSize * 3, // INCREASED mass for better slingshot
+                gravity: 5.0, // INCREASED gravity
                 nebulaId: nebulaIndex,
                 clusterCenter: true
             };
@@ -2860,24 +3050,85 @@ function createEnhancedPlanetClustersInNebulas() {
             scene.add(star);
             planets.push(star);
             
-            // Create 3-5 planets orbiting the star
-            const planetCount = 3 + Math.floor(Math.random() * 3);
+            // Create 5-12 planets orbiting the star
+            const planetCount = 5 + Math.floor(Math.random() * 8);
+            console.log(`    🪐 Creating ${planetCount} LARGE planets for System ${c + 1}...`);
             
             for (let p = 0; p < planetCount; p++) {
-                const planetSize = 2 + Math.random() * 6;
+                // ⭐ MUCH LARGER planet sizes
+                let planetSize;
+                const distanceFactor = p / planetCount;
+                
+                if (distanceFactor < 0.2) {
+                    // Inner rocky planets - LARGER
+                    planetSize = 3 + Math.random() * 5; // Was 1-3.5, now 3-8
+                } else if (distanceFactor < 0.5) {
+                    // Mid-range terrestrial planets - LARGER
+                    planetSize = 5 + Math.random() * 8; // Was 2-6, now 5-13
+                } else if (distanceFactor < 0.8) {
+                    // Outer gas giants - MUCH LARGER
+                    planetSize = 10 + Math.random() * 15; // Was 4-12, now 10-25
+                } else {
+                    // Distant ice giants - LARGER
+                    planetSize = 7 + Math.random() * 10; // Was 3-9, now 7-17
+                }
+                
                 const planetGeometry = new THREE.SphereGeometry(planetSize, 32, 32);
-                const planetHue = (nebulaIndex / nebulaClouds.length) + Math.random() * 0.2;
+                
+                // Diverse planet colors and types
+                let planetHue, planetSaturation, planetLightness;
+                const planetTypeRoll = Math.random();
+                
+                if (planetTypeRoll < 0.15) {
+                    // Desert/Rocky (tan, orange, red)
+                    planetHue = 0.05 + Math.random() * 0.12;
+                    planetSaturation = 0.5 + Math.random() * 0.4;
+                    planetLightness = 0.4 + Math.random() * 0.3;
+                } else if (planetTypeRoll < 0.30) {
+                    // Water worlds (blue, cyan)
+                    planetHue = 0.55 + Math.random() * 0.15;
+                    planetSaturation = 0.6 + Math.random() * 0.3;
+                    planetLightness = 0.5 + Math.random() * 0.3;
+                } else if (planetTypeRoll < 0.45) {
+                    // Forest/Jungle (green)
+                    planetHue = 0.25 + Math.random() * 0.15;
+                    planetSaturation = 0.5 + Math.random() * 0.4;
+                    planetLightness = 0.3 + Math.random() * 0.3;
+                } else if (planetTypeRoll < 0.60) {
+                    // Ice worlds (white, light blue)
+                    planetHue = 0.55 + Math.random() * 0.05;
+                    planetSaturation = 0.2 + Math.random() * 0.3;
+                    planetLightness = 0.7 + Math.random() * 0.25;
+                } else if (planetTypeRoll < 0.75) {
+                    // Gas giants (yellow, orange, red, purple)
+                    planetHue = Math.random() < 0.5 ? 
+                                 (0.08 + Math.random() * 0.12) : 
+                                 (0.75 + Math.random() * 0.2);
+                    planetSaturation = 0.6 + Math.random() * 0.3;
+                    planetLightness = 0.5 + Math.random() * 0.2;
+                } else if (planetTypeRoll < 0.85) {
+                    // Volcanic (dark red, orange glow)
+                    planetHue = 0.0 + Math.random() * 0.08;
+                    planetSaturation = 0.7 + Math.random() * 0.3;
+                    planetLightness = 0.2 + Math.random() * 0.3;
+                } else {
+                    // Exotic/Crystal (purple, pink, teal)
+                    planetHue = 0.65 + Math.random() * 0.25;
+                    planetSaturation = 0.7 + Math.random() * 0.3;
+                    planetLightness = 0.4 + Math.random() * 0.3;
+                }
+                
                 const planetMaterial = new THREE.MeshBasicMaterial({ 
-                    color: new THREE.Color().setHSL(planetHue, 0.7, 0.5),
+                    color: new THREE.Color().setHSL(planetHue, planetSaturation, planetLightness),
                     transparent: true,
                     opacity: 0.85
                 });
                 const planet = new THREE.Mesh(planetGeometry, planetMaterial);
                 
-                const orbitRadius = 100 + p * 80;
-                const orbitSpeed = 0.003 + Math.random() * 0.007;
+                const orbitRadius = 120 + p * 110; // Increased spacing for larger planets
+                const orbitSpeed = 0.002 + Math.random() * 0.008;
                 const orbitPhase = Math.random() * Math.PI * 2;
-                const orbitTilt = (Math.random() - 0.5) * 0.3;
+                const orbitTilt = (Math.random() - 0.5) * 0.4;
                 
                 planet.position.set(
                     clusterX + Math.cos(orbitPhase) * orbitRadius,
@@ -2885,6 +3136,7 @@ function createEnhancedPlanetClustersInNebulas() {
                     clusterZ + Math.sin(orbitPhase) * orbitRadius
                 );
                 
+                // ⭐ CRITICAL: Full collision and slingshot support
                 planet.userData = {
                     name: `Nebula-${nebulaIndex + 1} System ${c + 1} Planet ${String.fromCharCode(65 + p)}`,
                     type: 'planet',
@@ -2893,8 +3145,8 @@ function createEnhancedPlanetClustersInNebulas() {
                     orbitPhase: orbitPhase,
                     orbitTilt: orbitTilt,
                     systemCenter: clusterCenter.clone(),
-                    mass: planetSize * 1.5,
-                    gravity: 0.8 + Math.random() * 1.2,
+                    mass: planetSize * 2.5, // INCREASED mass for better slingshot
+                    gravity: 1.5 + (planetSize * 0.3), // INCREASED gravity based on size
                     nebulaId: nebulaIndex,
                     inNebula: true
                 };
@@ -2904,58 +3156,65 @@ function createEnhancedPlanetClustersInNebulas() {
                 scene.add(planet);
                 planets.push(planet);
                 
-                // Add RING SYSTEMS to 40% of planets (increased from rare)
-                if (Math.random() < 0.4) {
-                    const ringCount = 1 + Math.floor(Math.random() * 4); // 1-4 rings
+                // Add RING SYSTEMS to 50% of planets
+                const ringChance = distanceFactor > 0.5 ? 0.60 : 0.35;
+                
+                if (Math.random() < ringChance) {
+                    const ringCount = 2 + Math.floor(Math.random() * 4);
                     
                     for (let r = 0; r < ringCount; r++) {
-                        const ringInner = planetSize + 4 + r * 5;
-                        const ringOuter = ringInner + 2 + Math.random() * 4;
+                        const ringInner = planetSize + 8 + r * 8; // Scaled for larger planets
+                        const ringOuter = ringInner + 4 + Math.random() * 6;
                         const ringGeometry = new THREE.RingGeometry(ringInner, ringOuter, 64);
                         const ringColor = new THREE.Color().setHSL(
-                            planetHue + 0.1 + r * 0.05, 
-                            0.5 - r * 0.1, 
-                            0.6 + r * 0.05
+                            planetHue + 0.08 + r * 0.04, 
+                            Math.max(0.2, planetSaturation - 0.2 - r * 0.1), 
+                            0.55 + r * 0.06
                         );
                         const ringMaterial = new THREE.MeshBasicMaterial({ 
                             color: ringColor,
                             transparent: true,
-                            opacity: 0.4 - r * 0.08,
+                            opacity: 0.5 - r * 0.08,
                             side: THREE.DoubleSide
                         });
                         const ring = new THREE.Mesh(ringGeometry, ringMaterial);
-                        ring.rotation.x = Math.PI / 2 + (Math.random() - 0.5) * 0.2;
-                        ring.rotation.z = (Math.random() - 0.5) * 0.1;
+                        ring.rotation.x = Math.PI / 2 + (Math.random() - 0.5) * 0.3;
+                        ring.rotation.z = (Math.random() - 0.5) * 0.2;
                         planet.add(ring);
                     }
                     
-                    console.log(`    💍 Added ${ringCount} ring(s) to ${planet.userData.name}`);
+                    console.log(`      💍 Added ${ringCount} rings to ${planet.userData.name}`);
                 }
                 
-                // Add MOON SYSTEMS to larger planets (50% chance if planet > 3 size)
-                if (planetSize > 3 && Math.random() < 0.5) {
-                    const moonCount = 1 + Math.floor(Math.random() * 3); // 1-3 moons
+                // Add MOON SYSTEMS - LARGER MOONS
+                const moonChance = planetSize > 5 ? 0.65 : 0.30; // Adjusted for larger planet sizes
+                
+                if (Math.random() < moonChance) {
+                    const moonCount = 1 + Math.floor(Math.random() * 4);
                     
                     for (let m = 0; m < moonCount; m++) {
-                        const moonSize = 0.5 + Math.random() * 1.5;
+                        const moonSize = 1 + Math.random() * 3; // LARGER moons (was 0.4-2.2, now 1-4)
                         const moonGeometry = new THREE.SphereGeometry(moonSize, 16, 16);
+                        
+                        const moonHue = planetHue + (Math.random() - 0.5) * 0.2;
                         const moonMaterial = new THREE.MeshBasicMaterial({ 
-                            color: new THREE.Color().setHSL(planetHue + 0.15, 0.4, 0.7),
+                            color: new THREE.Color().setHSL(moonHue, 0.3 + Math.random() * 0.3, 0.6 + Math.random() * 0.2),
                             transparent: true,
                             opacity: 0.8
                         });
                         const moon = new THREE.Mesh(moonGeometry, moonMaterial);
                         
-                        const moonOrbitRadius = planetSize + 12 + m * 8;
-                        const moonOrbitSpeed = 0.015 + Math.random() * 0.025;
+                        const moonOrbitRadius = planetSize + 15 + m * 12; // Scaled for larger planets
+                        const moonOrbitSpeed = 0.012 + Math.random() * 0.028;
                         const moonOrbitPhase = Math.random() * Math.PI * 2;
                         
                         moon.position.set(
                             moonOrbitRadius * Math.cos(moonOrbitPhase),
-                            (Math.random() - 0.5) * 4,
+                            (Math.random() - 0.5) * 5,
                             moonOrbitRadius * Math.sin(moonOrbitPhase)
                         );
                         
+                        // ⭐ CRITICAL: Moons also support collision and slingshot
                         moon.userData = {
                             name: `${planet.userData.name} Moon ${m + 1}`,
                             type: 'moon',
@@ -2963,44 +3222,43 @@ function createEnhancedPlanetClustersInNebulas() {
                             orbitSpeed: moonOrbitSpeed,
                             orbitPhase: moonOrbitPhase,
                             parentPlanet: planet,
-                            mass: moonSize,
-                            gravity: 0.3 + Math.random() * 0.5,
+                            mass: moonSize * 2, // INCREASED mass
+                            gravity: 0.5 + moonSize * 0.4, // INCREASED gravity based on size
                             nebulaId: nebulaIndex
                         };
                         
                         moon.visible = true;
                         moon.frustumCulled = false;
-                        planet.add(moon); // Add as child so it follows parent
                         planets.push(moon);
+                        planet.add(moon);
                     }
                     
-                    console.log(`    🌙 Added ${moonCount} moon(s) to ${planet.userData.name}`);
+                    console.log(`      🌙 Added ${moonCount} moon(s) to ${planet.userData.name}`);
                 }
             }
             
-            // Create NEBULA GAS CLOUDS around systems (50% chance, increased from 25%)
-if (Math.random() < 0.5) {
-    createNebulaGasCloud(clusterCenter, nebulaIndex, starColor);
-}
+            // Add ambient gas clouds
+            if (Math.random() < 0.5) {
+                createNebulaGasCloud(clusterCenter, nebulaIndex, starColor);
+            }
 
-// Also add ambient gas clouds throughout the nebula (2-4 per nebula)
-if (c === 0) { // Only on first cluster to avoid duplicates
-    const ambientCloudCount = 2 + Math.floor(Math.random() * 3); // 2-4 clouds
-    for (let ac = 0; ac < ambientCloudCount; ac++) {
-        const ambientDistance = (Math.random() * 0.7 + 0.3) * nebulaSize;
-        const ambientAngle = Math.random() * Math.PI * 2;
-        const ambientElevation = (Math.random() - 0.5) * Math.PI * 0.4;
-        
-        const ambientPos = new THREE.Vector3(
-            nebulaPos.x + ambientDistance * Math.cos(ambientAngle) * Math.cos(ambientElevation),
-            nebulaPos.y + ambientDistance * Math.sin(ambientElevation),
-            nebulaPos.z + ambientDistance * Math.sin(ambientAngle) * Math.cos(ambientElevation)
-        );
-        
-        createNebulaGasCloud(ambientPos, nebulaIndex, starColor);
-    }
-    console.log(`    🌫️ Added ${ambientCloudCount} ambient gas cloud clusters to nebula`);
-}
+            if (c === 0) {
+                const ambientCloudCount = 2 + Math.floor(Math.random() * 3);
+                for (let ac = 0; ac < ambientCloudCount; ac++) {
+                    const ambientDistance = (Math.random() * 0.7 + 0.3) * nebulaSize;
+                    const ambientAngle = Math.random() * Math.PI * 2;
+                    const ambientElevation = (Math.random() - 0.5) * Math.PI * 0.4;
+                    
+                    const ambientPos = new THREE.Vector3(
+                        nebulaPos.x + ambientDistance * Math.cos(ambientAngle) * Math.cos(ambientElevation),
+                        nebulaPos.y + ambientDistance * Math.sin(ambientElevation),
+                        nebulaPos.z + ambientDistance * Math.sin(ambientAngle) * Math.cos(ambientElevation)
+                    );
+                    
+                    createNebulaGasCloud(ambientPos, nebulaIndex, starColor);
+                }
+                console.log(`    🌫️ Added ${ambientCloudCount} ambient gas cloud clusters to nebula`);
+            }
             
             enhancedClusters.push({
                 center: clusterCenter,
@@ -3011,10 +3269,12 @@ if (c === 0) { // Only on first cluster to avoid duplicates
         }
     });
     
-    console.log(`✅ Created ${enhancedClusters.length} enhanced planet clusters in nebulas`);
-    console.log(`   💫 Total new celestial objects: ${enhancedClusters.length * 4} (avg)`);
+    console.log(`✅ Created ${enhancedClusters.length} MASSIVELY DIVERSE enhanced planet clusters`);
+    console.log(`   💫 ALL PLANETS support collision detection and gravitational slingshots`);
+    console.log(`   🪐 Average planet size: 3-25 units (MUCH LARGER)`);
+    console.log(`   💍 50-60% have ring systems`);
+    console.log(`   🌙 65% of large planets have 1-4 moons (also larger)`);
 }
-
 // =============================================================================
 // NEBULA GAS CLOUD CREATION - CLUSTERED VERSION
 // Creates 3-4 overlapping gas clouds for a more realistic nebula appearance
@@ -3519,7 +3779,7 @@ function createEnemyMaterial(shapeData, enemyType, distance) {
         glowScale: isBoss ? 1.3 : 1.2
     };
 }
-
+    
 // =============================================================================
 // WORMHOLES, COMETS, AND OTHER SPACE OBJECTS
 // =============================================================================
@@ -4121,11 +4381,11 @@ function createAsteroidBelts() {
         for (let b = 0; b < beltCount; b++) {
             const beltGroup = new THREE.Group();
             
-            // PLENTIFUL: 200-500 asteroids
-            const asteroidCount = 100 + Math.random() * 200;
+            // PLENTIFUL: 50-150 asteroids
+            const asteroidCount = 50 + Math.random() * 100;
             
             // CLOSER: 800-2000 units from black hole
-        	const beltRadius = 1600 + Math.random() * 2400;
+        	const beltRadius = 1600 + Math.random() * 1000;
             const beltWidth = 400 + Math.random() * 800;
             
             for (let j = 0; j < asteroidCount; j++) {
@@ -4334,6 +4594,155 @@ function loadEnemiesForGalaxy(galaxyId) {
     console.log(`✅ Loaded ${enemiesPerGalaxy} enemies for galaxy ${galaxyId}`);
 }
 
+// =============================================================================
+// WARP SPEED STARFIELD EFFECT - 3D Streaking Stars
+// Runs alongside createHyperspaceEffect() for enhanced visual immersion
+// =============================================================================
+
+function createWarpSpeedStarfield() {
+    console.log('Creating 3D warp speed starfield with streaks...');
+    
+    const starCount = 200;
+    const starSpeed = 80;
+    const starSpread = 2000;
+    const starDepth = 4000;
+    
+    // Create line segments for each star (2 vertices per star)
+    const lineGeometry = new THREE.BufferGeometry();
+    const linePositions = new Float32Array(starCount * 2 * 3); // 2 points per line
+    const starVelocities = new Float32Array(starCount);
+    const starData = []; // Store star info
+    
+    // Initialize stars
+    for (let i = 0; i < starCount; i++) {
+        const angle = Math.random() * Math.PI * 2;
+        const radius = Math.random() * starSpread;
+        
+        const x = Math.cos(angle) * radius;
+        const y = Math.sin(angle) * radius;
+        const z = -Math.random() * starDepth;
+        
+        starData.push({ x, y, z });
+        starVelocities[i] = 0.8 + Math.random() * 0.4;
+        
+        // Set initial line positions (both points at same location initially)
+        const i6 = i * 6;
+        linePositions[i6] = x;
+        linePositions[i6 + 1] = y;
+        linePositions[i6 + 2] = z;
+        linePositions[i6 + 3] = x;
+        linePositions[i6 + 4] = y;
+        linePositions[i6 + 5] = z;
+    }
+    
+    lineGeometry.setAttribute('position', new THREE.BufferAttribute(linePositions, 3));
+    
+    // White lines with additive blending
+    const lineMaterial = new THREE.LineBasicMaterial({
+        color: 0xffffff,
+        transparent: true,
+        opacity: 0.6,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false
+    });
+    
+    const lines = new THREE.LineSegments(lineGeometry, lineMaterial);
+    lines.frustumCulled = false;
+    lines.visible = false; // ✅ Start hidden
+    
+    if (typeof scene !== 'undefined') {
+        scene.add(lines);
+    }
+    
+    window.warpStarfield = {
+        lines: lines,
+        starData: starData,
+        velocities: starVelocities,
+        speed: starSpeed,
+        spread: starSpread,
+        depth: starDepth
+    };
+    
+    console.log('✅ 3D warp speed starfield created (hidden by default)');
+}
+
+window.addEventListener('keydown', (e) => {
+    if (e.key.toLowerCase() === 'x') braking = true;
+});
+
+window.addEventListener('keyup', (e) => {
+    if (e.key.toLowerCase() === 'x') braking = false;
+});
+
+function updateWarpSpeedStarfield() {
+    if (!window.warpStarfield?.lines) return;
+
+    const starfield = window.warpStarfield;
+
+    // Smoothly ease toward brake or resume
+    const target = braking ? 0 : 80; // 0 when braking, 80 when normal
+    starfield.speed += (target - starfield.speed) * 0.05; // easing factor 0.05 = smooth decel/accel
+
+    // Keep normal camera sync
+    if (typeof camera !== 'undefined') {
+        starfield.lines.position.copy(camera.position);
+        starfield.lines.rotation.copy(camera.rotation);
+    }
+
+    const positions = starfield.lines.geometry.attributes.position.array;
+    const starData = starfield.starData;
+    const velocities = starfield.velocities;
+    const speed = starfield.speed;
+    const spread = starfield.spread;
+    const depth = starfield.depth;
+    
+    for (let i = 0; i < starData.length; i++) {
+        const star = starData[i];
+        const velocity = velocities[i];
+        
+        // Move star toward camera (in LOCAL space, so it's always "forward")
+        star.z += speed * velocity;
+        
+        // Reset if passed camera
+        if (star.z > 100) {
+            const angle = Math.random() * Math.PI * 2;
+            const radius = Math.random() * spread;
+            star.x = Math.cos(angle) * radius;
+            star.y = Math.sin(angle) * radius;
+            star.z = -depth;
+            velocities[i] = 0.8 + Math.random() * 0.4;
+        }
+        
+        // Update line positions (create streak effect)
+        const i6 = i * 6;
+        const streakLength = speed * velocity * 1; // Length of the streak
+        
+        // Front point (head of streak)
+        positions[i6] = star.x;
+        positions[i6 + 1] = star.y;
+        positions[i6 + 2] = star.z;
+        
+        // Back point (tail of streak)
+        positions[i6 + 3] = star.x;
+        positions[i6 + 4] = star.y;
+        positions[i6 + 5] = star.z - streakLength;
+    }
+    
+    starfield.lines.geometry.attributes.position.needsUpdate = true;
+}
+
+function toggleWarpSpeedStarfield(enabled) {
+    if (typeof window.warpStarfield === 'undefined') {
+        return;
+    }
+    
+    if (window.warpStarfield.lines) {
+        window.warpStarfield.lines.visible = enabled;
+    }
+    
+    console.log(`⚡ 3D Warp starfield ${enabled ? 'ACTIVATED' : 'deactivated'}`);
+}
+
 function cleanupDistantEnemies(currentGalaxyId) {
     // ✅ DISABLED: Keep all enemies loaded across all galaxies
     // This function is now a no-op to preserve enemies in all galaxies
@@ -4494,7 +4903,9 @@ if (typeof window !== 'undefined') {
 	window.spawnBlackHoleGuardians = spawnBlackHoleGuardians;
 	window.loadGuardiansForGalaxy = loadGuardiansForGalaxy;
 	window.animateNebulaBrownDwarfs = animateNebulaBrownDwarfs;
-
+	window.createWarpSpeedStarfield = createWarpSpeedStarfield;
+    window.updateWarpSpeedStarfield = updateWarpSpeedStarfield;
+    window.toggleWarpSpeedStarfield = toggleWarpSpeedStarfield;
     
     // Core creation functions
     window.createOptimizedPlanets = createOptimizedPlanets3D;
@@ -4515,6 +4926,7 @@ if (typeof window !== 'undefined') {
 	window.createEnemyMaterial = createEnemyMaterial;
 	window.getRandomGalaxyPosition = getRandomGalaxyPosition;
 	window.createGalaxyEnvironmentalEffects = createGalaxyEnvironmentalEffects;
+	window.updateCMBOpacity = updateCMBOpacity;
 	
     // Data exports
     window.galaxyTypes = galaxyTypes;
@@ -4525,4 +4937,120 @@ if (typeof window !== 'undefined') {
     window.createNebulaGasCloud = createNebulaGasCloud;
     
     console.log('Enhanced game objects with planet clusters loaded');
+}
+// CMB OPACITY HELPER FUNCTION
+// =============================================================================
+function setCMBOpacity(value) {
+    if (window.cosmicSkybox && window.cosmicSkybox.material && window.cosmicSkybox.material.uniforms) {
+        window.cosmicSkybox.material.uniforms.opacity.value = value;
+        console.log('✅ CMB opacity set to:', value);
+    } else {
+        console.log('❌ CMB not found');
+    }
+}
+
+// ✅ ENHANCED: Dynamic CMB opacity based on distance from Sagittarius A, nebula proximity, AND storm proximity
+// =============================================================================
+function updateCMBOpacity() {
+    if (!window.cosmicSkybox || !window.cosmicSkybox.material || !window.cosmicSkybox.material.uniforms) {
+        return;
+    }
+    
+    if (typeof camera === 'undefined') {
+        return;
+    }
+    
+    // PART 1: Calculate base opacity based on distance from Sagittarius A* (at origin 0,0,0)
+    const sagittariusAPosition = new THREE.Vector3(0, 0, 0);
+    const distanceFromSgrA = camera.position.distanceTo(sagittariusAPosition);
+    
+    // Linear interpolation: 0.01 at origin, 0.09 at 4000+ units
+    const maxDistance = 60000;
+    const minOpacity = 0.01;
+    const maxOpacity = 0.09;
+    
+    let baseOpacity = minOpacity + (distanceFromSgrA / maxDistance) * (maxOpacity - minOpacity);
+    baseOpacity = Math.max(minOpacity, Math.min(maxOpacity, baseOpacity)); // Clamp between 0.03 and 0.09
+    
+    // PART 2: Check proximity to nebula centers and boost opacity
+    let finalOpacity = baseOpacity;
+    let inNebulaEffect = false;
+    
+    if (typeof nebulaClouds !== 'undefined' && nebulaClouds.length > 0) {
+        let closestNebulaDistance = Infinity;
+        
+        // Find the closest nebula
+        nebulaClouds.forEach(nebula => {
+            if (nebula && nebula.position) {
+                const distance = camera.position.distanceTo(nebula.position);
+                if (distance < closestNebulaDistance) {
+                    closestNebulaDistance = distance;
+                }
+            }
+        });
+        
+        // If within 750 units of a nebula, start boosting opacity
+        if (closestNebulaDistance <= 750) {
+            inNebulaEffect = true;
+            const nebulaMaxOpacity = 0.2;
+            
+            if (closestNebulaDistance <= 250) {
+                // Within 250 units: full nebula opacity
+                finalOpacity = nebulaMaxOpacity;
+            } else {
+                // Between 250-750 units: fade from base opacity to nebula opacity
+                const fadeRange = 750 - 250; // 500 units
+                const fadeDistance = closestNebulaDistance - 250;
+                const fadeFactor = fadeDistance / fadeRange; // 0 at 250 units, 1 at 750 units
+                
+                // Interpolate between nebula max opacity and base opacity
+                finalOpacity = nebulaMaxOpacity * (1 - fadeFactor) + baseOpacity * fadeFactor;
+            }
+        }
+    }
+    
+    // PART 3: ✅ NEW - Check proximity to solar storms and plasma storms
+    if (!inNebulaEffect && typeof cosmicFeatures !== 'undefined') {
+        const stormMaxOpacity = 0.2;
+        let inStormEffect = false;
+        
+        // Check solar storms
+        if (cosmicFeatures.solarStorms && cosmicFeatures.solarStorms.length > 0) {
+            cosmicFeatures.solarStorms.forEach(storm => {
+                if (storm && storm.position && !inStormEffect) {
+                    const distance = camera.position.distanceTo(storm.position);
+                    const stormRadius = 200; // Solar storms have waves extending to ~200 units
+                    
+                    // If inside or very close to storm radius
+                    if (distance <= stormRadius) {
+                        inStormEffect = true;
+                        // Quick fade: full effect at center, fades to edge
+                        const fadeFactor = distance / stormRadius; // 0 at center, 1 at edge
+                        finalOpacity = stormMaxOpacity * (1 - fadeFactor * 0.5) + baseOpacity * (fadeFactor * 0.5);
+                    }
+                }
+            });
+        }
+        
+        // Check plasma storms
+        if (cosmicFeatures.plasmaStorms && cosmicFeatures.plasmaStorms.length > 0 && !inStormEffect) {
+            cosmicFeatures.plasmaStorms.forEach(storm => {
+                if (storm && storm.position && !inStormEffect) {
+                    const distance = camera.position.distanceTo(storm.position);
+                    const stormRadius = 280; // Plasma storms have glow layer at 280 units
+                    
+                    // If inside or very close to storm radius
+                    if (distance <= stormRadius) {
+                        inStormEffect = true;
+                        // Quick fade: full effect at center, fades to edge
+                        const fadeFactor = distance / stormRadius; // 0 at center, 1 at edge
+                        finalOpacity = stormMaxOpacity * (1 - fadeFactor * 0.5) + baseOpacity * (fadeFactor * 0.5);
+                    }
+                }
+            });
+        }
+    }
+    
+    // Update the CMB shader uniform
+    window.cosmicSkybox.material.uniforms.opacity.value = finalOpacity;
 }
