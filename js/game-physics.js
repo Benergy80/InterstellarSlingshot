@@ -1093,10 +1093,11 @@ if (gameState.emergencyWarp.active) {
     gameState.emergencyWarp.timeRemaining -= 16.67;
     if (gameState.emergencyWarp.timeRemaining <= 0) {
         gameState.emergencyWarp.active = false;
-        gameState.emergencyWarp.postWarp = true;  // NEW: Enter coasting phase
+        gameState.emergencyWarp.postWarp = true;
         
-        // ✅ NEW: Deactivate 3D warp starfield
-        if (typeof toggleWarpSpeedStarfield === 'function') {
+        // Check speed and disable starfield if needed
+        const currentSpeedKmS = gameState.velocityVector.length() * 1000;
+        if (currentSpeedKmS < 10000 && typeof toggleWarpSpeedStarfield === 'function') {
             toggleWarpSpeedStarfield(false);
         }
         
@@ -1106,30 +1107,48 @@ if (gameState.emergencyWarp.active) {
     }
 } else if (gameState.emergencyWarp.postWarp) {
     // Coast on momentum until brakes are manually used
-    const currentSpeed = gameState.velocityVector.length();
+    const currentSpeedKmS = gameState.velocityVector.length() * 1000;
+    
+    // Auto-disable starfield when coasting below threshold
+    if (currentSpeedKmS < 10000 && typeof toggleWarpSpeedStarfield === 'function') {
+        if (window.warpStarfield && window.warpStarfield.lines && window.warpStarfield.lines.visible) {
+            toggleWarpSpeedStarfield(false);
+        }
+    }
+    
     if (keys.x) {
-        // Player is actively braking - end coasting phase
         gameState.emergencyWarp.postWarp = false;
         if (typeof showAchievement === 'function') {
             showAchievement('Emergency Brake Applied', 'Momentum coasting ended');
         }
     }
-    // Continue coasting - no automatic velocity reduction
 }
 
     
-    // Emergency braking (X key) - NO ENERGY COST, ALWAYS AVAILABLE
+    // Emergency braking (X key) - GRADUAL DECELERATION
 if (keys.x && gameState.energy > 0) {
-    const currentSpeed = gameState.velocityVector.length();
-    if (currentSpeed > gameState.minVelocity) {
-        const brakePower = 0.95; // Gradual 5% reduction per frame
-        const newVelocity = gameState.velocityVector.clone().multiplyScalar(brakePower);
-        if (newVelocity.length() >= gameState.minVelocity) {
-            gameState.velocityVector.copy(newVelocity);
-        } else {
-            gameState.velocityVector.normalize().multiplyScalar(gameState.minVelocity);
+    // Gradual braking: reduce velocity by 2% per frame instead of instant stop
+    const brakingForce = 0.98; // 2% reduction per frame
+    gameState.velocityVector.multiplyScalar(brakingForce);
+    
+    // Small energy cost for braking
+    gameState.energy = Math.max(0, gameState.energy - 0.02);
+    
+    // Get current speed in km/s
+    const currentSpeedKmS = gameState.velocityVector.length() * 1000;
+    
+    // Disable warp starfield when speed drops below 10,000 km/s
+    if (currentSpeedKmS < 10000 && typeof toggleWarpSpeedStarfield === 'function') {
+        if (window.warpStarfield && window.warpStarfield.lines && window.warpStarfield.lines.visible) {
+            toggleWarpSpeedStarfield(false);
+            console.log('⚡ Warp starfield disabled - speed below 10,000 km/s');
         }
-        gameState.energy = Math.max(0, gameState.energy - 0.08);
+    }
+    
+    if (Math.random() > 0.92) {
+        if (typeof createHyperspaceEffect === 'function') {
+            createHyperspaceEffect();
+        }
     }
 }
     
@@ -1562,6 +1581,36 @@ function initializeGalaxyDiscoverySystem() {
 }
 
 // =============================================================================
+// NEBULA DISCOVERY SYSTEM
+// =============================================================================
+
+function checkForNebulaDiscovery() {
+    if (typeof gameState === 'undefined' || typeof camera === 'undefined') return;
+    if (typeof nebulaClouds === 'undefined' || nebulaClouds.length === 0) return;
+    
+    const discoveryRange = 3000; // Distance to trigger discovery
+    
+    nebulaClouds.forEach(nebula => {
+        if (!nebula || !nebula.userData || nebula.userData.discovered) return;
+        
+        const distance = camera.position.distanceTo(nebula.position);
+        
+        if (distance < discoveryRange) {
+            // Mark as discovered
+            nebula.userData.discovered = true;
+            
+            // Show discovery notification
+            if (typeof showAchievement === 'function') {
+                const nebulaName = nebula.userData.mythicalName || nebula.userData.name || 'Unknown Nebula';
+                showAchievement('Nebula Discovered!', `Discovered the ${nebulaName} Nebula`, true);
+            }
+            
+            console.log(`🌫️ Nebula discovered: ${nebula.userData.mythicalName || nebula.userData.name}`);
+        }
+    });
+}
+
+// =============================================================================
 // FUNCTION EXPORTS AND COMPATIBILITY
 // =============================================================================
 
@@ -1581,6 +1630,9 @@ window.destroyAsteroid = destroyAsteroid;
 window.destroyAsteroidByWeapon = destroyAsteroidByWeapon;
 window.destroyAsteroidByCollision = destroyAsteroidByCollision;
 window.createAsteroidExplosion = createAsteroidExplosion;
+
+// Export the function
+window.checkForNebulaDiscovery = checkForNebulaDiscovery;
 
 // Automatic black hole warp function
 window.transitionToRandomLocation = transitionToRandomLocation;
