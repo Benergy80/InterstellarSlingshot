@@ -1012,6 +1012,11 @@ if (typeof enemies !== 'undefined' && enemies.length > 0 && gameState.frameCount
     updateGalaxyMap();
 	}
     
+    // NEW: Check for nebula discoveries
+    if (gameState.frameCount % 30 === 0 && typeof checkForNebulaDiscovery === 'function') {
+        checkForNebulaDiscovery();
+    }
+    
     // WEAPON ENERGY REGENERATION (ADD THIS)
     if (gameState.weapons.energy < 100) {
         gameState.weapons.energy = Math.min(100, gameState.weapons.energy + 0.5); // Regenerate 0.5 per frame (~30/sec)
