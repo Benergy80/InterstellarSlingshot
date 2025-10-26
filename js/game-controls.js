@@ -3038,30 +3038,30 @@ function playEnhancedBlackHoleWarpSound() {
 
 // FIXED: Utility function to adjust minimum ship speed
 function initControls() {
-    console.log('ðŸŽ® initControls function called');
+    console.log('initControls function called');
     
     try {
         if (typeof setupEnhancedEventListeners === 'function') {
             setupEnhancedEventListeners();
-            console.log('âœ… Event listeners initialized');
+            console.log('Event listeners initialized');
         } else {
-            console.warn('âš ï¸ setupEnhancedEventListeners not found');
+            console.warn('setupEnhancedEventListeners not found');
         }
         
         if (typeof initAudio === 'function') {
             initAudio();
-            console.log('âœ… Audio initialized');
+            console.log('Audio initialized');
         }
         
         setTimeout(() => {
             if (typeof startTutorial === 'function') {
                 startTutorial();
-                console.log('âœ… Tutorial started');
+                console.log('Tutorial started');
             }
         }, 1000);
         
     } catch (error) {
-        console.error('âŒ Error in initControls:', error);
+        console.error('Error in initControls:', error);
     }
 }
 
@@ -3176,7 +3176,7 @@ if (typeof window !== 'undefined') {
     // Make music system available
     window.musicSystem = musicSystem;
     
-    console.log('âœ… Enhanced Game Controls loaded - All functions exported');
+    console.log('Game Controls loaded - All functions exported');
 }
 
 console.log('ðŸ Game Controls script completed successfully!');
