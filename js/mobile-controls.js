@@ -178,19 +178,42 @@ function mobileFireWeapon() {
     }
 }
 
-function mobileBrakes() {
+// =============================================================================
+// MOBILE BRAKE CONTROLS - HOLD TO BRAKE
+// =============================================================================
+
+let brakeHoldInterval = null;
+
+function mobileBrakesStart() {
     if (typeof keys !== 'undefined') {
         keys.x = true;
-        setTimeout(() => keys.x = false, 200);
+    }
+    
+    // Visual feedback
+    const brakeBtn = document.querySelector('.mobile-btn[onclick*="Brakes"]');
+    if (brakeBtn) {
+        brakeBtn.style.background = 'linear-gradient(135deg, rgba(255, 150, 0, 0.9), rgba(255, 100, 0, 0.9))';
     }
     
     if (typeof playSound === 'function') {
         playSound('ui_click', 600, 0.1);
     }
     
-    if (typeof showAchievement === 'function') {
-        showAchievement('Brakes Engaged', 'Emergency deceleration activated');
+    console.log('📱 Mobile brakes engaged');
+}
+
+function mobileBrakesEnd() {
+    if (typeof keys !== 'undefined') {
+        keys.x = false;
     }
+    
+    // Reset visual feedback
+    const brakeBtn = document.querySelector('.mobile-btn[onclick*="Brakes"]');
+    if (brakeBtn) {
+        brakeBtn.style.background = '';
+    }
+    
+    console.log('📱 Mobile brakes released');
 }
 
 function mobileAutoNavigate() {
@@ -239,8 +262,13 @@ function mobileEmergencyWarp() {
 }
 
 // Mobile fire handler - proper implementation
-function handleMobileFire() {
-    console.log('Mobile fire button pressed');
+function handleMobileFire(event) {
+    if (event) {
+        event.preventDefault();
+        event.stopPropagation();
+    }
+    
+    console.log('📱 Mobile fire button pressed');
     
     // Ensure game is active
     if (typeof gameState === 'undefined' || !gameState.gameStarted || gameState.gameOver) {
@@ -256,20 +284,22 @@ function handleMobileFire() {
     // Call the main fire weapon function
     if (typeof fireWeapon === 'function') {
         fireWeapon();
-        console.log('Fire weapon called successfully');
+        console.log('✅ Fire weapon called successfully');
     } else if (typeof keys !== 'undefined') {
         // Fallback: simulate spacebar press
         keys.space = true;
         setTimeout(() => keys.space = false, 100);
-        console.log('Fire weapon via keys.space');
+        console.log('✅ Fire weapon via keys.space');
     }
     
     // Visual feedback
-    const fireBtn = document.querySelector('.mobile-btn.primary');
+    const fireBtn = document.querySelector('.mobile-btn.primary, .mobile-btn.fire');
     if (fireBtn) {
-        fireBtn.style.transform = 'perspective(600px) rotateX(-3deg) translateZ(2px) scale(0.92)';
+        fireBtn.style.transform = 'scale(0.85)';
+        fireBtn.style.opacity = '0.8';
         setTimeout(() => {
-            fireBtn.style.transform = 'perspective(600px) rotateX(-3deg) translateZ(5px)';
+            fireBtn.style.transform = 'scale(1)';
+            fireBtn.style.opacity = '1';
         }, 150);
     }
 }
@@ -381,41 +411,46 @@ function updateMobileNavigation() {
 }
 
 // =============================================================================
-// ENHANCED TOUCH CONTROLS
+// ENHANCED TOUCH CONTROLS - CAMERA LOOK ONLY
 // =============================================================================
 
 let touchStartX = 0;
 let touchStartY = 0;
 let isTouching = false;
-let touchStartTime = 0;
-let hasMoved = false;
-let totalMovement = 0;
 
 document.addEventListener('touchstart', (e) => {
+    // Only handle touches on game canvas, not on UI buttons
+    if (e.target.closest('.mobile-btn') || 
+        e.target.closest('.mobile-controls') ||
+        e.target.closest('.mobile-popup') ||
+        e.target.closest('.nav-panel-mobile')) {
+        return; // Let button handlers work
+    }
+    
     if (e.target.id === 'gameCanvas' || e.target.closest('#gameContainer')) {
         const touch = e.touches[0];
         touchStartX = touch.clientX;
         touchStartY = touch.clientY;
-        touchStartTime = Date.now();
         isTouching = true;
-        hasMoved = false;
-        totalMovement = 0;
         e.preventDefault();
     }
 }, { passive: false });
 
 document.addEventListener('touchmove', (e) => {
+    // Only handle touches on game canvas, not on UI buttons
+    if (e.target.closest('.mobile-btn') || 
+        e.target.closest('.mobile-controls') ||
+        e.target.closest('.mobile-popup') ||
+        e.target.closest('.nav-panel-mobile')) {
+        return;
+    }
+    
     if (isTouching && typeof camera !== 'undefined') {
         const touch = e.touches[0];
         const deltaX = touch.clientX - touchStartX;
         const deltaY = touch.clientY - touchStartY;
         
-        totalMovement += Math.abs(deltaX) + Math.abs(deltaY);
-        
-        if (totalMovement > 10) {
-            hasMoved = true;
-        }
-        
+        // Apply camera rotation
         camera.rotation.y -= deltaX * 0.005;
         camera.rotation.x -= deltaY * 0.005;
         camera.rotation.x = Math.max(-Math.PI/2, Math.min(Math.PI/2, camera.rotation.x));
@@ -427,26 +462,6 @@ document.addEventListener('touchmove', (e) => {
 }, { passive: false });
 
 document.addEventListener('touchend', (e) => {
-    if (isTouching) {
-        const touchDuration = Date.now() - touchStartTime;
-        
-        if (!hasMoved && touchDuration < 300 && totalMovement < 15 && mobileSettings.crosshairTargeting) {
-            mobileFireWeapon();
-            
-            const crosshair = document.getElementById('crosshair');
-            if (crosshair) {
-                crosshair.style.borderColor = 'rgba(255, 100, 100, 1)';
-                crosshair.style.boxShadow = '0 0 25px rgba(255, 100, 100, 0.8)';
-                crosshair.style.transform = 'translate(-50%, -50%) scale(1.3)';
-                
-                setTimeout(() => {
-                    crosshair.style.borderColor = 'rgba(0, 255, 0, 0.9)';
-                    crosshair.style.boxShadow = '0 0 15px rgba(0, 255, 0, 0.7)';
-                    crosshair.style.transform = 'translate(-50%, -50%) scale(1)';
-                }, 200);
-            }
-        }
-    }
     isTouching = false;
 });
 
@@ -555,6 +570,12 @@ document.addEventListener('DOMContentLoaded', () => {
         if (floatingStatus) {
             floatingStatus.style.display = 'flex';
             console.log('📱 Mobile floating status now visible');
+        } else {
+            // If floating status doesn't exist, create it
+            console.log('📱 Floating status not found, creating it...');
+            if (typeof createMobileFloatingStatus === 'function') {
+                createMobileFloatingStatus();
+            }
         }
     }
 }
