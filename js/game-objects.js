@@ -125,6 +125,66 @@ const galaxyMapPositions = [
     { x: 0.5, y: 0.5 }    // 8 (Sagittarius A* at center)
 ];
 
+// =============================================================================
+// MYTHICAL NEBULA NAMING SYSTEM
+// =============================================================================
+
+const mythicalNebulaNames = [
+    // Legendary Lost Cities
+    'Atlantis', 'El Dorado', 'Shangri-La', 'Shambhala', 'Avalon',
+    'Camelot', 'Asgard', 'Olympus', 'Valhalla', 'Elysium',
+    
+    // Science Fiction Cities
+    'Cloud City', 'Coruscant', 'Trantor', 'Terminus', 'Arrakeen',
+    'Neo-Tokyo', 'Citadel Station', 'Rapture', 'Columbia', 'New Mombasa',
+    'Zanarkand', 'Midgar', 'Insomnia', 'Piltover', 'Zaun',
+    
+    // Fantasy Realms
+    'Rivendell', 'Gondor', 'Lothlorien', 'Erebor', 'Minas Tirith',
+    'Hogwarts', 'Narnia', 'Wonderland', 'Neverland', 'Oz',
+    'Xanadu', 'Hy-Brasil', 'Ys', 'Lyonesse', 'Iram',
+    
+    // Epic Cosmic Cities
+    'Celestia', 'Astral City', 'Starfall', 'Nova Prime', 'Helios Prime',
+    'Solaris', 'Lunaris', 'Cosmopolis', 'Galaxia', 'Nebulonis',
+    'Stellaris', 'Astropolis', 'Quasar City', 'Pulsar Haven', 'Void Station',
+    
+    // Mythological Places
+    'Thule', 'Hyperborea', 'Lemuria', 'Mu', 'Arcadia',
+    'Babylon', 'Nineveh', 'Troy', 'Carthage', 'Petra'
+];
+
+// Track which names have been used
+const usedNebulaNames = new Set();
+
+// Function to get a mythical name for a nebula
+function getMythicalNebulaName(clusterIndex) {
+    // For clustered nebulas, use related names
+    const clusterPrefixes = ['Greater', 'Lesser', 'New', 'Old', 'High', 'Low', 'Upper', 'Lower', 'North', 'South', 'East', 'West'];
+    
+    // Get available names (not yet used)
+    const availableNames = mythicalNebulaNames.filter(name => !usedNebulaNames.has(name));
+    
+    // If we've used all names, start reusing with prefixes
+    if (availableNames.length === 0) {
+        usedNebulaNames.clear();
+        return getMythicalNebulaName(clusterIndex);
+    }
+    
+    // Pick a random name from available ones
+    const baseName = availableNames[Math.floor(Math.random() * availableNames.length)];
+    
+    // For clustered nebulas (same clusterIndex), occasionally add prefix
+    let finalName = baseName;
+    if (clusterIndex !== undefined && Math.random() < 0.4) {
+        const prefix = clusterPrefixes[clusterIndex % clusterPrefixes.length];
+        finalName = `${prefix} ${baseName}`;
+    }
+    
+    usedNebulaNames.add(baseName);
+    return finalName;
+}
+
 // ✅ NEW: Convert 3D spherical coordinates to 2D map coordinates
 // Projects the spherical universe onto a flat circular map
 function convertSpherical3DTo2DMap(galaxyData) {
@@ -2787,6 +2847,18 @@ function createClusteredNebulas() {
         { x: 8000, y: -800, z: -20000 }
     ];
     
+    // MYTHICAL NEBULA NAMING SYSTEM
+    const mythicalNebulaNames = [
+        'Olympus Nebula',      // Home of the gods
+        'Titan Nebula',        // Primordial giants
+        'Atlantis Nebula',     // Lost City of the heavens
+        'Prometheus Nebula',   // Bringer of fire
+        'Elysium Nebula',      // Paradise realm
+        'Tartarus Nebula',     // Deepest abyss
+        'Hyperion Nebula',     // Titan of light
+        'Chronos Nebula'       // God of time
+    ];
+    
     for (let i = 0; i < nebulaCount; i++) {
         const nebulaGroup = new THREE.Group();
         const clusterIndex = i % clusterCenters.length;
@@ -2932,14 +3004,19 @@ function createClusteredNebulas() {
         nebulaGroup.visible = true;
         nebulaGroup.frustumCulled = false;
         
+        const mythicalName = getMythicalNebulaName(clusterIndex);
+        
         nebulaGroup.userData = {
-            name: `Nebula Cluster ${i + 1}`,
+            name: `${mythicalName} Nebula`,
+            mythicalName: mythicalName, // Store the short name separately
             type: 'nebula',
             size: nebulaSize,
             color: nebulaColor,
             cluster: clusterIndex,
+            clusterName: mythicalName, // For discovery notifications
             rotationSpeed: (Math.random() - 0.5) * 0.0008,
-            position3D: nebulaGroup.position.clone()
+            position3D: nebulaGroup.position.clone(),
+            discovered: false // Track discovery status
         };
         
         scene.add(nebulaGroup);
@@ -4058,14 +4135,14 @@ function createNebulas() {
     
     // Define nebula types matching galaxy formations
     const nebulaTypes = [
-        { name: 'Spiral', shape: 'spiral', arms: 3, color: 0x4488ff },
-        { name: 'Elliptical', shape: 'elliptical', color: 0xff8844 },
-        { name: 'Ring', shape: 'ring', arms: 1, color: 0x88ff44 },
-        { name: 'Irregular', shape: 'irregular', color: 0xff4488 },
-        { name: 'Quasar', shape: 'quasar', color: 0xff44ff },
-        { name: 'Lenticular', shape: 'lenticular', color: 0x44ffff },
-        { name: 'Ancient', shape: 'ancient', color: 0xffaa88 },
-        { name: 'Dwarf Spiral', shape: 'spiral', arms: 2, color: 0x8844ff }
+        { name: 'Olympus', shape: 'spiral', arms: 3, color: 0x4488ff },      // Home of the gods
+        { name: 'Titan', shape: 'elliptical', color: 0xff8844 },             // Primordial giants
+        { name: 'Atlantis', shape: 'ring', arms: 1, color: 0x88ff44 },       // Lost City of the heavens
+        { name: 'Prometheus', shape: 'irregular', color: 0xff4488 },         // Bringer of fire
+        { name: 'Elysium', shape: 'quasar', color: 0xff44ff },               // Paradise realm
+        { name: 'Tartarus', shape: 'lenticular', color: 0x44ffff },          // Deepest abyss
+        { name: 'Hyperion', shape: 'ancient', color: 0xffaa88 },             // Titan of light
+        { name: 'Chronos', shape: 'spiral', arms: 2, color: 0x8844ff }       // God of time
     ];
     
     // Cluster positions for nebulas
@@ -4683,10 +4760,27 @@ function updateWarpSpeedStarfield() {
     const target = braking ? 0 : 80; // 0 when braking, 80 when normal
     starfield.speed += (target - starfield.speed) * 0.05; // easing factor 0.05 = smooth decel/accel
 
-    // Keep normal camera sync
-    if (typeof camera !== 'undefined') {
+    // NEW: Align starfield with ship's velocity vector instead of camera
+    if (typeof camera !== 'undefined' && typeof gameState !== 'undefined' && gameState.velocityVector) {
+        // Position follows camera
         starfield.lines.position.copy(camera.position);
-        starfield.lines.rotation.copy(camera.rotation);
+        
+        // NEW: Rotate to match velocity direction (ship trajectory)
+        const velocityDirection = gameState.velocityVector.clone().normalize();
+        
+        // Only update rotation if we have meaningful velocity
+        if (velocityDirection.length() > 0.01) {
+            // Create a quaternion that orients the starfield along the velocity vector
+            const up = new THREE.Vector3(0, 1, 0);
+            const quaternion = new THREE.Quaternion();
+            
+            // Look along the velocity direction
+            const matrix = new THREE.Matrix4();
+            matrix.lookAt(new THREE.Vector3(0, 0, 0), velocityDirection, up);
+            quaternion.setFromRotationMatrix(matrix);
+            
+            starfield.lines.quaternion.copy(quaternion);
+        }
     }
 
     const positions = starfield.lines.geometry.attributes.position.array;
@@ -4700,7 +4794,7 @@ function updateWarpSpeedStarfield() {
         const star = starData[i];
         const velocity = velocities[i];
         
-        // Move star toward camera (in LOCAL space, so it's always "forward")
+        // Move star toward camera (in LOCAL space, so it's always along trajectory)
         star.z += speed * velocity;
         
         // Reset if passed camera
