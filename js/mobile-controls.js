@@ -477,8 +477,9 @@ document.addEventListener('touchend', (e) => {
 // SWIPE GESTURE FOR NAVIGATION
 // =============================================================================
 
-let swipeStartX = 0;
-let isSwipeGesture = false;
+// Swipe gesture variables - with safety checks
+if (typeof swipeStartX === 'undefined') var swipeStartX = 0;
+if (typeof isSwipeGesture === 'undefined') var isSwipeGesture = false;
 
 document.addEventListener('touchstart', (e) => {
     const touch = e.touches[0];
