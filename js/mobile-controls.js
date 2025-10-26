@@ -238,6 +238,42 @@ function mobileEmergencyWarp() {
     console.log('📱 Mobile emergency warp triggered');
 }
 
+// Mobile fire handler - proper implementation
+function handleMobileFire() {
+    console.log('🔫 Mobile fire button pressed');
+    
+    // Ensure game is active
+    if (typeof gameState === 'undefined' || !gameState.gameStarted || gameState.gameOver) {
+        console.log('🔫 Fire blocked - game not active');
+        return;
+    }
+    
+    // Resume audio context if needed
+    if (typeof resumeAudioContext === 'function') {
+        resumeAudioContext();
+    }
+    
+    // Call the main fire weapon function
+    if (typeof fireWeapon === 'function') {
+        fireWeapon();
+        console.log('🔫 Fire weapon called successfully');
+    } else if (typeof keys !== 'undefined') {
+        // Fallback: simulate spacebar press
+        keys.space = true;
+        setTimeout(() => keys.space = false, 100);
+        console.log('🔫 Fire weapon via keys.space');
+    }
+    
+    // Visual feedback
+    const fireBtn = document.querySelector('.mobile-btn.primary');
+    if (fireBtn) {
+        fireBtn.style.transform = 'perspective(600px) rotateX(-3deg) translateZ(2px) scale(0.92)';
+        setTimeout(() => {
+            fireBtn.style.transform = 'perspective(600px) rotateX(-3deg) translateZ(5px)';
+        }, 150);
+    }
+}
+
 // =============================================================================
 // NAVIGATION PANEL MANAGEMENT
 // =============================================================================
@@ -380,11 +416,20 @@ document.addEventListener('touchmove', (e) => {
             hasMoved = true;
         }
         
-        // FIXED: Inverted vertical control to match keyboard behavior
-        // Up swipe (negative deltaY) should pitch UP (positive rotation)
-        // Down swipe (positive deltaY) should pitch DOWN (negative rotation)
-        camera.rotation.y -= deltaX * 0.005;  // Horizontal: unchanged
-        camera.rotation.x += deltaY * 0.005;  // Vertical: SIGN CHANGED to match keyboard
+        // FIXED: Proper spherical rotation to match keyboard behavior
+        // Horizontal swipe controls yaw (left/right look)
+        // Up swipe should pitch UP (look up)
+        // Down swipe should pitch DOWN (look down)
+        
+        // Apply yaw rotation (left/right)
+        camera.rotation.y -= deltaX * 0.005;
+        
+        // Apply pitch rotation (up/down) - INVERTED to match keyboard
+        // Negative deltaY (swipe up) should INCREASE rotation.x (pitch up)
+        // Positive deltaY (swipe down) should DECREASE rotation.x (pitch down)
+        camera.rotation.x -= deltaY * 0.005;
+        
+        // Clamp vertical rotation to prevent flipping
         camera.rotation.x = Math.max(-Math.PI/2, Math.min(Math.PI/2, camera.rotation.x));
         
         touchStartX = touch.clientX;
@@ -500,25 +545,47 @@ document.addEventListener('DOMContentLoaded', () => {
     let introCompleted = false;
     
     function showMobileControlsIfMobile() {
-        function isMobileDevice() {
-            const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
-            const isNarrowScreen = window.innerWidth <= 768;
-            const isCoarsePointer = window.matchMedia("(pointer: coarse)").matches;
-            return isTouchDevice && (isNarrowScreen || isCoarsePointer);
-        }
+    function isMobileDevice() {
+        const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+        const isNarrowScreen = window.innerWidth <= 768;
+        const isCoarsePointer = window.matchMedia("(pointer: coarse)").matches;
+        return isTouchDevice && (isNarrowScreen || isCoarsePointer);
+    }
+    
+    if (isMobileDevice()) {
+        const mobileControls = document.querySelector('.mobile-controls');
+        const navPanelMobile = document.querySelector('.nav-panel-mobile');
+        const floatingStatus = document.getElementById('mobileFloatingStatus');
         
-        if (isMobileDevice()) {
-            const mobileControls = document.querySelector('.mobile-controls');
-            const navPanelMobile = document.querySelector('.nav-panel-mobile');
-            if (mobileControls) {
-                mobileControls.style.display = 'flex';
-                console.log('📱 Mobile controls now visible');
-            }
-            if (navPanelMobile) {
-                navPanelMobile.style.display = 'block';
-            }
+        if (mobileControls) {
+            mobileControls.style.display = 'flex';
+            console.log('📱 Mobile controls now visible');
+        }
+        if (navPanelMobile) {
+            navPanelMobile.style.display = 'block';
+        }
+        if (floatingStatus) {
+            floatingStatus.style.display = 'flex';
+            console.log('📱 Mobile floating status now visible');
         }
     }
+}
+    
+    // Hide mobile floating status during intro
+function hideMobileFloatingStatusDuringIntro() {
+    const floatingStatus = document.getElementById('mobileFloatingStatus');
+    if (floatingStatus) {
+        floatingStatus.style.display = 'none';
+    }
+}
+
+// Show mobile floating status after intro
+function showMobileFloatingStatusAfterIntro() {
+    const floatingStatus = document.getElementById('mobileFloatingStatus');
+    if (floatingStatus) {
+        floatingStatus.style.display = 'flex';
+    }
+}
     
     const observer = new MutationObserver((mutations) => {
         mutations.forEach((mutation) => {
