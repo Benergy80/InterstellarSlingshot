@@ -415,16 +415,10 @@ function updateMobileNavigation() {
 // ENHANCED TOUCH CONTROLS - CAMERA LOOK ONLY
 // =============================================================================
 
-// Touch control variables - with safety checks to prevent duplicate declarations
-if (typeof touchStartX === 'undefined') {
-    var touchStartX = 0;
-}
-if (typeof touchStartY === 'undefined') {
-    var touchStartY = 0;
-}
-if (typeof isTouching === 'undefined') {
-    var isTouching = false;
-}
+// Touch control variables - with safety checks
+if (typeof touchStartX === 'undefined') var touchStartX = 0;
+if (typeof touchStartY === 'undefined') var touchStartY = 0;
+if (typeof isTouching === 'undefined') var isTouching = false;
 
 document.addEventListener('touchstart', (e) => {
     // Only handle touches on game canvas, not on UI buttons
