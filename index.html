@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Interstellar Slingshot - A Gravitational Space Explorer by ChiLab</title>
-
+    
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🚀</text></svg>">
     
     <!-- External Dependencies with THREE.js Backup System -->
@@ -663,8 +663,8 @@
     title="Fire Weapons">
     <i class="fas fa-crosshairs"></i>
 </button>
-        <button class="mobile-btn" onclick="mobileBrakesStart()" title="Brakes">
-            <i class="fas fa-hand-paper"></i>
+        <button class="mobile-btn" onclick="showMobilePanel('controls')" title="Flight Controls">
+            <i class="fas fa-cog"></i>
         </button>
         <button class="mobile-btn" onclick="mobileEmergencyWarp()" title="Emergency Warp">
             <i class="fas fa-rocket"></i>
@@ -740,7 +740,7 @@
     <script src="js/game-core.js"></script>
 
     <!-- Mobile Script -->
-    <script src="js/mobile-controls.js?v=3"></script>
+    <script src="js/mobile-controls.js"></script>
 
     <!-- Initialization Script -->
     <script>
