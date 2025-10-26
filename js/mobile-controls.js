@@ -240,11 +240,11 @@ function mobileEmergencyWarp() {
 
 // Mobile fire handler - proper implementation
 function handleMobileFire() {
-    console.log('🔫 Mobile fire button pressed');
+    console.log('Mobile fire button pressed');
     
     // Ensure game is active
     if (typeof gameState === 'undefined' || !gameState.gameStarted || gameState.gameOver) {
-        console.log('🔫 Fire blocked - game not active');
+        console.log('Fire blocked - game not active');
         return;
     }
     
@@ -256,12 +256,12 @@ function handleMobileFire() {
     // Call the main fire weapon function
     if (typeof fireWeapon === 'function') {
         fireWeapon();
-        console.log('🔫 Fire weapon called successfully');
+        console.log('Fire weapon called successfully');
     } else if (typeof keys !== 'undefined') {
         // Fallback: simulate spacebar press
         keys.space = true;
         setTimeout(() => keys.space = false, 100);
-        console.log('🔫 Fire weapon via keys.space');
+        console.log('Fire weapon via keys.space');
     }
     
     // Visual feedback
@@ -416,20 +416,8 @@ document.addEventListener('touchmove', (e) => {
             hasMoved = true;
         }
         
-        // FIXED: Proper spherical rotation to match keyboard behavior
-        // Horizontal swipe controls yaw (left/right look)
-        // Up swipe should pitch UP (look up)
-        // Down swipe should pitch DOWN (look down)
-        
-        // Apply yaw rotation (left/right)
         camera.rotation.y -= deltaX * 0.005;
-        
-        // Apply pitch rotation (up/down) - INVERTED to match keyboard
-        // Negative deltaY (swipe up) should INCREASE rotation.x (pitch up)
-        // Positive deltaY (swipe down) should DECREASE rotation.x (pitch down)
         camera.rotation.x -= deltaY * 0.005;
-        
-        // Clamp vertical rotation to prevent flipping
         camera.rotation.x = Math.max(-Math.PI/2, Math.min(Math.PI/2, camera.rotation.x));
         
         touchStartX = touch.clientX;
@@ -571,22 +559,6 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 }
     
-    // Hide mobile floating status during intro
-function hideMobileFloatingStatusDuringIntro() {
-    const floatingStatus = document.getElementById('mobileFloatingStatus');
-    if (floatingStatus) {
-        floatingStatus.style.display = 'none';
-    }
-}
-
-// Show mobile floating status after intro
-function showMobileFloatingStatusAfterIntro() {
-    const floatingStatus = document.getElementById('mobileFloatingStatus');
-    if (floatingStatus) {
-        floatingStatus.style.display = 'flex';
-    }
-}
-    
     const observer = new MutationObserver((mutations) => {
         mutations.forEach((mutation) => {
             if (mutation.type === 'attributes' && mutation.attributeName === 'class') {
@@ -614,6 +586,22 @@ function showMobileFloatingStatusAfterIntro() {
     
     observer.observe(document.body, { attributes: true });
 });
+
+// Hide mobile floating status during intro
+function hideMobileFloatingStatusDuringIntro() {
+    const floatingStatus = document.getElementById('mobileFloatingStatus');
+    if (floatingStatus) {
+        floatingStatus.style.display = 'none';
+    }
+}
+
+// Show mobile floating status after intro
+function showMobileFloatingStatusAfterIntro() {
+    const floatingStatus = document.getElementById('mobileFloatingStatus');
+    if (floatingStatus) {
+        floatingStatus.style.display = 'flex';
+    }
+}
 
 // =============================================================================
 // PREVENT ACCIDENTAL BEHAVIORS
