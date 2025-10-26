@@ -1036,9 +1036,13 @@ function updateGalaxyMap() {
     const sgrAEl = document.querySelector('[title="Sagittarius A* - Galactic Center"]');
     if (sgrAEl) sgrAEl.style.display = 'none';
     
-    // Clear existing target dots
+     // Clear existing target dots
     const existingTargetDots = document.querySelectorAll('.galactic-target-dot');
     existingTargetDots.forEach(dot => dot.remove());
+    
+    // FIXED: Also clear cosmic feature dots from universal view
+    const existingCosmicDots = document.querySelectorAll('.cosmic-feature-dot');
+    existingCosmicDots.forEach(dot => dot.remove());
     
     // Show nearby objects as dots (enemies, planets, etc.)
     const galaxyMap = document.getElementById('galaxyMap');
@@ -1251,8 +1255,32 @@ planets.forEach(planet => {
     // Show all galaxy indicators
     const galaxyIndicators = document.querySelectorAll('.galaxy-indicator');
     galaxyIndicators.forEach((el, index) => {
-        if (index < galaxyTypes.length && galaxyMapPositions[index]) {
-            const mapPos = galaxyMapPositions[index];
+        if (index < galaxyTypes.length) {
+            // ✅ FIXED: Use accurate 2D projection from 3D spherical coordinates
+            let mapPos;
+            if (typeof galaxy3DPositions !== 'undefined' && galaxy3DPositions[index]) {
+                // Convert 3D spherical to 2D map coordinates
+                const galaxy3D = galaxy3DPositions[index];
+                const phi = galaxy3D.phi;
+                const theta = galaxy3D.theta;
+                const distance = galaxy3D.distance;
+                
+                // Project spherical coordinates onto 2D map
+                let x = (phi / (Math.PI * 2)) % 1.0;
+                let y = theta / Math.PI;
+                
+                // Apply distance factor for depth
+                const centerX = 0.5;
+                const centerY = 0.5;
+                x = centerX + (x - centerX) * distance;
+                y = centerY + (y - centerY) * distance;
+                
+                mapPos = { x, y };
+            } else {
+                // Fallback to old positions
+                mapPos = galaxyMapPositions[index] || { x: 0.5, y: 0.5 };
+            }
+            
             el.style.left = `${mapPos.x * 100}%`;
             el.style.top = `${mapPos.y * 100}%`;
             el.style.display = 'flex';
@@ -1277,6 +1305,67 @@ planets.forEach(planet => {
     const viewStatusEl = document.getElementById('mapViewStatus');
     if (viewStatusEl) {
         viewStatusEl.textContent = gameState.mapView === 'galactic' ? 'Galaxy View' : 'Universal View';
+    }
+    
+    // ✅ FIXED: Update current galaxy region display
+    const currentRegionEl = document.getElementById('currentGalaxyRegion');
+    if (currentRegionEl && typeof galaxyTypes !== 'undefined') {
+        // Determine which galaxy the player is currently in
+        let currentGalaxyName = 'Sagittarius A'; // ✅ Default to starting location
+        
+        // First check gameState.location if available
+        if (typeof gameState !== 'undefined' && gameState.location) {
+            // If we have a location set, use it to determine galaxy
+            if (gameState.location.includes('Spiral') || gameState.location.includes('Federation')) {
+                currentGalaxyName = 'Spiral Galaxy';
+            } else if (gameState.location.includes('Elliptical') || gameState.location.includes('Klingon')) {
+                currentGalaxyName = 'Elliptical Galaxy';
+            } else if (gameState.location.includes('Irregular') || gameState.location.includes('Rebel')) {
+                currentGalaxyName = 'Irregular Galaxy';
+            } else if (gameState.location.includes('Ring') || gameState.location.includes('Romulan')) {
+                currentGalaxyName = 'Ring Galaxy';
+            } else if (gameState.location.includes('Dwarf') || gameState.location.includes('Galactic Empire')) {
+                currentGalaxyName = 'Dwarf Galaxy';
+            } else if (gameState.location.includes('Lenticular') || gameState.location.includes('Cardassian')) {
+                currentGalaxyName = 'Lenticular Galaxy';
+            } else if (gameState.location.includes('Quasar') || gameState.location.includes('Sith')) {
+                currentGalaxyName = 'Quasar Galaxy';
+            } else if (gameState.location.includes('Sagittarius') || gameState.location.includes('Local') || gameState.location.includes('Vulcan') || gameState.location.includes('Sol')) {
+                currentGalaxyName = 'Sagittarius A';
+            }
+        }
+        
+        // ✅ Fallback: Check proximity to galactic cores (only if we have planets loaded)
+        if (typeof planets !== 'undefined' && planets.length > 0) {
+            const blackHoles = planets.filter(p => p.userData.type === 'blackhole' && p.userData.isGalacticCore);
+            if (blackHoles.length > 0) {
+                let closestGalaxyId = -1;
+                let closestDistance = Infinity;
+                
+                blackHoles.forEach(bh => {
+                    if (bh.userData.galaxyId !== undefined) {
+                        const distance = camera.position.distanceTo(bh.position);
+                        if (distance < closestDistance) {
+                            closestDistance = distance;
+                            closestGalaxyId = bh.userData.galaxyId;
+                        }
+                    }
+                });
+                
+                // Use galaxy type name for current region
+                if (closestGalaxyId >= 0 && closestGalaxyId < galaxyTypes.length) {
+                    const galaxyType = galaxyTypes[closestGalaxyId];
+                    // Special case for galaxy 7 (Ancient/Local)
+                    if (closestGalaxyId === 7) {
+                        currentGalaxyName = 'Sagittarius A';
+                    } else {
+                        currentGalaxyName = `${galaxyType.name} Galaxy`;
+                    }
+                }
+            }
+        }
+        
+        currentRegionEl.textContent = currentGalaxyName;
     }
     
     // ⭐ NEW: Update current galaxy name display
@@ -1825,9 +1914,13 @@ function createMobileControls() {
     <button class="mobile-btn" onclick="mobileCycleTarget()" style="${buttonStyle}" title="Cycle Targets">
         <i class="fas fa-bullseye"></i>
     </button>
-    <button class="mobile-btn primary" onclick="handleMobileFire()" style="${buttonStyle} width: 80px; height: 80px; background: linear-gradient(135deg, rgba(255, 50, 50, 0.8), rgba(200, 0, 0, 0.8)); border-color: rgba(255, 100, 100, 0.6);" title="Fire Weapons">
-        <i class="fas fa-crosshairs"></i>
-    </button>
+    <button class="mobile-btn primary" 
+        onclick="handleMobileFire()" 
+        ontouchstart="handleMobileFire(); event.preventDefault();"
+        style="${buttonStyle} width: 80px; height: 80px; background: linear-gradient(135deg, rgba(255, 50, 50, 0.8), rgba(200, 0, 0, 0.8)); border-color: rgba(255, 100, 100, 0.6);" 
+        title="Fire Weapons">
+    <i class="fas fa-crosshairs"></i>
+</button>
     <button class="mobile-btn emergency" onclick="mobileEmergencyWarp()" style="${buttonStyle} background: linear-gradient(135deg, rgba(255, 150, 0, 0.8), rgba(200, 100, 0, 0.8)); border-color: rgba(255, 200, 0, 0.6);" title="Emergency Warp">
         <i class="fas fa-rocket"></i>
     </button>
