@@ -836,58 +836,67 @@ function showMissionCommandAlert(title, text, isVictoryMessage = false) {
     const isFinalTutorialMessage = title === "Final Orders";
     
     if (isTutorialActive && !isVictoryMessage) {
-        if (isFinalTutorialMessage) {
-            // Create UNDERSTOOD button for the final tutorial message
-            const understoodButton = document.createElement('button');
-            understoodButton.id = 'missionCommandUnderstood';
-            understoodButton.className = 'mt-4 space-btn rounded px-6 py-2';
-            understoodButton.innerHTML = '<i class="fas fa-check mr-2"></i>UNDERSTOOD';
-            understoodButton.style.background = 'linear-gradient(135deg, rgba(0, 150, 255, 0.8), rgba(0, 100, 200, 0.8))';
-            understoodButton.style.borderColor = 'rgba(0, 200, 255, 0.6)';
-            buttonContainer.appendChild(understoodButton);
-            
-            // UNDERSTOOD button completes tutorial and dismisses the message
-            understoodButton.onclick = () => {
-                alertElement.classList.add('hidden');
-                completeTutorial();
-            };
-        } else {
-            // Create SKIP TUTORIAL button for other tutorial messages
-            const skipButton = document.createElement('button');
-            skipButton.id = 'missionCommandSkip';
-            skipButton.className = 'mt-4 space-btn rounded px-6 py-2';
-            skipButton.innerHTML = '<i class="fas fa-forward mr-2"></i>SKIP TUTORIAL';
-            skipButton.style.background = 'linear-gradient(135deg, rgba(255, 150, 0, 0.8), rgba(200, 100, 0, 0.8))';
-            skipButton.style.borderColor = 'rgba(255, 200, 0, 0.6)';
-            buttonContainer.appendChild(skipButton);
-            
-            // SKIP TUTORIAL button immediately completes tutorial
-            skipButton.onclick = () => {
-                alertElement.classList.add('hidden');
-                
-                // Skip ALL remaining tutorial messages
-                if (tutorialSystem.active) {
-                    tutorialSystem.active = false;
-                    completeTutorial();
-                    showAchievement('Tutorial Skipped', 'All hostile forces are now active!');
-                }
-            };
-        }
-    } else {
-        // Create UNDERSTOOD button for victory messages and non-tutorial messages
-        const understoodButton = document.createElement('button');
-        understoodButton.id = 'missionCommandUnderstood';
-        understoodButton.className = 'mt-4 space-btn rounded px-6 py-2';
-        understoodButton.innerHTML = '<i class="fas fa-check mr-2"></i>UNDERSTOOD';
-        understoodButton.style.background = 'linear-gradient(135deg, rgba(0, 150, 255, 0.8), rgba(0, 100, 200, 0.8))';
-        understoodButton.style.borderColor = 'rgba(0, 200, 255, 0.6)';
-        buttonContainer.appendChild(understoodButton);
+    // Create SKIP TUTORIAL button for tutorial messages
+    const skipButton = document.createElement('button');
+    skipButton.id = 'missionCommandSkip';
+    skipButton.className = 'mt-4 space-btn rounded px-6 py-2';
+    skipButton.innerHTML = '<i class="fas fa-forward mr-2"></i>SKIP TUTORIAL';
+    skipButton.style.cssText = `
+        background: linear-gradient(135deg, rgba(255, 150, 0, 0.8), rgba(200, 100, 0, 0.8));
+        border-color: rgba(255, 200, 0, 0.6);
+        pointer-events: auto;
+        touch-action: manipulation;
+        -webkit-tap-highlight-color: rgba(255, 150, 0, 0.3);
+        cursor: pointer;
+    `;
+    buttonContainer.appendChild(skipButton);
+    
+    // SKIP TUTORIAL button immediately completes tutorial
+    const handleSkip = () => {
+        alertElement.classList.add('hidden');
         
-        // UNDERSTOOD button dismisses the message
-        understoodButton.onclick = () => {
-            alertElement.classList.add('hidden');
-        };
-    }
+        // Skip ALL remaining tutorial messages
+        if (tutorialSystem.active) {
+            tutorialSystem.active = false;
+            completeTutorial();
+            showAchievement('Tutorial Skipped', 'All hostile forces are now active!');
+        }
+    };
+    
+    skipButton.onclick = handleSkip;
+    skipButton.ontouchend = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        handleSkip();
+    };
+} else {
+    // Create UNDERSTOOD button for victory messages and non-tutorial messages
+    const understoodButton = document.createElement('button');
+    understoodButton.id = 'missionCommandUnderstood';
+    understoodButton.className = 'mt-4 space-btn rounded px-6 py-2';
+    understoodButton.innerHTML = '<i class="fas fa-check mr-2"></i>UNDERSTOOD';
+    understoodButton.style.cssText = `
+        background: linear-gradient(135deg, rgba(0, 150, 255, 0.8), rgba(0, 100, 200, 0.8));
+        border-color: rgba(0, 200, 255, 0.6);
+        pointer-events: auto;
+        touch-action: manipulation;
+        -webkit-tap-highlight-color: rgba(0, 150, 255, 0.3);
+        cursor: pointer;
+    `;
+    buttonContainer.appendChild(understoodButton);
+    
+    // UNDERSTOOD button dismisses the message
+    const handleUnderstood = () => {
+        alertElement.classList.add('hidden');
+    };
+    
+    understoodButton.onclick = handleUnderstood;
+    understoodButton.ontouchend = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        handleUnderstood();
+    };
+}
     
     // Only play sound if not suppressed
 if (typeof gameState === 'undefined' || !gameState.suppressAchievements) {
