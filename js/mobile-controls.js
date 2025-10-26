@@ -193,6 +193,26 @@ function mobileBrakes() {
     }
 }
 
+function mobileBrakesStart() {
+    if (typeof keys !== 'undefined') {
+        keys.x = true;
+    }
+    
+    if (typeof playSound === 'function') {
+        playSound('ui_click', 600, 0.1);
+    }
+    
+    console.log('📱 Mobile brakes started (holding)');
+}
+
+function mobileBrakesEnd() {
+    if (typeof keys !== 'undefined') {
+        keys.x = false;
+    }
+    
+    console.log('📱 Mobile brakes released');
+}
+
 function mobileAutoNavigate() {
     if (typeof toggleAutoNavigate === 'function') {
         toggleAutoNavigate();
