@@ -10,29 +10,29 @@
     
     <!-- PRIMARY: Try the original CDN first -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js" 
-            onload="console.log('✅ THREE.js r128 loaded from primary CDN')"
+            onload="console.log('THREE.js r128 loaded from primary CDN')"
             onerror="loadBackupTHREE()"></script>
     
     <!-- BACKUP: Alternative CDNs if primary fails -->
     <script>
     function loadBackupTHREE() {
-      console.log('🔄 Primary CDN failed, trying backup CDNs...');
+      console.log('Primary CDN failed, trying backup CDNs...');
       
       const script1 = document.createElement('script');
       script1.src = 'https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js';
       script1.onload = function() {
-        console.log('✅ THREE.js r128 loaded from JSDelivr backup');
+        console.log('THREE.js r128 loaded from JSDelivr backup');
       };
       script1.onerror = function() {
-        console.log('❌ JSDelivr backup failed, trying unpkg...');
+        console.log('JSDelivr backup failed, trying unpkg...');
         
         const script2 = document.createElement('script');
         script2.src = 'https://unpkg.com/three@0.128.0/build/three.min.js';
         script2.onload = function() {
-          console.log('✅ THREE.js r128 loaded from unpkg backup');
+          console.log('THREE.js r128 loaded from unpkg backup');
         };
         script2.onerror = function() {
-          console.error('❌ All THREE.js CDNs failed!');
+          console.error('All THREE.js CDNs failed!');
           alert('Cannot load THREE.js library. Please check your internet connection.');
         };
         document.head.appendChild(script2);
@@ -43,10 +43,10 @@
     window.addEventListener('load', () => {
       setTimeout(() => {
         if (typeof THREE === 'undefined') {
-          console.warn('⚠️ THREE.js still not detected after page load, making final attempt...');
+          console.warn('THREE.js still not detected after page load, making final attempt...');
           loadBackupTHREE();
         } else {
-          console.log('✅ THREE.js confirmed loaded. Version:', THREE.REVISION);
+          console.log('THREE.js confirmed loaded. Version:', THREE.REVISION);
         }
       }, 1000);
     });
@@ -748,12 +748,12 @@
             if (gameInitialized) return;
             gameInitialized = true;
             
-            console.log('🚀 Starting Interstellar Slingshot...');
+            console.log('Starting Interstellar Slingshot...');
             
             setTimeout(() => {
                 try {
                     if (typeof THREE === 'undefined') {
-                        console.log('⏳ Waiting for THREE.js...');
+                        console.log('Waiting for THREE.js...');
                         setTimeout(arguments.callee, 100);
                         return;
                     }
@@ -765,10 +765,10 @@
                         console.log('🎮 Starting normal game...');
                         startGame();
                     } else {
-                        console.error('❌ No game start function found');
+                        console.error('No game start function found');
                     }
                 } catch (error) {
-                    console.error('❌ Initialization error:', error);
+                    console.error('Initialization error:', error);
                 }
             }, 100);
         });
