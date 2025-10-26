@@ -178,42 +178,19 @@ function mobileFireWeapon() {
     }
 }
 
-// =============================================================================
-// MOBILE BRAKE CONTROLS - HOLD TO BRAKE
-// =============================================================================
-
-let brakeHoldInterval = null;
-
-function mobileBrakesStart() {
+function mobileBrakes() {
     if (typeof keys !== 'undefined') {
         keys.x = true;
-    }
-    
-    // Visual feedback
-    const brakeBtn = document.querySelector('.mobile-btn[onclick*="Brakes"]');
-    if (brakeBtn) {
-        brakeBtn.style.background = 'linear-gradient(135deg, rgba(255, 150, 0, 0.9), rgba(255, 100, 0, 0.9))';
+        setTimeout(() => keys.x = false, 200);
     }
     
     if (typeof playSound === 'function') {
         playSound('ui_click', 600, 0.1);
     }
     
-    console.log('📱 Mobile brakes engaged');
-}
-
-function mobileBrakesEnd() {
-    if (typeof keys !== 'undefined') {
-        keys.x = false;
+    if (typeof showAchievement === 'function') {
+        showAchievement('Brakes Engaged', 'Emergency deceleration activated');
     }
-    
-    // Reset visual feedback
-    const brakeBtn = document.querySelector('.mobile-btn[onclick*="Brakes"]');
-    if (brakeBtn) {
-        brakeBtn.style.background = '';
-    }
-    
-    console.log('📱 Mobile brakes released');
 }
 
 function mobileAutoNavigate() {
