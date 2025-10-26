@@ -2,23 +2,19 @@
 // MOBILE CONTROLS - Complete Mobile Functionality
 // =============================================================================
 
-// Mobile settings - with safety check to prevent duplicate declarations
-if (typeof mobileSettings === 'undefined') {
-    var mobileSettings = {
-        crosshairTargeting: true,
-        targetMode: true,
-        forwardThrust: false
-    };
-} else {
-    console.log('📱 mobileSettings already declared, skipping initialization');
-}
+// Mobile settings - use window object to avoid declaration conflicts
+window.mobileSettings = window.mobileSettings || {
+    crosshairTargeting: true,
+    targetMode: true,
+    forwardThrust: false
+};
 
 // Initialize mobile settings
 document.addEventListener('DOMContentLoaded', () => {
     if (window.innerWidth <= 768 || 'ontouchstart' in window) {
         console.log('📱 Mobile device detected - enabling crosshair targeting and target mode');
-        mobileSettings.crosshairTargeting = true;
-        mobileSettings.targetMode = true;
+        window.mobileSettings.crosshairTargeting = true;
+        window.mobileSettings.targetMode = true;
         
         // Set target mode when game starts
         setTimeout(() => {
@@ -99,7 +95,7 @@ function setupMobileLaunchMusicTrigger() {
 // =============================================================================
 
 function startForwardThrust() {
-    mobileSettings.forwardThrust = true;
+    window.mobileSettings.forwardThrust = true;
     
     if (typeof keys !== 'undefined') {
         keys.w = true;
@@ -113,7 +109,7 @@ function startForwardThrust() {
 }
 
 function stopForwardThrust() {
-    mobileSettings.forwardThrust = false;
+    window.mobileSettings.forwardThrust = false;
     
     if (typeof keys !== 'undefined') {
         keys.w = false;
@@ -638,7 +634,7 @@ document.addEventListener('touchstart', (e) => {
 }, { passive: false });
 
 window.addEventListener('beforeunload', () => {
-    if (mobileSettings.forwardThrust) {
+    if (window.mobileSettings.forwardThrust) {
         stopForwardThrust();
     }
 });
