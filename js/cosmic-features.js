@@ -2198,7 +2198,6 @@ if (typeof window !== 'undefined') {
     window.initializeCosmicFeatures = initializeCosmicFeatures;
     window.updateCosmicFeatures = updateCosmicFeatures;
     window.checkCosmicFeatureInteractions = checkCosmicFeatureInteractions;
-    window.getRandomGalaxyPosition = getRandomGalaxyPosition;
     
     // Individual creation functions for testing
     window.createPulsars = createPulsars;
