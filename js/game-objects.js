@@ -288,6 +288,82 @@ function getRandomPositionInGalaxy3D(galaxyId) {
 }
 
 // =============================================================================
+// UTILITY: Get Random Galaxy Position (used by cosmic features)
+// =============================================================================
+function getRandomGalaxyPosition(galaxyId) {
+    // ENHANCED: Safety checks for undefined/invalid galaxyId
+    if (galaxyId === undefined || galaxyId === null || galaxyId < 0) {
+        console.warn(`Invalid galaxyId: ${galaxyId}, using default position`);
+        return new THREE.Vector3(0, 0, 0);
+    }
+    
+    // Safety check for galaxyTypes array
+    if (typeof galaxyTypes === 'undefined' || !galaxyTypes[galaxyId]) {
+        console.warn(`No galaxy data for galaxyId: ${galaxyId}, using default position`);
+        return new THREE.Vector3(0, 0, 0);
+    }
+    
+    const galaxy = galaxyTypes[galaxyId];
+    
+    // Use 3D positioning (preferred method)
+    if (typeof getRandomPositionInGalaxy3D === 'function') {
+        try {
+            const position3D = getRandomPositionInGalaxy3D(galaxyId);
+            if (position3D && position3D.x !== undefined && position3D.y !== undefined && position3D.z !== undefined) {
+                return position3D;
+            }
+        } catch (error) {
+            console.warn(`3D positioning failed for galaxy ${galaxyId}, falling back to 2D conversion:`, error);
+        }
+    }
+    
+    // FALLBACK: Enhanced 3D conversion from 2D map positions
+    if (typeof galaxyMapPositions === 'undefined' || !galaxyMapPositions[galaxyId]) {
+        console.warn(`No map position for galaxyId: ${galaxyId}, using default position`);
+        return new THREE.Vector3(0, 0, 0);
+    }
+    
+    const mapPos = galaxyMapPositions[galaxyId];
+    
+    // Enhanced 3D spherical distribution instead of flat
+    const universeRadius = 40000; // Match the doubled scale system
+    
+    // Convert 2D map position to 3D spherical coordinates
+    const phi = mapPos.x * Math.PI * 2; // Azimuthal angle (0 to 2π)
+    const theta = mapPos.y * Math.PI; // Polar angle (0 to π)
+    
+    // Place galaxy center in 3D spherical space
+    const galaxyDistance = universeRadius * 0.7; // Place galaxies toward outer sphere
+    const galaxyBaseX = Math.sin(theta) * Math.cos(phi) * galaxyDistance;
+    const galaxyBaseY = Math.cos(theta) * galaxyDistance;
+    const galaxyBaseZ = Math.sin(theta) * Math.sin(phi) * galaxyDistance;
+    
+    // Random position within galaxy bounds (also in 3D)
+    const galaxyRadius = galaxy.size || 1200; // Default size if missing
+    const localPhi = Math.random() * Math.PI * 2;
+    const localTheta = Math.random() * Math.PI;
+    const localDistance = Math.random() * galaxyRadius;
+    
+    const localX = Math.sin(localTheta) * Math.cos(localPhi) * localDistance;
+    const localY = Math.cos(localTheta) * localDistance;
+    const localZ = Math.sin(localTheta) * Math.sin(localPhi) * localDistance;
+    
+    const finalPosition = new THREE.Vector3(
+        galaxyBaseX + localX,
+        galaxyBaseY + localY,
+        galaxyBaseZ + localZ
+    );
+    
+    // Safety check for valid position
+    if (isNaN(finalPosition.x) || isNaN(finalPosition.y) || isNaN(finalPosition.z)) {
+        console.warn(`Invalid position calculated for galaxy ${galaxyId}, using default`);
+        return new THREE.Vector3(0, 0, 0);
+    }
+    
+    return finalPosition;
+}
+
+// =============================================================================
 // ENHANCED ENEMY PLACEMENT SYSTEM - Multiple Placement Strategies
 // =============================================================================
 
