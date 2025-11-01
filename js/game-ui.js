@@ -2153,8 +2153,13 @@ function mobileCycleTarget() {
     }
 }
 
-let lastFireTime = 0;
-const fireDebounceTime = 200; // 200ms cooldown
+// Use window object to avoid variable conflicts
+if (!window.mobileFireState) {
+    window.mobileFireState = {
+        lastFireTime: 0,
+        fireDebounceTime: 200 // 200ms cooldown
+    };
+}
 
 function handleMobileFire(event) {
     if (event) {
@@ -2164,11 +2169,11 @@ function handleMobileFire(event) {
     
     // Debounce to prevent double-firing
     const now = Date.now();
-    if (now - lastFireTime < fireDebounceTime) {
+    if (now - window.mobileFireState.lastFireTime < window.mobileFireState.fireDebounceTime) {
         console.log('Fire blocked - too soon after last fire');
         return;
     }
-    lastFireTime = now;
+    window.mobileFireState.lastFireTime = now;
     
     console.log('📱 Mobile fire button pressed');
     
