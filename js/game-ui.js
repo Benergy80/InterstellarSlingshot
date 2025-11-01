@@ -2153,29 +2153,6 @@ function mobileCycleTarget() {
     }
 }
 
-function mobileEmergencyWarp() {
-    // Interface with existing emergency warp system
-    if (typeof gameState !== 'undefined' && gameState.emergencyWarp && gameState.emergencyWarp.available > 0) {
-        // Use existing warp function
-        if (typeof triggerEmergencyWarp === 'function') {
-            triggerEmergencyWarp();
-        } else {
-            // Fallback warp
-            gameState.emergencyWarp.available--;
-            gameState.emergencyWarp.active = true;
-            if (typeof showAchievement === 'function') {
-                showAchievement('Emergency Warp', 'Warp drive engaged!');
-            }
-        }
-        
-        // Visual feedback
-        document.body.style.filter = 'brightness(2) blur(2px)';
-        setTimeout(() => {
-            document.body.style.filter = 'none';
-        }, 500);
-    }
-}
-
 let lastFireTime = 0;
 const fireDebounceTime = 200; // 200ms cooldown
 
@@ -2321,7 +2298,6 @@ if (typeof window !== 'undefined') {
     window.createMobilePopups = createMobilePopups;
     window.updateMobileFloatingStatus = updateMobileFloatingStatus;
     window.mobileCycleTarget = mobileCycleTarget;
-    window.mobileEmergencyWarp = mobileEmergencyWarp;
     window.handleMobileFire = handleMobileFire;
     window.openMobilePopup = openMobilePopup;
     
