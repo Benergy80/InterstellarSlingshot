@@ -1182,7 +1182,7 @@ function createPlasmaStorms() {
     }
     
     // GUARANTEED: Create 1-3 plasma storms across distant galaxies (same as solar storms)
-    const targetStormCount = 1 + Math.floor(Math.random() * 2); // 1-3 storms 
+    const targetStormCount = 0.5 + Math.floor(Math.random() * 2); // 1-3 storms 
     let stormsCreated = 0;
     const availableGalaxies = [];
     
