@@ -164,6 +164,8 @@
             animation: achievementSlide 4s ease-in-out;
         }
 
+
+
         /* Small control buttons */
         .small-control-btn {
             background: linear-gradient(135deg, rgba(0,150,255,0.15), rgba(0,100,200,0.2));
@@ -235,17 +237,79 @@
            ============================================================================= */
         
         @media (max-width: 768px) and (pointer: coarse), 
-               (max-width: 768px) and (hover: none), 
-               (pointer: coarse) and (hover: none) {
-            /* Hide desktop UI on mobile */
-            .ui-panel {
-                display: none !important;
-            }
-            
-            /* Show mobile controls */
-            .mobile-controls {
-                display: flex !important;
-            }
+       (max-width: 768px) and (hover: none), 
+       (pointer: coarse) and (hover: none) {
+    /* Hide desktop UI on mobile */
+    .ui-panel {
+        display: none !important;
+    }
+    
+    /* EXCEPTION: Keep achievement popup visible on mobile */
+    #achievementPopup .ui-panel {
+        display: block !important;
+    }
+    
+    /* Show mobile controls */
+    .mobile-controls {
+        display: flex !important;
+    }
+    
+    /* Enhanced mobile crosshair */
+    .crosshair {
+        width: 32px !important;
+        height: 32px !important;
+        border-width: 2px !important;
+        border-color: rgba(0, 255, 0, 0.9) !important;
+        z-index: 150 !important;
+    }
+    
+    /* Enable touch controls */
+    body {
+        cursor: auto !important;
+        touch-action: pan-x pan-y;
+    }
+
+    #gameCanvas {
+        touch-action: none;
+    }
+
+    /* Hide during intro */
+    body.intro-active #achievementPopup,
+    body.intro-active .mobile-controls,
+    body.intro-active .nav-panel-mobile {
+        display: none !important;
+    }
+
+    /* FIX: Position achievement popup at top center on mobile (like tutorial) */
+    #achievementPopup {
+        bottom: auto !important;
+        top: 10% !important;
+        left: 50% !important;
+        transform: translate(-50%, 0) !important;
+        max-width: 90% !important;
+    }
+
+    #achievementPopup .ui-panel {
+        padding: 16px !important;
+        min-width: 280px !important;
+        max-width: 100% !important;
+    }
+
+    #achievementPopup h4 {
+        font-size: 1.1rem !important;
+        margin-bottom: 8px !important;
+    }
+
+    #achievementPopup p {
+        font-size: 0.9rem !important;
+        line-height: 1.4 !important;
+    }
+
+    /* Mobile tutorial positioning */
+    .mission-command-alert {
+        top: 15% !important;
+        transform: translate(-50%, -50%) !important;
+    }
             
             /* Enhanced mobile crosshair */
             .crosshair {
@@ -458,7 +522,7 @@
     <!-- Main Game Container -->
     <div id="gameContainer" class="relative w-full h-screen">
         <!-- Title Header -->
-        <div class="absolute top-4 left-1/2 transform -translate-x-1/2 ui-panel title-header rounded-lg p-4 z-10" style="left: 50%; transform: translateX(-50%);">
+        <div class="absolute top-4 left-1/2 ui-panel title-header rounded-lg p-4 z-10">
             <h1 class="text-2xl font-bold text-cyan-400 glow-text cyber-title curved-element" id="gameTitle">INTERSTELLAR SLINGSHOT</h1>
             <div class="text-xs text-center text-gray-400 mt-1 opacity-80">A Gravitational Space Explorer by ChiLab</div>
         </div>
@@ -572,7 +636,8 @@
         </div>
         
         <!-- Mission Command Alert - Green ORBITRON Styling -->
-        <div id="missionCommandAlert" class="absolute mission-command-alert p-6 hidden z-50" style="top: 85%; left: 50%; transform: translate(-50%, -50%); max-width: 90%; width: 600px;">
+        <div id="missionCommandAlert" class="absolute mission-command-alert p-6 hidden z-50" 
+     style="top: 50%; left: 50%; transform: translate(-50%, -50%); max-width: 90%; width: 600px;">
     <div class="text-center">
         <h2 class="text-xl font-bold text-cyan-400 mb-2">MISSION COMMAND</h2>
         <div id="missionCommandText" class="text-gray-300 mb-4"></div>
@@ -643,11 +708,24 @@
 
 <!-- Achievement Popup -->
 <div id="achievementPopup" class="hidden fixed bottom-20 left-1/2 transform -translate-x-1/2 pointer-events-auto" style="z-index: 999 !important;">
-    <div class="ui-panel rounded-lg p-4 text-center" style="min-width: 300px; background: linear-gradient(135deg, rgba(15, 23, 42, 0.95), rgba(30, 41, 59, 0.95)); backdrop-filter: blur(10px);">
+    <div class="ui-panel rounded-lg p-4 text-center" style="min-width: 300px; background: linear-gradient(135deg, rgba(15, 23, 42, 0.3), rgba(30, 41, 59, 0.3)); backdrop-filter: blur(2px);">
         <h4 class="text-lg font-bold text-cyan-400 glow-text mb-2 cyber-title">Achievement!</h4>
         <p id="achievementText" class="text-sm text-gray-300"></p>
     </div>
 </div>
+
+<!-- Shield Overlay System -->
+<div id="shieldOverlay">
+    <canvas id="shieldCanvas"></canvas>
+</div>
+
+<!-- Shield Status Indicator -->
+<div class="shield-indicator" id="shieldIndicator">
+    <div>🛡️ SHIELDS: <span id="shieldStatus">ACTIVE</span></div>
+    <div class="shield-status">Energy Drain: <span id="shieldDrain">2%/s</span></div>
+    <div class="shield-restrictions">⚠️ Warp & Missiles Disabled</div>
+</div>
+
     <!-- MOBILE CONTROLS -->
     <div class="mobile-controls">
         <button class="mobile-btn" onclick="showMobilePanel('controls')" title="Flight Controls">
@@ -746,6 +824,7 @@
     <script src="js/game-ui.js"></script>
     <script src="js/game-controls.js"></script>
     <script src="js/game-intro.js"></script>
+    <script src="js/game-shields.js"></script>
     <script src="js/game-core.js"></script>
 
     <!-- Mobile Script -->
