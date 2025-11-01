@@ -532,23 +532,15 @@ document.addEventListener('touchmove', (e) => {
             const deltaX = touch.clientX - touchStartX;
             const deltaY = touch.clientY - touchStartY;
             
-            // CRITICAL FIX: Force roll to zero during single-finger swipe
-            // This prevents world from rolling when swiping left/right
-            // Save current roll for restoration later
-            const savedRoll = camera.rotation.z;
-            camera.rotation.z = 0;
-            
             // Apply camera rotation using local-space rotations (like desktop controls)
+            // This gives proper pitch/yaw feeling instead of tilting the world
             const sensitivity = 0.005;
             
-            // Yaw (left/right) - rotateY in local space (now around upright axis)
+            // Yaw (left/right) - rotateY in local space
             camera.rotateY(-deltaX * sensitivity);
             
             // Pitch (up/down) - rotateX in local space
             camera.rotateX(-deltaY * sensitivity);
-            
-            // Restore roll after rotations (but normalize it)
-            camera.rotation.z = savedRoll;
             
             // Clamp pitch to prevent over-rotation (90 degrees up/down)
             camera.rotation.x = Math.max(-Math.PI/2, Math.min(Math.PI/2, camera.rotation.x));
@@ -565,11 +557,9 @@ document.addEventListener('touchmove', (e) => {
             // Reset yaw velocity to prevent automatic banking during mobile touch
             if (typeof rotationalVelocity !== 'undefined') {
                 rotationalVelocity.yaw = 0;
-                rotationalVelocity.roll = 0;  // Also reset roll velocity
             }
             if (typeof window.rotationalVelocity !== 'undefined') {
                 window.rotationalVelocity.yaw = 0;
-                window.rotationalVelocity.roll = 0;  // Also reset roll velocity
             }
             
             // Update timing for auto-leveling system (so it knows when to level)
