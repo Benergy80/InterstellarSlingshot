@@ -25,6 +25,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 gameState.targetLock = gameState.targetLock || {};
                 gameState.targetLock.active = true;
                 console.log('📱 Target mode activated for mobile');
+                
+                // Enable auto-leveling by default on mobile (prevents unwanted roll)
+                gameState.autoLevelingEnabled = true;
+                console.log('📱 Auto-leveling enabled for mobile');
             }
         }, 2000);
 
@@ -280,6 +284,25 @@ window.mobileEmergencyWarp = function() {
     console.log('✅ Mobile emergency warp triggered');
 };
 
+window.mobileToggleAutoLevel = function() {
+    if (typeof gameState !== 'undefined') {
+        gameState.autoLevelingEnabled = !gameState.autoLevelingEnabled;
+        
+        if (typeof showAchievement === 'function') {
+            showAchievement(
+                'Auto-Leveling', 
+                gameState.autoLevelingEnabled ? 'ENABLED - Camera will level out' : 'DISABLED - Free rotation'
+            );
+        }
+        
+        if (typeof playSound === 'function') {
+            playSound('ui_click', 800, 0.1);
+        }
+        
+        console.log('📱 Auto-leveling toggled:', gameState.autoLevelingEnabled ? 'ON' : 'OFF');
+    }
+};
+
 window.handleMobileFire = function(event) {
     if (event) {
         event.preventDefault();
@@ -466,27 +489,36 @@ document.addEventListener('touchmove', (e) => {
     }
     
     if (isTouching && typeof camera !== 'undefined') {
-    const touch = e.touches[0];
-    const deltaX = touch.clientX - touchStartX;
-    const deltaY = touch.clientY - touchStartY;
-    
-    // Apply camera rotation using local-space rotations (like desktop controls)
-    // This gives proper pitch/yaw feeling instead of tilting the world
-    const sensitivity = 0.005;
-    
-    // Yaw (left/right) - rotateY in local space
-    camera.rotateY(-deltaX * sensitivity);
-    
-    // Pitch (up/down) - rotateX in local space
-    camera.rotateX(-deltaY * sensitivity);
-    
-    // Clamp pitch to prevent over-rotation (90 degrees up/down)
-    camera.rotation.x = Math.max(-Math.PI/2, Math.min(Math.PI/2, camera.rotation.x));
-    
-    touchStartX = touch.clientX;
-    touchStartY = touch.clientY;
-    e.preventDefault();
-}
+        const touch = e.touches[0];
+        const deltaX = touch.clientX - touchStartX;
+        const deltaY = touch.clientY - touchStartY;
+        
+        // Apply camera rotation using local-space rotations (like desktop controls)
+        // This gives proper pitch/yaw feeling instead of tilting the world
+        const sensitivity = 0.005;
+        
+        // Yaw (left/right) - rotateY in local space
+        camera.rotateY(-deltaX * sensitivity);
+        
+        // Pitch (up/down) - rotateX in local space
+        camera.rotateX(-deltaY * sensitivity);
+        
+        // Clamp pitch to prevent over-rotation (90 degrees up/down)
+        camera.rotation.x = Math.max(-Math.PI/2, Math.min(Math.PI/2, camera.rotation.x));
+        
+        // Update timing for auto-leveling system (so it knows when to level)
+        if (typeof lastRollInputTime !== 'undefined') {
+            lastRollInputTime = performance.now();
+        }
+        // Also update on window object in case it's defined there
+        if (typeof window.lastRollInputTime !== 'undefined') {
+            window.lastRollInputTime = performance.now();
+        }
+        
+        touchStartX = touch.clientX;
+        touchStartY = touch.clientY;
+        e.preventDefault();
+    }
 }, { passive: false });
 
 document.addEventListener('touchend', (e) => {
