@@ -151,7 +151,11 @@ function applyRotationalInertia(keys, allowManualRotation) {
     const speedFactor = Math.max(0, Math.min(1, (currentSpeed - minSpeed) / (maxSpeed - minSpeed)));
     
     // Apply banking proportional to both yaw velocity and current speed
-    const bankingFromYaw = -rotationalVelocity.yaw * rotationalInertia.bankingFactor * speedFactor;
+    // SKIP banking during mobile touch input to prevent unwanted roll
+    let bankingFromYaw = 0;
+    if (!window.mobileTouchActive) {
+        bankingFromYaw = -rotationalVelocity.yaw * rotationalInertia.bankingFactor * speedFactor;
+    }
     const totalRoll = rotationalVelocity.roll + bankingFromYaw;
     
     if (Math.abs(totalRoll) > 0.00001) {
