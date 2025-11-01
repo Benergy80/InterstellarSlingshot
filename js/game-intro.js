@@ -440,9 +440,9 @@ function setupIntroContentFirst() {
             
             // Set z-index after visibility
             if (panel.classList.contains('title-header')) {
-                panel.style.zIndex = '55';
+                panel.style.zIndex = '600';
             } else {
-                panel.style.zIndex = '50';
+                panel.style.zIndex = '600';
             }
         });
     }, 1000);
@@ -540,9 +540,9 @@ function setupIntroUIContent() {
         
         // Preserve z-index hierarchy
         if (panel.classList.contains('title-header')) {
-            panel.style.zIndex = '55';
+            panel.style.zIndex = '600';
         } else {
-            panel.style.zIndex = '50';
+            panel.style.zIndex = '600';
         }
     });
     
@@ -1394,24 +1394,6 @@ function completeIntroSequence() {
         el.removeAttribute('data-intro-locked');
     });
     
-    // FORCE RESET ALL UI panel effects and transforms
-    const uiPanels = document.querySelectorAll('.ui-panel, .title-header');
-    uiPanels.forEach(panel => {
-        // Check if this is the title panel
-        if (panel.classList.contains('title-header')) {
-            // Reset title panel to its proper centered position
-            panel.style.transform = 'translateX(-50%)';
-        } else {
-            // Clear transforms for other panels
-            panel.style.transform = '';
-        }
-        
-        // Clear all other effects
-        panel.style.filter = '';
-        panel.style.opacity = '';
-        panel.style.animation = '';
-    });
-    
     // Mark intro as played
     markIntroAsPlayed();
     
@@ -1703,34 +1685,31 @@ function applyUIShakeAndGlitch(launchProgress) {
     const shakeIntensity = Math.min(0.5, launchProgress * 1.0);
     
     allPanels.forEach((panel, index) => {
-        // Store original styling to preserve effects
-        if (!panel.dataset.originalBackdrop) {
-            panel.dataset.originalBackdrop = getComputedStyle(panel).backdropFilter || 'blur(2px)';
-            panel.dataset.originalTransform = getComputedStyle(panel).transform || '';
+        // Store original computed transform ONCE
+        if (!panel.dataset.originalTransform) {
+            const computedStyle = getComputedStyle(panel);
+            panel.dataset.originalBackdrop = computedStyle.backdropFilter || 'blur(10px)';
+            panel.dataset.originalTransform = computedStyle.transform || 'none';
         }
         
         // Store original z-index to preserve layering
         const originalZIndex = panel.style.zIndex || getComputedStyle(panel).zIndex;
         
-        // Apply shake while preserving curved effects
+        // Apply shake
         const shakeX = (Math.random() - 0.5) * shakeIntensity * 4;
         const shakeY = (Math.random() - 0.5) * shakeIntensity * 3;
         const rotation = (Math.random() - 0.5) * shakeIntensity * 1;
         
-        // Special handling for title header to maintain centering
-        if (panel.classList.contains('title-header')) {
-            const baseTransform = 'translateX(-50%)';
+        // Apply shake to ALL panels using their stored transforms
+        const baseTransform = panel.dataset.originalTransform;
+        if (baseTransform && baseTransform !== 'none') {
             panel.style.transform = `${baseTransform} translate(${shakeX}px, ${shakeY}px) rotate(${rotation}deg)`;
         } else {
-            // Preserve curved transform and add shake for other panels
-            const baseTransform = panel.dataset.originalTransform;
-            panel.style.transform = `${baseTransform} translate(${shakeX}px, ${shakeY}px) rotate(${rotation}deg)`;
+            panel.style.transform = `translate(${shakeX}px, ${shakeY}px) rotate(${rotation}deg)`;
         }
         
         panel.style.zIndex = originalZIndex;
         panel.style.transformOrigin = 'center center';
-        
-        // CRITICAL: Preserve backdrop filter during shake
         panel.style.backdropFilter = panel.dataset.originalBackdrop;
     });
     
@@ -1741,14 +1720,12 @@ function applyUIShakeAndGlitch(launchProgress) {
             const residualShakeX = (Math.random() - 0.5) * shakeIntensity * 1;
             const residualShakeY = (Math.random() - 0.5) * shakeIntensity * 0.75;
             
-            // Special handling for title header
-            if (panel.classList.contains('title-header')) {
-                const baseTransform = 'translateX(-50%)';
+            // Restore base transform with residual shake
+            const baseTransform = panel.dataset.originalTransform;
+            if (baseTransform && baseTransform !== 'none') {
                 panel.style.transform = `${baseTransform} translate(${residualShakeX}px, ${residualShakeY}px)`;
             } else {
-                // Restore with curved effects preserved for other panels
-                const baseTransform = panel.dataset.originalTransform;
-                panel.style.transform = `${baseTransform} translate(${residualShakeX}px, ${residualShakeY}px)`;
+                panel.style.transform = `translate(${residualShakeX}px, ${residualShakeY}px)`;
             }
             
             panel.style.zIndex = originalZIndex;
@@ -2205,24 +2182,6 @@ function cleanupIntroElements() {
         fadeOverlay.remove();
     }
     
-    // FORCE RESET ALL UI panel effects and transforms
-    const uiPanels = document.querySelectorAll('.ui-panel, .title-header');
-    uiPanels.forEach(panel => {
-        // Check if this is the title panel
-        if (panel.classList.contains('title-header')) {
-            // Reset title panel to its proper centered position
-            panel.style.transform = 'translateX(-50%)';
-        } else {
-            // Clear transforms for other panels
-            panel.style.transform = '';
-        }
-        
-        // Clear all other effects
-        panel.style.filter = '';
-        panel.style.opacity = '';
-        panel.style.animation = '';
-    });
-    
     // Also reset all text elements to clear any text scrambling
     const allTextElements = document.querySelectorAll('.ui-panel div, .ui-panel span, .ui-panel p');
     allTextElements.forEach(el => {
@@ -2304,7 +2263,7 @@ function cleanupIntroElements() {
 }
 
 function restoreUIBlurEffects() {
-    // Restore backdrop blur to all UI panels after intro
+    // Restore backdrop blur to UI panels after intro, but NOT the title-header
     const uiPanels = document.querySelectorAll('.ui-panel');
     uiPanels.forEach(panel => {
         panel.style.backdropFilter = 'blur(2px)';
@@ -2546,18 +2505,29 @@ introStyles.textContent = `
        Z-INDEX HIERARCHY - CRITICAL for proper layering
        ============================================================================= */
     .ui-panel {
-        z-index: 70 !important;
+        z-index: 600 !important;
     }
     
     .title-header {
         position: fixed !important;
-        left: 50% !important;
-        transform: translateX(-50%) !important;
-        z-index: 70 !important;
+    backdrop-filter: blur(2px);
+    left: 50% !important;
+    top: 1rem !important;
+    transform-origin: center center;
+	transform: translateX(-50%) perspective(1000px) rotateX(2deg) translateZ(8px);
+    border-radius: 25px;
+    box-shadow: 
+        0 20px 60px rgba(0, 150, 255, 0.5),
+        inset 0 2px 15px rgba(0,150,255,0.3),
+        inset 0 -2px 15px rgba(0,150,255,0.2);
+    min-width: 300px;
+    z-index: 900 !important;
+    transform-style: preserve-3d;
     }
     
     body.intro-active .title-header {
-        transform: translateX(-50%) !important;
+    transform-origin: center center;
+	transform: translateX(-50%) perspective(1000px) rotateX(2deg) translateZ(8px);
     }
     
     #skipIntroBtn {
@@ -2604,31 +2574,31 @@ introStyles.textContent = `
     
     /* CRITICAL: When gameContainer animates, force UI above it */
     #gameContainer[style*="animation"] .ui-panel {
-        position: fixed !important;
+        position: fixed 
         z-index: 9999 !important;
-        transform-style: preserve-3d !important;
-        isolation: isolate !important;
     }
     
     #gameContainer[style*="animation"] .title-header {
-        position: fixed !important;
+        position: fixed 
         left: 50% !important;
-        transform: translateX(-50%) !important;
+        transform-origin: center center;
+		transform: translateX(-50%) perspective(1000px) rotateX(2deg) translateZ(8px);
         z-index: 9999 !important;
     }
     
     /* Alternative: Move UI outside gameContainer during rumble */
     body.intro-active.launch-phase .ui-panel {
-        position: fixed !important;
+        position: fixed 
         z-index: 9999 !important;
     }
     
     body.intro-active.launch-phase .title-header {
-        position: fixed !important;
-        left: 50% !important;
-        transform: translateX(-50%) !important;
-        z-index: 9999 !important;
-    }
+    position: fixed;
+    left: 50% !important;
+    transform-origin: center center;
+	transform: translateX(-50%) perspective(1000px) rotateX(2deg) translateZ(8px);
+    z-index: 9999 !important;
+}
     
     /* =============================================================================
        CURSOR CONTROL
