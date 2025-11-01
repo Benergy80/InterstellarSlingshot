@@ -32,9 +32,9 @@ const gameState = {
     solarStormBoostActive: false,
     solarStormBoostEndTime: 0,
     tenSecondWarningShown: false,
-    plasmaStormBoostActive: false,          // ⭐ NEW
-    plasmaStormBoostEndTime: 0,             // ⭐ NEW
-    plasmaTenSecondWarningShown: false,     // ⭐ NEW
+    plasmaStormBoostActive: false,          // â­ NEW
+    plasmaStormBoostEndTime: 0,             // â­ NEW
+    plasmaTenSecondWarningShown: false,     // â­ NEW
     shipMass: 2.0, // Doubled mass for doubled world
     baseSpeed: 0.2, // Doubled for doubled world
     thrustPower: 0.01, // Doubled for doubled world
@@ -442,7 +442,7 @@ function createSingleOrbitLine(planet, isLocal) {
 orbitLine.position.set(systemCenter.x, systemCenter.y, systemCenter.z);
 orbitLine.rotation.x = Math.PI / 2; // Rotate to horizontal plane
 
-// ✅ ENHANCED: Apply stored orbital tilt for local gateway systems
+// âœ… ENHANCED: Apply stored orbital tilt for local gateway systems
 if (planet.userData.isLocalGateway && planet.userData.orbitalTilt) {
     orbitLine.rotation.y += planet.userData.orbitalTilt.z; // Z-tilt affects Y-rotation
     orbitLine.rotation.z += planet.userData.orbitalTilt.x; // X-tilt affects Z-rotation
@@ -650,20 +650,20 @@ setTimeout(() => {
     }
 }, 1000);
 
-// ⭐ NEW: Create enhanced planet clusters AFTER all nebula layers
+// â­ NEW: Create enhanced planet clusters AFTER all nebula layers
 setTimeout(() => {
     if (typeof createEnhancedPlanetClustersInNebulas === 'function') {
-        console.log('🌟 Creating enhanced planet clusters within nebulas...');
+        console.log('ðŸŒŸ Creating enhanced planet clusters within nebulas...');
         createEnhancedPlanetClustersInNebulas();
     } else {
-        console.warn('⚠️ createEnhancedPlanetClustersInNebulas function not found!');
+        console.warn('âš ï¸ createEnhancedPlanetClustersInNebulas function not found!');
     }
 }, 3000); // Wait 3 seconds for all nebula layers to complete
 
 // ADD THIS NEW CODE RIGHT AFTER THE ABOVE:
 setTimeout(() => {
     if (typeof createEnhancedPlanetClustersInNebulas === 'function') {
-        console.log('🌟 Creating enhanced planet clusters in nebulas...');
+        console.log('ðŸŒŸ Creating enhanced planet clusters in nebulas...');
         createEnhancedPlanetClustersInNebulas();
     }
 }, 2000); // Wait for nebulas to be fully created first
@@ -676,7 +676,7 @@ if (typeof createAsteroidBelts === 'function') {
     console.log('Asteroid belts created');
 }
 */
-console.log('⚠️ INITIAL ASTEROID LOAD DISABLED - Will load during intro sequence only');
+console.log('âš ï¸ INITIAL ASTEROID LOAD DISABLED - Will load during intro sequence only');
 
             if (typeof createEnhancedComets === 'function') {
                 createEnhancedComets();
@@ -718,11 +718,11 @@ if (typeof spawnBlackHoleGuardians === 'function') {
             if (typeof setupGalaxyMap === 'function') {
                 setupGalaxyMap();
                 
-                // ⭐ NEW: Update galaxy map to show initial location
+                // â­ NEW: Update galaxy map to show initial location
                 setTimeout(() => {
                     if (typeof updateGalaxyMap === 'function') {
                         updateGalaxyMap();
-                        console.log('🗺️ Initial galaxy location set');
+                        console.log('ðŸ—ºï¸ Initial galaxy location set');
                     }
                 }, 1000); // Wait 1 second for camera to be positioned
             }
@@ -732,22 +732,34 @@ if (typeof spawnBlackHoleGuardians === 'function') {
     console.log('UI system initialized');
 }
 
+// Initialize shield system (with delay to ensure DOM is ready)
+setTimeout(() => {
+    if (typeof initShieldSystem === 'function') {
+        const initialized = initShieldSystem();
+        if (initialized) {
+            console.log('ðŸ›¡ï¸ Shield system ready');
+        } else {
+            console.warn('âš ï¸ Shield system initialization failed - will retry on first activation');
+        }
+    }
+}, 100);
+
             // In your game initialization section, add:
 if (typeof initializeCosmicFeatures === 'function') {
     initializeCosmicFeatures();
     console.log('Special cosmic features initialized');
 }
 
-// ✅ ADD THIS RIGHT HERE:
+// âœ… ADD THIS RIGHT HERE:
 if (typeof createWarpSpeedStarfield === 'function') {
     createWarpSpeedStarfield();
-    console.log('🚀 3D warp speed starfield created');
+    console.log('ðŸš€ 3D warp speed starfield created');
 }
 // Enhance cosmic features for collision and slingshot support
 if (typeof enhanceCosmicFeaturesForGameplay === 'function') {
     setTimeout(() => {
         enhanceCosmicFeaturesForGameplay();
-        console.log('✅ Cosmic features enhanced for gameplay');
+        console.log('âœ… Cosmic features enhanced for gameplay');
     }, 500); // Small delay to ensure all features are created
 }
             // Create orbit lines after planets exist
@@ -914,7 +926,7 @@ if (typeof animateNebulaBrownDwarfs !== 'undefined') {
     animateNebulaBrownDwarfs();
 }
     
-    // ⭐ ENHANCED: Animate nebula gas clouds with individual pulsing per cloud
+    // â­ ENHANCED: Animate nebula gas clouds with individual pulsing per cloud
 if (typeof nebulaGasClouds !== 'undefined' && nebulaGasClouds.length > 0) {
     nebulaGasClouds.forEach(cloudCluster => {
         // Rotate entire cluster slowly
@@ -950,7 +962,7 @@ if (typeof nebulaGasClouds !== 'undefined' && nebulaGasClouds.length > 0) {
     });
 }
 
-// ⭐ NEW: Animate asteroid belts rotation
+// â­ NEW: Animate asteroid belts rotation
 if (typeof asteroidBelts !== 'undefined' && asteroidBelts.length > 0) {
     asteroidBelts.forEach(belt => {
         if (belt.userData.rotationSpeed && belt.rotation) {
@@ -994,6 +1006,11 @@ if (typeof enemies !== 'undefined' && enemies.length > 0 && gameState.frameCount
     
     // Update target lock system
     updateTargetLock();
+    
+    // Update shield system
+if (typeof updateShieldSystem === 'function') {
+    updateShieldSystem();
+}
     
     // PERFORMANCE: Update active planets less frequently based on performance mode
     const planetUpdateFrequency = gameState.performanceMode === 'minimal' ? 10 : 
@@ -1071,20 +1088,23 @@ if (planet.userData.type === 'blackhole' && planet.userData.rotationSpeed) {
     });
 }
     
-        // Enhanced asteroid orbital mechanics for doubled world (only for active asteroids)
+        // OPTIMIZED: Asteroid orbital mechanics - update positions less frequently (every 3 frames)
         if (planet.userData.type === 'asteroid' && planet.userData.beltGroup) {
-    const time = Date.now() * 0.001 * planet.userData.orbitSpeed;
-    const orbitPhase = planet.userData.orbitPhase || 0;
+    // Update orbital position every 3 frames to reduce expensive trig calculations
+    if (gameState.frameCount % 5 === 0) {
+        const time = Date.now() * 0.001 * planet.userData.orbitSpeed;
+        const orbitPhase = planet.userData.orbitPhase || 0;
+        
+        // FIXED: Use LOCAL coordinates since asteroids are children of positioned beltGroup
+        const orbitX = Math.cos(time + orbitPhase) * planet.userData.orbitRadius;
+        const orbitZ = Math.sin(time + orbitPhase) * planet.userData.orbitRadius;
+        const orbitY = Math.sin(time * 0.5 + orbitPhase) * 10;
+        
+        // Set LOCAL position relative to parent beltGroup
+        planet.position.set(orbitX, orbitY, orbitZ);
+    }
     
-    // FIXED: Use LOCAL coordinates since asteroids are children of positioned beltGroup
-    const orbitX = Math.cos(time + orbitPhase) * planet.userData.orbitRadius;
-    const orbitZ = Math.sin(time + orbitPhase) * planet.userData.orbitRadius;
-    const orbitY = Math.sin(time * 0.5 + orbitPhase) * 10;
-    
-    // Set LOCAL position relative to parent beltGroup
-    planet.position.set(orbitX, orbitY, orbitZ);
-    
-    // Asteroid rotation
+    // Keep asteroid rotation smooth - update every frame (cheap operation)
     if (planet.userData.rotationSpeed) {
         planet.rotation.x += planet.userData.rotationSpeed;
         planet.rotation.y += planet.userData.rotationSpeed * 0.7;
@@ -1462,10 +1482,10 @@ else if (planet.userData.parentPlanet && planet.userData.orbitRadius > 0) {
     const moonY = Math.sin(time * 0.5 + orbitPhase) * 4;
     
     if (isChildOfParent) {
-        // ✅ CORRECT: Moon is a child, use LOCAL coordinates
+        // âœ… CORRECT: Moon is a child, use LOCAL coordinates
         planet.position.set(moonX, moonY, moonZ);
     } else {
-        // ⚠️ FALLBACK: Moon is not a child, use WORLD coordinates
+        // âš ï¸ FALLBACK: Moon is not a child, use WORLD coordinates
         if (planet.userData.parentPlanet.position) {
             const parentPos = planet.userData.parentPlanet.position;
             planet.position.set(parentPos.x + moonX, parentPos.y + moonY, parentPos.z + moonZ);
