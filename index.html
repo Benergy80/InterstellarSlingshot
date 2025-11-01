@@ -727,39 +727,42 @@
 </div>
 
     <!-- MOBILE CONTROLS -->
-    <div class="mobile-controls">
-        <button class="mobile-btn" onclick="showMobilePanel('controls')" title="Flight Controls">
-            <i class="fas fa-gamepad"></i>
-        </button>
-        <button class="mobile-btn" 
-            ontouchstart="mobileBrakesStart()" 
-            ontouchend="mobileBrakesEnd()"
-            onmousedown="mobileBrakesStart()" 
-            onmouseup="mobileBrakesEnd()"
-            title="Brakes (Hold)">
-            <i class="fas fa-hand-paper"></i>
-        </button>
-        <button class="mobile-btn primary fire-btn" 
-            onclick="handleMobileFire(event)" 
-            ontouchstart="handleMobileFire(event)"
-            title="Fire Weapons">
-            <i class="fas fa-crosshairs"></i>
-        </button>
-        <button class="mobile-btn" 
-            onmousedown="startForwardThrust()" 
-            onmouseup="stopForwardThrust()" 
-            ontouchstart="startForwardThrust()" 
-            ontouchend="stopForwardThrust()" 
-            title="Forward Thrust">
-            <i class="fas fa-arrow-up"></i>
-        </button>
-        <button class="mobile-btn" onclick="mobileEmergencyWarp()" title="Emergency Warp">
-            <i class="fas fa-rocket"></i>
-        </button>
-        <button class="mobile-btn" onclick="mobileToggleAutoLevel()" title="Toggle Auto-Level">
-            <i class="fas fa-balance-scale"></i>
-        </button>
-    </div>
+<div class="mobile-controls">
+    <button class="mobile-btn" onclick="showMobilePanel('controls')" title="Flight Controls">
+        <i class="fas fa-gamepad"></i>
+    </button>
+    <button class="mobile-btn" 
+        ontouchstart="mobileBrakesStart()" 
+        ontouchend="mobileBrakesEnd()"
+        onmousedown="mobileBrakesStart()" 
+        onmouseup="mobileBrakesEnd()"
+        title="Brakes (Hold)">
+        <i class="fas fa-hand-paper"></i>
+    </button>
+    <button class="mobile-btn primary fire-btn" 
+        onclick="handleMobileFire(event)" 
+        ontouchstart="handleMobileFire(event)"
+        title="Fire Weapons">
+        <i class="fas fa-crosshairs"></i>
+    </button>
+    <button class="mobile-btn" 
+        onmousedown="startForwardThrust()" 
+        onmouseup="stopForwardThrust()" 
+        ontouchstart="startForwardThrust()" 
+        ontouchend="stopForwardThrust()" 
+        title="Forward Thrust">
+        <i class="fas fa-arrow-up"></i>
+    </button>
+    <button class="mobile-btn" onclick="mobileToggleShields()" title="Toggle Shields">
+        <i class="fas fa-shield-alt"></i>
+    </button>
+    <button class="mobile-btn" onclick="mobileEmergencyWarp()" title="Emergency Warp">
+        <i class="fas fa-rocket"></i>
+    </button>
+    <button class="mobile-btn" onclick="mobileToggleAutoLevel()" title="Toggle Auto-Level">
+        <i class="fas fa-balance-scale"></i>
+    </button>
+</div>
 
     <!-- Mobile Navigation Panel -->
     <div class="nav-panel-mobile" id="navPanelMobile">
