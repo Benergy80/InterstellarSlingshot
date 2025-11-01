@@ -306,6 +306,25 @@ window.mobileToggleAutoLevel = function() {
     }
 };
 
+window.mobileToggleShields = function() {
+    console.log('📱 Mobile shields button pressed');
+    
+    // Call the main shields toggle function
+    if (typeof toggleShields === 'function') {
+        toggleShields();
+        console.log('✅ Shields toggled via toggleShields()');
+    } else if (typeof keys !== 'undefined') {
+        // Fallback: simulate shift key press
+        keys.shift = true;
+        setTimeout(() => keys.shift = false, 100);
+        console.log('✅ Shields toggled via keys.shift');
+    }
+    
+    if (typeof playSound === 'function') {
+        playSound('ui_click', 1000, 0.15);
+    }
+};
+
 window.handleMobileFire = function(event) {
     if (event) {
         event.preventDefault();
@@ -463,6 +482,8 @@ window.mobileCycleTarget = function() {
 let touchStartX = 0;
 let touchStartY = 0;
 let isTouching = false;
+let twoFingerTouchStartDistance = 0;
+let twoFingerTouchStartRotation = 0;
 
 document.addEventListener('touchstart', (e) => {
     // Only handle touches on game canvas, not on UI buttons
@@ -474,11 +495,23 @@ document.addEventListener('touchstart', (e) => {
     }
     
     if (e.target.id === 'gameCanvas' || e.target.closest('#gameContainer')) {
-        const touch = e.touches[0];
-        touchStartX = touch.clientX;
-        touchStartY = touch.clientY;
-        isTouching = true;
-        window.mobileTouchActive = true; // Prevent automatic banking during touch
+        if (e.touches.length === 1) {
+            // Single finger - look controls
+            const touch = e.touches[0];
+            touchStartX = touch.clientX;
+            touchStartY = touch.clientY;
+            isTouching = true;
+            window.mobileTouchActive = true; // Prevent automatic banking during touch
+        } else if (e.touches.length === 2) {
+            // Two fingers - roll control
+            const touch1 = e.touches[0];
+            const touch2 = e.touches[1];
+            const dx = touch2.clientX - touch1.clientX;
+            const dy = touch2.clientY - touch1.clientY;
+            twoFingerTouchStartDistance = Math.sqrt(dx * dx + dy * dy);
+            twoFingerTouchStartRotation = Math.atan2(dy, dx);
+            isTouching = false; // Disable single touch when two fingers active
+        }
         e.preventDefault();
     }
 }, { passive: false });
@@ -492,44 +525,77 @@ document.addEventListener('touchmove', (e) => {
         return;
     }
     
-    if (isTouching && typeof camera !== 'undefined') {
-        const touch = e.touches[0];
-        const deltaX = touch.clientX - touchStartX;
-        const deltaY = touch.clientY - touchStartY;
-        
-        // Apply camera rotation using local-space rotations (like desktop controls)
-        // This gives proper pitch/yaw feeling instead of tilting the world
-        const sensitivity = 0.005;
-        
-        // Yaw (left/right) - rotateY in local space
-        camera.rotateY(-deltaX * sensitivity);
-        
-        // Pitch (up/down) - rotateX in local space
-        camera.rotateX(-deltaY * sensitivity);
-        
-        // Clamp pitch to prevent over-rotation (90 degrees up/down)
-        camera.rotation.x = Math.max(-Math.PI/2, Math.min(Math.PI/2, camera.rotation.x));
-        
-        // Reset yaw velocity to prevent automatic banking during mobile touch
-        if (typeof rotationalVelocity !== 'undefined') {
-            rotationalVelocity.yaw = 0;
+    if (typeof camera !== 'undefined') {
+        if (e.touches.length === 1 && isTouching) {
+            // Single finger - pitch and yaw controls
+            const touch = e.touches[0];
+            const deltaX = touch.clientX - touchStartX;
+            const deltaY = touch.clientY - touchStartY;
+            
+            // Apply camera rotation using local-space rotations (like desktop controls)
+            // This gives proper pitch/yaw feeling instead of tilting the world
+            const sensitivity = 0.005;
+            
+            // Yaw (left/right) - rotateY in local space
+            camera.rotateY(-deltaX * sensitivity);
+            
+            // Pitch (up/down) - rotateX in local space
+            camera.rotateX(-deltaY * sensitivity);
+            
+            // Clamp pitch to prevent over-rotation (90 degrees up/down)
+            camera.rotation.x = Math.max(-Math.PI/2, Math.min(Math.PI/2, camera.rotation.x));
+            
+            // Reset yaw velocity to prevent automatic banking during mobile touch
+            if (typeof rotationalVelocity !== 'undefined') {
+                rotationalVelocity.yaw = 0;
+            }
+            if (typeof window.rotationalVelocity !== 'undefined') {
+                window.rotationalVelocity.yaw = 0;
+            }
+            
+            // Update timing for auto-leveling system (so it knows when to level)
+            if (typeof lastRollInputTime !== 'undefined') {
+                lastRollInputTime = performance.now();
+            }
+            // Also update on window object in case it's defined there
+            if (typeof window.lastRollInputTime !== 'undefined') {
+                window.lastRollInputTime = performance.now();
+            }
+            
+            touchStartX = touch.clientX;
+            touchStartY = touch.clientY;
+            e.preventDefault();
+        } else if (e.touches.length === 2) {
+            // Two fingers - roll control
+            const touch1 = e.touches[0];
+            const touch2 = e.touches[1];
+            const dx = touch2.clientX - touch1.clientX;
+            const dy = touch2.clientY - touch1.clientY;
+            const currentRotation = Math.atan2(dy, dx);
+            
+            // Calculate rotation delta
+            let rotationDelta = currentRotation - twoFingerTouchStartRotation;
+            
+            // Normalize to [-PI, PI]
+            while (rotationDelta > Math.PI) rotationDelta -= Math.PI * 2;
+            while (rotationDelta < -Math.PI) rotationDelta += Math.PI * 2;
+            
+            // Apply roll
+            const rollSensitivity = 0.5;
+            camera.rotateZ(-rotationDelta * rollSensitivity);
+            
+            // Update timing for auto-leveling
+            if (typeof lastRollInputTime !== 'undefined') {
+                lastRollInputTime = performance.now();
+            }
+            if (typeof window.lastRollInputTime !== 'undefined') {
+                window.lastRollInputTime = performance.now();
+            }
+            
+            // Update start rotation for next frame
+            twoFingerTouchStartRotation = currentRotation;
+            e.preventDefault();
         }
-        if (typeof window.rotationalVelocity !== 'undefined') {
-            window.rotationalVelocity.yaw = 0;
-        }
-        
-        // Update timing for auto-leveling system (so it knows when to level)
-        if (typeof lastRollInputTime !== 'undefined') {
-            lastRollInputTime = performance.now();
-        }
-        // Also update on window object in case it's defined there
-        if (typeof window.lastRollInputTime !== 'undefined') {
-            window.lastRollInputTime = performance.now();
-        }
-        
-        touchStartX = touch.clientX;
-        touchStartY = touch.clientY;
-        e.preventDefault();
     }
 }, { passive: false });
 
@@ -599,6 +665,22 @@ setInterval(() => {
     const navPanel = document.getElementById('navPanelMobile');
     if (navPanel && navPanel.classList.contains('active')) {
         window.updateMobileNavigation();
+    }
+    
+    // Update floating status indicators (hull, energy, warps)
+    if (typeof updateMobileFloatingStatus === 'function') {
+        updateMobileFloatingStatus();
+    } else {
+        // Fallback: update directly
+        if (typeof gameState !== 'undefined') {
+            const hullEl = document.getElementById('mobileFloatingHull');
+            const energyEl = document.getElementById('mobileFloatingEnergy');
+            const warpsEl = document.getElementById('mobileFloatingWarps');
+            
+            if (hullEl) hullEl.textContent = Math.round(gameState.hull) + '%';
+            if (energyEl) energyEl.textContent = Math.round(gameState.energy) + '%';
+            if (warpsEl) warpsEl.textContent = gameState.emergencyWarp?.available ?? 5;
+        }
     }
     
     // Check for game over
