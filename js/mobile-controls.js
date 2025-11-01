@@ -5,6 +5,9 @@
 
 'use strict';
 
+// Mobile touch flag to prevent automatic banking during touch input
+window.mobileTouchActive = false;
+
 // Mobile settings - use window object to avoid declaration conflicts
 window.mobileSettings = window.mobileSettings || {
     crosshairTargeting: true,
@@ -475,6 +478,7 @@ document.addEventListener('touchstart', (e) => {
         touchStartX = touch.clientX;
         touchStartY = touch.clientY;
         isTouching = true;
+        window.mobileTouchActive = true; // Prevent automatic banking during touch
         e.preventDefault();
     }
 }, { passive: false });
@@ -506,6 +510,14 @@ document.addEventListener('touchmove', (e) => {
         // Clamp pitch to prevent over-rotation (90 degrees up/down)
         camera.rotation.x = Math.max(-Math.PI/2, Math.min(Math.PI/2, camera.rotation.x));
         
+        // Reset yaw velocity to prevent automatic banking during mobile touch
+        if (typeof rotationalVelocity !== 'undefined') {
+            rotationalVelocity.yaw = 0;
+        }
+        if (typeof window.rotationalVelocity !== 'undefined') {
+            window.rotationalVelocity.yaw = 0;
+        }
+        
         // Update timing for auto-leveling system (so it knows when to level)
         if (typeof lastRollInputTime !== 'undefined') {
             lastRollInputTime = performance.now();
@@ -523,6 +535,16 @@ document.addEventListener('touchmove', (e) => {
 
 document.addEventListener('touchend', (e) => {
     isTouching = false;
+    window.mobileTouchActive = false; // Re-enable banking after touch ends
+    
+    // Reset yaw velocity to prevent banking from accumulated velocity
+    if (typeof rotationalVelocity !== 'undefined') {
+        rotationalVelocity.yaw = 0;
+    }
+    // Also try window object
+    if (typeof window.rotationalVelocity !== 'undefined') {
+        window.rotationalVelocity.yaw = 0;
+    }
 });
 
 // Swipe gesture - isolated scope
