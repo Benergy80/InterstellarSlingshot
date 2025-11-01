@@ -15,6 +15,16 @@ let lastRollInputTime = 0;
 // Camera rotation tracking for auto-navigation compatibility
 let cameraRotationTracking = { x: 0, y: 0, z: 0 };
 
+// NEW: Rotational inertia system for space-like flight feel
+let rotationalVelocity = { pitch: 0, yaw: 0, roll: 0 };
+const rotationalInertia = {
+    acceleration: 0.0020,       // How quickly rotation speeds up (slower for fine control)
+    deceleration: 0.95,        // How quickly rotation slows down (0.92 = retain 92% per frame)
+    maxSpeed: 0.014,           // Maximum rotation speed (reduced for finer control)
+    bankingFactor: -2.5,        // How much to bank when turning at full speed (scaled by velocity)
+    bankingSmoothing: 0.2     // How smoothly banking is applied
+};
+
 function orientTowardsTarget(target) {
     if (!target || typeof camera === 'undefined') return false;
     
@@ -72,9 +82,96 @@ function orientTowardsTarget(target) {
     return finalAngle < orientationThreshold;
 }
 
+// NEW: Apply rotational inertia for space-like flight controls
+function applyRotationalInertia(keys, allowManualRotation) {
+    // Apply acceleration when keys are pressed
+    if (allowManualRotation) {
+        // Pitch controls (up/down)
+        if (keys.up) {
+            rotationalVelocity.pitch += rotationalInertia.acceleration;
+            lastPitchInputTime = performance.now();
+        } else if (keys.down) {
+            rotationalVelocity.pitch -= rotationalInertia.acceleration;
+            lastPitchInputTime = performance.now();
+        } else {
+            // Apply deceleration when no input
+            rotationalVelocity.pitch *= rotationalInertia.deceleration;
+        }
+        
+        // Yaw controls (left/right arrows for turning)
+        if (keys.left) {
+            rotationalVelocity.yaw += rotationalInertia.acceleration;
+            lastRollInputTime = performance.now();
+        } else if (keys.right) {
+            rotationalVelocity.yaw -= rotationalInertia.acceleration;
+            lastRollInputTime = performance.now();
+        } else {
+            // Apply deceleration when no input
+            rotationalVelocity.yaw *= rotationalInertia.deceleration;
+        }
+    }
+    
+    // Roll controls (Q/E keys for barrel roll) - always available
+    if (keys.q) {
+        rotationalVelocity.roll += rotationalInertia.acceleration;
+        lastRollInputTime = performance.now();
+    } else if (keys.e) {
+        rotationalVelocity.roll -= rotationalInertia.acceleration;
+        lastRollInputTime = performance.now();
+    } else {
+        // Apply deceleration when no input
+        rotationalVelocity.roll *= rotationalInertia.deceleration;
+    }
+    
+    // Clamp rotational velocities to max speed
+    rotationalVelocity.pitch = Math.max(-rotationalInertia.maxSpeed, 
+                                        Math.min(rotationalInertia.maxSpeed, rotationalVelocity.pitch));
+    rotationalVelocity.yaw = Math.max(-rotationalInertia.maxSpeed, 
+                                      Math.min(rotationalInertia.maxSpeed, rotationalVelocity.yaw));
+    rotationalVelocity.roll = Math.max(-rotationalInertia.maxSpeed, 
+                                       Math.min(rotationalInertia.maxSpeed, rotationalVelocity.roll));
+    
+    // Apply pitch (looking up/down) - this is always relative to current orientation
+    if (Math.abs(rotationalVelocity.pitch) > 0.00001) {
+        camera.rotateX(rotationalVelocity.pitch);
+    }
+    
+    // Apply yaw (turning left/right) - this is always relative to current orientation
+    if (Math.abs(rotationalVelocity.yaw) > 0.00001) {
+        camera.rotateY(rotationalVelocity.yaw);
+    }
+    
+    // Apply roll (barrel roll) with SPEED-DEPENDENT automatic banking from yaw
+    // Banking increases with speed - slow = minimal banking, fast = aggressive banking
+    const currentSpeed = typeof gameState !== 'undefined' && gameState.velocity ? gameState.velocity : 0;
+    const minSpeed = 0.5;  // Minimum speed for banking
+    const maxSpeed = 6.0;  // Speed at which banking reaches maximum
+    
+    // Calculate speed factor (0 to 1, where 0 = no banking, 1 = full banking)
+    const speedFactor = Math.max(0, Math.min(1, (currentSpeed - minSpeed) / (maxSpeed - minSpeed)));
+    
+    // Apply banking proportional to both yaw velocity and current speed
+    const bankingFromYaw = -rotationalVelocity.yaw * rotationalInertia.bankingFactor * speedFactor;
+    const totalRoll = rotationalVelocity.roll + bankingFromYaw;
+    
+    if (Math.abs(totalRoll) > 0.00001) {
+        camera.rotateZ(totalRoll);
+    }
+    
+    // Update tracking for auto-navigation compatibility
+    cameraRotationTracking.x = camera.rotation.x;
+    cameraRotationTracking.y = camera.rotation.y;
+    cameraRotationTracking.z = camera.rotation.z;
+    
+    // Stop very small rotations to prevent drift
+    if (Math.abs(rotationalVelocity.pitch) < 0.00001) rotationalVelocity.pitch = 0;
+    if (Math.abs(rotationalVelocity.yaw) < 0.00001) rotationalVelocity.yaw = 0;
+    if (Math.abs(rotationalVelocity.roll) < 0.00001) rotationalVelocity.roll = 0;
+}
+
 // Initialize enhanced game state properties
 function initializeEnhancedGameStateProperties() {
-    console.log('ðŸ”§ Initializing enhanced gameState properties...');
+    console.log('🔧 Initializing enhanced gameState properties...');
     
     // Auto-leveling properties - OFF by default as requested
     if (typeof gameState.autoLevelingEnabled === 'undefined') {
@@ -366,14 +463,28 @@ function destroyAsteroidByWeapon(asteroid, hitPosition = null) {
     console.log(`Asteroid destroyed by weapon fire: ${asteroid.userData.name} (+${hullRestoration} hull) - radius: ${actualRadius.toFixed(1)}`);
 }
 function destroyAsteroidByCollision(asteroid) {
-    gameState.hull = Math.max(0, gameState.hull - 15);
+    // Apply damage with shield reduction
+    const damage = 15;
+    const shieldReduction = typeof getShieldDamageReduction === 'function' ? 
+                            getShieldDamageReduction() : 0;
+    const actualDamage = damage * (1 - shieldReduction);
+    
+    gameState.hull = Math.max(0, gameState.hull - actualDamage);
+    
+    // Create shield hit effect if shields are active
+    if (typeof isShieldActive === 'function' && isShieldActive() && 
+        typeof createShieldHitEffect === 'function') {
+        createShieldHitEffect(asteroid.position);
+    }
     
     createEnhancedScreenDamageEffect();
     
     if (typeof playSound !== 'undefined') {
         playSound('damage');
     }
-    
+
+
+
     // FIXED: Account for scale in collision explosions too
     const baseRadius = asteroid.geometry ? asteroid.geometry.parameters.radius : 1;
     const actualRadius = baseRadius * (asteroid.scale.x || 1);
@@ -618,7 +729,7 @@ if (arrivedGalaxyId >= 0 && typeof loadEnemiesForGalaxy === 'function') {
 if (arrivedGalaxyId >= 0 && typeof loadGuardiansForGalaxy === 'function') {
     setTimeout(() => {
         loadGuardiansForGalaxy(arrivedGalaxyId);
-        console.log(`🛡️ Loading guardians for galaxy ${arrivedGalaxyId} after warp`);
+        console.log(`🛡️ Loading guardians for galaxy ${arrivedGalaxyId} after warp`);
     }, 900); // Load guardians before cleanup
 }
 
@@ -742,11 +853,11 @@ if (arrivedGalaxyId >= 0 && typeof cleanupDistantAsteroids === 'function') {
             updateUI();
         }
         
-        // ⭐ NEW: Force galaxy map update after warp
+        // â­ NEW: Force galaxy map update after warp
         if (typeof updateGalaxyMap === 'function') {
             setTimeout(() => {
                 updateGalaxyMap();
-                console.log('🗺️ Galaxy map updated after warp');
+                console.log('🗺️ Galaxy map updated after warp');
             }, 500);
         }
         
@@ -763,7 +874,7 @@ if (arrivedGalaxyId >= 0 && typeof cleanupDistantAsteroids === 'function') {
         // COMPLETION LOG
         // ==========================================================================
         
-        console.log('═══════════════════════════════════════════════════════');
+        console.log('â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•');
         console.log(`   BLACK HOLE WARP COMPLETE`);
         console.log(`   Origin: ${sourceBlackHole}`);
         console.log(`   Destination: ${targetBlackHole.userData.name}`);
@@ -771,7 +882,7 @@ if (arrivedGalaxyId >= 0 && typeof cleanupDistantAsteroids === 'function') {
         console.log(`   Galaxy ID: ${arrivedGalaxyId}`);
         console.log(`   Nearby Objects: ${nearbyObjects.length}`);
         console.log(`   Position: (${safePosition.x.toFixed(0)}, ${safePosition.y.toFixed(0)}, ${safePosition.z.toFixed(0)})`);
-        console.log('═══════════════════════════════════════════════════════');
+        console.log('â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•');
         
     }, 1500); // Wait for full fade to white before executing warp
 }
@@ -813,19 +924,19 @@ function executeSlingshot() {
         const planetMass = nearestPlanet.userData.mass || 1;
         const planetRadius = nearestPlanet.geometry ? nearestPlanet.geometry.parameters.radius : 5;
         
-        const forwardDirection = new THREE.Vector3();
-        camera.getWorldDirection(forwardDirection);
+        // FIXED: Use player's CURRENT TRAJECTORY, not a perpendicular direction
+        // Get current velocity direction (player's trajectory)
+        const currentTrajectory = gameState.velocityVector.clone().normalize();
         
-        const planetDirection = new THREE.Vector3().subVectors(
-            nearestPlanet.position, 
-            camera.position
-        ).normalize();
+        // Slingshot boosts in the direction you're already moving
+        const slingshotDirection = currentTrajectory;
         
-        const slingDirection = new THREE.Vector3().crossVectors(planetDirection, camera.up).normalize();
-        const slingshotDirection = forwardDirection.clone().add(slingDirection).normalize();
-        
-        const slinghotPower = (planetMass * planetRadius) / 5;
-        const boostVelocity = Math.min(6.0 + slinghotPower, gameState.slingshot.maxSpeed);
+        // FIXED: Make slingshots MUCH MORE POWERFUL than emergency warps
+        // Emergency warp: ~15,000 km/s
+        // Slingshot base: 25,000 km/s, scaling up with planet mass
+        const slinghotPower = (planetMass * planetRadius) / 2; // Doubled from /5 to /2
+        const baseBoostSpeed = 25.0; // Much higher than emergency warp's 15.0
+        const boostVelocity = Math.min(baseBoostSpeed + slinghotPower, 50.0); // Max 50,000 km/s
         
         gameState.velocityVector.copy(slingshotDirection).multiplyScalar(boostVelocity);
         gameState.energy = Math.max(5, gameState.energy - 20);
@@ -888,48 +999,17 @@ function updateEnhancedPhysics() {
     const assistRange = 60; // DOUBLED
     const collisionThreshold = 6; // DOUBLED
     
-    // SPECIFICATION: Basic Camera Rotation (Arrow Keys) - Direct camera.rotateX/Y/Z() calls
+    // NEW: Inertia-based rotation system for space-like flight feel
     // Don't allow manual rotation when auto-navigation is orienting
     const allowManualRotation = !gameState.autoNavigating || !gameState.autoNavOrienting;
 
-    if (allowManualRotation) {
-        // SPECIFICATION COMPLIANT: Direct camera rotation calls for intuitive local space feel
-        if (keys.up) {
-            camera.rotateX(rotSpeed); // Rotate camera up (pitch up)
-            lastPitchInputTime = performance.now();
-        }
-        if (keys.down) {
-            camera.rotateX(-rotSpeed); // Rotate camera down (pitch down)
-            lastPitchInputTime = performance.now();
-        }
-        if (keys.left) {
-            camera.rotateY(rotSpeed); // Rotate camera left (yaw left)
-            lastRollInputTime = performance.now();
-        }
-        if (keys.right) {
-            camera.rotateY(-rotSpeed); // Rotate camera right (yaw right)
-            lastRollInputTime = performance.now();
-        }
-        
-        // Update tracking for auto-navigation compatibility
-        cameraRotationTracking.x = camera.rotation.x;
-        cameraRotationTracking.y = camera.rotation.y;
-        cameraRotationTracking.z = camera.rotation.z;
+    if (allowManualRotation || keys.q || keys.e) {
+        // Apply rotational inertia system
+        applyRotationalInertia(keys, allowManualRotation);
     } else {
-        // When auto-navigating, apply calculated rotations
-        camera.rotation.set(cameraRotationTracking.x, cameraRotationTracking.y, cameraRotationTracking.z);
-    }
-    
-    // SPECIFICATION: Roll controls (Q/E) - always available
-    if (keys.q) {
-        camera.rotateZ(rotSpeed); // Roll left
-        cameraRotationTracking.z = camera.rotation.z;
-        lastRollInputTime = performance.now();
-    }
-    if (keys.e) {
-        camera.rotateZ(-rotSpeed); // Roll right
-        cameraRotationTracking.z = camera.rotation.z;
-        lastRollInputTime = performance.now();
+        // When auto-navigating, reset inertia and maintain orientation
+        rotationalVelocity = { pitch: 0, yaw: 0, roll: 0 };
+        // Don't force rotation.set as it can cause issues - let auto-nav handle it
     }
     
     // L key toggle for auto-leveling
@@ -972,28 +1052,46 @@ if (gameState.autoLevelingEnabled) {
     gameState.wasAutoNavigating = isAutoNavigating;
     
     // Only auto-level when in manual flight mode
-    if (!isAutoNavigating && !isDuringEmergencyOperation) {
+if (!isAutoNavigating && !isDuringEmergencyOperation) {
+    
+    // FIXED: Auto-level ONLY roll (Z-axis) - this is the "banking" angle
+    // This preserves the ship's trajectory direction while leveling the wings
+    if ((now - lastRollInputTime) > autoLevelingDelay) {
+        const rollLerpFactor = autoLevelingSpeed;
+        let currentRoll = camera.rotation.z;
         
-        // FIXED: Auto-level ONLY roll (Z-axis) - this is the "banking" angle
-        // This preserves the ship's trajectory direction while leveling the wings
-        if ((now - lastRollInputTime) > autoLevelingDelay) {
-            const rollLerpFactor = autoLevelingSpeed;
-            const currentRoll = camera.rotation.z;
-            const targetRoll = 0; // Level wings
-            const newRoll = THREE.MathUtils.lerp(currentRoll, targetRoll, rollLerpFactor);
-            
-            // Apply roll leveling only
-            camera.rotation.z = newRoll;
-            
-            // Update tracking to stay synchronized
-            cameraRotationTracking.z = newRoll;
-            
-            // Snap to zero when very close
-            if (Math.abs(newRoll) < 0.01) {
-                camera.rotation.z = 0;
-                cameraRotationTracking.z = 0;
-            }
+        // CRITICAL FIX: Normalize angle to [-PI, PI] range
+        while (currentRoll > Math.PI) currentRoll -= Math.PI * 2;
+        while (currentRoll < -Math.PI) currentRoll += Math.PI * 2;
+        
+        // NEW: Accept BOTH upright (0°) and inverted (180°) as stable states
+        // Level to whichever is closer
+        let targetRoll;
+        if (currentRoll > Math.PI / 2) {
+            // Currently rolled past 90° → level to inverted (180°)
+            targetRoll = Math.PI;
+        } else if (currentRoll < -Math.PI / 2) {
+            // Currently rolled past -90° → level to inverted (-180°)
+            targetRoll = -Math.PI;
+        } else {
+            // Currently between -90° and +90° → level to upright (0°)
+            targetRoll = 0;
         }
+        
+        const newRoll = THREE.MathUtils.lerp(currentRoll, targetRoll, rollLerpFactor);
+        
+        // Apply roll leveling only
+        camera.rotation.z = newRoll;
+        
+        // Update tracking to stay synchronized
+        cameraRotationTracking.z = newRoll;
+        
+        // Snap to target when very close
+        if (Math.abs(newRoll - targetRoll) < 0.01) {
+            camera.rotation.z = targetRoll;
+            cameraRotationTracking.z = targetRoll;
+        }
+    }
         
         // REMOVED: Pitch auto-leveling - this was changing trajectory direction
         // The ship should maintain its pitch attitude for flight control
@@ -1067,26 +1165,39 @@ if (frameDistance > 0.01) { // Only track significant movement
     }
     
      // SPECIFICATION: Emergency Systems - O Key: Emergency warp
-    if (keys.o && gameState.emergencyWarp.available > 0 && !gameState.emergencyWarp.active) {
-        gameState.emergencyWarp.available--;
-        gameState.emergencyWarp.active = true;
-        gameState.emergencyWarp.timeRemaining = gameState.emergencyWarp.boostDuration;
-        gameState.velocityVector.copy(forwardDirection).multiplyScalar(gameState.emergencyWarp.boostSpeed);
-        
-        // ✅ Activate BOTH visual effects
-        for (let i = 0; i < 3; i++) {
-            setTimeout(() => createHyperspaceEffect(), i * 200);
-        }
-        
-        // ✅ NEW: Activate 3D warp starfield
-        if (typeof toggleWarpSpeedStarfield === 'function') {
-            toggleWarpSpeedStarfield(true);
-        }
-        
-        if (typeof playSound !== 'undefined') {
-            playSound('warp');
-        }
+// Check shield block FIRST before processing warp
+if (keys.o && typeof isShieldActive === 'function' && isShieldActive()) {
+    if (typeof showAchievement === 'function') {
+        showAchievement('Warp Blocked', 'Cannot warp with shields active');
     }
+    keys.o = false; // Clear the key immediately
+}
+// Now process warp with cooldown protection
+else if (keys.o && gameState.emergencyWarp.available > 0 && !gameState.emergencyWarp.active) {
+    gameState.emergencyWarp.available--;
+    gameState.emergencyWarp.active = true;
+    gameState.emergencyWarp.timeRemaining = gameState.emergencyWarp.boostDuration;
+    gameState.velocityVector.copy(forwardDirection).multiplyScalar(gameState.emergencyWarp.boostSpeed);
+    
+    // âœ… CRITICAL: Clear the key immediately to prevent retriggering
+    keys.o = false;
+    
+    // âœ… Activate BOTH visual effects
+    for (let i = 0; i < 3; i++) {
+        setTimeout(() => createHyperspaceEffect(), i * 200);
+    }
+    
+    // âœ… NEW: Activate 3D warp starfield
+    if (typeof toggleWarpSpeedStarfield === 'function') {
+        toggleWarpSpeedStarfield(true);
+    }
+    
+    if (typeof playSound !== 'undefined') {
+        playSound('warp');
+    }
+    
+    console.log(`🚀 Emergency warp activated! ${gameState.emergencyWarp.available} charges remaining`);
+}
     
         // Enhanced Emergency warp timer with momentum coasting
 if (gameState.emergencyWarp.active) {
@@ -1116,20 +1227,37 @@ if (gameState.emergencyWarp.active) {
         }
     }
     
+    // FIXED: Don't immediately end postWarp when braking - let velocity naturally decrease
+    // Only end postWarp when velocity drops near minVelocity
     if (keys.x) {
-        gameState.emergencyWarp.postWarp = false;
-        if (typeof showAchievement === 'function') {
-            showAchievement('Emergency Brake Applied', 'Momentum coasting ended');
+        const minVelocity = gameState.minVelocity || 2.0;
+        if (gameState.velocityVector.length() < minVelocity * 1.5) {
+            // Only end postWarp when close to normal speed
+            gameState.emergencyWarp.postWarp = false;
+            if (typeof showAchievement === 'function') {
+                showAchievement('Emergency Brake Applied', 'Momentum coasting ended');
+            }
         }
+        // Note: Braking is applied below in the main braking section (line ~1244)
     }
 }
 
+// Update shield system
+if (typeof updateShieldSystem === 'function') {
+    updateShieldSystem();
+}
     
     // Emergency braking (X key) - GRADUAL DECELERATION
 if (keys.x && gameState.energy > 0) {
     // Gradual braking: reduce velocity by 2% per frame instead of instant stop
     const brakingForce = 0.98; // 2% reduction per frame
     gameState.velocityVector.multiplyScalar(brakingForce);
+    
+    // NEW: Also apply braking to rotational velocity (dampen turning and rolling)
+    const rotationalBrakingForce = 0.95; // 5% reduction per frame for rotation
+    rotationalVelocity.pitch *= rotationalBrakingForce;
+    rotationalVelocity.yaw *= rotationalBrakingForce;
+    rotationalVelocity.roll *= rotationalBrakingForce;
     
     // Small energy cost for braking
     gameState.energy = Math.max(0, gameState.energy - 0.02);
@@ -1141,7 +1269,7 @@ if (keys.x && gameState.energy > 0) {
     if (currentSpeedKmS < 10000 && typeof toggleWarpSpeedStarfield === 'function') {
         if (window.warpStarfield && window.warpStarfield.lines && window.warpStarfield.lines.visible) {
             toggleWarpSpeedStarfield(false);
-            console.log('⚡ Warp starfield disabled - speed below 10,000 km/s');
+            console.log('âš¡ Warp starfield disabled - speed below 10,000 km/s');
         }
     }
     
@@ -1200,7 +1328,20 @@ if ((planet.userData.type === 'planet' || planet.userData.type === 'star' || pla
             showAchievement('Surface Contact!', `Scraped against ${planet.userData.name} - Hull damage!`);
         }
     } else {
-        gameState.hull = Math.max(0, gameState.hull - 2); // Less damage for planets
+        // Apply damage with shield reduction
+        const damage = 2;
+        const shieldReduction = typeof getShieldDamageReduction === 'function' ? 
+                                getShieldDamageReduction() : 0;
+        const actualDamage = damage * (1 - shieldReduction);
+        
+        gameState.hull = Math.max(0, gameState.hull - actualDamage);
+        
+        // Create shield hit effect if shields are active
+        if (typeof isShieldActive === 'function' && isShieldActive() && 
+            typeof createShieldHitEffect === 'function') {
+            createShieldHitEffect(planetPosition);
+        }
+        
         if (typeof showAchievement === 'function') {
             showAchievement('Collision Avoided', `Bounced off ${planet.userData.name}`);
         }
@@ -1605,7 +1746,7 @@ function checkForNebulaDiscovery() {
                 showAchievement('Nebula Discovered!', `Discovered the ${nebulaName} Nebula`, true);
             }
             
-            console.log(`🌫️ Nebula discovered: ${nebula.userData.mythicalName || nebula.userData.name}`);
+            console.log(`🌫️ Nebula discovered: ${nebula.userData.mythicalName || nebula.userData.name}`);
         }
     });
 }
