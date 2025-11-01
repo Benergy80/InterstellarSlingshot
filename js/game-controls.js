@@ -635,31 +635,46 @@ function fireEnemyWeapon(enemy, difficultySettings) {
         damage = Math.min(damage, 15);
         
         // Random chance to hit (makes combat more dynamic)
-        if (Math.random() < 0.7) { // 70% hit chance
-            if (typeof gameState !== 'undefined' && gameState.hull !== undefined) {
-                gameState.hull = Math.max(0, gameState.hull - damage);
-            } else if (typeof gameState !== 'undefined' && gameState.health !== undefined) {
-                gameState.health = Math.max(0, gameState.health - damage);
-            }
-            
-            // ENHANCED: Directional damage effects with attacker position
-            createEnhancedScreenDamageEffect(enemy.position);
-            playSound('damage');
-            
-            if (enemy.userData.isBoss) {
-                showAchievement('Boss Attack!', `${enemy.userData.name} hit for ${damage} damage!`, false);
-            } else {
-                showAchievement('Taking Fire!', `Enemy hit for ${damage} damage!`, false);
-            }
-            
-            // Check for game over
-            const currentHealth = gameState.hull || gameState.health || 0;
-            if (currentHealth <= 0) {
-                createDeathEffect();
-            }
-        } else {
-            showAchievement('Missed!', 'Enemy shot missed!', false);
-        }
+if (Math.random() < 0.7) { // 70% hit chance
+    // Apply damage with shield reduction
+    const shieldReduction = typeof getShieldDamageReduction === 'function' ? 
+                            getShieldDamageReduction() : 0;
+    const actualDamage = damage * (1 - shieldReduction);
+    
+    if (typeof gameState !== 'undefined' && gameState.hull !== undefined) {
+        gameState.hull = Math.max(0, gameState.hull - actualDamage);
+    } else if (typeof gameState !== 'undefined' && gameState.health !== undefined) {
+        gameState.health = Math.max(0, gameState.health - actualDamage);
+    }
+    
+    // Create shield hit effect if shields are active
+    const shieldsActive = typeof isShieldActive === 'function' && isShieldActive();
+    if (shieldsActive && typeof createShieldHitEffect === 'function') {
+        createShieldHitEffect(enemy.position);
+    }
+    
+    // ENHANCED: Directional damage effects with attacker position
+    createEnhancedScreenDamageEffect(enemy.position);
+    
+    // ONLY play damage sound if shields are NOT active
+    if (!shieldsActive) {
+        playSound('damage');
+    }
+    
+    if (enemy.userData.isBoss) {
+        showAchievement('Boss Attack!', `${enemy.userData.name} hit for ${damage} damage!`, false);
+    } else {
+        showAchievement('Taking Fire!', `Enemy hit for ${damage} damage!`, false);
+    }
+    
+    // Check for game over
+    const currentHealth = gameState.hull || gameState.health || 0;
+    if (currentHealth <= 0) {
+        createDeathEffect();
+    }
+} else {
+    showAchievement('Missed!', 'Enemy shot missed!', false);
+}
     }
 }
 
@@ -726,10 +741,10 @@ const tutorialSystem = {
             delay: 15000
         },
         {
-            title: "Combat Systems",
-            text: "Your ship is equipped with energy weapons and hull repair systems. Destroying enemies will restore hull integrity. Watch your energy levels during combat.",
-            delay: 25000
-        },
+    		title: "Combat Systems",
+    		text: "Your ship is equipped with energy weapons and hull repair systems. Destroying enemies will restore hull integrity. Press Tab to toggle shields (drains energy). Watch your energy levels during combat.",
+    		delay: 25000
+		},
         {
             title: "Primary Objective",
             text: "We need you to eliminate all the hostile forces in each galaxy including Sagittarius A. Use your weapons with left click or Option key. Hold Space for target lock.",
@@ -1237,7 +1252,12 @@ function toggleMusic() {
 
 // RESTORED: Working sound parameters from game-controls13.js
 function playSound(type, frequency = 440, duration = 0.2) {
-    if (!audioContext || audioContext.state === 'suspended') return;
+    console.log('🔊 playSound called with type:', type); // ADD THIS LINE AT THE TOP
+    
+    if (!audioContext || audioContext.state === 'suspended') {
+        console.warn('⚠️ Audio context not available or suspended:', audioContext?.state);
+        return;
+    }
     
     const oscillator = audioContext.createOscillator();
     const gain = audioContext.createGain();
@@ -1254,6 +1274,18 @@ function playSound(type, frequency = 440, duration = 0.2) {
             oscillator.type = 'square';
             duration = 0.1;
             break;
+            
+        case 'shield_hit':
+            console.log('🎵 Playing shield_hit sound - CASE REACHED'); // ADD THIS
+            // Energy absorption sound - swoops down like impact being deadened
+            oscillator.frequency.setValueAtTime(600, audioContext.currentTime);
+            oscillator.frequency.exponentialRampToValueAtTime(150, audioContext.currentTime + 0.15);
+            gain.gain.setValueAtTime(0.25, audioContext.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.15);
+            oscillator.type = 'sine'; // Smooth, muffled sound
+            duration = 0.15;
+            break;
+            
         case 'explosion':
             oscillator.frequency.setValueAtTime(150, audioContext.currentTime);
             oscillator.frequency.exponentialRampToValueAtTime(50, audioContext.currentTime + 0.4);
@@ -1303,6 +1335,15 @@ function playSound(type, frequency = 440, duration = 0.2) {
             oscillator.type = 'sawtooth';
             duration = 0.2;
             break;
+		case 'shield_hit':
+    // Energy absorption sound - swoops down like impact being deadened
+    oscillator.frequency.setValueAtTime(600, audioContext.currentTime);
+    oscillator.frequency.exponentialRampToValueAtTime(150, audioContext.currentTime + 0.15);
+    gain.gain.setValueAtTime(0.25, audioContext.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.15);
+    oscillator.type = 'sine'; // Smooth, muffled sound
+    duration = 0.15;
+    break;
 		case 'boss':
     		// Deep, menacing boss sound
     		oscillator.frequency.setValueAtTime(80, audioContext.currentTime);
@@ -1964,10 +2005,18 @@ function initializeControlButtons() {
         if (e.key === 'ArrowLeft') keys.left = true;
         if (e.key === 'ArrowRight') keys.right = true;
         
-        if (e.key === 'Tab') {
+        if (e.key === 'CapsLock') {
             e.preventDefault();
             cycleTargets();
         }
+        
+        // Shield toggle - Caps Lock
+if (e.key === 'Tab') {
+    e.preventDefault();
+    if (typeof toggleShields === 'function') {
+        toggleShields();
+    }
+}
         
         if (key === 'l') keys.l = true;
         
