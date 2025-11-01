@@ -545,6 +545,15 @@ document.addEventListener('touchmove', (e) => {
             // Clamp pitch to prevent over-rotation (90 degrees up/down)
             camera.rotation.x = Math.max(-Math.PI/2, Math.min(Math.PI/2, camera.rotation.x));
             
+            // CRITICAL: Normalize yaw angle to prevent gimbal lock at 180/360 degrees
+            // Keep yaw in [-PI, PI] range to prevent flipping
+            while (camera.rotation.y > Math.PI) camera.rotation.y -= Math.PI * 2;
+            while (camera.rotation.y < -Math.PI) camera.rotation.y += Math.PI * 2;
+            
+            // CRITICAL: Normalize roll angle to prevent gimbal lock
+            while (camera.rotation.z > Math.PI) camera.rotation.z -= Math.PI * 2;
+            while (camera.rotation.z < -Math.PI) camera.rotation.z += Math.PI * 2;
+            
             // Reset yaw velocity to prevent automatic banking during mobile touch
             if (typeof rotationalVelocity !== 'undefined') {
                 rotationalVelocity.yaw = 0;
@@ -583,6 +592,15 @@ document.addEventListener('touchmove', (e) => {
             // Apply roll
             const rollSensitivity = 0.5;
             camera.rotateZ(-rotationDelta * rollSensitivity);
+            
+            // CRITICAL: Normalize all rotation angles to prevent gimbal lock
+            // Keep angles in [-PI, PI] range
+            while (camera.rotation.x > Math.PI) camera.rotation.x -= Math.PI * 2;
+            while (camera.rotation.x < -Math.PI) camera.rotation.x += Math.PI * 2;
+            while (camera.rotation.y > Math.PI) camera.rotation.y -= Math.PI * 2;
+            while (camera.rotation.y < -Math.PI) camera.rotation.y += Math.PI * 2;
+            while (camera.rotation.z > Math.PI) camera.rotation.z -= Math.PI * 2;
+            while (camera.rotation.z < -Math.PI) camera.rotation.z += Math.PI * 2;
             
             // Update timing for auto-leveling
             if (typeof lastRollInputTime !== 'undefined') {
