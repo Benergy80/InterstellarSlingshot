@@ -630,7 +630,7 @@ document.addEventListener('touchmove', (e) => {
             
             // Apply roll directly to Z rotation
             // REVERSED: Flip sign so counter-clockwise gesture = counter-clockwise roll
-            const rollSensitivity = 0.3;
+            const rollSensitivity = 0.5;
             camera.rotation.z += rotationDelta * rollSensitivity;  // Changed from -= to +=
             
             // CRITICAL: Normalize roll angle to prevent gimbal lock
