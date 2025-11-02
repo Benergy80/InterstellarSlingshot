@@ -569,10 +569,10 @@ document.addEventListener('touchmove', (e) => {
             while (window.mobileCameraPitch > Math.PI) window.mobileCameraPitch -= Math.PI * 2;
             while (window.mobileCameraPitch < -Math.PI) window.mobileCameraPitch += Math.PI * 2;
             
-            // CRITICAL: Preserve current roll from 2-finger gestures
-            // Extract roll from current camera orientation
-            const euler = new THREE.Euler().setFromQuaternion(camera.quaternion, 'YXZ');
-            window.mobileCameraRoll = euler.z;
+            // CRITICAL FIX: Don't extract roll from camera during 1-finger touch
+            // This prevents gimbal lock issues at 90° pitch
+            // Roll is only updated during 2-finger gestures
+            // For 1-finger, just maintain whatever roll value was set by 2-finger
             
             // Rebuild camera orientation from scratch using quaternions
             // This includes pitch, yaw, AND preserved roll
@@ -627,8 +627,9 @@ document.addEventListener('touchmove', (e) => {
             while (rotationDelta < -Math.PI) rotationDelta += Math.PI * 2;
             
             // Apply roll directly to Z rotation
+            // REVERSED: Flip sign so counter-clockwise gesture = counter-clockwise roll
             const rollSensitivity = 0.3;
-            camera.rotation.z -= rotationDelta * rollSensitivity;
+            camera.rotation.z += rotationDelta * rollSensitivity;  // Changed from -= to +=
             
             // CRITICAL: Normalize roll angle to prevent gimbal lock
             while (camera.rotation.z > Math.PI) camera.rotation.z -= Math.PI * 2;
