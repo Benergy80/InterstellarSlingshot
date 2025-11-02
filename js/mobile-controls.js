@@ -502,6 +502,20 @@ document.addEventListener('touchstart', (e) => {
             touchStartY = touch.clientY;
             isTouching = true;
             window.mobileTouchActive = true; // Prevent automatic banking during touch
+            
+            // Initialize tracked angles from current camera orientation if not set
+            if (typeof window.mobileCameraPitch === 'undefined' && typeof camera !== 'undefined') {
+                // Extract Euler angles from current camera orientation
+                const euler = new THREE.Euler().setFromQuaternion(camera.quaternion, 'YXZ');
+                window.mobileCameraPitch = euler.x;
+                window.mobileCameraYaw = euler.y;
+                window.mobileCameraRoll = euler.z;
+                console.log('📱 Initialized mobile camera tracking:', {
+                    pitch: euler.x, 
+                    yaw: euler.y, 
+                    roll: euler.z
+                });
+            }
         } else if (e.touches.length === 2) {
             // Two fingers - roll control
             const touch1 = e.touches[0];
@@ -527,46 +541,69 @@ document.addEventListener('touchmove', (e) => {
     
     if (typeof camera !== 'undefined') {
         if (e.touches.length === 1 && isTouching) {
-            // Single finger - pitch and yaw controls
+            // Single finger - pitch and yaw controls (PURE, NO TILTING)
             const touch = e.touches[0];
             const deltaX = touch.clientX - touchStartX;
             const deltaY = touch.clientY - touchStartY;
             
-            // Apply camera rotation using local-space rotations (like desktop controls)
-            // This gives proper pitch/yaw feeling instead of tilting the world
-            const sensitivity = 0.005;
+            const sensitivity = 0.003;
             
-            // Yaw (left/right) - rotateY in local space
-            camera.rotateY(-deltaX * sensitivity);
+            // Track accumulated pitch and yaw in world space
+            if (typeof window.mobileCameraPitch === 'undefined') {
+                window.mobileCameraPitch = 0;
+            }
+            if (typeof window.mobileCameraYaw === 'undefined') {
+                window.mobileCameraYaw = 0;
+            }
+            if (typeof window.mobileCameraRoll === 'undefined') {
+                window.mobileCameraRoll = 0;
+            }
             
-            // Pitch (up/down) - rotateX in local space
-            camera.rotateX(-deltaY * sensitivity);
+            // Update accumulated angles
+            window.mobileCameraYaw -= deltaX * sensitivity;
+            window.mobileCameraPitch -= deltaY * sensitivity;
             
-            // Clamp pitch to prevent over-rotation (90 degrees up/down)
-            camera.rotation.x = Math.max(-Math.PI/2, Math.min(Math.PI/2, camera.rotation.x));
+            // Normalize angles to [-PI, PI] for infinite rotation
+            while (window.mobileCameraYaw > Math.PI) window.mobileCameraYaw -= Math.PI * 2;
+            while (window.mobileCameraYaw < -Math.PI) window.mobileCameraYaw += Math.PI * 2;
+            while (window.mobileCameraPitch > Math.PI) window.mobileCameraPitch -= Math.PI * 2;
+            while (window.mobileCameraPitch < -Math.PI) window.mobileCameraPitch += Math.PI * 2;
             
-            // CRITICAL: Normalize yaw angle to prevent gimbal lock at 180/360 degrees
-            // Keep yaw in [-PI, PI] range to prevent flipping
-            while (camera.rotation.y > Math.PI) camera.rotation.y -= Math.PI * 2;
-            while (camera.rotation.y < -Math.PI) camera.rotation.y += Math.PI * 2;
+            // CRITICAL: Preserve current roll from 2-finger gestures
+            // Extract roll from current camera orientation
+            const euler = new THREE.Euler().setFromQuaternion(camera.quaternion, 'YXZ');
+            window.mobileCameraRoll = euler.z;
             
-            // CRITICAL: Normalize roll angle to prevent gimbal lock
-            while (camera.rotation.z > Math.PI) camera.rotation.z -= Math.PI * 2;
-            while (camera.rotation.z < -Math.PI) camera.rotation.z += Math.PI * 2;
+            // Rebuild camera orientation from scratch using quaternions
+            // This includes pitch, yaw, AND preserved roll
+            const pitchQuat = new THREE.Quaternion();
+            pitchQuat.setFromAxisAngle(new THREE.Vector3(1, 0, 0), window.mobileCameraPitch);
             
-            // Reset yaw velocity to prevent automatic banking during mobile touch
+            const yawQuat = new THREE.Quaternion();
+            yawQuat.setFromAxisAngle(new THREE.Vector3(0, 1, 0), window.mobileCameraYaw);
+            
+            const rollQuat = new THREE.Quaternion();
+            rollQuat.setFromAxisAngle(new THREE.Vector3(0, 0, 1), window.mobileCameraRoll);
+            
+            // Combine: yaw * pitch * roll (preserves roll from 2-finger gestures)
+            camera.quaternion.copy(yawQuat).multiply(pitchQuat).multiply(rollQuat);
+            
+            // Reset velocities to prevent automatic banking during mobile touch
             if (typeof rotationalVelocity !== 'undefined') {
+                rotationalVelocity.pitch = 0;
                 rotationalVelocity.yaw = 0;
+                rotationalVelocity.roll = 0;
             }
             if (typeof window.rotationalVelocity !== 'undefined') {
+                window.rotationalVelocity.pitch = 0;
                 window.rotationalVelocity.yaw = 0;
+                window.rotationalVelocity.roll = 0;
             }
             
-            // Update timing for auto-leveling system (so it knows when to level)
+            // Update timing for auto-leveling system
             if (typeof lastRollInputTime !== 'undefined') {
                 lastRollInputTime = performance.now();
             }
-            // Also update on window object in case it's defined there
             if (typeof window.lastRollInputTime !== 'undefined') {
                 window.lastRollInputTime = performance.now();
             }
@@ -575,7 +612,7 @@ document.addEventListener('touchmove', (e) => {
             touchStartY = touch.clientY;
             e.preventDefault();
         } else if (e.touches.length === 2) {
-            // Two fingers - roll control
+            // Two fingers - roll control (barrel roll)
             const touch1 = e.touches[0];
             const touch2 = e.touches[1];
             const dx = touch2.clientX - touch1.clientX;
@@ -589,18 +626,18 @@ document.addEventListener('touchmove', (e) => {
             while (rotationDelta > Math.PI) rotationDelta -= Math.PI * 2;
             while (rotationDelta < -Math.PI) rotationDelta += Math.PI * 2;
             
-            // Apply roll
-            const rollSensitivity = 0.5;
-            camera.rotateZ(-rotationDelta * rollSensitivity);
+            // Apply roll directly to Z rotation
+            const rollSensitivity = 0.3;
+            camera.rotation.z -= rotationDelta * rollSensitivity;
             
-            // CRITICAL: Normalize all rotation angles to prevent gimbal lock
-            // Keep angles in [-PI, PI] range
-            while (camera.rotation.x > Math.PI) camera.rotation.x -= Math.PI * 2;
-            while (camera.rotation.x < -Math.PI) camera.rotation.x += Math.PI * 2;
-            while (camera.rotation.y > Math.PI) camera.rotation.y -= Math.PI * 2;
-            while (camera.rotation.y < -Math.PI) camera.rotation.y += Math.PI * 2;
+            // CRITICAL: Normalize roll angle to prevent gimbal lock
             while (camera.rotation.z > Math.PI) camera.rotation.z -= Math.PI * 2;
             while (camera.rotation.z < -Math.PI) camera.rotation.z += Math.PI * 2;
+            
+            // CRITICAL: Update tracked roll so single-finger swipe preserves it
+            if (typeof window.mobileCameraRoll !== 'undefined') {
+                window.mobileCameraRoll = camera.rotation.z;
+            }
             
             // Update timing for auto-leveling
             if (typeof lastRollInputTime !== 'undefined') {
