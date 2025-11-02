@@ -50,15 +50,23 @@ function setupMobileLaunchMusicTrigger() {
                     node.onclick = function(e) {
                         console.log('📱 Launch button clicked - starting music');
                         
+                        // Initialize audio system FIRST (enables all sound effects)
+                        if (typeof initAudio === 'function') {
+                            initAudio();
+                            console.log('🔊 Audio system initialized from mobile launch');
+                        }
+                        
+                        // Resume audio context (required for browsers)
+                        if (typeof resumeAudioContext === 'function') {
+                            resumeAudioContext();
+                        }
+                        
+                        // Start background music
                         if (typeof startBackgroundMusic === 'function') {
                             setTimeout(() => {
                                 startBackgroundMusic();
                                 console.log('🎵 Background music started from mobile launch');
                             }, 500);
-                        }
-                        
-                        if (typeof resumeAudioContext === 'function') {
-                            resumeAudioContext();
                         }
                         
                         if (originalClick) {
@@ -80,15 +88,23 @@ function setupMobileLaunchMusicTrigger() {
             existingLaunchBtn.onclick = function(e) {
                 console.log('📱 Launch button clicked - starting music');
                 
+                // Initialize audio system FIRST (enables all sound effects)
+                if (typeof initAudio === 'function') {
+                    initAudio();
+                    console.log('🔊 Audio system initialized from mobile launch');
+                }
+                
+                // Resume audio context (required for browsers)
+                if (typeof resumeAudioContext === 'function') {
+                    resumeAudioContext();
+                }
+                
+                // Start background music
                 if (typeof startBackgroundMusic === 'function') {
                     setTimeout(() => {
                         startBackgroundMusic();
                         console.log('🎵 Background music started from mobile launch');
                     }, 500);
-                }
-                
-                if (typeof resumeAudioContext === 'function') {
-                    resumeAudioContext();
                 }
                 
                 if (originalClick) {
@@ -630,7 +646,7 @@ document.addEventListener('touchmove', (e) => {
             
             // Apply roll directly to Z rotation
             // REVERSED: Flip sign so counter-clockwise gesture = counter-clockwise roll
-            const rollSensitivity = 0.5;
+            const rollSensitivity = 0.3;
             camera.rotation.z += rotationDelta * rollSensitivity;  // Changed from -= to +=
             
             // CRITICAL: Normalize roll angle to prevent gimbal lock
