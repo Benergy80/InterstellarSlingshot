@@ -726,10 +726,16 @@
     <div class="shield-restrictions">⚠️ Warp & Missiles Disabled</div>
 </div>
 
-    <!-- MOBILE CONTROLS -->
+<!-- MOBILE CONTROLS -->
 <div class="mobile-controls">
     <button class="mobile-btn" onclick="showMobilePanel('controls')" title="Flight Controls">
         <i class="fas fa-gamepad"></i>
+    </button>
+    <button class="mobile-btn missile" 
+        onclick="mobileLaunchMissile()" 
+        title="Launch Missile">
+        <i class="fas fa-bullseye"></i>
+        <span class="missile-count-badge" id="mobileMissileCountBadge">3</span>
     </button>
     <button class="mobile-btn" 
         ontouchstart="mobileBrakesStart()" 
@@ -739,9 +745,9 @@
         title="Brakes (Hold)">
         <i class="fas fa-hand-paper"></i>
     </button>
-    <button class="mobile-btn primary fire-btn" 
-        onclick="handleMobileFire(event)" 
-        ontouchstart="handleMobileFire(event)"
+    <button class="mobile-btn fire" 
+        onclick="handleMobileFire()" 
+        ontouchstart="handleMobileFire(event)" 
         title="Fire Weapons">
         <i class="fas fa-crosshairs"></i>
     </button>
