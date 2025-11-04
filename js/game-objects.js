@@ -2237,7 +2237,7 @@ try {
         });
         
         // Create massive sphere that encompasses the entire universe
-        const cosmicSkyboxGeometry = new THREE.SphereGeometry(300001, 64, 64);
+        const cosmicSkyboxGeometry = new THREE.SphereGeometry(140000, 64, 64);
         const cosmicSkybox = new THREE.Mesh(cosmicSkyboxGeometry, cosmicSkyboxMaterial);
         cosmicSkybox.renderOrder = -1; // Render behind everything
         cosmicSkybox.visible = true;
@@ -2284,7 +2284,7 @@ try {
                 });
                 
                 // Create even larger sphere behind the CMB skybox
-                const hubbleGeometry = new THREE.SphereGeometry(300000, 64, 64);
+                const hubbleGeometry = new THREE.SphereGeometry(150000, 64, 64);
                 const hubbleSkybox = new THREE.Mesh(hubbleGeometry, hubbleMaterial);
                 hubbleSkybox.renderOrder = -2; // Render behind CMB skybox
                 hubbleSkybox.visible = true;
@@ -2379,7 +2379,7 @@ try {
                 depthWrite: false
             });
             
-            const fallbackGeometry = new THREE.SphereGeometry(300000, 64, 64);
+            const fallbackGeometry = new THREE.SphereGeometry(150000, 64, 64);
             const fallbackSkybox = new THREE.Mesh(fallbackGeometry, fallbackMaterial);
             fallbackSkybox.renderOrder = -2;
             fallbackSkybox.visible = true;
