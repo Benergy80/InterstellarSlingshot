@@ -910,16 +910,8 @@ function animate() {
             stars.rotation.y += 0.0002;
         }
         renderer.render(scene, camera);
-        return;
-    
-    // Add mobile-specific updates
-    if (isMobileDevice) {
-        integrateAutoThrust();
-        updateMobileUI();
+        return; // Stop all game updates when game over
     }
-    
-    requestAnimationFrame(animate);
-}
     
     // Add this inside your animate() function
 if (typeof animateNebulaBrownDwarfs !== 'undefined') {
