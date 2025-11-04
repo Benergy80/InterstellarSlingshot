@@ -5247,6 +5247,8 @@ if (typeof window !== 'undefined') {
     window.galaxyEnemyLimits = galaxyEnemyLimits;
     window.createEnhancedPlanetClustersInNebulas = createEnhancedPlanetClustersInNebulas;
     window.createNebulaGasCloud = createNebulaGasCloud;
+	window.updateCMBOpacity = updateCMBOpacity;
+    window.updateHubbleSkyboxOpacity = updateHubbleSkyboxOpacity;
     
     console.log('Enhanced game objects with planet clusters loaded');
 }
@@ -5365,4 +5367,41 @@ function updateCMBOpacity() {
     
     // Update the CMB shader uniform
     window.cosmicSkybox.material.uniforms.opacity.value = finalOpacity;
+}
+
+// =============================================================================
+// HUBBLE SKYBOX OPACITY CONTROL - FADES IN AS PLAYER TRAVELS
+// =============================================================================
+function updateHubbleSkyboxOpacity() {
+    if (!window.hubbleSkybox || !window.hubbleSkybox.material) {
+        return;
+    }
+    
+    if (typeof camera === 'undefined' || typeof gameState === 'undefined') {
+        return;
+    }
+    
+    // Calculate total distance traveled from origin
+    const distanceFromStart = camera.position.length();
+    
+    // Define fade-in range (adjust these values to control the fade speed)
+    const fadeStartDistance = 0;        // Start fading at origin
+    const fadeEndDistance = 50000;      // Reach max opacity at 50,000 units
+    
+    // Calculate opacity based on distance (0.01 to 0.6)
+    let targetOpacity;
+    if (distanceFromStart < fadeStartDistance) {
+        targetOpacity = 0.01;
+    } else if (distanceFromStart > fadeEndDistance) {
+        targetOpacity = 0.6;
+    } else {
+        // Linear interpolation between 0.01 and 0.6
+        const progress = (distanceFromStart - fadeStartDistance) / (fadeEndDistance - fadeStartDistance);
+        targetOpacity = 0.01 + (progress * 0.59); // 0.59 = 0.6 - 0.01
+    }
+    
+    // Smoothly transition to target opacity
+    const currentOpacity = window.hubbleSkybox.material.opacity;
+    const lerpSpeed = 0.02; // Smooth transition speed
+    window.hubbleSkybox.material.opacity = currentOpacity + (targetOpacity - currentOpacity) * lerpSpeed;
 }
