@@ -1069,7 +1069,12 @@ if (typeof localGalaxyStars !== 'undefined' && localGalaxyStars) {
     if (typeof updateHubbleSkyboxOpacity === 'function') {
         updateHubbleSkyboxOpacity();
     }
-    
+
+	// Update second Hubble skybox opacity (deeper space layer)
+    if (typeof updateHubbleSkybox2Opacity === 'function') {
+        updateHubbleSkybox2Opacity();
+    }
+	
     // PERFORMANCE: Update only expensive effects for active planets (tendrils, glows, etc.)
     activePlanets.forEach((planet) => {
     // FIXED: Only rotate star particles, keep disk stable
