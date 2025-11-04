@@ -1225,13 +1225,17 @@ function switchToAmbientMusic() {
 
 function toggleMusic() {
     musicSystem.enabled = !musicSystem.enabled;
-    const musicIcon = document.getElementById('musicIcon');
-    const musicControl = document.getElementById('musicControl');
+    const muteIcon = document.getElementById('muteIcon');
+    const muteBtn = document.getElementById('muteBtn');
+    
+    console.log('🔊 toggleMusic called, enabled:', musicSystem.enabled);
     
     if (musicSystem.enabled) {
-        if (musicIcon) musicIcon.className = 'fas fa-volume-up text-cyan-400';
-        if (musicControl) musicControl.classList.remove('muted');
-        if (musicGain) musicGain.gain.setValueAtTime(0.4, audioContext.currentTime);
+        if (muteIcon) muteIcon.className = 'fas fa-volume-up text-cyan-400';
+        if (muteBtn) muteBtn.classList.remove('muted');
+        if (musicGain && audioContext) {
+            musicGain.gain.setValueAtTime(0.4, audioContext.currentTime);
+        }
         
         // Restart appropriate music
         if (musicSystem.inBattle) {
@@ -1239,14 +1243,24 @@ function toggleMusic() {
         } else {
             startBackgroundMusic();
         }
+        console.log('🎵 Music unmuted');
     } else {
-        if (musicIcon) musicIcon.className = 'fas fa-volume-mute text-red-400';
-        if (musicControl) musicControl.classList.add('muted');
-        if (musicGain) musicGain.gain.setValueAtTime(0, audioContext.currentTime);
+        if (muteIcon) muteIcon.className = 'fas fa-volume-mute text-red-400';
+        if (muteBtn) muteBtn.classList.add('muted');
+        if (musicGain && audioContext) {
+            musicGain.gain.setValueAtTime(0, audioContext.currentTime);
+        }
         
         // Stop all music
-        if (musicSystem.backgroundMusic) musicSystem.backgroundMusic.stop();
-        if (musicSystem.battleMusic) musicSystem.battleMusic.stop();
+        if (musicSystem.backgroundMusic) {
+            musicSystem.backgroundMusic.stop();
+            musicSystem.backgroundMusic = null;
+        }
+        if (musicSystem.battleMusic) {
+            musicSystem.battleMusic.stop();
+            musicSystem.battleMusic = null;
+        }
+        console.log('🔇 Music muted');
     }
 }
 
