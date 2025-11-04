@@ -2267,7 +2267,7 @@ try {
         const textureLoader = new THREE.TextureLoader();
         
         // Local Hubble Ultra Deep Field image path
-        const hubbleImageURL = './images/hubble_ultra_deep_field_high_rez_edit1.jpg';
+        const hubbleImageURL = './images/hubble_ultra_deep_field_high_rez_edit3.jpg';
         
         console.log('Loading Hubble Ultra Deep Field image from local path...');
         
