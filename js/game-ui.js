@@ -1632,10 +1632,18 @@ function showVictoryScreen() {
 }
 
 function gameOver(reason) {
+    // Prevent duplicate game over screens
     if (typeof gameState !== 'undefined') {
+        if (gameState.gameOverScreenShown) {
+            console.log('⚠️ Game over screen already shown, ignoring duplicate call');
+            return;
+        }
         gameState.gameOver = true;
         gameState.gameStarted = false;
+        gameState.gameOverScreenShown = true;
     }
+    
+    console.log('💀 GAME OVER - Stopping all systems');
     
     // Stop all music
     if (typeof musicSystem !== 'undefined') {
@@ -1649,13 +1657,24 @@ function gameOver(reason) {
         }
     }
     
+    // Stop audio context
+    if (typeof audioContext !== 'undefined' && audioContext) {
+        audioContext.suspend();
+    }
+    
     // Clean up any active effects
     if (typeof cleanupEventHorizonEffects === 'function') {
         cleanupEventHorizonEffects();
     }
     
+    // Clear any remaining timeouts/intervals
+    if (typeof window.mobileUpdateInterval !== 'undefined') {
+        clearInterval(window.mobileUpdateInterval);
+    }
+    
     // Enhanced game over screen with visible mouse cursor
     const gameOverOverlay = document.createElement('div');
+    gameOverOverlay.id = 'gameOverScreen';
     gameOverOverlay.className = 'absolute inset-0 bg-black bg-opacity-95 flex items-center justify-center z-50 cyberpunk-bg';
     gameOverOverlay.style.cursor = 'auto'; // Make mouse visible
     gameOverOverlay.innerHTML = `
@@ -1684,6 +1703,8 @@ function gameOver(reason) {
     // Ensure mouse is visible and working
     document.body.style.cursor = 'auto';
     gameOverOverlay.style.pointerEvents = 'all';
+    
+    console.log('✅ Game over screen displayed - all systems stopped');
 }
 
 // =============================================================================
