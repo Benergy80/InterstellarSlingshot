@@ -2258,6 +2258,148 @@ try {
     }
     
     // =============================================================================
+    // HUBBLE ULTRA DEEP FIELD SKYBOX - DISTANT GALAXIES BACKGROUND
+    // =============================================================================
+    
+    console.log('Creating Hubble Ultra Deep Field galaxy background...');
+    
+    try {
+        const textureLoader = new THREE.TextureLoader();
+        
+        // Local Hubble Ultra Deep Field image path
+        const hubbleImageURL = './images/hubble_ultra_deep_field_high_rez_edit1.jpg';
+        
+        console.log('Loading Hubble Ultra Deep Field image from local path...');
+        
+        textureLoader.load(
+            hubbleImageURL,
+            function(texture) {
+                // Create material with the Hubble texture
+                const hubbleMaterial = new THREE.MeshBasicMaterial({
+                    map: texture,
+                    side: THREE.BackSide,
+                    transparent: true,
+                    opacity: 0.6,  // Subtle so it doesn't overpower the scene
+                    depthWrite: false
+                });
+                
+                // Create even larger sphere behind the CMB skybox
+                const hubbleGeometry = new THREE.SphereGeometry(700000, 64, 64);
+                const hubbleSkybox = new THREE.Mesh(hubbleGeometry, hubbleMaterial);
+                hubbleSkybox.renderOrder = -2; // Render behind CMB skybox
+                hubbleSkybox.visible = true;
+                hubbleSkybox.frustumCulled = false;
+                
+                scene.add(hubbleSkybox);
+                
+                // Store reference
+                window.hubbleSkybox = hubbleSkybox;
+                if (typeof gameState !== 'undefined') {
+                    gameState.hubbleSkybox = hubbleSkybox;
+                }
+                
+                console.log('✅ Hubble Ultra Deep Field skybox loaded - distant galaxies visible');
+            },
+            function(progress) {
+                console.log(`Loading Hubble texture: ${(progress.loaded / progress.total * 100).toFixed(0)}%`);
+            },
+            function(error) {
+                console.warn('❌ Failed to load Hubble image from /images/, creating procedural galaxy background...');
+                console.error('Error details:', error);
+                createProceduralGalaxyBackground();
+            }
+        );
+        
+        function createProceduralGalaxyBackground() {
+            const fallbackMaterial = new THREE.ShaderMaterial({
+                uniforms: {
+                    time: { value: 0 }
+                },
+                vertexShader: `
+                    varying vec3 vPosition;
+                    varying vec2 vUv;
+                    
+                    void main() {
+                        vPosition = position;
+                        vUv = uv;
+                        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                    }
+                `,
+                fragmentShader: `
+                    uniform float time;
+                    varying vec3 vPosition;
+                    varying vec2 vUv;
+                    
+                    float random(vec2 st) {
+                        return fract(sin(dot(st.xy, vec2(12.9898,78.233))) * 43758.5453123);
+                    }
+                    
+                    void main() {
+                        vec3 direction = normalize(vPosition);
+                        float theta = atan(direction.z, direction.x);
+                        float phi = acos(direction.y);
+                        vec2 sphereUV = vec2(theta / (2.0 * 3.14159), phi / 3.14159);
+                        
+                        vec3 color = vec3(0.0);
+                        
+                        // Create thousands of tiny galaxy-like dots (Hubble-style)
+                        for(int i = 0; i < 5000; i++) {
+                            vec2 galaxyPos = vec2(random(vec2(float(i) * 0.1, float(i) * 0.2)), 
+                                                  random(vec2(float(i) * 0.3, float(i) * 0.4)));
+                            float dist = distance(sphereUV, galaxyPos);
+                            
+                            if(dist < 0.002) {
+                                float brightness = (0.002 - dist) / 0.002;
+                                float size = random(vec2(float(i) * 0.5));
+                                
+                                // Varied galaxy colors (like in Hubble deep field)
+                                float colorSeed = random(vec2(float(i)));
+                                vec3 galaxyColor;
+                                if(colorSeed < 0.25) {
+                                    galaxyColor = vec3(1.0, 0.95, 0.8); // Yellow-white (old galaxies)
+                                } else if(colorSeed < 0.5) {
+                                    galaxyColor = vec3(0.7, 0.85, 1.0); // Blue-white (young galaxies)
+                                } else if(colorSeed < 0.75) {
+                                    galaxyColor = vec3(1.0, 0.8, 0.7); // Orange (intermediate)
+                                } else {
+                                    galaxyColor = vec3(1.0, 0.6, 0.5); // Red-shifted (very distant)
+                                }
+                                
+                                // Vary galaxy shapes slightly
+                                float shape = 1.0 + random(vec2(float(i) * 0.7)) * 0.5;
+                                color += galaxyColor * brightness * size * shape * 0.25;
+                            }
+                        }
+                        
+                        gl_FragColor = vec4(color, 0.5);
+                    }
+                `,
+                transparent: true,
+                side: THREE.BackSide,
+                depthWrite: false
+            });
+            
+            const fallbackGeometry = new THREE.SphereGeometry(700000, 64, 64);
+            const fallbackSkybox = new THREE.Mesh(fallbackGeometry, fallbackMaterial);
+            fallbackSkybox.renderOrder = -2;
+            fallbackSkybox.visible = true;
+            fallbackSkybox.frustumCulled = false;
+            
+            scene.add(fallbackSkybox);
+            
+            window.hubbleSkybox = fallbackSkybox;
+            if (typeof gameState !== 'undefined') {
+                gameState.hubbleSkybox = fallbackSkybox;
+            }
+            
+            console.log('✅ Procedural Hubble-style galaxy background created');
+        }
+        
+    } catch (hubbleError) {
+        console.error('❌ Error creating Hubble skybox:', hubbleError);
+    }
+    
+    // =============================================================================
     // STARFIELD CREATION
     // =============================================================================
     
