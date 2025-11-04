@@ -2426,7 +2426,7 @@ try {
                 });
                 
                 // Create sphere behind the first Hubble skybox
-                const hubbleGeometry2 = new THREE.SphereGeometry(150000, 64, 64);
+                const hubbleGeometry2 = new THREE.SphereGeometry(140000, 64, 64);
                 const hubbleSkybox2 = new THREE.Mesh(hubbleGeometry2, hubbleMaterial2);
                 hubbleSkybox2.renderOrder = -3; // Render behind first Hubble skybox
                 hubbleSkybox2.visible = true;
