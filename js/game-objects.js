@@ -16,11 +16,11 @@
 
 const SCALE_CONFIG = {
     // Objects that get scaled UP
-    planets: 2.5,        // Planets 2.5x larger
-    stars: 2.5,          // Stars 2.5x larger
-    blackHoles: 2.0,     // Black holes 2x larger
-    cosmicFeatures: 2.0, // Pulsars, supernovas, etc. 2x larger
-    moons: 2.0,          // Moons 2x larger
+    planets: 10,        // Planets 2.5x larger
+    stars: 10,          // Stars 2.5x larger
+    blackHoles: 10,     // Black holes 2x larger
+    cosmicFeatures: 10, // Pulsars, supernovas, etc. 2x larger
+    moons: 10,          // Moons 2x larger
     
     // Objects that stay SAME size
     asteroids: 1.0,      // Keep same
