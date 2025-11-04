@@ -2284,7 +2284,7 @@ try {
                 });
                 
                 // Create even larger sphere behind the CMB skybox
-                const hubbleGeometry = new THREE.SphereGeometry(700000, 64, 64);
+                const hubbleGeometry = new THREE.SphereGeometry(200000, 64, 64);
                 const hubbleSkybox = new THREE.Mesh(hubbleGeometry, hubbleMaterial);
                 hubbleSkybox.renderOrder = -2; // Render behind CMB skybox
                 hubbleSkybox.visible = true;
