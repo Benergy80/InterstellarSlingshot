@@ -5442,8 +5442,8 @@ function updateHubbleSkyboxOpacity() {
     const distanceFromStart = camera.position.length();
     
     // Define fade-in range (adjust these values to control the fade speed)
-    const fadeStartDistance = 30000;        // Start fading at origin
-    const fadeEndDistance = 60000;      // Reach max opacity at 50,000 units
+    const fadeStartDistance = 5000;        // Start fading at origin
+    const fadeEndDistance = 150000;      // Reach max opacity at 50,000 units
     
     // Calculate opacity based on distance (0.01 to 0.6)
     let targetOpacity;
@@ -5479,7 +5479,7 @@ function updateHubbleSkybox2Opacity() {
     
     // Define fade-in range (starts later, for deeper exploration)
     const fadeStartDistance = 5000;        // Start fading at 5,000 units
-    const fadeEndDistance = 100000;        // Reach max opacity at 100,000 units
+    const fadeEndDistance = 80000;        // Reach max opacity at 100,000 units
     
     // Calculate opacity based on distance (0.00 to 0.02)
     let targetOpacity;
