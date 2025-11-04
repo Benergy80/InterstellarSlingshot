@@ -2279,7 +2279,7 @@ try {
                     map: texture,
                     side: THREE.BackSide,
                     transparent: true,
-                    opacity: 0.6,  // Subtle so it doesn't overpower the scene
+                    opacity: 1,  // Subtle so it doesn't overpower the scene
                     depthWrite: false
                 });
                 
