@@ -1064,6 +1064,11 @@ if (typeof localGalaxyStars !== 'undefined' && localGalaxyStars) {
     if (typeof updateCMBOpacity === 'function') {
         updateCMBOpacity();
     }
+
+	// Update Hubble skybox opacity based on distance traveled
+    if (typeof updateHubbleSkyboxOpacity === 'function') {
+        updateHubbleSkyboxOpacity();
+    }
     
     // PERFORMANCE: Update only expensive effects for active planets (tendrils, glows, etc.)
     activePlanets.forEach((planet) => {
