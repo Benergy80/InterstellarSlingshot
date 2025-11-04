@@ -5391,13 +5391,13 @@ function updateHubbleSkyboxOpacity() {
     // Calculate opacity based on distance (0.01 to 0.6)
     let targetOpacity;
     if (distanceFromStart < fadeStartDistance) {
-        targetOpacity = 0.01;
+        targetOpacity = 0.00;
     } else if (distanceFromStart > fadeEndDistance) {
-        targetOpacity = 0.6;
+        targetOpacity = 0.09;
     } else {
         // Linear interpolation between 0.01 and 0.6
         const progress = (distanceFromStart - fadeStartDistance) / (fadeEndDistance - fadeStartDistance);
-        targetOpacity = 0.01 + (progress * 0.59); // 0.59 = 0.6 - 0.01
+        targetOpacity = 0.00 + (progress * 0.9); // 0.59 = 0.6 - 0.01
     }
     
     // Smoothly transition to target opacity
