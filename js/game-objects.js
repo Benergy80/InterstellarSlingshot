@@ -5305,6 +5305,7 @@ if (typeof window !== 'undefined') {
     window.createNebulaGasCloud = createNebulaGasCloud;
 	window.updateCMBOpacity = updateCMBOpacity;
     window.updateHubbleSkyboxOpacity = updateHubbleSkyboxOpacity;
+	window.updateHubbleSkybox2Opacity = updateHubbleSkybox2Opacity;
     
     console.log('Enhanced game objects with planet clusters loaded');
 }
