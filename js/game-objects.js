@@ -5462,3 +5462,39 @@ function updateHubbleSkyboxOpacity() {
     const lerpSpeed = 0.02; // Smooth transition speed
     window.hubbleSkybox.material.opacity = currentOpacity + (targetOpacity - currentOpacity) * lerpSpeed;
 }
+// =============================================================================
+// HUBBLE SKYBOX 2 OPACITY CONTROL - FADES IN AS PLAYER TRAVELS DEEPER
+// =============================================================================
+function updateHubbleSkybox2Opacity() {
+    if (!window.hubbleSkybox2 || !window.hubbleSkybox2.material) {
+        return;
+    }
+    
+    if (typeof camera === 'undefined' || typeof gameState === 'undefined') {
+        return;
+    }
+    
+    // Calculate total distance traveled from origin
+    const distanceFromStart = camera.position.length();
+    
+    // Define fade-in range (starts later, for deeper exploration)
+    const fadeStartDistance = 5000;        // Start fading at 5,000 units
+    const fadeEndDistance = 100000;        // Reach max opacity at 100,000 units
+    
+    // Calculate opacity based on distance (0.00 to 0.02)
+    let targetOpacity;
+    if (distanceFromStart < fadeStartDistance) {
+        targetOpacity = 0.00;
+    } else if (distanceFromStart > fadeEndDistance) {
+        targetOpacity = 0.2;
+    } else {
+        // Linear interpolation between 0.00 and 0.02
+        const progress = (distanceFromStart - fadeStartDistance) / (fadeEndDistance - fadeStartDistance);
+        targetOpacity = 0.00 + (progress * 0.2); // 0.02 = 0.02 - 0.00
+    }
+    
+    // Smoothly transition to target opacity
+    const currentOpacity = window.hubbleSkybox2.material.opacity;
+    const lerpSpeed = 0.02; // Smooth transition speed
+    window.hubbleSkybox2.material.opacity = currentOpacity + (targetOpacity - currentOpacity) * lerpSpeed;
+}
