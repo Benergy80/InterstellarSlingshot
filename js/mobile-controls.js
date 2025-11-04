@@ -724,8 +724,15 @@ document.addEventListener('click', (e) => {
     }
 });
 
-// Periodic updates
-setInterval(() => {
+// Periodic updates with game over check
+const mobileUpdateInterval = setInterval(() => {
+    // CRITICAL: Stop interval if game is over
+    if (typeof gameState !== 'undefined' && gameState.gameOver) {
+        clearInterval(mobileUpdateInterval);
+        console.log('📱 Mobile update interval stopped - game over');
+        return;
+    }
+    
     const statusPopup = document.getElementById('statusPopup');
     if (statusPopup && statusPopup.classList.contains('active')) {
         window.updateMobileStatus();
@@ -750,17 +757,6 @@ setInterval(() => {
             if (energyEl) energyEl.textContent = Math.round(gameState.energy) + '%';
             if (warpsEl) warpsEl.textContent = gameState.emergencyWarp?.available ?? 5;
         }
-    }
-    
-    // Check for game over
-    if (typeof gameState !== 'undefined' && gameState.gameOver) {
-        setTimeout(() => {
-            const gameOverScreen = document.getElementById('gameOverScreen');
-            if (!gameOverScreen && typeof gameOver === 'function') {
-                console.log('📱 Creating mobile mission failed screen');
-                gameOver('Hull integrity critical - ship destroyed!');
-            }
-        }, 500);
     }
 }, 1000);
 
