@@ -2398,7 +2398,63 @@ try {
     } catch (hubbleError) {
         console.error('❌ Error creating Hubble skybox:', hubbleError);
     }
+
+    // =============================================================================
+    // HUBBLE ULTRA DEEP FIELD SKYBOX 2 - SECOND LAYER OF DISTANT GALAXIES
+    // =============================================================================
     
+    console.log('Creating second Hubble Ultra Deep Field galaxy background...');
+    
+    try {
+        const textureLoader2 = new THREE.TextureLoader();
+        
+        // Local Hubble Ultra Deep Field image path (second image)
+        const hubbleImageURL2 = './images/hubble_ultra_deep_field_high_rez_edit4.jpg';
+        
+        console.log('Loading second Hubble Ultra Deep Field image from local path...');
+        
+        textureLoader2.load(
+            hubbleImageURL2,
+            function(texture) {
+                // Create material with the Hubble texture
+                const hubbleMaterial2 = new THREE.MeshBasicMaterial({
+                    map: texture,
+                    side: THREE.BackSide,
+                    transparent: true,
+                    opacity: 0.00,  // Starts invisible, fades in further out
+                    depthWrite: false
+                });
+                
+                // Create even larger sphere behind the first Hubble skybox
+                const hubbleGeometry2 = new THREE.SphereGeometry(250000, 64, 64);
+                const hubbleSkybox2 = new THREE.Mesh(hubbleGeometry2, hubbleMaterial2);
+                hubbleSkybox2.renderOrder = -3; // Render behind first Hubble skybox
+                hubbleSkybox2.visible = true;
+                hubbleSkybox2.frustumCulled = false;
+                
+                scene.add(hubbleSkybox2);
+                
+                // Store reference
+                window.hubbleSkybox2 = hubbleSkybox2;
+                if (typeof gameState !== 'undefined') {
+                    gameState.hubbleSkybox2 = hubbleSkybox2;
+                }
+                
+                console.log('✅ Second Hubble Ultra Deep Field skybox loaded - deeper distant galaxies visible');
+            },
+            function(progress) {
+                console.log(`Loading second Hubble texture: ${(progress.loaded / progress.total * 100).toFixed(0)}%`);
+            },
+            function(error) {
+                console.warn('❌ Failed to load second Hubble image from /images/');
+                console.error('Error details:', error);
+            }
+        );
+        
+    } catch (hubbleError) {
+        console.error('❌ Error creating second Hubble skybox:', hubbleError);
+    }
+	
     // =============================================================================
     // STARFIELD CREATION
     // =============================================================================
