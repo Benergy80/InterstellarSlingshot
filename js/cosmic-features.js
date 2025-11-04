@@ -1506,97 +1506,92 @@ function updateCosmicFeatures() {
         formation.scale.setScalar(growthFactor);
     });
     
-    // Update plasma storms (movement and lightning animation)
-cosmicFeatures.plasmaStorms.forEach(storm => {
+    // Update plasma storms (movement and lightning animation) - OPTIMIZED
+cosmicFeatures.plasmaStorms.forEach((storm, stormIndex) => {
     if (!storm.userData) return;
     
-    // Move storm
+    // Move storm (always update position)
     if (storm.userData.direction) {
         storm.position.add(storm.userData.direction.clone().multiplyScalar(storm.userData.movementSpeed));
     }
     
-    // ⭐ ANIMATE GLOWING ENERGY CORE - Pulsing effect
+    // ⚡ PERFORMANCE: Only animate visual effects every 2 frames (still 30fps, smooth)
+    if (typeof gameState !== 'undefined' && gameState.frameCount % 2 !== stormIndex % 2) return;
+    
+    // Pre-calculate shared values to avoid redundant sin() calls
+    const corePulse = Math.sin(time * 2) * 0.15 + 1.0;
+    const glowPulse = Math.sin(time * 2.5 + Math.PI) * 0.12 + 1.0;
+    const innerPulse = Math.sin(time * 4) * 0.2 + 1.0;
+    
+    // ⚡ ANIMATE CORES - Batched animations
     if (storm.userData.energyCore) {
-        const corePulse = Math.sin(time * 2) * 0.15 + 1.0; // 0.85 to 1.15
         storm.userData.energyCore.scale.setScalar(corePulse);
-        
-        // Pulse core opacity
         if (storm.userData.energyCore.material) {
             storm.userData.energyCore.material.opacity = 0.3 + Math.sin(time * 3) * 0.15;
         }
     }
     
-    // ⭐ ANIMATE GLOW SPHERE - Counter-pulse for depth
     if (storm.userData.glowSphere) {
-        const glowPulse = Math.sin(time * 2.5 + Math.PI) * 0.12 + 1.0;
         storm.userData.glowSphere.scale.setScalar(glowPulse);
     }
     
-    // ⭐ ANIMATE INNER CORE - Fast pulse
     if (storm.userData.innerCore) {
-        const innerPulse = Math.sin(time * 4) * 0.2 + 1.0;
         storm.userData.innerCore.scale.setScalar(innerPulse);
-        
         if (storm.userData.innerCore.material) {
             storm.userData.innerCore.material.opacity = 0.4 + Math.sin(time * 5) * 0.3;
         }
     }
     
-    // ⭐ FLICKERING LIGHTNING EFFECT on point light
+    // ⚡ FLICKERING LIGHTNING EFFECT - Reduced frequency
     if (storm.userData.plasmaLight && storm.userData.baseLightIntensity) {
-        storm.userData.lightningFlickerTime += 0.1;
-        
-        // Random lightning flickers
-        if (Math.random() < 0.15) {
+        // Check for flicker less frequently (every 10 frames instead of every frame)
+        if (typeof gameState !== 'undefined' && gameState.frameCount % 10 === stormIndex % 10 && Math.random() < 0.3) {
             // Lightning flash!
             storm.userData.plasmaLight.intensity = storm.userData.baseLightIntensity * (3.0 + Math.random() * 2.0);
-            
-            // Quick color flash to white
             storm.userData.plasmaLight.color.setHex(0xffffff);
+            storm.userData.lightningActive = true;
             
-            // Return to normal after short delay
-            setTimeout(() => {
-                if (storm.userData.plasmaLight) {
-                    storm.userData.plasmaLight.color.setHex(0x8866ff);
-                }
-            }, 50);
-        } else {
+            // Schedule color return (avoid creating too many timeouts)
+            if (!storm.userData.lightningTimeout) {
+                storm.userData.lightningTimeout = setTimeout(() => {
+                    if (storm.userData.plasmaLight) {
+                        storm.userData.plasmaLight.color.setHex(0x8866ff);
+                    }
+                    storm.userData.lightningTimeout = null;
+                    storm.userData.lightningActive = false;
+                }, 50);
+            }
+        } else if (!storm.userData.lightningActive) {
             // Normal pulsing
-            const lightPulse = Math.sin(time * 3) * 0.4 + 0.8; // 0.4 to 1.2
+            const lightPulse = Math.sin(time * 3) * 0.4 + 0.8;
             storm.userData.plasmaLight.intensity = storm.userData.baseLightIntensity * lightPulse;
-        }
-        
-        // Subtle color shift
-        const hueShift = Math.sin(time * 0.8) * 0.05;
-        if (!storm.userData.plasmaLight.color.equals(new THREE.Color(0xffffff))) {
+            
+            // Color shift (less frequent calculation)
+            const hueShift = Math.sin(time * 0.8) * 0.05;
             storm.userData.plasmaLight.color.setHSL(0.7 + hueShift, 0.8, 0.5);
         }
     }
     
-    // Animate cloud spheres
-    if (storm.userData.spheres) {
-        storm.userData.spheres.forEach((sphere, index) => {
-            const wobble = Math.sin(time * 2 + index) * 0.1 + 1.0;
-            sphere.scale.setScalar(wobble);
-        });
+    // Animate cloud spheres - SIMPLIFIED (only every other sphere)
+    if (storm.userData.spheres && storm.userData.spheres.length > 0) {
+        const wobble = Math.sin(time * 2) * 0.1 + 1.0;
+        for (let i = 0; i < storm.userData.spheres.length; i += 2) {
+            storm.userData.spheres[i].scale.setScalar(wobble);
+        }
     }
     
-    // Animate lightning tendrils with flickering
-    if (storm.userData.tendrils) {
-        storm.userData.tendrils.children.forEach((tendril, index) => {
-            if (!tendril.userData) return;
+    // Animate lightning tendrils - SIMPLIFIED (update fewer tendrils)
+    if (storm.userData.tendrils && storm.userData.tendrils.children.length > 0) {
+        const hue = 0.7 + Math.sin(time * 2) * 0.1;
+        // Only update every 3rd tendril
+        for (let i = 0; i < storm.userData.tendrils.children.length; i += 3) {
+            const tendril = storm.userData.tendrils.children[i];
+            if (!tendril.userData) continue;
             
-            // Flicker effect
-            if (Math.random() < 0.1) {
-                tendril.material.opacity = 0.8 + Math.random() * 0.2;
-            } else {
-                tendril.material.opacity = tendril.userData.baseOpacity || 0.6;
-            }
-            
-            // Color pulse
-            const hue = 0.7 + Math.sin(time * 2 + index) * 0.1;
+            // Simplified flicker (no random check every frame)
+            tendril.material.opacity = tendril.userData.baseOpacity || 0.6;
             tendril.material.color.setHSL(hue, 1.0, 0.5);
-        });
+        }
     }
 });
     
