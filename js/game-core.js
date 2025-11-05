@@ -1011,8 +1011,8 @@ if (typeof updateShieldSystem === 'function') {
         updateActivePlanets();
     }
     
-    // OPTIMIZED: Update enemy detection every 3 frames for responsive combat (still 20 times per second)
-    if (gameState.frameCount % 3 === 0 && typeof detectEnemiesInRegion === 'function') {
+    // HIGH FREQUENCY: Update enemy detection every frame for responsive combat
+    if (typeof detectEnemiesInRegion === 'function') {
         detectEnemiesInRegion();
     }
     
