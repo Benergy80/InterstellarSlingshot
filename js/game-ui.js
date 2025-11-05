@@ -1049,29 +1049,51 @@ function updateGalaxyMap() {
 planets.forEach(planet => {
     if (!planet || !planet.position) return;
     
-    // PERFORMANCE: Skip asteroids unless it's their update frame (every 360 frames = ~6 seconds)
-    if (planet.userData.type === 'asteroid' && gameState.frameCount % 360 !== 0) {
+    // Skip asteroids here - they're handled separately below
+    if (planet.userData.type === 'asteroid') {
         return;
     }
     
-    // FIXED: Get world position for asteroids in belt groups
-    const worldPos = new THREE.Vector3();
-    if (planet.userData.type === 'asteroid' && planet.parent) {
-        planet.getWorldPosition(worldPos);
-    } else {
-        worldPos.copy(planet.position);
-    }
-    
-    const distance = camera.position.distanceTo(worldPos);
+    const distance = camera.position.distanceTo(planet.position);
     if (distance < radarRange && distance > 10) { // Not too close
         nearbyObjects.push({
-            position: worldPos,
+            position: planet.position,
             type: planet.userData.type,
             name: planet.userData.name,
             distance: distance
         });
     }
 });
+
+// PERFORMANCE: Handle asteroids separately - only update every 360 frames
+if (gameState.frameCount % 360 === 0) {
+    // Clear old asteroid dots
+    const existingAsteroidDots = document.querySelectorAll('.galactic-target-dot[data-asteroid="true"]');
+    existingAsteroidDots.forEach(dot => dot.remove());
+    
+    // Add fresh asteroid data
+    planets.forEach(planet => {
+        if (!planet || !planet.position || planet.userData.type !== 'asteroid') return;
+        
+        // Get world position for asteroids in belt groups
+        const worldPos = new THREE.Vector3();
+        if (planet.parent) {
+            planet.getWorldPosition(worldPos);
+        } else {
+            worldPos.copy(planet.position);
+        }
+        
+        const distance = camera.position.distanceTo(worldPos);
+        if (distance < radarRange && distance > 10) {
+            nearbyObjects.push({
+                position: worldPos,
+                type: planet.userData.type,
+                name: planet.userData.name,
+                distance: distance
+            });
+        }
+    });
+}
         
         // Add nearby enemies
         enemies.forEach(enemy => {
@@ -1099,7 +1121,10 @@ planets.forEach(planet => {
             // Only show if within map bounds
             if (screenX >= 5 && screenX <= 95 && screenZ >= 5 && screenZ <= 95) {
                 const dot = document.createElement('div');
-                dot.className = 'galactic-target-dot absolute';
+dot.className = 'galactic-target-dot absolute';
+if (obj.type === 'asteroid') {
+    dot.setAttribute('data-asteroid', 'true');
+}
                 
                 // Color based on type
                 let dotColor = '#4488ff'; // Default blue for planets
