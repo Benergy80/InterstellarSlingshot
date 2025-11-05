@@ -1265,7 +1265,7 @@ planets.forEach(planet => {
                     nebulaDot.style.boxShadow = `0 0 12px ${nebulaDot.style.backgroundColor}`;
                     nebulaDot.style.pointerEvents = 'none';
                     nebulaDot.style.zIndex = '6';
-                    nebulaDot.innerHTML = `<span style="font-size: 12px;">💫</span>`;
+                    nebulaDot.innerHTML = `<span style="font-size: 12px;"><i class="fa-solid fa-cloud"></i></span>`;
                     nebulaDot.title = nebula.userData.mythicalName || nebula.userData.name || 'Nebula';
                     
                     galaxyMap.appendChild(nebulaDot);
