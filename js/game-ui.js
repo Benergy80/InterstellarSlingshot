@@ -1045,45 +1045,24 @@ function updateGalaxyMap() {
         // Collect all nearby targetable objects
         const nearbyObjects = [];
         
-        // Add nearby planets
+        // Add nearby planets - OPTIMIZED for asteroids
 planets.forEach(planet => {
     if (!planet || !planet.position) return;
     
-    // Skip asteroids here - they're handled separately below
+    // OPTIMIZED: For asteroids, check belt group distance first (much faster)
     if (planet.userData.type === 'asteroid') {
-        return;
-    }
-    
-    const distance = camera.position.distanceTo(planet.position);
-    if (distance < radarRange && distance > 10) { // Not too close
-        nearbyObjects.push({
-            position: planet.position,
-            type: planet.userData.type,
-            name: planet.userData.name,
-            distance: distance
-        });
-    }
-});
-
-// PERFORMANCE: Handle asteroids separately - only update every 360 frames
-if (gameState.frameCount % 360 === 0) {
-    // Clear old asteroid dots
-    const existingAsteroidDots = document.querySelectorAll('.galactic-target-dot[data-asteroid="true"]');
-    existingAsteroidDots.forEach(dot => dot.remove());
-    
-    // Add fresh asteroid data
-    planets.forEach(planet => {
-        if (!planet || !planet.position || planet.userData.type !== 'asteroid') return;
+        // Get parent belt group position (already in world space)
+        if (!planet.userData.beltGroup || !planet.userData.beltGroup.position) return;
         
-        // Get world position for asteroids in belt groups
+        // Quick check: Is the entire belt too far?
+        const beltDistance = camera.position.distanceTo(planet.userData.beltGroup.position);
+        if (beltDistance > radarRange + 2000) return; // Belt + radius buffer
+        
+        // Belt is nearby, now get asteroid's world position
         const worldPos = new THREE.Vector3();
-        if (planet.parent) {
-            planet.getWorldPosition(worldPos);
-        } else {
-            worldPos.copy(planet.position);
-        }
-        
+        planet.getWorldPosition(worldPos);
         const distance = camera.position.distanceTo(worldPos);
+        
         if (distance < radarRange && distance > 10) {
             nearbyObjects.push({
                 position: worldPos,
@@ -1092,8 +1071,19 @@ if (gameState.frameCount % 360 === 0) {
                 distance: distance
             });
         }
-    });
-}
+    } else {
+        // Non-asteroids use direct position (fast)
+        const distance = camera.position.distanceTo(planet.position);
+        if (distance < radarRange && distance > 10) {
+            nearbyObjects.push({
+                position: planet.position,
+                type: planet.userData.type,
+                name: planet.userData.name,
+                distance: distance
+            });
+        }
+    }
+});
         
         // Add nearby enemies
         enemies.forEach(enemy => {
@@ -1121,10 +1111,7 @@ if (gameState.frameCount % 360 === 0) {
             // Only show if within map bounds
             if (screenX >= 5 && screenX <= 95 && screenZ >= 5 && screenZ <= 95) {
                 const dot = document.createElement('div');
-dot.className = 'galactic-target-dot absolute';
-if (obj.type === 'asteroid') {
-    dot.setAttribute('data-asteroid', 'true');
-}
+                dot.className = 'galactic-target-dot absolute';
                 
                 // Color based on type
                 let dotColor = '#4488ff'; // Default blue for planets
@@ -1278,7 +1265,7 @@ if (obj.type === 'asteroid') {
                     nebulaDot.style.boxShadow = `0 0 12px ${nebulaDot.style.backgroundColor}`;
                     nebulaDot.style.pointerEvents = 'none';
                     nebulaDot.style.zIndex = '6';
-                    nebulaDot.innerHTML = `<span style="font-size: 12px;"><i class="fa-solid fa-cloud"></i></span>`;
+                    nebulaDot.innerHTML = `<span style="font-size: 12px;">💫</span>`;
                     nebulaDot.title = nebula.userData.mythicalName || nebula.userData.name || 'Nebula';
                     
                     galaxyMap.appendChild(nebulaDot);
