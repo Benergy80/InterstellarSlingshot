@@ -1004,7 +1004,7 @@ function updateGalaxyMap() {
     const playerMapPos = document.getElementById('playerMapPosition');
     const targetMapPos = document.getElementById('targetMapPosition');
     const mapDirectionArrow = document.getElementById('mapDirectionArrow');
-    const universeRadius = 50000;
+    const universeRadius = 40000;
     
     if (!playerMapPos) return;
     
