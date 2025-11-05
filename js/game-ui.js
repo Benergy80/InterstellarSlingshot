@@ -1045,43 +1045,31 @@ function updateGalaxyMap() {
         // Collect all nearby targetable objects
         const nearbyObjects = [];
         
-        // Add nearby planets - OPTIMIZED for asteroids
+        // Add nearby planets
 planets.forEach(planet => {
     if (!planet || !planet.position) return;
     
-    // OPTIMIZED: For asteroids, check belt group distance first (much faster)
-    if (planet.userData.type === 'asteroid') {
-        // Get parent belt group position (already in world space)
-        if (!planet.userData.beltGroup || !planet.userData.beltGroup.position) return;
-        
-        // Quick check: Is the entire belt too far?
-        const beltDistance = camera.position.distanceTo(planet.userData.beltGroup.position);
-        if (beltDistance > radarRange + 2000) return; // Belt + radius buffer
-        
-        // Belt is nearby, now get asteroid's world position
-        const worldPos = new THREE.Vector3();
+    // PERFORMANCE: Skip asteroids unless it's their update frame (every 360 frames = ~6 seconds)
+    if (planet.userData.type === 'asteroid' && gameState.frameCount % 360 !== 0) {
+        return;
+    }
+    
+    // FIXED: Get world position for asteroids in belt groups
+    const worldPos = new THREE.Vector3();
+    if (planet.userData.type === 'asteroid' && planet.parent) {
         planet.getWorldPosition(worldPos);
-        const distance = camera.position.distanceTo(worldPos);
-        
-        if (distance < radarRange && distance > 10) {
-            nearbyObjects.push({
-                position: worldPos,
-                type: planet.userData.type,
-                name: planet.userData.name,
-                distance: distance
-            });
-        }
     } else {
-        // Non-asteroids use direct position (fast)
-        const distance = camera.position.distanceTo(planet.position);
-        if (distance < radarRange && distance > 10) {
-            nearbyObjects.push({
-                position: planet.position,
-                type: planet.userData.type,
-                name: planet.userData.name,
-                distance: distance
-            });
-        }
+        worldPos.copy(planet.position);
+    }
+    
+    const distance = camera.position.distanceTo(worldPos);
+    if (distance < radarRange && distance > 10) { // Not too close
+        nearbyObjects.push({
+            position: worldPos,
+            type: planet.userData.type,
+            name: planet.userData.name,
+            distance: distance
+        });
     }
 });
         
