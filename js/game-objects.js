@@ -4695,6 +4695,10 @@ function createAsteroidBelts() {
         window.asteroidBelts = [];
     }
     
+    // PERFORMANCE FIX: Determine current galaxy
+    const currentGalaxyId = (typeof getCurrentGalaxyId === 'function') ? getCurrentGalaxyId() : 7;
+    console.log(`Creating asteroids only for current galaxy: ${currentGalaxyId}`);
+    
     const nearbyDistance = 80000;
     
     // FIXED: Find actual black holes in the scene
@@ -4707,6 +4711,11 @@ function createAsteroidBelts() {
     console.log(`Found ${blackHoles.length} galaxy black holes for asteroid placement`);
     
     galaxyTypes.forEach((galaxyType, galaxyIndex) => {
+        
+        // PERFORMANCE FIX: Only create asteroids for current galaxy
+        if (galaxyIndex !== currentGalaxyId) {
+            return;
+        }
         
         // FIXED: Find the actual black hole for this galaxy
         const blackHole = blackHoles.find(bh => bh.userData.galaxyId === galaxyIndex);
