@@ -1001,11 +1001,6 @@ function updateCompass() {
 function updateGalaxyMap() {
     if (typeof gameState === 'undefined' || typeof camera === 'undefined') return;
     
-    // PERFORMANCE: Skip update if game is paused or map isn't visible
-    if (gameState.paused) return;
-    const navPanel = document.getElementById('navPanel');
-    if (!navPanel || !navPanel.classList.contains('visible')) return;
-    
     const playerMapPos = document.getElementById('playerMapPosition');
     const targetMapPos = document.getElementById('targetMapPosition');
     const mapDirectionArrow = document.getElementById('mapDirectionArrow');
