@@ -32,9 +32,9 @@ const gameState = {
     solarStormBoostActive: false,
     solarStormBoostEndTime: 0,
     tenSecondWarningShown: false,
-    plasmaStormBoostActive: false,          // ★ NEW
-    plasmaStormBoostEndTime: 0,             // ★ NEW
-    plasmaTenSecondWarningShown: false,     // ★ NEW
+    plasmaStormBoostActive: false,          // â­ NEW
+    plasmaStormBoostEndTime: 0,             // â­ NEW
+    plasmaTenSecondWarningShown: false,     // â­ NEW
     shipMass: 2.0, // Doubled mass for doubled world
     baseSpeed: 0.2, // Doubled for doubled world
     thrustPower: 0.01, // Doubled for doubled world
@@ -442,7 +442,7 @@ function createSingleOrbitLine(planet, isLocal) {
 orbitLine.position.set(systemCenter.x, systemCenter.y, systemCenter.z);
 orbitLine.rotation.x = Math.PI / 2; // Rotate to horizontal plane
 
-// ✔️ ENHANCED: Apply stored orbital tilt for local gateway systems
+// âœ… ENHANCED: Apply stored orbital tilt for local gateway systems
 if (planet.userData.isLocalGateway && planet.userData.orbitalTilt) {
     orbitLine.rotation.y += planet.userData.orbitalTilt.z; // Z-tilt affects Y-rotation
     orbitLine.rotation.z += planet.userData.orbitalTilt.x; // X-tilt affects Z-rotation
@@ -483,6 +483,43 @@ function forceCreateOrbitLines() {
     orbitLinesInitialized = false;
     lastOrbitUpdate = 0;
     createOrbitLines();
+}
+
+// FIXED: Enhanced orbit line visibility toggle
+function toggleOrbitLines() {
+    orbitLinesVisible = !orbitLinesVisible;
+    console.log(`Toggling orbits: ${orbitLinesVisible ? 'ON' : 'OFF'}`);
+    
+    // If turning on and no orbit lines exist, force create them
+    if (orbitLinesVisible && (!orbitLines || orbitLines.length === 0)) {
+        console.log('No orbit lines found, force creating...');
+        forceCreateOrbitLines();
+    }
+    
+    // Update visibility of existing orbit lines
+    if (orbitLines && orbitLines.length > 0) {
+        let visibleCount = 0;
+        orbitLines.forEach((line, index) => {
+            if (line && line.visible !== undefined) {
+                line.visible = orbitLinesVisible;
+                if (orbitLinesVisible) visibleCount++;
+                console.log(`Orbit line ${index}: ${line.userData?.planetName || 'unknown'} - visible = ${line.visible}`);
+            }
+        });
+        console.log(`Updated visibility for ${visibleCount} orbit lines`);
+    } else {
+        console.warn('No orbit lines array found! orbitLines:', orbitLines);
+        
+        // Try to create orbit lines if they don't exist
+        if (orbitLinesVisible) {
+            setTimeout(() => {
+                console.log('Attempting to force create orbit lines after delay...');
+                forceCreateOrbitLines();
+            }, 100);
+        }
+    }
+    
+    return orbitLinesVisible;
 }
 
 // =============================================================================
@@ -613,20 +650,20 @@ setTimeout(() => {
     }
 }, 1000);
 
-// ★ NEW: Create enhanced planet clusters AFTER all nebula layers
+// â­ NEW: Create enhanced planet clusters AFTER all nebula layers
 setTimeout(() => {
     if (typeof createEnhancedPlanetClustersInNebulas === 'function') {
-        console.log('🌸 Creating enhanced planet clusters within nebulas...');
+        console.log('ðŸŒŸ Creating enhanced planet clusters within nebulas...');
         createEnhancedPlanetClustersInNebulas();
     } else {
-        console.warn('⚠️ createEnhancedPlanetClustersInNebulas function not found!');
+        console.warn('âš ï¸ createEnhancedPlanetClustersInNebulas function not found!');
     }
 }, 3000); // Wait 3 seconds for all nebula layers to complete
 
 // ADD THIS NEW CODE RIGHT AFTER THE ABOVE:
 setTimeout(() => {
     if (typeof createEnhancedPlanetClustersInNebulas === 'function') {
-        console.log('🌸 Creating enhanced planet clusters in nebulas...');
+        console.log('ðŸŒŸ Creating enhanced planet clusters in nebulas...');
         createEnhancedPlanetClustersInNebulas();
     }
 }, 2000); // Wait for nebulas to be fully created first
@@ -639,7 +676,7 @@ if (typeof createAsteroidBelts === 'function') {
     console.log('Asteroid belts created');
 }
 */
-console.log('⚠️ INITIAL ASTEROID LOAD DISABLED - Will load during intro sequence only');
+console.log('âš ï¸ INITIAL ASTEROID LOAD DISABLED - Will load during intro sequence only');
 
             if (typeof createEnhancedComets === 'function') {
                 createEnhancedComets();
@@ -681,11 +718,11 @@ if (typeof spawnBlackHoleGuardians === 'function') {
             if (typeof setupGalaxyMap === 'function') {
                 setupGalaxyMap();
                 
-                // ★ NEW: Update galaxy map to show initial location
+                // â­ NEW: Update galaxy map to show initial location
                 setTimeout(() => {
                     if (typeof updateGalaxyMap === 'function') {
                         updateGalaxyMap();
-                        console.log('🗺️ Initial galaxy location set');
+                        console.log('ðŸ—ºï¸ Initial galaxy location set');
                     }
                 }, 1000); // Wait 1 second for camera to be positioned
             }
@@ -700,9 +737,9 @@ setTimeout(() => {
     if (typeof initShieldSystem === 'function') {
         const initialized = initShieldSystem();
         if (initialized) {
-            console.log('🛡️ Shield system ready');
+            console.log('ðŸ›¡ï¸ Shield system ready');
         } else {
-            console.warn('⚠️ Shield system initialization failed - will retry on first activation');
+            console.warn('âš ï¸ Shield system initialization failed - will retry on first activation');
         }
     }
 }, 100);
@@ -713,16 +750,16 @@ if (typeof initializeCosmicFeatures === 'function') {
     console.log('Special cosmic features initialized');
 }
 
-// ✔️ ADD THIS RIGHT HERE:
+// âœ… ADD THIS RIGHT HERE:
 if (typeof createWarpSpeedStarfield === 'function') {
     createWarpSpeedStarfield();
-    console.log('🚀 3D warp speed starfield created');
+    console.log('ðŸš€ 3D warp speed starfield created');
 }
 // Enhance cosmic features for collision and slingshot support
 if (typeof enhanceCosmicFeaturesForGameplay === 'function') {
     setTimeout(() => {
         enhanceCosmicFeaturesForGameplay();
-        console.log('✔️ Cosmic features enhanced for gameplay');
+        console.log('âœ… Cosmic features enhanced for gameplay');
     }, 500); // Small delay to ensure all features are created
 }
             // Create orbit lines after planets exist
@@ -881,7 +918,7 @@ if (typeof animateNebulaBrownDwarfs !== 'undefined') {
     animateNebulaBrownDwarfs();
 }
     
-    // ★ ENHANCED: Animate nebula gas clouds with individual pulsing per cloud
+    // â­ ENHANCED: Animate nebula gas clouds with individual pulsing per cloud
 if (typeof nebulaGasClouds !== 'undefined' && nebulaGasClouds.length > 0) {
     nebulaGasClouds.forEach(cloudCluster => {
         // Rotate entire cluster slowly
@@ -917,7 +954,7 @@ if (typeof nebulaGasClouds !== 'undefined' && nebulaGasClouds.length > 0) {
     });
 }
 
-// ★ NEW: Animate asteroid belts rotation
+// â­ NEW: Animate asteroid belts rotation
 if (typeof asteroidBelts !== 'undefined' && asteroidBelts.length > 0) {
     asteroidBelts.forEach(belt => {
         if (belt.userData.rotationSpeed && belt.rotation) {
@@ -974,8 +1011,8 @@ if (typeof updateShieldSystem === 'function') {
         updateActivePlanets();
     }
     
-    // OPTIMIZED: Update enemy detection every 3 frames for responsive combat (still 20 times per second)
-    if (gameState.frameCount % 3 === 0 && typeof detectEnemiesInRegion === 'function') {
+    // HIGH FREQUENCY: Update enemy detection every frame for responsive combat
+    if (typeof detectEnemiesInRegion === 'function') {
         detectEnemiesInRegion();
     }
     
@@ -1041,7 +1078,6 @@ if (typeof localGalaxyStars !== 'undefined' && localGalaxyStars) {
     // PERFORMANCE: Update only expensive effects for active planets (tendrils, glows, etc.)
     activePlanets.forEach((planet) => {
     // FIXED: Only rotate star particles, keep disk stable
-    // This handles black hole rotation for ACTIVE planets only (nearby)
 if (planet.userData.type === 'blackhole' && planet.userData.rotationSpeed) {
     planet.children.forEach(child => {
         if (child.type === 'Points') { // Star particles
@@ -1052,11 +1088,6 @@ if (planet.userData.type === 'blackhole' && planet.userData.rotationSpeed) {
             child.rotation.z = 0; // No tumbling
         }
     });
-    
-    // Also rotate main galaxy stars if they exist
-    if (planet.userData.galaxyStars) {
-        planet.userData.galaxyStars.rotation.y += planet.userData.rotationSpeed;
-    }
 }
     
         // OPTIMIZED: Asteroid orbital mechanics - update positions less frequently (every 3 frames)
@@ -1294,8 +1325,45 @@ if (typeof nebulaClouds !== 'undefined' && nebulaClouds.length > 0) {
     });
 }
 
-// ✅ REMOVED DUPLICATE LOOPS - Black hole rotation is already handled in activePlanets loop above
-// This eliminates the performance issue of iterating through ALL planets every frame
+// In your animate() function, add this with your other planet updates:
+planets.forEach(planet => {
+    if (planet.userData.type === 'blackhole' && planet.userData.starCluster) {
+        // Get rotation speed from userData, or use default based on black hole type
+        let rotationSpeed = planet.userData.rotationSpeed;
+        
+        // If no rotation speed set, assign based on type
+        if (!rotationSpeed) {
+            if (planet.userData.isGalacticCenter || planet.userData.isSagittariusA) {
+                rotationSpeed = 0.025; // Sagittarius A* speed
+            } else if (planet.userData.isGalacticCore) {
+                rotationSpeed = 0.020; // Other galactic cores speed
+            } else {
+                rotationSpeed = 0.015; // Default for other black holes
+            }
+            planet.userData.rotationSpeed = rotationSpeed; // Store for future use
+        }
+        
+        // Apply rotation to starfield
+        planet.userData.starCluster.rotation.y += rotationSpeed;
+        
+        // Optional: Add slight wobble to make it more dynamic
+        planet.userData.starCluster.rotation.x = Math.sin(Date.now() * 0.0001) * 0.05;
+    }
+});
+
+planets.forEach(planet => {
+    if (planet.userData.type === 'blackhole' && planet.userData.rotationSpeed) {
+        // Rotate star cluster (small dense stars near black hole)
+        if (planet.userData.starCluster) {
+            planet.userData.starCluster.rotation.y += planet.userData.rotationSpeed;
+        }
+        
+        // Rotate main galaxy stars (the spiral/ring/elliptical structure)
+        if (planet.userData.galaxyStars) {
+            planet.userData.galaxyStars.rotation.y += planet.userData.rotationSpeed;
+        }
+    }
+});
 
 // Also add interaction checking:
 if (typeof checkCosmicFeatureInteractions === 'function' && typeof camera !== 'undefined' && typeof gameState !== 'undefined') {
@@ -1416,10 +1484,10 @@ else if (planet.userData.parentPlanet && planet.userData.orbitRadius > 0) {
     const moonY = Math.sin(time * 0.5 + orbitPhase) * 4;
     
     if (isChildOfParent) {
-        // ✔️ CORRECT: Moon is a child, use LOCAL coordinates
+        // âœ… CORRECT: Moon is a child, use LOCAL coordinates
         planet.position.set(moonX, moonY, moonZ);
     } else {
-        // ⚠️ FALLBACK: Moon is not a child, use WORLD coordinates
+        // âš ï¸ FALLBACK: Moon is not a child, use WORLD coordinates
         if (planet.userData.parentPlanet.position) {
             const parentPos = planet.userData.parentPlanet.position;
             planet.position.set(parentPos.x + moonX, parentPos.y + moonY, parentPos.z + moonZ);
