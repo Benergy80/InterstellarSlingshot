@@ -4695,7 +4695,7 @@ function createAsteroidBelts() {
         window.asteroidBelts = [];
     }
     
-    const nearbyDistance = 80000;
+    const nearbyDistance = 20000;
     
     // FIXED: Find actual black holes in the scene
     const blackHoles = planets.filter(p => 
@@ -4829,6 +4829,142 @@ asteroidBelts.push(beltGroup);
     });
     
     console.log(`✅ Created ${asteroidBelts.length} OPTIMIZED asteroid belts around actual black holes`);
+}
+
+// =============================================================================
+// DYNAMIC ASTEROID LOADING FOR GALAXIES
+// =============================================================================
+
+function loadAsteroidsForGalaxy(galaxyId) {
+    console.log(`Loading asteroids for galaxy ${galaxyId}...`);
+    
+    // Check if asteroids already exist for this galaxy
+    if (typeof asteroidBelts !== 'undefined') {
+        const existingBelts = asteroidBelts.filter(belt => 
+            belt.userData && belt.userData.galaxyId === galaxyId
+        );
+        
+        if (existingBelts.length > 0) {
+            console.log(`Galaxy ${galaxyId} already has ${existingBelts.length} asteroid belts`);
+            return;
+        }
+    }
+    
+    // Initialize shared resources if needed
+    initializeAsteroidResources();
+    
+    // SAFETY: Ensure asteroidBelts array exists
+    if (typeof window.asteroidBelts === 'undefined') {
+        window.asteroidBelts = [];
+    }
+    
+    // Find black holes in the scene
+    const blackHoles = planets.filter(p => 
+        p.userData.type === 'blackhole' && 
+        typeof p.userData.galaxyId === 'number' &&
+        !p.userData.isLocalGateway
+    );
+    
+    // Find the black hole for this specific galaxy
+    const blackHole = blackHoles.find(bh => bh.userData.galaxyId === galaxyId);
+    
+    if (!blackHole) {
+        console.warn(`No black hole found for galaxy ${galaxyId}`);
+        return;
+    }
+    
+    const galaxyType = galaxyTypes[galaxyId];
+    const galaxyCenter = blackHole.position.clone();
+    
+    console.log(`Creating asteroid belt for galaxy ${galaxyId} (${galaxyType.name})`);
+    
+    const beltCount = Math.random() > 0.5 ? 2 : 1;
+    
+    for (let b = 0; b < beltCount; b++) {
+        const beltGroup = new THREE.Group();
+        const asteroidCount = 50 + Math.random() * 100;
+        const beltRadius = 1600 + Math.random() * 1000;
+        const beltWidth = 400 + Math.random() * 800;
+        
+        for (let j = 0; j < asteroidCount; j++) {
+            const geomIndex = Math.floor(Math.random() * 3);
+            const geometry = asteroidResources.geometries[geomIndex];
+            
+            const matIndex = Math.floor(Math.random() * asteroidResources.materials.length);
+            const material = asteroidResources.materials[matIndex];
+            
+            const asteroid = new THREE.Mesh(geometry, material);
+            const scale = 3 + Math.random() * 6;
+            asteroid.scale.setScalar(scale);
+            asteroid.frustumCulled = false;
+            
+            const ringAngle = (j / asteroidCount) * Math.PI * 2 + (Math.random() - 0.5) * 0.3;
+            const ringDistance = beltRadius + (Math.random() - 0.5) * beltWidth;
+            const ringHeight = (Math.random() - 0.5) * 200;
+            
+            asteroid.position.set(
+                Math.cos(ringAngle) * ringDistance,
+                ringHeight,
+                Math.sin(ringAngle) * ringDistance
+            );
+            
+            asteroid.rotation.set(
+                Math.random() * Math.PI * 2,
+                Math.random() * Math.PI * 2,
+                Math.random() * Math.PI * 2
+            );
+            
+            asteroid.userData = {
+                name: `${galaxyType.name} Asteroid ${j + 1}`,
+                type: 'asteroid',
+                health: 2,
+                maxHealth: 2,
+                orbitSpeed: 0.0005 + Math.random() * 0.001,
+                rotationSpeed: (Math.random() - 0.5) * 0.015,
+                beltCenter: galaxyCenter,
+                orbitRadius: ringDistance,
+                orbitPhase: ringAngle,
+                galaxyId: galaxyId,
+                isTargetable: true,
+                isDestructible: true,
+                beltGroup: beltGroup
+            };
+            
+            beltGroup.add(asteroid);
+            planets.push(asteroid);
+        }
+        
+        if (galaxyId === 7) {
+            const yOffset = (Math.random() < 0.5 ? 1 : -1) * (600 + Math.random() * 400);
+            beltGroup.position.set(galaxyCenter.x, galaxyCenter.y + yOffset, galaxyCenter.z);
+            console.log(`✅ Local asteroid belt ${b + 1} offset ${yOffset > 0 ? 'ABOVE' : 'BELOW'} solar plane by ${Math.abs(yOffset).toFixed(0)} units`);
+        } else {
+            beltGroup.position.copy(galaxyCenter);
+        }
+        beltGroup.visible = true;
+        beltGroup.frustumCulled = false;
+        
+        beltGroup.userData = {
+            name: `${galaxyType.name} Galaxy Asteroid Belt ${b + 1}`,
+            type: 'asteroidBelt',
+            center: galaxyCenter,
+            radius: beltRadius,
+            asteroidCount: asteroidCount,
+            galaxyId: galaxyId,
+            blackHolePosition: galaxyCenter.clone()
+        };
+        
+        scene.add(beltGroup);
+        
+        const beltLight = new THREE.PointLight(0xffffff, 3.0, 3000);
+        beltLight.position.copy(galaxyCenter);
+        scene.add(beltLight);
+        beltGroup.userData.light = beltLight;
+        
+        asteroidBelts.push(beltGroup);
+    }
+    
+    console.log(`✅ Loaded asteroids for galaxy ${galaxyId}`);
 }
 
 // =============================================================================
@@ -5274,6 +5410,7 @@ if (typeof window !== 'undefined') {
 	window.createWarpSpeedStarfield = createWarpSpeedStarfield;
     window.updateWarpSpeedStarfield = updateWarpSpeedStarfield;
     window.toggleWarpSpeedStarfield = toggleWarpSpeedStarfield;
+    window.loadAsteroidsForGalaxy = loadAsteroidsForGalaxy;
     
     // Core creation functions
     window.createOptimizedPlanets = createOptimizedPlanets3D;
