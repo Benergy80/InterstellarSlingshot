@@ -1858,18 +1858,10 @@ function setupNormalGameContent() {
         }
     }, 1000);
     
-    // Create asteroid belts for starting galaxy only (galaxy 7 - local)
-    if (typeof loadAsteroidsForGalaxy === 'function') {
-        loadAsteroidsForGalaxy(7);
-        console.log('☄️ Starting galaxy asteroids loaded');
-        
-        // Cleanup any distant asteroids immediately
-        setTimeout(() => {
-            if (typeof cleanupDistantAsteroids === 'function') {
-                cleanupDistantAsteroids(7);
-                console.log('♻️ Initial asteroid cleanup complete');
-            }
-        }, 100);
+    // Create asteroid belts
+    if (typeof createAsteroidBelts === 'function') {
+        createAsteroidBelts();
+        console.log('☄️ Asteroid belts created');
     }
     
     if (typeof createEnhancedComets === 'function') {
