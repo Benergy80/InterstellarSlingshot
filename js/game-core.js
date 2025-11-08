@@ -244,28 +244,6 @@ if (planet.userData.type === 'moon') {
     // Enhanced LOD for distant objects in doubled world (performance optimized)
     const lodDistance = gameState.performanceMode === 'minimal' ? 2000 :
                         gameState.performanceMode === 'optimized' ? 3000 : 4000;
-    
-    planets.forEach(planet => {
-        const distance = camera.position.distanceTo(planet.position);
-        if (planet.geometry && distance > lodDistance && planet.userData.type !== 'asteroid') {
-            if (!planet.userData.isSimplified) {
-                const originalGeometry = planet.geometry;
-                const simplifiedGeometry = new THREE.SphereGeometry(
-                    originalGeometry.parameters?.radius || 5,
-                    8, 8
-                );
-                planet.geometry = simplifiedGeometry;
-                planet.userData.isSimplified = true;
-                planet.userData.originalGeometry = originalGeometry;
-            }
-        } else if (planet.userData.isSimplified && distance <= lodDistance) {
-            if (planet.userData.originalGeometry) {
-                planet.geometry = planet.userData.originalGeometry;
-                planet.userData.isSimplified = false;
-            }
-        }
-    });
-}
 
 function monitorPerformance() {
     const now = performance.now();
@@ -1017,7 +995,7 @@ if (typeof updateShieldSystem === 'function') {
     }
     
     // OPTIMIZED: Update galaxy map less frequently (every 180 frames = ~once every 3 seconds)
-	if (gameState.frameCount % 180 === 0 && typeof updateGalaxyMap === 'function') {
+	if (gameState.frameCount % 60 === 0 && typeof updateGalaxyMap === 'function') {
     updateGalaxyMap();
 	}
     
