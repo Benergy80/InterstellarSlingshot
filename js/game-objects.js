@@ -1325,6 +1325,32 @@ if (typeof nebulaClouds !== 'undefined' && nebulaClouds.length > 0) {
     });
 }
 
+// In your animate() function, add this with your other planet updates:
+planets.forEach(planet => {
+    if (planet.userData.type === 'blackhole' && planet.userData.starCluster) {
+        // Get rotation speed from userData, or use default based on black hole type
+        let rotationSpeed = planet.userData.rotationSpeed;
+        
+        // If no rotation speed set, assign based on type
+        if (!rotationSpeed) {
+            if (planet.userData.isGalacticCenter || planet.userData.isSagittariusA) {
+                rotationSpeed = 0.025; // Sagittarius A* speed
+            } else if (planet.userData.isGalacticCore) {
+                rotationSpeed = 0.020; // Other galactic cores speed
+            } else {
+                rotationSpeed = 0.015; // Default for other black holes
+            }
+            planet.userData.rotationSpeed = rotationSpeed; // Store for future use
+        }
+        
+        // Apply rotation to starfield
+        planet.userData.starCluster.rotation.y += rotationSpeed;
+        
+        // Optional: Add slight wobble to make it more dynamic
+        planet.userData.starCluster.rotation.x = Math.sin(Date.now() * 0.0001) * 0.05;
+    }
+});
+
 // Also add interaction checking:
 if (typeof checkCosmicFeatureInteractions === 'function' && typeof camera !== 'undefined' && typeof gameState !== 'undefined') {
     checkCosmicFeatureInteractions(camera.position, gameState);
