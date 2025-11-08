@@ -1668,7 +1668,7 @@ const core8Distance = (400 + Math.random() * 220) * (Math.random() < 0.5 ? 1 : -
     warpThreshold: 80,
     isGalacticCore: true,
     isCompanionCore: true, // New flag
-    galaxyId: 8,
+    galaxyId: 7,
     rotationSpeed: 0.0001,
     mapPosition: { x: 0.5, y: 0.52 }
 };
