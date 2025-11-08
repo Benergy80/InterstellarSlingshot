@@ -4695,7 +4695,7 @@ function createAsteroidBelts() {
         window.asteroidBelts = [];
     }
     
-    const nearbyDistance = 80000;
+    const nearbyDistance = 20000;
     
     // FIXED: Find actual black holes in the scene
     const blackHoles = planets.filter(p => 
@@ -4851,7 +4851,9 @@ function loadAsteroidsForGalaxy(galaxyId) {
     }
     
     // Initialize shared resources if needed
-    initializeAsteroidResources();
+    if (typeof asteroidResources === 'undefined' || !asteroidResources.initialized) {
+        initializeAsteroidResources();
+    }
     
     // SAFETY: Ensure asteroidBelts array exists
     if (typeof window.asteroidBelts === 'undefined') {
@@ -4937,7 +4939,7 @@ function loadAsteroidsForGalaxy(galaxyId) {
         if (galaxyId === 7) {
             const yOffset = (Math.random() < 0.5 ? 1 : -1) * (600 + Math.random() * 400);
             beltGroup.position.set(galaxyCenter.x, galaxyCenter.y + yOffset, galaxyCenter.z);
-            console.log(`✅ Local asteroid belt ${b + 1} offset ${yOffset > 0 ? 'ABOVE' : 'BELOW'} solar plane by ${Math.abs(yOffset).toFixed(0)} units`);
+            console.log(`✅ Local asteroid belt ${b + 1} offset ${yOffset > 0 ? 'ABOVE' : 'BELOW'} solar plane`);
         } else {
             beltGroup.position.copy(galaxyCenter);
         }
@@ -4964,7 +4966,7 @@ function loadAsteroidsForGalaxy(galaxyId) {
         asteroidBelts.push(beltGroup);
     }
     
-    console.log(`✅ Loaded asteroids for galaxy ${galaxyId}`);
+    console.log(`✅ Loaded ${beltCount} asteroid belts for galaxy ${galaxyId}`);
 }
 
 // =============================================================================
