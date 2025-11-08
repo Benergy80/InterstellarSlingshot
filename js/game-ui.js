@@ -797,7 +797,7 @@ function getCurrentGalaxyId() {
     }
     
     // Fallback: Use 3D galaxy center positions
-    const universeRadius = 50000;
+    const universeRadius = 40000;
     
     if (typeof getGalaxy3DPosition === 'function' && typeof galaxyTypes !== 'undefined') {
         let closestGalaxy = -1;
@@ -1004,7 +1004,7 @@ function updateGalaxyMap() {
     const playerMapPos = document.getElementById('playerMapPosition');
     const targetMapPos = document.getElementById('targetMapPosition');
     const mapDirectionArrow = document.getElementById('mapDirectionArrow');
-    const universeRadius = 50000;
+    const universeRadius = 40000;
     
     if (!playerMapPos) return;
     
@@ -1394,7 +1394,7 @@ planets.forEach(planet => {
         // NEW: Check if player is inside a nebula
         let nebulaName = null;
         if (typeof nebulaClouds !== 'undefined' && nebulaClouds.length > 0) {
-            const nebulaDetectionRange = 5000; // Distance to consider "inside" nebula
+            const nebulaDetectionRange = 3000; // Distance to consider "inside" nebula
             
             nebulaClouds.forEach(nebula => {
                 if (!nebula || !nebula.userData) return;
