@@ -244,6 +244,7 @@ if (planet.userData.type === 'moon') {
     // Enhanced LOD for distant objects in doubled world (performance optimized)
     const lodDistance = gameState.performanceMode === 'minimal' ? 2000 :
                         gameState.performanceMode === 'optimized' ? 3000 : 4000;
+}
 
 function monitorPerformance() {
     const now = performance.now();
