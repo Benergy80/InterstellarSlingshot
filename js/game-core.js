@@ -953,6 +953,25 @@ if (typeof updateOuterSystems === 'function') {
     updateOuterSystems();
 }
     
+    // Check for outer system discoveries
+if (gameState.frameCount % 60 === 0 && typeof outerInterstellarSystems !== 'undefined') {
+    outerInterstellarSystems.forEach(system => {
+        if (!system.userData.discovered) {
+            const distance = camera.position.distanceTo(system.position);
+            if (distance < 3000) {
+                system.userData.discovered = true;
+                if (typeof showAchievement === 'function') {
+                    showAchievement(
+                        `Discovered: ${system.userData.name}`,
+                        'Unexplored Interstellar Space'
+                    );
+                }
+                console.log(`🌌 Discovered outer system: ${system.userData.name}`);
+            }
+        }
+    });
+}
+    
 // Pulse enemy glow for visibility - OPTIMIZED: Only nearby enemies
 if (typeof enemies !== 'undefined' && enemies.length > 0 && gameState.frameCount % 2 === 0) {
     const pulseTime = Date.now() * 0.002;
