@@ -1079,7 +1079,7 @@ function updateGalaxyMap() {
     
     // Show nearby objects as dots (enemies, planets, etc.)
     const galaxyMap = document.getElementById('galaxyMap');
-    const radarRange = 5000; // Detection range for galactic view
+    const radarRange = 3500; // Detection range for galactic view
     
     if (galaxyMap && typeof planets !== 'undefined' && typeof enemies !== 'undefined') {
         // Collect all nearby targetable objects
