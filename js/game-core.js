@@ -857,7 +857,19 @@ function animate() {
             stars.rotation.x += 0.0001;
             stars.rotation.y += 0.0002;
         }
-        renderer.render(scene, camera);
+        // DIAGNOSTIC: Log expensive operations every 60 frames
+    if (gameState.frameCount % 60 === 0) {
+        console.log('=== FRAME DIAGNOSTIC ===');
+        console.log('Map View:', gameState.mapView);
+        console.log('Planets array length:', planets ? planets.length : 0);
+        console.log('Enemies array length:', enemies ? enemies.length : 0);
+        console.log('Asteroid belts:', asteroidBelts ? asteroidBelts.length : 0);
+        console.log('Local galaxy stars visible:', localGalaxyStars ? localGalaxyStars.visible : 'N/A');
+        console.log('Scene children count:', scene ? scene.children.length : 0);
+        console.log('Frame time:', frameTime.toFixed(2), 'ms');
+    }
+
+    renderer.render(scene, camera);
         return; // Skip all other game updates when paused
     }
     
