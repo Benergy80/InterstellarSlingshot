@@ -1065,7 +1065,7 @@ function updateGalaxyMap() {
     
     // Show nearby objects as dots (enemies, planets, etc.)
     const galaxyMap = document.getElementById('galaxyMap');
-    const radarRange = 3000; // Detection range for galactic view
+    const radarRange = 5000; // Detection range for galactic view
     
     if (galaxyMap && typeof planets !== 'undefined' && typeof enemies !== 'undefined') {
         // Collect all nearby targetable objects
@@ -1191,13 +1191,8 @@ planets.forEach(planet => {
     } else {
     // ========== UNIVERSAL VIEW ==========
     
-    // CRITICAL: Clear galactic view target dots
-    const existingTargetDots = document.querySelectorAll('.galactic-target-dot');
-    existingTargetDots.forEach(dot => dot.remove());
-    
-    // **NEW: Also clear cosmic feature dots from previous render**
-    const existingCosmicDots = document.querySelectorAll('.cosmic-feature-dot');
-    existingCosmicDots.forEach(dot => dot.remove());
+    // Use pooling instead
+mapDotPool.releaseAll();
     
     // **NEW: Display major cosmic features on map**
     if (typeof cosmicFeatures !== 'undefined') {
