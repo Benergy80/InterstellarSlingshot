@@ -58,6 +58,15 @@ function createOuterInterstellarSystems() {
 function createOuterSystem(center, name, centerType, systemId) {
     const systemGroup = new THREE.Group();
     systemGroup.position.copy(center);
+    
+    // Generate random tilt for THIS SYSTEM (all orbits share this plane)
+    const systemTiltX = (Math.random() - 0.5) * Math.PI * 0.4;
+    const systemTiltZ = (Math.random() - 0.5) * Math.PI * 0.4;
+    
+    // CMB color for this system
+    const cmbColors = [0xff6b35, 0xff9933, 0xffd700, 0xffffff, 0xffaa88];
+    const systemColor = cmbColors[Math.floor(Math.random() * cmbColors.length)];
+    
     systemGroup.userData = {
         name: name,
         type: 'outer_interstellar_system',
@@ -65,7 +74,10 @@ function createOuterSystem(center, name, centerType, systemId) {
         location: 'Unexplored Interstellar Space',
         centerType: centerType,
         orbiters: [],
-        discovered: false // Track discovery
+        discovered: false,
+        tiltX: systemTiltX,
+        tiltZ: systemTiltZ,
+        systemColor: systemColor
     };
     
     // Create center object
@@ -82,7 +94,7 @@ function createOuterSystem(center, name, centerType, systemId) {
     for (let i = 0; i < brownDwarfCount; i++) {
         const orbitRadius = 800 + Math.random() * 1200;
         createOrbitingBrownDwarf(center, orbitRadius, i, systemGroup);
-        createSystemOrbitLine(center, orbitRadius, 0x8b4513, systemGroup);
+        createSystemOrbitLine(center, orbitRadius, systemGroup);
     }
     
     // Orbiting pulsars (1-3)
@@ -90,7 +102,7 @@ function createOuterSystem(center, name, centerType, systemId) {
     for (let i = 0; i < pulsarCount; i++) {
         const orbitRadius = 1500 + Math.random() * 1500;
         createOrbitingPulsar(center, orbitRadius, i, systemGroup);
-        createSystemOrbitLine(center, orbitRadius, 0x44eeff, systemGroup);
+        createSystemOrbitLine(center, orbitRadius, systemGroup);
     }
     
     // Asteroid field
@@ -99,7 +111,7 @@ function createOuterSystem(center, name, centerType, systemId) {
     for (let i = 0; i < asteroidCount; i++) {
         createOrbitingAsteroid(center, asteroidOrbitRadius, i, systemGroup);
     }
-    createSystemOrbitLine(center, asteroidOrbitRadius, 0x666666, systemGroup);
+    createSystemOrbitLine(center, asteroidOrbitRadius, systemGroup);
     
     scene.add(systemGroup);
     outerInterstellarSystems.push(systemGroup);
@@ -325,6 +337,11 @@ function createOrbitingBrownDwarf(center, orbitRadius, index, systemGroup) {
     };
     
     systemGroup.userData.orbiters.push(dwarf);
+    scene.add(dwarf);
+    
+    if (typeof planets !== 'undefined') {
+        planets.push(dwarf);
+    }
     scene.add(dwarf); // NEW
     
     // ADD TO PLANETS ARRAY FOR PHYSICS - NEW
@@ -428,17 +445,14 @@ function createOrbitingAsteroid(center, orbitRadius, index, systemGroup) {
 // ORBIT LINES
 // =============================================================================
 
-function createSystemOrbitLine(center, radius, color, systemGroup) {
+function createSystemOrbitLine(center, radius, systemGroup) {
     const segments = 128;
     const points = [];
     
-    // Random tilt for each orbit
-    const tiltX = (Math.random() - 0.5) * Math.PI * 0.4;
-    const tiltZ = (Math.random() - 0.5) * Math.PI * 0.4;
-    
-    // CMB color variations
-    const cmbColors = [0xff6b35, 0xff9933, 0xffd700, 0xffffff, 0xffaa88];
-    const orbitColor = cmbColors[Math.floor(Math.random() * cmbColors.length)];
+    // Use the system's shared tilt
+    const tiltX = systemGroup.userData.tiltX;
+    const tiltZ = systemGroup.userData.tiltZ;
+    const orbitColor = systemGroup.userData.systemColor;
     
     for (let i = 0; i <= segments; i++) {
         const angle = (i / segments) * Math.PI * 2;
@@ -446,7 +460,7 @@ function createSystemOrbitLine(center, radius, color, systemGroup) {
         let y = 0;
         let z = Math.sin(angle) * radius;
         
-        // Apply tilt
+        // Apply system tilt
         const rotatedX = x;
         const rotatedY = y * Math.cos(tiltX) - z * Math.sin(tiltX);
         const rotatedZ = y * Math.sin(tiltX) + z * Math.cos(tiltX);
@@ -473,8 +487,56 @@ function createSystemOrbitLine(center, radius, color, systemGroup) {
     
     systemGroup.add(line);
     
-    // Create star-field around this system with matching color
+    // Create star-field matching this orbit
     createSystemStarfield(center, radius, orbitColor, systemGroup);
+}
+
+function createSystemStarfield(center, maxRadius, color, systemGroup) {
+    const starCount = 200 + Math.floor(Math.random() * 300);
+    const starfieldRadius = maxRadius * 0.5;
+    
+    const positions = [];
+    const colors = [];
+    const sizes = [];
+    
+    const baseColor = new THREE.Color(color);
+    
+    for (let i = 0; i < starCount; i++) {
+        const theta = Math.random() * Math.PI * 2;
+        const phi = Math.acos(2 * Math.random() - 1);
+        const r = Math.random() * starfieldRadius;
+        
+        const x = center.x + r * Math.sin(phi) * Math.cos(theta);
+        const y = center.y + r * Math.sin(phi) * Math.sin(theta);
+        const z = center.z + r * Math.cos(phi);
+        
+        positions.push(x, y, z);
+        
+        const colorVariation = new THREE.Color(
+            baseColor.r * (0.8 + Math.random() * 0.4),
+            baseColor.g * (0.8 + Math.random() * 0.4),
+            baseColor.b * (0.8 + Math.random() * 0.4)
+        );
+        colors.push(colorVariation.r, colorVariation.g, colorVariation.b);
+        sizes.push(1 + Math.random() * 2);
+    }
+    
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+    geometry.setAttribute('size', new THREE.Float32BufferAttribute(sizes, 1));
+    
+    const material = new THREE.PointsMaterial({
+        size: 2,
+        vertexColors: true,
+        transparent: true,
+        opacity: 0.6,
+        sizeAttenuation: true
+    });
+    
+    const starfield = new THREE.Points(geometry, material);
+    starfield.userData = { type: 'system_starfield' };
+    systemGroup.add(starfield);
 }
 
 function createSystemStarfield(center, maxRadius, color, systemGroup) {
