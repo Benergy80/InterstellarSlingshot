@@ -1125,6 +1125,46 @@ planets.forEach(planet => {
     }
 });
         
+        // Add nearby outer system objects
+if (typeof outerInterstellarSystems !== 'undefined') {
+    outerInterstellarSystems.forEach(system => {
+        if (!system.userData.orbiters) return;
+        
+        // Check if system is in radar range
+        const systemDistance = camera.position.distanceTo(system.position);
+        if (systemDistance < radarRange + 2000) {
+            
+            // Add all orbiters from this system
+            system.userData.orbiters.forEach(orbiter => {
+                const distance = camera.position.distanceTo(orbiter.position);
+                if (distance < radarRange) {
+                    nearbyObjects.push({
+                        position: orbiter.position,
+                        type: orbiter.userData.type,
+                        name: orbiter.userData.name,
+                        distance: distance,
+                        isOuterSystem: true
+                    });
+                }
+            });
+            
+            // Add center object
+            if (system.userData.centerObject) {
+                const centerDist = camera.position.distanceTo(system.userData.centerObject.position);
+                if (centerDist < radarRange) {
+                    nearbyObjects.push({
+                        position: system.userData.centerObject.position,
+                        type: system.userData.centerType,
+                        name: system.userData.name + ' Core',
+                        distance: centerDist,
+                        isOuterSystem: true
+                    });
+                }
+            }
+        }
+    });
+}
+        
         // Add nearby enemies
         enemies.forEach(enemy => {
             if (!enemy || !enemy.position || !enemy.userData || enemy.userData.health <= 0) return;
@@ -1154,19 +1194,34 @@ planets.forEach(planet => {
                 dot.className = 'galactic-target-dot absolute';
                 
                 // Color based on type
-                let dotColor = '#4488ff'; // Default blue for planets
-                let dotSize = '4px';
-                
-                if (obj.type === 'enemy') {
-                    dotColor = obj.isBoss ? '#ff00ff' : '#ff4444'; // Purple for boss, red for enemy
-                    dotSize = obj.isBoss ? '8px' : '6px';
-                } else if (obj.type === 'blackhole') {
-                    dotColor = '#000000';
-                    dotSize = '6px';
-                } else if (obj.type === 'star') {
-                    dotColor = '#ffff44';
-                    dotSize = '5px';
-                }
+let dotColor = '#4488ff'; // Default blue for planets
+let dotSize = '4px';
+
+if (obj.type === 'enemy') {
+    dotColor = obj.isBoss ? '#ff00ff' : '#ff4444';
+    dotSize = obj.isBoss ? '8px' : '6px';
+} else if (obj.type === 'blackhole') {
+    dotColor = '#000000';
+    dotSize = '6px';
+} else if (obj.type === 'star') {
+    dotColor = '#ffff44';
+    dotSize = '5px';
+} else if (obj.type === 'brown_dwarf') {
+    dotColor = '#8b4513';
+    dotSize = '5px';
+} else if (obj.type === 'pulsar') {
+    dotColor = '#44eeff';
+    dotSize = '6px';
+} else if (obj.type === 'supernova') {
+    dotColor = '#ff6600';
+    dotSize = '7px';
+} else if (obj.type === 'plasma_storm') {
+    dotColor = '#aa44ff';
+    dotSize = '7px';
+} else if (obj.type === 'solar_storm') {
+    dotColor = '#ffff00';
+    dotSize = '7px';
+}
                 
                 dot.style.width = dotSize;
                 dot.style.height = dotSize;
