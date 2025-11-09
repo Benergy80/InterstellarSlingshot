@@ -503,6 +503,7 @@ function createSystemStarfield(center, maxRadius, color, systemGroup) {
     const baseColor = new THREE.Color(color);
     
     for (let i = 0; i < starCount; i++) {
+        // Spherical distribution
         const theta = Math.random() * Math.PI * 2;
         const phi = Math.acos(2 * Math.random() - 1);
         const r = Math.random() * starfieldRadius;
@@ -513,6 +514,7 @@ function createSystemStarfield(center, maxRadius, color, systemGroup) {
         
         positions.push(x, y, z);
         
+        // Vary color slightly
         const colorVariation = new THREE.Color(
             baseColor.r * (0.8 + Math.random() * 0.4),
             baseColor.g * (0.8 + Math.random() * 0.4),
