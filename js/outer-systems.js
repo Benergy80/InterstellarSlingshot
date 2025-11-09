@@ -33,7 +33,7 @@ function createOuterInterstellarSystems() {
     const innerBoundary = 40000; // Furthest galaxy
     const outerBoundary = 85000; // Near skybox (universe radius ~100000)
     const targetRadius = (innerBoundary + outerBoundary) / 2; // ~62500
-    const radiusVariation = 10000;
+    const radiusVariation = 8000;
     
     for (let i = 0; i < 16; i++) {
         // Spherical distribution
@@ -559,8 +559,8 @@ function updateOuterSystems() {
         if (!system.userData || !system.userData.orbiters) return;
         
         const systemDist = system.position.distanceTo(playerPos);
-        const blurStart = 50000;
-        const blurMax = 80000;
+        const blurStart = 30000;
+        const blurMax = 60000;
         
         let opacity = 1.0;
         if (systemDist > blurStart) {
