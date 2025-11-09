@@ -729,16 +729,22 @@ if (typeof initializeCosmicFeatures === 'function') {
     console.log('Special cosmic features initialized');
 }
 
+// Create outer interstellar systems
+if (typeof createOuterInterstellarSystems === 'function') {
+    createOuterInterstellarSystems();
+    console.log('🌌 Outer interstellar systems created');
+}
+
 // âœ… ADD THIS RIGHT HERE:
 if (typeof createWarpSpeedStarfield === 'function') {
     createWarpSpeedStarfield();
-    console.log('ðŸš€ 3D warp speed starfield created');
+    console.log('3D warp speed starfield created');
 }
 // Enhance cosmic features for collision and slingshot support
 if (typeof enhanceCosmicFeaturesForGameplay === 'function') {
     setTimeout(() => {
         enhanceCosmicFeaturesForGameplay();
-        console.log('âœ… Cosmic features enhanced for gameplay');
+        console.log('Cosmic features enhanced for gameplay');
     }, 500); // Small delay to ensure all features are created
 }
             // Create orbit lines after planets exist
@@ -933,7 +939,7 @@ if (typeof nebulaGasClouds !== 'undefined' && nebulaGasClouds.length > 0) {
     });
 }
 
-// â­ NEW: Animate asteroid belts rotation
+// NEW: Animate asteroid belts rotation
 if (typeof asteroidBelts !== 'undefined' && asteroidBelts.length > 0) {
     asteroidBelts.forEach(belt => {
         if (belt.userData.rotationSpeed && belt.rotation) {
@@ -941,6 +947,11 @@ if (typeof asteroidBelts !== 'undefined' && asteroidBelts.length > 0) {
         }
     });
 } 
+    
+    // Update outer systems
+if (typeof updateOuterSystems === 'function') {
+    updateOuterSystems();
+}
     
 // Pulse enemy glow for visibility - OPTIMIZED: Only nearby enemies
 if (typeof enemies !== 'undefined' && enemies.length > 0 && gameState.frameCount % 2 === 0) {
