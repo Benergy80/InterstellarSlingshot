@@ -490,6 +490,8 @@ function createSystemOrbitLine(center, radius, systemGroup) {
     line.userData = { type: 'orbit_line', orbitColor: orbitColor };
     
     systemGroup.add(line);
+    // Create star-field matching this orbit
+    createSystemStarfield(center, radius, orbitColor, systemGroup);
 }
 
 function createSystemStarfield(systemGroup) {
@@ -510,7 +512,7 @@ function createSystemStarfield(systemGroup) {
     }
     
     const starCount = 800;
-    const starfieldRadius = maxRadius * 2.0; // Make it MUCH larger
+    const starfieldRadius = maxRadius * .5; 
     
     const positions = [];
     const colors = [];
