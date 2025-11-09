@@ -1049,19 +1049,11 @@ function updateGalaxyMap() {
 planets.forEach(planet => {
     if (!planet || !planet.position) return;
     
-    // OPTIMIZED: Manual world position calculation (faster than getWorldPosition)
-    let worldPos = new THREE.Vector3();
-    
-    if (planet.userData.type === 'asteroid' && planet.userData.beltGroup) {
-        // Fast calculation: beltGroup world position + asteroid local position
-        const beltPos = planet.userData.beltGroup.position;
-        worldPos.set(
-            beltPos.x + planet.position.x,
-            beltPos.y + planet.position.y,
-            beltPos.z + planet.position.z
-        );
+    // FIXED: Get world position for asteroids in belt groups
+    const worldPos = new THREE.Vector3();
+    if (planet.userData.type === 'asteroid' && planet.parent) {
+        planet.getWorldPosition(worldPos);
     } else {
-        // Regular objects use their position directly
         worldPos.copy(planet.position);
     }
     
