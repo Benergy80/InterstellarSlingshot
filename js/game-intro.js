@@ -1,7 +1,7 @@
 // Game Intro - Cinematic Launch Sequence from Earth
 // Adapted for Spherical Universe System
 // Creates an immersive first-person launch experience before normal gameplay begins
-// FIXED: Proper fade to black and fade in timing, enhanced cyberpunk mission command text
+// FIXED: Proper fade to black and fade in timing, cyberpunk mission command text
 
 // =============================================================================
 // INTRO SEQUENCE STATE MANAGEMENT
@@ -315,18 +315,18 @@ function initializeMinimalThreeJS() {
 function startLoadingAnimation() {
     let progress = 0;
     const loadingTexts = [
-        "Starting enhanced systems...",
-        "Loading cosmic data (spherical universe)...", 
+        "Starting flight systems...",
+        "Loading cosmic data...", 
         "Scanning galaxy coordinates...",
         "Calculating orbital mechanics...",
         "Calibrating gravitational sensors...",
         "Initializing gravitational assist systems...",
-        "Preparing cyberpunk 3D environment...",
-        "Loading enhanced weapon systems...",
+        "Preparing 3D environment...",
+        "Loading weapon systems...",
         "Optimizing neural interface...",
-        "Setting up eerie space audio...",
+        "Setting up space audio...",
         "Synchronizing quantum drives...",
-        "Ready for enhanced launch!"
+        "Ready for launch!"
     ];
     
     const interval = setInterval(() => {
@@ -1312,15 +1312,6 @@ function animateTransitionPhase(elapsed) {
     } else {
         // Slow fade in from black (remaining time)
         const fadeInProgress = (progress - 0.3) / 0.7;
-        
-        // Cleanup distant asteroids at start of fade-in (matches warp behavior)
-        if (fadeInProgress < 0.05 && !introSequence.asteroidsCleanedUp) {
-            if (typeof cleanupDistantAsteroids === 'function') {
-                cleanupDistantAsteroids(7,8); // Keep only local galaxy (ID 7)
-                console.log('♻️ Distant asteroids cleaned up during fade-in');
-            }
-            introSequence.asteroidsCleanedUp = true;
-        }
         
         createFadeFromBlack(fadeInProgress);
     }
