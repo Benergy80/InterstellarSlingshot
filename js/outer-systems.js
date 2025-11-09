@@ -112,35 +112,38 @@ function createOuterSystem(center, name, centerType, systemId) {
 // =============================================================================
 
 function createSystemSupernova(center, systemGroup) {
-    // Core
+    // Core - using MeshStandardMaterial for emissive support
     const coreGeo = new THREE.SphereGeometry(80, 32, 32);
-    const coreMat = new THREE.MeshBasicMaterial({
+    const coreMat = new THREE.MeshStandardMaterial({
         color: 0xff6600,
         emissive: 0xff6600,
-        emissiveIntensity: 2
+        emissiveIntensity: 2,
+        roughness: 0.2,
+        metalness: 0.5
     });
     const core = new THREE.Mesh(coreGeo, coreMat);
     core.position.copy(center);
-    core.userData = {
-    type: 'supernova',
-    name: `${systemGroup.userData.name} Core`,
-    systemName: systemGroup.userData.name,
-    location: 'Unexplored Interstellar Space',
-    radius: 80,
-    mass: 3.0,
-    slingshotMultiplier: 3.0
-};
-
-scene.add(core);
-
-// ADD TO PLANETS ARRAY
-if (typeof planets !== 'undefined') {
-    planets.push(core);
-}
-
-systemGroup.userData.centerObject = core;
     
-    // Glow layers
+    core.userData = {
+        type: 'supernova',
+        name: `${systemGroup.userData.name} Core`,
+        systemName: systemGroup.userData.name,
+        location: 'Unexplored Interstellar Space',
+        radius: 80,
+        mass: 3.0,
+        slingshotMultiplier: 3.0
+    };
+
+    scene.add(core);
+
+    // ADD TO PLANETS ARRAY
+    if (typeof planets !== 'undefined') {
+        planets.push(core);
+    }
+
+    systemGroup.userData.centerObject = core;
+    
+    // Glow layers - MeshBasicMaterial is fine here
     for (let i = 0; i < 3; i++) {
         const size = 120 + i * 60;
         const opacity = 0.4 - i * 0.1;
@@ -161,22 +164,41 @@ systemGroup.userData.centerObject = core;
     light.position.copy(center);
     systemGroup.add(light);
     systemGroup.add(core);
-    
-    systemGroup.userData.centerObject = core;
 }
 
 function createSystemPlasmaStorm(center, systemGroup) {
-    // Core
+    // Core - using MeshStandardMaterial for emissive support
     const coreGeo = new THREE.SphereGeometry(60, 32, 32);
-    const coreMat = new THREE.MeshBasicMaterial({
+    const coreMat = new THREE.MeshStandardMaterial({
         color: 0xaa44ff,
         emissive: 0xaa44ff,
-        emissiveIntensity: 2
+        emissiveIntensity: 2,
+        roughness: 0.2,
+        metalness: 0.4
     });
     const core = new THREE.Mesh(coreGeo, coreMat);
     core.position.copy(center);
     
-    // Plasma clouds
+    core.userData = {
+        type: 'plasma_storm',
+        name: `${systemGroup.userData.name} Core`,
+        systemName: systemGroup.userData.name,
+        location: 'Unexplored Interstellar Space',
+        radius: 60,
+        mass: 2.5,
+        slingshotMultiplier: 2.8
+    };
+
+    scene.add(core);
+
+    // ADD TO PLANETS ARRAY
+    if (typeof planets !== 'undefined') {
+        planets.push(core);
+    }
+
+    systemGroup.userData.centerObject = core;
+    
+    // Plasma clouds - MeshBasicMaterial is fine here
     for (let i = 0; i < 5; i++) {
         const angle = (i / 5) * Math.PI * 2;
         const cloudGeo = new THREE.SphereGeometry(40, 16, 16);
@@ -199,22 +221,41 @@ function createSystemPlasmaStorm(center, systemGroup) {
     light.position.copy(center);
     systemGroup.add(light);
     systemGroup.add(core);
-    
-    systemGroup.userData.centerObject = core;
 }
 
 function createSystemSolarStorm(center, systemGroup) {
-    // Core
+    // Core - using MeshStandardMaterial for emissive support
     const coreGeo = new THREE.SphereGeometry(70, 32, 32);
-    const coreMat = new THREE.MeshBasicMaterial({
+    const coreMat = new THREE.MeshStandardMaterial({
         color: 0xffff00,
         emissive: 0xffff00,
-        emissiveIntensity: 2
+        emissiveIntensity: 2,
+        roughness: 0.2,
+        metalness: 0.3
     });
     const core = new THREE.Mesh(coreGeo, coreMat);
     core.position.copy(center);
     
-    // Flares
+    core.userData = {
+        type: 'solar_storm',
+        name: `${systemGroup.userData.name} Core`,
+        systemName: systemGroup.userData.name,
+        location: 'Unexplored Interstellar Space',
+        radius: 70,
+        mass: 2.8,
+        slingshotMultiplier: 3.2
+    };
+
+    scene.add(core);
+
+    // ADD TO PLANETS ARRAY
+    if (typeof planets !== 'undefined') {
+        planets.push(core);
+    }
+
+    systemGroup.userData.centerObject = core;
+    
+    // Flares - MeshBasicMaterial is fine here
     for (let i = 0; i < 8; i++) {
         const angle = (i / 8) * Math.PI * 2;
         const flareGeo = new THREE.ConeGeometry(20, 150, 8);
@@ -242,8 +283,6 @@ function createSystemSolarStorm(center, systemGroup) {
     light.position.copy(center);
     systemGroup.add(light);
     systemGroup.add(core);
-    
-    systemGroup.userData.centerObject = core;
 }
 
 // =============================================================================
@@ -254,8 +293,6 @@ function createOrbitingBrownDwarf(center, orbitRadius, index, systemGroup) {
     const geo = new THREE.SphereGeometry(35, 24, 24);
     const mat = new THREE.MeshStandardMaterial({
         color: 0x8b4513,
-        emissive: 0x4d2600,
-        emissiveIntensity: 0.8,
         metalness: 0.3,
         roughness: 0.7
     });
@@ -296,11 +333,14 @@ function createOrbitingBrownDwarf(center, orbitRadius, index, systemGroup) {
 }
 
 function createOrbitingPulsar(center, orbitRadius, index, systemGroup) {
+    // Core - use MeshStandardMaterial for proper emissive glow
     const coreGeo = new THREE.SphereGeometry(20, 16, 16);
-    const coreMat = new THREE.MeshBasicMaterial({
+    const coreMat = new THREE.MeshStandardMaterial({
         color: 0x44eeff,
         emissive: 0x44eeff,
-        emissiveIntensity: 3
+        emissiveIntensity: 3,
+        roughness: 0.1,
+        metalness: 0.8
     });
     const pulsar = new THREE.Mesh(coreGeo, coreMat);
     
@@ -340,16 +380,15 @@ function createOrbitingPulsar(center, orbitRadius, index, systemGroup) {
     };
     
     systemGroup.userData.orbiters.push(pulsar);
-    scene.add(pulsar); // NEW
+    scene.add(pulsar);
     
-    // ADD TO PLANETS ARRAY FOR PHYSICS - NEW
+    // ADD TO PLANETS ARRAY FOR PHYSICS
     if (typeof planets !== 'undefined') {
         planets.push(pulsar);
     }
     
     return pulsar;
 }
-
 function createOrbitingAsteroid(center, orbitRadius, index, systemGroup) {
     const size = 3 + Math.random() * 5;
     const geo = new THREE.DodecahedronGeometry(size);
