@@ -4732,8 +4732,8 @@ function createAsteroidBelts() {
         for (let b = 0; b < beltCount; b++) {
             const beltGroup = new THREE.Group();
             
-            // PLENTIFUL: 50-100 asteroids
-            const asteroidCount = 25 + Math.random() * 50;
+            // PLENTIFUL: 50-150 asteroids
+            const asteroidCount = 100 + Math.random() * 50;
             
             // CLOSER: 800-2000 units from black hole
         	const beltRadius = 1600 + Math.random() * 1000;
