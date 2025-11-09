@@ -1313,15 +1313,6 @@ function animateTransitionPhase(elapsed) {
         // Slow fade in from black (remaining time)
         const fadeInProgress = (progress - 0.3) / 0.7;
         
-        // Cleanup distant asteroids at start of fade-in (matches warp behavior)
-        if (fadeInProgress < 0.05 && !introSequence.asteroidsCleanedUp) {
-            if (typeof cleanupDistantAsteroids === 'function') {
-                cleanupDistantAsteroids(7,8); // Keep only local galaxy (ID 7)
-                console.log('♻️ Distant asteroids cleaned up during fade-in');
-            }
-            introSequence.asteroidsCleanedUp = true;
-        }
-        
         createFadeFromBlack(fadeInProgress);
     }
     
