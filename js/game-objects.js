@@ -4695,7 +4695,7 @@ function createAsteroidBelts() {
         window.asteroidBelts = [];
     }
     
-    const nearbyDistance = 40000;
+    const nearbyDistance = 80000;
     
     // FIXED: Find actual black holes in the scene
     const blackHoles = planets.filter(p => 
@@ -4733,7 +4733,7 @@ function createAsteroidBelts() {
             const beltGroup = new THREE.Group();
             
             // PLENTIFUL: 50-100 asteroids
-            const asteroidCount = 50 + Math.random() * 50;
+            const asteroidCount = 25 + Math.random() * 50;
             
             // CLOSER: 800-2000 units from black hole
         	const beltRadius = 1600 + Math.random() * 1000;
