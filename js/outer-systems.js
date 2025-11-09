@@ -500,13 +500,7 @@ function createSystemStarfield(center, maxRadius, color, systemGroup) {
     const colors = [];
     const sizes = [];
     
-    // White/yellow colors only
-    const starColors = [
-        new THREE.Color(0xffffff), // White
-        new THREE.Color(0xffffee), // Warm white
-        new THREE.Color(0xffeeaa), // Light yellow
-        new THREE.Color(0xffdd88)  // Yellow
-    ];
+    const baseColor = new THREE.Color(color);
     
     for (let i = 0; i < starCount; i++) {
         const theta = Math.random() * Math.PI * 2;
@@ -519,8 +513,12 @@ function createSystemStarfield(center, maxRadius, color, systemGroup) {
         
         positions.push(x, y, z);
         
-        const starColor = starColors[Math.floor(Math.random() * starColors.length)];
-        colors.push(starColor.r, starColor.g, starColor.b);
+        const colorVariation = new THREE.Color(
+            baseColor.r * (0.8 + Math.random() * 0.4),
+            baseColor.g * (0.8 + Math.random() * 0.4),
+            baseColor.b * (0.8 + Math.random() * 0.4)
+        );
+        colors.push(colorVariation.r, colorVariation.g, colorVariation.b);
         sizes.push(1 + Math.random() * 2);
     }
     
@@ -533,15 +531,12 @@ function createSystemStarfield(center, maxRadius, color, systemGroup) {
         size: 2,
         vertexColors: true,
         transparent: true,
-        opacity: 0.7,
+        opacity: 0.6,
         sizeAttenuation: true
     });
     
     const starfield = new THREE.Points(geometry, material);
-    starfield.userData = { 
-        type: 'system_starfield',
-        rotationSpeed: 0.0001 + Math.random() * 0.0002
-    };
+    starfield.userData = { type: 'system_starfield' };
     systemGroup.add(starfield);
 }
 
