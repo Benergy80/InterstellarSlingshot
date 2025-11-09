@@ -1843,6 +1843,12 @@ function setupNormalGameContent() {
         console.log('🚀 3D warp speed starfield created');
     }
     
+    // CREATE OUTER INTERSTELLAR SYSTEMS
+    if (typeof createOuterInterstellarSystems === 'function') {
+        createOuterInterstellarSystems();
+        console.log('Outer interstellar systems created');
+    }
+    
     // Create nebulas
     if (typeof createNebulas === 'function') {
         createNebulas();
