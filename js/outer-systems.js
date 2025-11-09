@@ -495,9 +495,7 @@ function createSystemOrbitLine(center, radius, systemGroup) {
 function createSystemStarfield(center, maxRadius, color, systemGroup) {
     const starCount = 200 + Math.floor(Math.random() * 300);
     const starfieldRadius = maxRadius * 0.5;
-    
     const positions = [];
-    const colors = [];
     const sizes = [];
     
     // White/yellow colors only
