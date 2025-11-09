@@ -513,9 +513,10 @@ function createSystemStarfield(center, maxRadius, color, systemGroup) {
         const phi = Math.acos(2 * Math.random() - 1);
         const r = Math.random() * starfieldRadius;
         
-        const x = center.x + r * Math.sin(phi) * Math.cos(theta);
-        const y = center.y + r * Math.sin(phi) * Math.sin(theta);
-        const z = center.z + r * Math.cos(phi);
+        // LOCAL coordinates since we're adding to systemGroup
+        const x = r * Math.sin(phi) * Math.cos(theta);
+        const y = r * Math.sin(phi) * Math.sin(theta);
+        const z = r * Math.cos(phi);
         
         positions.push(x, y, z);
         
@@ -530,10 +531,10 @@ function createSystemStarfield(center, maxRadius, color, systemGroup) {
     geometry.setAttribute('size', new THREE.Float32BufferAttribute(sizes, 1));
     
     const material = new THREE.PointsMaterial({
-        size: 2,
+        size: 3,
         vertexColors: true,
         transparent: true,
-        opacity: 0.7,
+        opacity: 0.8,
         sizeAttenuation: true
     });
     
@@ -543,8 +544,9 @@ function createSystemStarfield(center, maxRadius, color, systemGroup) {
         rotationSpeed: 0.0001 + Math.random() * 0.0002
     };
     systemGroup.add(starfield);
+    
+    console.log(`Created starfield with ${starCount} stars around ${systemGroup.userData.name}`);
 }
-
 function createSystemStarfield(center, maxRadius, color, systemGroup) {
     const starCount = 200 + Math.floor(Math.random() * 300);
     const starfieldRadius = maxRadius * 0.5;
