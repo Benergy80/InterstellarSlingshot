@@ -94,7 +94,7 @@ function createOuterSystem(center, name, centerType, systemId) {
     for (let i = 0; i < brownDwarfCount; i++) {
         const orbitRadius = 800 + Math.random() * 1200;
         createOrbitingBrownDwarf(center, orbitRadius, i, systemGroup);
-        createSystemOrbitLine(center, orbitRadius, systemGroup);
+        createSystemOrbitLine(center, orbitRadius, systemGroup); // REMOVED COLOR PARAM
     }
     
     // Orbiting pulsars (1-3)
@@ -102,7 +102,7 @@ function createOuterSystem(center, name, centerType, systemId) {
     for (let i = 0; i < pulsarCount; i++) {
         const orbitRadius = 1500 + Math.random() * 1500;
         createOrbitingPulsar(center, orbitRadius, i, systemGroup);
-        createSystemOrbitLine(center, orbitRadius, systemGroup);
+        createSystemOrbitLine(center, orbitRadius, systemGroup); // REMOVED COLOR PARAM
     }
     
     // Asteroid field
@@ -111,7 +111,9 @@ function createOuterSystem(center, name, centerType, systemId) {
     for (let i = 0; i < asteroidCount; i++) {
         createOrbitingAsteroid(center, asteroidOrbitRadius, i, systemGroup);
     }
-    createSystemOrbitLine(center, asteroidOrbitRadius, systemGroup);
+    createSystemOrbitLine(center, asteroidOrbitRadius, systemGroup); // REMOVED COLOR PARAM
+    
+    // CREATE ONE LARGE STARFIELD FOR THIS ENTIRE SYSTEM
     createSystemStarfield(systemGroup);
     
     scene.add(systemGroup);
@@ -493,17 +495,9 @@ function createSystemOrbitLine(center, radius, systemGroup) {
     createSystemStarfield(center, radius, orbitColor, systemGroup);
 }
 
-function createSystemStarfield(systemGroup) {
-    // Use the largest orbit radius to determine starfield size
-    let maxRadius = 1000; // Default
-    systemGroup.userData.orbiters.forEach(orbiter => {
-        if (orbiter.userData && orbiter.userData.orbitRadius) {
-            maxRadius = Math.max(maxRadius, orbiter.userData.orbitRadius);
-        }
-    });
-    
-    const starCount = 500 + Math.floor(Math.random() * 500);
-    const starfieldRadius = maxRadius * 1.2; // Make it larger than largest orbit
+function createSystemStarfield(center, maxRadius, color, systemGroup) {
+    const starCount = 200 + Math.floor(Math.random() * 300);
+    const starfieldRadius = maxRadius * 0.5;
     
     const positions = [];
     const colors = [];
@@ -512,17 +506,17 @@ function createSystemStarfield(systemGroup) {
     // White/yellow colors only
     const starColors = [
         new THREE.Color(0xffffff), // White
-        new THREE.Color(0xffffee), // Warm white  
+        new THREE.Color(0xffffee), // Warm white
         new THREE.Color(0xffeeaa), // Light yellow
         new THREE.Color(0xffdd88)  // Yellow
     ];
     
     for (let i = 0; i < starCount; i++) {
-        // Spherical distribution in LOCAL space
         const theta = Math.random() * Math.PI * 2;
         const phi = Math.acos(2 * Math.random() - 1);
         const r = Math.random() * starfieldRadius;
         
+        // LOCAL coordinates since we're adding to systemGroup
         const x = r * Math.sin(phi) * Math.cos(theta);
         const y = r * Math.sin(phi) * Math.sin(theta);
         const z = r * Math.cos(phi);
@@ -531,7 +525,7 @@ function createSystemStarfield(systemGroup) {
         
         const starColor = starColors[Math.floor(Math.random() * starColors.length)];
         colors.push(starColor.r, starColor.g, starColor.b);
-        sizes.push(2 + Math.random() * 4); // Larger stars
+        sizes.push(1 + Math.random() * 2);
     }
     
     const geometry = new THREE.BufferGeometry();
@@ -540,22 +534,21 @@ function createSystemStarfield(systemGroup) {
     geometry.setAttribute('size', new THREE.Float32BufferAttribute(sizes, 1));
     
     const material = new THREE.PointsMaterial({
-        size: 6, // Much larger base size
+        size: 3,
         vertexColors: true,
         transparent: true,
-        opacity: 0.9,
+        opacity: 0.8,
         sizeAttenuation: true
     });
     
     const starfield = new THREE.Points(geometry, material);
-    starfield.frustumCulled = false; // Don't cull
     starfield.userData = { 
         type: 'system_starfield',
         rotationSpeed: 0.0001 + Math.random() * 0.0002
     };
     systemGroup.add(starfield);
     
-    console.log(`✨ Created starfield with ${starCount} stars for ${systemGroup.userData.name} (radius: ${starfieldRadius.toFixed(0)})`);
+    console.log(`Created starfield with ${starCount} stars around ${systemGroup.userData.name}`);
 }
 
 // =============================================================================
