@@ -4688,7 +4688,7 @@ function createAsteroidBelts() {
         window.asteroidBelts = [];
     }
     
-    const nearbyDistance = 40000;
+    const nearbyDistance = 5000;
     
     // FIXED: Find actual black holes in the scene
     const blackHoles = planets.filter(p => 
