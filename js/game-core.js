@@ -647,6 +647,18 @@ setTimeout(() => {
     }
 }, 2000); // Wait for nebulas to be fully created first
 
+// In your game initialization section, add:
+if (typeof initializeCosmicFeatures === 'function') {
+    initializeCosmicFeatures();
+    console.log('Special cosmic features initialized');
+}
+
+// Create outer interstellar systems
+if (typeof createOuterInterstellarSystems === 'function') {
+    createOuterInterstellarSystems();
+    console.log('🌌 Outer interstellar systems created');
+}
+
             // TEMPORARILY DISABLED: Asteroid creation on initial load
 // Asteroids will only be created during the intro sequence for better FPS
 /*
@@ -655,7 +667,7 @@ if (typeof createAsteroidBelts === 'function') {
     console.log('Asteroid belts created');
 }
 */
-console.log('âš ï¸ INITIAL ASTEROID LOAD DISABLED - Will load during intro sequence only');
+console.log('INITIAL ASTEROID LOAD DISABLED - Will load during intro sequence only');
 
             if (typeof createEnhancedComets === 'function') {
                 createEnhancedComets();
@@ -723,19 +735,7 @@ setTimeout(() => {
     }
 }, 100);
 
-            // In your game initialization section, add:
-if (typeof initializeCosmicFeatures === 'function') {
-    initializeCosmicFeatures();
-    console.log('Special cosmic features initialized');
-}
-
-// Create outer interstellar systems
-if (typeof createOuterInterstellarSystems === 'function') {
-    createOuterInterstellarSystems();
-    console.log('🌌 Outer interstellar systems created');
-}
-
-// âœ… ADD THIS RIGHT HERE:
+// ADD THIS RIGHT HERE:
 if (typeof createWarpSpeedStarfield === 'function') {
     createWarpSpeedStarfield();
     console.log('3D warp speed starfield created');
