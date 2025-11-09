@@ -498,19 +498,23 @@ function createSystemStarfield(systemGroup) {
         return;
     }
     
-    // Use the largest orbit radius to determine starfield size
-    let maxRadius = 1000;
+    // ADD DEBUG MARKER at center (0,0,0 local space)
+    const markerGeo = new THREE.SphereGeometry(50, 16, 16);
+    const markerMat = new THREE.MeshBasicMaterial({
+        color: 0x00ff00,
+        transparent: true,
+        opacity: 0.8
+    });
+    const marker = new THREE.Mesh(markerGeo, markerMat);
+    marker.position.set(0, 0, 0);
+    marker.userData = { type: 'debug_marker' };
+    systemGroup.add(marker);
     
-    if (systemGroup.userData.orbiters && systemGroup.userData.orbiters.length > 0) {
-        systemGroup.userData.orbiters.forEach(orbiter => {
-            if (orbiter.userData && orbiter.userData.orbitRadius) {
-                maxRadius = Math.max(maxRadius, orbiter.userData.orbitRadius);
-            }
-        });
-    }
+    // Calculate starfield size
+    let maxRadius = 2000; // Larger default
     
-    const starCount = 800;
-    const starfieldRadius = maxRadius * 2.0; // Make it MUCH larger
+    const starCount = 1000;
+    const starfieldRadius = maxRadius * 1.5;
     
     const positions = [];
     const colors = [];
@@ -528,7 +532,7 @@ function createSystemStarfield(systemGroup) {
         const phi = Math.acos(2 * Math.random() - 1);
         const r = Math.random() * starfieldRadius;
         
-        // Local coordinates (systemGroup is already positioned at center)
+        // Local space - centered at (0,0,0)
         const x = r * Math.sin(phi) * Math.cos(theta);
         const y = r * Math.sin(phi) * Math.sin(theta);
         const z = r * Math.cos(phi);
@@ -537,7 +541,7 @@ function createSystemStarfield(systemGroup) {
         
         const starColor = starColors[Math.floor(Math.random() * starColors.length)];
         colors.push(starColor.r, starColor.g, starColor.b);
-        sizes.push(3 + Math.random() * 5);
+        sizes.push(4 + Math.random() * 6);
     }
     
     const geometry = new THREE.BufferGeometry();
@@ -546,7 +550,7 @@ function createSystemStarfield(systemGroup) {
     geometry.setAttribute('size', new THREE.Float32BufferAttribute(sizes, 1));
     
     const material = new THREE.PointsMaterial({
-        size: 8,
+        size: 10,
         vertexColors: true,
         transparent: true,
         opacity: 1.0,
@@ -555,18 +559,23 @@ function createSystemStarfield(systemGroup) {
     });
     
     const starfield = new THREE.Points(geometry, material);
-    starfield.position.set(0, 0, 0); // Explicitly at local origin
+    starfield.position.set(0, 0, 0); // LOCAL ORIGIN
     starfield.frustumCulled = false;
     starfield.renderOrder = -1;
     starfield.userData = { 
         type: 'system_starfield',
-        rotationSpeed: 0.0002 + Math.random() * 0.0003,
+        rotationSpeed: 0.01, // MUCH FASTER - 100x faster than before
         systemName: systemGroup.userData.name
     };
     
     systemGroup.add(starfield);
     
-    console.log(`✨ Created starfield with ${starCount} stars for ${systemGroup.userData.name} (radius: ${starfieldRadius.toFixed(0)} units)`);
+    console.log(`✨ Starfield for ${systemGroup.userData.name}:
+        - Position: (0, 0, 0) local
+        - Parent position: (${systemGroup.position.x.toFixed(0)}, ${systemGroup.position.y.toFixed(0)}, ${systemGroup.position.z.toFixed(0)})
+        - Stars: ${starCount}
+        - Radius: ${starfieldRadius.toFixed(0)}
+        - Rotation speed: ${starfield.userData.rotationSpeed}`);
 }
 
 // =============================================================================
@@ -581,7 +590,6 @@ function updateOuterSystems() {
     outerInterstellarSystems.forEach(system => {
         if (!system.userData || !system.userData.orbiters) return;
         
-        // Distance blurring
         const systemDist = system.position.distanceTo(playerPos);
         const blurStart = 30000;
         const blurMax = 60000;
@@ -591,21 +599,21 @@ function updateOuterSystems() {
             opacity = 1.0 - Math.min(1, (systemDist - blurStart) / (blurMax - blurStart));
         }
         
-        // Get system tilt
         const tiltX = system.userData.tiltX || 0;
         const tiltZ = system.userData.tiltZ || 0;
         
-        // Rotate starfields and apply opacity
+        // Update all children
         system.children.forEach(child => {
-            // Rotate starfield
+            // ROTATE STARFIELD FAST
             if (child.userData && child.userData.type === 'system_starfield') {
                 child.rotation.y += child.userData.rotationSpeed;
+                child.rotation.x += child.userData.rotationSpeed * 0.5;
                 if (child.material) {
                     child.material.opacity = opacity;
                 }
             }
             
-            // Apply opacity to other materials
+            // Apply opacity to materials
             if (child.material && child.userData.type !== 'system_starfield') {
                 if (Array.isArray(child.material)) {
                     child.material.forEach(mat => {
@@ -631,12 +639,10 @@ function updateOuterSystems() {
             
             orbiter.userData.orbitAngle += orbiter.userData.orbitSpeed;
             
-            // Calculate position on flat plane first
             let x = Math.cos(orbiter.userData.orbitAngle) * orbiter.userData.orbitRadius;
             let y = 0;
             let z = Math.sin(orbiter.userData.orbitAngle) * orbiter.userData.orbitRadius;
             
-            // Apply system tilt
             const rotatedX = x;
             const rotatedY = y * Math.cos(tiltX) - z * Math.sin(tiltX);
             const rotatedZ = y * Math.sin(tiltX) + z * Math.cos(tiltX);
@@ -645,7 +651,6 @@ function updateOuterSystems() {
             const finalY = rotatedX * Math.sin(tiltZ) + rotatedY * Math.cos(tiltZ);
             const finalZ = rotatedZ;
             
-            // Apply to world position
             orbiter.position.set(
                 orbiter.userData.orbitCenter.x + finalX,
                 orbiter.userData.orbitCenter.y + finalY,
