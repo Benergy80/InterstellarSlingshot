@@ -438,6 +438,7 @@ function createOrbitingAsteroid(center, orbitRadius, index, systemGroup) {
     };
     
     systemGroup.userData.orbiters.push(asteroid);
+    scene.add(asteroid); // ADD THIS LINE
     return asteroid;
 }
 
