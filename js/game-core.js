@@ -1374,6 +1374,24 @@ if (typeof checkCosmicFeatureInteractions === 'function' && typeof camera !== 'u
         updateCrosshairTargeting();
     }
     
+    // Update crosshair less frequently to avoid interfering with UI clicks
+    if (gameState.frameCount % 3 === 0 && typeof updateCrosshairTargeting === 'function') {
+        updateCrosshairTargeting();
+    }
+    
+    // DIAGNOSTIC: Log expensive operations every 60 frames
+    if (gameState.frameCount % 60 === 0) {
+        console.log('=== FRAME DIAGNOSTIC ===');
+        console.log('Map View:', gameState.mapView);
+        console.log('Planets array length:', planets ? planets.length : 0);
+        console.log('Enemies array length:', enemies ? enemies.length : 0);
+        console.log('Asteroid belts:', asteroidBelts ? asteroidBelts.length : 0);
+        console.log('Local galaxy stars visible:', localGalaxyStars ? localGalaxyStars.visible : 'N/A');
+        console.log('Scene children count:', scene ? scene.children.length : 0);
+        console.log('Frame time:', frameTime.toFixed(2), 'ms');
+        console.log('updateGalaxyMap called:', gameState.frameCount % 60 === 0 ? 'YES' : 'NO');
+    }
+    
     renderer.render(scene, camera);
 }
 
