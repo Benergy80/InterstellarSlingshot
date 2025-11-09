@@ -492,36 +492,52 @@ function createSystemOrbitLine(center, radius, systemGroup) {
     systemGroup.add(line);
 }
 
-function createSystemStarfield(center, maxRadius, color, systemGroup) {
-    const starCount = 200 + Math.floor(Math.random() * 300);
-    const starfieldRadius = maxRadius * 0.5;
+function createSystemStarfield(systemGroup) {
+    if (!systemGroup || !systemGroup.add) {
+        console.error('Invalid systemGroup passed to createSystemStarfield');
+        return;
+    }
+    
+    // Use the largest orbit radius to determine starfield size
+    let maxRadius = 1000;
+    
+    if (systemGroup.userData.orbiters && systemGroup.userData.orbiters.length > 0) {
+        systemGroup.userData.orbiters.forEach(orbiter => {
+            if (orbiter.userData && orbiter.userData.orbitRadius) {
+                maxRadius = Math.max(maxRadius, orbiter.userData.orbitRadius);
+            }
+        });
+    }
+    
+    const starCount = 800;
+    const starfieldRadius = maxRadius * 2.0; // Make it MUCH larger
     
     const positions = [];
     const colors = [];
     const sizes = [];
     
-    const baseColor = new THREE.Color(color);
+    const starColors = [
+        new THREE.Color(0xffffff),
+        new THREE.Color(0xffffee),
+        new THREE.Color(0xffeeaa),
+        new THREE.Color(0xffdd88)
+    ];
     
     for (let i = 0; i < starCount; i++) {
-        // Spherical distribution
         const theta = Math.random() * Math.PI * 2;
         const phi = Math.acos(2 * Math.random() - 1);
         const r = Math.random() * starfieldRadius;
         
-        const x = center.x + r * Math.sin(phi) * Math.cos(theta);
-        const y = center.y + r * Math.sin(phi) * Math.sin(theta);
-        const z = center.z + r * Math.cos(phi);
+        // Local coordinates (systemGroup is already positioned at center)
+        const x = r * Math.sin(phi) * Math.cos(theta);
+        const y = r * Math.sin(phi) * Math.sin(theta);
+        const z = r * Math.cos(phi);
         
         positions.push(x, y, z);
         
-        // Vary color slightly
-        const colorVariation = new THREE.Color(
-            baseColor.r * (0.8 + Math.random() * 0.4),
-            baseColor.g * (0.8 + Math.random() * 0.4),
-            baseColor.b * (0.8 + Math.random() * 0.4)
-        );
-        colors.push(colorVariation.r, colorVariation.g, colorVariation.b);
-        sizes.push(1 + Math.random() * 2);
+        const starColor = starColors[Math.floor(Math.random() * starColors.length)];
+        colors.push(starColor.r, starColor.g, starColor.b);
+        sizes.push(3 + Math.random() * 5);
     }
     
     const geometry = new THREE.BufferGeometry();
@@ -530,16 +546,27 @@ function createSystemStarfield(center, maxRadius, color, systemGroup) {
     geometry.setAttribute('size', new THREE.Float32BufferAttribute(sizes, 1));
     
     const material = new THREE.PointsMaterial({
-        size: 2,
+        size: 8,
         vertexColors: true,
         transparent: true,
-        opacity: 0.6,
-        sizeAttenuation: true
+        opacity: 1.0,
+        sizeAttenuation: true,
+        blending: THREE.AdditiveBlending
     });
     
     const starfield = new THREE.Points(geometry, material);
-    starfield.userData = { type: 'system_starfield' };
+    starfield.position.set(0, 0, 0); // Explicitly at local origin
+    starfield.frustumCulled = false;
+    starfield.renderOrder = -1;
+    starfield.userData = { 
+        type: 'system_starfield',
+        rotationSpeed: 0.0002 + Math.random() * 0.0003,
+        systemName: systemGroup.userData.name
+    };
+    
     systemGroup.add(starfield);
+    
+    console.log(`✨ Created starfield with ${starCount} stars for ${systemGroup.userData.name} (radius: ${starfieldRadius.toFixed(0)} units)`);
 }
 
 // =============================================================================
