@@ -1458,7 +1458,7 @@ else if (planet.userData.parentPlanet && planet.userData.orbitRadius > 0) {
     
     // FIXED: Speed adjustments based on moon type with proper distant galaxy handling
     if (planet.userData.isLocal) {
-        moonSpeed *= 2.5; // Local system moons orbit faster
+        moonSpeed *= 5; // Local system moons orbit faster
     } else if (planet.userData.isLocalGateway) {
         moonSpeed *= 2.8; // Local gateway system moons
     } else if (planet.userData.nebulaId !== undefined) {
