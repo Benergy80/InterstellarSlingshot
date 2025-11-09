@@ -499,7 +499,13 @@ function createSystemStarfield(center, maxRadius, color, systemGroup) {
     const colors = [];
     const sizes = [];
     
-    const baseColor = new THREE.Color(color);
+    // White/yellow colors only
+    const starColors = [
+        new THREE.Color(0xffffff), // White
+        new THREE.Color(0xffffee), // Warm white
+        new THREE.Color(0xffeeaa), // Light yellow
+        new THREE.Color(0xffdd88)  // Yellow
+    ];
     
     for (let i = 0; i < starCount; i++) {
         const theta = Math.random() * Math.PI * 2;
@@ -512,12 +518,8 @@ function createSystemStarfield(center, maxRadius, color, systemGroup) {
         
         positions.push(x, y, z);
         
-        const colorVariation = new THREE.Color(
-            baseColor.r * (0.8 + Math.random() * 0.4),
-            baseColor.g * (0.8 + Math.random() * 0.4),
-            baseColor.b * (0.8 + Math.random() * 0.4)
-        );
-        colors.push(colorVariation.r, colorVariation.g, colorVariation.b);
+        const starColor = starColors[Math.floor(Math.random() * starColors.length)];
+        colors.push(starColor.r, starColor.g, starColor.b);
         sizes.push(1 + Math.random() * 2);
     }
     
@@ -530,12 +532,15 @@ function createSystemStarfield(center, maxRadius, color, systemGroup) {
         size: 2,
         vertexColors: true,
         transparent: true,
-        opacity: 0.6,
+        opacity: 0.7,
         sizeAttenuation: true
     });
     
     const starfield = new THREE.Points(geometry, material);
-    starfield.userData = { type: 'system_starfield' };
+    starfield.userData = { 
+        type: 'system_starfield',
+        rotationSpeed: 0.0001 + Math.random() * 0.0002
+    };
     systemGroup.add(starfield);
 }
 
@@ -601,7 +606,7 @@ function updateOuterSystems() {
         
         // Distance blurring
         const systemDist = system.position.distanceTo(playerPos);
-        const blurStart = 30000;
+        const blurStart = 20000;
         const blurMax = 60000;
         
         let opacity = 1.0;
@@ -609,7 +614,11 @@ function updateOuterSystems() {
             opacity = 1.0 - Math.min(1, (systemDist - blurStart) / (blurMax - blurStart));
         }
         
-        // Apply opacity to all system objects
+        // Get system tilt
+        const tiltX = system.userData.tiltX || 0;
+        const tiltZ = system.userData.tiltZ || 0;
+        
+        // Apply opacity and rotate starfields
         system.traverse((child) => {
             if (child.material) {
                 if (Array.isArray(child.material)) {
@@ -622,10 +631,15 @@ function updateOuterSystems() {
                 } else {
                     if (child.material.transparent !== false) {
                         child.material.transparent = true;
-                        const baseMaterialOpacity = child.userData.baseOpacity || 1.0;
-                        child.material.opacity = baseMaterialOpacity * opacity;
+                        const baseOpacity = child.userData.baseOpacity || 1.0;
+                        child.material.opacity = baseOpacity * opacity;
                     }
                 }
+            }
+            
+            // Rotate starfields
+            if (child.userData && child.userData.type === 'system_starfield') {
+                child.rotation.y += child.userData.rotationSpeed;
             }
         });
         
@@ -634,13 +648,26 @@ function updateOuterSystems() {
             
             orbiter.userData.orbitAngle += orbiter.userData.orbitSpeed;
             
-            const x = orbiter.userData.orbitCenter.x + 
-                     Math.cos(orbiter.userData.orbitAngle) * orbiter.userData.orbitRadius;
-            const z = orbiter.userData.orbitCenter.z + 
-                     Math.sin(orbiter.userData.orbitAngle) * orbiter.userData.orbitRadius;
+            // Calculate position on flat plane first
+            let x = Math.cos(orbiter.userData.orbitAngle) * orbiter.userData.orbitRadius;
+            let y = 0;
+            let z = Math.sin(orbiter.userData.orbitAngle) * orbiter.userData.orbitRadius;
             
-            orbiter.position.x = x;
-            orbiter.position.z = z;
+            // Apply system tilt
+            const rotatedX = x;
+            const rotatedY = y * Math.cos(tiltX) - z * Math.sin(tiltX);
+            const rotatedZ = y * Math.sin(tiltX) + z * Math.cos(tiltX);
+            
+            const finalX = rotatedX * Math.cos(tiltZ) - rotatedY * Math.sin(tiltZ);
+            const finalY = rotatedX * Math.sin(tiltZ) + rotatedY * Math.cos(tiltZ);
+            const finalZ = rotatedZ;
+            
+            // Apply to world position
+            orbiter.position.set(
+                orbiter.userData.orbitCenter.x + finalX,
+                orbiter.userData.orbitCenter.y + finalY,
+                orbiter.userData.orbitCenter.z + finalZ
+            );
             
             if (orbiter.userData.type === 'pulsar') {
                 orbiter.rotation.y += orbiter.userData.rotationSpeed;
