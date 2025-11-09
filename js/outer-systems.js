@@ -112,6 +112,7 @@ function createOuterSystem(center, name, centerType, systemId) {
         createOrbitingAsteroid(center, asteroidOrbitRadius, i, systemGroup);
     }
     createSystemOrbitLine(center, asteroidOrbitRadius, systemGroup);
+    createSystemStarfield(systemGroup);
     
     scene.add(systemGroup);
     outerInterstellarSystems.push(systemGroup);
@@ -546,55 +547,6 @@ function createSystemStarfield(center, maxRadius, color, systemGroup) {
     systemGroup.add(starfield);
     
     console.log(`Created starfield with ${starCount} stars around ${systemGroup.userData.name}`);
-}
-function createSystemStarfield(center, maxRadius, color, systemGroup) {
-    const starCount = 200 + Math.floor(Math.random() * 300);
-    const starfieldRadius = maxRadius * 0.5;
-    
-    const positions = [];
-    const colors = [];
-    const sizes = [];
-    
-    const baseColor = new THREE.Color(color);
-    
-    for (let i = 0; i < starCount; i++) {
-        // Spherical distribution
-        const theta = Math.random() * Math.PI * 2;
-        const phi = Math.acos(2 * Math.random() - 1);
-        const r = Math.random() * starfieldRadius;
-        
-        const x = center.x + r * Math.sin(phi) * Math.cos(theta);
-        const y = center.y + r * Math.sin(phi) * Math.sin(theta);
-        const z = center.z + r * Math.cos(phi);
-        
-        positions.push(x, y, z);
-        
-        // Vary color slightly
-        const colorVariation = new THREE.Color(
-            baseColor.r * (0.8 + Math.random() * 0.4),
-            baseColor.g * (0.8 + Math.random() * 0.4),
-            baseColor.b * (0.8 + Math.random() * 0.4)
-        );
-        colors.push(colorVariation.r, colorVariation.g, colorVariation.b);
-        sizes.push(1 + Math.random() * 2);
-    }
-    
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-    geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
-    geometry.setAttribute('size', new THREE.Float32BufferAttribute(sizes, 1));
-    
-    const material = new THREE.PointsMaterial({
-        size: 2,
-        vertexColors: true,
-        transparent: true,
-        opacity: 0.6,
-        sizeAttenuation: true
-    });
-    
-    const starfield = new THREE.Points(geometry, material);
-    starfield.userData = { type: 'system_starfield' };
-    systemGroup.add(starfield);
 }
 
 // =============================================================================
