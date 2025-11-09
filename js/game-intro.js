@@ -319,12 +319,12 @@ function startLoadingAnimation() {
         "Loading cosmic data...", 
         "Scanning galaxy coordinates...",
         "Calculating orbital mechanics...",
-        "Calibrating gravitational sensors...",
+        "Calibrating navigation sensors...",
         "Initializing gravitational assist systems...",
         "Preparing 3D environment...",
-        "Loading weapon systems...",
+        "Loading cyber weapon systems...",
         "Optimizing neural interface...",
-        "Setting up space audio...",
+        "Setting up synth audio...",
         "Synchronizing quantum drives...",
         "Ready for launch!"
     ];
@@ -350,7 +350,7 @@ function startLoadingAnimation() {
         if (progress >= 100) {
             clearInterval(interval);
             if (loadingText) {
-                loadingText.textContent = "Ready for enhanced launch!";
+                loadingText.textContent = "Ready for launch!";
             }
             console.log('🚀 Loading animation completed in ~3 seconds');
         }
