@@ -998,6 +998,38 @@ function updateCompass() {
     }
 }
 
+// DOM element pool for map dots
+const mapDotPool = {
+    available: [],
+    inUse: new Set(),
+    
+    get(type) {
+        let dot = this.available.pop();
+        if (!dot) {
+            dot = document.createElement('div');
+            dot.className = `${type}-dot absolute`;
+        }
+        this.inUse.add(dot);
+        return dot;
+    },
+    
+    release(dot) {
+        if (this.inUse.has(dot)) {
+            this.inUse.delete(dot);
+            dot.remove();
+            this.available.push(dot);
+        }
+    },
+    
+    releaseAll() {
+        this.inUse.forEach(dot => {
+            dot.remove();
+            this.available.push(dot);
+        });
+        this.inUse.clear();
+    }
+};
+
 function updateGalaxyMap() {
     if (typeof gameState === 'undefined' || typeof camera === 'undefined') return;
     
@@ -1029,13 +1061,8 @@ function updateGalaxyMap() {
     const sgrAEl = document.querySelector('[title="Sagittarius A* - Galactic Center"]');
     if (sgrAEl) sgrAEl.style.display = 'none';
     
-     // Clear existing target dots
-    const existingTargetDots = document.querySelectorAll('.galactic-target-dot');
-    existingTargetDots.forEach(dot => dot.remove());
-    
-    // FIXED: Also clear cosmic feature dots from universal view
-    const existingCosmicDots = document.querySelectorAll('.cosmic-feature-dot');
-    existingCosmicDots.forEach(dot => dot.remove());
+    // NEW - ADD THIS:
+	mapDotPool.releaseAll();
     
     // Show nearby objects as dots (enemies, planets, etc.)
     const galaxyMap = document.getElementById('galaxyMap');
@@ -1110,7 +1137,7 @@ planets.forEach(planet => {
             
             // Only show if within map bounds
             if (screenX >= 5 && screenX <= 95 && screenZ >= 5 && screenZ <= 95) {
-                const dot = document.createElement('div');
+                const dot = mapDotPool.get('cosmic-feature');
                 dot.className = 'galactic-target-dot absolute';
                 
                 // Color based on type
