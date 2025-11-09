@@ -1313,7 +1313,9 @@ function animateTransitionPhase(elapsed) {
         // Slow fade in from black (remaining time)
         const fadeInProgress = (progress - 0.3) / 0.7;
         
-        // Cleanup distant asteroids at start of fade-in (matches warp behavior)
+         // Cleanup distant asteroids at start of fade-in (matches warp behavior)
+        // DISABLED: Keep all asteroids visible at game start
+        /*
         if (fadeInProgress < 0.05 && !introSequence.asteroidsCleanedUp) {
             if (typeof cleanupDistantAsteroids === 'function') {
                 cleanupDistantAsteroids(7,8); // Keep only local galaxy (ID 7,8)
@@ -1321,9 +1323,7 @@ function animateTransitionPhase(elapsed) {
             }
             introSequence.asteroidsCleanedUp = true;
         }
-        
-        createFadeFromBlack(fadeInProgress);
-    }
+        */
     
     // Fade out intro elements after game appears
     if (progress < 0.8) {
