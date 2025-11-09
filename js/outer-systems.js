@@ -30,10 +30,10 @@ const outerSystemNames = [
 function createOuterInterstellarSystems() {
     console.log('🌌 Creating 16 outer interstellar systems in deep space...');
     
-    const innerBoundary = 35000; // Furthest galaxy
+    const innerBoundary = 45000; // Furthest galaxy
     const outerBoundary = 65000; // Near skybox (universe radius ~100000)
-    const targetRadius = (innerBoundary + outerBoundary) / 2; // ~50000
-    const radiusVariation = 12000;
+    const targetRadius = (innerBoundary + outerBoundary) / 2; // ~62500
+    const radiusVariation = 10000;
     
     for (let i = 0; i < 16; i++) {
         // Spherical distribution
