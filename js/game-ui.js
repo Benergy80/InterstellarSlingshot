@@ -1043,6 +1043,7 @@ function updateGalaxyMap() {
     // PERFORMANCE: Limit asteroid rendering to reduce DOM operations
     const galaxyMap = document.getElementById('galaxyMap');
     const radarRange = 5000;
+    const maxAsteroidsToShow = 100; // Limit asteroids on radar
     
     if (galaxyMap && typeof planets !== 'undefined' && typeof enemies !== 'undefined') {
         const nearbyObjects = [];
