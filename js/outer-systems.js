@@ -155,6 +155,7 @@ function createSystemSupernova(center, systemGroup) {
             blending: THREE.AdditiveBlending
         });
         const glow = new THREE.Mesh(glowGeo, glowMat);
+        glow.userData.baseOpacity = opacity; // ADD THIS
         glow.position.copy(center);
         systemGroup.add(glow);
     }
@@ -215,6 +216,7 @@ function createSystemPlasmaStorm(center, systemGroup) {
             center.z + Math.sin(angle) * 100
         );
         systemGroup.add(cloud);
+        cloud.userData.baseOpacity = 0.6; // ADD THIS LINE
     }
     
     const light = new THREE.PointLight(0xaa44ff, 12, 4000);
@@ -277,6 +279,7 @@ function createSystemSolarStorm(center, systemGroup) {
             center.z + Math.sin(angle) * 200
         ));
         systemGroup.add(flare);
+        flare.userData.baseOpacity = 0.7; // ADD THIS LINE
     }
     
     const light = new THREE.PointLight(0xffff00, 18, 5000);
@@ -429,25 +432,99 @@ function createSystemOrbitLine(center, radius, color, systemGroup) {
     const segments = 128;
     const points = [];
     
+    // Random tilt for each orbit
+    const tiltX = (Math.random() - 0.5) * Math.PI * 0.4;
+    const tiltZ = (Math.random() - 0.5) * Math.PI * 0.4;
+    
+    // CMB color variations
+    const cmbColors = [0xff6b35, 0xff9933, 0xffd700, 0xffffff, 0xffaa88];
+    const orbitColor = cmbColors[Math.floor(Math.random() * cmbColors.length)];
+    
     for (let i = 0; i <= segments; i++) {
         const angle = (i / segments) * Math.PI * 2;
+        let x = Math.cos(angle) * radius;
+        let y = 0;
+        let z = Math.sin(angle) * radius;
+        
+        // Apply tilt
+        const rotatedX = x;
+        const rotatedY = y * Math.cos(tiltX) - z * Math.sin(tiltX);
+        const rotatedZ = y * Math.sin(tiltX) + z * Math.cos(tiltX);
+        
+        const finalX = rotatedX * Math.cos(tiltZ) - rotatedY * Math.sin(tiltZ);
+        const finalY = rotatedX * Math.sin(tiltZ) + rotatedY * Math.cos(tiltZ);
+        const finalZ = rotatedZ;
+        
         points.push(new THREE.Vector3(
-            center.x + Math.cos(angle) * radius,
-            center.y,
-            center.z + Math.sin(angle) * radius
+            center.x + finalX,
+            center.y + finalY,
+            center.z + finalZ
         ));
     }
     
     const geo = new THREE.BufferGeometry().setFromPoints(points);
     const mat = new THREE.LineBasicMaterial({
-        color: color,
+        color: orbitColor,
         transparent: true,
-        opacity: 0.3
+        opacity: 0.4
     });
     const line = new THREE.Line(geo, mat);
-    line.userData = { type: 'orbit_line' };
+    line.userData = { type: 'orbit_line', orbitColor: orbitColor };
     
     systemGroup.add(line);
+    
+    // Create star-field around this system with matching color
+    createSystemStarfield(center, radius, orbitColor, systemGroup);
+}
+
+function createSystemStarfield(center, maxRadius, color, systemGroup) {
+    const starCount = 200 + Math.floor(Math.random() * 300);
+    const starfieldRadius = maxRadius * 0.5;
+    
+    const positions = [];
+    const colors = [];
+    const sizes = [];
+    
+    const baseColor = new THREE.Color(color);
+    
+    for (let i = 0; i < starCount; i++) {
+        // Spherical distribution
+        const theta = Math.random() * Math.PI * 2;
+        const phi = Math.acos(2 * Math.random() - 1);
+        const r = Math.random() * starfieldRadius;
+        
+        const x = center.x + r * Math.sin(phi) * Math.cos(theta);
+        const y = center.y + r * Math.sin(phi) * Math.sin(theta);
+        const z = center.z + r * Math.cos(phi);
+        
+        positions.push(x, y, z);
+        
+        // Vary color slightly
+        const colorVariation = new THREE.Color(
+            baseColor.r * (0.8 + Math.random() * 0.4),
+            baseColor.g * (0.8 + Math.random() * 0.4),
+            baseColor.b * (0.8 + Math.random() * 0.4)
+        );
+        colors.push(colorVariation.r, colorVariation.g, colorVariation.b);
+        sizes.push(1 + Math.random() * 2);
+    }
+    
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+    geometry.setAttribute('size', new THREE.Float32BufferAttribute(sizes, 1));
+    
+    const material = new THREE.PointsMaterial({
+        size: 2,
+        vertexColors: true,
+        transparent: true,
+        opacity: 0.6,
+        sizeAttenuation: true
+    });
+    
+    const starfield = new THREE.Points(geometry, material);
+    starfield.userData = { type: 'system_starfield' };
+    systemGroup.add(starfield);
 }
 
 // =============================================================================
@@ -455,16 +532,46 @@ function createSystemOrbitLine(center, radius, color, systemGroup) {
 // =============================================================================
 
 function updateOuterSystems() {
+    const playerPos = camera.position;
+    
     outerInterstellarSystems.forEach(system => {
         if (!system.userData.orbiters) return;
+        
+        // Distance blurring
+        const systemDist = system.position.distanceTo(playerPos);
+        const blurStart = 30000;
+        const blurMax = 60000;
+        
+        let opacity = 1.0;
+        if (systemDist > blurStart) {
+            opacity = 1.0 - Math.min(1, (systemDist - blurStart) / (blurMax - blurStart));
+        }
+        
+        // Apply opacity to all system objects
+        system.traverse((child) => {
+            if (child.material) {
+                if (Array.isArray(child.material)) {
+                    child.material.forEach(mat => {
+                        if (mat.transparent !== false) {
+                            mat.transparent = true;
+                            mat.opacity = Math.min(mat.opacity, opacity);
+                        }
+                    });
+                } else {
+                    if (child.material.transparent !== false) {
+                        child.material.transparent = true;
+                        const baseMaterialOpacity = child.userData.baseOpacity || 1.0;
+                        child.material.opacity = baseMaterialOpacity * opacity;
+                    }
+                }
+            }
+        });
         
         system.userData.orbiters.forEach(orbiter => {
             if (!orbiter.userData.orbitAngle) return;
             
-            // Update orbit angle
             orbiter.userData.orbitAngle += orbiter.userData.orbitSpeed;
             
-            // Calculate new position
             const x = orbiter.userData.orbitCenter.x + 
                      Math.cos(orbiter.userData.orbitAngle) * orbiter.userData.orbitRadius;
             const z = orbiter.userData.orbitCenter.z + 
@@ -473,7 +580,6 @@ function updateOuterSystems() {
             orbiter.position.x = x;
             orbiter.position.z = z;
             
-            // Rotate pulsars
             if (orbiter.userData.type === 'pulsar') {
                 orbiter.rotation.y += orbiter.userData.rotationSpeed;
             }
