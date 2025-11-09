@@ -493,10 +493,15 @@ function createSystemOrbitLine(center, radius, systemGroup) {
 }
 
 function createSystemStarfield(systemGroup) {
-    // Use the largest orbit radius to determine starfield size
-    let maxRadius = 1000; // Default
+    if (!systemGroup || !systemGroup.add) {
+        console.error('Invalid systemGroup passed to createSystemStarfield');
+        return;
+    }
     
-    if (systemGroup.userData.orbiters) {
+    // Use the largest orbit radius to determine starfield size
+    let maxRadius = 1000;
+    
+    if (systemGroup.userData.orbiters && systemGroup.userData.orbiters.length > 0) {
         systemGroup.userData.orbiters.forEach(orbiter => {
             if (orbiter.userData && orbiter.userData.orbitRadius) {
                 maxRadius = Math.max(maxRadius, orbiter.userData.orbitRadius);
@@ -504,8 +509,8 @@ function createSystemStarfield(systemGroup) {
         });
     }
     
-    const starCount = 500 + Math.floor(Math.random() * 500);
-    const starfieldRadius = maxRadius * 1.2;
+    const starCount = 800;
+    const starfieldRadius = maxRadius * 2.0; // Make it MUCH larger
     
     const positions = [];
     const colors = [];
@@ -523,6 +528,7 @@ function createSystemStarfield(systemGroup) {
         const phi = Math.acos(2 * Math.random() - 1);
         const r = Math.random() * starfieldRadius;
         
+        // Local coordinates (systemGroup is already positioned at center)
         const x = r * Math.sin(phi) * Math.cos(theta);
         const y = r * Math.sin(phi) * Math.sin(theta);
         const z = r * Math.cos(phi);
@@ -531,7 +537,7 @@ function createSystemStarfield(systemGroup) {
         
         const starColor = starColors[Math.floor(Math.random() * starColors.length)];
         colors.push(starColor.r, starColor.g, starColor.b);
-        sizes.push(2 + Math.random() * 4);
+        sizes.push(3 + Math.random() * 5);
     }
     
     const geometry = new THREE.BufferGeometry();
@@ -540,22 +546,27 @@ function createSystemStarfield(systemGroup) {
     geometry.setAttribute('size', new THREE.Float32BufferAttribute(sizes, 1));
     
     const material = new THREE.PointsMaterial({
-        size: 6,
+        size: 8,
         vertexColors: true,
         transparent: true,
-        opacity: 0.9,
-        sizeAttenuation: true
+        opacity: 1.0,
+        sizeAttenuation: true,
+        blending: THREE.AdditiveBlending
     });
     
     const starfield = new THREE.Points(geometry, material);
+    starfield.position.set(0, 0, 0); // Explicitly at local origin
     starfield.frustumCulled = false;
+    starfield.renderOrder = -1;
     starfield.userData = { 
         type: 'system_starfield',
-        rotationSpeed: 0.0001 + Math.random() * 0.0002
+        rotationSpeed: 0.0002 + Math.random() * 0.0003,
+        systemName: systemGroup.userData.name
     };
+    
     systemGroup.add(starfield);
     
-    console.log(`✨ Created starfield with ${starCount} stars for ${systemGroup.userData.name} (radius: ${starfieldRadius.toFixed(0)})`);
+    console.log(`✨ Created starfield with ${starCount} stars for ${systemGroup.userData.name} (radius: ${starfieldRadius.toFixed(0)} units)`);
 }
 
 // =============================================================================
@@ -563,14 +574,16 @@ function createSystemStarfield(systemGroup) {
 // =============================================================================
 
 function updateOuterSystems() {
+    if (!camera || !camera.position) return;
+    
     const playerPos = camera.position;
     
     outerInterstellarSystems.forEach(system => {
-        if (!system.userData.orbiters) return;
+        if (!system.userData || !system.userData.orbiters) return;
         
         // Distance blurring
         const systemDist = system.position.distanceTo(playerPos);
-        const blurStart = 20000;
+        const blurStart = 30000;
         const blurMax = 60000;
         
         let opacity = 1.0;
@@ -582,14 +595,24 @@ function updateOuterSystems() {
         const tiltX = system.userData.tiltX || 0;
         const tiltZ = system.userData.tiltZ || 0;
         
-        // Apply opacity and rotate starfields
-        system.traverse((child) => {
-            if (child.material) {
+        // Rotate starfields and apply opacity
+        system.children.forEach(child => {
+            // Rotate starfield
+            if (child.userData && child.userData.type === 'system_starfield') {
+                child.rotation.y += child.userData.rotationSpeed;
+                if (child.material) {
+                    child.material.opacity = opacity;
+                }
+            }
+            
+            // Apply opacity to other materials
+            if (child.material && child.userData.type !== 'system_starfield') {
                 if (Array.isArray(child.material)) {
                     child.material.forEach(mat => {
                         if (mat.transparent !== false) {
                             mat.transparent = true;
-                            mat.opacity = Math.min(mat.opacity, opacity);
+                            const baseOpacity = child.userData.baseOpacity || 1.0;
+                            mat.opacity = baseOpacity * opacity;
                         }
                     });
                 } else {
@@ -600,13 +623,9 @@ function updateOuterSystems() {
                     }
                 }
             }
-            
-            // Rotate starfields
-            if (child.userData && child.userData.type === 'system_starfield') {
-                child.rotation.y += child.userData.rotationSpeed;
-            }
         });
         
+        // Update orbiters
         system.userData.orbiters.forEach(orbiter => {
             if (!orbiter.userData.orbitAngle) return;
             
@@ -639,7 +658,6 @@ function updateOuterSystems() {
         });
     });
 }
-
 // =============================================================================
 // EXPORTS
 // =============================================================================
