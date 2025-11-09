@@ -1016,6 +1016,13 @@ const mapDotPool = {
         if (this.inUse.has(dot)) {
             this.inUse.delete(dot);
             dot.remove();
+            
+            // CLEAR ALL STYLES AND ATTRIBUTES
+            dot.className = '';
+            dot.style.cssText = '';
+            dot.innerHTML = '';
+            dot.title = '';
+            
             this.available.push(dot);
         }
     },
@@ -1023,6 +1030,13 @@ const mapDotPool = {
     releaseAll() {
         this.inUse.forEach(dot => {
             dot.remove();
+            
+            // CLEAR ALL STYLES AND ATTRIBUTES
+            dot.className = '';
+            dot.style.cssText = '';
+            dot.innerHTML = '';
+            dot.title = '';
+            
             this.available.push(dot);
         });
         this.inUse.clear();
