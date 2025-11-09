@@ -1029,54 +1029,49 @@ function updateGalaxyMap() {
     const sgrAEl = document.querySelector('[title="Sagittarius A* - Galactic Center"]');
     if (sgrAEl) sgrAEl.style.display = 'none';
     
-     // Clear existing target dots
-    const existingTargetDots = document.querySelectorAll('.galactic-target-dot');
-    existingTargetDots.forEach(dot => dot.remove());
+     // Clear existing target dots ONLY IF switching views
+    if (!gameState.lastMapView || gameState.lastMapView !== 'galactic') {
+        const existingTargetDots = document.querySelectorAll('.galactic-target-dot');
+        existingTargetDots.forEach(dot => dot.remove());
+        gameState.lastMapView = 'galactic';
+    }
     
     // FIXED: Also clear cosmic feature dots from universal view
     const existingCosmicDots = document.querySelectorAll('.cosmic-feature-dot');
     existingCosmicDots.forEach(dot => dot.remove());
     
-    // Show nearby objects as dots (enemies, planets, etc.)
+    // PERFORMANCE: Limit asteroid rendering to reduce DOM operations
     const galaxyMap = document.getElementById('galaxyMap');
-    const radarRange = 5000; // Detection range for galactic view
+    const radarRange = 5000;
     
     if (galaxyMap && typeof planets !== 'undefined' && typeof enemies !== 'undefined') {
-        // Collect all nearby targetable objects
         const nearbyObjects = [];
+        let asteroidCount = 0;
         
-        // Add nearby planets
-planets.forEach(planet => {
-    if (!planet || !planet.position) return;
-    
-    // OPTIMIZED: Manual world position calculation (faster than getWorldPosition)
-    let worldPos = new THREE.Vector3();
-    
-    if (planet.userData.type === 'asteroid' && planet.userData.beltGroup) {
-        // Fast calculation: beltGroup world position + asteroid local position
-        const beltPos = planet.userData.beltGroup.position;
-        worldPos.set(
-            beltPos.x + planet.position.x,
-            beltPos.y + planet.position.y,
-            beltPos.z + planet.position.z
-        );
-    } else {
-        // Regular objects use their position directly
-        worldPos.copy(planet.position);
-    }
-    
-    const distance = camera.position.distanceTo(worldPos);
-    if (distance < radarRange && distance > 10) { // Not too close
-        nearbyObjects.push({
-            position: worldPos,
-            type: planet.userData.type,
-            name: planet.userData.name,
-            distance: distance
+        // Add nearby planets (with asteroid limit)
+        planets.forEach(planet => {
+            if (!planet || !planet.position) return;
+            
+            // PERFORMANCE: Limit asteroids shown on radar
+            if (planet.userData.type === 'asteroid') {
+                if (asteroidCount >= maxAsteroidsToShow) return;
+                asteroidCount++;
+            }
+            
+            const worldPos = planet.position;
+            const distance = camera.position.distanceTo(worldPos);
+            
+            if (distance < radarRange && distance > 10) {
+                nearbyObjects.push({
+                    position: worldPos,
+                    type: planet.userData.type,
+                    name: planet.userData.name,
+                    distance: distance
+                });
+            }
         });
-    }
-});
         
-        // Add nearby enemies
+        // Add nearby enemies (no limit)
         enemies.forEach(enemy => {
             if (!enemy || !enemy.position || !enemy.userData || enemy.userData.health <= 0) return;
             const distance = camera.position.distanceTo(enemy.position);
@@ -1091,25 +1086,25 @@ planets.forEach(planet => {
             }
         });
         
-        // Display objects as dots on map
+        // PERFORMANCE: Use DocumentFragment for batch DOM insertion
+        const fragment = document.createDocumentFragment();
+        
         nearbyObjects.forEach(obj => {
             const relativeX = (obj.position.x - camera.position.x) / radarRange;
             const relativeZ = (obj.position.z - camera.position.z) / radarRange;
             
-            const screenX = 50 + relativeX * 50; // Scale to fit map
+            const screenX = 50 + relativeX * 50;
             const screenZ = 50 + relativeZ * 50;
             
-            // Only show if within map bounds
             if (screenX >= 5 && screenX <= 95 && screenZ >= 5 && screenZ <= 95) {
                 const dot = document.createElement('div');
                 dot.className = 'galactic-target-dot absolute';
                 
-                // Color based on type
-                let dotColor = '#4488ff'; // Default blue for planets
+                let dotColor = '#4488ff';
                 let dotSize = '4px';
                 
                 if (obj.type === 'enemy') {
-                    dotColor = obj.isBoss ? '#ff00ff' : '#ff4444'; // Purple for boss, red for enemy
+                    dotColor = obj.isBoss ? '#ff00ff' : '#ff4444';
                     dotSize = obj.isBoss ? '8px' : '6px';
                 } else if (obj.type === 'blackhole') {
                     dotColor = '#000000';
@@ -1119,20 +1114,26 @@ planets.forEach(planet => {
                     dotSize = '5px';
                 }
                 
-                dot.style.width = dotSize;
-                dot.style.height = dotSize;
-                dot.style.backgroundColor = dotColor;
-                dot.style.borderRadius = '50%';
-                dot.style.left = `${screenX}%`;
-                dot.style.top = `${screenZ}%`;
-                dot.style.transform = 'translate(-50%, -50%)';
-                dot.style.boxShadow = `0 0 4px ${dotColor}`;
-                dot.style.pointerEvents = 'none';
+                // Set all styles at once
+                dot.style.cssText = `
+                    width: ${dotSize};
+                    height: ${dotSize};
+                    background-color: ${dotColor};
+                    border-radius: 50%;
+                    left: ${screenX}%;
+                    top: ${screenZ}%;
+                    transform: translate(-50%, -50%);
+                    box-shadow: 0 0 4px ${dotColor};
+                    pointer-events: none;
+                `;
                 dot.title = `${obj.name} (${obj.distance.toFixed(0)} units)`;
                 
-                galaxyMap.appendChild(dot);
+                fragment.appendChild(dot);
             }
         });
+        
+        // Single DOM operation instead of 100+
+        galaxyMap.appendChild(fragment);
     }
     
     // Update current target indicator
