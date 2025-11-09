@@ -228,8 +228,8 @@ gameState.emergencyWarp = {
         gameState.eventHorizonWarning = {
             active: false,
             blackHole: null,
-            warningDistance: 400,
-            criticalDistance: 160
+            warningDistance: 300,
+            criticalDistance: 120
         };
     }
     // Call this during game initialization
