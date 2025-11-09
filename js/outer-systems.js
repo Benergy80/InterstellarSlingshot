@@ -30,8 +30,8 @@ const outerSystemNames = [
 function createOuterInterstellarSystems() {
     console.log('🌌 Creating 16 outer interstellar systems in deep space...');
     
-    const innerBoundary = 40000; // Furthest galaxy
-    const outerBoundary = 85000; // Near skybox (universe radius ~100000)
+    const innerBoundary = 45000; // Furthest galaxy
+    const outerBoundary = 65000; // Near skybox (universe radius ~100000)
     const targetRadius = (innerBoundary + outerBoundary) / 2; // ~62500
     const radiusVariation = 10000;
     
@@ -490,6 +490,7 @@ function createSystemOrbitLine(center, radius, systemGroup) {
     line.userData = { type: 'orbit_line', orbitColor: orbitColor };
     
     systemGroup.add(line);
+    
     // Create star-field matching this orbit
     createSystemStarfield(center, radius, orbitColor, systemGroup);
 }
@@ -507,6 +508,7 @@ function createSystemStarfield(center, maxRadius, color, systemGroup) {
         new THREE.Color(0xffffff), // White
         new THREE.Color(0xffffee), // Warm white
         new THREE.Color(0xffeeaa), // Light yellow
+        new THREE.Color(0xffdd88)  // Yellow
     ];
     
     for (let i = 0; i < starCount; i++) {
@@ -554,15 +556,14 @@ function createSystemStarfield(center, maxRadius, color, systemGroup) {
 // =============================================================================
 
 function updateOuterSystems() {
-    if (!camera || !camera.position) return;
-    
     const playerPos = camera.position;
     
     outerInterstellarSystems.forEach(system => {
-        if (!system.userData || !system.userData.orbiters) return;
+        if (!system.userData.orbiters) return;
         
+        // Distance blurring
         const systemDist = system.position.distanceTo(playerPos);
-        const blurStart = 30000;
+        const blurStart = 20000;
         const blurMax = 60000;
         
         let opacity = 1.0;
@@ -570,28 +571,18 @@ function updateOuterSystems() {
             opacity = 1.0 - Math.min(1, (systemDist - blurStart) / (blurMax - blurStart));
         }
         
+        // Get system tilt
         const tiltX = system.userData.tiltX || 0;
         const tiltZ = system.userData.tiltZ || 0;
         
-        // Update all children
-        system.children.forEach(child => {
-            // ROTATE STARFIELD FAST
-            if (child.userData && child.userData.type === 'system_starfield') {
-                child.rotation.y += child.userData.rotationSpeed;
-                child.rotation.x += child.userData.rotationSpeed * 0.5;
-                if (child.material) {
-                    child.material.opacity = opacity;
-                }
-            }
-            
-            // Apply opacity to materials
-            if (child.material && child.userData.type !== 'system_starfield') {
+        // Apply opacity and rotate starfields
+        system.traverse((child) => {
+            if (child.material) {
                 if (Array.isArray(child.material)) {
                     child.material.forEach(mat => {
                         if (mat.transparent !== false) {
                             mat.transparent = true;
-                            const baseOpacity = child.userData.baseOpacity || 1.0;
-                            mat.opacity = baseOpacity * opacity;
+                            mat.opacity = Math.min(mat.opacity, opacity);
                         }
                     });
                 } else {
@@ -602,18 +593,24 @@ function updateOuterSystems() {
                     }
                 }
             }
+            
+            // Rotate starfields
+            if (child.userData && child.userData.type === 'system_starfield') {
+                child.rotation.y += child.userData.rotationSpeed;
+            }
         });
         
-        // Update orbiters
         system.userData.orbiters.forEach(orbiter => {
             if (!orbiter.userData.orbitAngle) return;
             
             orbiter.userData.orbitAngle += orbiter.userData.orbitSpeed;
             
+            // Calculate position on flat plane first
             let x = Math.cos(orbiter.userData.orbitAngle) * orbiter.userData.orbitRadius;
             let y = 0;
             let z = Math.sin(orbiter.userData.orbitAngle) * orbiter.userData.orbitRadius;
             
+            // Apply system tilt
             const rotatedX = x;
             const rotatedY = y * Math.cos(tiltX) - z * Math.sin(tiltX);
             const rotatedZ = y * Math.sin(tiltX) + z * Math.cos(tiltX);
@@ -622,6 +619,7 @@ function updateOuterSystems() {
             const finalY = rotatedX * Math.sin(tiltZ) + rotatedY * Math.cos(tiltZ);
             const finalZ = rotatedZ;
             
+            // Apply to world position
             orbiter.position.set(
                 orbiter.userData.orbitCenter.x + finalX,
                 orbiter.userData.orbitCenter.y + finalY,
@@ -634,6 +632,7 @@ function updateOuterSystems() {
         });
     });
 }
+
 // =============================================================================
 // EXPORTS
 // =============================================================================
