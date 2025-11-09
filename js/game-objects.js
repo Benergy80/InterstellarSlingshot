@@ -104,6 +104,13 @@ const galaxy3DPositions = [
         theta: 1.1,
         name: 'Local Group (Sol System)'
     },
+    // Galaxy 8: Sagittarius A
+    { 
+        distance: 0.5, 
+        phi: 0.0, 
+        theta: 1.1,
+        name: 'Sagittarius A'
+    }
 ];
 
 // KEEP the old galaxyMapPositions as fallback for UI
@@ -1605,7 +1612,7 @@ try {
             isSagittariusA: true,
             targetGalaxy: Math.floor(Math.random() * 8),
             mapPosition: { x: 0.5, y: 0.5 },
-            galaxyId: 7,
+            galaxyId: 8,
             rotationSpeed: 0.025
         };
         
