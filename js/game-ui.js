@@ -1007,7 +1007,6 @@ const mapDotPool = {
         let dot = this.available.pop();
         if (!dot) {
             dot = document.createElement('div');
-            dot.className = `${type}-dot absolute`;
         }
         this.inUse.add(dot);
         return dot;
@@ -1211,7 +1210,7 @@ planets.forEach(planet => {
             
             // Only show if within map bounds
             if (featureMapX >= 0 && featureMapX <= 1 && featureMapZ >= 0 && featureMapZ <= 1) {
-                const dot = document.createElement('div');
+                const dot = mapDotPool.get('cosmic-feature');
                 dot.className = 'cosmic-feature-dot absolute';
                 dot.style.width = size;
                 dot.style.height = size;
@@ -1277,7 +1276,7 @@ planets.forEach(planet => {
                 
                 // Only show if within map bounds
                 if (nebulaMapX >= 0 && nebulaMapX <= 1 && nebulaMapZ >= 0 && nebulaMapZ <= 1) {
-                    const nebulaDot = document.createElement('div');
+                    const nebulaDot = mapDotPool.get('cosmic-feature');
                     nebulaDot.className = 'cosmic-feature-dot nebula-indicator absolute';
                     
                     // Larger size for nebulas
@@ -2374,4 +2373,4 @@ if (typeof window !== 'undefined') {
     console.log('Enhanced Game UI loaded - All compatibility issues resolved!');
 }
 
-console.log('Game UI system loaded successfully - COMPREHENSIVE REWRITE COMPLETE!');
+console.log('Game UI system loaded successfully');
