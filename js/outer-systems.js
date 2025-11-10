@@ -559,8 +559,8 @@ function updateOuterSystems() {
         if (!system.userData || !system.userData.orbiters) return;
         
         const systemDist = system.position.distanceTo(playerPos);
-        const blurStart = 65000;
-        const blurMax = 80000;
+        const blurStart = 85000;
+        const blurMax = 100000;
         
         let opacity = 1.0;
         if (systemDist > blurStart) {
