@@ -30,7 +30,7 @@ const outerSystemNames = [
 function createOuterInterstellarSystems() {
     console.log('🌌 Creating 16 outer interstellar systems in deep space...');
     
-    const innerBoundary = 55000; // Furthest galaxy
+    const innerBoundary = 45000; // Furthest galaxy
     const outerBoundary = 100000; // Near skybox (universe radius ~100000)
     const targetRadius = (innerBoundary + outerBoundary) / 2; // ~62500
     const radiusVariation = 10000;
@@ -520,7 +520,7 @@ function updateOuterSystems() {
         if (!system.userData || !system.userData.orbiters) return;
         
         const systemDist = system.position.distanceTo(playerPos);
-        const blurStart = 35000;
+        const blurStart = 15000;
         const blurMax = 65000;
         
         let opacity = 1.0;
