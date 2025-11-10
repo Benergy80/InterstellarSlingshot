@@ -5625,11 +5625,11 @@ function updateHubbleSkybox2Opacity() {
     if (distanceFromStart < fadeStartDistance) {
         targetOpacity = 0.00;
     } else if (distanceFromStart > fadeEndDistance) {
-        targetOpacity = .6;
+        targetOpacity = .7;
     } else {
         // Linear interpolation between 0.00 and 0.02
         const progress = (distanceFromStart - fadeStartDistance) / (fadeEndDistance - fadeStartDistance);
-        targetOpacity = 0.00 + (progress * .6); // 0.02 = 0.02 - 0.00
+        targetOpacity = 0.00 + (progress * .7); // 0.02 = 0.02 - 0.00
     }
     
     // Smoothly transition to target opacity
