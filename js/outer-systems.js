@@ -2,7 +2,10 @@
 // Located between 40000 units and skybox boundary
 // Features: Supernova/Plasma Storm/Solar Storm cores with orbiting Brown Dwarfs, Pulsars, and asteroids
 
-const outerInterstellarSystems = [];
+if (typeof window.outerInterstellarSystems === 'undefined') {
+    window.outerInterstellarSystems = [];
+}
+const outerInterstellarSystems = window.outerInterstellarSystems;
 
 const outerSystemNames = [
     "Void's Edge Nexus",
@@ -30,7 +33,7 @@ const outerSystemNames = [
 function createOuterInterstellarSystems() {
     console.log('🌌 Creating 16 outer interstellar systems in deep space...');
     
-    const innerBoundary = 45000; // Furthest galaxy
+    const innerBoundary = 40000; // Furthest galaxy
     const outerBoundary = 100000; // Near skybox (universe radius ~100000)
     const targetRadius = (innerBoundary + outerBoundary) / 2; // ~62500
     const radiusVariation = 10000;
@@ -520,7 +523,7 @@ function updateOuterSystems() {
         if (!system.userData || !system.userData.orbiters) return;
         
         const systemDist = system.position.distanceTo(playerPos);
-        const blurStart = 15000;
+        const blurStart = 45000;
         const blurMax = 65000;
         
         let opacity = 1.0;
