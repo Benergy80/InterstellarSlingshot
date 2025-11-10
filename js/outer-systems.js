@@ -502,7 +502,7 @@ function createSystemStarfield(maxRadius, systemGroup) {
     const starfield = new THREE.Points(geometry, material);
     starfield.userData = { 
         type: 'system_starfield',
-        rotationSpeed: 0.001 + Math.random() * 0.002
+        rotationSpeed: 0.01 + Math.random() * 0.02
     };
     systemGroup.add(starfield);
 }
