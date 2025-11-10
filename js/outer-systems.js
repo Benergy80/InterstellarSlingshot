@@ -131,7 +131,6 @@ function createOuterSystem(center, name, centerType, systemId) {
 // =============================================================================
 
 function createSystemSupernova(center, systemGroup) {
-    // Core - using MeshStandardMaterial for emissive support
     const coreGeo = new THREE.SphereGeometry(80, 32, 32);
     const coreMat = new THREE.MeshStandardMaterial({
         color: 0xff6600,
@@ -141,7 +140,7 @@ function createSystemSupernova(center, systemGroup) {
         metalness: 0.5
     });
     const core = new THREE.Mesh(coreGeo, coreMat);
-    core.position.copy(center);
+    core.position.set(0, 0, 0); // LOCAL - systemGroup is already at center
     
     core.userData = {
         type: 'supernova',
@@ -153,16 +152,10 @@ function createSystemSupernova(center, systemGroup) {
         slingshotMultiplier: 3.0
     };
 
-    scene.add(core);
-
-    // ADD TO PLANETS ARRAY
-    if (typeof planets !== 'undefined') {
-        planets.push(core);
-    }
-
+    systemGroup.add(core); // Add to systemGroup only
     systemGroup.userData.centerObject = core;
     
-    // Glow layers - MeshBasicMaterial is fine here
+    // Glow layers
     for (let i = 0; i < 3; i++) {
         const size = 120 + i * 60;
         const opacity = 0.4 - i * 0.1;
@@ -174,20 +167,18 @@ function createSystemSupernova(center, systemGroup) {
             blending: THREE.AdditiveBlending
         });
         const glow = new THREE.Mesh(glowGeo, glowMat);
-        glow.userData.baseOpacity = opacity; // ADD THIS
-        glow.position.copy(center);
+        glow.userData.baseOpacity = opacity;
+        glow.position.set(0, 0, 0); // LOCAL
         systemGroup.add(glow);
     }
     
     // Light
     const light = new THREE.PointLight(0xff6600, 15, 5000);
-    light.position.copy(center);
+    light.position.set(0, 0, 0); // LOCAL
     systemGroup.add(light);
-    systemGroup.add(core);
 }
 
 function createSystemPlasmaStorm(center, systemGroup) {
-    // Core - using MeshStandardMaterial for emissive support
     const coreGeo = new THREE.SphereGeometry(60, 32, 32);
     const coreMat = new THREE.MeshStandardMaterial({
         color: 0xaa44ff,
@@ -197,7 +188,7 @@ function createSystemPlasmaStorm(center, systemGroup) {
         metalness: 0.4
     });
     const core = new THREE.Mesh(coreGeo, coreMat);
-    core.position.copy(center);
+    core.position.set(0, 0, 0); // LOCAL
     
     core.userData = {
         type: 'plasma_storm',
@@ -209,16 +200,10 @@ function createSystemPlasmaStorm(center, systemGroup) {
         slingshotMultiplier: 2.8
     };
 
-    scene.add(core);
-
-    // ADD TO PLANETS ARRAY
-    if (typeof planets !== 'undefined') {
-        planets.push(core);
-    }
-
+    systemGroup.add(core);
     systemGroup.userData.centerObject = core;
     
-    // Plasma clouds - MeshBasicMaterial is fine here
+    // Plasma clouds
     for (let i = 0; i < 5; i++) {
         const angle = (i / 5) * Math.PI * 2;
         const cloudGeo = new THREE.SphereGeometry(40, 16, 16);
@@ -229,33 +214,31 @@ function createSystemPlasmaStorm(center, systemGroup) {
             blending: THREE.AdditiveBlending
         });
         const cloud = new THREE.Mesh(cloudGeo, cloudMat);
+        cloud.userData.baseOpacity = 0.6;
         cloud.position.set(
-            center.x + Math.cos(angle) * 100,
-            center.y + (Math.random() - 0.5) * 50,
-            center.z + Math.sin(angle) * 100
+            Math.cos(angle) * 100, // LOCAL
+            0,
+            Math.sin(angle) * 100
         );
         systemGroup.add(cloud);
-        cloud.userData.baseOpacity = 0.6; // ADD THIS LINE
     }
     
-    const light = new THREE.PointLight(0xaa44ff, 12, 4000);
-    light.position.copy(center);
+    const light = new THREE.PointLight(0xaa44ff, 12, 5000);
+    light.position.set(0, 0, 0); // LOCAL
     systemGroup.add(light);
-    systemGroup.add(core);
 }
 
 function createSystemSolarStorm(center, systemGroup) {
-    // Core - using MeshStandardMaterial for emissive support
     const coreGeo = new THREE.SphereGeometry(70, 32, 32);
     const coreMat = new THREE.MeshStandardMaterial({
         color: 0xffff00,
         emissive: 0xffff00,
         emissiveIntensity: 2,
-        roughness: 0.2,
-        metalness: 0.3
+        roughness: 0.3,
+        metalness: 0.6
     });
     const core = new THREE.Mesh(coreGeo, coreMat);
-    core.position.copy(center);
+    core.position.set(0, 0, 0); // LOCAL
     
     core.userData = {
         type: 'solar_storm',
@@ -263,20 +246,14 @@ function createSystemSolarStorm(center, systemGroup) {
         systemName: systemGroup.userData.name,
         location: 'Unexplored Interstellar Space',
         radius: 70,
-        mass: 2.8,
-        slingshotMultiplier: 3.2
+        mass: 2.0,
+        slingshotMultiplier: 2.2
     };
 
-    scene.add(core);
-
-    // ADD TO PLANETS ARRAY
-    if (typeof planets !== 'undefined') {
-        planets.push(core);
-    }
-
+    systemGroup.add(core);
     systemGroup.userData.centerObject = core;
     
-    // Flares - MeshBasicMaterial is fine here
+    // Flares
     for (let i = 0; i < 8; i++) {
         const angle = (i / 8) * Math.PI * 2;
         const flareGeo = new THREE.ConeGeometry(20, 150, 8);
@@ -288,23 +265,22 @@ function createSystemSolarStorm(center, systemGroup) {
         });
         const flare = new THREE.Mesh(flareGeo, flareMat);
         flare.position.set(
-            center.x + Math.cos(angle) * 90,
-            center.y,
-            center.z + Math.sin(angle) * 90
+            Math.cos(angle) * 90, // LOCAL
+            0,
+            Math.sin(angle) * 90
         );
         flare.lookAt(new THREE.Vector3(
-            center.x + Math.cos(angle) * 200,
-            center.y,
-            center.z + Math.sin(angle) * 200
+            Math.cos(angle) * 200,
+            0,
+            Math.sin(angle) * 200
         ));
         systemGroup.add(flare);
-        flare.userData.baseOpacity = 0.7; // ADD THIS LINE
+        flare.userData.baseOpacity = 0.7;
     }
     
     const light = new THREE.PointLight(0xffff00, 18, 5000);
-    light.position.copy(center);
+    light.position.set(0, 0, 0); // LOCAL
     systemGroup.add(light);
-    systemGroup.add(core);
 }
 
 // =============================================================================
@@ -322,15 +298,15 @@ function createOrbitingBrownDwarf(center, orbitRadius, index, systemGroup) {
     
     const angle = (index / 4) * Math.PI * 2;
     dwarf.position.set(
-        center.x + Math.cos(angle) * orbitRadius,
-        center.y,
-        center.z + Math.sin(angle) * orbitRadius
+        Math.cos(angle) * orbitRadius, // LOCAL
+        0,
+        Math.sin(angle) * orbitRadius
     );
     
     dwarf.userData = {
         type: 'brown_dwarf',
         name: `${systemGroup.userData.name} Brown Dwarf ${index + 1}`,
-        orbitCenter: center.clone(),
+        orbitCenter: new THREE.Vector3(0, 0, 0), // LOCAL center
         orbitRadius: orbitRadius,
         orbitSpeed: 0.0001 + Math.random() * 0.0002,
         orbitAngle: angle,
@@ -343,11 +319,7 @@ function createOrbitingBrownDwarf(center, orbitRadius, index, systemGroup) {
     };
     
     systemGroup.userData.orbiters.push(dwarf);
-    scene.add(dwarf);
-    
-    if (typeof planets !== 'undefined') {
-        planets.push(dwarf);
-    }
+    systemGroup.add(dwarf); // Add to systemGroup
     
     return dwarf;
 }
@@ -365,9 +337,9 @@ function createOrbitingPulsar(center, orbitRadius, index, systemGroup) {
     
     const angle = (index / 3) * Math.PI * 2;
     pulsar.position.set(
-        center.x + Math.cos(angle) * orbitRadius,  // WORLD COORDINATES
-        center.y,
-        center.z + Math.sin(angle) * orbitRadius
+        Math.cos(angle) * orbitRadius, // LOCAL
+        0,
+        Math.sin(angle) * orbitRadius
     );
     
     const ringGeo = new THREE.TorusGeometry(40, 3, 8, 32);
@@ -383,7 +355,7 @@ function createOrbitingPulsar(center, orbitRadius, index, systemGroup) {
     pulsar.userData = {
         type: 'pulsar',
         name: `${systemGroup.userData.name} Pulsar ${index + 1}`,
-        orbitCenter: center.clone(),  // WORLD CENTER
+        orbitCenter: new THREE.Vector3(0, 0, 0), // LOCAL center
         orbitRadius: orbitRadius,
         orbitSpeed: 0.00005 + Math.random() * 0.0001,
         orbitAngle: angle,
@@ -397,11 +369,7 @@ function createOrbitingPulsar(center, orbitRadius, index, systemGroup) {
     };
     
     systemGroup.userData.orbiters.push(pulsar);
-    scene.add(pulsar);
-    
-    if (typeof planets !== 'undefined') {
-        planets.push(pulsar);
-    }
+    systemGroup.add(pulsar); // Add to systemGroup
     
     return pulsar;
 }
@@ -420,14 +388,14 @@ function createOrbitingAsteroid(center, orbitRadius, index, systemGroup) {
     const radiusVar = orbitRadius + (Math.random() - 0.5) * 100;
     
     asteroid.position.set(
-        center.x + Math.cos(angle) * radiusVar,  // WORLD COORDINATES
-        center.y + (Math.random() - 0.5) * 50,
-        center.z + Math.sin(angle) * radiusVar
+        Math.cos(angle) * radiusVar, // LOCAL
+        (Math.random() - 0.5) * 50,
+        Math.sin(angle) * radiusVar
     );
     
     asteroid.userData = {
         type: 'outer_asteroid',
-        orbitCenter: center.clone(),  // WORLD CENTER
+        orbitCenter: new THREE.Vector3(0, 0, 0), // LOCAL center
         orbitRadius: radiusVar,
         orbitSpeed: 0.0002 + Math.random() * 0.0003,
         orbitAngle: angle,
@@ -435,7 +403,7 @@ function createOrbitingAsteroid(center, orbitRadius, index, systemGroup) {
     };
     
     systemGroup.userData.orbiters.push(asteroid);
-    scene.add(asteroid);
+    systemGroup.add(asteroid); // Add to systemGroup
     return asteroid;
 }
 
@@ -467,11 +435,8 @@ function createSystemOrbitLine(center, radius, systemGroup) {
         const finalY = rotatedX * Math.sin(tiltZ) + rotatedY * Math.cos(tiltZ);
         const finalZ = rotatedZ;
         
-        points.push(new THREE.Vector3(
-            center.x + finalX,
-            center.y + finalY,
-            center.z + finalZ
-        ));
+        // LOCAL COORDINATES - no center offset
+        points.push(new THREE.Vector3(finalX, finalY, finalZ));
     }
     
     const geo = new THREE.BufferGeometry().setFromPoints(points);
