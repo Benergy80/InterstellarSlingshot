@@ -111,10 +111,14 @@ function createOuterSystem(center, name, centerType, systemId) {
     for (let i = 0; i < asteroidCount; i++) {
         createOrbitingAsteroid(center, asteroidOrbitRadius, i, systemGroup);
     }
-    createSystemOrbitLine(center, asteroidOrbitRadius, systemGroup); // REMOVED COLOR PARAM
+    
+    createSystemOrbitLine(center, asteroidOrbitRadius, systemGroup);
     
     // CREATE ONE LARGE STARFIELD FOR THIS ENTIRE SYSTEM
-    createSystemStarfield(systemGroup);
+    // Calculate max orbit radius from pulsars (which have the largest orbits)
+    const maxOrbitRadius = 1500 + 1500; // Max pulsar orbit
+    const starfieldRadius = maxOrbitRadius * 0.5; // Half the system radius
+    createSystemStarfield(starfieldRadius, systemGroup);
     
     scene.add(systemGroup);
     outerInterstellarSystems.push(systemGroup);
@@ -477,13 +481,11 @@ function createSystemOrbitLine(center, radius, systemGroup) {
     line.userData = { type: 'orbit_line', orbitColor: orbitColor };
     
     systemGroup.add(line);
-    // Create star-field matching this orbit
-    createSystemStarfield(center, radius, orbitColor, systemGroup);
 }
 
-function createSystemStarfield(center, maxRadius, color, systemGroup) {
+function createSystemStarfield(maxRadius, systemGroup) {
     const starCount = 200 + Math.floor(Math.random() * 300);
-    const starfieldRadius = maxRadius * 0.5;
+    const starfieldRadius = maxRadius;
     
     const positions = [];
     const colors = [];
@@ -531,7 +533,7 @@ function createSystemStarfield(center, maxRadius, color, systemGroup) {
         type: 'system_starfield',
         rotationSpeed: 0.0001 + Math.random() * 0.0002
     };
-    systemGroup.add(starfield);  // ADD THIS LINE
+    systemGroup.add(starfield);
 }
 
 // =============================================================================
