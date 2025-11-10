@@ -312,7 +312,6 @@ function createSystemSolarStorm(center, systemGroup) {
 // =============================================================================
 
 function createOrbitingBrownDwarf(center, orbitRadius, index, systemGroup) {
-    // Create brown dwarf
     const geo = new THREE.SphereGeometry(35, 24, 24);
     const mat = new THREE.MeshStandardMaterial({
         color: 0x8b4513,
@@ -323,7 +322,7 @@ function createOrbitingBrownDwarf(center, orbitRadius, index, systemGroup) {
     
     const angle = (index / 4) * Math.PI * 2;
     dwarf.position.set(
-        center.x + Math.cos(angle) * orbitRadius,  // WORLD COORDINATES
+        center.x + Math.cos(angle) * orbitRadius,
         center.y,
         center.z + Math.sin(angle) * orbitRadius
     );
@@ -331,7 +330,7 @@ function createOrbitingBrownDwarf(center, orbitRadius, index, systemGroup) {
     dwarf.userData = {
         type: 'brown_dwarf',
         name: `${systemGroup.userData.name} Brown Dwarf ${index + 1}`,
-        orbitCenter: center.clone(),  // WORLD CENTER
+        orbitCenter: center.clone(),
         orbitRadius: orbitRadius,
         orbitSpeed: 0.0001 + Math.random() * 0.0002,
         orbitAngle: angle,
@@ -353,7 +352,7 @@ function createOrbitingBrownDwarf(center, orbitRadius, index, systemGroup) {
     return dwarf;
 }
 
-ffunction createOrbitingPulsar(center, orbitRadius, index, systemGroup) {
+function createOrbitingPulsar(center, orbitRadius, index, systemGroup) {
     const coreGeo = new THREE.SphereGeometry(20, 16, 16);
     const coreMat = new THREE.MeshStandardMaterial({
         color: 0x44eeff,
