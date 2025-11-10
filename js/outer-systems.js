@@ -306,9 +306,9 @@ function createOrbitingBrownDwarf(center, orbitRadius, index, systemGroup) {
     dwarf.userData = {
         type: 'brown_dwarf',
         name: `${systemGroup.userData.name} Brown Dwarf ${index + 1}`,
-        orbitCenter: new THREE.Vector3(0, 0, 0), // LOCAL center
+        orbitCenter: new THREE.Vector3(0, 0, 0),
         orbitRadius: orbitRadius,
-        orbitSpeed: 0.0001 + Math.random() * 0.0002,
+        orbitSpeed: 0.0003 + Math.random() * 0.0004, // INCREASED from 0.0001
         orbitAngle: angle,
         systemId: systemGroup.userData.systemId,
         systemName: systemGroup.userData.name,
@@ -355,9 +355,9 @@ function createOrbitingPulsar(center, orbitRadius, index, systemGroup) {
     pulsar.userData = {
         type: 'pulsar',
         name: `${systemGroup.userData.name} Pulsar ${index + 1}`,
-        orbitCenter: new THREE.Vector3(0, 0, 0), // LOCAL center
+        orbitCenter: new THREE.Vector3(0, 0, 0),
         orbitRadius: orbitRadius,
-        orbitSpeed: 0.00005 + Math.random() * 0.0001,
+        orbitSpeed: 0.0002 + Math.random() * 0.0003, // INCREASED from 0.00005
         orbitAngle: angle,
         rotationSpeed: 0.02 + Math.random() * 0.03,
         systemId: systemGroup.userData.systemId,
@@ -388,22 +388,25 @@ function createOrbitingAsteroid(center, orbitRadius, index, systemGroup) {
     const radiusVar = orbitRadius + (Math.random() - 0.5) * 100;
     
     asteroid.position.set(
-        Math.cos(angle) * radiusVar, // LOCAL
+        Math.cos(angle) * radiusVar,
         (Math.random() - 0.5) * 50,
         Math.sin(angle) * radiusVar
     );
     
     asteroid.userData = {
         type: 'outer_asteroid',
-        orbitCenter: new THREE.Vector3(0, 0, 0), // LOCAL center
+        orbitCenter: new THREE.Vector3(0, 0, 0),
         orbitRadius: radiusVar,
-        orbitSpeed: 0.0002 + Math.random() * 0.0003,
+        orbitSpeed: 0.0007 + Math.random() * 0.0008,
         orbitAngle: angle,
-        systemId: systemGroup.userData.systemId
+        systemId: systemGroup.userData.systemId,
+        rotationSpeedX: (Math.random() - 0.5) * 0.02,
+        rotationSpeedY: (Math.random() - 0.5) * 0.02,
+        rotationSpeedZ: (Math.random() - 0.5) * 0.02
     };
     
     systemGroup.userData.orbiters.push(asteroid);
-    systemGroup.add(asteroid); // Add to systemGroup
+    systemGroup.add(asteroid);
     return asteroid;
 }
 
@@ -443,7 +446,7 @@ function createSystemOrbitLine(center, radius, systemGroup) {
     const mat = new THREE.LineBasicMaterial({
         color: orbitColor,
         transparent: true,
-        opacity: 0.4
+        opacity: 0.2
     });
     const line = new THREE.Line(geo, mat);
     line.userData = { type: 'orbit_line', orbitColor: orbitColor };
@@ -499,7 +502,7 @@ function createSystemStarfield(maxRadius, systemGroup) {
     const starfield = new THREE.Points(geometry, material);
     starfield.userData = { 
         type: 'system_starfield',
-        rotationSpeed: 0.0001 + Math.random() * 0.0002
+        rotationSpeed: 0.001 + Math.random() * 0.002
     };
     systemGroup.add(starfield);
 }
