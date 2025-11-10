@@ -5475,9 +5475,9 @@ function updateCMBOpacity() {
     const distanceFromSgrA = camera.position.distanceTo(sagittariusAPosition);
     
     // Linear interpolation: 0.01 at origin, 0.09 at 4000+ units
-    const maxDistance = 60000;
+    const maxDistance = 100000;
     const minOpacity = 0.01;
-    const maxOpacity = 0.09;
+    const maxOpacity = 0.07;
     
     let baseOpacity = minOpacity + (distanceFromSgrA / maxDistance) * (maxOpacity - minOpacity);
     baseOpacity = Math.max(minOpacity, Math.min(maxOpacity, baseOpacity)); // Clamp between 0.03 and 0.09
@@ -5499,18 +5499,18 @@ function updateCMBOpacity() {
             }
         });
         
-        // If within 750 units of a nebula, start boosting opacity
-        if (closestNebulaDistance <= 750) {
+        // If within 1500 units of a nebula, start boosting opacity
+        if (closestNebulaDistance <= 1500) {
             inNebulaEffect = true;
             const nebulaMaxOpacity = 0.2;
             
-            if (closestNebulaDistance <= 250) {
+            if (closestNebulaDistance <= 500) {
                 // Within 250 units: full nebula opacity
                 finalOpacity = nebulaMaxOpacity;
             } else {
                 // Between 250-750 units: fade from base opacity to nebula opacity
-                const fadeRange = 750 - 250; // 500 units
-                const fadeDistance = closestNebulaDistance - 250;
+                const fadeRange = 1500 - 500; // 500 units
+                const fadeDistance = closestNebulaDistance - 500;
                 const fadeFactor = fadeDistance / fadeRange; // 0 at 250 units, 1 at 750 units
                 
                 // Interpolate between nebula max opacity and base opacity
