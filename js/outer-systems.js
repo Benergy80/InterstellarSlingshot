@@ -586,8 +586,15 @@ function updateOuterSystems() {
                 orbiter.userData.orbitCenter.z + finalZ
             );
             
-            if (orbiter.userData.type === 'pulsar') {
+             if (orbiter.userData.type === 'pulsar') {
                 orbiter.rotation.y += orbiter.userData.rotationSpeed;
+            }
+            
+            // Add asteroid tumbling
+            if (orbiter.userData.type === 'outer_asteroid') {
+                orbiter.rotation.x += orbiter.userData.rotationSpeedX;
+                orbiter.rotation.y += orbiter.userData.rotationSpeedY;
+                orbiter.rotation.z += orbiter.userData.rotationSpeedZ;
             }
         });
     });
