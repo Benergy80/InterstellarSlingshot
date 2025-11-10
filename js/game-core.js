@@ -1636,9 +1636,6 @@ if (typeof window !== 'undefined') {
     window.nebulaGasClouds = nebulaGasClouds;
     window.orbitLines = orbitLines;
     
-    window.createClusteredNebulas = createClusteredNebulas;
-	window.createSpectacularClusteredNebulas = createSpectacularClusteredNebulas;
-    
     window.debugInfo = {
         planets: () => planets.length,
         activePlanets: () => activePlanets.length,
