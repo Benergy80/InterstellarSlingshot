@@ -323,35 +323,37 @@ function createOrbitingBrownDwarf(center, orbitRadius, index, systemGroup) {
     
     const angle = (index / 4) * Math.PI * 2;
     dwarf.position.set(
-        Math.cos(angle) * orbitRadius,  // RELATIVE TO ORIGIN
-        0,                               // RELATIVE TO ORIGIN
-        Math.sin(angle) * orbitRadius   // RELATIVE TO ORIGIN
+        center.x + Math.cos(angle) * orbitRadius,  // WORLD COORDINATES
+        center.y,
+        center.z + Math.sin(angle) * orbitRadius
     );
     
     dwarf.userData = {
         type: 'brown_dwarf',
         name: `${systemGroup.userData.name} Brown Dwarf ${index + 1}`,
-        orbitCenter: new THREE.Vector3(0, 0, 0),  // ORIGIN SINCE RELATIVE TO SYSTEMGROUP
+        orbitCenter: center.clone(),  // WORLD CENTER
         orbitRadius: orbitRadius,
         orbitSpeed: 0.0001 + Math.random() * 0.0002,
         orbitAngle: angle,
         systemId: systemGroup.userData.systemId,
         systemName: systemGroup.userData.name,
         location: 'Unexplored Interstellar Space',
-        // Slingshot properties
         radius: 35,
         mass: 0.08,
         slingshotMultiplier: 1.3
     };
     
     systemGroup.userData.orbiters.push(dwarf);
-    systemGroup.add(dwarf);  // ADD TO SYSTEMGROUP NOT SCENE
+    scene.add(dwarf);
+    
+    if (typeof planets !== 'undefined') {
+        planets.push(dwarf);
+    }
     
     return dwarf;
 }
 
-function createOrbitingPulsar(center, orbitRadius, index, systemGroup) {
-    // Core - use MeshStandardMaterial for proper emissive glow
+ffunction createOrbitingPulsar(center, orbitRadius, index, systemGroup) {
     const coreGeo = new THREE.SphereGeometry(20, 16, 16);
     const coreMat = new THREE.MeshStandardMaterial({
         color: 0x44eeff,
@@ -364,12 +366,11 @@ function createOrbitingPulsar(center, orbitRadius, index, systemGroup) {
     
     const angle = (index / 3) * Math.PI * 2;
     pulsar.position.set(
-        Math.cos(angle) * orbitRadius,  // RELATIVE TO ORIGIN
-        0,                               // RELATIVE TO ORIGIN
-        Math.sin(angle) * orbitRadius   // RELATIVE TO ORIGIN
+        center.x + Math.cos(angle) * orbitRadius,  // WORLD COORDINATES
+        center.y,
+        center.z + Math.sin(angle) * orbitRadius
     );
     
-    // Magnetic field visualization
     const ringGeo = new THREE.TorusGeometry(40, 3, 8, 32);
     const ringMat = new THREE.MeshBasicMaterial({
         color: 0x88ffff,
@@ -383,7 +384,7 @@ function createOrbitingPulsar(center, orbitRadius, index, systemGroup) {
     pulsar.userData = {
         type: 'pulsar',
         name: `${systemGroup.userData.name} Pulsar ${index + 1}`,
-        orbitCenter: new THREE.Vector3(0, 0, 0),  // ORIGIN SINCE RELATIVE TO SYSTEMGROUP
+        orbitCenter: center.clone(),  // WORLD CENTER
         orbitRadius: orbitRadius,
         orbitSpeed: 0.00005 + Math.random() * 0.0001,
         orbitAngle: angle,
@@ -391,14 +392,17 @@ function createOrbitingPulsar(center, orbitRadius, index, systemGroup) {
         systemId: systemGroup.userData.systemId,
         systemName: systemGroup.userData.name,
         location: 'Unexplored Interstellar Space',
-        // Slingshot properties
         radius: 20,
         mass: 1.4,
         slingshotMultiplier: 2.5
     };
     
     systemGroup.userData.orbiters.push(pulsar);
-    systemGroup.add(pulsar);  // ADD TO SYSTEMGROUP NOT SCENE
+    scene.add(pulsar);
+    
+    if (typeof planets !== 'undefined') {
+        planets.push(pulsar);
+    }
     
     return pulsar;
 }
@@ -417,14 +421,14 @@ function createOrbitingAsteroid(center, orbitRadius, index, systemGroup) {
     const radiusVar = orbitRadius + (Math.random() - 0.5) * 100;
     
     asteroid.position.set(
-        Math.cos(angle) * radiusVar,           // RELATIVE TO ORIGIN
-        (Math.random() - 0.5) * 50,            // RELATIVE TO ORIGIN
-        Math.sin(angle) * radiusVar            // RELATIVE TO ORIGIN
+        center.x + Math.cos(angle) * radiusVar,  // WORLD COORDINATES
+        center.y + (Math.random() - 0.5) * 50,
+        center.z + Math.sin(angle) * radiusVar
     );
     
     asteroid.userData = {
         type: 'outer_asteroid',
-        orbitCenter: new THREE.Vector3(0, 0, 0),  // ORIGIN SINCE RELATIVE TO SYSTEMGROUP
+        orbitCenter: center.clone(),  // WORLD CENTER
         orbitRadius: radiusVar,
         orbitSpeed: 0.0002 + Math.random() * 0.0003,
         orbitAngle: angle,
@@ -432,7 +436,7 @@ function createOrbitingAsteroid(center, orbitRadius, index, systemGroup) {
     };
     
     systemGroup.userData.orbiters.push(asteroid);
-    systemGroup.add(asteroid);  // ADD TO SYSTEMGROUP NOT SCENE
+    scene.add(asteroid);
     return asteroid;
 }
 
