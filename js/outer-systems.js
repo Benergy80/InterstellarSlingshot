@@ -31,7 +31,7 @@ function createOuterInterstellarSystems() {
     console.log('🌌 Creating 16 outer interstellar systems in deep space...');
     
     const innerBoundary = 65000; // Furthest galaxy
-    const outerBoundary = 85000; // Near skybox (universe radius ~100000)
+    const outerBoundary = 100000; // Near skybox (universe radius ~100000)
     const targetRadius = (innerBoundary + outerBoundary) / 2; // ~62500
     const radiusVariation = 10000;
     
