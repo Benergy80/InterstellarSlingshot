@@ -100,6 +100,14 @@ const gameState = {
         speed: 5.0,
         selected: false
     },
+    borg: {
+        spawned: false,
+        active: false,
+        cube: null,
+        drones: [],
+        lastCommunication: 0,
+        communicationCooldown: 15000 // 15 seconds between messages
+    },
     frameCount: 0,
     lastUpdateTime: 0,
     audioSystem: null,
@@ -1400,6 +1408,16 @@ if (typeof checkCosmicFeatureInteractions === 'function' && typeof camera !== 'u
     // Update missile cooldown
     if (gameState.missiles.cooldown > 0) {
         gameState.missiles.cooldown = Math.max(0, gameState.missiles.cooldown - 16.67);
+    }
+
+    // Check for Borg spawn (every 5 seconds)
+    if (gameState.frameCount % 300 === 0 && typeof checkBorgSpawn === 'function') {
+        checkBorgSpawn();
+    }
+
+    // Update Borg behavior
+    if (typeof updateBorgBehavior === 'function') {
+        updateBorgBehavior();
     }
 
     // Enhanced physics and controls for doubled world

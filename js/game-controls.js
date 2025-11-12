@@ -2661,6 +2661,308 @@ function checkGuardianVictory() {
 
 
 // =============================================================================
+// BORG CUBE ENCOUNTER SYSTEM
+// =============================================================================
+
+const BORG_MESSAGES = [
+    "Resistance is futile.",
+    "You will be assimilated.",
+    "Your biological and technological distinctiveness will be added to our own.",
+    "We are the Borg. Lower your shields and surrender your ships.",
+    "Freedom is irrelevant. Self-determination is irrelevant.",
+    "You will adapt to service us.",
+    "Strength is irrelevant. Resistance is futile.",
+    "We are Borg. Existence as you know it is over."
+];
+
+function checkBorgSpawn() {
+    if (typeof gameState === 'undefined' || typeof camera === 'undefined') return;
+    if (gameState.borg.spawned) return; // Already spawned
+
+    // Check if player is beyond 70,000 units from origin
+    const distanceFromOrigin = camera.position.length();
+
+    if (distanceFromOrigin > 70000) {
+        // 30% chance to spawn
+        if (Math.random() < 0.3) {
+            spawnBorgCube();
+        } else {
+            // Mark as checked so we don't spam the roll
+            gameState.borg.spawned = true;
+            setTimeout(() => {
+                gameState.borg.spawned = false; // Allow another check later
+            }, 60000); // Wait 60 seconds before checking again
+        }
+    }
+}
+
+function spawnBorgCube() {
+    if (typeof THREE === 'undefined' || typeof scene === 'undefined' || typeof camera === 'undefined') return;
+
+    // Spawn ahead of player's current position
+    const spawnDistance = 5000;
+    const direction = camera.getWorldDirection(new THREE.Vector3()).normalize();
+    const spawnPosition = camera.position.clone().add(direction.multiplyScalar(spawnDistance));
+
+    // Create the Borg cube - large black/green cube
+    const cubeSize = 50; // Black hole size
+    const cubeGeometry = new THREE.BoxGeometry(cubeSize, cubeSize, cubeSize);
+    const cubeMaterial = new THREE.MeshBasicMaterial({
+        color: 0x003300,
+        wireframe: false,
+        transparent: true,
+        opacity: 0.9
+    });
+    const cube = new THREE.Mesh(cubeGeometry, cubeMaterial);
+    cube.position.copy(spawnPosition);
+
+    // Add green glow effect
+    const glowGeometry = new THREE.BoxGeometry(cubeSize * 1.2, cubeSize * 1.2, cubeSize * 1.2);
+    const glowMaterial = new THREE.MeshBasicMaterial({
+        color: 0x00ff00,
+        transparent: true,
+        opacity: 0.3,
+        wireframe: true
+    });
+    const glow = new THREE.Mesh(glowGeometry, glowMaterial);
+    cube.add(glow);
+
+    // Set cube properties
+    cube.userData = {
+        type: 'enemy',
+        health: 100,
+        maxHealth: 100,
+        name: 'Borg Cube',
+        isBorg: true,
+        isBorgCube: true,
+        speed: 2.0, // Slow but relentless
+        damage: 5,
+        detectionRange: 10000,
+        firingRange: 500,
+        lastAttack: 0,
+        droneCount: 0,
+        maxDrones: 8,
+        galaxyId: -1 // Special: not tied to any galaxy
+    };
+
+    scene.add(cube);
+    if (typeof enemies !== 'undefined') {
+        enemies.push(cube);
+    }
+
+    // Mark as spawned
+    gameState.borg.spawned = true;
+    gameState.borg.active = true;
+    gameState.borg.cube = cube;
+    gameState.borg.drones = [];
+
+    // Show dramatic spawn message
+    showAchievement('⚠️ CRITICAL ALERT', 'Unknown massive vessel detected! Extreme threat level!', true);
+    playSound('boss');
+
+    // Spawn initial drones after 2 seconds
+    setTimeout(() => {
+        for (let i = 0; i < 8; i++) {
+            spawnBorgDrone();
+        }
+    }, 2000);
+
+    console.log('🎯 Borg Cube spawned! Resistance is futile!');
+}
+
+function spawnBorgDrone() {
+    if (!gameState.borg.cube || !gameState.borg.active) return;
+    if (typeof THREE === 'undefined' || typeof scene === 'undefined') return;
+
+    const cube = gameState.borg.cube;
+
+    // Create small pyramid-shaped drone
+    const droneGeometry = new THREE.ConeGeometry(2, 4, 4);
+    const droneMaterial = new THREE.MeshBasicMaterial({
+        color: 0x00ff00,
+        wireframe: false
+    });
+    const drone = new THREE.Mesh(droneGeometry, droneMaterial);
+
+    // Spawn near cube with random offset
+    const offset = new THREE.Vector3(
+        (Math.random() - 0.5) * 100,
+        (Math.random() - 0.5) * 100,
+        (Math.random() - 0.5) * 100
+    );
+    drone.position.copy(cube.position).add(offset);
+
+    // Set drone properties
+    drone.userData = {
+        type: 'enemy',
+        health: 2,
+        maxHealth: 2,
+        name: 'Borg Drone',
+        isBorg: true,
+        isBorgDrone: true,
+        speed: 1.5,
+        damage: 2,
+        detectionRange: 5000,
+        firingRange: 300,
+        lastAttack: 0,
+        circlePhase: Math.random() * Math.PI * 2,
+        galaxyId: -1,
+        parentCube: cube
+    };
+
+    scene.add(drone);
+    if (typeof enemies !== 'undefined') {
+        enemies.push(drone);
+    }
+
+    gameState.borg.drones.push(drone);
+    cube.userData.droneCount++;
+
+    console.log(`🤖 Borg Drone spawned (${cube.userData.droneCount}/∞)`);
+}
+
+function updateBorgBehavior() {
+    if (!gameState.borg.active || !gameState.borg.cube) return;
+    if (typeof camera === 'undefined' || typeof THREE === 'undefined') return;
+
+    const cube = gameState.borg.cube;
+
+    // Check if cube is destroyed
+    if (cube.userData.health <= 0) {
+        handleBorgCubeDestruction();
+        return;
+    }
+
+    const playerPos = camera.position;
+    const distance = cube.position.distanceTo(playerPos);
+
+    // Relentless pursuit - always move towards player
+    const direction = new THREE.Vector3().subVectors(playerPos, cube.position).normalize();
+    cube.position.add(direction.multiplyScalar(cube.userData.speed));
+
+    // Rotate cube for effect
+    cube.rotation.x += 0.002;
+    cube.rotation.y += 0.003;
+    cube.rotation.z += 0.001;
+
+    // Send communications when close
+    if (distance < 5000) {
+        sendBorgCommunication(distance);
+    }
+
+    // Spawn drones when player gets close (3500 units)
+    if (distance < 3500 && cube.userData.droneCount < cube.userData.maxDrones) {
+        spawnBorgDrone();
+    }
+
+    // Check for dead drones and replace them
+    gameState.borg.drones = gameState.borg.drones.filter(drone => {
+        if (!drone || drone.userData.health <= 0) {
+            cube.userData.droneCount--;
+            // Spawn replacement after short delay
+            setTimeout(() => spawnBorgDrone(), 2000);
+            return false;
+        }
+        return true;
+    });
+
+    // Update drone behavior - swarm around cube
+    gameState.borg.drones.forEach((drone, index) => {
+        if (!drone || drone.userData.health <= 0) return;
+
+        const droneDistance = drone.position.distanceTo(playerPos);
+
+        // If player is within 3500 units, drones attack
+        if (droneDistance < 3500) {
+            // Swarm attack behavior
+            const swarmAngle = Date.now() * 0.001 + (index * Math.PI * 2 / 8);
+            const spiralRadius = 80 + Math.sin(Date.now() * 0.0003) * 30;
+
+            const targetX = playerPos.x + Math.cos(swarmAngle) * spiralRadius;
+            const targetZ = playerPos.z + Math.sin(swarmAngle) * spiralRadius;
+            const targetY = playerPos.y + Math.sin(swarmAngle * 0.5) * 20;
+
+            const targetPos = new THREE.Vector3(targetX, targetY, targetZ);
+            const dir = new THREE.Vector3().subVectors(targetPos, drone.position).normalize();
+            drone.position.add(dir.multiplyScalar(drone.userData.speed));
+        } else {
+            // Orbit cube when far from player
+            const orbitAngle = Date.now() * 0.001 + (index * Math.PI * 2 / 8);
+            const orbitRadius = 80;
+
+            const targetX = cube.position.x + Math.cos(orbitAngle) * orbitRadius;
+            const targetZ = cube.position.z + Math.sin(orbitAngle) * orbitRadius;
+            const targetY = cube.position.y + Math.sin(orbitAngle * 0.5) * 30;
+
+            const targetPos = new THREE.Vector3(targetX, targetY, targetZ);
+            const dir = new THREE.Vector3().subVectors(targetPos, drone.position).normalize();
+            drone.position.add(dir.multiplyScalar(drone.userData.speed * 0.5));
+        }
+
+        // Drone attack
+        if (droneDistance < drone.userData.firingRange) {
+            const now = Date.now();
+            if (now - (drone.userData.lastAttack || 0) > 1500) {
+                fireEnemyWeapon(drone);
+                drone.userData.lastAttack = now;
+            }
+        }
+    });
+}
+
+function sendBorgCommunication(distance) {
+    const now = Date.now();
+    if (now - gameState.borg.lastCommunication < gameState.borg.communicationCooldown) return;
+
+    gameState.borg.lastCommunication = now;
+
+    const message = BORG_MESSAGES[Math.floor(Math.random() * BORG_MESSAGES.length)];
+    const threat = distance < 2000 ? 'IMMINENT THREAT' : 'INCOMING THREAT';
+
+    showAchievement(`⚠️ BORG TRANSMISSION [${threat}]`, message, true);
+    playSound('boss');
+
+    console.log(`📡 Borg: "${message}"`);
+}
+
+function handleBorgCubeDestruction() {
+    if (!gameState.borg.cube) return;
+
+    const cube = gameState.borg.cube;
+
+    // Epic victory message
+    showAchievement('🎉 LEGENDARY VICTORY!', 'Borg Cube destroyed! The pursuit is over. You are free!', true);
+    playSound('achievement');
+    setTimeout(() => playBossVictoryMusic(), 500);
+
+    // Destroy all drones
+    gameState.borg.drones.forEach(drone => {
+        if (drone && scene) {
+            scene.remove(drone);
+        }
+        const index = enemies.indexOf(drone);
+        if (index > -1) enemies.splice(index, 1);
+    });
+
+    // Remove cube
+    if (scene) scene.remove(cube);
+    const cubeIndex = enemies.indexOf(cube);
+    if (cubeIndex > -1) enemies.splice(cubeIndex, 1);
+
+    // Reset Borg state
+    gameState.borg.active = false;
+    gameState.borg.cube = null;
+    gameState.borg.drones = [];
+
+    // Massive rewards
+    gameState.missiles.capacity += 5;
+    gameState.missiles.current = gameState.missiles.capacity;
+    showAchievement('ULTIMATE REWARD', `+5 Missile Capacity! Total: ${gameState.missiles.capacity}`, true);
+
+    console.log('🎊 Borg Cube defeated! Player is free!');
+}
+
+// =============================================================================
 // MISSILE SYSTEM
 // =============================================================================
 
@@ -3634,6 +3936,14 @@ if (typeof window !== 'undefined') {
     window.fireMissile = fireMissile;
     window.updateMissiles = updateMissiles;
     window.updateMissileUI = updateMissileUI;
+
+    // Borg systems
+    window.checkBorgSpawn = checkBorgSpawn;
+    window.updateBorgBehavior = updateBorgBehavior;
+    window.spawnBorgCube = spawnBorgCube;
+    window.spawnBorgDrone = spawnBorgDrone;
+    window.sendBorgCommunication = sendBorgCommunication;
+    window.handleBorgCubeDestruction = handleBorgCubeDestruction;
 
     // Audio systems
     window.playSound = playSound;
