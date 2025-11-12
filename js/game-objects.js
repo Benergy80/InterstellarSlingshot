@@ -4241,11 +4241,105 @@ function spawnEnhancedWormhole() {
         isTemporary: true,
         detectionRange: 1200, // Doubled
         detected: false,
-        spiralSpeed: 0.02 + Math.random() * 0.03
+        spiralSpeed: 0.02 + Math.random() * 0.03,
+        // Instability properties
+        unstable: true,
+        phaseTimer: 0,
+        phaseInterval: 5000 + Math.random() * 10000, // 5-15 seconds per phase
+        isVisible: true,
+        colorHue: Math.random(), // Starting hue
+        colorSpeed: 0.0001 + Math.random() * 0.0002
     };
     
     scene.add(wormholeGroup);
     wormholes.push(wormholeGroup);
+}
+
+// Update unstable wormholes - call from animate loop
+function updateUnstableWormholes(deltaTime = 16.67) {
+    if (typeof wormholes === 'undefined' || !wormholes) return;
+
+    wormholes.forEach(wormhole => {
+        if (!wormhole.userData.unstable) return;
+
+        // Update phase timer
+        wormhole.userData.phaseTimer += deltaTime;
+
+        // Color shift over time
+        wormhole.userData.colorHue += wormhole.userData.colorSpeed;
+        if (wormhole.userData.colorHue > 1) wormhole.userData.colorHue -= 1;
+
+        // Update ring colors
+        wormhole.children.forEach((child, index) => {
+            if (child.material && child.geometry && child.geometry.type === 'TorusGeometry') {
+                const hue = (wormhole.userData.colorHue + index * 0.05) % 1;
+                child.material.color.setHSL(hue, 0.8, 0.6);
+            }
+        });
+
+        // Phase transition (appear/disappear)
+        if (wormhole.userData.phaseTimer >= wormhole.userData.phaseInterval) {
+            wormhole.userData.phaseTimer = 0;
+            wormhole.userData.isVisible = !wormhole.userData.isVisible;
+            wormhole.userData.phaseInterval = 5000 + Math.random() * 10000;
+
+            if (wormhole.userData.isVisible) {
+                // Appearing - burst of light
+                createWormholeBurst(wormhole.position, true);
+                wormhole.visible = true;
+            } else {
+                // Disappearing - burst of light
+                createWormholeBurst(wormhole.position, false);
+                setTimeout(() => {
+                    wormhole.visible = false;
+                }, 500);
+            }
+        }
+
+        // Fade in/out transition
+        if (wormhole.visible) {
+            wormhole.children.forEach(child => {
+                if (child.material && child.material.opacity !== undefined) {
+                    const baseOpacity = child.userData.baseOpacity || child.material.opacity;
+                    if (!child.userData.baseOpacity) child.userData.baseOpacity = baseOpacity;
+
+                    if (wormhole.userData.isVisible) {
+                        child.material.opacity = Math.min(baseOpacity, child.material.opacity + 0.02);
+                    }
+                }
+            });
+        }
+    });
+}
+
+// Create burst of light effect for wormhole phase transitions
+function createWormholeBurst(position, appearing) {
+    const burstGeometry = new THREE.SphereGeometry(20, 16, 16);
+    const burstMaterial = new THREE.MeshBasicMaterial({
+        color: appearing ? 0x00ffff : 0xff00ff,
+        transparent: true,
+        opacity: 0.8
+    });
+    const burst = new THREE.Mesh(burstGeometry, burstMaterial);
+    burst.position.copy(position);
+    scene.add(burst);
+
+    let scale = 0.5;
+    let opacity = 0.8;
+    const interval = setInterval(() => {
+        scale += 0.3;
+        opacity -= 0.05;
+
+        burst.scale.set(scale, scale, scale);
+        burstMaterial.opacity = opacity;
+
+        if (opacity <= 0) {
+            clearInterval(interval);
+            scene.remove(burst);
+            burstGeometry.dispose();
+            burstMaterial.dispose();
+        }
+    }, 50);
 }
 
 function createEnhancedComets() {
@@ -5419,6 +5513,7 @@ if (typeof window !== 'undefined') {
     window.createEnemies = createEnemies3D;
     window.createEnhancedComets = createEnhancedComets;
     window.createEnhancedWormholes = createEnhancedWormholes;
+    window.updateUnstableWormholes = updateUnstableWormholes;
     window.createNebulas = createNebulas;
     window.createClusteredNebulas = createClusteredNebulas;
 	window.createSpectacularClusteredNebulas = createSpectacularClusteredNebulas;

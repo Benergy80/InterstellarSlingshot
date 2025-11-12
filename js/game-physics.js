@@ -1142,10 +1142,10 @@ function updateEnhancedPhysics() {
         initializeEnhancedGameStateProperties();
         gameState.enhancedPropertiesInitialized = true;
     }
-    
+
     // SPECIFICATION: Use consistent rotSpeed = 0.03 for all rotation inputs
     const rotSpeed = 0.02;
-    const gravitationalConstant = 0.001; // DOUBLED for doubled masses
+    const gravitationalConstant = 0.003; // TRIPLED for stronger gravity
     const assistRange = 60; // DOUBLED
     const collisionThreshold = 6; // DOUBLED
     
@@ -1505,9 +1505,18 @@ if ((planet.userData.type === 'planet' || planet.userData.type === 'star' || pla
     }
 }
             
-            // Enhanced gravitational force (DOUBLED for doubled masses)
+            // Enhanced gravitational force with type-specific multipliers
             if (planet.userData.type !== 'asteroid') {
-                const gravitationalForce = gravitationalConstant * gameState.shipMass * planetMass / (distance * distance);
+                let gravityMultiplier = 1.0;
+
+                // Stronger gravity for stars and planets
+                if (planet.userData.type === 'star') {
+                    gravityMultiplier = 2.0; // Stars have 2x gravity
+                } else if (planet.userData.type === 'planet') {
+                    gravityMultiplier = 1.5; // Planets have 1.5x gravity
+                }
+
+                const gravitationalForce = gravitationalConstant * gameState.shipMass * planetMass * gravityMultiplier / (distance * distance);
                 const direction = new THREE.Vector3().subVectors(planetPosition, camera.position).normalize();
                 const gravityVector = direction.clone().multiplyScalar(gravitationalForce);
                 
