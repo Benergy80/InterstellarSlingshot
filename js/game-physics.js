@@ -1729,28 +1729,236 @@ function initializeGalaxyDiscoverySystem() {
 // NEBULA DISCOVERY SYSTEM
 // =============================================================================
 
+// Nebula music state
+let currentNebulaMusic = null;
+let nebulaMusicGain = null;
+
+function playNebulaMusic(nebulaIndex) {
+    if (!audioContext || typeof musicGain === 'undefined') return;
+
+    // Stop existing nebula music
+    if (currentNebulaMusic) {
+        try {
+            currentNebulaMusic.oscillator1.stop();
+            currentNebulaMusic.oscillator2.stop();
+            currentNebulaMusic.oscillator3.stop();
+            currentNebulaMusic.oscillator4.stop();
+        } catch(e) {}
+        currentNebulaMusic = null;
+    }
+
+    // Create unique music for this nebula based on index
+    const baseFreq = 100 + (nebulaIndex * 50);
+    const melodyFreq = 200 + (nebulaIndex * 75);
+    const harmonyFreq = 300 + (nebulaIndex * 100);
+    const bassFreq = 50 + (nebulaIndex * 25);
+
+    // Create oscillators for layered techno sound
+    const osc1 = audioContext.createOscillator(); // Bass
+    const osc2 = audioContext.createOscillator(); // Melody
+    const osc3 = audioContext.createOscillator(); // Harmony
+    const osc4 = audioContext.createOscillator(); // Atmosphere
+
+    // Create gain node for fade-in
+    nebulaMusicGain = audioContext.createGain();
+    nebulaMusicGain.gain.setValueAtTime(0, audioContext.currentTime);
+    nebulaMusicGain.gain.linearRampToValueAtTime(0.15, audioContext.currentTime + 3); // 3 second fade in
+
+    // Set oscillator types and frequencies
+    osc1.type = 'sawtooth';
+    osc1.frequency.value = bassFreq;
+
+    osc2.type = 'square';
+    osc2.frequency.value = melodyFreq;
+
+    osc3.type = 'sine';
+    osc3.frequency.value = harmonyFreq;
+
+    osc4.type = 'triangle';
+    osc4.frequency.value = baseFreq * 2;
+
+    // Connect oscillators
+    osc1.connect(nebulaMusicGain);
+    osc2.connect(nebulaMusicGain);
+    osc3.connect(nebulaMusicGain);
+    osc4.connect(nebulaMusicGain);
+    nebulaMusicGain.connect(musicGain || masterGain);
+
+    // Start oscillators
+    osc1.start();
+    osc2.start();
+    osc3.start();
+    osc4.start();
+
+    // Store reference
+    currentNebulaMusic = {
+        oscillator1: osc1,
+        oscillator2: osc2,
+        oscillator3: osc3,
+        oscillator4: osc4,
+        gainNode: nebulaMusicGain
+    };
+
+    // Add frequency modulation for more interesting sound
+    setInterval(() => {
+        if (currentNebulaMusic && audioContext && audioContext.state === 'running') {
+            const time = audioContext.currentTime;
+            const mod1 = Math.sin(time * 0.5) * 10;
+            const mod2 = Math.cos(time * 0.3) * 15;
+            osc2.frequency.setValueAtTime(melodyFreq + mod1, time);
+            osc3.frequency.setValueAtTime(harmonyFreq + mod2, time);
+        }
+    }, 100);
+
+    console.log(`Playing unique nebula music for nebula ${nebulaIndex}`);
+}
+
+function stopNebulaMusic() {
+    if (currentNebulaMusic && nebulaMusicGain && audioContext) {
+        // Fade out over 2 seconds
+        nebulaMusicGain.gain.linearRampToValueAtTime(0, audioContext.currentTime + 2);
+
+        setTimeout(() => {
+            if (currentNebulaMusic) {
+                try {
+                    currentNebulaMusic.oscillator1.stop();
+                    currentNebulaMusic.oscillator2.stop();
+                    currentNebulaMusic.oscillator3.stop();
+                    currentNebulaMusic.oscillator4.stop();
+                } catch(e) {}
+                currentNebulaMusic = null;
+            }
+        }, 2100);
+    }
+}
+
+function getEnemyIntelligence(nebulaPosition) {
+    if (typeof enemies === 'undefined' || typeof planets === 'undefined') {
+        return { nearbyGalaxy: null, enemyCount: 0, blackHoleLocations: [], cosmicObjects: [] };
+    }
+
+    // Find nearest galaxy
+    let nearestGalaxy = null;
+    let nearestGalaxyDist = Infinity;
+
+    if (typeof planets !== 'undefined') {
+        planets.forEach(planet => {
+            if (planet.userData.type === 'blackhole' && planet.userData.isGalacticCore && planet.userData.galaxyId !== undefined) {
+                const dist = nebulaPosition.distanceTo(planet.position);
+                if (dist < nearestGalaxyDist && dist < 10000) {
+                    nearestGalaxyDist = dist;
+                    nearestGalaxy = planet.userData.galaxyId;
+                }
+            }
+        });
+    }
+
+    if (nearestGalaxy === null) return { nearbyGalaxy: null, enemyCount: 0, blackHoleLocations: [], cosmicObjects: [] };
+
+    // Get enemies in that galaxy
+    const galaxyEnemies = enemies.filter(e =>
+        e.userData.galaxyId === nearestGalaxy && e.userData.health > 0
+    );
+
+    // Find where enemies are hiding
+    const blackHoleLocations = [];
+    const cosmicObjects = [];
+
+    galaxyEnemies.forEach(enemy => {
+        // Check if near black hole
+        const nearbyBlackHoles = planets.filter(p =>
+            p.userData.type === 'blackhole' &&
+            p.position.distanceTo(enemy.position) < 500
+        );
+
+        if (nearbyBlackHoles.length > 0) {
+            nearbyBlackHoles.forEach(bh => {
+                const bhName = bh.userData.name || 'Unknown Black Hole';
+                if (!blackHoleLocations.includes(bhName)) {
+                    blackHoleLocations.push(bhName);
+                }
+            });
+        }
+
+        // Check if near other cosmic objects
+        const nearbyObjects = planets.filter(p =>
+            (p.userData.type === 'planet' || p.userData.type === 'pulsar' || p.userData.type === 'neutron_star') &&
+            p.position.distanceTo(enemy.position) < 300
+        );
+
+        if (nearbyObjects.length > 0) {
+            nearbyObjects.forEach(obj => {
+                const objName = obj.userData.name || obj.userData.type;
+                if (!cosmicObjects.includes(objName)) {
+                    cosmicObjects.push(objName);
+                }
+            });
+        }
+    });
+
+    return {
+        nearbyGalaxy,
+        enemyCount: galaxyEnemies.length,
+        blackHoleLocations: blackHoleLocations.slice(0, 3), // Max 3
+        cosmicObjects: cosmicObjects.slice(0, 3) // Max 3
+    };
+}
+
 function checkForNebulaDiscovery() {
     if (typeof gameState === 'undefined' || typeof camera === 'undefined') return;
     if (typeof nebulaClouds === 'undefined' || nebulaClouds.length === 0) return;
-    
+
     const discoveryRange = 3000; // Distance to trigger discovery
-    
-    nebulaClouds.forEach(nebula => {
+
+    nebulaClouds.forEach((nebula, index) => {
         if (!nebula || !nebula.userData || nebula.userData.discovered) return;
-        
+
         const distance = camera.position.distanceTo(nebula.position);
-        
+
         if (distance < discoveryRange) {
             // Mark as discovered
             nebula.userData.discovered = true;
-            
-            // Show discovery notification
-            if (typeof showAchievement === 'function') {
-                const nebulaName = nebula.userData.mythicalName || nebula.userData.name || 'Unknown Nebula';
-                showAchievement('Nebula Discovered!', `Discovered the ${nebulaName} Nebula`, true);
+
+            // Restore energy
+            if (gameState.energy < 100) {
+                const energyRestored = 100 - gameState.energy;
+                gameState.energy = 100;
+                console.log(`Energy restored: +${energyRestored.toFixed(1)}%`);
             }
-            
-            console.log(`🌫️ Nebula discovered: ${nebula.userData.mythicalName || nebula.userData.name}`);
+
+            // Play unique nebula music
+            playNebulaMusic(index);
+
+            // Get enemy intelligence
+            const intel = getEnemyIntelligence(nebula.position);
+
+            // Show welcome notification with intelligence
+            const nebulaName = nebula.userData.mythicalName || nebula.userData.name || 'Unknown Nebula';
+
+            let welcomeMessage = `Welcome to the ${nebulaName} Nebula. Energy restored to 100%.`;
+
+            if (intel.nearbyGalaxy !== null && typeof galaxyTypes !== 'undefined') {
+                const galaxy = galaxyTypes[intel.nearbyGalaxy];
+                welcomeMessage += `\n\nINTELLIGENCE REPORT: ${galaxy.name} Galaxy (${galaxy.faction}) under attack! `;
+                welcomeMessage += `${intel.enemyCount} hostile ${galaxy.species} forces detected.`;
+
+                if (intel.blackHoleLocations.length > 0) {
+                    welcomeMessage += `\n\nEnemies near black holes: ${intel.blackHoleLocations.join(', ')}`;
+                }
+
+                if (intel.cosmicObjects.length > 0) {
+                    welcomeMessage += `\n\nEnemies near cosmic objects: ${intel.cosmicObjects.join(', ')}`;
+                }
+
+                welcomeMessage += `\n\nEliminate all hostiles to liberate the galaxy!`;
+            }
+
+            if (typeof showAchievement === 'function') {
+                showAchievement('Nebula Discovered!', welcomeMessage, true);
+            }
+
+            console.log(`Nebula discovered: ${nebulaName}`);
+            console.log(`Intelligence:`, intel);
         }
     });
 }
@@ -1776,8 +1984,11 @@ window.destroyAsteroidByWeapon = destroyAsteroidByWeapon;
 window.destroyAsteroidByCollision = destroyAsteroidByCollision;
 window.createAsteroidExplosion = createAsteroidExplosion;
 
-// Export the function
+// Export nebula functions
 window.checkForNebulaDiscovery = checkForNebulaDiscovery;
+window.playNebulaMusic = playNebulaMusic;
+window.stopNebulaMusic = stopNebulaMusic;
+window.getEnemyIntelligence = getEnemyIntelligence;
 
 // Automatic black hole warp function
 window.transitionToRandomLocation = transitionToRandomLocation;

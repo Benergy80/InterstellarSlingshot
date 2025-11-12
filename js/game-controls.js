@@ -2222,6 +2222,7 @@ setTimeout(() => {
         display: none;
         overflow: hidden;
         box-shadow: 0 0 30px rgba(255, 51, 0, 0.6), inset 0 0 30px rgba(255, 51, 0, 0.3);
+        background: rgba(0, 0, 0, 0.3);
     `;
 
     const scopeCanvas = document.createElement('canvas');
@@ -2231,6 +2232,69 @@ setTimeout(() => {
     zoomScope.appendChild(scopeCanvas);
     document.body.appendChild(zoomScope);
 
+    let animationFrameId = null;
+
+    function updateZoomScope() {
+        if (!gameState.missiles.selected || !renderer || !renderer.domElement) {
+            if (animationFrameId) {
+                cancelAnimationFrame(animationFrameId);
+                animationFrameId = null;
+            }
+            return;
+        }
+
+        const ctx = scopeCanvas.getContext('2d');
+        const zoomFactor = 2.5;
+
+        // Get mouse position
+        const mouseX = gameState.crosshairX || gameState.mouseX || window.innerWidth / 2;
+        const mouseY = gameState.crosshairY || gameState.mouseY || window.innerHeight / 2;
+
+        // Calculate source area on the renderer canvas
+        const sourceWidth = 250 / zoomFactor;
+        const sourceHeight = 250 / zoomFactor;
+        const sourceX = mouseX - (sourceWidth / 2);
+        const sourceY = mouseY - (sourceHeight / 2);
+
+        // Clear canvas
+        ctx.clearRect(0, 0, 250, 250);
+
+        // Draw magnified portion
+        try {
+            ctx.drawImage(
+                renderer.domElement,
+                Math.max(0, sourceX),
+                Math.max(0, sourceY),
+                sourceWidth,
+                sourceHeight,
+                0,
+                0,
+                250,
+                250
+            );
+        } catch (err) {
+            console.warn('Zoom scope render error:', err);
+        }
+
+        // Draw crosshair overlay
+        ctx.strokeStyle = 'rgba(255, 51, 0, 0.8)';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(125, 0);
+        ctx.lineTo(125, 250);
+        ctx.moveTo(0, 125);
+        ctx.lineTo(250, 125);
+        ctx.stroke();
+
+        // Draw center circle
+        ctx.beginPath();
+        ctx.arc(125, 125, 20, 0, Math.PI * 2);
+        ctx.stroke();
+
+        // Continue animation
+        animationFrameId = requestAnimationFrame(updateZoomScope);
+    }
+
     document.addEventListener('mousemove', (e) => {
         if (gameState.missiles.selected) {
             const x = e.clientX - 125;
@@ -2239,37 +2303,16 @@ setTimeout(() => {
             zoomScope.style.top = y + 'px';
             zoomScope.style.display = 'block';
 
-            const ctx = scopeCanvas.getContext('2d');
-            ctx.clearRect(0, 0, 250, 250);
-
-            const zoomFactor = 2.5;
-            const sourceX = e.clientX - (125 / zoomFactor);
-            const sourceY = e.clientY - (125 / zoomFactor);
-            const sourceWidth = 250 / zoomFactor;
-            const sourceHeight = 250 / zoomFactor;
-
-            try {
-                if (typeof renderer !== 'undefined' && renderer.domElement) {
-                    ctx.drawImage(renderer.domElement,
-                        sourceX, sourceY, sourceWidth, sourceHeight,
-                        0, 0, 250, 250);
-                }
-            } catch (err) {}
-
-            ctx.strokeStyle = 'rgba(255, 51, 0, 0.5)';
-            ctx.lineWidth = 2;
-            ctx.beginPath();
-            ctx.moveTo(125, 0);
-            ctx.lineTo(125, 250);
-            ctx.moveTo(0, 125);
-            ctx.lineTo(250, 125);
-            ctx.stroke();
-
-            ctx.beginPath();
-            ctx.arc(125, 125, 20, 0, Math.PI * 2);
-            ctx.stroke();
+            // Start animation if not already running
+            if (!animationFrameId) {
+                updateZoomScope();
+            }
         } else {
             zoomScope.style.display = 'none';
+            if (animationFrameId) {
+                cancelAnimationFrame(animationFrameId);
+                animationFrameId = null;
+            }
         }
     });
 }, 1000);
