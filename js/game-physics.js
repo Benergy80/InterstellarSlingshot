@@ -466,14 +466,33 @@ function destroyAsteroidByWeapon(asteroid, hitPosition = null) {
     destroyAsteroid(asteroid);
     console.log(`Asteroid destroyed by weapon fire: ${asteroid.userData.name} (+${hullRestoration} hull) - radius: ${actualRadius.toFixed(1)}`);
 }
+
+// Black hole warp invulnerability check
+function isBlackHoleWarpInvulnerable() {
+    if (typeof gameState === 'undefined' || !gameState.slingshot) return false;
+
+    // Check if in black hole warp (active or coasting)
+    const inBlackHoleWarp = (gameState.slingshot.active || gameState.slingshot.postSlingshot) &&
+                            gameState.slingshot.fromBlackHole;
+
+    if (!inBlackHoleWarp) return false;
+
+    // Check if speed is >= 10,000 km/s
+    const speedKmS = gameState.velocityVector.length() * 1000;
+    return speedKmS >= 10000;
+}
+
 function destroyAsteroidByCollision(asteroid) {
-    // Apply damage with shield reduction
-    const damage = 15;
-    const shieldReduction = typeof getShieldDamageReduction === 'function' ? 
-                            getShieldDamageReduction() : 0;
-    const actualDamage = damage * (1 - shieldReduction);
-    
-    gameState.hull = Math.max(0, gameState.hull - actualDamage);
+    // Check black hole warp invulnerability
+    if (!isBlackHoleWarpInvulnerable()) {
+        // Apply damage with shield reduction
+        const damage = 15;
+        const shieldReduction = typeof getShieldDamageReduction === 'function' ?
+                                getShieldDamageReduction() : 0;
+        const actualDamage = damage * (1 - shieldReduction);
+
+        gameState.hull = Math.max(0, gameState.hull - actualDamage);
+    }
     
     // Create shield hit effect if shields are active
     if (typeof isShieldActive === 'function' && isShieldActive() && 
@@ -944,10 +963,16 @@ function executeSlingshot() {
         
         gameState.velocityVector.copy(slingshotDirection).multiplyScalar(boostVelocity);
         gameState.energy = Math.max(5, gameState.energy - 20);
-        
+
         gameState.slingshot.active = true;
         gameState.slingshot.timeRemaining = gameState.slingshot.duration;
-        
+        gameState.slingshot.fromBlackHole = (nearestPlanet.userData.type === 'blackhole');
+
+        // Activate warp starfield (matching emergency warp behavior)
+        if (typeof toggleWarpSpeedStarfield === 'function') {
+            toggleWarpSpeedStarfield(true);
+        }
+
         if (nearestPlanet.userData.type === 'blackhole') {
             if (typeof showAchievement === 'function') {
                 showAchievement('Black Hole Slingshot', `EXTREME VELOCITY: ${(boostVelocity * 1000).toFixed(0)} km/s!`);
@@ -1325,29 +1350,31 @@ if ((planet.userData.type === 'planet' || planet.userData.type === 'star' || pla
     // Reduce velocity significantly on collision
     gameState.velocityVector.multiplyScalar(0.3); // Lose 70% of speed
     
-    // Small hull damage from scraping
-    if (planet.userData.type === 'star' || planet.userData.type === 'blackhole') {
-        gameState.hull = Math.max(0, gameState.hull - 5); // More damage for stars/black holes
-        if (typeof showAchievement === 'function') {
-            showAchievement('Surface Contact!', `Scraped against ${planet.userData.name} - Hull damage!`);
-        }
-    } else {
-        // Apply damage with shield reduction
-        const damage = 2;
-        const shieldReduction = typeof getShieldDamageReduction === 'function' ? 
-                                getShieldDamageReduction() : 0;
-        const actualDamage = damage * (1 - shieldReduction);
-        
-        gameState.hull = Math.max(0, gameState.hull - actualDamage);
-        
-        // Create shield hit effect if shields are active
-        if (typeof isShieldActive === 'function' && isShieldActive() && 
-            typeof createShieldHitEffect === 'function') {
-            createShieldHitEffect(planetPosition);
-        }
-        
-        if (typeof showAchievement === 'function') {
-            showAchievement('Collision Avoided', `Bounced off ${planet.userData.name}`);
+    // Small hull damage from scraping (check invulnerability first)
+    if (!isBlackHoleWarpInvulnerable()) {
+        if (planet.userData.type === 'star' || planet.userData.type === 'blackhole') {
+            gameState.hull = Math.max(0, gameState.hull - 5); // More damage for stars/black holes
+            if (typeof showAchievement === 'function') {
+                showAchievement('Surface Contact!', `Scraped against ${planet.userData.name} - Hull damage!`);
+            }
+        } else {
+            // Apply damage with shield reduction
+            const damage = 2;
+            const shieldReduction = typeof getShieldDamageReduction === 'function' ?
+                                    getShieldDamageReduction() : 0;
+            const actualDamage = damage * (1 - shieldReduction);
+
+            gameState.hull = Math.max(0, gameState.hull - actualDamage);
+
+            // Create shield hit effect if shields are active
+            if (typeof isShieldActive === 'function' && isShieldActive() &&
+                typeof createShieldHitEffect === 'function') {
+                createShieldHitEffect(planetPosition);
+            }
+
+            if (typeof showAchievement === 'function') {
+                showAchievement('Collision Avoided', `Bounced off ${planet.userData.name}`);
+            }
         }
     }
     
@@ -1522,31 +1549,48 @@ if ((planet.userData.type === 'planet' || planet.userData.type === 'star' || pla
         }
     }
     
-    // Slingshot timer management
+    // Slingshot timer management (matching emergency warp behavior)
     if (gameState.slingshot.active) {
         gameState.slingshot.timeRemaining -= 16.67;
-        
+
         if (gameState.slingshot.timeRemaining <= 0) {
             gameState.slingshot.active = false;
             gameState.slingshot.postSlingshot = true;
             gameState.slingshot.timeRemaining = 0;
+
+            // Check speed and disable starfield if needed (matching emergency warp)
+            const currentSpeedKmS = gameState.velocityVector.length() * 1000;
+            if (currentSpeedKmS < 10000 && typeof toggleWarpSpeedStarfield === 'function') {
+                toggleWarpSpeedStarfield(false);
+            }
+
             if (typeof showAchievement === 'function') {
-                showAchievement('Slingshot Complete', 'Coasting on inertia - friction will gradually slow you down');
+                showAchievement('Slingshot Complete', 'Coasting on momentum - use X to brake');
             }
         }
     } else if (gameState.slingshot.postSlingshot) {
+        // Coast on momentum (matching emergency warp behavior)
         const currentSpeed = gameState.velocityVector.length();
+        const currentSpeedKmS = currentSpeed * 1000;
+
+        // Disable starfield if speed drops below threshold
+        if (currentSpeedKmS < 10000 && typeof toggleWarpSpeedStarfield === 'function') {
+            toggleWarpSpeedStarfield(false);
+        }
+
         if (currentSpeed > gameState.maxVelocity) {
             gameState.velocityVector.multiplyScalar(gameState.slingshot.inertiaDecay);
-            
+
             if (gameState.velocityVector.length() <= gameState.maxVelocity) {
                 gameState.slingshot.postSlingshot = false;
+                gameState.slingshot.fromBlackHole = false; // Reset black hole flag
                 if (typeof showAchievement === 'function') {
                     showAchievement('Normal Velocity', 'Returned to standard propulsion limits');
                 }
             }
         } else {
             gameState.slingshot.postSlingshot = false;
+            gameState.slingshot.fromBlackHole = false; // Reset black hole flag
         }
     }
     
@@ -1972,6 +2016,7 @@ window.updateEnhancedPhysics = updateEnhancedPhysics;
 window.createHyperspaceEffect = createHyperspaceEffect;
 window.createEnhancedScreenDamageEffect = createEnhancedScreenDamageEffect;
 window.executeSlingshot = executeSlingshot;
+window.isBlackHoleWarpInvulnerable = isBlackHoleWarpInvulnerable;
 
 // Add these to your existing window exports:
 window.shouldSuppressAchievement = shouldSuppressAchievement;

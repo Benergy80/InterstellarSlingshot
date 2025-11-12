@@ -621,11 +621,11 @@ body.ui-mode {
 
 #eventHorizonWarning {
     animation: eventHorizonShake 0.5s infinite;
-    background: linear-gradient(45deg, rgba(255,255,0,0.3), rgba(255,200,0,0.3));
+    background: linear-gradient(45deg, rgba(255,255,0,0.15), rgba(255,200,0,0.15));
     color: rgba(255, 255, 255, 0.95);
     border-radius: 15px;
     padding: 20px;
-    border: 2px solid rgba(255,255,0,0.4);
+    border: 2px solid rgba(255,255,0,0.2);
     backdrop-filter: blur(3px);
 }
 

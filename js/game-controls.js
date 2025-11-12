@@ -636,15 +636,21 @@ function fireEnemyWeapon(enemy, difficultySettings) {
         
         // Random chance to hit (makes combat more dynamic)
 if (Math.random() < 0.7) { // 70% hit chance
-    // Apply damage with shield reduction
-    const shieldReduction = typeof getShieldDamageReduction === 'function' ? 
-                            getShieldDamageReduction() : 0;
-    const actualDamage = damage * (1 - shieldReduction);
-    
-    if (typeof gameState !== 'undefined' && gameState.hull !== undefined) {
-        gameState.hull = Math.max(0, gameState.hull - actualDamage);
-    } else if (typeof gameState !== 'undefined' && gameState.health !== undefined) {
-        gameState.health = Math.max(0, gameState.health - actualDamage);
+    // Check black hole warp invulnerability
+    const isInvulnerable = typeof isBlackHoleWarpInvulnerable === 'function' &&
+                           isBlackHoleWarpInvulnerable();
+
+    if (!isInvulnerable) {
+        // Apply damage with shield reduction
+        const shieldReduction = typeof getShieldDamageReduction === 'function' ?
+                                getShieldDamageReduction() : 0;
+        const actualDamage = damage * (1 - shieldReduction);
+
+        if (typeof gameState !== 'undefined' && gameState.hull !== undefined) {
+            gameState.hull = Math.max(0, gameState.hull - actualDamage);
+        } else if (typeof gameState !== 'undefined' && gameState.health !== undefined) {
+            gameState.health = Math.max(0, gameState.health - actualDamage);
+        }
     }
     
     // Create shield hit effect if shields are active
@@ -1057,11 +1063,15 @@ function createAmbientSpaceMusic() {
     // Store references
     musicSystem.backgroundMusic = {
         stop: () => {
-            bassOsc.stop();
-            lfo1.stop();
-            padOsc.stop();
-            lfo2.stop();
-            mysteryOsc.stop();
+            try {
+                bassOsc.stop();
+                lfo1.stop();
+                padOsc.stop();
+                lfo2.stop();
+                mysteryOsc.stop();
+            } catch(e) {
+                // Oscillators already stopped, ignore error
+            }
         }
     };
 }
@@ -1161,9 +1171,13 @@ function createBattleMusic() {
     
     musicSystem.battleMusic = {
         stop: () => {
-            bassOsc.stop();
-            padOsc.stop();
-            leadOsc.stop();
+            try {
+                bassOsc.stop();
+                padOsc.stop();
+                leadOsc.stop();
+            } catch(e) {
+                // Oscillators already stopped, ignore error
+            }
         }
     };
 }
@@ -2036,12 +2050,10 @@ function initializeControlButtons() {
         if (key === 'b') keys.b = true;
         if (key === 'z') {
             keys.z = true;
-            // Toggle missile zoom scope
-            gameState.missiles.selected = !gameState.missiles.selected;
-            if (gameState.missiles.selected) {
+            // Activate missile zoom scope (hold to zoom)
+            if (!gameState.missiles.selected) {
+                gameState.missiles.selected = true;
                 showAchievement('Zoom Scope Active', 'Missile targeting scope engaged');
-            } else {
-                showAchievement('Zoom Scope Disabled', 'Normal targeting resumed');
             }
         }
 
@@ -2125,7 +2137,11 @@ if (e.key === 'Tab') {
         }
         if (key === 'x') keys.x = false;
         if (key === 'b') keys.b = false;
-        if (key === 'z') keys.z = false;
+        if (key === 'z') {
+            keys.z = false;
+            // Deactivate missile zoom scope when key released
+            gameState.missiles.selected = false;
+        }
         if (key === 'l') keys.l = false;
         
         if (e.key === 'ArrowUp') keys.up = false;
@@ -2623,9 +2639,14 @@ function checkGuardianVictory() {
             
             // Play galaxy victory music
             playGalaxyVictoryMusic();
-            
+
+            // Launch fireworks celebration
+            if (typeof createFireworkCelebration === 'function') {
+                createFireworkCelebration();
+            }
+
             // Show FINAL liberation achievement
-            showAchievement('Galaxy Liberated!', `${galaxyType.name} Galaxy (${galaxyType.faction}) completely liberated!`);
+            showAchievement(`Galaxy Liberation Complete - ${galaxyType.name}`, `${galaxyType.name} Galaxy (${galaxyType.faction}) completely liberated!`);
             
             // Mission Control message
             const remainingGalaxies = 8 - gameState.galaxiesCleared;

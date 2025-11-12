@@ -66,11 +66,12 @@ const gameState = {
         active: false,
         timeRemaining: 0,
         maxSpeed: 20.0, // Doubled for doubled world
-        duration: 20000,
+        duration: 24000, // 3x emergency warp duration (8000ms * 3)
         accelerationPhase: 10000,
         maintainPhase: 10000,
         postSlingshot: false,
-        inertiaDecay: 0.9995
+        inertiaDecay: 0.9999, // Match emergency warp behavior (coast on momentum)
+        fromBlackHole: false // Track if current slingshot is from black hole (for invulnerability)
     },
     eventHorizonWarning: {
         active: false,
@@ -1005,9 +1006,9 @@ if (typeof enemies !== 'undefined' && enemies.length > 0 && gameState.frameCount
             if (enemy.userData.baseOpacity === undefined) {
                 enemy.userData.baseOpacity = enemy.material.opacity;
             }
-            enemy.material.opacity = enemy.userData.baseOpacity * (0.85 + pulseFactor * 0.3);
+            enemy.material.opacity = enemy.userData.baseOpacity * (0.9 + pulseFactor * 0.5);
         }
-        
+
         // Pulse the glow mesh
         if (enemy.children && enemy.children[0]) {
             const glow = enemy.children[0];
@@ -1015,7 +1016,7 @@ if (typeof enemies !== 'undefined' && enemies.length > 0 && gameState.frameCount
                 if (glow.userData.baseOpacity === undefined) {
                     glow.userData.baseOpacity = glow.material.opacity;
                 }
-                glow.material.opacity = glow.userData.baseOpacity * (0.7 + pulseFactor * 0.6);
+                glow.material.opacity = glow.userData.baseOpacity * (0.8 + pulseFactor * 0.9);
             }
         }
     });
