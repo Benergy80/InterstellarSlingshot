@@ -1411,7 +1411,7 @@ if (typeof checkCosmicFeatureInteractions === 'function' && typeof camera !== 'u
         console.log('Planets array length:', planets ? planets.length : 0);
         console.log('Enemies array length:', enemies ? enemies.length : 0);
         console.log('Asteroid belts:', asteroidBelts ? asteroidBelts.length : 0);
-        console.log('Local galaxy stars visible:', localGalaxyStars ? localGalaxyStars.visible : 'N/A');
+        console.log('Local galaxy stars visible:', typeof localGalaxyStars !== 'undefined' && localGalaxyStars ? localGalaxyStars.visible : 'N/A');
         console.log('Scene children count:', scene ? scene.children.length : 0);
         console.log('Frame time:', frameTime.toFixed(2), 'ms');
         console.log('updateGalaxyMap called:', gameState.frameCount % 60 === 0 ? 'YES' : 'NO');
