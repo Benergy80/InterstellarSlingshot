@@ -9,7 +9,7 @@ const keys = {
   q: false, e: false, o: false,
   shift: false, alt: false, space: false,
   up: false, down: false, left: false, right: false,
-  x: false, b: false
+  x: false, b: false, z: false
 };
 
 // Enhanced Audio System with Eerie Space Music (RESTORED from game-controls13.js)
@@ -2034,7 +2034,17 @@ function initializeControlButtons() {
             }
         }
         if (key === 'b') keys.b = true;
-        
+        if (key === 'z') {
+            keys.z = true;
+            // Toggle missile zoom scope
+            gameState.missiles.selected = !gameState.missiles.selected;
+            if (gameState.missiles.selected) {
+                showAchievement('Zoom Scope Active', 'Missile targeting scope engaged');
+            } else {
+                showAchievement('Zoom Scope Disabled', 'Normal targeting resumed');
+            }
+        }
+
         if (e.key === 'ArrowUp') keys.up = true;
         if (e.key === 'ArrowDown') keys.down = true;
         if (e.key === 'ArrowLeft') keys.left = true;
@@ -2115,6 +2125,7 @@ if (e.key === 'Tab') {
         }
         if (key === 'x') keys.x = false;
         if (key === 'b') keys.b = false;
+        if (key === 'z') keys.z = false;
         if (key === 'l') keys.l = false;
         
         if (e.key === 'ArrowUp') keys.up = false;
