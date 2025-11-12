@@ -2,10 +2,7 @@
 // Located between 40000 units and skybox boundary
 // Features: Supernova/Plasma Storm/Solar Storm cores with orbiting Brown Dwarfs, Pulsars, and asteroids
 
-if (typeof window.outerInterstellarSystems === 'undefined') {
-    window.outerInterstellarSystems = [];
-}
-const outerInterstellarSystems = window.outerInterstellarSystems;
+window.outerInterstellarSystems = window.outerInterstellarSystems || [];
 
 const outerSystemNames = [
     "Void's Edge Nexus",
