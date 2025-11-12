@@ -411,6 +411,127 @@ function createAsteroidExplosion(position, radius = 1) {
     }, 2000); // Reduced from 3000ms to 2000ms
 }
 
+// DRAMATIC PLAYER EXPLOSION - Full screen with vaporizing effect
+function createPlayerExplosion() {
+    console.log('Creating dramatic player ship explosion!');
+
+    const playerPos = camera.position.clone();
+    const explosionGroup = new THREE.Group();
+    explosionGroup.position.copy(playerPos);
+    scene.add(explosionGroup);
+
+    // MASSIVE MAIN EXPLOSION SPHERE
+    const mainExplosionGeometry = new THREE.SphereGeometry(50, 32, 32);
+    const mainExplosionMaterial = new THREE.MeshBasicMaterial({
+        color: 0xff3300,
+        transparent: true,
+        opacity: 1.0
+    });
+    const mainExplosion = new THREE.Mesh(mainExplosionGeometry, mainExplosionMaterial);
+    explosionGroup.add(mainExplosion);
+
+    // MASSIVE PARTICLE DEBRIS FIELD
+    const particleCount = 100;
+    for (let i = 0; i < particleCount; i++) {
+        const particleGeometry = new THREE.SphereGeometry(2 + Math.random() * 5, 8, 8);
+        const particleMaterial = new THREE.MeshBasicMaterial({
+            color: new THREE.Color().setHSL(0.05 + Math.random() * 0.15, 1.0, 0.5),
+            transparent: true,
+            opacity: 1.0
+        });
+        const particle = new THREE.Mesh(particleGeometry, particleMaterial);
+
+        const velocity = new THREE.Vector3(
+            (Math.random() - 0.5) * 60,
+            (Math.random() - 0.5) * 60,
+            (Math.random() - 0.5) * 60
+        );
+
+        explosionGroup.add(particle);
+
+        let particleLife = 1.0;
+        const particleInterval = setInterval(() => {
+            particle.position.add(velocity.clone().multiplyScalar(0.3));
+            particleLife -= 0.02;
+            particleMaterial.opacity = particleLife;
+
+            const scale = particleLife;
+            particle.scale.set(scale, scale, scale);
+
+            if (particleLife <= 0) {
+                clearInterval(particleInterval);
+                explosionGroup.remove(particle);
+                particleGeometry.dispose();
+                particleMaterial.dispose();
+            }
+        }, 50);
+    }
+
+    // MAIN EXPLOSION ANIMATION - Dramatic growth
+    let explosionScale = 1;
+    let explosionOpacity = 1.0;
+    const explosionInterval = setInterval(() => {
+        explosionScale += 5;
+        explosionOpacity -= 0.02;
+
+        mainExplosion.scale.set(explosionScale, explosionScale, explosionScale);
+        mainExplosionMaterial.opacity = explosionOpacity;
+
+        if (explosionOpacity <= 0) {
+            clearInterval(explosionInterval);
+            explosionGroup.remove(mainExplosion);
+            mainExplosionGeometry.dispose();
+            mainExplosionMaterial.dispose();
+        }
+    }, 50);
+
+    // MULTIPLE SHOCKWAVES
+    for (let i = 0; i < 3; i++) {
+        setTimeout(() => {
+            const shockwaveGeometry = new THREE.RingGeometry(10, 15, 32);
+            const shockwaveMaterial = new THREE.MeshBasicMaterial({
+                color: 0xff6600,
+                transparent: true,
+                opacity: 0.8,
+                side: THREE.DoubleSide
+            });
+            const shockwave = new THREE.Mesh(shockwaveGeometry, shockwaveMaterial);
+            shockwave.rotation.x = Math.PI / 2;
+            explosionGroup.add(shockwave);
+
+            let shockwaveScale = 1;
+            let shockwaveOpacity = 0.8;
+            const shockwaveInterval = setInterval(() => {
+                shockwaveScale += 8;
+                shockwaveOpacity -= 0.04;
+
+                shockwave.scale.set(shockwaveScale, shockwaveScale, 1);
+                shockwaveMaterial.opacity = shockwaveOpacity;
+
+                if (shockwaveOpacity <= 0) {
+                    clearInterval(shockwaveInterval);
+                    explosionGroup.remove(shockwave);
+                    shockwaveGeometry.dispose();
+                    shockwaveMaterial.dispose();
+                }
+            }, 50);
+        }, i * 200);
+    }
+
+    // Play vaporizing sound effect
+    if (typeof playSound !== 'undefined') {
+        playSound('ship_vaporize');
+    }
+
+    // Cleanup
+    setTimeout(() => {
+        if (explosionGroup.parent) {
+            scene.remove(explosionGroup);
+        }
+        console.log('Player explosion cleanup complete');
+    }, 5000);
+}
+
 // RESTORED: Asteroid destruction functions
 function destroyAsteroid(asteroid) {
     scene.remove(asteroid);
@@ -2017,6 +2138,7 @@ window.createHyperspaceEffect = createHyperspaceEffect;
 window.createEnhancedScreenDamageEffect = createEnhancedScreenDamageEffect;
 window.executeSlingshot = executeSlingshot;
 window.isBlackHoleWarpInvulnerable = isBlackHoleWarpInvulnerable;
+window.createPlayerExplosion = createPlayerExplosion;
 
 // Add these to your existing window exports:
 window.shouldSuppressAchievement = shouldSuppressAchievement;

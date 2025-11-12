@@ -1814,6 +1814,105 @@ function gameOver(reason) {
     console.log('✅ Game over screen displayed - all systems stopped');
 }
 
+// HULL ZERO GAME OVER - Dramatic full screen explosion effect
+function showGameOverScreen(title, message) {
+    // Prevent duplicate screens
+    if (typeof gameState !== 'undefined') {
+        if (gameState.gameOverScreenShown) {
+            console.log('⚠️ Game over screen already shown, ignoring duplicate call');
+            return;
+        }
+        gameState.gameOver = true;
+        gameState.gameStarted = false;
+        gameState.gameOverScreenShown = true;
+    }
+
+    console.log('💀 HULL BREACH - Ship destroyed');
+
+    // Full screen red flash effect
+    const flashOverlay = document.createElement('div');
+    flashOverlay.style.cssText = `
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: radial-gradient(circle, rgba(255,0,0,0.9) 0%, rgba(200,0,0,0.7) 50%, rgba(100,0,0,0.5) 100%);
+        z-index: 9998;
+        opacity: 1;
+        pointer-events: none;
+        animation: explosionFlash 2s ease-out forwards;
+    `;
+
+    // Add CSS animation for flash
+    const style = document.createElement('style');
+    style.textContent = `
+        @keyframes explosionFlash {
+            0% { opacity: 1; }
+            50% { opacity: 0.7; }
+            100% { opacity: 0; }
+        }
+    `;
+    document.head.appendChild(style);
+    document.body.appendChild(flashOverlay);
+
+    // Remove flash after animation
+    setTimeout(() => {
+        flashOverlay.remove();
+    }, 2000);
+
+    // Stop all systems
+    if (typeof musicSystem !== 'undefined') {
+        if (musicSystem.backgroundMusic) {
+            try {musicSystem.backgroundMusic.stop();} catch(e) {}
+            musicSystem.backgroundMusic = null;
+        }
+        if (musicSystem.battleMusic) {
+            try {musicSystem.battleMusic.stop();} catch(e) {}
+            musicSystem.battleMusic = null;
+        }
+    }
+
+    if (typeof audioContext !== 'undefined' && audioContext) {
+        audioContext.suspend();
+    }
+
+    // Show game over screen after flash
+    setTimeout(() => {
+        const gameOverOverlay = document.createElement('div');
+        gameOverOverlay.id = 'gameOverScreen';
+        gameOverOverlay.className = 'absolute inset-0 bg-black bg-opacity-95 flex items-center justify-center z-9999 cyberpunk-bg';
+        gameOverOverlay.style.cursor = 'auto';
+        gameOverOverlay.innerHTML = `
+            <div class="text-center ui-panel rounded-lg p-8" style="cursor: auto;">
+                <div class="text-8xl mb-6 text-red-500" style="text-shadow: 0 0 20px rgba(255,0,0,0.8);">💥</div>
+                <h1 class="text-5xl font-bold text-red-400 mb-4 glow-text cyber-title" style="text-shadow: 0 0 30px rgba(255,0,0,0.9);">${title || 'HULL BREACH'}</h1>
+                <p class="text-gray-300 mb-6 text-xl">${message || 'Ship destroyed'}</p>
+                <div class="space-y-4">
+                    <div class="text-lg text-red-400 glow-text">Final Stats:</div>
+                    <div class="text-sm text-gray-300 space-y-1">
+                        <div>Distance Traveled: ${gameState ? gameState.distance.toFixed(1) : '0'} light years</div>
+                        <div>Final Velocity: ${gameState ? (gameState.velocity * 1000).toFixed(0) : '0'} km/s</div>
+                        <div>Energy Remaining: ${gameState ? gameState.energy.toFixed(0) : '0'}%</div>
+                        <div>Hull Integrity: ${gameState ? gameState.hull.toFixed(0) : '0'}%</div>
+                        <div>Galaxies Cleared: ${gameState ? (gameState.galaxiesCleared || 0) : 0}/8</div>
+                        <div>Emergency Warps Remaining: ${gameState ? gameState.emergencyWarp.available : '0'}</div>
+                    </div>
+                    <button onclick="location.reload()" class="mt-6 space-btn rounded px-6 py-3" style="cursor: pointer; background: linear-gradient(135deg, #ff0066 0%, #ff6600 100%); border: 2px solid #ff3300;">
+                        <i class="fas fa-redo mr-2"></i>Restart Mission
+                    </button>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(gameOverOverlay);
+
+        document.body.style.cursor = 'auto';
+        gameOverOverlay.style.pointerEvents = 'all';
+
+        console.log('✅ Hull breach game over screen displayed');
+    }, 1500);
+}
+
 // =============================================================================
 // INTEGRATED UPDATE LOOP FOR UI SYSTEMS
 // =============================================================================
@@ -2413,6 +2512,7 @@ if (typeof window !== 'undefined') {
     window.checkVictoryCondition = checkVictoryCondition;
     window.showVictoryScreen = showVictoryScreen;
     window.gameOver = gameOver;
+    window.showGameOverScreen = showGameOverScreen;
     
     // Bridge functions for integration
     window.displayAchievement = displayAchievement;

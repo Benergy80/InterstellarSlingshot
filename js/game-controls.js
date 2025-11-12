@@ -1399,6 +1399,16 @@ function playSound(type, frequency = 440, duration = 0.2) {
             oscillator.type = 'sawtooth';
             duration = 0.6;
             break;
+
+        case 'ship_vaporize':
+            // Dramatic vaporizing sound - starts high and sweeps down
+            oscillator.frequency.setValueAtTime(800, audioContext.currentTime);
+            oscillator.frequency.exponentialRampToValueAtTime(20, audioContext.currentTime + 1.5);
+            gain.gain.setValueAtTime(0.7, audioContext.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + 1.5);
+            oscillator.type = 'sawtooth';
+            duration = 1.5;
+            break;
         default:
             oscillator.frequency.setValueAtTime(frequency, audioContext.currentTime);
             gain.gain.setValueAtTime(0.2, audioContext.currentTime);
@@ -3129,6 +3139,45 @@ function updateMissiles() {
             }
         }
 
+        // Cosmic feature destruction
+        if (typeof cosmicFeatures !== 'undefined') {
+            // Check Dyson Spheres
+            if (cosmicFeatures.dysonSpheres) {
+                for (let sphere of cosmicFeatures.dysonSpheres) {
+                    if (sphere.userData.destroyed) continue;
+                    const distance = missile.position.distanceTo(sphere.position);
+                    if (distance < 100) {
+                        handleCosmicFeatureDestruction(missile, sphere, 'dyson');
+                        return false;
+                    }
+                }
+            }
+
+            // Check Crystal structures
+            if (cosmicFeatures.crystalStructures) {
+                for (let crystal of cosmicFeatures.crystalStructures) {
+                    if (crystal.userData.destroyed) continue;
+                    const distance = missile.position.distanceTo(crystal.position);
+                    if (distance < 50) {
+                        handleCosmicFeatureDestruction(missile, crystal, 'crystal');
+                        return false;
+                    }
+                }
+            }
+
+            // Check Space Whales
+            if (cosmicFeatures.spaceWhales) {
+                for (let whale of cosmicFeatures.spaceWhales) {
+                    if (whale.userData.destroyed) continue;
+                    const distance = missile.position.distanceTo(whale.position);
+                    if (distance < 80) {
+                        handleCosmicFeatureDestruction(missile, whale, 'whale');
+                        return false;
+                    }
+                }
+            }
+        }
+
         return true;
     });
 }
@@ -3188,6 +3237,61 @@ function handleMissileHit(missile, enemy) {
         if (typeof checkAndSpawnBoss === 'function' && enemy.userData.galaxyId !== undefined) {
             checkAndSpawnBoss(enemy.userData.galaxyId);
         }
+    }
+}
+
+function handleCosmicFeatureDestruction(missile, feature, type) {
+    scene.remove(missile);
+    feature.userData.destroyed = true;
+
+    // Create larger explosion
+    createMissileExplosion(missile.position);
+    playSound('missile_explosion');
+
+    // Apply effects based on type
+    switch(type) {
+        case 'dyson':
+            // Dyson Sphere: +25% energy max
+            const energyBoost = 25;
+            gameState.maxEnergy = (gameState.maxEnergy || 100) + energyBoost;
+            gameState.energy = Math.min(gameState.maxEnergy, gameState.energy + energyBoost);
+            showAchievement('DYSON SPHERE DESTROYED!',
+                `Maximum energy capacity increased to ${gameState.maxEnergy}%!`, true);
+            break;
+
+        case 'crystal':
+            // Crystal Structure: 2x attack damage
+            if (!gameState.weaponDamageMultiplier) gameState.weaponDamageMultiplier = 1;
+            gameState.weaponDamageMultiplier *= 2;
+            showAchievement('CRYSTAL STRUCTURE DESTROYED!',
+                `Weapon damage multiplier: x${gameState.weaponDamageMultiplier}!`, true);
+            break;
+
+        case 'whale':
+            // Space Whale: -50% hull curse
+            const hullPenalty = gameState.hull * 0.5;
+            gameState.hull = Math.max(1, gameState.hull - hullPenalty);
+            showAchievement('SPACE WHALE DESTROYED!',
+                `Ancient curse applied: -${hullPenalty.toFixed(0)}% hull integrity!`, true);
+            break;
+    }
+
+    // Visual destruction effect
+    if (feature.material) {
+        feature.material.transparent = true;
+        let opacity = 1.0;
+        const fadeInterval = setInterval(() => {
+            opacity -= 0.05;
+            if (feature.material) {
+                feature.material.opacity = opacity;
+            }
+            if (opacity <= 0) {
+                clearInterval(fadeInterval);
+                scene.remove(feature);
+            }
+        }, 50);
+    } else {
+        scene.remove(feature);
     }
 }
 

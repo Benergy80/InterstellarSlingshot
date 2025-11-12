@@ -1411,6 +1411,16 @@ if (typeof checkCosmicFeatureInteractions === 'function' && typeof camera !== 'u
         gameState.missiles.cooldown = Math.max(0, gameState.missiles.cooldown - 16.67);
     }
 
+    // Check for hull zero - mission fail
+    if (gameState.hull <= 0 && !gameState.gameOver) {
+        if (typeof createPlayerExplosion === 'function') {
+            createPlayerExplosion();
+        }
+        if (typeof showGameOverScreen === 'function') {
+            showGameOverScreen('HULL BREACH', 'Ship destroyed - structural integrity failure');
+        }
+    }
+
     // Check for Borg spawn (every 5 seconds)
     if (gameState.frameCount % 300 === 0 && typeof checkBorgSpawn === 'function') {
         checkBorgSpawn();
