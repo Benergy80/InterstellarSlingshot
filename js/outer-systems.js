@@ -2,26 +2,33 @@
 // Located between 40000 units and skybox boundary
 // Features: Supernova/Plasma Storm/Solar Storm cores with orbiting Brown Dwarfs, Pulsars, and asteroids
 
-window.outerInterstellarSystems = window.outerInterstellarSystems || [];
+// Safe initialization - prevents "already declared" errors
+if (!window.outerInterstellarSystems) {
+    window.outerInterstellarSystems = [];
+}
+if (!window.outerSystemNames) {
+    window.outerSystemNames = [
+        "Void's Edge Nexus",
+        "Deep Space Terminus", 
+        "Stellar Graveyard Alpha",
+        "The Far Reaches",
+        "Beyond the Veil",
+        "Outer Darkness Station",
+        "Edge of Creation",
+        "The Last Light",
+        "Stellar Wasteland",
+        "Deep Void Cluster",
+        "The Forgotten Reaches",
+        "Boundary's End",
+        "Final Frontier Node",
+        "The Great Empty",
+        "Deep Space Refuge",
+        "The Outer Limits"
+    ];
+}
 
-const outerSystemNames = [
-    "Void's Edge Nexus",
-    "Deep Space Terminus", 
-    "Stellar Graveyard Alpha",
-    "The Far Reaches",
-    "Beyond the Veil",
-    "Outer Darkness Station",
-    "Edge of Creation",
-    "The Last Light",
-    "Stellar Wasteland",
-    "Deep Void Cluster",
-    "The Forgotten Reaches",
-    "Boundary's End",
-    "Final Frontier Node",
-    "The Great Empty",
-    "Deep Space Refuge",
-    "The Outer Limits"
-];
+const outerInterstellarSystems = window.outerInterstellarSystems;
+const outerSystemNames = window.outerSystemNames;
 
 // =============================================================================
 // MAIN CREATION FUNCTION
