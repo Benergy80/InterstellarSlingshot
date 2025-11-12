@@ -1368,6 +1368,23 @@ function playSound(type, frequency = 440, duration = 0.2) {
     		oscillator.type = 'sawtooth';
     		duration = 1.2;
     		break;
+        case 'missile_launch':
+            oscillator.frequency.setValueAtTime(400, audioContext.currentTime);
+            oscillator.frequency.exponentialRampToValueAtTime(150, audioContext.currentTime + 0.3);
+            gain.gain.setValueAtTime(0.4, audioContext.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
+            oscillator.type = 'sawtooth';
+            duration = 0.3;
+            break;
+
+        case 'missile_explosion':
+            oscillator.frequency.setValueAtTime(200, audioContext.currentTime);
+            oscillator.frequency.exponentialRampToValueAtTime(30, audioContext.currentTime + 0.6);
+            gain.gain.setValueAtTime(0.5, audioContext.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.6);
+            oscillator.type = 'sawtooth';
+            duration = 0.6;
+            break;
         default:
             oscillator.frequency.setValueAtTime(frequency, audioContext.currentTime);
             gain.gain.setValueAtTime(0.2, audioContext.currentTime);
@@ -2004,6 +2021,10 @@ function initializeControlButtons() {
                 fireWeapon();
             }
         }
+        if (e.key === 'Meta' || e.key === 'Command') {
+            e.preventDefault();
+            fireMissile();
+        }
         if (key === 'x') {
             keys.x = true;
             
@@ -2160,11 +2181,11 @@ document.addEventListener('click', (e) => {
     // Mouse movement tracking for crosshair - FIXED POSITION TRACKING
 document.addEventListener('mousemove', (e) => {
     if (!gameState.gameStarted || gameState.gameOver || gamePaused) return;
-    
+
     // ALWAYS update actual mouse position for UI detection
     gameState.mouseX = e.clientX;
     gameState.mouseY = e.clientY;
-    
+
     // Only update crosshair position if not in target lock mode
     // This keeps crosshair and mouse positions separate when target lock is active
     if (!gameState.targetLock.active) {
@@ -2174,6 +2195,74 @@ document.addEventListener('mousemove', (e) => {
     // Note: When target lock is active, crosshair position is controlled by updateTargetLock()
     // but we still track real mouse position for UI interaction
 });
+
+// Add zoom scope crosshair after initial setup
+setTimeout(() => {
+    const zoomScope = document.createElement('div');
+    zoomScope.id = 'zoomScope';
+    zoomScope.style.cssText = `
+        position: fixed;
+        width: 250px;
+        height: 250px;
+        border: 3px solid rgba(255, 51, 0, 0.8);
+        border-radius: 50%;
+        pointer-events: none;
+        z-index: 999;
+        display: none;
+        overflow: hidden;
+        box-shadow: 0 0 30px rgba(255, 51, 0, 0.6), inset 0 0 30px rgba(255, 51, 0, 0.3);
+    `;
+
+    const scopeCanvas = document.createElement('canvas');
+    scopeCanvas.width = 250;
+    scopeCanvas.height = 250;
+    scopeCanvas.style.cssText = 'width: 100%; height: 100%;';
+    zoomScope.appendChild(scopeCanvas);
+    document.body.appendChild(zoomScope);
+
+    document.addEventListener('mousemove', (e) => {
+        if (gameState.missiles.selected) {
+            const x = e.clientX - 125;
+            const y = e.clientY - 125;
+            zoomScope.style.left = x + 'px';
+            zoomScope.style.top = y + 'px';
+            zoomScope.style.display = 'block';
+
+            const ctx = scopeCanvas.getContext('2d');
+            ctx.clearRect(0, 0, 250, 250);
+
+            const zoomFactor = 2.5;
+            const sourceX = e.clientX - (125 / zoomFactor);
+            const sourceY = e.clientY - (125 / zoomFactor);
+            const sourceWidth = 250 / zoomFactor;
+            const sourceHeight = 250 / zoomFactor;
+
+            try {
+                if (typeof renderer !== 'undefined' && renderer.domElement) {
+                    ctx.drawImage(renderer.domElement,
+                        sourceX, sourceY, sourceWidth, sourceHeight,
+                        0, 0, 250, 250);
+                }
+            } catch (err) {}
+
+            ctx.strokeStyle = 'rgba(255, 51, 0, 0.5)';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(125, 0);
+            ctx.lineTo(125, 250);
+            ctx.moveTo(0, 125);
+            ctx.lineTo(250, 125);
+            ctx.stroke();
+
+            ctx.beginPath();
+            ctx.arc(125, 125, 20, 0, Math.PI * 2);
+            ctx.stroke();
+        } else {
+            zoomScope.style.display = 'none';
+        }
+    });
+}, 1000);
+
     // RESTORED: Enhanced button handlers
     const autoNavBtn = document.getElementById('autoNavigateBtn');
     if (autoNavBtn) {
@@ -2516,6 +2605,293 @@ function checkGuardianVictory() {
     }
 }
 
+
+// =============================================================================
+// MISSILE SYSTEM
+// =============================================================================
+
+// Missile System
+function fireMissile() {
+    if (typeof shieldSystem !== 'undefined' && shieldSystem.active) {
+        showAchievement('Missiles Disabled', 'Shields must be deactivated first');
+        return;
+    }
+
+    if (gameState.missiles.cooldown > 0 || gameState.missiles.current <= 0) {
+        if (gameState.missiles.current <= 0) {
+            showAchievement('No Missiles', 'Missiles depleted - defeat enemies for resupply');
+        }
+        return;
+    }
+
+    gameState.missiles.current--;
+    gameState.missiles.cooldown = gameState.missiles.cooldownTime;
+
+    let targetObject = null;
+    let targetPosition;
+
+    // Missiles can use navigation panel targets from distance
+    if (gameState.currentTarget) {
+        targetPosition = gameState.currentTarget.position.clone();
+        targetObject = gameState.currentTarget;
+    } else if (gameState.targetLock.active && gameState.targetLock.target) {
+        targetPosition = gameState.targetLock.target.position.clone();
+        targetObject = gameState.targetLock.target;
+    } else {
+        const mousePos = new THREE.Vector2(
+            (gameState.crosshairX / window.innerWidth) * 2 - 1,
+            -(gameState.crosshairY / window.innerHeight) * 2 + 1
+        );
+        const raycaster = new THREE.Raycaster();
+        raycaster.setFromCamera(mousePos, camera);
+        const enemyIntersects = raycaster.intersectObjects(enemies);
+
+        if (enemyIntersects.length > 0) {
+            targetPosition = enemyIntersects[0].point;
+            targetObject = enemyIntersects[0].object;
+        } else {
+            const direction = raycaster.ray.direction.clone();
+            targetPosition = camera.position.clone().add(direction.multiplyScalar(1000));
+        }
+    }
+
+    createMissile(camera.position.clone(), targetPosition, targetObject);
+    playSound('missile_launch');
+    updateMissileUI();
+}
+
+function createMissile(startPos, targetPos, targetObject) {
+    const missileGeometry = new THREE.CylinderGeometry(0.3, 0.5, 2, 8);
+    const missileMaterial = new THREE.MeshBasicMaterial({ color: 0xff3300 });
+    const missile = new THREE.Mesh(missileGeometry, missileMaterial);
+
+    missile.position.copy(startPos);
+    const direction = new THREE.Vector3().subVectors(targetPos, startPos).normalize();
+    const up = new THREE.Vector3(0, 1, 0);
+    const axis = new THREE.Vector3().crossVectors(up, direction);
+    const angle = Math.acos(up.dot(direction));
+    if (axis.length() > 0.001) {
+        missile.setRotationFromAxisAngle(axis.normalize(), angle);
+    }
+
+    // Glow effect
+    const glowGeometry = new THREE.CylinderGeometry(0.5, 0.7, 2.5, 8);
+    const glowMaterial = new THREE.MeshBasicMaterial({
+        color: 0xff6600,
+        transparent: true,
+        opacity: 0.4,
+        blending: THREE.AdditiveBlending
+    });
+    const glow = new THREE.Mesh(glowGeometry, glowMaterial);
+    missile.add(glow);
+
+    // Smoke trail
+    const trailGeometry = new THREE.CylinderGeometry(0.2, 0.4, 1, 6);
+    const trailMaterial = new THREE.MeshBasicMaterial({
+        color: 0x666666,
+        transparent: true,
+        opacity: 0.6
+    });
+    const trail = new THREE.Mesh(trailGeometry, trailMaterial);
+    trail.position.y = -1.5;
+    missile.add(trail);
+
+    scene.add(missile);
+
+    missile.userData = {
+        velocity: direction.clone().multiplyScalar(gameState.missiles.speed),
+        target: targetObject,
+        lifetime: 0,
+        maxLifetime: 5000,
+        type: 'missile'
+    };
+
+    if (!window.activeMissiles) window.activeMissiles = [];
+    window.activeMissiles.push(missile);
+}
+
+function updateMissiles() {
+    if (!window.activeMissiles) return;
+
+    window.activeMissiles = window.activeMissiles.filter(missile => {
+        missile.userData.lifetime += 16.67;
+
+        if (missile.userData.lifetime > missile.userData.maxLifetime) {
+            scene.remove(missile);
+            return false;
+        }
+
+        // Tracking
+        if (missile.userData.target && missile.userData.target.userData.health > 0) {
+            const targetDir = new THREE.Vector3()
+                .subVectors(missile.userData.target.position, missile.position)
+                .normalize();
+            missile.userData.velocity.lerp(
+                targetDir.multiplyScalar(gameState.missiles.speed),
+                0.05
+            );
+        }
+
+        missile.position.add(missile.userData.velocity);
+
+        const up = new THREE.Vector3(0, 1, 0);
+        const axis = new THREE.Vector3().crossVectors(up, missile.userData.velocity.clone().normalize());
+        const angle = Math.acos(up.dot(missile.userData.velocity.clone().normalize()));
+        if (axis.length() > 0.001) {
+            missile.setRotationFromAxisAngle(axis.normalize(), angle);
+        }
+
+        // Hit detection
+        if (typeof enemies !== 'undefined') {
+            for (let enemy of enemies) {
+                if (enemy.userData.health <= 0) continue;
+                if (missile.position.distanceTo(enemy.position) < 15) {
+                    handleMissileHit(missile, enemy);
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    });
+}
+
+function handleMissileHit(missile, enemy) {
+    scene.remove(missile);
+
+    enemy.userData.health -= gameState.missiles.damage;
+    flashEnemyHit(enemy, gameState.missiles.damage);
+    createMissileExplosion(missile.position);
+    playSound('missile_explosion');
+
+    showAchievement('Missile Hit!',
+        `Damaged ${enemy.userData.name} (${enemy.userData.health}/${enemy.userData.maxHealth} HP)`);
+
+    if (enemy.userData.health <= 0) {
+        const wasBoss = enemy.userData.isBoss;
+        const bossName = enemy.userData.name;
+
+        createExplosionEffect(enemy.position, 0xff4444, 15);
+        playSound('explosion');
+
+        if (wasBoss) {
+            showAchievement('BOSS DEFEATED!', `${bossName} destroyed by missile!`);
+            if (typeof checkBossVictory === 'function') checkBossVictory(enemy);
+            if (typeof createFireworkCelebration === 'function') createFireworkCelebration();
+            playBossVictoryMusic();
+
+            // Boss defeated: +2 missile capacity
+            gameState.missiles.capacity += 2;
+            gameState.missiles.current = Math.min(gameState.missiles.capacity, gameState.missiles.current + 2);
+            showAchievement('Missile Capacity Increased!',
+                `Capacity now ${gameState.missiles.capacity} missiles`);
+        } else {
+            showAchievement('Enemy Destroyed!', `${enemy.userData.name} eliminated by missile`);
+
+            // 20% chance for missile drop
+            if (Math.random() < 0.2) {
+                gameState.missiles.current = Math.min(gameState.missiles.capacity, gameState.missiles.current + 1);
+                showAchievement('Missile Recovered!',
+                    `+1 missile from debris (${gameState.missiles.current}/${gameState.missiles.capacity})`);
+            }
+        }
+
+        const hullRecovery = wasBoss ? 15 + Math.random() * 15 : 5 + Math.random() * 10;
+        gameState.hull = Math.min(gameState.maxHull || 100, gameState.hull + hullRecovery);
+        showAchievement('Hull Repaired', `+${hullRecovery.toFixed(1)} hull integrity from salvage`);
+
+        if (gameState.targetLock.target === enemy) gameState.targetLock.target = null;
+        if (gameState.currentTarget === enemy) gameState.currentTarget = null;
+
+        scene.remove(enemy);
+        enemies.splice(enemies.indexOf(enemy), 1);
+
+        if (typeof populateTargets === 'function') setTimeout(populateTargets, 100);
+        checkGalaxyClear();
+        if (typeof checkAndSpawnBoss === 'function' && enemy.userData.galaxyId !== undefined) {
+            checkAndSpawnBoss(enemy.userData.galaxyId);
+        }
+    }
+}
+
+function createMissileExplosion(position) {
+    const explosionGeometry = new THREE.SphereGeometry(8, 16, 16);
+    const explosionMaterial = new THREE.MeshBasicMaterial({
+        color: 0xff3300,
+        transparent: true,
+        opacity: 0.9
+    });
+    const explosion = new THREE.Mesh(explosionGeometry, explosionMaterial);
+    explosion.position.copy(position);
+    scene.add(explosion);
+
+    let scale = 1;
+    let opacity = 0.9;
+    const explosionInterval = setInterval(() => {
+        scale += 0.8;
+        opacity -= 0.08;
+        explosion.scale.set(scale, scale, scale);
+        explosionMaterial.opacity = opacity;
+
+        if (opacity <= 0) {
+            clearInterval(explosionInterval);
+            scene.remove(explosion);
+            explosionGeometry.dispose();
+            explosionMaterial.dispose();
+        }
+    }, 50);
+
+    // Particles
+    const particles = new THREE.BufferGeometry();
+    const particleCount = 40;
+    const positions = new Float32Array(particleCount * 3);
+
+    for (let i = 0; i < particleCount; i++) {
+        positions[i * 3] = (Math.random() - 0.5) * 25;
+        positions[i * 3 + 1] = (Math.random() - 0.5) * 25;
+        positions[i * 3 + 2] = (Math.random() - 0.5) * 25;
+    }
+
+    particles.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    const particleMaterial = new THREE.PointsMaterial({
+        color: 0xff6600,
+        size: 1.5,
+        transparent: true,
+        opacity: 1
+    });
+    const particleSystem = new THREE.Points(particles, particleMaterial);
+    particleSystem.position.copy(position);
+    scene.add(particleSystem);
+
+    let particleLife = 1.0;
+    const particleInterval = setInterval(() => {
+        particleLife -= 0.025;
+        particleMaterial.opacity = particleLife;
+
+        if (particleLife <= 0) {
+            clearInterval(particleInterval);
+            scene.remove(particleSystem);
+            particles.dispose();
+            particleMaterial.dispose();
+        }
+    }, 70);
+}
+
+function updateMissileUI() {
+    const missileCount = document.getElementById('missileCount');
+    if (missileCount) {
+        missileCount.textContent = `${gameState.missiles.current}/${gameState.missiles.capacity}`;
+    }
+
+    const mobileMissileCount = document.getElementById('mobileMissileCountBadge');
+    if (mobileMissileCount) {
+        mobileMissileCount.textContent = gameState.missiles.current;
+    }
+}
+
+// =============================================================================
+// WEAPON SYSTEM
+// =============================================================================
 
 // RESTORED: Working weapon system with asteroid targeting
 function fireWeapon() {
@@ -3199,7 +3575,12 @@ if (typeof window !== 'undefined') {
     window.updateEnemyBehavior = updateEnemyBehavior;
     window.fireWeapon = fireWeapon;
     window.flashEnemyHit = flashEnemyHit;
-    
+
+    // Missile systems
+    window.fireMissile = fireMissile;
+    window.updateMissiles = updateMissiles;
+    window.updateMissileUI = updateMissileUI;
+
     // Audio systems
     window.playSound = playSound;
     window.toggleMusic = toggleMusic;

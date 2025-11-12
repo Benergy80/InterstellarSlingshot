@@ -91,6 +91,15 @@ const gameState = {
         energy: 100,
         cooldown: 0
     },
+    missiles: {
+        current: 3,
+        capacity: 3,
+        cooldown: 0,
+        cooldownTime: 1000,
+        damage: 3,
+        speed: 5.0,
+        selected: false
+    },
     frameCount: 0,
     lastUpdateTime: 0,
     audioSystem: null,
@@ -1382,7 +1391,17 @@ if (typeof checkCosmicFeatureInteractions === 'function' && typeof camera !== 'u
     if (gameState.frameCount % 2 === 0 && typeof updateEnemyBehavior === 'function') {
     updateEnemyBehavior();
 }
-    
+
+    // Update missiles
+    if (typeof updateMissiles === 'function') {
+        updateMissiles();
+    }
+
+    // Update missile cooldown
+    if (gameState.missiles.cooldown > 0) {
+        gameState.missiles.cooldown = Math.max(0, gameState.missiles.cooldown - 16.67);
+    }
+
     // Enhanced physics and controls for doubled world
     if (typeof updateEnhancedPhysics === 'function') {
         updateEnhancedPhysics();
