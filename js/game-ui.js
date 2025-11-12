@@ -1179,7 +1179,74 @@ if (typeof outerInterstellarSystems !== 'undefined') {
                 });
             }
         });
-        
+
+        // Add cosmic features (if available)
+        if (typeof cosmicFeatures !== 'undefined') {
+            // Dyson Spheres
+            if (cosmicFeatures.dysonSpheres) {
+                cosmicFeatures.dysonSpheres.forEach(sphere => {
+                    if (!sphere || !sphere.position || sphere.userData.destroyed) return;
+                    const distance = camera.position.distanceTo(sphere.position);
+                    if (distance < radarRange) {
+                        nearbyObjects.push({
+                            position: sphere.position,
+                            type: 'dyson_sphere',
+                            name: 'Dyson Sphere',
+                            distance: distance
+                        });
+                    }
+                });
+            }
+
+            // Crystal Structures
+            if (cosmicFeatures.crystalStructures) {
+                cosmicFeatures.crystalStructures.forEach(crystal => {
+                    if (!crystal || !crystal.position || crystal.userData.destroyed) return;
+                    const distance = camera.position.distanceTo(crystal.position);
+                    if (distance < radarRange) {
+                        nearbyObjects.push({
+                            position: crystal.position,
+                            type: 'crystal_structure',
+                            name: 'Crystal Structure',
+                            distance: distance
+                        });
+                    }
+                });
+            }
+
+            // Space Whales
+            if (cosmicFeatures.spaceWhales) {
+                cosmicFeatures.spaceWhales.forEach(whale => {
+                    if (!whale || !whale.position || whale.userData.destroyed) return;
+                    const distance = camera.position.distanceTo(whale.position);
+                    if (distance < radarRange) {
+                        nearbyObjects.push({
+                            position: whale.position,
+                            type: 'space_whale',
+                            name: 'Space Whale',
+                            distance: distance
+                        });
+                    }
+                });
+            }
+
+            // Ringworlds
+            if (cosmicFeatures.ringworlds) {
+                cosmicFeatures.ringworlds.forEach(ringworld => {
+                    if (!ringworld || !ringworld.position) return;
+                    const distance = camera.position.distanceTo(ringworld.position);
+                    if (distance < radarRange) {
+                        nearbyObjects.push({
+                            position: ringworld.position,
+                            type: 'ringworld',
+                            name: 'Ringworld',
+                            distance: distance
+                        });
+                    }
+                });
+            }
+        }
+
         // Display objects as dots on map
         nearbyObjects.forEach(obj => {
             const relativeX = (obj.position.x - camera.position.x) / radarRange;
@@ -1221,8 +1288,20 @@ if (obj.type === 'enemy') {
 } else if (obj.type === 'solar_storm') {
     dotColor = '#ffff00';
     dotSize = '7px';
+} else if (obj.type === 'dyson_sphere') {
+    dotColor = '#00ffaa';
+    dotSize = '8px';
+} else if (obj.type === 'crystal_structure') {
+    dotColor = '#aa00ff';
+    dotSize = '7px';
+} else if (obj.type === 'space_whale') {
+    dotColor = '#0088ff';
+    dotSize = '9px';
+} else if (obj.type === 'ringworld') {
+    dotColor = '#ffaa00';
+    dotSize = '8px';
 }
-                
+
                 dot.style.width = dotSize;
                 dot.style.height = dotSize;
                 dot.style.backgroundColor = dotColor;

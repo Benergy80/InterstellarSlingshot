@@ -1411,6 +1411,11 @@ if (typeof checkCosmicFeatureInteractions === 'function' && typeof camera !== 'u
         updateUnstableWormholes(16.67);
     }
 
+    // Update ambient space debris
+    if (typeof updateAmbientSpaceDebris === 'function') {
+        updateAmbientSpaceDebris();
+    }
+
     // Update missile cooldown
     if (gameState.missiles.cooldown > 0) {
         gameState.missiles.cooldown = Math.max(0, gameState.missiles.cooldown - 16.67);
