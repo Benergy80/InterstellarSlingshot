@@ -2259,6 +2259,11 @@ setTimeout(() => {
     document.body.appendChild(zoomScope);
 
     let animationFrameId = null;
+    let scopeTargetX = 0;
+    let scopeTargetY = 0;
+    let scopeCurrentX = 0;
+    let scopeCurrentY = 0;
+    const scopeSmoothing = 0.15; // Smooth following like crosshair
 
     function updateZoomScope() {
         if (!gameState.missiles.selected || !renderer || !renderer.domElement) {
@@ -2271,6 +2276,14 @@ setTimeout(() => {
 
         const ctx = scopeCanvas.getContext('2d');
         const zoomFactor = 2.5;
+
+        // Smooth scope position (lerp towards target)
+        scopeCurrentX += (scopeTargetX - scopeCurrentX) * scopeSmoothing;
+        scopeCurrentY += (scopeTargetY - scopeCurrentY) * scopeSmoothing;
+
+        // Update scope visual position
+        zoomScope.style.left = scopeCurrentX + 'px';
+        zoomScope.style.top = scopeCurrentY + 'px';
 
         // Get mouse position
         const mouseX = gameState.crosshairX || gameState.mouseX || window.innerWidth / 2;
@@ -2302,8 +2315,8 @@ setTimeout(() => {
             console.warn('Zoom scope render error:', err);
         }
 
-        // Draw crosshair overlay
-        ctx.strokeStyle = 'rgba(255, 51, 0, 0.8)';
+        // Draw crosshair overlay in GREEN to match mouse aiming cursor
+        ctx.strokeStyle = 'rgba(0, 255, 150, 0.8)'; // Green like aiming cursor
         ctx.lineWidth = 2;
         ctx.beginPath();
         ctx.moveTo(125, 0);
@@ -2323,14 +2336,17 @@ setTimeout(() => {
 
     document.addEventListener('mousemove', (e) => {
         if (gameState.missiles.selected) {
-            const x = e.clientX - 125;
-            const y = e.clientY - 125;
-            zoomScope.style.left = x + 'px';
-            zoomScope.style.top = y + 'px';
+            // Update target position (scope will smooth towards it)
+            scopeTargetX = e.clientX - 125;
+            scopeTargetY = e.clientY - 125;
+
             zoomScope.style.display = 'block';
 
             // Start animation if not already running
             if (!animationFrameId) {
+                // Initialize current position to target on first show
+                scopeCurrentX = scopeTargetX;
+                scopeCurrentY = scopeTargetY;
                 updateZoomScope();
             }
         } else {

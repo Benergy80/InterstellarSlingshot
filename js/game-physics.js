@@ -1910,46 +1910,41 @@ let nebulaMusicGain = null;
 function playNebulaMusic(nebulaIndex) {
     if (!audioContext || typeof musicGain === 'undefined') return;
 
-    // Stop existing nebula music
+    // Stop existing nebula music with fade
     if (currentNebulaMusic) {
-        try {
-            currentNebulaMusic.oscillator1.stop();
-            currentNebulaMusic.oscillator2.stop();
-            currentNebulaMusic.oscillator3.stop();
-            currentNebulaMusic.oscillator4.stop();
-        } catch(e) {}
-        currentNebulaMusic = null;
+        stopNebulaMusic();
     }
 
-    // Create unique music for this nebula based on index
-    const baseFreq = 100 + (nebulaIndex * 50);
-    const melodyFreq = 200 + (nebulaIndex * 75);
-    const harmonyFreq = 300 + (nebulaIndex * 100);
-    const bassFreq = 50 + (nebulaIndex * 25);
+    // Create unique, magical music for this nebula
+    // Use higher frequencies for more pleasant, ethereal sound
+    const baseFreq = 220 + (nebulaIndex * 55); // A3 and up
+    const melodyFreq = 440 + (nebulaIndex * 110); // A4 and up
+    const harmonyFreq = 330 + (nebulaIndex * 82.5); // E4 and up
+    const atmosphereFreq = 880 + (nebulaIndex * 220); // A5 and up
 
-    // Create oscillators for layered techno sound
-    const osc1 = audioContext.createOscillator(); // Bass
+    // Create oscillators for layered magical sound
+    const osc1 = audioContext.createOscillator(); // Base harmony
     const osc2 = audioContext.createOscillator(); // Melody
     const osc3 = audioContext.createOscillator(); // Harmony
-    const osc4 = audioContext.createOscillator(); // Atmosphere
+    const osc4 = audioContext.createOscillator(); // High atmosphere
 
-    // Create gain node for fade-in
+    // Create gain node for fade-in (softer volume)
     nebulaMusicGain = audioContext.createGain();
     nebulaMusicGain.gain.setValueAtTime(0, audioContext.currentTime);
-    nebulaMusicGain.gain.linearRampToValueAtTime(0.15, audioContext.currentTime + 3); // 3 second fade in
+    nebulaMusicGain.gain.linearRampToValueAtTime(0.08, audioContext.currentTime + 4); // 4 second fade in, softer
 
-    // Set oscillator types and frequencies
-    osc1.type = 'sawtooth';
-    osc1.frequency.value = bassFreq;
+    // Use only sine and triangle for softer, more magical sound
+    osc1.type = 'sine';
+    osc1.frequency.value = baseFreq;
 
-    osc2.type = 'square';
+    osc2.type = 'triangle';
     osc2.frequency.value = melodyFreq;
 
     osc3.type = 'sine';
     osc3.frequency.value = harmonyFreq;
 
-    osc4.type = 'triangle';
-    osc4.frequency.value = baseFreq * 2;
+    osc4.type = 'sine';
+    osc4.frequency.value = atmosphereFreq;
 
     // Connect oscillators
     osc1.connect(nebulaMusicGain);
@@ -1970,21 +1965,26 @@ function playNebulaMusic(nebulaIndex) {
         oscillator2: osc2,
         oscillator3: osc3,
         oscillator4: osc4,
-        gainNode: nebulaMusicGain
+        gainNode: nebulaMusicGain,
+        nebulaIndex: nebulaIndex
     };
 
-    // Add frequency modulation for more interesting sound
-    setInterval(() => {
+    // Add gentle frequency modulation for magical, shimmering sound
+    const modulationInterval = setInterval(() => {
         if (currentNebulaMusic && audioContext && audioContext.state === 'running') {
             const time = audioContext.currentTime;
-            const mod1 = Math.sin(time * 0.5) * 10;
-            const mod2 = Math.cos(time * 0.3) * 15;
+            const mod1 = Math.sin(time * 0.3) * 5; // Gentler modulation
+            const mod2 = Math.cos(time * 0.2) * 8;
+            const mod3 = Math.sin(time * 0.4) * 3;
             osc2.frequency.setValueAtTime(melodyFreq + mod1, time);
             osc3.frequency.setValueAtTime(harmonyFreq + mod2, time);
+            osc4.frequency.setValueAtTime(atmosphereFreq + mod3, time);
+        } else {
+            clearInterval(modulationInterval);
         }
     }, 100);
 
-    console.log(`Playing unique nebula music for nebula ${nebulaIndex}`);
+    console.log(`Playing magical nebula music for nebula ${nebulaIndex}`);
 }
 
 function stopNebulaMusic() {
@@ -2083,13 +2083,22 @@ function checkForNebulaDiscovery() {
     if (typeof nebulaClouds === 'undefined' || nebulaClouds.length === 0) return;
 
     const discoveryRange = 3000; // Distance to trigger discovery
+    const exitRange = 4000; // Distance to trigger music fade out
+
+    let playerNearNebula = false;
 
     nebulaClouds.forEach((nebula, index) => {
-        if (!nebula || !nebula.userData || nebula.userData.discovered) return;
+        if (!nebula || !nebula.userData) return;
 
         const distance = camera.position.distanceTo(nebula.position);
 
-        if (distance < discoveryRange) {
+        // Check if player is within any nebula
+        if (distance < exitRange) {
+            playerNearNebula = true;
+        }
+
+        // Discovery check
+        if (!nebula.userData.discovered && distance < discoveryRange) {
             // Mark as discovered
             nebula.userData.discovered = true;
 
@@ -2135,6 +2144,11 @@ function checkForNebulaDiscovery() {
             console.log(`Intelligence:`, intel);
         }
     });
+
+    // If player has left all nebulas, stop the music
+    if (!playerNearNebula && currentNebulaMusic) {
+        stopNebulaMusic();
+    }
 }
 
 // =============================================================================
@@ -2153,6 +2167,7 @@ window.createPlayerExplosion = createPlayerExplosion;
 window.shouldSuppressAchievement = shouldSuppressAchievement;
 window.checkForGalaxyDiscovery = checkForGalaxyDiscovery;
 window.initializeGalaxyDiscoverySystem = initializeGalaxyDiscoverySystem;
+window.stopNebulaMusic = stopNebulaMusic;
 
 // All asteroid functions
 window.destroyAsteroid = destroyAsteroid;
