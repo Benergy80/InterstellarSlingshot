@@ -261,12 +261,12 @@ function createBorgDrone(systemGroup, maxOrbitRadius, index) {
     const core = new THREE.Mesh(coreGeo, coreMat);
     droneGroup.add(core);
 
-    // Position drone in patrol orbit
-    const patrolRadius = maxOrbitRadius * 1.3;
+    // Position drone in MUCH larger patrol orbit (released from far distance)
+    const patrolRadius = 10000 + Math.random() * 5000; // 10,000-15,000 units from system center
     const angle = (index / 3) * Math.PI * 2;
     droneGroup.position.set(
         Math.cos(angle) * patrolRadius,
-        (Math.random() - 0.5) * 200,
+        (Math.random() - 0.5) * 1000, // Higher vertical variance
         Math.sin(angle) * patrolRadius
     );
 
@@ -585,10 +585,10 @@ function updateOuterSystems() {
     outerInterstellarSystems.forEach(system => {
         if (!system.userData || !system.userData.orbiters) return;
 
-        // Distance-based opacity for far systems
+        // Distance-based opacity for far systems (visible from 5,000 units!)
         const systemDist = system.position.distanceTo(playerPos);
-        const blurStart = 50000;
-        const blurMax = 80000;
+        const blurStart = 5000; // START visible at 5,000 units
+        const blurMax = 90000; // Fade out at very far distances
 
         let opacity = 1.0;
         if (systemDist > blurStart) {

@@ -1036,27 +1036,56 @@ function createAmbientSpaceMusic() {
     lfo2.start(startTime);
     mysteryOsc.start(startTime);
     
-    // RESTORED: Working mystery tone scheduler with proper volume
+    // IMPROVED: Mystery tone scheduler with better cleanup to prevent stuck sounds
+    let mysteryTimeoutId = null;
     function triggerMysteryTone() {
+        // Clear any previous timeout
+        if (mysteryTimeoutId) {
+            clearTimeout(mysteryTimeoutId);
+            mysteryTimeoutId = null;
+        }
+
+        // Check if music is still enabled and context is valid
         if (!musicSystem.enabled || !musicSystem.backgroundMusic) return;
-        
+        if (!audioContext || audioContext.state === 'closed') return;
+
         const frequencies = [110, 146.83, 164.81, 220, 293.66, 329.63];
         const freq = frequencies[Math.floor(Math.random() * frequencies.length)];
         const now = audioContext.currentTime;
-        
-        mysteryOsc.frequency.setValueAtTime(freq, now);
+
+        // Ensure we start from 0 to prevent stuck sounds
+        mysteryGain.gain.cancelScheduledValues(now);
         mysteryGain.gain.setValueAtTime(0, now);
-        mysteryGain.gain.linearRampToValueAtTime(0.04, now + 2); // RESTORED: 0.04 for more presence
-        mysteryGain.gain.linearRampToValueAtTime(0.001, now + 8);
-        
-        setTimeout(triggerMysteryTone, 8000 + Math.random() * 12000);
+        mysteryGain.gain.linearRampToValueAtTime(0.04, now + 2); // Fade in
+        mysteryGain.gain.linearRampToValueAtTime(0.001, now + 8); // Fade out completely
+
+        mysteryOsc.frequency.setValueAtTime(freq, now);
+
+        // Schedule next tone with stored timeout ID
+        mysteryTimeoutId = setTimeout(triggerMysteryTone, 8000 + Math.random() * 12000);
     }
-    
+
     setTimeout(triggerMysteryTone, 5000);
+
+    // Store timeout ID for cleanup
+    if (!musicSystem.mysteryTimeout) {
+        musicSystem.mysteryTimeout = mysteryTimeoutId;
+    }
     
     // Store references
     musicSystem.backgroundMusic = {
         stop: () => {
+            // Clear mystery tone timeout to prevent stuck sounds
+            if (mysteryTimeoutId) {
+                clearTimeout(mysteryTimeoutId);
+                mysteryTimeoutId = null;
+            }
+            if (musicSystem.mysteryTimeout) {
+                clearTimeout(musicSystem.mysteryTimeout);
+                musicSystem.mysteryTimeout = null;
+            }
+
+            // Stop all oscillators
             bassOsc.stop();
             lfo1.stop();
             padOsc.stop();
@@ -1460,6 +1489,145 @@ const explosionInterval = setInterval(() => {
     
     // Play explosion sound
     playSound('explosion');
+}
+
+// =============================================================================
+// MASSIVE BORG CUBE EXPLOSION - For 100 HP BORG destruction
+// =============================================================================
+
+function createMassiveBorgExplosion(position) {
+    console.log('💥 MASSIVE BORG EXPLOSION at', position);
+
+    // Create HUGE expanding sphere explosion
+    const explosionGeo = new THREE.SphereGeometry(100, 32, 32);
+    const explosionMat = new THREE.MeshBasicMaterial({
+        color: 0x00ff00, // Green BORG color
+        transparent: true,
+        opacity: 0.9,
+        blending: THREE.AdditiveBlending
+    });
+    const explosion = new THREE.Mesh(explosionGeo, explosionMat);
+    explosion.position.copy(position);
+    scene.add(explosion);
+
+    // Secondary orange/red explosion sphere
+    const explosionGeo2 = new THREE.SphereGeometry(80, 32, 32);
+    const explosionMat2 = new THREE.MeshBasicMaterial({
+        color: 0xff4400,
+        transparent: true,
+        opacity: 0.8,
+        blending: THREE.AdditiveBlending
+    });
+    const explosion2 = new THREE.Mesh(explosionGeo2, explosionMat2);
+    explosion2.position.copy(position);
+    scene.add(explosion2);
+
+    // MASSIVE particle burst (500 particles!)
+    const particleCount = 500;
+    const particleGeometry = new THREE.BufferGeometry();
+    const particlePositions = new Float32Array(particleCount * 3);
+    const particleVelocities = [];
+
+    for (let i = 0; i < particleCount; i++) {
+        particlePositions[i * 3] = position.x;
+        particlePositions[i * 3 + 1] = position.y;
+        particlePositions[i * 3 + 2] = position.z;
+
+        // Random velocity in all directions
+        particleVelocities.push({
+            x: (Math.random() - 0.5) * 50,
+            y: (Math.random() - 0.5) * 50,
+            z: (Math.random() - 0.5) * 50
+        });
+    }
+
+    particleGeometry.setAttribute('position', new THREE.BufferAttribute(particlePositions, 3));
+
+    const particleMaterial = new THREE.PointsMaterial({
+        color: 0x00ff00,
+        size: 15,
+        transparent: true,
+        opacity: 1.0,
+        blending: THREE.AdditiveBlending
+    });
+
+    const particles = new THREE.Points(particleGeometry, particleMaterial);
+    scene.add(particles);
+
+    // Animate MASSIVE explosion
+    let scale = 1;
+    let opacity1 = 0.9;
+    let opacity2 = 0.8;
+    let particleOpacity = 1.0;
+
+    const explosionInterval = setInterval(() => {
+        scale += 3.0; // MUCH faster expansion
+        opacity1 -= 0.03;
+        opacity2 -= 0.025;
+        particleOpacity -= 0.04;
+
+        explosion.scale.set(scale, scale, scale);
+        explosion2.scale.set(scale * 1.2, scale * 1.2, scale * 1.2);
+        explosionMat.opacity = Math.max(0, opacity1);
+        explosionMat2.opacity = Math.max(0, opacity2);
+        particleMaterial.opacity = Math.max(0, particleOpacity);
+
+        // Update particle positions
+        const positions = particleGeometry.attributes.position.array;
+        for (let i = 0; i < particleCount; i++) {
+            positions[i * 3] += particleVelocities[i].x;
+            positions[i * 3 + 1] += particleVelocities[i].y;
+            positions[i * 3 + 2] += particleVelocities[i].z;
+        }
+        particleGeometry.attributes.position.needsUpdate = true;
+
+        if (opacity1 <= 0) {
+            clearInterval(explosionInterval);
+            scene.remove(explosion);
+            scene.remove(explosion2);
+            scene.remove(particles);
+            explosionGeo.dispose();
+            explosionGeo2.dispose();
+            explosionMat.dispose();
+            explosionMat2.dispose();
+            particleGeometry.dispose();
+            particleMaterial.dispose();
+        }
+    }, 50);
+
+    // Create shockwave rings
+    for (let i = 0; i < 5; i++) {
+        setTimeout(() => {
+            const ringGeo = new THREE.TorusGeometry(100, 5, 16, 32);
+            const ringMat = new THREE.MeshBasicMaterial({
+                color: 0x00ff00,
+                transparent: true,
+                opacity: 0.7,
+                blending: THREE.AdditiveBlending
+            });
+            const ring = new THREE.Mesh(ringGeo, ringMat);
+            ring.position.copy(position);
+            ring.rotation.x = Math.random() * Math.PI;
+            ring.rotation.y = Math.random() * Math.PI;
+            scene.add(ring);
+
+            let ringScale = 1;
+            let ringOpacity = 0.7;
+            const ringInterval = setInterval(() => {
+                ringScale += 2;
+                ringOpacity -= 0.05;
+                ring.scale.set(ringScale, ringScale, ringScale);
+                ringMat.opacity = Math.max(0, ringOpacity);
+
+                if (ringOpacity <= 0) {
+                    clearInterval(ringInterval);
+                    scene.remove(ring);
+                    ringGeo.dispose();
+                    ringMat.dispose();
+                }
+            }, 50);
+        }, i * 200);
+    }
 }
 
 // =============================================================================
@@ -2250,12 +2418,48 @@ document.addEventListener('mousemove', (e) => {
 
 function checkWeaponHits(targetPosition) {
     const hitRadius = 50;
-    
+
+    // Check BORG drone hits (from outer interstellar systems)
+    if (typeof outerInterstellarSystems !== 'undefined') {
+        outerInterstellarSystems.forEach(system => {
+            if (!system.userData || !system.userData.drones) return;
+
+            system.userData.drones.forEach((drone, droneIndex) => {
+                if (drone.userData.health <= 0) return;
+
+                const distance = drone.position.distanceTo(targetPosition);
+                if (distance < hitRadius * 2) { // Larger hit radius for BORG cubes
+                    const damage = 1;
+                    drone.userData.health -= damage;
+
+                    flashEnemyHit(drone, damage);
+                    playSound('weapon');
+                    showAchievement('BORG Hit!', `${drone.userData.name} damaged (${drone.userData.health}/100 HP)`);
+
+                    if (drone.userData.health <= 0) {
+                        // BORG cube destroyed - MASSIVE EXPLOSION!
+                        createMassiveBorgExplosion(drone.position);
+                        playSound('explosion');
+                        showAchievement('BORG CUBE DESTROYED!', `${drone.userData.name} eliminated!`);
+
+                        // Remove from scene and array
+                        scene.remove(drone);
+                        system.userData.drones.splice(droneIndex, 1);
+                        const orbiterIndex = system.userData.orbiters.indexOf(drone);
+                        if (orbiterIndex > -1) {
+                            system.userData.orbiters.splice(orbiterIndex, 1);
+                        }
+                    }
+                }
+            });
+        });
+    }
+
     // Check enemy hits
     if (typeof enemies !== 'undefined') {
         enemies.forEach((enemy, enemyIndex) => {
             if (enemy.userData.health <= 0) return;
-            
+
             const distance = enemy.position.distanceTo(targetPosition);
             if (distance < hitRadius) {
                 const damage = 1; // Standard damage
