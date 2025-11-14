@@ -1311,9 +1311,9 @@ if (keys.x && gameState.energy > 0) {
                     return;
                 }
             }
-            
+
             // PLANET COLLISION DETECTION - Prevent flying into planets
-if ((planet.userData.type === 'planet' || planet.userData.type === 'star' || planet.userData.type === 'blackhole') && 
+if ((planet.userData.type === 'planet' || planet.userData.type === 'star' || planet.userData.type === 'blackhole') &&
     distance < planetRadius + 10) { // 10 unit safety margin
     
     // Push player away from planet surface
@@ -1549,7 +1549,67 @@ if ((planet.userData.type === 'planet' || planet.userData.type === 'star' || pla
             gameState.slingshot.postSlingshot = false;
         }
     }
-    
+
+    // BORG DRONE COLLISION DETECTION - Prevent game freeze when hitting BORG
+    if (typeof outerInterstellarSystems !== 'undefined') {
+        outerInterstellarSystems.forEach(system => {
+            if (!system.userData || !system.userData.drones) return;
+
+            system.userData.drones.forEach(drone => {
+                if (drone.userData.health <= 0) return;
+
+                const droneDistance = camera.position.distanceTo(drone.position);
+                const collisionDistance = 50; // BORG cube collision threshold
+
+                if (droneDistance < collisionDistance) {
+                    // Push player away from BORG cube
+                    const pushDirection = new THREE.Vector3().subVectors(camera.position, drone.position).normalize();
+                    const pushDistance = collisionDistance - droneDistance + 10;
+
+                    camera.position.add(pushDirection.multiplyScalar(pushDistance));
+
+                    // Reduce velocity significantly on collision
+                    gameState.velocityVector.multiplyScalar(0.2); // Lose 80% of speed
+
+                    // Heavy hull damage from BORG collision
+                    const damage = 10;
+                    const shieldReduction = typeof getShieldDamageReduction === 'function' ?
+                                            getShieldDamageReduction() : 0;
+                    const actualDamage = damage * (1 - shieldReduction);
+
+                    gameState.hull = Math.max(0, gameState.hull - actualDamage);
+
+                    // Create shield hit effect if shields are active
+                    if (typeof isShieldActive === 'function' && isShieldActive() &&
+                        typeof createShieldHitEffect === 'function') {
+                        createShieldHitEffect(drone.position);
+                    }
+
+                    // Show collision warning
+                    if (typeof showAchievement === 'function') {
+                        showAchievement('BORG COLLISION!', `Collided with ${drone.userData.name} - Heavy damage!`);
+                    }
+
+                    // Sound effect
+                    if (typeof playSound === 'function') {
+                        playSound('hit');
+                    }
+
+                    // Check for game over
+                    if (gameState.hull <= 0) {
+                        if (typeof createPlayerExplosion === 'function') {
+                            createPlayerExplosion();
+                        }
+                        if (typeof showGameOverScreen === 'function') {
+                            showGameOverScreen('DESTROYED', `Annihilated by ${drone.userData.name}`);
+                        }
+                        return;
+                    }
+                }
+            });
+        });
+    }
+
     // Enhanced velocity limits
     const currentMaxVelocity = gameState.emergencyWarp.active ? gameState.emergencyWarp.boostSpeed :
                          gameState.emergencyWarp.postWarp ? gameState.emergencyWarp.boostSpeed :  // NEW LINE

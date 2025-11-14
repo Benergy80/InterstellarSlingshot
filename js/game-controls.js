@@ -2428,7 +2428,7 @@ function checkWeaponHits(targetPosition) {
                 if (drone.userData.health <= 0) return;
 
                 const distance = drone.position.distanceTo(targetPosition);
-                if (distance < hitRadius * 2) { // Larger hit radius for BORG cubes
+                if (distance < hitRadius) { // Normal hit radius
                     const damage = 1;
                     drone.userData.health -= damage;
 
@@ -2762,18 +2762,40 @@ function fireWeapon() {
             targetObject = enemyIntersects[0].object;
             console.log('Hit detected: enemy', targetObject.userData.name);
         } else {
-            // Check for asteroid hits (for manual aiming only)
-            const asteroidTargets = planets.filter(p => p.userData.type === 'asteroid');
-            const asteroidIntersects = raycaster.intersectObjects(asteroidTargets);
-            if (asteroidIntersects.length > 0) {
-                targetPosition = asteroidIntersects[0].point;
-                targetObject = asteroidIntersects[0].object;
-                console.log('Hit detected: asteroid', targetObject.userData.name);
-                console.log('Asteroid hit confirmed, calling destroyAsteroidByWeapon');
+            // Check for BORG drone hits (from outer interstellar systems)
+            let borgDrones = [];
+            if (typeof outerInterstellarSystems !== 'undefined') {
+                outerInterstellarSystems.forEach(system => {
+                    if (system.userData && system.userData.drones) {
+                        system.userData.drones.forEach(drone => {
+                            if (drone.userData.health > 0) {
+                                // Add all children of the drone group for raycasting
+                                borgDrones.push(...drone.children);
+                            }
+                        });
+                    }
+                });
+            }
+
+            const borgIntersects = raycaster.intersectObjects(borgDrones);
+            if (borgIntersects.length > 0) {
+                targetPosition = borgIntersects[0].point;
+                targetObject = borgIntersects[0].object.parent; // Parent is the drone group
+                console.log('Hit detected: BORG drone', targetObject.userData.name);
             } else {
-                // Fire in the direction of the crosshair
-                const direction = raycaster.ray.direction.clone();
-                targetPosition = camera.position.clone().add(direction.multiplyScalar(1000));
+                // Check for asteroid hits (for manual aiming only)
+                const asteroidTargets = planets.filter(p => p.userData.type === 'asteroid');
+                const asteroidIntersects = raycaster.intersectObjects(asteroidTargets);
+                if (asteroidIntersects.length > 0) {
+                    targetPosition = asteroidIntersects[0].point;
+                    targetObject = asteroidIntersects[0].object;
+                    console.log('Hit detected: asteroid', targetObject.userData.name);
+                    console.log('Asteroid hit confirmed, calling destroyAsteroidByWeapon');
+                } else {
+                    // Fire in the direction of the crosshair
+                    const direction = raycaster.ray.direction.clone();
+                    targetPosition = camera.position.clone().add(direction.multiplyScalar(1000));
+                }
             }
         }
     }
