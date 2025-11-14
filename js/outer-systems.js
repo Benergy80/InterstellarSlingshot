@@ -1,29 +1,166 @@
-// Outer Interstellar Systems - Far-off star systems beyond known galaxies
-// Located between 75,000 and 85,000 units from center
-// Features: Bright star centers with orbiting planets, BORG drones, and cosmic features
+// Outer Interstellar Systems - Two distinct sets of deep space systems
+// SET 1: 16 Exotic Core Systems (40,000-100,000 units) - Supernova/Plasma/Solar Storm cores
+// SET 2: 12 BORG Systems (75,000-85,000 units) - Bright stars with BORG drone patrols
 
 // Prevent re-declaration errors from browser cache/hot-reload
 if (!window.outerInterstellarSystems) {
     window.outerInterstellarSystems = [];
 }
 
+if (!window.outerSystemNames) {
+    window.outerSystemNames = [
+        "Void's Edge Nexus",
+        "Deep Space Terminus",
+        "Stellar Graveyard Alpha",
+        "The Far Reaches",
+        "Beyond the Veil",
+        "Outer Darkness Station",
+        "Edge of Creation",
+        "The Last Light",
+        "Stellar Wasteland",
+        "Deep Void Cluster",
+        "The Forgotten Reaches",
+        "Boundary's End",
+        "Final Frontier Node",
+        "The Great Empty",
+        "Deep Space Refuge",
+        "The Outer Limits"
+    ];
+}
+
 // Local references for code convenience
 const outerInterstellarSystems = window.outerInterstellarSystems;
+const outerSystemNames = window.outerSystemNames;
 
 // =============================================================================
-// MAIN CREATION FUNCTION
+// MAIN CREATION FUNCTION - Creates BOTH system sets
 // =============================================================================
 
 function createOuterInterstellarSystems() {
-    console.log('🌌 Creating 12 outer interstellar systems in deep space (75,000-85,000 units)...');
+    console.log('🌌 Creating outer interstellar systems in deep space...');
 
+    // SET 1: Create 16 exotic core systems (40,000-100,000 units)
+    console.log('  Creating SET 1: 16 exotic core systems (Supernova/Plasma/Solar)...');
+    createExoticCoreSystems();
+
+    // SET 2: Create 12 BORG patrol systems (75,000-85,000 units)
+    console.log('  Creating SET 2: 12 BORG patrol systems (Bright stars + BORG)...');
+    createBorgPatrolSystems();
+
+    console.log(`✅ Created ${outerInterstellarSystems.length} total outer interstellar systems`);
+}
+
+// =============================================================================
+// SET 1: EXOTIC CORE SYSTEMS (16 systems, 40k-100k units)
+// =============================================================================
+
+function createExoticCoreSystems() {
+    const innerBoundary = 40000;
+    const outerBoundary = 100000;
+    const targetRadius = (innerBoundary + outerBoundary) / 2; // ~70,000
+    const radiusVariation = 10000;
+
+    for (let i = 0; i < 16; i++) {
+        // Spherical distribution
+        const phi = (i / 16) * Math.PI * 2;
+        const theta = Math.PI / 2 + (Math.random() - 0.5) * Math.PI * 0.3;
+        const radius = targetRadius + (Math.random() - 0.5) * radiusVariation;
+
+        const x = radius * Math.sin(theta) * Math.cos(phi);
+        const y = radius * Math.cos(theta);
+        const z = radius * Math.sin(theta) * Math.sin(phi);
+
+        const systemCenter = new THREE.Vector3(x, y, z);
+        const centerTypes = ['supernova', 'plasma_storm', 'solar_storm'];
+        const centerType = centerTypes[Math.floor(Math.random() * centerTypes.length)];
+
+        createExoticSystem(systemCenter, outerSystemNames[i], centerType, i);
+    }
+}
+
+function createExoticSystem(center, name, centerType, systemId) {
+    const systemGroup = new THREE.Group();
+    systemGroup.position.copy(center);
+
+    // Generate random tilt for THIS SYSTEM
+    const systemTiltX = (Math.random() - 0.5) * Math.PI * 0.4;
+    const systemTiltZ = (Math.random() - 0.5) * Math.PI * 0.4;
+
+    // CMB color for this system
+    const cmbColors = [0xff6b35, 0xff9933, 0xffd700, 0xffffff, 0xffaa88];
+    const systemColor = cmbColors[Math.floor(Math.random() * cmbColors.length)];
+
+    systemGroup.userData = {
+        name: name,
+        type: 'outer_interstellar_system',
+        systemType: 'exotic_core',
+        systemId: systemId,
+        location: 'Unexplored Interstellar Space',
+        centerType: centerType,
+        orbiters: [],
+        discovered: false,
+        tiltX: systemTiltX,
+        tiltZ: systemTiltZ,
+        systemColor: systemColor
+    };
+
+    // Create center object
+    if (centerType === 'supernova') {
+        createSystemSupernova(center, systemGroup);
+    } else if (centerType === 'plasma_storm') {
+        createSystemPlasmaStorm(center, systemGroup);
+    } else {
+        createSystemSolarStorm(center, systemGroup);
+    }
+
+    // Orbiting brown dwarfs (2-4)
+    const brownDwarfCount = 2 + Math.floor(Math.random() * 3);
+    for (let i = 0; i < brownDwarfCount; i++) {
+        const orbitRadius = 800 + Math.random() * 1200;
+        createOrbitingBrownDwarf(center, orbitRadius, i, systemGroup);
+        createSystemOrbitLine(center, orbitRadius, systemGroup);
+    }
+
+    // Orbiting pulsars (1-3)
+    const pulsarCount = 1 + Math.floor(Math.random() * 3);
+    for (let i = 0; i < pulsarCount; i++) {
+        const orbitRadius = 1500 + Math.random() * 1500;
+        createOrbitingPulsar(center, orbitRadius, i, systemGroup);
+        createSystemOrbitLine(center, orbitRadius, systemGroup);
+    }
+
+    // Asteroid field
+    const asteroidOrbitRadius = 600 + Math.random() * 800;
+    const asteroidCount = 20 + Math.floor(Math.random() * 30);
+    for (let i = 0; i < asteroidCount; i++) {
+        createOrbitingAsteroid(center, asteroidOrbitRadius, i, systemGroup);
+    }
+
+    createSystemOrbitLine(center, asteroidOrbitRadius, systemGroup);
+
+    // CREATE STARFIELD FOR THIS SYSTEM
+    const maxOrbitRadius = 1500 + 1500; // Max pulsar orbit
+    const starfieldRadius = maxOrbitRadius * 0.5;
+    createSystemStarfield(starfieldRadius, systemGroup);
+
+    scene.add(systemGroup);
+    outerInterstellarSystems.push(systemGroup);
+
+    console.log(`    🌟 ${name}: ${centerType} at ${center.length().toFixed(0)} units`);
+}
+
+// =============================================================================
+// SET 2: BORG PATROL SYSTEMS (12 systems, 75k-85k units)
+// =============================================================================
+
+function createBorgPatrolSystems() {
     const minDistance = 75000;
     const maxDistance = 85000;
 
     for (let i = 0; i < 12; i++) {
         // Random spherical distribution (not along any single axis plane)
-        const phi = Math.random() * Math.PI * 2; // Full 360 degree rotation
-        const theta = Math.acos(2 * Math.random() - 1); // Full sphere distribution
+        const phi = Math.random() * Math.PI * 2;
+        const theta = Math.acos(2 * Math.random() - 1);
         const radius = minDistance + Math.random() * (maxDistance - minDistance);
 
         // Convert spherical to cartesian coordinates
@@ -33,19 +170,16 @@ function createOuterInterstellarSystems() {
 
         const systemCenter = new THREE.Vector3(x, y, z);
 
-        console.log(`  Creating system ${i + 1}/12 at distance ${radius.toFixed(0)} units`);
-        createOuterSystem(systemCenter, i);
+        createBorgSystem(systemCenter, i);
     }
-
-    console.log(`✅ Created ${outerInterstellarSystems.length} outer interstellar systems`);
 }
 
-function createOuterSystem(center, systemId) {
+function createBorgSystem(center, systemId) {
     const systemGroup = new THREE.Group();
     systemGroup.position.copy(center);
 
-    // Generate random tilt for THIS SYSTEM (all orbits share this plane)
-    const systemTiltX = (Math.random() - 0.5) * Math.PI * 0.6; // Random tilt
+    // Generate random tilt for THIS SYSTEM
+    const systemTiltX = (Math.random() - 0.5) * Math.PI * 0.6;
     const systemTiltZ = (Math.random() - 0.5) * Math.PI * 0.6;
 
     // Bright star colors
@@ -62,7 +196,8 @@ function createOuterSystem(center, systemId) {
     systemGroup.userData = {
         name: 'Unknown System',
         type: 'outer_interstellar_system',
-        systemId: systemId,
+        systemType: 'borg_patrol',
+        systemId: 16 + systemId, // Start at 16 to avoid ID conflicts
         location: 'Unexplored Interstellar Space',
         starType: starType.name,
         orbiters: [],
@@ -78,22 +213,22 @@ function createOuterSystem(center, systemId) {
     createBrightStar(systemGroup, starType);
 
     // Create 2-5 planets orbiting the star
-    const planetCount = 2 + Math.floor(Math.random() * 4); // 2-5 planets
+    const planetCount = 2 + Math.floor(Math.random() * 4);
     let maxOrbitRadius = 0;
 
     for (let i = 0; i < planetCount; i++) {
         const orbitRadius = 800 + (i * 600) + Math.random() * 400;
         maxOrbitRadius = Math.max(maxOrbitRadius, orbitRadius);
         createOrbitingPlanet(systemGroup, orbitRadius, i);
-        createSystemOrbitLine(systemGroup, orbitRadius);
+        createSystemOrbitLine(center, orbitRadius, systemGroup);
     }
 
-    // Create rotating starfield (radius = 0.5x the largest orbit radius)
+    // Create rotating starfield
     const starfieldRadius = maxOrbitRadius * 0.5;
     createSystemStarfield(starfieldRadius, systemGroup);
 
     // Create 2-3 BORG drones patrolling the system
-    const droneCount = 2 + Math.floor(Math.random() * 2); // 2-3 drones
+    const droneCount = 2 + Math.floor(Math.random() * 2);
     for (let i = 0; i < droneCount; i++) {
         createBorgDrone(systemGroup, maxOrbitRadius, i);
     }
@@ -104,11 +239,294 @@ function createOuterSystem(center, systemId) {
     scene.add(systemGroup);
     outerInterstellarSystems.push(systemGroup);
 
-    console.log(`  🌟 Unknown System created: ${starType.name} star with ${planetCount} planets at ${center.length().toFixed(0)} units`);
+    console.log(`    🟩 Unknown System #${systemId + 1}: ${starType.name} star with ${planetCount} planets and ${droneCount} BORG drones at ${center.length().toFixed(0)} units`);
 }
 
 // =============================================================================
-// BRIGHT STAR CREATION
+// EXOTIC CORE CENTER OBJECTS (Supernova, Plasma Storm, Solar Storm)
+// =============================================================================
+
+function createSystemSupernova(center, systemGroup) {
+    const coreGeo = new THREE.SphereGeometry(80, 32, 32);
+    const coreMat = new THREE.MeshStandardMaterial({
+        color: 0xff6600,
+        emissive: 0xff6600,
+        emissiveIntensity: 2,
+        roughness: 0.2,
+        metalness: 0.5
+    });
+    const core = new THREE.Mesh(coreGeo, coreMat);
+    core.position.set(0, 0, 0);
+
+    core.userData = {
+        type: 'supernova',
+        name: `${systemGroup.userData.name} Core`,
+        systemName: systemGroup.userData.name,
+        location: 'Unexplored Interstellar Space',
+        radius: 80,
+        mass: 3.0,
+        slingshotMultiplier: 3.0
+    };
+
+    systemGroup.add(core);
+    systemGroup.userData.centerObject = core;
+
+    // Glow layers
+    for (let i = 0; i < 3; i++) {
+        const size = 120 + i * 60;
+        const opacity = 0.4 - i * 0.1;
+        const glowGeo = new THREE.SphereGeometry(size, 24, 24);
+        const glowMat = new THREE.MeshBasicMaterial({
+            color: i === 0 ? 0xff8800 : 0xff4400,
+            transparent: true,
+            opacity: opacity,
+            blending: THREE.AdditiveBlending
+        });
+        const glow = new THREE.Mesh(glowGeo, glowMat);
+        glow.userData.baseOpacity = opacity;
+        glow.position.set(0, 0, 0);
+        systemGroup.add(glow);
+    }
+
+    const light = new THREE.PointLight(0xff6600, 15, 5000);
+    light.position.set(0, 0, 0);
+    systemGroup.add(light);
+}
+
+function createSystemPlasmaStorm(center, systemGroup) {
+    const coreGeo = new THREE.SphereGeometry(60, 32, 32);
+    const coreMat = new THREE.MeshStandardMaterial({
+        color: 0xaa44ff,
+        emissive: 0xaa44ff,
+        emissiveIntensity: 2,
+        roughness: 0.2,
+        metalness: 0.4
+    });
+    const core = new THREE.Mesh(coreGeo, coreMat);
+    core.position.set(0, 0, 0);
+
+    core.userData = {
+        type: 'plasma_storm',
+        name: `${systemGroup.userData.name} Core`,
+        systemName: systemGroup.userData.name,
+        location: 'Unexplored Interstellar Space',
+        radius: 60,
+        mass: 2.5,
+        slingshotMultiplier: 2.8
+    };
+
+    systemGroup.add(core);
+    systemGroup.userData.centerObject = core;
+
+    // Plasma clouds
+    for (let i = 0; i < 5; i++) {
+        const angle = (i / 5) * Math.PI * 2;
+        const cloudGeo = new THREE.SphereGeometry(40, 16, 16);
+        const cloudMat = new THREE.MeshBasicMaterial({
+            color: 0x8844ff,
+            transparent: true,
+            opacity: 0.6,
+            blending: THREE.AdditiveBlending
+        });
+        const cloud = new THREE.Mesh(cloudGeo, cloudMat);
+        cloud.userData.baseOpacity = 0.6;
+        cloud.position.set(
+            Math.cos(angle) * 100,
+            0,
+            Math.sin(angle) * 100
+        );
+        systemGroup.add(cloud);
+    }
+
+    const light = new THREE.PointLight(0xaa44ff, 12, 5000);
+    light.position.set(0, 0, 0);
+    systemGroup.add(light);
+}
+
+function createSystemSolarStorm(center, systemGroup) {
+    const coreGeo = new THREE.SphereGeometry(70, 32, 32);
+    const coreMat = new THREE.MeshStandardMaterial({
+        color: 0xffff00,
+        emissive: 0xffff00,
+        emissiveIntensity: 2,
+        roughness: 0.3,
+        metalness: 0.6
+    });
+    const core = new THREE.Mesh(coreGeo, coreMat);
+    core.position.set(0, 0, 0);
+
+    core.userData = {
+        type: 'solar_storm',
+        name: `${systemGroup.userData.name} Core`,
+        systemName: systemGroup.userData.name,
+        location: 'Unexplored Interstellar Space',
+        radius: 70,
+        mass: 2.0,
+        slingshotMultiplier: 2.2
+    };
+
+    systemGroup.add(core);
+    systemGroup.userData.centerObject = core;
+
+    // Flares
+    for (let i = 0; i < 8; i++) {
+        const angle = (i / 8) * Math.PI * 2;
+        const flareGeo = new THREE.ConeGeometry(20, 150, 8);
+        const flareMat = new THREE.MeshBasicMaterial({
+            color: 0xffaa00,
+            transparent: true,
+            opacity: 0.7,
+            blending: THREE.AdditiveBlending
+        });
+        const flare = new THREE.Mesh(flareGeo, flareMat);
+        flare.position.set(
+            Math.cos(angle) * 90,
+            0,
+            Math.sin(angle) * 90
+        );
+        flare.lookAt(new THREE.Vector3(
+            Math.cos(angle) * 200,
+            0,
+            Math.sin(angle) * 200
+        ));
+        systemGroup.add(flare);
+        flare.userData.baseOpacity = 0.7;
+    }
+
+    const light = new THREE.PointLight(0xffff00, 18, 5000);
+    light.position.set(0, 0, 0);
+    systemGroup.add(light);
+}
+
+// =============================================================================
+// EXOTIC SYSTEM ORBITERS (Brown Dwarfs, Pulsars, Asteroids)
+// =============================================================================
+
+function createOrbitingBrownDwarf(center, orbitRadius, index, systemGroup) {
+    const geo = new THREE.SphereGeometry(35, 24, 24);
+    const mat = new THREE.MeshStandardMaterial({
+        color: 0x8b4513,
+        metalness: 0.3,
+        roughness: 0.7
+    });
+    const dwarf = new THREE.Mesh(geo, mat);
+
+    const angle = (index / 4) * Math.PI * 2;
+    dwarf.position.set(
+        Math.cos(angle) * orbitRadius,
+        0,
+        Math.sin(angle) * orbitRadius
+    );
+
+    dwarf.userData = {
+        type: 'brown_dwarf',
+        name: `${systemGroup.userData.name} Brown Dwarf ${index + 1}`,
+        orbitCenter: new THREE.Vector3(0, 0, 0),
+        orbitRadius: orbitRadius,
+        orbitSpeed: 0.0003 + Math.random() * 0.0004,
+        orbitAngle: angle,
+        systemId: systemGroup.userData.systemId,
+        systemName: systemGroup.userData.name,
+        location: 'Unexplored Interstellar Space',
+        radius: 35,
+        mass: 0.08,
+        slingshotMultiplier: 1.3
+    };
+
+    systemGroup.userData.orbiters.push(dwarf);
+    systemGroup.add(dwarf);
+
+    return dwarf;
+}
+
+function createOrbitingPulsar(center, orbitRadius, index, systemGroup) {
+    const coreGeo = new THREE.SphereGeometry(20, 16, 16);
+    const coreMat = new THREE.MeshStandardMaterial({
+        color: 0x44eeff,
+        emissive: 0x44eeff,
+        emissiveIntensity: 3,
+        roughness: 0.1,
+        metalness: 0.8
+    });
+    const pulsar = new THREE.Mesh(coreGeo, coreMat);
+
+    const angle = (index / 3) * Math.PI * 2;
+    pulsar.position.set(
+        Math.cos(angle) * orbitRadius,
+        0,
+        Math.sin(angle) * orbitRadius
+    );
+
+    const ringGeo = new THREE.TorusGeometry(40, 3, 8, 32);
+    const ringMat = new THREE.MeshBasicMaterial({
+        color: 0x88ffff,
+        transparent: true,
+        opacity: 0.5
+    });
+    const ring = new THREE.Mesh(ringGeo, ringMat);
+    ring.rotation.x = Math.PI / 2;
+    pulsar.add(ring);
+
+    pulsar.userData = {
+        type: 'pulsar',
+        name: `${systemGroup.userData.name} Pulsar ${index + 1}`,
+        orbitCenter: new THREE.Vector3(0, 0, 0),
+        orbitRadius: orbitRadius,
+        orbitSpeed: 0.0002 + Math.random() * 0.0003,
+        orbitAngle: angle,
+        rotationSpeed: 0.02 + Math.random() * 0.03,
+        systemId: systemGroup.userData.systemId,
+        systemName: systemGroup.userData.name,
+        location: 'Unexplored Interstellar Space',
+        radius: 20,
+        mass: 1.4,
+        slingshotMultiplier: 2.5
+    };
+
+    systemGroup.userData.orbiters.push(pulsar);
+    systemGroup.add(pulsar);
+
+    return pulsar;
+}
+
+function createOrbitingAsteroid(center, orbitRadius, index, systemGroup) {
+    const size = 5 + Math.random() * 10;
+    const geo = new THREE.DodecahedronGeometry(size, 0);
+    const mat = new THREE.MeshStandardMaterial({
+        color: 0x888888,
+        metalness: 0.4,
+        roughness: 0.9
+    });
+    const asteroid = new THREE.Mesh(geo, mat);
+
+    const angle = (index / 50) * Math.PI * 2;
+    const radiusVar = orbitRadius + (Math.random() - 0.5) * 100;
+
+    asteroid.position.set(
+        Math.cos(angle) * radiusVar,
+        (Math.random() - 0.5) * 50,
+        Math.sin(angle) * radiusVar
+    );
+
+    asteroid.userData = {
+        type: 'outer_asteroid',
+        orbitCenter: new THREE.Vector3(0, 0, 0),
+        orbitRadius: radiusVar,
+        orbitSpeed: 0.0007 + Math.random() * 0.0008,
+        orbitAngle: angle,
+        systemId: systemGroup.userData.systemId,
+        rotationSpeedX: (Math.random() - 0.5) * 0.02,
+        rotationSpeedY: (Math.random() - 0.5) * 0.02,
+        rotationSpeedZ: (Math.random() - 0.5) * 0.02
+    };
+
+    systemGroup.userData.orbiters.push(asteroid);
+    systemGroup.add(asteroid);
+    return asteroid;
+}
+
+// =============================================================================
+// BORG SYSTEM CENTER STAR
 // =============================================================================
 
 function createBrightStar(systemGroup, starType) {
@@ -123,7 +541,7 @@ function createBrightStar(systemGroup, starType) {
         metalness: 0.3
     });
     const star = new THREE.Mesh(starGeo, starMat);
-    star.position.set(0, 0, 0); // LOCAL - systemGroup is already at center
+    star.position.set(0, 0, 0);
 
     star.userData = {
         type: 'star',
@@ -164,22 +582,15 @@ function createBrightStar(systemGroup, starType) {
 }
 
 // =============================================================================
-// ORBITING PLANETS
+// BORG SYSTEM ORBITERS (Planets)
 // =============================================================================
 
 function createOrbitingPlanet(systemGroup, orbitRadius, index) {
-    // Varied planet sizes
     const planetRadius = 20 + Math.random() * 40;
 
-    // Varied planet colors
     const planetColors = [
-        0x8B7355, // Brown/rocky
-        0x4A90E2, // Blue/water
-        0xE86A17, // Orange/gas
-        0x9B59B6, // Purple/exotic
-        0x2ECC71, // Green/habitable
-        0xE74C3C, // Red/desert
-        0x95A5A6  // Gray/barren
+        0x8B7355, 0x4A90E2, 0xE86A17, 0x9B59B6,
+        0x2ECC71, 0xE74C3C, 0x95A5A6
     ];
 
     const planetColor = planetColors[Math.floor(Math.random() * planetColors.length)];
@@ -201,7 +612,7 @@ function createOrbitingPlanet(systemGroup, orbitRadius, index) {
 
     planet.userData = {
         type: 'outer_planet',
-        name: `${systemGroup.userData.name} Planet ${String.fromCharCode(65 + index)}`, // A, B, C...
+        name: `${systemGroup.userData.name} Planet ${String.fromCharCode(65 + index)}`,
         orbitCenter: new THREE.Vector3(0, 0, 0),
         orbitRadius: orbitRadius,
         orbitSpeed: 0.0002 + Math.random() * 0.0003,
@@ -222,7 +633,7 @@ function createOrbitingPlanet(systemGroup, orbitRadius, index) {
 }
 
 // =============================================================================
-// BORG DRONES
+// BORG DRONES (Only in BORG patrol systems)
 // =============================================================================
 
 function createBorgDrone(systemGroup, maxOrbitRadius, index) {
@@ -292,7 +703,7 @@ function createBorgDrone(systemGroup, maxOrbitRadius, index) {
 }
 
 // =============================================================================
-// COSMIC FEATURES
+// COSMIC FEATURES (Only in BORG patrol systems)
 // =============================================================================
 
 function createCosmicFeature(systemGroup, maxOrbitRadius) {
@@ -311,7 +722,6 @@ function createCosmicFeature(systemGroup, maxOrbitRadius) {
         feature = createSpaceWhale();
     }
 
-    // Position in orbit
     const angle = Math.random() * Math.PI * 2;
     feature.position.set(
         Math.cos(angle) * orbitRadius,
@@ -336,7 +746,6 @@ function createCosmicFeature(systemGroup, maxOrbitRadius) {
 function createCrystalStructure() {
     const group = new THREE.Group();
 
-    // Large central crystal
     const crystalGeo = new THREE.OctahedronGeometry(80, 0);
     const crystalMat = new THREE.MeshStandardMaterial({
         color: 0x88CCFF,
@@ -350,7 +759,6 @@ function createCrystalStructure() {
     const crystal = new THREE.Mesh(crystalGeo, crystalMat);
     group.add(crystal);
 
-    // Smaller orbiting crystals
     for (let i = 0; i < 5; i++) {
         const smallGeo = new THREE.OctahedronGeometry(20, 0);
         const smallCrystal = new THREE.Mesh(smallGeo, crystalMat);
@@ -375,7 +783,6 @@ function createCrystalStructure() {
 function createDysonSphere() {
     const group = new THREE.Group();
 
-    // Sphere framework
     const sphereGeo = new THREE.SphereGeometry(150, 16, 16);
     const sphereMat = new THREE.MeshBasicMaterial({
         color: 0xFFAA00,
@@ -386,7 +793,6 @@ function createDysonSphere() {
     const sphere = new THREE.Mesh(sphereGeo, sphereMat);
     group.add(sphere);
 
-    // Energy collectors (panels)
     for (let i = 0; i < 8; i++) {
         const panelGeo = new THREE.BoxGeometry(80, 80, 5);
         const panelMat = new THREE.MeshStandardMaterial({
@@ -421,9 +827,8 @@ function createDysonSphere() {
 function createSpaceWhale() {
     const group = new THREE.Group();
 
-    // Body
     const bodyGeo = new THREE.SphereGeometry(60, 24, 24);
-    bodyGeo.scale(2, 1, 1); // Elongate
+    bodyGeo.scale(2, 1, 1);
     const bodyMat = new THREE.MeshStandardMaterial({
         color: 0x4A5F7F,
         metalness: 0.3,
@@ -434,7 +839,6 @@ function createSpaceWhale() {
     const body = new THREE.Mesh(bodyGeo, bodyMat);
     group.add(body);
 
-    // Tail fins
     for (let i = 0; i < 2; i++) {
         const finGeo = new THREE.ConeGeometry(40, 80, 8);
         const finMat = new THREE.MeshStandardMaterial({
@@ -448,7 +852,6 @@ function createSpaceWhale() {
         group.add(fin);
     }
 
-    // Glowing eyes
     for (let i = 0; i < 2; i++) {
         const eyeGeo = new THREE.SphereGeometry(8, 16, 16);
         const eyeMat = new THREE.MeshBasicMaterial({
@@ -472,14 +875,13 @@ function createSpaceWhale() {
 }
 
 // =============================================================================
-// ORBIT LINES
+// ORBIT LINES (Used by both system types)
 // =============================================================================
 
-function createSystemOrbitLine(systemGroup, radius) {
+function createSystemOrbitLine(center, radius, systemGroup) {
     const segments = 128;
     const points = [];
 
-    // Use the system's shared tilt
     const tiltX = systemGroup.userData.tiltX;
     const tiltZ = systemGroup.userData.tiltZ;
     const orbitColor = systemGroup.userData.systemColor;
@@ -490,7 +892,6 @@ function createSystemOrbitLine(systemGroup, radius) {
         let y = 0;
         let z = Math.sin(angle) * radius;
 
-        // Apply system tilt
         const rotatedX = x;
         const rotatedY = y * Math.cos(tiltX) - z * Math.sin(tiltX);
         const rotatedZ = y * Math.sin(tiltX) + z * Math.cos(tiltX);
@@ -499,7 +900,6 @@ function createSystemOrbitLine(systemGroup, radius) {
         const finalY = rotatedX * Math.sin(tiltZ) + rotatedY * Math.cos(tiltZ);
         const finalZ = rotatedZ;
 
-        // LOCAL COORDINATES - no center offset
         points.push(new THREE.Vector3(finalX, finalY, finalZ));
     }
 
@@ -516,7 +916,7 @@ function createSystemOrbitLine(systemGroup, radius) {
 }
 
 // =============================================================================
-// ROTATING STARFIELD
+// ROTATING STARFIELD (Used by both system types)
 // =============================================================================
 
 function createSystemStarfield(maxRadius, systemGroup) {
@@ -527,12 +927,11 @@ function createSystemStarfield(maxRadius, systemGroup) {
     const colors = [];
     const sizes = [];
 
-    // White/yellow/blue star colors
     const starColors = [
-        new THREE.Color(0xffffff), // White
-        new THREE.Color(0xffffee), // Warm white
-        new THREE.Color(0xffeeaa), // Light yellow
-        new THREE.Color(0xaaccff), // Light blue
+        new THREE.Color(0xffffff),
+        new THREE.Color(0xffffee),
+        new THREE.Color(0xffeeaa),
+        new THREE.Color(0xaaccff),
     ];
 
     for (let i = 0; i < starCount; i++) {
@@ -540,7 +939,6 @@ function createSystemStarfield(maxRadius, systemGroup) {
         const phi = Math.acos(2 * Math.random() - 1);
         const r = Math.random() * starfieldRadius;
 
-        // LOCAL coordinates since we're adding to systemGroup
         const x = r * Math.sin(phi) * Math.cos(theta);
         const y = r * Math.sin(phi) * Math.sin(theta);
         const z = r * Math.cos(phi);
@@ -574,7 +972,7 @@ function createSystemStarfield(maxRadius, systemGroup) {
 }
 
 // =============================================================================
-// ANIMATION
+// ANIMATION (Updates both system types)
 // =============================================================================
 
 function updateOuterSystems() {
@@ -629,9 +1027,9 @@ function updateOuterSystems() {
             }
         });
 
-        // Update orbiters (planets, drones, cosmic features)
+        // Update orbiters (planets, drones, cosmic features, brown dwarfs, pulsars, asteroids)
         system.userData.orbiters.forEach(orbiter => {
-            if (!orbiter.userData.orbitAngle) return;
+            if (!orbiter.userData.orbitAngle !== undefined) return;
 
             orbiter.userData.orbitAngle += orbiter.userData.orbitSpeed;
 
@@ -657,6 +1055,18 @@ function updateOuterSystems() {
             // Rotate planets
             if (orbiter.userData.type === 'outer_planet' && orbiter.userData.rotationSpeed) {
                 orbiter.rotation.y += orbiter.userData.rotationSpeed;
+            }
+
+            // Rotate pulsars
+            if (orbiter.userData.type === 'pulsar' && orbiter.userData.rotationSpeed) {
+                orbiter.rotation.y += orbiter.userData.rotationSpeed;
+            }
+
+            // Rotate asteroids
+            if (orbiter.userData.type === 'outer_asteroid') {
+                orbiter.rotation.x += orbiter.userData.rotationSpeedX;
+                orbiter.rotation.y += orbiter.userData.rotationSpeedY;
+                orbiter.rotation.z += orbiter.userData.rotationSpeedZ;
             }
 
             // Rotate BORG drones
