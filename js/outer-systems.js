@@ -265,7 +265,8 @@ function createSystemSupernova(center, systemGroup) {
         location: 'Unexplored Interstellar Space',
         radius: 80,
         mass: 3.0,
-        slingshotMultiplier: 3.0
+        slingshotMultiplier: 3.0,
+        isOuterSystem: true
     };
 
     systemGroup.add(core);
@@ -312,7 +313,8 @@ function createSystemPlasmaStorm(center, systemGroup) {
         location: 'Unexplored Interstellar Space',
         radius: 60,
         mass: 2.5,
-        slingshotMultiplier: 2.8
+        slingshotMultiplier: 2.8,
+        isOuterSystem: true
     };
 
     systemGroup.add(core);
@@ -362,7 +364,8 @@ function createSystemSolarStorm(center, systemGroup) {
         location: 'Unexplored Interstellar Space',
         radius: 70,
         mass: 2.0,
-        slingshotMultiplier: 2.2
+        slingshotMultiplier: 2.2,
+        isOuterSystem: true
     };
 
     systemGroup.add(core);
@@ -430,7 +433,8 @@ function createOrbitingBrownDwarf(center, orbitRadius, index, systemGroup) {
         location: 'Unexplored Interstellar Space',
         radius: 35,
         mass: 0.08,
-        slingshotMultiplier: 1.3
+        slingshotMultiplier: 1.3,
+        isOuterSystem: true
     };
 
     systemGroup.userData.orbiters.push(dwarf);
@@ -480,7 +484,8 @@ function createOrbitingPulsar(center, orbitRadius, index, systemGroup) {
         location: 'Unexplored Interstellar Space',
         radius: 20,
         mass: 1.4,
-        slingshotMultiplier: 2.5
+        slingshotMultiplier: 2.5,
+        isOuterSystem: true
     };
 
     systemGroup.userData.orbiters.push(pulsar);
@@ -551,7 +556,8 @@ function createBrightStar(systemGroup, starType) {
         radius: starRadius,
         mass: 5.0,
         slingshotMultiplier: 4.0,
-        starType: starType.name
+        starType: starType.name,
+        isOuterSystem: true
     };
 
     systemGroup.add(star);
@@ -623,7 +629,8 @@ function createOrbitingPlanet(systemGroup, orbitRadius, index) {
         radius: planetRadius,
         mass: planetRadius / 40,
         slingshotMultiplier: 1.5,
-        rotationSpeed: (Math.random() - 0.5) * 0.02
+        rotationSpeed: (Math.random() - 0.5) * 0.02,
+        isOuterSystem: true
     };
 
     systemGroup.userData.orbiters.push(planet);
@@ -735,6 +742,22 @@ function createCosmicFeature(systemGroup, maxOrbitRadius) {
     feature.userData.orbitCenter = new THREE.Vector3(0, 0, 0);
     feature.userData.systemName = systemGroup.userData.name;
     feature.userData.location = 'Unexplored Interstellar Space';
+    feature.userData.isOuterSystem = true;
+
+    // Add gravitational properties based on feature type
+    if (featureType === 'dyson_sphere') {
+        feature.userData.mass = 3.0;
+        feature.userData.slingshotMultiplier = 2.8;
+        feature.userData.radius = 150;
+    } else if (featureType === 'crystal_structure') {
+        feature.userData.mass = 1.5;
+        feature.userData.slingshotMultiplier = 2.0;
+        feature.userData.radius = 80;
+    } else if (featureType === 'space_whale') {
+        feature.userData.mass = 0.5;
+        feature.userData.slingshotMultiplier = 1.2;
+        feature.userData.radius = 120;
+    }
 
     systemGroup.userData.orbiters.push(feature);
     systemGroup.userData.cosmicFeature = feature;

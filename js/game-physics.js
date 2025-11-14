@@ -1468,7 +1468,64 @@ if ((planet.userData.type === 'planet' || planet.userData.type === 'star' || pla
             }
         });
     }
-    
+
+    // OUTER INTERSTELLAR SYSTEMS GRAVITY - Add gravity from all outer system objects
+    if (typeof outerInterstellarSystems !== 'undefined') {
+        outerInterstellarSystems.forEach(system => {
+            if (!system.userData) return;
+
+            // Center object gravity (star, supernova, plasma storm, solar storm)
+            if (system.userData.centerObject) {
+                const centerObj = system.userData.centerObject;
+                const centerPos = new THREE.Vector3();
+                centerObj.getWorldPosition(centerPos);
+                const distance = camera.position.distanceTo(centerPos);
+                const mass = centerObj.userData.mass || 1;
+
+                if (distance > 0) {
+                    const gravitationalForce = gravitationalConstant * gameState.shipMass * mass / (distance * distance);
+                    const direction = new THREE.Vector3().subVectors(centerPos, camera.position).normalize();
+                    const gravityVector = direction.clone().multiplyScalar(gravitationalForce);
+                    totalGravitationalForce.add(gravityVector);
+
+                    // Check for gravity assist range
+                    if (distance < assistRange && distance < nearestAssistDistance) {
+                        nearestAssistPlanet = centerObj;
+                        nearestAssistDistance = distance;
+                        gravityWellInRange = true;
+                    }
+                }
+            }
+
+            // Orbiter gravity (planets, brown dwarfs, pulsars, cosmic features)
+            if (system.userData.orbiters) {
+                system.userData.orbiters.forEach(orbiter => {
+                    // Skip asteroids and BORG drones (no significant gravity)
+                    if (orbiter.userData.type === 'outer_asteroid' || orbiter.userData.type === 'borg_drone') return;
+
+                    const orbiterPos = new THREE.Vector3();
+                    orbiter.getWorldPosition(orbiterPos);
+                    const distance = camera.position.distanceTo(orbiterPos);
+                    const mass = orbiter.userData.mass || 1;
+
+                    if (distance > 0) {
+                        const gravitationalForce = gravitationalConstant * gameState.shipMass * mass / (distance * distance);
+                        const direction = new THREE.Vector3().subVectors(orbiterPos, camera.position).normalize();
+                        const gravityVector = direction.clone().multiplyScalar(gravitationalForce);
+                        totalGravitationalForce.add(gravityVector);
+
+                        // Check for gravity assist range
+                        if (distance < assistRange && distance < nearestAssistDistance) {
+                            nearestAssistPlanet = orbiter;
+                            nearestAssistDistance = distance;
+                            gravityWellInRange = true;
+                        }
+                    }
+                });
+            }
+        });
+    }
+
     // Apply gravitational force
     gameState.velocityVector.add(totalGravitationalForce);
     
