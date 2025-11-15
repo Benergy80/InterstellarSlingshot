@@ -1,6 +1,6 @@
 // Outer Interstellar Systems - Two distinct sets of deep space systems
-// SET 1: 16 Exotic Core Systems (40,000-100,000 units) - Supernova/Plasma/Solar Storm cores
-// SET 2: 12 BORG Systems (75,000-85,000 units) - Bright stars with BORG drone patrols
+// SET 1: 16 Exotic Core Systems (60,000-75,000 units - Middle Zone) - Supernova/Plasma/Solar Storm cores - ALWAYS VISIBLE
+// SET 2: 12 BORG Patrol Systems (75,000-90,000 units - Outer Zone) - Bright stars with BORG drone patrols
 
 // Prevent re-declaration errors from browser cache/hot-reload
 if (!window.outerInterstellarSystems) {
@@ -28,9 +28,27 @@ if (!window.outerSystemNames) {
     ];
 }
 
+if (!window.borgSystemNames) {
+    window.borgSystemNames = [
+        "Frontier's Edge",
+        "Void Sentinel",
+        "Dark Boundary",
+        "Outer Reach",
+        "Silent Watch",
+        "Deep Patrol Zone",
+        "Rim Guardian",
+        "Far Watch Station",
+        "Edge Warden",
+        "Outer Perimeter",
+        "Last Light",
+        "Final Watch"
+    ];
+}
+
 // Local references for code convenience
 const outerInterstellarSystems = window.outerInterstellarSystems;
 const outerSystemNames = window.outerSystemNames;
+const borgSystemNames = window.borgSystemNames;
 
 // =============================================================================
 // MAIN CREATION FUNCTION - Creates BOTH system sets
@@ -51,14 +69,14 @@ function createOuterInterstellarSystems() {
 }
 
 // =============================================================================
-// SET 1: EXOTIC CORE SYSTEMS (16 systems, 40k-100k units)
+// SET 1: EXOTIC CORE SYSTEMS (16 systems, 60k-75k units - Middle Zone)
 // =============================================================================
 
 function createExoticCoreSystems() {
-    const innerBoundary = 40000;
-    const outerBoundary = 100000;
-    const targetRadius = (innerBoundary + outerBoundary) / 2; // ~70,000
-    const radiusVariation = 10000;
+    const innerBoundary = 60000;
+    const outerBoundary = 75000;
+    const targetRadius = (innerBoundary + outerBoundary) / 2; // ~67,500
+    const radiusVariation = 7500;
 
     for (let i = 0; i < 16; i++) {
         // Spherical distribution
@@ -150,12 +168,12 @@ function createExoticSystem(center, name, centerType, systemId) {
 }
 
 // =============================================================================
-// SET 2: BORG PATROL SYSTEMS (12 systems, 75k-85k units)
+// SET 2: BORG PATROL SYSTEMS (12 systems, 75k-90k units - Outer Zone)
 // =============================================================================
 
 function createBorgPatrolSystems() {
     const minDistance = 75000;
-    const maxDistance = 85000;
+    const maxDistance = 90000;
 
     for (let i = 0; i < 12; i++) {
         // Random spherical distribution (not along any single axis plane)
@@ -194,7 +212,7 @@ function createBorgSystem(center, systemId) {
     const starType = starColors[Math.floor(Math.random() * starColors.length)];
 
     systemGroup.userData = {
-        name: 'Unknown System',
+        name: borgSystemNames[systemId],
         type: 'outer_interstellar_system',
         systemType: 'borg_patrol',
         systemId: 16 + systemId, // Start at 16 to avoid ID conflicts
@@ -206,7 +224,8 @@ function createBorgSystem(center, systemId) {
         discovered: false,
         tiltX: systemTiltX,
         tiltZ: systemTiltZ,
-        systemColor: starType.color
+        systemColor: starType.color,
+        hasBorg: true
     };
 
     // Create bright star at center
@@ -1006,14 +1025,26 @@ function updateOuterSystems() {
     outerInterstellarSystems.forEach(system => {
         if (!system.userData || !system.userData.orbiters) return;
 
-        // Distance-based opacity for far systems (visible from 5,000 units!)
+        // Distance-based opacity - different for each set
         const systemDist = system.position.distanceTo(playerPos);
-        const blurStart = 5000; // START visible at 5,000 units
-        const blurMax = 90000; // Fade out at very far distances
-
         let opacity = 1.0;
-        if (systemDist > blurStart) {
-            opacity = 1.0 - Math.min(1, (systemDist - blurStart) / (blurMax - blurStart));
+
+        if (system.userData.systemType === 'exotic_core') {
+            // SET 1: Exotic Core Systems - Always visible from far away!
+            // Only fade at extreme distances (150,000+ units)
+            const blurStart = 150000;
+            const blurMax = 200000;
+            if (systemDist > blurStart) {
+                opacity = 1.0 - Math.min(1, (systemDist - blurStart) / (blurMax - blurStart));
+            }
+        } else if (system.userData.systemType === 'borg_patrol') {
+            // SET 2: BORG Patrol Systems - Normal visibility
+            // Start fading when player is 10,000 units away
+            const blurStart = 10000;
+            const blurMax = 120000;
+            if (systemDist > blurStart) {
+                opacity = 1.0 - Math.min(1, (systemDist - blurStart) / (blurMax - blurStart));
+            }
         }
 
         const tiltX = system.userData.tiltX || 0;
