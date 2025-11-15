@@ -1485,17 +1485,13 @@ if (typeof checkCosmicFeatureInteractions === 'function' && typeof camera !== 'u
         console.log('updateGalaxyMap called:', gameState.frameCount % 60 === 0 ? 'YES' : 'NO');
     }
 
-    // ATMOSPHERIC PERSPECTIVE: Update distance-based effects and depth of field
-    // Apply every 2 frames for smooth transitions while maintaining performance
-    if (gameState.frameCount % 2 === 0 && typeof updateAtmosphericPerspective === 'function') {
+    // ATMOSPHERIC PERSPECTIVE: Update distance-based effects
+    // Optimized with caching - update every 15 frames for performance
+    if (gameState.frameCount % 15 === 0 && typeof updateAtmosphericPerspective === 'function') {
         updateAtmosphericPerspective(camera);
     }
 
-    // DEPTH OF FIELD: Apply simulated depth of field effects
-    // Update less frequently (every 5 frames) to reduce performance impact
-    if (gameState.frameCount % 5 === 0 && typeof updateDepthOfFieldEffect === 'function') {
-        updateDepthOfFieldEffect(camera);
-    }
+    // Depth of field disabled for performance (was causing expensive scene traversals)
 
     renderer.render(scene, camera);
 }

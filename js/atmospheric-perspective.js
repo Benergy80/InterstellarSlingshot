@@ -123,69 +123,63 @@ function applyAtmosphericScattering(object, distance) {
 }
 
 // =============================================================================
-// APPLY ATMOSPHERIC EFFECTS TO SCENE OBJECTS
+// APPLY ATMOSPHERIC EFFECTS TO SCENE OBJECTS - OPTIMIZED
 // =============================================================================
+
+// Cache for performance - only update when player moves significantly
+let cachedPlayerPosition = new THREE.Vector3();
+let cachedObjects = [];
+let cacheUpdateDistance = 10000; // Re-cache when player moves this far
 
 function updateAtmosphericPerspective(camera) {
     if (!camera || !camera.position || !scene) return;
 
     const playerPos = camera.position;
 
-    // Process all scene objects
-    scene.traverse((object) => {
-        if (!object.visible || !object.position) return;
+    // Only rebuild cache if player has moved significantly
+    if (cachedPlayerPosition.distanceTo(playerPos) > cacheUpdateDistance || cachedObjects.length === 0) {
+        cachedObjects = [];
+        cachedPlayerPosition.copy(playerPos);
 
-        // Calculate distance from camera
+        // Build cache of relevant objects only
+        scene.traverse((object) => {
+            if (!object.visible || !object.position || !object.material) return;
+
+            const distance = playerPos.distanceTo(object.position);
+
+            // Skip objects too close or too far to need effects
+            if (distance < 45000 || distance > 110000) return;
+
+            if (object.userData) {
+                const type = object.userData.type;
+
+                // Check if object needs atmospheric effects
+                if ((atmosphericConfig.enabledCategories.planets && (type === 'planet' || type === 'moon')) ||
+                    (atmosphericConfig.enabledCategories.stars && (type === 'star' || type === 'pulsar' || type === 'supernova' || type === 'brown_dwarf')) ||
+                    (atmosphericConfig.enabledCategories.cosmicFeatures && (type === 'dyson_sphere' || type === 'space_whale' || type === 'crystal_formation' || type === 'plasma_storm' || type === 'dark_matter_node' || type === 'ringworld')) ||
+                    (atmosphericConfig.enabledCategories.galaxies && type === 'galaxy') ||
+                    (atmosphericConfig.enabledCategories.outerSystems && (object.userData.systemType === 'exotic_core' || object.userData.systemType === 'borg_patrol'))) {
+                    cachedObjects.push(object);
+                }
+            }
+        });
+    }
+
+    // Apply effects only to cached objects
+    cachedObjects.forEach(object => {
         const distance = playerPos.distanceTo(object.position);
-
-        // Determine if this object should have atmospheric effects
-        let shouldApplyEffects = false;
-
-        if (object.userData) {
-            const type = object.userData.type;
-
-            // Check object categories
-            if (atmosphericConfig.enabledCategories.planets &&
-                (type === 'planet' || type === 'moon')) {
-                shouldApplyEffects = true;
-            }
-            if (atmosphericConfig.enabledCategories.stars &&
-                (type === 'star' || type === 'pulsar' || type === 'supernova' || type === 'brown_dwarf')) {
-                shouldApplyEffects = true;
-            }
-            if (atmosphericConfig.enabledCategories.nebulas && type === 'nebula') {
-                shouldApplyEffects = true;
-            }
-            if (atmosphericConfig.enabledCategories.cosmicFeatures &&
-                (type === 'dyson_sphere' || type === 'space_whale' || type === 'crystal_formation' ||
-                 type === 'plasma_storm' || type === 'dark_matter_node' || type === 'ringworld')) {
-                shouldApplyEffects = true;
-            }
-            if (atmosphericConfig.enabledCategories.debris &&
-                (type === 'asteroid' || type === 'debris' || type === 'outer_asteroid')) {
-                shouldApplyEffects = true;
-            }
-            if (atmosphericConfig.enabledCategories.galaxies && type === 'galaxy') {
-                shouldApplyEffects = true;
-            }
-            if (atmosphericConfig.enabledCategories.outerSystems &&
-                (object.userData.systemType === 'exotic_core' || object.userData.systemType === 'borg_patrol')) {
-                shouldApplyEffects = true;
-            }
-        }
-
-        // Apply effects if applicable
-        if (shouldApplyEffects && object.material) {
-            applyDistanceBasedOpacity(object, distance);
-            applyAtmosphericScattering(object, distance);
-        }
+        applyDistanceBasedOpacity(object, distance);
+        applyAtmosphericScattering(object, distance);
     });
 
-    // Special handling for particle systems
+    // Special handling for nebula particles - but only those in range
     if (typeof nebulaClouds !== 'undefined' && nebulaClouds.length > 0) {
         nebulaClouds.forEach(nebula => {
             if (!nebula || !nebula.position) return;
             const distance = playerPos.distanceTo(nebula.position);
+
+            // Skip nebulas that are too far or too close
+            if (distance < 45000 || distance > 110000) return;
 
             // Apply to nebula particles
             nebula.children.forEach(child => {
@@ -256,10 +250,11 @@ function updateDepthOfFieldEffect(camera) {
 // INITIALIZATION AND EXPORTS
 // =============================================================================
 
-// Auto-enable depth of field on load
-setTimeout(() => {
-    enableDepthOfField();
-}, 1000);
+// Depth of field disabled by default for performance
+// It causes another full scene traversal which is too expensive
+// setTimeout(() => {
+//     enableDepthOfField();
+// }, 1000);
 
 // Export functions to global scope
 if (typeof window !== 'undefined') {
