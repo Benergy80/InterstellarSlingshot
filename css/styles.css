@@ -505,8 +505,8 @@ body.ui-mode {
 }
 
 .round-map {
-    width: 320px;
-    height: 320px;
+    width: 220px;
+    height: 220px;
     border-radius: 50%;
     position: relative;
     overflow: hidden;
