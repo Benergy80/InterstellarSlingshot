@@ -4798,3 +4798,57 @@ document.addEventListener('DOMContentLoaded', () => {
 
 console.log('🎵 Nebula Sound Debug Menu DISABLED (awaiting proper sound testing panel)');
 */
+
+// =============================================================================
+// NEBULA VISIBILITY TOGGLE COMMANDS
+// =============================================================================
+
+window.showNebulas = function() {
+    if (typeof nebulaClouds === 'undefined' || nebulaClouds.length === 0) {
+        console.log('⚠️ No nebulas found in scene');
+        return;
+    }
+
+    nebulaClouds.forEach(nebula => {
+        if (nebula) {
+            nebula.visible = true;
+        }
+    });
+
+    console.log(`✅ All ${nebulaClouds.length} nebulas are now visible`);
+};
+
+window.hideNebulas = function() {
+    if (typeof nebulaClouds === 'undefined' || nebulaClouds.length === 0) {
+        console.log('⚠️ No nebulas found in scene');
+        return;
+    }
+
+    nebulaClouds.forEach(nebula => {
+        if (nebula) {
+            nebula.visible = false;
+        }
+    });
+
+    console.log(`🙈 All ${nebulaClouds.length} nebulas are now hidden`);
+};
+
+window.toggleNebulas = function() {
+    if (typeof nebulaClouds === 'undefined' || nebulaClouds.length === 0) {
+        console.log('⚠️ No nebulas found in scene');
+        return;
+    }
+
+    // Check current state of first nebula
+    const currentlyVisible = nebulaClouds[0] && nebulaClouds[0].visible;
+
+    nebulaClouds.forEach(nebula => {
+        if (nebula) {
+            nebula.visible = !currentlyVisible;
+        }
+    });
+
+    console.log(`🔄 All ${nebulaClouds.length} nebulas toggled to ${!currentlyVisible ? 'visible' : 'hidden'}`);
+};
+
+console.log('🌫️ Nebula visibility commands loaded: showNebulas(), hideNebulas(), toggleNebulas()');
