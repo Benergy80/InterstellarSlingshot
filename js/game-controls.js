@@ -2181,7 +2181,27 @@ function initializeControlButtons() {
             }
         }
         if (key === 'b') keys.b = true;
-        
+
+        // Z key - Zoom scope toggle
+        if (key === 'z') {
+            keys.z = true;
+            if (camera && camera.fov) {
+                // Toggle between normal (75) and zoomed (30) FOV
+                if (camera.fov === 75) {
+                    camera.fov = 30; // Zoomed in
+                    if (typeof showAchievement === 'function') {
+                        showAchievement('Scope Activated', 'Press Z to deactivate');
+                    }
+                } else {
+                    camera.fov = 75; // Normal view
+                    if (typeof showAchievement === 'function') {
+                        showAchievement('Scope Deactivated', 'Normal view restored');
+                    }
+                }
+                camera.updateProjectionMatrix();
+            }
+        }
+
         if (e.key === 'ArrowUp') keys.up = true;
         if (e.key === 'ArrowDown') keys.down = true;
         if (e.key === 'ArrowLeft') keys.left = true;
@@ -2262,8 +2282,9 @@ if (e.key === 'Tab') {
         }
         if (key === 'x') keys.x = false;
         if (key === 'b') keys.b = false;
+        if (key === 'z') keys.z = false;
         if (key === 'l') keys.l = false;
-        
+
         if (e.key === 'ArrowUp') keys.up = false;
         if (e.key === 'ArrowDown') keys.down = false;
         if (e.key === 'ArrowLeft') keys.left = false;
@@ -3497,3 +3518,195 @@ if (typeof window !== 'undefined') {
 }
 
 console.log('ðŸ Game Controls script completed successfully!');
+
+// =============================================================================
+// NEBULA SOUND DEBUG MENU
+// =============================================================================
+
+// Debug menu state
+window.nebulaDebugState = {
+    mysteryFreq: 220,
+    fadeInTime: 2,
+    fadeOutTime: 8,
+    interval: 14,
+    volume: 0.04,
+    bassEnabled: true,
+    padEnabled: true,
+    lastTrigger: null
+};
+
+// Toggle debug menu
+window.toggleNebulaDebug = function() {
+    const debugMenu = document.getElementById('nebulaSoundDebug');
+    if (debugMenu) {
+        debugMenu.classList.toggle('hidden');
+    }
+};
+
+// Add M key listener for debug menu  
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'm' || e.key === 'M') {
+        if (typeof gameState !== 'undefined' && !gameState.paused && gameState.gameStarted) {
+            toggleNebulaDebug();
+        }
+    }
+});
+
+// Update mystery frequency
+window.updateMysteryFreq = function(value) {
+    window.nebulaDebugState.mysteryFreq = parseFloat(value);
+    document.getElementById('mysteryFreqValue').textContent = value + ' Hz';
+};
+
+// Update fade in time
+window.updateFadeIn = function(value) {
+    window.nebulaDebugState.fadeInTime = parseFloat(value);
+    document.getElementById('fadeInValue').textContent = value + 's';
+};
+
+// Update fade out time
+window.updateFadeOut = function(value) {
+    window.nebulaDebugState.fadeOutTime = parseFloat(value);
+    document.getElementById('fadeOutValue').textContent = value + 's';
+};
+
+// Update interval
+window.updateInterval = function(value) {
+    window.nebulaDebugState.interval = parseFloat(value);
+    document.getElementById('intervalValue').textContent = value + 's';
+};
+
+// Update volume
+window.updateVolume = function(value) {
+    window.nebulaDebugState.volume = parseFloat(value);
+    document.getElementById('volumeValue').textContent = value;
+};
+
+// Manual trigger mystery tone with debug settings
+window.triggerDebugMysteryTone = function() {
+    if (typeof audioContext === 'undefined' || !audioContext || typeof mysteryGain === 'undefined' || !mysteryGain || typeof mysteryOsc === 'undefined' || !mysteryOsc) {
+        console.log('❌ Audio context not initialized');
+        alert('Nebula sounds not initialized yet. Enter a nebula first!');
+        return;
+    }
+
+    const now = audioContext.currentTime;
+    const state = window.nebulaDebugState;
+
+    // Use debug frequency
+    const freqOptions = [state.mysteryFreq * 0.9, state.mysteryFreq, state.mysteryFreq * 1.1];
+    const freq = freqOptions[Math.floor(Math.random() * freqOptions.length)];
+
+    // Apply debug settings
+    mysteryGain.gain.cancelScheduledValues(now);
+    mysteryGain.gain.setValueAtTime(0, now);
+    mysteryGain.gain.linearRampToValueAtTime(state.volume, now + state.fadeInTime);
+    mysteryGain.gain.linearRampToValueAtTime(0.001, now + state.fadeInTime + state.fadeOutTime);
+
+    mysteryOsc.frequency.setValueAtTime(freq, now);
+
+    // Update debug display
+    window.nebulaDebugState.lastTrigger = new Date().toLocaleTimeString();
+    updateDebugState();
+
+    console.log(\`🎵 Debug mystery tone triggered: \${freq.toFixed(1)} Hz\`);
+};
+
+// Toggle bass layer
+window.toggleDebugBass = function() {
+    if (typeof audioContext === 'undefined' || !audioContext) {
+        alert('Audio context not initialized yet. Enter a nebula first!');
+        return;
+    }
+
+    window.nebulaDebugState.bassEnabled = !window.nebulaDebugState.bassEnabled;
+    const btn = document.getElementById('toggleBassBtn');
+    if (btn) {
+        btn.textContent = \`Toggle Bass (\${window.nebulaDebugState.bassEnabled ? 'ON' : 'OFF'})\`;
+    }
+
+    if (typeof bassGain !== 'undefined' && bassGain) {
+        const now = audioContext.currentTime;
+        bassGain.gain.cancelScheduledValues(now);
+        bassGain.gain.linearRampToValueAtTime(
+            window.nebulaDebugState.bassEnabled ? 0.025 : 0,
+            now + 0.5
+        );
+    }
+};
+
+// Toggle pad layer
+window.toggleDebugPad = function() {
+    if (typeof audioContext === 'undefined' || !audioContext) {
+        alert('Audio context not initialized yet. Enter a nebula first!');
+        return;
+    }
+
+    window.nebulaDebugState.padEnabled = !window.nebulaDebugState.padEnabled;
+    const btn = document.getElementById('togglePadBtn');
+    if (btn) {
+        btn.textContent = \`Toggle Pad (\${window.nebulaDebugState.padEnabled ? 'ON' : 'OFF'})\`;
+    }
+
+    if (typeof padGain !== 'undefined' && padGain) {
+        const now = audioContext.currentTime;
+        padGain.gain.cancelScheduledValues(now);
+        padGain.gain.linearRampToValueAtTime(
+            window.nebulaDebugState.padEnabled ? 0.015 : 0,
+            now + 0.5
+        );
+    }
+};
+
+// Stop all nebula sounds
+window.stopAllNebulaSounds = function() {
+    if (musicSystem.backgroundMusic && musicSystem.backgroundMusic.stop) {
+        musicSystem.backgroundMusic.stop();
+        console.log('🛑 All nebula sounds stopped');
+    }
+};
+
+// Update debug state display
+function updateDebugState() {
+    const stateDiv = document.getElementById('debugState');
+    if (!stateDiv) return;
+
+    const contextState = (typeof audioContext !== 'undefined' && audioContext) ? audioContext.state : 'not initialized';
+    const lastTrigger = window.nebulaDebugState.lastTrigger || 'Never';
+
+    stateDiv.innerHTML = \`
+        <div>Audio Context: <span class="text-green-400">\${contextState}</span></div>
+        <div>Mystery Tone Active: <span class="\${(typeof audioContext !== 'undefined' && audioContext && audioContext.state === 'running') ? 'text-green-400' : 'text-gray-400'}">
+            \${(typeof audioContext !== 'undefined' && audioContext && audioContext.state === 'running') ? 'Yes' : 'No'}
+        </span></div>
+        <div>Last Trigger: <span class="text-yellow-400">\${lastTrigger}</span></div>
+    \`;
+}
+
+// Initialize debug menu buttons
+document.addEventListener('DOMContentLoaded', () => {
+    const triggerBtn = document.getElementById('triggerMysteryBtn');
+    if (triggerBtn) {
+        triggerBtn.addEventListener('click', window.triggerDebugMysteryTone);
+    }
+
+    const stopBtn = document.getElementById('stopAllSoundsBtn');
+    if (stopBtn) {
+        stopBtn.addEventListener('click', window.stopAllNebulaSounds);
+    }
+
+    const toggleBassBtn = document.getElementById('toggleBassBtn');
+    if (toggleBassBtn) {
+        toggleBassBtn.addEventListener('click', window.toggleDebugBass);
+    }
+
+    const togglePadBtn = document.getElementById('togglePadBtn');
+    if (togglePadBtn) {
+        togglePadBtn.addEventListener('click', window.toggleDebugPad);
+    }
+
+    // Update debug state every second
+    setInterval(updateDebugState, 1000);
+});
+
+console.log('🎵 Nebula Sound Debug Menu loaded');
