@@ -4312,11 +4312,32 @@ function enableAutoThrust() {
 // =============================================================================
 
 function createDeathEffect() {
-    if (typeof gameOver !== 'undefined') {
+    // ⭐ Enhanced death effect matching planet collision mechanics
+    // Stop all player motion
+    if (typeof gameState !== 'undefined' && gameState.velocityVector) {
+        gameState.velocityVector.set(0, 0, 0);
+    }
+
+    // Create massive player explosion effect
+    if (typeof createPlayerExplosion === 'function') {
+        createPlayerExplosion();
+    }
+
+    // Play explosion/vaporizing sound
+    if (typeof playSound === 'function') {
+        playSound('explosion');
+    }
+
+    // Show game over screen
+    if (typeof showGameOverScreen === 'function') {
+        showGameOverScreen('HULL BREACH', 'Ship destroyed by enemy fire - hull integrity: 0%');
+    } else if (typeof gameOver !== 'undefined') {
         gameOver('Hull integrity critical - ship destroyed!');
     } else {
         showAchievement('GAME OVER', 'Ship destroyed - mission failed!');
     }
+
+    console.log('💀 PLAYER DESTROYED: Hull reached 0% from enemy damage');
 }
 
 function playVictoryMusic() {
