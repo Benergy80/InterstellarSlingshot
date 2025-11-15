@@ -2758,7 +2758,13 @@ if (typeof checkAndSpawnBoss === 'function' && enemy.userData.galaxyId !== undef
 					if (enemy.userData.isBoss) {
     				const wasVictory = checkBossVictory(enemy);
     				if (wasVictory) {
-        			showAchievement('BOSS DEFEATED!', `${enemy.userData.name} destroyed!`);
+        			// ⭐ NEW: Award warp for defeating boss
+        			if (gameState.emergencyWarp && gameState.emergencyWarp.available < gameState.emergencyWarp.maxWarps) {
+            			gameState.emergencyWarp.available++;
+            			showAchievement('BOSS DEFEATED!', `${enemy.userData.name} destroyed! +1 Warp Earned (${gameState.emergencyWarp.available}/${gameState.emergencyWarp.maxWarps})`);
+        			} else {
+            			showAchievement('BOSS DEFEATED!', `${enemy.userData.name} destroyed!`);
+        			}
         			// Call firework celebration here
         			if (typeof createFireworkCelebration === 'function') {
             		createFireworkCelebration();
@@ -3502,6 +3508,12 @@ function handleCosmicFeatureDestruction(missile, feature, type) {
     // Create larger explosion
     createMissileExplosion(missile.position);
     playSound('missile_explosion');
+
+    // ⭐ NEW: Award warp for destroying cosmic feature
+    if (gameState.emergencyWarp && gameState.emergencyWarp.available < gameState.emergencyWarp.maxWarps) {
+        gameState.emergencyWarp.available++;
+        console.log(`⚡ Warp earned from cosmic feature destruction! Total: ${gameState.emergencyWarp.available}/${gameState.emergencyWarp.maxWarps}`);
+    }
 
     // Apply effects based on type
     switch(type) {
