@@ -350,9 +350,49 @@ function populateTargets() {
         
         // Dark matter nodes only show when very close (they're hard to detect)
         cosmicTargets.push(...cosmicFeatures.darkMatterNodes.filter(dm => camera.position.distanceTo(dm.position) < 400));
-        
+
     }
-    
+
+    // ADD OUTER INTERSTELLAR SYSTEMS TO TARGETING
+    const outerSystemTargets = [];
+    if (typeof outerInterstellarSystems !== 'undefined') {
+        outerInterstellarSystems.forEach(system => {
+            if (!system || !system.userData) return;
+
+            // Get system's world position
+            const systemPos = new THREE.Vector3();
+            system.getWorldPosition(systemPos);
+            const systemDistance = camera.position.distanceTo(systemPos);
+
+            // Add center object (always show if within 10,000 units)
+            if (system.userData.centerObject && systemDistance < 10000) {
+                const centerPos = new THREE.Vector3();
+                system.userData.centerObject.getWorldPosition(centerPos);
+                const centerDistance = camera.position.distanceTo(centerPos);
+
+                if (centerDistance < 10000) {
+                    outerSystemTargets.push(system.userData.centerObject);
+                }
+            }
+
+            // Add planets and cosmic features from orbiters (show if within 8,000 units of system)
+            if (system.userData.orbiters && systemDistance < 8000) {
+                system.userData.orbiters.forEach(orbiter => {
+                    // Skip asteroids and BORG drones from navigation
+                    if (orbiter.userData.type === 'outer_asteroid' || orbiter.userData.type === 'borg_drone') return;
+
+                    const orbiterPos = new THREE.Vector3();
+                    orbiter.getWorldPosition(orbiterPos);
+                    const distance = camera.position.distanceTo(orbiterPos);
+
+                    if (distance < 8000) {
+                        outerSystemTargets.push(orbiter);
+                    }
+                });
+            }
+        });
+    }
+
     const allTargetableObjects = [
         ...(typeof planets !== 'undefined' ? planets.filter(p => p.userData && p.userData.name !== 'Earth' && p.userData.type !== 'asteroid') : []),
         ...detectedWormholes,
@@ -364,7 +404,8 @@ function populateTargets() {
             const maxRange = e.userData.isBlackHoleGuardian ? 10000 : 3000;
             return distance < maxRange;
         }) : []),
-        ...cosmicTargets // ADD COSMIC FEATURES HERE!
+        ...cosmicTargets, // ADD COSMIC FEATURES HERE!
+        ...outerSystemTargets // ADD OUTER SYSTEM OBJECTS HERE!
     ];
 
     const nearbyObjects = allTargetableObjects.filter(obj => {
@@ -393,6 +434,9 @@ function populateTargets() {
             typeColor = 'text-yellow-400';
         } else if (obj.userData.type === 'planet') {
             typeColor = 'text-blue-400';
+        } else if (obj.userData.type === 'outer_planet') {
+            typeDisplay = 'Outer Planet';
+            typeColor = 'text-indigo-400';
         } else if (obj.userData.type === 'moon') {
             typeDisplay = 'Moon';
             typeColor = 'text-gray-300';
@@ -463,6 +507,12 @@ function populateTargets() {
             factionIndicator = ` (${obj.userData.ancientCivilization || obj.userData.species || 'Ancient'})`;
         } else if (obj.userData.type === 'space_whale') {
             factionIndicator = ' (Peaceful)';
+        }
+        // Outer system objects indicator
+        else if (obj.userData.isOuterSystem || obj.userData.type === 'outer_planet' ||
+                 obj.userData.type === 'supernova' || obj.userData.type === 'plasma_storm' ||
+                 obj.userData.type === 'solar_storm') {
+            factionIndicator = ' (Outer Systems)';
         }
         
         // Enhanced status indicators - INCLUDING COSMIC FEATURES (NO ICONS)
@@ -1441,6 +1491,62 @@ mapDotPool.releaseAll();
                 }
             });
         }
+
+    // Add Outer Interstellar Systems (28 total: 16 exotic + 12 BORG)
+    if (typeof outerInterstellarSystems !== 'undefined') {
+        outerInterstellarSystems.forEach(system => {
+            if (!system || !system.position || !system.userData) return;
+
+            const systemMapX = (system.position.x / universeRadius) + 0.5;
+            const systemMapZ = (system.position.z / universeRadius) + 0.5;
+
+            // Only show if within map bounds (outer systems should always be visible)
+            if (systemMapX >= 0 && systemMapX <= 1 && systemMapZ >= 0 && systemMapZ <= 1) {
+                const systemDot = mapDotPool.get('cosmic-feature');
+                systemDot.className = 'cosmic-feature-dot outer-system-indicator absolute';
+
+                // Determine color and icon based on system type
+                let color = '#ffff88';  // Default: bright yellow for unknown systems
+                let icon = '⭐';
+                let size = '8px';
+
+                if (system.userData.centerType === 'supernova') {
+                    color = '#ff6600';
+                    icon = '💥';
+                    size = '10px';
+                } else if (system.userData.centerType === 'plasma_storm') {
+                    color = '#aa44ff';
+                    icon = '⚡';
+                    size = '10px';
+                } else if (system.userData.centerType === 'solar_storm') {
+                    color = '#ffff00';
+                    icon = '☀️';
+                    size = '10px';
+                } else if (system.userData.hasBorg) {
+                    // BORG patrol systems
+                    color = '#00ff00';
+                    icon = '🛸';
+                    size = '9px';
+                }
+
+                systemDot.style.width = size;
+                systemDot.style.height = size;
+                systemDot.style.backgroundColor = color;
+                systemDot.style.borderRadius = '50%';
+                systemDot.style.border = `2px solid ${color}`;
+                systemDot.style.left = `${systemMapX * 100}%`;
+                systemDot.style.top = `${systemMapZ * 100}%`;
+                systemDot.style.transform = 'translate(-50%, -50%)';
+                systemDot.style.boxShadow = `0 0 10px ${color}`;
+                systemDot.style.pointerEvents = 'none';
+                systemDot.style.zIndex = '7';  // Above nebulas
+                systemDot.innerHTML = `<span style="font-size: 10px;">${icon}</span>`;
+                systemDot.title = system.userData.name + ' - ' + system.userData.location;
+
+                galaxyMap.appendChild(systemDot);
+            }
+        });
+    }
 
     // Show player triangle, hide direction arrow
     playerMapPos.style.display = 'block';

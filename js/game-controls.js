@@ -1042,23 +1042,41 @@ function createAmbientSpaceMusic() {
     lfo2.start(startTime);
     mysteryOsc.start(startTime);
     
-    // RESTORED: Working mystery tone scheduler with proper volume
+    // IMPROVED: Mystery tone scheduler with better cleanup to prevent stuck sounds
+    let mysteryTimeoutId = null;
     function triggerMysteryTone() {
+        // Clear any previous timeout
+        if (mysteryTimeoutId) {
+            clearTimeout(mysteryTimeoutId);
+            mysteryTimeoutId = null;
+        }
+
+        // Check if music is still enabled and context is valid
         if (!musicSystem.enabled || !musicSystem.backgroundMusic) return;
-        
+        if (!audioContext || audioContext.state === 'closed') return;
+
         const frequencies = [110, 146.83, 164.81, 220, 293.66, 329.63];
         const freq = frequencies[Math.floor(Math.random() * frequencies.length)];
         const now = audioContext.currentTime;
-        
-        mysteryOsc.frequency.setValueAtTime(freq, now);
+
+        // Ensure we start from 0 to prevent stuck sounds
+        mysteryGain.gain.cancelScheduledValues(now);
         mysteryGain.gain.setValueAtTime(0, now);
-        mysteryGain.gain.linearRampToValueAtTime(0.04, now + 2); // RESTORED: 0.04 for more presence
-        mysteryGain.gain.linearRampToValueAtTime(0.001, now + 8);
-        
-        setTimeout(triggerMysteryTone, 8000 + Math.random() * 12000);
+        mysteryGain.gain.linearRampToValueAtTime(0.04, now + 2); // Fade in
+        mysteryGain.gain.linearRampToValueAtTime(0.001, now + 8); // Fade out completely
+
+        mysteryOsc.frequency.setValueAtTime(freq, now);
+
+        // Schedule next tone with stored timeout ID
+        mysteryTimeoutId = setTimeout(triggerMysteryTone, 8000 + Math.random() * 12000);
     }
-    
+
     setTimeout(triggerMysteryTone, 5000);
+
+    // Store timeout ID for cleanup
+    if (!musicSystem.mysteryTimeout) {
+        musicSystem.mysteryTimeout = mysteryTimeoutId;
+    }
     
     // Store references
     musicSystem.backgroundMusic = {
@@ -1501,6 +1519,145 @@ const explosionInterval = setInterval(() => {
     
     // Play explosion sound
     playSound('explosion');
+}
+
+// =============================================================================
+// MASSIVE BORG CUBE EXPLOSION - For 100 HP BORG destruction
+// =============================================================================
+
+function createMassiveBorgExplosion(position) {
+    console.log('💥 MASSIVE BORG EXPLOSION at', position);
+
+    // Create HUGE expanding sphere explosion
+    const explosionGeo = new THREE.SphereGeometry(100, 32, 32);
+    const explosionMat = new THREE.MeshBasicMaterial({
+        color: 0x00ff00, // Green BORG color
+        transparent: true,
+        opacity: 0.9,
+        blending: THREE.AdditiveBlending
+    });
+    const explosion = new THREE.Mesh(explosionGeo, explosionMat);
+    explosion.position.copy(position);
+    scene.add(explosion);
+
+    // Secondary orange/red explosion sphere
+    const explosionGeo2 = new THREE.SphereGeometry(80, 32, 32);
+    const explosionMat2 = new THREE.MeshBasicMaterial({
+        color: 0xff4400,
+        transparent: true,
+        opacity: 0.8,
+        blending: THREE.AdditiveBlending
+    });
+    const explosion2 = new THREE.Mesh(explosionGeo2, explosionMat2);
+    explosion2.position.copy(position);
+    scene.add(explosion2);
+
+    // MASSIVE particle burst (500 particles!)
+    const particleCount = 500;
+    const particleGeometry = new THREE.BufferGeometry();
+    const particlePositions = new Float32Array(particleCount * 3);
+    const particleVelocities = [];
+
+    for (let i = 0; i < particleCount; i++) {
+        particlePositions[i * 3] = position.x;
+        particlePositions[i * 3 + 1] = position.y;
+        particlePositions[i * 3 + 2] = position.z;
+
+        // Random velocity in all directions
+        particleVelocities.push({
+            x: (Math.random() - 0.5) * 50,
+            y: (Math.random() - 0.5) * 50,
+            z: (Math.random() - 0.5) * 50
+        });
+    }
+
+    particleGeometry.setAttribute('position', new THREE.BufferAttribute(particlePositions, 3));
+
+    const particleMaterial = new THREE.PointsMaterial({
+        color: 0x00ff00,
+        size: 15,
+        transparent: true,
+        opacity: 1.0,
+        blending: THREE.AdditiveBlending
+    });
+
+    const particles = new THREE.Points(particleGeometry, particleMaterial);
+    scene.add(particles);
+
+    // Animate MASSIVE explosion
+    let scale = 1;
+    let opacity1 = 0.9;
+    let opacity2 = 0.8;
+    let particleOpacity = 1.0;
+
+    const explosionInterval = setInterval(() => {
+        scale += 3.0; // MUCH faster expansion
+        opacity1 -= 0.03;
+        opacity2 -= 0.025;
+        particleOpacity -= 0.04;
+
+        explosion.scale.set(scale, scale, scale);
+        explosion2.scale.set(scale * 1.2, scale * 1.2, scale * 1.2);
+        explosionMat.opacity = Math.max(0, opacity1);
+        explosionMat2.opacity = Math.max(0, opacity2);
+        particleMaterial.opacity = Math.max(0, particleOpacity);
+
+        // Update particle positions
+        const positions = particleGeometry.attributes.position.array;
+        for (let i = 0; i < particleCount; i++) {
+            positions[i * 3] += particleVelocities[i].x;
+            positions[i * 3 + 1] += particleVelocities[i].y;
+            positions[i * 3 + 2] += particleVelocities[i].z;
+        }
+        particleGeometry.attributes.position.needsUpdate = true;
+
+        if (opacity1 <= 0) {
+            clearInterval(explosionInterval);
+            scene.remove(explosion);
+            scene.remove(explosion2);
+            scene.remove(particles);
+            explosionGeo.dispose();
+            explosionGeo2.dispose();
+            explosionMat.dispose();
+            explosionMat2.dispose();
+            particleGeometry.dispose();
+            particleMaterial.dispose();
+        }
+    }, 50);
+
+    // Create shockwave rings
+    for (let i = 0; i < 5; i++) {
+        setTimeout(() => {
+            const ringGeo = new THREE.TorusGeometry(100, 5, 16, 32);
+            const ringMat = new THREE.MeshBasicMaterial({
+                color: 0x00ff00,
+                transparent: true,
+                opacity: 0.7,
+                blending: THREE.AdditiveBlending
+            });
+            const ring = new THREE.Mesh(ringGeo, ringMat);
+            ring.position.copy(position);
+            ring.rotation.x = Math.random() * Math.PI;
+            ring.rotation.y = Math.random() * Math.PI;
+            scene.add(ring);
+
+            let ringScale = 1;
+            let ringOpacity = 0.7;
+            const ringInterval = setInterval(() => {
+                ringScale += 2;
+                ringOpacity -= 0.05;
+                ring.scale.set(ringScale, ringScale, ringScale);
+                ringMat.opacity = Math.max(0, ringOpacity);
+
+                if (ringOpacity <= 0) {
+                    clearInterval(ringInterval);
+                    scene.remove(ring);
+                    ringGeo.dispose();
+                    ringMat.dispose();
+                }
+            }, 50);
+        }, i * 200);
+    }
 }
 
 // =============================================================================
@@ -2435,12 +2592,48 @@ setTimeout(() => {
 
 function checkWeaponHits(targetPosition) {
     const hitRadius = 50;
-    
+
+    // Check BORG drone hits (from outer interstellar systems)
+    if (typeof outerInterstellarSystems !== 'undefined') {
+        outerInterstellarSystems.forEach(system => {
+            if (!system.userData || !system.userData.drones) return;
+
+            system.userData.drones.forEach((drone, droneIndex) => {
+                if (drone.userData.health <= 0) return;
+
+                const distance = drone.position.distanceTo(targetPosition);
+                if (distance < hitRadius) { // Normal hit radius
+                    const damage = 1;
+                    drone.userData.health -= damage;
+
+                    flashEnemyHit(drone, damage);
+                    playSound('weapon');
+                    showAchievement('BORG Hit!', `${drone.userData.name} damaged (${drone.userData.health}/100 HP)`);
+
+                    if (drone.userData.health <= 0) {
+                        // BORG cube destroyed - MASSIVE EXPLOSION!
+                        createMassiveBorgExplosion(drone.position);
+                        playSound('explosion');
+                        showAchievement('BORG CUBE DESTROYED!', `${drone.userData.name} eliminated!`);
+
+                        // Remove from scene and array
+                        scene.remove(drone);
+                        system.userData.drones.splice(droneIndex, 1);
+                        const orbiterIndex = system.userData.orbiters.indexOf(drone);
+                        if (orbiterIndex > -1) {
+                            system.userData.orbiters.splice(orbiterIndex, 1);
+                        }
+                    }
+                }
+            });
+        });
+    }
+
     // Check enemy hits
     if (typeof enemies !== 'undefined') {
         enemies.forEach((enemy, enemyIndex) => {
             if (enemy.userData.health <= 0) return;
-            
+
             const distance = enemy.position.distanceTo(targetPosition);
             if (distance < hitRadius) {
                 const damage = 1; // Standard damage
@@ -3431,18 +3624,40 @@ function fireWeapon() {
             targetObject = enemyIntersects[0].object;
             console.log('Hit detected: enemy', targetObject.userData.name);
         } else {
-            // Check for asteroid hits (for manual aiming only)
-            const asteroidTargets = planets.filter(p => p.userData.type === 'asteroid');
-            const asteroidIntersects = raycaster.intersectObjects(asteroidTargets);
-            if (asteroidIntersects.length > 0) {
-                targetPosition = asteroidIntersects[0].point;
-                targetObject = asteroidIntersects[0].object;
-                console.log('Hit detected: asteroid', targetObject.userData.name);
-                console.log('Asteroid hit confirmed, calling destroyAsteroidByWeapon');
+            // Check for BORG drone hits (from outer interstellar systems)
+            let borgDrones = [];
+            if (typeof outerInterstellarSystems !== 'undefined') {
+                outerInterstellarSystems.forEach(system => {
+                    if (system.userData && system.userData.drones) {
+                        system.userData.drones.forEach(drone => {
+                            if (drone.userData.health > 0) {
+                                // Add all children of the drone group for raycasting
+                                borgDrones.push(...drone.children);
+                            }
+                        });
+                    }
+                });
+            }
+
+            const borgIntersects = raycaster.intersectObjects(borgDrones);
+            if (borgIntersects.length > 0) {
+                targetPosition = borgIntersects[0].point;
+                targetObject = borgIntersects[0].object.parent; // Parent is the drone group
+                console.log('Hit detected: BORG drone', targetObject.userData.name);
             } else {
-                // Fire in the direction of the crosshair
-                const direction = raycaster.ray.direction.clone();
-                targetPosition = camera.position.clone().add(direction.multiplyScalar(1000));
+                // Check for asteroid hits (for manual aiming only)
+                const asteroidTargets = planets.filter(p => p.userData.type === 'asteroid');
+                const asteroidIntersects = raycaster.intersectObjects(asteroidTargets);
+                if (asteroidIntersects.length > 0) {
+                    targetPosition = asteroidIntersects[0].point;
+                    targetObject = asteroidIntersects[0].object;
+                    console.log('Hit detected: asteroid', targetObject.userData.name);
+                    console.log('Asteroid hit confirmed, calling destroyAsteroidByWeapon');
+                } else {
+                    // Fire in the direction of the crosshair
+                    const direction = raycaster.ray.direction.clone();
+                    targetPosition = camera.position.clone().add(direction.multiplyScalar(1000));
+                }
             }
         }
     }
@@ -4157,3 +4372,197 @@ if (typeof window !== 'undefined') {
 }
 
 console.log('ðŸ Game Controls script completed successfully!');
+
+// =============================================================================
+// NEBULA SOUND DEBUG MENU (Press T to toggle)
+// =============================================================================
+
+// Debug menu state
+window.nebulaDebugState = {
+    mysteryFreq: 220,
+    fadeInTime: 2,
+    fadeOutTime: 8,
+    interval: 14,
+    volume: 0.04,
+    bassEnabled: true,
+    padEnabled: true,
+    lastTrigger: null
+};
+
+// Toggle debug menu
+window.toggleNebulaDebug = function() {
+    const debugMenu = document.getElementById('nebulaSoundDebug');
+    if (debugMenu) {
+        debugMenu.classList.toggle('hidden');
+    }
+};
+
+// Add T key listener for debug menu  
+document.addEventListener('keydown', (e) => {
+    if (e.key === 't' || e.key === 'T') {
+        // Only allow if game is started and not paused
+        if (typeof gameState !== 'undefined' && gameState.gameStarted && !gameState.paused) {
+            e.preventDefault(); // Prevent any other T key actions
+            toggleNebulaDebug();
+        }
+    }
+});
+
+// Update mystery frequency
+window.updateMysteryFreq = function(value) {
+    window.nebulaDebugState.mysteryFreq = parseFloat(value);
+    document.getElementById('mysteryFreqValue').textContent = value + ' Hz';
+};
+
+// Update fade in time
+window.updateFadeIn = function(value) {
+    window.nebulaDebugState.fadeInTime = parseFloat(value);
+    document.getElementById('fadeInValue').textContent = value + 's';
+};
+
+// Update fade out time
+window.updateFadeOut = function(value) {
+    window.nebulaDebugState.fadeOutTime = parseFloat(value);
+    document.getElementById('fadeOutValue').textContent = value + 's';
+};
+
+// Update interval
+window.updateInterval = function(value) {
+    window.nebulaDebugState.interval = parseFloat(value);
+    document.getElementById('intervalValue').textContent = value + 's';
+};
+
+// Update volume
+window.updateVolume = function(value) {
+    window.nebulaDebugState.volume = parseFloat(value);
+    document.getElementById('volumeValue').textContent = value;
+};
+
+// Manual trigger mystery tone with debug settings
+window.triggerDebugMysteryTone = function() {
+    if (typeof audioContext === 'undefined' || !audioContext || typeof mysteryGain === 'undefined' || !mysteryGain || typeof mysteryOsc === 'undefined' || !mysteryOsc) {
+        console.log('❌ Audio context not initialized');
+        alert('Nebula sounds not initialized yet. Enter a nebula first!');
+        return;
+    }
+
+    const now = audioContext.currentTime;
+    const state = window.nebulaDebugState;
+
+    // Use debug frequency
+    const freqOptions = [state.mysteryFreq * 0.9, state.mysteryFreq, state.mysteryFreq * 1.1];
+    const freq = freqOptions[Math.floor(Math.random() * freqOptions.length)];
+
+    // Apply debug settings
+    mysteryGain.gain.cancelScheduledValues(now);
+    mysteryGain.gain.setValueAtTime(0, now);
+    mysteryGain.gain.linearRampToValueAtTime(state.volume, now + state.fadeInTime);
+    mysteryGain.gain.linearRampToValueAtTime(0.001, now + state.fadeInTime + state.fadeOutTime);
+
+    mysteryOsc.frequency.setValueAtTime(freq, now);
+
+    // Update debug display
+    window.nebulaDebugState.lastTrigger = new Date().toLocaleTimeString();
+    updateDebugState();
+
+    console.log(`🎵 Debug mystery tone triggered: ${freq.toFixed(1)} Hz`);
+};
+
+// Toggle bass layer
+window.toggleDebugBass = function() {
+    if (typeof audioContext === 'undefined' || !audioContext) {
+        alert('Audio context not initialized yet. Enter a nebula first!');
+        return;
+    }
+
+    window.nebulaDebugState.bassEnabled = !window.nebulaDebugState.bassEnabled;
+    const btn = document.getElementById('toggleBassBtn');
+    if (btn) {
+        btn.textContent = `Toggle Bass (${window.nebulaDebugState.bassEnabled ? 'ON' : 'OFF'})`;
+    }
+
+    if (typeof bassGain !== 'undefined' && bassGain) {
+        const now = audioContext.currentTime;
+        bassGain.gain.cancelScheduledValues(now);
+        bassGain.gain.linearRampToValueAtTime(
+            window.nebulaDebugState.bassEnabled ? 0.025 : 0,
+            now + 0.5
+        );
+    }
+};
+
+// Toggle pad layer
+window.toggleDebugPad = function() {
+    if (typeof audioContext === 'undefined' || !audioContext) {
+        alert('Audio context not initialized yet. Enter a nebula first!');
+        return;
+    }
+
+    window.nebulaDebugState.padEnabled = !window.nebulaDebugState.padEnabled;
+    const btn = document.getElementById('togglePadBtn');
+    if (btn) {
+        btn.textContent = `Toggle Pad (${window.nebulaDebugState.padEnabled ? 'ON' : 'OFF'})`;
+    }
+
+    if (typeof padGain !== 'undefined' && padGain) {
+        const now = audioContext.currentTime;
+        padGain.gain.cancelScheduledValues(now);
+        padGain.gain.linearRampToValueAtTime(
+            window.nebulaDebugState.padEnabled ? 0.015 : 0,
+            now + 0.5
+        );
+    }
+};
+
+// Stop all nebula sounds
+window.stopAllNebulaSounds = function() {
+    if (musicSystem.backgroundMusic && musicSystem.backgroundMusic.stop) {
+        musicSystem.backgroundMusic.stop();
+        console.log('🛑 All nebula sounds stopped');
+    }
+};
+
+// Update debug state display
+function updateDebugState() {
+    const stateDiv = document.getElementById('debugState');
+    if (!stateDiv) return;
+
+    const contextState = (typeof audioContext !== 'undefined' && audioContext) ? audioContext.state : 'not initialized';
+    const lastTrigger = window.nebulaDebugState.lastTrigger || 'Never';
+
+    stateDiv.innerHTML = `
+        <div>Audio Context: <span class="text-green-400">${contextState}</span></div>
+        <div>Mystery Tone Active: <span class="${(typeof audioContext !== 'undefined' && audioContext && audioContext.state === 'running') ? 'text-green-400' : 'text-gray-400'}">
+            ${(typeof audioContext !== 'undefined' && audioContext && audioContext.state === 'running') ? 'Yes' : 'No'}
+        </span></div>
+        <div>Last Trigger: <span class="text-yellow-400">${lastTrigger}</span></div>
+    `;
+}
+
+// Initialize debug menu buttons
+document.addEventListener('DOMContentLoaded', () => {
+    const triggerBtn = document.getElementById('triggerMysteryBtn');
+    if (triggerBtn) {
+        triggerBtn.addEventListener('click', window.triggerDebugMysteryTone);
+    }
+
+    const stopBtn = document.getElementById('stopAllSoundsBtn');
+    if (stopBtn) {
+        stopBtn.addEventListener('click', window.stopAllNebulaSounds);
+    }
+
+    const toggleBassBtn = document.getElementById('toggleBassBtn');
+    if (toggleBassBtn) {
+        toggleBassBtn.addEventListener('click', window.toggleDebugBass);
+    }
+
+    const togglePadBtn = document.getElementById('togglePadBtn');
+    if (togglePadBtn) {
+        togglePadBtn.addEventListener('click', window.toggleDebugPad);
+    }
+
+    // Update debug state every second
+    setInterval(updateDebugState, 1000);
+});
+
+console.log('🎵 Nebula Sound Debug Menu loaded (Press T to toggle)');
