@@ -2431,15 +2431,15 @@ function createMobileFloatingStatus() {
     
     // MINIMAL STATUS: Only Hull, Energy, and Emergency Warps
     floatingStatus.innerHTML = `
-        <div class="mobile-stat-pill" style="background: linear-gradient(135deg, rgba(15, 23, 42, 0.85), rgba(30, 41, 59, 0.85)); backdrop-filter: blur(10px); border: 1px solid rgba(248, 113, 113, 0.5); border-radius: 20px; padding: 8px 14px; font-size: 13px; font-weight: 600; color: #f87171; text-shadow: 0 0 8px rgba(248, 113, 113, 0.6);">
+        <div class="mobile-stat-pill" style="background: linear-gradient(135deg, rgba(15, 23, 42, 0.85), rgba(30, 41, 59, 0.85)); backdrop-filter: blur(10px); border: 1px solid rgba(248, 113, 113, 0.5); border-radius: 20px; padding: 8px 14px; font-size: 13px; font-weight: 600; color: #f87171; text-shadow: 0 0 8px rgba(248, 113, 113, 0.6); opacity: 0.7;">
             <i class="fas fa-shield-alt" style="margin-right: 6px; color: rgba(248, 113, 113, 0.8);"></i>
             <span id="mobileFloatingHull">100%</span>
         </div>
-        <div class="mobile-stat-pill" style="background: linear-gradient(135deg, rgba(15, 23, 42, 0.85), rgba(30, 41, 59, 0.85)); backdrop-filter: blur(10px); border: 1px solid rgba(96, 165, 250, 0.5); border-radius: 20px; padding: 8px 14px; font-size: 13px; font-weight: 600; color: #60a5fa; text-shadow: 0 0 8px rgba(96, 165, 250, 0.6);">
+        <div class="mobile-stat-pill" style="background: linear-gradient(135deg, rgba(15, 23, 42, 0.85), rgba(30, 41, 59, 0.85)); backdrop-filter: blur(10px); border: 1px solid rgba(96, 165, 250, 0.5); border-radius: 20px; padding: 8px 14px; font-size: 13px; font-weight: 600; color: #60a5fa; text-shadow: 0 0 8px rgba(96, 165, 250, 0.6); opacity: 0.7;">
             <i class="fas fa-bolt" style="margin-right: 6px; color: rgba(96, 165, 250, 0.8);"></i>
             <span id="mobileFloatingEnergy">100%</span>
         </div>
-        <div class="mobile-stat-pill" style="background: linear-gradient(135deg, rgba(15, 23, 42, 0.85), rgba(30, 41, 59, 0.85)); backdrop-filter: blur(10px); border: 1px solid rgba(251, 191, 36, 0.5); border-radius: 20px; padding: 8px 14px; font-size: 13px; font-weight: 600; color: #fbbf24; text-shadow: 0 0 8px rgba(251, 191, 36, 0.6);">
+        <div class="mobile-stat-pill" style="background: linear-gradient(135deg, rgba(15, 23, 42, 0.85), rgba(30, 41, 59, 0.85)); backdrop-filter: blur(10px); border: 1px solid rgba(251, 191, 36, 0.5); border-radius: 20px; padding: 8px 14px; font-size: 13px; font-weight: 600; color: #fbbf24; text-shadow: 0 0 8px rgba(251, 191, 36, 0.6); opacity: 0.7;">
             <i class="fas fa-rocket" style="margin-right: 6px; color: rgba(251, 191, 36, 0.8);"></i>
             <span id="mobileFloatingWarps">5</span>
         </div>
