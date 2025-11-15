@@ -366,11 +366,21 @@
             pointer-events: auto;
         }
 
-        /* Top row: Flight controls and Emergency warp */
+        /* Top row: Flight controls and Emergency warp - flanking the indicators */
         .mobile-controls-top {
+            position: fixed;
+            bottom: 100px;
+            left: 0;
+            right: 0;
             display: flex;
-            gap: 15px;
-            justify-content: center;
+            justify-content: space-between;
+            padding: 0 15px;
+            z-index: 25;
+            pointer-events: none;
+        }
+
+        .mobile-controls-top .mobile-btn {
+            pointer-events: auto;
         }
 
         /* Bottom row: Main action buttons */
