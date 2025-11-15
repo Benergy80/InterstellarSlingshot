@@ -66,11 +66,12 @@ const gameState = {
         active: false,
         timeRemaining: 0,
         maxSpeed: 20.0, // Doubled for doubled world
-        duration: 20000,
+        duration: 24000, // 3x emergency warp duration (8000ms * 3)
         accelerationPhase: 10000,
         maintainPhase: 10000,
         postSlingshot: false,
-        inertiaDecay: 0.9995
+        inertiaDecay: 0.9999, // Match emergency warp behavior (coast on momentum)
+        fromBlackHole: false // Track if current slingshot is from black hole (for invulnerability)
     },
     eventHorizonWarning: {
         active: false,
@@ -90,6 +91,23 @@ const gameState = {
         armed: true,
         energy: 100,
         cooldown: 0
+    },
+    missiles: {
+        current: 3,
+        capacity: 3,
+        cooldown: 0,
+        cooldownTime: 1000,
+        damage: 3,
+        speed: 5.0,
+        selected: false
+    },
+    borg: {
+        spawned: false,
+        active: false,
+        cube: null,
+        drones: [],
+        lastCommunication: 0,
+        communicationCooldown: 15000 // 15 seconds between messages
     },
     frameCount: 0,
     lastUpdateTime: 0,
@@ -988,9 +1006,9 @@ if (typeof enemies !== 'undefined' && enemies.length > 0 && gameState.frameCount
             if (enemy.userData.baseOpacity === undefined) {
                 enemy.userData.baseOpacity = enemy.material.opacity;
             }
-            enemy.material.opacity = enemy.userData.baseOpacity * (0.85 + pulseFactor * 0.3);
+            enemy.material.opacity = enemy.userData.baseOpacity * (0.9 + pulseFactor * 0.5);
         }
-        
+
         // Pulse the glow mesh
         if (enemy.children && enemy.children[0]) {
             const glow = enemy.children[0];
@@ -998,7 +1016,7 @@ if (typeof enemies !== 'undefined' && enemies.length > 0 && gameState.frameCount
                 if (glow.userData.baseOpacity === undefined) {
                     glow.userData.baseOpacity = glow.material.opacity;
                 }
-                glow.material.opacity = glow.userData.baseOpacity * (0.7 + pulseFactor * 0.6);
+                glow.material.opacity = glow.userData.baseOpacity * (0.8 + pulseFactor * 0.9);
             }
         }
     });
@@ -1382,7 +1400,47 @@ if (typeof checkCosmicFeatureInteractions === 'function' && typeof camera !== 'u
     if (gameState.frameCount % 2 === 0 && typeof updateEnemyBehavior === 'function') {
     updateEnemyBehavior();
 }
-    
+
+    // Update missiles
+    if (typeof updateMissiles === 'function') {
+        updateMissiles();
+    }
+
+    // Update unstable wormholes
+    if (typeof updateUnstableWormholes === 'function') {
+        updateUnstableWormholes(16.67);
+    }
+
+    // Update ambient space debris
+    if (typeof updateAmbientSpaceDebris === 'function') {
+        updateAmbientSpaceDebris();
+    }
+
+    // Update missile cooldown
+    if (gameState.missiles.cooldown > 0) {
+        gameState.missiles.cooldown = Math.max(0, gameState.missiles.cooldown - 16.67);
+    }
+
+    // Check for hull zero - mission fail
+    if (gameState.hull <= 0 && !gameState.gameOver) {
+        if (typeof createPlayerExplosion === 'function') {
+            createPlayerExplosion();
+        }
+        if (typeof showGameOverScreen === 'function') {
+            showGameOverScreen('HULL BREACH', 'Ship destroyed - structural integrity failure');
+        }
+    }
+
+    // Check for Borg spawn (every 5 seconds)
+    if (gameState.frameCount % 300 === 0 && typeof checkBorgSpawn === 'function') {
+        checkBorgSpawn();
+    }
+
+    // Update Borg behavior
+    if (typeof updateBorgBehavior === 'function') {
+        updateBorgBehavior();
+    }
+
     // Enhanced physics and controls for doubled world
     if (typeof updateEnhancedPhysics === 'function') {
         updateEnhancedPhysics();

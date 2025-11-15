@@ -9,7 +9,7 @@ const keys = {
   q: false, e: false, o: false,
   shift: false, alt: false, space: false,
   up: false, down: false, left: false, right: false,
-  x: false, b: false
+  x: false, b: false, z: false
 };
 
 // Enhanced Audio System with Eerie Space Music (RESTORED from game-controls13.js)
@@ -636,15 +636,21 @@ function fireEnemyWeapon(enemy, difficultySettings) {
         
         // Random chance to hit (makes combat more dynamic)
 if (Math.random() < 0.7) { // 70% hit chance
-    // Apply damage with shield reduction
-    const shieldReduction = typeof getShieldDamageReduction === 'function' ? 
-                            getShieldDamageReduction() : 0;
-    const actualDamage = damage * (1 - shieldReduction);
-    
-    if (typeof gameState !== 'undefined' && gameState.hull !== undefined) {
-        gameState.hull = Math.max(0, gameState.hull - actualDamage);
-    } else if (typeof gameState !== 'undefined' && gameState.health !== undefined) {
-        gameState.health = Math.max(0, gameState.health - actualDamage);
+    // Check black hole warp invulnerability
+    const isInvulnerable = typeof isBlackHoleWarpInvulnerable === 'function' &&
+                           isBlackHoleWarpInvulnerable();
+
+    if (!isInvulnerable) {
+        // Apply damage with shield reduction
+        const shieldReduction = typeof getShieldDamageReduction === 'function' ?
+                                getShieldDamageReduction() : 0;
+        const actualDamage = damage * (1 - shieldReduction);
+
+        if (typeof gameState !== 'undefined' && gameState.hull !== undefined) {
+            gameState.hull = Math.max(0, gameState.hull - actualDamage);
+        } else if (typeof gameState !== 'undefined' && gameState.health !== undefined) {
+            gameState.health = Math.max(0, gameState.health - actualDamage);
+        }
     }
     
     // Create shield hit effect if shields are active
@@ -1057,11 +1063,15 @@ function createAmbientSpaceMusic() {
     // Store references
     musicSystem.backgroundMusic = {
         stop: () => {
-            bassOsc.stop();
-            lfo1.stop();
-            padOsc.stop();
-            lfo2.stop();
-            mysteryOsc.stop();
+            try {
+                bassOsc.stop();
+                lfo1.stop();
+                padOsc.stop();
+                lfo2.stop();
+                mysteryOsc.stop();
+            } catch(e) {
+                // Oscillators already stopped, ignore error
+            }
         }
     };
 }
@@ -1161,9 +1171,13 @@ function createBattleMusic() {
     
     musicSystem.battleMusic = {
         stop: () => {
-            bassOsc.stop();
-            padOsc.stop();
-            leadOsc.stop();
+            try {
+                bassOsc.stop();
+                padOsc.stop();
+                leadOsc.stop();
+            } catch(e) {
+                // Oscillators already stopped, ignore error
+            }
         }
     };
 }
@@ -1368,6 +1382,33 @@ function playSound(type, frequency = 440, duration = 0.2) {
     		oscillator.type = 'sawtooth';
     		duration = 1.2;
     		break;
+        case 'missile_launch':
+            oscillator.frequency.setValueAtTime(400, audioContext.currentTime);
+            oscillator.frequency.exponentialRampToValueAtTime(150, audioContext.currentTime + 0.3);
+            gain.gain.setValueAtTime(0.4, audioContext.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
+            oscillator.type = 'sawtooth';
+            duration = 0.3;
+            break;
+
+        case 'missile_explosion':
+            oscillator.frequency.setValueAtTime(200, audioContext.currentTime);
+            oscillator.frequency.exponentialRampToValueAtTime(30, audioContext.currentTime + 0.6);
+            gain.gain.setValueAtTime(0.5, audioContext.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.6);
+            oscillator.type = 'sawtooth';
+            duration = 0.6;
+            break;
+
+        case 'ship_vaporize':
+            // Dramatic vaporizing sound - starts high and sweeps down
+            oscillator.frequency.setValueAtTime(800, audioContext.currentTime);
+            oscillator.frequency.exponentialRampToValueAtTime(20, audioContext.currentTime + 1.5);
+            gain.gain.setValueAtTime(0.7, audioContext.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + 1.5);
+            oscillator.type = 'sawtooth';
+            duration = 1.5;
+            break;
         default:
             oscillator.frequency.setValueAtTime(frequency, audioContext.currentTime);
             gain.gain.setValueAtTime(0.2, audioContext.currentTime);
@@ -2004,6 +2045,10 @@ function initializeControlButtons() {
                 fireWeapon();
             }
         }
+        if (e.key === 'Meta' || e.key === 'Command') {
+            e.preventDefault();
+            fireMissile();
+        }
         if (key === 'x') {
             keys.x = true;
             
@@ -2013,7 +2058,15 @@ function initializeControlButtons() {
             }
         }
         if (key === 'b') keys.b = true;
-        
+        if (key === 'z') {
+            keys.z = true;
+            // Activate missile zoom scope (hold to zoom)
+            if (!gameState.missiles.selected) {
+                gameState.missiles.selected = true;
+                showAchievement('Zoom Scope Active', 'Missile targeting scope engaged');
+            }
+        }
+
         if (e.key === 'ArrowUp') keys.up = true;
         if (e.key === 'ArrowDown') keys.down = true;
         if (e.key === 'ArrowLeft') keys.left = true;
@@ -2094,6 +2147,11 @@ if (e.key === 'Tab') {
         }
         if (key === 'x') keys.x = false;
         if (key === 'b') keys.b = false;
+        if (key === 'z') {
+            keys.z = false;
+            // Deactivate missile zoom scope when key released
+            gameState.missiles.selected = false;
+        }
         if (key === 'l') keys.l = false;
         
         if (e.key === 'ArrowUp') keys.up = false;
@@ -2160,11 +2218,11 @@ document.addEventListener('click', (e) => {
     // Mouse movement tracking for crosshair - FIXED POSITION TRACKING
 document.addEventListener('mousemove', (e) => {
     if (!gameState.gameStarted || gameState.gameOver || gamePaused) return;
-    
+
     // ALWAYS update actual mouse position for UI detection
     gameState.mouseX = e.clientX;
     gameState.mouseY = e.clientY;
-    
+
     // Only update crosshair position if not in target lock mode
     // This keeps crosshair and mouse positions separate when target lock is active
     if (!gameState.targetLock.active) {
@@ -2174,6 +2232,133 @@ document.addEventListener('mousemove', (e) => {
     // Note: When target lock is active, crosshair position is controlled by updateTargetLock()
     // but we still track real mouse position for UI interaction
 });
+
+// Add zoom scope crosshair after initial setup
+setTimeout(() => {
+    const zoomScope = document.createElement('div');
+    zoomScope.id = 'zoomScope';
+    zoomScope.style.cssText = `
+        position: fixed;
+        width: 250px;
+        height: 250px;
+        border: 3px solid rgba(255, 51, 0, 0.8);
+        border-radius: 50%;
+        pointer-events: none;
+        z-index: 999;
+        display: none;
+        overflow: hidden;
+        box-shadow: 0 0 30px rgba(255, 51, 0, 0.6), inset 0 0 30px rgba(255, 51, 0, 0.3);
+        background: rgba(0, 0, 0, 0.3);
+    `;
+
+    const scopeCanvas = document.createElement('canvas');
+    scopeCanvas.width = 250;
+    scopeCanvas.height = 250;
+    scopeCanvas.style.cssText = 'width: 100%; height: 100%;';
+    zoomScope.appendChild(scopeCanvas);
+    document.body.appendChild(zoomScope);
+
+    let animationFrameId = null;
+    let scopeTargetX = 0;
+    let scopeTargetY = 0;
+    let scopeCurrentX = 0;
+    let scopeCurrentY = 0;
+    const scopeSmoothing = 0.15; // Smooth following like crosshair
+
+    function updateZoomScope() {
+        if (!gameState.missiles.selected || !renderer || !renderer.domElement) {
+            if (animationFrameId) {
+                cancelAnimationFrame(animationFrameId);
+                animationFrameId = null;
+            }
+            return;
+        }
+
+        const ctx = scopeCanvas.getContext('2d');
+        const zoomFactor = 2.5;
+
+        // Smooth scope position (lerp towards target)
+        scopeCurrentX += (scopeTargetX - scopeCurrentX) * scopeSmoothing;
+        scopeCurrentY += (scopeTargetY - scopeCurrentY) * scopeSmoothing;
+
+        // Update scope visual position
+        zoomScope.style.left = scopeCurrentX + 'px';
+        zoomScope.style.top = scopeCurrentY + 'px';
+
+        // Get mouse position
+        const mouseX = gameState.crosshairX || gameState.mouseX || window.innerWidth / 2;
+        const mouseY = gameState.crosshairY || gameState.mouseY || window.innerHeight / 2;
+
+        // Calculate source area on the renderer canvas
+        const sourceWidth = 250 / zoomFactor;
+        const sourceHeight = 250 / zoomFactor;
+        const sourceX = mouseX - (sourceWidth / 2);
+        const sourceY = mouseY - (sourceHeight / 2);
+
+        // Clear canvas
+        ctx.clearRect(0, 0, 250, 250);
+
+        // Draw magnified portion
+        try {
+            ctx.drawImage(
+                renderer.domElement,
+                Math.max(0, sourceX),
+                Math.max(0, sourceY),
+                sourceWidth,
+                sourceHeight,
+                0,
+                0,
+                250,
+                250
+            );
+        } catch (err) {
+            console.warn('Zoom scope render error:', err);
+        }
+
+        // Draw crosshair overlay in GREEN to match mouse aiming cursor
+        ctx.strokeStyle = 'rgba(0, 255, 150, 0.8)'; // Green like aiming cursor
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(125, 0);
+        ctx.lineTo(125, 250);
+        ctx.moveTo(0, 125);
+        ctx.lineTo(250, 125);
+        ctx.stroke();
+
+        // Draw center circle
+        ctx.beginPath();
+        ctx.arc(125, 125, 20, 0, Math.PI * 2);
+        ctx.stroke();
+
+        // Continue animation
+        animationFrameId = requestAnimationFrame(updateZoomScope);
+    }
+
+    document.addEventListener('mousemove', (e) => {
+        if (gameState.missiles.selected) {
+            // Update target position (scope will smooth towards it)
+            scopeTargetX = e.clientX - 125;
+            scopeTargetY = e.clientY - 125;
+
+            zoomScope.style.display = 'block';
+
+            // Start animation if not already running
+            if (!animationFrameId) {
+                // Initialize current position to target on first show
+                scopeCurrentX = scopeTargetX;
+                scopeCurrentY = scopeTargetY;
+                updateZoomScope();
+            }
+        } else {
+            zoomScope.style.display = 'none';
+            if (animationFrameId) {
+                cancelAnimationFrame(animationFrameId);
+                animationFrameId = null;
+            }
+        }
+    });
+}, 1000);
+
     // RESTORED: Enhanced button handlers
     const autoNavBtn = document.getElementById('autoNavigateBtn');
     if (autoNavBtn) {
@@ -2480,9 +2665,14 @@ function checkGuardianVictory() {
             
             // Play galaxy victory music
             playGalaxyVictoryMusic();
-            
+
+            // Launch fireworks celebration
+            if (typeof createFireworkCelebration === 'function') {
+                createFireworkCelebration();
+            }
+
             // Show FINAL liberation achievement
-            showAchievement('Galaxy Liberated!', `${galaxyType.name} Galaxy (${galaxyType.faction}) completely liberated!`);
+            showAchievement(`Galaxy Liberation Complete - ${galaxyType.name}`, `${galaxyType.name} Galaxy (${galaxyType.faction}) completely liberated!`);
             
             // Mission Control message
             const remainingGalaxies = 8 - gameState.galaxiesCleared;
@@ -2516,6 +2706,689 @@ function checkGuardianVictory() {
     }
 }
 
+
+// =============================================================================
+// BORG CUBE ENCOUNTER SYSTEM
+// =============================================================================
+
+const BORG_MESSAGES = [
+    "Resistance is futile.",
+    "You will be assimilated.",
+    "Your biological and technological distinctiveness will be added to our own.",
+    "We are the Borg. Lower your shields and surrender your ships.",
+    "Freedom is irrelevant. Self-determination is irrelevant.",
+    "You will adapt to service us.",
+    "Strength is irrelevant. Resistance is futile.",
+    "We are Borg. Existence as you know it is over."
+];
+
+function checkBorgSpawn() {
+    if (typeof gameState === 'undefined' || typeof camera === 'undefined') return;
+    if (gameState.borg.spawned) return; // Already spawned
+
+    // Check if player is beyond 70,000 units from origin
+    const distanceFromOrigin = camera.position.length();
+
+    if (distanceFromOrigin > 70000) {
+        // 30% chance to spawn
+        if (Math.random() < 0.3) {
+            spawnBorgCube();
+        } else {
+            // Mark as checked so we don't spam the roll
+            gameState.borg.spawned = true;
+            setTimeout(() => {
+                gameState.borg.spawned = false; // Allow another check later
+            }, 60000); // Wait 60 seconds before checking again
+        }
+    }
+}
+
+function spawnBorgCube() {
+    if (typeof THREE === 'undefined' || typeof scene === 'undefined' || typeof camera === 'undefined') return;
+
+    // Spawn ahead of player's current position
+    const spawnDistance = 5000;
+    const direction = camera.getWorldDirection(new THREE.Vector3()).normalize();
+    const spawnPosition = camera.position.clone().add(direction.multiplyScalar(spawnDistance));
+
+    // Create the Borg cube - large black/green cube
+    const cubeSize = 50; // Black hole size
+    const cubeGeometry = new THREE.BoxGeometry(cubeSize, cubeSize, cubeSize);
+    const cubeMaterial = new THREE.MeshBasicMaterial({
+        color: 0x003300,
+        wireframe: false,
+        transparent: true,
+        opacity: 0.9
+    });
+    const cube = new THREE.Mesh(cubeGeometry, cubeMaterial);
+    cube.position.copy(spawnPosition);
+
+    // Add green glow effect
+    const glowGeometry = new THREE.BoxGeometry(cubeSize * 1.2, cubeSize * 1.2, cubeSize * 1.2);
+    const glowMaterial = new THREE.MeshBasicMaterial({
+        color: 0x00ff00,
+        transparent: true,
+        opacity: 0.3,
+        wireframe: true
+    });
+    const glow = new THREE.Mesh(glowGeometry, glowMaterial);
+    cube.add(glow);
+
+    // Set cube properties
+    cube.userData = {
+        type: 'enemy',
+        health: 100,
+        maxHealth: 100,
+        name: 'Borg Cube',
+        isBorg: true,
+        isBorgCube: true,
+        speed: 2.0, // Slow but relentless
+        damage: 5,
+        detectionRange: 10000,
+        firingRange: 500,
+        lastAttack: 0,
+        droneCount: 0,
+        maxDrones: 8,
+        galaxyId: -1 // Special: not tied to any galaxy
+    };
+
+    scene.add(cube);
+    if (typeof enemies !== 'undefined') {
+        enemies.push(cube);
+    }
+
+    // Mark as spawned
+    gameState.borg.spawned = true;
+    gameState.borg.active = true;
+    gameState.borg.cube = cube;
+    gameState.borg.drones = [];
+
+    // Show dramatic spawn message
+    showAchievement('⚠️ CRITICAL ALERT', 'Unknown massive vessel detected! Extreme threat level!', true);
+    playSound('boss');
+
+    // Spawn initial drones after 2 seconds
+    setTimeout(() => {
+        for (let i = 0; i < 8; i++) {
+            spawnBorgDrone();
+        }
+    }, 2000);
+
+    console.log('🎯 Borg Cube spawned! Resistance is futile!');
+}
+
+function spawnBorgDrone() {
+    if (!gameState.borg.cube || !gameState.borg.active) return;
+    if (typeof THREE === 'undefined' || typeof scene === 'undefined') return;
+
+    const cube = gameState.borg.cube;
+
+    // Create small pyramid-shaped drone
+    const droneGeometry = new THREE.ConeGeometry(2, 4, 4);
+    const droneMaterial = new THREE.MeshBasicMaterial({
+        color: 0x00ff00,
+        wireframe: false
+    });
+    const drone = new THREE.Mesh(droneGeometry, droneMaterial);
+
+    // Spawn near cube with random offset
+    const offset = new THREE.Vector3(
+        (Math.random() - 0.5) * 100,
+        (Math.random() - 0.5) * 100,
+        (Math.random() - 0.5) * 100
+    );
+    drone.position.copy(cube.position).add(offset);
+
+    // Set drone properties
+    drone.userData = {
+        type: 'enemy',
+        health: 2,
+        maxHealth: 2,
+        name: 'Borg Drone',
+        isBorg: true,
+        isBorgDrone: true,
+        speed: 1.5,
+        damage: 2,
+        detectionRange: 5000,
+        firingRange: 300,
+        lastAttack: 0,
+        circlePhase: Math.random() * Math.PI * 2,
+        galaxyId: -1,
+        parentCube: cube
+    };
+
+    scene.add(drone);
+    if (typeof enemies !== 'undefined') {
+        enemies.push(drone);
+    }
+
+    gameState.borg.drones.push(drone);
+    cube.userData.droneCount++;
+
+    console.log(`🤖 Borg Drone spawned (${cube.userData.droneCount}/∞)`);
+}
+
+function updateBorgBehavior() {
+    if (!gameState.borg.active || !gameState.borg.cube) return;
+    if (typeof camera === 'undefined' || typeof THREE === 'undefined') return;
+
+    const cube = gameState.borg.cube;
+
+    // Check if cube is destroyed
+    if (cube.userData.health <= 0) {
+        handleBorgCubeDestruction();
+        return;
+    }
+
+    const playerPos = camera.position;
+    const distance = cube.position.distanceTo(playerPos);
+
+    // Relentless pursuit - always move towards player
+    const direction = new THREE.Vector3().subVectors(playerPos, cube.position).normalize();
+    cube.position.add(direction.multiplyScalar(cube.userData.speed));
+
+    // Rotate cube for effect
+    cube.rotation.x += 0.002;
+    cube.rotation.y += 0.003;
+    cube.rotation.z += 0.001;
+
+    // Send communications when close
+    if (distance < 5000) {
+        sendBorgCommunication(distance);
+    }
+
+    // Spawn drones when player gets close (3500 units)
+    if (distance < 3500 && cube.userData.droneCount < cube.userData.maxDrones) {
+        spawnBorgDrone();
+    }
+
+    // Check for dead drones and replace them
+    gameState.borg.drones = gameState.borg.drones.filter(drone => {
+        if (!drone || drone.userData.health <= 0) {
+            cube.userData.droneCount--;
+            // Spawn replacement after short delay
+            setTimeout(() => spawnBorgDrone(), 2000);
+            return false;
+        }
+        return true;
+    });
+
+    // Update drone behavior - swarm around cube
+    gameState.borg.drones.forEach((drone, index) => {
+        if (!drone || drone.userData.health <= 0) return;
+
+        const droneDistance = drone.position.distanceTo(playerPos);
+
+        // If player is within 3500 units, drones attack
+        if (droneDistance < 3500) {
+            // Swarm attack behavior
+            const swarmAngle = Date.now() * 0.001 + (index * Math.PI * 2 / 8);
+            const spiralRadius = 80 + Math.sin(Date.now() * 0.0003) * 30;
+
+            const targetX = playerPos.x + Math.cos(swarmAngle) * spiralRadius;
+            const targetZ = playerPos.z + Math.sin(swarmAngle) * spiralRadius;
+            const targetY = playerPos.y + Math.sin(swarmAngle * 0.5) * 20;
+
+            const targetPos = new THREE.Vector3(targetX, targetY, targetZ);
+            const dir = new THREE.Vector3().subVectors(targetPos, drone.position).normalize();
+            drone.position.add(dir.multiplyScalar(drone.userData.speed));
+        } else {
+            // Orbit cube when far from player
+            const orbitAngle = Date.now() * 0.001 + (index * Math.PI * 2 / 8);
+            const orbitRadius = 80;
+
+            const targetX = cube.position.x + Math.cos(orbitAngle) * orbitRadius;
+            const targetZ = cube.position.z + Math.sin(orbitAngle) * orbitRadius;
+            const targetY = cube.position.y + Math.sin(orbitAngle * 0.5) * 30;
+
+            const targetPos = new THREE.Vector3(targetX, targetY, targetZ);
+            const dir = new THREE.Vector3().subVectors(targetPos, drone.position).normalize();
+            drone.position.add(dir.multiplyScalar(drone.userData.speed * 0.5));
+        }
+
+        // Drone attack
+        if (droneDistance < drone.userData.firingRange) {
+            const now = Date.now();
+            if (now - (drone.userData.lastAttack || 0) > 1500) {
+                fireEnemyWeapon(drone);
+                drone.userData.lastAttack = now;
+            }
+        }
+    });
+}
+
+function sendBorgCommunication(distance) {
+    const now = Date.now();
+    if (now - gameState.borg.lastCommunication < gameState.borg.communicationCooldown) return;
+
+    gameState.borg.lastCommunication = now;
+
+    const message = BORG_MESSAGES[Math.floor(Math.random() * BORG_MESSAGES.length)];
+    const threat = distance < 2000 ? 'IMMINENT THREAT' : 'INCOMING THREAT';
+
+    showAchievement(`⚠️ BORG TRANSMISSION [${threat}]`, message, true);
+    playSound('boss');
+
+    console.log(`📡 Borg: "${message}"`);
+}
+
+function handleBorgCubeDestruction() {
+    if (!gameState.borg.cube) return;
+
+    const cube = gameState.borg.cube;
+
+    // Epic victory message
+    showAchievement('🎉 LEGENDARY VICTORY!', 'Borg Cube destroyed! The pursuit is over. You are free!', true);
+    playSound('achievement');
+    setTimeout(() => playBossVictoryMusic(), 500);
+
+    // Destroy all drones
+    gameState.borg.drones.forEach(drone => {
+        if (drone && scene) {
+            scene.remove(drone);
+        }
+        const index = enemies.indexOf(drone);
+        if (index > -1) enemies.splice(index, 1);
+    });
+
+    // Remove cube
+    if (scene) scene.remove(cube);
+    const cubeIndex = enemies.indexOf(cube);
+    if (cubeIndex > -1) enemies.splice(cubeIndex, 1);
+
+    // Reset Borg state
+    gameState.borg.active = false;
+    gameState.borg.cube = null;
+    gameState.borg.drones = [];
+
+    // Massive rewards
+    gameState.missiles.capacity += 5;
+    gameState.missiles.current = gameState.missiles.capacity;
+    showAchievement('ULTIMATE REWARD', `+5 Missile Capacity! Total: ${gameState.missiles.capacity}`, true);
+
+    console.log('🎊 Borg Cube defeated! Player is free!');
+}
+
+// =============================================================================
+// MISSILE SYSTEM
+// =============================================================================
+
+// Missile System
+function fireMissile() {
+    if (typeof shieldSystem !== 'undefined' && shieldSystem.active) {
+        showAchievement('Missiles Disabled', 'Shields must be deactivated first');
+        return;
+    }
+
+    if (gameState.missiles.cooldown > 0 || gameState.missiles.current <= 0) {
+        if (gameState.missiles.current <= 0) {
+            showAchievement('No Missiles', 'Missiles depleted - defeat enemies for resupply');
+        }
+        return;
+    }
+
+    gameState.missiles.current--;
+    gameState.missiles.cooldown = gameState.missiles.cooldownTime;
+
+    let targetObject = null;
+    let targetPosition;
+
+    // Missiles can use navigation panel targets from distance
+    if (gameState.currentTarget) {
+        targetPosition = gameState.currentTarget.position.clone();
+        targetObject = gameState.currentTarget;
+    } else if (gameState.targetLock.active && gameState.targetLock.target) {
+        targetPosition = gameState.targetLock.target.position.clone();
+        targetObject = gameState.targetLock.target;
+    } else {
+        const mousePos = new THREE.Vector2(
+            (gameState.crosshairX / window.innerWidth) * 2 - 1,
+            -(gameState.crosshairY / window.innerHeight) * 2 + 1
+        );
+        const raycaster = new THREE.Raycaster();
+        raycaster.setFromCamera(mousePos, camera);
+        const enemyIntersects = raycaster.intersectObjects(enemies);
+
+        if (enemyIntersects.length > 0) {
+            targetPosition = enemyIntersects[0].point;
+            targetObject = enemyIntersects[0].object;
+        } else {
+            const direction = raycaster.ray.direction.clone();
+            targetPosition = camera.position.clone().add(direction.multiplyScalar(1000));
+        }
+    }
+
+    createMissile(camera.position.clone(), targetPosition, targetObject);
+    playSound('missile_launch');
+    updateMissileUI();
+}
+
+function createMissile(startPos, targetPos, targetObject) {
+    const missileGeometry = new THREE.CylinderGeometry(0.3, 0.5, 2, 8);
+    const missileMaterial = new THREE.MeshBasicMaterial({ color: 0xff3300 });
+    const missile = new THREE.Mesh(missileGeometry, missileMaterial);
+
+    missile.position.copy(startPos);
+    const direction = new THREE.Vector3().subVectors(targetPos, startPos).normalize();
+    const up = new THREE.Vector3(0, 1, 0);
+    const axis = new THREE.Vector3().crossVectors(up, direction);
+    const angle = Math.acos(up.dot(direction));
+    if (axis.length() > 0.001) {
+        missile.setRotationFromAxisAngle(axis.normalize(), angle);
+    }
+
+    // Glow effect
+    const glowGeometry = new THREE.CylinderGeometry(0.5, 0.7, 2.5, 8);
+    const glowMaterial = new THREE.MeshBasicMaterial({
+        color: 0xff6600,
+        transparent: true,
+        opacity: 0.4,
+        blending: THREE.AdditiveBlending
+    });
+    const glow = new THREE.Mesh(glowGeometry, glowMaterial);
+    missile.add(glow);
+
+    // Smoke trail
+    const trailGeometry = new THREE.CylinderGeometry(0.2, 0.4, 1, 6);
+    const trailMaterial = new THREE.MeshBasicMaterial({
+        color: 0x666666,
+        transparent: true,
+        opacity: 0.6
+    });
+    const trail = new THREE.Mesh(trailGeometry, trailMaterial);
+    trail.position.y = -1.5;
+    missile.add(trail);
+
+    scene.add(missile);
+
+    missile.userData = {
+        velocity: direction.clone().multiplyScalar(gameState.missiles.speed),
+        target: targetObject,
+        lifetime: 0,
+        maxLifetime: 5000,
+        type: 'missile'
+    };
+
+    if (!window.activeMissiles) window.activeMissiles = [];
+    window.activeMissiles.push(missile);
+}
+
+function updateMissiles() {
+    if (!window.activeMissiles) return;
+
+    window.activeMissiles = window.activeMissiles.filter(missile => {
+        missile.userData.lifetime += 16.67;
+
+        if (missile.userData.lifetime > missile.userData.maxLifetime) {
+            scene.remove(missile);
+            return false;
+        }
+
+        // Tracking
+        if (missile.userData.target && missile.userData.target.userData.health > 0) {
+            const targetDir = new THREE.Vector3()
+                .subVectors(missile.userData.target.position, missile.position)
+                .normalize();
+            missile.userData.velocity.lerp(
+                targetDir.multiplyScalar(gameState.missiles.speed),
+                0.05
+            );
+        }
+
+        missile.position.add(missile.userData.velocity);
+
+        const up = new THREE.Vector3(0, 1, 0);
+        const axis = new THREE.Vector3().crossVectors(up, missile.userData.velocity.clone().normalize());
+        const angle = Math.acos(up.dot(missile.userData.velocity.clone().normalize()));
+        if (axis.length() > 0.001) {
+            missile.setRotationFromAxisAngle(axis.normalize(), angle);
+        }
+
+        // Hit detection
+        if (typeof enemies !== 'undefined') {
+            for (let enemy of enemies) {
+                if (enemy.userData.health <= 0) continue;
+                if (missile.position.distanceTo(enemy.position) < 15) {
+                    handleMissileHit(missile, enemy);
+                    return false;
+                }
+            }
+        }
+
+        // Cosmic feature destruction
+        if (typeof cosmicFeatures !== 'undefined') {
+            // Check Dyson Spheres
+            if (cosmicFeatures.dysonSpheres) {
+                for (let sphere of cosmicFeatures.dysonSpheres) {
+                    if (sphere.userData.destroyed) continue;
+                    const distance = missile.position.distanceTo(sphere.position);
+                    if (distance < 100) {
+                        handleCosmicFeatureDestruction(missile, sphere, 'dyson');
+                        return false;
+                    }
+                }
+            }
+
+            // Check Crystal structures
+            if (cosmicFeatures.crystalStructures) {
+                for (let crystal of cosmicFeatures.crystalStructures) {
+                    if (crystal.userData.destroyed) continue;
+                    const distance = missile.position.distanceTo(crystal.position);
+                    if (distance < 50) {
+                        handleCosmicFeatureDestruction(missile, crystal, 'crystal');
+                        return false;
+                    }
+                }
+            }
+
+            // Check Space Whales
+            if (cosmicFeatures.spaceWhales) {
+                for (let whale of cosmicFeatures.spaceWhales) {
+                    if (whale.userData.destroyed) continue;
+                    const distance = missile.position.distanceTo(whale.position);
+                    if (distance < 80) {
+                        handleCosmicFeatureDestruction(missile, whale, 'whale');
+                        return false;
+                    }
+                }
+            }
+        }
+
+        return true;
+    });
+}
+
+function handleMissileHit(missile, enemy) {
+    scene.remove(missile);
+
+    enemy.userData.health -= gameState.missiles.damage;
+    flashEnemyHit(enemy, gameState.missiles.damage);
+    createMissileExplosion(missile.position);
+    playSound('missile_explosion');
+
+    showAchievement('Missile Hit!',
+        `Damaged ${enemy.userData.name} (${enemy.userData.health}/${enemy.userData.maxHealth} HP)`);
+
+    if (enemy.userData.health <= 0) {
+        const wasBoss = enemy.userData.isBoss;
+        const bossName = enemy.userData.name;
+
+        createExplosionEffect(enemy.position, 0xff4444, 15);
+        playSound('explosion');
+
+        if (wasBoss) {
+            showAchievement('BOSS DEFEATED!', `${bossName} destroyed by missile!`);
+            if (typeof checkBossVictory === 'function') checkBossVictory(enemy);
+            if (typeof createFireworkCelebration === 'function') createFireworkCelebration();
+            playBossVictoryMusic();
+
+            // Boss defeated: +2 missile capacity
+            gameState.missiles.capacity += 2;
+            gameState.missiles.current = Math.min(gameState.missiles.capacity, gameState.missiles.current + 2);
+            showAchievement('Missile Capacity Increased!',
+                `Capacity now ${gameState.missiles.capacity} missiles`);
+        } else {
+            showAchievement('Enemy Destroyed!', `${enemy.userData.name} eliminated by missile`);
+
+            // 20% chance for missile drop
+            if (Math.random() < 0.2) {
+                gameState.missiles.current = Math.min(gameState.missiles.capacity, gameState.missiles.current + 1);
+                showAchievement('Missile Recovered!',
+                    `+1 missile from debris (${gameState.missiles.current}/${gameState.missiles.capacity})`);
+            }
+        }
+
+        const hullRecovery = wasBoss ? 15 + Math.random() * 15 : 5 + Math.random() * 10;
+        gameState.hull = Math.min(gameState.maxHull || 100, gameState.hull + hullRecovery);
+        showAchievement('Hull Repaired', `+${hullRecovery.toFixed(1)} hull integrity from salvage`);
+
+        if (gameState.targetLock.target === enemy) gameState.targetLock.target = null;
+        if (gameState.currentTarget === enemy) gameState.currentTarget = null;
+
+        scene.remove(enemy);
+        enemies.splice(enemies.indexOf(enemy), 1);
+
+        if (typeof populateTargets === 'function') setTimeout(populateTargets, 100);
+        checkGalaxyClear();
+        if (typeof checkAndSpawnBoss === 'function' && enemy.userData.galaxyId !== undefined) {
+            checkAndSpawnBoss(enemy.userData.galaxyId);
+        }
+    }
+}
+
+function handleCosmicFeatureDestruction(missile, feature, type) {
+    scene.remove(missile);
+    feature.userData.destroyed = true;
+
+    // Create larger explosion
+    createMissileExplosion(missile.position);
+    playSound('missile_explosion');
+
+    // Apply effects based on type
+    switch(type) {
+        case 'dyson':
+            // Dyson Sphere: +25% energy max
+            const energyBoost = 25;
+            gameState.maxEnergy = (gameState.maxEnergy || 100) + energyBoost;
+            gameState.energy = Math.min(gameState.maxEnergy, gameState.energy + energyBoost);
+            showAchievement('DYSON SPHERE DESTROYED!',
+                `Maximum energy capacity increased to ${gameState.maxEnergy}%!`, true);
+            break;
+
+        case 'crystal':
+            // Crystal Structure: 2x attack damage
+            if (!gameState.weaponDamageMultiplier) gameState.weaponDamageMultiplier = 1;
+            gameState.weaponDamageMultiplier *= 2;
+            showAchievement('CRYSTAL STRUCTURE DESTROYED!',
+                `Weapon damage multiplier: x${gameState.weaponDamageMultiplier}!`, true);
+            break;
+
+        case 'whale':
+            // Space Whale: -50% hull curse
+            const hullPenalty = gameState.hull * 0.5;
+            gameState.hull = Math.max(1, gameState.hull - hullPenalty);
+            showAchievement('SPACE WHALE DESTROYED!',
+                `Ancient curse applied: -${hullPenalty.toFixed(0)}% hull integrity!`, true);
+            break;
+    }
+
+    // Visual destruction effect
+    if (feature.material) {
+        feature.material.transparent = true;
+        let opacity = 1.0;
+        const fadeInterval = setInterval(() => {
+            opacity -= 0.05;
+            if (feature.material) {
+                feature.material.opacity = opacity;
+            }
+            if (opacity <= 0) {
+                clearInterval(fadeInterval);
+                scene.remove(feature);
+            }
+        }, 50);
+    } else {
+        scene.remove(feature);
+    }
+}
+
+function createMissileExplosion(position) {
+    const explosionGeometry = new THREE.SphereGeometry(8, 16, 16);
+    const explosionMaterial = new THREE.MeshBasicMaterial({
+        color: 0xff3300,
+        transparent: true,
+        opacity: 0.9
+    });
+    const explosion = new THREE.Mesh(explosionGeometry, explosionMaterial);
+    explosion.position.copy(position);
+    scene.add(explosion);
+
+    let scale = 1;
+    let opacity = 0.9;
+    const explosionInterval = setInterval(() => {
+        scale += 0.8;
+        opacity -= 0.08;
+        explosion.scale.set(scale, scale, scale);
+        explosionMaterial.opacity = opacity;
+
+        if (opacity <= 0) {
+            clearInterval(explosionInterval);
+            scene.remove(explosion);
+            explosionGeometry.dispose();
+            explosionMaterial.dispose();
+        }
+    }, 50);
+
+    // Particles
+    const particles = new THREE.BufferGeometry();
+    const particleCount = 40;
+    const positions = new Float32Array(particleCount * 3);
+
+    for (let i = 0; i < particleCount; i++) {
+        positions[i * 3] = (Math.random() - 0.5) * 25;
+        positions[i * 3 + 1] = (Math.random() - 0.5) * 25;
+        positions[i * 3 + 2] = (Math.random() - 0.5) * 25;
+    }
+
+    particles.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    const particleMaterial = new THREE.PointsMaterial({
+        color: 0xff6600,
+        size: 1.5,
+        transparent: true,
+        opacity: 1
+    });
+    const particleSystem = new THREE.Points(particles, particleMaterial);
+    particleSystem.position.copy(position);
+    scene.add(particleSystem);
+
+    let particleLife = 1.0;
+    const particleInterval = setInterval(() => {
+        particleLife -= 0.025;
+        particleMaterial.opacity = particleLife;
+
+        if (particleLife <= 0) {
+            clearInterval(particleInterval);
+            scene.remove(particleSystem);
+            particles.dispose();
+            particleMaterial.dispose();
+        }
+    }, 70);
+}
+
+function updateMissileUI() {
+    const missileCount = document.getElementById('missileCount');
+    if (missileCount) {
+        missileCount.textContent = `${gameState.missiles.current}/${gameState.missiles.capacity}`;
+    }
+
+    const mobileMissileCount = document.getElementById('mobileMissileCountBadge');
+    if (mobileMissileCount) {
+        mobileMissileCount.textContent = gameState.missiles.current;
+    }
+}
+
+// =============================================================================
+// WEAPON SYSTEM
+// =============================================================================
 
 // RESTORED: Working weapon system with asteroid targeting
 function fireWeapon() {
@@ -3199,7 +4072,20 @@ if (typeof window !== 'undefined') {
     window.updateEnemyBehavior = updateEnemyBehavior;
     window.fireWeapon = fireWeapon;
     window.flashEnemyHit = flashEnemyHit;
-    
+
+    // Missile systems
+    window.fireMissile = fireMissile;
+    window.updateMissiles = updateMissiles;
+    window.updateMissileUI = updateMissileUI;
+
+    // Borg systems
+    window.checkBorgSpawn = checkBorgSpawn;
+    window.updateBorgBehavior = updateBorgBehavior;
+    window.spawnBorgCube = spawnBorgCube;
+    window.spawnBorgDrone = spawnBorgDrone;
+    window.sendBorgCommunication = sendBorgCommunication;
+    window.handleBorgCubeDestruction = handleBorgCubeDestruction;
+
     // Audio systems
     window.playSound = playSound;
     window.toggleMusic = toggleMusic;

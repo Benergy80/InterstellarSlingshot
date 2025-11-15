@@ -411,6 +411,127 @@ function createAsteroidExplosion(position, radius = 1) {
     }, 2000); // Reduced from 3000ms to 2000ms
 }
 
+// DRAMATIC PLAYER EXPLOSION - Full screen with vaporizing effect
+function createPlayerExplosion() {
+    console.log('Creating dramatic player ship explosion!');
+
+    const playerPos = camera.position.clone();
+    const explosionGroup = new THREE.Group();
+    explosionGroup.position.copy(playerPos);
+    scene.add(explosionGroup);
+
+    // MASSIVE MAIN EXPLOSION SPHERE
+    const mainExplosionGeometry = new THREE.SphereGeometry(50, 32, 32);
+    const mainExplosionMaterial = new THREE.MeshBasicMaterial({
+        color: 0xff3300,
+        transparent: true,
+        opacity: 1.0
+    });
+    const mainExplosion = new THREE.Mesh(mainExplosionGeometry, mainExplosionMaterial);
+    explosionGroup.add(mainExplosion);
+
+    // MASSIVE PARTICLE DEBRIS FIELD
+    const particleCount = 100;
+    for (let i = 0; i < particleCount; i++) {
+        const particleGeometry = new THREE.SphereGeometry(2 + Math.random() * 5, 8, 8);
+        const particleMaterial = new THREE.MeshBasicMaterial({
+            color: new THREE.Color().setHSL(0.05 + Math.random() * 0.15, 1.0, 0.5),
+            transparent: true,
+            opacity: 1.0
+        });
+        const particle = new THREE.Mesh(particleGeometry, particleMaterial);
+
+        const velocity = new THREE.Vector3(
+            (Math.random() - 0.5) * 60,
+            (Math.random() - 0.5) * 60,
+            (Math.random() - 0.5) * 60
+        );
+
+        explosionGroup.add(particle);
+
+        let particleLife = 1.0;
+        const particleInterval = setInterval(() => {
+            particle.position.add(velocity.clone().multiplyScalar(0.3));
+            particleLife -= 0.02;
+            particleMaterial.opacity = particleLife;
+
+            const scale = particleLife;
+            particle.scale.set(scale, scale, scale);
+
+            if (particleLife <= 0) {
+                clearInterval(particleInterval);
+                explosionGroup.remove(particle);
+                particleGeometry.dispose();
+                particleMaterial.dispose();
+            }
+        }, 50);
+    }
+
+    // MAIN EXPLOSION ANIMATION - Dramatic growth
+    let explosionScale = 1;
+    let explosionOpacity = 1.0;
+    const explosionInterval = setInterval(() => {
+        explosionScale += 5;
+        explosionOpacity -= 0.02;
+
+        mainExplosion.scale.set(explosionScale, explosionScale, explosionScale);
+        mainExplosionMaterial.opacity = explosionOpacity;
+
+        if (explosionOpacity <= 0) {
+            clearInterval(explosionInterval);
+            explosionGroup.remove(mainExplosion);
+            mainExplosionGeometry.dispose();
+            mainExplosionMaterial.dispose();
+        }
+    }, 50);
+
+    // MULTIPLE SHOCKWAVES
+    for (let i = 0; i < 3; i++) {
+        setTimeout(() => {
+            const shockwaveGeometry = new THREE.RingGeometry(10, 15, 32);
+            const shockwaveMaterial = new THREE.MeshBasicMaterial({
+                color: 0xff6600,
+                transparent: true,
+                opacity: 0.8,
+                side: THREE.DoubleSide
+            });
+            const shockwave = new THREE.Mesh(shockwaveGeometry, shockwaveMaterial);
+            shockwave.rotation.x = Math.PI / 2;
+            explosionGroup.add(shockwave);
+
+            let shockwaveScale = 1;
+            let shockwaveOpacity = 0.8;
+            const shockwaveInterval = setInterval(() => {
+                shockwaveScale += 8;
+                shockwaveOpacity -= 0.04;
+
+                shockwave.scale.set(shockwaveScale, shockwaveScale, 1);
+                shockwaveMaterial.opacity = shockwaveOpacity;
+
+                if (shockwaveOpacity <= 0) {
+                    clearInterval(shockwaveInterval);
+                    explosionGroup.remove(shockwave);
+                    shockwaveGeometry.dispose();
+                    shockwaveMaterial.dispose();
+                }
+            }, 50);
+        }, i * 200);
+    }
+
+    // Play vaporizing sound effect
+    if (typeof playSound !== 'undefined') {
+        playSound('ship_vaporize');
+    }
+
+    // Cleanup
+    setTimeout(() => {
+        if (explosionGroup.parent) {
+            scene.remove(explosionGroup);
+        }
+        console.log('Player explosion cleanup complete');
+    }, 5000);
+}
+
 // RESTORED: Asteroid destruction functions
 function destroyAsteroid(asteroid) {
     scene.remove(asteroid);
@@ -466,14 +587,33 @@ function destroyAsteroidByWeapon(asteroid, hitPosition = null) {
     destroyAsteroid(asteroid);
     console.log(`Asteroid destroyed by weapon fire: ${asteroid.userData.name} (+${hullRestoration} hull) - radius: ${actualRadius.toFixed(1)}`);
 }
+
+// Black hole warp invulnerability check
+function isBlackHoleWarpInvulnerable() {
+    if (typeof gameState === 'undefined' || !gameState.slingshot) return false;
+
+    // Check if in black hole warp (active or coasting)
+    const inBlackHoleWarp = (gameState.slingshot.active || gameState.slingshot.postSlingshot) &&
+                            gameState.slingshot.fromBlackHole;
+
+    if (!inBlackHoleWarp) return false;
+
+    // Check if speed is >= 10,000 km/s
+    const speedKmS = gameState.velocityVector.length() * 1000;
+    return speedKmS >= 10000;
+}
+
 function destroyAsteroidByCollision(asteroid) {
-    // Apply damage with shield reduction
-    const damage = 15;
-    const shieldReduction = typeof getShieldDamageReduction === 'function' ? 
-                            getShieldDamageReduction() : 0;
-    const actualDamage = damage * (1 - shieldReduction);
-    
-    gameState.hull = Math.max(0, gameState.hull - actualDamage);
+    // Check black hole warp invulnerability
+    if (!isBlackHoleWarpInvulnerable()) {
+        // Apply damage with shield reduction
+        const damage = 15;
+        const shieldReduction = typeof getShieldDamageReduction === 'function' ?
+                                getShieldDamageReduction() : 0;
+        const actualDamage = damage * (1 - shieldReduction);
+
+        gameState.hull = Math.max(0, gameState.hull - actualDamage);
+    }
     
     // Create shield hit effect if shields are active
     if (typeof isShieldActive === 'function' && isShieldActive() && 
@@ -944,10 +1084,16 @@ function executeSlingshot() {
         
         gameState.velocityVector.copy(slingshotDirection).multiplyScalar(boostVelocity);
         gameState.energy = Math.max(5, gameState.energy - 20);
-        
+
         gameState.slingshot.active = true;
         gameState.slingshot.timeRemaining = gameState.slingshot.duration;
-        
+        gameState.slingshot.fromBlackHole = (nearestPlanet.userData.type === 'blackhole');
+
+        // Activate warp starfield (matching emergency warp behavior)
+        if (typeof toggleWarpSpeedStarfield === 'function') {
+            toggleWarpSpeedStarfield(true);
+        }
+
         if (nearestPlanet.userData.type === 'blackhole') {
             if (typeof showAchievement === 'function') {
                 showAchievement('Black Hole Slingshot', `EXTREME VELOCITY: ${(boostVelocity * 1000).toFixed(0)} km/s!`);
@@ -996,10 +1142,10 @@ function updateEnhancedPhysics() {
         initializeEnhancedGameStateProperties();
         gameState.enhancedPropertiesInitialized = true;
     }
-    
+
     // SPECIFICATION: Use consistent rotSpeed = 0.03 for all rotation inputs
     const rotSpeed = 0.02;
-    const gravitationalConstant = 0.001; // DOUBLED for doubled masses
+    const gravitationalConstant = 0.003; // TRIPLED for stronger gravity
     const assistRange = 60; // DOUBLED
     const collisionThreshold = 6; // DOUBLED
     
@@ -1325,29 +1471,31 @@ if ((planet.userData.type === 'planet' || planet.userData.type === 'star' || pla
     // Reduce velocity significantly on collision
     gameState.velocityVector.multiplyScalar(0.3); // Lose 70% of speed
     
-    // Small hull damage from scraping
-    if (planet.userData.type === 'star' || planet.userData.type === 'blackhole') {
-        gameState.hull = Math.max(0, gameState.hull - 5); // More damage for stars/black holes
-        if (typeof showAchievement === 'function') {
-            showAchievement('Surface Contact!', `Scraped against ${planet.userData.name} - Hull damage!`);
-        }
-    } else {
-        // Apply damage with shield reduction
-        const damage = 2;
-        const shieldReduction = typeof getShieldDamageReduction === 'function' ? 
-                                getShieldDamageReduction() : 0;
-        const actualDamage = damage * (1 - shieldReduction);
-        
-        gameState.hull = Math.max(0, gameState.hull - actualDamage);
-        
-        // Create shield hit effect if shields are active
-        if (typeof isShieldActive === 'function' && isShieldActive() && 
-            typeof createShieldHitEffect === 'function') {
-            createShieldHitEffect(planetPosition);
-        }
-        
-        if (typeof showAchievement === 'function') {
-            showAchievement('Collision Avoided', `Bounced off ${planet.userData.name}`);
+    // Small hull damage from scraping (check invulnerability first)
+    if (!isBlackHoleWarpInvulnerable()) {
+        if (planet.userData.type === 'star' || planet.userData.type === 'blackhole') {
+            gameState.hull = Math.max(0, gameState.hull - 5); // More damage for stars/black holes
+            if (typeof showAchievement === 'function') {
+                showAchievement('Surface Contact!', `Scraped against ${planet.userData.name} - Hull damage!`);
+            }
+        } else {
+            // Apply damage with shield reduction
+            const damage = 2;
+            const shieldReduction = typeof getShieldDamageReduction === 'function' ?
+                                    getShieldDamageReduction() : 0;
+            const actualDamage = damage * (1 - shieldReduction);
+
+            gameState.hull = Math.max(0, gameState.hull - actualDamage);
+
+            // Create shield hit effect if shields are active
+            if (typeof isShieldActive === 'function' && isShieldActive() &&
+                typeof createShieldHitEffect === 'function') {
+                createShieldHitEffect(planetPosition);
+            }
+
+            if (typeof showAchievement === 'function') {
+                showAchievement('Collision Avoided', `Bounced off ${planet.userData.name}`);
+            }
         }
     }
     
@@ -1357,9 +1505,18 @@ if ((planet.userData.type === 'planet' || planet.userData.type === 'star' || pla
     }
 }
             
-            // Enhanced gravitational force (DOUBLED for doubled masses)
+            // Enhanced gravitational force with type-specific multipliers
             if (planet.userData.type !== 'asteroid') {
-                const gravitationalForce = gravitationalConstant * gameState.shipMass * planetMass / (distance * distance);
+                let gravityMultiplier = 1.0;
+
+                // Stronger gravity for stars and planets
+                if (planet.userData.type === 'star') {
+                    gravityMultiplier = 2.0; // Stars have 2x gravity
+                } else if (planet.userData.type === 'planet') {
+                    gravityMultiplier = 1.5; // Planets have 1.5x gravity
+                }
+
+                const gravitationalForce = gravitationalConstant * gameState.shipMass * planetMass * gravityMultiplier / (distance * distance);
                 const direction = new THREE.Vector3().subVectors(planetPosition, camera.position).normalize();
                 const gravityVector = direction.clone().multiplyScalar(gravitationalForce);
                 
@@ -1522,31 +1679,48 @@ if ((planet.userData.type === 'planet' || planet.userData.type === 'star' || pla
         }
     }
     
-    // Slingshot timer management
+    // Slingshot timer management (matching emergency warp behavior)
     if (gameState.slingshot.active) {
         gameState.slingshot.timeRemaining -= 16.67;
-        
+
         if (gameState.slingshot.timeRemaining <= 0) {
             gameState.slingshot.active = false;
             gameState.slingshot.postSlingshot = true;
             gameState.slingshot.timeRemaining = 0;
+
+            // Check speed and disable starfield if needed (matching emergency warp)
+            const currentSpeedKmS = gameState.velocityVector.length() * 1000;
+            if (currentSpeedKmS < 10000 && typeof toggleWarpSpeedStarfield === 'function') {
+                toggleWarpSpeedStarfield(false);
+            }
+
             if (typeof showAchievement === 'function') {
-                showAchievement('Slingshot Complete', 'Coasting on inertia - friction will gradually slow you down');
+                showAchievement('Slingshot Complete', 'Coasting on momentum - use X to brake');
             }
         }
     } else if (gameState.slingshot.postSlingshot) {
+        // Coast on momentum (matching emergency warp behavior)
         const currentSpeed = gameState.velocityVector.length();
+        const currentSpeedKmS = currentSpeed * 1000;
+
+        // Disable starfield if speed drops below threshold
+        if (currentSpeedKmS < 10000 && typeof toggleWarpSpeedStarfield === 'function') {
+            toggleWarpSpeedStarfield(false);
+        }
+
         if (currentSpeed > gameState.maxVelocity) {
             gameState.velocityVector.multiplyScalar(gameState.slingshot.inertiaDecay);
-            
+
             if (gameState.velocityVector.length() <= gameState.maxVelocity) {
                 gameState.slingshot.postSlingshot = false;
+                gameState.slingshot.fromBlackHole = false; // Reset black hole flag
                 if (typeof showAchievement === 'function') {
                     showAchievement('Normal Velocity', 'Returned to standard propulsion limits');
                 }
             }
         } else {
             gameState.slingshot.postSlingshot = false;
+            gameState.slingshot.fromBlackHole = false; // Reset black hole flag
         }
     }
     
@@ -1729,30 +1903,252 @@ function initializeGalaxyDiscoverySystem() {
 // NEBULA DISCOVERY SYSTEM
 // =============================================================================
 
+// Nebula music state
+let currentNebulaMusic = null;
+let nebulaMusicGain = null;
+
+function playNebulaMusic(nebulaIndex) {
+    if (!audioContext || typeof musicGain === 'undefined') return;
+
+    // Stop existing nebula music with fade
+    if (currentNebulaMusic) {
+        stopNebulaMusic();
+    }
+
+    // Create unique, magical music for this nebula
+    // Use higher frequencies for more pleasant, ethereal sound
+    const baseFreq = 220 + (nebulaIndex * 55); // A3 and up
+    const melodyFreq = 440 + (nebulaIndex * 110); // A4 and up
+    const harmonyFreq = 330 + (nebulaIndex * 82.5); // E4 and up
+    const atmosphereFreq = 880 + (nebulaIndex * 220); // A5 and up
+
+    // Create oscillators for layered magical sound
+    const osc1 = audioContext.createOscillator(); // Base harmony
+    const osc2 = audioContext.createOscillator(); // Melody
+    const osc3 = audioContext.createOscillator(); // Harmony
+    const osc4 = audioContext.createOscillator(); // High atmosphere
+
+    // Create gain node for fade-in (softer volume)
+    nebulaMusicGain = audioContext.createGain();
+    nebulaMusicGain.gain.setValueAtTime(0, audioContext.currentTime);
+    nebulaMusicGain.gain.linearRampToValueAtTime(0.08, audioContext.currentTime + 4); // 4 second fade in, softer
+
+    // Use only sine and triangle for softer, more magical sound
+    osc1.type = 'sine';
+    osc1.frequency.value = baseFreq;
+
+    osc2.type = 'triangle';
+    osc2.frequency.value = melodyFreq;
+
+    osc3.type = 'sine';
+    osc3.frequency.value = harmonyFreq;
+
+    osc4.type = 'sine';
+    osc4.frequency.value = atmosphereFreq;
+
+    // Connect oscillators
+    osc1.connect(nebulaMusicGain);
+    osc2.connect(nebulaMusicGain);
+    osc3.connect(nebulaMusicGain);
+    osc4.connect(nebulaMusicGain);
+    nebulaMusicGain.connect(musicGain || masterGain);
+
+    // Start oscillators
+    osc1.start();
+    osc2.start();
+    osc3.start();
+    osc4.start();
+
+    // Store reference
+    currentNebulaMusic = {
+        oscillator1: osc1,
+        oscillator2: osc2,
+        oscillator3: osc3,
+        oscillator4: osc4,
+        gainNode: nebulaMusicGain,
+        nebulaIndex: nebulaIndex
+    };
+
+    // Add gentle frequency modulation for magical, shimmering sound
+    const modulationInterval = setInterval(() => {
+        if (currentNebulaMusic && audioContext && audioContext.state === 'running') {
+            const time = audioContext.currentTime;
+            const mod1 = Math.sin(time * 0.3) * 5; // Gentler modulation
+            const mod2 = Math.cos(time * 0.2) * 8;
+            const mod3 = Math.sin(time * 0.4) * 3;
+            osc2.frequency.setValueAtTime(melodyFreq + mod1, time);
+            osc3.frequency.setValueAtTime(harmonyFreq + mod2, time);
+            osc4.frequency.setValueAtTime(atmosphereFreq + mod3, time);
+        } else {
+            clearInterval(modulationInterval);
+        }
+    }, 100);
+
+    console.log(`Playing magical nebula music for nebula ${nebulaIndex}`);
+}
+
+function stopNebulaMusic() {
+    if (currentNebulaMusic && nebulaMusicGain && audioContext) {
+        // Fade out over 2 seconds
+        nebulaMusicGain.gain.linearRampToValueAtTime(0, audioContext.currentTime + 2);
+
+        setTimeout(() => {
+            if (currentNebulaMusic) {
+                try {
+                    currentNebulaMusic.oscillator1.stop();
+                    currentNebulaMusic.oscillator2.stop();
+                    currentNebulaMusic.oscillator3.stop();
+                    currentNebulaMusic.oscillator4.stop();
+                } catch(e) {}
+                currentNebulaMusic = null;
+            }
+        }, 2100);
+    }
+}
+
+function getEnemyIntelligence(nebulaPosition) {
+    if (typeof enemies === 'undefined' || typeof planets === 'undefined') {
+        return { nearbyGalaxy: null, enemyCount: 0, blackHoleLocations: [], cosmicObjects: [] };
+    }
+
+    // Find nearest galaxy
+    let nearestGalaxy = null;
+    let nearestGalaxyDist = Infinity;
+
+    if (typeof planets !== 'undefined') {
+        planets.forEach(planet => {
+            if (planet.userData.type === 'blackhole' && planet.userData.isGalacticCore && planet.userData.galaxyId !== undefined) {
+                const dist = nebulaPosition.distanceTo(planet.position);
+                if (dist < nearestGalaxyDist && dist < 10000) {
+                    nearestGalaxyDist = dist;
+                    nearestGalaxy = planet.userData.galaxyId;
+                }
+            }
+        });
+    }
+
+    if (nearestGalaxy === null) return { nearbyGalaxy: null, enemyCount: 0, blackHoleLocations: [], cosmicObjects: [] };
+
+    // Get enemies in that galaxy
+    const galaxyEnemies = enemies.filter(e =>
+        e.userData.galaxyId === nearestGalaxy && e.userData.health > 0
+    );
+
+    // Find where enemies are hiding
+    const blackHoleLocations = [];
+    const cosmicObjects = [];
+
+    galaxyEnemies.forEach(enemy => {
+        // Check if near black hole
+        const nearbyBlackHoles = planets.filter(p =>
+            p.userData.type === 'blackhole' &&
+            p.position.distanceTo(enemy.position) < 500
+        );
+
+        if (nearbyBlackHoles.length > 0) {
+            nearbyBlackHoles.forEach(bh => {
+                const bhName = bh.userData.name || 'Unknown Black Hole';
+                if (!blackHoleLocations.includes(bhName)) {
+                    blackHoleLocations.push(bhName);
+                }
+            });
+        }
+
+        // Check if near other cosmic objects
+        const nearbyObjects = planets.filter(p =>
+            (p.userData.type === 'planet' || p.userData.type === 'pulsar' || p.userData.type === 'neutron_star') &&
+            p.position.distanceTo(enemy.position) < 300
+        );
+
+        if (nearbyObjects.length > 0) {
+            nearbyObjects.forEach(obj => {
+                const objName = obj.userData.name || obj.userData.type;
+                if (!cosmicObjects.includes(objName)) {
+                    cosmicObjects.push(objName);
+                }
+            });
+        }
+    });
+
+    return {
+        nearbyGalaxy,
+        enemyCount: galaxyEnemies.length,
+        blackHoleLocations: blackHoleLocations.slice(0, 3), // Max 3
+        cosmicObjects: cosmicObjects.slice(0, 3) // Max 3
+    };
+}
+
 function checkForNebulaDiscovery() {
     if (typeof gameState === 'undefined' || typeof camera === 'undefined') return;
     if (typeof nebulaClouds === 'undefined' || nebulaClouds.length === 0) return;
-    
+
     const discoveryRange = 3000; // Distance to trigger discovery
-    
-    nebulaClouds.forEach(nebula => {
-        if (!nebula || !nebula.userData || nebula.userData.discovered) return;
-        
+    const exitRange = 4000; // Distance to trigger music fade out
+
+    let playerNearNebula = false;
+
+    nebulaClouds.forEach((nebula, index) => {
+        if (!nebula || !nebula.userData) return;
+
         const distance = camera.position.distanceTo(nebula.position);
-        
-        if (distance < discoveryRange) {
+
+        // Check if player is within any nebula
+        if (distance < exitRange) {
+            playerNearNebula = true;
+        }
+
+        // Discovery check
+        if (!nebula.userData.discovered && distance < discoveryRange) {
             // Mark as discovered
             nebula.userData.discovered = true;
-            
-            // Show discovery notification
-            if (typeof showAchievement === 'function') {
-                const nebulaName = nebula.userData.mythicalName || nebula.userData.name || 'Unknown Nebula';
-                showAchievement('Nebula Discovered!', `Discovered the ${nebulaName} Nebula`, true);
+
+            // Restore energy
+            if (gameState.energy < 100) {
+                const energyRestored = 100 - gameState.energy;
+                gameState.energy = 100;
+                console.log(`Energy restored: +${energyRestored.toFixed(1)}%`);
             }
-            
-            console.log(`🌫️ Nebula discovered: ${nebula.userData.mythicalName || nebula.userData.name}`);
+
+            // Play unique nebula music
+            playNebulaMusic(index);
+
+            // Get enemy intelligence
+            const intel = getEnemyIntelligence(nebula.position);
+
+            // Show welcome notification with intelligence
+            const nebulaName = nebula.userData.mythicalName || nebula.userData.name || 'Unknown Nebula';
+
+            let welcomeMessage = `Welcome to the ${nebulaName} Nebula. Energy restored to 100%.`;
+
+            if (intel.nearbyGalaxy !== null && typeof galaxyTypes !== 'undefined') {
+                const galaxy = galaxyTypes[intel.nearbyGalaxy];
+                welcomeMessage += `\n\nINTELLIGENCE REPORT: ${galaxy.name} Galaxy (${galaxy.faction}) under attack! `;
+                welcomeMessage += `${intel.enemyCount} hostile ${galaxy.species} forces detected.`;
+
+                if (intel.blackHoleLocations.length > 0) {
+                    welcomeMessage += `\n\nEnemies near black holes: ${intel.blackHoleLocations.join(', ')}`;
+                }
+
+                if (intel.cosmicObjects.length > 0) {
+                    welcomeMessage += `\n\nEnemies near cosmic objects: ${intel.cosmicObjects.join(', ')}`;
+                }
+
+                welcomeMessage += `\n\nEliminate all hostiles to liberate the galaxy!`;
+            }
+
+            if (typeof showAchievement === 'function') {
+                showAchievement('Nebula Discovered!', welcomeMessage, true);
+            }
+
+            console.log(`Nebula discovered: ${nebulaName}`);
+            console.log(`Intelligence:`, intel);
         }
     });
+
+    // If player has left all nebulas, stop the music
+    if (!playerNearNebula && currentNebulaMusic) {
+        stopNebulaMusic();
+    }
 }
 
 // =============================================================================
@@ -1764,11 +2160,14 @@ window.updateEnhancedPhysics = updateEnhancedPhysics;
 window.createHyperspaceEffect = createHyperspaceEffect;
 window.createEnhancedScreenDamageEffect = createEnhancedScreenDamageEffect;
 window.executeSlingshot = executeSlingshot;
+window.isBlackHoleWarpInvulnerable = isBlackHoleWarpInvulnerable;
+window.createPlayerExplosion = createPlayerExplosion;
 
 // Add these to your existing window exports:
 window.shouldSuppressAchievement = shouldSuppressAchievement;
 window.checkForGalaxyDiscovery = checkForGalaxyDiscovery;
 window.initializeGalaxyDiscoverySystem = initializeGalaxyDiscoverySystem;
+window.stopNebulaMusic = stopNebulaMusic;
 
 // All asteroid functions
 window.destroyAsteroid = destroyAsteroid;
@@ -1776,8 +2175,11 @@ window.destroyAsteroidByWeapon = destroyAsteroidByWeapon;
 window.destroyAsteroidByCollision = destroyAsteroidByCollision;
 window.createAsteroidExplosion = createAsteroidExplosion;
 
-// Export the function
+// Export nebula functions
 window.checkForNebulaDiscovery = checkForNebulaDiscovery;
+window.playNebulaMusic = playNebulaMusic;
+window.stopNebulaMusic = stopNebulaMusic;
+window.getEnemyIntelligence = getEnemyIntelligence;
 
 // Automatic black hole warp function
 window.transitionToRandomLocation = transitionToRandomLocation;
