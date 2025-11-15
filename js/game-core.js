@@ -249,7 +249,7 @@ function updateActivePlanets() {
         // CRITICAL: Always include moons and ensure they're visible
 if (planet.userData.type === 'moon') {
     planet.visible = true;
-    planet.frustumCulled = false;
+    planet.frustumCulled = true;  // OPTIMIZATION: Enable frustum culling for planets
     activePlanets.push(planet);
 }
         // Include asteroids within range for orbital mechanics
@@ -927,6 +927,9 @@ if (typeof animateNebulaBrownDwarfs !== 'undefined') {
     
     // â­ ENHANCED: Animate nebula gas clouds with individual pulsing per cloud
 if (typeof nebulaGasClouds !== 'undefined' && nebulaGasClouds.length > 0) {
+    // OPTIMIZATION: Cache Date.now() once per frame instead of per cloud
+    const currentTime = Date.now();
+
     nebulaGasClouds.forEach(cloudCluster => {
         // Rotate entire cluster slowly
         if (cloudCluster.rotation) {
@@ -934,23 +937,23 @@ if (typeof nebulaGasClouds !== 'undefined' && nebulaGasClouds.length > 0) {
             cloudCluster.rotation.y += 0.0003;
             cloudCluster.rotation.z += 0.0001;
         }
-        
+
         // Animate each individual cloud in the cluster
         if (cloudCluster.children && cloudCluster.children.length > 0) {
             cloudCluster.children.forEach(cloud => {
                 if (cloud.userData && cloud.userData.pulseSpeed) {
-                    // Each cloud pulses at its own speed and phase
-                    const pulseTime = Date.now() * cloud.userData.pulseSpeed + cloud.userData.pulsePhase;
+                    // Each cloud pulses at its own speed and phase (using cached time)
+                    const pulseTime = currentTime * cloud.userData.pulseSpeed + cloud.userData.pulsePhase;
                     const scale = 1 + Math.sin(pulseTime) * 0.08;
                     cloud.scale.set(scale, scale, scale);
-                    
+
                     // Also pulse opacity for breathing effect
                     if (cloud.material && cloud.userData.baseOpacity) {
                         const opacityPulse = Math.sin(pulseTime * 0.5) * 0.05;
                         cloud.material.opacity = cloud.userData.baseOpacity + opacityPulse;
                     }
                 }
-                
+
                 // Individual cloud rotation for wispy effect
                 if (cloud.rotation) {
                     cloud.rotation.x += 0.0005;
@@ -1554,7 +1557,7 @@ if (planet.rotation && !planet.userData.isLocalStar) {
 else if (planet.userData.parentPlanet && planet.userData.orbitRadius > 0) {
     // Ensure moon is always visible
     planet.visible = true;
-    planet.frustumCulled = false;
+    planet.frustumCulled = true;  // OPTIMIZATION: Enable frustum culling for planets
     
     // Check if moon is a child of its parent planet
     const isChildOfParent = planet.parent === planet.userData.parentPlanet;

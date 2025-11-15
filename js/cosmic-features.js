@@ -134,7 +134,7 @@ const pulsarMaterial = new THREE.MeshStandardMaterial({
         };
         
         pulsar.visible = true;
-        pulsar.frustumCulled = false;
+        pulsar.frustumCulled = true;  // OPTIMIZATION: Enable frustum culling
         
         cosmicFeatures.pulsars.push(pulsar);
         if (typeof scene !== 'undefined') {
@@ -254,7 +254,7 @@ function createSupernovas() {
         };
         
         supernovaCore.visible = true;
-        supernovaCore.frustumCulled = false;
+        supernovaCore.frustumCulled = true;  // OPTIMIZATION: Enable frustum culling
         
         cosmicFeatures.supernovas.push(supernovaCore);
         if (typeof scene !== 'undefined') {
@@ -318,7 +318,7 @@ const brownDwarfMaterial = new THREE.MeshStandardMaterial({
             };
             
             brownDwarf.visible = true;
-            brownDwarf.frustumCulled = false;
+            brownDwarf.frustumCulled = true;  // OPTIMIZATION: Enable frustum culling
             
             cosmicFeatures.brownDwarfs.push(brownDwarf);
             if (typeof scene !== 'undefined') {
@@ -389,7 +389,7 @@ function createDarkMatterNodes() {
             };
             
             darkMatterNode.visible = true;
-            darkMatterNode.frustumCulled = false;
+            darkMatterNode.frustumCulled = true;  // OPTIMIZATION: Enable frustum culling
             
             cosmicFeatures.darkMatterNodes.push(darkMatterNode);
             if (typeof scene !== 'undefined') {
@@ -511,7 +511,7 @@ const starMaterial = new THREE.MeshStandardMaterial({
         };
         
         centralStar.visible = true;
-        centralStar.frustumCulled = false;
+        centralStar.frustumCulled = true;  // OPTIMIZATION: Enable frustum culling
         
         cosmicFeatures.dysonSpheres.push(centralStar);
         if (typeof scene !== 'undefined') {
@@ -745,7 +745,7 @@ function createSolarStorms() {
         };
         
         stormCore.visible = true;
-        stormCore.frustumCulled = false;
+        stormCore.frustumCulled = true;  // OPTIMIZATION: Enable frustum culling
         
         cosmicFeatures.solarStorms.push(stormCore);
         if (typeof scene !== 'undefined') {
@@ -821,7 +821,7 @@ function createRoguePlanets() {
         };
         
         roguePlanet.visible = true;
-        roguePlanet.frustumCulled = false;
+        roguePlanet.frustumCulled = true;  // OPTIMIZATION: Enable frustum culling
         
         cosmicFeatures.roguePlanets.push(roguePlanet);
         if (typeof scene !== 'undefined') {
@@ -919,7 +919,7 @@ function createDustClouds() {
             };
             
             dustCloud.visible = true;
-            dustCloud.frustumCulled = false;
+            dustCloud.frustumCulled = true;  // OPTIMIZATION: Enable frustum culling
             
             cosmicFeatures.dustClouds.push(dustCloud);
             if (typeof scene !== 'undefined') {
@@ -1047,7 +1047,7 @@ function createSpaceWhales() {
         };
         
         whaleBody.visible = true;
-        whaleBody.frustumCulled = false;
+        whaleBody.frustumCulled = true;  // OPTIMIZATION: Enable frustum culling
         
         cosmicFeatures.spaceWhales.push(whaleBody);
         if (typeof scene !== 'undefined') {
@@ -1157,7 +1157,7 @@ function createCrystalFormations() {
             };
             
             crystalGroup.visible = true;
-            crystalGroup.frustumCulled = false;
+            crystalGroup.frustumCulled = true;  // OPTIMIZATION: Enable frustum culling
             
             cosmicFeatures.crystalFormations.push(crystalGroup);
             if (typeof scene !== 'undefined') {
@@ -1353,7 +1353,7 @@ function createPlasmaStorms() {
         };
         
         stormCloudGroup.visible = true;
-        stormCloudGroup.frustumCulled = false;
+        stormCloudGroup.frustumCulled = true;  // OPTIMIZATION: Enable frustum culling
         
         cosmicFeatures.plasmaStorms.push(stormCloudGroup);
         if (typeof scene !== 'undefined') {

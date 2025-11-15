@@ -262,19 +262,39 @@ function refreshEnemyDifficulty() {
     
     // Update all existing enemies
     // PERFORMANCE: Limit active enemies based on distance and performance mode
-const maxActiveEnemies = gameState.performanceMode === 'minimal' ? 3 : 
+const maxActiveEnemies = gameState.performanceMode === 'minimal' ? 3 :
                          gameState.performanceMode === 'optimized' ? 5 : 8;
 
-const nearbyEnemies = enemies.filter(enemy => 
-    enemy.userData.health > 0 && 
-    camera.position.distanceTo(enemy.position) < 3000  // Only process nearby enemies
-).sort((a, b) => {
+// OPTIMIZED: Filter using squared distance (no sqrt), then cache distances for sorting
+const camPos = camera.position;
+const maxDistSquared = 3000 * 3000;
+const enemyDistances = new Map();
+
+const nearbyEnemiesUnsorted = enemies.filter(enemy => {
+    if (enemy.userData.health <= 0) return false;
+
+    // Calculate squared distance (avoids expensive sqrt)
+    const dx = enemy.position.x - camPos.x;
+    const dy = enemy.position.y - camPos.y;
+    const dz = enemy.position.z - camPos.z;
+    const distSq = dx*dx + dy*dy + dz*dz;
+
+    if (distSq < maxDistSquared) {
+        // Cache the actual distance for sorting (only calculate sqrt once per enemy)
+        enemyDistances.set(enemy, Math.sqrt(distSq));
+        return true;
+    }
+    return false;
+});
+
+const nearbyEnemies = nearbyEnemiesUnsorted.sort((a, b) => {
     // Prioritize: 1) Bosses, 2) Active enemies, 3) Closest enemies
     if (a.userData.isBoss && !b.userData.isBoss) return -1;
     if (!a.userData.isBoss && b.userData.isBoss) return 1;
     if (a.userData.isActive && !b.userData.isActive) return -1;
     if (!a.userData.isActive && b.userData.isActive) return 1;
-    return camera.position.distanceTo(a.position) - camera.position.distanceTo(b.position);
+    // Use cached distances instead of recalculating
+    return enemyDistances.get(a) - enemyDistances.get(b);
 }).slice(0, maxActiveEnemies);
 
 // Process only the limited set of nearby enemies
@@ -3950,59 +3970,68 @@ function cycleTargets() {
         allTargets.push(...detectedWormholes);
     }
     
+    // OPTIMIZED: Helper function to filter by squared distance (avoids expensive sqrt)
+    const filterBySquaredDist = (items, maxDistSquared) => {
+        const camPos = camera.position;
+        return items.filter(obj => {
+            const dx = obj.position.x - camPos.x;
+            const dy = obj.position.y - camPos.y;
+            const dz = obj.position.z - camPos.z;
+            return (dx*dx + dy*dy + dz*dz) < maxDistSquared;
+        });
+    };
+
     // Add comets
     if (typeof comets !== 'undefined') {
-        const nearbyComets = comets.filter(c => camera.position.distanceTo(c.position) < 4000);
-        allTargets.push(...nearbyComets);
+        allTargets.push(...filterBySquaredDist(comets, 4000*4000));
     }
-    
+
     // Add enemies
     if (typeof enemies !== 'undefined') {
-        const aliveEnemies = enemies.filter(e => e.userData.health > 0 && camera.position.distanceTo(e.position) < 2000);
-        allTargets.push(...aliveEnemies);
+        const aliveEnemies = enemies.filter(e => e.userData.health > 0);
+        allTargets.push(...filterBySquaredDist(aliveEnemies, 2000*2000));
     }
-    
-    // ADD COSMIC FEATURES TO CYCLING - This is the main addition!
+
+    // ADD COSMIC FEATURES TO CYCLING - OPTIMIZED with pre-calculated squared distances
     if (typeof cosmicFeatures !== 'undefined') {
-        // Add nearby cosmic features within cycling range
-        allTargets.push(...cosmicFeatures.pulsars.filter(p => camera.position.distanceTo(p.position) < 2000));
-        allTargets.push(...cosmicFeatures.supernovas.filter(s => camera.position.distanceTo(s.position) < 3000));
-        allTargets.push(...cosmicFeatures.dysonSpheres.filter(d => camera.position.distanceTo(d.position) < 4000));
-        allTargets.push(...cosmicFeatures.ringworlds.filter(r => camera.position.distanceTo(r.position) < 4000));
-        allTargets.push(...cosmicFeatures.spaceWhales.filter(w => camera.position.distanceTo(w.position) < 2000));
-        allTargets.push(...cosmicFeatures.brownDwarfs.filter(bd => camera.position.distanceTo(bd.position) < 1500));
-        allTargets.push(...cosmicFeatures.solarStorms.filter(ss => camera.position.distanceTo(ss.position) < 2500));
-        allTargets.push(...cosmicFeatures.crystalFormations.filter(cf => camera.position.distanceTo(cf.position) < 1800));
-        allTargets.push(...cosmicFeatures.plasmaStorms.filter(ps => camera.position.distanceTo(ps.position) < 2200));
-        allTargets.push(...cosmicFeatures.roguePlanets.filter(rp => camera.position.distanceTo(rp.position) < 1600));
-        
-        // Dark matter nodes only show when very close (they're hard to detect)
-        allTargets.push(...cosmicFeatures.darkMatterNodes.filter(dm => camera.position.distanceTo(dm.position) < 400));
-        
-        // Dust clouds only show when inside or very close
-        allTargets.push(...cosmicFeatures.dustClouds.filter(dc => camera.position.distanceTo(dc.position) < 250));
+        allTargets.push(...filterBySquaredDist(cosmicFeatures.pulsars, 2000*2000));
+        allTargets.push(...filterBySquaredDist(cosmicFeatures.supernovas, 3000*3000));
+        allTargets.push(...filterBySquaredDist(cosmicFeatures.dysonSpheres, 4000*4000));
+        allTargets.push(...filterBySquaredDist(cosmicFeatures.ringworlds, 4000*4000));
+        allTargets.push(...filterBySquaredDist(cosmicFeatures.spaceWhales, 2000*2000));
+        allTargets.push(...filterBySquaredDist(cosmicFeatures.brownDwarfs, 1500*1500));
+        allTargets.push(...filterBySquaredDist(cosmicFeatures.solarStorms, 2500*2500));
+        allTargets.push(...filterBySquaredDist(cosmicFeatures.crystalFormations, 1800*1800));
+        allTargets.push(...filterBySquaredDist(cosmicFeatures.plasmaStorms, 2200*2200));
+        allTargets.push(...filterBySquaredDist(cosmicFeatures.roguePlanets, 1600*1600));
+        allTargets.push(...filterBySquaredDist(cosmicFeatures.darkMatterNodes, 400*400));
+        allTargets.push(...filterBySquaredDist(cosmicFeatures.dustClouds, 250*250));
     }
-    
-    // Filter by distance and sort
-    const nearbyObjects = allTargets.filter(obj => {
-        const distance = camera.position.distanceTo(obj.position);
-        return distance < 6000; // Doubled range
-    }).sort((a, b) => {
-        const distA = camera.position.distanceTo(a.position);
-        const distB = camera.position.distanceTo(b.position);
-        return distA - distB;
-    });
-    
+
+    // Add nebula gas clouds
+    if (typeof nebulaGasClouds !== 'undefined') {
+        allTargets.push(...filterBySquaredDist(nebulaGasClouds, 3000*3000));
+    }
+
+    // OPTIMIZED: Cache distances in a Map to avoid recalculating during sort
+    const distanceCache = new Map();
+    const getDistance = (obj) => {
+        if (!distanceCache.has(obj)) {
+            distanceCache.set(obj, camera.position.distanceTo(obj.position));
+        }
+        return distanceCache.get(obj);
+    };
+
+    // Filter by distance and sort using cached distances
+    const nearbyObjects = allTargets.filter(obj => getDistance(obj) < 6000)
+        .sort((a, b) => getDistance(a) - getDistance(b));
+
     if (nearbyObjects.length === 0) {
         gameState.currentTarget = null;
         showAchievement('No Targets', 'No objects detected in range');
         return;
     }
-    
-    if (typeof nebulaGasClouds !== 'undefined') {
-    allTargets.push(...nebulaGasClouds.filter(gc => camera.position.distanceTo(gc.position) < 3000));
-}
-    
+
     let currentIndex = -1;
     if (gameState.currentTarget) {
         currentIndex = nearbyObjects.findIndex(target => target === gameState.currentTarget);

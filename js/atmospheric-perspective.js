@@ -36,6 +36,9 @@ const originalMaterialProps = new WeakMap();
 // =============================================================================
 
 function applyDistanceBasedOpacity(object, distance) {
+    // DISABLED FOR FPS TESTING
+    return;
+
     if (!object || !object.material) return;
 
     const { fadeStart, fadeEnd, minOpacity } = atmosphericConfig;
@@ -81,6 +84,9 @@ function applyDistanceBasedOpacity(object, distance) {
 // =============================================================================
 
 function applyAtmosphericScattering(object, distance) {
+    // DISABLED FOR FPS TESTING
+    return;
+
     if (!object || !object.material || !object.material.color) return;
 
     const { colorShiftStart, colorShiftEnd, atmosphericColor, scatteringIntensity } = atmosphericConfig;
@@ -132,6 +138,9 @@ let cachedObjects = [];
 let cacheUpdateDistance = 10000; // Re-cache when player moves this far
 
 function updateAtmosphericPerspective(camera) {
+    // DISABLED FOR FPS TESTING
+    return;
+
     if (!camera || !camera.position || !scene) return;
 
     const playerPos = camera.position;
@@ -210,6 +219,9 @@ function disableDepthOfField() {
 }
 
 function updateDepthOfFieldEffect(camera) {
+    // DISABLED FOR FPS TESTING
+    return;
+
     if (!depthOfFieldEnabled || !camera || !camera.position || !scene) return;
 
     const playerPos = camera.position;
