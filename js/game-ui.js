@@ -1903,7 +1903,7 @@ function showVictoryScreen() {
                     <div>Energy Remaining: ${gameState ? gameState.energy.toFixed(0) : '100'}%</div>
                     <div>Hull Integrity: ${gameState ? gameState.hull.toFixed(0) : '100'}%</div>
                     <div>All Galaxies Liberated: 8/8</div>
-                    <div>Emergency Warps Remaining: ${gameState ? gameState.emergencyWarp.available : '5'}</div>
+                    <div>Emergency Warps: ${gameState ? `${gameState.emergencyWarp.available}/${gameState.emergencyWarp.maxWarps}` : '1/10'}</div>
                 </div>
                 <button onclick="location.reload()" class="mt-6 space-btn rounded px-6 py-3" style="cursor: pointer;">
                     <i class="fas fa-redo mr-2"></i>New Mission
@@ -1982,7 +1982,7 @@ function gameOver(reason) {
                     <div>Energy Remaining: ${gameState ? gameState.energy.toFixed(0) : '0'}%</div>
                     <div>Hull Integrity: ${gameState ? gameState.hull.toFixed(0) : '0'}%</div>
                     <div>Galaxies Cleared: ${gameState ? gameState.galaxiesCleared : 0}/8</div>
-                    <div>Emergency Warps Remaining: ${gameState ? gameState.emergencyWarp.available : '0'}</div>
+                    <div>Emergency Warps: ${gameState ? `${gameState.emergencyWarp.available}/${gameState.emergencyWarp.maxWarps}` : '0/10'}</div>
                 </div>
                 <button onclick="location.reload()" class="mt-6 space-btn rounded px-6 py-3" style="cursor: pointer;">
                     <i class="fas fa-redo mr-2"></i>Restart Mission
@@ -2081,7 +2081,7 @@ function showGameOverScreen(title, message) {
                         <div>Energy Remaining: ${gameState ? gameState.energy.toFixed(0) : '0'}%</div>
                         <div>Hull Integrity: ${gameState ? gameState.hull.toFixed(0) : '0'}%</div>
                         <div>Galaxies Cleared: ${gameState ? (gameState.galaxiesCleared || 0) : 0}/8</div>
-                        <div>Emergency Warps Remaining: ${gameState ? gameState.emergencyWarp.available : '0'}</div>
+                        <div>Emergency Warps: ${gameState ? `${gameState.emergencyWarp.available}/${gameState.emergencyWarp.maxWarps}` : '0/10'}</div>
                     </div>
                     <button onclick="location.reload()" class="mt-6 space-btn rounded px-6 py-3" style="cursor: pointer; background: linear-gradient(135deg, #ff0066 0%, #ff6600 100%); border: 2px solid #ff3300;">
                         <i class="fas fa-redo mr-2"></i>Restart Mission

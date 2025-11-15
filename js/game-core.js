@@ -40,7 +40,7 @@ const gameState = {
     thrustPower: 0.01, // Doubled for doubled world
     wThrustMultiplier: 2.0, // W key gets 2x thrust
     minVelocity: 0.2, // Doubled for doubled world
-    maxVelocity: 2.0, // Doubled for doubled world
+    maxVelocity: 0.5, // ⭐ REDUCED: 500 km/s max thruster speed (was 2.0)
     mapMode: 'galactic',
     mapView: 'galactic', // 'galactic', 'universal'
     galaxiesCleared: 0,
@@ -65,13 +65,14 @@ const gameState = {
     slingshot: {
         active: false,
         timeRemaining: 0,
-        maxSpeed: 20.0, // Doubled for doubled world
+        maxSpeed: 50.0, // ⭐ INCREASED: Much faster slingshot for escaping gravity (was 20.0)
         duration: 24000, // 3x emergency warp duration (8000ms * 3)
         accelerationPhase: 10000,
         maintainPhase: 10000,
         postSlingshot: false,
         inertiaDecay: 0.9999, // Match emergency warp behavior (coast on momentum)
-        fromBlackHole: false // Track if current slingshot is from black hole (for invulnerability)
+        fromBlackHole: false, // Track if current slingshot is from black hole (for invulnerability)
+        escapeVelocity: 25.0 // ⭐ NEW: Velocity needed to escape system gravity well
     },
     eventHorizonWarning: {
         active: false,
@@ -80,12 +81,33 @@ const gameState = {
         criticalDistance: 160 // Doubled for doubled world
     },
     emergencyWarp: {
-        available: 5,
+        available: 1, // ⭐ CHANGED: Start with only 1 warp (was 5)
+        maxWarps: 10, // ⭐ NEW: Maximum warps player can accumulate
         cooldown: 0,
+        rechargeDuration: 60000, // ⭐ NEW: 60 seconds to recharge 1 warp
+        lastRechargeTime: 0, // ⭐ NEW: Track when last warp was added
         boostDuration: 15000,  // 15 seconds for debugging (was 8000)
         boostSpeed: 100.0,     // Much faster for debugging (was 30.0)
         active: false,
         timeRemaining: 0
+    },
+    // ⭐ NEW: Enhanced gravity system for core gameplay
+    gravity: {
+        enabled: true, // Master switch for gravity system
+        strengthMultiplier: 10.0, // Overall gravity strength (increased from default)
+        systemCenterPull: true, // Pull toward system centers
+        currentGravityWell: null, // Current dominant gravity source
+        escapeThreshold: 5000, // Distance to be considered "escaped" from a system
+        // Gravity multipliers by object type
+        multipliers: {
+            star: 15.0, // Stars have very strong gravity
+            blackhole: 30.0, // Black holes have extreme gravity
+            planet: 8.0, // Planets have strong gravity
+            systemCenter: 20.0 // Planetary system centers have very strong pull
+        },
+        // Track if player has escaped their starting system
+        escapedStartingSystem: false,
+        startingSystemCenter: null // Will be set to Sol system center
     },
     weapons: {
         armed: true,

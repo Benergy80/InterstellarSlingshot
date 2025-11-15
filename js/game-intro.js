@@ -1945,31 +1945,55 @@ function fadeCountdownTextForGameTransition() {
 }
 
 function resetCameraToGamePosition() {
-    // ADAPTED FOR SPHERICAL UNIVERSE
-    // Reset camera to normal game position (matching createOptimizedPlanets)
-    const localSystemOffset = { x: 2000, y: 0, z: 1200 }; // From createOptimizedPlanets
-    camera.position.set(localSystemOffset.x + 160, localSystemOffset.y + 40, localSystemOffset.z);
+    // ⭐ ENHANCED: Start player in orbit around Sol system for gravity mechanics gameplay
+    const localSystemOffset = { x: 2000, y: 0, z: 1200 }; // Sol system center
+
+    // ⭐ Store Sol system center in gameState for gravity tracking
+    if (typeof gameState !== 'undefined' && gameState.gravity) {
+        gameState.gravity.startingSystemCenter = new THREE.Vector3(
+            localSystemOffset.x,
+            localSystemOffset.y,
+            localSystemOffset.z
+        );
+        console.log('⭐ Sol system center stored for gravity mechanics');
+    }
+
+    // ⭐ Position player in stable orbit around Sol system (200 units from center)
+    const orbitRadius = 200;
+    const orbitAngle = Math.PI / 4; // 45 degrees
+    camera.position.set(
+        localSystemOffset.x + Math.cos(orbitAngle) * orbitRadius,
+        localSystemOffset.y + 20, // Slight vertical offset
+        localSystemOffset.z + Math.sin(orbitAngle) * orbitRadius
+    );
     camera.lookAt(new THREE.Vector3(0, 0, 0)); // Face towards Sagittarius A*
-    
+
     // Reset camera rotation
     if (typeof cameraRotation !== 'undefined') {
-        cameraRotation = { 
+        cameraRotation = {
             x: camera.rotation.x,
             y: camera.rotation.y,
-            z: camera.rotation.z 
+            z: camera.rotation.z
         };
     }
-    
-    // Set initial orbital velocity
+
+    // ⭐ Set orbital velocity to maintain stable orbit around Sol system
     if (typeof gameState !== 'undefined' && gameState.velocityVector) {
-        const sunPosition = new THREE.Vector3(localSystemOffset.x, localSystemOffset.y, localSystemOffset.z);
-        const earthPosition = camera.position.clone();
-        const earthToSun = new THREE.Vector3().subVectors(sunPosition, earthPosition).normalize();
-        const orbitalDirection = new THREE.Vector3(-earthToSun.z, 0, earthToSun.x).normalize();
-        gameState.velocityVector = orbitalDirection.multiplyScalar(gameState.minVelocity || 0.2);
+        const systemCenter = new THREE.Vector3(localSystemOffset.x, localSystemOffset.y, localSystemOffset.z);
+        const playerPosition = camera.position.clone();
+
+        // Calculate direction perpendicular to radius (tangent to orbit)
+        const radialDirection = new THREE.Vector3().subVectors(playerPosition, systemCenter).normalize();
+        const orbitalDirection = new THREE.Vector3(-radialDirection.z, 0, radialDirection.x).normalize();
+
+        // ⭐ Set orbital velocity to match minimum velocity (will be balanced by gravity)
+        const orbitalSpeed = gameState.minVelocity || 0.2;
+        gameState.velocityVector = orbitalDirection.multiplyScalar(orbitalSpeed);
+
+        console.log('⭐ Player starting in orbit around Sol system with orbital velocity:', orbitalSpeed);
     }
-    
-    console.log('📍 Camera reset to normal game position in spherical universe');
+
+    console.log('📍 Camera positioned in orbit around Sol system for gravity gameplay');
 }
 
 function fadeOutIntroElements(progress) {

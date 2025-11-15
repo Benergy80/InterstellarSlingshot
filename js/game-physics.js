@@ -1207,7 +1207,7 @@ function updateEnhancedPhysics() {
 
     // SPECIFICATION: Use consistent rotSpeed = 0.03 for all rotation inputs
     const rotSpeed = 0.02;
-    const gravitationalConstant = 0.003; // TRIPLED for stronger gravity
+    const gravitationalConstant = 0.03; // ⭐ INCREASED 10x: Make gravity dominant force (was 0.003)
     const assistRange = 60; // DOUBLED
     const collisionThreshold = 6; // DOUBLED
     
@@ -1375,7 +1375,23 @@ if (frameDistance > 0.01) { // Only track significant movement
             createHyperspaceEffect();
         }
     }
-    
+
+    // ⭐ NEW: Warp recharge system - regenerate 1 warp every 60 seconds
+    if (!gameState.emergencyWarp.lastRechargeTime) {
+        gameState.emergencyWarp.lastRechargeTime = Date.now();
+    }
+
+    const timeSinceLastRecharge = Date.now() - gameState.emergencyWarp.lastRechargeTime;
+    if (timeSinceLastRecharge >= gameState.emergencyWarp.rechargeDuration &&
+        gameState.emergencyWarp.available < gameState.emergencyWarp.maxWarps) {
+        gameState.emergencyWarp.available++;
+        gameState.emergencyWarp.lastRechargeTime = Date.now();
+        if (typeof showAchievement === 'function') {
+            showAchievement('Warp Recharged', `Warp charges: ${gameState.emergencyWarp.available}/${gameState.emergencyWarp.maxWarps}`);
+        }
+        console.log(`⚡ Warp recharged! Now have ${gameState.emergencyWarp.available} warps`);
+    }
+
      // SPECIFICATION: Emergency Systems - O Key: Emergency warp
 // Check shield block FIRST before processing warp
 if (keys.o && typeof isShieldActive === 'function' && isShieldActive()) {
@@ -1408,9 +1424,12 @@ else if (keys.o && gameState.emergencyWarp.available > 0 && !gameState.emergency
         playSound('warp');
     }
     
-    console.log(`🚀 Emergency warp activated! ${gameState.emergencyWarp.available} charges remaining`);
+    // ⭐ Reset recharge timer when warp is used
+    gameState.emergencyWarp.lastRechargeTime = Date.now();
+
+    console.log(`🚀 Emergency warp activated! ${gameState.emergencyWarp.available}/${gameState.emergencyWarp.maxWarps} charges remaining`);
 }
-    
+
         // Enhanced Emergency warp timer with momentum coasting
 if (gameState.emergencyWarp.active) {
     gameState.emergencyWarp.timeRemaining -= 16.67;
@@ -1567,15 +1586,42 @@ if ((planet.userData.type === 'planet' || planet.userData.type === 'star' || pla
     }
 }
             
-            // Enhanced gravitational force with type-specific multipliers
+            // ⭐ ENHANCED: Gravity is now core gameplay mechanic
             if (planet.userData.type !== 'asteroid') {
                 let gravityMultiplier = 1.0;
 
-                // Stronger gravity for stars and planets
-                if (planet.userData.type === 'star') {
-                    gravityMultiplier = 2.0; // Stars have 2x gravity
-                } else if (planet.userData.type === 'planet') {
-                    gravityMultiplier = 1.5; // Planets have 1.5x gravity
+                // ⭐ MUCH STRONGER gravity based on gameState configuration
+                if (gameState.gravity && gameState.gravity.enabled) {
+                    if (planet.userData.type === 'star') {
+                        gravityMultiplier = gameState.gravity.multipliers.star; // Very strong (15.0)
+                    } else if (planet.userData.type === 'planet') {
+                        gravityMultiplier = gameState.gravity.multipliers.planet; // Strong (8.0)
+                    } else if (planet.userData.type === 'blackhole') {
+                        gravityMultiplier = gameState.gravity.multipliers.blackhole; // Extreme (30.0)
+                    }
+
+                    // ⭐ NEW: System center gravity - pull toward planetary system centers
+                    if (gameState.gravity.systemCenterPull && planet.userData.systemCenter) {
+                        // Also apply gravity toward the system center itself
+                        const systemCenter = planet.userData.systemCenter;
+                        const distanceToCenter = camera.position.distanceTo(systemCenter);
+
+                        if (distanceToCenter > 0 && distanceToCenter < 3000) { // Only within system range
+                            const centerGravityForce = gravitationalConstant * gameState.shipMass *
+                                                      (planetMass * gameState.gravity.multipliers.systemCenter) /
+                                                      (distanceToCenter * distanceToCenter);
+                            const centerDirection = new THREE.Vector3().subVectors(systemCenter, camera.position).normalize();
+                            const centerGravityVector = centerDirection.clone().multiplyScalar(centerGravityForce);
+                            totalGravitationalForce.add(centerGravityVector);
+                        }
+                    }
+                } else {
+                    // Fallback to old values if gravity system disabled
+                    if (planet.userData.type === 'star') {
+                        gravityMultiplier = 2.0;
+                    } else if (planet.userData.type === 'planet') {
+                        gravityMultiplier = 1.5;
+                    }
                 }
 
                 const gravitationalForce = gravitationalConstant * gameState.shipMass * planetMass * gravityMultiplier / (distance * distance);
@@ -2288,6 +2334,12 @@ function checkForNebulaDiscovery() {
                 console.log(`Energy restored: +${energyRestored.toFixed(1)}%`);
             }
 
+            // ⭐ NEW: Award warp for discovering nebula
+            if (gameState.emergencyWarp && gameState.emergencyWarp.available < gameState.emergencyWarp.maxWarps) {
+                gameState.emergencyWarp.available++;
+                console.log(`⚡ Warp earned from nebula discovery! Total: ${gameState.emergencyWarp.available}/${gameState.emergencyWarp.maxWarps}`);
+            }
+
             // Play unique nebula music
             playNebulaMusic(index);
 
@@ -2297,7 +2349,7 @@ function checkForNebulaDiscovery() {
             // Show welcome notification with intelligence
             const nebulaName = nebula.userData.mythicalName || nebula.userData.name || 'Unknown Nebula';
 
-            let welcomeMessage = `Welcome to the ${nebulaName} Nebula. Energy restored to 100%.`;
+            let welcomeMessage = `Welcome to the ${nebulaName} Nebula. Energy restored to 100%. +1 Warp Earned!`;
 
             if (intel.nearbyGalaxy !== null && typeof galaxyTypes !== 'undefined') {
                 const galaxy = galaxyTypes[intel.nearbyGalaxy];
