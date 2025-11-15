@@ -1966,7 +1966,6 @@ function gameOver(reason) {
     gameOverOverlay.style.cursor = 'auto'; // Make mouse visible
     gameOverOverlay.innerHTML = `
         <div class="text-center ui-panel rounded-lg p-8" style="cursor: auto;">
-            <div class="text-6xl mb-4">◇</div>
             <h1 class="text-4xl font-bold text-red-400 mb-4 glow-text cyber-title">MISSION FAILED</h1>
             <p class="text-gray-300 mb-6">${reason}</p>
             <div class="space-y-4">
@@ -1996,7 +1995,7 @@ function gameOver(reason) {
 
 // HULL ZERO GAME OVER - Dramatic full screen explosion effect
 function showGameOverScreen(title, message) {
-    // Prevent duplicate screens
+    // Prevent duplicate game over screens
     if (typeof gameState !== 'undefined') {
         if (gameState.gameOverScreenShown) {
             console.log('⚠️ Game over screen already shown, ignoring duplicate call');
@@ -2007,90 +2006,67 @@ function showGameOverScreen(title, message) {
         gameState.gameOverScreenShown = true;
     }
 
-    console.log('💀 HULL BREACH - Ship destroyed');
+    console.log('💀 GAME OVER - Stopping all systems');
 
-    // Full screen red flash effect
-    const flashOverlay = document.createElement('div');
-    flashOverlay.style.cssText = `
-        position: fixed;
-        top: 0;
-        left: 0;
-        width: 100%;
-        height: 100%;
-        background: radial-gradient(circle, rgba(255,0,0,0.9) 0%, rgba(200,0,0,0.7) 50%, rgba(100,0,0,0.5) 100%);
-        z-index: 9998;
-        opacity: 1;
-        pointer-events: none;
-        animation: explosionFlash 2s ease-out forwards;
-    `;
-
-    // Add CSS animation for flash
-    const style = document.createElement('style');
-    style.textContent = `
-        @keyframes explosionFlash {
-            0% { opacity: 1; }
-            50% { opacity: 0.7; }
-            100% { opacity: 0; }
-        }
-    `;
-    document.head.appendChild(style);
-    document.body.appendChild(flashOverlay);
-
-    // Remove flash after animation
-    setTimeout(() => {
-        flashOverlay.remove();
-    }, 2000);
-
-    // Stop all systems
+    // Stop all music
     if (typeof musicSystem !== 'undefined') {
         if (musicSystem.backgroundMusic) {
-            try {musicSystem.backgroundMusic.stop();} catch(e) {}
+            musicSystem.backgroundMusic.stop();
             musicSystem.backgroundMusic = null;
         }
         if (musicSystem.battleMusic) {
-            try {musicSystem.battleMusic.stop();} catch(e) {}
+            musicSystem.battleMusic.stop();
             musicSystem.battleMusic = null;
         }
     }
 
+    // Stop audio context
     if (typeof audioContext !== 'undefined' && audioContext) {
         audioContext.suspend();
     }
 
-    // Show game over screen after flash
-    setTimeout(() => {
-        const gameOverOverlay = document.createElement('div');
-        gameOverOverlay.id = 'gameOverScreen';
-        gameOverOverlay.className = 'absolute inset-0 bg-black bg-opacity-95 flex items-center justify-center z-9999 cyberpunk-bg';
-        gameOverOverlay.style.cssText = 'cursor: auto; z-index: 9999;';
-        gameOverOverlay.innerHTML = `
-            <div class="text-center ui-panel rounded-lg p-8" style="cursor: auto;">
-                <div class="text-8xl mb-6 text-red-500" style="text-shadow: 0 0 20px rgba(255,0,0,0.8);">💥</div>
-                <h1 class="text-5xl font-bold text-red-400 mb-4 glow-text cyber-title" style="text-shadow: 0 0 30px rgba(255,0,0,0.9);">${title || 'HULL BREACH'}</h1>
-                <p class="text-gray-300 mb-6 text-xl">${message || 'Ship destroyed'}</p>
-                <div class="space-y-4">
-                    <div class="text-lg text-red-400 glow-text">Final Stats:</div>
-                    <div class="text-sm text-gray-300 space-y-1">
-                        <div>Distance Traveled: ${gameState ? gameState.distance.toFixed(1) : '0'} light years</div>
-                        <div>Final Velocity: ${gameState ? (gameState.velocity * 1000).toFixed(0) : '0'} km/s</div>
-                        <div>Energy Remaining: ${gameState ? gameState.energy.toFixed(0) : '0'}%</div>
-                        <div>Hull Integrity: ${gameState ? gameState.hull.toFixed(0) : '0'}%</div>
-                        <div>Galaxies Cleared: ${gameState ? (gameState.galaxiesCleared || 0) : 0}/8</div>
-                        <div>Emergency Warps: ${gameState ? `${gameState.emergencyWarp.available}/${gameState.emergencyWarp.maxWarps}` : '0/10'}</div>
-                    </div>
-                    <button onclick="location.reload()" class="mt-6 space-btn rounded px-6 py-3" style="cursor: pointer; background: linear-gradient(135deg, #ff0066 0%, #ff6600 100%); border: 2px solid #ff3300;">
-                        <i class="fas fa-redo mr-2"></i>Restart Mission
-                    </button>
+    // Clean up any active effects
+    if (typeof cleanupEventHorizonEffects === 'function') {
+        cleanupEventHorizonEffects();
+    }
+
+    // Clear any remaining timeouts/intervals
+    if (typeof window.mobileUpdateInterval !== 'undefined') {
+        clearInterval(window.mobileUpdateInterval);
+    }
+
+    // Enhanced game over screen with visible mouse cursor
+    const gameOverOverlay = document.createElement('div');
+    gameOverOverlay.id = 'gameOverScreen';
+    gameOverOverlay.className = 'absolute inset-0 bg-black bg-opacity-95 flex items-center justify-center z-50 cyberpunk-bg';
+    gameOverOverlay.style.cursor = 'auto'; // Make mouse visible
+    gameOverOverlay.innerHTML = `
+        <div class="text-center ui-panel rounded-lg p-8" style="cursor: auto;">
+            <h1 class="text-4xl font-bold text-red-400 mb-4 glow-text cyber-title">MISSION FAILED</h1>
+            <p class="text-gray-300 mb-6">${message || 'Ship destroyed'}</p>
+            <div class="space-y-4">
+                <div class="text-lg text-cyan-400 glow-text">Final Stats:</div>
+                <div class="text-sm text-gray-300 space-y-1">
+                    <div>Distance Traveled: ${gameState ? gameState.distance.toFixed(1) : '0'} light years</div>
+                    <div>Final Velocity: ${gameState ? (gameState.velocity * 1000).toFixed(0) : '0'} km/s</div>
+                    <div>Energy Remaining: ${gameState ? gameState.energy.toFixed(0) : '0'}%</div>
+                    <div>Hull Integrity: ${gameState ? gameState.hull.toFixed(0) : '0'}%</div>
+                    <div>Galaxies Cleared: ${gameState ? gameState.galaxiesCleared : 0}/8</div>
+                    <div>Emergency Warps Remaining: ${gameState ? gameState.emergencyWarp.available : '0'}</div>
                 </div>
+                <button onclick="location.reload()" class="mt-6 space-btn rounded px-6 py-3" style="cursor: pointer;">
+                    <i class="fas fa-redo mr-2"></i>Restart Mission
+                </button>
             </div>
-        `;
-        document.body.appendChild(gameOverOverlay);
+        </div>
+    `;
+    document.body.appendChild(gameOverOverlay);
 
-        document.body.style.cursor = 'auto';
-        gameOverOverlay.style.pointerEvents = 'all';
+    // Ensure mouse is visible and working
+    document.body.style.cursor = 'auto';
+    gameOverOverlay.style.pointerEvents = 'all';
 
-        console.log('✅ Hull breach game over screen displayed');
-    }, 1500);
+    console.log('✅ Game over screen displayed - all systems stopped');
 }
 
 // =============================================================================
