@@ -513,7 +513,8 @@ let twoFingerTouchStartRotation = 0;
 
 document.addEventListener('touchstart', (e) => {
     // Only handle touches on game canvas, not on UI buttons
-    if (e.target.closest('.mobile-btn') || 
+    if (e.target.closest('.mobile-btn') ||
+        e.target.closest('.mobile-controls-container') ||
         e.target.closest('.mobile-controls') ||
         e.target.closest('.mobile-popup') ||
         e.target.closest('.nav-panel-mobile')) {
@@ -544,7 +545,8 @@ document.addEventListener('touchstart', (e) => {
 
 document.addEventListener('touchmove', (e) => {
     // Only handle touches on game canvas, not on UI buttons
-    if (e.target.closest('.mobile-btn') || 
+    if (e.target.closest('.mobile-btn') ||
+        e.target.closest('.mobile-controls-container') ||
         e.target.closest('.mobile-controls') ||
         e.target.closest('.mobile-popup') ||
         e.target.closest('.nav-panel-mobile')) {
@@ -762,11 +764,20 @@ const mobileUpdateInterval = setInterval(() => {
             const hullEl = document.getElementById('mobileFloatingHull');
             const energyEl = document.getElementById('mobileFloatingEnergy');
             const warpsEl = document.getElementById('mobileFloatingWarps');
-            
+
             if (hullEl) hullEl.textContent = Math.round(gameState.hull) + '%';
             if (energyEl) energyEl.textContent = Math.round(gameState.energy) + '%';
             if (warpsEl) warpsEl.textContent = gameState.emergencyWarp?.available ?? 5;
         }
+    }
+
+    // Update mobile indicators
+    if (typeof gameState !== 'undefined') {
+        const energyIndicator = document.getElementById('mobileEnergyValue');
+        const warpIndicator = document.getElementById('mobileWarpValue');
+
+        if (energyIndicator) energyIndicator.textContent = Math.round(gameState.energy) + '%';
+        if (warpIndicator) warpIndicator.textContent = gameState.emergencyWarp?.available ?? 5;
     }
 }, 1000);
 
@@ -783,13 +794,20 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         
         if (isMobileDevice()) {
-            const mobileControls = document.querySelector('.mobile-controls');
+            const mobileControlsContainer = document.querySelector('.mobile-controls-container');
+            const mobileIndicators = document.querySelectorAll('.mobile-indicator');
             const navPanelMobile = document.querySelector('.nav-panel-mobile');
             const floatingStatus = document.getElementById('mobileFloatingStatus');
-            
-            if (mobileControls) {
-                mobileControls.style.display = 'flex';
-                console.log('📱 Mobile controls now visible');
+
+            if (mobileControlsContainer) {
+                mobileControlsContainer.style.display = 'flex';
+                console.log('📱 Mobile controls container now visible');
+            }
+            if (mobileIndicators.length > 0) {
+                mobileIndicators.forEach(indicator => {
+                    indicator.style.display = 'block';
+                });
+                console.log('📱 Mobile indicators now visible');
             }
             if (navPanelMobile) {
                 navPanelMobile.style.display = 'block';

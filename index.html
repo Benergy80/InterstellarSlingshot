@@ -250,8 +250,22 @@
     }
     
     /* Show mobile controls */
-    .mobile-controls {
+    .mobile-controls-container {
         display: flex !important;
+    }
+
+    /* Show mobile indicators */
+    .mobile-indicator {
+        display: block !important;
+    }
+
+    /* Add transparency to shield indicator on mobile */
+    .shield-indicator {
+        opacity: 0.7 !important;
+    }
+
+    .shield-indicator.active {
+        opacity: 0.7 !important;
     }
     
     /* Mobile crosshair */
@@ -275,7 +289,8 @@
 
     /* Hide during intro */
     body.intro-active #achievementPopup,
-    body.intro-active .mobile-controls,
+    body.intro-active .mobile-controls-container,
+    body.intro-active .mobile-indicator,
     body.intro-active .nav-panel-mobile {
         display: none !important;
     }
@@ -332,7 +347,8 @@
 
             /* Hide during intro */
             body.intro-active #achievementPopup,
-            body.intro-active .mobile-controls,
+            body.intro-active .mobile-controls-container,
+            body.intro-active .mobile-indicator,
             body.intro-active .nav-panel-mobile {
                 display: none !important;
             }
@@ -348,15 +364,70 @@
                 transform: translate(-50%, -50%) !important;
             }
         }
-        /* Mobile control buttons */
-        .mobile-controls {
+        /* Mobile indicators - Hidden by default, shown on mobile */
+        .mobile-indicator {
+            position: fixed;
+            left: 10px;
+            background: linear-gradient(135deg, rgba(15, 23, 42, 0.5), rgba(30, 41, 59, 0.5));
+            border: 1px solid rgba(0, 150, 255, 0.5);
+            border-radius: 8px;
+            padding: 6px 10px;
+            font-family: 'Orbitron', monospace;
+            font-size: 11px;
+            text-shadow: 0 0 8px rgba(0, 212, 255, 0.6);
+            backdrop-filter: blur(2px);
+            z-index: 850;
+            display: none;
+            opacity: 0.7;
+            box-shadow: 0 0 15px rgba(0, 150, 255, 0.3);
+            color: #00d4ff;
+        }
+
+        .energy-indicator {
+            top: 35%;
+            color: #ffff00;
+            border-color: rgba(255, 255, 0, 0.5);
+            text-shadow: 0 0 8px rgba(255, 255, 0, 0.6);
+        }
+
+        .warp-indicator {
+            top: 55%;
+            color: #ff6600;
+            border-color: rgba(255, 100, 0, 0.5);
+            text-shadow: 0 0 8px rgba(255, 100, 0, 0.6);
+        }
+
+        .indicator-value {
+            font-size: 10px;
+            margin-top: 2px;
+            font-weight: bold;
+        }
+
+        /* Mobile control buttons container */
+        .mobile-controls-container {
             position: fixed;
             bottom: 20px;
             left: 50%;
             transform: translateX(-50%);
             display: none;
-            gap: 15px;
+            flex-direction: column;
+            gap: 10px;
             z-index: 100;
+            pointer-events: auto;
+        }
+
+        /* Top row: Flight controls and Emergency warp */
+        .mobile-controls-top {
+            display: flex;
+            gap: 15px;
+            justify-content: center;
+        }
+
+        /* Bottom row: Main action buttons */
+        .mobile-controls {
+            display: flex;
+            gap: 15px;
+            justify-content: center;
             pointer-events: auto;
         }
 
@@ -506,7 +577,8 @@
         
         /* Force hide mobile on desktop */
         @media (min-width: 769px) and (pointer: fine) and (hover: hover) {
-            .mobile-controls,
+            .mobile-controls-container,
+            .mobile-indicator,
             .nav-panel-mobile,
             .mobile-popup {
                 display: none !important;
@@ -728,45 +800,64 @@
     <div class="shield-restrictions">⚠️ Warp & Missiles Disabled</div>
 </div>
 
+<!-- Mobile Energy Indicator -->
+<div class="mobile-indicator energy-indicator" id="mobileEnergyIndicator">
+    <div>⚡ ENERGY</div>
+    <div class="indicator-value"><span id="mobileEnergyValue">100%</span></div>
+</div>
+
+<!-- Mobile Emergency Warp Indicator -->
+<div class="mobile-indicator warp-indicator" id="mobileWarpIndicator">
+    <div>🚀 WARP</div>
+    <div class="indicator-value"><span id="mobileWarpValue">5</span></div>
+</div>
+
 <!-- MOBILE CONTROLS -->
-<div class="mobile-controls">
-    <button class="mobile-btn" onclick="showMobilePanel('controls')" title="Flight Controls">
-        <i class="fas fa-gamepad"></i>
-    </button>
-    <button class="mobile-btn missile" 
-        onclick="mobileLaunchMissile()" 
-        title="Launch Missile">
-        <i class="fas fa-rocket"></i>
-        <span class="missile-count-badge" id="mobileMissileCountBadge">3</span>
-    </button>
-    <button class="mobile-btn" 
-        ontouchstart="mobileBrakesStart()" 
-        ontouchend="mobileBrakesEnd()"
-        onmousedown="mobileBrakesStart()" 
-        onmouseup="mobileBrakesEnd()"
-        title="Brakes (Hold)">
-        <i class="fas fa-hand-paper"></i>
-    </button>
-    <button class="mobile-btn fire" 
-        onclick="handleMobileFire()" 
-        ontouchstart="handleMobileFire(event)" 
-        title="Fire Weapons">
-        <i class="fas fa-crosshairs"></i>
-    </button>
-    <button class="mobile-btn" 
-        onmousedown="startForwardThrust()" 
-        onmouseup="stopForwardThrust()" 
-        ontouchstart="startForwardThrust()" 
-        ontouchend="stopForwardThrust()" 
-        title="Forward Thrust">
-        <i class="fas fa-arrow-up"></i>
-    </button>
-    <button class="mobile-btn" onclick="mobileToggleShields()" title="Toggle Shields">
-        <i class="fas fa-shield-alt"></i>
-    </button>
-    <button class="mobile-btn" onclick="mobileEmergencyWarp()" title="Emergency Warp">
-        <i class="fa-solid fa-triangle-exclamation"></i>
-    </button>
+<div class="mobile-controls-container">
+    <!-- Top row: Flight Controls and Emergency Warp (aligned with indicators) -->
+    <div class="mobile-controls-top">
+        <button class="mobile-btn" onclick="showMobilePanel('controls')" title="Flight Controls">
+            <i class="fas fa-gamepad"></i>
+        </button>
+        <button class="mobile-btn" onclick="mobileEmergencyWarp()" title="Emergency Warp">
+            <i class="fa-solid fa-triangle-exclamation"></i>
+        </button>
+    </div>
+
+    <!-- Bottom row: Main action buttons -->
+    <div class="mobile-controls">
+        <button class="mobile-btn missile"
+            onclick="mobileLaunchMissile()"
+            title="Launch Missile">
+            <i class="fas fa-rocket"></i>
+            <span class="missile-count-badge" id="mobileMissileCountBadge">3</span>
+        </button>
+        <button class="mobile-btn"
+            ontouchstart="mobileBrakesStart()"
+            ontouchend="mobileBrakesEnd()"
+            onmousedown="mobileBrakesStart()"
+            onmouseup="mobileBrakesEnd()"
+            title="Brakes (Hold)">
+            <i class="fas fa-hand-paper"></i>
+        </button>
+        <button class="mobile-btn fire"
+            onclick="handleMobileFire()"
+            ontouchstart="handleMobileFire(event)"
+            title="Fire Weapons">
+            <i class="fas fa-crosshairs"></i>
+        </button>
+        <button class="mobile-btn"
+            onmousedown="startForwardThrust()"
+            onmouseup="stopForwardThrust()"
+            ontouchstart="startForwardThrust()"
+            ontouchend="stopForwardThrust()"
+            title="Forward Thrust">
+            <i class="fas fa-arrow-up"></i>
+        </button>
+        <button class="mobile-btn" onclick="mobileToggleShields()" title="Toggle Shields">
+            <i class="fas fa-shield-alt"></i>
+        </button>
+    </div>
 </div>
 
     <!-- Mobile Navigation Panel -->
