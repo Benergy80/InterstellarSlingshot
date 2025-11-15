@@ -877,10 +877,50 @@ function showMissionCommandAlert(title, text, isVictoryMessage = false) {
     const isFinalTutorialMessage = title === "Final Orders";
     
     if (isTutorialActive && !isVictoryMessage) {
-    // Create SKIP TUTORIAL button for tutorial messages
+    // ⭐ Create button container with flex layout for OK and SKIP buttons
+    const tutorialButtonContainer = document.createElement('div');
+    tutorialButtonContainer.className = 'flex gap-4 mt-4';
+    tutorialButtonContainer.style.cssText = `
+        display: flex;
+        gap: 1rem;
+        margin-top: 1rem;
+        justify-content: center;
+        flex-wrap: wrap;
+    `;
+
+    // ⭐ Create blue OK button to advance to next tutorial message
+    const okButton = document.createElement('button');
+    okButton.id = 'missionCommandOK';
+    okButton.className = 'space-btn rounded px-6 py-2';
+    okButton.innerHTML = '<i class="fas fa-check mr-2"></i>OK';
+    okButton.style.cssText = `
+        background: linear-gradient(135deg, rgba(0, 150, 255, 0.8), rgba(0, 100, 200, 0.8));
+        border-color: rgba(0, 200, 255, 0.6);
+        pointer-events: auto;
+        touch-action: manipulation;
+        -webkit-tap-highlight-color: rgba(0, 150, 255, 0.3);
+        cursor: pointer;
+        flex: 1;
+        min-width: 120px;
+    `;
+    tutorialButtonContainer.appendChild(okButton);
+
+    // ⭐ OK button dismisses current message, next one will appear on timer
+    const handleOK = () => {
+        alertElement.classList.add('hidden');
+    };
+
+    okButton.onclick = handleOK;
+    okButton.ontouchend = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        handleOK();
+    };
+
+    // ⭐ Create orange SKIP TUTORIAL button
     const skipButton = document.createElement('button');
     skipButton.id = 'missionCommandSkip';
-    skipButton.className = 'mt-4 space-btn rounded px-6 py-2';
+    skipButton.className = 'space-btn rounded px-6 py-2';
     skipButton.innerHTML = '<i class="fas fa-forward mr-2"></i>SKIP TUTORIAL';
     skipButton.style.cssText = `
         background: linear-gradient(135deg, rgba(255, 150, 0, 0.8), rgba(200, 100, 0, 0.8));
@@ -889,13 +929,15 @@ function showMissionCommandAlert(title, text, isVictoryMessage = false) {
         touch-action: manipulation;
         -webkit-tap-highlight-color: rgba(255, 150, 0, 0.3);
         cursor: pointer;
+        flex: 1;
+        min-width: 120px;
     `;
-    buttonContainer.appendChild(skipButton);
-    
+    tutorialButtonContainer.appendChild(skipButton);
+
     // SKIP TUTORIAL button immediately completes tutorial
     const handleSkip = () => {
         alertElement.classList.add('hidden');
-        
+
         // Skip ALL remaining tutorial messages
         if (tutorialSystem.active) {
             tutorialSystem.active = false;
@@ -903,13 +945,16 @@ function showMissionCommandAlert(title, text, isVictoryMessage = false) {
             showAchievement('Tutorial Skipped', 'All hostile forces are now active!');
         }
     };
-    
+
     skipButton.onclick = handleSkip;
     skipButton.ontouchend = (e) => {
         e.preventDefault();
         e.stopPropagation();
         handleSkip();
     };
+
+    // Add the button container to the main container
+    buttonContainer.appendChild(tutorialButtonContainer);
 } else {
     // Create UNDERSTOOD button for victory messages and non-tutorial messages
     const understoodButton = document.createElement('button');
