@@ -317,7 +317,7 @@
 
     /* Mobile tutorial positioning */
     .mission-command-alert {
-        top: 15% !important;
+        top: calc(15% + 10px) !important;
         transform: translate(-50%, -50%) !important;
     }
             
@@ -354,7 +354,7 @@
 
             /* Mobile tutorial positioning */
             .mission-command-alert {
-                top: 15% !important;
+                top: calc(15% + 10px) !important;
                 transform: translate(-50%, -50%) !important;
             }
         }
@@ -976,9 +976,27 @@
         window.addEventListener('load', () => {
             if (gameInitialized) return;
             gameInitialized = true;
-            
+
+            // Hide mobile browser UI by scrolling
+            if ('ontouchstart' in window || navigator.maxTouchPoints > 0) {
+                // Make body slightly taller to enable scroll
+                document.body.style.minHeight = 'calc(100vh + 1px)';
+
+                // Scroll to hide address bar
+                setTimeout(() => {
+                    window.scrollTo(0, 1);
+                }, 100);
+
+                // Lock scroll position after hiding UI
+                setTimeout(() => {
+                    window.scrollTo(0, 0);
+                    document.body.style.minHeight = '100vh';
+                    document.body.style.overflow = 'hidden';
+                }, 500);
+            }
+
             console.log('Starting Interstellar Slingshot...');
-            
+
             setTimeout(() => {
                 try {
                     if (typeof THREE === 'undefined') {
