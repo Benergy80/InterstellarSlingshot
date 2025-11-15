@@ -156,6 +156,7 @@ function updateAtmosphericPerspective(camera) {
                 // Check if object needs atmospheric effects
                 if ((atmosphericConfig.enabledCategories.planets && (type === 'planet' || type === 'moon')) ||
                     (atmosphericConfig.enabledCategories.stars && (type === 'star' || type === 'pulsar' || type === 'supernova' || type === 'brown_dwarf')) ||
+                    (atmosphericConfig.enabledCategories.nebulas && type === 'nebula') ||
                     (atmosphericConfig.enabledCategories.cosmicFeatures && (type === 'dyson_sphere' || type === 'space_whale' || type === 'crystal_formation' || type === 'plasma_storm' || type === 'dark_matter_node' || type === 'ringworld')) ||
                     (atmosphericConfig.enabledCategories.galaxies && type === 'galaxy') ||
                     (atmosphericConfig.enabledCategories.outerSystems && (object.userData.systemType === 'exotic_core' || object.userData.systemType === 'borg_patrol'))) {
