@@ -1207,7 +1207,7 @@ function updateEnhancedPhysics() {
 
     // SPECIFICATION: Use consistent rotSpeed = 0.03 for all rotation inputs
     const rotSpeed = 0.02;
-    const gravitationalConstant = 0.03; // ⭐ INCREASED 10x: Make gravity dominant force (was 0.003)
+    const gravitationalConstant = 0.01; // ⚡ BALANCED: Moderate gravity force (was 0.03 - too strong!)
     const assistRange = 60; // DOUBLED
     const collisionThreshold = 6; // DOUBLED
     
@@ -1539,50 +1539,56 @@ if (keys.x && gameState.energy > 0) {
                 }
             }
 
-            // PLANET COLLISION DETECTION - Prevent flying into planets
+            // ⚡ DEADLY COLLISION DETECTION - Crashing into celestial bodies causes mission failure
 if ((planet.userData.type === 'planet' || planet.userData.type === 'star' || planet.userData.type === 'blackhole') &&
     distance < planetRadius + 10) { // 10 unit safety margin
-    
-    // Push player away from planet surface
-    const pushDirection = new THREE.Vector3().subVectors(camera.position, planetPosition).normalize();
-    const pushDistance = (planetRadius + 15) - distance; // Push to safe distance
-    
-    camera.position.add(pushDirection.multiplyScalar(pushDistance));
-    
-    // Reduce velocity significantly on collision
-    gameState.velocityVector.multiplyScalar(0.3); // Lose 70% of speed
-    
-    // Small hull damage from scraping (check invulnerability first)
-    if (!isBlackHoleWarpInvulnerable()) {
-        if (planet.userData.type === 'star' || planet.userData.type === 'blackhole') {
-            gameState.hull = Math.max(0, gameState.hull - 5); // More damage for stars/black holes
-            if (typeof showAchievement === 'function') {
-                showAchievement('Surface Contact!', `Scraped against ${planet.userData.name} - Hull damage!`);
-            }
-        } else {
-            // Apply damage with shield reduction
-            const damage = 2;
-            const shieldReduction = typeof getShieldDamageReduction === 'function' ?
-                                    getShieldDamageReduction() : 0;
-            const actualDamage = damage * (1 - shieldReduction);
 
-            gameState.hull = Math.max(0, gameState.hull - actualDamage);
+    // ⚡ SUN COLLISION = INSTANT DEATH
+    if (planet.userData.type === 'star') {
+        gameState.hull = 0; // Instant complete hull failure
+        gameState.velocityVector.set(0, 0, 0); // Stop all motion
 
-            // Create shield hit effect if shields are active
-            if (typeof isShieldActive === 'function' && isShieldActive() &&
-                typeof createShieldHitEffect === 'function') {
-                createShieldHitEffect(planetPosition);
-            }
-
-            if (typeof showAchievement === 'function') {
-                showAchievement('Collision Avoided', `Bounced off ${planet.userData.name}`);
-            }
+        // Create massive explosion
+        if (typeof createPlayerExplosion === 'function') {
+            createPlayerExplosion();
         }
+
+        // Trigger mission failed
+        if (typeof showGameOverScreen === 'function') {
+            showGameOverScreen('VAPORIZED BY STAR', `Ship destroyed by ${planet.userData.name} - hull integrity: 0%`);
+        }
+
+        if (typeof playSound === 'function') {
+            playSound('explosion');
+        }
+
+        console.log(`💀 INSTANT DEATH: Player collided with star ${planet.userData.name}`);
+        return;
     }
-    
-    // Sound effect
-    if (typeof playSound === 'function') {
-        playSound('hit');
+
+    // ⚡ PLANET/BLACK HOLE COLLISION = EXPLOSION AND MISSION FAILURE
+    if (planet.userData.type === 'planet' || planet.userData.type === 'blackhole') {
+        // Complete hull destruction on direct collision
+        gameState.hull = 0;
+        gameState.velocityVector.set(0, 0, 0); // Stop all motion
+
+        // Create explosion
+        if (typeof createPlayerExplosion === 'function') {
+            createPlayerExplosion();
+        }
+
+        // Trigger mission failed
+        const impactType = planet.userData.type === 'blackhole' ? 'CRUSHED BY SINGULARITY' : 'PLANETARY IMPACT';
+        if (typeof showGameOverScreen === 'function') {
+            showGameOverScreen(impactType, `Ship destroyed by collision with ${planet.userData.name}`);
+        }
+
+        if (typeof playSound === 'function') {
+            playSound('explosion');
+        }
+
+        console.log(`💀 MISSION FAILED: Player collided with ${planet.userData.type} ${planet.userData.name}`);
+        return;
     }
 }
             

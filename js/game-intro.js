@@ -1945,26 +1945,33 @@ function fadeCountdownTextForGameTransition() {
 }
 
 function resetCameraToGamePosition() {
-    // ⭐ ENHANCED: Start player in orbit around Sol system for gravity mechanics gameplay
+    // ⭐ ENHANCED: Start player in outer Sol system for challenging gravity escape gameplay
     const localSystemOffset = { x: 2000, y: 0, z: 1200 }; // Sol system center
 
-    // ⭐ Store Sol system center in gameState for gravity tracking
+    // ⭐ Calculate gravity well boundary (200 units beyond Neptune at 1400)
+    const neptuneOrbit = 1400;
+    const gravityWellRadius = neptuneOrbit + 200; // 1600 units
+
+    // ⭐ Store Sol system data in gameState for gravity tracking
     if (typeof gameState !== 'undefined' && gameState.gravity) {
         gameState.gravity.startingSystemCenter = new THREE.Vector3(
             localSystemOffset.x,
             localSystemOffset.y,
             localSystemOffset.z
         );
-        console.log('⭐ Sol system center stored for gravity mechanics');
+        gameState.gravity.wellRadius = gravityWellRadius; // 1600 units
+        gameState.gravity.escapeThreshold = gravityWellRadius; // Can't escape beyond this without slingshot
+        console.log(`⭐ Sol system gravity well: ${gravityWellRadius} units radius`);
     }
 
-    // ⭐ Position player in stable orbit around Sol system (200 units from center)
-    const orbitRadius = 200;
-    const orbitAngle = Math.PI / 4; // 45 degrees
+    // ⭐ Position player in outer system (near Jupiter orbit at 500 units)
+    // This is far from the sun but still well within the gravity well
+    const startOrbitRadius = 500; // Jupiter's orbit
+    const orbitAngle = Math.PI / 3; // 60 degrees
     camera.position.set(
-        localSystemOffset.x + Math.cos(orbitAngle) * orbitRadius,
-        localSystemOffset.y + 20, // Slight vertical offset
-        localSystemOffset.z + Math.sin(orbitAngle) * orbitRadius
+        localSystemOffset.x + Math.cos(orbitAngle) * startOrbitRadius,
+        localSystemOffset.y + 40, // Elevated for better view
+        localSystemOffset.z + Math.sin(orbitAngle) * startOrbitRadius
     );
     camera.lookAt(new THREE.Vector3(0, 0, 0)); // Face towards Sagittarius A*
 
@@ -1977,7 +1984,7 @@ function resetCameraToGamePosition() {
         };
     }
 
-    // ⭐ Set orbital velocity to maintain stable orbit around Sol system
+    // ⭐ Set orbital velocity - not enough to escape, just maintain orbit
     if (typeof gameState !== 'undefined' && gameState.velocityVector) {
         const systemCenter = new THREE.Vector3(localSystemOffset.x, localSystemOffset.y, localSystemOffset.z);
         const playerPosition = camera.position.clone();
@@ -1986,14 +1993,15 @@ function resetCameraToGamePosition() {
         const radialDirection = new THREE.Vector3().subVectors(playerPosition, systemCenter).normalize();
         const orbitalDirection = new THREE.Vector3(-radialDirection.z, 0, radialDirection.x).normalize();
 
-        // ⭐ Set orbital velocity to match minimum velocity (will be balanced by gravity)
+        // ⭐ Set orbital velocity - player will be stuck in orbit, needs slingshot to escape
         const orbitalSpeed = gameState.minVelocity || 0.2;
         gameState.velocityVector = orbitalDirection.multiplyScalar(orbitalSpeed);
 
-        console.log('⭐ Player starting in orbit around Sol system with orbital velocity:', orbitalSpeed);
+        console.log(`⭐ Player starting at ${startOrbitRadius} units from Sol (Jupiter orbit)`);
+        console.log(`⭐ Gravity well extends to ${gravityWellRadius} units - slingshot required to escape!`);
     }
 
-    console.log('📍 Camera positioned in orbit around Sol system for gravity gameplay');
+    console.log('📍 Camera positioned in outer Sol system - gravity well active');
 }
 
 function fadeOutIntroElements(progress) {

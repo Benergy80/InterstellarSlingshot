@@ -94,20 +94,24 @@ const gameState = {
     // ⭐ NEW: Enhanced gravity system for core gameplay
     gravity: {
         enabled: true, // Master switch for gravity system
-        strengthMultiplier: 10.0, // Overall gravity strength (increased from default)
+        strengthMultiplier: 3.0, // ⚡ REDUCED: Balanced gravity (was 10.0, too strong)
         systemCenterPull: true, // Pull toward system centers
         currentGravityWell: null, // Current dominant gravity source
-        escapeThreshold: 5000, // Distance to be considered "escaped" from a system
+        escapeThreshold: 1600, // ⚡ UPDATED: Distance to escape Sol gravity well (Neptune + 200)
+        wellRadius: 1600, // ⚡ NEW: Gravity well boundary radius
         // Gravity multipliers by object type
         multipliers: {
-            star: 15.0, // Stars have very strong gravity
-            blackhole: 30.0, // Black holes have extreme gravity
-            planet: 8.0, // Planets have strong gravity
-            systemCenter: 20.0 // Planetary system centers have very strong pull
+            star: 3.0, // ⚡ REDUCED: Stars have moderate gravity (was 15.0)
+            blackhole: 8.0, // ⚡ REDUCED: Black holes strong but not instant death (was 30.0)
+            planet: 2.0, // ⚡ REDUCED: Planets have mild gravity (was 8.0)
+            systemCenter: 5.0 // ⚡ REDUCED: System center pull (was 20.0) - enough to trap player
         },
         // Track if player has escaped their starting system
         escapedStartingSystem: false,
-        startingSystemCenter: null // Will be set to Sol system center
+        startingSystemCenter: null, // Will be set to Sol system center
+        // ⚡ NEW: Gravity well system
+        insideWell: true, // Player starts inside Sol gravity well
+        maxNormalThrust: 0.5 // Max velocity achievable with normal thrust (can't escape well)
     },
     weapons: {
         armed: true,
