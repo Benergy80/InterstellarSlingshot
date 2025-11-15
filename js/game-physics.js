@@ -1207,7 +1207,7 @@ function updateEnhancedPhysics() {
 
     // SPECIFICATION: Use consistent rotSpeed = 0.03 for all rotation inputs
     const rotSpeed = 0.02;
-    const gravitationalConstant = 0.01; // ⚡ BALANCED: Moderate gravity force (was 0.03 - too strong!)
+    const gravitationalConstant = 0.003; // TRIPLED for stronger gravity
     const assistRange = 60; // DOUBLED
     const collisionThreshold = 6; // DOUBLED
     
@@ -1376,22 +1376,6 @@ if (frameDistance > 0.01) { // Only track significant movement
         }
     }
 
-    // ⭐ NEW: Warp recharge system - regenerate 1 warp every 60 seconds
-    if (!gameState.emergencyWarp.lastRechargeTime) {
-        gameState.emergencyWarp.lastRechargeTime = Date.now();
-    }
-
-    const timeSinceLastRecharge = Date.now() - gameState.emergencyWarp.lastRechargeTime;
-    if (timeSinceLastRecharge >= gameState.emergencyWarp.rechargeDuration &&
-        gameState.emergencyWarp.available < gameState.emergencyWarp.maxWarps) {
-        gameState.emergencyWarp.available++;
-        gameState.emergencyWarp.lastRechargeTime = Date.now();
-        if (typeof showAchievement === 'function') {
-            showAchievement('Warp Recharged', `Warp charges: ${gameState.emergencyWarp.available}/${gameState.emergencyWarp.maxWarps}`);
-        }
-        console.log(`⚡ Warp recharged! Now have ${gameState.emergencyWarp.available} warps`);
-    }
-
      // SPECIFICATION: Emergency Systems - O Key: Emergency warp
 // Check shield block FIRST before processing warp
 if (keys.o && typeof isShieldActive === 'function' && isShieldActive()) {
@@ -1423,11 +1407,8 @@ else if (keys.o && gameState.emergencyWarp.available > 0 && !gameState.emergency
     if (typeof playSound !== 'undefined') {
         playSound('warp');
     }
-    
-    // ⭐ Reset recharge timer when warp is used
-    gameState.emergencyWarp.lastRechargeTime = Date.now();
 
-    console.log(`🚀 Emergency warp activated! ${gameState.emergencyWarp.available}/${gameState.emergencyWarp.maxWarps} charges remaining`);
+    console.log(`🚀 Emergency warp activated! ${gameState.emergencyWarp.available} charges remaining`);
 }
 
         // Enhanced Emergency warp timer with momentum coasting
@@ -1605,42 +1586,14 @@ if ((planet.userData.type === 'planet' || planet.userData.type === 'star' || pla
     }
 }
             
-            // ⭐ ENHANCED: Gravity is now core gameplay mechanic
             if (planet.userData.type !== 'asteroid') {
                 let gravityMultiplier = 1.0;
 
-                // ⭐ MUCH STRONGER gravity based on gameState configuration
-                if (gameState.gravity && gameState.gravity.enabled) {
-                    if (planet.userData.type === 'star') {
-                        gravityMultiplier = gameState.gravity.multipliers.star; // Very strong (15.0)
-                    } else if (planet.userData.type === 'planet') {
-                        gravityMultiplier = gameState.gravity.multipliers.planet; // Strong (8.0)
-                    } else if (planet.userData.type === 'blackhole') {
-                        gravityMultiplier = gameState.gravity.multipliers.blackhole; // Extreme (30.0)
-                    }
-
-                    // ⭐ NEW: System center gravity - pull toward planetary system centers
-                    if (gameState.gravity.systemCenterPull && planet.userData.systemCenter) {
-                        // Also apply gravity toward the system center itself
-                        const systemCenter = planet.userData.systemCenter;
-                        const distanceToCenter = camera.position.distanceTo(systemCenter);
-
-                        if (distanceToCenter > 0 && distanceToCenter < 3000) { // Only within system range
-                            const centerGravityForce = gravitationalConstant * gameState.shipMass *
-                                                      (planetMass * gameState.gravity.multipliers.systemCenter) /
-                                                      (distanceToCenter * distanceToCenter);
-                            const centerDirection = new THREE.Vector3().subVectors(systemCenter, camera.position).normalize();
-                            const centerGravityVector = centerDirection.clone().multiplyScalar(centerGravityForce);
-                            totalGravitationalForce.add(centerGravityVector);
-                        }
-                    }
-                } else {
-                    // Fallback to old values if gravity system disabled
-                    if (planet.userData.type === 'star') {
-                        gravityMultiplier = 2.0;
-                    } else if (planet.userData.type === 'planet') {
-                        gravityMultiplier = 1.5;
-                    }
+                // Stronger gravity for stars and planets
+                if (planet.userData.type === 'star') {
+                    gravityMultiplier = 2.0; // Stars have 2x gravity
+                } else if (planet.userData.type === 'planet') {
+                    gravityMultiplier = 1.5; // Planets have 1.5x gravity
                 }
 
                 const gravitationalForce = gravitationalConstant * gameState.shipMass * planetMass * gravityMultiplier / (distance * distance);
@@ -2064,32 +2017,6 @@ if (dampedVelocity.length() >= gameState.minVelocity ||
     
     // Update velocity for Ship Status panel
     gameState.velocity = gameState.velocityVector.length();
-
-    // ⭐ NEW: Check for escape from Sol gravity well and unlock higher thrust
-    if (gameState.gravity && !gameState.gravity.escapedStartingSystem && gameState.gravity.startingSystemCenter) {
-        const distanceFromSol = camera.position.distanceTo(gameState.gravity.startingSystemCenter);
-
-        // Check if player has escaped the gravity well (1600 units)
-        if (distanceFromSol > gameState.gravity.wellRadius) {
-            gameState.gravity.escapedStartingSystem = true;
-            gameState.gravity.insideWell = false;
-
-            // ⭐ UNLOCK HIGHER THRUST CAPACITY - increase from 500 km/s to 2000 km/s
-            gameState.maxVelocity = 2.0; // Was 0.5, now 2.0 (2000 km/s)
-
-            console.log('🚀 ESCAPED SOL SYSTEM! Thrust capacity increased to 2000 km/s');
-
-            // Show dramatic achievement
-            if (typeof showAchievement === 'function') {
-                showAchievement('INTERSTELLAR SPACE ACHIEVED!', 'Thrust capacity increased: 500 km/s → 2000 km/s');
-            }
-
-            // Play achievement sound
-            if (typeof playSound === 'function') {
-                playSound('achievement');
-            }
-        }
-    }
 
     // FIXED: Energy regeneration only when NOT actively thrusting
 const isThrusting = (keys.w || keys.a || keys.s || keys.d || keys.b || keys.x) && gameState.energy > 0;

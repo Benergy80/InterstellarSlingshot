@@ -1903,14 +1903,9 @@ function setupNormalGameContent() {
         if (!gameState.velocityVector) {
             gameState.velocityVector = new THREE.Vector3(0, 0, 0);
         }
-
-        // ⭐ NEW: Set initial target lock to Earth
-        setTimeout(() => {
-            lockToEarth();
-        }, 2000); // Wait 2 seconds for everything to be initialized
     }
 
-    
+
     // START THE GAME ANIMATION LOOP during black screen for seamless transition
     if (typeof animate === 'function') {
         console.log('🎬 Starting game animation during black screen for seamless transition');
@@ -1950,34 +1945,10 @@ function fadeCountdownTextForGameTransition() {
 }
 
 function resetCameraToGamePosition() {
-    // ⭐ ENHANCED: Start player in outer Sol system for challenging gravity escape gameplay
-    const localSystemOffset = { x: 2000, y: 0, z: 1200 }; // Sol system center
-
-    // ⭐ Calculate gravity well boundary (200 units beyond Neptune at 1400)
-    const neptuneOrbit = 1400;
-    const gravityWellRadius = neptuneOrbit + 200; // 1600 units
-
-    // ⭐ Store Sol system data in gameState for gravity tracking
-    if (typeof gameState !== 'undefined' && gameState.gravity) {
-        gameState.gravity.startingSystemCenter = new THREE.Vector3(
-            localSystemOffset.x,
-            localSystemOffset.y,
-            localSystemOffset.z
-        );
-        gameState.gravity.wellRadius = gravityWellRadius; // 1600 units
-        gameState.gravity.escapeThreshold = gravityWellRadius; // Can't escape beyond this without slingshot
-        console.log(`⭐ Sol system gravity well: ${gravityWellRadius} units radius`);
-    }
-
-    // ⭐ Position player in outer system (near Jupiter orbit at 500 units)
-    // This is far from the sun but still well within the gravity well
-    const startOrbitRadius = 500; // Jupiter's orbit
-    const orbitAngle = Math.PI / 3; // 60 degrees
-    camera.position.set(
-        localSystemOffset.x + Math.cos(orbitAngle) * startOrbitRadius,
-        localSystemOffset.y + 40, // Elevated for better view
-        localSystemOffset.z + Math.sin(orbitAngle) * startOrbitRadius
-    );
+    // ADAPTED FOR SPHERICAL UNIVERSE
+    // Reset camera to normal game position (matching createOptimizedPlanets)
+    const localSystemOffset = { x: 2000, y: 0, z: 1200 }; // From createOptimizedPlanets
+    camera.position.set(localSystemOffset.x + 160, localSystemOffset.y + 40, localSystemOffset.z);
     camera.lookAt(new THREE.Vector3(0, 0, 0)); // Face towards Sagittarius A*
 
     // Reset camera rotation
@@ -1989,53 +1960,16 @@ function resetCameraToGamePosition() {
         };
     }
 
-    // ⭐ Set orbital velocity - not enough to escape, just maintain orbit
+    // Set initial orbital velocity
     if (typeof gameState !== 'undefined' && gameState.velocityVector) {
-        const systemCenter = new THREE.Vector3(localSystemOffset.x, localSystemOffset.y, localSystemOffset.z);
-        const playerPosition = camera.position.clone();
-
-        // Calculate direction perpendicular to radius (tangent to orbit)
-        const radialDirection = new THREE.Vector3().subVectors(playerPosition, systemCenter).normalize();
-        const orbitalDirection = new THREE.Vector3(-radialDirection.z, 0, radialDirection.x).normalize();
-
-        // ⭐ Set orbital velocity - player will be stuck in orbit, needs slingshot to escape
-        const orbitalSpeed = gameState.minVelocity || 0.2;
-        gameState.velocityVector = orbitalDirection.multiplyScalar(orbitalSpeed);
-
-        console.log(`⭐ Player starting at ${startOrbitRadius} units from Sol (Jupiter orbit)`);
-        console.log(`⭐ Gravity well extends to ${gravityWellRadius} units - slingshot required to escape!`);
+        const sunPosition = new THREE.Vector3(localSystemOffset.x, localSystemOffset.y, localSystemOffset.z);
+        const earthPosition = camera.position.clone();
+        const earthToSun = new THREE.Vector3().subVectors(sunPosition, earthPosition).normalize();
+        const orbitalDirection = new THREE.Vector3(-earthToSun.z, 0, earthToSun.x).normalize();
+        gameState.velocityVector = orbitalDirection.multiplyScalar(gameState.minVelocity || 0.2);
     }
 
-    console.log('📍 Camera positioned in outer Sol system - gravity well active');
-}
-
-// ⭐ NEW: Function to find and lock to Earth at game start
-function lockToEarth() {
-    if (typeof planets === 'undefined' || !planets || planets.length === 0) {
-        console.warn('⚠️ Cannot lock to Earth - planets not loaded yet');
-        return;
-    }
-
-    // Find Earth in the planets array
-    const earth = planets.find(p => p.userData && p.userData.name === 'Earth');
-
-    if (earth) {
-        // Set Earth as the target
-        if (typeof gameState !== 'undefined' && gameState.targetLock) {
-            gameState.targetLock.active = true;
-            gameState.targetLock.target = earth;
-            gameState.currentTarget = earth;
-
-            console.log('🌍 Player locked to Earth - gravity will drag you along its orbit');
-
-            // Show achievement
-            if (typeof showAchievement === 'function') {
-                showAchievement('Orbiting Earth', 'Use gravitational slingshots to escape to interstellar space');
-            }
-        }
-    } else {
-        console.warn('⚠️ Earth not found in planets array');
-    }
+    console.log('📍 Camera reset to normal game position in spherical universe');
 }
 
 function fadeOutIntroElements(progress) {
