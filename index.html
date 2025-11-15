@@ -97,19 +97,17 @@
             backdrop-filter: blur(2px);
             border: 1px solid rgba(0, 150, 255, 0.5);
             border-radius: 15px;
-            box-shadow: 
+            box-shadow:
                 0 12px 40px rgba(0, 150, 255, 0.3),
                 inset 0 1px 0 rgba(0,150,255,0.4),
                 inset 0 -1px 0 rgba(0,150,255,0.2);
-            cursor: auto !important;
-            pointer-events: auto !important;
+            pointer-events: none !important;
             transform-style: preserve-3d;
             perspective: 1200px;
             transform: perspective(1000px) rotateX(-2deg) translateZ(5px);
         }
 
-        .mission-command-alert * {
-            cursor: auto !important;
+        .mission-command-alert button {
             pointer-events: auto !important;
         }
 
@@ -158,6 +156,11 @@
         #achievementPopup {
             z-index: 999 !important;
             position: fixed !important;
+            pointer-events: none !important;
+        }
+
+        /* Allow pointer events only for interactive content */
+        #achievementPopup.interactive {
             pointer-events: auto !important;
         }
 

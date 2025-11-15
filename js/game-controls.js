@@ -3839,12 +3839,12 @@ function showAchievement(title, description, playAchievementSound = true) {
         popup.style.opacity = '';   // Clear inline opacity style
         popup.style.zIndex = '999'; // Maximum priority
         popup.style.position = 'fixed'; // Ensure it's always fixed
-        popup.style.pointerEvents = 'auto'; // Enable interaction
 
         popup.classList.remove('hidden');
 
         // Add click handler for "Slingshot Ready" on mobile
         if (title === 'Slingshot Ready') {
+            popup.classList.add('interactive'); // Enable pointer events
             popup.style.cursor = 'pointer';
 
             // Remove any existing handlers to prevent duplicates
@@ -3863,6 +3863,7 @@ function showAchievement(title, description, playAchievementSound = true) {
                 if (typeof executeSlingshot === 'function') {
                     executeSlingshot();
                     popup.classList.add('hidden');
+                    popup.classList.remove('interactive');
                 }
             };
 
@@ -3873,6 +3874,7 @@ function showAchievement(title, description, playAchievementSound = true) {
             popup.addEventListener('click', slingshotHandler);
             popup.addEventListener('touchstart', slingshotHandler, { passive: false });
         } else {
+            popup.classList.remove('interactive'); // Disable pointer events
             popup.style.cursor = 'default';
 
             // Remove slingshot handler if exists
@@ -3897,6 +3899,7 @@ function showAchievement(title, description, playAchievementSound = true) {
         // Auto-hide after display time
         setTimeout(() => {
             popup.classList.add('hidden');
+            popup.classList.remove('interactive'); // Remove pointer events when hidden
             console.log(`✅ Achievement hidden: ${title}`);
         }, displayTime);
     } else {
