@@ -394,7 +394,7 @@ function populateTargets() {
     }
 
     const allTargetableObjects = [
-        ...(typeof planets !== 'undefined' ? planets.filter(p => p.userData && p.userData.name !== 'Earth' && p.userData.type !== 'asteroid') : []),
+        ...(typeof planets !== 'undefined' ? planets.filter(p => p.userData && p.userData.type !== 'asteroid') : []),
         ...detectedWormholes,
         ...(typeof comets !== 'undefined' ? comets.filter(c => camera.position.distanceTo(c.position) < 4000) : []), // Doubled range
         ...(typeof enemies !== 'undefined' ? enemies.filter(e => {
@@ -847,7 +847,7 @@ function getCurrentGalaxyId() {
     }
     
     // Fallback: Use 3D galaxy center positions
-    const universeRadius = 100000;  // Increased to accommodate exotic/borg systems (up to 85k units) with margins
+    const universeRadius = 150000;  // Increased for wider map coverage (accommodates exotic/borg systems with larger margins)
     
     if (typeof getGalaxy3DPosition === 'function' && typeof galaxyTypes !== 'undefined') {
         let closestGalaxy = -1;
@@ -966,11 +966,11 @@ function setupGalaxyMap() {
         galaxyEl.textContent = (index + 1).toString();
         galaxyEl.title = `${galaxy.name} Galaxy (${galaxy.faction})`;
         
-        // Mark cleared galaxies with green checkmark
+        // Mark cleared galaxies with green dot
 		if (bossDefeated || (typeof gameState !== 'undefined' && gameState.currentGalaxyEnemies && gameState.currentGalaxyEnemies[index] === 0)) {
 		galaxyEl.style.backgroundColor = '#22c55e'; // Green for cleared
     	galaxyEl.style.border = '2px solid #86efac';
-    	galaxyEl.textContent = '✓';
+    	galaxyEl.textContent = '';
     	galaxyEl.title = `${galaxy.name} Galaxy (${galaxy.faction}) - LIBERATED`;
 		}
 
@@ -984,7 +984,7 @@ function setupGalaxyMap() {
     sgrAEl.style.top = '50%';
     sgrAEl.style.transform = 'translate(-50%, -50%)';
     sgrAEl.style.boxShadow = '0 0 8px #ca8a04';
-    sgrAEl.textContent = '✦';
+    sgrAEl.textContent = '';
     sgrAEl.title = 'Sagittarius A* - Galactic Center';
     galaxyMap.appendChild(sgrAEl);
     const existingGalaxyIndicator = document.getElementById('currentGalaxyIndicator');
@@ -1099,7 +1099,7 @@ function updateGalaxyMap() {
     const playerMapPos = document.getElementById('playerMapPosition');
     const targetMapPos = document.getElementById('targetMapPosition');
     const mapDirectionArrow = document.getElementById('mapDirectionArrow');
-    const universeRadius = 100000;  // Increased to accommodate exotic/borg systems (up to 85k units) with margins
+    const universeRadius = 150000;  // Increased for wider map coverage (accommodates exotic/borg systems with larger margins)
     
     if (!playerMapPos) return;
     
@@ -1129,7 +1129,7 @@ function updateGalaxyMap() {
     
     // Show nearby objects as dots (enemies, planets, etc.)
     const galaxyMap = document.getElementById('galaxyMap');
-    const radarRange = 2000; // Detection range for galactic view
+    const radarRange = 3000; // Detection range for galactic view (increased for wider coverage)
     
     if (galaxyMap && typeof planets !== 'undefined' && typeof enemies !== 'undefined') {
         // Collect all nearby targetable objects
@@ -1395,12 +1395,12 @@ mapDotPool.releaseAll();
     // **NEW: Display major cosmic features on map**
     if (typeof cosmicFeatures !== 'undefined') {
         // Function to add cosmic feature dot
-        const addCosmicFeatureDot = (feature, color, size, icon) => {
+        const addCosmicFeatureDot = (feature, color, size) => {
             if (!feature || !feature.position) return;
-            
+
             const featureMapX = (feature.position.x / universeRadius) + 0.5;
             const featureMapZ = (feature.position.z / universeRadius) + 0.5;
-            
+
             // Only show if within map bounds
             if (featureMapX >= 0 && featureMapX <= 1 && featureMapZ >= 0 && featureMapZ <= 1) {
                 const dot = mapDotPool.get('cosmic-feature');
@@ -1416,9 +1416,9 @@ mapDotPool.releaseAll();
                 dot.style.boxShadow = `0 0 8px ${color}`;
                 dot.style.pointerEvents = 'none';
                 dot.style.zIndex = '5';
-                dot.innerHTML = `<span style="font-size: 10px;">${icon}</span>`;
+                dot.innerHTML = '';
                 dot.title = feature.userData.name || 'Cosmic Feature';
-                
+
                 galaxyMap.appendChild(dot);
             }
         };
@@ -1426,35 +1426,35 @@ mapDotPool.releaseAll();
         // Add Dyson Spheres (legendary - large purple)
         if (cosmicFeatures.dysonSpheres) {
             cosmicFeatures.dysonSpheres.forEach(dyson => {
-                addCosmicFeatureDot(dyson, '#aa44ff', '10px', '⚙️');
+                addCosmicFeatureDot(dyson, '#aa44ff', '10px');
             });
         }
-        
+
         // Add Supernovas (rare - large orange)
         if (cosmicFeatures.supernovas) {
             cosmicFeatures.supernovas.forEach(supernova => {
-                addCosmicFeatureDot(supernova, '#ff6600', '9px', '💥');
+                addCosmicFeatureDot(supernova, '#ff6600', '9px');
             });
         }
-        
+
         // Add Pulsars (rare - medium cyan)
         if (cosmicFeatures.pulsars) {
             cosmicFeatures.pulsars.forEach(pulsar => {
-                addCosmicFeatureDot(pulsar, '#44eeff', '7px', '✨');
+                addCosmicFeatureDot(pulsar, '#44eeff', '7px');
             });
         }
-        
+
         // Add Plasma Storms (rare - medium purple)
         if (cosmicFeatures.plasmaStorms) {
             cosmicFeatures.plasmaStorms.forEach(storm => {
-                addCosmicFeatureDot(storm, '#cc44ff', '7px', '⚡');
+                addCosmicFeatureDot(storm, '#cc44ff', '7px');
             });
         }
-        
+
         // Add Crystal Formations (rare - medium emerald)
         if (cosmicFeatures.crystalFormations) {
             cosmicFeatures.crystalFormations.forEach(crystal => {
-                addCosmicFeatureDot(crystal, '#44ff88', '7px', '💎');
+                addCosmicFeatureDot(crystal, '#44ff88', '7px');
             });
         }
     }
@@ -1484,7 +1484,7 @@ mapDotPool.releaseAll();
                     nebulaDot.style.boxShadow = `0 0 12px ${nebulaDot.style.backgroundColor}`;
                     nebulaDot.style.pointerEvents = 'none';
                     nebulaDot.style.zIndex = '6';
-                    nebulaDot.innerHTML = `<span style="font-size: 12px;">💫</span>`;
+                    nebulaDot.innerHTML = '';
                     nebulaDot.title = nebula.userData.mythicalName || nebula.userData.name || 'Nebula';
                     
                     galaxyMap.appendChild(nebulaDot);
@@ -1505,27 +1505,22 @@ mapDotPool.releaseAll();
                 const systemDot = mapDotPool.get('cosmic-feature');
                 systemDot.className = 'cosmic-feature-dot outer-system-indicator absolute';
 
-                // Determine color and icon based on system type
+                // Determine color based on system type
                 let color = '#ffff88';  // Default: bright yellow for unknown systems
-                let icon = '⭐';
                 let size = '8px';
 
                 if (system.userData.centerType === 'supernova') {
                     color = '#ff6600';
-                    icon = '💥';
                     size = '10px';
                 } else if (system.userData.centerType === 'plasma_storm') {
                     color = '#aa44ff';
-                    icon = '⚡';
                     size = '10px';
                 } else if (system.userData.centerType === 'solar_storm') {
                     color = '#ffff00';
-                    icon = '☀️';
                     size = '10px';
                 } else if (system.userData.hasBorg) {
                     // BORG patrol systems
                     color = '#00ff00';
-                    icon = '🛸';
                     size = '9px';
                 }
 
@@ -1540,7 +1535,7 @@ mapDotPool.releaseAll();
                 systemDot.style.boxShadow = `0 0 10px ${color}`;
                 systemDot.style.pointerEvents = 'none';
                 systemDot.style.zIndex = '7';  // Above nebulas
-                systemDot.innerHTML = `<span style="font-size: 10px;">${icon}</span>`;
+                systemDot.innerHTML = '';
                 systemDot.title = system.userData.name + ' - ' + system.userData.location;
 
                 galaxyMap.appendChild(systemDot);
