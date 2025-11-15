@@ -1518,10 +1518,10 @@ if (keys.x && gameState.energy > 0) {
                         createPlayerExplosion();
                     }
 
-                    // Play explosion/vaporizing sound (DISABLED - sound gets stuck)
-                    // if (typeof playSound === 'function') {
-                    //     playSound('explosion');
-                    // }
+                    // Play explosion/vaporizing sound
+                    if (typeof playSound === 'function') {
+                        playSound('explosion');
+                    }
 
                     // Show game over screen
                     if (typeof showGameOverScreen === 'function') {
@@ -1552,10 +1552,10 @@ if ((planet.userData.type === 'planet' || planet.userData.type === 'star' || pla
             showGameOverScreen('VAPORIZED BY STAR', `Ship destroyed by ${planet.userData.name} - hull integrity: 0%`);
         }
 
-        // Explosion sound (DISABLED - sound gets stuck)
-        // if (typeof playSound === 'function') {
-        //     playSound('explosion');
-        // }
+        // Explosion sound
+        if (typeof playSound === 'function') {
+            playSound('explosion');
+        }
 
         console.log(`💀 INSTANT DEATH: Player collided with star ${planet.userData.name}`);
         return;
@@ -1578,10 +1578,10 @@ if ((planet.userData.type === 'planet' || planet.userData.type === 'star' || pla
             showGameOverScreen(impactType, `Ship destroyed by collision with ${planet.userData.name}`);
         }
 
-        // Explosion sound (DISABLED - sound gets stuck)
-        // if (typeof playSound === 'function') {
-        //     playSound('explosion');
-        // }
+        // Explosion sound
+        if (typeof playSound === 'function') {
+            playSound('explosion');
+        }
 
         console.log(`💀 MISSION FAILED: Player collided with ${planet.userData.type} ${planet.userData.name}`);
         return;
@@ -1918,10 +1918,10 @@ if ((planet.userData.type === 'planet' || planet.userData.type === 'star' || pla
                             createPlayerExplosion();
                         }
 
-                        // Play explosion/vaporizing sound (DISABLED - sound gets stuck)
-                        // if (typeof playSound === 'function') {
-                        //     playSound('explosion');
-                        // }
+                        // Play explosion/vaporizing sound
+                        if (typeof playSound === 'function') {
+                            playSound('explosion');
+                        }
 
                         // Show game over screen
                         if (typeof showGameOverScreen === 'function') {

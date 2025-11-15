@@ -4376,10 +4376,10 @@ function createDeathEffect() {
         createPlayerExplosion();
     }
 
-    // Play explosion/vaporizing sound (DISABLED - sound gets stuck)
-    // if (typeof playSound === 'function') {
-    //     playSound('explosion');
-    // }
+    // Play explosion/vaporizing sound
+    if (typeof playSound === 'function') {
+        playSound('explosion');
+    }
 
     // Show game over screen
     if (typeof showGameOverScreen === 'function') {
