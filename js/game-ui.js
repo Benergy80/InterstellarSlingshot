@@ -2355,13 +2355,13 @@ function createMobileTopBar() {
     `;
     
     topBar.innerHTML = `
-        <div class="mobile-info" style="background: linear-gradient(135deg, rgba(15, 23, 42, 0.9), rgba(30, 41, 59, 0.9)); backdrop-filter: blur(10px); border: 1px solid rgba(0,150,255,0.5); border-radius: 20px; padding: 8px 16px; color: white; font-size: 14px; font-weight: 600;">
+        <div class="mobile-info" style="background: linear-gradient(135deg, rgba(15, 23, 42, 0.3), rgba(30, 41, 59, 0.3)); backdrop-filter: blur(10px); border: 1px solid rgba(0,150,255,0.4); border-radius: 20px; padding: 8px 16px; color: white; font-size: 14px; font-weight: 600;">
             <div id="mobileVelocity">0.0 km/s</div>
         </div>
-        <div class="mobile-info" style="background: linear-gradient(135deg, rgba(15, 23, 42, 0.9), rgba(30, 41, 59, 0.9)); backdrop-filter: blur(10px); border: 1px solid rgba(0,150,255,0.5); border-radius: 20px; padding: 8px 16px; color: white; font-size: 14px; font-weight: 600;">
+        <div class="mobile-info" style="background: linear-gradient(135deg, rgba(15, 23, 42, 0.3), rgba(30, 41, 59, 0.3)); backdrop-filter: blur(10px); border: 1px solid rgba(0,150,255,0.4); border-radius: 20px; padding: 8px 16px; color: white; font-size: 14px; font-weight: 600;">
             <div id="mobileEnergy">100%</div>
         </div>
-        <button class="mobile-menu-btn" onclick="openMobilePopup('navigation')" style="width: 48px; height: 48px; border-radius: 12px; background: linear-gradient(135deg, rgba(0, 150, 255, 0.8), rgba(0, 100, 200, 0.8)); border: 2px solid rgba(0, 200, 255, 0.6); color: white; display: flex; align-items: center; justify-content: center; font-size: 20px; cursor: pointer;">
+        <button class="mobile-menu-btn" onclick="openMobilePopup('navigation')" style="width: 48px; height: 48px; border-radius: 12px; background: linear-gradient(135deg, rgba(0, 150, 255, 0.3), rgba(0, 100, 200, 0.3)); border: 2px solid rgba(0, 200, 255, 0.4); color: white; display: flex; align-items: center; justify-content: center; font-size: 20px; cursor: pointer; box-shadow: 0 4px 15px rgba(0, 150, 255, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.1);">
             <i class="fas fa-map"></i>
         </button>
     `;
@@ -2383,7 +2383,7 @@ function createMobileControls() {
         pointer-events: auto;
     `;
     
-    const buttonStyle = `width: 64px; height: 64px; border-radius: 50%; background: linear-gradient(135deg, rgba(0, 150, 255, 0.8), rgba(0, 100, 200, 0.8)); border: 2px solid rgba(0, 200, 255, 0.6); color: white; display: flex; align-items: center; justify-content: center; font-size: 24px; cursor: pointer; transition: all 0.2s ease; box-shadow: 0 4px 15px rgba(0, 150, 255, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.2);`;
+    const buttonStyle = `width: 64px; height: 64px; border-radius: 50%; background: linear-gradient(135deg, rgba(0, 150, 255, 0.3), rgba(0, 100, 200, 0.3)); border: 2px solid rgba(0, 200, 255, 0.4); color: white; display: flex; align-items: center; justify-content: center; font-size: 24px; cursor: pointer; transition: all 0.2s ease; box-shadow: 0 4px 15px rgba(0, 150, 255, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.1);`;
     
     controls.innerHTML = `
     <button class="mobile-btn" onclick="mobileCycleTarget()" style="${buttonStyle}" title="Cycle Targets">
@@ -2391,11 +2391,11 @@ function createMobileControls() {
     </button>
     <button class="mobile-btn primary"
     ontouchstart="handleMobileFire(event); return false;"
-    style="${buttonStyle} width: 80px; height: 80px; border-radius: 50%; background: linear-gradient(135deg, rgba(255, 50, 50, 0.5), rgba(200, 0, 0, 0.5)); border-color: rgba(255, 100, 100, 0.6); box-shadow: 0 4px 15px rgba(255, 50, 50, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.2); opacity: 1;"
+    style="${buttonStyle} width: 80px; height: 80px; border-radius: 50%; background: linear-gradient(135deg, rgba(255, 50, 50, 0.3), rgba(200, 0, 0, 0.3)); border-color: rgba(255, 100, 100, 0.4); box-shadow: 0 4px 15px rgba(255, 50, 50, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.1); opacity: 1;"
     title="Fire Weapons">
     <i class="fas fa-crosshairs"></i>
 </button>
-    <button class="mobile-btn emergency" onclick="mobileEmergencyWarp()" style="${buttonStyle} background: linear-gradient(135deg, rgba(255, 150, 0, 0.8), rgba(200, 100, 0, 0.8)); border-color: rgba(255, 200, 0, 0.6);" title="Emergency Warp">
+    <button class="mobile-btn emergency" onclick="mobileEmergencyWarp()" style="${buttonStyle} background: linear-gradient(135deg, rgba(255, 150, 0, 0.3), rgba(200, 100, 0, 0.3)); border-color: rgba(255, 200, 0, 0.4); box-shadow: 0 4px 15px rgba(255, 150, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.1);" title="Emergency Warp">
         <i class="fas fa-rocket"></i>
     </button>
     <button class="mobile-btn" onclick="openMobilePopup('controls')" style="${buttonStyle}" title="Controls">

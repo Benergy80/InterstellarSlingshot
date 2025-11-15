@@ -1057,8 +1057,8 @@ body.mobile-mode .mobile-ui {
     width: 64px;
     height: 64px;
     border-radius: 50%; /* This makes it circular */
-    background: linear-gradient(135deg, rgba(0, 150, 255, 0.8), rgba(0, 100, 200, 0.8));
-    border: 2px solid rgba(0, 200, 255, 0.6);
+    background: linear-gradient(135deg, rgba(0, 150, 255, 0.3), rgba(0, 100, 200, 0.3));
+    border: 2px solid rgba(0, 200, 255, 0.4);
     color: white;
     display: flex;
     align-items: center;
@@ -1066,16 +1066,16 @@ body.mobile-mode .mobile-ui {
     font-size: 24px;
     cursor: pointer;
     transition: all 0.2s ease;
-    box-shadow: 0 4px 15px rgba(0, 150, 255, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.2);
+    box-shadow: 0 4px 15px rgba(0, 150, 255, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.1);
 }
 
 .mobile-btn.primary {
     width: 80px !important;
     height: 80px !important;
     border-radius: 50% !important; /* Force circular for fire button */
-    background: linear-gradient(135deg, rgba(255, 50, 50, 0.5), rgba(200, 0, 0, 0.5));
-    border-color: rgba(255, 100, 100, 0.6);
-    box-shadow: 0 4px 15px rgba(255, 50, 50, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.2);
+    background: linear-gradient(135deg, rgba(255, 50, 50, 0.3), rgba(200, 0, 0, 0.3));
+    border-color: rgba(255, 100, 100, 0.4);
+    box-shadow: 0 4px 15px rgba(255, 50, 50, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.1);
     opacity: 1 !important;
 }
 
