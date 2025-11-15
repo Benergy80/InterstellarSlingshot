@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, minimal-ui, viewport-fit=cover">
     <title>Interstellar Slingshot - A Gravitational Space Explorer by ChiLab</title>
     
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🚀</text></svg>">
@@ -60,6 +60,15 @@
     <!-- Game Styles -->
     <link rel="stylesheet" href="css/styles.css">
     <style>
+        /* Mobile browser UI hiding */
+        html, body {
+            position: fixed;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            -webkit-overflow-scrolling: touch;
+        }
+
         /* Title flashing effect for gravity well alert */
         .title-flash {
             animation: titleFlash 0.5s ease-in-out infinite alternate;
@@ -317,8 +326,8 @@
 
     /* Mobile tutorial positioning */
     .mission-command-alert {
-        top: calc(15% + 10px) !important;
-        transform: translate(-50%, -50%) !important;
+        top: 20% !important;
+        transform: translate(-50%, 0) !important;
     }
             
             /* Mobile crosshair */
@@ -354,8 +363,8 @@
 
             /* Mobile tutorial positioning */
             .mission-command-alert {
-                top: calc(15% + 10px) !important;
-                transform: translate(-50%, -50%) !important;
+                top: 20% !important;
+                transform: translate(-50%, 0) !important;
             }
         }
         /* Mobile control buttons container */
@@ -973,27 +982,45 @@
     <script>
         let gameInitialized = false;
 
-        window.addEventListener('load', () => {
-            if (gameInitialized) return;
-            gameInitialized = true;
-
-            // Hide mobile browser UI by scrolling
+        // Function to hide mobile browser UI
+        function hideMobileBrowserUI() {
             if ('ontouchstart' in window || navigator.maxTouchPoints > 0) {
-                // Make body slightly taller to enable scroll
-                document.body.style.minHeight = 'calc(100vh + 1px)';
+                console.log('📱 Attempting to hide mobile browser UI...');
 
-                // Scroll to hide address bar
+                // Make body scrollable
+                document.body.style.minHeight = 'calc(100vh + 1px)';
+                document.body.style.overflow = 'auto';
+
+                // Force scroll to trigger browser UI hide
                 setTimeout(() => {
                     window.scrollTo(0, 1);
-                }, 100);
+                    console.log('📱 Scrolled to (0, 1)');
+                }, 50);
 
-                // Lock scroll position after hiding UI
+                // Reset and lock scroll
                 setTimeout(() => {
                     window.scrollTo(0, 0);
                     document.body.style.minHeight = '100vh';
                     document.body.style.overflow = 'hidden';
-                }, 500);
+                    document.documentElement.style.overflow = 'hidden';
+                    console.log('📱 Browser UI hide complete, scroll locked');
+                }, 300);
             }
+        }
+
+        // Hide browser UI on DOM load (for intro screen)
+        document.addEventListener('DOMContentLoaded', () => {
+            console.log('📱 DOM loaded, hiding browser UI for intro');
+            hideMobileBrowserUI();
+        });
+
+        window.addEventListener('load', () => {
+            if (gameInitialized) return;
+            gameInitialized = true;
+
+            // Hide browser UI again when game loads
+            console.log('📱 Window loaded, hiding browser UI for game');
+            hideMobileBrowserUI();
 
             console.log('Starting Interstellar Slingshot...');
 
