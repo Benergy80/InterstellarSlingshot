@@ -1042,7 +1042,7 @@ function updateOuterSystems() {
 
         // Distance-based opacity - different for each set
         const systemDist = system.position.distanceTo(playerPos);
-        const blurStart = 15000;
+        const blurStart = 10000;
         const blurMax = 65000;
         
         let opacity = 1.0;
@@ -1064,7 +1064,7 @@ function updateOuterSystems() {
         } else if (system.userData.systemType === 'borg_patrol') {
             // SET 2: BORG Patrol Systems - Same minimal visibility as exotic systems
             // Invisible when player is >45,000 units away, fade IN as player approaches
-            const fadeStart = 45000;      // Start becoming visible at this distance
+            const fadeStart = 55000;      // Start becoming visible at this distance
             const fadeComplete = 5000;    // Fully visible at this distance
 
             if (systemDist > fadeStart) {
