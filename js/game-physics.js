@@ -2064,7 +2064,33 @@ if (dampedVelocity.length() >= gameState.minVelocity ||
     
     // Update velocity for Ship Status panel
     gameState.velocity = gameState.velocityVector.length();
-    
+
+    // ⭐ NEW: Check for escape from Sol gravity well and unlock higher thrust
+    if (gameState.gravity && !gameState.gravity.escapedStartingSystem && gameState.gravity.startingSystemCenter) {
+        const distanceFromSol = camera.position.distanceTo(gameState.gravity.startingSystemCenter);
+
+        // Check if player has escaped the gravity well (1600 units)
+        if (distanceFromSol > gameState.gravity.wellRadius) {
+            gameState.gravity.escapedStartingSystem = true;
+            gameState.gravity.insideWell = false;
+
+            // ⭐ UNLOCK HIGHER THRUST CAPACITY - increase from 500 km/s to 2000 km/s
+            gameState.maxVelocity = 2.0; // Was 0.5, now 2.0 (2000 km/s)
+
+            console.log('🚀 ESCAPED SOL SYSTEM! Thrust capacity increased to 2000 km/s');
+
+            // Show dramatic achievement
+            if (typeof showAchievement === 'function') {
+                showAchievement('INTERSTELLAR SPACE ACHIEVED!', 'Thrust capacity increased: 500 km/s → 2000 km/s');
+            }
+
+            // Play achievement sound
+            if (typeof playSound === 'function') {
+                playSound('achievement');
+            }
+        }
+    }
+
     // FIXED: Energy regeneration only when NOT actively thrusting
 const isThrusting = (keys.w || keys.a || keys.s || keys.d || keys.b || keys.x) && gameState.energy > 0;
 
