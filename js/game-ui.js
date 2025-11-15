@@ -847,7 +847,7 @@ function getCurrentGalaxyId() {
     }
     
     // Fallback: Use 3D galaxy center positions
-    const universeRadius = 40000;
+    const universeRadius = 100000;  // Increased to accommodate exotic/borg systems (up to 85k units) with margins
     
     if (typeof getGalaxy3DPosition === 'function' && typeof galaxyTypes !== 'undefined') {
         let closestGalaxy = -1;
@@ -1099,7 +1099,7 @@ function updateGalaxyMap() {
     const playerMapPos = document.getElementById('playerMapPosition');
     const targetMapPos = document.getElementById('targetMapPosition');
     const mapDirectionArrow = document.getElementById('mapDirectionArrow');
-    const universeRadius = 40000;
+    const universeRadius = 100000;  // Increased to accommodate exotic/borg systems (up to 85k units) with margins
     
     if (!playerMapPos) return;
     

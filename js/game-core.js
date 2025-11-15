@@ -82,8 +82,8 @@ const gameState = {
     emergencyWarp: {
         available: 5,
         cooldown: 0,
-        boostDuration: 8000,
-        boostSpeed: 30.0, // Doubled for doubled world
+        boostDuration: 15000,  // 15 seconds for debugging (was 8000)
+        boostSpeed: 100.0,     // Much faster for debugging (was 30.0)
         active: false,
         timeRemaining: 0
     },

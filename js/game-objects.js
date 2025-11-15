@@ -253,7 +253,7 @@ function getGalaxy3DPosition(galaxyId) {
     const galaxyData = galaxy3DPositions[galaxyId];
     if (!galaxyData) return new THREE.Vector3(0, 0, 0);
     
-    const universeRadius = 40000; // Doubled scale to match your existing system
+    const universeRadius = 100000; // Increased to accommodate exotic/borg systems (up to 85k units) with margins
     const distance = galaxyData.distance * universeRadius;
     const phi = galaxyData.phi;
     const theta = galaxyData.theta;
@@ -326,7 +326,7 @@ function getRandomGalaxyPosition(galaxyId) {
     const mapPos = galaxyMapPositions[galaxyId];
     
     // Enhanced 3D spherical distribution instead of flat
-    const universeRadius = 40000; // Match the doubled scale system
+    const universeRadius = 100000; // Increased to accommodate exotic/borg systems (up to 85k units) with margins
     
     // Convert 2D map position to 3D spherical coordinates
     const phi = mapPos.x * Math.PI * 2; // Azimuthal angle (0 to 2π)
@@ -731,7 +731,7 @@ function spawnBossForGalaxy(galaxyId) {
             return;
         }
         
-        const universeRadius = 40000; // PRESERVED: Doubled scale
+        const universeRadius = 100000; // Increased to accommodate exotic/borg systems (up to 85k units) with margins
         
         const galaxyX = (mapPos.x - 0.5) * universeRadius * 2;
         const galaxyZ = (mapPos.y - 0.5) * universeRadius * 2;
@@ -1044,7 +1044,7 @@ function calculateBlackHoleRotationSpeed(galaxyType, galaxyId, position) {
     
     // Distance from galactic center affects speed (closer = faster)
     const distanceFromCenter = Math.sqrt(position.x * position.x + position.z * position.z);
-    const universeRadius = 40000; // Doubled scale
+    const universeRadius = 100000; // Increased to accommodate exotic/borg systems (up to 85k units) with margins
     const normalizedDistance = Math.min(distanceFromCenter / universeRadius, 1.0);
     
     // Speed decreases with distance from center (inverse relationship)
@@ -3304,19 +3304,131 @@ function createClusteredNebulas() {
 
 function createSpectacularClusteredNebulas() {
     console.log('Creating spectacular multi-layered clustered nebulas...');
-    
+
     // Create 3 layers with slight timing delays for variety
     createClusteredNebulas(); // Layer 1
-    
+
     setTimeout(() => {
         createClusteredNebulas(); // Layer 2
     }, 300);
-    
+
     setTimeout(() => {
         createClusteredNebulas(); // Layer 3
     }, 600);
-    
+
+    // Create distant nebulas in the outer regions (50,000-75,000 units)
+    setTimeout(() => {
+        createDistantNebulas();
+    }, 900);
+
     console.log('Triple-layered clustered nebulas with maximum color intermingling created!');
+}
+
+// =============================================================================
+// DISTANT NEBULAS - Distributed between 50,000-75,000 units from origin
+// =============================================================================
+function createDistantNebulas() {
+    console.log('Creating distant nebulas in outer regions (50,000-75,000 units)...');
+
+    if (typeof nebulaClouds === 'undefined') {
+        window.nebulaClouds = [];
+    }
+
+    const distantNebulaCount = 6;  // Add 6 distant nebulas
+    const minRadius = 50000;
+    const maxRadius = 75000;
+
+    const distantNebulaNames = [
+        'Distant Nebula Alpha',
+        'Distant Nebula Beta',
+        'Distant Nebula Gamma',
+        'Distant Nebula Delta',
+        'Distant Nebula Epsilon',
+        'Distant Nebula Zeta'
+    ];
+
+    for (let i = 0; i < distantNebulaCount; i++) {
+        const nebulaGroup = new THREE.Group();
+
+        // Distribute evenly around a sphere at distant radius
+        const phi = (i / distantNebulaCount) * Math.PI * 2;  // Azimuthal angle
+        const theta = Math.PI / 2 + (Math.random() - 0.5) * Math.PI * 0.5;  // Polar angle (mostly equatorial)
+        const radius = minRadius + Math.random() * (maxRadius - minRadius);
+
+        const nebulaX = radius * Math.sin(theta) * Math.cos(phi);
+        const nebulaY = radius * Math.cos(theta);
+        const nebulaZ = radius * Math.sin(theta) * Math.sin(phi);
+
+        // Create nebula cloud particles
+        const particleCount = 1200;
+        const particleGeometry = new THREE.BufferGeometry();
+        const positions = new Float32Array(particleCount * 3);
+        const colors = new Float32Array(particleCount * 3);
+
+        // Varied colors for distant nebulas
+        const baseHue = Math.random();  // Full color spectrum
+        const nebulaColor = new THREE.Color().setHSL(baseHue, 0.7 + Math.random() * 0.3, 0.5 + Math.random() * 0.3);
+        const nebulaSize = 3000 + Math.random() * 4000;  // Larger nebulas for distant regions
+
+        for (let j = 0; j < particleCount; j++) {
+            const radius = Math.pow(Math.random(), 0.3) * nebulaSize;
+            const theta = Math.random() * Math.PI * 2;
+            const phi = Math.acos(2 * Math.random() - 1);
+
+            const x = radius * Math.sin(phi) * Math.cos(theta);
+            const y = radius * Math.sin(phi) * Math.sin(theta) * 0.3;  // Flattened
+            const z = radius * Math.cos(phi);
+
+            positions[j * 3] = x;
+            positions[j * 3 + 1] = y;
+            positions[j * 3 + 2] = z;
+
+            // Color variation
+            const colorVariation = (Math.random() - 0.5) * 0.2;
+            const particleColor = new THREE.Color().setHSL(
+                (baseHue + colorVariation + 1) % 1,
+                0.6 + Math.random() * 0.4,
+                0.4 + Math.random() * 0.4
+            );
+
+            colors[j * 3] = particleColor.r;
+            colors[j * 3 + 1] = particleColor.g;
+            colors[j * 3 + 2] = particleColor.b;
+        }
+
+        particleGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        particleGeometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
+        const particleMaterial = new THREE.PointsMaterial({
+            size: 80,
+            vertexColors: true,
+            transparent: true,
+            opacity: 0.6,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false
+        });
+
+        const particles = new THREE.Points(particleGeometry, particleMaterial);
+        nebulaGroup.add(particles);
+
+        nebulaGroup.position.set(nebulaX, nebulaY, nebulaZ);
+        nebulaGroup.userData = {
+            type: 'nebula',
+            name: distantNebulaNames[i],
+            mythicalName: distantNebulaNames[i],
+            color: nebulaColor,
+            discovered: false,
+            size: nebulaSize,
+            isDistant: true
+        };
+
+        scene.add(nebulaGroup);
+        nebulaClouds.push(nebulaGroup);
+
+        console.log(`  Created ${distantNebulaNames[i]} at distance ${radius.toFixed(0)} units`);
+    }
+
+    console.log(`✅ Created ${distantNebulaCount} distant nebulas in outer regions`);
 }
 // =============================================================================
 // ENHANCED PLANET CLUSTERS - FROM EARLY VERSION
@@ -4344,8 +4456,8 @@ function createWormholeBurst(position, appearing) {
 
 // Create ambient space debris and particles
 function createAmbientSpaceDebris() {
-    // Create large debris field with various particle types
-    const debrisCount = 500; // Lots of particles
+    // Create MASSIVE debris field with various particle types
+    const debrisCount = 2500; // Significantly more particles for better atmosphere
     const debrisGroup = new THREE.Group();
     debrisGroup.name = 'spaceDebris';
 
@@ -4356,11 +4468,11 @@ function createAmbientSpaceDebris() {
     const debrisSizes = [];
 
     for (let i = 0; i < debrisCount; i++) {
-        // Spread across large area
+        // Spread across MASSIVE area to cover the entire universe
         debrisPositions.push(
-            (Math.random() - 0.5) * 40000,
-            (Math.random() - 0.5) * 3000,
-            (Math.random() - 0.5) * 40000
+            (Math.random() - 0.5) * 80000,  // Doubled spread area
+            (Math.random() - 0.5) * 5000,   // More vertical spread
+            (Math.random() - 0.5) * 80000   // Doubled spread area
         );
 
         // Various colors for different debris types
@@ -4378,8 +4490,8 @@ function createAmbientSpaceDebris() {
         }
         debrisColors.push(color.r, color.g, color.b);
 
-        // Varying sizes
-        debrisSizes.push(0.5 + Math.random() * 2.5);
+        // Varying sizes with more variety
+        debrisSizes.push(0.5 + Math.random() * 3.5);
     }
 
     debrisGeometry.setAttribute('position', new THREE.Float32BufferAttribute(debrisPositions, 3));
@@ -4398,8 +4510,8 @@ function createAmbientSpaceDebris() {
     debrisPoints.frustumCulled = false;
     debrisGroup.add(debrisPoints);
 
-    // Add some larger floating debris chunks
-    for (let i = 0; i < 50; i++) {
+    // Add MANY MORE larger floating debris chunks for better atmosphere
+    for (let i = 0; i < 250; i++) {  // 5x more chunks
         const chunkSize = 1 + Math.random() * 3;
         const chunkGeometry = new THREE.BoxGeometry(chunkSize, chunkSize * 0.5, chunkSize);
         const chunkMaterial = new THREE.MeshBasicMaterial({
@@ -4410,9 +4522,9 @@ function createAmbientSpaceDebris() {
         const chunk = new THREE.Mesh(chunkGeometry, chunkMaterial);
 
         chunk.position.set(
-            (Math.random() - 0.5) * 35000,
-            (Math.random() - 0.5) * 2500,
-            (Math.random() - 0.5) * 35000
+            (Math.random() - 0.5) * 70000,  // Doubled spread to match debris particles
+            (Math.random() - 0.5) * 4000,   // More vertical spread
+            (Math.random() - 0.5) * 70000   // Doubled spread to match debris particles
         );
 
         chunk.rotation.set(

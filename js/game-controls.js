@@ -2421,9 +2421,11 @@ setTimeout(() => {
     let scopeCurrentX = 0;
     let scopeCurrentY = 0;
     const scopeSmoothing = 0.15; // Smooth following like crosshair
+    let lastMissileSelectedState = false;
 
     function updateZoomScope() {
         if (!gameState.missiles.selected || !renderer || !renderer.domElement) {
+            zoomScope.style.display = 'none';
             if (animationFrameId) {
                 cancelAnimationFrame(animationFrameId);
                 animationFrameId = null;
@@ -2491,28 +2493,43 @@ setTimeout(() => {
         animationFrameId = requestAnimationFrame(updateZoomScope);
     }
 
-    document.addEventListener('mousemove', (e) => {
-        if (gameState.missiles.selected) {
-            // Update target position (scope will smooth towards it)
-            scopeTargetX = e.clientX - 125;
-            scopeTargetY = e.clientY - 125;
-
+    // Function to activate/deactivate scope without requiring mouse movement
+    function toggleZoomScope() {
+        if (gameState.missiles.selected && !animationFrameId) {
+            // Activate scope immediately
+            const mouseX = gameState.crosshairX || gameState.mouseX || window.innerWidth / 2;
+            const mouseY = gameState.crosshairY || gameState.mouseY || window.innerHeight / 2;
+            scopeTargetX = mouseX - 125;
+            scopeTargetY = mouseY - 125;
+            scopeCurrentX = scopeTargetX;
+            scopeCurrentY = scopeTargetY;
             zoomScope.style.display = 'block';
-
-            // Start animation if not already running
-            if (!animationFrameId) {
-                // Initialize current position to target on first show
-                scopeCurrentX = scopeTargetX;
-                scopeCurrentY = scopeTargetY;
-                updateZoomScope();
-            }
-        } else {
+            updateZoomScope();
+        } else if (!gameState.missiles.selected) {
+            // Deactivate scope immediately
             zoomScope.style.display = 'none';
             if (animationFrameId) {
                 cancelAnimationFrame(animationFrameId);
                 animationFrameId = null;
             }
         }
+    }
+
+    // Check for state changes in animation loop
+    function checkZoomScopeState() {
+        if (gameState.missiles.selected !== lastMissileSelectedState) {
+            lastMissileSelectedState = gameState.missiles.selected;
+            toggleZoomScope();
+        }
+        requestAnimationFrame(checkZoomScopeState);
+    }
+    checkZoomScopeState();
+
+    // Update scope position on mouse movement
+    document.addEventListener('mousemove', (e) => {
+        // Update target position for smooth following
+        scopeTargetX = e.clientX - 125;
+        scopeTargetY = e.clientY - 125;
     });
 }, 1000);
 
