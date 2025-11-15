@@ -2220,7 +2220,7 @@ function initializeControlButtons() {
             // Activate missile zoom scope (hold to zoom)
             if (!gameState.missiles.selected) {
                 gameState.missiles.selected = true;
-                showAchievement('Zoom Scope Active', 'Missile targeting scope engaged');
+                // No notification - silent activation
             }
         }
 
@@ -2398,20 +2398,20 @@ setTimeout(() => {
         position: fixed;
         width: 250px;
         height: 250px;
-        border: 3px solid rgba(255, 51, 0, 0.8);
+        border: 3px solid rgba(255, 51, 0, 0.3);
         border-radius: 50%;
         pointer-events: none;
         z-index: 999;
         display: none;
         overflow: hidden;
-        box-shadow: 0 0 30px rgba(255, 51, 0, 0.6), inset 0 0 30px rgba(255, 51, 0, 0.3);
-        background: rgba(0, 0, 0, 0.3);
+        box-shadow: 0 0 20px rgba(255, 51, 0, 0.4), inset 0 0 20px rgba(255, 51, 0, 0.2);
+        background: rgba(0, 0, 0, 0.2);
     `;
 
     const scopeCanvas = document.createElement('canvas');
     scopeCanvas.width = 250;
     scopeCanvas.height = 250;
-    scopeCanvas.style.cssText = 'width: 100%; height: 100%;';
+    scopeCanvas.style.cssText = 'width: 100%; height: 100%; border-radius: 50%;';
     zoomScope.appendChild(scopeCanvas);
     document.body.appendChild(zoomScope);
 
@@ -2457,7 +2457,13 @@ setTimeout(() => {
         // Clear canvas
         ctx.clearRect(0, 0, 250, 250);
 
-        // Draw magnified portion
+        // Save context and create circular clipping path
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(125, 125, 125, 0, Math.PI * 2);
+        ctx.clip();
+
+        // Draw magnified portion (now clipped to circle)
         try {
             ctx.drawImage(
                 renderer.domElement,
@@ -2473,6 +2479,9 @@ setTimeout(() => {
         } catch (err) {
             console.warn('Zoom scope render error:', err);
         }
+
+        // Restore context to draw crosshairs over the clipped image
+        ctx.restore();
 
         // Draw crosshair overlay in GREEN to match mouse aiming cursor
         ctx.strokeStyle = 'rgba(0, 255, 150, 0.8)'; // Green like aiming cursor
