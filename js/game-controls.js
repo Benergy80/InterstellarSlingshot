@@ -2444,9 +2444,9 @@ setTimeout(() => {
         zoomScope.style.left = scopeCurrentX + 'px';
         zoomScope.style.top = scopeCurrentY + 'px';
 
-        // Use gameState mouse position for zoom calculation
-        const mouseX = gameState.mouseX || window.innerWidth / 2;
-        const mouseY = gameState.mouseY || window.innerHeight / 2;
+        // Get mouse position - check crosshair position first (this is what's properly tracked!)
+        const mouseX = gameState.crosshairX || gameState.mouseX || window.innerWidth / 2;
+        const mouseY = gameState.crosshairY || gameState.mouseY || window.innerHeight / 2;
 
         // Calculate source area on the renderer canvas
         const sourceWidth = 250 / zoomFactor;
