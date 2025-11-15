@@ -1030,10 +1030,10 @@ function updateOuterSystems() {
         let opacity = 1.0;
 
         if (system.userData.systemType === 'exotic_core') {
-            // SET 1: Exotic Core Systems - Always visible from far away!
-            // Only fade at extreme distances (150,000+ units)
-            const blurStart = 150000;
-            const blurMax = 200000;
+            // SET 1: Exotic Core Systems - Original visibility settings
+            // Start fading at 5,000 units from player
+            const blurStart = 5000;
+            const blurMax = 90000;
             if (systemDist > blurStart) {
                 opacity = 1.0 - Math.min(1, (systemDist - blurStart) / (blurMax - blurStart));
             }
