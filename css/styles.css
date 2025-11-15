@@ -1128,56 +1128,39 @@ body.intro-active .nav-panel-mobile {
     }
 }
 
-/* Swipe indicator for navigation panel */
+/* Swipe indicator for navigation panel - Cyberpunk theme */
 .swipe-indicator {
     position: fixed;
     top: 80px;
-    right: 10px;
+    right: 8px;
     display: flex;
-    flex-direction: column;
     align-items: center;
-    justify-content: center;
-    background: linear-gradient(135deg, rgba(0, 150, 255, 0.3), rgba(0, 100, 200, 0.3));
-    border: 2px solid rgba(0, 200, 255, 0.5);
-    border-radius: 8px;
-    padding: 8px 6px;
+    gap: 4px;
+    background: rgba(0, 0, 0, 0.7);
+    border: 1px solid rgba(0, 255, 255, 0.4);
+    border-radius: 4px;
+    padding: 6px 10px;
     z-index: 25;
     pointer-events: none;
-    animation: swipePulse 2s ease-in-out infinite;
+    box-shadow: 0 0 10px rgba(0, 255, 255, 0.3), inset 0 0 10px rgba(0, 255, 255, 0.1);
+    opacity: 0.7;
 }
 
 .swipe-arrow {
-    font-size: 20px;
-    color: rgba(0, 200, 255, 0.9);
-    margin-bottom: 2px;
-    animation: swipeArrowMove 1.5s ease-in-out infinite;
+    font-size: 16px;
+    font-weight: bold;
+    color: #00ffff;
+    text-shadow: 0 0 8px rgba(0, 255, 255, 0.8);
+    font-family: monospace;
 }
 
 .swipe-text {
-    font-size: 10px;
-    font-weight: bold;
-    color: rgba(0, 200, 255, 0.9);
+    font-size: 9px;
+    font-weight: 700;
+    color: #00ffff;
     font-family: 'Orbitron', monospace;
-}
-
-@keyframes swipePulse {
-    0%, 100% {
-        opacity: 0.6;
-        transform: scale(1);
-    }
-    50% {
-        opacity: 1;
-        transform: scale(1.05);
-    }
-}
-
-@keyframes swipeArrowMove {
-    0%, 100% {
-        transform: translateX(0);
-    }
-    50% {
-        transform: translateX(-4px);
-    }
+    letter-spacing: 1px;
+    text-shadow: 0 0 6px rgba(0, 255, 255, 0.6);
 }
 
 /* Hide swipe indicator when nav panel is active */
@@ -1185,7 +1168,11 @@ body.intro-active .nav-panel-mobile {
     display: none;
 }
 
-/* Hide swipe indicator on desktop */
+/* Hide swipe indicator during intro and on desktop */
+body.intro-active .swipe-indicator {
+    display: none !important;
+}
+
 @media (min-width: 769px) {
     .swipe-indicator {
         display: none !important;

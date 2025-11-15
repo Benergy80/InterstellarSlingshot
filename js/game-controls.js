@@ -3951,6 +3951,25 @@ function showAchievement(title, description, playAchievementSound = true) {
         popup.style.zIndex = '999'; // Maximum priority
         popup.style.position = 'fixed'; // Ensure it's always fixed
 
+        // ⭐ BORG STYLING: Apply green ORBITRON font for BORG messages
+        if (title.includes('BORG')) {
+            popup.classList.add('borg-message');
+            titleElement.style.fontFamily = "'Orbitron', monospace";
+            titleElement.style.color = '#00ff00';
+            titleElement.style.textShadow = '0 0 10px rgba(0, 255, 0, 0.8)';
+            achievementText.style.fontFamily = "'Orbitron', monospace";
+            achievementText.style.color = '#00ff00';
+            achievementText.style.textShadow = '0 0 8px rgba(0, 255, 0, 0.6)';
+        } else {
+            popup.classList.remove('borg-message');
+            titleElement.style.fontFamily = '';
+            titleElement.style.color = '';
+            titleElement.style.textShadow = '';
+            achievementText.style.fontFamily = '';
+            achievementText.style.color = '';
+            achievementText.style.textShadow = '';
+        }
+
         popup.classList.remove('hidden');
 
         // Add click handler for "Slingshot Ready" on mobile
