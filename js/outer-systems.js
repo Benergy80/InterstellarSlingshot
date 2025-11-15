@@ -1023,6 +1023,14 @@ function updateOuterSystems() {
     const playerPos = camera.position;
 
     outerInterstellarSystems.forEach(system => {
+        if (!system.userData || !system.userData.orbiters) return;
+
+        // Distance-based opacity - different for each set
+        const systemDist = system.position.distanceTo(playerPos);
+        const blurStart = 15000;
+        const blurMax = 65000;
+        
+        let opacity = 1.0;
 
         if (system.userData.systemType === 'exotic_core') {
             // SET 1: Exotic Core Systems - Original visibility settings
