@@ -1120,5 +1120,12 @@ body.intro-active .nav-panel-mobile {
 #loadingScreen:not([style*="display: none"]) ~ * .mobile-floating-status {
     display: none !important;
 }
+
+/* Hide event horizon warning on mobile - notifications work better */
+@media (max-width: 768px) {
+    #eventHorizonWarning {
+        display: none !important;
+    }
+}
 `;
 }

@@ -2618,7 +2618,7 @@ function handleMobileFire(event) {
         fireBtn.style.opacity = '0.8';
         setTimeout(() => {
             fireBtn.style.transform = 'scale(1)';
-            fireBtn.style.opacity = '1';
+            // Keep button transparent after first use
         }, 150);
     }
 }

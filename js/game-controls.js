@@ -926,6 +926,9 @@ function showMissionCommandAlert(title, text, isVictoryMessage = false) {
         cursor: pointer;
         flex: 1;
         min-width: 120px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
     `;
     tutorialButtonContainer.appendChild(understoodButton);
 
@@ -996,6 +999,9 @@ function showMissionCommandAlert(title, text, isVictoryMessage = false) {
         touch-action: manipulation;
         -webkit-tap-highlight-color: rgba(0, 150, 255, 0.3);
         cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
     `;
     buttonContainer.appendChild(understoodButton);
     
