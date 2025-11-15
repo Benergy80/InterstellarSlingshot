@@ -1038,12 +1038,13 @@ body.mobile-mode .mobile-ui {
     }
 }
 
-/* Ensure tutorial buttons are tappable on mobile */
-.mission-command-alert {
-    pointer-events: auto !important;
+/* Ensure tutorial buttons are clickable and cursor is visible ONLY on the alert itself */
+#missionCommandAlert:not(.hidden) {
+    cursor: auto !important;
 }
 
-.mission-command-alert button {
+#missionCommandAlert:not(.hidden) button {
+    cursor: pointer !important;
     pointer-events: auto !important;
     touch-action: manipulation !important;
     -webkit-tap-highlight-color: rgba(0, 150, 255, 0.3);
