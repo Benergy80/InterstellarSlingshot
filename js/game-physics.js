@@ -202,7 +202,7 @@ function initializeEnhancedGameStateProperties() {
         available: 5,
         cooldown: 0,
         boostDuration: 8000,
-        boostSpeed: 100.0, // INCREASED FOR DEBUGGING (was 15.0)
+        boostSpeed: 15.0,
         active: false,
         timeRemaining: 0,
         postWarp: false,  // NEW: Track momentum coasting phase
@@ -216,7 +216,7 @@ gameState.emergencyWarp = {
     available: 5,
     cooldown: 0,
     boostDuration: 8000,
-    boostSpeed: 100.0, // INCREASED FOR DEBUGGING (was 15.0)
+    boostSpeed: 15.0,
     active: false,
     timeRemaining: 0,
     postWarp: false,  // NEW: Track post-warp coasting
@@ -1616,7 +1616,7 @@ if ((planet.userData.type === 'planet' || planet.userData.type === 'star' || pla
                 if (drone.userData.health <= 0) return;
 
                 const droneDistance = camera.position.distanceTo(drone.position);
-                const collisionDistance = 400; // BORG cube collision threshold (200 cube size + 200 glow + buffer)
+                const collisionDistance = 50; // BORG cube collision threshold
 
                 if (droneDistance < collisionDistance) {
                     // Push player away from BORG cube

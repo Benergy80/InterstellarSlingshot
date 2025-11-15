@@ -665,15 +665,15 @@ function createOrbitingPlanet(systemGroup, orbitRadius, index) {
 function createBorgDrone(systemGroup, maxOrbitRadius, index) {
     const droneGroup = new THREE.Group();
 
-    // BORG cube design - MUCH LARGER to be visible at patrol distance
-    const cubeSize = 200; // Increased from 30 to 200 for visibility
+    // BORG cube design
+    const cubeSize = 30;
     const cubeGeo = new THREE.BoxGeometry(cubeSize, cubeSize, cubeSize);
     const cubeMat = new THREE.MeshStandardMaterial({
         color: 0x1a1a1a,
         metalness: 0.9,
         roughness: 0.2,
         emissive: 0x00ff00,
-        emissiveIntensity: 0.5 // Brighter emissive
+        emissiveIntensity: 0.3
     });
     const cube = new THREE.Mesh(cubeGeo, cubeMat);
     droneGroup.add(cube);
@@ -687,8 +687,8 @@ function createBorgDrone(systemGroup, maxOrbitRadius, index) {
     const edges = new THREE.LineSegments(edgeGeo, edgeMat);
     droneGroup.add(edges);
 
-    // Add glowing sphere in center - LARGER
-    const coreGeo = new THREE.SphereGeometry(60, 16, 16); // Increased from 10 to 60
+    // Add glowing sphere in center
+    const coreGeo = new THREE.SphereGeometry(10, 16, 16);
     const coreMat = new THREE.MeshBasicMaterial({
         color: 0x00ff00,
         transparent: true,
@@ -698,20 +698,8 @@ function createBorgDrone(systemGroup, maxOrbitRadius, index) {
     const core = new THREE.Mesh(coreGeo, coreMat);
     droneGroup.add(core);
 
-    // Add bright glow halo for visibility at distance
-    const glowGeo = new THREE.SphereGeometry(300, 16, 16);
-    const glowMat = new THREE.MeshBasicMaterial({
-        color: 0x00ff00,
-        transparent: true,
-        opacity: 0.2,
-        blending: THREE.AdditiveBlending,
-        side: THREE.BackSide
-    });
-    const glow = new THREE.Mesh(glowGeo, glowMat);
-    droneGroup.add(glow);
-
-    // Position drone closer to system for visibility
-    const patrolRadius = 3000 + Math.random() * 2000; // Reduced from 10k-15k to 3k-5k units
+    // Position drone in MUCH larger patrol orbit (released from far distance)
+    const patrolRadius = 10000 + Math.random() * 5000; // 10,000-15,000 units from system center
     const angle = (index / 3) * Math.PI * 2;
     droneGroup.position.set(
         Math.cos(angle) * patrolRadius,

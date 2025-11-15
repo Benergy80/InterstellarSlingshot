@@ -82,7 +82,7 @@ const gameState = {
         available: 5,
         cooldown: 0,
         boostDuration: 8000,
-        boostSpeed: 100.0, // INCREASED FOR DEBUGGING (was 30.0)
+        boostSpeed: 30.0, // Doubled for doubled world
         active: false,
         timeRemaining: 0
     },
