@@ -2419,7 +2419,7 @@ function createMobileFloatingStatus() {
     floatingStatus.id = 'mobileFloatingStatus';
     floatingStatus.style.cssText = `
         position: fixed;
-        bottom: 100px;
+        bottom: 180px;
         left: 50%;
         transform: translateX(-50%);
         display: flex;
