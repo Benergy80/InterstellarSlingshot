@@ -2420,8 +2420,6 @@ setTimeout(() => {
     let scopeTargetY = 0;
     let scopeCurrentX = 0;
     let scopeCurrentY = 0;
-    let scopeMouseX = window.innerWidth / 2;  // Track actual mouse position for zoom
-    let scopeMouseY = window.innerHeight / 2;
     const scopeSmoothing = 0.15; // Smooth following like crosshair
     let lastMissileSelectedState = false;
 
@@ -2446,9 +2444,9 @@ setTimeout(() => {
         zoomScope.style.left = scopeCurrentX + 'px';
         zoomScope.style.top = scopeCurrentY + 'px';
 
-        // Use tracked mouse position for zoom calculation
-        const mouseX = scopeMouseX;
-        const mouseY = scopeMouseY;
+        // Use gameState mouse position for zoom calculation
+        const mouseX = gameState.mouseX || window.innerWidth / 2;
+        const mouseY = gameState.mouseY || window.innerHeight / 2;
 
         // Calculate source area on the renderer canvas
         const sourceWidth = 250 / zoomFactor;
@@ -2541,9 +2539,6 @@ setTimeout(() => {
         // Update target position for smooth following
         scopeTargetX = e.clientX - 125;
         scopeTargetY = e.clientY - 125;
-        // Update mouse position for zoom calculation
-        scopeMouseX = e.clientX;
-        scopeMouseY = e.clientY;
     });
 }, 1000);
 
