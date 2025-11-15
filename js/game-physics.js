@@ -2325,8 +2325,8 @@ function checkForNebulaDiscovery() {
                 console.log(`⚡ Warp earned from nebula discovery! Total: ${gameState.emergencyWarp.available}/${gameState.emergencyWarp.maxWarps}`);
             }
 
-            // Play unique nebula music
-            playNebulaMusic(index);
+            // Play unique nebula music (DISABLED)
+            // playNebulaMusic(index);
 
             // Get enemy intelligence
             const intel = getEnemyIntelligence(nebula.position);
@@ -2361,10 +2361,10 @@ function checkForNebulaDiscovery() {
         }
     });
 
-    // If player has left all nebulas, stop the music
-    if (!playerNearNebula && currentNebulaMusic) {
-        stopNebulaMusic();
-    }
+    // If player has left all nebulas, stop the music (DISABLED)
+    // if (!playerNearNebula && currentNebulaMusic) {
+    //     stopNebulaMusic();
+    // }
 }
 
 // =============================================================================
