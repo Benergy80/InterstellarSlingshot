@@ -1127,5 +1127,69 @@ body.intro-active .nav-panel-mobile {
         display: none !important;
     }
 }
+
+/* Swipe indicator for navigation panel */
+.swipe-indicator {
+    position: fixed;
+    top: 80px;
+    right: 10px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(135deg, rgba(0, 150, 255, 0.3), rgba(0, 100, 200, 0.3));
+    border: 2px solid rgba(0, 200, 255, 0.5);
+    border-radius: 8px;
+    padding: 8px 6px;
+    z-index: 25;
+    pointer-events: none;
+    animation: swipePulse 2s ease-in-out infinite;
+}
+
+.swipe-arrow {
+    font-size: 20px;
+    color: rgba(0, 200, 255, 0.9);
+    margin-bottom: 2px;
+    animation: swipeArrowMove 1.5s ease-in-out infinite;
+}
+
+.swipe-text {
+    font-size: 10px;
+    font-weight: bold;
+    color: rgba(0, 200, 255, 0.9);
+    font-family: 'Orbitron', monospace;
+}
+
+@keyframes swipePulse {
+    0%, 100% {
+        opacity: 0.6;
+        transform: scale(1);
+    }
+    50% {
+        opacity: 1;
+        transform: scale(1.05);
+    }
+}
+
+@keyframes swipeArrowMove {
+    0%, 100% {
+        transform: translateX(0);
+    }
+    50% {
+        transform: translateX(-4px);
+    }
+}
+
+/* Hide swipe indicator when nav panel is active */
+.nav-panel-mobile.active ~ .swipe-indicator {
+    display: none;
+}
+
+/* Hide swipe indicator on desktop */
+@media (min-width: 769px) {
+    .swipe-indicator {
+        display: none !important;
+    }
+}
 `;
 }
