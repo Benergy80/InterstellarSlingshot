@@ -1392,156 +1392,156 @@ if (obj.type === 'enemy') {
     // Use pooling instead
 mapDotPool.releaseAll();
     
-    // **NEW: Display major cosmic features on map**
-    if (typeof cosmicFeatures !== 'undefined') {
-        // Function to add cosmic feature dot
-        const addCosmicFeatureDot = (feature, color, size) => {
-            if (!feature || !feature.position) return;
+    // **DISABLED: Display major cosmic features on map**
+    // if (typeof cosmicFeatures !== 'undefined') {
+    //     // Function to add cosmic feature dot
+    //     const addCosmicFeatureDot = (feature, color, size) => {
+    //         if (!feature || !feature.position) return;
 
-            const featureMapX = (feature.position.x / universeRadius) + 0.5;
-            const featureMapZ = (feature.position.z / universeRadius) + 0.5;
+    //         const featureMapX = (feature.position.x / universeRadius) + 0.5;
+    //         const featureMapZ = (feature.position.z / universeRadius) + 0.5;
 
-            // Only show if within map bounds
-            if (featureMapX >= 0 && featureMapX <= 1 && featureMapZ >= 0 && featureMapZ <= 1) {
-                const dot = mapDotPool.get('cosmic-feature');
-                dot.className = 'cosmic-feature-dot absolute';
-                dot.style.width = size;
-                dot.style.height = size;
-                dot.style.backgroundColor = color;
-                dot.style.borderRadius = '50%';
-                dot.style.border = `1px solid ${color}`;
-                dot.style.left = `${featureMapX * 100}%`;
-                dot.style.top = `${featureMapZ * 100}%`;
-                dot.style.transform = 'translate(-50%, -50%)';
-                dot.style.boxShadow = `0 0 8px ${color}`;
-                dot.style.pointerEvents = 'none';
-                dot.style.zIndex = '5';
-                dot.innerHTML = '';
-                dot.title = feature.userData.name || 'Cosmic Feature';
+    //         // Only show if within map bounds
+    //         if (featureMapX >= 0 && featureMapX <= 1 && featureMapZ >= 0 && featureMapZ <= 1) {
+    //             const dot = mapDotPool.get('cosmic-feature');
+    //             dot.className = 'cosmic-feature-dot absolute';
+    //             dot.style.width = size;
+    //             dot.style.height = size;
+    //             dot.style.backgroundColor = color;
+    //             dot.style.borderRadius = '50%';
+    //             dot.style.border = `1px solid ${color}`;
+    //             dot.style.left = `${featureMapX * 100}%`;
+    //             dot.style.top = `${featureMapZ * 100}%`;
+    //             dot.style.transform = 'translate(-50%, -50%)';
+    //             dot.style.boxShadow = `0 0 8px ${color}`;
+    //             dot.style.pointerEvents = 'none';
+    //             dot.style.zIndex = '5';
+    //             dot.innerHTML = '';
+    //             dot.title = feature.userData.name || 'Cosmic Feature';
 
-                galaxyMap.appendChild(dot);
-            }
-        };
-        
-        // Add Dyson Spheres (legendary - large purple)
-        if (cosmicFeatures.dysonSpheres) {
-            cosmicFeatures.dysonSpheres.forEach(dyson => {
-                addCosmicFeatureDot(dyson, '#aa44ff', '10px');
-            });
-        }
+    //             galaxyMap.appendChild(dot);
+    //         }
+    //     };
 
-        // Add Supernovas (rare - large orange)
-        if (cosmicFeatures.supernovas) {
-            cosmicFeatures.supernovas.forEach(supernova => {
-                addCosmicFeatureDot(supernova, '#ff6600', '9px');
-            });
-        }
+    //     // Add Dyson Spheres (legendary - large purple)
+    //     if (cosmicFeatures.dysonSpheres) {
+    //         cosmicFeatures.dysonSpheres.forEach(dyson => {
+    //             addCosmicFeatureDot(dyson, '#aa44ff', '10px');
+    //         });
+    //     }
 
-        // Add Pulsars (rare - medium cyan)
-        if (cosmicFeatures.pulsars) {
-            cosmicFeatures.pulsars.forEach(pulsar => {
-                addCosmicFeatureDot(pulsar, '#44eeff', '7px');
-            });
-        }
+    //     // Add Supernovas (rare - large orange)
+    //     if (cosmicFeatures.supernovas) {
+    //         cosmicFeatures.supernovas.forEach(supernova => {
+    //             addCosmicFeatureDot(supernova, '#ff6600', '9px');
+    //         });
+    //     }
 
-        // Add Plasma Storms (rare - medium purple)
-        if (cosmicFeatures.plasmaStorms) {
-            cosmicFeatures.plasmaStorms.forEach(storm => {
-                addCosmicFeatureDot(storm, '#cc44ff', '7px');
-            });
-        }
+    //     // Add Pulsars (rare - medium cyan)
+    //     if (cosmicFeatures.pulsars) {
+    //         cosmicFeatures.pulsars.forEach(pulsar => {
+    //             addCosmicFeatureDot(pulsar, '#44eeff', '7px');
+    //         });
+    //     }
 
-        // Add Crystal Formations (rare - medium emerald)
-        if (cosmicFeatures.crystalFormations) {
-            cosmicFeatures.crystalFormations.forEach(crystal => {
-                addCosmicFeatureDot(crystal, '#44ff88', '7px');
-            });
-        }
-    }
+    //     // Add Plasma Storms (rare - medium purple)
+    //     if (cosmicFeatures.plasmaStorms) {
+    //         cosmicFeatures.plasmaStorms.forEach(storm => {
+    //             addCosmicFeatureDot(storm, '#cc44ff', '7px');
+    //         });
+    //     }
 
-// Add Nebulas with region names (large, with text labels)
-        if (typeof nebulaClouds !== 'undefined' && nebulaClouds.length > 0) {
-            nebulaClouds.forEach(nebula => {
-                if (!nebula || !nebula.position || !nebula.userData) return;
-                
-                const nebulaMapX = (nebula.position.x / universeRadius) + 0.5;
-                const nebulaMapZ = (nebula.position.z / universeRadius) + 0.5;
-                
-                // Only show if within map bounds
-                if (nebulaMapX >= 0 && nebulaMapX <= 1 && nebulaMapZ >= 0 && nebulaMapZ <= 1) {
-                    const nebulaDot = mapDotPool.get('cosmic-feature');
-                    nebulaDot.className = 'cosmic-feature-dot nebula-indicator absolute';
-                    
-                    // Larger size for nebulas
-                    nebulaDot.style.width = '14px';
-                    nebulaDot.style.height = '14px';
-                    nebulaDot.style.backgroundColor = '#' + (nebula.userData.color ? nebula.userData.color.getHexString() : 'ff88cc');
-                    nebulaDot.style.borderRadius = '50%';
-                    nebulaDot.style.border = '2px solid rgba(255, 136, 204, 0.8)';
-                    nebulaDot.style.left = `${nebulaMapX * 100}%`;
-                    nebulaDot.style.top = `${nebulaMapZ * 100}%`;
-                    nebulaDot.style.transform = 'translate(-50%, -50%)';
-                    nebulaDot.style.boxShadow = `0 0 12px ${nebulaDot.style.backgroundColor}`;
-                    nebulaDot.style.pointerEvents = 'none';
-                    nebulaDot.style.zIndex = '6';
-                    nebulaDot.innerHTML = '';
-                    nebulaDot.title = nebula.userData.mythicalName || nebula.userData.name || 'Nebula';
-                    
-                    galaxyMap.appendChild(nebulaDot);
-                }
-            });
-        }
+    //     // Add Crystal Formations (rare - medium emerald)
+    //     if (cosmicFeatures.crystalFormations) {
+    //         cosmicFeatures.crystalFormations.forEach(crystal => {
+    //             addCosmicFeatureDot(crystal, '#44ff88', '7px');
+    //         });
+    //     }
+    // }
 
-    // Add Outer Interstellar Systems (28 total: 16 exotic + 12 BORG)
-    if (typeof outerInterstellarSystems !== 'undefined') {
-        outerInterstellarSystems.forEach(system => {
-            if (!system || !system.position || !system.userData) return;
+// DISABLED: Add Nebulas with region names (large, with text labels)
+        // if (typeof nebulaClouds !== 'undefined' && nebulaClouds.length > 0) {
+        //     nebulaClouds.forEach(nebula => {
+        //         if (!nebula || !nebula.position || !nebula.userData) return;
+        //
+        //         const nebulaMapX = (nebula.position.x / universeRadius) + 0.5;
+        //         const nebulaMapZ = (nebula.position.z / universeRadius) + 0.5;
+        //
+        //         // Only show if within map bounds
+        //         if (nebulaMapX >= 0 && nebulaMapX <= 1 && nebulaMapZ >= 0 && nebulaMapZ <= 1) {
+        //             const nebulaDot = mapDotPool.get('cosmic-feature');
+        //             nebulaDot.className = 'cosmic-feature-dot nebula-indicator absolute';
+        //
+        //             // Larger size for nebulas
+        //             nebulaDot.style.width = '14px';
+        //             nebulaDot.style.height = '14px';
+        //             nebulaDot.style.backgroundColor = '#' + (nebula.userData.color ? nebula.userData.color.getHexString() : 'ff88cc');
+        //             nebulaDot.style.borderRadius = '50%';
+        //             nebulaDot.style.border = '2px solid rgba(255, 136, 204, 0.8)';
+        //             nebulaDot.style.left = `${nebulaMapX * 100}%`;
+        //             nebulaDot.style.top = `${nebulaMapZ * 100}%`;
+        //             nebulaDot.style.transform = 'translate(-50%, -50%)';
+        //             nebulaDot.style.boxShadow = `0 0 12px ${nebulaDot.style.backgroundColor}`;
+        //             nebulaDot.style.pointerEvents = 'none';
+        //             nebulaDot.style.zIndex = '6';
+        //             nebulaDot.innerHTML = '';
+        //             nebulaDot.title = nebula.userData.mythicalName || nebula.userData.name || 'Nebula';
+        //
+        //             galaxyMap.appendChild(nebulaDot);
+        //         }
+        //     });
+        // }
 
-            const systemMapX = (system.position.x / universeRadius) + 0.5;
-            const systemMapZ = (system.position.z / universeRadius) + 0.5;
+    // DISABLED: Add Outer Interstellar Systems (28 total: 16 exotic + 12 BORG)
+    // if (typeof outerInterstellarSystems !== 'undefined') {
+    //     outerInterstellarSystems.forEach(system => {
+    //         if (!system || !system.position || !system.userData) return;
 
-            // Only show if within map bounds (outer systems should always be visible)
-            if (systemMapX >= 0 && systemMapX <= 1 && systemMapZ >= 0 && systemMapZ <= 1) {
-                const systemDot = mapDotPool.get('cosmic-feature');
-                systemDot.className = 'cosmic-feature-dot outer-system-indicator absolute';
+    //         const systemMapX = (system.position.x / universeRadius) + 0.5;
+    //         const systemMapZ = (system.position.z / universeRadius) + 0.5;
 
-                // Determine color based on system type
-                let color = '#ffff88';  // Default: bright yellow for unknown systems
-                let size = '8px';
+    //         // Only show if within map bounds (outer systems should always be visible)
+    //         if (systemMapX >= 0 && systemMapX <= 1 && systemMapZ >= 0 && systemMapZ <= 1) {
+    //             const systemDot = mapDotPool.get('cosmic-feature');
+    //             systemDot.className = 'cosmic-feature-dot outer-system-indicator absolute';
 
-                if (system.userData.centerType === 'supernova') {
-                    color = '#ff6600';
-                    size = '10px';
-                } else if (system.userData.centerType === 'plasma_storm') {
-                    color = '#aa44ff';
-                    size = '10px';
-                } else if (system.userData.centerType === 'solar_storm') {
-                    color = '#ffff00';
-                    size = '10px';
-                } else if (system.userData.hasBorg) {
-                    // BORG patrol systems
-                    color = '#00ff00';
-                    size = '9px';
-                }
+    //             // Determine color based on system type
+    //             let color = '#ffff88';  // Default: bright yellow for unknown systems
+    //             let size = '8px';
 
-                systemDot.style.width = size;
-                systemDot.style.height = size;
-                systemDot.style.backgroundColor = color;
-                systemDot.style.borderRadius = '50%';
-                systemDot.style.border = `2px solid ${color}`;
-                systemDot.style.left = `${systemMapX * 100}%`;
-                systemDot.style.top = `${systemMapZ * 100}%`;
-                systemDot.style.transform = 'translate(-50%, -50%)';
-                systemDot.style.boxShadow = `0 0 10px ${color}`;
-                systemDot.style.pointerEvents = 'none';
-                systemDot.style.zIndex = '7';  // Above nebulas
-                systemDot.innerHTML = '';
-                systemDot.title = system.userData.name + ' - ' + system.userData.location;
+    //             if (system.userData.centerType === 'supernova') {
+    //                 color = '#ff6600';
+    //                 size = '10px';
+    //             } else if (system.userData.centerType === 'plasma_storm') {
+    //                 color = '#aa44ff';
+    //                 size = '10px';
+    //             } else if (system.userData.centerType === 'solar_storm') {
+    //                 color = '#ffff00';
+    //                 size = '10px';
+    //             } else if (system.userData.hasBorg) {
+    //                 // BORG patrol systems
+    //                 color = '#00ff00';
+    //                 size = '9px';
+    //             }
 
-                galaxyMap.appendChild(systemDot);
-            }
-        });
-    }
+    //             systemDot.style.width = size;
+    //             systemDot.style.height = size;
+    //             systemDot.style.backgroundColor = color;
+    //             systemDot.style.borderRadius = '50%';
+    //             systemDot.style.border = `2px solid ${color}`;
+    //             systemDot.style.left = `${systemMapX * 100}%`;
+    //             systemDot.style.top = `${systemMapZ * 100}%`;
+    //             systemDot.style.transform = 'translate(-50%, -50%)';
+    //             systemDot.style.boxShadow = `0 0 10px ${color}`;
+    //             systemDot.style.pointerEvents = 'none';
+    //             systemDot.style.zIndex = '7';  // Above nebulas
+    //             systemDot.innerHTML = '';
+    //             systemDot.title = system.userData.name + ' - ' + system.userData.location;
+
+    //             galaxyMap.appendChild(systemDot);
+    //         }
+    //     });
+    // }
 
     // Show player triangle, hide direction arrow
     playerMapPos.style.display = 'block';
