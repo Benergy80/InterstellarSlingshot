@@ -1048,9 +1048,9 @@ function updateOuterSystems() {
         let opacity = 1.0;
 
         if (system.userData.systemType === 'exotic_core') {
-            // SET 1: Exotic Core Systems - Minimal visibility at start
-            // Invisible when player is >65,000 units away, fade IN as player approaches
-            const fadeStart = 65000;      // Start becoming visible at this distance
+            // SET 1: Exotic Core Systems - ALWAYS VISIBLE from game start
+            // Increased visibility range so players can see them immediately
+            const fadeStart = 150000;     // Start fading at this distance (increased from 65000)
             const fadeComplete = 5000;    // Fully visible at this distance
 
             if (systemDist > fadeStart) {
