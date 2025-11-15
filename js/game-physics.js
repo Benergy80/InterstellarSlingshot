@@ -1119,13 +1119,14 @@ function executeSlingshot() {
     if (nearestPlanet && gameState.energy >= 20 && !gameState.slingshot.active) {
         const planetMass = nearestPlanet.userData.mass || 1;
         const planetRadius = nearestPlanet.geometry ? nearestPlanet.geometry.parameters.radius : 5;
-        
-        // FIXED: Use player's CURRENT TRAJECTORY, not a perpendicular direction
-        // Get current velocity direction (player's trajectory)
-        const currentTrajectory = gameState.velocityVector.clone().normalize();
-        
-        // Slingshot boosts in the direction you're already moving
-        const slingshotDirection = currentTrajectory;
+
+        // Use the direction the player is looking (camera forward direction)
+        const lookDirection = new THREE.Vector3();
+        camera.getWorldDirection(lookDirection);
+        lookDirection.normalize();
+
+        // Slingshot boosts in the direction the player is looking
+        const slingshotDirection = lookDirection;
         
         // FIXED: Make slingshots MUCH MORE POWERFUL than emergency warps
         // Emergency warp: ~15,000 km/s

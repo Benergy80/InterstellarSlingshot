@@ -3832,7 +3832,7 @@ function showAchievement(title, description, playAchievementSound = true) {
     if (popup && achievementText && titleElement) {
         achievementText.textContent = description;
         titleElement.textContent = title;
-        
+
         // ⭐ CRITICAL: Force clear any inline styles that might block visibility
         popup.style.display = '';  // Clear inline display style
         popup.style.visibility = ''; // Clear inline visibility style
@@ -3840,19 +3840,60 @@ function showAchievement(title, description, playAchievementSound = true) {
         popup.style.zIndex = '999'; // Maximum priority
         popup.style.position = 'fixed'; // Ensure it's always fixed
         popup.style.pointerEvents = 'auto'; // Enable interaction
-        
+
         popup.classList.remove('hidden');
-        
+
+        // Add click handler for "Slingshot Ready" on mobile
+        if (title === 'Slingshot Ready') {
+            popup.style.cursor = 'pointer';
+
+            // Remove any existing handlers to prevent duplicates
+            const oldHandler = popup._slingshotClickHandler;
+            if (oldHandler) {
+                popup.removeEventListener('click', oldHandler);
+                popup.removeEventListener('touchstart', oldHandler);
+            }
+
+            // Create new handler
+            const slingshotHandler = (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                console.log('📱 Slingshot Ready notification tapped');
+
+                if (typeof executeSlingshot === 'function') {
+                    executeSlingshot();
+                    popup.classList.add('hidden');
+                }
+            };
+
+            // Store handler reference for cleanup
+            popup._slingshotClickHandler = slingshotHandler;
+
+            // Add listeners
+            popup.addEventListener('click', slingshotHandler);
+            popup.addEventListener('touchstart', slingshotHandler, { passive: false });
+        } else {
+            popup.style.cursor = 'default';
+
+            // Remove slingshot handler if exists
+            const oldHandler = popup._slingshotClickHandler;
+            if (oldHandler) {
+                popup.removeEventListener('click', oldHandler);
+                popup.removeEventListener('touchstart', oldHandler);
+                popup._slingshotClickHandler = null;
+            }
+        }
+
         console.log(`✨ Achievement displaying: ${title}`);
-        
+
         // Longer display time for important achievements
         const displayTime = 4000;
-        
+
         // Play sound if requested
         if (playAchievementSound && typeof playSound === 'function') {
             playSound('achievement');
         }
-        
+
         // Auto-hide after display time
         setTimeout(() => {
             popup.classList.add('hidden');
