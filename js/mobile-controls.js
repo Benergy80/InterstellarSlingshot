@@ -770,15 +770,6 @@ const mobileUpdateInterval = setInterval(() => {
             if (warpsEl) warpsEl.textContent = gameState.emergencyWarp?.available ?? 5;
         }
     }
-
-    // Update mobile indicators
-    if (typeof gameState !== 'undefined') {
-        const energyIndicator = document.getElementById('mobileEnergyValue');
-        const warpIndicator = document.getElementById('mobileWarpValue');
-
-        if (energyIndicator) energyIndicator.textContent = Math.round(gameState.energy) + '%';
-        if (warpIndicator) warpIndicator.textContent = gameState.emergencyWarp?.available ?? 5;
-    }
 }, 1000);
 
 // Show mobile controls after intro
@@ -795,19 +786,12 @@ document.addEventListener('DOMContentLoaded', () => {
         
         if (isMobileDevice()) {
             const mobileControlsContainer = document.querySelector('.mobile-controls-container');
-            const mobileIndicators = document.querySelectorAll('.mobile-indicator');
             const navPanelMobile = document.querySelector('.nav-panel-mobile');
             const floatingStatus = document.getElementById('mobileFloatingStatus');
 
             if (mobileControlsContainer) {
                 mobileControlsContainer.style.display = 'flex';
                 console.log('📱 Mobile controls container now visible');
-            }
-            if (mobileIndicators.length > 0) {
-                mobileIndicators.forEach(indicator => {
-                    indicator.style.display = 'block';
-                });
-                console.log('📱 Mobile indicators now visible');
             }
             if (navPanelMobile) {
                 navPanelMobile.style.display = 'block';

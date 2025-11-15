@@ -254,22 +254,9 @@
         display: flex !important;
     }
 
-    /* Show mobile indicators */
-    .mobile-indicator {
-        display: block !important;
-    }
-
-    /* Add transparency and fix positioning for shield indicator on mobile */
+    /* Hide shield indicator on mobile */
     .shield-indicator {
-        opacity: 0.7 !important;
-        top: 45% !important;
-        left: 10px !important;
-        transform: none !important;
-    }
-
-    .shield-indicator.active {
-        opacity: 0.7 !important;
-        transform: none !important;
+        display: none !important;
     }
     
     /* Mobile crosshair */
@@ -294,7 +281,6 @@
     /* Hide during intro */
     body.intro-active #achievementPopup,
     body.intro-active .mobile-controls-container,
-    body.intro-active .mobile-indicator,
     body.intro-active .nav-panel-mobile {
         display: none !important;
     }
@@ -352,7 +338,6 @@
             /* Hide during intro */
             body.intro-active #achievementPopup,
             body.intro-active .mobile-controls-container,
-            body.intro-active .mobile-indicator,
             body.intro-active .nav-panel-mobile {
                 display: none !important;
             }
@@ -368,47 +353,6 @@
                 transform: translate(-50%, -50%) !important;
             }
         }
-        /* Mobile indicators - Hidden by default, shown on mobile */
-        .mobile-indicator {
-            position: fixed !important;
-            left: 10px !important;
-            right: auto !important;
-            transform: none !important;
-            background: linear-gradient(135deg, rgba(15, 23, 42, 0.5), rgba(30, 41, 59, 0.5));
-            border: 1px solid rgba(0, 150, 255, 0.5);
-            border-radius: 8px;
-            padding: 6px 10px;
-            font-family: 'Orbitron', monospace;
-            font-size: 11px;
-            text-shadow: 0 0 8px rgba(0, 212, 255, 0.6);
-            backdrop-filter: blur(2px);
-            z-index: 850;
-            display: none;
-            opacity: 0.7;
-            box-shadow: 0 0 15px rgba(0, 150, 255, 0.3);
-            color: #00d4ff;
-        }
-
-        .energy-indicator {
-            top: 35% !important;
-            color: #ffff00;
-            border-color: rgba(255, 255, 0, 0.5);
-            text-shadow: 0 0 8px rgba(255, 255, 0, 0.6);
-        }
-
-        .warp-indicator {
-            top: 55% !important;
-            color: #ff6600;
-            border-color: rgba(255, 100, 0, 0.5);
-            text-shadow: 0 0 8px rgba(255, 100, 0, 0.6);
-        }
-
-        .indicator-value {
-            font-size: 10px;
-            margin-top: 2px;
-            font-weight: bold;
-        }
-
         /* Mobile control buttons container */
         .mobile-controls-container {
             position: fixed;
@@ -584,7 +528,6 @@
         /* Force hide mobile on desktop */
         @media (min-width: 769px) and (pointer: fine) and (hover: hover) {
             .mobile-controls-container,
-            .mobile-indicator,
             .nav-panel-mobile,
             .mobile-popup {
                 display: none !important;
@@ -804,18 +747,6 @@
     <div>🛡️ SHIELDS: <span id="shieldStatus">ACTIVE</span></div>
     <div class="shield-status">Energy Drain: <span id="shieldDrain">2%/s</span></div>
     <div class="shield-restrictions">⚠️ Warp & Missiles Disabled</div>
-</div>
-
-<!-- Mobile Energy Indicator -->
-<div class="mobile-indicator energy-indicator" id="mobileEnergyIndicator">
-    <div>⚡ ENERGY</div>
-    <div class="indicator-value"><span id="mobileEnergyValue">100%</span></div>
-</div>
-
-<!-- Mobile Emergency Warp Indicator -->
-<div class="mobile-indicator warp-indicator" id="mobileWarpIndicator">
-    <div>🚀 WARP</div>
-    <div class="indicator-value"><span id="mobileWarpValue">5</span></div>
 </div>
 
 <!-- MOBILE CONTROLS -->
