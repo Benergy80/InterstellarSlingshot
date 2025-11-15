@@ -996,7 +996,16 @@ function updateEnhancedPhysics() {
         initializeEnhancedGameStateProperties();
         gameState.enhancedPropertiesInitialized = true;
     }
-    
+
+    // Get keys reference from game-controls.js
+    const keys = window.keys || {
+        w: false, a: false, s: false, d: false,
+        q: false, e: false, o: false,
+        shift: false, alt: false, space: false,
+        up: false, down: false, left: false, right: false,
+        x: false, b: false, l: false
+    };
+
     // SPECIFICATION: Use consistent rotSpeed = 0.03 for all rotation inputs
     const rotSpeed = 0.02;
     const gravitationalConstant = 0.001; // DOUBLED for doubled masses
