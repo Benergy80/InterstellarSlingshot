@@ -243,12 +243,12 @@
     .ui-panel {
         display: none !important;
     }
-    
+
     /* EXCEPTION: Keep achievement popup visible on mobile */
     #achievementPopup .ui-panel {
         display: block !important;
     }
-    
+
     /* Show mobile controls */
     .mobile-controls-container {
         display: flex !important;
@@ -259,13 +259,17 @@
         display: block !important;
     }
 
-    /* Add transparency to shield indicator on mobile */
+    /* Add transparency and fix positioning for shield indicator on mobile */
     .shield-indicator {
         opacity: 0.7 !important;
+        top: 45% !important;
+        left: 10px !important;
+        transform: none !important;
     }
 
     .shield-indicator.active {
         opacity: 0.7 !important;
+        transform: none !important;
     }
     
     /* Mobile crosshair */
@@ -366,8 +370,10 @@
         }
         /* Mobile indicators - Hidden by default, shown on mobile */
         .mobile-indicator {
-            position: fixed;
-            left: 10px;
+            position: fixed !important;
+            left: 10px !important;
+            right: auto !important;
+            transform: none !important;
             background: linear-gradient(135deg, rgba(15, 23, 42, 0.5), rgba(30, 41, 59, 0.5));
             border: 1px solid rgba(0, 150, 255, 0.5);
             border-radius: 8px;
@@ -384,14 +390,14 @@
         }
 
         .energy-indicator {
-            top: 35%;
+            top: 35% !important;
             color: #ffff00;
             border-color: rgba(255, 255, 0, 0.5);
             text-shadow: 0 0 8px rgba(255, 255, 0, 0.6);
         }
 
         .warp-indicator {
-            top: 55%;
+            top: 55% !important;
             color: #ff6600;
             border-color: rgba(255, 100, 0, 0.5);
             text-shadow: 0 0 8px rgba(255, 100, 0, 0.6);

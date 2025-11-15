@@ -844,6 +844,7 @@ body.ui-mode {
     .shield-indicator {
         top: 45%;
         left: 10px;
+        transform: none !important;
         padding: 6px 10px;
         font-size: 11px;
         opacity: 0.7 !important;
@@ -851,6 +852,7 @@ body.ui-mode {
 
     .shield-indicator.active {
         opacity: 0.7 !important;
+        transform: none !important;
     }
 }
 
