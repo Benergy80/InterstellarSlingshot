@@ -1035,8 +1035,8 @@ function updateOuterSystems() {
         if (system.userData.systemType === 'exotic_core') {
             // SET 1: Exotic Core Systems - Original visibility settings
             // Start fading at 5,000 units from player
-            const blurStart = 5000;
-            const blurMax = 90000;
+            const blurStart = 1000;
+            const blurMax = 100000;
             if (systemDist > blurStart) {
                 opacity = 1.0 - Math.min(1, (systemDist - blurStart) / (blurMax - blurStart));
             }
