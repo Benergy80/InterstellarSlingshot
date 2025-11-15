@@ -809,10 +809,34 @@ function startTutorial() {
     });
 }
 
+// ⭐ NEW: Function to immediately advance to next tutorial message
+function showNextTutorialMessage() {
+    if (!tutorialSystem.active || tutorialSystem.currentStep >= tutorialSystem.messages.length) {
+        // No more messages, complete tutorial
+        completeTutorial();
+        return;
+    }
+
+    const nextMessage = tutorialSystem.messages[tutorialSystem.currentStep];
+    if (nextMessage) {
+        showMissionCommandAlert(nextMessage.title, nextMessage.text);
+        tutorialSystem.currentStep++;
+
+        // Check if this was the last message
+        if (tutorialSystem.currentStep >= tutorialSystem.messages.length) {
+            setTimeout(() => {
+                completeTutorial();
+            }, 15000); // Complete after 15 seconds or manual dismiss
+        }
+    } else {
+        completeTutorial();
+    }
+}
+
 // Add this new function:
 function completeTutorial() {
     console.log('Completing tutorial...');
-    
+
     tutorialSystem.completed = true;
     tutorialSystem.active = false;
     tutorialSystem.completionTime = Date.now();
@@ -888,12 +912,12 @@ function showMissionCommandAlert(title, text, isVictoryMessage = false) {
         flex-wrap: wrap;
     `;
 
-    // ⭐ Create blue OK button to advance to next tutorial message
-    const okButton = document.createElement('button');
-    okButton.id = 'missionCommandOK';
-    okButton.className = 'space-btn rounded px-6 py-2';
-    okButton.innerHTML = '<i class="fas fa-check mr-2"></i>OK';
-    okButton.style.cssText = `
+    // ⭐ Create blue UNDERSTOOD button to immediately advance to next tutorial message
+    const understoodButton = document.createElement('button');
+    understoodButton.id = 'missionCommandUnderstood';
+    understoodButton.className = 'space-btn rounded px-6 py-2';
+    understoodButton.innerHTML = '<i class="fas fa-check mr-2"></i>UNDERSTOOD';
+    understoodButton.style.cssText = `
         background: linear-gradient(135deg, rgba(0, 150, 255, 0.8), rgba(0, 100, 200, 0.8));
         border-color: rgba(0, 200, 255, 0.6);
         pointer-events: auto;
@@ -903,18 +927,22 @@ function showMissionCommandAlert(title, text, isVictoryMessage = false) {
         flex: 1;
         min-width: 120px;
     `;
-    tutorialButtonContainer.appendChild(okButton);
+    tutorialButtonContainer.appendChild(understoodButton);
 
-    // ⭐ OK button dismisses current message, next one will appear on timer
-    const handleOK = () => {
+    // ⭐ UNDERSTOOD button dismisses current and immediately shows next tutorial message
+    const handleUnderstood = () => {
         alertElement.classList.add('hidden');
+        // Immediately show next tutorial message
+        if (typeof showNextTutorialMessage === 'function') {
+            showNextTutorialMessage();
+        }
     };
 
-    okButton.onclick = handleOK;
-    okButton.ontouchend = (e) => {
+    understoodButton.onclick = handleUnderstood;
+    understoodButton.ontouchend = (e) => {
         e.preventDefault();
         e.stopPropagation();
-        handleOK();
+        handleUnderstood();
     };
 
     // ⭐ Create orange SKIP TUTORIAL button
