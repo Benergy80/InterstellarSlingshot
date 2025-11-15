@@ -523,6 +523,58 @@ function createPlayerExplosion() {
         playSound('ship_vaporize');
     }
 
+    // FULL-SCREEN VAPORIZING EXPLOSION OVERLAY
+    const fullScreenOverlay = document.createElement('div');
+    fullScreenOverlay.id = 'playerExplosionOverlay';
+    fullScreenOverlay.style.cssText = `
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100vw;
+        height: 100vh;
+        background: radial-gradient(circle, rgba(255,100,0,0.9) 0%, rgba(255,50,0,0.7) 30%, rgba(200,0,0,0.5) 60%, transparent 100%);
+        z-index: 10000;
+        pointer-events: none;
+        opacity: 0;
+        animation: vaporizeExplosion 2s ease-out forwards;
+    `;
+
+    // Add keyframe animation
+    if (!document.getElementById('vaporizeExplosionStyle')) {
+        const style = document.createElement('style');
+        style.id = 'vaporizeExplosionStyle';
+        style.textContent = `
+            @keyframes vaporizeExplosion {
+                0% {
+                    opacity: 0;
+                    transform: scale(0.5);
+                }
+                20% {
+                    opacity: 1;
+                    transform: scale(1.2);
+                }
+                40% {
+                    opacity: 0.8;
+                    transform: scale(1.5);
+                }
+                100% {
+                    opacity: 0;
+                    transform: scale(3);
+                }
+            }
+        `;
+        document.head.appendChild(style);
+    }
+
+    document.body.appendChild(fullScreenOverlay);
+
+    // Remove overlay after animation
+    setTimeout(() => {
+        if (fullScreenOverlay.parentNode) {
+            fullScreenOverlay.parentNode.removeChild(fullScreenOverlay);
+        }
+    }, 2000);
+
     // Cleanup
     setTimeout(() => {
         if (explosionGroup.parent) {

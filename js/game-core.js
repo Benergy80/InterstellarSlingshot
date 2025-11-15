@@ -631,6 +631,11 @@ function startGame() {
         console.log('Creating spectacular triple-layered clustered nebulas...');
         createSpectacularClusteredNebulas();
     }
+
+    // Create boss battle skybox (starts transparent, pulses during boss battles)
+    if (typeof createBossBattleSkybox === 'function') {
+        createBossBattleSkybox();
+    }
 }, 1000);
 
 // In your startGame() function, after calling createOptimizedPlanets3D():
@@ -1095,10 +1100,15 @@ if (typeof localGalaxyStars !== 'undefined' && localGalaxyStars) {
     if (typeof updateHubbleSkyboxOpacity === 'function') {
         updateHubbleSkyboxOpacity();
     }
-    
+
     // Update second Hubble skybox opacity (deeper space layer)
     if (typeof updateHubbleSkybox2Opacity === 'function') {
         updateHubbleSkybox2Opacity();
+    }
+
+    // Update boss battle skybox with heartbeat pulsing
+    if (typeof updateBossSkyboxHeartbeat === 'function') {
+        updateBossSkyboxHeartbeat();
     }
     
     // PERFORMANCE: Update only expensive effects for active planets (tendrils, glows, etc.)

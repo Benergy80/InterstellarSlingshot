@@ -2420,6 +2420,8 @@ setTimeout(() => {
     let scopeTargetY = 0;
     let scopeCurrentX = 0;
     let scopeCurrentY = 0;
+    let scopeMouseX = window.innerWidth / 2;  // Track actual mouse position for zoom
+    let scopeMouseY = window.innerHeight / 2;
     const scopeSmoothing = 0.15; // Smooth following like crosshair
     let lastMissileSelectedState = false;
 
@@ -2444,9 +2446,9 @@ setTimeout(() => {
         zoomScope.style.left = scopeCurrentX + 'px';
         zoomScope.style.top = scopeCurrentY + 'px';
 
-        // Get mouse position
-        const mouseX = gameState.crosshairX || gameState.mouseX || window.innerWidth / 2;
-        const mouseY = gameState.crosshairY || gameState.mouseY || window.innerHeight / 2;
+        // Use tracked mouse position for zoom calculation
+        const mouseX = scopeMouseX;
+        const mouseY = scopeMouseY;
 
         // Calculate source area on the renderer canvas
         const sourceWidth = 250 / zoomFactor;
@@ -2539,6 +2541,9 @@ setTimeout(() => {
         // Update target position for smooth following
         scopeTargetX = e.clientX - 125;
         scopeTargetY = e.clientY - 125;
+        // Update mouse position for zoom calculation
+        scopeMouseX = e.clientX;
+        scopeMouseY = e.clientY;
     });
 }, 1000);
 
@@ -4400,10 +4405,12 @@ if (typeof window !== 'undefined') {
 console.log('ðŸ Game Controls script completed successfully!');
 
 // =============================================================================
-// NEBULA SOUND DEBUG MENU (Press T to toggle)
+// NEBULA SOUND DEBUG MENU - DISABLED
+// Will be re-enabled when proper sound testing panel is implemented
 // =============================================================================
 
-// Debug menu state
+// DISABLED: Debug menu and T key listener commented out
+/*
 window.nebulaDebugState = {
     mysteryFreq: 220,
     fadeInTime: 2,
@@ -4415,7 +4422,6 @@ window.nebulaDebugState = {
     lastTrigger: null
 };
 
-// Toggle debug menu
 window.toggleNebulaDebug = function() {
     const debugMenu = document.getElementById('nebulaSoundDebug');
     if (debugMenu) {
@@ -4423,18 +4429,18 @@ window.toggleNebulaDebug = function() {
     }
 };
 
-// Add T key listener for debug menu  
 document.addEventListener('keydown', (e) => {
     if (e.key === 't' || e.key === 'T') {
-        // Only allow if game is started and not paused
         if (typeof gameState !== 'undefined' && gameState.gameStarted && !gameState.paused) {
-            e.preventDefault(); // Prevent any other T key actions
+            e.preventDefault();
             toggleNebulaDebug();
         }
     }
 });
+*/
 
-// Update mystery frequency
+// DISABLED: All debug functions commented out
+/*
 window.updateMysteryFreq = function(value) {
     window.nebulaDebugState.mysteryFreq = parseFloat(value);
     document.getElementById('mysteryFreqValue').textContent = value + ' Hz';
@@ -4591,4 +4597,5 @@ document.addEventListener('DOMContentLoaded', () => {
     setInterval(updateDebugState, 1000);
 });
 
-console.log('🎵 Nebula Sound Debug Menu loaded (Press T to toggle)');
+console.log('🎵 Nebula Sound Debug Menu DISABLED (awaiting proper sound testing panel)');
+*/

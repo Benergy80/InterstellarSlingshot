@@ -3321,6 +3321,11 @@ function createSpectacularClusteredNebulas() {
         createDistantNebulas();
     }, 900);
 
+    // Create exotic core nebulas (45,000-65,000 units)
+    setTimeout(() => {
+        createExoticCoreNebulas();
+    }, 1200);
+
     console.log('Triple-layered clustered nebulas with maximum color intermingling created!');
 }
 
@@ -3429,6 +3434,115 @@ function createDistantNebulas() {
     }
 
     console.log(`✅ Created ${distantNebulaCount} distant nebulas in outer regions`);
+}
+
+// =============================================================================
+// EXOTIC CORE NEBULAS - Distributed in exotic core systems range (45,000-65,000 units)
+// =============================================================================
+function createExoticCoreNebulas() {
+    console.log('Creating exotic core nebulas (45,000-65,000 units)...');
+
+    if (typeof nebulaClouds === 'undefined') {
+        window.nebulaClouds = [];
+    }
+
+    const exoticNebulaCount = 8;  // Add 8 nebulas in exotic range
+    const minRadius = 45000;
+    const maxRadius = 65000;
+
+    const exoticNebulaNames = [
+        'Frontier Nebula',
+        'Outer Veil Nebula',
+        'Deep Space Nebula',
+        'Void Nebula',
+        'Boundary Nebula',
+        'Edge Nebula',
+        'Threshold Nebula',
+        'Horizon Nebula'
+    ];
+
+    for (let i = 0; i < exoticNebulaCount; i++) {
+        const nebulaGroup = new THREE.Group();
+
+        // Distribute around a sphere at exotic core distance
+        const phi = (i / exoticNebulaCount) * Math.PI * 2;
+        const theta = Math.PI / 2 + (Math.random() - 0.5) * Math.PI * 0.6;
+        const radius = minRadius + Math.random() * (maxRadius - minRadius);
+
+        const nebulaX = radius * Math.sin(theta) * Math.cos(phi);
+        const nebulaY = radius * Math.cos(theta);
+        const nebulaZ = radius * Math.sin(theta) * Math.sin(phi);
+
+        // Create nebula cloud particles
+        const particleCount = 1500;
+        const particleGeometry = new THREE.BufferGeometry();
+        const positions = new Float32Array(particleCount * 3);
+        const colors = new Float32Array(particleCount * 3);
+
+        // Rich, vibrant colors for exotic nebulas
+        const baseHue = (i / exoticNebulaCount) + Math.random() * 0.1;
+        const nebulaColor = new THREE.Color().setHSL(baseHue, 0.8 + Math.random() * 0.2, 0.5 + Math.random() * 0.3);
+        const nebulaSize = 3500 + Math.random() * 3500;
+
+        for (let j = 0; j < particleCount; j++) {
+            const radius = Math.pow(Math.random(), 0.3) * nebulaSize;
+            const theta = Math.random() * Math.PI * 2;
+            const phi = Math.acos(2 * Math.random() - 1);
+
+            const x = radius * Math.sin(phi) * Math.cos(theta);
+            const y = radius * Math.sin(phi) * Math.sin(theta) * 0.3;
+            const z = radius * Math.cos(phi);
+
+            positions[j * 3] = x;
+            positions[j * 3 + 1] = y;
+            positions[j * 3 + 2] = z;
+
+            // Color variation
+            const colorVariation = (Math.random() - 0.5) * 0.2;
+            const particleColor = new THREE.Color().setHSL(
+                (baseHue + colorVariation + 1) % 1,
+                0.7 + Math.random() * 0.3,
+                0.4 + Math.random() * 0.4
+            );
+
+            colors[j * 3] = particleColor.r;
+            colors[j * 3 + 1] = particleColor.g;
+            colors[j * 3 + 2] = particleColor.b;
+        }
+
+        particleGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        particleGeometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
+        const particleMaterial = new THREE.PointsMaterial({
+            size: 85,
+            vertexColors: true,
+            transparent: true,
+            opacity: 0.65,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false
+        });
+
+        const particles = new THREE.Points(particleGeometry, particleMaterial);
+        nebulaGroup.add(particles);
+
+        nebulaGroup.position.set(nebulaX, nebulaY, nebulaZ);
+        nebulaGroup.userData = {
+            type: 'nebula',
+            name: exoticNebulaNames[i],
+            mythicalName: exoticNebulaNames[i],
+            color: nebulaColor,
+            discovered: false,
+            size: nebulaSize,
+            isExoticCore: true
+        };
+
+        scene.add(nebulaGroup);
+        nebulaClouds.push(nebulaGroup);
+
+        console.log(`  Created ${exoticNebulaNames[i]} at distance ${radius.toFixed(0)} units`);
+    }
+
+    console.log(`✅ Created ${exoticNebulaCount} exotic core nebulas`);
 }
 // =============================================================================
 // ENHANCED PLANET CLUSTERS - FROM EARLY VERSION
@@ -5977,3 +6091,75 @@ function updateHubbleSkybox2Opacity() {
     const lerpSpeed = 0.02; // Smooth transition speed
     window.hubbleSkybox2.material.opacity = currentOpacity + (targetOpacity - currentOpacity) * lerpSpeed;
 }
+
+
+// =============================================================================
+// BOSS BATTLE SKYBOX - Blood-red pulsing heartbeat effect
+// =============================================================================
+
+let bossSkybox = null;
+let bossSkyboxOpacity = 0;
+let bossHeartbeatPhase = 0;
+
+function createBossBattleSkybox() {
+    console.log("Creating boss battle skybox...");
+
+    const geometry = new THREE.SphereGeometry(90000, 64, 64);
+    const material = new THREE.MeshBasicMaterial({
+        color: 0x8b0000,  // Deep blood red
+        side: THREE.BackSide,
+        transparent: true,
+        opacity: 0,
+        fog: false,
+        depthWrite: false
+    });
+
+    bossSkybox = new THREE.Mesh(geometry, material);
+    bossSkybox.name = "BossBattleSkybox";
+    bossSkybox.frustumCulled = false;
+    bossSkybox.renderOrder = -1;
+
+    scene.add(bossSkybox);
+
+    console.log("✅ Boss battle skybox created (initially transparent)");
+}
+
+// Update boss skybox opacity with heartbeat effect
+function updateBossSkyboxHeartbeat() {
+    if (!bossSkybox || typeof bossSystem === "undefined") return;
+
+    const hasBoss = bossSystem.activeBoss !== null;
+
+    if (hasBoss) {
+        // Heartbeat pulsing effect
+        bossHeartbeatPhase += 0.08;  // Speed of heartbeat
+
+        // Double-beat pattern like a real heartbeat: lub-dub, pause, lub-dub
+        const beat1 = Math.sin(bossHeartbeatPhase * 2) * 0.5 + 0.5;  // Fast beat
+        const beat2 = Math.sin((bossHeartbeatPhase - 0.3) * 2) * 0.5 + 0.5;  // Second beat slightly delayed
+        const pause = Math.sin(bossHeartbeatPhase) * 0.5 + 0.5;  // Slower pulse for pause
+
+        // Combine beats for realistic heartbeat pattern
+        const heartbeat = Math.max(beat1 * 0.6, beat2 * 0.4) * pause;
+
+        // Target opacity with heartbeat
+        const targetOpacity = 0.3 + (heartbeat * 0.4);  // Range: 0.3 to 0.7
+
+        // Smooth transition to target
+        bossSkyboxOpacity += (targetOpacity - bossSkyboxOpacity) * 0.1;
+
+    } else {
+        // Fade out when no boss
+        bossSkyboxOpacity -= bossSkyboxOpacity * 0.05;
+        if (bossSkyboxOpacity < 0.01) bossSkyboxOpacity = 0;
+    }
+
+    // Apply opacity
+    bossSkybox.material.opacity = bossSkyboxOpacity;
+}
+
+// Export functions
+window.createBossBattleSkybox = createBossBattleSkybox;
+window.updateBossSkyboxHeartbeat = updateBossSkyboxHeartbeat;
+window.bossSkybox = bossSkybox;
+
