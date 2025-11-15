@@ -1041,6 +1041,11 @@ body.mobile-mode .mobile-ui {
 /* Ensure tutorial buttons are tappable on mobile */
 .mission-command-alert {
     pointer-events: auto !important;
+    cursor: auto !important;
+}
+
+.mission-command-alert * {
+    cursor: auto !important;
 }
 
 .mission-command-alert button {
@@ -1049,6 +1054,7 @@ body.mobile-mode .mobile-ui {
     -webkit-tap-highlight-color: rgba(0, 150, 255, 0.3);
     min-height: 44px; /* iOS minimum tap target */
     min-width: 44px;
+    cursor: pointer !important;
 }
 
 @media (max-width: 768px) {

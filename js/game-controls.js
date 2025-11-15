@@ -918,8 +918,9 @@ function showMissionCommandAlert(title, text, isVictoryMessage = false) {
     understoodButton.className = 'space-btn rounded px-6 py-2';
     understoodButton.innerHTML = '<i class="fas fa-check mr-2"></i>UNDERSTOOD';
     understoodButton.style.cssText = `
-        background: linear-gradient(135deg, rgba(0, 150, 255, 0.8), rgba(0, 100, 200, 0.8));
-        border-color: rgba(0, 200, 255, 0.6);
+        background: linear-gradient(135deg, rgba(0, 150, 255, 0.4), rgba(0, 100, 200, 0.4));
+        border: 2px solid rgba(0, 200, 255, 0.5);
+        color: rgba(255, 255, 255, 0.95);
         pointer-events: auto;
         touch-action: manipulation;
         -webkit-tap-highlight-color: rgba(0, 150, 255, 0.3);
@@ -951,8 +952,9 @@ function showMissionCommandAlert(title, text, isVictoryMessage = false) {
     skipButton.className = 'space-btn rounded px-6 py-2';
     skipButton.innerHTML = '<i class="fas fa-forward mr-2"></i>SKIP TUTORIAL';
     skipButton.style.cssText = `
-        background: linear-gradient(135deg, rgba(255, 150, 0, 0.8), rgba(200, 100, 0, 0.8));
-        border-color: rgba(255, 200, 0, 0.6);
+        background: linear-gradient(135deg, rgba(255, 150, 0, 0.4), rgba(200, 100, 0, 0.4));
+        border: 2px solid rgba(255, 200, 0, 0.5);
+        color: rgba(255, 255, 255, 0.95);
         pointer-events: auto;
         touch-action: manipulation;
         -webkit-tap-highlight-color: rgba(255, 150, 0, 0.3);
@@ -990,8 +992,9 @@ function showMissionCommandAlert(title, text, isVictoryMessage = false) {
     understoodButton.className = 'mt-4 space-btn rounded px-6 py-2';
     understoodButton.innerHTML = '<i class="fas fa-check mr-2"></i>UNDERSTOOD';
     understoodButton.style.cssText = `
-        background: linear-gradient(135deg, rgba(0, 150, 255, 0.8), rgba(0, 100, 200, 0.8));
-        border-color: rgba(0, 200, 255, 0.6);
+        background: linear-gradient(135deg, rgba(0, 150, 255, 0.4), rgba(0, 100, 200, 0.4));
+        border: 2px solid rgba(0, 200, 255, 0.5);
+        color: rgba(255, 255, 255, 0.95);
         pointer-events: auto;
         touch-action: manipulation;
         -webkit-tap-highlight-color: rgba(0, 150, 255, 0.3);
