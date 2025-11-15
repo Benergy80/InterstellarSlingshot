@@ -3590,7 +3590,7 @@ window.triggerDebugMysteryTone = function() {
     window.nebulaDebugState.lastTrigger = new Date().toLocaleTimeString();
     updateDebugState();
 
-    console.log(\`🎵 Debug mystery tone triggered: \${freq.toFixed(1)} Hz\`);
+    console.log(`🎵 Debug mystery tone triggered: ${freq.toFixed(1)} Hz`);
 };
 
 // Toggle bass layer
@@ -3603,7 +3603,7 @@ window.toggleDebugBass = function() {
     window.nebulaDebugState.bassEnabled = !window.nebulaDebugState.bassEnabled;
     const btn = document.getElementById('toggleBassBtn');
     if (btn) {
-        btn.textContent = \`Toggle Bass (\${window.nebulaDebugState.bassEnabled ? 'ON' : 'OFF'})\`;
+        btn.textContent = `Toggle Bass (${window.nebulaDebugState.bassEnabled ? 'ON' : 'OFF'})`;
     }
 
     if (typeof bassGain !== 'undefined' && bassGain) {
@@ -3626,7 +3626,7 @@ window.toggleDebugPad = function() {
     window.nebulaDebugState.padEnabled = !window.nebulaDebugState.padEnabled;
     const btn = document.getElementById('togglePadBtn');
     if (btn) {
-        btn.textContent = \`Toggle Pad (\${window.nebulaDebugState.padEnabled ? 'ON' : 'OFF'})\`;
+        btn.textContent = `Toggle Pad (${window.nebulaDebugState.padEnabled ? 'ON' : 'OFF'})`;
     }
 
     if (typeof padGain !== 'undefined' && padGain) {
@@ -3655,13 +3655,13 @@ function updateDebugState() {
     const contextState = (typeof audioContext !== 'undefined' && audioContext) ? audioContext.state : 'not initialized';
     const lastTrigger = window.nebulaDebugState.lastTrigger || 'Never';
 
-    stateDiv.innerHTML = \`
-        <div>Audio Context: <span class="text-green-400">\${contextState}</span></div>
-        <div>Mystery Tone Active: <span class="\${(typeof audioContext !== 'undefined' && audioContext && audioContext.state === 'running') ? 'text-green-400' : 'text-gray-400'}">
-            \${(typeof audioContext !== 'undefined' && audioContext && audioContext.state === 'running') ? 'Yes' : 'No'}
+    stateDiv.innerHTML = `
+        <div>Audio Context: <span class="text-green-400">${contextState}</span></div>
+        <div>Mystery Tone Active: <span class="${(typeof audioContext !== 'undefined' && audioContext && audioContext.state === 'running') ? 'text-green-400' : 'text-gray-400'}">
+            ${(typeof audioContext !== 'undefined' && audioContext && audioContext.state === 'running') ? 'Yes' : 'No'}
         </span></div>
-        <div>Last Trigger: <span class="text-yellow-400">\${lastTrigger}</span></div>
-    \`;
+        <div>Last Trigger: <span class="text-yellow-400">${lastTrigger}</span></div>
+    `;
 }
 
 // Initialize debug menu buttons
