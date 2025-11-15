@@ -3542,7 +3542,8 @@ function createExoticCoreNebulas() {
         console.log(`  Created ${exoticNebulaNames[i]} at distance ${radius.toFixed(0)} units`);
     }
 
-    console.log(`✅ Created ${exoticNebulaCount} exotic core nebulas`);
+    console.log(`✅ Created ${exoticNebulaCount} exotic core nebulas in range 45,000-65,000 units`);
+    console.log(`   Total nebulas in scene: ${nebulaClouds.length}`);
 }
 // =============================================================================
 // ENHANCED PLANET CLUSTERS - FROM EARLY VERSION
