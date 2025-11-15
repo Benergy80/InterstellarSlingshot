@@ -73,7 +73,7 @@ function createOuterInterstellarSystems() {
 // =============================================================================
 
 function createExoticCoreSystems() {
-    const innerBoundary = 60000;
+    const innerBoundary = 45000;
     const outerBoundary = 75000;
     const targetRadius = (innerBoundary + outerBoundary) / 2; // ~67,500
     const radiusVariation = 7500;
@@ -172,7 +172,7 @@ function createExoticSystem(center, name, centerType, systemId) {
 // =============================================================================
 
 function createBorgPatrolSystems() {
-    const minDistance = 75000;
+    const minDistance = 65000;
     const maxDistance = 90000;
 
     for (let i = 0; i < 12; i++) {
