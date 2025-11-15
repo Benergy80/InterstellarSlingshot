@@ -1903,6 +1903,11 @@ function setupNormalGameContent() {
         if (!gameState.velocityVector) {
             gameState.velocityVector = new THREE.Vector3(0, 0, 0);
         }
+
+        // ⭐ NEW: Set initial target lock to Earth
+        setTimeout(() => {
+            lockToEarth();
+        }, 2000); // Wait 2 seconds for everything to be initialized
     }
 
     
@@ -2002,6 +2007,35 @@ function resetCameraToGamePosition() {
     }
 
     console.log('📍 Camera positioned in outer Sol system - gravity well active');
+}
+
+// ⭐ NEW: Function to find and lock to Earth at game start
+function lockToEarth() {
+    if (typeof planets === 'undefined' || !planets || planets.length === 0) {
+        console.warn('⚠️ Cannot lock to Earth - planets not loaded yet');
+        return;
+    }
+
+    // Find Earth in the planets array
+    const earth = planets.find(p => p.userData && p.userData.name === 'Earth');
+
+    if (earth) {
+        // Set Earth as the target
+        if (typeof gameState !== 'undefined' && gameState.targetLock) {
+            gameState.targetLock.active = true;
+            gameState.targetLock.target = earth;
+            gameState.currentTarget = earth;
+
+            console.log('🌍 Player locked to Earth - gravity will drag you along its orbit');
+
+            // Show achievement
+            if (typeof showAchievement === 'function') {
+                showAchievement('Orbiting Earth', 'Use gravitational slingshots to escape to interstellar space');
+            }
+        }
+    } else {
+        console.warn('⚠️ Earth not found in planets array');
+    }
 }
 
 function fadeOutIntroElements(progress) {
