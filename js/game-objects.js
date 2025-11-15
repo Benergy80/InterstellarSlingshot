@@ -805,7 +805,7 @@ function spawnBossForGalaxy(galaxyId) {
     
     // PRESERVED: Ensure boss visibility and prevent frustum culling
     boss.visible = true;
-    boss.frustumCulled = false;
+    boss.frustumCulled = true;  // OPTIMIZATION: Enable frustum culling
     
     scene.add(boss);
     enemies.push(boss);
@@ -900,7 +900,7 @@ function spawnBossSupport(galaxyId, bossPosition, supportIndex) {
     
     // PRESERVED: Ensure support visibility and prevent frustum culling
     support.visible = true;
-    support.frustumCulled = false;
+    support.frustumCulled = true;  // OPTIMIZATION: Enable frustum culling
     
     scene.add(support);
     enemies.push(support);
@@ -1388,7 +1388,7 @@ try {
                 systemOffset.z
             );
             planet.visible = true;
-            planet.frustumCulled = false;
+            planet.frustumCulled = true;  // OPTIMIZATION: Enable frustum culling for planets
             
             planet.userData = {
                 name: `${systemData.name}-${pIndex + 1}`,
@@ -1424,7 +1424,7 @@ try {
                     const ring = new THREE.Mesh(ringGeometry, ringMaterial);
                     ring.rotation.x = Math.PI / 2;
                     ring.visible = true;
-                    ring.frustumCulled = false;
+                    ring.frustumCulled = true;  // OPTIMIZATION: Enable frustum culling
                     
                     planet.add(ring);
                 }
@@ -1444,7 +1444,7 @@ try {
                         const moon = new THREE.Mesh(moonGeometry, moonMaterial);
                         moon.position.set(moonData.distance, 0, 0);
                         moon.visible = true;
-                        moon.frustumCulled = false;
+                        moon.frustumCulled = true;  // OPTIMIZATION: Enable frustum culling
                         
                         moon.userData = { 
                             name: moonData.name,
@@ -1494,7 +1494,7 @@ try {
             );
             
             planet.visible = true;
-            planet.frustumCulled = false;
+            planet.frustumCulled = true;  // OPTIMIZATION: Enable frustum culling for planets
             
             planet.userData = { 
                 name: planetData.name,
@@ -1532,7 +1532,7 @@ try {
                     const ring = new THREE.Mesh(ringGeometry, ringMaterial);
                     ring.rotation.x = Math.PI / 2;
                     ring.visible = true;
-                    ring.frustumCulled = false;
+                    ring.frustumCulled = true;  // OPTIMIZATION: Enable frustum culling
                     
                     if (planet && planet.add) {
                         planet.add(ring);
@@ -1551,7 +1551,7 @@ try {
                     const moon = new THREE.Mesh(moonGeometry, moonMaterial);
                     moon.position.set(moonData.distance, 0, 0);
                     moon.visible = true;
-                    moon.frustumCulled = false;
+                    moon.frustumCulled = true;  // OPTIMIZATION: Enable frustum culling
                     moon.material.transparent = false;
                     
                     moon.userData = { 
@@ -1970,7 +1970,7 @@ systemData.planets.forEach((planetData, pIndex) => {
             const ring = new THREE.Mesh(ringGeometry, ringMaterial);
             ring.rotation.x = Math.PI / 2 + (Math.random() - 0.5) * 0.2; // Slight tilt variation
             ring.visible = true;
-            ring.frustumCulled = false;
+            ring.frustumCulled = true;  // OPTIMIZATION: Enable frustum culling
             
             planet.add(ring);
         }
@@ -2010,7 +2010,7 @@ systemData.planets.forEach((planetData, pIndex) => {
             const moon = new THREE.Mesh(moonGeometry, moonMaterial);
             moon.position.set(moonDistance, 0, 0);
             moon.visible = true;
-            moon.frustumCulled = false;
+            moon.frustumCulled = true;  // OPTIMIZATION: Enable frustum culling
             
             moon.userData = { 
                 name: `${systemData.name}-${pIndex + 1}-Moon-${m + 1}`,
@@ -2115,7 +2115,7 @@ try {
         const ring = new THREE.Mesh(ringGeometry, ringMaterial);
         ring.rotation.x = Math.PI / 2;
         ring.visible = true;
-        ring.frustumCulled = false;
+        ring.frustumCulled = true;  // OPTIMIZATION: Enable frustum culling
         
         if (blackHole && blackHole.add) {
             blackHole.add(ring);
@@ -2715,7 +2715,7 @@ const galaxyStarsToAdd = galaxyMainStars;
             ring.rotation.z = (Math.random() - 0.5) * 0.4;
             
             ring.visible = true;
-            ring.frustumCulled = false;
+            ring.frustumCulled = true;  // OPTIMIZATION: Enable frustum culling
             ring.matrixAutoUpdate = true;
             ring.updateMatrix();
             galaxyBlackHole.add(ring);
@@ -2891,7 +2891,7 @@ star.userData = {
                                     
                                     const planet = new THREE.Mesh(planetGeometry, planetMaterial);
                                     planet.visible = true;
-                                    planet.frustumCulled = false;
+                                    planet.frustumCulled = true;  // OPTIMIZATION: Enable frustum culling for planets
                                     planet.matrixAutoUpdate = false;
                                     
                                     const orbitRadius = 50 + (p * 80) + Math.random() * 40;
@@ -2967,7 +2967,7 @@ star.userData = {
                                             const ring = new THREE.Mesh(ringGeometry, ringMaterial);
                                             ring.rotation.x = Math.PI / 2 + (Math.random() - 0.5) * 0.2;
                                             ring.visible = true;
-                                            ring.frustumCulled = false;
+                                            ring.frustumCulled = true;  // OPTIMIZATION: Enable frustum culling
                                             planet.add(ring);
                                         }
                                         
@@ -2996,7 +2996,7 @@ if (Math.random() < moonProbability) {
             
             const moon = new THREE.Mesh(moonGeometry, moonMaterial);
             moon.visible = true;
-            moon.frustumCulled = false;
+            moon.frustumCulled = true;  // OPTIMIZATION: Enable frustum culling
             
             const moonOrbitRadius = planetSize + 12 + m * 8;
             const moonAngle = Math.random() * Math.PI * 2;
@@ -3514,16 +3514,34 @@ function createExoticCoreNebulas() {
         particleGeometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
 
         const particleMaterial = new THREE.PointsMaterial({
-            size: 85,
+            size: 150,  // Increased from 85 for better visibility at distance
             vertexColors: true,
             transparent: true,
-            opacity: 0.65,
-            blending: THREE.AdditiveBlending,
-            depthWrite: false
+            opacity: 0.85,  // Increased from 0.65 for better visibility
+            blending: THREE.AdditiveBlending,  // Makes particles glow
+            depthWrite: false,
+            sizeAttenuation: true  // Size scales with distance
         });
 
         const particles = new THREE.Points(particleGeometry, particleMaterial);
         nebulaGroup.add(particles);
+
+        // Add glowing core to make exotic nebulas more visible from distance
+        const coreGeometry = new THREE.SphereGeometry(nebulaSize * 0.15, 16, 16);
+        const coreMaterial = new THREE.MeshBasicMaterial({
+            color: nebulaColor,
+            transparent: true,
+            opacity: 0.4,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false
+        });
+        const core = new THREE.Mesh(coreGeometry, coreMaterial);
+        nebulaGroup.add(core);
+
+        // Add point light for extra glow effect
+        const nebulaLight = new THREE.PointLight(nebulaColor, 8, nebulaSize * 2);
+        nebulaLight.position.set(0, 0, 0);
+        nebulaGroup.add(nebulaLight);
 
         nebulaGroup.position.set(nebulaX, nebulaY, nebulaZ);
         nebulaGroup.userData = {
@@ -3730,7 +3748,7 @@ function createEnhancedPlanetClustersInNebulas() {
                 };
                 
                 planet.visible = true;
-                planet.frustumCulled = false;
+                planet.frustumCulled = true;  // OPTIMIZATION: Enable frustum culling for planets
                 scene.add(planet);
                 planets.push(planet);
                 
@@ -3806,7 +3824,7 @@ function createEnhancedPlanetClustersInNebulas() {
                         };
                         
                         moon.visible = true;
-                        moon.frustumCulled = false;
+                        moon.frustumCulled = true;  // OPTIMIZATION: Enable frustum culling
                         planets.push(moon);
                         planet.add(moon);
                     }
@@ -4056,7 +4074,7 @@ function createEnemies3D() {
             };
             
             enemy.visible = true;
-            enemy.frustumCulled = false;
+            enemy.frustumCulled = true;  // OPTIMIZATION: Enable frustum culling
             
             scene.add(enemy);
             enemies.push(enemy);
@@ -4128,7 +4146,7 @@ function createEnemies3D() {
         };
         
         enemy.visible = true;
-        enemy.frustumCulled = false;
+        enemy.frustumCulled = true;  // OPTIMIZATION: Enable frustum culling
         
         scene.add(enemy);
         enemies.push(enemy);
@@ -4420,7 +4438,7 @@ function spawnEnhancedWormhole() {
         
         // FIXED: Prevent frustum culling for wormhole rings
         ring.visible = true;
-        ring.frustumCulled = false;
+        ring.frustumCulled = true;  // OPTIMIZATION: Enable frustum culling
         
         wormholeGroup.add(ring);
     }
@@ -5524,7 +5542,7 @@ function loadEnemiesForGalaxy(galaxyId) {
         
         // Ensure visibility and prevent frustum culling
         enemy.visible = true;
-        enemy.frustumCulled = false;
+        enemy.frustumCulled = true;  // OPTIMIZATION: Enable frustum culling
         
         scene.add(enemy);
         enemies.push(enemy);

@@ -249,7 +249,7 @@ function updateActivePlanets() {
         // CRITICAL: Always include moons and ensure they're visible
 if (planet.userData.type === 'moon') {
     planet.visible = true;
-    planet.frustumCulled = false;
+    planet.frustumCulled = true;  // OPTIMIZATION: Enable frustum culling for planets
     activePlanets.push(planet);
 }
         // Include asteroids within range for orbital mechanics
@@ -1557,7 +1557,7 @@ if (planet.rotation && !planet.userData.isLocalStar) {
 else if (planet.userData.parentPlanet && planet.userData.orbitRadius > 0) {
     // Ensure moon is always visible
     planet.visible = true;
-    planet.frustumCulled = false;
+    planet.frustumCulled = true;  // OPTIMIZATION: Enable frustum culling for planets
     
     // Check if moon is a child of its parent planet
     const isChildOfParent = planet.parent === planet.userData.parentPlanet;
