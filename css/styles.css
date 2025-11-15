@@ -839,13 +839,10 @@ body.ui-mode {
     font-style: italic;
 }
 
-/* Mobile Shield Indicator */
+/* Mobile Shield Indicator - Hidden on mobile */
 @media (max-width: 768px) {
     .shield-indicator {
-        top: 45%;
-        left: 10px;
-        padding: 6px 10px;
-        font-size: 11px;
+        display: none !important;
     }
 }
 
@@ -877,6 +874,7 @@ body.ui-mode {
 }
 
 /* Mobile controls */
+.mobile-controls-container,
 .mobile-controls {
     z-index: 700 !important;
 }
@@ -1111,13 +1109,13 @@ body.mobile-mode .mobile-ui {
 }
 
 /* Hide mobile controls during intro and loading */
-body.intro-active .mobile-controls,
+body.intro-active .mobile-controls-container,
 body.intro-active .mobile-floating-status,
 body.intro-active .nav-panel-mobile {
     display: none !important;
 }
 
-#loadingScreen:not([style*="display: none"]) ~ * .mobile-controls,
+#loadingScreen:not([style*="display: none"]) ~ * .mobile-controls-container,
 #loadingScreen:not([style*="display: none"]) ~ * .mobile-floating-status {
     display: none !important;
 }

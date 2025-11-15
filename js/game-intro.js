@@ -185,9 +185,9 @@ function initializeThreeJSForIntro() {
     scene = new THREE.Scene();
     
     camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 250000);
-    renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
     renderer.setSize(window.innerWidth, window.innerHeight);
-    
+
     // Keep background black - no automatic fade
     renderer.setClearColor(0x000000);
     
@@ -266,7 +266,7 @@ function initializeMinimalThreeJS() {
     scene = new THREE.Scene();
     
     camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 250000);
-    renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.setClearColor(0x000003); // dark blue not black
     

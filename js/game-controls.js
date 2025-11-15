@@ -2220,7 +2220,7 @@ function initializeControlButtons() {
             // Activate missile zoom scope (hold to zoom)
             if (!gameState.missiles.selected) {
                 gameState.missiles.selected = true;
-                showAchievement('Zoom Scope Active', 'Missile targeting scope engaged');
+                // No notification - silent activation
             }
         }
 
@@ -2398,20 +2398,20 @@ setTimeout(() => {
         position: fixed;
         width: 250px;
         height: 250px;
-        border: 3px solid rgba(255, 51, 0, 0.8);
+        border: 3px solid rgba(255, 51, 0, 0.3);
         border-radius: 50%;
         pointer-events: none;
         z-index: 999;
         display: none;
         overflow: hidden;
-        box-shadow: 0 0 30px rgba(255, 51, 0, 0.6), inset 0 0 30px rgba(255, 51, 0, 0.3);
-        background: rgba(0, 0, 0, 0.3);
+        box-shadow: 0 0 20px rgba(255, 51, 0, 0.4), inset 0 0 20px rgba(255, 51, 0, 0.2);
+        background: rgba(0, 0, 0, 0.2);
     `;
 
     const scopeCanvas = document.createElement('canvas');
     scopeCanvas.width = 250;
     scopeCanvas.height = 250;
-    scopeCanvas.style.cssText = 'width: 100%; height: 100%;';
+    scopeCanvas.style.cssText = 'width: 100%; height: 100%; border-radius: 50%;';
     zoomScope.appendChild(scopeCanvas);
     document.body.appendChild(zoomScope);
 
@@ -2421,9 +2421,11 @@ setTimeout(() => {
     let scopeCurrentX = 0;
     let scopeCurrentY = 0;
     const scopeSmoothing = 0.15; // Smooth following like crosshair
+    let lastMissileSelectedState = false;
 
     function updateZoomScope() {
         if (!gameState.missiles.selected || !renderer || !renderer.domElement) {
+            zoomScope.style.display = 'none';
             if (animationFrameId) {
                 cancelAnimationFrame(animationFrameId);
                 animationFrameId = null;
@@ -2442,7 +2444,7 @@ setTimeout(() => {
         zoomScope.style.left = scopeCurrentX + 'px';
         zoomScope.style.top = scopeCurrentY + 'px';
 
-        // Get mouse position
+        // Get mouse position - check crosshair position first (this is what's properly tracked!)
         const mouseX = gameState.crosshairX || gameState.mouseX || window.innerWidth / 2;
         const mouseY = gameState.crosshairY || gameState.mouseY || window.innerHeight / 2;
 
@@ -2455,7 +2457,13 @@ setTimeout(() => {
         // Clear canvas
         ctx.clearRect(0, 0, 250, 250);
 
-        // Draw magnified portion
+        // Save context and create circular clipping path
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(125, 125, 125, 0, Math.PI * 2);
+        ctx.clip();
+
+        // Draw magnified portion (now clipped to circle)
         try {
             ctx.drawImage(
                 renderer.domElement,
@@ -2471,6 +2479,9 @@ setTimeout(() => {
         } catch (err) {
             console.warn('Zoom scope render error:', err);
         }
+
+        // Restore context to draw crosshairs over the clipped image
+        ctx.restore();
 
         // Draw crosshair overlay in GREEN to match mouse aiming cursor
         ctx.strokeStyle = 'rgba(0, 255, 150, 0.8)'; // Green like aiming cursor
@@ -2491,28 +2502,43 @@ setTimeout(() => {
         animationFrameId = requestAnimationFrame(updateZoomScope);
     }
 
-    document.addEventListener('mousemove', (e) => {
-        if (gameState.missiles.selected) {
-            // Update target position (scope will smooth towards it)
-            scopeTargetX = e.clientX - 125;
-            scopeTargetY = e.clientY - 125;
-
+    // Function to activate/deactivate scope without requiring mouse movement
+    function toggleZoomScope() {
+        if (gameState.missiles.selected && !animationFrameId) {
+            // Activate scope immediately
+            const mouseX = gameState.crosshairX || gameState.mouseX || window.innerWidth / 2;
+            const mouseY = gameState.crosshairY || gameState.mouseY || window.innerHeight / 2;
+            scopeTargetX = mouseX - 125;
+            scopeTargetY = mouseY - 125;
+            scopeCurrentX = scopeTargetX;
+            scopeCurrentY = scopeTargetY;
             zoomScope.style.display = 'block';
-
-            // Start animation if not already running
-            if (!animationFrameId) {
-                // Initialize current position to target on first show
-                scopeCurrentX = scopeTargetX;
-                scopeCurrentY = scopeTargetY;
-                updateZoomScope();
-            }
-        } else {
+            updateZoomScope();
+        } else if (!gameState.missiles.selected) {
+            // Deactivate scope immediately
             zoomScope.style.display = 'none';
             if (animationFrameId) {
                 cancelAnimationFrame(animationFrameId);
                 animationFrameId = null;
             }
         }
+    }
+
+    // Check for state changes in animation loop
+    function checkZoomScopeState() {
+        if (gameState.missiles.selected !== lastMissileSelectedState) {
+            lastMissileSelectedState = gameState.missiles.selected;
+            toggleZoomScope();
+        }
+        requestAnimationFrame(checkZoomScopeState);
+    }
+    checkZoomScopeState();
+
+    // Update scope position on mouse movement
+    document.addEventListener('mousemove', (e) => {
+        // Update target position for smooth following
+        scopeTargetX = e.clientX - 125;
+        scopeTargetY = e.clientY - 125;
     });
 }, 1000);
 
@@ -3806,30 +3832,74 @@ function showAchievement(title, description, playAchievementSound = true) {
     if (popup && achievementText && titleElement) {
         achievementText.textContent = description;
         titleElement.textContent = title;
-        
+
         // ⭐ CRITICAL: Force clear any inline styles that might block visibility
         popup.style.display = '';  // Clear inline display style
         popup.style.visibility = ''; // Clear inline visibility style
         popup.style.opacity = '';   // Clear inline opacity style
         popup.style.zIndex = '999'; // Maximum priority
         popup.style.position = 'fixed'; // Ensure it's always fixed
-        popup.style.pointerEvents = 'auto'; // Enable interaction
-        
+
         popup.classList.remove('hidden');
-        
+
+        // Add click handler for "Slingshot Ready" on mobile
+        if (title === 'Slingshot Ready') {
+            popup.classList.add('interactive'); // Enable pointer events
+            popup.style.cursor = 'pointer';
+
+            // Remove any existing handlers to prevent duplicates
+            const oldHandler = popup._slingshotClickHandler;
+            if (oldHandler) {
+                popup.removeEventListener('click', oldHandler);
+                popup.removeEventListener('touchstart', oldHandler);
+            }
+
+            // Create new handler
+            const slingshotHandler = (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                console.log('📱 Slingshot Ready notification tapped');
+
+                if (typeof executeSlingshot === 'function') {
+                    executeSlingshot();
+                    popup.classList.add('hidden');
+                    popup.classList.remove('interactive');
+                }
+            };
+
+            // Store handler reference for cleanup
+            popup._slingshotClickHandler = slingshotHandler;
+
+            // Add listeners
+            popup.addEventListener('click', slingshotHandler);
+            popup.addEventListener('touchstart', slingshotHandler, { passive: false });
+        } else {
+            popup.classList.remove('interactive'); // Disable pointer events
+            popup.style.cursor = 'default';
+
+            // Remove slingshot handler if exists
+            const oldHandler = popup._slingshotClickHandler;
+            if (oldHandler) {
+                popup.removeEventListener('click', oldHandler);
+                popup.removeEventListener('touchstart', oldHandler);
+                popup._slingshotClickHandler = null;
+            }
+        }
+
         console.log(`✨ Achievement displaying: ${title}`);
-        
+
         // Longer display time for important achievements
         const displayTime = 4000;
-        
+
         // Play sound if requested
         if (playAchievementSound && typeof playSound === 'function') {
             playSound('achievement');
         }
-        
+
         // Auto-hide after display time
         setTimeout(() => {
             popup.classList.add('hidden');
+            popup.classList.remove('interactive'); // Remove pointer events when hidden
             console.log(`✅ Achievement hidden: ${title}`);
         }, displayTime);
     } else {
@@ -4374,10 +4444,12 @@ if (typeof window !== 'undefined') {
 console.log('ðŸ Game Controls script completed successfully!');
 
 // =============================================================================
-// NEBULA SOUND DEBUG MENU (Press T to toggle)
+// NEBULA SOUND DEBUG MENU - DISABLED
+// Will be re-enabled when proper sound testing panel is implemented
 // =============================================================================
 
-// Debug menu state
+// DISABLED: Debug menu and T key listener commented out
+/*
 window.nebulaDebugState = {
     mysteryFreq: 220,
     fadeInTime: 2,
@@ -4389,7 +4461,6 @@ window.nebulaDebugState = {
     lastTrigger: null
 };
 
-// Toggle debug menu
 window.toggleNebulaDebug = function() {
     const debugMenu = document.getElementById('nebulaSoundDebug');
     if (debugMenu) {
@@ -4397,18 +4468,18 @@ window.toggleNebulaDebug = function() {
     }
 };
 
-// Add T key listener for debug menu  
 document.addEventListener('keydown', (e) => {
     if (e.key === 't' || e.key === 'T') {
-        // Only allow if game is started and not paused
         if (typeof gameState !== 'undefined' && gameState.gameStarted && !gameState.paused) {
-            e.preventDefault(); // Prevent any other T key actions
+            e.preventDefault();
             toggleNebulaDebug();
         }
     }
 });
+*/
 
-// Update mystery frequency
+// DISABLED: All debug functions commented out
+/*
 window.updateMysteryFreq = function(value) {
     window.nebulaDebugState.mysteryFreq = parseFloat(value);
     document.getElementById('mysteryFreqValue').textContent = value + ' Hz';
@@ -4565,4 +4636,5 @@ document.addEventListener('DOMContentLoaded', () => {
     setInterval(updateDebugState, 1000);
 });
 
-console.log('🎵 Nebula Sound Debug Menu loaded (Press T to toggle)');
+console.log('🎵 Nebula Sound Debug Menu DISABLED (awaiting proper sound testing panel)');
+*/

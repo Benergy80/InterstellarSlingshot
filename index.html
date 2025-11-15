@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, minimal-ui, viewport-fit=cover">
     <title>Interstellar Slingshot - A Gravitational Space Explorer by ChiLab</title>
     
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🚀</text></svg>">
@@ -60,6 +60,15 @@
     <!-- Game Styles -->
     <link rel="stylesheet" href="css/styles.css">
     <style>
+        /* Mobile browser UI hiding */
+        html, body {
+            position: fixed;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            -webkit-overflow-scrolling: touch;
+        }
+
         /* Title flashing effect for gravity well alert */
         .title-flash {
             animation: titleFlash 0.5s ease-in-out infinite alternate;
@@ -88,19 +97,17 @@
             backdrop-filter: blur(2px);
             border: 1px solid rgba(0, 150, 255, 0.5);
             border-radius: 15px;
-            box-shadow: 
+            box-shadow:
                 0 12px 40px rgba(0, 150, 255, 0.3),
                 inset 0 1px 0 rgba(0,150,255,0.4),
                 inset 0 -1px 0 rgba(0,150,255,0.2);
-            cursor: auto !important;
-            pointer-events: auto !important;
+            pointer-events: none !important;
             transform-style: preserve-3d;
             perspective: 1200px;
             transform: perspective(1000px) rotateX(-2deg) translateZ(5px);
         }
 
-        .mission-command-alert * {
-            cursor: auto !important;
+        .mission-command-alert button {
             pointer-events: auto !important;
         }
 
@@ -149,6 +156,11 @@
         #achievementPopup {
             z-index: 999 !important;
             position: fixed !important;
+            pointer-events: none !important;
+        }
+
+        /* Allow pointer events only for interactive content */
+        #achievementPopup.interactive {
             pointer-events: auto !important;
         }
 
@@ -243,15 +255,25 @@
     .ui-panel {
         display: none !important;
     }
-    
+
     /* EXCEPTION: Keep achievement popup visible on mobile */
     #achievementPopup .ui-panel {
         display: block !important;
     }
-    
+
     /* Show mobile controls */
-    .mobile-controls {
+    .mobile-controls-container {
         display: flex !important;
+    }
+
+    /* Show mobile top row separately */
+    .mobile-controls-top {
+        display: flex !important;
+    }
+
+    /* Hide shield indicator on mobile */
+    .shield-indicator {
+        display: none !important;
     }
     
     /* Mobile crosshair */
@@ -275,7 +297,7 @@
 
     /* Hide during intro */
     body.intro-active #achievementPopup,
-    body.intro-active .mobile-controls,
+    body.intro-active .mobile-controls-container,
     body.intro-active .nav-panel-mobile {
         display: none !important;
     }
@@ -307,8 +329,8 @@
 
     /* Mobile tutorial positioning */
     .mission-command-alert {
-        top: 15% !important;
-        transform: translate(-50%, -50%) !important;
+        top: 20% !important;
+        transform: translate(-50%, 0) !important;
     }
             
             /* Mobile crosshair */
@@ -332,7 +354,7 @@
 
             /* Hide during intro */
             body.intro-active #achievementPopup,
-            body.intro-active .mobile-controls,
+            body.intro-active .mobile-controls-container,
             body.intro-active .nav-panel-mobile {
                 display: none !important;
             }
@@ -344,19 +366,45 @@
 
             /* Mobile tutorial positioning */
             .mission-command-alert {
-                top: 15% !important;
-                transform: translate(-50%, -50%) !important;
+                top: 20% !important;
+                transform: translate(-50%, 0) !important;
             }
         }
-        /* Mobile control buttons */
-        .mobile-controls {
+        /* Mobile control buttons container */
+        .mobile-controls-container {
             position: fixed;
             bottom: 20px;
             left: 50%;
             transform: translateX(-50%);
             display: none;
-            gap: 15px;
+            flex-direction: column;
+            gap: 10px;
             z-index: 100;
+            pointer-events: auto;
+        }
+
+        /* Top row: Flight controls and Emergency warp - flanking the indicators */
+        .mobile-controls-top {
+            position: fixed;
+            bottom: 100px;
+            left: -5px;
+            right: -5px;
+            display: flex;
+            justify-content: space-between;
+            padding: 0;
+            z-index: 25;
+            pointer-events: none;
+        }
+
+        .mobile-controls-top .mobile-btn {
+            pointer-events: auto;
+        }
+
+        /* Bottom row: Main action buttons */
+        .mobile-controls {
+            display: flex;
+            gap: 15px;
+            justify-content: center;
             pointer-events: auto;
         }
 
@@ -506,7 +554,7 @@
         
         /* Force hide mobile on desktop */
         @media (min-width: 769px) and (pointer: fine) and (hover: hover) {
-            .mobile-controls,
+            .mobile-controls-container,
             .nav-panel-mobile,
             .mobile-popup {
                 display: none !important;
@@ -537,7 +585,8 @@
                 Option: Fire Weapons<br>
                 X: Brake/Stop | Tab: Engage Shields<br>
                 Enter: Auto-nav/Slingshot<br>
-                Space: Target Lock | O: Emergency Warp
+                Space: Target Lock | O: Emergency Warp<br>
+                Z: Zoom Scope (Hold)
             </div>
             <div class="flex gap-2 mt-2">
                 <button id="muteBtn" class="small-control-btn">
@@ -728,44 +777,51 @@
 </div>
 
 <!-- MOBILE CONTROLS -->
-<div class="mobile-controls">
-    <button class="mobile-btn" onclick="showMobilePanel('controls')" title="Flight Controls">
-        <i class="fas fa-gamepad"></i>
-    </button>
-    <button class="mobile-btn missile" 
-        onclick="mobileLaunchMissile()" 
-        title="Launch Missile">
-        <i class="fas fa-rocket"></i>
-        <span class="missile-count-badge" id="mobileMissileCountBadge">3</span>
-    </button>
-    <button class="mobile-btn" 
-        ontouchstart="mobileBrakesStart()" 
-        ontouchend="mobileBrakesEnd()"
-        onmousedown="mobileBrakesStart()" 
-        onmouseup="mobileBrakesEnd()"
-        title="Brakes (Hold)">
-        <i class="fas fa-hand-paper"></i>
-    </button>
-    <button class="mobile-btn fire" 
-        onclick="handleMobileFire()" 
-        ontouchstart="handleMobileFire(event)" 
-        title="Fire Weapons">
-        <i class="fas fa-crosshairs"></i>
-    </button>
-    <button class="mobile-btn" 
-        onmousedown="startForwardThrust()" 
-        onmouseup="stopForwardThrust()" 
-        ontouchstart="startForwardThrust()" 
-        ontouchend="stopForwardThrust()" 
-        title="Forward Thrust">
-        <i class="fas fa-arrow-up"></i>
-    </button>
-    <button class="mobile-btn" onclick="mobileToggleShields()" title="Toggle Shields">
-        <i class="fas fa-shield-alt"></i>
-    </button>
-    <button class="mobile-btn" onclick="mobileEmergencyWarp()" title="Emergency Warp">
-        <i class="fa-solid fa-triangle-exclamation"></i>
-    </button>
+<div class="mobile-controls-container">
+    <!-- Top row: Flight Controls and Emergency Warp (aligned with indicators) -->
+    <div class="mobile-controls-top">
+        <button class="mobile-btn" onclick="showMobilePanel('controls')" title="Flight Controls">
+            <i class="fas fa-gamepad"></i>
+        </button>
+        <button class="mobile-btn" onclick="mobileEmergencyWarp()" title="Emergency Warp">
+            <i class="fa-solid fa-triangle-exclamation"></i>
+        </button>
+    </div>
+
+    <!-- Bottom row: Main action buttons -->
+    <div class="mobile-controls">
+        <button class="mobile-btn missile"
+            onclick="mobileLaunchMissile()"
+            title="Launch Missile">
+            <i class="fas fa-rocket"></i>
+            <span class="missile-count-badge" id="mobileMissileCountBadge">3</span>
+        </button>
+        <button class="mobile-btn"
+            ontouchstart="mobileBrakesStart()"
+            ontouchend="mobileBrakesEnd()"
+            onmousedown="mobileBrakesStart()"
+            onmouseup="mobileBrakesEnd()"
+            title="Brakes (Hold)">
+            <i class="fas fa-hand-paper"></i>
+        </button>
+        <button class="mobile-btn fire"
+            onclick="handleMobileFire()"
+            ontouchstart="handleMobileFire(event)"
+            title="Fire Weapons">
+            <i class="fas fa-crosshairs"></i>
+        </button>
+        <button class="mobile-btn"
+            onmousedown="startForwardThrust()"
+            onmouseup="stopForwardThrust()"
+            ontouchstart="startForwardThrust()"
+            ontouchend="stopForwardThrust()"
+            title="Forward Thrust">
+            <i class="fas fa-arrow-up"></i>
+        </button>
+        <button class="mobile-btn" onclick="mobileToggleShields()" title="Toggle Shields">
+            <i class="fas fa-shield-alt"></i>
+        </button>
+    </div>
 </div>
 
     <!-- Mobile Navigation Panel -->
@@ -917,6 +973,7 @@
     <script src="js/game-physics.js"></script>
     <script src="js/game-ui.js"></script>
     <script src="js/game-controls.js"></script>
+    <script src="js/atmospheric-perspective.js"></script>
     <script src="js/game-intro.js"></script>
     <script src="js/game-shields.js"></script>
     <script src="js/game-core.js"></script>
@@ -928,12 +985,48 @@
     <script>
         let gameInitialized = false;
 
+        // Function to hide mobile browser UI
+        function hideMobileBrowserUI() {
+            if ('ontouchstart' in window || navigator.maxTouchPoints > 0) {
+                console.log('📱 Attempting to hide mobile browser UI...');
+
+                // Make body scrollable
+                document.body.style.minHeight = 'calc(100vh + 1px)';
+                document.body.style.overflow = 'auto';
+
+                // Force scroll to trigger browser UI hide
+                setTimeout(() => {
+                    window.scrollTo(0, 1);
+                    console.log('📱 Scrolled to (0, 1)');
+                }, 50);
+
+                // Reset and lock scroll
+                setTimeout(() => {
+                    window.scrollTo(0, 0);
+                    document.body.style.minHeight = '100vh';
+                    document.body.style.overflow = 'hidden';
+                    document.documentElement.style.overflow = 'hidden';
+                    console.log('📱 Browser UI hide complete, scroll locked');
+                }, 300);
+            }
+        }
+
+        // Hide browser UI on DOM load (for intro screen)
+        document.addEventListener('DOMContentLoaded', () => {
+            console.log('📱 DOM loaded, hiding browser UI for intro');
+            hideMobileBrowserUI();
+        });
+
         window.addEventListener('load', () => {
             if (gameInitialized) return;
             gameInitialized = true;
-            
+
+            // Hide browser UI again when game loads
+            console.log('📱 Window loaded, hiding browser UI for game');
+            hideMobileBrowserUI();
+
             console.log('Starting Interstellar Slingshot...');
-            
+
             setTimeout(() => {
                 try {
                     if (typeof THREE === 'undefined') {

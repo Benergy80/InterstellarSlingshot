@@ -161,6 +161,9 @@ function createExoticSystem(center, name, centerType, systemId) {
     const starfieldRadius = maxOrbitRadius * 0.5;
     createSystemStarfield(starfieldRadius, systemGroup);
 
+    // CREATE 1 COSMIC FEATURE in orbit (for gravitational slingshots and map visibility)
+    createCosmicFeature(systemGroup, maxOrbitRadius);
+
     scene.add(systemGroup);
     outerInterstellarSystems.push(systemGroup);
 
@@ -763,7 +766,7 @@ function createCosmicFeature(systemGroup, maxOrbitRadius) {
     feature.userData.location = 'Unexplored Interstellar Space';
     feature.userData.isOuterSystem = true;
 
-    // Add gravitational properties based on feature type
+    // Add gravitational properties based on feature type (same as cosmic-features.js)
     if (featureType === 'dyson_sphere') {
         feature.userData.mass = 3.0;
         feature.userData.slingshotMultiplier = 2.8;
@@ -781,6 +784,18 @@ function createCosmicFeature(systemGroup, maxOrbitRadius) {
     systemGroup.userData.orbiters.push(feature);
     systemGroup.userData.cosmicFeature = feature;
     systemGroup.add(feature);
+
+    // ADD TO GLOBAL COSMIC FEATURES ARRAYS for map visibility and physics
+    // This ensures they appear as dots on the galactic map and participate in gravitational slingshots
+    if (typeof cosmicFeatures !== 'undefined') {
+        if (featureType === 'dyson_sphere' && cosmicFeatures.dysonSpheres) {
+            cosmicFeatures.dysonSpheres.push(feature);
+        } else if (featureType === 'crystal_structure' && cosmicFeatures.crystalFormations) {
+            cosmicFeatures.crystalFormations.push(feature);
+        } else if (featureType === 'space_whale' && cosmicFeatures.spaceWhales) {
+            cosmicFeatures.spaceWhales.push(feature);
+        }
+    }
 
     return feature;
 }
@@ -1033,20 +1048,32 @@ function updateOuterSystems() {
         let opacity = 1.0;
 
         if (system.userData.systemType === 'exotic_core') {
-            // SET 1: Exotic Core Systems - Original visibility settings
-            // Start fading at 5,000 units from player
-            const blurStart = 10000;
-            const blurMax = 100000;
-            if (systemDist > blurStart) {
-                opacity = 1.0 - Math.min(1, (systemDist - blurStart) / (blurMax - blurStart));
+            // SET 1: Exotic Core Systems - Minimal visibility at start
+            // Invisible when player is >65,000 units away, fade IN as player approaches
+            const fadeStart = 65000;      // Start becoming visible at this distance
+            const fadeComplete = 5000;    // Fully visible at this distance
+
+            if (systemDist > fadeStart) {
+                opacity = 0;  // Invisible when far away
+            } else if (systemDist > fadeComplete) {
+                // Fade in as player gets closer
+                opacity = 1.0 - (systemDist - fadeComplete) / (fadeStart - fadeComplete);
+            } else {
+                opacity = 1.0;  // Fully visible when close
             }
         } else if (system.userData.systemType === 'borg_patrol') {
-            // SET 2: BORG Patrol Systems - Normal visibility
-            // Start fading when player is 10,000 units away
-            const blurStart = 30000;
-            const blurMax = 120000;
-            if (systemDist > blurStart) {
-                opacity = 1.0 - Math.min(1, (systemDist - blurStart) / (blurMax - blurStart));
+            // SET 2: BORG Patrol Systems - Same minimal visibility as exotic systems
+            // Invisible when player is >45,000 units away, fade IN as player approaches
+            const fadeStart = 45000;      // Start becoming visible at this distance
+            const fadeComplete = 5000;    // Fully visible at this distance
+
+            if (systemDist > fadeStart) {
+                opacity = 0;  // Invisible when far away
+            } else if (systemDist > fadeComplete) {
+                // Fade in as player gets closer
+                opacity = 1.0 - (systemDist - fadeComplete) / (fadeStart - fadeComplete);
+            } else {
+                opacity = 1.0;  // Fully visible when close
             }
         }
 

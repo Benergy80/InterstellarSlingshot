@@ -82,8 +82,8 @@ const gameState = {
     emergencyWarp: {
         available: 5,
         cooldown: 0,
-        boostDuration: 8000,
-        boostSpeed: 30.0, // Doubled for doubled world
+        boostDuration: 15000,  // 15 seconds for debugging (was 8000)
+        boostSpeed: 100.0,     // Much faster for debugging (was 30.0)
         active: false,
         timeRemaining: 0
     },
@@ -586,7 +586,7 @@ function startGame() {
         scene.add(globalAmbientLight);
         
         camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 250000);
-        renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
         renderer.setSize(window.innerWidth, window.innerHeight);
         renderer.setClearColor(0x000003);
         
@@ -630,6 +630,11 @@ function startGame() {
     if (typeof createSpectacularClusteredNebulas === 'function') {
         console.log('Creating spectacular triple-layered clustered nebulas...');
         createSpectacularClusteredNebulas();
+    }
+
+    // Create boss battle skybox (starts transparent, pulses during boss battles)
+    if (typeof createBossBattleSkybox === 'function') {
+        createBossBattleSkybox();
     }
 }, 1000);
 
@@ -1095,10 +1100,15 @@ if (typeof localGalaxyStars !== 'undefined' && localGalaxyStars) {
     if (typeof updateHubbleSkyboxOpacity === 'function') {
         updateHubbleSkyboxOpacity();
     }
-    
+
     // Update second Hubble skybox opacity (deeper space layer)
     if (typeof updateHubbleSkybox2Opacity === 'function') {
         updateHubbleSkybox2Opacity();
+    }
+
+    // Update boss battle skybox with heartbeat pulsing
+    if (typeof updateBossSkyboxHeartbeat === 'function') {
+        updateBossSkyboxHeartbeat();
     }
     
     // PERFORMANCE: Update only expensive effects for active planets (tendrils, glows, etc.)
@@ -1474,7 +1484,19 @@ if (typeof checkCosmicFeatureInteractions === 'function' && typeof camera !== 'u
         console.log('Frame time:', frameTime.toFixed(2), 'ms');
         console.log('updateGalaxyMap called:', gameState.frameCount % 60 === 0 ? 'YES' : 'NO');
     }
-    
+
+    // ATMOSPHERIC PERSPECTIVE: Update distance-based effects and depth of field
+    // Apply every 2 frames for smooth transitions while maintaining performance
+    if (gameState.frameCount % 2 === 0 && typeof updateAtmosphericPerspective === 'function') {
+        updateAtmosphericPerspective(camera);
+    }
+
+    // DEPTH OF FIELD: Apply simulated depth of field effects
+    // Update less frequently (every 5 frames) to reduce performance impact
+    if (gameState.frameCount % 5 === 0 && typeof updateDepthOfFieldEffect === 'function') {
+        updateDepthOfFieldEffect(camera);
+    }
+
     renderer.render(scene, camera);
 }
 

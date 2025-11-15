@@ -523,6 +523,58 @@ function createPlayerExplosion() {
         playSound('ship_vaporize');
     }
 
+    // FULL-SCREEN VAPORIZING EXPLOSION OVERLAY
+    const fullScreenOverlay = document.createElement('div');
+    fullScreenOverlay.id = 'playerExplosionOverlay';
+    fullScreenOverlay.style.cssText = `
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100vw;
+        height: 100vh;
+        background: radial-gradient(circle, rgba(255,100,0,0.9) 0%, rgba(255,50,0,0.7) 30%, rgba(200,0,0,0.5) 60%, transparent 100%);
+        z-index: 10000;
+        pointer-events: none;
+        opacity: 0;
+        animation: vaporizeExplosion 2s ease-out forwards;
+    `;
+
+    // Add keyframe animation
+    if (!document.getElementById('vaporizeExplosionStyle')) {
+        const style = document.createElement('style');
+        style.id = 'vaporizeExplosionStyle';
+        style.textContent = `
+            @keyframes vaporizeExplosion {
+                0% {
+                    opacity: 0;
+                    transform: scale(0.5);
+                }
+                20% {
+                    opacity: 1;
+                    transform: scale(1.2);
+                }
+                40% {
+                    opacity: 0.8;
+                    transform: scale(1.5);
+                }
+                100% {
+                    opacity: 0;
+                    transform: scale(3);
+                }
+            }
+        `;
+        document.head.appendChild(style);
+    }
+
+    document.body.appendChild(fullScreenOverlay);
+
+    // Remove overlay after animation
+    setTimeout(() => {
+        if (fullScreenOverlay.parentNode) {
+            fullScreenOverlay.parentNode.removeChild(fullScreenOverlay);
+        }
+    }, 2000);
+
     // Cleanup
     setTimeout(() => {
         if (explosionGroup.parent) {
@@ -818,7 +870,7 @@ function transitionToRandomLocation(sourceBlackHole) {
             for (let g = 0; g < 8; g++) {
                 const mapPos = galaxyMapPositions[g];
                 if (mapPos) {
-                    const universeRadius = 40000;
+                    const universeRadius = 100000;  // Increased to accommodate exotic/borg systems (up to 85k units) with margins
                     const galaxyX = (mapPos.x - 0.5) * universeRadius * 2;
                     const galaxyZ = (mapPos.y - 0.5) * universeRadius * 2;
                     const galaxyY = 0;
@@ -1067,13 +1119,14 @@ function executeSlingshot() {
     if (nearestPlanet && gameState.energy >= 20 && !gameState.slingshot.active) {
         const planetMass = nearestPlanet.userData.mass || 1;
         const planetRadius = nearestPlanet.geometry ? nearestPlanet.geometry.parameters.radius : 5;
-        
-        // FIXED: Use player's CURRENT TRAJECTORY, not a perpendicular direction
-        // Get current velocity direction (player's trajectory)
-        const currentTrajectory = gameState.velocityVector.clone().normalize();
-        
-        // Slingshot boosts in the direction you're already moving
-        const slingshotDirection = currentTrajectory;
+
+        // Use the direction the player is looking (camera forward direction)
+        const lookDirection = new THREE.Vector3();
+        camera.getWorldDirection(lookDirection);
+        lookDirection.normalize();
+
+        // Slingshot boosts in the direction the player is looking
+        const slingshotDirection = lookDirection;
         
         // FIXED: Make slingshots MUCH MORE POWERFUL than emergency warps
         // Emergency warp: ~15,000 km/s
