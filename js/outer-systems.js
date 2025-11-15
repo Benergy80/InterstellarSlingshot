@@ -1035,7 +1035,7 @@ function updateOuterSystems() {
         if (system.userData.systemType === 'exotic_core') {
             // SET 1: Exotic Core Systems - Original visibility settings
             // Start fading at 5,000 units from player
-            const blurStart = 1000;
+            const blurStart = 10000;
             const blurMax = 100000;
             if (systemDist > blurStart) {
                 opacity = 1.0 - Math.min(1, (systemDist - blurStart) / (blurMax - blurStart));
@@ -1043,7 +1043,7 @@ function updateOuterSystems() {
         } else if (system.userData.systemType === 'borg_patrol') {
             // SET 2: BORG Patrol Systems - Normal visibility
             // Start fading when player is 10,000 units away
-            const blurStart = 10000;
+            const blurStart = 30000;
             const blurMax = 120000;
             if (systemDist > blurStart) {
                 opacity = 1.0 - Math.min(1, (systemDist - blurStart) / (blurMax - blurStart));
