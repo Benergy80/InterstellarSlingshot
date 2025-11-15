@@ -1524,17 +1524,30 @@ if (keys.x && gameState.energy > 0) {
             const planetMass = planet.userData.mass || 1;
             const planetRadius = planet.geometry ? planet.geometry.parameters.radius : 1;
             
-            // FIXED: Asteroid collision detection with proper functions
+            // ⭐ ASTEROID COLLISION - Apply damage and check for death
             if (planet.userData.type === 'asteroid' && distance < collisionThreshold) {
                 destroyAsteroidByCollision(planet);
-                
+
                 if (gameState.hull <= 0) {
+                    // Stop all player motion
+                    gameState.velocityVector.set(0, 0, 0);
+
+                    // Create massive player explosion
                     if (typeof createPlayerExplosion === 'function') {
                         createPlayerExplosion();
                     }
+
+                    // Play explosion/vaporizing sound
+                    if (typeof playSound === 'function') {
+                        playSound('explosion');
+                    }
+
+                    // Show game over screen
                     if (typeof showGameOverScreen === 'function') {
                         showGameOverScreen('HULL BREACH', 'Ship destroyed by asteroid impact');
                     }
+
+                    console.log('💀 PLAYER DESTROYED: Killed by asteroid collision');
                     return;
                 }
             }
@@ -1940,14 +1953,27 @@ if ((planet.userData.type === 'planet' || planet.userData.type === 'star' || pla
                         playSound('hit');
                     }
 
-                    // Check for game over
+                    // ⭐ Check for game over - enhanced with full death effects
                     if (gameState.hull <= 0) {
+                        // Stop all player motion
+                        gameState.velocityVector.set(0, 0, 0);
+
+                        // Create massive player explosion
                         if (typeof createPlayerExplosion === 'function') {
                             createPlayerExplosion();
                         }
+
+                        // Play explosion/vaporizing sound
+                        if (typeof playSound === 'function') {
+                            playSound('explosion');
+                        }
+
+                        // Show game over screen
                         if (typeof showGameOverScreen === 'function') {
                             showGameOverScreen('DESTROYED', `Annihilated by ${drone.userData.name}`);
                         }
+
+                        console.log(`💀 PLAYER DESTROYED: Killed by ${drone.userData.name}`);
                         return;
                     }
                 }
