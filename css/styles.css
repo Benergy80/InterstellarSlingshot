@@ -1073,9 +1073,10 @@ body.mobile-mode .mobile-ui {
     width: 80px !important;
     height: 80px !important;
     border-radius: 50% !important; /* Force circular for fire button */
-    background: linear-gradient(135deg, rgba(255, 50, 50, 0.8), rgba(200, 0, 0, 0.8));
+    background: linear-gradient(135deg, rgba(255, 50, 50, 0.5), rgba(200, 0, 0, 0.5));
     border-color: rgba(255, 100, 100, 0.6);
     box-shadow: 0 4px 15px rgba(255, 50, 50, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.2);
+    opacity: 1 !important;
 }
 
 /* Mobile button touch optimization */

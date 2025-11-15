@@ -2389,9 +2389,9 @@ function createMobileControls() {
     <button class="mobile-btn" onclick="mobileCycleTarget()" style="${buttonStyle}" title="Cycle Targets">
         <i class="fas fa-bullseye"></i>
     </button>
-    <button class="mobile-btn primary" 
+    <button class="mobile-btn primary"
     ontouchstart="handleMobileFire(event); return false;"
-    style="${buttonStyle} width: 80px; height: 80px; border-radius: 50%; background: linear-gradient(135deg, rgba(255, 50, 50, 0.8), rgba(200, 0, 0, 0.8)); border-color: rgba(255, 100, 100, 0.6); box-shadow: 0 4px 15px rgba(255, 50, 50, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.2);" 
+    style="${buttonStyle} width: 80px; height: 80px; border-radius: 50%; background: linear-gradient(135deg, rgba(255, 50, 50, 0.5), rgba(200, 0, 0, 0.5)); border-color: rgba(255, 100, 100, 0.6); box-shadow: 0 4px 15px rgba(255, 50, 50, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.2); opacity: 1;"
     title="Fire Weapons">
     <i class="fas fa-crosshairs"></i>
 </button>
@@ -2611,14 +2611,12 @@ function handleMobileFire(event) {
         console.log('✅ Fire weapon via keys.space');
     }
     
-    // Visual feedback
+    // Visual feedback - transform only, no opacity change
     const fireBtn = document.querySelector('.mobile-btn.primary, .mobile-btn.fire');
     if (fireBtn) {
         fireBtn.style.transform = 'scale(0.85)';
-        fireBtn.style.opacity = '0.8';
         setTimeout(() => {
             fireBtn.style.transform = 'scale(1)';
-            // Keep button transparent after first use
         }, 150);
     }
 }

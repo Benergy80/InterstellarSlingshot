@@ -381,14 +381,12 @@ window.handleMobileFire = function(event) {
         console.log('✅ Fire weapon via keys.space');
     }
     
-    // Visual feedback
+    // Visual feedback - transform only, no opacity change
     const fireBtn = document.querySelector('.mobile-btn.primary, .mobile-btn.fire');
     if (fireBtn) {
         fireBtn.style.transform = 'scale(0.85)';
-        fireBtn.style.opacity = '0.8';
         setTimeout(() => {
             fireBtn.style.transform = 'scale(1)';
-            // Keep button transparent after first use
         }, 150);
     }
 };
