@@ -4241,11 +4241,234 @@ function spawnEnhancedWormhole() {
         isTemporary: true,
         detectionRange: 1200, // Doubled
         detected: false,
-        spiralSpeed: 0.02 + Math.random() * 0.03
+        spiralSpeed: 0.02 + Math.random() * 0.03,
+        // Instability properties
+        unstable: true,
+        phaseTimer: 0,
+        phaseInterval: 5000 + Math.random() * 10000, // 5-15 seconds per phase
+        isVisible: true,
+        colorHue: Math.random(), // Starting hue
+        colorSpeed: 0.0001 + Math.random() * 0.0002
     };
     
     scene.add(wormholeGroup);
     wormholes.push(wormholeGroup);
+}
+
+// Update unstable wormholes - call from animate loop
+function updateUnstableWormholes(deltaTime = 16.67) {
+    if (typeof wormholes === 'undefined' || !wormholes) return;
+
+    wormholes.forEach(wormhole => {
+        if (!wormhole.userData.unstable) return;
+
+        // Update phase timer
+        wormhole.userData.phaseTimer += deltaTime;
+
+        // Color shift over time
+        wormhole.userData.colorHue += wormhole.userData.colorSpeed;
+        if (wormhole.userData.colorHue > 1) wormhole.userData.colorHue -= 1;
+
+        // Update ring colors
+        wormhole.children.forEach((child, index) => {
+            if (child.material && child.geometry && child.geometry.type === 'TorusGeometry') {
+                const hue = (wormhole.userData.colorHue + index * 0.05) % 1;
+                child.material.color.setHSL(hue, 0.8, 0.6);
+            }
+        });
+
+        // Phase transition (appear/disappear)
+        if (wormhole.userData.phaseTimer >= wormhole.userData.phaseInterval) {
+            wormhole.userData.phaseTimer = 0;
+            wormhole.userData.isVisible = !wormhole.userData.isVisible;
+            wormhole.userData.phaseInterval = 5000 + Math.random() * 10000;
+
+            if (wormhole.userData.isVisible) {
+                // Appearing - burst of light
+                createWormholeBurst(wormhole.position, true);
+                wormhole.visible = true;
+            } else {
+                // Disappearing - burst of light
+                createWormholeBurst(wormhole.position, false);
+                setTimeout(() => {
+                    wormhole.visible = false;
+                }, 500);
+            }
+        }
+
+        // Fade in/out transition
+        if (wormhole.visible) {
+            wormhole.children.forEach(child => {
+                if (child.material && child.material.opacity !== undefined) {
+                    const baseOpacity = child.userData.baseOpacity || child.material.opacity;
+                    if (!child.userData.baseOpacity) child.userData.baseOpacity = baseOpacity;
+
+                    if (wormhole.userData.isVisible) {
+                        child.material.opacity = Math.min(baseOpacity, child.material.opacity + 0.02);
+                    }
+                }
+            });
+        }
+    });
+}
+
+// Create burst of light effect for wormhole phase transitions
+function createWormholeBurst(position, appearing) {
+    const burstGeometry = new THREE.SphereGeometry(20, 16, 16);
+    const burstMaterial = new THREE.MeshBasicMaterial({
+        color: appearing ? 0x00ffff : 0xff00ff,
+        transparent: true,
+        opacity: 0.8
+    });
+    const burst = new THREE.Mesh(burstGeometry, burstMaterial);
+    burst.position.copy(position);
+    scene.add(burst);
+
+    let scale = 0.5;
+    let opacity = 0.8;
+    const interval = setInterval(() => {
+        scale += 0.3;
+        opacity -= 0.05;
+
+        burst.scale.set(scale, scale, scale);
+        burstMaterial.opacity = opacity;
+
+        if (opacity <= 0) {
+            clearInterval(interval);
+            scene.remove(burst);
+            burstGeometry.dispose();
+            burstMaterial.dispose();
+        }
+    }, 50);
+}
+
+// Create ambient space debris and particles
+function createAmbientSpaceDebris() {
+    // Create large debris field with various particle types
+    const debrisCount = 500; // Lots of particles
+    const debrisGroup = new THREE.Group();
+    debrisGroup.name = 'spaceDebris';
+
+    // Debris particles
+    const debrisGeometry = new THREE.BufferGeometry();
+    const debrisPositions = [];
+    const debrisColors = [];
+    const debrisSizes = [];
+
+    for (let i = 0; i < debrisCount; i++) {
+        // Spread across large area
+        debrisPositions.push(
+            (Math.random() - 0.5) * 40000,
+            (Math.random() - 0.5) * 3000,
+            (Math.random() - 0.5) * 40000
+        );
+
+        // Various colors for different debris types
+        const debrisType = Math.random();
+        let color;
+        if (debrisType < 0.3) {
+            // Metallic debris (gray/silver)
+            color = new THREE.Color(0.6 + Math.random() * 0.3, 0.6 + Math.random() * 0.3, 0.6 + Math.random() * 0.3);
+        } else if (debrisType < 0.6) {
+            // Rocky debris (brown/gray)
+            color = new THREE.Color().setHSL(0.05 + Math.random() * 0.1, 0.3, 0.3 + Math.random() * 0.2);
+        } else {
+            // Ice debris (blue/white)
+            color = new THREE.Color().setHSL(0.55 + Math.random() * 0.1, 0.5, 0.7 + Math.random() * 0.2);
+        }
+        debrisColors.push(color.r, color.g, color.b);
+
+        // Varying sizes
+        debrisSizes.push(0.5 + Math.random() * 2.5);
+    }
+
+    debrisGeometry.setAttribute('position', new THREE.Float32BufferAttribute(debrisPositions, 3));
+    debrisGeometry.setAttribute('color', new THREE.Float32BufferAttribute(debrisColors, 3));
+    debrisGeometry.setAttribute('size', new THREE.Float32BufferAttribute(debrisSizes, 1));
+
+    const debrisMaterial = new THREE.PointsMaterial({
+        size: 2,
+        vertexColors: true,
+        transparent: true,
+        opacity: 0.6,
+        sizeAttenuation: true
+    });
+
+    const debrisPoints = new THREE.Points(debrisGeometry, debrisMaterial);
+    debrisPoints.frustumCulled = false;
+    debrisGroup.add(debrisPoints);
+
+    // Add some larger floating debris chunks
+    for (let i = 0; i < 50; i++) {
+        const chunkSize = 1 + Math.random() * 3;
+        const chunkGeometry = new THREE.BoxGeometry(chunkSize, chunkSize * 0.5, chunkSize);
+        const chunkMaterial = new THREE.MeshBasicMaterial({
+            color: new THREE.Color().setHSL(Math.random() * 0.1, 0.2, 0.3),
+            transparent: true,
+            opacity: 0.4
+        });
+        const chunk = new THREE.Mesh(chunkGeometry, chunkMaterial);
+
+        chunk.position.set(
+            (Math.random() - 0.5) * 35000,
+            (Math.random() - 0.5) * 2500,
+            (Math.random() - 0.5) * 35000
+        );
+
+        chunk.rotation.set(
+            Math.random() * Math.PI,
+            Math.random() * Math.PI,
+            Math.random() * Math.PI
+        );
+
+        chunk.userData = {
+            rotationSpeed: {
+                x: (Math.random() - 0.5) * 0.01,
+                y: (Math.random() - 0.5) * 0.01,
+                z: (Math.random() - 0.5) * 0.01
+            },
+            driftSpeed: new THREE.Vector3(
+                (Math.random() - 0.5) * 0.5,
+                (Math.random() - 0.5) * 0.1,
+                (Math.random() - 0.5) * 0.5
+            )
+        };
+
+        chunk.frustumCulled = false;
+        debrisGroup.add(chunk);
+    }
+
+    scene.add(debrisGroup);
+
+    // Store reference for updates
+    if (typeof window.spaceDebris === 'undefined') {
+        window.spaceDebris = debrisGroup;
+    }
+
+    console.log(`Created ${debrisCount} debris particles and 50 floating chunks`);
+}
+
+// Update ambient space debris - slow drift and rotation
+function updateAmbientSpaceDebris() {
+    if (typeof spaceDebris === 'undefined' || !spaceDebris) return;
+
+    spaceDebris.children.forEach(child => {
+        if (child.userData && child.userData.rotationSpeed) {
+            // Rotate chunks slowly
+            child.rotation.x += child.userData.rotationSpeed.x;
+            child.rotation.y += child.userData.rotationSpeed.y;
+            child.rotation.z += child.userData.rotationSpeed.z;
+
+            // Drift slowly
+            child.position.add(child.userData.driftSpeed);
+
+            // Wrap around if too far
+            const maxDist = 20000;
+            if (Math.abs(child.position.x) > maxDist) child.position.x *= -0.9;
+            if (Math.abs(child.position.y) > maxDist) child.position.y *= -0.9;
+            if (Math.abs(child.position.z) > maxDist) child.position.z *= -0.9;
+        }
+    });
 }
 
 function createEnhancedComets() {
@@ -5419,6 +5642,9 @@ if (typeof window !== 'undefined') {
     window.createEnemies = createEnemies3D;
     window.createEnhancedComets = createEnhancedComets;
     window.createEnhancedWormholes = createEnhancedWormholes;
+    window.updateUnstableWormholes = updateUnstableWormholes;
+    window.createAmbientSpaceDebris = createAmbientSpaceDebris;
+    window.updateAmbientSpaceDebris = updateAmbientSpaceDebris;
     window.createNebulas = createNebulas;
     window.createClusteredNebulas = createClusteredNebulas;
 	window.createSpectacularClusteredNebulas = createSpectacularClusteredNebulas;

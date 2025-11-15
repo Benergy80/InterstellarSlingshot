@@ -1027,6 +1027,9 @@ function updateOuterSystems() {
 
         // Distance-based opacity - different for each set
         const systemDist = system.position.distanceTo(playerPos);
+        const blurStart = 15000;
+        const blurMax = 65000;
+        
         let opacity = 1.0;
 
         if (system.userData.systemType === 'exotic_core') {

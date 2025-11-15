@@ -1881,7 +1881,12 @@ function setupNormalGameContent() {
         createEnhancedWormholes();
         console.log('🌀 Wormholes created');
     }
-    
+
+    if (typeof createAmbientSpaceDebris === 'function') {
+        createAmbientSpaceDebris();
+        console.log('💫 Space debris created');
+    }
+
     if (typeof createEnemies === 'function') {
         createEnemies();
         console.log('👾 Enemies created');

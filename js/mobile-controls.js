@@ -187,9 +187,19 @@ window.mobileFireWeapon = function() {
         keys.space = true;
         setTimeout(() => keys.space = false, 100);
     }
-    
+
     if (typeof playSound === 'function') {
         playSound('weapon', 800, 0.2);
+    }
+};
+
+window.mobileLaunchMissile = function() {
+    if (typeof fireMissile === 'function') {
+        fireMissile();
+    }
+
+    if (typeof playSound === 'function') {
+        playSound('ui_click', 1100, 0.15);
     }
 };
 
