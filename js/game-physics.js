@@ -533,7 +533,7 @@ function createPlayerExplosion() {
         width: 100vw;
         height: 100vh;
         background: radial-gradient(circle, rgba(255,100,0,0.9) 0%, rgba(255,50,0,0.7) 30%, rgba(200,0,0,0.5) 60%, transparent 100%);
-        z-index: 10000;
+        z-index: 5000;
         pointer-events: none;
         opacity: 0;
         animation: vaporizeExplosion 2s ease-out forwards;

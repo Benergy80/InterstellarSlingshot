@@ -2067,7 +2067,7 @@ function showGameOverScreen(title, message) {
         const gameOverOverlay = document.createElement('div');
         gameOverOverlay.id = 'gameOverScreen';
         gameOverOverlay.className = 'absolute inset-0 bg-black bg-opacity-95 flex items-center justify-center z-9999 cyberpunk-bg';
-        gameOverOverlay.style.cursor = 'auto';
+        gameOverOverlay.style.cssText = 'cursor: auto; z-index: 9999;';
         gameOverOverlay.innerHTML = `
             <div class="text-center ui-panel rounded-lg p-8" style="cursor: auto;">
                 <div class="text-8xl mb-6 text-red-500" style="text-shadow: 0 0 20px rgba(255,0,0,0.8);">💥</div>
