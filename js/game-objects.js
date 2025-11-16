@@ -2572,7 +2572,12 @@ if (scene && scene.add) {
             const armStars = galaxyType.name === 'Quasar' ? 6000 : galaxyType.name === 'Dwarf' ? 2000 : 4000;
             
             console.log(`Creating 3D galaxy ${g} (${galaxyType.name}) at spherical position:`, galaxyCenter);
-            
+
+            // Calculate disc starfield size to be 2.5x the spherical starfield radius
+            const blackHoleSize = galaxyType.name === 'Quasar' ? 60 : galaxyType.name === 'Dwarf' ? 20 : 36;
+            const sphericalStarfieldMaxRadius = blackHoleSize + 1000;
+            const discStarfieldRadius = sphericalStarfieldMaxRadius * 2.5;
+
             // Create galaxy stars with proper 3D distribution
             // CREATE SEPARATE ROTATING STAR CLUSTER with unique structure per galaxy type
 // CREATE SEPARATE ROTATING STAR CLUSTER matching original algorithm
@@ -2583,10 +2588,10 @@ const galaxyStarsColors = [];
 // Generate stars with original algorithm
 for (let i = 0; i < armStars; i++) {
     let localX, localY, localZ;
-    
+
     if (Math.random() < 0.4) {
         // Center bulge (40% of stars)
-        const bulgeRadius = Math.pow(Math.random(), 2.5) * (galaxySize * 0.3);
+        const bulgeRadius = Math.pow(Math.random(), 2.5) * (discStarfieldRadius * 0.3);
         const bulgeAngle = Math.random() * Math.PI * 2;
         const bulgePhi = (Math.random() - 0.5) * Math.PI;
         
@@ -2600,28 +2605,28 @@ for (let i = 0; i < armStars; i++) {
             // Spiral galaxies (including Ring)
             const arm = Math.floor(i / (armStars/galaxyType.arms)) % galaxyType.arms;
             const armAngle = (i / (armStars/galaxyType.arms)) * Math.PI * 2;
-            const armDistance = Math.pow(Math.random(), 1.8) * galaxySize;
+            const armDistance = Math.pow(Math.random(), 1.8) * discStarfieldRadius;
             const armWidth = galaxyType.name === 'Ring' ? 0.03 : 0.12;
-            
+
             // Ring galaxies: skip center
-            if (galaxyType.name === 'Ring' && armDistance < galaxySize * 0.4) {
+            if (galaxyType.name === 'Ring' && armDistance < discStarfieldRadius * 0.4) {
                 i--; // Don't count this iteration
                 continue;
             }
-            
-            const angle = armAngle + (armDistance / galaxySize) * Math.PI * 2;
-            localX = Math.cos(angle + arm * (Math.PI*2/galaxyType.arms)) * armDistance + 
+
+            const angle = armAngle + (armDistance / discStarfieldRadius) * Math.PI * 2;
+            localX = Math.cos(angle + arm * (Math.PI*2/galaxyType.arms)) * armDistance +
                       (Math.random() - 0.5) * armWidth * armDistance;
-            localZ = Math.sin(angle + arm * (Math.PI*2/galaxyType.arms)) * armDistance + 
+            localZ = Math.sin(angle + arm * (Math.PI*2/galaxyType.arms)) * armDistance +
                       (Math.random() - 0.5) * armWidth * armDistance;
             localY = (Math.random() - 0.5) * (galaxyType.name === 'Elliptical' ? 120 : 30);
-            
+
         } else {
             // Elliptical galaxies (no arms)
-            const distance = Math.pow(Math.random(), 1.3) * galaxySize;
+            const distance = Math.pow(Math.random(), 1.3) * discStarfieldRadius;
             const theta = Math.random() * Math.PI * 2;
             const phi = (Math.random() - 0.5) * (galaxyType.name === 'Lenticular' ? 0.3 : Math.PI * 0.6);
-            
+
             localX = distance * Math.sin(phi) * Math.cos(theta);
             localZ = distance * Math.sin(phi) * Math.sin(theta);
             localY = distance * Math.cos(phi) * (galaxyType.name === 'Lenticular' ? 0.1 : 0.5);
@@ -2657,9 +2662,9 @@ galaxyMainStars.frustumCulled = false;
 
 // Store temporarily to add to black hole after it's created
 const galaxyStarsToAdd = galaxyMainStars;
-            
+
                     // Create galactic core black hole with proper 3D positioning and rotation
-            const blackHoleSize = galaxyType.name === 'Quasar' ? 60 : galaxyType.name === 'Dwarf' ? 20 : 36;
+            // blackHoleSize already calculated above for disc starfield sizing
             const blackHoleGeometry = new THREE.SphereGeometry(blackHoleSize, 16, 16);
             const blackHoleMaterial = new THREE.MeshBasicMaterial({ 
                 color: 0x000000,
