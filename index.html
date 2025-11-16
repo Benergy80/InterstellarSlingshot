@@ -182,7 +182,7 @@
         .small-control-btn {
             background: linear-gradient(135deg, rgba(0,150,255,0.15), rgba(0,100,200,0.2));
             border: 1px solid rgba(0,150,255,0.4);
-            color: rgba(0,255,200,0.8);
+            color: rgba(0,255,255,0.8);
             font-size: 11px;
             padding: 4px 8px;
             border-radius: 4px;
@@ -193,8 +193,8 @@
 
         .small-control-btn:hover {
             background: linear-gradient(135deg, rgba(0,200,255,0.25), rgba(0,150,255,0.3));
-            border-color: rgba(0,255,200,0.6);
-            box-shadow: 0 0 10px rgba(0,255,200,0.3);
+            border-color: rgba(0,255,255,0.6);
+            box-shadow: 0 0 10px rgba(0,255,255,0.3);
         }
 
         .small-control-btn.muted {
@@ -480,14 +480,14 @@
         }
 
         .nav-panel-mobile h3 {
-            color: rgba(0, 255, 200, 0.9);
+            color: rgba(0, 255, 255, 0.9);
             font-family: 'Orbitron', monospace;
-            text-shadow: 0 0 8px rgba(0, 255, 200, 0.6);
+            text-shadow: 0 0 8px rgba(0, 255, 255, 0.6);
             margin-bottom: 20px;
             text-align: center;
             border-bottom: 1px solid rgba(0, 150, 255, 0.3);
             padding-bottom: 10px;
-            filter: drop-shadow(0 0 8px rgba(0,255,200,0.6));
+            filter: drop-shadow(0 0 8px rgba(0,255,255,0.6));
         }
 
         /* Mobile popups */
@@ -530,8 +530,8 @@
         }
 
         .mobile-popup h3 {
-            color: rgba(0, 255, 200, 0.9);
-            text-shadow: 0 0 8px rgba(0, 255, 200, 0.6);
+            color: rgba(0, 255, 255, 0.9);
+            text-shadow: 0 0 8px rgba(0, 255, 255, 0.6);
             margin-bottom: 15px;
             text-align: center;
         }
@@ -560,7 +560,7 @@
         }
     </style>
 </head>
-<body class="text-white">
+<body class="text-white intro-active">
     <div class="cyberpunk-bg"></div>
     <div class="crosshair" id="crosshair"></div>
     
@@ -780,8 +780,9 @@
         <button class="mobile-btn" onclick="showMobilePanel('controls')" title="Flight Controls">
             <i class="fas fa-gamepad"></i>
         </button>
-        <button class="mobile-btn" onclick="mobileEmergencyWarp()" title="Emergency Warp">
+        <button class="mobile-btn warp" onclick="mobileEmergencyWarp()" title="Emergency Warp">
             <i class="fa-solid fa-triangle-exclamation"></i>
+            <span class="warp-count-badge" id="mobileWarpCountBadge">5</span>
         </button>
     </div>
 

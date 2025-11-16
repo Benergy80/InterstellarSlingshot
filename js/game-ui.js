@@ -304,20 +304,27 @@ function updateAutoNavigateButton() {
 }
 
 // Update floating status displays
+// NOTE: This function is duplicated later in this file (around line 2524)
+// and will be overridden. Keeping this version for reference/fallback.
 function updateMobileFloatingStatus() {
     if (typeof gameState === 'undefined') return;
-    
-    // MINIMAL STATUS: Only Hull, Energy, and Emergency Warps
+
+    // MINIMAL STATUS: Only Hull and Energy (Emergency Warps shown on button badge)
     const updates = {
         'mobileFloatingHull': gameState.hull ? Math.round(gameState.hull) + '%' : '100%',
-        'mobileFloatingEnergy': gameState.energy ? Math.round(gameState.energy) + '%' : '100%',
-        'mobileFloatingWarps': gameState.emergencyWarp?.available ?? (gameState.emergencyWarpCount || 5)
+        'mobileFloatingEnergy': gameState.energy ? Math.round(gameState.energy) + '%' : '100%'
     };
-    
+
     Object.entries(updates).forEach(([id, value]) => {
         const element = document.getElementById(id);
         if (element) element.textContent = value;
     });
+
+    // Update emergency warp count on button badge
+    const warpBadge = document.getElementById('mobileWarpCountBadge');
+    if (warpBadge) {
+        warpBadge.textContent = gameState.emergencyWarp?.available ?? 5;
+    }
 }
 
 // =============================================================================
@@ -930,12 +937,32 @@ function setupGalaxyMap() {
     // Clear existing galaxy indicators
     const existingGalaxies = galaxyMap.querySelectorAll('.galaxy-indicator');
     existingGalaxies.forEach(el => el.remove());
-    
+
     // Create enhanced galaxy indicators with boss system integration
     galaxyTypes.forEach((galaxy, index) => {
-        // Guard missing map positions
-        const mapPos = (typeof galaxyMapPositions !== 'undefined') ? galaxyMapPositions[index] : null;
-        if (!mapPos) {
+        // Convert 3D spherical position to 2D map position (same logic as universe view)
+        let mapPos;
+        if (typeof galaxy3DPositions !== 'undefined' && galaxy3DPositions[index]) {
+            const galaxy3D = galaxy3DPositions[index];
+            const phi = galaxy3D.phi;
+            const theta = galaxy3D.theta;
+            const distance = galaxy3D.distance;
+
+            // Project spherical coordinates onto 2D map
+            let x = (phi / (Math.PI * 2)) % 1.0;
+            let y = theta / Math.PI;
+
+            // Apply distance factor for depth
+            const centerX = 0.5;
+            const centerY = 0.5;
+            x = centerX + (x - centerX) * distance;
+            y = centerY + (y - centerY) * distance;
+
+            mapPos = { x, y };
+        } else if (typeof galaxyMapPositions !== 'undefined' && galaxyMapPositions[index]) {
+            // Fallback to old hardcoded positions
+            mapPos = galaxyMapPositions[index];
+        } else {
             console.warn(`No map position for galaxy index ${index} ("${galaxy.name}"), skipping.`);
             return;
         }
@@ -1642,13 +1669,30 @@ mapDotPool.releaseAll();
         mapDirectionArrow.style.display = 'none';
     }
     
-    // Show player position in universe
-    const playerMapX = (camera.position.x / universeRadius) + 0.5;
-    const playerMapZ = (camera.position.z / universeRadius) + 0.5;
-    
+    // Show player position in universe using same spherical projection as galaxies
+    const playerX = camera.position.x;
+    const playerY = camera.position.y;
+    const playerZ = camera.position.z;
+
+    // Convert player's Cartesian position to spherical coordinates
+    const playerDistance = Math.sqrt(playerX * playerX + playerY * playerY + playerZ * playerZ);
+    const playerPhi = Math.atan2(playerZ, playerX);
+    const playerTheta = Math.acos(playerY / Math.max(playerDistance, 0.001)); // Avoid division by zero
+
+    // Project spherical coordinates onto 2D map (same as galaxy projection)
+    let playerMapX = ((playerPhi + Math.PI) / (Math.PI * 2)) % 1.0;
+    let playerMapY = playerTheta / Math.PI;
+
+    // Apply distance factor for depth (same as galaxies)
+    const normalizedDistance = Math.min(playerDistance / universeRadius, 1.0);
+    const centerX = 0.5;
+    const centerY = 0.5;
+    playerMapX = centerX + (playerMapX - centerX) * normalizedDistance;
+    playerMapY = centerY + (playerMapY - centerY) * normalizedDistance;
+
     const clampedX = Math.max(5, Math.min(95, playerMapX * 100));
-    const clampedZ = Math.max(5, Math.min(95, playerMapZ * 100));
-    
+    const clampedZ = Math.max(5, Math.min(95, playerMapY * 100));
+
     playerMapPos.style.left = `${clampedX}%`;
     playerMapPos.style.top = `${clampedZ}%`;
     
@@ -2493,19 +2537,15 @@ function createMobileFloatingStatus() {
         font-family: 'Orbitron', monospace;
     `;
     
-    // MINIMAL STATUS: Only Hull, Energy, and Emergency Warps
+    // MINIMAL STATUS: Only Hull and Energy (Emergency Warps shown on button badge)
     floatingStatus.innerHTML = `
-        <div class="mobile-stat-pill" style="background: linear-gradient(135deg, rgba(15, 23, 42, 0.85), rgba(30, 41, 59, 0.85)); backdrop-filter: blur(10px); border: 1px solid rgba(248, 113, 113, 0.5); border-radius: 20px; padding: 8px 14px; font-size: 13px; font-weight: 600; color: #f87171; text-shadow: 0 0 8px rgba(248, 113, 113, 0.6); opacity: 0.7;">
-            <i class="fas fa-shield-alt" style="margin-right: 6px; color: rgba(248, 113, 113, 0.8);"></i>
+        <div class="mobile-stat-pill" style="background: rgba(0, 0, 0, 0.7); border: 1px solid rgba(248, 113, 113, 0.6); border-radius: 4px; padding: 8px 14px; font-size: 13px; font-weight: 600; color: #f87171; text-shadow: 0 0 8px rgba(248, 113, 113, 0.8); box-shadow: 0 0 10px rgba(248, 113, 113, 0.3), inset 0 0 10px rgba(248, 113, 113, 0.1); opacity: 0.7;">
+            <i class="fas fa-shield-alt" style="margin-right: 6px;"></i>
             <span id="mobileFloatingHull">100%</span>
         </div>
-        <div class="mobile-stat-pill" style="background: linear-gradient(135deg, rgba(15, 23, 42, 0.85), rgba(30, 41, 59, 0.85)); backdrop-filter: blur(10px); border: 1px solid rgba(96, 165, 250, 0.5); border-radius: 20px; padding: 8px 14px; font-size: 13px; font-weight: 600; color: #60a5fa; text-shadow: 0 0 8px rgba(96, 165, 250, 0.6); opacity: 0.7;">
-            <i class="fas fa-bolt" style="margin-right: 6px; color: rgba(96, 165, 250, 0.8);"></i>
+        <div class="mobile-stat-pill" style="background: rgba(0, 0, 0, 0.7); border: 1px solid rgba(96, 165, 250, 0.6); border-radius: 4px; padding: 8px 14px; font-size: 13px; font-weight: 600; color: #60a5fa; text-shadow: 0 0 8px rgba(96, 165, 250, 0.8); box-shadow: 0 0 10px rgba(96, 165, 250, 0.3), inset 0 0 10px rgba(96, 165, 250, 0.1); opacity: 0.7;">
+            <i class="fas fa-bolt" style="margin-right: 6px;"></i>
             <span id="mobileFloatingEnergy">100%</span>
-        </div>
-        <div class="mobile-stat-pill" style="background: linear-gradient(135deg, rgba(15, 23, 42, 0.85), rgba(30, 41, 59, 0.85)); backdrop-filter: blur(10px); border: 1px solid rgba(251, 191, 36, 0.5); border-radius: 20px; padding: 8px 14px; font-size: 13px; font-weight: 600; color: #fbbf24; text-shadow: 0 0 8px rgba(251, 191, 36, 0.6); opacity: 0.7;">
-            <i class="fas fa-rocket" style="margin-right: 6px; color: rgba(251, 191, 36, 0.8);"></i>
-            <span id="mobileFloatingWarps">5</span>
         </div>
     `;
     
@@ -2527,20 +2567,25 @@ function createMobileFloatingStatus() {
 
 function updateMobileFloatingStatus() {
     if (typeof gameState === 'undefined') return;
-    
-    // MINIMAL STATUS: Only Hull, Energy, and Emergency Warps
+
+    // MINIMAL STATUS: Only Hull and Energy (Emergency Warps shown on button badge)
     const updates = {
         'mobileFloatingHull': gameState.hull ? Math.round(gameState.hull) + '%' : '100%',
-        'mobileFloatingEnergy': gameState.energy ? Math.round(gameState.energy) + '%' : '100%',
-        'mobileFloatingWarps': gameState.emergencyWarp?.available ?? 5
+        'mobileFloatingEnergy': gameState.energy ? Math.round(gameState.energy) + '%' : '100%'
     };
-    
+
     Object.entries(updates).forEach(([id, value]) => {
         const element = document.getElementById(id);
         if (element) {
             element.textContent = value;
         }
     });
+
+    // Update emergency warp count on button badge
+    const warpBadge = document.getElementById('mobileWarpCountBadge');
+    if (warpBadge) {
+        warpBadge.textContent = gameState.emergencyWarp?.available ?? 5;
+    }
 }
 
 function createMobilePopups() {
