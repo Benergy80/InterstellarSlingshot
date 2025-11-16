@@ -1534,8 +1534,15 @@ if (keys.x && gameState.energy > 0) {
             }
 
             // ⚡ DEADLY COLLISION DETECTION - Crashing into celestial bodies causes mission failure
-if ((planet.userData.type === 'planet' || planet.userData.type === 'star' || planet.userData.type === 'blackhole') &&
-    distance < planetRadius + 10) { // 10 unit safety margin
+
+// Black holes: Only collide with center core (10 units), not the surface
+const blackHoleCoreCollision = planet.userData.type === 'blackhole' && distance < 10;
+
+// Planets and stars: Collide with surface
+const surfaceCollision = (planet.userData.type === 'planet' || planet.userData.type === 'star') &&
+                         distance < planetRadius + 10; // 10 unit safety margin
+
+if (blackHoleCoreCollision || surfaceCollision) {
 
     // ⚡ SUN COLLISION = INSTANT DEATH
     if (planet.userData.type === 'star') {
