@@ -1176,7 +1176,7 @@ body.intro-active .nav-panel-mobile {
 /* Swipe indicator for navigation panel - Cyberpunk theme */
 .swipe-indicator {
     position: fixed;
-    top: 80px;
+    top: 20px;
     right: 8px;
     display: flex;
     align-items: center;
