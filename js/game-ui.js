@@ -1214,7 +1214,23 @@ if (typeof outerInterstellarSystems !== 'undefined') {
         }
     });
 }
-        
+
+        // Add nearby interstellar asteroids
+        if (typeof interstellarAsteroids !== 'undefined') {
+            interstellarAsteroids.forEach(asteroid => {
+                if (!asteroid || !asteroid.position) return;
+                const distance = camera.position.distanceTo(asteroid.position);
+                if (distance < radarRange) {
+                    nearbyObjects.push({
+                        position: asteroid.position,
+                        type: 'interstellar_asteroid',
+                        name: asteroid.userData.name,
+                        distance: distance
+                    });
+                }
+            });
+        }
+
         // Add nearby enemies
         enemies.forEach(enemy => {
             if (!enemy || !enemy.position || !enemy.userData || enemy.userData.health <= 0) return;
@@ -1350,6 +1366,15 @@ if (obj.type === 'enemy') {
 } else if (obj.type === 'ringworld') {
     dotColor = '#ffaa00';
     dotSize = '8px';
+} else if (obj.type === 'interstellar_asteroid') {
+    dotColor = '#998877';
+    dotSize = '5px';
+} else if (obj.type === 'asteroid') {
+    dotColor = '#887766';
+    dotSize = '3px';
+} else if (obj.type === 'outer_asteroid') {
+    dotColor = '#887766';
+    dotSize = '3px';
 }
 
                 dot.style.width = dotSize;
@@ -1542,6 +1567,60 @@ mapDotPool.releaseAll();
     //         }
     //     });
     // }
+
+    // Display interstellar asteroid fields on map
+    if (typeof interstellarAsteroids !== 'undefined' && interstellarAsteroids.length > 0) {
+        // Group asteroids by field and calculate field centers
+        const fields = {};
+        interstellarAsteroids.forEach(asteroid => {
+            const fieldIndex = asteroid.userData.fieldIndex;
+            if (!fields[fieldIndex]) {
+                fields[fieldIndex] = [];
+            }
+            fields[fieldIndex].push(asteroid);
+        });
+
+        // Display each field as a dot on the map
+        Object.keys(fields).forEach(fieldIndex => {
+            const asteroids = fields[fieldIndex];
+
+            // Calculate field center (average position)
+            let centerX = 0, centerY = 0, centerZ = 0;
+            asteroids.forEach(a => {
+                centerX += a.position.x;
+                centerY += a.position.y;
+                centerZ += a.position.z;
+            });
+            centerX /= asteroids.length;
+            centerY /= asteroids.length;
+            centerZ /= asteroids.length;
+
+            // Convert to map coordinates
+            const fieldMapX = (centerX / universeRadius) + 0.5;
+            const fieldMapZ = (centerZ / universeRadius) + 0.5;
+
+            // Only show if within map bounds
+            if (fieldMapX >= 0 && fieldMapX <= 1 && fieldMapZ >= 0 && fieldMapZ <= 1) {
+                const dot = mapDotPool.get('asteroid-field');
+                dot.className = 'asteroid-field-dot absolute';
+                dot.style.width = '8px';
+                dot.style.height = '8px';
+                dot.style.backgroundColor = 'rgba(120, 100, 80, 0.8)';
+                dot.style.borderRadius = '50%';
+                dot.style.border = '1px solid rgba(150, 130, 110, 1)';
+                dot.style.left = `${fieldMapX * 100}%`;
+                dot.style.top = `${fieldMapZ * 100}%`;
+                dot.style.transform = 'translate(-50%, -50%)';
+                dot.style.boxShadow = '0 0 6px rgba(120, 100, 80, 0.6)';
+                dot.style.pointerEvents = 'none';
+                dot.style.zIndex = '6';
+                dot.innerHTML = '';
+                dot.title = `Asteroid Field ${fieldIndex} (${asteroids.length} asteroids)`;
+
+                galaxyMap.appendChild(dot);
+            }
+        });
+    }
 
     // Show player triangle, hide direction arrow
     playerMapPos.style.display = 'block';

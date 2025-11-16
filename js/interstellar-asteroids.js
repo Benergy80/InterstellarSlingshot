@@ -310,11 +310,70 @@ function handleAsteroidCollision(asteroidA, asteroidB) {
     breakInterstellarAsteroid(asteroidB, collisionPoint, collisionNormal.negate());
 }
 
+// Console command to find asteroid field locations
+function findAsteroidFields() {
+    if (typeof interstellarAsteroids === 'undefined' || interstellarAsteroids.length === 0) {
+        console.log('❌ No interstellar asteroid fields found. They may not be created yet.');
+        return;
+    }
+
+    console.log('🌌 INTERSTELLAR ASTEROID FIELD LOCATIONS:');
+    console.log(`Total asteroids: ${interstellarAsteroids.length}`);
+    console.log('');
+
+    // Group asteroids by field
+    const fields = {};
+    interstellarAsteroids.forEach(asteroid => {
+        const fieldIndex = asteroid.userData.fieldIndex;
+        if (!fields[fieldIndex]) {
+            fields[fieldIndex] = [];
+        }
+        fields[fieldIndex].push(asteroid);
+    });
+
+    // Display each field's center position
+    Object.keys(fields).sort((a, b) => a - b).forEach(fieldIndex => {
+        const asteroids = fields[fieldIndex];
+
+        // Calculate field center (average position)
+        let centerX = 0, centerY = 0, centerZ = 0;
+        asteroids.forEach(a => {
+            centerX += a.position.x;
+            centerY += a.position.y;
+            centerZ += a.position.z;
+        });
+        centerX /= asteroids.length;
+        centerY /= asteroids.length;
+        centerZ /= asteroids.length;
+
+        const distanceFromCenter = Math.sqrt(centerX * centerX + centerY * centerY + centerZ * centerZ);
+        const distanceFromPlayer = typeof camera !== 'undefined'
+            ? Math.sqrt(
+                Math.pow(centerX - camera.position.x, 2) +
+                Math.pow(centerY - camera.position.y, 2) +
+                Math.pow(centerZ - camera.position.z, 2)
+              )
+            : 'N/A';
+
+        console.log(`Field ${fieldIndex}:`);
+        console.log(`  Center: (${centerX.toFixed(0)}, ${centerY.toFixed(0)}, ${centerZ.toFixed(0)})`);
+        console.log(`  Distance from Sagittarius A*: ${distanceFromCenter.toFixed(0)} units`);
+        if (distanceFromPlayer !== 'N/A') {
+            console.log(`  Distance from you: ${distanceFromPlayer.toFixed(0)} units`);
+        }
+        console.log(`  Asteroids in field: ${asteroids.length}`);
+        console.log('');
+    });
+
+    console.log('💡 Tip: Use autopilot to navigate to these coordinates!');
+}
+
 // Export functions
 window.createInterstellarAsteroidFields = createInterstellarAsteroidFields;
 window.updateInterstellarAsteroids = updateInterstellarAsteroids;
 window.breakInterstellarAsteroid = breakInterstellarAsteroid;
 window.destroyInterstellarAsteroid = destroyInterstellarAsteroid;
 window.checkInterstellarAsteroidCollisions = checkInterstellarAsteroidCollisions;
+window.findAsteroidFields = findAsteroidFields;
 
 console.log('🌌 Interstellar Asteroid Fields system loaded');
