@@ -1217,8 +1217,8 @@ function updateBorgPatrolCombat() {
                     const toPlayer = new THREE.Vector3().subVectors(playerPos, droneWorldPos);
                     const localDirection = system.worldToLocal(toPlayer.normalize());
 
-                    // Move towards player
-                    const speed = 0.8; // Pursuit speed
+                    // Move towards player - patrol drones are fast scouts, faster than the main cube
+                    const speed = 3.0; // Pursuit speed - faster than BORG cube (2.0) and main drones (1.5)
                     drone.position.add(localDirection.multiplyScalar(speed));
 
                     // Face the player
