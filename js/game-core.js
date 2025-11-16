@@ -586,10 +586,18 @@ function startGame() {
         scene.add(globalAmbientLight);
         
         camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 250000);
+
+        // Add ship headlight - point light attached to camera to illuminate nearby asteroids
+        const shipLight = new THREE.PointLight(0xffffff, 1.5, 500, 2);  // white light, intensity 1.5, 500 unit range, decay 2
+        shipLight.position.set(0, 0, 0);  // At camera position
+        camera.add(shipLight);
+        scene.add(camera);  // Add camera to scene so the light works
+        window.shipLight = shipLight;  // Store reference for potential adjustments
+
         renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
         renderer.setSize(window.innerWidth, window.innerHeight);
         renderer.setClearColor(0x000003);
-        
+
         const gameContainer = document.getElementById('gameContainer');
         if (!gameContainer) {
             throw new Error('Game container not found');

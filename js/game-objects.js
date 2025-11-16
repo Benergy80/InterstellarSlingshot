@@ -2728,7 +2728,7 @@ const galaxyStarsToAdd = galaxyMainStars;
             galaxyBlackHole.add(ring);
 
             // Create large outer accretion disc (2.5x spherical starfield radius) with high transparency
-            const sphericalStarfieldMaxRadius = blackHoleSize + 1000;
+            // Reuse sphericalStarfieldMaxRadius from earlier calculation
             const largeDiscRadiusMultiplier = 2.5;
             const largeDiscInnerRadius = sphericalStarfieldMaxRadius * largeDiscRadiusMultiplier * 0.7;
             const largeDiscOuterRadius = sphericalStarfieldMaxRadius * largeDiscRadiusMultiplier * 1.1;
