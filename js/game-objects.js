@@ -2726,6 +2726,33 @@ const galaxyStarsToAdd = galaxyMainStars;
             ring.matrixAutoUpdate = true;
             ring.updateMatrix();
             galaxyBlackHole.add(ring);
+
+            // Create large outer accretion disc (2.5x spherical starfield radius) with high transparency
+            const sphericalStarfieldMaxRadius = blackHoleSize + 1000;
+            const largeDiscRadiusMultiplier = 2.5;
+            const largeDiscInnerRadius = sphericalStarfieldMaxRadius * largeDiscRadiusMultiplier * 0.7;
+            const largeDiscOuterRadius = sphericalStarfieldMaxRadius * largeDiscRadiusMultiplier * 1.1;
+
+            const largeRingGeometry = new THREE.RingGeometry(largeDiscInnerRadius, largeDiscOuterRadius, 64);
+            const largeRingMaterial = new THREE.MeshBasicMaterial({
+                color: galaxyType.color,
+                transparent: true,
+                opacity: galaxyType.name === 'Quasar' ? 0.15 : 0.08,  // Very transparent
+                side: THREE.DoubleSide
+            });
+            const largeRing = new THREE.Mesh(largeRingGeometry, largeRingMaterial);
+
+            // Apply same rotation as smaller ring with slight variation
+            largeRing.rotation.x = Math.PI / 2 + (Math.random() - 0.5) * 0.3;
+            largeRing.rotation.y = (Math.random() - 0.5) * 0.5;
+            largeRing.rotation.z = (Math.random() - 0.5) * 0.3;
+
+            largeRing.visible = true;
+            largeRing.frustumCulled = true;
+            largeRing.matrixAutoUpdate = true;
+            largeRing.updateMatrix();
+            galaxyBlackHole.add(largeRing);
+
             // Add the main galaxy stars
 if (typeof galaxyStarsToAdd !== 'undefined') {
     galaxyBlackHole.add(galaxyStarsToAdd);
