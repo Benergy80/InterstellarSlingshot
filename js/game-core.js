@@ -987,7 +987,12 @@ if (typeof asteroidBelts !== 'undefined' && asteroidBelts.length > 0) {
 if (typeof updateOuterSystems === 'function') {
     updateOuterSystems();
 }
-    
+
+    // Update BORG patrol drone combat behavior
+    if (typeof updateBorgPatrolCombat === 'function') {
+        updateBorgPatrolCombat();
+    }
+
     // Check for outer system discoveries
 if (gameState.frameCount % 60 === 0 && typeof outerInterstellarSystems !== 'undefined') {
     outerInterstellarSystems.forEach(system => {
