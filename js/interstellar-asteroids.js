@@ -13,7 +13,7 @@ const INTERSTELLAR_ASTEROID_CONFIG = {
     fieldCount: 8,  // Number of asteroid fields
     asteroidsPerField: 15,  // Asteroids per field
     minDistance: 25000,  // Min distance from galactic center
-    maxDistance: 80000,  // Max distance from galactic center
+    maxDistance: 55000,  // Max distance from galactic center (reduced from 80000 to bring closer)
     baseSize: 50,  // 10x bigger than normal asteroids (base ~5)
     sizeVariation: 0.7,  // Size can vary ±70%
     maxSpeed: 0.3,  // Maximum asteroid velocity
@@ -121,9 +121,12 @@ function createInterstellarAsteroid(position, size, velocity, fieldIndex, astero
     geometry.attributes.position.needsUpdate = true;
     geometry.computeVertexNormals();
 
-    // Material - dark gray/brown rocky appearance
+    // Material - dark gray/brown rocky appearance with slight emissive for visibility in deep space
+    const baseColor = new THREE.Color(0.3 + Math.random() * 0.2, 0.25 + Math.random() * 0.15, 0.2 + Math.random() * 0.1);
     const material = new THREE.MeshStandardMaterial({
-        color: new THREE.Color(0.3 + Math.random() * 0.2, 0.25 + Math.random() * 0.15, 0.2 + Math.random() * 0.1),
+        color: baseColor,
+        emissive: baseColor,
+        emissiveIntensity: 0.15,  // Slight self-illumination for visibility in dark space
         roughness: 0.9,
         metalness: 0.1,
         flatShading: true
