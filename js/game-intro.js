@@ -957,9 +957,9 @@ function createSkipButton() {
             width: auto !important;
             padding: 8px 16px !important;
             background: rgba(0, 0, 0, 0.7) !important;
-            border: 1px solid rgba(0, 255, 255, 0.4) !important;
+            border: 1px solid rgba(0, 255, 0, 0.4) !important;
             border-radius: 4px !important;
-            color: #00ffff !important;
+            color: #00ff00 !important;
             font-family: 'Orbitron', monospace !important;
             font-size: 12px !important;
             font-weight: 600 !important;
@@ -967,7 +967,7 @@ function createSkipButton() {
             opacity: 0;
             transition: all 0.2s ease !important;
             z-index: 80 !important;
-            box-shadow: 0 0 10px rgba(0, 255, 255, 0.3), inset 0 0 10px rgba(0, 255, 255, 0.1) !important;
+            box-shadow: 0 0 10px rgba(0, 255, 0, 0.3), inset 0 0 10px rgba(0, 255, 0, 0.1) !important;
         `;
 
         skipButton.addEventListener('mouseenter', () => {
