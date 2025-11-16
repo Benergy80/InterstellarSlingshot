@@ -924,17 +924,18 @@ function showMissionCommandAlert(title, text, isVictoryMessage = false) {
     if (isMobile) {
         understoodButton.style.cssText = `
             background: rgba(0, 0, 0, 0.7);
-            border: 1px solid rgba(0, 255, 0, 0.4);
+            border: 1px solid rgba(0, 150, 255, 0.5);
             border-radius: 4px;
-            color: #00ff00;
+            color: #00ff88;
             font-family: 'Orbitron', monospace;
             font-weight: 600;
-            box-shadow: 0 0 10px rgba(0, 255, 0, 0.3), inset 0 0 10px rgba(0, 255, 0, 0.1);
+            box-shadow: 0 0 10px rgba(0, 150, 255, 0.3), inset 0 0 10px rgba(0, 150, 255, 0.1);
+            text-shadow: 0 0 8px rgba(0,255,136,0.6), 0 0 16px rgba(0,255,136,0.3);
             opacity: 0.7;
             transition: all 0.2s ease;
             pointer-events: auto;
             touch-action: manipulation;
-            -webkit-tap-highlight-color: rgba(0, 255, 0, 0.3);
+            -webkit-tap-highlight-color: rgba(0, 150, 255, 0.3);
             cursor: pointer;
             flex: 1;
             min-width: 120px;
