@@ -937,12 +937,32 @@ function setupGalaxyMap() {
     // Clear existing galaxy indicators
     const existingGalaxies = galaxyMap.querySelectorAll('.galaxy-indicator');
     existingGalaxies.forEach(el => el.remove());
-    
+
     // Create enhanced galaxy indicators with boss system integration
     galaxyTypes.forEach((galaxy, index) => {
-        // Guard missing map positions
-        const mapPos = (typeof galaxyMapPositions !== 'undefined') ? galaxyMapPositions[index] : null;
-        if (!mapPos) {
+        // Convert 3D spherical position to 2D map position (same logic as universe view)
+        let mapPos;
+        if (typeof galaxy3DPositions !== 'undefined' && galaxy3DPositions[index]) {
+            const galaxy3D = galaxy3DPositions[index];
+            const phi = galaxy3D.phi;
+            const theta = galaxy3D.theta;
+            const distance = galaxy3D.distance;
+
+            // Project spherical coordinates onto 2D map
+            let x = (phi / (Math.PI * 2)) % 1.0;
+            let y = theta / Math.PI;
+
+            // Apply distance factor for depth
+            const centerX = 0.5;
+            const centerY = 0.5;
+            x = centerX + (x - centerX) * distance;
+            y = centerY + (y - centerY) * distance;
+
+            mapPos = { x, y };
+        } else if (typeof galaxyMapPositions !== 'undefined' && galaxyMapPositions[index]) {
+            // Fallback to old hardcoded positions
+            mapPos = galaxyMapPositions[index];
+        } else {
             console.warn(`No map position for galaxy index ${index} ("${galaxy.name}"), skipping.`);
             return;
         }
@@ -1649,13 +1669,30 @@ mapDotPool.releaseAll();
         mapDirectionArrow.style.display = 'none';
     }
     
-    // Show player position in universe
-    const playerMapX = (camera.position.x / universeRadius) + 0.5;
-    const playerMapZ = (camera.position.z / universeRadius) + 0.5;
-    
+    // Show player position in universe using same spherical projection as galaxies
+    const playerX = camera.position.x;
+    const playerY = camera.position.y;
+    const playerZ = camera.position.z;
+
+    // Convert player's Cartesian position to spherical coordinates
+    const playerDistance = Math.sqrt(playerX * playerX + playerY * playerY + playerZ * playerZ);
+    const playerPhi = Math.atan2(playerZ, playerX);
+    const playerTheta = Math.acos(playerY / Math.max(playerDistance, 0.001)); // Avoid division by zero
+
+    // Project spherical coordinates onto 2D map (same as galaxy projection)
+    let playerMapX = ((playerPhi + Math.PI) / (Math.PI * 2)) % 1.0;
+    let playerMapY = playerTheta / Math.PI;
+
+    // Apply distance factor for depth (same as galaxies)
+    const normalizedDistance = Math.min(playerDistance / universeRadius, 1.0);
+    const centerX = 0.5;
+    const centerY = 0.5;
+    playerMapX = centerX + (playerMapX - centerX) * normalizedDistance;
+    playerMapY = centerY + (playerMapY - centerY) * normalizedDistance;
+
     const clampedX = Math.max(5, Math.min(95, playerMapX * 100));
-    const clampedZ = Math.max(5, Math.min(95, playerMapZ * 100));
-    
+    const clampedZ = Math.max(5, Math.min(95, playerMapY * 100));
+
     playerMapPos.style.left = `${clampedX}%`;
     playerMapPos.style.top = `${clampedZ}%`;
     
