@@ -912,17 +912,24 @@ function showMissionCommandAlert(title, text, isVictoryMessage = false) {
         flex-wrap: wrap;
     `;
 
-    // ⭐ Create blue UNDERSTOOD button to immediately advance to next tutorial message
+    // ⭐ Create UNDERSTOOD button to immediately advance to next tutorial message
     const understoodButton = document.createElement('button');
     understoodButton.id = 'missionCommandUnderstood';
     understoodButton.className = 'space-btn rounded px-6 py-2';
     understoodButton.innerHTML = '<i class="fas fa-check mr-2"></i>UNDERSTOOD';
     understoodButton.style.cssText = `
-        background: linear-gradient(135deg, rgba(0, 150, 255, 0.5), rgba(0, 100, 200, 0.5));
-        border-color: rgba(0, 200, 255, 0.6);
+        background: rgba(0, 0, 0, 0.7);
+        border: 1px solid rgba(0, 255, 255, 0.4);
+        border-radius: 4px;
+        color: #00ffff;
+        font-family: 'Orbitron', monospace;
+        font-weight: 600;
+        box-shadow: 0 0 10px rgba(0, 255, 255, 0.3), inset 0 0 10px rgba(0, 255, 255, 0.1);
+        opacity: 0.7;
+        transition: all 0.2s ease;
         pointer-events: auto;
         touch-action: manipulation;
-        -webkit-tap-highlight-color: rgba(0, 150, 255, 0.3);
+        -webkit-tap-highlight-color: rgba(0, 255, 255, 0.3);
         cursor: pointer;
         flex: 1;
         min-width: 120px;
@@ -993,11 +1000,18 @@ function showMissionCommandAlert(title, text, isVictoryMessage = false) {
     understoodButton.className = 'mt-4 space-btn rounded px-6 py-2';
     understoodButton.innerHTML = '<i class="fas fa-check mr-2"></i>UNDERSTOOD';
     understoodButton.style.cssText = `
-        background: linear-gradient(135deg, rgba(0, 150, 255, 0.5), rgba(0, 100, 200, 0.5));
-        border-color: rgba(0, 200, 255, 0.6);
+        background: rgba(0, 0, 0, 0.7);
+        border: 1px solid rgba(0, 255, 255, 0.4);
+        border-radius: 4px;
+        color: #00ffff;
+        font-family: 'Orbitron', monospace;
+        font-weight: 600;
+        box-shadow: 0 0 10px rgba(0, 255, 255, 0.3), inset 0 0 10px rgba(0, 255, 255, 0.1);
+        opacity: 0.7;
+        transition: all 0.2s ease;
         pointer-events: auto;
         touch-action: manipulation;
-        -webkit-tap-highlight-color: rgba(0, 150, 255, 0.3);
+        -webkit-tap-highlight-color: rgba(0, 255, 255, 0.3);
         cursor: pointer;
         display: flex;
         align-items: center;

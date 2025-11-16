@@ -945,7 +945,7 @@ function createSkipButton() {
     skipButton.innerHTML = '<i class="fas fa-forward mr-2"></i>Skip Intro';
     skipButton.addEventListener('click', skipIntroSequence);
     
-    // Apply space-btn styling with cyan colors
+    // Apply mobile button styling with cyan colors
     skipButton.style.cssText = `
         position: fixed !important;
         bottom: 16px !important;
@@ -953,32 +953,30 @@ function createSkipButton() {
         transform: translateX(-50%) !important;
         width: auto !important;
         padding: 8px 16px !important;
-        background: linear-gradient(135deg, rgba(0,150,255,0.2), rgba(0,100,200,0.3)) !important;
-        backdrop-filter: blur(5px) !important;
-        border: 1px solid rgba(0,150,255,0.5) !important;
-        border-radius: 6px !important;
-        color: rgba(0,255,200,0.9) !important;
+        background: rgba(0, 0, 0, 0.7) !important;
+        border: 1px solid rgba(0, 255, 255, 0.4) !important;
+        border-radius: 4px !important;
+        color: #00ffff !important;
         font-family: 'Orbitron', monospace !important;
         font-size: 12px !important;
+        font-weight: 600 !important;
         cursor: pointer !important;
         opacity: 0 !important;
-        transition: all 0.3s ease !important;
+        transition: all 0.2s ease !important;
         z-index: 80 !important;
-        box-shadow: 0 4px 15px rgba(0,150,255,0.2), inset 0 1px 0 rgba(0,150,255,0.3) !important;
+        box-shadow: 0 0 10px rgba(0, 255, 255, 0.3), inset 0 0 10px rgba(0, 255, 255, 0.1) !important;
     `;
-    
+
     skipButton.addEventListener('mouseenter', () => {
-        skipButton.style.background = 'linear-gradient(135deg, rgba(0, 150, 0, 0.3) 0%, rgba(0, 200, 0, 0.3) 100%)';
-        skipButton.style.borderColor = 'rgba(0, 255, 100, 0.7)';
-        skipButton.style.boxShadow = '0 0 15px rgba(0, 255, 100, 0.5)';
-        skipButton.style.color = 'rgba(0, 255, 150, 0.9)';
+        skipButton.style.background = 'rgba(0, 255, 255, 0.2)';
+        skipButton.style.boxShadow = '0 0 15px rgba(0, 255, 255, 0.5), inset 0 0 15px rgba(0, 255, 255, 0.2)';
+        skipButton.style.opacity = '1';
     });
-    
+
     skipButton.addEventListener('mouseleave', () => {
-        skipButton.style.background = 'linear-gradient(135deg, rgba(0,150,255,0.2), rgba(0,100,200,0.3))';
-        skipButton.style.borderColor = 'rgba(0,150,255,0.5)';
-        skipButton.style.boxShadow = '0 4px 15px rgba(0,150,255,0.2), inset 0 1px 0 rgba(0,150,255,0.3)';
-        skipButton.style.color = 'rgba(0,255,200,0.9)';
+        skipButton.style.background = 'rgba(0, 0, 0, 0.7)';
+        skipButton.style.boxShadow = '0 0 10px rgba(0, 255, 255, 0.3), inset 0 0 10px rgba(0, 255, 255, 0.1)';
+        skipButton.style.opacity = '0.7';
     });
     
     document.body.appendChild(skipButton);
@@ -2550,26 +2548,23 @@ introStyles.textContent = `
     
     #skipIntroBtn {
         z-index: 80 !important;
-        background: linear-gradient(135deg, rgba(0,150,255,0.2), rgba(0,100,200,0.3)) !important;
-        border: 1px solid rgba(0,150,255,0.5) !important;
-        color: rgba(0,255,200,0.9) !important;
+        background: rgba(0, 0, 0, 0.7) !important;
+        border: 1px solid rgba(0, 255, 255, 0.4) !important;
+        border-radius: 4px !important;
+        color: #00ffff !important;
         font-family: 'Orbitron', monospace !important;
-        transition: all 0.3s ease !important;
-        backdrop-filter: blur(5px) !important;
-        transform: perspective(600px) rotateX(-2deg) translateX(-50%) !important;
-        box-shadow: 
-            0 4px 15px rgba(0,150,255,0.2),
-            inset 0 1px 0 rgba(0,150,255,0.3) !important;
+        font-weight: 600 !important;
+        transition: all 0.2s ease !important;
+        transform: translateX(-50%) !important;
+        box-shadow: 0 0 10px rgba(0, 255, 255, 0.3), inset 0 0 10px rgba(0, 255, 255, 0.1) !important;
+        opacity: 0.7 !important;
     }
 
     #skipIntroBtn:hover {
-        background: linear-gradient(135deg, rgba(0,200,255,0.3), rgba(0,150,255,0.4)) !important;
-        border-color: rgba(0,255,200,0.7) !important;
-        box-shadow: 
-            0 0 20px rgba(0,255,200,0.4),
-            0 6px 20px rgba(0,150,255,0.3),
-            inset 0 1px 0 rgba(0,255,200,0.4) !important;
-        transform: perspective(600px) rotateX(-2deg) translateX(-50%) translateY(-1px) !important;
+        background: rgba(0, 255, 255, 0.2) !important;
+        box-shadow: 0 0 15px rgba(0, 255, 255, 0.5), inset 0 0 15px rgba(0, 255, 255, 0.2) !important;
+        opacity: 1 !important;
+        transform: translateX(-50%) scale(1.05) !important;
     }
     
     /* Overlays - Higher z-index than fade overlay */
