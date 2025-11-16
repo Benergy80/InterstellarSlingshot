@@ -381,14 +381,12 @@ window.handleMobileFire = function(event) {
         console.log('✅ Fire weapon via keys.space');
     }
     
-    // Visual feedback
+    // Visual feedback - transform only, no opacity change
     const fireBtn = document.querySelector('.mobile-btn.primary, .mobile-btn.fire');
     if (fireBtn) {
         fireBtn.style.transform = 'scale(0.85)';
-        fireBtn.style.opacity = '0.8';
         setTimeout(() => {
             fireBtn.style.transform = 'scale(1)';
-            fireBtn.style.opacity = '1';
         }, 150);
     }
 };
@@ -701,8 +699,10 @@ let isSwipeGesture = false;
 document.addEventListener('touchstart', (e) => {
     const touch = e.touches[0];
     const screenWidth = window.innerWidth;
-    
-    if (touch.clientX > screenWidth - 40) {
+    const screenHeight = window.innerHeight;
+
+    // Only detect swipes from TOP RIGHT corner (right 60px, top 150px)
+    if (touch.clientX > screenWidth - 60 && touch.clientY < 150) {
         swipeStartX = touch.clientX;
         isSwipeGesture = true;
     }
@@ -724,13 +724,41 @@ document.addEventListener('touchend', () => {
     isSwipeGesture = false;
 });
 
-// Close panels on outside click
-document.addEventListener('click', (e) => {
+// Swipe-to-close detection for nav panel
+let closeSwipeStartX = 0;
+let isCloseSwipeGesture = false;
+
+document.addEventListener('touchstart', (e) => {
     const navPanel = document.getElementById('navPanelMobile');
-    if (navPanel && navPanel.classList.contains('active') && !navPanel.contains(e.target)) {
-        window.hideNavPanel();
+    if (navPanel && navPanel.classList.contains('active')) {
+        const touch = e.touches[0];
+        // Detect swipe starting from the left edge of the screen (within navigation panel)
+        if (touch.clientX < 100) {
+            closeSwipeStartX = touch.clientX;
+            isCloseSwipeGesture = true;
+        }
     }
-    
+});
+
+document.addEventListener('touchmove', (e) => {
+    if (isCloseSwipeGesture) {
+        const touch = e.touches[0];
+        const deltaX = touch.clientX - closeSwipeStartX;
+
+        // Swipe right to close (at least 80px movement)
+        if (deltaX > 80) {
+            window.hideNavPanel();
+            isCloseSwipeGesture = false;
+        }
+    }
+});
+
+document.addEventListener('touchend', () => {
+    isCloseSwipeGesture = false;
+});
+
+// Close mobile popups on outside click (but NOT nav panel)
+document.addEventListener('click', (e) => {
     if (e.target.classList.contains('mobile-popup')) {
         e.target.classList.remove('active');
     }

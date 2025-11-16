@@ -809,10 +809,34 @@ function startTutorial() {
     });
 }
 
+// ⭐ NEW: Function to immediately advance to next tutorial message
+function showNextTutorialMessage() {
+    if (!tutorialSystem.active || tutorialSystem.currentStep >= tutorialSystem.messages.length) {
+        // No more messages, complete tutorial
+        completeTutorial();
+        return;
+    }
+
+    const nextMessage = tutorialSystem.messages[tutorialSystem.currentStep];
+    if (nextMessage) {
+        showMissionCommandAlert(nextMessage.title, nextMessage.text);
+        tutorialSystem.currentStep++;
+
+        // Check if this was the last message
+        if (tutorialSystem.currentStep >= tutorialSystem.messages.length) {
+            setTimeout(() => {
+                completeTutorial();
+            }, 15000); // Complete after 15 seconds or manual dismiss
+        }
+    } else {
+        completeTutorial();
+    }
+}
+
 // Add this new function:
 function completeTutorial() {
     console.log('Completing tutorial...');
-    
+
     tutorialSystem.completed = true;
     tutorialSystem.active = false;
     tutorialSystem.completionTime = Date.now();
@@ -877,25 +901,74 @@ function showMissionCommandAlert(title, text, isVictoryMessage = false) {
     const isFinalTutorialMessage = title === "Final Orders";
     
     if (isTutorialActive && !isVictoryMessage) {
-    // Create SKIP TUTORIAL button for tutorial messages
+    // ⭐ Create button container with flex layout for OK and SKIP buttons
+    const tutorialButtonContainer = document.createElement('div');
+    tutorialButtonContainer.className = 'flex gap-4 mt-4';
+    tutorialButtonContainer.style.cssText = `
+        display: flex;
+        gap: 1rem;
+        margin-top: 1rem;
+        justify-content: center;
+        flex-wrap: wrap;
+    `;
+
+    // ⭐ Create blue UNDERSTOOD button to immediately advance to next tutorial message
+    const understoodButton = document.createElement('button');
+    understoodButton.id = 'missionCommandUnderstood';
+    understoodButton.className = 'space-btn rounded px-6 py-2';
+    understoodButton.innerHTML = '<i class="fas fa-check mr-2"></i>UNDERSTOOD';
+    understoodButton.style.cssText = `
+        background: linear-gradient(135deg, rgba(0, 150, 255, 0.5), rgba(0, 100, 200, 0.5));
+        border-color: rgba(0, 200, 255, 0.6);
+        pointer-events: auto;
+        touch-action: manipulation;
+        -webkit-tap-highlight-color: rgba(0, 150, 255, 0.3);
+        cursor: pointer;
+        flex: 1;
+        min-width: 120px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    `;
+    tutorialButtonContainer.appendChild(understoodButton);
+
+    // ⭐ UNDERSTOOD button dismisses current and immediately shows next tutorial message
+    const handleUnderstood = () => {
+        alertElement.classList.add('hidden');
+        // Immediately show next tutorial message
+        if (typeof showNextTutorialMessage === 'function') {
+            showNextTutorialMessage();
+        }
+    };
+
+    understoodButton.onclick = handleUnderstood;
+    understoodButton.ontouchend = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        handleUnderstood();
+    };
+
+    // ⭐ Create orange SKIP TUTORIAL button
     const skipButton = document.createElement('button');
     skipButton.id = 'missionCommandSkip';
-    skipButton.className = 'mt-4 space-btn rounded px-6 py-2';
+    skipButton.className = 'space-btn rounded px-6 py-2';
     skipButton.innerHTML = '<i class="fas fa-forward mr-2"></i>SKIP TUTORIAL';
     skipButton.style.cssText = `
-        background: linear-gradient(135deg, rgba(255, 150, 0, 0.8), rgba(200, 100, 0, 0.8));
+        background: linear-gradient(135deg, rgba(255, 150, 0, 0.5), rgba(200, 100, 0, 0.5));
         border-color: rgba(255, 200, 0, 0.6);
         pointer-events: auto;
         touch-action: manipulation;
         -webkit-tap-highlight-color: rgba(255, 150, 0, 0.3);
         cursor: pointer;
+        flex: 1;
+        min-width: 120px;
     `;
-    buttonContainer.appendChild(skipButton);
-    
+    tutorialButtonContainer.appendChild(skipButton);
+
     // SKIP TUTORIAL button immediately completes tutorial
     const handleSkip = () => {
         alertElement.classList.add('hidden');
-        
+
         // Skip ALL remaining tutorial messages
         if (tutorialSystem.active) {
             tutorialSystem.active = false;
@@ -903,13 +976,16 @@ function showMissionCommandAlert(title, text, isVictoryMessage = false) {
             showAchievement('Tutorial Skipped', 'All hostile forces are now active!');
         }
     };
-    
+
     skipButton.onclick = handleSkip;
     skipButton.ontouchend = (e) => {
         e.preventDefault();
         e.stopPropagation();
         handleSkip();
     };
+
+    // Add the button container to the main container
+    buttonContainer.appendChild(tutorialButtonContainer);
 } else {
     // Create UNDERSTOOD button for victory messages and non-tutorial messages
     const understoodButton = document.createElement('button');
@@ -917,12 +993,15 @@ function showMissionCommandAlert(title, text, isVictoryMessage = false) {
     understoodButton.className = 'mt-4 space-btn rounded px-6 py-2';
     understoodButton.innerHTML = '<i class="fas fa-check mr-2"></i>UNDERSTOOD';
     understoodButton.style.cssText = `
-        background: linear-gradient(135deg, rgba(0, 150, 255, 0.8), rgba(0, 100, 200, 0.8));
+        background: linear-gradient(135deg, rgba(0, 150, 255, 0.5), rgba(0, 100, 200, 0.5));
         border-color: rgba(0, 200, 255, 0.6);
         pointer-events: auto;
         touch-action: manipulation;
         -webkit-tap-highlight-color: rgba(0, 150, 255, 0.3);
         cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
     `;
     buttonContainer.appendChild(understoodButton);
     
@@ -2758,7 +2837,13 @@ if (typeof checkAndSpawnBoss === 'function' && enemy.userData.galaxyId !== undef
 					if (enemy.userData.isBoss) {
     				const wasVictory = checkBossVictory(enemy);
     				if (wasVictory) {
-        			showAchievement('BOSS DEFEATED!', `${enemy.userData.name} destroyed!`);
+        			// ⭐ NEW: Award warp for defeating boss
+        			if (gameState.emergencyWarp && gameState.emergencyWarp.available < gameState.emergencyWarp.maxWarps) {
+            			gameState.emergencyWarp.available++;
+            			showAchievement('BOSS DEFEATED!', `${enemy.userData.name} destroyed! +1 Warp Earned (${gameState.emergencyWarp.available}/${gameState.emergencyWarp.maxWarps})`);
+        			} else {
+            			showAchievement('BOSS DEFEATED!', `${enemy.userData.name} destroyed!`);
+        			}
         			// Call firework celebration here
         			if (typeof createFireworkCelebration === 'function') {
             		createFireworkCelebration();
@@ -3503,6 +3588,12 @@ function handleCosmicFeatureDestruction(missile, feature, type) {
     createMissileExplosion(missile.position);
     playSound('missile_explosion');
 
+    // ⭐ NEW: Award warp for destroying cosmic feature
+    if (gameState.emergencyWarp && gameState.emergencyWarp.available < gameState.emergencyWarp.maxWarps) {
+        gameState.emergencyWarp.available++;
+        console.log(`⚡ Warp earned from cosmic feature destruction! Total: ${gameState.emergencyWarp.available}/${gameState.emergencyWarp.maxWarps}`);
+    }
+
     // Apply effects based on type
     switch(type) {
         case 'dyson':
@@ -3700,9 +3791,45 @@ function fireWeapon() {
                     console.log('Hit detected: asteroid', targetObject.userData.name);
                     console.log('Asteroid hit confirmed, calling destroyAsteroidByWeapon');
                 } else {
-                    // Fire in the direction of the crosshair
-                    const direction = raycaster.ray.direction.clone();
-                    targetPosition = camera.position.clone().add(direction.multiplyScalar(1000));
+                    // Check for interstellar asteroid hits
+                    if (typeof interstellarAsteroids !== 'undefined' && interstellarAsteroids.length > 0) {
+                        const interstellarIntersects = raycaster.intersectObjects(interstellarAsteroids);
+                        if (interstellarIntersects.length > 0) {
+                            targetPosition = interstellarIntersects[0].point;
+                            targetObject = interstellarIntersects[0].object;
+                            targetObject.userData.isInterstellarAsteroid = true;  // Flag for special handling
+                            console.log('Hit detected: interstellar asteroid', targetObject.userData.name);
+                        }
+                    }
+
+                    // Check for outer system asteroids (exotic core + BORG systems)
+                    if (!targetObject && typeof outerInterstellarSystems !== 'undefined') {
+                        let outerAsteroids = [];
+                        outerInterstellarSystems.forEach(system => {
+                            if (system.userData && system.userData.orbiters) {
+                                system.userData.orbiters.forEach(orbiter => {
+                                    if (orbiter.userData && orbiter.userData.type === 'asteroid') {
+                                        outerAsteroids.push(orbiter);
+                                    }
+                                });
+                            }
+                        });
+
+                        if (outerAsteroids.length > 0) {
+                            const outerAsteroidIntersects = raycaster.intersectObjects(outerAsteroids);
+                            if (outerAsteroidIntersects.length > 0) {
+                                targetPosition = outerAsteroidIntersects[0].point;
+                                targetObject = outerAsteroidIntersects[0].object;
+                                console.log('Hit detected: outer system asteroid', targetObject.userData.name);
+                            }
+                        }
+                    }
+
+                    if (!targetObject) {
+                        // Fire in the direction of the crosshair
+                        const direction = raycaster.ray.direction.clone();
+                        targetPosition = camera.position.clone().add(direction.multiplyScalar(1000));
+                    }
                 }
             }
         }
@@ -3716,6 +3843,17 @@ function fireWeapon() {
         if (targetObject.userData.type === 'asteroid') {
             // Asteroid hit - restore hull, pass actual hit position
             destroyAsteroidByWeapon(targetObject, targetPosition);
+        } else if (targetObject.userData.type === 'interstellar_asteroid') {
+            // Interstellar asteroid hit - break into pieces
+            if (typeof breakInterstellarAsteroid === 'function') {
+                const hitNormal = new THREE.Vector3().subVectors(targetPosition, targetObject.position).normalize();
+                breakInterstellarAsteroid(targetObject, targetPosition, hitNormal);
+                // Small hull restoration for shooting large asteroids
+                if (typeof gameState !== 'undefined') {
+                    gameState.hull = Math.min(gameState.maxHull, gameState.hull + 5);
+                }
+                console.log('Interstellar asteroid broken into fragments (+5 hull)');
+            }
         } else {
             // Check for normal enemy/object hits
             checkWeaponHits(targetPosition);
@@ -3859,6 +3997,25 @@ function showAchievement(title, description, playAchievementSound = true) {
         popup.style.opacity = '';   // Clear inline opacity style
         popup.style.zIndex = '999'; // Maximum priority
         popup.style.position = 'fixed'; // Ensure it's always fixed
+
+        // ⭐ BORG STYLING: Apply green ORBITRON font for BORG messages
+        if (title.includes('BORG')) {
+            popup.classList.add('borg-message');
+            titleElement.style.fontFamily = "'Orbitron', monospace";
+            titleElement.style.color = '#00ff00';
+            titleElement.style.textShadow = '0 0 10px rgba(0, 255, 0, 0.8)';
+            achievementText.style.fontFamily = "'Orbitron', monospace";
+            achievementText.style.color = '#00ff00';
+            achievementText.style.textShadow = '0 0 8px rgba(0, 255, 0, 0.6)';
+        } else {
+            popup.classList.remove('borg-message');
+            titleElement.style.fontFamily = '';
+            titleElement.style.color = '';
+            titleElement.style.textShadow = '';
+            achievementText.style.fontFamily = '';
+            achievementText.style.color = '';
+            achievementText.style.textShadow = '';
+        }
 
         popup.classList.remove('hidden');
 
@@ -4255,11 +4412,32 @@ function enableAutoThrust() {
 // =============================================================================
 
 function createDeathEffect() {
-    if (typeof gameOver !== 'undefined') {
+    // ⭐ Enhanced death effect matching planet collision mechanics
+    // Stop all player motion
+    if (typeof gameState !== 'undefined' && gameState.velocityVector) {
+        gameState.velocityVector.set(0, 0, 0);
+    }
+
+    // Create massive player explosion effect
+    if (typeof createPlayerExplosion === 'function') {
+        createPlayerExplosion();
+    }
+
+    // Play explosion/vaporizing sound
+    if (typeof playSound === 'function') {
+        playSound('explosion');
+    }
+
+    // Show game over screen
+    if (typeof showGameOverScreen === 'function') {
+        showGameOverScreen('HULL BREACH', 'Ship destroyed by enemy fire - hull integrity: 0%');
+    } else if (typeof gameOver !== 'undefined') {
         gameOver('Hull integrity critical - ship destroyed!');
     } else {
         showAchievement('GAME OVER', 'Ship destroyed - mission failed!');
     }
+
+    console.log('💀 PLAYER DESTROYED: Hull reached 0% from enemy damage');
 }
 
 function playVictoryMusic() {
@@ -4667,3 +4845,57 @@ document.addEventListener('DOMContentLoaded', () => {
 
 console.log('🎵 Nebula Sound Debug Menu DISABLED (awaiting proper sound testing panel)');
 */
+
+// =============================================================================
+// NEBULA VISIBILITY TOGGLE COMMANDS
+// =============================================================================
+
+window.showNebulas = function() {
+    if (typeof nebulaClouds === 'undefined' || nebulaClouds.length === 0) {
+        console.log('⚠️ No nebulas found in scene');
+        return;
+    }
+
+    nebulaClouds.forEach(nebula => {
+        if (nebula) {
+            nebula.visible = true;
+        }
+    });
+
+    console.log(`✅ All ${nebulaClouds.length} nebulas are now visible`);
+};
+
+window.hideNebulas = function() {
+    if (typeof nebulaClouds === 'undefined' || nebulaClouds.length === 0) {
+        console.log('⚠️ No nebulas found in scene');
+        return;
+    }
+
+    nebulaClouds.forEach(nebula => {
+        if (nebula) {
+            nebula.visible = false;
+        }
+    });
+
+    console.log(`🙈 All ${nebulaClouds.length} nebulas are now hidden`);
+};
+
+window.toggleNebulas = function() {
+    if (typeof nebulaClouds === 'undefined' || nebulaClouds.length === 0) {
+        console.log('⚠️ No nebulas found in scene');
+        return;
+    }
+
+    // Check current state of first nebula
+    const currentlyVisible = nebulaClouds[0] && nebulaClouds[0].visible;
+
+    nebulaClouds.forEach(nebula => {
+        if (nebula) {
+            nebula.visible = !currentlyVisible;
+        }
+    });
+
+    console.log(`🔄 All ${nebulaClouds.length} nebulas toggled to ${!currentlyVisible ? 'visible' : 'hidden'}`);
+};
+
+console.log('🌫️ Nebula visibility commands loaded: showNebulas(), hideNebulas(), toggleNebulas()');

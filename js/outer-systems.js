@@ -76,7 +76,7 @@ function createExoticCoreSystems() {
     const innerBoundary = 45000;
     const outerBoundary = 75000;
     const targetRadius = (innerBoundary + outerBoundary) / 2; // ~67,500
-    const radiusVariation = 7500;
+    const radiusVariation = 12500;
 
     for (let i = 0; i < 16; i++) {
         // Spherical distribution
@@ -1178,11 +1178,83 @@ function updateOuterSystems() {
 }
 
 // =============================================================================
+// BORG PATROL DRONE COMBAT BEHAVIOR
+// =============================================================================
+
+function updateBorgPatrolCombat() {
+    if (typeof camera === 'undefined' || typeof outerInterstellarSystems === 'undefined') return;
+    if (!gameState || !gameState.gameStarted || gameState.gameOver) return;
+
+    const playerPos = camera.position;
+
+    outerInterstellarSystems.forEach(system => {
+        if (!system.userData || !system.userData.hasBorg || !system.userData.drones) return;
+
+        system.userData.drones.forEach(drone => {
+            if (!drone || !drone.userData || drone.userData.health <= 0) return;
+
+            // Get drone's world position
+            const droneWorldPos = new THREE.Vector3();
+            drone.getWorldPosition(droneWorldPos);
+
+            const distance = playerPos.distanceTo(droneWorldPos);
+
+            // Aggressive behavior - attack if player is within 5000 units
+            if (distance < 5000) {
+                // Mark as alerted
+                if (!drone.userData.alerted) {
+                    drone.userData.alerted = true;
+                    console.log(`⚠️ ${drone.userData.name} detected player!`);
+                }
+
+                // If within 3500 units, pursue and attack
+                if (distance < 3500) {
+                    // Stop normal orbit behavior, pursue player
+                    const systemWorldPos = new THREE.Vector3();
+                    system.getWorldPosition(systemWorldPos);
+
+                    // Calculate direction to player in local coordinates
+                    const toPlayer = new THREE.Vector3().subVectors(playerPos, droneWorldPos);
+                    const localDirection = system.worldToLocal(toPlayer.normalize());
+
+                    // Move towards player - patrol drones are fast scouts, faster than the main cube
+                    const speed = 3.0; // Pursuit speed - faster than BORG cube (2.0) and main drones (1.5)
+                    drone.position.add(localDirection.multiplyScalar(speed));
+
+                    // Face the player
+                    drone.lookAt(system.worldToLocal(playerPos.clone()));
+
+                    // Fire weapons if in range
+                    if (distance < 2000) {
+                        const now = Date.now();
+                        if (!drone.userData.lastAttack || now - drone.userData.lastAttack > 2000) {
+                            // Fire at player
+                            if (typeof fireEnemyWeapon === 'function') {
+                                fireEnemyWeapon(drone);
+                                drone.userData.lastAttack = now;
+                                console.log(`🔴 ${drone.userData.name} firing at player!`);
+                            }
+                        }
+                    }
+                }
+            } else {
+                // Reset alert state when player leaves range
+                if (drone.userData.alerted) {
+                    drone.userData.alerted = false;
+                    console.log(`${drone.userData.name} lost player contact`);
+                }
+            }
+        });
+    });
+}
+
+// =============================================================================
 // EXPORTS
 // =============================================================================
 
 if (typeof window !== 'undefined') {
     window.createOuterInterstellarSystems = createOuterInterstellarSystems;
     window.updateOuterSystems = updateOuterSystems;
+    window.updateBorgPatrolCombat = updateBorgPatrolCombat;
     window.outerInterstellarSystems = outerInterstellarSystems;
 }

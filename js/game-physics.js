@@ -533,7 +533,7 @@ function createPlayerExplosion() {
         width: 100vw;
         height: 100vh;
         background: radial-gradient(circle, rgba(255,100,0,0.9) 0%, rgba(255,50,0,0.7) 30%, rgba(200,0,0,0.5) 60%, transparent 100%);
-        z-index: 10000;
+        z-index: 5000;
         pointer-events: none;
         opacity: 0;
         animation: vaporizeExplosion 2s ease-out forwards;
@@ -1375,7 +1375,7 @@ if (frameDistance > 0.01) { // Only track significant movement
             createHyperspaceEffect();
         }
     }
-    
+
      // SPECIFICATION: Emergency Systems - O Key: Emergency warp
 // Check shield block FIRST before processing warp
 if (keys.o && typeof isShieldActive === 'function' && isShieldActive()) {
@@ -1407,10 +1407,10 @@ else if (keys.o && gameState.emergencyWarp.available > 0 && !gameState.emergency
     if (typeof playSound !== 'undefined') {
         playSound('warp');
     }
-    
+
     console.log(`🚀 Emergency warp activated! ${gameState.emergencyWarp.available} charges remaining`);
 }
-    
+
         // Enhanced Emergency warp timer with momentum coasting
 if (gameState.emergencyWarp.active) {
     gameState.emergencyWarp.timeRemaining -= 16.67;
@@ -1505,69 +1505,96 @@ if (keys.x && gameState.energy > 0) {
             const planetMass = planet.userData.mass || 1;
             const planetRadius = planet.geometry ? planet.geometry.parameters.radius : 1;
             
-            // FIXED: Asteroid collision detection with proper functions
+            // ⭐ ASTEROID COLLISION - Apply damage and check for death
             if (planet.userData.type === 'asteroid' && distance < collisionThreshold) {
                 destroyAsteroidByCollision(planet);
-                
+
                 if (gameState.hull <= 0) {
+                    // Stop all player motion
+                    gameState.velocityVector.set(0, 0, 0);
+
+                    // Create massive player explosion
                     if (typeof createPlayerExplosion === 'function') {
                         createPlayerExplosion();
                     }
+
+                    // Play explosion/vaporizing sound
+                    if (typeof playSound === 'function') {
+                        playSound('explosion');
+                    }
+
+                    // Show game over screen
                     if (typeof showGameOverScreen === 'function') {
                         showGameOverScreen('HULL BREACH', 'Ship destroyed by asteroid impact');
                     }
+
+                    console.log('💀 PLAYER DESTROYED: Killed by asteroid collision');
                     return;
                 }
             }
 
-            // PLANET COLLISION DETECTION - Prevent flying into planets
-if ((planet.userData.type === 'planet' || planet.userData.type === 'star' || planet.userData.type === 'blackhole') &&
-    distance < planetRadius + 10) { // 10 unit safety margin
-    
-    // Push player away from planet surface
-    const pushDirection = new THREE.Vector3().subVectors(camera.position, planetPosition).normalize();
-    const pushDistance = (planetRadius + 15) - distance; // Push to safe distance
-    
-    camera.position.add(pushDirection.multiplyScalar(pushDistance));
-    
-    // Reduce velocity significantly on collision
-    gameState.velocityVector.multiplyScalar(0.3); // Lose 70% of speed
-    
-    // Small hull damage from scraping (check invulnerability first)
-    if (!isBlackHoleWarpInvulnerable()) {
-        if (planet.userData.type === 'star' || planet.userData.type === 'blackhole') {
-            gameState.hull = Math.max(0, gameState.hull - 5); // More damage for stars/black holes
-            if (typeof showAchievement === 'function') {
-                showAchievement('Surface Contact!', `Scraped against ${planet.userData.name} - Hull damage!`);
-            }
-        } else {
-            // Apply damage with shield reduction
-            const damage = 2;
-            const shieldReduction = typeof getShieldDamageReduction === 'function' ?
-                                    getShieldDamageReduction() : 0;
-            const actualDamage = damage * (1 - shieldReduction);
+            // ⚡ DEADLY COLLISION DETECTION - Crashing into celestial bodies causes mission failure
 
-            gameState.hull = Math.max(0, gameState.hull - actualDamage);
+// Black holes: Only collide with center core (10 units), not the surface
+const blackHoleCoreCollision = planet.userData.type === 'blackhole' && distance < 10;
 
-            // Create shield hit effect if shields are active
-            if (typeof isShieldActive === 'function' && isShieldActive() &&
-                typeof createShieldHitEffect === 'function') {
-                createShieldHitEffect(planetPosition);
-            }
+// Planets and stars: Collide with surface
+const surfaceCollision = (planet.userData.type === 'planet' || planet.userData.type === 'star') &&
+                         distance < planetRadius + 10; // 10 unit safety margin
 
-            if (typeof showAchievement === 'function') {
-                showAchievement('Collision Avoided', `Bounced off ${planet.userData.name}`);
-            }
+if (blackHoleCoreCollision || surfaceCollision) {
+
+    // ⚡ SUN COLLISION = INSTANT DEATH
+    if (planet.userData.type === 'star') {
+        gameState.hull = 0; // Instant complete hull failure
+        gameState.velocityVector.set(0, 0, 0); // Stop all motion
+
+        // Create massive explosion
+        if (typeof createPlayerExplosion === 'function') {
+            createPlayerExplosion();
         }
+
+        // Trigger mission failed
+        if (typeof showGameOverScreen === 'function') {
+            showGameOverScreen('VAPORIZED BY STAR', `Ship destroyed by ${planet.userData.name} - hull integrity: 0%`);
+        }
+
+        // Explosion sound
+        if (typeof playSound === 'function') {
+            playSound('explosion');
+        }
+
+        console.log(`💀 INSTANT DEATH: Player collided with star ${planet.userData.name}`);
+        return;
     }
-    
-    // Sound effect
-    if (typeof playSound === 'function') {
-        playSound('hit');
+
+    // ⚡ PLANET/BLACK HOLE COLLISION = EXPLOSION AND MISSION FAILURE
+    if (planet.userData.type === 'planet' || planet.userData.type === 'blackhole') {
+        // Complete hull destruction on direct collision
+        gameState.hull = 0;
+        gameState.velocityVector.set(0, 0, 0); // Stop all motion
+
+        // Create explosion
+        if (typeof createPlayerExplosion === 'function') {
+            createPlayerExplosion();
+        }
+
+        // Trigger mission failed
+        const impactType = planet.userData.type === 'blackhole' ? 'CRUSHED BY SINGULARITY' : 'PLANETARY IMPACT';
+        if (typeof showGameOverScreen === 'function') {
+            showGameOverScreen(impactType, `Ship destroyed by collision with ${planet.userData.name}`);
+        }
+
+        // Explosion sound
+        if (typeof playSound === 'function') {
+            playSound('explosion');
+        }
+
+        console.log(`💀 MISSION FAILED: Player collided with ${planet.userData.type} ${planet.userData.name}`);
+        return;
     }
 }
             
-            // Enhanced gravitational force with type-specific multipliers
             if (planet.userData.type !== 'asteroid') {
                 let gravityMultiplier = 1.0;
 
@@ -1888,18 +1915,105 @@ if ((planet.userData.type === 'planet' || planet.userData.type === 'star' || pla
                         playSound('hit');
                     }
 
-                    // Check for game over
+                    // ⭐ Check for game over - enhanced with full death effects
                     if (gameState.hull <= 0) {
+                        // Stop all player motion
+                        gameState.velocityVector.set(0, 0, 0);
+
+                        // Create massive player explosion
                         if (typeof createPlayerExplosion === 'function') {
                             createPlayerExplosion();
                         }
+
+                        // Play explosion/vaporizing sound
+                        if (typeof playSound === 'function') {
+                            playSound('explosion');
+                        }
+
+                        // Show game over screen
                         if (typeof showGameOverScreen === 'function') {
                             showGameOverScreen('DESTROYED', `Annihilated by ${drone.userData.name}`);
                         }
+
+                        console.log(`💀 PLAYER DESTROYED: Killed by ${drone.userData.name}`);
                         return;
                     }
                 }
             });
+        });
+    }
+
+    // INTERSTELLAR ASTEROID COLLISION DETECTION - Large roaming asteroids between galaxies
+    if (typeof interstellarAsteroids !== 'undefined' && interstellarAsteroids.length > 0) {
+        interstellarAsteroids.forEach(asteroid => {
+            if (!asteroid || !asteroid.userData) return;
+
+            const asteroidDistance = camera.position.distanceTo(asteroid.position);
+            const collisionDistance = asteroid.userData.size + 10; // Size + safety margin
+
+            if (asteroidDistance < collisionDistance) {
+                // Push player away from asteroid
+                const pushDirection = new THREE.Vector3().subVectors(camera.position, asteroid.position).normalize();
+                const pushDistance = collisionDistance - asteroidDistance + 5;
+
+                camera.position.add(pushDirection.multiplyScalar(pushDistance));
+
+                // Reduce velocity on collision
+                gameState.velocityVector.multiplyScalar(0.3); // Lose 70% of speed
+
+                // Hull damage based on asteroid size
+                const damage = Math.ceil(asteroid.userData.size / 5); // Larger = more damage
+                const shieldReduction = typeof getShieldDamageReduction === 'function' ?
+                                        getShieldDamageReduction() : 0;
+                const actualDamage = damage * (1 - shieldReduction);
+
+                gameState.hull = Math.max(0, gameState.hull - actualDamage);
+
+                // Create shield hit effect if shields are active
+                if (typeof isShieldActive === 'function' && isShieldActive() &&
+                    typeof createShieldHitEffect === 'function') {
+                    createShieldHitEffect(asteroid.position);
+                }
+
+                // Show collision warning
+                if (typeof showAchievement === 'function') {
+                    showAchievement('ASTEROID IMPACT!', `Collided with large asteroid - ${damage} hull damage!`);
+                }
+
+                // Sound effect
+                if (typeof playSound === 'function') {
+                    playSound('hit');
+                }
+
+                // Create screen damage effect
+                if (typeof createEnhancedScreenDamageEffect === 'function') {
+                    createEnhancedScreenDamageEffect();
+                }
+
+                // Check for game over
+                if (gameState.hull <= 0) {
+                    // Stop all player motion
+                    gameState.velocityVector.set(0, 0, 0);
+
+                    // Create massive player explosion
+                    if (typeof createPlayerExplosion === 'function') {
+                        createPlayerExplosion();
+                    }
+
+                    // Play explosion sound
+                    if (typeof playSound === 'function') {
+                        playSound('explosion');
+                    }
+
+                    // Show game over screen
+                    if (typeof showGameOverScreen === 'function') {
+                        showGameOverScreen('HULL BREACH', `Ship destroyed by collision with ${asteroid.userData.name}`);
+                    }
+
+                    console.log(`💀 PLAYER DESTROYED: Killed by interstellar asteroid collision`);
+                    return;
+                }
+            }
         });
     }
 
@@ -1986,7 +2100,7 @@ if (dampedVelocity.length() >= gameState.minVelocity ||
     
     // Update velocity for Ship Status panel
     gameState.velocity = gameState.velocityVector.length();
-    
+
     // FIXED: Energy regeneration only when NOT actively thrusting
 const isThrusting = (keys.w || keys.a || keys.s || keys.d || keys.b || keys.x) && gameState.energy > 0;
 
@@ -2288,8 +2402,14 @@ function checkForNebulaDiscovery() {
                 console.log(`Energy restored: +${energyRestored.toFixed(1)}%`);
             }
 
-            // Play unique nebula music
-            playNebulaMusic(index);
+            // ⭐ NEW: Award warp for discovering nebula
+            if (gameState.emergencyWarp && gameState.emergencyWarp.available < gameState.emergencyWarp.maxWarps) {
+                gameState.emergencyWarp.available++;
+                console.log(`⚡ Warp earned from nebula discovery! Total: ${gameState.emergencyWarp.available}/${gameState.emergencyWarp.maxWarps}`);
+            }
+
+            // Play unique nebula music (DISABLED)
+            // playNebulaMusic(index);
 
             // Get enemy intelligence
             const intel = getEnemyIntelligence(nebula.position);
@@ -2297,7 +2417,7 @@ function checkForNebulaDiscovery() {
             // Show welcome notification with intelligence
             const nebulaName = nebula.userData.mythicalName || nebula.userData.name || 'Unknown Nebula';
 
-            let welcomeMessage = `Welcome to the ${nebulaName} Nebula. Energy restored to 100%.`;
+            let welcomeMessage = `Welcome to the ${nebulaName} Nebula. Energy restored to 100%. +1 Warp Earned!`;
 
             if (intel.nearbyGalaxy !== null && typeof galaxyTypes !== 'undefined') {
                 const galaxy = galaxyTypes[intel.nearbyGalaxy];
@@ -2324,10 +2444,10 @@ function checkForNebulaDiscovery() {
         }
     });
 
-    // If player has left all nebulas, stop the music
-    if (!playerNearNebula && currentNebulaMusic) {
-        stopNebulaMusic();
-    }
+    // If player has left all nebulas, stop the music (DISABLED)
+    // if (!playerNearNebula && currentNebulaMusic) {
+    //     stopNebulaMusic();
+    // }
 }
 
 // =============================================================================

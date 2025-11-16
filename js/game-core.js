@@ -971,13 +971,28 @@ if (typeof asteroidBelts !== 'undefined' && asteroidBelts.length > 0) {
             belt.rotation.y += belt.userData.rotationSpeed;
         }
     });
-} 
-    
+}
+
+    // Update interstellar asteroid fields
+    if (typeof updateInterstellarAsteroids === 'function') {
+        updateInterstellarAsteroids();
+    }
+
+    // Check interstellar asteroid collisions
+    if (typeof checkInterstellarAsteroidCollisions === 'function') {
+        checkInterstellarAsteroidCollisions();
+    }
+
     // Update outer systems
 if (typeof updateOuterSystems === 'function') {
     updateOuterSystems();
 }
-    
+
+    // Update BORG patrol drone combat behavior
+    if (typeof updateBorgPatrolCombat === 'function') {
+        updateBorgPatrolCombat();
+    }
+
     // Check for outer system discoveries
 if (gameState.frameCount % 60 === 0 && typeof outerInterstellarSystems !== 'undefined') {
     outerInterstellarSystems.forEach(system => {
@@ -1065,8 +1080,10 @@ if (typeof updateShieldSystem === 'function') {
         gameState.weapons.energy = Math.min(100, gameState.weapons.energy + 0.5); // Regenerate 0.5 per frame (~30/sec)
     }
     
-    // FIXED: Only update targets occasionally, not every frame (prevents click interference)
-    if (gameState.frameCount % 30 === 0 && typeof populateTargets === 'function') {
+    // FIXED: Only update targets occasionally, not every frame (prevents scroll interference)
+    // Update every 180 frames (~3 seconds at 60fps) instead of every 30 frames (0.5 seconds)
+    // This allows players to scroll and select targets without constant refreshing
+    if (gameState.frameCount % 180 === 0 && typeof populateTargets === 'function') {
         populateTargets();
     }
     

@@ -1868,15 +1868,24 @@ if (gameState.solarStormBoostActive || gameState.plasmaStormBoostActive) {
     
     // Check space whales
     cosmicFeatures.spaceWhales.forEach(whale => {
-        const distance = playerPos.distanceTo(whale.position);
-        
+        // Use world position for outer system whales (nested in system groups)
+        let whaleWorldPos;
+        if (whale.userData.isOuterSystem && whale.parent) {
+            whaleWorldPos = new THREE.Vector3();
+            whale.getWorldPosition(whaleWorldPos);
+        } else {
+            whaleWorldPos = whale.position;
+        }
+
+        const distance = playerPos.distanceTo(whaleWorldPos);
+
         if (distance < 300 && !whale.userData.encountered) {
             whale.userData.encountered = true;
-            
+
             if (typeof showAchievement === 'function') {
                 showAchievement('Space Whale Encounter', 'Legendary cosmic creature detected!');
             }
-            
+
             // Peaceful energy gift
             gameState.energy = Math.min(gameState.maxEnergy || 100, gameState.energy + 50);
         } else if (distance > 500) {
@@ -1886,8 +1895,17 @@ if (gameState.solarStormBoostActive || gameState.plasmaStormBoostActive) {
     
     // Check crystal formations
     cosmicFeatures.crystalFormations.forEach(formation => {
-        const distance = playerPos.distanceTo(formation.position);
-        
+        // Use world position for outer system crystals (nested in system groups)
+        let formationWorldPos;
+        if (formation.userData.isOuterSystem && formation.parent) {
+            formationWorldPos = new THREE.Vector3();
+            formation.getWorldPosition(formationWorldPos);
+        } else {
+            formationWorldPos = formation.position;
+        }
+
+        const distance = playerPos.distanceTo(formationWorldPos);
+
         if (distance < 400) {
             // Energy field effect
             if (typeof gameState.shieldBonus === 'undefined') {

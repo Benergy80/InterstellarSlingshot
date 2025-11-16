@@ -394,7 +394,7 @@ function populateTargets() {
     }
 
     const allTargetableObjects = [
-        ...(typeof planets !== 'undefined' ? planets.filter(p => p.userData && p.userData.name !== 'Earth' && p.userData.type !== 'asteroid') : []),
+        ...(typeof planets !== 'undefined' ? planets.filter(p => p.userData && p.userData.type !== 'asteroid') : []),
         ...detectedWormholes,
         ...(typeof comets !== 'undefined' ? comets.filter(c => camera.position.distanceTo(c.position) < 4000) : []), // Doubled range
         ...(typeof enemies !== 'undefined' ? enemies.filter(e => {
@@ -847,7 +847,7 @@ function getCurrentGalaxyId() {
     }
     
     // Fallback: Use 3D galaxy center positions
-    const universeRadius = 100000;  // Increased to accommodate exotic/borg systems (up to 85k units) with margins
+    const universeRadius = 150000;  // Increased for wider map coverage (accommodates exotic/borg systems with larger margins)
     
     if (typeof getGalaxy3DPosition === 'function' && typeof galaxyTypes !== 'undefined') {
         let closestGalaxy = -1;
@@ -966,11 +966,11 @@ function setupGalaxyMap() {
         galaxyEl.textContent = (index + 1).toString();
         galaxyEl.title = `${galaxy.name} Galaxy (${galaxy.faction})`;
         
-        // Mark cleared galaxies with green checkmark
+        // Mark cleared galaxies with green dot
 		if (bossDefeated || (typeof gameState !== 'undefined' && gameState.currentGalaxyEnemies && gameState.currentGalaxyEnemies[index] === 0)) {
 		galaxyEl.style.backgroundColor = '#22c55e'; // Green for cleared
     	galaxyEl.style.border = '2px solid #86efac';
-    	galaxyEl.textContent = '✓';
+    	galaxyEl.textContent = '';
     	galaxyEl.title = `${galaxy.name} Galaxy (${galaxy.faction}) - LIBERATED`;
 		}
 
@@ -984,7 +984,7 @@ function setupGalaxyMap() {
     sgrAEl.style.top = '50%';
     sgrAEl.style.transform = 'translate(-50%, -50%)';
     sgrAEl.style.boxShadow = '0 0 8px #ca8a04';
-    sgrAEl.textContent = '✦';
+    sgrAEl.textContent = '';
     sgrAEl.title = 'Sagittarius A* - Galactic Center';
     galaxyMap.appendChild(sgrAEl);
     const existingGalaxyIndicator = document.getElementById('currentGalaxyIndicator');
@@ -1099,7 +1099,7 @@ function updateGalaxyMap() {
     const playerMapPos = document.getElementById('playerMapPosition');
     const targetMapPos = document.getElementById('targetMapPosition');
     const mapDirectionArrow = document.getElementById('mapDirectionArrow');
-    const universeRadius = 100000;  // Increased to accommodate exotic/borg systems (up to 85k units) with margins
+    const universeRadius = 150000;  // Increased for wider map coverage (accommodates exotic/borg systems with larger margins)
     
     if (!playerMapPos) return;
     
@@ -1129,7 +1129,7 @@ function updateGalaxyMap() {
     
     // Show nearby objects as dots (enemies, planets, etc.)
     const galaxyMap = document.getElementById('galaxyMap');
-    const radarRange = 2000; // Detection range for galactic view
+    const radarRange = 1500; // Detection range for galactic view
     
     if (galaxyMap && typeof planets !== 'undefined' && typeof enemies !== 'undefined') {
         // Collect all nearby targetable objects
@@ -1179,17 +1179,21 @@ planets.forEach(planet => {
 if (typeof outerInterstellarSystems !== 'undefined') {
     outerInterstellarSystems.forEach(system => {
         if (!system.userData.orbiters) return;
-        
+
         // Check if system is in radar range
         const systemDistance = camera.position.distanceTo(system.position);
         if (systemDistance < radarRange + 2000) {
-            
+
             // Add all orbiters from this system
             system.userData.orbiters.forEach(orbiter => {
-                const distance = camera.position.distanceTo(orbiter.position);
+                // Get world position for nested objects
+                const orbiterWorldPos = new THREE.Vector3();
+                orbiter.getWorldPosition(orbiterWorldPos);
+
+                const distance = camera.position.distanceTo(orbiterWorldPos);
                 if (distance < radarRange) {
                     nearbyObjects.push({
-                        position: orbiter.position,
+                        position: orbiterWorldPos,
                         type: orbiter.userData.type,
                         name: orbiter.userData.name,
                         distance: distance,
@@ -1197,13 +1201,17 @@ if (typeof outerInterstellarSystems !== 'undefined') {
                     });
                 }
             });
-            
+
             // Add center object
             if (system.userData.centerObject) {
-                const centerDist = camera.position.distanceTo(system.userData.centerObject.position);
+                // Get world position for nested center object
+                const centerWorldPos = new THREE.Vector3();
+                system.userData.centerObject.getWorldPosition(centerWorldPos);
+
+                const centerDist = camera.position.distanceTo(centerWorldPos);
                 if (centerDist < radarRange) {
                     nearbyObjects.push({
-                        position: system.userData.centerObject.position,
+                        position: centerWorldPos,
                         type: system.userData.centerType,
                         name: system.userData.name + ' Core',
                         distance: centerDist,
@@ -1214,7 +1222,23 @@ if (typeof outerInterstellarSystems !== 'undefined') {
         }
     });
 }
-        
+
+        // Add nearby interstellar asteroids
+        if (typeof interstellarAsteroids !== 'undefined') {
+            interstellarAsteroids.forEach(asteroid => {
+                if (!asteroid || !asteroid.position) return;
+                const distance = camera.position.distanceTo(asteroid.position);
+                if (distance < radarRange) {
+                    nearbyObjects.push({
+                        position: asteroid.position,
+                        type: 'interstellar_asteroid',
+                        name: asteroid.userData.name,
+                        distance: distance
+                    });
+                }
+            });
+        }
+
         // Add nearby enemies
         enemies.forEach(enemy => {
             if (!enemy || !enemy.position || !enemy.userData || enemy.userData.health <= 0) return;
@@ -1350,6 +1374,21 @@ if (obj.type === 'enemy') {
 } else if (obj.type === 'ringworld') {
     dotColor = '#ffaa00';
     dotSize = '8px';
+} else if (obj.type === 'interstellar_asteroid') {
+    dotColor = '#998877';
+    dotSize = '5px';
+} else if (obj.type === 'asteroid') {
+    dotColor = '#887766';
+    dotSize = '3px';
+} else if (obj.type === 'outer_asteroid') {
+    dotColor = '#887766';
+    dotSize = '3px';
+} else if (obj.type === 'outer_planet') {
+    dotColor = '#6688ff';
+    dotSize = '5px';
+} else if (obj.type === 'borg_drone') {
+    dotColor = '#00ff00';
+    dotSize = '5px';
 }
 
                 dot.style.width = dotSize;
@@ -1392,158 +1431,207 @@ if (obj.type === 'enemy') {
     // Use pooling instead
 mapDotPool.releaseAll();
     
-    // **NEW: Display major cosmic features on map**
-    if (typeof cosmicFeatures !== 'undefined') {
-        // Function to add cosmic feature dot
-        const addCosmicFeatureDot = (feature, color, size, icon) => {
-            if (!feature || !feature.position) return;
-            
-            const featureMapX = (feature.position.x / universeRadius) + 0.5;
-            const featureMapZ = (feature.position.z / universeRadius) + 0.5;
-            
-            // Only show if within map bounds
-            if (featureMapX >= 0 && featureMapX <= 1 && featureMapZ >= 0 && featureMapZ <= 1) {
-                const dot = mapDotPool.get('cosmic-feature');
-                dot.className = 'cosmic-feature-dot absolute';
-                dot.style.width = size;
-                dot.style.height = size;
-                dot.style.backgroundColor = color;
-                dot.style.borderRadius = '50%';
-                dot.style.border = `1px solid ${color}`;
-                dot.style.left = `${featureMapX * 100}%`;
-                dot.style.top = `${featureMapZ * 100}%`;
-                dot.style.transform = 'translate(-50%, -50%)';
-                dot.style.boxShadow = `0 0 8px ${color}`;
-                dot.style.pointerEvents = 'none';
-                dot.style.zIndex = '5';
-                dot.innerHTML = `<span style="font-size: 10px;">${icon}</span>`;
-                dot.title = feature.userData.name || 'Cosmic Feature';
-                
-                galaxyMap.appendChild(dot);
+    // **DISABLED: Display major cosmic features on map**
+    // if (typeof cosmicFeatures !== 'undefined') {
+    //     // Function to add cosmic feature dot
+    //     const addCosmicFeatureDot = (feature, color, size) => {
+    //         if (!feature || !feature.position) return;
+
+    //         const featureMapX = (feature.position.x / universeRadius) + 0.5;
+    //         const featureMapZ = (feature.position.z / universeRadius) + 0.5;
+
+    //         // Only show if within map bounds
+    //         if (featureMapX >= 0 && featureMapX <= 1 && featureMapZ >= 0 && featureMapZ <= 1) {
+    //             const dot = mapDotPool.get('cosmic-feature');
+    //             dot.className = 'cosmic-feature-dot absolute';
+    //             dot.style.width = size;
+    //             dot.style.height = size;
+    //             dot.style.backgroundColor = color;
+    //             dot.style.borderRadius = '50%';
+    //             dot.style.border = `1px solid ${color}`;
+    //             dot.style.left = `${featureMapX * 100}%`;
+    //             dot.style.top = `${featureMapZ * 100}%`;
+    //             dot.style.transform = 'translate(-50%, -50%)';
+    //             dot.style.boxShadow = `0 0 8px ${color}`;
+    //             dot.style.pointerEvents = 'none';
+    //             dot.style.zIndex = '5';
+    //             dot.innerHTML = '';
+    //             dot.title = feature.userData.name || 'Cosmic Feature';
+
+    //             galaxyMap.appendChild(dot);
+    //         }
+    //     };
+
+    //     // Add Dyson Spheres (legendary - large purple)
+    //     if (cosmicFeatures.dysonSpheres) {
+    //         cosmicFeatures.dysonSpheres.forEach(dyson => {
+    //             addCosmicFeatureDot(dyson, '#aa44ff', '10px');
+    //         });
+    //     }
+
+    //     // Add Supernovas (rare - large orange)
+    //     if (cosmicFeatures.supernovas) {
+    //         cosmicFeatures.supernovas.forEach(supernova => {
+    //             addCosmicFeatureDot(supernova, '#ff6600', '9px');
+    //         });
+    //     }
+
+    //     // Add Pulsars (rare - medium cyan)
+    //     if (cosmicFeatures.pulsars) {
+    //         cosmicFeatures.pulsars.forEach(pulsar => {
+    //             addCosmicFeatureDot(pulsar, '#44eeff', '7px');
+    //         });
+    //     }
+
+    //     // Add Plasma Storms (rare - medium purple)
+    //     if (cosmicFeatures.plasmaStorms) {
+    //         cosmicFeatures.plasmaStorms.forEach(storm => {
+    //             addCosmicFeatureDot(storm, '#cc44ff', '7px');
+    //         });
+    //     }
+
+    //     // Add Crystal Formations (rare - medium emerald)
+    //     if (cosmicFeatures.crystalFormations) {
+    //         cosmicFeatures.crystalFormations.forEach(crystal => {
+    //             addCosmicFeatureDot(crystal, '#44ff88', '7px');
+    //         });
+    //     }
+    // }
+
+// DISABLED: Add Nebulas with region names (large, with text labels)
+        // if (typeof nebulaClouds !== 'undefined' && nebulaClouds.length > 0) {
+        //     nebulaClouds.forEach(nebula => {
+        //         if (!nebula || !nebula.position || !nebula.userData) return;
+        //
+        //         const nebulaMapX = (nebula.position.x / universeRadius) + 0.5;
+        //         const nebulaMapZ = (nebula.position.z / universeRadius) + 0.5;
+        //
+        //         // Only show if within map bounds
+        //         if (nebulaMapX >= 0 && nebulaMapX <= 1 && nebulaMapZ >= 0 && nebulaMapZ <= 1) {
+        //             const nebulaDot = mapDotPool.get('cosmic-feature');
+        //             nebulaDot.className = 'cosmic-feature-dot nebula-indicator absolute';
+        //
+        //             // Larger size for nebulas
+        //             nebulaDot.style.width = '14px';
+        //             nebulaDot.style.height = '14px';
+        //             nebulaDot.style.backgroundColor = '#' + (nebula.userData.color ? nebula.userData.color.getHexString() : 'ff88cc');
+        //             nebulaDot.style.borderRadius = '50%';
+        //             nebulaDot.style.border = '2px solid rgba(255, 136, 204, 0.8)';
+        //             nebulaDot.style.left = `${nebulaMapX * 100}%`;
+        //             nebulaDot.style.top = `${nebulaMapZ * 100}%`;
+        //             nebulaDot.style.transform = 'translate(-50%, -50%)';
+        //             nebulaDot.style.boxShadow = `0 0 12px ${nebulaDot.style.backgroundColor}`;
+        //             nebulaDot.style.pointerEvents = 'none';
+        //             nebulaDot.style.zIndex = '6';
+        //             nebulaDot.innerHTML = '';
+        //             nebulaDot.title = nebula.userData.mythicalName || nebula.userData.name || 'Nebula';
+        //
+        //             galaxyMap.appendChild(nebulaDot);
+        //         }
+        //     });
+        // }
+
+    // DISABLED: Add Outer Interstellar Systems (28 total: 16 exotic + 12 BORG)
+    // if (typeof outerInterstellarSystems !== 'undefined') {
+    //     outerInterstellarSystems.forEach(system => {
+    //         if (!system || !system.position || !system.userData) return;
+
+    //         const systemMapX = (system.position.x / universeRadius) + 0.5;
+    //         const systemMapZ = (system.position.z / universeRadius) + 0.5;
+
+    //         // Only show if within map bounds (outer systems should always be visible)
+    //         if (systemMapX >= 0 && systemMapX <= 1 && systemMapZ >= 0 && systemMapZ <= 1) {
+    //             const systemDot = mapDotPool.get('cosmic-feature');
+    //             systemDot.className = 'cosmic-feature-dot outer-system-indicator absolute';
+
+    //             // Determine color based on system type
+    //             let color = '#ffff88';  // Default: bright yellow for unknown systems
+    //             let size = '8px';
+
+    //             if (system.userData.centerType === 'supernova') {
+    //                 color = '#ff6600';
+    //                 size = '10px';
+    //             } else if (system.userData.centerType === 'plasma_storm') {
+    //                 color = '#aa44ff';
+    //                 size = '10px';
+    //             } else if (system.userData.centerType === 'solar_storm') {
+    //                 color = '#ffff00';
+    //                 size = '10px';
+    //             } else if (system.userData.hasBorg) {
+    //                 // BORG patrol systems
+    //                 color = '#00ff00';
+    //                 size = '9px';
+    //             }
+
+    //             systemDot.style.width = size;
+    //             systemDot.style.height = size;
+    //             systemDot.style.backgroundColor = color;
+    //             systemDot.style.borderRadius = '50%';
+    //             systemDot.style.border = `2px solid ${color}`;
+    //             systemDot.style.left = `${systemMapX * 100}%`;
+    //             systemDot.style.top = `${systemMapZ * 100}%`;
+    //             systemDot.style.transform = 'translate(-50%, -50%)';
+    //             systemDot.style.boxShadow = `0 0 10px ${color}`;
+    //             systemDot.style.pointerEvents = 'none';
+    //             systemDot.style.zIndex = '7';  // Above nebulas
+    //             systemDot.innerHTML = '';
+    //             systemDot.title = system.userData.name + ' - ' + system.userData.location;
+
+    //             galaxyMap.appendChild(systemDot);
+    //         }
+    //     });
+    // }
+
+    // Display interstellar asteroid fields on map
+    if (typeof interstellarAsteroids !== 'undefined' && interstellarAsteroids.length > 0) {
+        // Group asteroids by field and calculate field centers
+        const fields = {};
+        interstellarAsteroids.forEach(asteroid => {
+            const fieldIndex = asteroid.userData.fieldIndex;
+            if (!fields[fieldIndex]) {
+                fields[fieldIndex] = [];
             }
-        };
-        
-        // Add Dyson Spheres (legendary - large purple)
-        if (cosmicFeatures.dysonSpheres) {
-            cosmicFeatures.dysonSpheres.forEach(dyson => {
-                addCosmicFeatureDot(dyson, '#aa44ff', '10px', '⚙️');
+            fields[fieldIndex].push(asteroid);
+        });
+
+        // Display each field as a dot on the map
+        Object.keys(fields).forEach(fieldIndex => {
+            const asteroids = fields[fieldIndex];
+
+            // Calculate field center (average position)
+            let centerX = 0, centerY = 0, centerZ = 0;
+            asteroids.forEach(a => {
+                centerX += a.position.x;
+                centerY += a.position.y;
+                centerZ += a.position.z;
             });
-        }
-        
-        // Add Supernovas (rare - large orange)
-        if (cosmicFeatures.supernovas) {
-            cosmicFeatures.supernovas.forEach(supernova => {
-                addCosmicFeatureDot(supernova, '#ff6600', '9px', '💥');
-            });
-        }
-        
-        // Add Pulsars (rare - medium cyan)
-        if (cosmicFeatures.pulsars) {
-            cosmicFeatures.pulsars.forEach(pulsar => {
-                addCosmicFeatureDot(pulsar, '#44eeff', '7px', '✨');
-            });
-        }
-        
-        // Add Plasma Storms (rare - medium purple)
-        if (cosmicFeatures.plasmaStorms) {
-            cosmicFeatures.plasmaStorms.forEach(storm => {
-                addCosmicFeatureDot(storm, '#cc44ff', '7px', '⚡');
-            });
-        }
-        
-        // Add Crystal Formations (rare - medium emerald)
-        if (cosmicFeatures.crystalFormations) {
-            cosmicFeatures.crystalFormations.forEach(crystal => {
-                addCosmicFeatureDot(crystal, '#44ff88', '7px', '💎');
-            });
-        }
-    }
+            centerX /= asteroids.length;
+            centerY /= asteroids.length;
+            centerZ /= asteroids.length;
 
-// Add Nebulas with region names (large, with text labels)
-        if (typeof nebulaClouds !== 'undefined' && nebulaClouds.length > 0) {
-            nebulaClouds.forEach(nebula => {
-                if (!nebula || !nebula.position || !nebula.userData) return;
-                
-                const nebulaMapX = (nebula.position.x / universeRadius) + 0.5;
-                const nebulaMapZ = (nebula.position.z / universeRadius) + 0.5;
-                
-                // Only show if within map bounds
-                if (nebulaMapX >= 0 && nebulaMapX <= 1 && nebulaMapZ >= 0 && nebulaMapZ <= 1) {
-                    const nebulaDot = mapDotPool.get('cosmic-feature');
-                    nebulaDot.className = 'cosmic-feature-dot nebula-indicator absolute';
-                    
-                    // Larger size for nebulas
-                    nebulaDot.style.width = '14px';
-                    nebulaDot.style.height = '14px';
-                    nebulaDot.style.backgroundColor = '#' + (nebula.userData.color ? nebula.userData.color.getHexString() : 'ff88cc');
-                    nebulaDot.style.borderRadius = '50%';
-                    nebulaDot.style.border = '2px solid rgba(255, 136, 204, 0.8)';
-                    nebulaDot.style.left = `${nebulaMapX * 100}%`;
-                    nebulaDot.style.top = `${nebulaMapZ * 100}%`;
-                    nebulaDot.style.transform = 'translate(-50%, -50%)';
-                    nebulaDot.style.boxShadow = `0 0 12px ${nebulaDot.style.backgroundColor}`;
-                    nebulaDot.style.pointerEvents = 'none';
-                    nebulaDot.style.zIndex = '6';
-                    nebulaDot.innerHTML = `<span style="font-size: 12px;">💫</span>`;
-                    nebulaDot.title = nebula.userData.mythicalName || nebula.userData.name || 'Nebula';
-                    
-                    galaxyMap.appendChild(nebulaDot);
-                }
-            });
-        }
+            // Convert to map coordinates
+            const fieldMapX = (centerX / universeRadius) + 0.5;
+            const fieldMapZ = (centerZ / universeRadius) + 0.5;
 
-    // Add Outer Interstellar Systems (28 total: 16 exotic + 12 BORG)
-    if (typeof outerInterstellarSystems !== 'undefined') {
-        outerInterstellarSystems.forEach(system => {
-            if (!system || !system.position || !system.userData) return;
+            // Only show if within map bounds
+            if (fieldMapX >= 0 && fieldMapX <= 1 && fieldMapZ >= 0 && fieldMapZ <= 1) {
+                const dot = mapDotPool.get('asteroid-field');
+                dot.className = 'asteroid-field-dot absolute';
+                dot.style.width = '8px';
+                dot.style.height = '8px';
+                dot.style.backgroundColor = 'rgba(120, 100, 80, 0.8)';
+                dot.style.borderRadius = '50%';
+                dot.style.border = '1px solid rgba(150, 130, 110, 1)';
+                dot.style.left = `${fieldMapX * 100}%`;
+                dot.style.top = `${fieldMapZ * 100}%`;
+                dot.style.transform = 'translate(-50%, -50%)';
+                dot.style.boxShadow = '0 0 6px rgba(120, 100, 80, 0.6)';
+                dot.style.pointerEvents = 'none';
+                dot.style.zIndex = '6';
+                dot.innerHTML = '';
+                dot.title = `Asteroid Field ${fieldIndex} (${asteroids.length} asteroids)`;
 
-            const systemMapX = (system.position.x / universeRadius) + 0.5;
-            const systemMapZ = (system.position.z / universeRadius) + 0.5;
-
-            // Only show if within map bounds (outer systems should always be visible)
-            if (systemMapX >= 0 && systemMapX <= 1 && systemMapZ >= 0 && systemMapZ <= 1) {
-                const systemDot = mapDotPool.get('cosmic-feature');
-                systemDot.className = 'cosmic-feature-dot outer-system-indicator absolute';
-
-                // Determine color and icon based on system type
-                let color = '#ffff88';  // Default: bright yellow for unknown systems
-                let icon = '⭐';
-                let size = '8px';
-
-                if (system.userData.centerType === 'supernova') {
-                    color = '#ff6600';
-                    icon = '💥';
-                    size = '10px';
-                } else if (system.userData.centerType === 'plasma_storm') {
-                    color = '#aa44ff';
-                    icon = '⚡';
-                    size = '10px';
-                } else if (system.userData.centerType === 'solar_storm') {
-                    color = '#ffff00';
-                    icon = '☀️';
-                    size = '10px';
-                } else if (system.userData.hasBorg) {
-                    // BORG patrol systems
-                    color = '#00ff00';
-                    icon = '🛸';
-                    size = '9px';
-                }
-
-                systemDot.style.width = size;
-                systemDot.style.height = size;
-                systemDot.style.backgroundColor = color;
-                systemDot.style.borderRadius = '50%';
-                systemDot.style.border = `2px solid ${color}`;
-                systemDot.style.left = `${systemMapX * 100}%`;
-                systemDot.style.top = `${systemMapZ * 100}%`;
-                systemDot.style.transform = 'translate(-50%, -50%)';
-                systemDot.style.boxShadow = `0 0 10px ${color}`;
-                systemDot.style.pointerEvents = 'none';
-                systemDot.style.zIndex = '7';  // Above nebulas
-                systemDot.innerHTML = `<span style="font-size: 10px;">${icon}</span>`;
-                systemDot.title = system.userData.name + ' - ' + system.userData.location;
-
-                galaxyMap.appendChild(systemDot);
+                galaxyMap.appendChild(dot);
             }
         });
     }
@@ -1903,7 +1991,7 @@ function showVictoryScreen() {
                     <div>Energy Remaining: ${gameState ? gameState.energy.toFixed(0) : '100'}%</div>
                     <div>Hull Integrity: ${gameState ? gameState.hull.toFixed(0) : '100'}%</div>
                     <div>All Galaxies Liberated: 8/8</div>
-                    <div>Emergency Warps Remaining: ${gameState ? gameState.emergencyWarp.available : '5'}</div>
+                    <div>Emergency Warps: ${gameState ? `${gameState.emergencyWarp.available}/${gameState.emergencyWarp.maxWarps}` : '1/10'}</div>
                 </div>
                 <button onclick="location.reload()" class="mt-6 space-btn rounded px-6 py-3" style="cursor: pointer;">
                     <i class="fas fa-redo mr-2"></i>New Mission
@@ -1971,7 +2059,6 @@ function gameOver(reason) {
     gameOverOverlay.style.cursor = 'auto'; // Make mouse visible
     gameOverOverlay.innerHTML = `
         <div class="text-center ui-panel rounded-lg p-8" style="cursor: auto;">
-            <div class="text-6xl mb-4">◇</div>
             <h1 class="text-4xl font-bold text-red-400 mb-4 glow-text cyber-title">MISSION FAILED</h1>
             <p class="text-gray-300 mb-6">${reason}</p>
             <div class="space-y-4">
@@ -1982,7 +2069,7 @@ function gameOver(reason) {
                     <div>Energy Remaining: ${gameState ? gameState.energy.toFixed(0) : '0'}%</div>
                     <div>Hull Integrity: ${gameState ? gameState.hull.toFixed(0) : '0'}%</div>
                     <div>Galaxies Cleared: ${gameState ? gameState.galaxiesCleared : 0}/8</div>
-                    <div>Emergency Warps Remaining: ${gameState ? gameState.emergencyWarp.available : '0'}</div>
+                    <div>Emergency Warps: ${gameState ? `${gameState.emergencyWarp.available}/${gameState.emergencyWarp.maxWarps}` : '0/10'}</div>
                 </div>
                 <button onclick="location.reload()" class="mt-6 space-btn rounded px-6 py-3" style="cursor: pointer;">
                     <i class="fas fa-redo mr-2"></i>Restart Mission
@@ -2001,7 +2088,7 @@ function gameOver(reason) {
 
 // HULL ZERO GAME OVER - Dramatic full screen explosion effect
 function showGameOverScreen(title, message) {
-    // Prevent duplicate screens
+    // Prevent duplicate game over screens
     if (typeof gameState !== 'undefined') {
         if (gameState.gameOverScreenShown) {
             console.log('⚠️ Game over screen already shown, ignoring duplicate call');
@@ -2012,90 +2099,67 @@ function showGameOverScreen(title, message) {
         gameState.gameOverScreenShown = true;
     }
 
-    console.log('💀 HULL BREACH - Ship destroyed');
+    console.log('💀 GAME OVER - Stopping all systems');
 
-    // Full screen red flash effect
-    const flashOverlay = document.createElement('div');
-    flashOverlay.style.cssText = `
-        position: fixed;
-        top: 0;
-        left: 0;
-        width: 100%;
-        height: 100%;
-        background: radial-gradient(circle, rgba(255,0,0,0.9) 0%, rgba(200,0,0,0.7) 50%, rgba(100,0,0,0.5) 100%);
-        z-index: 9998;
-        opacity: 1;
-        pointer-events: none;
-        animation: explosionFlash 2s ease-out forwards;
-    `;
-
-    // Add CSS animation for flash
-    const style = document.createElement('style');
-    style.textContent = `
-        @keyframes explosionFlash {
-            0% { opacity: 1; }
-            50% { opacity: 0.7; }
-            100% { opacity: 0; }
-        }
-    `;
-    document.head.appendChild(style);
-    document.body.appendChild(flashOverlay);
-
-    // Remove flash after animation
-    setTimeout(() => {
-        flashOverlay.remove();
-    }, 2000);
-
-    // Stop all systems
+    // Stop all music
     if (typeof musicSystem !== 'undefined') {
         if (musicSystem.backgroundMusic) {
-            try {musicSystem.backgroundMusic.stop();} catch(e) {}
+            musicSystem.backgroundMusic.stop();
             musicSystem.backgroundMusic = null;
         }
         if (musicSystem.battleMusic) {
-            try {musicSystem.battleMusic.stop();} catch(e) {}
+            musicSystem.battleMusic.stop();
             musicSystem.battleMusic = null;
         }
     }
 
+    // Stop audio context
     if (typeof audioContext !== 'undefined' && audioContext) {
         audioContext.suspend();
     }
 
-    // Show game over screen after flash
-    setTimeout(() => {
-        const gameOverOverlay = document.createElement('div');
-        gameOverOverlay.id = 'gameOverScreen';
-        gameOverOverlay.className = 'absolute inset-0 bg-black bg-opacity-95 flex items-center justify-center z-9999 cyberpunk-bg';
-        gameOverOverlay.style.cursor = 'auto';
-        gameOverOverlay.innerHTML = `
-            <div class="text-center ui-panel rounded-lg p-8" style="cursor: auto;">
-                <div class="text-8xl mb-6 text-red-500" style="text-shadow: 0 0 20px rgba(255,0,0,0.8);">💥</div>
-                <h1 class="text-5xl font-bold text-red-400 mb-4 glow-text cyber-title" style="text-shadow: 0 0 30px rgba(255,0,0,0.9);">${title || 'HULL BREACH'}</h1>
-                <p class="text-gray-300 mb-6 text-xl">${message || 'Ship destroyed'}</p>
-                <div class="space-y-4">
-                    <div class="text-lg text-red-400 glow-text">Final Stats:</div>
-                    <div class="text-sm text-gray-300 space-y-1">
-                        <div>Distance Traveled: ${gameState ? gameState.distance.toFixed(1) : '0'} light years</div>
-                        <div>Final Velocity: ${gameState ? (gameState.velocity * 1000).toFixed(0) : '0'} km/s</div>
-                        <div>Energy Remaining: ${gameState ? gameState.energy.toFixed(0) : '0'}%</div>
-                        <div>Hull Integrity: ${gameState ? gameState.hull.toFixed(0) : '0'}%</div>
-                        <div>Galaxies Cleared: ${gameState ? (gameState.galaxiesCleared || 0) : 0}/8</div>
-                        <div>Emergency Warps Remaining: ${gameState ? gameState.emergencyWarp.available : '0'}</div>
-                    </div>
-                    <button onclick="location.reload()" class="mt-6 space-btn rounded px-6 py-3" style="cursor: pointer; background: linear-gradient(135deg, #ff0066 0%, #ff6600 100%); border: 2px solid #ff3300;">
-                        <i class="fas fa-redo mr-2"></i>Restart Mission
-                    </button>
+    // Clean up any active effects
+    if (typeof cleanupEventHorizonEffects === 'function') {
+        cleanupEventHorizonEffects();
+    }
+
+    // Clear any remaining timeouts/intervals
+    if (typeof window.mobileUpdateInterval !== 'undefined') {
+        clearInterval(window.mobileUpdateInterval);
+    }
+
+    // Enhanced game over screen with visible mouse cursor
+    const gameOverOverlay = document.createElement('div');
+    gameOverOverlay.id = 'gameOverScreen';
+    gameOverOverlay.className = 'absolute inset-0 bg-black bg-opacity-95 flex items-center justify-center z-50 cyberpunk-bg';
+    gameOverOverlay.style.cursor = 'auto'; // Make mouse visible
+    gameOverOverlay.innerHTML = `
+        <div class="text-center ui-panel rounded-lg p-8" style="cursor: auto;">
+            <h1 class="text-4xl font-bold text-red-400 mb-4 glow-text cyber-title">MISSION FAILED</h1>
+            <p class="text-gray-300 mb-6">${message || 'Ship destroyed'}</p>
+            <div class="space-y-4">
+                <div class="text-lg text-cyan-400 glow-text">Final Stats:</div>
+                <div class="text-sm text-gray-300 space-y-1">
+                    <div>Distance Traveled: ${gameState ? gameState.distance.toFixed(1) : '0'} light years</div>
+                    <div>Final Velocity: ${gameState ? (gameState.velocity * 1000).toFixed(0) : '0'} km/s</div>
+                    <div>Energy Remaining: ${gameState ? gameState.energy.toFixed(0) : '0'}%</div>
+                    <div>Hull Integrity: ${gameState ? gameState.hull.toFixed(0) : '0'}%</div>
+                    <div>Galaxies Cleared: ${gameState ? gameState.galaxiesCleared : 0}/8</div>
+                    <div>Emergency Warps Remaining: ${gameState ? gameState.emergencyWarp.available : '0'}</div>
                 </div>
+                <button onclick="location.reload()" class="mt-6 space-btn rounded px-6 py-3" style="cursor: pointer;">
+                    <i class="fas fa-redo mr-2"></i>Restart Mission
+                </button>
             </div>
-        `;
-        document.body.appendChild(gameOverOverlay);
+        </div>
+    `;
+    document.body.appendChild(gameOverOverlay);
 
-        document.body.style.cursor = 'auto';
-        gameOverOverlay.style.pointerEvents = 'all';
+    // Ensure mouse is visible and working
+    document.body.style.cursor = 'auto';
+    gameOverOverlay.style.pointerEvents = 'all';
 
-        console.log('✅ Hull breach game over screen displayed');
-    }, 1500);
+    console.log('✅ Game over screen displayed - all systems stopped');
 }
 
 // =============================================================================
@@ -2355,13 +2419,13 @@ function createMobileTopBar() {
     `;
     
     topBar.innerHTML = `
-        <div class="mobile-info" style="background: linear-gradient(135deg, rgba(15, 23, 42, 0.9), rgba(30, 41, 59, 0.9)); backdrop-filter: blur(10px); border: 1px solid rgba(0,150,255,0.5); border-radius: 20px; padding: 8px 16px; color: white; font-size: 14px; font-weight: 600;">
+        <div class="mobile-info" style="background: linear-gradient(135deg, rgba(15, 23, 42, 0.3), rgba(30, 41, 59, 0.3)); backdrop-filter: blur(10px); border: 1px solid rgba(0,150,255,0.4); border-radius: 20px; padding: 8px 16px; color: white; font-size: 14px; font-weight: 600;">
             <div id="mobileVelocity">0.0 km/s</div>
         </div>
-        <div class="mobile-info" style="background: linear-gradient(135deg, rgba(15, 23, 42, 0.9), rgba(30, 41, 59, 0.9)); backdrop-filter: blur(10px); border: 1px solid rgba(0,150,255,0.5); border-radius: 20px; padding: 8px 16px; color: white; font-size: 14px; font-weight: 600;">
+        <div class="mobile-info" style="background: linear-gradient(135deg, rgba(15, 23, 42, 0.3), rgba(30, 41, 59, 0.3)); backdrop-filter: blur(10px); border: 1px solid rgba(0,150,255,0.4); border-radius: 20px; padding: 8px 16px; color: white; font-size: 14px; font-weight: 600;">
             <div id="mobileEnergy">100%</div>
         </div>
-        <button class="mobile-menu-btn" onclick="openMobilePopup('navigation')" style="width: 48px; height: 48px; border-radius: 12px; background: linear-gradient(135deg, rgba(0, 150, 255, 0.8), rgba(0, 100, 200, 0.8)); border: 2px solid rgba(0, 200, 255, 0.6); color: white; display: flex; align-items: center; justify-content: center; font-size: 20px; cursor: pointer;">
+        <button class="mobile-menu-btn" onclick="openMobilePopup('navigation')" style="width: 48px; height: 48px; border-radius: 12px; background: linear-gradient(135deg, rgba(0, 150, 255, 0.3), rgba(0, 100, 200, 0.3)); border: 2px solid rgba(0, 200, 255, 0.4); color: white; display: flex; align-items: center; justify-content: center; font-size: 20px; cursor: pointer; box-shadow: 0 4px 15px rgba(0, 150, 255, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.1);">
             <i class="fas fa-map"></i>
         </button>
     `;
@@ -2383,19 +2447,19 @@ function createMobileControls() {
         pointer-events: auto;
     `;
     
-    const buttonStyle = `width: 64px; height: 64px; border-radius: 50%; background: linear-gradient(135deg, rgba(0, 150, 255, 0.8), rgba(0, 100, 200, 0.8)); border: 2px solid rgba(0, 200, 255, 0.6); color: white; display: flex; align-items: center; justify-content: center; font-size: 24px; cursor: pointer; transition: all 0.2s ease; box-shadow: 0 4px 15px rgba(0, 150, 255, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.2);`;
+    const buttonStyle = `width: 64px; height: 64px; border-radius: 50%; background: linear-gradient(135deg, rgba(0, 150, 255, 0.3), rgba(0, 100, 200, 0.3)); border: 2px solid rgba(0, 200, 255, 0.4); color: white; display: flex; align-items: center; justify-content: center; font-size: 24px; cursor: pointer; transition: all 0.2s ease; box-shadow: 0 4px 15px rgba(0, 150, 255, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.1);`;
     
     controls.innerHTML = `
     <button class="mobile-btn" onclick="mobileCycleTarget()" style="${buttonStyle}" title="Cycle Targets">
         <i class="fas fa-bullseye"></i>
     </button>
-    <button class="mobile-btn primary" 
+    <button class="mobile-btn primary"
     ontouchstart="handleMobileFire(event); return false;"
-    style="${buttonStyle} width: 80px; height: 80px; border-radius: 50%; background: linear-gradient(135deg, rgba(255, 50, 50, 0.8), rgba(200, 0, 0, 0.8)); border-color: rgba(255, 100, 100, 0.6); box-shadow: 0 4px 15px rgba(255, 50, 50, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.2);" 
+    style="${buttonStyle} width: 80px; height: 80px; border-radius: 50%; background: linear-gradient(135deg, rgba(255, 50, 50, 0.3), rgba(200, 0, 0, 0.3)); border-color: rgba(255, 100, 100, 0.4); box-shadow: 0 4px 15px rgba(255, 50, 50, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.1); opacity: 1;"
     title="Fire Weapons">
     <i class="fas fa-crosshairs"></i>
 </button>
-    <button class="mobile-btn emergency" onclick="mobileEmergencyWarp()" style="${buttonStyle} background: linear-gradient(135deg, rgba(255, 150, 0, 0.8), rgba(200, 100, 0, 0.8)); border-color: rgba(255, 200, 0, 0.6);" title="Emergency Warp">
+    <button class="mobile-btn emergency" onclick="mobileEmergencyWarp()" style="${buttonStyle} background: linear-gradient(135deg, rgba(255, 150, 0, 0.3), rgba(200, 100, 0, 0.3)); border-color: rgba(255, 200, 0, 0.4); box-shadow: 0 4px 15px rgba(255, 150, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.1);" title="Emergency Warp">
         <i class="fas fa-rocket"></i>
     </button>
     <button class="mobile-btn" onclick="openMobilePopup('controls')" style="${buttonStyle}" title="Controls">
@@ -2611,14 +2675,12 @@ function handleMobileFire(event) {
         console.log('✅ Fire weapon via keys.space');
     }
     
-    // Visual feedback
+    // Visual feedback - transform only, no opacity change
     const fireBtn = document.querySelector('.mobile-btn.primary, .mobile-btn.fire');
     if (fireBtn) {
         fireBtn.style.transform = 'scale(0.85)';
-        fireBtn.style.opacity = '0.8';
         setTimeout(() => {
             fireBtn.style.transform = 'scale(1)';
-            fireBtn.style.opacity = '1';
         }, 150);
     }
 }

@@ -1871,7 +1871,12 @@ function setupNormalGameContent() {
         createAsteroidBelts();
         console.log('☄️ Asteroid belts created');
     }
-    
+
+    if (typeof createInterstellarAsteroidFields === 'function') {
+        createInterstellarAsteroidFields();
+        console.log('🌌 Interstellar asteroid fields created');
+    }
+
     if (typeof createEnhancedComets === 'function') {
         createEnhancedComets();
         console.log('☄️ Comets created');
@@ -1905,7 +1910,7 @@ function setupNormalGameContent() {
         }
     }
 
-    
+
     // START THE GAME ANIMATION LOOP during black screen for seamless transition
     if (typeof animate === 'function') {
         console.log('🎬 Starting game animation during black screen for seamless transition');
@@ -1950,16 +1955,16 @@ function resetCameraToGamePosition() {
     const localSystemOffset = { x: 2000, y: 0, z: 1200 }; // From createOptimizedPlanets
     camera.position.set(localSystemOffset.x + 160, localSystemOffset.y + 40, localSystemOffset.z);
     camera.lookAt(new THREE.Vector3(0, 0, 0)); // Face towards Sagittarius A*
-    
+
     // Reset camera rotation
     if (typeof cameraRotation !== 'undefined') {
-        cameraRotation = { 
+        cameraRotation = {
             x: camera.rotation.x,
             y: camera.rotation.y,
-            z: camera.rotation.z 
+            z: camera.rotation.z
         };
     }
-    
+
     // Set initial orbital velocity
     if (typeof gameState !== 'undefined' && gameState.velocityVector) {
         const sunPosition = new THREE.Vector3(localSystemOffset.x, localSystemOffset.y, localSystemOffset.z);
@@ -1968,7 +1973,7 @@ function resetCameraToGamePosition() {
         const orbitalDirection = new THREE.Vector3(-earthToSun.z, 0, earthToSun.x).normalize();
         gameState.velocityVector = orbitalDirection.multiplyScalar(gameState.minVelocity || 0.2);
     }
-    
+
     console.log('📍 Camera reset to normal game position in spherical universe');
 }
 

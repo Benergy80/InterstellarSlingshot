@@ -411,11 +411,11 @@
         .mobile-btn {
             width: 50px;
             height: 50px;
-            border-radius: 8px;
-            background: linear-gradient(135deg, rgba(15, 23, 42, 0.4), rgba(30, 41, 59, 0.4));
+            border-radius: 4px;
+            background: rgba(0, 0, 0, 0.7);
             backdrop-filter: blur(8px);
-            border: 1px solid rgba(0, 150, 255, 0.5);
-            color: rgba(0, 255, 200, 0.9);
+            border: 1px solid rgba(0, 255, 255, 0.4);
+            color: #00ffff;
             display: flex;
             align-items: center;
             justify-content: center;
@@ -424,36 +424,33 @@
             transition: all 0.2s ease;
             font-family: 'Orbitron', monospace;
             font-weight: 600;
-            box-shadow: 
-                0 4px 15px rgba(0, 150, 255, 0.3),
-                inset 0 1px 0 rgba(0, 150, 255, 0.4);
-            transform-style: preserve-3d;
-            perspective: 600px;
-            transform: perspective(600px) rotateX(-2deg) translateZ(3px);
-            filter: drop-shadow(0 0 8px rgba(0,150,255,0.6));
+            box-shadow: 0 0 10px rgba(0, 255, 255, 0.3), inset 0 0 10px rgba(0, 255, 255, 0.1);
+            opacity: 0.7;
         }
 
         .mobile-btn:active {
-            transform: perspective(600px) rotateX(-2deg) translateZ(1px) scale(0.95);
-            background: linear-gradient(135deg, rgba(0, 200, 255, 0.3), rgba(0, 150, 255, 0.4));
-            box-shadow: 
-                0 0 20px rgba(0, 255, 200, 0.4),
-                0 6px 20px rgba(0, 150, 255, 0.3),
-                inset 0 1px 0 rgba(0, 255, 200, 0.4);
+            background: rgba(0, 255, 255, 0.2);
+            box-shadow: 0 0 15px rgba(0, 255, 255, 0.5), inset 0 0 15px rgba(0, 255, 255, 0.2);
+            transform: scale(0.95);
+            opacity: 1;
         }
 
         .mobile-btn.fire {
             width: 64px;
             height: 64px;
-            background: linear-gradient(135deg, rgba(255, 50, 50, 0.4), rgba(200, 0, 0, 0.4));
-            border-color: rgba(255, 100, 100, 0.6);
+            background: rgba(0, 0, 0, 0.7) !important;
+            border: 1px solid rgba(255, 50, 50, 0.6) !important;
+            color: #ff5555 !important;
             font-size: 20px;
-            transform: perspective(600px) rotateX(-3deg) translateZ(5px);
+            box-shadow: 0 0 10px rgba(255, 50, 50, 0.4), inset 0 0 10px rgba(255, 50, 50, 0.1) !important;
+            opacity: 0.7 !important;
         }
 
         .mobile-btn.fire:active {
-            background: linear-gradient(135deg, rgba(255, 100, 100, 0.6), rgba(255, 50, 50, 0.6));
-            transform: perspective(600px) rotateX(-3deg) translateZ(2px) scale(0.92);
+            background: rgba(255, 50, 50, 0.2) !important;
+            box-shadow: 0 0 15px rgba(255, 50, 50, 0.6), inset 0 0 15px rgba(255, 50, 50, 0.2) !important;
+            transform: scale(0.92);
+            opacity: 1 !important;
         }
 
         /* Mobile navigation panel */
@@ -846,6 +843,12 @@
         </button>
     </div>
 
+    <!-- Swipe Indicator for Navigation -->
+    <div id="swipeIndicator" class="swipe-indicator">
+        <span class="swipe-arrow">&lt;</span>
+        <span class="swipe-text">NAV</span>
+    </div>
+
     <!-- MOBILE POPUPS -->
     <div class="mobile-popup" id="controlsPopup">
         <div class="mobile-popup-content">
@@ -970,6 +973,7 @@
     <script src="js/cosmic-features.js"></script>
     <script src="js/game-objects.js"></script>
     <script src="js/outer-systems.js"></script>
+    <script src="js/interstellar-asteroids.js"></script>
     <script src="js/game-physics.js"></script>
     <script src="js/game-ui.js"></script>
     <script src="js/game-controls.js"></script>
