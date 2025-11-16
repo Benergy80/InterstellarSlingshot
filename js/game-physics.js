@@ -1936,6 +1936,80 @@ if ((planet.userData.type === 'planet' || planet.userData.type === 'star' || pla
         });
     }
 
+    // INTERSTELLAR ASTEROID COLLISION DETECTION - Large roaming asteroids between galaxies
+    if (typeof interstellarAsteroids !== 'undefined' && interstellarAsteroids.length > 0) {
+        interstellarAsteroids.forEach(asteroid => {
+            if (!asteroid || !asteroid.userData) return;
+
+            const asteroidDistance = camera.position.distanceTo(asteroid.position);
+            const collisionDistance = asteroid.userData.size + 10; // Size + safety margin
+
+            if (asteroidDistance < collisionDistance) {
+                // Push player away from asteroid
+                const pushDirection = new THREE.Vector3().subVectors(camera.position, asteroid.position).normalize();
+                const pushDistance = collisionDistance - asteroidDistance + 5;
+
+                camera.position.add(pushDirection.multiplyScalar(pushDistance));
+
+                // Reduce velocity on collision
+                gameState.velocityVector.multiplyScalar(0.3); // Lose 70% of speed
+
+                // Hull damage based on asteroid size
+                const damage = Math.ceil(asteroid.userData.size / 5); // Larger = more damage
+                const shieldReduction = typeof getShieldDamageReduction === 'function' ?
+                                        getShieldDamageReduction() : 0;
+                const actualDamage = damage * (1 - shieldReduction);
+
+                gameState.hull = Math.max(0, gameState.hull - actualDamage);
+
+                // Create shield hit effect if shields are active
+                if (typeof isShieldActive === 'function' && isShieldActive() &&
+                    typeof createShieldHitEffect === 'function') {
+                    createShieldHitEffect(asteroid.position);
+                }
+
+                // Show collision warning
+                if (typeof showAchievement === 'function') {
+                    showAchievement('ASTEROID IMPACT!', `Collided with large asteroid - ${damage} hull damage!`);
+                }
+
+                // Sound effect
+                if (typeof playSound === 'function') {
+                    playSound('hit');
+                }
+
+                // Create screen damage effect
+                if (typeof createEnhancedScreenDamageEffect === 'function') {
+                    createEnhancedScreenDamageEffect();
+                }
+
+                // Check for game over
+                if (gameState.hull <= 0) {
+                    // Stop all player motion
+                    gameState.velocityVector.set(0, 0, 0);
+
+                    // Create massive player explosion
+                    if (typeof createPlayerExplosion === 'function') {
+                        createPlayerExplosion();
+                    }
+
+                    // Play explosion sound
+                    if (typeof playSound === 'function') {
+                        playSound('explosion');
+                    }
+
+                    // Show game over screen
+                    if (typeof showGameOverScreen === 'function') {
+                        showGameOverScreen('HULL BREACH', `Ship destroyed by collision with ${asteroid.userData.name}`);
+                    }
+
+                    console.log(`💀 PLAYER DESTROYED: Killed by interstellar asteroid collision`);
+                    return;
+                }
+            }
+        });
+    }
+
     // Enhanced velocity limits
     const currentMaxVelocity = gameState.emergencyWarp.active ? gameState.emergencyWarp.boostSpeed :
                          gameState.emergencyWarp.postWarp ? gameState.emergencyWarp.boostSpeed :  // NEW LINE

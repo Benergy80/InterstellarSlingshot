@@ -1871,7 +1871,12 @@ function setupNormalGameContent() {
         createAsteroidBelts();
         console.log('☄️ Asteroid belts created');
     }
-    
+
+    if (typeof createInterstellarAsteroidFields === 'function') {
+        createInterstellarAsteroidFields();
+        console.log('🌌 Interstellar asteroid fields created');
+    }
+
     if (typeof createEnhancedComets === 'function') {
         createEnhancedComets();
         console.log('☄️ Comets created');

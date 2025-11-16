@@ -971,8 +971,18 @@ if (typeof asteroidBelts !== 'undefined' && asteroidBelts.length > 0) {
             belt.rotation.y += belt.userData.rotationSpeed;
         }
     });
-} 
-    
+}
+
+    // Update interstellar asteroid fields
+    if (typeof updateInterstellarAsteroids === 'function') {
+        updateInterstellarAsteroids();
+    }
+
+    // Check interstellar asteroid collisions
+    if (typeof checkInterstellarAsteroidCollisions === 'function') {
+        checkInterstellarAsteroidCollisions();
+    }
+
     // Update outer systems
 if (typeof updateOuterSystems === 'function') {
     updateOuterSystems();

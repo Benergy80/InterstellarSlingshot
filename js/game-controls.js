@@ -3791,9 +3791,45 @@ function fireWeapon() {
                     console.log('Hit detected: asteroid', targetObject.userData.name);
                     console.log('Asteroid hit confirmed, calling destroyAsteroidByWeapon');
                 } else {
-                    // Fire in the direction of the crosshair
-                    const direction = raycaster.ray.direction.clone();
-                    targetPosition = camera.position.clone().add(direction.multiplyScalar(1000));
+                    // Check for interstellar asteroid hits
+                    if (typeof interstellarAsteroids !== 'undefined' && interstellarAsteroids.length > 0) {
+                        const interstellarIntersects = raycaster.intersectObjects(interstellarAsteroids);
+                        if (interstellarIntersects.length > 0) {
+                            targetPosition = interstellarIntersects[0].point;
+                            targetObject = interstellarIntersects[0].object;
+                            targetObject.userData.isInterstellarAsteroid = true;  // Flag for special handling
+                            console.log('Hit detected: interstellar asteroid', targetObject.userData.name);
+                        }
+                    }
+
+                    // Check for outer system asteroids (exotic core + BORG systems)
+                    if (!targetObject && typeof outerInterstellarSystems !== 'undefined') {
+                        let outerAsteroids = [];
+                        outerInterstellarSystems.forEach(system => {
+                            if (system.userData && system.userData.orbiters) {
+                                system.userData.orbiters.forEach(orbiter => {
+                                    if (orbiter.userData && orbiter.userData.type === 'asteroid') {
+                                        outerAsteroids.push(orbiter);
+                                    }
+                                });
+                            }
+                        });
+
+                        if (outerAsteroids.length > 0) {
+                            const outerAsteroidIntersects = raycaster.intersectObjects(outerAsteroids);
+                            if (outerAsteroidIntersects.length > 0) {
+                                targetPosition = outerAsteroidIntersects[0].point;
+                                targetObject = outerAsteroidIntersects[0].object;
+                                console.log('Hit detected: outer system asteroid', targetObject.userData.name);
+                            }
+                        }
+                    }
+
+                    if (!targetObject) {
+                        // Fire in the direction of the crosshair
+                        const direction = raycaster.ray.direction.clone();
+                        targetPosition = camera.position.clone().add(direction.multiplyScalar(1000));
+                    }
                 }
             }
         }
@@ -3807,6 +3843,17 @@ function fireWeapon() {
         if (targetObject.userData.type === 'asteroid') {
             // Asteroid hit - restore hull, pass actual hit position
             destroyAsteroidByWeapon(targetObject, targetPosition);
+        } else if (targetObject.userData.type === 'interstellar_asteroid') {
+            // Interstellar asteroid hit - break into pieces
+            if (typeof breakInterstellarAsteroid === 'function') {
+                const hitNormal = new THREE.Vector3().subVectors(targetPosition, targetObject.position).normalize();
+                breakInterstellarAsteroid(targetObject, targetPosition, hitNormal);
+                // Small hull restoration for shooting large asteroids
+                if (typeof gameState !== 'undefined') {
+                    gameState.hull = Math.min(gameState.maxHull, gameState.hull + 5);
+                }
+                console.log('Interstellar asteroid broken into fragments (+5 hull)');
+            }
         } else {
             // Check for normal enemy/object hits
             checkWeaponHits(targetPosition);
