@@ -783,7 +783,7 @@ const mobileUpdateInterval = setInterval(() => {
         window.updateMobileNavigation();
     }
     
-    // Update floating status indicators (hull, energy, warps)
+    // Update floating status indicators (hull, energy) and warp badge
     if (typeof updateMobileFloatingStatus === 'function') {
         updateMobileFloatingStatus();
     } else {
@@ -791,11 +791,11 @@ const mobileUpdateInterval = setInterval(() => {
         if (typeof gameState !== 'undefined') {
             const hullEl = document.getElementById('mobileFloatingHull');
             const energyEl = document.getElementById('mobileFloatingEnergy');
-            const warpsEl = document.getElementById('mobileFloatingWarps');
+            const warpBadge = document.getElementById('mobileWarpCountBadge');
 
             if (hullEl) hullEl.textContent = Math.round(gameState.hull) + '%';
             if (energyEl) energyEl.textContent = Math.round(gameState.energy) + '%';
-            if (warpsEl) warpsEl.textContent = gameState.emergencyWarp?.available ?? 5;
+            if (warpBadge) warpBadge.textContent = gameState.emergencyWarp?.available ?? 5;
         }
     }
 }, 1000);

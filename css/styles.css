@@ -1107,6 +1107,33 @@ body.mobile-mode .mobile-ui {
     opacity: 1 !important;
 }
 
+/* Count badges for missile and emergency warp buttons */
+.missile-count-badge,
+.warp-count-badge {
+    position: absolute;
+    top: -6px;
+    right: -6px;
+    background: rgba(0, 0, 0, 0.9);
+    border: 1px solid rgba(0, 255, 255, 0.6);
+    border-radius: 10px;
+    padding: 2px 6px;
+    font-size: 11px;
+    font-weight: 700;
+    color: #00ffff;
+    font-family: 'Orbitron', monospace;
+    text-shadow: 0 0 6px rgba(0, 255, 255, 0.8);
+    box-shadow: 0 0 8px rgba(0, 255, 255, 0.4);
+    min-width: 18px;
+    text-align: center;
+    pointer-events: none;
+}
+
+/* Make buttons with badges positioned relative */
+.mobile-btn.missile,
+.mobile-btn.warp {
+    position: relative;
+}
+
 /* Ensure mobile controls are always above touch overlay */
 .mobile-controls {
     z-index: 30 !important;
