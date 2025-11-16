@@ -99,9 +99,11 @@ function createAsteroidField(centerPosition, fieldIndex) {
 }
 
 // Create a single interstellar asteroid
-function createInterstellarAsteroid(position, size, velocity, fieldIndex, asteroidIndex) {
+function createInterstellarAsteroid(position, size, velocity, fieldIndex, asteroidIndex, generation = 0) {
     // Create irregular asteroid geometry
-    const geometry = new THREE.IcosahedronGeometry(size, 1);
+    // Use simpler geometry for fragments (generation > 0) to improve performance
+    const detailLevel = generation > 0 ? 0 : 1;  // 12 vertices for fragments, 42 for originals
+    const geometry = new THREE.IcosahedronGeometry(size, detailLevel);
 
     // Randomize vertices for irregular shape
     const positionAttribute = geometry.attributes.position;
@@ -126,7 +128,7 @@ function createInterstellarAsteroid(position, size, velocity, fieldIndex, astero
     const material = new THREE.MeshStandardMaterial({
         color: baseColor,
         emissive: baseColor,
-        emissiveIntensity: 0.35,  // Stronger self-illumination for visibility in dark space
+        emissiveIntensity: 0.55,  // Increased for better visibility in dark space
         roughness: 0.9,
         metalness: 0.1,
         flatShading: true
@@ -225,18 +227,21 @@ function breakInterstellarAsteroid(asteroid, hitPosition, hitNormal) {
 
         const fragmentVelocity = asteroid.userData.velocity.clone().add(explosiveForce);
 
+        // Pass generation to create simpler geometry for fragments
+        const newGeneration = (asteroid.userData.generation || 0) + 1;
         createInterstellarAsteroid(
             fragmentPos,
             fragmentSize,
             fragmentVelocity,
             asteroid.userData.fieldIndex,
-            interstellarAsteroids.length
+            interstellarAsteroids.length,
+            newGeneration
         );
 
         // Update generation counter
         const lastAsteroid = interstellarAsteroids[interstellarAsteroids.length - 1];
         if (lastAsteroid) {
-            lastAsteroid.userData.generation = asteroid.userData.generation + 1;
+            lastAsteroid.userData.generation = newGeneration;
         }
     }
 

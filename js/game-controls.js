@@ -3900,6 +3900,10 @@ function fireWeapon() {
                 if (typeof gameState !== 'undefined') {
                     gameState.hull = Math.min(gameState.maxHull, gameState.hull + 5);
                 }
+                // Play asteroid hit sound
+                if (typeof playSound === 'function') {
+                    playSound('explosion');
+                }
                 console.log('Interstellar asteroid broken into fragments (+5 hull)');
             }
         } else {
