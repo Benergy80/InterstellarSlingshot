@@ -1179,17 +1179,21 @@ planets.forEach(planet => {
 if (typeof outerInterstellarSystems !== 'undefined') {
     outerInterstellarSystems.forEach(system => {
         if (!system.userData.orbiters) return;
-        
+
         // Check if system is in radar range
         const systemDistance = camera.position.distanceTo(system.position);
         if (systemDistance < radarRange + 2000) {
-            
+
             // Add all orbiters from this system
             system.userData.orbiters.forEach(orbiter => {
-                const distance = camera.position.distanceTo(orbiter.position);
+                // Get world position for nested objects
+                const orbiterWorldPos = new THREE.Vector3();
+                orbiter.getWorldPosition(orbiterWorldPos);
+
+                const distance = camera.position.distanceTo(orbiterWorldPos);
                 if (distance < radarRange) {
                     nearbyObjects.push({
-                        position: orbiter.position,
+                        position: orbiterWorldPos,
                         type: orbiter.userData.type,
                         name: orbiter.userData.name,
                         distance: distance,
@@ -1197,13 +1201,17 @@ if (typeof outerInterstellarSystems !== 'undefined') {
                     });
                 }
             });
-            
+
             // Add center object
             if (system.userData.centerObject) {
-                const centerDist = camera.position.distanceTo(system.userData.centerObject.position);
+                // Get world position for nested center object
+                const centerWorldPos = new THREE.Vector3();
+                system.userData.centerObject.getWorldPosition(centerWorldPos);
+
+                const centerDist = camera.position.distanceTo(centerWorldPos);
                 if (centerDist < radarRange) {
                     nearbyObjects.push({
-                        position: system.userData.centerObject.position,
+                        position: centerWorldPos,
                         type: system.userData.centerType,
                         name: system.userData.name + ' Core',
                         distance: centerDist,
@@ -1375,6 +1383,12 @@ if (obj.type === 'enemy') {
 } else if (obj.type === 'outer_asteroid') {
     dotColor = '#887766';
     dotSize = '3px';
+} else if (obj.type === 'outer_planet') {
+    dotColor = '#6688ff';
+    dotSize = '5px';
+} else if (obj.type === 'borg_drone') {
+    dotColor = '#00ff00';
+    dotSize = '5px';
 }
 
                 dot.style.width = dotSize;
