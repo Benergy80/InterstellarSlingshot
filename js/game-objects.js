@@ -2706,14 +2706,8 @@ const galaxyStarsToAdd = galaxyMainStars;
             }
 
             // Create accretion disk with galaxy rotation applied
-            // Disc should be 2-3x the radius of the spherical starfield for proper scale
-            // Starfield max radius: blackHoleSize + 1000, so disc should be 2-3x that
-            const starfieldMaxRadius = blackHoleSize + 1000;
-            const discRadiusMultiplier = 2.5; // 2.5x the starfield radius
-            const discInnerRadius = starfieldMaxRadius * discRadiusMultiplier * 0.7; // Inner edge
-            const discOuterRadius = starfieldMaxRadius * discRadiusMultiplier * 1.1; // Outer edge
-
-            const ringGeometry = new THREE.RingGeometry(discInnerRadius, discOuterRadius, 64);
+            const ringSize = galaxyType.name === 'Quasar' ? 80 : blackHoleSize + 12;
+            const ringGeometry = new THREE.RingGeometry(ringSize - 8, ringSize + 20, 32);
             const ringMaterial = new THREE.MeshBasicMaterial({
                 color: galaxyType.color,
                 transparent: true,
