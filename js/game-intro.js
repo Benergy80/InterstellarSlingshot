@@ -945,39 +945,44 @@ function createSkipButton() {
     skipButton.innerHTML = '<i class="fas fa-forward mr-2"></i>Skip Intro';
     skipButton.addEventListener('click', skipIntroSequence);
     
-    // Apply mobile button styling with cyan colors
-    skipButton.style.cssText = `
-        position: fixed !important;
-        bottom: 16px !important;
-        left: 50% !important;
-        transform: translateX(-50%) !important;
-        width: auto !important;
-        padding: 8px 16px !important;
-        background: rgba(0, 0, 0, 0.7) !important;
-        border: 1px solid rgba(0, 255, 255, 0.4) !important;
-        border-radius: 4px !important;
-        color: #00ffff !important;
-        font-family: 'Orbitron', monospace !important;
-        font-size: 12px !important;
-        font-weight: 600 !important;
-        cursor: pointer !important;
-        opacity: 0 !important;
-        transition: all 0.2s ease !important;
-        z-index: 80 !important;
-        box-shadow: 0 0 10px rgba(0, 255, 255, 0.3), inset 0 0 10px rgba(0, 255, 255, 0.1) !important;
-    `;
+    // Apply mobile button styling with cyan colors on mobile, keep original on desktop
+    const isMobile = window.innerWidth <= 768 || ('ontouchstart' in window && window.innerWidth <= 1024);
 
-    skipButton.addEventListener('mouseenter', () => {
-        skipButton.style.background = 'rgba(0, 255, 255, 0.2)';
-        skipButton.style.boxShadow = '0 0 15px rgba(0, 255, 255, 0.5), inset 0 0 15px rgba(0, 255, 255, 0.2)';
-        skipButton.style.opacity = '1';
-    });
+    if (isMobile) {
+        skipButton.style.cssText = `
+            position: fixed !important;
+            bottom: 16px !important;
+            left: 50% !important;
+            transform: translateX(-50%) !important;
+            width: auto !important;
+            padding: 8px 16px !important;
+            background: rgba(0, 0, 0, 0.7) !important;
+            border: 1px solid rgba(0, 255, 255, 0.4) !important;
+            border-radius: 4px !important;
+            color: #00ffff !important;
+            font-family: 'Orbitron', monospace !important;
+            font-size: 12px !important;
+            font-weight: 600 !important;
+            cursor: pointer !important;
+            opacity: 0;
+            transition: all 0.2s ease !important;
+            z-index: 80 !important;
+            box-shadow: 0 0 10px rgba(0, 255, 255, 0.3), inset 0 0 10px rgba(0, 255, 255, 0.1) !important;
+        `;
 
-    skipButton.addEventListener('mouseleave', () => {
-        skipButton.style.background = 'rgba(0, 0, 0, 0.7)';
-        skipButton.style.boxShadow = '0 0 10px rgba(0, 255, 255, 0.3), inset 0 0 10px rgba(0, 255, 255, 0.1)';
-        skipButton.style.opacity = '0.7';
-    });
+        skipButton.addEventListener('mouseenter', () => {
+            skipButton.style.background = 'rgba(0, 255, 255, 0.2)';
+            skipButton.style.boxShadow = '0 0 15px rgba(0, 255, 255, 0.5), inset 0 0 15px rgba(0, 255, 255, 0.2)';
+        });
+
+        skipButton.addEventListener('mouseleave', () => {
+            skipButton.style.background = 'rgba(0, 0, 0, 0.7)';
+            skipButton.style.boxShadow = '0 0 10px rgba(0, 255, 255, 0.3), inset 0 0 10px rgba(0, 255, 255, 0.1)';
+        });
+    } else {
+        // Desktop: keep original styling with just opacity fix
+        skipButton.style.opacity = '0';
+    }
     
     document.body.appendChild(skipButton);
     introSequence.skipButton = skipButton;
@@ -2546,25 +2551,27 @@ introStyles.textContent = `
 	transform: translateX(-50%) perspective(1000px) rotateX(2deg) translateZ(8px);
     }
     
-    #skipIntroBtn {
-        z-index: 80 !important;
-        background: rgba(0, 0, 0, 0.7) !important;
-        border: 1px solid rgba(0, 255, 255, 0.4) !important;
-        border-radius: 4px !important;
-        color: #00ffff !important;
-        font-family: 'Orbitron', monospace !important;
-        font-weight: 600 !important;
-        transition: all 0.2s ease !important;
-        transform: translateX(-50%) !important;
-        box-shadow: 0 0 10px rgba(0, 255, 255, 0.3), inset 0 0 10px rgba(0, 255, 255, 0.1) !important;
-        opacity: 0.7 !important;
-    }
+    /* Mobile-only styling for Skip Intro button */
+    @media (max-width: 768px), (max-width: 1024px) and (hover: none) {
+        #skipIntroBtn {
+            z-index: 80 !important;
+            background: rgba(0, 0, 0, 0.7) !important;
+            border: 1px solid rgba(0, 255, 255, 0.4) !important;
+            border-radius: 4px !important;
+            color: #00ffff !important;
+            font-family: 'Orbitron', monospace !important;
+            font-weight: 600 !important;
+            transition: all 0.2s ease !important;
+            transform: translateX(-50%) !important;
+            box-shadow: 0 0 10px rgba(0, 255, 255, 0.3), inset 0 0 10px rgba(0, 255, 255, 0.1) !important;
+        }
 
-    #skipIntroBtn:hover {
-        background: rgba(0, 255, 255, 0.2) !important;
-        box-shadow: 0 0 15px rgba(0, 255, 255, 0.5), inset 0 0 15px rgba(0, 255, 255, 0.2) !important;
-        opacity: 1 !important;
-        transform: translateX(-50%) scale(1.05) !important;
+        #skipIntroBtn:hover,
+        #skipIntroBtn:active {
+            background: rgba(0, 255, 255, 0.2) !important;
+            box-shadow: 0 0 15px rgba(0, 255, 255, 0.5), inset 0 0 15px rgba(0, 255, 255, 0.2) !important;
+            transform: translateX(-50%) scale(1.05) !important;
+        }
     }
     
     /* Overlays - Higher z-index than fade overlay */
