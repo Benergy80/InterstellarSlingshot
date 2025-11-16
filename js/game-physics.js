@@ -865,27 +865,20 @@ function transitionToRandomLocation(sourceBlackHole) {
         
         // Determine which galaxy we warped to based on proximity
         let arrivedGalaxyId = -1;
-        
-        if (typeof galaxyMapPositions !== 'undefined') {
+
+        if (typeof getGalaxy3DPosition === 'function') {
             for (let g = 0; g < 8; g++) {
-                const mapPos = galaxyMapPositions[g];
-                if (mapPos) {
-                    const universeRadius = 100000;  // Increased to accommodate exotic/borg systems (up to 85k units) with margins
-                    const galaxyX = (mapPos.x - 0.5) * universeRadius * 2;
-                    const galaxyZ = (mapPos.y - 0.5) * universeRadius * 2;
-                    const galaxyY = 0;
-                    const galaxyCenter = new THREE.Vector3(galaxyX, galaxyY, galaxyZ);
-                    
-                    if (camera.position.distanceTo(galaxyCenter) < 15000) {
-                        arrivedGalaxyId = g;
-                        break;
-                    }
+                const galaxyCenter = getGalaxy3DPosition(g);
+
+                if (camera.position.distanceTo(galaxyCenter) < 15000) {
+                    arrivedGalaxyId = g;
+                    break;
                 }
             }
         }
-        
+
         // Use the specific discovery name for the arrived galaxy
-        const locationName = arrivedGalaxyId >= 0 && arrivedGalaxyId < galaxyDiscoveryNames.length 
+        const locationName = arrivedGalaxyId >= 0 && arrivedGalaxyId < galaxyDiscoveryNames.length
             ? galaxyDiscoveryNames[arrivedGalaxyId]
             : 'Unknown Region';
         
