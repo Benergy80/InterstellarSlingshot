@@ -269,12 +269,14 @@ function getGalaxy3DPosition(galaxyId) {
 function getRandomPositionInGalaxy3D(galaxyId) {
     const galaxy = galaxyTypes[galaxyId];
     const centerPosition = getGalaxy3DPosition(galaxyId);
-    
+
     // Random position within galaxy bounds in 3D
+    // Limit cosmic features to 55000 units from galaxy center for discoverability
     const galaxyRadius = galaxy.size;
+    const maxSpawnRadius = Math.min(galaxyRadius, 55000);
     const localPhi = Math.random() * Math.PI * 2;
     const localTheta = Math.random() * Math.PI;
-    const localDistance = Math.random() * galaxyRadius;
+    const localDistance = Math.random() * maxSpawnRadius;
     
     const localX = Math.sin(localTheta) * Math.cos(localPhi) * localDistance;
     const localY = Math.cos(localTheta) * localDistance;
