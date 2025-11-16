@@ -76,7 +76,7 @@ function createExoticCoreSystems() {
     const innerBoundary = 45000;
     const outerBoundary = 75000;
     const targetRadius = (innerBoundary + outerBoundary) / 2; // ~67,500
-    const radiusVariation = 7500;
+    const radiusVariation = 12500;
 
     for (let i = 0; i < 16; i++) {
         // Spherical distribution
