@@ -1246,43 +1246,8 @@ function createPlasmaStorms() {
         }
         
         stormCloudGroup.position.copy(position);
-        
-        // **OPTIMIZED: Fewer, smaller tendrils for better FPS**
-        const tendrilGroup = new THREE.Group();
-        for (let tendril = 0; tendril < 6; tendril++) { // OPTIMIZED: 6 tendrils (was 12)
-            const tendrilGeometry = new THREE.CylinderGeometry(6, 1.5, 500, 4); // OPTIMIZED: Smaller size, 4 segments (was 10, 2, 800, 6)
-            const tendrilMaterial = new THREE.MeshStandardMaterial({
-                color: 0xffffff,
-                emissive: 0x8888ff,
-                emissiveIntensity: 2.0,
-                roughness: 0.2,
-                metalness: 0.6,
-                transparent: true,
-                opacity: 0.8
-            });
-            const tendrilMesh = new THREE.Mesh(tendrilGeometry, tendrilMaterial);
-            
-            const tendrilAngle = Math.random() * Math.PI * 2;
-            const tendrilDistance = 400 + Math.random() * 400; // **10x larger (was 40-80)**
-            
-            tendrilMesh.position.set(
-                Math.cos(tendrilAngle) * tendrilDistance,
-                (Math.random() - 0.5) * 600, // **10x larger (was 60)**
-                Math.sin(tendrilAngle) * tendrilDistance
-            );
-            tendrilMesh.rotation.z = Math.random() * Math.PI * 2;
-            tendrilMesh.userData = {
-                baseAngle: tendrilMesh.rotation.z,
-                waveSpeed: 0.5 + Math.random() * 0.5,
-                baseOpacity: 0.8,
-                flickerSpeed: 2.0 + Math.random() * 3.0
-            };
-            
-            tendrilGroup.add(tendrilMesh);
-        }
-        stormCloudGroup.add(tendrilGroup);
-        
-        // ⭐ OPTIMIZED: Central energy core - reduced poly count for better FPS
+
+        // ⭐ OPTIMIZED: Central energy core - reduced poly count for better FPS (tendrils removed for performance)
         const coreGeometry = new THREE.SphereGeometry(180, 12, 12); // OPTIMIZED: Smaller, 12x12 segments (was 250, 32x32)
         const coreMaterial = new THREE.MeshBasicMaterial({
             color: 0x6644ff,
@@ -1329,7 +1294,7 @@ function createPlasmaStorms() {
         
         console.log(`  💡 Added flickering plasma light to storm at`, position);
         
-        // ⭐ UPDATED: Store all new components in userData
+        // ⭐ OPTIMIZED: Store components in userData (tendrils removed for performance)
         stormCloudGroup.userData = {
             name: `Plasma-Storm-${galaxyId}-${cosmicFeatures.plasmaStorms.length}`,
             type: 'plasma_storm',
@@ -1338,13 +1303,12 @@ function createPlasmaStorms() {
             movementSpeed: 0.2 + Math.random() * 0.3,
             energyOutput: 50 + Math.random() * 100,
             spheres: cloudSpheres,
-            tendrils: tendrilGroup,
-            energyCore: energyCore,           // ⭐ NEW: Store glowing core
-            glowSphere: glowSphere,            // ⭐ NEW: Store glow layer
-            innerCore: innerCore,              // ⭐ NEW: Store inner core
-            plasmaLight: plasmaLight,          // ⭐ NEW: Store point light
-            baseLightIntensity: 20.0,          // ⭐ NEW: Base intensity for flickering
-            lightningFlickerTime: 0,           // ⭐ NEW: Timer for lightning flicker
+            energyCore: energyCore,           // ⭐ Store glowing core
+            glowSphere: glowSphere,            // ⭐ Store glow layer
+            innerCore: innerCore,              // ⭐ Store inner core
+            plasmaLight: plasmaLight,          // ⭐ Store point light
+            baseLightIntensity: 20.0,          // ⭐ Base intensity for flickering
+            lightningFlickerTime: 0,           // ⭐ Timer for lightning flicker
             direction: new THREE.Vector3(
                 (Math.random() - 0.5) * 0.5,
                 (Math.random() - 0.5) * 0.2,
@@ -1364,7 +1328,7 @@ function createPlasmaStorms() {
         console.log(`✅ Plasma storm ${stormsCreated} created in galaxy ${galaxyId}`);
     }
     
-    console.log(`⚡ Created ${cosmicFeatures.plasmaStorms.length} plasma storms with glowing cores and dynamic lighting (target was ${targetStormCount})`);
+    console.log(`⚡ OPTIMIZED: Created ${cosmicFeatures.plasmaStorms.length} plasma storms with reduced geometry for better FPS (target was ${targetStormCount})`);
 }
 
 // =============================================================================
@@ -1575,22 +1539,9 @@ cosmicFeatures.plasmaStorms.forEach((storm, stormIndex) => {
     // Animate cloud spheres - OPTIMIZED (all spheres with single calculation)
     if (storm.userData.spheres && storm.userData.spheres.length > 0) {
         const wobble = Math.sin(time * 2) * 0.1 + 1.0;
-        // Update all spheres at once (already reduced from 8-14 to 4-6 spheres)
+        // Update all spheres at once (reduced from 8-14 to 4-6 spheres)
         storm.userData.spheres.forEach(sphere => {
             sphere.scale.setScalar(wobble);
-        });
-    }
-
-    // Animate lightning tendrils - OPTIMIZED (all tendrils with single calculation)
-    if (storm.userData.tendrils && storm.userData.tendrils.children.length > 0) {
-        const hue = 0.7 + Math.sin(time * 2) * 0.1;
-        // Update all tendrils at once (already reduced from 12 to 6 tendrils)
-        storm.userData.tendrils.children.forEach(tendril => {
-            if (!tendril.userData) return;
-
-            // Simplified flicker
-            tendril.material.opacity = tendril.userData.baseOpacity || 0.6;
-            tendril.material.color.setHSL(hue, 1.0, 0.5);
         });
     }
 });
