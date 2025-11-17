@@ -317,7 +317,8 @@ function createSystemSupernova(center, systemGroup) {
 }
 
 function createSystemPlasmaStorm(center, systemGroup) {
-    const coreGeo = new THREE.SphereGeometry(60, 32, 32);
+    // OPTIMIZED: Reduced poly count for better FPS
+    const coreGeo = new THREE.SphereGeometry(60, 16, 16); // OPTIMIZED: 16x16 segments (was 32x32)
     const coreMat = new THREE.MeshStandardMaterial({
         color: 0xaa44ff,
         emissive: 0xaa44ff,
@@ -342,10 +343,10 @@ function createSystemPlasmaStorm(center, systemGroup) {
     systemGroup.add(core);
     systemGroup.userData.centerObject = core;
 
-    // Plasma clouds
-    for (let i = 0; i < 5; i++) {
-        const angle = (i / 5) * Math.PI * 2;
-        const cloudGeo = new THREE.SphereGeometry(40, 16, 16);
+    // Plasma clouds - OPTIMIZED: Fewer clouds with lower poly count
+    for (let i = 0; i < 3; i++) { // OPTIMIZED: 3 clouds (was 5)
+        const angle = (i / 3) * Math.PI * 2;
+        const cloudGeo = new THREE.SphereGeometry(40, 8, 8); // OPTIMIZED: 8x8 segments (was 16x16)
         const cloudMat = new THREE.MeshBasicMaterial({
             color: 0x8844ff,
             transparent: true,

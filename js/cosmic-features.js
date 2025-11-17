@@ -1211,15 +1211,15 @@ function createPlasmaStorms() {
         
         console.log(`⚡ Creating plasma storm in galaxy ${galaxyId} at position`, position);
         
-        // **UPDATED: Storm cloud 10x larger**
+        // **OPTIMIZED: Reduced geometry for better FPS**
         const stormCloudGroup = new THREE.Group();
         const cloudSpheres = [];
-        const sphereCount = 8 + Math.floor(Math.random() * 6);
-        
+        const sphereCount = 4 + Math.floor(Math.random() * 3); // OPTIMIZED: 4-6 spheres (was 8-14)
+
         // Create outer cloud spheres
         for (let sphere = 0; sphere < sphereCount; sphere++) {
-            const sphereRadius = 150 + Math.random() * 250; // **10x larger (was 15-40)**
-            const sphereGeometry = new THREE.SphereGeometry(sphereRadius, 16, 16);
+            const sphereRadius = 80 + Math.random() * 70; // OPTIMIZED: 80-150 radius (was 150-400)
+            const sphereGeometry = new THREE.SphereGeometry(sphereRadius, 8, 8); // OPTIMIZED: 8x8 segments (was 16x16)
             const sphereMaterial = new THREE.MeshStandardMaterial({
                 color: Math.random() > 0.5 ? 0x6644ff : 0x4466ff,
                 emissive: Math.random() > 0.5 ? 0x2200ff : 0x0044ff,
@@ -1247,10 +1247,10 @@ function createPlasmaStorms() {
         
         stormCloudGroup.position.copy(position);
         
-        // **UPDATED: Lightning tendrils 10x larger with animation data**
+        // **OPTIMIZED: Fewer, smaller tendrils for better FPS**
         const tendrilGroup = new THREE.Group();
-        for (let tendril = 0; tendril < 12; tendril++) {
-            const tendrilGeometry = new THREE.CylinderGeometry(10, 2, 800, 6); // **10x larger (was 1, 0.2, 80)**
+        for (let tendril = 0; tendril < 6; tendril++) { // OPTIMIZED: 6 tendrils (was 12)
+            const tendrilGeometry = new THREE.CylinderGeometry(6, 1.5, 500, 4); // OPTIMIZED: Smaller size, 4 segments (was 10, 2, 800, 6)
             const tendrilMaterial = new THREE.MeshStandardMaterial({
                 color: 0xffffff,
                 emissive: 0x8888ff,
@@ -1282,8 +1282,8 @@ function createPlasmaStorms() {
         }
         stormCloudGroup.add(tendrilGroup);
         
-        // ⭐ NEW: Central energy core - glowing pulsing sphere (REPLACES wireframe discharge)
-        const coreGeometry = new THREE.SphereGeometry(250, 32, 32);
+        // ⭐ OPTIMIZED: Central energy core - reduced poly count for better FPS
+        const coreGeometry = new THREE.SphereGeometry(180, 12, 12); // OPTIMIZED: Smaller, 12x12 segments (was 250, 32x32)
         const coreMaterial = new THREE.MeshBasicMaterial({
             color: 0x6644ff,
             transparent: true,
@@ -1291,9 +1291,9 @@ function createPlasmaStorms() {
             blending: THREE.AdditiveBlending
         });
         const energyCore = new THREE.Mesh(coreGeometry, coreMaterial);
-        
+
         // Add outer glow layer
-        const glowGeometry = new THREE.SphereGeometry(280, 32, 32);
+        const glowGeometry = new THREE.SphereGeometry(210, 12, 12); // OPTIMIZED: Smaller, 12x12 segments (was 280, 32x32)
         const glowMaterial = new THREE.MeshBasicMaterial({
             color: 0x8866ff,
             transparent: true,
@@ -1302,9 +1302,9 @@ function createPlasmaStorms() {
         });
         const glowSphere = new THREE.Mesh(glowGeometry, glowMaterial);
         energyCore.add(glowSphere);
-        
+
         // Add inner bright core
-        const innerCoreGeometry = new THREE.SphereGeometry(180, 32, 32);
+        const innerCoreGeometry = new THREE.SphereGeometry(140, 12, 12); // OPTIMIZED: Smaller, 12x12 segments (was 180, 32x32)
         const innerCoreMaterial = new THREE.MeshBasicMaterial({
             color: 0xffffff,
             transparent: true,
@@ -1509,14 +1509,14 @@ function updateCosmicFeatures() {
     // Update plasma storms (movement and lightning animation) - OPTIMIZED
 cosmicFeatures.plasmaStorms.forEach((storm, stormIndex) => {
     if (!storm.userData) return;
-    
+
     // Move storm (always update position)
     if (storm.userData.direction) {
         storm.position.add(storm.userData.direction.clone().multiplyScalar(storm.userData.movementSpeed));
     }
-    
-    // ⚡ PERFORMANCE: Only animate visual effects every 2 frames (still 30fps, smooth)
-    if (typeof gameState !== 'undefined' && gameState.frameCount % 2 !== stormIndex % 2) return;
+
+    // ⚡ PERFORMANCE OPTIMIZED: Only animate visual effects every 5 frames (~12fps animation, imperceptible)
+    if (typeof gameState !== 'undefined' && gameState.frameCount % 5 !== stormIndex % 5) return;
     
     // Pre-calculate shared values to avoid redundant sin() calls
     const corePulse = Math.sin(time * 2) * 0.15 + 1.0;
@@ -1542,10 +1542,10 @@ cosmicFeatures.plasmaStorms.forEach((storm, stormIndex) => {
         }
     }
     
-    // ⚡ FLICKERING LIGHTNING EFFECT - Reduced frequency
+    // ⚡ FLICKERING LIGHTNING EFFECT - Optimized frequency
     if (storm.userData.plasmaLight && storm.userData.baseLightIntensity) {
-        // Check for flicker less frequently (every 10 frames instead of every frame)
-        if (typeof gameState !== 'undefined' && gameState.frameCount % 10 === stormIndex % 10 && Math.random() < 0.3) {
+        // Check for flicker every 8 frames for dramatic effect
+        if (typeof gameState !== 'undefined' && gameState.frameCount % 8 === stormIndex % 8 && Math.random() < 0.4) {
             // Lightning flash!
             storm.userData.plasmaLight.intensity = storm.userData.baseLightIntensity * (3.0 + Math.random() * 2.0);
             storm.userData.plasmaLight.color.setHex(0xffffff);
@@ -1572,26 +1572,26 @@ cosmicFeatures.plasmaStorms.forEach((storm, stormIndex) => {
         }
     }
     
-    // Animate cloud spheres - SIMPLIFIED (only every other sphere)
+    // Animate cloud spheres - OPTIMIZED (all spheres with single calculation)
     if (storm.userData.spheres && storm.userData.spheres.length > 0) {
         const wobble = Math.sin(time * 2) * 0.1 + 1.0;
-        for (let i = 0; i < storm.userData.spheres.length; i += 2) {
-            storm.userData.spheres[i].scale.setScalar(wobble);
-        }
+        // Update all spheres at once (already reduced from 8-14 to 4-6 spheres)
+        storm.userData.spheres.forEach(sphere => {
+            sphere.scale.setScalar(wobble);
+        });
     }
-    
-    // Animate lightning tendrils - SIMPLIFIED (update fewer tendrils)
+
+    // Animate lightning tendrils - OPTIMIZED (all tendrils with single calculation)
     if (storm.userData.tendrils && storm.userData.tendrils.children.length > 0) {
         const hue = 0.7 + Math.sin(time * 2) * 0.1;
-        // Only update every 3rd tendril
-        for (let i = 0; i < storm.userData.tendrils.children.length; i += 3) {
-            const tendril = storm.userData.tendrils.children[i];
-            if (!tendril.userData) continue;
-            
-            // Simplified flicker (no random check every frame)
+        // Update all tendrils at once (already reduced from 12 to 6 tendrils)
+        storm.userData.tendrils.children.forEach(tendril => {
+            if (!tendril.userData) return;
+
+            // Simplified flicker
             tendril.material.opacity = tendril.userData.baseOpacity || 0.6;
             tendril.material.color.setHSL(hue, 1.0, 0.5);
-        }
+        });
     }
 });
     
