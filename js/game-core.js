@@ -1129,14 +1129,16 @@ if (typeof enemies !== 'undefined' && enemies.length > 0 && gameState.frameCount
                         if (child.userData.baseOpacity === undefined) {
                             child.userData.baseOpacity = child.material.opacity;
                         }
-                        child.material.opacity = child.userData.baseOpacity * (0.9 + pulseFactor * 0.5);
+                        // Increased pulsing amplitude for better visibility
+                        child.material.opacity = child.userData.baseOpacity * (1.0 + pulseFactor * 0.8);
                     }
-                    // Also pulse emissive intensity for glowing effect
+                    // Also pulse emissive intensity for glowing effect - MUCH BRIGHTER
                     if (child.material.emissiveIntensity !== undefined) {
                         if (child.userData.baseEmissive === undefined) {
                             child.userData.baseEmissive = child.material.emissiveIntensity;
                         }
-                        child.material.emissiveIntensity = child.userData.baseEmissive * (0.8 + pulseFactor * 1.2);
+                        // Significantly increased brightness for GLB models
+                        child.material.emissiveIntensity = child.userData.baseEmissive * (1.5 + pulseFactor * 2.5);
                     }
                 }
             });

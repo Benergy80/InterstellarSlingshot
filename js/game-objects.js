@@ -3072,8 +3072,8 @@ if (Math.random() < moonProbability) {
             if (planets && planets.push) {
                 planets.push(moon);
             }
-            
-            console.log(`      🌙 Added moon to ${planet.userData.name} in galaxy ${g}`);
+
+            // console.log(`      🌙 Added moon to ${planet.userData.name} in galaxy ${g}`);
         } catch (moonError) {
             console.error(`Error creating moon for planet in galaxy ${g}:`, moonError);
         }
@@ -3824,8 +3824,8 @@ function createEnhancedPlanetClustersInNebulas() {
                         ring.rotation.z = (Math.random() - 0.5) * 0.2;
                         planet.add(ring);
                     }
-                    
-                    console.log(`      💍 Added ${ringCount} rings to ${planet.userData.name}`);
+
+                    // console.log(`      💍 Added ${ringCount} rings to ${planet.userData.name}`);
                 }
                 
                 // Add MOON SYSTEMS - LARGER MOONS
@@ -4081,20 +4081,27 @@ function createEnemies3D() {
 
             // Try to use 3D model first, fallback to geometry (g+1 because models are 1-8, galaxies are 0-7)
             let enemy;
+            let isGLBModel = false;
             if (typeof createEnemyMeshWithModel === 'function') {
                 enemy = createEnemyMeshWithModel(g + 1, enemyGeometry, materials.enemyMaterial);
+                // Check if we got a GLB model (Group) or fallback mesh
+                isGLBModel = enemy.isGroup || (enemy.children && enemy.children.length > 0 && enemy.children[0].isMesh);
             } else {
                 enemy = new THREE.Mesh(enemyGeometry, materials.enemyMaterial);
             }
 
-            const glowGeometry = enemyGeometry.clone();
-            const glow = new THREE.Mesh(glowGeometry, materials.glowMaterial);
-            glow.scale.multiplyScalar(materials.glowScale);
+            // Only add procedural glow to fallback geometry enemies
+            // GLB models have their own materials and don't need procedural glow
+            if (!isGLBModel) {
+                const glowGeometry = enemyGeometry.clone();
+                const glow = new THREE.Mesh(glowGeometry, materials.glowMaterial);
+                glow.scale.multiplyScalar(materials.glowScale);
 
-            glow.visible = true;
-            glow.frustumCulled = false;
+                glow.visible = true;
+                glow.frustumCulled = false;
 
-            enemy.add(glow);
+                enemy.add(glow);
+            }
             enemy.position.copy(enemyPosition);
             
             // Determine if this enemy is in the local galaxy (galaxy 7)

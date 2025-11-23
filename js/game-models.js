@@ -273,10 +273,14 @@ async function loadAllModels() {
 // Get enemy model for a specific region (1-8)
 function getEnemyModel(regionId) {
     const model = modelCache.enemies[regionId];
+    console.log(`🔍 getEnemyModel(${regionId}) - model in cache:`, !!model);
     if (model) {
         // Clone the model so we can have multiple instances
-        return model.clone();
+        const clone = model.clone();
+        console.log(`   Cloned model type:`, clone.type, `isGroup:`, clone.isGroup, `children:`, clone.children.length);
+        return clone;
     }
+    console.log(`   ❌ No model in cache for region ${regionId}, returning null`);
     return null;
 }
 
@@ -345,6 +349,9 @@ function createEnemyMeshWithModel(regionId, fallbackGeometry, material) {
             }
         });
         console.log(`  Enemy ${regionId} model: ${meshCount} mesh(es), ~${vertexCount} vertices total`);
+
+        // Scale enemy models to be more visible (similar to bosses but smaller)
+        model.scale.multiplyScalar(1.5);
 
         return model;
     } else {

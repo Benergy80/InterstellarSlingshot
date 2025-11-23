@@ -35,11 +35,28 @@ function initCameraSystem(camera, scene) {
 
         if (playerModel) {
             // Don't attach to camera - keep it in the scene
-            playerModel.scale.set(1, 1, 1);
+            playerModel.scale.set(2, 2, 2);  // Make player ship visible and prominent
             playerModel.position.set(0, 0, 0);
 
             // Make sure it's oriented correctly
             playerModel.rotation.y = Math.PI;  // Face forward
+
+            // Apply bright, self-lit material to all meshes
+            playerModel.traverse((child) => {
+                if (child.isMesh) {
+                    // Create bright, glowing material for player ship
+                    child.material = new THREE.MeshStandardMaterial({
+                        color: 0x00ffff,  // Cyan color for player ship
+                        emissive: 0x00ffff,
+                        emissiveIntensity: 1.5,  // Bright glow
+                        metalness: 0.8,
+                        roughness: 0.2,
+                        transparent: false
+                    });
+                    child.castShadow = true;
+                    child.receiveShadow = true;
+                }
+            });
 
             scene.add(playerModel);
             cameraState.playerShipMesh = playerModel;
@@ -47,7 +64,7 @@ function initCameraSystem(camera, scene) {
             // Start in first-person mode (ship hidden)
             playerModel.visible = false;
 
-            console.log('✅ Player ship added to scene for third-person view');
+            console.log('✅ Player ship added to scene for third-person view (scale: 2x, glowing cyan)');
             cameraState.initialized = true;
         } else {
             console.warn('⚠️ getPlayerModel returned null/undefined - no player model available');
