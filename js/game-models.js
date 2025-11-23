@@ -69,86 +69,123 @@ const modelCache = {
 // Load a single GLB model
 function loadGLBModel(path) {
     return new Promise((resolve, reject) => {
-        const loader = new THREE.GLTFLoader();
+        console.log(`📥 Attempting to load: ${path}`);
 
-        loader.load(
-            path,
-            (gltf) => {
-                console.log(`✅ Loaded model: ${path}`);
-                resolve(gltf.scene);
-            },
-            (progress) => {
-                const percent = (progress.loaded / progress.total) * 100;
-                console.log(`Loading ${path}: ${percent.toFixed(1)}%`);
-            },
-            (error) => {
-                console.error(`❌ Error loading ${path}:`, error);
-                reject(error);
-            }
-        );
+        try {
+            const loader = new THREE.GLTFLoader();
+            console.log(`🔧 GLTFLoader instantiated for: ${path}`);
+
+            loader.load(
+                path,
+                (gltf) => {
+                    console.log(`✅ Successfully loaded model: ${path}`);
+                    console.log(`   - Scene children:`, gltf.scene.children.length);
+                    resolve(gltf.scene);
+                },
+                (progress) => {
+                    if (progress.total > 0) {
+                        const percent = (progress.loaded / progress.total) * 100;
+                        console.log(`⏳ Loading ${path}: ${percent.toFixed(1)}%`);
+                    }
+                },
+                (error) => {
+                    console.error(`❌ FAILED to load ${path}`);
+                    console.error(`   - Error type:`, error.constructor.name);
+                    console.error(`   - Error message:`, error.message);
+                    console.error(`   - Full error:`, error);
+                    reject(error);
+                }
+            );
+        } catch (err) {
+            console.error(`❌ Exception while setting up loader for ${path}:`, err);
+            reject(err);
+        }
     });
 }
 
 // Load all enemy models (Enemy1.glb through Enemy8.glb)
 async function loadEnemyModels() {
-    console.log('Loading enemy models...');
+    console.log('🎯 === LOADING ENEMY MODELS ===');
     const promises = [];
 
     for (let i = 1; i <= 8; i++) {
         const path = `models/Enemy${i}.glb`;
+        console.log(`🎯 Queueing enemy ${i}: ${path}`);
         promises.push(
             loadGLBModel(path)
                 .then(model => {
+                    console.log(`✅ Enemy ${i} cached successfully`);
                     modelCache.enemies[i] = model;
                     modelCache.loadingProgress += (1 / 17) * 100; // 17 total models
                 })
                 .catch(err => {
-                    console.warn(`Failed to load ${path}, will use fallback geometry`);
+                    console.warn(`⚠️ Failed to load ${path}, will use fallback geometry`);
+                    console.warn(`   Error:`, err.message);
                     modelCache.enemies[i] = null;
                 })
         );
     }
 
+    console.log(`🎯 Waiting for ${promises.length} enemy models to load...`);
     await Promise.all(promises);
-    console.log('✅ Enemy models loaded');
+    console.log('✅ === ENEMY MODELS BATCH COMPLETE ===');
+
+    // Log summary
+    let successCount = 0;
+    for (let i = 1; i <= 8; i++) {
+        if (modelCache.enemies[i]) successCount++;
+    }
+    console.log(`📊 Enemy models: ${successCount}/8 loaded successfully`);
 }
 
 // Load all boss models (Boss1.glb through Boss8.glb)
 async function loadBossModels() {
-    console.log('Loading boss models...');
+    console.log('👑 === LOADING BOSS MODELS ===');
     const promises = [];
 
     for (let i = 1; i <= 8; i++) {
         const path = `models/Boss${i}.glb`;
+        console.log(`👑 Queueing boss ${i}: ${path}`);
         promises.push(
             loadGLBModel(path)
                 .then(model => {
+                    console.log(`✅ Boss ${i} cached successfully`);
                     modelCache.bosses[i] = model;
                     modelCache.loadingProgress += (1 / 17) * 100; // 17 total models
                 })
                 .catch(err => {
-                    console.warn(`Failed to load ${path}, will use fallback geometry`);
+                    console.warn(`⚠️ Failed to load ${path}, will use fallback geometry`);
+                    console.warn(`   Error:`, err.message);
                     modelCache.bosses[i] = null;
                 })
         );
     }
 
+    console.log(`👑 Waiting for ${promises.length} boss models to load...`);
     await Promise.all(promises);
-    console.log('✅ Boss models loaded');
+    console.log('✅ === BOSS MODELS BATCH COMPLETE ===');
+
+    // Log summary
+    let successCount = 0;
+    for (let i = 1; i <= 8; i++) {
+        if (modelCache.bosses[i]) successCount++;
+    }
+    console.log(`📊 Boss models: ${successCount}/8 loaded successfully`);
 }
 
 // Load player model (Player.glb)
 async function loadPlayerModel() {
-    console.log('Loading player model...');
+    console.log('🚀 === LOADING PLAYER MODEL ===');
     const path = 'models/Player.glb';
 
     try {
         const model = await loadGLBModel(path);
         modelCache.player = model;
         modelCache.loadingProgress += (1 / 17) * 100; // 17 total models
-        console.log('✅ Player model loaded');
+        console.log('✅ === PLAYER MODEL LOADED ===');
     } catch (err) {
-        console.warn('Failed to load Player.glb, player will be camera-only');
+        console.warn('⚠️ Failed to load Player.glb, player will be camera-only');
+        console.warn(`   Error:`, err.message);
         modelCache.player = null;
     }
 }
@@ -156,6 +193,7 @@ async function loadPlayerModel() {
 // Main function to load all models
 async function loadAllModels() {
     console.log('🚀 Starting model loading...');
+    console.log('📍 Current location:', window.location.href);
 
     try {
         // First, ensure GLTFLoader is available
@@ -166,20 +204,44 @@ async function loadAllModels() {
             console.log('✅ THREE.GLTFLoader already available');
         }
 
-        // Load all models in parallel
-        await Promise.all([
-            loadEnemyModels(),
-            loadBossModels(),
-            loadPlayerModel()
+        console.log('🔄 About to load all models in parallel...');
+
+        // Load all models in parallel with individual error handling
+        const results = await Promise.allSettled([
+            loadEnemyModels().catch(err => {
+                console.error('❌ Enemy models batch failed:', err);
+                throw err;
+            }),
+            loadBossModels().catch(err => {
+                console.error('❌ Boss models batch failed:', err);
+                throw err;
+            }),
+            loadPlayerModel().catch(err => {
+                console.error('❌ Player model failed:', err);
+                throw err;
+            })
         ]);
+
+        console.log('📊 Loading results:', results);
+
+        // Check which ones succeeded
+        results.forEach((result, index) => {
+            const names = ['Enemy models', 'Boss models', 'Player model'];
+            if (result.status === 'fulfilled') {
+                console.log(`✅ ${names[index]} - SUCCESS`);
+            } else {
+                console.error(`❌ ${names[index]} - FAILED:`, result.reason);
+            }
+        });
 
         modelCache.loaded = true;
         modelCache.loadingProgress = 100;
-        console.log('🎉 All models loaded successfully!');
+        console.log('🎉 Model loading process completed!');
 
         return true;
     } catch (error) {
-        console.error('❌ Error loading models:', error);
+        console.error('❌ Critical error in loadAllModels:', error);
+        console.error('Stack trace:', error.stack);
         return false;
     }
 }
@@ -238,10 +300,12 @@ function createEnemyMeshWithModel(regionId, fallbackGeometry, material) {
         // Use the GLB model
         console.log(`Using GLB model for Enemy ${regionId}`);
 
-        // Apply the game's material to all meshes in the model
+        // DON'T override the model's materials - keep the original GLB materials
+        // Just ensure shadows are enabled
         model.traverse((child) => {
             if (child.isMesh) {
-                child.material = material;
+                // Keep the original material from the GLB file
+                // child.material = material;  // REMOVED - this was overriding the model's appearance!
                 child.castShadow = true;
                 child.receiveShadow = true;
             }
