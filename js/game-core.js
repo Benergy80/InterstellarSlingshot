@@ -1062,34 +1062,55 @@ if (gameState.frameCount % 60 === 0 && typeof outerInterstellarSystems !== 'unde
 }
     
 // Pulse enemy glow for visibility - OPTIMIZED: Only nearby enemies
+// UPDATED: Handle both simple meshes and GLB model Groups
 if (typeof enemies !== 'undefined' && enemies.length > 0 && gameState.frameCount % 2 === 0) {
     const pulseTime = Date.now() * 0.002;
     const pulseFactor = 0.5 + Math.sin(pulseTime) * 0.5;
-    
+
     // Only pulse enemies within visual range (3000 units)
-    const nearbyEnemies = enemies.filter(e => 
-        e.userData.health > 0 && 
+    const nearbyEnemies = enemies.filter(e =>
+        e.userData.health > 0 &&
         camera.position.distanceTo(e.position) < 3000
     );
-    
+
     nearbyEnemies.forEach(enemy => {
-        // Pulse the main body opacity
-        if (enemy && enemy.material && enemy.material.opacity !== undefined) {
+        // Handle both simple Mesh and GLB model Group structures
+        if (enemy.isMesh && enemy.material && enemy.material.opacity !== undefined) {
+            // Simple mesh (fallback geometry)
             if (enemy.userData.baseOpacity === undefined) {
                 enemy.userData.baseOpacity = enemy.material.opacity;
             }
             enemy.material.opacity = enemy.userData.baseOpacity * (0.9 + pulseFactor * 0.5);
-        }
 
-        // Pulse the glow mesh
-        if (enemy.children && enemy.children[0]) {
-            const glow = enemy.children[0];
-            if (glow.material && glow.material.opacity !== undefined) {
-                if (glow.userData.baseOpacity === undefined) {
-                    glow.userData.baseOpacity = glow.material.opacity;
+            // Pulse the glow mesh if it exists
+            if (enemy.children && enemy.children[0]) {
+                const glow = enemy.children[0];
+                if (glow.material && glow.material.opacity !== undefined) {
+                    if (glow.userData.baseOpacity === undefined) {
+                        glow.userData.baseOpacity = glow.material.opacity;
+                    }
+                    glow.material.opacity = glow.userData.baseOpacity * (0.8 + pulseFactor * 0.9);
                 }
-                glow.material.opacity = glow.userData.baseOpacity * (0.8 + pulseFactor * 0.9);
             }
+        } else if (enemy.isGroup || (enemy.children && enemy.children.length > 0)) {
+            // GLB model Group - traverse all meshes and pulse their materials
+            enemy.traverse((child) => {
+                if (child.isMesh && child.material) {
+                    if (child.material.opacity !== undefined) {
+                        if (child.userData.baseOpacity === undefined) {
+                            child.userData.baseOpacity = child.material.opacity;
+                        }
+                        child.material.opacity = child.userData.baseOpacity * (0.9 + pulseFactor * 0.5);
+                    }
+                    // Also pulse emissive intensity for glowing effect
+                    if (child.material.emissiveIntensity !== undefined) {
+                        if (child.userData.baseEmissive === undefined) {
+                            child.userData.baseEmissive = child.material.emissiveIntensity;
+                        }
+                        child.material.emissiveIntensity = child.userData.baseEmissive * (0.8 + pulseFactor * 1.2);
+                    }
+                }
+            });
         }
     });
 }
