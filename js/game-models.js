@@ -439,6 +439,20 @@ console.log('✅ Game models system loaded and ready');
 console.log('🚀 Auto-starting model loading...');
 loadAllModels().then(() => {
     console.log('✅ All models loaded and cached');
+
+    // Initialize camera system now that models are ready
+    console.log('🔍 Checking if camera system should be initialized...');
+    console.log('  - initCameraSystem function exists?', typeof initCameraSystem === 'function');
+    console.log('  - window.gameCamera exists?', !!window.gameCamera);
+    console.log('  - scene exists?', typeof scene !== 'undefined' && !!scene);
+
+    if (typeof initCameraSystem === 'function' && window.gameCamera && typeof scene !== 'undefined' && scene) {
+        console.log('🎥 Initializing camera system after auto-load...');
+        initCameraSystem(window.gameCamera, scene);
+        console.log('✅ Camera system initialized with player ship');
+    } else {
+        console.log('⏳ Camera system not ready yet - will initialize later');
+    }
 }).catch(err => {
     console.error('❌ Model loading failed:', err);
 });
