@@ -35,7 +35,7 @@ function initCameraSystem(camera, scene) {
 
         if (playerModel) {
             // Don't attach to camera - keep it in the scene
-            playerModel.scale.set(60, 60, 60);  // Made 60x bigger for easy visibility
+            playerModel.scale.set(100, 100, 100);  // Made 100x bigger for easy visibility
             playerModel.position.set(0, 0, 0);
 
             // Make sure it's oriented correctly
@@ -157,15 +157,15 @@ function toggleCameraView() {
  */
 function updateCameraView(camera) {
     if (cameraState.mode === 'third-person' && cameraState.playerShipMesh) {
-        // In third-person mode, position the ship model ahead and below camera
-        // so it's visible in the lower part of the screen
+        // In third-person mode, position ship at camera location
+        // Camera view is from behind the ship
 
-        // Start with camera position
+        // Position ship at camera location
         cameraState.playerShipMesh.position.copy(camera.position);
 
-        // Calculate forward and down offset in camera's local space
-        const forwardDistance = 30;  // Distance ahead of camera
-        const downOffset = 8;  // Distance below camera center
+        // Calculate offset to place ship in front of camera view
+        const forwardDistance = 50;  // Distance in front of camera for ship to be visible
+        const downOffset = 10;  // Distance below camera center
 
         // Create offset vector (forward in camera space is negative Z)
         const offset = new THREE.Vector3(0, -downOffset, -forwardDistance);
