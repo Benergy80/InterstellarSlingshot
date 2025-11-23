@@ -2,7 +2,15 @@
 // Handles loading and caching of enemy, boss, and player 3D models
 
 console.log('🎨 GAME MODELS SCRIPT LOADED 🎨');
-console.log('Loading game models system...');
+
+// Check if GLTFLoader is already available from the script tag
+if (typeof window.GLTFLoader !== 'undefined') {
+    console.log('✅ GLTFLoader is available from script tag');
+} else {
+    console.warn('⚠️ GLTFLoader not yet available, will load dynamically');
+}
+
+console.log('🔄 Initializing game models system...');
 
 // =============================================================================
 // GLTF LOADER SETUP
@@ -303,6 +311,7 @@ function attachPlayerModelToCamera(camera) {
 
 // Export functions to window for global access
 if (typeof window !== 'undefined') {
+    console.log('📦 Exporting model functions to window...');
     window.modelCache = modelCache;
     window.loadAllModels = loadAllModels;
     window.getEnemyModel = getEnemyModel;
@@ -313,6 +322,15 @@ if (typeof window !== 'undefined') {
     window.createEnemyMeshWithModel = createEnemyMeshWithModel;
     window.createBossMeshWithModel = createBossMeshWithModel;
     window.attachPlayerModelToCamera = attachPlayerModelToCamera;
+    console.log('✅ Model functions exported successfully');
 }
 
-console.log('✅ Game models system loaded');
+console.log('✅ Game models system loaded and ready');
+
+// Auto-start model loading when script loads
+console.log('🚀 Auto-starting model loading...');
+loadAllModels().then(() => {
+    console.log('✅ All models loaded and cached');
+}).catch(err => {
+    console.error('❌ Model loading failed:', err);
+});
