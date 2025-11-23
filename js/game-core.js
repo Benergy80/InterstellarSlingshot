@@ -1145,24 +1145,10 @@ if (typeof enemies !== 'undefined' && enemies.length > 0 && gameState.frameCount
 
     nearbyEnemies.forEach(enemy => {
         // Handle both simple Mesh and GLB model Group structures
-        if (enemy.isMesh && enemy.material && enemy.material.opacity !== undefined) {
-            // Simple mesh (fallback geometry)
-            if (enemy.userData.baseOpacity === undefined) {
-                enemy.userData.baseOpacity = enemy.material.opacity;
-            }
-            enemy.material.opacity = enemy.userData.baseOpacity * (0.9 + pulseFactor * 0.5);
+        // Check if this is a GLB model first (has children that are meshes)
+        const isGLBModel = enemy.type === 'Group' || (enemy.children && enemy.children.length > 0 && enemy.children.some(c => c.isMesh));
 
-            // Pulse the glow mesh if it exists
-            if (enemy.children && enemy.children[0]) {
-                const glow = enemy.children[0];
-                if (glow.material && glow.material.opacity !== undefined) {
-                    if (glow.userData.baseOpacity === undefined) {
-                        glow.userData.baseOpacity = glow.material.opacity;
-                    }
-                    glow.material.opacity = glow.userData.baseOpacity * (0.8 + pulseFactor * 0.9);
-                }
-            }
-        } else if (enemy.isGroup || (enemy.children && enemy.children.length > 0)) {
+        if (isGLBModel) {
             // GLB model Group - traverse all meshes and pulse their materials
             enemy.traverse((child) => {
                 if (child.isMesh && child.material) {
@@ -1183,6 +1169,23 @@ if (typeof enemies !== 'undefined' && enemies.length > 0 && gameState.frameCount
                     }
                 }
             });
+        } else if (enemy.isMesh && enemy.material && enemy.material.opacity !== undefined) {
+            // Simple mesh (fallback geometry)
+            if (enemy.userData.baseOpacity === undefined) {
+                enemy.userData.baseOpacity = enemy.material.opacity;
+            }
+            enemy.material.opacity = enemy.userData.baseOpacity * (0.9 + pulseFactor * 0.5);
+
+            // Pulse the glow mesh if it exists
+            if (enemy.children && enemy.children[0]) {
+                const glow = enemy.children[0];
+                if (glow.material && glow.material.opacity !== undefined) {
+                    if (glow.userData.baseOpacity === undefined) {
+                        glow.userData.baseOpacity = glow.material.opacity;
+                    }
+                    glow.material.opacity = glow.userData.baseOpacity * (0.8 + pulseFactor * 0.9);
+                }
+            }
         }
     });
 }

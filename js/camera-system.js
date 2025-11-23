@@ -48,13 +48,17 @@ function initCameraSystem(camera, scene) {
                     child.material = new THREE.MeshStandardMaterial({
                         color: 0x00ffff,  // Cyan color for player ship
                         emissive: 0x00ffff,
-                        emissiveIntensity: 1.5,  // Bright glow
+                        emissiveIntensity: 2.0,  // Very bright glow
                         metalness: 0.8,
                         roughness: 0.2,
-                        transparent: false
+                        transparent: false,
+                        side: THREE.DoubleSide,  // Ensure visible from all angles
+                        depthWrite: true,
+                        depthTest: true
                     });
                     child.castShadow = true;
                     child.receiveShadow = true;
+                    child.frustumCulled = false;  // Don't cull when off-screen
                 }
             });
 
@@ -84,7 +88,14 @@ function initCameraSystem(camera, scene) {
  */
 function toggleCameraView() {
     if (!cameraState.playerShipMesh) {
-        console.log('⚠️ No player ship model available for third-person view');
+        console.warn('⚠️ No player ship model available for third-person view');
+        console.warn('   Camera state:', cameraState);
+        console.warn('   Try re-initializing: initCameraSystem is', typeof initCameraSystem);
+
+        // Show notification to user
+        if (typeof showNotification === 'function') {
+            showNotification('Player model not loaded yet', 2000);
+        }
         return;
     }
 
@@ -93,6 +104,8 @@ function toggleCameraView() {
         cameraState.mode = 'third-person';
         cameraState.playerShipMesh.visible = true;
         console.log('📷 Switched to THIRD-PERSON view');
+        console.log('   Player ship position:', cameraState.playerShipMesh.position);
+        console.log('   Player ship visible:', cameraState.playerShipMesh.visible);
 
         // Show notification
         if (typeof showNotification === 'function') {
@@ -124,8 +137,8 @@ function updateCameraView(camera) {
         cameraState.playerShipMesh.position.copy(camera.position);
 
         // Calculate forward and down offset in camera's local space
-        const forwardDistance = 50;  // Distance ahead of camera
-        const downOffset = 15;  // Distance below camera center
+        const forwardDistance = 30;  // Distance ahead of camera (closer for better visibility)
+        const downOffset = 8;  // Distance below camera center (less offset)
 
         // Create offset vector (forward in camera space is negative Z)
         const offset = new THREE.Vector3(0, -downOffset, -forwardDistance);
@@ -138,6 +151,9 @@ function updateCameraView(camera) {
 
         // Orient ship to match camera facing direction
         cameraState.playerShipMesh.rotation.copy(camera.rotation);
+
+        // Ensure the model is always visible
+        cameraState.playerShipMesh.visible = true;
     }
 }
 

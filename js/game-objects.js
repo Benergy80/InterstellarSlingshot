@@ -4160,20 +4160,27 @@ function createEnemies3D() {
 
         // Try to use 3D model first, fallback to geometry (use galaxy 1 model for local pirates)
         let enemy;
+        let isGLBModel = false;
         if (typeof createEnemyMeshWithModel === 'function') {
             enemy = createEnemyMeshWithModel(1, enemyGeometry, materials.enemyMaterial);
+            // Check if we got a GLB model (Group) or fallback mesh
+            isGLBModel = enemy.isGroup || (enemy.children && enemy.children.length > 0 && enemy.children[0].isMesh);
         } else {
             enemy = new THREE.Mesh(enemyGeometry, materials.enemyMaterial);
         }
 
-        const glowGeometry = enemyGeometry.clone();
-        const glow = new THREE.Mesh(glowGeometry, materials.glowMaterial);
-        glow.scale.multiplyScalar(materials.glowScale);
-        
-        glow.visible = true;
-        glow.frustumCulled = false;
-        
-        enemy.add(glow);
+        // Only add procedural glow to fallback geometry enemies
+        // GLB models have their own materials and don't need procedural glow
+        if (!isGLBModel) {
+            const glowGeometry = enemyGeometry.clone();
+            const glow = new THREE.Mesh(glowGeometry, materials.glowMaterial);
+            glow.scale.multiplyScalar(materials.glowScale);
+
+            glow.visible = true;
+            glow.frustumCulled = false;
+
+            enemy.add(glow);
+        }
         
         // Position around local system
         const angle = (i / 10) * Math.PI * 2 + Math.random() * 0.5;

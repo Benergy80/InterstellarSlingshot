@@ -347,11 +347,12 @@ function createEnemyMeshWithModel(regionId, fallbackGeometry, material) {
                 if (child.material) {
                     // Keep existing material, just enhance it
                     child.material.emissive = material.emissive || material.color;
-                    child.material.emissiveIntensity = 1.0;
+                    child.material.emissiveIntensity = 1.5;  // Brighter glow for better visibility
                     child.material.metalness = 0.7;
                     child.material.roughness = 0.3;
                     child.material.transparent = true;
-                    child.material.opacity = material.opacity || 0.9;
+                    child.material.opacity = 1.0;  // Start fully opaque, pulsing will animate this
+                    child.material.depthWrite = true;  // Ensure proper depth rendering
                     child.material.needsUpdate = true;
                 }
                 child.castShadow = true;
