@@ -407,7 +407,7 @@ function createAsteroidExplosion(position, radius = 1) {
         if (explosionGroup.parent) {
             scene.remove(explosionGroup);
         }
-        console.log('Balanced asteroid explosion cleanup complete');
+        // console.log('Balanced asteroid explosion cleanup complete');
     }, 2000); // Reduced from 3000ms to 2000ms
 }
 

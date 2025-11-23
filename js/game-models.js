@@ -273,11 +273,11 @@ async function loadAllModels() {
 // Get enemy model for a specific region (1-8)
 function getEnemyModel(regionId) {
     const model = modelCache.enemies[regionId];
-    console.log(`🔍 getEnemyModel(${regionId}) - model in cache:`, !!model);
+    // console.log(`🔍 getEnemyModel(${regionId}) - model in cache:`, !!model);
     if (model) {
         // Clone the model so we can have multiple instances
         const clone = model.clone();
-        console.log(`   Cloned model type:`, clone.type, `isGroup:`, clone.isGroup, `children:`, clone.children.length);
+        // console.log(`   Cloned model type:`, clone.type, `isGroup:`, clone.isGroup, `children:`, clone.children.length);
         return clone;
     }
     console.log(`   ❌ No model in cache for region ${regionId}, returning null`);
@@ -328,7 +328,7 @@ function createEnemyMeshWithModel(regionId, fallbackGeometry, material) {
 
     if (model) {
         // Use the GLB model
-        console.log(`Using GLB model for Enemy ${regionId}`);
+        // console.log(`Using GLB model for Enemy ${regionId}`);
 
         // Debug: Log what's in the model
         let meshCount = 0;
@@ -369,10 +369,10 @@ function createEnemyMeshWithModel(regionId, fallbackGeometry, material) {
                 child.receiveShadow = false;
             }
         });
-        console.log(`  Enemy ${regionId} model: ${meshCount} mesh(es), ~${vertexCount} vertices total`);
+        // console.log(`  Enemy ${regionId} model: ${meshCount} mesh(es), ~${vertexCount} vertices total`);
 
-        // Scale enemy models to be MUCH more visible
-        model.scale.multiplyScalar(3.0);  // Increased from 1.5 to 3.0 for visibility
+        // Scale enemy models MASSIVELY for visibility
+        model.scale.multiplyScalar(50.0);  // Made 50x bigger for easy visibility
 
         return model;
     } else {
@@ -388,7 +388,7 @@ function createBossMeshWithModel(regionId, fallbackGeometry, material) {
 
     if (model) {
         // Use the GLB model
-        console.log(`Using GLB model for Boss ${regionId}`);
+        // console.log(`Using GLB model for Boss ${regionId}`);
 
         // CRITICAL: Set the entire model visible first
         model.visible = true;
@@ -420,8 +420,8 @@ function createBossMeshWithModel(regionId, fallbackGeometry, material) {
             }
         });
 
-        // Bosses are larger
-        model.scale.multiplyScalar(4.0);  // Increased from 2.5 to 4.0
+        // Bosses are MUCH larger than enemies
+        model.scale.multiplyScalar(75.0);  // Made 75x bigger for easy visibility
 
         return model;
     } else {

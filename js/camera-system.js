@@ -35,7 +35,7 @@ function initCameraSystem(camera, scene) {
 
         if (playerModel) {
             // Don't attach to camera - keep it in the scene
-            playerModel.scale.set(4, 4, 4);  // Make player ship MUCH larger and visible
+            playerModel.scale.set(60, 60, 60);  // Made 60x bigger for easy visibility
             playerModel.position.set(0, 0, 0);
 
             // Make sure it's oriented correctly
