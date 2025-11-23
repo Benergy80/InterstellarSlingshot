@@ -2319,7 +2319,16 @@ function initializeControlButtons() {
             togglePause();
             return;
         }
-        
+
+        // Add third-person camera toggle
+        if (e.key === '3') {
+            e.preventDefault();
+            if (typeof toggleCameraView === 'function') {
+                toggleCameraView();
+            }
+            return;
+        }
+
         if (gameState.paused) return;  // MAKE SURE THIS LINE EXISTS
         
         if (e.key === 'Tab' || e.key === 'Enter') {

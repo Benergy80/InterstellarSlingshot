@@ -627,13 +627,10 @@ function startGame() {
             loadAllModels().then(() => {
                 console.log('✅ 3D models loaded successfully');
 
-                // Attach player model to camera if available
-                if (typeof attachPlayerModelToCamera === 'function' && window.gameCamera) {
-                    const playerShip = attachPlayerModelToCamera(window.gameCamera);
-                    if (playerShip) {
-                        window.playerShip = playerShip;
-                        console.log('✅ Player ship model attached to camera');
-                    }
+                // Initialize camera system for first/third-person views
+                if (typeof initCameraSystem === 'function' && window.gameCamera && scene) {
+                    initCameraSystem(window.gameCamera, scene);
+                    console.log('✅ Camera system initialized with player ship');
                 }
             }).catch(err => {
                 console.warn('⚠️ Some models failed to load, using fallback geometry:', err);
@@ -950,7 +947,12 @@ function animate() {
         renderer.render(scene, camera);
         return; // Stop all game updates when game over
     }
-    
+
+    // Update camera view for third-person mode
+    if (typeof updateCameraView === 'function') {
+        updateCameraView(camera);
+    }
+
     // Add this inside your animate() function
 if (typeof animateNebulaBrownDwarfs !== 'undefined') {
     animateNebulaBrownDwarfs();
