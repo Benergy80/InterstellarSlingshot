@@ -576,8 +576,11 @@ function isPositionTooClose(position, minDistance) {
 
 // SIMPLIFIED: Direct initialization without complex dependency checking
 function startGame() {
+    console.log('========================================');
+    console.log('🚀 START GAME CALLED');
+    console.log('========================================');
     console.log('Starting enhanced game initialization...');
-    
+
     try {
         // Initialize Three.js
         scene = new THREE.Scene();
@@ -622,36 +625,62 @@ function startGame() {
         console.log('Animation started');
 
         // Initialize camera system with player ship
-        // Models may already be loaded from auto-load, so we'll initialize regardless
-        console.log('🎥 Initializing camera system...');
+        console.log('========================================');
+        console.log('🎥 CAMERA SYSTEM INITIALIZATION START');
+        console.log('========================================');
         console.log('  - Camera ready:', !!window.gameCamera);
         console.log('  - Scene ready:', !!scene);
-        console.log('  - initCameraSystem available:', typeof initCameraSystem === 'function');
-        console.log('  - Models loaded:', typeof areModelsLoaded === 'function' ? areModelsLoaded() : 'unknown');
+        console.log('  - initCameraSystem function available:', typeof initCameraSystem);
+        console.log('  - areModelsLoaded function available:', typeof areModelsLoaded);
+        console.log('  - getPlayerModel function available:', typeof getPlayerModel);
+
+        if (typeof areModelsLoaded === 'function') {
+            console.log('  - Models loaded status:', areModelsLoaded());
+        }
+
+        if (typeof getPlayerModel === 'function') {
+            const testModel = getPlayerModel();
+            console.log('  - Test getPlayerModel() result:', !!testModel);
+        }
 
         // Initialize camera system now (models should be loaded from auto-load)
         if (typeof initCameraSystem === 'function' && window.gameCamera && scene) {
-            console.log('🎥 Calling initCameraSystem with camera and scene...');
+            console.log('✅ All prerequisites met, calling initCameraSystem...');
             initCameraSystem(window.gameCamera, scene);
-            console.log('✅ Camera system initialized');
+            console.log('✅ initCameraSystem call completed');
+            console.log('  - cameraState.initialized:', window.cameraState ? window.cameraState.initialized : 'cameraState not found');
+            console.log('  - cameraState.playerShipMesh:', window.cameraState ? !!window.cameraState.playerShipMesh : 'cameraState not found');
         } else {
-            console.error('❌ Cannot initialize camera system - missing prerequisites');
+            console.error('❌ Cannot initialize camera system - missing prerequisites:');
+            console.error('   - initCameraSystem function:', typeof initCameraSystem);
+            console.error('   - window.gameCamera:', !!window.gameCamera);
+            console.error('   - scene:', !!scene);
         }
 
         // If models aren't loaded yet, wait for them
         if (typeof areModelsLoaded === 'function' && !areModelsLoaded()) {
-            console.log('⏳ Models not loaded yet, waiting...');
+            console.log('⏳ Models not loaded yet at camera init time, setting up delayed initialization...');
             if (typeof loadAllModels === 'function') {
                 loadAllModels().then(() => {
-                    console.log('✅ Models loaded, re-initializing camera system');
+                    console.log('========================================');
+                    console.log('🎥 DELAYED CAMERA INITIALIZATION (models just finished loading)');
+                    console.log('========================================');
                     if (typeof initCameraSystem === 'function' && window.gameCamera && scene) {
                         initCameraSystem(window.gameCamera, scene);
+                        console.log('✅ Delayed camera initialization complete');
+                        console.log('  - cameraState.initialized:', window.cameraState ? window.cameraState.initialized : 'cameraState not found');
+                        console.log('  - cameraState.playerShipMesh:', window.cameraState ? !!window.cameraState.playerShipMesh : 'cameraState not found');
                     }
                 }).catch(err => {
-                    console.warn('⚠️ Some models failed to load:', err);
+                    console.warn('⚠️ Model loading error during delayed init:', err);
                 });
             }
+        } else {
+            console.log('✅ Models already loaded, no delayed initialization needed');
         }
+        console.log('========================================');
+        console.log('🎥 CAMERA SYSTEM INITIALIZATION END');
+        console.log('========================================');
 
         simulateLoading();
         console.log('Loading simulation started');
