@@ -300,45 +300,25 @@ function createEnemyMeshWithModel(regionId, fallbackGeometry, material) {
         // Use the GLB model
         console.log(`Using GLB model for Enemy ${regionId}`);
 
-        // Enhance the GLB model's materials to add emissive glow
-        // while preserving the original textures and appearance
-        const color = material.color;  // Get the game's enemy color
-
+        // Debug: Log what's in the model
+        let meshCount = 0;
+        let vertexCount = 0;
         model.traverse((child) => {
             if (child.isMesh) {
-                // Clone the original material to preserve it
-                if (child.material) {
-                    child.material = child.material.clone();
-
-                    // Add emissive glow to make it bright and visible
-                    child.material.emissive = color;
-                    child.material.emissiveIntensity = 0.5;
-
-                    // Add some transparency for the translucent effect
-                    child.material.transparent = true;
-                    child.material.opacity = 0.85;
-
-                    // Ensure it's self-lit
-                    if (child.material.type !== 'MeshBasicMaterial') {
-                        // Convert to MeshStandardMaterial if needed for better emissive
-                        const oldMat = child.material;
-                        child.material = new THREE.MeshStandardMaterial({
-                            color: oldMat.color || color,
-                            map: oldMat.map,
-                            emissive: color,
-                            emissiveIntensity: 0.6,
-                            transparent: true,
-                            opacity: 0.85,
-                            metalness: 0.3,
-                            roughness: 0.7
-                        });
+                meshCount++;
+                if (child.geometry) {
+                    const positions = child.geometry.attributes.position;
+                    if (positions) {
+                        vertexCount += positions.count;
                     }
                 }
-
+                // Use the game's material which already has the correct glow/transparency
+                child.material = material;
                 child.castShadow = true;
                 child.receiveShadow = true;
             }
         });
+        console.log(`  Enemy ${regionId} model: ${meshCount} mesh(es), ~${vertexCount} vertices total`);
 
         return model;
     } else {
@@ -356,41 +336,12 @@ function createBossMeshWithModel(regionId, fallbackGeometry, material) {
         // Use the GLB model
         console.log(`Using GLB model for Boss ${regionId}`);
 
-        // Enhance the GLB model's materials to add emissive glow
-        // while preserving the original textures and appearance
-        const color = material.color;  // Get the game's boss color
-
+        // Apply the game's bright, glowing material to all meshes in the model
+        // This ensures the model has the same visual appearance as the original bosses
         model.traverse((child) => {
             if (child.isMesh) {
-                // Clone the original material to preserve it
-                if (child.material) {
-                    child.material = child.material.clone();
-
-                    // Add emissive glow to make it bright and visible
-                    child.material.emissive = color;
-                    child.material.emissiveIntensity = 0.7;  // Bosses glow brighter
-
-                    // Add some transparency for the translucent effect
-                    child.material.transparent = true;
-                    child.material.opacity = 0.9;  // Bosses slightly more opaque
-
-                    // Ensure it's self-lit
-                    if (child.material.type !== 'MeshBasicMaterial') {
-                        // Convert to MeshStandardMaterial if needed for better emissive
-                        const oldMat = child.material;
-                        child.material = new THREE.MeshStandardMaterial({
-                            color: oldMat.color || color,
-                            map: oldMat.map,
-                            emissive: color,
-                            emissiveIntensity: 0.8,
-                            transparent: true,
-                            opacity: 0.9,
-                            metalness: 0.5,
-                            roughness: 0.5
-                        });
-                    }
-                }
-
+                // Use the game's material which already has the correct glow/transparency
+                child.material = material;
                 child.castShadow = true;
                 child.receiveShadow = true;
             }
