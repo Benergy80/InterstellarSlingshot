@@ -69,14 +69,16 @@ const modelCache = {
 // Load a single GLB model
 function loadGLBModel(path) {
     return new Promise((resolve, reject) => {
-        console.log(`📥 Attempting to load: ${path}`);
+        // Add cache-busting parameter to force reload
+        const cacheBustPath = `${path}?v=${Date.now()}`;
+        console.log(`📥 Attempting to load: ${cacheBustPath}`);
 
         try {
             const loader = new THREE.GLTFLoader();
             console.log(`🔧 GLTFLoader instantiated for: ${path}`);
 
             loader.load(
-                path,
+                cacheBustPath,
                 (gltf) => {
                     console.log(`✅ Successfully loaded model: ${path}`);
                     console.log(`   - Scene children:`, gltf.scene.children.length);
@@ -180,12 +182,30 @@ async function loadPlayerModel() {
 
     try {
         const model = await loadGLBModel(path);
+
+        // Debug: Log what's in the model
+        let meshCount = 0;
+        let vertexCount = 0;
+        model.traverse((child) => {
+            if (child.isMesh) {
+                meshCount++;
+                if (child.geometry) {
+                    const positions = child.geometry.attributes.position;
+                    if (positions) {
+                        vertexCount += positions.count;
+                    }
+                }
+            }
+        });
+        console.log(`  Player model: ${meshCount} mesh(es), ~${vertexCount} vertices total`);
+
         modelCache.player = model;
         modelCache.loadingProgress += (1 / 17) * 100; // 17 total models
-        console.log('✅ === PLAYER MODEL LOADED ===');
+        console.log('✅ === PLAYER MODEL LOADED AND CACHED ===');
     } catch (err) {
-        console.warn('⚠️ Failed to load Player.glb, player will be camera-only');
-        console.warn(`   Error:`, err.message);
+        console.error('❌ Failed to load Player.glb, player will be camera-only');
+        console.error(`   Error:`, err.message);
+        console.error(`   Stack:`, err.stack);
         modelCache.player = null;
     }
 }
@@ -272,9 +292,15 @@ function getBossModel(regionId) {
 
 // Get player model
 function getPlayerModel() {
+    console.log('🔍 getPlayerModel called');
+    console.log('  - Player model in cache?', !!modelCache.player);
     if (modelCache.player) {
-        return modelCache.player.clone();
+        console.log('  - Cloning player model...');
+        const clone = modelCache.player.clone();
+        console.log('  - Clone created successfully:', !!clone);
+        return clone;
     }
+    console.warn('⚠️ No player model in cache, returning null');
     return null;
 }
 

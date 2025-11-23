@@ -628,9 +628,21 @@ function startGame() {
                 console.log('✅ 3D models loaded successfully');
 
                 // Initialize camera system for first/third-person views
-                if (typeof initCameraSystem === 'function' && window.gameCamera && scene) {
-                    initCameraSystem(window.gameCamera, scene);
-                    console.log('✅ Camera system initialized with player ship');
+                console.log('🔍 Checking camera system prerequisites:');
+                console.log('  - initCameraSystem function exists?', typeof initCameraSystem === 'function');
+                console.log('  - window.gameCamera exists?', !!window.gameCamera);
+                console.log('  - scene exists?', !!scene);
+
+                if (typeof initCameraSystem === 'function') {
+                    if (window.gameCamera && scene) {
+                        console.log('🎥 Calling initCameraSystem...');
+                        initCameraSystem(window.gameCamera, scene);
+                        console.log('✅ Camera system initialized with player ship');
+                    } else {
+                        console.error('❌ Camera or scene not available for camera system initialization');
+                    }
+                } else {
+                    console.error('❌ initCameraSystem function not found');
                 }
             }).catch(err => {
                 console.warn('⚠️ Some models failed to load, using fallback geometry:', err);

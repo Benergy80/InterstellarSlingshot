@@ -17,10 +17,14 @@ const cameraState = {
  */
 function initCameraSystem(camera, scene) {
     console.log('🎥 Initializing camera system...');
+    console.log('  - Camera provided:', !!camera);
+    console.log('  - Scene provided:', !!scene);
 
     // Try to get the player model
     if (typeof getPlayerModel === 'function') {
+        console.log('  - getPlayerModel function found, calling it...');
         const playerModel = getPlayerModel();
+        console.log('  - getPlayerModel returned:', !!playerModel);
 
         if (playerModel) {
             // Don't attach to camera - keep it in the scene
@@ -38,12 +42,15 @@ function initCameraSystem(camera, scene) {
 
             console.log('✅ Player ship added to scene for third-person view');
         } else {
-            console.log('⚠️ No player model available');
+            console.warn('⚠️ getPlayerModel returned null/undefined - no player model available');
         }
+    } else {
+        console.error('❌ getPlayerModel function not found');
     }
 
     // Export to window for global access
     window.cameraState = cameraState;
+    console.log('🎥 Camera system initialization complete');
 }
 
 /**
