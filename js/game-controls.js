@@ -2774,7 +2774,7 @@ setTimeout(() => {
     console.log('âœ… Enhanced event listeners setup complete');
 
 function checkWeaponHits(targetPosition) {
-    const hitRadius = 50;
+    const hitRadius = 500;  // Increased to match new 120x scaled GLB models
 
     // Check BORG drone hits (from outer interstellar systems)
     if (typeof outerInterstellarSystems !== 'undefined') {

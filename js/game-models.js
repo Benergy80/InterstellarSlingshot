@@ -352,16 +352,16 @@ function createEnemyMeshWithModel(regionId, fallbackGeometry, material) {
                 child.visible = true;
                 child.frustumCulled = false;
 
-                // Use the SAME material as the original enemies for consistency
-                // Copy properties from the passed material parameter
+                // More defined material like asteroids - less transparent, more surface detail
                 child.material = new THREE.MeshBasicMaterial({
                     color: material.color || new THREE.Color(0xff0000),
-                    transparent: material.transparent !== undefined ? material.transparent : true,
-                    opacity: material.opacity !== undefined ? material.opacity : 0.6,  // Match original enemy opacity
-                    blending: material.blending || THREE.NormalBlending,
+                    transparent: true,
+                    opacity: 0.85,  // More opaque for better surface definition
+                    blending: THREE.NormalBlending,
                     depthWrite: true,
                     depthTest: true,
-                    side: THREE.DoubleSide  // Render both sides
+                    side: THREE.DoubleSide,
+                    wireframe: false  // Solid surface, not wireframe
                 });
 
                 child.castShadow = false;
@@ -370,8 +370,20 @@ function createEnemyMeshWithModel(regionId, fallbackGeometry, material) {
         });
         // console.log(`  Enemy ${regionId} model: ${meshCount} mesh(es), ~${vertexCount} vertices total`);
 
-        // Scale enemy models MASSIVELY for visibility
-        model.scale.multiplyScalar(150.0);  // Made 150x bigger for easy visibility
+        // Center the model to fix position offset issues
+        // Calculate bounding box to find center
+        const box = new THREE.Box3().setFromObject(model);
+        const center = box.getCenter(new THREE.Vector3());
+
+        // Offset all children to center the model at origin
+        model.traverse((child) => {
+            if (child.isMesh) {
+                child.position.sub(center);
+            }
+        });
+
+        // Scale enemy models (reduced by 20% from 150x to 120x)
+        model.scale.multiplyScalar(120.0);
 
         return model;
     } else {
@@ -401,16 +413,16 @@ function createBossMeshWithModel(regionId, fallbackGeometry, material) {
                 child.visible = true;
                 child.frustumCulled = false;
 
-                // Use the SAME material as the original bosses for consistency
-                // Copy properties from the passed material parameter
+                // More defined material like asteroids - less transparent, more surface detail
                 child.material = new THREE.MeshBasicMaterial({
                     color: material.color || new THREE.Color(0xff0000),
-                    transparent: material.transparent !== undefined ? material.transparent : true,
-                    opacity: material.opacity !== undefined ? material.opacity : 0.6,  // Match original boss opacity
-                    blending: material.blending || THREE.NormalBlending,
+                    transparent: true,
+                    opacity: 0.85,  // More opaque for better surface definition
+                    blending: THREE.NormalBlending,
                     depthWrite: true,
                     depthTest: true,
-                    side: THREE.DoubleSide  // Render both sides
+                    side: THREE.DoubleSide,
+                    wireframe: false
                 });
 
                 child.castShadow = false;
@@ -418,8 +430,19 @@ function createBossMeshWithModel(regionId, fallbackGeometry, material) {
             }
         });
 
-        // Bosses are MUCH larger than enemies
-        model.scale.multiplyScalar(225.0);  // Made 225x bigger (3x bigger than 75x)
+        // Center the model to fix position offset issues
+        const box = new THREE.Box3().setFromObject(model);
+        const center = box.getCenter(new THREE.Vector3());
+
+        // Offset all children to center the model at origin
+        model.traverse((child) => {
+            if (child.isMesh) {
+                child.position.sub(center);
+            }
+        });
+
+        // Bosses are MUCH larger than enemies (reduced by 20% from 225x to 180x)
+        model.scale.multiplyScalar(180.0);
 
         return model;
     } else {

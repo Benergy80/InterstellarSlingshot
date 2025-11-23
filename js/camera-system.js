@@ -35,8 +35,19 @@ function initCameraSystem(camera, scene) {
 
         if (playerModel) {
             // Don't attach to camera - keep it in the scene
-            playerModel.scale.set(100, 100, 100);  // Made 100x bigger for easy visibility
+            playerModel.scale.set(80, 80, 80);  // Reduced by 20% (100 → 80)
             playerModel.position.set(0, 0, 0);
+
+            // Center the model to fix position offset issues
+            const box = new THREE.Box3().setFromObject(playerModel);
+            const center = box.getCenter(new THREE.Vector3());
+
+            // Offset all children to center the model at origin
+            playerModel.traverse((child) => {
+                if (child.isMesh) {
+                    child.position.sub(center);
+                }
+            });
 
             // Make sure it's oriented correctly
             playerModel.rotation.y = Math.PI;  // Face forward
