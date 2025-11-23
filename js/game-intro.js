@@ -183,8 +183,12 @@ function startGameWithIntro() {
 function initializeThreeJSForIntro() {
     // Initialize basic Three.js components
     scene = new THREE.Scene();
-    
+
     camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 250000);
+
+    // Store camera reference for player model attachment
+    window.gameCamera = camera;
+
     renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
     renderer.setSize(window.innerWidth, window.innerHeight);
 
@@ -257,15 +261,35 @@ function initializeThreeJSForIntro() {
     blackOverlay.style.opacity = '1';
     blackOverlay.style.zIndex = '30'; // Above scene, below UI
     document.body.appendChild(blackOverlay);
-    
+
     console.log('⚫ Black overlay created immediately to prevent flash');
+
+    // Initialize camera system with player ship
+    console.log('========================================');
+    console.log('🎥 CAMERA SYSTEM INITIALIZATION (INTRO MODE)');
+    console.log('========================================');
+    console.log('  - Camera ready:', !!window.gameCamera);
+    console.log('  - Scene ready:', !!scene);
+    console.log('  - initCameraSystem function available:', typeof initCameraSystem);
+
+    if (typeof initCameraSystem === 'function' && window.gameCamera && scene) {
+        console.log('✅ Calling initCameraSystem...');
+        initCameraSystem(window.gameCamera, scene);
+        console.log('✅ Camera system initialized in intro mode');
+    } else {
+        console.warn('⚠️ Camera system initialization deferred - will retry after models load');
+    }
 }
 
 function initializeMinimalThreeJS() {
     // Initialize basic Three.js components for intro-skipped version
     scene = new THREE.Scene();
-    
+
     camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 250000);
+
+    // Store camera reference for player model attachment
+    window.gameCamera = camera;
+
     renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.setClearColor(0x000003); // dark blue not black
@@ -304,8 +328,24 @@ function initializeMinimalThreeJS() {
             gameState.velocityVector = new THREE.Vector3(0, 0, 0);
         }
     }
-    
+
     console.log('Minimal Three.js initialized for intro sequence');
+
+    // Initialize camera system with player ship
+    console.log('========================================');
+    console.log('🎥 CAMERA SYSTEM INITIALIZATION (MINIMAL/SKIP INTRO MODE)');
+    console.log('========================================');
+    console.log('  - Camera ready:', !!window.gameCamera);
+    console.log('  - Scene ready:', !!scene);
+    console.log('  - initCameraSystem function available:', typeof initCameraSystem);
+
+    if (typeof initCameraSystem === 'function' && window.gameCamera && scene) {
+        console.log('✅ Calling initCameraSystem...');
+        initCameraSystem(window.gameCamera, scene);
+        console.log('✅ Camera system initialized in minimal mode');
+    } else {
+        console.warn('⚠️ Camera system initialization deferred - will retry after models load');
+    }
 }
 
 // =============================================================================
