@@ -621,32 +621,36 @@ function startGame() {
         animate();
         console.log('Animation started');
 
-        // Load all 3D models (enemies, bosses, player)
-        if (typeof loadAllModels === 'function') {
-            console.log('🎨 Loading 3D models...');
-            loadAllModels().then(() => {
-                console.log('✅ 3D models loaded successfully');
+        // Initialize camera system with player ship
+        // Models may already be loaded from auto-load, so we'll initialize regardless
+        console.log('🎥 Initializing camera system...');
+        console.log('  - Camera ready:', !!window.gameCamera);
+        console.log('  - Scene ready:', !!scene);
+        console.log('  - initCameraSystem available:', typeof initCameraSystem === 'function');
+        console.log('  - Models loaded:', typeof areModelsLoaded === 'function' ? areModelsLoaded() : 'unknown');
 
-                // Initialize camera system for first/third-person views
-                console.log('🔍 Checking camera system prerequisites:');
-                console.log('  - initCameraSystem function exists?', typeof initCameraSystem === 'function');
-                console.log('  - window.gameCamera exists?', !!window.gameCamera);
-                console.log('  - scene exists?', !!scene);
+        // Initialize camera system now (models should be loaded from auto-load)
+        if (typeof initCameraSystem === 'function' && window.gameCamera && scene) {
+            console.log('🎥 Calling initCameraSystem with camera and scene...');
+            initCameraSystem(window.gameCamera, scene);
+            console.log('✅ Camera system initialized');
+        } else {
+            console.error('❌ Cannot initialize camera system - missing prerequisites');
+        }
 
-                if (typeof initCameraSystem === 'function') {
-                    if (window.gameCamera && scene) {
-                        console.log('🎥 Calling initCameraSystem...');
+        // If models aren't loaded yet, wait for them
+        if (typeof areModelsLoaded === 'function' && !areModelsLoaded()) {
+            console.log('⏳ Models not loaded yet, waiting...');
+            if (typeof loadAllModels === 'function') {
+                loadAllModels().then(() => {
+                    console.log('✅ Models loaded, re-initializing camera system');
+                    if (typeof initCameraSystem === 'function' && window.gameCamera && scene) {
                         initCameraSystem(window.gameCamera, scene);
-                        console.log('✅ Camera system initialized with player ship');
-                    } else {
-                        console.error('❌ Camera or scene not available for camera system initialization');
                     }
-                } else {
-                    console.error('❌ initCameraSystem function not found');
-                }
-            }).catch(err => {
-                console.warn('⚠️ Some models failed to load, using fallback geometry:', err);
-            });
+                }).catch(err => {
+                    console.warn('⚠️ Some models failed to load:', err);
+                });
+            }
         }
 
         simulateLoading();

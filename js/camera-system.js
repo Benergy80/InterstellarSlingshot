@@ -9,13 +9,20 @@ const cameraState = {
     playerShipMesh: null,  // Reference to the player ship 3D model
     thirdPersonDistance: 15,  // Distance behind ship
     thirdPersonHeight: 5,     // Height above ship
-    smoothing: 0.15           // Camera smoothing factor (lower = smoother)
+    smoothing: 0.15,          // Camera smoothing factor (lower = smoother)
+    initialized: false        // Flag to prevent double-initialization
 };
 
 /**
  * Initialize the camera system with the player ship model
  */
 function initCameraSystem(camera, scene) {
+    // Prevent double-initialization
+    if (cameraState.initialized && cameraState.playerShipMesh) {
+        console.log('🎥 Camera system already initialized, skipping...');
+        return;
+    }
+
     console.log('🎥 Initializing camera system...');
     console.log('  - Camera provided:', !!camera);
     console.log('  - Scene provided:', !!scene);
@@ -41,8 +48,10 @@ function initCameraSystem(camera, scene) {
             playerModel.visible = false;
 
             console.log('✅ Player ship added to scene for third-person view');
+            cameraState.initialized = true;
         } else {
             console.warn('⚠️ getPlayerModel returned null/undefined - no player model available');
+            console.warn('   Models may not be loaded yet. Try calling initCameraSystem again after models load.');
         }
     } else {
         console.error('❌ getPlayerModel function not found');
@@ -50,7 +59,7 @@ function initCameraSystem(camera, scene) {
 
     // Export to window for global access
     window.cameraState = cameraState;
-    console.log('🎥 Camera system initialization complete');
+    console.log('🎥 Camera system initialization complete (initialized:', cameraState.initialized, ')');
 }
 
 /**
