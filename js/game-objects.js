@@ -4330,8 +4330,15 @@ function loadGuardiansForGalaxy(galaxyId) {
         
         const distanceFromCenter = guardianOrbitRadius;
         const materials = createEnemyMaterial(shapeData, 'regular', distanceFromCenter);
-        const guardian = new THREE.Mesh(guardianGeometry, materials.enemyMaterial);
-        
+
+        // Try to use 3D model first, fallback to geometry (galaxyId+1 because models are 1-8, galaxies are 0-7)
+        let guardian;
+        if (typeof createEnemyMeshWithModel === 'function') {
+            guardian = createEnemyMeshWithModel(galaxyId + 1, guardianGeometry, materials.enemyMaterial);
+        } else {
+            guardian = new THREE.Mesh(guardianGeometry, materials.enemyMaterial);
+        }
+
         guardian.scale.multiplyScalar(1.3); // ⭐ Slightly larger
         
         const glowGeometry = guardianGeometry.clone();
