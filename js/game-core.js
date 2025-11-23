@@ -764,16 +764,57 @@ if (typeof createEnhancedWormholes === 'function') {
     console.log('Enhanced wormholes created');
 }
 
-// Create enemies for ALL galaxies on game start
-if (typeof createEnemies === 'function') {
-    createEnemies();
-    console.log('Enemy ships created for all galaxies');
-}
-            
-            // ADD THIS NEW CODE:
-if (typeof spawnBlackHoleGuardians === 'function') {
-    spawnBlackHoleGuardians();
-    console.log('Black Hole Guardians spawned');
+// Create enemies for ALL galaxies on game start - WAIT FOR MODELS TO LOAD FIRST
+// This ensures that 3D GLB models are available when enemies are created
+if (typeof areModelsLoaded === 'function' && areModelsLoaded()) {
+    // Models are already loaded, create enemies immediately
+    console.log('✅ Models loaded, creating enemies with 3D models...');
+    if (typeof createEnemies === 'function') {
+        createEnemies();
+        console.log('Enemy ships created for all galaxies');
+    }
+    if (typeof spawnBlackHoleGuardians === 'function') {
+        spawnBlackHoleGuardians();
+        console.log('Black Hole Guardians spawned');
+    }
+} else {
+    // Models not loaded yet, wait for them
+    console.log('⏳ Models not loaded yet, waiting before creating enemies...');
+    if (typeof loadAllModels === 'function') {
+        loadAllModels().then(() => {
+            console.log('✅ Models finished loading, now creating enemies with 3D models...');
+            if (typeof createEnemies === 'function') {
+                createEnemies();
+                console.log('Enemy ships created for all galaxies with GLB models');
+            }
+            if (typeof spawnBlackHoleGuardians === 'function') {
+                spawnBlackHoleGuardians();
+                console.log('Black Hole Guardians spawned with GLB models');
+            }
+        }).catch(err => {
+            console.warn('⚠️ Model loading error, creating enemies with fallback geometry:', err);
+            // Even if models fail to load, still create enemies (they'll use fallback geometry)
+            if (typeof createEnemies === 'function') {
+                createEnemies();
+                console.log('Enemy ships created with fallback geometry');
+            }
+            if (typeof spawnBlackHoleGuardians === 'function') {
+                spawnBlackHoleGuardians();
+                console.log('Black Hole Guardians spawned with fallback geometry');
+            }
+        });
+    } else {
+        // If loadAllModels isn't available, just create enemies normally
+        console.warn('⚠️ loadAllModels function not found, creating enemies immediately');
+        if (typeof createEnemies === 'function') {
+            createEnemies();
+            console.log('Enemy ships created');
+        }
+        if (typeof spawnBlackHoleGuardians === 'function') {
+            spawnBlackHoleGuardians();
+            console.log('Black Hole Guardians spawned');
+        }
+    }
 }
             
             // Initialize UI and controls
