@@ -352,21 +352,24 @@ function createEnemyMeshWithModel(regionId, fallbackGeometry, material) {
                 child.visible = true;
                 child.frustumCulled = false;
 
-                // PRESERVE the GLB model's material but enhance it with game colors
-                // DON'T replace it entirely - that makes models look like procedural geometry
-                if (child.material) {
-                    // Keep existing material, just enhance it
-                    child.material.emissive = material.emissive || material.color;
-                    child.material.emissiveIntensity = 2.5;  // MUCH brighter for visibility
-                    child.material.metalness = 0.7;
-                    child.material.roughness = 0.3;
-                    child.material.transparent = true;
-                    child.material.opacity = 1.0;  // Start fully opaque, pulsing will animate this
-                    child.material.depthWrite = true;  // Ensure proper depth rendering
-                    child.material.depthTest = true;
-                    child.material.side = THREE.DoubleSide;  // Render both sides
-                    child.material.needsUpdate = true;
-                }
+                // REPLACE the material entirely with a new glowing material
+                // This ensures proper rendering regardless of the GLB's original material
+                const enemyColor = material.color || new THREE.Color(0xff0000);
+                const emissiveColor = material.emissive || enemyColor;
+
+                child.material = new THREE.MeshStandardMaterial({
+                    color: enemyColor,
+                    emissive: emissiveColor,
+                    emissiveIntensity: 3.0,  // Very bright self-illumination
+                    metalness: 0.7,
+                    roughness: 0.3,
+                    transparent: true,
+                    opacity: 1.0,  // Start fully opaque, pulsing will animate this
+                    depthWrite: true,
+                    depthTest: true,
+                    side: THREE.DoubleSide  // Render both sides
+                });
+
                 child.castShadow = true;
                 child.receiveShadow = true;
             }
@@ -404,19 +407,24 @@ function createBossMeshWithModel(regionId, fallbackGeometry, material) {
                 child.visible = true;
                 child.frustumCulled = false;
 
-                // Keep existing material, just enhance it
-                if (child.material) {
-                    child.material.emissive = material.emissive || material.color;
-                    child.material.emissiveIntensity = 3.0;  // Bosses are VERY bright
-                    child.material.metalness = 0.8;
-                    child.material.roughness = 0.2;
-                    child.material.transparent = true;
-                    child.material.opacity = 1.0;
-                    child.material.depthWrite = true;
-                    child.material.depthTest = true;
-                    child.material.side = THREE.DoubleSide;
-                    child.material.needsUpdate = true;
-                }
+                // REPLACE the material entirely with a new glowing material
+                // This ensures proper rendering regardless of the GLB's original material
+                const bossColor = material.color || new THREE.Color(0xff0000);
+                const emissiveColor = material.emissive || bossColor;
+
+                child.material = new THREE.MeshStandardMaterial({
+                    color: bossColor,
+                    emissive: emissiveColor,
+                    emissiveIntensity: 4.0,  // Bosses are EXTREMELY bright
+                    metalness: 0.8,
+                    roughness: 0.2,
+                    transparent: true,
+                    opacity: 1.0,
+                    depthWrite: true,
+                    depthTest: true,
+                    side: THREE.DoubleSide  // Render both sides
+                });
+
                 child.castShadow = true;
                 child.receiveShadow = true;
             }
