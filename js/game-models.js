@@ -4,8 +4,8 @@
 console.log('🎨 GAME MODELS SCRIPT LOADED 🎨');
 
 // Check if GLTFLoader is already available from the script tag
-if (typeof window.GLTFLoader !== 'undefined') {
-    console.log('✅ GLTFLoader is available from script tag');
+if (typeof THREE !== 'undefined' && typeof THREE.GLTFLoader !== 'undefined') {
+    console.log('✅ GLTFLoader is available as THREE.GLTFLoader');
 } else {
     console.warn('⚠️ GLTFLoader not yet available, will load dynamically');
 }
@@ -19,19 +19,26 @@ console.log('🔄 Initializing game models system...');
 // Import GLTFLoader from CDN
 let GLTFLoader;
 
-// Load GLTFLoader from CDN
+// Load GLTFLoader from CDN (fallback - should be loaded via script tag)
 function loadGLTFLoader() {
     return new Promise((resolve, reject) => {
+        // GLTFLoader should already be loaded via script tag in index.html
+        if (typeof THREE !== 'undefined' && typeof THREE.GLTFLoader !== 'undefined') {
+            console.log('✅ Using existing THREE.GLTFLoader');
+            resolve();
+            return;
+        }
+
+        console.log('📥 Attempting to load GLTFLoader dynamically...');
         const script = document.createElement('script');
         script.src = 'https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js';
         script.onload = () => {
             console.log('✅ GLTFLoader script loaded from CDN');
-            // GLTFLoader is available as a global, not as THREE.GLTFLoader
-            if (typeof window.GLTFLoader !== 'undefined') {
-                console.log('✅ GLTFLoader constructor is available');
+            if (typeof THREE !== 'undefined' && typeof THREE.GLTFLoader !== 'undefined') {
+                console.log('✅ THREE.GLTFLoader is now available');
                 resolve();
             } else {
-                console.error('❌ GLTFLoader not found in window object');
+                console.error('❌ THREE.GLTFLoader not found after script load');
                 reject(new Error('GLTFLoader not found after script load'));
             }
         };
@@ -62,7 +69,7 @@ const modelCache = {
 // Load a single GLB model
 function loadGLBModel(path) {
     return new Promise((resolve, reject) => {
-        const loader = new window.GLTFLoader();
+        const loader = new THREE.GLTFLoader();
 
         loader.load(
             path,
@@ -152,11 +159,11 @@ async function loadAllModels() {
 
     try {
         // First, ensure GLTFLoader is available
-        if (typeof window.GLTFLoader === 'undefined') {
-            console.log('📦 GLTFLoader not found, loading from CDN...');
+        if (typeof THREE === 'undefined' || typeof THREE.GLTFLoader === 'undefined') {
+            console.log('📦 THREE.GLTFLoader not found, attempting to load...');
             await loadGLTFLoader();
         } else {
-            console.log('✅ GLTFLoader already available');
+            console.log('✅ THREE.GLTFLoader already available');
         }
 
         // Load all models in parallel
