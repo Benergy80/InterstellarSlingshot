@@ -352,17 +352,12 @@ function createEnemyMeshWithModel(regionId, fallbackGeometry, material) {
                 child.visible = true;
                 child.frustumCulled = false;
 
-                // REPLACE the material entirely with a new glowing material
-                // This ensures proper rendering regardless of the GLB's original material
+                // REPLACE with MeshBasicMaterial - always visible, unaffected by lighting
+                // MeshStandardMaterial requires scene lights which don't work well in dark space
                 const enemyColor = material.color || new THREE.Color(0xff0000);
-                const emissiveColor = material.emissive || enemyColor;
 
-                child.material = new THREE.MeshStandardMaterial({
+                child.material = new THREE.MeshBasicMaterial({
                     color: enemyColor,
-                    emissive: emissiveColor,
-                    emissiveIntensity: 3.0,  // Very bright self-illumination
-                    metalness: 0.7,
-                    roughness: 0.3,
                     transparent: true,
                     opacity: 1.0,  // Start fully opaque, pulsing will animate this
                     depthWrite: true,
@@ -370,8 +365,8 @@ function createEnemyMeshWithModel(regionId, fallbackGeometry, material) {
                     side: THREE.DoubleSide  // Render both sides
                 });
 
-                child.castShadow = true;
-                child.receiveShadow = true;
+                child.castShadow = false;  // Basic materials don't cast shadows
+                child.receiveShadow = false;
             }
         });
         console.log(`  Enemy ${regionId} model: ${meshCount} mesh(es), ~${vertexCount} vertices total`);
@@ -407,17 +402,12 @@ function createBossMeshWithModel(regionId, fallbackGeometry, material) {
                 child.visible = true;
                 child.frustumCulled = false;
 
-                // REPLACE the material entirely with a new glowing material
-                // This ensures proper rendering regardless of the GLB's original material
+                // REPLACE with MeshBasicMaterial - always visible, unaffected by lighting
+                // MeshStandardMaterial requires scene lights which don't work well in dark space
                 const bossColor = material.color || new THREE.Color(0xff0000);
-                const emissiveColor = material.emissive || bossColor;
 
-                child.material = new THREE.MeshStandardMaterial({
+                child.material = new THREE.MeshBasicMaterial({
                     color: bossColor,
-                    emissive: emissiveColor,
-                    emissiveIntensity: 4.0,  // Bosses are EXTREMELY bright
-                    metalness: 0.8,
-                    roughness: 0.2,
                     transparent: true,
                     opacity: 1.0,
                     depthWrite: true,
@@ -425,8 +415,8 @@ function createBossMeshWithModel(regionId, fallbackGeometry, material) {
                     side: THREE.DoubleSide  // Render both sides
                 });
 
-                child.castShadow = true;
-                child.receiveShadow = true;
+                child.castShadow = false;  // Basic materials don't cast shadows
+                child.receiveShadow = false;
             }
         });
 

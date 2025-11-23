@@ -52,13 +52,9 @@ function initCameraSystem(camera, scene) {
                     child.visible = true;
                     child.frustumCulled = false;
 
-                    // Create bright, glowing material for player ship
-                    child.material = new THREE.MeshStandardMaterial({
-                        color: 0x00ffff,  // Cyan color for player ship
-                        emissive: 0x00ffff,
-                        emissiveIntensity: 4.0,  // EXTREMELY bright glow
-                        metalness: 0.8,
-                        roughness: 0.2,
+                    // Use MeshBasicMaterial - always visible, unaffected by lighting
+                    child.material = new THREE.MeshBasicMaterial({
+                        color: 0x00ffff,  // Bright cyan color for player ship
                         transparent: true,
                         opacity: 1.0,
                         side: THREE.DoubleSide,  // Ensure visible from all angles
