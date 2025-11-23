@@ -1667,12 +1667,6 @@ if (planet.rotation && !planet.userData.isLocalStar) {
             if (planet.matrixAutoUpdate === false) {
                 planet.updateMatrix();
             }
-            
-            // Debug logging for verification (only for first few frames and when close)
-            const distanceToPlayer = camera.position.distanceTo(planet.position);
-            if (gameState.frameCount < 100 && gameState.frameCount % 30 === 0 && distanceToPlayer < 2000) {
-                console.log(`Adjusted orbit update: ${planet.userData.name} at speed ${baseSpeed.toFixed(4)}`);
-            }
         }
 // Moon orbital mechanics (relative to parent planet) - LOCAL COORDINATES
 else if (planet.userData.parentPlanet && planet.userData.orbitRadius > 0) {

@@ -342,8 +342,18 @@ function createEnemyMeshWithModel(regionId, fallbackGeometry, material) {
                         vertexCount += positions.count;
                     }
                 }
-                // Use the game's material which already has the correct glow/transparency
-                child.material = material;
+                // PRESERVE the GLB model's material but enhance it with game colors
+                // DON'T replace it entirely - that makes models look like procedural geometry
+                if (child.material) {
+                    // Keep existing material, just enhance it
+                    child.material.emissive = material.emissive || material.color;
+                    child.material.emissiveIntensity = 1.0;
+                    child.material.metalness = 0.7;
+                    child.material.roughness = 0.3;
+                    child.material.transparent = true;
+                    child.material.opacity = material.opacity || 0.9;
+                    child.material.needsUpdate = true;
+                }
                 child.castShadow = true;
                 child.receiveShadow = true;
             }
@@ -369,12 +379,20 @@ function createBossMeshWithModel(regionId, fallbackGeometry, material) {
         // Use the GLB model
         console.log(`Using GLB model for Boss ${regionId}`);
 
-        // Apply the game's bright, glowing material to all meshes in the model
-        // This ensures the model has the same visual appearance as the original bosses
+        // PRESERVE the GLB model's material but enhance it with game colors
+        // DON'T replace it entirely - that makes models look like procedural geometry
         model.traverse((child) => {
             if (child.isMesh) {
-                // Use the game's material which already has the correct glow/transparency
-                child.material = material;
+                // Keep existing material, just enhance it
+                if (child.material) {
+                    child.material.emissive = material.emissive || material.color;
+                    child.material.emissiveIntensity = 1.5;  // Bosses are brighter
+                    child.material.metalness = 0.8;
+                    child.material.roughness = 0.2;
+                    child.material.transparent = true;
+                    child.material.opacity = material.opacity || 0.9;
+                    child.material.needsUpdate = true;
+                }
                 child.castShadow = true;
                 child.receiveShadow = true;
             }

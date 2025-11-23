@@ -117,36 +117,27 @@ function toggleCameraView() {
  */
 function updateCameraView(camera) {
     if (cameraState.mode === 'third-person' && cameraState.playerShipMesh) {
-        // Update player ship position to match camera (inverse of normal)
-        // The ship follows the camera's position
+        // In third-person mode, position the ship model ahead and below camera
+        // so it's visible in the lower part of the screen
+
+        // Start with camera position
         cameraState.playerShipMesh.position.copy(camera.position);
 
-        // Match camera rotation
-        cameraState.playerShipMesh.rotation.copy(camera.rotation);
+        // Calculate forward and down offset in camera's local space
+        const forwardDistance = 50;  // Distance ahead of camera
+        const downOffset = 15;  // Distance below camera center
 
-        // Offset the camera behind and above the ship
-        const distance = cameraState.thirdPersonDistance;
-        const height = cameraState.thirdPersonHeight;
+        // Create offset vector (forward in camera space is negative Z)
+        const offset = new THREE.Vector3(0, -downOffset, -forwardDistance);
 
-        // Calculate offset in local space
-        const offset = new THREE.Vector3(0, height, distance);
-
-        // Transform offset by camera's rotation to get world space offset
+        // Rotate offset by camera's orientation
         offset.applyQuaternion(camera.quaternion);
 
-        // Target position is ship position plus offset
-        const targetPosition = new THREE.Vector3()
-            .copy(cameraState.playerShipMesh.position)
-            .add(offset);
+        // Apply offset to ship position
+        cameraState.playerShipMesh.position.add(offset);
 
-        // Smoothly interpolate camera to target position
-        camera.position.lerp(targetPosition, cameraState.smoothing);
-
-        // Camera looks at the ship
-        const lookAtTarget = new THREE.Vector3()
-            .copy(cameraState.playerShipMesh.position);
-
-        camera.lookAt(lookAtTarget);
+        // Orient ship to match camera facing direction
+        cameraState.playerShipMesh.rotation.copy(camera.rotation);
     }
 }
 
