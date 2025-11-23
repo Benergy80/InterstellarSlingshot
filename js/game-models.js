@@ -1,6 +1,7 @@
 // Game Models - GLB Model Loading and Management System
 // Handles loading and caching of enemy, boss, and player 3D models
 
+console.log('🎨 GAME MODELS SCRIPT LOADED 🎨');
 console.log('Loading game models system...');
 
 // =============================================================================
@@ -16,12 +17,18 @@ function loadGLTFLoader() {
         const script = document.createElement('script');
         script.src = 'https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js';
         script.onload = () => {
-            console.log('✅ GLTFLoader loaded successfully');
-            GLTFLoader = THREE.GLTFLoader;
-            resolve();
+            console.log('✅ GLTFLoader script loaded from CDN');
+            // GLTFLoader is available as a global, not as THREE.GLTFLoader
+            if (typeof window.GLTFLoader !== 'undefined') {
+                console.log('✅ GLTFLoader constructor is available');
+                resolve();
+            } else {
+                console.error('❌ GLTFLoader not found in window object');
+                reject(new Error('GLTFLoader not found after script load'));
+            }
         };
         script.onerror = () => {
-            console.error('❌ Failed to load GLTFLoader');
+            console.error('❌ Failed to load GLTFLoader script from CDN');
             reject(new Error('Failed to load GLTFLoader'));
         };
         document.head.appendChild(script);
@@ -47,7 +54,7 @@ const modelCache = {
 // Load a single GLB model
 function loadGLBModel(path) {
     return new Promise((resolve, reject) => {
-        const loader = new GLTFLoader();
+        const loader = new window.GLTFLoader();
 
         loader.load(
             path,
@@ -137,8 +144,11 @@ async function loadAllModels() {
 
     try {
         // First, ensure GLTFLoader is available
-        if (typeof THREE.GLTFLoader === 'undefined') {
+        if (typeof window.GLTFLoader === 'undefined') {
+            console.log('📦 GLTFLoader not found, loading from CDN...');
             await loadGLTFLoader();
+        } else {
+            console.log('✅ GLTFLoader already available');
         }
 
         // Load all models in parallel
