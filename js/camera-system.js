@@ -35,20 +35,28 @@ function initCameraSystem(camera, scene) {
 
         if (playerModel) {
             // Don't attach to camera - keep it in the scene
-            playerModel.scale.set(2, 2, 2);  // Make player ship visible and prominent
+            playerModel.scale.set(4, 4, 4);  // Make player ship MUCH larger and visible
             playerModel.position.set(0, 0, 0);
 
             // Make sure it's oriented correctly
             playerModel.rotation.y = Math.PI;  // Face forward
 
+            // CRITICAL: Make the entire model visible
+            playerModel.visible = false;  // Start hidden (first-person mode)
+            playerModel.frustumCulled = false;
+
             // Apply bright, self-lit material to all meshes
             playerModel.traverse((child) => {
                 if (child.isMesh) {
+                    // CRITICAL: Make each mesh visible
+                    child.visible = true;
+                    child.frustumCulled = false;
+
                     // Create bright, glowing material for player ship
                     child.material = new THREE.MeshStandardMaterial({
                         color: 0x00ffff,  // Cyan color for player ship
                         emissive: 0x00ffff,
-                        emissiveIntensity: 2.0,  // Very bright glow
+                        emissiveIntensity: 3.0,  // VERY bright glow
                         metalness: 0.8,
                         roughness: 0.2,
                         transparent: false,
@@ -58,7 +66,6 @@ function initCameraSystem(camera, scene) {
                     });
                     child.castShadow = true;
                     child.receiveShadow = true;
-                    child.frustumCulled = false;  // Don't cull when off-screen
                 }
             });
 
@@ -137,8 +144,8 @@ function updateCameraView(camera) {
         cameraState.playerShipMesh.position.copy(camera.position);
 
         // Calculate forward and down offset in camera's local space
-        const forwardDistance = 30;  // Distance ahead of camera (closer for better visibility)
-        const downOffset = 8;  // Distance below camera center (less offset)
+        const forwardDistance = 20;  // Distance ahead of camera (VERY close for visibility)
+        const downOffset = 5;  // Distance below camera center (minimal offset)
 
         // Create offset vector (forward in camera space is negative Z)
         const offset = new THREE.Vector3(0, -downOffset, -forwardDistance);

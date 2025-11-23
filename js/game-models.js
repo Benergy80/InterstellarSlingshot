@@ -333,6 +333,11 @@ function createEnemyMeshWithModel(regionId, fallbackGeometry, material) {
         // Debug: Log what's in the model
         let meshCount = 0;
         let vertexCount = 0;
+
+        // CRITICAL: Set the entire model visible first
+        model.visible = true;
+        model.frustumCulled = false;  // Don't cull when slightly off-screen
+
         model.traverse((child) => {
             if (child.isMesh) {
                 meshCount++;
@@ -342,17 +347,24 @@ function createEnemyMeshWithModel(regionId, fallbackGeometry, material) {
                         vertexCount += positions.count;
                     }
                 }
+
+                // CRITICAL: Make each mesh visible
+                child.visible = true;
+                child.frustumCulled = false;
+
                 // PRESERVE the GLB model's material but enhance it with game colors
                 // DON'T replace it entirely - that makes models look like procedural geometry
                 if (child.material) {
                     // Keep existing material, just enhance it
                     child.material.emissive = material.emissive || material.color;
-                    child.material.emissiveIntensity = 1.5;  // Brighter glow for better visibility
+                    child.material.emissiveIntensity = 2.5;  // MUCH brighter for visibility
                     child.material.metalness = 0.7;
                     child.material.roughness = 0.3;
                     child.material.transparent = true;
                     child.material.opacity = 1.0;  // Start fully opaque, pulsing will animate this
                     child.material.depthWrite = true;  // Ensure proper depth rendering
+                    child.material.depthTest = true;
+                    child.material.side = THREE.DoubleSide;  // Render both sides
                     child.material.needsUpdate = true;
                 }
                 child.castShadow = true;
@@ -361,8 +373,8 @@ function createEnemyMeshWithModel(regionId, fallbackGeometry, material) {
         });
         console.log(`  Enemy ${regionId} model: ${meshCount} mesh(es), ~${vertexCount} vertices total`);
 
-        // Scale enemy models to be more visible (similar to bosses but smaller)
-        model.scale.multiplyScalar(1.5);
+        // Scale enemy models to be MUCH more visible
+        model.scale.multiplyScalar(3.0);  // Increased from 1.5 to 3.0 for visibility
 
         return model;
     } else {
@@ -380,18 +392,29 @@ function createBossMeshWithModel(regionId, fallbackGeometry, material) {
         // Use the GLB model
         console.log(`Using GLB model for Boss ${regionId}`);
 
+        // CRITICAL: Set the entire model visible first
+        model.visible = true;
+        model.frustumCulled = false;
+
         // PRESERVE the GLB model's material but enhance it with game colors
         // DON'T replace it entirely - that makes models look like procedural geometry
         model.traverse((child) => {
             if (child.isMesh) {
+                // CRITICAL: Make each mesh visible
+                child.visible = true;
+                child.frustumCulled = false;
+
                 // Keep existing material, just enhance it
                 if (child.material) {
                     child.material.emissive = material.emissive || material.color;
-                    child.material.emissiveIntensity = 1.5;  // Bosses are brighter
+                    child.material.emissiveIntensity = 3.0;  // Bosses are VERY bright
                     child.material.metalness = 0.8;
                     child.material.roughness = 0.2;
                     child.material.transparent = true;
-                    child.material.opacity = material.opacity || 0.9;
+                    child.material.opacity = 1.0;
+                    child.material.depthWrite = true;
+                    child.material.depthTest = true;
+                    child.material.side = THREE.DoubleSide;
                     child.material.needsUpdate = true;
                 }
                 child.castShadow = true;
@@ -400,7 +423,7 @@ function createBossMeshWithModel(regionId, fallbackGeometry, material) {
         });
 
         // Bosses are larger
-        model.scale.multiplyScalar(2.5);
+        model.scale.multiplyScalar(4.0);  // Increased from 2.5 to 4.0
 
         return model;
     } else {
