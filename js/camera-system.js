@@ -56,10 +56,11 @@ function initCameraSystem(camera, scene) {
                     child.material = new THREE.MeshStandardMaterial({
                         color: 0x00ffff,  // Cyan color for player ship
                         emissive: 0x00ffff,
-                        emissiveIntensity: 3.0,  // VERY bright glow
+                        emissiveIntensity: 4.0,  // EXTREMELY bright glow
                         metalness: 0.8,
                         roughness: 0.2,
-                        transparent: false,
+                        transparent: true,
+                        opacity: 1.0,
                         side: THREE.DoubleSide,  // Ensure visible from all angles
                         depthWrite: true,
                         depthTest: true
@@ -110,9 +111,24 @@ function toggleCameraView() {
         // Switch to third-person
         cameraState.mode = 'third-person';
         cameraState.playerShipMesh.visible = true;
+
+        // CRITICAL: Explicitly set all child meshes to visible
+        cameraState.playerShipMesh.traverse((child) => {
+            if (child.isMesh) {
+                child.visible = true;
+            }
+        });
+
         console.log('📷 Switched to THIRD-PERSON view');
         console.log('   Player ship position:', cameraState.playerShipMesh.position);
         console.log('   Player ship visible:', cameraState.playerShipMesh.visible);
+
+        // Log child mesh visibility
+        let visibleMeshCount = 0;
+        cameraState.playerShipMesh.traverse((child) => {
+            if (child.isMesh && child.visible) visibleMeshCount++;
+        });
+        console.log('   Visible child meshes:', visibleMeshCount);
 
         // Show notification
         if (typeof showNotification === 'function') {
@@ -122,6 +138,14 @@ function toggleCameraView() {
         // Switch to first-person
         cameraState.mode = 'first-person';
         cameraState.playerShipMesh.visible = false;
+
+        // Hide all child meshes too
+        cameraState.playerShipMesh.traverse((child) => {
+            if (child.isMesh) {
+                child.visible = false;
+            }
+        });
+
         console.log('📷 Switched to FIRST-PERSON view');
 
         // Show notification
@@ -144,8 +168,8 @@ function updateCameraView(camera) {
         cameraState.playerShipMesh.position.copy(camera.position);
 
         // Calculate forward and down offset in camera's local space
-        const forwardDistance = 20;  // Distance ahead of camera (VERY close for visibility)
-        const downOffset = 5;  // Distance below camera center (minimal offset)
+        const forwardDistance = 30;  // Distance ahead of camera
+        const downOffset = 8;  // Distance below camera center
 
         // Create offset vector (forward in camera space is negative Z)
         const offset = new THREE.Vector3(0, -downOffset, -forwardDistance);
@@ -159,8 +183,13 @@ function updateCameraView(camera) {
         // Orient ship to match camera facing direction
         cameraState.playerShipMesh.rotation.copy(camera.rotation);
 
-        // Ensure the model is always visible
+        // Ensure the model and all children are visible
         cameraState.playerShipMesh.visible = true;
+        cameraState.playerShipMesh.traverse((child) => {
+            if (child.isMesh) {
+                child.visible = true;
+            }
+        });
     }
 }
 
