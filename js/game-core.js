@@ -527,6 +527,7 @@ function simulateLoading() {
     let progress = 0;
     const loadingTexts = [
         "Starting enhanced systems...",
+        "Loading 3D models...",
         "Loading cosmic data (doubled scale)...",
         "Calculating orbital mechanics...",
         "Initializing gravitational assist systems...",
@@ -594,6 +595,9 @@ function startGame() {
         scene.add(camera);  // Add camera to scene so the light works
         window.shipLight = shipLight;  // Store reference for potential adjustments
 
+        // Store camera reference for player model attachment later
+        window.gameCamera = camera;
+
         renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
         renderer.setSize(window.innerWidth, window.innerHeight);
         renderer.setClearColor(0x000003);
@@ -616,10 +620,29 @@ function startGame() {
         // Start animation first (most critical)
         animate();
         console.log('Animation started');
-        
+
+        // Load all 3D models (enemies, bosses, player)
+        if (typeof loadAllModels === 'function') {
+            console.log('🎨 Loading 3D models...');
+            loadAllModels().then(() => {
+                console.log('✅ 3D models loaded successfully');
+
+                // Attach player model to camera if available
+                if (typeof attachPlayerModelToCamera === 'function' && window.gameCamera) {
+                    const playerShip = attachPlayerModelToCamera(window.gameCamera);
+                    if (playerShip) {
+                        window.playerShip = playerShip;
+                        console.log('✅ Player ship model attached to camera');
+                    }
+                }
+            }).catch(err => {
+                console.warn('⚠️ Some models failed to load, using fallback geometry:', err);
+            });
+        }
+
         simulateLoading();
         console.log('Loading simulation started');
-        
+
         // Add this during game initialization (in startGame function)
 		initializeGalaxyDiscoverySystem();
         
