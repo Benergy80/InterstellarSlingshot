@@ -300,12 +300,41 @@ function createEnemyMeshWithModel(regionId, fallbackGeometry, material) {
         // Use the GLB model
         console.log(`Using GLB model for Enemy ${regionId}`);
 
-        // DON'T override the model's materials - keep the original GLB materials
-        // Just ensure shadows are enabled
+        // Enhance the GLB model's materials to add emissive glow
+        // while preserving the original textures and appearance
+        const color = material.color;  // Get the game's enemy color
+
         model.traverse((child) => {
             if (child.isMesh) {
-                // Keep the original material from the GLB file
-                // child.material = material;  // REMOVED - this was overriding the model's appearance!
+                // Clone the original material to preserve it
+                if (child.material) {
+                    child.material = child.material.clone();
+
+                    // Add emissive glow to make it bright and visible
+                    child.material.emissive = color;
+                    child.material.emissiveIntensity = 0.5;
+
+                    // Add some transparency for the translucent effect
+                    child.material.transparent = true;
+                    child.material.opacity = 0.85;
+
+                    // Ensure it's self-lit
+                    if (child.material.type !== 'MeshBasicMaterial') {
+                        // Convert to MeshStandardMaterial if needed for better emissive
+                        const oldMat = child.material;
+                        child.material = new THREE.MeshStandardMaterial({
+                            color: oldMat.color || color,
+                            map: oldMat.map,
+                            emissive: color,
+                            emissiveIntensity: 0.6,
+                            transparent: true,
+                            opacity: 0.85,
+                            metalness: 0.3,
+                            roughness: 0.7
+                        });
+                    }
+                }
+
                 child.castShadow = true;
                 child.receiveShadow = true;
             }
@@ -327,10 +356,41 @@ function createBossMeshWithModel(regionId, fallbackGeometry, material) {
         // Use the GLB model
         console.log(`Using GLB model for Boss ${regionId}`);
 
-        // Apply the game's material to all meshes in the model
+        // Enhance the GLB model's materials to add emissive glow
+        // while preserving the original textures and appearance
+        const color = material.color;  // Get the game's boss color
+
         model.traverse((child) => {
             if (child.isMesh) {
-                child.material = material;
+                // Clone the original material to preserve it
+                if (child.material) {
+                    child.material = child.material.clone();
+
+                    // Add emissive glow to make it bright and visible
+                    child.material.emissive = color;
+                    child.material.emissiveIntensity = 0.7;  // Bosses glow brighter
+
+                    // Add some transparency for the translucent effect
+                    child.material.transparent = true;
+                    child.material.opacity = 0.9;  // Bosses slightly more opaque
+
+                    // Ensure it's self-lit
+                    if (child.material.type !== 'MeshBasicMaterial') {
+                        // Convert to MeshStandardMaterial if needed for better emissive
+                        const oldMat = child.material;
+                        child.material = new THREE.MeshStandardMaterial({
+                            color: oldMat.color || color,
+                            map: oldMat.map,
+                            emissive: color,
+                            emissiveIntensity: 0.8,
+                            transparent: true,
+                            opacity: 0.9,
+                            metalness: 0.5,
+                            roughness: 0.5
+                        });
+                    }
+                }
+
                 child.castShadow = true;
                 child.receiveShadow = true;
             }
