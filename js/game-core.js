@@ -1562,7 +1562,9 @@ if (typeof checkCosmicFeatureInteractions === 'function' && typeof camera !== 'u
         updateCrosshairTargeting();
     }
     
-    // DIAGNOSTIC: Log expensive operations every 60 frames
+    // DIAGNOSTIC: Disabled to reduce console spam
+    // Uncomment below to debug performance issues
+    /*
     if (gameState.frameCount % 60 === 0) {
         console.log('=== FRAME DIAGNOSTIC ===');
         console.log('Map View:', gameState.mapView);
@@ -1574,6 +1576,7 @@ if (typeof checkCosmicFeatureInteractions === 'function' && typeof camera !== 'u
         console.log('Frame time:', frameTime.toFixed(2), 'ms');
         console.log('updateGalaxyMap called:', gameState.frameCount % 60 === 0 ? 'YES' : 'NO');
     }
+    */
 
     // ATMOSPHERIC PERSPECTIVE: Update distance-based effects
     // Optimized with caching - update every 15 frames for performance
