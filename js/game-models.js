@@ -323,7 +323,7 @@ function getModelLoadingProgress() {
 // =============================================================================
 
 // Create enemy mesh using GLB model or fallback geometry
-function createEnemyMeshWithModel(regionId, fallbackGeometry, material) {
+function createEnemyMeshWithModel(regionId, fallbackGeometry, material, scaleOverride) {
     const model = getEnemyModel(regionId);
 
     if (model) {
@@ -395,7 +395,7 @@ function createEnemyMeshWithModel(regionId, fallbackGeometry, material) {
             const glowMaterial = new THREE.MeshBasicMaterial({
                 color: glowColor,
                 transparent: true,
-                opacity: 0.5,
+                opacity: 0.3,  // Less opaque - will pulse from 0.0 to 0.6
                 blending: THREE.AdditiveBlending,
                 side: THREE.DoubleSide,
                 depthWrite: false,
@@ -411,8 +411,9 @@ function createEnemyMeshWithModel(regionId, fallbackGeometry, material) {
             child.add(glowMesh);
         });
 
-        // Scale enemy models (reduced by 20% from 150x to 120x)
-        model.scale.multiplyScalar(120.0);
+        // Scale enemy models (default 120x, but can be overridden)
+        const finalScale = scaleOverride !== undefined ? scaleOverride : 120.0;
+        model.scale.multiplyScalar(finalScale);
 
         return model;
     } else {
@@ -441,7 +442,7 @@ function createEnemyMeshWithModel(regionId, fallbackGeometry, material) {
         const glowMaterial = new THREE.MeshBasicMaterial({
             color: glowColor,
             transparent: true,
-            opacity: 0.5,
+            opacity: 0.3,  // Less opaque - will pulse from 0.0 to 0.6
             blending: THREE.AdditiveBlending,
             side: THREE.DoubleSide,
             depthWrite: false,

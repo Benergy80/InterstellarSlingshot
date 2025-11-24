@@ -4083,7 +4083,8 @@ function createEnemies3D() {
             let enemy;
             let isGLBModel = false;
             if (typeof createEnemyMeshWithModel === 'function') {
-                enemy = createEnemyMeshWithModel(g + 1, enemyGeometry, materials.enemyMaterial);
+                // Galaxy enemies are 20% smaller: 120 * 0.8 = 96
+                enemy = createEnemyMeshWithModel(g + 1, enemyGeometry, materials.enemyMaterial, 96.0);
                 // Check if we got a GLB model (Group) or fallback mesh
                 isGLBModel = enemy.isGroup || (enemy.children && enemy.children.length > 0 && enemy.children[0].isMesh);
             } else {

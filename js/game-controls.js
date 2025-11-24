@@ -425,7 +425,7 @@ function updateEnemyBehavior() {
                 
                 const targetPos = new THREE.Vector3(targetX, targetY, targetZ);
                 const direction = new THREE.Vector3().subVectors(targetPos, enemy.position).normalize();
-                enemy.position.add(direction.multiplyScalar((enemy.userData.speed || 0.5) * 0.1));
+                enemy.position.add(direction.multiplyScalar((enemy.userData.speed || 1.5) * 0.5));  // Increased patrol speed
             }
         });
         return; // Exit early - don't process combat logic during tutorial
@@ -504,9 +504,10 @@ function updateEnemyBehavior() {
         }
         
         if (enemy.userData.isActive) {
-            // Apply difficulty-based speed modifiers
-            const baseSpeed = enemy.userData.speed || 0.5;
-            const adjustedSpeed = baseSpeed * (isLocal ? difficultySettings.localSpeedMultiplier : difficultySettings.distantSpeedMultiplier);
+            // Apply difficulty-based speed modifiers with minimum speed of 1.5 (roughly 100km/s)
+            const baseSpeed = enemy.userData.speed || 1.5;  // Increased from 0.5 to 1.5
+            const speedMultiplier = isLocal ? difficultySettings.localSpeedMultiplier : difficultySettings.distantSpeedMultiplier;
+            const adjustedSpeed = Math.max(1.5, baseSpeed * speedMultiplier);  // Ensure minimum 1.5 speed
             
             if (isLocal) {
                 updateLocalEnemyBehavior(enemy, distanceToPlayer, adjustedSpeed, difficultySettings);
@@ -533,8 +534,10 @@ function updateEnemyBehavior() {
                 }
             }
         } else {
-            // Patrol behavior when not active
-            updatePatrolBehavior(enemy, camera.position, 0.2, Date.now() * 0.001);
+            // Patrol behavior when not active - maintain minimum speed
+            const baseSpeed = enemy.userData.speed || 1.5;
+            const patrolSpeed = Math.max(1.0, baseSpeed * 0.7);  // Patrol at 70% speed, minimum 1.0
+            updatePatrolBehavior(enemy, camera.position, patrolSpeed, Date.now() * 0.001);
         }
         
     });
