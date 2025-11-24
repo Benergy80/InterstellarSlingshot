@@ -105,12 +105,31 @@ function applyEnemyRotation(enemy, direction, speed) {
         // Add very slow tumble for variety
         enemy.userData.targetRotation.z += Math.sin(Date.now() * 0.00005 + (enemy.userData.tumbleSeed || 0)) * enemy.userData.tumbleRate;
 
-        // SMOOTH interpolation to target rotation (slightly faster for more responsive movement)
+        // ENHANCED: Track angular velocity (turn rate) for accuracy reduction
+        // Calculate how fast the enemy is turning (radians per frame)
+        const previousYaw = enemy.userData.previousYaw || currentYaw;
+        const actualYawDelta = currentYaw - previousYaw;
+        const turnRate = Math.abs(actualYawDelta);  // Radians per frame
+
+        // Store for next frame and for firing accuracy calculation
+        enemy.userData.previousYaw = currentYaw;
+        enemy.userData.turnRate = turnRate;
+
+        // Cap maximum turn rate (0.15 radians/frame ≈ 8.6 degrees/frame ≈ 516 degrees/second at 60fps)
+        const maxTurnRate = 0.15;  // Radians per frame
+        let lerpFactor = 0.03;  // Base lerp speed
+
+        // If turning too fast, reduce lerp to cap turn rate
+        if (Math.abs(normalizedYawDelta) > maxTurnRate) {
+            lerpFactor = maxTurnRate / Math.abs(normalizedYawDelta);
+        }
+
+        // SMOOTH interpolation to target rotation with turn rate limiting
         if (!enemy.rotation) enemy.rotation = new THREE.Euler();
 
-        enemy.rotation.x = THREE.MathUtils.lerp(enemy.rotation.x || 0, enemy.userData.targetRotation.x, 0.03);  // Increased from 0.01
-        enemy.rotation.y = THREE.MathUtils.lerp(enemy.rotation.y || 0, enemy.userData.targetRotation.y, 0.03);  // Increased from 0.01
-        enemy.rotation.z = THREE.MathUtils.lerp(enemy.rotation.z || 0, enemy.userData.targetRotation.z, 0.03);  // Increased from 0.01
+        enemy.rotation.x = THREE.MathUtils.lerp(enemy.rotation.x || 0, enemy.userData.targetRotation.x, lerpFactor);
+        enemy.rotation.y = THREE.MathUtils.lerp(enemy.rotation.y || 0, enemy.userData.targetRotation.y, lerpFactor);
+        enemy.rotation.z = THREE.MathUtils.lerp(enemy.rotation.z || 0, enemy.userData.targetRotation.z, lerpFactor);
     } catch (e) {
         // Ignore rotation errors
     }
@@ -759,9 +778,22 @@ function fireEnemyWeapon(enemy, difficultySettings) {
         
         // Cap damage to reasonable levels
         damage = Math.min(damage, 15);
-        
-        // Random chance to hit (makes combat more dynamic)
-if (Math.random() < 0.7) { // 70% hit chance
+
+        // ENHANCED: Accuracy reduction during evasive maneuvers
+        // Base accuracy: 70%, reduced by turn rate
+        let hitChance = 0.7;  // Base 70% hit chance
+
+        // Reduce accuracy when enemy is turning (evasive maneuvers)
+        const turnRate = enemy.userData.turnRate || 0;
+        if (turnRate > 0.01) {  // Only apply if turning significantly
+            // Turn rate of 0.15 rad/frame (max) = 50% accuracy penalty
+            // Turn rate of 0.075 rad/frame (half max) = 25% accuracy penalty
+            const accuracyPenalty = Math.min(turnRate * 3.33, 0.5);  // Max 50% penalty
+            hitChance = Math.max(0.2, hitChance - accuracyPenalty);  // Min 20% accuracy
+        }
+
+        // Random chance to hit based on adjusted accuracy
+        if (Math.random() < hitChance) {
     // Check black hole warp invulnerability
     const isInvulnerable = typeof isBlackHoleWarpInvulnerable === 'function' &&
                            isBlackHoleWarpInvulnerable();
