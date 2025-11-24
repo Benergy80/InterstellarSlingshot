@@ -1011,7 +1011,7 @@ function checkBossVictory(defeatedEnemy) {
         // Show victory message
         if (typeof showAchievement === 'function') {
             showAchievement('Elite Guardian Eliminated!',
-                `${defeatedEnemy.userData.name} has been defeated! Species ${faction} is now extinct!`);
+                `${defeatedEnemy.userData.name} has been defeated! Hostile Forces have been Eliminated!`);
         }
 
         return true;
