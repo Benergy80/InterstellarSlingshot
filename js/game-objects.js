@@ -746,7 +746,7 @@ function spawnBossForGalaxy(galaxyId) {
     // PRESERVED: Create boss flagship with all original features
     const bossGeometry = createEnemyGeometry(galaxyId); // PRESERVED: Use proper geometry system
     const shapeData = enemyShapes[galaxyId];
-    
+
     // PRESERVED: Enhanced boss material with all original properties
     const bossMaterial = new THREE.MeshStandardMaterial({
         color: new THREE.Color(shapeData.color).multiplyScalar(1.3), // PRESERVED: 1.3x brighter
@@ -755,9 +755,15 @@ function spawnBossForGalaxy(galaxyId) {
         emissive: new THREE.Color(shapeData.color).multiplyScalar(0.4), // PRESERVED: Strong emissive
         emissiveIntensity: 0.8
     });
-    
-    const boss = new THREE.Mesh(bossGeometry, bossMaterial);
-    boss.scale.multiplyScalar(2.5); // PRESERVED: Boss scaling
+
+    // Try to use 3D boss model first, fallback to geometry (galaxyId+1 because models are 1-8, galaxies are 0-7)
+    let boss;
+    if (typeof createBossMeshWithModel === 'function') {
+        boss = createBossMeshWithModel(galaxyId + 1, bossGeometry, bossMaterial);
+    } else {
+        boss = new THREE.Mesh(bossGeometry, bossMaterial);
+        boss.scale.multiplyScalar(2.5); // PRESERVED: Boss scaling (only if using fallback)
+    }
     
     // ENHANCED: Position boss using 3D coordinates
     boss.position.copy(bossPosition);
@@ -859,8 +865,14 @@ function spawnBossSupport(galaxyId, bossPosition, supportIndex) {
         emissive: new THREE.Color(shapeData.color).multiplyScalar(0.2),
         emissiveIntensity: 0.5
     });
-    
-    const support = new THREE.Mesh(supportGeometry, supportMaterial);
+
+    // Try to use 3D model first, fallback to geometry (galaxyId+1 because models are 1-8, galaxies are 0-7)
+    let support;
+    if (typeof createEnemyMeshWithModel === 'function') {
+        support = createEnemyMeshWithModel(galaxyId + 1, supportGeometry, supportMaterial);
+    } else {
+        support = new THREE.Mesh(supportGeometry, supportMaterial);
+    }
     
     // ENHANCED: Position around boss in 3D space
     const angle = (supportIndex / 3) * Math.PI * 2;
@@ -3060,8 +3072,8 @@ if (Math.random() < moonProbability) {
             if (planets && planets.push) {
                 planets.push(moon);
             }
-            
-            console.log(`      🌙 Added moon to ${planet.userData.name} in galaxy ${g}`);
+
+            // console.log(`      🌙 Added moon to ${planet.userData.name} in galaxy ${g}`);
         } catch (moonError) {
             console.error(`Error creating moon for planet in galaxy ${g}:`, moonError);
         }
@@ -3812,8 +3824,8 @@ function createEnhancedPlanetClustersInNebulas() {
                         ring.rotation.z = (Math.random() - 0.5) * 0.2;
                         planet.add(ring);
                     }
-                    
-                    console.log(`      💍 Added ${ringCount} rings to ${planet.userData.name}`);
+
+                    // console.log(`      💍 Added ${ringCount} rings to ${planet.userData.name}`);
                 }
                 
                 // Add MOON SYSTEMS - LARGER MOONS
@@ -4064,18 +4076,33 @@ function createEnemies3D() {
             
             const enemyPosition = getEnemyPlacementPosition(g, placementType);
             const distance = galaxy3DCenter.distanceTo(enemyPosition);
-            
-            const materials = createEnemyMaterial(shapeData, 'regular', distance);
-            const enemy = new THREE.Mesh(enemyGeometry, materials.enemyMaterial);
 
-            const glowGeometry = enemyGeometry.clone();
-            const glow = new THREE.Mesh(glowGeometry, materials.glowMaterial);
-            glow.scale.multiplyScalar(materials.glowScale);
-            
-            glow.visible = true;
-            glow.frustumCulled = false;
-            
-            enemy.add(glow);
+            const materials = createEnemyMaterial(shapeData, 'regular', distance);
+
+            // Try to use 3D model first, fallback to geometry (g+1 because models are 1-8, galaxies are 0-7)
+            let enemy;
+            let isGLBModel = false;
+            if (typeof createEnemyMeshWithModel === 'function') {
+                // Galaxy enemies are 20% smaller: 120 * 0.8 = 96
+                enemy = createEnemyMeshWithModel(g + 1, enemyGeometry, materials.enemyMaterial, 96.0);
+                // Check if we got a GLB model (Group) or fallback mesh
+                isGLBModel = enemy.isGroup || (enemy.children && enemy.children.length > 0 && enemy.children[0].isMesh);
+            } else {
+                enemy = new THREE.Mesh(enemyGeometry, materials.enemyMaterial);
+            }
+
+            // Only add procedural glow to fallback geometry enemies
+            // GLB models have their own materials and don't need procedural glow
+            if (!isGLBModel) {
+                const glowGeometry = enemyGeometry.clone();
+                const glow = new THREE.Mesh(glowGeometry, materials.glowMaterial);
+                glow.scale.multiplyScalar(materials.glowScale);
+
+                glow.visible = true;
+                glow.frustumCulled = false;
+
+                enemy.add(glow);
+            }
             enemy.position.copy(enemyPosition);
             
             // Determine if this enemy is in the local galaxy (galaxy 7)
@@ -4131,16 +4158,30 @@ function createEnemies3D() {
         const distance = 1800 + Math.random() * 1200;
         const localShapeData = { color: 0xff4444 };
         const materials = createEnemyMaterial(localShapeData, 'local', distance);
-        const enemy = new THREE.Mesh(enemyGeometry, materials.enemyMaterial);
 
-        const glowGeometry = enemyGeometry.clone();
-        const glow = new THREE.Mesh(glowGeometry, materials.glowMaterial);
-        glow.scale.multiplyScalar(materials.glowScale);
-        
-        glow.visible = true;
-        glow.frustumCulled = false;
-        
-        enemy.add(glow);
+        // Try to use 3D model first, fallback to geometry (use galaxy 1 model for local pirates)
+        let enemy;
+        let isGLBModel = false;
+        if (typeof createEnemyMeshWithModel === 'function') {
+            enemy = createEnemyMeshWithModel(1, enemyGeometry, materials.enemyMaterial);
+            // Check if we got a GLB model (Group) or fallback mesh
+            isGLBModel = enemy.isGroup || (enemy.children && enemy.children.length > 0 && enemy.children[0].isMesh);
+        } else {
+            enemy = new THREE.Mesh(enemyGeometry, materials.enemyMaterial);
+        }
+
+        // Only add procedural glow to fallback geometry enemies
+        // GLB models have their own materials and don't need procedural glow
+        if (!isGLBModel) {
+            const glowGeometry = enemyGeometry.clone();
+            const glow = new THREE.Mesh(glowGeometry, materials.glowMaterial);
+            glow.scale.multiplyScalar(materials.glowScale);
+
+            glow.visible = true;
+            glow.frustumCulled = false;
+
+            enemy.add(glow);
+        }
         
         // Position around local system
         const angle = (i / 10) * Math.PI * 2 + Math.random() * 0.5;
@@ -4304,8 +4345,15 @@ function loadGuardiansForGalaxy(galaxyId) {
         
         const distanceFromCenter = guardianOrbitRadius;
         const materials = createEnemyMaterial(shapeData, 'regular', distanceFromCenter);
-        const guardian = new THREE.Mesh(guardianGeometry, materials.enemyMaterial);
-        
+
+        // Try to use 3D model first, fallback to geometry (galaxyId+1 because models are 1-8, galaxies are 0-7)
+        let guardian;
+        if (typeof createEnemyMeshWithModel === 'function') {
+            guardian = createEnemyMeshWithModel(galaxyId + 1, guardianGeometry, materials.enemyMaterial);
+        } else {
+            guardian = new THREE.Mesh(guardianGeometry, materials.enemyMaterial);
+        }
+
         guardian.scale.multiplyScalar(1.3); // ⭐ Slightly larger
         
         const glowGeometry = guardianGeometry.clone();
@@ -5529,10 +5577,17 @@ function loadEnemiesForGalaxy(galaxyId) {
         
         const enemyPosition = getEnemyPlacementPosition(galaxyId, placementType);
         const distance = galaxy3DCenter.distanceTo(enemyPosition);
-        
+
         // Enhanced enemy creation with adaptive rendering
         const materials = createEnemyMaterial(shapeData, 'regular', distance);
-        const enemy = new THREE.Mesh(enemyGeometry, materials.enemyMaterial);
+
+        // Try to use 3D model first, fallback to geometry (galaxyId+1 because models are 1-8, galaxies are 0-7)
+        let enemy;
+        if (typeof createEnemyMeshWithModel === 'function') {
+            enemy = createEnemyMeshWithModel(galaxyId + 1, enemyGeometry, materials.enemyMaterial);
+        } else {
+            enemy = new THREE.Mesh(enemyGeometry, materials.enemyMaterial);
+        }
 
         const glowGeometry = enemyGeometry.clone();
         const glow = new THREE.Mesh(glowGeometry, materials.glowMaterial);

@@ -48,27 +48,88 @@ function adjustMinimumSpeed(speed) {
 // =============================================================================
 
 // UPDATED: Pursuit behavior
+// Helper: Add smooth rotation to enemy based on movement trajectory
+function applyEnemyRotation(enemy, direction, speed) {
+    if (!enemy || !direction) return;
+
+    try {
+        // Skip if not moving enough
+        const movementMagnitude = Math.sqrt(direction.x * direction.x + direction.y * direction.y + direction.z * direction.z);
+        if (movementMagnitude < 0.01) return;  // Increased threshold to reduce twitching
+
+        // Initialize rotation tracking if not exists
+        if (!enemy.userData.targetRotation) {
+            enemy.userData.targetRotation = {x: 0, y: 0, z: 0};
+        }
+        if (!enemy.userData.tumbleRate) {
+            enemy.userData.tumbleRate = (Math.random() - 0.5) * 0.05;  // Reduced tumble (was 0.1)
+        }
+
+        // Calculate target rotation to face movement direction (trajectory)
+        const lateralSpeed = Math.sqrt(direction.x * direction.x + direction.z * direction.z);
+
+        if (lateralSpeed > 0.01) {  // Only update yaw if moving laterally
+            // Yaw: Face the direction of horizontal movement
+            const targetYaw = Math.atan2(direction.x, direction.z);
+
+            // Store previous target for smoothing
+            if (!enemy.userData.prevTargetYaw) {
+                enemy.userData.prevTargetYaw = targetYaw;
+            }
+
+            // Smooth the target yaw to reduce twitching
+            enemy.userData.prevTargetYaw = THREE.MathUtils.lerp(enemy.userData.prevTargetYaw, targetYaw, 0.1);
+            enemy.userData.targetRotation.y = enemy.userData.prevTargetYaw;
+        }
+
+        // Pitch: Tilt based on vertical movement (very gentle)
+        if (lateralSpeed > 0.01) {
+            enemy.userData.targetRotation.x = -Math.atan2(direction.y, lateralSpeed) * 0.15;  // Even gentler
+        }
+
+        // Bank: Roll into turns based on change in yaw (very subtle)
+        const currentYaw = enemy.rotation.y || 0;
+        const yawDelta = enemy.userData.targetRotation.y - currentYaw;
+        const normalizedYawDelta = Math.atan2(Math.sin(yawDelta), Math.cos(yawDelta));
+        enemy.userData.targetRotation.z = normalizedYawDelta * 0.1;  // Reduced banking
+
+        // Add very slow tumble for variety
+        enemy.userData.targetRotation.z += Math.sin(Date.now() * 0.00005 + (enemy.userData.tumbleSeed || 0)) * enemy.userData.tumbleRate;
+
+        // VERY SMOOTH interpolation to target rotation
+        if (!enemy.rotation) enemy.rotation = new THREE.Euler();
+
+        enemy.rotation.x = THREE.MathUtils.lerp(enemy.rotation.x || 0, enemy.userData.targetRotation.x, 0.01);  // Even slower
+        enemy.rotation.y = THREE.MathUtils.lerp(enemy.rotation.y || 0, enemy.userData.targetRotation.y, 0.01);  // Even slower
+        enemy.rotation.z = THREE.MathUtils.lerp(enemy.rotation.z || 0, enemy.userData.targetRotation.z, 0.01);  // Even slower
+    } catch (e) {
+        // Ignore rotation errors
+    }
+}
+
 function updatePursuitBehavior(enemy, playerPos, speed, distance) {
     // Safety checks
     if (!enemy || !enemy.userData || !playerPos || typeof THREE === 'undefined') {
         return;
     }
-    
+
     try {
         if (distance > 100) {
             // Direct pursuit when far
             const direction = new THREE.Vector3().subVectors(playerPos, enemy.position).normalize();
             enemy.position.add(direction.multiplyScalar(speed));
+            applyEnemyRotation(enemy, direction, speed);  // Add rotation
         } else {
             // Circle strafe when close
             const angle = Date.now() * 0.001 + (enemy.userData.circlePhase || 0);
             const targetX = playerPos.x + Math.cos(angle) * 80;
             const targetZ = playerPos.z + Math.sin(angle) * 80;
             const targetY = playerPos.y + Math.sin(angle * 0.5) * 20;
-            
+
             const targetPos = new THREE.Vector3(targetX, targetY, targetZ);
             const direction = new THREE.Vector3().subVectors(targetPos, enemy.position).normalize();
             enemy.position.add(direction.multiplyScalar(speed * 0.8));
+            applyEnemyRotation(enemy, direction, speed * 0.8);  // Add rotation
         }
     } catch (e) {
         // Ignore movement errors if positions are invalid
@@ -94,6 +155,7 @@ function updateSwarmBehavior(enemy, playerPos, speed, time) {
         const targetPos = new THREE.Vector3(targetX, targetY, targetZ);
         const direction = new THREE.Vector3().subVectors(targetPos, enemy.position).normalize();
         enemy.position.add(direction.multiplyScalar(speed * 0.9));
+        applyEnemyRotation(enemy, direction, speed * 0.9);  // Add rotation
     } catch (e) {
         // Ignore movement errors
     }
@@ -105,17 +167,18 @@ function updateEvasionBehavior(enemy, playerPos, speed, time) {
     if (!enemy || !enemy.userData || !playerPos || typeof THREE === 'undefined') {
         return;
     }
-    
+
     try {
         // Move perpendicular to player direction
         const direction = new THREE.Vector3().subVectors(enemy.position, playerPos).normalize();
         const perpendicular = new THREE.Vector3(-direction.z, direction.y, direction.x);
-        
+
         // Add some randomness and oscillation
         const oscillation = Math.sin(time * 2 + (enemy.userData.circlePhase || 0)) * 0.5;
         const evasionVector = perpendicular.multiplyScalar(speed * (1 + oscillation));
-        
+
         enemy.position.add(evasionVector);
+        applyEnemyRotation(enemy, perpendicular, speed);  // Add rotation
     } catch (e) {
         // Ignore movement errors
     }
@@ -127,19 +190,20 @@ function updateFlankingBehavior(enemy, playerPos, speed, time) {
     if (!enemy || !enemy.userData || !playerPos || typeof THREE === 'undefined') {
         return;
     }
-    
+
     try {
         // Try to get behind or to the side of the player
         const flankAngle = (enemy.userData.circlePhase || 0) + Math.PI;
         const flankRadius = 150;
-        
+
         const targetX = playerPos.x + Math.cos(flankAngle) * flankRadius;
         const targetZ = playerPos.z + Math.sin(flankAngle) * flankRadius;
         const targetY = playerPos.y;
-        
+
         const targetPos = new THREE.Vector3(targetX, targetY, targetZ);
         const direction = new THREE.Vector3().subVectors(targetPos, enemy.position).normalize();
         enemy.position.add(direction.multiplyScalar(speed * 0.7));
+        applyEnemyRotation(enemy, direction, speed * 0.7);  // Add rotation
     } catch (e) {
         // Ignore movement errors
     }
@@ -151,25 +215,29 @@ function updateEngagementBehavior(enemy, playerPos, speed, time) {
     if (!enemy || !enemy.userData || !playerPos || typeof THREE === 'undefined') {
         return;
     }
-    
+
     try {
         // Maintain optimal attack distance
         const optimalDistance = 100;
         const currentDistance = enemy.position.distanceTo(playerPos);
-        
+
+        let direction;
         if (currentDistance > optimalDistance + 20) {
             // Move closer
-            const direction = new THREE.Vector3().subVectors(playerPos, enemy.position).normalize();
+            direction = new THREE.Vector3().subVectors(playerPos, enemy.position).normalize();
             enemy.position.add(direction.multiplyScalar(speed));
+            applyEnemyRotation(enemy, direction, speed);  // Add rotation
         } else if (currentDistance < optimalDistance - 20) {
             // Move away
-            const direction = new THREE.Vector3().subVectors(enemy.position, playerPos).normalize();
+            direction = new THREE.Vector3().subVectors(enemy.position, playerPos).normalize();
             enemy.position.add(direction.multiplyScalar(speed * 0.5));
+            applyEnemyRotation(enemy, direction, speed * 0.5);  // Add rotation
         } else {
             // Maintain position with slight movement
             const angle = time * 0.5;
             const offset = new THREE.Vector3(Math.cos(angle) * 10, 0, Math.sin(angle) * 10);
             enemy.position.add(offset.multiplyScalar(speed * 0.3));
+            applyEnemyRotation(enemy, offset, speed * 0.3);  // Add rotation
         }
     } catch (e) {
         // Ignore movement errors
@@ -196,8 +264,9 @@ function updatePatrolBehavior(enemy, playerPos, speed, time) {
         
         const targetPos = new THREE.Vector3(targetX, targetY, targetZ);
         const direction = new THREE.Vector3().subVectors(targetPos, enemy.position).normalize();
-        
+
         enemy.position.add(direction.multiplyScalar(speed * 0.3));
+        applyEnemyRotation(enemy, direction, speed * 0.3);  // Add rotation
     } catch (e) {
         // Ignore movement errors
     }
@@ -356,7 +425,7 @@ function updateEnemyBehavior() {
                 
                 const targetPos = new THREE.Vector3(targetX, targetY, targetZ);
                 const direction = new THREE.Vector3().subVectors(targetPos, enemy.position).normalize();
-                enemy.position.add(direction.multiplyScalar((enemy.userData.speed || 0.5) * 0.1));
+                enemy.position.add(direction.multiplyScalar((enemy.userData.speed || 1.5) * 0.5));  // Increased patrol speed
             }
         });
         return; // Exit early - don't process combat logic during tutorial
@@ -435,9 +504,10 @@ function updateEnemyBehavior() {
         }
         
         if (enemy.userData.isActive) {
-            // Apply difficulty-based speed modifiers
-            const baseSpeed = enemy.userData.speed || 0.5;
-            const adjustedSpeed = baseSpeed * (isLocal ? difficultySettings.localSpeedMultiplier : difficultySettings.distantSpeedMultiplier);
+            // Apply difficulty-based speed modifiers with minimum speed of 1.5 (roughly 100km/s)
+            const baseSpeed = enemy.userData.speed || 1.5;  // Increased from 0.5 to 1.5
+            const speedMultiplier = isLocal ? difficultySettings.localSpeedMultiplier : difficultySettings.distantSpeedMultiplier;
+            const adjustedSpeed = Math.max(1.5, baseSpeed * speedMultiplier);  // Ensure minimum 1.5 speed
             
             if (isLocal) {
                 updateLocalEnemyBehavior(enemy, distanceToPlayer, adjustedSpeed, difficultySettings);
@@ -464,8 +534,10 @@ function updateEnemyBehavior() {
                 }
             }
         } else {
-            // Patrol behavior when not active
-            updatePatrolBehavior(enemy, camera.position, 0.2, Date.now() * 0.001);
+            // Patrol behavior when not active - maintain minimum speed
+            const baseSpeed = enemy.userData.speed || 1.5;
+            const patrolSpeed = Math.max(1.0, baseSpeed * 0.7);  // Patrol at 70% speed, minimum 1.0
+            updatePatrolBehavior(enemy, camera.position, patrolSpeed, Date.now() * 0.001);
         }
         
     });
@@ -2319,7 +2391,16 @@ function initializeControlButtons() {
             togglePause();
             return;
         }
-        
+
+        // Add third-person camera toggle
+        if (e.key === '3') {
+            e.preventDefault();
+            if (typeof toggleCameraView === 'function') {
+                toggleCameraView();
+            }
+            return;
+        }
+
         if (gameState.paused) return;  // MAKE SURE THIS LINE EXISTS
         
         if (e.key === 'Tab' || e.key === 'Enter') {
@@ -2765,7 +2846,7 @@ setTimeout(() => {
     console.log('âœ… Enhanced event listeners setup complete');
 
 function checkWeaponHits(targetPosition) {
-    const hitRadius = 50;
+    const hitRadius = 150;  // Increased from 50 to match 120x scaled models (3x original)
 
     // Check BORG drone hits (from outer interstellar systems)
     if (typeof outerInterstellarSystems !== 'undefined') {
@@ -2808,8 +2889,29 @@ function checkWeaponHits(targetPosition) {
         enemies.forEach((enemy, enemyIndex) => {
             if (enemy.userData.health <= 0) return;
 
+            // Calculate hitbox relative to enemy model size
+            let enemyHitRadius = hitRadius * 3;  // Default fallback
+
+            // Calculate actual bounding box size if not cached
+            if (enemy.userData.hitRadius === undefined) {
+                try {
+                    const box = new THREE.Box3().setFromObject(enemy);
+                    const size = new THREE.Vector3();
+                    box.getSize(size);
+                    // Use the largest dimension as the hit radius
+                    enemyHitRadius = Math.max(size.x, size.y, size.z) / 2;
+                    // Cache it for performance
+                    enemy.userData.hitRadius = enemyHitRadius;
+                } catch (e) {
+                    // If bbox calculation fails, use default
+                    enemy.userData.hitRadius = hitRadius * 3;
+                }
+            } else {
+                enemyHitRadius = enemy.userData.hitRadius;
+            }
+
             const distance = enemy.position.distanceTo(targetPosition);
-            if (distance < hitRadius) {
+            if (distance < enemyHitRadius) {
                 const damage = 1; // Standard damage
                 enemy.userData.health -= damage;
                 

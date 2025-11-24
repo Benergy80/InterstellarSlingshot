@@ -24,7 +24,7 @@ const INTERSTELLAR_ASTEROID_CONFIG = {
 
 // Create interstellar asteroid fields between galaxies
 function createInterstellarAsteroidFields() {
-    console.log('🌌 Creating interstellar asteroid fields...');
+    // console.log('🌌 Creating interstellar asteroid fields...');
 
     if (typeof THREE === 'undefined' || typeof scene === 'undefined') {
         console.error('❌ THREE.js or scene not available');
@@ -37,7 +37,7 @@ function createInterstellarAsteroidFields() {
         createAsteroidField(fieldPos, fieldIndex);
     });
 
-    console.log(`✅ Created ${INTERSTELLAR_ASTEROID_CONFIG.fieldCount} interstellar asteroid fields with ${interstellarAsteroids.length} total asteroids`);
+    // console.log(`✅ Created ${INTERSTELLAR_ASTEROID_CONFIG.fieldCount} interstellar asteroid fields with ${interstellarAsteroids.length} total asteroids`);
 }
 
 // Generate positions for asteroid fields (between galaxies)
@@ -163,7 +163,7 @@ function createInterstellarAsteroid(position, size, velocity, fieldIndex, astero
     scene.add(asteroid);
     interstellarAsteroids.push(asteroid);
 
-    console.log(`  Created ${asteroid.userData.name} at (${position.x.toFixed(0)}, ${position.y.toFixed(0)}, ${position.z.toFixed(0)}) - size: ${size.toFixed(1)}, health: ${asteroid.userData.health}`);
+    // console.log(`  Created ${asteroid.userData.name} at (${position.x.toFixed(0)}, ${position.y.toFixed(0)}, ${position.z.toFixed(0)}) - size: ${size.toFixed(1)}, health: ${asteroid.userData.health}`);
 }
 
 // Update interstellar asteroids (movement and rotation)
@@ -248,7 +248,7 @@ function breakInterstellarAsteroid(asteroid, hitPosition, hitNormal) {
     // Destroy original asteroid
     destroyInterstellarAsteroid(asteroid);
 
-    console.log(`💥 Asteroid broke into ${breakupPieces} fragments (size: ${fragmentSize.toFixed(1)})`);
+    // console.log(`💥 Asteroid broke into ${breakupPieces} fragments (size: ${fragmentSize.toFixed(1)})`);
 }
 
 // Destroy an interstellar asteroid
@@ -299,7 +299,7 @@ function checkInterstellarAsteroidCollisions() {
 
 // Handle collision between two asteroids
 function handleAsteroidCollision(asteroidA, asteroidB) {
-    console.log(`💥 Asteroid collision: ${asteroidA.userData.name} vs ${asteroidB.userData.name}`);
+    // console.log(`💥 Asteroid collision: ${asteroidA.userData.name} vs ${asteroidB.userData.name}`);
 
     // Calculate collision point (midpoint between centers)
     const collisionPoint = new THREE.Vector3().addVectors(

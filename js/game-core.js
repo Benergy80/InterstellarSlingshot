@@ -527,6 +527,7 @@ function simulateLoading() {
     let progress = 0;
     const loadingTexts = [
         "Starting enhanced systems...",
+        "Loading 3D models...",
         "Loading cosmic data (doubled scale)...",
         "Calculating orbital mechanics...",
         "Initializing gravitational assist systems...",
@@ -575,8 +576,11 @@ function isPositionTooClose(position, minDistance) {
 
 // SIMPLIFIED: Direct initialization without complex dependency checking
 function startGame() {
+    console.log('========================================');
+    console.log('🚀 START GAME CALLED');
+    console.log('========================================');
     console.log('Starting enhanced game initialization...');
-    
+
     try {
         // Initialize Three.js
         scene = new THREE.Scene();
@@ -593,6 +597,9 @@ function startGame() {
         camera.add(shipLight);
         scene.add(camera);  // Add camera to scene so the light works
         window.shipLight = shipLight;  // Store reference for potential adjustments
+
+        // Store camera reference for player model attachment later
+        window.gameCamera = camera;
 
         renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
         renderer.setSize(window.innerWidth, window.innerHeight);
@@ -616,10 +623,68 @@ function startGame() {
         // Start animation first (most critical)
         animate();
         console.log('Animation started');
-        
+
+        // Initialize camera system with player ship
+        console.log('========================================');
+        console.log('🎥 CAMERA SYSTEM INITIALIZATION START');
+        console.log('========================================');
+        console.log('  - Camera ready:', !!window.gameCamera);
+        console.log('  - Scene ready:', !!scene);
+        console.log('  - initCameraSystem function available:', typeof initCameraSystem);
+        console.log('  - areModelsLoaded function available:', typeof areModelsLoaded);
+        console.log('  - getPlayerModel function available:', typeof getPlayerModel);
+
+        if (typeof areModelsLoaded === 'function') {
+            console.log('  - Models loaded status:', areModelsLoaded());
+        }
+
+        if (typeof getPlayerModel === 'function') {
+            const testModel = getPlayerModel();
+            console.log('  - Test getPlayerModel() result:', !!testModel);
+        }
+
+        // Initialize camera system now (models should be loaded from auto-load)
+        if (typeof initCameraSystem === 'function' && window.gameCamera && scene) {
+            console.log('✅ All prerequisites met, calling initCameraSystem...');
+            initCameraSystem(window.gameCamera, scene);
+            console.log('✅ initCameraSystem call completed');
+            console.log('  - cameraState.initialized:', window.cameraState ? window.cameraState.initialized : 'cameraState not found');
+            console.log('  - cameraState.playerShipMesh:', window.cameraState ? !!window.cameraState.playerShipMesh : 'cameraState not found');
+        } else {
+            console.error('❌ Cannot initialize camera system - missing prerequisites:');
+            console.error('   - initCameraSystem function:', typeof initCameraSystem);
+            console.error('   - window.gameCamera:', !!window.gameCamera);
+            console.error('   - scene:', !!scene);
+        }
+
+        // If models aren't loaded yet, wait for them
+        if (typeof areModelsLoaded === 'function' && !areModelsLoaded()) {
+            console.log('⏳ Models not loaded yet at camera init time, setting up delayed initialization...');
+            if (typeof loadAllModels === 'function') {
+                loadAllModels().then(() => {
+                    console.log('========================================');
+                    console.log('🎥 DELAYED CAMERA INITIALIZATION (models just finished loading)');
+                    console.log('========================================');
+                    if (typeof initCameraSystem === 'function' && window.gameCamera && scene) {
+                        initCameraSystem(window.gameCamera, scene);
+                        console.log('✅ Delayed camera initialization complete');
+                        console.log('  - cameraState.initialized:', window.cameraState ? window.cameraState.initialized : 'cameraState not found');
+                        console.log('  - cameraState.playerShipMesh:', window.cameraState ? !!window.cameraState.playerShipMesh : 'cameraState not found');
+                    }
+                }).catch(err => {
+                    console.warn('⚠️ Model loading error during delayed init:', err);
+                });
+            }
+        } else {
+            console.log('✅ Models already loaded, no delayed initialization needed');
+        }
+        console.log('========================================');
+        console.log('🎥 CAMERA SYSTEM INITIALIZATION END');
+        console.log('========================================');
+
         simulateLoading();
         console.log('Loading simulation started');
-        
+
         // Add this during game initialization (in startGame function)
 		initializeGalaxyDiscoverySystem();
         
@@ -699,16 +764,57 @@ if (typeof createEnhancedWormholes === 'function') {
     console.log('Enhanced wormholes created');
 }
 
-// Create enemies for ALL galaxies on game start
-if (typeof createEnemies === 'function') {
-    createEnemies();
-    console.log('Enemy ships created for all galaxies');
-}
-            
-            // ADD THIS NEW CODE:
-if (typeof spawnBlackHoleGuardians === 'function') {
-    spawnBlackHoleGuardians();
-    console.log('Black Hole Guardians spawned');
+// Create enemies for ALL galaxies on game start - WAIT FOR MODELS TO LOAD FIRST
+// This ensures that 3D GLB models are available when enemies are created
+if (typeof areModelsLoaded === 'function' && areModelsLoaded()) {
+    // Models are already loaded, create enemies immediately
+    console.log('✅ Models loaded, creating enemies with 3D models...');
+    if (typeof createEnemies === 'function') {
+        createEnemies();
+        console.log('Enemy ships created for all galaxies');
+    }
+    if (typeof spawnBlackHoleGuardians === 'function') {
+        spawnBlackHoleGuardians();
+        console.log('Black Hole Guardians spawned');
+    }
+} else {
+    // Models not loaded yet, wait for them
+    console.log('⏳ Models not loaded yet, waiting before creating enemies...');
+    if (typeof loadAllModels === 'function') {
+        loadAllModels().then(() => {
+            console.log('✅ Models finished loading, now creating enemies with 3D models...');
+            if (typeof createEnemies === 'function') {
+                createEnemies();
+                console.log('Enemy ships created for all galaxies with GLB models');
+            }
+            if (typeof spawnBlackHoleGuardians === 'function') {
+                spawnBlackHoleGuardians();
+                console.log('Black Hole Guardians spawned with GLB models');
+            }
+        }).catch(err => {
+            console.warn('⚠️ Model loading error, creating enemies with fallback geometry:', err);
+            // Even if models fail to load, still create enemies (they'll use fallback geometry)
+            if (typeof createEnemies === 'function') {
+                createEnemies();
+                console.log('Enemy ships created with fallback geometry');
+            }
+            if (typeof spawnBlackHoleGuardians === 'function') {
+                spawnBlackHoleGuardians();
+                console.log('Black Hole Guardians spawned with fallback geometry');
+            }
+        });
+    } else {
+        // If loadAllModels isn't available, just create enemies normally
+        console.warn('⚠️ loadAllModels function not found, creating enemies immediately');
+        if (typeof createEnemies === 'function') {
+            createEnemies();
+            console.log('Enemy ships created');
+        }
+        if (typeof spawnBlackHoleGuardians === 'function') {
+            spawnBlackHoleGuardians();
+            console.log('Black Hole Guardians spawned');
+        }
+    }
 }
             
             // Initialize UI and controls
@@ -927,7 +1033,12 @@ function animate() {
         renderer.render(scene, camera);
         return; // Stop all game updates when game over
     }
-    
+
+    // Update camera view for third-person mode
+    if (typeof updateCameraView === 'function') {
+        updateCameraView(camera);
+    }
+
     // Add this inside your animate() function
 if (typeof animateNebulaBrownDwarfs !== 'undefined') {
     animateNebulaBrownDwarfs();
@@ -1021,34 +1132,62 @@ if (gameState.frameCount % 60 === 0 && typeof outerInterstellarSystems !== 'unde
 }
     
 // Pulse enemy glow for visibility - OPTIMIZED: Only nearby enemies
+// UPDATED: Handle both simple meshes and GLB model Groups
 if (typeof enemies !== 'undefined' && enemies.length > 0 && gameState.frameCount % 2 === 0) {
     const pulseTime = Date.now() * 0.002;
     const pulseFactor = 0.5 + Math.sin(pulseTime) * 0.5;
-    
+
     // Only pulse enemies within visual range (3000 units)
-    const nearbyEnemies = enemies.filter(e => 
-        e.userData.health > 0 && 
+    const nearbyEnemies = enemies.filter(e =>
+        e.userData.health > 0 &&
         camera.position.distanceTo(e.position) < 3000
     );
-    
-    nearbyEnemies.forEach(enemy => {
-        // Pulse the main body opacity
-        if (enemy && enemy.material && enemy.material.opacity !== undefined) {
-            if (enemy.userData.baseOpacity === undefined) {
-                enemy.userData.baseOpacity = enemy.material.opacity;
-            }
-            enemy.material.opacity = enemy.userData.baseOpacity * (0.9 + pulseFactor * 0.5);
-        }
 
-        // Pulse the glow mesh
-        if (enemy.children && enemy.children[0]) {
-            const glow = enemy.children[0];
-            if (glow.material && glow.material.opacity !== undefined) {
-                if (glow.userData.baseOpacity === undefined) {
-                    glow.userData.baseOpacity = glow.material.opacity;
+    nearbyEnemies.forEach(enemy => {
+        // Handle both simple Mesh and GLB model Group structures
+        // Check if this is a GLB model first (has children that are meshes)
+        const isGLBModel = enemy.type === 'Group' || (enemy.children && enemy.children.length > 0 && enemy.children.some(c => c.isMesh));
+
+        if (isGLBModel) {
+            // GLB model Group - traverse all meshes and pulse their materials
+            enemy.traverse((child) => {
+                if (child.isMesh && child.material) {
+                    // Check if this is a glow layer child mesh
+                    const isGlowLayer = child.userData.isGlowLayer || false;
+
+                    if (isGlowLayer) {
+                        // GLOW LAYER - pulse opacity dramatically (fade completely to transparent and back)
+                        if (child.material.opacity !== undefined) {
+                            if (child.userData.baseOpacity === undefined) {
+                                child.userData.baseOpacity = child.material.opacity;
+                            }
+                            // Fade completely from 0.0 (transparent) to 1.0 (full opacity)
+                            // pulseFactor ranges from -1 to 1, so map it to 0.0 to 1.0
+                            child.material.opacity = (pulseFactor + 1.0) * 0.5;  // Ranges from 0.0 to 1.0
+                        }
+                    } else {
+                        // BASE MATERIAL - keep solid, no opacity pulsing
+                        // Only pulse emissive if it has one
+                        if (child.material.emissiveIntensity !== undefined) {
+                            if (child.userData.baseEmissive === undefined) {
+                                child.userData.baseEmissive = child.material.emissiveIntensity;
+                            }
+                            child.material.emissiveIntensity = child.userData.baseEmissive * (1.0 + pulseFactor * 0.5);
+                        }
+                    }
                 }
-                glow.material.opacity = glow.userData.baseOpacity * (0.8 + pulseFactor * 0.9);
-            }
+            });
+        } else if (enemy.isMesh) {
+            // Simple mesh (fallback geometry) - keep base solid
+            // Base material doesn't pulse, only glow layer does
+
+            // Pulse the glow mesh if it exists
+            enemy.traverse((child) => {
+                if (child.userData.isGlowLayer && child.material && child.material.opacity !== undefined) {
+                    // Fade completely from 0.0 (transparent) to 1.0 (full opacity)
+                    child.material.opacity = (pulseFactor + 1.0) * 0.5;
+                }
+            });
         }
     });
 }
@@ -1500,7 +1639,9 @@ if (typeof checkCosmicFeatureInteractions === 'function' && typeof camera !== 'u
         updateCrosshairTargeting();
     }
     
-    // DIAGNOSTIC: Log expensive operations every 60 frames
+    // DIAGNOSTIC: Disabled to reduce console spam
+    // Uncomment below to debug performance issues
+    /*
     if (gameState.frameCount % 60 === 0) {
         console.log('=== FRAME DIAGNOSTIC ===');
         console.log('Map View:', gameState.mapView);
@@ -1512,6 +1653,7 @@ if (typeof checkCosmicFeatureInteractions === 'function' && typeof camera !== 'u
         console.log('Frame time:', frameTime.toFixed(2), 'ms');
         console.log('updateGalaxyMap called:', gameState.frameCount % 60 === 0 ? 'YES' : 'NO');
     }
+    */
 
     // ATMOSPHERIC PERSPECTIVE: Update distance-based effects
     // Optimized with caching - update every 15 frames for performance
@@ -1570,12 +1712,6 @@ if (planet.rotation && !planet.userData.isLocalStar) {
             // CRITICAL FIX: Update matrix for planets with matrixAutoUpdate disabled!
             if (planet.matrixAutoUpdate === false) {
                 planet.updateMatrix();
-            }
-            
-            // Debug logging for verification (only for first few frames and when close)
-            const distanceToPlayer = camera.position.distanceTo(planet.position);
-            if (gameState.frameCount < 100 && gameState.frameCount % 30 === 0 && distanceToPlayer < 2000) {
-                console.log(`Adjusted orbit update: ${planet.userData.name} at speed ${baseSpeed.toFixed(4)}`);
             }
         }
 // Moon orbital mechanics (relative to parent planet) - LOCAL COORDINATES
