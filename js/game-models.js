@@ -390,7 +390,7 @@ function createEnemyMeshWithModel(regionId, fallbackGeometry, material) {
             const glowMaterial = new THREE.MeshBasicMaterial({
                 color: glowColor,
                 transparent: true,
-                opacity: 0.4,  // Will pulse between 0 and ~0.8
+                opacity: 0.5,  // Base opacity - will pulse from 0.0 to 1.0
                 blending: THREE.AdditiveBlending,  // Additive for glow effect
                 side: THREE.DoubleSide,
                 depthWrite: false,  // Don't write to depth buffer for proper blending
@@ -426,7 +426,42 @@ function createEnemyMeshWithModel(regionId, fallbackGeometry, material) {
     } else {
         // Fallback to procedural geometry
         console.log(`Using fallback geometry for Enemy ${regionId}`);
-        return new THREE.Mesh(fallbackGeometry, material);
+
+        // Create base mesh with darker, more defined material
+        const baseColor = new THREE.Color(material.color || 0xff0000);
+        baseColor.multiplyScalar(0.4);  // Darker base for contrast
+
+        const baseMaterial = new THREE.MeshStandardMaterial({
+            color: baseColor,
+            transparent: false,
+            opacity: 1.0,
+            roughness: 0.6,
+            metalness: 0.7,
+            side: THREE.DoubleSide
+        });
+
+        const baseMesh = new THREE.Mesh(fallbackGeometry, baseMaterial);
+
+        // Add glow layer
+        const glowColor = new THREE.Color(material.color || 0xff0000);
+        glowColor.multiplyScalar(1.2);
+
+        const glowMaterial = new THREE.MeshBasicMaterial({
+            color: glowColor,
+            transparent: true,
+            opacity: 0.5,
+            blending: THREE.AdditiveBlending,
+            side: THREE.DoubleSide,
+            depthWrite: false,
+            depthTest: true
+        });
+
+        const glowMesh = new THREE.Mesh(fallbackGeometry.clone(), glowMaterial);
+        glowMesh.scale.multiplyScalar(1.05);
+        glowMesh.userData.isGlowLayer = true;
+        baseMesh.add(glowMesh);
+
+        return baseMesh;
     }
 }
 

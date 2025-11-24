@@ -2886,8 +2886,26 @@ function checkWeaponHits(targetPosition) {
         enemies.forEach((enemy, enemyIndex) => {
             if (enemy.userData.health <= 0) return;
 
-            // All enemies use the same hitbox size (120x scale models)
-            const enemyHitRadius = hitRadius * 3;  // 150 (same for both local and standard enemies)
+            // Calculate hitbox relative to enemy model size
+            let enemyHitRadius = hitRadius * 3;  // Default fallback
+
+            // Calculate actual bounding box size if not cached
+            if (enemy.userData.hitRadius === undefined) {
+                try {
+                    const box = new THREE.Box3().setFromObject(enemy);
+                    const size = new THREE.Vector3();
+                    box.getSize(size);
+                    // Use the largest dimension as the hit radius
+                    enemyHitRadius = Math.max(size.x, size.y, size.z) / 2;
+                    // Cache it for performance
+                    enemy.userData.hitRadius = enemyHitRadius;
+                } catch (e) {
+                    // If bbox calculation fails, use default
+                    enemy.userData.hitRadius = hitRadius * 3;
+                }
+            } else {
+                enemyHitRadius = enemy.userData.hitRadius;
+            }
 
             const distance = enemy.position.distanceTo(targetPosition);
             if (distance < enemyHitRadius) {

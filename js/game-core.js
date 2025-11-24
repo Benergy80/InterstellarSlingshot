@@ -1156,14 +1156,14 @@ if (typeof enemies !== 'undefined' && enemies.length > 0 && gameState.frameCount
                     const isGlowLayer = child.userData.isGlowLayer || false;
 
                     if (isGlowLayer) {
-                        // GLOW LAYER - pulse opacity dramatically (fade in/out)
+                        // GLOW LAYER - pulse opacity dramatically (fade completely to transparent and back)
                         if (child.material.opacity !== undefined) {
                             if (child.userData.baseOpacity === undefined) {
                                 child.userData.baseOpacity = child.material.opacity;
                             }
-                            // Dramatic pulsing from near-transparent to bright
-                            // pulseFactor ranges from -1 to 1, so this ranges from 0.1 to 1.9
-                            child.material.opacity = child.userData.baseOpacity * (1.0 + pulseFactor * 0.9);
+                            // Fade completely from 0.0 (transparent) to 1.0 (full opacity)
+                            // pulseFactor ranges from -1 to 1, so map it to 0.0 to 1.0
+                            child.material.opacity = (pulseFactor + 1.0) * 0.5;  // Ranges from 0.0 to 1.0
                         }
                     } else {
                         // BASE MATERIAL - keep solid, no opacity pulsing
@@ -1177,23 +1177,17 @@ if (typeof enemies !== 'undefined' && enemies.length > 0 && gameState.frameCount
                     }
                 }
             });
-        } else if (enemy.isMesh && enemy.material && enemy.material.opacity !== undefined) {
-            // Simple mesh (fallback geometry)
-            if (enemy.userData.baseOpacity === undefined) {
-                enemy.userData.baseOpacity = enemy.material.opacity;
-            }
-            enemy.material.opacity = enemy.userData.baseOpacity * (0.9 + pulseFactor * 0.5);
+        } else if (enemy.isMesh) {
+            // Simple mesh (fallback geometry) - keep base solid
+            // Base material doesn't pulse, only glow layer does
 
             // Pulse the glow mesh if it exists
-            if (enemy.children && enemy.children[0]) {
-                const glow = enemy.children[0];
-                if (glow.material && glow.material.opacity !== undefined) {
-                    if (glow.userData.baseOpacity === undefined) {
-                        glow.userData.baseOpacity = glow.material.opacity;
-                    }
-                    glow.material.opacity = glow.userData.baseOpacity * (0.8 + pulseFactor * 0.9);
+            enemy.traverse((child) => {
+                if (child.userData.isGlowLayer && child.material && child.material.opacity !== undefined) {
+                    // Fade completely from 0.0 (transparent) to 1.0 (full opacity)
+                    child.material.opacity = (pulseFactor + 1.0) * 0.5;
                 }
-            }
+            });
         }
     });
 }
