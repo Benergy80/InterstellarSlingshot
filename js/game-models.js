@@ -403,7 +403,8 @@ function createEnemyMeshWithModel(regionId, fallbackGeometry, material) {
             });
 
             const glowMesh = new THREE.Mesh(glowGeometry, glowMaterial);
-            glowMesh.scale.multiplyScalar(1.05);
+            // Don't scale - keep exact same size as base for perfect alignment
+            glowMesh.scale.set(1.0, 1.0, 1.0);
             glowMesh.position.set(0, 0, 0);
             glowMesh.rotation.set(0, 0, 0);
             glowMesh.userData.isGlowLayer = true;
@@ -448,7 +449,8 @@ function createEnemyMeshWithModel(regionId, fallbackGeometry, material) {
         });
 
         const glowMesh = new THREE.Mesh(fallbackGeometry.clone(), glowMaterial);
-        glowMesh.scale.multiplyScalar(1.05);
+        // Don't scale - keep exact same size as base for perfect alignment
+        glowMesh.scale.set(1.0, 1.0, 1.0);
         glowMesh.position.set(0, 0, 0);  // Position at parent's origin
         glowMesh.rotation.set(0, 0, 0);  // No rotation offset
         glowMesh.userData.isGlowLayer = true;
