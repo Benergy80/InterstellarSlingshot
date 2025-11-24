@@ -1603,6 +1603,11 @@ if (typeof checkCosmicFeatureInteractions === 'function' && typeof camera !== 'u
         gameState.weapons.cooldown = Math.max(0, gameState.weapons.cooldown - 16.67);
     }
 
+    // Update explosion animations (frame-based animation system)
+    if (typeof explosionManager !== 'undefined') {
+        explosionManager.update(16.67); // Pass frame time in ms
+    }
+
     // Check for hull zero - mission fail
     if (gameState.hull <= 0 && !gameState.gameOver) {
         if (typeof createPlayerExplosion === 'function') {

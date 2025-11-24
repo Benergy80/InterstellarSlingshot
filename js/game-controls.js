@@ -44,6 +44,51 @@ function adjustMinimumSpeed(speed) {
 }
 
 // =============================================================================
+// EXPLOSION MANAGER - Centralized explosion animation system
+// =============================================================================
+// Replaces setInterval-based explosions with game-loop integrated animations
+// Fixes memory leaks, performance issues, and timing inconsistencies
+
+const explosionManager = {
+    activeExplosions: [],
+
+    // Add a new explosion to be animated
+    addExplosion(explosionData) {
+        this.activeExplosions.push(explosionData);
+    },
+
+    // Update all active explosions (called from game loop)
+    update(deltaTime = 16.67) {
+        for (let i = this.activeExplosions.length - 1; i >= 0; i--) {
+            const explosion = this.activeExplosions[i];
+
+            // Update explosion based on type
+            if (explosion.update) {
+                const stillActive = explosion.update(deltaTime);
+
+                // Remove completed explosions
+                if (!stillActive) {
+                    if (explosion.cleanup) {
+                        explosion.cleanup();
+                    }
+                    this.activeExplosions.splice(i, 1);
+                }
+            }
+        }
+    },
+
+    // Clear all explosions (for cleanup or game reset)
+    clearAll() {
+        this.activeExplosions.forEach(explosion => {
+            if (explosion.cleanup) {
+                explosion.cleanup();
+            }
+        });
+        this.activeExplosions = [];
+    }
+};
+
+// =============================================================================
 // ENHANCED ENEMY AI BEHAVIORS
 // =============================================================================
 
@@ -1740,7 +1785,8 @@ function createExplosionEffect(targetObject) {
         console.warn('Invalid target object for explosion');
         return;
     }
-    
+
+    // Create explosion sphere
     const explosionGeometry = new THREE.SphereGeometry(2, 8, 8);
     const explosionMaterial = new THREE.MeshBasicMaterial({
         color: 0xff6600,
@@ -1749,36 +1795,18 @@ function createExplosionEffect(targetObject) {
     const explosion = new THREE.Mesh(explosionGeometry, explosionMaterial);
     explosion.position.copy(position);
     scene.add(explosion);
-    
-     // Animate explosion (FASTER)
-    let scale = 1;
-    let opacity = 1;
-    // CHANGE TO (MUCH SLOWER):
-const explosionInterval = setInterval(() => {
-    scale += 0.5;  // Changed from 2.0 to 0.5 (4x slower growth)
-    opacity -= 0.05;  // Changed from 0.2 to 0.05 (4x slower fade)
-    explosion.scale.set(scale, scale, scale);
-    explosionMaterial.opacity = opacity;
-    
-    if (opacity <= 0) {
-        clearInterval(explosionInterval);
-        scene.remove(explosion);
-        explosionGeometry.dispose();
-        explosionMaterial.dispose();
-    }
-}, 60);  // Changed from 30ms to 60ms (slower updates)
-    
+
     // Create particle burst
     const particles = new THREE.BufferGeometry();
     const particleCount = 30;
     const positions = new Float32Array(particleCount * 3);
-    
+
     for (let i = 0; i < particleCount; i++) {
         positions[i * 3] = (Math.random() - 0.5) * 20;
         positions[i * 3 + 1] = (Math.random() - 0.5) * 20;
         positions[i * 3 + 2] = (Math.random() - 0.5) * 20;
     }
-    
+
     particles.setAttribute('position', new THREE.BufferAttribute(positions, 3));
     const particleMaterial = new THREE.PointsMaterial({
         color: 0xff8800,
@@ -1789,21 +1817,41 @@ const explosionInterval = setInterval(() => {
     const particleSystem = new THREE.Points(particles, particleMaterial);
     particleSystem.position.copy(position);
     scene.add(particleSystem);
-    
-    // Animate particles
+
+    // Add to explosion manager for frame-based animation
+    let scale = 1;
+    let opacity = 1;
     let particleLife = 1.0;
-    const particleInterval = setInterval(() => {
-    particleLife -= 0.02;  // Changed from 0.05 to 0.02 (slower fade)
-    particleMaterial.opacity = particleLife;
-    
-    if (particleLife <= 0) {
-        clearInterval(particleInterval);
-        scene.remove(particleSystem);
-        particles.dispose();
-        particleMaterial.dispose();
-    }
-}, 80);  // Changed from 50ms to 80ms (slower updates)
-    
+    let elapsed = 0;
+
+    explosionManager.addExplosion({
+        update(deltaTime) {
+            elapsed += deltaTime;
+
+            // Update explosion sphere (slower growth and fade)
+            scale += 0.5 * (deltaTime / 60);  // Normalized to 60fps
+            opacity -= 0.05 * (deltaTime / 60);
+            explosion.scale.set(scale, scale, scale);
+            explosionMaterial.opacity = Math.max(0, opacity);
+
+            // Update particles
+            particleLife -= 0.02 * (deltaTime / 60);
+            particleMaterial.opacity = Math.max(0, particleLife);
+
+            // Return false when animation is complete
+            return opacity > 0 || particleLife > 0;
+        },
+
+        cleanup() {
+            scene.remove(explosion);
+            scene.remove(particleSystem);
+            explosionGeometry.dispose();
+            explosionMaterial.dispose();
+            particles.dispose();
+            particleMaterial.dispose();
+        }
+    });
+
     // Play explosion sound
     playSound('explosion');
 }
@@ -1871,35 +1919,40 @@ function createMassiveBorgExplosion(position) {
     const particles = new THREE.Points(particleGeometry, particleMaterial);
     scene.add(particles);
 
-    // Animate MASSIVE explosion
+    // Add main explosion to manager
     let scale = 1;
     let opacity1 = 0.9;
     let opacity2 = 0.8;
     let particleOpacity = 1.0;
 
-    const explosionInterval = setInterval(() => {
-        scale += 3.0; // MUCH faster expansion
-        opacity1 -= 0.03;
-        opacity2 -= 0.025;
-        particleOpacity -= 0.04;
+    explosionManager.addExplosion({
+        update(deltaTime) {
+            // Update scales and opacities
+            scale += 3.0 * (deltaTime / 50);
+            opacity1 -= 0.03 * (deltaTime / 50);
+            opacity2 -= 0.025 * (deltaTime / 50);
+            particleOpacity -= 0.04 * (deltaTime / 50);
 
-        explosion.scale.set(scale, scale, scale);
-        explosion2.scale.set(scale * 1.2, scale * 1.2, scale * 1.2);
-        explosionMat.opacity = Math.max(0, opacity1);
-        explosionMat2.opacity = Math.max(0, opacity2);
-        particleMaterial.opacity = Math.max(0, particleOpacity);
+            explosion.scale.set(scale, scale, scale);
+            explosion2.scale.set(scale * 1.2, scale * 1.2, scale * 1.2);
+            explosionMat.opacity = Math.max(0, opacity1);
+            explosionMat2.opacity = Math.max(0, opacity2);
+            particleMaterial.opacity = Math.max(0, particleOpacity);
 
-        // Update particle positions
-        const positions = particleGeometry.attributes.position.array;
-        for (let i = 0; i < particleCount; i++) {
-            positions[i * 3] += particleVelocities[i].x;
-            positions[i * 3 + 1] += particleVelocities[i].y;
-            positions[i * 3 + 2] += particleVelocities[i].z;
-        }
-        particleGeometry.attributes.position.needsUpdate = true;
+            // Update particle positions
+            const positions = particleGeometry.attributes.position.array;
+            const deltaFactor = deltaTime / 50;
+            for (let i = 0; i < particleCount; i++) {
+                positions[i * 3] += particleVelocities[i].x * deltaFactor;
+                positions[i * 3 + 1] += particleVelocities[i].y * deltaFactor;
+                positions[i * 3 + 2] += particleVelocities[i].z * deltaFactor;
+            }
+            particleGeometry.attributes.position.needsUpdate = true;
 
-        if (opacity1 <= 0) {
-            clearInterval(explosionInterval);
+            return opacity1 > 0;
+        },
+
+        cleanup() {
             scene.remove(explosion);
             scene.remove(explosion2);
             scene.remove(particles);
@@ -1910,41 +1963,66 @@ function createMassiveBorgExplosion(position) {
             particleGeometry.dispose();
             particleMaterial.dispose();
         }
-    }, 50);
+    });
 
-    // Create shockwave rings
+    // Create shockwave rings with staggered timing
     for (let i = 0; i < 5; i++) {
-        setTimeout(() => {
-            const ringGeo = new THREE.TorusGeometry(100, 5, 16, 32);
-            const ringMat = new THREE.MeshBasicMaterial({
-                color: 0x00ff00,
-                transparent: true,
-                opacity: 0.7,
-                blending: THREE.AdditiveBlending
-            });
-            const ring = new THREE.Mesh(ringGeo, ringMat);
-            ring.position.copy(position);
-            ring.rotation.x = Math.random() * Math.PI;
-            ring.rotation.y = Math.random() * Math.PI;
-            scene.add(ring);
+        const ringDelay = i * 200;
+        let ringCreated = false;
+        let ringDelayElapsed = 0;
 
-            let ringScale = 1;
-            let ringOpacity = 0.7;
-            const ringInterval = setInterval(() => {
-                ringScale += 2;
-                ringOpacity -= 0.05;
-                ring.scale.set(ringScale, ringScale, ringScale);
-                ringMat.opacity = Math.max(0, ringOpacity);
+        explosionManager.addExplosion({
+            update(deltaTime) {
+                ringDelayElapsed += deltaTime;
 
-                if (ringOpacity <= 0) {
-                    clearInterval(ringInterval);
-                    scene.remove(ring);
-                    ringGeo.dispose();
-                    ringMat.dispose();
+                // Wait for delay before creating ring
+                if (!ringCreated && ringDelayElapsed >= ringDelay) {
+                    ringCreated = true;
+                    const ringGeo = new THREE.TorusGeometry(100, 5, 16, 32);
+                    const ringMat = new THREE.MeshBasicMaterial({
+                        color: 0x00ff00,
+                        transparent: true,
+                        opacity: 0.7,
+                        blending: THREE.AdditiveBlending
+                    });
+                    const ring = new THREE.Mesh(ringGeo, ringMat);
+                    ring.position.copy(position);
+                    ring.rotation.x = Math.random() * Math.PI;
+                    ring.rotation.y = Math.random() * Math.PI;
+                    scene.add(ring);
+
+                    // Store ring data for animation
+                    this.ring = ring;
+                    this.ringGeo = ringGeo;
+                    this.ringMat = ringMat;
+                    this.ringScale = 1;
+                    this.ringOpacity = 0.7;
                 }
-            }, 50);
-        }, i * 200);
+
+                // Animate ring
+                if (ringCreated && this.ring) {
+                    this.ringScale += 2 * (deltaTime / 50);
+                    this.ringOpacity -= 0.05 * (deltaTime / 50);
+                    this.ring.scale.set(this.ringScale, this.ringScale, this.ringScale);
+                    this.ringMat.opacity = Math.max(0, this.ringOpacity);
+
+                    return this.ringOpacity > 0;
+                }
+
+                return true; // Keep alive until ring is created
+            },
+
+            cleanup() {
+                if (this.ring) {
+                    scene.remove(this.ring);
+                    this.ringGeo.dispose();
+                    this.ringMat.dispose();
+                }
+            }
+        });
     }
+
+    playSound('explosion');
 }
 
 // =============================================================================
@@ -3876,22 +3954,6 @@ function createMissileExplosion(position) {
     explosion.position.copy(position);
     scene.add(explosion);
 
-    let scale = 1;
-    let opacity = 0.9;
-    const explosionInterval = setInterval(() => {
-        scale += 0.8;
-        opacity -= 0.08;
-        explosion.scale.set(scale, scale, scale);
-        explosionMaterial.opacity = opacity;
-
-        if (opacity <= 0) {
-            clearInterval(explosionInterval);
-            scene.remove(explosion);
-            explosionGeometry.dispose();
-            explosionMaterial.dispose();
-        }
-    }, 50);
-
     // Particles
     const particles = new THREE.BufferGeometry();
     const particleCount = 40;
@@ -3914,18 +3976,37 @@ function createMissileExplosion(position) {
     particleSystem.position.copy(position);
     scene.add(particleSystem);
 
+    // Add to explosion manager
+    let scale = 1;
+    let opacity = 0.9;
     let particleLife = 1.0;
-    const particleInterval = setInterval(() => {
-        particleLife -= 0.025;
-        particleMaterial.opacity = particleLife;
 
-        if (particleLife <= 0) {
-            clearInterval(particleInterval);
+    explosionManager.addExplosion({
+        update(deltaTime) {
+            // Update explosion sphere
+            scale += 0.8 * (deltaTime / 50);
+            opacity -= 0.08 * (deltaTime / 50);
+            explosion.scale.set(scale, scale, scale);
+            explosionMaterial.opacity = Math.max(0, opacity);
+
+            // Update particles
+            particleLife -= 0.025 * (deltaTime / 70);
+            particleMaterial.opacity = Math.max(0, particleLife);
+
+            return opacity > 0 || particleLife > 0;
+        },
+
+        cleanup() {
+            scene.remove(explosion);
             scene.remove(particleSystem);
+            explosionGeometry.dispose();
+            explosionMaterial.dispose();
             particles.dispose();
             particleMaterial.dispose();
         }
-    }, 70);
+    });
+
+    playSound('missile_explosion');
 }
 
 function updateMissileUI() {
