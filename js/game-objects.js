@@ -784,7 +784,18 @@ function spawnBossForGalaxy(galaxyId) {
     bossGlow.frustumCulled = false;
     
     boss.add(bossGlow);
-    
+
+    // Calculate hitbox size from scaled model (like asteroids) - bosses are 180x scaled
+    let bossHitboxSize = 180; // Default for 180x scaled model
+    try {
+        const box = new THREE.Box3().setFromObject(boss);
+        const size = new THREE.Vector3();
+        box.getSize(size);
+        bossHitboxSize = Math.max(size.x, size.y, size.z);
+    } catch (e) {
+        // Use default if calculation fails
+    }
+
     // PRESERVED: Complete boss userData with all original properties
     boss.userData = {
         name: `${galaxyType.faction} Overlord`, // PRESERVED: Boss naming
@@ -808,7 +819,8 @@ function spawnBossForGalaxy(galaxyId) {
         isLocal: false,
         isBoss: true, // PRESERVED: Mark as boss
         isBossSupport: false,
-        position3D: bossPosition.clone() // NEW: Store 3D position for reference
+        position3D: bossPosition.clone(), // NEW: Store 3D position for reference
+        hitboxSize: bossHitboxSize // Store hitbox size for accurate collision detection
     };
     
     // PRESERVED: Ensure boss visibility and prevent frustum culling
@@ -885,7 +897,18 @@ function spawnBossSupport(galaxyId, bossPosition, supportIndex) {
     supportPosition.z += Math.sin(angle) * distance;
     
     support.position.copy(supportPosition);
-    
+
+    // Calculate hitbox size from scaled model (like asteroids) - supports are 120x scaled
+    let supportHitboxSize = 120; // Default for 120x scaled model
+    try {
+        const box = new THREE.Box3().setFromObject(support);
+        const size = new THREE.Vector3();
+        box.getSize(size);
+        supportHitboxSize = Math.max(size.x, size.y, size.z);
+    } catch (e) {
+        // Use default if calculation fails
+    }
+
     // PRESERVED: Complete support userData with all original properties
     support.userData = {
         name: `${galaxyType.faction} Support ${supportIndex + 1}`, // PRESERVED: Support naming
@@ -909,7 +932,8 @@ function spawnBossSupport(galaxyId, bossPosition, supportIndex) {
         isLocal: false,
         isBoss: false,
         isBossSupport: true, // PRESERVED: Mark as boss support
-        position3D: supportPosition.clone() // NEW: Store 3D position
+        position3D: supportPosition.clone(), // NEW: Store 3D position
+        hitboxSize: supportHitboxSize // Store hitbox size for accurate collision detection
     };
     
     // PRESERVED: Ensure support visibility and prevent frustum culling
@@ -4108,6 +4132,17 @@ function createEnemies3D() {
             // Determine if this enemy is in the local galaxy (galaxy 7)
             const isLocal = (g === 7);
             
+            // Calculate hitbox size from scaled model (like asteroids)
+            let hitboxSize = 120; // Default for 120x scaled model
+            try {
+                const box = new THREE.Box3().setFromObject(enemy);
+                const size = new THREE.Vector3();
+                box.getSize(size);
+                hitboxSize = Math.max(size.x, size.y, size.z);
+            } catch (e) {
+                // Use default if calculation fails
+            }
+
             enemy.userData = {
                 name: `${galaxyType.faction} Hostile ${i + 1}`,
                 type: 'enemy',
@@ -4131,7 +4166,8 @@ function createEnemies3D() {
                 isBoss: false,
                 isBossSupport: false,
                 position3D: enemyPosition.clone(),
-                placementType: placementType
+                placementType: placementType,
+                hitboxSize: hitboxSize // Store hitbox size for accurate collision detection
             };
             
             enemy.visible = true;
@@ -4190,7 +4226,18 @@ function createEnemies3D() {
             localSystemOffset.y + (Math.random() - 0.5) * 200,
             localSystemOffset.z + Math.sin(angle) * distance
         );
-        
+
+        // Calculate hitbox size from scaled model (like asteroids)
+        let hitboxSize = 120; // Default for 120x scaled model
+        try {
+            const box = new THREE.Box3().setFromObject(enemy);
+            const size = new THREE.Vector3();
+            box.getSize(size);
+            hitboxSize = Math.max(size.x, size.y, size.z);
+        } catch (e) {
+            // Use default if calculation fails
+        }
+
         enemy.userData = {
             name: `Martian Pirate ${i + 1}`,
             type: 'enemy',
@@ -4217,7 +4264,8 @@ function createEnemies3D() {
             isLocal: true,
             isBoss: false,
             isBossSupport: false,
-            position3D: enemy.position.clone()
+            position3D: enemy.position.clone(),
+            hitboxSize: hitboxSize // Store hitbox size for accurate collision detection
         };
         
         enemy.visible = true;

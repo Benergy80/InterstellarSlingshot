@@ -82,26 +82,35 @@ function applyEnemyRotation(enemy, direction, speed) {
             enemy.userData.targetRotation.y = enemy.userData.prevTargetYaw;
         }
 
-        // Pitch: Tilt based on vertical movement (very gentle)
+        // ENHANCED: Pitch based on vertical movement AND turns (more dynamic)
         if (lateralSpeed > 0.01) {
-            enemy.userData.targetRotation.x = -Math.atan2(direction.y, lateralSpeed) * 0.15;  // Even gentler
+            // Base pitch from vertical movement
+            const verticalPitch = -Math.atan2(direction.y, lateralSpeed) * 0.3;  // Increased from 0.15 to 0.3
+
+            // Additional pitch during turns for more dynamic movement
+            const currentYaw = enemy.rotation.y || 0;
+            const yawDelta = enemy.userData.targetRotation.y - currentYaw;
+            const normalizedYawDelta = Math.atan2(Math.sin(yawDelta), Math.cos(yawDelta));
+            const turnPitch = Math.abs(normalizedYawDelta) * 0.4;  // Pitch up during sharp turns
+
+            enemy.userData.targetRotation.x = verticalPitch + turnPitch;
         }
 
-        // Bank: Roll into turns based on change in yaw (very subtle)
+        // Bank: Roll into turns based on change in yaw (more pronounced)
         const currentYaw = enemy.rotation.y || 0;
         const yawDelta = enemy.userData.targetRotation.y - currentYaw;
         const normalizedYawDelta = Math.atan2(Math.sin(yawDelta), Math.cos(yawDelta));
-        enemy.userData.targetRotation.z = normalizedYawDelta * 0.1;  // Reduced banking
+        enemy.userData.targetRotation.z = normalizedYawDelta * 0.25;  // Increased from 0.1 to 0.25 for more visible banking
 
         // Add very slow tumble for variety
         enemy.userData.targetRotation.z += Math.sin(Date.now() * 0.00005 + (enemy.userData.tumbleSeed || 0)) * enemy.userData.tumbleRate;
 
-        // VERY SMOOTH interpolation to target rotation
+        // SMOOTH interpolation to target rotation (slightly faster for more responsive movement)
         if (!enemy.rotation) enemy.rotation = new THREE.Euler();
 
-        enemy.rotation.x = THREE.MathUtils.lerp(enemy.rotation.x || 0, enemy.userData.targetRotation.x, 0.01);  // Even slower
-        enemy.rotation.y = THREE.MathUtils.lerp(enemy.rotation.y || 0, enemy.userData.targetRotation.y, 0.01);  // Even slower
-        enemy.rotation.z = THREE.MathUtils.lerp(enemy.rotation.z || 0, enemy.userData.targetRotation.z, 0.01);  // Even slower
+        enemy.rotation.x = THREE.MathUtils.lerp(enemy.rotation.x || 0, enemy.userData.targetRotation.x, 0.03);  // Increased from 0.01
+        enemy.rotation.y = THREE.MathUtils.lerp(enemy.rotation.y || 0, enemy.userData.targetRotation.y, 0.03);  // Increased from 0.01
+        enemy.rotation.z = THREE.MathUtils.lerp(enemy.rotation.z || 0, enemy.userData.targetRotation.z, 0.03);  // Increased from 0.01
     } catch (e) {
         // Ignore rotation errors
     }
@@ -114,11 +123,36 @@ function updatePursuitBehavior(enemy, playerPos, speed, distance) {
     }
 
     try {
+        // Initialize acceleration burst tracking
+        if (enemy.userData.nextAccelBurst === undefined) {
+            enemy.userData.nextAccelBurst = Date.now() + 2000 + Math.random() * 3000; // 2-5 seconds
+        }
+        if (enemy.userData.accelBurstActive === undefined) {
+            enemy.userData.accelBurstActive = false;
+        }
+
+        // Occasional acceleration bursts (20% chance every few seconds)
+        const now = Date.now();
+        if (now > enemy.userData.nextAccelBurst && !enemy.userData.accelBurstActive) {
+            enemy.userData.accelBurstActive = true;
+            enemy.userData.accelBurstEnd = now + 800 + Math.random() * 700; // 0.8-1.5 second burst
+            enemy.userData.nextAccelBurst = now + 3000 + Math.random() * 4000; // Next burst in 3-7 seconds
+        }
+
+        // Apply acceleration multiplier during burst
+        let currentSpeed = speed;
+        if (enemy.userData.accelBurstActive) {
+            currentSpeed *= 1.8; // 80% speed boost during acceleration
+            if (now > enemy.userData.accelBurstEnd) {
+                enemy.userData.accelBurstActive = false;
+            }
+        }
+
         if (distance > 100) {
             // Direct pursuit when far
             const direction = new THREE.Vector3().subVectors(playerPos, enemy.position).normalize();
-            enemy.position.add(direction.multiplyScalar(speed));
-            applyEnemyRotation(enemy, direction, speed);  // Add rotation
+            enemy.position.add(direction.multiplyScalar(currentSpeed));
+            applyEnemyRotation(enemy, direction, currentSpeed);  // Add rotation
         } else {
             // Circle strafe when close
             const angle = Date.now() * 0.001 + (enemy.userData.circlePhase || 0);
@@ -128,8 +162,8 @@ function updatePursuitBehavior(enemy, playerPos, speed, distance) {
 
             const targetPos = new THREE.Vector3(targetX, targetY, targetZ);
             const direction = new THREE.Vector3().subVectors(targetPos, enemy.position).normalize();
-            enemy.position.add(direction.multiplyScalar(speed * 0.8));
-            applyEnemyRotation(enemy, direction, speed * 0.8);  // Add rotation
+            enemy.position.add(direction.multiplyScalar(currentSpeed * 0.8));
+            applyEnemyRotation(enemy, direction, currentSpeed * 0.8);  // Add rotation
         }
     } catch (e) {
         // Ignore movement errors if positions are invalid
@@ -2889,29 +2923,27 @@ function checkWeaponHits(targetPosition) {
         enemies.forEach((enemy, enemyIndex) => {
             if (enemy.userData.health <= 0) return;
 
-            // Calculate hitbox relative to enemy model size
-            let enemyHitRadius = hitRadius * 3;  // Default fallback
-
-            // Calculate actual bounding box size if not cached
-            if (enemy.userData.hitRadius === undefined) {
+            // FIXED: Use hitbox size matching scaled model (like asteroids)
+            // Calculate hitbox if not already stored (should be set at creation time)
+            if (enemy.userData.hitboxSize === undefined) {
                 try {
                     const box = new THREE.Box3().setFromObject(enemy);
                     const size = new THREE.Vector3();
                     box.getSize(size);
-                    // Use the largest dimension as the hit radius
-                    enemyHitRadius = Math.max(size.x, size.y, size.z) / 2;
-                    // Cache it for performance
-                    enemy.userData.hitRadius = enemyHitRadius;
+                    // Store largest dimension as hitbox size (diameter)
+                    enemy.userData.hitboxSize = Math.max(size.x, size.y, size.z);
                 } catch (e) {
-                    // If bbox calculation fails, use default
-                    enemy.userData.hitRadius = hitRadius * 3;
+                    // Fallback: use reasonable default for 120x scaled model
+                    enemy.userData.hitboxSize = 120; // Approximate size of scaled model
                 }
-            } else {
-                enemyHitRadius = enemy.userData.hitRadius;
             }
 
+            // Hitbox detection with safety margin (like asteroids: size + margin)
+            const safetyMargin = 20; // Safety margin for easier hitting
+            const collisionDistance = enemy.userData.hitboxSize / 2 + safetyMargin;
             const distance = enemy.position.distanceTo(targetPosition);
-            if (distance < enemyHitRadius) {
+
+            if (distance < collisionDistance) {
                 const damage = 1; // Standard damage
                 enemy.userData.health -= damage;
                 
