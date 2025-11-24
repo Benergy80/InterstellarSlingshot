@@ -352,20 +352,47 @@ function createEnemyMeshWithModel(regionId, fallbackGeometry, material) {
                 child.visible = true;
                 child.frustumCulled = false;
 
-                // More defined material - much dimmer colors to show shape better
-                const dimmedColor = new THREE.Color(material.color || 0xff0000);
-                dimmedColor.multiplyScalar(0.3);  // Reduce brightness by 70% to see shape clearly
+                // DUAL-LAYER MATERIAL SYSTEM:
+                // 1. Base material - solid, asteroid-like, spacecraft colors
+                // 2. Glow layer - transparent, pulsing, bright red/orange
 
-                child.material = new THREE.MeshBasicMaterial({
-                    color: dimmedColor,
-                    transparent: true,
-                    opacity: 0.85,  // More opaque for better surface definition
-                    blending: THREE.NormalBlending,
-                    depthWrite: true,
-                    depthTest: true,
+                // Base color for spacecraft (metallic colors)
+                const baseColor = new THREE.Color(material.color || 0xff0000);
+                // Use darker, more metallic spacecraft colors
+                baseColor.multiplyScalar(0.4);  // Darker base for contrast
+
+                // Base material - solid, defined surface like asteroids
+                child.material = new THREE.MeshStandardMaterial({
+                    color: baseColor,
+                    transparent: false,
+                    opacity: 1.0,  // Fully opaque base
+                    roughness: 0.6,  // Rough like asteroid surface
+                    metalness: 0.7,  // Metallic spacecraft look
                     side: THREE.DoubleSide,
-                    wireframe: false  // Solid surface, not wireframe
+                    depthWrite: true,
+                    depthTest: true
                 });
+
+                // Create glow layer as a child mesh (slightly larger)
+                const glowGeometry = child.geometry.clone();
+                const glowColor = new THREE.Color(material.color || 0xff0000);
+                // Keep glow bright (don't dim as much)
+                glowColor.multiplyScalar(1.2);  // Bright glow
+
+                const glowMaterial = new THREE.MeshBasicMaterial({
+                    color: glowColor,
+                    transparent: true,
+                    opacity: 0.4,  // Will pulse between 0 and ~0.8
+                    blending: THREE.AdditiveBlending,  // Additive for glow effect
+                    side: THREE.DoubleSide,
+                    depthWrite: false,  // Don't write to depth buffer for proper blending
+                    depthTest: true
+                });
+
+                const glowMesh = new THREE.Mesh(glowGeometry, glowMaterial);
+                glowMesh.scale.multiplyScalar(1.05);  // Slightly larger than base
+                glowMesh.userData.isGlowLayer = true;  // Tag for pulsing system
+                child.add(glowMesh);  // Add as child to the base mesh
 
                 child.castShadow = false;
                 child.receiveShadow = false;

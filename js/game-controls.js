@@ -55,41 +55,53 @@ function applyEnemyRotation(enemy, direction, speed) {
     try {
         // Skip if not moving enough
         const movementMagnitude = Math.sqrt(direction.x * direction.x + direction.y * direction.y + direction.z * direction.z);
-        if (movementMagnitude < 0.001) return;
+        if (movementMagnitude < 0.01) return;  // Increased threshold to reduce twitching
 
         // Initialize rotation tracking if not exists
         if (!enemy.userData.targetRotation) {
             enemy.userData.targetRotation = {x: 0, y: 0, z: 0};
         }
         if (!enemy.userData.tumbleRate) {
-            enemy.userData.tumbleRate = (Math.random() - 0.5) * 0.1;  // Slow random tumble
+            enemy.userData.tumbleRate = (Math.random() - 0.5) * 0.05;  // Reduced tumble (was 0.1)
         }
 
         // Calculate target rotation to face movement direction (trajectory)
         const lateralSpeed = Math.sqrt(direction.x * direction.x + direction.z * direction.z);
 
-        // Yaw: Face the direction of horizontal movement
-        enemy.userData.targetRotation.y = Math.atan2(direction.x, direction.z);
+        if (lateralSpeed > 0.01) {  // Only update yaw if moving laterally
+            // Yaw: Face the direction of horizontal movement
+            const targetYaw = Math.atan2(direction.x, direction.z);
 
-        // Pitch: Tilt based on vertical movement
-        enemy.userData.targetRotation.x = -Math.atan2(direction.y, lateralSpeed) * 0.2;  // Very gentle pitch
+            // Store previous target for smoothing
+            if (!enemy.userData.prevTargetYaw) {
+                enemy.userData.prevTargetYaw = targetYaw;
+            }
 
-        // Bank: Roll into turns based on change in yaw
+            // Smooth the target yaw to reduce twitching
+            enemy.userData.prevTargetYaw = THREE.MathUtils.lerp(enemy.userData.prevTargetYaw, targetYaw, 0.1);
+            enemy.userData.targetRotation.y = enemy.userData.prevTargetYaw;
+        }
+
+        // Pitch: Tilt based on vertical movement (very gentle)
+        if (lateralSpeed > 0.01) {
+            enemy.userData.targetRotation.x = -Math.atan2(direction.y, lateralSpeed) * 0.15;  // Even gentler
+        }
+
+        // Bank: Roll into turns based on change in yaw (very subtle)
         const currentYaw = enemy.rotation.y || 0;
         const yawDelta = enemy.userData.targetRotation.y - currentYaw;
-        // Normalize yaw delta to -PI to PI
         const normalizedYawDelta = Math.atan2(Math.sin(yawDelta), Math.cos(yawDelta));
-        enemy.userData.targetRotation.z = normalizedYawDelta * 0.15;  // Very gentle banking
+        enemy.userData.targetRotation.z = normalizedYawDelta * 0.1;  // Reduced banking
 
-        // Add slow tumble for variety
-        enemy.userData.targetRotation.z += Math.sin(Date.now() * 0.0001 + (enemy.userData.tumbleSeed || 0)) * enemy.userData.tumbleRate;
+        // Add very slow tumble for variety
+        enemy.userData.targetRotation.z += Math.sin(Date.now() * 0.00005 + (enemy.userData.tumbleSeed || 0)) * enemy.userData.tumbleRate;
 
         // VERY SMOOTH interpolation to target rotation
         if (!enemy.rotation) enemy.rotation = new THREE.Euler();
 
-        enemy.rotation.x = THREE.MathUtils.lerp(enemy.rotation.x || 0, enemy.userData.targetRotation.x, 0.02);  // Very slow
-        enemy.rotation.y = THREE.MathUtils.lerp(enemy.rotation.y || 0, enemy.userData.targetRotation.y, 0.02);  // Very slow
-        enemy.rotation.z = THREE.MathUtils.lerp(enemy.rotation.z || 0, enemy.userData.targetRotation.z, 0.02);  // Very slow
+        enemy.rotation.x = THREE.MathUtils.lerp(enemy.rotation.x || 0, enemy.userData.targetRotation.x, 0.01);  // Even slower
+        enemy.rotation.y = THREE.MathUtils.lerp(enemy.rotation.y || 0, enemy.userData.targetRotation.y, 0.01);  // Even slower
+        enemy.rotation.z = THREE.MathUtils.lerp(enemy.rotation.z || 0, enemy.userData.targetRotation.z, 0.01);  // Even slower
     } catch (e) {
         // Ignore rotation errors
     }
@@ -2874,9 +2886,8 @@ function checkWeaponHits(targetPosition) {
         enemies.forEach((enemy, enemyIndex) => {
             if (enemy.userData.health <= 0) return;
 
-            // Use larger hitbox for distant enemies (120x scale) vs local enemies
-            const isLocal = enemy.userData.isLocal || false;
-            const enemyHitRadius = isLocal ? hitRadius : hitRadius * 2;  // 2x larger for distant enemies
+            // All enemies use the same hitbox size (120x scale models)
+            const enemyHitRadius = hitRadius * 3;  // 150 (same for both local and standard enemies)
 
             const distance = enemy.position.distanceTo(targetPosition);
             if (distance < enemyHitRadius) {

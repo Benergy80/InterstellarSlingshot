@@ -1152,20 +1152,28 @@ if (typeof enemies !== 'undefined' && enemies.length > 0 && gameState.frameCount
             // GLB model Group - traverse all meshes and pulse their materials
             enemy.traverse((child) => {
                 if (child.isMesh && child.material) {
-                    if (child.material.opacity !== undefined) {
-                        if (child.userData.baseOpacity === undefined) {
-                            child.userData.baseOpacity = child.material.opacity;
+                    // Check if this is a glow layer child mesh
+                    const isGlowLayer = child.userData.isGlowLayer || false;
+
+                    if (isGlowLayer) {
+                        // GLOW LAYER - pulse opacity dramatically (fade in/out)
+                        if (child.material.opacity !== undefined) {
+                            if (child.userData.baseOpacity === undefined) {
+                                child.userData.baseOpacity = child.material.opacity;
+                            }
+                            // Dramatic pulsing from near-transparent to bright
+                            // pulseFactor ranges from -1 to 1, so this ranges from 0.1 to 1.9
+                            child.material.opacity = child.userData.baseOpacity * (1.0 + pulseFactor * 0.9);
                         }
-                        // Increased pulsing amplitude for better visibility
-                        child.material.opacity = child.userData.baseOpacity * (1.0 + pulseFactor * 0.8);
-                    }
-                    // Also pulse emissive intensity for glowing effect - MUCH BRIGHTER
-                    if (child.material.emissiveIntensity !== undefined) {
-                        if (child.userData.baseEmissive === undefined) {
-                            child.userData.baseEmissive = child.material.emissiveIntensity;
+                    } else {
+                        // BASE MATERIAL - keep solid, no opacity pulsing
+                        // Only pulse emissive if it has one
+                        if (child.material.emissiveIntensity !== undefined) {
+                            if (child.userData.baseEmissive === undefined) {
+                                child.userData.baseEmissive = child.material.emissiveIntensity;
+                            }
+                            child.material.emissiveIntensity = child.userData.baseEmissive * (1.0 + pulseFactor * 0.5);
                         }
-                        // Significantly increased brightness for GLB models
-                        child.material.emissiveIntensity = child.userData.baseEmissive * (1.5 + pulseFactor * 2.5);
                     }
                 }
             });
