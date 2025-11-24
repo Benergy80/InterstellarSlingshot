@@ -48,27 +48,51 @@ function adjustMinimumSpeed(speed) {
 // =============================================================================
 
 // UPDATED: Pursuit behavior
-// Helper: Add dynamic rotation/banking to enemy based on movement
+// Helper: Add smooth rotation to enemy based on movement trajectory
 function applyEnemyRotation(enemy, direction, speed) {
     if (!enemy || !direction) return;
 
-    // Calculate banking based on lateral movement
-    const lateralSpeed = Math.sqrt(direction.x * direction.x + direction.z * direction.z);
-    const bankAngle = Math.atan2(direction.x, direction.z) * 0.3;  // Banking into turns
+    try {
+        // Skip if not moving enough
+        const movementMagnitude = Math.sqrt(direction.x * direction.x + direction.y * direction.y + direction.z * direction.z);
+        if (movementMagnitude < 0.001) return;
 
-    // Smoothly interpolate rotation
-    if (!enemy.rotation) enemy.rotation = new THREE.Euler();
+        // Initialize rotation tracking if not exists
+        if (!enemy.userData.targetRotation) {
+            enemy.userData.targetRotation = {x: 0, y: 0, z: 0};
+        }
+        if (!enemy.userData.tumbleRate) {
+            enemy.userData.tumbleRate = (Math.random() - 0.5) * 0.1;  // Slow random tumble
+        }
 
-    // Bank based on turn direction
-    enemy.rotation.z = THREE.MathUtils.lerp(enemy.rotation.z || 0, bankAngle, 0.1);
+        // Calculate target rotation to face movement direction (trajectory)
+        const lateralSpeed = Math.sqrt(direction.x * direction.x + direction.z * direction.z);
 
-    // Pitch based on vertical movement
-    const pitchAngle = Math.atan2(direction.y, lateralSpeed) * 0.5;
-    enemy.rotation.x = THREE.MathUtils.lerp(enemy.rotation.x || 0, pitchAngle, 0.1);
+        // Yaw: Face the direction of horizontal movement
+        enemy.userData.targetRotation.y = Math.atan2(direction.x, direction.z);
 
-    // Yaw to face movement direction
-    const yawAngle = Math.atan2(direction.x, direction.z);
-    enemy.rotation.y = THREE.MathUtils.lerp(enemy.rotation.y || 0, yawAngle, 0.1);
+        // Pitch: Tilt based on vertical movement
+        enemy.userData.targetRotation.x = -Math.atan2(direction.y, lateralSpeed) * 0.2;  // Very gentle pitch
+
+        // Bank: Roll into turns based on change in yaw
+        const currentYaw = enemy.rotation.y || 0;
+        const yawDelta = enemy.userData.targetRotation.y - currentYaw;
+        // Normalize yaw delta to -PI to PI
+        const normalizedYawDelta = Math.atan2(Math.sin(yawDelta), Math.cos(yawDelta));
+        enemy.userData.targetRotation.z = normalizedYawDelta * 0.15;  // Very gentle banking
+
+        // Add slow tumble for variety
+        enemy.userData.targetRotation.z += Math.sin(Date.now() * 0.0001 + (enemy.userData.tumbleSeed || 0)) * enemy.userData.tumbleRate;
+
+        // VERY SMOOTH interpolation to target rotation
+        if (!enemy.rotation) enemy.rotation = new THREE.Euler();
+
+        enemy.rotation.x = THREE.MathUtils.lerp(enemy.rotation.x || 0, enemy.userData.targetRotation.x, 0.02);  // Very slow
+        enemy.rotation.y = THREE.MathUtils.lerp(enemy.rotation.y || 0, enemy.userData.targetRotation.y, 0.02);  // Very slow
+        enemy.rotation.z = THREE.MathUtils.lerp(enemy.rotation.z || 0, enemy.userData.targetRotation.z, 0.02);  // Very slow
+    } catch (e) {
+        // Ignore rotation errors
+    }
 }
 
 function updatePursuitBehavior(enemy, playerPos, speed, distance) {
