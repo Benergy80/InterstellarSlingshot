@@ -3945,11 +3945,15 @@ function fireWeapon() {
         const raycaster = new THREE.Raycaster();
         raycaster.setFromCamera(mousePos, camera);
         
-        // Check for enemy hits first
-        const enemyIntersects = raycaster.intersectObjects(enemies);
+        // Check for enemy hits first (recursive: true for GLB model Groups)
+        const enemyIntersects = raycaster.intersectObjects(enemies, true);
         if (enemyIntersects.length > 0) {
             targetPosition = enemyIntersects[0].point;
+            // Get the root enemy object (may be a parent Group)
             targetObject = enemyIntersects[0].object;
+            while (targetObject.parent && targetObject.parent.userData && targetObject.parent.userData.type === 'enemy') {
+                targetObject = targetObject.parent;
+            }
             console.log('Hit detected: enemy', targetObject.userData.name);
         } else {
             // Check for BORG drone hits (from outer interstellar systems)
@@ -4053,9 +4057,12 @@ function fireWeapon() {
             // Check for normal enemy/object hits
             checkWeaponHits(targetPosition);
         }
+    } else {
+        // FIXED: Still check for hits near the ray path even without direct raycast hit
+        // This allows hits on enemies that are close to the crosshair aim line
+        // targetPosition is already set to a point along the ray direction (line 4022)
+        checkWeaponHits(targetPosition);
     }
-    // FIXED: Removed fallback area-hit check when no direct raycast hit
-    // This was causing explosions at incorrect locations when aiming at empty space
     
     // Apply weapon power boost from solar storms
     if (typeof gameState !== 'undefined' && gameState.weaponPowerBoost > 1.0) {
