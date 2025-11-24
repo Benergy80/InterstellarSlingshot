@@ -3010,14 +3010,17 @@ if (enemy.userData.health <= 0) {
     
     // Check for galaxy clear
     checkGalaxyClear();
-    
-    // Check if we should spawn a boss
-if (typeof checkAndSpawnBoss === 'function' && enemy.userData.galaxyId !== undefined) {
-    checkAndSpawnBoss(enemy.userData.galaxyId);
-}
+
+    // ENHANCED: Check if we should spawn area bosses or elite guardians
+    if (typeof checkAndSpawnAreaBosses === 'function') {
+        checkAndSpawnAreaBosses();
+    }
+    if (typeof checkAndSpawnEliteGuardians === 'function') {
+        checkAndSpawnEliteGuardians();
+    }
                     
                     // Check if this was a boss that was defeated
-					if (enemy.userData.isBoss) {
+					if (enemy.userData.isBoss || enemy.userData.isEliteGuardian) {
     				const wasVictory = checkBossVictory(enemy);
     				if (wasVictory) {
         			// ⭐ NEW: Award warp for defeating boss
@@ -3757,8 +3760,13 @@ function handleMissileHit(missile, enemy) {
 
         if (typeof populateTargets === 'function') setTimeout(populateTargets, 100);
         checkGalaxyClear();
-        if (typeof checkAndSpawnBoss === 'function' && enemy.userData.galaxyId !== undefined) {
-            checkAndSpawnBoss(enemy.userData.galaxyId);
+
+        // ENHANCED: Check if we should spawn area bosses or elite guardians
+        if (typeof checkAndSpawnAreaBosses === 'function') {
+            checkAndSpawnAreaBosses();
+        }
+        if (typeof checkAndSpawnEliteGuardians === 'function') {
+            checkAndSpawnEliteGuardians();
         }
     }
 }
