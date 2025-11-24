@@ -3154,17 +3154,9 @@ if (enemy.userData.health <= 0) {
         });
     }
     
-    // Check asteroid hits (if they exist)
-    if (typeof planets !== 'undefined') {
-    planets.filter(p => p.userData.type === 'asteroid' && p.userData.health > 0).forEach(asteroid => {
-        const distance = asteroid.position.distanceTo(targetPosition);
-        if (distance < hitRadius) {
-            createExplosionEffect(asteroid.position, 0xffaa00, 10);
-            // No notification for asteroid hits - silent destruction
-            playSound('hit');
-        	}
-    	});
-	}
+    // REMOVED: Asteroid checks - asteroids should only be hit by direct raycasting
+    // The fallback checkWeaponHits() is for enemies that are near the aim line,
+    // not for asteroids. Asteroids require precise aim with direct raycast hits.
 }
 
 function checkGalaxyClear() {
