@@ -2846,7 +2846,7 @@ setTimeout(() => {
     console.log('âœ… Enhanced event listeners setup complete');
 
 function checkWeaponHits(targetPosition) {
-    const hitRadius = 150;  // Increased from 50 to match 120x scaled models (3x original)
+    const hitRadius = 300;  // Increased from 150 to 300 for better mouse aiming hit detection (2x larger hitboxes)
 
     // Check BORG drone hits (from outer interstellar systems)
     if (typeof outerInterstellarSystems !== 'undefined') {
@@ -4013,10 +4013,9 @@ function fireWeapon() {
             // Check for normal enemy/object hits
             checkWeaponHits(targetPosition);
         }
-    } else {
-        // No direct hit - still check for area hits
-        checkWeaponHits(targetPosition);
     }
+    // FIXED: Removed fallback area-hit check when no direct raycast hit
+    // This was causing explosions at incorrect locations when aiming at empty space
     
     // Apply weapon power boost from solar storms
     if (typeof gameState !== 'undefined' && gameState.weaponPowerBoost > 1.0) {

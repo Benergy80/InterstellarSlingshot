@@ -395,7 +395,7 @@ function createEnemyMeshWithModel(regionId, fallbackGeometry, material, scaleOve
             const glowMaterial = new THREE.MeshBasicMaterial({
                 color: glowColor,
                 transparent: true,
-                opacity: 0.3,  // Less opaque - will pulse from 0.0 to 0.6
+                opacity: 0.2,  // Base opacity - will pulse from 0.0 to 0.7
                 blending: THREE.AdditiveBlending,
                 side: THREE.DoubleSide,
                 depthWrite: false,
@@ -442,7 +442,7 @@ function createEnemyMeshWithModel(regionId, fallbackGeometry, material, scaleOve
         const glowMaterial = new THREE.MeshBasicMaterial({
             color: glowColor,
             transparent: true,
-            opacity: 0.3,  // Less opaque - will pulse from 0.0 to 0.6
+            opacity: 0.2,  // Base opacity - will pulse from 0.0 to 0.7
             blending: THREE.AdditiveBlending,
             side: THREE.DoubleSide,
             depthWrite: false,
