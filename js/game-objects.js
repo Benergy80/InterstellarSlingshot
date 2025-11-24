@@ -6184,17 +6184,22 @@ if (typeof window !== 'undefined') {
     window.testDifficultyScaling = testDifficultyScaling;
     window.isEnemyInLocalGalaxy = isEnemyInLocalGalaxy;
     
-    // FIXED: Boss system exports
+    // ENHANCED: Boss system exports (area-based + elite guardians)
     window.bossSystem = bossSystem;
-    window.checkAndSpawnBoss = checkAndSpawnBoss;
-    window.spawnBossForGalaxy = spawnBossForGalaxy;
+    window.checkAndSpawnAreaBosses = checkAndSpawnAreaBosses;
+    window.checkAndSpawnEliteGuardians = checkAndSpawnEliteGuardians;
+    window.spawnBossForArea = spawnBossForArea;
+    window.spawnEliteGuardian = spawnEliteGuardian;
     window.spawnBossSupport = spawnBossSupport;
     window.checkBossVictory = checkBossVictory;
-    // COMPATIBILITY: Also export with 3D names for future use
-    window.spawnBossForGalaxy3D = spawnBossForGalaxy;
+
+    // LEGACY: Keep old function names for backwards compatibility (redirect to new system)
+    window.checkAndSpawnBoss = checkAndSpawnAreaBosses;
+    window.checkAndSpawnBoss3D = checkAndSpawnAreaBosses;
+    window.spawnBossForGalaxy = spawnBossForArea;
+    window.spawnBossForGalaxy3D = spawnBossForArea;
     window.spawnBossSupport3D = spawnBossSupport;
     window.checkBossVictory3D = checkBossVictory;
-    window.checkAndSpawnBoss3D = checkAndSpawnBoss;
     
     // Add these exports
 	window.initializeAsteroidResources = initializeAsteroidResources;
