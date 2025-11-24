@@ -352,9 +352,9 @@ function createEnemyMeshWithModel(regionId, fallbackGeometry, material) {
                 child.visible = true;
                 child.frustumCulled = false;
 
-                // More defined material - dimmer colors to show shape better
+                // More defined material - much dimmer colors to show shape better
                 const dimmedColor = new THREE.Color(material.color || 0xff0000);
-                dimmedColor.multiplyScalar(0.5);  // Reduce brightness by 50% to see shape
+                dimmedColor.multiplyScalar(0.3);  // Reduce brightness by 70% to see shape clearly
 
                 child.material = new THREE.MeshBasicMaterial({
                     color: dimmedColor,
@@ -416,9 +416,9 @@ function createBossMeshWithModel(regionId, fallbackGeometry, material) {
                 child.visible = true;
                 child.frustumCulled = false;
 
-                // More defined material - dimmer colors to show shape better
+                // More defined material - much dimmer colors to show shape better
                 const dimmedColor = new THREE.Color(material.color || 0xff0000);
-                dimmedColor.multiplyScalar(0.5);  // Reduce brightness by 50% to see shape
+                dimmedColor.multiplyScalar(0.3);  // Reduce brightness by 70% to see shape clearly
 
                 child.material = new THREE.MeshBasicMaterial({
                     color: dimmedColor,

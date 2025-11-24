@@ -189,9 +189,9 @@ function updateCameraView(camera) {
             cameraState.playerShipMesh.rotation.x += pitchTilt;
         }
 
-        // Now move camera BEHIND and ABOVE the ship for third-person view
-        const behindDistance = 300;  // Distance behind ship
-        const aboveOffset = 80;       // Distance above ship
+        // Move camera VERY CLOSE behind and above the ship for third-person view
+        const behindDistance = 40;   // Very short distance behind ship
+        const aboveOffset = 12;      // Just slightly above ship
 
         // Create offset vector pointing backwards and up from ship
         // In camera space: positive Z is behind, positive Y is up
@@ -200,11 +200,11 @@ function updateCameraView(camera) {
         // Rotate offset by ship's orientation to follow ship's direction
         cameraOffset.applyQuaternion(camera.quaternion);
 
-        // Position camera behind and above the ship
+        // Calculate desired camera position
         const desiredCameraPos = cameraState.playerShipMesh.position.clone().add(cameraOffset);
 
-        // Smoothly interpolate camera to desired position (optional smoothing)
-        camera.position.lerp(desiredCameraPos, 0.1);
+        // CRITICAL: Use strong lerp to keep camera close (prevent flying away)
+        camera.position.lerp(desiredCameraPos, 0.8);
 
         // Make camera look at the ship
         camera.lookAt(cameraState.playerShipMesh.position);
