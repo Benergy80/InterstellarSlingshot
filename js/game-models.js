@@ -338,8 +338,7 @@ function createEnemyMeshWithModel(regionId, fallbackGeometry, material) {
         model.visible = true;
         model.frustumCulled = false;  // Don't cull when slightly off-screen
 
-        // IMPORTANT: Collect all base meshes first, BEFORE adding glow children
-        // This prevents infinite recursion in traverse()
+        // STEP 1: Collect all base meshes and apply materials
         const baseMeshes = [];
         model.traverse((child) => {
             if (child.isMesh) {
@@ -350,73 +349,65 @@ function createEnemyMeshWithModel(regionId, fallbackGeometry, material) {
                         vertexCount += positions.count;
                     }
                 }
+
+                // Make visible
+                child.visible = true;
+                child.frustumCulled = false;
+
+                // Apply base material
+                const baseColor = new THREE.Color(material.color || 0xff0000);
+                baseColor.multiplyScalar(0.4);
+
+                child.material = new THREE.MeshStandardMaterial({
+                    color: baseColor,
+                    transparent: false,
+                    opacity: 1.0,
+                    roughness: 0.6,
+                    metalness: 0.7,
+                    side: THREE.DoubleSide,
+                    depthWrite: true,
+                    depthTest: true
+                });
+
+                child.castShadow = false;
+                child.receiveShadow = false;
+
                 baseMeshes.push(child);
             }
         });
 
-        // Now process each base mesh and add glow layers
-        baseMeshes.forEach((child) => {
-            // CRITICAL: Make each mesh visible
-            child.visible = true;
-            child.frustumCulled = false;
-
-            // DUAL-LAYER MATERIAL SYSTEM:
-            // 1. Base material - solid, asteroid-like, spacecraft colors
-            // 2. Glow layer - transparent, pulsing, bright red/orange
-
-            // Base color for spacecraft (metallic colors)
-            const baseColor = new THREE.Color(material.color || 0xff0000);
-            // Use darker, more metallic spacecraft colors
-            baseColor.multiplyScalar(0.4);  // Darker base for contrast
-
-            // Base material - solid, defined surface like asteroids
-            child.material = new THREE.MeshStandardMaterial({
-                color: baseColor,
-                transparent: false,
-                opacity: 1.0,  // Fully opaque base
-                roughness: 0.6,  // Rough like asteroid surface
-                metalness: 0.7,  // Metallic spacecraft look
-                side: THREE.DoubleSide,
-                depthWrite: true,
-                depthTest: true
-            });
-
-            // Create glow layer as a child mesh (slightly larger)
-            const glowGeometry = child.geometry.clone();
-            const glowColor = new THREE.Color(material.color || 0xff0000);
-            // Keep glow bright (don't dim as much)
-            glowColor.multiplyScalar(1.2);  // Bright glow
-
-            const glowMaterial = new THREE.MeshBasicMaterial({
-                color: glowColor,
-                transparent: true,
-                opacity: 0.5,  // Base opacity - will pulse from 0.0 to 1.0
-                blending: THREE.AdditiveBlending,  // Additive for glow effect
-                side: THREE.DoubleSide,
-                depthWrite: false,  // Don't write to depth buffer for proper blending
-                depthTest: true
-            });
-
-            const glowMesh = new THREE.Mesh(glowGeometry, glowMaterial);
-            glowMesh.scale.multiplyScalar(1.05);  // Slightly larger than base
-            glowMesh.userData.isGlowLayer = true;  // Tag for pulsing system
-            child.add(glowMesh);  // Add as child to the base mesh
-
-            child.castShadow = false;
-            child.receiveShadow = false;
-        });
-        // console.log(`  Enemy ${regionId} model: ${meshCount} mesh(es), ~${vertexCount} vertices total`);
-
-        // Center the model to fix position offset issues
-        // Calculate bounding box to find center
+        // STEP 2: Center the model BEFORE adding glow layers
         const box = new THREE.Box3().setFromObject(model);
         const center = box.getCenter(new THREE.Vector3());
 
-        // Offset all children to center the model at origin
         model.traverse((child) => {
             if (child.isMesh) {
                 child.position.sub(center);
             }
+        });
+
+        // STEP 3: NOW add glow layers (after centering)
+        baseMeshes.forEach((child) => {
+            const glowGeometry = child.geometry.clone();
+            const glowColor = new THREE.Color(material.color || 0xff0000);
+            glowColor.multiplyScalar(1.2);
+
+            const glowMaterial = new THREE.MeshBasicMaterial({
+                color: glowColor,
+                transparent: true,
+                opacity: 0.5,
+                blending: THREE.AdditiveBlending,
+                side: THREE.DoubleSide,
+                depthWrite: false,
+                depthTest: true
+            });
+
+            const glowMesh = new THREE.Mesh(glowGeometry, glowMaterial);
+            glowMesh.scale.multiplyScalar(1.05);
+            glowMesh.position.set(0, 0, 0);
+            glowMesh.rotation.set(0, 0, 0);
+            glowMesh.userData.isGlowLayer = true;
+            child.add(glowMesh);
         });
 
         // Scale enemy models (reduced by 20% from 150x to 120x)
@@ -458,6 +449,8 @@ function createEnemyMeshWithModel(regionId, fallbackGeometry, material) {
 
         const glowMesh = new THREE.Mesh(fallbackGeometry.clone(), glowMaterial);
         glowMesh.scale.multiplyScalar(1.05);
+        glowMesh.position.set(0, 0, 0);  // Position at parent's origin
+        glowMesh.rotation.set(0, 0, 0);  // No rotation offset
         glowMesh.userData.isGlowLayer = true;
         baseMesh.add(glowMesh);
 
