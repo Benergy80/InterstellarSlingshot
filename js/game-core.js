@@ -1598,6 +1598,11 @@ if (typeof checkCosmicFeatureInteractions === 'function' && typeof camera !== 'u
         gameState.missiles.cooldown = Math.max(0, gameState.missiles.cooldown - 16.67);
     }
 
+    // Update weapon cooldown
+    if (gameState.weapons && gameState.weapons.cooldown > 0) {
+        gameState.weapons.cooldown = Math.max(0, gameState.weapons.cooldown - 16.67);
+    }
+
     // Check for hull zero - mission fail
     if (gameState.hull <= 0 && !gameState.gameOver) {
         if (typeof createPlayerExplosion === 'function') {

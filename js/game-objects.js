@@ -814,8 +814,8 @@ function spawnBossForArea(galaxyId, placementType, areaKey) {
     
     boss.add(bossGlow);
 
-    // Calculate hitbox size from scaled model (like asteroids) - bosses are 180x scaled
-    let bossHitboxSize = 180; // Default for 180x scaled model
+    // Calculate hitbox size from scaled model (like asteroids) - bosses are 144x scaled
+    let bossHitboxSize = 144; // Default for 144x scaled model
     try {
         const box = new THREE.Box3().setFromObject(boss);
         const size = new THREE.Vector3();
@@ -931,8 +931,8 @@ function spawnBossSupport(galaxyId, bossPosition, supportIndex, areaKey = null) 
     
     support.position.copy(supportPosition);
 
-    // Calculate hitbox size from scaled model (like asteroids) - supports are 120x scaled
-    let supportHitboxSize = 120; // Default for 120x scaled model
+    // Calculate hitbox size from scaled model (like asteroids) - supports are 96x scaled
+    let supportHitboxSize = 96; // Default for 96x scaled model
     try {
         const box = new THREE.Box3().setFromObject(support);
         const size = new THREE.Vector3();
@@ -1128,12 +1128,12 @@ function spawnEliteGuardian(galaxyId, faction) {
         emissiveIntensity: 1.2
     });
 
-    // Use boss model but with extra scaling - 250x (larger than bosses at 180x)
+    // Use boss model but with extra scaling - 200x (larger than bosses at 144x)
     let guardian;
     if (typeof createBossMeshWithModel === 'function') {
         guardian = createBossMeshWithModel(galaxyId + 1, guardianGeometry, guardianMaterial);
-        // Apply additional scaling for elite guardian (250x total)
-        guardian.scale.multiplyScalar(250.0 / 180.0); // Scale up from boss size
+        // Apply additional scaling for elite guardian (200x total = 80% of original 250x)
+        guardian.scale.multiplyScalar(200.0 / 144.0); // Scale up from boss size
     } else {
         guardian = new THREE.Mesh(guardianGeometry, guardianMaterial);
         guardian.scale.multiplyScalar(3.5); // Larger than regular boss
@@ -1156,7 +1156,7 @@ function spawnEliteGuardian(galaxyId, faction) {
     guardian.add(guardianGlow);
 
     // Calculate hitbox size
-    let guardianHitboxSize = 250; // Default for 250x scaled model
+    let guardianHitboxSize = 200; // Default for 200x scaled model
     try {
         const box = new THREE.Box3().setFromObject(guardian);
         const size = new THREE.Vector3();
@@ -4323,7 +4323,7 @@ function createEnemies3D() {
             const isLocal = (g === 7);
             
             // Calculate hitbox size from scaled model (like asteroids)
-            let hitboxSize = 120; // Default for 120x scaled model
+            let hitboxSize = 96; // Default for 96x scaled model
             try {
                 const box = new THREE.Box3().setFromObject(enemy);
                 const size = new THREE.Vector3();
@@ -4418,7 +4418,7 @@ function createEnemies3D() {
         );
 
         // Calculate hitbox size from scaled model (like asteroids)
-        let hitboxSize = 120; // Default for 120x scaled model
+        let hitboxSize = 96; // Default for 96x scaled model
         try {
             const box = new THREE.Box3().setFromObject(enemy);
             const size = new THREE.Vector3();

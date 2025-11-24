@@ -318,8 +318,9 @@ function updatePatrolBehavior(enemy, playerPos, speed, time) {
         const targetPos = new THREE.Vector3(targetX, targetY, targetZ);
         const direction = new THREE.Vector3().subVectors(targetPos, enemy.position).normalize();
 
-        enemy.position.add(direction.multiplyScalar(speed * 0.3));
-        applyEnemyRotation(enemy, direction, speed * 0.3);  // Add rotation
+        // ENHANCED: Increased patrol speed from 0.3 to 0.6 for smoother flowing motion
+        enemy.position.add(direction.multiplyScalar(speed * 0.6));
+        applyEnemyRotation(enemy, direction, speed * 0.6);  // Add rotation
     } catch (e) {
         // Ignore movement errors
     }
@@ -587,9 +588,9 @@ function updateEnemyBehavior() {
                 }
             }
         } else {
-            // Patrol behavior when not active - maintain minimum speed
+            // Patrol behavior when not active - maintain minimum speed for smooth flowing motion
             const baseSpeed = enemy.userData.speed || 1.5;
-            const patrolSpeed = Math.max(1.0, baseSpeed * 0.7);  // Patrol at 70% speed, minimum 1.0
+            const patrolSpeed = Math.max(1.5, baseSpeed * 0.8);  // Patrol at 80% speed, minimum 1.5
             updatePatrolBehavior(enemy, camera.position, patrolSpeed, Date.now() * 0.001);
         }
         
@@ -2965,8 +2966,8 @@ function checkWeaponHits(targetPosition) {
                     // Store largest dimension as hitbox size (diameter)
                     enemy.userData.hitboxSize = Math.max(size.x, size.y, size.z);
                 } catch (e) {
-                    // Fallback: use reasonable default for 120x scaled model
-                    enemy.userData.hitboxSize = 120; // Approximate size of scaled model
+                    // Fallback: use reasonable default for 96x scaled model
+                    enemy.userData.hitboxSize = 96; // Approximate size of scaled model
                 }
             }
 
