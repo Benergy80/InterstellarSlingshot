@@ -352,9 +352,12 @@ function createEnemyMeshWithModel(regionId, fallbackGeometry, material) {
                 child.visible = true;
                 child.frustumCulled = false;
 
-                // More defined material like asteroids - less transparent, more surface detail
+                // More defined material - dimmer colors to show shape better
+                const dimmedColor = new THREE.Color(material.color || 0xff0000);
+                dimmedColor.multiplyScalar(0.5);  // Reduce brightness by 50% to see shape
+
                 child.material = new THREE.MeshBasicMaterial({
-                    color: material.color || new THREE.Color(0xff0000),
+                    color: dimmedColor,
                     transparent: true,
                     opacity: 0.85,  // More opaque for better surface definition
                     blending: THREE.NormalBlending,
@@ -413,9 +416,12 @@ function createBossMeshWithModel(regionId, fallbackGeometry, material) {
                 child.visible = true;
                 child.frustumCulled = false;
 
-                // More defined material like asteroids - less transparent, more surface detail
+                // More defined material - dimmer colors to show shape better
+                const dimmedColor = new THREE.Color(material.color || 0xff0000);
+                dimmedColor.multiplyScalar(0.5);  // Reduce brightness by 50% to see shape
+
                 child.material = new THREE.MeshBasicMaterial({
-                    color: material.color || new THREE.Color(0xff0000),
+                    color: dimmedColor,
                     transparent: true,
                     opacity: 0.85,  // More opaque for better surface definition
                     blending: THREE.NormalBlending,

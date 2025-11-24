@@ -48,27 +48,52 @@ function adjustMinimumSpeed(speed) {
 // =============================================================================
 
 // UPDATED: Pursuit behavior
+// Helper: Add dynamic rotation/banking to enemy based on movement
+function applyEnemyRotation(enemy, direction, speed) {
+    if (!enemy || !direction) return;
+
+    // Calculate banking based on lateral movement
+    const lateralSpeed = Math.sqrt(direction.x * direction.x + direction.z * direction.z);
+    const bankAngle = Math.atan2(direction.x, direction.z) * 0.3;  // Banking into turns
+
+    // Smoothly interpolate rotation
+    if (!enemy.rotation) enemy.rotation = new THREE.Euler();
+
+    // Bank based on turn direction
+    enemy.rotation.z = THREE.MathUtils.lerp(enemy.rotation.z || 0, bankAngle, 0.1);
+
+    // Pitch based on vertical movement
+    const pitchAngle = Math.atan2(direction.y, lateralSpeed) * 0.5;
+    enemy.rotation.x = THREE.MathUtils.lerp(enemy.rotation.x || 0, pitchAngle, 0.1);
+
+    // Yaw to face movement direction
+    const yawAngle = Math.atan2(direction.x, direction.z);
+    enemy.rotation.y = THREE.MathUtils.lerp(enemy.rotation.y || 0, yawAngle, 0.1);
+}
+
 function updatePursuitBehavior(enemy, playerPos, speed, distance) {
     // Safety checks
     if (!enemy || !enemy.userData || !playerPos || typeof THREE === 'undefined') {
         return;
     }
-    
+
     try {
         if (distance > 100) {
             // Direct pursuit when far
             const direction = new THREE.Vector3().subVectors(playerPos, enemy.position).normalize();
             enemy.position.add(direction.multiplyScalar(speed));
+            applyEnemyRotation(enemy, direction, speed);  // Add rotation
         } else {
             // Circle strafe when close
             const angle = Date.now() * 0.001 + (enemy.userData.circlePhase || 0);
             const targetX = playerPos.x + Math.cos(angle) * 80;
             const targetZ = playerPos.z + Math.sin(angle) * 80;
             const targetY = playerPos.y + Math.sin(angle * 0.5) * 20;
-            
+
             const targetPos = new THREE.Vector3(targetX, targetY, targetZ);
             const direction = new THREE.Vector3().subVectors(targetPos, enemy.position).normalize();
             enemy.position.add(direction.multiplyScalar(speed * 0.8));
+            applyEnemyRotation(enemy, direction, speed * 0.8);  // Add rotation
         }
     } catch (e) {
         // Ignore movement errors if positions are invalid
@@ -94,6 +119,7 @@ function updateSwarmBehavior(enemy, playerPos, speed, time) {
         const targetPos = new THREE.Vector3(targetX, targetY, targetZ);
         const direction = new THREE.Vector3().subVectors(targetPos, enemy.position).normalize();
         enemy.position.add(direction.multiplyScalar(speed * 0.9));
+        applyEnemyRotation(enemy, direction, speed * 0.9);  // Add rotation
     } catch (e) {
         // Ignore movement errors
     }
@@ -105,17 +131,18 @@ function updateEvasionBehavior(enemy, playerPos, speed, time) {
     if (!enemy || !enemy.userData || !playerPos || typeof THREE === 'undefined') {
         return;
     }
-    
+
     try {
         // Move perpendicular to player direction
         const direction = new THREE.Vector3().subVectors(enemy.position, playerPos).normalize();
         const perpendicular = new THREE.Vector3(-direction.z, direction.y, direction.x);
-        
+
         // Add some randomness and oscillation
         const oscillation = Math.sin(time * 2 + (enemy.userData.circlePhase || 0)) * 0.5;
         const evasionVector = perpendicular.multiplyScalar(speed * (1 + oscillation));
-        
+
         enemy.position.add(evasionVector);
+        applyEnemyRotation(enemy, perpendicular, speed);  // Add rotation
     } catch (e) {
         // Ignore movement errors
     }
@@ -127,19 +154,20 @@ function updateFlankingBehavior(enemy, playerPos, speed, time) {
     if (!enemy || !enemy.userData || !playerPos || typeof THREE === 'undefined') {
         return;
     }
-    
+
     try {
         // Try to get behind or to the side of the player
         const flankAngle = (enemy.userData.circlePhase || 0) + Math.PI;
         const flankRadius = 150;
-        
+
         const targetX = playerPos.x + Math.cos(flankAngle) * flankRadius;
         const targetZ = playerPos.z + Math.sin(flankAngle) * flankRadius;
         const targetY = playerPos.y;
-        
+
         const targetPos = new THREE.Vector3(targetX, targetY, targetZ);
         const direction = new THREE.Vector3().subVectors(targetPos, enemy.position).normalize();
         enemy.position.add(direction.multiplyScalar(speed * 0.7));
+        applyEnemyRotation(enemy, direction, speed * 0.7);  // Add rotation
     } catch (e) {
         // Ignore movement errors
     }
@@ -151,25 +179,29 @@ function updateEngagementBehavior(enemy, playerPos, speed, time) {
     if (!enemy || !enemy.userData || !playerPos || typeof THREE === 'undefined') {
         return;
     }
-    
+
     try {
         // Maintain optimal attack distance
         const optimalDistance = 100;
         const currentDistance = enemy.position.distanceTo(playerPos);
-        
+
+        let direction;
         if (currentDistance > optimalDistance + 20) {
             // Move closer
-            const direction = new THREE.Vector3().subVectors(playerPos, enemy.position).normalize();
+            direction = new THREE.Vector3().subVectors(playerPos, enemy.position).normalize();
             enemy.position.add(direction.multiplyScalar(speed));
+            applyEnemyRotation(enemy, direction, speed);  // Add rotation
         } else if (currentDistance < optimalDistance - 20) {
             // Move away
-            const direction = new THREE.Vector3().subVectors(enemy.position, playerPos).normalize();
+            direction = new THREE.Vector3().subVectors(enemy.position, playerPos).normalize();
             enemy.position.add(direction.multiplyScalar(speed * 0.5));
+            applyEnemyRotation(enemy, direction, speed * 0.5);  // Add rotation
         } else {
             // Maintain position with slight movement
             const angle = time * 0.5;
             const offset = new THREE.Vector3(Math.cos(angle) * 10, 0, Math.sin(angle) * 10);
             enemy.position.add(offset.multiplyScalar(speed * 0.3));
+            applyEnemyRotation(enemy, offset, speed * 0.3);  // Add rotation
         }
     } catch (e) {
         // Ignore movement errors
@@ -196,8 +228,9 @@ function updatePatrolBehavior(enemy, playerPos, speed, time) {
         
         const targetPos = new THREE.Vector3(targetX, targetY, targetZ);
         const direction = new THREE.Vector3().subVectors(targetPos, enemy.position).normalize();
-        
+
         enemy.position.add(direction.multiplyScalar(speed * 0.3));
+        applyEnemyRotation(enemy, direction, speed * 0.3);  // Add rotation
     } catch (e) {
         // Ignore movement errors
     }
@@ -2817,8 +2850,12 @@ function checkWeaponHits(targetPosition) {
         enemies.forEach((enemy, enemyIndex) => {
             if (enemy.userData.health <= 0) return;
 
+            // Use larger hitbox for distant enemies (120x scale) vs local enemies
+            const isLocal = enemy.userData.isLocal || false;
+            const enemyHitRadius = isLocal ? hitRadius : hitRadius * 2;  // 2x larger for distant enemies
+
             const distance = enemy.position.distanceTo(targetPosition);
-            if (distance < hitRadius) {
+            if (distance < enemyHitRadius) {
                 const damage = 1; // Standard damage
                 enemy.userData.health -= damage;
                 
