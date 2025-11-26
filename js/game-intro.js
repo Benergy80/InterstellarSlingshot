@@ -1006,7 +1006,7 @@ function createSkipButton() {
             cursor: pointer !important;
             opacity: 0;
             transition: all 0.2s ease !important;
-            z-index: 80 !important;
+            z-index: 10000 !important;
             box-shadow: 0 0 10px rgba(0, 150, 255, 0.3), inset 0 0 10px rgba(0, 150, 255, 0.1) !important;
             text-shadow: 0 0 8px rgba(0,255,136,0.6), 0 0 16px rgba(0,255,136,0.3) !important;
         `;
