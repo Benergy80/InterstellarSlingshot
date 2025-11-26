@@ -2099,8 +2099,9 @@ function gameOver(reason) {
     // Enhanced game over screen with visible mouse cursor
     const gameOverOverlay = document.createElement('div');
     gameOverOverlay.id = 'gameOverScreen';
-    gameOverOverlay.className = 'absolute inset-0 bg-black bg-opacity-95 flex items-center justify-center z-50 cyberpunk-bg';
+    gameOverOverlay.className = 'absolute inset-0 bg-black bg-opacity-95 flex items-center justify-center cyberpunk-bg';
     gameOverOverlay.style.cursor = 'auto'; // Make mouse visible
+    gameOverOverlay.style.zIndex = '10000'; // FIXED: High z-index for iPad visibility
     gameOverOverlay.innerHTML = `
         <div class="text-center ui-panel rounded-lg p-8" style="cursor: auto;">
             <h1 class="text-4xl font-bold text-red-400 mb-4 glow-text cyber-title">MISSION FAILED</h1>
@@ -2175,8 +2176,9 @@ function showGameOverScreen(title, message) {
     // Enhanced game over screen with visible mouse cursor
     const gameOverOverlay = document.createElement('div');
     gameOverOverlay.id = 'gameOverScreen';
-    gameOverOverlay.className = 'absolute inset-0 bg-black bg-opacity-95 flex items-center justify-center z-50 cyberpunk-bg';
+    gameOverOverlay.className = 'absolute inset-0 bg-black bg-opacity-95 flex items-center justify-center cyberpunk-bg';
     gameOverOverlay.style.cursor = 'auto'; // Make mouse visible
+    gameOverOverlay.style.zIndex = '10000'; // FIXED: High z-index for iPad visibility
     gameOverOverlay.innerHTML = `
         <div class="text-center ui-panel rounded-lg p-8" style="cursor: auto;">
             <h1 class="text-4xl font-bold text-red-400 mb-4 glow-text cyber-title">MISSION FAILED</h1>
