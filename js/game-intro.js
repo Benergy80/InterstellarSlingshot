@@ -981,12 +981,14 @@ function createCountdownOverlay() {
 function createSkipButton() {
     const skipButton = document.createElement('button');
     skipButton.id = 'skipIntroBtn';
-    skipButton.className = 'absolute bottom-4 left-1/2 transform -translate-x-1/2 space-btn rounded px-4 py-2 text-sm z-50';
+    skipButton.className = 'absolute bottom-4 left-1/2 transform -translate-x-1/2 space-btn rounded px-4 py-2 text-sm';
     skipButton.innerHTML = '<i class="fas fa-forward mr-2"></i>Skip Intro';
     skipButton.addEventListener('click', skipIntroSequence);
-    
-    // Apply mobile button styling with cyan colors on mobile, keep original on desktop
-    const isMobile = window.innerWidth <= 768 || ('ontouchstart' in window && window.innerWidth <= 1024);
+
+    // FIXED: Improved mobile detection for iPads (including landscape mode)
+    const isMobile = window.innerWidth <= 768 ||
+                     ('ontouchstart' in window && window.innerWidth <= 1024) ||
+                     /iPad|iPhone|iPod/.test(navigator.userAgent);
 
     if (isMobile) {
         skipButton.style.cssText = `
@@ -1021,10 +1023,11 @@ function createSkipButton() {
             skipButton.style.boxShadow = '0 0 10px rgba(0, 255, 255, 0.3), inset 0 0 10px rgba(0, 255, 255, 0.1)';
         });
     } else {
-        // Desktop: keep original styling with just opacity fix
+        // FIXED: Desktop also needs high z-index (removed z-50 from className)
         skipButton.style.opacity = '0';
+        skipButton.style.zIndex = '10000';
     }
-    
+
     document.body.appendChild(skipButton);
     introSequence.skipButton = skipButton;
 }
