@@ -831,7 +831,7 @@ function spawnBossForArea(galaxyId, placementType, areaKey) {
         type: 'enemy',
         health: getEnemyHealthForDifficulty(false, true, false), // PRESERVED: Dynamic boss health
         maxHealth: getEnemyHealthForDifficulty(false, true, false),
-        speed: 1.5, // PRESERVED: Boss speed
+        speed: 0.8, // FIXED: Boss speed (800 km/s, within 200-1000 km/s range)
         aggression: 1.0, // PRESERVED: Maximum aggression
         patrolCenter: bossPosition.clone(), // ENHANCED: 3D patrol center
         patrolRadius: 800, // PRESERVED: Boss patrol radius
@@ -948,7 +948,7 @@ function spawnBossSupport(galaxyId, bossPosition, supportIndex, areaKey = null) 
         type: 'enemy',
         health: getEnemyHealthForDifficulty(false, false, true), // PRESERVED: Support health
         maxHealth: getEnemyHealthForDifficulty(false, false, true),
-        speed: 1.2, // PRESERVED: Support speed
+        speed: 0.7, // FIXED: Support speed (700 km/s, within 200-1000 km/s range)
         aggression: 0.9, // PRESERVED: Support aggression
         patrolCenter: supportPosition.clone(), // ENHANCED: 3D patrol center
         patrolRadius: distance,
@@ -1172,7 +1172,7 @@ function spawnEliteGuardian(galaxyId, faction) {
         type: 'enemy',
         health: getEnemyHealthForDifficulty(false, true, false) * 2, // 2x boss health
         maxHealth: getEnemyHealthForDifficulty(false, true, false) * 2,
-        speed: 2.0, // Faster than bosses
+        speed: 1.0, // FIXED: Elite guardian speed (1000 km/s max, faster than bosses at 800 km/s)
         aggression: 1.0,
         patrolCenter: guardianPosition.clone(),
         patrolRadius: 1200, // Larger patrol radius
@@ -4338,7 +4338,7 @@ function createEnemies3D() {
                 type: 'enemy',
                 health: getEnemyHealthForDifficulty(isLocal, false, false),
                 maxHealth: getEnemyHealthForDifficulty(isLocal, false, false),
-                speed: 0.8 + Math.random() * 1.5,
+                speed: 0.2 + Math.random() * 0.8, // FIXED: 0.2-1.0 range (200-1000 km/s)
                 aggression: Math.random(),
                 patrolCenter: enemyPosition.clone(),
                 patrolRadius: 2000 + Math.random() * 3000,

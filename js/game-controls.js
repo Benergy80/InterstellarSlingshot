@@ -524,7 +524,9 @@ function updateEnemyBehavior() {
                 
                 const targetPos = new THREE.Vector3(targetX, targetY, targetZ);
                 const direction = new THREE.Vector3().subVectors(targetPos, enemy.position).normalize();
-                enemy.position.add(direction.multiplyScalar((enemy.userData.speed || 1.5) * 0.5));  // Increased patrol speed
+                const tutorialSpeed = Math.max(0.2, (enemy.userData.speed || 0.5) * 0.5);  // Min 200 km/s even in tutorial
+                enemy.position.add(direction.multiplyScalar(tutorialSpeed));
+                applyEnemyRotation(enemy, direction, tutorialSpeed);  // Make ship face movement direction
             }
         });
         return; // Exit early - don't process combat logic during tutorial
@@ -603,10 +605,10 @@ function updateEnemyBehavior() {
         }
         
         if (enemy.userData.isActive) {
-            // Apply difficulty-based speed modifiers with minimum speed of 1.5 (roughly 100km/s)
-            const baseSpeed = enemy.userData.speed || 1.5;  // Increased from 0.5 to 1.5
+            // FIXED: Enemy speeds 200-1000 km/s (0.2-1.0 game units, multiply by 1000 for km/s display)
+            const baseSpeed = enemy.userData.speed || 0.5;
             const speedMultiplier = isLocal ? difficultySettings.localSpeedMultiplier : difficultySettings.distantSpeedMultiplier;
-            const adjustedSpeed = Math.max(1.5, baseSpeed * speedMultiplier);  // Ensure minimum 1.5 speed
+            const adjustedSpeed = Math.min(1.0, Math.max(0.2, baseSpeed * speedMultiplier));  // Clamp to 0.2-1.0 (200-1000 km/s)
             
             if (isLocal) {
                 updateLocalEnemyBehavior(enemy, distanceToPlayer, adjustedSpeed, difficultySettings);
@@ -633,9 +635,9 @@ function updateEnemyBehavior() {
                 }
             }
         } else {
-            // Patrol behavior when not active - maintain minimum speed for smooth flowing motion
-            const baseSpeed = enemy.userData.speed || 1.5;
-            const patrolSpeed = Math.max(1.5, baseSpeed * 0.8);  // Patrol at 80% speed, minimum 1.5
+            // FIXED: Patrol behavior - enemies always thrust forward at min 200 km/s
+            const baseSpeed = enemy.userData.speed || 0.5;
+            const patrolSpeed = Math.min(1.0, Math.max(0.2, baseSpeed * 0.8));  // Patrol at 80% speed, clamped to 0.2-1.0 (200-1000 km/s)
             updatePatrolBehavior(enemy, camera.position, patrolSpeed, Date.now() * 0.001);
         }
         
