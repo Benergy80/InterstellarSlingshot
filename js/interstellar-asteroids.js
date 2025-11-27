@@ -123,12 +123,12 @@ function createInterstellarAsteroid(position, size, velocity, fieldIndex, astero
     geometry.attributes.position.needsUpdate = true;
     geometry.computeVertexNormals();
 
-    // Material - dark gray/brown rocky appearance with emissive glow for visibility in deep space
-    const baseColor = new THREE.Color(0.3 + Math.random() * 0.2, 0.25 + Math.random() * 0.15, 0.2 + Math.random() * 0.1);
+    // FIXED: Brighter material with enhanced emissive glow for visibility in deep space
+    const baseColor = new THREE.Color(0.4 + Math.random() * 0.3, 0.35 + Math.random() * 0.25, 0.3 + Math.random() * 0.2); // Brighter base
     const material = new THREE.MeshStandardMaterial({
         color: baseColor,
         emissive: baseColor,
-        emissiveIntensity: 0.55,  // Increased for better visibility in dark space
+        emissiveIntensity: 0.8,  // FIXED: 0.55 → 0.8 for much better visibility in dark space
         roughness: 0.9,
         metalness: 0.1,
         flatShading: true

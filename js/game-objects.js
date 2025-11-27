@@ -5450,20 +5450,21 @@ function initializeAsteroidResources() {
         new THREE.SphereGeometry(1, 4, 4)
     ];
     
-    // UPDATED: Use MeshBasicMaterial with emissive colors for visibility
+    // FIXED: Enhanced visibility with brighter emissive and base colors
     const colorVariants = [
-        { hue: 0, sat: 0.15, light: 0.6 },      // Gray
-        { hue: 0.09, sat: 0.5, light: 0.5 },    // Brown
-        { hue: 0.58, sat: 0.4, light: 0.65 }    // Blue-metallic
+        { hue: 0, sat: 0.15, light: 0.7 },      // Lighter gray
+        { hue: 0.09, sat: 0.5, light: 0.6 },    // Lighter brown
+        { hue: 0.58, sat: 0.4, light: 0.75 }    // Lighter blue-metallic
     ];
-    
+
     colorVariants.forEach(color => {
     asteroidResources.materials.push(
         new THREE.MeshStandardMaterial({
             color: new THREE.Color().setHSL(color.hue, color.sat, color.light),
             roughness: 0.9,
             metalness: color.hue > 0.5 ? 0.3 : 0.1,
-            emissive: new THREE.Color().setHSL(color.hue, color.sat * 0.5, 0.1)
+            emissive: new THREE.Color().setHSL(color.hue, color.sat * 0.5, 0.35), // FIXED: 0.1 → 0.35 for much brighter glow
+            emissiveIntensity: 0.8  // FIXED: Added emissive intensity for better visibility
         })
     );
 });
@@ -5605,13 +5606,12 @@ beltGroup.frustumCulled = false; // Don't cull the entire group
             
             scene.add(beltGroup);
 
-// ADD LIGHTING: Create a point light at the belt center
-const beltLight = new THREE.PointLight(0xffffff, 3.0, 3000); // White light, intensity 1.5, range 3000
+// FIXED: Enhanced lighting for better asteroid visibility
+const beltLight = new THREE.PointLight(0xffffff, 5.0, 4000); // FIXED: intensity 3.0→5.0, range 3000→4000
 beltLight.position.copy(galaxyCenter);
 scene.add(beltLight);
 beltGroup.userData.light = beltLight; // Store reference for cleanup
 
-asteroidBelts.push(beltGroup);
             asteroidBelts.push(beltGroup);
         }
     });
