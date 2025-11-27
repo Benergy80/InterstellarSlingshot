@@ -1173,11 +1173,10 @@ body.intro-active .nav-panel-mobile {
     }
 }
 
-/* Swipe indicator for navigation panel - Cyberpunk theme */
+/* Swipe indicators for navigation panel - Cyberpunk theme */
 .swipe-indicator {
     position: fixed;
     top: 20px;
-    right: 8px;
     display: flex;
     align-items: center;
     gap: 4px;
@@ -1189,6 +1188,17 @@ body.intro-active .nav-panel-mobile {
     pointer-events: none;
     box-shadow: 0 0 10px rgba(0, 150, 255, 0.3), inset 0 0 10px rgba(0, 150, 255, 0.1);
     opacity: 0.7;
+}
+
+/* Open indicator: right side, shown when panel closed */
+.swipe-indicator-open {
+    right: 8px;
+}
+
+/* Close indicator: left side, hidden by default */
+.swipe-indicator-close {
+    left: 8px;
+    display: none;
 }
 
 .swipe-arrow {
@@ -1208,9 +1218,13 @@ body.intro-active .nav-panel-mobile {
     text-shadow: 0 0 8px rgba(0,255,136,0.6), 0 0 16px rgba(0,255,136,0.3);
 }
 
-/* Hide swipe indicator when nav panel is active */
-.nav-panel-mobile.active ~ .swipe-indicator {
+/* When nav panel is active: hide "open" indicator, show "close" indicator */
+.nav-panel-mobile.active ~ .swipe-indicator-open {
     display: none;
+}
+
+.nav-panel-mobile.active ~ .swipe-indicator-close {
+    display: flex;
 }
 
 /* Hide swipe indicator during intro and on desktop */
