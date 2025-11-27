@@ -1218,10 +1218,9 @@ body.intro-active .swipe-indicator {
     display: none !important;
 }
 
-@media (min-width: 769px) {
+/* Hide swipe indicator on desktop only (devices with hover capability) */
+@media (hover: hover) and (pointer: fine) {
     .swipe-indicator {
         display: none !important;
     }
-}
-`;
 }
