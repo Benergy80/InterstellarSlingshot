@@ -985,12 +985,12 @@ function createSkipButton() {
     skipButton.innerHTML = '<i class="fas fa-forward mr-2"></i>Skip Intro';
     skipButton.addEventListener('click', skipIntroSequence);
 
-    // FIXED: Improved mobile detection for iPads (including landscape mode)
-    const isMobile = window.innerWidth <= 768 ||
-                     ('ontouchstart' in window && window.innerWidth <= 1024) ||
-                     /iPad|iPhone|iPod/.test(navigator.userAgent);
+    // FIXED: iPad uses desktop transparent styling, iPhone uses mobile styling
+    const isIPhone = /iPhone|iPod/.test(navigator.userAgent);
+    const isMobile = (window.innerWidth <= 768 || ('ontouchstart' in window && window.innerWidth <= 1024)) && isIPhone;
 
     if (isMobile) {
+        // iPhone-specific mobile styling with solid background
         skipButton.style.cssText = `
             position: fixed !important;
             bottom: 16px !important;
@@ -1023,7 +1023,7 @@ function createSkipButton() {
             skipButton.style.boxShadow = '0 0 10px rgba(0, 255, 255, 0.3), inset 0 0 10px rgba(0, 255, 255, 0.1)';
         });
     } else {
-        // FIXED: Desktop also needs high z-index (removed z-50 from className)
+        // Desktop AND iPad: transparent glassmorphism style from space-btn class
         skipButton.style.opacity = '0';
         skipButton.style.zIndex = '10000';
     }
