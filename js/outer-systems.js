@@ -720,7 +720,7 @@ function createBorgDrone(systemGroup, maxOrbitRadius, index) {
         orbitAngle: angle,
         orbitCenter: new THREE.Vector3(0, 0, 0),
         rotationSpeed: 0.01,
-        health: 100,
+        health: 2, // FIXED: Drones die in 2 hits (1 damage per hit)
         hostile: true
     };
 
