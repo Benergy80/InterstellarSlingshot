@@ -37,7 +37,7 @@ function initCameraSystem(camera, scene) {
 
         if (playerModel) {
             // Don't attach to camera - keep it in the scene
-            playerModel.scale.set(80, 80, 80);  // Reduced by 20% (100 → 80)
+            playerModel.scale.set(4000, 4000, 4000);  // DEBUG: 50x bigger for visibility (80 → 4000)
             playerModel.position.set(0, 0, 0);
 
             // Center the model to fix position offset issues
