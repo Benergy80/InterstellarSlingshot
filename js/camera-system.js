@@ -258,7 +258,7 @@ function updateCameraView(camera) {
         // X: positive = right, negative = left (in camera's local space)
         // Y: positive = up, negative = down
         // Z: positive = back, negative = forward
-        const cockpitOffset = new THREE.Vector3(0, -2, 0.5); // Centered, down 2, back 0.5
+        const cockpitOffset = new THREE.Vector3(0.25, -2, 0.5); // Right 0.25, down 2, back 0.5
         cockpitOffset.applyQuaternion(camera.quaternion);
 
         // DEBUG: Log before position update
@@ -310,7 +310,7 @@ function updateCameraView(camera) {
         const chaseHeight = 3;   // Height above ship
 
         // Calculate offset: behind (positive Z), above (positive Y), and left (negative X)
-        const chaseOffset = new THREE.Vector3(-1, chaseHeight, chaseDistance); // Left 1 unit
+        const chaseOffset = new THREE.Vector3(-1.25, chaseHeight, chaseDistance); // Left 1.25 units
         chaseOffset.applyQuaternion(camera.quaternion);
 
         // DEBUG: Log before position update
