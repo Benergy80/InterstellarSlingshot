@@ -207,10 +207,22 @@ function updateCameraView(camera) {
     // Camera position IS the player's actual flight position (controlled by game physics)
     // We just position the ship model to match, without modifying camera position
 
-    if (!cameraState.playerShipMesh) return; // No ship model loaded yet
+    // DEBUG: Track calls
+    if (!window.updateCameraViewCallCount) window.updateCameraViewCallCount = 0;
+    window.updateCameraViewCallCount++;
+
+    if (!cameraState.playerShipMesh) {
+        if (window.updateCameraViewCallCount % 120 === 0) {
+            console.warn('⚠️ updateCameraView called but no playerShipMesh! Call count:', window.updateCameraViewCallCount);
+        }
+        return; // No ship model loaded yet
+    }
 
     // CRITICAL: Hide ship during intro sequence
     if (typeof introSequence !== 'undefined' && introSequence.active) {
+        if (window.updateCameraViewCallCount % 120 === 0) {
+            console.log('  ⏸️ Intro active - hiding ship and returning early');
+        }
         cameraState.playerShipMesh.visible = false;
         cameraState.playerShipMesh.traverse((child) => {
             if (child.isMesh) {
@@ -223,13 +235,21 @@ function updateCameraView(camera) {
     // Make ship visible when game is active
     cameraState.playerShipMesh.visible = true;
 
+    if (window.updateCameraViewCallCount % 120 === 0) {
+        console.log('  ▶️ Game active - updating ship position');
+    }
+
     // DEBUG: Log positions every 120 frames (every 2 seconds)
     if (!window.cameraDebugFrameCount) window.cameraDebugFrameCount = 0;
     window.cameraDebugFrameCount++;
     if (window.cameraDebugFrameCount % 120 === 0) {
         console.log('📍 Camera position:', camera.position);
         console.log('🚢 Ship position:', cameraState.playerShipMesh.position);
+        console.log('🚢 Ship world position:', cameraState.playerShipMesh.getWorldPosition(new THREE.Vector3()));
         console.log('🎥 Camera mode:', cameraState.mode);
+        console.log('🔍 Ship parent:', cameraState.playerShipMesh.parent);
+        console.log('🔍 Ship visible:', cameraState.playerShipMesh.visible);
+        console.log('🔍 Camera object:', camera);
     }
 
     if (cameraState.mode === 'first-person') {
@@ -242,8 +262,19 @@ function updateCameraView(camera) {
         const cockpitOffset = new THREE.Vector3(0, 0, 4); // Ship 4 units back
         cockpitOffset.applyQuaternion(camera.quaternion);
 
+        // DEBUG: Log before position update
+        if (window.cameraDebugFrameCount % 120 === 0) {
+            console.log('  [1ST PERSON] Camera pos:', camera.position);
+            console.log('  [1ST PERSON] Cockpit offset:', cockpitOffset);
+        }
+
         cameraState.playerShipMesh.position.copy(camera.position);
         cameraState.playerShipMesh.position.add(cockpitOffset);
+
+        // DEBUG: Log after position update
+        if (window.cameraDebugFrameCount % 120 === 0) {
+            console.log('  [1ST PERSON] Ship pos AFTER update:', cameraState.playerShipMesh.position);
+        }
 
         // Orient ship to match camera direction
         cameraState.playerShipMesh.rotation.copy(camera.rotation);
@@ -278,9 +309,20 @@ function updateCameraView(camera) {
         const chaseOffset = new THREE.Vector3(0, chaseHeight, chaseDistance);
         chaseOffset.applyQuaternion(camera.quaternion);
 
+        // DEBUG: Log before position update
+        if (window.cameraDebugFrameCount % 120 === 0) {
+            console.log('  [3RD PERSON] Camera pos:', camera.position);
+            console.log('  [3RD PERSON] Chase offset:', chaseOffset);
+        }
+
         // CRITICAL: Copy camera position FIRST, then subtract offset
         cameraState.playerShipMesh.position.copy(camera.position);
         cameraState.playerShipMesh.position.sub(chaseOffset);
+
+        // DEBUG: Log after position update
+        if (window.cameraDebugFrameCount % 120 === 0) {
+            console.log('  [3RD PERSON] Ship pos AFTER update:', cameraState.playerShipMesh.position);
+        }
 
         // Orient ship to match camera direction
         cameraState.playerShipMesh.rotation.copy(camera.rotation);
