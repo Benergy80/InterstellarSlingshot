@@ -280,6 +280,9 @@ function updateCameraView(camera) {
         // Orient ship to match camera direction
         cameraState.playerShipMesh.rotation.copy(camera.rotation);
 
+        // Rotate ship 180 degrees on Y axis to face forward
+        cameraState.playerShipMesh.rotation.y += Math.PI;
+
         // Add dynamic banking based on rotational velocity
         if (typeof rotationalVelocity !== 'undefined') {
             const bankAmount = -rotationalVelocity.yaw * 15;
@@ -329,6 +332,9 @@ function updateCameraView(camera) {
 
         // Orient ship to match camera direction
         cameraState.playerShipMesh.rotation.copy(camera.rotation);
+
+        // Rotate ship 180 degrees on Y axis to face forward
+        cameraState.playerShipMesh.rotation.y += Math.PI;
 
         // Add dynamic banking based on rotational velocity
         if (typeof rotationalVelocity !== 'undefined') {
