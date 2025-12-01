@@ -2546,11 +2546,14 @@ function initializeControlButtons() {
             return;
         }
 
-        // Add third-person camera toggle
-        if (e.key === '3') {
+        // Add camera view toggle (V key or 3 key)
+        if (e.key === 'v' || e.key === 'V' || e.key === '3') {
             e.preventDefault();
             if (typeof toggleCameraView === 'function') {
+                console.log('🎥 Toggling camera view...');
                 toggleCameraView();
+            } else {
+                console.warn('⚠️ toggleCameraView function not available');
             }
             return;
         }
@@ -3193,7 +3196,7 @@ function checkGalaxyClear() {
         );
         
         // Check if boss has been defeated for this galaxy
-        const bossDefeated = (typeof bossSystem !== 'undefined' && bossSystem.galaxyBossDefeated[g]);
+        const bossDefeated = (typeof bossSystem !== 'undefined' && bossSystem.galaxyBossDefeated && bossSystem.galaxyBossDefeated[g]);
         
         // Galaxy is only "cleared" when:
         // 1. All regular enemies are defeated

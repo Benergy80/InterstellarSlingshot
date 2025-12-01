@@ -4508,7 +4508,7 @@ function loadGuardiansForGalaxy(galaxyId) {
     }
     
     // ⭐ CRITICAL: Only spawn guardians AFTER boss is defeated
-    if (typeof bossSystem !== 'undefined' && !bossSystem.galaxyBossDefeated[galaxyId]) {
+    if (typeof bossSystem !== 'undefined' && bossSystem.galaxyBossDefeated && !bossSystem.galaxyBossDefeated[galaxyId]) {
         console.log(`Galaxy ${galaxyId} boss not yet defeated - guardians will spawn after boss victory`);
         return;
     }
