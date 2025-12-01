@@ -1024,7 +1024,13 @@ function animate() {
         adjustPerformance();
         gameState.lastPerformanceCheck = currentTime;
     }
-    
+
+    // CRITICAL: Update camera view ALWAYS (before gameStarted check)
+    // This ensures player ship follows camera even during intro/before game starts
+    if (typeof updateCameraView === 'function') {
+        updateCameraView(camera);
+    }
+
     if (gameState.gameOver || !gameState.gameStarted) {
         if (stars) {
             stars.rotation.x += 0.0001;
@@ -1032,11 +1038,6 @@ function animate() {
         }
         renderer.render(scene, camera);
         return; // Stop all game updates when game over
-    }
-
-    // Update camera view for third-person mode
-    if (typeof updateCameraView === 'function') {
-        updateCameraView(camera);
     }
 
     // Add this inside your animate() function

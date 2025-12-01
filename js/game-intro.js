@@ -1222,10 +1222,15 @@ function animateIntroSequence() {
     if (introSequence.shakeIntensity > 0) {
         applyCameraShake();
     }
-    
+
+    // Update player ship position to follow camera
+    if (typeof updateCameraView === 'function' && camera) {
+        updateCameraView(camera);
+    }
+
     // Render the scene
     renderer.render(scene, camera);
-    
+
     // Continue animation loop
     requestAnimationFrame(animateIntroSequence);
 }
