@@ -264,9 +264,10 @@ function updateCameraView(camera) {
         // Position the ship model so the camera is at the cockpit/center of the ship
         // The ship model is just visual - the camera position is the "real" player position
 
-        // No offset - ship model centered on camera position
-        // Camera = player position = ship center/cockpit
-        const cockpitOffset = new THREE.Vector3(0, 0, 0); // Ship centered on camera
+        // Position ship slightly in front and below camera so it's centered in view
+        // Small offset to center the ship model in the camera's viewport
+        // Z is negative to move ship forward (in front of camera)
+        const cockpitOffset = new THREE.Vector3(0, -2, -8); // Ship in front of camera
         cockpitOffset.applyQuaternion(camera.quaternion);
 
         // DEBUG: Log before position update
