@@ -5,10 +5,10 @@
 
 // Camera state
 const cameraState = {
-    mode: 'third-person',  // DEBUG: Start in third-person to see the model
+    mode: 'third-person',  // Cockpit view mode (camera inside model)
     playerShipMesh: null,  // Reference to the player ship 3D model
-    thirdPersonDistance: 10000,   // DEBUG: Far back to see the giant 4000x model
-    thirdPersonHeight: 5000,   // DEBUG: High up to see the giant model
+    thirdPersonDistance: 1,   // Not used in cockpit view
+    thirdPersonHeight: 0.5,   // Not used in cockpit view
     smoothing: 0.15,          // Camera smoothing factor (lower = smoother)
     initialized: false,       // Flag to prevent double-initialization
     playerFlightPosition: new THREE.Vector3(),  // Store actual flight position
@@ -214,18 +214,19 @@ function updateCameraView(camera) {
             cameraState.playerShipMesh.rotation.x += pitchTilt;
         }
 
-        // Calculate camera offset: 1 unit back, 0.5 units up
-        // In local ship space: +Z is backward, +Y is up
+        // COCKPIT VIEW: Position camera inside the ship model
+        // For 4000x scale model, cockpit is deep inside the model
+        // In local ship space: -Z is forward, +Y is up, +X is right
         const cameraOffset = new THREE.Vector3(
-            0,                                    // No left/right offset
-            cameraState.thirdPersonHeight,        // 0.5 units up
-            cameraState.thirdPersonDistance       // 1 unit back
+            0,          // Centered (no left/right offset)
+            150,        // Slightly up (cockpit height at 4000x scale)
+            -1800       // Far forward inside the model (negative = forward)
         );
 
-        // Rotate offset by ship's orientation to follow behind correctly
+        // Rotate offset by ship's orientation
         cameraOffset.applyQuaternion(cameraState.playerShipMesh.quaternion);
 
-        // Position camera behind and above the ship
+        // Position camera inside the cockpit
         camera.position.copy(cameraState.playerShipMesh.position).add(cameraOffset);
 
         // CRITICAL: Camera rotation must match ship rotation so controls feel natural
