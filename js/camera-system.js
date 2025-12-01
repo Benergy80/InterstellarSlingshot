@@ -179,22 +179,22 @@ function toggleCameraView() {
             showNotification('Third-Person Camera', 2000);
         }
     } else {
-        // Switch to first-person
+        // Switch to first-person (cockpit view)
         cameraState.mode = 'first-person';
-        cameraState.playerShipMesh.visible = false;
+        cameraState.playerShipMesh.visible = true; // Keep visible for cockpit view
 
-        // Hide all child meshes too
+        // Keep all child meshes visible for cockpit view
         cameraState.playerShipMesh.traverse((child) => {
             if (child.isMesh) {
-                child.visible = false;
+                child.visible = true;
             }
         });
 
-        console.log('📷 Switched to FIRST-PERSON view');
+        console.log('📷 Switched to FIRST-PERSON view (cockpit)');
 
         // Show notification
         if (typeof showNotification === 'function') {
-            showNotification('First-Person Camera', 2000);
+            showNotification('First-Person Camera (Cockpit View)', 2000);
         }
     }
 }
@@ -209,45 +209,15 @@ function updateCameraView(camera) {
 
     if (!cameraState.playerShipMesh) return; // No ship model loaded yet
 
-    // DEBUG: FORCE SHIP TO BE VISIBLE IN FRONT OF CAMERA
-    // Position ship directly in front of camera at close range
-    const debugDistance = 50; // Very close so we can see it
-    const forwardOffset = new THREE.Vector3(0, 0, -debugDistance);
-    forwardOffset.applyQuaternion(camera.quaternion);
-
-    cameraState.playerShipMesh.position.copy(camera.position).add(forwardOffset);
-    cameraState.playerShipMesh.rotation.copy(camera.rotation);
-
-    // Force visibility
-    cameraState.playerShipMesh.visible = true;
-    cameraState.playerShipMesh.traverse((child) => {
-        if (child.isMesh) {
-            child.visible = true;
-        }
-    });
-
-    // Log every 60 frames (roughly once per second)
-    if (!window.debugFrameCount) window.debugFrameCount = 0;
-    window.debugFrameCount++;
-    if (window.debugFrameCount % 60 === 0) {
-        console.log('🚢 DEBUG: Player ship forced in front of camera');
-        console.log('  - Ship position:', cameraState.playerShipMesh.position);
-        console.log('  - Camera position:', camera.position);
-        console.log('  - Ship visible:', cameraState.playerShipMesh.visible);
-        console.log('  - Ship parent:', cameraState.playerShipMesh.parent);
-        console.log('  - In scene:', scene ? scene.children.includes(cameraState.playerShipMesh) : 'scene not defined');
-    }
-
-    return; // Skip the normal mode logic below
-
     if (cameraState.mode === 'first-person') {
-        // FIRST-PERSON MODE:
-        // Ship model positioned at camera (player's actual position)
-        // Camera stays at same position (no offset to avoid drift bug)
-        // Ship visible around the view
+        // FIRST-PERSON MODE (COCKPIT VIEW):
+        // Camera is inside the cockpit looking out
+        // Ship positioned slightly ahead and below camera so edges are visible
 
-        // Position ship model at camera position
-        cameraState.playerShipMesh.position.copy(camera.position);
+        // Position ship just ahead of camera (cockpit view)
+        const cockpitOffset = new THREE.Vector3(0, -2, -5); // Slightly below and ahead
+        cockpitOffset.applyQuaternion(camera.quaternion);
+        cameraState.playerShipMesh.position.copy(camera.position).add(cockpitOffset);
 
         // Orient ship to match camera direction
         cameraState.playerShipMesh.rotation.copy(camera.rotation);
@@ -260,29 +230,30 @@ function updateCameraView(camera) {
             cameraState.playerShipMesh.rotation.x += pitchTilt;
         }
 
-        // IMPORTANT: Camera position is NOT modified - stays at player position
-        // This prevents the drift bug
-
-        // Ensure the ship model is visible
+        // Make ship visible but slightly transparent for cockpit view
         cameraState.playerShipMesh.visible = true;
         cameraState.playerShipMesh.traverse((child) => {
             if (child.isMesh) {
                 child.visible = true;
+                // Keep existing material transparency
             }
         });
 
     } else if (cameraState.mode === 'third-person') {
-        // THIRD-PERSON MODE (EXTERNAL VIEW):
-        // Ship positioned AHEAD of camera in facing direction
-        // Camera stays at player position (no drift)
-        // This allows you to see the ship in front of you
+        // THIRD-PERSON MODE (CHASE CAMERA):
+        // Camera is behind and above the ship looking at it
+        // Ship positioned ahead of camera at a comfortable viewing distance
 
-        // Calculate forward direction from camera
-        const forwardOffset = new THREE.Vector3(0, 0, -200); // 200 units ahead (negative Z is forward)
-        forwardOffset.applyQuaternion(camera.quaternion);
+        // Position ship ahead of camera so we can see it from behind
+        const chaseDistance = 30; // Distance behind ship (adjustable)
+        const chaseHeight = 10;   // Height above ship (adjustable)
 
-        // Position ship ahead of camera
-        cameraState.playerShipMesh.position.copy(camera.position).add(forwardOffset);
+        // Calculate offset: behind (positive Z) and above (positive Y)
+        const chaseOffset = new THREE.Vector3(0, chaseHeight, chaseDistance);
+        chaseOffset.applyQuaternion(camera.quaternion);
+
+        // Position ship ahead of the chase camera position
+        cameraState.playerShipMesh.position.copy(camera.position).sub(chaseOffset);
 
         // Orient ship to match camera direction
         cameraState.playerShipMesh.rotation.copy(camera.rotation);
@@ -295,10 +266,7 @@ function updateCameraView(camera) {
             cameraState.playerShipMesh.rotation.x += pitchTilt;
         }
 
-        // IMPORTANT: Camera position is NOT modified - stays at player position
-        // Ship is offset forward so camera can see it
-
-        // Ensure the ship model is visible
+        // Ensure the ship model is fully visible and opaque in third-person
         cameraState.playerShipMesh.visible = true;
         cameraState.playerShipMesh.traverse((child) => {
             if (child.isMesh) {
