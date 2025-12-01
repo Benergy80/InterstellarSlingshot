@@ -5,10 +5,10 @@
 
 // Camera state
 const cameraState = {
-    mode: 'third-person',  // Cockpit view mode (camera inside model)
+    mode: 'first-person',  // Start in first-person (cockpit view)
     playerShipMesh: null,  // Reference to the player ship 3D model
-    thirdPersonDistance: 1,   // Not used in cockpit view
-    thirdPersonHeight: 0.5,   // Not used in cockpit view
+    thirdPersonDistance: 1,   // Distance multiplier for third-person view
+    thirdPersonHeight: 0.5,   // Height multiplier for third-person view
     smoothing: 0.15,          // Camera smoothing factor (lower = smoother)
     initialized: false,       // Flag to prevent double-initialization
     playerFlightPosition: new THREE.Vector3(),  // Store actual flight position
@@ -83,10 +83,10 @@ function initCameraSystem(camera, scene) {
             scene.add(playerModel);
             cameraState.playerShipMesh = playerModel;
 
-            // DEBUG: Start in third-person mode (ship visible)
+            // Ship starts visible for both first-person (cockpit) and third-person views
             playerModel.visible = true;
 
-            console.log('✅ Player ship added to scene for third-person view (scale: 4000x, glowing cyan)');
+            console.log('✅ Player ship added to scene (scale: 4000x, cyan wireframe)');
             cameraState.initialized = true;
         } else {
             console.warn('⚠️ getPlayerModel returned null/undefined - no player model available');
@@ -174,28 +174,57 @@ function updateCameraView(camera) {
     cameraState.playerFlightPosition.copy(camera.position);
     cameraState.playerFlightRotation.copy(camera.rotation);
 
-    if (cameraState.mode === 'first-person') {
+    if (cameraState.mode === 'first-person' && cameraState.playerShipMesh) {
         // FIRST-PERSON MODE (COCKPIT VIEW):
-        // Camera stays at flight position (inside cockpit)
-        // Ship model is hidden (camera is inside it)
-        // Camera IS the perspective center
-        // Flight controls directly move/rotate the camera
+        // Ship model positioned at flight position
+        // Camera positioned INSIDE the cockpit looking out
+        // Ship visible as wireframe around the view
 
-        // Ensure ship model is hidden in first-person
-        if (cameraState.playerShipMesh) {
-            cameraState.playerShipMesh.visible = false;
-            cameraState.playerShipMesh.traverse((child) => {
-                if (child.isMesh) {
-                    child.visible = false;
-                }
-            });
+        // Position ship model at the player's actual flight position
+        cameraState.playerShipMesh.position.copy(cameraState.playerFlightPosition);
+
+        // Orient ship to match flight direction
+        cameraState.playerShipMesh.rotation.copy(cameraState.playerFlightRotation);
+
+        // Add dynamic banking based on rotational velocity
+        if (typeof rotationalVelocity !== 'undefined') {
+            const bankAmount = -rotationalVelocity.yaw * 15;
+            cameraState.playerShipMesh.rotation.z += bankAmount;
+            const pitchTilt = rotationalVelocity.pitch * 5;
+            cameraState.playerShipMesh.rotation.x += pitchTilt;
         }
 
+        // COCKPIT VIEW: Position camera inside the ship model
+        // For 4000x scale model, cockpit is deep inside the model
+        // In local ship space: -Z is forward, +Y is up, +X is right
+        const cockpitOffset = new THREE.Vector3(
+            0,          // Centered (no left/right offset)
+            150,        // Slightly up (cockpit height at 4000x scale)
+            -1800       // Far forward inside the model (negative = forward)
+        );
+
+        // Rotate offset by ship's orientation
+        cockpitOffset.applyQuaternion(cameraState.playerShipMesh.quaternion);
+
+        // Position camera inside the cockpit
+        camera.position.copy(cameraState.playerShipMesh.position).add(cockpitOffset);
+
+        // Camera rotation matches ship rotation
+        camera.rotation.copy(cameraState.playerShipMesh.rotation);
+
+        // Ensure the ship model is visible (wireframe)
+        cameraState.playerShipMesh.visible = true;
+        cameraState.playerShipMesh.traverse((child) => {
+            if (child.isMesh) {
+                child.visible = true;
+            }
+        });
+
     } else if (cameraState.mode === 'third-person' && cameraState.playerShipMesh) {
-        // THIRD-PERSON MODE:
-        // Ship model positioned at flight position (player's actual location)
-        // Camera positioned 1 unit behind and 0.5 units above the ship
-        // Ship model IS the perspective center, camera follows behind
+        // THIRD-PERSON MODE (EXTERNAL VIEW):
+        // Ship model positioned at flight position
+        // Camera positioned BEHIND and ABOVE the ship
+        // Ship visible in foreground
 
         // Position ship model at the player's actual flight position
         cameraState.playerShipMesh.position.copy(cameraState.playerFlightPosition);
@@ -214,23 +243,22 @@ function updateCameraView(camera) {
             cameraState.playerShipMesh.rotation.x += pitchTilt;
         }
 
-        // COCKPIT VIEW: Position camera inside the ship model
-        // For 4000x scale model, cockpit is deep inside the model
-        // In local ship space: -Z is forward, +Y is up, +X is right
-        const cameraOffset = new THREE.Vector3(
+        // THIRD-PERSON VIEW: Position camera behind and above the ship
+        // For 4000x scale model, need significant distance
+        // In local ship space: +Z is backward, +Y is up
+        const externalOffset = new THREE.Vector3(
             0,          // Centered (no left/right offset)
-            150,        // Slightly up (cockpit height at 4000x scale)
-            -1800       // Far forward inside the model (negative = forward)
+            2500,       // High above (for 4000x scale model)
+            6000        // Far behind (for 4000x scale model)
         );
 
         // Rotate offset by ship's orientation
-        cameraOffset.applyQuaternion(cameraState.playerShipMesh.quaternion);
+        externalOffset.applyQuaternion(cameraState.playerShipMesh.quaternion);
 
-        // Position camera inside the cockpit
-        camera.position.copy(cameraState.playerShipMesh.position).add(cameraOffset);
+        // Position camera behind and above the ship
+        camera.position.copy(cameraState.playerShipMesh.position).add(externalOffset);
 
         // CRITICAL: Camera rotation must match ship rotation so controls feel natural
-        // Player controls the ship, camera follows with same orientation
         camera.rotation.copy(cameraState.playerShipMesh.rotation);
 
         // Ensure the ship model and all children are visible
