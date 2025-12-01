@@ -1157,9 +1157,9 @@ function beginLaunchSequence() {
         window.atmosphereCreated = true;
     }
     
-    // Make skip button fully visible
+    // Make skip button semi-transparent and visible
     if (introSequence.skipButton) {
-        introSequence.skipButton.style.opacity = '1';
+        introSequence.skipButton.style.opacity = '0.7';
     }
     
     // Skip surface phase, go directly to countdown

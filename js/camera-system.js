@@ -242,7 +242,11 @@ function updateCameraView(camera) {
     // DEBUG: Log positions every 120 frames (every 2 seconds)
     if (!window.cameraDebugFrameCount) window.cameraDebugFrameCount = 0;
     window.cameraDebugFrameCount++;
-    if (window.cameraDebugFrameCount % 120 === 0) {
+
+    const shouldLog = (window.cameraDebugFrameCount % 120 === 0);
+
+    if (shouldLog) {
+        console.log('🔍 DEBUG BLOCK START - Frame:', window.cameraDebugFrameCount);
         console.log('📍 Camera position:', camera.position);
         console.log('🚢 Ship position:', cameraState.playerShipMesh.position);
         console.log('🚢 Ship world position:', cameraState.playerShipMesh.getWorldPosition(new THREE.Vector3()));
@@ -250,6 +254,7 @@ function updateCameraView(camera) {
         console.log('🔍 Ship parent:', cameraState.playerShipMesh.parent);
         console.log('🔍 Ship visible:', cameraState.playerShipMesh.visible);
         console.log('🔍 Camera object:', camera);
+        console.log('🔍 DEBUG BLOCK END');
     }
 
     if (cameraState.mode === 'first-person') {
@@ -263,7 +268,7 @@ function updateCameraView(camera) {
         cockpitOffset.applyQuaternion(camera.quaternion);
 
         // DEBUG: Log before position update
-        if (window.cameraDebugFrameCount % 120 === 0) {
+        if (shouldLog) {
             console.log('  [1ST PERSON] Camera pos:', camera.position);
             console.log('  [1ST PERSON] Cockpit offset:', cockpitOffset);
         }
@@ -272,7 +277,7 @@ function updateCameraView(camera) {
         cameraState.playerShipMesh.position.add(cockpitOffset);
 
         // DEBUG: Log after position update
-        if (window.cameraDebugFrameCount % 120 === 0) {
+        if (shouldLog) {
             console.log('  [1ST PERSON] Ship pos AFTER update:', cameraState.playerShipMesh.position);
         }
 
@@ -310,7 +315,7 @@ function updateCameraView(camera) {
         chaseOffset.applyQuaternion(camera.quaternion);
 
         // DEBUG: Log before position update
-        if (window.cameraDebugFrameCount % 120 === 0) {
+        if (shouldLog) {
             console.log('  [3RD PERSON] Camera pos:', camera.position);
             console.log('  [3RD PERSON] Chase offset:', chaseOffset);
         }
@@ -320,7 +325,7 @@ function updateCameraView(camera) {
         cameraState.playerShipMesh.position.sub(chaseOffset);
 
         // DEBUG: Log after position update
-        if (window.cameraDebugFrameCount % 120 === 0) {
+        if (shouldLog) {
             console.log('  [3RD PERSON] Ship pos AFTER update:', cameraState.playerShipMesh.position);
         }
 
