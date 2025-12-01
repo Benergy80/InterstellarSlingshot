@@ -19,9 +19,28 @@ const cameraState = {
  * Initialize the camera system with the player ship model
  */
 function initCameraSystem(camera, scene) {
-    // Prevent double-initialization
+    // Check if we need to re-add player to a new scene
     if (cameraState.initialized && cameraState.playerShipMesh) {
-        console.log('🎥 Camera system already initialized, skipping...');
+        // If the player model's parent doesn't match the provided scene, we need to move it
+        if (cameraState.playerShipMesh.parent !== scene) {
+            console.log('🎥 Camera system already initialized, but player ship is in wrong scene');
+            console.log('  - Current parent:', cameraState.playerShipMesh.parent);
+            console.log('  - Target scene:', scene);
+            console.log('  - Re-adding player ship to new scene...');
+
+            // Remove from old parent if it has one
+            if (cameraState.playerShipMesh.parent) {
+                cameraState.playerShipMesh.parent.remove(cameraState.playerShipMesh);
+            }
+
+            // Add to new scene
+            scene.add(cameraState.playerShipMesh);
+            console.log('✅ Player ship moved to new scene');
+            console.log('  - New parent:', cameraState.playerShipMesh.parent);
+            return;
+        }
+
+        console.log('🎥 Camera system already initialized and in correct scene, skipping...');
         return;
     }
 
