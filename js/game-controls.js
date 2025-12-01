@@ -3470,7 +3470,7 @@ function spawnBorgDrone() {
         name: 'Borg Drone',
         isBorg: true,
         isBorgDrone: true,
-        speed: 1.5,
+        speed: 3.0,  // FIXED: Faster than mothership (2.0) so they can swarm around it
         damage: 2,
         detectionRange: 5000,
         firingRange: 300,
