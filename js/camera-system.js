@@ -310,7 +310,7 @@ function updateCameraView(camera) {
         const chaseHeight = 3;   // Height above ship
 
         // Calculate offset: behind (positive Z), above (positive Y), and left (negative X)
-        const chaseOffset = new THREE.Vector3(-1.75, chaseHeight, chaseDistance); // Left 1.75 units
+        const chaseOffset = new THREE.Vector3(-1, chaseHeight, chaseDistance); // Left 1 unit
         chaseOffset.applyQuaternion(camera.quaternion);
 
         // DEBUG: Log before position update
