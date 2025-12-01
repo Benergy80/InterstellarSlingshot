@@ -65,13 +65,14 @@ function initCameraSystem(camera, scene) {
                     child.visible = true;
                     child.frustumCulled = false;
 
-                    // Use MeshBasicMaterial - always visible, unaffected by lighting
+                    // DEBUG: Use wireframe mode to see through the giant model
                     child.material = new THREE.MeshBasicMaterial({
                         color: 0x00ffff,  // Bright cyan color for player ship
+                        wireframe: true,   // DEBUG: Wireframe so we can see through it
                         transparent: true,
-                        opacity: 1.0,
-                        side: THREE.DoubleSide,  // Ensure visible from all angles
-                        depthWrite: true,
+                        opacity: 0.8,      // Semi-transparent
+                        side: THREE.DoubleSide,
+                        depthWrite: false, // Don't write to depth buffer (allow seeing through)
                         depthTest: true
                     });
                     child.castShadow = true;
