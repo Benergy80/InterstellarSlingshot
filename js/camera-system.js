@@ -211,13 +211,17 @@ function updateCameraView(camera) {
         });
 
     } else if (cameraState.mode === 'third-person') {
-        // THIRD-PERSON MODE:
-        // Ship model positioned at camera (player's actual position)
-        // Camera stays at same position (no offset to avoid drift bug)
-        // Ship visible at camera location
+        // THIRD-PERSON MODE (EXTERNAL VIEW):
+        // Ship positioned AHEAD of camera in facing direction
+        // Camera stays at player position (no drift)
+        // This allows you to see the ship in front of you
 
-        // Position ship model at camera position
-        cameraState.playerShipMesh.position.copy(camera.position);
+        // Calculate forward direction from camera
+        const forwardOffset = new THREE.Vector3(0, 0, -200); // 200 units ahead (negative Z is forward)
+        forwardOffset.applyQuaternion(camera.quaternion);
+
+        // Position ship ahead of camera
+        cameraState.playerShipMesh.position.copy(camera.position).add(forwardOffset);
 
         // Orient ship to match camera direction
         cameraState.playerShipMesh.rotation.copy(camera.rotation);
@@ -231,7 +235,7 @@ function updateCameraView(camera) {
         }
 
         // IMPORTANT: Camera position is NOT modified - stays at player position
-        // This prevents the drift bug
+        // Ship is offset forward so camera can see it
 
         // Ensure the ship model is visible
         cameraState.playerShipMesh.visible = true;
