@@ -248,12 +248,13 @@ function updateCameraView(camera) {
     if (shouldLog) {
         console.log('🔍 DEBUG BLOCK START - Frame:', window.cameraDebugFrameCount);
         console.log('📍 Camera position:', camera.position);
-        console.log('🚢 Ship position:', cameraState.playerShipMesh.position);
-        console.log('🚢 Ship world position:', cameraState.playerShipMesh.getWorldPosition(new THREE.Vector3()));
+        console.log('🚢 Ship LOCAL position:', cameraState.playerShipMesh.position);
+        console.log('🚢 Ship WORLD position:', cameraState.playerShipMesh.getWorldPosition(new THREE.Vector3()));
+        console.log('📏 Ship scale:', cameraState.playerShipMesh.scale);
+        console.log('🔄 Ship rotation:', cameraState.playerShipMesh.rotation);
         console.log('🎥 Camera mode:', cameraState.mode);
         console.log('🔍 Ship parent:', cameraState.playerShipMesh.parent);
         console.log('🔍 Ship visible:', cameraState.playerShipMesh.visible);
-        console.log('🔍 Camera object:', camera);
         console.log('🔍 DEBUG BLOCK END');
     }
 
@@ -271,6 +272,7 @@ function updateCameraView(camera) {
 
         // DEBUG: Log before position update
         if (shouldLog) {
+            console.log('  [1ST PERSON] BEFORE - Ship local pos:', cameraState.playerShipMesh.position.clone());
             console.log('  [1ST PERSON] Camera pos:', camera.position);
             console.log('  [1ST PERSON] Cockpit offset:', cockpitOffset);
         }
@@ -280,7 +282,8 @@ function updateCameraView(camera) {
 
         // DEBUG: Log after position update
         if (shouldLog) {
-            console.log('  [1ST PERSON] Ship pos AFTER update:', cameraState.playerShipMesh.position);
+            console.log('  [1ST PERSON] AFTER - Ship local pos:', cameraState.playerShipMesh.position.clone());
+            console.log('  [1ST PERSON] AFTER - Ship world pos:', cameraState.playerShipMesh.getWorldPosition(new THREE.Vector3()));
         }
 
         // Orient ship to match camera direction
@@ -318,6 +321,7 @@ function updateCameraView(camera) {
 
         // DEBUG: Log before position update
         if (shouldLog) {
+            console.log('  [3RD PERSON] BEFORE - Ship local pos:', cameraState.playerShipMesh.position.clone());
             console.log('  [3RD PERSON] Camera pos:', camera.position);
             console.log('  [3RD PERSON] Chase offset:', chaseOffset);
         }
@@ -328,7 +332,8 @@ function updateCameraView(camera) {
 
         // DEBUG: Log after position update
         if (shouldLog) {
-            console.log('  [3RD PERSON] Ship pos AFTER update:', cameraState.playerShipMesh.position);
+            console.log('  [3RD PERSON] AFTER - Ship local pos:', cameraState.playerShipMesh.position.clone());
+            console.log('  [3RD PERSON] AFTER - Ship world pos:', cameraState.playerShipMesh.getWorldPosition(new THREE.Vector3()));
         }
 
         // Orient ship to match camera direction
