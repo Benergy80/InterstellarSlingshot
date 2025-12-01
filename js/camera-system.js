@@ -59,19 +59,9 @@ function initCameraSystem(camera, scene) {
             playerModel.scale.set(96, 96, 96);  // Same size as regular enemies in local galaxy
             playerModel.position.set(0, 0, 0);
 
-            // Center the model to fix position offset issues
-            const box = new THREE.Box3().setFromObject(playerModel);
-            const center = box.getCenter(new THREE.Vector3());
-
-            // Offset all children to center the model at origin
-            playerModel.traverse((child) => {
-                if (child.isMesh) {
-                    child.position.sub(center);
-                }
-            });
-
-            // Make sure it's oriented correctly
-            playerModel.rotation.y = Math.PI;  // Face forward
+            // Don't rotate or offset the model during init
+            // Let the update loop handle all positioning and rotation
+            // This ensures the model's position exactly matches what we set in updateCameraView
 
             // CRITICAL: Make the entire model visible
             playerModel.visible = true;  // DEBUG: Start visible since we're in third-person mode
