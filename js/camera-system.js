@@ -12,7 +12,14 @@ const cameraState = {
     smoothing: 0.15,          // Camera smoothing factor (lower = smoother)
     initialized: false,       // Flag to prevent double-initialization
     playerFlightPosition: new THREE.Vector3(),  // Store actual flight position
-    playerFlightRotation: new THREE.Euler()     // Store actual flight rotation
+    playerFlightRotation: new THREE.Euler(),     // Store actual flight rotation
+
+    // Camera transition animation
+    isTransitioning: false,
+    transitionStartTime: 0,
+    transitionDuration: 400, // milliseconds
+    transitionStartOffset: new THREE.Vector3(),
+    transitionTargetOffset: new THREE.Vector3()
 };
 
 /**
@@ -141,6 +148,14 @@ function toggleCameraView() {
         return;
     }
 
+    // Store current offset as transition start
+    const currentOffset = new THREE.Vector3();
+    if (cameraState.mode === 'first-person') {
+        currentOffset.set(0.25, -2, 0.5); // Current first-person offset
+    } else {
+        currentOffset.set(-1, 3, 8); // Current third-person offset
+    }
+
     if (cameraState.mode === 'first-person') {
         // Switch to third-person
         cameraState.mode = 'third-person';
@@ -153,16 +168,13 @@ function toggleCameraView() {
             }
         });
 
-        console.log('📷 Switched to THIRD-PERSON view');
-        console.log('   Player ship position:', cameraState.playerShipMesh.position);
-        console.log('   Player ship visible:', cameraState.playerShipMesh.visible);
+        // Start transition animation
+        cameraState.isTransitioning = true;
+        cameraState.transitionStartTime = performance.now();
+        cameraState.transitionStartOffset.copy(currentOffset);
+        cameraState.transitionTargetOffset.set(-1, 3, 8); // Third-person target
 
-        // Log child mesh visibility
-        let visibleMeshCount = 0;
-        cameraState.playerShipMesh.traverse((child) => {
-            if (child.isMesh && child.visible) visibleMeshCount++;
-        });
-        console.log('   Visible child meshes:', visibleMeshCount);
+        console.log('📷 Transitioning to THIRD-PERSON view');
 
         // Show notification
         if (typeof showNotification === 'function') {
@@ -180,7 +192,13 @@ function toggleCameraView() {
             }
         });
 
-        console.log('📷 Switched to FIRST-PERSON view (cockpit)');
+        // Start transition animation
+        cameraState.isTransitioning = true;
+        cameraState.transitionStartTime = performance.now();
+        cameraState.transitionStartOffset.copy(currentOffset);
+        cameraState.transitionTargetOffset.set(0.25, -2, 0.5); // First-person target
+
+        console.log('📷 Transitioning to FIRST-PERSON view (cockpit)');
 
         // Show notification
         if (typeof showNotification === 'function') {
@@ -248,17 +266,47 @@ function updateCameraView(camera) {
         console.log('🔍 DEBUG BLOCK END');
     }
 
+    // Calculate offset (with animation if transitioning)
+    let currentOffset;
+
+    if (cameraState.isTransitioning) {
+        // Animate between offsets
+        const elapsed = performance.now() - cameraState.transitionStartTime;
+        const progress = Math.min(elapsed / cameraState.transitionDuration, 1);
+
+        // Smooth easing function (ease-in-out)
+        const easedProgress = progress < 0.5
+            ? 2 * progress * progress
+            : 1 - Math.pow(-2 * progress + 2, 2) / 2;
+
+        // Interpolate between start and target offset
+        currentOffset = new THREE.Vector3();
+        currentOffset.lerpVectors(
+            cameraState.transitionStartOffset,
+            cameraState.transitionTargetOffset,
+            easedProgress
+        );
+
+        // End transition when complete
+        if (progress >= 1) {
+            cameraState.isTransitioning = false;
+        }
+    } else if (cameraState.mode === 'first-person') {
+        // First-person offset
+        currentOffset = new THREE.Vector3(0.25, -2, 0.5);
+    } else {
+        // Third-person offset
+        currentOffset = new THREE.Vector3(-1, 3, 8);
+    }
+
     if (cameraState.mode === 'first-person') {
         // FIRST-PERSON MODE (COCKPIT VIEW):
         // Camera IS the player position - enemies target this location
         // Position the ship model so the camera is at the cockpit/center of the ship
         // The ship model is just visual - the camera position is the "real" player position
 
-        // Position ship for centered first-person cockpit view
-        // X: positive = right, negative = left (in camera's local space)
-        // Y: positive = up, negative = down
-        // Z: positive = back, negative = forward
-        const cockpitOffset = new THREE.Vector3(0.25, -2, 0.5); // Right 0.25, down 2, back 0.5
+        // Use animated offset during transitions
+        const cockpitOffset = currentOffset.clone();
         cockpitOffset.applyQuaternion(camera.quaternion);
 
         // DEBUG: Log before position update
@@ -305,12 +353,8 @@ function updateCameraView(camera) {
         // Camera is behind and above the ship looking at it
         // Ship positioned ahead of camera at a comfortable viewing distance
 
-        // Position ship ahead of camera so we can see it from behind
-        const chaseDistance = 8; // Distance behind ship
-        const chaseHeight = 3;   // Height above ship
-
-        // Calculate offset: behind (positive Z), above (positive Y), and left (negative X)
-        const chaseOffset = new THREE.Vector3(-1, chaseHeight, chaseDistance); // Left 1 unit
+        // Use animated offset during transitions
+        const chaseOffset = currentOffset.clone();
         chaseOffset.applyQuaternion(camera.quaternion);
 
         // DEBUG: Log before position update
