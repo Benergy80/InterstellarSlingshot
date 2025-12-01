@@ -229,7 +229,7 @@ function updateCameraView(camera) {
         // Ship positioned slightly ahead and below camera so edges are visible
 
         // Position ship just ahead of camera (cockpit view)
-        const cockpitOffset = new THREE.Vector3(0, -2, -5); // Slightly below and ahead
+        const cockpitOffset = new THREE.Vector3(0, -1, -2); // Much closer for cockpit view
         cockpitOffset.applyQuaternion(camera.quaternion);
 
         // CRITICAL: Copy camera position FIRST, then add offset
@@ -262,8 +262,8 @@ function updateCameraView(camera) {
         // Ship positioned ahead of camera at a comfortable viewing distance
 
         // Position ship ahead of camera so we can see it from behind
-        const chaseDistance = 30; // Distance behind ship (adjustable)
-        const chaseHeight = 10;   // Height above ship (adjustable)
+        const chaseDistance = 8; // Distance behind ship (much closer!)
+        const chaseHeight = 3;   // Height above ship (much closer!)
 
         // Calculate offset: behind (positive Z) and above (positive Y)
         const chaseOffset = new THREE.Vector3(0, chaseHeight, chaseDistance);
