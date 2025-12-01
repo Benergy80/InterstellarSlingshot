@@ -3349,13 +3349,12 @@ function checkBorgSpawn() {
     if (typeof gameState === 'undefined' || typeof camera === 'undefined') return;
     if (gameState.borg.spawned) return; // Already spawned
 
-    // FIXED: Only spawn in far outer BORG system zones (65k-90k units)
+    // Giant BORG Cube encounter when exploring beyond 70,000 units
     const distanceFromOrigin = camera.position.length();
 
-    // BORG patrol systems are at 65,000-90,000 units from origin
-    if (distanceFromOrigin >= 65000 && distanceFromOrigin <= 90000) {
-        // 80% chance to spawn when in BORG system range
-        if (Math.random() < 0.8) {
+    if (distanceFromOrigin > 70000) {
+        // 30% chance to spawn the relentless pursuer
+        if (Math.random() < 0.3) {
             spawnBorgCube();
         } else {
             // Mark as checked so we don't spam the roll
