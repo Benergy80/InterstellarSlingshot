@@ -223,18 +223,22 @@ function updateCameraView(camera) {
     // Make ship visible when game is active
     cameraState.playerShipMesh.visible = true;
 
+    // DEBUG: Log positions every 120 frames (every 2 seconds)
+    if (!window.cameraDebugFrameCount) window.cameraDebugFrameCount = 0;
+    window.cameraDebugFrameCount++;
+    if (window.cameraDebugFrameCount % 120 === 0) {
+        console.log('📍 Camera position:', camera.position);
+        console.log('🚢 Ship position:', cameraState.playerShipMesh.position);
+        console.log('🎥 Camera mode:', cameraState.mode);
+    }
+
     if (cameraState.mode === 'first-person') {
         // FIRST-PERSON MODE (COCKPIT VIEW):
-        // Camera is inside the cockpit looking out
-        // Ship positioned slightly ahead and below camera so edges are visible
+        // Camera is INSIDE the cockpit - ship positioned AT camera
+        // Camera should be in the center/rear of the ship looking forward
 
-        // Position ship just ahead of camera (cockpit view)
-        const cockpitOffset = new THREE.Vector3(0, -1, -2); // Much closer for cockpit view
-        cockpitOffset.applyQuaternion(camera.quaternion);
-
-        // CRITICAL: Copy camera position FIRST, then add offset
+        // Position ship EXACTLY at camera position (camera is inside the cockpit)
         cameraState.playerShipMesh.position.copy(camera.position);
-        cameraState.playerShipMesh.position.add(cockpitOffset);
 
         // Orient ship to match camera direction
         cameraState.playerShipMesh.rotation.copy(camera.rotation);
