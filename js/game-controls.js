@@ -3641,6 +3641,9 @@ function handleBorgCubeDestruction() {
 
 // Missile System
 function fireMissile() {
+    // Resume audio context on user interaction to fix suspended state warning
+    resumeAudioContext();
+
     if (typeof shieldSystem !== 'undefined' && shieldSystem.active) {
         showAchievement('Missiles Disabled', 'Shields must be deactivated first');
         return;
@@ -4032,6 +4035,9 @@ function updateMissileUI() {
 
 // RESTORED: Working weapon system with asteroid targeting
 function fireWeapon() {
+    // Resume audio context on user interaction to fix suspended state warning
+    resumeAudioContext();
+
     // Faster weapon cooldown (RESTORED)
     if (gameState.weapons.cooldown > 0 || gameState.weapons.energy < 10) return;
     
