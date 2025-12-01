@@ -2757,7 +2757,7 @@ document.addEventListener('click', (e) => {
     
     // Mouse movement tracking for crosshair - FIXED POSITION TRACKING
 document.addEventListener('mousemove', (e) => {
-    if (!gameState.gameStarted || gameState.gameOver || gamePaused) return;
+    if (typeof gameState === 'undefined' || !gameState.gameStarted || gameState.gameOver || typeof gamePaused !== 'undefined' && gamePaused) return;
 
     // ALWAYS update actual mouse position for UI detection
     gameState.mouseX = e.clientX;

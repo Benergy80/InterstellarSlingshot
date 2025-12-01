@@ -177,7 +177,9 @@ function updateCameraView(camera) {
     // Camera position IS the player's actual flight position (controlled by game physics)
     // We just position the ship model to match, without modifying camera position
 
-    if (cameraState.mode === 'first-person' && cameraState.playerShipMesh) {
+    if (!cameraState.playerShipMesh) return; // No ship model loaded yet
+
+    if (cameraState.mode === 'first-person') {
         // FIRST-PERSON MODE:
         // Ship model positioned at camera (player's actual position)
         // Camera stays at same position (no offset to avoid drift bug)
@@ -208,7 +210,7 @@ function updateCameraView(camera) {
             }
         });
 
-    } else if (cameraState.mode === 'third-person' && cameraState.playerShipMesh) {
+    } else if (cameraState.mode === 'third-person') {
         // THIRD-PERSON MODE:
         // Ship model positioned at camera (player's actual position)
         // Camera stays at same position (no offset to avoid drift bug)
