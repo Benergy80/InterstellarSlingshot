@@ -56,40 +56,40 @@ function initCameraSystem(camera, scene) {
 
         if (playerModel) {
             // Don't attach to camera - keep it in the scene
-            playerModel.scale.set(96, 96, 96);  // Same size as regular enemies in local galaxy
+            playerModel.scale.set(48, 48, 48);  // Reduced from 96 to 48 for better performance
             playerModel.position.set(0, 0, 0);
 
             // Don't rotate or offset the model during init
             // Let the update loop handle all positioning and rotation
             // This ensures the model's position exactly matches what we set in updateCameraView
 
+            // Performance optimization: disable shadows and simplify rendering
+            playerModel.castShadow = false;
+            playerModel.receiveShadow = false;
+
             // CRITICAL: Make the entire model visible
             playerModel.visible = true;  // DEBUG: Start visible since we're in third-person mode
             playerModel.frustumCulled = false;
 
-            // Apply bright, self-lit material to all meshes
+            // Apply optimized self-lit material to all meshes
             playerModel.traverse((child) => {
                 if (child.isMesh) {
                     // CRITICAL: Make each mesh visible
                     child.visible = true;
                     child.frustumCulled = false;
 
-                    // Self-illuminated material compatible with game lighting
-                    const playerColor = new THREE.Color(0x00ffff);
-                    child.material = new THREE.MeshStandardMaterial({
-                        color: playerColor.multiplyScalar(0.4),  // Darker base color
-                        emissive: 0x00ffff,  // Bright cyan emissive (self-lit)
-                        emissiveIntensity: 0.8,  // Strong self-illumination
-                        roughness: 0.6,
-                        metalness: 0.7,
+                    // Optimized self-illuminated material - simpler for better performance
+                    child.material = new THREE.MeshBasicMaterial({
+                        color: 0x00ffff,  // Bright cyan
                         transparent: true,
-                        opacity: 0.85,  // Slightly transparent to see through in cockpit
-                        side: THREE.DoubleSide,
+                        opacity: 0.85,
+                        side: THREE.FrontSide,  // Only render front faces for performance
                         depthWrite: true,
                         depthTest: true
                     });
-                    child.castShadow = true;
-                    child.receiveShadow = true;
+                    // Disable shadows for performance
+                    child.castShadow = false;
+                    child.receiveShadow = false;
                 }
             });
 
@@ -254,10 +254,11 @@ function updateCameraView(camera) {
         // Position the ship model so the camera is at the cockpit/center of the ship
         // The ship model is just visual - the camera position is the "real" player position
 
-        // Position ship slightly in front and below camera so it's centered in view
-        // Small offset to center the ship model in the camera's viewport
-        // Z is negative to move ship forward (in front of camera)
-        const cockpitOffset = new THREE.Vector3(0, -2, -8); // Ship in front of camera
+        // Position ship for centered first-person cockpit view
+        // X: positive = right, negative = left (in camera's local space)
+        // Y: positive = up, negative = down
+        // Z: positive = back, negative = forward
+        const cockpitOffset = new THREE.Vector3(-1, -2, 2); // Left 1, down 2, back 2
         cockpitOffset.applyQuaternion(camera.quaternion);
 
         // DEBUG: Log before position update
@@ -302,11 +303,11 @@ function updateCameraView(camera) {
         // Ship positioned ahead of camera at a comfortable viewing distance
 
         // Position ship ahead of camera so we can see it from behind
-        const chaseDistance = 8; // Distance behind ship (much closer!)
-        const chaseHeight = 3;   // Height above ship (much closer!)
+        const chaseDistance = 8; // Distance behind ship
+        const chaseHeight = 3;   // Height above ship
 
-        // Calculate offset: behind (positive Z) and above (positive Y)
-        const chaseOffset = new THREE.Vector3(0, chaseHeight, chaseDistance);
+        // Calculate offset: behind (positive Z), above (positive Y), and left (negative X)
+        const chaseOffset = new THREE.Vector3(-1, chaseHeight, chaseDistance); // Left 1 unit
         chaseOffset.applyQuaternion(camera.quaternion);
 
         // DEBUG: Log before position update
