@@ -209,6 +209,20 @@ function updateCameraView(camera) {
 
     if (!cameraState.playerShipMesh) return; // No ship model loaded yet
 
+    // CRITICAL: Hide ship during intro sequence
+    if (typeof introSequence !== 'undefined' && introSequence.active) {
+        cameraState.playerShipMesh.visible = false;
+        cameraState.playerShipMesh.traverse((child) => {
+            if (child.isMesh) {
+                child.visible = false;
+            }
+        });
+        return; // Don't update position during intro
+    }
+
+    // Make ship visible when game is active
+    cameraState.playerShipMesh.visible = true;
+
     if (cameraState.mode === 'first-person') {
         // FIRST-PERSON MODE (COCKPIT VIEW):
         // Camera is inside the cockpit looking out
@@ -217,7 +231,10 @@ function updateCameraView(camera) {
         // Position ship just ahead of camera (cockpit view)
         const cockpitOffset = new THREE.Vector3(0, -2, -5); // Slightly below and ahead
         cockpitOffset.applyQuaternion(camera.quaternion);
-        cameraState.playerShipMesh.position.copy(camera.position).add(cockpitOffset);
+
+        // CRITICAL: Copy camera position FIRST, then add offset
+        cameraState.playerShipMesh.position.copy(camera.position);
+        cameraState.playerShipMesh.position.add(cockpitOffset);
 
         // Orient ship to match camera direction
         cameraState.playerShipMesh.rotation.copy(camera.rotation);
@@ -252,8 +269,9 @@ function updateCameraView(camera) {
         const chaseOffset = new THREE.Vector3(0, chaseHeight, chaseDistance);
         chaseOffset.applyQuaternion(camera.quaternion);
 
-        // Position ship ahead of the chase camera position
-        cameraState.playerShipMesh.position.copy(camera.position).sub(chaseOffset);
+        // CRITICAL: Copy camera position FIRST, then subtract offset
+        cameraState.playerShipMesh.position.copy(camera.position);
+        cameraState.playerShipMesh.position.sub(chaseOffset);
 
         // Orient ship to match camera direction
         cameraState.playerShipMesh.rotation.copy(camera.rotation);
