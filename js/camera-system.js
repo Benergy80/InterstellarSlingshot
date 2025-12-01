@@ -209,6 +209,37 @@ function updateCameraView(camera) {
 
     if (!cameraState.playerShipMesh) return; // No ship model loaded yet
 
+    // DEBUG: FORCE SHIP TO BE VISIBLE IN FRONT OF CAMERA
+    // Position ship directly in front of camera at close range
+    const debugDistance = 50; // Very close so we can see it
+    const forwardOffset = new THREE.Vector3(0, 0, -debugDistance);
+    forwardOffset.applyQuaternion(camera.quaternion);
+
+    cameraState.playerShipMesh.position.copy(camera.position).add(forwardOffset);
+    cameraState.playerShipMesh.rotation.copy(camera.rotation);
+
+    // Force visibility
+    cameraState.playerShipMesh.visible = true;
+    cameraState.playerShipMesh.traverse((child) => {
+        if (child.isMesh) {
+            child.visible = true;
+        }
+    });
+
+    // Log every 60 frames (roughly once per second)
+    if (!window.debugFrameCount) window.debugFrameCount = 0;
+    window.debugFrameCount++;
+    if (window.debugFrameCount % 60 === 0) {
+        console.log('🚢 DEBUG: Player ship forced in front of camera');
+        console.log('  - Ship position:', cameraState.playerShipMesh.position);
+        console.log('  - Camera position:', camera.position);
+        console.log('  - Ship visible:', cameraState.playerShipMesh.visible);
+        console.log('  - Ship parent:', cameraState.playerShipMesh.parent);
+        console.log('  - In scene:', scene ? scene.children.includes(cameraState.playerShipMesh) : 'scene not defined');
+    }
+
+    return; // Skip the normal mode logic below
+
     if (cameraState.mode === 'first-person') {
         // FIRST-PERSON MODE:
         // Ship model positioned at camera (player's actual position)
