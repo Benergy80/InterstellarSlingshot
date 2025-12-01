@@ -260,14 +260,13 @@ function updateCameraView(camera) {
 
     if (cameraState.mode === 'first-person') {
         // FIRST-PERSON MODE (COCKPIT VIEW):
-        // Camera is INSIDE the cockpit looking forward
-        // Ship needs to be positioned so camera is in the cockpit area
+        // Camera IS the player position - enemies target this location
+        // Position the ship model so the camera is at the cockpit/center of the ship
+        // The ship model is just visual - the camera position is the "real" player position
 
-        // Position ship so camera is inside the cockpit
-        // Ship is scaled 96x, so offsets need to be proportional
-        // For a cockpit view, camera should be near the front of the ship
-        // Positive Z moves ship backward (away from camera's forward direction)
-        const cockpitOffset = new THREE.Vector3(0, -3, 15); // Ship 15 units behind camera
+        // No offset - ship model centered on camera position
+        // Camera = player position = ship center/cockpit
+        const cockpitOffset = new THREE.Vector3(0, 0, 0); // Ship centered on camera
         cockpitOffset.applyQuaternion(camera.quaternion);
 
         // DEBUG: Log before position update
