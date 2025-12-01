@@ -84,13 +84,24 @@ function initCameraSystem(camera, scene) {
                 }
             });
 
+            console.log('  - About to add player model to scene...');
+            console.log('  - Scene object:', scene);
+            console.log('  - Scene children count before add:', scene.children.length);
+            console.log('  - Player model parent before add:', playerModel.parent);
+
             scene.add(playerModel);
+
+            console.log('  - Scene children count after add:', scene.children.length);
+            console.log('  - Player model parent after add:', playerModel.parent);
+            console.log('  - Player model in scene?', scene.children.includes(playerModel));
+
             cameraState.playerShipMesh = playerModel;
 
             // Ship starts visible for both first-person (cockpit) and third-person views
             playerModel.visible = true;
 
             console.log('✅ Player ship added to scene (scale: 96x, cyan emissive)');
+            console.log('  - cameraState.playerShipMesh parent:', cameraState.playerShipMesh.parent);
             cameraState.initialized = true;
         } else {
             console.warn('⚠️ getPlayerModel returned null/undefined - no player model available');
@@ -248,6 +259,34 @@ function updateCameraView(camera) {
 }
 
 /**
+ * Debug: Manually re-add player ship to scene if it was removed
+ */
+function readdPlayerShipToScene(scene) {
+    if (!cameraState.playerShipMesh) {
+        console.error('❌ No player ship mesh in cameraState');
+        return false;
+    }
+
+    console.log('🔧 Attempting to re-add player ship to scene...');
+    console.log('  - Current parent:', cameraState.playerShipMesh.parent);
+    console.log('  - Scene provided:', !!scene);
+
+    // Remove from current parent if it has one
+    if (cameraState.playerShipMesh.parent) {
+        cameraState.playerShipMesh.parent.remove(cameraState.playerShipMesh);
+        console.log('  - Removed from current parent');
+    }
+
+    // Add to scene
+    scene.add(cameraState.playerShipMesh);
+    console.log('  - Added to scene');
+    console.log('  - New parent:', cameraState.playerShipMesh.parent);
+    console.log('  - In scene?', scene.children.includes(cameraState.playerShipMesh));
+
+    return true;
+}
+
+/**
  * Adjust third-person camera distance
  */
 function setThirdPersonDistance(distance) {
@@ -270,6 +309,7 @@ if (typeof window !== 'undefined') {
     window.updateCameraView = updateCameraView;
     window.setThirdPersonDistance = setThirdPersonDistance;
     window.setThirdPersonHeight = setThirdPersonHeight;
+    window.readdPlayerShipToScene = readdPlayerShipToScene;
     window.cameraState = cameraState;
 
     console.log('✅ Camera system loaded');
