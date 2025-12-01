@@ -258,7 +258,7 @@ function updateCameraView(camera) {
         // X: positive = right, negative = left (in camera's local space)
         // Y: positive = up, negative = down
         // Z: positive = back, negative = forward
-        const cockpitOffset = new THREE.Vector3(-1, -2, 1); // Left 1, down 2, back 1
+        const cockpitOffset = new THREE.Vector3(0, -2, 0.5); // Centered, down 2, back 0.5
         cockpitOffset.applyQuaternion(camera.quaternion);
 
         // DEBUG: Log before position update
