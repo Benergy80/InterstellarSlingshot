@@ -234,11 +234,16 @@ function updateCameraView(camera) {
 
     if (cameraState.mode === 'first-person') {
         // FIRST-PERSON MODE (COCKPIT VIEW):
-        // Camera is INSIDE the cockpit - ship positioned AT camera
-        // Camera should be in the center/rear of the ship looking forward
+        // Camera is INSIDE the cockpit looking forward
+        // Ship needs to be positioned so camera is in the cockpit area
 
-        // Position ship EXACTLY at camera position (camera is inside the cockpit)
+        // Offset ship BEHIND camera so camera appears to be in the front cockpit
+        // Positive Z moves ship backward, placing camera toward the front
+        const cockpitOffset = new THREE.Vector3(0, 0, 4); // Ship 4 units back
+        cockpitOffset.applyQuaternion(camera.quaternion);
+
         cameraState.playerShipMesh.position.copy(camera.position);
+        cameraState.playerShipMesh.position.add(cockpitOffset);
 
         // Orient ship to match camera direction
         cameraState.playerShipMesh.rotation.copy(camera.rotation);
