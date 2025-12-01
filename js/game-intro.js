@@ -1865,16 +1865,23 @@ function setupNormalGameContent() {
     
     // Clear the intro scene
     scene.clear();
-    
+
     // Re-add basic lighting
     const ambientLight = new THREE.AmbientLight(0x333333, 0.4);
     scene.add(ambientLight);
-    
+
+    // CRITICAL: Re-add player ship after scene.clear() removed it
+    if (typeof initCameraSystem === 'function' && window.gameCamera) {
+        console.log('🚀 Re-initializing camera system after scene.clear()...');
+        initCameraSystem(window.gameCamera, scene);
+        console.log('✅ Player ship re-added to cleared scene');
+    }
+
     // Create normal game content - ADAPTED FOR SPHERICAL UNIVERSE
     if (typeof createOptimizedPlanets3D === 'function') {
         createOptimizedPlanets3D();
     }
-    
+
     resetCameraToGamePosition();
     console.log('📍 Camera reset to game position');
     
