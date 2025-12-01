@@ -1862,11 +1862,17 @@ function createExplosionEffect(targetObject) {
 // MASSIVE BORG CUBE EXPLOSION - For 100 HP BORG destruction
 // =============================================================================
 
-function createMassiveBorgExplosion(position) {
-    console.log('💥 MASSIVE BORG EXPLOSION at', position);
+function createMassiveBorgExplosion(position, cubeSize = 30) {
+    console.log(`💥 MASSIVE BORG EXPLOSION at ${position}, cube size: ${cubeSize}`);
+
+    // Scale explosion to cube size (base: cubeSize 30 = explosion 100)
+    // Larger cubes get proportionally larger explosions
+    const explosionScale = cubeSize / 30; // Scale factor relative to standard drone
+    const baseExplosionSize = 100 * explosionScale;
+    const secondaryExplosionSize = 80 * explosionScale;
 
     // Create HUGE expanding sphere explosion
-    const explosionGeo = new THREE.SphereGeometry(100, 32, 32);
+    const explosionGeo = new THREE.SphereGeometry(baseExplosionSize, 32, 32);
     const explosionMat = new THREE.MeshBasicMaterial({
         color: 0x00ff00, // Green BORG color
         transparent: true,
@@ -1878,7 +1884,7 @@ function createMassiveBorgExplosion(position) {
     scene.add(explosion);
 
     // Secondary orange/red explosion sphere
-    const explosionGeo2 = new THREE.SphereGeometry(80, 32, 32);
+    const explosionGeo2 = new THREE.SphereGeometry(secondaryExplosionSize, 32, 32);
     const explosionMat2 = new THREE.MeshBasicMaterial({
         color: 0xff4400,
         transparent: true,
@@ -1889,22 +1895,23 @@ function createMassiveBorgExplosion(position) {
     explosion2.position.copy(position);
     scene.add(explosion2);
 
-    // MASSIVE particle burst (500 particles!)
-    const particleCount = 500;
+    // MASSIVE particle burst (500 particles scaled by cube size)
+    const particleCount = Math.floor(500 * explosionScale);
     const particleGeometry = new THREE.BufferGeometry();
     const particlePositions = new Float32Array(particleCount * 3);
     const particleVelocities = [];
 
+    const particleSpeed = 50 * explosionScale;
     for (let i = 0; i < particleCount; i++) {
         particlePositions[i * 3] = position.x;
         particlePositions[i * 3 + 1] = position.y;
         particlePositions[i * 3 + 2] = position.z;
 
-        // Random velocity in all directions
+        // Random velocity in all directions (scaled)
         particleVelocities.push({
-            x: (Math.random() - 0.5) * 50,
-            y: (Math.random() - 0.5) * 50,
-            z: (Math.random() - 0.5) * 50
+            x: (Math.random() - 0.5) * particleSpeed,
+            y: (Math.random() - 0.5) * particleSpeed,
+            z: (Math.random() - 0.5) * particleSpeed
         });
     }
 
@@ -1912,7 +1919,7 @@ function createMassiveBorgExplosion(position) {
 
     const particleMaterial = new THREE.PointsMaterial({
         color: 0x00ff00,
-        size: 15,
+        size: 15 * explosionScale,
         transparent: true,
         opacity: 1.0,
         blending: THREE.AdditiveBlending
@@ -3013,8 +3020,9 @@ function checkWeaponHits(targetPosition) {
                     showAchievement('BORG Hit!', `${drone.userData.name} damaged (${drone.userData.health}/100 HP)`);
 
                     if (drone.userData.health <= 0) {
-                        // BORG cube destroyed - MASSIVE EXPLOSION!
-                        createMassiveBorgExplosion(drone.position);
+                        // BORG cube destroyed - MASSIVE EXPLOSION scaled to cube size!
+                        const cubeSize = drone.userData.cubeSize || 30;
+                        createMassiveBorgExplosion(drone.position, cubeSize);
                         playSound('explosion');
                         showAchievement('BORG CUBE DESTROYED!', `${drone.userData.name} eliminated!`);
 

@@ -679,6 +679,7 @@ function createBorgDrone(systemGroup, maxOrbitRadius, index) {
         emissiveIntensity: 0.3
     });
     const cube = new THREE.Mesh(cubeGeo, cubeMat);
+    cube.frustumCulled = false; // FIXED: Prevent disappearing when close/out of view
     droneGroup.add(cube);
 
     // Add green glowing edges
@@ -688,6 +689,7 @@ function createBorgDrone(systemGroup, maxOrbitRadius, index) {
         linewidth: 2
     });
     const edges = new THREE.LineSegments(edgeGeo, edgeMat);
+    edges.frustumCulled = false; // FIXED: Prevent disappearing when close/out of view
     droneGroup.add(edges);
 
     // Add glowing sphere in center
@@ -699,6 +701,7 @@ function createBorgDrone(systemGroup, maxOrbitRadius, index) {
         blending: THREE.AdditiveBlending
     });
     const core = new THREE.Mesh(coreGeo, coreMat);
+    core.frustumCulled = false; // FIXED: Prevent disappearing when close/out of view
     droneGroup.add(core);
 
     // Position drone in MUCH larger patrol orbit (released from far distance)
@@ -721,7 +724,8 @@ function createBorgDrone(systemGroup, maxOrbitRadius, index) {
         orbitCenter: new THREE.Vector3(0, 0, 0),
         rotationSpeed: 0.01,
         health: 2, // FIXED: Drones die in 2 hits (1 damage per hit)
-        hostile: true
+        hostile: true,
+        cubeSize: cubeSize // Store cube size for explosion scaling
     };
 
     systemGroup.userData.orbiters.push(droneGroup);
