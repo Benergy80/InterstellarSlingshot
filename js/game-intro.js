@@ -998,7 +998,7 @@ function createSkipButton() {
             transform: translateX(-50%) !important;
             width: auto !important;
             padding: 8px 16px !important;
-            background: rgba(0, 0, 0, 0.7) !important;
+            background: rgba(0, 0, 0, 0.3) !important;
             border: 1px solid rgba(0, 150, 255, 0.5) !important;
             border-radius: 4px !important;
             color: #00ff88 !important;
@@ -1019,7 +1019,7 @@ function createSkipButton() {
         });
 
         skipButton.addEventListener('mouseleave', () => {
-            skipButton.style.background = 'rgba(0, 0, 0, 0.7)';
+            skipButton.style.background = 'rgba(0, 0, 0, 0.3)';
             skipButton.style.boxShadow = '0 0 10px rgba(0, 255, 255, 0.3), inset 0 0 10px rgba(0, 255, 255, 0.1)';
         });
     } else {

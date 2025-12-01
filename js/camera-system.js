@@ -262,9 +262,11 @@ function updateCameraView(camera) {
         // Camera is INSIDE the cockpit looking forward
         // Ship needs to be positioned so camera is in the cockpit area
 
-        // Offset ship BEHIND camera so camera appears to be in the front cockpit
-        // Positive Z moves ship backward, placing camera toward the front
-        const cockpitOffset = new THREE.Vector3(0, 0, 4); // Ship 4 units back
+        // Position ship so camera is inside the cockpit
+        // Ship is scaled 96x, so we need to position it so the camera is roughly in the middle-front
+        // Negative Z moves ship forward, positive Z moves it back
+        // For the camera to be in the cockpit, the ship needs to be roughly centered on the camera
+        const cockpitOffset = new THREE.Vector3(0, -2, 0); // Ship slightly below camera
         cockpitOffset.applyQuaternion(camera.quaternion);
 
         // DEBUG: Log before position update
