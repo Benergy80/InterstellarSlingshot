@@ -5,10 +5,10 @@
 
 // Camera state
 const cameraState = {
-    mode: 'first-person',  // 'first-person' or 'third-person'
+    mode: 'third-person',  // DEBUG: Start in third-person to see the model
     playerShipMesh: null,  // Reference to the player ship 3D model
-    thirdPersonDistance: 1,   // FIXED: 1 unit behind ship
-    thirdPersonHeight: 0.5,   // FIXED: 0.5 units above ship
+    thirdPersonDistance: 10000,   // DEBUG: Far back to see the giant 4000x model
+    thirdPersonHeight: 5000,   // DEBUG: High up to see the giant model
     smoothing: 0.15,          // Camera smoothing factor (lower = smoother)
     initialized: false,       // Flag to prevent double-initialization
     playerFlightPosition: new THREE.Vector3(),  // Store actual flight position
@@ -55,7 +55,7 @@ function initCameraSystem(camera, scene) {
             playerModel.rotation.y = Math.PI;  // Face forward
 
             // CRITICAL: Make the entire model visible
-            playerModel.visible = false;  // Start hidden (first-person mode)
+            playerModel.visible = true;  // DEBUG: Start visible since we're in third-person mode
             playerModel.frustumCulled = false;
 
             // Apply bright, self-lit material to all meshes
@@ -82,10 +82,10 @@ function initCameraSystem(camera, scene) {
             scene.add(playerModel);
             cameraState.playerShipMesh = playerModel;
 
-            // Start in first-person mode (ship hidden)
-            playerModel.visible = false;
+            // DEBUG: Start in third-person mode (ship visible)
+            playerModel.visible = true;
 
-            console.log('✅ Player ship added to scene for third-person view (scale: 2x, glowing cyan)');
+            console.log('✅ Player ship added to scene for third-person view (scale: 4000x, glowing cyan)');
             cameraState.initialized = true;
         } else {
             console.warn('⚠️ getPlayerModel returned null/undefined - no player model available');
