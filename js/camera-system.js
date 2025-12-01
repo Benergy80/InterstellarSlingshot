@@ -174,21 +174,20 @@ function toggleCameraView() {
  * Call this in the game loop
  */
 function updateCameraView(camera) {
-    // Store current camera position as the player's actual flight position
-    cameraState.playerFlightPosition.copy(camera.position);
-    cameraState.playerFlightRotation.copy(camera.rotation);
+    // Camera position IS the player's actual flight position (controlled by game physics)
+    // We just position the ship model to match, without modifying camera position
 
     if (cameraState.mode === 'first-person' && cameraState.playerShipMesh) {
-        // FIRST-PERSON MODE (COCKPIT VIEW):
-        // Ship model positioned at flight position
-        // Camera positioned INSIDE the cockpit looking out
-        // Ship visible as wireframe around the view
+        // FIRST-PERSON MODE:
+        // Ship model positioned at camera (player's actual position)
+        // Camera stays at same position (no offset to avoid drift bug)
+        // Ship visible around the view
 
-        // Position ship model at the player's actual flight position
-        cameraState.playerShipMesh.position.copy(cameraState.playerFlightPosition);
+        // Position ship model at camera position
+        cameraState.playerShipMesh.position.copy(camera.position);
 
-        // Orient ship to match flight direction
-        cameraState.playerShipMesh.rotation.copy(cameraState.playerFlightRotation);
+        // Orient ship to match camera direction
+        cameraState.playerShipMesh.rotation.copy(camera.rotation);
 
         // Add dynamic banking based on rotational velocity
         if (typeof rotationalVelocity !== 'undefined') {
@@ -198,25 +197,10 @@ function updateCameraView(camera) {
             cameraState.playerShipMesh.rotation.x += pitchTilt;
         }
 
-        // COCKPIT VIEW: Position camera inside the ship model
-        // For 96x scale model, cockpit is at center-front
-        // In local ship space: -Z is forward, +Y is up, +X is right
-        const cockpitOffset = new THREE.Vector3(
-            0,          // Centered (no left/right offset)
-            3.6,        // Slightly up (cockpit height at 96x scale)
-            -43         // Forward inside the model (negative = forward)
-        );
+        // IMPORTANT: Camera position is NOT modified - stays at player position
+        // This prevents the drift bug
 
-        // Rotate offset by ship's orientation
-        cockpitOffset.applyQuaternion(cameraState.playerShipMesh.quaternion);
-
-        // Position camera inside the cockpit
-        camera.position.copy(cameraState.playerShipMesh.position).add(cockpitOffset);
-
-        // Camera rotation matches ship rotation
-        camera.rotation.copy(cameraState.playerShipMesh.rotation);
-
-        // Ensure the ship model is visible (wireframe)
+        // Ensure the ship model is visible
         cameraState.playerShipMesh.visible = true;
         cameraState.playerShipMesh.traverse((child) => {
             if (child.isMesh) {
@@ -225,47 +209,29 @@ function updateCameraView(camera) {
         });
 
     } else if (cameraState.mode === 'third-person' && cameraState.playerShipMesh) {
-        // THIRD-PERSON MODE (EXTERNAL VIEW):
-        // Ship model positioned at flight position
-        // Camera positioned BEHIND and ABOVE the ship
-        // Ship visible in foreground
+        // THIRD-PERSON MODE:
+        // Ship model positioned at camera (player's actual position)
+        // Camera stays at same position (no offset to avoid drift bug)
+        // Ship visible at camera location
 
-        // Position ship model at the player's actual flight position
-        cameraState.playerShipMesh.position.copy(cameraState.playerFlightPosition);
+        // Position ship model at camera position
+        cameraState.playerShipMesh.position.copy(camera.position);
 
-        // Orient ship to match flight direction
-        cameraState.playerShipMesh.rotation.copy(cameraState.playerFlightRotation);
+        // Orient ship to match camera direction
+        cameraState.playerShipMesh.rotation.copy(camera.rotation);
 
         // Add dynamic banking based on rotational velocity
         if (typeof rotationalVelocity !== 'undefined') {
-            // Apply roll (banking) based on yaw velocity
             const bankAmount = -rotationalVelocity.yaw * 15;
             cameraState.playerShipMesh.rotation.z += bankAmount;
-
-            // Apply pitch tilt based on pitch velocity
             const pitchTilt = rotationalVelocity.pitch * 5;
             cameraState.playerShipMesh.rotation.x += pitchTilt;
         }
 
-        // THIRD-PERSON VIEW: Position camera behind and above the ship
-        // For 96x scale model
-        // In local ship space: +Z is backward, +Y is up
-        const externalOffset = new THREE.Vector3(
-            0,          // Centered (no left/right offset)
-            60,         // Above the ship (for 96x scale model)
-            144         // Behind the ship (for 96x scale model)
-        );
+        // IMPORTANT: Camera position is NOT modified - stays at player position
+        // This prevents the drift bug
 
-        // Rotate offset by ship's orientation
-        externalOffset.applyQuaternion(cameraState.playerShipMesh.quaternion);
-
-        // Position camera behind and above the ship
-        camera.position.copy(cameraState.playerShipMesh.position).add(externalOffset);
-
-        // CRITICAL: Camera rotation must match ship rotation so controls feel natural
-        camera.rotation.copy(cameraState.playerShipMesh.rotation);
-
-        // Ensure the ship model and all children are visible
+        // Ensure the ship model is visible
         cameraState.playerShipMesh.visible = true;
         cameraState.playerShipMesh.traverse((child) => {
             if (child.isMesh) {
