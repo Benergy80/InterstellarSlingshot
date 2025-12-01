@@ -37,7 +37,7 @@ function initCameraSystem(camera, scene) {
 
         if (playerModel) {
             // Don't attach to camera - keep it in the scene
-            playerModel.scale.set(4000, 4000, 4000);  // DEBUG: 50x bigger for visibility (80 → 4000)
+            playerModel.scale.set(96, 96, 96);  // Same size as regular enemies in local galaxy
             playerModel.position.set(0, 0, 0);
 
             // Center the model to fix position offset issues
@@ -65,14 +65,18 @@ function initCameraSystem(camera, scene) {
                     child.visible = true;
                     child.frustumCulled = false;
 
-                    // DEBUG: Use wireframe mode to see through the giant model
-                    child.material = new THREE.MeshBasicMaterial({
-                        color: 0x00ffff,  // Bright cyan color for player ship
-                        wireframe: true,   // DEBUG: Wireframe so we can see through it
+                    // Self-illuminated material compatible with game lighting
+                    const playerColor = new THREE.Color(0x00ffff);
+                    child.material = new THREE.MeshStandardMaterial({
+                        color: playerColor.multiplyScalar(0.4),  // Darker base color
+                        emissive: 0x00ffff,  // Bright cyan emissive (self-lit)
+                        emissiveIntensity: 0.8,  // Strong self-illumination
+                        roughness: 0.6,
+                        metalness: 0.7,
                         transparent: true,
-                        opacity: 0.8,      // Semi-transparent
+                        opacity: 0.85,  // Slightly transparent to see through in cockpit
                         side: THREE.DoubleSide,
-                        depthWrite: false, // Don't write to depth buffer (allow seeing through)
+                        depthWrite: true,
                         depthTest: true
                     });
                     child.castShadow = true;
@@ -86,7 +90,7 @@ function initCameraSystem(camera, scene) {
             // Ship starts visible for both first-person (cockpit) and third-person views
             playerModel.visible = true;
 
-            console.log('✅ Player ship added to scene (scale: 4000x, cyan wireframe)');
+            console.log('✅ Player ship added to scene (scale: 96x, cyan emissive)');
             cameraState.initialized = true;
         } else {
             console.warn('⚠️ getPlayerModel returned null/undefined - no player model available');
@@ -195,12 +199,12 @@ function updateCameraView(camera) {
         }
 
         // COCKPIT VIEW: Position camera inside the ship model
-        // For 4000x scale model, cockpit is deep inside the model
+        // For 96x scale model, cockpit is at center-front
         // In local ship space: -Z is forward, +Y is up, +X is right
         const cockpitOffset = new THREE.Vector3(
             0,          // Centered (no left/right offset)
-            150,        // Slightly up (cockpit height at 4000x scale)
-            -1800       // Far forward inside the model (negative = forward)
+            3.6,        // Slightly up (cockpit height at 96x scale)
+            -43         // Forward inside the model (negative = forward)
         );
 
         // Rotate offset by ship's orientation
@@ -244,12 +248,12 @@ function updateCameraView(camera) {
         }
 
         // THIRD-PERSON VIEW: Position camera behind and above the ship
-        // For 4000x scale model, need significant distance
+        // For 96x scale model
         // In local ship space: +Z is backward, +Y is up
         const externalOffset = new THREE.Vector3(
             0,          // Centered (no left/right offset)
-            2500,       // High above (for 4000x scale model)
-            6000        // Far behind (for 4000x scale model)
+            60,         // Above the ship (for 96x scale model)
+            144         // Behind the ship (for 96x scale model)
         );
 
         // Rotate offset by ship's orientation
