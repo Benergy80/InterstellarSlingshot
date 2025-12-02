@@ -353,7 +353,7 @@ function updateCameraView(camera) {
         // Add dynamic banking based on rotational velocity
         if (typeof rotationalVelocity !== 'undefined') {
             const bankAmount = -rotationalVelocity.yaw * 15;
-            const pitchTilt = rotationalVelocity.pitch * 5;
+            const pitchTilt = -rotationalVelocity.pitch * 5; // Negative to match input direction
             // Set rotation directly to prevent accumulation over multiple frames
             cameraState.playerShipMesh.rotation.z = camera.rotation.z + bankAmount;
             cameraState.playerShipMesh.rotation.x = camera.rotation.x + pitchTilt;
@@ -403,7 +403,7 @@ function updateCameraView(camera) {
         // Add dynamic banking based on rotational velocity
         if (typeof rotationalVelocity !== 'undefined') {
             const bankAmount = -rotationalVelocity.yaw * 15;
-            const pitchTilt = rotationalVelocity.pitch * 5;
+            const pitchTilt = -rotationalVelocity.pitch * 5; // Negative to match input direction
             // Set rotation directly to prevent accumulation over multiple frames
             cameraState.playerShipMesh.rotation.z = camera.rotation.z + bankAmount;
             cameraState.playerShipMesh.rotation.x = camera.rotation.x + pitchTilt;
