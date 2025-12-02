@@ -148,12 +148,31 @@ function toggleCameraView() {
         return;
     }
 
-    // Store current offset as transition start
-    const currentOffset = new THREE.Vector3();
-    if (cameraState.mode === 'first-person') {
-        currentOffset.set(0.25, -2, 0.5); // Current first-person offset
-    } else {
-        currentOffset.set(-1, 3, 8); // Current third-person offset
+    // If already transitioning, reverse the direction instead of starting new transition
+    if (cameraState.isTransitioning) {
+        // Reverse the transition by swapping start and target
+        const temp = cameraState.transitionStartOffset.clone();
+        cameraState.transitionStartOffset.copy(cameraState.transitionTargetOffset);
+        cameraState.transitionTargetOffset.copy(temp);
+
+        // Reverse the progress by resetting time based on current progress
+        const elapsed = performance.now() - cameraState.transitionStartTime;
+        const progress = Math.min(elapsed / cameraState.transitionDuration, 1);
+        const remainingProgress = 1 - progress;
+        cameraState.transitionStartTime = performance.now() - (remainingProgress * cameraState.transitionDuration);
+
+        // Toggle mode
+        cameraState.mode = (cameraState.mode === 'first-person') ? 'third-person' : 'first-person';
+
+        console.log('📷 Reversing transition to', cameraState.mode.toUpperCase(), 'view');
+
+        // Show notification
+        if (typeof showNotification === 'function') {
+            const msg = cameraState.mode === 'third-person' ? 'Third-Person Camera' : 'First-Person Camera (Cockpit View)';
+            showNotification(msg, 2000);
+        }
+
+        return;
     }
 
     if (cameraState.mode === 'first-person') {
@@ -168,11 +187,11 @@ function toggleCameraView() {
             }
         });
 
-        // Start transition animation
+        // Start transition animation from first-person to third-person
         cameraState.isTransitioning = true;
         cameraState.transitionStartTime = performance.now();
-        cameraState.transitionStartOffset.copy(currentOffset);
-        cameraState.transitionTargetOffset.set(-1, 3, 8); // Third-person target
+        cameraState.transitionStartOffset.set(0.25, -2, 0.5); // First-person offset
+        cameraState.transitionTargetOffset.set(-1, 3, 8); // Third-person offset
 
         console.log('📷 Transitioning to THIRD-PERSON view');
 
@@ -192,11 +211,11 @@ function toggleCameraView() {
             }
         });
 
-        // Start transition animation
+        // Start transition animation from third-person to first-person (reverse path)
         cameraState.isTransitioning = true;
         cameraState.transitionStartTime = performance.now();
-        cameraState.transitionStartOffset.copy(currentOffset);
-        cameraState.transitionTargetOffset.set(0.25, -2, 0.5); // First-person target
+        cameraState.transitionStartOffset.set(-1, 3, 8); // Third-person offset
+        cameraState.transitionTargetOffset.set(0.25, -2, 0.5); // First-person offset
 
         console.log('📷 Transitioning to FIRST-PERSON view (cockpit)');
 
