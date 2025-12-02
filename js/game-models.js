@@ -395,7 +395,7 @@ function createEnemyMeshWithModel(regionId, fallbackGeometry, material, scaleOve
             const glowMaterial = new THREE.MeshBasicMaterial({
                 color: glowColor,
                 transparent: true,
-                opacity: 0.3,  // Less opaque - will pulse from 0.0 to 0.6
+                opacity: 0.2,  // Base opacity - will pulse from 0.0 to 0.7
                 blending: THREE.AdditiveBlending,
                 side: THREE.DoubleSide,
                 depthWrite: false,
@@ -411,8 +411,8 @@ function createEnemyMeshWithModel(regionId, fallbackGeometry, material, scaleOve
             child.add(glowMesh);
         });
 
-        // Scale enemy models (default 120x, but can be overridden)
-        const finalScale = scaleOverride !== undefined ? scaleOverride : 120.0;
+        // Scale enemy models (default 96x = 80% of original 120x, but can be overridden)
+        const finalScale = scaleOverride !== undefined ? scaleOverride : 96.0;
         model.scale.multiplyScalar(finalScale);
 
         return model;
@@ -442,7 +442,7 @@ function createEnemyMeshWithModel(regionId, fallbackGeometry, material, scaleOve
         const glowMaterial = new THREE.MeshBasicMaterial({
             color: glowColor,
             transparent: true,
-            opacity: 0.3,  // Less opaque - will pulse from 0.0 to 0.6
+            opacity: 0.2,  // Base opacity - will pulse from 0.0 to 0.7
             blending: THREE.AdditiveBlending,
             side: THREE.DoubleSide,
             depthWrite: false,
@@ -512,8 +512,8 @@ function createBossMeshWithModel(regionId, fallbackGeometry, material) {
             }
         });
 
-        // Bosses are MUCH larger than enemies (reduced by 20% from 225x to 180x)
-        model.scale.multiplyScalar(180.0);
+        // Bosses are larger than enemies (144x = 80% of original 180x)
+        model.scale.multiplyScalar(144.0);
 
         return model;
     } else {

@@ -981,14 +981,16 @@ function createCountdownOverlay() {
 function createSkipButton() {
     const skipButton = document.createElement('button');
     skipButton.id = 'skipIntroBtn';
-    skipButton.className = 'absolute bottom-4 left-1/2 transform -translate-x-1/2 space-btn rounded px-4 py-2 text-sm z-50';
+    skipButton.className = 'absolute bottom-4 left-1/2 transform -translate-x-1/2 space-btn rounded px-4 py-2 text-sm';
     skipButton.innerHTML = '<i class="fas fa-forward mr-2"></i>Skip Intro';
     skipButton.addEventListener('click', skipIntroSequence);
-    
-    // Apply mobile button styling with cyan colors on mobile, keep original on desktop
-    const isMobile = window.innerWidth <= 768 || ('ontouchstart' in window && window.innerWidth <= 1024);
+
+    // FIXED: iPad uses desktop transparent styling, iPhone uses mobile styling
+    const isIPhone = /iPhone|iPod/.test(navigator.userAgent);
+    const isMobile = (window.innerWidth <= 768 || ('ontouchstart' in window && window.innerWidth <= 1024)) && isIPhone;
 
     if (isMobile) {
+        // iPhone-specific mobile styling with solid background
         skipButton.style.cssText = `
             position: fixed !important;
             bottom: 16px !important;
@@ -996,7 +998,7 @@ function createSkipButton() {
             transform: translateX(-50%) !important;
             width: auto !important;
             padding: 8px 16px !important;
-            background: rgba(0, 0, 0, 0.7) !important;
+            background: rgba(0, 0, 0, 0.3) !important;
             border: 1px solid rgba(0, 150, 255, 0.5) !important;
             border-radius: 4px !important;
             color: #00ff88 !important;
@@ -1006,7 +1008,7 @@ function createSkipButton() {
             cursor: pointer !important;
             opacity: 0;
             transition: all 0.2s ease !important;
-            z-index: 80 !important;
+            z-index: 10000 !important;
             box-shadow: 0 0 10px rgba(0, 150, 255, 0.3), inset 0 0 10px rgba(0, 150, 255, 0.1) !important;
             text-shadow: 0 0 8px rgba(0,255,136,0.6), 0 0 16px rgba(0,255,136,0.3) !important;
         `;
@@ -1017,14 +1019,15 @@ function createSkipButton() {
         });
 
         skipButton.addEventListener('mouseleave', () => {
-            skipButton.style.background = 'rgba(0, 0, 0, 0.7)';
+            skipButton.style.background = 'rgba(0, 0, 0, 0.3)';
             skipButton.style.boxShadow = '0 0 10px rgba(0, 255, 255, 0.3), inset 0 0 10px rgba(0, 255, 255, 0.1)';
         });
     } else {
-        // Desktop: keep original styling with just opacity fix
+        // Desktop AND iPad: transparent glassmorphism style from space-btn class
         skipButton.style.opacity = '0';
+        skipButton.style.zIndex = '10000';
     }
-    
+
     document.body.appendChild(skipButton);
     introSequence.skipButton = skipButton;
 }
@@ -1154,9 +1157,9 @@ function beginLaunchSequence() {
         window.atmosphereCreated = true;
     }
     
-    // Make skip button fully visible
+    // Make skip button semi-transparent and visible
     if (introSequence.skipButton) {
-        introSequence.skipButton.style.opacity = '1';
+        introSequence.skipButton.style.opacity = '0.7';
     }
     
     // Skip surface phase, go directly to countdown
@@ -1219,10 +1222,15 @@ function animateIntroSequence() {
     if (introSequence.shakeIntensity > 0) {
         applyCameraShake();
     }
-    
+
+    // Update player ship position to follow camera
+    if (typeof updateCameraView === 'function' && camera) {
+        updateCameraView(camera);
+    }
+
     // Render the scene
     renderer.render(scene, camera);
-    
+
     // Continue animation loop
     requestAnimationFrame(animateIntroSequence);
 }
@@ -1862,16 +1870,23 @@ function setupNormalGameContent() {
     
     // Clear the intro scene
     scene.clear();
-    
+
     // Re-add basic lighting
     const ambientLight = new THREE.AmbientLight(0x333333, 0.4);
     scene.add(ambientLight);
-    
+
+    // CRITICAL: Re-add player ship after scene.clear() removed it
+    if (typeof initCameraSystem === 'function' && window.gameCamera) {
+        console.log('🚀 Re-initializing camera system after scene.clear()...');
+        initCameraSystem(window.gameCamera, scene);
+        console.log('✅ Player ship re-added to cleared scene');
+    }
+
     // Create normal game content - ADAPTED FOR SPHERICAL UNIVERSE
     if (typeof createOptimizedPlanets3D === 'function') {
         createOptimizedPlanets3D();
     }
-    
+
     resetCameraToGamePosition();
     console.log('📍 Camera reset to game position');
     

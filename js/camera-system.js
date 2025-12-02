@@ -5,21 +5,49 @@
 
 // Camera state
 const cameraState = {
-    mode: 'first-person',  // 'first-person' or 'third-person'
+    mode: 'first-person',  // Start in first-person (cockpit view)
     playerShipMesh: null,  // Reference to the player ship 3D model
-    thirdPersonDistance: 15,  // Distance behind ship
-    thirdPersonHeight: 5,     // Height above ship
+    thirdPersonDistance: 1,   // Distance multiplier for third-person view
+    thirdPersonHeight: 0.5,   // Height multiplier for third-person view
     smoothing: 0.15,          // Camera smoothing factor (lower = smoother)
-    initialized: false        // Flag to prevent double-initialization
+    initialized: false,       // Flag to prevent double-initialization
+    playerFlightPosition: new THREE.Vector3(),  // Store actual flight position
+    playerFlightRotation: new THREE.Euler(),     // Store actual flight rotation
+
+    // Camera transition animation
+    isTransitioning: false,
+    transitionStartTime: 0,
+    transitionDuration: 400, // milliseconds
+    transitionStartOffset: new THREE.Vector3(),
+    transitionTargetOffset: new THREE.Vector3()
 };
 
 /**
  * Initialize the camera system with the player ship model
  */
 function initCameraSystem(camera, scene) {
-    // Prevent double-initialization
+    // Check if we need to re-add player to a new scene
     if (cameraState.initialized && cameraState.playerShipMesh) {
-        console.log('🎥 Camera system already initialized, skipping...');
+        // If the player model's parent doesn't match the provided scene, we need to move it
+        if (cameraState.playerShipMesh.parent !== scene) {
+            console.log('🎥 Camera system already initialized, but player ship is in wrong scene');
+            console.log('  - Current parent:', cameraState.playerShipMesh.parent);
+            console.log('  - Target scene:', scene);
+            console.log('  - Re-adding player ship to new scene...');
+
+            // Remove from old parent if it has one
+            if (cameraState.playerShipMesh.parent) {
+                cameraState.playerShipMesh.parent.remove(cameraState.playerShipMesh);
+            }
+
+            // Add to new scene
+            scene.add(cameraState.playerShipMesh);
+            console.log('✅ Player ship moved to new scene');
+            console.log('  - New parent:', cameraState.playerShipMesh.parent);
+            return;
+        }
+
+        console.log('🎥 Camera system already initialized and in correct scene, skipping...');
         return;
     }
 
@@ -35,55 +63,61 @@ function initCameraSystem(camera, scene) {
 
         if (playerModel) {
             // Don't attach to camera - keep it in the scene
-            playerModel.scale.set(80, 80, 80);  // Reduced by 20% (100 → 80)
+            playerModel.scale.set(48, 48, 48);  // Reduced from 96 to 48 for better performance
             playerModel.position.set(0, 0, 0);
 
-            // Center the model to fix position offset issues
-            const box = new THREE.Box3().setFromObject(playerModel);
-            const center = box.getCenter(new THREE.Vector3());
+            // Don't rotate or offset the model during init
+            // Let the update loop handle all positioning and rotation
+            // This ensures the model's position exactly matches what we set in updateCameraView
 
-            // Offset all children to center the model at origin
-            playerModel.traverse((child) => {
-                if (child.isMesh) {
-                    child.position.sub(center);
-                }
-            });
-
-            // Make sure it's oriented correctly
-            playerModel.rotation.y = Math.PI;  // Face forward
+            // Performance optimization: disable shadows and simplify rendering
+            playerModel.castShadow = false;
+            playerModel.receiveShadow = false;
 
             // CRITICAL: Make the entire model visible
-            playerModel.visible = false;  // Start hidden (first-person mode)
+            playerModel.visible = true;  // DEBUG: Start visible since we're in third-person mode
             playerModel.frustumCulled = false;
 
-            // Apply bright, self-lit material to all meshes
+            // Apply optimized self-lit material to all meshes
             playerModel.traverse((child) => {
                 if (child.isMesh) {
                     // CRITICAL: Make each mesh visible
                     child.visible = true;
                     child.frustumCulled = false;
 
-                    // Use MeshBasicMaterial - always visible, unaffected by lighting
+                    // Optimized self-illuminated material - simpler for better performance
                     child.material = new THREE.MeshBasicMaterial({
-                        color: 0x00ffff,  // Bright cyan color for player ship
+                        color: 0x00ffff,  // Bright cyan
                         transparent: true,
-                        opacity: 1.0,
-                        side: THREE.DoubleSide,  // Ensure visible from all angles
+                        opacity: 0.85,
+                        side: THREE.FrontSide,  // Only render front faces for performance
                         depthWrite: true,
                         depthTest: true
                     });
-                    child.castShadow = true;
-                    child.receiveShadow = true;
+                    // Disable shadows for performance
+                    child.castShadow = false;
+                    child.receiveShadow = false;
                 }
             });
 
+            console.log('  - About to add player model to scene...');
+            console.log('  - Scene object:', scene);
+            console.log('  - Scene children count before add:', scene.children.length);
+            console.log('  - Player model parent before add:', playerModel.parent);
+
             scene.add(playerModel);
+
+            console.log('  - Scene children count after add:', scene.children.length);
+            console.log('  - Player model parent after add:', playerModel.parent);
+            console.log('  - Player model in scene?', scene.children.includes(playerModel));
+
             cameraState.playerShipMesh = playerModel;
 
-            // Start in first-person mode (ship hidden)
-            playerModel.visible = false;
+            // Ship starts visible for both first-person (cockpit) and third-person views
+            playerModel.visible = true;
 
-            console.log('✅ Player ship added to scene for third-person view (scale: 2x, glowing cyan)');
+            console.log('✅ Player ship added to scene (scale: 96x, cyan emissive)');
+            console.log('  - cameraState.playerShipMesh parent:', cameraState.playerShipMesh.parent);
             cameraState.initialized = true;
         } else {
             console.warn('⚠️ getPlayerModel returned null/undefined - no player model available');
@@ -114,6 +148,33 @@ function toggleCameraView() {
         return;
     }
 
+    // If already transitioning, reverse the direction instead of starting new transition
+    if (cameraState.isTransitioning) {
+        // Reverse the transition by swapping start and target
+        const temp = cameraState.transitionStartOffset.clone();
+        cameraState.transitionStartOffset.copy(cameraState.transitionTargetOffset);
+        cameraState.transitionTargetOffset.copy(temp);
+
+        // Reverse the progress by resetting time based on current progress
+        const elapsed = performance.now() - cameraState.transitionStartTime;
+        const progress = Math.min(elapsed / cameraState.transitionDuration, 1);
+        const remainingProgress = 1 - progress;
+        cameraState.transitionStartTime = performance.now() - (remainingProgress * cameraState.transitionDuration);
+
+        // Toggle mode
+        cameraState.mode = (cameraState.mode === 'first-person') ? 'third-person' : 'first-person';
+
+        console.log('📷 Reversing transition to', cameraState.mode.toUpperCase(), 'view');
+
+        // Show notification
+        if (typeof showNotification === 'function') {
+            const msg = cameraState.mode === 'third-person' ? 'Third-Person Camera' : 'First-Person Camera (Cockpit View)';
+            showNotification(msg, 2000);
+        }
+
+        return;
+    }
+
     if (cameraState.mode === 'first-person') {
         // Switch to third-person
         cameraState.mode = 'third-person';
@@ -126,38 +187,41 @@ function toggleCameraView() {
             }
         });
 
-        console.log('📷 Switched to THIRD-PERSON view');
-        console.log('   Player ship position:', cameraState.playerShipMesh.position);
-        console.log('   Player ship visible:', cameraState.playerShipMesh.visible);
+        // Start transition animation from first-person to third-person
+        cameraState.isTransitioning = true;
+        cameraState.transitionStartTime = performance.now();
+        cameraState.transitionStartOffset.set(0.25, -2, 0.5); // First-person offset
+        cameraState.transitionTargetOffset.set(-1, 3, 8); // Third-person offset
 
-        // Log child mesh visibility
-        let visibleMeshCount = 0;
-        cameraState.playerShipMesh.traverse((child) => {
-            if (child.isMesh && child.visible) visibleMeshCount++;
-        });
-        console.log('   Visible child meshes:', visibleMeshCount);
+        console.log('📷 Transitioning to THIRD-PERSON view');
 
         // Show notification
         if (typeof showNotification === 'function') {
             showNotification('Third-Person Camera', 2000);
         }
     } else {
-        // Switch to first-person
+        // Switch to first-person (cockpit view)
         cameraState.mode = 'first-person';
-        cameraState.playerShipMesh.visible = false;
+        cameraState.playerShipMesh.visible = true; // Keep visible for cockpit view
 
-        // Hide all child meshes too
+        // Keep all child meshes visible for cockpit view
         cameraState.playerShipMesh.traverse((child) => {
             if (child.isMesh) {
-                child.visible = false;
+                child.visible = true;
             }
         });
 
-        console.log('📷 Switched to FIRST-PERSON view');
+        // Start transition animation from third-person to first-person (reverse path)
+        cameraState.isTransitioning = true;
+        cameraState.transitionStartTime = performance.now();
+        cameraState.transitionStartOffset.set(-1, 3, 8); // Third-person offset
+        cameraState.transitionTargetOffset.set(0.25, -2, 0.5); // First-person offset
+
+        console.log('📷 Transitioning to FIRST-PERSON view (cockpit)');
 
         // Show notification
         if (typeof showNotification === 'function') {
-            showNotification('First-Person Camera', 2000);
+            showNotification('First-Person Camera (Cockpit View)', 2000);
         }
     }
 }
@@ -167,42 +231,185 @@ function toggleCameraView() {
  * Call this in the game loop
  */
 function updateCameraView(camera) {
-    if (cameraState.mode === 'third-person' && cameraState.playerShipMesh) {
-        // In third-person mode, the camera stays in a fixed position behind and above
-        // The ship model is positioned in front of where the player actually is (camera position)
+    // Camera position IS the player's actual flight position (controlled by game physics)
+    // We just position the ship model to match, without modifying camera position
 
-        // Camera stays at the player's actual flight position (first-person position)
-        // We don't move the camera - it stays where the player is flying
+    // DEBUG: Track calls
+    if (!window.updateCameraViewCallCount) window.updateCameraViewCallCount = 0;
+    window.updateCameraViewCallCount++;
 
-        // Position ship model AHEAD of the camera so it's visible
-        const forwardDistance = 50;  // Ship visible ahead of camera
-        const aboveOffset = -8;      // Slightly below camera view
+    if (!cameraState.playerShipMesh) {
+        if (window.updateCameraViewCallCount % 120 === 0) {
+            console.warn('⚠️ updateCameraView called but no playerShipMesh! Call count:', window.updateCameraViewCallCount);
+        }
+        return; // No ship model loaded yet
+    }
 
-        // Create offset vector pointing forward and slightly down
-        // Negative Z is forward in camera space
-        const shipOffset = new THREE.Vector3(0, aboveOffset, -forwardDistance);
+    // CRITICAL: Hide ship during intro sequence
+    if (typeof introSequence !== 'undefined' && introSequence.active) {
+        if (window.updateCameraViewCallCount % 120 === 0) {
+            console.log('  ⏸️ Intro active - hiding ship and returning early');
+        }
+        cameraState.playerShipMesh.visible = false;
+        cameraState.playerShipMesh.traverse((child) => {
+            if (child.isMesh) {
+                child.visible = false;
+            }
+        });
+        return; // Don't update position during intro
+    }
 
-        // Rotate offset by camera's orientation
-        shipOffset.applyQuaternion(camera.quaternion);
+    // Make ship visible when game is active
+    cameraState.playerShipMesh.visible = true;
 
-        // Position ship ahead of camera
-        cameraState.playerShipMesh.position.copy(camera.position).add(shipOffset);
+    if (window.updateCameraViewCallCount % 120 === 0) {
+        console.log('  ▶️ Game active - updating ship position');
+    }
 
-        // Orient ship to match camera/flight direction
-        cameraState.playerShipMesh.rotation.copy(camera.rotation);
+    // DEBUG: Log positions every 120 frames (every 2 seconds)
+    if (!window.cameraDebugFrameCount) window.cameraDebugFrameCount = 0;
+    window.cameraDebugFrameCount++;
 
-        // Add dynamic banking and tilting based on rotational velocity
-        if (typeof rotationalVelocity !== 'undefined') {
-            // Apply roll (banking) based on yaw velocity
-            const bankAmount = -rotationalVelocity.yaw * 15;  // Banking when turning
-            cameraState.playerShipMesh.rotation.z += bankAmount;
+    const shouldLog = (window.cameraDebugFrameCount % 120 === 0);
 
-            // Apply additional pitch tilt based on pitch velocity
-            const pitchTilt = rotationalVelocity.pitch * 5;
-            cameraState.playerShipMesh.rotation.x += pitchTilt;
+    if (shouldLog) {
+        console.log('🔍 DEBUG BLOCK START - Frame:', window.cameraDebugFrameCount);
+        console.log('📍 Camera position:', camera.position);
+        console.log('🚢 Ship LOCAL position:', cameraState.playerShipMesh.position);
+        console.log('🚢 Ship WORLD position:', cameraState.playerShipMesh.getWorldPosition(new THREE.Vector3()));
+        console.log('📏 Ship scale:', cameraState.playerShipMesh.scale);
+        console.log('🔄 Ship rotation:', cameraState.playerShipMesh.rotation);
+        console.log('🎥 Camera mode:', cameraState.mode);
+        console.log('🔍 Ship parent:', cameraState.playerShipMesh.parent);
+        console.log('🔍 Ship visible:', cameraState.playerShipMesh.visible);
+        console.log('🔍 DEBUG BLOCK END');
+    }
+
+    // Calculate offset (with animation if transitioning)
+    let currentOffset;
+
+    if (cameraState.isTransitioning) {
+        // Animate between offsets
+        const elapsed = performance.now() - cameraState.transitionStartTime;
+        const progress = Math.min(elapsed / cameraState.transitionDuration, 1);
+
+        // Smooth easing function (ease-in-out)
+        const easedProgress = progress < 0.5
+            ? 2 * progress * progress
+            : 1 - Math.pow(-2 * progress + 2, 2) / 2;
+
+        // Interpolate between start and target offset
+        currentOffset = new THREE.Vector3();
+        currentOffset.lerpVectors(
+            cameraState.transitionStartOffset,
+            cameraState.transitionTargetOffset,
+            easedProgress
+        );
+
+        // End transition when complete
+        if (progress >= 1) {
+            cameraState.isTransitioning = false;
+        }
+    } else if (cameraState.mode === 'first-person') {
+        // First-person offset
+        currentOffset = new THREE.Vector3(0.25, -2, 0.5);
+    } else {
+        // Third-person offset
+        currentOffset = new THREE.Vector3(-1, 3, 8);
+    }
+
+    if (cameraState.mode === 'first-person') {
+        // FIRST-PERSON MODE (COCKPIT VIEW):
+        // Camera IS the player position - enemies target this location
+        // Position the ship model so the camera is at the cockpit/center of the ship
+        // The ship model is just visual - the camera position is the "real" player position
+
+        // Use animated offset during transitions
+        const cockpitOffset = currentOffset.clone();
+        cockpitOffset.applyQuaternion(camera.quaternion);
+
+        // DEBUG: Log before position update
+        if (shouldLog) {
+            console.log('  [1ST PERSON] BEFORE - Ship local pos:', cameraState.playerShipMesh.position.clone());
+            console.log('  [1ST PERSON] Camera pos:', camera.position);
+            console.log('  [1ST PERSON] Cockpit offset:', cockpitOffset);
         }
 
-        // Ensure the model and all children are visible
+        cameraState.playerShipMesh.position.copy(camera.position);
+        cameraState.playerShipMesh.position.add(cockpitOffset);
+
+        // DEBUG: Log after position update
+        if (shouldLog) {
+            console.log('  [1ST PERSON] AFTER - Ship local pos:', cameraState.playerShipMesh.position.clone());
+            console.log('  [1ST PERSON] AFTER - Ship world pos:', cameraState.playerShipMesh.getWorldPosition(new THREE.Vector3()));
+        }
+
+        // Orient ship to match camera direction
+        cameraState.playerShipMesh.rotation.copy(camera.rotation);
+
+        // Rotate ship 180 degrees on Y axis to face forward
+        cameraState.playerShipMesh.rotation.y += Math.PI;
+
+        // Add dynamic banking based on rotational velocity
+        if (typeof rotationalVelocity !== 'undefined') {
+            const bankAmount = -rotationalVelocity.yaw * 15;
+            const pitchTilt = -rotationalVelocity.pitch * 5; // Negative to match input direction
+            // Set rotation directly to prevent accumulation over multiple frames
+            cameraState.playerShipMesh.rotation.z = camera.rotation.z + bankAmount;
+            cameraState.playerShipMesh.rotation.x = camera.rotation.x + pitchTilt;
+        }
+
+        // Make ship visible but slightly transparent for cockpit view
+        cameraState.playerShipMesh.visible = true;
+        cameraState.playerShipMesh.traverse((child) => {
+            if (child.isMesh) {
+                child.visible = true;
+                // Keep existing material transparency
+            }
+        });
+
+    } else if (cameraState.mode === 'third-person') {
+        // THIRD-PERSON MODE (CHASE CAMERA):
+        // Camera is behind and above the ship looking at it
+        // Ship positioned ahead of camera at a comfortable viewing distance
+
+        // Use animated offset during transitions
+        const chaseOffset = currentOffset.clone();
+        chaseOffset.applyQuaternion(camera.quaternion);
+
+        // DEBUG: Log before position update
+        if (shouldLog) {
+            console.log('  [3RD PERSON] BEFORE - Ship local pos:', cameraState.playerShipMesh.position.clone());
+            console.log('  [3RD PERSON] Camera pos:', camera.position);
+            console.log('  [3RD PERSON] Chase offset:', chaseOffset);
+        }
+
+        // CRITICAL: Copy camera position FIRST, then subtract offset
+        cameraState.playerShipMesh.position.copy(camera.position);
+        cameraState.playerShipMesh.position.sub(chaseOffset);
+
+        // DEBUG: Log after position update
+        if (shouldLog) {
+            console.log('  [3RD PERSON] AFTER - Ship local pos:', cameraState.playerShipMesh.position.clone());
+            console.log('  [3RD PERSON] AFTER - Ship world pos:', cameraState.playerShipMesh.getWorldPosition(new THREE.Vector3()));
+        }
+
+        // Orient ship to match camera direction
+        cameraState.playerShipMesh.rotation.copy(camera.rotation);
+
+        // Rotate ship 180 degrees on Y axis to face forward
+        cameraState.playerShipMesh.rotation.y += Math.PI;
+
+        // Add dynamic banking based on rotational velocity
+        if (typeof rotationalVelocity !== 'undefined') {
+            const bankAmount = -rotationalVelocity.yaw * 15;
+            const pitchTilt = -rotationalVelocity.pitch * 5; // Negative to match input direction
+            // Set rotation directly to prevent accumulation over multiple frames
+            cameraState.playerShipMesh.rotation.z = camera.rotation.z + bankAmount;
+            cameraState.playerShipMesh.rotation.x = camera.rotation.x + pitchTilt;
+        }
+
+        // Ensure the ship model is fully visible and opaque in third-person
         cameraState.playerShipMesh.visible = true;
         cameraState.playerShipMesh.traverse((child) => {
             if (child.isMesh) {
@@ -210,6 +417,34 @@ function updateCameraView(camera) {
             }
         });
     }
+}
+
+/**
+ * Debug: Manually re-add player ship to scene if it was removed
+ */
+function readdPlayerShipToScene(scene) {
+    if (!cameraState.playerShipMesh) {
+        console.error('❌ No player ship mesh in cameraState');
+        return false;
+    }
+
+    console.log('🔧 Attempting to re-add player ship to scene...');
+    console.log('  - Current parent:', cameraState.playerShipMesh.parent);
+    console.log('  - Scene provided:', !!scene);
+
+    // Remove from current parent if it has one
+    if (cameraState.playerShipMesh.parent) {
+        cameraState.playerShipMesh.parent.remove(cameraState.playerShipMesh);
+        console.log('  - Removed from current parent');
+    }
+
+    // Add to scene
+    scene.add(cameraState.playerShipMesh);
+    console.log('  - Added to scene');
+    console.log('  - New parent:', cameraState.playerShipMesh.parent);
+    console.log('  - In scene?', scene.children.includes(cameraState.playerShipMesh));
+
+    return true;
 }
 
 /**
@@ -235,6 +470,7 @@ if (typeof window !== 'undefined') {
     window.updateCameraView = updateCameraView;
     window.setThirdPersonDistance = setThirdPersonDistance;
     window.setThirdPersonHeight = setThirdPersonHeight;
+    window.readdPlayerShipToScene = readdPlayerShipToScene;
     window.cameraState = cameraState;
 
     console.log('✅ Camera system loaded');

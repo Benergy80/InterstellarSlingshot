@@ -845,10 +845,17 @@
         </button>
     </div>
 
-    <!-- Swipe Indicator for Navigation -->
-    <div id="swipeIndicator" class="swipe-indicator">
+    <!-- Swipe Indicators for Navigation Panel -->
+    <!-- Right indicator: shown when panel is closed, swipe left to open -->
+    <div id="swipeIndicatorOpen" class="swipe-indicator swipe-indicator-open">
         <span class="swipe-arrow">&lt;</span>
         <span class="swipe-text">NAV</span>
+    </div>
+
+    <!-- Left indicator: shown when panel is open, swipe right to close -->
+    <div id="swipeIndicatorClose" class="swipe-indicator swipe-indicator-close">
+        <span class="swipe-text">NAV</span>
+        <span class="swipe-arrow">&gt;</span>
     </div>
 
     <!-- MOBILE POPUPS -->

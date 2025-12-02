@@ -545,11 +545,19 @@ const galaxyEnemyLimits = {
 };
 
 // FIXED: Boss system initialization - SINGLE DECLARATION
+// ENHANCED: Area-based boss and elite guardian system
 const bossSystem = {
-    galaxyBossSpawned: [false, false, false, false, false, false, false, false],
-    galaxyBossDefeated: [false, false, false, false, false, false, false, false],
+    // Area bosses: Track by area (galaxyId + placementType)
+    // Key format: "galaxyId-placementType" (e.g., "0-cosmic_feature", "3-black_hole")
+    areaBosses: {},
+
+    // Elite guardians: Track by species/faction (universe-wide)
+    // Key format: faction name (e.g., "Borg Collective", "Crystalline Hive")
+    eliteGuardians: {},
+
     activeBoss: null,
-    bossThreshold: 3 // Spawn boss when 3 or fewer enemies remain
+    activeBosses: [], // Track multiple active bosses
+    bossThreshold: 0 // Spawn boss when 0 enemies remain in area (all cleared)
 };
 
 // =============================================================================
@@ -680,32 +688,53 @@ function isEnemyInLocalGalaxy(enemy) {
     return distanceFromOrigin < 5000; // Local galaxy radius
 }
 
-// FIXED: Boss spawning system
-function checkAndSpawnBoss(galaxyId) {
+// ENHANCED: Area-based boss spawning system
+function checkAndSpawnAreaBosses() {
     if (typeof enemies === 'undefined' || typeof scene === 'undefined') return;
-    
-    // Check if boss should be spawned for this galaxy
-    if (bossSystem.galaxyBossSpawned[galaxyId] || bossSystem.galaxyBossDefeated[galaxyId]) {
-        return; // Boss already spawned or defeated
-    }
-    
-    // Count remaining enemies in this galaxy
-    const galaxyEnemies = enemies.filter(enemy => 
-        enemy.userData && 
-        enemy.userData.health > 0 && 
-        enemy.userData.galaxyId === galaxyId &&
-        !enemy.userData.isBoss &&
-        !enemy.userData.isBossSupport
-    );
-    
-    if (galaxyEnemies.length <= bossSystem.bossThreshold) {
-        spawnBossForGalaxy(galaxyId);
-    }
+
+    // Track all enemy areas (combinations of galaxyId and placementType)
+    const areaEnemyCounts = {};
+
+    // Count enemies by area
+    enemies.forEach(enemy => {
+        if (!enemy.userData || enemy.userData.health <= 0) return;
+        if (enemy.userData.isBoss || enemy.userData.isBossSupport || enemy.userData.isEliteGuardian) return;
+
+        const galaxyId = enemy.userData.galaxyId;
+        const placementType = enemy.userData.placementType || 'random';
+        const areaKey = `${galaxyId}-${placementType}`;
+
+        areaEnemyCounts[areaKey] = (areaEnemyCounts[areaKey] || 0) + 1;
+    });
+
+    // Check each area - spawn boss if area is cleared
+    Object.keys(areaEnemyCounts).forEach(areaKey => {
+        const count = areaEnemyCounts[areaKey];
+
+        // Check if this area's boss has already been spawned/defeated
+        if (bossSystem.areaBosses[areaKey]) return;
+
+        // Spawn boss when all enemies in area are cleared
+        if (count <= bossSystem.bossThreshold) {
+            const [galaxyId, placementType] = areaKey.split('-');
+            spawnBossForArea(parseInt(galaxyId), placementType, areaKey);
+        }
+    });
 }
 
-function spawnBossForGalaxy(galaxyId) {
-    // PRESERVED: Safety check to prevent duplicate boss spawning
-    if (bossSystem.galaxyBossSpawned[galaxyId]) return;
+// ENHANCED: Spawn boss for specific area
+function spawnBossForArea(galaxyId, placementType, areaKey) {
+    // Safety check to prevent duplicate boss spawning
+    if (bossSystem.areaBosses[areaKey]) return;
+
+    console.log(`🎯 Spawning area boss for ${areaKey} (Galaxy ${galaxyId}, ${placementType})`);
+
+    // Mark boss as spawned for this area
+    bossSystem.areaBosses[areaKey] = {
+        spawned: true,
+        defeated: false,
+        bossRef: null
+    };
     
     const galaxyType = galaxyTypes[galaxyId];
     
@@ -784,14 +813,25 @@ function spawnBossForGalaxy(galaxyId) {
     bossGlow.frustumCulled = false;
     
     boss.add(bossGlow);
-    
+
+    // Calculate hitbox size from scaled model (like asteroids) - bosses are 144x scaled
+    let bossHitboxSize = 144; // Default for 144x scaled model
+    try {
+        const box = new THREE.Box3().setFromObject(boss);
+        const size = new THREE.Vector3();
+        box.getSize(size);
+        bossHitboxSize = Math.max(size.x, size.y, size.z);
+    } catch (e) {
+        // Use default if calculation fails
+    }
+
     // PRESERVED: Complete boss userData with all original properties
     boss.userData = {
-        name: `${galaxyType.faction} Overlord`, // PRESERVED: Boss naming
+        name: `${galaxyType.faction} Overlord (${placementType})`, // ENHANCED: Include area type
         type: 'enemy',
         health: getEnemyHealthForDifficulty(false, true, false), // PRESERVED: Dynamic boss health
         maxHealth: getEnemyHealthForDifficulty(false, true, false),
-        speed: 1.5, // PRESERVED: Boss speed
+        speed: 0.8, // FIXED: Boss speed (800 km/s, within 200-1000 km/s range)
         aggression: 1.0, // PRESERVED: Maximum aggression
         patrolCenter: bossPosition.clone(), // ENHANCED: 3D patrol center
         patrolRadius: 800, // PRESERVED: Boss patrol radius
@@ -808,23 +848,28 @@ function spawnBossForGalaxy(galaxyId) {
         isLocal: false,
         isBoss: true, // PRESERVED: Mark as boss
         isBossSupport: false,
-        position3D: bossPosition.clone() // NEW: Store 3D position for reference
+        isEliteGuardian: false, // NEW: Distinguish from elite guardians
+        position3D: bossPosition.clone(), // NEW: Store 3D position for reference
+        hitboxSize: bossHitboxSize, // Store hitbox size for accurate collision detection
+        areaKey: areaKey, // NEW: Track which area this boss belongs to
+        placementType: placementType // NEW: Track area type
     };
-    
+
     // PRESERVED: Ensure boss visibility and prevent frustum culling
     boss.visible = true;
     boss.frustumCulled = true;  // OPTIMIZATION: Enable frustum culling
-    
+
     scene.add(boss);
     enemies.push(boss);
-    
-    // PRESERVED: Update boss system tracking
-    bossSystem.galaxyBossSpawned[galaxyId] = true;
-    bossSystem.activeBoss = boss;
+
+    // ENHANCED: Update boss system tracking
+    bossSystem.areaBosses[areaKey].bossRef = boss;
+    bossSystem.activeBosses.push(boss);
+    bossSystem.activeBoss = boss; // Keep for backwards compatibility
     
     // PRESERVED: Spawn 2-3 support ships with enhanced 3D positioning
     for (let i = 0; i < 3; i++) {
-        spawnBossSupport(galaxyId, bossPosition, i);
+        spawnBossSupport(galaxyId, bossPosition, i, areaKey);
     }
     
     // PRESERVED: Boss warning and audio systems
@@ -852,7 +897,7 @@ function spawnBossForGalaxy(galaxyId) {
 // ENHANCED 3D BOSS SUPPORT SPAWNING - PRESERVES ALL ORIGINAL FEATURES
 // =============================================================================
 
-function spawnBossSupport(galaxyId, bossPosition, supportIndex) {
+function spawnBossSupport(galaxyId, bossPosition, supportIndex, areaKey = null) {
     const galaxyType = galaxyTypes[galaxyId];
     const shapeData = enemyShapes[galaxyId];
     
@@ -885,14 +930,25 @@ function spawnBossSupport(galaxyId, bossPosition, supportIndex) {
     supportPosition.z += Math.sin(angle) * distance;
     
     support.position.copy(supportPosition);
-    
+
+    // Calculate hitbox size from scaled model (like asteroids) - supports are 96x scaled
+    let supportHitboxSize = 96; // Default for 96x scaled model
+    try {
+        const box = new THREE.Box3().setFromObject(support);
+        const size = new THREE.Vector3();
+        box.getSize(size);
+        supportHitboxSize = Math.max(size.x, size.y, size.z);
+    } catch (e) {
+        // Use default if calculation fails
+    }
+
     // PRESERVED: Complete support userData with all original properties
     support.userData = {
         name: `${galaxyType.faction} Support ${supportIndex + 1}`, // PRESERVED: Support naming
         type: 'enemy',
         health: getEnemyHealthForDifficulty(false, false, true), // PRESERVED: Support health
         maxHealth: getEnemyHealthForDifficulty(false, false, true),
-        speed: 1.2, // PRESERVED: Support speed
+        speed: 0.7, // FIXED: Support speed (700 km/s, within 200-1000 km/s range)
         aggression: 0.9, // PRESERVED: Support aggression
         patrolCenter: supportPosition.clone(), // ENHANCED: 3D patrol center
         patrolRadius: distance,
@@ -909,7 +965,10 @@ function spawnBossSupport(galaxyId, bossPosition, supportIndex) {
         isLocal: false,
         isBoss: false,
         isBossSupport: true, // PRESERVED: Mark as boss support
-        position3D: supportPosition.clone() // NEW: Store 3D position
+        isEliteGuardian: false, // NEW: Distinguish from elite guardians
+        position3D: supportPosition.clone(), // NEW: Store 3D position
+        hitboxSize: supportHitboxSize, // Store hitbox size for accurate collision detection
+        areaKey: areaKey // NEW: Track which area this support belongs to
     };
     
     // PRESERVED: Ensure support visibility and prevent frustum culling
@@ -927,88 +986,243 @@ function spawnBossSupport(galaxyId, bossPosition, supportIndex) {
 // =============================================================================
 
 function checkBossVictory(defeatedEnemy) {
-    // PRESERVED: Only process actual boss defeats
-    if (!defeatedEnemy.userData.isBoss) return false;
-    
+    // Handle both area bosses and elite guardians
+    if (!defeatedEnemy.userData.isBoss && !defeatedEnemy.userData.isEliteGuardian) return false;
+
     const galaxyId = defeatedEnemy.userData.galaxyId;
-    
-    // PRESERVED: Update boss system tracking
-    bossSystem.galaxyBossDefeated[galaxyId] = true;
-    
-    if (bossSystem.activeBoss === defeatedEnemy) {
-        bossSystem.activeBoss = null;
-    }
-    
-    // PRESERVED: Remove all support ships for this galaxy
-    const supportShips = enemies.filter(enemy => 
-        enemy.userData.isBossSupport && 
-        enemy.userData.galaxyId === galaxyId
-    );
-    
-    supportShips.forEach(support => {
-        // PRESERVED: Create explosion effect if available
-        if (typeof createExplosionEffect === 'function') {
-            createExplosionEffect(support);
+    const areaKey = defeatedEnemy.userData.areaKey;
+    const faction = defeatedEnemy.userData.faction || galaxyTypes[galaxyId].faction;
+
+    if (defeatedEnemy.userData.isEliteGuardian) {
+        // ELITE GUARDIAN DEFEATED
+        console.log(`🏆 Elite Guardian defeated: ${defeatedEnemy.userData.name} (${faction})`);
+
+        // Mark elite guardian as defeated
+        if (bossSystem.eliteGuardians[faction]) {
+            bossSystem.eliteGuardians[faction].defeated = true;
         }
-        
-        scene.remove(support);
-        const index = enemies.indexOf(support);
-        if (index > -1) enemies.splice(index, 1);
-    });
-    
-    console.log(`Boss victory: Defeated ${defeatedEnemy.userData.name} and ${supportShips.length} support ships in galaxy ${galaxyId}`);
-    
-    // ⭐ NEW: Spawn guardians immediately after boss defeat
-    if (typeof loadGuardiansForGalaxy === 'function') {
-        setTimeout(() => {
-            loadGuardiansForGalaxy(galaxyId);
-            
-            // Show guardian spawn notification
-            const galaxyType = galaxyTypes[galaxyId];
-            if (typeof showAchievement === 'function') {
-                showAchievement('Elite Guardians Deployed!', 
-                    `${galaxyType.name} Galaxy black hole guardians are now active!`);
+
+        // Remove from active bosses list
+        const bossIndex = bossSystem.activeBosses.indexOf(defeatedEnemy);
+        if (bossIndex > -1) {
+            bossSystem.activeBosses.splice(bossIndex, 1);
+        }
+
+        // Show victory message
+        if (typeof showAchievement === 'function') {
+            showAchievement('Elite Guardian Eliminated!',
+                `${defeatedEnemy.userData.name} has been defeated! Hostile Forces have been Eliminated!`);
+        }
+
+        return true;
+
+    } else if (defeatedEnemy.userData.isBoss) {
+        // AREA BOSS DEFEATED
+        console.log(`🎯 Area Boss defeated: ${defeatedEnemy.userData.name} (${areaKey})`);
+
+        // Mark area boss as defeated
+        if (areaKey && bossSystem.areaBosses[areaKey]) {
+            bossSystem.areaBosses[areaKey].defeated = true;
+        }
+
+        // Remove from active bosses list
+        const bossIndex = bossSystem.activeBosses.indexOf(defeatedEnemy);
+        if (bossIndex > -1) {
+            bossSystem.activeBosses.splice(bossIndex, 1);
+        }
+
+        // Update legacy tracking for backwards compatibility
+        if (bossSystem.activeBoss === defeatedEnemy) {
+            bossSystem.activeBoss = null;
+        }
+
+        // Remove all support ships for this area
+        const supportShips = enemies.filter(enemy =>
+            enemy.userData.isBossSupport &&
+            enemy.userData.areaKey === areaKey
+        );
+
+        supportShips.forEach(support => {
+            if (typeof createExplosionEffect === 'function') {
+                createExplosionEffect(support);
             }
-            
-            // Mission Control alert
-            setTimeout(() => {
-                if (typeof showMissionCommandAlert === 'function') {
-                    showMissionCommandAlert('Mission Control', 
-                        `Warning! Elite guardian forces have been deployed to defend the ${galaxyType.name} Galaxy black hole. Eliminate all guardians to liberate this galaxy!`);
-                }
-            }, 2000);
-        }, 1500); // 1.5 second dramatic delay
+
+            scene.remove(support);
+            const index = enemies.indexOf(support);
+            if (index > -1) enemies.splice(index, 1);
+        });
+
+        console.log(`Boss victory: Defeated ${defeatedEnemy.userData.name} and ${supportShips.length} support ships in area ${areaKey}`);
+
+        // Check if we should spawn elite guardians now
+        checkAndSpawnEliteGuardians();
+
+        return true;
     }
-    
-    return true;
+
+    return false;
 }
 // =============================================================================
-// ENHANCED BOSS CHECKING SYSTEM - PRESERVES ALL ORIGINAL FEATURES
+// ELITE GUARDIAN SPAWNING SYSTEM - UNIVERSE-WIDE SPECIES ELIMINATION
 // =============================================================================
 
-function checkAndSpawnBoss(galaxyId) {
-    // PRESERVED: Safety checks
+function checkAndSpawnEliteGuardians() {
     if (typeof enemies === 'undefined' || typeof scene === 'undefined') return;
-    
-    // PRESERVED: Check if boss should be spawned for this galaxy
-    if (bossSystem.galaxyBossSpawned[galaxyId] || bossSystem.galaxyBossDefeated[galaxyId]) {
-        return; // Boss already spawned or defeated
+
+    // Track enemy counts by faction/species across ALL galaxies
+    const factionCounts = {};
+
+    enemies.forEach(enemy => {
+        if (!enemy.userData || enemy.userData.health <= 0) return;
+        if (enemy.userData.isBoss || enemy.userData.isBossSupport || enemy.userData.isEliteGuardian) return;
+
+        const galaxyId = enemy.userData.galaxyId;
+        const faction = galaxyTypes[galaxyId].faction;
+
+        factionCounts[faction] = (factionCounts[faction] || 0) + 1;
+    });
+
+    // Check each faction - spawn elite guardian if species is completely eliminated
+    Object.keys(galaxyTypes).forEach(galaxyId => {
+        const faction = galaxyTypes[galaxyId].faction;
+        const count = factionCounts[faction] || 0;
+
+        // Check if elite guardian already spawned or defeated
+        if (bossSystem.eliteGuardians[faction]) return;
+
+        // Spawn elite guardian when ALL enemies of this species are eliminated universe-wide
+        if (count === 0) {
+            console.log(`🌌 Species ${faction} completely eliminated! Spawning Elite Guardian...`);
+            spawnEliteGuardian(parseInt(galaxyId), faction);
+        }
+    });
+}
+
+function spawnEliteGuardian(galaxyId, faction) {
+    // Safety check
+    if (bossSystem.eliteGuardians[faction]) return;
+
+    console.log(`👑 Spawning Elite Guardian for faction: ${faction} (Galaxy ${galaxyId})`);
+
+    // Mark elite guardian as spawned
+    bossSystem.eliteGuardians[faction] = {
+        spawned: true,
+        defeated: false,
+        guardianRef: null
+    };
+
+    const galaxyType = galaxyTypes[galaxyId];
+
+    // Use galaxy's 3D position as spawn point
+    const guardianPosition = getGalaxy3DPosition(galaxyId);
+
+    const guardianGeometry = createEnemyGeometry(galaxyId);
+    const shapeData = enemyShapes[galaxyId];
+
+    // Elite guardian material - much brighter and more intimidating
+    const guardianMaterial = new THREE.MeshStandardMaterial({
+        color: new THREE.Color(shapeData.color).multiplyScalar(1.8), // 1.8x brighter than boss
+        roughness: 0.2,
+        metalness: 0.9,
+        emissive: new THREE.Color(shapeData.color).multiplyScalar(0.8), // Very strong emissive
+        emissiveIntensity: 1.2
+    });
+
+    // Use boss model but with extra scaling - 200x (larger than bosses at 144x)
+    let guardian;
+    if (typeof createBossMeshWithModel === 'function') {
+        guardian = createBossMeshWithModel(galaxyId + 1, guardianGeometry, guardianMaterial);
+        // Apply additional scaling for elite guardian (200x total = 80% of original 250x)
+        guardian.scale.multiplyScalar(200.0 / 144.0); // Scale up from boss size
+    } else {
+        guardian = new THREE.Mesh(guardianGeometry, guardianMaterial);
+        guardian.scale.multiplyScalar(3.5); // Larger than regular boss
     }
-    
-    // PRESERVED: Count remaining enemies in this galaxy
-    const galaxyEnemies = enemies.filter(enemy => 
-        enemy.userData && 
-        enemy.userData.health > 0 && 
-        enemy.userData.galaxyId === galaxyId &&
-        !enemy.userData.isBoss &&
-        !enemy.userData.isBossSupport
-    );
-    
-    // PRESERVED: Spawn boss when threshold is reached
-    if (galaxyEnemies.length <= bossSystem.bossThreshold) {
-        console.log(`Boss threshold reached for galaxy ${galaxyId}: ${galaxyEnemies.length} enemies remaining, spawning boss...`);
-        spawnBossForGalaxy(galaxyId);
+
+    guardian.position.copy(guardianPosition);
+
+    // Elite guardian glow - much more intense
+    const guardianGlowGeometry = guardianGeometry.clone();
+    const guardianGlowMaterial = new THREE.MeshBasicMaterial({
+        color: shapeData.color,
+        transparent: true,
+        opacity: 0.6, // More opaque than boss glow
+        blending: THREE.AdditiveBlending
+    });
+    const guardianGlow = new THREE.Mesh(guardianGlowGeometry, guardianGlowMaterial);
+    guardianGlow.scale.multiplyScalar(1.5); // Larger glow
+    guardianGlow.visible = true;
+    guardianGlow.frustumCulled = false;
+    guardian.add(guardianGlow);
+
+    // Calculate hitbox size
+    let guardianHitboxSize = 200; // Default for 200x scaled model
+    try {
+        const box = new THREE.Box3().setFromObject(guardian);
+        const size = new THREE.Vector3();
+        box.getSize(size);
+        guardianHitboxSize = Math.max(size.x, size.y, size.z);
+    } catch (e) {
+        // Use default if calculation fails
     }
+
+    // Elite guardian userData
+    guardian.userData = {
+        name: `${faction} ELITE GUARDIAN`,
+        type: 'enemy',
+        health: getEnemyHealthForDifficulty(false, true, false) * 2, // 2x boss health
+        maxHealth: getEnemyHealthForDifficulty(false, true, false) * 2,
+        speed: 1.0, // FIXED: Elite guardian speed (1000 km/s max, faster than bosses at 800 km/s)
+        aggression: 1.0,
+        patrolCenter: guardianPosition.clone(),
+        patrolRadius: 1200, // Larger patrol radius
+        lastAttack: 0,
+        isActive: true,
+        visible: true,
+        galaxyId: galaxyId,
+        galaxyColor: shapeData.color,
+        swarmTarget: null,
+        circlePhase: Math.random() * Math.PI * 2,
+        attackMode: 'elite_engage',
+        detectionRange: 6000, // Larger detection range
+        firingRange: 600, // Longer firing range
+        isLocal: false,
+        isBoss: false,
+        isBossSupport: false,
+        isEliteGuardian: true, // Mark as elite guardian
+        faction: faction,
+        position3D: guardianPosition.clone(),
+        hitboxSize: guardianHitboxSize
+    };
+
+    guardian.visible = true;
+    guardian.frustumCulled = true;
+
+    scene.add(guardian);
+    enemies.push(guardian);
+
+    // Update tracking
+    bossSystem.eliteGuardians[faction].guardianRef = guardian;
+    bossSystem.activeBosses.push(guardian);
+
+    // Show warning
+    if (typeof showBossWarning === 'function') {
+        showBossWarning(`⚠️ ${guardian.userData.name} ⚠️`);
+    }
+
+    // Play boss sound
+    if (typeof playSound === 'function') {
+        playSound('boss');
+    }
+
+    // Show achievement
+    if (typeof showAchievement === 'function') {
+        showAchievement('ELITE GUARDIAN DEPLOYED!',
+            `The last defender of ${faction} has arrived! This is their final stand!`);
+    }
+
+    console.log(`Elite Guardian spawned: ${guardian.userData.name} at`, guardianPosition);
+    return guardian;
 }
 
 // =============================================================================
@@ -4108,12 +4322,23 @@ function createEnemies3D() {
             // Determine if this enemy is in the local galaxy (galaxy 7)
             const isLocal = (g === 7);
             
+            // Calculate hitbox size from scaled model (like asteroids)
+            let hitboxSize = 96; // Default for 96x scaled model
+            try {
+                const box = new THREE.Box3().setFromObject(enemy);
+                const size = new THREE.Vector3();
+                box.getSize(size);
+                hitboxSize = Math.max(size.x, size.y, size.z);
+            } catch (e) {
+                // Use default if calculation fails
+            }
+
             enemy.userData = {
                 name: `${galaxyType.faction} Hostile ${i + 1}`,
                 type: 'enemy',
                 health: getEnemyHealthForDifficulty(isLocal, false, false),
                 maxHealth: getEnemyHealthForDifficulty(isLocal, false, false),
-                speed: 0.8 + Math.random() * 1.5,
+                speed: 0.2 + Math.random() * 0.8, // FIXED: 0.2-1.0 range (200-1000 km/s)
                 aggression: Math.random(),
                 patrolCenter: enemyPosition.clone(),
                 patrolRadius: 2000 + Math.random() * 3000,
@@ -4131,7 +4356,8 @@ function createEnemies3D() {
                 isBoss: false,
                 isBossSupport: false,
                 position3D: enemyPosition.clone(),
-                placementType: placementType
+                placementType: placementType,
+                hitboxSize: hitboxSize // Store hitbox size for accurate collision detection
             };
             
             enemy.visible = true;
@@ -4190,7 +4416,18 @@ function createEnemies3D() {
             localSystemOffset.y + (Math.random() - 0.5) * 200,
             localSystemOffset.z + Math.sin(angle) * distance
         );
-        
+
+        // Calculate hitbox size from scaled model (like asteroids)
+        let hitboxSize = 96; // Default for 96x scaled model
+        try {
+            const box = new THREE.Box3().setFromObject(enemy);
+            const size = new THREE.Vector3();
+            box.getSize(size);
+            hitboxSize = Math.max(size.x, size.y, size.z);
+        } catch (e) {
+            // Use default if calculation fails
+        }
+
         enemy.userData = {
             name: `Martian Pirate ${i + 1}`,
             type: 'enemy',
@@ -4217,7 +4454,8 @@ function createEnemies3D() {
             isLocal: true,
             isBoss: false,
             isBossSupport: false,
-            position3D: enemy.position.clone()
+            position3D: enemy.position.clone(),
+            hitboxSize: hitboxSize // Store hitbox size for accurate collision detection
         };
         
         enemy.visible = true;
@@ -4270,7 +4508,7 @@ function loadGuardiansForGalaxy(galaxyId) {
     }
     
     // ⭐ CRITICAL: Only spawn guardians AFTER boss is defeated
-    if (typeof bossSystem !== 'undefined' && !bossSystem.galaxyBossDefeated[galaxyId]) {
+    if (typeof bossSystem !== 'undefined' && bossSystem.galaxyBossDefeated && !bossSystem.galaxyBossDefeated[galaxyId]) {
         console.log(`Galaxy ${galaxyId} boss not yet defeated - guardians will spawn after boss victory`);
         return;
     }
@@ -5212,20 +5450,21 @@ function initializeAsteroidResources() {
         new THREE.SphereGeometry(1, 4, 4)
     ];
     
-    // UPDATED: Use MeshBasicMaterial with emissive colors for visibility
+    // FIXED: Enhanced visibility with brighter emissive and base colors
     const colorVariants = [
-        { hue: 0, sat: 0.15, light: 0.6 },      // Gray
-        { hue: 0.09, sat: 0.5, light: 0.5 },    // Brown
-        { hue: 0.58, sat: 0.4, light: 0.65 }    // Blue-metallic
+        { hue: 0, sat: 0.15, light: 0.7 },      // Lighter gray
+        { hue: 0.09, sat: 0.5, light: 0.6 },    // Lighter brown
+        { hue: 0.58, sat: 0.4, light: 0.75 }    // Lighter blue-metallic
     ];
-    
+
     colorVariants.forEach(color => {
     asteroidResources.materials.push(
         new THREE.MeshStandardMaterial({
             color: new THREE.Color().setHSL(color.hue, color.sat, color.light),
             roughness: 0.9,
             metalness: color.hue > 0.5 ? 0.3 : 0.1,
-            emissive: new THREE.Color().setHSL(color.hue, color.sat * 0.5, 0.1)
+            emissive: new THREE.Color().setHSL(color.hue, color.sat * 0.5, 0.35), // FIXED: 0.1 → 0.35 for much brighter glow
+            emissiveIntensity: 0.8  // FIXED: Added emissive intensity for better visibility
         })
     );
 });
@@ -5367,13 +5606,12 @@ beltGroup.frustumCulled = false; // Don't cull the entire group
             
             scene.add(beltGroup);
 
-// ADD LIGHTING: Create a point light at the belt center
-const beltLight = new THREE.PointLight(0xffffff, 3.0, 3000); // White light, intensity 1.5, range 3000
+// FIXED: Enhanced lighting for better asteroid visibility
+const beltLight = new THREE.PointLight(0xffffff, 5.0, 4000); // FIXED: intensity 3.0→5.0, range 3000→4000
 beltLight.position.copy(galaxyCenter);
 scene.add(beltLight);
 beltGroup.userData.light = beltLight; // Store reference for cleanup
 
-asteroidBelts.push(beltGroup);
             asteroidBelts.push(beltGroup);
         }
     });
@@ -5946,17 +6184,22 @@ if (typeof window !== 'undefined') {
     window.testDifficultyScaling = testDifficultyScaling;
     window.isEnemyInLocalGalaxy = isEnemyInLocalGalaxy;
     
-    // FIXED: Boss system exports
+    // ENHANCED: Boss system exports (area-based + elite guardians)
     window.bossSystem = bossSystem;
-    window.checkAndSpawnBoss = checkAndSpawnBoss;
-    window.spawnBossForGalaxy = spawnBossForGalaxy;
+    window.checkAndSpawnAreaBosses = checkAndSpawnAreaBosses;
+    window.checkAndSpawnEliteGuardians = checkAndSpawnEliteGuardians;
+    window.spawnBossForArea = spawnBossForArea;
+    window.spawnEliteGuardian = spawnEliteGuardian;
     window.spawnBossSupport = spawnBossSupport;
     window.checkBossVictory = checkBossVictory;
-    // COMPATIBILITY: Also export with 3D names for future use
-    window.spawnBossForGalaxy3D = spawnBossForGalaxy;
+
+    // LEGACY: Keep old function names for backwards compatibility (redirect to new system)
+    window.checkAndSpawnBoss = checkAndSpawnAreaBosses;
+    window.checkAndSpawnBoss3D = checkAndSpawnAreaBosses;
+    window.spawnBossForGalaxy = spawnBossForArea;
+    window.spawnBossForGalaxy3D = spawnBossForArea;
     window.spawnBossSupport3D = spawnBossSupport;
     window.checkBossVictory3D = checkBossVictory;
-    window.checkAndSpawnBoss3D = checkAndSpawnBoss;
     
     // Add these exports
 	window.initializeAsteroidResources = initializeAsteroidResources;

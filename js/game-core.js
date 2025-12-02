@@ -1024,7 +1024,13 @@ function animate() {
         adjustPerformance();
         gameState.lastPerformanceCheck = currentTime;
     }
-    
+
+    // CRITICAL: Update camera view ALWAYS (before gameStarted check)
+    // This ensures player ship follows camera even during intro/before game starts
+    if (typeof updateCameraView === 'function') {
+        updateCameraView(camera);
+    }
+
     if (gameState.gameOver || !gameState.gameStarted) {
         if (stars) {
             stars.rotation.x += 0.0001;
@@ -1032,11 +1038,6 @@ function animate() {
         }
         renderer.render(scene, camera);
         return; // Stop all game updates when game over
-    }
-
-    // Update camera view for third-person mode
-    if (typeof updateCameraView === 'function') {
-        updateCameraView(camera);
     }
 
     // Add this inside your animate() function
@@ -1161,9 +1162,9 @@ if (typeof enemies !== 'undefined' && enemies.length > 0 && gameState.frameCount
                             if (child.userData.baseOpacity === undefined) {
                                 child.userData.baseOpacity = child.material.opacity;
                             }
-                            // Fade completely from 0.0 (transparent) to 1.0 (full opacity)
-                            // pulseFactor ranges from -1 to 1, so map it to 0.0 to 1.0
-                            child.material.opacity = (pulseFactor + 1.0) * 0.5;  // Ranges from 0.0 to 1.0
+                            // Fade from 0.0 (transparent) to 0.7 (semi-opaque)
+                            // pulseFactor ranges from 0.0 to 1.0 (via Math.sin oscillation)
+                            child.material.opacity = pulseFactor * 0.7;  // Ranges from 0.0 to 0.7
                         }
                     } else {
                         // BASE MATERIAL - keep solid, no opacity pulsing
@@ -1184,8 +1185,8 @@ if (typeof enemies !== 'undefined' && enemies.length > 0 && gameState.frameCount
             // Pulse the glow mesh if it exists
             enemy.traverse((child) => {
                 if (child.userData.isGlowLayer && child.material && child.material.opacity !== undefined) {
-                    // Fade completely from 0.0 (transparent) to 1.0 (full opacity)
-                    child.material.opacity = (pulseFactor + 1.0) * 0.5;
+                    // Fade from 0.0 (transparent) to 0.7 (semi-opaque)
+                    child.material.opacity = pulseFactor * 0.7;
                 }
             });
         }
@@ -1596,6 +1597,16 @@ if (typeof checkCosmicFeatureInteractions === 'function' && typeof camera !== 'u
     // Update missile cooldown
     if (gameState.missiles.cooldown > 0) {
         gameState.missiles.cooldown = Math.max(0, gameState.missiles.cooldown - 16.67);
+    }
+
+    // Update weapon cooldown
+    if (gameState.weapons && gameState.weapons.cooldown > 0) {
+        gameState.weapons.cooldown = Math.max(0, gameState.weapons.cooldown - 16.67);
+    }
+
+    // Update explosion animations (frame-based animation system)
+    if (typeof explosionManager !== 'undefined') {
+        explosionManager.update(16.67); // Pass frame time in ms
     }
 
     // Check for hull zero - mission fail

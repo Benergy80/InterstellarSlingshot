@@ -340,23 +340,33 @@ function populateTargets() {
     // Enhanced targeting with better filtering - NO ASTEROIDS IN NAVIGATION (doubled ranges)
     const detectedWormholes = (typeof wormholes !== 'undefined') ? wormholes.filter(w => w.userData && w.userData.detected) : [];
     
-    // ADD COSMIC FEATURES TO TARGETING - This is the main addition!
+    // FIXED: ADD COSMIC FEATURES TO TARGETING - Use world position for outer system features
     const cosmicTargets = [];
     if (typeof cosmicFeatures !== 'undefined') {
-        // Add nearby cosmic features within detection range
-        cosmicTargets.push(...cosmicFeatures.pulsars.filter(p => camera.position.distanceTo(p.position) < 2000));
-        cosmicTargets.push(...cosmicFeatures.supernovas.filter(s => camera.position.distanceTo(s.position) < 3000));
-        cosmicTargets.push(...cosmicFeatures.dysonSpheres.filter(d => camera.position.distanceTo(d.position) < 4000));
-        cosmicTargets.push(...cosmicFeatures.ringworlds.filter(r => camera.position.distanceTo(r.position) < 4000));
-        cosmicTargets.push(...cosmicFeatures.spaceWhales.filter(w => camera.position.distanceTo(w.position) < 2000));
-        cosmicTargets.push(...cosmicFeatures.brownDwarfs.filter(bd => camera.position.distanceTo(bd.position) < 1500));
-        cosmicTargets.push(...cosmicFeatures.solarStorms.filter(ss => camera.position.distanceTo(ss.position) < 2500));
-        cosmicTargets.push(...cosmicFeatures.crystalFormations.filter(cf => camera.position.distanceTo(cf.position) < 1800));
-        cosmicTargets.push(...cosmicFeatures.plasmaStorms.filter(ps => camera.position.distanceTo(ps.position) < 2200));
-        cosmicTargets.push(...cosmicFeatures.roguePlanets.filter(rp => camera.position.distanceTo(rp.position) < 1600));
-        
+        // Helper function to get distance accounting for nested outer system objects
+        const getCosmicDistance = (obj) => {
+            if (obj.userData.isOuterSystem && obj.parent) {
+                const worldPos = new THREE.Vector3();
+                obj.getWorldPosition(worldPos);
+                return camera.position.distanceTo(worldPos);
+            }
+            return camera.position.distanceTo(obj.position);
+        };
+
+        // Add nearby cosmic features within detection range (using world positions for outer systems)
+        cosmicTargets.push(...cosmicFeatures.pulsars.filter(p => getCosmicDistance(p) < 2000));
+        cosmicTargets.push(...cosmicFeatures.supernovas.filter(s => getCosmicDistance(s) < 3000));
+        cosmicTargets.push(...cosmicFeatures.dysonSpheres.filter(d => getCosmicDistance(d) < 4000));
+        cosmicTargets.push(...cosmicFeatures.ringworlds.filter(r => getCosmicDistance(r) < 4000));
+        cosmicTargets.push(...cosmicFeatures.spaceWhales.filter(w => getCosmicDistance(w) < 2000));
+        cosmicTargets.push(...cosmicFeatures.brownDwarfs.filter(bd => getCosmicDistance(bd) < 1500));
+        cosmicTargets.push(...cosmicFeatures.solarStorms.filter(ss => getCosmicDistance(ss) < 2500));
+        cosmicTargets.push(...cosmicFeatures.crystalFormations.filter(cf => getCosmicDistance(cf) < 1800));
+        cosmicTargets.push(...cosmicFeatures.plasmaStorms.filter(ps => getCosmicDistance(ps) < 2200));
+        cosmicTargets.push(...cosmicFeatures.roguePlanets.filter(rp => getCosmicDistance(rp) < 1600));
+
         // Dark matter nodes only show when very close (they're hard to detect)
-        cosmicTargets.push(...cosmicFeatures.darkMatterNodes.filter(dm => camera.position.distanceTo(dm.position) < 400));
+        cosmicTargets.push(...cosmicFeatures.darkMatterNodes.filter(dm => getCosmicDistance(dm) < 400));
 
     }
 
@@ -415,12 +425,22 @@ function populateTargets() {
         ...outerSystemTargets // ADD OUTER SYSTEM OBJECTS HERE!
     ];
 
+    // Helper to get distance for any object (handles nested outer system objects)
+    const getObjectDistance = (obj) => {
+        if (obj.userData.isOuterSystem && obj.parent) {
+            const worldPos = new THREE.Vector3();
+            obj.getWorldPosition(worldPos);
+            return camera.position.distanceTo(worldPos);
+        }
+        return camera.position.distanceTo(obj.position);
+    };
+
     const nearbyObjects = allTargetableObjects.filter(obj => {
-        const distance = camera.position.distanceTo(obj.position);
+        const distance = getObjectDistance(obj);
         return distance < 6000; // Doubled range
     }).sort((a, b) => {
-        const distA = camera.position.distanceTo(a.position);
-        const distB = camera.position.distanceTo(b.position);
+        const distA = getObjectDistance(a);
+        const distB = getObjectDistance(b);
         return distA - distB;
     });
 
@@ -2099,8 +2119,9 @@ function gameOver(reason) {
     // Enhanced game over screen with visible mouse cursor
     const gameOverOverlay = document.createElement('div');
     gameOverOverlay.id = 'gameOverScreen';
-    gameOverOverlay.className = 'absolute inset-0 bg-black bg-opacity-95 flex items-center justify-center z-50 cyberpunk-bg';
+    gameOverOverlay.className = 'absolute inset-0 bg-black bg-opacity-95 flex items-center justify-center cyberpunk-bg';
     gameOverOverlay.style.cursor = 'auto'; // Make mouse visible
+    gameOverOverlay.style.zIndex = '10000'; // FIXED: High z-index for iPad visibility
     gameOverOverlay.innerHTML = `
         <div class="text-center ui-panel rounded-lg p-8" style="cursor: auto;">
             <h1 class="text-4xl font-bold text-red-400 mb-4 glow-text cyber-title">MISSION FAILED</h1>
@@ -2175,8 +2196,9 @@ function showGameOverScreen(title, message) {
     // Enhanced game over screen with visible mouse cursor
     const gameOverOverlay = document.createElement('div');
     gameOverOverlay.id = 'gameOverScreen';
-    gameOverOverlay.className = 'absolute inset-0 bg-black bg-opacity-95 flex items-center justify-center z-50 cyberpunk-bg';
+    gameOverOverlay.className = 'absolute inset-0 bg-black bg-opacity-95 flex items-center justify-center cyberpunk-bg';
     gameOverOverlay.style.cursor = 'auto'; // Make mouse visible
+    gameOverOverlay.style.zIndex = '10000'; // FIXED: High z-index for iPad visibility
     gameOverOverlay.innerHTML = `
         <div class="text-center ui-panel rounded-lg p-8" style="cursor: auto;">
             <h1 class="text-4xl font-bold text-red-400 mb-4 glow-text cyber-title">MISSION FAILED</h1>

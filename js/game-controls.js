@@ -44,6 +44,51 @@ function adjustMinimumSpeed(speed) {
 }
 
 // =============================================================================
+// EXPLOSION MANAGER - Centralized explosion animation system
+// =============================================================================
+// Replaces setInterval-based explosions with game-loop integrated animations
+// Fixes memory leaks, performance issues, and timing inconsistencies
+
+const explosionManager = {
+    activeExplosions: [],
+
+    // Add a new explosion to be animated
+    addExplosion(explosionData) {
+        this.activeExplosions.push(explosionData);
+    },
+
+    // Update all active explosions (called from game loop)
+    update(deltaTime = 16.67) {
+        for (let i = this.activeExplosions.length - 1; i >= 0; i--) {
+            const explosion = this.activeExplosions[i];
+
+            // Update explosion based on type
+            if (explosion.update) {
+                const stillActive = explosion.update(deltaTime);
+
+                // Remove completed explosions
+                if (!stillActive) {
+                    if (explosion.cleanup) {
+                        explosion.cleanup();
+                    }
+                    this.activeExplosions.splice(i, 1);
+                }
+            }
+        }
+    },
+
+    // Clear all explosions (for cleanup or game reset)
+    clearAll() {
+        this.activeExplosions.forEach(explosion => {
+            if (explosion.cleanup) {
+                explosion.cleanup();
+            }
+        });
+        this.activeExplosions = [];
+    }
+};
+
+// =============================================================================
 // ENHANCED ENEMY AI BEHAVIORS
 // =============================================================================
 
@@ -82,26 +127,54 @@ function applyEnemyRotation(enemy, direction, speed) {
             enemy.userData.targetRotation.y = enemy.userData.prevTargetYaw;
         }
 
-        // Pitch: Tilt based on vertical movement (very gentle)
+        // ENHANCED: Pitch based on vertical movement AND turns (more dynamic)
         if (lateralSpeed > 0.01) {
-            enemy.userData.targetRotation.x = -Math.atan2(direction.y, lateralSpeed) * 0.15;  // Even gentler
+            // Base pitch from vertical movement
+            const verticalPitch = -Math.atan2(direction.y, lateralSpeed) * 0.3;  // Increased from 0.15 to 0.3
+
+            // Additional pitch during turns for more dynamic movement
+            const currentYaw = enemy.rotation.y || 0;
+            const yawDelta = enemy.userData.targetRotation.y - currentYaw;
+            const normalizedYawDelta = Math.atan2(Math.sin(yawDelta), Math.cos(yawDelta));
+            const turnPitch = Math.abs(normalizedYawDelta) * 0.4;  // Pitch up during sharp turns
+
+            enemy.userData.targetRotation.x = verticalPitch + turnPitch;
         }
 
-        // Bank: Roll into turns based on change in yaw (very subtle)
+        // Bank: Roll into turns based on change in yaw (more pronounced)
         const currentYaw = enemy.rotation.y || 0;
         const yawDelta = enemy.userData.targetRotation.y - currentYaw;
         const normalizedYawDelta = Math.atan2(Math.sin(yawDelta), Math.cos(yawDelta));
-        enemy.userData.targetRotation.z = normalizedYawDelta * 0.1;  // Reduced banking
+        enemy.userData.targetRotation.z = normalizedYawDelta * 0.25;  // Increased from 0.1 to 0.25 for more visible banking
 
         // Add very slow tumble for variety
         enemy.userData.targetRotation.z += Math.sin(Date.now() * 0.00005 + (enemy.userData.tumbleSeed || 0)) * enemy.userData.tumbleRate;
 
-        // VERY SMOOTH interpolation to target rotation
+        // ENHANCED: Track angular velocity (turn rate) for accuracy reduction
+        // Calculate how fast the enemy is turning (radians per frame)
+        const previousYaw = enemy.userData.previousYaw || currentYaw;
+        const actualYawDelta = currentYaw - previousYaw;
+        const turnRate = Math.abs(actualYawDelta);  // Radians per frame
+
+        // Store for next frame and for firing accuracy calculation
+        enemy.userData.previousYaw = currentYaw;
+        enemy.userData.turnRate = turnRate;
+
+        // Cap maximum turn rate (0.15 radians/frame ≈ 8.6 degrees/frame ≈ 516 degrees/second at 60fps)
+        const maxTurnRate = 0.15;  // Radians per frame
+        let lerpFactor = 0.03;  // Base lerp speed
+
+        // If turning too fast, reduce lerp to cap turn rate
+        if (Math.abs(normalizedYawDelta) > maxTurnRate) {
+            lerpFactor = maxTurnRate / Math.abs(normalizedYawDelta);
+        }
+
+        // SMOOTH interpolation to target rotation with turn rate limiting
         if (!enemy.rotation) enemy.rotation = new THREE.Euler();
 
-        enemy.rotation.x = THREE.MathUtils.lerp(enemy.rotation.x || 0, enemy.userData.targetRotation.x, 0.01);  // Even slower
-        enemy.rotation.y = THREE.MathUtils.lerp(enemy.rotation.y || 0, enemy.userData.targetRotation.y, 0.01);  // Even slower
-        enemy.rotation.z = THREE.MathUtils.lerp(enemy.rotation.z || 0, enemy.userData.targetRotation.z, 0.01);  // Even slower
+        enemy.rotation.x = THREE.MathUtils.lerp(enemy.rotation.x || 0, enemy.userData.targetRotation.x, lerpFactor);
+        enemy.rotation.y = THREE.MathUtils.lerp(enemy.rotation.y || 0, enemy.userData.targetRotation.y, lerpFactor);
+        enemy.rotation.z = THREE.MathUtils.lerp(enemy.rotation.z || 0, enemy.userData.targetRotation.z, lerpFactor);
     } catch (e) {
         // Ignore rotation errors
     }
@@ -114,11 +187,36 @@ function updatePursuitBehavior(enemy, playerPos, speed, distance) {
     }
 
     try {
+        // Initialize acceleration burst tracking
+        if (enemy.userData.nextAccelBurst === undefined) {
+            enemy.userData.nextAccelBurst = Date.now() + 2000 + Math.random() * 3000; // 2-5 seconds
+        }
+        if (enemy.userData.accelBurstActive === undefined) {
+            enemy.userData.accelBurstActive = false;
+        }
+
+        // Occasional acceleration bursts (20% chance every few seconds)
+        const now = Date.now();
+        if (now > enemy.userData.nextAccelBurst && !enemy.userData.accelBurstActive) {
+            enemy.userData.accelBurstActive = true;
+            enemy.userData.accelBurstEnd = now + 800 + Math.random() * 700; // 0.8-1.5 second burst
+            enemy.userData.nextAccelBurst = now + 3000 + Math.random() * 4000; // Next burst in 3-7 seconds
+        }
+
+        // Apply acceleration multiplier during burst
+        let currentSpeed = speed;
+        if (enemy.userData.accelBurstActive) {
+            currentSpeed *= 1.8; // 80% speed boost during acceleration
+            if (now > enemy.userData.accelBurstEnd) {
+                enemy.userData.accelBurstActive = false;
+            }
+        }
+
         if (distance > 100) {
             // Direct pursuit when far
             const direction = new THREE.Vector3().subVectors(playerPos, enemy.position).normalize();
-            enemy.position.add(direction.multiplyScalar(speed));
-            applyEnemyRotation(enemy, direction, speed);  // Add rotation
+            enemy.position.add(direction.multiplyScalar(currentSpeed));
+            applyEnemyRotation(enemy, direction, currentSpeed);  // Add rotation
         } else {
             // Circle strafe when close
             const angle = Date.now() * 0.001 + (enemy.userData.circlePhase || 0);
@@ -128,8 +226,8 @@ function updatePursuitBehavior(enemy, playerPos, speed, distance) {
 
             const targetPos = new THREE.Vector3(targetX, targetY, targetZ);
             const direction = new THREE.Vector3().subVectors(targetPos, enemy.position).normalize();
-            enemy.position.add(direction.multiplyScalar(speed * 0.8));
-            applyEnemyRotation(enemy, direction, speed * 0.8);  // Add rotation
+            enemy.position.add(direction.multiplyScalar(currentSpeed * 0.8));
+            applyEnemyRotation(enemy, direction, currentSpeed * 0.8);  // Add rotation
         }
     } catch (e) {
         // Ignore movement errors if positions are invalid
@@ -265,8 +363,9 @@ function updatePatrolBehavior(enemy, playerPos, speed, time) {
         const targetPos = new THREE.Vector3(targetX, targetY, targetZ);
         const direction = new THREE.Vector3().subVectors(targetPos, enemy.position).normalize();
 
-        enemy.position.add(direction.multiplyScalar(speed * 0.3));
-        applyEnemyRotation(enemy, direction, speed * 0.3);  // Add rotation
+        // ENHANCED: Increased patrol speed from 0.3 to 0.6 for smoother flowing motion
+        enemy.position.add(direction.multiplyScalar(speed * 0.6));
+        applyEnemyRotation(enemy, direction, speed * 0.6);  // Add rotation
     } catch (e) {
         // Ignore movement errors
     }
@@ -425,7 +524,9 @@ function updateEnemyBehavior() {
                 
                 const targetPos = new THREE.Vector3(targetX, targetY, targetZ);
                 const direction = new THREE.Vector3().subVectors(targetPos, enemy.position).normalize();
-                enemy.position.add(direction.multiplyScalar((enemy.userData.speed || 1.5) * 0.5));  // Increased patrol speed
+                const tutorialSpeed = Math.max(0.2, (enemy.userData.speed || 0.5) * 0.5);  // Min 200 km/s even in tutorial
+                enemy.position.add(direction.multiplyScalar(tutorialSpeed));
+                applyEnemyRotation(enemy, direction, tutorialSpeed);  // Make ship face movement direction
             }
         });
         return; // Exit early - don't process combat logic during tutorial
@@ -504,10 +605,10 @@ function updateEnemyBehavior() {
         }
         
         if (enemy.userData.isActive) {
-            // Apply difficulty-based speed modifiers with minimum speed of 1.5 (roughly 100km/s)
-            const baseSpeed = enemy.userData.speed || 1.5;  // Increased from 0.5 to 1.5
+            // FIXED: Enemy speeds 200-1000 km/s (0.2-1.0 game units, multiply by 1000 for km/s display)
+            const baseSpeed = enemy.userData.speed || 0.5;
             const speedMultiplier = isLocal ? difficultySettings.localSpeedMultiplier : difficultySettings.distantSpeedMultiplier;
-            const adjustedSpeed = Math.max(1.5, baseSpeed * speedMultiplier);  // Ensure minimum 1.5 speed
+            const adjustedSpeed = Math.min(1.0, Math.max(0.2, baseSpeed * speedMultiplier));  // Clamp to 0.2-1.0 (200-1000 km/s)
             
             if (isLocal) {
                 updateLocalEnemyBehavior(enemy, distanceToPlayer, adjustedSpeed, difficultySettings);
@@ -534,9 +635,9 @@ function updateEnemyBehavior() {
                 }
             }
         } else {
-            // Patrol behavior when not active - maintain minimum speed
-            const baseSpeed = enemy.userData.speed || 1.5;
-            const patrolSpeed = Math.max(1.0, baseSpeed * 0.7);  // Patrol at 70% speed, minimum 1.0
+            // FIXED: Patrol behavior - enemies always thrust forward at min 200 km/s
+            const baseSpeed = enemy.userData.speed || 0.5;
+            const patrolSpeed = Math.min(1.0, Math.max(0.2, baseSpeed * 0.8));  // Patrol at 80% speed, clamped to 0.2-1.0 (200-1000 km/s)
             updatePatrolBehavior(enemy, camera.position, patrolSpeed, Date.now() * 0.001);
         }
         
@@ -725,9 +826,22 @@ function fireEnemyWeapon(enemy, difficultySettings) {
         
         // Cap damage to reasonable levels
         damage = Math.min(damage, 15);
-        
-        // Random chance to hit (makes combat more dynamic)
-if (Math.random() < 0.7) { // 70% hit chance
+
+        // ENHANCED: Accuracy reduction during evasive maneuvers
+        // Base accuracy: 70%, reduced by turn rate
+        let hitChance = 0.7;  // Base 70% hit chance
+
+        // Reduce accuracy when enemy is turning (evasive maneuvers)
+        const turnRate = enemy.userData.turnRate || 0;
+        if (turnRate > 0.01) {  // Only apply if turning significantly
+            // Turn rate of 0.15 rad/frame (max) = 50% accuracy penalty
+            // Turn rate of 0.075 rad/frame (half max) = 25% accuracy penalty
+            const accuracyPenalty = Math.min(turnRate * 3.33, 0.5);  // Max 50% penalty
+            hitChance = Math.max(0.2, hitChance - accuracyPenalty);  // Min 20% accuracy
+        }
+
+        // Random chance to hit based on adjusted accuracy
+        if (Math.random() < hitChance) {
     // Check black hole warp invulnerability
     const isInvulnerable = typeof isBlackHoleWarpInvulnerable === 'function' &&
                            isBlackHoleWarpInvulnerable();
@@ -1673,7 +1787,8 @@ function createExplosionEffect(targetObject) {
         console.warn('Invalid target object for explosion');
         return;
     }
-    
+
+    // Create explosion sphere
     const explosionGeometry = new THREE.SphereGeometry(2, 8, 8);
     const explosionMaterial = new THREE.MeshBasicMaterial({
         color: 0xff6600,
@@ -1682,36 +1797,18 @@ function createExplosionEffect(targetObject) {
     const explosion = new THREE.Mesh(explosionGeometry, explosionMaterial);
     explosion.position.copy(position);
     scene.add(explosion);
-    
-     // Animate explosion (FASTER)
-    let scale = 1;
-    let opacity = 1;
-    // CHANGE TO (MUCH SLOWER):
-const explosionInterval = setInterval(() => {
-    scale += 0.5;  // Changed from 2.0 to 0.5 (4x slower growth)
-    opacity -= 0.05;  // Changed from 0.2 to 0.05 (4x slower fade)
-    explosion.scale.set(scale, scale, scale);
-    explosionMaterial.opacity = opacity;
-    
-    if (opacity <= 0) {
-        clearInterval(explosionInterval);
-        scene.remove(explosion);
-        explosionGeometry.dispose();
-        explosionMaterial.dispose();
-    }
-}, 60);  // Changed from 30ms to 60ms (slower updates)
-    
+
     // Create particle burst
     const particles = new THREE.BufferGeometry();
     const particleCount = 30;
     const positions = new Float32Array(particleCount * 3);
-    
+
     for (let i = 0; i < particleCount; i++) {
         positions[i * 3] = (Math.random() - 0.5) * 20;
         positions[i * 3 + 1] = (Math.random() - 0.5) * 20;
         positions[i * 3 + 2] = (Math.random() - 0.5) * 20;
     }
-    
+
     particles.setAttribute('position', new THREE.BufferAttribute(positions, 3));
     const particleMaterial = new THREE.PointsMaterial({
         color: 0xff8800,
@@ -1722,21 +1819,41 @@ const explosionInterval = setInterval(() => {
     const particleSystem = new THREE.Points(particles, particleMaterial);
     particleSystem.position.copy(position);
     scene.add(particleSystem);
-    
-    // Animate particles
+
+    // Add to explosion manager for frame-based animation
+    let scale = 1;
+    let opacity = 1;
     let particleLife = 1.0;
-    const particleInterval = setInterval(() => {
-    particleLife -= 0.02;  // Changed from 0.05 to 0.02 (slower fade)
-    particleMaterial.opacity = particleLife;
-    
-    if (particleLife <= 0) {
-        clearInterval(particleInterval);
-        scene.remove(particleSystem);
-        particles.dispose();
-        particleMaterial.dispose();
-    }
-}, 80);  // Changed from 50ms to 80ms (slower updates)
-    
+    let elapsed = 0;
+
+    explosionManager.addExplosion({
+        update(deltaTime) {
+            elapsed += deltaTime;
+
+            // Update explosion sphere (slower growth and fade)
+            scale += 0.5 * (deltaTime / 60);  // Normalized to 60fps
+            opacity -= 0.05 * (deltaTime / 60);
+            explosion.scale.set(scale, scale, scale);
+            explosionMaterial.opacity = Math.max(0, opacity);
+
+            // Update particles
+            particleLife -= 0.02 * (deltaTime / 60);
+            particleMaterial.opacity = Math.max(0, particleLife);
+
+            // Return false when animation is complete
+            return opacity > 0 || particleLife > 0;
+        },
+
+        cleanup() {
+            scene.remove(explosion);
+            scene.remove(particleSystem);
+            explosionGeometry.dispose();
+            explosionMaterial.dispose();
+            particles.dispose();
+            particleMaterial.dispose();
+        }
+    });
+
     // Play explosion sound
     playSound('explosion');
 }
@@ -1745,11 +1862,17 @@ const explosionInterval = setInterval(() => {
 // MASSIVE BORG CUBE EXPLOSION - For 100 HP BORG destruction
 // =============================================================================
 
-function createMassiveBorgExplosion(position) {
-    console.log('💥 MASSIVE BORG EXPLOSION at', position);
+function createMassiveBorgExplosion(position, cubeSize = 30) {
+    console.log(`💥 MASSIVE BORG EXPLOSION at ${position}, cube size: ${cubeSize}`);
+
+    // Scale explosion to cube size (base: cubeSize 30 = explosion 100)
+    // Larger cubes get proportionally larger explosions
+    const explosionScale = cubeSize / 30; // Scale factor relative to standard drone
+    const baseExplosionSize = 100 * explosionScale;
+    const secondaryExplosionSize = 80 * explosionScale;
 
     // Create HUGE expanding sphere explosion
-    const explosionGeo = new THREE.SphereGeometry(100, 32, 32);
+    const explosionGeo = new THREE.SphereGeometry(baseExplosionSize, 32, 32);
     const explosionMat = new THREE.MeshBasicMaterial({
         color: 0x00ff00, // Green BORG color
         transparent: true,
@@ -1761,7 +1884,7 @@ function createMassiveBorgExplosion(position) {
     scene.add(explosion);
 
     // Secondary orange/red explosion sphere
-    const explosionGeo2 = new THREE.SphereGeometry(80, 32, 32);
+    const explosionGeo2 = new THREE.SphereGeometry(secondaryExplosionSize, 32, 32);
     const explosionMat2 = new THREE.MeshBasicMaterial({
         color: 0xff4400,
         transparent: true,
@@ -1772,22 +1895,23 @@ function createMassiveBorgExplosion(position) {
     explosion2.position.copy(position);
     scene.add(explosion2);
 
-    // MASSIVE particle burst (500 particles!)
-    const particleCount = 500;
+    // MASSIVE particle burst (500 particles scaled by cube size)
+    const particleCount = Math.floor(500 * explosionScale);
     const particleGeometry = new THREE.BufferGeometry();
     const particlePositions = new Float32Array(particleCount * 3);
     const particleVelocities = [];
 
+    const particleSpeed = 50 * explosionScale;
     for (let i = 0; i < particleCount; i++) {
         particlePositions[i * 3] = position.x;
         particlePositions[i * 3 + 1] = position.y;
         particlePositions[i * 3 + 2] = position.z;
 
-        // Random velocity in all directions
+        // Random velocity in all directions (scaled)
         particleVelocities.push({
-            x: (Math.random() - 0.5) * 50,
-            y: (Math.random() - 0.5) * 50,
-            z: (Math.random() - 0.5) * 50
+            x: (Math.random() - 0.5) * particleSpeed,
+            y: (Math.random() - 0.5) * particleSpeed,
+            z: (Math.random() - 0.5) * particleSpeed
         });
     }
 
@@ -1795,7 +1919,7 @@ function createMassiveBorgExplosion(position) {
 
     const particleMaterial = new THREE.PointsMaterial({
         color: 0x00ff00,
-        size: 15,
+        size: 15 * explosionScale,
         transparent: true,
         opacity: 1.0,
         blending: THREE.AdditiveBlending
@@ -1804,35 +1928,40 @@ function createMassiveBorgExplosion(position) {
     const particles = new THREE.Points(particleGeometry, particleMaterial);
     scene.add(particles);
 
-    // Animate MASSIVE explosion
+    // Add main explosion to manager
     let scale = 1;
     let opacity1 = 0.9;
     let opacity2 = 0.8;
     let particleOpacity = 1.0;
 
-    const explosionInterval = setInterval(() => {
-        scale += 3.0; // MUCH faster expansion
-        opacity1 -= 0.03;
-        opacity2 -= 0.025;
-        particleOpacity -= 0.04;
+    explosionManager.addExplosion({
+        update(deltaTime) {
+            // Update scales and opacities
+            scale += 3.0 * (deltaTime / 50);
+            opacity1 -= 0.03 * (deltaTime / 50);
+            opacity2 -= 0.025 * (deltaTime / 50);
+            particleOpacity -= 0.04 * (deltaTime / 50);
 
-        explosion.scale.set(scale, scale, scale);
-        explosion2.scale.set(scale * 1.2, scale * 1.2, scale * 1.2);
-        explosionMat.opacity = Math.max(0, opacity1);
-        explosionMat2.opacity = Math.max(0, opacity2);
-        particleMaterial.opacity = Math.max(0, particleOpacity);
+            explosion.scale.set(scale, scale, scale);
+            explosion2.scale.set(scale * 1.2, scale * 1.2, scale * 1.2);
+            explosionMat.opacity = Math.max(0, opacity1);
+            explosionMat2.opacity = Math.max(0, opacity2);
+            particleMaterial.opacity = Math.max(0, particleOpacity);
 
-        // Update particle positions
-        const positions = particleGeometry.attributes.position.array;
-        for (let i = 0; i < particleCount; i++) {
-            positions[i * 3] += particleVelocities[i].x;
-            positions[i * 3 + 1] += particleVelocities[i].y;
-            positions[i * 3 + 2] += particleVelocities[i].z;
-        }
-        particleGeometry.attributes.position.needsUpdate = true;
+            // Update particle positions
+            const positions = particleGeometry.attributes.position.array;
+            const deltaFactor = deltaTime / 50;
+            for (let i = 0; i < particleCount; i++) {
+                positions[i * 3] += particleVelocities[i].x * deltaFactor;
+                positions[i * 3 + 1] += particleVelocities[i].y * deltaFactor;
+                positions[i * 3 + 2] += particleVelocities[i].z * deltaFactor;
+            }
+            particleGeometry.attributes.position.needsUpdate = true;
 
-        if (opacity1 <= 0) {
-            clearInterval(explosionInterval);
+            return opacity1 > 0;
+        },
+
+        cleanup() {
             scene.remove(explosion);
             scene.remove(explosion2);
             scene.remove(particles);
@@ -1843,41 +1972,66 @@ function createMassiveBorgExplosion(position) {
             particleGeometry.dispose();
             particleMaterial.dispose();
         }
-    }, 50);
+    });
 
-    // Create shockwave rings
+    // Create shockwave rings with staggered timing
     for (let i = 0; i < 5; i++) {
-        setTimeout(() => {
-            const ringGeo = new THREE.TorusGeometry(100, 5, 16, 32);
-            const ringMat = new THREE.MeshBasicMaterial({
-                color: 0x00ff00,
-                transparent: true,
-                opacity: 0.7,
-                blending: THREE.AdditiveBlending
-            });
-            const ring = new THREE.Mesh(ringGeo, ringMat);
-            ring.position.copy(position);
-            ring.rotation.x = Math.random() * Math.PI;
-            ring.rotation.y = Math.random() * Math.PI;
-            scene.add(ring);
+        const ringDelay = i * 200;
+        let ringCreated = false;
+        let ringDelayElapsed = 0;
 
-            let ringScale = 1;
-            let ringOpacity = 0.7;
-            const ringInterval = setInterval(() => {
-                ringScale += 2;
-                ringOpacity -= 0.05;
-                ring.scale.set(ringScale, ringScale, ringScale);
-                ringMat.opacity = Math.max(0, ringOpacity);
+        explosionManager.addExplosion({
+            update(deltaTime) {
+                ringDelayElapsed += deltaTime;
 
-                if (ringOpacity <= 0) {
-                    clearInterval(ringInterval);
-                    scene.remove(ring);
-                    ringGeo.dispose();
-                    ringMat.dispose();
+                // Wait for delay before creating ring
+                if (!ringCreated && ringDelayElapsed >= ringDelay) {
+                    ringCreated = true;
+                    const ringGeo = new THREE.TorusGeometry(100, 5, 16, 32);
+                    const ringMat = new THREE.MeshBasicMaterial({
+                        color: 0x00ff00,
+                        transparent: true,
+                        opacity: 0.7,
+                        blending: THREE.AdditiveBlending
+                    });
+                    const ring = new THREE.Mesh(ringGeo, ringMat);
+                    ring.position.copy(position);
+                    ring.rotation.x = Math.random() * Math.PI;
+                    ring.rotation.y = Math.random() * Math.PI;
+                    scene.add(ring);
+
+                    // Store ring data for animation
+                    this.ring = ring;
+                    this.ringGeo = ringGeo;
+                    this.ringMat = ringMat;
+                    this.ringScale = 1;
+                    this.ringOpacity = 0.7;
                 }
-            }, 50);
-        }, i * 200);
+
+                // Animate ring
+                if (ringCreated && this.ring) {
+                    this.ringScale += 2 * (deltaTime / 50);
+                    this.ringOpacity -= 0.05 * (deltaTime / 50);
+                    this.ring.scale.set(this.ringScale, this.ringScale, this.ringScale);
+                    this.ringMat.opacity = Math.max(0, this.ringOpacity);
+
+                    return this.ringOpacity > 0;
+                }
+
+                return true; // Keep alive until ring is created
+            },
+
+            cleanup() {
+                if (this.ring) {
+                    scene.remove(this.ring);
+                    this.ringGeo.dispose();
+                    this.ringMat.dispose();
+                }
+            }
+        });
     }
+
+    playSound('explosion');
 }
 
 // =============================================================================
@@ -2224,7 +2378,7 @@ function createDirectionalDamageEffect(attackDirection) {
     
     // Create the directional damage overlay
     const damageOverlay = document.createElement('div');
-    damageOverlay.className = 'absolute pointer-events-none z-30';
+    damageOverlay.className = 'fixed pointer-events-none z-30';
     damageOverlay.style.cssText = overlayStyle + pulseStyle + 'opacity: 0; transition: opacity 0.1s ease-out;';
     document.body.appendChild(damageOverlay);
     
@@ -2249,7 +2403,8 @@ function createDirectionalDamageEffect(attackDirection) {
 
 function createDamageDirectionIndicator(direction) {
     const indicator = document.createElement('div');
-    indicator.className = 'absolute pointer-events-none z-35 text-red-400 font-bold text-lg';
+    indicator.className = 'fixed pointer-events-none text-red-400 font-bold text-lg';
+    indicator.style.zIndex = '50'; // Higher than other UI elements
     indicator.style.fontFamily = "'Orbitron', monospace";
     indicator.style.textShadow = '0 0 10px rgba(255,0,0,0.8), 0 0 20px rgba(255,0,0,0.5)';
     indicator.style.opacity = '0';
@@ -2285,17 +2440,20 @@ function createDamageDirectionIndicator(direction) {
     indicator.textContent = text;
     indicator.style.cssText += positionStyle;
     document.body.appendChild(indicator);
-    
+
+    // Store the base transform for proper animation
+    const baseTransform = indicator.style.transform || '';
+
     // Animate in
     setTimeout(() => {
         indicator.style.opacity = '1';
-        indicator.style.transform += ' scale(1.1)';
+        indicator.style.transform = baseTransform + ' scale(1.1)';
     }, 50);
-    
+
     // Animate out
     setTimeout(() => {
         indicator.style.opacity = '0';
-        indicator.style.transform += ' scale(0.8)';
+        indicator.style.transform = baseTransform + ' scale(0.8)';
     }, 800);
     
     // Remove
@@ -2392,11 +2550,14 @@ function initializeControlButtons() {
             return;
         }
 
-        // Add third-person camera toggle
-        if (e.key === '3') {
+        // Add camera view toggle (V key or 3 key)
+        if (e.key === 'v' || e.key === 'V' || e.key === '3') {
             e.preventDefault();
             if (typeof toggleCameraView === 'function') {
+                console.log('🎥 Toggling camera view...');
                 toggleCameraView();
+            } else {
+                console.warn('⚠️ toggleCameraView function not available');
             }
             return;
         }
@@ -2603,7 +2764,7 @@ document.addEventListener('click', (e) => {
     
     // Mouse movement tracking for crosshair - FIXED POSITION TRACKING
 document.addEventListener('mousemove', (e) => {
-    if (!gameState.gameStarted || gameState.gameOver || gamePaused) return;
+    if (typeof gameState === 'undefined' || !gameState.gameStarted || gameState.gameOver || typeof gamePaused !== 'undefined' && gamePaused) return;
 
     // ALWAYS update actual mouse position for UI detection
     gameState.mouseX = e.clientX;
@@ -2846,7 +3007,7 @@ setTimeout(() => {
     console.log('âœ… Enhanced event listeners setup complete');
 
 function checkWeaponHits(targetPosition) {
-    const hitRadius = 150;  // Increased from 50 to match 120x scaled models (3x original)
+    const hitRadius = 300;  // Increased from 150 to 300 for better mouse aiming hit detection (2x larger hitboxes)
 
     // Check BORG drone hits (from outer interstellar systems)
     if (typeof outerInterstellarSystems !== 'undefined') {
@@ -2866,8 +3027,9 @@ function checkWeaponHits(targetPosition) {
                     showAchievement('BORG Hit!', `${drone.userData.name} damaged (${drone.userData.health}/100 HP)`);
 
                     if (drone.userData.health <= 0) {
-                        // BORG cube destroyed - MASSIVE EXPLOSION!
-                        createMassiveBorgExplosion(drone.position);
+                        // BORG cube destroyed - MASSIVE EXPLOSION scaled to cube size!
+                        const cubeSize = drone.userData.cubeSize || 30;
+                        createMassiveBorgExplosion(drone.position, cubeSize);
                         playSound('explosion');
                         showAchievement('BORG CUBE DESTROYED!', `${drone.userData.name} eliminated!`);
 
@@ -2889,29 +3051,27 @@ function checkWeaponHits(targetPosition) {
         enemies.forEach((enemy, enemyIndex) => {
             if (enemy.userData.health <= 0) return;
 
-            // Calculate hitbox relative to enemy model size
-            let enemyHitRadius = hitRadius * 3;  // Default fallback
-
-            // Calculate actual bounding box size if not cached
-            if (enemy.userData.hitRadius === undefined) {
+            // FIXED: Use hitbox size matching scaled model (like asteroids)
+            // Calculate hitbox if not already stored (should be set at creation time)
+            if (enemy.userData.hitboxSize === undefined) {
                 try {
                     const box = new THREE.Box3().setFromObject(enemy);
                     const size = new THREE.Vector3();
                     box.getSize(size);
-                    // Use the largest dimension as the hit radius
-                    enemyHitRadius = Math.max(size.x, size.y, size.z) / 2;
-                    // Cache it for performance
-                    enemy.userData.hitRadius = enemyHitRadius;
+                    // Store largest dimension as hitbox size (diameter)
+                    enemy.userData.hitboxSize = Math.max(size.x, size.y, size.z);
                 } catch (e) {
-                    // If bbox calculation fails, use default
-                    enemy.userData.hitRadius = hitRadius * 3;
+                    // Fallback: use reasonable default for 96x scaled model
+                    enemy.userData.hitboxSize = 96; // Approximate size of scaled model
                 }
-            } else {
-                enemyHitRadius = enemy.userData.hitRadius;
             }
 
+            // Hitbox detection with safety margin (like asteroids: size + margin)
+            const safetyMargin = 20; // Safety margin for easier hitting
+            const collisionDistance = enemy.userData.hitboxSize / 2 + safetyMargin;
             const distance = enemy.position.distanceTo(targetPosition);
-            if (distance < enemyHitRadius) {
+
+            if (distance < collisionDistance) {
                 const damage = 1; // Standard damage
                 enemy.userData.health -= damage;
                 
@@ -2978,14 +3138,17 @@ if (enemy.userData.health <= 0) {
     
     // Check for galaxy clear
     checkGalaxyClear();
-    
-    // Check if we should spawn a boss
-if (typeof checkAndSpawnBoss === 'function' && enemy.userData.galaxyId !== undefined) {
-    checkAndSpawnBoss(enemy.userData.galaxyId);
-}
+
+    // ENHANCED: Check if we should spawn area bosses or elite guardians
+    if (typeof checkAndSpawnAreaBosses === 'function') {
+        checkAndSpawnAreaBosses();
+    }
+    if (typeof checkAndSpawnEliteGuardians === 'function') {
+        checkAndSpawnEliteGuardians();
+    }
                     
                     // Check if this was a boss that was defeated
-					if (enemy.userData.isBoss) {
+					if (enemy.userData.isBoss || enemy.userData.isEliteGuardian) {
     				const wasVictory = checkBossVictory(enemy);
     				if (wasVictory) {
         			// ⭐ NEW: Award warp for defeating boss
@@ -3008,17 +3171,9 @@ if (typeof checkAndSpawnBoss === 'function' && enemy.userData.galaxyId !== undef
         });
     }
     
-    // Check asteroid hits (if they exist)
-    if (typeof planets !== 'undefined') {
-    planets.filter(p => p.userData.type === 'asteroid' && p.userData.health > 0).forEach(asteroid => {
-        const distance = asteroid.position.distanceTo(targetPosition);
-        if (distance < hitRadius) {
-            createExplosionEffect(asteroid.position, 0xffaa00, 10);
-            // No notification for asteroid hits - silent destruction
-            playSound('hit');
-        	}
-    	});
-	}
+    // REMOVED: Asteroid checks - asteroids should only be hit by direct raycasting
+    // The fallback checkWeaponHits() is for enemies that are near the aim line,
+    // not for asteroids. Asteroids require precise aim with direct raycast hits.
 }
 
 function checkGalaxyClear() {
@@ -3045,7 +3200,7 @@ function checkGalaxyClear() {
         );
         
         // Check if boss has been defeated for this galaxy
-        const bossDefeated = (typeof bossSystem !== 'undefined' && bossSystem.galaxyBossDefeated[g]);
+        const bossDefeated = (typeof bossSystem !== 'undefined' && bossSystem.galaxyBossDefeated && bossSystem.galaxyBossDefeated[g]);
         
         // Galaxy is only "cleared" when:
         // 1. All regular enemies are defeated
@@ -3201,11 +3356,11 @@ function checkBorgSpawn() {
     if (typeof gameState === 'undefined' || typeof camera === 'undefined') return;
     if (gameState.borg.spawned) return; // Already spawned
 
-    // Check if player is beyond 70,000 units from origin
+    // Giant BORG Cube encounter when exploring beyond 70,000 units
     const distanceFromOrigin = camera.position.length();
 
     if (distanceFromOrigin > 70000) {
-        // 30% chance to spawn
+        // 30% chance to spawn the relentless pursuer
         if (Math.random() < 0.3) {
             spawnBorgCube();
         } else {
@@ -3322,7 +3477,7 @@ function spawnBorgDrone() {
         name: 'Borg Drone',
         isBorg: true,
         isBorgDrone: true,
-        speed: 1.5,
+        speed: 3.0,  // FIXED: Faster than mothership (2.0) so they can swarm around it
         damage: 2,
         detectionRange: 5000,
         firingRange: 300,
@@ -3490,6 +3645,9 @@ function handleBorgCubeDestruction() {
 
 // Missile System
 function fireMissile() {
+    // Resume audio context on user interaction to fix suspended state warning
+    resumeAudioContext();
+
     if (typeof shieldSystem !== 'undefined' && shieldSystem.active) {
         showAchievement('Missiles Disabled', 'Shields must be deactivated first');
         return;
@@ -3725,8 +3883,13 @@ function handleMissileHit(missile, enemy) {
 
         if (typeof populateTargets === 'function') setTimeout(populateTargets, 100);
         checkGalaxyClear();
-        if (typeof checkAndSpawnBoss === 'function' && enemy.userData.galaxyId !== undefined) {
-            checkAndSpawnBoss(enemy.userData.galaxyId);
+
+        // ENHANCED: Check if we should spawn area bosses or elite guardians
+        if (typeof checkAndSpawnAreaBosses === 'function') {
+            checkAndSpawnAreaBosses();
+        }
+        if (typeof checkAndSpawnEliteGuardians === 'function') {
+            checkAndSpawnEliteGuardians();
         }
     }
 }
@@ -3803,22 +3966,6 @@ function createMissileExplosion(position) {
     explosion.position.copy(position);
     scene.add(explosion);
 
-    let scale = 1;
-    let opacity = 0.9;
-    const explosionInterval = setInterval(() => {
-        scale += 0.8;
-        opacity -= 0.08;
-        explosion.scale.set(scale, scale, scale);
-        explosionMaterial.opacity = opacity;
-
-        if (opacity <= 0) {
-            clearInterval(explosionInterval);
-            scene.remove(explosion);
-            explosionGeometry.dispose();
-            explosionMaterial.dispose();
-        }
-    }, 50);
-
     // Particles
     const particles = new THREE.BufferGeometry();
     const particleCount = 40;
@@ -3841,18 +3988,37 @@ function createMissileExplosion(position) {
     particleSystem.position.copy(position);
     scene.add(particleSystem);
 
+    // Add to explosion manager
+    let scale = 1;
+    let opacity = 0.9;
     let particleLife = 1.0;
-    const particleInterval = setInterval(() => {
-        particleLife -= 0.025;
-        particleMaterial.opacity = particleLife;
 
-        if (particleLife <= 0) {
-            clearInterval(particleInterval);
+    explosionManager.addExplosion({
+        update(deltaTime) {
+            // Update explosion sphere
+            scale += 0.8 * (deltaTime / 50);
+            opacity -= 0.08 * (deltaTime / 50);
+            explosion.scale.set(scale, scale, scale);
+            explosionMaterial.opacity = Math.max(0, opacity);
+
+            // Update particles
+            particleLife -= 0.025 * (deltaTime / 70);
+            particleMaterial.opacity = Math.max(0, particleLife);
+
+            return opacity > 0 || particleLife > 0;
+        },
+
+        cleanup() {
+            scene.remove(explosion);
             scene.remove(particleSystem);
+            explosionGeometry.dispose();
+            explosionMaterial.dispose();
             particles.dispose();
             particleMaterial.dispose();
         }
-    }, 70);
+    });
+
+    playSound('missile_explosion');
 }
 
 function updateMissileUI() {
@@ -3873,6 +4039,9 @@ function updateMissileUI() {
 
 // RESTORED: Working weapon system with asteroid targeting
 function fireWeapon() {
+    // Resume audio context on user interaction to fix suspended state warning
+    resumeAudioContext();
+
     // Faster weapon cooldown (RESTORED)
     if (gameState.weapons.cooldown > 0 || gameState.weapons.energy < 10) return;
     
@@ -3905,11 +4074,15 @@ function fireWeapon() {
         const raycaster = new THREE.Raycaster();
         raycaster.setFromCamera(mousePos, camera);
         
-        // Check for enemy hits first
-        const enemyIntersects = raycaster.intersectObjects(enemies);
+        // Check for enemy hits first (recursive: true for GLB model Groups)
+        const enemyIntersects = raycaster.intersectObjects(enemies, true);
         if (enemyIntersects.length > 0) {
             targetPosition = enemyIntersects[0].point;
+            // Get the root enemy object (may be a parent Group)
             targetObject = enemyIntersects[0].object;
+            while (targetObject.parent && targetObject.parent.userData && targetObject.parent.userData.type === 'enemy') {
+                targetObject = targetObject.parent;
+            }
             console.log('Hit detected: enemy', targetObject.userData.name);
         } else {
             // Check for BORG drone hits (from outer interstellar systems)
@@ -4014,7 +4187,9 @@ function fireWeapon() {
             checkWeaponHits(targetPosition);
         }
     } else {
-        // No direct hit - still check for area hits
+        // FIXED: Still check for hits near the ray path even without direct raycast hit
+        // This allows hits on enemies that are close to the crosshair aim line
+        // targetPosition is already set to a point along the ray direction (line 4022)
         checkWeaponHits(targetPosition);
     }
     

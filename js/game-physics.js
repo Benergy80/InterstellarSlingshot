@@ -300,13 +300,13 @@ function createEnhancedScreenDamageEffect() {
 // COMPACT: All the cool effects but much smaller scale
 function createAsteroidExplosion(position, radius = 1) {
     console.log('Creating compact asteroid explosion at position:', position, 'with radius:', radius);
-    
+
     const explosionGroup = new THREE.Group();
     explosionGroup.position.copy(position);
     scene.add(explosionGroup);
-    
+
     // MAIN EXPLOSION SPHERE - Small but visible
-    const mainExplosionGeometry = new THREE.SphereGeometry(radius * 0.4, 12, 12); // Much smaller
+    const mainExplosionGeometry = new THREE.SphereGeometry(radius * 0.4, 12, 12);
     const mainExplosionMaterial = new THREE.MeshBasicMaterial({
         color: 0xff6600,
         transparent: true,
@@ -314,101 +314,98 @@ function createAsteroidExplosion(position, radius = 1) {
     });
     const mainExplosion = new THREE.Mesh(mainExplosionGeometry, mainExplosionMaterial);
     explosionGroup.add(mainExplosion);
-    
+
     // PARTICLE DEBRIS - Much larger and more numerous
-    const particleCount = 20; // More particles
+    const particleCount = 20;
+    const particles = [];
+    const particleVelocities = [];
+
     for (let i = 0; i < particleCount; i++) {
-        const particleGeometry = new THREE.SphereGeometry(1 + Math.random() * 2, 6, 6); // Much larger particles
+        const particleGeometry = new THREE.SphereGeometry(1 + Math.random() * 2, 6, 6);
         const particleMaterial = new THREE.MeshBasicMaterial({
             color: new THREE.Color().setHSL(0.1 + Math.random() * 0.15, 0.8, 0.5 + Math.random() * 0.3),
             transparent: true,
             opacity: 0.9
         });
         const particle = new THREE.Mesh(particleGeometry, particleMaterial);
-        
+
         // Much larger velocity spread
         const velocity = new THREE.Vector3(
-            (Math.random() - 0.5) * 25, // Increased from 6 to 25
+            (Math.random() - 0.5) * 25,
             (Math.random() - 0.5) * 25,
             (Math.random() - 0.5) * 25
         );
-        
+
         explosionGroup.add(particle);
-        
-        let particleLife = 1.0;
-        const particleInterval = setInterval(() => {
-            particle.position.add(velocity.clone().multiplyScalar(0.2)); // Faster movement
-            particleLife -= 0.08; // Slower fade for longer visibility
-            particleMaterial.opacity = particleLife;
-            
-            // Particles get smaller as they fade
-            const scale = particleLife;
-            particle.scale.set(scale, scale, scale);
-            
-            if (particleLife <= 0) {
-                clearInterval(particleInterval);
-                explosionGroup.remove(particle);
-                particleGeometry.dispose();
-                particleMaterial.dispose();
-            }
-        }, 50); // Slower update for smoother animation
+        particles.push({ mesh: particle, geometry: particleGeometry, material: particleMaterial, life: 1.0 });
+        particleVelocities.push(velocity);
     }
-    
-    // MAIN EXPLOSION ANIMATION - Compact growth
-    let explosionScale = 1;
-    let explosionOpacity = 0.8;
-    const explosionInterval = setInterval(() => {
-        explosionScale += 1; // Small growth
-        explosionOpacity -= 0.1; // Quick fade
-        
-        mainExplosion.scale.set(explosionScale, explosionScale, explosionScale);
-        mainExplosionMaterial.opacity = explosionOpacity;
-        
-        if (explosionOpacity <= 0) {
-            clearInterval(explosionInterval);
-            explosionGroup.remove(mainExplosion);
-            mainExplosionGeometry.dispose();
-            mainExplosionMaterial.dispose();
-        }
-    }, 60);
-    
+
     // SHOCKWAVE RING EFFECT - Smaller but still visible
-    const shockwaveGeometry = new THREE.RingGeometry(radius * .6, radius * 1, 16); // Reduced from 2x-3x to 1.2x-1.8x
+    const shockwaveGeometry = new THREE.RingGeometry(radius * .6, radius * 1, 16);
     const shockwaveMaterial = new THREE.MeshBasicMaterial({
         color: 0xffaa00,
         transparent: true,
-        opacity: 0.5, // Slightly more subtle
+        opacity: 0.5,
         side: THREE.DoubleSide
     });
     const shockwave = new THREE.Mesh(shockwaveGeometry, shockwaveMaterial);
-    shockwave.rotation.x = Math.PI / 2; // Horizontal ring
+    shockwave.rotation.x = Math.PI / 2;
     explosionGroup.add(shockwave);
-    
-    // Animate shockwave - moderate expansion
+
+    // Add to explosion manager
+    let explosionScale = 1;
+    let explosionOpacity = 0.8;
     let shockwaveScale = 1;
     let shockwaveOpacity = 0.5;
-    const shockwaveInterval = setInterval(() => {
-        shockwaveScale += 1.5; // Reduced from 3 to 1.5
-        shockwaveOpacity -= 0.05;
-        
-        shockwave.scale.set(shockwaveScale, shockwaveScale, 1);
-        shockwaveMaterial.opacity = shockwaveOpacity;
-        
-        if (shockwaveOpacity <= 0) {
-            clearInterval(shockwaveInterval);
-            explosionGroup.remove(shockwave);
-            shockwaveGeometry.dispose();
-            shockwaveMaterial.dispose();
-        }
-    }, 50);
-    
-    // CLEANUP - Moderate duration
-    setTimeout(() => {
-        if (explosionGroup.parent) {
-            scene.remove(explosionGroup);
-        }
-        // console.log('Balanced asteroid explosion cleanup complete');
-    }, 2000); // Reduced from 3000ms to 2000ms
+    let elapsedTime = 0;
+
+    if (typeof explosionManager !== 'undefined') {
+        explosionManager.addExplosion({
+            update(deltaTime) {
+                elapsedTime += deltaTime;
+
+                // Update main explosion
+                explosionScale += 1 * (deltaTime / 60);
+                explosionOpacity -= 0.1 * (deltaTime / 60);
+                mainExplosion.scale.set(explosionScale, explosionScale, explosionScale);
+                mainExplosionMaterial.opacity = Math.max(0, explosionOpacity);
+
+                // Update particles
+                const deltaFactor = deltaTime / 50;
+                for (let i = 0; i < particles.length; i++) {
+                    const p = particles[i];
+                    if (p.life > 0) {
+                        p.mesh.position.add(particleVelocities[i].clone().multiplyScalar(0.2 * deltaFactor));
+                        p.life -= 0.08 * deltaFactor;
+                        p.material.opacity = Math.max(0, p.life);
+                        p.mesh.scale.set(p.life, p.life, p.life);
+                    }
+                }
+
+                // Update shockwave
+                shockwaveScale += 1.5 * (deltaTime / 50);
+                shockwaveOpacity -= 0.05 * (deltaTime / 50);
+                shockwave.scale.set(shockwaveScale, shockwaveScale, 1);
+                shockwaveMaterial.opacity = Math.max(0, shockwaveOpacity);
+
+                // Complete after 2 seconds
+                return elapsedTime < 2000;
+            },
+
+            cleanup() {
+                scene.remove(explosionGroup);
+                mainExplosionGeometry.dispose();
+                mainExplosionMaterial.dispose();
+                particles.forEach(p => {
+                    p.geometry.dispose();
+                    p.material.dispose();
+                });
+                shockwaveGeometry.dispose();
+                shockwaveMaterial.dispose();
+            }
+        });
+    }
 }
 
 // DRAMATIC PLAYER EXPLOSION - Full screen with vaporizing effect
@@ -432,6 +429,9 @@ function createPlayerExplosion() {
 
     // MASSIVE PARTICLE DEBRIS FIELD
     const particleCount = 100;
+    const particles = [];
+    const particleVelocities = [];
+
     for (let i = 0; i < particleCount; i++) {
         const particleGeometry = new THREE.SphereGeometry(2 + Math.random() * 5, 8, 8);
         const particleMaterial = new THREE.MeshBasicMaterial({
@@ -448,74 +448,101 @@ function createPlayerExplosion() {
         );
 
         explosionGroup.add(particle);
-
-        let particleLife = 1.0;
-        const particleInterval = setInterval(() => {
-            particle.position.add(velocity.clone().multiplyScalar(0.3));
-            particleLife -= 0.02;
-            particleMaterial.opacity = particleLife;
-
-            const scale = particleLife;
-            particle.scale.set(scale, scale, scale);
-
-            if (particleLife <= 0) {
-                clearInterval(particleInterval);
-                explosionGroup.remove(particle);
-                particleGeometry.dispose();
-                particleMaterial.dispose();
-            }
-        }, 50);
+        particles.push({ mesh: particle, geometry: particleGeometry, material: particleMaterial, life: 1.0 });
+        particleVelocities.push(velocity);
     }
 
-    // MAIN EXPLOSION ANIMATION - Dramatic growth
+    // Add main explosion to manager
     let explosionScale = 1;
     let explosionOpacity = 1.0;
-    const explosionInterval = setInterval(() => {
-        explosionScale += 5;
-        explosionOpacity -= 0.02;
 
-        mainExplosion.scale.set(explosionScale, explosionScale, explosionScale);
-        mainExplosionMaterial.opacity = explosionOpacity;
+    if (typeof explosionManager !== 'undefined') {
+        explosionManager.addExplosion({
+            update(deltaTime) {
+                // Update main explosion
+                explosionScale += 5 * (deltaTime / 50);
+                explosionOpacity -= 0.02 * (deltaTime / 50);
+                mainExplosion.scale.set(explosionScale, explosionScale, explosionScale);
+                mainExplosionMaterial.opacity = Math.max(0, explosionOpacity);
 
-        if (explosionOpacity <= 0) {
-            clearInterval(explosionInterval);
-            explosionGroup.remove(mainExplosion);
-            mainExplosionGeometry.dispose();
-            mainExplosionMaterial.dispose();
-        }
-    }, 50);
-
-    // MULTIPLE SHOCKWAVES
-    for (let i = 0; i < 3; i++) {
-        setTimeout(() => {
-            const shockwaveGeometry = new THREE.RingGeometry(10, 15, 32);
-            const shockwaveMaterial = new THREE.MeshBasicMaterial({
-                color: 0xff6600,
-                transparent: true,
-                opacity: 0.8,
-                side: THREE.DoubleSide
-            });
-            const shockwave = new THREE.Mesh(shockwaveGeometry, shockwaveMaterial);
-            shockwave.rotation.x = Math.PI / 2;
-            explosionGroup.add(shockwave);
-
-            let shockwaveScale = 1;
-            let shockwaveOpacity = 0.8;
-            const shockwaveInterval = setInterval(() => {
-                shockwaveScale += 8;
-                shockwaveOpacity -= 0.04;
-
-                shockwave.scale.set(shockwaveScale, shockwaveScale, 1);
-                shockwaveMaterial.opacity = shockwaveOpacity;
-
-                if (shockwaveOpacity <= 0) {
-                    clearInterval(shockwaveInterval);
-                    explosionGroup.remove(shockwave);
-                    shockwaveGeometry.dispose();
-                    shockwaveMaterial.dispose();
+                // Update particles
+                const deltaFactor = deltaTime / 50;
+                for (let i = 0; i < particles.length; i++) {
+                    const p = particles[i];
+                    if (p.life > 0) {
+                        p.mesh.position.add(particleVelocities[i].clone().multiplyScalar(0.3 * deltaFactor));
+                        p.life -= 0.02 * deltaFactor;
+                        p.material.opacity = Math.max(0, p.life);
+                        p.mesh.scale.set(p.life, p.life, p.life);
+                    }
                 }
-            }, 50);
-        }, i * 200);
+
+                return explosionOpacity > 0;
+            },
+
+            cleanup() {
+                explosionGroup.remove(mainExplosion);
+                mainExplosionGeometry.dispose();
+                mainExplosionMaterial.dispose();
+                particles.forEach(p => {
+                    explosionGroup.remove(p.mesh);
+                    p.geometry.dispose();
+                    p.material.dispose();
+                });
+            }
+        });
+
+        // MULTIPLE SHOCKWAVES
+        for (let i = 0; i < 3; i++) {
+            const waveDelay = i * 200;
+            let waveCreated = false;
+            let waveDelayElapsed = 0;
+
+            explosionManager.addExplosion({
+                update(deltaTime) {
+                    waveDelayElapsed += deltaTime;
+
+                    if (!waveCreated && waveDelayElapsed >= waveDelay) {
+                        waveCreated = true;
+                        const shockwaveGeometry = new THREE.RingGeometry(10, 15, 32);
+                        const shockwaveMaterial = new THREE.MeshBasicMaterial({
+                            color: 0xff6600,
+                            transparent: true,
+                            opacity: 0.8,
+                            side: THREE.DoubleSide
+                        });
+                        const shockwave = new THREE.Mesh(shockwaveGeometry, shockwaveMaterial);
+                        shockwave.rotation.x = Math.PI / 2;
+                        explosionGroup.add(shockwave);
+
+                        this.shockwave = shockwave;
+                        this.shockwaveGeometry = shockwaveGeometry;
+                        this.shockwaveMaterial = shockwaveMaterial;
+                        this.shockwaveScale = 1;
+                        this.shockwaveOpacity = 0.8;
+                    }
+
+                    if (waveCreated && this.shockwave) {
+                        this.shockwaveScale += 8 * (deltaTime / 50);
+                        this.shockwaveOpacity -= 0.04 * (deltaTime / 50);
+                        this.shockwave.scale.set(this.shockwaveScale, this.shockwaveScale, 1);
+                        this.shockwaveMaterial.opacity = Math.max(0, this.shockwaveOpacity);
+
+                        return this.shockwaveOpacity > 0;
+                    }
+
+                    return true;
+                },
+
+                cleanup() {
+                    if (this.shockwave) {
+                        explosionGroup.remove(this.shockwave);
+                        this.shockwaveGeometry.dispose();
+                        this.shockwaveMaterial.dispose();
+                    }
+                }
+            });
+        }
     }
 
     // Play vaporizing sound effect

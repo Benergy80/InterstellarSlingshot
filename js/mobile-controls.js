@@ -437,11 +437,12 @@ window.updateMobileNavigation = function() {
             
             mobileCard.onclick = (e) => {
                 card.click();
-                
-                setTimeout(() => {
-                    window.hideNavPanel();
-                }, 300);
-                
+
+                // FIXED: Don't auto-close panel when selecting target
+                // Panel should only close when:
+                // 1. User swipes it shut manually
+                // 2. User activates "Orient to Target" (auto-navigate) button
+
                 if (typeof playSound === 'function') {
                     playSound('navigation', 900, 0.1);
                 }
