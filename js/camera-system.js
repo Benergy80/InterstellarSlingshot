@@ -353,9 +353,10 @@ function updateCameraView(camera) {
         // Add dynamic banking based on rotational velocity
         if (typeof rotationalVelocity !== 'undefined') {
             const bankAmount = -rotationalVelocity.yaw * 15;
-            cameraState.playerShipMesh.rotation.z += bankAmount;
             const pitchTilt = rotationalVelocity.pitch * 5;
-            cameraState.playerShipMesh.rotation.x += pitchTilt;
+            // Set rotation directly to prevent accumulation over multiple frames
+            cameraState.playerShipMesh.rotation.z = camera.rotation.z + bankAmount;
+            cameraState.playerShipMesh.rotation.x = camera.rotation.x + pitchTilt;
         }
 
         // Make ship visible but slightly transparent for cockpit view
@@ -402,9 +403,10 @@ function updateCameraView(camera) {
         // Add dynamic banking based on rotational velocity
         if (typeof rotationalVelocity !== 'undefined') {
             const bankAmount = -rotationalVelocity.yaw * 15;
-            cameraState.playerShipMesh.rotation.z += bankAmount;
             const pitchTilt = rotationalVelocity.pitch * 5;
-            cameraState.playerShipMesh.rotation.x += pitchTilt;
+            // Set rotation directly to prevent accumulation over multiple frames
+            cameraState.playerShipMesh.rotation.z = camera.rotation.z + bankAmount;
+            cameraState.playerShipMesh.rotation.x = camera.rotation.x + pitchTilt;
         }
 
         // Ensure the ship model is fully visible and opaque in third-person
