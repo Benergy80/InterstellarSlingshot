@@ -2378,7 +2378,7 @@ function createDirectionalDamageEffect(attackDirection) {
     
     // Create the directional damage overlay
     const damageOverlay = document.createElement('div');
-    damageOverlay.className = 'absolute pointer-events-none z-30';
+    damageOverlay.className = 'fixed pointer-events-none z-30';
     damageOverlay.style.cssText = overlayStyle + pulseStyle + 'opacity: 0; transition: opacity 0.1s ease-out;';
     document.body.appendChild(damageOverlay);
     
@@ -2403,7 +2403,8 @@ function createDirectionalDamageEffect(attackDirection) {
 
 function createDamageDirectionIndicator(direction) {
     const indicator = document.createElement('div');
-    indicator.className = 'absolute pointer-events-none z-35 text-red-400 font-bold text-lg';
+    indicator.className = 'fixed pointer-events-none text-red-400 font-bold text-lg';
+    indicator.style.zIndex = '50'; // Higher than other UI elements
     indicator.style.fontFamily = "'Orbitron', monospace";
     indicator.style.textShadow = '0 0 10px rgba(255,0,0,0.8), 0 0 20px rgba(255,0,0,0.5)';
     indicator.style.opacity = '0';
@@ -2439,17 +2440,20 @@ function createDamageDirectionIndicator(direction) {
     indicator.textContent = text;
     indicator.style.cssText += positionStyle;
     document.body.appendChild(indicator);
-    
+
+    // Store the base transform for proper animation
+    const baseTransform = indicator.style.transform || '';
+
     // Animate in
     setTimeout(() => {
         indicator.style.opacity = '1';
-        indicator.style.transform += ' scale(1.1)';
+        indicator.style.transform = baseTransform + ' scale(1.1)';
     }, 50);
-    
+
     // Animate out
     setTimeout(() => {
         indicator.style.opacity = '0';
-        indicator.style.transform += ' scale(0.8)';
+        indicator.style.transform = baseTransform + ' scale(0.8)';
     }, 800);
     
     // Remove
