@@ -2222,6 +2222,136 @@ const fadeInterval = setInterval(() => {
     }
 }
 
+// 3RD PERSON LASER: Animated tracer from ship wing tips (visible from behind)
+function createThirdPersonLasers(playerShip, targetPosition) {
+    if (typeof THREE === 'undefined' || typeof scene === 'undefined') return;
+    
+    try {
+        // Get ship's world transform
+        const shipPos = new THREE.Vector3();
+        const shipQuat = new THREE.Quaternion();
+        playerShip.getWorldPosition(shipPos);
+        playerShip.getWorldQuaternion(shipQuat);
+        
+        // Wing tip positions in ship local space (adjusted for 48x scale)
+        // Wings spread on X axis, slightly forward on Z
+        const wingSpread = 8;   // Left/right from center
+        const wingForward = -4; // Slightly forward of center
+        const wingUp = 0;       // At ship center height
+        
+        const leftWingLocal = new THREE.Vector3(-wingSpread, wingUp, wingForward);
+        const rightWingLocal = new THREE.Vector3(wingSpread, wingUp, wingForward);
+        
+        // Transform to world space
+        const leftWing = leftWingLocal.applyQuaternion(shipQuat).add(shipPos);
+        const rightWing = rightWingLocal.applyQuaternion(shipQuat).add(shipPos.clone());
+        
+        // Create muzzle flash at each wing (visible marker)
+        createMuzzleFlash(leftWing);
+        createMuzzleFlash(rightWing);
+        
+        // Create animated tracer projectiles
+        createTracerProjectile(leftWing.clone(), targetPosition, '#00ff96');
+        createTracerProjectile(rightWing.clone(), targetPosition, '#00ff96');
+        
+    } catch (error) {
+        console.warn('Failed to create third-person lasers:', error);
+    }
+}
+
+// Muzzle flash effect at wing tip (brief bright sphere)
+function createMuzzleFlash(position) {
+    const flashGeometry = new THREE.SphereGeometry(2, 8, 8);
+    const flashMaterial = new THREE.MeshBasicMaterial({
+        color: '#00ff96',
+        transparent: true,
+        opacity: 1.0
+    });
+    const flash = new THREE.Mesh(flashGeometry, flashMaterial);
+    flash.position.copy(position);
+    scene.add(flash);
+    
+    // Quick fade out
+    let opacity = 1.0;
+    const fadeInterval = setInterval(() => {
+        opacity -= 0.25;
+        flashMaterial.opacity = opacity;
+        if (opacity <= 0) {
+            clearInterval(fadeInterval);
+            scene.remove(flash);
+            flashGeometry.dispose();
+            flashMaterial.dispose();
+        }
+    }, 30);
+}
+
+// Animated tracer projectile that travels from start to target
+function createTracerProjectile(startPos, endPos, color) {
+    const direction = new THREE.Vector3().subVectors(endPos, startPos);
+    const totalLength = direction.length();
+    const tracerLength = Math.min(50, totalLength * 0.1); // Short tracer
+    
+    // Create tracer geometry (short cylinder)
+    const tracerGeometry = new THREE.CylinderGeometry(0.3, 0.3, tracerLength, 6);
+    const tracerMaterial = new THREE.MeshBasicMaterial({
+        color: color,
+        transparent: true,
+        opacity: 0.9
+    });
+    const tracer = new THREE.Mesh(tracerGeometry, tracerMaterial);
+    
+    // Orient tracer along direction
+    const up = new THREE.Vector3(0, 1, 0);
+    const dir = direction.clone().normalize();
+    const axis = new THREE.Vector3().crossVectors(up, dir);
+    const angle = Math.acos(up.dot(dir));
+    
+    if (axis.length() > 0.001) {
+        axis.normalize();
+        tracer.setRotationFromAxisAngle(axis, angle);
+    }
+    
+    // Add glow
+    const glowGeometry = new THREE.CylinderGeometry(0.6, 0.6, tracerLength, 6);
+    const glowMaterial = new THREE.MeshBasicMaterial({
+        color: color,
+        transparent: true,
+        opacity: 0.4,
+        blending: THREE.AdditiveBlending
+    });
+    const glow = new THREE.Mesh(glowGeometry, glowMaterial);
+    tracer.add(glow);
+    
+    tracer.position.copy(startPos);
+    scene.add(tracer);
+    
+    // Animate tracer moving toward target
+    const speed = totalLength / 8; // Reach target in ~8 frames
+    let progress = 0;
+    
+    const animateInterval = setInterval(() => {
+        progress += speed;
+        
+        if (progress >= totalLength) {
+            // Reached target - remove tracer
+            clearInterval(animateInterval);
+            scene.remove(tracer);
+            tracerGeometry.dispose();
+            tracerMaterial.dispose();
+            glowGeometry.dispose();
+            glowMaterial.dispose();
+        } else {
+            // Move tracer along path
+            const t = progress / totalLength;
+            tracer.position.lerpVectors(startPos, endPos, t);
+            
+            // Fade as it travels
+            tracerMaterial.opacity = 0.9 * (1 - t * 0.5);
+            glowMaterial.opacity = 0.4 * (1 - t * 0.5);
+        }
+    }, 16); // ~60fps
+}
+
 // =============================================================================
 // ENHANCED VISUAL FEEDBACK: ENEMY HIT COLOR CHANGES
 // =============================================================================
@@ -4190,21 +4320,21 @@ function fireWeapon() {
         }
     }
     
-    // Create weapon effect - Dual lasers from ship position
-    const hasShip = window.cameraState && window.cameraState.playerShipMesh;
-    const laserOrigin = hasShip 
-        ? window.cameraState.playerShipMesh.position.clone()
-        : camera.position.clone();
+    // Create weapon effect - different approach for 1st vs 3rd person
+    const mode = window.cameraState?.mode || 'first-person';
+    const playerShip = window.cameraState?.playerShipMesh;
     
-    const fireQuat = hasShip
-        ? window.cameraState.playerShipMesh.quaternion
-        : camera.quaternion;
-    
-    const leftOffset = new THREE.Vector3(-3, 0, 0).applyQuaternion(fireQuat);
-    const rightOffset = new THREE.Vector3(3, 0, 0).applyQuaternion(fireQuat);
-    
-    createLaserBeam(laserOrigin.clone().add(leftOffset), targetPosition, '#00ff96', true);
-    createLaserBeam(laserOrigin.clone().add(rightOffset), targetPosition, '#00ff96', true);
+    if (mode === 'third-person' && playerShip && playerShip.visible) {
+        // 3RD PERSON: Create tracer effect from wing tips
+        createThirdPersonLasers(playerShip, targetPosition);
+    } else {
+        // 1ST PERSON: Fire from camera position
+        const leftOffset = new THREE.Vector3(-3, 0, 0).applyQuaternion(camera.quaternion);
+        const rightOffset = new THREE.Vector3(3, 0, 0).applyQuaternion(camera.quaternion);
+        
+        createLaserBeam(camera.position.clone().add(leftOffset), targetPosition, '#00ff96', true);
+        createLaserBeam(camera.position.clone().add(rightOffset), targetPosition, '#00ff96', true);
+    }
     
     // Handle weapon hits based on target type
     if (targetObject) {
