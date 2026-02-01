@@ -4217,10 +4217,10 @@ function fireWeapon() {
     const leftOffset = new THREE.Vector3(-wingSpread, 0, 0).applyQuaternion(camQuat);
     const rightOffset = new THREE.Vector3(wingSpread, 0, 0).applyQuaternion(camQuat);
     
-    // DEBUG v2247 - add visual marker at laser origin
+    // DEBUG v2248 - add visual marker at laser origin
     const shipToCam = playerShip ? camera.position.distanceTo(playerShip.position).toFixed(1) : 'n/a';
     const shipToLaser = playerShip ? playerShip.position.distanceTo(laserOrigin).toFixed(1) : 'n/a';
-    console.log('🔫 LASER v2247:', {
+    console.log('🔫 LASER v2248:', {
         mode: mode,
         shipVisible: playerShip?.visible,
         shipToCam: shipToCam,
@@ -4229,15 +4229,21 @@ function fireWeapon() {
         laserOrigin: laserOrigin.toArray().map(n=>n.toFixed(0))
     });
     
-    // DEBUG: Add visible red sphere at laser origin for 1 second
-    if (mode === 'third-person') {
-        const debugSphere = new THREE.Mesh(
-            new THREE.SphereGeometry(2, 8, 8),
-            new THREE.MeshBasicMaterial({ color: 0xff0000 })
-        );
-        debugSphere.position.copy(laserOrigin);
-        scene.add(debugSphere);
-        setTimeout(() => scene.remove(debugSphere), 1000);
+    // DEBUG: Add LARGE visible red sphere at laser origin for 2 seconds
+    if (mode === 'third-person' && typeof THREE !== 'undefined' && typeof scene !== 'undefined') {
+        try {
+            const debugSphere = new THREE.Mesh(
+                new THREE.SphereGeometry(5, 16, 16),  // Larger sphere
+                new THREE.MeshBasicMaterial({ color: 0xff0000, depthTest: false })  // Always visible
+            );
+            debugSphere.position.copy(laserOrigin);
+            debugSphere.renderOrder = 9999;  // Render on top
+            scene.add(debugSphere);
+            console.log('🔴 DEBUG SPHERE added at:', laserOrigin.toArray().map(n=>n.toFixed(0)));
+            setTimeout(() => { scene.remove(debugSphere); }, 2000);
+        } catch(e) {
+            console.error('🔴 DEBUG SPHERE failed:', e);
+        }
     }
     
     createLaserBeam(laserOrigin.clone().add(leftOffset), targetPosition, '#00ff96', true);
