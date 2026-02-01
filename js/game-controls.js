@@ -4191,20 +4191,21 @@ function fireWeapon() {
     }
     
     // Create weapon effect - fire from ship position
-    // VERSION MARKER: v2251 - CALCULATE ship position directly from camera offset
+    // VERSION MARKER: v2252 - SCALED offsets for 48x ship scale
     const camQuat = camera.quaternion;
     const mode = window.cameraState?.mode || 'unknown';
     
     let laserOrigin;
     if (mode === 'third-person') {
-        // Calculate ship position EXACTLY how camera-system.js does it:
-        // normalThirdPersonOffset: new THREE.Vector3(0, -4, -14)
-        // Ship is 14 units FORWARD (-Z) and 4 units DOWN (-Y) from camera
+        // Ship is scaled 48x, so offsets need to be much larger
+        // Camera offset is (0, -4, -14) but ship visual is 48x bigger
+        // Ship center is at camera + offset, but nose is ~24 units ahead of center (half of 48-unit ship)
+        // Total: go to where camera system puts ship, then add large nose offset
         const shipOffset = new THREE.Vector3(0, -4, -14).applyQuaternion(camQuat);
         const shipPos = camera.position.clone().add(shipOffset);
         
-        // Add nose offset (ship is roughly 10 units long at 96x scale... try 8 forward)
-        const noseOffset = new THREE.Vector3(0, 0, -8).applyQuaternion(camQuat);
+        // Ship is 48x scale, so nose is roughly 20-30 units ahead of ship center
+        const noseOffset = new THREE.Vector3(0, 2, -25).applyQuaternion(camQuat);  // forward and slightly up
         laserOrigin = shipPos.clone().add(noseOffset);
     } else {
         // First-person: fire from camera
@@ -4212,13 +4213,13 @@ function fireWeapon() {
         laserOrigin = camera.position.clone().add(forwardOffset);
     }
     
-    // Wing gun offsets (left/right)
-    const wingSpread = (mode === 'third-person') ? 6 : 2;
+    // Wing gun offsets (left/right) - also scaled up
+    const wingSpread = (mode === 'third-person') ? 15 : 2;
     const leftOffset = new THREE.Vector3(-wingSpread, 0, 0).applyQuaternion(camQuat);
     const rightOffset = new THREE.Vector3(wingSpread, 0, 0).applyQuaternion(camQuat);
     
-    // DEBUG v2251 - simplified, no spheres
-    console.log('🔫 LASER v2251:', { mode, laserOrigin: laserOrigin.toArray().map(n=>n.toFixed(0)) });
+    // DEBUG v2252
+    console.log('🔫 LASER v2252:', { mode, laserOrigin: laserOrigin.toArray().map(n=>n.toFixed(0)) });
     
     createLaserBeam(laserOrigin.clone().add(leftOffset), targetPosition, '#00ff96', true);
     createLaserBeam(laserOrigin.clone().add(rightOffset), targetPosition, '#00ff96', true);
