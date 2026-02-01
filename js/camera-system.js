@@ -28,8 +28,11 @@ const cameraState = {
     normalFirstPersonOffset: new THREE.Vector3(0.25, -2, 0.5),
     normalThirdPersonOffset: new THREE.Vector3(0, 3, 8),
     // Warp offsets (ship falls behind - camera ahead of ship)
-    warpFirstPersonOffset: new THREE.Vector3(0, -3, -15),  // Camera way ahead, looking back at ship
-    warpThirdPersonOffset: new THREE.Vector3(0, 2, -10)    // Camera in front of ship
+    warpFirstPersonOffset: new THREE.Vector3(0, -1, -8),   // Camera ahead, ship visible below/behind
+    warpThirdPersonOffset: new THREE.Vector3(0, 1, -5),    // Camera in front, ship visible behind
+    
+    // Track if this is a warp transition (for custom easing)
+    isWarpTransition: false
 };
 
 /**
@@ -296,16 +299,23 @@ function updateCameraView(camera) {
         console.log('🚀 WARP START - transitioning camera ahead of ship');
         cameraState.isTransitioning = true;
         cameraState.transitionStartTime = performance.now();
-        cameraState.transitionDuration = 300;  // Fast transition into warp
+        cameraState.transitionDuration = 800;  // Gradual acceleration into warp
         
+        // Start from CURRENT offset (wherever we are now), not a preset
         if (cameraState.mode === 'first-person') {
             cameraState.transitionStartOffset.copy(cameraState.normalFirstPersonOffset);
-            cameraState.transitionTargetOffset.copy(cameraState.warpFirstPersonOffset);
         } else {
             cameraState.transitionStartOffset.copy(cameraState.normalThirdPersonOffset);
+        }
+        
+        // Target: camera moves ahead of ship (negative Z = in front)
+        if (cameraState.mode === 'first-person') {
+            cameraState.transitionTargetOffset.copy(cameraState.warpFirstPersonOffset);
+        } else {
             cameraState.transitionTargetOffset.copy(cameraState.warpThirdPersonOffset);
         }
         cameraState.warpOffsetActive = true;
+        cameraState.isWarpTransition = 'out';  // Mark as warp-out for custom easing
     }
     
     // Detect warp END - trigger transition back to normal (ship catches up)
@@ -313,7 +323,8 @@ function updateCameraView(camera) {
         console.log('🚀 WARP END - transitioning ship back to normal position');
         cameraState.isTransitioning = true;
         cameraState.transitionStartTime = performance.now();
-        cameraState.transitionDuration = 800;  // Slower, graceful return
+        cameraState.transitionDuration = 1000;  // Slower, graceful return
+        cameraState.isWarpTransition = 'in';  // Mark as warp-in for custom easing
         
         if (cameraState.mode === 'first-person') {
             cameraState.transitionStartOffset.copy(cameraState.warpFirstPersonOffset);
@@ -359,10 +370,20 @@ function updateCameraView(camera) {
         const elapsed = performance.now() - cameraState.transitionStartTime;
         const progress = Math.min(elapsed / cameraState.transitionDuration, 1);
 
-        // Smooth easing function (ease-in-out)
-        const easedProgress = progress < 0.5
-            ? 2 * progress * progress
-            : 1 - Math.pow(-2 * progress + 2, 2) / 2;
+        // Custom easing based on transition type
+        let easedProgress;
+        if (cameraState.isWarpTransition === 'out') {
+            // Warp OUT: ease-in (gradual acceleration - slow start, fast end)
+            easedProgress = progress * progress * progress;  // Cubic ease-in
+        } else if (cameraState.isWarpTransition === 'in') {
+            // Warp IN: ease-out (gradual deceleration - fast start, slow end)
+            easedProgress = 1 - Math.pow(1 - progress, 3);  // Cubic ease-out
+        } else {
+            // Normal transition: ease-in-out
+            easedProgress = progress < 0.5
+                ? 2 * progress * progress
+                : 1 - Math.pow(-2 * progress + 2, 2) / 2;
+        }
 
         // Interpolate between start and target offset
         currentOffset = new THREE.Vector3();
@@ -375,6 +396,7 @@ function updateCameraView(camera) {
         // End transition when complete
         if (progress >= 1) {
             cameraState.isTransitioning = false;
+            cameraState.isWarpTransition = false;  // Clear warp transition flag
         }
     } else if (cameraState.mode === 'first-person') {
         // First-person offset (use warp offset if warping)
