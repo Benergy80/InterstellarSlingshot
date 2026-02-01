@@ -66,6 +66,16 @@ function initCameraSystem(camera, scene) {
             playerModel.scale.set(48, 48, 48);  // Reduced from 96 to 48 for better performance
             playerModel.position.set(0, 0, 0);
 
+            // CENTER THE MODEL GEOMETRY (fix off-center GLB exports)
+            const box = new THREE.Box3().setFromObject(playerModel);
+            const center = box.getCenter(new THREE.Vector3());
+            playerModel.traverse((child) => {
+                if (child.isMesh) {
+                    child.position.sub(center);
+                }
+            });
+            console.log('📐 Player model centered, offset was:', center);
+
             // Don't rotate or offset the model during init
             // Let the update loop handle all positioning and rotation
             // This ensures the model's position exactly matches what we set in updateCameraView
