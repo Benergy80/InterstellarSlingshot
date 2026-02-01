@@ -2233,11 +2233,11 @@ function createThirdPersonLasers(playerShip, targetPosition) {
         playerShip.getWorldPosition(shipPos);
         playerShip.getWorldQuaternion(shipQuat);
         
-        // Wing tip positions in ship local space (adjusted for 48x scale)
-        // Wings spread on X axis, slightly forward on Z
-        const wingSpread = 8;   // Left/right from center
-        const wingForward = -4; // Slightly forward of center
-        const wingUp = 0;       // At ship center height
+        // Wing tip positions in ship local space (ship is 48x scale)
+        // Need to account for ship's 180° Y flip - forward is +Z in ship local space
+        const wingSpread = 20;  // Left/right from center (larger for 48x scale)
+        const wingForward = 15; // Forward of center (+Z because ship faces opposite to camera)
+        const wingUp = -2;      // Slightly below center
         
         const leftWingLocal = new THREE.Vector3(-wingSpread, wingUp, wingForward);
         const rightWingLocal = new THREE.Vector3(wingSpread, wingUp, wingForward);
