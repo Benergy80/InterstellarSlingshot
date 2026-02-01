@@ -197,6 +197,7 @@ function createBorgPatrolSystems() {
 
 function createBorgSystem(center, systemId) {
     const systemGroup = new THREE.Group();
+    systemGroup.frustumCulled = false;  // Prevent system from being culled
     systemGroup.position.copy(center);
 
     // Generate random tilt for THIS SYSTEM
@@ -667,6 +668,7 @@ function createOrbitingPlanet(systemGroup, orbitRadius, index) {
 
 function createBorgDrone(systemGroup, maxOrbitRadius, index) {
     const droneGroup = new THREE.Group();
+    droneGroup.frustumCulled = false;  // Prevent group from being culled
 
     // BORG cube design
     const cubeSize = 30;
