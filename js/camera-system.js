@@ -26,7 +26,7 @@ const cameraState = {
     warpOffsetActive: false,
     // Normal offsets for reference
     normalFirstPersonOffset: new THREE.Vector3(0.25, -2, 0.5),
-    normalThirdPersonOffset: new THREE.Vector3(0, 5, 20),  // Further back so ship appears smaller
+    normalThirdPersonOffset: new THREE.Vector3(0, 4, 14),  // Behind and above ship
     // Warp END offsets (where ship ends up after camera overtakes it)
     // Large positive Z = ship way in front, then it falls below frame
     warpFirstPersonOffset: new THREE.Vector3(0, 8, 40),    // Ship far ahead and above, falls out bottom
@@ -593,6 +593,86 @@ function setThirdPersonHeight(height) {
     console.log(`📷 Third-person height: ${cameraState.thirdPersonHeight}`);
 }
 
+/**
+ * Set camera to first-person mode (1 key)
+ */
+function setCameraFirstPerson() {
+    if (!cameraState.playerShipMesh) {
+        console.warn('⚠️ No player ship model available');
+        return;
+    }
+    
+    if (cameraState.mode === 'first-person' && !cameraState.isTransitioning) {
+        console.log('📷 Already in first-person mode');
+        return;
+    }
+    
+    console.log('📷 Setting FIRST-PERSON view');
+    cameraState.mode = 'first-person';
+    cameraState.playerShipMesh.visible = true;
+    cameraState.isTransitioning = true;
+    cameraState.transitionStartTime = performance.now();
+    cameraState.transitionDuration = 400;
+    cameraState.isWarpTransition = false;
+    cameraState.transitionStartOffset.copy(cameraState.normalThirdPersonOffset);
+    cameraState.transitionTargetOffset.copy(cameraState.normalFirstPersonOffset);
+    
+    if (typeof showNotification === 'function') {
+        showNotification('First-Person Camera', 2000);
+    }
+}
+
+/**
+ * Set camera to third-person mode (3 key)
+ */
+function setCameraThirdPerson() {
+    if (!cameraState.playerShipMesh) {
+        console.warn('⚠️ No player ship model available');
+        return;
+    }
+    
+    if (cameraState.mode === 'third-person' && !cameraState.isTransitioning) {
+        console.log('📷 Already in third-person mode');
+        return;
+    }
+    
+    console.log('📷 Setting THIRD-PERSON view');
+    cameraState.mode = 'third-person';
+    cameraState.playerShipMesh.visible = true;
+    cameraState.isTransitioning = true;
+    cameraState.transitionStartTime = performance.now();
+    cameraState.transitionDuration = 400;
+    cameraState.isWarpTransition = false;
+    cameraState.transitionStartOffset.copy(cameraState.normalFirstPersonOffset);
+    cameraState.transitionTargetOffset.copy(cameraState.normalThirdPersonOffset);
+    
+    if (typeof showNotification === 'function') {
+        showNotification('Third-Person Camera', 2000);
+    }
+}
+
+/**
+ * Hide ship completely (0 key)
+ */
+function setCameraNoShip() {
+    if (!cameraState.playerShipMesh) {
+        console.warn('⚠️ No player ship model available');
+        return;
+    }
+    
+    console.log('📷 Hiding ship');
+    cameraState.playerShipMesh.visible = false;
+    cameraState.playerShipMesh.traverse((child) => {
+        if (child.isMesh) {
+            child.visible = false;
+        }
+    });
+    
+    if (typeof showNotification === 'function') {
+        showNotification('Ship Hidden', 2000);
+    }
+}
+
 // Export functions to window
 if (typeof window !== 'undefined') {
     window.initCameraSystem = initCameraSystem;
@@ -601,6 +681,9 @@ if (typeof window !== 'undefined') {
     window.setThirdPersonDistance = setThirdPersonDistance;
     window.setThirdPersonHeight = setThirdPersonHeight;
     window.readdPlayerShipToScene = readdPlayerShipToScene;
+    window.setCameraFirstPerson = setCameraFirstPerson;
+    window.setCameraThirdPerson = setCameraThirdPerson;
+    window.setCameraNoShip = setCameraNoShip;
     window.cameraState = cameraState;
 
     console.log('✅ Camera system loaded');

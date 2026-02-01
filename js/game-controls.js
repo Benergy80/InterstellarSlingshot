@@ -2550,8 +2550,29 @@ function initializeControlButtons() {
             return;
         }
 
-        // Add camera view toggle (V key or 3 key)
-        if (e.key === 'v' || e.key === 'V' || e.key === '3') {
+        // Camera view controls: 1 = first-person, 3 = third-person, 0 = no ship, V = toggle
+        if (e.key === '1') {
+            e.preventDefault();
+            if (typeof setCameraFirstPerson === 'function') {
+                setCameraFirstPerson();
+            }
+            return;
+        }
+        if (e.key === '3') {
+            e.preventDefault();
+            if (typeof setCameraThirdPerson === 'function') {
+                setCameraThirdPerson();
+            }
+            return;
+        }
+        if (e.key === '0') {
+            e.preventDefault();
+            if (typeof setCameraNoShip === 'function') {
+                setCameraNoShip();
+            }
+            return;
+        }
+        if (e.key === 'v' || e.key === 'V') {
             e.preventDefault();
             if (typeof toggleCameraView === 'function') {
                 console.log('🎥 Toggling camera view...');
