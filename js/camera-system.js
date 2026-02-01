@@ -19,7 +19,17 @@ const cameraState = {
     transitionStartTime: 0,
     transitionDuration: 400, // milliseconds
     transitionStartOffset: new THREE.Vector3(),
-    transitionTargetOffset: new THREE.Vector3()
+    transitionTargetOffset: new THREE.Vector3(),
+    
+    // Warp state tracking
+    wasWarping: false,
+    warpOffsetActive: false,
+    // Normal offsets for reference
+    normalFirstPersonOffset: new THREE.Vector3(0.25, -2, 0.5),
+    normalThirdPersonOffset: new THREE.Vector3(0, 3, 8),
+    // Warp offsets (ship falls behind - camera ahead of ship)
+    warpFirstPersonOffset: new THREE.Vector3(0, -3, -15),  // Camera way ahead, looking back at ship
+    warpThirdPersonOffset: new THREE.Vector3(0, 2, -10)    // Camera in front of ship
 };
 
 /**
@@ -274,6 +284,50 @@ function updateCameraView(camera) {
     // Make ship visible when game is active
     cameraState.playerShipMesh.visible = true;
 
+    // =========================================================================
+    // WARP TRANSITION DETECTION
+    // =========================================================================
+    const isWarping = typeof gameState !== 'undefined' && 
+                      gameState.emergencyWarp && 
+                      gameState.emergencyWarp.active;
+    
+    // Detect warp START - trigger transition to warp offset (ship falls behind)
+    if (isWarping && !cameraState.wasWarping) {
+        console.log('🚀 WARP START - transitioning camera ahead of ship');
+        cameraState.isTransitioning = true;
+        cameraState.transitionStartTime = performance.now();
+        cameraState.transitionDuration = 300;  // Fast transition into warp
+        
+        if (cameraState.mode === 'first-person') {
+            cameraState.transitionStartOffset.copy(cameraState.normalFirstPersonOffset);
+            cameraState.transitionTargetOffset.copy(cameraState.warpFirstPersonOffset);
+        } else {
+            cameraState.transitionStartOffset.copy(cameraState.normalThirdPersonOffset);
+            cameraState.transitionTargetOffset.copy(cameraState.warpThirdPersonOffset);
+        }
+        cameraState.warpOffsetActive = true;
+    }
+    
+    // Detect warp END - trigger transition back to normal (ship catches up)
+    if (!isWarping && cameraState.wasWarping) {
+        console.log('🚀 WARP END - transitioning ship back to normal position');
+        cameraState.isTransitioning = true;
+        cameraState.transitionStartTime = performance.now();
+        cameraState.transitionDuration = 800;  // Slower, graceful return
+        
+        if (cameraState.mode === 'first-person') {
+            cameraState.transitionStartOffset.copy(cameraState.warpFirstPersonOffset);
+            cameraState.transitionTargetOffset.copy(cameraState.normalFirstPersonOffset);
+        } else {
+            cameraState.transitionStartOffset.copy(cameraState.warpThirdPersonOffset);
+            cameraState.transitionTargetOffset.copy(cameraState.normalThirdPersonOffset);
+        }
+        cameraState.warpOffsetActive = false;
+    }
+    
+    cameraState.wasWarping = isWarping;
+    // =========================================================================
+
     if (window.updateCameraViewCallCount % 120 === 0) {
         console.log('  ▶️ Game active - updating ship position');
     }
@@ -323,11 +377,15 @@ function updateCameraView(camera) {
             cameraState.isTransitioning = false;
         }
     } else if (cameraState.mode === 'first-person') {
-        // First-person offset
-        currentOffset = new THREE.Vector3(0.25, -2, 0.5);
+        // First-person offset (use warp offset if warping)
+        currentOffset = cameraState.warpOffsetActive 
+            ? cameraState.warpFirstPersonOffset.clone()
+            : cameraState.normalFirstPersonOffset.clone();
     } else {
-        // Third-person offset (X=0 centers the ship, Y=up, Z=behind)
-        currentOffset = new THREE.Vector3(0, 3, 8);
+        // Third-person offset (use warp offset if warping)
+        currentOffset = cameraState.warpOffsetActive 
+            ? cameraState.warpThirdPersonOffset.clone()
+            : cameraState.normalThirdPersonOffset.clone();
     }
 
     if (cameraState.mode === 'first-person') {
