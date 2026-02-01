@@ -4195,9 +4195,9 @@ function fireWeapon() {
     const mode = window.cameraState?.mode || 'unknown';
     
     // Calculate laser origin: camera position + forward offset to ship nose
-    // Negative Z = forward in camera space
-    const forwardDist = (mode === 'third-person') ? -28 : -2;
-    const downDist = (mode === 'third-person') ? -6 : 0;
+    // Try POSITIVE Z = forward (opposite of typical convention)
+    const forwardDist = (mode === 'third-person') ? 28 : 2;
+    const downDist = (mode === 'third-person') ? -4 : 0;
     
     const forwardOffset = new THREE.Vector3(0, downDist, forwardDist).applyQuaternion(camQuat);
     const laserOrigin = camera.position.clone().add(forwardOffset);
