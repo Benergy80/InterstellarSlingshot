@@ -3,6 +3,9 @@
 // CLEANED: Removed stub functions, duplicate gameState, competing initialization
 // RESTORED: Working audio system, UI buttons, mouse crosshair, tutorial from game-controls13.js
 
+// Active lasers array - tracks beams that move with the ship
+const activeLasers = [];
+
 // Global key state
 const keys = {
   w: false, a: false, s: false, d: false,
@@ -2265,7 +2268,7 @@ function createThirdPersonLasers(playerShip, targetPosition) {
     }
 }
 
-// Full-length laser beam for 3rd person (instant appearance, fades like 1st person)
+// Full-length laser beam for 3rd person - NOW TRACKS WITH SHIP MOVEMENT
 function createThirdPersonBeam(startPos, endPos, color) {
     if (typeof THREE === 'undefined' || typeof scene === 'undefined') return;
     
@@ -2315,25 +2318,61 @@ function createThirdPersonBeam(startPos, endPos, color) {
         
         scene.add(laserBeam);
         
-        // VERY fast fade for 3rd person - disappear before ship moves noticeably
-        let opacity = 0.9;
+        // Store camera position at creation time for tracking
+        const creationCameraPos = camera.position.clone();
+        
+        // Track this laser for position updates
+        const laserData = {
+            beam: laserBeam,
+            geometry: laserGeometry,
+            material: laserMaterial,
+            glowGeometry: glowGeometry,
+            glowMaterial: glowMaterial,
+            lastCameraPos: creationCameraPos,
+            opacity: 0.9
+        };
+        activeLasers.push(laserData);
+        
+        // Slower fade now that lasers track with ship
         const fadeInterval = setInterval(() => {
-            opacity -= 0.35;  // Much faster fade
-            laserMaterial.opacity = opacity;
-            glowMaterial.opacity = opacity * 0.4;
+            laserData.opacity -= 0.15;  // Slower fade - laser stays visible longer
+            laserMaterial.opacity = laserData.opacity;
+            glowMaterial.opacity = laserData.opacity * 0.4;
             
-            if (opacity <= 0) {
+            if (laserData.opacity <= 0) {
                 clearInterval(fadeInterval);
+                // Remove from active lasers array
+                const idx = activeLasers.indexOf(laserData);
+                if (idx > -1) activeLasers.splice(idx, 1);
+                // Cleanup
                 scene.remove(laserBeam);
                 laserGeometry.dispose();
                 laserMaterial.dispose();
                 glowGeometry.dispose();
                 glowMaterial.dispose();
             }
-        }, 25);  // Faster interval
+        }, 30);
         
     } catch (error) {
         console.warn('Failed to create third-person beam:', error);
+    }
+}
+
+// Update active lasers to track with ship movement - call this in animate()
+function updateActiveLasers() {
+    if (typeof camera === 'undefined' || activeLasers.length === 0) return;
+    
+    const currentCameraPos = camera.position;
+    
+    for (const laserData of activeLasers) {
+        // Calculate how much the camera has moved since last frame
+        const delta = new THREE.Vector3().subVectors(currentCameraPos, laserData.lastCameraPos);
+        
+        // Move the laser beam by the same amount
+        laserData.beam.position.add(delta);
+        
+        // Update stored position for next frame
+        laserData.lastCameraPos.copy(currentCameraPos);
     }
 }
 

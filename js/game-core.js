@@ -1030,6 +1030,11 @@ function animate() {
     if (typeof updateCameraView === 'function') {
         updateCameraView(camera);
     }
+    
+    // Update laser positions to track with ship movement
+    if (typeof updateActiveLasers === 'function') {
+        updateActiveLasers();
+    }
 
     if (gameState.gameOver || !gameState.gameStarted) {
         if (stars) {
