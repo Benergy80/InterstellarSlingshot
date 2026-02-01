@@ -2200,10 +2200,10 @@ function createLaserBeam(startPos, endPos, color = '#00ff96', isPlayer = true) {
         
         scene.add(laserBeam);
         
-        // Fast-fading laser beams
+        // Longer-lasting laser beams (original timing)
 let opacity = 0.8;
 const fadeInterval = setInterval(() => {
-    opacity -= 0.15;  // Faster fade
+    opacity -= 0.05;  // Original fade rate
     laserMaterial.opacity = opacity;
     glowMaterial.opacity = opacity * 0.4;
     
@@ -2215,7 +2215,7 @@ const fadeInterval = setInterval(() => {
         glowGeometry.dispose();
         glowMaterial.dispose();
     }
-}, 40);  // Faster interval
+}, 50);  // Original interval
         
     } catch (error) {
         console.warn('Failed to create laser beam:', error);
@@ -4190,8 +4190,21 @@ function fireWeapon() {
         }
     }
     
-    // Create weapon effect (RESTORED: Uses corrected laser beam)
-    createLaserBeam(camera.position, targetPosition, '#00ff96', true);
+    // Create weapon effect - Dual lasers from ship position
+    const hasShip = window.cameraState && window.cameraState.playerShipMesh;
+    const laserOrigin = hasShip 
+        ? window.cameraState.playerShipMesh.position.clone()
+        : camera.position.clone();
+    
+    const fireQuat = hasShip
+        ? window.cameraState.playerShipMesh.quaternion
+        : camera.quaternion;
+    
+    const leftOffset = new THREE.Vector3(-3, 0, 0).applyQuaternion(fireQuat);
+    const rightOffset = new THREE.Vector3(3, 0, 0).applyQuaternion(fireQuat);
+    
+    createLaserBeam(laserOrigin.clone().add(leftOffset), targetPosition, '#00ff96', true);
+    createLaserBeam(laserOrigin.clone().add(rightOffset), targetPosition, '#00ff96', true);
     
     // Handle weapon hits based on target type
     if (targetObject) {
