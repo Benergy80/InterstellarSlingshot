@@ -2271,7 +2271,7 @@ function createThirdPersonLasers(playerShip, targetPosition) {
         
         // Wing positions relative to ship center
         const wingSpread = size.x * 0.35;
-        const wingForward = -size.z * 0.15;  // Slightly forward
+        const wingForward = -size.z * 0.18;  // Slightly forward
         const wingUp = -2;
         
         // Apply camera quaternion for wing offsets
@@ -4499,8 +4499,8 @@ function fireWeapon() {
         createThirdPersonLasers(playerShip, targetPosition);
     } else {
         // 1ST PERSON: Fire from camera position
-        const leftOffset = new THREE.Vector3(-3, 0, 0).applyQuaternion(camera.quaternion);
-        const rightOffset = new THREE.Vector3(3, 0, 0).applyQuaternion(camera.quaternion);
+        const leftOffset = new THREE.Vector3(-3, -2, 0).applyQuaternion(camera.quaternion);
+        const rightOffset = new THREE.Vector3(3, -2, 0).applyQuaternion(camera.quaternion);
         
         createLaserBeam(camera.position.clone().add(leftOffset), targetPosition, '#00ff96', true);
         createLaserBeam(camera.position.clone().add(rightOffset), targetPosition, '#00ff96', true);
