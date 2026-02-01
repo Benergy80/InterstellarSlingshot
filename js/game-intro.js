@@ -1280,9 +1280,9 @@ function animateCountdownPhase(elapsed) {
         introSequence.countdownValue = newCountdown;
         updateCountdownDisplay(newCountdown);
         
-        // Play countdown tick sound (very quiet)
-        if (newCountdown > 0 && typeof playSound === 'function') {
-            playSound('achievement', 800, 0.02);
+        // Play custom countdown beep - NASA-style tone
+        if (newCountdown > 0) {
+            playCountdownTone(newCountdown);
         }
     }
     
@@ -1395,11 +1395,6 @@ function transitionToCountdown() {
     introSequence.phase = 'countdown';
     introSequence.phaseStartTime = Date.now();
     console.log('⏱️ Intro phase: Countdown started');
-    
-    // Play launch preparation sound
-    if (typeof playSound === 'function') {
-        playSound('warp', 200, 0.5);
-    }
 }
 
 function transitionToLaunch() {
@@ -2456,6 +2451,54 @@ function easeInOutCubic(x) {
 // =============================================================================
 // CYBERPUNK SYNTH-WAVE INTRO SOUNDS
 // =============================================================================
+
+// Custom countdown tone - clean futuristic beep
+function playCountdownTone(number) {
+    if (!audioContext || audioContext.state === 'suspended') return;
+    
+    try {
+        const oscillator = audioContext.createOscillator();
+        const gain = audioContext.createGain();
+        
+        oscillator.connect(gain);
+        gain.connect(audioContext.destination);
+        
+        // Two-tone beep: base tone + harmonic
+        // Pitch rises as countdown gets lower (building urgency)
+        const baseFreq = 600 + (10 - number) * 40;  // 600Hz to 960Hz
+        oscillator.frequency.setValueAtTime(baseFreq, audioContext.currentTime);
+        
+        // Clean sine wave for clarity
+        oscillator.type = 'sine';
+        
+        // Quick, punchy envelope
+        gain.gain.setValueAtTime(0, audioContext.currentTime);
+        gain.gain.linearRampToValueAtTime(0.12, audioContext.currentTime + 0.01);  // Quick attack
+        gain.gain.setValueAtTime(0.12, audioContext.currentTime + 0.08);  // Hold
+        gain.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + 0.2);  // Decay
+        
+        oscillator.start(audioContext.currentTime);
+        oscillator.stop(audioContext.currentTime + 0.2);
+        
+        // Add subtle harmonic overtone
+        const harmonic = audioContext.createOscillator();
+        const harmonicGain = audioContext.createGain();
+        harmonic.connect(harmonicGain);
+        harmonicGain.connect(audioContext.destination);
+        
+        harmonic.frequency.setValueAtTime(baseFreq * 2, audioContext.currentTime);  // Octave up
+        harmonic.type = 'sine';
+        
+        harmonicGain.gain.setValueAtTime(0, audioContext.currentTime);
+        harmonicGain.gain.linearRampToValueAtTime(0.04, audioContext.currentTime + 0.01);
+        harmonicGain.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + 0.15);
+        
+        harmonic.start(audioContext.currentTime);
+        harmonic.stop(audioContext.currentTime + 0.15);
+    } catch (e) {
+        console.warn('Countdown tone error:', e);
+    }
+}
 
 function playCountdownBeep(number) {
     if (!audioContext || audioContext.state === 'suspended') return;
