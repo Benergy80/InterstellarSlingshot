@@ -286,6 +286,17 @@ function updateCameraView(camera) {
         });
         return; // Don't update position during intro
     }
+    
+    // CRITICAL: Keep ship hidden if in 'hidden' mode (0 key)
+    if (cameraState.mode === 'hidden') {
+        cameraState.playerShipMesh.visible = false;
+        cameraState.playerShipMesh.traverse((child) => {
+            if (child.isMesh) {
+                child.visible = false;
+            }
+        });
+        return; // Don't update position when hidden
+    }
 
     // Make ship visible when game is active
     cameraState.playerShipMesh.visible = true;
@@ -652,24 +663,36 @@ function setCameraThirdPerson() {
 }
 
 /**
- * Hide ship completely (0 key)
+ * Hide ship completely and reset to origin (0 key)
  */
 function setCameraNoShip() {
-    if (!cameraState.playerShipMesh) {
-        console.warn('⚠️ No player ship model available');
-        return;
+    console.log('📷 Hiding ship and resetting to origin');
+    
+    // Set mode to hidden so updateCameraView doesn't re-show it
+    cameraState.mode = 'hidden';
+    
+    // Hide ship mesh if it exists
+    if (cameraState.playerShipMesh) {
+        cameraState.playerShipMesh.visible = false;
+        cameraState.playerShipMesh.traverse((child) => {
+            if (child.isMesh) {
+                child.visible = false;
+            }
+        });
     }
     
-    console.log('📷 Hiding ship');
-    cameraState.playerShipMesh.visible = false;
-    cameraState.playerShipMesh.traverse((child) => {
-        if (child.isMesh) {
-            child.visible = false;
-        }
-    });
+    // Reset camera/player position to origin
+    if (typeof camera !== 'undefined' && camera.position) {
+        camera.position.set(0, 0, 0);
+    }
+    
+    // Also reset velocity if gameState exists
+    if (typeof gameState !== 'undefined' && gameState.velocityVector) {
+        gameState.velocityVector.set(0, 0, 0);
+    }
     
     if (typeof showNotification === 'function') {
-        showNotification('Ship Hidden', 2000);
+        showNotification('Ship Hidden - Origin', 2000);
     }
 }
 
