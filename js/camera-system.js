@@ -692,15 +692,15 @@ function createThrusterGlows(playerModel) {
     cameraState.thrusterGlows = [];
     
     // Two thruster positions at rear engine exhausts (in local model space, small values)
-    // Negative Z = rear of ship, negative Y = bottom where engines are
+    // Aligned with the 2 downward-facing points at back of ship
     const thrusterPositions = [
-        new THREE.Vector3(-0.012, -0.02, -0.03),   // Left engine exhaust
-        new THREE.Vector3(0.012, -0.02, -0.03)     // Right engine exhaust
+        new THREE.Vector3(-0.022, -0.025, -0.045),   // Left engine exhaust (wider, further back)
+        new THREE.Vector3(0.022, -0.025, -0.045)     // Right engine exhaust (wider, further back)
     ];
     
     thrusterPositions.forEach((pos, index) => {
-        // Create small glow cone (pointing backward)
-        const glowGeometry = new THREE.ConeGeometry(0.008, 0.025, 8);
+        // Create glow cone for engine exhaust
+        const glowGeometry = new THREE.ConeGeometry(0.01, 0.035, 8);
         const glowMaterial = new THREE.MeshBasicMaterial({
             color: 0xffaa00,  // Orange-yellow
             transparent: true,
@@ -710,14 +710,14 @@ function createThrusterGlows(playerModel) {
         
         const glow = new THREE.Mesh(glowGeometry, glowMaterial);
         glow.position.copy(pos);
-        glow.rotation.x = Math.PI / 2;  // Point backward (negative Z direction)
+        glow.rotation.x = -Math.PI / 2;  // Cone points outward from ship
         glow.renderOrder = 101;  // Render on top of ship
         
         playerModel.add(glow);
         cameraState.thrusterGlows.push(glow);
         
         // Add a second larger, dimmer glow for effect
-        const outerGlowGeometry = new THREE.ConeGeometry(0.012, 0.04, 8);
+        const outerGlowGeometry = new THREE.ConeGeometry(0.015, 0.05, 8);
         const outerGlowMaterial = new THREE.MeshBasicMaterial({
             color: 0xff6600,  // Deeper orange
             transparent: true,
@@ -727,8 +727,8 @@ function createThrusterGlows(playerModel) {
         
         const outerGlow = new THREE.Mesh(outerGlowGeometry, outerGlowMaterial);
         outerGlow.position.copy(pos);
-        outerGlow.position.z -= 0.005;  // Slightly further back (more negative Z)
-        outerGlow.rotation.x = Math.PI / 2;  // Point backward
+        outerGlow.position.z -= 0.008;  // Slightly further back (more negative Z)
+        outerGlow.rotation.x = -Math.PI / 2;  // Cone points outward from ship
         outerGlow.renderOrder = 100;
         
         playerModel.add(outerGlow);
