@@ -1390,17 +1390,22 @@ else if (keys.o && gameState.emergencyWarp.available > 0 && !gameState.emergency
     gameState.emergencyWarp.timeRemaining = gameState.emergencyWarp.boostDuration;
     gameState.velocityVector.copy(forwardDirection).multiplyScalar(gameState.emergencyWarp.boostSpeed);
     
-    // âœ… CRITICAL: Clear the key immediately to prevent retriggering
+    // ✅ CRITICAL: Clear the key immediately to prevent retriggering
     keys.o = false;
     
-    // âœ… Activate BOTH visual effects
+    // ✅ Activate BOTH visual effects
     for (let i = 0; i < 3; i++) {
         setTimeout(() => createHyperspaceEffect(), i * 200);
     }
     
-    // âœ… NEW: Activate 3D warp starfield
+    // ✅ NEW: Activate 3D warp starfield
     if (typeof toggleWarpSpeedStarfield === 'function') {
         toggleWarpSpeedStarfield(true);
+    }
+    
+    // ✅ NEW: Smooth camera transition - ship moves behind camera during warp
+    if (typeof setCameraWarpOut === 'function') {
+        setCameraWarpOut();
     }
     
     if (typeof playSound !== 'undefined') {
@@ -1480,7 +1485,12 @@ if (keys.x && gameState.energy > 0) {
     if (currentSpeedKmS < 10000 && typeof toggleWarpSpeedStarfield === 'function') {
         if (window.warpStarfield && window.warpStarfield.lines && window.warpStarfield.lines.visible) {
             toggleWarpSpeedStarfield(false);
-            console.log('âš¡ Warp starfield disabled - speed below 10,000 km/s');
+            console.log('⚡ Warp starfield disabled - speed below 10,000 km/s');
+            
+            // Smooth camera transition - ship returns to view
+            if (typeof setCameraWarpBack === 'function') {
+                setCameraWarpBack();
+            }
         }
     }
     

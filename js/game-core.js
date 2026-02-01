@@ -45,7 +45,7 @@ const gameState = {
     mapView: 'galactic', // 'galactic', 'universal'
     galaxiesCleared: 0,
     currentGalaxyEnemies: {}, // Initialize as empty object
-    mouseAiming: false,
+    mouseAiming: true,  // Start with mouse aiming enabled
     mouseX: (typeof window !== 'undefined') ? window.innerWidth / 2 : 400,
     mouseY: (typeof window !== 'undefined') ? window.innerHeight / 2 : 300,
     crosshairX: (typeof window !== 'undefined') ? window.innerWidth / 2 : 400,

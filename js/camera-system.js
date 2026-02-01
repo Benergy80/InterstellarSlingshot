@@ -617,6 +617,60 @@ function getCurrentOffset() {
     }
 }
 
+/**
+ * Smooth transition OUT for warp - ship moves behind camera
+ * Call when emergency warp activates
+ */
+function setCameraWarpOut() {
+    if (!cameraState.playerShipMesh) return;
+    
+    // Store current mode so we can return to it
+    if (!cameraState.preWarpMode) {
+        cameraState.preWarpMode = cameraState.mode;
+    }
+    
+    console.log('🚀 Warp camera transition OUT (ship behind camera)');
+    
+    const currentOffset = getCurrentOffset();
+    
+    cameraState.mode = 'zero-offset';
+    cameraState.isTransitioning = true;
+    cameraState.transitionStartTime = performance.now();
+    cameraState.transitionDuration = 600;  // Smooth transition
+    cameraState.transitionStartOffset.copy(currentOffset);
+    cameraState.transitionTargetOffset.set(0.25, -1, 3);  // Behind camera
+}
+
+/**
+ * Smooth transition BACK from warp - ship returns to view
+ * Call when braking from warp speed
+ */
+function setCameraWarpBack() {
+    if (!cameraState.playerShipMesh) return;
+    
+    // Restore previous camera mode, default to third-person
+    const targetMode = cameraState.preWarpMode || 'third-person';
+    cameraState.preWarpMode = null;  // Clear stored mode
+    
+    console.log(`🛑 Warp camera transition BACK to ${targetMode}`);
+    
+    const currentOffset = getCurrentOffset();
+    
+    cameraState.mode = targetMode;
+    cameraState.playerShipMesh.visible = true;
+    cameraState.isTransitioning = true;
+    cameraState.transitionStartTime = performance.now();
+    cameraState.transitionDuration = 800;  // Slightly longer for dramatic return
+    cameraState.transitionStartOffset.copy(currentOffset);
+    
+    // Set target based on mode
+    if (targetMode === 'first-person') {
+        cameraState.transitionTargetOffset.copy(cameraState.normalFirstPersonOffset);
+    } else {
+        cameraState.transitionTargetOffset.copy(cameraState.normalThirdPersonOffset);
+    }
+}
+
 // Export functions to window
 if (typeof window !== 'undefined') {
     window.initCameraSystem = initCameraSystem;
@@ -628,6 +682,8 @@ if (typeof window !== 'undefined') {
     window.setCameraFirstPerson = setCameraFirstPerson;
     window.setCameraThirdPerson = setCameraThirdPerson;
     window.setCameraNoShip = setCameraNoShip;
+    window.setCameraWarpOut = setCameraWarpOut;
+    window.setCameraWarpBack = setCameraWarpBack;
     window.getCurrentOffset = getCurrentOffset;
     window.getPlayerPosition = getPlayerPosition;
     window.cameraState = cameraState;
