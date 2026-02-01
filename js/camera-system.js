@@ -595,6 +595,24 @@ function setCameraNoShip() {
 }
 
 /**
+ * Get player position based on camera mode
+ * - 1st/3rd person: ship model position
+ * - Zero offset: camera position (POV)
+ */
+function getPlayerPosition() {
+    if (cameraState.mode === 'zero-offset') {
+        // In zero-offset mode, player position IS the camera
+        return window.camera ? window.camera.position.clone() : new THREE.Vector3();
+    } else if (cameraState.playerShipMesh) {
+        // In 1st/3rd person, player position is the ship model
+        return cameraState.playerShipMesh.position.clone();
+    } else {
+        // Fallback to camera position
+        return window.camera ? window.camera.position.clone() : new THREE.Vector3();
+    }
+}
+
+/**
  * Helper: Get current interpolated offset
  */
 function getCurrentOffset() {
@@ -629,6 +647,7 @@ if (typeof window !== 'undefined') {
     window.setCameraThirdPerson = setCameraThirdPerson;
     window.setCameraNoShip = setCameraNoShip;
     window.getCurrentOffset = getCurrentOffset;
+    window.getPlayerPosition = getPlayerPosition;
     window.cameraState = cameraState;
 
     console.log('✅ Camera system loaded');
