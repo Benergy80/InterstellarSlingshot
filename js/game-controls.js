@@ -4191,6 +4191,7 @@ function fireWeapon() {
     }
     
     // Create weapon effect - fire from in front of camera (where ship visually is)
+    // VERSION MARKER: v2241 - forwardDist should be 100
     const camQuat = camera.quaternion;
     const mode = window.cameraState?.mode || 'unknown';
     
@@ -4208,7 +4209,7 @@ function fireWeapon() {
     const rightOffset = new THREE.Vector3(wingSpread, 0, 0).applyQuaternion(camQuat);
     
     // DEBUG
-    console.log('🔫 LASER:', {
+    console.log('🔫 LASER v2241:', {
         mode: mode,
         forwardDist: forwardDist,
         camPos: camera.position.toArray().map(n=>n.toFixed(0)),
