@@ -2227,24 +2227,25 @@ function createThirdPersonLasers(playerShip, targetPosition) {
     if (typeof THREE === 'undefined' || typeof scene === 'undefined') return;
     
     try {
-        // Get ship's world position
-        const shipPos = new THREE.Vector3();
-        playerShip.getWorldPosition(shipPos);
-        
-        // Use CAMERA quaternion for wing offsets (not ship's flipped quaternion)
-        // This ensures wings are positioned correctly relative to view direction
+        // Calculate ship position the SAME WAY as camera-system.js does:
+        // ship = camera.position + thirdPersonOffset applied with camera.quaternion
+        // This ensures lasers match the visual ship position exactly
         const camQuat = camera.quaternion;
         
-        // Calculate wing positions based on bounding box size
+        // Third person offset from camera-system.js: (0, -4, -14)
+        const shipOffset = new THREE.Vector3(0, -4, -14).applyQuaternion(camQuat);
+        const shipPos = camera.position.clone().add(shipOffset);
+        
+        // Get model size for wing spread calculation
         const box = new THREE.Box3().setFromObject(playerShip);
         const size = box.getSize(new THREE.Vector3());
         
-        // Wing spread based on model width, forward offset toward nose
+        // Wing positions relative to ship center
         const wingSpread = size.x * 0.35;
-        const wingForward = -size.z * 0.2;  // Negative = forward in camera space
+        const wingForward = -size.z * 0.15;  // Slightly forward
         const wingUp = -2;
         
-        // Apply camera quaternion to get world positions
+        // Apply camera quaternion for wing offsets
         const leftOffset = new THREE.Vector3(-wingSpread, wingUp, wingForward).applyQuaternion(camQuat);
         const rightOffset = new THREE.Vector3(wingSpread, wingUp, wingForward).applyQuaternion(camQuat);
         
@@ -2255,7 +2256,7 @@ function createThirdPersonLasers(playerShip, targetPosition) {
         createMuzzleFlash(leftWing.clone());
         createMuzzleFlash(rightWing.clone());
         
-        // Create full-length static laser beams (same style as 1st person)
+        // Create full-length static laser beams
         createThirdPersonBeam(leftWing, targetPosition, '#00ff96');
         createThirdPersonBeam(rightWing, targetPosition, '#00ff96');
         
