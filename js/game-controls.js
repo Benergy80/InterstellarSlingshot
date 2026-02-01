@@ -4217,31 +4217,57 @@ function fireWeapon() {
     const leftOffset = new THREE.Vector3(-wingSpread, 0, 0).applyQuaternion(camQuat);
     const rightOffset = new THREE.Vector3(wingSpread, 0, 0).applyQuaternion(camQuat);
     
-    // DEBUG v2248 - add visual marker at laser origin
-    const shipToCam = playerShip ? camera.position.distanceTo(playerShip.position).toFixed(1) : 'n/a';
-    const shipToLaser = playerShip ? playerShip.position.distanceTo(laserOrigin).toFixed(1) : 'n/a';
-    console.log('🔫 LASER v2248:', {
+    // DEBUG v2250 - show camera, ship, and laser positions
+    const camPos = camera.position.clone();
+    const shipWorldPos = playerShip ? new THREE.Vector3() : null;
+    if (playerShip) playerShip.getWorldPosition(shipWorldPos);
+    
+    const shipToCam = shipWorldPos ? camPos.distanceTo(shipWorldPos).toFixed(1) : 'n/a';
+    const shipToLaser = shipWorldPos ? shipWorldPos.distanceTo(laserOrigin).toFixed(1) : 'n/a';
+    
+    console.log('🔫 LASER v2250:', {
         mode: mode,
-        shipVisible: playerShip?.visible,
+        camPos: camPos.toArray().map(n=>n.toFixed(0)),
+        shipWorldPos: shipWorldPos ? shipWorldPos.toArray().map(n=>n.toFixed(0)) : 'none',
+        laserOrigin: laserOrigin.toArray().map(n=>n.toFixed(0)),
         shipToCam: shipToCam,
-        shipToLaser: shipToLaser,
-        shipPos: playerShip ? playerShip.position.toArray().map(n=>n.toFixed(0)) : 'none',
-        laserOrigin: laserOrigin.toArray().map(n=>n.toFixed(0))
+        shipToLaser: shipToLaser
     });
     
-    // DEBUG: Add HUGE visible red sphere at laser origin for 3 seconds
+    // DEBUG: Add spheres at CAMERA (yellow), SHIP (blue), and LASER ORIGIN (red)
     if (mode === 'third-person' && typeof THREE !== 'undefined' && typeof scene !== 'undefined') {
         try {
-            const debugSphere = new THREE.Mesh(
-                new THREE.SphereGeometry(50, 16, 16),  // HUGE sphere (ship is 96x scale)
+            // Yellow sphere at camera
+            const camSphere = new THREE.Mesh(
+                new THREE.SphereGeometry(30, 8, 8),
+                new THREE.MeshBasicMaterial({ color: 0xffff00, transparent: true, opacity: 0.5 })
+            );
+            camSphere.position.copy(camPos);
+            scene.add(camSphere);
+            
+            // Blue sphere at ship world position
+            if (shipWorldPos) {
+                const shipSphere = new THREE.Mesh(
+                    new THREE.SphereGeometry(40, 8, 8),
+                    new THREE.MeshBasicMaterial({ color: 0x0000ff, transparent: true, opacity: 0.5 })
+                );
+                shipSphere.position.copy(shipWorldPos);
+                scene.add(shipSphere);
+                setTimeout(() => { scene.remove(shipSphere); }, 3000);
+            }
+            
+            // Red sphere at laser origin
+            const laserSphere = new THREE.Mesh(
+                new THREE.SphereGeometry(25, 8, 8),
                 new THREE.MeshBasicMaterial({ color: 0xff0000, transparent: true, opacity: 0.7 })
             );
-            debugSphere.position.copy(laserOrigin);
-            scene.add(debugSphere);
-            console.log('🔴 DEBUG SPHERE (r=50) at:', laserOrigin.toArray().map(n=>n.toFixed(0)));
-            setTimeout(() => { scene.remove(debugSphere); }, 3000);
+            laserSphere.position.copy(laserOrigin);
+            scene.add(laserSphere);
+            
+            console.log('🟡 CAM sphere, 🔵 SHIP sphere, 🔴 LASER sphere added');
+            setTimeout(() => { scene.remove(camSphere); scene.remove(laserSphere); }, 3000);
         } catch(e) {
-            console.error('🔴 DEBUG SPHERE failed:', e);
+            console.error('DEBUG SPHERES failed:', e);
         }
     }
     
