@@ -565,7 +565,9 @@ function updateEnemyBehavior() {
     enemies.forEach(enemy => {
         if (enemy.userData.health <= 0) return;
         
-        const distanceToPlayer = camera.position.distanceTo(enemy.position);
+        // Use ship position for targeting in 1st/3rd person, camera in zero-offset mode
+        const playerPos = (typeof getPlayerPosition === 'function') ? getPlayerPosition() : camera.position.clone();
+        const distanceToPlayer = playerPos.distanceTo(enemy.position);
         const isLocal = isEnemyInLocalGalaxy(enemy);
         
         // ENHANCED: Larger detection ranges
@@ -591,7 +593,7 @@ function updateEnemyBehavior() {
         if (distanceToPlayer < detectionRange && !enemy.userData.isActive && currentAttackers < maxAttackers) {
             enemy.userData.isActive = true;
             enemy.userData.detectedPlayer = true;
-            enemy.userData.lastSeenPlayerPos = camera.position.clone();
+            enemy.userData.lastSeenPlayerPos = playerPos.clone();
             
             if (isLocal) localActiveAttackers++;
             else activeAttackers++;
@@ -614,9 +616,9 @@ function updateEnemyBehavior() {
                 updateLocalEnemyBehavior(enemy, distanceToPlayer, adjustedSpeed, difficultySettings);
             } else {
                 if (enemy.userData.isBoss) {
-                    updateBossBehavior(enemy, camera.position, adjustedSpeed);
+                    updateBossBehavior(enemy, playerPos, adjustedSpeed);
                 } else if (enemy.userData.isBossSupport) {
-                    updateSupportBehavior(enemy, camera.position, adjustedSpeed);
+                    updateSupportBehavior(enemy, playerPos, adjustedSpeed);
                 } else {
                     updateEnhancedEnemyBehavior(enemy, distanceToPlayer, adjustedSpeed, difficultySettings);
                 }
@@ -638,7 +640,7 @@ function updateEnemyBehavior() {
             // FIXED: Patrol behavior - enemies always thrust forward at min 200 km/s
             const baseSpeed = enemy.userData.speed || 0.5;
             const patrolSpeed = Math.min(1.0, Math.max(0.2, baseSpeed * 0.8));  // Patrol at 80% speed, clamped to 0.2-1.0 (200-1000 km/s)
-            updatePatrolBehavior(enemy, camera.position, patrolSpeed, Date.now() * 0.001);
+            updatePatrolBehavior(enemy, playerPos, patrolSpeed, Date.now() * 0.001);
         }
         
     });
@@ -657,7 +659,8 @@ function updateLocalEnemyBehavior(enemy, distanceToPlayer, adjustedSpeed, diffic
     }
     
     const time = Date.now() * 0.001;
-    const playerPos = camera.position.clone();
+    // Use ship position for targeting
+    const playerPos = (typeof getPlayerPosition === 'function') ? getPlayerPosition() : camera.position.clone();
     
     // Update last seen player position if player is visible
     if (distanceToPlayer < difficultySettings.localDetectionRange) {
@@ -810,12 +813,15 @@ function fireEnemyWeapon(enemy, difficultySettings) {
     
     const isLocal = isEnemyInLocalGalaxy(enemy);
     const firingRange = isLocal ? difficultySettings.localFiringRange : difficultySettings.distantFiringRange;
-    const distanceToPlayer = camera.position.distanceTo(enemy.position);
+    
+    // Target ship position in 1st/3rd person, camera in zero-offset
+    const playerPos = (typeof getPlayerPosition === 'function') ? getPlayerPosition() : camera.position.clone();
+    const distanceToPlayer = playerPos.distanceTo(enemy.position);
     
     if (distanceToPlayer <= firingRange) {
-        // Create enemy laser beam (RESTORED from game-controls13.js)
+        // Create enemy laser beam targeting player position
         const laserColor = enemy.userData.isBoss ? '#ff4444' : '#ff8800';
-        createLaserBeam(enemy.position, camera.position, laserColor, false);
+        createLaserBeam(enemy.position, playerPos, laserColor, false);
         
         playSound('enemy_fire');
         
