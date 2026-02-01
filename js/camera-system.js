@@ -359,9 +359,18 @@ function updateCameraView(camera) {
         cameraState.playerShipMesh.position.copy(camera.position);
         cameraState.playerShipMesh.position.add(cockpitOffset);
 
-        // Orient ship to match camera direction using QUATERNIONS (avoids gimbal lock)
-        const flipY = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI);
-        const shipQuaternion = camera.quaternion.clone().multiply(flipY);
+        // Orient ship to face AWAY from camera (direction of travel)
+        // v2254: Build rotation matrix from camera vectors for proper alignment
+        const camForward = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
+        const camUp = new THREE.Vector3(0, 1, 0).applyQuaternion(camera.quaternion);
+        
+        // Ship faces opposite direction (away from camera)
+        const shipForward = camForward.clone().negate();
+        
+        // Build rotation matrix from direction vectors
+        const shipMatrix = new THREE.Matrix4();
+        shipMatrix.lookAt(new THREE.Vector3(), shipForward, camUp);
+        const shipQuaternion = new THREE.Quaternion().setFromRotationMatrix(shipMatrix);
         
         // Add dynamic banking based on rotational velocity
         if (typeof rotationalVelocity !== 'undefined') {
@@ -396,10 +405,18 @@ function updateCameraView(camera) {
         cameraState.playerShipMesh.position.copy(camera.position);
         cameraState.playerShipMesh.position.add(chaseOffset);
 
-        // Orient ship to match camera direction using QUATERNIONS (avoids gimbal lock)
-        // Create a 180° Y rotation quaternion to face the ship forward
-        const flipY = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI);
-        const shipQuaternion = camera.quaternion.clone().multiply(flipY);
+        // Orient ship to face AWAY from camera (direction of travel)
+        // v2254: Build rotation matrix from camera vectors for proper alignment
+        const camForward = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
+        const camUp = new THREE.Vector3(0, 1, 0).applyQuaternion(camera.quaternion);
+        
+        // Ship faces opposite direction (away from camera, toward travel direction)
+        const shipForward = camForward.clone().negate();
+        
+        // Build rotation matrix from direction vectors
+        const shipMatrix = new THREE.Matrix4();
+        shipMatrix.lookAt(new THREE.Vector3(), shipForward, camUp);
+        const shipQuaternion = new THREE.Quaternion().setFromRotationMatrix(shipMatrix);
         
         // Add dynamic banking based on rotational velocity
         if (typeof rotationalVelocity !== 'undefined') {
