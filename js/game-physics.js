@@ -1384,30 +1384,42 @@ if (keys.o && typeof isShieldActive === 'function' && isShieldActive()) {
     keys.o = false; // Clear the key immediately
 }
 // Now process warp with cooldown protection
-else if (keys.o && gameState.emergencyWarp.available > 0 && !gameState.emergencyWarp.active) {
-    gameState.emergencyWarp.available--;
-    gameState.emergencyWarp.active = true;
-    gameState.emergencyWarp.timeRemaining = gameState.emergencyWarp.boostDuration;
-    gameState.velocityVector.copy(forwardDirection).multiplyScalar(gameState.emergencyWarp.boostSpeed);
-    
-    // âœ… CRITICAL: Clear the key immediately to prevent retriggering
+else if (keys.o && gameState.emergencyWarp.available > 0 && !gameState.emergencyWarp.active && !gameState.emergencyWarp.transitioning) {
+    // ✅ CRITICAL: Clear the key immediately to prevent retriggering
     keys.o = false;
     
-    // âœ… Activate BOTH visual effects
-    for (let i = 0; i < 3; i++) {
-        setTimeout(() => createHyperspaceEffect(), i * 200);
+    // Mark as transitioning to prevent re-triggers
+    gameState.emergencyWarp.transitioning = true;
+    
+    // Step 1: Animate camera from current view to first-person
+    if (typeof setCameraFirstPerson === 'function') {
+        setCameraFirstPerson();
     }
     
-    // âœ… NEW: Activate 3D warp starfield
-    if (typeof toggleWarpSpeedStarfield === 'function') {
-        toggleWarpSpeedStarfield(true);
-    }
-    
-    if (typeof playSound !== 'undefined') {
-        playSound('warp');
-    }
+    // Step 2: After camera transition completes (400ms), engage warp
+    setTimeout(() => {
+        gameState.emergencyWarp.available--;
+        gameState.emergencyWarp.active = true;
+        gameState.emergencyWarp.transitioning = false;
+        gameState.emergencyWarp.timeRemaining = gameState.emergencyWarp.boostDuration;
+        gameState.velocityVector.copy(forwardDirection).multiplyScalar(gameState.emergencyWarp.boostSpeed);
+        
+        // Activate visual effects
+        for (let i = 0; i < 3; i++) {
+            setTimeout(() => createHyperspaceEffect(), i * 200);
+        }
+        
+        // Activate 3D warp starfield
+        if (typeof toggleWarpSpeedStarfield === 'function') {
+            toggleWarpSpeedStarfield(true);
+        }
+        
+        if (typeof playSound !== 'undefined') {
+            playSound('warp');
+        }
 
-    console.log(`🚀 Emergency warp activated! ${gameState.emergencyWarp.available} charges remaining`);
+        console.log(`🚀 Emergency warp activated! ${gameState.emergencyWarp.available} charges remaining`);
+    }, 400);  // Match camera transition duration
 }
 
         // Enhanced Emergency warp timer with momentum coasting
@@ -1480,7 +1492,12 @@ if (keys.x && gameState.energy > 0) {
     if (currentSpeedKmS < 10000 && typeof toggleWarpSpeedStarfield === 'function') {
         if (window.warpStarfield && window.warpStarfield.lines && window.warpStarfield.lines.visible) {
             toggleWarpSpeedStarfield(false);
-            console.log('âš¡ Warp starfield disabled - speed below 10,000 km/s');
+            console.log('⚡ Warp starfield disabled - speed below 10,000 km/s');
+            
+            // Return to third-person view when exiting warp speed
+            if (typeof setCameraThirdPerson === 'function') {
+                setCameraThirdPerson();
+            }
         }
     }
     
