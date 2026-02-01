@@ -872,6 +872,7 @@ function fireEnemyWeapon(enemy, difficultySettings) {
     }
     
     // ENHANCED: Directional damage effects with attacker position
+    console.log('💥 Player hit! Creating damage effect from enemy at:', enemy.position);
     createEnhancedScreenDamageEffect(enemy.position);
     
     // ONLY play damage sound if shields are NOT active
@@ -2402,8 +2403,11 @@ function createDirectionalDamageEffect(attackDirection) {
     }, 500);
     
     // Add directional damage indicator text
+    console.log('💥 Damage direction:', direction);
     if (direction !== 'center' && direction !== 'front') {
         createDamageDirectionIndicator(direction);
+    } else {
+        console.log('💥 Skipping indicator (direction is center/front)');
     }
 }
 
@@ -4192,9 +4196,11 @@ function fireWeapon() {
     
     // Create weapon effect (RESTORED: Uses corrected laser beam)
     // Fire from wing guns (left and right of ship) when ship model available
-    if (window.cameraState && window.cameraState.playerShipMesh) {
+    if (window.cameraState && window.cameraState.playerShipMesh && window.cameraState.mode !== 'zero-offset') {
         const shipPos = window.cameraState.playerShipMesh.position.clone();
         const shipQuat = window.cameraState.playerShipMesh.quaternion;
+        
+        console.log('🔫 Firing from ship position:', shipPos);
         
         // Wing offsets (left and right guns)
         const wingOffset = 2.5;  // Distance from center to wing
@@ -4205,6 +4211,7 @@ function fireWeapon() {
         createLaserBeam(shipPos.clone().add(leftWing), targetPosition, '#00ff96', true);
         createLaserBeam(shipPos.clone().add(rightWing), targetPosition, '#00ff96', true);
     } else {
+        console.log('🔫 Firing from camera position (no ship or zero-offset mode)');
         createLaserBeam(camera.position.clone(), targetPosition, '#00ff96', true);
     }
     
