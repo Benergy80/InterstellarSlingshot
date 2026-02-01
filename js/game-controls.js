@@ -2222,6 +2222,81 @@ const fadeInterval = setInterval(() => {
     }
 }
 
+// THIRD-PERSON LASER: Thicker, more visible beams that scale with the 48x ship
+function createThirdPersonLaser(startPos, endPos, color = '#00ff96') {
+    if (typeof THREE === 'undefined' || typeof scene === 'undefined') return;
+    
+    try {
+        const direction = new THREE.Vector3().subVectors(endPos, startPos);
+        const length = direction.length();
+        
+        // Much thicker laser for third-person visibility (ship is 48x scale)
+        const laserRadius = 1.5;  // 7.5x thicker than regular laser
+        const glowRadius = 3.0;
+        
+        const laserGeometry = new THREE.CylinderGeometry(laserRadius, laserRadius, length, 8);
+        const laserMaterial = new THREE.MeshBasicMaterial({
+            color: color,
+            transparent: true,
+            opacity: 0.9
+        });
+        
+        const laserBeam = new THREE.Mesh(laserGeometry, laserMaterial);
+        
+        // Position and orient the laser
+        laserBeam.position.copy(startPos);
+        
+        const up = new THREE.Vector3(0, 1, 0);
+        const dir = direction.clone().normalize();
+        const axis = new THREE.Vector3().crossVectors(up, dir);
+        const angle = Math.acos(up.dot(dir));
+        
+        if (axis.length() > 0.001) {
+            axis.normalize();
+            laserBeam.setRotationFromAxisAngle(axis, angle);
+        } else if (dir.y < 0) {
+            laserBeam.rotateX(Math.PI);
+        }
+        
+        // Center the cylinder along its length
+        const offset = direction.clone().multiplyScalar(0.5);
+        laserBeam.position.add(offset);
+        
+        // Add larger glow effect
+        const glowGeometry = new THREE.CylinderGeometry(glowRadius, glowRadius, length, 8);
+        const glowMaterial = new THREE.MeshBasicMaterial({
+            color: color,
+            transparent: true,
+            opacity: 0.4,
+            blending: THREE.AdditiveBlending
+        });
+        const glow = new THREE.Mesh(glowGeometry, glowMaterial);
+        laserBeam.add(glow);
+        
+        scene.add(laserBeam);
+        
+        // Fade out
+        let opacity = 0.9;
+        const fadeInterval = setInterval(() => {
+            opacity -= 0.06;
+            laserMaterial.opacity = opacity;
+            glowMaterial.opacity = opacity * 0.4;
+            
+            if (opacity <= 0) {
+                clearInterval(fadeInterval);
+                scene.remove(laserBeam);
+                laserGeometry.dispose();
+                laserMaterial.dispose();
+                glowGeometry.dispose();
+                glowMaterial.dispose();
+            }
+        }, 50);
+        
+    } catch (error) {
+        console.warn('Failed to create third-person laser:', error);
+    }
+}
+
 // =============================================================================
 // ENHANCED VISUAL FEEDBACK: ENEMY HIT COLOR CHANGES
 // =============================================================================
@@ -4190,39 +4265,58 @@ function fireWeapon() {
         }
     }
     
-    // Create weapon effect - fire from ship position
-    // VERSION MARKER: v2252 - SCALED offsets for 48x ship scale
+    // Create weapon effect - VERSION v2253: Use actual ship mesh world transform
     const camQuat = camera.quaternion;
     const mode = window.cameraState?.mode || 'unknown';
+    const playerShip = window.cameraState?.playerShipMesh;
     
-    let laserOrigin;
-    if (mode === 'third-person') {
-        // Ship is scaled 48x, so offsets need to be much larger
-        // Camera offset is (0, -4, -14) but ship visual is 48x bigger
-        // Ship center is at camera + offset, but nose is ~24 units ahead of center (half of 48-unit ship)
-        // Total: go to where camera system puts ship, then add large nose offset
-        const shipOffset = new THREE.Vector3(0, -4, -14).applyQuaternion(camQuat);
-        const shipPos = camera.position.clone().add(shipOffset);
+    if (mode === 'third-person' && playerShip && playerShip.visible) {
+        // THIRD-PERSON: Get wing gun positions from actual ship mesh
+        // Ship is scaled 48x, wing guns are in ship LOCAL space
+        const shipWorldPos = new THREE.Vector3();
+        const shipWorldQuat = new THREE.Quaternion();
+        playerShip.getWorldPosition(shipWorldPos);
+        playerShip.getWorldQuaternion(shipWorldQuat);
         
-        // Ship is 48x scale, so nose is roughly 20-30 units ahead of ship center
-        const noseOffset = new THREE.Vector3(0, 2, -25).applyQuaternion(camQuat);  // forward and slightly up
-        laserOrigin = shipPos.clone().add(noseOffset);
+        // Wing gun positions in ship local space (adjust these to match your model)
+        // Ship model faces -Z when rotated correctly, wings are on X axis
+        // At 48x scale, wing spread should be significant
+        const wingSpread = 12;  // Units in local space (will be scaled by ship)
+        const gunForward = -8;  // How far forward the guns are from ship center
+        const gunDown = -2;     // Slightly below center
+        
+        // Left wing gun (local space)
+        const leftGunLocal = new THREE.Vector3(-wingSpread, gunDown, gunForward);
+        // Right wing gun (local space)
+        const rightGunLocal = new THREE.Vector3(wingSpread, gunDown, gunForward);
+        
+        // Transform to world space using ship's world matrix
+        const leftGunWorld = leftGunLocal.clone().applyQuaternion(shipWorldQuat).add(shipWorldPos);
+        const rightGunWorld = rightGunLocal.clone().applyQuaternion(shipWorldQuat).add(shipWorldPos);
+        
+        console.log('🔫 LASER v2253 3rd-person:', { 
+            shipPos: shipWorldPos.toArray().map(n=>n.toFixed(0)),
+            leftGun: leftGunWorld.toArray().map(n=>n.toFixed(0)),
+            rightGun: rightGunWorld.toArray().map(n=>n.toFixed(0))
+        });
+        
+        // Create thicker, more visible lasers for third-person
+        createThirdPersonLaser(leftGunWorld, targetPosition, '#00ff96');
+        createThirdPersonLaser(rightGunWorld, targetPosition, '#00ff96');
     } else {
-        // First-person: fire from camera
+        // FIRST-PERSON: fire from camera position
         const forwardOffset = new THREE.Vector3(0, 0, -2).applyQuaternion(camQuat);
-        laserOrigin = camera.position.clone().add(forwardOffset);
+        const laserOrigin = camera.position.clone().add(forwardOffset);
+        
+        const wingSpread = 2;
+        const leftOffset = new THREE.Vector3(-wingSpread, 0, 0).applyQuaternion(camQuat);
+        const rightOffset = new THREE.Vector3(wingSpread, 0, 0).applyQuaternion(camQuat);
+        
+        console.log('🔫 LASER v2253 1st-person:', { laserOrigin: laserOrigin.toArray().map(n=>n.toFixed(0)) });
+        
+        createLaserBeam(laserOrigin.clone().add(leftOffset), targetPosition, '#00ff96', true);
+        createLaserBeam(laserOrigin.clone().add(rightOffset), targetPosition, '#00ff96', true);
     }
-    
-    // Wing gun offsets (left/right) - also scaled up
-    const wingSpread = (mode === 'third-person') ? 15 : 2;
-    const leftOffset = new THREE.Vector3(-wingSpread, 0, 0).applyQuaternion(camQuat);
-    const rightOffset = new THREE.Vector3(wingSpread, 0, 0).applyQuaternion(camQuat);
-    
-    // DEBUG v2252
-    console.log('🔫 LASER v2252:', { mode, laserOrigin: laserOrigin.toArray().map(n=>n.toFixed(0)) });
-    
-    createLaserBeam(laserOrigin.clone().add(leftOffset), targetPosition, '#00ff96', true);
-    createLaserBeam(laserOrigin.clone().add(rightOffset), targetPosition, '#00ff96', true);
     
     // Handle weapon hits based on target type
     if (targetObject) {

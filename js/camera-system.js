@@ -17,7 +17,7 @@ const cameraState = {
     // Camera transition animation
     isTransitioning: false,
     transitionStartTime: 0,
-    transitionDuration: 400, // milliseconds
+    transitionDuration: 800, // milliseconds - doubled for smoother visible transition
     transitionStartOffset: new THREE.Vector3(),
     transitionTargetOffset: new THREE.Vector3(),
     
