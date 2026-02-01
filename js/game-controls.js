@@ -872,7 +872,6 @@ function fireEnemyWeapon(enemy, difficultySettings) {
     }
     
     // ENHANCED: Directional damage effects with attacker position
-    console.log('💥 Player hit! Creating damage effect from enemy at:', enemy.position);
     createEnhancedScreenDamageEffect(enemy.position);
     
     // ONLY play damage sound if shields are NOT active
@@ -2280,8 +2279,6 @@ function flashEnemyHit(enemy, damage = 1) {
 
 // ENHANCED: Directional damage effect system with attacker position
 function createScreenDamageEffect(attackerPosition = null) {
-    console.log('💥 createScreenDamageEffect called with:', attackerPosition ? 'position' : 'null');
-    
     if (!attackerPosition) {
         // Fallback to old full-screen effect if no attacker position provided
         const damageOverlay = document.createElement('div');
@@ -2296,7 +2293,6 @@ function createScreenDamageEffect(attackerPosition = null) {
     
     // NEW: Directional damage effect based on attacker position
     const attackDirection = getAttackDirection(attackerPosition);
-    console.log('💥 Attack direction result:', attackDirection);
     createDirectionalDamageEffect(attackDirection);
     
     // Enhanced screen shake effect
@@ -2406,11 +2402,8 @@ function createDirectionalDamageEffect(attackDirection) {
     }, 500);
     
     // Add directional damage indicator text
-    console.log('💥 Damage direction:', direction);
     if (direction !== 'center' && direction !== 'front') {
         createDamageDirectionIndicator(direction);
-    } else {
-        console.log('💥 Skipping indicator (direction is center/front)');
     }
 }
 
@@ -4202,14 +4195,8 @@ function fireWeapon() {
     if (window.cameraState && window.cameraState.playerShipMesh && window.cameraState.mode !== 'zero-offset') {
         const shipPos = window.cameraState.playerShipMesh.position.clone();
         const shipQuat = window.cameraState.playerShipMesh.quaternion;
-        const camPos = camera.position.clone();
-        
-        console.log('🔫 Camera pos:', camPos.x.toFixed(1), camPos.y.toFixed(1), camPos.z.toFixed(1));
-        console.log('🔫 Ship pos:', shipPos.x.toFixed(1), shipPos.y.toFixed(1), shipPos.z.toFixed(1));
-        console.log('🔫 Difference:', (shipPos.x - camPos.x).toFixed(1), (shipPos.y - camPos.y).toFixed(1), (shipPos.z - camPos.z).toFixed(1));
-        
-        // Wing offsets (left and right guns) - increased for visibility
-        const wingOffset = 8;  // Distance from center to wing (increased from 2.5)
+        // Wing offsets (left and right guns)
+        const wingOffset = 3;  // Distance from center to wing
         const leftWing = new THREE.Vector3(-wingOffset, 0, 0).applyQuaternion(shipQuat);
         const rightWing = new THREE.Vector3(wingOffset, 0, 0).applyQuaternion(shipQuat);
         
@@ -4217,7 +4204,6 @@ function fireWeapon() {
         createLaserBeam(shipPos.clone().add(leftWing), targetPosition, '#00ff96', true);
         createLaserBeam(shipPos.clone().add(rightWing), targetPosition, '#00ff96', true);
     } else {
-        console.log('🔫 Firing from camera position (no ship or zero-offset mode)');
         createLaserBeam(camera.position.clone(), targetPosition, '#00ff96', true);
     }
     

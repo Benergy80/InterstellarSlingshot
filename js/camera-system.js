@@ -293,31 +293,6 @@ function updateCameraView(camera) {
         cameraState.playerShipMesh.visible = true;
     }
 
-    // Warp detection removed - camera stays in normal position during warp
-
-    if (window.updateCameraViewCallCount % 120 === 0) {
-        console.log('  ▶️ Game active - updating ship position');
-    }
-
-    // DEBUG: Log positions every 120 frames (every 2 seconds)
-    if (!window.cameraDebugFrameCount) window.cameraDebugFrameCount = 0;
-    window.cameraDebugFrameCount++;
-
-    const shouldLog = (window.cameraDebugFrameCount % 120 === 0);
-
-    if (shouldLog) {
-        console.log('🔍 DEBUG BLOCK START - Frame:', window.cameraDebugFrameCount);
-        console.log('📍 Camera position:', camera.position);
-        console.log('🚢 Ship LOCAL position:', cameraState.playerShipMesh.position);
-        console.log('🚢 Ship WORLD position:', cameraState.playerShipMesh.getWorldPosition(new THREE.Vector3()));
-        console.log('📏 Ship scale:', cameraState.playerShipMesh.scale);
-        console.log('🔄 Ship rotation:', cameraState.playerShipMesh.rotation);
-        console.log('🎥 Camera mode:', cameraState.mode);
-        console.log('🔍 Ship parent:', cameraState.playerShipMesh.parent);
-        console.log('🔍 Ship visible:', cameraState.playerShipMesh.visible);
-        console.log('🔍 DEBUG BLOCK END');
-    }
-
     // Calculate offset (with animation if transitioning)
     let currentOffset;
 
@@ -365,21 +340,8 @@ function updateCameraView(camera) {
         const cockpitOffset = currentOffset.clone();
         cockpitOffset.applyQuaternion(camera.quaternion);
 
-        // DEBUG: Log before position update
-        if (shouldLog) {
-            console.log('  [1ST PERSON] BEFORE - Ship local pos:', cameraState.playerShipMesh.position.clone());
-            console.log('  [1ST PERSON] Camera pos:', camera.position);
-            console.log('  [1ST PERSON] Cockpit offset:', cockpitOffset);
-        }
-
         cameraState.playerShipMesh.position.copy(camera.position);
         cameraState.playerShipMesh.position.add(cockpitOffset);
-
-        // DEBUG: Log after position update
-        if (shouldLog) {
-            console.log('  [1ST PERSON] AFTER - Ship local pos:', cameraState.playerShipMesh.position.clone());
-            console.log('  [1ST PERSON] AFTER - Ship world pos:', cameraState.playerShipMesh.getWorldPosition(new THREE.Vector3()));
-        }
 
         // Orient ship to match camera direction using QUATERNIONS (avoids gimbal lock)
         const flipY = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI);
@@ -414,22 +376,9 @@ function updateCameraView(camera) {
         const chaseOffset = currentOffset.clone();
         chaseOffset.applyQuaternion(camera.quaternion);
 
-        // DEBUG: Log before position update
-        if (shouldLog) {
-            console.log('  [3RD PERSON] BEFORE - Ship local pos:', cameraState.playerShipMesh.position.clone());
-            console.log('  [3RD PERSON] Camera pos:', camera.position);
-            console.log('  [3RD PERSON] Chase offset:', chaseOffset);
-        }
-
         // UNIFIED: Always ADD offset (third-person uses negative Z to put ship ahead)
         cameraState.playerShipMesh.position.copy(camera.position);
         cameraState.playerShipMesh.position.add(chaseOffset);
-
-        // DEBUG: Log after position update
-        if (shouldLog) {
-            console.log('  [3RD PERSON] AFTER - Ship local pos:', cameraState.playerShipMesh.position.clone());
-            console.log('  [3RD PERSON] AFTER - Ship world pos:', cameraState.playerShipMesh.getWorldPosition(new THREE.Vector3()));
-        }
 
         // Orient ship to match camera direction using QUATERNIONS (avoids gimbal lock)
         // Create a 180° Y rotation quaternion to face the ship forward
