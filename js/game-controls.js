@@ -2271,7 +2271,7 @@ function createThirdPersonLasers(playerShip, targetPosition) {
         
         // Wing positions relative to ship center
         const wingSpread = size.x * 0.35;
-        const wingForward = -size.z * 0.18;  // Slightly forward
+        const wingForward = -size.z * 0.15;  // Slightly forward
         const wingUp = -2;
         
         // Apply camera quaternion for wing offsets
