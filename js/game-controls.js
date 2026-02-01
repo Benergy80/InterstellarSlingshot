@@ -2222,44 +2222,117 @@ const fadeInterval = setInterval(() => {
     }
 }
 
-// 3RD PERSON LASER: Fire from ship wing tips using same laser effect as 1st person
+// 3RD PERSON LASER: Fire from ship wing tips with full-length beam to target
 function createThirdPersonLasers(playerShip, targetPosition) {
     if (typeof THREE === 'undefined' || typeof scene === 'undefined') return;
     
     try {
-        // Get ship's world transform
+        // Get ship's world position
         const shipPos = new THREE.Vector3();
-        const shipQuat = new THREE.Quaternion();
         playerShip.getWorldPosition(shipPos);
-        playerShip.getWorldQuaternion(shipQuat);
         
-        // Calculate wing tip positions based on ship's bounding box
-        // This dynamically attaches to the actual model size
+        // Use CAMERA quaternion for wing offsets (not ship's flipped quaternion)
+        // This ensures wings are positioned correctly relative to view direction
+        const camQuat = camera.quaternion;
+        
+        // Calculate wing positions based on bounding box size
         const box = new THREE.Box3().setFromObject(playerShip);
         const size = box.getSize(new THREE.Vector3());
         
-        // Wing tips are at roughly half the width, at the front
-        const wingSpread = size.x * 0.4;  // 40% of ship width from center
-        const wingForward = size.z * 0.3; // 30% forward from center
-        const wingUp = 0;
+        // Wing spread based on model width, forward offset toward nose
+        const wingSpread = size.x * 0.35;
+        const wingForward = -size.z * 0.2;  // Negative = forward in camera space
+        const wingUp = -2;
         
-        const leftWingLocal = new THREE.Vector3(-wingSpread, wingUp, wingForward);
-        const rightWingLocal = new THREE.Vector3(wingSpread, wingUp, wingForward);
+        // Apply camera quaternion to get world positions
+        const leftOffset = new THREE.Vector3(-wingSpread, wingUp, wingForward).applyQuaternion(camQuat);
+        const rightOffset = new THREE.Vector3(wingSpread, wingUp, wingForward).applyQuaternion(camQuat);
         
-        // Transform to world space
-        const leftWing = leftWingLocal.clone().applyQuaternion(shipQuat).add(shipPos);
-        const rightWing = rightWingLocal.clone().applyQuaternion(shipQuat).add(shipPos);
+        const leftWing = shipPos.clone().add(leftOffset);
+        const rightWing = shipPos.clone().add(rightOffset);
         
         // Create muzzle flash at wing tips
         createMuzzleFlash(leftWing.clone());
         createMuzzleFlash(rightWing.clone());
         
-        // Use the SAME laser beam as 1st person for consistent look/timing
-        createLaserBeam(leftWing, targetPosition, '#00ff96', true);
-        createLaserBeam(rightWing, targetPosition, '#00ff96', true);
+        // Create full-length static laser beams (same style as 1st person)
+        createThirdPersonBeam(leftWing, targetPosition, '#00ff96');
+        createThirdPersonBeam(rightWing, targetPosition, '#00ff96');
         
     } catch (error) {
         console.warn('Failed to create third-person lasers:', error);
+    }
+}
+
+// Full-length laser beam for 3rd person (instant appearance, fades like 1st person)
+function createThirdPersonBeam(startPos, endPos, color) {
+    if (typeof THREE === 'undefined' || typeof scene === 'undefined') return;
+    
+    try {
+        const direction = new THREE.Vector3().subVectors(endPos, startPos);
+        const length = direction.length();
+        
+        const laserGeometry = new THREE.CylinderGeometry(0.2, 0.2, length, 8);
+        const laserMaterial = new THREE.MeshBasicMaterial({
+            color: color,
+            transparent: true,
+            opacity: 0.8
+        });
+        
+        const laserBeam = new THREE.Mesh(laserGeometry, laserMaterial);
+        
+        // Position at start
+        laserBeam.position.copy(startPos);
+        
+        // Orient along direction
+        const up = new THREE.Vector3(0, 1, 0);
+        const dir = direction.clone().normalize();
+        const axis = new THREE.Vector3().crossVectors(up, dir);
+        const angle = Math.acos(up.dot(dir));
+        
+        if (axis.length() > 0.001) {
+            axis.normalize();
+            laserBeam.setRotationFromAxisAngle(axis, angle);
+        } else if (dir.y < 0) {
+            laserBeam.rotateX(Math.PI);
+        }
+        
+        // Center along length
+        const offset = direction.clone().multiplyScalar(0.5);
+        laserBeam.position.add(offset);
+        
+        // Add glow
+        const glowGeometry = new THREE.CylinderGeometry(0.4, 0.4, length, 8);
+        const glowMaterial = new THREE.MeshBasicMaterial({
+            color: color,
+            transparent: true,
+            opacity: 0.3,
+            blending: THREE.AdditiveBlending
+        });
+        const glow = new THREE.Mesh(glowGeometry, glowMaterial);
+        laserBeam.add(glow);
+        
+        scene.add(laserBeam);
+        
+        // Fast fade (same as 1st person)
+        let opacity = 0.8;
+        const fadeInterval = setInterval(() => {
+            opacity -= 0.15;
+            laserMaterial.opacity = opacity;
+            glowMaterial.opacity = opacity * 0.4;
+            
+            if (opacity <= 0) {
+                clearInterval(fadeInterval);
+                scene.remove(laserBeam);
+                laserGeometry.dispose();
+                laserMaterial.dispose();
+                glowGeometry.dispose();
+                glowMaterial.dispose();
+            }
+        }, 40);
+        
+    } catch (error) {
+        console.warn('Failed to create third-person beam:', error);
     }
 }
 
