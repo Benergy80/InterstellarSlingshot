@@ -4190,15 +4190,20 @@ function fireWeapon() {
         }
     }
     
-    // Create weapon effect - VERSION v2255: Reverted to simple camera-based firing
-    const forwardDist = 100;  // Fire from well ahead of camera
-    const forwardOffset = new THREE.Vector3(0, 0, -forwardDist).applyQuaternion(camera.quaternion);
-    const laserOrigin = camera.position.clone().add(forwardOffset);
+    // Create weapon effect - RESTORED ORIGINAL WORKING VERSION
+    // Use ship model position if available, otherwise camera position
+    const hasShip = window.cameraState && window.cameraState.playerShipMesh;
+    const laserOrigin = hasShip 
+        ? window.cameraState.playerShipMesh.position.clone()
+        : camera.position.clone();
     
-    // Wing gun spread
-    const wingSpread = 8;
-    const leftOffset = new THREE.Vector3(-wingSpread, 0, 0).applyQuaternion(camera.quaternion);
-    const rightOffset = new THREE.Vector3(wingSpread, 0, 0).applyQuaternion(camera.quaternion);
+    // Fire dual lasers from origin with slight left/right offset
+    const fireQuat = hasShip
+        ? window.cameraState.playerShipMesh.quaternion
+        : camera.quaternion;
+    
+    const leftOffset = new THREE.Vector3(-3, 0, 0).applyQuaternion(fireQuat);
+    const rightOffset = new THREE.Vector3(3, 0, 0).applyQuaternion(fireQuat);
     
     createLaserBeam(laserOrigin.clone().add(leftOffset), targetPosition, '#00ff96', true);
     createLaserBeam(laserOrigin.clone().add(rightOffset), targetPosition, '#00ff96', true);
