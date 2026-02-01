@@ -203,7 +203,7 @@ function toggleCameraView() {
         cameraState.isTransitioning = true;
         cameraState.transitionStartTime = performance.now();
         cameraState.transitionStartOffset.set(0.25, -2, 0.5); // First-person offset
-        cameraState.transitionTargetOffset.set(-1, 3, 8); // Third-person offset
+        cameraState.transitionTargetOffset.set(0, 3, 8); // Third-person offset (centered)
 
         console.log('📷 Transitioning to THIRD-PERSON view');
 
@@ -226,7 +226,7 @@ function toggleCameraView() {
         // Start transition animation from third-person to first-person (reverse path)
         cameraState.isTransitioning = true;
         cameraState.transitionStartTime = performance.now();
-        cameraState.transitionStartOffset.set(-1, 3, 8); // Third-person offset
+        cameraState.transitionStartOffset.set(0, 3, 8); // Third-person offset (centered)
         cameraState.transitionTargetOffset.set(0.25, -2, 0.5); // First-person offset
 
         console.log('📷 Transitioning to FIRST-PERSON view (cockpit)');
@@ -326,8 +326,8 @@ function updateCameraView(camera) {
         // First-person offset
         currentOffset = new THREE.Vector3(0.25, -2, 0.5);
     } else {
-        // Third-person offset
-        currentOffset = new THREE.Vector3(-1, 3, 8);
+        // Third-person offset (X=0 centers the ship, Y=up, Z=behind)
+        currentOffset = new THREE.Vector3(0, 3, 8);
     }
 
     if (cameraState.mode === 'first-person') {
@@ -356,20 +356,20 @@ function updateCameraView(camera) {
             console.log('  [1ST PERSON] AFTER - Ship world pos:', cameraState.playerShipMesh.getWorldPosition(new THREE.Vector3()));
         }
 
-        // Orient ship to match camera direction
-        cameraState.playerShipMesh.rotation.copy(camera.rotation);
-
-        // Rotate ship 180 degrees on Y axis to face forward
-        cameraState.playerShipMesh.rotation.y += Math.PI;
-
+        // Orient ship to match camera direction using QUATERNIONS (avoids gimbal lock)
+        const flipY = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI);
+        const shipQuaternion = camera.quaternion.clone().multiply(flipY);
+        
         // Add dynamic banking based on rotational velocity
         if (typeof rotationalVelocity !== 'undefined') {
             const bankAmount = -rotationalVelocity.yaw * 15;
-            const pitchTilt = -rotationalVelocity.pitch * 5; // Negative to match input direction
-            // Set rotation directly to prevent accumulation over multiple frames
-            cameraState.playerShipMesh.rotation.z = camera.rotation.z + bankAmount;
-            cameraState.playerShipMesh.rotation.x = camera.rotation.x + pitchTilt;
+            const pitchTilt = -rotationalVelocity.pitch * 5;
+            const bankQuat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), bankAmount);
+            const pitchQuat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), pitchTilt);
+            shipQuaternion.multiply(bankQuat).multiply(pitchQuat);
         }
+        
+        cameraState.playerShipMesh.quaternion.copy(shipQuaternion);
 
         // Make ship visible but slightly transparent for cockpit view
         cameraState.playerShipMesh.visible = true;
@@ -406,20 +406,21 @@ function updateCameraView(camera) {
             console.log('  [3RD PERSON] AFTER - Ship world pos:', cameraState.playerShipMesh.getWorldPosition(new THREE.Vector3()));
         }
 
-        // Orient ship to match camera direction
-        cameraState.playerShipMesh.rotation.copy(camera.rotation);
-
-        // Rotate ship 180 degrees on Y axis to face forward
-        cameraState.playerShipMesh.rotation.y += Math.PI;
-
+        // Orient ship to match camera direction using QUATERNIONS (avoids gimbal lock)
+        // Create a 180° Y rotation quaternion to face the ship forward
+        const flipY = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI);
+        const shipQuaternion = camera.quaternion.clone().multiply(flipY);
+        
         // Add dynamic banking based on rotational velocity
         if (typeof rotationalVelocity !== 'undefined') {
             const bankAmount = -rotationalVelocity.yaw * 15;
-            const pitchTilt = -rotationalVelocity.pitch * 5; // Negative to match input direction
-            // Set rotation directly to prevent accumulation over multiple frames
-            cameraState.playerShipMesh.rotation.z = camera.rotation.z + bankAmount;
-            cameraState.playerShipMesh.rotation.x = camera.rotation.x + pitchTilt;
+            const pitchTilt = -rotationalVelocity.pitch * 5;
+            const bankQuat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), bankAmount);
+            const pitchQuat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), pitchTilt);
+            shipQuaternion.multiply(bankQuat).multiply(pitchQuat);
         }
+        
+        cameraState.playerShipMesh.quaternion.copy(shipQuaternion);
 
         // Ensure the ship model is fully visible and opaque in third-person
         cameraState.playerShipMesh.visible = true;
