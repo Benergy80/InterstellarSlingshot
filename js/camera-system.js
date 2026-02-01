@@ -25,7 +25,12 @@ const cameraState = {
     // Positive Z = ship in front of camera, Negative Z = ship behind camera
     // For third-person (camera behind ship), offset is NEGATIVE Z
     normalFirstPersonOffset: new THREE.Vector3(0.25, -2, 0.5),   // Cockpit: ship slightly forward/below
-    normalThirdPersonOffset: new THREE.Vector3(0, -4, -14)       // Chase cam: ship ahead (negative = in front)
+    normalThirdPersonOffset: new THREE.Vector3(0, -4, -14),      // Chase cam: ship ahead (negative = in front)
+    
+    // Thruster glow system
+    thrusterGlows: [],      // Array of thruster glow meshes
+    thrusterActive: false,  // Whether thrusters are firing
+    thrusterIntensity: 0    // Current glow intensity (0-1)
 };
 
 /**
@@ -141,6 +146,9 @@ function initCameraSystem(camera, scene) {
 
             // Ship starts visible for both first-person (cockpit) and third-person views
             playerModel.visible = true;
+            
+            // Create thruster glow effects at rear of ship
+            createThrusterGlows(playerModel);
 
             console.log('✅ Player ship added to scene (scale: 96x, cyan emissive)');
             console.log('  - cameraState.playerShipMesh parent:', cameraState.playerShipMesh.parent);
@@ -659,6 +667,109 @@ if (typeof window !== 'undefined') {
     window.getCurrentOffset = getCurrentOffset;
     window.getPlayerPosition = getPlayerPosition;
     window.cameraState = cameraState;
+    window.createThrusterGlows = createThrusterGlows;
+    window.updateThrusterGlow = updateThrusterGlow;
 
-    console.log('✅ Camera system loaded');
+    console.log('✅ Camera system loaded (with thruster glow system)');
+}
+
+// =============================================================================
+// THRUSTER GLOW SYSTEM
+// =============================================================================
+
+/**
+ * Create thruster glow effects at the rear of the ship
+ */
+function createThrusterGlows(playerModel) {
+    if (!playerModel || typeof THREE === 'undefined') return;
+    
+    // Clear existing glows
+    cameraState.thrusterGlows.forEach(glow => {
+        if (glow.parent) glow.parent.remove(glow);
+        if (glow.geometry) glow.geometry.dispose();
+        if (glow.material) glow.material.dispose();
+    });
+    cameraState.thrusterGlows = [];
+    
+    // Get model bounds to position thrusters at rear
+    const box = new THREE.Box3().setFromObject(playerModel);
+    const size = box.getSize(new THREE.Vector3());
+    
+    // Thruster positions (rear of ship, spread out)
+    const thrusterPositions = [
+        new THREE.Vector3(-size.x * 0.25, 0, size.z * 0.4),   // Left thruster
+        new THREE.Vector3(size.x * 0.25, 0, size.z * 0.4),    // Right thruster
+        new THREE.Vector3(0, -size.y * 0.15, size.z * 0.45)   // Center/bottom thruster
+    ];
+    
+    thrusterPositions.forEach((pos, index) => {
+        // Create glow cone (pointing backward)
+        const glowGeometry = new THREE.ConeGeometry(0.15, 0.5, 8);
+        const glowMaterial = new THREE.MeshBasicMaterial({
+            color: 0xffaa00,  // Orange-yellow
+            transparent: true,
+            opacity: 0,
+            blending: THREE.AdditiveBlending
+        });
+        
+        const glow = new THREE.Mesh(glowGeometry, glowMaterial);
+        glow.position.copy(pos);
+        glow.rotation.x = -Math.PI / 2;  // Point backward
+        glow.renderOrder = 101;  // Render on top of ship
+        
+        playerModel.add(glow);
+        cameraState.thrusterGlows.push(glow);
+        
+        // Add a second larger, dimmer glow for effect
+        const outerGlowGeometry = new THREE.ConeGeometry(0.25, 0.8, 8);
+        const outerGlowMaterial = new THREE.MeshBasicMaterial({
+            color: 0xff6600,  // Deeper orange
+            transparent: true,
+            opacity: 0,
+            blending: THREE.AdditiveBlending
+        });
+        
+        const outerGlow = new THREE.Mesh(outerGlowGeometry, outerGlowMaterial);
+        outerGlow.position.copy(pos);
+        outerGlow.position.z += 0.1;  // Slightly further back
+        outerGlow.rotation.x = -Math.PI / 2;
+        outerGlow.renderOrder = 100;
+        
+        playerModel.add(outerGlow);
+        cameraState.thrusterGlows.push(outerGlow);
+    });
+    
+    console.log(`🔥 Created ${cameraState.thrusterGlows.length} thruster glow effects`);
+}
+
+/**
+ * Update thruster glow based on input - call this each frame
+ * @param {boolean} isThrusting - Whether W key (or other thrust) is active
+ */
+function updateThrusterGlow(isThrusting) {
+    if (cameraState.thrusterGlows.length === 0) return;
+    
+    // Smooth intensity transition
+    const targetIntensity = isThrusting ? 1.0 : 0.0;
+    const transitionSpeed = isThrusting ? 0.2 : 0.15;  // Faster on, slower off
+    
+    cameraState.thrusterIntensity += (targetIntensity - cameraState.thrusterIntensity) * transitionSpeed;
+    
+    // Update each glow
+    const time = Date.now() * 0.01;
+    cameraState.thrusterGlows.forEach((glow, index) => {
+        if (!glow.material) return;
+        
+        // Flicker effect when active
+        const flicker = isThrusting ? (0.8 + Math.sin(time + index) * 0.2) : 1.0;
+        const baseOpacity = index % 2 === 0 ? 0.8 : 0.4;  // Inner glows brighter
+        
+        glow.material.opacity = cameraState.thrusterIntensity * baseOpacity * flicker;
+        
+        // Scale glow with intensity
+        const scale = 0.5 + cameraState.thrusterIntensity * 0.5;
+        glow.scale.set(scale, scale + cameraState.thrusterIntensity * 0.3, scale);
+    });
+    
+    cameraState.thrusterActive = isThrusting;
 }

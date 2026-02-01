@@ -1035,6 +1035,12 @@ function animate() {
     if (typeof updateActiveLasers === 'function') {
         updateActiveLasers();
     }
+    
+    // Update thruster glow based on W key (forward thrust)
+    if (typeof updateThrusterGlow === 'function' && typeof keys !== 'undefined') {
+        const isThrusting = keys.w && gameState.energy > 0;
+        updateThrusterGlow(isThrusting);
+    }
 
     if (gameState.gameOver || !gameState.gameStarted) {
         if (stars) {
