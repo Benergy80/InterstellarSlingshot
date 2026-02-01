@@ -3712,7 +3712,11 @@ function fireMissile() {
         }
     }
 
-    createMissile(camera.position.clone(), targetPosition, targetObject);
+    // Use ship model position if available, otherwise camera position
+    const missileOrigin = (window.cameraState && window.cameraState.playerShipMesh) 
+        ? window.cameraState.playerShipMesh.position.clone()
+        : camera.position.clone();
+    createMissile(missileOrigin, targetPosition, targetObject);
     playSound('missile_launch');
     updateMissileUI();
 }
@@ -4181,7 +4185,11 @@ function fireWeapon() {
     }
     
     // Create weapon effect (RESTORED: Uses corrected laser beam)
-    createLaserBeam(camera.position, targetPosition, '#00ff96', true);
+    // Use ship model position if available, otherwise camera position
+    const weaponOrigin = (window.cameraState && window.cameraState.playerShipMesh) 
+        ? window.cameraState.playerShipMesh.position.clone()
+        : camera.position.clone();
+    createLaserBeam(weaponOrigin, targetPosition, '#00ff96', true);
     
     // Handle weapon hits based on target type
     if (targetObject) {

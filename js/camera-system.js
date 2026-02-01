@@ -346,8 +346,8 @@ function updateCameraView(camera) {
             
         }
     } else if (cameraState.mode === 'zero-offset') {
-        // Zero offset - camera at ship position
-        currentOffset = new THREE.Vector3(0, 0, 0);
+        // Zero offset - ship behind camera
+        currentOffset = new THREE.Vector3(0, 0, 3);
     } else if (cameraState.mode === 'first-person') {
         // First-person offset
         currentOffset = cameraState.normalFirstPersonOffset.clone();
@@ -586,10 +586,8 @@ function setCameraNoShip() {
     cameraState.transitionStartTime = performance.now();
     cameraState.transitionDuration = 400;
     cameraState.transitionStartOffset.copy(currentOffset);
-    cameraState.transitionTargetOffset.set(0, 0, 0);  // Zero offset
-    
-    // Hide the ship since at zero offset it would clip through camera
-    cameraState.playerShipMesh.visible = false;
+    // Positive Z = ship ends up behind camera (camera passes through ship)
+    cameraState.transitionTargetOffset.set(0, 0, 3);
     
     if (typeof showNotification === 'function') {
         showNotification('Zero Offset Camera', 2000);
@@ -613,7 +611,7 @@ function getCurrentOffset() {
     } else if (cameraState.mode === 'third-person') {
         return cameraState.normalThirdPersonOffset.clone();
     } else if (cameraState.mode === 'zero-offset') {
-        return new THREE.Vector3(0, 0, 0);
+        return new THREE.Vector3(0, 0, 3);  // Ship behind camera
     } else {
         return cameraState.normalFirstPersonOffset.clone();
     }
