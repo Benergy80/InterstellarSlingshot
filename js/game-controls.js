@@ -4191,21 +4191,30 @@ function fireWeapon() {
     }
     
     // Create weapon effect - fire from in front of camera (where ship visually is)
-    // In 3rd person, ship is ~14 units in front of camera, plus ~10 more for nose = 24 forward
     const camQuat = camera.quaternion;
+    const mode = window.cameraState?.mode || 'unknown';
     
     // Calculate laser origin: camera position + forward offset to ship nose
     // Negative Z = forward in camera space
-    const forwardDist = (window.cameraState?.mode === 'third-person') ? -28 : -2;
-    const downDist = (window.cameraState?.mode === 'third-person') ? -6 : 0;
+    const forwardDist = (mode === 'third-person') ? -28 : -2;
+    const downDist = (mode === 'third-person') ? -6 : 0;
     
     const forwardOffset = new THREE.Vector3(0, downDist, forwardDist).applyQuaternion(camQuat);
     const laserOrigin = camera.position.clone().add(forwardOffset);
     
     // Wing gun offsets (left/right)
-    const wingSpread = (window.cameraState?.mode === 'third-person') ? 8 : 2;
+    const wingSpread = (mode === 'third-person') ? 8 : 2;
     const leftOffset = new THREE.Vector3(-wingSpread, 0, 0).applyQuaternion(camQuat);
     const rightOffset = new THREE.Vector3(wingSpread, 0, 0).applyQuaternion(camQuat);
+    
+    // DEBUG
+    console.log('🔫 LASER:', {
+        mode: mode,
+        forwardDist: forwardDist,
+        camPos: camera.position.toArray().map(n=>n.toFixed(0)),
+        laserOrigin: laserOrigin.toArray().map(n=>n.toFixed(0)),
+        target: targetPosition.toArray().map(n=>n.toFixed(0))
+    });
     
     createLaserBeam(laserOrigin.clone().add(leftOffset), targetPosition, '#00ff96', true);
     createLaserBeam(laserOrigin.clone().add(rightOffset), targetPosition, '#00ff96', true);
