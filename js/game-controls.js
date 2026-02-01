@@ -4191,19 +4191,19 @@ function fireWeapon() {
     }
     
     // Create weapon effect - fire from ACTUAL ship model position
-    // VERSION MARKER: v2244 - use playerShipMesh position directly
+    // VERSION MARKER: v2245 - ship position + camera's forward direction
     const camQuat = camera.quaternion;
     const mode = window.cameraState?.mode || 'unknown';
     const playerShip = window.cameraState?.playerShipMesh;
     
     // Use actual ship position if available, otherwise fall back to camera offset
     let laserOrigin;
-    if (playerShip && mode === 'third-person') {
-        // Get ship's world position and forward direction
+    if (playerShip && playerShip.visible && mode === 'third-person') {
+        // Get ship's world position
         const shipPos = playerShip.position.clone();
-        const shipQuat = playerShip.quaternion;
-        // Offset forward from ship nose (ship faces -Z in local space typically)
-        const noseOffset = new THREE.Vector3(0, 0, -15).applyQuaternion(shipQuat);
+        // Use CAMERA's forward direction (that's where we're aiming), not ship's rotated quaternion
+        // Offset slightly forward from ship center using camera's facing direction
+        const noseOffset = new THREE.Vector3(0, 0, -20).applyQuaternion(camQuat);
         laserOrigin = shipPos.clone().add(noseOffset);
     } else {
         // First-person: fire from camera
@@ -4212,15 +4212,15 @@ function fireWeapon() {
         laserOrigin = camera.position.clone().add(forwardOffset);
     }
     
-    // Wing gun offsets (left/right) - use ship orientation in 3rd person
+    // Wing gun offsets (left/right) - always use camera orientation for consistent aim
     const wingSpread = (mode === 'third-person') ? 8 : 2;
-    const orientQuat = (playerShip && mode === 'third-person') ? playerShip.quaternion : camQuat;
-    const leftOffset = new THREE.Vector3(-wingSpread, 0, 0).applyQuaternion(orientQuat);
-    const rightOffset = new THREE.Vector3(wingSpread, 0, 0).applyQuaternion(orientQuat);
+    const leftOffset = new THREE.Vector3(-wingSpread, 0, 0).applyQuaternion(camQuat);
+    const rightOffset = new THREE.Vector3(wingSpread, 0, 0).applyQuaternion(camQuat);
     
     // DEBUG
-    console.log('🔫 LASER v2244:', {
+    console.log('🔫 LASER v2245:', {
         mode: mode,
+        shipVisible: playerShip?.visible,
         shipPos: playerShip ? playerShip.position.toArray().map(n=>n.toFixed(0)) : 'none',
         camPos: camera.position.toArray().map(n=>n.toFixed(0)),
         laserOrigin: laserOrigin.toArray().map(n=>n.toFixed(0)),
