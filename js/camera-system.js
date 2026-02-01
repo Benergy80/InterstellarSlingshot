@@ -691,20 +691,16 @@ function createThrusterGlows(playerModel) {
     });
     cameraState.thrusterGlows = [];
     
-    // Get model bounds to position thrusters at rear
-    const box = new THREE.Box3().setFromObject(playerModel);
-    const size = box.getSize(new THREE.Vector3());
-    
-    // Thruster positions (rear of ship, spread out)
+    // Two thruster positions at rear engine exhausts (in local model space, small values)
+    // These match the diamond-shaped engine ports visible at the back of the ship
     const thrusterPositions = [
-        new THREE.Vector3(-size.x * 0.25, 0, size.z * 0.4),   // Left thruster
-        new THREE.Vector3(size.x * 0.25, 0, size.z * 0.4),    // Right thruster
-        new THREE.Vector3(0, -size.y * 0.15, size.z * 0.45)   // Center/bottom thruster
+        new THREE.Vector3(-0.012, -0.015, 0.025),   // Left engine exhaust
+        new THREE.Vector3(0.012, -0.015, 0.025)    // Right engine exhaust
     ];
     
     thrusterPositions.forEach((pos, index) => {
-        // Create glow cone (pointing backward)
-        const glowGeometry = new THREE.ConeGeometry(0.15, 0.5, 8);
+        // Create small glow cone (pointing backward)
+        const glowGeometry = new THREE.ConeGeometry(0.008, 0.025, 8);
         const glowMaterial = new THREE.MeshBasicMaterial({
             color: 0xffaa00,  // Orange-yellow
             transparent: true,
@@ -721,7 +717,7 @@ function createThrusterGlows(playerModel) {
         cameraState.thrusterGlows.push(glow);
         
         // Add a second larger, dimmer glow for effect
-        const outerGlowGeometry = new THREE.ConeGeometry(0.25, 0.8, 8);
+        const outerGlowGeometry = new THREE.ConeGeometry(0.012, 0.04, 8);
         const outerGlowMaterial = new THREE.MeshBasicMaterial({
             color: 0xff6600,  // Deeper orange
             transparent: true,
@@ -731,7 +727,7 @@ function createThrusterGlows(playerModel) {
         
         const outerGlow = new THREE.Mesh(outerGlowGeometry, outerGlowMaterial);
         outerGlow.position.copy(pos);
-        outerGlow.position.z += 0.1;  // Slightly further back
+        outerGlow.position.z += 0.005;  // Slightly further back
         outerGlow.rotation.x = -Math.PI / 2;
         outerGlow.renderOrder = 100;
         
