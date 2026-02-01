@@ -2234,10 +2234,10 @@ function createThirdPersonLasers(playerShip, targetPosition) {
         playerShip.getWorldQuaternion(shipQuat);
         
         // Wing tip positions in ship local space (ship is 48x scale)
-        // Need to account for ship's 180° Y flip - forward is +Z in ship local space
-        const wingSpread = 20;  // Left/right from center (larger for 48x scale)
-        const wingForward = 15; // Forward of center (+Z because ship faces opposite to camera)
-        const wingUp = -2;      // Slightly below center
+        // Based on screenshot: flashes need to be narrower and further forward
+        const wingSpread = 10;  // Narrower - closer to ship body
+        const wingForward = 35; // Much further forward toward wing tips
+        const wingUp = 0;       // At ship center height
         
         const leftWingLocal = new THREE.Vector3(-wingSpread, wingUp, wingForward);
         const rightWingLocal = new THREE.Vector3(wingSpread, wingUp, wingForward);
@@ -2261,7 +2261,7 @@ function createThirdPersonLasers(playerShip, targetPosition) {
 
 // Muzzle flash effect at wing tip (brief bright sphere)
 function createMuzzleFlash(position) {
-    const flashGeometry = new THREE.SphereGeometry(2, 8, 8);
+    const flashGeometry = new THREE.SphereGeometry(0.8, 8, 8);  // Smaller flash
     const flashMaterial = new THREE.MeshBasicMaterial({
         color: '#00ff96',
         transparent: true,
@@ -2274,7 +2274,7 @@ function createMuzzleFlash(position) {
     // Quick fade out
     let opacity = 1.0;
     const fadeInterval = setInterval(() => {
-        opacity -= 0.25;
+        opacity -= 0.3;
         flashMaterial.opacity = opacity;
         if (opacity <= 0) {
             clearInterval(fadeInterval);
@@ -2282,7 +2282,7 @@ function createMuzzleFlash(position) {
             flashGeometry.dispose();
             flashMaterial.dispose();
         }
-    }, 30);
+    }, 25);
 }
 
 // Animated tracer projectile that travels from start to target
