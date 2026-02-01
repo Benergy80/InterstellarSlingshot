@@ -692,10 +692,10 @@ function createThrusterGlows(playerModel) {
     cameraState.thrusterGlows = [];
     
     // Two thruster positions at rear engine exhausts (in local model space, small values)
-    // These match the diamond-shaped engine ports visible at the back of the ship
+    // Negative Z = rear of ship, negative Y = bottom where engines are
     const thrusterPositions = [
-        new THREE.Vector3(-0.012, -0.015, 0.025),   // Left engine exhaust
-        new THREE.Vector3(0.012, -0.015, 0.025)    // Right engine exhaust
+        new THREE.Vector3(-0.012, -0.02, -0.03),   // Left engine exhaust
+        new THREE.Vector3(0.012, -0.02, -0.03)     // Right engine exhaust
     ];
     
     thrusterPositions.forEach((pos, index) => {
@@ -710,7 +710,7 @@ function createThrusterGlows(playerModel) {
         
         const glow = new THREE.Mesh(glowGeometry, glowMaterial);
         glow.position.copy(pos);
-        glow.rotation.x = -Math.PI / 2;  // Point backward
+        glow.rotation.x = Math.PI / 2;  // Point backward (negative Z direction)
         glow.renderOrder = 101;  // Render on top of ship
         
         playerModel.add(glow);
@@ -727,8 +727,8 @@ function createThrusterGlows(playerModel) {
         
         const outerGlow = new THREE.Mesh(outerGlowGeometry, outerGlowMaterial);
         outerGlow.position.copy(pos);
-        outerGlow.position.z += 0.005;  // Slightly further back
-        outerGlow.rotation.x = -Math.PI / 2;
+        outerGlow.position.z -= 0.005;  // Slightly further back (more negative Z)
+        outerGlow.rotation.x = Math.PI / 2;  // Point backward
         outerGlow.renderOrder = 100;
         
         playerModel.add(outerGlow);
