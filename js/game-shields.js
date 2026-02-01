@@ -23,7 +23,11 @@ const shieldSystem = {
     
     // Visual effects
     rippleEffect: null,
-    flickerIntensity: 0  // ENSURE THIS IS 0, NOT UNDEFINED
+    flickerIntensity: 0,  // ENSURE THIS IS 0, NOT UNDEFINED
+    
+    // 3D Shield (buckyball for third-person view)
+    mesh3D: null,
+    glowMesh3D: null
 };
 
 // =============================================================================
@@ -190,6 +194,9 @@ function activateShields() {
         createShieldActivationRipple();
     }
     
+    // Create 3D shield for third-person view
+    create3DShield();
+    
     // Play sound
     if (typeof playSound === 'function') {
         playSound('powerup', 600, 0.3);
@@ -222,6 +229,9 @@ function deactivateShields(forced = false) {
     if (shieldSystem.ctx) {
         shieldSystem.ctx.clearRect(0, 0, shieldSystem.canvas.width, shieldSystem.canvas.height);
     }
+    
+    // Destroy 3D shield
+    destroy3DShield();
     
     // Play sound
     if (typeof playSound === 'function') {
@@ -269,8 +279,28 @@ function updateShieldSystem() {
     // Update status display
     updateShieldDisplay();
     
-    // Render shield
-    renderShield();
+    // Update 3D shield position and effects
+    update3DShield();
+    
+    // Show/hide appropriate shield based on camera mode
+    const inThirdPerson = isThirdPersonView();
+    
+    // 3D shield visible only in third-person
+    if (shieldSystem.mesh3D) {
+        shieldSystem.mesh3D.visible = inThirdPerson;
+        shieldSystem.glowMesh3D.visible = inThirdPerson;
+    }
+    
+    // 2D overlay visible only in first-person
+    const overlay = document.getElementById('shieldOverlay');
+    if (overlay) {
+        overlay.style.display = inThirdPerson ? 'none' : 'block';
+    }
+    
+    // Render 2D shield (only processes if visible)
+    if (!inThirdPerson) {
+        renderShield();
+    }
 }
 
 function updateShieldDisplay() {
@@ -565,6 +595,102 @@ function getShieldDamageReduction() {
 }
 
 // =============================================================================
+// 3D SHIELD (BUCKYBALL) FOR THIRD-PERSON VIEW
+// =============================================================================
+
+function create3DShield() {
+    if (typeof THREE === 'undefined' || typeof scene === 'undefined') return;
+    
+    // Remove existing if any
+    destroy3DShield();
+    
+    // Create icosahedron geometry (buckyball/geodesic sphere base)
+    const radius = 12;  // Size to surround ship
+    const detail = 1;   // Subdivision level for buckyball look
+    const geometry = new THREE.IcosahedronGeometry(radius, detail);
+    
+    // Wireframe material for energy shield look
+    const material = new THREE.MeshBasicMaterial({
+        color: 0x00d4ff,
+        wireframe: true,
+        transparent: true,
+        opacity: 0.6
+    });
+    
+    shieldSystem.mesh3D = new THREE.Mesh(geometry, material);
+    shieldSystem.mesh3D.renderOrder = 50;  // Render above most things
+    
+    // Add inner glow sphere
+    const glowGeometry = new THREE.IcosahedronGeometry(radius * 0.95, detail);
+    const glowMaterial = new THREE.MeshBasicMaterial({
+        color: 0x00d4ff,
+        transparent: true,
+        opacity: 0.15,
+        side: THREE.BackSide
+    });
+    shieldSystem.glowMesh3D = new THREE.Mesh(glowGeometry, glowMaterial);
+    shieldSystem.glowMesh3D.renderOrder = 49;
+    
+    scene.add(shieldSystem.mesh3D);
+    scene.add(shieldSystem.glowMesh3D);
+    
+    console.log('🛡️ 3D buckyball shield created');
+}
+
+function destroy3DShield() {
+    if (shieldSystem.mesh3D) {
+        scene.remove(shieldSystem.mesh3D);
+        shieldSystem.mesh3D.geometry.dispose();
+        shieldSystem.mesh3D.material.dispose();
+        shieldSystem.mesh3D = null;
+    }
+    if (shieldSystem.glowMesh3D) {
+        scene.remove(shieldSystem.glowMesh3D);
+        shieldSystem.glowMesh3D.geometry.dispose();
+        shieldSystem.glowMesh3D.material.dispose();
+        shieldSystem.glowMesh3D = null;
+    }
+}
+
+function update3DShield() {
+    if (!shieldSystem.mesh3D || !shieldSystem.active) return;
+    
+    // Get player ship position
+    const playerPos = typeof getPlayerPosition === 'function' 
+        ? getPlayerPosition() 
+        : (window.cameraState?.playerShipMesh?.position || camera.position);
+    
+    // Position shield around player
+    shieldSystem.mesh3D.position.copy(playerPos);
+    shieldSystem.glowMesh3D.position.copy(playerPos);
+    
+    // Rotate slowly for visual effect
+    shieldSystem.mesh3D.rotation.x += 0.005;
+    shieldSystem.mesh3D.rotation.y += 0.008;
+    shieldSystem.glowMesh3D.rotation.x += 0.003;
+    shieldSystem.glowMesh3D.rotation.y += 0.005;
+    
+    // Pulse opacity based on energy level
+    const pulse = Math.sin(Date.now() * 0.003) * 0.1;
+    const energyFactor = gameState.energy / 100;
+    shieldSystem.mesh3D.material.opacity = 0.5 + pulse + (energyFactor * 0.2);
+    shieldSystem.glowMesh3D.material.opacity = 0.1 + (pulse * 0.5);
+    
+    // Change color when energy is low
+    if (gameState.energy < 15) {
+        shieldSystem.mesh3D.material.color.setHex(0xff6600);
+        shieldSystem.glowMesh3D.material.color.setHex(0xff6600);
+    } else {
+        shieldSystem.mesh3D.material.color.setHex(0x00d4ff);
+        shieldSystem.glowMesh3D.material.color.setHex(0x00d4ff);
+    }
+}
+
+function isThirdPersonView() {
+    return window.cameraState && window.cameraState.mode === 'third-person';
+}
+
+// =============================================================================
 // EXPORTS
 // =============================================================================
 
@@ -576,6 +702,9 @@ if (typeof window !== 'undefined') {
     window.createShieldHitEffect = createShieldHitEffect;
     window.isShieldActive = isShieldActive;
     window.getShieldDamageReduction = getShieldDamageReduction;
+    window.create3DShield = create3DShield;
+    window.destroy3DShield = destroy3DShield;
+    window.update3DShield = update3DShield;
     
-    console.log('🛡️ Shield system module loaded');
+    console.log('🛡️ Shield system module loaded (with 3D buckyball shield)');
 }
