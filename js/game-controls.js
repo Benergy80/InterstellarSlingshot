@@ -4190,50 +4190,18 @@ function fireWeapon() {
         }
     }
     
-    // Create weapon effect - VERSION v2254: Normal thickness, use ship world transform
-    const camQuat = camera.quaternion;
-    const mode = window.cameraState?.mode || 'unknown';
-    const playerShip = window.cameraState?.playerShipMesh;
+    // Create weapon effect - VERSION v2255: Reverted to simple camera-based firing
+    const forwardDist = 100;  // Fire from well ahead of camera
+    const forwardOffset = new THREE.Vector3(0, 0, -forwardDist).applyQuaternion(camera.quaternion);
+    const laserOrigin = camera.position.clone().add(forwardOffset);
     
-    let leftGunWorld, rightGunWorld;
+    // Wing gun spread
+    const wingSpread = 8;
+    const leftOffset = new THREE.Vector3(-wingSpread, 0, 0).applyQuaternion(camera.quaternion);
+    const rightOffset = new THREE.Vector3(wingSpread, 0, 0).applyQuaternion(camera.quaternion);
     
-    if (mode === 'third-person' && playerShip && playerShip.visible) {
-        // THIRD-PERSON: Get wing gun positions from actual ship mesh
-        const shipWorldPos = new THREE.Vector3();
-        const shipWorldQuat = new THREE.Quaternion();
-        playerShip.getWorldPosition(shipWorldPos);
-        playerShip.getWorldQuaternion(shipWorldQuat);
-        
-        // Wing gun positions in ship local space
-        const wingSpread = 12;
-        const gunForward = -8;
-        const gunDown = -2;
-        
-        const leftGunLocal = new THREE.Vector3(-wingSpread, gunDown, gunForward);
-        const rightGunLocal = new THREE.Vector3(wingSpread, gunDown, gunForward);
-        
-        leftGunWorld = leftGunLocal.clone().applyQuaternion(shipWorldQuat).add(shipWorldPos);
-        rightGunWorld = rightGunLocal.clone().applyQuaternion(shipWorldQuat).add(shipWorldPos);
-        
-        console.log('🔫 LASER v2254 3rd-person');
-    } else {
-        // FIRST-PERSON: fire from camera position
-        const forwardOffset = new THREE.Vector3(0, 0, -2).applyQuaternion(camQuat);
-        const laserOrigin = camera.position.clone().add(forwardOffset);
-        
-        const wingSpread = 2;
-        const leftOffset = new THREE.Vector3(-wingSpread, 0, 0).applyQuaternion(camQuat);
-        const rightOffset = new THREE.Vector3(wingSpread, 0, 0).applyQuaternion(camQuat);
-        
-        leftGunWorld = laserOrigin.clone().add(leftOffset);
-        rightGunWorld = laserOrigin.clone().add(rightOffset);
-        
-        console.log('🔫 LASER v2254 1st-person');
-    }
-    
-    // Use normal-thickness lasers for both modes
-    createLaserBeam(leftGunWorld, targetPosition, '#00ff96', true);
-    createLaserBeam(rightGunWorld, targetPosition, '#00ff96', true);
+    createLaserBeam(laserOrigin.clone().add(leftOffset), targetPosition, '#00ff96', true);
+    createLaserBeam(laserOrigin.clone().add(rightOffset), targetPosition, '#00ff96', true);
     
     // Handle weapon hits based on target type
     if (targetObject) {
