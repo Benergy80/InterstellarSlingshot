@@ -1241,6 +1241,16 @@ if (typeof updateShieldSystem === 'function') {
         checkForNebulaDiscovery();
     }
     
+    // DEEP DISCOVERY: Check for close approach to nebula centers (50 units)
+    if (gameState.frameCount % 15 === 0 && typeof checkForNebulaDeepDiscovery === 'function') {
+        checkForNebulaDeepDiscovery();
+    }
+    
+    // ANIMATE: Pulse discovery path lines
+    if (typeof animateDiscoveryPaths === 'function') {
+        animateDiscoveryPaths();
+    }
+    
     // WEAPON ENERGY REGENERATION (ADD THIS)
     if (gameState.weapons.energy < 100) {
         gameState.weapons.energy = Math.min(100, gameState.weapons.energy + 0.5); // Regenerate 0.5 per frame (~30/sec)

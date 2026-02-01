@@ -2510,6 +2510,320 @@ window.playNebulaMusic = playNebulaMusic;
 window.stopNebulaMusic = stopNebulaMusic;
 window.getEnemyIntelligence = getEnemyIntelligence;
 
+// =============================================================================
+// NEBULA DEEP DISCOVERY SYSTEM - Hostile Race Pathways
+// =============================================================================
+
+// Track active discovery paths
+let discoveryPaths = [];
+
+// Faction lore database - backstory for each hostile species
+const FACTION_LORE = {
+    'Federation': {
+        species: 'Human',
+        color: 0x4488ff,
+        greeting: 'INCOMING TRANSMISSION - STARFLEET INTELLIGENCE',
+        lore: `Captain, our sensors detect Federation renegades in this sector. These former Starfleet officers turned to piracy after the Dominion War, stealing military-grade vessels and preying on civilian convoys. Their commander, Admiral Kane, believes the Federation abandoned the outer colonies. Approach with extreme caution - they fight with the precision of trained officers but none of the mercy.`,
+        threat: 'TACTICAL ASSESSMENT: Coordinated strike formations. Shield modulation tactics. High weapons accuracy.'
+    },
+    'Klingon Empire': {
+        species: 'Klingon',
+        color: 0xff8844,
+        greeting: 'INTELLIGENCE BRIEFING - KLINGON THREAT DETECTED',
+        lore: `A rogue Klingon warband has claimed this nebula as their hunting ground. Led by General Koth of House Duras, these warriors were exiled for dishonorable combat against civilians. They seek glory through slaughter, caring nothing for the warrior\'s code. Their battle cry: "Today IS a good day for YOU to die!" They will not retreat, they will not surrender.`,
+        threat: 'TACTICAL ASSESSMENT: Aggressive ramming tactics. Cloaking devices possible. Berserker combat style.'
+    },
+    'Rebel Alliance': {
+        species: 'Mon Calamari',
+        color: 0x88ff44,
+        greeting: 'PRIORITY ALERT - REBEL CELL IDENTIFIED',
+        lore: `Mon Calamari insurgents have established a hidden base near this nebula. Survivors of a brutal Imperial occupation, they now strike at any vessel they perceive as a threat. Their leader, Admiral Ackbar\'s former lieutenant, commands converted civilian cruisers armed with salvaged turbolasers. They fight for vengeance, not peace - and they see all outsiders as potential enemies.`,
+        threat: 'TACTICAL ASSESSMENT: Ambush specialists. Superior sensors. "It\'s a trap!" formations.'
+    },
+    'Romulan Star Empire': {
+        species: 'Romulan',
+        color: 0xff4488,
+        greeting: 'CLASSIFIED INTERCEPT - ROMULAN ACTIVITY',
+        lore: `The Tal Shiar have deployed a covert operations fleet to this region. These shadow agents answer to no one - not even the Romulan Senate. Their mission: eliminate all witnesses to their activities in this sector. Commander T\'Vok leads the operation, a woman whose name is whispered in fear across a dozen star systems. Trust nothing you see - Romulan holographic deception is legendary.`,
+        threat: 'TACTICAL ASSESSMENT: Cloaking technology. Plasma torpedoes. Psychological warfare specialists.'
+    },
+    'Galactic Empire': {
+        species: 'Imperial',
+        color: 0x44ffff,
+        greeting: 'IMPERIAL REMNANT FORCES DETECTED',
+        lore: `An Imperial Remnant fleet lurks within this nebula, still flying the banner of a fallen Empire. Moff Jerec commands this force of fanatics, seeking ancient artifacts they believe will restore Imperial glory. Their TIE squadrons are piloted by veterans of a hundred battles, and their Star Destroyer captains show no mercy. The Empire\'s shadow stretches even here.`,
+        threat: 'TACTICAL ASSESSMENT: Overwhelming numbers. Fighter swarms. Heavy capital ship firepower.'
+    },
+    'Cardassian Union': {
+        species: 'Cardassian',
+        color: 0xff44ff,
+        greeting: 'OBSIDIAN ORDER WARNING - CARDASSIAN PRESENCE',
+        lore: `Cardassian forces have infiltrated this region, remnants of the Obsidian Order\'s darkest programs. Gul Madred, infamous for his interrogation techniques, leads a fleet of warships equipped with experimental weapons. The Cardassians lost everything in the Dominion War - now they take from others. They specialize in disabling ships and capturing crews for... processing.`,
+        threat: 'TACTICAL ASSESSMENT: Disabling weapons priority. Tractor beam traps. Torture specialists aboard.'
+    },
+    'Sith Empire': {
+        species: 'Sith',
+        color: 0xff8888,
+        greeting: 'DARK SIDE PRESENCE - SITH LORD DETECTED',
+        lore: `The Force trembles with dark energy from this nebula. A Sith Lord, Darth Malachar, has gathered an army of dark acolytes and corrupted soldiers. They seek to drain the life force of entire worlds to fuel their master\'s immortality. Their ships run red with the blood of innocents, and their weapons fire burns with the hatred of the Dark Side itself. Fear is their greatest weapon.`,
+        threat: 'TACTICAL ASSESSMENT: Force-enhanced pilots. Lightning weapons. Unpredictable aggression.'
+    },
+    'Vulcan High Command': {
+        species: 'Vulcan',
+        color: 0xffaa88,
+        greeting: 'LOGIC PROTOCOL VIOLATION - VULCAN EXTREMISTS',
+        lore: `Disturbing intelligence, Captain. A sect of Vulcan extremists called the "V\'tosh ka\'tur" - Vulcans without logic - have established operations here. Led by T\'Pol\'s distant ancestor, Administrator Soval, they believe emotion must be purged from the galaxy - by force. Their ships are crewed by the most brilliant tactical minds in the quadrant, now turned to genocide. Cold, calculating, merciless.`,
+        threat: 'TACTICAL ASSESSMENT: Perfect tactical efficiency. No fear. No hesitation. No mercy.'
+    }
+};
+
+// Create a dotted path line from nebula to galaxy core
+function createDiscoveryPath(nebulaPosition, galaxyBlackHole, factionColor, factionName) {
+    if (!scene || !THREE) return null;
+    
+    const startPos = nebulaPosition.clone();
+    const endPos = galaxyBlackHole.position.clone();
+    
+    // Create points along the path
+    const pathPoints = [];
+    const segments = 100;
+    
+    for (let i = 0; i <= segments; i++) {
+        const t = i / segments;
+        // Add slight curve for visual interest
+        const curveHeight = Math.sin(t * Math.PI) * 500;
+        pathPoints.push(new THREE.Vector3(
+            startPos.x + (endPos.x - startPos.x) * t,
+            startPos.y + (endPos.y - startPos.y) * t + curveHeight,
+            startPos.z + (endPos.z - startPos.z) * t
+        ));
+    }
+    
+    // Create the path geometry
+    const pathGeometry = new THREE.BufferGeometry().setFromPoints(pathPoints);
+    
+    // Create dashed line material
+    const pathMaterial = new THREE.LineDashedMaterial({
+        color: factionColor,
+        dashSize: 100,
+        gapSize: 50,
+        linewidth: 2,
+        transparent: true,
+        opacity: 0.7
+    });
+    
+    const pathLine = new THREE.Line(pathGeometry, pathMaterial);
+    pathLine.computeLineDistances(); // Required for dashed lines
+    
+    pathLine.userData = {
+        type: 'discovery_path',
+        faction: factionName,
+        startPosition: startPos.clone(),
+        endPosition: endPos.clone(),
+        createdAt: Date.now()
+    };
+    
+    // Add glow particles along the path
+    const glowParticles = createPathGlowParticles(pathPoints, factionColor);
+    
+    scene.add(pathLine);
+    if (glowParticles) scene.add(glowParticles);
+    
+    discoveryPaths.push({ line: pathLine, particles: glowParticles, faction: factionName });
+    
+    console.log(`🛤️ Discovery path created to ${factionName} territory`);
+    return pathLine;
+}
+
+// Create glowing particles along the discovery path
+function createPathGlowParticles(pathPoints, color) {
+    if (!THREE) return null;
+    
+    const particleCount = 50;
+    const positions = new Float32Array(particleCount * 3);
+    
+    for (let i = 0; i < particleCount; i++) {
+        const pointIndex = Math.floor((i / particleCount) * pathPoints.length);
+        const point = pathPoints[Math.min(pointIndex, pathPoints.length - 1)];
+        
+        positions[i * 3] = point.x + (Math.random() - 0.5) * 50;
+        positions[i * 3 + 1] = point.y + (Math.random() - 0.5) * 50;
+        positions[i * 3 + 2] = point.z + (Math.random() - 0.5) * 50;
+    }
+    
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    
+    const material = new THREE.PointsMaterial({
+        color: color,
+        size: 30,
+        transparent: true,
+        opacity: 0.5,
+        blending: THREE.AdditiveBlending,
+        sizeAttenuation: true
+    });
+    
+    const particles = new THREE.Points(geometry, material);
+    particles.userData = { type: 'discovery_path_particles' };
+    
+    return particles;
+}
+
+// Find the nearest galaxy core black hole to a position
+function findNearestGalaxyCore(position) {
+    if (typeof planets === 'undefined') return null;
+    
+    let nearestCore = null;
+    let nearestDist = Infinity;
+    
+    planets.forEach(planet => {
+        if (planet.userData.isGalacticCore && planet.userData.type === 'blackhole') {
+            const dist = position.distanceTo(planet.position);
+            if (dist < nearestDist) {
+                nearestDist = dist;
+                nearestCore = planet;
+            }
+        }
+    });
+    
+    return nearestCore;
+}
+
+// Deep discovery check - triggers at 50 units from nebula center
+function checkForNebulaDeepDiscovery() {
+    if (typeof gameState === 'undefined' || typeof camera === 'undefined') return;
+    if (typeof nebulaClouds === 'undefined' || nebulaClouds.length === 0) return;
+    
+    const deepDiscoveryRange = 50; // Very close to nebula center
+    
+    nebulaClouds.forEach((nebula, index) => {
+        if (!nebula || !nebula.userData) return;
+        
+        // Skip if already deep-discovered
+        if (nebula.userData.deepDiscovered) return;
+        
+        const distance = camera.position.distanceTo(nebula.position);
+        
+        if (distance < deepDiscoveryRange) {
+            // Mark as deep discovered
+            nebula.userData.deepDiscovered = true;
+            
+            // Find the nearest galaxy core
+            const nearestCore = findNearestGalaxyCore(nebula.position);
+            
+            if (nearestCore && nearestCore.userData.faction) {
+                const factionName = nearestCore.userData.faction;
+                const loreData = FACTION_LORE[factionName];
+                
+                if (loreData) {
+                    // Create the discovery path
+                    createDiscoveryPath(
+                        nebula.position,
+                        nearestCore,
+                        loreData.color,
+                        factionName
+                    );
+                    
+                    // Play dramatic sound
+                    playDeepDiscoverySound();
+                    
+                    // Show Mission Command transmission with faction lore
+                    const nebulaName = nebula.userData.mythicalName || nebula.userData.name || 'Unknown Nebula';
+                    const galaxyName = nearestCore.userData.name || `${factionName} Galaxy`;
+                    
+                    const transmissionText = `${loreData.greeting}\n\n` +
+                        `${loreData.lore}\n\n` +
+                        `${loreData.threat}\n\n` +
+                        `NAVIGATION: A pathway has been marked from the ${nebulaName} to ${galaxyName}. ` +
+                        `Follow the ${factionName === 'Federation' ? 'blue' : 
+                            factionName === 'Klingon Empire' ? 'orange' : 
+                            factionName === 'Rebel Alliance' ? 'green' :
+                            factionName === 'Romulan Star Empire' ? 'pink' :
+                            factionName === 'Galactic Empire' ? 'cyan' :
+                            factionName === 'Cardassian Union' ? 'magenta' :
+                            factionName === 'Sith Empire' ? 'red' : 'peach'} dotted line to engage hostile forces.\n\n` +
+                        `Good hunting, Captain.`;
+                    
+                    if (typeof showMissionCommandAlert === 'function') {
+                        showMissionCommandAlert('Mission Control', transmissionText);
+                    }
+                    
+                    // Also show achievement
+                    if (typeof showAchievement === 'function') {
+                        showAchievement(
+                            'Hostile Territory Located!',
+                            `${factionName} forces detected. Path marked to their stronghold.`,
+                            true
+                        );
+                    }
+                    
+                    console.log(`🔮 Deep discovery: ${nebulaName} → ${factionName} territory`);
+                }
+            }
+        }
+    });
+}
+
+// Play dramatic sound for deep discovery
+function playDeepDiscoverySound() {
+    if (!audioContext || typeof sfxGain === 'undefined') return;
+    
+    try {
+        // Create ominous discovery tone
+        const osc1 = audioContext.createOscillator();
+        const osc2 = audioContext.createOscillator();
+        const gainNode = audioContext.createGain();
+        
+        osc1.type = 'sine';
+        osc1.frequency.setValueAtTime(110, audioContext.currentTime);
+        osc1.frequency.linearRampToValueAtTime(220, audioContext.currentTime + 1);
+        
+        osc2.type = 'triangle';
+        osc2.frequency.setValueAtTime(165, audioContext.currentTime);
+        osc2.frequency.linearRampToValueAtTime(330, audioContext.currentTime + 1);
+        
+        gainNode.gain.setValueAtTime(0, audioContext.currentTime);
+        gainNode.gain.linearRampToValueAtTime(0.15, audioContext.currentTime + 0.3);
+        gainNode.gain.linearRampToValueAtTime(0, audioContext.currentTime + 2);
+        
+        osc1.connect(gainNode);
+        osc2.connect(gainNode);
+        gainNode.connect(sfxGain || masterGain);
+        
+        osc1.start();
+        osc2.start();
+        osc1.stop(audioContext.currentTime + 2);
+        osc2.stop(audioContext.currentTime + 2);
+        
+        console.log('🔊 Deep discovery sound played');
+    } catch (e) {
+        console.log('Could not play discovery sound:', e);
+    }
+}
+
+// Animate discovery paths (pulsing effect)
+function animateDiscoveryPaths() {
+    const time = Date.now() * 0.001;
+    
+    discoveryPaths.forEach(path => {
+        if (path.line && path.line.material) {
+            // Pulse the opacity
+            path.line.material.opacity = 0.5 + Math.sin(time * 2) * 0.2;
+        }
+        if (path.particles && path.particles.material) {
+            // Pulse particles
+            path.particles.material.opacity = 0.3 + Math.sin(time * 3) * 0.2;
+        }
+    });
+}
+
+// Export deep discovery functions
+window.checkForNebulaDeepDiscovery = checkForNebulaDeepDiscovery;
+window.createDiscoveryPath = createDiscoveryPath;
+window.animateDiscoveryPaths = animateDiscoveryPaths;
+window.FACTION_LORE = FACTION_LORE;
+window.discoveryPaths = discoveryPaths;
+
 // Automatic black hole warp function
 window.transitionToRandomLocation = transitionToRandomLocation;
 
