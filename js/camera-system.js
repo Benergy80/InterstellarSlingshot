@@ -562,21 +562,42 @@ function setCameraNoShip() {
         return;
     }
     
-    console.log('📷 Setting zero offset (no visible ship) with smooth transition');
+    console.log('📷 Setting zero offset (cycling through 1st person first)');
     
-    // Capture current offset for smooth transition
-    const currentOffset = getCurrentOffset();
-    
-    // Keep ship visible during transition (same as setCameraFirstPerson)
+    // Keep ship visible during transitions
     cameraState.playerShipMesh.visible = true;
     
-    cameraState.mode = 'zero-offset';
-    cameraState.isTransitioning = true;
-    cameraState.transitionStartTime = performance.now();
-    cameraState.transitionDuration = 400;  // Match first-person transition duration
-    cameraState.transitionStartOffset.copy(currentOffset);
-    // Ship moves behind camera (reverse of 1→0 which brings ship into view)
-    cameraState.transitionTargetOffset.set(0.25, -1, 3);
+    // If coming from 3rd person, go to 1st person first (like warp does)
+    if (cameraState.mode === 'third-person') {
+        // Step 1: Animate to first-person
+        const currentOffset = getCurrentOffset();
+        cameraState.mode = 'first-person';
+        cameraState.isTransitioning = true;
+        cameraState.transitionStartTime = performance.now();
+        cameraState.transitionDuration = 400;
+        cameraState.transitionStartOffset.copy(currentOffset);
+        cameraState.transitionTargetOffset.copy(cameraState.normalFirstPersonOffset);
+        
+        // Step 2: After reaching 1st person, continue to zero-offset
+        setTimeout(() => {
+            const firstPersonOffset = getCurrentOffset();
+            cameraState.mode = 'zero-offset';
+            cameraState.isTransitioning = true;
+            cameraState.transitionStartTime = performance.now();
+            cameraState.transitionDuration = 400;
+            cameraState.transitionStartOffset.copy(firstPersonOffset);
+            cameraState.transitionTargetOffset.set(0.25, -1, 3);
+        }, 420);  // Slightly after 1st transition completes
+    } else {
+        // Already in 1st person or other mode - go directly to zero-offset
+        const currentOffset = getCurrentOffset();
+        cameraState.mode = 'zero-offset';
+        cameraState.isTransitioning = true;
+        cameraState.transitionStartTime = performance.now();
+        cameraState.transitionDuration = 400;
+        cameraState.transitionStartOffset.copy(currentOffset);
+        cameraState.transitionTargetOffset.set(0.25, -1, 3);
+    }
     
     if (typeof showNotification === 'function') {
         showNotification('Zero Offset Camera', 2000);

@@ -571,8 +571,8 @@ function calculateDifficultySettings(galaxiesCleared = 0) {
         maxLocalAttackers: Math.min(3 + galaxiesCleared, 8), // Start with 3, +1 per galaxy cleared, max 8
         localSpeedMultiplier: 0.5 + (galaxiesCleared * 0.1), // Start slow, get faster
         localHealthMultiplier: galaxiesCleared === 0 ? 1 : Math.min(1 + galaxiesCleared * 0.25, 3), // MAX 3 hits
-        localDetectionRange: 2000 + (galaxiesCleared * 200), // Larger detection as difficulty increases
-        localFiringRange: 200 + (galaxiesCleared * 25),
+        localDetectionRange: 2500 + (galaxiesCleared * 200), // Larger detection as difficulty increases
+        localFiringRange: 500 + (galaxiesCleared * 50),  // Increased - enemies attack from further
         localAttackCooldown: Math.max(1000, 2000 - (galaxiesCleared * 100)), // Faster attacks as difficulty increases
         
         // Distant galaxy settings (always challenging) - MAX 3 HITS
@@ -580,7 +580,7 @@ function calculateDifficultySettings(galaxiesCleared = 0) {
         distantSpeedMultiplier: 0.8 + (galaxiesCleared * 0.05),
         distantHealthMultiplier: Math.min(2 + galaxiesCleared * 0.125, 3), // MAX 3 hits
         distantDetectionRange: 3000 + (galaxiesCleared * 150),
-        distantFiringRange: 300 + (galaxiesCleared * 20),
+        distantFiringRange: 600 + (galaxiesCleared * 30),  // Increased - enemies attack from further
         distantAttackCooldown: Math.max(800, 1200 - (galaxiesCleared * 50)),
         
         // General settings
