@@ -4191,7 +4191,7 @@ function fireWeapon() {
     }
     
     // Create weapon effect - fire from ACTUAL ship model position
-    // VERSION MARKER: v2245 - ship position + camera's forward direction
+    // VERSION MARKER: v2246 - ship is only 14 units ahead, use small nose offset
     const camQuat = camera.quaternion;
     const mode = window.cameraState?.mode || 'unknown';
     const playerShip = window.cameraState?.playerShipMesh;
@@ -4199,16 +4199,16 @@ function fireWeapon() {
     // Use actual ship position if available, otherwise fall back to camera offset
     let laserOrigin;
     if (playerShip && playerShip.visible && mode === 'third-person') {
-        // Get ship's world position
+        // Ship is at camera + (0, -4, -14) in camera space (14 units ahead, 4 down)
+        // Get ship's world position and add small forward offset to nose
         const shipPos = playerShip.position.clone();
-        // Use CAMERA's forward direction (that's where we're aiming), not ship's rotated quaternion
-        // Offset slightly forward from ship center using camera's facing direction
-        const noseOffset = new THREE.Vector3(0, 0, -20).applyQuaternion(camQuat);
+        // Small offset to ship nose (ship is ~10 units long, so -5 gets to front)
+        const noseOffset = new THREE.Vector3(0, 0, -5).applyQuaternion(camQuat);
         laserOrigin = shipPos.clone().add(noseOffset);
     } else {
         // First-person: fire from camera
         const forwardDist = 2;
-        const forwardOffset = new THREE.Vector3(0, 0, forwardDist).applyQuaternion(camQuat);
+        const forwardOffset = new THREE.Vector3(0, 0, -forwardDist).applyQuaternion(camQuat);
         laserOrigin = camera.position.clone().add(forwardOffset);
     }
     
@@ -4217,14 +4217,16 @@ function fireWeapon() {
     const leftOffset = new THREE.Vector3(-wingSpread, 0, 0).applyQuaternion(camQuat);
     const rightOffset = new THREE.Vector3(wingSpread, 0, 0).applyQuaternion(camQuat);
     
-    // DEBUG
-    console.log('🔫 LASER v2245:', {
+    // DEBUG - show distance between ship and laser origin
+    const shipToCam = playerShip ? camera.position.distanceTo(playerShip.position).toFixed(1) : 'n/a';
+    const shipToLaser = playerShip ? playerShip.position.distanceTo(laserOrigin).toFixed(1) : 'n/a';
+    console.log('🔫 LASER v2246:', {
         mode: mode,
         shipVisible: playerShip?.visible,
+        shipToCam: shipToCam,
+        shipToLaser: shipToLaser,
         shipPos: playerShip ? playerShip.position.toArray().map(n=>n.toFixed(0)) : 'none',
-        camPos: camera.position.toArray().map(n=>n.toFixed(0)),
-        laserOrigin: laserOrigin.toArray().map(n=>n.toFixed(0)),
-        target: targetPosition.toArray().map(n=>n.toFixed(0))
+        laserOrigin: laserOrigin.toArray().map(n=>n.toFixed(0))
     });
     
     createLaserBeam(laserOrigin.clone().add(leftOffset), targetPosition, '#00ff96', true);
