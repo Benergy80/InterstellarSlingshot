@@ -4191,16 +4191,16 @@ function fireWeapon() {
     }
     
     // Create weapon effect (RESTORED: Uses corrected laser beam)
-    // Fire from wing guns (left and right of ship) when ship model available
-    if (window.cameraState && window.cameraState.playerShipMesh && window.cameraState.mode !== 'zero-offset') {
+    // FIXED: Only fire from ship in ACTUAL third-person mode (not first-person or zero-offset)
+    if (window.cameraState && window.cameraState.playerShipMesh && window.cameraState.mode === 'third-person') {
         const shipPos = window.cameraState.playerShipMesh.position.clone();
         const shipQuat = window.cameraState.playerShipMesh.quaternion;
         
         // Wing gun offsets scaled for 48x ship model
-        // X = left/right from center, Y = up/down, Z = forward/back (negative = forward)
-        const wingOffset = 6;     // Distance from center to wing (scaled for 48x model)
-        const forwardOffset = -8; // Fire from front of ship (negative Z = forward)
-        const verticalOffset = -1; // Slightly below center
+        // X = left/right from center, Y = up/down, Z = forward/back (negative = forward in ship space)
+        const wingOffset = 8;     // Distance from center to wing guns
+        const forwardOffset = -12; // Fire from front/nose of ship (negative Z = forward in ship space)
+        const verticalOffset = 0; // At ship center height
         
         // Create offset vectors in ship's local space, then rotate to world space
         const leftWing = new THREE.Vector3(-wingOffset, verticalOffset, forwardOffset).applyQuaternion(shipQuat);
@@ -4210,6 +4210,7 @@ function fireWeapon() {
         createLaserBeam(shipPos.clone().add(leftWing), targetPosition, '#00ff96', true);
         createLaserBeam(shipPos.clone().add(rightWing), targetPosition, '#00ff96', true);
     } else {
+        // First-person and zero-offset modes: fire from camera position (player viewpoint)
         createLaserBeam(camera.position.clone(), targetPosition, '#00ff96', true);
     }
     

@@ -5933,6 +5933,7 @@ function createWarpSpeedStarfield() {
     const lines = new THREE.LineSegments(lineGeometry, lineMaterial);
     lines.frustumCulled = false;
     lines.visible = false; // ✅ Start hidden
+    lines.renderOrder = 1;  // Render behind player ship (which has renderOrder 100)
     
     if (typeof scene !== 'undefined') {
         scene.add(lines);

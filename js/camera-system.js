@@ -112,11 +112,19 @@ function initCameraSystem(camera, scene) {
                         depthWrite: true,
                         depthTest: true
                     });
+                    
+                    // CRITICAL: Render player ship ON TOP of warp effects (starfield, hyperspace)
+                    // Higher renderOrder = rendered later = appears on top
+                    child.renderOrder = 100;
+                    
                     // Disable shadows for performance
                     child.castShadow = false;
                     child.receiveShadow = false;
                 }
             });
+            
+            // Also set renderOrder on the parent model
+            playerModel.renderOrder = 100;
 
             console.log('  - About to add player model to scene...');
             console.log('  - Scene object:', scene);
@@ -291,6 +299,14 @@ function updateCameraView(camera) {
     } else {
         // Make ship visible when game is active (not in zero-offset mode)
         cameraState.playerShipMesh.visible = true;
+        
+        // CRITICAL: Force ALL child meshes visible (fixes warp disappearing issue)
+        // During warp, the ship must remain visible on screen
+        cameraState.playerShipMesh.traverse((child) => {
+            if (child.isMesh) {
+                child.visible = true;
+            }
+        });
     }
 
     // Calculate offset (with animation if transitioning)
