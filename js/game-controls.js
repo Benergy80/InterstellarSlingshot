@@ -2280,6 +2280,8 @@ function flashEnemyHit(enemy, damage = 1) {
 
 // ENHANCED: Directional damage effect system with attacker position
 function createScreenDamageEffect(attackerPosition = null) {
+    console.log('💥 createScreenDamageEffect called with:', attackerPosition ? 'position' : 'null');
+    
     if (!attackerPosition) {
         // Fallback to old full-screen effect if no attacker position provided
         const damageOverlay = document.createElement('div');
@@ -2294,6 +2296,7 @@ function createScreenDamageEffect(attackerPosition = null) {
     
     // NEW: Directional damage effect based on attacker position
     const attackDirection = getAttackDirection(attackerPosition);
+    console.log('💥 Attack direction result:', attackDirection);
     createDirectionalDamageEffect(attackDirection);
     
     // Enhanced screen shake effect
@@ -4200,7 +4203,7 @@ function fireWeapon() {
         const shipPos = window.cameraState.playerShipMesh.position.clone();
         const shipQuat = window.cameraState.playerShipMesh.quaternion;
         
-        console.log('🔫 Firing from ship position:', shipPos);
+        console.log('🔫 Firing from ship position:', shipPos.x.toFixed(1), shipPos.y.toFixed(1), shipPos.z.toFixed(1));
         
         // Wing offsets (left and right guns)
         const wingOffset = 2.5;  // Distance from center to wing
