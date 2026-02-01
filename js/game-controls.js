@@ -4217,10 +4217,10 @@ function fireWeapon() {
     const leftOffset = new THREE.Vector3(-wingSpread, 0, 0).applyQuaternion(camQuat);
     const rightOffset = new THREE.Vector3(wingSpread, 0, 0).applyQuaternion(camQuat);
     
-    // DEBUG - show distance between ship and laser origin
+    // DEBUG v2247 - add visual marker at laser origin
     const shipToCam = playerShip ? camera.position.distanceTo(playerShip.position).toFixed(1) : 'n/a';
     const shipToLaser = playerShip ? playerShip.position.distanceTo(laserOrigin).toFixed(1) : 'n/a';
-    console.log('🔫 LASER v2246:', {
+    console.log('🔫 LASER v2247:', {
         mode: mode,
         shipVisible: playerShip?.visible,
         shipToCam: shipToCam,
@@ -4228,6 +4228,17 @@ function fireWeapon() {
         shipPos: playerShip ? playerShip.position.toArray().map(n=>n.toFixed(0)) : 'none',
         laserOrigin: laserOrigin.toArray().map(n=>n.toFixed(0))
     });
+    
+    // DEBUG: Add visible red sphere at laser origin for 1 second
+    if (mode === 'third-person') {
+        const debugSphere = new THREE.Mesh(
+            new THREE.SphereGeometry(2, 8, 8),
+            new THREE.MeshBasicMaterial({ color: 0xff0000 })
+        );
+        debugSphere.position.copy(laserOrigin);
+        scene.add(debugSphere);
+        setTimeout(() => scene.remove(debugSphere), 1000);
+    }
     
     createLaserBeam(laserOrigin.clone().add(leftOffset), targetPosition, '#00ff96', true);
     createLaserBeam(laserOrigin.clone().add(rightOffset), targetPosition, '#00ff96', true);
