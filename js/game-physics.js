@@ -2689,12 +2689,12 @@ function findNearestGalaxyCore(position) {
     return nearestCore;
 }
 
-// Deep discovery check - triggers at 50 units from nebula center
+// Deep discovery check - triggers at 1000 units from nebula center
 function checkForNebulaDeepDiscovery() {
     if (typeof gameState === 'undefined' || typeof camera === 'undefined') return;
     if (typeof nebulaClouds === 'undefined' || nebulaClouds.length === 0) return;
     
-    const deepDiscoveryRange = 50; // Very close to nebula center
+    const deepDiscoveryRange = 1000; // Within nebula core region
     
     nebulaClouds.forEach((nebula, index) => {
         if (!nebula || !nebula.userData) return;
