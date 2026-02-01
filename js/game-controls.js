@@ -4190,86 +4190,35 @@ function fireWeapon() {
         }
     }
     
-    // Create weapon effect - fire from ACTUAL ship model position
-    // VERSION MARKER: v2246 - ship is only 14 units ahead, use small nose offset
+    // Create weapon effect - fire from ship position
+    // VERSION MARKER: v2251 - CALCULATE ship position directly from camera offset
     const camQuat = camera.quaternion;
     const mode = window.cameraState?.mode || 'unknown';
-    const playerShip = window.cameraState?.playerShipMesh;
     
-    // Use actual ship position if available, otherwise fall back to camera offset
     let laserOrigin;
-    if (playerShip && playerShip.visible && mode === 'third-person') {
-        // Ship is at camera + (0, -4, -14) in camera space (14 units ahead, 4 down)
-        // Get ship's world position and add small forward offset to nose
-        const shipPos = playerShip.position.clone();
-        // Small offset to ship nose (ship is ~10 units long, so -5 gets to front)
-        const noseOffset = new THREE.Vector3(0, 0, -5).applyQuaternion(camQuat);
+    if (mode === 'third-person') {
+        // Calculate ship position EXACTLY how camera-system.js does it:
+        // normalThirdPersonOffset: new THREE.Vector3(0, -4, -14)
+        // Ship is 14 units FORWARD (-Z) and 4 units DOWN (-Y) from camera
+        const shipOffset = new THREE.Vector3(0, -4, -14).applyQuaternion(camQuat);
+        const shipPos = camera.position.clone().add(shipOffset);
+        
+        // Add nose offset (ship is roughly 10 units long at 96x scale... try 8 forward)
+        const noseOffset = new THREE.Vector3(0, 0, -8).applyQuaternion(camQuat);
         laserOrigin = shipPos.clone().add(noseOffset);
     } else {
         // First-person: fire from camera
-        const forwardDist = 2;
-        const forwardOffset = new THREE.Vector3(0, 0, -forwardDist).applyQuaternion(camQuat);
+        const forwardOffset = new THREE.Vector3(0, 0, -2).applyQuaternion(camQuat);
         laserOrigin = camera.position.clone().add(forwardOffset);
     }
     
-    // Wing gun offsets (left/right) - always use camera orientation for consistent aim
-    const wingSpread = (mode === 'third-person') ? 8 : 2;
+    // Wing gun offsets (left/right)
+    const wingSpread = (mode === 'third-person') ? 6 : 2;
     const leftOffset = new THREE.Vector3(-wingSpread, 0, 0).applyQuaternion(camQuat);
     const rightOffset = new THREE.Vector3(wingSpread, 0, 0).applyQuaternion(camQuat);
     
-    // DEBUG v2250 - show camera, ship, and laser positions
-    const camPos = camera.position.clone();
-    const shipWorldPos = playerShip ? new THREE.Vector3() : null;
-    if (playerShip) playerShip.getWorldPosition(shipWorldPos);
-    
-    const shipToCam = shipWorldPos ? camPos.distanceTo(shipWorldPos).toFixed(1) : 'n/a';
-    const shipToLaser = shipWorldPos ? shipWorldPos.distanceTo(laserOrigin).toFixed(1) : 'n/a';
-    
-    console.log('🔫 LASER v2250:', {
-        mode: mode,
-        camPos: camPos.toArray().map(n=>n.toFixed(0)),
-        shipWorldPos: shipWorldPos ? shipWorldPos.toArray().map(n=>n.toFixed(0)) : 'none',
-        laserOrigin: laserOrigin.toArray().map(n=>n.toFixed(0)),
-        shipToCam: shipToCam,
-        shipToLaser: shipToLaser
-    });
-    
-    // DEBUG: Add spheres at CAMERA (yellow), SHIP (blue), and LASER ORIGIN (red)
-    if (mode === 'third-person' && typeof THREE !== 'undefined' && typeof scene !== 'undefined') {
-        try {
-            // Yellow sphere at camera
-            const camSphere = new THREE.Mesh(
-                new THREE.SphereGeometry(30, 8, 8),
-                new THREE.MeshBasicMaterial({ color: 0xffff00, transparent: true, opacity: 0.5 })
-            );
-            camSphere.position.copy(camPos);
-            scene.add(camSphere);
-            
-            // Blue sphere at ship world position
-            if (shipWorldPos) {
-                const shipSphere = new THREE.Mesh(
-                    new THREE.SphereGeometry(40, 8, 8),
-                    new THREE.MeshBasicMaterial({ color: 0x0000ff, transparent: true, opacity: 0.5 })
-                );
-                shipSphere.position.copy(shipWorldPos);
-                scene.add(shipSphere);
-                setTimeout(() => { scene.remove(shipSphere); }, 3000);
-            }
-            
-            // Red sphere at laser origin
-            const laserSphere = new THREE.Mesh(
-                new THREE.SphereGeometry(25, 8, 8),
-                new THREE.MeshBasicMaterial({ color: 0xff0000, transparent: true, opacity: 0.7 })
-            );
-            laserSphere.position.copy(laserOrigin);
-            scene.add(laserSphere);
-            
-            console.log('🟡 CAM sphere, 🔵 SHIP sphere, 🔴 LASER sphere added');
-            setTimeout(() => { scene.remove(camSphere); scene.remove(laserSphere); }, 3000);
-        } catch(e) {
-            console.error('DEBUG SPHERES failed:', e);
-        }
-    }
+    // DEBUG v2251 - simplified, no spheres
+    console.log('🔫 LASER v2251:', { mode, laserOrigin: laserOrigin.toArray().map(n=>n.toFixed(0)) });
     
     createLaserBeam(laserOrigin.clone().add(leftOffset), targetPosition, '#00ff96', true);
     createLaserBeam(laserOrigin.clone().add(rightOffset), targetPosition, '#00ff96', true);
