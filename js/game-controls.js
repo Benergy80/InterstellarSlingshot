@@ -4190,23 +4190,8 @@ function fireWeapon() {
         }
     }
     
-    // Create weapon effect - RESTORED ORIGINAL WORKING VERSION
-    // Use ship model position if available, otherwise camera position
-    const hasShip = window.cameraState && window.cameraState.playerShipMesh;
-    const laserOrigin = hasShip 
-        ? window.cameraState.playerShipMesh.position.clone()
-        : camera.position.clone();
-    
-    // Fire dual lasers from origin with slight left/right offset
-    const fireQuat = hasShip
-        ? window.cameraState.playerShipMesh.quaternion
-        : camera.quaternion;
-    
-    const leftOffset = new THREE.Vector3(-3, 0, 0).applyQuaternion(fireQuat);
-    const rightOffset = new THREE.Vector3(3, 0, 0).applyQuaternion(fireQuat);
-    
-    createLaserBeam(laserOrigin.clone().add(leftOffset), targetPosition, '#00ff96', true);
-    createLaserBeam(laserOrigin.clone().add(rightOffset), targetPosition, '#00ff96', true);
+    // Create weapon effect (RESTORED: Uses corrected laser beam)
+    createLaserBeam(camera.position, targetPosition, '#00ff96', true);
     
     // Handle weapon hits based on target type
     if (targetObject) {
