@@ -2333,9 +2333,9 @@ function createThirdPersonBeam(startPos, endPos, color) {
         };
         activeLasers.push(laserData);
         
-        // Slower fade now that lasers track with ship
+        // Fast fade for 3rd person - snappy visual
         const fadeInterval = setInterval(() => {
-            laserData.opacity -= 0.15;  // Slower fade - laser stays visible longer
+            laserData.opacity -= 0.3;  // Fast fade
             laserMaterial.opacity = laserData.opacity;
             glowMaterial.opacity = laserData.opacity * 0.4;
             
@@ -2351,7 +2351,7 @@ function createThirdPersonBeam(startPos, endPos, color) {
                 glowGeometry.dispose();
                 glowMaterial.dispose();
             }
-        }, 30);
+        }, 25);
         
     } catch (error) {
         console.warn('Failed to create third-person beam:', error);
@@ -2360,25 +2360,27 @@ function createThirdPersonBeam(startPos, endPos, color) {
 
 // Update active lasers to track with ship movement - call this in animate()
 function updateActiveLasers() {
-    if (typeof camera === 'undefined' || activeLasers.length === 0) return;
+    if (typeof camera === 'undefined') return;
     
     const currentCameraPos = camera.position;
     
+    // Update laser beams
     for (const laserData of activeLasers) {
-        // Calculate how much the camera has moved since last frame
         const delta = new THREE.Vector3().subVectors(currentCameraPos, laserData.lastCameraPos);
-        
-        // Move the laser beam by the same amount
         laserData.beam.position.add(delta);
-        
-        // Update stored position for next frame
         laserData.lastCameraPos.copy(currentCameraPos);
     }
+    
+    // Also update muzzle flashes
+    updateMuzzleFlashes();
 }
 
-// Muzzle flash effect at wing tip (brief bright sphere)
+// Active muzzle flashes - track with ship like lasers
+const activeMuzzleFlashes = [];
+
+// Muzzle flash effect at wing tip (brief bright sphere) - NOW TRACKS WITH SHIP
 function createMuzzleFlash(position) {
-    const flashGeometry = new THREE.SphereGeometry(0.8, 8, 8);  // Smaller flash
+    const flashGeometry = new THREE.SphereGeometry(0.8, 8, 8);
     const flashMaterial = new THREE.MeshBasicMaterial({
         color: '#00ff96',
         transparent: true,
@@ -2388,18 +2390,43 @@ function createMuzzleFlash(position) {
     flash.position.copy(position);
     scene.add(flash);
     
+    // Track for position updates
+    const flashData = {
+        mesh: flash,
+        geometry: flashGeometry,
+        material: flashMaterial,
+        lastCameraPos: camera.position.clone(),
+        opacity: 1.0
+    };
+    activeMuzzleFlashes.push(flashData);
+    
     // Quick fade out
-    let opacity = 1.0;
     const fadeInterval = setInterval(() => {
-        opacity -= 0.3;
-        flashMaterial.opacity = opacity;
-        if (opacity <= 0) {
+        flashData.opacity -= 0.3;
+        flashMaterial.opacity = flashData.opacity;
+        if (flashData.opacity <= 0) {
             clearInterval(fadeInterval);
+            // Remove from tracking array
+            const idx = activeMuzzleFlashes.indexOf(flashData);
+            if (idx > -1) activeMuzzleFlashes.splice(idx, 1);
             scene.remove(flash);
             flashGeometry.dispose();
             flashMaterial.dispose();
         }
     }, 25);
+}
+
+// Update muzzle flashes to track with ship - called from updateActiveLasers
+function updateMuzzleFlashes() {
+    if (typeof camera === 'undefined' || activeMuzzleFlashes.length === 0) return;
+    
+    const currentCameraPos = camera.position;
+    
+    for (const flashData of activeMuzzleFlashes) {
+        const delta = new THREE.Vector3().subVectors(currentCameraPos, flashData.lastCameraPos);
+        flashData.mesh.position.add(delta);
+        flashData.lastCameraPos.copy(currentCameraPos);
+    }
 }
 
 // Animated tracer projectile that travels from start to target
