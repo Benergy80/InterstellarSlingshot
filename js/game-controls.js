@@ -2157,6 +2157,7 @@ function createFireworkCelebrationWithSound() {
 }
 
 // RESTORED: Working laser beam from game-controls13.js (FIXES POSITIONING)
+// NOW TRACKS WITH SHIP for player lasers (1st person / cockpit view)
 function createLaserBeam(startPos, endPos, color = '#00ff96', isPlayer = true) {
     if (typeof THREE === 'undefined' || typeof scene === 'undefined') return;
     
@@ -2203,22 +2204,44 @@ function createLaserBeam(startPos, endPos, color = '#00ff96', isPlayer = true) {
         
         scene.add(laserBeam);
         
+        // Track player lasers with ship movement (not enemy lasers)
+        let laserData = null;
+        if (isPlayer && typeof camera !== 'undefined') {
+            laserData = {
+                beam: laserBeam,
+                geometry: laserGeometry,
+                material: laserMaterial,
+                glowGeometry: glowGeometry,
+                glowMaterial: glowMaterial,
+                lastCameraPos: camera.position.clone(),
+                opacity: 0.8
+            };
+            activeLasers.push(laserData);
+        }
+        
         // Fast-fading laser beams
-let opacity = 0.8;
-const fadeInterval = setInterval(() => {
-    opacity -= 0.15;  // Fast fade
-    laserMaterial.opacity = opacity;
-    glowMaterial.opacity = opacity * 0.4;
-    
-    if (opacity <= 0) {
-        clearInterval(fadeInterval);
-        scene.remove(laserBeam);
-        laserGeometry.dispose();
-        laserMaterial.dispose();
-        glowGeometry.dispose();
-        glowMaterial.dispose();
-    }
-}, 40);  // Fast interval
+        let opacity = 0.8;
+        const fadeInterval = setInterval(() => {
+            opacity -= 0.3;  // Fast fade
+            laserMaterial.opacity = opacity;
+            glowMaterial.opacity = opacity * 0.4;
+            
+            if (laserData) laserData.opacity = opacity;
+            
+            if (opacity <= 0) {
+                clearInterval(fadeInterval);
+                // Remove from tracking if player laser
+                if (laserData) {
+                    const idx = activeLasers.indexOf(laserData);
+                    if (idx > -1) activeLasers.splice(idx, 1);
+                }
+                scene.remove(laserBeam);
+                laserGeometry.dispose();
+                laserMaterial.dispose();
+                glowGeometry.dispose();
+                glowMaterial.dispose();
+            }
+        }, 25);  // Fast interval
         
     } catch (error) {
         console.warn('Failed to create laser beam:', error);
