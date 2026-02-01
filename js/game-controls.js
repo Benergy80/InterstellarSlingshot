@@ -4229,18 +4229,17 @@ function fireWeapon() {
         laserOrigin: laserOrigin.toArray().map(n=>n.toFixed(0))
     });
     
-    // DEBUG: Add LARGE visible red sphere at laser origin for 2 seconds
+    // DEBUG: Add HUGE visible red sphere at laser origin for 3 seconds
     if (mode === 'third-person' && typeof THREE !== 'undefined' && typeof scene !== 'undefined') {
         try {
             const debugSphere = new THREE.Mesh(
-                new THREE.SphereGeometry(5, 16, 16),  // Larger sphere
-                new THREE.MeshBasicMaterial({ color: 0xff0000, depthTest: false })  // Always visible
+                new THREE.SphereGeometry(50, 16, 16),  // HUGE sphere (ship is 96x scale)
+                new THREE.MeshBasicMaterial({ color: 0xff0000, transparent: true, opacity: 0.7 })
             );
             debugSphere.position.copy(laserOrigin);
-            debugSphere.renderOrder = 9999;  // Render on top
             scene.add(debugSphere);
-            console.log('🔴 DEBUG SPHERE added at:', laserOrigin.toArray().map(n=>n.toFixed(0)));
-            setTimeout(() => { scene.remove(debugSphere); }, 2000);
+            console.log('🔴 DEBUG SPHERE (r=50) at:', laserOrigin.toArray().map(n=>n.toFixed(0)));
+            setTimeout(() => { scene.remove(debugSphere); }, 3000);
         } catch(e) {
             console.error('🔴 DEBUG SPHERE failed:', e);
         }
