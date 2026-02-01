@@ -4190,41 +4190,22 @@ function fireWeapon() {
         }
     }
     
-    // Create weapon effect (RESTORED: Uses corrected laser beam)
-    // FIXED: Use same approach as missiles - if ship model exists, fire from ship position
-    const hasShipModel = window.cameraState && window.cameraState.playerShipMesh;
+    // Create weapon effect - EXACTLY like missiles
+    // Use ship model position if available, otherwise camera position
+    const laserOrigin = (window.cameraState && window.cameraState.playerShipMesh) 
+        ? window.cameraState.playerShipMesh.position.clone()
+        : camera.position.clone();
     
-    // DEBUG: Log laser origin info (remove after testing)
-    console.log('🔫 Laser fire - hasShipModel:', hasShipModel, 
-                'mode:', window.cameraState?.mode,
-                'shipPos:', hasShipModel ? window.cameraState.playerShipMesh.position : 'N/A',
-                'camPos:', camera.position);
+    // Fire dual lasers from origin with slight left/right offset
+    const fireQuat = (window.cameraState && window.cameraState.playerShipMesh)
+        ? window.cameraState.playerShipMesh.quaternion
+        : camera.quaternion;
     
-    if (hasShipModel) {
-        const shipPos = window.cameraState.playerShipMesh.position.clone();
-        const shipQuat = window.cameraState.playerShipMesh.quaternion;
-        
-        // Wing gun offsets scaled for 48x ship model
-        // X = left/right from center, Y = up/down, Z = forward/back (negative = forward in ship space)
-        const wingOffset = 8;     // Distance from center to wing guns
-        const forwardOffset = -12; // Fire from front/nose of ship (negative Z = forward in ship space)
-        const verticalOffset = 0; // At ship center height
-        
-        // Create offset vectors in ship's local space, then rotate to world space
-        const leftWing = new THREE.Vector3(-wingOffset, verticalOffset, forwardOffset).applyQuaternion(shipQuat);
-        const rightWing = new THREE.Vector3(wingOffset, verticalOffset, forwardOffset).applyQuaternion(shipQuat);
-        
-        // Fire from both wing guns
-        createLaserBeam(shipPos.clone().add(leftWing), targetPosition, '#00ff96', true);
-        createLaserBeam(shipPos.clone().add(rightWing), targetPosition, '#00ff96', true);
-    } else {
-        // Fallback: no ship model loaded, fire dual lasers from camera with slight offset
-        const camQuat = camera.quaternion;
-        const leftOffset = new THREE.Vector3(-2, 0, 0).applyQuaternion(camQuat);
-        const rightOffset = new THREE.Vector3(2, 0, 0).applyQuaternion(camQuat);
-        createLaserBeam(camera.position.clone().add(leftOffset), targetPosition, '#00ff96', true);
-        createLaserBeam(camera.position.clone().add(rightOffset), targetPosition, '#00ff96', true);
-    }
+    const leftOffset = new THREE.Vector3(-3, 0, 0).applyQuaternion(fireQuat);
+    const rightOffset = new THREE.Vector3(3, 0, 0).applyQuaternion(fireQuat);
+    
+    createLaserBeam(laserOrigin.clone().add(leftOffset), targetPosition, '#00ff96', true);
+    createLaserBeam(laserOrigin.clone().add(rightOffset), targetPosition, '#00ff96', true);
     
     // Handle weapon hits based on target type
     if (targetObject) {
