@@ -4192,12 +4192,22 @@ function fireWeapon() {
     
     // Create weapon effect - EXACTLY like missiles
     // Use ship model position if available, otherwise camera position
-    const laserOrigin = (window.cameraState && window.cameraState.playerShipMesh) 
+    const hasShip = window.cameraState && window.cameraState.playerShipMesh;
+    const laserOrigin = hasShip 
         ? window.cameraState.playerShipMesh.position.clone()
         : camera.position.clone();
     
+    // DEBUG: Log positions to compare ship vs camera
+    console.log('🔫 LASER FIRE:', {
+        hasShipModel: hasShip,
+        mode: window.cameraState?.mode,
+        shipPos: hasShip ? window.cameraState.playerShipMesh.position.toArray().map(n => n.toFixed(1)) : 'N/A',
+        camPos: camera.position.toArray().map(n => n.toFixed(1)),
+        laserOrigin: laserOrigin.toArray().map(n => n.toFixed(1))
+    });
+    
     // Fire dual lasers from origin with slight left/right offset
-    const fireQuat = (window.cameraState && window.cameraState.playerShipMesh)
+    const fireQuat = hasShip
         ? window.cameraState.playerShipMesh.quaternion
         : camera.quaternion;
     
