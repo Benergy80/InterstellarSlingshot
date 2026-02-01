@@ -2200,10 +2200,10 @@ function createLaserBeam(startPos, endPos, color = '#00ff96', isPlayer = true) {
         
         scene.add(laserBeam);
         
-        // Longer-lasting laser beams (original timing)
+        // Fast-fading laser beams
 let opacity = 0.8;
 const fadeInterval = setInterval(() => {
-    opacity -= 0.05;  // Original fade rate
+    opacity -= 0.15;  // Fast fade
     laserMaterial.opacity = opacity;
     glowMaterial.opacity = opacity * 0.4;
     
@@ -2215,7 +2215,7 @@ const fadeInterval = setInterval(() => {
         glowGeometry.dispose();
         glowMaterial.dispose();
     }
-}, 50);  // Original interval
+}, 40);  // Fast interval
         
     } catch (error) {
         console.warn('Failed to create laser beam:', error);
