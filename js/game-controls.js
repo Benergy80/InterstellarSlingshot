@@ -4191,8 +4191,16 @@ function fireWeapon() {
     }
     
     // Create weapon effect (RESTORED: Uses corrected laser beam)
-    // FIXED: Only fire from ship in ACTUAL third-person mode (not first-person or zero-offset)
-    if (window.cameraState && window.cameraState.playerShipMesh && window.cameraState.mode === 'third-person') {
+    // FIXED: Use same approach as missiles - if ship model exists, fire from ship position
+    const hasShipModel = window.cameraState && window.cameraState.playerShipMesh;
+    
+    // DEBUG: Log laser origin info (remove after testing)
+    console.log('🔫 Laser fire - hasShipModel:', hasShipModel, 
+                'mode:', window.cameraState?.mode,
+                'shipPos:', hasShipModel ? window.cameraState.playerShipMesh.position : 'N/A',
+                'camPos:', camera.position);
+    
+    if (hasShipModel) {
         const shipPos = window.cameraState.playerShipMesh.position.clone();
         const shipQuat = window.cameraState.playerShipMesh.quaternion;
         
@@ -4210,8 +4218,12 @@ function fireWeapon() {
         createLaserBeam(shipPos.clone().add(leftWing), targetPosition, '#00ff96', true);
         createLaserBeam(shipPos.clone().add(rightWing), targetPosition, '#00ff96', true);
     } else {
-        // First-person and zero-offset modes: fire from camera position (player viewpoint)
-        createLaserBeam(camera.position.clone(), targetPosition, '#00ff96', true);
+        // Fallback: no ship model loaded, fire dual lasers from camera with slight offset
+        const camQuat = camera.quaternion;
+        const leftOffset = new THREE.Vector3(-2, 0, 0).applyQuaternion(camQuat);
+        const rightOffset = new THREE.Vector3(2, 0, 0).applyQuaternion(camQuat);
+        createLaserBeam(camera.position.clone().add(leftOffset), targetPosition, '#00ff96', true);
+        createLaserBeam(camera.position.clone().add(rightOffset), targetPosition, '#00ff96', true);
     }
     
     // Handle weapon hits based on target type
