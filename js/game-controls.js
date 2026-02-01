@@ -2315,10 +2315,10 @@ function createThirdPersonBeam(startPos, endPos, color) {
         
         scene.add(laserBeam);
         
-        // Fast fade (same as 1st person)
-        let opacity = 0.8;
+        // VERY fast fade for 3rd person - disappear before ship moves noticeably
+        let opacity = 0.9;
         const fadeInterval = setInterval(() => {
-            opacity -= 0.15;
+            opacity -= 0.35;  // Much faster fade
             laserMaterial.opacity = opacity;
             glowMaterial.opacity = opacity * 0.4;
             
@@ -2330,7 +2330,7 @@ function createThirdPersonBeam(startPos, endPos, color) {
                 glowGeometry.dispose();
                 glowMaterial.dispose();
             }
-        }, 40);
+        }, 25);  // Faster interval
         
     } catch (error) {
         console.warn('Failed to create third-person beam:', error);
