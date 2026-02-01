@@ -2400,12 +2400,37 @@ function startNormalGameplay() {
         animate();
     }
     
-    // Start tutorial after a brief delay to let everything settle
-    if (typeof startTutorial === 'function') {
-        setTimeout(startTutorial, 2000);
+    // ✨ CINEMATIC OPENING: Start in 0-person, transition to 3rd person, then tutorial
+    console.log('🎬 Starting cinematic opening sequence...');
+    
+    // Step 1: Start in zero-offset (0-person) view - no ship visible
+    if (typeof cameraState !== 'undefined' && cameraState.playerShipMesh) {
+        cameraState.mode = 'zero-offset';
+        cameraState.playerShipMesh.visible = false;
+        console.log('📷 Starting in 0-person POV');
     }
     
-    console.log('🎬 Normal gameplay fully active - 3D space should now be visible');
+    // Step 2: After 2 seconds, do slow cinematic transition to 3rd person
+    setTimeout(() => {
+        console.log('📷 Beginning cinematic transition to 3rd person...');
+        if (typeof cameraState !== 'undefined' && cameraState.playerShipMesh) {
+            // Show ship and start slow transition
+            cameraState.playerShipMesh.visible = true;
+            cameraState.mode = 'third-person';
+            cameraState.isTransitioning = true;
+            cameraState.transitionStartTime = performance.now();
+            cameraState.transitionDuration = 2000;  // Slow 2-second cinematic transition
+            cameraState.transitionStartOffset = new THREE.Vector3(0.25, -1, 3);  // From behind camera
+            cameraState.transitionTargetOffset = cameraState.normalThirdPersonOffset.clone();
+        }
+    }, 2000);
+    
+    // Step 3: Start tutorial after cinematic transition completes
+    if (typeof startTutorial === 'function') {
+        setTimeout(startTutorial, 4500);  // 2s wait + 2s transition + 0.5s settle
+    }
+    
+    console.log('🎬 Normal gameplay fully active - cinematic opening in progress');
 }
 
 // =============================================================================
