@@ -386,16 +386,16 @@ function calculateDifficultySettings() {
         maxLocalAttackers: Math.min(3 + galaxiesCleared, 8), // Start with 3, +1 per galaxy cleared, max 8
         localSpeedMultiplier: 0.5 + (galaxiesCleared * 0.1), // Start slow, get faster
         localHealthMultiplier: galaxiesCleared === 0 ? 1 : Math.min(1 + galaxiesCleared * 0.25, 3), // MAX 3 hits
-        localDetectionRange: 2500 + (galaxiesCleared * 200), // Larger detection as difficulty increases
-        localFiringRange: 500 + (galaxiesCleared * 50),  // Increased from 200 - enemies attack from further
-        localAttackCooldown: Math.max(800, 1500 - (galaxiesCleared * 100)), // Faster attacks
+        localDetectionRange: 3500 + (galaxiesCleared * 300), // Much larger detection
+        localFiringRange: 800 + (galaxiesCleared * 75),  // Attack from much further
+        localAttackCooldown: Math.max(600, 1200 - (galaxiesCleared * 100)), // Faster attacks
         
         // Distant galaxy settings (always challenging) - MAX 3 HITS
-        maxDistantAttackers: Math.min(5 + galaxiesCleared, 10),
-        distantSpeedMultiplier: 0.8 + (galaxiesCleared * 0.05),
+        maxDistantAttackers: Math.min(8 + galaxiesCleared, 15),  // More attackers
+        distantSpeedMultiplier: 1.0 + (galaxiesCleared * 0.08),  // Faster enemies
         distantHealthMultiplier: Math.min(2 + galaxiesCleared * 0.125, 3), // MAX 3 hits
-        distantDetectionRange: 3500 + (galaxiesCleared * 150),  // Increased detection range
-        distantFiringRange: 600 + (galaxiesCleared * 30),  // Increased from 300
+        distantDetectionRange: 5000 + (galaxiesCleared * 200),  // Much larger detection
+        distantFiringRange: 1000 + (galaxiesCleared * 50),  // Attack from much further
         distantAttackCooldown: Math.max(800, 1200 - (galaxiesCleared * 50)),
         
         // General settings
@@ -1880,11 +1880,10 @@ function createExplosionEffect(targetObject) {
 function createMassiveBorgExplosion(position, cubeSize = 30) {
     console.log(`💥 MASSIVE BORG EXPLOSION at ${position}, cube size: ${cubeSize}`);
 
-    // Scale explosion to cube size (base: cubeSize 30 = explosion 100)
-    // Larger cubes get proportionally larger explosions
+    // Scale explosion to cube size - MUCH LARGER explosions
     const explosionScale = cubeSize / 30; // Scale factor relative to standard drone
-    const baseExplosionSize = 100 * explosionScale;
-    const secondaryExplosionSize = 80 * explosionScale;
+    const baseExplosionSize = 300 * explosionScale;  // 3x larger base
+    const secondaryExplosionSize = 250 * explosionScale;  // 3x larger secondary
 
     // Create HUGE expanding sphere explosion
     const explosionGeo = new THREE.SphereGeometry(baseExplosionSize, 32, 32);
@@ -1910,13 +1909,13 @@ function createMassiveBorgExplosion(position, cubeSize = 30) {
     explosion2.position.copy(position);
     scene.add(explosion2);
 
-    // MASSIVE particle burst (500 particles scaled by cube size)
-    const particleCount = Math.floor(500 * explosionScale);
+    // MASSIVE particle burst (1000 particles scaled by cube size)
+    const particleCount = Math.floor(1000 * explosionScale);
     const particleGeometry = new THREE.BufferGeometry();
     const particlePositions = new Float32Array(particleCount * 3);
     const particleVelocities = [];
 
-    const particleSpeed = 50 * explosionScale;
+    const particleSpeed = 100 * explosionScale;  // Faster particles
     for (let i = 0; i < particleCount; i++) {
         particlePositions[i * 3] = position.x;
         particlePositions[i * 3 + 1] = position.y;
@@ -3682,6 +3681,76 @@ const BORG_MESSAGES = [
     "We are Borg. Existence as you know it is over."
 ];
 
+// Borg ominous alarm system
+let borgAlarmOscillator = null;
+let borgAlarmGain = null;
+let borgAlarmActive = false;
+
+function startBorgAlarm() {
+    if (borgAlarmActive || !audioContext || audioContext.state === 'suspended') return;
+    
+    try {
+        borgAlarmOscillator = audioContext.createOscillator();
+        borgAlarmGain = audioContext.createGain();
+        const filter = audioContext.createBiquadFilter();
+        
+        borgAlarmOscillator.connect(filter);
+        filter.connect(borgAlarmGain);
+        borgAlarmGain.connect(audioContext.destination);
+        
+        // Low ominous drone
+        borgAlarmOscillator.type = 'sawtooth';
+        borgAlarmOscillator.frequency.setValueAtTime(55, audioContext.currentTime);  // Very low A
+        
+        // Pulsing effect via LFO on gain
+        const lfo = audioContext.createOscillator();
+        const lfoGain = audioContext.createGain();
+        lfo.connect(lfoGain);
+        lfoGain.connect(borgAlarmGain.gain);
+        
+        lfo.type = 'sine';
+        lfo.frequency.setValueAtTime(0.5, audioContext.currentTime);  // Slow pulse
+        lfoGain.gain.setValueAtTime(0.08, audioContext.currentTime);
+        
+        // Low pass filter for ominous rumble
+        filter.type = 'lowpass';
+        filter.frequency.setValueAtTime(200, audioContext.currentTime);
+        filter.Q.setValueAtTime(2, audioContext.currentTime);
+        
+        // Base gain
+        borgAlarmGain.gain.setValueAtTime(0.15, audioContext.currentTime);
+        
+        borgAlarmOscillator.start();
+        lfo.start();
+        borgAlarmActive = true;
+        
+        console.log('🔊 Borg alarm started');
+    } catch (e) {
+        console.warn('Failed to start Borg alarm:', e);
+    }
+}
+
+function stopBorgAlarm() {
+    if (!borgAlarmActive) return;
+    
+    try {
+        if (borgAlarmGain) {
+            borgAlarmGain.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + 0.5);
+        }
+        setTimeout(() => {
+            if (borgAlarmOscillator) {
+                borgAlarmOscillator.stop();
+                borgAlarmOscillator = null;
+            }
+            borgAlarmGain = null;
+            borgAlarmActive = false;
+            console.log('🔇 Borg alarm stopped');
+        }, 600);
+    } catch (e) {
+        borgAlarmActive = false;
+    }
+}
+
 function checkBorgSpawn() {
     if (typeof gameState === 'undefined' || typeof camera === 'undefined') return;
     if (gameState.borg.spawned) return; // Already spawned
@@ -3748,7 +3817,7 @@ function spawnBorgCube() {
         firingRange: 500,
         lastAttack: 0,
         droneCount: 0,
-        maxDrones: 8,
+        maxDrones: 16,  // More drones for intense swarm attacks
         galaxyId: -1 // Special: not tied to any galaxy
     };
 
@@ -3767,9 +3836,9 @@ function spawnBorgCube() {
     showAchievement('⚠️ CRITICAL ALERT', 'Unknown massive vessel detected! Extreme threat level!', true);
     playSound('boss');
 
-    // Spawn initial drones after 2 seconds
+    // Spawn initial swarm of drones after 2 seconds
     setTimeout(() => {
-        for (let i = 0; i < 8; i++) {
+        for (let i = 0; i < 12; i++) {
             spawnBorgDrone();
         }
     }, 2000);
@@ -3843,6 +3912,13 @@ function updateBorgBehavior() {
     const playerPos = camera.position;
     const distance = cube.position.distanceTo(playerPos);
 
+    // Ominous alarm - starts when pursuing, stops when > 15000 units away
+    if (distance < 15000) {
+        startBorgAlarm();
+    } else {
+        stopBorgAlarm();
+    }
+
     // Relentless pursuit - always move towards player
     const direction = new THREE.Vector3().subVectors(playerPos, cube.position).normalize();
     cube.position.add(direction.multiplyScalar(cube.userData.speed));
@@ -3857,8 +3933,8 @@ function updateBorgBehavior() {
         sendBorgCommunication(distance);
     }
 
-    // Spawn drones when player gets close (3500 units)
-    if (distance < 3500 && cube.userData.droneCount < cube.userData.maxDrones) {
+    // Spawn MORE drones when player gets close - continuous spawning
+    if (distance < 5000 && cube.userData.droneCount < 16) {  // Increased max drones to 16
         spawnBorgDrone();
     }
 
