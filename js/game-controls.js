@@ -4195,12 +4195,18 @@ function fireWeapon() {
     if (window.cameraState && window.cameraState.playerShipMesh && window.cameraState.mode !== 'zero-offset') {
         const shipPos = window.cameraState.playerShipMesh.position.clone();
         const shipQuat = window.cameraState.playerShipMesh.quaternion;
-        // Wing offsets (left and right guns)
-        const wingOffset = 3;  // Distance from center to wing
-        const leftWing = new THREE.Vector3(-wingOffset, 0, 0).applyQuaternion(shipQuat);
-        const rightWing = new THREE.Vector3(wingOffset, 0, 0).applyQuaternion(shipQuat);
         
-        // Fire from both wings
+        // Wing gun offsets scaled for 48x ship model
+        // X = left/right from center, Y = up/down, Z = forward/back (negative = forward)
+        const wingOffset = 6;     // Distance from center to wing (scaled for 48x model)
+        const forwardOffset = -8; // Fire from front of ship (negative Z = forward)
+        const verticalOffset = -1; // Slightly below center
+        
+        // Create offset vectors in ship's local space, then rotate to world space
+        const leftWing = new THREE.Vector3(-wingOffset, verticalOffset, forwardOffset).applyQuaternion(shipQuat);
+        const rightWing = new THREE.Vector3(wingOffset, verticalOffset, forwardOffset).applyQuaternion(shipQuat);
+        
+        // Fire from both wing guns
         createLaserBeam(shipPos.clone().add(leftWing), targetPosition, '#00ff96', true);
         createLaserBeam(shipPos.clone().add(rightWing), targetPosition, '#00ff96', true);
     } else {

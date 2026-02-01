@@ -1036,8 +1036,15 @@ function animate() {
             stars.rotation.x += 0.0001;
             stars.rotation.y += 0.0002;
         }
+        
+        // CRITICAL: Keep explosion animations running during game over
+        // so player can see their ship explode before game over screen
+        if (typeof explosionManager !== 'undefined') {
+            explosionManager.update(16.67);
+        }
+        
         renderer.render(scene, camera);
-        return; // Stop all game updates when game over
+        return; // Stop all other game updates when game over
     }
 
     // Add this inside your animate() function
