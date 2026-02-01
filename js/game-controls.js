@@ -4202,11 +4202,14 @@ function fireWeapon() {
     if (window.cameraState && window.cameraState.playerShipMesh && window.cameraState.mode !== 'zero-offset') {
         const shipPos = window.cameraState.playerShipMesh.position.clone();
         const shipQuat = window.cameraState.playerShipMesh.quaternion;
+        const camPos = camera.position.clone();
         
-        console.log('🔫 Firing from ship position:', shipPos.x.toFixed(1), shipPos.y.toFixed(1), shipPos.z.toFixed(1));
+        console.log('🔫 Camera pos:', camPos.x.toFixed(1), camPos.y.toFixed(1), camPos.z.toFixed(1));
+        console.log('🔫 Ship pos:', shipPos.x.toFixed(1), shipPos.y.toFixed(1), shipPos.z.toFixed(1));
+        console.log('🔫 Difference:', (shipPos.x - camPos.x).toFixed(1), (shipPos.y - camPos.y).toFixed(1), (shipPos.z - camPos.z).toFixed(1));
         
-        // Wing offsets (left and right guns)
-        const wingOffset = 2.5;  // Distance from center to wing
+        // Wing offsets (left and right guns) - increased for visibility
+        const wingOffset = 8;  // Distance from center to wing (increased from 2.5)
         const leftWing = new THREE.Vector3(-wingOffset, 0, 0).applyQuaternion(shipQuat);
         const rightWing = new THREE.Vector3(wingOffset, 0, 0).applyQuaternion(shipQuat);
         
