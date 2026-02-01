@@ -4192,21 +4192,20 @@ function fireWeapon() {
     
     // Create weapon effect - fire from ship model in 3rd person
     const hasShip = window.cameraState && window.cameraState.playerShipMesh;
-    const fireQuat = hasShip
-        ? window.cameraState.playerShipMesh.quaternion
-        : camera.quaternion;
     
-    // Start from ship center (or camera if no ship)
+    // Start from ship position (or camera if no ship)
     const baseOrigin = hasShip 
         ? window.cameraState.playerShipMesh.position.clone()
         : camera.position.clone();
     
-    // CRITICAL: In 3rd person, add FORWARD offset so lasers fire from FRONT of ship
-    // Ship model faces -Z in local space, so forward is negative Z
-    const forwardOffset = new THREE.Vector3(0, 0, -15).applyQuaternion(fireQuat);
+    // Use CAMERA quaternion for offsets (ship is rotated 180° so its local Z is backwards)
+    const fireQuat = camera.quaternion;
+    
+    // Forward offset using camera's forward direction (negative Z in camera space = forward)
+    const forwardOffset = new THREE.Vector3(0, 0, -20).applyQuaternion(fireQuat);
     const laserOrigin = baseOrigin.clone().add(forwardOffset);
     
-    // Wing gun offsets (left/right)
+    // Wing gun offsets (left/right in camera space)
     const leftOffset = new THREE.Vector3(-5, 0, 0).applyQuaternion(fireQuat);
     const rightOffset = new THREE.Vector3(5, 0, 0).applyQuaternion(fireQuat);
     
