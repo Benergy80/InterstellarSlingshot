@@ -4185,11 +4185,22 @@ function fireWeapon() {
     }
     
     // Create weapon effect (RESTORED: Uses corrected laser beam)
-    // Use ship model position if available, otherwise camera position
-    const weaponOrigin = (window.cameraState && window.cameraState.playerShipMesh) 
-        ? window.cameraState.playerShipMesh.position.clone()
-        : camera.position.clone();
-    createLaserBeam(weaponOrigin, targetPosition, '#00ff96', true);
+    // Fire from wing guns (left and right of ship) when ship model available
+    if (window.cameraState && window.cameraState.playerShipMesh) {
+        const shipPos = window.cameraState.playerShipMesh.position.clone();
+        const shipQuat = window.cameraState.playerShipMesh.quaternion;
+        
+        // Wing offsets (left and right guns)
+        const wingOffset = 2.5;  // Distance from center to wing
+        const leftWing = new THREE.Vector3(-wingOffset, 0, 0).applyQuaternion(shipQuat);
+        const rightWing = new THREE.Vector3(wingOffset, 0, 0).applyQuaternion(shipQuat);
+        
+        // Fire from both wings
+        createLaserBeam(shipPos.clone().add(leftWing), targetPosition, '#00ff96', true);
+        createLaserBeam(shipPos.clone().add(rightWing), targetPosition, '#00ff96', true);
+    } else {
+        createLaserBeam(camera.position.clone(), targetPosition, '#00ff96', true);
+    }
     
     // Handle weapon hits based on target type
     if (targetObject) {

@@ -279,8 +279,7 @@ function updateCameraView(camera) {
         return; // Don't update position during intro
     }
     
-    // CRITICAL: Keep ship hidden if in 'zero-offset' mode (0 key)
-    // But still process transitions so we can animate to/from this mode
+    // CRITICAL: Keep ship hidden if in 'zero-offset' mode (0 key) AND transition complete
     if (cameraState.mode === 'zero-offset' && !cameraState.isTransitioning) {
         cameraState.playerShipMesh.visible = false;
         cameraState.playerShipMesh.traverse((child) => {
@@ -289,10 +288,10 @@ function updateCameraView(camera) {
             }
         });
         // Don't return - let position update run with zero offset
+    } else {
+        // Make ship visible when game is active (not in zero-offset mode)
+        cameraState.playerShipMesh.visible = true;
     }
-
-    // Make ship visible when game is active
-    cameraState.playerShipMesh.visible = true;
 
     // Warp detection removed - camera stays in normal position during warp
 
@@ -346,8 +345,8 @@ function updateCameraView(camera) {
             
         }
     } else if (cameraState.mode === 'zero-offset') {
-        // Zero offset - ship behind camera
-        currentOffset = new THREE.Vector3(0, 0, 3);
+        // Zero offset - ship behind camera (matches transition target)
+        currentOffset = new THREE.Vector3(0.25, -1, 3);
     } else if (cameraState.mode === 'first-person') {
         // First-person offset
         currentOffset = cameraState.normalFirstPersonOffset.clone();
@@ -584,10 +583,11 @@ function setCameraNoShip() {
     cameraState.mode = 'zero-offset';
     cameraState.isTransitioning = true;
     cameraState.transitionStartTime = performance.now();
-    cameraState.transitionDuration = 400;
+    cameraState.transitionDuration = 600;  // Longer transition to see ship pass
     cameraState.transitionStartOffset.copy(currentOffset);
-    // Positive Z = ship ends up behind camera (camera passes through ship)
-    cameraState.transitionTargetOffset.set(0, 0, 3);
+    // Match first-person X offset (0.25) for smooth path, then behind camera
+    // This creates path: current → through 1st-person style → behind camera
+    cameraState.transitionTargetOffset.set(0.25, -1, 3);
     
     if (typeof showNotification === 'function') {
         showNotification('Zero Offset Camera', 2000);
@@ -611,7 +611,7 @@ function getCurrentOffset() {
     } else if (cameraState.mode === 'third-person') {
         return cameraState.normalThirdPersonOffset.clone();
     } else if (cameraState.mode === 'zero-offset') {
-        return new THREE.Vector3(0, 0, 3);  // Ship behind camera
+        return new THREE.Vector3(0.25, -1, 3);  // Ship behind camera
     } else {
         return cameraState.normalFirstPersonOffset.clone();
     }
