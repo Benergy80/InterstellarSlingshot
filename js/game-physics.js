@@ -1419,6 +1419,13 @@ else if (keys.o && gameState.emergencyWarp.available > 0 && !gameState.emergency
         }
 
         console.log(`🚀 Emergency warp activated! ${gameState.emergencyWarp.available} charges remaining`);
+        
+        // Step 3: Pull back to 3rd person while warping (see ship in starfield)
+        setTimeout(() => {
+            if (typeof setCameraThirdPerson === 'function') {
+                setCameraThirdPerson();
+            }
+        }, 300);  // Short delay, then pull back to 3rd person
     }, 400);  // Match camera transition duration
 }
 
