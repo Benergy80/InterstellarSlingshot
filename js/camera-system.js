@@ -27,9 +27,10 @@ const cameraState = {
     // Normal offsets for reference
     normalFirstPersonOffset: new THREE.Vector3(0.25, -2, 0.5),
     normalThirdPersonOffset: new THREE.Vector3(0, 3, 8),
-    // Warp offsets (ship falls behind - camera ahead of ship)
-    warpFirstPersonOffset: new THREE.Vector3(0, -1, -8),   // Camera ahead, ship visible below/behind
-    warpThirdPersonOffset: new THREE.Vector3(0, 1, -5),    // Camera in front, ship visible behind
+    // Warp offsets (ship visible in front as camera "falls behind")
+    // Positive Z = ship in front of camera, so we see it receding
+    warpFirstPersonOffset: new THREE.Vector3(0, -1, 12),   // Ship way in front, visible as it pulls away
+    warpThirdPersonOffset: new THREE.Vector3(0, 5, 20),    // Ship far ahead in third-person
     
     // Track if this is a warp transition (for custom easing)
     isWarpTransition: false
@@ -215,8 +216,9 @@ function toggleCameraView() {
         // Start transition animation from first-person to third-person
         cameraState.isTransitioning = true;
         cameraState.transitionStartTime = performance.now();
-        cameraState.transitionStartOffset.set(0.25, -2, 0.5); // First-person offset
-        cameraState.transitionTargetOffset.set(0, 3, 8); // Third-person offset (centered)
+        cameraState.isWarpTransition = false;  // Not a warp transition
+        cameraState.transitionStartOffset.copy(cameraState.normalFirstPersonOffset);
+        cameraState.transitionTargetOffset.copy(cameraState.normalThirdPersonOffset);
 
         console.log('📷 Transitioning to THIRD-PERSON view');
 
@@ -239,8 +241,9 @@ function toggleCameraView() {
         // Start transition animation from third-person to first-person (reverse path)
         cameraState.isTransitioning = true;
         cameraState.transitionStartTime = performance.now();
-        cameraState.transitionStartOffset.set(0, 3, 8); // Third-person offset (centered)
-        cameraState.transitionTargetOffset.set(0.25, -2, 0.5); // First-person offset
+        cameraState.isWarpTransition = false;  // Not a warp transition
+        cameraState.transitionStartOffset.copy(cameraState.normalThirdPersonOffset);
+        cameraState.transitionTargetOffset.copy(cameraState.normalFirstPersonOffset);
 
         console.log('📷 Transitioning to FIRST-PERSON view (cockpit)');
 
