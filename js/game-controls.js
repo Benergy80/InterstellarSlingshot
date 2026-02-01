@@ -814,8 +814,11 @@ function updateSupportBehavior(enemy, playerPos, speed) {
 function fireEnemyWeapon(enemy, difficultySettings) {
     if (!enemy || !enemy.userData || enemy.userData.health <= 0) return;
     
+    // DEBUG: Log who is attacking
+    console.log(`🔫 ${enemy.userData.name || enemy.userData.type || 'Unknown'} firing at player from distance: ${enemy.position.distanceTo(camera.position).toFixed(0)} units`);
+    
     const isLocal = isEnemyInLocalGalaxy(enemy);
-    const firingRange = isLocal ? difficultySettings.localFiringRange : difficultySettings.distantFiringRange;
+    const firingRange = isLocal ? difficultySettings?.localFiringRange || 500 : difficultySettings?.distantFiringRange || 600;
     
     // Target ship position in 1st/3rd person, camera in zero-offset
     const playerPos = (typeof getPlayerPosition === 'function') ? getPlayerPosition() : camera.position.clone();
