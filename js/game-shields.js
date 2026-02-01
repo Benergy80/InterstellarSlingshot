@@ -605,7 +605,7 @@ function create3DShield() {
     destroy3DShield();
     
     // Create icosahedron geometry (buckyball/geodesic sphere base)
-    const radius = 12;  // Size to surround ship
+    const radius = 8;  // Size to surround ship (smaller, tighter fit)
     const detail = 1;   // Subdivision level for buckyball look
     const geometry = new THREE.IcosahedronGeometry(radius, detail);
     

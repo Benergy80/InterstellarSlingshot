@@ -1388,8 +1388,17 @@ else if (keys.o && gameState.emergencyWarp.available > 0 && !gameState.emergency
     // ✅ CRITICAL: Clear the key immediately to prevent retriggering
     keys.o = false;
     
+    // ✅ Capture forward direction NOW before setTimeout (closure issue fix)
+    const capturedForwardDirection = forwardDirection.clone();
+    const capturedBoostSpeed = gameState.emergencyWarp.boostSpeed;
+    
+    // ✅ Decrement warp count IMMEDIATELY (not in setTimeout)
+    gameState.emergencyWarp.available--;
+    
     // Mark as transitioning to prevent re-triggers
     gameState.emergencyWarp.transitioning = true;
+    
+    console.log(`🚀 Emergency warp initiated! ${gameState.emergencyWarp.available} charges remaining`);
     
     // Step 1: Animate camera from current view to first-person
     if (typeof setCameraFirstPerson === 'function') {
@@ -1398,11 +1407,10 @@ else if (keys.o && gameState.emergencyWarp.available > 0 && !gameState.emergency
     
     // Step 2: After camera transition completes (400ms), engage warp
     setTimeout(() => {
-        gameState.emergencyWarp.available--;
         gameState.emergencyWarp.active = true;
         gameState.emergencyWarp.transitioning = false;
         gameState.emergencyWarp.timeRemaining = gameState.emergencyWarp.boostDuration;
-        gameState.velocityVector.copy(forwardDirection).multiplyScalar(gameState.emergencyWarp.boostSpeed);
+        gameState.velocityVector.copy(capturedForwardDirection).multiplyScalar(capturedBoostSpeed);
         
         // Activate visual effects
         for (let i = 0; i < 3; i++) {
@@ -1418,7 +1426,7 @@ else if (keys.o && gameState.emergencyWarp.available > 0 && !gameState.emergency
             playSound('warp');
         }
 
-        console.log(`🚀 Emergency warp activated! ${gameState.emergencyWarp.available} charges remaining`);
+        console.log(`🚀 Warp engaged!`);
         
         // Step 3: Pull back to 3rd person while warping (see ship in starfield)
         setTimeout(() => {
