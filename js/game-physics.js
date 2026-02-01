@@ -274,28 +274,7 @@ function createHyperspaceEffect() {
     }
 }
 
-// PRESERVED: Enhanced screen damage effect
-function createEnhancedScreenDamageEffect() {
-    const damageOverlay = document.createElement('div');
-    damageOverlay.className = 'absolute inset-0 bg-red-500 pointer-events-none z-30';
-    damageOverlay.style.opacity = '0';
-    damageOverlay.style.animation = 'damageFlash 0.5s ease-out forwards';
-    document.body.appendChild(damageOverlay);
-    
-    const gameContainer = document.getElementById('gameContainer');
-    if (gameContainer) {
-        gameContainer.style.animation = 'screenShake 0.8s ease-out';
-        setTimeout(() => {
-            if (gameContainer) {
-                gameContainer.style.animation = '';
-            }
-        }, 800);
-    }
-    
-    setTimeout(() => {
-        damageOverlay.remove();
-    }, 500);
-}
+// REMOVED: createEnhancedScreenDamageEffect - using directional version from game-controls.js
 
 // COMPACT: All the cool effects but much smaller scale
 function createAsteroidExplosion(position, radius = 1) {
@@ -2477,7 +2456,6 @@ function checkForNebulaDiscovery() {
 // Make all functions globally available
 window.updateEnhancedPhysics = updateEnhancedPhysics;
 window.createHyperspaceEffect = createHyperspaceEffect;
-window.createEnhancedScreenDamageEffect = createEnhancedScreenDamageEffect;
 window.executeSlingshot = executeSlingshot;
 window.isBlackHoleWarpInvulnerable = isBlackHoleWarpInvulnerable;
 window.createPlayerExplosion = createPlayerExplosion;
