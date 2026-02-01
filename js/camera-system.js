@@ -694,8 +694,8 @@ function createThrusterGlows(playerModel) {
     // Two thruster positions at rear engine exhausts (in local model space, small values)
     // Aligned with the 2 downward-facing points at back of ship
     const thrusterPositions = [
-        new THREE.Vector3(-0.022, 0.025, -0.125),   // Left engine exhaust
-        new THREE.Vector3(0.022, 0.025, -0.125)     // Right engine exhaust
+        new THREE.Vector3(-0.022, 0, -0.125),   // Left engine exhaust
+        new THREE.Vector3(0.022, 0, -0.125)     // Right engine exhaust
     ];
     
     thrusterPositions.forEach((pos, index) => {
