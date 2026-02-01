@@ -2222,7 +2222,7 @@ const fadeInterval = setInterval(() => {
     }
 }
 
-// 3RD PERSON LASER: Animated tracer from ship wing tips (visible from behind)
+// 3RD PERSON LASER: Fire from ship wing tips using same laser effect as 1st person
 function createThirdPersonLasers(playerShip, targetPosition) {
     if (typeof THREE === 'undefined' || typeof scene === 'undefined') return;
     
@@ -2233,26 +2233,30 @@ function createThirdPersonLasers(playerShip, targetPosition) {
         playerShip.getWorldPosition(shipPos);
         playerShip.getWorldQuaternion(shipQuat);
         
-        // Wing tip positions in ship local space (ship is 48x scale)
-        // Based on screenshot: flashes need to be narrower and further forward
-        const wingSpread = 10;  // Narrower - closer to ship body
-        const wingForward = 35; // Much further forward toward wing tips
-        const wingUp = 0;       // At ship center height
+        // Calculate wing tip positions based on ship's bounding box
+        // This dynamically attaches to the actual model size
+        const box = new THREE.Box3().setFromObject(playerShip);
+        const size = box.getSize(new THREE.Vector3());
+        
+        // Wing tips are at roughly half the width, at the front
+        const wingSpread = size.x * 0.4;  // 40% of ship width from center
+        const wingForward = size.z * 0.3; // 30% forward from center
+        const wingUp = 0;
         
         const leftWingLocal = new THREE.Vector3(-wingSpread, wingUp, wingForward);
         const rightWingLocal = new THREE.Vector3(wingSpread, wingUp, wingForward);
         
         // Transform to world space
-        const leftWing = leftWingLocal.applyQuaternion(shipQuat).add(shipPos);
-        const rightWing = rightWingLocal.applyQuaternion(shipQuat).add(shipPos.clone());
+        const leftWing = leftWingLocal.clone().applyQuaternion(shipQuat).add(shipPos);
+        const rightWing = rightWingLocal.clone().applyQuaternion(shipQuat).add(shipPos);
         
-        // Create muzzle flash at each wing (visible marker)
-        createMuzzleFlash(leftWing);
-        createMuzzleFlash(rightWing);
+        // Create muzzle flash at wing tips
+        createMuzzleFlash(leftWing.clone());
+        createMuzzleFlash(rightWing.clone());
         
-        // Create animated tracer projectiles
-        createTracerProjectile(leftWing.clone(), targetPosition, '#00ff96');
-        createTracerProjectile(rightWing.clone(), targetPosition, '#00ff96');
+        // Use the SAME laser beam as 1st person for consistent look/timing
+        createLaserBeam(leftWing, targetPosition, '#00ff96', true);
+        createLaserBeam(rightWing, targetPosition, '#00ff96', true);
         
     } catch (error) {
         console.warn('Failed to create third-person lasers:', error);
