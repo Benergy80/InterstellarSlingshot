@@ -4190,29 +4190,25 @@ function fireWeapon() {
         }
     }
     
-    // Create weapon effect - EXACTLY like missiles
-    // Use ship model position if available, otherwise camera position
+    // Create weapon effect - fire from ship model in 3rd person
     const hasShip = window.cameraState && window.cameraState.playerShipMesh;
-    const laserOrigin = hasShip 
-        ? window.cameraState.playerShipMesh.position.clone()
-        : camera.position.clone();
-    
-    // DEBUG: Log positions to compare ship vs camera
-    console.log('🔫 LASER FIRE:', {
-        hasShipModel: hasShip,
-        mode: window.cameraState?.mode,
-        shipPos: hasShip ? window.cameraState.playerShipMesh.position.toArray().map(n => n.toFixed(1)) : 'N/A',
-        camPos: camera.position.toArray().map(n => n.toFixed(1)),
-        laserOrigin: laserOrigin.toArray().map(n => n.toFixed(1))
-    });
-    
-    // Fire dual lasers from origin with slight left/right offset
     const fireQuat = hasShip
         ? window.cameraState.playerShipMesh.quaternion
         : camera.quaternion;
     
-    const leftOffset = new THREE.Vector3(-3, 0, 0).applyQuaternion(fireQuat);
-    const rightOffset = new THREE.Vector3(3, 0, 0).applyQuaternion(fireQuat);
+    // Start from ship center (or camera if no ship)
+    const baseOrigin = hasShip 
+        ? window.cameraState.playerShipMesh.position.clone()
+        : camera.position.clone();
+    
+    // CRITICAL: In 3rd person, add FORWARD offset so lasers fire from FRONT of ship
+    // Ship model faces -Z in local space, so forward is negative Z
+    const forwardOffset = new THREE.Vector3(0, 0, -15).applyQuaternion(fireQuat);
+    const laserOrigin = baseOrigin.clone().add(forwardOffset);
+    
+    // Wing gun offsets (left/right)
+    const leftOffset = new THREE.Vector3(-5, 0, 0).applyQuaternion(fireQuat);
+    const rightOffset = new THREE.Vector3(5, 0, 0).applyQuaternion(fireQuat);
     
     createLaserBeam(laserOrigin.clone().add(leftOffset), targetPosition, '#00ff96', true);
     createLaserBeam(laserOrigin.clone().add(rightOffset), targetPosition, '#00ff96', true);
