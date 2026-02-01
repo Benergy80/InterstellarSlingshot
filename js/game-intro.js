@@ -1880,6 +1880,13 @@ function setupNormalGameContent() {
         console.log('🚀 Re-initializing camera system after scene.clear()...');
         initCameraSystem(window.gameCamera, scene);
         console.log('✅ Player ship re-added to cleared scene');
+        
+        // CRITICAL: Start in zero-offset mode (ship hidden) for cinematic fade-in
+        if (typeof cameraState !== 'undefined' && cameraState.playerShipMesh) {
+            cameraState.mode = 'zero-offset';
+            cameraState.playerShipMesh.visible = false;
+            console.log('📷 Camera set to 0-person for cinematic opening');
+        }
     }
 
     // Create normal game content - ADAPTED FOR SPHERICAL UNIVERSE
