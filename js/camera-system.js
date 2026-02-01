@@ -19,16 +19,7 @@ const cameraState = {
     transitionStartTime: 0,
     transitionDuration: 400, // milliseconds
     transitionStartOffset: new THREE.Vector3(),
-    transitionTargetOffset: new THREE.Vector3(),
-    
-    // Warp animation state
-    warpAnimating: false,
-    warpDirection: 'out',  // 'out' = zooming away, 'in' = returning
-    warpStartTime: 0,
-    warpDuration: 600,  // milliseconds for warp animation
-    warpStartScale: 1.0,
-    warpTargetScale: 0.0,
-    wasWarping: false  // Track previous warp state to detect transitions
+    transitionTargetOffset: new THREE.Vector3()
 };
 
 /**
@@ -280,79 +271,8 @@ function updateCameraView(camera) {
         return; // Don't update position during intro
     }
 
-    // Check for warp state changes (emergency warp)
-    const isWarping = typeof gameState !== 'undefined' && 
-                      gameState.emergencyWarp && 
-                      gameState.emergencyWarp.active;
-    
-    // Detect warp start
-    if (isWarping && !cameraState.wasWarping && !cameraState.warpAnimating) {
-        console.log('🚀 Warp START detected - animating ship out');
-        cameraState.warpAnimating = true;
-        cameraState.warpDirection = 'out';
-        cameraState.warpStartTime = performance.now();
-        cameraState.warpStartScale = 1.0;
-        cameraState.warpTargetScale = 0.0;
-    }
-    
-    // Detect warp end
-    if (!isWarping && cameraState.wasWarping && !cameraState.warpAnimating) {
-        console.log('🚀 Warp END detected - animating ship back in');
-        cameraState.warpAnimating = true;
-        cameraState.warpDirection = 'in';
-        cameraState.warpStartTime = performance.now();
-        cameraState.warpStartScale = 0.0;
-        cameraState.warpTargetScale = 1.0;
-    }
-    
-    cameraState.wasWarping = isWarping;
-    
-    // Handle warp animation
-    if (cameraState.warpAnimating) {
-        const elapsed = performance.now() - cameraState.warpStartTime;
-        const progress = Math.min(elapsed / cameraState.warpDuration, 1);
-        
-        // Ease function
-        const easedProgress = cameraState.warpDirection === 'out'
-            ? progress * progress  // Ease in (accelerate out)
-            : 1 - Math.pow(1 - progress, 2);  // Ease out (decelerate in)
-        
-        // Calculate current scale
-        const currentScale = cameraState.warpStartScale + 
-            (cameraState.warpTargetScale - cameraState.warpStartScale) * easedProgress;
-        
-        // Apply scale to ship
-        const baseScale = 48;
-        cameraState.playerShipMesh.scale.setScalar(baseScale * currentScale);
-        
-        // Also move ship forward during warp-out, backward during warp-in
-        // Store this for use in position calculations below
-        cameraState.currentWarpOffset = cameraState.warpDirection === 'out' 
-            ? easedProgress * 50  // Zoom forward
-            : (1 - easedProgress) * 50;  // Return from forward
-        
-        // End animation when complete
-        if (progress >= 1) {
-            cameraState.warpAnimating = false;
-            console.log('🚀 Warp animation complete:', cameraState.warpDirection);
-            
-            // Restore scale after warp-in
-            if (cameraState.warpDirection === 'in') {
-                cameraState.playerShipMesh.scale.setScalar(baseScale);
-            }
-        }
-        
-        // If warping out and animation complete, hide ship
-        if (cameraState.warpDirection === 'out' && progress >= 1) {
-            cameraState.playerShipMesh.visible = false;
-            return;
-        }
-    }
-    
-    // Make ship visible when game is active (unless animating out)
-    if (!cameraState.warpAnimating || cameraState.warpDirection === 'in') {
-        cameraState.playerShipMesh.visible = true;
-    }
+    // Make ship visible when game is active
+    cameraState.playerShipMesh.visible = true;
 
     if (window.updateCameraViewCallCount % 120 === 0) {
         console.log('  ▶️ Game active - updating ship position');
@@ -429,13 +349,6 @@ function updateCameraView(camera) {
 
         cameraState.playerShipMesh.position.copy(camera.position);
         cameraState.playerShipMesh.position.add(cockpitOffset);
-        
-        // Apply warp animation offset (pushes ship forward during warp)
-        if (cameraState.warpAnimating && cameraState.currentWarpOffset) {
-            const warpForward = new THREE.Vector3(0, 0, -cameraState.currentWarpOffset);
-            warpForward.applyQuaternion(camera.quaternion);
-            cameraState.playerShipMesh.position.add(warpForward);
-        }
 
         // DEBUG: Log after position update
         if (shouldLog) {
@@ -486,13 +399,6 @@ function updateCameraView(camera) {
         // CRITICAL: Copy camera position FIRST, then subtract offset
         cameraState.playerShipMesh.position.copy(camera.position);
         cameraState.playerShipMesh.position.sub(chaseOffset);
-        
-        // Apply warp animation offset (pushes ship forward during warp)
-        if (cameraState.warpAnimating && cameraState.currentWarpOffset) {
-            const warpForward = new THREE.Vector3(0, 0, -cameraState.currentWarpOffset);
-            warpForward.applyQuaternion(camera.quaternion);
-            cameraState.playerShipMesh.position.add(warpForward);
-        }
 
         // DEBUG: Log after position update
         if (shouldLog) {
