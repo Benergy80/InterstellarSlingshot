@@ -252,12 +252,17 @@ function deactivateShields(forced = false) {
 
 function updateShieldSystem() {
     if (!shieldSystem.active) return;
+    if (typeof gameState === 'undefined') return;
     
     const now = Date.now();
-    const deltaTime = (now - shieldSystem.lastUpdateTime) / 1000; // Convert to seconds
+    let deltaTime = (now - shieldSystem.lastUpdateTime) / 1000; // Convert to seconds
     shieldSystem.lastUpdateTime = now;
     
-    // Drain energy
+    // Safety: cap deltaTime to prevent huge drain on first frame or lag spikes
+    if (deltaTime > 0.1) deltaTime = 0.1;  // Max 100ms worth of drain per frame
+    if (deltaTime <= 0) return;  // Skip if no time passed
+    
+    // Drain energy (2.0 = 2% per second)
     const energyDrain = shieldSystem.energyDrainRate * deltaTime;
     gameState.energy = Math.max(0, gameState.energy - energyDrain);
     

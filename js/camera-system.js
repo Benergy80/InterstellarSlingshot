@@ -557,18 +557,25 @@ function setCameraNoShip() {
         return;
     }
     
-    console.log('📷 Setting zero offset (no visible ship)');
+    if (cameraState.mode === 'zero-offset' && !cameraState.isTransitioning) {
+        console.log('📷 Already in zero-offset mode');
+        return;
+    }
+    
+    console.log('📷 Setting zero offset (no visible ship) with smooth transition');
     
     // Capture current offset for smooth transition
     const currentOffset = getCurrentOffset();
     
+    // Keep ship visible during transition (same as setCameraFirstPerson)
+    cameraState.playerShipMesh.visible = true;
+    
     cameraState.mode = 'zero-offset';
     cameraState.isTransitioning = true;
     cameraState.transitionStartTime = performance.now();
-    cameraState.transitionDuration = 600;  // Longer transition to see ship pass
+    cameraState.transitionDuration = 400;  // Match first-person transition duration
     cameraState.transitionStartOffset.copy(currentOffset);
-    // Match first-person X offset (0.25) for smooth path, then behind camera
-    // This creates path: current → through 1st-person style → behind camera
+    // Ship moves behind camera (reverse of 1→0 which brings ship into view)
     cameraState.transitionTargetOffset.set(0.25, -1, 3);
     
     if (typeof showNotification === 'function') {
