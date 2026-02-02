@@ -869,14 +869,15 @@ function transitionToRandomLocation(sourceBlackHole) {
             'Ancient Galaxy - Vulcan High Command'
         ];
         
-        // Determine which galaxy we warped to based on proximity
+        // Determine which galaxy we warped to based on proximity to DESTINATION (safePosition)
         let arrivedGalaxyId = -1;
 
         if (typeof getGalaxy3DPosition === 'function') {
             for (let g = 0; g < 8; g++) {
                 const galaxyCenter = getGalaxy3DPosition(g);
 
-                if (camera.position.distanceTo(galaxyCenter) < 15000) {
+                // FIXED: Check against safePosition (destination), not camera.position (old location)
+                if (safePosition.distanceTo(galaxyCenter) < 15000) {
                     arrivedGalaxyId = g;
                     break;
                 }
@@ -886,7 +887,7 @@ function transitionToRandomLocation(sourceBlackHole) {
         // Use the specific discovery name for the arrived galaxy
         const locationName = arrivedGalaxyId >= 0 && arrivedGalaxyId < galaxyDiscoveryNames.length
             ? galaxyDiscoveryNames[arrivedGalaxyId]
-            : 'Unknown Region';
+            : `${targetBlackHole.userData.name || 'Deep Space'}`; // Fallback to black hole name
         
         // Move camera to new position
         if (typeof camera !== 'undefined') {
@@ -2892,7 +2893,7 @@ function createDiscoveryPathToPosition(nebulaPosition, targetPosition, factionCo
     return pathLine;
 }
 
-// Deep discovery check - triggers at 100 units from nebula center
+// Deep discovery check - triggers based on nebula type
 // PAIRED NEBULA SYSTEM: Both nebulas in pair lead to SAME faction
 // Even index = path to black hole core, Odd index = path to patrol enemies near cosmic features
 function checkForNebulaDeepDiscovery() {
@@ -2900,18 +2901,24 @@ function checkForNebulaDeepDiscovery() {
     if (typeof nebulaClouds === 'undefined' || nebulaClouds.length === 0) return;
     if (typeof galaxyTypes === 'undefined') return;
     
-    const deepDiscoveryRange = 100; // Close to nebula center - makes it a quest!
-    
     nebulaClouds.forEach((nebula, index) => {
         if (!nebula || !nebula.userData) return;
         
         // Skip if already deep-discovered
         if (nebula.userData.deepDiscovered) return;
         
+        // DISCOVERY RANGE based on nebula type:
+        // - Clustered nebulas (index 0-7): 100 units (close to center - quest-like)
+        // - Distant & Exotic nebulas (index 8+): Use nebula size (outer orbit radius)
+        //   since players can't easily see the exact center
+        const isClusteredNebula = index < 8;
+        const nebulaSize = nebula.userData.size || 2000;
+        const deepDiscoveryRange = isClusteredNebula ? 100 : nebulaSize;
+        
         const distance = camera.position.distanceTo(nebula.position);
         
         // Debug: log when getting close
-        if (distance < 2000 && gameState.frameCount % 60 === 0) {
+        if (distance < nebulaSize && gameState.frameCount % 60 === 0) {
             console.log(`🔍 Near nebula ${index}: ${distance.toFixed(0)} units (need < ${deepDiscoveryRange})`);
         }
         
