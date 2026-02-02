@@ -3419,6 +3419,11 @@ if (enemy.userData.health <= 0) {
     const wasBoss = enemy.userData.isBoss;
     const bossName = enemy.userData.name;
     
+    // Record the kill position for elite guardian spawning
+    if (typeof recordEnemyKillPosition === 'function') {
+        recordEnemyKillPosition(enemy);
+    }
+    
     // Enemy destroyed - NOW create explosion and remove
     createExplosionEffect(enemy.position, 0xff4444, 15);
     playSound('explosion');
@@ -4016,6 +4021,9 @@ function handleBorgCubeDestruction() {
     if (!gameState.borg.cube) return;
 
     const cube = gameState.borg.cube;
+
+    // STOP THE OMINOUS ALARM IMMEDIATELY
+    stopBorgAlarm();
 
     // Epic victory message
     showAchievement('🎉 LEGENDARY VICTORY!', 'Borg Cube destroyed! The pursuit is over. You are free!', true);

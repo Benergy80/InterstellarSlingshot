@@ -937,14 +937,14 @@ function getCurrentGalaxyName() {
     if (galaxyId === -1) {
         return 'Unexplored Space';
     } else if (galaxyId === 7) {
-        return 'Local Galaxy'; // Special case for starting galaxy
+        return 'Local Galaxy - Sol System'; // Special case for starting galaxy
     } else if (typeof galaxyTypes !== 'undefined' && galaxyTypes[galaxyId]) {
-        // ⭐ Use galaxy TYPE names (Spiral, Elliptical, etc.)
+        // ⭐ Use galaxy TYPE names with faction
         const galaxy = galaxyTypes[galaxyId];
-        return `${galaxy.name} Galaxy`;
+        return `${galaxy.name} Galaxy - ${galaxy.faction}`;
     }
     
-    return 'Unknown Region';
+    return 'Deep Space';
 }
 
 function setupGalaxyMap() {

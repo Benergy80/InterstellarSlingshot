@@ -857,16 +857,16 @@ function transitionToRandomLocation(sourceBlackHole) {
         // PHASE 5: DETERMINE ARRIVAL GALAXY
         // ==========================================================================
         
-        // Determine galaxy location names
+        // Determine galaxy location names (with faction)
         const galaxyDiscoveryNames = [
-            'Spiral Galaxy',         // 0 - Federation Space
-            'Elliptical Galaxy',     // 1 - Klingon Empire
-            'Irregular Galaxy',      // 2 - Rebel Alliance
-            'Ring Galaxy',           // 3 - Romulan Star Empire
-            'Dwarf Galaxy',          // 4 - Galactic Empire
-            'Lenticular Galaxy',     // 5 - Cardassian Union
-            'Quasar Galaxy',         // 6 - Sith Empire
-            'Sagittarius A'          // 7 - Vulcan High Command / Local
+            'Spiral Galaxy - Federation Space',
+            'Elliptical Galaxy - Klingon Empire',
+            'Irregular Galaxy - Rebel Alliance',
+            'Ring Galaxy - Romulan Star Empire',
+            'Dwarf Galaxy - Galactic Empire',
+            'Lenticular Galaxy - Cardassian Union',
+            'Quasar Galaxy - Sith Empire',
+            'Ancient Galaxy - Vulcan High Command'
         ];
         
         // Determine which galaxy we warped to based on proximity

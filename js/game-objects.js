@@ -560,6 +560,9 @@ const bossSystem = {
     bossThreshold: 0 // Spawn boss when 0 enemies remain in area (all cleared)
 };
 
+// Track where the last enemy of each faction was killed (for elite guardian spawning)
+const lastKillPositions = {};
+
 // =============================================================================
 // PROGRESSIVE DIFFICULTY SYSTEM - ENHANCED COMBAT MECHANICS
 // =============================================================================
@@ -1066,6 +1069,20 @@ function checkBossVictory(defeatedEnemy) {
 // ELITE GUARDIAN SPAWNING SYSTEM - UNIVERSE-WIDE SPECIES ELIMINATION
 // =============================================================================
 
+// Record where an enemy was killed (for elite guardian spawning)
+function recordEnemyKillPosition(enemy) {
+    if (!enemy || !enemy.userData) return;
+    
+    const galaxyId = enemy.userData.galaxyId;
+    if (galaxyId === undefined || !galaxyTypes[galaxyId]) return;
+    
+    const faction = galaxyTypes[galaxyId].faction;
+    
+    // Store the kill position for this faction
+    lastKillPositions[faction] = enemy.position.clone();
+    console.log(`📍 Recorded kill position for ${faction} at`, enemy.position);
+}
+
 function checkAndSpawnEliteGuardians() {
     if (typeof enemies === 'undefined' || typeof scene === 'undefined') return;
 
@@ -1093,12 +1110,14 @@ function checkAndSpawnEliteGuardians() {
         // Spawn elite guardian when ALL enemies of this species are eliminated universe-wide
         if (count === 0) {
             console.log(`🌌 Species ${faction} completely eliminated! Spawning Elite Guardian...`);
-            spawnEliteGuardian(parseInt(galaxyId), faction);
+            // Use the last kill position if available, otherwise use galaxy center
+            const spawnPos = lastKillPositions[faction] || null;
+            spawnEliteGuardian(parseInt(galaxyId), faction, spawnPos);
         }
     });
 }
 
-function spawnEliteGuardian(galaxyId, faction) {
+function spawnEliteGuardian(galaxyId, faction, spawnPosition = null) {
     // Safety check
     if (bossSystem.eliteGuardians[faction]) return;
 
@@ -1113,8 +1132,9 @@ function spawnEliteGuardian(galaxyId, faction) {
 
     const galaxyType = galaxyTypes[galaxyId];
 
-    // Use galaxy's 3D position as spawn point
-    const guardianPosition = getGalaxy3DPosition(galaxyId);
+    // Use provided spawn position (where last enemy was killed) or fallback to galaxy center
+    const guardianPosition = spawnPosition ? spawnPosition.clone() : getGalaxy3DPosition(galaxyId);
+    console.log(`📍 Elite Guardian spawning at ${spawnPosition ? 'last kill position' : 'galaxy center'}:`, guardianPosition);
 
     const guardianGeometry = createEnemyGeometry(galaxyId);
     const shapeData = enemyShapes[galaxyId];
@@ -6187,6 +6207,8 @@ if (typeof window !== 'undefined') {
     
     // ENHANCED: Boss system exports (area-based + elite guardians)
     window.bossSystem = bossSystem;
+    window.lastKillPositions = lastKillPositions;
+    window.recordEnemyKillPosition = recordEnemyKillPosition;
     window.checkAndSpawnAreaBosses = checkAndSpawnAreaBosses;
     window.checkAndSpawnEliteGuardians = checkAndSpawnEliteGuardians;
     window.spawnBossForArea = spawnBossForArea;
