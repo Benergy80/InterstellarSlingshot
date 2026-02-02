@@ -2739,24 +2739,46 @@ function findCosmicFeaturesForGalaxy(galaxyId) {
     return features;
 }
 
-// Find patrol enemies near cosmic features for a galaxy
+// Find patrol enemies near cosmic features for a galaxy (AWAY from black hole)
 function findPatrolEnemiesNearCosmicFeatures(galaxyId) {
     if (typeof enemies === 'undefined') return null;
     
-    // First, get cosmic features for this galaxy
-    const cosmicFeats = findCosmicFeaturesForGalaxy(galaxyId);
+    // Get the black hole position to avoid it
+    const galaxyCore = findGalaxyCoreById(galaxyId);
+    const blackHolePos = galaxyCore ? galaxyCore.position : null;
+    const minDistFromBlackHole = 2000; // Must be at least this far from black hole
     
-    // Get all enemies for this galaxy (alive, non-boss)
-    const galaxyEnemies = enemies.filter(e => 
+    // First, get cosmic features for this galaxy that are AWAY from the black hole
+    let cosmicFeats = findCosmicFeaturesForGalaxy(galaxyId);
+    
+    // Filter out cosmic features too close to the black hole
+    if (blackHolePos) {
+        cosmicFeats = cosmicFeats.filter(f => 
+            f.position.distanceTo(blackHolePos) > minDistFromBlackHole
+        );
+    }
+    
+    // Get all enemies for this galaxy (alive, non-boss, AWAY from black hole)
+    let galaxyEnemies = enemies.filter(e => 
         e.userData.galaxyId === galaxyId &&
         e.userData.health > 0 &&
         !e.userData.isBoss &&
         !e.userData.isBossSupport
     );
     
-    if (galaxyEnemies.length === 0) return null;
+    // Filter out enemies too close to the black hole
+    if (blackHolePos) {
+        galaxyEnemies = galaxyEnemies.filter(e =>
+            e.position.distanceTo(blackHolePos) > minDistFromBlackHole
+        );
+    }
     
-    // If we have cosmic features, find enemies near them
+    if (galaxyEnemies.length === 0) {
+        console.log(`No patrol enemies found away from black hole for galaxy ${galaxyId}`);
+        return null;
+    }
+    
+    // If we have cosmic features away from the black hole, find enemies near them
     if (cosmicFeats.length > 0) {
         // Find the cosmic feature with the most enemies nearby
         let bestFeature = null;
@@ -2775,13 +2797,12 @@ function findPatrolEnemiesNearCosmicFeatures(galaxyId) {
         });
         
         if (bestFeature && bestEnemyCount > 0) {
-            // Calculate centroid of enemies near the cosmic feature
-            const centroid = new THREE.Vector3();
-            nearbyEnemies.forEach(e => centroid.add(e.position));
-            centroid.divideScalar(nearbyEnemies.length);
+            // Return the COSMIC FEATURE position (not enemy centroid)
+            // This ensures the path leads to the cosmic feature itself
+            console.log(`Found ${bestEnemyCount} enemies near ${bestFeature.name} at distance ${blackHolePos ? bestFeature.position.distanceTo(blackHolePos).toFixed(0) : '?'} from black hole`);
             
             return {
-                position: centroid,
+                position: bestFeature.position.clone(),
                 count: bestEnemyCount,
                 cosmicFeature: bestFeature.name,
                 cosmicFeatureType: bestFeature.type
@@ -2789,17 +2810,23 @@ function findPatrolEnemiesNearCosmicFeatures(galaxyId) {
         }
     }
     
-    // Fallback: just get the centroid of all enemies in the galaxy
-    const centroid = new THREE.Vector3();
-    galaxyEnemies.forEach(e => centroid.add(e.position));
-    centroid.divideScalar(galaxyEnemies.length);
+    // Fallback: find the enemy centroid that's furthest from the black hole
+    if (galaxyEnemies.length > 0) {
+        const centroid = new THREE.Vector3();
+        galaxyEnemies.forEach(e => centroid.add(e.position));
+        centroid.divideScalar(galaxyEnemies.length);
+        
+        console.log(`Fallback: ${galaxyEnemies.length} patrol enemies, centroid ${blackHolePos ? centroid.distanceTo(blackHolePos).toFixed(0) : '?'} from black hole`);
+        
+        return {
+            position: centroid,
+            count: galaxyEnemies.length,
+            cosmicFeature: null,
+            cosmicFeatureType: null
+        };
+    }
     
-    return {
-        position: centroid,
-        count: galaxyEnemies.length,
-        cosmicFeature: null,
-        cosmicFeatureType: null
-    };
+    return null;
 }
 
 // Create a path to a position (generalized version)
@@ -2865,7 +2892,7 @@ function createDiscoveryPathToPosition(nebulaPosition, targetPosition, factionCo
     return pathLine;
 }
 
-// Deep discovery check - triggers at 1000 units from nebula center
+// Deep discovery check - triggers at 100 units from nebula center
 // PAIRED NEBULA SYSTEM: Both nebulas in pair lead to SAME faction
 // Even index = path to black hole core, Odd index = path to patrol enemies near cosmic features
 function checkForNebulaDeepDiscovery() {
@@ -2873,7 +2900,7 @@ function checkForNebulaDeepDiscovery() {
     if (typeof nebulaClouds === 'undefined' || nebulaClouds.length === 0) return;
     if (typeof galaxyTypes === 'undefined') return;
     
-    const deepDiscoveryRange = 1000; // Within nebula region
+    const deepDiscoveryRange = 100; // Close to nebula center - makes it a quest!
     
     nebulaClouds.forEach((nebula, index) => {
         if (!nebula || !nebula.userData) return;
