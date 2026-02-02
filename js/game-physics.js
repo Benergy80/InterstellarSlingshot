@@ -2804,14 +2804,14 @@ function createDiscoveryPathToPosition(nebulaPosition, targetPosition, factionCo
     return pathLine;
 }
 
-// Deep discovery check - triggers at 1000 units from nebula center
+// Deep discovery check - triggers at 50 units from nebula center
 // PAIRED NEBULA SYSTEM: Even index = path to black hole core, Odd index = path to patrol enemies
 function checkForNebulaDeepDiscovery() {
     if (typeof gameState === 'undefined' || typeof camera === 'undefined') return;
     if (typeof nebulaClouds === 'undefined' || nebulaClouds.length === 0) return;
     if (typeof galaxyTypes === 'undefined') return;
     
-    const deepDiscoveryRange = 1000; // Within nebula core region
+    const deepDiscoveryRange = 50; // Very close to nebula center
     
     nebulaClouds.forEach((nebula, index) => {
         if (!nebula || !nebula.userData) return;
@@ -2821,7 +2821,14 @@ function checkForNebulaDeepDiscovery() {
         
         const distance = camera.position.distanceTo(nebula.position);
         
+        // Debug: log when getting close
+        if (distance < 500 && gameState.frameCount % 60 === 0) {
+            console.log(`🔍 Near nebula ${index}: ${distance.toFixed(0)} units (need < ${deepDiscoveryRange})`);
+        }
+        
         if (distance < deepDiscoveryRange) {
+            console.log(`✨ DEEP DISCOVERY TRIGGERED for nebula ${index} at distance ${distance.toFixed(0)}`);
+            
             // Mark as deep discovered
             nebula.userData.deepDiscovered = true;
             
