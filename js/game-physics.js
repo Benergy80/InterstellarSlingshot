@@ -2922,21 +2922,23 @@ function checkForNebulaDeepDiscovery() {
             nebula.userData.deepDiscovered = true;
             
             // PAIRED NEBULA LOGIC:
-            // Both nebulas in a pair lead to the SAME faction
-            // Find the first nebula in this pair to determine the target galaxy
-            const pairStartIndex = Math.floor(index / 2) * 2;
-            const firstNebulaInPair = nebulaClouds[pairStartIndex];
+            // Pair 0 (nebulas 0,1) → Galaxy 0 (Federation)
+            // Pair 1 (nebulas 2,3) → Galaxy 1 (Klingon)
+            // Pair 2 (nebulas 4,5) → Galaxy 2 (Rebel Alliance)
+            // etc... cycling through 8 galaxies
+            const pairIndex = Math.floor(index / 2);
+            const galaxyId = pairIndex % 8; // Cycle through 8 galaxies
             
-            // Find the nearest galaxy to the FIRST nebula in the pair
-            // This ensures both nebulas point to the same faction
-            const nearestCore = findNearestGalaxyCore(firstNebulaInPair ? firstNebulaInPair.position : nebula.position);
+            // Find the galaxy core for this specific galaxy ID
+            const galaxyCore = findGalaxyCoreById(galaxyId);
             
-            if (!nearestCore || nearestCore.userData.galaxyId === undefined) {
-                console.log(`No galaxy core found near nebula pair starting at ${pairStartIndex}`);
+            if (!galaxyCore) {
+                console.log(`No galaxy core found for galaxy ${galaxyId}`);
                 return;
             }
             
-            const galaxyId = nearestCore.userData.galaxyId;
+            console.log(`🌌 Nebula ${index} (pair ${pairIndex}) → Galaxy ${galaxyId} (${galaxyTypes[galaxyId].faction})`);
+            
             const galaxyType = galaxyTypes[galaxyId];
             
             if (!galaxyType) return;
@@ -2960,7 +2962,7 @@ function checkForNebulaDeepDiscovery() {
                 // PATH TO BLACK HOLE CORE - enemies preventing interstellar travel
                 createDiscoveryPathToPosition(
                     nebula.position,
-                    nearestCore.position,
+                    galaxyCore.position,
                     loreData.color,
                     factionName,
                     'core'
@@ -2968,7 +2970,7 @@ function checkForNebulaDeepDiscovery() {
                 
                 playDeepDiscoverySound();
                 
-                const galaxyName = nearestCore.userData.name || `${galaxyType.name} Galaxy Core`;
+                const galaxyName = galaxyCore.userData.name || `${galaxyType.name} Galaxy Core`;
                 
                 const transmissionText = `${loreData.greeting}\n\n` +
                     `${loreData.lore}\n\n` +
