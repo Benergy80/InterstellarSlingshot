@@ -568,8 +568,9 @@ function updateEnemyBehavior() {
     enemies.forEach(enemy => {
         if (enemy.userData.health <= 0) return;
         
-        // Use ship position for targeting in 1st/3rd person, camera in zero-offset mode
-        const playerPos = (typeof getPlayerPosition === 'function') ? getPlayerPosition() : camera.position.clone();
+        // FIXED: Always use camera position for consistent distance checks
+        // The ship mesh can lag behind during warps, causing enemies to attack from afar
+        const playerPos = camera.position.clone();
         const distanceToPlayer = playerPos.distanceTo(enemy.position);
         const isLocal = isEnemyInLocalGalaxy(enemy);
         
@@ -662,8 +663,8 @@ function updateLocalEnemyBehavior(enemy, distanceToPlayer, adjustedSpeed, diffic
     }
     
     const time = Date.now() * 0.001;
-    // Use ship position for targeting
-    const playerPos = (typeof getPlayerPosition === 'function') ? getPlayerPosition() : camera.position.clone();
+    // FIXED: Always use camera position for consistent targeting
+    const playerPos = camera.position.clone();
     
     // Update last seen player position if player is visible
     if (distanceToPlayer < difficultySettings.localDetectionRange) {
@@ -814,15 +815,18 @@ function updateSupportBehavior(enemy, playerPos, speed) {
 function fireEnemyWeapon(enemy, difficultySettings) {
     if (!enemy || !enemy.userData || enemy.userData.health <= 0) return;
     
-    // DEBUG: Log who is attacking
-    console.log(`🔫 ${enemy.userData.name || enemy.userData.type || 'Unknown'} firing at player from distance: ${enemy.position.distanceTo(camera.position).toFixed(0)} units`);
-    
     const isLocal = isEnemyInLocalGalaxy(enemy);
     const firingRange = isLocal ? difficultySettings?.localFiringRange || 500 : difficultySettings?.distantFiringRange || 600;
     
-    // Target ship position in 1st/3rd person, camera in zero-offset
-    const playerPos = (typeof getPlayerPosition === 'function') ? getPlayerPosition() : camera.position.clone();
+    // FIXED: Always use camera position for consistent range checks
+    // The ship mesh can lag behind during warps, causing "invisible" attacks
+    const playerPos = camera.position.clone();
     const distanceToPlayer = playerPos.distanceTo(enemy.position);
+    
+    // DEBUG: Log who is attacking (only if in range)
+    if (distanceToPlayer <= firingRange) {
+        console.log(`🔫 ${enemy.userData.name || enemy.userData.type || 'Unknown'} firing at player from distance: ${distanceToPlayer.toFixed(0)} units (range: ${firingRange})`);
+    }
     
     if (distanceToPlayer <= firingRange) {
         // Create enemy laser beam targeting player position
