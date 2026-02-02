@@ -2689,10 +2689,127 @@ function findNearestGalaxyCore(position) {
     return nearestCore;
 }
 
+// Find a galaxy core by galaxy ID
+function findGalaxyCoreById(galaxyId) {
+    if (typeof planets === 'undefined') return null;
+    
+    for (const planet of planets) {
+        if (planet.userData.isGalacticCore && 
+            planet.userData.type === 'blackhole' && 
+            planet.userData.galaxyId === galaxyId) {
+            return planet;
+        }
+    }
+    return null;
+}
+
+// Find the centroid of patrol enemies for a specific galaxy
+function findPatrolEnemyCentroid(galaxyId) {
+    if (typeof enemies === 'undefined') return null;
+    
+    // Get all patrol enemies (non-boss, non-guardian) for this galaxy
+    const patrolEnemies = enemies.filter(e => 
+        e.userData.galaxyId === galaxyId &&
+        e.userData.health > 0 &&
+        !e.userData.isBoss &&
+        !e.userData.isBossSupport &&
+        !e.userData.isEliteGuardian &&
+        e.userData.attackMode === 'patrol'
+    );
+    
+    if (patrolEnemies.length === 0) {
+        // Fallback: get any non-boss enemy in the galaxy
+        const anyEnemies = enemies.filter(e =>
+            e.userData.galaxyId === galaxyId &&
+            e.userData.health > 0 &&
+            !e.userData.isBoss
+        );
+        if (anyEnemies.length === 0) return null;
+        
+        // Return centroid of any enemies
+        const centroid = new THREE.Vector3();
+        anyEnemies.forEach(e => centroid.add(e.position));
+        centroid.divideScalar(anyEnemies.length);
+        return { position: centroid, count: anyEnemies.length };
+    }
+    
+    // Calculate centroid of patrol enemies
+    const centroid = new THREE.Vector3();
+    patrolEnemies.forEach(e => centroid.add(e.position));
+    centroid.divideScalar(patrolEnemies.length);
+    
+    return { position: centroid, count: patrolEnemies.length };
+}
+
+// Create a path to a position (generalized version)
+function createDiscoveryPathToPosition(nebulaPosition, targetPosition, factionColor, factionName, pathType) {
+    if (!scene || !THREE) return null;
+    
+    const startPos = nebulaPosition.clone();
+    const endPos = targetPosition.clone();
+    
+    // Create points along the path
+    const pathPoints = [];
+    const segments = 100;
+    
+    for (let i = 0; i <= segments; i++) {
+        const t = i / segments;
+        // Add slight curve for visual interest
+        const curveHeight = Math.sin(t * Math.PI) * 500;
+        pathPoints.push(new THREE.Vector3(
+            startPos.x + (endPos.x - startPos.x) * t,
+            startPos.y + (endPos.y - startPos.y) * t + curveHeight,
+            startPos.z + (endPos.z - startPos.z) * t
+        ));
+    }
+    
+    // Create the path geometry
+    const pathGeometry = new THREE.BufferGeometry().setFromPoints(pathPoints);
+    
+    // Different dash patterns for core vs patrol
+    const dashSize = pathType === 'core' ? 100 : 60;
+    const gapSize = pathType === 'core' ? 50 : 40;
+    
+    // Create dashed line material
+    const pathMaterial = new THREE.LineDashedMaterial({
+        color: factionColor,
+        dashSize: dashSize,
+        gapSize: gapSize,
+        linewidth: 2,
+        transparent: true,
+        opacity: 0.7
+    });
+    
+    const pathLine = new THREE.Line(pathGeometry, pathMaterial);
+    pathLine.computeLineDistances(); // Required for dashed lines
+    
+    pathLine.userData = {
+        type: 'discovery_path',
+        pathType: pathType, // 'core' or 'patrol'
+        faction: factionName,
+        startPosition: startPos.clone(),
+        endPosition: endPos.clone(),
+        createdAt: Date.now()
+    };
+    
+    // Add glow particles along the path
+    const glowParticles = createPathGlowParticles(pathPoints, factionColor);
+    
+    scene.add(pathLine);
+    if (glowParticles) scene.add(glowParticles);
+    
+    discoveryPaths.push({ line: pathLine, particles: glowParticles, faction: factionName, pathType: pathType });
+    
+    console.log(`🛤️ Discovery path (${pathType}) created to ${factionName} territory`);
+    return pathLine;
+}
+
 // Deep discovery check - triggers at 1000 units from nebula center
+// PAIRED NEBULA SYSTEM: Even index = path to black hole core, Odd index = path to patrol enemies
 function checkForNebulaDeepDiscovery() {
     if (typeof gameState === 'undefined' || typeof camera === 'undefined') return;
     if (typeof nebulaClouds === 'undefined' || nebulaClouds.length === 0) return;
+    if (typeof galaxyTypes === 'undefined') return;
     
     const deepDiscoveryRange = 1000; // Within nebula core region
     
@@ -2708,56 +2825,110 @@ function checkForNebulaDeepDiscovery() {
             // Mark as deep discovered
             nebula.userData.deepDiscovered = true;
             
-            // Find the nearest galaxy core
-            const nearestCore = findNearestGalaxyCore(nebula.position);
+            // PAIRED NEBULA LOGIC:
+            // Pair index determines which galaxy (0-7)
+            // Even nebula index = path to black hole core enemies
+            // Odd nebula index = path to patrol enemies in galaxy
+            const pairIndex = Math.floor(index / 2) % 8; // Which galaxy (0-7)
+            const isCorePath = (index % 2 === 0); // Even = core, Odd = patrol
             
-            if (nearestCore && nearestCore.userData.faction) {
-                const factionName = nearestCore.userData.faction;
-                const loreData = FACTION_LORE[factionName];
+            const galaxyId = pairIndex;
+            const galaxyType = galaxyTypes[galaxyId];
+            
+            if (!galaxyType) return;
+            
+            const factionName = galaxyType.faction;
+            const loreData = FACTION_LORE[factionName];
+            
+            if (!loreData) return;
+            
+            const nebulaName = nebula.userData.mythicalName || nebula.userData.name || 'Unknown Nebula';
+            const colorName = factionName === 'Federation' ? 'blue' : 
+                factionName === 'Klingon Empire' ? 'orange' : 
+                factionName === 'Rebel Alliance' ? 'green' :
+                factionName === 'Romulan Star Empire' ? 'pink' :
+                factionName === 'Galactic Empire' ? 'cyan' :
+                factionName === 'Cardassian Union' ? 'magenta' :
+                factionName === 'Sith Empire' ? 'red' : 'peach';
+            
+            if (isCorePath) {
+                // PATH TO BLACK HOLE CORE - where the main stronghold is
+                const galaxyCore = findGalaxyCoreById(galaxyId);
                 
-                if (loreData) {
-                    // Create the discovery path
-                    createDiscoveryPath(
+                if (galaxyCore) {
+                    createDiscoveryPathToPosition(
                         nebula.position,
-                        nearestCore,
+                        galaxyCore.position,
                         loreData.color,
-                        factionName
+                        factionName,
+                        'core'
                     );
                     
-                    // Play dramatic sound
                     playDeepDiscoverySound();
                     
-                    // Show Mission Command transmission with faction lore
-                    const nebulaName = nebula.userData.mythicalName || nebula.userData.name || 'Unknown Nebula';
-                    const galaxyName = nearestCore.userData.name || `${factionName} Galaxy`;
+                    const galaxyName = galaxyCore.userData.name || `${galaxyType.name} Galaxy Core`;
                     
                     const transmissionText = `${loreData.greeting}\n\n` +
                         `${loreData.lore}\n\n` +
                         `${loreData.threat}\n\n` +
-                        `NAVIGATION: A pathway has been marked from the ${nebulaName} to ${galaxyName}. ` +
-                        `Follow the ${factionName === 'Federation' ? 'blue' : 
-                            factionName === 'Klingon Empire' ? 'orange' : 
-                            factionName === 'Rebel Alliance' ? 'green' :
-                            factionName === 'Romulan Star Empire' ? 'pink' :
-                            factionName === 'Galactic Empire' ? 'cyan' :
-                            factionName === 'Cardassian Union' ? 'magenta' :
-                            factionName === 'Sith Empire' ? 'red' : 'peach'} dotted line to engage hostile forces.\n\n` +
-                        `Good hunting, Captain.`;
+                        `STRONGHOLD DETECTED: The ${factionName} have fortified their position around the ${galaxyType.name} Galaxy black hole. ` +
+                        `Their command structure and elite forces are concentrated here.\n\n` +
+                        `NAVIGATION: Follow the ${colorName} dotted line from ${nebulaName} to their stronghold.\n\n` +
+                        `Strike at the heart of their operation, Captain.`;
                     
                     if (typeof showMissionCommandAlert === 'function') {
-                        showMissionCommandAlert('Mission Control', transmissionText);
+                        showMissionCommandAlert('Mission Control - Stronghold Located', transmissionText);
                     }
                     
-                    // Also show achievement
                     if (typeof showAchievement === 'function') {
                         showAchievement(
-                            'Hostile Territory Located!',
-                            `${factionName} forces detected. Path marked to their stronghold.`,
+                            'Enemy Stronghold Located!',
+                            `${factionName} command center at ${galaxyType.name} Galaxy Core. Path marked.`,
                             true
                         );
                     }
                     
-                    console.log(`🔮 Deep discovery: ${nebulaName} → ${factionName} territory`);
+                    console.log(`🔮 Deep discovery (CORE): ${nebulaName} → ${factionName} stronghold`);
+                }
+            } else {
+                // PATH TO PATROL ENEMIES - scattered forces in the galaxy
+                const patrolData = findPatrolEnemyCentroid(galaxyId);
+                
+                if (patrolData) {
+                    createDiscoveryPathToPosition(
+                        nebula.position,
+                        patrolData.position,
+                        loreData.color,
+                        factionName,
+                        'patrol'
+                    );
+                    
+                    playDeepDiscoverySound();
+                    
+                    const transmissionText = `${loreData.greeting}\n\n` +
+                        `PATROL FORCES DETECTED: Our long-range sensors have located ${factionName} patrol squadrons ` +
+                        `operating throughout the ${galaxyType.name} Galaxy. These ${patrolData.count} hostile units are conducting ` +
+                        `search-and-destroy missions against civilian shipping lanes.\n\n` +
+                        `${loreData.threat}\n\n` +
+                        `NAVIGATION: Follow the ${colorName} dotted line from ${nebulaName} to intercept their patrol routes.\n\n` +
+                        `Hunt them down before they find more victims, Captain.`;
+                    
+                    if (typeof showMissionCommandAlert === 'function') {
+                        showMissionCommandAlert('Mission Control - Patrol Routes Located', transmissionText);
+                    }
+                    
+                    if (typeof showAchievement === 'function') {
+                        showAchievement(
+                            'Enemy Patrols Located!',
+                            `${patrolData.count} ${factionName} patrol units detected. Path marked.`,
+                            true
+                        );
+                    }
+                    
+                    console.log(`🔮 Deep discovery (PATROL): ${nebulaName} → ${factionName} patrols (${patrolData.count} units)`);
+                } else {
+                    // No patrol enemies found - maybe they're all dead or at the core
+                    console.log(`No patrol enemies found for ${factionName} - skipping patrol path`);
                 }
             }
         }
@@ -2820,6 +2991,9 @@ function animateDiscoveryPaths() {
 // Export deep discovery functions
 window.checkForNebulaDeepDiscovery = checkForNebulaDeepDiscovery;
 window.createDiscoveryPath = createDiscoveryPath;
+window.createDiscoveryPathToPosition = createDiscoveryPathToPosition;
+window.findGalaxyCoreById = findGalaxyCoreById;
+window.findPatrolEnemyCentroid = findPatrolEnemyCentroid;
 window.animateDiscoveryPaths = animateDiscoveryPaths;
 window.FACTION_LORE = FACTION_LORE;
 window.discoveryPaths = discoveryPaths;
