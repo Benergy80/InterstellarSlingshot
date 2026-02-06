@@ -281,25 +281,67 @@ const NEBULA_NAME_PREFIXES = [
 ];
 
 // =============================================================================
-// NEBULA-TO-GALAXY PAIRING
+// NEBULA-TO-GALAXY MISSION MAPPINGS
 // =============================================================================
 
 /**
- * Maps pairs of clustered nebulas to their associated galaxy.
- * Used by the deep discovery system to unlock faction intelligence.
+ * Every nebula category maps to a galaxy/faction for the mission discovery system.
+ * All 8 hostile factions are represented across the nebula categories.
  *
- * Pair 0 (Nebulas 0,1) -> Galaxy 0 (Federation / Spiral)
- * Pair 1 (Nebulas 2,3) -> Galaxy 1 (Klingon Empire / Elliptical)
- * Pair 2 (Nebulas 4,5) -> Galaxy 2 (Rebel Alliance / Irregular)
- * Pair 3 (Nebulas 6,7) -> Galaxy 3 (Romulan Star Empire / Ring)
+ * CLUSTERED NEBULAS (first 8, paired):
+ *   Pair 0 (Nebulas 0,1) -> Galaxy 0 (Federation / Spiral)      - even=core, odd=patrol
+ *   Pair 1 (Nebulas 2,3) -> Galaxy 1 (Klingon Empire / Elliptical)
+ *   Pair 2 (Nebulas 4,5) -> Galaxy 2 (Rebel Alliance / Irregular)
+ *   Pair 3 (Nebulas 6,7) -> Galaxy 3 (Romulan Star Empire / Ring)
  *
- * @param {number} nebulaIndex - Index in the nebulaClouds array
- * @returns {number} The associated galaxy ID (0-7)
+ * DISTANT NEBULAS (fill in galaxies 4-7 first, then cycle):
+ *   Distant Nebula Alpha   -> Galaxy 4 (Galactic Empire / Dwarf)
+ *   Distant Nebula Beta    -> Galaxy 5 (Cardassian Union / Lenticular)
+ *   Distant Nebula Gamma   -> Galaxy 6 (Sith Empire / Quasar)
+ *   Distant Nebula Delta   -> Galaxy 7 (Vulcan High Command / Ancient)
+ *   Distant Nebula Epsilon -> Galaxy 0 (Federation)
+ *   Distant Nebula Zeta    -> Galaxy 1 (Klingon Empire)
+ *
+ * EXOTIC CORE NEBULAS (continue cycling through all 8):
+ *   Frontier Nebula   -> Galaxy 2 (Rebel Alliance)
+ *   Outer Veil Nebula -> Galaxy 3 (Romulan Star Empire)
+ *   Deep Space Nebula -> Galaxy 4 (Galactic Empire)
+ *   Void Nebula       -> Galaxy 5 (Cardassian Union)
+ *   Boundary Nebula   -> Galaxy 6 (Sith Empire)
+ *   Edge Nebula       -> Galaxy 7 (Vulcan High Command)
+ *   Threshold Nebula  -> Galaxy 0 (Federation)
+ *   Horizon Nebula    -> Galaxy 1 (Klingon Empire)
+ *
+ * GALAXY-FORMATION NEBULAS (1:1 with galaxy types, gated by black hole clear):
+ *   Olympus Nebula    -> Galaxy 0 (Federation)    [requires BH enemies cleared]
+ *   Titan Nebula      -> Galaxy 1 (Klingon)       [requires BH enemies cleared]
+ *   Atlantis Nebula   -> Galaxy 2 (Rebel Alliance) [requires BH enemies cleared]
+ *   Prometheus Nebula -> Galaxy 3 (Romulan)        [requires BH enemies cleared]
+ *   Elysium Nebula    -> Galaxy 4 (Galactic Empire) [requires BH enemies cleared]
+ *   Tartarus Nebula   -> Galaxy 5 (Cardassian)     [requires BH enemies cleared]
+ *   Hyperion Nebula   -> Galaxy 6 (Sith Empire)    [requires BH enemies cleared]
+ *   Chronos Nebula    -> Galaxy 7 (Vulcan)          [requires BH enemies cleared]
+ *
+ * FACTION COVERAGE SUMMARY:
+ *   Galaxy 0 (Federation):       2 clustered + 1 distant + 1 exotic + 1 formation = 5 nebulas
+ *   Galaxy 1 (Klingon Empire):   2 clustered + 1 distant + 1 exotic + 1 formation = 5 nebulas
+ *   Galaxy 2 (Rebel Alliance):   2 clustered + 1 exotic + 1 formation = 4 nebulas
+ *   Galaxy 3 (Romulan):          2 clustered + 1 exotic + 1 formation = 4 nebulas
+ *   Galaxy 4 (Galactic Empire):  1 distant + 1 exotic + 1 formation = 3 nebulas
+ *   Galaxy 5 (Cardassian Union): 1 distant + 1 exotic + 1 formation = 3 nebulas
+ *   Galaxy 6 (Sith Empire):      1 distant + 1 exotic + 1 formation = 3 nebulas
+ *   Galaxy 7 (Vulcan):           1 distant + 1 exotic + 1 formation = 3 nebulas
+ *
+ * TRIGGER CONDITIONS:
+ *   Clustered:         Close approach (100 units). Always triggers on approach.
+ *   Distant/Exotic:    Enter nebula boundary (size radius). Always triggers.
+ *   Galaxy-Formation:  Close approach (100 units). Deferred until all enemies
+ *                      with placementType 'black_hole' in that galaxy are eliminated.
+ *
+ * DEFEAT HANDLING:
+ *   If a faction is already fully eliminated when a nebula is discovered,
+ *   a liberation gratitude message is shown instead of a mission path.
  */
-function getNebulaGalaxyPairing(nebulaIndex) {
-    const pairIndex = Math.floor(nebulaIndex / 2);
-    return pairIndex % 8;
-}
 
 // =============================================================================
 // NEBULA DISCOVERY RANGES
@@ -313,8 +355,8 @@ const NEBULA_DISCOVERY = {
     surfaceRange: 3000,
     /** Distance at which discovery music fades */
     exitRange: 4000,
-    /** Deep discovery range for clustered nebulas (index 0-7) - requires close approach */
-    deepDiscoveryClusteredRange: 100,
+    /** Deep discovery range for clustered and galaxy-formation nebulas */
+    deepDiscoveryCloseRange: 100,
     /** Deep discovery for distant/exotic nebulas uses the nebula's own size as range */
     deepDiscoveryUsesSize: true
 };
@@ -397,14 +439,14 @@ const NEBULA_MATERIAL_DEFAULTS = {
 /**
  * Quick reference for all nebula categories in the game:
  *
- * | Category         | Count | Distance (units) | Size Range    | Particles  | Point Size | Opacity |
- * |------------------|-------|------------------|---------------|------------|------------|---------|
- * | Clustered        | 8x3=24| 12,000 - 20,000  | 2,000 - 5,000 | 1,200      | 2.5        | 0.65    |
- * | Galaxy-Formation | 8     | 15,000 - 31,000  | 1,200 - 2,000 | 4,000-6,000| 2.5        | 0.65    |
- * | Distant          | 6     | 50,000 - 75,000  | 3,000 - 7,000 | 1,200      | 80         | 0.60    |
- * | Exotic Core      | 8     | 45,000 - 65,000  | 3,500 - 7,000 | 1,500      | 150        | 0.85    |
- * |------------------|-------|------------------|---------------|------------|------------|---------|
- * | TOTAL            | ~46   |                  |               |            |            |         |
+ * | Category         | Count | Distance (units) | Size Range    | Particles  | Point Size | Opacity | Mission Type              |
+ * |------------------|-------|------------------|---------------|------------|------------|---------|---------------------------|
+ * | Clustered        | 8x3=24| 12,000 - 20,000  | 2,000 - 5,000 | 1,200      | 2.5        | 0.65    | Core/Patrol (paired)      |
+ * | Galaxy-Formation | 8     | 15,000 - 31,000  | 1,200 - 2,000 | 4,000-6,000| 2.5        | 0.65    | Remnant (after BH clear)  |
+ * | Distant          | 6     | 50,000 - 75,000  | 3,000 - 7,000 | 1,200      | 80         | 0.60    | Hostile forces (direct)   |
+ * | Exotic Core      | 8     | 45,000 - 65,000  | 3,500 - 7,000 | 1,500      | 150        | 0.85    | Hostile forces (direct)   |
+ * |------------------|-------|------------------|---------------|------------|------------|---------|---------------------------|
+ * | TOTAL            | ~46   |                  |               |            |            |         | All 8 factions covered    |
  *
  * Shape types (Galaxy-Formation only):
  *   spiral     - Arms + center bulge (Olympus: 3 arms, Chronos: 2 arms)
@@ -414,4 +456,10 @@ const NEBULA_MATERIAL_DEFAULTS = {
  *   quasar     - Central bulge + vertical polar jets (Elysium)
  *   lenticular - Ultra-flat disk with bright center (Tartarus)
  *   ancient    - Small irregular cluster (Hyperion)
+ *
+ * Mission path types:
+ *   core    - Dashed line (100/50) to black hole stronghold
+ *   patrol  - Dashed line (60/40) to enemies near cosmic features
+ *   remnant - Dashed line to scattered survivors after BH stronghold falls
+ *   liberation - No path; gratitude message when faction already defeated
  */
