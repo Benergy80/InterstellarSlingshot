@@ -1259,11 +1259,19 @@ function showMissionCommandAlert(title, text, isVictoryMessage = false) {
     }
     buttonContainer.appendChild(understoodButton);
     
-    // UNDERSTOOD button dismisses the message
+    // UNDERSTOOD button dismisses the message and resumes the game if paused
     const handleUnderstood = () => {
         alertElement.classList.add('hidden');
+        // Resume the game if it was paused for this transmission
+        if (typeof gameState !== 'undefined' && gameState.paused) {
+            gameState.paused = false;
+            const pauseBtn = document.getElementById('pauseBtn');
+            const pauseIcon = document.getElementById('pauseIcon');
+            if (pauseBtn) pauseBtn.classList.remove('paused');
+            if (pauseIcon) pauseIcon.className = 'fas fa-pause mr-1';
+        }
     };
-    
+
     understoodButton.onclick = handleUnderstood;
     understoodButton.ontouchend = (e) => {
         e.preventDefault();
@@ -1271,11 +1279,149 @@ function showMissionCommandAlert(title, text, isVictoryMessage = false) {
         handleUnderstood();
     };
 }
-    
+
     // Only play sound if not suppressed
 if (typeof gameState === 'undefined' || !gameState.suppressAchievements) {
         playSound('achievement');
 }
+}
+
+// =============================================================================
+// INCOMING TRANSMISSION PROMPT - READ / SKIP choice for discovery missions
+// Shows a brief notification; READ pauses the game and displays full lore.
+// =============================================================================
+
+function showIncomingTransmission(title, text, factionColor) {
+    // Remove any existing prompt
+    const existing = document.getElementById('incomingTransmissionPrompt');
+    if (existing) existing.remove();
+
+    const colorHex = factionColor
+        ? '#' + new THREE.Color(factionColor).getHexString()
+        : '#00ff88';
+
+    const prompt = document.createElement('div');
+    prompt.id = 'incomingTransmissionPrompt';
+    prompt.style.cssText = `
+        position: fixed;
+        top: 12%;
+        left: 50%;
+        transform: translateX(-50%);
+        z-index: 1000;
+        background: rgba(0, 0, 0, 0.85);
+        border: 1px solid ${colorHex};
+        border-radius: 8px;
+        padding: 16px 28px;
+        text-align: center;
+        box-shadow: 0 0 20px ${colorHex}44, inset 0 0 15px ${colorHex}22;
+        font-family: 'Orbitron', monospace;
+        animation: transmissionPulse 1.5s ease-in-out infinite;
+        pointer-events: auto;
+        max-width: 420px;
+        width: 90%;
+    `;
+
+    prompt.innerHTML = `
+        <div style="color: ${colorHex}; font-size: 0.75rem; letter-spacing: 3px; margin-bottom: 6px; opacity: 0.8;">
+            INCOMING TRANSMISSION
+        </div>
+        <div style="color: #ffffff; font-size: 1rem; font-weight: 700; margin-bottom: 14px; letter-spacing: 1px;
+                     text-shadow: 0 0 8px ${colorHex}88;">
+            ${title}
+        </div>
+        <div style="display: flex; gap: 12px; justify-content: center;">
+            <button id="transmissionRead" style="
+                background: rgba(0, 200, 100, 0.2);
+                border: 1px solid rgba(0, 255, 136, 0.6);
+                border-radius: 4px;
+                color: #00ff88;
+                font-family: 'Orbitron', monospace;
+                font-size: 0.85rem;
+                font-weight: 600;
+                padding: 8px 24px;
+                cursor: pointer;
+                letter-spacing: 2px;
+                text-shadow: 0 0 8px rgba(0,255,136,0.5);
+                transition: all 0.2s ease;
+                pointer-events: auto;
+                touch-action: manipulation;
+            ">READ</button>
+            <button id="transmissionSkip" style="
+                background: rgba(255, 150, 0, 0.15);
+                border: 1px solid rgba(255, 200, 0, 0.4);
+                border-radius: 4px;
+                color: #ffcc44;
+                font-family: 'Orbitron', monospace;
+                font-size: 0.85rem;
+                font-weight: 600;
+                padding: 8px 24px;
+                cursor: pointer;
+                letter-spacing: 2px;
+                text-shadow: 0 0 8px rgba(255,200,0,0.4);
+                transition: all 0.2s ease;
+                pointer-events: auto;
+                touch-action: manipulation;
+            ">SKIP</button>
+        </div>
+    `;
+
+    // Inject keyframe animation if not already present
+    if (!document.getElementById('transmissionPulseStyle')) {
+        const style = document.createElement('style');
+        style.id = 'transmissionPulseStyle';
+        style.textContent = `
+            @keyframes transmissionPulse {
+                0%, 100% { box-shadow: 0 0 20px ${colorHex}44, inset 0 0 15px ${colorHex}22; }
+                50% { box-shadow: 0 0 30px ${colorHex}66, inset 0 0 20px ${colorHex}33; }
+            }
+        `;
+        document.head.appendChild(style);
+    }
+
+    document.body.appendChild(prompt);
+
+    // Play a short comm-link beep
+    if (typeof playSound === 'function') {
+        playSound('achievement');
+    }
+
+    const dismiss = () => {
+        prompt.remove();
+    };
+
+    // READ: pause the game and show full lore
+    const handleRead = () => {
+        dismiss();
+        // Pause the game if not already paused
+        if (typeof gameState !== 'undefined' && !gameState.paused) {
+            gameState.paused = true;
+            // Show pause state visually but don't show the pause overlay
+            const pauseBtn = document.getElementById('pauseBtn');
+            const pauseIcon = document.getElementById('pauseIcon');
+            if (pauseBtn) pauseBtn.classList.add('paused');
+            if (pauseIcon) pauseIcon.className = 'fas fa-play mr-1';
+        }
+        showMissionCommandAlert(title, text);
+    };
+
+    // SKIP: dismiss and keep playing
+    const handleSkip = () => {
+        dismiss();
+    };
+
+    const readBtn = prompt.querySelector('#transmissionRead');
+    const skipBtn = prompt.querySelector('#transmissionSkip');
+
+    readBtn.onclick = handleRead;
+    readBtn.ontouchend = (e) => { e.preventDefault(); e.stopPropagation(); handleRead(); };
+    skipBtn.onclick = handleSkip;
+    skipBtn.ontouchend = (e) => { e.preventDefault(); e.stopPropagation(); handleSkip(); };
+
+    // Auto-dismiss after 15 seconds if no action taken
+    const autoTimeout = setTimeout(dismiss, 15000);
+    // Clear timeout on any interaction
+    readBtn.addEventListener('click', () => clearTimeout(autoTimeout));
+    skipBtn.addEventListener('click', () => clearTimeout(autoTimeout));
 }
 
 // =============================================================================
@@ -5372,6 +5518,7 @@ if (typeof window !== 'undefined') {
     window.tutorialSystem = tutorialSystem;
     window.startTutorial = startTutorial;
     window.showMissionCommandAlert = showMissionCommandAlert;
+    window.showIncomingTransmission = showIncomingTransmission;
     window.completeTutorial = completeTutorial;
     
     // UI systems

@@ -3108,8 +3108,8 @@ function checkForNebulaDeepDiscovery() {
                 `Civilian shipping lanes have been reopened, and reconstruction efforts are underway.\n\n` +
                 `This sector is now safe, Captain. Your courage will not be forgotten.`;
 
-            if (typeof showMissionCommandAlert === 'function') {
-                showMissionCommandAlert('Mission Control - Liberated Sector', liberationText);
+            if (typeof showIncomingTransmission === 'function') {
+                showIncomingTransmission('Mission Control - Liberated Sector', liberationText, loreData.color);
             }
 
             if (typeof showAchievement === 'function') {
@@ -3151,8 +3151,8 @@ function checkForNebulaDeepDiscovery() {
                     `NAVIGATION: Follow the ${colorName} dotted line from ${nebulaName} to their stronghold.\n\n` +
                     `Strike at the heart of their operation, Captain.`;
 
-                if (typeof showMissionCommandAlert === 'function') {
-                    showMissionCommandAlert('Mission Control - Stronghold Located', transmissionText);
+                if (typeof showIncomingTransmission === 'function') {
+                    showIncomingTransmission('Mission Control - Stronghold Located', transmissionText, loreData.color);
                 }
 
                 if (typeof showAchievement === 'function') {
@@ -3196,8 +3196,8 @@ function checkForNebulaDeepDiscovery() {
                         `NAVIGATION: Follow the ${colorName} dotted line from ${nebulaName} to intercept their patrol routes.\n\n` +
                         `Hunt them down before they find more victims, Captain.`;
 
-                    if (typeof showMissionCommandAlert === 'function') {
-                        showMissionCommandAlert('Mission Control - Patrol Routes Located', transmissionText);
+                    if (typeof showIncomingTransmission === 'function') {
+                        showIncomingTransmission('Mission Control - Patrol Routes Located', transmissionText, loreData.color);
                     }
 
                     const achievementText = patrolData.cosmicFeature
@@ -3236,8 +3236,8 @@ function checkForNebulaDeepDiscovery() {
                     `NAVIGATION: Follow the ${colorName} dotted line from the ${nebulaName} to intercept the remaining forces.\n\n` +
                     `Finish what you started, Captain. Leave no threat standing.`;
 
-                if (typeof showMissionCommandAlert === 'function') {
-                    showMissionCommandAlert('Mission Control - Remnant Forces Detected', transmissionText);
+                if (typeof showIncomingTransmission === 'function') {
+                    showIncomingTransmission('Mission Control - Remnant Forces Detected', transmissionText, loreData.color);
                 }
 
                 if (typeof showAchievement === 'function') {
@@ -3286,8 +3286,8 @@ function checkForNebulaDeepDiscovery() {
                     `NAVIGATION: Follow the ${colorName} dotted line from ${nebulaName} to engage.\n\n` +
                     `The universe is counting on you, Captain.`;
 
-                if (typeof showMissionCommandAlert === 'function') {
-                    showMissionCommandAlert('Mission Control - Hostile Forces Located', transmissionText);
+                if (typeof showIncomingTransmission === 'function') {
+                    showIncomingTransmission('Mission Control - Hostile Forces Located', transmissionText, loreData.color);
                 }
 
                 if (typeof showAchievement === 'function') {
