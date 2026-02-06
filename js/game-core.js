@@ -1345,31 +1345,6 @@ if (planet.userData.type === 'blackhole' && planet.userData.rotationSpeed) {
         planet.rotation.z += planet.userData.rotationSpeed * 0.4;
     }
 }
-
-        // NEBULA ASTEROID ORBITS - asteroids with orbitCenter (around distant/exotic nebulas)
-        if (planet.userData.type === 'asteroid' && planet.userData.orbitCenter && planet.userData.orbitSpeed) {
-    // Update orbital angle
-    planet.userData.orbitAngle = (planet.userData.orbitAngle || 0) + planet.userData.orbitSpeed;
-    
-    const center = planet.userData.orbitCenter;
-    const radius = planet.userData.orbitRadius || 1000;
-    const angle = planet.userData.orbitAngle;
-    const tilt = planet.userData.orbitTilt || 0;
-    
-    // Calculate new position on orbit
-    planet.position.set(
-        center.x + Math.cos(angle) * radius,
-        center.y + Math.sin(tilt) * radius * 0.3 + Math.sin(angle * 2) * 20,
-        center.z + Math.sin(angle) * radius
-    );
-    
-    // Keep asteroid rotation smooth
-    if (planet.userData.rotationSpeed) {
-        planet.rotation.x += planet.userData.rotationSpeed;
-        planet.rotation.y += planet.userData.rotationSpeed * 0.7;
-        planet.rotation.z += planet.userData.rotationSpeed * 0.4;
-    }
-}
         
         // PERFORMANCE: Optimized tendril animations for distant stars (active only)
         if (planet.userData.tendrilGroup && !planet.userData.isLocalStar && gameState.performanceMode !== 'minimal') {
