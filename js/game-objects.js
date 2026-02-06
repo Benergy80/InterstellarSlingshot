@@ -6537,3 +6537,108 @@ window.createBossBattleSkybox = createBossBattleSkybox;
 window.updateBossSkyboxHeartbeat = updateBossSkyboxHeartbeat;
 window.bossSkybox = bossSkybox;
 
+// =============================================================================
+// DEBUG: NEBULA RED BEACONS - Visible markers at all nebula positions
+// =============================================================================
+
+let nebulaDebugBeacons = [];
+
+function createNebulaDebugBeacons() {
+    console.log('🔴 Creating debug beacons at all nebula positions...');
+    
+    // Remove any existing beacons first
+    removeNebulaDebugBeacons();
+    
+    if (typeof nebulaClouds === 'undefined' || nebulaClouds.length === 0) {
+        console.warn('⚠️ No nebulas found - cannot create debug beacons');
+        return;
+    }
+    
+    nebulaClouds.forEach((nebula, index) => {
+        if (!nebula || !nebula.position) return;
+        
+        // Create a bright red sphere beacon
+        const beaconGeometry = new THREE.SphereGeometry(100, 16, 16);
+        const beaconMaterial = new THREE.MeshBasicMaterial({
+            color: 0xff0000,
+            transparent: false
+        });
+        const beacon = new THREE.Mesh(beaconGeometry, beaconMaterial);
+        beacon.position.copy(nebula.position);
+        
+        // Add pulsing outer glow ring
+        const glowGeometry = new THREE.RingGeometry(150, 200, 32);
+        const glowMaterial = new THREE.MeshBasicMaterial({
+            color: 0xff0000,
+            transparent: true,
+            opacity: 0.6,
+            side: THREE.DoubleSide
+        });
+        const glow = new THREE.Mesh(glowGeometry, glowMaterial);
+        glow.rotation.x = Math.PI / 2; // Horizontal ring
+        beacon.add(glow);
+        
+        // Add second ring perpendicular
+        const glow2 = new THREE.Mesh(glowGeometry.clone(), glowMaterial.clone());
+        glow2.rotation.y = Math.PI / 2; // Vertical ring
+        beacon.add(glow2);
+        
+        // Add vertical spike for visibility from distance
+        const spikeGeometry = new THREE.CylinderGeometry(10, 10, 1000, 8);
+        const spikeMaterial = new THREE.MeshBasicMaterial({
+            color: 0xff0000,
+            transparent: true,
+            opacity: 0.8
+        });
+        const spike = new THREE.Mesh(spikeGeometry, spikeMaterial);
+        spike.position.y = 500;
+        beacon.add(spike);
+        
+        // Add point light for visibility
+        const light = new THREE.PointLight(0xff0000, 5, 3000, 1);
+        beacon.add(light);
+        
+        beacon.userData = {
+            name: `Debug Beacon ${index + 1}`,
+            type: 'debug_beacon',
+            nebulaIndex: index,
+            nebulaName: nebula.userData?.name || `Nebula ${index + 1}`
+        };
+        
+        beacon.visible = true;
+        beacon.frustumCulled = false;
+        
+        scene.add(beacon);
+        nebulaDebugBeacons.push(beacon);
+        
+        const nebulaName = nebula.userData?.name || `Nebula ${index + 1}`;
+        console.log(`  🔴 Beacon ${index + 1} at ${nebulaName}: (${Math.round(nebula.position.x)}, ${Math.round(nebula.position.y)}, ${Math.round(nebula.position.z)})`);
+    });
+    
+    console.log(`✅ Created ${nebulaDebugBeacons.length} debug beacons at nebula positions`);
+}
+
+function removeNebulaDebugBeacons() {
+    nebulaDebugBeacons.forEach(beacon => {
+        if (beacon && beacon.parent) {
+            scene.remove(beacon);
+        }
+    });
+    nebulaDebugBeacons = [];
+    console.log('🔴 Removed all nebula debug beacons');
+}
+
+function toggleNebulaDebugBeacons() {
+    if (nebulaDebugBeacons.length === 0) {
+        createNebulaDebugBeacons();
+    } else {
+        removeNebulaDebugBeacons();
+    }
+}
+
+// Export debug beacon functions
+window.createNebulaDebugBeacons = createNebulaDebugBeacons;
+window.removeNebulaDebugBeacons = removeNebulaDebugBeacons;
+window.toggleNebulaDebugBeacons = toggleNebulaDebugBeacons;
+window.nebulaDebugBeacons = nebulaDebugBeacons;
+
