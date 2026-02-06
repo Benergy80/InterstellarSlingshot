@@ -4529,7 +4529,7 @@ function fireWeapon() {
                 console.log('Hit detected: BORG drone', targetObject.userData.name);
             } else {
                 // Check for asteroid hits (for manual aiming only)
-                const asteroidTargets = planets.filter(p => p.userData.type === 'asteroid');
+                const asteroidTargets = planets.filter(p => p.userData.type === 'asteroid' || p.userData.type === 'interstellar_asteroid');
                 const asteroidIntersects = raycaster.intersectObjects(asteroidTargets);
                 if (asteroidIntersects.length > 0) {
                     targetPosition = asteroidIntersects[0].point;

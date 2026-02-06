@@ -793,7 +793,7 @@ function updateCrosshairTargeting() {
             targetableObjects.push(...enemies.filter(e => e.userData && e.userData.health > 0));
         }
         if (typeof planets !== 'undefined') {
-            targetableObjects.push(...planets.filter(p => p.userData && p.userData.type === 'asteroid' && p.userData.health > 0));
+            targetableObjects.push(...planets.filter(p => p.userData && (p.userData.type === 'asteroid' || p.userData.type === 'interstellar_asteroid') && p.userData.health > 0));
         }
         
         targetableObjects.forEach(obj => {

@@ -3714,6 +3714,103 @@ function createDistantNebulas() {
     }
 
     console.log(`✅ Created ${distantNebulaCount} distant nebulas in outer regions`);
+    
+    // Add orbiting asteroids to distant nebulas
+    setTimeout(() => {
+        createNebulaAsteroidBelts(nebulaClouds.filter(n => n.userData && n.userData.isDistant));
+    }, 500);
+}
+
+// =============================================================================
+// NEBULA ASTEROID BELTS - Orbiting asteroids around distant/exotic nebulas
+// =============================================================================
+function createNebulaAsteroidBelts(nebulas) {
+    if (!nebulas || nebulas.length === 0) return;
+    
+    console.log(`🪨 Creating asteroid belts for ${nebulas.length} nebulas...`);
+    
+    nebulas.forEach((nebula, nebulaIndex) => {
+        const nebulaPos = nebula.position;
+        const nebulaSize = nebula.userData.size || 3000;
+        const asteroidCount = 20 + Math.floor(Math.random() * 15); // 20-35 asteroids per nebula
+        
+        for (let i = 0; i < asteroidCount; i++) {
+            // Random orbital parameters
+            const orbitRadius = nebulaSize * (0.6 + Math.random() * 0.5); // 60-110% of nebula size
+            const orbitAngle = Math.random() * Math.PI * 2;
+            const orbitTilt = (Math.random() - 0.5) * 0.3;
+            const orbitSpeed = 0.0005 + Math.random() * 0.002; // Slow orbital motion
+            
+            // Asteroid size
+            const size = 5 + Math.random() * 15;
+            
+            // Create asteroid geometry
+            const geometry = new THREE.IcosahedronGeometry(size, 0);
+            
+            // Randomize vertices for irregular shape
+            const positionAttribute = geometry.attributes.position;
+            for (let v = 0; v < positionAttribute.count; v++) {
+                const x = positionAttribute.getX(v);
+                const y = positionAttribute.getY(v);
+                const z = positionAttribute.getZ(v);
+                const randomFactor = 0.7 + Math.random() * 0.6;
+                positionAttribute.setXYZ(v, x * randomFactor, y * randomFactor, z * randomFactor);
+            }
+            geometry.computeVertexNormals();
+            
+            // Asteroid material
+            const baseColor = new THREE.Color(0.5 + Math.random() * 0.3, 0.4 + Math.random() * 0.2, 0.3 + Math.random() * 0.2);
+            const material = new THREE.MeshStandardMaterial({
+                color: baseColor,
+                emissive: baseColor,
+                emissiveIntensity: 0.3,
+                roughness: 0.9,
+                metalness: 0.1,
+                flatShading: true
+            });
+            
+            const asteroid = new THREE.Mesh(geometry, material);
+            
+            // Initial position on orbit
+            asteroid.position.set(
+                nebulaPos.x + Math.cos(orbitAngle) * orbitRadius,
+                nebulaPos.y + Math.sin(orbitTilt) * orbitRadius * 0.3,
+                nebulaPos.z + Math.sin(orbitAngle) * orbitRadius
+            );
+            
+            // Random rotation
+            asteroid.rotation.set(
+                Math.random() * Math.PI * 2,
+                Math.random() * Math.PI * 2,
+                Math.random() * Math.PI * 2
+            );
+            
+            asteroid.frustumCulled = false;
+            
+            // CRITICAL: Full userData for targeting, destruction, and orbital motion
+            asteroid.userData = {
+                type: 'asteroid',
+                name: `Nebula ${nebulaIndex + 1} Asteroid ${i + 1}`,
+                size: size,
+                health: Math.ceil(size / 5), // 1-4 health based on size
+                orbitRadius: orbitRadius,
+                orbitAngle: orbitAngle,
+                orbitSpeed: orbitSpeed,
+                orbitTilt: orbitTilt,
+                orbitCenter: nebulaPos.clone(),
+                rotationSpeed: 0.005 + Math.random() * 0.01,
+                nebulaId: nebulaIndex,
+                inNebula: true
+            };
+            
+            scene.add(asteroid);
+            if (typeof planets !== 'undefined') {
+                planets.push(asteroid);
+            }
+        }
+        
+        console.log(`  🪨 Added ${asteroidCount} orbiting asteroids to ${nebula.userData.name || 'Nebula ' + (nebulaIndex + 1)}`);
+    });
 }
 
 // =============================================================================
@@ -3842,6 +3939,11 @@ function createExoticCoreNebulas() {
 
     console.log(`✅ Created ${exoticNebulaCount} exotic core nebulas in range 45,000-65,000 units`);
     console.log(`   Total nebulas in scene: ${nebulaClouds.length}`);
+    
+    // Add orbiting asteroids to exotic nebulas
+    setTimeout(() => {
+        createNebulaAsteroidBelts(nebulaClouds.filter(n => n.userData && n.userData.isExoticCore));
+    }, 600);
 }
 // =============================================================================
 // ENHANCED PLANET CLUSTERS - FROM EARLY VERSION
@@ -6270,6 +6372,7 @@ if (typeof window !== 'undefined') {
     window.galaxyEnemyLimits = galaxyEnemyLimits;
     window.createEnhancedPlanetClustersInNebulas = createEnhancedPlanetClustersInNebulas;
     window.createNebulaGasCloud = createNebulaGasCloud;
+    window.createNebulaAsteroidBelts = createNebulaAsteroidBelts;
 	window.updateCMBOpacity = updateCMBOpacity;
     window.updateHubbleSkyboxOpacity = updateHubbleSkyboxOpacity;
 	window.updateHubbleSkybox2Opacity = updateHubbleSkybox2Opacity;

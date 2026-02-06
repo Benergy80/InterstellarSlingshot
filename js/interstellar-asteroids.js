@@ -162,6 +162,11 @@ function createInterstellarAsteroid(position, size, velocity, fieldIndex, astero
 
     scene.add(asteroid);
     interstellarAsteroids.push(asteroid);
+    
+    // CRITICAL: Also add to planets array so it can be targeted and destroyed
+    if (typeof planets !== 'undefined') {
+        planets.push(asteroid);
+    }
 
     // console.log(`  Created ${asteroid.userData.name} at (${position.x.toFixed(0)}, ${position.y.toFixed(0)}, ${position.z.toFixed(0)}) - size: ${size.toFixed(1)}, health: ${asteroid.userData.health}`);
 }
