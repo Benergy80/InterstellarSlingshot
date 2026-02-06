@@ -2893,80 +2893,246 @@ function createDiscoveryPathToPosition(nebulaPosition, targetPosition, factionCo
     return pathLine;
 }
 
+// =============================================================================
+// NEBULA-TO-GALAXY MISSION MAPPINGS
+// Every nebula discovery triggers faction lore and a path to enemy locations.
+// Distant and Exotic nebulas fill in factions not covered by the clustered pairs.
+// =============================================================================
+
+// Distant nebulas: prioritize galaxies 4-7 (uncovered by clustered), then cycle
+const DISTANT_NEBULA_GALAXY_MAP = {
+    'Distant Nebula Alpha': 4,    // Galactic Empire
+    'Distant Nebula Beta': 5,     // Cardassian Union
+    'Distant Nebula Gamma': 6,    // Sith Empire
+    'Distant Nebula Delta': 7,    // Vulcan High Command
+    'Distant Nebula Epsilon': 0,  // Federation
+    'Distant Nebula Zeta': 1      // Klingon Empire
+};
+
+// Exotic nebulas: fill remaining gaps, then cycle through all 8 factions
+const EXOTIC_NEBULA_GALAXY_MAP = {
+    'Frontier Nebula': 2,         // Rebel Alliance
+    'Outer Veil Nebula': 3,       // Romulan Star Empire
+    'Deep Space Nebula': 4,       // Galactic Empire
+    'Void Nebula': 5,             // Cardassian Union
+    'Boundary Nebula': 6,         // Sith Empire
+    'Edge Nebula': 7,             // Vulcan High Command
+    'Threshold Nebula': 0,        // Federation
+    'Horizon Nebula': 1           // Klingon Empire
+};
+
+// Galaxy-formation nebulas: 1:1 mapping to their corresponding galaxy type
+const GALAXY_FORMATION_NEBULA_MAP = {
+    'Olympus Nebula': 0,          // Federation (Spiral)
+    'Titan Nebula': 1,            // Klingon Empire (Elliptical)
+    'Atlantis Nebula': 2,         // Rebel Alliance (Ring)
+    'Prometheus Nebula': 3,       // Romulan Star Empire (Irregular)
+    'Elysium Nebula': 4,          // Galactic Empire (Quasar)
+    'Tartarus Nebula': 5,         // Cardassian Union (Lenticular)
+    'Hyperion Nebula': 6,         // Sith Empire (Ancient)
+    'Chronos Nebula': 7           // Vulcan High Command (Spiral)
+};
+
+// Faction color name lookup
+const FACTION_COLOR_NAMES = {
+    'Federation': 'blue',
+    'Klingon Empire': 'orange',
+    'Rebel Alliance': 'green',
+    'Romulan Star Empire': 'pink',
+    'Galactic Empire': 'cyan',
+    'Cardassian Union': 'magenta',
+    'Sith Empire': 'red',
+    'Vulcan High Command': 'peach'
+};
+
+// Check if all enemies for a faction/galaxy have been eliminated
+function isFactionDefeated(galaxyId) {
+    if (typeof enemies === 'undefined') return false;
+    const alive = enemies.filter(e =>
+        e.userData &&
+        e.userData.galaxyId === galaxyId &&
+        e.userData.health > 0 &&
+        !e.userData.isEliteGuardian
+    );
+    return alive.length === 0;
+}
+
+// Check if all enemies that initially spawned near a galaxy's black hole are cleared
+function areBlackHoleEnemiesCleared(galaxyId) {
+    if (typeof enemies === 'undefined') return false;
+    const blackHoleEnemies = enemies.filter(e =>
+        e.userData &&
+        e.userData.galaxyId === galaxyId &&
+        e.userData.placementType === 'black_hole'
+    );
+    // If no black hole enemies were ever spawned for this galaxy, consider it cleared
+    if (blackHoleEnemies.length === 0) return true;
+    const alive = blackHoleEnemies.filter(e => e.userData.health > 0);
+    return alive.length === 0;
+}
+
+// Find remaining alive enemies for a galaxy to point a discovery path toward
+function findRemainingEnemyTarget(galaxyId) {
+    if (typeof enemies === 'undefined') return null;
+    const alive = enemies.filter(e =>
+        e.userData &&
+        e.userData.galaxyId === galaxyId &&
+        e.userData.health > 0 &&
+        !e.userData.isEliteGuardian
+    );
+    if (alive.length === 0) return null;
+    // Return the centroid of all remaining enemies
+    const centroid = new THREE.Vector3();
+    alive.forEach(e => centroid.add(e.position));
+    centroid.divideScalar(alive.length);
+    return { position: centroid, count: alive.length };
+}
+
+// Classify a nebula by its userData properties
+function classifyNebula(nebula) {
+    const ud = nebula.userData;
+    if (ud.isDistant) return 'distant';
+    if (ud.isExoticCore) return 'exotic';
+    if (ud.shape) return 'galaxy_formation';
+    return 'clustered';
+}
+
+// Resolve a nebula to its paired galaxy ID
+function resolveNebulaGalaxyId(nebula, nebulaType, index) {
+    const name = nebula.userData.name || '';
+    switch (nebulaType) {
+        case 'distant':
+            return DISTANT_NEBULA_GALAXY_MAP[name] !== undefined ? DISTANT_NEBULA_GALAXY_MAP[name] : index % 8;
+        case 'exotic':
+            return EXOTIC_NEBULA_GALAXY_MAP[name] !== undefined ? EXOTIC_NEBULA_GALAXY_MAP[name] : index % 8;
+        case 'galaxy_formation':
+            return GALAXY_FORMATION_NEBULA_MAP[name] !== undefined ? GALAXY_FORMATION_NEBULA_MAP[name] : index % 8;
+        case 'clustered':
+        default: {
+            // First 8 clustered nebulas use the original paired logic
+            const pairIndex = Math.floor(index / 2);
+            return pairIndex % 8;
+        }
+    }
+}
+
 // Deep discovery check - triggers based on nebula type
-// PAIRED NEBULA SYSTEM: Both nebulas in pair lead to SAME faction
-// Even index = path to black hole core, Odd index = path to patrol enemies near cosmic features
+// CLUSTERED: Paired system (even=core path, odd=patrol path) - triggers on close approach
+// GALAXY-FORMATION: Triggers ONLY after all black hole enemies for that galaxy are cleared
+// DISTANT & EXOTIC: Each triggers its own faction lore and path to remaining enemies
+// ALL TYPES: If faction already defeated, shows liberation gratitude instead
 function checkForNebulaDeepDiscovery() {
     if (typeof gameState === 'undefined' || typeof camera === 'undefined') return;
     if (typeof nebulaClouds === 'undefined' || nebulaClouds.length === 0) return;
     if (typeof galaxyTypes === 'undefined') return;
-    
+
+    // Track first-8 clustered nebula count for paired index logic
+    let clusteredCount = 0;
+
     nebulaClouds.forEach((nebula, index) => {
         if (!nebula || !nebula.userData) return;
-        
+
         // Skip if already deep-discovered
         if (nebula.userData.deepDiscovered) return;
-        
-        // DISCOVERY RANGE based on nebula type:
-        // - Clustered nebulas (index 0-7): 100 units (close to center - quest-like)
-        // - Distant & Exotic nebulas (index 8+): Use nebula size (outer orbit radius)
-        //   since players can't easily see the exact center
-        const isClusteredNebula = index < 8;
+
+        // Classify nebula by userData flags
+        const nebulaType = classifyNebula(nebula);
         const nebulaSize = nebula.userData.size || 2000;
-        const deepDiscoveryRange = isClusteredNebula ? 100 : nebulaSize;
-        
+
+        // Discovery range depends on nebula category
+        let deepDiscoveryRange;
+        if (nebulaType === 'clustered') {
+            deepDiscoveryRange = 100; // Close approach required
+        } else {
+            // Galaxy-formation, distant, and exotic all use nebula size as range.
+            // Galaxy-formation triggers while the player is fighting near the black hole
+            // inside the nebula boundary, so close approach isn't practical.
+            deepDiscoveryRange = nebulaSize;
+        }
+
         const distance = camera.position.distanceTo(nebula.position);
-        
+
         // Debug: log when getting close
         if (distance < nebulaSize && gameState.frameCount % 60 === 0) {
-            console.log(`🔍 Near nebula ${index}: ${distance.toFixed(0)} units (need < ${deepDiscoveryRange})`);
+            console.log(`🔍 Near ${nebulaType} nebula ${index}: ${distance.toFixed(0)} units (need < ${deepDiscoveryRange})`);
         }
-        
-        if (distance < deepDiscoveryRange) {
-            console.log(`✨ DEEP DISCOVERY TRIGGERED for nebula ${index} at distance ${distance.toFixed(0)}`);
-            
-            // Mark as deep discovered
-            nebula.userData.deepDiscovered = true;
-            
-            // PAIRED NEBULA LOGIC:
-            // Pair 0 (nebulas 0,1) → Galaxy 0 (Federation)
-            // Pair 1 (nebulas 2,3) → Galaxy 1 (Klingon)
-            // Pair 2 (nebulas 4,5) → Galaxy 2 (Rebel Alliance)
-            // etc... cycling through 8 galaxies
-            const pairIndex = Math.floor(index / 2);
-            const galaxyId = pairIndex % 8; // Cycle through 8 galaxies
-            
-            // Find the galaxy core for this specific galaxy ID
-            const galaxyCore = findGalaxyCoreById(galaxyId);
-            
-            if (!galaxyCore) {
-                console.log(`No galaxy core found for galaxy ${galaxyId}`);
+
+        if (distance >= deepDiscoveryRange) return;
+
+        // Resolve which galaxy/faction this nebula maps to
+        const galaxyId = resolveNebulaGalaxyId(nebula, nebulaType, index);
+        if (galaxyId === undefined) return;
+
+        const galaxyCore = findGalaxyCoreById(galaxyId);
+        if (!galaxyCore) {
+            console.log(`No galaxy core found for galaxy ${galaxyId}`);
+            return;
+        }
+
+        const galaxyType = galaxyTypes[galaxyId];
+        if (!galaxyType) return;
+
+        const factionName = galaxyType.faction;
+        const loreData = FACTION_LORE[factionName];
+        if (!loreData) return;
+
+        const nebulaName = nebula.userData.mythicalName || nebula.userData.name || 'Unknown Nebula';
+        const colorName = FACTION_COLOR_NAMES[factionName] || 'white';
+
+        // GALAXY-FORMATION: Only trigger after all black hole enemies for this galaxy are eliminated
+        if (nebulaType === 'galaxy_formation') {
+            if (!areBlackHoleEnemiesCleared(galaxyId)) {
+                // Not ready yet - don't mark as discovered, check again later
+                if (gameState.frameCount % 120 === 0) {
+                    console.log(`⏳ ${nebulaName}: ${factionName} black hole forces still active - discovery deferred`);
+                }
                 return;
             }
-            
-            console.log(`🌌 Nebula ${index} (pair ${pairIndex}) → Galaxy ${galaxyId} (${galaxyTypes[galaxyId].faction})`);
-            
-            const galaxyType = galaxyTypes[galaxyId];
-            
-            if (!galaxyType) return;
-            
-            const factionName = galaxyType.faction;
-            const loreData = FACTION_LORE[factionName];
-            
-            if (!loreData) return;
-            
-            const isCorePath = (index % 2 === 0); // Even = core, Odd = patrol/cosmic features
-            const nebulaName = nebula.userData.mythicalName || nebula.userData.name || 'Unknown Nebula';
-            const colorName = factionName === 'Federation' ? 'blue' : 
-                factionName === 'Klingon Empire' ? 'orange' : 
-                factionName === 'Rebel Alliance' ? 'green' :
-                factionName === 'Romulan Star Empire' ? 'pink' :
-                factionName === 'Galactic Empire' ? 'cyan' :
-                factionName === 'Cardassian Union' ? 'magenta' :
-                factionName === 'Sith Empire' ? 'red' : 'peach';
-            
+        }
+
+        // Mark as deep discovered
+        console.log(`✨ DEEP DISCOVERY TRIGGERED for ${nebulaType} nebula "${nebulaName}" at distance ${distance.toFixed(0)}`);
+        nebula.userData.deepDiscovered = true;
+
+        // CHECK: Is this faction already defeated?
+        if (isFactionDefeated(galaxyId)) {
+            // Liberation gratitude message
+            playDeepDiscoverySound();
+
+            const liberationText =
+                `INCOMING TRANSMISSION - LIBERATED TERRITORY\n\n` +
+                `Captain, welcome to the ${nebulaName}.\n\n` +
+                `Thanks to your heroic efforts, the ${factionName} forces that once terrorized this region have been completely eliminated. ` +
+                `The ${galaxyType.species} hostiles who controlled the ${galaxyType.name} Galaxy are no more.\n\n` +
+                `The inhabitants of this nebula and surrounding systems wish to express their deepest gratitude. ` +
+                `Civilian shipping lanes have been reopened, and reconstruction efforts are underway.\n\n` +
+                `This sector is now safe, Captain. Your courage will not be forgotten.`;
+
+            if (typeof showIncomingTransmission === 'function') {
+                showIncomingTransmission('Mission Control - Liberated Sector', liberationText, loreData.color);
+            }
+
+            if (typeof showAchievement === 'function') {
+                showAchievement(
+                    'Liberated Nebula!',
+                    `${nebulaName} is free from ${factionName} control. The ${galaxyType.species} threat has been eliminated.`,
+                    true
+                );
+            }
+
+            console.log(`🕊️ Liberation: ${nebulaName} - ${factionName} already defeated in galaxy ${galaxyId}`);
+            return;
+        }
+
+        // FACTION STILL ACTIVE - Create path to enemy locations
+        console.log(`🌌 ${nebulaType} nebula "${nebulaName}" → Galaxy ${galaxyId} (${factionName})`);
+
+        if (nebulaType === 'clustered') {
+            // CLUSTERED: Paired system - even index = core stronghold, odd = patrol routes
+            const isCorePath = (index % 2 === 0);
+
             if (isCorePath) {
-                // PATH TO BLACK HOLE CORE - enemies preventing interstellar travel
+                // PATH TO BLACK HOLE CORE
                 createDiscoveryPathToPosition(
                     nebula.position,
                     galaxyCore.position,
@@ -2974,11 +3140,9 @@ function checkForNebulaDeepDiscovery() {
                     factionName,
                     'core'
                 );
-                
+
                 playDeepDiscoverySound();
-                
-                const galaxyName = galaxyCore.userData.name || `${galaxyType.name} Galaxy Core`;
-                
+
                 const transmissionText = `${loreData.greeting}\n\n` +
                     `${loreData.lore}\n\n` +
                     `${loreData.threat}\n\n` +
@@ -2986,11 +3150,11 @@ function checkForNebulaDeepDiscovery() {
                     `preventing interstellar travel through this region. Their command structure and elite forces are concentrated here.\n\n` +
                     `NAVIGATION: Follow the ${colorName} dotted line from ${nebulaName} to their stronghold.\n\n` +
                     `Strike at the heart of their operation, Captain.`;
-                
-                if (typeof showMissionCommandAlert === 'function') {
-                    showMissionCommandAlert('Mission Control - Stronghold Located', transmissionText);
+
+                if (typeof showIncomingTransmission === 'function') {
+                    showIncomingTransmission('Mission Control - Stronghold Located', transmissionText, loreData.color);
                 }
-                
+
                 if (typeof showAchievement === 'function') {
                     showAchievement(
                         'Enemy Stronghold Located!',
@@ -2998,12 +3162,12 @@ function checkForNebulaDeepDiscovery() {
                         true
                     );
                 }
-                
+
                 console.log(`🔮 Deep discovery (CORE): ${nebulaName} → ${factionName} stronghold at galaxy ${galaxyId}`);
             } else {
                 // PATH TO PATROL ENEMIES NEAR COSMIC FEATURES
                 const patrolData = findPatrolEnemiesNearCosmicFeatures(galaxyId);
-                
+
                 if (patrolData) {
                     createDiscoveryPathToPosition(
                         nebula.position,
@@ -3012,10 +3176,9 @@ function checkForNebulaDeepDiscovery() {
                         factionName,
                         'patrol'
                     );
-                    
+
                     playDeepDiscoverySound();
-                    
-                    // Build transmission based on whether cosmic features were found
+
                     let locationInfo = '';
                     if (patrolData.cosmicFeature) {
                         locationInfo = `Our sensors have detected ${patrolData.count} ${factionName} patrol units ` +
@@ -3026,30 +3189,118 @@ function checkForNebulaDeepDiscovery() {
                             `scattered throughout the ${galaxyType.name} Galaxy. They're conducting search-and-destroy missions ` +
                             `against civilian shipping lanes.`;
                     }
-                    
+
                     const transmissionText = `${loreData.greeting}\n\n` +
                         `PATROL FORCES DETECTED: ${locationInfo}\n\n` +
                         `${loreData.threat}\n\n` +
                         `NAVIGATION: Follow the ${colorName} dotted line from ${nebulaName} to intercept their patrol routes.\n\n` +
                         `Hunt them down before they find more victims, Captain.`;
-                    
-                    if (typeof showMissionCommandAlert === 'function') {
-                        showMissionCommandAlert('Mission Control - Patrol Routes Located', transmissionText);
+
+                    if (typeof showIncomingTransmission === 'function') {
+                        showIncomingTransmission('Mission Control - Patrol Routes Located', transmissionText, loreData.color);
                     }
-                    
-                    const achievementText = patrolData.cosmicFeature 
+
+                    const achievementText = patrolData.cosmicFeature
                         ? `${patrolData.count} ${factionName} units near ${patrolData.cosmicFeature}. Path marked.`
                         : `${patrolData.count} ${factionName} patrol units detected. Path marked.`;
-                    
+
                     if (typeof showAchievement === 'function') {
                         showAchievement('Enemy Patrols Located!', achievementText, true);
                     }
-                    
+
                     console.log(`🔮 Deep discovery (PATROL): ${nebulaName} → ${factionName} patrols (${patrolData.count} units, cosmic: ${patrolData.cosmicFeature || 'none'})`);
                 } else {
-                    // No patrol enemies found - maybe they're all dead
                     console.log(`No patrol enemies found for ${factionName} in galaxy ${galaxyId}`);
                 }
+            }
+        } else if (nebulaType === 'galaxy_formation') {
+            // GALAXY-FORMATION: Black hole enemies are cleared - point to remaining scattered enemies
+            const remainingTarget = findRemainingEnemyTarget(galaxyId);
+
+            if (remainingTarget) {
+                createDiscoveryPathToPosition(
+                    nebula.position,
+                    remainingTarget.position,
+                    loreData.color,
+                    factionName,
+                    'patrol'
+                );
+
+                playDeepDiscoverySound();
+
+                const transmissionText = `${loreData.greeting}\n\n` +
+                    `${loreData.lore}\n\n` +
+                    `STRONGHOLD FALLEN: Captain, the ${factionName} black hole stronghold in the ${galaxyType.name} Galaxy has been destroyed! ` +
+                    `However, ${remainingTarget.count} ${galaxyType.species} survivors have scattered across the sector and remain dangerous.\n\n` +
+                    `${loreData.threat}\n\n` +
+                    `NAVIGATION: Follow the ${colorName} dotted line from the ${nebulaName} to intercept the remaining forces.\n\n` +
+                    `Finish what you started, Captain. Leave no threat standing.`;
+
+                if (typeof showIncomingTransmission === 'function') {
+                    showIncomingTransmission('Mission Control - Remnant Forces Detected', transmissionText, loreData.color);
+                }
+
+                if (typeof showAchievement === 'function') {
+                    showAchievement(
+                        'Remnant Forces Located!',
+                        `${remainingTarget.count} scattered ${factionName} survivors detected. Path marked from ${nebulaName}.`,
+                        true
+                    );
+                }
+
+                console.log(`🔮 Deep discovery (REMNANT): ${nebulaName} → ${remainingTarget.count} ${factionName} survivors in galaxy ${galaxyId}`);
+            } else {
+                console.log(`No remaining enemies for ${factionName} in galaxy ${galaxyId}`);
+            }
+        } else {
+            // DISTANT & EXOTIC: Each triggers its own lore and path to remaining enemies
+            // Try patrol enemies near cosmic features first, fall back to any remaining enemies
+            const patrolData = findPatrolEnemiesNearCosmicFeatures(galaxyId);
+            const targetData = patrolData || findRemainingEnemyTarget(galaxyId);
+
+            if (targetData) {
+                const pathType = patrolData ? 'patrol' : 'core';
+                createDiscoveryPathToPosition(
+                    nebula.position,
+                    targetData.position,
+                    loreData.color,
+                    factionName,
+                    pathType
+                );
+
+                playDeepDiscoverySound();
+
+                let locationInfo = '';
+                if (patrolData && patrolData.cosmicFeature) {
+                    locationInfo = `ENEMY STAGING AREA: ${targetData.count} ${factionName} forces detected near the ${patrolData.cosmicFeature}. ` +
+                        `They're using the ${patrolData.cosmicFeatureType} as a forward operating base deep in the ${galaxyType.name} Galaxy.`;
+                } else {
+                    locationInfo = `HOSTILE TERRITORY: ${targetData.count} ${factionName} forces detected in the ${galaxyType.name} Galaxy. ` +
+                        `Their ${galaxyType.species} warriors control this region of space and threaten all who pass through.`;
+                }
+
+                const transmissionText = `${loreData.greeting}\n\n` +
+                    `${loreData.lore}\n\n` +
+                    `${locationInfo}\n\n` +
+                    `${loreData.threat}\n\n` +
+                    `NAVIGATION: Follow the ${colorName} dotted line from ${nebulaName} to engage.\n\n` +
+                    `The universe is counting on you, Captain.`;
+
+                if (typeof showIncomingTransmission === 'function') {
+                    showIncomingTransmission('Mission Control - Hostile Forces Located', transmissionText, loreData.color);
+                }
+
+                if (typeof showAchievement === 'function') {
+                    showAchievement(
+                        `${factionName} Forces Located!`,
+                        `${targetData.count} hostiles in the ${galaxyType.name} Galaxy. Path marked from ${nebulaName}.`,
+                        true
+                    );
+                }
+
+                console.log(`🔮 Deep discovery (${nebulaType.toUpperCase()}): ${nebulaName} → ${factionName} forces (${targetData.count} units) in galaxy ${galaxyId}`);
+            } else {
+                console.log(`No enemies found for ${factionName} in galaxy ${galaxyId} from ${nebulaName}`);
             }
         }
     });
@@ -3118,6 +3369,12 @@ window.findPatrolEnemiesNearCosmicFeatures = findPatrolEnemiesNearCosmicFeatures
 window.animateDiscoveryPaths = animateDiscoveryPaths;
 window.FACTION_LORE = FACTION_LORE;
 window.discoveryPaths = discoveryPaths;
+window.isFactionDefeated = isFactionDefeated;
+window.areBlackHoleEnemiesCleared = areBlackHoleEnemiesCleared;
+window.findRemainingEnemyTarget = findRemainingEnemyTarget;
+window.DISTANT_NEBULA_GALAXY_MAP = DISTANT_NEBULA_GALAXY_MAP;
+window.EXOTIC_NEBULA_GALAXY_MAP = EXOTIC_NEBULA_GALAXY_MAP;
+window.GALAXY_FORMATION_NEBULA_MAP = GALAXY_FORMATION_NEBULA_MAP;
 
 // Automatic black hole warp function
 window.transitionToRandomLocation = transitionToRandomLocation;
