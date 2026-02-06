@@ -3690,13 +3690,17 @@ function createDistantNebulas() {
             transparent: true,
             opacity: 0.6,
             blending: THREE.AdditiveBlending,
-            depthWrite: false
+            depthWrite: false,
+            sizeAttenuation: true  // Keep particles visible at distance
         });
 
         const particles = new THREE.Points(particleGeometry, particleMaterial);
+        particles.frustumCulled = false;  // CRITICAL: Don't cull at distance
         nebulaGroup.add(particles);
 
         nebulaGroup.position.set(nebulaX, nebulaY, nebulaZ);
+        nebulaGroup.frustumCulled = false;  // CRITICAL: Don't cull at distance
+        
         nebulaGroup.userData = {
             type: 'nebula',
             name: distantNebulaNames[i],
@@ -3901,6 +3905,7 @@ function createExoticCoreNebulas() {
         });
 
         const particles = new THREE.Points(particleGeometry, particleMaterial);
+        particles.frustumCulled = false;  // CRITICAL: Don't cull at distance
         nebulaGroup.add(particles);
 
         // Add glowing core to make exotic nebulas more visible from distance
@@ -3913,6 +3918,7 @@ function createExoticCoreNebulas() {
             depthWrite: false
         });
         const core = new THREE.Mesh(coreGeometry, coreMaterial);
+        core.frustumCulled = false;  // CRITICAL: Don't cull at distance
         nebulaGroup.add(core);
 
         // Add point light for extra glow effect
@@ -3921,6 +3927,8 @@ function createExoticCoreNebulas() {
         nebulaGroup.add(nebulaLight);
 
         nebulaGroup.position.set(nebulaX, nebulaY, nebulaZ);
+        nebulaGroup.frustumCulled = false;  // CRITICAL: Don't cull at distance
+        
         nebulaGroup.userData = {
             type: 'nebula',
             name: exoticNebulaNames[i],
