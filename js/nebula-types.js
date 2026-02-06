@@ -335,8 +335,10 @@ const NEBULA_NAME_PREFIXES = [
  * TRIGGER CONDITIONS:
  *   Clustered:         Close approach (100 units). Always triggers on approach.
  *   Distant/Exotic:    Enter nebula boundary (size radius). Always triggers.
- *   Galaxy-Formation:  Close approach (100 units). Deferred until all enemies
+ *   Galaxy-Formation:  Enter nebula boundary (size radius). Deferred until all enemies
  *                      with placementType 'black_hole' in that galaxy are eliminated.
+ *                      The player will typically already be inside the nebula while
+ *                      clearing the black hole enemies, so it triggers automatically.
  *
  * DEFEAT HANDLING:
  *   If a faction is already fully eliminated when a nebula is discovered,
@@ -355,9 +357,9 @@ const NEBULA_DISCOVERY = {
     surfaceRange: 3000,
     /** Distance at which discovery music fades */
     exitRange: 4000,
-    /** Deep discovery range for clustered and galaxy-formation nebulas */
+    /** Deep discovery range for clustered nebulas - requires close approach */
     deepDiscoveryCloseRange: 100,
-    /** Deep discovery for distant/exotic nebulas uses the nebula's own size as range */
+    /** Deep discovery for galaxy-formation, distant, and exotic nebulas uses nebula size as range */
     deepDiscoveryUsesSize: true
 };
 

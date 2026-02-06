@@ -3041,10 +3041,13 @@ function checkForNebulaDeepDiscovery() {
 
         // Discovery range depends on nebula category
         let deepDiscoveryRange;
-        if (nebulaType === 'clustered' || nebulaType === 'galaxy_formation') {
+        if (nebulaType === 'clustered') {
             deepDiscoveryRange = 100; // Close approach required
         } else {
-            deepDiscoveryRange = nebulaSize; // Distant/exotic use their size
+            // Galaxy-formation, distant, and exotic all use nebula size as range.
+            // Galaxy-formation triggers while the player is fighting near the black hole
+            // inside the nebula boundary, so close approach isn't practical.
+            deepDiscoveryRange = nebulaSize;
         }
 
         const distance = camera.position.distanceTo(nebula.position);
