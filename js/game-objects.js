@@ -13,25 +13,44 @@
 // =============================================================================
 // GLOBAL SCALE MULTIPLIERS - ADJUST THESE TO CHANGE SIZES
 // =============================================================================
+// TEST BRANCH: 5x cosmic scale - planets, stars, black holes, cosmic features,
+// moons, nebulas, and orbit distances are 5x larger than normal
+// Asteroids, enemies, ships, satellites, and player remain the same size
+
+const COSMIC_SCALE_MULTIPLIER = 5.0; // 5x scale test
 
 const SCALE_CONFIG = {
-    // Objects that get scaled UP
-    planets: 10,        // Planets 2.5x larger
-    stars: 10,          // Stars 2.5x larger
-    blackHoles: 10,     // Black holes 2x larger
-    cosmicFeatures: 10, // Pulsars, supernovas, etc. 2x larger
-    moons: 10,          // Moons 2x larger
+    // Objects that get scaled UP (5x from previous 10x = 50x from original)
+    planets: 10 * COSMIC_SCALE_MULTIPLIER,        // 50x - Planets 5x larger than current
+    stars: 10 * COSMIC_SCALE_MULTIPLIER,          // 50x - Stars 5x larger than current
+    blackHoles: 10 * COSMIC_SCALE_MULTIPLIER,     // 50x - Black holes 5x larger than current
+    cosmicFeatures: 10 * COSMIC_SCALE_MULTIPLIER, // 50x - Pulsars, supernovas, etc. 5x larger
+    moons: 10 * COSMIC_SCALE_MULTIPLIER,          // 50x - Moons 5x larger than current
+    nebulas: COSMIC_SCALE_MULTIPLIER,             // 5x - Nebula sizes
+    orbitRadius: COSMIC_SCALE_MULTIPLIER,         // 5x - Orbit distances
     
-    // Objects that stay SAME size
+    // Objects that stay SAME size (no change)
     asteroids: 1.0,      // Keep same
     enemies: 1.0,        // Keep same
-    player: 0.5          // Keep same (player ship is just the camera)
+    player: 0.5,         // Keep same (player ship is just the camera)
+    satellites: 1.0,     // Keep same
+    civilianShips: 1.0   // Keep same
 };
 
 // Helper function to get scaled size
 function getScaledSize(baseSize, objectType) {
     const multiplier = SCALE_CONFIG[objectType] || 1.0;
     return baseSize * multiplier;
+}
+
+// Helper function to get scaled nebula size (5x for this test branch)
+function getScaledNebulaSize(baseSize) {
+    return baseSize * (SCALE_CONFIG.nebulas || 1.0);
+}
+
+// Helper function to get scaled orbit radius (5x for this test branch)
+function getScaledOrbitRadius(baseRadius) {
+    return baseRadius * (SCALE_CONFIG.orbitRadius || 1.0);
 }
 
 // Enhanced 3D Galaxy definitions with spherical coordinates
@@ -1630,8 +1649,9 @@ try {
                 emissive: new THREE.Color(planetData.color).multiplyScalar(0.05)
             });
             const planet = new THREE.Mesh(planetGeometry, planetMaterial);
+            const scaledPlanetOrbit = getScaledOrbitRadius(planetData.distance);
             planet.position.set(
-                systemOffset.x + planetData.distance,
+                systemOffset.x + scaledPlanetOrbit,
                 systemOffset.y,
                 systemOffset.z
             );
@@ -1642,7 +1662,7 @@ try {
                 name: `${systemData.name}-${pIndex + 1}`,
                 type: 'planet',
                 isStatic: false,
-                orbitRadius: planetData.distance,
+                orbitRadius: scaledPlanetOrbit,
                 orbitSpeed: 0.012 + pIndex * 0.004,
                 orbitPhase: pIndex * Math.PI * 0.5,
                 systemCenter: { x: systemOffset.x, y: systemOffset.y, z: systemOffset.z },
@@ -1689,15 +1709,16 @@ try {
                             color: moonData.color,
                             emissive: new THREE.Color(moonData.color).multiplyScalar(0.02)
                         });
+                        const scaledMoonOrbit = getScaledOrbitRadius(moonData.distance);
                         const moon = new THREE.Mesh(moonGeometry, moonMaterial);
-                        moon.position.set(moonData.distance, 0, 0);
+                        moon.position.set(scaledMoonOrbit, 0, 0);
                         moon.visible = true;
                         moon.frustumCulled = true;  // OPTIMIZATION: Enable frustum culling
                         
                         moon.userData = { 
                             name: moonData.name,
                             type: 'moon',
-                            orbitRadius: moonData.distance,
+                            orbitRadius: scaledMoonOrbit,
                             orbitSpeed: 0.1 + moonIndex * 0.02,
                             orbitPhase: moonIndex * Math.PI * 0.5,
                             parentPlanet: planet,
@@ -1735,8 +1756,9 @@ try {
                 emissive: new THREE.Color(planetData.color).multiplyScalar(0.05)
             });
             const planet = new THREE.Mesh(planetGeometry, planetMaterial);
+            const scaledLocalPlanetOrbit = getScaledOrbitRadius(planetData.distance);
             planet.position.set(
-                localSystemOffset.x + planetData.distance, 
+                localSystemOffset.x + scaledLocalPlanetOrbit, 
                 localSystemOffset.y, 
                 localSystemOffset.z
             );
@@ -1748,7 +1770,7 @@ try {
                 name: planetData.name,
                 type: 'planet',
                 isStart: planetData.name === 'Earth',
-                orbitRadius: planetData.distance,
+                orbitRadius: scaledLocalPlanetOrbit,
                 orbitSpeed: 0.04 - index * 0.002,
                 orbitPhase: index * Math.PI * 0.3,
                 systemCenter: localSystemOffset,
@@ -1791,13 +1813,14 @@ try {
             // Add moons
             planetData.moons.forEach((moonData, moonIndex) => {
                 try {
+                    const scaledLocalMoonOrbit = getScaledOrbitRadius(moonData.distance);
                     const moonGeometry = new THREE.SphereGeometry(moonData.size, 12, 12);
                     const moonMaterial = new THREE.MeshLambertMaterial({ 
                         color: moonData.color,
                         emissive: new THREE.Color(moonData.color).multiplyScalar(0.02)
                     });
                     const moon = new THREE.Mesh(moonGeometry, moonMaterial);
-                    moon.position.set(moonData.distance, 0, 0);
+                    moon.position.set(scaledLocalMoonOrbit, 0, 0);
                     moon.visible = true;
                     moon.frustumCulled = true;  // OPTIMIZATION: Enable frustum culling
                     moon.material.transparent = false;
@@ -1805,7 +1828,7 @@ try {
                     moon.userData = { 
                         name: moonData.name,
                         type: 'moon',
-                        orbitRadius: moonData.distance,
+                        orbitRadius: scaledLocalMoonOrbit,
                         orbitSpeed: 0.1 + moonIndex * 0.02,
                         orbitPhase: moonIndex * Math.PI * 0.5,
                         parentPlanet: planet,
@@ -1855,7 +1878,7 @@ try {
             type: 'blackhole',
             mass: 8000,
             gravity: 400.0,
-            warpThreshold: 160,
+            warpThreshold: getScaledOrbitRadius(160),
             isGalacticCenter: true,
             isSagittariusA: true,
             targetGalaxy: Math.floor(Math.random() * 8),
@@ -1920,7 +1943,7 @@ const core8Distance = (400 + Math.random() * 220) * (Math.random() < 0.5 ? 1 : -
     type: 'blackhole',
     mass: 2800, // Smaller mass than Sagittarius A*
     gravity: 150.0,
-    warpThreshold: 80,
+    warpThreshold: getScaledOrbitRadius(80),
     isGalacticCore: true,
     isCompanionCore: true, // New flag
     galaxyId: 7,
@@ -2338,7 +2361,7 @@ try {
             type: 'blackhole',
             mass: 280,
             gravity: 140.0,
-            warpThreshold: 100,
+            warpThreshold: getScaledOrbitRadius(100),
             isLocalGateway: true,
             isLocal: true,
             rotationSpeed: 0.015
@@ -2933,7 +2956,7 @@ const galaxyStarsToAdd = galaxyMainStars;
                 type: 'blackhole',
                 mass: galaxyType.mass,
                 gravity: galaxyType.name === 'Quasar' ? 300.0 : galaxyType.name === 'Dwarf' ? 100.0 : 200.0,
-                warpThreshold: 160,
+                warpThreshold: getScaledOrbitRadius(160),
                 isGalacticCore: true,
                 galaxyType: galaxyType,
                 galaxyId: g,
@@ -3443,7 +3466,7 @@ function createClusteredNebulas() {
         }
         
         const nebulaColor = new THREE.Color().setHSL(baseHue, 0.7 + Math.random() * 0.3, 0.5 + Math.random() * 0.3);
-        const nebulaSize = 2000 + Math.random() * 3000;
+        const nebulaSize = getScaledNebulaSize(2000 + Math.random() * 3000);
         
         for (let j = 0; j < particleCount; j++) {
             const radius = Math.pow(Math.random(), 0.3) * nebulaSize;
@@ -3656,7 +3679,7 @@ function createDistantNebulas() {
 
         const baseHue = Math.random();
         const nebulaColor = new THREE.Color().setHSL(baseHue, 0.7 + Math.random() * 0.3, 0.5 + Math.random() * 0.3);
-        const nebulaSize = 1500 + Math.random() * 1000; // Matched to galaxy-formation scale
+        const nebulaSize = getScaledNebulaSize(1500 + Math.random() * 1000); // Matched to galaxy-formation scale
         const shape = nebulaShapes[i % nebulaShapes.length];
         const arms = shape === 'spiral' ? 3 : (shape === 'ring' ? 1 : 2);
 
@@ -3819,7 +3842,7 @@ function createExoticCoreNebulas() {
 
         const baseHue = (i / exoticNebulaCount) + Math.random() * 0.1;
         const nebulaColor = new THREE.Color().setHSL(baseHue, 0.8 + Math.random() * 0.2, 0.5 + Math.random() * 0.3);
-        const nebulaSize = 1500 + Math.random() * 1000; // Matched to galaxy-formation scale
+        const nebulaSize = getScaledNebulaSize(1500 + Math.random() * 1000); // Matched to galaxy-formation scale
         const shape = nebulaShapes[i % nebulaShapes.length];
         const arms = shape === 'spiral' ? 3 : (shape === 'ring' ? 1 : 2);
 
@@ -7883,9 +7906,9 @@ function spawnEnhancedWormhole() {
         type: 'wormhole',
         lifeTime: 120000 + Math.random() * 60000,
         age: 0,
-        warpThreshold: 40, // Doubled
+        warpThreshold: getScaledOrbitRadius(40),
         isTemporary: true,
-        detectionRange: 1200, // Doubled
+        detectionRange: getScaledOrbitRadius(1200),
         detected: false,
         spiralSpeed: 0.02 + Math.random() * 0.03,
         // Instability properties
@@ -8314,7 +8337,7 @@ function createNebulas() {
         const positions = new Float32Array(particleCount * 3);
         const colors = new Float32Array(particleCount * 3);
         
-        const nebulaSize = 1200 + Math.random() * 800;
+        const nebulaSize = getScaledNebulaSize(1200 + Math.random() * 800);
         const hue = Math.random();
         const nebulaColor = new THREE.Color().setHSL(hue, 0.7, 0.6);
         

@@ -2,6 +2,14 @@
 // SET 1: 16 Exotic Core Systems (60,000-75,000 units - Middle Zone) - Supernova/Plasma/Solar Storm cores - ALWAYS VISIBLE
 // SET 2: 12 BORG Patrol Systems (75,000-90,000 units - Outer Zone) - Bright stars with BORG drone patrols
 
+// Helper function for cosmic scale (accesses SCALE_CONFIG from game-objects.js)
+function getOuterSystemScaledOrbitRadius(baseRadius) {
+    const scaleFactor = (typeof SCALE_CONFIG !== 'undefined' && SCALE_CONFIG.orbitRadius) 
+        ? SCALE_CONFIG.orbitRadius 
+        : 1.0;
+    return baseRadius * scaleFactor;
+}
+
 // Prevent re-declaration errors from browser cache/hot-reload
 if (!window.outerInterstellarSystems) {
     window.outerInterstellarSystems = [];
@@ -134,7 +142,7 @@ function createExoticSystem(center, name, centerType, systemId) {
     // Orbiting brown dwarfs (2-4)
     const brownDwarfCount = 2 + Math.floor(Math.random() * 3);
     for (let i = 0; i < brownDwarfCount; i++) {
-        const orbitRadius = 800 + Math.random() * 1200;
+        const orbitRadius = getOuterSystemScaledOrbitRadius(800 + Math.random() * 1200);
         createOrbitingBrownDwarf(center, orbitRadius, i, systemGroup);
         createSystemOrbitLine(center, orbitRadius, systemGroup);
     }
@@ -142,7 +150,7 @@ function createExoticSystem(center, name, centerType, systemId) {
     // Orbiting pulsars (1-3)
     const pulsarCount = 1 + Math.floor(Math.random() * 3);
     for (let i = 0; i < pulsarCount; i++) {
-        const orbitRadius = 1500 + Math.random() * 1500;
+        const orbitRadius = getOuterSystemScaledOrbitRadius(1500 + Math.random() * 1500);
         createOrbitingPulsar(center, orbitRadius, i, systemGroup);
         createSystemOrbitLine(center, orbitRadius, systemGroup);
     }
@@ -240,7 +248,7 @@ function createBorgSystem(center, systemId) {
     let maxOrbitRadius = 0;
 
     for (let i = 0; i < planetCount; i++) {
-        const orbitRadius = 800 + (i * 600) + Math.random() * 400;
+        const orbitRadius = getOuterSystemScaledOrbitRadius(800 + (i * 600) + Math.random() * 400);
         maxOrbitRadius = Math.max(maxOrbitRadius, orbitRadius);
         createOrbitingPlanet(systemGroup, orbitRadius, i);
         createSystemOrbitLine(center, orbitRadius, systemGroup);
