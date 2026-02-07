@@ -190,54 +190,90 @@ function updatePursuitBehavior(enemy, playerPos, speed, distance) {
     }
 
     try {
-        // Initialize acceleration burst tracking
+        // Initialize velocity if not present (inertia-based movement)
+        if (!enemy.userData.velocity) {
+            enemy.userData.velocity = new THREE.Vector3(0, 0, 0);
+        }
+        if (!enemy.userData.facing) {
+            enemy.userData.facing = new THREE.Vector3(0, 0, 1);
+        }
+        
+        // Physics constants (similar to player)
+        const maxSpeed = speed * 2;
+        const acceleration = speed * 0.08; // How fast they can accelerate
+        const turnRate = 0.03; // How fast they can turn (radians per frame)
+        const drag = 0.98; // Slight drag for inertia feel
+        
+        // Calculate desired direction to player
+        const desiredDirection = new THREE.Vector3().subVectors(playerPos, enemy.position).normalize();
+        
+        // Gradually turn facing toward desired direction (can't instant-turn)
+        const currentFacing = enemy.userData.facing.clone();
+        const angleDiff = currentFacing.angleTo(desiredDirection);
+        
+        if (angleDiff > 0.01) {
+            // Interpolate facing toward target (limited by turn rate)
+            const turnAmount = Math.min(turnRate, angleDiff);
+            enemy.userData.facing.lerp(desiredDirection, turnAmount / angleDiff);
+            enemy.userData.facing.normalize();
+        }
+        
+        // Acceleration bursts
         if (enemy.userData.nextAccelBurst === undefined) {
-            enemy.userData.nextAccelBurst = Date.now() + 2000 + Math.random() * 3000; // 2-5 seconds
+            enemy.userData.nextAccelBurst = Date.now() + 2000 + Math.random() * 3000;
         }
-        if (enemy.userData.accelBurstActive === undefined) {
-            enemy.userData.accelBurstActive = false;
-        }
-
-        // Occasional acceleration bursts (20% chance every few seconds)
         const now = Date.now();
         if (now > enemy.userData.nextAccelBurst && !enemy.userData.accelBurstActive) {
             enemy.userData.accelBurstActive = true;
-            enemy.userData.accelBurstEnd = now + 800 + Math.random() * 700; // 0.8-1.5 second burst
-            enemy.userData.nextAccelBurst = now + 3000 + Math.random() * 4000; // Next burst in 3-7 seconds
+            enemy.userData.accelBurstEnd = now + 800 + Math.random() * 700;
+            enemy.userData.nextAccelBurst = now + 3000 + Math.random() * 4000;
         }
-
-        // Apply acceleration multiplier during burst
-        let currentSpeed = speed;
+        
+        let thrustPower = acceleration;
         if (enemy.userData.accelBurstActive) {
-            currentSpeed *= 1.8; // 80% speed boost during acceleration
+            thrustPower *= 1.8;
             if (now > enemy.userData.accelBurstEnd) {
                 enemy.userData.accelBurstActive = false;
             }
         }
-
-        if (distance > 100) {
-            // Direct pursuit when far
-            const direction = new THREE.Vector3().subVectors(playerPos, enemy.position).normalize();
-            enemy.position.add(direction.multiplyScalar(currentSpeed));
-            applyEnemyRotation(enemy, direction, currentSpeed);  // Add rotation
-        } else {
-            // Circle strafe when close
-            const angle = Date.now() * 0.001 + (enemy.userData.circlePhase || 0);
-            const targetX = playerPos.x + Math.cos(angle) * 80;
-            const targetZ = playerPos.z + Math.sin(angle) * 80;
-            const targetY = playerPos.y + Math.sin(angle * 0.5) * 20;
-
-            const targetPos = new THREE.Vector3(targetX, targetY, targetZ);
-            const direction = new THREE.Vector3().subVectors(targetPos, enemy.position).normalize();
-            enemy.position.add(direction.multiplyScalar(currentSpeed * 0.8));
-            applyEnemyRotation(enemy, direction, currentSpeed * 0.8);  // Add rotation
+        
+        // Apply thrust in facing direction (like player, can only accelerate forward)
+        const thrust = enemy.userData.facing.clone().multiplyScalar(thrustPower);
+        enemy.userData.velocity.add(thrust);
+        
+        // Clamp to max speed
+        if (enemy.userData.velocity.length() > maxSpeed) {
+            enemy.userData.velocity.setLength(maxSpeed);
+        }
+        
+        // Apply drag
+        enemy.userData.velocity.multiplyScalar(drag);
+        
+        // Update position based on velocity
+        enemy.position.add(enemy.userData.velocity);
+        
+        // Rotate enemy to face direction of travel (not instant)
+        applyEnemyRotation(enemy, enemy.userData.facing, speed);
+        
+        // Swarm behavior when close - orbit around player
+        if (distance < 150) {
+            const orbitAngle = Date.now() * 0.0015 + (enemy.userData.circlePhase || 0);
+            const orbitOffset = new THREE.Vector3(
+                Math.cos(orbitAngle) * 100,
+                Math.sin(orbitAngle * 0.5) * 30,
+                Math.sin(orbitAngle) * 100
+            );
+            const orbitTarget = playerPos.clone().add(orbitOffset);
+            const orbitDir = new THREE.Vector3().subVectors(orbitTarget, enemy.position).normalize();
+            enemy.userData.facing.lerp(orbitDir, turnRate * 2);
+            enemy.userData.facing.normalize();
         }
     } catch (e) {
         // Ignore movement errors if positions are invalid
     }
 }
 
-// NEW: Swarm behavior
+// Swarm behavior with inertia physics
 function updateSwarmBehavior(enemy, playerPos, speed, time) {
     // Safety checks
     if (!enemy || !enemy.userData || !playerPos || typeof THREE === 'undefined') {
@@ -245,6 +281,19 @@ function updateSwarmBehavior(enemy, playerPos, speed, time) {
     }
     
     try {
+        // Initialize velocity if not present
+        if (!enemy.userData.velocity) {
+            enemy.userData.velocity = new THREE.Vector3(0, 0, 0);
+        }
+        if (!enemy.userData.facing) {
+            enemy.userData.facing = new THREE.Vector3(0, 0, 1);
+        }
+        
+        const maxSpeed = speed * 1.8;
+        const acceleration = speed * 0.06;
+        const turnRate = 0.04;
+        const drag = 0.97;
+        
         // Spiraling approach from multiple angles
         const swarmAngle = time * 0.5 + (enemy.userData.circlePhase || 0);
         const spiralRadius = 120 + Math.sin(time * 0.3) * 40;
@@ -254,9 +303,25 @@ function updateSwarmBehavior(enemy, playerPos, speed, time) {
         const targetY = playerPos.y + Math.sin(time * 0.2) * 30;
         
         const targetPos = new THREE.Vector3(targetX, targetY, targetZ);
-        const direction = new THREE.Vector3().subVectors(targetPos, enemy.position).normalize();
-        enemy.position.add(direction.multiplyScalar(speed * 0.9));
-        applyEnemyRotation(enemy, direction, speed * 0.9);  // Add rotation
+        const desiredDirection = new THREE.Vector3().subVectors(targetPos, enemy.position).normalize();
+        
+        // Gradual turn
+        enemy.userData.facing.lerp(desiredDirection, turnRate);
+        enemy.userData.facing.normalize();
+        
+        // Thrust in facing direction
+        const thrust = enemy.userData.facing.clone().multiplyScalar(acceleration);
+        enemy.userData.velocity.add(thrust);
+        
+        // Clamp and drag
+        if (enemy.userData.velocity.length() > maxSpeed) {
+            enemy.userData.velocity.setLength(maxSpeed);
+        }
+        enemy.userData.velocity.multiplyScalar(drag);
+        
+        // Apply velocity
+        enemy.position.add(enemy.userData.velocity);
+        applyEnemyRotation(enemy, enemy.userData.facing, speed);
     } catch (e) {
         // Ignore movement errors
     }
@@ -386,16 +451,16 @@ function calculateDifficultySettings() {
         maxLocalAttackers: Math.min(3 + galaxiesCleared, 8), // Start with 3, +1 per galaxy cleared, max 8
         localSpeedMultiplier: 0.5 + (galaxiesCleared * 0.1), // Start slow, get faster
         localHealthMultiplier: galaxiesCleared === 0 ? 1 : Math.min(1 + galaxiesCleared * 0.25, 3), // MAX 3 hits
-        localDetectionRange: 3500 + (galaxiesCleared * 300), // Much larger detection
-        localFiringRange: 800 + (galaxiesCleared * 75),  // Attack from much further
+        localDetectionRange: 3500 + (galaxiesCleared * 300), // Long detection for pursuit
+        localFiringRange: 150 + (galaxiesCleared * 25),  // Must get close to fire
         localAttackCooldown: Math.max(600, 1200 - (galaxiesCleared * 100)), // Faster attacks
         
         // Distant galaxy settings (always challenging) - MAX 3 HITS
         maxDistantAttackers: Math.min(8 + galaxiesCleared, 15),  // More attackers
         distantSpeedMultiplier: 1.0 + (galaxiesCleared * 0.08),  // Faster enemies
         distantHealthMultiplier: Math.min(2 + galaxiesCleared * 0.125, 3), // MAX 3 hits
-        distantDetectionRange: 5000 + (galaxiesCleared * 200),  // Much larger detection
-        distantFiringRange: 1000 + (galaxiesCleared * 50),  // Attack from much further
+        distantDetectionRange: 5000 + (galaxiesCleared * 200),  // Long detection for pursuit
+        distantFiringRange: 200 + (galaxiesCleared * 30),  // Must get close to fire
         distantAttackCooldown: Math.max(800, 1200 - (galaxiesCleared * 50)),
         
         // General settings
@@ -493,9 +558,6 @@ nearbyEnemies.forEach(enemy => {
 
 // ENHANCED: Enemy Behavior System with Progressive Difficulty and Tutorial Safety
 function updateEnemyBehavior() {
-    // PERF TEST: Completely disable enemy AI
-    return;
-    
     // Safety checks
     if (typeof enemies === 'undefined' || typeof gameState === 'undefined' || typeof camera === 'undefined') {
         return;
