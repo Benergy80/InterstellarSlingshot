@@ -1975,6 +1975,18 @@ function setupNormalGameContent() {
         console.log('🛡️ Black Hole Guardians spawned');
 	}
     
+    // Create trading ships in nebulas
+    if (typeof createTradingShipsInNebulas === 'function') {
+        createTradingShipsInNebulas();
+        console.log('🚀 Trading ships created in nebulas');
+    }
+    
+    // Create civilian ships throughout the universe
+    if (typeof createAllCivilianShips === 'function') {
+        createAllCivilianShips();
+        console.log('🌍 Civilian ships created throughout universe');
+    }
+    
     // Initialize game state for normal gameplay
     if (typeof gameState !== 'undefined') {
         gameState.gameStarted = true;

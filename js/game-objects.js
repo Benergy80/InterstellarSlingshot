@@ -4801,40 +4801,326 @@ function createTradingShip(nebula, index) {
     tradingShips.push(shipGroup);
 }
 
+// =============================================================================
+// CIVILIAN SHIP AI - States: idle, traveling, fleeing, distress, hailing
+// =============================================================================
+const civilianShipHails = [
+    "Greetings, pilot! Safe travels out there.",
+    "Watch out for pirates in this sector.",
+    "Beautiful nebula, isn't it?",
+    "Heading to the next station. Clear skies!",
+    "Need any supplies? ...Just kidding, we're fully loaded.",
+    "First time through here? Stick to the trade lanes.",
+    "Heard there's trouble near the outer systems.",
+    "Good hunting out there, friend!",
+    "These cargo containers won't deliver themselves!",
+    "If you see any Borg, we were never here.",
+    "Long range sensors picking up hostiles. Stay sharp.",
+    "Another day, another credit. Am I right?",
+    "Don't mind us, just passing through.",
+    "May the stars guide your path.",
+    "Freelancer, huh? Respect."
+];
+
+const distressMessages = [
+    "MAYDAY MAYDAY! We're under attack!",
+    "This is an emergency! Hostile vessels engaging!",
+    "Help! Our shields are failing!",
+    "SOS! Any friendly ships in range?!",
+    "We're taking heavy fire! Need assistance!",
+    "Emergency beacon activated! Please respond!",
+    "Hull breach imminent! Requesting immediate aid!"
+];
+
+// Track last hail time to prevent spam
+let lastCivilianHailTime = 0;
+const HAIL_COOLDOWN = 30000; // 30 seconds between hails
+let lastDistressTime = 0;
+const DISTRESS_COOLDOWN = 60000; // 60 seconds between distress events
+
 function updateTradingShips() {
     if (tradingShips.length === 0) return;
+    
+    const now = Date.now();
+    const playerPos = (typeof spaceship !== 'undefined' && spaceship) ? spaceship.position : null;
     
     tradingShips.forEach(ship => {
         if (!ship || !ship.userData) return;
         
         const data = ship.userData;
         
-        // Orbit around nebula center
-        data.orbitAngle += data.orbitSpeed;
+        // Initialize AI state if not set
+        if (!data.aiState) {
+            data.aiState = 'idle';
+            data.stateTimer = 0;
+            data.fleeDirection = null;
+            data.hasHailedPlayer = false;
+            data.currentDestination = null;
+            data.waitTime = 0;
+        }
         
-        const newX = data.nebulaPosition.x + Math.cos(data.orbitAngle) * data.orbitRadius;
-        const newZ = data.nebulaPosition.z + Math.sin(data.orbitAngle) * data.orbitRadius;
+        // Check for nearby threats (enemies within 500 units)
+        const nearbyThreat = checkForNearbyThreats(ship.position, 500);
         
-        // Gentle vertical bob
-        const verticalBob = Math.sin(data.orbitAngle * 3) * 20;
-        const newY = data.nebulaPosition.y + data.verticalOffset + verticalBob;
-        
-        // Smooth movement
-        ship.position.x += (newX - ship.position.x) * 0.02;
-        ship.position.y += (newY - ship.position.y) * 0.02;
-        ship.position.z += (newZ - ship.position.z) * 0.02;
-        
-        // Face direction of travel
-        const direction = new THREE.Vector3(
-            newX - ship.position.x,
-            0,
-            newZ - ship.position.z
-        ).normalize();
-        
-        if (direction.length() > 0.01) {
-            ship.lookAt(ship.position.x + direction.x * 100, ship.position.y, ship.position.z + direction.z * 100);
+        // State machine
+        switch (data.aiState) {
+            case 'idle':
+                // Orbit around nebula center
+                updateOrbitBehavior(ship, data);
+                
+                // Random chance to start traveling to a destination
+                if (data.nearbyPlanets && data.nearbyPlanets.length > 0 && Math.random() < 0.001) {
+                    data.aiState = 'traveling';
+                    data.currentDestination = data.nearbyPlanets[Math.floor(Math.random() * data.nearbyPlanets.length)].clone();
+                    data.stateTimer = 0;
+                }
+                
+                // Check if player is nearby for hailing
+                if (playerPos && !data.hasHailedPlayer && now - lastCivilianHailTime > HAIL_COOLDOWN) {
+                    const distToPlayer = ship.position.distanceTo(playerPos);
+                    if (distToPlayer < 400 && distToPlayer > 100) {
+                        // Chance to hail
+                        if (Math.random() < 0.02) {
+                            hailPlayer(ship, data);
+                            lastCivilianHailTime = now;
+                        }
+                    }
+                }
+                
+                // React to threats
+                if (nearbyThreat) {
+                    data.aiState = 'fleeing';
+                    data.fleeDirection = new THREE.Vector3()
+                        .subVectors(ship.position, nearbyThreat.position)
+                        .normalize();
+                    data.stateTimer = 0;
+                    
+                    // Chance to send distress
+                    if (now - lastDistressTime > DISTRESS_COOLDOWN && Math.random() < 0.3) {
+                        sendDistressSignal(ship, data);
+                        lastDistressTime = now;
+                    }
+                }
+                break;
+                
+            case 'traveling':
+                data.stateTimer++;
+                
+                if (data.currentDestination) {
+                    // Move toward destination
+                    const toDestination = new THREE.Vector3()
+                        .subVectors(data.currentDestination, ship.position);
+                    const distance = toDestination.length();
+                    
+                    if (distance < 100) {
+                        // Arrived - wait then return or pick new destination
+                        data.aiState = 'waiting';
+                        data.waitTime = 200 + Math.random() * 300;
+                        data.stateTimer = 0;
+                    } else {
+                        // Travel toward destination
+                        toDestination.normalize();
+                        const travelSpeed = (data.speed || 0.5) * 2;
+                        ship.position.add(toDestination.multiplyScalar(travelSpeed));
+                        
+                        // Face direction of travel
+                        ship.lookAt(data.currentDestination);
+                    }
+                } else {
+                    data.aiState = 'idle';
+                }
+                
+                // React to threats while traveling
+                if (nearbyThreat) {
+                    data.aiState = 'fleeing';
+                    data.fleeDirection = new THREE.Vector3()
+                        .subVectors(ship.position, nearbyThreat.position)
+                        .normalize();
+                    data.stateTimer = 0;
+                }
+                
+                // Timeout - return to idle
+                if (data.stateTimer > 2000) {
+                    data.aiState = 'idle';
+                    data.currentDestination = null;
+                }
+                break;
+                
+            case 'waiting':
+                data.waitTime--;
+                if (data.waitTime <= 0) {
+                    // Return to nebula or pick new destination
+                    if (Math.random() < 0.5 && data.nearbyPlanets && data.nearbyPlanets.length > 1) {
+                        data.currentDestination = data.nearbyPlanets[Math.floor(Math.random() * data.nearbyPlanets.length)].clone();
+                        data.aiState = 'traveling';
+                    } else {
+                        data.currentDestination = data.nebulaPosition.clone();
+                        data.aiState = 'returning';
+                    }
+                }
+                
+                // Still react to threats while waiting
+                if (nearbyThreat) {
+                    data.aiState = 'fleeing';
+                    data.fleeDirection = new THREE.Vector3()
+                        .subVectors(ship.position, nearbyThreat.position)
+                        .normalize();
+                }
+                break;
+                
+            case 'returning':
+                if (data.nebulaPosition) {
+                    const toHome = new THREE.Vector3()
+                        .subVectors(data.nebulaPosition, ship.position);
+                    const homeDist = toHome.length();
+                    
+                    if (homeDist < data.orbitRadius) {
+                        data.aiState = 'idle';
+                        data.currentDestination = null;
+                    } else {
+                        toHome.normalize();
+                        const returnSpeed = (data.speed || 0.5) * 1.5;
+                        ship.position.add(toHome.multiplyScalar(returnSpeed));
+                        ship.lookAt(data.nebulaPosition);
+                    }
+                } else {
+                    data.aiState = 'idle';
+                }
+                break;
+                
+            case 'fleeing':
+                data.stateTimer++;
+                
+                if (data.fleeDirection) {
+                    // Flee at high speed
+                    const fleeSpeed = (data.speed || 0.5) * 4;
+                    ship.position.add(data.fleeDirection.clone().multiplyScalar(fleeSpeed));
+                    
+                    // Face away from threat
+                    const lookTarget = ship.position.clone().add(data.fleeDirection.clone().multiplyScalar(100));
+                    ship.lookAt(lookTarget);
+                    
+                    // Add some evasive jitter
+                    ship.position.x += (Math.random() - 0.5) * 2;
+                    ship.position.y += (Math.random() - 0.5) * 1;
+                    ship.position.z += (Math.random() - 0.5) * 2;
+                }
+                
+                // Stop fleeing after a while or if threat is gone
+                if (data.stateTimer > 300 || !nearbyThreat) {
+                    data.aiState = 'returning';
+                    data.stateTimer = 0;
+                    data.fleeDirection = null;
+                }
+                break;
         }
     });
+}
+
+function updateOrbitBehavior(ship, data) {
+    // Original orbit behavior
+    data.orbitAngle += data.orbitSpeed;
+    
+    const newX = data.nebulaPosition.x + Math.cos(data.orbitAngle) * data.orbitRadius;
+    const newZ = data.nebulaPosition.z + Math.sin(data.orbitAngle) * data.orbitRadius;
+    
+    // Gentle vertical bob
+    const verticalBob = Math.sin(data.orbitAngle * 3) * 20;
+    const newY = data.nebulaPosition.y + data.verticalOffset + verticalBob;
+    
+    // Smooth movement
+    ship.position.x += (newX - ship.position.x) * 0.02;
+    ship.position.y += (newY - ship.position.y) * 0.02;
+    ship.position.z += (newZ - ship.position.z) * 0.02;
+    
+    // Face direction of travel
+    const direction = new THREE.Vector3(
+        newX - ship.position.x,
+        0,
+        newZ - ship.position.z
+    ).normalize();
+    
+    if (direction.length() > 0.01) {
+        ship.lookAt(ship.position.x + direction.x * 100, ship.position.y, ship.position.z + direction.z * 100);
+    }
+}
+
+function checkForNearbyThreats(position, range) {
+    // Check for enemies near this position
+    if (typeof enemies === 'undefined' || enemies.length === 0) return null;
+    
+    for (const enemy of enemies) {
+        if (!enemy || !enemy.position || !enemy.visible) continue;
+        if (enemy.userData && enemy.userData.isDead) continue;
+        
+        const distance = position.distanceTo(enemy.position);
+        if (distance < range) {
+            return enemy;
+        }
+    }
+    return null;
+}
+
+function hailPlayer(ship, data) {
+    const message = civilianShipHails[Math.floor(Math.random() * civilianShipHails.length)];
+    const shipName = data.name || 'Civilian Ship';
+    
+    // Display hail message
+    if (typeof showAchievement === 'function') {
+        showAchievement(`📡 ${shipName}: "${message}"`);
+    }
+    
+    console.log(`📡 ${shipName} hails: "${message}"`);
+    data.hasHailedPlayer = true;
+    
+    // Reset hail flag after a while so they can hail again later
+    setTimeout(() => {
+        if (data) data.hasHailedPlayer = false;
+    }, 120000); // Can hail again after 2 minutes
+}
+
+function sendDistressSignal(ship, data) {
+    const message = distressMessages[Math.floor(Math.random() * distressMessages.length)];
+    const shipName = data.name || 'Civilian Ship';
+    
+    // Mark ship as in distress
+    data.inDistress = true;
+    
+    // Display distress message
+    if (typeof showAchievement === 'function') {
+        showAchievement(`🆘 ${shipName}: "${message}"`);
+    }
+    
+    console.log(`🆘 DISTRESS: ${shipName}: "${message}"`);
+    
+    // Add visual distress indicator (flashing)
+    if (!ship.userData.distressLight) {
+        const distressLight = new THREE.PointLight(0xff0000, 2, 200);
+        distressLight.position.set(0, 10, 0);
+        ship.add(distressLight);
+        ship.userData.distressLight = distressLight;
+        
+        // Flash the light
+        let flashOn = true;
+        const flashInterval = setInterval(() => {
+            if (!ship || !ship.userData || !ship.userData.distressLight) {
+                clearInterval(flashInterval);
+                return;
+            }
+            flashOn = !flashOn;
+            ship.userData.distressLight.intensity = flashOn ? 2 : 0;
+        }, 500);
+        
+        // Stop flashing after 30 seconds
+        setTimeout(() => {
+            clearInterval(flashInterval);
+            if (ship && ship.userData && ship.userData.distressLight) {
+                ship.remove(ship.userData.distressLight);
+                ship.userData.distressLight = null;
+                ship.userData.inDistress = false;
+            }
+        }, 30000);
+    }
 }
 
 window.tradingShips = tradingShips;
@@ -5076,18 +5362,49 @@ function createScienceShip(targetPosition, targetType, index) {
     return shipGroup;
 }
 
+// Mining ship specific messages
+const miningShipHails = [
+    "Rich deposits in this sector!",
+    "Another load of ore coming up.",
+    "These asteroids aren't going to mine themselves!",
+    "Careful around the belt - debris everywhere.",
+    "Found some rare minerals. Today's a good day!",
+    "Watch your hull in here, friend.",
+    "Mining is honest work. Dangerous, but honest."
+];
+
+// Science ship specific messages
+const scienceShipHails = [
+    "Fascinating readings from this anomaly!",
+    "Running spectral analysis... don't mind us.",
+    "The data we're collecting here is unprecedented!",
+    "Anomaly stability at 73%... probably safe.",
+    "For science!",
+    "Recording some unusual phenomena here.",
+    "These energy signatures are off the charts!"
+];
+
 function updateCivilianShips() {
     if (civilianShips.length === 0) return;
+    
+    const now = Date.now();
+    const playerPos = (typeof spaceship !== 'undefined' && spaceship) ? spaceship.position : null;
     
     civilianShips.forEach(ship => {
         if (!ship || !ship.userData) return;
         
         const data = ship.userData;
         
-        // Update orbit angle
-        data.orbitAngle += data.orbitSpeed || 0.0001;
+        // Initialize AI state if not set
+        if (!data.aiState) {
+            data.aiState = 'working'; // Mining/scanning/orbiting
+            data.stateTimer = 0;
+            data.fleeDirection = null;
+            data.hasHailedPlayer = false;
+            data.workCycleTimer = 0;
+        }
         
-        // Calculate new position based on orbit
+        // Get center position for this ship's work area
         let centerPos;
         if (data.planetPosition) {
             centerPos = data.planetPosition;
@@ -5099,28 +5416,170 @@ function updateCivilianShips() {
             return;
         }
         
-        const newX = centerPos.x + Math.cos(data.orbitAngle) * data.orbitRadius;
-        const newZ = centerPos.z + Math.sin(data.orbitAngle) * data.orbitRadius;
+        // Check for nearby threats
+        const nearbyThreat = checkForNearbyThreats(ship.position, 400);
         
-        // Smooth movement
-        ship.position.x += (newX - ship.position.x) * 0.02;
-        ship.position.z += (newZ - ship.position.z) * 0.02;
-        
-        // Face direction of travel
-        const direction = new THREE.Vector3(
-            newX - ship.position.x,
-            0,
-            newZ - ship.position.z
-        );
-        
-        if (direction.length() > 0.01) {
-            ship.lookAt(
-                ship.position.x + direction.x * 100,
-                ship.position.y,
-                ship.position.z + direction.z * 100
-            );
+        switch (data.aiState) {
+            case 'working':
+                // Update orbit angle (normal work behavior)
+                data.orbitAngle += data.orbitSpeed || 0.0001;
+                
+                const newX = centerPos.x + Math.cos(data.orbitAngle) * data.orbitRadius;
+                const newZ = centerPos.z + Math.sin(data.orbitAngle) * data.orbitRadius;
+                
+                // Smooth movement
+                ship.position.x += (newX - ship.position.x) * 0.02;
+                ship.position.z += (newZ - ship.position.z) * 0.02;
+                
+                // Face direction of travel
+                const direction = new THREE.Vector3(newX - ship.position.x, 0, newZ - ship.position.z);
+                if (direction.length() > 0.01) {
+                    ship.lookAt(ship.position.x + direction.x * 100, ship.position.y, ship.position.z + direction.z * 100);
+                }
+                
+                // Mining ships: occasional "mining" behavior (stop and hover)
+                if (data.shipCategory === 'mining') {
+                    data.workCycleTimer++;
+                    if (data.workCycleTimer > 500 && Math.random() < 0.005) {
+                        data.aiState = 'mining';
+                        data.stateTimer = 100 + Math.random() * 200;
+                        data.workCycleTimer = 0;
+                    }
+                }
+                
+                // Science ships: occasional "scanning" behavior
+                if (data.shipCategory === 'science') {
+                    data.workCycleTimer++;
+                    if (data.workCycleTimer > 400 && Math.random() < 0.005) {
+                        data.aiState = 'scanning';
+                        data.stateTimer = 150 + Math.random() * 150;
+                        data.workCycleTimer = 0;
+                    }
+                }
+                
+                // Check if player is nearby for hailing
+                if (playerPos && !data.hasHailedPlayer && now - lastCivilianHailTime > HAIL_COOLDOWN) {
+                    const distToPlayer = ship.position.distanceTo(playerPos);
+                    if (distToPlayer < 300 && distToPlayer > 80) {
+                        if (Math.random() < 0.015) {
+                            hailPlayerCivilian(ship, data);
+                            lastCivilianHailTime = now;
+                        }
+                    }
+                }
+                
+                // React to threats
+                if (nearbyThreat) {
+                    data.aiState = 'fleeing';
+                    data.fleeDirection = new THREE.Vector3()
+                        .subVectors(ship.position, nearbyThreat.position)
+                        .normalize();
+                    data.stateTimer = 0;
+                    
+                    if (now - lastDistressTime > DISTRESS_COOLDOWN && Math.random() < 0.25) {
+                        sendDistressSignal(ship, data);
+                        lastDistressTime = now;
+                    }
+                }
+                break;
+                
+            case 'mining':
+                // Stationary mining - slight wobble
+                ship.position.x += (Math.random() - 0.5) * 0.3;
+                ship.position.z += (Math.random() - 0.5) * 0.3;
+                
+                data.stateTimer--;
+                if (data.stateTimer <= 0) {
+                    data.aiState = 'working';
+                }
+                
+                if (nearbyThreat) {
+                    data.aiState = 'fleeing';
+                    data.fleeDirection = new THREE.Vector3()
+                        .subVectors(ship.position, nearbyThreat.position)
+                        .normalize();
+                }
+                break;
+                
+            case 'scanning':
+                // Slow rotation while scanning
+                ship.rotation.y += 0.01;
+                
+                data.stateTimer--;
+                if (data.stateTimer <= 0) {
+                    data.aiState = 'working';
+                }
+                
+                if (nearbyThreat) {
+                    data.aiState = 'fleeing';
+                    data.fleeDirection = new THREE.Vector3()
+                        .subVectors(ship.position, nearbyThreat.position)
+                        .normalize();
+                }
+                break;
+                
+            case 'fleeing':
+                data.stateTimer++;
+                
+                if (data.fleeDirection) {
+                    const fleeSpeed = 3;
+                    ship.position.add(data.fleeDirection.clone().multiplyScalar(fleeSpeed));
+                    
+                    const lookTarget = ship.position.clone().add(data.fleeDirection.clone().multiplyScalar(100));
+                    ship.lookAt(lookTarget);
+                    
+                    // Evasive maneuvers
+                    ship.position.x += (Math.random() - 0.5) * 1.5;
+                    ship.position.z += (Math.random() - 0.5) * 1.5;
+                }
+                
+                // Return to work when safe
+                if (data.stateTimer > 250 || !nearbyThreat) {
+                    data.aiState = 'returning';
+                    data.stateTimer = 0;
+                    data.fleeDirection = null;
+                }
+                break;
+                
+            case 'returning':
+                const toCenter = new THREE.Vector3().subVectors(centerPos, ship.position);
+                const distToCenter = toCenter.length();
+                
+                if (distToCenter < data.orbitRadius * 1.2) {
+                    data.aiState = 'working';
+                } else {
+                    toCenter.normalize();
+                    ship.position.add(toCenter.multiplyScalar(1.5));
+                    ship.lookAt(centerPos);
+                }
+                break;
         }
     });
+}
+
+function hailPlayerCivilian(ship, data) {
+    let messages;
+    if (data.shipCategory === 'mining') {
+        messages = miningShipHails;
+    } else if (data.shipCategory === 'science') {
+        messages = scienceShipHails;
+    } else {
+        messages = civilianShipHails;
+    }
+    
+    const message = messages[Math.floor(Math.random() * messages.length)];
+    const shipName = data.name || 'Civilian Ship';
+    
+    if (typeof showAchievement === 'function') {
+        showAchievement(`📡 ${shipName}: "${message}"`);
+    }
+    
+    console.log(`📡 ${shipName} hails: "${message}"`);
+    data.hasHailedPlayer = true;
+    
+    setTimeout(() => {
+        if (data) data.hasHailedPlayer = false;
+    }, 90000);
 }
 
 // Function to spawn all civilian ships
