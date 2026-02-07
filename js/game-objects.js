@@ -541,7 +541,7 @@ const enemyShapes = {
 
 // Enhanced enemy spawning limits per galaxy
 const galaxyEnemyLimits = {
-    0: 12, 1: 15, 2: 10, 3: 13, 4: 8, 5: 14, 6: 18, 7: 0  // Vulcan disabled for testing
+    0: 12, 1: 15, 2: 10, 3: 13, 4: 8, 5: 14, 6: 18, 7: 10  // Vulcan restored
 };
 
 // FIXED: Boss system initialization - SINGLE DECLARATION
@@ -812,19 +812,23 @@ function createGalaxyToNebulaLine(galaxyId) {
     
     const faction = galaxyTypes[galaxyId];
     
-    // Create line from black hole to nebula
+    // Create DASHED line from black hole to nebula (like nebula lore triggers)
     const points = [galaxyBlackHole.position.clone(), trackingNebula.position.clone()];
     const geometry = new THREE.BufferGeometry().setFromPoints(points);
     
-    // Use faction color with pulsing glow effect
-    const lineMaterial = new THREE.LineBasicMaterial({
+    // Use faction color with dashed style
+    const lineMaterial = new THREE.LineDashedMaterial({
         color: faction.color,
         transparent: true,
-        opacity: 0.8,
-        linewidth: 3
+        opacity: 0.9,
+        linewidth: 2,
+        dashSize: 100,
+        gapSize: 50,
+        scale: 1
     });
     
     const line = new THREE.Line(geometry, lineMaterial);
+    line.computeLineDistances(); // Required for dashed lines to work
     line.userData = {
         type: 'galaxy_intel_line',
         galaxyId: galaxyId,

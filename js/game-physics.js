@@ -229,7 +229,7 @@ gameState.emergencyWarp = {
             active: false,
             blackHole: null,
             warningDistance: 300,
-            criticalDistance: 120
+            criticalDistance: 50  // Auto-warp at 50 units from event horizon
         };
     }
     // Call this during game initialization
