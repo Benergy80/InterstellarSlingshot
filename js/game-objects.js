@@ -4737,45 +4737,49 @@ function createTradingShip(nebula, index) {
     
     if (typeof civilianShipRegistry !== 'undefined') {
         shipGroup = civilianShipRegistry.getShipMesh(shipCategory);
-        // Enhance registry ships with emissive for visibility
+        // Enhance registry ships with strong emissive glow
         if (shipGroup) {
             shipGroup.traverse((child) => {
                 if (child.isMesh && child.material) {
-                    child.material.emissive = new THREE.Color(0x222244);
-                    child.material.emissiveIntensity = 0.3;
+                    child.material.emissive = new THREE.Color(0x4466aa);
+                    child.material.emissiveIntensity = 1.2;
                 }
             });
+            // Add bright point light
+            const shipLight = new THREE.PointLight(0x6699ff, 2, 300);
+            shipLight.position.set(0, 5, 0);
+            shipGroup.add(shipLight);
         }
     }
     
     // Fallback if no ship created
     if (!shipGroup || shipGroup.children.length === 0) {
-        // Fallback to simple procedural ship
+        // Fallback to simple procedural ship with strong glow
         shipGroup = new THREE.Group();
         const hull = new THREE.Mesh(
             new THREE.BoxGeometry(8, 4, 16),
             new THREE.MeshStandardMaterial({ 
-                color: 0x8888aa, 
-                metalness: 0.6, 
-                roughness: 0.4,
-                emissive: 0x222244,
-                emissiveIntensity: 0.4
+                color: 0x6688bb, 
+                metalness: 0.4, 
+                roughness: 0.3,
+                emissive: 0x4466aa,
+                emissiveIntensity: 1.5
             })
         );
         shipGroup.add(hull);
         
-        // Engine glow
-        const engineMat = new THREE.MeshBasicMaterial({ color: 0x00aaff, transparent: true, opacity: 0.9 });
-        const engineL = new THREE.Mesh(new THREE.SphereGeometry(1.5, 8, 8), engineMat);
+        // Engine glow - bright
+        const engineMat = new THREE.MeshBasicMaterial({ color: 0x00ccff, transparent: true, opacity: 1.0 });
+        const engineL = new THREE.Mesh(new THREE.SphereGeometry(2, 8, 8), engineMat);
         engineL.position.set(-3, 0, 9);
         shipGroup.add(engineL);
-        const engineR = new THREE.Mesh(new THREE.SphereGeometry(1.5, 8, 8), engineMat);
+        const engineR = new THREE.Mesh(new THREE.SphereGeometry(2, 8, 8), engineMat);
         engineR.position.set(3, 0, 9);
         shipGroup.add(engineR);
         
-        // Add point light so ship is visible
-        const shipLight = new THREE.PointLight(0x4488ff, 0.5, 100);
-        shipLight.position.set(0, 2, 0);
+        // Add bright point light so ship glows
+        const shipLight = new THREE.PointLight(0x6699ff, 2.5, 300);
+        shipLight.position.set(0, 3, 0);
         shipGroup.add(shipLight);
     }
     
@@ -4840,39 +4844,50 @@ function createTradingShip(nebula, index) {
 function createNebulaShip(nebula, index, shipCategory) {
     let shipGroup;
     
+    // Color schemes for different ship types
+    const shipColors = {
+        'mining': { main: 0xddcc44, emissive: 0xaa9922, light: 0xffee44 },
+        'science': { main: 0x44aaff, emissive: 0x2288dd, light: 0x66ccff },
+        'rescue': { main: 0xff6644, emissive: 0xdd4422, light: 0xff8866 },
+        'military': { main: 0x44ff66, emissive: 0x22dd44, light: 0x66ff88 }
+    };
+    const colors = shipColors[shipCategory] || shipColors['science'];
+    
     if (typeof civilianShipRegistry !== 'undefined') {
         shipGroup = civilianShipRegistry.getShipMesh(shipCategory);
-        // Enhance registry ships with emissive for visibility
+        // Enhance registry ships with strong emissive glow
         if (shipGroup) {
             shipGroup.traverse((child) => {
                 if (child.isMesh && child.material) {
-                    child.material.emissive = new THREE.Color(0x222244);
-                    child.material.emissiveIntensity = 0.3;
+                    child.material.emissive = new THREE.Color(colors.emissive);
+                    child.material.emissiveIntensity = 1.2;
                 }
             });
+            // Add bright point light
+            const shipLight = new THREE.PointLight(colors.light, 2, 300);
+            shipLight.position.set(0, 5, 0);
+            shipGroup.add(shipLight);
         }
     }
     
     // Fallback if no ship created
     if (!shipGroup || shipGroup.children.length === 0) {
         shipGroup = new THREE.Group();
-        const color = shipCategory === 'mining' ? 0xaaaa55 : 0x4488ff;
-        const emissiveColor = shipCategory === 'mining' ? 0x444422 : 0x224488;
         const hull = new THREE.Mesh(
             new THREE.BoxGeometry(8, 5, 15),
             new THREE.MeshStandardMaterial({ 
-                color: color, 
-                metalness: 0.6, 
-                roughness: 0.4,
-                emissive: emissiveColor,
-                emissiveIntensity: 0.4
+                color: colors.main, 
+                metalness: 0.4, 
+                roughness: 0.3,
+                emissive: colors.emissive,
+                emissiveIntensity: 1.5
             })
         );
         shipGroup.add(hull);
         
-        // Add point light so ship is visible
-        const shipLight = new THREE.PointLight(color, 0.5, 100);
-        shipLight.position.set(0, 3, 0);
+        // Add bright point light so ship glows
+        const shipLight = new THREE.PointLight(colors.light, 2.5, 300);
+        shipLight.position.set(0, 4, 0);
         shipGroup.add(shipLight);
     }
     
