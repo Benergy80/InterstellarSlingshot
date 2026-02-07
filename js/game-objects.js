@@ -7741,7 +7741,7 @@ function createEnhancedPlanetClustersInNebulas() {
     }
     
     const enhancedClusters = [];
-    const clustersPerNebula = 3; // 3 star systems per nebula
+    const clustersPerNebula = 2; // PERF: Reduced from 3 to 2 star systems per nebula
     
     // Create clusters within each nebula
     nebulaClouds.forEach((nebula, nebulaIndex) => {
@@ -7799,9 +7799,9 @@ function createEnhancedPlanetClustersInNebulas() {
             scene.add(star);
             planets.push(star);
             
-            // Create 5-12 planets orbiting the star
-            const planetCount = 5 + Math.floor(Math.random() * 8);
-            console.log(`    🪐 Creating ${planetCount} LARGE planets for System ${c + 1}...`);
+            // PERF: Reduced from 5-12 to 3-7 planets per star
+            const planetCount = 3 + Math.floor(Math.random() * 5);
+            console.log(`    🪐 Creating ${planetCount} planets for System ${c + 1}...`);
             
             for (let p = 0; p < planetCount; p++) {
                 // ⭐ MUCH LARGER planet sizes
