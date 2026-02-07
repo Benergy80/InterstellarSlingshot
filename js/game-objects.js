@@ -3703,10 +3703,12 @@ function createClusteredNebulas() {
     }
     
     const nebulaCount = 8;
+    // PERF: Push cluster centers further from twin cores (origin)
+    // Reduces object density near origin for better FPS
     const clusterCenters = [
-        { x: 15000, y: 0, z: 12000 },
-        { x: -18000, y: 500, z: -15000 },
-        { x: 8000, y: -800, z: -20000 }
+        { x: 28000, y: 0, z: 22000 },      // Was 15000, 12000
+        { x: -32000, y: 500, z: -28000 },  // Was -18000, -15000
+        { x: 18000, y: -800, z: -35000 }   // Was 8000, -20000
     ];
     
     // MYTHICAL NEBULA NAMING SYSTEM
