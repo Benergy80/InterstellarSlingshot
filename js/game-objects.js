@@ -3703,12 +3703,10 @@ function createClusteredNebulas() {
     }
     
     const nebulaCount = 8;
-    // PERF: Push cluster centers MUCH further from twin cores (origin)
-    // Previously 8000-18000, now 25000-35000 to reduce object density near origin
     const clusterCenters = [
-        { x: 28000, y: 0, z: 22000 },      // Was 15000, 12000
-        { x: -32000, y: 500, z: -28000 },  // Was -18000, -15000
-        { x: 18000, y: -800, z: -35000 }   // Was 8000, -20000
+        { x: 15000, y: 0, z: 12000 },
+        { x: -18000, y: 500, z: -15000 },
+        { x: 8000, y: -800, z: -20000 }
     ];
     
     // MYTHICAL NEBULA NAMING SYSTEM
@@ -7741,7 +7739,7 @@ function createEnhancedPlanetClustersInNebulas() {
     }
     
     const enhancedClusters = [];
-    const clustersPerNebula = 2; // PERF: Reduced from 3 to 2 star systems per nebula
+    const clustersPerNebula = 3; // 3 star systems per nebula
     
     // Create clusters within each nebula
     nebulaClouds.forEach((nebula, nebulaIndex) => {
@@ -7799,8 +7797,8 @@ function createEnhancedPlanetClustersInNebulas() {
             scene.add(star);
             planets.push(star);
             
-            // PERF: Reduced from 5-12 to 3-7 planets per star
-            const planetCount = 3 + Math.floor(Math.random() * 5);
+            // Create 5-12 planets orbiting the star
+            const planetCount = 5 + Math.floor(Math.random() * 8);
             console.log(`    🪐 Creating ${planetCount} LARGE planets for System ${c + 1}...`);
             
             for (let p = 0; p < planetCount; p++) {

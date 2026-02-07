@@ -1609,12 +1609,7 @@ if (typeof localGalaxyStars !== 'undefined' && localGalaxyStars) {
     }
 
     // FIXED: Call the enhanced orbital mechanics function
-    // Use window reference to allow spatial-optimization.js to patch it
-    if (typeof window.updatePlanetOrbits === 'function') {
-        window.updatePlanetOrbits();
-    } else {
-        updatePlanetOrbits();
-    }
+    updatePlanetOrbits();
   
   // NEW: Update warp speed starfield effect
     if (typeof updateWarpSpeedStarfield === 'function') {
@@ -2050,12 +2045,6 @@ if (typeof checkCosmicFeatureInteractions === 'function' && typeof camera !== 'u
 
 // FIXED: Enhanced orbital mechanics that work for ALL galaxies - ADJUSTED SPEEDS (75% slower)
 function updatePlanetOrbits() {
-    // SKIP if spatial optimization has patched this function
-    // The patched version in spatial-optimization.js will handle everything
-    if (typeof spatialGrid !== 'undefined' && spatialGrid.initialized) {
-        return; // Let the patched version handle it
-    }
-    
     // PERF: Distance culling - only update objects within 2000 units
     const playerPos = camera.position;
     const CULL_DISTANCE = 2000;
