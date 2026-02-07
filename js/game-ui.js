@@ -27,6 +27,16 @@ function updateUI() {
     // Basic stats updates
     if (velocityEl) velocityEl.textContent = (gameState.velocity * 1000).toFixed(0) + ' km/s';
     if (distanceEl) distanceEl.textContent = gameState.distance.toFixed(1) + ' ly';
+    
+    // Emergency Warp count update
+    if (emergencyWarpEl && gameState.emergencyWarp) {
+        emergencyWarpEl.textContent = gameState.emergencyWarp.available;
+    }
+    // Also update mobile warp count
+    const mobileWarpEl = document.getElementById('mobileWarpCount');
+    if (mobileWarpEl && gameState.emergencyWarp) {
+        mobileWarpEl.textContent = gameState.emergencyWarp.available;
+    }
     if (energyBarEl) {
     // First, always update the width to match current energy
     const energyPercent = Math.max(0, Math.min(100, gameState.energy));

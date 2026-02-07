@@ -68,6 +68,14 @@
             overflow: hidden;
             -webkit-overflow-scrolling: touch;
         }
+        
+        /* Prevent text selection on UI elements during gameplay */
+        #gameTitle, .ui-panel, .cyber-title, .glow-text, h1, h2, h3 {
+            -webkit-user-select: none;
+            -moz-user-select: none;
+            -ms-user-select: none;
+            user-select: none;
+        }
 
         /* Title flashing effect for gravity well alert */
         .title-flash {
@@ -580,11 +588,13 @@
                 WASD: Thrust Forward/Left/Back/Right<br>
                 Arrow Keys: Look Up/Down/Left/Right<br>
                 Q/E: Roll Left/Right<br>
-                Option: Fire Weapons<br>
+                Option/Click: Fire Weapons<br>
+                Cmd/Meta: Fire Missile<br>
                 X: Brake/Stop | Tab: Engage Shields<br>
                 Enter: Auto-nav/Slingshot<br>
                 Space: Target Lock | O: Emergency Warp<br>
-                Z: Zoom Scope (Hold)
+                Z: Zoom Scope (Hold)<br>
+                1/3/0: 1st/3rd/No Ship POV | V: Toggle
             </div>
             <div class="flex gap-2 mt-2">
                 <button id="muteBtn" class="small-control-btn">
@@ -871,9 +881,11 @@
                 <strong>DESKTOP CONTROLS:</strong><br>
                 Arrows: Pitch/Yaw | Q/E: Roll<br>
                 W/S: Throttle | A/D: Strafe<br>
-                Space: Fire | Tab: Cycle Targets<br>
+                Click/Option: Fire | Cmd: Missile<br>
+                Space: Target Lock | Tab: Cycle Targets<br>
                 Enter: Auto-nav/Slingshot<br>
-                Option: Target Lock | O: Emergency Warp
+                O: Emergency Warp | Z: Zoom Scope<br>
+                1/3/0: POV (1st/3rd/None) | V: Toggle
             </div>
         </div>
     </div>

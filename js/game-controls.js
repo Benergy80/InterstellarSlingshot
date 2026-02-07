@@ -1329,7 +1329,7 @@ function showIncomingTransmission(title, text, factionColor) {
         left: 50%;
         transform: translateX(-50%);
         z-index: 1000;
-        background: rgba(0, 0, 0, 0.85);
+        background: linear-gradient(135deg, rgba(15, 23, 42, 0.85) 0%, rgba(30, 41, 59, 0.85) 100%);
         border: 1px solid ${colorHex};
         border-radius: 8px;
         padding: 16px 28px;
@@ -1340,6 +1340,8 @@ function showIncomingTransmission(title, text, factionColor) {
         pointer-events: auto;
         max-width: 420px;
         width: 90%;
+        backdrop-filter: blur(4px);
+        -webkit-backdrop-filter: blur(4px);
     `;
 
     prompt.innerHTML = `

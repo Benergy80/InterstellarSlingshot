@@ -5080,6 +5080,363 @@ function createNebulaShip(nebula, index, shipCategory) {
 }
 
 // =============================================================================
+// DISTANT & EXOTIC NEBULA SHIPS - Ships in outer nebulas with mining routes
+// =============================================================================
+
+function createShipsInDistantExoticNebulas() {
+    console.log('🚀 Creating ships in distant and exotic nebulas...');
+    
+    if (typeof nebulaClouds === 'undefined' || nebulaClouds.length === 0) {
+        console.log('No nebulas found, skipping distant/exotic ships');
+        return;
+    }
+    
+    // Get distant and exotic nebulas
+    const distantNebulas = nebulaClouds.filter(n => 
+        n && n.userData && n.userData.isDistant
+    );
+    const exoticNebulas = nebulaClouds.filter(n => 
+        n && n.userData && n.userData.isExoticCore
+    );
+    
+    console.log(`  Found ${distantNebulas.length} distant nebulas, ${exoticNebulas.length} exotic nebulas`);
+    
+    // Get outer systems for mining destinations
+    const exoticSystems = (typeof outerInterstellarSystems !== 'undefined') 
+        ? outerInterstellarSystems.filter(s => s.userData && s.userData.systemType === 'exotic_core')
+        : [];
+    const borgSystems = (typeof outerInterstellarSystems !== 'undefined')
+        ? outerInterstellarSystems.filter(s => s.userData && s.userData.systemType === 'borg_patrol')
+        : [];
+    
+    console.log(`  Found ${exoticSystems.length} exotic systems, ${borgSystems.length} BORG systems for mining routes`);
+    
+    // Create ships in distant nebulas
+    distantNebulas.forEach((nebula, nebulaIndex) => {
+        // 5-10 trading ships per distant nebula (less populated than core)
+        const shipCount = 5 + Math.floor(Math.random() * 6);
+        for (let i = 0; i < shipCount; i++) {
+            createDistantNebulaShip(nebula, i, 'trading');
+        }
+        
+        // 2-4 mining ships with routes to BORG systems
+        const miningCount = 2 + Math.floor(Math.random() * 3);
+        for (let i = 0; i < miningCount; i++) {
+            const targetSystem = borgSystems.length > 0 
+                ? borgSystems[Math.floor(Math.random() * borgSystems.length)]
+                : null;
+            createMiningShipWithRoute(nebula, i, targetSystem, 'distant');
+        }
+        
+        // 1-2 science ships
+        const scienceCount = 1 + Math.floor(Math.random() * 2);
+        for (let i = 0; i < scienceCount; i++) {
+            createDistantNebulaShip(nebula, i, 'science');
+        }
+    });
+    
+    // Create ships in exotic nebulas
+    exoticNebulas.forEach((nebula, nebulaIndex) => {
+        // 4-8 trading ships per exotic nebula
+        const shipCount = 4 + Math.floor(Math.random() * 5);
+        for (let i = 0; i < shipCount; i++) {
+            createDistantNebulaShip(nebula, i, 'trading');
+        }
+        
+        // 3-5 mining ships with routes to exotic systems
+        const miningCount = 3 + Math.floor(Math.random() * 3);
+        for (let i = 0; i < miningCount; i++) {
+            const targetSystem = exoticSystems.length > 0
+                ? exoticSystems[Math.floor(Math.random() * exoticSystems.length)]
+                : null;
+            createMiningShipWithRoute(nebula, i, targetSystem, 'exotic');
+        }
+        
+        // 2-3 science ships (exotic areas attract researchers)
+        const scienceCount = 2 + Math.floor(Math.random() * 2);
+        for (let i = 0; i < scienceCount; i++) {
+            createDistantNebulaShip(nebula, i, 'science');
+        }
+    });
+    
+    // Create freighter caravans between distant nebulas
+    if (distantNebulas.length >= 2) {
+        createOuterNebulaCaravans(distantNebulas, 'distant');
+    }
+    
+    // Create freighter caravans between exotic nebulas
+    if (exoticNebulas.length >= 2) {
+        createOuterNebulaCaravans(exoticNebulas, 'exotic');
+    }
+    
+    console.log(`✅ Created ships in distant/exotic nebulas`);
+}
+
+function createDistantNebulaShip(nebula, index, shipType) {
+    let shipGroup;
+    let shipCategory;
+    
+    if (shipType === 'trading') {
+        const tradingTypes = ['freighter', 'tanker', 'shuttle', 'passenger'];
+        shipCategory = tradingTypes[Math.floor(Math.random() * tradingTypes.length)];
+    } else if (shipType === 'science') {
+        shipCategory = 'science';
+    } else {
+        shipCategory = shipType;
+    }
+    
+    const colors = SHIP_TYPE_COLORS[shipCategory] || SHIP_TYPE_COLORS.shuttle;
+    
+    if (typeof civilianShipRegistry !== 'undefined') {
+        shipGroup = civilianShipRegistry.getShipMesh(shipCategory);
+        if (shipGroup) {
+            shipGroup.traverse((child) => {
+                if (child.isMesh && child.material) {
+                    child.material.emissive = new THREE.Color(colors.emissive);
+                    child.material.emissiveIntensity = 2.5;
+                    child.material.color = new THREE.Color(colors.main);
+                }
+            });
+        }
+    }
+    
+    if (!shipGroup || shipGroup.children.length === 0) {
+        shipGroup = new THREE.Group();
+        const hull = new THREE.Mesh(
+            new THREE.BoxGeometry(8, 4, 16),
+            new THREE.MeshStandardMaterial({ 
+                color: colors.main, 
+                metalness: 0.3, 
+                roughness: 0.4,
+                emissive: colors.emissive,
+                emissiveIntensity: 2.5
+            })
+        );
+        shipGroup.add(hull);
+        
+        const engineMat = new THREE.MeshBasicMaterial({ color: colors.glow });
+        const engineL = new THREE.Mesh(new THREE.SphereGeometry(2, 8, 8), engineMat);
+        engineL.position.set(-3, 0, 9);
+        shipGroup.add(engineL);
+        const engineR = new THREE.Mesh(new THREE.SphereGeometry(2, 8, 8), engineMat);
+        engineR.position.set(3, 0, 9);
+        shipGroup.add(engineR);
+    }
+    
+    // Position within nebula
+    const nebulaSize = nebula.userData.size || 2000;
+    const orbitRadius = nebulaSize * 0.2 + Math.random() * nebulaSize * 0.5;
+    const angle = (index / 5) * Math.PI * 2 + Math.random();
+    const height = (Math.random() - 0.5) * 300;
+    
+    const startX = nebula.position.x + Math.cos(angle) * orbitRadius;
+    const startY = nebula.position.y + height;
+    const startZ = nebula.position.z + Math.sin(angle) * orbitRadius;
+    
+    shipGroup.position.set(startX, startY, startZ);
+    
+    const orbitDirection = Math.random() < 0.5 ? 1 : -1;
+    
+    shipGroup.userData = {
+        type: 'trading_ship',
+        shipCategory: shipCategory,
+        name: `${shipCategory.charAt(0).toUpperCase() + shipCategory.slice(1)} ${index + 1}`,
+        nebulaName: nebula.userData.name || nebula.userData.mythicalName,
+        nebulaPosition: nebula.position.clone(),
+        orbitRadius: orbitRadius,
+        orbitAngle: angle,
+        orbitSpeed: 0.001 + Math.random() * 0.002,
+        orbitDirection: orbitDirection,
+        verticalOffset: height,
+        speed: 0.3 + Math.random() * 0.4,
+        isNeutral: true,
+        isDistantNebula: nebula.userData.isDistant || false,
+        isExoticNebula: nebula.userData.isExoticCore || false,
+        shipColorName: colors.name
+    };
+    
+    shipGroup.visible = true;
+    scene.add(shipGroup);
+    tradingShips.push(shipGroup);
+}
+
+function createMiningShipWithRoute(nebula, index, targetSystem, regionType) {
+    let shipGroup;
+    const shipCategory = 'mining';
+    const colors = SHIP_TYPE_COLORS.mining;
+    
+    if (typeof civilianShipRegistry !== 'undefined') {
+        shipGroup = civilianShipRegistry.getShipMesh(shipCategory);
+        if (shipGroup) {
+            shipGroup.traverse((child) => {
+                if (child.isMesh && child.material) {
+                    child.material.emissive = new THREE.Color(colors.emissive);
+                    child.material.emissiveIntensity = 2.5;
+                    child.material.color = new THREE.Color(colors.main);
+                }
+            });
+        }
+    }
+    
+    if (!shipGroup || shipGroup.children.length === 0) {
+        shipGroup = new THREE.Group();
+        // Rugged mining ship design
+        const hull = new THREE.Mesh(
+            new THREE.BoxGeometry(10, 6, 20),
+            new THREE.MeshStandardMaterial({ 
+                color: colors.main, 
+                metalness: 0.5, 
+                roughness: 0.6,
+                emissive: colors.emissive,
+                emissiveIntensity: 2.5
+            })
+        );
+        shipGroup.add(hull);
+        
+        // Mining arm
+        const armMat = new THREE.MeshStandardMaterial({ color: 0x666666, metalness: 0.7 });
+        const arm = new THREE.Mesh(new THREE.BoxGeometry(2, 2, 12), armMat);
+        arm.position.set(0, -2, -10);
+        shipGroup.add(arm);
+        
+        // Cargo hold
+        const cargoMat = new THREE.MeshStandardMaterial({ color: 0x555555, emissive: 0x222222 });
+        const cargo = new THREE.Mesh(new THREE.BoxGeometry(8, 4, 6), cargoMat);
+        cargo.position.set(0, 5, 2);
+        shipGroup.add(cargo);
+        
+        const engineMat = new THREE.MeshBasicMaterial({ color: colors.glow });
+        const engine = new THREE.Mesh(new THREE.SphereGeometry(2.5, 8, 8), engineMat);
+        engine.position.set(0, 0, 11);
+        shipGroup.add(engine);
+    }
+    
+    // Start at nebula
+    const nebulaSize = nebula.userData.size || 2000;
+    const orbitRadius = nebulaSize * 0.3;
+    const angle = Math.random() * Math.PI * 2;
+    
+    const startX = nebula.position.x + Math.cos(angle) * orbitRadius;
+    const startY = nebula.position.y + (Math.random() - 0.5) * 200;
+    const startZ = nebula.position.z + Math.sin(angle) * orbitRadius;
+    
+    shipGroup.position.set(startX, startY, startZ);
+    
+    // Determine mining destination
+    let miningDestination = null;
+    let miningDestinationName = 'Unknown';
+    
+    if (targetSystem) {
+        miningDestination = targetSystem.position.clone();
+        miningDestinationName = targetSystem.userData.name || 'Outer System';
+    }
+    
+    shipGroup.userData = {
+        type: 'mining_ship',
+        shipCategory: shipCategory,
+        name: `Mining Vessel ${index + 1}`,
+        nebulaName: nebula.userData.name || nebula.userData.mythicalName,
+        nebulaPosition: nebula.position.clone(),
+        homeNebula: nebula.position.clone(),
+        miningDestination: miningDestination,
+        miningDestinationName: miningDestinationName,
+        regionType: regionType, // 'distant', 'exotic', or 'clustered'
+        
+        // Mining route state
+        miningState: 'traveling_to_mine', // 'traveling_to_mine', 'mining', 'returning'
+        miningProgress: 0,
+        miningDuration: 30000 + Math.random() * 30000, // 30-60 seconds mining
+        routeProgress: Math.random(), // Start at random point
+        routeSpeed: 0.0001 + Math.random() * 0.0001,
+        
+        // Fallback orbit behavior
+        orbitRadius: orbitRadius,
+        orbitAngle: angle,
+        orbitSpeed: 0.001 + Math.random() * 0.002,
+        orbitDirection: Math.random() < 0.5 ? 1 : -1,
+        verticalOffset: (Math.random() - 0.5) * 200,
+        
+        speed: 0.4 + Math.random() * 0.3,
+        isNeutral: true,
+        hasMiningRoute: miningDestination !== null,
+        shipColorName: colors.name
+    };
+    
+    shipGroup.visible = true;
+    scene.add(shipGroup);
+    tradingShips.push(shipGroup);
+}
+
+function createOuterNebulaCaravans(nebulas, regionType) {
+    console.log(`🚛 Creating ${regionType} nebula caravans...`);
+    
+    // Create 1-2 caravans for outer nebulas
+    const caravanCount = 1 + Math.floor(Math.random() * 2);
+    
+    for (let c = 0; c < caravanCount; c++) {
+        const sourceIndex = Math.floor(Math.random() * nebulas.length);
+        let destIndex = Math.floor(Math.random() * nebulas.length);
+        while (destIndex === sourceIndex && nebulas.length > 1) {
+            destIndex = Math.floor(Math.random() * nebulas.length);
+        }
+        
+        const sourceNebula = nebulas[sourceIndex];
+        const destNebula = nebulas[destIndex];
+        
+        const caravanSize = 2 + Math.floor(Math.random() * 3); // 2-4 ships (smaller caravans)
+        const caravan = {
+            id: freighterCaravans.length,
+            ships: [],
+            source: sourceNebula.position.clone(),
+            destination: destNebula.position.clone(),
+            sourceName: sourceNebula.userData.name || sourceNebula.userData.mythicalName || `Nebula`,
+            destName: destNebula.userData.name || destNebula.userData.mythicalName || `Nebula`,
+            progress: Math.random(),
+            speed: 0.00015 + Math.random() * 0.0001, // Slightly slower (longer distances)
+            direction: 1,
+            regionType: regionType,
+            underAttack: false,
+            attackers: [],
+            escortRequested: false
+        };
+        
+        const routeVector = new THREE.Vector3().subVectors(caravan.destination, caravan.source);
+        const caravanCenter = caravan.source.clone().add(routeVector.clone().multiplyScalar(caravan.progress));
+        
+        for (let i = 0; i < caravanSize; i++) {
+            const shipGroup = createCaravanFreighter(caravan, i, caravanSize, caravanCenter);
+            shipGroup.userData.regionType = regionType;
+            caravan.ships.push(shipGroup);
+        }
+        
+        freighterCaravans.push(caravan);
+        console.log(`  🚛 ${regionType.charAt(0).toUpperCase() + regionType.slice(1)} Caravan: ${caravanSize} freighters (${caravan.sourceName} ↔ ${caravan.destName})`);
+    }
+}
+
+// Update clustered nebula mining ships to travel to core systems
+function updateClusteredMiningRoutes() {
+    // Find core system (local solar system center)
+    const coreSystemPosition = new THREE.Vector3(0, 0, 0); // Origin is local system
+    
+    tradingShips.forEach(ship => {
+        const data = ship.userData;
+        if (data.shipCategory === 'mining' && !data.hasMiningRoute && !data.isDistantNebula && !data.isExoticNebula) {
+            // This is a clustered nebula mining ship - give it a route to core
+            data.hasMiningRoute = true;
+            data.miningDestination = coreSystemPosition.clone();
+            data.miningDestinationName = 'Core System';
+            data.regionType = 'clustered';
+            data.miningState = 'traveling_to_mine';
+            data.routeProgress = Math.random();
+            data.routeSpeed = 0.0002 + Math.random() * 0.0001;
+            data.miningDuration = 20000 + Math.random() * 20000;
+            data.miningProgress = 0;
+        }
+    });
+}
+
+// =============================================================================
 // CIVILIAN SHIP AI - States: idle, traveling, fleeing, distress, hailing
 // =============================================================================
 const civilianShipHails = [
