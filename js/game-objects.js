@@ -5268,6 +5268,453 @@ function createDistantEnemy(nebula, galaxyId, index) {
 window.createDistantExoticEnemies = createDistantExoticEnemies;
 
 // =============================================================================
+// UFO ENEMIES - Mysterious aliens patrolling exotic systems with erratic movement
+// =============================================================================
+const ufoEnemies = [];
+let ufoModelCache = null;
+
+async function loadUFOModel() {
+    if (ufoModelCache) return ufoModelCache;
+    
+    return new Promise((resolve) => {
+        if (typeof THREE === 'undefined' || typeof THREE.GLTFLoader === 'undefined') {
+            resolve(null);
+            return;
+        }
+        
+        const loader = new THREE.GLTFLoader();
+        loader.load(
+            'models/UFO.glb',
+            (gltf) => {
+                ufoModelCache = gltf.scene;
+                console.log('🛸 UFO model loaded');
+                resolve(ufoModelCache);
+            },
+            undefined,
+            (error) => {
+                console.warn('⚠️ UFO model not found, using procedural');
+                resolve(null);
+            }
+        );
+    });
+}
+
+function createProceduralUFO() {
+    const ufoGroup = new THREE.Group();
+    
+    // Classic saucer shape
+    const saucerGeom = new THREE.CylinderGeometry(40, 50, 12, 24);
+    const saucerMat = new THREE.MeshStandardMaterial({
+        color: 0x556677,
+        metalness: 0.9,
+        roughness: 0.2
+    });
+    const saucer = new THREE.Mesh(saucerGeom, saucerMat);
+    ufoGroup.add(saucer);
+    
+    // Dome on top
+    const domeGeom = new THREE.SphereGeometry(20, 16, 12, 0, Math.PI * 2, 0, Math.PI / 2);
+    const domeMat = new THREE.MeshStandardMaterial({
+        color: 0x88ffaa,
+        metalness: 0.3,
+        roughness: 0.1,
+        transparent: true,
+        opacity: 0.7
+    });
+    const dome = new THREE.Mesh(domeGeom, domeMat);
+    dome.position.y = 6;
+    ufoGroup.add(dome);
+    
+    // Glowing underside
+    const glowGeom = new THREE.RingGeometry(15, 45, 24);
+    const glowMat = new THREE.MeshBasicMaterial({
+        color: 0x00ff88,
+        transparent: true,
+        opacity: 0.6,
+        side: THREE.DoubleSide
+    });
+    const glow = new THREE.Mesh(glowGeom, glowMat);
+    glow.rotation.x = Math.PI / 2;
+    glow.position.y = -6;
+    ufoGroup.add(glow);
+    
+    // Pulsing lights around edge
+    for (let i = 0; i < 8; i++) {
+        const angle = (i / 8) * Math.PI * 2;
+        const light = new THREE.Mesh(
+            new THREE.SphereGeometry(3, 8, 8),
+            new THREE.MeshBasicMaterial({ color: 0x00ffff })
+        );
+        light.position.set(Math.cos(angle) * 42, 0, Math.sin(angle) * 42);
+        light.userData.lightIndex = i;
+        ufoGroup.add(light);
+    }
+    
+    return ufoGroup;
+}
+
+function createUFOEnemy(position, systemName, index) {
+    let ufo;
+    
+    if (ufoModelCache) {
+        ufo = ufoModelCache.clone();
+        ufo.scale.set(60, 60, 60);
+        
+        // Enhance materials for game style
+        ufo.traverse((child) => {
+            if (child.isMesh && child.material) {
+                if (child.material.isMeshStandardMaterial) {
+                    child.material.metalness = 0.85;
+                    child.material.roughness = 0.15;
+                    child.material.envMapIntensity = 2.0;
+                }
+            }
+        });
+    } else {
+        ufo = createProceduralUFO();
+    }
+    
+    ufo.position.copy(position);
+    
+    // UFO userData - erratic movement parameters
+    ufo.userData = {
+        name: `Unknown Craft ${index + 1}`,
+        type: 'enemy',
+        enemyType: 'ufo',
+        health: 4, // Takes 4 hits
+        maxHealth: 4,
+        speed: 1.5, // Fast!
+        aggression: 0.7,
+        patrolCenter: position.clone(),
+        patrolRadius: 2000,
+        lastAttack: 0,
+        isActive: false,
+        visible: true,
+        galaxyId: -1, // No faction
+        galaxyColor: 0x00ff88,
+        attackMode: 'erratic',
+        detectionRange: 2500,
+        firingRange: 350,
+        isLocal: false,
+        isBoss: false,
+        isUFO: true,
+        alwaysDropMissile: true, // Always drop missile on death
+        systemName: systemName,
+        hitboxSize: 80,
+        // Erratic movement parameters
+        erraticPhase: Math.random() * Math.PI * 2,
+        erraticSpeed: 0.02 + Math.random() * 0.03,
+        wobbleAmplitude: 300 + Math.random() * 200,
+        verticalBob: Math.random() * Math.PI * 2,
+        spiralPhase: Math.random() * Math.PI * 2
+    };
+    
+    ufo.visible = true;
+    ufo.frustumCulled = false;
+    
+    scene.add(ufo);
+    enemies.push(ufo);
+    ufoEnemies.push(ufo);
+    
+    return ufo;
+}
+
+function createUFOsInExoticSystems() {
+    console.log('🛸 Creating UFO enemies in exotic systems...');
+    
+    if (typeof outerInterstellarSystems === 'undefined' || outerInterstellarSystems.length === 0) {
+        console.log('No outer systems found, skipping UFOs');
+        return;
+    }
+    
+    let ufosCreated = 0;
+    
+    // Add UFOs to exotic core systems only
+    outerInterstellarSystems.forEach((system, sysIndex) => {
+        if (!system || !system.userData) return;
+        
+        // Only exotic core systems get UFOs (not borg patrol)
+        if (system.userData.systemType !== 'exotic_core') return;
+        
+        // 2-4 UFOs per exotic system
+        const ufoCount = 2 + Math.floor(Math.random() * 3);
+        
+        for (let i = 0; i < ufoCount; i++) {
+            const angle = Math.random() * Math.PI * 2;
+            const distance = 1000 + Math.random() * 2000;
+            const height = (Math.random() - 0.5) * 500;
+            
+            const ufoPosition = new THREE.Vector3(
+                system.position.x + Math.cos(angle) * distance,
+                system.position.y + height,
+                system.position.z + Math.sin(angle) * distance
+            );
+            
+            createUFOEnemy(ufoPosition, system.userData.name, ufosCreated);
+            ufosCreated++;
+        }
+    });
+    
+    console.log(`✅ Created ${ufosCreated} UFO enemies in exotic systems`);
+}
+
+// UFO erratic movement update
+function updateUFOMovement() {
+    const time = Date.now() * 0.001;
+    
+    ufoEnemies.forEach(ufo => {
+        if (!ufo || !ufo.userData || ufo.userData.health <= 0) return;
+        
+        const data = ufo.userData;
+        
+        // Only apply erratic movement when not actively chasing player
+        if (data.attackMode === 'erratic' || !data.isActive) {
+            // Complex erratic movement pattern
+            data.erraticPhase += data.erraticSpeed;
+            data.spiralPhase += 0.01;
+            data.verticalBob += 0.03;
+            
+            // Spiral + wobble pattern
+            const spiralRadius = data.wobbleAmplitude * (0.5 + 0.5 * Math.sin(data.spiralPhase * 0.3));
+            const wobbleX = Math.cos(data.erraticPhase) * spiralRadius;
+            const wobbleZ = Math.sin(data.erraticPhase * 1.3) * spiralRadius;
+            const wobbleY = Math.sin(data.verticalBob) * 150;
+            
+            // Target position
+            const targetX = data.patrolCenter.x + wobbleX;
+            const targetY = data.patrolCenter.y + wobbleY;
+            const targetZ = data.patrolCenter.z + wobbleZ;
+            
+            // Smooth but quick movement
+            ufo.position.x += (targetX - ufo.position.x) * 0.02;
+            ufo.position.y += (targetY - ufo.position.y) * 0.02;
+            ufo.position.z += (targetZ - ufo.position.z) * 0.02;
+            
+            // UFO tilt based on movement
+            const tiltX = (targetZ - ufo.position.z) * 0.01;
+            const tiltZ = -(targetX - ufo.position.x) * 0.01;
+            ufo.rotation.x = tiltX;
+            ufo.rotation.z = tiltZ;
+            
+            // Slow spin
+            ufo.rotation.y += 0.01;
+        }
+    });
+}
+
+window.ufoEnemies = ufoEnemies;
+window.createUFOsInExoticSystems = createUFOsInExoticSystems;
+window.updateUFOMovement = updateUFOMovement;
+window.loadUFOModel = loadUFOModel;
+
+// =============================================================================
+// SATELLITES & SPACE PROBES - Near inhabited areas and cosmic features
+// =============================================================================
+const satellites = [];
+let satelliteModelsLoaded = false;
+const satelliteModelCache = {};
+
+async function loadSatelliteModels() {
+    if (satelliteModelsLoaded) return;
+    
+    const models = ['Satellite.glb', 'Satellite2.glb', 'SpaceProbe.glb'];
+    
+    for (const modelFile of models) {
+        try {
+            const model = await new Promise((resolve) => {
+                if (typeof THREE === 'undefined' || typeof THREE.GLTFLoader === 'undefined') {
+                    resolve(null);
+                    return;
+                }
+                const loader = new THREE.GLTFLoader();
+                loader.load(
+                    `models/${modelFile}`,
+                    (gltf) => resolve(gltf.scene),
+                    undefined,
+                    () => resolve(null)
+                );
+            });
+            
+            if (model) {
+                const key = modelFile.replace('.glb', '');
+                satelliteModelCache[key] = model;
+                console.log(`  📡 Loaded ${modelFile}`);
+            }
+        } catch (e) {
+            console.warn(`  ⚠️ Failed to load ${modelFile}`);
+        }
+    }
+    
+    satelliteModelsLoaded = true;
+    console.log(`📡 Satellite models loaded: ${Object.keys(satelliteModelCache).length}`);
+}
+
+function createSatellite(position, type = 'satellite') {
+    let sat;
+    
+    // Pick model based on type
+    const modelKeys = Object.keys(satelliteModelCache);
+    if (modelKeys.length > 0) {
+        let modelKey;
+        if (type === 'probe') {
+            modelKey = 'SpaceProbe';
+        } else {
+            // Random satellite
+            const satKeys = modelKeys.filter(k => k.includes('Satellite'));
+            modelKey = satKeys.length > 0 ? satKeys[Math.floor(Math.random() * satKeys.length)] : modelKeys[0];
+        }
+        
+        if (satelliteModelCache[modelKey]) {
+            sat = satelliteModelCache[modelKey].clone();
+            sat.scale.set(15, 15, 15); // Appropriate scale
+            
+            // Enhance materials
+            sat.traverse((child) => {
+                if (child.isMesh && child.material) {
+                    if (child.material.isMeshStandardMaterial) {
+                        child.material.metalness = 0.8;
+                        child.material.roughness = 0.3;
+                        child.material.envMapIntensity = 1.5;
+                    }
+                }
+            });
+        }
+    }
+    
+    // Fallback procedural
+    if (!sat) {
+        sat = new THREE.Group();
+        const body = new THREE.Mesh(
+            new THREE.BoxGeometry(10, 10, 15),
+            new THREE.MeshStandardMaterial({ color: 0xaaaaaa, metalness: 0.7, roughness: 0.4 })
+        );
+        sat.add(body);
+        
+        // Solar panels
+        const panelMat = new THREE.MeshStandardMaterial({ color: 0x2244aa, metalness: 0.5, roughness: 0.3 });
+        const panel1 = new THREE.Mesh(new THREE.BoxGeometry(30, 1, 10), panelMat);
+        panel1.position.x = -20;
+        sat.add(panel1);
+        const panel2 = new THREE.Mesh(new THREE.BoxGeometry(30, 1, 10), panelMat);
+        panel2.position.x = 20;
+        sat.add(panel2);
+    }
+    
+    sat.position.copy(position);
+    
+    sat.userData = {
+        type: 'satellite',
+        subType: type,
+        name: type === 'probe' ? 'Deep Space Probe' : 'Communications Satellite',
+        isNeutral: true,
+        rotationSpeed: 0.002 + Math.random() * 0.003,
+        orbitSpeed: 0.0001 + Math.random() * 0.0002
+    };
+    
+    sat.visible = true;
+    scene.add(sat);
+    satellites.push(sat);
+    
+    return sat;
+}
+
+function createSatellitesNearCosmicFeatures() {
+    console.log('📡 Creating satellites and probes near cosmic features...');
+    
+    let created = 0;
+    
+    // Near cosmic features where enemies patrol
+    if (typeof cosmicFeatures !== 'undefined') {
+        // Near space whales
+        if (cosmicFeatures.spaceWhales) {
+            cosmicFeatures.spaceWhales.forEach((whale, i) => {
+                if (whale && whale.position && Math.random() < 0.6) {
+                    const offset = new THREE.Vector3(
+                        (Math.random() - 0.5) * 500,
+                        (Math.random() - 0.5) * 200,
+                        (Math.random() - 0.5) * 500
+                    );
+                    createSatellite(whale.position.clone().add(offset), 'probe');
+                    created++;
+                }
+            });
+        }
+        
+        // Near crystal formations
+        if (cosmicFeatures.crystalFormations) {
+            cosmicFeatures.crystalFormations.forEach((crystal, i) => {
+                if (crystal && crystal.position && Math.random() < 0.5) {
+                    const offset = new THREE.Vector3(
+                        (Math.random() - 0.5) * 300,
+                        (Math.random() - 0.5) * 150,
+                        (Math.random() - 0.5) * 300
+                    );
+                    createSatellite(crystal.position.clone().add(offset), 'probe');
+                    created++;
+                }
+            });
+        }
+        
+        // Near plasma storms
+        if (cosmicFeatures.plasmaStorms) {
+            cosmicFeatures.plasmaStorms.forEach((storm, i) => {
+                if (storm && storm.position && Math.random() < 0.4) {
+                    const offset = new THREE.Vector3(
+                        (Math.random() - 0.5) * 600,
+                        (Math.random() - 0.5) * 200,
+                        (Math.random() - 0.5) * 600
+                    );
+                    createSatellite(storm.position.clone().add(offset), 'satellite');
+                    created++;
+                }
+            });
+        }
+    }
+    
+    // Near outer interstellar systems (where enemies patrol)
+    if (typeof outerInterstellarSystems !== 'undefined') {
+        outerInterstellarSystems.forEach((system, i) => {
+            if (!system || !system.position) return;
+            
+            // 1-3 satellites per system
+            const satCount = 1 + Math.floor(Math.random() * 3);
+            for (let s = 0; s < satCount; s++) {
+                const angle = Math.random() * Math.PI * 2;
+                const distance = 500 + Math.random() * 1000;
+                const offset = new THREE.Vector3(
+                    Math.cos(angle) * distance,
+                    (Math.random() - 0.5) * 200,
+                    Math.sin(angle) * distance
+                );
+                createSatellite(system.position.clone().add(offset), Math.random() < 0.3 ? 'probe' : 'satellite');
+                created++;
+            }
+        });
+    }
+    
+    console.log(`✅ Created ${created} satellites and probes`);
+}
+
+function updateSatellites() {
+    satellites.forEach(sat => {
+        if (!sat || !sat.userData) return;
+        
+        // Slow rotation
+        sat.rotation.y += sat.userData.rotationSpeed || 0.002;
+        
+        // Gentle bob for probes
+        if (sat.userData.subType === 'probe') {
+            sat.rotation.x = Math.sin(Date.now() * 0.001) * 0.1;
+        }
+    });
+}
+
+window.satellites = satellites;
+window.loadSatelliteModels = loadSatelliteModels;
+window.createSatellitesNearCosmicFeatures = createSatellitesNearCosmicFeatures;
+window.updateSatellites = updateSatellites;
+
+// =============================================================================
 // ENHANCED PLANET CLUSTERS - FROM EARLY VERSION
 // Creates rich planetary systems with rings, moons, and asteroid belts within nebulas
 // =============================================================================

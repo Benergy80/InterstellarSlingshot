@@ -792,6 +792,22 @@ if (typeof areModelsLoaded === 'function' && areModelsLoaded()) {
         createAllCivilianShips();
         console.log('Civilian ships created throughout universe');
     }
+    // Load UFO model and create UFOs in exotic systems
+    if (typeof loadUFOModel === 'function') {
+        loadUFOModel().then(() => {
+            if (typeof createUFOsInExoticSystems === 'function') {
+                createUFOsInExoticSystems();
+            }
+        });
+    }
+    // Load satellite models and create satellites near cosmic features
+    if (typeof loadSatelliteModels === 'function') {
+        loadSatelliteModels().then(() => {
+            if (typeof createSatellitesNearCosmicFeatures === 'function') {
+                createSatellitesNearCosmicFeatures();
+            }
+        });
+    }
     // Initialize distress beacon system (needs outer systems to exist)
     if (typeof distressBeaconSystem !== 'undefined' && distressBeaconSystem.initialize) {
         distressBeaconSystem.initialize();
@@ -1126,6 +1142,16 @@ if (typeof updateTradingShips === 'function') {
 // Update civilian ships throughout universe
 if (typeof updateCivilianShips === 'function') {
     updateCivilianShips();
+}
+
+// Update UFO erratic movement
+if (typeof updateUFOMovement === 'function') {
+    updateUFOMovement();
+}
+
+// Update satellites
+if (typeof updateSatellites === 'function') {
+    updateSatellites();
 }
 
 // Update distress beacons (pulsing effect)

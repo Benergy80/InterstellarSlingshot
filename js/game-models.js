@@ -584,7 +584,7 @@ const civilianShipRegistry = {
         freighter: {
             name: 'Freighter',
             modelFile: 'Freighter.glb',
-            scale: 1.0,
+            scale: 0.8,
             description: 'Heavy cargo hauler',
             spawnLocations: ['nebula', 'trade_route', 'station'],
             speed: { min: 0.3, max: 0.6 },
@@ -593,25 +593,26 @@ const civilianShipRegistry = {
         tanker: {
             name: 'Tanker',
             modelFile: 'Tanker.glb',
-            scale: 1.2,
+            scale: 0.8,
             description: 'Fuel and gas transport',
-            spawnLocations: ['star', 'refinery', 'gas_giant'],
+            spawnLocations: ['star', 'refinery', 'gas_giant', 'nebula'],
             speed: { min: 0.2, max: 0.4 },
             colors: [0xcc6633, 0xdd8844, 0xbb5522]
         },
         passenger: {
             name: 'Passenger Liner',
             modelFile: 'Passenger.glb',
-            scale: 1.5,
+            modelVariants: ['Passenger.glb', 'Passenger2.glb', 'Passenger3.glb'],
+            scale: 0.7,
             description: 'Luxury cruise vessel',
-            spawnLocations: ['planet', 'station', 'scenic'],
+            spawnLocations: ['planet', 'station', 'scenic', 'nebula'],
             speed: { min: 0.4, max: 0.7 },
             colors: [0xffffff, 0xeeeeff, 0xffffee]
         },
         mining: {
             name: 'Mining Vessel',
             modelFile: 'Mining.glb',
-            scale: 0.9,
+            scale: 0.8,
             description: 'Asteroid mining ship',
             spawnLocations: ['asteroid_belt', 'asteroid', 'dwarf_planet'],
             speed: { min: 0.2, max: 0.5 },
@@ -619,17 +620,17 @@ const civilianShipRegistry = {
         },
         science: {
             name: 'Research Vessel',
-            modelFile: 'Science.glb',
-            scale: 0.8,
+            modelFile: 'SpaceProbe.glb',
+            scale: 0.5,
             description: 'Scientific research ship',
-            spawnLocations: ['anomaly', 'nebula', 'pulsar', 'black_hole'],
+            spawnLocations: ['anomaly', 'nebula', 'pulsar', 'black_hole', 'cosmic_feature'],
             speed: { min: 0.3, max: 0.6 },
             colors: [0x4488ff, 0x3377ee, 0x5599ff]
         },
         shuttle: {
             name: 'Shuttle',
             modelFile: 'Shuttle.glb',
-            scale: 0.5,
+            scale: 0.4,
             description: 'Small transport craft',
             spawnLocations: ['anywhere', 'planet', 'station'],
             speed: { min: 0.5, max: 1.0 },
@@ -647,11 +648,32 @@ const civilianShipRegistry = {
         military: {
             name: 'Patrol Cruiser',
             modelFile: 'Military.glb',
-            scale: 1.1,
+            scale: 0.6,
             description: 'Armed escort vessel',
             spawnLocations: ['trade_route', 'border', 'station'],
             speed: { min: 0.6, max: 1.0 },
             colors: [0x336633, 0x445544, 0x224422]
+        },
+        satellite: {
+            name: 'Satellite',
+            modelFile: 'Satellite.glb',
+            modelVariants: ['Satellite.glb', 'Satellite2.glb'],
+            scale: 0.3,
+            description: 'Orbital communications satellite',
+            spawnLocations: ['planet', 'station', 'inhabited', 'cosmic_feature'],
+            speed: { min: 0.1, max: 0.2 },
+            isStationary: true,
+            colors: [0xcccccc, 0xaaaaaa, 0xdddddd]
+        },
+        spaceprobe: {
+            name: 'Space Probe',
+            modelFile: 'SpaceProbe.glb',
+            scale: 0.4,
+            description: 'Deep space research probe',
+            spawnLocations: ['cosmic_feature', 'anomaly', 'deep_space', 'exotic'],
+            speed: { min: 0.05, max: 0.15 },
+            isStationary: true,
+            colors: [0x888888, 0x999999, 0x777777]
         }
     },
     
@@ -659,7 +681,7 @@ const civilianShipRegistry = {
     modelCache: {},
     modelsLoaded: false,
     
-    // Load all civilian ship models
+    // Load all civilian ship models (including variants)
     loadAllModels: async function() {
         console.log('🚢 Loading civilian ship models...');
         
@@ -669,10 +691,11 @@ const civilianShipRegistry = {
         
         for (const catKey of categories) {
             const category = this.categories[catKey];
-            const path = `models/${category.modelFile}`;
             
+            // Load main model
+            const mainPath = `models/${category.modelFile}`;
             try {
-                const model = await this.loadModel(path);
+                const model = await this.loadModel(mainPath);
                 if (model) {
                     this.modelCache[catKey] = model;
                     loaded++;
@@ -684,6 +707,26 @@ const civilianShipRegistry = {
             } catch (err) {
                 failed++;
                 console.log(`  ⚠️ Failed to load ${category.name}: ${err.message}`);
+            }
+            
+            // Load variants if they exist
+            if (category.modelVariants && category.modelVariants.length > 1) {
+                if (!this.modelCache[catKey + '_variants']) {
+                    this.modelCache[catKey + '_variants'] = [];
+                }
+                
+                for (let i = 0; i < category.modelVariants.length; i++) {
+                    const variantPath = `models/${category.modelVariants[i]}`;
+                    try {
+                        const variantModel = await this.loadModel(variantPath);
+                        if (variantModel) {
+                            this.modelCache[catKey + '_variants'].push(variantModel);
+                            console.log(`    ✅ Loaded variant: ${category.modelVariants[i]}`);
+                        }
+                    } catch (err) {
+                        console.log(`    ⚠️ Failed to load variant: ${category.modelVariants[i]}`);
+                    }
+                }
             }
         }
         
@@ -714,17 +757,41 @@ const civilianShipRegistry = {
     },
     
     // Get a ship model (or create procedural fallback)
-    getShipMesh: function(categoryKey, customColor = null) {
+    // useVariant: if true and variants exist, pick a random variant
+    getShipMesh: function(categoryKey, customColor = null, useVariant = true) {
         const category = this.categories[categoryKey];
         if (!category) {
             console.warn(`Unknown ship category: ${categoryKey}`);
             return this.createProceduralShip('shuttle', customColor);
         }
         
-        // Try to use cached model
-        if (this.modelCache[categoryKey]) {
-            const model = this.modelCache[categoryKey].clone();
+        // Try to use cached model (with variants if available)
+        let model = null;
+        const variants = this.modelCache[categoryKey + '_variants'];
+        
+        if (useVariant && variants && variants.length > 0) {
+            // Pick random variant
+            const variantIndex = Math.floor(Math.random() * variants.length);
+            model = variants[variantIndex].clone();
+        } else if (this.modelCache[categoryKey]) {
+            model = this.modelCache[categoryKey].clone();
+        }
+        
+        if (model) {
             model.scale.multiplyScalar(category.scale * 50); // Base scale
+            
+            // Apply consistent material properties to match game style
+            model.traverse((child) => {
+                if (child.isMesh && child.material) {
+                    // Enhance materials to match game aesthetic
+                    if (child.material.isMeshStandardMaterial) {
+                        child.material.metalness = Math.min(child.material.metalness + 0.2, 0.9);
+                        child.material.roughness = Math.max(child.material.roughness - 0.1, 0.2);
+                        child.material.envMapIntensity = 1.5;
+                    }
+                }
+            });
+            
             return model;
         }
         

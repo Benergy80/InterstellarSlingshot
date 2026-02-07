@@ -3584,6 +3584,21 @@ if (enemy.userData.health <= 0) {
     createExplosionEffect(enemy.position, 0xff4444, 15);
     playSound('explosion');
     
+    // UFOs always drop missiles when destroyed
+    if (enemy.userData.isUFO || enemy.userData.alwaysDropMissile) {
+        // Spawn a missile pickup at the UFO's position
+        if (typeof spawnMissilePickup === 'function') {
+            spawnMissilePickup(enemy.position.clone());
+            console.log('🛸 UFO destroyed - missile dropped!');
+        } else {
+            // Fallback: just add missiles directly
+            if (typeof gameState !== 'undefined' && typeof gameState.missiles !== 'undefined') {
+                gameState.missiles = Math.min((gameState.missiles || 0) + 1, 10);
+                showAchievement('MISSILE ACQUIRED!', `Alien technology salvaged! (${gameState.missiles}/10)`);
+            }
+        }
+    }
+    
     if (wasBoss) {
     showAchievement('BOSS DEFEATED!', `${bossName} destroyed!`);
     // Call boss victory check and fireworks
