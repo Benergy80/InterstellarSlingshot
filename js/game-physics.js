@@ -3342,16 +3342,9 @@ function checkForNebulaDeepDiscovery() {
             ? `${factionThreat}\n\nLOCAL THREAT: ${nebulaThreat}`
             : factionThreat;
 
-        // GALAXY-FORMATION: Only trigger after all black hole enemies for this galaxy are eliminated
-        if (nebulaType === 'galaxy_formation') {
-            if (!areBlackHoleEnemiesCleared(galaxyId)) {
-                // Not ready yet - don't mark as discovered, check again later
-                if (gameState.frameCount % 120 === 0) {
-                    console.log(`⏳ ${nebulaName}: ${factionName} black hole forces still active - discovery deferred`);
-                }
-                return;
-            }
-        }
+        // GALAXY-FORMATION: Trigger on approach (same as other nebulas)
+        // Previously required clearing black hole enemies first, but this was too restrictive
+        // Now triggers immediately so player gets lore and navigation when entering the nebula
 
         // Mark as deep discovered
         console.log(`✨ DEEP DISCOVERY TRIGGERED for ${nebulaType} nebula "${nebulaName}" at distance ${distance.toFixed(0)}`);
