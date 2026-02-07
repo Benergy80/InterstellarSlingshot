@@ -2274,7 +2274,7 @@ const core8GalaxyStarsMaterial = new THREE.PointsMaterial({
 const core8LocalStarsVertices = [];
 const core8LocalStarsColors = [];
 
-// Create 1500 stars in spiral pattern (reduced from 3000 for performance)
+// Create 1500 stars in spiral pattern for Core8
 for (let i = 0; i < 1500; i++) {
     const armAngle = Math.random() * Math.PI * 2;
     const armDistance = Math.pow(Math.random(), 1.8) * 2000;
@@ -3053,8 +3053,8 @@ const localGalaxyStarsMaterial = new THREE.PointsMaterial({
 
 const localStarsVertices = [];
 
-// Local galaxy stars (2000 stars in spiral pattern - reduced for performance)
-for (let i = 0; i < 2000; i++) {
+// Local galaxy stars (3000 stars in spiral pattern around Sagittarius A*)
+for (let i = 0; i < 3000; i++) {
     const armAngle = Math.random() * Math.PI * 2;
     const armDistance = Math.pow(Math.random(), 1.8) * 4000;
     const armWidth = 0.25;
