@@ -1609,7 +1609,12 @@ if (typeof localGalaxyStars !== 'undefined' && localGalaxyStars) {
     }
 
     // FIXED: Call the enhanced orbital mechanics function
-    updatePlanetOrbits();
+    // Use window reference to allow spatial-optimization.js to patch it
+    if (typeof window.updatePlanetOrbits === 'function') {
+        window.updatePlanetOrbits();
+    } else {
+        updatePlanetOrbits();
+    }
   
   // NEW: Update warp speed starfield effect
     if (typeof updateWarpSpeedStarfield === 'function') {

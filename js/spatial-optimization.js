@@ -1,38 +1,30 @@
 // =============================================================================
-// SPATIAL OPTIMIZATION SYSTEM - Dramatically reduce per-frame object processing
+// SPATIAL OPTIMIZATION SYSTEM - Fast object culling without sqrt
 // =============================================================================
 
 console.log('🚀 Loading Spatial Optimization System...');
 
 // =============================================================================
-// SPATIAL PARTITIONING - Divide space into regions for fast culling
+// SPATIAL PARTITIONING - Pre-sort objects by distance from origin
 // =============================================================================
 
 const spatialGrid = {
-    // Grid configuration
-    cellSize: 5000,  // Each cell is 5000x5000x5000 units
-    cells: new Map(), // Map of "x,y,z" -> array of objects
-    
     // Pre-sorted arrays for fast access
-    originObjects: [],      // Objects within 3000 units of origin
-    nearObjects: [],        // Objects 3000-10000 units from origin
-    farObjects: [],         // Objects beyond 10000 units
+    originObjects: [],      // Objects within 3000 units of origin (twin cores area)
+    nearObjects: [],        // Objects 3000-15000 units from origin
+    farObjects: [],         // Objects beyond 15000 units
     
-    // Cache for quick lookups
-    lastPlayerCell: null,
-    lastUpdateFrame: 0,
+    initialized: false,
     
-    // Get cell key for a position
-    getCellKey: function(pos) {
-        const cx = Math.floor(pos.x / this.cellSize);
-        const cy = Math.floor(pos.y / this.cellSize);
-        const cz = Math.floor(pos.z / this.cellSize);
-        return `${cx},${cy},${cz}`;
-    },
-    
-    // Get distance from origin (fast approximation using max of abs values)
-    fastDistanceFromOrigin: function(pos) {
-        return Math.max(Math.abs(pos.x), Math.abs(pos.y), Math.abs(pos.z));
+    // Fast AABB check - no sqrt needed!
+    isInRange: function(objPos, playerPos, range) {
+        const dx = Math.abs(objPos.x - playerPos.x);
+        if (dx > range) return false;
+        const dy = Math.abs(objPos.y - playerPos.y);
+        if (dy > range) return false;
+        const dz = Math.abs(objPos.z - playerPos.z);
+        if (dz > range) return false;
+        return true;
     },
     
     // Sort all planets into distance-based arrays (call once after planets created)
@@ -47,7 +39,7 @@ const spatialGrid = {
         this.farObjects = [];
         
         const ORIGIN_THRESHOLD = 3000;
-        const NEAR_THRESHOLD = 10000;
+        const NEAR_THRESHOLD = 15000;
         
         planets.forEach(planet => {
             if (!planet || !planet.position) return;
@@ -63,54 +55,53 @@ const spatialGrid = {
             }
         });
         
+        this.initialized = true;
+        
         console.log(`📊 Spatial sort complete:`);
-        console.log(`   Origin (<${ORIGIN_THRESHOLD}): ${this.originObjects.length} objects`);
-        console.log(`   Near (${ORIGIN_THRESHOLD}-${NEAR_THRESHOLD}): ${this.nearObjects.length} objects`);
-        console.log(`   Far (>${NEAR_THRESHOLD}): ${this.farObjects.length} objects`);
+        console.log(`   🔴 Origin (<${ORIGIN_THRESHOLD}): ${this.originObjects.length} objects`);
+        console.log(`   🟡 Near (${ORIGIN_THRESHOLD}-${NEAR_THRESHOLD}): ${this.nearObjects.length} objects`);
+        console.log(`   🟢 Far (>${NEAR_THRESHOLD}): ${this.farObjects.length} objects`);
+        console.log(`   Total: ${planets.length}`);
     },
     
-    // Fast check if object is potentially visible (AABB check, no sqrt)
-    isInRange: function(objPos, playerPos, range) {
-        const dx = Math.abs(objPos.x - playerPos.x);
-        if (dx > range) return false;
-        const dy = Math.abs(objPos.y - playerPos.y);
-        if (dy > range) return false;
-        const dz = Math.abs(objPos.z - playerPos.z);
-        if (dz > range) return false;
-        return true; // Within cubic range (fast approximation)
-    },
-    
-    // Get objects that should be processed this frame
+    // Get objects that should be processed this frame (FAST!)
     getObjectsToProcess: function(playerPos, range) {
+        if (!this.initialized) return planets; // Fallback to all planets
+        
         const result = [];
         const playerDist = playerPos.length();
         
-        // Always process origin objects if player is near origin
-        if (playerDist < 5000) {
-            // Player near origin - process origin objects
-            this.originObjects.forEach(obj => {
+        // Determine which arrays to check based on player position
+        const checkOrigin = playerDist < 6000;
+        const checkNear = playerDist > 1000 && playerDist < 20000;
+        const checkFar = playerDist > 10000;
+        
+        // Process only relevant arrays with fast AABB checks
+        if (checkOrigin) {
+            for (let i = 0; i < this.originObjects.length; i++) {
+                const obj = this.originObjects[i];
                 if (obj && obj.position && this.isInRange(obj.position, playerPos, range)) {
                     result.push(obj);
                 }
-            });
+            }
         }
         
-        // Process near objects if player is in that range
-        if (playerDist > 1000 && playerDist < 15000) {
-            this.nearObjects.forEach(obj => {
+        if (checkNear) {
+            for (let i = 0; i < this.nearObjects.length; i++) {
+                const obj = this.nearObjects[i];
                 if (obj && obj.position && this.isInRange(obj.position, playerPos, range)) {
                     result.push(obj);
                 }
-            });
+            }
         }
         
-        // Process far objects only if player is far from origin
-        if (playerDist > 8000) {
-            this.farObjects.forEach(obj => {
+        if (checkFar) {
+            for (let i = 0; i < this.farObjects.length; i++) {
+                const obj = this.farObjects[i];
                 if (obj && obj.position && this.isInRange(obj.position, playerPos, range)) {
                     result.push(obj);
                 }
-            });
+            }
         }
         
         return result;
@@ -118,62 +109,80 @@ const spatialGrid = {
 };
 
 // =============================================================================
-// OPTIMIZED PLANET ORBIT UPDATE - Replace the expensive forEach
+// PATCH: Override expensive forEach in updatePlanetOrbits
 // =============================================================================
 
-function updatePlanetOrbitsOptimized() {
-    if (typeof camera === 'undefined' || typeof planets === 'undefined') return;
-    
-    const playerPos = camera.position;
-    const PROCESS_RANGE = 2500; // Slightly larger than visual range
-    
-    // Use spatial partitioning to get only relevant objects
-    const objectsToProcess = spatialGrid.getObjectsToProcess(playerPos, PROCESS_RANGE);
-    
-    // PERF DEBUG: Log every 300 frames
-    if (typeof gameState !== 'undefined' && gameState.frameCount % 300 === 0) {
-        console.log(`📊 OPTIMIZED: Processing ${objectsToProcess.length}/${planets.length} planets`);
+function patchUpdatePlanetOrbits() {
+    if (typeof updatePlanetOrbits === 'undefined') {
+        console.log('   updatePlanetOrbits not found, retrying...');
+        setTimeout(patchUpdatePlanetOrbits, 500);
+        return;
     }
     
-    objectsToProcess.forEach(planet => {
-        if (!planet || !planet.userData) return;
-        
-        // Basic planet rotation
-        if (planet.rotation && !planet.userData.isLocalStar) {
-            const rotationSpeed = planet.userData.rotationSpeed || 0.02;
-            planet.rotation.y += rotationSpeed;
+    // Store original function
+    const originalUpdatePlanetOrbits = updatePlanetOrbits;
+    
+    // Create patched version
+    window.updatePlanetOrbits = function() {
+        if (!spatialGrid.initialized) {
+            // Fallback to original if not initialized
+            return originalUpdatePlanetOrbits();
         }
         
-        // Orbital mechanics
-        if (planet.userData.orbitRadius > 0 && planet.userData.systemCenter) {
-            let baseSpeed = planet.userData.orbitSpeed || 0.015;
+        if (typeof camera === 'undefined') return;
+        
+        const playerPos = camera.position;
+        const CULL_DISTANCE = 2500;
+        
+        // Use spatial grid for fast object selection
+        const objectsToProcess = spatialGrid.getObjectsToProcess(playerPos, CULL_DISTANCE);
+        
+        // PERF DEBUG: Log every 300 frames
+        if (typeof gameState !== 'undefined' && gameState.frameCount % 300 === 0) {
+            console.log(`📊 SPATIAL: Processing ${objectsToProcess.length}/${planets.length} planets (${((1 - objectsToProcess.length/planets.length) * 100).toFixed(0)}% culled)`);
+        }
+        
+        // Process only the culled set
+        objectsToProcess.forEach(planet => {
+            if (!planet || !planet.userData) return;
             
-            if (planet.userData.isLocal) {
-                baseSpeed *= 3.0;
-            } else if (planet.userData.isDistant) {
-                baseSpeed *= 25.0;
-            } else {
-                baseSpeed *= 8.0;
+            // Planet rotation
+            if (planet.rotation && !planet.userData.isLocalStar) {
+                const rotationSpeed = planet.userData.rotationSpeed || 0.02;
+                planet.rotation.y += rotationSpeed;
             }
             
-            // Update orbit angle
-            planet.userData.orbitAngle = (planet.userData.orbitAngle || 0) + baseSpeed;
-            
-            // Calculate new position
-            const center = planet.userData.systemCenter;
-            const radius = planet.userData.orbitRadius;
-            const angle = planet.userData.orbitAngle;
-            const inclination = planet.userData.orbitInclination || 0;
-            
-            planet.position.x = center.x + Math.cos(angle) * radius;
-            planet.position.z = center.z + Math.sin(angle) * radius;
-            planet.position.y = center.y + Math.sin(angle * 2) * inclination;
-        }
-    });
+            // Orbital mechanics
+            if (planet.userData.orbitRadius > 0 && planet.userData.systemCenter) {
+                let baseSpeed = planet.userData.orbitSpeed || 0.015;
+                
+                if (planet.userData.isLocal) {
+                    baseSpeed *= 3.0;
+                } else if (planet.userData.isDistant) {
+                    baseSpeed *= 25.0;
+                } else {
+                    baseSpeed *= 8.0;
+                }
+                
+                planet.userData.orbitAngle = (planet.userData.orbitAngle || 0) + baseSpeed;
+                
+                const center = planet.userData.systemCenter;
+                const radius = planet.userData.orbitRadius;
+                const angle = planet.userData.orbitAngle;
+                const inclination = planet.userData.orbitInclination || 0;
+                
+                planet.position.x = center.x + Math.cos(angle) * radius;
+                planet.position.z = center.z + Math.sin(angle) * radius;
+                planet.position.y = center.y + Math.sin(angle * 2) * inclination;
+            }
+        });
+    };
+    
+    console.log('✅ Patched updatePlanetOrbits with spatial optimization');
 }
 
 // =============================================================================
-// INITIALIZATION - Sort objects after scene is created
+// INITIALIZATION
 // =============================================================================
 
 function initializeSpatialOptimization() {
@@ -181,30 +190,25 @@ function initializeSpatialOptimization() {
     
     // Wait for planets to be created
     if (typeof planets === 'undefined' || planets.length === 0) {
-        console.log('   Waiting for planets to be created...');
+        console.log('   Waiting for planets...');
         setTimeout(initializeSpatialOptimization, 1000);
         return;
     }
     
-    // Sort planets by distance from origin
+    // Sort planets by distance
     spatialGrid.sortPlanetsByDistance();
     
-    // Override the original updatePlanetOrbits function
-    if (typeof window.updatePlanetOrbits !== 'undefined') {
-        window._originalUpdatePlanetOrbits = window.updatePlanetOrbits;
-        window.updatePlanetOrbits = updatePlanetOrbitsOptimized;
-        console.log('✅ Replaced updatePlanetOrbits with optimized version');
-    }
+    // Patch the update function
+    patchUpdatePlanetOrbits();
     
-    console.log('✅ Spatial optimization initialized');
+    console.log('✅ Spatial optimization active!');
 }
 
-// Auto-initialize after a delay (to let scene load)
+// Auto-initialize after scene loads
 setTimeout(initializeSpatialOptimization, 3000);
 
 // Export for debugging
 window.spatialGrid = spatialGrid;
-window.updatePlanetOrbitsOptimized = updatePlanetOrbitsOptimized;
 window.initializeSpatialOptimization = initializeSpatialOptimization;
 
 console.log('✅ Spatial Optimization System loaded');
