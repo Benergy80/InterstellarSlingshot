@@ -3575,6 +3575,11 @@ if (enemy.userData.health <= 0) {
         areaClearTracker.onEnemyDestroyed(enemy);
     }
     
+    // Check for species elimination - triggers distress beacon and boss spawn
+    if (typeof distressBeaconSystem !== 'undefined' && distressBeaconSystem.onEnemyDestroyed) {
+        distressBeaconSystem.onEnemyDestroyed(enemy);
+    }
+    
     // Enemy destroyed - NOW create explosion and remove
     createExplosionEffect(enemy.position, 0xff4444, 15);
     playSound('explosion');

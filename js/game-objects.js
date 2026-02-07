@@ -4231,6 +4231,449 @@ const areaClearTracker = {
 window.areaClearTracker = areaClearTracker;
 
 // =============================================================================
+// DISTRESS BEACON SYSTEM - Triggers when species eliminated, leads to boss fight
+// =============================================================================
+const distressBeaconSystem = {
+    // Track which species have had their beacons triggered
+    triggeredSpecies: new Set(),
+    // Track active beacons
+    activeBeacons: [],
+    // Track boss spawn locations
+    bossSpawnLocations: {},
+    // Available outer systems for boss spawns
+    availableOuterSystems: [],
+    
+    // Initialize - called after outer systems are created
+    initialize: function() {
+        // Get list of outer systems for boss spawns
+        if (typeof outerInterstellarSystems !== 'undefined') {
+            this.availableOuterSystems = [...outerInterstellarSystems];
+            console.log(`🚨 Distress Beacon System initialized with ${this.availableOuterSystems.length} potential boss locations`);
+        }
+    },
+    
+    // Check if all regular enemies of a species are eliminated (not bosses/guardians)
+    checkSpeciesEliminated: function(galaxyId) {
+        if (this.triggeredSpecies.has(galaxyId)) return false;
+        
+        if (typeof enemies === 'undefined') return false;
+        
+        // Count remaining regular enemies of this species
+        const remainingEnemies = enemies.filter(e => 
+            e && e.userData && 
+            e.userData.galaxyId === galaxyId &&
+            e.userData.health > 0 &&
+            !e.userData.isBoss &&
+            !e.userData.isBossSupport &&
+            !e.userData.isEliteGuardian &&
+            !e.userData.isDistressBoss // Don't count distress bosses
+        ).length;
+        
+        console.log(`📊 Species ${galaxyId} check: ${remainingEnemies} regular enemies remaining`);
+        
+        return remainingEnemies === 0;
+    },
+    
+    // Trigger distress beacon for a species
+    triggerDistressBeacon: function(galaxyId) {
+        if (this.triggeredSpecies.has(galaxyId)) return;
+        if (typeof galaxyTypes === 'undefined') return;
+        
+        const galaxy = galaxyTypes[galaxyId];
+        if (!galaxy) return;
+        
+        this.triggeredSpecies.add(galaxyId);
+        
+        // Select an outer system for the boss
+        const targetSystem = this.selectOuterSystemForBoss(galaxyId);
+        if (!targetSystem) {
+            console.warn(`⚠️ No available outer system for ${galaxy.faction} boss`);
+            return;
+        }
+        
+        this.bossSpawnLocations[galaxyId] = targetSystem;
+        
+        // Create the distress beacon visual
+        this.createDistressBeacon(galaxyId, targetSystem);
+        
+        // Create the navigation line
+        this.createNavigationLine(galaxyId, targetSystem);
+        
+        // Spawn the boss in the outer system
+        this.spawnDistressBoss(galaxyId, targetSystem);
+        
+        // Show Mission Command transmission
+        this.showDistressTransmission(galaxyId, targetSystem);
+        
+        console.log(`🚨 DISTRESS BEACON: ${galaxy.faction} boss spawned at ${targetSystem.userData.name}`);
+    },
+    
+    // Select an outer system for boss spawn
+    selectOuterSystemForBoss: function(galaxyId) {
+        if (this.availableOuterSystems.length === 0) {
+            // Refill from all outer systems if empty
+            if (typeof outerInterstellarSystems !== 'undefined') {
+                this.availableOuterSystems = outerInterstellarSystems.filter(s => 
+                    !Object.values(this.bossSpawnLocations).includes(s)
+                );
+            }
+        }
+        
+        if (this.availableOuterSystems.length === 0) return null;
+        
+        // Pick a random system and remove it from available
+        const index = Math.floor(Math.random() * this.availableOuterSystems.length);
+        const system = this.availableOuterSystems.splice(index, 1)[0];
+        
+        return system;
+    },
+    
+    // Create visual distress beacon at galaxy center
+    createDistressBeacon: function(galaxyId, targetSystem) {
+        const galaxyCenter = getGalaxy3DPosition(galaxyId);
+        const galaxy = galaxyTypes[galaxyId];
+        
+        const beaconGroup = new THREE.Group();
+        
+        // Pulsing beacon sphere
+        const beaconGeometry = new THREE.SphereGeometry(150, 16, 16);
+        const beaconMaterial = new THREE.MeshBasicMaterial({
+            color: 0xff4444,
+            transparent: true,
+            opacity: 0.8
+        });
+        const beacon = new THREE.Mesh(beaconGeometry, beaconMaterial);
+        beaconGroup.add(beacon);
+        
+        // Outer glow
+        const glowGeometry = new THREE.SphereGeometry(250, 16, 16);
+        const glowMaterial = new THREE.MeshBasicMaterial({
+            color: 0xff6666,
+            transparent: true,
+            opacity: 0.4,
+            blending: THREE.AdditiveBlending
+        });
+        const glow = new THREE.Mesh(glowGeometry, glowMaterial);
+        beaconGroup.add(glow);
+        
+        // Vertical beam
+        const beamGeometry = new THREE.CylinderGeometry(20, 20, 2000, 8);
+        const beamMaterial = new THREE.MeshBasicMaterial({
+            color: 0xff4444,
+            transparent: true,
+            opacity: 0.5,
+            blending: THREE.AdditiveBlending
+        });
+        const beam = new THREE.Mesh(beamGeometry, beamMaterial);
+        beaconGroup.add(beam);
+        
+        beaconGroup.position.copy(galaxyCenter);
+        beaconGroup.userData = {
+            type: 'distress_beacon',
+            galaxyId: galaxyId,
+            faction: galaxy.faction,
+            targetSystem: targetSystem,
+            pulsePhase: 0
+        };
+        
+        scene.add(beaconGroup);
+        this.activeBeacons.push(beaconGroup);
+    },
+    
+    // Create dotted navigation line to outer system
+    createNavigationLine: function(galaxyId, targetSystem) {
+        const galaxyCenter = getGalaxy3DPosition(galaxyId);
+        const targetPosition = targetSystem.position;
+        const galaxy = galaxyTypes[galaxyId];
+        
+        // Create dotted line using points
+        const linePoints = [];
+        const segments = 50;
+        const dashLength = 0.6; // 60% visible, 40% gap
+        
+        for (let i = 0; i <= segments; i++) {
+            const t = i / segments;
+            // Only add points for "visible" segments (dotted effect)
+            if ((i % 2) === 0) {
+                const point = new THREE.Vector3().lerpVectors(galaxyCenter, targetPosition, t);
+                linePoints.push(point);
+                
+                const nextT = Math.min((i + 1) / segments, 1);
+                const nextPoint = new THREE.Vector3().lerpVectors(galaxyCenter, targetPosition, nextT);
+                linePoints.push(nextPoint);
+            }
+        }
+        
+        const lineGeometry = new THREE.BufferGeometry().setFromPoints(linePoints);
+        const lineMaterial = new THREE.LineBasicMaterial({
+            color: galaxy.color || 0xff4444,
+            transparent: true,
+            opacity: 0.8,
+            linewidth: 2
+        });
+        
+        const navigationLine = new THREE.LineSegments(lineGeometry, lineMaterial);
+        navigationLine.userData = {
+            type: 'distress_navigation_line',
+            galaxyId: galaxyId,
+            faction: galaxy.faction
+        };
+        
+        scene.add(navigationLine);
+        
+        // Store reference for cleanup
+        if (!this.navigationLines) this.navigationLines = [];
+        this.navigationLines.push(navigationLine);
+    },
+    
+    // Spawn the faction boss in the outer system
+    spawnDistressBoss: function(galaxyId, targetSystem) {
+        const galaxy = galaxyTypes[galaxyId];
+        const shapeData = enemyShapes[galaxyId];
+        
+        // Boss spawn position - near the system center
+        const systemCenter = targetSystem.position.clone();
+        const bossOffset = new THREE.Vector3(
+            (Math.random() - 0.5) * 500,
+            (Math.random() - 0.5) * 200,
+            (Math.random() - 0.5) * 500
+        );
+        const bossPosition = systemCenter.add(bossOffset);
+        
+        // Create boss geometry (larger)
+        const bossGeometry = createEnemyGeometry(galaxyId);
+        const materials = createEnemyMaterial(shapeData, 'boss', 50000);
+        
+        let boss;
+        if (typeof createEnemyMeshWithModel === 'function') {
+            boss = createEnemyMeshWithModel(galaxyId + 1, bossGeometry, materials.enemyMaterial, 200); // 2x size
+        } else {
+            boss = new THREE.Mesh(bossGeometry, materials.enemyMaterial);
+            boss.scale.set(2, 2, 2);
+        }
+        
+        // Add glow
+        const glowGeometry = bossGeometry.clone();
+        const glow = new THREE.Mesh(glowGeometry, materials.glowMaterial);
+        glow.scale.multiplyScalar(materials.glowScale);
+        glow.userData.isGlowLayer = true;
+        boss.add(glow);
+        
+        boss.position.copy(bossPosition);
+        
+        // Boss userData
+        boss.userData = {
+            name: `${galaxy.faction} Warlord`,
+            type: 'enemy',
+            health: 500, // Tough boss
+            maxHealth: 500,
+            speed: 0.8,
+            aggression: 0.9,
+            patrolCenter: bossPosition.clone(),
+            patrolRadius: 1000,
+            lastAttack: 0,
+            isActive: true,
+            visible: true,
+            galaxyId: galaxyId,
+            galaxyColor: shapeData.color,
+            attackMode: 'aggressive',
+            detectionRange: 3000,
+            firingRange: 400,
+            isLocal: false,
+            isBoss: true,
+            isDistressBoss: true, // Special flag
+            isBossSupport: false,
+            position3D: bossPosition.clone(),
+            outerSystemName: targetSystem.userData.name,
+            hitboxSize: 200
+        };
+        
+        boss.visible = true;
+        boss.frustumCulled = false;
+        
+        scene.add(boss);
+        enemies.push(boss);
+        
+        // Spawn 3-5 support enemies
+        const supportCount = 3 + Math.floor(Math.random() * 3);
+        for (let i = 0; i < supportCount; i++) {
+            this.spawnBossSupport(galaxyId, bossPosition, i);
+        }
+        
+        console.log(`👑 Spawned ${galaxy.faction} Warlord at ${targetSystem.userData.name} with ${supportCount} support ships`);
+    },
+    
+    // Spawn support enemies for the boss
+    spawnBossSupport: function(galaxyId, bossPosition, index) {
+        const galaxy = galaxyTypes[galaxyId];
+        const shapeData = enemyShapes[galaxyId];
+        
+        const angle = (index / 5) * Math.PI * 2;
+        const distance = 300 + Math.random() * 400;
+        const supportPosition = new THREE.Vector3(
+            bossPosition.x + Math.cos(angle) * distance,
+            bossPosition.y + (Math.random() - 0.5) * 100,
+            bossPosition.z + Math.sin(angle) * distance
+        );
+        
+        const supportGeometry = createEnemyGeometry(galaxyId);
+        const materials = createEnemyMaterial(shapeData, 'regular', 50000);
+        
+        let support;
+        if (typeof createEnemyMeshWithModel === 'function') {
+            support = createEnemyMeshWithModel(galaxyId + 1, supportGeometry, materials.enemyMaterial, 96);
+        } else {
+            support = new THREE.Mesh(supportGeometry, materials.enemyMaterial);
+        }
+        
+        support.position.copy(supportPosition);
+        
+        support.userData = {
+            name: `${galaxy.faction} Elite Guard ${index + 1}`,
+            type: 'enemy',
+            health: 150,
+            maxHealth: 150,
+            speed: 1.0,
+            aggression: 0.85,
+            patrolCenter: bossPosition.clone(),
+            patrolRadius: 600,
+            lastAttack: 0,
+            isActive: true,
+            visible: true,
+            galaxyId: galaxyId,
+            galaxyColor: shapeData.color,
+            attackMode: 'defensive',
+            detectionRange: 2000,
+            firingRange: 300,
+            isLocal: false,
+            isBoss: false,
+            isDistressBoss: false,
+            isBossSupport: true,
+            position3D: supportPosition.clone(),
+            hitboxSize: 96
+        };
+        
+        support.visible = true;
+        scene.add(support);
+        enemies.push(support);
+    },
+    
+    // Show Mission Command transmission about distress beacon
+    showDistressTransmission: function(galaxyId, targetSystem) {
+        const galaxy = galaxyTypes[galaxyId];
+        const systemName = targetSystem.userData.name;
+        const systemType = targetSystem.userData.systemType === 'borg_patrol' ? 'Borg Patrol Zone' : 'Exotic System';
+        
+        const message = `🚨 PRIORITY ALERT - DISTRESS BEACON DETECTED 🚨\n\n` +
+            `Captain, you have eliminated all ${galaxy.faction} forces from their stronghold!\n\n` +
+            `However, our sensors detect a ${galaxy.faction} WARLORD has retreated to the ${systemName} in deep space.\n\n` +
+            `This ${systemType} is located at extreme range. The Warlord commands an elite guard and must be destroyed to fully liberate ${galaxy.species} space.\n\n` +
+            `NAVIGATION: Follow the ${galaxy.name} colored beacon line to intercept.\n\n` +
+            `⚠️ WARNING: Expect heavy resistance. The Warlord will not surrender.\n\n` +
+            `Hunt them down, Captain. Finish this.`;
+        
+        if (typeof showMissionCommandTransmission === 'function') {
+            showMissionCommandTransmission(message);
+        } else if (typeof showNotification === 'function') {
+            showNotification(message, 15000);
+        }
+    },
+    
+    // Update beacon visuals (called each frame)
+    updateBeacons: function() {
+        const time = Date.now() * 0.003;
+        
+        this.activeBeacons.forEach(beacon => {
+            if (!beacon || !beacon.userData) return;
+            
+            // Pulse the beacon
+            const pulseFactor = 0.5 + Math.sin(time + beacon.userData.pulsePhase) * 0.5;
+            
+            beacon.children.forEach(child => {
+                if (child.material && child.material.opacity !== undefined) {
+                    if (child.geometry.type === 'SphereGeometry') {
+                        child.material.opacity = 0.4 + pulseFactor * 0.4;
+                    }
+                }
+            });
+            
+            // Rotate the beacon
+            beacon.rotation.y += 0.01;
+        });
+    },
+    
+    // Called when any enemy is destroyed - check for species elimination
+    onEnemyDestroyed: function(enemy) {
+        if (!enemy || !enemy.userData) return;
+        
+        const galaxyId = enemy.userData.galaxyId;
+        if (galaxyId === undefined || galaxyId === null) return;
+        
+        // Don't trigger on boss death
+        if (enemy.userData.isBoss || enemy.userData.isDistressBoss) {
+            // Check if this was a distress boss - show victory!
+            if (enemy.userData.isDistressBoss) {
+                this.onDistressBossDefeated(galaxyId);
+            }
+            return;
+        }
+        
+        // Small delay to let enemy be removed from array
+        setTimeout(() => {
+            if (this.checkSpeciesEliminated(galaxyId)) {
+                this.triggerDistressBeacon(galaxyId);
+            }
+        }, 200);
+    },
+    
+    // Called when a distress boss is defeated
+    onDistressBossDefeated: function(galaxyId) {
+        const galaxy = galaxyTypes[galaxyId];
+        if (!galaxy) return;
+        
+        // Remove beacon and navigation line
+        this.activeBeacons = this.activeBeacons.filter(beacon => {
+            if (beacon.userData.galaxyId === galaxyId) {
+                scene.remove(beacon);
+                return false;
+            }
+            return true;
+        });
+        
+        if (this.navigationLines) {
+            this.navigationLines = this.navigationLines.filter(line => {
+                if (line.userData.galaxyId === galaxyId) {
+                    scene.remove(line);
+                    return false;
+                }
+                return true;
+            });
+        }
+        
+        // Victory transmission
+        const message = `🏆 WARLORD DEFEATED! 🏆\n\n` +
+            `Captain, the ${galaxy.faction} Warlord has been destroyed!\n\n` +
+            `With their military leadership eliminated, the ${galaxy.species} no longer pose a threat to the galaxy.\n\n` +
+            `${galaxy.faction} space is now FULLY LIBERATED!\n\n` +
+            `The universe grows safer thanks to your courage. Mission Command salutes you.\n\n` +
+            `🌟 ${galaxy.faction} - COMPLETELY NEUTRALIZED 🌟`;
+        
+        if (typeof showMissionCommandTransmission === 'function') {
+            showMissionCommandTransmission(message);
+        }
+        
+        // Fireworks!
+        if (typeof createFireworkCelebration === 'function') {
+            createFireworkCelebration();
+        }
+        
+        console.log(`🏆 ${galaxy.faction} WARLORD DEFEATED - Species fully neutralized!`);
+    }
+};
+
+window.distressBeaconSystem = distressBeaconSystem;
+
+// =============================================================================
 // TRADING SHIPS IN NEBULAS - Civilian ships traveling between planets
 // =============================================================================
 const tradingShips = [];

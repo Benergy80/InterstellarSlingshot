@@ -787,6 +787,11 @@ if (typeof areModelsLoaded === 'function' && areModelsLoaded()) {
         createTradingShipsInNebulas();
         console.log('Trading ships created in nebulas');
     }
+    // Initialize distress beacon system (needs outer systems to exist)
+    if (typeof distressBeaconSystem !== 'undefined' && distressBeaconSystem.initialize) {
+        distressBeaconSystem.initialize();
+        console.log('Distress beacon system initialized');
+    }
 } else {
     // Models not loaded yet, wait for them
     console.log('⏳ Models not loaded yet, waiting before creating enemies...');
@@ -809,6 +814,10 @@ if (typeof areModelsLoaded === 'function' && areModelsLoaded()) {
             if (typeof createTradingShipsInNebulas === 'function') {
                 createTradingShipsInNebulas();
             }
+            // Initialize distress beacon system
+            if (typeof distressBeaconSystem !== 'undefined' && distressBeaconSystem.initialize) {
+                distressBeaconSystem.initialize();
+            }
         }).catch(err => {
             console.warn('⚠️ Model loading error, creating enemies with fallback geometry:', err);
             // Even if models fail to load, still create enemies (they'll use fallback geometry)
@@ -827,6 +836,10 @@ if (typeof areModelsLoaded === 'function' && areModelsLoaded()) {
             // Create trading ships in nebulas
             if (typeof createTradingShipsInNebulas === 'function') {
                 createTradingShipsInNebulas();
+            }
+            // Initialize distress beacon system
+            if (typeof distressBeaconSystem !== 'undefined' && distressBeaconSystem.initialize) {
+                distressBeaconSystem.initialize();
             }
         });
     } else {
@@ -1103,6 +1116,11 @@ if (typeof updateOrbitLineVisibility === 'function') {
 // Update trading ships in nebulas
 if (typeof updateTradingShips === 'function') {
     updateTradingShips();
+}
+
+// Update distress beacons (pulsing effect)
+if (typeof distressBeaconSystem !== 'undefined' && distressBeaconSystem.updateBeacons) {
+    distressBeaconSystem.updateBeacons();
 }
     
     // â­ ENHANCED: Animate nebula gas clouds with individual pulsing per cloud
