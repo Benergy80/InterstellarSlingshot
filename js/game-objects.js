@@ -4744,9 +4744,6 @@ function createTradingShip(nebula, index) {
         shipGroup.add(engineR);
     }
     
-    // Scale up ships to be visible at nebula distances (nebulas are 45k-75k units out)
-    shipGroup.scale.multiplyScalar(3);
-    
     // Position within nebula
     const nebulaSize = nebula.userData.size || 1500;
     const orbitRadius = nebulaSize * 0.3 + Math.random() * nebulaSize * 0.4;
@@ -5184,9 +5181,6 @@ function createCivilianShipNearPlanet(planet, index) {
         shipGroup.add(hull);
     }
     
-    // Scale up ships to be visible
-    shipGroup.scale.multiplyScalar(2);
-    
     // Position in orbit around planet
     const planetRadius = planet.userData.radius || 100;
     const orbitRadius = planetRadius * 2 + 50 + Math.random() * 100;
@@ -5262,9 +5256,6 @@ function createMiningShip(belt, index) {
         );
         shipGroup.add(hull);
     }
-    
-    // Scale up ships to be visible
-    shipGroup.scale.multiplyScalar(2.5);
     
     // Position within the belt
     const beltRadius = belt.userData.radius || 500;
@@ -5342,9 +5333,6 @@ function createScienceShip(targetPosition, targetType, index) {
         );
         shipGroup.add(hull);
     }
-    
-    // Scale up ships to be visible
-    shipGroup.scale.multiplyScalar(3);
     
     // Position at safe distance from anomaly
     const safeDistance = targetType === 'black_hole' ? 2000 : 500;
