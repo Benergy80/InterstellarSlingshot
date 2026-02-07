@@ -3327,11 +3327,20 @@ function checkForNebulaDeepDiscovery() {
         const nebulaLore = getNebulaLore(nebulaName);
         const hasNebulaLore = nebulaLore !== null;
         
-        // Use nebula-specific greeting/threat if available, else use faction defaults
+        // Use nebula-specific greeting if available, else use faction default
         const greeting = hasNebulaLore ? nebulaLore.greeting : loreData.greeting;
-        const threat = hasNebulaLore ? nebulaLore.threat : loreData.threat;
-        const backstory = hasNebulaLore ? nebulaLore.backstory : '';
-        const connection = hasNebulaLore ? nebulaLore.connection : loreData.lore;
+        
+        // Combine BOTH faction lore AND nebula-specific lore for maximum story content
+        const factionBackstory = loreData.lore;  // General faction backstory (always shown)
+        const nebulaBackstory = hasNebulaLore ? nebulaLore.backstory : '';  // Nebula's unique history
+        const nebulaConnection = hasNebulaLore ? nebulaLore.connection : '';  // Why this nebula connects to faction
+        
+        // Combine threat assessments - show both if nebula has unique threat
+        const factionThreat = loreData.threat;
+        const nebulaThreat = hasNebulaLore ? nebulaLore.threat : '';
+        const combinedThreat = nebulaThreat && nebulaThreat !== factionThreat 
+            ? `${factionThreat}\n\nLOCAL THREAT: ${nebulaThreat}`
+            : factionThreat;
 
         // GALAXY-FORMATION: Only trigger after all black hole enemies for this galaxy are eliminated
         if (nebulaType === 'galaxy_formation') {
@@ -3397,11 +3406,21 @@ function checkForNebulaDeepDiscovery() {
 
                 playDeepDiscoverySound();
 
-                // Build transmission with nebula-specific lore
+                // Build transmission with BOTH faction lore AND nebula-specific lore
                 let transmissionText = `${greeting}\n\n`;
-                if (backstory) transmissionText += `${backstory}\n\n`;
-                transmissionText += `${connection}\n\n`;
-                transmissionText += `${threat}\n\n`;
+                
+                // Faction backstory (who these enemies are)
+                transmissionText += `${factionBackstory}\n\n`;
+                
+                // Nebula-specific content (if available)
+                if (nebulaBackstory) {
+                    transmissionText += `NEBULA INTELLIGENCE: ${nebulaBackstory}\n\n`;
+                }
+                if (nebulaConnection) {
+                    transmissionText += `LOCAL SITUATION: ${nebulaConnection}\n\n`;
+                }
+                
+                transmissionText += `${combinedThreat}\n\n`;
                 transmissionText += `STRONGHOLD DETECTED: The ${factionName} have fortified their position around the ${galaxyType.name} Galaxy black hole, ` +
                     `preventing interstellar travel through this region. Their command structure and elite forces are concentrated here.\n\n` +
                     `NAVIGATION: Follow the ${colorName} dotted line from ${nebulaName} to their stronghold.\n\n` +
@@ -3446,12 +3465,22 @@ function checkForNebulaDeepDiscovery() {
                             `against civilian shipping lanes.`;
                     }
 
-                    // Build patrol transmission with nebula-specific lore
+                    // Build patrol transmission with BOTH faction lore AND nebula-specific lore
                     let transmissionText = `${greeting}\n\n`;
-                    if (backstory) transmissionText += `${backstory}\n\n`;
+                    
+                    // Faction backstory
+                    transmissionText += `${factionBackstory}\n\n`;
+                    
+                    // Nebula-specific content
+                    if (nebulaBackstory) {
+                        transmissionText += `NEBULA INTELLIGENCE: ${nebulaBackstory}\n\n`;
+                    }
+                    if (nebulaConnection) {
+                        transmissionText += `LOCAL SITUATION: ${nebulaConnection}\n\n`;
+                    }
+                    
                     transmissionText += `PATROL FORCES DETECTED: ${locationInfo}\n\n`;
-                    transmissionText += `${connection}\n\n`;
-                    transmissionText += `${threat}\n\n`;
+                    transmissionText += `${combinedThreat}\n\n`;
                     transmissionText += `NAVIGATION: Follow the ${colorName} dotted line from ${nebulaName} to intercept their patrol routes.\n\n` +
                         `Hunt them down before they find more victims, Captain.`;
 
@@ -3487,13 +3516,23 @@ function checkForNebulaDeepDiscovery() {
 
                 playDeepDiscoverySound();
 
-                // Build remnant transmission with nebula-specific lore
+                // Build remnant transmission with BOTH faction lore AND nebula-specific lore
                 let transmissionText = `${greeting}\n\n`;
-                if (backstory) transmissionText += `${backstory}\n\n`;
+                
+                // Faction backstory
+                transmissionText += `${factionBackstory}\n\n`;
+                
+                // Nebula-specific content
+                if (nebulaBackstory) {
+                    transmissionText += `NEBULA INTELLIGENCE: ${nebulaBackstory}\n\n`;
+                }
+                if (nebulaConnection) {
+                    transmissionText += `LOCAL SITUATION: ${nebulaConnection}\n\n`;
+                }
+                
                 transmissionText += `STRONGHOLD FALLEN: Captain, the ${factionName} black hole stronghold in the ${galaxyType.name} Galaxy has been destroyed! ` +
                     `However, ${remainingTarget.count} ${galaxyType.species} survivors have scattered across the sector and remain dangerous.\n\n`;
-                transmissionText += `${connection}\n\n`;
-                transmissionText += `${threat}\n\n`;
+                transmissionText += `${combinedThreat}\n\n`;
                 transmissionText += `NAVIGATION: Follow the ${colorName} dotted line from the ${nebulaName} to intercept the remaining forces.\n\n` +
                     `Finish what you started, Captain. Leave no threat standing.`;
 
@@ -3540,12 +3579,22 @@ function checkForNebulaDeepDiscovery() {
                         `Their ${galaxyType.species} warriors control this region of space and threaten all who pass through.`;
                 }
 
-                // Build distant/exotic transmission with nebula-specific lore
+                // Build distant/exotic transmission with BOTH faction lore AND nebula-specific lore
                 let transmissionText = `${greeting}\n\n`;
-                if (backstory) transmissionText += `${backstory}\n\n`;
-                transmissionText += `${connection}\n\n`;
+                
+                // Faction backstory
+                transmissionText += `${factionBackstory}\n\n`;
+                
+                // Nebula-specific content
+                if (nebulaBackstory) {
+                    transmissionText += `NEBULA INTELLIGENCE: ${nebulaBackstory}\n\n`;
+                }
+                if (nebulaConnection) {
+                    transmissionText += `LOCAL SITUATION: ${nebulaConnection}\n\n`;
+                }
+                
                 transmissionText += `${locationInfo}\n\n`;
-                transmissionText += `${threat}\n\n`;
+                transmissionText += `${combinedThreat}\n\n`;
                 transmissionText += `NAVIGATION: Follow the ${colorName} dotted line from ${nebulaName} to engage.\n\n` +
                     `The universe is counting on you, Captain.`;
 
