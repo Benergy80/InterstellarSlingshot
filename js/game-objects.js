@@ -541,7 +541,7 @@ const enemyShapes = {
 
 // Enhanced enemy spawning limits per galaxy
 const galaxyEnemyLimits = {
-    0: 12, 1: 15, 2: 10, 3: 13, 4: 8, 5: 14, 6: 18, 7: 16
+    0: 12, 1: 15, 2: 10, 3: 13, 4: 8, 5: 14, 6: 18, 7: 0  // PERF TEST: Vulcan (7) disabled
 };
 
 // FIXED: Boss system initialization - SINGLE DECLARATION
