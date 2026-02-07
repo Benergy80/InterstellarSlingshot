@@ -9483,11 +9483,8 @@ beltGroup.frustumCulled = false; // Don't cull the entire group
             
             scene.add(beltGroup);
 
-// FIXED: Enhanced lighting for better asteroid visibility
-const beltLight = new THREE.PointLight(0xffffff, 5.0, 4000); // FIXED: intensity 3.0→5.0, range 3000→4000
-beltLight.position.copy(galaxyCenter);
-scene.add(beltLight);
-beltGroup.userData.light = beltLight; // Store reference for cleanup
+            // REMOVED: Asteroid belt PointLight for performance
+            // Asteroids use emissive materials for visibility instead
 
             asteroidBelts.push(beltGroup);
         }
@@ -9623,10 +9620,8 @@ function loadAsteroidsForGalaxy(galaxyId) {
         
         scene.add(beltGroup);
         
-        const beltLight = new THREE.PointLight(0xffffff, 3.0, 3000);
-        beltLight.position.copy(galaxyCenter);
-        scene.add(beltLight);
-        beltGroup.userData.light = beltLight;
+        // REMOVED: Asteroid belt PointLight for performance
+        // Asteroids use emissive materials for visibility instead
         
         asteroidBelts.push(beltGroup);
     }
