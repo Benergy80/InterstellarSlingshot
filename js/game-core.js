@@ -237,8 +237,8 @@ function checkCosmicDiscoveries() {
 
 function updateActivePlanets() {
     // PERFORMANCE: Reduced active ranges for better performance
-    const activeRange = gameState.performanceMode === 'minimal' ? 1500 :
-                        gameState.performanceMode === 'optimized' ? 2500 : 3000;
+    const activeRange = gameState.performanceMode === 'minimal' ? 1000 :
+                        gameState.performanceMode === 'optimized' ? 1500 : 2000;
     
     activePlanets = planets.filter(planet => {
         const distance = camera.position.distanceTo(planet.position);
@@ -1842,9 +1842,9 @@ if (typeof checkCosmicFeatureInteractions === 'function' && typeof camera !== 'u
 
 // FIXED: Enhanced orbital mechanics that work for ALL galaxies - ADJUSTED SPEEDS (75% slower)
 function updatePlanetOrbits() {
-    // PERF: Distance culling - only update objects within 3000 units
+    // PERF: Distance culling - only update objects within 2000 units
     const playerPos = camera.position;
-    const CULL_DISTANCE = 3000;
+    const CULL_DISTANCE = 2000;
     
     // PERF DEBUG: Log planet count every 300 frames
     if (gameState.frameCount % 300 === 0) {

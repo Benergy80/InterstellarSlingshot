@@ -1531,7 +1531,7 @@ if (keys.x && gameState.energy > 0) {
     let gravityWellInRange = false;
     
     // PERF: Distance culling constant
-    const GRAVITY_CULL_DISTANCE = 3000;
+    const GRAVITY_CULL_DISTANCE = 2000;
     
     if (typeof activePlanets !== 'undefined') {
         activePlanets.forEach(planet => {

@@ -501,8 +501,8 @@ function generateSphericalGalaxyPositions() {
 // Generate 3D spherical positions for nebula clusters
 function generateSphericalNebulaPositions(clusterCount = 3) {
     const nebulaClusterPositions = [];
-    const minRadius = 15000; // Closer than galaxies
-    const maxRadius = 30000;
+    const minRadius = 20000; // Pushed further from twin cores for performance
+    const maxRadius = 35000;
     
     for (let i = 0; i < clusterCount; i++) {
         const radius = minRadius + Math.random() * (maxRadius - minRadius);
@@ -3053,8 +3053,8 @@ const localGalaxyStarsMaterial = new THREE.PointsMaterial({
 
 const localStarsVertices = [];
 
-// Local galaxy stars (2500 stars in spiral pattern - reduced for performance)
-for (let i = 0; i < 2500; i++) {
+// Local galaxy stars (2000 stars in spiral pattern - reduced for performance)
+for (let i = 0; i < 2000; i++) {
     const armAngle = Math.random() * Math.PI * 2;
     const armDistance = Math.pow(Math.random(), 1.8) * 4000;
     const armWidth = 0.25;
