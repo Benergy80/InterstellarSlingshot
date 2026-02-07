@@ -678,13 +678,14 @@ function createEnemyClusters() {
     console.log(`✅ Created ${nebulaIntelSystem.enemyClusters.length} enemy clusters`);
 }
 
-// Create visual lines from nebulas to their assigned faction's enemy clusters
+// Prepare intel line data but DON'T create visible lines yet
+// Lines only appear when triggered (galaxy cleared)
 function createNebulaIntelLines() {
-    if (typeof nebulaClouds === 'undefined' || typeof scene === 'undefined') return;
+    if (typeof nebulaClouds === 'undefined') return;
     
-    console.log('📡 Creating intel lines from nebulas to enemy clusters...');
+    console.log('📡 Preparing intel line data (lines hidden until triggered)...');
     
-    // Remove existing lines
+    // Clear any existing lines
     nebulaIntelSystem.intelLines.forEach(intel => {
         if (intel.line && intel.line.parent) {
             intel.line.parent.remove(intel.line);
@@ -692,59 +693,10 @@ function createNebulaIntelLines() {
     });
     nebulaIntelSystem.intelLines = [];
     
-    // Get clustered nebulas
-    const clusteredNebulas = nebulaClouds.filter(n => 
-        n && n.userData && !n.userData.isDistant && !n.userData.isExoticCore && n.userData.assignedFaction !== undefined
-    );
+    // Store cluster-nebula relationships but don't create visible lines
+    // Lines will be created by createGalaxyToNebulaLine() when faction is cleared
     
-    clusteredNebulas.forEach((nebula, nebulaIndex) => {
-        const factionId = nebula.userData.assignedFaction;
-        const nebulaColor = nebula.userData.color || new THREE.Color(0x00ffff);
-        
-        // Find clusters for this faction
-        const factionClusters = nebulaIntelSystem.enemyClusters.filter(c => c.galaxyId === factionId);
-        
-        // Create lines to each cluster (max 3 lines per nebula to reduce clutter)
-        const nearestClusters = factionClusters
-            .map(c => ({ cluster: c, dist: nebula.position.distanceTo(c.center) }))
-            .sort((a, b) => a.dist - b.dist)
-            .slice(0, 3);
-        
-        nearestClusters.forEach(({ cluster }) => {
-            // Create line geometry
-            const points = [nebula.position.clone(), cluster.center.clone()];
-            const geometry = new THREE.BufferGeometry().setFromPoints(points);
-            
-            // Line color based on nebula color (will turn white when defeated)
-            const lineMaterial = new THREE.LineBasicMaterial({
-                color: nebulaColor,
-                transparent: true,
-                opacity: 0.6,
-                linewidth: 2
-            });
-            
-            const line = new THREE.Line(geometry, lineMaterial);
-            line.userData = {
-                type: 'intel_line',
-                nebulaId: nebulaIndex,
-                clusterId: cluster.id,
-                factionId: factionId,
-                defeated: false
-            };
-            
-            scene.add(line);
-            cluster.lineObject = line;
-            
-            nebulaIntelSystem.intelLines.push({
-                nebulaId: nebulaIndex,
-                clusterId: cluster.id,
-                line: line,
-                defeated: false
-            });
-        });
-    });
-    
-    console.log(`✅ Created ${nebulaIntelSystem.intelLines.length} intel lines`);
+    console.log(`✅ Intel system ready (lines will appear when factions are cleared)`);
 }
 
 // Check if a cluster is defeated and update line color
@@ -770,21 +722,7 @@ function updateClusterStatus(deadEnemy) {
         if (allDead) {
             cluster.defeated = true;
             
-            // Turn line white
-            if (cluster.lineObject) {
-                cluster.lineObject.material.color.setHex(0xffffff);
-                cluster.lineObject.material.opacity = 0.8;
-                cluster.lineObject.userData.defeated = true;
-            }
-            
-            // Update intel line record
-            nebulaIntelSystem.intelLines.forEach(intel => {
-                if (intel.clusterId === cluster.id) {
-                    intel.defeated = true;
-                }
-            });
-            
-            console.log(`✅ Cluster ${cluster.id} (${galaxyTypes[galaxyId].faction}) defeated - line turned white`);
+            console.log(`✅ Cluster ${cluster.id} (${galaxyTypes[galaxyId].faction}) defeated`);
             
             // Check if all clusters for this faction are defeated
             checkFactionCleared(galaxyId);
