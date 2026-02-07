@@ -778,7 +778,17 @@ const civilianShipRegistry = {
         }
         
         if (model) {
-            model.scale.multiplyScalar(category.scale * 1.0); // Match enemy ship relative size
+            // Normalize model size using bounding box - target ~20 units
+            const box = new THREE.Box3().setFromObject(model);
+            const size = box.getSize(new THREE.Vector3());
+            const maxDimension = Math.max(size.x, size.y, size.z);
+            const targetSize = 20; // All ships normalized to ~20 units
+            
+            if (maxDimension > 0) {
+                const normalizeScale = targetSize / maxDimension;
+                model.scale.multiplyScalar(normalizeScale * category.scale);
+                console.log(`  🚢 ${categoryKey}: normalized from ${maxDimension.toFixed(1)} to ${(targetSize * category.scale).toFixed(1)} units`);
+            }
             
             // Apply visible materials - ships need to glow in dark space
             model.traverse((child) => {
@@ -790,13 +800,13 @@ const civilianShipRegistry = {
                         metalness: 0.5,
                         roughness: 0.4,
                         emissive: oldColor,
-                        emissiveIntensity: 0.4
+                        emissiveIntensity: 0.5
                     });
                 }
             });
             
             // Add a point light so ship is visible
-            const shipLight = new THREE.PointLight(0x6688ff, 1, 150);
+            const shipLight = new THREE.PointLight(0x88aaff, 1.5, 200);
             shipLight.position.set(0, 5, 0);
             model.add(shipLight);
             
