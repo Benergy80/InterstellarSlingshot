@@ -9413,7 +9413,7 @@ function createAsteroidBelts() {
             const beltGroup = new THREE.Group();
             
             // PLENTIFUL: 50-150 asteroids
-            const asteroidCount = 100 + Math.random() * 50;
+            const asteroidCount = 75 + Math.random() * 37; // Reduced 25% for performance
             
             // CLOSER: 800-2000 units from black hole
         	const beltRadius = 1600 + Math.random() * 1000;
@@ -9560,7 +9560,7 @@ function loadAsteroidsForGalaxy(galaxyId) {
     
     for (let b = 0; b < beltCount; b++) {
         const beltGroup = new THREE.Group();
-        const asteroidCount = 50 + Math.random() * 100;
+        const asteroidCount = 37 + Math.random() * 75; // Reduced 25% for performance
         const beltRadius = 1600 + Math.random() * 1000;
         const beltWidth = 400 + Math.random() * 800;
         
