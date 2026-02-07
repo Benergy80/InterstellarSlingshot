@@ -9377,12 +9377,6 @@ function createAsteroidBelts() {
         // FIXED: Find the actual black hole for this galaxy
         const blackHole = blackHoles.find(bh => bh.userData.galaxyId === galaxyIndex);
         
-        // Skip galaxy 8 (Sagittarius A*) - no asteroid belt at galactic center for performance
-        if (galaxyIndex === 8) {
-            console.log('Skipping asteroid belt for Sagittarius A* (galaxy 8) for performance');
-            return;
-        }
-        
         if (!blackHole) {
             console.warn(`No black hole found for galaxy ${galaxyIndex}`);
             return;
@@ -9425,8 +9419,8 @@ function createAsteroidBelts() {
     const scale = 3 + Math.random() * 6; // Was 1-5, now 3-9
     asteroid.scale.setScalar(scale);
     
-    // Enable frustum culling for performance (only render visible asteroids)
-    asteroid.frustumCulled = true;
+    // CRITICAL: Disable frustum culling so distant asteroids stay visible
+    asteroid.frustumCulled = false;
     
     const ringAngle = (j / asteroidCount) * Math.PI * 2 + (Math.random() - 0.5) * 0.3;
     const ringDistance = beltRadius + (Math.random() - 0.5) * beltWidth;
@@ -9566,7 +9560,7 @@ function loadAsteroidsForGalaxy(galaxyId) {
             const asteroid = new THREE.Mesh(geometry, material);
             const scale = 3 + Math.random() * 6;
             asteroid.scale.setScalar(scale);
-            asteroid.frustumCulled = true; // Enable culling for performance
+            asteroid.frustumCulled = false;
             
             const ringAngle = (j / asteroidCount) * Math.PI * 2 + (Math.random() - 0.5) * 0.3;
             const ringDistance = beltRadius + (Math.random() - 0.5) * beltWidth;
