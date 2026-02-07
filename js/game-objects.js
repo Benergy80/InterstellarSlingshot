@@ -6248,6 +6248,8 @@ if (typeof window !== 'undefined') {
     window.createNebulas = createNebulas;
     window.createClusteredNebulas = createClusteredNebulas;
 	window.createSpectacularClusteredNebulas = createSpectacularClusteredNebulas;
+    window.createDistantNebulas = createDistantNebulas;
+    window.createExoticCoreNebulas = createExoticCoreNebulas;
     window.createAsteroidBelts = createAsteroidBelts;
     window.isPositionTooClose = isPositionTooClose;
     

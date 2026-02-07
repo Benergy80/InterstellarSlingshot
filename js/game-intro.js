@@ -1910,10 +1910,22 @@ function setupNormalGameContent() {
         console.log('Outer interstellar systems created');
     }
     
-    // Create nebulas
+    // Create nebulas (all 3 types)
     if (typeof createNebulas === 'function') {
         createNebulas();
-        console.log('☁️ Nebulas created');
+        console.log('☁️ Nebulas created (8 galaxy-formation nebulas)');
+    }
+    
+    // Create distant nebulas (50,000-75,000 units from origin)
+    if (typeof createDistantNebulas === 'function') {
+        createDistantNebulas();
+        console.log('☁️ Distant nebulas created (6 nebulas at 50k-75k units)');
+    }
+    
+    // Create exotic core nebulas (45,000-65,000 units from origin)
+    if (typeof createExoticCoreNebulas === 'function') {
+        createExoticCoreNebulas();
+        console.log('☁️ Exotic core nebulas created (8 nebulas at 45k-65k units)');
     }
     
     // ⭐ ADD THIS NEW SECTION RIGHT HERE:
@@ -1977,6 +1989,16 @@ function setupNormalGameContent() {
         console.log('🎬 Starting game animation during black screen for seamless transition');
         animate(); // Start the normal game loop now
     }
+    
+    // DEBUG: Create red beacons at all nebula positions (wait for nebulas to be created)
+    setTimeout(() => {
+        if (typeof createNebulaDebugBeacons === 'function') {
+            console.log('🔴 DEBUG: Creating nebula position beacons...');
+            createNebulaDebugBeacons();
+        } else {
+            console.warn('⚠️ createNebulaDebugBeacons function not found');
+        }
+    }, 3000); // 3 second delay to ensure all nebulas exist
     
     console.log('✨ Normal game content setup complete with ALL features including cosmic phenomena');
 }
