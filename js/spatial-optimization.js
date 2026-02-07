@@ -146,22 +146,22 @@ function patchUpdatePlanetOrbits() {
         objectsToProcess.forEach(planet => {
             if (!planet || !planet.userData) return;
             
-            // Planet rotation
+            // Planet rotation - MATCH ORIGINAL SPEEDS
             if (planet.rotation && !planet.userData.isLocalStar) {
                 const rotationSpeed = planet.userData.rotationSpeed || 0.02;
                 planet.rotation.y += rotationSpeed;
             }
             
-            // Orbital mechanics
+            // Orbital mechanics - MATCH ORIGINAL SPEEDS FROM game-core.js
             if (planet.userData.orbitRadius > 0 && planet.userData.systemCenter) {
                 let baseSpeed = planet.userData.orbitSpeed || 0.015;
                 
                 if (planet.userData.isLocal) {
-                    baseSpeed *= 3.0;
+                    baseSpeed *= 3.0;  // Match original
                 } else if (planet.userData.isDistant) {
-                    baseSpeed *= 25.0;
+                    baseSpeed *= 25.0; // Match original
                 } else {
-                    baseSpeed *= 8.0;
+                    baseSpeed *= 5.0;  // FIX: Was 8.0, should be 5.0 to match original
                 }
                 
                 planet.userData.orbitAngle = (planet.userData.orbitAngle || 0) + baseSpeed;
