@@ -805,11 +805,7 @@ const civilianShipRegistry = {
                 }
             });
             
-            // Add a point light so ship is visible
-            const shipLight = new THREE.PointLight(0x88aaff, 1.5, 200);
-            shipLight.position.set(0, 5, 0);
-            model.add(shipLight);
-            
+            // No point lights - using emissive materials instead
             return model;
         }
         
@@ -860,15 +856,11 @@ const civilianShipRegistry = {
             if (child.isMesh && child.material && child.material.isMeshStandardMaterial) {
                 const col = child.material.color ? child.material.color.getHex() : 0x888899;
                 child.material.emissive = new THREE.Color(col);
-                child.material.emissiveIntensity = 0.35;
+                child.material.emissiveIntensity = 2.0; // Strong glow
             }
         });
         
-        // Add point light for visibility
-        const shipLight = new THREE.PointLight(0x6688ff, 1, 150);
-        shipLight.position.set(0, 10, 0);
-        shipGroup.add(shipLight);
-        
+        // No point lights - using emissive materials instead
         return shipGroup;
     },
     

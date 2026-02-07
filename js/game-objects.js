@@ -4737,50 +4737,41 @@ function createTradingShip(nebula, index) {
     
     if (typeof civilianShipRegistry !== 'undefined') {
         shipGroup = civilianShipRegistry.getShipMesh(shipCategory);
-        // Enhance registry ships with strong emissive glow
+        // Enhance registry ships with strong emissive glow (no point lights - too many!)
         if (shipGroup) {
             shipGroup.traverse((child) => {
                 if (child.isMesh && child.material) {
-                    child.material.emissive = new THREE.Color(0x4466aa);
-                    child.material.emissiveIntensity = 1.2;
+                    child.material.emissive = new THREE.Color(0x6699cc);
+                    child.material.emissiveIntensity = 2.0;
                 }
             });
-            // Add bright point light
-            const shipLight = new THREE.PointLight(0x6699ff, 2, 300);
-            shipLight.position.set(0, 5, 0);
-            shipGroup.add(shipLight);
         }
     }
     
     // Fallback if no ship created
     if (!shipGroup || shipGroup.children.length === 0) {
-        // Fallback to simple procedural ship with strong glow
+        // Fallback to simple procedural ship with strong emissive glow
         shipGroup = new THREE.Group();
         const hull = new THREE.Mesh(
             new THREE.BoxGeometry(8, 4, 16),
             new THREE.MeshStandardMaterial({ 
-                color: 0x6688bb, 
-                metalness: 0.4, 
-                roughness: 0.3,
-                emissive: 0x4466aa,
-                emissiveIntensity: 1.5
+                color: 0x88aadd, 
+                metalness: 0.3, 
+                roughness: 0.4,
+                emissive: 0x6699cc,
+                emissiveIntensity: 2.5
             })
         );
         shipGroup.add(hull);
         
-        // Engine glow - bright
-        const engineMat = new THREE.MeshBasicMaterial({ color: 0x00ccff, transparent: true, opacity: 1.0 });
+        // Engine glow - MeshBasicMaterial always visible
+        const engineMat = new THREE.MeshBasicMaterial({ color: 0x00ddff });
         const engineL = new THREE.Mesh(new THREE.SphereGeometry(2, 8, 8), engineMat);
         engineL.position.set(-3, 0, 9);
         shipGroup.add(engineL);
         const engineR = new THREE.Mesh(new THREE.SphereGeometry(2, 8, 8), engineMat);
         engineR.position.set(3, 0, 9);
         shipGroup.add(engineR);
-        
-        // Add bright point light so ship glows
-        const shipLight = new THREE.PointLight(0x6699ff, 2.5, 300);
-        shipLight.position.set(0, 3, 0);
-        shipGroup.add(shipLight);
     }
     
     // Position within nebula
@@ -4855,18 +4846,14 @@ function createNebulaShip(nebula, index, shipCategory) {
     
     if (typeof civilianShipRegistry !== 'undefined') {
         shipGroup = civilianShipRegistry.getShipMesh(shipCategory);
-        // Enhance registry ships with strong emissive glow
+        // Enhance registry ships with strong emissive glow (no point lights!)
         if (shipGroup) {
             shipGroup.traverse((child) => {
                 if (child.isMesh && child.material) {
                     child.material.emissive = new THREE.Color(colors.emissive);
-                    child.material.emissiveIntensity = 1.2;
+                    child.material.emissiveIntensity = 2.0;
                 }
             });
-            // Add bright point light
-            const shipLight = new THREE.PointLight(colors.light, 2, 300);
-            shipLight.position.set(0, 5, 0);
-            shipGroup.add(shipLight);
         }
     }
     
@@ -4877,18 +4864,19 @@ function createNebulaShip(nebula, index, shipCategory) {
             new THREE.BoxGeometry(8, 5, 15),
             new THREE.MeshStandardMaterial({ 
                 color: colors.main, 
-                metalness: 0.4, 
-                roughness: 0.3,
+                metalness: 0.3, 
+                roughness: 0.4,
                 emissive: colors.emissive,
-                emissiveIntensity: 1.5
+                emissiveIntensity: 2.5
             })
         );
         shipGroup.add(hull);
         
-        // Add bright point light so ship glows
-        const shipLight = new THREE.PointLight(colors.light, 2.5, 300);
-        shipLight.position.set(0, 4, 0);
-        shipGroup.add(shipLight);
+        // Engine glow - MeshBasicMaterial always visible
+        const engineMat = new THREE.MeshBasicMaterial({ color: colors.light });
+        const engine = new THREE.Mesh(new THREE.SphereGeometry(1.5, 8, 8), engineMat);
+        engine.position.set(0, 0, 8);
+        shipGroup.add(engine);
     }
     
     // Position within nebula
@@ -5370,30 +5358,31 @@ function sendDistressSignal(ship, data) {
     
     console.log(`🆘 DISTRESS: ${shipName}: "${message}"`);
     
-    // Add visual distress indicator (flashing)
-    if (!ship.userData.distressLight) {
-        const distressLight = new THREE.PointLight(0xff0000, 2, 200);
-        distressLight.position.set(0, 10, 0);
-        ship.add(distressLight);
-        ship.userData.distressLight = distressLight;
+    // Add visual distress indicator (flashing beacon, not PointLight)
+    if (!ship.userData.distressBeacon) {
+        const beaconMat = new THREE.MeshBasicMaterial({ color: 0xff0000 });
+        const distressBeacon = new THREE.Mesh(new THREE.SphereGeometry(3, 8, 8), beaconMat);
+        distressBeacon.position.set(0, 10, 0);
+        ship.add(distressBeacon);
+        ship.userData.distressBeacon = distressBeacon;
         
-        // Flash the light
+        // Flash the beacon
         let flashOn = true;
         const flashInterval = setInterval(() => {
-            if (!ship || !ship.userData || !ship.userData.distressLight) {
+            if (!ship || !ship.userData || !ship.userData.distressBeacon) {
                 clearInterval(flashInterval);
                 return;
             }
             flashOn = !flashOn;
-            ship.userData.distressLight.intensity = flashOn ? 2 : 0;
+            ship.userData.distressBeacon.visible = flashOn;
         }, 500);
         
         // Stop flashing after 30 seconds
         setTimeout(() => {
             clearInterval(flashInterval);
-            if (ship && ship.userData && ship.userData.distressLight) {
-                ship.remove(ship.userData.distressLight);
-                ship.userData.distressLight = null;
+            if (ship && ship.userData && ship.userData.distressBeacon) {
+                ship.remove(ship.userData.distressBeacon);
+                ship.userData.distressBeacon = null;
                 ship.userData.inDistress = false;
             }
         }, 30000);
@@ -6302,24 +6291,25 @@ function createSatellite(position, type = 'satellite') {
             sat = satelliteModelCache[modelKey].clone();
             sat.scale.set(2, 2, 2); // Reasonable satellite scale
             
-            // Enhance materials - make visible in space
+            // Enhance materials with strong emissive (no point lights!)
             sat.traverse((child) => {
                 if (child.isMesh && child.material) {
                     child.material = new THREE.MeshStandardMaterial({
-                        color: 0xcccccc,
-                        metalness: 0.7,
+                        color: 0xdddddd,
+                        metalness: 0.5,
                         roughness: 0.3,
-                        emissive: 0x222233,
-                        emissiveIntensity: 0.3
+                        emissive: 0x446688,
+                        emissiveIntensity: 1.5
                     });
                 }
             });
             
-            // Add blinking light
-            const light = new THREE.PointLight(0x00ff00, 0.5, 50);
-            light.position.set(0, 5, 0);
-            sat.add(light);
-            sat.userData.blinkLight = light;
+            // Add blinking beacon (MeshBasicMaterial, not PointLight)
+            const beaconMat = new THREE.MeshBasicMaterial({ color: 0x00ff00 });
+            const beacon = new THREE.Mesh(new THREE.SphereGeometry(0.5, 8, 8), beaconMat);
+            beacon.position.set(0, 5, 0);
+            sat.add(beacon);
+            sat.userData.blinkBeacon = beacon;
         }
     }
     
@@ -6329,22 +6319,22 @@ function createSatellite(position, type = 'satellite') {
         const body = new THREE.Mesh(
             new THREE.BoxGeometry(10, 10, 15),
             new THREE.MeshStandardMaterial({ 
-                color: 0xcccccc, 
-                metalness: 0.6, 
+                color: 0xdddddd, 
+                metalness: 0.5, 
                 roughness: 0.4,
-                emissive: 0x222233,
-                emissiveIntensity: 0.3
+                emissive: 0x446688,
+                emissiveIntensity: 1.5
             })
         );
         sat.add(body);
         
-        // Solar panels - blue glow
+        // Solar panels - blue emissive glow
         const panelMat = new THREE.MeshStandardMaterial({ 
-            color: 0x4488ff, 
-            metalness: 0.5, 
+            color: 0x66aaff, 
+            metalness: 0.4, 
             roughness: 0.3,
-            emissive: 0x2244aa,
-            emissiveIntensity: 0.5
+            emissive: 0x4488dd,
+            emissiveIntensity: 2.0
         });
         const panel1 = new THREE.Mesh(new THREE.BoxGeometry(30, 1, 10), panelMat);
         panel1.position.x = -20;
@@ -6353,11 +6343,12 @@ function createSatellite(position, type = 'satellite') {
         panel2.position.x = 20;
         sat.add(panel2);
         
-        // Add blinking light
-        const light = new THREE.PointLight(0x00ff00, 0.5, 50);
-        light.position.set(0, 8, 0);
-        sat.add(light);
-        sat.userData.blinkLight = light;
+        // Add blinking beacon (MeshBasicMaterial, not PointLight)
+        const beaconMat = new THREE.MeshBasicMaterial({ color: 0x00ff00 });
+        const beacon = new THREE.Mesh(new THREE.SphereGeometry(1, 8, 8), beaconMat);
+        beacon.position.set(0, 8, 0);
+        sat.add(beacon);
+        sat.userData.blinkBeacon = beacon;
     }
     
     sat.position.copy(position);
