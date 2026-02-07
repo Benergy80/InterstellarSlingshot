@@ -2,12 +2,33 @@
 // SET 1: 16 Exotic Core Systems (60,000-75,000 units - Middle Zone) - Supernova/Plasma/Solar Storm cores - ALWAYS VISIBLE
 // SET 2: 12 BORG Patrol Systems (75,000-90,000 units - Outer Zone) - Bright stars with BORG drone patrols
 
-// Helper function for cosmic scale (accesses SCALE_CONFIG from game-objects.js)
+// Helper functions for cosmic scale (accesses SCALE_CONFIG from game-objects.js)
 function getOuterSystemScaledOrbitRadius(baseRadius) {
     const scaleFactor = (typeof SCALE_CONFIG !== 'undefined' && SCALE_CONFIG.orbitRadius) 
         ? SCALE_CONFIG.orbitRadius 
         : 1.0;
     return baseRadius * scaleFactor;
+}
+
+function getOuterSystemScaledStarSize(baseSize) {
+    const scaleFactor = (typeof SCALE_CONFIG !== 'undefined' && SCALE_CONFIG.stars) 
+        ? SCALE_CONFIG.stars 
+        : 1.0;
+    return baseSize * scaleFactor;
+}
+
+function getOuterSystemScaledPlanetSize(baseSize) {
+    const scaleFactor = (typeof SCALE_CONFIG !== 'undefined' && SCALE_CONFIG.planets) 
+        ? SCALE_CONFIG.planets 
+        : 1.0;
+    return baseSize * scaleFactor;
+}
+
+function getOuterSystemScaledCosmicFeatureSize(baseSize) {
+    const scaleFactor = (typeof SCALE_CONFIG !== 'undefined' && SCALE_CONFIG.cosmicFeatures) 
+        ? SCALE_CONFIG.cosmicFeatures 
+        : 1.0;
+    return baseSize * scaleFactor;
 }
 
 // Prevent re-declaration errors from browser cache/hot-reload
@@ -278,7 +299,7 @@ function createBorgSystem(center, systemId) {
 // =============================================================================
 
 function createSystemSupernova(center, systemGroup) {
-    const coreGeo = new THREE.SphereGeometry(80, 32, 32);
+    const coreGeo = new THREE.SphereGeometry(getOuterSystemScaledCosmicFeatureSize(80), 32, 32);
     const coreMat = new THREE.MeshStandardMaterial({
         color: 0xff6600,
         emissive: 0xff6600,
@@ -305,7 +326,7 @@ function createSystemSupernova(center, systemGroup) {
 
     // Glow layers
     for (let i = 0; i < 3; i++) {
-        const size = 120 + i * 60;
+        const size = getOuterSystemScaledCosmicFeatureSize(120 + i * 60);
         const opacity = 0.4 - i * 0.1;
         const glowGeo = new THREE.SphereGeometry(size, 24, 24);
         const glowMat = new THREE.MeshBasicMaterial({
@@ -326,7 +347,7 @@ function createSystemSupernova(center, systemGroup) {
 }
 
 function createSystemPlasmaStorm(center, systemGroup) {
-    const coreGeo = new THREE.SphereGeometry(60, 32, 32);
+    const coreGeo = new THREE.SphereGeometry(getOuterSystemScaledCosmicFeatureSize(60), 32, 32);
     const coreMat = new THREE.MeshStandardMaterial({
         color: 0xaa44ff,
         emissive: 0xaa44ff,
@@ -354,7 +375,7 @@ function createSystemPlasmaStorm(center, systemGroup) {
     // Plasma clouds
     for (let i = 0; i < 5; i++) {
         const angle = (i / 5) * Math.PI * 2;
-        const cloudGeo = new THREE.SphereGeometry(40, 16, 16);
+        const cloudGeo = new THREE.SphereGeometry(getOuterSystemScaledCosmicFeatureSize(40), 16, 16);
         const cloudMat = new THREE.MeshBasicMaterial({
             color: 0x8844ff,
             transparent: true,
@@ -377,7 +398,7 @@ function createSystemPlasmaStorm(center, systemGroup) {
 }
 
 function createSystemSolarStorm(center, systemGroup) {
-    const coreGeo = new THREE.SphereGeometry(70, 32, 32);
+    const coreGeo = new THREE.SphereGeometry(getOuterSystemScaledCosmicFeatureSize(70), 32, 32);
     const coreMat = new THREE.MeshStandardMaterial({
         color: 0xffff00,
         emissive: 0xffff00,
@@ -437,7 +458,7 @@ function createSystemSolarStorm(center, systemGroup) {
 // =============================================================================
 
 function createOrbitingBrownDwarf(center, orbitRadius, index, systemGroup) {
-    const geo = new THREE.SphereGeometry(35, 24, 24);
+    const geo = new THREE.SphereGeometry(getOuterSystemScaledCosmicFeatureSize(35), 24, 24);
     const mat = new THREE.MeshStandardMaterial({
         color: 0x8b4513,
         metalness: 0.3,
@@ -475,7 +496,7 @@ function createOrbitingBrownDwarf(center, orbitRadius, index, systemGroup) {
 }
 
 function createOrbitingPulsar(center, orbitRadius, index, systemGroup) {
-    const coreGeo = new THREE.SphereGeometry(20, 16, 16);
+    const coreGeo = new THREE.SphereGeometry(getOuterSystemScaledCosmicFeatureSize(20), 16, 16);
     const coreMat = new THREE.MeshStandardMaterial({
         color: 0x44eeff,
         emissive: 0x44eeff,
@@ -492,7 +513,7 @@ function createOrbitingPulsar(center, orbitRadius, index, systemGroup) {
         Math.sin(angle) * orbitRadius
     );
 
-    const ringGeo = new THREE.TorusGeometry(40, 3, 8, 32);
+    const ringGeo = new THREE.TorusGeometry(getOuterSystemScaledCosmicFeatureSize(40), getOuterSystemScaledCosmicFeatureSize(3), 8, 32);
     const ringMat = new THREE.MeshBasicMaterial({
         color: 0x88ffff,
         transparent: true,
@@ -566,7 +587,7 @@ function createOrbitingAsteroid(center, orbitRadius, index, systemGroup) {
 // =============================================================================
 
 function createBrightStar(systemGroup, starType) {
-    const starRadius = 100 + Math.random() * 50;
+    const starRadius = getOuterSystemScaledStarSize(100 + Math.random() * 50);
 
     const starGeo = new THREE.SphereGeometry(starRadius, 32, 32);
     const starMat = new THREE.MeshStandardMaterial({
@@ -623,7 +644,7 @@ function createBrightStar(systemGroup, starType) {
 // =============================================================================
 
 function createOrbitingPlanet(systemGroup, orbitRadius, index) {
-    const planetRadius = 20 + Math.random() * 40;
+    const planetRadius = getOuterSystemScaledPlanetSize(20 + Math.random() * 40);
 
     const planetColors = [
         0x8B7355, 0x4A90E2, 0xE86A17, 0x9B59B6,
