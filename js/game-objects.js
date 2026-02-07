@@ -2274,8 +2274,8 @@ const core8GalaxyStarsMaterial = new THREE.PointsMaterial({
 const core8LocalStarsVertices = [];
 const core8LocalStarsColors = [];
 
-// Create 1000 stars in spiral pattern (reduced from 3000 for performance)
-for (let i = 0; i < 1000; i++) {
+// Create 3000 stars in spiral pattern (same as local galaxy)
+for (let i = 0; i < 3000; i++) {
     const armAngle = Math.random() * Math.PI * 2;
     const armDistance = Math.pow(Math.random(), 1.8) * 2000;
     const armWidth = 0.20;
