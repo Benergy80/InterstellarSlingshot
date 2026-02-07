@@ -4737,23 +4737,46 @@ function createTradingShip(nebula, index) {
     
     if (typeof civilianShipRegistry !== 'undefined') {
         shipGroup = civilianShipRegistry.getShipMesh(shipCategory);
-    } else {
+        // Enhance registry ships with emissive for visibility
+        if (shipGroup) {
+            shipGroup.traverse((child) => {
+                if (child.isMesh && child.material) {
+                    child.material.emissive = new THREE.Color(0x222244);
+                    child.material.emissiveIntensity = 0.3;
+                }
+            });
+        }
+    }
+    
+    // Fallback if no ship created
+    if (!shipGroup || shipGroup.children.length === 0) {
         // Fallback to simple procedural ship
         shipGroup = new THREE.Group();
         const hull = new THREE.Mesh(
-            new THREE.BoxGeometry(40, 15, 80),
-            new THREE.MeshStandardMaterial({ color: 0x888899, metalness: 0.6, roughness: 0.4 })
+            new THREE.BoxGeometry(8, 4, 16),
+            new THREE.MeshStandardMaterial({ 
+                color: 0x8888aa, 
+                metalness: 0.6, 
+                roughness: 0.4,
+                emissive: 0x222244,
+                emissiveIntensity: 0.4
+            })
         );
         shipGroup.add(hull);
         
         // Engine glow
-        const engineMat = new THREE.MeshBasicMaterial({ color: 0x00aaff, transparent: true, opacity: 0.8 });
-        const engineL = new THREE.Mesh(new THREE.SphereGeometry(8, 8, 8), engineMat);
-        engineL.position.set(-15, 0, 45);
+        const engineMat = new THREE.MeshBasicMaterial({ color: 0x00aaff, transparent: true, opacity: 0.9 });
+        const engineL = new THREE.Mesh(new THREE.SphereGeometry(1.5, 8, 8), engineMat);
+        engineL.position.set(-3, 0, 9);
         shipGroup.add(engineL);
-        const engineR = new THREE.Mesh(new THREE.SphereGeometry(8, 8, 8), engineMat);
-        engineR.position.set(15, 0, 45);
+        const engineR = new THREE.Mesh(new THREE.SphereGeometry(1.5, 8, 8), engineMat);
+        engineR.position.set(3, 0, 9);
         shipGroup.add(engineR);
+        
+        // Add point light so ship is visible
+        const shipLight = new THREE.PointLight(0x4488ff, 0.5, 100);
+        shipLight.position.set(0, 2, 0);
+        shipGroup.add(shipLight);
     }
     
     // Position within nebula
@@ -4819,15 +4842,38 @@ function createNebulaShip(nebula, index, shipCategory) {
     
     if (typeof civilianShipRegistry !== 'undefined') {
         shipGroup = civilianShipRegistry.getShipMesh(shipCategory);
-    } else {
-        // Fallback to simple procedural ship
+        // Enhance registry ships with emissive for visibility
+        if (shipGroup) {
+            shipGroup.traverse((child) => {
+                if (child.isMesh && child.material) {
+                    child.material.emissive = new THREE.Color(0x222244);
+                    child.material.emissiveIntensity = 0.3;
+                }
+            });
+        }
+    }
+    
+    // Fallback if no ship created
+    if (!shipGroup || shipGroup.children.length === 0) {
         shipGroup = new THREE.Group();
         const color = shipCategory === 'mining' ? 0xaaaa55 : 0x4488ff;
+        const emissiveColor = shipCategory === 'mining' ? 0x444422 : 0x224488;
         const hull = new THREE.Mesh(
             new THREE.BoxGeometry(8, 5, 15),
-            new THREE.MeshStandardMaterial({ color: color, metalness: 0.6, roughness: 0.4 })
+            new THREE.MeshStandardMaterial({ 
+                color: color, 
+                metalness: 0.6, 
+                roughness: 0.4,
+                emissive: emissiveColor,
+                emissiveIntensity: 0.4
+            })
         );
         shipGroup.add(hull);
+        
+        // Add point light so ship is visible
+        const shipLight = new THREE.PointLight(color, 0.5, 100);
+        shipLight.position.set(0, 3, 0);
+        shipGroup.add(shipLight);
     }
     
     // Position within nebula
@@ -5132,10 +5178,8 @@ function hailPlayer(ship, data) {
     const message = civilianShipHails[Math.floor(Math.random() * civilianShipHails.length)];
     const shipName = data.name || 'Civilian Ship';
     
-    // Display hail message
-    if (typeof showAchievement === 'function') {
-        showAchievement(`📡 ${shipName}: "${message}"`);
-    }
+    // Display transmission using Mission Command style UI
+    showIncomingTransmission(shipName, message);
     
     console.log(`📡 ${shipName} hails: "${message}"`);
     data.hasHailedPlayer = true;
@@ -5146,6 +5190,63 @@ function hailPlayer(ship, data) {
     }, 120000); // Can hail again after 2 minutes
 }
 
+// Show incoming transmission with Mission Command style UI
+function showIncomingTransmission(sender, message, isDistress = false) {
+    // Check if transmission container exists, create if not
+    let container = document.getElementById('incomingTransmission');
+    if (!container) {
+        container = document.createElement('div');
+        container.id = 'incomingTransmission';
+        container.style.cssText = `
+            position: fixed;
+            top: 120px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.85);
+            border: 1px solid ${isDistress ? 'rgba(255, 50, 50, 0.7)' : 'rgba(0, 150, 255, 0.5)'};
+            border-radius: 8px;
+            padding: 15px 25px;
+            z-index: 1000;
+            min-width: 300px;
+            max-width: 500px;
+            font-family: 'Orbitron', 'Segoe UI', sans-serif;
+            opacity: 0;
+            transition: opacity 0.3s ease;
+            pointer-events: none;
+        `;
+        document.body.appendChild(container);
+    }
+    
+    // Update styling for distress vs normal
+    container.style.borderColor = isDistress ? 'rgba(255, 50, 50, 0.7)' : 'rgba(0, 150, 255, 0.5)';
+    
+    const titleColor = isDistress ? '#ff4444' : '#00aaff';
+    const icon = isDistress ? '🆘' : '📡';
+    
+    container.innerHTML = `
+        <div style="color: ${titleColor}; font-size: 12px; text-transform: uppercase; letter-spacing: 2px; margin-bottom: 8px;">
+            ${icon} Incoming Transmission
+        </div>
+        <div style="color: #88ccff; font-size: 14px; font-weight: bold; margin-bottom: 5px;">
+            ${sender}
+        </div>
+        <div style="color: #ccddff; font-size: 13px; font-style: italic; line-height: 1.4;">
+            "${message}"
+        </div>
+    `;
+    
+    // Show with fade in
+    container.style.opacity = '1';
+    
+    // Auto-hide after delay
+    const hideDelay = isDistress ? 6000 : 4000;
+    setTimeout(() => {
+        container.style.opacity = '0';
+    }, hideDelay);
+}
+
+window.showIncomingTransmission = showIncomingTransmission;
+
 function sendDistressSignal(ship, data) {
     const message = distressMessages[Math.floor(Math.random() * distressMessages.length)];
     const shipName = data.name || 'Civilian Ship';
@@ -5153,10 +5254,8 @@ function sendDistressSignal(ship, data) {
     // Mark ship as in distress
     data.inDistress = true;
     
-    // Display distress message
-    if (typeof showAchievement === 'function') {
-        showAchievement(`🆘 ${shipName}: "${message}"`);
-    }
+    // Display distress message using Mission Command style
+    showIncomingTransmission(shipName, message, true);
     
     console.log(`🆘 DISTRESS: ${shipName}: "${message}"`);
     
@@ -5637,9 +5736,8 @@ function hailPlayerCivilian(ship, data) {
     const message = messages[Math.floor(Math.random() * messages.length)];
     const shipName = data.name || 'Civilian Ship';
     
-    if (typeof showAchievement === 'function') {
-        showAchievement(`📡 ${shipName}: "${message}"`);
-    }
+    // Use Mission Command style transmission UI
+    showIncomingTransmission(shipName, message);
     
     console.log(`📡 ${shipName} hails: "${message}"`);
     data.hasHailedPlayer = true;
@@ -6093,16 +6191,24 @@ function createSatellite(position, type = 'satellite') {
             sat = satelliteModelCache[modelKey].clone();
             sat.scale.set(2, 2, 2); // Reasonable satellite scale
             
-            // Enhance materials
+            // Enhance materials - make visible in space
             sat.traverse((child) => {
                 if (child.isMesh && child.material) {
-                    if (child.material.isMeshStandardMaterial) {
-                        child.material.metalness = 0.8;
-                        child.material.roughness = 0.3;
-                        child.material.envMapIntensity = 1.5;
-                    }
+                    child.material = new THREE.MeshStandardMaterial({
+                        color: 0xcccccc,
+                        metalness: 0.7,
+                        roughness: 0.3,
+                        emissive: 0x222233,
+                        emissiveIntensity: 0.3
+                    });
                 }
             });
+            
+            // Add blinking light
+            const light = new THREE.PointLight(0x00ff00, 0.5, 50);
+            light.position.set(0, 5, 0);
+            sat.add(light);
+            sat.userData.blinkLight = light;
         }
     }
     
@@ -6111,18 +6217,36 @@ function createSatellite(position, type = 'satellite') {
         sat = new THREE.Group();
         const body = new THREE.Mesh(
             new THREE.BoxGeometry(10, 10, 15),
-            new THREE.MeshStandardMaterial({ color: 0xaaaaaa, metalness: 0.7, roughness: 0.4 })
+            new THREE.MeshStandardMaterial({ 
+                color: 0xcccccc, 
+                metalness: 0.6, 
+                roughness: 0.4,
+                emissive: 0x222233,
+                emissiveIntensity: 0.3
+            })
         );
         sat.add(body);
         
-        // Solar panels
-        const panelMat = new THREE.MeshStandardMaterial({ color: 0x2244aa, metalness: 0.5, roughness: 0.3 });
+        // Solar panels - blue glow
+        const panelMat = new THREE.MeshStandardMaterial({ 
+            color: 0x4488ff, 
+            metalness: 0.5, 
+            roughness: 0.3,
+            emissive: 0x2244aa,
+            emissiveIntensity: 0.5
+        });
         const panel1 = new THREE.Mesh(new THREE.BoxGeometry(30, 1, 10), panelMat);
         panel1.position.x = -20;
         sat.add(panel1);
         const panel2 = new THREE.Mesh(new THREE.BoxGeometry(30, 1, 10), panelMat);
         panel2.position.x = 20;
         sat.add(panel2);
+        
+        // Add blinking light
+        const light = new THREE.PointLight(0x00ff00, 0.5, 50);
+        light.position.set(0, 8, 0);
+        sat.add(light);
+        sat.userData.blinkLight = light;
     }
     
     sat.position.copy(position);
