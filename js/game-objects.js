@@ -2227,7 +2227,7 @@ const core8Distance = (400 + Math.random() * 220) * (Math.random() < 0.5 ? 1 : -
     name: 'Companion Core', // RENAMED from "Twin Galactic Core"
     type: 'blackhole',
     mass: 2800, // Smaller mass than Sagittarius A*
-    gravity: 150.0,
+    gravity: 0, // DISABLED for performance testing (was 150.0)
     warpThreshold: 80,
     isGalacticCore: true,
     isCompanionCore: true, // New flag

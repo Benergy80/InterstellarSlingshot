@@ -1282,10 +1282,10 @@ if (gameState.frameCount % 60 === 0 && typeof outerInterstellarSystems !== 'unde
     });
 }
     
-// Pulse enemy glow for visibility - OPTIMIZED: Only nearby enemies
+// Pulse enemy glow for visibility - DISABLED FOR PERFORMANCE TESTING
 // UPDATED: Handle both simple meshes and GLB model Groups
 // FIXED: Never go completely dark - maintain minimum visibility
-if (typeof enemies !== 'undefined' && enemies.length > 0 && gameState.frameCount % 2 === 0) {
+if (false && typeof enemies !== 'undefined' && enemies.length > 0 && gameState.frameCount % 2 === 0) {
     const pulseTime = Date.now() * 0.003; // Slightly faster pulse
     const pulseFactor = 0.5 + Math.sin(pulseTime) * 0.5; // 0.0 to 1.0
     
