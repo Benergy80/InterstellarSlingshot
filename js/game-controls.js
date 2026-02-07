@@ -449,7 +449,7 @@ function calculateDifficultySettings() {
     const baseSettings = {
         // Local galaxy settings (progressive difficulty) - MAX 3 HITS
         maxLocalAttackers: Math.min(3 + galaxiesCleared, 8), // Start with 3, +1 per galaxy cleared, max 8
-        localSpeedMultiplier: 0.5 + (galaxiesCleared * 0.1), // Start slow, get faster
+        localSpeedMultiplier: 0.8 + (galaxiesCleared * 0.05), // INCREASED: Faster pursuit from the start
         localHealthMultiplier: galaxiesCleared === 0 ? 1 : Math.min(1 + galaxiesCleared * 0.25, 3), // MAX 3 hits
         localDetectionRange: 3500 + (galaxiesCleared * 300), // Long detection for pursuit
         localFiringRange: 150 + (galaxiesCleared * 25),  // Must get close to fire
