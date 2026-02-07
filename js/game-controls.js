@@ -3513,13 +3513,16 @@ function checkWeaponHits(targetPosition) {
 
     // Check BORG drone hits (from outer interstellar systems)
     if (typeof outerInterstellarSystems !== 'undefined') {
+        const droneWorldPos = new THREE.Vector3();
         outerInterstellarSystems.forEach(system => {
             if (!system.userData || !system.userData.drones) return;
 
             system.userData.drones.forEach((drone, droneIndex) => {
                 if (drone.userData.health <= 0) return;
 
-                const distance = drone.position.distanceTo(targetPosition);
+                // FIXED: Use world position for hit detection (drones are children of system group)
+                drone.getWorldPosition(droneWorldPos);
+                const distance = droneWorldPos.distanceTo(targetPosition);
                 if (distance < hitRadius) { // Normal hit radius
                     const damage = 1;
                     drone.userData.health -= damage;
@@ -3531,12 +3534,13 @@ function checkWeaponHits(targetPosition) {
                     if (drone.userData.health <= 0) {
                         // BORG cube destroyed - MASSIVE EXPLOSION scaled to cube size!
                         const cubeSize = drone.userData.cubeSize || 30;
-                        createMassiveBorgExplosion(drone.position, cubeSize);
+                        drone.getWorldPosition(droneWorldPos); // Get world pos for explosion
+                        createMassiveBorgExplosion(droneWorldPos, cubeSize);
                         playSound('explosion');
                         showAchievement('BORG CUBE DESTROYED!', `${drone.userData.name} eliminated!`);
 
                         // Remove from scene and array
-                        scene.remove(drone);
+                        drone.parent.remove(drone); // Remove from parent (system group)
                         system.userData.drones.splice(droneIndex, 1);
                         const orbiterIndex = system.userData.orbiters.indexOf(drone);
                         if (orbiterIndex > -1) {
