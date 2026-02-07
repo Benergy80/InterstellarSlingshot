@@ -1990,15 +1990,7 @@ function setupNormalGameContent() {
         animate(); // Start the normal game loop now
     }
     
-    // DEBUG: Create red beacons at all nebula positions (wait for nebulas to be created)
-    setTimeout(() => {
-        if (typeof createNebulaDebugBeacons === 'function') {
-            console.log('🔴 DEBUG: Creating nebula position beacons...');
-            createNebulaDebugBeacons();
-        } else {
-            console.warn('⚠️ createNebulaDebugBeacons function not found');
-        }
-    }, 3000); // 3 second delay to ensure all nebulas exist
+    // Debug beacons removed - nebulas now have proper fade-in visibility
     
     console.log('✨ Normal game content setup complete with ALL features including cosmic phenomena');
 }

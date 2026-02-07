@@ -910,13 +910,7 @@ if (typeof enhanceCosmicFeaturesForGameplay === 'function') {
     }, 500); // Small delay to ensure all features are created
 }
 
-// DEBUG: Create red beacons at all nebula positions (wait for all nebulas to be created)
-setTimeout(() => {
-    if (typeof createNebulaDebugBeacons === 'function') {
-        console.log('🔴 DEBUG: Creating nebula position beacons...');
-        createNebulaDebugBeacons();
-    }
-}, 5000); // Wait 5 seconds for all nebula layers to complete
+// Debug beacons removed - nebulas now have proper fade-in visibility
             // Create orbit lines after planets exist
             setTimeout(() => {
     createOrbitLines();
