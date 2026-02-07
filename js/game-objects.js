@@ -816,6 +816,9 @@ function checkFactionCleared(galaxyId) {
 function showFactionClearedMission(faction, nebulaName, galaxyId) {
     console.log(`🎖️ ${faction.faction} forces cleared! Directing to ${nebulaName}`);
     
+    // Create line from galaxy black hole to tracking nebula
+    createGalaxyToNebulaLine(galaxyId);
+    
     // Use the existing mission command alert system
     if (typeof showMissionCommandAlert === 'function') {
         const title = `${faction.faction.toUpperCase()} FORCES NEUTRALIZED`;
@@ -837,6 +840,78 @@ function showFactionClearedMission(faction, nebulaName, galaxyId) {
             checkAndSpawnAreaBosses();
         }, 5000); // Delay boss spawn by 5 seconds for dramatic effect
     }
+}
+
+// Create a line from galaxy black hole to the nebula tracking that faction
+function createGalaxyToNebulaLine(galaxyId) {
+    if (typeof scene === 'undefined' || typeof planets === 'undefined' || typeof nebulaClouds === 'undefined') {
+        console.warn('Cannot create galaxy-nebula line: missing scene/planets/nebulaClouds');
+        return;
+    }
+    
+    // Find the galaxy's black hole
+    const galaxyBlackHole = planets.find(p => 
+        p.userData && 
+        p.userData.type === 'blackhole' && 
+        p.userData.isGalacticCore && 
+        p.userData.galaxyId === galaxyId
+    );
+    
+    if (!galaxyBlackHole) {
+        console.warn(`No black hole found for galaxy ${galaxyId}`);
+        return;
+    }
+    
+    // Find the nebula tracking this faction
+    const trackingNebula = nebulaClouds.find(n => 
+        n && n.userData && n.userData.assignedFaction === galaxyId
+    );
+    
+    if (!trackingNebula) {
+        console.warn(`No nebula tracking faction ${galaxyId}`);
+        return;
+    }
+    
+    const faction = galaxyTypes[galaxyId];
+    
+    // Create line from black hole to nebula
+    const points = [galaxyBlackHole.position.clone(), trackingNebula.position.clone()];
+    const geometry = new THREE.BufferGeometry().setFromPoints(points);
+    
+    // Use faction color with pulsing glow effect
+    const lineMaterial = new THREE.LineBasicMaterial({
+        color: faction.color,
+        transparent: true,
+        opacity: 0.8,
+        linewidth: 3
+    });
+    
+    const line = new THREE.Line(geometry, lineMaterial);
+    line.userData = {
+        type: 'galaxy_intel_line',
+        galaxyId: galaxyId,
+        factionName: faction.faction,
+        nebulaName: trackingNebula.userData.name
+    };
+    
+    scene.add(line);
+    
+    // Store in intel system
+    if (!nebulaIntelSystem.galaxyLines) {
+        nebulaIntelSystem.galaxyLines = [];
+    }
+    nebulaIntelSystem.galaxyLines.push({
+        galaxyId: galaxyId,
+        line: line,
+        blackHole: galaxyBlackHole,
+        nebula: trackingNebula
+    });
+    
+    console.log(`📡 Created intel line: ${faction.faction} Galaxy → ${trackingNebula.userData.name}`);
+}
+
+// Export the new function
+window.createGalaxyToNebulaLine = createGalaxyToNebulaLine;
 }
 
 // Initialize the intel system (call after nebulas and enemies are created)
