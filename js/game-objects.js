@@ -850,7 +850,6 @@ function createGalaxyToNebulaLine(galaxyId) {
 
 // Export the new function
 window.createGalaxyToNebulaLine = createGalaxyToNebulaLine;
-}
 
 // Initialize the intel system (call after nebulas and enemies are created)
 function initializeNebulaIntelSystem() {
