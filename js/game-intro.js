@@ -2477,38 +2477,22 @@ function playCountdownTone(number) {
         oscillator.connect(gain);
         gain.connect(audioContext.destination);
         
-        // Two-tone beep: base tone + harmonic
-        // Pitch rises as countdown gets lower (building urgency)
-        const baseFreq = 600 + (10 - number) * 40;  // 600Hz to 960Hz
+        // NASA-style consistent beep - 1000Hz (classic mission control tone)
+        // Same pitch every time for that authentic countdown feel
+        const baseFreq = 1000;  // Fixed 1kHz tone
         oscillator.frequency.setValueAtTime(baseFreq, audioContext.currentTime);
         
         // Clean sine wave for clarity
         oscillator.type = 'sine';
         
-        // Quick, punchy envelope
-        gain.gain.setValueAtTime(0, audioContext.currentTime);
-        gain.gain.linearRampToValueAtTime(0.12, audioContext.currentTime + 0.01);  // Quick attack
-        gain.gain.setValueAtTime(0.12, audioContext.currentTime + 0.08);  // Hold
-        gain.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + 0.2);  // Decay
+        // Short, clean beep - NASA style
+        const beepDuration = 0.1;  // 100ms beep
+        gain.gain.setValueAtTime(0.15, audioContext.currentTime);  // Immediate start
+        gain.gain.setValueAtTime(0.15, audioContext.currentTime + beepDuration - 0.01);  // Hold
+        gain.gain.linearRampToValueAtTime(0, audioContext.currentTime + beepDuration);  // Quick cutoff
         
         oscillator.start(audioContext.currentTime);
-        oscillator.stop(audioContext.currentTime + 0.2);
-        
-        // Add subtle harmonic overtone
-        const harmonic = audioContext.createOscillator();
-        const harmonicGain = audioContext.createGain();
-        harmonic.connect(harmonicGain);
-        harmonicGain.connect(audioContext.destination);
-        
-        harmonic.frequency.setValueAtTime(baseFreq * 2, audioContext.currentTime);  // Octave up
-        harmonic.type = 'sine';
-        
-        harmonicGain.gain.setValueAtTime(0, audioContext.currentTime);
-        harmonicGain.gain.linearRampToValueAtTime(0.04, audioContext.currentTime + 0.01);
-        harmonicGain.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + 0.15);
-        
-        harmonic.start(audioContext.currentTime);
-        harmonic.stop(audioContext.currentTime + 0.15);
+        oscillator.stop(audioContext.currentTime + beepDuration);
     } catch (e) {
         console.warn('Countdown tone error:', e);
     }
