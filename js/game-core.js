@@ -1842,6 +1842,13 @@ if (typeof checkCosmicFeatureInteractions === 'function' && typeof camera !== 'u
 
 // FIXED: Enhanced orbital mechanics that work for ALL galaxies - ADJUSTED SPEEDS (75% slower)
 function updatePlanetOrbits() {
+    // PERF DEBUG: Log planet count every 300 frames
+    if (gameState.frameCount % 300 === 0) {
+        const playerPos = camera.position;
+        const nearbyCount = planets.filter(p => p && p.position && playerPos.distanceTo(p.position) < 5000).length;
+        console.log(`📊 PERF: ${planets.length} total planets, ${nearbyCount} within 5000 units`);
+    }
+    
     planets.forEach((planet) => {
         // Skip if planet is destroyed or doesn't exist
         if (!planet || !planet.userData) return;
