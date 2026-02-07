@@ -1196,7 +1196,8 @@ if (typeof distressBeaconSystem !== 'undefined' && distressBeaconSystem.updateBe
 }
     
     // â­ ENHANCED: Animate nebula gas clouds with individual pulsing per cloud
-if (typeof nebulaGasClouds !== 'undefined' && nebulaGasClouds.length > 0) {
+// PERF TEST: Nebula gas cloud animation disabled
+if (false && typeof nebulaGasClouds !== 'undefined' && nebulaGasClouds.length > 0) {
     // OPTIMIZATION: Cache Date.now() once per frame instead of per cloud
     const currentTime = Date.now();
 
@@ -1234,7 +1235,8 @@ if (typeof nebulaGasClouds !== 'undefined' && nebulaGasClouds.length > 0) {
     });
 }
 
-// NEW: Animate asteroid belts rotation
+// PERF TEST: Asteroid belt rotation disabled
+/*
 if (typeof asteroidBelts !== 'undefined' && asteroidBelts.length > 0) {
     asteroidBelts.forEach(belt => {
         if (belt.userData.rotationSpeed && belt.rotation) {
@@ -1242,6 +1244,7 @@ if (typeof asteroidBelts !== 'undefined' && asteroidBelts.length > 0) {
         }
     });
 }
+*/
 
     // Update interstellar asteroid fields
     if (typeof updateInterstellarAsteroids === 'function') {
