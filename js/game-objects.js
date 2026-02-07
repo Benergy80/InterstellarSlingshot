@@ -564,6 +564,302 @@ const bossSystem = {
 const lastKillPositions = {};
 
 // =============================================================================
+// NEBULA INTEL SYSTEM - Track enemy clusters and display lines to hostiles
+// =============================================================================
+
+const nebulaIntelSystem = {
+    // Nebula-to-faction assignments
+    nebulaFactions: {}, // nebulaId -> galaxyId (faction)
+    
+    // Enemy clusters - groups of enemies with center points
+    enemyClusters: [], // { id, galaxyId, center, enemies[], defeated, lineObject }
+    
+    // Lines from nebulas to clusters
+    intelLines: [], // { nebulaId, clusterId, line, defeated }
+    
+    initialized: false
+};
+
+// Assign each nebula to track a specific faction
+function assignFactionsToNebulas() {
+    if (typeof nebulaClouds === 'undefined' || nebulaClouds.length === 0) {
+        console.log('No nebulas found for faction assignment');
+        return;
+    }
+    
+    console.log('📡 Assigning factions to nebulas for intel tracking...');
+    
+    // Get clustered nebulas (not distant/exotic - those have their own assignments)
+    const clusteredNebulas = nebulaClouds.filter(n => 
+        n && n.userData && !n.userData.isDistant && !n.userData.isExoticCore
+    );
+    
+    // Distribute 8 factions across nebulas
+    clusteredNebulas.forEach((nebula, index) => {
+        const factionId = index % 8; // Cycle through 8 galaxy factions
+        nebula.userData.assignedFaction = factionId;
+        nebula.userData.factionName = galaxyTypes[factionId].faction;
+        nebula.userData.factionColor = galaxyTypes[factionId].color;
+        
+        nebulaIntelSystem.nebulaFactions[index] = factionId;
+        
+        console.log(`  📡 ${nebula.userData.name} → ${galaxyTypes[factionId].faction} (Galaxy ${factionId})`);
+    });
+    
+    nebulaIntelSystem.initialized = true;
+}
+
+// Create enemy clusters - groups of enemies by faction and proximity
+function createEnemyClusters() {
+    if (typeof enemies === 'undefined' || enemies.length === 0) return;
+    
+    console.log('📍 Creating enemy clusters for intel lines...');
+    
+    // Clear existing clusters
+    nebulaIntelSystem.enemyClusters = [];
+    
+    // Group enemies by faction (galaxyId)
+    const factionEnemies = {};
+    enemies.forEach(enemy => {
+        if (!enemy.userData || enemy.userData.health <= 0) return;
+        if (enemy.userData.isBoss || enemy.userData.isBossSupport) return;
+        
+        const galaxyId = enemy.userData.galaxyId;
+        if (galaxyId === undefined || galaxyId < 0) return;
+        
+        if (!factionEnemies[galaxyId]) {
+            factionEnemies[galaxyId] = [];
+        }
+        factionEnemies[galaxyId].push(enemy);
+    });
+    
+    // For each faction, create clusters based on proximity (max 3000 units apart)
+    const clusterRadius = 3000;
+    let clusterId = 0;
+    
+    Object.keys(factionEnemies).forEach(galaxyId => {
+        const factionList = factionEnemies[galaxyId];
+        const assigned = new Set();
+        
+        factionList.forEach(enemy => {
+            if (assigned.has(enemy)) return;
+            
+            // Start a new cluster with this enemy
+            const cluster = {
+                id: clusterId++,
+                galaxyId: parseInt(galaxyId),
+                enemies: [enemy],
+                center: enemy.position.clone(),
+                defeated: false,
+                lineObject: null
+            };
+            assigned.add(enemy);
+            
+            // Find nearby enemies to add to cluster
+            factionList.forEach(otherEnemy => {
+                if (assigned.has(otherEnemy)) return;
+                if (enemy.position.distanceTo(otherEnemy.position) < clusterRadius) {
+                    cluster.enemies.push(otherEnemy);
+                    assigned.add(otherEnemy);
+                }
+            });
+            
+            // Calculate cluster center
+            if (cluster.enemies.length > 1) {
+                const centerSum = new THREE.Vector3();
+                cluster.enemies.forEach(e => centerSum.add(e.position));
+                cluster.center = centerSum.divideScalar(cluster.enemies.length);
+            }
+            
+            nebulaIntelSystem.enemyClusters.push(cluster);
+        });
+    });
+    
+    console.log(`✅ Created ${nebulaIntelSystem.enemyClusters.length} enemy clusters`);
+}
+
+// Create visual lines from nebulas to their assigned faction's enemy clusters
+function createNebulaIntelLines() {
+    if (typeof nebulaClouds === 'undefined' || typeof scene === 'undefined') return;
+    
+    console.log('📡 Creating intel lines from nebulas to enemy clusters...');
+    
+    // Remove existing lines
+    nebulaIntelSystem.intelLines.forEach(intel => {
+        if (intel.line && intel.line.parent) {
+            intel.line.parent.remove(intel.line);
+        }
+    });
+    nebulaIntelSystem.intelLines = [];
+    
+    // Get clustered nebulas
+    const clusteredNebulas = nebulaClouds.filter(n => 
+        n && n.userData && !n.userData.isDistant && !n.userData.isExoticCore && n.userData.assignedFaction !== undefined
+    );
+    
+    clusteredNebulas.forEach((nebula, nebulaIndex) => {
+        const factionId = nebula.userData.assignedFaction;
+        const nebulaColor = nebula.userData.color || new THREE.Color(0x00ffff);
+        
+        // Find clusters for this faction
+        const factionClusters = nebulaIntelSystem.enemyClusters.filter(c => c.galaxyId === factionId);
+        
+        // Create lines to each cluster (max 3 lines per nebula to reduce clutter)
+        const nearestClusters = factionClusters
+            .map(c => ({ cluster: c, dist: nebula.position.distanceTo(c.center) }))
+            .sort((a, b) => a.dist - b.dist)
+            .slice(0, 3);
+        
+        nearestClusters.forEach(({ cluster }) => {
+            // Create line geometry
+            const points = [nebula.position.clone(), cluster.center.clone()];
+            const geometry = new THREE.BufferGeometry().setFromPoints(points);
+            
+            // Line color based on nebula color (will turn white when defeated)
+            const lineMaterial = new THREE.LineBasicMaterial({
+                color: nebulaColor,
+                transparent: true,
+                opacity: 0.6,
+                linewidth: 2
+            });
+            
+            const line = new THREE.Line(geometry, lineMaterial);
+            line.userData = {
+                type: 'intel_line',
+                nebulaId: nebulaIndex,
+                clusterId: cluster.id,
+                factionId: factionId,
+                defeated: false
+            };
+            
+            scene.add(line);
+            cluster.lineObject = line;
+            
+            nebulaIntelSystem.intelLines.push({
+                nebulaId: nebulaIndex,
+                clusterId: cluster.id,
+                line: line,
+                defeated: false
+            });
+        });
+    });
+    
+    console.log(`✅ Created ${nebulaIntelSystem.intelLines.length} intel lines`);
+}
+
+// Check if a cluster is defeated and update line color
+function updateClusterStatus(deadEnemy) {
+    if (!nebulaIntelSystem.initialized) return;
+    
+    const galaxyId = deadEnemy.userData.galaxyId;
+    
+    // Find cluster containing this enemy
+    nebulaIntelSystem.enemyClusters.forEach(cluster => {
+        if (cluster.defeated) return;
+        if (cluster.galaxyId !== galaxyId) return;
+        
+        // Check if enemy was in this cluster
+        const enemyIndex = cluster.enemies.indexOf(deadEnemy);
+        if (enemyIndex === -1) return;
+        
+        // Check if all enemies in cluster are dead
+        const allDead = cluster.enemies.every(e => 
+            !e.userData || e.userData.health <= 0
+        );
+        
+        if (allDead) {
+            cluster.defeated = true;
+            
+            // Turn line white
+            if (cluster.lineObject) {
+                cluster.lineObject.material.color.setHex(0xffffff);
+                cluster.lineObject.material.opacity = 0.8;
+                cluster.lineObject.userData.defeated = true;
+            }
+            
+            // Update intel line record
+            nebulaIntelSystem.intelLines.forEach(intel => {
+                if (intel.clusterId === cluster.id) {
+                    intel.defeated = true;
+                }
+            });
+            
+            console.log(`✅ Cluster ${cluster.id} (${galaxyTypes[galaxyId].faction}) defeated - line turned white`);
+            
+            // Check if all clusters for this faction are defeated
+            checkFactionCleared(galaxyId);
+        }
+    });
+}
+
+// Check if all enemies of a faction are cleared in an area
+function checkFactionCleared(galaxyId) {
+    const factionClusters = nebulaIntelSystem.enemyClusters.filter(c => c.galaxyId === galaxyId);
+    const allCleared = factionClusters.every(c => c.defeated);
+    
+    if (allCleared && factionClusters.length > 0) {
+        const faction = galaxyTypes[galaxyId];
+        
+        // Find nearest nebula tracking this faction
+        const trackingNebula = nebulaClouds.find(n => 
+            n && n.userData && n.userData.assignedFaction === galaxyId
+        );
+        
+        const nebulaName = trackingNebula ? trackingNebula.userData.name : 'nearest nebula';
+        
+        // Show Mission Command
+        showFactionClearedMission(faction, nebulaName, galaxyId);
+    }
+}
+
+// Show Mission Command when faction is cleared in an area
+function showFactionClearedMission(faction, nebulaName, galaxyId) {
+    console.log(`🎖️ ${faction.faction} forces cleared! Directing to ${nebulaName}`);
+    
+    // Use the existing mission command alert system
+    if (typeof showMissionCommandAlert === 'function') {
+        const title = `${faction.faction.toUpperCase()} FORCES NEUTRALIZED`;
+        const message = `Congratulations, Captain! All ${faction.faction} hostiles have been eliminated in this sector.\n\n` +
+            `Navigate to ${nebulaName} for intel on remaining hostile activity.\n\n` +
+            `The flagship commander will arrive soon to reclaim this territory. Prepare for heavy resistance.`;
+        
+        showMissionCommandAlert(title, message, faction.color);
+    } else if (typeof showAchievement === 'function') {
+        showAchievement(
+            `🎖️ ${faction.faction} CLEARED`,
+            `Seek ${nebulaName} for intel on remaining hostiles`
+        );
+    }
+    
+    // Now trigger boss spawn check
+    if (typeof checkAndSpawnAreaBosses === 'function') {
+        setTimeout(() => {
+            checkAndSpawnAreaBosses();
+        }, 5000); // Delay boss spawn by 5 seconds for dramatic effect
+    }
+}
+
+// Initialize the intel system (call after nebulas and enemies are created)
+function initializeNebulaIntelSystem() {
+    console.log('📡 Initializing Nebula Intel System...');
+    
+    assignFactionsToNebulas();
+    createEnemyClusters();
+    createNebulaIntelLines();
+    
+    console.log('✅ Nebula Intel System initialized');
+}
+
+// Export nebula intel system
+window.nebulaIntelSystem = nebulaIntelSystem;
+window.assignFactionsToNebulas = assignFactionsToNebulas;
+window.createEnemyClusters = createEnemyClusters;
+window.createNebulaIntelLines = createNebulaIntelLines;
+window.updateClusterStatus = updateClusterStatus;
+window.checkFactionCleared = checkFactionCleared;
+window.initializeNebulaIntelSystem = initializeNebulaIntelSystem;
+
+// =============================================================================
 // PROGRESSIVE DIFFICULTY SYSTEM - ENHANCED COMBAT MECHANICS
 // =============================================================================
 

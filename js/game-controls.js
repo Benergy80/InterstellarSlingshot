@@ -3597,6 +3597,11 @@ if (enemy.userData.health <= 0) {
         recordEnemyKillPosition(enemy);
     }
     
+    // Update nebula intel system - check if cluster is cleared, turn line white
+    if (typeof updateClusterStatus === 'function') {
+        updateClusterStatus(enemy);
+    }
+    
     // Track area clearing for Mission Command notifications
     if (typeof areaClearTracker !== 'undefined' && areaClearTracker.onEnemyDestroyed) {
         areaClearTracker.onEnemyDestroyed(enemy);

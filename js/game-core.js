@@ -782,6 +782,11 @@ if (typeof areModelsLoaded === 'function' && areModelsLoaded()) {
         createDistantExoticEnemies();
         console.log('Deep space patrol enemies created');
     }
+    // Initialize nebula intel system (links nebulas to enemy clusters)
+    if (typeof initializeNebulaIntelSystem === 'function') {
+        initializeNebulaIntelSystem();
+        console.log('Nebula intel system initialized');
+    }
     // Create trading ships in nebulas
     if (typeof createTradingShipsInNebulas === 'function') {
         createTradingShipsInNebulas();

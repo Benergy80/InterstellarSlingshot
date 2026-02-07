@@ -1975,6 +1975,12 @@ function setupNormalGameContent() {
         console.log('🛡️ Black Hole Guardians spawned');
 	}
     
+    // Initialize nebula intel system (links nebulas to enemy clusters)
+    if (typeof initializeNebulaIntelSystem === 'function') {
+        initializeNebulaIntelSystem();
+        console.log('📡 Nebula intel system initialized');
+    }
+    
     // Create trading ships in nebulas
     if (typeof createTradingShipsInNebulas === 'function') {
         createTradingShipsInNebulas();
