@@ -780,17 +780,25 @@ const civilianShipRegistry = {
         if (model) {
             model.scale.multiplyScalar(category.scale * 1.0); // Match enemy ship relative size
             
-            // Apply consistent material properties to match game style
+            // Apply visible materials - ships need to glow in dark space
             model.traverse((child) => {
-                if (child.isMesh && child.material) {
-                    // Enhance materials to match game aesthetic
-                    if (child.material.isMeshStandardMaterial) {
-                        child.material.metalness = Math.min(child.material.metalness + 0.2, 0.9);
-                        child.material.roughness = Math.max(child.material.roughness - 0.1, 0.2);
-                        child.material.envMapIntensity = 1.5;
-                    }
+                if (child.isMesh) {
+                    // Replace material with bright, visible version
+                    const oldColor = child.material && child.material.color ? child.material.color.getHex() : 0x888899;
+                    child.material = new THREE.MeshStandardMaterial({
+                        color: oldColor,
+                        metalness: 0.5,
+                        roughness: 0.4,
+                        emissive: oldColor,
+                        emissiveIntensity: 0.4
+                    });
                 }
             });
+            
+            // Add a point light so ship is visible
+            const shipLight = new THREE.PointLight(0x6688ff, 1, 150);
+            shipLight.position.set(0, 5, 0);
+            model.add(shipLight);
             
             return model;
         }
@@ -836,6 +844,20 @@ const civilianShipRegistry = {
         
         // Add engine glow to all ships
         this.addEngineGlow(shipGroup, categoryKey);
+        
+        // Make all procedural ships visible in dark space
+        shipGroup.traverse((child) => {
+            if (child.isMesh && child.material && child.material.isMeshStandardMaterial) {
+                const col = child.material.color ? child.material.color.getHex() : 0x888899;
+                child.material.emissive = new THREE.Color(col);
+                child.material.emissiveIntensity = 0.35;
+            }
+        });
+        
+        // Add point light for visibility
+        const shipLight = new THREE.PointLight(0x6688ff, 1, 150);
+        shipLight.position.set(0, 10, 0);
+        shipGroup.add(shipLight);
         
         return shipGroup;
     },
