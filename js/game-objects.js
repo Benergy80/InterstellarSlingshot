@@ -4981,6 +4981,18 @@ function updateTradingShips() {
                 // Orbit around nebula center
                 updateOrbitBehavior(ship, data);
                 
+                // Mining ships: chance to stop and mine
+                if (data.shipCategory === 'mining' && Math.random() < 0.003) {
+                    data.aiState = 'mining';
+                    data.stateTimer = 150 + Math.random() * 200;
+                }
+                
+                // Science ships: chance to stop and scan
+                if (data.shipCategory === 'science' && Math.random() < 0.003) {
+                    data.aiState = 'scanning';
+                    data.stateTimer = 100 + Math.random() * 150;
+                }
+                
                 // Random chance to start traveling to a destination
                 if (data.nearbyPlanets && data.nearbyPlanets.length > 0 && Math.random() < 0.005) {
                     data.aiState = 'traveling';
@@ -5124,6 +5136,50 @@ function updateTradingShips() {
                     data.aiState = 'returning';
                     data.stateTimer = 0;
                     data.fleeDirection = null;
+                }
+                break;
+                
+            case 'mining':
+                // Mining behavior - wobble in place
+                ship.position.x += (Math.random() - 0.5) * 0.5;
+                ship.position.y += (Math.random() - 0.5) * 0.3;
+                ship.position.z += (Math.random() - 0.5) * 0.5;
+                ship.rotation.z = Math.sin(Date.now() * 0.005) * 0.1;
+                
+                data.stateTimer--;
+                if (data.stateTimer <= 0) {
+                    data.aiState = 'idle';
+                    ship.rotation.z = 0;
+                }
+                
+                // Still react to threats
+                if (nearbyThreat) {
+                    data.aiState = 'fleeing';
+                    data.fleeDirection = new THREE.Vector3()
+                        .subVectors(ship.position, nearbyThreat.position)
+                        .normalize();
+                    ship.rotation.z = 0;
+                }
+                break;
+                
+            case 'scanning':
+                // Science scanning - slow rotation while stationary
+                ship.rotation.y += 0.02;
+                
+                // Gentle hover
+                ship.position.y += Math.sin(Date.now() * 0.003) * 0.1;
+                
+                data.stateTimer--;
+                if (data.stateTimer <= 0) {
+                    data.aiState = 'idle';
+                }
+                
+                // Still react to threats
+                if (nearbyThreat) {
+                    data.aiState = 'fleeing';
+                    data.fleeDirection = new THREE.Vector3()
+                        .subVectors(ship.position, nearbyThreat.position)
+                        .normalize();
                 }
                 break;
         }
