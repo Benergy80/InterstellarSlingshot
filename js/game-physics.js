@@ -1182,6 +1182,9 @@ function executeSlingshot() {
 // =============================================================================
 
 function updateEnhancedPhysics() {
+    // PERF TEST: Disable ALL enhanced physics including gravity
+    return;
+    
     // Pause-aware physics
     if (typeof gamePaused !== 'undefined' && gamePaused) {
         if (typeof renderer !== 'undefined' && renderer) {
