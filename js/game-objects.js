@@ -5375,6 +5375,9 @@ function updateTradingShips() {
 }
 
 function updateOrbitBehavior(ship, data) {
+    // Safety check: Skip if no nebulaPosition (e.g., caravan freighters)
+    if (!data.nebulaPosition) return;
+    
     // BI-DIRECTIONAL ORBIT: Use orbitDirection to determine CW vs CCW
     const direction = data.orbitDirection || 1; // Default to CCW if not set
     data.orbitAngle += data.orbitSpeed * direction;
