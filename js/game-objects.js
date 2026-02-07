@@ -3957,7 +3957,7 @@ function updateNebulaVisibility() {
     if (typeof nebulaClouds === 'undefined' || nebulaClouds.length === 0) return;
     if (typeof camera === 'undefined') return;
     
-    const fadeSpeed = 0.02; // How fast to fade in/out (0.02 = ~50 frames for full fade)
+    const fadeSpeed = 0.005; // How fast to fade in/out (0.005 = ~200 frames / ~3-4 seconds for full fade)
     const maxOpacity = 0.65;
     
     nebulaClouds.forEach(nebula => {
@@ -3994,9 +3994,9 @@ function updateNebulaVisibility() {
         // Smoothly interpolate current opacity toward target
         const opacityDiff = targetOpacity - nebula.userData.currentOpacity;
         if (Math.abs(opacityDiff) > 0.001) {
-            // Fade in faster than fade out for dramatic reveal
-            const speed = opacityDiff > 0 ? fadeSpeed : fadeSpeed * 0.7;
-            nebula.userData.currentOpacity += opacityDiff * speed * 3;
+            // Slow, dramatic fade-in for distant nebulas
+            const speed = opacityDiff > 0 ? fadeSpeed : fadeSpeed * 0.5;
+            nebula.userData.currentOpacity += opacityDiff * speed;
             
             // Clamp to valid range
             nebula.userData.currentOpacity = Math.max(0, Math.min(maxOpacity, nebula.userData.currentOpacity));
