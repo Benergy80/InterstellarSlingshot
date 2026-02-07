@@ -493,6 +493,9 @@ nearbyEnemies.forEach(enemy => {
 
 // ENHANCED: Enemy Behavior System with Progressive Difficulty and Tutorial Safety
 function updateEnemyBehavior() {
+    // PERF TEST: Completely disable enemy AI
+    return;
+    
     // Safety checks
     if (typeof enemies === 'undefined' || typeof gameState === 'undefined' || typeof camera === 'undefined') {
         return;
