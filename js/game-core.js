@@ -1194,9 +1194,15 @@ if (gameState.frameCount % 60 === 0 && typeof outerInterstellarSystems !== 'unde
     
 // Pulse enemy glow for visibility - OPTIMIZED: Only nearby enemies
 // UPDATED: Handle both simple meshes and GLB model Groups
+// FIXED: Never go completely dark - maintain minimum visibility
 if (typeof enemies !== 'undefined' && enemies.length > 0 && gameState.frameCount % 2 === 0) {
-    const pulseTime = Date.now() * 0.002;
-    const pulseFactor = 0.5 + Math.sin(pulseTime) * 0.5;
+    const pulseTime = Date.now() * 0.003; // Slightly faster pulse
+    const pulseFactor = 0.5 + Math.sin(pulseTime) * 0.5; // 0.0 to 1.0
+    
+    // FIXED: Minimum values so enemies never disappear
+    const minGlowOpacity = 0.35;  // Never go below 35% opacity
+    const maxGlowOpacity = 0.85;  // Max 85% opacity
+    const glowRange = maxGlowOpacity - minGlowOpacity;
 
     // Only pulse enemies within visual range (3000 units)
     const nearbyEnemies = enemies.filter(e =>
@@ -1217,14 +1223,13 @@ if (typeof enemies !== 'undefined' && enemies.length > 0 && gameState.frameCount
                     const isGlowLayer = child.userData.isGlowLayer || false;
 
                     if (isGlowLayer) {
-                        // GLOW LAYER - pulse opacity dramatically (fade completely to transparent and back)
+                        // GLOW LAYER - pulse opacity but NEVER go completely dark
                         if (child.material.opacity !== undefined) {
                             if (child.userData.baseOpacity === undefined) {
                                 child.userData.baseOpacity = child.material.opacity;
                             }
-                            // Fade from 0.0 (transparent) to 0.7 (semi-opaque)
-                            // pulseFactor ranges from 0.0 to 1.0 (via Math.sin oscillation)
-                            child.material.opacity = pulseFactor * 0.7;  // Ranges from 0.0 to 0.7
+                            // FIXED: Pulse from minGlowOpacity to maxGlowOpacity (never invisible)
+                            child.material.opacity = minGlowOpacity + (pulseFactor * glowRange);
                         }
                     } else {
                         // BASE MATERIAL - keep solid, no opacity pulsing
@@ -1245,8 +1250,8 @@ if (typeof enemies !== 'undefined' && enemies.length > 0 && gameState.frameCount
             // Pulse the glow mesh if it exists
             enemy.traverse((child) => {
                 if (child.userData.isGlowLayer && child.material && child.material.opacity !== undefined) {
-                    // Fade from 0.0 (transparent) to 0.7 (semi-opaque)
-                    child.material.opacity = pulseFactor * 0.7;
+                    // FIXED: Pulse from minGlowOpacity to maxGlowOpacity (never invisible)
+                    child.material.opacity = minGlowOpacity + (pulseFactor * glowRange);
                 }
             });
         }

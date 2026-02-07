@@ -5368,26 +5368,26 @@ function createEnemyGeometry(galaxyId) {
 function createEnemyMaterial(shapeData, enemyType, distance) {
     const isBoss = enemyType === 'boss';
     
-    // Main enemy body - SEMI-TRANSPARENT!
+    // Main enemy body - MORE VISIBLE with higher opacity
     const enemyMaterial = new THREE.MeshBasicMaterial({
         color: shapeData.color,
-        transparent: true,  // ← KEY: Make the main body transparent
-        opacity: 0.6,       // ← KEY: 60% opacity makes it translucent
-        blending: THREE.NormalBlending  // Normal blending for the body
+        transparent: true,
+        opacity: 0.85,       // INCREASED: 85% opacity for better visibility
+        blending: THREE.NormalBlending
     });
     
     // Glow layer - bright and additive
     const glowMaterial = new THREE.MeshBasicMaterial({
         color: shapeData.color,
         transparent: true,
-        opacity: 0.4,  // Brighter glow
+        opacity: 0.6,  // INCREASED: Brighter base glow
         blending: THREE.AdditiveBlending
     });
     
     return {
         enemyMaterial: enemyMaterial,
         glowMaterial: glowMaterial,
-        glowScale: isBoss ? 1.3 : 1.2
+        glowScale: isBoss ? 1.4 : 1.25
     };
 }
     
