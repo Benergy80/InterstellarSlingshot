@@ -4690,28 +4690,40 @@ window.distressBeaconSystem = distressBeaconSystem;
 const tradingShips = [];
 
 function createTradingShipsInNebulas() {
-    console.log('🚀 Creating trading ships in nebulas...');
+    console.log('🚀 Creating civilian ships in nebulas...');
     
     if (typeof nebulaClouds === 'undefined' || nebulaClouds.length === 0) {
-        console.log('No nebulas found, skipping trading ships');
+        console.log('No nebulas found, skipping civilian ships');
         return;
     }
     
-    // Only add trading ships to clustered nebulas (galaxy-formation nebulas)
+    // Only add ships to clustered nebulas (galaxy-formation nebulas)
     const clusteredNebulas = nebulaClouds.filter(n => 
         n && n.userData && !n.userData.isDistant && !n.userData.isExoticCore
     );
     
     clusteredNebulas.forEach((nebula, nebulaIndex) => {
-        // 3-5 trading ships per nebula
-        const shipCount = 3 + Math.floor(Math.random() * 3);
+        // 4-7 civilian ships per nebula (more variety)
+        const shipCount = 4 + Math.floor(Math.random() * 4);
         
         for (let i = 0; i < shipCount; i++) {
             createTradingShip(nebula, i);
         }
+        
+        // 1-3 mining ships per nebula
+        const miningCount = 1 + Math.floor(Math.random() * 3);
+        for (let i = 0; i < miningCount; i++) {
+            createNebulaShip(nebula, i, 'mining');
+        }
+        
+        // 1-2 science ships per nebula
+        const scienceCount = 1 + Math.floor(Math.random() * 2);
+        for (let i = 0; i < scienceCount; i++) {
+            createNebulaShip(nebula, i, 'science');
+        }
     });
     
-    console.log(`✅ Created ${tradingShips.length} trading ships across ${clusteredNebulas.length} nebulas`);
+    console.log(`✅ Created ${tradingShips.length} civilian ships across ${clusteredNebulas.length} nebulas`);
 }
 
 function createTradingShip(nebula, index) {
@@ -4795,6 +4807,61 @@ function createTradingShip(nebula, index) {
             shipGroup.userData.destinationIndex = Math.floor(Math.random() * nearbyPlanets.length);
         }
     }
+    
+    shipGroup.visible = true;
+    scene.add(shipGroup);
+    tradingShips.push(shipGroup);
+}
+
+// Create specific ship types in nebulas (mining, science, etc.)
+function createNebulaShip(nebula, index, shipCategory) {
+    let shipGroup;
+    
+    if (typeof civilianShipRegistry !== 'undefined') {
+        shipGroup = civilianShipRegistry.getShipMesh(shipCategory);
+    } else {
+        // Fallback to simple procedural ship
+        shipGroup = new THREE.Group();
+        const color = shipCategory === 'mining' ? 0xaaaa55 : 0x4488ff;
+        const hull = new THREE.Mesh(
+            new THREE.BoxGeometry(8, 5, 15),
+            new THREE.MeshStandardMaterial({ color: color, metalness: 0.6, roughness: 0.4 })
+        );
+        shipGroup.add(hull);
+    }
+    
+    // Position within nebula
+    const nebulaSize = nebula.userData.size || 1500;
+    const orbitRadius = nebulaSize * 0.2 + Math.random() * nebulaSize * 0.5;
+    const angle = Math.random() * Math.PI * 2;
+    const height = (Math.random() - 0.5) * 300;
+    
+    const startX = nebula.position.x + Math.cos(angle) * orbitRadius;
+    const startY = nebula.position.y + height;
+    const startZ = nebula.position.z + Math.sin(angle) * orbitRadius;
+    
+    shipGroup.position.set(startX, startY, startZ);
+    
+    const shipNames = {
+        'mining': 'Mining Vessel',
+        'science': 'Research Ship',
+        'rescue': 'Rescue Ship',
+        'military': 'Patrol Craft'
+    };
+    
+    shipGroup.userData = {
+        type: 'trading_ship',
+        shipCategory: shipCategory,
+        name: `${shipNames[shipCategory] || 'Ship'} ${index + 1}`,
+        nebulaName: nebula.userData.name,
+        nebulaPosition: nebula.position.clone(),
+        orbitRadius: orbitRadius,
+        orbitAngle: angle,
+        orbitSpeed: 0.0001 + Math.random() * 0.0002,
+        verticalOffset: height,
+        speed: 0.3 + Math.random() * 0.4,
+        isNeutral: true
+    };
     
     shipGroup.visible = true;
     scene.add(shipGroup);
