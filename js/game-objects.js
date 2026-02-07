@@ -5829,7 +5829,7 @@ function createUFOEnemy(position, systemName, index) {
     
     if (ufoModelCache) {
         ufo = ufoModelCache.clone();
-        ufo.scale.set(60, 60, 60);
+        ufo.scale.set(3, 3, 3); // Reasonable UFO scale
         
         // Enhance materials for game style
         ufo.traverse((child) => {
@@ -6037,7 +6037,7 @@ function createSatellite(position, type = 'satellite') {
         
         if (satelliteModelCache[modelKey]) {
             sat = satelliteModelCache[modelKey].clone();
-            sat.scale.set(50, 50, 50); // Visible scale
+            sat.scale.set(2, 2, 2); // Reasonable satellite scale
             
             // Enhance materials
             sat.traverse((child) => {
