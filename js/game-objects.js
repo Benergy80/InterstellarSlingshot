@@ -4703,21 +4703,21 @@ function createTradingShipsInNebulas() {
     );
     
     clusteredNebulas.forEach((nebula, nebulaIndex) => {
-        // 4-7 civilian ships per nebula (more variety)
-        const shipCount = 4 + Math.floor(Math.random() * 4);
+        // 8-15 civilian ships per nebula (busy community feel)
+        const shipCount = 8 + Math.floor(Math.random() * 8);
         
         for (let i = 0; i < shipCount; i++) {
             createTradingShip(nebula, i);
         }
         
-        // 1-3 mining ships per nebula
-        const miningCount = 1 + Math.floor(Math.random() * 3);
+        // 3-6 mining ships per nebula
+        const miningCount = 3 + Math.floor(Math.random() * 4);
         for (let i = 0; i < miningCount; i++) {
             createNebulaShip(nebula, i, 'mining');
         }
         
-        // 1-2 science ships per nebula
-        const scienceCount = 1 + Math.floor(Math.random() * 2);
+        // 2-4 science ships per nebula
+        const scienceCount = 2 + Math.floor(Math.random() * 3);
         for (let i = 0; i < scienceCount; i++) {
             createNebulaShip(nebula, i, 'science');
         }
@@ -4810,7 +4810,7 @@ function createTradingShip(nebula, index) {
         nebulaPosition: nebula.position.clone(),
         orbitRadius: orbitRadius,
         orbitAngle: angle,
-        orbitSpeed: 0.0001 + Math.random() * 0.0002, // Slow orbit
+        orbitSpeed: 0.002 + Math.random() * 0.003, // Slow orbit
         verticalOffset: height,
         destination: null,
         speed: shipSpeed,
@@ -4903,7 +4903,7 @@ function createNebulaShip(nebula, index, shipCategory) {
         nebulaPosition: nebula.position.clone(),
         orbitRadius: orbitRadius,
         orbitAngle: angle,
-        orbitSpeed: 0.0001 + Math.random() * 0.0002,
+        orbitSpeed: 0.002 + Math.random() * 0.003,
         verticalOffset: height,
         speed: 0.3 + Math.random() * 0.4,
         isNeutral: true
@@ -4982,7 +4982,7 @@ function updateTradingShips() {
                 updateOrbitBehavior(ship, data);
                 
                 // Random chance to start traveling to a destination
-                if (data.nearbyPlanets && data.nearbyPlanets.length > 0 && Math.random() < 0.001) {
+                if (data.nearbyPlanets && data.nearbyPlanets.length > 0 && Math.random() < 0.005) {
                     data.aiState = 'traveling';
                     data.currentDestination = data.nearbyPlanets[Math.floor(Math.random() * data.nearbyPlanets.length)].clone();
                     data.stateTimer = 0;
@@ -5518,7 +5518,7 @@ function createScienceShip(targetPosition, targetType, index) {
         targetType: targetType,
         orbitRadius: safeDistance,
         orbitAngle: angle,
-        orbitSpeed: 0.0001 + Math.random() * 0.0002,
+        orbitSpeed: 0.002 + Math.random() * 0.003,
         isNeutral: true
     };
     
@@ -6257,7 +6257,7 @@ function createSatellite(position, type = 'satellite') {
         name: type === 'probe' ? 'Deep Space Probe' : 'Communications Satellite',
         isNeutral: true,
         rotationSpeed: 0.002 + Math.random() * 0.003,
-        orbitSpeed: 0.0001 + Math.random() * 0.0002
+        orbitSpeed: 0.002 + Math.random() * 0.003
     };
     
     sat.visible = true;
