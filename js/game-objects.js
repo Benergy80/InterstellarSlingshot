@@ -541,7 +541,7 @@ const enemyShapes = {
 
 // Enhanced enemy spawning limits per galaxy
 const galaxyEnemyLimits = {
-    0: 12, 1: 15, 2: 10, 3: 13, 4: 8, 5: 14, 6: 18, 7: 6  // Vulcan reduced for performance
+    0: 12, 1: 15, 2: 10, 3: 13, 4: 8, 5: 14, 6: 18, 7: 0  // Vulcan disabled for testing
 };
 
 // FIXED: Boss system initialization - SINGLE DECLARATION
@@ -2207,6 +2207,8 @@ try {
 // 8TH GALACTIC CORE - ABOVE SAGITTARIUS A* WITH STARFIELD
 // =============================================================================
 
+// PERF TEST: Companion Core disabled to test performance
+if (false) {
 try {
     console.log('Creating Companion Core near Sagittarius A*...');
     
@@ -2618,6 +2620,7 @@ console.log('✅ 8th galactic core created with spiral galaxy starfield:', core8
 } catch (core8Error) {
     console.error('❌ Error creating 8th galactic core:', core8Error);
 }
+} // End of PERF TEST: Companion Core disabled
     
     // =============================================================================
 // LOCAL BLACK HOLE GATEWAY - POSITIONED ABOVE SOLAR SYSTEM PLANE
