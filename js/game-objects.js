@@ -3619,9 +3619,10 @@ function createDistantNebulas() {
         window.nebulaClouds = [];
     }
 
-    const distantNebulaCount = 6;  // Add 6 distant nebulas
+    const distantNebulaCount = 6;
     const minRadius = 50000;
     const maxRadius = 75000;
+    const visibilityRange = 25000; // Only visible within 25k units
 
     const distantNebulaNames = [
         'Distant Nebula Alpha',
@@ -3631,72 +3632,122 @@ function createDistantNebulas() {
         'Distant Nebula Epsilon',
         'Distant Nebula Zeta'
     ];
+    
+    // Nebula shapes matching galaxy-formation style
+    const nebulaShapes = ['spiral', 'elliptical', 'irregular', 'lenticular', 'spiral', 'ring'];
 
     for (let i = 0; i < distantNebulaCount; i++) {
         const nebulaGroup = new THREE.Group();
 
         // Distribute evenly around a sphere at distant radius
-        const phi = (i / distantNebulaCount) * Math.PI * 2;  // Azimuthal angle
-        const theta = Math.PI / 2 + (Math.random() - 0.5) * Math.PI * 0.5;  // Polar angle (mostly equatorial)
-        const radius = minRadius + Math.random() * (maxRadius - minRadius);
+        const phi = (i / distantNebulaCount) * Math.PI * 2;
+        const theta = Math.PI / 2 + (Math.random() - 0.5) * Math.PI * 0.5;
+        const distanceFromOrigin = minRadius + Math.random() * (maxRadius - minRadius);
 
-        const nebulaX = radius * Math.sin(theta) * Math.cos(phi);
-        const nebulaY = radius * Math.cos(theta);
-        const nebulaZ = radius * Math.sin(theta) * Math.sin(phi);
+        const nebulaX = distanceFromOrigin * Math.sin(theta) * Math.cos(phi);
+        const nebulaY = distanceFromOrigin * Math.cos(theta);
+        const nebulaZ = distanceFromOrigin * Math.sin(theta) * Math.sin(phi);
 
-        // Create nebula cloud particles
-        const particleCount = 1200;
-        const particleGeometry = new THREE.BufferGeometry();
+        // MATCHED TO GALAXY-FORMATION: High particle count
+        const particleCount = 4000 + Math.floor(Math.random() * 2000);
+        const nebulaGeometry = new THREE.BufferGeometry();
         const positions = new Float32Array(particleCount * 3);
         const colors = new Float32Array(particleCount * 3);
 
-        // Varied colors for distant nebulas
-        const baseHue = Math.random();  // Full color spectrum
+        const baseHue = Math.random();
         const nebulaColor = new THREE.Color().setHSL(baseHue, 0.7 + Math.random() * 0.3, 0.5 + Math.random() * 0.3);
-        const nebulaSize = 3000 + Math.random() * 4000;  // Larger nebulas for distant regions
+        const nebulaSize = 1500 + Math.random() * 1000; // Matched to galaxy-formation scale
+        const shape = nebulaShapes[i % nebulaShapes.length];
+        const arms = shape === 'spiral' ? 3 : (shape === 'ring' ? 1 : 2);
 
-        for (let j = 0; j < particleCount; j++) {
-            const radius = Math.pow(Math.random(), 0.3) * nebulaSize;
-            const theta = Math.random() * Math.PI * 2;
-            const phi = Math.acos(2 * Math.random() - 1);
+        // MATCHED TO GALAXY-FORMATION: Galaxy-like distribution
+        for (let p = 0; p < particleCount; p++) {
+            const i3 = p * 3;
+            let x, y, z;
+            
+            if (shape === 'spiral' || shape === 'ring') {
+                if (Math.random() < 0.4) {
+                    // Center bulge
+                    const bulgeRadius = Math.pow(Math.random(), 2.5) * (nebulaSize * 0.3);
+                    const bulgeAngle = Math.random() * Math.PI * 2;
+                    const bulgePhi = (Math.random() - 0.5) * Math.PI;
+                    x = bulgeRadius * Math.cos(bulgeAngle) * Math.cos(bulgePhi);
+                    z = bulgeRadius * Math.sin(bulgeAngle) * Math.cos(bulgePhi);
+                    y = bulgeRadius * Math.sin(bulgePhi) * 0.8;
+                } else {
+                    // Spiral arms
+                    const arm = Math.floor(p / (particleCount / arms)) % arms;
+                    const armAngle = (p / (particleCount / arms)) * Math.PI * 2;
+                    const armDistance = Math.pow(Math.random(), 1.8) * nebulaSize;
+                    const armWidth = shape === 'ring' ? 0.03 : 0.12;
+                    if (shape === 'ring' && armDistance < nebulaSize * 0.4) continue;
+                    const angle = armAngle + (armDistance / nebulaSize) * Math.PI * 2;
+                    x = Math.cos(angle + arm * (Math.PI * 2 / arms)) * armDistance + (Math.random() - 0.5) * armWidth * armDistance;
+                    z = Math.sin(angle + arm * (Math.PI * 2 / arms)) * armDistance + (Math.random() - 0.5) * armWidth * armDistance;
+                    y = (Math.random() - 0.5) * 30;
+                }
+            } else if (shape === 'elliptical') {
+                const dist = Math.pow(Math.random(), 1.3) * nebulaSize;
+                const t = Math.random() * Math.PI * 2;
+                const ph = (Math.random() - 0.5) * Math.PI * 0.6;
+                x = dist * Math.sin(ph) * Math.cos(t);
+                z = dist * Math.sin(ph) * Math.sin(t);
+                y = dist * Math.cos(ph) * 0.5;
+            } else if (shape === 'lenticular') {
+                if (Math.random() < 0.4) {
+                    const bulgeRadius = Math.pow(Math.random(), 3) * (nebulaSize * 0.3);
+                    const bulgeAngle = Math.random() * Math.PI * 2;
+                    x = Math.cos(bulgeAngle) * bulgeRadius;
+                    z = Math.sin(bulgeAngle) * bulgeRadius;
+                    y = (Math.random() - 0.5) * 50;
+                } else {
+                    const dist = Math.pow(Math.random(), 1.5) * nebulaSize;
+                    const t = Math.random() * Math.PI * 2;
+                    x = Math.cos(t) * dist;
+                    z = Math.sin(t) * dist;
+                    y = (Math.random() - 0.5) * 20;
+                }
+            } else {
+                // Irregular
+                const dist = Math.pow(Math.random(), 1.3) * nebulaSize;
+                const t = Math.random() * Math.PI * 2;
+                const ph = (Math.random() - 0.5) * Math.PI;
+                x = dist * Math.sin(ph) * Math.cos(t) + (Math.random() - 0.5) * nebulaSize * 0.3;
+                z = dist * Math.sin(ph) * Math.sin(t) + (Math.random() - 0.5) * nebulaSize * 0.3;
+                y = dist * Math.cos(ph) * 0.4;
+            }
 
-            const x = radius * Math.sin(phi) * Math.cos(theta);
-            const y = radius * Math.sin(phi) * Math.sin(theta) * 0.3;  // Flattened
-            const z = radius * Math.cos(phi);
+            positions[i3] = x;
+            positions[i3 + 1] = y;
+            positions[i3 + 2] = z;
 
-            positions[j * 3] = x;
-            positions[j * 3 + 1] = y;
-            positions[j * 3 + 2] = z;
-
-            // Color variation
-            const colorVariation = (Math.random() - 0.5) * 0.2;
-            const particleColor = new THREE.Color().setHSL(
-                (baseHue + colorVariation + 1) % 1,
-                0.6 + Math.random() * 0.4,
-                0.4 + Math.random() * 0.4
-            );
-
-            colors[j * 3] = particleColor.r;
-            colors[j * 3 + 1] = particleColor.g;
-            colors[j * 3 + 2] = particleColor.b;
+            const colorVariation = nebulaColor.clone();
+            colorVariation.offsetHSL((Math.random() - 0.5) * 0.15, 0, (Math.random() - 0.5) * 0.2);
+            colors[i3] = colorVariation.r;
+            colors[i3 + 1] = colorVariation.g;
+            colors[i3 + 2] = colorVariation.b;
         }
 
-        particleGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-        particleGeometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+        nebulaGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        nebulaGeometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
 
-        const particleMaterial = new THREE.PointsMaterial({
-            size: 80,
+        // MATCHED TO GALAXY-FORMATION: Same particle material settings
+        const nebulaMaterial = new THREE.PointsMaterial({
+            size: 2.5,
             vertexColors: true,
             transparent: true,
-            opacity: 0.6,
+            opacity: 0.65,
             blending: THREE.AdditiveBlending,
-            depthWrite: false
+            sizeAttenuation: true
         });
 
-        const particles = new THREE.Points(particleGeometry, particleMaterial);
-        nebulaGroup.add(particles);
+        const nebulaPoints = new THREE.Points(nebulaGeometry, nebulaMaterial);
+        nebulaPoints.visible = true;
+        nebulaPoints.frustumCulled = false;
+        nebulaGroup.add(nebulaPoints);
 
         nebulaGroup.position.set(nebulaX, nebulaY, nebulaZ);
+        nebulaGroup.visible = false; // Start hidden - visibility controlled by range
         nebulaGroup.userData = {
             type: 'nebula',
             name: distantNebulaNames[i],
@@ -3704,16 +3755,19 @@ function createDistantNebulas() {
             color: nebulaColor,
             discovered: false,
             size: nebulaSize,
-            isDistant: true
+            shape: shape,
+            isDistant: true,
+            visibilityRange: visibilityRange,
+            distanceFromOrigin: distanceFromOrigin
         };
 
         scene.add(nebulaGroup);
         nebulaClouds.push(nebulaGroup);
 
-        console.log(`  Created ${distantNebulaNames[i]} at distance ${radius.toFixed(0)} units`);
+        console.log(`  Created ${distantNebulaNames[i]} (${shape}) at distance ${distanceFromOrigin.toFixed(0)} units - visible within ${visibilityRange} units`);
     }
 
-    console.log(`✅ Created ${distantNebulaCount} distant nebulas in outer regions`);
+    console.log(`✅ Created ${distantNebulaCount} distant nebulas (galaxy-formation style, range-based visibility)`);
 }
 
 // =============================================================================
@@ -3726,9 +3780,10 @@ function createExoticCoreNebulas() {
         window.nebulaClouds = [];
     }
 
-    const exoticNebulaCount = 8;  // Add 8 nebulas in exotic range
+    const exoticNebulaCount = 8;
     const minRadius = 45000;
     const maxRadius = 65000;
+    const visibilityRange = 20000; // Only visible within 20k units
 
     const exoticNebulaNames = [
         'Frontier Nebula',
@@ -3740,6 +3795,9 @@ function createExoticCoreNebulas() {
         'Threshold Nebula',
         'Horizon Nebula'
     ];
+    
+    // Nebula shapes matching galaxy-formation style
+    const nebulaShapes = ['spiral', 'elliptical', 'quasar', 'lenticular', 'irregular', 'ancient', 'ring', 'spiral'];
 
     for (let i = 0; i < exoticNebulaCount; i++) {
         const nebulaGroup = new THREE.Group();
@@ -3747,83 +3805,127 @@ function createExoticCoreNebulas() {
         // Distribute around a sphere at exotic core distance
         const phi = (i / exoticNebulaCount) * Math.PI * 2;
         const theta = Math.PI / 2 + (Math.random() - 0.5) * Math.PI * 0.6;
-        const radius = minRadius + Math.random() * (maxRadius - minRadius);
+        const distanceFromOrigin = minRadius + Math.random() * (maxRadius - minRadius);
 
-        const nebulaX = radius * Math.sin(theta) * Math.cos(phi);
-        const nebulaY = radius * Math.cos(theta);
-        const nebulaZ = radius * Math.sin(theta) * Math.sin(phi);
+        const nebulaX = distanceFromOrigin * Math.sin(theta) * Math.cos(phi);
+        const nebulaY = distanceFromOrigin * Math.cos(theta);
+        const nebulaZ = distanceFromOrigin * Math.sin(theta) * Math.sin(phi);
 
-        // Create nebula cloud particles
-        const particleCount = 1500;
-        const particleGeometry = new THREE.BufferGeometry();
+        // MATCHED TO GALAXY-FORMATION: High particle count
+        const particleCount = 4000 + Math.floor(Math.random() * 2000);
+        const nebulaGeometry = new THREE.BufferGeometry();
         const positions = new Float32Array(particleCount * 3);
         const colors = new Float32Array(particleCount * 3);
 
-        // Rich, vibrant colors for exotic nebulas
         const baseHue = (i / exoticNebulaCount) + Math.random() * 0.1;
         const nebulaColor = new THREE.Color().setHSL(baseHue, 0.8 + Math.random() * 0.2, 0.5 + Math.random() * 0.3);
-        const nebulaSize = 3500 + Math.random() * 3500;
+        const nebulaSize = 1500 + Math.random() * 1000; // Matched to galaxy-formation scale
+        const shape = nebulaShapes[i % nebulaShapes.length];
+        const arms = shape === 'spiral' ? 3 : (shape === 'ring' ? 1 : 2);
 
-        for (let j = 0; j < particleCount; j++) {
-            const radius = Math.pow(Math.random(), 0.3) * nebulaSize;
-            const theta = Math.random() * Math.PI * 2;
-            const phi = Math.acos(2 * Math.random() - 1);
+        // MATCHED TO GALAXY-FORMATION: Galaxy-like distribution
+        for (let p = 0; p < particleCount; p++) {
+            const i3 = p * 3;
+            let x, y, z;
+            
+            if (shape === 'spiral' || shape === 'ring') {
+                if (Math.random() < 0.4) {
+                    const bulgeRadius = Math.pow(Math.random(), 2.5) * (nebulaSize * 0.3);
+                    const bulgeAngle = Math.random() * Math.PI * 2;
+                    const bulgePhi = (Math.random() - 0.5) * Math.PI;
+                    x = bulgeRadius * Math.cos(bulgeAngle) * Math.cos(bulgePhi);
+                    z = bulgeRadius * Math.sin(bulgeAngle) * Math.cos(bulgePhi);
+                    y = bulgeRadius * Math.sin(bulgePhi) * 0.8;
+                } else {
+                    const arm = Math.floor(p / (particleCount / arms)) % arms;
+                    const armAngle = (p / (particleCount / arms)) * Math.PI * 2;
+                    const armDistance = Math.pow(Math.random(), 1.8) * nebulaSize;
+                    const armWidth = shape === 'ring' ? 0.03 : 0.12;
+                    if (shape === 'ring' && armDistance < nebulaSize * 0.4) continue;
+                    const angle = armAngle + (armDistance / nebulaSize) * Math.PI * 2;
+                    x = Math.cos(angle + arm * (Math.PI * 2 / arms)) * armDistance + (Math.random() - 0.5) * armWidth * armDistance;
+                    z = Math.sin(angle + arm * (Math.PI * 2 / arms)) * armDistance + (Math.random() - 0.5) * armWidth * armDistance;
+                    y = (Math.random() - 0.5) * 30;
+                }
+            } else if (shape === 'elliptical' || shape === 'ancient') {
+                const dist = Math.pow(Math.random(), 1.3) * nebulaSize;
+                const t = Math.random() * Math.PI * 2;
+                const ph = (Math.random() - 0.5) * Math.PI * 0.6;
+                x = dist * Math.sin(ph) * Math.cos(t);
+                z = dist * Math.sin(ph) * Math.sin(t);
+                y = dist * Math.cos(ph) * 0.5;
+            } else if (shape === 'lenticular') {
+                if (Math.random() < 0.4) {
+                    const bulgeRadius = Math.pow(Math.random(), 3) * (nebulaSize * 0.3);
+                    const bulgeAngle = Math.random() * Math.PI * 2;
+                    x = Math.cos(bulgeAngle) * bulgeRadius;
+                    z = Math.sin(bulgeAngle) * bulgeRadius;
+                    y = (Math.random() - 0.5) * 50;
+                } else {
+                    const dist = Math.pow(Math.random(), 1.5) * nebulaSize;
+                    const t = Math.random() * Math.PI * 2;
+                    x = Math.cos(t) * dist;
+                    z = Math.sin(t) * dist;
+                    y = (Math.random() - 0.5) * 20;
+                }
+            } else if (shape === 'quasar') {
+                // Quasar: Intense core with jets
+                if (Math.random() < 0.5) {
+                    const coreRadius = Math.pow(Math.random(), 3) * (nebulaSize * 0.2);
+                    const coreAngle = Math.random() * Math.PI * 2;
+                    x = Math.cos(coreAngle) * coreRadius;
+                    z = Math.sin(coreAngle) * coreRadius;
+                    y = (Math.random() - 0.5) * 30;
+                } else {
+                    // Jets
+                    const jetLength = Math.random() * nebulaSize * 0.8;
+                    const jetSpread = Math.random() * 30;
+                    const jetSide = Math.random() > 0.5 ? 1 : -1;
+                    x = (Math.random() - 0.5) * jetSpread;
+                    z = (Math.random() - 0.5) * jetSpread;
+                    y = jetSide * jetLength;
+                }
+            } else {
+                // Irregular
+                const dist = Math.pow(Math.random(), 1.3) * nebulaSize;
+                const t = Math.random() * Math.PI * 2;
+                const ph = (Math.random() - 0.5) * Math.PI;
+                x = dist * Math.sin(ph) * Math.cos(t) + (Math.random() - 0.5) * nebulaSize * 0.3;
+                z = dist * Math.sin(ph) * Math.sin(t) + (Math.random() - 0.5) * nebulaSize * 0.3;
+                y = dist * Math.cos(ph) * 0.4;
+            }
 
-            const x = radius * Math.sin(phi) * Math.cos(theta);
-            const y = radius * Math.sin(phi) * Math.sin(theta) * 0.3;
-            const z = radius * Math.cos(phi);
+            positions[i3] = x;
+            positions[i3 + 1] = y;
+            positions[i3 + 2] = z;
 
-            positions[j * 3] = x;
-            positions[j * 3 + 1] = y;
-            positions[j * 3 + 2] = z;
-
-            // Color variation
-            const colorVariation = (Math.random() - 0.5) * 0.2;
-            const particleColor = new THREE.Color().setHSL(
-                (baseHue + colorVariation + 1) % 1,
-                0.7 + Math.random() * 0.3,
-                0.4 + Math.random() * 0.4
-            );
-
-            colors[j * 3] = particleColor.r;
-            colors[j * 3 + 1] = particleColor.g;
-            colors[j * 3 + 2] = particleColor.b;
+            const colorVariation = nebulaColor.clone();
+            colorVariation.offsetHSL((Math.random() - 0.5) * 0.15, 0, (Math.random() - 0.5) * 0.2);
+            colors[i3] = colorVariation.r;
+            colors[i3 + 1] = colorVariation.g;
+            colors[i3 + 2] = colorVariation.b;
         }
 
-        particleGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-        particleGeometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+        nebulaGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        nebulaGeometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
 
-        const particleMaterial = new THREE.PointsMaterial({
-            size: 150,  // Increased from 85 for better visibility at distance
+        // MATCHED TO GALAXY-FORMATION: Same particle material settings
+        const nebulaMaterial = new THREE.PointsMaterial({
+            size: 2.5,
             vertexColors: true,
             transparent: true,
-            opacity: 0.85,  // Increased from 0.65 for better visibility
-            blending: THREE.AdditiveBlending,  // Makes particles glow
-            depthWrite: false,
-            sizeAttenuation: true  // Size scales with distance
-        });
-
-        const particles = new THREE.Points(particleGeometry, particleMaterial);
-        nebulaGroup.add(particles);
-
-        // Add glowing core to make exotic nebulas more visible from distance
-        const coreGeometry = new THREE.SphereGeometry(nebulaSize * 0.15, 16, 16);
-        const coreMaterial = new THREE.MeshBasicMaterial({
-            color: nebulaColor,
-            transparent: true,
-            opacity: 0.4,
+            opacity: 0.65,
             blending: THREE.AdditiveBlending,
-            depthWrite: false
+            sizeAttenuation: true
         });
-        const core = new THREE.Mesh(coreGeometry, coreMaterial);
-        nebulaGroup.add(core);
 
-        // Add point light for extra glow effect
-        const nebulaLight = new THREE.PointLight(nebulaColor, 8, nebulaSize * 2);
-        nebulaLight.position.set(0, 0, 0);
-        nebulaGroup.add(nebulaLight);
+        const nebulaPoints = new THREE.Points(nebulaGeometry, nebulaMaterial);
+        nebulaPoints.visible = true;
+        nebulaPoints.frustumCulled = false;
+        nebulaGroup.add(nebulaPoints);
 
         nebulaGroup.position.set(nebulaX, nebulaY, nebulaZ);
+        nebulaGroup.visible = false; // Start hidden - visibility controlled by range
         nebulaGroup.userData = {
             type: 'nebula',
             name: exoticNebulaNames[i],
@@ -3831,18 +3933,64 @@ function createExoticCoreNebulas() {
             color: nebulaColor,
             discovered: false,
             size: nebulaSize,
-            isExoticCore: true
+            shape: shape,
+            isExoticCore: true,
+            visibilityRange: visibilityRange,
+            distanceFromOrigin: distanceFromOrigin
         };
 
         scene.add(nebulaGroup);
         nebulaClouds.push(nebulaGroup);
 
-        console.log(`  Created ${exoticNebulaNames[i]} at distance ${radius.toFixed(0)} units`);
+        console.log(`  Created ${exoticNebulaNames[i]} (${shape}) at distance ${distanceFromOrigin.toFixed(0)} units - visible within ${visibilityRange} units`);
     }
 
-    console.log(`✅ Created ${exoticNebulaCount} exotic core nebulas in range 45,000-65,000 units`);
+    console.log(`✅ Created ${exoticNebulaCount} exotic core nebulas (galaxy-formation style, range-based visibility)`);
     console.log(`   Total nebulas in scene: ${nebulaClouds.length}`);
 }
+
+// =============================================================================
+// NEBULA VISIBILITY UPDATE - Called each frame to show/hide distant nebulas based on range
+// =============================================================================
+function updateNebulaVisibility() {
+    if (typeof nebulaClouds === 'undefined' || nebulaClouds.length === 0) return;
+    if (typeof camera === 'undefined') return;
+    
+    nebulaClouds.forEach(nebula => {
+        if (!nebula || !nebula.userData) return;
+        
+        // Only apply range-based visibility to distant and exotic nebulas
+        if (!nebula.userData.isDistant && !nebula.userData.isExoticCore) return;
+        
+        const visibilityRange = nebula.userData.visibilityRange || 25000;
+        const distance = camera.position.distanceTo(nebula.position);
+        
+        // Show/hide based on range
+        const shouldBeVisible = distance < visibilityRange;
+        
+        if (nebula.visible !== shouldBeVisible) {
+            nebula.visible = shouldBeVisible;
+            if (shouldBeVisible) {
+                console.log(`👁️ ${nebula.userData.name} now visible (distance: ${distance.toFixed(0)})`);
+            }
+        }
+        
+        // Fade opacity based on distance within visible range
+        if (shouldBeVisible && nebula.children[0] && nebula.children[0].material) {
+            const fadeStart = visibilityRange * 0.6;
+            const fadeEnd = visibilityRange;
+            if (distance > fadeStart) {
+                const fadeProgress = (distance - fadeStart) / (fadeEnd - fadeStart);
+                nebula.children[0].material.opacity = 0.65 * (1 - fadeProgress * 0.5);
+            } else {
+                nebula.children[0].material.opacity = 0.65;
+            }
+        }
+    });
+}
+
+// Export visibility update function
+window.updateNebulaVisibility = updateNebulaVisibility;
 // =============================================================================
 // ENHANCED PLANET CLUSTERS - FROM EARLY VERSION
 // Creates rich planetary systems with rings, moons, and asteroid belts within nebulas

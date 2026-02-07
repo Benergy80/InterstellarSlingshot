@@ -1070,6 +1070,10 @@ function animate() {
 if (typeof animateNebulaBrownDwarfs !== 'undefined') {
     animateNebulaBrownDwarfs();
 }
+// Update distant/exotic nebula visibility based on player range
+if (typeof updateNebulaVisibility === 'function') {
+    updateNebulaVisibility();
+}
     
     // â­ ENHANCED: Animate nebula gas clouds with individual pulsing per cloud
 if (typeof nebulaGasClouds !== 'undefined' && nebulaGasClouds.length > 0) {
