@@ -4252,26 +4252,29 @@ const distressBeaconSystem = {
         }
     },
     
-    // Check if all regular enemies of a species are eliminated (not bosses/guardians)
-    checkSpeciesEliminated: function(galaxyId) {
+    // Check if Elite Guardian has been defeated for this species
+    // Distress beacon only triggers AFTER Elite Guardian is killed
+    checkEliteGuardianDefeated: function(galaxyId) {
         if (this.triggeredSpecies.has(galaxyId)) return false;
         
-        if (typeof enemies === 'undefined') return false;
+        if (typeof bossSystem === 'undefined') return false;
+        if (typeof galaxyTypes === 'undefined') return false;
         
-        // Count remaining regular enemies of this species
-        const remainingEnemies = enemies.filter(e => 
-            e && e.userData && 
-            e.userData.galaxyId === galaxyId &&
-            e.userData.health > 0 &&
-            !e.userData.isBoss &&
-            !e.userData.isBossSupport &&
-            !e.userData.isEliteGuardian &&
-            !e.userData.isDistressBoss // Don't count distress bosses
-        ).length;
+        const galaxy = galaxyTypes[galaxyId];
+        if (!galaxy) return false;
         
-        console.log(`📊 Species ${galaxyId} check: ${remainingEnemies} regular enemies remaining`);
+        const faction = galaxy.faction;
         
-        return remainingEnemies === 0;
+        // Check if elite guardian was spawned AND defeated
+        if (bossSystem.eliteGuardians && bossSystem.eliteGuardians[faction]) {
+            const guardianStatus = bossSystem.eliteGuardians[faction];
+            if (guardianStatus.spawned && guardianStatus.defeated) {
+                console.log(`📊 ${faction} Elite Guardian defeated - ready for distress beacon`);
+                return true;
+            }
+        }
+        
+        return false;
     },
     
     // Trigger distress beacon for a species
@@ -4461,12 +4464,15 @@ const distressBeaconSystem = {
         
         boss.position.copy(bossPosition);
         
+        // Warlord health: 3x Elite Guardian (which is 2x boss) = 6x boss health
+        const warlordHealth = getEnemyHealthForDifficulty(false, true, false) * 3;
+        
         // Boss userData
         boss.userData = {
             name: `${galaxy.faction} Warlord`,
             type: 'enemy',
-            health: 500, // Tough boss
-            maxHealth: 500,
+            health: warlordHealth, // 3x boss health (tougher than Elite Guardian)
+            maxHealth: warlordHealth,
             speed: 0.8,
             aggression: 0.9,
             patrolCenter: bossPosition.clone(),
@@ -4528,11 +4534,14 @@ const distressBeaconSystem = {
         
         support.position.copy(supportPosition);
         
+        // Elite Guard health: 2x boss support
+        const eliteGuardHealth = getEnemyHealthForDifficulty(false, false, true) * 2;
+        
         support.userData = {
             name: `${galaxy.faction} Elite Guard ${index + 1}`,
             type: 'enemy',
-            health: 150,
-            maxHealth: 150,
+            health: eliteGuardHealth, // 2x boss support health
+            maxHealth: eliteGuardHealth,
             speed: 1.0,
             aggression: 0.85,
             patrolCenter: bossPosition.clone(),
@@ -4565,12 +4574,12 @@ const distressBeaconSystem = {
         const systemType = targetSystem.userData.systemType === 'borg_patrol' ? 'Borg Patrol Zone' : 'Exotic System';
         
         const message = `🚨 PRIORITY ALERT - DISTRESS BEACON DETECTED 🚨\n\n` +
-            `Captain, you have eliminated all ${galaxy.faction} forces from their stronghold!\n\n` +
-            `However, our sensors detect a ${galaxy.faction} WARLORD has retreated to the ${systemName} in deep space.\n\n` +
-            `This ${systemType} is located at extreme range. The Warlord commands an elite guard and must be destroyed to fully liberate ${galaxy.species} space.\n\n` +
+            `Captain, the ${galaxy.faction} Elite Guardian has fallen!\n\n` +
+            `But this is not over. Our deep space sensors have intercepted a distress signal - the ${galaxy.faction} WARLORD has retreated to the ${systemName}!\n\n` +
+            `This ${systemType} lies at the edge of known space. The Warlord has rallied their last elite forces for a final stand.\n\n` +
             `NAVIGATION: Follow the ${galaxy.name} colored beacon line to intercept.\n\n` +
-            `⚠️ WARNING: Expect heavy resistance. The Warlord will not surrender.\n\n` +
-            `Hunt them down, Captain. Finish this.`;
+            `⚠️ WARNING: The Warlord is more powerful than the Elite Guardian. Expect heavy resistance.\n\n` +
+            `This is the final battle for ${galaxy.species} space. End this, Captain.`;
         
         if (typeof showMissionCommandTransmission === 'function') {
             showMissionCommandTransmission(message);
@@ -4602,28 +4611,30 @@ const distressBeaconSystem = {
         });
     },
     
-    // Called when any enemy is destroyed - check for species elimination
+    // Called when any enemy is destroyed - check for Elite Guardian defeat
     onEnemyDestroyed: function(enemy) {
         if (!enemy || !enemy.userData) return;
         
         const galaxyId = enemy.userData.galaxyId;
         if (galaxyId === undefined || galaxyId === null) return;
         
-        // Don't trigger on boss death
-        if (enemy.userData.isBoss || enemy.userData.isDistressBoss) {
-            // Check if this was a distress boss - show victory!
-            if (enemy.userData.isDistressBoss) {
-                this.onDistressBossDefeated(galaxyId);
-            }
+        // Check if this was a distress boss - show victory!
+        if (enemy.userData.isDistressBoss) {
+            this.onDistressBossDefeated(galaxyId);
             return;
         }
         
-        // Small delay to let enemy be removed from array
-        setTimeout(() => {
-            if (this.checkSpeciesEliminated(galaxyId)) {
-                this.triggerDistressBeacon(galaxyId);
-            }
-        }, 200);
+        // Check if this was an Elite Guardian - trigger distress beacon!
+        if (enemy.userData.isEliteGuardian) {
+            console.log(`🛡️ Elite Guardian defeated for galaxy ${galaxyId} - checking for distress beacon trigger`);
+            // Small delay to let the bossSystem update
+            setTimeout(() => {
+                if (this.checkEliteGuardianDefeated(galaxyId)) {
+                    this.triggerDistressBeacon(galaxyId);
+                }
+            }, 500);
+            return;
+        }
     },
     
     // Called when a distress boss is defeated
