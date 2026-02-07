@@ -2407,7 +2407,6 @@ function checkForNebulaDiscovery() {
     if (typeof gameState === 'undefined' || typeof camera === 'undefined') return;
     if (typeof nebulaClouds === 'undefined' || nebulaClouds.length === 0) return;
 
-    const discoveryRange = 3000; // Distance to trigger discovery
     const exitRange = 4000; // Distance to trigger music fade out
 
     let playerNearNebula = false;
@@ -2416,6 +2415,11 @@ function checkForNebulaDiscovery() {
         if (!nebula || !nebula.userData) return;
 
         const distance = camera.position.distanceTo(nebula.position);
+        
+        // Use smaller discovery range for clustered nebulas (they come in pairs)
+        // Distant and exotic nebulas can use larger range since they're more spread out
+        const isClusteredNebula = !nebula.userData.isDistant && !nebula.userData.isExoticCore;
+        const discoveryRange = isClusteredNebula ? 200 : 3000;
 
         // Check if player is within any nebula
         if (distance < exitRange) {
