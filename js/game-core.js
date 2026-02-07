@@ -1722,8 +1722,8 @@ planets.forEach(planet => {
         // Apply rotation to starfield
         planet.userData.starCluster.rotation.y += rotationSpeed;
         
-        // Optional: Add slight wobble to make it more dynamic
-        planet.userData.starCluster.rotation.x = Math.sin(Date.now() * 0.0001) * 0.05;
+        // PERF: Wobble disabled for performance
+        // planet.userData.starCluster.rotation.x = Math.sin(Date.now() * 0.0001) * 0.05;
     }
 });
 

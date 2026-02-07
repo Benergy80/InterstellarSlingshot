@@ -2609,7 +2609,7 @@ core8GalaxyStarsGeometry.setAttribute('color', new THREE.Float32BufferAttribute(
 
 const core8GalaxyStars = new THREE.Points(core8GalaxyStarsGeometry, core8GalaxyStarsMaterial);
 core8GalaxyStars.visible = true;
-core8GalaxyStars.frustumCulled = false;
+core8GalaxyStars.frustumCulled = true; // PERF: Enable culling
 
 core8BlackHole.add(core8GalaxyStars);
 core8BlackHole.userData.starCluster = core8GalaxyStars; // Store reference for rotation
@@ -3081,7 +3081,7 @@ for (let i = 0; i < 4000; i++) {
 localGalaxyStarsGeometry.setAttribute('position', new THREE.Float32BufferAttribute(localStarsVertices, 3));
 const localGalaxyStars = new THREE.Points(localGalaxyStarsGeometry, localGalaxyStarsMaterial);
 localGalaxyStars.visible = true;
-localGalaxyStars.frustumCulled = false;
+localGalaxyStars.frustumCulled = true; // PERF: Enable culling
 
 // Store as global variable so we can rotate it
 window.localGalaxyStars = localGalaxyStars;
