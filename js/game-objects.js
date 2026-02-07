@@ -4715,47 +4715,34 @@ function createTradingShipsInNebulas() {
 }
 
 function createTradingShip(nebula, index) {
-    // Simple cargo ship geometry
-    const shipGroup = new THREE.Group();
+    // Use civilian ship registry if available
+    let shipGroup;
+    let shipCategory;
     
-    // Main hull
-    const hullGeometry = new THREE.BoxGeometry(40, 15, 80);
-    const hullMaterial = new THREE.MeshStandardMaterial({
-        color: 0x888899,
-        metalness: 0.6,
-        roughness: 0.4
-    });
-    const hull = new THREE.Mesh(hullGeometry, hullMaterial);
-    shipGroup.add(hull);
+    // Pick appropriate ship type for nebula location
+    const nebulaShipTypes = ['freighter', 'tanker', 'science', 'shuttle', 'passenger'];
+    shipCategory = nebulaShipTypes[Math.floor(Math.random() * nebulaShipTypes.length)];
     
-    // Cargo containers
-    const containerColors = [0x4488cc, 0xcc8844, 0x44cc88, 0xcc4488];
-    for (let c = 0; c < 3; c++) {
-        const containerGeometry = new THREE.BoxGeometry(30, 20, 25);
-        const containerMaterial = new THREE.MeshStandardMaterial({
-            color: containerColors[c % containerColors.length],
-            metalness: 0.3,
-            roughness: 0.6
-        });
-        const container = new THREE.Mesh(containerGeometry, containerMaterial);
-        container.position.set(0, 15, -20 + c * 25);
-        shipGroup.add(container);
+    if (typeof civilianShipRegistry !== 'undefined') {
+        shipGroup = civilianShipRegistry.getShipMesh(shipCategory);
+    } else {
+        // Fallback to simple procedural ship
+        shipGroup = new THREE.Group();
+        const hull = new THREE.Mesh(
+            new THREE.BoxGeometry(40, 15, 80),
+            new THREE.MeshStandardMaterial({ color: 0x888899, metalness: 0.6, roughness: 0.4 })
+        );
+        shipGroup.add(hull);
+        
+        // Engine glow
+        const engineMat = new THREE.MeshBasicMaterial({ color: 0x00aaff, transparent: true, opacity: 0.8 });
+        const engineL = new THREE.Mesh(new THREE.SphereGeometry(8, 8, 8), engineMat);
+        engineL.position.set(-15, 0, 45);
+        shipGroup.add(engineL);
+        const engineR = new THREE.Mesh(new THREE.SphereGeometry(8, 8, 8), engineMat);
+        engineR.position.set(15, 0, 45);
+        shipGroup.add(engineR);
     }
-    
-    // Engine glow
-    const engineGeometry = new THREE.SphereGeometry(8, 8, 8);
-    const engineMaterial = new THREE.MeshBasicMaterial({
-        color: 0x00aaff,
-        transparent: true,
-        opacity: 0.8
-    });
-    const engineLeft = new THREE.Mesh(engineGeometry, engineMaterial);
-    engineLeft.position.set(-15, 0, 45);
-    shipGroup.add(engineLeft);
-    
-    const engineRight = new THREE.Mesh(engineGeometry, engineMaterial);
-    engineRight.position.set(15, 0, 45);
-    shipGroup.add(engineRight);
     
     // Position within nebula
     const nebulaSize = nebula.userData.size || 1500;
@@ -4769,18 +4756,29 @@ function createTradingShip(nebula, index) {
     
     shipGroup.position.set(startX, startY, startZ);
     
+    // Get ship name from registry
+    const categoryData = (typeof civilianShipRegistry !== 'undefined') 
+        ? civilianShipRegistry.categories[shipCategory] 
+        : { name: 'Cargo Freighter' };
+    
+    // Get speed from registry
+    const shipSpeed = (typeof civilianShipRegistry !== 'undefined')
+        ? civilianShipRegistry.getShipSpeed(shipCategory)
+        : 0.5 + Math.random() * 0.5;
+    
     // Ship data
     shipGroup.userData = {
         type: 'trading_ship',
-        name: `Cargo Freighter ${index + 1}`,
+        shipCategory: shipCategory,
+        name: `${categoryData.name} ${index + 1}`,
         nebulaName: nebula.userData.name,
         nebulaPosition: nebula.position.clone(),
         orbitRadius: orbitRadius,
         orbitAngle: angle,
         orbitSpeed: 0.0001 + Math.random() * 0.0002, // Slow orbit
         verticalOffset: height,
-        destination: null, // Will be set to nearby planet
-        speed: 0.5 + Math.random() * 0.5,
+        destination: null,
+        speed: shipSpeed,
         isNeutral: true
     };
     
@@ -4842,6 +4840,303 @@ function updateTradingShips() {
 window.tradingShips = tradingShips;
 window.createTradingShipsInNebulas = createTradingShipsInNebulas;
 window.updateTradingShips = updateTradingShips;
+
+// =============================================================================
+// CIVILIAN SHIPS THROUGHOUT THE UNIVERSE - Various ship types in different areas
+// =============================================================================
+const civilianShips = [];
+
+function createCivilianShipsNearPlanets() {
+    console.log('🚀 Creating civilian ships near planets...');
+    
+    if (typeof planets === 'undefined' || planets.length === 0) {
+        console.log('No planets found, skipping civilian ships near planets');
+        return;
+    }
+    
+    let shipsCreated = 0;
+    
+    // Add ships around some planets (not all, to avoid clutter)
+    const planetsWithShips = planets.filter(() => Math.random() < 0.3); // 30% of planets
+    
+    planetsWithShips.forEach((planet, index) => {
+        if (!planet || !planet.position) return;
+        
+        // 1-3 ships per planet
+        const shipCount = 1 + Math.floor(Math.random() * 3);
+        
+        for (let i = 0; i < shipCount; i++) {
+            const ship = createCivilianShipNearPlanet(planet, i);
+            if (ship) {
+                civilianShips.push(ship);
+                shipsCreated++;
+            }
+        }
+    });
+    
+    console.log(`✅ Created ${shipsCreated} civilian ships near planets`);
+}
+
+function createCivilianShipNearPlanet(planet, index) {
+    // Pick ship type appropriate for planet
+    const planetShipTypes = ['shuttle', 'passenger', 'freighter', 'science'];
+    const shipCategory = planetShipTypes[Math.floor(Math.random() * planetShipTypes.length)];
+    
+    let shipGroup;
+    if (typeof civilianShipRegistry !== 'undefined') {
+        shipGroup = civilianShipRegistry.getShipMesh(shipCategory);
+    } else {
+        // Simple fallback
+        shipGroup = new THREE.Group();
+        const hull = new THREE.Mesh(
+            new THREE.BoxGeometry(20, 10, 40),
+            new THREE.MeshStandardMaterial({ color: 0xaaaaaa, metalness: 0.5, roughness: 0.5 })
+        );
+        shipGroup.add(hull);
+    }
+    
+    // Position in orbit around planet
+    const planetRadius = planet.userData.radius || 100;
+    const orbitRadius = planetRadius * 2 + 50 + Math.random() * 100;
+    const angle = Math.random() * Math.PI * 2;
+    const inclination = (Math.random() - 0.5) * 0.5;
+    
+    const x = planet.position.x + Math.cos(angle) * orbitRadius;
+    const y = planet.position.y + Math.sin(inclination) * orbitRadius * 0.3;
+    const z = planet.position.z + Math.sin(angle) * orbitRadius;
+    
+    shipGroup.position.set(x, y, z);
+    
+    const categoryData = (typeof civilianShipRegistry !== 'undefined')
+        ? civilianShipRegistry.categories[shipCategory]
+        : { name: 'Shuttle' };
+    
+    shipGroup.userData = {
+        type: 'civilian_ship',
+        shipCategory: shipCategory,
+        name: `${categoryData.name} ${index + 1}`,
+        planetName: planet.userData.name,
+        planetPosition: planet.position.clone(),
+        orbitRadius: orbitRadius,
+        orbitAngle: angle,
+        orbitSpeed: 0.0002 + Math.random() * 0.0003,
+        orbitInclination: inclination,
+        isNeutral: true
+    };
+    
+    shipGroup.visible = true;
+    scene.add(shipGroup);
+    
+    return shipGroup;
+}
+
+function createMiningShipsInAsteroidBelts() {
+    console.log('⛏️ Creating mining ships in asteroid belts...');
+    
+    if (typeof asteroidBelts === 'undefined' || asteroidBelts.length === 0) {
+        console.log('No asteroid belts found, skipping mining ships');
+        return;
+    }
+    
+    let shipsCreated = 0;
+    
+    asteroidBelts.forEach((belt, beltIndex) => {
+        if (!belt || !belt.position) return;
+        
+        // 2-4 mining ships per belt
+        const shipCount = 2 + Math.floor(Math.random() * 3);
+        
+        for (let i = 0; i < shipCount; i++) {
+            const ship = createMiningShip(belt, i);
+            if (ship) {
+                civilianShips.push(ship);
+                shipsCreated++;
+            }
+        }
+    });
+    
+    console.log(`✅ Created ${shipsCreated} mining ships in asteroid belts`);
+}
+
+function createMiningShip(belt, index) {
+    let shipGroup;
+    if (typeof civilianShipRegistry !== 'undefined') {
+        shipGroup = civilianShipRegistry.getShipMesh('mining');
+    } else {
+        shipGroup = new THREE.Group();
+        const hull = new THREE.Mesh(
+            new THREE.BoxGeometry(30, 20, 45),
+            new THREE.MeshStandardMaterial({ color: 0xaaaa55, metalness: 0.5, roughness: 0.6 })
+        );
+        shipGroup.add(hull);
+    }
+    
+    // Position within the belt
+    const beltRadius = belt.userData.radius || 500;
+    const angle = Math.random() * Math.PI * 2;
+    const radiusVariation = beltRadius * 0.3;
+    const actualRadius = beltRadius + (Math.random() - 0.5) * radiusVariation;
+    
+    const x = belt.position.x + Math.cos(angle) * actualRadius;
+    const y = belt.position.y + (Math.random() - 0.5) * 50;
+    const z = belt.position.z + Math.sin(angle) * actualRadius;
+    
+    shipGroup.position.set(x, y, z);
+    
+    shipGroup.userData = {
+        type: 'civilian_ship',
+        shipCategory: 'mining',
+        name: `Mining Vessel ${index + 1}`,
+        beltPosition: belt.position.clone(),
+        orbitRadius: actualRadius,
+        orbitAngle: angle,
+        orbitSpeed: 0.00005 + Math.random() * 0.0001, // Very slow
+        isNeutral: true
+    };
+    
+    shipGroup.visible = true;
+    scene.add(shipGroup);
+    
+    return shipGroup;
+}
+
+function createScienceShipsNearAnomalies() {
+    console.log('🔬 Creating science ships near anomalies...');
+    
+    let shipsCreated = 0;
+    
+    // Near pulsars
+    if (typeof cosmicFeatures !== 'undefined' && cosmicFeatures.pulsars) {
+        cosmicFeatures.pulsars.forEach((pulsar, i) => {
+            if (Math.random() < 0.5) { // 50% chance
+                const ship = createScienceShip(pulsar.position, 'pulsar', i);
+                if (ship) {
+                    civilianShips.push(ship);
+                    shipsCreated++;
+                }
+            }
+        });
+    }
+    
+    // Near black holes (galaxy centers)
+    if (typeof galaxyTypes !== 'undefined') {
+        for (let g = 0; g < 8; g++) {
+            if (Math.random() < 0.3) { // 30% chance per galaxy
+                const center = getGalaxy3DPosition(g);
+                const ship = createScienceShip(center, 'black_hole', g);
+                if (ship) {
+                    civilianShips.push(ship);
+                    shipsCreated++;
+                }
+            }
+        }
+    }
+    
+    console.log(`✅ Created ${shipsCreated} science ships near anomalies`);
+}
+
+function createScienceShip(targetPosition, targetType, index) {
+    let shipGroup;
+    if (typeof civilianShipRegistry !== 'undefined') {
+        shipGroup = civilianShipRegistry.getShipMesh('science');
+    } else {
+        shipGroup = new THREE.Group();
+        const hull = new THREE.Mesh(
+            new THREE.CylinderGeometry(20, 15, 8, 12),
+            new THREE.MeshStandardMaterial({ color: 0x4488ff, metalness: 0.7, roughness: 0.3 })
+        );
+        shipGroup.add(hull);
+    }
+    
+    // Position at safe distance from anomaly
+    const safeDistance = targetType === 'black_hole' ? 2000 : 500;
+    const angle = Math.random() * Math.PI * 2;
+    
+    const x = targetPosition.x + Math.cos(angle) * safeDistance;
+    const y = targetPosition.y + (Math.random() - 0.5) * 200;
+    const z = targetPosition.z + Math.sin(angle) * safeDistance;
+    
+    shipGroup.position.set(x, y, z);
+    
+    shipGroup.userData = {
+        type: 'civilian_ship',
+        shipCategory: 'science',
+        name: `Research Vessel ${index + 1}`,
+        targetPosition: targetPosition.clone(),
+        targetType: targetType,
+        orbitRadius: safeDistance,
+        orbitAngle: angle,
+        orbitSpeed: 0.0001 + Math.random() * 0.0002,
+        isNeutral: true
+    };
+    
+    shipGroup.visible = true;
+    scene.add(shipGroup);
+    
+    return shipGroup;
+}
+
+function updateCivilianShips() {
+    if (civilianShips.length === 0) return;
+    
+    civilianShips.forEach(ship => {
+        if (!ship || !ship.userData) return;
+        
+        const data = ship.userData;
+        
+        // Update orbit angle
+        data.orbitAngle += data.orbitSpeed || 0.0001;
+        
+        // Calculate new position based on orbit
+        let centerPos;
+        if (data.planetPosition) {
+            centerPos = data.planetPosition;
+        } else if (data.beltPosition) {
+            centerPos = data.beltPosition;
+        } else if (data.targetPosition) {
+            centerPos = data.targetPosition;
+        } else {
+            return;
+        }
+        
+        const newX = centerPos.x + Math.cos(data.orbitAngle) * data.orbitRadius;
+        const newZ = centerPos.z + Math.sin(data.orbitAngle) * data.orbitRadius;
+        
+        // Smooth movement
+        ship.position.x += (newX - ship.position.x) * 0.02;
+        ship.position.z += (newZ - ship.position.z) * 0.02;
+        
+        // Face direction of travel
+        const direction = new THREE.Vector3(
+            newX - ship.position.x,
+            0,
+            newZ - ship.position.z
+        );
+        
+        if (direction.length() > 0.01) {
+            ship.lookAt(
+                ship.position.x + direction.x * 100,
+                ship.position.y,
+                ship.position.z + direction.z * 100
+            );
+        }
+    });
+}
+
+// Function to spawn all civilian ships
+function createAllCivilianShips() {
+    console.log('🌍 Creating civilian ships throughout the universe...');
+    
+    createCivilianShipsNearPlanets();
+    createMiningShipsInAsteroidBelts();
+    createScienceShipsNearAnomalies();
+    
+    console.log(`✅ Total civilian ships created: ${civilianShips.length}`);
+}
+
+window.civilianShips = civilianShips;
+window.createAllCivilianShips = createAllCivilianShips;
+window.updateCivilianShips = updateCivilianShips;
 
 // =============================================================================
 // ENEMIES IN DISTANT/EXOTIC GALAXIES - Add patrols to outer regions

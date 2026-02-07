@@ -787,6 +787,11 @@ if (typeof areModelsLoaded === 'function' && areModelsLoaded()) {
         createTradingShipsInNebulas();
         console.log('Trading ships created in nebulas');
     }
+    // Create civilian ships throughout the universe
+    if (typeof createAllCivilianShips === 'function') {
+        createAllCivilianShips();
+        console.log('Civilian ships created throughout universe');
+    }
     // Initialize distress beacon system (needs outer systems to exist)
     if (typeof distressBeaconSystem !== 'undefined' && distressBeaconSystem.initialize) {
         distressBeaconSystem.initialize();
@@ -1116,6 +1121,11 @@ if (typeof updateOrbitLineVisibility === 'function') {
 // Update trading ships in nebulas
 if (typeof updateTradingShips === 'function') {
     updateTradingShips();
+}
+
+// Update civilian ships throughout universe
+if (typeof updateCivilianShips === 'function') {
+    updateCivilianShips();
 }
 
 // Update distress beacons (pulsing effect)
