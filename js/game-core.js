@@ -53,7 +53,7 @@ const gameState = {
     targetLock: {
         active: false,
         target: null,
-        range: 400, // Doubled range
+        range: 600, // Increased for better target acquisition
         autoAim: true,
         smoothing: 0.25
     },

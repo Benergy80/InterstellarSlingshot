@@ -18,9 +18,9 @@ let cameraRotationTracking = { x: 0, y: 0, z: 0 };
 // NEW: Rotational inertia system for space-like flight feel
 let rotationalVelocity = { pitch: 0, yaw: 0, roll: 0 };
 const rotationalInertia = {
-    acceleration: 0.0020,       // How quickly rotation speeds up (slower for fine control)
-    deceleration: 0.95,        // How quickly rotation slows down (0.92 = retain 92% per frame)
-    maxSpeed: 0.014,           // Maximum rotation speed (reduced for finer control)
+    acceleration: 0.0030,       // INCREASED: Faster turn response for ambush reactions
+    deceleration: 0.93,        // Slightly faster slowdown for snappier control
+    maxSpeed: 0.022,           // INCREASED: Faster max turn speed
     bankingFactor: -2.5,        // How much to bank when turning at full speed (scaled by velocity)
     bankingSmoothing: 0.2     // How smoothly banking is applied
 };
