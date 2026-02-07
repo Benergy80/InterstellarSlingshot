@@ -236,9 +236,9 @@ function checkCosmicDiscoveries() {
 }
 
 function updateActivePlanets() {
-    // PERFORMANCE: Adjust active range based on performance mode
-    const activeRange = gameState.performanceMode === 'minimal' ? 2000 :
-                        gameState.performanceMode === 'optimized' ? 3000 : 4000;
+    // PERFORMANCE: Reduced active ranges for better performance
+    const activeRange = gameState.performanceMode === 'minimal' ? 1500 :
+                        gameState.performanceMode === 'optimized' ? 2500 : 3000;
     
     activePlanets = planets.filter(planet => {
         const distance = camera.position.distanceTo(planet.position);
@@ -1842,14 +1842,22 @@ if (typeof checkCosmicFeatureInteractions === 'function' && typeof camera !== 'u
 
 // FIXED: Enhanced orbital mechanics that work for ALL galaxies - ADJUSTED SPEEDS (75% slower)
 function updatePlanetOrbits() {
+    // PERF: Distance culling - only update objects within 3000 units
+    const playerPos = camera.position;
+    const CULL_DISTANCE = 3000;
+    
     // PERF DEBUG: Log planet count every 300 frames
     if (gameState.frameCount % 300 === 0) {
-        const playerPos = camera.position;
-        const nearbyCount = planets.filter(p => p && p.position && playerPos.distanceTo(p.position) < 5000).length;
-        console.log(`📊 PERF: ${planets.length} total planets, ${nearbyCount} within 5000 units`);
+        const nearbyCount = planets.filter(p => p && p.position && playerPos.distanceTo(p.position) < CULL_DISTANCE).length;
+        console.log(`📊 PERF: ${planets.length} total, ${nearbyCount} within ${CULL_DISTANCE} units (processing only nearby)`);
     }
     
     planets.forEach((planet) => {
+        // PERF: Skip distant objects entirely
+        if (planet && planet.position) {
+            const dist = playerPos.distanceTo(planet.position);
+            if (dist > CULL_DISTANCE) return; // Skip this planet
+        }
         // Skip if planet is destroyed or doesn't exist
         if (!planet || !planet.userData) return;
         

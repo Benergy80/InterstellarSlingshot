@@ -1530,10 +1530,19 @@ if (keys.x && gameState.energy > 0) {
     let nearestAssistDistance = Infinity;
     let gravityWellInRange = false;
     
+    // PERF: Distance culling constant
+    const GRAVITY_CULL_DISTANCE = 3000;
+    
     if (typeof activePlanets !== 'undefined') {
         activePlanets.forEach(planet => {
             const planetPosition = planet.position;
             const distance = camera.position.distanceTo(planetPosition);
+            
+            // PERF: Skip objects beyond cull distance (except black holes which have long-range gravity)
+            if (distance > GRAVITY_CULL_DISTANCE && planet.userData.type !== 'blackhole') {
+                return;
+            }
+            
             const planetMass = planet.userData.mass || 1;
             const planetRadius = planet.geometry ? planet.geometry.parameters.radius : 1;
             

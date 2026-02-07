@@ -541,7 +541,7 @@ const enemyShapes = {
 
 // Enhanced enemy spawning limits per galaxy
 const galaxyEnemyLimits = {
-    0: 12, 1: 15, 2: 10, 3: 13, 4: 8, 5: 14, 6: 18, 7: 16
+    0: 12, 1: 15, 2: 10, 3: 13, 4: 8, 5: 14, 6: 18, 7: 6  // Vulcan reduced for performance
 };
 
 // FIXED: Boss system initialization - SINGLE DECLARATION
@@ -3053,8 +3053,8 @@ const localGalaxyStarsMaterial = new THREE.PointsMaterial({
 
 const localStarsVertices = [];
 
-// Local galaxy stars (3000 stars in spiral pattern - reduced from 4000 for performance)
-for (let i = 0; i < 3000; i++) {
+// Local galaxy stars (2500 stars in spiral pattern - reduced for performance)
+for (let i = 0; i < 2500; i++) {
     const armAngle = Math.random() * Math.PI * 2;
     const armDistance = Math.pow(Math.random(), 1.8) * 4000;
     const armWidth = 0.25;
@@ -8267,9 +8267,9 @@ function createEnemies3D() {
         console.log(`   Galaxy ${g} (${galaxyTypes[g].name}): ${count} enemies`);
     }
     
-    // Create local galaxy enemies (Martian Pirates) - ALWAYS spawn these
+    // Create local galaxy enemies (Martian Pirates) - reduced for performance
     const localSystemOffset = { x: 2000, y: 0, z: 1200 };
-    for (let i = 0; i < 10; i++) {
+    for (let i = 0; i < 4; i++) {
         const enemyGeometry = createEnemyGeometry(0);
         
         const distance = 1800 + Math.random() * 1200;
