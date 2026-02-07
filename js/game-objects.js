@@ -2162,7 +2162,7 @@ try {
             name: 'Sagittarius A* (Galactic Center)',
             type: 'blackhole',
             mass: 8000,
-            gravity: 400.0,
+            gravity: 0, // PERF TEST: Disabled (was 400.0)
             warpThreshold: 160,
             isGalacticCenter: true,
             isSagittariusA: true,
