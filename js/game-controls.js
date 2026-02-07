@@ -3570,6 +3570,11 @@ if (enemy.userData.health <= 0) {
         recordEnemyKillPosition(enemy);
     }
     
+    // Track area clearing for Mission Command notifications
+    if (typeof areaClearTracker !== 'undefined' && areaClearTracker.onEnemyDestroyed) {
+        areaClearTracker.onEnemyDestroyed(enemy);
+    }
+    
     // Enemy destroyed - NOW create explosion and remove
     createExplosionEffect(enemy.position, 0xff4444, 15);
     playSound('explosion');

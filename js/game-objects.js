@@ -3622,7 +3622,7 @@ function createDistantNebulas() {
     const distantNebulaCount = 6;
     const minRadius = 50000;
     const maxRadius = 75000;
-    const visibilityRange = 25000; // Only visible within 25k units
+    const visibilityRange = 45000; // Only visible within 45k units
 
     const distantNebulaNames = [
         'Distant Nebula Alpha',
@@ -3783,7 +3783,7 @@ function createExoticCoreNebulas() {
     const exoticNebulaCount = 8;
     const minRadius = 45000;
     const maxRadius = 65000;
-    const visibilityRange = 20000; // Only visible within 20k units
+    const visibilityRange = 40000; // Only visible within 40k units
 
     const exoticNebulaNames = [
         'Frontier Nebula',
@@ -3991,6 +3991,503 @@ function updateNebulaVisibility() {
 
 // Export visibility update function
 window.updateNebulaVisibility = updateNebulaVisibility;
+
+// =============================================================================
+// ORBIT LINE VISIBILITY - Show orbits when near nebulas or black holes
+// =============================================================================
+function updateOrbitLineVisibility() {
+    if (typeof orbitLines === 'undefined' || orbitLines.length === 0) return;
+    if (typeof camera === 'undefined') return;
+    
+    const nebulaShowDistance = 3000; // Show orbits within 3000 units of nebula
+    const blackHoleShowDistance = 5000; // Show orbits within 5000 units of black hole
+    
+    // Check proximity to nebulas
+    let nearNebula = false;
+    let nearestNebulaDistance = Infinity;
+    
+    if (typeof nebulaClouds !== 'undefined' && nebulaClouds.length > 0) {
+        nebulaClouds.forEach(nebula => {
+            if (nebula && nebula.position) {
+                const distance = camera.position.distanceTo(nebula.position);
+                if (distance < nearestNebulaDistance) {
+                    nearestNebulaDistance = distance;
+                }
+                if (distance < nebulaShowDistance) {
+                    nearNebula = true;
+                }
+            }
+        });
+    }
+    
+    // Check proximity to black holes (galaxy cores)
+    let nearBlackHole = false;
+    if (typeof galaxyTypes !== 'undefined') {
+        for (let g = 0; g < galaxyTypes.length; g++) {
+            const galaxyCenter = getGalaxy3DPosition ? getGalaxy3DPosition(g) : null;
+            if (galaxyCenter) {
+                const distance = camera.position.distanceTo(galaxyCenter);
+                if (distance < blackHoleShowDistance) {
+                    nearBlackHole = true;
+                    break;
+                }
+            }
+        }
+    }
+    
+    // Update orbit visibility
+    const shouldShowOrbits = nearNebula || nearBlackHole;
+    
+    orbitLines.forEach(line => {
+        if (line && line.userData) {
+            // Only auto-show/hide orbits that belong to systems near player
+            if (line.userData.systemCenter) {
+                const systemDistance = camera.position.distanceTo(line.userData.systemCenter);
+                const isNearbySystem = systemDistance < 5000;
+                
+                if (isNearbySystem && shouldShowOrbits) {
+                    line.visible = true;
+                    // Fade opacity based on distance
+                    if (line.material) {
+                        const fadeStart = 3000;
+                        const fadeEnd = 5000;
+                        if (systemDistance > fadeStart) {
+                            const fadeProgress = (systemDistance - fadeStart) / (fadeEnd - fadeStart);
+                            line.material.opacity = 0.4 * (1 - fadeProgress * 0.7);
+                        } else {
+                            line.material.opacity = 0.4;
+                        }
+                    }
+                } else if (!window.orbitLinesVisible) {
+                    // Only hide if player hasn't manually toggled orbits on
+                    line.visible = false;
+                }
+            }
+        }
+    });
+}
+
+window.updateOrbitLineVisibility = updateOrbitLineVisibility;
+
+// =============================================================================
+// AREA CLEARED NOTIFICATION SYSTEM - Track and notify when areas are cleared
+// =============================================================================
+const areaClearTracker = {
+    clearedAreas: new Set(),
+    
+    // Check if an area is newly cleared
+    checkAreaCleared: function(galaxyId, areaType) {
+        const areaKey = `${galaxyId}-${areaType}`;
+        if (this.clearedAreas.has(areaKey)) return false;
+        
+        // Count remaining enemies in this area
+        let remainingEnemies = 0;
+        if (typeof enemies !== 'undefined') {
+            remainingEnemies = enemies.filter(e => 
+                e && e.userData && 
+                e.userData.galaxyId === galaxyId &&
+                (areaType === 'all' || e.userData.placementType === areaType)
+            ).length;
+        }
+        
+        if (remainingEnemies === 0) {
+            this.clearedAreas.add(areaKey);
+            return true;
+        }
+        return false;
+    },
+    
+    // Notify Mission Command of cleared area
+    notifyAreaCleared: function(galaxyId, areaType) {
+        if (typeof galaxyTypes === 'undefined') return;
+        
+        const galaxy = galaxyTypes[galaxyId];
+        if (!galaxy) return;
+        
+        let areaName = '';
+        let message = '';
+        
+        if (areaType === 'all' || areaType === 'black_hole') {
+            areaName = `${galaxy.name} Galaxy`;
+            message = `SECTOR CLEARED!\n\n` +
+                `Captain, all ${galaxy.faction} forces in the ${areaName} have been eliminated!\n\n` +
+                `The local populations can now rebuild in peace. Mission Command commends your valor.\n\n` +
+                `🏆 ${areaName} - LIBERATED`;
+        } else if (areaType === 'cosmic_feature') {
+            areaName = `${galaxy.name} Patrol Zone`;
+            message = `PATROL ZONE SECURED!\n\n` +
+                `The ${galaxy.faction} patrol forces in the ${areaName} have been neutralized.\n\n` +
+                `Shipping lanes are now safe. Well done, Captain.`;
+        } else if (areaType === 'nebula') {
+            areaName = `${galaxy.name} Nebula Region`;
+            message = `NEBULA SECURED!\n\n` +
+                `${galaxy.faction} forces have been driven from the ${areaName}.\n\n` +
+                `Scientists can now study these stellar nurseries in peace.`;
+        }
+        
+        // Show notification
+        if (typeof showMissionCommandTransmission === 'function') {
+            showMissionCommandTransmission(message);
+        } else if (typeof showNotification === 'function') {
+            showNotification(message, 8000);
+        }
+        
+        console.log(`🏆 AREA CLEARED: ${areaName} (Galaxy ${galaxyId}, Type: ${areaType})`);
+    },
+    
+    // Called when an enemy is destroyed
+    onEnemyDestroyed: function(enemy) {
+        if (!enemy || !enemy.userData) return;
+        
+        const galaxyId = enemy.userData.galaxyId;
+        const placementType = enemy.userData.placementType || 'all';
+        const nebulaName = enemy.userData.nebulaName;
+        const isDistantExotic = enemy.userData.isDistantGalaxy || enemy.userData.isExoticGalaxy;
+        
+        // Small delay to let the enemy be fully removed from array
+        setTimeout(() => {
+            // Check if entire galaxy is cleared
+            if (this.checkAreaCleared(galaxyId, 'all')) {
+                this.notifyAreaCleared(galaxyId, 'all');
+            }
+            // Check specific area types
+            else if (this.checkAreaCleared(galaxyId, placementType)) {
+                this.notifyAreaCleared(galaxyId, placementType);
+            }
+            
+            // Check distant/exotic nebula areas
+            if (nebulaName && this.checkNebulaCleared(nebulaName)) {
+                this.notifyNebulaCleared(nebulaName);
+            }
+        }, 100);
+    },
+    
+    // Check if a specific nebula area is cleared
+    checkNebulaCleared: function(nebulaName) {
+        const areaKey = `nebula-${nebulaName}`;
+        if (this.clearedAreas.has(areaKey)) return false;
+        
+        let remainingEnemies = 0;
+        if (typeof enemies !== 'undefined') {
+            remainingEnemies = enemies.filter(e => 
+                e && e.userData && e.userData.nebulaName === nebulaName
+            ).length;
+        }
+        
+        if (remainingEnemies === 0) {
+            this.clearedAreas.add(areaKey);
+            return true;
+        }
+        return false;
+    },
+    
+    // Notify when nebula is cleared
+    notifyNebulaCleared: function(nebulaName) {
+        const message = `NEBULA SECURED!\n\n` +
+            `All hostile forces in the ${nebulaName} have been eliminated!\n\n` +
+            `This region of deep space is now safe for exploration and colonization.\n\n` +
+            `🌟 ${nebulaName} - LIBERATED`;
+        
+        if (typeof showMissionCommandTransmission === 'function') {
+            showMissionCommandTransmission(message);
+        } else if (typeof showNotification === 'function') {
+            showNotification(message, 8000);
+        }
+        
+        console.log(`🌟 NEBULA CLEARED: ${nebulaName}`);
+    }
+};
+
+window.areaClearTracker = areaClearTracker;
+
+// =============================================================================
+// TRADING SHIPS IN NEBULAS - Civilian ships traveling between planets
+// =============================================================================
+const tradingShips = [];
+
+function createTradingShipsInNebulas() {
+    console.log('🚀 Creating trading ships in nebulas...');
+    
+    if (typeof nebulaClouds === 'undefined' || nebulaClouds.length === 0) {
+        console.log('No nebulas found, skipping trading ships');
+        return;
+    }
+    
+    // Only add trading ships to clustered nebulas (galaxy-formation nebulas)
+    const clusteredNebulas = nebulaClouds.filter(n => 
+        n && n.userData && !n.userData.isDistant && !n.userData.isExoticCore
+    );
+    
+    clusteredNebulas.forEach((nebula, nebulaIndex) => {
+        // 3-5 trading ships per nebula
+        const shipCount = 3 + Math.floor(Math.random() * 3);
+        
+        for (let i = 0; i < shipCount; i++) {
+            createTradingShip(nebula, i);
+        }
+    });
+    
+    console.log(`✅ Created ${tradingShips.length} trading ships across ${clusteredNebulas.length} nebulas`);
+}
+
+function createTradingShip(nebula, index) {
+    // Simple cargo ship geometry
+    const shipGroup = new THREE.Group();
+    
+    // Main hull
+    const hullGeometry = new THREE.BoxGeometry(40, 15, 80);
+    const hullMaterial = new THREE.MeshStandardMaterial({
+        color: 0x888899,
+        metalness: 0.6,
+        roughness: 0.4
+    });
+    const hull = new THREE.Mesh(hullGeometry, hullMaterial);
+    shipGroup.add(hull);
+    
+    // Cargo containers
+    const containerColors = [0x4488cc, 0xcc8844, 0x44cc88, 0xcc4488];
+    for (let c = 0; c < 3; c++) {
+        const containerGeometry = new THREE.BoxGeometry(30, 20, 25);
+        const containerMaterial = new THREE.MeshStandardMaterial({
+            color: containerColors[c % containerColors.length],
+            metalness: 0.3,
+            roughness: 0.6
+        });
+        const container = new THREE.Mesh(containerGeometry, containerMaterial);
+        container.position.set(0, 15, -20 + c * 25);
+        shipGroup.add(container);
+    }
+    
+    // Engine glow
+    const engineGeometry = new THREE.SphereGeometry(8, 8, 8);
+    const engineMaterial = new THREE.MeshBasicMaterial({
+        color: 0x00aaff,
+        transparent: true,
+        opacity: 0.8
+    });
+    const engineLeft = new THREE.Mesh(engineGeometry, engineMaterial);
+    engineLeft.position.set(-15, 0, 45);
+    shipGroup.add(engineLeft);
+    
+    const engineRight = new THREE.Mesh(engineGeometry, engineMaterial);
+    engineRight.position.set(15, 0, 45);
+    shipGroup.add(engineRight);
+    
+    // Position within nebula
+    const nebulaSize = nebula.userData.size || 1500;
+    const orbitRadius = nebulaSize * 0.3 + Math.random() * nebulaSize * 0.4;
+    const angle = (index / 5) * Math.PI * 2 + Math.random();
+    const height = (Math.random() - 0.5) * 200;
+    
+    const startX = nebula.position.x + Math.cos(angle) * orbitRadius;
+    const startY = nebula.position.y + height;
+    const startZ = nebula.position.z + Math.sin(angle) * orbitRadius;
+    
+    shipGroup.position.set(startX, startY, startZ);
+    
+    // Ship data
+    shipGroup.userData = {
+        type: 'trading_ship',
+        name: `Cargo Freighter ${index + 1}`,
+        nebulaName: nebula.userData.name,
+        nebulaPosition: nebula.position.clone(),
+        orbitRadius: orbitRadius,
+        orbitAngle: angle,
+        orbitSpeed: 0.0001 + Math.random() * 0.0002, // Slow orbit
+        verticalOffset: height,
+        destination: null, // Will be set to nearby planet
+        speed: 0.5 + Math.random() * 0.5,
+        isNeutral: true
+    };
+    
+    // Find nearby planets for destinations
+    if (typeof planets !== 'undefined' && planets.length > 0) {
+        const nearbyPlanets = planets.filter(p => {
+            if (!p || !p.position) return false;
+            const distance = nebula.position.distanceTo(p.position);
+            return distance < nebulaSize * 2;
+        });
+        
+        if (nearbyPlanets.length > 0) {
+            shipGroup.userData.nearbyPlanets = nearbyPlanets.map(p => p.position.clone());
+            shipGroup.userData.destinationIndex = Math.floor(Math.random() * nearbyPlanets.length);
+        }
+    }
+    
+    shipGroup.visible = true;
+    scene.add(shipGroup);
+    tradingShips.push(shipGroup);
+}
+
+function updateTradingShips() {
+    if (tradingShips.length === 0) return;
+    
+    tradingShips.forEach(ship => {
+        if (!ship || !ship.userData) return;
+        
+        const data = ship.userData;
+        
+        // Orbit around nebula center
+        data.orbitAngle += data.orbitSpeed;
+        
+        const newX = data.nebulaPosition.x + Math.cos(data.orbitAngle) * data.orbitRadius;
+        const newZ = data.nebulaPosition.z + Math.sin(data.orbitAngle) * data.orbitRadius;
+        
+        // Gentle vertical bob
+        const verticalBob = Math.sin(data.orbitAngle * 3) * 20;
+        const newY = data.nebulaPosition.y + data.verticalOffset + verticalBob;
+        
+        // Smooth movement
+        ship.position.x += (newX - ship.position.x) * 0.02;
+        ship.position.y += (newY - ship.position.y) * 0.02;
+        ship.position.z += (newZ - ship.position.z) * 0.02;
+        
+        // Face direction of travel
+        const direction = new THREE.Vector3(
+            newX - ship.position.x,
+            0,
+            newZ - ship.position.z
+        ).normalize();
+        
+        if (direction.length() > 0.01) {
+            ship.lookAt(ship.position.x + direction.x * 100, ship.position.y, ship.position.z + direction.z * 100);
+        }
+    });
+}
+
+window.tradingShips = tradingShips;
+window.createTradingShipsInNebulas = createTradingShipsInNebulas;
+window.updateTradingShips = updateTradingShips;
+
+// =============================================================================
+// ENEMIES IN DISTANT/EXOTIC GALAXIES - Add patrols to outer regions
+// =============================================================================
+function createDistantExoticEnemies() {
+    console.log('👾 Creating enemies in distant and exotic galaxies...');
+    
+    if (typeof nebulaClouds === 'undefined' || nebulaClouds.length === 0) {
+        console.log('No nebulas found, skipping distant enemies');
+        return;
+    }
+    
+    let enemiesCreated = 0;
+    
+    // Get distant and exotic nebulas
+    const outerNebulas = nebulaClouds.filter(n => 
+        n && n.userData && (n.userData.isDistant || n.userData.isExoticCore)
+    );
+    
+    // Assign enemy types to distant/exotic areas (cycle through galaxy types)
+    outerNebulas.forEach((nebula, index) => {
+        // Assign a galaxy type (enemy faction) to this nebula
+        const galaxyId = index % 8;
+        const galaxyType = galaxyTypes[galaxyId];
+        
+        // Store the faction info in the nebula
+        nebula.userData.assignedFaction = galaxyId;
+        nebula.userData.factionName = galaxyType.faction;
+        
+        // Create 3-5 patrol enemies per distant/exotic nebula
+        const enemyCount = 3 + Math.floor(Math.random() * 3);
+        
+        for (let i = 0; i < enemyCount; i++) {
+            createDistantEnemy(nebula, galaxyId, i);
+            enemiesCreated++;
+        }
+    });
+    
+    console.log(`✅ Created ${enemiesCreated} enemies across ${outerNebulas.length} distant/exotic nebulas`);
+}
+
+function createDistantEnemy(nebula, galaxyId, index) {
+    const galaxyType = galaxyTypes[galaxyId];
+    const shapeData = enemyShapes[galaxyId];
+    
+    // Create enemy geometry
+    const enemyGeometry = createEnemyGeometry(galaxyId);
+    const distance = nebula.userData.distanceFromOrigin || 50000;
+    const materials = createEnemyMaterial(shapeData, 'regular', distance);
+    
+    // Create enemy mesh
+    let enemy;
+    let isGLBModel = false;
+    if (typeof createEnemyMeshWithModel === 'function') {
+        enemy = createEnemyMeshWithModel(galaxyId + 1, enemyGeometry, materials.enemyMaterial, 96.0);
+        isGLBModel = enemy.isGroup || (enemy.children && enemy.children.length > 0);
+    } else {
+        enemy = new THREE.Mesh(enemyGeometry, materials.enemyMaterial);
+    }
+    
+    // Add glow for non-GLB enemies
+    if (!isGLBModel) {
+        const glowGeometry = enemyGeometry.clone();
+        const glow = new THREE.Mesh(glowGeometry, materials.glowMaterial);
+        glow.scale.multiplyScalar(materials.glowScale);
+        glow.visible = true;
+        glow.frustumCulled = false;
+        enemy.add(glow);
+    }
+    
+    // Position around the nebula
+    const nebulaSize = nebula.userData.size || 2000;
+    const patrolRadius = nebulaSize * 0.5 + Math.random() * nebulaSize * 0.5;
+    const angle = (index / 5) * Math.PI * 2 + Math.random();
+    const height = (Math.random() - 0.5) * 500;
+    
+    const enemyX = nebula.position.x + Math.cos(angle) * patrolRadius;
+    const enemyY = nebula.position.y + height;
+    const enemyZ = nebula.position.z + Math.sin(angle) * patrolRadius;
+    
+    enemy.position.set(enemyX, enemyY, enemyZ);
+    
+    // Calculate hitbox size
+    let hitboxSize = 96;
+    try {
+        const box = new THREE.Box3().setFromObject(enemy);
+        const size = new THREE.Vector3();
+        box.getSize(size);
+        hitboxSize = Math.max(size.x, size.y, size.z);
+    } catch (e) {}
+    
+    enemy.userData = {
+        name: `${galaxyType.faction} Deep Space Patrol ${index + 1}`,
+        type: 'enemy',
+        health: getEnemyHealthForDifficulty(false, false, false) * 1.2, // Slightly tougher
+        maxHealth: getEnemyHealthForDifficulty(false, false, false) * 1.2,
+        speed: 0.3 + Math.random() * 0.7,
+        aggression: 0.6 + Math.random() * 0.4,
+        patrolCenter: nebula.position.clone(),
+        patrolRadius: patrolRadius,
+        lastAttack: 0,
+        isActive: false,
+        visible: true,
+        galaxyId: galaxyId,
+        galaxyColor: shapeData.color,
+        swarmTarget: null,
+        circlePhase: Math.random() * Math.PI * 2,
+        attackMode: 'patrol',
+        detectionRange: 2000, // Larger detection range in deep space
+        firingRange: 300,
+        isLocal: false,
+        isBoss: false,
+        isBossSupport: false,
+        position3D: enemy.position.clone(),
+        placementType: 'distant_patrol',
+        hitboxSize: hitboxSize,
+        nebulaName: nebula.userData.name,
+        isDistantGalaxy: nebula.userData.isDistant || false,
+        isExoticGalaxy: nebula.userData.isExoticCore || false
+    };
+    
+    enemy.visible = true;
+    enemy.frustumCulled = true;
+    
+    scene.add(enemy);
+    enemies.push(enemy);
+}
+
+window.createDistantExoticEnemies = createDistantExoticEnemies;
+
 // =============================================================================
 // ENHANCED PLANET CLUSTERS - FROM EARLY VERSION
 // Creates rich planetary systems with rings, moons, and asteroid belts within nebulas

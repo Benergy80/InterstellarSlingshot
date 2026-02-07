@@ -777,6 +777,16 @@ if (typeof areModelsLoaded === 'function' && areModelsLoaded()) {
         spawnBlackHoleGuardians();
         console.log('Black Hole Guardians spawned');
     }
+    // Create enemies in distant/exotic nebula regions
+    if (typeof createDistantExoticEnemies === 'function') {
+        createDistantExoticEnemies();
+        console.log('Deep space patrol enemies created');
+    }
+    // Create trading ships in nebulas
+    if (typeof createTradingShipsInNebulas === 'function') {
+        createTradingShipsInNebulas();
+        console.log('Trading ships created in nebulas');
+    }
 } else {
     // Models not loaded yet, wait for them
     console.log('⏳ Models not loaded yet, waiting before creating enemies...');
@@ -791,6 +801,14 @@ if (typeof areModelsLoaded === 'function' && areModelsLoaded()) {
                 spawnBlackHoleGuardians();
                 console.log('Black Hole Guardians spawned with GLB models');
             }
+            // Create enemies in distant/exotic nebula regions
+            if (typeof createDistantExoticEnemies === 'function') {
+                createDistantExoticEnemies();
+            }
+            // Create trading ships in nebulas
+            if (typeof createTradingShipsInNebulas === 'function') {
+                createTradingShipsInNebulas();
+            }
         }).catch(err => {
             console.warn('⚠️ Model loading error, creating enemies with fallback geometry:', err);
             // Even if models fail to load, still create enemies (they'll use fallback geometry)
@@ -801,6 +819,14 @@ if (typeof areModelsLoaded === 'function' && areModelsLoaded()) {
             if (typeof spawnBlackHoleGuardians === 'function') {
                 spawnBlackHoleGuardians();
                 console.log('Black Hole Guardians spawned with fallback geometry');
+            }
+            // Create enemies in distant/exotic nebula regions
+            if (typeof createDistantExoticEnemies === 'function') {
+                createDistantExoticEnemies();
+            }
+            // Create trading ships in nebulas
+            if (typeof createTradingShipsInNebulas === 'function') {
+                createTradingShipsInNebulas();
             }
         });
     } else {
@@ -1073,6 +1099,16 @@ if (typeof animateNebulaBrownDwarfs !== 'undefined') {
 // Update distant/exotic nebula visibility based on player range
 if (typeof updateNebulaVisibility === 'function') {
     updateNebulaVisibility();
+}
+
+// Update orbit line visibility based on proximity to nebulas/black holes
+if (typeof updateOrbitLineVisibility === 'function') {
+    updateOrbitLineVisibility();
+}
+
+// Update trading ships in nebulas
+if (typeof updateTradingShips === 'function') {
+    updateTradingShips();
 }
     
     // â­ ENHANCED: Animate nebula gas clouds with individual pulsing per cloud
