@@ -122,6 +122,188 @@ const gameState = {
     
 };
 
+// =============================================================================
+// PERFORMANCE DEBUG SYSTEM - Track lag near twin cores
+// =============================================================================
+
+const perfDebug = {
+    enabled: true,
+    logInterval: 60,        // Log every N frames
+    frameCount: 0,
+    lastLogTime: 0,
+    
+    // FPS tracking
+    fps: 0,
+    frameTimeMs: 0,
+    worstFrameTime: 0,
+    avgFrameTime: 0,
+    frameHistory: [],
+    
+    // Position tracking
+    distanceFromOrigin: 0,
+    inTwinCoresZone: false,
+    twinCoresThreshold: 2000,  // Distance where lag starts
+    
+    // Function timing (in ms)
+    timings: {
+        physics: 0,
+        enemies: 0,
+        nebulas: 0,
+        orbits: 0,
+        render: 0,
+        total: 0
+    },
+    
+    // Object counts
+    counts: {
+        enemies: 0,
+        nebulas: 0,
+        planets: 0,
+        ships: 0,
+        asteroids: 0,
+        particles: 0
+    },
+    
+    // Zone change tracking
+    lastZone: 'unknown',
+    zoneChangeTime: 0,
+    
+    // Start timing a section
+    startTimer: function(section) {
+        this._timers = this._timers || {};
+        this._timers[section] = performance.now();
+    },
+    
+    // End timing and record
+    endTimer: function(section) {
+        if (this._timers && this._timers[section]) {
+            this.timings[section] = performance.now() - this._timers[section];
+        }
+    },
+    
+    // Update counts
+    updateCounts: function() {
+        this.counts.enemies = (typeof enemies !== 'undefined') ? enemies.filter(e => e && e.userData && e.userData.health > 0).length : 0;
+        this.counts.nebulas = (typeof nebulaClouds !== 'undefined') ? nebulaClouds.length : 0;
+        this.counts.planets = (typeof planets !== 'undefined') ? planets.length : 0;
+        this.counts.ships = (typeof tradingShips !== 'undefined') ? tradingShips.length : 0;
+        this.counts.asteroids = (typeof asteroidBelts !== 'undefined') ? 
+            asteroidBelts.reduce((total, belt) => total + (belt.children ? belt.children.length : 0), 0) : 0;
+    },
+    
+    // Main update function - call once per frame
+    update: function(camera) {
+        if (!this.enabled) return;
+        
+        const now = performance.now();
+        this.frameCount++;
+        
+        // Calculate frame time
+        if (this.lastLogTime > 0) {
+            this.frameTimeMs = now - this.lastLogTime;
+            this.frameHistory.push(this.frameTimeMs);
+            if (this.frameHistory.length > 60) this.frameHistory.shift();
+            
+            // Track worst frame
+            if (this.frameTimeMs > this.worstFrameTime) {
+                this.worstFrameTime = this.frameTimeMs;
+            }
+        }
+        
+        // Calculate FPS and averages
+        if (this.frameHistory.length > 0) {
+            this.avgFrameTime = this.frameHistory.reduce((a, b) => a + b) / this.frameHistory.length;
+            this.fps = 1000 / this.avgFrameTime;
+        }
+        
+        // Track distance from origin (twin cores)
+        if (camera && camera.position) {
+            this.distanceFromOrigin = camera.position.length();
+            const wasInZone = this.inTwinCoresZone;
+            this.inTwinCoresZone = this.distanceFromOrigin < this.twinCoresThreshold;
+            
+            // Detect zone change
+            const currentZone = this.inTwinCoresZone ? 'TWIN_CORES' : 'OUTER_SPACE';
+            if (currentZone !== this.lastZone) {
+                this.zoneChangeTime = now;
+                console.log(`%c🚀 ZONE CHANGE: ${this.lastZone} → ${currentZone} at distance ${this.distanceFromOrigin.toFixed(0)}`, 
+                    'color: yellow; font-weight: bold; font-size: 14px;');
+                console.log(`   Position: (${camera.position.x.toFixed(0)}, ${camera.position.y.toFixed(0)}, ${camera.position.z.toFixed(0)})`);
+                this.lastZone = currentZone;
+                this.worstFrameTime = 0; // Reset worst frame on zone change
+            }
+        }
+        
+        this.lastLogTime = now;
+        
+        // Periodic detailed logging
+        if (this.frameCount % this.logInterval === 0) {
+            this.updateCounts();
+            this.logStatus();
+        }
+    },
+    
+    // Log current status to console
+    logStatus: function() {
+        const zoneColor = this.inTwinCoresZone ? 'color: red; font-weight: bold;' : 'color: green;';
+        const fpsColor = this.fps < 30 ? 'color: red; font-weight: bold;' : (this.fps < 50 ? 'color: orange;' : 'color: lime;');
+        
+        console.log(
+            `%c📊 PERF [${this.inTwinCoresZone ? '⚠️ TWIN CORES' : '✅ OUTER SPACE'}] ` +
+            `FPS: ${this.fps.toFixed(1)} | Frame: ${this.avgFrameTime.toFixed(1)}ms | Worst: ${this.worstFrameTime.toFixed(1)}ms | ` +
+            `Distance: ${this.distanceFromOrigin.toFixed(0)}`,
+            fpsColor
+        );
+        
+        // Log object counts
+        console.log(
+            `   📦 Objects: Enemies=${this.counts.enemies} | Nebulas=${this.counts.nebulas} | ` +
+            `Planets=${this.counts.planets} | Ships=${this.counts.ships} | Asteroids=${this.counts.asteroids}`
+        );
+        
+        // Log function timings if any are slow
+        const slowThreshold = 5; // ms
+        const slowFuncs = Object.entries(this.timings).filter(([k, v]) => v > slowThreshold);
+        if (slowFuncs.length > 0) {
+            console.log(
+                `%c   ⏱️ Slow functions: ${slowFuncs.map(([k, v]) => `${k}=${v.toFixed(1)}ms`).join(' | ')}`,
+                'color: orange;'
+            );
+        }
+        
+        // Alert if FPS drops significantly in twin cores zone
+        if (this.inTwinCoresZone && this.fps < 30) {
+            console.log(
+                `%c   🔴 LAG DETECTED in Twin Cores zone! FPS=${this.fps.toFixed(1)}`,
+                'color: red; font-weight: bold; font-size: 12px;'
+            );
+        }
+    },
+    
+    // Get detailed report (call from console: perfDebug.report())
+    report: function() {
+        console.log('%c═══════════════════════════════════════════════════════════', 'color: cyan;');
+        console.log('%c   PERFORMANCE DEBUG REPORT', 'color: cyan; font-weight: bold; font-size: 16px;');
+        console.log('%c═══════════════════════════════════════════════════════════', 'color: cyan;');
+        console.log(`Zone: ${this.inTwinCoresZone ? '⚠️ TWIN CORES (< ' + this.twinCoresThreshold + ' units)' : '✅ OUTER SPACE'}`);
+        console.log(`Distance from origin: ${this.distanceFromOrigin.toFixed(0)} units`);
+        console.log(`Current FPS: ${this.fps.toFixed(1)}`);
+        console.log(`Average frame time: ${this.avgFrameTime.toFixed(2)} ms`);
+        console.log(`Worst frame time: ${this.worstFrameTime.toFixed(2)} ms`);
+        console.log('');
+        console.log('Object Counts:');
+        Object.entries(this.counts).forEach(([k, v]) => console.log(`  ${k}: ${v}`));
+        console.log('');
+        console.log('Function Timings (ms):');
+        Object.entries(this.timings).forEach(([k, v]) => console.log(`  ${k}: ${v.toFixed(2)}`));
+        console.log('%c═══════════════════════════════════════════════════════════', 'color: cyan;');
+    }
+};
+
+// Export to window for console access
+window.perfDebug = perfDebug;
+console.log('%c🔧 Performance debugger loaded! Use perfDebug.report() for detailed info', 'color: cyan; font-weight: bold;');
+
 // Three.js Setup and global arrays
 let scene, camera, renderer, stars, blackHole;
 let planets = [];
@@ -1118,6 +1300,12 @@ function animate() {
         gameState.lastPerformanceCheck = currentTime;
     }
 
+    // PERFORMANCE DEBUG: Update tracker
+    if (typeof perfDebug !== 'undefined' && perfDebug.enabled) {
+        perfDebug.update(camera);
+        perfDebug.startTimer('total');
+    }
+
     // CRITICAL: Update camera view ALWAYS (before gameStarted check)
     // This ensures player ship follows camera even during intro/before game starts
     if (typeof updateCameraView === 'function') {
@@ -1155,6 +1343,9 @@ function animate() {
 if (typeof animateNebulaBrownDwarfs !== 'undefined') {
     animateNebulaBrownDwarfs();
 }
+// PERFORMANCE DEBUG: Time nebula updates
+if (typeof perfDebug !== 'undefined') perfDebug.startTimer('nebulas');
+
 // Update distant/exotic nebula visibility based on player range
 if (typeof updateNebulaVisibility === 'function') {
     updateNebulaVisibility();
@@ -1164,6 +1355,8 @@ if (typeof updateNebulaVisibility === 'function') {
 if (typeof updateOrbitLineVisibility === 'function') {
     updateOrbitLineVisibility();
 }
+
+if (typeof perfDebug !== 'undefined') perfDebug.endTimer('nebulas');
 
 // Update trading ships in nebulas
 if (typeof updateTradingShips === 'function') {
@@ -1738,9 +1931,11 @@ if (typeof checkCosmicFeatureInteractions === 'function' && typeof camera !== 'u
 }
     
     // Enhanced enemy behavior update
+    if (typeof perfDebug !== 'undefined') perfDebug.startTimer('enemies');
     if (gameState.frameCount % 2 === 0 && typeof updateEnemyBehavior === 'function') {
-    updateEnemyBehavior();
-}
+        updateEnemyBehavior();
+    }
+    if (typeof perfDebug !== 'undefined') perfDebug.endTimer('enemies');
 
     // Update missiles
     if (typeof updateMissiles === 'function') {
@@ -1793,9 +1988,11 @@ if (typeof checkCosmicFeatureInteractions === 'function' && typeof camera !== 'u
     }
 
     // Enhanced physics and controls for doubled world
+    if (typeof perfDebug !== 'undefined') perfDebug.startTimer('physics');
     if (typeof updateEnhancedPhysics === 'function') {
         updateEnhancedPhysics();
     }
+    if (typeof perfDebug !== 'undefined') perfDebug.endTimer('physics');
     
     // FORCE NORMAL PERFORMANCE MODE - disable auto-adjustment temporarily
     gameState.performanceMode = 'normal';
@@ -1837,7 +2034,13 @@ if (typeof checkCosmicFeatureInteractions === 'function' && typeof camera !== 'u
 
     // Depth of field disabled for performance (was causing expensive scene traversals)
 
+    // PERFORMANCE DEBUG: Time render call
+    if (typeof perfDebug !== 'undefined') perfDebug.startTimer('render');
     renderer.render(scene, camera);
+    if (typeof perfDebug !== 'undefined') {
+        perfDebug.endTimer('render');
+        perfDebug.endTimer('total');
+    }
 }
 
 // FIXED: Enhanced orbital mechanics that work for ALL galaxies - ADJUSTED SPEEDS (75% slower)
