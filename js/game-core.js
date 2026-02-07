@@ -1651,10 +1651,10 @@ if (planet.userData.type === 'blackhole' && planet.userData.rotationSpeed) {
     });
 }
     
-        // OPTIMIZED: Asteroid orbital mechanics - update positions less frequently (every 3 frames)
+        // Asteroid orbital mechanics - update every 2 frames for smoother motion
         if (planet.userData.type === 'asteroid' && planet.userData.beltGroup) {
-    // Update orbital position every 3 frames to reduce expensive trig calculations
-    if (gameState.frameCount % 5 === 0) {
+    // Update orbital position every 2 frames (was 5, caused jumpiness)
+    if (gameState.frameCount % 2 === 0) {
         const time = Date.now() * 0.001 * planet.userData.orbitSpeed;
         const orbitPhase = planet.userData.orbitPhase || 0;
         
@@ -2047,7 +2047,7 @@ if (typeof checkCosmicFeatureInteractions === 'function' && typeof camera !== 'u
 function updatePlanetOrbits() {
     // PERF: Distance culling - only update objects within range
     const playerPos = camera.position;
-    const CULL_DISTANCE = 5000; // Increased from 2000 to fix distant planet orbits
+    const CULL_DISTANCE = 7500; // Increased to fix jumpy distant asteroids
     
     // PERF DEBUG: Log planet count every 300 frames
     if (gameState.frameCount % 300 === 0) {
