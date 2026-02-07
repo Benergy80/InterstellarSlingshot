@@ -4,6 +4,21 @@
 // ENHANCED: Full 3D integration with fallback compatibility
 
 // =============================================================================
+// COSMIC FEATURE SCALING HELPER
+// =============================================================================
+// Accesses SCALE_CONFIG from game-objects.js for consistent scaling
+function getCosmicFeatureScale() {
+    if (typeof SCALE_CONFIG !== 'undefined' && SCALE_CONFIG.cosmicFeatures) {
+        return SCALE_CONFIG.cosmicFeatures;
+    }
+    return 1.0; // Default if not available
+}
+
+function scaleCosmicFeatureSize(baseSize) {
+    return baseSize * getCosmicFeatureScale();
+}
+
+// =============================================================================
 // COSMIC PHENOMENON DEFINITIONS
 // =============================================================================
 
@@ -83,7 +98,7 @@ function createPulsars() {
         if (!position) return; // Skip if position generation failed
         
         // Pulsar core - ultra-dense neutron star
-const pulsarGeometry = new THREE.SphereGeometry(8, 16, 16);
+const pulsarGeometry = new THREE.SphereGeometry(scaleCosmicFeatureSize(8), 16, 16);
 const pulsarMaterial = new THREE.MeshStandardMaterial({
     color: 0x00ffff,
     emissive: 0x004444,
@@ -165,7 +180,7 @@ function createSupernovas() {
         if (!position) return;
         
         // Supernova remnant core
-        const coreGeometry = new THREE.SphereGeometry(15, 16, 16);
+        const coreGeometry = new THREE.SphereGeometry(scaleCosmicFeatureSize(15), 16, 16);
         const coreMaterial = new THREE.MeshStandardMaterial({
             color: 0xffffff,
             emissive: 0xffaa00,
@@ -192,7 +207,7 @@ function createSupernovas() {
         // Expanding shockwave shells
         const shockwaveShells = [];
         for (let shell = 0; shell < 3; shell++) {
-            const shellRadius = 80 + (shell * 40);
+            const shellRadius = scaleCosmicFeatureSize(80 + (shell * 40));
             const shellGeometry = new THREE.SphereGeometry(shellRadius, 16, 16);
             const shellMaterial = new THREE.MeshBasicMaterial({
                 color: shell === 0 ? 0xff4400 : shell === 1 ? 0xff6622 : 0xff8844,
@@ -285,7 +300,7 @@ function createBrownDwarfs() {
             if (!position) continue;
             
             // Brown dwarf main body
-         const brownDwarfGeometry = new THREE.SphereGeometry(20, 16, 16);
+         const brownDwarfGeometry = new THREE.SphereGeometry(scaleCosmicFeatureSize(20), 16, 16);
 const brownDwarfMaterial = new THREE.MeshStandardMaterial({
     color: 0x4d2600,
     emissive: 0x331100,
@@ -297,7 +312,7 @@ const brownDwarfMaterial = new THREE.MeshStandardMaterial({
             brownDwarf.position.copy(position);
             
             // Dim atmospheric glow
-            const glowGeometry = new THREE.SphereGeometry(25, 16, 16);
+            const glowGeometry = new THREE.SphereGeometry(scaleCosmicFeatureSize(25), 16, 16);
             const glowMaterial = new THREE.MeshBasicMaterial({
                 color: 0x663300,
                 transparent: true,
@@ -350,7 +365,7 @@ function createDarkMatterNodes() {
             if (!position) continue;
             
             // Dark matter visualization (barely visible)
-            const nodeGeometry = new THREE.SphereGeometry(50, 16, 16);
+            const nodeGeometry = new THREE.SphereGeometry(scaleCosmicFeatureSize(50), 16, 16);
             const nodeMaterial = new THREE.MeshBasicMaterial({
                 color: 0x440044,
                 transparent: true,
@@ -428,7 +443,7 @@ function createDysonSpheres() {
         if (!position) continue;
         
         // Central star
-        const starGeometry = new THREE.SphereGeometry(30, 16, 16);
+        const starGeometry = new THREE.SphereGeometry(scaleCosmicFeatureSize(30), 16, 16);
 const starMaterial = new THREE.MeshStandardMaterial({
     color: 0xffff00,
     emissive: 0xffaa00,
@@ -549,7 +564,7 @@ function createRingworlds() {
     if (!position) return;
     
     // Central star
-    const starGeometry = new THREE.SphereGeometry(25, 16, 16);
+    const starGeometry = new THREE.SphereGeometry(scaleCosmicFeatureSize(25), 16, 16);
 const starMaterial = new THREE.MeshStandardMaterial({
     color: 0xffd700,
     emissive: 0xffaa00,
@@ -684,7 +699,7 @@ function createSolarStorms() {
         console.log(`⛈️ Creating solar storm in galaxy ${galaxyId} at position`, position);
         
         // Storm core
-        const stormGeometry = new THREE.SphereGeometry(25, 16, 16);
+        const stormGeometry = new THREE.SphereGeometry(scaleCosmicFeatureSize(25), 16, 16);
         const stormMaterial = new THREE.MeshBasicMaterial({
             color: 0xff3300,
             transparent: true,
@@ -779,7 +794,7 @@ function createRoguePlanets() {
         if (!position) return;
         
         // Rogue planet body
-        const planetSize = 15 + Math.random() * 25;
+        const planetSize = scaleCosmicFeatureSize(15 + Math.random() * 25);
         const planetGeometry = new THREE.SphereGeometry(planetSize, 16, 16);
         
         // Cold, dark planet colors
@@ -1283,7 +1298,7 @@ function createPlasmaStorms() {
         stormCloudGroup.add(tendrilGroup);
         
         // ⭐ NEW: Central energy core - glowing pulsing sphere (REPLACES wireframe discharge)
-        const coreGeometry = new THREE.SphereGeometry(250, 32, 32);
+        const coreGeometry = new THREE.SphereGeometry(scaleCosmicFeatureSize(250), 32, 32);
         const coreMaterial = new THREE.MeshBasicMaterial({
             color: 0x6644ff,
             transparent: true,
@@ -1293,7 +1308,7 @@ function createPlasmaStorms() {
         const energyCore = new THREE.Mesh(coreGeometry, coreMaterial);
         
         // Add outer glow layer
-        const glowGeometry = new THREE.SphereGeometry(280, 32, 32);
+        const glowGeometry = new THREE.SphereGeometry(scaleCosmicFeatureSize(280), 32, 32);
         const glowMaterial = new THREE.MeshBasicMaterial({
             color: 0x8866ff,
             transparent: true,
@@ -1304,7 +1319,7 @@ function createPlasmaStorms() {
         energyCore.add(glowSphere);
         
         // Add inner bright core
-        const innerCoreGeometry = new THREE.SphereGeometry(180, 32, 32);
+        const innerCoreGeometry = new THREE.SphereGeometry(scaleCosmicFeatureSize(180), 32, 32);
         const innerCoreMaterial = new THREE.MeshBasicMaterial({
             color: 0xffffff,
             transparent: true,

@@ -5854,6 +5854,11 @@ window.freighterCaravans = freighterCaravans;
 window.updateFreighterCaravans = updateFreighterCaravans;
 window.damageCaravanFreighter = damageCaravanFreighter;
 window.SHIP_TYPE_COLORS = SHIP_TYPE_COLORS;
+window.SCALE_CONFIG = SCALE_CONFIG;
+window.COSMIC_SCALE_MULTIPLIER = COSMIC_SCALE_MULTIPLIER;
+window.getScaledSize = getScaledSize;
+window.getScaledNebulaSize = getScaledNebulaSize;
+window.getScaledOrbitRadius = getScaledOrbitRadius;
 
 // =============================================================================
 // CIVILIAN SHIPS THROUGHOUT THE UNIVERSE - Various ship types in different areas
