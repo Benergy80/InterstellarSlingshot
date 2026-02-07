@@ -1409,7 +1409,8 @@ if (typeof updateShieldSystem === 'function') {
     
   // Rotate local galaxy stars around Sagittarius A*
 if (typeof localGalaxyStars !== 'undefined' && localGalaxyStars) {
-    localGalaxyStars.rotation.y += 0.0003; // Slow rotation around Y-axis
+    // PERF TEST: localGalaxyStars rotation disabled
+    // localGalaxyStars.rotation.y += 0.0003; // Slow rotation around Y-axis
 }
     
     // PERFORMANCE: Update orbit lines less frequently but more reliably
@@ -1719,14 +1720,16 @@ planets.forEach(planet => {
             planet.userData.rotationSpeed = rotationSpeed; // Store for future use
         }
         
-        // Apply rotation to starfield
-        planet.userData.starCluster.rotation.y += rotationSpeed;
+        // PERF TEST: Starfield rotation disabled
+        // planet.userData.starCluster.rotation.y += rotationSpeed;
         
         // PERF: Wobble disabled for performance
         // planet.userData.starCluster.rotation.x = Math.sin(Date.now() * 0.0001) * 0.05;
     }
 });
 
+// PERF TEST: All black hole star rotation disabled
+/*
 planets.forEach(planet => {
     if (planet.userData.type === 'blackhole' && planet.userData.rotationSpeed) {
         // Rotate star cluster (small dense stars near black hole)
@@ -1740,6 +1743,7 @@ planets.forEach(planet => {
         }
     }
 });
+*/
 
 // Also add interaction checking:
 if (typeof checkCosmicFeatureInteractions === 'function' && typeof camera !== 'undefined' && typeof gameState !== 'undefined') {
