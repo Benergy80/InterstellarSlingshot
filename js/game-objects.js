@@ -5003,7 +5003,7 @@ function updateTradingShips() {
                 // Check if player is nearby for hailing
                 if (playerPos && !data.hasHailedPlayer && now - lastCivilianHailTime > HAIL_COOLDOWN) {
                     const distToPlayer = ship.position.distanceTo(playerPos);
-                    if (distToPlayer < 400 && distToPlayer > 100) {
+                    if (distToPlayer < 200 && distToPlayer > 50) {
                         // Chance to hail
                         if (Math.random() < 0.02) {
                             hailPlayer(ship, data);
@@ -5216,17 +5216,31 @@ function updateOrbitBehavior(ship, data) {
 
 function checkForNearbyThreats(position, range) {
     // Check for enemies near this position
-    if (typeof enemies === 'undefined' || enemies.length === 0) return null;
-    
-    for (const enemy of enemies) {
-        if (!enemy || !enemy.position || !enemy.visible) continue;
-        if (enemy.userData && enemy.userData.isDead) continue;
-        
-        const distance = position.distanceTo(enemy.position);
-        if (distance < range) {
-            return enemy;
+    if (typeof enemies !== 'undefined' && enemies.length > 0) {
+        for (const enemy of enemies) {
+            if (!enemy || !enemy.position || !enemy.visible) continue;
+            if (enemy.userData && enemy.userData.isDead) continue;
+            
+            const distance = position.distanceTo(enemy.position);
+            if (distance < range) {
+                return enemy;
+            }
         }
     }
+    
+    // Check for player projectiles (lasers) near this position
+    if (typeof lasers !== 'undefined' && lasers.length > 0) {
+        for (const laser of lasers) {
+            if (!laser || !laser.position) continue;
+            
+            const distance = position.distanceTo(laser.position);
+            if (distance < range * 0.5) { // Smaller range for projectiles
+                // Return a fake "threat" at the projectile position to flee from
+                return { position: laser.position.clone(), isProjectile: true };
+            }
+        }
+    }
+    
     return null;
 }
 
@@ -5246,56 +5260,82 @@ function hailPlayer(ship, data) {
     }, 120000); // Can hail again after 2 minutes
 }
 
-// Show incoming transmission with Mission Command style UI
+// Show incoming transmission with game-matching UI style
 function showIncomingTransmission(sender, message, isDistress = false) {
     // Check if transmission container exists, create if not
     let container = document.getElementById('incomingTransmission');
     if (!container) {
         container = document.createElement('div');
         container.id = 'incomingTransmission';
-        container.style.cssText = `
-            position: fixed;
-            top: 120px;
-            left: 50%;
-            transform: translateX(-50%);
-            background: rgba(0, 0, 0, 0.85);
-            border: 1px solid ${isDistress ? 'rgba(255, 50, 50, 0.7)' : 'rgba(0, 150, 255, 0.5)'};
-            border-radius: 8px;
-            padding: 15px 25px;
-            z-index: 1000;
-            min-width: 300px;
-            max-width: 500px;
-            font-family: 'Orbitron', 'Segoe UI', sans-serif;
-            opacity: 0;
-            transition: opacity 0.3s ease;
-            pointer-events: none;
-        `;
         document.body.appendChild(container);
     }
     
-    // Update styling for distress vs normal
-    container.style.borderColor = isDistress ? 'rgba(255, 50, 50, 0.7)' : 'rgba(0, 150, 255, 0.5)';
-    
-    const titleColor = isDistress ? '#ff4444' : '#00aaff';
+    // Match game UI style - similar to tutorial/mission command
+    const borderColor = isDistress ? 'rgba(255, 80, 80, 0.6)' : 'rgba(0, 200, 255, 0.4)';
+    const glowColor = isDistress ? 'rgba(255, 0, 0, 0.3)' : 'rgba(0, 150, 255, 0.2)';
+    const titleColor = isDistress ? '#ff6666' : '#00ddff';
     const icon = isDistress ? '🆘' : '📡';
     
+    container.style.cssText = `
+        position: fixed;
+        top: 100px;
+        left: 50%;
+        transform: translateX(-50%);
+        background: linear-gradient(180deg, rgba(0, 20, 40, 0.95) 0%, rgba(0, 10, 20, 0.9) 100%);
+        border: 1px solid ${borderColor};
+        border-radius: 4px;
+        padding: 16px 24px;
+        z-index: 1000;
+        min-width: 320px;
+        max-width: 480px;
+        font-family: 'Orbitron', 'Courier New', monospace;
+        opacity: 0;
+        transition: opacity 0.4s ease;
+        pointer-events: none;
+        box-shadow: 0 0 20px ${glowColor}, inset 0 0 30px rgba(0, 50, 100, 0.1);
+    `;
+    
     container.innerHTML = `
-        <div style="color: ${titleColor}; font-size: 12px; text-transform: uppercase; letter-spacing: 2px; margin-bottom: 8px;">
-            ${icon} Incoming Transmission
+        <div style="
+            color: ${titleColor}; 
+            font-size: 10px; 
+            text-transform: uppercase; 
+            letter-spacing: 3px; 
+            margin-bottom: 10px;
+            text-shadow: 0 0 10px ${titleColor};
+            border-bottom: 1px solid ${borderColor};
+            padding-bottom: 8px;
+        ">
+            ${icon} INCOMING TRANSMISSION
         </div>
-        <div style="color: #88ccff; font-size: 14px; font-weight: bold; margin-bottom: 5px;">
-            ${sender}
+        <div style="
+            color: #aaccff; 
+            font-size: 12px; 
+            font-weight: bold; 
+            margin-bottom: 8px;
+            text-shadow: 0 0 5px rgba(100, 150, 255, 0.5);
+        ">
+            FROM: ${sender.toUpperCase()}
         </div>
-        <div style="color: #ccddff; font-size: 13px; font-style: italic; line-height: 1.4;">
+        <div style="
+            color: #88aacc; 
+            font-size: 11px; 
+            line-height: 1.5;
+            font-style: italic;
+            padding-left: 8px;
+            border-left: 2px solid rgba(0, 150, 255, 0.3);
+        ">
             "${message}"
         </div>
     `;
     
     // Show with fade in
-    container.style.opacity = '1';
+    requestAnimationFrame(() => {
+        container.style.opacity = '1';
+    });
     
     // Auto-hide after delay
-    const hideDelay = isDistress ? 6000 : 4000;
+    const hideDelay = isDistress ? 6000 : 4500;
     setTimeout(() => {
         container.style.opacity = '0';
     }, hideDelay);

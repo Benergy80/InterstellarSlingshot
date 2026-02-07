@@ -800,7 +800,7 @@ const civilianShipRegistry = {
                         metalness: 0.5,
                         roughness: 0.4,
                         emissive: oldColor,
-                        emissiveIntensity: 0.5
+                        emissiveIntensity: 1.0
                     });
                 }
             });

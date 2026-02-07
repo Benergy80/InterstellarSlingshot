@@ -1087,6 +1087,12 @@ function showMissionCommandAlert(title, text, isVictoryMessage = false) {
         return;
     }
     
+    // Show cursor so player can click UNDERSTOOD button
+    document.body.style.cursor = 'auto';
+    if (typeof renderer !== 'undefined' && renderer.domElement) {
+        renderer.domElement.style.cursor = 'auto';
+    }
+    
     titleElement.textContent = title;
     textElement.textContent = text;
     alertElement.classList.remove('hidden');
@@ -1166,6 +1172,11 @@ function showMissionCommandAlert(title, text, isVictoryMessage = false) {
     // ⭐ UNDERSTOOD button dismisses current and immediately shows next tutorial message
     const handleUnderstood = () => {
         alertElement.classList.add('hidden');
+        // Restore hidden cursor for gameplay
+        document.body.style.cursor = 'none';
+        if (typeof renderer !== 'undefined' && renderer.domElement) {
+            renderer.domElement.style.cursor = 'none';
+        }
         // Immediately show next tutorial message
         if (typeof showNextTutorialMessage === 'function') {
             showNextTutorialMessage();
@@ -1199,6 +1210,11 @@ function showMissionCommandAlert(title, text, isVictoryMessage = false) {
     // SKIP TUTORIAL button immediately completes tutorial
     const handleSkip = () => {
         alertElement.classList.add('hidden');
+        // Restore hidden cursor for gameplay
+        document.body.style.cursor = 'none';
+        if (typeof renderer !== 'undefined' && renderer.domElement) {
+            renderer.domElement.style.cursor = 'none';
+        }
 
         // Skip ALL remaining tutorial messages
         if (tutorialSystem.active) {
@@ -1262,6 +1278,11 @@ function showMissionCommandAlert(title, text, isVictoryMessage = false) {
     // UNDERSTOOD button dismisses the message and resumes the game if paused
     const handleUnderstood = () => {
         alertElement.classList.add('hidden');
+        // Restore hidden cursor for gameplay
+        document.body.style.cursor = 'none';
+        if (typeof renderer !== 'undefined' && renderer.domElement) {
+            renderer.domElement.style.cursor = 'none';
+        }
         // Resume the game if it was paused for this transmission
         if (typeof gameState !== 'undefined' && gameState.paused) {
             gameState.paused = false;
