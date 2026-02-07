@@ -720,7 +720,113 @@ function updateEnemyBehavior() {
     }
 }
 
-// UPDATED: Local enemy behavior with enhanced AI
+// =============================================================================
+// FACTION-SPECIFIC ATTACK PATTERNS
+// Each faction has a unique combat style!
+// =============================================================================
+
+const factionBehaviors = {
+    // Galaxy 0: FEDERATION - Tactical coordination, stay at optimal range
+    0: {
+        name: 'Federation',
+        style: 'tactical',
+        primaryBehavior: 'engage',      // Maintain optimal distance
+        secondaryBehavior: 'flank',     // Coordinated flanking
+        aggressionMultiplier: 0.8,      // Moderate aggression
+        preferredRange: 200,            // Medium range fighters
+        behaviorChangeChance: 0.0005,   // Rarely change tactics
+        speedBonus: 1.0
+    },
+    // Galaxy 1: KLINGON - Aggressive head-on charges, honorable combat
+    1: {
+        name: 'Klingon',
+        style: 'berserker',
+        primaryBehavior: 'pursue',      // Direct charge!
+        secondaryBehavior: 'pursue',    // Always charging
+        aggressionMultiplier: 1.5,      // Very aggressive
+        preferredRange: 80,             // Close range warriors
+        behaviorChangeChance: 0.0002,   // Stay committed to the charge
+        speedBonus: 1.3                 // Fast and furious
+    },
+    // Galaxy 2: REBEL - Hit and run, guerrilla tactics
+    2: {
+        name: 'Rebel',
+        style: 'guerrilla',
+        primaryBehavior: 'evade',       // Hit and run
+        secondaryBehavior: 'flank',     // Attack from angles
+        aggressionMultiplier: 0.7,      // Cautious
+        preferredRange: 250,            // Keep distance
+        behaviorChangeChance: 0.003,    // Frequently reposition
+        speedBonus: 1.2                 // Quick escapes
+    },
+    // Galaxy 3: ROMULAN - Ambush predators, patience then strike
+    3: {
+        name: 'Romulan',
+        style: 'ambush',
+        primaryBehavior: 'flank',       // Circle for position
+        secondaryBehavior: 'pursue',    // Then strike hard
+        aggressionMultiplier: 1.2,      // Deadly when attacking
+        preferredRange: 150,            // Mid-range
+        behaviorChangeChance: 0.001,    // Patient
+        speedBonus: 1.1
+    },
+    // Galaxy 4: IMPERIAL - Overwhelming swarm tactics
+    4: {
+        name: 'Imperial',
+        style: 'swarm',
+        primaryBehavior: 'swarm',       // Surround target
+        secondaryBehavior: 'engage',    // Press the attack
+        aggressionMultiplier: 1.0,      // Standard aggression
+        preferredRange: 120,            // Close swarm
+        behaviorChangeChance: 0.0008,   // Coordinated
+        speedBonus: 0.9                 // Slower but numerous
+    },
+    // Galaxy 5: CARDASSIAN - Strategic encirclement
+    5: {
+        name: 'Cardassian',
+        style: 'encircle',
+        primaryBehavior: 'flank',       // Surround first
+        secondaryBehavior: 'swarm',     // Then close in
+        aggressionMultiplier: 0.9,      // Calculated
+        preferredRange: 180,            // Medium range
+        behaviorChangeChance: 0.0015,   // Adaptive
+        speedBonus: 1.0
+    },
+    // Galaxy 6: SITH - Relentless pursuit, no mercy
+    6: {
+        name: 'Sith',
+        style: 'relentless',
+        primaryBehavior: 'pursue',      // Hunt them down
+        secondaryBehavior: 'engage',    // Aggressive engagement
+        aggressionMultiplier: 1.4,      // Very aggressive
+        preferredRange: 100,            // Get close for the kill
+        behaviorChangeChance: 0.0003,   // Focused
+        speedBonus: 1.25                // Dark side speed boost
+    },
+    // Galaxy 7: VULCAN - Logical, precise calculated attacks
+    7: {
+        name: 'Vulcan',
+        style: 'precision',
+        primaryBehavior: 'engage',      // Optimal positioning
+        secondaryBehavior: 'evade',     // Logical retreat when needed
+        aggressionMultiplier: 0.85,     // Controlled aggression
+        preferredRange: 160,            // Precise range
+        behaviorChangeChance: 0.002,    // Adaptive logic
+        speedBonus: 1.0
+    }
+};
+
+// Get faction behavior for an enemy
+function getFactionBehavior(enemy) {
+    const galaxyId = enemy.userData.galaxyId;
+    if (galaxyId !== undefined && factionBehaviors[galaxyId]) {
+        return factionBehaviors[galaxyId];
+    }
+    // Default to Federation-style if unknown
+    return factionBehaviors[0];
+}
+
+// UPDATED: Local enemy behavior with FACTION-SPECIFIC AI
 function updateLocalEnemyBehavior(enemy, distanceToPlayer, adjustedSpeed, difficultySettings) {
     // Safety checks
     if (!enemy || !enemy.userData || typeof camera === 'undefined' || typeof THREE === 'undefined') {
@@ -728,8 +834,11 @@ function updateLocalEnemyBehavior(enemy, distanceToPlayer, adjustedSpeed, diffic
     }
     
     const time = Date.now() * 0.001;
-    // FIXED: Always use camera position for consistent targeting
     const playerPos = camera.position.clone();
+    const faction = getFactionBehavior(enemy);
+    
+    // Apply faction speed bonus
+    const factionSpeed = adjustedSpeed * faction.speedBonus;
     
     // Update last seen player position if player is visible
     if (distanceToPlayer < difficultySettings.localDetectionRange) {
@@ -737,35 +846,51 @@ function updateLocalEnemyBehavior(enemy, distanceToPlayer, adjustedSpeed, diffic
         enemy.userData.lastSeenTime = time;
     }
     
-    // Ensure attack mode is set
+    // Initialize attack mode based on faction if not set
     if (!enemy.userData.attackMode) {
+        enemy.userData.attackMode = faction.primaryBehavior;
+    }
+    
+    // Faction-specific behavior changes
+    if (Math.random() < faction.behaviorChangeChance) {
+        // Switch between primary and secondary behaviors
+        if (enemy.userData.attackMode === faction.primaryBehavior) {
+            enemy.userData.attackMode = faction.secondaryBehavior;
+        } else {
+            enemy.userData.attackMode = faction.primaryBehavior;
+        }
+    }
+    
+    // Distance-based behavior override for some factions
+    if (faction.style === 'berserker' && distanceToPlayer > 300) {
+        // Klingons always charge from distance
+        enemy.userData.attackMode = 'pursue';
+    } else if (faction.style === 'guerrilla' && distanceToPlayer < 100) {
+        // Rebels retreat when too close
+        enemy.userData.attackMode = 'evade';
+    } else if (faction.style === 'ambush' && distanceToPlayer < faction.preferredRange) {
+        // Romulans strike hard when in range
         enemy.userData.attackMode = 'pursue';
     }
     
     switch (enemy.userData.attackMode) {
         case 'pursue':
-            updatePursuitBehavior(enemy, playerPos, adjustedSpeed, distanceToPlayer);
+            updatePursuitBehavior(enemy, playerPos, factionSpeed * faction.aggressionMultiplier, distanceToPlayer);
             break;
         case 'swarm':
-            updateSwarmBehavior(enemy, playerPos, adjustedSpeed, time);
+            updateSwarmBehavior(enemy, playerPos, factionSpeed, time);
             break;
         case 'evade':
-            updateEvasionBehavior(enemy, playerPos, adjustedSpeed, time);
+            updateEvasionBehavior(enemy, playerPos, factionSpeed, time);
             break;
         case 'flank':
-            updateFlankingBehavior(enemy, playerPos, adjustedSpeed, time);
+            updateFlankingBehavior(enemy, playerPos, factionSpeed, time);
             break;
         case 'engage':
-            updateEngagementBehavior(enemy, playerPos, adjustedSpeed, time);
+            updateEngagementBehavior(enemy, playerPos, factionSpeed, time);
             break;
         default:
-            updatePursuitBehavior(enemy, playerPos, adjustedSpeed, distanceToPlayer);
-    }
-    
-    // Random behavior changes for dynamic combat
-    if (Math.random() < 0.001) { // 0.1% chance per frame
-        const behaviors = ['pursue', 'swarm', 'evade', 'flank', 'engage'];
-        enemy.userData.attackMode = behaviors[Math.floor(Math.random() * behaviors.length)];
+            updatePursuitBehavior(enemy, playerPos, factionSpeed, distanceToPlayer);
     }
     
     try {
