@@ -541,7 +541,7 @@ const enemyShapes = {
 
 // Enhanced enemy spawning limits per galaxy
 const galaxyEnemyLimits = {
-    0: 12, 1: 15, 2: 10, 3: 13, 4: 8, 5: 14, 6: 18, 7: 0  // PERF TEST: Vulcan (7) disabled
+    0: 12, 1: 15, 2: 10, 3: 13, 4: 8, 5: 14, 6: 18, 7: 16
 };
 
 // FIXED: Boss system initialization - SINGLE DECLARATION
@@ -2162,7 +2162,7 @@ try {
             name: 'Sagittarius A* (Galactic Center)',
             type: 'blackhole',
             mass: 8000,
-            gravity: 0, // PERF TEST: Disabled (was 400.0)
+            gravity: 400.0,
             warpThreshold: 160,
             isGalacticCenter: true,
             isSagittariusA: true,
@@ -2227,7 +2227,7 @@ const core8Distance = (400 + Math.random() * 220) * (Math.random() < 0.5 ? 1 : -
     name: 'Companion Core', // RENAMED from "Twin Galactic Core"
     type: 'blackhole',
     mass: 2800, // Smaller mass than Sagittarius A*
-    gravity: 0, // DISABLED for performance testing (was 150.0)
+    gravity: 150.0,
     warpThreshold: 80,
     isGalacticCore: true,
     isCompanionCore: true, // New flag

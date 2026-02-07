@@ -1196,8 +1196,7 @@ if (typeof distressBeaconSystem !== 'undefined' && distressBeaconSystem.updateBe
 }
     
     // â­ ENHANCED: Animate nebula gas clouds with individual pulsing per cloud
-// PERF TEST: Nebula gas cloud animation disabled
-if (false && typeof nebulaGasClouds !== 'undefined' && nebulaGasClouds.length > 0) {
+if (typeof nebulaGasClouds !== 'undefined' && nebulaGasClouds.length > 0) {
     // OPTIMIZATION: Cache Date.now() once per frame instead of per cloud
     const currentTime = Date.now();
 
@@ -1235,8 +1234,6 @@ if (false && typeof nebulaGasClouds !== 'undefined' && nebulaGasClouds.length > 
     });
 }
 
-// PERF TEST: Asteroid belt rotation disabled
-/*
 if (typeof asteroidBelts !== 'undefined' && asteroidBelts.length > 0) {
     asteroidBelts.forEach(belt => {
         if (belt.userData.rotationSpeed && belt.rotation) {
@@ -1244,7 +1241,6 @@ if (typeof asteroidBelts !== 'undefined' && asteroidBelts.length > 0) {
         }
     });
 }
-*/
 
     // Update interstellar asteroid fields
     if (typeof updateInterstellarAsteroids === 'function') {
@@ -1405,8 +1401,7 @@ if (typeof updateShieldSystem === 'function') {
     
   // Rotate local galaxy stars around Sagittarius A*
 if (typeof localGalaxyStars !== 'undefined' && localGalaxyStars) {
-    // PERF TEST: localGalaxyStars rotation disabled
-    // localGalaxyStars.rotation.y += 0.0003; // Slow rotation around Y-axis
+    localGalaxyStars.rotation.y += 0.0003; // Slow rotation around Y-axis
 }
     
     // PERFORMANCE: Update orbit lines less frequently but more reliably
@@ -1716,16 +1711,13 @@ planets.forEach(planet => {
             planet.userData.rotationSpeed = rotationSpeed; // Store for future use
         }
         
-        // PERF TEST: Starfield rotation disabled
-        // planet.userData.starCluster.rotation.y += rotationSpeed;
+        planet.userData.starCluster.rotation.y += rotationSpeed;
         
-        // PERF: Wobble disabled for performance
-        // planet.userData.starCluster.rotation.x = Math.sin(Date.now() * 0.0001) * 0.05;
+        // Slight wobble for dynamic effect
+        planet.userData.starCluster.rotation.x = Math.sin(Date.now() * 0.0001) * 0.05;
     }
 });
 
-// PERF TEST: All black hole star rotation disabled
-/*
 planets.forEach(planet => {
     if (planet.userData.type === 'blackhole' && planet.userData.rotationSpeed) {
         // Rotate star cluster (small dense stars near black hole)
@@ -1739,7 +1731,6 @@ planets.forEach(planet => {
         }
     }
 });
-*/
 
 // Also add interaction checking:
 if (typeof checkCosmicFeatureInteractions === 'function' && typeof camera !== 'undefined' && typeof gameState !== 'undefined') {
