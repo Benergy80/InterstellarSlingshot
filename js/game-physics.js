@@ -1705,33 +1705,39 @@ if (blackHoleCoreCollision || surfaceCollision) {
                     
                     gravityVector.multiplyScalar(20);
                     
-                    // Enhanced spiral effects
+                    // Enhanced spiral effects - OPTIMIZED: reduced DOM operations
                     if (distance < 200) {
                         const spiralStrength = Math.pow((200 - distance) / 200, 2);
+                        // Cache time once instead of calling Date.now() multiple times
+                        const now = performance.now() * 0.001;
                         const spiralForce = new THREE.Vector3(
-                            Math.sin(Date.now() * 0.001 * spiralStrength * 3),
+                            Math.sin(now * spiralStrength * 3),
                             0,
-                            Math.cos(Date.now() * 0.001 * spiralStrength * 3)
+                            Math.cos(now * spiralStrength * 3)
                         ).multiplyScalar(spiralStrength * 0.2);
                         
                         gameState.velocityVector.add(spiralForce);
                         
                         if (distance < 160) {
-                            camera.rotation.z += spiralStrength * 0.02 * Math.sin(Date.now() * 0.005);
+                            camera.rotation.z += spiralStrength * 0.02 * Math.sin(now * 5);
                             
-                            if (!document.getElementById('dangerOverlay')) {
+                            // OPTIMIZED: Cache danger overlay reference, only create once
+                            if (!window._cachedDangerOverlay) {
+                                window._cachedDangerOverlay = document.getElementById('dangerOverlay');
+                            }
+                            if (!window._cachedDangerOverlay) {
                                 const dangerOverlay = document.createElement('div');
                                 dangerOverlay.id = 'dangerOverlay';
                                 dangerOverlay.className = 'absolute inset-0 pointer-events-none z-20';
-                                dangerOverlay.style.background = `radial-gradient(circle, transparent 0%, rgba(255,255,0,${spiralStrength * 0.4}) 100%)`;
                                 dangerOverlay.style.animation = 'pulse 0.5s infinite';
                                 document.body.appendChild(dangerOverlay);
+                                window._cachedDangerOverlay = dangerOverlay;
                             }
-                        } else {
-                            const dangerOverlay = document.getElementById('dangerOverlay');
-                            if (dangerOverlay) {
-                                dangerOverlay.remove();
-                            }
+                            // Update background only (cheaper than full DOM manipulation)
+                            window._cachedDangerOverlay.style.background = `radial-gradient(circle, transparent 0%, rgba(255,255,0,${spiralStrength * 0.4}) 100%)`;
+                        } else if (window._cachedDangerOverlay) {
+                            window._cachedDangerOverlay.remove();
+                            window._cachedDangerOverlay = null;
                         }
                     }
                 }
