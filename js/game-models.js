@@ -778,7 +778,7 @@ const civilianShipRegistry = {
         }
         
         if (model) {
-            model.scale.multiplyScalar(category.scale * 5); // Reasonable ship scale
+            model.scale.multiplyScalar(category.scale * 1.0); // Match enemy ship relative size
             
             // Apply consistent material properties to match game style
             model.traverse((child) => {

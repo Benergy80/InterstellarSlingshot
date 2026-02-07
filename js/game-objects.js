@@ -5584,12 +5584,11 @@ function hailPlayerCivilian(ship, data) {
 
 // Function to spawn all civilian ships
 function createAllCivilianShips() {
-    console.log('🌍 Creating civilian ships throughout the universe...');
-    
-    createCivilianShipsNearPlanets();
-    createMiningShipsInAsteroidBelts();
-    createScienceShipsNearAnomalies();
-    
+    // Civilian ships only in nebulas now - disabled for core systems
+    console.log('🌍 Civilian ships disabled for core systems (nebula trading ships only)');
+    // createCivilianShipsNearPlanets();  // Disabled - only nebula ships
+    // createMiningShipsInAsteroidBelts(); // Disabled - only nebula ships
+    // createScienceShipsNearAnomalies();  // Disabled - only nebula ships
     console.log(`✅ Total civilian ships created: ${civilianShips.length}`);
 }
 
