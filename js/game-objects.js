@@ -5566,7 +5566,7 @@ function createSatellite(position, type = 'satellite') {
         
         if (satelliteModelCache[modelKey]) {
             sat = satelliteModelCache[modelKey].clone();
-            sat.scale.set(15, 15, 15); // Appropriate scale
+            sat.scale.set(50, 50, 50); // Visible scale
             
             // Enhance materials
             sat.traverse((child) => {

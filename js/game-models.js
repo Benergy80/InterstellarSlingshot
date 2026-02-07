@@ -584,7 +584,7 @@ const civilianShipRegistry = {
         freighter: {
             name: 'Freighter',
             modelFile: 'Freighter.glb',
-            scale: 0.8,
+            scale: 2.0,
             description: 'Heavy cargo hauler',
             spawnLocations: ['nebula', 'trade_route', 'station'],
             speed: { min: 0.3, max: 0.6 },
@@ -593,7 +593,7 @@ const civilianShipRegistry = {
         tanker: {
             name: 'Tanker',
             modelFile: 'Tanker.glb',
-            scale: 0.8,
+            scale: 2.0,
             description: 'Fuel and gas transport',
             spawnLocations: ['star', 'refinery', 'gas_giant', 'nebula'],
             speed: { min: 0.2, max: 0.4 },
@@ -603,7 +603,7 @@ const civilianShipRegistry = {
             name: 'Passenger Liner',
             modelFile: 'Passenger.glb',
             modelVariants: ['Passenger.glb', 'Passenger2.glb', 'Passenger3.glb'],
-            scale: 0.7,
+            scale: 1.8,
             description: 'Luxury cruise vessel',
             spawnLocations: ['planet', 'station', 'scenic', 'nebula'],
             speed: { min: 0.4, max: 0.7 },
@@ -612,7 +612,7 @@ const civilianShipRegistry = {
         mining: {
             name: 'Mining Vessel',
             modelFile: 'Mining.glb',
-            scale: 0.8,
+            scale: 2.0,
             description: 'Asteroid mining ship',
             spawnLocations: ['asteroid_belt', 'asteroid', 'dwarf_planet'],
             speed: { min: 0.2, max: 0.5 },
@@ -621,7 +621,7 @@ const civilianShipRegistry = {
         science: {
             name: 'Research Vessel',
             modelFile: 'SpaceProbe.glb',
-            scale: 0.5,
+            scale: 1.5,
             description: 'Scientific research ship',
             spawnLocations: ['anomaly', 'nebula', 'pulsar', 'black_hole', 'cosmic_feature'],
             speed: { min: 0.3, max: 0.6 },
@@ -630,7 +630,7 @@ const civilianShipRegistry = {
         shuttle: {
             name: 'Shuttle',
             modelFile: 'Shuttle.glb',
-            scale: 0.4,
+            scale: 1.2,
             description: 'Small transport craft',
             spawnLocations: ['anywhere', 'planet', 'station'],
             speed: { min: 0.5, max: 1.0 },
@@ -639,7 +639,7 @@ const civilianShipRegistry = {
         rescue: {
             name: 'Rescue Ship',
             modelFile: 'Rescue.glb',
-            scale: 0.7,
+            scale: 1.8,
             description: 'Emergency response vessel',
             spawnLocations: ['distress', 'debris', 'wreck'],
             speed: { min: 0.8, max: 1.2 },
@@ -648,7 +648,7 @@ const civilianShipRegistry = {
         military: {
             name: 'Patrol Cruiser',
             modelFile: 'Military.glb',
-            scale: 0.6,
+            scale: 1.6,
             description: 'Armed escort vessel',
             spawnLocations: ['trade_route', 'border', 'station'],
             speed: { min: 0.6, max: 1.0 },
@@ -658,7 +658,7 @@ const civilianShipRegistry = {
             name: 'Satellite',
             modelFile: 'Satellite.glb',
             modelVariants: ['Satellite.glb', 'Satellite2.glb'],
-            scale: 0.3,
+            scale: 1.0,
             description: 'Orbital communications satellite',
             spawnLocations: ['planet', 'station', 'inhabited', 'cosmic_feature'],
             speed: { min: 0.1, max: 0.2 },
@@ -668,7 +668,7 @@ const civilianShipRegistry = {
         spaceprobe: {
             name: 'Space Probe',
             modelFile: 'SpaceProbe.glb',
-            scale: 0.4,
+            scale: 1.2,
             description: 'Deep space research probe',
             spawnLocations: ['cosmic_feature', 'anomaly', 'deep_space', 'exotic'],
             speed: { min: 0.05, max: 0.15 },
