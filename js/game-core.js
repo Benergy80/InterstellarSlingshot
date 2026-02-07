@@ -2045,9 +2045,9 @@ if (typeof checkCosmicFeatureInteractions === 'function' && typeof camera !== 'u
 
 // FIXED: Enhanced orbital mechanics that work for ALL galaxies - ADJUSTED SPEEDS (75% slower)
 function updatePlanetOrbits() {
-    // PERF: Distance culling - only update objects within 2000 units
+    // PERF: Distance culling - only update objects within range
     const playerPos = camera.position;
-    const CULL_DISTANCE = 2000;
+    const CULL_DISTANCE = 5000; // Increased from 2000 to fix distant planet orbits
     
     // PERF DEBUG: Log planet count every 300 frames
     if (gameState.frameCount % 300 === 0) {
