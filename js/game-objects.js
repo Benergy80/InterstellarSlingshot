@@ -3951,10 +3951,14 @@ function createExoticCoreNebulas() {
 
 // =============================================================================
 // NEBULA VISIBILITY UPDATE - Called each frame to show/hide distant nebulas based on range
+// Includes smooth fade-in/fade-out effect
 // =============================================================================
 function updateNebulaVisibility() {
     if (typeof nebulaClouds === 'undefined' || nebulaClouds.length === 0) return;
     if (typeof camera === 'undefined') return;
+    
+    const fadeSpeed = 0.02; // How fast to fade in/out (0.02 = ~50 frames for full fade)
+    const maxOpacity = 0.65;
     
     nebulaClouds.forEach(nebula => {
         if (!nebula || !nebula.userData) return;
@@ -3965,26 +3969,52 @@ function updateNebulaVisibility() {
         const visibilityRange = nebula.userData.visibilityRange || 25000;
         const distance = camera.position.distanceTo(nebula.position);
         
-        // Show/hide based on range
-        const shouldBeVisible = distance < visibilityRange;
-        
-        if (nebula.visible !== shouldBeVisible) {
-            nebula.visible = shouldBeVisible;
-            if (shouldBeVisible) {
-                console.log(`👁️ ${nebula.userData.name} now visible (distance: ${distance.toFixed(0)})`);
-            }
+        // Initialize fade state if not present
+        if (nebula.userData.currentOpacity === undefined) {
+            nebula.userData.currentOpacity = 0;
         }
         
-        // Fade opacity based on distance within visible range
-        if (shouldBeVisible && nebula.children[0] && nebula.children[0].material) {
+        // Determine if should be visible based on range
+        const shouldBeVisible = distance < visibilityRange;
+        
+        // Calculate target opacity based on distance
+        let targetOpacity = 0;
+        if (shouldBeVisible) {
+            // Distance-based opacity: full at 60% of range, fades to 50% at edge
             const fadeStart = visibilityRange * 0.6;
             const fadeEnd = visibilityRange;
             if (distance > fadeStart) {
                 const fadeProgress = (distance - fadeStart) / (fadeEnd - fadeStart);
-                nebula.children[0].material.opacity = 0.65 * (1 - fadeProgress * 0.5);
+                targetOpacity = maxOpacity * (1 - fadeProgress * 0.5);
             } else {
-                nebula.children[0].material.opacity = 0.65;
+                targetOpacity = maxOpacity;
             }
+        }
+        
+        // Smoothly interpolate current opacity toward target
+        const opacityDiff = targetOpacity - nebula.userData.currentOpacity;
+        if (Math.abs(opacityDiff) > 0.001) {
+            // Fade in faster than fade out for dramatic reveal
+            const speed = opacityDiff > 0 ? fadeSpeed : fadeSpeed * 0.7;
+            nebula.userData.currentOpacity += opacityDiff * speed * 3;
+            
+            // Clamp to valid range
+            nebula.userData.currentOpacity = Math.max(0, Math.min(maxOpacity, nebula.userData.currentOpacity));
+        }
+        
+        // Update visibility and material opacity
+        const isCurrentlyVisible = nebula.userData.currentOpacity > 0.001;
+        
+        if (nebula.visible !== isCurrentlyVisible) {
+            nebula.visible = isCurrentlyVisible;
+            if (isCurrentlyVisible && nebula.userData.currentOpacity < 0.1) {
+                console.log(`👁️ ${nebula.userData.name} fading into view (distance: ${distance.toFixed(0)})`);
+            }
+        }
+        
+        // Apply opacity to nebula particles
+        if (nebula.children[0] && nebula.children[0].material) {
+            nebula.children[0].material.opacity = nebula.userData.currentOpacity;
         }
     });
 }
