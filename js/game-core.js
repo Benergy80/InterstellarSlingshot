@@ -1139,6 +1139,11 @@ if (typeof updateTradingShips === 'function') {
     updateTradingShips();
 }
 
+// Update freighter caravans traveling between nebulas
+if (typeof updateFreighterCaravans === 'function') {
+    updateFreighterCaravans();
+}
+
 // Update civilian ships throughout universe
 if (typeof updateCivilianShips === 'function') {
     updateCivilianShips();

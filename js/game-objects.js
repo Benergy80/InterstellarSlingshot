@@ -4689,6 +4689,25 @@ window.distressBeaconSystem = distressBeaconSystem;
 // =============================================================================
 const tradingShips = [];
 
+// =============================================================================
+// SHIP TYPE COLOR DEFINITIONS - Each ship type has a distinct color scheme
+// =============================================================================
+const SHIP_TYPE_COLORS = {
+    freighter: { main: 0xff8844, emissive: 0xcc6622, glow: 0xffaa66, name: 'Orange' },     // Orange freighters
+    tanker: { main: 0xffdd44, emissive: 0xccaa22, glow: 0xffee66, name: 'Yellow' },        // Yellow tankers
+    science: { main: 0x44aaff, emissive: 0x2288dd, glow: 0x66ccff, name: 'Blue' },         // Blue science
+    shuttle: { main: 0xaaffaa, emissive: 0x66dd66, glow: 0xccffcc, name: 'Green' },        // Green shuttles
+    passenger: { main: 0xff88ff, emissive: 0xdd66dd, glow: 0xffaaff, name: 'Pink' },       // Pink passenger
+    mining: { main: 0xddcc44, emissive: 0xaa9922, glow: 0xffee44, name: 'Gold' },          // Gold mining
+    rescue: { main: 0xff4444, emissive: 0xdd2222, glow: 0xff6666, name: 'Red' },           // Red rescue
+    military: { main: 0x44ff88, emissive: 0x22dd66, glow: 0x66ffaa, name: 'Teal' }         // Teal military
+};
+
+// =============================================================================
+// FREIGHTER CARAVAN SYSTEM - Groups traveling between nebulas
+// =============================================================================
+const freighterCaravans = [];
+
 function createTradingShipsInNebulas() {
     console.log('🚀 Creating civilian ships in nebulas...');
     
@@ -4723,7 +4742,142 @@ function createTradingShipsInNebulas() {
         }
     });
     
+    // Create freighter caravans traveling between nebulas
+    if (clusteredNebulas.length >= 2) {
+        createFreighterCaravans(clusteredNebulas);
+    }
+    
     console.log(`✅ Created ${tradingShips.length} civilian ships across ${clusteredNebulas.length} nebulas`);
+    console.log(`🚛 Created ${freighterCaravans.length} freighter caravans`);
+}
+
+// =============================================================================
+// FREIGHTER CARAVAN CREATION - Groups of freighters traveling between nebulas
+// =============================================================================
+function createFreighterCaravans(nebulas) {
+    console.log('🚛 Creating freighter caravans between nebulas...');
+    
+    // Create 2-4 caravans
+    const caravanCount = 2 + Math.floor(Math.random() * 3);
+    
+    for (let c = 0; c < caravanCount; c++) {
+        // Pick two different nebulas as endpoints
+        const sourceIndex = Math.floor(Math.random() * nebulas.length);
+        let destIndex = Math.floor(Math.random() * nebulas.length);
+        while (destIndex === sourceIndex && nebulas.length > 1) {
+            destIndex = Math.floor(Math.random() * nebulas.length);
+        }
+        
+        const sourceNebula = nebulas[sourceIndex];
+        const destNebula = nebulas[destIndex];
+        
+        // Create a caravan of 3-6 freighters
+        const caravanSize = 3 + Math.floor(Math.random() * 4);
+        const caravan = {
+            id: c,
+            ships: [],
+            source: sourceNebula.position.clone(),
+            destination: destNebula.position.clone(),
+            sourceName: sourceNebula.userData.name || `Nebula ${sourceIndex}`,
+            destName: destNebula.userData.name || `Nebula ${destIndex}`,
+            progress: Math.random(), // Start at random point along route
+            speed: 0.0002 + Math.random() * 0.0002, // Slow caravan speed
+            direction: 1, // 1 = toward dest, -1 = toward source
+            underAttack: false,
+            attackers: [],
+            escortRequested: false
+        };
+        
+        // Calculate caravan starting position along route
+        const routeVector = new THREE.Vector3().subVectors(caravan.destination, caravan.source);
+        const caravanCenter = caravan.source.clone().add(routeVector.multiplyScalar(caravan.progress));
+        
+        // Create the freighter ships in formation
+        for (let i = 0; i < caravanSize; i++) {
+            const shipGroup = createCaravanFreighter(caravan, i, caravanSize, caravanCenter);
+            caravan.ships.push(shipGroup);
+            tradingShips.push(shipGroup);
+        }
+        
+        freighterCaravans.push(caravan);
+        console.log(`  🚛 Caravan ${c + 1}: ${caravanSize} freighters (${caravan.sourceName} ↔ ${caravan.destName})`);
+    }
+}
+
+function createCaravanFreighter(caravan, index, totalShips, caravanCenter) {
+    let shipGroup;
+    const shipCategory = 'freighter';
+    const colors = SHIP_TYPE_COLORS.freighter;
+    
+    if (typeof civilianShipRegistry !== 'undefined') {
+        shipGroup = civilianShipRegistry.getShipMesh(shipCategory);
+        if (shipGroup) {
+            shipGroup.traverse((child) => {
+                if (child.isMesh && child.material) {
+                    child.material.emissive = new THREE.Color(colors.emissive);
+                    child.material.emissiveIntensity = 2.5;
+                    child.material.color = new THREE.Color(colors.main);
+                }
+            });
+        }
+    }
+    
+    // Fallback procedural freighter
+    if (!shipGroup || shipGroup.children.length === 0) {
+        shipGroup = new THREE.Group();
+        const hull = new THREE.Mesh(
+            new THREE.BoxGeometry(12, 6, 24),
+            new THREE.MeshStandardMaterial({ 
+                color: colors.main, 
+                metalness: 0.4, 
+                roughness: 0.3,
+                emissive: colors.emissive,
+                emissiveIntensity: 2.5
+            })
+        );
+        shipGroup.add(hull);
+        
+        // Cargo containers
+        const containerMat = new THREE.MeshStandardMaterial({ 
+            color: 0x666666, emissive: 0x333333, emissiveIntensity: 1.0 
+        });
+        const container = new THREE.Mesh(new THREE.BoxGeometry(8, 4, 8), containerMat);
+        container.position.set(0, 5, 0);
+        shipGroup.add(container);
+        
+        // Engine glow
+        const engineMat = new THREE.MeshBasicMaterial({ color: colors.glow });
+        const engine = new THREE.Mesh(new THREE.SphereGeometry(2.5, 8, 8), engineMat);
+        engine.position.set(0, 0, 13);
+        shipGroup.add(engine);
+    }
+    
+    // Position in formation (V-shape or line)
+    const formationOffset = new THREE.Vector3();
+    const row = Math.floor(index / 2);
+    const side = index % 2 === 0 ? -1 : 1;
+    formationOffset.x = side * (row + 1) * 60; // Spread horizontally
+    formationOffset.z = row * -80; // Trail behind
+    formationOffset.y = (Math.random() - 0.5) * 40;
+    
+    shipGroup.position.copy(caravanCenter).add(formationOffset);
+    
+    shipGroup.userData = {
+        type: 'caravan_freighter',
+        shipCategory: shipCategory,
+        name: `Caravan ${caravan.id + 1} - Freighter ${index + 1}`,
+        caravanId: caravan.id,
+        formationOffset: formationOffset,
+        isNeutral: true,
+        isCaravan: true,
+        speed: caravan.speed,
+        health: 3, // Freighters can take 3 hits before destroyed
+        maxHealth: 3
+    };
+    
+    shipGroup.visible = true;
+    scene.add(shipGroup);
+    return shipGroup;
 }
 
 function createTradingShip(nebula, index) {
@@ -4735,37 +4889,40 @@ function createTradingShip(nebula, index) {
     const nebulaShipTypes = ['freighter', 'tanker', 'science', 'shuttle', 'passenger'];
     shipCategory = nebulaShipTypes[Math.floor(Math.random() * nebulaShipTypes.length)];
     
+    // Get distinct colors for this ship type
+    const colors = SHIP_TYPE_COLORS[shipCategory] || SHIP_TYPE_COLORS.shuttle;
+    
     if (typeof civilianShipRegistry !== 'undefined') {
         shipGroup = civilianShipRegistry.getShipMesh(shipCategory);
-        // Enhance registry ships with strong emissive glow (no point lights - too many!)
+        // Apply ship-type-specific colors for easy identification
         if (shipGroup) {
             shipGroup.traverse((child) => {
                 if (child.isMesh && child.material) {
-                    child.material.emissive = new THREE.Color(0x6699cc);
-                    child.material.emissiveIntensity = 2.0;
+                    child.material.emissive = new THREE.Color(colors.emissive);
+                    child.material.emissiveIntensity = 2.5;
+                    child.material.color = new THREE.Color(colors.main);
                 }
             });
         }
     }
     
-    // Fallback if no ship created
+    // Fallback if no ship created - with type-specific colors
     if (!shipGroup || shipGroup.children.length === 0) {
-        // Fallback to simple procedural ship with strong emissive glow
         shipGroup = new THREE.Group();
         const hull = new THREE.Mesh(
             new THREE.BoxGeometry(8, 4, 16),
             new THREE.MeshStandardMaterial({ 
-                color: 0x88aadd, 
+                color: colors.main, 
                 metalness: 0.3, 
                 roughness: 0.4,
-                emissive: 0x6699cc,
+                emissive: colors.emissive,
                 emissiveIntensity: 2.5
             })
         );
         shipGroup.add(hull);
         
-        // Engine glow - MeshBasicMaterial always visible
-        const engineMat = new THREE.MeshBasicMaterial({ color: 0x00ddff });
+        // Engine glow - MeshBasicMaterial always visible, matches ship type color
+        const engineMat = new THREE.MeshBasicMaterial({ color: colors.glow });
         const engineL = new THREE.Mesh(new THREE.SphereGeometry(2, 8, 8), engineMat);
         engineL.position.set(-3, 0, 9);
         shipGroup.add(engineL);
@@ -4796,6 +4953,9 @@ function createTradingShip(nebula, index) {
         ? civilianShipRegistry.getShipSpeed(shipCategory)
         : 0.5 + Math.random() * 0.5;
     
+    // BI-DIRECTIONAL TRAFFIC: 50% chance to orbit in opposite direction
+    const orbitDirection = Math.random() < 0.5 ? 1 : -1;
+    
     // Ship data
     shipGroup.userData = {
         type: 'trading_ship',
@@ -4806,10 +4966,12 @@ function createTradingShip(nebula, index) {
         orbitRadius: orbitRadius,
         orbitAngle: angle,
         orbitSpeed: 0.002 + Math.random() * 0.003, // Slow orbit
+        orbitDirection: orbitDirection, // NEW: 1 = CCW, -1 = CW (two-way traffic)
         verticalOffset: height,
         destination: null,
         speed: shipSpeed,
-        isNeutral: true
+        isNeutral: true,
+        shipColorName: colors.name // Track color for debugging
     };
     
     // Find nearby planets for destinations
@@ -4835,23 +4997,18 @@ function createTradingShip(nebula, index) {
 function createNebulaShip(nebula, index, shipCategory) {
     let shipGroup;
     
-    // Color schemes for different ship types
-    const shipColors = {
-        'mining': { main: 0xddcc44, emissive: 0xaa9922, light: 0xffee44 },
-        'science': { main: 0x44aaff, emissive: 0x2288dd, light: 0x66ccff },
-        'rescue': { main: 0xff6644, emissive: 0xdd4422, light: 0xff8866 },
-        'military': { main: 0x44ff66, emissive: 0x22dd44, light: 0x66ff88 }
-    };
-    const colors = shipColors[shipCategory] || shipColors['science'];
+    // Use unified ship type colors
+    const colors = SHIP_TYPE_COLORS[shipCategory] || SHIP_TYPE_COLORS.science;
     
     if (typeof civilianShipRegistry !== 'undefined') {
         shipGroup = civilianShipRegistry.getShipMesh(shipCategory);
-        // Enhance registry ships with strong emissive glow (no point lights!)
+        // Apply ship-type-specific colors
         if (shipGroup) {
             shipGroup.traverse((child) => {
                 if (child.isMesh && child.material) {
                     child.material.emissive = new THREE.Color(colors.emissive);
-                    child.material.emissiveIntensity = 2.0;
+                    child.material.emissiveIntensity = 2.5;
+                    child.material.color = new THREE.Color(colors.main);
                 }
             });
         }
@@ -4873,7 +5030,7 @@ function createNebulaShip(nebula, index, shipCategory) {
         shipGroup.add(hull);
         
         // Engine glow - MeshBasicMaterial always visible
-        const engineMat = new THREE.MeshBasicMaterial({ color: colors.light });
+        const engineMat = new THREE.MeshBasicMaterial({ color: colors.glow });
         const engine = new THREE.Mesh(new THREE.SphereGeometry(1.5, 8, 8), engineMat);
         engine.position.set(0, 0, 8);
         shipGroup.add(engine);
@@ -4898,6 +5055,9 @@ function createNebulaShip(nebula, index, shipCategory) {
         'military': 'Patrol Craft'
     };
     
+    // BI-DIRECTIONAL TRAFFIC: 50% chance to orbit in opposite direction
+    const orbitDirection = Math.random() < 0.5 ? 1 : -1;
+    
     shipGroup.userData = {
         type: 'trading_ship',
         shipCategory: shipCategory,
@@ -4907,9 +5067,11 @@ function createNebulaShip(nebula, index, shipCategory) {
         orbitRadius: orbitRadius,
         orbitAngle: angle,
         orbitSpeed: 0.002 + Math.random() * 0.003,
+        orbitDirection: orbitDirection, // NEW: 1 = CCW, -1 = CW (two-way traffic)
         verticalOffset: height,
         speed: 0.3 + Math.random() * 0.4,
-        isNeutral: true
+        isNeutral: true,
+        shipColorName: colors.name // Track color for debugging
     };
     
     shipGroup.visible = true;
@@ -5190,8 +5352,9 @@ function updateTradingShips() {
 }
 
 function updateOrbitBehavior(ship, data) {
-    // Original orbit behavior
-    data.orbitAngle += data.orbitSpeed;
+    // BI-DIRECTIONAL ORBIT: Use orbitDirection to determine CW vs CCW
+    const direction = data.orbitDirection || 1; // Default to CCW if not set
+    data.orbitAngle += data.orbitSpeed * direction;
     
     const newX = data.nebulaPosition.x + Math.cos(data.orbitAngle) * data.orbitRadius;
     const newZ = data.nebulaPosition.z + Math.sin(data.orbitAngle) * data.orbitRadius;
@@ -5205,15 +5368,15 @@ function updateOrbitBehavior(ship, data) {
     ship.position.y += (newY - ship.position.y) * 0.02;
     ship.position.z += (newZ - ship.position.z) * 0.02;
     
-    // Face direction of travel
-    const direction = new THREE.Vector3(
+    // Face direction of travel (accounts for orbit direction)
+    const movementDir = new THREE.Vector3(
         newX - ship.position.x,
         0,
         newZ - ship.position.z
     ).normalize();
     
-    if (direction.length() > 0.01) {
-        ship.lookAt(ship.position.x + direction.x * 100, ship.position.y, ship.position.z + direction.z * 100);
+    if (movementDir.length() > 0.01) {
+        ship.lookAt(ship.position.x + movementDir.x * 100, ship.position.y, ship.position.z + movementDir.z * 100);
     }
 }
 
@@ -5247,6 +5410,269 @@ function checkForNearbyThreats(position, range) {
     return null;
 }
 
+// =============================================================================
+// FREIGHTER CARAVAN UPDATE SYSTEM
+// =============================================================================
+
+// Track caravan attack events
+let lastCaravanAttackTime = 0;
+const CARAVAN_ATTACK_COOLDOWN = 90000; // 90 seconds between caravan attacks
+let caravanDistressShown = false;
+
+function updateFreighterCaravans() {
+    if (freighterCaravans.length === 0) return;
+    
+    const now = Date.now();
+    const playerPos = (typeof camera !== 'undefined' && camera) ? camera.position : null;
+    
+    freighterCaravans.forEach(caravan => {
+        if (!caravan || caravan.ships.length === 0) return;
+        
+        // Update caravan progress along route
+        caravan.progress += caravan.speed * caravan.direction;
+        
+        // Reverse direction at endpoints (ping-pong between nebulas)
+        if (caravan.progress >= 1.0) {
+            caravan.progress = 1.0;
+            caravan.direction = -1;
+        } else if (caravan.progress <= 0.0) {
+            caravan.progress = 0.0;
+            caravan.direction = 1;
+        }
+        
+        // Calculate caravan center position
+        const routeVector = new THREE.Vector3().subVectors(caravan.destination, caravan.source);
+        const caravanCenter = caravan.source.clone().add(routeVector.clone().multiplyScalar(caravan.progress));
+        
+        // Calculate facing direction
+        const facingDir = caravan.direction > 0 
+            ? routeVector.clone().normalize() 
+            : routeVector.clone().negate().normalize();
+        
+        // Update each ship in caravan
+        caravan.ships.forEach((ship, shipIndex) => {
+            if (!ship || !ship.userData) return;
+            
+            // Calculate target position (formation offset rotated to face direction)
+            const offset = ship.userData.formationOffset.clone();
+            
+            // Rotate offset to align with travel direction
+            const angle = Math.atan2(facingDir.x, facingDir.z);
+            const rotatedOffset = new THREE.Vector3(
+                offset.x * Math.cos(angle) - offset.z * Math.sin(angle),
+                offset.y,
+                offset.x * Math.sin(angle) + offset.z * Math.cos(angle)
+            );
+            
+            const targetPos = caravanCenter.clone().add(rotatedOffset);
+            
+            // Smooth movement toward target
+            ship.position.lerp(targetPos, 0.02);
+            
+            // Face travel direction
+            const lookTarget = ship.position.clone().add(facingDir.clone().multiplyScalar(100));
+            ship.lookAt(lookTarget);
+        });
+        
+        // Check for enemy attacks on caravan
+        if (!caravan.underAttack && now - lastCaravanAttackTime > CARAVAN_ATTACK_COOLDOWN) {
+            checkCaravanForAttack(caravan, playerPos);
+        }
+        
+        // Update attack state
+        if (caravan.underAttack) {
+            updateCaravanUnderAttack(caravan, playerPos);
+        }
+    });
+}
+
+function checkCaravanForAttack(caravan, playerPos) {
+    // Only trigger attacks when player is somewhat nearby (within 5000 units)
+    if (!playerPos) return;
+    
+    const caravanPos = caravan.ships[0]?.position;
+    if (!caravanPos) return;
+    
+    const distToPlayer = caravanPos.distanceTo(playerPos);
+    if (distToPlayer > 5000) return;
+    
+    // Check for nearby enemies
+    if (typeof enemies === 'undefined' || enemies.length === 0) return;
+    
+    for (const enemy of enemies) {
+        if (!enemy || !enemy.position || !enemy.visible) continue;
+        if (enemy.userData && enemy.userData.isDead) continue;
+        
+        const distToCaravan = enemy.position.distanceTo(caravanPos);
+        if (distToCaravan < 800) {
+            // ATTACK! Enemy is close to caravan
+            triggerCaravanAttack(caravan, enemy);
+            return;
+        }
+    }
+    
+    // Random chance for enemies to intercept caravan when player is nearby
+    if (Math.random() < 0.001 && distToPlayer < 3000) { // 0.1% chance per frame
+        // Find nearest enemy to redirect
+        let nearestEnemy = null;
+        let nearestDist = Infinity;
+        
+        for (const enemy of enemies) {
+            if (!enemy || !enemy.position || !enemy.visible) continue;
+            if (enemy.userData && (enemy.userData.isDead || enemy.userData.isBoss)) continue;
+            
+            const dist = enemy.position.distanceTo(caravanPos);
+            if (dist < nearestDist && dist < 3000) {
+                nearestDist = dist;
+                nearestEnemy = enemy;
+            }
+        }
+        
+        if (nearestEnemy) {
+            triggerCaravanAttack(caravan, nearestEnemy);
+        }
+    }
+}
+
+function triggerCaravanAttack(caravan, enemy) {
+    console.log(`🚨 CARAVAN UNDER ATTACK! Caravan ${caravan.id + 1} targeted by enemy!`);
+    
+    caravan.underAttack = true;
+    caravan.attackers = [enemy];
+    lastCaravanAttackTime = Date.now();
+    
+    // Redirect enemy to attack caravan
+    if (enemy.userData) {
+        enemy.userData.targetCaravan = caravan;
+        enemy.userData.originalTarget = enemy.userData.swarmTarget;
+        enemy.userData.swarmTarget = caravan.ships[0];
+    }
+    
+    // Show distress call to player
+    if (!caravanDistressShown) {
+        const distressMsg = `MAYDAY! This is Caravan ${caravan.id + 1} en route from ${caravan.sourceName}! We're under attack! Any friendly ships, please assist!`;
+        showIncomingTransmission(`Caravan ${caravan.id + 1} DISTRESS`, distressMsg, true);
+        caravanDistressShown = true;
+        
+        // Reset distress flag after cooldown
+        setTimeout(() => { caravanDistressShown = false; }, 60000);
+    }
+    
+    // Show achievement/mission prompt
+    if (typeof showAchievement === 'function') {
+        showAchievement('⚠️ CONVOY IN DANGER', `Defend Caravan ${caravan.id + 1}! Freighters need protection!`);
+    }
+}
+
+function updateCaravanUnderAttack(caravan, playerPos) {
+    // Check if attackers are still alive
+    caravan.attackers = caravan.attackers.filter(enemy => {
+        return enemy && enemy.visible && enemy.userData && !enemy.userData.isDead;
+    });
+    
+    // Attack resolved if no attackers left
+    if (caravan.attackers.length === 0) {
+        caravan.underAttack = false;
+        console.log(`✅ Caravan ${caravan.id + 1} is safe!`);
+        
+        // Thank player if they're nearby
+        if (playerPos) {
+            const caravanPos = caravan.ships[0]?.position;
+            if (caravanPos && caravanPos.distanceTo(playerPos) < 1500) {
+                showIncomingTransmission(`Caravan ${caravan.id + 1}`, 
+                    "Thank you, pilot! You saved our cargo and our lives. Safe travels!");
+                
+                // Award player (optional - could add credits/XP)
+                if (typeof showAchievement === 'function') {
+                    showAchievement('🛡️ CONVOY SAVED', `Caravan ${caravan.id + 1} successfully defended!`);
+                }
+            }
+        }
+        return;
+    }
+    
+    // Caravan ships try to flee during attack
+    caravan.ships.forEach(ship => {
+        if (!ship || !ship.userData) return;
+        
+        // Evasive maneuvers
+        ship.position.x += (Math.random() - 0.5) * 1.5;
+        ship.position.y += (Math.random() - 0.5) * 0.5;
+        ship.position.z += (Math.random() - 0.5) * 1.5;
+    });
+    
+    // Enemies actively pursue caravan ships
+    caravan.attackers.forEach(enemy => {
+        if (!enemy || !enemy.userData) return;
+        
+        // Pick a random caravan ship to target
+        const targetShip = caravan.ships[Math.floor(Math.random() * caravan.ships.length)];
+        if (targetShip && targetShip.position) {
+            enemy.userData.swarmTarget = targetShip;
+        }
+    });
+}
+
+// Damage caravan freighter when hit by enemy fire
+function damageCaravanFreighter(ship) {
+    if (!ship || !ship.userData || !ship.userData.isCaravan) return false;
+    
+    ship.userData.health = (ship.userData.health || 3) - 1;
+    
+    console.log(`💥 Caravan freighter hit! Health: ${ship.userData.health}/${ship.userData.maxHealth}`);
+    
+    if (ship.userData.health <= 0) {
+        // Freighter destroyed
+        destroyCaravanFreighter(ship);
+        return true;
+    }
+    
+    // Visual damage feedback - flash red
+    ship.traverse((child) => {
+        if (child.isMesh && child.material) {
+            const originalEmissive = child.material.emissive.getHex();
+            child.material.emissive.setHex(0xff0000);
+            setTimeout(() => {
+                if (child.material) child.material.emissive.setHex(originalEmissive);
+            }, 200);
+        }
+    });
+    
+    return false;
+}
+
+function destroyCaravanFreighter(ship) {
+    console.log(`💀 Caravan freighter destroyed: ${ship.userData.name}`);
+    
+    // Create explosion effect
+    if (typeof createExplosionEffect === 'function') {
+        createExplosionEffect(ship);
+    }
+    
+    // Remove from caravan
+    const caravanId = ship.userData.caravanId;
+    const caravan = freighterCaravans[caravanId];
+    if (caravan) {
+        const idx = caravan.ships.indexOf(ship);
+        if (idx > -1) caravan.ships.splice(idx, 1);
+        
+        // If all ships destroyed, caravan is lost
+        if (caravan.ships.length === 0) {
+            console.log(`☠️ Caravan ${caravanId + 1} completely destroyed!`);
+            if (typeof showAchievement === 'function') {
+                showAchievement('💀 CONVOY LOST', `Caravan ${caravanId + 1} was destroyed. The cargo is lost.`);
+            }
+        }
+    }
+    
+    // Remove from trading ships array
+    const tradingIdx = tradingShips.indexOf(ship);
+    if (tradingIdx > -1) tradingShips.splice(tradingIdx, 1);
+    
+    // Remove from scene
+    scene.remove(ship);
+}
+
 function hailPlayer(ship, data) {
     const message = civilianShipHails[Math.floor(Math.random() * civilianShipHails.length)];
     const shipName = data.name || 'Civilian Ship';
@@ -5273,18 +5699,22 @@ function showIncomingTransmission(sender, message, isDistress = false) {
         document.body.appendChild(container);
     }
     
-    // Match game UI style - similar to tutorial/mission command
-    const borderColor = isDistress ? 'rgba(255, 80, 80, 0.6)' : 'rgba(0, 200, 255, 0.4)';
-    const glowColor = isDistress ? 'rgba(255, 0, 0, 0.3)' : 'rgba(0, 150, 255, 0.2)';
+    // Match game UI style - transparent like HUD elements
+    // Keep border color matching (cyan for normal, red for distress)
+    const borderColor = isDistress ? 'rgba(255, 80, 80, 0.5)' : 'rgba(0, 150, 255, 0.5)';
+    const glowColor = isDistress ? 'rgba(255, 50, 50, 0.3)' : 'rgba(0, 150, 255, 0.3)';
     const titleColor = isDistress ? '#ff6666' : '#00ddff';
-    const icon = isDistress ? '🆘' : '📡';
+    const accentColor = isDistress ? 'rgba(255, 80, 80, 0.3)' : 'rgba(0, 150, 255, 0.3)';
+    
+    // Transmission type label - NO emoji for distress
+    const transmissionLabel = isDistress ? 'DISTRESS SIGNAL' : 'INCOMING TRANSMISSION';
     
     container.style.cssText = `
         position: fixed;
         top: 100px;
         left: 50%;
         transform: translateX(-50%);
-        background: linear-gradient(180deg, rgba(0, 20, 40, 0.95) 0%, rgba(0, 10, 20, 0.9) 100%);
+        background: linear-gradient(135deg, rgba(15, 23, 42, 0.35) 0%, rgba(30, 41, 59, 0.35) 100%);
         border: 1px solid ${borderColor};
         border-radius: 4px;
         padding: 16px 24px;
@@ -5295,7 +5725,12 @@ function showIncomingTransmission(sender, message, isDistress = false) {
         opacity: 0;
         transition: opacity 0.4s ease;
         pointer-events: none;
-        box-shadow: 0 0 20px ${glowColor}, inset 0 0 30px rgba(0, 50, 100, 0.1);
+        box-shadow: 
+            0 12px 40px ${glowColor},
+            inset 0 1px 0 ${accentColor},
+            inset 0 -1px 0 ${accentColor};
+        backdrop-filter: blur(4px);
+        -webkit-backdrop-filter: blur(4px);
     `;
     
     container.innerHTML = `
@@ -5305,11 +5740,11 @@ function showIncomingTransmission(sender, message, isDistress = false) {
             text-transform: uppercase; 
             letter-spacing: 3px; 
             margin-bottom: 10px;
-            text-shadow: 0 0 10px ${titleColor};
+            text-shadow: 0 0 8px ${titleColor};
             border-bottom: 1px solid ${borderColor};
             padding-bottom: 8px;
         ">
-            ${icon} INCOMING TRANSMISSION
+            ${transmissionLabel}
         </div>
         <div style="
             color: #aaccff; 
@@ -5326,7 +5761,7 @@ function showIncomingTransmission(sender, message, isDistress = false) {
             line-height: 1.5;
             font-style: italic;
             padding-left: 8px;
-            border-left: 2px solid rgba(0, 150, 255, 0.3);
+            border-left: 2px solid ${accentColor};
         ">
             "${message}"
         </div>
@@ -5392,6 +5827,10 @@ function sendDistressSignal(ship, data) {
 window.tradingShips = tradingShips;
 window.createTradingShipsInNebulas = createTradingShipsInNebulas;
 window.updateTradingShips = updateTradingShips;
+window.freighterCaravans = freighterCaravans;
+window.updateFreighterCaravans = updateFreighterCaravans;
+window.damageCaravanFreighter = damageCaravanFreighter;
+window.SHIP_TYPE_COLORS = SHIP_TYPE_COLORS;
 
 // =============================================================================
 // CIVILIAN SHIPS THROUGHOUT THE UNIVERSE - Various ship types in different areas
