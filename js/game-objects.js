@@ -5773,7 +5773,7 @@ function updateTradingShips() {
     if (tradingShips.length === 0) return;
     
     const now = Date.now();
-    const playerPos = (typeof spaceship !== 'undefined' && spaceship) ? spaceship.position : null;
+    const playerPos = (typeof camera !== 'undefined' && camera) ? camera.position : null;
     
     tradingShips.forEach(ship => {
         if (!ship || !ship.userData) return;
@@ -5802,10 +5802,17 @@ function updateTradingShips() {
                 // Orbit around nebula center
                 updateOrbitBehavior(ship, data);
                 
-                // Mining ships: chance to stop and mine
-                if (data.shipCategory === 'mining' && Math.random() < 0.003) {
-                    data.aiState = 'mining';
-                    data.stateTimer = 150 + Math.random() * 200;
+                // Mining ships: use mining routes if available, otherwise local mining
+                if (data.shipCategory === 'mining') {
+                    if (data.hasMiningRoute && data.miningDestination && Math.random() < 0.01) {
+                        // Start mining route to core system
+                        data.aiState = 'traveling_to_mine';
+                        console.log(`⛏️ ${data.name} departing for ${data.miningDestinationName || 'mining site'}`);
+                    } else if (!data.hasMiningRoute && Math.random() < 0.003) {
+                        // Local mining (no route assigned)
+                        data.aiState = 'mining';
+                        data.stateTimer = 150 + Math.random() * 200;
+                    }
                 }
                 
                 // Science ships: chance to stop and scan
@@ -5821,12 +5828,12 @@ function updateTradingShips() {
                     data.stateTimer = 0;
                 }
                 
-                // Check if player is nearby for hailing
+                // Check if player is nearby for hailing (100 units trigger distance)
                 if (playerPos && !data.hasHailedPlayer && now - lastCivilianHailTime > HAIL_COOLDOWN) {
                     const distToPlayer = ship.position.distanceTo(playerPos);
-                    if (distToPlayer < 200 && distToPlayer > 50) {
-                        // Chance to hail
-                        if (Math.random() < 0.02) {
+                    if (distToPlayer < 100 && distToPlayer > 30) {
+                        // Higher chance to hail at close range
+                        if (Math.random() < 0.05) {
                             hailPlayer(ship, data);
                             lastCivilianHailTime = now;
                         }
@@ -6870,7 +6877,7 @@ function updateCivilianShips() {
     if (civilianShips.length === 0) return;
     
     const now = Date.now();
-    const playerPos = (typeof spaceship !== 'undefined' && spaceship) ? spaceship.position : null;
+    const playerPos = (typeof camera !== 'undefined' && camera) ? camera.position : null;
     
     civilianShips.forEach(ship => {
         if (!ship || !ship.userData) return;
@@ -6939,11 +6946,11 @@ function updateCivilianShips() {
                     }
                 }
                 
-                // Check if player is nearby for hailing
+                // Check if player is nearby for hailing (100 units trigger distance)
                 if (playerPos && !data.hasHailedPlayer && now - lastCivilianHailTime > HAIL_COOLDOWN) {
                     const distToPlayer = ship.position.distanceTo(playerPos);
-                    if (distToPlayer < 300 && distToPlayer > 80) {
-                        if (Math.random() < 0.015) {
+                    if (distToPlayer < 100 && distToPlayer > 30) {
+                        if (Math.random() < 0.05) {
                             hailPlayerCivilian(ship, data);
                             lastCivilianHailTime = now;
                         }
