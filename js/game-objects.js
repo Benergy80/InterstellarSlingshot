@@ -5707,6 +5707,119 @@ function updateTradingShips() {
                         .normalize();
                 }
                 break;
+            
+            // =================================================================
+            // MINING ROUTE STATES - Ships traveling between nebulas and systems
+            // =================================================================
+            case 'traveling_to_mine':
+                if (data.hasMiningRoute && data.miningDestination) {
+                    const toMine = new THREE.Vector3()
+                        .subVectors(data.miningDestination, ship.position);
+                    const mineDist = toMine.length();
+                    
+                    if (mineDist < 500) {
+                        // Arrived at mining location
+                        data.aiState = 'mining_at_destination';
+                        data.miningProgress = 0;
+                        data.stateTimer = data.miningDuration || 30000;
+                    } else {
+                        // Travel toward mining destination
+                        toMine.normalize();
+                        const travelSpeed = (data.speed || 0.4) * 1.5;
+                        ship.position.add(toMine.multiplyScalar(travelSpeed));
+                        ship.lookAt(data.miningDestination);
+                        
+                        // Update route progress
+                        if (data.homeNebula) {
+                            const totalDist = data.homeNebula.distanceTo(data.miningDestination);
+                            const currentDist = ship.position.distanceTo(data.homeNebula);
+                            data.routeProgress = Math.min(1, currentDist / totalDist);
+                        }
+                    }
+                } else {
+                    // No route, fall back to idle orbit
+                    data.aiState = 'idle';
+                }
+                
+                // React to threats
+                if (nearbyThreat) {
+                    data.aiState = 'fleeing';
+                    data.fleeDirection = new THREE.Vector3()
+                        .subVectors(ship.position, nearbyThreat.position)
+                        .normalize();
+                }
+                break;
+            
+            case 'mining_at_destination':
+                // Mining behavior at destination system
+                ship.position.x += (Math.random() - 0.5) * 0.8;
+                ship.position.y += (Math.random() - 0.5) * 0.4;
+                ship.position.z += (Math.random() - 0.5) * 0.8;
+                ship.rotation.z = Math.sin(Date.now() * 0.004) * 0.15;
+                
+                data.miningProgress += 16.67; // ~60fps
+                if (data.miningProgress >= (data.miningDuration || 30000)) {
+                    // Done mining, head back home
+                    data.aiState = 'returning_with_cargo';
+                    ship.rotation.z = 0;
+                }
+                
+                // React to threats even while mining
+                if (nearbyThreat) {
+                    data.aiState = 'fleeing';
+                    data.fleeDirection = new THREE.Vector3()
+                        .subVectors(ship.position, nearbyThreat.position)
+                        .normalize();
+                    ship.rotation.z = 0;
+                }
+                break;
+            
+            case 'returning_with_cargo':
+                if (data.homeNebula) {
+                    const toHome = new THREE.Vector3()
+                        .subVectors(data.homeNebula, ship.position);
+                    const homeDist = toHome.length();
+                    
+                    if (homeDist < (data.orbitRadius || 500)) {
+                        // Back home - reset to traveling state after a brief rest
+                        data.aiState = 'idle';
+                        data.stateTimer = 500 + Math.random() * 500; // Rest before next trip
+                        
+                        // After resting, start another mining trip
+                        setTimeout(() => {
+                            if (data.hasMiningRoute && ship.userData) {
+                                ship.userData.aiState = 'traveling_to_mine';
+                            }
+                        }, (data.stateTimer || 500) * 16.67);
+                    } else {
+                        // Travel home (slightly slower when loaded with cargo)
+                        toHome.normalize();
+                        const returnSpeed = (data.speed || 0.4) * 1.2;
+                        ship.position.add(toHome.multiplyScalar(returnSpeed));
+                        ship.lookAt(data.homeNebula);
+                        
+                        // Update route progress (going back)
+                        if (data.miningDestination) {
+                            const totalDist = data.homeNebula.distanceTo(data.miningDestination);
+                            const currentDist = ship.position.distanceTo(data.miningDestination);
+                            data.routeProgress = Math.min(1, currentDist / totalDist);
+                        }
+                    }
+                } else if (data.nebulaPosition) {
+                    // Fallback to nebulaPosition if homeNebula not set
+                    data.homeNebula = data.nebulaPosition.clone();
+                } else {
+                    data.aiState = 'idle';
+                }
+                
+                // React to threats
+                if (nearbyThreat) {
+                    data.aiState = 'fleeing';
+                    data.fleeDirection = new THREE.Vector3()
+                        .subVectors(ship.position, nearbyThreat.position)
+                        .normalize();
+                }
+                break;
         }
     });
 }
@@ -6189,6 +6302,11 @@ function sendDistressSignal(ship, data) {
 
 window.tradingShips = tradingShips;
 window.createTradingShipsInNebulas = createTradingShipsInNebulas;
+window.createShipsInDistantExoticNebulas = createShipsInDistantExoticNebulas;
+window.createDistantNebulaShip = createDistantNebulaShip;
+window.createMiningShipWithRoute = createMiningShipWithRoute;
+window.createOuterNebulaCaravans = createOuterNebulaCaravans;
+window.updateClusteredMiningRoutes = updateClusteredMiningRoutes;
 window.updateTradingShips = updateTradingShips;
 window.freighterCaravans = freighterCaravans;
 window.updateFreighterCaravans = updateFreighterCaravans;

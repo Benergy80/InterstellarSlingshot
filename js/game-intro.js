@@ -1981,6 +1981,18 @@ function setupNormalGameContent() {
         console.log('🚀 Trading ships created in nebulas');
     }
     
+    // Create ships in distant and exotic nebulas with mining routes
+    if (typeof createShipsInDistantExoticNebulas === 'function') {
+        createShipsInDistantExoticNebulas();
+        console.log('🌌 Ships created in distant/exotic nebulas');
+    }
+    
+    // Update clustered nebula mining ships with routes to core systems
+    if (typeof updateClusteredMiningRoutes === 'function') {
+        updateClusteredMiningRoutes();
+        console.log('⛏️ Mining routes established for clustered nebula ships');
+    }
+    
     // Create civilian ships throughout the universe
     if (typeof createAllCivilianShips === 'function') {
         createAllCivilianShips();

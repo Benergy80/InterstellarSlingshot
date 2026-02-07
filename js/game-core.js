@@ -787,6 +787,16 @@ if (typeof areModelsLoaded === 'function' && areModelsLoaded()) {
         createTradingShipsInNebulas();
         console.log('Trading ships created in nebulas');
     }
+    // Create ships in distant and exotic nebulas with mining routes
+    if (typeof createShipsInDistantExoticNebulas === 'function') {
+        createShipsInDistantExoticNebulas();
+        console.log('Ships created in distant/exotic nebulas');
+    }
+    // Update clustered nebula mining ships with routes to core systems
+    if (typeof updateClusteredMiningRoutes === 'function') {
+        updateClusteredMiningRoutes();
+        console.log('Mining routes established for clustered nebula ships');
+    }
     // Create civilian ships throughout the universe
     if (typeof createAllCivilianShips === 'function') {
         createAllCivilianShips();
@@ -835,6 +845,14 @@ if (typeof areModelsLoaded === 'function' && areModelsLoaded()) {
             if (typeof createTradingShipsInNebulas === 'function') {
                 createTradingShipsInNebulas();
             }
+            // Create ships in distant/exotic nebulas
+            if (typeof createShipsInDistantExoticNebulas === 'function') {
+                createShipsInDistantExoticNebulas();
+            }
+            // Update mining routes
+            if (typeof updateClusteredMiningRoutes === 'function') {
+                updateClusteredMiningRoutes();
+            }
             // Initialize distress beacon system
             if (typeof distressBeaconSystem !== 'undefined' && distressBeaconSystem.initialize) {
                 distressBeaconSystem.initialize();
@@ -857,6 +875,14 @@ if (typeof areModelsLoaded === 'function' && areModelsLoaded()) {
             // Create trading ships in nebulas
             if (typeof createTradingShipsInNebulas === 'function') {
                 createTradingShipsInNebulas();
+            }
+            // Create ships in distant/exotic nebulas
+            if (typeof createShipsInDistantExoticNebulas === 'function') {
+                createShipsInDistantExoticNebulas();
+            }
+            // Update mining routes
+            if (typeof updateClusteredMiningRoutes === 'function') {
+                updateClusteredMiningRoutes();
             }
             // Initialize distress beacon system
             if (typeof distressBeaconSystem !== 'undefined' && distressBeaconSystem.initialize) {
