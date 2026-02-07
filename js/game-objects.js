@@ -1701,13 +1701,10 @@ function createOptimizedPlanets3D() {
         sun.visible = true;
         sun.frustumCulled = false;
 
-        const sunLight = new THREE.PointLight(0xffff88, 1.5, 4000, 0.8);
-        sunLight.position.copy(sun.position);
-        sunLight.castShadow = false;
-        
-        if (scene && scene.add) {
-            scene.add(sunLight);
-        }
+        // PERF: PointLight removed - Sun uses emissive material instead
+        // const sunLight = new THREE.PointLight(0xffff88, 1.5, 4000, 0.8);
+        // sunLight.position.copy(sun.position);
+        // scene.add(sunLight);
 
         const localAmbientLight = new THREE.AmbientLight(0x404040, 0.2);
         if (scene && scene.add) {
@@ -2207,8 +2204,6 @@ try {
 // 8TH GALACTIC CORE - ABOVE SAGITTARIUS A* WITH STARFIELD
 // =============================================================================
 
-// PERF TEST: Companion Core disabled to test performance
-if (false) {
 try {
     console.log('Creating Companion Core near Sagittarius A*...');
     
@@ -2620,7 +2615,6 @@ console.log('✅ 8th galactic core created with spiral galaxy starfield:', core8
 } catch (core8Error) {
     console.error('❌ Error creating 8th galactic core:', core8Error);
 }
-} // End of PERF TEST: Companion Core disabled
     
     // =============================================================================
 // LOCAL BLACK HOLE GATEWAY - POSITIONED ABOVE SOLAR SYSTEM PLANE
@@ -5047,21 +5041,21 @@ function createTradingShipsInNebulas() {
     );
     
     clusteredNebulas.forEach((nebula, nebulaIndex) => {
-        // 8-15 civilian ships per nebula (busy community feel)
-        const shipCount = 8 + Math.floor(Math.random() * 8);
+        // PERF: Reduced ship counts - 3-5 civilian ships per nebula
+        const shipCount = 3 + Math.floor(Math.random() * 3);
         
         for (let i = 0; i < shipCount; i++) {
             createTradingShip(nebula, i);
         }
         
-        // 3-6 mining ships per nebula
-        const miningCount = 3 + Math.floor(Math.random() * 4);
+        // PERF: 1-2 mining ships per nebula
+        const miningCount = 1 + Math.floor(Math.random() * 2);
         for (let i = 0; i < miningCount; i++) {
             createNebulaShip(nebula, i, 'mining');
         }
         
-        // 2-4 science ships per nebula
-        const scienceCount = 2 + Math.floor(Math.random() * 3);
+        // PERF: 1 science ship per nebula
+        const scienceCount = 1;
         for (let i = 0; i < scienceCount; i++) {
             createNebulaShip(nebula, i, 'science');
         }
