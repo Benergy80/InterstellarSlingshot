@@ -1651,21 +1651,19 @@ if (planet.userData.type === 'blackhole' && planet.userData.rotationSpeed) {
     });
 }
     
-        // Asteroid orbital mechanics - update every 2 frames for smoother motion
+        // Asteroid orbital mechanics - update EVERY frame for smooth motion
         if (planet.userData.type === 'asteroid' && planet.userData.beltGroup) {
-    // Update orbital position every 2 frames (was 5, caused jumpiness)
-    if (gameState.frameCount % 2 === 0) {
-        const time = Date.now() * 0.001 * planet.userData.orbitSpeed;
-        const orbitPhase = planet.userData.orbitPhase || 0;
-        
-        // FIXED: Use LOCAL coordinates since asteroids are children of positioned beltGroup
-        const orbitX = Math.cos(time + orbitPhase) * planet.userData.orbitRadius;
-        const orbitZ = Math.sin(time + orbitPhase) * planet.userData.orbitRadius;
-        const orbitY = Math.sin(time * 0.5 + orbitPhase) * 10;
-        
-        // Set LOCAL position relative to parent beltGroup
-        planet.position.set(orbitX, orbitY, orbitZ);
-    }
+    // Update orbital position every frame (no skipping)
+    const time = Date.now() * 0.001 * planet.userData.orbitSpeed;
+    const orbitPhase = planet.userData.orbitPhase || 0;
+    
+    // FIXED: Use LOCAL coordinates since asteroids are children of positioned beltGroup
+    const orbitX = Math.cos(time + orbitPhase) * planet.userData.orbitRadius;
+    const orbitZ = Math.sin(time + orbitPhase) * planet.userData.orbitRadius;
+    const orbitY = Math.sin(time * 0.5 + orbitPhase) * 10;
+    
+    // Set LOCAL position relative to parent beltGroup
+    planet.position.set(orbitX, orbitY, orbitZ);
     
     // Keep asteroid rotation smooth - update every frame (cheap operation)
     if (planet.userData.rotationSpeed) {
@@ -2045,22 +2043,15 @@ if (typeof checkCosmicFeatureInteractions === 'function' && typeof camera !== 'u
 
 // FIXED: Enhanced orbital mechanics that work for ALL galaxies - ADJUSTED SPEEDS (75% slower)
 function updatePlanetOrbits() {
-    // PERF: Distance culling - only update objects within range
+    // Process ALL planets - no distance culling (was causing asteroids to pop in/out)
     const playerPos = camera.position;
-    const CULL_DISTANCE = 7500; // Increased to fix jumpy distant asteroids
     
     // PERF DEBUG: Log planet count every 300 frames
     if (gameState.frameCount % 300 === 0) {
-        const nearbyCount = planets.filter(p => p && p.position && playerPos.distanceTo(p.position) < CULL_DISTANCE).length;
-        console.log(`📊 PERF: ${planets.length} total, ${nearbyCount} within ${CULL_DISTANCE} units (processing only nearby)`);
+        console.log(`📊 PERF: Processing all ${planets.length} planets (no cull distance)`);
     }
     
     planets.forEach((planet) => {
-        // PERF: Skip distant objects entirely
-        if (planet && planet.position) {
-            const dist = playerPos.distanceTo(planet.position);
-            if (dist > CULL_DISTANCE) return; // Skip this planet
-        }
         // Skip if planet is destroyed or doesn't exist
         if (!planet || !planet.userData) return;
         
