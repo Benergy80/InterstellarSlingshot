@@ -4261,7 +4261,14 @@ function createExoticCoreNebulas() {
 // NEBULA VISIBILITY UPDATE - Called each frame to show/hide distant nebulas based on range
 // Includes smooth fade-in/fade-out effect
 // =============================================================================
+// Frame counter for throttling nebula visibility
+let _nebulaVisibilityFrameCount = 0;
+
 function updateNebulaVisibility() {
+    // PERF: Only check every 15 frames instead of every frame
+    _nebulaVisibilityFrameCount++;
+    if (_nebulaVisibilityFrameCount % 15 !== 0) return;
+    
     if (typeof nebulaClouds === 'undefined' || nebulaClouds.length === 0) return;
     if (typeof camera === 'undefined') return;
     
@@ -4333,7 +4340,14 @@ window.updateNebulaVisibility = updateNebulaVisibility;
 // =============================================================================
 // ORBIT LINE VISIBILITY - Show orbits when near nebulas or black holes
 // =============================================================================
+// Frame counter for throttling
+let _orbitVisibilityFrameCount = 0;
+
 function updateOrbitLineVisibility() {
+    // PERF: Only check every 30 frames instead of every frame
+    _orbitVisibilityFrameCount++;
+    if (_orbitVisibilityFrameCount % 30 !== 0) return;
+    
     if (typeof orbitLines === 'undefined' || orbitLines.length === 0) return;
     if (typeof camera === 'undefined') return;
     
