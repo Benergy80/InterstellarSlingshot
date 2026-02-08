@@ -136,6 +136,22 @@
         #missionCommandText {
             font-size: 1rem !important;
             line-height: 1.6 !important;
+            max-height: 50vh !important;
+            overflow-y: auto !important;
+            padding-right: 10px !important;
+        }
+        
+        /* Scrollbar styling for lore text */
+        #missionCommandText::-webkit-scrollbar {
+            width: 6px;
+        }
+        #missionCommandText::-webkit-scrollbar-track {
+            background: rgba(0, 150, 255, 0.1);
+            border-radius: 3px;
+        }
+        #missionCommandText::-webkit-scrollbar-thumb {
+            background: rgba(0, 255, 136, 0.5);
+            border-radius: 3px;
         }
 
         /* ADD THE MOBILE STYLES HERE */
@@ -993,19 +1009,19 @@
     <!-- Game Scripts -->
     <!-- Load GLTFLoader before game-models.js -->
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
-    <script src="js/game-models.js?v=20260207-1818"></script>
-    <script src="js/camera-system.js?v=20260207-1818"></script>
+    <script src="js/game-models.js?v=20260207-1826"></script>
+    <script src="js/camera-system.js?v=20260207-1826"></script>
     <script src="js/cosmic-features.js"></script>
-    <script src="js/game-objects.js?v=20260207-1818"></script>
-    <script src="js/game-controls.js?v=20260207-1818"></script>
+    <script src="js/game-objects.js?v=20260207-1826"></script>
+    <script src="js/game-controls.js?v=20260207-1826"></script>
     <script src="js/outer-systems.js"></script>
     <script src="js/interstellar-asteroids.js"></script>
-    <script src="js/game-physics.js?v=20260207-1818"></script>
+    <script src="js/game-physics.js?v=20260207-1826"></script>
     <script src="js/game-ui.js"></script>
     <script src="js/atmospheric-perspective.js"></script>
-    <script src="js/game-intro.js?v=20260207-1818"></script>
+    <script src="js/game-intro.js?v=20260207-1826"></script>
     <script src="js/game-shields.js"></script>
-    <script src="js/game-core.js?v=20260207-1818"></script>
+    <script src="js/game-core.js?v=20260207-1826"></script>
 
     <!-- Mobile Script -->
     <script src="js/mobile-controls.js"></script>
