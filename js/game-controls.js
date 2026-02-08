@@ -1424,10 +1424,19 @@ function showMissionCommandAlert(title, text, isVictoryMessage = false) {
     // Add the button container to the main container
     buttonContainer.appendChild(tutorialButtonContainer);
 } else {
+    // Create centered button container for lore/victory messages
+    const loreButtonContainer = document.createElement('div');
+    loreButtonContainer.style.cssText = `
+        display: flex;
+        justify-content: center;
+        margin-top: 1.5rem;
+        width: 100%;
+    `;
+
     // Create UNDERSTOOD button for victory messages and non-tutorial messages
     const understoodButton = document.createElement('button');
     understoodButton.id = 'missionCommandUnderstood';
-    understoodButton.className = 'mt-4 space-btn rounded px-6 py-2';
+    understoodButton.className = 'space-btn rounded px-6 py-2';
     understoodButton.innerHTML = '<i class="fas fa-check mr-2"></i>UNDERSTOOD';
 
     // Apply mobile button styling only on mobile devices
@@ -1463,7 +1472,8 @@ function showMissionCommandAlert(title, text, isVictoryMessage = false) {
             justify-content: center;
         `;
     }
-    buttonContainer.appendChild(understoodButton);
+    loreButtonContainer.appendChild(understoodButton);
+    buttonContainer.appendChild(loreButtonContainer);
     
     // UNDERSTOOD button dismisses the message and resumes the game if paused
     const handleUnderstood = () => {
