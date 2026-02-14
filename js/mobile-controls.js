@@ -303,10 +303,10 @@ window.mobileEmergencyWarp = function() {
     
     // Trigger warp by setting key (the physics handler will process it)
     if (typeof keys !== 'undefined') {
-        keys.o = true;
+        keys.enter = true;
         // Clear after a single frame to prevent loops
         setTimeout(() => {
-            keys.o = false;
+            keys.enter = false;
         }, 50);
     }
     

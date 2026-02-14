@@ -1376,18 +1376,18 @@ if (frameDistance > 0.01) { // Only track significant movement
         }
     }
 
-     // SPECIFICATION: Emergency Systems - O Key: Emergency warp
+     // SPECIFICATION: Emergency Systems - Enter Key: Emergency warp
 // Check shield block FIRST before processing warp
-if (keys.o && typeof isShieldActive === 'function' && isShieldActive()) {
+if (keys.enter && typeof isShieldActive === 'function' && isShieldActive()) {
     if (typeof showAchievement === 'function') {
         showAchievement('Warp Blocked', 'Cannot warp with shields active');
     }
-    keys.o = false; // Clear the key immediately
+    keys.enter = false; // Clear the key immediately
 }
 // Now process warp with cooldown protection
-else if (keys.o && gameState.emergencyWarp.available > 0 && !gameState.emergencyWarp.active && !gameState.emergencyWarp.transitioning) {
+else if (keys.enter && gameState.emergencyWarp.available > 0 && !gameState.emergencyWarp.active && !gameState.emergencyWarp.transitioning) {
     // ✅ CRITICAL: Clear the key immediately to prevent retriggering
-    keys.o = false;
+    keys.enter = false;
     
     // ✅ Capture forward direction NOW before setTimeout (closure issue fix)
     const capturedForwardDirection = forwardDirection.clone();
