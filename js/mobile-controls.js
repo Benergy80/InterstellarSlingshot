@@ -21,30 +21,17 @@ document.addEventListener('DOMContentLoaded', () => {
         console.log('📱 Mobile device detected - enabling crosshair targeting and target mode');
         window.mobileSettings.crosshairTargeting = true;
         window.mobileSettings.targetMode = true;
-
+        
         // Set target mode when game starts
         setTimeout(() => {
             if (typeof gameState !== 'undefined') {
                 gameState.targetLock = gameState.targetLock || {};
                 gameState.targetLock.active = true;
                 console.log('📱 Target mode activated for mobile');
-
+                
                 // Enable auto-leveling by default on mobile (prevents unwanted roll)
                 gameState.autoLevelingEnabled = true;
                 console.log('📱 Auto-leveling enabled for mobile');
-            }
-
-            // Initialize camera badge to match current camera mode
-            const badge = document.getElementById('mobileCameraModeBadge');
-            if (badge && typeof cameraState !== 'undefined') {
-                if (cameraState.mode === 'first-person') {
-                    badge.textContent = '1st';
-                } else if (cameraState.mode === 'third-person') {
-                    badge.textContent = '3rd';
-                } else if (cameraState.mode === 'zero-offset') {
-                    badge.textContent = '0';
-                }
-                console.log('📷 Camera badge initialized to:', badge.textContent);
             }
         }, 2000);
 
@@ -316,10 +303,10 @@ window.mobileEmergencyWarp = function() {
     
     // Trigger warp by setting key (the physics handler will process it)
     if (typeof keys !== 'undefined') {
-        keys.o = true;
+        keys.enter = true;
         // Clear after a single frame to prevent loops
         setTimeout(() => {
-            keys.o = false;
+            keys.enter = false;
         }, 50);
     }
     
@@ -904,39 +891,5 @@ window.addEventListener('beforeunload', () => {
         window.stopForwardThrust();
     }
 });
-
-// Mobile camera cycling: 0-person -> 1st-person -> 3rd-person -> loop
-window.mobileCycleCamera = function() {
-    if (typeof cameraState === 'undefined') {
-        console.warn('⚠️ Camera system not initialized');
-        return;
-    }
-
-    const badge = document.getElementById('mobileCameraModeBadge');
-
-    // Cycle through modes: zero-offset -> first-person -> third-person -> zero-offset
-    if (cameraState.mode === 'zero-offset') {
-        // Switch to first-person
-        if (typeof setCameraFirstPerson === 'function') {
-            setCameraFirstPerson();
-            if (badge) badge.textContent = '1st';
-            console.log('📷 Mobile camera: Switched to 1st person');
-        }
-    } else if (cameraState.mode === 'first-person') {
-        // Switch to third-person
-        if (typeof setCameraThirdPerson === 'function') {
-            setCameraThirdPerson();
-            if (badge) badge.textContent = '3rd';
-            console.log('📷 Mobile camera: Switched to 3rd person');
-        }
-    } else {
-        // Switch to zero-offset (no ship visible)
-        if (typeof setCameraNoShip === 'function') {
-            setCameraNoShip();
-            if (badge) badge.textContent = '0';
-            console.log('📷 Mobile camera: Switched to 0 person (no ship)');
-        }
-    }
-};
 
 console.log('📱 Mobile controls system loaded successfully');

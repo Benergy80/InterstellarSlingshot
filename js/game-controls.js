@@ -9,7 +9,7 @@ const activeLasers = [];
 // Global key state
 const keys = {
   w: false, a: false, s: false, d: false,
-  q: false, e: false, o: false,
+  q: false, e: false, enter: false,
   shift: false, alt: false, space: false,
   up: false, down: false, left: false, right: false,
   x: false, b: false, z: false
@@ -1173,7 +1173,7 @@ const tutorialSystem = {
         },
         {
             title: "Emergency Systems",
-            text: "You have 5 Emergency Warp charges that can help boost you into Hyperspace, but they alone are not enough to get you to the next Galaxy. Press O to activate Emergency Warp.",
+            text: "You have 5 Emergency Warp charges that can help boost you into Hyperspace, but they alone are not enough to get you to the next Galaxy. Press Enter to activate Emergency Warp.",
             delay: 45000
         },
         {
@@ -3277,7 +3277,7 @@ function initializeControlButtons() {
         if (key === 'd') keys.d = true;
         if (key === 'q') keys.q = true;
         if (key === 'e') keys.e = true;
-        if (key === 'o') keys.o = true;
+        if (e.key === 'Enter') keys.enter = true;
         if (e.key === 'Shift') keys.shift = true;
         if (e.key === ' ') {
     keys.space = true;
@@ -3382,7 +3382,7 @@ if (e.key === 'Tab') {
         if (key === 'd') keys.d = false;
         if (key === 'q') keys.q = false;
         if (key === 'e') keys.e = false;
-        if (key === 'o') keys.o = false;
+        if (e.key === 'Enter') keys.enter = false;
         if (e.key === 'Shift') keys.shift = false;
         if (e.key === ' ') {
             keys.space = false;

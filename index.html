@@ -483,43 +483,6 @@
             opacity: 1 !important;
         }
 
-        /* Camera mode badge */
-        .camera-mode-badge {
-            position: absolute;
-            bottom: -4px;
-            right: -4px;
-            background: rgba(0, 150, 255, 0.9);
-            color: #000;
-            font-size: 9px;
-            font-weight: 700;
-            padding: 2px 4px;
-            border-radius: 3px;
-            min-width: 20px;
-            text-align: center;
-            box-shadow: 0 0 8px rgba(0, 150, 255, 0.6);
-            font-family: 'Orbitron', monospace;
-        }
-
-        .warp-count-badge, .missile-count-badge {
-            position: absolute;
-            bottom: -4px;
-            right: -4px;
-            background: rgba(0, 255, 136, 0.9);
-            color: #000;
-            font-size: 10px;
-            font-weight: 700;
-            padding: 2px 5px;
-            border-radius: 3px;
-            min-width: 18px;
-            text-align: center;
-            box-shadow: 0 0 8px rgba(0, 255, 136, 0.6);
-            font-family: 'Orbitron', monospace;
-        }
-
-        .mobile-btn {
-            position: relative;
-        }
-
         /* Mobile navigation panel */
         .nav-panel-mobile {
             position: fixed;
@@ -844,14 +807,10 @@
 
 <!-- MOBILE CONTROLS -->
 <div class="mobile-controls-container">
-    <!-- Top row: Flight Controls, Camera Toggle, and Emergency Warp (aligned with indicators) -->
+    <!-- Top row: Flight Controls and Emergency Warp (aligned with indicators) -->
     <div class="mobile-controls-top">
         <button class="mobile-btn" onclick="showMobilePanel('controls')" title="Flight Controls">
             <i class="fas fa-gamepad"></i>
-        </button>
-        <button class="mobile-btn camera" id="mobileCameraToggle" onclick="mobileCycleCamera()" title="Camera View">
-            <i class="fas fa-video"></i>
-            <span class="camera-mode-badge" id="mobileCameraModeBadge">1st</span>
         </button>
         <button class="mobile-btn warp" onclick="mobileEmergencyWarp()" title="Emergency Warp">
             <i class="fa-solid fa-triangle-exclamation"></i>
