@@ -3,6 +3,16 @@
  * Allows toggling between first-person and third-person camera views
  */
 
+// Helper function to detect mobile devices
+function isMobileDevice() {
+    return window.innerWidth <= 768 || 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+}
+
+// Helper function to get the appropriate third-person offset
+function getThirdPersonOffset() {
+    return isMobileDevice() ? cameraState.mobileThirdPersonOffset : cameraState.normalThirdPersonOffset;
+}
+
 // Camera state
 const cameraState = {
     mode: 'first-person',  // Start in first-person (cockpit view)
@@ -26,6 +36,7 @@ const cameraState = {
     // For third-person (camera behind ship), offset is NEGATIVE Z
     normalFirstPersonOffset: new THREE.Vector3(0.25, -2, 0.5),   // Cockpit: ship slightly forward/below
     normalThirdPersonOffset: new THREE.Vector3(0, -4, -14),      // Chase cam: ship ahead (negative = in front)
+    mobileThirdPersonOffset: new THREE.Vector3(0, -6, -25),      // Mobile: Further back and higher for better view
     
     // Thruster glow system
     thrusterGlows: [],      // Array of thruster glow meshes
@@ -224,9 +235,9 @@ function toggleCameraView() {
         // Start transition animation from first-person to third-person
         cameraState.isTransitioning = true;
         cameraState.transitionStartTime = performance.now();
-        
+
         cameraState.transitionStartOffset.copy(cameraState.normalFirstPersonOffset);
-        cameraState.transitionTargetOffset.copy(cameraState.normalThirdPersonOffset);
+        cameraState.transitionTargetOffset.copy(getThirdPersonOffset());
 
         console.log('📷 Transitioning to THIRD-PERSON view');
 
@@ -249,8 +260,8 @@ function toggleCameraView() {
         // Start transition animation from third-person to first-person (reverse path)
         cameraState.isTransitioning = true;
         cameraState.transitionStartTime = performance.now();
-        
-        cameraState.transitionStartOffset.copy(cameraState.normalThirdPersonOffset);
+
+        cameraState.transitionStartOffset.copy(getThirdPersonOffset());
         cameraState.transitionTargetOffset.copy(cameraState.normalFirstPersonOffset);
 
         console.log('📷 Transitioning to FIRST-PERSON view (cockpit)');
@@ -351,7 +362,7 @@ function updateCameraView(camera) {
         currentOffset = cameraState.normalFirstPersonOffset.clone();
     } else {
         // Third-person offset
-        currentOffset = cameraState.normalThirdPersonOffset.clone();
+        currentOffset = getThirdPersonOffset().clone();
     }
 
     if (cameraState.mode === 'first-person') {
@@ -548,8 +559,8 @@ function setCameraThirdPerson() {
     cameraState.transitionStartTime = performance.now();
     cameraState.transitionDuration = 400;
     cameraState.transitionStartOffset.copy(currentOffset);  // Start from current position
-    cameraState.transitionTargetOffset.copy(cameraState.normalThirdPersonOffset);
-    
+    cameraState.transitionTargetOffset.copy(getThirdPersonOffset());
+
     if (typeof showNotification === 'function') {
         showNotification('Third-Person Camera', 2000);
     }
@@ -645,7 +656,7 @@ function getCurrentOffset() {
     } else if (cameraState.mode === 'first-person') {
         return cameraState.normalFirstPersonOffset.clone();
     } else if (cameraState.mode === 'third-person') {
-        return cameraState.normalThirdPersonOffset.clone();
+        return getThirdPersonOffset().clone();
     } else if (cameraState.mode === 'zero-offset') {
         return new THREE.Vector3(0.25, -1, 3);  // Ship behind camera
     } else {
