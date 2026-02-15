@@ -3331,7 +3331,7 @@ function initializeControlButtons() {
                 fireWeapon();
             }
         }
-        if (e.key === 'Meta' || e.key === 'Command') {
+        if (e.key === 'Shift') {
             e.preventDefault();
             fireMissile();
         }
