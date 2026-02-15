@@ -2191,12 +2191,13 @@ if (blackHoleCoreCollision || surfaceCollision) {
     gameState.velocityVector.normalize().multiplyScalar(currentMaxVelocity);
 }
     
-    // SPECIFICATION: Minimum velocity enforcement - MODIFIED for emergency braking
+    // SPECIFICATION: Minimum velocity enforcement - MODIFIED for emergency braking AND Jump auto-brake
 if (currentVelocity < gameState.minVelocity && 
     !gameState.slingshot.active && 
     !gameState.slingshot.postSlingshot && 
     !gameState.emergencyWarp.active &&
-    !gameState.emergencyBraking) {  // <-- ADD THIS LINE
+    !gameState.emergencyWarp.autoBraking &&  // NEW: Don't enforce min velocity during Jump auto-brake
+    !gameState.emergencyBraking) {
     if (currentVelocity > 0.001) {
         gameState.velocityVector.normalize().multiplyScalar(gameState.minVelocity);
     } else {
@@ -2218,7 +2219,8 @@ if (dampedVelocity.length() >= gameState.minVelocity ||
     gameState.slingshot.active || 
     gameState.slingshot.postSlingshot || 
     gameState.emergencyWarp.active ||
-    gameState.emergencyWarp.postWarp) {  // NEW CONDITION
+    gameState.emergencyWarp.autoBraking ||  // NEW: Allow damping during Jump auto-brake
+    gameState.emergencyWarp.postWarp) {
     gameState.velocityVector.copy(dampedVelocity);
 }
     
