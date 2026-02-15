@@ -90,8 +90,9 @@ function orientTowardsTarget(target) {
 // NEW: Apply rotational inertia for space-like flight controls
 function applyRotationalInertia(keys, allowManualRotation) {
     // Choose turning speed based on CAPS LOCK state
-    const currentAcceleration = keys.capsLock ? rotationalInertia.fastAcceleration : rotationalInertia.acceleration;
-    const currentMaxSpeed = keys.capsLock ? rotationalInertia.fastMaxSpeed : rotationalInertia.maxSpeed;
+    // 🔄 INVERTED: Default = fast turning, CAPS LOCK = slow/precision mode
+    const currentAcceleration = keys.capsLock ? rotationalInertia.acceleration : rotationalInertia.fastAcceleration;
+    const currentMaxSpeed = keys.capsLock ? rotationalInertia.maxSpeed : rotationalInertia.fastMaxSpeed;
     
     // Apply acceleration when keys are pressed
     if (allowManualRotation) {
@@ -1568,7 +1569,7 @@ if (gameState.emergencyWarp.autoBraking) {
     const targetSpeed = gameState.emergencyWarp.targetSpeed || (gameState.minVelocity || 2.0);
     
     // Apply gradual braking (same as manual X key braking)
-    const brakingForce = 0.98; // 2% reduction per frame
+    const brakingForce = 0.99; // 1% reduction per frame (smoother deceleration)
     gameState.velocityVector.multiplyScalar(brakingForce);
     
     // Also apply rotational braking for smooth camera transitions
@@ -1621,8 +1622,8 @@ if (typeof updateShieldSystem === 'function') {
     // Emergency braking (X key) - GRADUAL DECELERATION
     // Skip manual braking if Jump auto-brake is active
 if (keys.x && gameState.energy > 0 && !gameState.emergencyWarp.autoBraking) {
-    // Gradual braking: reduce velocity by 2% per frame instead of instant stop
-    const brakingForce = 0.98; // 2% reduction per frame
+    // Gradual braking: reduce velocity by 1% per frame (smoother deceleration)
+    const brakingForce = 0.99; // 1% reduction per frame (was 0.98 = 2%)
     gameState.velocityVector.multiplyScalar(brakingForce);
     
     // NEW: Also apply braking to rotational velocity (dampen turning and rolling)
@@ -2256,16 +2257,51 @@ if (dampedVelocity.length() >= gameState.minVelocity ||
                 }
             }
         } else {
-            const targetDirection = new THREE.Vector3().subVectors(
-                gameState.currentTarget.position, 
-                camera.position
-            ).normalize();
+            // 🛰️ ORBITAL APPROACH: Aim for near-orbit intercept, not direct collision
+            const targetPos = gameState.currentTarget.position;
+            const targetDistance = camera.position.distanceTo(targetPos);
+            
+            // Calculate orbital approach point (offset perpendicular to approach vector)
+            const toTarget = new THREE.Vector3().subVectors(targetPos, camera.position);
+            const approachDistance = toTarget.length();
+            
+            // Determine safe orbital radius based on target type
+            let orbitRadius = 500; // Default orbit radius for enemies
+            if (gameState.currentTarget.userData) {
+                if (gameState.currentTarget.userData.type === 'planet') {
+                    orbitRadius = (gameState.currentTarget.userData.size || 100) * 3; // 3x planet radius
+                } else if (gameState.currentTarget.userData.type === 'blackhole') {
+                    orbitRadius = (gameState.currentTarget.userData.size || 200) * 2; // 2x black hole radius
+                } else if (gameState.currentTarget.userData.isEnemy) {
+                    orbitRadius = 300; // Close approach for enemies (combat range)
+                }
+            }
+            
+            let targetDirection;
+            
+            // When far away: aim for tangential intercept point (orbital approach)
+            if (approachDistance > orbitRadius * 2) {
+                // Create tangent point perpendicular to approach vector
+                const perpendicular = new THREE.Vector3(-toTarget.z, 0, toTarget.x).normalize();
+                const orbitPoint = targetPos.clone().add(perpendicular.multiplyScalar(orbitRadius));
+                targetDirection = new THREE.Vector3().subVectors(orbitPoint, camera.position).normalize();
+            } else {
+                // When close: circularize into orbit
+                const currentVelocity = gameState.velocityVector.clone().normalize();
+                const radialDirection = toTarget.clone().normalize();
+                
+                // Calculate tangential direction (perpendicular to radial)
+                const tangentialDirection = new THREE.Vector3().crossVectors(radialDirection, new THREE.Vector3(0, 1, 0)).normalize();
+                
+                // Blend between current velocity and tangential (smooth transition into orbit)
+                targetDirection = currentVelocity.lerp(tangentialDirection, 0.3);
+            }
             
             gameState.velocityVector.addScaledVector(targetDirection, gameState.thrustPower * 0.4);
             gameState.energy = Math.max(0, gameState.energy - 0.03);
             
-            const targetDistance = camera.position.distanceTo(gameState.currentTarget.position);
-            if (targetDistance > 100) {
+            // Re-orient if drifting too far off course
+            if (targetDistance > orbitRadius) {
                 orientTowardsTarget(gameState.currentTarget);
             }
         }

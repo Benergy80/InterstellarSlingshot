@@ -3515,6 +3515,9 @@ document.addEventListener('click', (e) => {
 });
     
     // Mouse movement tracking for crosshair - FIXED POSITION TRACKING
+// Mouse smoothing factor for crosshair (0 = instant, 1 = no movement)
+const crosshairSmoothingFactor = 0.15; // 15% smoothing (smooth but responsive)
+
 document.addEventListener('mousemove', (e) => {
     if (typeof gameState === 'undefined' || !gameState.gameStarted || gameState.gameOver || typeof gamePaused !== 'undefined' && gamePaused) return;
 
@@ -3525,8 +3528,9 @@ document.addEventListener('mousemove', (e) => {
     // Only update crosshair position if not in target lock mode
     // This keeps crosshair and mouse positions separate when target lock is active
     if (!gameState.targetLock.active) {
-        gameState.crosshairX = e.clientX;
-        gameState.crosshairY = e.clientY;
+        // 🎯 SMOOTH CROSSHAIR: Lerp toward mouse position for smoother aiming
+        gameState.crosshairX = gameState.crosshairX + (e.clientX - gameState.crosshairX) * (1 - crosshairSmoothingFactor);
+        gameState.crosshairY = gameState.crosshairY + (e.clientY - gameState.crosshairY) * (1 - crosshairSmoothingFactor);
     }
     // Note: When target lock is active, crosshair position is controlled by updateTargetLock()
     // but we still track real mouse position for UI interaction
