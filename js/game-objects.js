@@ -5050,21 +5050,21 @@ function createTradingShipsInNebulas() {
     );
     
     clusteredNebulas.forEach((nebula, nebulaIndex) => {
-        // 8-15 civilian ships per nebula (busy community feel)
-        const shipCount = 8 + Math.floor(Math.random() * 8);
+        // 15-25 civilian ships per nebula (much busier space lanes)
+        const shipCount = 15 + Math.floor(Math.random() * 11);
         
         for (let i = 0; i < shipCount; i++) {
             createTradingShip(nebula, i);
         }
         
-        // 3-6 mining ships per nebula
-        const miningCount = 3 + Math.floor(Math.random() * 4);
+        // 8-15 mining ships per nebula (increased mining activity)
+        const miningCount = 8 + Math.floor(Math.random() * 8);
         for (let i = 0; i < miningCount; i++) {
             createNebulaShip(nebula, i, 'mining');
         }
         
-        // 2-4 science ships per nebula
-        const scienceCount = 2 + Math.floor(Math.random() * 3);
+        // 3-6 science ships per nebula
+        const scienceCount = 3 + Math.floor(Math.random() * 4);
         for (let i = 0; i < scienceCount; i++) {
             createNebulaShip(nebula, i, 'science');
         }
@@ -5077,6 +5077,98 @@ function createTradingShipsInNebulas() {
     
     console.log(`✅ Created ${tradingShips.length} civilian ships across ${clusteredNebulas.length} nebulas`);
     console.log(`🚛 Created ${freighterCaravans.length} freighter caravans`);
+    
+    // Create mining expeditions at black holes
+    createBlackHoleMiningExpeditions();
+}
+
+// =============================================================================
+// BLACK HOLE MINING EXPEDITIONS - Mining ships sent from nearby nebulas to black holes
+// =============================================================================
+function createBlackHoleMiningExpeditions() {
+    console.log('⛏️ Creating mining expeditions to black holes...');
+    
+    if (typeof planets === 'undefined') return;
+    
+    const blackHoles = planets.filter(p => 
+        p && p.userData && p.userData.type === 'blackhole'
+    );
+    
+    if (blackHoles.length === 0) {
+        console.log('No black holes found for mining expeditions');
+        return;
+    }
+    
+    blackHoles.forEach((blackHole, index) => {
+        // 5-12 mining ships per black hole (resource-rich areas)
+        const minerCount = 5 + Math.floor(Math.random() * 8);
+        
+        for (let i = 0; i < minerCount; i++) {
+            // Find nearest nebula to serve as home base
+            let nearestNebula = null;
+            let minDist = Infinity;
+            
+            if (typeof nebulaClouds !== 'undefined') {
+                nebulaClouds.forEach(nebula => {
+                    if (nebula && nebula.position) {
+                        const dist = blackHole.position.distanceTo(nebula.position);
+                        if (dist < minDist) {
+                            minDist = dist;
+                            nearestNebula = nebula;
+                        }
+                    }
+                });
+            }
+            
+            // Create mining ship with route to black hole
+            if (nearestNebula) {
+                createBlackHoleMiningShip(nearestNebula, blackHole, i);
+            }
+        }
+    });
+    
+    console.log(`⛏️ Created mining expeditions to ${blackHoles.length} black holes`);
+}
+
+function createBlackHoleMiningShip(homeNebula, targetBlackHole, index) {
+    const shipCategory = 'mining';
+    let shipGroup;
+    
+    // Use civilian ship registry if available
+    if (typeof civilianShipRegistry !== 'undefined') {
+        shipGroup = civilianShipRegistry.getShipMesh(shipCategory);
+    } else {
+        // Fallback: create basic mesh
+        shipGroup = new THREE.Group();
+        const geometry = new THREE.BoxGeometry(3, 1.5, 6);
+        const material = new THREE.MeshPhongMaterial({ color: 0x888888 });
+        const mesh = new THREE.Mesh(geometry, material);
+        shipGroup.add(mesh);
+    }
+    
+    // Position near home nebula
+    const angle = (index / 12) * Math.PI * 2;
+    const radius = homeNebula.userData.radius * 1.5;
+    shipGroup.position.set(
+        homeNebula.position.x + Math.cos(angle) * radius,
+        homeNebula.position.y + (Math.random() - 0.5) * 100,
+        homeNebula.position.z + Math.sin(angle) * radius
+    );
+    
+    shipGroup.userData = {
+        type: 'mining_ship',
+        civilian: true,
+        homeNebula: homeNebula,
+        miningDestination: targetBlackHole.position.clone(),
+        health: 100,
+        maxHealth: 100,
+        speed: 2 + Math.random() * 2,
+        routePhase: 'outbound', // outbound to black hole, inbound to nebula
+        name: `Mining Vessel ${index + 1}`
+    };
+    
+    scene.add(shipGroup);
+    tradingShips.push(shipGroup); // Add to trading ships array for tracking
 }
 
 // =============================================================================
@@ -5085,8 +5177,8 @@ function createTradingShipsInNebulas() {
 function createFreighterCaravans(nebulas) {
     console.log('🚛 Creating freighter caravans between nebulas...');
     
-    // Create 2-4 caravans
-    const caravanCount = 2 + Math.floor(Math.random() * 3);
+    // Create 5-10 caravans (more trade routes)
+    const caravanCount = 5 + Math.floor(Math.random() * 6);
     
     for (let c = 0; c < caravanCount; c++) {
         // Pick two different nebulas as endpoints
