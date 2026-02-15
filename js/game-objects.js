@@ -10245,11 +10245,11 @@ if (typeof window !== 'undefined') {
 // CMB OPACITY HELPER FUNCTION
 // =============================================================================
 function setCMBOpacity(value) {
-    if (window.cosmicSkybox && window.cosmicSkybox.material && window.cosmicSkybox.material.uniforms) {
+    if (window.cosmicSkybox && window.cosmicSkybox.material && window.cosmicSkybox.material.uniforms && window.cosmicSkybox.material.uniforms.opacity) {
         window.cosmicSkybox.material.uniforms.opacity.value = value;
         console.log('✅ CMB opacity set to:', value);
     } else {
-        console.log('❌ CMB not found');
+        console.warn('❌ CMB opacity uniform not available');
     }
 }
 
@@ -10355,8 +10355,10 @@ function updateCMBOpacity() {
         }
     }
     
-    // Update the CMB shader uniform
-    window.cosmicSkybox.material.uniforms.opacity.value = finalOpacity;
+    // Update the CMB shader uniform (with safety check)
+    if (window.cosmicSkybox.material.uniforms && window.cosmicSkybox.material.uniforms.opacity) {
+        window.cosmicSkybox.material.uniforms.opacity.value = finalOpacity;
+    }
 }
 
 // =============================================================================
