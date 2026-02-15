@@ -151,7 +151,7 @@ function applyRotationalInertia(keys, allowManualRotation) {
         camera.rotateY(rotationalVelocity.yaw);
     }
     
-    // Apply roll (barrel roll) with SPEED-DEPENDENT automatic banking from yaw
+    // Apply roll (barrel roll) with SPEED-DEPENDENT automatic banking from yaw AND strafe
     // Banking increases with speed - slow = minimal banking, fast = aggressive banking
     const currentSpeed = typeof gameState !== 'undefined' && gameState.velocity ? gameState.velocity : 0;
     const minSpeed = 0.5;  // Minimum speed for banking
@@ -166,7 +166,19 @@ function applyRotationalInertia(keys, allowManualRotation) {
     if (!window.mobileTouchActive) {
         bankingFromYaw = -rotationalVelocity.yaw * rotationalInertia.bankingFactor * speedFactor;
     }
-    const totalRoll = rotationalVelocity.roll + bankingFromYaw;
+    
+    // 🛩️ STRAFE BANKING: Tilt nose opposite to strafe direction (A = tilt right, D = tilt left)
+    let bankingFromStrafe = 0;
+    if (typeof keys !== 'undefined') {
+        const strafeBankingFactor = 0.02; // Subtle tilt for strafe
+        if (keys.a) {
+            bankingFromStrafe = strafeBankingFactor * speedFactor; // Strafe left → tilt right
+        } else if (keys.d) {
+            bankingFromStrafe = -strafeBankingFactor * speedFactor; // Strafe right → tilt left
+        }
+    }
+    
+    const totalRoll = rotationalVelocity.roll + bankingFromYaw + bankingFromStrafe;
     
     if (Math.abs(totalRoll) > 0.00001) {
         camera.rotateZ(totalRoll);
@@ -2283,10 +2295,14 @@ if (dampedVelocity.length() >= gameState.minVelocity ||
             gameState.velocityVector.addScaledVector(targetDirection, gameState.thrustPower * 0.4);
             gameState.energy = Math.max(0, gameState.energy - 0.03);
             
-            // Re-orient if drifting too far off course
-            if (targetDistance > orbitRadius) {
+            // Re-orient ONLY during distant approach (not during orbital insertion)
+            // This prevents camera shake when trying to orbit close to target
+            if (approachDistance > orbitRadius * 2) {
+                // Far away: orient towards tangent intercept point
                 orientTowardsTarget(gameState.currentTarget);
             }
+            // When close (<2x orbit): let natural velocity vector guide orientation
+            // Camera will naturally point where ship is going (tangential)
         }
     } else if (gameState.autoNavigating && gameState.energy <= 5) {
         // SPECIFICATION: Automatically disengages when energy drops below 5
