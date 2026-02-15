@@ -1506,20 +1506,17 @@ if (gameState.emergencyWarp.active) {
         
         // 🎯 JUMP vs EMERGENCY WARP: Different end behaviors
         if (gameState.emergencyWarp.isJump) {
-            // JUMP: Restore original velocity (return to speed before jump)
-            if (gameState.emergencyWarp.preJumpVelocity) {
-                gameState.velocityVector.copy(gameState.emergencyWarp.preJumpVelocity);
-                console.log('✅ Jump complete - velocity restored');
-            }
-            
-            // Clean up jump flags
-            gameState.emergencyWarp.isJump = false;
-            gameState.emergencyWarp.preJumpVelocity = null;
+            // JUMP: Auto-brake to return to original speed smoothly
+            gameState.emergencyWarp.autoBraking = true;
             gameState.emergencyWarp.postWarp = false; // No coasting for Jump
             
-            // Disable starfield
-            if (typeof toggleWarpSpeedStarfield === 'function') {
-                toggleWarpSpeedStarfield(false);
+            // Store target speed (pre-jump velocity magnitude)
+            if (gameState.emergencyWarp.preJumpVelocity) {
+                gameState.emergencyWarp.targetSpeed = gameState.emergencyWarp.preJumpVelocity.length();
+                console.log(`⚡ Jump complete - auto-braking to ${(gameState.emergencyWarp.targetSpeed * 1000).toFixed(0)} km/s`);
+            } else {
+                // Fallback: brake to minimum speed
+                gameState.emergencyWarp.targetSpeed = gameState.minVelocity || 2.0;
             }
             
             // No notification for Jump end (silent)
@@ -1565,13 +1562,65 @@ if (gameState.emergencyWarp.active) {
     }
 }
 
+// 🎯 JUMP AUTO-BRAKE - Smoothly return to pre-jump speed
+if (gameState.emergencyWarp.autoBraking) {
+    const currentSpeed = gameState.velocityVector.length();
+    const targetSpeed = gameState.emergencyWarp.targetSpeed || (gameState.minVelocity || 2.0);
+    
+    // Apply gradual braking (same as manual X key braking)
+    const brakingForce = 0.98; // 2% reduction per frame
+    gameState.velocityVector.multiplyScalar(brakingForce);
+    
+    // Also apply rotational braking for smooth camera transitions
+    const rotationalBrakingForce = 0.95;
+    rotationalVelocity.pitch *= rotationalBrakingForce;
+    rotationalVelocity.yaw *= rotationalBrakingForce;
+    rotationalVelocity.roll *= rotationalBrakingForce;
+    
+    // Check if we've reached target speed (with small tolerance)
+    if (currentSpeed <= targetSpeed * 1.05) {
+        // Restore exact pre-jump velocity direction and magnitude
+        if (gameState.emergencyWarp.preJumpVelocity) {
+            gameState.velocityVector.copy(gameState.emergencyWarp.preJumpVelocity);
+            console.log('✅ Jump auto-brake complete - velocity restored');
+        }
+        
+        // Clean up jump flags and release control
+        gameState.emergencyWarp.autoBraking = false;
+        gameState.emergencyWarp.isJump = false;
+        gameState.emergencyWarp.preJumpVelocity = null;
+        gameState.emergencyWarp.targetSpeed = null;
+        
+        // Disable starfield
+        if (typeof toggleWarpSpeedStarfield === 'function') {
+            toggleWarpSpeedStarfield(false);
+        }
+        
+        // Return to third-person camera
+        if (typeof setCameraThirdPerson === 'function') {
+            setCameraThirdPerson();
+        }
+    }
+    
+    // Disable starfield when speed drops below threshold during auto-brake
+    const currentSpeedKmS = currentSpeed * 1000;
+    if (currentSpeedKmS < 10000 && typeof toggleWarpSpeedStarfield === 'function') {
+        if (window.warpStarfield && window.warpStarfield.lines && window.warpStarfield.lines.visible) {
+            toggleWarpSpeedStarfield(false);
+            
+            // Camera transition handled when auto-brake completes
+        }
+    }
+}
+
 // Update shield system
 if (typeof updateShieldSystem === 'function') {
     updateShieldSystem();
 }
     
     // Emergency braking (X key) - GRADUAL DECELERATION
-if (keys.x && gameState.energy > 0) {
+    // Skip manual braking if Jump auto-brake is active
+if (keys.x && gameState.energy > 0 && !gameState.emergencyWarp.autoBraking) {
     // Gradual braking: reduce velocity by 2% per frame instead of instant stop
     const brakingForce = 0.98; // 2% reduction per frame
     gameState.velocityVector.multiplyScalar(brakingForce);

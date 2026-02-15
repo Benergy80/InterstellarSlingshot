@@ -130,14 +130,22 @@ Difficulty increases with each galaxy liberated:
 #### **Jump (Double-Tap W)**
 - **Function:** Short tactical boost (1 second)
 - **Cost:** 25% energy
-- **Behavior:** Returns to original speed after 1s (not coast)
-- **Visual:** Warp starfield, hyperspace effects
+- **Behavior:** 
+  1. 1-second warp boost at emergency warp speed
+  2. Auto-brake engages after 1s
+  3. Smoothly decelerates back to pre-jump speed
+  4. Camera transitions smoothly (first-person → third-person)
+  5. Returns full control when target speed reached
+- **Visual:** Warp starfield, hyperspace effects, smooth deceleration
 - **No Notification:** Silent tactical maneuver
 
-**Code Location:** `js/game-physics.js` (lines 1388-1533)
-- Captures `preJumpVelocity` before boost
-- Restores velocity after 1s duration
-- Flag: `gameState.emergencyWarp.isJump = true`
+**Code Location:** `js/game-physics.js` (lines 1388-1610)
+- Captures `preJumpVelocity` before boost (direction + magnitude)
+- Auto-brake applies 2% speed reduction per frame after 1s
+- Restores exact velocity when target speed reached
+- Flags: 
+  - `gameState.emergencyWarp.isJump = true`
+  - `gameState.emergencyWarp.autoBraking = true` (during deceleration)
 
 #### **Emergency Warp (O Key)**
 - **Function:** Full emergency warp (10+ seconds)
