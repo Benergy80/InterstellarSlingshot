@@ -1387,15 +1387,12 @@ if (frameDistance > 0.01) { // Only track significant movement
     }
     
     // Double-tap W for JUMP - short tactical boost (uses 25% energy, no warp charge)
-    // Returns to original speed after 1 second
+    // Natural braking after 1 second
     if (keys.wDoubleTap && gameState.energy >= 25 && !gameState.emergencyWarp.active) {
         keys.wDoubleTap = false;
         
         const capturedForwardDirection = forwardDirection.clone();
         const capturedBoostSpeed = gameState.emergencyWarp.boostSpeed;
-        
-        // 🎯 JUMP: Capture pre-jump velocity to restore after
-        const preJumpVelocity = gameState.velocityVector.clone();
         
         // Use 25% energy instead of warp charge
         gameState.energy = Math.max(0, gameState.energy - 25);
@@ -1411,8 +1408,7 @@ if (frameDistance > 0.01) { // Only track significant movement
         setTimeout(() => {
             gameState.emergencyWarp.active = true;
             gameState.emergencyWarp.transitioning = false;
-            gameState.emergencyWarp.timeRemaining = 1000; // 1 second (not 2)
-            gameState.emergencyWarp.preJumpVelocity = preJumpVelocity; // Store for restoration
+            gameState.emergencyWarp.timeRemaining = 1000; // 1 second
             gameState.velocityVector.copy(capturedForwardDirection).multiplyScalar(capturedBoostSpeed);
             
             for (let i = 0; i < 2; i++) {
@@ -1507,18 +1503,10 @@ if (gameState.emergencyWarp.active) {
         
         // 🎯 JUMP vs EMERGENCY WARP: Different end behaviors
         if (gameState.emergencyWarp.isJump) {
-            // JUMP: Auto-brake to return to original speed smoothly
+            // JUMP: Auto-brake naturally to minimum speed
             gameState.emergencyWarp.autoBraking = true;
             gameState.emergencyWarp.postWarp = false; // No coasting for Jump
-            
-            // Store target speed (pre-jump velocity magnitude)
-            if (gameState.emergencyWarp.preJumpVelocity) {
-                gameState.emergencyWarp.targetSpeed = gameState.emergencyWarp.preJumpVelocity.length();
-                console.log(`⚡ Jump complete - auto-braking to ${(gameState.emergencyWarp.targetSpeed * 1000).toFixed(0)} km/s`);
-            } else {
-                // Fallback: brake to minimum speed
-                gameState.emergencyWarp.targetSpeed = gameState.minVelocity || 2.0;
-            }
+            console.log(`⚡ Jump complete - natural auto-braking engaged`);
             
             // No notification for Jump end (silent)
             
@@ -1563,13 +1551,13 @@ if (gameState.emergencyWarp.active) {
     }
 }
 
-// 🎯 JUMP AUTO-BRAKE - Smoothly return to pre-jump speed
+// 🎯 JUMP AUTO-BRAKE - Natural braking after 1 second
 if (gameState.emergencyWarp.autoBraking) {
     const currentSpeed = gameState.velocityVector.length();
-    const targetSpeed = gameState.emergencyWarp.targetSpeed || (gameState.minVelocity || 2.0);
+    const minVelocity = gameState.minVelocity || 2.0;
     
-    // Apply gradual braking (same as manual X key braking)
-    const brakingForce = 0.99; // 1% reduction per frame (smoother deceleration)
+    // Apply natural braking force (stronger than manual brake for faster stop)
+    const brakingForce = 0.97; // 3% reduction per frame (natural deceleration)
     gameState.velocityVector.multiplyScalar(brakingForce);
     
     // Also apply rotational braking for smooth camera transitions
@@ -1578,19 +1566,12 @@ if (gameState.emergencyWarp.autoBraking) {
     rotationalVelocity.yaw *= rotationalBrakingForce;
     rotationalVelocity.roll *= rotationalBrakingForce;
     
-    // Check if we've reached target speed (with small tolerance)
-    if (currentSpeed <= targetSpeed * 1.05) {
-        // Restore exact pre-jump velocity direction and magnitude
-        if (gameState.emergencyWarp.preJumpVelocity) {
-            gameState.velocityVector.copy(gameState.emergencyWarp.preJumpVelocity);
-            console.log('✅ Jump auto-brake complete - velocity restored');
-        }
-        
+    // When speed drops to minimum, stop auto-braking and release control
+    if (currentSpeed <= minVelocity * 1.2) {
         // Clean up jump flags and release control
         gameState.emergencyWarp.autoBraking = false;
         gameState.emergencyWarp.isJump = false;
-        gameState.emergencyWarp.preJumpVelocity = null;
-        gameState.emergencyWarp.targetSpeed = null;
+        console.log('✅ Jump auto-brake complete - natural deceleration finished');
         
         // Disable starfield
         if (typeof toggleWarpSpeedStarfield === 'function') {
@@ -1608,8 +1589,6 @@ if (gameState.emergencyWarp.autoBraking) {
     if (currentSpeedKmS < 10000 && typeof toggleWarpSpeedStarfield === 'function') {
         if (window.warpStarfield && window.warpStarfield.lines && window.warpStarfield.lines.visible) {
             toggleWarpSpeedStarfield(false);
-            
-            // Camera transition handled when auto-brake completes
         }
     }
 }

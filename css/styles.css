@@ -293,7 +293,8 @@ body.ui-mode {
         0 0 15px rgba(0,255,150,0.7),
         inset 0 0 15px rgba(0,255,150,0.4),
         0 0 5px rgba(255,255,255,0.3);
-    transition: all 0.3s ease;
+    transition: border-color 0.3s ease, box-shadow 0.3s ease, transform 0.3s ease;
+    /* Exclude left/top from transition for instant crosshair position tracking */
 }
 
 .crosshair.enemy-target {

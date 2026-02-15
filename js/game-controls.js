@@ -3278,16 +3278,25 @@ function initializeControlButtons() {
         
         const key = e.key.toLowerCase();
         
-        // W key with double-tap detection for energy boost
+        // W key with double-tap detection for Jump
         if (key === 'w') {
-            const now = Date.now();
-            if (now - doubleTapState.lastWTap < doubleTapState.doubleTapThreshold) {
-                // Double-tap detected - energy boost
-                keys.wDoubleTap = true;
-            } else {
+            // Ignore repeat keydown events from holding the key
+            if (e.repeat) {
+                // Key is being held - just set normal W thrust
                 keys.w = true;
+            } else {
+                // Fresh key press - check for double-tap
+                const now = Date.now();
+                if (now - doubleTapState.lastWTap < doubleTapState.doubleTapThreshold) {
+                    // Double-tap detected - Jump!
+                    keys.wDoubleTap = true;
+                    keys.w = false; // Don't also thrust
+                } else {
+                    // Single tap - normal thrust
+                    keys.w = true;
+                }
+                doubleTapState.lastWTap = now;
             }
-            doubleTapState.lastWTap = now;
         }
         
         if (key === 'a') keys.a = true;
