@@ -18,11 +18,16 @@ let cameraRotationTracking = { x: 0, y: 0, z: 0 };
 // NEW: Rotational inertia system for space-like flight feel
 let rotationalVelocity = { pitch: 0, yaw: 0, roll: 0 };
 const rotationalInertia = {
-    acceleration: 0.0030,       // INCREASED: Faster turn response for ambush reactions
+    // Default slower turning (original values restored)
+    acceleration: 0.0020,       // Slower turn response (default)
     deceleration: 0.93,        // Slightly faster slowdown for snappier control
-    maxSpeed: 0.022,           // INCREASED: Faster max turn speed
+    maxSpeed: 0.015,           // Slower max turn speed (default)
     bankingFactor: -2.5,        // How much to bank when turning at full speed (scaled by velocity)
-    bankingSmoothing: 0.2     // How smoothly banking is applied
+    bankingSmoothing: 0.2,     // How smoothly banking is applied
+    
+    // Fast turning values (activated with CAPS LOCK)
+    fastAcceleration: 0.0030,   // Faster turn response
+    fastMaxSpeed: 0.022         // Faster max turn speed
 };
 
 function orientTowardsTarget(target) {
@@ -84,14 +89,18 @@ function orientTowardsTarget(target) {
 
 // NEW: Apply rotational inertia for space-like flight controls
 function applyRotationalInertia(keys, allowManualRotation) {
+    // Choose turning speed based on CAPS LOCK state
+    const currentAcceleration = keys.capsLock ? rotationalInertia.fastAcceleration : rotationalInertia.acceleration;
+    const currentMaxSpeed = keys.capsLock ? rotationalInertia.fastMaxSpeed : rotationalInertia.maxSpeed;
+    
     // Apply acceleration when keys are pressed
     if (allowManualRotation) {
         // Pitch controls (up/down)
         if (keys.up) {
-            rotationalVelocity.pitch += rotationalInertia.acceleration;
+            rotationalVelocity.pitch += currentAcceleration;
             lastPitchInputTime = performance.now();
         } else if (keys.down) {
-            rotationalVelocity.pitch -= rotationalInertia.acceleration;
+            rotationalVelocity.pitch -= currentAcceleration;
             lastPitchInputTime = performance.now();
         } else {
             // Apply deceleration when no input
@@ -100,10 +109,10 @@ function applyRotationalInertia(keys, allowManualRotation) {
         
         // Yaw controls (left/right arrows for turning)
         if (keys.left) {
-            rotationalVelocity.yaw += rotationalInertia.acceleration;
+            rotationalVelocity.yaw += currentAcceleration;
             lastRollInputTime = performance.now();
         } else if (keys.right) {
-            rotationalVelocity.yaw -= rotationalInertia.acceleration;
+            rotationalVelocity.yaw -= currentAcceleration;
             lastRollInputTime = performance.now();
         } else {
             // Apply deceleration when no input
@@ -113,23 +122,23 @@ function applyRotationalInertia(keys, allowManualRotation) {
     
     // Roll controls (Q/E keys for barrel roll) - always available
     if (keys.q) {
-        rotationalVelocity.roll += rotationalInertia.acceleration;
+        rotationalVelocity.roll += currentAcceleration;
         lastRollInputTime = performance.now();
     } else if (keys.e) {
-        rotationalVelocity.roll -= rotationalInertia.acceleration;
+        rotationalVelocity.roll -= currentAcceleration;
         lastRollInputTime = performance.now();
     } else {
         // Apply deceleration when no input
         rotationalVelocity.roll *= rotationalInertia.deceleration;
     }
     
-    // Clamp rotational velocities to max speed
-    rotationalVelocity.pitch = Math.max(-rotationalInertia.maxSpeed, 
-                                        Math.min(rotationalInertia.maxSpeed, rotationalVelocity.pitch));
-    rotationalVelocity.yaw = Math.max(-rotationalInertia.maxSpeed, 
-                                      Math.min(rotationalInertia.maxSpeed, rotationalVelocity.yaw));
-    rotationalVelocity.roll = Math.max(-rotationalInertia.maxSpeed, 
-                                       Math.min(rotationalInertia.maxSpeed, rotationalVelocity.roll));
+    // Clamp rotational velocities to max speed (using current max based on CAPS LOCK)
+    rotationalVelocity.pitch = Math.max(-currentMaxSpeed, 
+                                        Math.min(currentMaxSpeed, rotationalVelocity.pitch));
+    rotationalVelocity.yaw = Math.max(-currentMaxSpeed, 
+                                      Math.min(currentMaxSpeed, rotationalVelocity.yaw));
+    rotationalVelocity.roll = Math.max(-currentMaxSpeed, 
+                                       Math.min(currentMaxSpeed, rotationalVelocity.roll));
     
     // Apply pitch (looking up/down) - this is always relative to current orientation
     if (Math.abs(rotationalVelocity.pitch) > 0.00001) {
@@ -1377,17 +1386,64 @@ if (frameDistance > 0.01) { // Only track significant movement
     }
 
      // SPECIFICATION: Emergency Systems - Enter Key: Emergency warp
-// Check shield block FIRST before processing warp
-if (keys.enter && typeof isShieldActive === 'function' && isShieldActive()) {
+// Check shield block FIRST before processing warp (O key for emergency warp)
+if (keys.o && typeof isShieldActive === 'function' && isShieldActive()) {
     if (typeof showAchievement === 'function') {
         showAchievement('Warp Blocked', 'Cannot warp with shields active');
     }
-    keys.enter = false; // Clear the key immediately
+    keys.o = false; // Clear the key immediately
+    keys.oDoubleTap = false;
 }
-// Now process warp with cooldown protection
-else if (keys.enter && gameState.emergencyWarp.available > 0 && !gameState.emergencyWarp.active && !gameState.emergencyWarp.transitioning) {
+// Double-tap O for 2-second warp
+else if (keys.oDoubleTap && gameState.emergencyWarp.available > 0 && !gameState.emergencyWarp.active && !gameState.emergencyWarp.transitioning) {
+    keys.oDoubleTap = false;
+    keys.o = false;
+    
+    const capturedForwardDirection = forwardDirection.clone();
+    const capturedBoostSpeed = gameState.emergencyWarp.boostSpeed;
+    
+    gameState.emergencyWarp.available--;
+    gameState.emergencyWarp.transitioning = true;
+    
+    console.log(`⚡ 2-second warp initiated! ${gameState.emergencyWarp.available} charges remaining`);
+    
+    if (typeof setCameraFirstPerson === 'function') {
+        setCameraFirstPerson();
+    }
+    
+    setTimeout(() => {
+        gameState.emergencyWarp.active = true;
+        gameState.emergencyWarp.transitioning = false;
+        gameState.emergencyWarp.timeRemaining = 2000; // 2 seconds instead of full duration
+        gameState.velocityVector.copy(capturedForwardDirection).multiplyScalar(capturedBoostSpeed);
+        
+        for (let i = 0; i < 2; i++) {
+            setTimeout(() => createHyperspaceEffect(), i * 200);
+        }
+        
+        if (typeof toggleWarpSpeedStarfield === 'function') {
+            toggleWarpSpeedStarfield(true);
+        }
+        
+        if (typeof playSound !== 'undefined') {
+            playSound('warp');
+        }
+        
+        if (typeof showAchievement === 'function') {
+            showAchievement('Quick Warp', '2-second boost engaged!');
+        }
+        
+        setTimeout(() => {
+            if (typeof setCameraThirdPerson === 'function') {
+                setCameraThirdPerson();
+            }
+        }, 300);
+    }, 400);
+}
+// Now process full emergency warp with cooldown protection (single tap O)
+else if (keys.o && gameState.emergencyWarp.available > 0 && !gameState.emergencyWarp.active && !gameState.emergencyWarp.transitioning) {
     // ✅ CRITICAL: Clear the key immediately to prevent retriggering
-    keys.enter = false;
+    keys.o = false;
     
     // ✅ Capture forward direction NOW before setTimeout (closure issue fix)
     const capturedForwardDirection = forwardDirection.clone();
