@@ -1385,18 +1385,23 @@ if (frameDistance > 0.01) { // Only track significant movement
         }
     }
     
-    // Double-tap W for energy-based short warp (uses 25% energy, no warp charge)
+    // Double-tap W for JUMP - short tactical boost (uses 25% energy, no warp charge)
+    // Returns to original speed after 1 second
     if (keys.wDoubleTap && gameState.energy >= 25 && !gameState.emergencyWarp.active) {
         keys.wDoubleTap = false;
         
         const capturedForwardDirection = forwardDirection.clone();
         const capturedBoostSpeed = gameState.emergencyWarp.boostSpeed;
         
+        // 🎯 JUMP: Capture pre-jump velocity to restore after
+        const preJumpVelocity = gameState.velocityVector.clone();
+        
         // Use 25% energy instead of warp charge
         gameState.energy = Math.max(0, gameState.energy - 25);
         gameState.emergencyWarp.transitioning = true;
+        gameState.emergencyWarp.isJump = true; // Flag this as a Jump (not emergency warp)
         
-        console.log(`⚡ Energy boost initiated! ${gameState.energy.toFixed(1)} energy remaining`);
+        console.log(`⚡ Jump initiated! ${gameState.energy.toFixed(1)} energy remaining`);
         
         if (typeof setCameraFirstPerson === 'function') {
             setCameraFirstPerson();
@@ -1405,7 +1410,8 @@ if (frameDistance > 0.01) { // Only track significant movement
         setTimeout(() => {
             gameState.emergencyWarp.active = true;
             gameState.emergencyWarp.transitioning = false;
-            gameState.emergencyWarp.timeRemaining = 2000; // 2 seconds
+            gameState.emergencyWarp.timeRemaining = 1000; // 1 second (not 2)
+            gameState.emergencyWarp.preJumpVelocity = preJumpVelocity; // Store for restoration
             gameState.velocityVector.copy(capturedForwardDirection).multiplyScalar(capturedBoostSpeed);
             
             for (let i = 0; i < 2; i++) {
@@ -1420,9 +1426,7 @@ if (frameDistance > 0.01) { // Only track significant movement
                 playSound('warp');
             }
             
-            if (typeof showAchievement === 'function') {
-                showAchievement('Energy Boost', '2-second burst! (25% energy used)');
-            }
+            // No achievement notification for Jump (silent tactical boost)
             
             setTimeout(() => {
                 if (typeof setCameraThirdPerson === 'function') {
@@ -1499,16 +1503,40 @@ if (gameState.emergencyWarp.active) {
     gameState.emergencyWarp.timeRemaining -= 16.67;
     if (gameState.emergencyWarp.timeRemaining <= 0) {
         gameState.emergencyWarp.active = false;
-        gameState.emergencyWarp.postWarp = true;
         
-        // Check speed and disable starfield if needed
-        const currentSpeedKmS = gameState.velocityVector.length() * 1000;
-        if (currentSpeedKmS < 10000 && typeof toggleWarpSpeedStarfield === 'function') {
-            toggleWarpSpeedStarfield(false);
-        }
-        
-        if (typeof showAchievement === 'function') {
-            showAchievement('Emergency Warp Complete', 'Coasting on momentum - use X to brake');
+        // 🎯 JUMP vs EMERGENCY WARP: Different end behaviors
+        if (gameState.emergencyWarp.isJump) {
+            // JUMP: Restore original velocity (return to speed before jump)
+            if (gameState.emergencyWarp.preJumpVelocity) {
+                gameState.velocityVector.copy(gameState.emergencyWarp.preJumpVelocity);
+                console.log('✅ Jump complete - velocity restored');
+            }
+            
+            // Clean up jump flags
+            gameState.emergencyWarp.isJump = false;
+            gameState.emergencyWarp.preJumpVelocity = null;
+            gameState.emergencyWarp.postWarp = false; // No coasting for Jump
+            
+            // Disable starfield
+            if (typeof toggleWarpSpeedStarfield === 'function') {
+                toggleWarpSpeedStarfield(false);
+            }
+            
+            // No notification for Jump end (silent)
+            
+        } else {
+            // EMERGENCY WARP: Coast on momentum
+            gameState.emergencyWarp.postWarp = true;
+            
+            // Check speed and disable starfield if needed
+            const currentSpeedKmS = gameState.velocityVector.length() * 1000;
+            if (currentSpeedKmS < 10000 && typeof toggleWarpSpeedStarfield === 'function') {
+                toggleWarpSpeedStarfield(false);
+            }
+            
+            if (typeof showAchievement === 'function') {
+                showAchievement('Emergency Warp Complete', 'Coasting on momentum - use X to brake');
+            }
         }
     }
 } else if (gameState.emergencyWarp.postWarp) {

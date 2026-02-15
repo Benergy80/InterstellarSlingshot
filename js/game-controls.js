@@ -3929,6 +3929,9 @@ if (enemy.userData.health <= 0) {
     
     // Check for galaxy clear
     checkGalaxyClear();
+    
+    // 🏆 VICTORY SYSTEM: Check if guardians defeated → galaxy liberated
+    checkGuardianVictory();
 
     // ENHANCED: Check if we should spawn area bosses or elite guardians
     if (typeof checkAndSpawnAreaBosses === 'function') {
@@ -3966,6 +3969,15 @@ if (enemy.userData.health <= 0) {
     // The fallback checkWeaponHits() is for enemies that are near the aim line,
     // not for asteroids. Asteroids require precise aim with direct raycast hits.
 }
+
+// =============================================================================
+// 🎯 MISSION PROGRESSION - PHASE 2: BOSS BATTLE CHECK
+// =============================================================================
+// Called after every enemy death to detect when all regular enemies + boss defeated
+// Triggers: Guardian spawn, Mission Command alert, boss victory music
+// Does NOT increment galaxiesCleared - that happens in checkGuardianVictory()
+// See: PROGRESSION_SYSTEM.md for full mission flow
+// =============================================================================
 
 function checkGalaxyClear() {
     if (typeof enemies === 'undefined' || typeof gameState === 'undefined') return;
@@ -4039,7 +4051,14 @@ function checkGalaxyClear() {
 }
 
 // =============================================================================
-// GUARDIAN VICTORY SYSTEM - Final galaxy liberation check
+// =============================================================================
+// 🏆 MISSION PROGRESSION - PHASE 3: GUARDIAN VICTORY CHECK
+// =============================================================================
+// Called after every enemy death to detect when all guardians defeated
+// THIS is where galaxiesCleared increments (0 → 1 → 2 → ... → 8)
+// Triggers: "Galaxy Liberation Complete" message, victory music, fireworks
+// At 8/8 galaxies: Campaign victory screen appears
+// See: PROGRESSION_SYSTEM.md for full mission flow
 // =============================================================================
 
 function checkGuardianVictory() {
@@ -4758,6 +4777,9 @@ function handleMissileHit(missile, enemy) {
 
         if (typeof populateTargets === 'function') setTimeout(populateTargets, 100);
         checkGalaxyClear();
+        
+        // 🏆 VICTORY SYSTEM: Check if guardians defeated → galaxy liberated
+        checkGuardianVictory();
 
         // ENHANCED: Check if we should spawn area bosses or elite guardians
         if (typeof checkAndSpawnAreaBosses === 'function') {
