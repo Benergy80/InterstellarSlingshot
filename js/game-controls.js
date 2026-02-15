@@ -15,9 +15,9 @@ const keys = {
   x: false, b: false, z: false
 };
 
-// Double-tap detection for O key (2-second warp)
+// Double-tap detection for W key (short energy-based boost)
 const doubleTapState = {
-  lastOTap: 0,
+  lastWTap: 0,
   doubleTapThreshold: 300 // ms
 };
 
@@ -3277,7 +3277,19 @@ function initializeControlButtons() {
         }
         
         const key = e.key.toLowerCase();
-        if (key === 'w') keys.w = true;
+        
+        // W key with double-tap detection for energy boost
+        if (key === 'w') {
+            const now = Date.now();
+            if (now - doubleTapState.lastWTap < doubleTapState.doubleTapThreshold) {
+                // Double-tap detected - energy boost
+                keys.wDoubleTap = true;
+            } else {
+                keys.w = true;
+            }
+            doubleTapState.lastWTap = now;
+        }
+        
         if (key === 'a') keys.a = true;
         if (key === 's') keys.s = true;
         if (key === 'd') keys.d = true;
@@ -3401,7 +3413,10 @@ if (e.key === 'Tab') {
         if (gameState.paused) return;  // CORRECT VARIABLE
         
         const key = e.key.toLowerCase();
-        if (key === 'w') keys.w = false;
+        if (key === 'w') {
+            keys.w = false;
+            keys.wDoubleTap = false;
+        }
         if (key === 'a') keys.a = false;
         if (key === 's') keys.s = false;
         if (key === 'd') keys.d = false;

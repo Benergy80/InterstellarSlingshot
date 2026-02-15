@@ -1384,63 +1384,63 @@ if (frameDistance > 0.01) { // Only track significant movement
             createHyperspaceEffect();
         }
     }
+    
+    // Double-tap W for energy-based short warp (uses 25% energy, no warp charge)
+    if (keys.wDoubleTap && gameState.energy >= 25 && !gameState.emergencyWarp.active) {
+        keys.wDoubleTap = false;
+        
+        const capturedForwardDirection = forwardDirection.clone();
+        const capturedBoostSpeed = gameState.emergencyWarp.boostSpeed;
+        
+        // Use 25% energy instead of warp charge
+        gameState.energy = Math.max(0, gameState.energy - 25);
+        gameState.emergencyWarp.transitioning = true;
+        
+        console.log(`⚡ Energy boost initiated! ${gameState.energy.toFixed(1)} energy remaining`);
+        
+        if (typeof setCameraFirstPerson === 'function') {
+            setCameraFirstPerson();
+        }
+        
+        setTimeout(() => {
+            gameState.emergencyWarp.active = true;
+            gameState.emergencyWarp.transitioning = false;
+            gameState.emergencyWarp.timeRemaining = 2000; // 2 seconds
+            gameState.velocityVector.copy(capturedForwardDirection).multiplyScalar(capturedBoostSpeed);
+            
+            for (let i = 0; i < 2; i++) {
+                setTimeout(() => createHyperspaceEffect(), i * 200);
+            }
+            
+            if (typeof toggleWarpSpeedStarfield === 'function') {
+                toggleWarpSpeedStarfield(true);
+            }
+            
+            if (typeof playSound !== 'undefined') {
+                playSound('warp');
+            }
+            
+            if (typeof showAchievement === 'function') {
+                showAchievement('Energy Boost', '2-second burst! (25% energy used)');
+            }
+            
+            setTimeout(() => {
+                if (typeof setCameraThirdPerson === 'function') {
+                    setCameraThirdPerson();
+                }
+            }, 300);
+        }, 400);
+    }
 
-     // SPECIFICATION: Emergency Systems - Enter Key: Emergency warp
+     // SPECIFICATION: Emergency Systems - O Key: Emergency warp
 // Check shield block FIRST before processing warp (O key for emergency warp)
 if (keys.o && typeof isShieldActive === 'function' && isShieldActive()) {
     if (typeof showAchievement === 'function') {
         showAchievement('Warp Blocked', 'Cannot warp with shields active');
     }
     keys.o = false; // Clear the key immediately
-    keys.oDoubleTap = false;
 }
-// Double-tap O for 2-second warp
-else if (keys.oDoubleTap && gameState.emergencyWarp.available > 0 && !gameState.emergencyWarp.active && !gameState.emergencyWarp.transitioning) {
-    keys.oDoubleTap = false;
-    keys.o = false;
-    
-    const capturedForwardDirection = forwardDirection.clone();
-    const capturedBoostSpeed = gameState.emergencyWarp.boostSpeed;
-    
-    gameState.emergencyWarp.available--;
-    gameState.emergencyWarp.transitioning = true;
-    
-    console.log(`⚡ 2-second warp initiated! ${gameState.emergencyWarp.available} charges remaining`);
-    
-    if (typeof setCameraFirstPerson === 'function') {
-        setCameraFirstPerson();
-    }
-    
-    setTimeout(() => {
-        gameState.emergencyWarp.active = true;
-        gameState.emergencyWarp.transitioning = false;
-        gameState.emergencyWarp.timeRemaining = 2000; // 2 seconds instead of full duration
-        gameState.velocityVector.copy(capturedForwardDirection).multiplyScalar(capturedBoostSpeed);
-        
-        for (let i = 0; i < 2; i++) {
-            setTimeout(() => createHyperspaceEffect(), i * 200);
-        }
-        
-        if (typeof toggleWarpSpeedStarfield === 'function') {
-            toggleWarpSpeedStarfield(true);
-        }
-        
-        if (typeof playSound !== 'undefined') {
-            playSound('warp');
-        }
-        
-        if (typeof showAchievement === 'function') {
-            showAchievement('Quick Warp', '2-second boost engaged!');
-        }
-        
-        setTimeout(() => {
-            if (typeof setCameraThirdPerson === 'function') {
-                setCameraThirdPerson();
-            }
-        }, 300);
-    }, 400);
-}
-// Now process full emergency warp with cooldown protection (single tap O)
+// Now process full emergency warp with cooldown protection (O key)
 else if (keys.o && gameState.emergencyWarp.available > 0 && !gameState.emergencyWarp.active && !gameState.emergencyWarp.transitioning) {
     // ✅ CRITICAL: Clear the key immediately to prevent retriggering
     keys.o = false;
