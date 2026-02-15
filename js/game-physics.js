@@ -2179,7 +2179,8 @@ if (blackHoleCoreCollision || surfaceCollision) {
 
     // Enhanced velocity limits
     const currentMaxVelocity = gameState.emergencyWarp.active ? gameState.emergencyWarp.boostSpeed :
-                         gameState.emergencyWarp.postWarp ? gameState.emergencyWarp.boostSpeed :  // NEW LINE
+                         gameState.emergencyWarp.autoBraking ? gameState.emergencyWarp.boostSpeed :  // NEW: Allow high speed during Jump brake
+                         gameState.emergencyWarp.postWarp ? gameState.emergencyWarp.boostSpeed :
                          (gameState.slingshot.active || gameState.slingshot.postSlingshot) ? 
                          gameState.slingshot.maxSpeed : gameState.maxVelocity;
     const currentVelocity = gameState.velocityVector.length();
@@ -2187,7 +2188,8 @@ if (blackHoleCoreCollision || surfaceCollision) {
     if (currentVelocity > currentMaxVelocity && 
     !gameState.slingshot.postSlingshot && 
     !gameState.emergencyWarp.active && 
-    !gameState.emergencyWarp.postWarp) {  // NEW CONDITION
+    !gameState.emergencyWarp.autoBraking &&  // NEW: Don't cap velocity during Jump brake
+    !gameState.emergencyWarp.postWarp) {
     gameState.velocityVector.normalize().multiplyScalar(currentMaxVelocity);
 }
     
