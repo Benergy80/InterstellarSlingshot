@@ -1934,6 +1934,16 @@ if (typeof checkCosmicFeatureInteractions === 'function' && typeof camera !== 'u
         updateEnemyBehavior();
     }
     if (typeof perfDebug !== 'undefined') perfDebug.endTimer('enemies');
+    
+    // Update civilian combat (enemies attacking civilians, distress calls)
+    if (gameState.frameCount % 3 === 0 && typeof updateCivilianCombat === 'function') {
+        updateCivilianCombat();
+    }
+    
+    // Update civilian map display
+    if (gameState.frameCount % 30 === 0 && typeof updateCivilianMapDisplay === 'function') {
+        updateCivilianMapDisplay();
+    }
 
     // Update missiles
     if (typeof updateMissiles === 'function') {

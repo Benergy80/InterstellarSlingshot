@@ -1310,6 +1310,24 @@ if (typeof outerInterstellarSystems !== 'undefined') {
                 });
             }
         });
+        
+        // Add nearby civilian ships (trade/mining vessels)
+        if (typeof tradingShips !== 'undefined') {
+            tradingShips.forEach(ship => {
+                if (!ship || !ship.position || !ship.userData || ship.userData.destroyed) return;
+                // Only show if marked as visible on map (within 3000 units)
+                if (ship.userData.showOnMap) {
+                    const distance = camera.position.distanceTo(ship.position);
+                    nearbyObjects.push({
+                        position: ship.position,
+                        type: 'civilian_ship',
+                        name: ship.userData.name || 'Civilian Vessel',
+                        distance: distance,
+                        underAttack: ship.userData.distressActive || false
+                    });
+                }
+            });
+        }
 
         // Add cosmic features (if available)
         if (typeof cosmicFeatures !== 'undefined') {
@@ -1398,6 +1416,9 @@ let dotSize = '4px';
 if (obj.type === 'enemy') {
     dotColor = obj.isBoss ? '#ff00ff' : '#ff4444';
     dotSize = obj.isBoss ? '8px' : '6px';
+} else if (obj.type === 'civilian_ship') {
+    dotColor = obj.underAttack ? '#ffaa00' : '#00ff88';  // Orange if under attack, green otherwise
+    dotSize = '5px';
 } else if (obj.type === 'blackhole') {
     dotColor = '#000000';
     dotSize = '6px';
