@@ -1429,8 +1429,35 @@ if (typeof nebulaGasClouds !== 'undefined' && nebulaGasClouds.length > 0) {
 
 if (typeof asteroidBelts !== 'undefined' && asteroidBelts.length > 0) {
     asteroidBelts.forEach(belt => {
-        if (belt.userData.rotationSpeed && belt.rotation) {
-            belt.rotation.y += belt.userData.rotationSpeed;
+        // Update individual asteroids within each belt
+        if (belt.children && belt.children.length > 0) {
+            belt.children.forEach(asteroid => {
+                if (!asteroid.userData || asteroid.userData.type !== 'asteroid') return;
+                
+                // 🌑 ORBITAL MOVEMENT: Update asteroid position based on orbitSpeed
+                if (asteroid.userData.orbitSpeed && asteroid.userData.beltCenter) {
+                    // Increment orbit phase
+                    asteroid.userData.orbitPhase += asteroid.userData.orbitSpeed;
+                    
+                    // Calculate new orbital position
+                    const orbitRadius = asteroid.userData.orbitRadius || 0;
+                    const orbitPhase = asteroid.userData.orbitPhase || 0;
+                    
+                    // Maintain original height variation
+                    const ringHeight = asteroid.position.y;
+                    
+                    // Update position in circular orbit
+                    asteroid.position.x = Math.cos(orbitPhase) * orbitRadius;
+                    asteroid.position.y = ringHeight; // Keep height constant
+                    asteroid.position.z = Math.sin(orbitPhase) * orbitRadius;
+                }
+                
+                // 🌀 INDIVIDUAL ROTATION: Make asteroids spin
+                if (asteroid.userData.rotationSpeed) {
+                    asteroid.rotation.y += asteroid.userData.rotationSpeed;
+                    asteroid.rotation.x += asteroid.userData.rotationSpeed * 0.3; // Tumble effect
+                }
+            });
         }
     });
 }
