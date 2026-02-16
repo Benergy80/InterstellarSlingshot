@@ -151,7 +151,8 @@ function applyRotationalInertia(keys, allowManualRotation) {
         camera.rotateY(rotationalVelocity.yaw);
     }
     
-    // 🛩️ STRAFE YAW: Turn nose toward strafe direction (always relative to current orientation)
+    // 🛩️ STRAFE YAW + BANKING: Turn nose OPPOSITE to strafe direction + bank wings
+    // Like a helicopter: strafe left → lean right, strafe right → lean left
     // Applied AFTER pitch/yaw so it works correctly regardless of orientation
     if (typeof keys !== 'undefined' && typeof gameState !== 'undefined') {
         const currentSpeed = gameState.velocity || 0;
@@ -159,6 +160,7 @@ function applyRotationalInertia(keys, allowManualRotation) {
         const maxSpeed = 6.0;
         const speedFactor = Math.max(0, Math.min(1, (currentSpeed - minSpeed) / (maxSpeed - minSpeed)));
         const strafeYawFactor = 0.015; // Subtle nose turn for strafe
+        const strafeBankFactor = 0.02; // Banking/roll for strafe
         
         // Get the strafe direction in camera's right vector
         const forwardDirection = new THREE.Vector3();
@@ -166,24 +168,26 @@ function applyRotationalInertia(keys, allowManualRotation) {
         const rightDirection = new THREE.Vector3();
         rightDirection.crossVectors(forwardDirection, camera.up).normalize();
         
-        let strafeDirection = null;
+        let strafeYawAmount = 0;
+        let strafeBankAmount = 0;
+        
         if (keys.a && gameState.energy > 0) {
-            strafeDirection = rightDirection.clone().multiplyScalar(-1); // Left
+            // Strafe left (A) → Turn nose RIGHT + Roll right wing down
+            strafeYawAmount = -strafeYawFactor * speedFactor; // Negative = right turn
+            strafeBankAmount = -strafeBankFactor * speedFactor; // Negative = right roll
         } else if (keys.d && gameState.energy > 0) {
-            strafeDirection = rightDirection.clone(); // Right
+            // Strafe right (D) → Turn nose LEFT + Roll left wing down
+            strafeYawAmount = strafeYawFactor * speedFactor; // Positive = left turn
+            strafeBankAmount = strafeBankFactor * speedFactor; // Positive = left roll
         }
         
-        if (strafeDirection) {
-            // Calculate rotation axis (camera's up vector)
+        if (strafeYawAmount !== 0) {
+            // Apply yaw rotation around the up axis (opposite to strafe direction)
             const rotationAxis = camera.up.clone().normalize();
+            camera.rotateOnWorldAxis(rotationAxis, strafeYawAmount);
             
-            // Calculate cross product to determine rotation direction
-            const cross = new THREE.Vector3().crossVectors(forwardDirection, strafeDirection);
-            const rotationDirection = cross.dot(rotationAxis);
-            
-            // Apply rotation around the up axis toward strafe direction
-            const strafeYaw = Math.sign(rotationDirection) * strafeYawFactor * speedFactor;
-            camera.rotateOnWorldAxis(rotationAxis, strafeYaw);
+            // Apply banking/roll around forward axis (wings dip)
+            camera.rotateZ(strafeBankAmount);
         }
     }
     
