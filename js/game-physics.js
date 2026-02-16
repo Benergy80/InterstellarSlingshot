@@ -156,9 +156,9 @@ function applyRotationalInertia(keys, allowManualRotation) {
         const strafeYawFactor = 0.015; // Subtle nose turn for strafe
         
         if (keys.a) {
-            strafeYaw = strafeYawFactor * speedFactor; // Strafe left → turn nose left
+            strafeYaw = -strafeYawFactor * speedFactor; // Strafe left → turn nose left (flipped)
         } else if (keys.d) {
-            strafeYaw = -strafeYawFactor * speedFactor; // Strafe right → turn nose right
+            strafeYaw = strafeYawFactor * speedFactor; // Strafe right → turn nose right (flipped)
         }
     }
     
