@@ -146,27 +146,45 @@ function applyRotationalInertia(keys, allowManualRotation) {
         camera.rotateX(rotationalVelocity.pitch);
     }
     
-    // 🛩️ STRAFE YAW: Turn nose in direction of strafe (A = turn left, D = turn right)
-    let strafeYaw = 0;
-    if (typeof keys !== 'undefined') {
-        const currentSpeed = typeof gameState !== 'undefined' && gameState.velocity ? gameState.velocity : 0;
+    // Apply yaw (turning left/right) - this is always relative to current orientation
+    if (Math.abs(rotationalVelocity.yaw) > 0.00001) {
+        camera.rotateY(rotationalVelocity.yaw);
+    }
+    
+    // 🛩️ STRAFE YAW: Turn nose toward strafe direction (always relative to current orientation)
+    // Applied AFTER pitch/yaw so it works correctly regardless of orientation
+    if (typeof keys !== 'undefined' && typeof gameState !== 'undefined') {
+        const currentSpeed = gameState.velocity || 0;
         const minSpeed = 0.5;
         const maxSpeed = 6.0;
         const speedFactor = Math.max(0, Math.min(1, (currentSpeed - minSpeed) / (maxSpeed - minSpeed)));
         const strafeYawFactor = 0.015; // Subtle nose turn for strafe
         
-        if (keys.a) {
-            strafeYaw = -strafeYawFactor * speedFactor; // Strafe left → turn nose left (flipped)
-        } else if (keys.d) {
-            strafeYaw = strafeYawFactor * speedFactor; // Strafe right → turn nose right (flipped)
+        // Get the strafe direction in camera's right vector
+        const forwardDirection = new THREE.Vector3();
+        camera.getWorldDirection(forwardDirection);
+        const rightDirection = new THREE.Vector3();
+        rightDirection.crossVectors(forwardDirection, camera.up).normalize();
+        
+        let strafeDirection = null;
+        if (keys.a && gameState.energy > 0) {
+            strafeDirection = rightDirection.clone().multiplyScalar(-1); // Left
+        } else if (keys.d && gameState.energy > 0) {
+            strafeDirection = rightDirection.clone(); // Right
         }
-    }
-    
-    // Apply yaw (turning left/right) - this is always relative to current orientation
-    // Combine manual yaw with strafe-induced yaw
-    const totalYaw = rotationalVelocity.yaw + strafeYaw;
-    if (Math.abs(totalYaw) > 0.00001) {
-        camera.rotateY(totalYaw);
+        
+        if (strafeDirection) {
+            // Calculate rotation axis (camera's up vector)
+            const rotationAxis = camera.up.clone().normalize();
+            
+            // Calculate cross product to determine rotation direction
+            const cross = new THREE.Vector3().crossVectors(forwardDirection, strafeDirection);
+            const rotationDirection = cross.dot(rotationAxis);
+            
+            // Apply rotation around the up axis toward strafe direction
+            const strafeYaw = Math.sign(rotationDirection) * strafeYawFactor * speedFactor;
+            camera.rotateOnWorldAxis(rotationAxis, strafeYaw);
+        }
     }
     
     // Apply roll (barrel roll) with SPEED-DEPENDENT automatic banking from yaw
