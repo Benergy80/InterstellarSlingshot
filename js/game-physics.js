@@ -146,12 +146,30 @@ function applyRotationalInertia(keys, allowManualRotation) {
         camera.rotateX(rotationalVelocity.pitch);
     }
     
-    // Apply yaw (turning left/right) - this is always relative to current orientation
-    if (Math.abs(rotationalVelocity.yaw) > 0.00001) {
-        camera.rotateY(rotationalVelocity.yaw);
+    // 🛩️ STRAFE YAW: Turn nose in direction of strafe (A = turn left, D = turn right)
+    let strafeYaw = 0;
+    if (typeof keys !== 'undefined') {
+        const currentSpeed = typeof gameState !== 'undefined' && gameState.velocity ? gameState.velocity : 0;
+        const minSpeed = 0.5;
+        const maxSpeed = 6.0;
+        const speedFactor = Math.max(0, Math.min(1, (currentSpeed - minSpeed) / (maxSpeed - minSpeed)));
+        const strafeYawFactor = 0.015; // Subtle nose turn for strafe
+        
+        if (keys.a) {
+            strafeYaw = strafeYawFactor * speedFactor; // Strafe left → turn nose left
+        } else if (keys.d) {
+            strafeYaw = -strafeYawFactor * speedFactor; // Strafe right → turn nose right
+        }
     }
     
-    // Apply roll (barrel roll) with SPEED-DEPENDENT automatic banking from yaw AND strafe
+    // Apply yaw (turning left/right) - this is always relative to current orientation
+    // Combine manual yaw with strafe-induced yaw
+    const totalYaw = rotationalVelocity.yaw + strafeYaw;
+    if (Math.abs(totalYaw) > 0.00001) {
+        camera.rotateY(totalYaw);
+    }
+    
+    // Apply roll (barrel roll) with SPEED-DEPENDENT automatic banking from yaw
     // Banking increases with speed - slow = minimal banking, fast = aggressive banking
     const currentSpeed = typeof gameState !== 'undefined' && gameState.velocity ? gameState.velocity : 0;
     const minSpeed = 0.5;  // Minimum speed for banking
@@ -167,18 +185,7 @@ function applyRotationalInertia(keys, allowManualRotation) {
         bankingFromYaw = -rotationalVelocity.yaw * rotationalInertia.bankingFactor * speedFactor;
     }
     
-    // 🛩️ STRAFE BANKING: Tilt nose opposite to strafe direction (A = tilt right, D = tilt left)
-    let bankingFromStrafe = 0;
-    if (typeof keys !== 'undefined') {
-        const strafeBankingFactor = 0.02; // Subtle tilt for strafe
-        if (keys.a) {
-            bankingFromStrafe = strafeBankingFactor * speedFactor; // Strafe left → tilt right
-        } else if (keys.d) {
-            bankingFromStrafe = -strafeBankingFactor * speedFactor; // Strafe right → tilt left
-        }
-    }
-    
-    const totalRoll = rotationalVelocity.roll + bankingFromYaw + bankingFromStrafe;
+    const totalRoll = rotationalVelocity.roll + bankingFromYaw;
     
     if (Math.abs(totalRoll) > 0.00001) {
         camera.rotateZ(totalRoll);
