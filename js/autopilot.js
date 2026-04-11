@@ -196,6 +196,7 @@
     const t = elapsed();
     // Shields OFF while scanning — we're travelling
     ensureShieldsFor('travel');
+    ensureThirdPerson();
 
     // Keep the game's Navigation System target list fresh
     if (typeof populateTargets === 'function' && (t % 1500) < 100) {
@@ -259,6 +260,8 @@
     const t = elapsed();
     // Shields ON while fighting
     ensureShieldsFor('combat');
+    // Demo always stays in 3rd person
+    ensureThirdPerson();
 
     const enemy = ap.combatTarget;
 
@@ -314,18 +317,27 @@
       }, 150);
     }
 
-    // Combat stall timeout — enemy running away?  Abandon it.
-    if (t > 35000) {
-      setStatus('Target evaded — disengaging');
-      ensureShieldsFor('travel');
-      goPhase(ap.returnPhase || 'findLocalEnemies');
-    }
+    // PURSUIT DOCTRINE: do NOT disengage on timeout.  The autopilot stays on
+    // the target until its health hits zero.  If the enemy outruns us, the
+    // phase will still be fine — we keep chasing.
   }
 
   // ─── 2) Emergency warp toward a nebula cluster ────────────────────────────
   function phaseWarpToNebulaCluster() {
     const t = elapsed();
     ensureShieldsFor('travel');
+    ensureThirdPerson();
+
+    // Any hostile on the nav system — break off and engage
+    const intruder = navDetectedEnemy();
+    if (intruder && !gameState.emergencyWarp.active && !gameState.emergencyWarp.transitioning) {
+      ap.combatTarget = intruder;
+      ap.combatMissileFired = false;
+      ap.returnPhase = 'warpToNebulaCluster';
+      goPhase('combat');
+      return;
+    }
+
     setStatus('Plotting course to nebula cluster…');
 
     if (!ap.currentNebula) {
@@ -362,6 +374,21 @@
   function phaseCoastToNebulaCluster() {
     const t = elapsed();
     ensureShieldsFor('travel');
+    ensureThirdPerson();
+
+    // Break off to engage any detected hostile (skip if still warp-coasting)
+    const speedNow = gameState.velocityVector ? gameState.velocityVector.length() : 0;
+    if (speedNow < 3 && !gameState.emergencyWarp.active) {
+      const intruder = navDetectedEnemy();
+      if (intruder) {
+        ap.combatTarget = intruder;
+        ap.combatMissileFired = false;
+        ap.returnPhase = 'coastToNebulaCluster';
+        goPhase('combat');
+        return;
+      }
+    }
+
     const speed = gameState.velocityVector ? gameState.velocityVector.length() : 0;
 
     if (!ap.currentNebula) {
@@ -414,6 +441,19 @@
   function phaseOrbitNebulaPlanet() {
     const t = elapsed();
     ensureShieldsFor('travel');
+    // Stay in 3rd person throughout the demo
+    ensureThirdPerson();
+
+    // Break off to pursue any detected hostile
+    const intruder = navDetectedEnemy();
+    if (intruder) {
+      ap.combatTarget = intruder;
+      ap.combatMissileFired = false;
+      ap.returnPhase = 'orbitNebulaPlanet';
+      transmit('TACTICAL', 'Hostile contact during survey!\nEngaging intruder — orbit paused.');
+      goPhase('combat');
+      return;
+    }
 
     if (!ap.orbitTarget) {
       // Prefer a real planet near the nebula; fall back to the nebula itself
@@ -427,19 +467,6 @@
         transmit('NAVIGATION SYSTEM', 'Target locked: ' + nm + '\nEstablishing orbital trajectory.\nPerforming science scans.');
         gameState.currentTarget = ap.orbitTarget;
       }
-    }
-
-    // Brief FPV showcase while orbiting
-    if (t > 4000 && !ap.fpvShown) {
-      ap.fpvShown = true;
-      setStatus('Switching to cockpit view');
-      if (window.setCameraFirstPerson) window.setCameraFirstPerson();
-      ap.fpvTimer = Date.now();
-    }
-    if (ap.fpvTimer && Date.now() - ap.fpvTimer > 6000 && !ap.fpvTimerDone) {
-      ap.fpvTimerDone = true;
-      setStatus('Returning to chase cam');
-      ensureThirdPerson();
     }
 
     // Fly to target and orbit slowly
@@ -470,6 +497,7 @@
   function phaseFollowDiscoveryPath() {
     const t = elapsed();
     ensureShieldsFor('travel');
+    ensureThirdPerson();
     const paths = window.discoveryPaths || [];
     const path = paths.length > 0 ? paths[paths.length - 1] : null;
     const endPos = path && path.line && path.line.userData && path.line.userData.endPosition;
@@ -517,6 +545,18 @@
   function phaseGotoBlackHoleGalaxy() {
     const t = elapsed();
     ensureShieldsFor('travel');
+    ensureThirdPerson();
+
+    // Any detected hostile → engage first
+    const intruder = navDetectedEnemy();
+    if (intruder) {
+      ap.combatTarget = intruder;
+      ap.combatMissileFired = false;
+      ap.returnPhase = 'gotoBlackHoleGalaxy';
+      goPhase('combat');
+      return;
+    }
+
     setStatus('Plotting course to black hole galaxy…');
 
     if (!ap.currentBH) {
@@ -544,8 +584,6 @@
       setStatus('Event horizon — initiating warp');
       goPhase('blackHoleWarp');
     }
-
-    if (t > 90000) { ap.currentBH = null; goPhase('approachBorg'); }
   }
 
   // ─── 6) Black hole warp → coast → fight more enemies ─────────────────────
@@ -576,6 +614,21 @@
   function phaseCoastAfterWarp() {
     const t = elapsed();
     ensureShieldsFor('travel');
+    ensureThirdPerson();
+
+    // After warp coast is over, engage any hostile the nav system sees
+    const speedCheck = gameState.velocityVector ? gameState.velocityVector.length() : 0;
+    if (speedCheck < 3) {
+      const intruder = navDetectedEnemy();
+      if (intruder) {
+        ap.combatTarget = intruder;
+        ap.combatMissileFired = false;
+        ap.returnPhase = 'gotoBlackHoleGalaxy';
+        goPhase('combat');
+        return;
+      }
+    }
+
     const speed = gameState.velocityVector ? gameState.velocityVector.length() : 0;
 
     // Find nearest asteroid belt to current position
@@ -627,6 +680,7 @@
   function phaseApproachBorg() {
     const t = elapsed();
     ensureShieldsFor('travel');
+    ensureThirdPerson();
     setStatus('Heading to outer reaches — Borg territory');
     if (t < 200) {
       transmit('LONG RANGE SENSORS', 'Massive unknown vessel detected at extreme range.\nWARNING: Borg Collective signature confirmed.\nAll hands to battle stations.');
@@ -973,12 +1027,6 @@
   }
 
   function resetFlags() {
-    ap.shieldShown = false;
-    ap.emergencyWarpShown = false;
-    ap.fpvShown = false;
-    ap.fpvTimerDone = false;
-    ap.fpvTimer = null;
-    ap.missileShown = false;
     ap.combatMissileFired = false;
     ap.brakingAfterWarp = false;
     ap.orbitTarget = null;
