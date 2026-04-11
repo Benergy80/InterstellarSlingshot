@@ -770,25 +770,27 @@
     removeHUD();
     const el = document.createElement('div');
     el.id = 'demoPilotHUD';
+    // NOTE: Achievement popup sits at bottom-20 (80px). Keep demo HUD BELOW it
+    // so demo status never blocks standard achievement toasts.
     el.style.cssText = [
       'position:fixed',
-      'bottom:80px',
+      'bottom:10px',
       'left:50%',
       'transform:translateX(-50%)',
-      'z-index:9999',
+      'z-index:500',
       'background:rgba(0,0,0,0.6)',
       'border:1px solid rgba(0,255,136,0.5)',
       'border-radius:8px',
-      'padding:8px 20px',
+      'padding:6px 18px',
       'font-family:Orbitron,monospace',
-      'font-size:12px',
+      'font-size:11px',
       'color:#00ff88',
       'text-align:center',
       'pointer-events:none',
       'text-shadow:0 0 8px rgba(0,255,136,0.8)',
       'box-shadow:0 0 20px rgba(0,255,136,0.3)',
       'letter-spacing:2px',
-      'min-width:280px',
+      'min-width:260px',
     ].join(';');
     el.innerHTML = '<div style="opacity:0.7;font-size:10px;margin-bottom:2px">🤖 DEMO AUTOPILOT</div><div id="demoPilotStatus">Initializing…</div>';
     document.body.appendChild(el);
