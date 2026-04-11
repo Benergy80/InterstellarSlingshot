@@ -56,6 +56,21 @@
     goPhase('init');
     buildHUD();
     ensureThirdPerson();
+
+    // Demo defaults: auto-leveling + mouse auto-aim ON
+    if (typeof gameState !== 'undefined') {
+      gameState.autoLevelingEnabled = true;
+      gameState.mouseAiming = true;
+      if (gameState.targetLock) {
+        gameState.targetLock.autoAim = true;
+      }
+      // Center the virtual crosshair so forward raycasts travel straight
+      if (typeof window !== 'undefined') {
+        gameState.crosshairX = window.innerWidth / 2;
+        gameState.crosshairY = window.innerHeight / 2;
+      }
+    }
+
     document.addEventListener('keydown', onKeyDown);
     notify('🤖 DEMO MODE ACTIVE', 'Autopilot engaged — press ESC to exit');
   }
@@ -157,13 +172,16 @@
       }
     }
 
-    // ── Shoot a nearby asteroid to demonstrate hull repair ─────────────────
-    const rock = nearestAsteroid(3000);
-    if (rock && t > 5000) {
-      const d = camPos().distanceTo(rock.position);
-      if (d < 2000) {
-        setStatus('Engaging asteroid — hull repair');
-        aimAndFireLaserAt(rock);
+    // ── Opportunistic fire: only if something is already in the forward cone ──
+    if (t > 5000) {
+      const coneTarget = findTargetInFiringCone(2500);
+      if (coneTarget) {
+        if (coneTarget.userData && coneTarget.userData.type === 'asteroid') {
+          setStatus('Asteroid in sights — hull salvage');
+        } else {
+          setStatus('Hostile in sights — engaging');
+        }
+        aimAndFireLaserAt(coneTarget);
       }
     }
 
@@ -236,10 +254,19 @@
       flyToward(enemy.position, 0.8);
     }
 
-    // Aim ship at enemy and fire lasers
-    aimAndFireLaserAt(enemy);
+    // Aim ship at enemy (orients), then fire only if they're actually lined up
+    const aimDummy = { position: enemy.position };
+    if (window.orientTowardsTarget) window.orientTowardsTarget(aimDummy);
+    // Keep the lock so missile/laser auto-aim work
+    gameState.targetLock.active = true;
+    gameState.targetLock.target = enemy;
+    gameState.currentTarget = enemy;
+    // Pull the trigger only when in the forward mouse-aim cone
+    if (isInFiringCone(enemy, 3000)) {
+      aimAndFireLaserAt(enemy);
+    }
 
-    // Fire a missile if we haven't recently and it's a tougher target
+    // Fire a missile if we haven't recently — missile auto-tracks so no cone gate
     if (t > 8000 && !ap.missileShown && gameState.missiles.current > 0 && !shieldsActive()) {
       ap.missileShown = true;
       setStatus('Firing missile!');
@@ -448,7 +475,15 @@
       } else {
         flyToward(target.position, 0.8);
       }
-      aimAndFireLaserAt(target);
+      // Orient toward the Borg target, then only fire if lined up
+      const aimDummy = { position: target.position };
+      if (window.orientTowardsTarget) window.orientTowardsTarget(aimDummy);
+      gameState.targetLock.active = true;
+      gameState.targetLock.target = target;
+      gameState.currentTarget = target;
+      if (isInFiringCone(target, 3500)) {
+        aimAndFireLaserAt(target);
+      }
 
       if (t % 10000 < 100 && gameState.missiles.current > 0 && !shieldsActive()) {
         fireMissileAt(target);
@@ -503,20 +538,63 @@
     k.a = (Math.sin(ap.orbitAngle) <= 0);
   }
 
+  // Returns true if target is within the ship's forward mouse-aim cone.
+  // ~14° half-angle matches how a player lines up shots with the crosshair.
+  function isInFiringCone(target, maxRangeOverride) {
+    if (!target || typeof camera === 'undefined') return false;
+    const pos = target.position || target;
+    const toTarget = new THREE.Vector3().subVectors(pos, camera.position);
+    const dist = toTarget.length();
+    const maxRange = maxRangeOverride || 2000;
+    if (dist > maxRange || dist < 1) return false;
+    toTarget.normalize();
+    const forward = new THREE.Vector3();
+    camera.getWorldDirection(forward);
+    const dot = forward.dot(toTarget);
+    return dot > 0.97; // cos(~14°) — tight forward cone
+  }
+
+  // Find any enemy OR asteroid inside the firing cone
+  function findTargetInFiringCone(maxRange) {
+    // Enemies first
+    if (typeof enemies !== 'undefined') {
+      for (let i = 0; i < enemies.length; i++) {
+        const e = enemies[i];
+        if (!e.userData || e.userData.health <= 0) continue;
+        if (isInFiringCone(e, maxRange)) return e;
+      }
+    }
+    // Then asteroids
+    if (typeof planets !== 'undefined') {
+      for (let i = 0; i < planets.length; i++) {
+        const p = planets[i];
+        if (!p.userData || p.userData.type !== 'asteroid') continue;
+        if (p.userData.health <= 0) continue;
+        if (isInFiringCone(p, maxRange)) return p;
+      }
+    }
+    return null;
+  }
+
   function aimAndFireLaserAt(target) {
     if (!target) return;
     const dummy = { position: target.position };
     if (window.orientTowardsTarget) window.orientTowardsTarget(dummy);
 
-    // Set target lock for auto-aim
-    gameState.targetLock.active = true;
-    gameState.targetLock.target = target;
-    gameState.currentTarget = target;
+    // Set target lock for auto-aim (enemies only — fireWeapon excludes asteroids from lock)
+    if (target.userData && target.userData.type !== 'asteroid') {
+      gameState.targetLock.active = true;
+      gameState.targetLock.target = target;
+      gameState.currentTarget = target;
+    }
+
+    // Only pull the trigger if the target is actually in the forward mouse-aim cone
+    if (!isInFiringCone(target, 2500)) return;
 
     const now = Date.now();
-    if (now - ap.lastFire > 300 && gameState.weapons.cooldown <= 0 && gameState.weapons.energy >= 10) {
+    // Slower cadence: ~1 shot per 900 ms
+    if (now - ap.lastFire > 900 && gameState.weapons.cooldown <= 0 && gameState.weapons.energy >= 10) {
       ap.lastFire = now;
-      // Aim crosshair center for asteroid hits
       gameState.crosshairX = window.innerWidth / 2;
       gameState.crosshairY = window.innerHeight / 2;
       if (window.fireWeapon) window.fireWeapon();
