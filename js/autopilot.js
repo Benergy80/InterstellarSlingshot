@@ -184,8 +184,8 @@
     if (gameState.energy < 40) gameState.energy = Math.min(100, gameState.energy + 1);
     if (gameState.missiles && gameState.missiles.current === 0)
       gameState.missiles.current = gameState.missiles.capacity || 3;
-    if (gameState.emergencyWarp && gameState.emergencyWarp.available === 0)
-      gameState.emergencyWarp.available = 1;
+    // NOTE: we intentionally do NOT top up emergencyWarp.available — the
+    // demo earns warps by defeating enemies (same as normal gameplay).
 
     // Clear movement keys each frame; we set what we need below
     releaseMovementKeys();
@@ -283,24 +283,24 @@
     }
 
     // Nothing on sensors — drift forward and demonstrate planet targeting
-    // by cycling nearby planets on the nav panel.  If we've been empty for a
-    // while, punch an emergency warp to leapfrog to new territory.
+    // by cycling nearby planets on the nav panel.
     cycleScanTarget();
     flyToward({ x: camPos().x + 200, y: camPos().y, z: camPos().z + 200 }, 1.0);
 
-    if (t > 4000 && Date.now() - (ap.lastNebulaWarp || 0) > 20000 &&
-        gameState.emergencyWarp.available > 0 &&
-        !gameState.emergencyWarp.active && !gameState.emergencyWarp.transitioning) {
+    // Emergency warp to a new sector is ONLY allowed after we've defeated
+    // at least 3 enemies this run (canEmergencyWarp() enforces this).
+    if (t > 4000 && Date.now() - (ap.lastNebulaWarp || 0) > 20000 && canEmergencyWarp()) {
       setStatus('Empty sector — emergency warp engaged');
       transmit('PROPULSION', 'Long-range scan mode.\nEmergency warp engaged for rapid sector survey.');
-      triggerEmergencyWarp();
-      ap.warpStartedAt = Date.now();
-      ap.lastNebulaWarp = Date.now();
+      if (triggerEmergencyWarp()) {
+        ap.warpStartedAt = Date.now();
+        ap.lastNebulaWarp = Date.now();
+      }
     }
 
-    // Safety: after 18 s with no kills, advance to the nebula objective
-    if (t > 18000) {
-      ap.segmentKills = Math.max(ap.segmentKills, 3); // force progression
+    // Advance to the nebula objective ONLY after the first 3 kills.  If
+    // we still haven't defeated anyone, keep scanning indefinitely.
+    if (t > 18000 && ap.enemiesKilled >= 3) {
       goPhase('warpToNebulaCluster');
     }
   }
@@ -345,29 +345,32 @@
     }
 
     const dist = camPos().distanceTo(enemy.position);
+    const autoAimRange = (gameState.targetLock && gameState.targetLock.range) || 600;
 
-    if (dist > 600) {
-      setStatus('Closing on target…');
-      flyToward(enemy.position, 2.0);
+    if (dist > autoAimRange) {
+      // OUTSIDE auto-aim range: pursue hard, do NOT fire yet
+      setStatus('Pursuing ' + (enemy.userData.name || 'hostile') + ' — ' + (dist | 0) + ' u');
+      flyToward(enemy.position, 2.5);
     } else {
-      setStatus('Engaging ' + (enemy.userData.name || 'hostile'));
+      // INSIDE auto-aim range: slow down, stay on target, line up shots
+      setStatus('Engaging ' + (enemy.userData.name || 'hostile') + ' — auto-aim locked');
       flyToward(enemy.position, 0.8);
     }
 
-    // Orient + lock
+    // Always orient toward the target and activate the lock so the game's
+    // auto-aim system will engage when we reach range.  autoFireOnTargetLock
+    // handles the actual trigger pull, gated on autoAimRange.
     const aimDummy = { position: enemy.position };
     if (window.orientTowardsTarget) window.orientTowardsTarget(aimDummy);
     gameState.targetLock.active = true;
     gameState.targetLock.target = enemy;
     gameState.currentTarget = enemy;
 
-    if (isInFiringCone(enemy, 3000)) {
-      aimAndFireLaserAt(enemy);
-    }
-
-    // One missile per combat encounter — missiles require shields down, so we
-    // briefly drop them to fire the torpedo then bring them back next frame
-    if (t > 6000 && !ap.combatMissileFired && gameState.missiles.current > 0) {
+    // One missile per combat encounter — only once we're inside auto-aim
+    // range so the missile actually has a chance of hitting, and the
+    // demonstration lines up with the laser-fire sequence.
+    if (t > 6000 && !ap.combatMissileFired && gameState.missiles.current > 0 &&
+        dist <= autoAimRange) {
       ap.combatMissileFired = true;
       setStatus('Firing missile!');
       transmit('WEAPONS', 'Missile locked and loaded!\nDropping shields — firing torpedo!');
@@ -421,16 +424,17 @@
     if (window.orientTowardsTarget) window.orientTowardsTarget(dummy);
     keys().w = true;
 
-    if (t > 1500 && !gameState.emergencyWarp.active && !gameState.emergencyWarp.transitioning) {
+    if (t > 1500 && canEmergencyWarp()) {
       setStatus('EMERGENCY WARP — ENGAGING');
       transmit('PROPULSION', 'Emergency warp drive engaged!\nBrace for hyperspace jump.');
-      triggerEmergencyWarp();
-      ap.warpsUsed++;
-      ap.warpStartedAt = Date.now();
-      goPhase('coastToNebulaCluster');
+      if (triggerEmergencyWarp()) {
+        ap.warpsUsed++;
+        ap.warpStartedAt = Date.now();
+        goPhase('coastToNebulaCluster');
+      }
     }
 
-    // Safety: if warp somehow fails, just fly there normally
+    // Safety: if warp somehow fails (or still gated), just fly there normally
     if (t > 6000) {
       goPhase('coastToNebulaCluster');
     }
@@ -791,13 +795,14 @@
     const distFromOrigin = camPos().length();
 
     if (distFromOrigin < 70000) {
-      if (!gameState.emergencyWarp.active && gameState.emergencyWarp.available > 0 && t > 3000) {
+      if (canEmergencyWarp() && t > 3000) {
         // Face away from origin and punch it
         const outward = camPos().clone().multiplyScalar(2);
         const dummy = { position: outward };
         if (window.orientTowardsTarget) window.orientTowardsTarget(dummy);
-        triggerEmergencyWarp();
-        ap.warpStartedAt = Date.now();
+        if (triggerEmergencyWarp()) {
+          ap.warpStartedAt = Date.now();
+        }
       } else {
         flyToward({ x: 80000, y: 0, z: 0 }, 3.0);
       }
@@ -951,11 +956,13 @@
       gameState.currentTarget = target;
     }
 
-    // Only pull the trigger if the target is actually in the forward mouse-aim cone
-    if (!isInFiringCone(target, 2500)) return;
+    // Only fire inside the game's auto-aim range AND when lined up
+    const autoAimRange = (gameState.targetLock && gameState.targetLock.range) || 600;
+    const dist = camPos().distanceTo(target.position);
+    if (dist > autoAimRange) return;
+    if (!isInFiringCone(target, autoAimRange + 100)) return;
 
     const now = Date.now();
-    // Slower cadence: ~1 shot per 900 ms
     if (now - ap.lastFire > 900 && gameState.weapons.cooldown <= 0 && gameState.weapons.energy >= 10) {
       ap.lastFire = now;
       gameState.crosshairX = window.innerWidth / 2;
@@ -970,11 +977,12 @@
     if (window.fireMissile) window.fireMissile();
   }
 
-  // Fire lasers as long as the game's targeting system holds a live enemy
-  // inside the forward cone.  Only runs during combat phases so travel time
-  // stays quiet.  Stops firing the moment the lock drops.
+  // Fire lasers ONLY when the game's auto mouse targeting has engaged on a
+  // live enemy — i.e. the enemy is inside gameState.targetLock.range (the
+  // game's auto-aim bubble).  Runs during combat and Borg fight phases.
+  // Stops firing the instant the lock drops or the target moves out of
+  // auto-aim range.
   function autoFireOnTargetLock() {
-    // Only during combat/fightBorg — travel phases should never auto-fire
     if (ap.phase !== 'combat' && ap.phase !== 'fightBorg') return;
     if (!gameState || !gameState.targetLock || !gameState.targetLock.active) return;
     const tgt = gameState.targetLock.target;
@@ -982,7 +990,15 @@
     // Only fire on enemies, never on asteroids/planets/etc.
     if (tgt.userData.type !== 'enemy' && !tgt.userData.isBorg) return;
     if (tgt.userData.health <= 0) return;
-    if (!isInFiringCone(tgt, 3500)) return;
+
+    // CRITICAL: only fire inside the game's auto-aim range.  updateTargetLock
+    // uses gameState.targetLock.range (default 600 u) to decide whether
+    // mouse auto-aim will engage; we honour the same rule.
+    const autoAimRange = (gameState.targetLock && gameState.targetLock.range) || 600;
+    const dist = camPos().distanceTo(tgt.position);
+    if (dist > autoAimRange) return;
+
+    if (!isInFiringCone(tgt, autoAimRange + 100)) return;
 
     const now = Date.now();
     if (now - (ap.lastFire || 0) < 900) return;
@@ -994,14 +1010,24 @@
     if (window.fireWeapon) window.fireWeapon();
   }
 
+  // Emergency warp is gated: the autopilot is NOT allowed to use its own
+  // warp charges until at least 3 enemies have been defeated this demo run.
+  // Returns true if the warp actually fired.
+  function canEmergencyWarp() {
+    if (!gameState.emergencyWarp) return false;
+    if (ap.enemiesKilled < 3) return false;
+    if (gameState.emergencyWarp.available <= 0) return false;
+    if (gameState.emergencyWarp.active) return false;
+    if (gameState.emergencyWarp.transitioning) return false;
+    if (typeof shieldSystem !== 'undefined' && shieldSystem.active) return false;
+    return true;
+  }
+
   function triggerEmergencyWarp() {
-    if (!gameState.emergencyWarp) return;
-    if (gameState.emergencyWarp.available > 0 &&
-        !gameState.emergencyWarp.active &&
-        !gameState.emergencyWarp.transitioning) {
-      keys().enter = true;
-      setTimeout(() => { keys().enter = false; }, 100);
-    }
+    if (!canEmergencyWarp()) return false;
+    keys().enter = true;
+    setTimeout(() => { keys().enter = false; }, 100);
+    return true;
   }
 
   // ─── World search helpers ──────────────────────────────────────────────────
