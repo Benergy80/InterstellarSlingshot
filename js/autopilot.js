@@ -93,12 +93,32 @@
 
   function onKeyDown(e) {
     if (e.key === 'Escape') { stop(); return; }
+
+    // Ignore shortcuts while typing into an input/textarea
+    const tag = (e.target && e.target.tagName) || '';
+    if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+
     // T toggles player takeover (T again returns to autopilot)
     if (!e.repeat && (e.key === 't' || e.key === 'T')) {
-      // Ignore if the user is typing into a text input
-      const tag = (e.target && e.target.tagName) || '';
-      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
       toggleTakeover();
+      return;
+    }
+
+    // O — manual emergency warp shortcut.  Works during demo, during
+    // takeover, whenever.  We fire it via the game's normal keys.enter
+    // channel so the physics warp code path runs unchanged.
+    if (!e.repeat && (e.key === 'o' || e.key === 'O')) {
+      if (typeof gameState !== 'undefined' &&
+          gameState.emergencyWarp &&
+          gameState.emergencyWarp.available > 0 &&
+          !gameState.emergencyWarp.active &&
+          !gameState.emergencyWarp.transitioning &&
+          (typeof shieldSystem === 'undefined' || !shieldSystem.active)) {
+        if (window.keys) {
+          window.keys.enter = true;
+          setTimeout(() => { if (window.keys) window.keys.enter = false; }, 100);
+        }
+      }
     }
   }
 
@@ -149,6 +169,14 @@
 
     // Clear movement keys each frame; we set what we need below
     releaseMovementKeys();
+
+    // ── Crosshair auto-fire ─────────────────────────────────────────────
+    // Whenever the game's targeting system has locked onto a live enemy
+    // inside the forward mouse-aim cone, pull the laser trigger.  When the
+    // lock disengages (enemy dead / moves out of cone / lock cleared) the
+    // firing stops automatically.  Runs parallel to phase logic so combat,
+    // pursuit and travel all benefit from it.
+    autoFireOnTargetLock();
 
     // Dispatch
     switch (ap.phase) {
@@ -867,6 +895,27 @@
     if (window.fireMissile) window.fireMissile();
   }
 
+  // Fire lasers as long as the game's targeting system holds a live enemy
+  // inside the forward cone.  Stops firing the moment the lock drops.
+  function autoFireOnTargetLock() {
+    if (!gameState || !gameState.targetLock || !gameState.targetLock.active) return;
+    const tgt = gameState.targetLock.target;
+    if (!tgt || !tgt.userData) return;
+    // Only fire on enemies, never on asteroids/planets/etc.
+    if (tgt.userData.type !== 'enemy' && !tgt.userData.isBorg) return;
+    if (tgt.userData.health <= 0) return;
+    if (!isInFiringCone(tgt, 3500)) return;
+
+    const now = Date.now();
+    if (now - (ap.lastFire || 0) < 900) return;
+    if (gameState.weapons.cooldown > 0 || gameState.weapons.energy < 10) return;
+
+    ap.lastFire = now;
+    gameState.crosshairX = window.innerWidth / 2;
+    gameState.crosshairY = window.innerHeight / 2;
+    if (window.fireWeapon) window.fireWeapon();
+  }
+
   function triggerEmergencyWarp() {
     if (!gameState.emergencyWarp) return;
     if (gameState.emergencyWarp.available > 0 &&
@@ -1054,11 +1103,31 @@
     ap.statusText = msg;
   }
 
+  // ─── Notification coordination ────────────────────────────────────────────
+  // Dedup per-title notifications for 6 s, and never overlap an achievement
+  // toast with an incoming transmission (transmissions win, notifies wait).
+  // Transmissions are rate-limited to one every 7 s so prompts don't clobber
+  // each other mid-animation.
+  const NOTIFY_COOLDOWN_MS = 6000;
+  const TRANSMIT_COOLDOWN_MS = 7000;
+  ap._lastNotify = {};
+  ap._lastTransmit = 0;
+
   function notify(title, body) {
+    const now = Date.now();
+    const last = ap._lastNotify[title] || 0;
+    if (now - last < NOTIFY_COOLDOWN_MS) return;
+    // If a transmission popup is currently on screen, defer this toast so we
+    // don't stack two large UI blocks on top of each other.
+    if (document.getElementById('incomingTransmissionPrompt')) return;
+    ap._lastNotify[title] = now;
     if (typeof showAchievement === 'function') showAchievement(title, body);
   }
 
   function transmit(from, msg) {
+    const now = Date.now();
+    if (now - ap._lastTransmit < TRANSMIT_COOLDOWN_MS) return;
+    ap._lastTransmit = now;
     if (typeof showIncomingTransmission === 'function') {
       showIncomingTransmission(from, msg, 0x00ccff);
     }
