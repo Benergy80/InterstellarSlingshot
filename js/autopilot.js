@@ -82,6 +82,16 @@
       }
     }
 
+    // Disable the tutorial for demo mode — no tutorial popups or forced
+    // pauses.  We mark it complete and hide any alert already on screen.
+    if (typeof tutorialSystem !== 'undefined') {
+      tutorialSystem.active = false;
+      tutorialSystem.completed = true;
+      tutorialSystem.completionTime = Date.now();
+    }
+    const alertEl = document.getElementById('missionCommandAlert');
+    if (alertEl) alertEl.classList.add('hidden');
+
     document.addEventListener('keydown', onKeyDown);
     notify('🤖 DEMO MODE ACTIVE', 'Autopilot engaged — press ESC to exit');
   }
@@ -162,6 +172,12 @@
     if (ap.paused) { tickHUD(); return; }
     if (typeof gameState === 'undefined' || !gameState.gameStarted) return;
     if (gameState.gameOver) { gameState.gameOver = false; return; }
+
+    // Defensively keep the tutorial system disabled every frame
+    if (typeof tutorialSystem !== 'undefined' && tutorialSystem.active) {
+      tutorialSystem.active = false;
+      tutorialSystem.completed = true;
+    }
 
     // Keep ship alive so the demo never ends prematurely
     if (gameState.hull < 50)   gameState.hull   = Math.min(gameState.maxHull || 100, gameState.hull + 1);
@@ -1235,9 +1251,43 @@
     const now = Date.now();
     if (now - ap._lastTransmit < TRANSMIT_COOLDOWN_MS) return;
     ap._lastTransmit = now;
-    if (typeof showIncomingTransmission === 'function') {
-      showIncomingTransmission(from, msg, 0x00ccff);
-    }
+
+    if (typeof showIncomingTransmission !== 'function') return;
+    showIncomingTransmission(from, msg, 0x00ccff);
+
+    // Demo-mode flow:
+    //   +2000 ms — auto-click READ so the full transmission opens
+    //   +7000 ms — auto-close the full transmission
+    // The game's handleRead() pauses the game; we immediately undo the
+    // pause so the demo keeps running.
+    setTimeout(() => {
+      if (!ap.active) return;
+      const readBtn = document.getElementById('transmissionRead');
+      if (readBtn) {
+        readBtn.click();
+        // handleRead() sets gameState.paused = true — unpause right away.
+        if (typeof gameState !== 'undefined') gameState.paused = false;
+        // Restore the cursor-hidden gameplay state (handleRead showed it)
+        if (typeof renderer !== 'undefined' && renderer && renderer.domElement) {
+          renderer.domElement.style.cursor = 'none';
+        }
+        // Button container in the mission alert can include UNDERSTOOD /
+        // SKIP TUTORIAL — neither should appear in demo mode, so wipe any
+        // buttons the alert just drew.
+        const alertEl = document.getElementById('missionCommandAlert');
+        if (alertEl) {
+          alertEl.querySelectorAll('button').forEach(b => b.remove());
+        }
+      }
+    }, 2000);
+
+    setTimeout(() => {
+      if (!ap.active) return;
+      const alertEl = document.getElementById('missionCommandAlert');
+      if (alertEl) alertEl.classList.add('hidden');
+      // Make sure gameState isn't stuck paused after our auto-open
+      if (typeof gameState !== 'undefined') gameState.paused = false;
+    }, 7000);
   }
 
   // ─── HUD ──────────────────────────────────────────────────────────────────
