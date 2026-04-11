@@ -70,7 +70,11 @@
       gameState.mouseAiming = true;
       if (gameState.targetLock) {
         gameState.targetLock.autoAim = true;
+        // Start with lock OFF — phaseCombat turns it on when engaging
+        gameState.targetLock.active = false;
+        gameState.targetLock.target = null;
       }
+      gameState.currentTarget = null;
       // Center the virtual crosshair so forward raycasts travel straight
       if (typeof window !== 'undefined') {
         gameState.crosshairX = window.innerWidth / 2;
@@ -262,9 +266,10 @@
       return;
     }
 
-    // Nothing on sensors — drift forward, and if we've been empty for a while,
-    // punch an emergency warp to leapfrog to new territory
-    setStatus('Scanning sector — no contacts');
+    // Nothing on sensors — drift forward and demonstrate planet targeting
+    // by cycling nearby planets on the nav panel.  If we've been empty for a
+    // while, punch an emergency warp to leapfrog to new territory.
+    cycleScanTarget();
     flyToward({ x: camPos().x + 200, y: camPos().y, z: camPos().z + 200 }, 1.0);
 
     if (t > 4000 && Date.now() - (ap.lastNebulaWarp || 0) > 20000 &&
@@ -273,6 +278,7 @@
       setStatus('Empty sector — emergency warp engaged');
       transmit('PROPULSION', 'Long-range scan mode.\nEmergency warp engaged for rapid sector survey.');
       triggerEmergencyWarp();
+      ap.warpStartedAt = Date.now();
       ap.lastNebulaWarp = Date.now();
     }
 
@@ -293,12 +299,22 @@
 
     const enemy = ap.combatTarget;
 
-    if (!enemy || !enemy.userData || enemy.userData.health <= 0) {
+    // No target on entry → bounce silently, no kill notification
+    if (!enemy || !enemy.userData) {
+      goPhase(ap.returnPhase || 'findLocalEnemies');
+      return;
+    }
+
+    // Target killed — notify exactly once per actual kill
+    if (enemy.userData.health <= 0) {
       ap.enemiesKilled++;
       ap.segmentKills = (ap.segmentKills || 0) + 1;
       ap.combatMissileFired = false;
       setStatus('Target eliminated (' + ap.segmentKills + ' this segment)');
       notify('Target Eliminated', 'Enemy destroyed — hull salvage collected');
+      // Clear the reference so we don't re-notify this same object if the
+      // game hasn't spliced it out yet
+      ap.combatTarget = null;
       // Drop shields as soon as the fight ends
       ensureShieldsFor('travel');
 
@@ -380,6 +396,10 @@
         '\nEngaging emergency warp drive for rapid transit.');
     }
 
+    // Showcase planet targeting while plotting the course — cycle through
+    // nearby planets on the Navigation System so viewers see the target list
+    cycleScanTarget();
+
     // Face the nebula, then punch emergency warp
     const dummy = { position: ap.currentNebula.position };
     if (window.orientTowardsTarget) window.orientTowardsTarget(dummy);
@@ -390,6 +410,7 @@
       transmit('PROPULSION', 'Emergency warp drive engaged!\nBrace for hyperspace jump.');
       triggerEmergencyWarp();
       ap.warpsUsed++;
+      ap.warpStartedAt = Date.now();
       goPhase('coastToNebulaCluster');
     }
 
@@ -404,9 +425,28 @@
     ensureShieldsFor('travel');
     ensureThirdPerson();
 
-    // Break off to engage any detected hostile (skip if still warp-coasting)
+    // Coast is "hot" (no braking allowed) until the emergency warp's full
+    // active cycle is finished.  Physics sets emergencyWarp.active while the
+    // 15 s boost is running; after that it flips to postWarp momentum coast.
+    const warpCycleActive =
+      (gameState.emergencyWarp && (gameState.emergencyWarp.active || gameState.emergencyWarp.transitioning)) ||
+      (gameState.slingshot && gameState.slingshot.active);
+    const warpMinCoastMs = (gameState.emergencyWarp && gameState.emergencyWarp.boostDuration) || 15000;
+    const coastLockUntil = (ap.warpStartedAt || 0) + warpMinCoastMs;
+    const inLockedCoast = warpCycleActive || Date.now() < coastLockUntil;
+
     const speedNow = gameState.velocityVector ? gameState.velocityVector.length() : 0;
-    if (speedNow < 3 && !gameState.emergencyWarp.active) {
+
+    // While the warp cycle is locked, keep firing planet-target demos to the
+    // nav system and suppress all braking / intruder break-off.
+    if (inLockedCoast) {
+      setStatus('Warp coast — ' + Math.max(0, ((coastLockUntil - Date.now()) / 1000)).toFixed(0) + 's remaining');
+      cycleScanTarget();
+      return;
+    }
+
+    // Break off to engage any detected hostile after the coast is cleared
+    if (speedNow < 3) {
       const intruder = navDetectedEnemy();
       if (intruder) {
         ap.combatTarget = intruder;
@@ -417,7 +457,7 @@
       }
     }
 
-    const speed = gameState.velocityVector ? gameState.velocityVector.length() : 0;
+    const speed = speedNow;
 
     if (!ap.currentNebula) {
       goPhase('gotoBlackHoleGalaxy');
@@ -459,7 +499,7 @@
     }
 
     // Safety timeout
-    if (t > 30000) {
+    if (t > 45000) {
       ap.brakingAfterWarp = false;
       goPhase('orbitNebulaPlanet');
     }
@@ -635,6 +675,7 @@
       ap.currentBH = null;
       ap.brakingAfterWarp = false;
       ap.warpsUsed++;
+      ap.warpStartedAt = Date.now();
       goPhase('coastAfterWarp');
     }
   }
@@ -644,9 +685,26 @@
     ensureShieldsFor('travel');
     ensureThirdPerson();
 
+    // Coast lock — same rule as emergency warp: don't brake while the warp's
+    // active/transition/slingshot phase is running, and keep coasting until
+    // at least the full boost duration has elapsed.
+    const warpCycleActive =
+      (gameState.emergencyWarp && (gameState.emergencyWarp.active || gameState.emergencyWarp.transitioning)) ||
+      (gameState.slingshot && gameState.slingshot.active);
+    const warpMinCoastMs = (gameState.emergencyWarp && gameState.emergencyWarp.boostDuration) || 15000;
+    const coastLockUntil = (ap.warpStartedAt || 0) + warpMinCoastMs;
+    const inLockedCoast = warpCycleActive || Date.now() < coastLockUntil;
+
+    const speedNow = gameState.velocityVector ? gameState.velocityVector.length() : 0;
+
+    if (inLockedCoast) {
+      setStatus('Warp coast — ' + Math.max(0, ((coastLockUntil - Date.now()) / 1000)).toFixed(0) + 's remaining');
+      cycleScanTarget();
+      return;
+    }
+
     // After warp coast is over, engage any hostile the nav system sees
-    const speedCheck = gameState.velocityVector ? gameState.velocityVector.length() : 0;
-    if (speedCheck < 3) {
+    if (speedNow < 3) {
       const intruder = navDetectedEnemy();
       if (intruder) {
         ap.combatTarget = intruder;
@@ -657,7 +715,7 @@
       }
     }
 
-    const speed = gameState.velocityVector ? gameState.velocityVector.length() : 0;
+    const speed = speedNow;
 
     // Find nearest asteroid belt to current position
     const belt = nearestAsteroidBelt();
@@ -723,6 +781,7 @@
         const dummy = { position: outward };
         if (window.orientTowardsTarget) window.orientTowardsTarget(dummy);
         triggerEmergencyWarp();
+        ap.warpStartedAt = Date.now();
       } else {
         flyToward({ x: 80000, y: 0, z: 0 }, 3.0);
       }
@@ -896,8 +955,11 @@
   }
 
   // Fire lasers as long as the game's targeting system holds a live enemy
-  // inside the forward cone.  Stops firing the moment the lock drops.
+  // inside the forward cone.  Only runs during combat phases so travel time
+  // stays quiet.  Stops firing the moment the lock drops.
   function autoFireOnTargetLock() {
+    // Only during combat/fightBorg — travel phases should never auto-fire
+    if (ap.phase !== 'combat' && ap.phase !== 'fightBorg') return;
     if (!gameState || !gameState.targetLock || !gameState.targetLock.active) return;
     const tgt = gameState.targetLock.target;
     if (!tgt || !tgt.userData) return;
@@ -1014,6 +1076,38 @@
     return candidates[Math.floor(Math.random() * candidates.length)];
   }
 
+  // While scanning/coasting, cycle through nearby planets on the navigation
+  // panel every 3 seconds.  Demonstrates planet targeting without
+  // interrupting travel — we set gameState.currentTarget but never steer to
+  // it.  Clears the lock if no planets are in range.
+  function cycleScanTarget() {
+    const now = Date.now();
+    if (now - (ap._lastScanCycle || 0) < 3000) return;
+    ap._lastScanCycle = now;
+
+    if (typeof planets === 'undefined') return;
+    const candidates = planets.filter(p => {
+      const ud = p && p.userData;
+      if (!ud) return false;
+      if (ud.type === 'blackhole' || ud.type === 'asteroid' ||
+          ud.type === 'asteroidBelt' || ud.type === 'moon') return false;
+      const d = camPos().distanceTo(p.position);
+      return d < 8000;
+    });
+
+    if (candidates.length === 0) return;
+
+    ap._scanIdx = ((ap._scanIdx || 0) + 1) % candidates.length;
+    const pick = candidates[ap._scanIdx];
+    gameState.currentTarget = pick;
+    // Don't activate targetLock — we don't want the weapon auto-aim
+    // to fire at a planet.  currentTarget alone drives the nav panel.
+    if (typeof populateTargets === 'function') populateTargets();
+
+    const nm = (pick.userData && pick.userData.name) || 'planet';
+    setStatus('Scanning — nav target: ' + nm);
+  }
+
   // Find a regular planet (not a star/black hole/asteroid) within maxRange of a point
   function planetNear(point, maxRange) {
     if (typeof planets === 'undefined' || !point) return null;
@@ -1071,8 +1165,21 @@
     ap.phaseStart = Date.now();
     ap.subState = 0;
     ap.navTarget = null;
-    ap.combatTarget = null;
     ap.lastFire = ap.lastFire || 0;
+    // Do NOT clear combatTarget — each phase manages its own target lifecycle
+    // and clearing it here wipes what findLocalEnemies just set when it
+    // transitions into 'combat'.
+
+    // If we are leaving combat (entering anything that isn't combat/fightBorg),
+    // drop the game's auto-aim lock so it stops auto-firing at travel time.
+    if (name !== 'combat' && name !== 'fightBorg') {
+      if (gameState && gameState.targetLock) {
+        gameState.targetLock.active = false;
+        gameState.targetLock.target = null;
+      }
+      if (gameState) gameState.currentTarget = null;
+      ap.combatTarget = null;
+    }
   }
 
   function resetFlags() {

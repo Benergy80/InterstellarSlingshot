@@ -688,12 +688,18 @@ function createDemoButton() {
         font-family: 'Orbitron', monospace;
     `;
     demoButton.innerHTML = `
-        <div style="text-align:center;color:white;">
-            <div style="font-size:0.95rem;font-weight:bold;color:#44aaff;
-                        text-shadow:0 0 10px rgba(68,170,255,0.8);letter-spacing:3px;">
+        <div style="text-align:center;">
+            <div style="font-size:0.95rem;font-weight:bold;color:#ffe066;
+                        text-shadow:0 0 8px rgba(255,224,102,1),
+                                    0 0 16px rgba(255,200,40,0.9),
+                                    0 0 28px rgba(255,180,0,0.7);
+                        letter-spacing:3px;">
                 DEMO MODE
             </div>
-            <div style="font-size:0.7rem;opacity:0.75;margin-top:3px;letter-spacing:1px;color:#aaccff;">
+            <div style="font-size:0.7rem;margin-top:3px;letter-spacing:1px;
+                        color:#fff1a8;
+                        text-shadow:0 0 6px rgba(255,224,102,0.9),
+                                    0 0 12px rgba(255,200,40,0.6);">
                 AUTOPILOT SHOWCASE
             </div>
         </div>
