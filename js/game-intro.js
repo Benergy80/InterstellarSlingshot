@@ -638,25 +638,96 @@ function revealIntroScene() {
 function showStartButton() {
     // Create and show the start button with fade-in
     createStartButton();
-    
+    createDemoButton();
+
     // Fade in start button
     if (introSequence.startButton) {
         introSequence.startButton.style.opacity = '0';
         introSequence.startButton.style.transition = 'opacity 1s ease-in-out';
-        
+
         // Trigger fade-in after a brief delay
         setTimeout(() => {
             introSequence.startButton.style.opacity = '1';
         }, 100);
     }
-    
+
+    // Fade in demo button
+    if (introSequence.demoButton) {
+        introSequence.demoButton.style.opacity = '0';
+        introSequence.demoButton.style.transition = 'opacity 1s ease-in-out';
+        setTimeout(() => {
+            introSequence.demoButton.style.opacity = '1';
+        }, 300);
+    }
+
     // Fade in skip button
     if (introSequence.skipButton) {
         introSequence.skipButton.style.transition = 'opacity 1s ease-in-out';
         introSequence.skipButton.style.opacity = '0.7';
     }
-    
-    console.log('🚀 Start button and skip button faded in');
+
+    console.log('🚀 Start button, demo button, and skip button faded in');
+}
+
+function createDemoButton() {
+    const demoButton = document.createElement('button');
+    demoButton.id = 'introDemoBtn';
+    demoButton.style.cssText = `
+        position: fixed;
+        top: calc(50% + 110px);
+        left: 50%;
+        transform: translateX(-50%);
+        z-index: 10000;
+        background: linear-gradient(135deg, rgba(0,100,255,0.2), rgba(0,50,200,0.3));
+        border: 2px solid rgba(0,150,255,0.7);
+        border-radius: 12px;
+        padding: 12px 32px;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        box-shadow: 0 0 20px rgba(0,150,255,0.4), inset 0 0 15px rgba(0,150,255,0.1);
+        font-family: 'Orbitron', monospace;
+    `;
+    demoButton.innerHTML = `
+        <div style="text-align:center;color:white;">
+            <div style="font-size:0.95rem;font-weight:bold;color:#44aaff;
+                        text-shadow:0 0 10px rgba(68,170,255,0.8);letter-spacing:3px;">
+                DEMO MODE
+            </div>
+            <div style="font-size:0.7rem;opacity:0.75;margin-top:3px;letter-spacing:1px;color:#aaccff;">
+                AUTOPILOT SHOWCASE
+            </div>
+        </div>
+    `;
+
+    demoButton.addEventListener('mouseenter', () => {
+        demoButton.style.background = 'linear-gradient(135deg, rgba(0,150,255,0.35), rgba(0,100,200,0.4))';
+        demoButton.style.boxShadow = '0 0 30px rgba(0,150,255,0.7), inset 0 0 20px rgba(0,150,255,0.2)';
+        demoButton.style.transform = 'translateX(-50%) scale(1.05)';
+    });
+    demoButton.addEventListener('mouseleave', () => {
+        demoButton.style.background = 'linear-gradient(135deg, rgba(0,100,255,0.2), rgba(0,50,200,0.3))';
+        demoButton.style.boxShadow = '0 0 20px rgba(0,150,255,0.4), inset 0 0 15px rgba(0,150,255,0.1)';
+        demoButton.style.transform = 'translateX(-50%) scale(1)';
+    });
+
+    demoButton.addEventListener('click', () => {
+        window.demoModeRequested = true;
+        console.log('🤖 Demo mode requested — skipping intro');
+        // Hide both buttons immediately
+        if (introSequence.startButton) {
+            introSequence.startButton.style.opacity = '0';
+            setTimeout(() => { if (introSequence.startButton) { introSequence.startButton.remove(); introSequence.startButton = null; } }, 500);
+        }
+        demoButton.style.opacity = '0';
+        setTimeout(() => demoButton.remove(), 500);
+        // Skip intro and go straight to game
+        if (typeof skipIntroSequence === 'function') {
+            skipIntroSequence();
+        }
+    });
+
+    document.body.appendChild(demoButton);
+    introSequence.demoButton = demoButton;
 }
 
 // =============================================================================
@@ -2019,9 +2090,20 @@ function setupNormalGameContent() {
         console.log('🎬 Starting game animation during black screen for seamless transition');
         animate(); // Start the normal game loop now
     }
-    
+
+    // AUTO-START DEMO AUTOPILOT if requested from launch screen
+    if (window.demoModeRequested) {
+        window.demoModeRequested = false;
+        setTimeout(() => {
+            if (window.demoPilot && typeof window.demoPilot.start === 'function') {
+                console.log('🤖 Auto-starting demo autopilot');
+                window.demoPilot.start();
+            }
+        }, 2000); // Give the scene 2 s to fully initialize
+    }
+
     // Debug beacons removed - nebulas now have proper fade-in visibility
-    
+
     console.log('✨ Normal game content setup complete with ALL features including cosmic phenomena');
 }
 function fadeCountdownTextForGameTransition() {

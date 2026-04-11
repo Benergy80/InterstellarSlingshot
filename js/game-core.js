@@ -1985,6 +1985,11 @@ if (typeof checkCosmicFeatureInteractions === 'function' && typeof camera !== 'u
         updateBorgBehavior();
     }
 
+    // DEMO AUTOPILOT — runs before physics so key inputs are applied this frame
+    if (typeof window !== 'undefined' && window.demoPilot && window.demoPilot.active) {
+        window.demoPilot.update();
+    }
+
     // Enhanced physics and controls for doubled world
     if (typeof perfDebug !== 'undefined') perfDebug.startTimer('physics');
     if (typeof updateEnhancedPhysics === 'function') {
