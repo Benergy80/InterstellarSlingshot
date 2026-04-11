@@ -9,6 +9,7 @@
   // ─── State ────────────────────────────────────────────────────────────────
   const ap = {
     active: false,
+    paused: false,          // true when player has taken over via T key
     phase: 'init',
     phaseStart: 0,
     subState: 0,
@@ -41,10 +42,16 @@
   };
 
   // ─── Public API ───────────────────────────────────────────────────────────
+  // NOTE: `active` stays true while paused so the game loop keeps calling
+  // update() and the HUD keeps ticking.  Use `driving` to know whether the
+  // autopilot is actually steering the ship.
   window.demoPilot = {
     start: start,
     stop: stop,
-    get active() { return ap.active; }
+    toggleTakeover: toggleTakeover,
+    get active() { return ap.active; },
+    get driving() { return ap.active && !ap.paused; },
+    get paused() { return ap.paused; }
   };
 
   // ─── Start / Stop ─────────────────────────────────────────────────────────
@@ -85,12 +92,50 @@
   }
 
   function onKeyDown(e) {
-    if (e.key === 'Escape') stop();
+    if (e.key === 'Escape') { stop(); return; }
+    // T toggles player takeover (T again returns to autopilot)
+    if (!e.repeat && (e.key === 't' || e.key === 'T')) {
+      // Ignore if the user is typing into a text input
+      const tag = (e.target && e.target.tagName) || '';
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+      toggleTakeover();
+    }
+  }
+
+  function toggleTakeover() {
+    if (!ap.active) return;
+    ap.paused = !ap.paused;
+    if (ap.paused) {
+      console.log('🕹️ Player takeover — autopilot paused');
+      // Hand controls back: release every key the autopilot was holding,
+      // drop target locks, and turn off shields so the player starts clean.
+      releaseKeys();
+      if (gameState && gameState.targetLock) {
+        gameState.targetLock.active = false;
+        gameState.targetLock.target = null;
+      }
+      if (gameState) gameState.currentTarget = null;
+      if (typeof shieldSystem !== 'undefined' && shieldSystem.active && window.deactivateShields) {
+        window.deactivateShields();
+      }
+      setStatus('PLAYER CONTROL — press T to resume demo');
+      notify('🕹️ PLAYER TAKEOVER', 'Controls yours — press T to resume demo');
+      updateHUDStyle(true);
+    } else {
+      console.log('🤖 Autopilot resumed');
+      // Restart the current phase cleanly
+      ap.phaseStart = Date.now();
+      setStatus('Autopilot resumed');
+      notify('🤖 AUTOPILOT RESUMED', 'Demo mode re-engaged — press T to take over');
+      updateHUDStyle(false);
+    }
   }
 
   // ─── Main update (called every frame from animate()) ──────────────────────
   function update() {
     if (!ap.active) return;
+    // Paused by player — still tick HUD but never drive the ship
+    if (ap.paused) { tickHUD(); return; }
     if (typeof gameState === 'undefined' || !gameState.gameStarted) return;
     if (gameState.gameOver) { gameState.gameOver = false; return; }
 
@@ -107,278 +152,430 @@
 
     // Dispatch
     switch (ap.phase) {
-      case 'init':               phaseInit();             break;
-      case 'sightseeing':        phaseSightseeing();      break;
-      case 'findEnemy':          phaseFindEnemy();        break;
-      case 'combat':             phaseCombat();           break;
-      case 'visitNebula':        phaseVisitNebula();      break;
-      case 'followPath':         phaseFollowPath();       break;
-      case 'gotoBlackHole':      phaseGotoBlackHole();    break;
-      case 'coastToGalaxy':      phaseCoastToGalaxy();    break;
-      case 'approachBorg':       phaseApproachBorg();     break;
-      case 'fightBorg':          phaseFightBorg();        break;
-      default:                   goPhase('sightseeing');
+      case 'init':                     phaseInit();                   break;
+      case 'findLocalEnemies':         phaseFindLocalEnemies();       break;
+      case 'combat':                   phaseCombat();                 break;
+      case 'warpToNebulaCluster':      phaseWarpToNebulaCluster();    break;
+      case 'coastToNebulaCluster':     phaseCoastToNebulaCluster();   break;
+      case 'orbitNebulaPlanet':        phaseOrbitNebulaPlanet();      break;
+      case 'followDiscoveryPath':      phaseFollowDiscoveryPath();    break;
+      case 'gotoBlackHoleGalaxy':      phaseGotoBlackHoleGalaxy();    break;
+      case 'blackHoleWarp':            phaseBlackHoleWarp();          break;
+      case 'coastAfterWarp':           phaseCoastAfterWarp();         break;
+      case 'approachBorg':             phaseApproachBorg();           break;
+      case 'fightBorg':                phaseFightBorg();              break;
+      default:                         goPhase('init');
     }
 
     tickHUD();
   }
 
   // ─── Phases ───────────────────────────────────────────────────────────────
+  //
+  // Goal order:
+  //   1) findLocalEnemies → combat (repeats until 3+ ships destroyed)
+  //   2) warpToNebulaCluster (emergency warp) → coastToNebulaCluster
+  //   3) orbitNebulaPlanet → triggers deep discovery → followDiscoveryPath
+  //   4) combat at revealed location (combat with returnPhase)
+  //   5) gotoBlackHoleGalaxy → combat at galaxy → blackHoleWarp
+  //   6) coastAfterWarp → combat loop in new galaxy (repeats a few times)
+  //   7) approachBorg → fightBorg → reset & loop
+  // ─────────────────────────────────────────────────────────────────────────
 
   function phaseInit() {
-    // Wait 3 s for scene to fully load, then switch to 3rd person and begin
     if (elapsed() > 3000) {
       ensureThirdPerson();
-      goPhase('sightseeing');
+      ap.segmentKills = 0;
+      ap.returnPhase = 'findLocalEnemies';
+      goPhase('findLocalEnemies');
     }
   }
 
-  function phaseSightseeing() {
+  // ─── 1) Hunt down local enemies ───────────────────────────────────────────
+  function phaseFindLocalEnemies() {
     const t = elapsed();
+    // Shields OFF while scanning — we're travelling
+    ensureShieldsFor('travel');
 
-    // ── Camera showreel: FPV for 8 s then back to 3rd person ──────────────
-    if (t > 10000 && !ap.fpvShown) {
-      ap.fpvShown = true;
-      setStatus('Switching to cockpit view…');
-      if (window.setCameraFirstPerson) window.setCameraFirstPerson();
-      ap.fpvTimer = Date.now();
-    }
-    if (ap.fpvTimer && Date.now() - ap.fpvTimer > 8000 && ap.fpvTimerDone !== true) {
-      ap.fpvTimerDone = true;
-      setStatus('Returning to chase cam');
-      ensureThirdPerson();
+    // Keep the game's Navigation System target list fresh
+    if (typeof populateTargets === 'function' && (t % 1500) < 100) {
+      populateTargets();
     }
 
-    // ── Pick an interesting planet to approach ────────────────────────────
-    if (!ap.orbitTarget || t > 20000 * (ap.subState + 1)) {
-      ap.orbitTarget = pickPlanet();
-      ap.subState++;
-      if (ap.orbitTarget) {
-        setStatus('Targeting ' + (ap.orbitTarget.userData.name || 'planet') + ' for orbit');
-        transmit('NAVIGATION SYSTEM', 'Plotting course to ' + (ap.orbitTarget.userData.name || 'nearby planet') + '\nEstimating orbital insertion…');
+    // First preference: an enemy the Navigation System has locked on to
+    const detected = navDetectedEnemy();
+    if (detected) {
+      const d = camPos().distanceTo(detected.position);
+      setStatus('NAV target: ' + (detected.userData.name || 'hostile') + ' · ' + (d | 0));
+      // Lock it on the navigation panel so viewers see the attraction
+      gameState.currentTarget = detected;
+      if (gameState.targetLock) {
+        gameState.targetLock.active = true;
+        gameState.targetLock.target = detected;
       }
-    }
-
-    // ── Orbit or approach chosen planet ───────────────────────────────────
-    if (ap.orbitTarget) {
-      const dist = camPos().distanceTo(ap.orbitTarget.position);
-      const radius = Math.max((ap.orbitTarget.userData.radius || 20) * 6, 150);
-      if (dist > radius * 2) {
-        setStatus('Flying to ' + (ap.orbitTarget.userData.name || 'planet'));
-        flyToward(ap.orbitTarget.position, 1.5);
-      } else {
-        setStatus('Orbiting ' + (ap.orbitTarget.userData.name || 'planet'));
-        orbitAround(ap.orbitTarget.position, radius);
+      // Fly toward it aggressively
+      flyToward(detected.position, 2.5);
+      // Once inside combat range, commit to the engagement
+      if (d < 2200) {
+        ap.combatTarget = detected;
+        ap.combatMissileFired = false;
+        transmit('TACTICAL', 'Nav system contact confirmed!\nHostile: ' + (detected.userData.name || 'Unknown') + '\nWeapon systems online.');
+        goPhase('combat');
       }
-    }
-
-    // ── Opportunistic fire: only if something is already in the forward cone ──
-    if (t > 5000) {
-      const coneTarget = findTargetInFiringCone(2500);
-      if (coneTarget) {
-        if (coneTarget.userData && coneTarget.userData.type === 'asteroid') {
-          setStatus('Asteroid in sights — hull salvage');
-        } else {
-          setStatus('Hostile in sights — engaging');
-        }
-        aimAndFireLaserAt(coneTarget);
-      }
-    }
-
-    // ── Demonstrate shields briefly ────────────────────────────────────────
-    if (t > 35000 && !ap.shieldShown && gameState.energy > 30) {
-      ap.shieldShown = true;
-      setStatus('Demonstrating energy shields');
-      transmit('DEFENSE SYSTEM', 'Energy shields activated!\nHexagonal barrier at full strength.');
-      if (window.activateShields) window.activateShields();
-      setTimeout(() => { if (window.deactivateShields) window.deactivateShields(); }, 5000);
-    }
-
-    // ── Demonstrate emergency warp ─────────────────────────────────────────
-    if (t > 50000 && !ap.emergencyWarpShown && !gameState.emergencyWarp.active) {
-      ap.emergencyWarpShown = true;
-      setStatus('Emergency warp — ENGAGING');
-      transmit('PROPULSION', 'Emergency warp drive charging…\nBrace for hyperspace jump!');
-      triggerEmergencyWarp();
-      ap.postWarpPhase = 'sightseeing_resume';
-      goPhase('coastToGalaxy');
       return;
     }
 
-    // ── After 60 s move on to combat ──────────────────────────────────────
-    if (t > 65000) {
-      goPhase('findEnemy');
+    // Fallback: widest sweep in case a distant enemy is the only option
+    const farEnemy = nearestAliveEnemy(15000);
+    if (farEnemy) {
+      setStatus('Long-range contact — intercepting');
+      flyToward(farEnemy.position, 2.5);
+      return;
+    }
+
+    // Nothing on sensors — drift forward, and if we've been empty for a while,
+    // punch an emergency warp to leapfrog to new territory
+    setStatus('Scanning sector — no contacts');
+    flyToward({ x: camPos().x + 200, y: camPos().y, z: camPos().z + 200 }, 1.0);
+
+    if (t > 4000 && Date.now() - (ap.lastNebulaWarp || 0) > 20000 &&
+        gameState.emergencyWarp.available > 0 &&
+        !gameState.emergencyWarp.active && !gameState.emergencyWarp.transitioning) {
+      setStatus('Empty sector — emergency warp engaged');
+      transmit('PROPULSION', 'Long-range scan mode.\nEmergency warp engaged for rapid sector survey.');
+      triggerEmergencyWarp();
+      ap.lastNebulaWarp = Date.now();
+    }
+
+    // Safety: after 18 s with no kills, advance to the nebula objective
+    if (t > 18000) {
+      ap.segmentKills = Math.max(ap.segmentKills, 3); // force progression
+      goPhase('warpToNebulaCluster');
     }
   }
 
-  function phaseFindEnemy() {
-    setStatus('Scanning for hostiles…');
-    const enemy = nearestAliveEnemy(8000);
-    if (enemy) {
-      ap.combatTarget = enemy;
-      setStatus('Hostile acquired — engaging');
-      transmit('TACTICAL', 'Hostile vessel detected!\nWeapon systems online. Engaging target.');
-      goPhase('combat');
-    } else {
-      // No enemy nearby — go visit a nebula to unlock paths
-      goPhase('visitNebula');
-    }
-  }
-
+  // ─── Reusable combat phase (returns to ap.returnPhase when target dead) ───
   function phaseCombat() {
     const t = elapsed();
+    // Shields ON while fighting
+    ensureShieldsFor('combat');
+
     const enemy = ap.combatTarget;
 
-    // Validate target still alive
     if (!enemy || !enemy.userData || enemy.userData.health <= 0) {
       ap.enemiesKilled++;
-      setStatus('Target eliminated');
+      ap.segmentKills = (ap.segmentKills || 0) + 1;
+      ap.combatMissileFired = false;
+      setStatus('Target eliminated (' + ap.segmentKills + ' this segment)');
       notify('Target Eliminated', 'Enemy destroyed — hull salvage collected');
-      // After a few kills, visit a nebula
-      if (ap.enemiesKilled % 3 === 0) {
-        goPhase('visitNebula');
+      // Drop shields as soon as the fight ends
+      ensureShieldsFor('travel');
+
+      // From first segment, advance to nebula warp once 3 kills logged
+      if (ap.returnPhase === 'findLocalEnemies' && ap.segmentKills >= 3) {
+        ap.segmentKills = 0;
+        goPhase('warpToNebulaCluster');
       } else {
-        goPhase('findEnemy');
+        goPhase(ap.returnPhase || 'findLocalEnemies');
       }
       return;
     }
 
     const dist = camPos().distanceTo(enemy.position);
 
-    // Close in
     if (dist > 600) {
       setStatus('Closing on target…');
       flyToward(enemy.position, 2.0);
     } else {
-      setStatus('Engaging hostile — ' + (enemy.userData.name || 'enemy'));
+      setStatus('Engaging ' + (enemy.userData.name || 'hostile'));
       flyToward(enemy.position, 0.8);
     }
 
-    // Aim ship at enemy (orients), then fire only if they're actually lined up
+    // Orient + lock
     const aimDummy = { position: enemy.position };
     if (window.orientTowardsTarget) window.orientTowardsTarget(aimDummy);
-    // Keep the lock so missile/laser auto-aim work
     gameState.targetLock.active = true;
     gameState.targetLock.target = enemy;
     gameState.currentTarget = enemy;
-    // Pull the trigger only when in the forward mouse-aim cone
+
     if (isInFiringCone(enemy, 3000)) {
       aimAndFireLaserAt(enemy);
     }
 
-    // Fire a missile if we haven't recently — missile auto-tracks so no cone gate
-    if (t > 8000 && !ap.missileShown && gameState.missiles.current > 0 && !shieldsActive()) {
-      ap.missileShown = true;
+    // One missile per combat encounter — missiles require shields down, so we
+    // briefly drop them to fire the torpedo then bring them back next frame
+    if (t > 6000 && !ap.combatMissileFired && gameState.missiles.current > 0) {
+      ap.combatMissileFired = true;
       setStatus('Firing missile!');
-      transmit('WEAPONS', 'Missile locked and loaded!\nFire torpedo — target acquired.');
-      fireMissileAt(enemy);
-    }
-
-    // If we've been fighting too long, move on
-    if (t > 40000) {
-      goPhase('visitNebula');
-    }
-  }
-
-  function phaseVisitNebula() {
-    const t = elapsed();
-    setStatus('Scanning for nebula…');
-
-    if (!ap.navTarget) {
-      const neb = nearestNebula();
-      if (neb) {
-        ap.navTarget = { position: neb.position.clone() };
-        ap.currentNebula = neb;
-        setStatus('Plotting course to ' + (neb.userData.name || 'nebula'));
-        transmit('SCIENCE OFFICER', 'Nebula detected — ' + (neb.userData.name || 'Unknown Nebula') +
-          '\nApproaching for deep scan.\nFaction intelligence may be unlocked.');
-      } else {
-        // No nebula found — skip to black hole
-        goPhase('gotoBlackHole');
-        return;
-      }
-    }
-
-    const dist = camPos().distanceTo(ap.navTarget.position);
-
-    if (dist > 80) {
-      flyToward(ap.navTarget.position, 2.0);
-    } else {
-      // Inside nebula — trigger deep discovery
-      if (typeof checkForNebulaDeepDiscovery === 'function') checkForNebulaDeepDiscovery();
-      ap.nebulasVisited++;
-      ap.navTarget = null;
-      ap.currentNebula = null;
-      setStatus('Nebula explored — intel unlocked');
-      // Linger a moment then follow discovery path or fight
+      transmit('WEAPONS', 'Missile locked and loaded!\nDropping shields — firing torpedo!');
+      if (shieldsActive() && window.deactivateShields) window.deactivateShields();
       setTimeout(() => {
-        if (ap.active) goPhase('followPath');
-      }, 4000);
+        if (ap.active) fireMissileAt(enemy);
+      }, 150);
     }
 
-    // Timeout safety
-    if (t > 60000) goPhase('followPath');
-  }
-
-  function phaseFollowPath() {
-    const t = elapsed();
-    // Follow any active discovery paths to find enemies
-    const paths = window.discoveryPaths || [];
-    if (paths.length > 0) {
-      const path = paths[paths.length - 1];
-      if (path && path.line && path.line.userData) {
-        const endPos = path.line.userData.endPosition;
-        if (endPos) {
-          const dist = camPos().distanceTo(endPos);
-          setStatus('Following discovery path to enemy territory…');
-          if (dist > 200) {
-            flyToward(endPos, 2.0);
-          } else {
-            goPhase('findEnemy');
-            return;
-          }
-        }
-      }
-    } else {
-      goPhase('findEnemy');
+    // Combat stall timeout — enemy running away?  Abandon it.
+    if (t > 35000) {
+      setStatus('Target evaded — disengaging');
+      ensureShieldsFor('travel');
+      goPhase(ap.returnPhase || 'findLocalEnemies');
     }
-    if (t > 60000) goPhase('gotoBlackHole');
   }
 
-  function phaseGotoBlackHole() {
+  // ─── 2) Emergency warp toward a nebula cluster ────────────────────────────
+  function phaseWarpToNebulaCluster() {
     const t = elapsed();
-    setStatus('Locating black hole gateway…');
+    ensureShieldsFor('travel');
+    setStatus('Plotting course to nebula cluster…');
 
-    if (!ap.navTarget) {
-      const bh = nearestBlackHole();
-      if (bh) {
-        ap.navTarget = { position: bh.position.clone() };
-        ap.currentBH = bh;
-        setStatus('Approaching ' + (bh.userData.name || 'black hole'));
-        transmit('NAVIGATION', 'Black hole gravitational gateway detected!\nPreparing slingshot maneuver.\nHold on — this is going to be rough.');
-      } else {
-        goPhase('findEnemy');
+    if (!ap.currentNebula) {
+      const neb = nearestNebula();
+      if (!neb) {
+        // No nebula found — skip ahead
+        goPhase('gotoBlackHoleGalaxy');
         return;
       }
+      ap.currentNebula = neb;
+      transmit('SCIENCE OFFICER', 'Nebula cluster detected — ' + (neb.userData.name || 'Unknown Nebula') +
+        '\nEngaging emergency warp drive for rapid transit.');
     }
 
-    const dist = camPos().distanceTo(ap.navTarget.position);
-    if (dist > 500) {
-      flyToward(ap.navTarget.position, 2.5);
-    } else {
-      // Close enough — physics auto-warps us
-      setStatus('Event horizon reached — WARPING');
-      ap.navTarget = null;
+    // Face the nebula, then punch emergency warp
+    const dummy = { position: ap.currentNebula.position };
+    if (window.orientTowardsTarget) window.orientTowardsTarget(dummy);
+    keys().w = true;
+
+    if (t > 1500 && !gameState.emergencyWarp.active && !gameState.emergencyWarp.transitioning) {
+      setStatus('EMERGENCY WARP — ENGAGING');
+      transmit('PROPULSION', 'Emergency warp drive engaged!\nBrace for hyperspace jump.');
+      triggerEmergencyWarp();
       ap.warpsUsed++;
-      goPhase('coastToGalaxy');
+      goPhase('coastToNebulaCluster');
     }
 
-    if (t > 90000) { ap.navTarget = null; goPhase('findEnemy'); }
+    // Safety: if warp somehow fails, just fly there normally
+    if (t > 6000) {
+      goPhase('coastToNebulaCluster');
+    }
   }
 
-  function phaseCoastToGalaxy() {
-    // After warp/emergency warp: coast on momentum, then brake at galaxy asteroid belt
+  function phaseCoastToNebulaCluster() {
     const t = elapsed();
+    ensureShieldsFor('travel');
+    const speed = gameState.velocityVector ? gameState.velocityVector.length() : 0;
+
+    if (!ap.currentNebula) {
+      goPhase('gotoBlackHoleGalaxy');
+      return;
+    }
+
+    const distToNebula = camPos().distanceTo(ap.currentNebula.position);
+    setStatus('Coasting to nebula — ' + (distToNebula | 0) + ' units');
+
+    // As we enter the nebula cluster area, brake at the galaxy's asteroid belt if nearby
+    const belt = nearestAsteroidBelt();
+    if (belt) {
+      const beltCenter = belt.userData.blackHolePosition || belt.position;
+      const beltRadius = belt.userData.radius || 2000;
+      const distToBelt = camPos().distanceTo(beltCenter);
+      if (distToBelt < beltRadius * 1.8) {
+        setStatus('Entering cluster perimeter — braking');
+        if (!ap.brakingAfterWarp) {
+          ap.brakingAfterWarp = true;
+          transmit('NAVIGATION', 'Entering nebula cluster perimeter.\nReducing velocity for system operations.');
+          ensureThirdPerson();
+        }
+        keys().x = true;
+      }
+    }
+
+    // Close to nebula — move to orbit phase
+    if (distToNebula < 3500 && speed < 1.5) {
+      ap.brakingAfterWarp = false;
+      goPhase('orbitNebulaPlanet');
+      return;
+    }
+
+    // Stall recovery
+    if (speed < 0.2 && t > 5000 && distToNebula > 500) {
+      const dummy = { position: ap.currentNebula.position };
+      if (window.orientTowardsTarget) window.orientTowardsTarget(dummy);
+      keys().w = true;
+    }
+
+    // Safety timeout
+    if (t > 30000) {
+      ap.brakingAfterWarp = false;
+      goPhase('orbitNebulaPlanet');
+    }
+  }
+
+  // ─── 3) Target a planet in the cluster, orbit, unlock discovery ──────────
+  function phaseOrbitNebulaPlanet() {
+    const t = elapsed();
+    ensureShieldsFor('travel');
+
+    if (!ap.orbitTarget) {
+      // Prefer a real planet near the nebula; fall back to the nebula itself
+      ap.orbitTarget =
+        (ap.currentNebula && planetNear(ap.currentNebula.position, 8000)) ||
+        (ap.currentNebula ? { position: ap.currentNebula.position.clone(), userData: { name: ap.currentNebula.userData.name || 'Nebula Core', radius: 120 } } : pickPlanet());
+
+      if (ap.orbitTarget) {
+        const nm = ap.orbitTarget.userData ? ap.orbitTarget.userData.name : 'nebula planet';
+        setStatus('Targeting ' + nm + ' for orbital survey');
+        transmit('NAVIGATION SYSTEM', 'Target locked: ' + nm + '\nEstablishing orbital trajectory.\nPerforming science scans.');
+        gameState.currentTarget = ap.orbitTarget;
+      }
+    }
+
+    // Brief FPV showcase while orbiting
+    if (t > 4000 && !ap.fpvShown) {
+      ap.fpvShown = true;
+      setStatus('Switching to cockpit view');
+      if (window.setCameraFirstPerson) window.setCameraFirstPerson();
+      ap.fpvTimer = Date.now();
+    }
+    if (ap.fpvTimer && Date.now() - ap.fpvTimer > 6000 && !ap.fpvTimerDone) {
+      ap.fpvTimerDone = true;
+      setStatus('Returning to chase cam');
+      ensureThirdPerson();
+    }
+
+    // Fly to target and orbit slowly
+    if (ap.orbitTarget) {
+      const dist = camPos().distanceTo(ap.orbitTarget.position);
+      const radius = Math.max(((ap.orbitTarget.userData && ap.orbitTarget.userData.radius) || 20) * 6, 180);
+      if (dist > radius * 2.2) {
+        setStatus('Approaching ' + (ap.orbitTarget.userData.name || 'planet'));
+        flyToward(ap.orbitTarget.position, 1.2);
+      } else {
+        setStatus('Slow orbit — ' + (ap.orbitTarget.userData.name || 'planet'));
+        orbitAround(ap.orbitTarget.position, radius);
+      }
+    }
+
+    // Force discovery after we've been orbiting a while
+    if (t > 12000 && typeof checkForNebulaDeepDiscovery === 'function') {
+      checkForNebulaDeepDiscovery();
+    }
+
+    // Move on to follow the dotted line after 20 s of orbits
+    if (t > 20000) {
+      goPhase('followDiscoveryPath');
+    }
+  }
+
+  // ─── 4) Follow dotted line → fight revealed enemies ─────────────────────
+  function phaseFollowDiscoveryPath() {
+    const t = elapsed();
+    ensureShieldsFor('travel');
+    const paths = window.discoveryPaths || [];
+    const path = paths.length > 0 ? paths[paths.length - 1] : null;
+    const endPos = path && path.line && path.line.userData && path.line.userData.endPosition;
+
+    // Check for an enemy in front of us as we travel
+    const enemyAhead = nearestAliveEnemy(3500);
+    if (enemyAhead) {
+      setStatus('Revealed hostile acquired');
+      transmit('TACTICAL', 'Revealed enemy forces engaged!\nEliminating hostile.');
+      ap.combatTarget = enemyAhead;
+      ap.returnPhase = 'followDiscoveryPath';
+      goPhase('combat');
+      return;
+    }
+
+    if (endPos) {
+      const dist = camPos().distanceTo(endPos);
+      setStatus('Following discovery path — ' + (dist | 0) + ' units');
+      if (dist > 300) {
+        flyToward(endPos, 2.0);
+      } else {
+        // At end of path — look for enemies
+        const near = nearestAliveEnemy(5000);
+        if (near) {
+          ap.combatTarget = near;
+          ap.returnPhase = 'followDiscoveryPath';
+          goPhase('combat');
+        } else {
+          // Cleared — move to black hole galaxy phase
+          ap.segmentKills = 0;
+          goPhase('gotoBlackHoleGalaxy');
+        }
+        return;
+      }
+    } else {
+      // No active path — just look for enemies or move on
+      if (t > 3000) goPhase('gotoBlackHoleGalaxy');
+    }
+
+    // Safety timeout
+    if (t > 60000) goPhase('gotoBlackHoleGalaxy');
+  }
+
+  // ─── 5) Travel to a black hole galaxy and fight enemies there ────────────
+  function phaseGotoBlackHoleGalaxy() {
+    const t = elapsed();
+    ensureShieldsFor('travel');
+    setStatus('Plotting course to black hole galaxy…');
+
+    if (!ap.currentBH) {
+      ap.currentBH = nearestBlackHole();
+      if (!ap.currentBH) { goPhase('approachBorg'); return; }
+      transmit('NAVIGATION', 'Black hole galaxy targeted.\nCourse locked — approach in progress.');
+    }
+
+    const distToBH = camPos().distanceTo(ap.currentBH.position);
+
+    // While approaching, fight any enemies we encounter
+    const enemy = nearestAliveEnemy(2500);
+    if (enemy && distToBH > 800) {
+      ap.combatTarget = enemy;
+      ap.returnPhase = 'gotoBlackHoleGalaxy';
+      goPhase('combat');
+      return;
+    }
+
+    if (distToBH > 500) {
+      setStatus('Approaching ' + (ap.currentBH.userData.name || 'black hole') + ' — ' + (distToBH | 0));
+      flyToward(ap.currentBH.position, 2.5);
+    } else {
+      // Close to event horizon — switch to warp phase (physics takes over)
+      setStatus('Event horizon — initiating warp');
+      goPhase('blackHoleWarp');
+    }
+
+    if (t > 90000) { ap.currentBH = null; goPhase('approachBorg'); }
+  }
+
+  // ─── 6) Black hole warp → coast → fight more enemies ─────────────────────
+  function phaseBlackHoleWarp() {
+    const t = elapsed();
+    ensureShieldsFor('travel');
+
+    if (ap.currentBH) {
+      const dist = camPos().distanceTo(ap.currentBH.position);
+      if (dist > 120) {
+        setStatus('Diving into event horizon');
+        flyToward(ap.currentBH.position, 3.0);
+      } else {
+        setStatus('WARPING — destination unknown');
+      }
+    }
+
+    // Physics runs the actual warp.  When we're suddenly very fast, we've warped.
+    const speed = gameState.velocityVector ? gameState.velocityVector.length() : 0;
+    if (speed > 3 || t > 6000) {
+      ap.currentBH = null;
+      ap.brakingAfterWarp = false;
+      ap.warpsUsed++;
+      goPhase('coastAfterWarp');
+    }
+  }
+
+  function phaseCoastAfterWarp() {
+    const t = elapsed();
+    ensureShieldsFor('travel');
     const speed = gameState.velocityVector ? gameState.velocityVector.length() : 0;
 
     // Find nearest asteroid belt to current position
@@ -390,58 +587,64 @@
       const distToBelt = camPos().distanceTo(beltCenter);
 
       if (distToBelt < beltRadius * 1.5) {
-        // We're entering the galaxy's outer rings — BRAKE
-        setStatus('Entering galaxy rings — braking!');
-        if (t < 500 || ap.brakingAfterWarp === false) {
+        setStatus('Entering galaxy rings — braking');
+        if (!ap.brakingAfterWarp) {
           ap.brakingAfterWarp = true;
-          transmit('NAVIGATION', 'Galaxy approach confirmed!\nReducing velocity — entering asteroid belt perimeter.\nPreparing for system operations.');
+          transmit('NAVIGATION', 'Galaxy approach confirmed!\nReducing velocity — entering asteroid belt perimeter.');
           ensureThirdPerson();
         }
-        if (keys().x !== undefined) keys().x = true;  // Brake key
+        keys().x = true;
 
-        if (speed < 0.5) {
+        if (speed < 0.6) {
           ap.brakingAfterWarp = false;
           setStatus('Velocity nominal — exploring new galaxy');
-          notify('Galaxy Reached', 'Entered new system — exploring…');
+          notify('Galaxy Reached', 'Entered new system — hunting hostiles');
           ap.loopCount++;
-          // After a few loops, head for Borg
-          if (ap.loopCount >= 3) {
+          ap.segmentKills = 0;
+          // After a couple of post-warp combat loops, go face the Borg
+          if (ap.loopCount >= 2) {
             goPhase('approachBorg');
           } else {
-            goPhase('findEnemy');
+            ap.returnPhase = 'gotoBlackHoleGalaxy';
+            goPhase('findLocalEnemies');
           }
         }
         return;
       }
     }
 
-    // Still coasting — gently thrust toward destination if speed is low
-    if (speed < 0.3 && t > 5000) {
-      // We stalled out mid-journey — push forward
-      if (keys().w !== undefined) keys().w = true;
-    }
+    // Mid-coast: gently thrust if we've stalled
+    if (speed < 0.3 && t > 5000) keys().w = true;
 
-    // Safety exit
-    if (t > 30000) { ap.brakingAfterWarp = false; goPhase('findEnemy'); }
+    if (t > 30000) {
+      ap.brakingAfterWarp = false;
+      ap.returnPhase = 'gotoBlackHoleGalaxy';
+      goPhase('findLocalEnemies');
+    }
   }
 
+  // ─── 7) Outer reaches — Borg ─────────────────────────────────────────────
   function phaseApproachBorg() {
     const t = elapsed();
+    ensureShieldsFor('travel');
     setStatus('Heading to outer reaches — Borg territory');
-    transmit('LONG RANGE SENSORS', 'Massive unknown vessel detected at extreme range.\nWARNING: Borg Collective signature confirmed.\nAll hands to battle stations.');
+    if (t < 200) {
+      transmit('LONG RANGE SENSORS', 'Massive unknown vessel detected at extreme range.\nWARNING: Borg Collective signature confirmed.\nAll hands to battle stations.');
+    }
 
-    // Fly far from origin to trigger Borg spawn (need >70,000 units)
     const distFromOrigin = camPos().length();
 
     if (distFromOrigin < 70000) {
-      // Use emergency warp to cover ground fast
       if (!gameState.emergencyWarp.active && gameState.emergencyWarp.available > 0 && t > 3000) {
+        // Face away from origin and punch it
+        const outward = camPos().clone().multiplyScalar(2);
+        const dummy = { position: outward };
+        if (window.orientTowardsTarget) window.orientTowardsTarget(dummy);
         triggerEmergencyWarp();
       } else {
         flyToward({ x: 80000, y: 0, z: 0 }, 3.0);
       }
     } else {
-      // Far enough — force Borg spawn
       if (!gameState.borg.spawned && window.spawnBorgCube) {
         window.spawnBorgCube();
       }
@@ -454,10 +657,13 @@
 
   function phaseFightBorg() {
     const t = elapsed();
+    // Shields up for Borg encounter
+    ensureShieldsFor('combat');
     const borgCube = gameState.borg && gameState.borg.cube;
-    const borgDrones = gameState.borg && gameState.borg.drones ? gameState.borg.drones.filter(d => d.userData && d.userData.health > 0) : [];
+    const borgDrones = gameState.borg && gameState.borg.drones
+      ? gameState.borg.drones.filter(d => d.userData && d.userData.health > 0)
+      : [];
 
-    // Pick best combat target
     let target = null;
     if (borgDrones.length > 0) {
       target = borgDrones.reduce((a, b) =>
@@ -470,12 +676,9 @@
       ap.combatTarget = target;
       const dist = camPos().distanceTo(target.position);
       setStatus('ENGAGING BORG — ' + (dist | 0) + ' units');
-      if (dist > 800) {
-        flyToward(target.position, 2.0);
-      } else {
-        flyToward(target.position, 0.8);
-      }
-      // Orient toward the Borg target, then only fire if lined up
+      if (dist > 800) flyToward(target.position, 2.0);
+      else            flyToward(target.position, 0.8);
+
       const aimDummy = { position: target.position };
       if (window.orientTowardsTarget) window.orientTowardsTarget(aimDummy);
       gameState.targetLock.active = true;
@@ -485,30 +688,33 @@
         aimAndFireLaserAt(target);
       }
 
-      if (t % 10000 < 100 && gameState.missiles.current > 0 && !shieldsActive()) {
-        fireMissileAt(target);
-      }
-
-      // Show shields during intense Borg combat
-      if (t > 15000 && !shieldsActive() && gameState.energy > 50) {
-        if (window.activateShields) window.activateShields();
-        setTimeout(() => { if (window.deactivateShields) window.deactivateShields(); }, 6000);
+      // Periodically drop shields and fire a missile, then shields back up
+      if (t % 10000 < 100 && gameState.missiles.current > 0) {
+        if (shieldsActive() && window.deactivateShields) window.deactivateShields();
+        setTimeout(() => { if (ap.active) fireMissileAt(target); }, 150);
       }
     } else {
       setStatus('Borg neutralized — VICTORY');
+      ensureShieldsFor('travel');
       transmit('MISSION CONTROL', 'Outstanding work, Captain!\nBorg threat eliminated.\nReturning to patrol route.');
       notify('BORG DEFEATED', 'Threat eliminated — restarting demo…');
       setTimeout(() => {
         if (ap.active) {
           resetFlags();
-          goPhase('sightseeing');
+          ap.segmentKills = 0;
+          ap.loopCount = 0;
+          ap.returnPhase = 'findLocalEnemies';
+          goPhase('findLocalEnemies');
         }
       }, 8000);
     }
 
     if (t > 180000) {
       resetFlags();
-      goPhase('sightseeing');
+      ap.segmentKills = 0;
+      ap.loopCount = 0;
+      ap.returnPhase = 'findLocalEnemies';
+      goPhase('findLocalEnemies');
     }
   }
 
@@ -630,6 +836,21 @@
     return best;
   }
 
+  // "Navigation System detected" — matches game-ui.js populateTargets() ranges:
+  //   regular enemies: 3000 units   (black-hole guardians: 10000 units)
+  // Returns the nearest enemy the player's onboard nav panel can currently see.
+  function navDetectedEnemy() {
+    if (typeof enemies === 'undefined') return null;
+    let best = null, bestDist = Infinity;
+    enemies.forEach(e => {
+      if (!e.userData || e.userData.health <= 0) return;
+      const maxRange = e.userData.isBlackHoleGuardian ? 10000 : 3000;
+      const d = camPos().distanceTo(e.position);
+      if (d < maxRange && d < bestDist) { bestDist = d; best = e; }
+    });
+    return best;
+  }
+
   function nearestAsteroid(maxRange) {
     if (typeof planets === 'undefined') return null;
     let best = null, bestDist = maxRange || 5000;
@@ -690,6 +911,33 @@
     return candidates[Math.floor(Math.random() * candidates.length)];
   }
 
+  // Find a regular planet (not a star/black hole/asteroid) within maxRange of a point
+  function planetNear(point, maxRange) {
+    if (typeof planets === 'undefined' || !point) return null;
+    let best = null, bestDist = maxRange || 5000;
+    planets.forEach(p => {
+      const ud = p.userData;
+      if (!ud) return;
+      if (ud.type === 'blackhole' || ud.type === 'asteroid' || ud.type === 'asteroidBelt' || ud.type === 'star') return;
+      if (ud.name === 'Earth') return;
+      const d = p.position.distanceTo(point);
+      if (d < bestDist) { bestDist = d; best = p; }
+    });
+    return best;
+  }
+
+  // ─── Shield helpers ───────────────────────────────────────────────────────
+  // Enforce shield-on while fighting, shield-off while traveling.
+  function ensureShieldsFor(mode) {
+    if (typeof shieldSystem === 'undefined') return;
+    const want = (mode === 'combat');
+    if (want && !shieldSystem.active && gameState.energy > 20) {
+      if (window.activateShields) window.activateShields();
+    } else if (!want && shieldSystem.active) {
+      if (window.deactivateShields) window.deactivateShields();
+    }
+  }
+
   // ─── Misc helpers ──────────────────────────────────────────────────────────
 
   function camPos() {
@@ -731,10 +979,14 @@
     ap.fpvTimerDone = false;
     ap.fpvTimer = null;
     ap.missileShown = false;
+    ap.combatMissileFired = false;
     ap.brakingAfterWarp = false;
     ap.orbitTarget = null;
     ap.orbitAngle = 0;
     ap.subState = 0;
+    ap.currentNebula = null;
+    ap.currentBH = null;
+    ap.lastNebulaWarp = 0;
   }
 
   function releaseKeys() {
@@ -792,7 +1044,7 @@
       'letter-spacing:2px',
       'min-width:260px',
     ].join(';');
-    el.innerHTML = '<div style="opacity:0.7;font-size:10px;margin-bottom:2px">🤖 DEMO AUTOPILOT</div><div id="demoPilotStatus">Initializing…</div>';
+    el.innerHTML = '<div id="demoPilotLabel" style="opacity:0.7;font-size:10px;margin-bottom:2px">🤖 DEMO AUTOPILOT · press T to take over</div><div id="demoPilotStatus">Initializing…</div>';
     document.body.appendChild(el);
     ap.hudEl = el;
   }
@@ -800,6 +1052,25 @@
   function tickHUD() {
     const s = document.getElementById('demoPilotStatus');
     if (s) s.textContent = ap.statusText || ap.phase;
+  }
+
+  function updateHUDStyle(paused) {
+    const el = document.getElementById('demoPilotHUD');
+    const label = document.getElementById('demoPilotLabel');
+    if (!el) return;
+    if (paused) {
+      el.style.borderColor = 'rgba(255,200,0,0.7)';
+      el.style.color = '#ffcc33';
+      el.style.textShadow = '0 0 8px rgba(255,200,0,0.8)';
+      el.style.boxShadow = '0 0 20px rgba(255,200,0,0.35)';
+      if (label) label.textContent = '🕹️ PLAYER CONTROL · press T to resume demo';
+    } else {
+      el.style.borderColor = 'rgba(0,255,136,0.5)';
+      el.style.color = '#00ff88';
+      el.style.textShadow = '0 0 8px rgba(0,255,136,0.8)';
+      el.style.boxShadow = '0 0 20px rgba(0,255,136,0.3)';
+      if (label) label.textContent = '🤖 DEMO AUTOPILOT · press T to take over';
+    }
   }
 
   function removeHUD() {
