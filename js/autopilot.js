@@ -308,7 +308,11 @@
       if (d < 2200) {
         ap.combatTarget = detected;
         ap.combatMissileFired = false;
-        transmit('TACTICAL', 'Nav system contact confirmed!\nHostile: ' + (detected.userData.name || 'Unknown') + '\nWeapon systems online.');
+        // TACTICAL transmission only fires ONCE per game session
+        if (!ap._tacticalMsgShown) {
+          ap._tacticalMsgShown = true;
+          transmit('TACTICAL', 'Nav system contact confirmed!\nHostile: ' + (detected.userData.name || 'Unknown') + '\nWeapon systems online.');
+        }
         goPhase('combat');
       }
       return;
@@ -577,7 +581,10 @@
       ap.combatTarget = intruder;
       ap.combatMissileFired = false;
       ap.returnPhase = 'orbitNebulaPlanet';
-      transmit('TACTICAL', 'Hostile contact during survey!\nEngaging intruder — orbit paused.');
+      if (!ap._tacticalMsgShown) {
+        ap._tacticalMsgShown = true;
+        transmit('TACTICAL', 'Hostile contact during survey!\nEngaging intruder — orbit paused.');
+      }
       goPhase('combat');
       return;
     }
@@ -633,7 +640,10 @@
     const enemyAhead = nearestAliveEnemy(3500);
     if (enemyAhead) {
       setStatus('Revealed hostile acquired');
-      transmit('TACTICAL', 'Revealed enemy forces engaged!\nEliminating hostile.');
+      if (!ap._tacticalMsgShown) {
+        ap._tacticalMsgShown = true;
+        transmit('TACTICAL', 'Revealed enemy forces engaged!\nEliminating hostile.');
+      }
       ap.combatTarget = enemyAhead;
       ap.returnPhase = 'followDiscoveryPath';
       goPhase('combat');
