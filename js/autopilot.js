@@ -220,7 +220,6 @@
     buffEnemiesForDemo();
     buffEnemySpeed();
     preemptiveShields();
-    trackHitSparks();
     autoReadAnyTransmission();
     // NOTE: no sweepStaleLasers here.  The game's own setInterval fade
     // cleans up lasers in ~100 ms — when the demo interfered with that
@@ -1297,34 +1296,23 @@
     }
   }
 
-  // Small hit-spark when an enemy takes damage but isn't killed.  We track
-  // combatTarget's health each frame; when it drops, spawn a tiny 5-particle
-  // flash (much smaller than createExplosionEffect's full death explosion).
-  ap._trackedHP = -1;
-  function trackHitSparks() {
-    const ct = ap.combatTarget;
-    if (!ct || !ct.userData || !ct.position) { ap._trackedHP = -1; return; }
-    const hp = ct.userData.health;
-    if (ap._trackedHP > 0 && hp < ap._trackedHP && hp > 0) {
-      createMiniHitSpark(ct.position);
-    }
-    ap._trackedHP = hp;
-  }
-
   // ─── Auto-read ALL incoming transmissions ──────────────────────────────
-  // Watches the DOM for #incomingTransmissionPrompt (raised by ANY
-  // showIncomingTransmission call — autopilot or game-emitted).  After
-  // the prompt has been visible for 1 s, click READ to open the full
-  // text; 5 s after that, auto-dismiss the full alert.
+  // The game has TWO transmission UIs:
+  //   1) game-controls.js: #incomingTransmissionPrompt (READ/SKIP buttons)
+  //   2) game-objects.js:  #incomingTransmission (auto-fade text, no buttons)
+  // We handle BOTH: click READ on the first type, and the second auto-fades.
   ap._seenPrompt = null;
+  ap._seenPromptTime = 0;
   function autoReadAnyTransmission() {
+    // Type 1: READ/SKIP prompt from game-controls.js deep-discovery etc.
     const prompt = document.getElementById('incomingTransmissionPrompt');
-    if (!prompt) return;
-    if (ap._seenPrompt === prompt) return;   // already handling this one
-    ap._seenPrompt = prompt;
-
-    setTimeout(() => {
-      if (!document.body.contains(prompt)) return;
+    if (prompt && ap._seenPrompt !== prompt) {
+      ap._seenPrompt = prompt;
+      ap._seenPromptTime = Date.now();
+    }
+    // 1 second after prompt appeared → click READ
+    if (prompt && ap._seenPrompt === prompt &&
+        Date.now() - ap._seenPromptTime > 1000) {
       const readBtn = document.getElementById('transmissionRead');
       if (readBtn) {
         readBtn.click();
@@ -1333,52 +1321,27 @@
           renderer.domElement.style.cursor = 'none';
         }
         const alertEl = document.getElementById('missionCommandAlert');
-        if (alertEl) {
-          alertEl.querySelectorAll('button').forEach(b => b.remove());
-        }
+        if (alertEl) alertEl.querySelectorAll('button').forEach(b => b.remove());
       }
-    }, 1000);
+      ap._seenPrompt = null;
+      // Schedule close of the full alert 5 s later
+      setTimeout(() => {
+        const alertEl = document.getElementById('missionCommandAlert');
+        if (alertEl) alertEl.classList.add('hidden');
+        if (typeof gameState !== 'undefined') gameState.paused = false;
+      }, 5000);
+    }
 
-    setTimeout(() => {
-      const alertEl = document.getElementById('missionCommandAlert');
-      if (alertEl) alertEl.classList.add('hidden');
-      if (typeof gameState !== 'undefined') gameState.paused = false;
-      if (ap._seenPrompt === prompt) ap._seenPrompt = null;
-    }, 6000);
-  }
-
-  function createMiniHitSpark(pos) {
-    if (typeof THREE === 'undefined' || typeof scene === 'undefined') return;
-    try {
-      const count = 6;
-      const positions = new Float32Array(count * 3);
-      for (let i = 0; i < count; i++) {
-        positions[i * 3]     = (Math.random() - 0.5) * 4;
-        positions[i * 3 + 1] = (Math.random() - 0.5) * 4;
-        positions[i * 3 + 2] = (Math.random() - 0.5) * 4;
-      }
-      const geom = new THREE.BufferGeometry();
-      geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-      const mat = new THREE.PointsMaterial({
-        color: 0xffaa44, size: 1.5, transparent: true, opacity: 1,
-        blending: THREE.AdditiveBlending
-      });
-      const pts = new THREE.Points(geom, mat);
-      pts.position.copy(pos);
-      scene.add(pts);
-      // Quick 300 ms fade-out then cleanup
-      let o = 1;
-      const iv = setInterval(() => {
-        o -= 0.25;
-        mat.opacity = Math.max(0, o);
-        if (o <= 0) {
-          clearInterval(iv);
-          scene.remove(pts);
-          geom.dispose();
-          mat.dispose();
-        }
-      }, 50);
-    } catch (_) {}
+    // Type 2: Auto-fade text from game-objects.js — nothing to do, it
+    // handles its own timeout.  But hide it faster (1.5 s) in demo mode
+    // so it doesn't obstruct the view too long.
+    const textTx = document.getElementById('incomingTransmission');
+    if (textTx && !textTx._demoShortenSet) {
+      textTx._demoShortenSet = true;
+      setTimeout(() => {
+        if (textTx) textTx.style.opacity = '0';
+      }, 1500);
+    }
   }
 
   function elapsed() {
