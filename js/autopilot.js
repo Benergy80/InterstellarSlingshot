@@ -206,9 +206,9 @@
     // tag it so we don't buff again.  The Borg cube is already 100 HP so it
     // takes plenty of hits — skip the buff for Borg so the boss stays tuned.
     buffEnemiesForDemo();
-    // Stale laser sweep (safety net): periodically splice out any lasers
-    // whose material is invisible but the intersect cleanup missed.
     sweepStaleLasers();
+    reactiveShields();
+    trackHitSparks();
 
     // Clear movement keys each frame; we set what we need below
     releaseMovementKeys();
@@ -331,9 +331,8 @@
   // ─── Reusable combat phase (returns to ap.returnPhase when target dead) ───
   function phaseCombat() {
     const t = elapsed();
-    // Shields ON while fighting
-    ensureShieldsFor('combat');
-    // Demo always stays in 3rd person
+    // Shields are reactive — they pop up only when hull takes a hit (see
+    // reactiveShields in the main update loop).
     ensureThirdPerson();
 
     const enemy = ap.combatTarget;
@@ -368,35 +367,34 @@
     }
 
     const dist = camPos().distanceTo(enemy.position);
-    const autoAimRange = (gameState.targetLock && gameState.targetLock.range) || 600;
+    // Use the enemy's own firing range — that's how close we need to be for
+    // a proper dog-fight (enemy fires back at us, we fire at them).
+    const engageRange = enemy.userData.firingRange || 500;
 
-    if (dist > autoAimRange) {
-      // OUTSIDE auto-aim range: pursue hard, do NOT fire yet
+    if (dist > engageRange) {
       setStatus('Pursuing ' + (enemy.userData.name || 'hostile') + ' — ' + (dist | 0) + ' u');
       flyToward(enemy.position, 2.5);
     } else {
-      // INSIDE auto-aim range: slow down, stay on target, line up shots
-      setStatus('Engaging ' + (enemy.userData.name || 'hostile') + ' — auto-aim locked');
+      setStatus('Engaging ' + (enemy.userData.name || 'hostile') + ' — in weapons range');
       flyToward(enemy.position, 0.8);
     }
 
-    // Always orient toward the target and activate the lock so the game's
-    // auto-aim system will engage when we reach range.  autoFireOnTargetLock
-    // handles the actual trigger pull, gated on autoAimRange.
+    // Orient + lock so auto-fire can engage when we're inside range
     const aimDummy = { position: enemy.position };
     if (window.orientTowardsTarget) window.orientTowardsTarget(aimDummy);
     gameState.targetLock.active = true;
     gameState.targetLock.target = enemy;
     gameState.currentTarget = enemy;
 
-    // One missile per combat encounter — only once we're inside auto-aim
-    // range so the missile actually has a chance of hitting, and the
-    // demonstration lines up with the laser-fire sequence.
-    if (t > 6000 && !ap.combatMissileFired && gameState.missiles.current > 0 &&
-        dist <= autoAimRange) {
-      ap.combatMissileFired = true;
-      setStatus('Firing missile!');
-      transmit('WEAPONS', 'Missile locked and loaded!\nDropping shields — firing torpedo!');
+    // Occasional missile fire — every ~15 s while inside engagement range.
+    // The WEAPONS transmission only fires ONCE per game session.
+    if (dist <= engageRange && gameState.missiles.current > 0 &&
+        Date.now() - (ap._lastMissileTime || 0) > 15000) {
+      ap._lastMissileTime = Date.now();
+      if (!ap._weaponsMsgShown) {
+        ap._weaponsMsgShown = true;
+        transmit('WEAPONS', 'Missile systems online.\nFiring torpedo!');
+      }
       if (shieldsActive() && window.deactivateShields) window.deactivateShields();
       setTimeout(() => {
         if (ap.active) fireMissileAt(enemy);
@@ -842,8 +840,7 @@
 
   function phaseFightBorg() {
     const t = elapsed();
-    // Shields up for Borg encounter
-    ensureShieldsFor('combat');
+    // Shields are reactive — they pop up on hull damage
     const borgCube = gameState.borg && gameState.borg.cube;
     const borgDrones = gameState.borg && gameState.borg.drones
       ? gameState.borg.drones.filter(d => d.userData && d.userData.health > 0)
@@ -864,23 +861,26 @@
       if (dist > 800) flyToward(target.position, 2.0);
       else            flyToward(target.position, 0.8);
 
+      const engageRange = (target.userData && target.userData.firingRange) || 500;
       const aimDummy = { position: target.position };
       if (window.orientTowardsTarget) window.orientTowardsTarget(aimDummy);
       gameState.targetLock.active = true;
       gameState.targetLock.target = target;
       gameState.currentTarget = target;
-      if (isInFiringCone(target, 3500)) {
-        aimAndFireLaserAt(target);
-      }
 
-      // Periodically drop shields and fire a missile, then shields back up
-      if (t % 10000 < 100 && gameState.missiles.current > 0) {
+      // Occasional missile every ~15 s
+      if (dist <= engageRange && gameState.missiles.current > 0 &&
+          Date.now() - (ap._lastMissileTime || 0) > 15000) {
+        ap._lastMissileTime = Date.now();
+        if (!ap._weaponsMsgShown) {
+          ap._weaponsMsgShown = true;
+          transmit('WEAPONS', 'Missile systems online.\nFiring torpedo!');
+        }
         if (shieldsActive() && window.deactivateShields) window.deactivateShields();
         setTimeout(() => { if (ap.active) fireMissileAt(target); }, 150);
       }
     } else {
       setStatus('Borg neutralized — VICTORY');
-      ensureShieldsFor('travel');
       transmit('MISSION CONTROL', 'Outstanding work, Captain!\nBorg threat eliminated.\nReturning to patrol route.');
       notify('BORG DEFEATED', 'Threat eliminated — restarting demo…');
       setTimeout(() => {
@@ -979,11 +979,11 @@
       gameState.currentTarget = target;
     }
 
-    // Only fire inside the game's auto-aim range AND when lined up
-    const autoAimRange = (gameState.targetLock && gameState.targetLock.range) || 600;
+    // Only fire inside the enemy's own firing range AND when lined up
+    const engageRange = (target.userData && target.userData.firingRange) || 500;
     const dist = camPos().distanceTo(target.position);
-    if (dist > autoAimRange) return;
-    if (!isInFiringCone(target, autoAimRange + 100)) return;
+    if (dist > engageRange) return;
+    if (!isInFiringCone(target, engageRange + 100)) return;
 
     const now = Date.now();
     if (now - ap.lastFire > 1600 && gameState.weapons.cooldown <= 0 && gameState.weapons.energy >= 10) {
@@ -1014,14 +1014,13 @@
     if (tgt.userData.type !== 'enemy' && !tgt.userData.isBorg) return;
     if (tgt.userData.health <= 0) return;
 
-    // CRITICAL: only fire inside the game's auto-aim range.  updateTargetLock
-    // uses gameState.targetLock.range (default 600 u) to decide whether
-    // mouse auto-aim will engage; we honour the same rule.
-    const autoAimRange = (gameState.targetLock && gameState.targetLock.range) || 600;
+    // Only fire when inside the enemy's own firing range — the distance at
+    // which the enemy shoots back at us, creating a proper dogfight.
+    const engageRange = (tgt.userData && tgt.userData.firingRange) || 500;
     const dist = camPos().distanceTo(tgt.position);
-    if (dist > autoAimRange) return;
+    if (dist > engageRange) return;
 
-    if (!isInFiringCone(tgt, autoAimRange + 100)) return;
+    if (!isInFiringCone(tgt, engageRange + 100)) return;
 
     const now = Date.now();
     if (now - (ap.lastFire || 0) < 1600) return;
@@ -1188,15 +1187,40 @@
     return best;
   }
 
-  // ─── Shield helpers ───────────────────────────────────────────────────────
-  // Enforce shield-on while fighting, shield-off while traveling.
+  // ─── Reactive shields ──────────────────────────────────────────────────────
+  // Shields activate ONLY when the player takes a hull hit (reactive, not
+  // pre-emptive).  They stay up for 5 s then drop automatically.
+  // ensureShieldsFor('travel') still forces shields off while cruising.
+  ap._lastHull = -1;
+  ap._shieldDropTimer = 0;
+
   function ensureShieldsFor(mode) {
     if (typeof shieldSystem === 'undefined') return;
-    const want = (mode === 'combat');
-    if (want && !shieldSystem.active && gameState.energy > 20) {
-      if (window.activateShields) window.activateShields();
-    } else if (!want && shieldSystem.active) {
+    if (mode === 'travel' && shieldSystem.active) {
       if (window.deactivateShields) window.deactivateShields();
+      ap._shieldDropTimer = 0;
+    }
+    // 'combat' mode: we no longer force shields on here — reactiveShields()
+    // handles activation when hull damage is detected.
+  }
+
+  function reactiveShields() {
+    if (typeof shieldSystem === 'undefined') return;
+    const hull = gameState.hull || 100;
+    // Initialise tracking on first frame
+    if (ap._lastHull < 0) { ap._lastHull = hull; return; }
+
+    // Detect a drop in hull (enemy hit us)
+    if (hull < ap._lastHull - 0.5 && !shieldSystem.active && gameState.energy > 20) {
+      if (window.activateShields) window.activateShields();
+      ap._shieldDropTimer = Date.now() + 5000; // keep up for 5 s
+    }
+    ap._lastHull = hull;
+
+    // Auto-drop shields after the timer expires
+    if (shieldSystem.active && ap._shieldDropTimer && Date.now() > ap._shieldDropTimer) {
+      if (window.deactivateShields) window.deactivateShields();
+      ap._shieldDropTimer = 0;
     }
   }
 
@@ -1239,16 +1263,20 @@
     }
   }
 
-  // Clean up any player lasers whose fade-out timer got stuck.  Called
-  // every frame; runs a cheap filter so the activeLasers array can't grow
-  // unbounded during long demo runs.
+  // Clean up player lasers aggressively.  Any laser older than 2 s or whose
+  // opacity faded is force-removed from the scene and spliced from the array.
   function sweepStaleLasers() {
     if (typeof activeLasers === 'undefined') return;
+    const now = Date.now();
     for (let i = activeLasers.length - 1; i >= 0; i--) {
       const ld = activeLasers[i];
       if (!ld) { activeLasers.splice(i, 1); continue; }
-      // Opacity fully faded or material missing → drop it.
-      const done = (ld.opacity !== undefined && ld.opacity <= 0.02) ||
+      // Stamp creation time on first encounter
+      if (!ld._demoCreatedAt) ld._demoCreatedAt = now;
+      const age = now - ld._demoCreatedAt;
+      // Force-remove if older than 2 s, opacity faded, or missing refs
+      const done = age > 2000 ||
+                   (ld.opacity !== undefined && ld.opacity <= 0.02) ||
                    !ld.material || !ld.beam;
       if (done) {
         try {
@@ -1261,6 +1289,54 @@
         activeLasers.splice(i, 1);
       }
     }
+  }
+
+  // Small hit-spark when an enemy takes damage but isn't killed.  We track
+  // combatTarget's health each frame; when it drops, spawn a tiny 5-particle
+  // flash (much smaller than createExplosionEffect's full death explosion).
+  ap._trackedHP = -1;
+  function trackHitSparks() {
+    const ct = ap.combatTarget;
+    if (!ct || !ct.userData || !ct.position) { ap._trackedHP = -1; return; }
+    const hp = ct.userData.health;
+    if (ap._trackedHP > 0 && hp < ap._trackedHP && hp > 0) {
+      createMiniHitSpark(ct.position);
+    }
+    ap._trackedHP = hp;
+  }
+
+  function createMiniHitSpark(pos) {
+    if (typeof THREE === 'undefined' || typeof scene === 'undefined') return;
+    try {
+      const count = 6;
+      const positions = new Float32Array(count * 3);
+      for (let i = 0; i < count; i++) {
+        positions[i * 3]     = (Math.random() - 0.5) * 4;
+        positions[i * 3 + 1] = (Math.random() - 0.5) * 4;
+        positions[i * 3 + 2] = (Math.random() - 0.5) * 4;
+      }
+      const geom = new THREE.BufferGeometry();
+      geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+      const mat = new THREE.PointsMaterial({
+        color: 0xffaa44, size: 1.5, transparent: true, opacity: 1,
+        blending: THREE.AdditiveBlending
+      });
+      const pts = new THREE.Points(geom, mat);
+      pts.position.copy(pos);
+      scene.add(pts);
+      // Quick 300 ms fade-out then cleanup
+      let o = 1;
+      const iv = setInterval(() => {
+        o -= 0.25;
+        mat.opacity = Math.max(0, o);
+        if (o <= 0) {
+          clearInterval(iv);
+          scene.remove(pts);
+          geom.dispose();
+          mat.dispose();
+        }
+      }, 50);
+    } catch (_) {}
   }
 
   function elapsed() {
