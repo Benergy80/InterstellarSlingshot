@@ -1184,7 +1184,21 @@ function beginLaunchSequence() {
             }
         }, 300);
     }
-    
+
+    // Hide demo button on launch
+    if (introSequence.demoButton) {
+        introSequence.demoButton.style.transition = 'opacity 0.3s ease-out';
+        introSequence.demoButton.style.opacity = '0';
+        setTimeout(() => {
+            if (introSequence.demoButton) {
+                introSequence.demoButton.remove();
+                introSequence.demoButton = null;
+            }
+        }, 300);
+    }
+    const demoBtnEl = document.getElementById('introDemoBtn');
+    if (demoBtnEl) { demoBtnEl.style.opacity = '0'; setTimeout(() => demoBtnEl.remove(), 300); }
+
     // Mark intro as active
     introSequence.active = true;
     introSequence.phase = 'countdown';
@@ -2184,13 +2198,23 @@ function fadeOutIntroElements(progress) {
 
 function skipIntroSequence() {
     console.log('⏭️ Skipping intro sequence with proper game transition');
-    
+
     // IMMEDIATELY remove skip button to prevent double-clicks/glitches
     if (introSequence.skipButton) {
         introSequence.skipButton.remove();
         introSequence.skipButton = null;
         console.log('🗑️ Skip button removed immediately to prevent glitches');
     }
+
+    // IMMEDIATELY remove demo button too
+    if (introSequence.demoButton) {
+        introSequence.demoButton.remove();
+        introSequence.demoButton = null;
+        console.log('🗑️ Demo button removed on skip');
+    }
+    // Also check by ID in case the reference was lost
+    const demoEl = document.getElementById('introDemoBtn');
+    if (demoEl) demoEl.remove();
     
     // DON'T remove start button yet - let it fade with the black overlay
     // It will be removed when the black overlay covers it

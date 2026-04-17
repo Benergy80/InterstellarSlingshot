@@ -121,9 +121,10 @@
 
   // Global O-key binding — ALWAYS active (registered once at module load, not
   // scoped to demo start) so the player can use it during demo, during
-  // takeover, or during normal gameplay.  We set keys.enter for a generous
-  // ~300 ms window so the physics loop always sees the keypress even if a
-  // frame drop slips through.
+  // takeover, or during normal gameplay.  We dispatch a synthetic Enter
+  // keydown/keyup so the game's own handler fires exactly as if the player
+  // pressed Enter — including all the visual + audio logic that the
+  // physics-only keys.enter bypass would miss.
   function handleGlobalOKey(e) {
     if (!e || e.repeat) return;
     if (e.key !== 'o' && e.key !== 'O') return;
@@ -136,16 +137,18 @@
     if (gameState.emergencyWarp.transitioning) return;
     if (typeof shieldSystem !== 'undefined' && shieldSystem.active) return;
 
-    // Route through the game's normal emergency-warp key channel
-    if (window.keys) {
-      window.keys.enter = true;
-      // Hold the key for ~350 ms so any paused/backgrounded frame still
-      // catches it when physics resumes.
-      setTimeout(() => { if (window.keys) window.keys.enter = false; }, 350);
-    }
+    // Dispatch a real Enter keystroke so the game's own keydown handler
+    // processes it — this fires both keys.enter AND all Enter-specific
+    // code paths (warp effects, sounds, etc.).
+    document.dispatchEvent(new KeyboardEvent('keydown', {
+      key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true
+    }));
+    setTimeout(() => {
+      document.dispatchEvent(new KeyboardEvent('keyup', {
+        key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true
+      }));
+    }, 350);
   }
-  // Register the O-key binding immediately at module load.  start()/stop()
-  // no longer control it — it is always available.
   if (typeof document !== 'undefined') {
     document.addEventListener('keydown', handleGlobalOKey);
   }
