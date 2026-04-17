@@ -218,10 +218,15 @@
     // tag it so we don't buff again.  The Borg cube is already 100 HP so it
     // takes plenty of hits — skip the buff for Borg so the boss stays tuned.
     buffEnemiesForDemo();
-    sweepStaleLasers();
-    reactiveShields();
+    buffEnemySpeed();
+    preemptiveShields();
     trackHitSparks();
     autoReadAnyTransmission();
+    // NOTE: no sweepStaleLasers here.  The game's own setInterval fade
+    // cleans up lasers in ~100 ms — when the demo interfered with that
+    // (zeroing opacity / force-removing from scene out-of-band) it
+    // actually BROKE the native fade pipeline.  Leaving cleanup to the
+    // game makes autopilot lasers behave identically to player lasers.
 
     // Clear movement keys each frame; we set what we need below
     releaseMovementKeys();
@@ -408,6 +413,7 @@
         ap._weaponsMsgShown = true;
         transmit('WEAPONS', 'Missile systems online.\nFiring torpedo!');
       }
+      ap._missileFireLock = Date.now() + 500; // hold shields off for 500 ms
       if (shieldsActive() && window.deactivateShields) window.deactivateShields();
       setTimeout(() => {
         if (ap.active) fireMissileAt(enemy);
@@ -889,6 +895,7 @@
           ap._weaponsMsgShown = true;
           transmit('WEAPONS', 'Missile systems online.\nFiring torpedo!');
         }
+        ap._missileFireLock = Date.now() + 500;
         if (shieldsActive() && window.deactivateShields) window.deactivateShields();
         setTimeout(() => { if (ap.active) fireMissileAt(target); }, 150);
       }
@@ -1200,40 +1207,39 @@
     return best;
   }
 
-  // ─── Reactive shields ──────────────────────────────────────────────────────
-  // Shields activate ONLY when the player takes a hull hit (reactive, not
-  // pre-emptive).  They stay up for 5 s then drop automatically.
+  // ─── Pre-emptive shields ───────────────────────────────────────────────────
+  // Shields engage as soon as the player is inside ANY live enemy's firing
+  // range — i.e. the moment they're "being fired upon."  They drop again
+  // once the player leaves every enemy's firing range.
   // ensureShieldsFor('travel') still forces shields off while cruising.
-  ap._lastHull = -1;
-  ap._shieldDropTimer = 0;
-
   function ensureShieldsFor(mode) {
     if (typeof shieldSystem === 'undefined') return;
     if (mode === 'travel' && shieldSystem.active) {
       if (window.deactivateShields) window.deactivateShields();
-      ap._shieldDropTimer = 0;
     }
-    // 'combat' mode: we no longer force shields on here — reactiveShields()
-    // handles activation when hull damage is detected.
   }
 
-  function reactiveShields() {
+  function preemptiveShields() {
     if (typeof shieldSystem === 'undefined') return;
-    const hull = gameState.hull || 100;
-    // Initialise tracking on first frame
-    if (ap._lastHull < 0) { ap._lastHull = hull; return; }
+    if (typeof enemies === 'undefined') return;
 
-    // Detect a drop in hull (enemy hit us)
-    if (hull < ap._lastHull - 0.5 && !shieldSystem.active && gameState.energy > 20) {
-      if (window.activateShields) window.activateShields();
-      ap._shieldDropTimer = Date.now() + 5000; // keep up for 5 s
+    // While a missile fire sequence is in-flight, do NOT re-raise shields
+    // (fireMissile aborts if shields are up).
+    if (ap._missileFireLock && Date.now() < ap._missileFireLock) return;
+
+    let inFireRange = false;
+    const camP = camPos();
+    for (let i = 0; i < enemies.length; i++) {
+      const e = enemies[i];
+      if (!e || !e.userData || e.userData.health <= 0) continue;
+      const range = (e.userData.firingRange || 500) + 50; // small buffer
+      if (camP.distanceTo(e.position) < range) { inFireRange = true; break; }
     }
-    ap._lastHull = hull;
 
-    // Auto-drop shields after the timer expires
-    if (shieldSystem.active && ap._shieldDropTimer && Date.now() > ap._shieldDropTimer) {
+    if (inFireRange && !shieldSystem.active && gameState.energy > 15) {
+      if (window.activateShields) window.activateShields();
+    } else if (!inFireRange && shieldSystem.active) {
       if (window.deactivateShields) window.deactivateShields();
-      ap._shieldDropTimer = 0;
     }
   }
 
@@ -1276,36 +1282,18 @@
     }
   }
 
-  // Aggressive laser cleanup.  A player laser's fade-out runs over ~100 ms,
-  // so anything in activeLasers older than 400 ms should already be gone.
-  // We also manually force the opacity down to 0 so nothing is visible in
-  // the scene while we wait for the next frame.
-  function sweepStaleLasers() {
-    if (typeof activeLasers === 'undefined') return;
-    const now = Date.now();
-    for (let i = activeLasers.length - 1; i >= 0; i--) {
-      const ld = activeLasers[i];
-      if (!ld) { activeLasers.splice(i, 1); continue; }
-      if (!ld._demoCreatedAt) ld._demoCreatedAt = now;
-      const age = now - ld._demoCreatedAt;
-      // Force-remove if older than 400 ms, opacity faded, or missing refs
-      const done = age > 400 ||
-                   (ld.opacity !== undefined && ld.opacity <= 0.02) ||
-                   !ld.material || !ld.beam;
-      if (done) {
-        try {
-          // Zero opacity first so any deferred render doesn't flash
-          if (ld.material) ld.material.opacity = 0;
-          if (ld.glowMaterial) ld.glowMaterial.opacity = 0;
-          if (ld.beam) ld.beam.visible = false;
-          if (ld.beam && typeof scene !== 'undefined') scene.remove(ld.beam);
-          if (ld.geometry && ld.geometry.dispose) ld.geometry.dispose();
-          if (ld.material && ld.material.dispose) ld.material.dispose();
-          if (ld.glowGeometry && ld.glowGeometry.dispose) ld.glowGeometry.dispose();
-          if (ld.glowMaterial && ld.glowMaterial.dispose) ld.glowMaterial.dispose();
-        } catch (_) {}
-        activeLasers.splice(i, 1);
-      }
+  // Double every enemy's movement speed so dog-fights feel fast.  Runs once
+  // per enemy (tagged _demoSpeedBuffed) so we never double again.
+  function buffEnemySpeed() {
+    if (typeof enemies === 'undefined') return;
+    for (let i = 0; i < enemies.length; i++) {
+      const e = enemies[i];
+      if (!e || !e.userData) continue;
+      if (e.userData._demoSpeedBuffed) continue;
+      if (e.userData.speed) e.userData.speed = e.userData.speed * 2.0;
+      if (e.userData.maxSpeed) e.userData.maxSpeed = e.userData.maxSpeed * 2.0;
+      if (e.userData.chaseSpeed) e.userData.chaseSpeed = e.userData.chaseSpeed * 2.0;
+      e.userData._demoSpeedBuffed = true;
     }
   }
 
@@ -1325,9 +1313,9 @@
 
   // ─── Auto-read ALL incoming transmissions ──────────────────────────────
   // Watches the DOM for #incomingTransmissionPrompt (raised by ANY
-  // showIncomingTransmission call — autopilot or game-emitted).  When a
-  // new prompt appears, wait 2 s then click READ to open the full text,
-  // immediately unpause, and auto-dismiss the full alert 5 s later.
+  // showIncomingTransmission call — autopilot or game-emitted).  After
+  // the prompt has been visible for 1 s, click READ to open the full
+  // text; 5 s after that, auto-dismiss the full alert.
   ap._seenPrompt = null;
   function autoReadAnyTransmission() {
     const prompt = document.getElementById('incomingTransmissionPrompt');
@@ -1336,31 +1324,27 @@
     ap._seenPrompt = prompt;
 
     setTimeout(() => {
-      // Prompt might have been dismissed manually before timer fires
       if (!document.body.contains(prompt)) return;
       const readBtn = document.getElementById('transmissionRead');
       if (readBtn) {
         readBtn.click();
-        // handleRead() pauses the game — unpause immediately so Tab etc work
         if (typeof gameState !== 'undefined') gameState.paused = false;
         if (typeof renderer !== 'undefined' && renderer && renderer.domElement) {
           renderer.domElement.style.cursor = 'none';
         }
-        // Strip every tutorial/understood button the alert just drew
         const alertEl = document.getElementById('missionCommandAlert');
         if (alertEl) {
           alertEl.querySelectorAll('button').forEach(b => b.remove());
         }
       }
-    }, 2000);
+    }, 1000);
 
     setTimeout(() => {
       const alertEl = document.getElementById('missionCommandAlert');
       if (alertEl) alertEl.classList.add('hidden');
       if (typeof gameState !== 'undefined') gameState.paused = false;
-      // Allow this prompt to be re-processed if somehow it comes back
       if (ap._seenPrompt === prompt) ap._seenPrompt = null;
-    }, 7000);
+    }, 6000);
   }
 
   function createMiniHitSpark(pos) {
