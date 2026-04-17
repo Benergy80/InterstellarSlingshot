@@ -217,15 +217,14 @@
     // first time we see an enemy, multiply its health + maxHealth by 3 and
     // tag it so we don't buff again.  The Borg cube is already 100 HP so it
     // takes plenty of hits — skip the buff for Borg so the boss stays tuned.
-    buffEnemiesForDemo();
-    buffEnemySpeed();
-    preemptiveShields();
+    // ── Throttled per-frame helpers ─────────────────────────────────────────
+    // Enemy buff loops only need to run once per second (enemies don't spawn
+    // faster than that).  Shield/target scans run at 10 Hz — still responsive
+    // but 6x cheaper.  frameCount drives all throttles consistently.
+    const fc = gameState.frameCount || 0;
+    if (fc % 60 === 0) { buffEnemiesForDemo(); buffEnemySpeed(); }
+    if (fc % 6 === 0)  { preemptiveShields(); }
     autoReadAnyTransmission();
-    // NOTE: no sweepStaleLasers here.  The game's own setInterval fade
-    // cleans up lasers in ~100 ms — when the demo interfered with that
-    // (zeroing opacity / force-removing from scene out-of-band) it
-    // actually BROKE the native fade pipeline.  Leaving cleanup to the
-    // game makes autopilot lasers behave identically to player lasers.
 
     // Clear movement keys each frame; we set what we need below
     releaseMovementKeys();
@@ -286,8 +285,10 @@
     ensureShieldsFor('travel');
     ensureThirdPerson();
 
-    // Keep the game's Navigation System target list fresh
-    if (typeof populateTargets === 'function' && (t % 1500) < 100) {
+    // Keep the game's Navigation System target list fresh (every ~5 s, heavy DOM)
+    if (typeof populateTargets === 'function' && t > 0 &&
+        Date.now() - (ap._lastPopulate || 0) > 5000) {
+      ap._lastPopulate = Date.now();
       populateTargets();
     }
 
@@ -934,11 +935,19 @@
 
   // ─── Navigation helpers ────────────────────────────────────────────────────
 
+  // Reusable vector to avoid per-frame allocation
+  const _flyVec = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+  const _flyDummy = { position: null };
+
   function flyToward(pos, speedMult) {
     speedMult = speedMult || 1.0;
-    const target = pos && pos.position ? pos.position : (pos.isVector3 ? pos : new THREE.Vector3(pos.x || 0, pos.y || 0, pos.z || 0));
-    const dummy = { position: target };
-    if (window.orientTowardsTarget) window.orientTowardsTarget(dummy);
+    let target;
+    if (pos && pos.position) { target = pos.position; }
+    else if (pos && pos.isVector3) { target = pos; }
+    else if (_flyVec) { target = _flyVec.set(pos.x || 0, pos.y || 0, pos.z || 0); }
+    else { return; }
+    _flyDummy.position = target;
+    if (window.orientTowardsTarget) window.orientTowardsTarget(_flyDummy);
     const k = keys();
     k.w = true;
     if (speedMult > 1.5) k.b = true;
@@ -1096,16 +1105,25 @@
 
   // "Navigation System detected" — matches game-ui.js populateTargets() ranges:
   //   regular enemies: 3000 units   (black-hole guardians: 10000 units)
-  // Returns the nearest enemy the player's onboard nav panel can currently see.
+  // Cached for ~15 frames to avoid scanning the full enemies array every frame.
+  ap._navCache = null;
+  ap._navCacheFrame = -99;
   function navDetectedEnemy() {
-    if (typeof enemies === 'undefined') return null;
+    const fc = (typeof gameState !== 'undefined' && gameState.frameCount) || 0;
+    if (fc - ap._navCacheFrame < 15) return ap._navCache;
+    ap._navCacheFrame = fc;
+
+    if (typeof enemies === 'undefined') { ap._navCache = null; return null; }
     let best = null, bestDist = Infinity;
-    enemies.forEach(e => {
-      if (!e.userData || e.userData.health <= 0) return;
+    const cp = camPos();
+    for (let i = 0; i < enemies.length; i++) {
+      const e = enemies[i];
+      if (!e || !e.userData || e.userData.health <= 0) continue;
       const maxRange = e.userData.isBlackHoleGuardian ? 10000 : 3000;
-      const d = camPos().distanceTo(e.position);
+      const d = cp.distanceTo(e.position);
       if (d < maxRange && d < bestDist) { bestDist = d; best = e; }
-    });
+    }
+    ap._navCache = best;
     return best;
   }
 
@@ -1170,34 +1188,38 @@
   }
 
   // While scanning/coasting, cycle through nearby planets on the navigation
-  // panel every 3 seconds.  Demonstrates planet targeting without
-  // interrupting travel — we set gameState.currentTarget but never steer to
-  // it.  Clears the lock if no planets are in range.
+  // panel every 5 seconds.  Demonstrates planet targeting without
+  // interrupting travel.  populateTargets() rebuilds DOM so we keep the
+  // interval long.
   function cycleScanTarget() {
     const now = Date.now();
-    if (now - (ap._lastScanCycle || 0) < 3000) return;
+    if (now - (ap._lastScanCycle || 0) < 5000) return;
     ap._lastScanCycle = now;
 
     if (typeof planets === 'undefined') return;
-    const candidates = planets.filter(p => {
+    // Build candidate list (one-shot, not stored)
+    const cp = camPos();
+    let bestPlanet = null, bestDist = 8000;
+    ap._scanIdx = ((ap._scanIdx || 0) + 1);
+    let count = 0;
+    for (let i = 0; i < planets.length; i++) {
+      const p = planets[i];
       const ud = p && p.userData;
-      if (!ud) return false;
+      if (!ud) continue;
       if (ud.type === 'blackhole' || ud.type === 'asteroid' ||
-          ud.type === 'asteroidBelt' || ud.type === 'moon') return false;
-      const d = camPos().distanceTo(p.position);
-      return d < 8000;
-    });
+          ud.type === 'asteroidBelt' || ud.type === 'moon') continue;
+      const d = cp.distanceTo(p.position);
+      if (d >= 8000) continue;
+      count++;
+      // Pick the Nth valid planet to cycle through them
+      if (count % Math.max(1, ap._scanIdx) === 0) { bestPlanet = p; }
+    }
 
-    if (candidates.length === 0) return;
-
-    ap._scanIdx = ((ap._scanIdx || 0) + 1) % candidates.length;
-    const pick = candidates[ap._scanIdx];
-    gameState.currentTarget = pick;
-    // Don't activate targetLock — we don't want the weapon auto-aim
-    // to fire at a planet.  currentTarget alone drives the nav panel.
+    if (!bestPlanet) return;
+    gameState.currentTarget = bestPlanet;
     if (typeof populateTargets === 'function') populateTargets();
 
-    const nm = (pick.userData && pick.userData.name) || 'planet';
+    const nm = (bestPlanet.userData && bestPlanet.userData.name) || 'planet';
     setStatus('Scanning — nav target: ' + nm);
   }
 
