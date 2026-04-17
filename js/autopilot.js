@@ -162,7 +162,14 @@
         gameState.targetLock.active = false;
         gameState.targetLock.target = null;
       }
-      if (gameState) gameState.currentTarget = null;
+      if (gameState) {
+        gameState.currentTarget = null;
+        // Always unpause on takeover so Tab/Shields/Space all work
+        gameState.paused = false;
+      }
+      // Hide any auto-opened mission alert so it doesn't block input
+      const alertEl = document.getElementById('missionCommandAlert');
+      if (alertEl) alertEl.classList.add('hidden');
       if (typeof shieldSystem !== 'undefined' && shieldSystem.active && window.deactivateShields) {
         window.deactivateShields();
       }
@@ -182,6 +189,11 @@
   // ─── Main update (called every frame from animate()) ──────────────────────
   function update() {
     if (!ap.active) return;
+    // CRITICAL: ensure the game is NEVER left paused by the demo.  The
+    // game's keydown handler early-returns on gameState.paused, which
+    // would block Tab (shields) during player takeover.  We reset this
+    // every single frame so the player always has keyboard input.
+    if (typeof gameState !== 'undefined') gameState.paused = false;
     // Paused by player — still tick HUD but never drive the ship
     if (ap.paused) { tickHUD(); return; }
     if (typeof gameState === 'undefined' || !gameState.gameStarted) return;
@@ -389,7 +401,7 @@
     // Occasional missile fire — every ~15 s while inside engagement range.
     // The WEAPONS transmission only fires ONCE per game session.
     if (dist <= engageRange && gameState.missiles.current > 0 &&
-        Date.now() - (ap._lastMissileTime || 0) > 15000) {
+        Date.now() - (ap._lastMissileTime || 0) > 7000) {
       ap._lastMissileTime = Date.now();
       if (!ap._weaponsMsgShown) {
         ap._weaponsMsgShown = true;
@@ -870,7 +882,7 @@
 
       // Occasional missile every ~15 s
       if (dist <= engageRange && gameState.missiles.current > 0 &&
-          Date.now() - (ap._lastMissileTime || 0) > 15000) {
+          Date.now() - (ap._lastMissileTime || 0) > 7000) {
         ap._lastMissileTime = Date.now();
         if (!ap._weaponsMsgShown) {
           ap._weaponsMsgShown = true;
@@ -1263,23 +1275,28 @@
     }
   }
 
-  // Clean up player lasers aggressively.  Any laser older than 2 s or whose
-  // opacity faded is force-removed from the scene and spliced from the array.
+  // Aggressive laser cleanup.  A player laser's fade-out runs over ~100 ms,
+  // so anything in activeLasers older than 400 ms should already be gone.
+  // We also manually force the opacity down to 0 so nothing is visible in
+  // the scene while we wait for the next frame.
   function sweepStaleLasers() {
     if (typeof activeLasers === 'undefined') return;
     const now = Date.now();
     for (let i = activeLasers.length - 1; i >= 0; i--) {
       const ld = activeLasers[i];
       if (!ld) { activeLasers.splice(i, 1); continue; }
-      // Stamp creation time on first encounter
       if (!ld._demoCreatedAt) ld._demoCreatedAt = now;
       const age = now - ld._demoCreatedAt;
-      // Force-remove if older than 2 s, opacity faded, or missing refs
-      const done = age > 2000 ||
+      // Force-remove if older than 400 ms, opacity faded, or missing refs
+      const done = age > 400 ||
                    (ld.opacity !== undefined && ld.opacity <= 0.02) ||
                    !ld.material || !ld.beam;
       if (done) {
         try {
+          // Zero opacity first so any deferred render doesn't flash
+          if (ld.material) ld.material.opacity = 0;
+          if (ld.glowMaterial) ld.glowMaterial.opacity = 0;
+          if (ld.beam) ld.beam.visible = false;
           if (ld.beam && typeof scene !== 'undefined') scene.remove(ld.beam);
           if (ld.geometry && ld.geometry.dispose) ld.geometry.dispose();
           if (ld.material && ld.material.dispose) ld.material.dispose();
