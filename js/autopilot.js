@@ -229,6 +229,7 @@
     if (fc % 6 === 0)  { preemptiveShields(); }
     autoReadAnyTransmission();
     hideStaleLasers();
+    swarmEnemiesNearPlayer();
 
     // Clear movement keys each frame; we set what we need below
     releaseMovementKeys();
@@ -1103,7 +1104,7 @@
       const ld = activeLasers[i];
       if (!ld || !ld.beam) continue;
       if (!ld._demoCreatedAt) ld._demoCreatedAt = now;
-      if (now - ld._demoCreatedAt > 200 && ld.beam.visible) {
+      if (now - ld._demoCreatedAt > 80 && ld.beam.visible) {
         ld.beam.visible = false;
         // Also zero the opacity defensively — some materials with
         // .visible=false may still contribute to the composite frame
@@ -1337,17 +1338,50 @@
   }
 
   // Double every enemy's movement speed so dog-fights feel fast.  Runs once
-  // per enemy (tagged _demoSpeedBuffed) so we never double again.
+  // per enemy (tagged _demoSpeedBuffed) so we never double again.  The game
+  // clamps native speed to a 0.2–1.0 range (game-controls.js:682), so the
+  // real movement boost comes from swarmEnemiesNearPlayer() which directly
+  // translates enemies toward the player every frame.
   function buffEnemySpeed() {
     if (typeof enemies === 'undefined') return;
     for (let i = 0; i < enemies.length; i++) {
       const e = enemies[i];
       if (!e || !e.userData) continue;
       if (e.userData._demoSpeedBuffed) continue;
-      if (e.userData.speed) e.userData.speed = e.userData.speed * 2.0;
+      if (e.userData.speed) e.userData.speed = Math.min(1.0, e.userData.speed * 2.0);
       if (e.userData.maxSpeed) e.userData.maxSpeed = e.userData.maxSpeed * 2.0;
       if (e.userData.chaseSpeed) e.userData.chaseSpeed = e.userData.chaseSpeed * 2.0;
+      // Widen detection range so enemies engage from further out
+      if (e.userData.detectionRange) {
+        e.userData.detectionRange = e.userData.detectionRange * 1.5;
+      }
       e.userData._demoSpeedBuffed = true;
+    }
+  }
+
+  // Pull every nearby live enemy closer to the player each frame.  This
+  // bypasses the game's native speed clamp (0.2–1.0) and produces a
+  // visible "swarm" effect when multiple enemies are within 1500 u.  The
+  // closer an enemy is, the harder it's pulled — creating urgency during
+  // dogfights.  Reuses a shared THREE.Vector3 to avoid allocation.
+  const _swarmVec = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+  function swarmEnemiesNearPlayer() {
+    if (typeof enemies === 'undefined' || !_swarmVec) return;
+    const cp = camPos();
+    const SWARM_RANGE = 1500;
+    const CLOSE_RANGE = 600;
+    for (let i = 0; i < enemies.length; i++) {
+      const e = enemies[i];
+      if (!e || !e.userData || e.userData.health <= 0) continue;
+      // Skip the Borg cube and boss support — they have custom movement
+      if (e.userData.isBorgCube || e.userData.isBossSupport) continue;
+      _swarmVec.subVectors(cp, e.position);
+      const dist = _swarmVec.length();
+      if (dist > SWARM_RANGE || dist < 50) continue;
+      _swarmVec.normalize();
+      // Pull strength: 0.8 u/frame at the edge of range, 2.0 in close range
+      const pull = dist < CLOSE_RANGE ? 2.0 : 0.8;
+      e.position.addScaledVector(_swarmVec, pull);
     }
   }
 
