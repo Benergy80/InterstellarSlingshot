@@ -221,6 +221,7 @@
     sweepStaleLasers();
     reactiveShields();
     trackHitSparks();
+    autoReadAnyTransmission();
 
     // Clear movement keys each frame; we set what we need below
     releaseMovementKeys();
@@ -1322,6 +1323,46 @@
     ap._trackedHP = hp;
   }
 
+  // ─── Auto-read ALL incoming transmissions ──────────────────────────────
+  // Watches the DOM for #incomingTransmissionPrompt (raised by ANY
+  // showIncomingTransmission call — autopilot or game-emitted).  When a
+  // new prompt appears, wait 2 s then click READ to open the full text,
+  // immediately unpause, and auto-dismiss the full alert 5 s later.
+  ap._seenPrompt = null;
+  function autoReadAnyTransmission() {
+    const prompt = document.getElementById('incomingTransmissionPrompt');
+    if (!prompt) return;
+    if (ap._seenPrompt === prompt) return;   // already handling this one
+    ap._seenPrompt = prompt;
+
+    setTimeout(() => {
+      // Prompt might have been dismissed manually before timer fires
+      if (!document.body.contains(prompt)) return;
+      const readBtn = document.getElementById('transmissionRead');
+      if (readBtn) {
+        readBtn.click();
+        // handleRead() pauses the game — unpause immediately so Tab etc work
+        if (typeof gameState !== 'undefined') gameState.paused = false;
+        if (typeof renderer !== 'undefined' && renderer && renderer.domElement) {
+          renderer.domElement.style.cursor = 'none';
+        }
+        // Strip every tutorial/understood button the alert just drew
+        const alertEl = document.getElementById('missionCommandAlert');
+        if (alertEl) {
+          alertEl.querySelectorAll('button').forEach(b => b.remove());
+        }
+      }
+    }, 2000);
+
+    setTimeout(() => {
+      const alertEl = document.getElementById('missionCommandAlert');
+      if (alertEl) alertEl.classList.add('hidden');
+      if (typeof gameState !== 'undefined') gameState.paused = false;
+      // Allow this prompt to be re-processed if somehow it comes back
+      if (ap._seenPrompt === prompt) ap._seenPrompt = null;
+    }, 7000);
+  }
+
   function createMiniHitSpark(pos) {
     if (typeof THREE === 'undefined' || typeof scene === 'undefined') return;
     try {
@@ -1436,43 +1477,11 @@
     const now = Date.now();
     if (now - ap._lastTransmit < TRANSMIT_COOLDOWN_MS) return;
     ap._lastTransmit = now;
-
     if (typeof showIncomingTransmission !== 'function') return;
     showIncomingTransmission(from, msg, 0x00ccff);
-
-    // Demo-mode flow:
-    //   +2000 ms — auto-click READ so the full transmission opens
-    //   +7000 ms — auto-close the full transmission
-    // The game's handleRead() pauses the game; we immediately undo the
-    // pause so the demo keeps running.
-    setTimeout(() => {
-      if (!ap.active) return;
-      const readBtn = document.getElementById('transmissionRead');
-      if (readBtn) {
-        readBtn.click();
-        // handleRead() sets gameState.paused = true — unpause right away.
-        if (typeof gameState !== 'undefined') gameState.paused = false;
-        // Restore the cursor-hidden gameplay state (handleRead showed it)
-        if (typeof renderer !== 'undefined' && renderer && renderer.domElement) {
-          renderer.domElement.style.cursor = 'none';
-        }
-        // Button container in the mission alert can include UNDERSTOOD /
-        // SKIP TUTORIAL — neither should appear in demo mode, so wipe any
-        // buttons the alert just drew.
-        const alertEl = document.getElementById('missionCommandAlert');
-        if (alertEl) {
-          alertEl.querySelectorAll('button').forEach(b => b.remove());
-        }
-      }
-    }, 2000);
-
-    setTimeout(() => {
-      if (!ap.active) return;
-      const alertEl = document.getElementById('missionCommandAlert');
-      if (alertEl) alertEl.classList.add('hidden');
-      // Make sure gameState isn't stuck paused after our auto-open
-      if (typeof gameState !== 'undefined') gameState.paused = false;
-    }, 7000);
+    // autoReadAnyTransmission() in the main update loop will pick up the
+    // prompt and auto-open the full message 2 s later, then auto-close
+    // after 5 s more.
   }
 
   // ─── HUD ──────────────────────────────────────────────────────────────────
