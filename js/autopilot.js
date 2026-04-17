@@ -412,15 +412,11 @@
     gameState.targetLock.target = enemy;
     gameState.currentTarget = enemy;
 
-    // Occasional missile fire — every ~15 s while inside engagement range.
-    // The WEAPONS transmission only fires ONCE per game session.
+    // Occasional missile fire — every ~7 s while inside engagement range.
+    // No transmission; status-line only keeps the HUD quiet.
     if (dist <= engageRange && gameState.missiles.current > 0 &&
         Date.now() - (ap._lastMissileTime || 0) > 7000) {
       ap._lastMissileTime = Date.now();
-      if (!ap._weaponsMsgShown) {
-        ap._weaponsMsgShown = true;
-        transmit('WEAPONS', 'Missile systems online.\nFiring torpedo!');
-      }
       ap._missileFireLock = Date.now() + 500; // hold shields off for 500 ms
       if (shieldsActive() && window.deactivateShields) window.deactivateShields();
       setTimeout(() => {
@@ -901,14 +897,10 @@
       gameState.targetLock.target = target;
       gameState.currentTarget = target;
 
-      // Occasional missile every ~15 s
+      // Occasional missile every ~7 s — no transmission
       if (dist <= engageRange && gameState.missiles.current > 0 &&
           Date.now() - (ap._lastMissileTime || 0) > 7000) {
         ap._lastMissileTime = Date.now();
-        if (!ap._weaponsMsgShown) {
-          ap._weaponsMsgShown = true;
-          transmit('WEAPONS', 'Missile systems online.\nFiring torpedo!');
-        }
         ap._missileFireLock = Date.now() + 500;
         if (shieldsActive() && window.deactivateShields) window.deactivateShields();
         setTimeout(() => { if (ap.active) fireMissileAt(target); }, 150);
