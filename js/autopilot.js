@@ -1497,11 +1497,14 @@
     removeHUD();
     const el = document.createElement('div');
     el.id = 'demoPilotHUD';
-    // NOTE: Achievement popup sits at bottom-20 (80px). Keep demo HUD BELOW it
-    // so demo status never blocks standard achievement toasts.
+    // Mobile: position at the TOP just below the NAV button.
+    // Desktop: keep at the bottom (above the achievement popup bottom-80).
+    const isMobile = window.innerWidth <= 768 ||
+                     ('ontouchstart' in window && window.innerWidth <= 1024);
+    const topOrBottom = isMobile ? 'top:84px' : 'bottom:10px';
     el.style.cssText = [
       'position:fixed',
-      'bottom:10px',
+      topOrBottom,
       'left:50%',
       'transform:translateX(-50%)',
       'z-index:500',
@@ -1518,10 +1521,20 @@
       'box-shadow:0 0 20px rgba(0,255,136,0.3)',
       'letter-spacing:2px',
       'min-width:260px',
+      'max-width:90vw',
     ].join(';');
     el.innerHTML = '<div id="demoPilotLabel" style="opacity:0.7;font-size:10px;margin-bottom:2px">🤖 DEMO AUTOPILOT · press T to take over</div><div id="demoPilotStatus">Initializing…</div>';
     document.body.appendChild(el);
     ap.hudEl = el;
+
+    // Re-evaluate position on orientation / resize so a tablet rotated
+    // into portrait picks the mobile layout and vice-versa.
+    if (!ap._resizeBound) {
+      ap._resizeBound = true;
+      window.addEventListener('resize', () => {
+        if (ap.active) buildHUD();
+      });
+    }
   }
 
   function tickHUD() {
