@@ -117,23 +117,37 @@
       toggleTakeover();
       return;
     }
+  }
 
-    // O — manual emergency warp shortcut.  Works during demo, during
-    // takeover, whenever.  We fire it via the game's normal keys.enter
-    // channel so the physics warp code path runs unchanged.
-    if (!e.repeat && (e.key === 'o' || e.key === 'O')) {
-      if (typeof gameState !== 'undefined' &&
-          gameState.emergencyWarp &&
-          gameState.emergencyWarp.available > 0 &&
-          !gameState.emergencyWarp.active &&
-          !gameState.emergencyWarp.transitioning &&
-          (typeof shieldSystem === 'undefined' || !shieldSystem.active)) {
-        if (window.keys) {
-          window.keys.enter = true;
-          setTimeout(() => { if (window.keys) window.keys.enter = false; }, 100);
-        }
-      }
+  // Global O-key binding — ALWAYS active (registered once at module load, not
+  // scoped to demo start) so the player can use it during demo, during
+  // takeover, or during normal gameplay.  We set keys.enter for a generous
+  // ~300 ms window so the physics loop always sees the keypress even if a
+  // frame drop slips through.
+  function handleGlobalOKey(e) {
+    if (!e || e.repeat) return;
+    if (e.key !== 'o' && e.key !== 'O') return;
+    const tag = (e.target && e.target.tagName) || '';
+    if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+    if (typeof gameState === 'undefined' || !gameState.gameStarted) return;
+    if (!gameState.emergencyWarp) return;
+    if (gameState.emergencyWarp.available <= 0) return;
+    if (gameState.emergencyWarp.active) return;
+    if (gameState.emergencyWarp.transitioning) return;
+    if (typeof shieldSystem !== 'undefined' && shieldSystem.active) return;
+
+    // Route through the game's normal emergency-warp key channel
+    if (window.keys) {
+      window.keys.enter = true;
+      // Hold the key for ~350 ms so any paused/backgrounded frame still
+      // catches it when physics resumes.
+      setTimeout(() => { if (window.keys) window.keys.enter = false; }, 350);
     }
+  }
+  // Register the O-key binding immediately at module load.  start()/stop()
+  // no longer control it — it is always available.
+  if (typeof document !== 'undefined') {
+    document.addEventListener('keydown', handleGlobalOKey);
   }
 
   function toggleTakeover() {
@@ -186,6 +200,15 @@
       gameState.missiles.current = gameState.missiles.capacity || 3;
     // NOTE: we intentionally do NOT top up emergencyWarp.available — the
     // demo earns warps by defeating enemies (same as normal gameplay).
+
+    // Buff every enemy so they take at least 3 laser hits.  We do this lazily:
+    // first time we see an enemy, multiply its health + maxHealth by 3 and
+    // tag it so we don't buff again.  The Borg cube is already 100 HP so it
+    // takes plenty of hits — skip the buff for Borg so the boss stays tuned.
+    buffEnemiesForDemo();
+    // Stale laser sweep (safety net): periodically splice out any lasers
+    // whose material is invisible but the intersect cleanup missed.
+    sweepStaleLasers();
 
     // Clear movement keys each frame; we set what we need below
     releaseMovementKeys();
@@ -963,7 +986,7 @@
     if (!isInFiringCone(target, autoAimRange + 100)) return;
 
     const now = Date.now();
-    if (now - ap.lastFire > 900 && gameState.weapons.cooldown <= 0 && gameState.weapons.energy >= 10) {
+    if (now - ap.lastFire > 1600 && gameState.weapons.cooldown <= 0 && gameState.weapons.energy >= 10) {
       ap.lastFire = now;
       gameState.crosshairX = window.innerWidth / 2;
       gameState.crosshairY = window.innerHeight / 2;
@@ -1001,7 +1024,7 @@
     if (!isInFiringCone(tgt, autoAimRange + 100)) return;
 
     const now = Date.now();
-    if (now - (ap.lastFire || 0) < 900) return;
+    if (now - (ap.lastFire || 0) < 1600) return;
     if (gameState.weapons.cooldown > 0 || gameState.weapons.energy < 10) return;
 
     ap.lastFire = now;
@@ -1191,9 +1214,52 @@
     return typeof shieldSystem !== 'undefined' && shieldSystem.active;
   }
 
+  // Intentional no-op: demo mode does NOT force any camera view.  Whatever
+  // view the player has selected persists for the entire run.  Kept as a
+  // function so existing call sites stay harmless.
   function ensureThirdPerson() {
-    if (window.cameraState && window.cameraState.mode !== 'third-person') {
-      if (window.setCameraThirdPerson) window.setCameraThirdPerson();
+    /* intentionally left blank — no auto view switching in demo mode */
+  }
+
+  // Multiply every enemy's health+maxHealth by 3 the first time we see it.
+  // Ensures enemies take at least ~3 hits so combat reads on screen.  Runs
+  // once per enemy via _demoBuffed tag.
+  function buffEnemiesForDemo() {
+    if (typeof enemies === 'undefined') return;
+    for (let i = 0; i < enemies.length; i++) {
+      const e = enemies[i];
+      if (!e || !e.userData) continue;
+      if (e.userData._demoBuffed) continue;
+      // Skip the Borg cube — it already has a tuned HP pool for the boss fight
+      if (e.userData.isBorgCube) { e.userData._demoBuffed = true; continue; }
+      const mh = e.userData.maxHealth || e.userData.health || 1;
+      e.userData.maxHealth = mh * 3;
+      e.userData.health = (e.userData.health || mh) * 3;
+      e.userData._demoBuffed = true;
+    }
+  }
+
+  // Clean up any player lasers whose fade-out timer got stuck.  Called
+  // every frame; runs a cheap filter so the activeLasers array can't grow
+  // unbounded during long demo runs.
+  function sweepStaleLasers() {
+    if (typeof activeLasers === 'undefined') return;
+    for (let i = activeLasers.length - 1; i >= 0; i--) {
+      const ld = activeLasers[i];
+      if (!ld) { activeLasers.splice(i, 1); continue; }
+      // Opacity fully faded or material missing → drop it.
+      const done = (ld.opacity !== undefined && ld.opacity <= 0.02) ||
+                   !ld.material || !ld.beam;
+      if (done) {
+        try {
+          if (ld.beam && typeof scene !== 'undefined') scene.remove(ld.beam);
+          if (ld.geometry && ld.geometry.dispose) ld.geometry.dispose();
+          if (ld.material && ld.material.dispose) ld.material.dispose();
+          if (ld.glowGeometry && ld.glowGeometry.dispose) ld.glowGeometry.dispose();
+          if (ld.glowMaterial && ld.glowMaterial.dispose) ld.glowMaterial.dispose();
+        } catch (_) {}
+        activeLasers.splice(i, 1);
+      }
     }
   }
 
