@@ -986,7 +986,7 @@
     if (!isInFiringCone(target, engageRange + 100)) return;
 
     const now = Date.now();
-    if (now - ap.lastFire > 1600 && gameState.weapons.cooldown <= 0 && gameState.weapons.energy >= 10) {
+    if (now - ap.lastFire > 1000 && gameState.weapons.cooldown <= 0 && gameState.weapons.energy >= 10) {
       ap.lastFire = now;
       gameState.crosshairX = window.innerWidth / 2;
       gameState.crosshairY = window.innerHeight / 2;
@@ -1023,7 +1023,7 @@
     if (!isInFiringCone(tgt, engageRange + 100)) return;
 
     const now = Date.now();
-    if (now - (ap.lastFire || 0) < 1600) return;
+    if (now - (ap.lastFire || 0) < 1000) return;
     if (gameState.weapons.cooldown > 0 || gameState.weapons.energy < 10) return;
 
     ap.lastFire = now;
