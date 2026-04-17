@@ -225,6 +225,7 @@
     if (fc % 60 === 0) { buffEnemiesForDemo(); buffEnemySpeed(); }
     if (fc % 6 === 0)  { preemptiveShields(); }
     autoReadAnyTransmission();
+    hideStaleLasers();
 
     // Clear movement keys each frame; we set what we need below
     releaseMovementKeys();
@@ -967,19 +968,22 @@
     k.a = (Math.sin(ap.orbitAngle) <= 0);
   }
 
+  // Reusable vectors for isInFiringCone to avoid GC pressure
+  const _coneVec = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+  const _coneFwd = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+
   // Returns true if target is within the ship's forward mouse-aim cone.
   // ~14° half-angle matches how a player lines up shots with the crosshair.
   function isInFiringCone(target, maxRangeOverride) {
-    if (!target || typeof camera === 'undefined') return false;
+    if (!target || typeof camera === 'undefined' || !_coneVec) return false;
     const pos = target.position || target;
-    const toTarget = new THREE.Vector3().subVectors(pos, camera.position);
-    const dist = toTarget.length();
+    _coneVec.subVectors(pos, camera.position);
+    const dist = _coneVec.length();
     const maxRange = maxRangeOverride || 2000;
     if (dist > maxRange || dist < 1) return false;
-    toTarget.normalize();
-    const forward = new THREE.Vector3();
-    camera.getWorldDirection(forward);
-    const dot = forward.dot(toTarget);
+    _coneVec.normalize();
+    camera.getWorldDirection(_coneFwd);
+    const dot = _coneFwd.dot(_coneVec);
     return dot > 0.97; // cos(~14°) — tight forward cone
   }
 
@@ -1088,6 +1092,30 @@
     keys().enter = true;
     setTimeout(() => { keys().enter = false; }, 100);
     return true;
+  }
+
+  // Hide lasers after 200 ms by setting .visible = false.  This does NOT
+  // touch scene.remove() or material.dispose() — we leave ALL disposal to
+  // the game's native fade setInterval so we never race with it.  Three.js
+  // skips rendering any mesh with .visible = false, so visually the laser
+  // is gone immediately; the native fade still completes its timer, marks
+  // opacity <= 0, then calls scene.remove + dispose as usual.  This is the
+  // key difference from the old sweepStaleLasers — no dispose/remove here.
+  function hideStaleLasers() {
+    if (typeof activeLasers === 'undefined') return;
+    const now = Date.now();
+    for (let i = 0; i < activeLasers.length; i++) {
+      const ld = activeLasers[i];
+      if (!ld || !ld.beam) continue;
+      if (!ld._demoCreatedAt) ld._demoCreatedAt = now;
+      if (now - ld._demoCreatedAt > 200 && ld.beam.visible) {
+        ld.beam.visible = false;
+        // Also zero the opacity defensively — some materials with
+        // .visible=false may still contribute to the composite frame
+        if (ld.material)     ld.material.opacity     = 0;
+        if (ld.glowMaterial) ld.glowMaterial.opacity = 0;
+      }
+    }
   }
 
   // ─── World search helpers ──────────────────────────────────────────────────
@@ -1356,12 +1384,12 @@
         if (alertEl) alertEl.querySelectorAll('button').forEach(b => b.remove());
       }
       ap._seenPrompt = null;
-      // Schedule close of the full alert 5 s later
+      // Close the full alert 2 s after opening
       setTimeout(() => {
         const alertEl = document.getElementById('missionCommandAlert');
         if (alertEl) alertEl.classList.add('hidden');
         if (typeof gameState !== 'undefined') gameState.paused = false;
-      }, 5000);
+      }, 2000);
     }
 
     // Type 2: Auto-fade text from game-objects.js — nothing to do, it
