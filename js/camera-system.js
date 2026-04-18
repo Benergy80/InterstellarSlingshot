@@ -20,12 +20,18 @@ const cameraState = {
     transitionDuration: 800, // milliseconds - doubled for smoother visible transition
     transitionStartOffset: new THREE.Vector3(),
     transitionTargetOffset: new THREE.Vector3(),
-    
+
     // All offsets use ADD: ship.position = camera.position + offset
     // Positive Z = ship in front of camera, Negative Z = ship behind camera
     // For third-person (camera behind ship), offset is NEGATIVE Z
+    // Mobile uses a wider offset so the ship is smaller and buttons are clear
     normalFirstPersonOffset: new THREE.Vector3(0.25, -2, 0.5),   // Cockpit: ship slightly forward/below
-    normalThirdPersonOffset: new THREE.Vector3(0, -4, -14),      // Chase cam: ship ahead (negative = in front)
+    normalThirdPersonOffset: (function () {
+        const isMobile = (typeof window !== 'undefined') &&
+                         (window.innerWidth <= 768 || ('ontouchstart' in window && window.innerWidth <= 1024));
+        // Mobile: pull camera further back (-22 vs -14) so buttons are visible
+        return isMobile ? new THREE.Vector3(0, -6, -22) : new THREE.Vector3(0, -4, -14);
+    })(),
     
     // Thruster glow system
     thrusterGlows: [],      // Array of thruster glow meshes
