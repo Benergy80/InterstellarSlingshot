@@ -117,18 +117,33 @@ function setupMobileLaunchMusicTrigger() {
 }
 
 // Make functions globally accessible
+// Double-tap detection for forward thrust → 2 s Jump warp
+let _lastThrustTapTime = 0;
+const THRUST_DOUBLE_TAP_MS = 300;
+
 window.startForwardThrust = function() {
     window.mobileSettings.forwardThrust = true;
-    
-    if (typeof keys !== 'undefined') {
-        keys.w = true;
+
+    const now = Date.now();
+    if (now - _lastThrustTapTime < THRUST_DOUBLE_TAP_MS) {
+        // Double-tap detected → trigger Jump (same as W×2 on desktop)
+        if (typeof keys !== 'undefined') {
+            keys.wDoubleTap = true;
+            setTimeout(() => { if (typeof keys !== 'undefined') keys.wDoubleTap = false; }, 150);
+        }
+        _lastThrustTapTime = 0; // reset so triple-tap doesn't re-fire
+        console.log('📱 Forward thrust DOUBLE-TAP → Jump warp');
+    } else {
+        // Single tap — normal thrust
+        if (typeof keys !== 'undefined') {
+            keys.w = true;
+        }
+        _lastThrustTapTime = now;
     }
-    
+
     if (typeof playSound === 'function') {
         playSound('thrust', 400, 0.1);
     }
-    
-    console.log('📱 Forward thrust started');
 };
 
 window.stopForwardThrust = function() {
