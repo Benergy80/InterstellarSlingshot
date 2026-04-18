@@ -517,7 +517,7 @@
     // Occasional missile fire — every ~7 s while inside engagement range.
     // No transmission; status-line only keeps the HUD quiet.
     if (dist <= engageRange && gameState.missiles.current > 0 &&
-        Date.now() - (ap._lastMissileTime || 0) > 7000) {
+        Date.now() - (ap._lastMissileTime || 0) > 2500) {
       ap._lastMissileTime = Date.now();
       ap._missileFireLock = Date.now() + 500; // hold shields off for 500 ms
       if (shieldsActive() && window.deactivateShields) window.deactivateShields();
@@ -1018,7 +1018,7 @@
 
       // Occasional missile every ~7 s — no transmission
       if (dist <= engageRange && gameState.missiles.current > 0 &&
-          Date.now() - (ap._lastMissileTime || 0) > 7000) {
+          Date.now() - (ap._lastMissileTime || 0) > 2500) {
         ap._lastMissileTime = Date.now();
         ap._missileFireLock = Date.now() + 500;
         if (shieldsActive() && window.deactivateShields) window.deactivateShields();
