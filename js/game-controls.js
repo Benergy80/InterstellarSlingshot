@@ -2588,8 +2588,11 @@ function createLaserBeam(startPos, endPos, color = '#00ff96', isPlayer = true) {
         
         scene.add(laserBeam);
         
-        // Track player lasers with ship movement (not enemy lasers)
+        // Track lasers.  Player beams go into activeLasers (they follow
+        // ship movement), enemy beams go into activeEnemyLasers (just for
+        // cleanup visibility tracking).
         let laserData = null;
+        let enemyLaserData = null;
         if (isPlayer && typeof camera !== 'undefined') {
             laserData = {
                 beam: laserBeam,
@@ -2601,8 +2604,19 @@ function createLaserBeam(startPos, endPos, color = '#00ff96', isPlayer = true) {
                 opacity: 0.8
             };
             activeLasers.push(laserData);
+        } else {
+            enemyLaserData = {
+                beam: laserBeam,
+                geometry: laserGeometry,
+                material: laserMaterial,
+                glowGeometry: glowGeometry,
+                glowMaterial: glowMaterial,
+                opacity: 0.8,
+                createdAt: Date.now()
+            };
+            activeEnemyLasers.push(enemyLaserData);
         }
-        
+
         // 400 ms fade: 0.8 opacity / 0.05 per 25 ms interval = 16 ticks = 400 ms.
         // Same duration for player and enemy beams so incoming fire reads
         // on screen as long as outgoing fire.
@@ -2611,11 +2625,17 @@ function createLaserBeam(startPos, endPos, color = '#00ff96', isPlayer = true) {
             opacity -= 0.05;
             laserMaterial.opacity = opacity;
             glowMaterial.opacity = opacity * 0.4;
-            
-            if (laserData) laserData.opacity = opacity;
-            
+
+            if (laserData)      laserData.opacity = opacity;
+            if (enemyLaserData) enemyLaserData.opacity = opacity;
+
             if (opacity <= 0) {
                 clearInterval(fadeInterval);
+                // Remove from enemy tracking if enemy laser
+                if (enemyLaserData) {
+                    const eidx = activeEnemyLasers.indexOf(enemyLaserData);
+                    if (eidx > -1) activeEnemyLasers.splice(eidx, 1);
+                }
                 // Remove from tracking if player laser
                 if (laserData) {
                     const idx = activeLasers.indexOf(laserData);
@@ -2794,6 +2814,13 @@ function updateActiveLasers() {
 // Active muzzle flashes - track with ship like lasers
 const activeMuzzleFlashes = [];
 if (typeof window !== 'undefined') window.activeMuzzleFlashes = activeMuzzleFlashes;
+
+// Active ENEMY laser beams — tracked separately from player lasers so the
+// demo/cleanup code can hide them on a timer too.  Player lasers go into
+// activeLasers; enemy beams never did (and sometimes linger if their
+// setInterval fade misfires).
+const activeEnemyLasers = [];
+if (typeof window !== 'undefined') window.activeEnemyLasers = activeEnemyLasers;
 
 // Muzzle flash effect at wing tip (brief bright sphere) - NOW TRACKS WITH SHIP
 function createMuzzleFlash(position) {

@@ -115,6 +115,28 @@
       }
     }
 
+    // 2b) Enemy laser beams with faded opacity — same treatment as player
+    const eArr = (typeof window !== 'undefined' && window.activeEnemyLasers) ||
+                 (typeof activeEnemyLasers !== 'undefined' ? activeEnemyLasers : null);
+    let removedEnemyLasers = 0;
+    if (eArr && Array.isArray(eArr)) {
+      for (let i = eArr.length - 1; i >= 0; i--) {
+        const ld = eArr[i];
+        if (!ld || !ld.material ||
+            (ld.material.opacity !== undefined && ld.material.opacity <= 0.01)) {
+          if (ld && ld.beam) {
+            try { scene.remove(ld.beam); } catch (_) {}
+            try { if (ld.geometry) ld.geometry.dispose(); } catch (_) {}
+            try { if (ld.material) ld.material.dispose(); } catch (_) {}
+            try { if (ld.glowGeometry) ld.glowGeometry.dispose(); } catch (_) {}
+            try { if (ld.glowMaterial) ld.glowMaterial.dispose(); } catch (_) {}
+          }
+          eArr.splice(i, 1);
+          removedEnemyLasers++;
+        }
+      }
+    }
+
     // 3) Same treatment for muzzle flashes
     const flashes = (typeof window !== 'undefined' && window.activeMuzzleFlashes) ||
                     (typeof activeMuzzleFlashes !== 'undefined' ? activeMuzzleFlashes : null);
@@ -184,10 +206,11 @@
       }
     });
 
-    if (removedMeshes || removedLasers || removedFlashes || removedPaths || removedTrails) {
+    if (removedMeshes || removedLasers || removedEnemyLasers || removedFlashes || removedPaths || removedTrails) {
       console.log('🧹 worldCleanup:',
         'enemies=' + removedMeshes,
         'lasers=' + removedLasers,
+        'eLasers=' + removedEnemyLasers,
         'flashes=' + removedFlashes,
         'paths=' + removedPaths,
         'trails=' + removedTrails);
@@ -427,6 +450,7 @@
     if (fc % 300 === 0) { sceneHealthCheck(); }           // every 5 s — console diagnostics
     autoReadAnyTransmission();
     hideStaleLasers();
+    hideStaleEnemyLasers();
     hideStaleMuzzleFlashes();
     sweepOldExplosions();
     demoRollAndBoost(fc);
@@ -1106,6 +1130,29 @@
           notify('Galaxy Reached', 'Entered new system — hunting hostiles');
           ap.loopCount++;
           ap.segmentKills = 0;
+
+          // Immediately lock onto the nearest enemy in this new galaxy so
+          // the autopilot starts engaging right away instead of drifting
+          // around looking for a target.
+          const nearest = nearestAliveEnemy(15000);
+          if (nearest) {
+            gameState.currentTarget = nearest;
+            if (gameState.targetLock) {
+              gameState.targetLock.active = true;
+              gameState.targetLock.target = nearest;
+            }
+            // If the enemy is close enough to engage directly, commit to
+            // combat; otherwise let findLocalEnemies pursue it.
+            const distToNearest = camPos().distanceTo(nearest.position);
+            if (distToNearest < 2500) {
+              ap.combatTarget = nearest;
+              ap.combatMissileFired = false;
+              ap.returnPhase = 'gotoBlackHoleGalaxy';
+              goPhase('combat');
+              return;
+            }
+          }
+
           // After a couple of post-warp combat loops, go face the Borg
           if (ap.loopCount >= 2) {
             goPhase('approachBorg');
@@ -1526,6 +1573,29 @@
     if (typeof explosionManager !== 'undefined') parts.push('explosions=' + explosionManager.activeExplosions.length);
     if (typeof window !== 'undefined' && window.discoveryPaths) parts.push('paths=' + window.discoveryPaths.length);
     console.log('🤖 demo health:', parts.join(' '));
+  }
+
+  // Hide enemy lasers the same way we hide player lasers — after 400 ms
+  // they become invisible via .visible = false and zeroed opacity.  The
+  // game's fade setInterval continues to handle actual disposal.  Enemy
+  // beams were previously untouched by any demo cleanup; if their
+  // setInterval misfired (backgrounded tab, heavy frame drops, etc.)
+  // they could linger indefinitely.
+  function hideStaleEnemyLasers() {
+    const arr = (typeof window !== 'undefined' && window.activeEnemyLasers) ||
+                (typeof activeEnemyLasers !== 'undefined' ? activeEnemyLasers : null);
+    if (!arr) return;
+    const now = Date.now();
+    for (let i = 0; i < arr.length; i++) {
+      const ld = arr[i];
+      if (!ld || !ld.beam) continue;
+      if (!ld._demoMarkTime) ld._demoMarkTime = ld.createdAt || now;
+      if (now - ld._demoMarkTime > DEMO_BEAM_HIDE_MS && ld.beam.visible) {
+        ld.beam.visible = false;
+        if (ld.material)     ld.material.opacity     = 0;
+        if (ld.glowMaterial) ld.glowMaterial.opacity = 0;
+      }
+    }
   }
 
   // Hide muzzle flashes with the same timing as lasers.  These are the green
