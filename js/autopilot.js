@@ -513,6 +513,14 @@
   function phaseOrbitLocalPlanet() {
     const t = elapsed();
 
+    // Wait 2 seconds at the start so the player can take in the scene
+    // before the demo snaps to a planet target.
+    if (t < 2000) {
+      setStatus('Surveying local space…');
+      keys().w = true; // gentle forward drift
+      return;
+    }
+
     // Pick a planet the first time (prefer within 3000u, fall back to any)
     if (!ap.orbitTarget) {
       ap.orbitTarget = planetNear(camPos(), 3000) || pickPlanet();
