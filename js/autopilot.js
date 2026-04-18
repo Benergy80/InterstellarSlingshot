@@ -556,7 +556,7 @@
     }
   }
 
-  // ─── 1a) Orbit a local planet for 10 s before hunting enemies ────────────
+  // ─── 1a) Orbit a local planet for 30 s before hunting enemies ────────────
   function phaseOrbitLocalPlanet() {
     const t = elapsed();
 
@@ -590,8 +590,10 @@
       orbitAround(ap.orbitTarget.position, radius);
     }
 
-    // After ~10 s, hand off to enemy-hunt
-    if (t > 10000) {
+    // After ~30 s, hand off to enemy-hunt.  A longer intro orbit lets
+    // the player take in the world — planets, star field, nebulas — at
+    // a relaxed pace before combat kicks off.
+    if (t > 30000) {
       ap.orbitTarget = null;
       gameState.currentTarget = null;
       goPhase('findLocalEnemies');
