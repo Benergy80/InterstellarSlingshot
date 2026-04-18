@@ -555,6 +555,12 @@ const bossSystem = {
     // Key format: faction name (e.g., "Borg Collective", "Crystalline Hive")
     eliteGuardians: {},
 
+    // Per-galaxy progress flags: index by galaxyId (0..7).  These MUST be
+    // initialized or checkGuardianVictory / checkGalaxyClear throw when
+    // reading [g] on undefined.
+    galaxyBossDefeated: [false, false, false, false, false, false, false, false],
+    galaxyGuardiansDefeated: [false, false, false, false, false, false, false, false],
+
     activeBoss: null,
     activeBosses: [], // Track multiple active bosses
     bossThreshold: 0 // Spawn boss when 0 enemies remain in area (all cleared)

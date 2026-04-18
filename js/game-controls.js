@@ -4079,8 +4079,11 @@ function checkGuardianVictory() {
     
     // Check each galaxy for remaining guardians
     for (let g = 0; g < 8; g++) {
-        // Only check galaxies where boss was defeated
-        if (typeof bossSystem !== 'undefined' && !bossSystem.galaxyBossDefeated[g]) {
+        // Only check galaxies where boss was defeated.  Guard against
+        // galaxyBossDefeated being undefined (sister checks already do this).
+        if (typeof bossSystem === 'undefined' ||
+            !bossSystem.galaxyBossDefeated ||
+            !bossSystem.galaxyBossDefeated[g]) {
             continue;
         }
         
