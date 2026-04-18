@@ -465,6 +465,8 @@
     // firing stops automatically.  Runs parallel to phase logic so combat,
     // pursuit and travel all benefit from it.
     autoFireOnTargetLock();
+    // Shoot nearby asteroids for hull repair (any phase, not just combat)
+    shootNearbyAsteroids();
 
     // Dispatch
     switch (ap.phase) {
@@ -1519,6 +1521,44 @@
     ap.lastFire = now;
     gameState.crosshairX = window.innerWidth / 2;
     gameState.crosshairY = window.innerHeight / 2;
+    if (window.fireWeapon) window.fireWeapon();
+  }
+
+  // Shoot asteroids that drift into targeting range.  Asteroids can't be
+  // auto-aimed via targetLock (the game explicitly excludes them), so we
+  // orient toward the asteroid and fire with the crosshair centered —
+  // the raycast from center-screen hits the asteroid we're pointing at.
+  // Uses a separate cooldown so it doesn't compete with enemy fire timing.
+  function shootNearbyAsteroids() {
+    // Skip during kill cooldown or if weapons are on cooldown
+    if (ap._killCooldownUntil && Date.now() < ap._killCooldownUntil) return;
+    if (!gameState || gameState.weapons.cooldown > 0 || gameState.weapons.energy < 10) return;
+
+    const now = Date.now();
+    if (now - (ap._lastAsteroidFire || 0) < 1600) return; // separate 1.6 s cadence
+
+    // Find the nearest asteroid within 500 u that's in the forward cone
+    if (typeof planets === 'undefined') return;
+    const cp = camPos();
+    let best = null, bestDist = 500;
+    for (let i = 0; i < planets.length; i++) {
+      const p = planets[i];
+      if (!p || !p.userData) continue;
+      if (p.userData.type !== 'asteroid' || (p.userData.health !== undefined && p.userData.health <= 0)) continue;
+      const d = cp.distanceTo(p.position);
+      if (d < bestDist && isInFiringCone(p, 500)) {
+        bestDist = d;
+        best = p;
+      }
+    }
+    if (!best) return;
+
+    // Orient toward the asteroid and fire (crosshair at screen center)
+    const dummy = { position: best.position };
+    if (window.orientTowardsTarget) window.orientTowardsTarget(dummy);
+    gameState.crosshairX = window.innerWidth / 2;
+    gameState.crosshairY = window.innerHeight / 2;
+    ap._lastAsteroidFire = now;
     if (window.fireWeapon) window.fireWeapon();
   }
 
