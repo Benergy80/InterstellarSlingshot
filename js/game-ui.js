@@ -278,7 +278,7 @@ if (gameState.hull <= 10 && !_uiEl('criticalDamageOverlay')) {
 
 function updateCosmicEffectsUI() {
     // Navigation jamming indicator
-    const navStatus = document.getElementById('navigationStatus');
+    const navStatus = _uiEl('navigationStatus');
     if (navStatus && typeof gameState !== 'undefined') {
         if (gameState.navigationJammed) {
             navStatus.innerHTML = '<i class="fas fa-exclamation-triangle text-red-400"></i> Navigation Jammed!';
@@ -288,17 +288,17 @@ function updateCosmicEffectsUI() {
             navStatus.className = 'text-green-400 font-mono';
         }
     }
-    
+
     // Weapon power boost indicator
-    const weaponStatus = document.getElementById('weaponStatus');
+    const weaponStatus = _uiEl('weaponStatus');
     if (weaponStatus && typeof gameState !== 'undefined' && gameState.weaponPowerBoost > 1.0) {
         const boost = ((gameState.weaponPowerBoost - 1) * 100).toFixed(0);
         weaponStatus.innerHTML = `<i class="fas fa-bolt text-yellow-400"></i> Weapon Power +${boost}%`;
         weaponStatus.className = 'text-yellow-400 font-mono';
     }
-    
+
     // Concealment indicator
-    const concealmentStatus = document.getElementById('concealmentStatus');
+    const concealmentStatus = _uiEl('concealmentStatus');
     if (concealmentStatus && typeof gameState !== 'undefined' && gameState.concealment > 0) {
         const concealment = (gameState.concealment * 100).toFixed(0);
         concealmentStatus.innerHTML = `<i class="fas fa-eye-slash text-blue-400"></i> Concealed ${concealment}%`;
@@ -307,7 +307,7 @@ function updateCosmicEffectsUI() {
 }
 
 function updateAutoNavigateButton() {
-    const autoNavBtn = document.getElementById('autoNavigateBtn');
+    const autoNavBtn = _uiEl('autoNavigateBtn');
     if (!autoNavBtn || typeof gameState === 'undefined') return;
     
     if (gameState.currentTarget && !gameState.gameOver && gameState.energy > 10) {
@@ -337,22 +337,13 @@ function updateAutoNavigateButton() {
 function updateMobileFloatingStatus() {
     if (typeof gameState === 'undefined') return;
 
-    // MINIMAL STATUS: Only Hull and Energy (Emergency Warps shown on button badge)
-    const updates = {
-        'mobileFloatingHull': gameState.hull ? Math.round(gameState.hull) + '%' : '100%',
-        'mobileFloatingEnergy': gameState.energy ? Math.round(gameState.energy) + '%' : '100%'
-    };
+    const hullEl = _uiEl('mobileFloatingHull');
+    const energyEl = _uiEl('mobileFloatingEnergy');
+    if (hullEl) hullEl.textContent = gameState.hull ? Math.round(gameState.hull) + '%' : '100%';
+    if (energyEl) energyEl.textContent = gameState.energy ? Math.round(gameState.energy) + '%' : '100%';
 
-    Object.entries(updates).forEach(([id, value]) => {
-        const element = document.getElementById(id);
-        if (element) element.textContent = value;
-    });
-
-    // Update emergency warp count on button badge
-    const warpBadge = document.getElementById('mobileWarpCountBadge');
-    if (warpBadge) {
-        warpBadge.textContent = gameState.emergencyWarp?.available ?? 5;
-    }
+    const warpBadge = _uiEl('mobileWarpCountBadge');
+    if (warpBadge) warpBadge.textContent = gameState.emergencyWarp?.available ?? 5;
 }
 
 // =============================================================================
@@ -2160,11 +2151,9 @@ function gameOver(reason) {
         cleanupEventHorizonEffects();
     }
     
-    // Clear any remaining timeouts/intervals
-    if (typeof window.mobileUpdateInterval !== 'undefined') {
-        clearInterval(window.mobileUpdateInterval);
-    }
-    
+    // Clear all registered game intervals
+    if (typeof clearAllGameIntervals === 'function') clearAllGameIntervals();
+
     // Enhanced game over screen with visible mouse cursor
     const gameOverOverlay = document.createElement('div');
     gameOverOverlay.id = 'gameOverScreen';
@@ -2237,10 +2226,8 @@ function showGameOverScreen(title, message) {
         cleanupEventHorizonEffects();
     }
 
-    // Clear any remaining timeouts/intervals
-    if (typeof window.mobileUpdateInterval !== 'undefined') {
-        clearInterval(window.mobileUpdateInterval);
-    }
+    // Clear all registered game intervals
+    if (typeof clearAllGameIntervals === 'function') clearAllGameIntervals();
 
     // Enhanced game over screen with visible mouse cursor
     const gameOverOverlay = document.createElement('div');
@@ -2509,13 +2496,13 @@ function createMobileUIContainer() {
     document.body.appendChild(mobileUI);
     
     // Show mobile UI only after game starts
-    const checkGameStarted = setInterval(() => {
+    const checkGameStarted = trackInterval(setInterval(() => {
         if (typeof gameState !== 'undefined' && gameState.gameStarted && !document.body.classList.contains('intro-active')) {
             mobileUI.style.display = 'block';
             console.log('📱 Mobile UI now visible - game started');
             clearInterval(checkGameStarted);
         }
-    }, 500);
+    }, 500));
 }
 
 function createMobileTopBar() {
@@ -2642,24 +2629,13 @@ function createMobileFloatingStatus() {
 function updateMobileFloatingStatus() {
     if (typeof gameState === 'undefined') return;
 
-    // MINIMAL STATUS: Only Hull and Energy (Emergency Warps shown on button badge)
-    const updates = {
-        'mobileFloatingHull': gameState.hull ? Math.round(gameState.hull) + '%' : '100%',
-        'mobileFloatingEnergy': gameState.energy ? Math.round(gameState.energy) + '%' : '100%'
-    };
+    const hullEl = _uiEl('mobileFloatingHull');
+    const energyEl = _uiEl('mobileFloatingEnergy');
+    if (hullEl) hullEl.textContent = gameState.hull ? Math.round(gameState.hull) + '%' : '100%';
+    if (energyEl) energyEl.textContent = gameState.energy ? Math.round(gameState.energy) + '%' : '100%';
 
-    Object.entries(updates).forEach(([id, value]) => {
-        const element = document.getElementById(id);
-        if (element) {
-            element.textContent = value;
-        }
-    });
-
-    // Update emergency warp count on button badge
-    const warpBadge = document.getElementById('mobileWarpCountBadge');
-    if (warpBadge) {
-        warpBadge.textContent = gameState.emergencyWarp?.available ?? 5;
-    }
+    const warpBadge = _uiEl('mobileWarpCountBadge');
+    if (warpBadge) warpBadge.textContent = gameState.emergencyWarp?.available ?? 5;
 }
 
 function createMobilePopups() {

@@ -304,6 +304,18 @@ const perfDebug = {
 window.perfDebug = perfDebug;
 console.log('%c🔧 Performance debugger loaded! Use perfDebug.report() for detailed info', 'color: cyan; font-weight: bold;');
 
+// setInterval registry — collect all long-lived interval IDs so they can
+// all be cancelled at game-end without hunting for individual variables.
+const _gameIntervalRegistry = new Set();
+window.trackInterval = function trackInterval(id) {
+    if (id != null) _gameIntervalRegistry.add(id);
+    return id;
+};
+window.clearAllGameIntervals = function clearAllGameIntervals() {
+    _gameIntervalRegistry.forEach(id => clearInterval(id));
+    _gameIntervalRegistry.clear();
+};
+
 // Three.js Setup and global arrays
 let scene, camera, renderer, stars, blackHole;
 let planets = [];
@@ -720,7 +732,7 @@ function simulateLoading() {
         "Ready for enhanced launch!"
     ];
     
-    const interval = setInterval(() => {
+    const interval = trackInterval(setInterval(() => {
         progress += 6 + Math.random() * 10;
         progress = Math.min(progress, 100);
         
@@ -743,7 +755,7 @@ function simulateLoading() {
                 console.log('Enhanced game fully loaded and started with doubled world scale!');
             }, 500);
         }
-    }, 180);
+    }, 180));
 }
 
 // Enhanced functions for doubled world compatibility
@@ -1431,38 +1443,41 @@ if (typeof nebulaGasClouds !== 'undefined' && nebulaGasClouds.length > 0) {
 }
 
 if (typeof asteroidBelts !== 'undefined' && asteroidBelts.length > 0) {
-    asteroidBelts.forEach(belt => {
-        // Update individual asteroids within each belt
-        if (belt.children && belt.children.length > 0) {
-            belt.children.forEach(asteroid => {
-                if (!asteroid.userData || asteroid.userData.type !== 'asteroid') return;
-                
-                // 🌑 ORBITAL MOVEMENT: Update asteroid position based on orbitSpeed
-                if (asteroid.userData.orbitSpeed && asteroid.userData.beltCenter) {
-                    // Increment orbit phase
-                    asteroid.userData.orbitPhase += asteroid.userData.orbitSpeed;
-                    
-                    // Calculate new orbital position
-                    const orbitRadius = asteroid.userData.orbitRadius || 0;
-                    const orbitPhase = asteroid.userData.orbitPhase || 0;
-                    
-                    // Maintain original height variation
-                    const ringHeight = asteroid.position.y;
-                    
-                    // Update position in circular orbit
-                    asteroid.position.x = Math.cos(orbitPhase) * orbitRadius;
-                    asteroid.position.y = ringHeight; // Keep height constant
-                    asteroid.position.z = Math.sin(orbitPhase) * orbitRadius;
-                }
-                
-                // 🌀 INDIVIDUAL ROTATION: Make asteroids spin
-                if (asteroid.userData.rotationSpeed) {
-                    asteroid.rotation.y += asteroid.userData.rotationSpeed;
-                    asteroid.rotation.x += asteroid.userData.rotationSpeed * 0.3; // Tumble effect
-                }
-            });
+    // Skip orbit/rotation updates for belts that are too far to see.
+    // Belt radius is at most ~600 units; 2000 unit cull gives comfortable margin.
+    const BELT_UPDATE_DIST_SQ = 2000 * 2000;
+    for (let bi = 0; bi < asteroidBelts.length; bi++) {
+        const belt = asteroidBelts[bi];
+        if (!belt.children || belt.children.length === 0) continue;
+        if (typeof camera !== 'undefined') {
+            const dx = camera.position.x - belt.position.x;
+            const dy = camera.position.y - belt.position.y;
+            const dz = camera.position.z - belt.position.z;
+            if (dx * dx + dy * dy + dz * dz > BELT_UPDATE_DIST_SQ) continue;
         }
-    });
+        const children = belt.children;
+        for (let ai = 0; ai < children.length; ai++) {
+            const asteroid = children[ai];
+            if (!asteroid.userData || asteroid.userData.type !== 'asteroid') continue;
+
+            // 🌑 ORBITAL MOVEMENT: Update asteroid position based on orbitSpeed
+            if (asteroid.userData.orbitSpeed && asteroid.userData.beltCenter) {
+                asteroid.userData.orbitPhase += asteroid.userData.orbitSpeed;
+                const orbitRadius = asteroid.userData.orbitRadius || 0;
+                const orbitPhase = asteroid.userData.orbitPhase;
+                const ringHeight = asteroid.position.y;
+                asteroid.position.x = Math.cos(orbitPhase) * orbitRadius;
+                asteroid.position.y = ringHeight;
+                asteroid.position.z = Math.sin(orbitPhase) * orbitRadius;
+            }
+
+            // 🌀 INDIVIDUAL ROTATION: Make asteroids spin
+            if (asteroid.userData.rotationSpeed) {
+                asteroid.rotation.y += asteroid.userData.rotationSpeed;
+                asteroid.rotation.x += asteroid.userData.rotationSpeed * 0.3;
+            }
+        }
+    }
 }
 
     // Update interstellar asteroid fields

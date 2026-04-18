@@ -2521,7 +2521,7 @@ function playNebulaMusic(nebulaIndex) {
     };
 
     // Add gentle frequency modulation for magical, shimmering sound
-    const modulationInterval = setInterval(() => {
+    const modulationInterval = trackInterval(setInterval(() => {
         if (currentNebulaMusic && audioContext && audioContext.state === 'running') {
             const time = audioContext.currentTime;
             const mod1 = Math.sin(time * 0.3) * 5; // Gentler modulation
@@ -2533,7 +2533,7 @@ function playNebulaMusic(nebulaIndex) {
         } else {
             clearInterval(modulationInterval);
         }
-    }, 100);
+    }, 100));
 
     console.log(`Playing magical nebula music for nebula ${nebulaIndex}`);
 }

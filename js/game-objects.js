@@ -6712,14 +6712,14 @@ function sendDistressSignal(ship, data) {
         
         // Flash the beacon
         let flashOn = true;
-        const flashInterval = setInterval(() => {
+        const flashInterval = trackInterval(setInterval(() => {
             if (!ship || !ship.userData || !ship.userData.distressBeacon) {
                 clearInterval(flashInterval);
                 return;
             }
             flashOn = !flashOn;
             ship.userData.distressBeacon.visible = flashOn;
-        }, 500);
+        }, 500));
         
         // Stop flashing after 30 seconds
         setTimeout(() => {

@@ -833,7 +833,7 @@ document.addEventListener('click', (e) => {
 });
 
 // Periodic updates with game over check
-const mobileUpdateInterval = setInterval(() => {
+const mobileUpdateInterval = trackInterval(setInterval(() => {
     // CRITICAL: Stop interval if game is over
     if (typeof gameState !== 'undefined' && gameState.gameOver) {
         clearInterval(mobileUpdateInterval);
@@ -866,7 +866,7 @@ const mobileUpdateInterval = setInterval(() => {
             if (warpBadge) warpBadge.textContent = gameState.emergencyWarp?.available ?? 5;
         }
     }
-}, 1000);
+}, 1000));
 
 // Show mobile controls after intro
 document.addEventListener('DOMContentLoaded', () => {

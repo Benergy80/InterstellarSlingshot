@@ -2623,31 +2623,34 @@ function easeInOutCubic(x) {
 // CYBERPUNK SYNTH-WAVE INTRO SOUNDS
 // =============================================================================
 
+// Shared gain node for countdown tones — created once and reused.
+// Oscillators must still be new each call (Web Audio spec: can't restart
+// a stopped oscillator), but the gain+destination wiring is pre-built.
+let _countdownGain = null;
+function _getCountdownGain() {
+    if (_countdownGain && _countdownGain.context.state !== 'closed') return _countdownGain;
+    _countdownGain = audioContext.createGain();
+    _countdownGain.connect(audioContext.destination);
+    return _countdownGain;
+}
+
 // Custom countdown tone - clean futuristic beep
 function playCountdownTone(number) {
     if (!audioContext || audioContext.state === 'suspended') return;
-    
+
     try {
+        const gain = _getCountdownGain();
         const oscillator = audioContext.createOscillator();
-        const gain = audioContext.createGain();
-        
         oscillator.connect(gain);
-        gain.connect(audioContext.destination);
-        
-        // NASA-style consistent beep - 1000Hz (classic mission control tone)
-        // Same pitch every time for that authentic countdown feel
-        const baseFreq = 1000;  // Fixed 1kHz tone
-        oscillator.frequency.setValueAtTime(baseFreq, audioContext.currentTime);
-        
-        // Clean sine wave for clarity
+
+        oscillator.frequency.setValueAtTime(1000, audioContext.currentTime);
         oscillator.type = 'sine';
-        
-        // Short, clean beep - NASA style
-        const beepDuration = 0.1;  // 100ms beep
-        gain.gain.setValueAtTime(0.15, audioContext.currentTime);  // Immediate start
-        gain.gain.setValueAtTime(0.15, audioContext.currentTime + beepDuration - 0.01);  // Hold
-        gain.gain.linearRampToValueAtTime(0, audioContext.currentTime + beepDuration);  // Quick cutoff
-        
+
+        const beepDuration = 0.1;
+        gain.gain.setValueAtTime(0.15, audioContext.currentTime);
+        gain.gain.setValueAtTime(0.15, audioContext.currentTime + beepDuration - 0.01);
+        gain.gain.linearRampToValueAtTime(0, audioContext.currentTime + beepDuration);
+
         oscillator.start(audioContext.currentTime);
         oscillator.stop(audioContext.currentTime + beepDuration);
     } catch (e) {
