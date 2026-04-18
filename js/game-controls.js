@@ -2603,10 +2603,12 @@ function createLaserBeam(startPos, endPos, color = '#00ff96', isPlayer = true) {
             activeLasers.push(laserData);
         }
         
-        // Fast-fading laser beams
+        // 400 ms fade: 0.8 opacity / 0.05 per 25 ms interval = 16 ticks = 400 ms.
+        // Same duration for player and enemy beams so incoming fire reads
+        // on screen as long as outgoing fire.
         let opacity = 0.8;
         const fadeInterval = setInterval(() => {
-            opacity -= 0.3;  // Fast fade
+            opacity -= 0.05;
             laserMaterial.opacity = opacity;
             glowMaterial.opacity = opacity * 0.4;
             
