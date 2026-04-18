@@ -3078,10 +3078,14 @@ function createDirectionalDamageEffect(attackDirection) {
             break;
     }
     
-    // Create the directional damage overlay
+    // Create the directional damage overlay.  Z-index must sit ABOVE the
+    // mission command alert (z-50) and incoming-transmission prompt (1000)
+    // so the player can always see incoming-fire warnings even when a
+    // transmission is on screen.
     const damageOverlay = document.createElement('div');
-    damageOverlay.className = 'fixed pointer-events-none z-30';
-    damageOverlay.style.cssText = overlayStyle + pulseStyle + 'opacity: 0; transition: opacity 0.1s ease-out;';
+    damageOverlay.className = 'fixed pointer-events-none';
+    damageOverlay.style.cssText = overlayStyle + pulseStyle +
+        'opacity: 0; transition: opacity 0.1s ease-out; z-index: 2000;';
     document.body.appendChild(damageOverlay);
     
     // Animate the effect
@@ -3106,7 +3110,9 @@ function createDirectionalDamageEffect(attackDirection) {
 function createDamageDirectionIndicator(direction) {
     const indicator = document.createElement('div');
     indicator.className = 'fixed pointer-events-none text-red-400 font-bold text-lg';
-    indicator.style.zIndex = '50'; // Higher than other UI elements
+    // Above mission alert (z-50) and transmission prompt (1000) so the
+    // directional arrows always read even during a transmission.
+    indicator.style.zIndex = '2001';
     indicator.style.fontFamily = "'Orbitron', monospace";
     indicator.style.textShadow = '0 0 10px rgba(255,0,0,0.8), 0 0 20px rgba(255,0,0,0.5)';
     indicator.style.opacity = '0';
