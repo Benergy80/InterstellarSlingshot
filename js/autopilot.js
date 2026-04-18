@@ -153,6 +153,33 @@
     document.addEventListener('keydown', handleGlobalOKey);
   }
 
+  // Global M-key binding — desktop only.  Toggles the FLIGHT CONTROLS
+  // (top-left), SHIP STATUS (bottom-left), and Map (bottom-right) UI
+  // panels on/off.  Hiding them during intense combat cuts DOM layout
+  // cost and can noticeably improve FPS.  Mobile is untouched (mobile
+  // uses its own popup UI instead of these panels).
+  function isDesktopViewport() {
+    return window.innerWidth > 768 && !('ontouchstart' in window);
+  }
+  function handleGlobalMKey(e) {
+    if (!e || e.repeat) return;
+    if (e.key !== 'm' && e.key !== 'M') return;
+    const tag = (e.target && e.target.tagName) || '';
+    if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+    if (!isDesktopViewport()) return;
+
+    const panels = document.querySelectorAll(
+      '.ui-panel.top-left, .ui-panel.bottom-left, .ui-panel.bottom-right'
+    );
+    if (!panels.length) return;
+    const hide = !document.body.classList.contains('demo-ui-hidden');
+    document.body.classList.toggle('demo-ui-hidden', hide);
+    panels.forEach(p => { p.style.display = hide ? 'none' : ''; });
+  }
+  if (typeof document !== 'undefined') {
+    document.addEventListener('keydown', handleGlobalMKey);
+  }
+
   function toggleTakeover() {
     if (!ap.active) return;
     ap.paused = !ap.paused;
@@ -1443,6 +1470,9 @@
   function autoReadAnyTransmission() {
     // Type 1: READ/SKIP prompt from game-controls.js deep-discovery etc.
     const prompt = document.getElementById('incomingTransmissionPrompt');
+    // Skip fast-dismiss prompts (TACTICAL/WEAPONS) — their own 1s timer
+    // in transmit() handles dismissal, we must not click READ on them.
+    if (prompt && prompt.dataset && prompt.dataset.demoFastDismiss === '1') return;
     if (prompt && ap._seenPrompt !== prompt) {
       ap._seenPrompt = prompt;
       ap._seenPromptTime = Date.now();
@@ -1563,9 +1593,22 @@
     ap._lastTransmit = now;
     if (typeof showIncomingTransmission !== 'function') return;
     showIncomingTransmission(from, msg, 0x00ccff);
-    // autoReadAnyTransmission() in the main update loop will pick up the
-    // prompt and auto-open the full message 2 s later, then auto-close
-    // after 5 s more.
+
+    // TACTICAL / WEAPONS messages auto-dismiss after 1 second total.  They
+    // skip the full-text READ flow entirely — quick in, quick out.  We tag
+    // the prompt so autoReadAnyTransmission leaves it alone.
+    if (from === 'TACTICAL' || from === 'WEAPONS') {
+      const p = document.getElementById('incomingTransmissionPrompt');
+      if (p) {
+        p.dataset.demoFastDismiss = '1';
+        setTimeout(() => {
+          const still = document.getElementById('incomingTransmissionPrompt');
+          if (still && still.dataset.demoFastDismiss === '1') still.remove();
+        }, 1000);
+      }
+    }
+    // All other transmissions: autoReadAnyTransmission() in the main update
+    // loop picks up the prompt and auto-opens the full message 1 s later.
   }
 
   // ─── HUD ──────────────────────────────────────────────────────────────────
