@@ -2179,6 +2179,34 @@
       transmit('TACTICAL', 'Under fire! Engaging attacker.');
       goPhase('combat');
     }
+
+    // Return fire immediately — don't wait for the ship to finish
+    // rotating to face the attacker.  We pin the target lock directly
+    // onto the attacker so fireWeapon() auto-aims the laser bolt at
+    // their world position, and we drop the normal alignment gate.
+    // Also orient the ship so the dogfight still looks correct visually.
+    if (gameState.targetLock) {
+      gameState.targetLock.active = true;
+      gameState.targetLock.target = target;
+    }
+    gameState.currentTarget = target;
+    if (window.orientTowardsTarget) {
+      window.orientTowardsTarget({ position: target.position });
+    }
+
+    const now = Date.now();
+    const canFireLaser =
+      gameState.weapons &&
+      gameState.weapons.cooldown <= 0 &&
+      gameState.weapons.energy >= 10 &&
+      now - (ap._lastAmbushFire || 0) > 300;   // ~3 shots per second
+    if (canFireLaser && window.fireWeapon) {
+      ap._lastAmbushFire = now;
+      ap.lastFire = now;                        // sync with autoFireOnTargetLock cooldown
+      gameState.crosshairX = window.innerWidth / 2;
+      gameState.crosshairY = window.innerHeight / 2;
+      window.fireWeapon();
+    }
   }
 
   function findLikelyAttacker() {

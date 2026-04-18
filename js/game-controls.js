@@ -3039,89 +3039,95 @@ function getAttackDirection(attackerPosition) {
     if (typeof camera === 'undefined') {
         return { primary: 'center', screenX: 0.5, screenY: 0.5, isVisible: true };
     }
-    
-    // Project attacker position to screen coordinates
-    const attackerScreen = attackerPosition.clone().project(camera);
-    
-    // Convert to screen space (-1 to 1) to (0 to 1)
-    const screenX = (attackerScreen.x * 0.5 + 0.5);
-    const screenY = -(attackerScreen.y * 0.5 - 0.5);
-    
-    // Determine primary direction
-    let direction = 'center';
-    
-    if (attackerScreen.z > 1) {
-        // Attacker is behind us
-        direction = 'behind';
+
+    // Transform the attacker into camera-local space so we can classify
+    // the incoming-fire direction reliably.  Three.js camera convention:
+    //   +X = right, -X = left
+    //   +Y = up,    -Y = down
+    //   -Z = into the scene (front), +Z = behind the camera
+    // We deliberately avoid .project() here — NDC coordinates are
+    // unreliable for points at or behind the camera plane, which made
+    // below/behind hits mis-classify as radial-from-center.
+    const local = camera.worldToLocal(attackerPosition.clone());
+    const absX = Math.abs(local.x);
+    const absY = Math.abs(local.y);
+    const absZ = Math.abs(local.z);
+
+    // Pick the dominant off-axis direction.  If the lateral/vertical
+    // offset is negligible compared to Z, fall back to 'front' (ahead)
+    // or 'behind' (straight rear) — the radial flash then makes sense.
+    let direction = 'front';
+    if (absX > absY) {
+        if (absX > absZ * 0.3) {
+            direction = local.x > 0 ? 'right' : 'left';
+        } else if (local.z > 0) {
+            direction = 'behind';
+        }
     } else {
-        // Determine side based on screen position
-        if (screenX < 0.3) {
-            direction = 'left';
-        } else if (screenX > 0.7) {
-            direction = 'right';
-        } else if (screenY < 0.3) {
-            direction = 'top';
-        } else if (screenY > 0.7) {
-            direction = 'bottom';
-        } else {
-            direction = 'front';
+        if (absY > absZ * 0.3) {
+            direction = local.y > 0 ? 'top' : 'bottom';
+        } else if (local.z > 0) {
+            direction = 'behind';
         }
     }
-    
+
+    // Screen coords are still useful for the indicator label; safe to
+    // compute even though we don't rely on them for direction.
+    const projected = attackerPosition.clone().project(camera);
+    const screenX = projected.x * 0.5 + 0.5;
+    const screenY = -projected.y * 0.5 + 0.5;
+
     return {
         primary: direction,
         screenX: screenX,
         screenY: screenY,
-        isVisible: attackerScreen.z < 1
+        isVisible: projected.z < 1
     };
 }
 
 function createDirectionalDamageEffect(attackDirection) {
     const direction = attackDirection.primary;
     let overlayStyle = '';
-    let pulseStyle = '';
-    
-    // Create directional gradient based on attack direction
+    let extraStyle = '';
+
+    // Each direction just uses a full-viewport gradient; the gradient
+    // itself fades to transparent so the colored band only shows on the
+    // correct side.  We deliberately do NOT restrict the element to a
+    // partial area — combining `top:0;bottom:0` from the base with
+    // `height:40%` was over-constrained and browsers resolved it by
+    // placing the "bottom" flash at the top of the screen (and "right"
+    // on the left).
     switch (direction) {
         case 'left':
             overlayStyle = 'background: linear-gradient(to right, rgba(255,0,0,0.8) 0%, rgba(255,0,0,0.3) 30%, transparent 60%);';
-            pulseStyle = 'left: 0; width: 40%; height: 100%; top: 0;';
             break;
         case 'right':
             overlayStyle = 'background: linear-gradient(to left, rgba(255,0,0,0.8) 0%, rgba(255,0,0,0.3) 30%, transparent 60%);';
-            pulseStyle = 'right: 0; width: 40%; height: 100%; top: 0;';
             break;
         case 'top':
             overlayStyle = 'background: linear-gradient(to bottom, rgba(255,0,0,0.8) 0%, rgba(255,0,0,0.3) 30%, transparent 60%);';
-            pulseStyle = 'top: 0; width: 100%; height: 40%; left: 0;';
             break;
         case 'bottom':
             overlayStyle = 'background: linear-gradient(to top, rgba(255,0,0,0.8) 0%, rgba(255,0,0,0.3) 30%, transparent 60%);';
-            pulseStyle = 'bottom: 0; width: 100%; height: 40%; left: 0;';
             break;
         case 'behind':
             overlayStyle = 'background: radial-gradient(circle at center, transparent 0%, rgba(255,0,0,0.4) 40%, rgba(255,0,0,0.8) 100%);';
-            pulseStyle = 'inset: 0; border: 8px solid rgba(255,0,0,0.6);';
+            extraStyle = 'box-shadow: inset 0 0 0 8px rgba(255,0,0,0.6);';
             break;
         case 'front':
         default:
             overlayStyle = 'background: radial-gradient(circle at center, rgba(255,0,0,0.6) 0%, rgba(255,0,0,0.3) 50%, transparent 80%);';
-            pulseStyle = 'inset: 20%; border-radius: 50%;';
             break;
     }
-    
-    // Create the directional damage overlay.  Z-index sits ABOVE the
-    // mission command alert (z-50) and incoming-transmission prompt (1000)
-    // so the player can always see incoming-fire warnings even when a
-    // transmission is on screen.  Critically we force inset:0 as the
-    // BASE so the overlay actually fills the viewport — the pulseStyle
-    // for front/behind previously had no size at all (inset:20% only)
-    // which produced a zero-size invisible element.
+
+    // Z-index sits ABOVE the mission command alert (z-50) and incoming-
+    // transmission prompt (1000) so the player always sees incoming-fire
+    // warnings even during a transmission.
     const damageOverlay = document.createElement('div');
     damageOverlay.className = 'fixed pointer-events-none';
     damageOverlay.style.cssText =
-        'top:0;left:0;right:0;bottom:0;' +   // base full-viewport coverage
-        overlayStyle + pulseStyle +
+        'top:0;left:0;right:0;bottom:0;' +   // full viewport, always
+        overlayStyle + extraStyle +
         'opacity: 0; transition: opacity 0.15s ease-out; z-index: 2000;';
     document.body.appendChild(damageOverlay);
 
