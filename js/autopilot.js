@@ -422,12 +422,17 @@
     const farEnemy = nearestAliveEnemy(15000);
     if (farEnemy) {
       setStatus('Long-range contact — intercepting');
+      // Lock the enemy on the nav panel so the viewer sees the target shift
+      gameState.currentTarget = farEnemy;
+      if (gameState.targetLock) {
+        gameState.targetLock.active = true;
+        gameState.targetLock.target = farEnemy;
+      }
       flyToward(farEnemy.position, 2.5);
       return;
     }
 
-    // Nothing on sensors — drift forward and demonstrate planet targeting
-    // by cycling nearby planets on the nav panel.
+    // Nothing on sensors — lock on to a nearby planet or object instead
     cycleScanTarget();
     flyToward({ x: camPos().x + 200, y: camPos().y, z: camPos().z + 200 }, 1.0);
 
@@ -1265,17 +1270,25 @@
     }
   }
 
-  // Periodic barrel roll + short W-tap boosts for cinematic flight.
-  // Roll: 4 s of gentle roll every ~18 s.
-  // Boost: brief keys.b pulse every ~8 s while cruising (not in combat).
+  // Barrel rolls + short W-tap boosts for cinematic flight.
+  // Rolls are frequent and punchy for exciting demonstrative play.
   function demoRollAndBoost(fc) {
     const k = keys();
 
-    // Roll: every ~18 s, apply a short roll input for ~4 s (~240 frames)
-    const rollCycle = fc % 1080; // 1080 frames = 18 s at 60fps
-    if (rollCycle >= 0 && rollCycle < 240) {
-      k.q = (rollCycle < 120); // first half: roll left
-      k.e = (rollCycle >= 120); // second half: roll right (cancel)
+    // Roll: every ~8 s, apply a quick Q/E roll for ~2 s (120 frames)
+    const rollCycle = fc % 480; // 480 frames = 8 s at 60fps
+    if (rollCycle < 60) {
+      k.q = true;   // roll left for 1 s
+    } else if (rollCycle >= 60 && rollCycle < 120) {
+      k.e = true;   // roll right for 1 s (partial cancel — net small roll)
+    }
+
+    // Extra snap-roll during combat for evasive excitement (~every 5 s)
+    if (ap.phase === 'combat' || ap.phase === 'fightBorg') {
+      const combatRoll = fc % 300;
+      if (combatRoll >= 0 && combatRoll < 40) {
+        k.e = true;  // quick dodge roll
+      }
     }
 
     // Short boost pulse every ~8 s for 0.5 s, only during travel phases
@@ -1694,10 +1707,10 @@
     if (typeof showIncomingTransmission !== 'function') return;
     showIncomingTransmission(from, msg, 0x00ccff);
 
-    // TACTICAL / WEAPONS messages auto-dismiss after 1 second total.  They
-    // skip the full-text READ flow entirely — quick in, quick out.  We tag
-    // the prompt so autoReadAnyTransmission leaves it alone.
-    if (from === 'TACTICAL' || from === 'WEAPONS') {
+    // Short-lived messages auto-dismiss after 1 second.  They skip the
+    // full-text READ flow entirely — quick flash, then gone.
+    const FAST_TITLES = ['TACTICAL','WEAPONS','NAVIGATION','NAVIGATION SYSTEM','PROPULSION','SCIENCE OFFICER'];
+    if (FAST_TITLES.indexOf(from) !== -1) {
       const p = document.getElementById('incomingTransmissionPrompt');
       if (p) {
         p.dataset.demoFastDismiss = '1';
