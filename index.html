@@ -241,11 +241,12 @@
             pointer-events: auto !important;
         }
 
-        /* Achievement animations */
+        /* Achievement animations — popup sits below the title panel, so
+           slide in from above and fade upward on exit. */
         @keyframes achievementSlide {
-            0% { transform: translate(-50%, 100px); opacity: 0; }
-            20% { transform: translate(-50%, 0); opacity: 1; }
-            80% { transform: translate(-50%, 0); opacity: 1; }
+            0%   { transform: translate(-50%, -60px); opacity: 0; }
+            20%  { transform: translate(-50%, 0);     opacity: 1; }
+            80%  { transform: translate(-50%, 0);     opacity: 1; }
             100% { transform: translate(-50%, -20px); opacity: 0; }
         }
 
@@ -834,7 +835,7 @@
     </div>
 
 <!-- Achievement Popup -->
-<div id="achievementPopup" class="hidden fixed bottom-20 left-1/2 transform -translate-x-1/2 pointer-events-auto" style="z-index: 999 !important;">
+<div id="achievementPopup" class="hidden fixed left-1/2 transform -translate-x-1/2 pointer-events-auto" style="z-index: 999 !important; top: 120px;">
     <div class="ui-panel rounded-lg p-4 text-center" style="min-width: 300px; background: linear-gradient(135deg, rgba(15, 23, 42, 0.3), rgba(30, 41, 59, 0.3)); backdrop-filter: blur(2px);">
         <h4 class="text-lg font-bold text-cyan-400 glow-text mb-2 cyber-title">Achievement!</h4>
         <p id="achievementText" class="text-sm text-gray-300"></p>
