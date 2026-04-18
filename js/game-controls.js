@@ -9,10 +9,16 @@ const activeLasers = [];
 // Global key state
 const keys = {
   w: false, a: false, s: false, d: false,
-  q: false, e: false, enter: false,
-  shift: false, alt: false, space: false,
+  q: false, e: false, enter: false, o: false,
+  shift: false, alt: false, space: false, capsLock: false,
   up: false, down: false, left: false, right: false,
   x: false, b: false, z: false
+};
+
+// Double-tap detection for W key (short energy-based boost)
+const doubleTapState = {
+  lastWTap: 0,
+  doubleTapThreshold: 300 // ms
 };
 
 // Enhanced Audio System with Eerie Space Music (RESTORED from game-controls13.js)
@@ -3271,13 +3277,53 @@ function initializeControlButtons() {
         }
         
         const key = e.key.toLowerCase();
-        if (key === 'w') keys.w = true;
+        
+        // W key with double-tap detection for Jump
+        if (key === 'w') {
+            // Ignore repeat keydown events from holding the key
+            if (e.repeat) {
+                // Key is being held - just set normal W thrust
+                keys.w = true;
+            } else {
+                // Fresh key press - check for double-tap
+                const now = Date.now();
+                if (now - doubleTapState.lastWTap < doubleTapState.doubleTapThreshold) {
+                    // Double-tap detected - Jump!
+                    keys.wDoubleTap = true;
+                    keys.w = false; // Don't also thrust
+                } else {
+                    // Single tap - normal thrust
+                    keys.w = true;
+                }
+                doubleTapState.lastWTap = now;
+            }
+        }
+        
         if (key === 'a') keys.a = true;
         if (key === 's') keys.s = true;
         if (key === 'd') keys.d = true;
         if (key === 'q') keys.q = true;
         if (key === 'e') keys.e = true;
         if (e.key === 'Enter') keys.enter = true;
+        
+        // O key for emergency warp with double-tap detection
+        if (key === 'o') {
+            const now = Date.now();
+            if (now - doubleTapState.lastOTap < doubleTapState.doubleTapThreshold) {
+                // Double-tap detected - 2-second warp
+                keys.oDoubleTap = true;
+            } else {
+                // Single tap - full emergency warp
+                keys.o = true;
+            }
+            doubleTapState.lastOTap = now;
+        }
+        
+        // CAPS LOCK detection for fast turning
+        if (e.getModifierState && e.getModifierState('CapsLock')) {
+            keys.capsLock = true;
+        }
+        
         if (e.key === 'Shift') keys.shift = true;
         if (e.key === ' ') {
     keys.space = true;
@@ -3294,7 +3340,7 @@ function initializeControlButtons() {
                 fireWeapon();
             }
         }
-        if (e.key === 'Meta' || e.key === 'Command') {
+        if (e.key === 'Shift') {
             e.preventDefault();
             fireMissile();
         }
@@ -3376,13 +3422,26 @@ if (e.key === 'Tab') {
         if (gameState.paused) return;  // CORRECT VARIABLE
         
         const key = e.key.toLowerCase();
-        if (key === 'w') keys.w = false;
+        if (key === 'w') {
+            keys.w = false;
+            keys.wDoubleTap = false;
+        }
         if (key === 'a') keys.a = false;
         if (key === 's') keys.s = false;
         if (key === 'd') keys.d = false;
         if (key === 'q') keys.q = false;
         if (key === 'e') keys.e = false;
         if (e.key === 'Enter') keys.enter = false;
+        if (key === 'o') {
+            keys.o = false;
+            keys.oDoubleTap = false;
+        }
+        
+        // Update CAPS LOCK state
+        if (e.getModifierState) {
+            keys.capsLock = e.getModifierState('CapsLock');
+        }
+        
         if (e.key === 'Shift') keys.shift = false;
         if (e.key === ' ') {
             keys.space = false;
@@ -3879,6 +3938,9 @@ if (enemy.userData.health <= 0) {
     
     // Check for galaxy clear
     checkGalaxyClear();
+    
+    // 🏆 VICTORY SYSTEM: Check if guardians defeated → galaxy liberated
+    checkGuardianVictory();
 
     // ENHANCED: Check if we should spawn area bosses or elite guardians
     if (typeof checkAndSpawnAreaBosses === 'function') {
@@ -3916,6 +3978,15 @@ if (enemy.userData.health <= 0) {
     // The fallback checkWeaponHits() is for enemies that are near the aim line,
     // not for asteroids. Asteroids require precise aim with direct raycast hits.
 }
+
+// =============================================================================
+// 🎯 MISSION PROGRESSION - PHASE 2: BOSS BATTLE CHECK
+// =============================================================================
+// Called after every enemy death to detect when all regular enemies + boss defeated
+// Triggers: Guardian spawn, Mission Command alert, boss victory music
+// Does NOT increment galaxiesCleared - that happens in checkGuardianVictory()
+// See: PROGRESSION_SYSTEM.md for full mission flow
+// =============================================================================
 
 function checkGalaxyClear() {
     if (typeof enemies === 'undefined' || typeof gameState === 'undefined') return;
@@ -3989,7 +4060,14 @@ function checkGalaxyClear() {
 }
 
 // =============================================================================
-// GUARDIAN VICTORY SYSTEM - Final galaxy liberation check
+// =============================================================================
+// 🏆 MISSION PROGRESSION - PHASE 3: GUARDIAN VICTORY CHECK
+// =============================================================================
+// Called after every enemy death to detect when all guardians defeated
+// THIS is where galaxiesCleared increments (0 → 1 → 2 → ... → 8)
+// Triggers: "Galaxy Liberation Complete" message, victory music, fireworks
+// At 8/8 galaxies: Campaign victory screen appears
+// See: PROGRESSION_SYSTEM.md for full mission flow
 // =============================================================================
 
 function checkGuardianVictory() {
@@ -4708,6 +4786,9 @@ function handleMissileHit(missile, enemy) {
 
         if (typeof populateTargets === 'function') setTimeout(populateTargets, 100);
         checkGalaxyClear();
+        
+        // 🏆 VICTORY SYSTEM: Check if guardians defeated → galaxy liberated
+        checkGuardianVictory();
 
         // ENHANCED: Check if we should spawn area bosses or elite guardians
         if (typeof checkAndSpawnAreaBosses === 'function') {

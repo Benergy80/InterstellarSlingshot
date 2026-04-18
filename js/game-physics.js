@@ -18,11 +18,16 @@ let cameraRotationTracking = { x: 0, y: 0, z: 0 };
 // NEW: Rotational inertia system for space-like flight feel
 let rotationalVelocity = { pitch: 0, yaw: 0, roll: 0 };
 const rotationalInertia = {
-    acceleration: 0.0030,       // INCREASED: Faster turn response for ambush reactions
+    // Default slower turning (original values restored)
+    acceleration: 0.0020,       // Slower turn response (default)
     deceleration: 0.93,        // Slightly faster slowdown for snappier control
-    maxSpeed: 0.022,           // INCREASED: Faster max turn speed
+    maxSpeed: 0.015,           // Slower max turn speed (default)
     bankingFactor: -2.5,        // How much to bank when turning at full speed (scaled by velocity)
-    bankingSmoothing: 0.2     // How smoothly banking is applied
+    bankingSmoothing: 0.2,     // How smoothly banking is applied
+    
+    // Fast turning values (activated with CAPS LOCK)
+    fastAcceleration: 0.0030,   // Faster turn response
+    fastMaxSpeed: 0.022         // Faster max turn speed
 };
 
 function orientTowardsTarget(target) {
@@ -84,14 +89,19 @@ function orientTowardsTarget(target) {
 
 // NEW: Apply rotational inertia for space-like flight controls
 function applyRotationalInertia(keys, allowManualRotation) {
+    // Choose turning speed based on CAPS LOCK state
+    // 🔄 INVERTED: Default = fast turning, CAPS LOCK = slow/precision mode
+    const currentAcceleration = keys.capsLock ? rotationalInertia.acceleration : rotationalInertia.fastAcceleration;
+    const currentMaxSpeed = keys.capsLock ? rotationalInertia.maxSpeed : rotationalInertia.fastMaxSpeed;
+    
     // Apply acceleration when keys are pressed
     if (allowManualRotation) {
         // Pitch controls (up/down)
         if (keys.up) {
-            rotationalVelocity.pitch += rotationalInertia.acceleration;
+            rotationalVelocity.pitch += currentAcceleration;
             lastPitchInputTime = performance.now();
         } else if (keys.down) {
-            rotationalVelocity.pitch -= rotationalInertia.acceleration;
+            rotationalVelocity.pitch -= currentAcceleration;
             lastPitchInputTime = performance.now();
         } else {
             // Apply deceleration when no input
@@ -100,10 +110,10 @@ function applyRotationalInertia(keys, allowManualRotation) {
         
         // Yaw controls (left/right arrows for turning)
         if (keys.left) {
-            rotationalVelocity.yaw += rotationalInertia.acceleration;
+            rotationalVelocity.yaw += currentAcceleration;
             lastRollInputTime = performance.now();
         } else if (keys.right) {
-            rotationalVelocity.yaw -= rotationalInertia.acceleration;
+            rotationalVelocity.yaw -= currentAcceleration;
             lastRollInputTime = performance.now();
         } else {
             // Apply deceleration when no input
@@ -113,23 +123,23 @@ function applyRotationalInertia(keys, allowManualRotation) {
     
     // Roll controls (Q/E keys for barrel roll) - always available
     if (keys.q) {
-        rotationalVelocity.roll += rotationalInertia.acceleration;
+        rotationalVelocity.roll += currentAcceleration;
         lastRollInputTime = performance.now();
     } else if (keys.e) {
-        rotationalVelocity.roll -= rotationalInertia.acceleration;
+        rotationalVelocity.roll -= currentAcceleration;
         lastRollInputTime = performance.now();
     } else {
         // Apply deceleration when no input
         rotationalVelocity.roll *= rotationalInertia.deceleration;
     }
     
-    // Clamp rotational velocities to max speed
-    rotationalVelocity.pitch = Math.max(-rotationalInertia.maxSpeed, 
-                                        Math.min(rotationalInertia.maxSpeed, rotationalVelocity.pitch));
-    rotationalVelocity.yaw = Math.max(-rotationalInertia.maxSpeed, 
-                                      Math.min(rotationalInertia.maxSpeed, rotationalVelocity.yaw));
-    rotationalVelocity.roll = Math.max(-rotationalInertia.maxSpeed, 
-                                       Math.min(rotationalInertia.maxSpeed, rotationalVelocity.roll));
+    // Clamp rotational velocities to max speed (using current max based on CAPS LOCK)
+    rotationalVelocity.pitch = Math.max(-currentMaxSpeed, 
+                                        Math.min(currentMaxSpeed, rotationalVelocity.pitch));
+    rotationalVelocity.yaw = Math.max(-currentMaxSpeed, 
+                                      Math.min(currentMaxSpeed, rotationalVelocity.yaw));
+    rotationalVelocity.roll = Math.max(-currentMaxSpeed, 
+                                       Math.min(currentMaxSpeed, rotationalVelocity.roll));
     
     // Apply pitch (looking up/down) - this is always relative to current orientation
     if (Math.abs(rotationalVelocity.pitch) > 0.00001) {
@@ -139,6 +149,46 @@ function applyRotationalInertia(keys, allowManualRotation) {
     // Apply yaw (turning left/right) - this is always relative to current orientation
     if (Math.abs(rotationalVelocity.yaw) > 0.00001) {
         camera.rotateY(rotationalVelocity.yaw);
+    }
+    
+    // 🛩️ STRAFE YAW + BANKING: Turn nose OPPOSITE to strafe direction + bank wings
+    // Like a helicopter: strafe left → lean right, strafe right → lean left
+    // Applied AFTER pitch/yaw so it works correctly regardless of orientation
+    if (typeof keys !== 'undefined' && typeof gameState !== 'undefined') {
+        const currentSpeed = gameState.velocity || 0;
+        const minSpeed = 0.5;
+        const maxSpeed = 6.0;
+        const speedFactor = Math.max(0, Math.min(1, (currentSpeed - minSpeed) / (maxSpeed - minSpeed)));
+        const strafeYawFactor = 0.015; // Subtle nose turn for strafe
+        const strafeBankFactor = 0.02; // Banking/roll for strafe
+        
+        // Get the strafe direction in camera's right vector
+        const forwardDirection = new THREE.Vector3();
+        camera.getWorldDirection(forwardDirection);
+        const rightDirection = new THREE.Vector3();
+        rightDirection.crossVectors(forwardDirection, camera.up).normalize();
+        
+        let strafeYawAmount = 0;
+        let strafeBankAmount = 0;
+        
+        if (keys.a && gameState.energy > 0) {
+            // Strafe left (A) → Turn nose RIGHT + Roll right wing down
+            strafeYawAmount = -strafeYawFactor * speedFactor; // Negative = right turn
+            strafeBankAmount = -strafeBankFactor * speedFactor; // Negative = right roll
+        } else if (keys.d && gameState.energy > 0) {
+            // Strafe right (D) → Turn nose LEFT + Roll left wing down
+            strafeYawAmount = strafeYawFactor * speedFactor; // Positive = left turn
+            strafeBankAmount = strafeBankFactor * speedFactor; // Positive = left roll
+        }
+        
+        if (strafeYawAmount !== 0) {
+            // Apply yaw rotation around the up axis (opposite to strafe direction)
+            const rotationAxis = camera.up.clone().normalize();
+            camera.rotateOnWorldAxis(rotationAxis, strafeYawAmount);
+            
+            // Apply banking/roll around forward axis (wings dip)
+            camera.rotateZ(strafeBankAmount);
+        }
     }
     
     // Apply roll (barrel roll) with SPEED-DEPENDENT automatic banking from yaw
@@ -156,6 +206,7 @@ function applyRotationalInertia(keys, allowManualRotation) {
     if (!window.mobileTouchActive) {
         bankingFromYaw = -rotationalVelocity.yaw * rotationalInertia.bankingFactor * speedFactor;
     }
+    
     const totalRoll = rotationalVelocity.roll + bankingFromYaw;
     
     if (Math.abs(totalRoll) > 0.00001) {
@@ -1375,19 +1426,66 @@ if (frameDistance > 0.01) { // Only track significant movement
             createHyperspaceEffect();
         }
     }
+    
+    // Double-tap W for JUMP - short tactical boost (uses 25% energy, no warp charge)
+    // Natural braking after 1 second
+    if (keys.wDoubleTap && gameState.energy >= 25 && !gameState.emergencyWarp.active) {
+        keys.wDoubleTap = false;
+        
+        const capturedForwardDirection = forwardDirection.clone();
+        const capturedBoostSpeed = gameState.emergencyWarp.boostSpeed;
+        
+        // Use 25% energy instead of warp charge
+        gameState.energy = Math.max(0, gameState.energy - 25);
+        gameState.emergencyWarp.transitioning = true;
+        gameState.emergencyWarp.isJump = true; // Flag this as a Jump (not emergency warp)
+        
+        console.log(`⚡ Jump initiated! ${gameState.energy.toFixed(1)} energy remaining`);
+        
+        if (typeof setCameraFirstPerson === 'function') {
+            setCameraFirstPerson();
+        }
+        
+        setTimeout(() => {
+            gameState.emergencyWarp.active = true;
+            gameState.emergencyWarp.transitioning = false;
+            gameState.emergencyWarp.timeRemaining = 1000; // 1 second
+            gameState.velocityVector.copy(capturedForwardDirection).multiplyScalar(capturedBoostSpeed);
+            
+            for (let i = 0; i < 2; i++) {
+                setTimeout(() => createHyperspaceEffect(), i * 200);
+            }
+            
+            if (typeof toggleWarpSpeedStarfield === 'function') {
+                toggleWarpSpeedStarfield(true);
+            }
+            
+            if (typeof playSound !== 'undefined') {
+                playSound('warp');
+            }
+            
+            // No achievement notification for Jump (silent tactical boost)
+            
+            setTimeout(() => {
+                if (typeof setCameraThirdPerson === 'function') {
+                    setCameraThirdPerson();
+                }
+            }, 300);
+        }, 400);
+    }
 
-     // SPECIFICATION: Emergency Systems - Enter Key: Emergency warp
-// Check shield block FIRST before processing warp
-if (keys.enter && typeof isShieldActive === 'function' && isShieldActive()) {
+     // SPECIFICATION: Emergency Systems - O Key: Emergency warp
+// Check shield block FIRST before processing warp (O key for emergency warp)
+if (keys.o && typeof isShieldActive === 'function' && isShieldActive()) {
     if (typeof showAchievement === 'function') {
         showAchievement('Warp Blocked', 'Cannot warp with shields active');
     }
-    keys.enter = false; // Clear the key immediately
+    keys.o = false; // Clear the key immediately
 }
-// Now process warp with cooldown protection
-else if (keys.enter && gameState.emergencyWarp.available > 0 && !gameState.emergencyWarp.active && !gameState.emergencyWarp.transitioning) {
+// Now process full emergency warp with cooldown protection (O key)
+else if (keys.o && gameState.emergencyWarp.available > 0 && !gameState.emergencyWarp.active && !gameState.emergencyWarp.transitioning) {
     // ✅ CRITICAL: Clear the key immediately to prevent retriggering
-    keys.enter = false;
+    keys.o = false;
     
     // ✅ Capture forward direction NOW before setTimeout (closure issue fix)
     const capturedForwardDirection = forwardDirection.clone();
@@ -1443,16 +1541,29 @@ if (gameState.emergencyWarp.active) {
     gameState.emergencyWarp.timeRemaining -= 16.67;
     if (gameState.emergencyWarp.timeRemaining <= 0) {
         gameState.emergencyWarp.active = false;
-        gameState.emergencyWarp.postWarp = true;
         
-        // Check speed and disable starfield if needed
-        const currentSpeedKmS = gameState.velocityVector.length() * 1000;
-        if (currentSpeedKmS < 10000 && typeof toggleWarpSpeedStarfield === 'function') {
-            toggleWarpSpeedStarfield(false);
-        }
-        
-        if (typeof showAchievement === 'function') {
-            showAchievement('Emergency Warp Complete', 'Coasting on momentum - use X to brake');
+        // 🎯 JUMP vs EMERGENCY WARP: Different end behaviors
+        if (gameState.emergencyWarp.isJump) {
+            // JUMP: Auto-brake naturally to minimum speed
+            gameState.emergencyWarp.autoBraking = true;
+            gameState.emergencyWarp.postWarp = false; // No coasting for Jump
+            console.log(`⚡ Jump complete - natural auto-braking engaged`);
+            
+            // No notification for Jump end (silent)
+            
+        } else {
+            // EMERGENCY WARP: Coast on momentum
+            gameState.emergencyWarp.postWarp = true;
+            
+            // Check speed and disable starfield if needed
+            const currentSpeedKmS = gameState.velocityVector.length() * 1000;
+            if (currentSpeedKmS < 10000 && typeof toggleWarpSpeedStarfield === 'function') {
+                toggleWarpSpeedStarfield(false);
+            }
+            
+            if (typeof showAchievement === 'function') {
+                showAchievement('Emergency Warp Complete', 'Coasting on momentum - use X to brake');
+            }
         }
     }
 } else if (gameState.emergencyWarp.postWarp) {
@@ -1481,15 +1592,58 @@ if (gameState.emergencyWarp.active) {
     }
 }
 
+// 🎯 JUMP AUTO-BRAKE - Natural braking after 1 second
+if (gameState.emergencyWarp.autoBraking) {
+    const currentSpeed = gameState.velocityVector.length();
+    const minVelocity = gameState.minVelocity || 2.0;
+    
+    // Apply natural braking force (stronger than manual brake for faster stop)
+    const brakingForce = 0.97; // 3% reduction per frame (natural deceleration)
+    gameState.velocityVector.multiplyScalar(brakingForce);
+    
+    // Also apply rotational braking for smooth camera transitions
+    const rotationalBrakingForce = 0.95;
+    rotationalVelocity.pitch *= rotationalBrakingForce;
+    rotationalVelocity.yaw *= rotationalBrakingForce;
+    rotationalVelocity.roll *= rotationalBrakingForce;
+    
+    // When speed drops to minimum, stop auto-braking and release control
+    if (currentSpeed <= minVelocity * 1.2) {
+        // Clean up jump flags and release control
+        gameState.emergencyWarp.autoBraking = false;
+        gameState.emergencyWarp.isJump = false;
+        console.log('✅ Jump auto-brake complete - natural deceleration finished');
+        
+        // Disable starfield
+        if (typeof toggleWarpSpeedStarfield === 'function') {
+            toggleWarpSpeedStarfield(false);
+        }
+        
+        // Return to third-person camera
+        if (typeof setCameraThirdPerson === 'function') {
+            setCameraThirdPerson();
+        }
+    }
+    
+    // Disable starfield when speed drops below threshold during auto-brake
+    const currentSpeedKmS = currentSpeed * 1000;
+    if (currentSpeedKmS < 10000 && typeof toggleWarpSpeedStarfield === 'function') {
+        if (window.warpStarfield && window.warpStarfield.lines && window.warpStarfield.lines.visible) {
+            toggleWarpSpeedStarfield(false);
+        }
+    }
+}
+
 // Update shield system
 if (typeof updateShieldSystem === 'function') {
     updateShieldSystem();
 }
     
     // Emergency braking (X key) - GRADUAL DECELERATION
-if (keys.x && gameState.energy > 0) {
-    // Gradual braking: reduce velocity by 2% per frame instead of instant stop
-    const brakingForce = 0.98; // 2% reduction per frame
+    // Skip manual braking if Jump auto-brake is active
+if (keys.x && gameState.energy > 0 && !gameState.emergencyWarp.autoBraking) {
+    // Gradual braking: reduce velocity by 1% per frame (smoother deceleration)
+    const brakingForce = 0.99; // 1% reduction per frame (was 0.98 = 2%)
     gameState.velocityVector.multiplyScalar(brakingForce);
     
     // NEW: Also apply braking to rotational velocity (dampen turning and rolling)
@@ -2066,7 +2220,8 @@ if (blackHoleCoreCollision || surfaceCollision) {
 
     // Enhanced velocity limits
     const currentMaxVelocity = gameState.emergencyWarp.active ? gameState.emergencyWarp.boostSpeed :
-                         gameState.emergencyWarp.postWarp ? gameState.emergencyWarp.boostSpeed :  // NEW LINE
+                         gameState.emergencyWarp.autoBraking ? gameState.emergencyWarp.boostSpeed :  // NEW: Allow high speed during Jump brake
+                         gameState.emergencyWarp.postWarp ? gameState.emergencyWarp.boostSpeed :
                          (gameState.slingshot.active || gameState.slingshot.postSlingshot) ? 
                          gameState.slingshot.maxSpeed : gameState.maxVelocity;
     const currentVelocity = gameState.velocityVector.length();
@@ -2074,16 +2229,18 @@ if (blackHoleCoreCollision || surfaceCollision) {
     if (currentVelocity > currentMaxVelocity && 
     !gameState.slingshot.postSlingshot && 
     !gameState.emergencyWarp.active && 
-    !gameState.emergencyWarp.postWarp) {  // NEW CONDITION
+    !gameState.emergencyWarp.autoBraking &&  // NEW: Don't cap velocity during Jump brake
+    !gameState.emergencyWarp.postWarp) {
     gameState.velocityVector.normalize().multiplyScalar(currentMaxVelocity);
 }
     
-    // SPECIFICATION: Minimum velocity enforcement - MODIFIED for emergency braking
+    // SPECIFICATION: Minimum velocity enforcement - MODIFIED for emergency braking AND Jump auto-brake
 if (currentVelocity < gameState.minVelocity && 
     !gameState.slingshot.active && 
     !gameState.slingshot.postSlingshot && 
     !gameState.emergencyWarp.active &&
-    !gameState.emergencyBraking) {  // <-- ADD THIS LINE
+    !gameState.emergencyWarp.autoBraking &&  // NEW: Don't enforce min velocity during Jump auto-brake
+    !gameState.emergencyBraking) {
     if (currentVelocity > 0.001) {
         gameState.velocityVector.normalize().multiplyScalar(gameState.minVelocity);
     } else {
@@ -2105,7 +2262,8 @@ if (dampedVelocity.length() >= gameState.minVelocity ||
     gameState.slingshot.active || 
     gameState.slingshot.postSlingshot || 
     gameState.emergencyWarp.active ||
-    gameState.emergencyWarp.postWarp) {  // NEW CONDITION
+    gameState.emergencyWarp.autoBraking ||  // NEW: Allow damping during Jump auto-brake
+    gameState.emergencyWarp.postWarp) {
     gameState.velocityVector.copy(dampedVelocity);
 }
     
@@ -2123,18 +2281,57 @@ if (dampedVelocity.length() >= gameState.minVelocity ||
                 }
             }
         } else {
-            const targetDirection = new THREE.Vector3().subVectors(
-                gameState.currentTarget.position, 
-                camera.position
-            ).normalize();
+            // 🛰️ ORBITAL APPROACH: Aim for near-orbit intercept, not direct collision
+            const targetPos = gameState.currentTarget.position;
+            const targetDistance = camera.position.distanceTo(targetPos);
+            
+            // Calculate orbital approach point (offset perpendicular to approach vector)
+            const toTarget = new THREE.Vector3().subVectors(targetPos, camera.position);
+            const approachDistance = toTarget.length();
+            
+            // Determine safe orbital radius based on target type
+            let orbitRadius = 500; // Default orbit radius for enemies
+            if (gameState.currentTarget.userData) {
+                if (gameState.currentTarget.userData.type === 'planet') {
+                    orbitRadius = (gameState.currentTarget.userData.size || 100) * 3; // 3x planet radius
+                } else if (gameState.currentTarget.userData.type === 'blackhole') {
+                    orbitRadius = (gameState.currentTarget.userData.size || 200) * 2; // 2x black hole radius
+                } else if (gameState.currentTarget.userData.isEnemy) {
+                    orbitRadius = 300; // Close approach for enemies (combat range)
+                }
+            }
+            
+            let targetDirection;
+            
+            // When far away: aim for tangential intercept point (orbital approach)
+            if (approachDistance > orbitRadius * 2) {
+                // Create tangent point perpendicular to approach vector
+                const perpendicular = new THREE.Vector3(-toTarget.z, 0, toTarget.x).normalize();
+                const orbitPoint = targetPos.clone().add(perpendicular.multiplyScalar(orbitRadius));
+                targetDirection = new THREE.Vector3().subVectors(orbitPoint, camera.position).normalize();
+            } else {
+                // When close: circularize into orbit
+                const currentVelocity = gameState.velocityVector.clone().normalize();
+                const radialDirection = toTarget.clone().normalize();
+                
+                // Calculate tangential direction (perpendicular to radial)
+                const tangentialDirection = new THREE.Vector3().crossVectors(radialDirection, new THREE.Vector3(0, 1, 0)).normalize();
+                
+                // Blend between current velocity and tangential (smooth transition into orbit)
+                targetDirection = currentVelocity.lerp(tangentialDirection, 0.3);
+            }
             
             gameState.velocityVector.addScaledVector(targetDirection, gameState.thrustPower * 0.4);
             gameState.energy = Math.max(0, gameState.energy - 0.03);
             
-            const targetDistance = camera.position.distanceTo(gameState.currentTarget.position);
-            if (targetDistance > 100) {
+            // Re-orient ONLY during distant approach (not during orbital insertion)
+            // This prevents camera shake when trying to orbit close to target
+            if (approachDistance > orbitRadius * 2) {
+                // Far away: orient towards tangent intercept point
                 orientTowardsTarget(gameState.currentTarget);
             }
+            // When close (<2x orbit): let natural velocity vector guide orientation
+            // Camera will naturally point where ship is going (tangential)
         }
     } else if (gameState.autoNavigating && gameState.energy <= 5) {
         // SPECIFICATION: Automatically disengages when energy drops below 5
