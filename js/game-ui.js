@@ -8,21 +8,39 @@
 // CORE UI UPDATE SYSTEM - ENHANCED INTEGRATION
 // =============================================================================
 
+// DOM element cache — updateUI/related frame-called functions used to run
+// 40+ getElementById lookups every frame. Cache the refs and re-resolve
+// lazily if the element gets detached (hull overlay, etc).
+const _uiElCache = Object.create(null);
+function _uiEl(id) {
+    const cached = _uiElCache[id];
+    if (cached && cached.isConnected) return cached;
+    const el = document.getElementById(id);
+    if (el) _uiElCache[id] = el;
+    else delete _uiElCache[id];
+    return el;
+}
+// Expose cache invalidation for callers that delete/replace tracked elements
+window._invalidateUiElCache = function(id) {
+    if (id) delete _uiElCache[id];
+    else for (const k in _uiElCache) delete _uiElCache[k];
+};
+
 function updateUI() {
     // Safety check for game state
     if (typeof gameState === 'undefined' || !gameState) return;
-    
+
     // FIXED: Properly define all UI elements at the start
-    const velocityEl = document.getElementById('velocity');
-    const distanceEl = document.getElementById('distance');
-    const energyBarEl = document.getElementById('energyBar');
-    const hullBarEl = document.getElementById('hullBar');
-    const locationEl = document.getElementById('location');
-    const targetInfo = document.getElementById('targetInfo');
-    const emergencyWarpEl = document.getElementById('emergencyWarpCount');
-    const weaponStatusEl = document.getElementById('weaponStatus');
-    const galaxiesClearedEl = document.getElementById('galaxiesCleared');
-    const targetLockStatusEl = document.getElementById('targetLockStatus');
+    const velocityEl = _uiEl('velocity');
+    const distanceEl = _uiEl('distance');
+    const energyBarEl = _uiEl('energyBar');
+    const hullBarEl = _uiEl('hullBar');
+    const locationEl = _uiEl('location');
+    const targetInfo = _uiEl('targetInfo');
+    const emergencyWarpEl = _uiEl('emergencyWarpCount');
+    const weaponStatusEl = _uiEl('weaponStatus');
+    const galaxiesClearedEl = _uiEl('galaxiesCleared');
+    const targetLockStatusEl = _uiEl('targetLockStatus');
     
     // Basic stats updates
     if (velocityEl) velocityEl.textContent = (gameState.velocity * 1000).toFixed(0) + ' km/s';
@@ -33,7 +51,7 @@ function updateUI() {
         emergencyWarpEl.textContent = gameState.emergencyWarp.available;
     }
     // Also update mobile warp count
-    const mobileWarpEl = document.getElementById('mobileWarpCount');
+    const mobileWarpEl = _uiEl('mobileWarpCount');
     if (mobileWarpEl && gameState.emergencyWarp) {
         mobileWarpEl.textContent = gameState.emergencyWarp.available;
     }
@@ -82,7 +100,7 @@ if (gameState.solarStormBoostActive || gameState.plasmaStormBoostActive) {
     const boostType = gameState.plasmaStormBoostActive ? 'PLASMA' : 'SOLAR';
     const boostColor = gameState.plasmaStormBoostActive ? '#8866ff' : '#ffd700';
     
-    const energyDisplay = document.querySelector('#energyBar').parentElement.previousElementSibling;
+    const energyDisplay = energyBarEl && energyBarEl.parentElement ? energyBarEl.parentElement.previousElementSibling : null;
     if (energyDisplay) {
         energyDisplay.innerHTML = `Energy: <span style="color: ${boostColor}; font-weight: bold; text-shadow: 0 0 10px ${boostColor};">${Math.round(gameState.energy)}% ⚡ ${boostType} (${timeLeft}s)</span>`;
     }
@@ -104,7 +122,7 @@ if (gameState.solarStormBoostActive || gameState.plasmaStormBoostActive) {
     }
     
     // ADDED: Cracked screen effect at 10% hull
-if (gameState.hull <= 10 && !document.getElementById('criticalDamageOverlay')) {
+if (gameState.hull <= 10 && !_uiEl('criticalDamageOverlay')) {
     const crackedOverlay = document.createElement('div');
     crackedOverlay.id = 'criticalDamageOverlay';
     crackedOverlay.style.cssText = `
