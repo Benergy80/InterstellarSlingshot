@@ -1577,6 +1577,11 @@
     if (now - (ap.lastFire || 0) < 1000) return;
     if (gameState.weapons.cooldown > 0 || gameState.weapons.energy < 10) return;
 
+    const aligned = window.orientTowardsTarget
+      ? window.orientTowardsTarget({ position: tgt.position })
+      : false;
+    if (!aligned) return;
+
     ap.lastFire = now;
     gameState.crosshairX = window.innerWidth / 2;
     gameState.crosshairY = window.innerHeight / 2;
@@ -1589,32 +1594,31 @@
   // the raycast from center-screen hits the asteroid we're pointing at.
   // Uses a separate cooldown so it doesn't compete with enemy fire timing.
   function shootNearbyAsteroids() {
-    // Skip during kill cooldown or if weapons are on cooldown
     if (ap._killCooldownUntil && Date.now() < ap._killCooldownUntil) return;
     if (!gameState || gameState.weapons.cooldown > 0 || gameState.weapons.energy < 10) return;
 
     const now = Date.now();
-    if (now - (ap._lastAsteroidFire || 0) < 1600) return; // separate 1.6 s cadence
+    if (now - (ap._lastAsteroidFire || 0) < 1600) return;
 
-    // Find the nearest asteroid within 500 u that's in the forward cone
     if (typeof planets === 'undefined') return;
     const cp = camPos();
-    let best = null, bestDist = 500;
+    let best = null, bestDist = 300;
     for (let i = 0; i < planets.length; i++) {
       const p = planets[i];
       if (!p || !p.userData) continue;
       if (p.userData.type !== 'asteroid' || (p.userData.health !== undefined && p.userData.health <= 0)) continue;
       const d = cp.distanceTo(p.position);
-      if (d < bestDist && isInFiringCone(p, 500)) {
+      if (d < bestDist && isInFiringCone(p, 300)) {
         bestDist = d;
         best = p;
       }
     }
     if (!best) return;
 
-    // Orient toward the asteroid and fire (crosshair at screen center)
     const dummy = { position: best.position };
-    if (window.orientTowardsTarget) window.orientTowardsTarget(dummy);
+    const aligned = window.orientTowardsTarget ? window.orientTowardsTarget(dummy) : false;
+    if (!aligned) return;
+
     gameState.crosshairX = window.innerWidth / 2;
     gameState.crosshairY = window.innerHeight / 2;
     ap._lastAsteroidFire = now;
