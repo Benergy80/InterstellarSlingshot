@@ -1133,7 +1133,7 @@
       const ld = activeLasers[i];
       if (!ld || !ld.beam) continue;
       if (!ld._demoCreatedAt) ld._demoCreatedAt = now;
-      if (now - ld._demoCreatedAt > 80 && ld.beam.visible) {
+      if (now - ld._demoCreatedAt > 400 && ld.beam.visible) {
         ld.beam.visible = false;
         // Also zero the opacity defensively — some materials with
         // .visible=false may still contribute to the composite frame
@@ -1156,7 +1156,7 @@
       const ex = exps[i];
       if (!ex) continue;
       if (!ex._demoCreatedAt) ex._demoCreatedAt = now;
-      if (now - ex._demoCreatedAt > 1500) {
+      if (now - ex._demoCreatedAt > 500) {
         // Zero the animation variables so the manager's next update()
         // returns false and runs cleanup().  We touch nothing else.
         if (ex.update) {
