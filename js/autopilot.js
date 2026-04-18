@@ -1912,6 +1912,9 @@
     // While a missile fire sequence is in-flight, do NOT re-raise shields
     // (fireMissile aborts if shields are up).
     if (ap._missileFireLock && Date.now() < ap._missileFireLock) return;
+    // Mobile warp button sets this global lock so shields stay down long
+    // enough for the physics warp path to fire.
+    if (window._demoShieldLock && Date.now() < window._demoShieldLock) return;
 
     let inFireRange = false;
     const camP = camPos();

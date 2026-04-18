@@ -305,12 +305,12 @@ window.mobileEmergencyWarp = function() {
         }
     }
     
-    // Check if already warping
-    if (gameState.emergencyWarp.active) {
-        console.log('⚠️ Already warping - ignoring button press');
+    // Check if transitioning
+    if (gameState.emergencyWarp.transitioning) {
+        console.log('⚠️ Warp transitioning - ignoring');
         return;
     }
-    
+
     // Check if charges available
     if (gameState.emergencyWarp.available <= 0) {
         if (typeof showAchievement === 'function') {
@@ -318,17 +318,28 @@ window.mobileEmergencyWarp = function() {
         }
         return;
     }
-    
-    // Trigger warp by setting key (the physics handler will process it).
-    // Hold for 200 ms so the physics loop reliably picks it up even if
-    // a frame drop delays the next animate() tick.
-    if (typeof keys !== 'undefined') {
-        keys.enter = true;
-        setTimeout(() => {
-            keys.enter = false;
-        }, 200);
+
+    // Block preemptiveShields from re-activating for 800 ms so the physics
+    // code sees shields-down when it processes the warp on the next frame.
+    // ap._missileFireLock is checked by preemptiveShields in autopilot.js.
+    if (typeof window.demoPilot !== 'undefined') {
+        // Access the autopilot's internal lock via a thin exposed helper
+        window._demoShieldLock = Date.now() + 800;
     }
-    
+
+    // Dispatch a real Enter keystroke so the game's own keydown handler
+    // fires — this runs the shield-drop + warp-initiation in the correct
+    // order within the same event-loop tick, avoiding the race where
+    // preemptiveShields re-raises shields between our drop and physics.
+    document.dispatchEvent(new KeyboardEvent('keydown', {
+        key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true
+    }));
+    setTimeout(() => {
+        document.dispatchEvent(new KeyboardEvent('keyup', {
+            key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true
+        }));
+    }, 300);
+
     console.log('✅ Mobile emergency warp triggered');
 };
 
