@@ -2795,16 +2795,10 @@ if (typeof window !== 'undefined') window.activeMuzzleFlashes = activeMuzzleFlas
 
 // Muzzle flash effect at wing tip (brief bright sphere) - NOW TRACKS WITH SHIP
 function createMuzzleFlash(position) {
-    // Scale muzzle flash to match visual wingspan.  Mobile pulls the 3rd
-    // person camera back to (0, -6, -22) instead of desktop's (0, -4, -14),
-    // so the ship looks smaller on screen and the flash needs to be
-    // proportionally smaller too — otherwise it looks like big blobs
-    // floating far from the tiny ship.
-    const isMobile = (typeof window !== 'undefined') &&
-                     (window.innerWidth <= 768 ||
-                      ('ontouchstart' in window && window.innerWidth <= 1024));
-    const flashRadius = isMobile ? 0.45 : 0.8;
-    const flashGeometry = new THREE.SphereGeometry(flashRadius, 8, 8);
+    // Unified flash size that matches the pulled-back 3rd-person camera
+    // (0, -6, -22) on both desktop and mobile — keeps wing-tip flashes
+    // looking attached to the ship instead of floating as big blobs.
+    const flashGeometry = new THREE.SphereGeometry(0.45, 8, 8);
     const flashMaterial = new THREE.MeshBasicMaterial({
         color: '#00ff96',
         transparent: true,
