@@ -297,25 +297,44 @@ function updateCameraView(camera) {
         return; // Don't update position during intro
     }
     
-    // CRITICAL: Keep ship hidden if in 'zero-offset' mode (0 key) AND transition complete
+    // Hide the ship when it would visually cross through the camera.
+    // This happens in two cases:
+    //   a) Plain zero-offset mode (0 key), transition complete
+    //   b) DURING a transition whose animated offset is very close to
+    //      the camera origin — e.g. the intro cinematic from zero-offset
+    //      (z=+3) to third-person (z=-22) passes through z=0, where the
+    //      ship mesh would overlap the camera and clip through the view.
+    let hideShip = false;
     if (cameraState.mode === 'zero-offset' && !cameraState.isTransitioning) {
+        hideShip = true;
+    } else if (cameraState.isTransitioning) {
+        // Snapshot the animated offset to decide visibility.
+        const elapsed0 = performance.now() - cameraState.transitionStartTime;
+        const progress0 = Math.min(elapsed0 / cameraState.transitionDuration, 1);
+        const ease0 = progress0 < 0.5
+            ? 2 * progress0 * progress0
+            : 1 - Math.pow(-2 * progress0 + 2, 2) / 2;
+        const animZ = cameraState.transitionStartOffset.z +
+                      (cameraState.transitionTargetOffset.z - cameraState.transitionStartOffset.z) * ease0;
+        const animY = cameraState.transitionStartOffset.y +
+                      (cameraState.transitionTargetOffset.y - cameraState.transitionStartOffset.y) * ease0;
+        // If the ship is within 2 units of the camera in the Z axis AND
+        // not far enough below/above it either, hide it for this frame.
+        if (Math.abs(animZ) < 2 && Math.abs(animY) < 2) {
+            hideShip = true;
+        }
+    }
+
+    if (hideShip) {
         cameraState.playerShipMesh.visible = false;
         cameraState.playerShipMesh.traverse((child) => {
-            if (child.isMesh) {
-                child.visible = false;
-            }
+            if (child.isMesh) child.visible = false;
         });
-        // Don't return - let position update run with zero offset
     } else {
-        // Make ship visible when game is active (not in zero-offset mode)
         cameraState.playerShipMesh.visible = true;
-        
         // CRITICAL: Force ALL child meshes visible (fixes warp disappearing issue)
-        // During warp, the ship must remain visible on screen
         cameraState.playerShipMesh.traverse((child) => {
-            if (child.isMesh) {
-                child.visible = true;
-            }
+            if (child.isMesh) child.visible = true;
         });
     }
 
