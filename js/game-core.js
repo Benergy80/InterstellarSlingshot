@@ -2027,6 +2027,13 @@ if (typeof checkCosmicFeatureInteractions === 'function' && typeof camera !== 'u
         window.demoPilot.update();
     }
 
+    // Enemy buffs (3x HP, 2x speed, close-range swarm) — applied in all
+    // gameplay modes, not just demo.  Skips when demo is driving so the
+    // demo's own update doesn't double-buff.
+    if (typeof window !== 'undefined' && typeof window.applyEnemyBuffs === 'function') {
+        window.applyEnemyBuffs();
+    }
+
     // Enhanced physics and controls for doubled world
     if (typeof perfDebug !== 'undefined') perfDebug.startTimer('physics');
     if (typeof updateEnhancedPhysics === 'function') {

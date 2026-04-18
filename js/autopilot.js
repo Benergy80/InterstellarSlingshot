@@ -54,6 +54,20 @@
     get paused() { return ap.paused; }
   };
 
+  // Per-frame enemy buffs + swarm — previously only applied while demo
+  // mode was active.  The user wants the same enemy difficulty in normal
+  // gameplay, so we expose a handle the game-core animate loop can call
+  // every frame regardless of demo state.
+  window.applyEnemyBuffs = function applyEnemyBuffs() {
+    if (typeof gameState === 'undefined' || !gameState.gameStarted) return;
+    if (gameState.gameOver || gameState.paused) return;
+    // Respect demo throttles when the demo is driving so we don't double-work
+    if (ap.active && !ap.paused) return;
+    const fc = gameState.frameCount || 0;
+    if (fc % 60 === 0) { buffEnemiesForDemo(); buffEnemySpeed(); }
+    if (fc % 3 === 0)  { swarmEnemiesNearPlayer(); }
+  };
+
   // ─── Start / Stop ─────────────────────────────────────────────────────────
   function start() {
     if (ap.active) return;
@@ -1755,31 +1769,19 @@
     if (typeof showAchievement === 'function') showAchievement(title, body);
   }
 
-  function transmit(from, msg) {
-    const now = Date.now();
-    if (now - ap._lastTransmit < TRANSMIT_COOLDOWN_MS) return;
-    ap._lastTransmit = now;
-    if (typeof showIncomingTransmission !== 'function') return;
-    showIncomingTransmission(from, msg, 0x00ccff);
-
-    // Short-lived messages auto-dismiss after 1 second.  They skip the
-    // full-text READ flow entirely — quick flash, then gone.
-    const FAST_TITLES = ['TACTICAL','WEAPONS','NAVIGATION','NAVIGATION SYSTEM','PROPULSION','SCIENCE OFFICER'];
-    if (FAST_TITLES.indexOf(from) !== -1) {
-      const p = document.getElementById('incomingTransmissionPrompt');
-      if (p) {
-        p.dataset.demoFastDismiss = '1';
-        setTimeout(() => {
-          const still = document.getElementById('incomingTransmissionPrompt');
-          if (still && still.dataset.demoFastDismiss === '1') still.remove();
-        }, 1000);
-      }
-    }
-    // All other transmissions: autoReadAnyTransmission() in the main update
-    // loop picks up the prompt and auto-opens the full message 1 s later.
-  }
+  // transmit() is intentionally a no-op.  Demo mode used to emit its own
+  // TACTICAL / PROPULSION / NAVIGATION / etc. transmissions to narrate the
+  // phase transitions; that was judged redundant with the HUD status line
+  // and the game-emitted Mission Control transmissions.  Kept as a
+  // function so existing call sites stay valid.
+  function transmit(/* from, msg */) { /* intentionally blank */ }
 
   // ─── HUD ──────────────────────────────────────────────────────────────────
+
+  function isMobileViewport() {
+    return window.innerWidth <= 768 ||
+           ('ontouchstart' in window && window.innerWidth <= 1024);
+  }
 
   function buildHUD() {
     removeHUD();
@@ -1787,9 +1789,12 @@
     el.id = 'demoPilotHUD';
     // Mobile: position at the TOP just below the NAV button.
     // Desktop: keep at the bottom (above the achievement popup bottom-80).
-    const isMobile = window.innerWidth <= 768 ||
-                     ('ontouchstart' in window && window.innerWidth <= 1024);
+    const isMobile = isMobileViewport();
     const topOrBottom = isMobile ? 'top:84px' : 'bottom:10px';
+    // Mobile: the panel becomes a tap target to toggle takeover, so
+    // enable pointer-events.  Desktop: non-interactive overlay.
+    const pe = isMobile ? 'pointer-events:auto' : 'pointer-events:none';
+    const cursor = isMobile ? 'cursor:pointer' : 'cursor:default';
     el.style.cssText = [
       'position:fixed',
       topOrBottom,
@@ -1804,16 +1809,36 @@
       'font-size:11px',
       'color:#00ff88',
       'text-align:center',
-      'pointer-events:none',
+      pe,
+      cursor,
       'text-shadow:0 0 8px rgba(0,255,136,0.8)',
       'box-shadow:0 0 20px rgba(0,255,136,0.3)',
       'letter-spacing:2px',
       'min-width:260px',
       'max-width:90vw',
+      '-webkit-tap-highlight-color:transparent',
+      'touch-action:manipulation',
     ].join(';');
-    el.innerHTML = '<div id="demoPilotLabel" style="opacity:0.7;font-size:10px;margin-bottom:2px">🤖 DEMO AUTOPILOT · press T to take over</div><div id="demoPilotStatus">Initializing…</div>';
+
+    // Mobile: label-only panel, no target information.
+    // Desktop: label + running status line (Pursuing X — 300 u, etc.).
+    if (isMobile) {
+      el.innerHTML = '<div id="demoPilotLabel" style="font-size:11px">🤖 DEMO AUTOPILOT · tap to take over</div>';
+    } else {
+      el.innerHTML = '<div id="demoPilotLabel" style="opacity:0.7;font-size:10px;margin-bottom:2px">🤖 DEMO AUTOPILOT · press T to take over</div><div id="demoPilotStatus">Initializing…</div>';
+    }
     document.body.appendChild(el);
     ap.hudEl = el;
+
+    // Mobile: tap the panel to toggle player takeover (same effect as T)
+    if (isMobile) {
+      const handler = (ev) => {
+        if (ev && ev.preventDefault) ev.preventDefault();
+        toggleTakeover();
+      };
+      el.addEventListener('click', handler);
+      el.addEventListener('touchend', handler);
+    }
 
     // Re-evaluate position on orientation / resize so a tablet rotated
     // into portrait picks the mobile layout and vice-versa.
@@ -1826,6 +1851,8 @@
   }
 
   function tickHUD() {
+    // Mobile HUD has no status line — skip target info updates.
+    if (isMobileViewport()) return;
     const s = document.getElementById('demoPilotStatus');
     if (s) s.textContent = ap.statusText || ap.phase;
   }
@@ -1834,18 +1861,21 @@
     const el = document.getElementById('demoPilotHUD');
     const label = document.getElementById('demoPilotLabel');
     if (!el) return;
+    const mobile = isMobileViewport();
+    const takeText  = mobile ? 'tap to take over' : 'press T to take over';
+    const resumeText = mobile ? 'tap to resume demo' : 'press T to resume demo';
     if (paused) {
       el.style.borderColor = 'rgba(255,200,0,0.7)';
       el.style.color = '#ffcc33';
       el.style.textShadow = '0 0 8px rgba(255,200,0,0.8)';
       el.style.boxShadow = '0 0 20px rgba(255,200,0,0.35)';
-      if (label) label.textContent = '🕹️ PLAYER CONTROL · press T to resume demo';
+      if (label) label.textContent = '🕹️ PLAYER CONTROL · ' + resumeText;
     } else {
       el.style.borderColor = 'rgba(0,255,136,0.5)';
       el.style.color = '#00ff88';
       el.style.textShadow = '0 0 8px rgba(0,255,136,0.8)';
       el.style.boxShadow = '0 0 20px rgba(0,255,136,0.3)';
-      if (label) label.textContent = '🤖 DEMO AUTOPILOT · press T to take over';
+      if (label) label.textContent = '🤖 DEMO AUTOPILOT · ' + takeText;
     }
   }
 
