@@ -322,6 +322,10 @@ function getModelLoadingProgress() {
 // HELPER FUNCTIONS FOR MODEL INTEGRATION
 // =============================================================================
 
+const _enemyModelScaleCorrection = {
+    7: 0.25  // Sith Empire model is 4x oversized
+};
+
 // Create enemy mesh using GLB model or fallback geometry
 function createEnemyMeshWithModel(regionId, fallbackGeometry, material, scaleOverride) {
     const model = getEnemyModel(regionId);
@@ -413,7 +417,8 @@ function createEnemyMeshWithModel(regionId, fallbackGeometry, material, scaleOve
 
         // Scale enemy models (default 96x = 80% of original 120x, but can be overridden)
         const finalScale = scaleOverride !== undefined ? scaleOverride : 96.0;
-        model.scale.multiplyScalar(finalScale);
+        const correction = _enemyModelScaleCorrection[regionId] || 1.0;
+        model.scale.multiplyScalar(finalScale * correction);
 
         return model;
     } else {
@@ -513,7 +518,8 @@ function createBossMeshWithModel(regionId, fallbackGeometry, material) {
         });
 
         // Bosses are larger than enemies (144x = 80% of original 180x)
-        model.scale.multiplyScalar(144.0);
+        const bossCorrection = _enemyModelScaleCorrection[regionId] || 1.0;
+        model.scale.multiplyScalar(144.0 * bossCorrection);
 
         return model;
     } else {
