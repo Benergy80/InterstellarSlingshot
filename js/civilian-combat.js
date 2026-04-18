@@ -133,29 +133,97 @@ function destroyCivilian(civilian) {
 
 function updateDistressCalls() {
     if (typeof camera === 'undefined') return;
-    
+
     const now = Date.now();
-    
+
     // Check each distress call
     for (let i = activeDistressCalls.length - 1; i >= 0; i--) {
         const call = activeDistressCalls[i];
-        
+
         // Remove if civilian destroyed or call too old (5 minutes)
-        if (!call.civilian || call.civilian.userData.destroyed || 
+        if (!call.civilian || call.civilian.userData.destroyed ||
             (now - call.startTime) > 300000) {
             activeDistressCalls.splice(i, 1);
             continue;
         }
-        
+
         // Check if player enters range
         const distToPlayer = call.civilian.position.distanceTo(camera.position);
         if (distToPlayer < DISTRESS_DETECTION_RANGE && !call.playerNotified) {
             call.playerNotified = true;
             if (typeof showAchievement === 'function') {
-                showAchievement('DISTRESS CALL DETECTED', 
+                showAchievement('DISTRESS CALL DETECTED',
                     `${call.name} under attack! Distance: ${(distToPlayer/1000).toFixed(1)}Mm`);
             }
         }
+
+        // ── Rescue check ─────────────────────────────────────────────────
+        // If the caravan has already called for help AND no live enemy is
+        // threatening it anymore (everyone within 600 u cleared), the
+        // player has successfully rescued the caravan.  Trigger the
+        // thank-you transmission + full resupply ONCE per distress call.
+        if (call.playerNotified && !call.rescueTriggered) {
+            const threatRange = 600; // generous — threats beyond this aren't "attacking"
+            let threatPresent = false;
+            if (typeof enemies !== 'undefined') {
+                for (let j = 0; j < enemies.length; j++) {
+                    const e = enemies[j];
+                    if (!e || !e.userData || e.userData.health <= 0) continue;
+                    if (call.civilian.position.distanceTo(e.position) < threatRange) {
+                        threatPresent = true;
+                        break;
+                    }
+                }
+            }
+            // Player must also be reasonably close — they earned the rescue
+            if (!threatPresent && distToPlayer < DISTRESS_DETECTION_RANGE) {
+                call.rescueTriggered = true;
+                triggerCaravanRescue(call);
+            }
+        }
+    }
+}
+
+// Player defended the caravan — thank-you transmission + full resupply.
+function triggerCaravanRescue(call) {
+    const name = call.name || 'Civilian vessel';
+
+    // Full resupply: hull, energy, missiles, and emergency warps maxed
+    if (typeof gameState !== 'undefined') {
+        if (gameState.maxHull) gameState.hull = gameState.maxHull;
+        else                   gameState.hull = 100;
+        gameState.energy = 100;
+        if (gameState.weapons) gameState.weapons.energy = 100;
+        if (gameState.missiles) gameState.missiles.current = gameState.missiles.capacity || 3;
+        if (gameState.emergencyWarp) {
+            gameState.emergencyWarp.available = gameState.emergencyWarp.maxWarps || 5;
+        }
+    }
+
+    // Notification banner
+    if (typeof showAchievement === 'function') {
+        showAchievement('🛡️ CARAVAN RESCUED',
+            `${name} saved! Full resupply: hull, energy, missiles, warps`);
+    }
+
+    // Thank-you transmission from the caravan
+    if (typeof showIncomingTransmission === 'function') {
+        const message =
+            `Thank you, Captain! You saved our lives!\n\n` +
+            `We will transfer supplies to you immediately.\n` +
+            `Hull, shields, missiles and emergency warp drives have all been fully restored.\n\n` +
+            `Safe travels, and may fortune favor you.`;
+        // Use 3-arg form so it matches the game-objects.js transmission UI
+        try {
+            showIncomingTransmission(`${name} — RESCUED`, message, 0x00ff88);
+        } catch (_) {
+            // Fallback to 2-arg form if the game-objects version is active
+            try { showIncomingTransmission(`${name}`, message); } catch (__) {}
+        }
+    }
+
+    if (typeof playSound === 'function') {
+        try { playSound('achievement', 900, 0.25); } catch (_) {}
     }
 }
 
