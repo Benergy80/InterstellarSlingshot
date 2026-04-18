@@ -2166,7 +2166,7 @@
     // Mobile: position at the TOP just below the NAV button.
     // Desktop: keep at the bottom (above the achievement popup bottom-80).
     const isMobile = isMobileViewport();
-    const topOrBottom = isMobile ? 'top:89px' : 'bottom:10px';
+    const topOrBottom = isMobile ? 'top:110px' : 'bottom:10px';
     // Mobile: the panel becomes a tap target to toggle takeover, so
     // enable pointer-events.  Desktop: non-interactive overlay.
     const pe = isMobile ? 'pointer-events:auto' : 'pointer-events:none';
