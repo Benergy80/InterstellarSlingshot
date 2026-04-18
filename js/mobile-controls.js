@@ -511,6 +511,7 @@ window.mobileCycleTarget = function() {
 let touchStartX = 0;
 let touchStartY = 0;
 let isTouching = false;
+let touchStartTime = 0;
 let twoFingerTouchStartDistance = 0;
 let twoFingerTouchStartRotation = 0;
 
@@ -520,18 +521,22 @@ document.addEventListener('touchstart', (e) => {
         e.target.closest('.mobile-controls-container') ||
         e.target.closest('.mobile-controls') ||
         e.target.closest('.mobile-popup') ||
-        e.target.closest('.nav-panel-mobile')) {
+        e.target.closest('.nav-panel-mobile') ||
+        e.target.closest('#demoPilotHUD') ||
+        e.target.closest('.mobile-floating-status') ||
+        e.target.closest('.mobile-stat-pill')) {
         return; // Let button handlers work
     }
-    
+
     if (e.target.id === 'gameCanvas' || e.target.closest('#gameContainer')) {
         if (e.touches.length === 1) {
-            // Single finger - look controls
+            // Single finger - look controls + record for tap detection
             const touch = e.touches[0];
             touchStartX = touch.clientX;
             touchStartY = touch.clientY;
+            touchStartTime = Date.now();
             isTouching = true;
-            window.mobileTouchActive = true; // Prevent automatic banking during touch
+            window.mobileTouchActive = true;
         } else if (e.touches.length === 2) {
             // Two fingers - roll control
             const touch1 = e.touches[0];
@@ -684,14 +689,33 @@ document.addEventListener('touchmove', (e) => {
 }, { passive: false });
 
 document.addEventListener('touchend', (e) => {
+    // TAP-TO-FIRE: if the touch was short (< 250 ms) and didn't move
+    // much (< 15 px), treat it as a tap on the game canvas → fire weapon.
+    // This restores the "tap anywhere to shoot" feel alongside auto-aim.
+    if (touchStartTime > 0 && isTouching) {
+        const dt = Date.now() - touchStartTime;
+        if (dt < 250 && e.changedTouches && e.changedTouches.length > 0) {
+            const endTouch = e.changedTouches[0];
+            const dx = Math.abs(endTouch.clientX - touchStartX);
+            const dy = Math.abs(endTouch.clientY - touchStartY);
+            if (dx < 15 && dy < 15) {
+                // Quick tap with minimal movement → fire
+                if (typeof gameState !== 'undefined' && gameState.gameStarted && !gameState.gameOver) {
+                    if (typeof resumeAudioContext === 'function') resumeAudioContext();
+                    if (typeof fireWeapon === 'function') fireWeapon();
+                }
+            }
+        }
+    }
+
     isTouching = false;
-    window.mobileTouchActive = false; // Re-enable banking after touch ends
-    
+    touchStartTime = 0;
+    window.mobileTouchActive = false;
+
     // Reset yaw velocity to prevent banking from accumulated velocity
     if (typeof rotationalVelocity !== 'undefined') {
         rotationalVelocity.yaw = 0;
     }
-    // Also try window object
     if (typeof window.rotationalVelocity !== 'undefined') {
         window.rotationalVelocity.yaw = 0;
     }
