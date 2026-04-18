@@ -515,6 +515,23 @@ function setThirdPersonHeight(height) {
 /**
  * Set camera to first-person mode (1 key)
  */
+// Compute a transition duration that scales with the actual 3D distance
+// between start and target offsets.  The old 3rd-person offset (0,-4,-14)
+// was ~14.6 u from 1st-person; the new pulled-back (0,-6,-22) is ~22.9 u.
+// A fixed 400 ms duration means the pulled-back version is 57 % faster
+// per unit travelled — feels rushed / janky during warps.  Scaling by
+// distance keeps the visual pacing consistent regardless of offset:
+//   14.6 u → ~410 ms, 22.9 u → ~640 ms, clamped to [400 ms, 800 ms].
+function computeTransitionDuration(startOffset, targetOffset) {
+    if (!startOffset || !targetOffset) return 400;
+    const dx = targetOffset.x - startOffset.x;
+    const dy = targetOffset.y - startOffset.y;
+    const dz = targetOffset.z - startOffset.z;
+    const dist = Math.sqrt(dx*dx + dy*dy + dz*dz);
+    // ~28 ms per unit: matches the old pace (14.6 u / 400 ms ≈ 27.4 ms/u)
+    return Math.max(400, Math.min(800, Math.round(dist * 28)));
+}
+
 function setCameraFirstPerson() {
     if (!cameraState.playerShipMesh) {
         console.warn('⚠️ No player ship model available');
@@ -535,10 +552,11 @@ function setCameraFirstPerson() {
     cameraState.playerShipMesh.visible = true;
     cameraState.isTransitioning = true;
     cameraState.transitionStartTime = performance.now();
-    cameraState.transitionDuration = 400;
     cameraState.transitionStartOffset.copy(currentOffset);  // Start from current position
     cameraState.transitionTargetOffset.copy(cameraState.normalFirstPersonOffset);
-    
+    cameraState.transitionDuration = computeTransitionDuration(
+        cameraState.transitionStartOffset, cameraState.transitionTargetOffset);
+
     if (typeof showNotification === 'function') {
         showNotification('First-Person Camera', 2000);
     }
@@ -552,24 +570,25 @@ function setCameraThirdPerson() {
         console.warn('⚠️ No player ship model available');
         return;
     }
-    
+
     if (cameraState.mode === 'third-person' && !cameraState.isTransitioning) {
         console.log('📷 Already in third-person mode');
         return;
     }
-    
+
     console.log('📷 Setting THIRD-PERSON view');
-    
+
     // Capture current offset for smooth transition from wherever we are
     const currentOffset = getCurrentOffset();
-    
+
     cameraState.mode = 'third-person';
     cameraState.playerShipMesh.visible = true;
     cameraState.isTransitioning = true;
     cameraState.transitionStartTime = performance.now();
-    cameraState.transitionDuration = 400;
     cameraState.transitionStartOffset.copy(currentOffset);  // Start from current position
     cameraState.transitionTargetOffset.copy(cameraState.normalThirdPersonOffset);
+    cameraState.transitionDuration = computeTransitionDuration(
+        cameraState.transitionStartOffset, cameraState.transitionTargetOffset);
     
     if (typeof showNotification === 'function') {
         showNotification('Third-Person Camera', 2000);
@@ -603,29 +622,34 @@ function setCameraNoShip() {
         cameraState.mode = 'first-person';
         cameraState.isTransitioning = true;
         cameraState.transitionStartTime = performance.now();
-        cameraState.transitionDuration = 400;
         cameraState.transitionStartOffset.copy(currentOffset);
         cameraState.transitionTargetOffset.copy(cameraState.normalFirstPersonOffset);
-        
-        // Step 2: After reaching 1st person, continue to zero-offset
+        cameraState.transitionDuration = computeTransitionDuration(
+            cameraState.transitionStartOffset, cameraState.transitionTargetOffset);
+        const step1Duration = cameraState.transitionDuration;
+
+        // Step 2: After reaching 1st person, continue to zero-offset.
+        // Use the dynamic duration so Step 2 kicks in right after Step 1.
         setTimeout(() => {
             const firstPersonOffset = getCurrentOffset();
             cameraState.mode = 'zero-offset';
             cameraState.isTransitioning = true;
             cameraState.transitionStartTime = performance.now();
-            cameraState.transitionDuration = 400;
             cameraState.transitionStartOffset.copy(firstPersonOffset);
             cameraState.transitionTargetOffset.set(0.25, -1, 3);
-        }, 420);  // Slightly after 1st transition completes
+            cameraState.transitionDuration = computeTransitionDuration(
+                cameraState.transitionStartOffset, cameraState.transitionTargetOffset);
+        }, step1Duration + 20);
     } else {
         // Already in 1st person or other mode - go directly to zero-offset
         const currentOffset = getCurrentOffset();
         cameraState.mode = 'zero-offset';
         cameraState.isTransitioning = true;
         cameraState.transitionStartTime = performance.now();
-        cameraState.transitionDuration = 400;
         cameraState.transitionStartOffset.copy(currentOffset);
         cameraState.transitionTargetOffset.set(0.25, -1, 3);
+        cameraState.transitionDuration = computeTransitionDuration(
+            cameraState.transitionStartOffset, cameraState.transitionTargetOffset);
     }
     
     if (typeof showNotification === 'function') {

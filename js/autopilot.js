@@ -682,6 +682,22 @@
     } else {
       setStatus('Engaging ' + (enemy.userData.name || 'hostile') + ' — in weapons range');
       flyToward(enemy.position, 0.8);
+
+      // Strategic brake: if we're closing too fast and about to overshoot
+      // the enemy, tap the brakes to stay in weapons range.  Triggers when
+      // our approach velocity along the enemy-ward axis is > 1.5 AND we're
+      // already inside 2/3 of engageRange.
+      const speed = gameState.velocityVector ? gameState.velocityVector.length() : 0;
+      if (dist < engageRange * 0.67 && speed > 1.5) {
+        keys().x = true;
+        setStatus('Holding range — braking');
+      }
+
+      // Also brake briefly if the enemy is sitting still/slow and we're
+      // sprinting right at them (approach speed > 2.5 inside 500 u)
+      if (dist < 500 && speed > 2.5) {
+        keys().x = true;
+      }
     }
 
     // Orient + lock so auto-fire can engage when we're inside range

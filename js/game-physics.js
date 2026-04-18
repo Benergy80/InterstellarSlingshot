@@ -1453,33 +1453,36 @@ if (frameDistance > 0.01) { // Only track significant movement
         if (typeof setCameraFirstPerson === 'function') {
             setCameraFirstPerson();
         }
-        
+        // Sync to the actual FPV transition duration (scaled by distance)
+        const jumpStep1 = (typeof cameraState !== 'undefined' && cameraState.transitionDuration)
+            ? cameraState.transitionDuration : 400;
+
         setTimeout(() => {
             gameState.emergencyWarp.active = true;
             gameState.emergencyWarp.transitioning = false;
             gameState.emergencyWarp.timeRemaining = 1000; // 1 second
             gameState.velocityVector.copy(capturedForwardDirection).multiplyScalar(capturedBoostSpeed);
-            
+
             for (let i = 0; i < 2; i++) {
                 setTimeout(() => createHyperspaceEffect(), i * 200);
             }
-            
+
             if (typeof toggleWarpSpeedStarfield === 'function') {
                 toggleWarpSpeedStarfield(true);
             }
-            
+
             if (typeof playSound !== 'undefined') {
                 playSound('warp');
             }
-            
+
             // No achievement notification for Jump (silent tactical boost)
-            
+
             setTimeout(() => {
                 if (typeof setCameraThirdPerson === 'function') {
                     setCameraThirdPerson();
                 }
-            }, 300);
-        }, 400);
+            }, 200);
+        }, jumpStep1);
     }
 
      // SPECIFICATION: Emergency Systems - O Key: Emergency warp
@@ -1511,37 +1514,45 @@ else if (keys.o && gameState.emergencyWarp.available > 0 && !gameState.emergency
     if (typeof setCameraFirstPerson === 'function') {
         setCameraFirstPerson();
     }
-    
-    // Step 2: After camera transition completes (400ms), engage warp
+    // Read the ACTUAL duration picked by setCameraFirstPerson — the
+    // camera system now scales it with offset distance so a pulled-back
+    // 3rd-person camera can take 600+ ms to reach 1st-person.  A fixed
+    // 400 ms warp delay would fire before the camera arrived, producing
+    // visual jank.
+    const step1Duration = (typeof cameraState !== 'undefined' && cameraState.transitionDuration)
+        ? cameraState.transitionDuration : 400;
+
+    // Step 2: After camera transition completes, engage warp
     setTimeout(() => {
         gameState.emergencyWarp.active = true;
         gameState.emergencyWarp.transitioning = false;
         gameState.emergencyWarp.timeRemaining = gameState.emergencyWarp.boostDuration;
         gameState.velocityVector.copy(capturedForwardDirection).multiplyScalar(capturedBoostSpeed);
-        
+
         // Activate visual effects
         for (let i = 0; i < 3; i++) {
             setTimeout(() => createHyperspaceEffect(), i * 200);
         }
-        
+
         // Activate 3D warp starfield
         if (typeof toggleWarpSpeedStarfield === 'function') {
             toggleWarpSpeedStarfield(true);
         }
-        
+
         if (typeof playSound !== 'undefined') {
             playSound('warp');
         }
 
         console.log(`🚀 Warp engaged!`);
-        
-        // Step 3: Pull back to 3rd person while warping (see ship in starfield)
+
+        // Step 3: Pull back to 3rd person while warping (see ship in starfield).
+        // Short 200 ms pause after Step 2 lets the starfield establish first.
         setTimeout(() => {
             if (typeof setCameraThirdPerson === 'function') {
                 setCameraThirdPerson();
             }
-        }, 300);  // Short delay, then pull back to 3rd person
-    }, 400);  // Match camera transition duration
+        }, 200);
+    }, step1Duration);
 }
 
         // Enhanced Emergency warp timer with momentum coasting
