@@ -36,6 +36,12 @@
     warpsUsed: 0,
     loopCount: 0,
 
+    // Ambush detection — tracks hull between frames so we can pivot into
+    // combat the moment something shoots at us, even mid-transit.
+    _lastHullCheck: null,
+    _ambushUntil: 0,
+    _lastAttacker: null,
+
     // HUD
     hudEl: null,
     statusText: '',
@@ -454,6 +460,13 @@
     hideStaleMuzzleFlashes();
     sweepOldExplosions();
     demoRollAndBoost(fc);
+
+    // Ambush detection — runs BEFORE the phase dispatch so a new combat
+    // target can be installed on this same frame.  Skipped during the
+    // opening/orbit phases (no enemies in play yet).
+    if (ap.phase !== 'init' && ap.phase !== 'orbitLocalPlanet') {
+      detectAmbushAndRespond();
+    }
 
     // Clear movement keys each frame; we set what we need below
     releaseMovementKeys();
@@ -1180,6 +1193,12 @@
       ap.warpsUsed++;
       ap.warpStartedAt = Date.now();
       releaseMovementKeys();
+      // Full target reset — we've teleported across the universe, so every
+      // pre-warp target (combat, nebula, discovery path, nav lock, attacker)
+      // is now thousands of units away.  Clearing them forces the post-warp
+      // phases to rediscover hostiles local to the new galaxy instead of
+      // trying to fly back to the old one.
+      resetTargetsAfterWarp();
       goPhase('coastAfterWarp');
     }
   }
@@ -2010,6 +2029,9 @@
   // ensureShieldsFor('travel') still forces shields off while cruising.
   function ensureShieldsFor(mode) {
     if (typeof shieldSystem === 'undefined') return;
+    // Don't drop shields while the ambush response is active — even in
+    // travel mode we want to stay protected for the full ambush window.
+    if (Date.now() < (ap._ambushUntil || 0)) return;
     if (mode === 'travel' && shieldSystem.active) {
       if (window.deactivateShields) window.deactivateShields();
     }
@@ -2026,6 +2048,15 @@
     // enough for the physics warp path to fire.
     if (window._demoShieldLock && Date.now() < window._demoShieldLock) return;
 
+    // During an active ambush response, force shields on and never drop them.
+    const underAmbush = Date.now() < (ap._ambushUntil || 0);
+    if (underAmbush) {
+      if (!shieldSystem.active && gameState.energy > 15 && window.activateShields) {
+        window.activateShields();
+      }
+      return;
+    }
+
     let inFireRange = false;
     const camP = camPos();
     for (let i = 0; i < enemies.length; i++) {
@@ -2040,6 +2071,106 @@
     } else if (!inFireRange && shieldSystem.active) {
       if (window.deactivateShields) window.deactivateShields();
     }
+  }
+
+  // ─── Target reset after black hole warp ───────────────────────────────────
+  // A black hole warp teleports the player thousands of units across the
+  // universe.  Every pre-warp target (nebula, combat enemy, discovery path,
+  // remembered attacker) is now irrelevant — chasing them would send the
+  // ship back across the galaxy.  Wipe all tracked targets so the post-warp
+  // phases rediscover hostiles, nebulas, and discovery paths in the new
+  // local area.
+  function resetTargetsAfterWarp() {
+    ap.combatTarget = null;
+    ap.combatMissileFired = false;
+    ap.currentNebula = null;
+    ap.discoveryPath = null;
+    ap._lastAttacker = null;
+    ap._navCache = null;
+    ap._navCacheFrame = -999;       // force navDetectedEnemy to re-scan
+    ap._ambushUntil = 0;            // stale attacker is no longer near us
+    ap._tacticalMsgShown = false;
+
+    if (typeof gameState !== 'undefined') {
+      gameState.currentTarget = null;
+      if (gameState.targetLock) {
+        gameState.targetLock.active = false;
+        gameState.targetLock.target = null;
+      }
+    }
+  }
+
+  // ─── Ambush detection ──────────────────────────────────────────────────────
+  // Watches hull for sudden drops — that's the signal that something fired
+  // on us.  Finds the most plausible shooter (closest live enemy within its
+  // own firing range) and forces a combat pivot: shields up, face the
+  // attacker, destroy it.  Respects warp phases — we don't yank the ship
+  // out of an active black hole warp or slingshot.
+  function detectAmbushAndRespond() {
+    if (typeof gameState === 'undefined' || gameState.hull === undefined) return;
+    if (typeof enemies === 'undefined') return;
+
+    const hullNow = gameState.hull;
+    const hullPrev = ap._lastHullCheck == null ? hullNow : ap._lastHullCheck;
+
+    // Any meaningful hull drop — latch the ambush window
+    if (hullNow < hullPrev - 0.5) {
+      ap._ambushUntil = Date.now() + 6000;
+      const shooter = findLikelyAttacker();
+      if (shooter) ap._lastAttacker = shooter;
+    }
+    ap._lastHullCheck = hullNow;
+
+    if (Date.now() >= (ap._ambushUntil || 0)) return;
+
+    // Refresh attacker if the remembered one died / cleared
+    let target = ap._lastAttacker;
+    if (!target || !target.userData || target.userData.health <= 0) {
+      target = findLikelyAttacker();
+      ap._lastAttacker = target;
+    }
+    if (!target) return;
+
+    // Never interrupt warp sequences — physics owns the ship then
+    const warpLocked =
+      ap.phase === 'blackHoleWarp' ||
+      (gameState.slingshot && gameState.slingshot.active) ||
+      (gameState.emergencyWarp && (gameState.emergencyWarp.active || gameState.emergencyWarp.transitioning));
+    if (warpLocked) return;
+
+    // Force shields on regardless of current travel state
+    if (typeof shieldSystem !== 'undefined' && !shieldSystem.active &&
+        gameState.energy > 15 && window.activateShields) {
+      window.activateShields();
+    }
+
+    // Pivot to combat if we aren't already fighting this attacker
+    const alreadyFighting = ap.phase === 'combat' && ap.combatTarget === target;
+    if (!alreadyFighting) {
+      ap.combatTarget = target;
+      ap.combatMissileFired = false;
+      // Remember where to return when the attacker is dead
+      if (ap.phase !== 'combat') {
+        ap.returnPhase = ap.returnPhase || ap.phase || 'findLocalEnemies';
+      }
+      transmit('TACTICAL', 'Under fire! Engaging attacker.');
+      goPhase('combat');
+    }
+  }
+
+  function findLikelyAttacker() {
+    if (typeof enemies === 'undefined') return null;
+    const cp = camPos();
+    let best = null, bestDist = Infinity;
+    for (let i = 0; i < enemies.length; i++) {
+      const e = enemies[i];
+      if (!e || !e.userData || e.userData.health <= 0) continue;
+      const range = (e.userData.firingRange || 500) + 100;
+      const d = cp.distanceTo(e.position);
+      if (d > range) continue;           // not plausibly firing on us
+      if (d < bestDist) { bestDist = d; best = e; }
+    }
+    return best;
   }
 
   // ─── Misc helpers ──────────────────────────────────────────────────────────
