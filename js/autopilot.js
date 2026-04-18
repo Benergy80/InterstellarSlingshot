@@ -525,11 +525,34 @@
       gameState.velocity = 0;
     }
 
-    if (elapsed() > 3000) {
+    // Don't start the demo sequence until the ship has actually loaded
+    // onto the screen.  The cinematic opening keeps the ship hidden for
+    // ~2 s, then fades it in with a 2 s camera transition from 0-offset
+    // to 3rd-person.  We wait for:
+    //   1) playerShipMesh to exist and be visible, AND
+    //   2) the camera transition to be finished, AND
+    //   3) the intro sequence to have reached its 'complete' phase.
+    // A safety timeout (8 s) ensures we don't hang forever if one of
+    // those flags is never set in this build.
+    const shipReady = (() => {
+      if (typeof cameraState === 'undefined') return false;
+      if (!cameraState.playerShipMesh) return false;
+      if (!cameraState.playerShipMesh.visible) return false;
+      if (cameraState.isTransitioning) return false;
+      return true;
+    })();
+    const introDone = (typeof introSequence === 'undefined') ||
+                      !introSequence.active ||
+                      introSequence.phase === 'complete';
+    const safetyElapsed = elapsed() > 8000;
+
+    if ((shipReady && introDone) || safetyElapsed) {
       ensureThirdPerson();
       ap.segmentKills = 0;
       ap.returnPhase = 'findLocalEnemies';
       goPhase('orbitLocalPlanet');
+    } else {
+      setStatus('Awaiting scene ready…');
     }
   }
 
