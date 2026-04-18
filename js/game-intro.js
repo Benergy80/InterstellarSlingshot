@@ -1068,32 +1068,36 @@ function createSkipButton() {
     skipButton.innerHTML = '<i class="fas fa-forward mr-2"></i>Skip Intro';
     skipButton.addEventListener('click', skipIntroSequence);
 
-    // FIXED: iPad uses desktop transparent styling, iPhone uses mobile styling
-    const isIPhone = /iPhone|iPod/.test(navigator.userAgent);
-    const isMobile = (window.innerWidth <= 768 || ('ontouchstart' in window && window.innerWidth <= 1024)) && isIPhone;
+    // Apply the visible mobile styling to ALL mobile devices (iPhone,
+    // Android, iPad).  Previously only iPhone got this treatment and
+    // Android / iPad fell back to the transparent space-btn class which
+    // rendered invisible on the black intro background.
+    const isMobile = window.innerWidth <= 768 ||
+                     ('ontouchstart' in window && window.innerWidth <= 1024);
 
     if (isMobile) {
-        // iPhone-specific mobile styling with solid background
+        // Mobile styling with solid background so it reads on any device
         skipButton.style.cssText = `
             position: fixed !important;
             bottom: 16px !important;
             left: 50% !important;
             transform: translateX(-50%) !important;
             width: auto !important;
-            padding: 8px 16px !important;
-            background: rgba(0, 0, 0, 0.3) !important;
-            border: 1px solid rgba(0, 150, 255, 0.5) !important;
-            border-radius: 4px !important;
+            padding: 10px 20px !important;
+            background: rgba(0, 0, 0, 0.55) !important;
+            border: 1px solid rgba(0, 255, 136, 0.7) !important;
+            border-radius: 6px !important;
             color: #00ff88 !important;
             font-family: 'Orbitron', monospace !important;
-            font-size: 12px !important;
-            font-weight: 600 !important;
+            font-size: 13px !important;
+            font-weight: 700 !important;
+            letter-spacing: 1px !important;
             cursor: pointer !important;
             opacity: 0;
             transition: all 0.2s ease !important;
             z-index: 10000 !important;
-            box-shadow: 0 0 10px rgba(0, 150, 255, 0.3), inset 0 0 10px rgba(0, 150, 255, 0.1) !important;
-            text-shadow: 0 0 8px rgba(0,255,136,0.6), 0 0 16px rgba(0,255,136,0.3) !important;
+            box-shadow: 0 0 12px rgba(0, 255, 136, 0.4), inset 0 0 12px rgba(0, 255, 136, 0.15) !important;
+            text-shadow: 0 0 8px rgba(0,255,136,0.9), 0 0 16px rgba(0,255,136,0.5) !important;
         `;
 
         skipButton.addEventListener('mouseenter', () => {
