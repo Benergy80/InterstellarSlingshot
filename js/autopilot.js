@@ -64,9 +64,10 @@
     buildHUD();
     ensureThirdPerson();
 
-    // Demo defaults: auto-leveling + mouse auto-aim ON
+    // Demo defaults: mouse auto-aim ON, auto-leveling OFF so the ship
+    // keeps whatever roll the phase logic applies (barrel rolls, banking).
     if (typeof gameState !== 'undefined') {
-      gameState.autoLevelingEnabled = true;
+      gameState.autoLevelingEnabled = false;
       gameState.mouseAiming = true;
       if (gameState.targetLock) {
         gameState.targetLock.autoAim = true;
@@ -234,6 +235,8 @@
       tutorialSystem.active = false;
       tutorialSystem.completed = true;
     }
+    // Defensively keep auto-leveling off — phases apply their own roll/banking
+    if (gameState.autoLevelingEnabled) gameState.autoLevelingEnabled = false;
 
     // Keep ship alive so the demo never ends prematurely
     if (gameState.hull < 50)   gameState.hull   = Math.min(gameState.maxHull || 100, gameState.hull + 1);
@@ -493,12 +496,28 @@
     // nearby planets on the Navigation System so viewers see the target list
     cycleScanTarget();
 
-    // Face the nebula, then punch emergency warp
-    const dummy = { position: ap.currentNebula.position };
+    // Face the nebula, then punch emergency warp ONLY after the ship is
+    // actually aimed at the nebula center (within ~3°).  Otherwise the warp
+    // would fire at whatever angle the ship happened to be at.
+    const nebPos = ap.currentNebula.position;
+    const dummy = { position: nebPos };
     if (window.orientTowardsTarget) window.orientTowardsTarget(dummy);
     keys().w = true;
 
-    if (t > 1500 && canEmergencyWarp()) {
+    // Compute the angle between the ship's forward vector and the direction
+    // to the nebula.  Reuse the cone-check helper vectors for zero alloc.
+    let aligned = false;
+    if (_coneVec && camera) {
+      _coneVec.subVectors(nebPos, camera.position).normalize();
+      camera.getWorldDirection(_coneFwd);
+      const dot = _coneFwd.dot(_coneVec);
+      aligned = dot > 0.9986; // cos(3°) — very tight alignment
+    }
+    setStatus(aligned
+      ? 'Aligned with nebula — charging warp drive'
+      : 'Aligning course to nebula…');
+
+    if (aligned && t > 500 && canEmergencyWarp()) {
       setStatus('EMERGENCY WARP — ENGAGING');
       transmit('PROPULSION', 'Emergency warp drive engaged!\nBrace for hyperspace jump.');
       if (triggerEmergencyWarp()) {
@@ -508,8 +527,9 @@
       }
     }
 
-    // Safety: if warp somehow fails (or still gated), just fly there normally
-    if (t > 6000) {
+    // Safety: if alignment takes too long (enemy nudged us, orient failed,
+    // warp still gated), loosen the cone or just fly there normally.
+    if (t > 8000) {
       goPhase('coastToNebulaCluster');
     }
   }
