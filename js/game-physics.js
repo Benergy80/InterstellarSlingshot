@@ -75,10 +75,10 @@ function orientTowardsTarget(target) {
     lastPitchInputTime = now;
     lastRollInputTime = now;
     
-    // Check if we're close enough to target direction
-    camera.getWorldDirection(currentForward);
-    const finalAngle = currentForward.angleTo(direction);
-    
+    // Check if we're close enough to target direction (re-sample after rotation)
+    camera.getWorldDirection(_ortFwd);
+    const finalAngle = _ortFwd.angleTo(_ortDir);
+
     return finalAngle < orientationThreshold;
 }
 
