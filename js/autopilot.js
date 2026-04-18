@@ -64,6 +64,26 @@
     buildHUD();
     ensureThirdPerson();
 
+    // Wrap showAchievement so shield toggles don't pile up popup stack in
+    // demo mode.  preemptiveShields flips shields on/off many times per
+    // combat and each toggle was triggering a stuck notification.
+    if (!ap._showAchievementOriginal && typeof window.showAchievement === 'function') {
+      ap._showAchievementOriginal = window.showAchievement;
+      window.showAchievement = function (title, desc, playSound) {
+        if (!ap.active) {
+          return ap._showAchievementOriginal.call(this, title, desc, playSound);
+        }
+        // Suppress these during demo — they're too noisy
+        if (typeof title === 'string' && (
+          title.indexOf('Shields Offline') !== -1 ||
+          title.indexOf('Shields Activated') !== -1 ||
+          title.indexOf('Insufficient Energy') !== -1 ||
+          title.indexOf('Shield System Error') !== -1
+        )) return;
+        return ap._showAchievementOriginal.call(this, title, desc, playSound);
+      };
+    }
+
     // Demo defaults: mouse auto-aim ON, auto-leveling OFF so the ship
     // keeps whatever roll the phase logic applies (barrel rolls, banking).
     if (typeof gameState !== 'undefined') {
@@ -103,6 +123,11 @@
     releaseKeys();
     removeHUD();
     document.removeEventListener('keydown', onKeyDown);
+    // Restore the original showAchievement
+    if (ap._showAchievementOriginal) {
+      window.showAchievement = ap._showAchievementOriginal;
+      ap._showAchievementOriginal = null;
+    }
     console.log('🤖 DEMO AUTOPILOT disengaged');
   }
 
@@ -277,6 +302,7 @@
     // Dispatch
     switch (ap.phase) {
       case 'init':                     phaseInit();                   break;
+      case 'orbitLocalPlanet':         phaseOrbitLocalPlanet();       break;
       case 'findLocalEnemies':         phaseFindLocalEnemies();       break;
       case 'combat':                   phaseCombat();                 break;
       case 'warpToNebulaCluster':      phaseWarpToNebulaCluster();    break;
@@ -311,6 +337,41 @@
       ensureThirdPerson();
       ap.segmentKills = 0;
       ap.returnPhase = 'findLocalEnemies';
+      // First objective: orbit a nearby planet using nav lock, THEN hunt
+      goPhase('orbitLocalPlanet');
+    }
+  }
+
+  // ─── 1a) Orbit a local planet for 10 s before hunting enemies ────────────
+  function phaseOrbitLocalPlanet() {
+    const t = elapsed();
+
+    // Pick a planet the first time (prefer within 3000u, fall back to any)
+    if (!ap.orbitTarget) {
+      ap.orbitTarget = planetNear(camPos(), 3000) || pickPlanet();
+      if (!ap.orbitTarget) { goPhase('findLocalEnemies'); return; }
+      const nm = (ap.orbitTarget.userData && ap.orbitTarget.userData.name) || 'planet';
+      setStatus('Nav lock: ' + nm + ' — orbital survey');
+      // Lock onto the planet on the Navigation System UI
+      gameState.currentTarget = ap.orbitTarget;
+      if (typeof populateTargets === 'function') populateTargets();
+    }
+
+    // Fly to orbit radius, then orbit
+    const dist = camPos().distanceTo(ap.orbitTarget.position);
+    const radius = Math.max(((ap.orbitTarget.userData && ap.orbitTarget.userData.radius) || 20) * 6, 150);
+    if (dist > radius * 2) {
+      setStatus('Approaching ' + (ap.orbitTarget.userData.name || 'planet'));
+      flyToward(ap.orbitTarget.position, 1.8);
+    } else {
+      setStatus('Orbiting ' + (ap.orbitTarget.userData.name || 'planet'));
+      orbitAround(ap.orbitTarget.position, radius);
+    }
+
+    // After ~10 s, hand off to enemy-hunt
+    if (t > 10000) {
+      ap.orbitTarget = null;
+      gameState.currentTarget = null;
       goPhase('findLocalEnemies');
     }
   }
