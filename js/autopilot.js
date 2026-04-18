@@ -557,7 +557,15 @@
       populateTargets();
     }
 
-    // First preference: an enemy the Navigation System has locked on to
+    // First preference: an enemy the Navigation System has locked on to.
+    // But if we just killed someone, respect the 1 s cooldown so the
+    // explosion reads before snapping to the next target.
+    if (ap._killCooldownUntil && Date.now() < ap._killCooldownUntil) {
+      setStatus('Kill confirmed — scanning…');
+      // Coast forward gently during the pause
+      keys().w = true;
+      return;
+    }
     const detected = navDetectedEnemy();
     if (detected) {
       const d = camPos().distanceTo(detected.position);
@@ -642,18 +650,25 @@
       ap.combatMissileFired = false;
       setStatus('Target eliminated (' + ap.segmentKills + ' this segment)');
       notify('Target Eliminated', 'Enemy destroyed — hull salvage collected');
-      // Clear the reference so we don't re-notify this same object if the
-      // game hasn't spliced it out yet
       ap.combatTarget = null;
-      // Drop shields as soon as the fight ends
       ensureShieldsFor('travel');
+      // Clear target lock so the nav panel shows the kill, not the next enemy
+      if (gameState.targetLock) {
+        gameState.targetLock.active = false;
+        gameState.targetLock.target = null;
+      }
+      gameState.currentTarget = null;
 
-      // From first segment, advance to nebula warp once 3 kills logged
+      // 1-second breather before pursuing the next target — lets the
+      // explosion + salvage animation read on screen instead of
+      // snapping to the next enemy instantly.
+      ap._killCooldownUntil = Date.now() + 1000;
+
       if (ap.returnPhase === 'findLocalEnemies' && ap.segmentKills >= 3) {
         ap.segmentKills = 0;
-        goPhase('warpToNebulaCluster');
+        setTimeout(() => { if (ap.active) goPhase('warpToNebulaCluster'); }, 1000);
       } else {
-        goPhase(ap.returnPhase || 'findLocalEnemies');
+        setTimeout(() => { if (ap.active) goPhase(ap.returnPhase || 'findLocalEnemies'); }, 1000);
       }
       return;
     }

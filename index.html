@@ -862,14 +862,9 @@
 <div class="mobile-controls-container">
     <!-- Top row: Flight Controls and Emergency Warp -->
     <div class="mobile-controls-top">
-        <div style="display:flex;gap:6px;pointer-events:auto;">
-            <button class="mobile-btn" onclick="showMobilePanel('controls')" title="Flight Controls">
-                <i class="fas fa-gamepad"></i>
-            </button>
-            <button class="mobile-btn" onclick="showMobilePanel('status')" title="Ship Status" style="width:36px;height:36px;font-size:14px;">
-                <i class="fas fa-info-circle"></i>
-            </button>
-        </div>
+        <button class="mobile-btn" onclick="showMobilePanel('controls')" title="Flight Controls">
+            <i class="fas fa-gamepad"></i>
+        </button>
         <button class="mobile-btn warp" onclick="mobileEmergencyWarp()" title="Emergency Warp">
             <i class="fa-solid fa-triangle-exclamation"></i>
             <span class="warp-count-badge" id="mobileWarpCountBadge">5</span>
