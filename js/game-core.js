@@ -40,7 +40,7 @@ const gameState = {
     thrustPower: 0.01, // Doubled for doubled world
     wThrustMultiplier: 2.0, // W key gets 2x thrust
     minVelocity: 0.2, // Doubled for doubled world
-    maxVelocity: 2.0, // Doubled for doubled world
+    maxVelocity: 4.0, // 2x player boost (was 2.0 after doubled-world scale)
     mapMode: 'galactic',
     mapView: 'galactic', // 'galactic', 'universal'
     galaxiesCleared: 0,

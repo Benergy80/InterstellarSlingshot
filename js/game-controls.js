@@ -2639,11 +2639,16 @@ function createThirdPersonLasers(playerShip, targetPosition) {
     try {
         // Calculate ship position the SAME WAY as camera-system.js does:
         // ship = camera.position + thirdPersonOffset applied with camera.quaternion
-        // This ensures lasers match the visual ship position exactly
+        // This ensures lasers match the visual ship position exactly.
+        // IMPORTANT: read the LIVE offset from cameraState so mobile (which
+        // pulls the camera back to (0, -6, -22)) still gets laser origins at
+        // the actual ship wing positions instead of the desktop offset.
         const camQuat = camera.quaternion;
-        
-        // Third person offset from camera-system.js: (0, -4, -14)
-        const shipOffset = new THREE.Vector3(0, -4, -14).applyQuaternion(camQuat);
+        const liveOffset = (typeof cameraState !== 'undefined' &&
+                            cameraState.normalThirdPersonOffset)
+            ? cameraState.normalThirdPersonOffset
+            : new THREE.Vector3(0, -4, -14);
+        const shipOffset = liveOffset.clone().applyQuaternion(camQuat);
         const shipPos = camera.position.clone().add(shipOffset);
         
         // Get model size for wing spread calculation
@@ -2788,7 +2793,16 @@ if (typeof window !== 'undefined') window.activeMuzzleFlashes = activeMuzzleFlas
 
 // Muzzle flash effect at wing tip (brief bright sphere) - NOW TRACKS WITH SHIP
 function createMuzzleFlash(position) {
-    const flashGeometry = new THREE.SphereGeometry(0.8, 8, 8);
+    // Scale muzzle flash to match visual wingspan.  Mobile pulls the 3rd
+    // person camera back to (0, -6, -22) instead of desktop's (0, -4, -14),
+    // so the ship looks smaller on screen and the flash needs to be
+    // proportionally smaller too — otherwise it looks like big blobs
+    // floating far from the tiny ship.
+    const isMobile = (typeof window !== 'undefined') &&
+                     (window.innerWidth <= 768 ||
+                      ('ontouchstart' in window && window.innerWidth <= 1024));
+    const flashRadius = isMobile ? 0.45 : 0.8;
+    const flashGeometry = new THREE.SphereGeometry(flashRadius, 8, 8);
     const flashMaterial = new THREE.MeshBasicMaterial({
         color: '#00ff96',
         transparent: true,
