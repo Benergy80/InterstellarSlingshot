@@ -1227,9 +1227,12 @@
 
   // ─── Navigation helpers ────────────────────────────────────────────────────
 
-  // Reusable vector to avoid per-frame allocation
+  // Reusable vectors to avoid per-frame allocation
   const _flyVec = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
   const _flyDummy = { position: null };
+  const _avoidToP = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+  const _avoidFwd = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+  const _avoidRight = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
 
   function flyToward(pos, speedMult) {
     speedMult = speedMult || 1.0;
@@ -1243,6 +1246,74 @@
     const k = keys();
     k.w = true;
     if (speedMult > 1.5) k.b = true;
+    // Planet collision avoidance — steer away from any non-target body
+    // in the ship's flight path.
+    avoidPlanetCollision(target);
+  }
+
+  // Scan for any planet/star/black-hole directly ahead within 1500 u.
+  // If the projected miss-distance is smaller than the body's radius plus
+  // a safety margin, apply strafe + brake inputs to dodge.  The body the
+  // autopilot is intentionally targeting (current flight target within
+  // 200 u) is exempt so we can still fly close to our goal.
+  function avoidPlanetCollision(currentTarget) {
+    if (typeof planets === 'undefined' || typeof camera === 'undefined') return;
+    if (!_avoidToP || !_avoidFwd || !_avoidRight) return;
+
+    const SCAN_RANGE = 1500;      // only care about bodies this close
+    const LOOKAHEAD  = 900;       // only consider bodies this far ahead
+    const SAFETY_BUF = 60;        // extra units around each body
+
+    camera.getWorldDirection(_avoidFwd);
+    _avoidRight.crossVectors(_avoidFwd, camera.up).normalize();
+    const cp = camPos();
+
+    let dodgeRight = 0; // > 0 = strafe right, < 0 = strafe left
+    let brake = false;
+    let danger = Infinity;
+
+    for (let i = 0; i < planets.length; i++) {
+      const p = planets[i];
+      if (!p || !p.userData) continue;
+      const ud = p.userData;
+      // Asteroid belts groups are invisible (children are the actual asteroids).
+      // Individual asteroids are too small and numerous to dodge.
+      if (ud.type === 'asteroid' || ud.type === 'asteroidBelt') continue;
+
+      _avoidToP.subVectors(p.position, cp);
+      const dist = _avoidToP.length();
+      if (dist > SCAN_RANGE) continue;
+
+      // Forward projection — how far along our trajectory the body sits.
+      const ahead = _avoidToP.dot(_avoidFwd);
+      if (ahead <= 0 || ahead > LOOKAHEAD) continue;   // behind us or too far
+
+      // Perpendicular distance from our flight line
+      const perp = Math.sqrt(Math.max(0, dist * dist - ahead * ahead));
+      const radius = (ud.radius || ud.warpThreshold || 20);
+      const threshold = radius + SAFETY_BUF;
+      if (perp > threshold) continue;                  // clean miss
+
+      // Don't dodge the body we're actively targeting if we're already close
+      if (currentTarget && p.position.distanceTo(currentTarget) < 200 && dist < 400) {
+        continue;
+      }
+
+      // Choose strafe direction: sign of the right-vector component
+      const rightComponent = _avoidToP.dot(_avoidRight);
+      dodgeRight += rightComponent > 0 ? -1 : 1;  // away from the body
+
+      if (dist < radius + 150) brake = true;          // very close → brake too
+      if (ahead < danger) danger = ahead;
+    }
+
+    if (dodgeRight !== 0) {
+      const k2 = keys();
+      if (dodgeRight > 0) { k2.d = true; k2.a = false; }
+      else                { k2.a = true; k2.d = false; }
+      if (brake) { k2.x = true; }
+      setStatus('Avoiding collision — dist ' + (danger | 0) + ' u');
+    }
   }
 
   function orbitAround(centerPos, radius) {
