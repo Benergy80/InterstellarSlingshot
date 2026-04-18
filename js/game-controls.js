@@ -2784,6 +2784,7 @@ function updateActiveLasers() {
 
 // Active muzzle flashes - track with ship like lasers
 const activeMuzzleFlashes = [];
+if (typeof window !== 'undefined') window.activeMuzzleFlashes = activeMuzzleFlashes;
 
 // Muzzle flash effect at wing tip (brief bright sphere) - NOW TRACKS WITH SHIP
 function createMuzzleFlash(position) {

@@ -284,6 +284,7 @@
     if (fc % 6 === 0)  { preemptiveShields(); }
     autoReadAnyTransmission();
     hideStaleLasers();
+    hideStaleMuzzleFlashes();
     sweepOldExplosions();
     swarmEnemiesNearPlayer();
     demoRollAndBoost(fc);
@@ -1200,13 +1201,10 @@
     return true;
   }
 
-  // Hide lasers after 200 ms by setting .visible = false.  This does NOT
+  // Hide lasers after 400 ms by setting .visible = false.  This does NOT
   // touch scene.remove() or material.dispose() — we leave ALL disposal to
-  // the game's native fade setInterval so we never race with it.  Three.js
-  // skips rendering any mesh with .visible = false, so visually the laser
-  // is gone immediately; the native fade still completes its timer, marks
-  // opacity <= 0, then calls scene.remove + dispose as usual.  This is the
-  // key difference from the old sweepStaleLasers — no dispose/remove here.
+  // the game's native fade setInterval so we never race with it.
+  const DEMO_BEAM_HIDE_MS = 400;
   function hideStaleLasers() {
     if (typeof activeLasers === 'undefined') return;
     const now = Date.now();
@@ -1214,12 +1212,31 @@
       const ld = activeLasers[i];
       if (!ld || !ld.beam) continue;
       if (!ld._demoCreatedAt) ld._demoCreatedAt = now;
-      if (now - ld._demoCreatedAt > 400 && ld.beam.visible) {
+      if (now - ld._demoCreatedAt > DEMO_BEAM_HIDE_MS && ld.beam.visible) {
         ld.beam.visible = false;
-        // Also zero the opacity defensively — some materials with
-        // .visible=false may still contribute to the composite frame
         if (ld.material)     ld.material.opacity     = 0;
         if (ld.glowMaterial) ld.glowMaterial.opacity = 0;
+      }
+    }
+  }
+
+  // Hide muzzle flashes with the same timing as lasers.  These are the green
+  // flashes at the ship's gun origin points — they use their own setInterval
+  // fade, and like the lasers they can visually persist longer than
+  // intended during heavy autopilot firing.  Same safe pattern: just toggle
+  // .visible / zero opacity, never touch scene.remove / dispose.
+  function hideStaleMuzzleFlashes() {
+    const flashes = (typeof window !== 'undefined' && window.activeMuzzleFlashes) ||
+                    (typeof activeMuzzleFlashes !== 'undefined' ? activeMuzzleFlashes : null);
+    if (!flashes) return;
+    const now = Date.now();
+    for (let i = 0; i < flashes.length; i++) {
+      const fd = flashes[i];
+      if (!fd || !fd.mesh) continue;
+      if (!fd._demoCreatedAt) fd._demoCreatedAt = now;
+      if (now - fd._demoCreatedAt > DEMO_BEAM_HIDE_MS && fd.mesh.visible) {
+        fd.mesh.visible = false;
+        if (fd.material) fd.material.opacity = 0;
       }
     }
   }
