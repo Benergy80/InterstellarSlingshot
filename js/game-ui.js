@@ -2002,45 +2002,47 @@ function updateWarpButton() {
 // =============================================================================
 
 function updateEventHorizonWarnings() {
-    const eventHorizonWarning = document.getElementById('eventHorizonWarning');
-    const blackHoleWarningHUD = document.getElementById('blackHoleWarningHUD');
-    const blackHoleDistanceHUD = document.getElementById('blackHoleDistanceHUD');
-    const gameTitle = document.getElementById('gameTitle');
-    
+    const eventHorizonWarning = _uiEl('eventHorizonWarning');
+    const blackHoleWarningHUD = _uiEl('blackHoleWarningHUD');
+    const blackHoleDistanceHUD = _uiEl('blackHoleDistanceHUD');
+    const gameTitle = _uiEl('gameTitle');
+
     if (typeof gameState === 'undefined' || !gameState.eventHorizonWarning) return;
-    
-    // Handle event horizon warnings
-    if (gameState.eventHorizonWarning.active && gameState.eventHorizonWarning.blackHole) {
-        const blackHole = gameState.eventHorizonWarning.blackHole;
-        
-        if (eventHorizonWarning) {
-            eventHorizonWarning.classList.remove('hidden');
+
+    const ehw = gameState.eventHorizonWarning;
+
+    // Validate the stored blackHole — if it has been despawned (parent
+    // gone), is missing, or we've drifted beyond warning range, clear
+    // the flag here rather than relying on the gravity loop, which only
+    // clears when it iterates the exact same object reference.
+    if (ehw.active && ehw.blackHole) {
+        const bh = ehw.blackHole;
+        const stillInScene = bh.parent && bh.userData && bh.userData.type === 'blackhole';
+        const distance = (typeof camera !== 'undefined') ? camera.position.distanceTo(bh.position) : 0;
+        const warningDistance = ehw.warningDistance || 200;
+
+        if (!stillInScene || distance > warningDistance) {
+            ehw.active = false;
+            ehw.blackHole = null;
         }
-        
+    }
+
+    if (ehw.active && ehw.blackHole) {
+        const blackHole = ehw.blackHole;
+
+        if (eventHorizonWarning) eventHorizonWarning.classList.remove('hidden');
+
         if (blackHoleWarningHUD && blackHoleDistanceHUD && typeof camera !== 'undefined') {
             blackHoleWarningHUD.classList.remove('hidden');
             const distance = camera.position.distanceTo(blackHole.position);
             blackHoleDistanceHUD.textContent = `Distance: ${distance.toFixed(1)} units`;
         }
-        
-        // Add title flashing effect
-        if (gameTitle) {
-            gameTitle.classList.add('title-flash');
-        }
+
+        if (gameTitle) gameTitle.classList.add('title-flash');
     } else {
-        // Hide warnings
-        if (eventHorizonWarning) {
-            eventHorizonWarning.classList.add('hidden');
-        }
-        
-        if (blackHoleWarningHUD) {
-            blackHoleWarningHUD.classList.add('hidden');
-        }
-        
-        // Remove title flashing effect
-        if (gameTitle) {
-            gameTitle.classList.remove('title-flash');
-        }
+        if (eventHorizonWarning) eventHorizonWarning.classList.add('hidden');
+        if (blackHoleWarningHUD) blackHoleWarningHUD.classList.add('hidden');
+        if (gameTitle) gameTitle.classList.remove('title-flash');
     }
 }
 
