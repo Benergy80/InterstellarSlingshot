@@ -280,13 +280,15 @@
     // faster than that).  Shield/target scans run at 10 Hz — still responsive
     // but 6x cheaper.  frameCount drives all throttles consistently.
     const fc = gameState.frameCount || 0;
-    if (fc % 60 === 0) { buffEnemiesForDemo(); buffEnemySpeed(); }
-    if (fc % 6 === 0)  { preemptiveShields(); }
+    if (fc % 60 === 0)  { buffEnemiesForDemo(); buffEnemySpeed(); }
+    if (fc % 30 === 0)  { preemptiveShields(); }          // 2 Hz — fewer mesh toggles
+    if (fc % 3 === 0)   { swarmEnemiesNearPlayer(); }     // 20 Hz — 3x cheaper, still snappy
+    if (fc % 120 === 0) { sweepStaleDiscoveryPaths(); }   // every 2 s
+    if (fc % 300 === 0) { sceneHealthCheck(); }           // every 5 s — console diagnostics
     autoReadAnyTransmission();
     hideStaleLasers();
     hideStaleMuzzleFlashes();
     sweepOldExplosions();
-    swarmEnemiesNearPlayer();
     demoRollAndBoost(fc);
 
     // Clear movement keys each frame; we set what we need below
@@ -1223,6 +1225,59 @@
         if (ld.glowMaterial) ld.glowMaterial.opacity = 0;
       }
     }
+  }
+
+  // Discovery paths are created when the player deep-discovers a nebula and
+  // never cleaned up by the game.  Over a long demo run they accumulate
+  // LineSegments + Points meshes = growing GPU buffer and render cost.
+  // Any path whose target galaxy has NO live enemies left is dead —
+  // dispose it.
+  function sweepStaleDiscoveryPaths() {
+    const paths = window.discoveryPaths;
+    if (!paths || !paths.length) return;
+    for (let i = paths.length - 1; i >= 0; i--) {
+      const p = paths[i];
+      if (!p) { paths.splice(i, 1); continue; }
+      const endPos = p.line && p.line.userData && p.line.userData.endPosition;
+      if (!endPos) continue;
+      // Is any live enemy near the path endpoint? If not, retire the path.
+      let alive = false;
+      if (typeof enemies !== 'undefined') {
+        for (let j = 0; j < enemies.length; j++) {
+          const e = enemies[j];
+          if (!e || !e.userData || e.userData.health <= 0) continue;
+          if (e.position.distanceTo(endPos) < 3500) { alive = true; break; }
+        }
+      }
+      if (alive) continue;
+      // Dispose the mesh and particle system
+      try {
+        if (p.line) {
+          if (typeof scene !== 'undefined') scene.remove(p.line);
+          if (p.line.geometry && p.line.geometry.dispose) p.line.geometry.dispose();
+          if (p.line.material && p.line.material.dispose) p.line.material.dispose();
+        }
+        if (p.particles) {
+          if (typeof scene !== 'undefined') scene.remove(p.particles);
+          if (p.particles.geometry && p.particles.geometry.dispose) p.particles.geometry.dispose();
+          if (p.particles.material && p.particles.material.dispose) p.particles.material.dispose();
+        }
+      } catch (_) {}
+      paths.splice(i, 1);
+    }
+  }
+
+  // Diagnostic: log scene / array sizes every 5 s so we can spot leaks.
+  function sceneHealthCheck() {
+    if (!ap.active) return;
+    const parts = [];
+    if (typeof scene !== 'undefined') parts.push('scene=' + scene.children.length);
+    if (typeof enemies !== 'undefined') parts.push('enemies=' + enemies.length);
+    if (typeof activeLasers !== 'undefined') parts.push('lasers=' + activeLasers.length);
+    if (typeof window !== 'undefined' && window.activeMuzzleFlashes) parts.push('flashes=' + window.activeMuzzleFlashes.length);
+    if (typeof explosionManager !== 'undefined') parts.push('explosions=' + explosionManager.activeExplosions.length);
+    if (typeof window !== 'undefined' && window.discoveryPaths) parts.push('paths=' + window.discoveryPaths.length);
+    console.log('🤖 demo health:', parts.join(' '));
   }
 
   // Hide muzzle flashes with the same timing as lasers.  These are the green

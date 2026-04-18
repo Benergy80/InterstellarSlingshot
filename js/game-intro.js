@@ -672,9 +672,15 @@ function showStartButton() {
 function createDemoButton() {
     const demoButton = document.createElement('button');
     demoButton.id = 'introDemoBtn';
+    // Mobile: place at the TOP of the launch screen so it doesn't overlap
+    // the main PRESS TO LAUNCH button in the middle of the view.
+    // Desktop: keep just below the main launch button as before.
+    const isMobile = window.innerWidth <= 768 ||
+                     ('ontouchstart' in window && window.innerWidth <= 1024);
+    const topPos = isMobile ? 'top: 70px' : 'top: calc(50% + 110px)';
     demoButton.style.cssText = `
         position: fixed;
-        top: calc(50% + 110px);
+        ${topPos};
         left: 50%;
         transform: translateX(-50%);
         z-index: 10000;
