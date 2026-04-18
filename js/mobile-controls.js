@@ -327,16 +327,16 @@ window.mobileEmergencyWarp = function() {
         window._demoShieldLock = Date.now() + 800;
     }
 
-    // Dispatch a real Enter keystroke so the game's own keydown handler
-    // fires — this runs the shield-drop + warp-initiation in the correct
-    // order within the same event-loop tick, avoiding the race where
-    // preemptiveShields re-raises shields between our drop and physics.
+    // Dispatch a real 'o' keystroke — that's the emergency warp hotkey
+    // (game-physics.js checks `keys.o` to kick off the warp).  Enter is
+    // bound to slingshot / auto-nav, NOT emergency warp, so dispatching
+    // Enter here was silently firing the wrong handler.
     document.dispatchEvent(new KeyboardEvent('keydown', {
-        key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true
+        key: 'o', code: 'KeyO', keyCode: 79, which: 79, bubbles: true
     }));
     setTimeout(() => {
         document.dispatchEvent(new KeyboardEvent('keyup', {
-            key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true
+            key: 'o', code: 'KeyO', keyCode: 79, which: 79, bubbles: true
         }));
     }, 300);
 
