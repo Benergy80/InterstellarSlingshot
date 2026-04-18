@@ -279,12 +279,15 @@ window.mobileEmergencyWarp = function() {
         return;
     }
     
-    // Check if shields are active
+    // Drop shields automatically before warping (the physics code blocks
+    // warp while shields are on, but in demo mode shields are up whenever
+    // near enemies — the player shouldn't have to manually toggle).
     if (typeof isShieldActive === 'function' && isShieldActive()) {
-        if (typeof showAchievement === 'function') {
-            showAchievement('Warp Blocked', 'Cannot warp with shields active');
+        if (typeof deactivateShields === 'function') {
+            deactivateShields();
+        } else if (typeof toggleShields === 'function') {
+            toggleShields();
         }
-        return;
     }
     
     // Check if already warping
@@ -301,13 +304,14 @@ window.mobileEmergencyWarp = function() {
         return;
     }
     
-    // Trigger warp by setting key (the physics handler will process it)
+    // Trigger warp by setting key (the physics handler will process it).
+    // Hold for 200 ms so the physics loop reliably picks it up even if
+    // a frame drop delays the next animate() tick.
     if (typeof keys !== 'undefined') {
         keys.enter = true;
-        // Clear after a single frame to prevent loops
         setTimeout(() => {
             keys.enter = false;
-        }, 50);
+        }, 200);
     }
     
     console.log('✅ Mobile emergency warp triggered');
