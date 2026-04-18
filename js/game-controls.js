@@ -1051,54 +1051,47 @@ function fireEnemyWeapon(enemy, difficultySettings) {
 
         // Random chance to hit based on adjusted accuracy
         if (Math.random() < hitChance) {
-    // Check black hole warp invulnerability
-    const isInvulnerable = typeof isBlackHoleWarpInvulnerable === 'function' &&
-                           isBlackHoleWarpInvulnerable();
+            const isInvulnerable = typeof isBlackHoleWarpInvulnerable === 'function' &&
+                                   isBlackHoleWarpInvulnerable();
+            const shieldsActive = typeof isShieldActive === 'function' && isShieldActive();
 
-    if (!isInvulnerable) {
-        // Apply damage with shield reduction
-        const shieldReduction = typeof getShieldDamageReduction === 'function' ?
-                                getShieldDamageReduction() : 0;
-        const actualDamage = damage * (1 - shieldReduction);
+            if (!isInvulnerable) {
+                const shieldReduction = typeof getShieldDamageReduction === 'function' ?
+                                        getShieldDamageReduction() : 0;
+                const actualDamage = damage * (1 - shieldReduction);
 
-        if (typeof gameState !== 'undefined' && gameState.hull !== undefined) {
-            gameState.hull = Math.max(0, gameState.hull - actualDamage);
-        } else if (typeof gameState !== 'undefined' && gameState.health !== undefined) {
-            gameState.health = Math.max(0, gameState.health - actualDamage);
-        }
-    }
-    
-    // Create shield hit effect if shields are active
-    const shieldsActive = typeof isShieldActive === 'function' && isShieldActive();
-    if (shieldsActive && typeof createShieldHitEffect === 'function') {
-        createShieldHitEffect(enemy.position);
-    }
-    
-    // ENHANCED: Directional damage effects with attacker position
-    createEnhancedScreenDamageEffect(enemy.position);
-    
-    // ONLY play damage sound if shields are NOT active
-    if (!shieldsActive) {
-        playSound('damage');
-    }
-    
-    // Only show damage notification if shields are NOT active
-    if (!shieldsActive) {
-        if (enemy.userData.isBoss) {
-            showAchievement('Boss Attack!', `${enemy.userData.name} hit for ${damage} damage!`, false);
+                if (typeof gameState !== 'undefined' && gameState.hull !== undefined) {
+                    gameState.hull = Math.max(0, gameState.hull - actualDamage);
+                } else if (typeof gameState !== 'undefined' && gameState.health !== undefined) {
+                    gameState.health = Math.max(0, gameState.health - actualDamage);
+                }
+            }
+
+            if (shieldsActive && typeof createShieldHitEffect === 'function') {
+                createShieldHitEffect(enemy.position);
+            }
+
+            // Red screen flash whenever the hit connects — but suppress it
+            // when fully invulnerable (e.g. during black-hole warp).
+            if (!isInvulnerable) {
+                createEnhancedScreenDamageEffect(enemy.position);
+                if (!shieldsActive) {
+                    playSound('damage');
+                    if (enemy.userData.isBoss) {
+                        showAchievement('Boss Attack!', `${enemy.userData.name} hit for ${damage} damage!`, false);
+                    } else {
+                        showAchievement('Taking Fire!', `Enemy hit for ${damage} damage!`, false);
+                    }
+                }
+            }
+
+            const currentHealth = gameState.hull || gameState.health || 0;
+            if (currentHealth <= 0) {
+                createDeathEffect();
+            }
         } else {
-            showAchievement('Taking Fire!', `Enemy hit for ${damage} damage!`, false);
+            showAchievement('Missed!', 'Enemy shot missed!', false);
         }
-    }
-    
-    // Check for game over
-    const currentHealth = gameState.hull || gameState.health || 0;
-    if (currentHealth <= 0) {
-        createDeathEffect();
-    }
-} else {
-    showAchievement('Missed!', 'Enemy shot missed!', false);
-}
     }
 }
 

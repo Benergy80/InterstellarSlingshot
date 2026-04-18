@@ -504,11 +504,18 @@
   // ─────────────────────────────────────────────────────────────────────────
 
   function phaseInit() {
+    // Keep the ship completely still until the scene has established.
+    // Zero velocity each frame so physics drift and residual launch
+    // momentum don't move the camera before the player sees the world.
+    if (typeof gameState !== 'undefined' && gameState.velocityVector) {
+      gameState.velocityVector.set(0, 0, 0);
+      gameState.velocity = 0;
+    }
+
     if (elapsed() > 3000) {
       ensureThirdPerson();
       ap.segmentKills = 0;
       ap.returnPhase = 'findLocalEnemies';
-      // First objective: orbit a nearby planet using nav lock, THEN hunt
       goPhase('orbitLocalPlanet');
     }
   }

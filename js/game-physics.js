@@ -720,13 +720,15 @@ function destroyAsteroidByCollision(asteroid) {
         gameState.hull = Math.max(0, gameState.hull - actualDamage);
     }
     
-    // Create shield hit effect if shields are active
-    if (typeof isShieldActive === 'function' && isShieldActive() && 
+    if (typeof isShieldActive === 'function' && isShieldActive() &&
         typeof createShieldHitEffect === 'function') {
         createShieldHitEffect(asteroid.position);
     }
-    
-    createEnhancedScreenDamageEffect();
+
+    if (!isBlackHoleWarpInvulnerable() &&
+        typeof createEnhancedScreenDamageEffect === 'function') {
+        createEnhancedScreenDamageEffect();
+    }
     
     if (typeof playSound !== 'undefined') {
         playSound('damage');
