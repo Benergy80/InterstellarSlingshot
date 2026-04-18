@@ -453,13 +453,13 @@ function calculateDifficultySettings() {
     const galaxiesCleared = (typeof gameState !== 'undefined' && gameState.galaxiesCleared) ? gameState.galaxiesCleared : 0;
     
     const baseSettings = {
-        // Local galaxy settings (progressive difficulty) - MAX 3 HITS
-        maxLocalAttackers: Math.min(3 + galaxiesCleared, 8), // Start with 3, +1 per galaxy cleared, max 8
-        localSpeedMultiplier: 0.8 + (galaxiesCleared * 0.05), // INCREASED: Faster pursuit from the start
-        localHealthMultiplier: galaxiesCleared === 0 ? 1 : Math.min(1 + galaxiesCleared * 0.25, 3), // MAX 3 hits
-        localDetectionRange: 3500 + (galaxiesCleared * 300), // Long detection for pursuit
-        localFiringRange: 150 + (galaxiesCleared * 25),  // Must get close to fire
-        localAttackCooldown: Math.max(600, 1200 - (galaxiesCleared * 100)), // Faster attacks
+        // Local galaxy settings (progressive difficulty)
+        maxLocalAttackers: Math.min(4 + galaxiesCleared, 10), // Start with 4 (all pirates), +1 per galaxy, max 10
+        localSpeedMultiplier: 1.0 + (galaxiesCleared * 0.05), // Full speed from the start
+        localHealthMultiplier: galaxiesCleared === 0 ? 1 : Math.min(1 + galaxiesCleared * 0.25, 3),
+        localDetectionRange: 3500 + (galaxiesCleared * 300),
+        localFiringRange: 350 + (galaxiesCleared * 25),  // Was 150 — far too close, enemies couldn't fire
+        localAttackCooldown: Math.max(600, 1200 - (galaxiesCleared * 100)),
         
         // Distant galaxy settings (always challenging) - MAX 3 HITS
         maxDistantAttackers: Math.min(8 + galaxiesCleared, 15),  // More attackers
@@ -649,9 +649,12 @@ function updateEnemyBehavior() {
         const detectionRange = isLocal ? 
             (difficultySettings.localDetectionRange || 2000) : 
             (enemy.userData.detectionRange || difficultySettings.distantDetectionRange || 3000);
-        const firingRange = isLocal ? 
-            (difficultySettings.localFiringRange || 200) : 
-            (enemy.userData.firingRange || difficultySettings.distantFiringRange || 300);
+        // Use the HIGHER of difficulty setting or enemy's own firingRange
+        // so buffed enemies (Martian Pirates: 360u) aren't capped by the
+        // global difficulty minimum.
+        const firingRange = isLocal ?
+            Math.max(difficultySettings.localFiringRange || 200, enemy.userData.firingRange || 0) :
+            Math.max(enemy.userData.firingRange || 0, difficultySettings.distantFiringRange || 300);
         
         // Count nearby enemies
         if (distanceToPlayer < detectionRange) {
@@ -685,7 +688,7 @@ function updateEnemyBehavior() {
             // FIXED: Enemy speeds 200-1000 km/s (0.2-1.0 game units, multiply by 1000 for km/s display)
             const baseSpeed = enemy.userData.speed || 0.5;
             const speedMultiplier = isLocal ? difficultySettings.localSpeedMultiplier : difficultySettings.distantSpeedMultiplier;
-            const adjustedSpeed = Math.min(1.0, Math.max(0.2, baseSpeed * speedMultiplier));  // Clamp to 0.2-1.0 (200-1000 km/s)
+            const adjustedSpeed = Math.min(2.0, Math.max(0.2, baseSpeed * speedMultiplier));  // Clamp to 0.2-2.0 (200-2000 km/s)
             
             if (isLocal) {
                 updateLocalEnemyBehavior(enemy, distanceToPlayer, adjustedSpeed, difficultySettings);
