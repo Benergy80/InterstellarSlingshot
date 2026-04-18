@@ -1535,8 +1535,10 @@
       const dist = _swarmVec.length();
       if (dist > SWARM_RANGE || dist < 50) continue;
       _swarmVec.normalize();
-      // Pull strength: 0.8 u/frame at the edge of range, 2.0 in close range
-      const pull = dist < CLOSE_RANGE ? 2.0 : 0.8;
+      // Pull strength: 0.8 u/frame at the edge of range, 2.0 in close range.
+      // Martian Pirates get a 75 % boost to feel faster and more aggressive.
+      let pull = dist < CLOSE_RANGE ? 2.0 : 0.8;
+      if (e.userData.isMartianPirate) pull *= 1.75;
       e.position.addScaledVector(_swarmVec, pull);
     }
   }

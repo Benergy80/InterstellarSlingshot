@@ -8422,8 +8422,9 @@ function createEnemies3D() {
             type: 'enemy',
             health: getEnemyHealthForDifficulty(true, false, false),
             maxHealth: getEnemyHealthForDifficulty(true, false, false),
-            speed: 0.6 + Math.random() * 1.0,
-            aggression: 0.7 + Math.random() * 0.3,
+            // Faster + much more aggressive than baseline pirates
+            speed: 1.2 + Math.random() * 0.8,         // 1.2–2.0 (was 0.6–1.6)
+            aggression: 0.95 + Math.random() * 0.05,   // 0.95–1.0 (was 0.7–1.0)
             patrolCenter: new THREE.Vector3(
                 localSystemOffset.x,
                 localSystemOffset.y,
@@ -8438,8 +8439,9 @@ function createEnemies3D() {
             swarmTarget: null,
             circlePhase: Math.random() * Math.PI * 2,
             attackMode: 'patrol',
-            detectionRange: 1200,
-            firingRange: 180,
+            detectionRange: 2400,   // doubled — pirates spot the player further out
+            firingRange: 360,        // doubled — they open fire from twice the distance
+            isMartianPirate: true,   // tag for autopilot swarm boost
             isLocal: true,
             isBoss: false,
             isBossSupport: false,
