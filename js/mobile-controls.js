@@ -525,8 +525,11 @@ window.mobileCycleTarget = function() {
 // Touch controls - isolated scope with let variables
 let touchStartX = 0;
 let touchStartY = 0;
+let tapOriginX = 0;       // never reset during drag — used for tap detection
+let tapOriginY = 0;
 let isTouching = false;
 let touchStartTime = 0;
+let hasDragged = false;    // set true once any significant touchmove fires
 let twoFingerTouchStartDistance = 0;
 let twoFingerTouchStartRotation = 0;
 
@@ -539,17 +542,20 @@ document.addEventListener('touchstart', (e) => {
         e.target.closest('.nav-panel-mobile') ||
         e.target.closest('#demoPilotHUD') ||
         e.target.closest('.mobile-floating-status') ||
-        e.target.closest('.mobile-stat-pill')) {
+        e.target.closest('.mobile-stat-pill') ||
+        e.target.closest('.mobile-controls-top')) {
         return; // Let button handlers work
     }
 
     if (e.target.id === 'gameCanvas' || e.target.closest('#gameContainer')) {
         if (e.touches.length === 1) {
-            // Single finger - look controls + record for tap detection
             const touch = e.touches[0];
             touchStartX = touch.clientX;
             touchStartY = touch.clientY;
+            tapOriginX  = touch.clientX;
+            tapOriginY  = touch.clientY;
             touchStartTime = Date.now();
+            hasDragged = false;
             isTouching = true;
             window.mobileTouchActive = true;
         } else if (e.touches.length === 2) {
@@ -592,12 +598,19 @@ document.addEventListener('touchmove', (e) => {
             // Apply rotation deltas to LOCAL axes (not world axes)
             // This matches desktop arrow key behavior exactly
             
+            // Mark as a drag once movement exceeds tap threshold so
+            // touchend doesn't false-positive as a tap-to-fire.
+            if (Math.abs(touch.clientX - tapOriginX) > 10 ||
+                Math.abs(touch.clientY - tapOriginY) > 10) {
+                hasDragged = true;
+            }
+
             // YAW (turn left/right) - rotate around LOCAL Y axis
             if (Math.abs(deltaX) > 0.5) {
                 camera.rotateY(-deltaX * sensitivity);
             }
-            
-            // PITCH (look up/down) - rotate around LOCAL X axis  
+
+            // PITCH (look up/down) - rotate around LOCAL X axis
             if (Math.abs(deltaY) > 0.5) {
                 camera.rotateX(-deltaY * sensitivity);
             }
@@ -704,17 +717,17 @@ document.addEventListener('touchmove', (e) => {
 }, { passive: false });
 
 document.addEventListener('touchend', (e) => {
-    // TAP-TO-FIRE: if the touch was short (< 250 ms) and didn't move
-    // much (< 15 px), treat it as a tap on the game canvas → fire weapon.
-    // This restores the "tap anywhere to shoot" feel alongside auto-aim.
-    if (touchStartTime > 0 && isTouching) {
+    // TAP-TO-FIRE: a genuine tap is short (< 300 ms), hasn't been marked
+    // as a drag by touchmove, and the finger stayed close to the ORIGINAL
+    // touchdown point (tapOriginX/Y — NOT the touchStartX/Y which gets
+    // reset during each move event for the look-drag system).
+    if (touchStartTime > 0 && isTouching && !hasDragged) {
         const dt = Date.now() - touchStartTime;
-        if (dt < 250 && e.changedTouches && e.changedTouches.length > 0) {
+        if (dt < 300 && e.changedTouches && e.changedTouches.length > 0) {
             const endTouch = e.changedTouches[0];
-            const dx = Math.abs(endTouch.clientX - touchStartX);
-            const dy = Math.abs(endTouch.clientY - touchStartY);
+            const dx = Math.abs(endTouch.clientX - tapOriginX);
+            const dy = Math.abs(endTouch.clientY - tapOriginY);
             if (dx < 15 && dy < 15) {
-                // Quick tap with minimal movement → fire
                 if (typeof gameState !== 'undefined' && gameState.gameStarted && !gameState.gameOver) {
                     if (typeof resumeAudioContext === 'function') resumeAudioContext();
                     if (typeof fireWeapon === 'function') fireWeapon();
@@ -725,9 +738,9 @@ document.addEventListener('touchend', (e) => {
 
     isTouching = false;
     touchStartTime = 0;
+    hasDragged = false;
     window.mobileTouchActive = false;
 
-    // Reset yaw velocity to prevent banking from accumulated velocity
     if (typeof rotationalVelocity !== 'undefined') {
         rotationalVelocity.yaw = 0;
     }
