@@ -66,6 +66,132 @@
     const fc = gameState.frameCount || 0;
     if (fc % 60 === 0) { buffEnemiesForDemo(); buffEnemySpeed(); }
     if (fc % 3 === 0)  { swarmEnemiesNearPlayer(); }
+    // Periodic world cleanup (every ~30 s) — runs in all modes so the
+    // scene doesn't balloon over time.  See worldCleanup for details.
+    if (fc % 1800 === 0 && fc > 0) worldCleanup();
+  };
+
+  // World cleanup — runs every ~30 s during gameplay.  Disposes orphaned
+  // THREE.js meshes that the game's own cleanup missed, so the renderer
+  // cache doesn't balloon.  Safe to call any time; all operations are
+  // defensive and guarded.
+  window.worldCleanup = function worldCleanup() {
+    if (typeof scene === 'undefined' || !scene.children) return;
+    let removedMeshes = 0, removedLasers = 0, removedFlashes = 0, removedPaths = 0;
+
+    // 1) Orphaned dead enemy meshes still in scene.children
+    if (typeof enemies !== 'undefined' && Array.isArray(enemies)) {
+      // Snapshot of LIVE enemy objects for quick lookup
+      const liveSet = new Set(enemies);
+      scene.children.slice().forEach(obj => {
+        if (!obj || !obj.userData) return;
+        if (obj.userData.type === 'enemy' && !liveSet.has(obj) && obj.userData.health <= 0) {
+          scene.remove(obj);
+          obj.traverse && obj.traverse(c => {
+            if (c.geometry && c.geometry.dispose) c.geometry.dispose();
+            if (c.material && c.material.dispose) c.material.dispose();
+          });
+          removedMeshes++;
+        }
+      });
+    }
+
+    // 2) Laser beams that have faded to opacity 0 but weren't spliced
+    if (typeof activeLasers !== 'undefined' && Array.isArray(activeLasers)) {
+      for (let i = activeLasers.length - 1; i >= 0; i--) {
+        const ld = activeLasers[i];
+        if (!ld || !ld.material ||
+            (ld.material.opacity !== undefined && ld.material.opacity <= 0.01)) {
+          if (ld && ld.beam) {
+            try { scene.remove(ld.beam); } catch (_) {}
+            try { if (ld.geometry) ld.geometry.dispose(); } catch (_) {}
+            try { if (ld.material) ld.material.dispose(); } catch (_) {}
+            try { if (ld.glowGeometry) ld.glowGeometry.dispose(); } catch (_) {}
+            try { if (ld.glowMaterial) ld.glowMaterial.dispose(); } catch (_) {}
+          }
+          activeLasers.splice(i, 1);
+          removedLasers++;
+        }
+      }
+    }
+
+    // 3) Same treatment for muzzle flashes
+    const flashes = (typeof window !== 'undefined' && window.activeMuzzleFlashes) ||
+                    (typeof activeMuzzleFlashes !== 'undefined' ? activeMuzzleFlashes : null);
+    if (flashes && Array.isArray(flashes)) {
+      for (let i = flashes.length - 1; i >= 0; i--) {
+        const fd = flashes[i];
+        if (!fd || !fd.material ||
+            (fd.material.opacity !== undefined && fd.material.opacity <= 0.01)) {
+          if (fd && fd.mesh) {
+            try { scene.remove(fd.mesh); } catch (_) {}
+            try { if (fd.geometry) fd.geometry.dispose(); } catch (_) {}
+            try { if (fd.material) fd.material.dispose(); } catch (_) {}
+          }
+          flashes.splice(i, 1);
+          removedFlashes++;
+        }
+      }
+    }
+
+    // 4) Discovery paths with no live enemies near their endpoint
+    if (typeof window !== 'undefined' && window.discoveryPaths) {
+      const paths = window.discoveryPaths;
+      for (let i = paths.length - 1; i >= 0; i--) {
+        const p = paths[i];
+        if (!p) { paths.splice(i, 1); removedPaths++; continue; }
+        const endPos = p.line && p.line.userData && p.line.userData.endPosition;
+        if (!endPos) continue;
+        let anyAlive = false;
+        if (typeof enemies !== 'undefined') {
+          for (let j = 0; j < enemies.length; j++) {
+            const e = enemies[j];
+            if (!e || !e.userData || e.userData.health <= 0) continue;
+            if (e.position.distanceTo(endPos) < 3500) { anyAlive = true; break; }
+          }
+        }
+        if (!anyAlive) {
+          try {
+            if (p.line) {
+              scene.remove(p.line);
+              if (p.line.geometry) p.line.geometry.dispose();
+              if (p.line.material) p.line.material.dispose();
+            }
+            if (p.particles) {
+              scene.remove(p.particles);
+              if (p.particles.geometry) p.particles.geometry.dispose();
+              if (p.particles.material) p.particles.material.dispose();
+            }
+          } catch (_) {}
+          paths.splice(i, 1);
+          removedPaths++;
+        }
+      }
+    }
+
+    // 5) Force-cleanup star-trail DOM elements older than 1 s (hyperspace
+    // effect — fires on every W-thrust, each creating 30 .star-trail
+    // divs.  They auto-remove after 300 ms but if a browser tab was
+    // suspended they can leak).
+    const staleTrails = document.querySelectorAll('.star-trail');
+    const nowMs = Date.now();
+    let removedTrails = 0;
+    staleTrails.forEach(t => {
+      if (!t._demoCreatedAt) t._demoCreatedAt = nowMs;
+      if (nowMs - t._demoCreatedAt > 1000) {
+        t.remove();
+        removedTrails++;
+      }
+    });
+
+    if (removedMeshes || removedLasers || removedFlashes || removedPaths || removedTrails) {
+      console.log('🧹 worldCleanup:',
+        'enemies=' + removedMeshes,
+        'lasers=' + removedLasers,
+        'flashes=' + removedFlashes,
+        'paths=' + removedPaths,
+        'trails=' + removedTrails);
+    }
   };
 
   // ─── Start / Stop ─────────────────────────────────────────────────────────
@@ -517,17 +643,15 @@
       setStatus('Pursuing ' + (enemy.userData.name || 'hostile') + ' — ' + (dist | 0) + ' u');
       flyToward(enemy.position, 2.5);
 
-      // Double-tap W Jump when the target is far out — energy-based 2s
-      // short warp with auto-brake.  Cooldown ~12 s so we don't spam it,
-      // and only triggers if we have enough energy and the distance is
-      // worth closing fast (> 2x engageRange).
-      if (dist > engageRange * 2 &&
-          gameState.energy > 30 &&
-          Date.now() - (ap._lastJumpTap || 0) > 12000) {
+      // Double-tap W Jump when pursuing: any target beyond 2000 u gets the
+      // 2-second short warp to close fast.  10 s cooldown + 25 energy
+      // floor keeps it from firing every frame.
+      if (dist > 2000 &&
+          gameState.energy > 25 &&
+          Date.now() - (ap._lastJumpTap || 0) > 10000) {
         ap._lastJumpTap = Date.now();
         if (window.keys) {
           window.keys.wDoubleTap = true;
-          // Clear immediately — the physics code consumes the flag
           setTimeout(() => { if (window.keys) window.keys.wDoubleTap = false; }, 120);
         }
       }

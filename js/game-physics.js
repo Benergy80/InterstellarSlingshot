@@ -1396,7 +1396,15 @@ if (frameDistance > 0.01) { // Only track significant movement
         const wThrustPower = gameState.thrustPower * gameState.wThrustMultiplier;
         gameState.velocityVector.addScaledVector(forwardDirection, wThrustPower);
         gameState.energy = Math.max(0, gameState.energy - 0.12);
-        if (Math.random() > 0.85) createHyperspaceEffect(); // Visual feedback
+        // Visual feedback — rate-limited to at most one effect every
+        // 500 ms so holding W doesn't spawn 30 DOM star-trails multiple
+        // times per second (each one hangs 300 ms and hurts long-run FPS).
+        if (Math.random() > 0.97) {
+            if (!gameState._lastHyperspaceFx || (Date.now() - gameState._lastHyperspaceFx) > 500) {
+                gameState._lastHyperspaceFx = Date.now();
+                createHyperspaceEffect();
+            }
+        }
     }
     if (keys.s && gameState.energy > 0) {
         // S Key: Reverse thrust (50% power) - consumes 0.04 energy per frame
