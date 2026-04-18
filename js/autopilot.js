@@ -464,9 +464,11 @@
     // lock disengages (enemy dead / moves out of cone / lock cleared) the
     // firing stops automatically.  Runs parallel to phase logic so combat,
     // pursuit and travel all benefit from it.
-    autoFireOnTargetLock();
-    // Shoot nearby asteroids for hull repair (any phase, not just combat)
-    shootNearbyAsteroids();
+    // No weapons during the opening phases — let the scene establish first
+    if (ap.phase !== 'init' && ap.phase !== 'orbitLocalPlanet') {
+      autoFireOnTargetLock();
+      shootNearbyAsteroids();
+    }
 
     // Dispatch
     switch (ap.phase) {
