@@ -1622,16 +1622,21 @@
     const dist = camPos().distanceTo(tgt.position);
     if (dist > engageRange) return;
 
-    if (!isInFiringCone(tgt, engageRange + 100)) return;
-
     const now = Date.now();
     if (now - (ap.lastFire || 0) < 1000) return;
     if (gameState.weapons.cooldown > 0 || gameState.weapons.energy < 10) return;
 
-    const aligned = window.orientTowardsTarget
-      ? window.orientTowardsTarget({ position: tgt.position })
-      : false;
-    if (!aligned) return;
+    // Keep rotating toward the target for visual presentation, but do
+    // NOT gate firing on alignment or firing-cone checks.  fireWeapon
+    // auto-aims at targetLock's world position, so the laser bolt
+    // already travels from the ship to the locked enemy regardless of
+    // ship facing.  Previously the strict 5°/14° gates meant lasers
+    // rarely fired while shields were up — shields imply combat, the
+    // ship is banking/turning, alignment flips on and off — giving the
+    // impression that lasers were disabled by shields.
+    if (window.orientTowardsTarget) {
+      window.orientTowardsTarget({ position: tgt.position });
+    }
 
     ap.lastFire = now;
     gameState.crosshairX = window.innerWidth / 2;
