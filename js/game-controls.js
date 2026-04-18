@@ -9,6 +9,12 @@
 const activeLasers = [];
 const LASER_ARRAY_CAP = 30;
 
+// Pooled vectors for per-frame enemy behaviour — avoids 1000s of
+// throwaway Vector3 allocations per second with 100+ enemies.
+const _ebV1 = new THREE.Vector3();
+const _ebV2 = new THREE.Vector3();
+const _ebV3 = new THREE.Vector3();
+
 // Global key state
 const keys = {
   w: false, a: false, s: false, d: false,
@@ -213,17 +219,13 @@ function updatePursuitBehavior(enemy, playerPos, speed, distance) {
         const turnRate = 0.03; // How fast they can turn (radians per frame)
         const drag = 0.98; // Slight drag for inertia feel
         
-        // Calculate desired direction to player
-        const desiredDirection = new THREE.Vector3().subVectors(playerPos, enemy.position).normalize();
-        
-        // Gradually turn facing toward desired direction (can't instant-turn)
-        const currentFacing = enemy.userData.facing.clone();
-        const angleDiff = currentFacing.angleTo(desiredDirection);
+        _ebV1.subVectors(playerPos, enemy.position).normalize();
+
+        const angleDiff = enemy.userData.facing.angleTo(_ebV1);
         
         if (angleDiff > 0.01) {
-            // Interpolate facing toward target (limited by turn rate)
             const turnAmount = Math.min(turnRate, angleDiff);
-            enemy.userData.facing.lerp(desiredDirection, turnAmount / angleDiff);
+            enemy.userData.facing.lerp(_ebV1, turnAmount / angleDiff);
             enemy.userData.facing.normalize();
         }
         
@@ -246,9 +248,8 @@ function updatePursuitBehavior(enemy, playerPos, speed, distance) {
             }
         }
         
-        // Apply thrust in facing direction (like player, can only accelerate forward)
-        const thrust = enemy.userData.facing.clone().multiplyScalar(thrustPower);
-        enemy.userData.velocity.add(thrust);
+        _ebV2.copy(enemy.userData.facing).multiplyScalar(thrustPower);
+        enemy.userData.velocity.add(_ebV2);
         
         // Clamp to max speed
         if (enemy.userData.velocity.length() > maxSpeed) {
@@ -264,17 +265,16 @@ function updatePursuitBehavior(enemy, playerPos, speed, distance) {
         // Rotate enemy to face direction of travel (not instant)
         applyEnemyRotation(enemy, enemy.userData.facing, speed);
         
-        // Swarm behavior when close - orbit around player
         if (distance < 150) {
             const orbitAngle = Date.now() * 0.0015 + (enemy.userData.circlePhase || 0);
-            const orbitOffset = new THREE.Vector3(
+            _ebV1.set(
                 Math.cos(orbitAngle) * 100,
                 Math.sin(orbitAngle * 0.5) * 30,
                 Math.sin(orbitAngle) * 100
             );
-            const orbitTarget = playerPos.clone().add(orbitOffset);
-            const orbitDir = new THREE.Vector3().subVectors(orbitTarget, enemy.position).normalize();
-            enemy.userData.facing.lerp(orbitDir, turnRate * 2);
+            _ebV2.copy(playerPos).add(_ebV1);
+            _ebV3.subVectors(_ebV2, enemy.position).normalize();
+            enemy.userData.facing.lerp(_ebV3, turnRate * 2);
             enemy.userData.facing.normalize();
         }
     } catch (e) {
@@ -311,16 +311,14 @@ function updateSwarmBehavior(enemy, playerPos, speed, time) {
         const targetZ = playerPos.z + Math.sin(swarmAngle) * spiralRadius;
         const targetY = playerPos.y + Math.sin(time * 0.2) * 30;
         
-        const targetPos = new THREE.Vector3(targetX, targetY, targetZ);
-        const desiredDirection = new THREE.Vector3().subVectors(targetPos, enemy.position).normalize();
-        
-        // Gradual turn
-        enemy.userData.facing.lerp(desiredDirection, turnRate);
+        _ebV1.set(targetX, targetY, targetZ);
+        _ebV2.subVectors(_ebV1, enemy.position).normalize();
+
+        enemy.userData.facing.lerp(_ebV2, turnRate);
         enemy.userData.facing.normalize();
-        
-        // Thrust in facing direction
-        const thrust = enemy.userData.facing.clone().multiplyScalar(acceleration);
-        enemy.userData.velocity.add(thrust);
+
+        _ebV3.copy(enemy.userData.facing).multiplyScalar(acceleration);
+        enemy.userData.velocity.add(_ebV3);
         
         // Clamp and drag
         if (enemy.userData.velocity.length() > maxSpeed) {
@@ -344,16 +342,14 @@ function updateEvasionBehavior(enemy, playerPos, speed, time) {
     }
 
     try {
-        // Move perpendicular to player direction
-        const direction = new THREE.Vector3().subVectors(enemy.position, playerPos).normalize();
-        const perpendicular = new THREE.Vector3(-direction.z, direction.y, direction.x);
+        _ebV1.subVectors(enemy.position, playerPos).normalize();
+        _ebV2.set(-_ebV1.z, _ebV1.y, _ebV1.x);
 
-        // Add some randomness and oscillation
         const oscillation = Math.sin(time * 2 + (enemy.userData.circlePhase || 0)) * 0.5;
-        const evasionVector = perpendicular.multiplyScalar(speed * (1 + oscillation));
+        _ebV2.multiplyScalar(speed * (1 + oscillation));
 
-        enemy.position.add(evasionVector);
-        applyEnemyRotation(enemy, perpendicular, speed);  // Add rotation
+        enemy.position.add(_ebV2);
+        applyEnemyRotation(enemy, _ebV2, speed);  // Add rotation
     } catch (e) {
         // Ignore movement errors
     }
@@ -375,10 +371,10 @@ function updateFlankingBehavior(enemy, playerPos, speed, time) {
         const targetZ = playerPos.z + Math.sin(flankAngle) * flankRadius;
         const targetY = playerPos.y;
 
-        const targetPos = new THREE.Vector3(targetX, targetY, targetZ);
-        const direction = new THREE.Vector3().subVectors(targetPos, enemy.position).normalize();
-        enemy.position.add(direction.multiplyScalar(speed * 0.7));
-        applyEnemyRotation(enemy, direction, speed * 0.7);  // Add rotation
+        _ebV1.set(targetX, targetY, targetZ);
+        _ebV2.subVectors(_ebV1, enemy.position).normalize();
+        enemy.position.add(_ebV2.multiplyScalar(speed * 0.7));
+        applyEnemyRotation(enemy, _ebV2, speed * 0.7);  // Add rotation
     } catch (e) {
         // Ignore movement errors
     }
@@ -396,23 +392,19 @@ function updateEngagementBehavior(enemy, playerPos, speed, time) {
         const optimalDistance = 100;
         const currentDistance = enemy.position.distanceTo(playerPos);
 
-        let direction;
         if (currentDistance > optimalDistance + 20) {
-            // Move closer
-            direction = new THREE.Vector3().subVectors(playerPos, enemy.position).normalize();
-            enemy.position.add(direction.multiplyScalar(speed));
-            applyEnemyRotation(enemy, direction, speed);  // Add rotation
+            _ebV1.subVectors(playerPos, enemy.position).normalize();
+            enemy.position.add(_ebV1.multiplyScalar(speed));
+            applyEnemyRotation(enemy, _ebV1, speed);
         } else if (currentDistance < optimalDistance - 20) {
-            // Move away
-            direction = new THREE.Vector3().subVectors(enemy.position, playerPos).normalize();
-            enemy.position.add(direction.multiplyScalar(speed * 0.5));
-            applyEnemyRotation(enemy, direction, speed * 0.5);  // Add rotation
+            _ebV1.subVectors(enemy.position, playerPos).normalize();
+            enemy.position.add(_ebV1.multiplyScalar(speed * 0.5));
+            applyEnemyRotation(enemy, _ebV1, speed * 0.5);
         } else {
-            // Maintain position with slight movement
             const angle = time * 0.5;
-            const offset = new THREE.Vector3(Math.cos(angle) * 10, 0, Math.sin(angle) * 10);
-            enemy.position.add(offset.multiplyScalar(speed * 0.3));
-            applyEnemyRotation(enemy, offset, speed * 0.3);  // Add rotation
+            _ebV1.set(Math.cos(angle) * 10, 0, Math.sin(angle) * 10);
+            enemy.position.add(_ebV1.multiplyScalar(speed * 0.3));
+            applyEnemyRotation(enemy, _ebV1, speed * 0.3);
         }
     } catch (e) {
         // Ignore movement errors
@@ -437,11 +429,10 @@ function updatePatrolBehavior(enemy, playerPos, speed, time) {
         const targetZ = enemy.userData.patrolCenter.z + Math.sin(angle) * enemy.userData.patrolRadius;
         const targetY = enemy.userData.patrolCenter.y + Math.sin(angle * 0.3) * 50;
         
-        const targetPos = new THREE.Vector3(targetX, targetY, targetZ);
-        const direction = new THREE.Vector3().subVectors(targetPos, enemy.position).normalize();
+        _ebV1.set(targetX, targetY, targetZ);
+        _ebV2.subVectors(_ebV1, enemy.position).normalize();
 
-        // ENHANCED: Increased patrol speed from 0.3 to 0.6 for smoother flowing motion
-        enemy.position.add(direction.multiplyScalar(speed * 0.6));
+        enemy.position.add(_ebV2.multiplyScalar(speed * 0.6));
         applyEnemyRotation(enemy, direction, speed * 0.6);  // Add rotation
     } catch (e) {
         // Ignore movement errors
@@ -2854,17 +2845,20 @@ function createMuzzleFlash(position) {
     flash.position.copy(position);
     scene.add(flash);
     
-    // Track for position updates
     const flashData = {
         mesh: flash,
         geometry: flashGeometry,
         material: flashMaterial,
-        lastCameraPos: camera.position.clone(),
+        lastCameraPos: new THREE.Vector3().copy(camera.position),
         opacity: 1.0
     };
     if (activeMuzzleFlashes.length >= 20) {
         const old = activeMuzzleFlashes.shift();
-        if (old && old.mesh) { old.mesh.visible = false; }
+        if (old && old.mesh) {
+            scene.remove(old.mesh);
+            if (old.geometry) old.geometry.dispose();
+            if (old.material) old.material.dispose();
+        }
     }
     activeMuzzleFlashes.push(flashData);
 

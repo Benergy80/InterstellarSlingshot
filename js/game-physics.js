@@ -35,6 +35,7 @@ const rotationalInertia = {
 const _ortDir = new THREE.Vector3();
 const _ortFwd = new THREE.Vector3();
 const _ortAxis = new THREE.Vector3();
+const _explVel = new THREE.Vector3();
 
 function orientTowardsTarget(target) {
     if (!target || typeof camera === 'undefined') return false;
@@ -401,7 +402,7 @@ function createAsteroidExplosion(position, radius = 1) {
                 for (let i = 0; i < particles.length; i++) {
                     const p = particles[i];
                     if (p.life > 0) {
-                        p.mesh.position.add(particleVelocities[i].clone().multiplyScalar(0.2 * deltaFactor));
+                        p.mesh.position.add(_explVel.copy(particleVelocities[i]).multiplyScalar(0.2 * deltaFactor));
                         p.life -= 0.08 * deltaFactor;
                         p.material.opacity = Math.max(0, p.life);
                         p.mesh.scale.set(p.life, p.life, p.life);
@@ -495,7 +496,7 @@ function createPlayerExplosion() {
                 for (let i = 0; i < particles.length; i++) {
                     const p = particles[i];
                     if (p.life > 0) {
-                        p.mesh.position.add(particleVelocities[i].clone().multiplyScalar(0.3 * deltaFactor));
+                        p.mesh.position.add(_explVel.copy(particleVelocities[i]).multiplyScalar(0.3 * deltaFactor));
                         p.life -= 0.02 * deltaFactor;
                         p.material.opacity = Math.max(0, p.life);
                         p.mesh.scale.set(p.life, p.life, p.life);
@@ -3878,20 +3879,37 @@ function playDeepDiscoverySound() {
     }
 }
 
-// Animate discovery paths (pulsing effect)
+function _disposeDiscoveryPath(path) {
+    if (path.line) {
+        if (path.line.parent) path.line.parent.remove(path.line);
+        if (path.line.geometry) path.line.geometry.dispose();
+        if (path.line.material) path.line.material.dispose();
+    }
+    if (path.particles) {
+        if (path.particles.parent) path.particles.parent.remove(path.particles);
+        if (path.particles.geometry) path.particles.geometry.dispose();
+        if (path.particles.material) path.particles.material.dispose();
+    }
+}
+
+const DISCOVERY_PATH_CAP = 8;
+
 function animateDiscoveryPaths() {
+    while (discoveryPaths.length > DISCOVERY_PATH_CAP) {
+        _disposeDiscoveryPath(discoveryPaths.shift());
+    }
+
     const time = Date.now() * 0.001;
-    
-    discoveryPaths.forEach(path => {
+
+    for (let i = 0; i < discoveryPaths.length; i++) {
+        const path = discoveryPaths[i];
         if (path.line && path.line.material) {
-            // Pulse the opacity
             path.line.material.opacity = 0.5 + Math.sin(time * 2) * 0.2;
         }
         if (path.particles && path.particles.material) {
-            // Pulse particles
             path.particles.material.opacity = 0.3 + Math.sin(time * 3) * 0.2;
         }
-    });
+    }
 }
 
 // Export deep discovery functions
