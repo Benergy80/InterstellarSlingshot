@@ -5009,15 +5009,9 @@ function fireWeapon() {
     let targetPosition;
     
     if (gameState.targetLock.active && gameState.targetLock.target) {
-        // Auto-aim at locked target (excludes asteroids - they can't be auto-targeted)
-        if (gameState.targetLock.target.userData.type !== 'asteroid') {
-            targetPosition = gameState.targetLock.target.position.clone();
-            targetObject = gameState.targetLock.target;
-        } else {
-            // Clear invalid asteroid target lock
-            gameState.targetLock.active = false;
-            gameState.targetLock.target = null;
-        }
+        // Auto-aim at locked target (including asteroids)
+        targetPosition = gameState.targetLock.target.position.clone();
+        targetObject = gameState.targetLock.target;
     }
     
     if (!targetObject) {

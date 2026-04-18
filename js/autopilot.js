@@ -1464,12 +1464,10 @@
     const dummy = { position: target.position };
     if (window.orientTowardsTarget) window.orientTowardsTarget(dummy);
 
-    // Set target lock for auto-aim (enemies only — fireWeapon excludes asteroids from lock)
-    if (target.userData && target.userData.type !== 'asteroid') {
-      gameState.targetLock.active = true;
-      gameState.targetLock.target = target;
-      gameState.currentTarget = target;
-    }
+    // Set target lock for auto-aim (enemies + asteroids)
+    gameState.targetLock.active = true;
+    gameState.targetLock.target = target;
+    gameState.currentTarget = target;
 
     // Only fire inside the enemy's own firing range AND when lined up
     const engageRange = (target.userData && target.userData.firingRange) || 500;
