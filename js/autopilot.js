@@ -1573,33 +1573,66 @@
     }
   }
 
-  // Barrel rolls + short W-tap boosts for cinematic flight.
-  // Rolls are frequent and punchy for exciting demonstrative play.
+  // Barrel rolls + banking + evasive snap-rolls + short W-tap boosts.
+  // The roll strategy is context-aware:
+  //   IN COMBAT (in weapons range):   full 360° barrel roll attack runs
+  //   IN PURSUIT (out of range):      banking weaves (roll + yaw together)
+  //   IN TRAVEL:                      gentle periodic barrel rolls
+  //   ANY PHASE on hull damage:       one-shot snap-roll evasion (1 s)
   function demoRollAndBoost(fc) {
     const k = keys();
+    const inCombatPhase = ap.phase === 'combat' || ap.phase === 'fightBorg';
 
-    // Roll: every ~8 s, apply a quick Q/E roll for ~2 s (120 frames)
-    const rollCycle = fc % 480; // 480 frames = 8 s at 60fps
-    if (rollCycle < 60) {
-      k.q = true;   // roll left for 1 s
-    } else if (rollCycle >= 60 && rollCycle < 120) {
-      k.e = true;   // roll right for 1 s (partial cancel — net small roll)
+    // ── Damage-triggered snap-roll (overrides other rolls) ────────────────
+    // When hull drops, schedule 1 s of continuous Q roll (one full ~360°
+    // barrel) and a short E strafe for evasion.  Runs until snapRollUntil
+    // expires.  We detect damage by comparing current hull to ap._rollHull.
+    const hull = (typeof gameState !== 'undefined' && gameState.hull) || 100;
+    if (ap._rollHull === undefined) ap._rollHull = hull;
+    if (hull < ap._rollHull - 0.5 && (!ap._snapRollUntil || Date.now() > ap._snapRollUntil)) {
+      ap._snapRollUntil = Date.now() + 1000;
+      ap._snapRollDir   = Math.random() < 0.5 ? 'q' : 'e';
+      ap._snapStrafeDir = Math.random() < 0.5 ? 'a' : 'd';
+    }
+    ap._rollHull = hull;
+
+    if (ap._snapRollUntil && Date.now() < ap._snapRollUntil) {
+      if (ap._snapRollDir === 'q') k.q = true; else k.e = true;
+      if (ap._snapStrafeDir === 'a') k.a = true; else k.d = true;
+      return; // skip normal roll pattern while evading
     }
 
-    // Extra snap-roll during combat for evasive excitement (~every 5 s)
-    if (ap.phase === 'combat' || ap.phase === 'fightBorg') {
-      const combatRoll = fc % 300;
-      if (combatRoll >= 0 && combatRoll < 40) {
-        k.e = true;  // quick dodge roll
-      }
-    }
+    if (inCombatPhase) {
+      const enemy = ap.combatTarget;
+      const engageRange = (enemy && enemy.userData && enemy.userData.firingRange) || 500;
+      const dist = enemy && enemy.position ? camPos().distanceTo(enemy.position) : 99999;
 
-    // Short boost pulse every ~8 s for 0.5 s, only during travel phases
-    if (ap.phase !== 'combat' && ap.phase !== 'fightBorg') {
-      const boostCycle = fc % 480; // 480 frames = 8 s
-      if (boostCycle >= 0 && boostCycle < 30) {
-        k.b = true;
+      if (dist < engageRange + 100) {
+        // IN WEAPONS RANGE — barrel-roll attack.  Full 360° rolls (~2 s of
+        // sustained Q, then ~2 s of sustained E) keep the ship spinning
+        // while auto-aim stays locked on (roll doesn't move pitch/yaw).
+        const atkCycle = fc % 360;              // 6 s period
+        if (atkCycle < 120)      { k.q = true; } // first 2 s: Q roll
+        else if (atkCycle < 240) { /* idle 2 s */ }
+        else if (atkCycle < 360) { k.e = true; } // last 2 s: E roll
+      } else {
+        // PURSUIT — banking weave: roll + yaw together for a dynamic
+        // approach instead of straight flat flight.  4 s period.
+        const wvCycle = fc % 240;
+        if (wvCycle < 60)        { k.q = true; k.left = true; }   // bank left
+        else if (wvCycle < 120)  { /* coast 1 s */ }
+        else if (wvCycle < 180)  { k.e = true; k.right = true; }  // bank right
+        else                     { /* coast 1 s */ }
       }
+    } else {
+      // TRAVEL — gentle barrel rolls every ~8 s, self-cancelling so the
+      // ship stays roughly level.
+      const rCycle = fc % 480;
+      if (rCycle < 60)       { k.q = true; }
+      else if (rCycle < 120) { k.e = true; }
+
+      // Short 0.5 s boost pulse every 8 s
+      if (rCycle < 30) k.b = true;
     }
   }
 
