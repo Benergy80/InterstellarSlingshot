@@ -858,27 +858,52 @@
   }
 
   // ─── 6) Black hole warp → coast → fight more enemies ─────────────────────
+  // The physics owns the warp sequence once the player is near the event
+  // horizon.  If the autopilot keeps setting keys.w and flyToward, the ship
+  // fights the physics pull, overshoots, and glitches after the teleport.
+  // Hands-off approach: only nudge toward the BH when clearly far away and
+  // stop ALL input once the warp machinery has engaged.
   function phaseBlackHoleWarp() {
     const t = elapsed();
     ensureShieldsFor('travel');
+    // Release any lingering movement keys so physics gets clean input
+    releaseMovementKeys();
 
-    if (ap.currentBH) {
+    // Detect that the warp has started: either event horizon proximity,
+    // active slingshot/blackHoleWarp state, or very high velocity.
+    const speed = gameState.velocityVector ? gameState.velocityVector.length() : 0;
+    const warpEngaged =
+      (gameState.eventHorizonWarning && gameState.eventHorizonWarning.active) ||
+      (gameState.slingshot && gameState.slingshot.active) ||
+      gameState.isBlackHoleWarping ||
+      speed > 5;
+
+    if (warpEngaged) {
+      // Hands OFF — let the physics/warp code run.  No thrust, no orient,
+      // no brake.  Just wait for the teleport to complete.
+      setStatus('WARPING — hands off controls');
+    } else if (ap.currentBH) {
       const dist = camPos().distanceTo(ap.currentBH.position);
-      if (dist > 120) {
-        setStatus('Diving into event horizon');
-        flyToward(ap.currentBH.position, 3.0);
+      // Only nudge toward the BH if we're still clearly far away.  Inside
+      // 400 u the physics gravitational pull does the rest; we just coast.
+      if (dist > 400) {
+        setStatus('Diving toward event horizon — ' + (dist | 0) + ' u');
+        const dummy = { position: ap.currentBH.position };
+        if (window.orientTowardsTarget) window.orientTowardsTarget(dummy);
+        keys().w = true;
       } else {
-        setStatus('WARPING — destination unknown');
+        setStatus('Coasting into event horizon — ' + (dist | 0) + ' u');
       }
     }
 
-    // Physics runs the actual warp.  When we're suddenly very fast, we've warped.
-    const speed = gameState.velocityVector ? gameState.velocityVector.length() : 0;
-    if (speed > 3 || t > 6000) {
+    // Exit this phase when the warp has visibly completed: we either got
+    // flung away at high speed, or 8 s have passed (safety).
+    if (speed > 10 || t > 8000) {
       ap.currentBH = null;
       ap.brakingAfterWarp = false;
       ap.warpsUsed++;
       ap.warpStartedAt = Date.now();
+      releaseMovementKeys();
       goPhase('coastAfterWarp');
     }
   }

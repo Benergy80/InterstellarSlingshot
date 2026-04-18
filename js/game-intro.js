@@ -1076,38 +1076,43 @@ function createSkipButton() {
                      ('ontouchstart' in window && window.innerWidth <= 1024);
 
     if (isMobile) {
-        // Mobile styling with solid background so it reads on any device
+        // Match the desktop space-btn glassmorphism look — blue/cyan
+        // gradient, not a heavy dark background.  Just enforce positioning
+        // + tappable sizing so the button sits above the intro video.
         skipButton.style.cssText = `
             position: fixed !important;
             bottom: 16px !important;
             left: 50% !important;
             transform: translateX(-50%) !important;
-            width: auto !important;
-            padding: 10px 20px !important;
-            background: rgba(0, 0, 0, 0.55) !important;
-            border: 1px solid rgba(0, 255, 136, 0.7) !important;
-            border-radius: 6px !important;
-            color: #00ff88 !important;
+            padding: 10px 22px !important;
+            background: linear-gradient(135deg, rgba(0,150,255,0.2), rgba(0,100,200,0.3)) !important;
+            border: 1px solid rgba(0,150,255,0.55) !important;
+            border-radius: 8px !important;
+            color: rgba(0,255,255,0.95) !important;
             font-family: 'Orbitron', monospace !important;
             font-size: 13px !important;
-            font-weight: 700 !important;
+            font-weight: 600 !important;
             letter-spacing: 1px !important;
             cursor: pointer !important;
             opacity: 0;
-            transition: all 0.2s ease !important;
+            transition: all 0.25s ease !important;
             z-index: 10000 !important;
-            box-shadow: 0 0 12px rgba(0, 255, 136, 0.4), inset 0 0 12px rgba(0, 255, 136, 0.15) !important;
-            text-shadow: 0 0 8px rgba(0,255,136,0.9), 0 0 16px rgba(0,255,136,0.5) !important;
+            backdrop-filter: blur(5px) !important;
+            -webkit-backdrop-filter: blur(5px) !important;
+            box-shadow: 0 4px 15px rgba(0,150,255,0.2), inset 0 1px 0 rgba(0,150,255,0.3) !important;
+            text-shadow: 0 0 6px rgba(0,255,255,0.6) !important;
+            -webkit-tap-highlight-color: rgba(0,200,255,0.3) !important;
+            touch-action: manipulation !important;
         `;
 
         skipButton.addEventListener('mouseenter', () => {
-            skipButton.style.background = 'rgba(0, 255, 255, 0.2)';
-            skipButton.style.boxShadow = '0 0 15px rgba(0, 255, 255, 0.5), inset 0 0 15px rgba(0, 255, 255, 0.2)';
+            skipButton.style.background = 'linear-gradient(135deg, rgba(0,200,255,0.3), rgba(0,150,255,0.4))';
+            skipButton.style.boxShadow = '0 0 20px rgba(0,255,255,0.4), 0 6px 20px rgba(0,150,255,0.3), inset 0 1px 0 rgba(0,255,255,0.4)';
         });
 
         skipButton.addEventListener('mouseleave', () => {
-            skipButton.style.background = 'rgba(0, 0, 0, 0.3)';
-            skipButton.style.boxShadow = '0 0 10px rgba(0, 255, 255, 0.3), inset 0 0 10px rgba(0, 255, 255, 0.1)';
+            skipButton.style.background = 'linear-gradient(135deg, rgba(0,150,255,0.2), rgba(0,100,200,0.3))';
+            skipButton.style.boxShadow = '0 4px 15px rgba(0,150,255,0.2), inset 0 1px 0 rgba(0,150,255,0.3)';
         });
     } else {
         // Desktop AND iPad: transparent glassmorphism style from space-btn class

@@ -180,7 +180,55 @@
                 max-height: 45vh !important;
             }
         }
-        
+
+        /* Game Over / Mission Failed screen — responsive on mobile.
+           The default panel is text-4xl + p-8 which overflows narrow
+           viewports and can push the Restart button below the fold. */
+        #gameOverScreen {
+            position: fixed !important;
+            inset: 0 !important;
+            z-index: 10000 !important;
+            display: flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            padding: 16px !important;
+        }
+        #gameOverScreen > div {
+            max-width: 92vw !important;
+            max-height: 92vh !important;
+            overflow-y: auto !important;
+            box-sizing: border-box !important;
+        }
+        @media (max-width: 768px) {
+            #gameOverScreen > div {
+                padding: 18px !important;
+                width: 92vw !important;
+            }
+            #gameOverScreen h1 {
+                font-size: 1.6rem !important;
+                margin-bottom: 10px !important;
+                line-height: 1.2 !important;
+            }
+            #gameOverScreen p {
+                font-size: 0.95rem !important;
+                margin-bottom: 14px !important;
+            }
+            #gameOverScreen .text-lg {
+                font-size: 1rem !important;
+            }
+            #gameOverScreen .text-sm {
+                font-size: 0.85rem !important;
+                line-height: 1.4 !important;
+            }
+            #gameOverScreen button {
+                font-size: 0.95rem !important;
+                padding: 12px 22px !important;
+                margin-top: 18px !important;
+                width: 100% !important;
+                max-width: 280px !important;
+            }
+        }
+
         /* Achievement Popup Priority */
         #achievementPopup {
             z-index: 999 !important;
