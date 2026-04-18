@@ -860,10 +860,13 @@
 
 <!-- MOBILE CONTROLS -->
 <div class="mobile-controls-container">
-    <!-- Top row: Flight Controls and Emergency Warp (aligned with indicators) -->
+    <!-- Top row: Flight Controls, Ship Status, Emergency Warp -->
     <div class="mobile-controls-top">
         <button class="mobile-btn" onclick="showMobilePanel('controls')" title="Flight Controls">
             <i class="fas fa-gamepad"></i>
+        </button>
+        <button class="mobile-btn" onclick="showMobilePanel('status')" title="Ship Status">
+            <i class="fas fa-info-circle"></i>
         </button>
         <button class="mobile-btn warp" onclick="mobileEmergencyWarp()" title="Emergency Warp">
             <i class="fa-solid fa-triangle-exclamation"></i>
@@ -880,24 +883,24 @@
             <span class="missile-count-badge" id="mobileMissileCountBadge">3</span>
         </button>
         <button class="mobile-btn"
-            ontouchstart="mobileBrakesStart()"
-            ontouchend="mobileBrakesEnd()"
+            ontouchstart="event.preventDefault();mobileBrakesStart()"
+            ontouchend="event.preventDefault();mobileBrakesEnd()"
             onmousedown="mobileBrakesStart()"
             onmouseup="mobileBrakesEnd()"
             title="Brakes (Hold)">
             <i class="fas fa-hand-paper"></i>
         </button>
         <button class="mobile-btn fire"
-            onclick="handleMobileFire()"
             ontouchstart="handleMobileFire(event)"
+            onclick="handleMobileFire(event)"
             title="Fire Weapons">
             <i class="fas fa-crosshairs"></i>
         </button>
         <button class="mobile-btn"
+            ontouchstart="event.preventDefault();startForwardThrust()"
+            ontouchend="event.preventDefault();stopForwardThrust()"
             onmousedown="startForwardThrust()"
             onmouseup="stopForwardThrust()"
-            ontouchstart="startForwardThrust()"
-            ontouchend="stopForwardThrust()"
             title="Forward Thrust">
             <i class="fas fa-arrow-up"></i>
         </button>
