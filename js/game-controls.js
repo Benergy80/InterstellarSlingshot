@@ -2747,9 +2747,11 @@ function createThirdPersonBeam(startPos, endPos, color) {
         };
         activeLasers.push(laserData);
         
-        // Fast fade for 3rd person - snappy visual
+        // 400 ms fade — matches createLaserBeam (0.9 start / 0.055 per
+        // 25 ms = ~16 ticks = 400 ms).  Keeps player and enemy beams
+        // visible on screen for the same duration.
         const fadeInterval = setInterval(() => {
-            laserData.opacity -= 0.3;  // Fast fade
+            laserData.opacity -= 0.055;
             laserMaterial.opacity = laserData.opacity;
             glowMaterial.opacity = laserData.opacity * 0.4;
             
@@ -3074,31 +3076,32 @@ function createDirectionalDamageEffect(attackDirection) {
             break;
     }
     
-    // Create the directional damage overlay.  Z-index must sit ABOVE the
+    // Create the directional damage overlay.  Z-index sits ABOVE the
     // mission command alert (z-50) and incoming-transmission prompt (1000)
     // so the player can always see incoming-fire warnings even when a
-    // transmission is on screen.
+    // transmission is on screen.  Critically we force inset:0 as the
+    // BASE so the overlay actually fills the viewport — the pulseStyle
+    // for front/behind previously had no size at all (inset:20% only)
+    // which produced a zero-size invisible element.
     const damageOverlay = document.createElement('div');
     damageOverlay.className = 'fixed pointer-events-none';
-    damageOverlay.style.cssText = overlayStyle + pulseStyle +
-        'opacity: 0; transition: opacity 0.1s ease-out; z-index: 2000;';
+    damageOverlay.style.cssText =
+        'top:0;left:0;right:0;bottom:0;' +   // base full-viewport coverage
+        overlayStyle + pulseStyle +
+        'opacity: 0; transition: opacity 0.15s ease-out; z-index: 2000;';
     document.body.appendChild(damageOverlay);
-    
-    // Animate the effect
-    setTimeout(() => {
-        damageOverlay.style.opacity = '1';
-    }, 10);
-    
-    setTimeout(() => {
-        damageOverlay.style.opacity = '0';
-    }, 200);
-    
-    setTimeout(() => {
-        damageOverlay.remove();
-    }, 500);
-    
-    // Add directional damage indicator text
-    if (direction !== 'center' && direction !== 'front') {
+
+    // Extended visibility so the flash actually registers during fast
+    // combat — appears in 15 ms, holds for 500 ms, fades out over 250 ms.
+    setTimeout(() => { damageOverlay.style.opacity = '1'; }, 15);
+    setTimeout(() => { damageOverlay.style.opacity = '0'; }, 500);
+    setTimeout(() => { damageOverlay.remove(); }, 800);
+
+    // Add directional damage indicator text for every non-center
+    // direction (including FRONT — previously suppressed, but the
+    // player deserves a "FRONT" warning when an enemy ahead of them
+    // lands a hit).
+    if (direction !== 'center') {
         createDamageDirectionIndicator(direction);
     }
 }

@@ -516,6 +516,21 @@
     if (dist > engageRange) {
       setStatus('Pursuing ' + (enemy.userData.name || 'hostile') + ' — ' + (dist | 0) + ' u');
       flyToward(enemy.position, 2.5);
+
+      // Double-tap W Jump when the target is far out — energy-based 2s
+      // short warp with auto-brake.  Cooldown ~12 s so we don't spam it,
+      // and only triggers if we have enough energy and the distance is
+      // worth closing fast (> 2x engageRange).
+      if (dist > engageRange * 2 &&
+          gameState.energy > 30 &&
+          Date.now() - (ap._lastJumpTap || 0) > 12000) {
+        ap._lastJumpTap = Date.now();
+        if (window.keys) {
+          window.keys.wDoubleTap = true;
+          // Clear immediately — the physics code consumes the flag
+          setTimeout(() => { if (window.keys) window.keys.wDoubleTap = false; }, 120);
+        }
+      }
     } else {
       setStatus('Engaging ' + (enemy.userData.name || 'hostile') + ' — in weapons range');
       flyToward(enemy.position, 0.8);
@@ -664,25 +679,24 @@
     const distToNebula = camPos().distanceTo(ap.currentNebula.position);
     setStatus('Coasting to nebula — ' + (distToNebula | 0) + ' units');
 
-    // As we enter the nebula cluster area, brake at the galaxy's asteroid belt if nearby
-    const belt = nearestAsteroidBelt();
-    if (belt) {
-      const beltCenter = belt.userData.blackHolePosition || belt.position;
-      const beltRadius = belt.userData.radius || 2000;
-      const distToBelt = camPos().distanceTo(beltCenter);
-      if (distToBelt < beltRadius * 1.8) {
-        setStatus('Entering cluster perimeter — braking');
-        if (!ap.brakingAfterWarp) {
-          ap.brakingAfterWarp = true;
-          transmit('NAVIGATION', 'Entering nebula cluster perimeter.\nReducing velocity for system operations.');
-          ensureThirdPerson();
-        }
-        keys().x = true;
+    // Only brake when VERY close to the nebula itself — within 4000 u of
+    // the nebula center (approximately the orbital-survey distance).
+    // Previously we were braking at the galaxy's asteroid belt perimeter
+    // (3600 u from the belt center) which could start 10 000+ u from the
+    // actual nebula, leaving the ship crawling for the rest of the trip.
+    const NEBULA_BRAKE_RANGE = 4000;
+    if (distToNebula < NEBULA_BRAKE_RANGE) {
+      setStatus('Nebula cluster — braking');
+      if (!ap.brakingAfterWarp) {
+        ap.brakingAfterWarp = true;
+        ensureThirdPerson();
       }
+      keys().x = true;
     }
 
-    // Close to nebula — move to orbit phase
-    if (distToNebula < 3500 && speed < 1.5) {
+    // Close to nebula — move to orbit phase.  Threshold reduced from 3500
+    // to 2500 so we actually reach the nebula before switching modes.
+    if (distToNebula < 2500 && speed < 1.5) {
       ap.brakingAfterWarp = false;
       goPhase('orbitNebulaPlanet');
       return;
