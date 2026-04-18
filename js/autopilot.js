@@ -582,12 +582,10 @@
     if (detected) {
       const d = camPos().distanceTo(detected.position);
       setStatus('NAV target: ' + (detected.userData.name || 'hostile') + ' · ' + (d | 0));
-      // Lock it on the navigation panel so viewers see the attraction
+      // Show on the nav panel (currentTarget) but do NOT activate targetLock
+      // from long range — that would make any fireWeapon call auto-aim at
+      // this distant enemy.  Lock gets set by phaseCombat once we're close.
       gameState.currentTarget = detected;
-      if (gameState.targetLock) {
-        gameState.targetLock.active = true;
-        gameState.targetLock.target = detected;
-      }
       // Fly toward it aggressively
       flyToward(detected.position, 2.5);
       // Once inside combat range, commit to the engagement
@@ -608,12 +606,8 @@
     const farEnemy = nearestAliveEnemy(15000);
     if (farEnemy) {
       setStatus('Long-range contact — intercepting');
-      // Lock the enemy on the nav panel so the viewer sees the target shift
+      // Nav panel only — no targetLock at this range
       gameState.currentTarget = farEnemy;
-      if (gameState.targetLock) {
-        gameState.targetLock.active = true;
-        gameState.targetLock.target = farEnemy;
-      }
       flyToward(farEnemy.position, 2.5);
       return;
     }
@@ -727,12 +721,22 @@
       }
     }
 
-    // Orient + lock so auto-fire can engage when we're inside range
+    // Always orient toward the enemy so the ship visually tracks it
     const aimDummy = { position: enemy.position };
     if (window.orientTowardsTarget) window.orientTowardsTarget(aimDummy);
-    gameState.targetLock.active = true;
-    gameState.targetLock.target = enemy;
     gameState.currentTarget = enemy;
+
+    // ONLY activate targetLock when inside engage range.  When outside,
+    // clear it — otherwise fireWeapon auto-aims at the far-off locked
+    // target whenever any fire call happens (asteroid shots, etc.),
+    // producing long-range laser bolts at things the crosshair isn't on.
+    if (dist <= engageRange) {
+      gameState.targetLock.active = true;
+      gameState.targetLock.target = enemy;
+    } else {
+      gameState.targetLock.active = false;
+      gameState.targetLock.target = null;
+    }
 
     // Occasional missile fire — every ~7 s while inside engagement range.
     // No transmission; status-line only keeps the HUD quiet.
@@ -1179,13 +1183,8 @@
           // around looking for a target.
           const nearest = nearestAliveEnemy(15000);
           if (nearest) {
+            // Nav panel only — phaseCombat handles the targetLock once close
             gameState.currentTarget = nearest;
-            if (gameState.targetLock) {
-              gameState.targetLock.active = true;
-              gameState.targetLock.target = nearest;
-            }
-            // If the enemy is close enough to engage directly, commit to
-            // combat; otherwise let findLocalEnemies pursue it.
             const distToNearest = camPos().distanceTo(nearest.position);
             if (distToNearest < 2500) {
               ap.combatTarget = nearest;
