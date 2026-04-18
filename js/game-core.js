@@ -1199,26 +1199,28 @@ function updateTargetLock() {
     let nearestTarget = null;
     let nearestDistance = gameState.targetLock.range;
     
-    // Check enemies first (if they exist)
+    // Pooled vectors — updateTargetLock runs every frame; the old code created
+    // 2 Vector3s per enemy per frame inside the forEach.
+    if (!updateTargetLock._dir) updateTargetLock._dir = new THREE.Vector3();
+    if (!updateTargetLock._fwd) updateTargetLock._fwd = new THREE.Vector3();
+    const _tlDir = updateTargetLock._dir;
+    const _tlFwd = updateTargetLock._fwd;
+
     if (typeof enemies !== 'undefined') {
-        enemies.forEach(enemy => {
-            if (enemy.userData.health <= 0) return;
-            
+        for (let i = 0; i < enemies.length; i++) {
+            const enemy = enemies[i];
+            if (enemy.userData.health <= 0) continue;
             const distance = camera.position.distanceTo(enemy.position);
             if (distance < nearestDistance) {
-                // Check if enemy is roughly in front of player
-                const direction = new THREE.Vector3().subVectors(enemy.position, camera.position).normalize();
-                const forward = new THREE.Vector3();
-                camera.getWorldDirection(forward);
-                const angle = direction.angleTo(forward);
-                
-                // Wider lock-on arc for doubled world
-                if (angle < 1.0) { // ~57 degree lock-on arc (increased from 45)
+                _tlDir.subVectors(enemy.position, camera.position).normalize();
+                camera.getWorldDirection(_tlFwd);
+                const angle = _tlDir.angleTo(_tlFwd);
+                if (angle < 1.0) {
                     nearestTarget = enemy;
                     nearestDistance = distance;
                 }
             }
-        });
+        }
     }
     
     // REMOVED: Asteroids from auto-targeting - players prefer manual aiming for asteroids
@@ -1228,8 +1230,9 @@ function updateTargetLock() {
     
     // Enhanced crosshair following when target locked (doubled world considerations)
     if (nearestTarget) {
-        // Project target position to screen coordinates
-        const targetScreen = nearestTarget.position.clone().project(camera);
+        // Project target position to screen coordinates (reuse pooled vector)
+        if (!updateTargetLock._scr) updateTargetLock._scr = new THREE.Vector3();
+        const targetScreen = updateTargetLock._scr.copy(nearestTarget.position).project(camera);
         
         // Check if target is visible on screen
         if (targetScreen.z < 1) { // Target is in front of camera

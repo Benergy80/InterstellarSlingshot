@@ -7,6 +7,7 @@
 const cameraState = {
     mode: 'first-person',  // Start in first-person (cockpit view)
     playerShipMesh: null,  // Reference to the player ship 3D model
+    _cachedChildMeshes: null, // Cached child mesh list to avoid traverse() every frame
     thirdPersonDistance: 1,   // Distance multiplier for third-person view
     thirdPersonHeight: 0.5,   // Height multiplier for third-person view
     smoothing: 0.15,          // Camera smoothing factor (lower = smoother)
@@ -325,18 +326,20 @@ function updateCameraView(camera) {
         }
     }
 
-    if (hideShip) {
-        cameraState.playerShipMesh.visible = false;
+    // Use cached child list instead of traverse() — traverse walks the entire
+    // subtree every frame (3000+ visibility toggles/sec on a 50-child model).
+    // Cache is populated on first access and invalidated only if the mesh changes.
+    if (!cameraState._cachedChildMeshes || cameraState._cachedChildMeshes._parent !== cameraState.playerShipMesh) {
+        cameraState._cachedChildMeshes = [];
+        cameraState._cachedChildMeshes._parent = cameraState.playerShipMesh;
         cameraState.playerShipMesh.traverse((child) => {
-            if (child.isMesh) child.visible = false;
-        });
-    } else {
-        cameraState.playerShipMesh.visible = true;
-        // CRITICAL: Force ALL child meshes visible (fixes warp disappearing issue)
-        cameraState.playerShipMesh.traverse((child) => {
-            if (child.isMesh) child.visible = true;
+            if (child.isMesh) cameraState._cachedChildMeshes.push(child);
         });
     }
+    const vis = !hideShip;
+    cameraState.playerShipMesh.visible = vis;
+    const cached = cameraState._cachedChildMeshes;
+    for (let i = 0; i < cached.length; i++) cached[i].visible = vis;
 
     // Calculate offset (with animation if transitioning)
     let currentOffset;

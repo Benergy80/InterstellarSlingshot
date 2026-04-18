@@ -3,8 +3,11 @@
 // CLEANED: Removed stub functions, duplicate gameState, competing initialization
 // RESTORED: Working audio system, UI buttons, mouse crosshair, tutorial from game-controls13.js
 
-// Active lasers array - tracks beams that move with the ship
+// Active lasers array - tracks beams that move with the ship.
+// Hard-capped at 30 entries; oldest are evicted when full so the
+// array can't grow unbounded during long demo sessions.
 const activeLasers = [];
+const LASER_ARRAY_CAP = 30;
 
 // Global key state
 const keys = {
@@ -2606,6 +2609,10 @@ function createLaserBeam(startPos, endPos, color = '#00ff96', isPlayer = true) {
                 lastCameraPos: camera.position.clone(),
                 opacity: 0.8
             };
+            if (activeLasers.length >= LASER_ARRAY_CAP) {
+                const old = activeLasers.shift();
+                if (old && old.beam) { old.beam.visible = false; }
+            }
             activeLasers.push(laserData);
         } else {
             enemyLaserData = {
@@ -2617,6 +2624,10 @@ function createLaserBeam(startPos, endPos, color = '#00ff96', isPlayer = true) {
                 opacity: 0.8,
                 createdAt: Date.now()
             };
+            if (activeEnemyLasers.length >= LASER_ARRAY_CAP) {
+                const old = activeEnemyLasers.shift();
+                if (old && old.beam) { old.beam.visible = false; }
+            }
             activeEnemyLasers.push(enemyLaserData);
         }
 
@@ -2768,8 +2779,12 @@ function createThirdPersonBeam(startPos, endPos, color) {
             lastCameraPos: creationCameraPos,
             opacity: 0.9
         };
+        if (activeLasers.length >= LASER_ARRAY_CAP) {
+            const old = activeLasers.shift();
+            if (old && old.beam) { old.beam.visible = false; }
+        }
         activeLasers.push(laserData);
-        
+
         // 400 ms fade — matches createLaserBeam (0.9 start / 0.055 per
         // 25 ms = ~16 ticks = 400 ms).  Keeps player and enemy beams
         // visible on screen for the same duration.
@@ -2797,20 +2812,19 @@ function createThirdPersonBeam(startPos, endPos, color) {
     }
 }
 
-// Update active lasers to track with ship movement - call this in animate()
+// Reusable delta vector — avoids `new THREE.Vector3()` every frame in
+// updateActiveLasers + updateMuzzleFlashes (was creating 60+ objects/sec).
+const _laserDelta = new THREE.Vector3();
+
 function updateActiveLasers() {
     if (typeof camera === 'undefined') return;
-    
     const currentCameraPos = camera.position;
-    
-    // Update laser beams
-    for (const laserData of activeLasers) {
-        const delta = new THREE.Vector3().subVectors(currentCameraPos, laserData.lastCameraPos);
-        laserData.beam.position.add(delta);
-        laserData.lastCameraPos.copy(currentCameraPos);
+    for (let i = 0; i < activeLasers.length; i++) {
+        const ld = activeLasers[i];
+        _laserDelta.subVectors(currentCameraPos, ld.lastCameraPos);
+        ld.beam.position.add(_laserDelta);
+        ld.lastCameraPos.copy(currentCameraPos);
     }
-    
-    // Also update muzzle flashes
     updateMuzzleFlashes();
 }
 
@@ -2848,8 +2862,12 @@ function createMuzzleFlash(position) {
         lastCameraPos: camera.position.clone(),
         opacity: 1.0
     };
+    if (activeMuzzleFlashes.length >= 20) {
+        const old = activeMuzzleFlashes.shift();
+        if (old && old.mesh) { old.mesh.visible = false; }
+    }
     activeMuzzleFlashes.push(flashData);
-    
+
     // Quick fade out
     const fadeInterval = setInterval(() => {
         flashData.opacity -= 0.3;
@@ -2869,13 +2887,12 @@ function createMuzzleFlash(position) {
 // Update muzzle flashes to track with ship - called from updateActiveLasers
 function updateMuzzleFlashes() {
     if (typeof camera === 'undefined' || activeMuzzleFlashes.length === 0) return;
-    
     const currentCameraPos = camera.position;
-    
-    for (const flashData of activeMuzzleFlashes) {
-        const delta = new THREE.Vector3().subVectors(currentCameraPos, flashData.lastCameraPos);
-        flashData.mesh.position.add(delta);
-        flashData.lastCameraPos.copy(currentCameraPos);
+    for (let i = 0; i < activeMuzzleFlashes.length; i++) {
+        const fd = activeMuzzleFlashes[i];
+        _laserDelta.subVectors(currentCameraPos, fd.lastCameraPos);
+        fd.mesh.position.add(_laserDelta);
+        fd.lastCameraPos.copy(currentCameraPos);
     }
 }
 

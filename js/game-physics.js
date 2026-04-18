@@ -30,45 +30,40 @@ const rotationalInertia = {
     fastMaxSpeed: 0.022         // Faster max turn speed
 };
 
+// Pooled vectors for orientTowardsTarget — called every frame, was creating
+// 3+ Vector3s + 1 Quaternion per call = 240+ allocations/sec at 60 fps.
+const _ortDir = new THREE.Vector3();
+const _ortFwd = new THREE.Vector3();
+const _ortAxis = new THREE.Vector3();
+
 function orientTowardsTarget(target) {
     if (!target || typeof camera === 'undefined') return false;
-    
-    // Get direction to target
-    const direction = new THREE.Vector3().subVectors(target.position, camera.position).normalize();
-    
-    // Get current camera forward direction
-    const currentForward = new THREE.Vector3();
-    camera.getWorldDirection(currentForward);
-    
-    // Calculate the angle between current direction and target direction
-    const angle = currentForward.angleTo(direction);
-    
-    // If already oriented (within 5 degrees), return true
+
+    _ortDir.subVectors(target.position, camera.position).normalize();
+    camera.getWorldDirection(_ortFwd);
+    const angle = _ortFwd.angleTo(_ortDir);
+
     const orientationThreshold = 0.087; // ~5 degrees
     if (angle < orientationThreshold) {
         return true;
     }
+
+    _ortAxis.crossVectors(_ortFwd, _ortDir).normalize();
     
-    // Calculate rotation axis using cross product
-    const rotationAxis = new THREE.Vector3().crossVectors(currentForward, direction).normalize();
-    
-    // If vectors are parallel/anti-parallel, use world up as rotation axis
-    if (rotationAxis.length() < 0.001) {
-        rotationAxis.set(0, 1, 0);
+    if (_ortAxis.length() < 0.001) {
+        _ortAxis.set(0, 1, 0);
     }
-    
-    // Create smooth rotation towards target
-    const rotationSpeed = 0.03; // Smooth rotation speed
-    const maxRotationPerFrame = 0.05; // Maximum rotation per frame to prevent flipping
-    
+
+    const rotationSpeed = 0.03;
+    const maxRotationPerFrame = 0.05;
     const rotationAmount = Math.min(angle * rotationSpeed, maxRotationPerFrame);
-    
-    // Create quaternion for the rotation
-    const quaternion = new THREE.Quaternion().setFromAxisAngle(rotationAxis, rotationAmount);
-    
-    // Apply rotation to camera while preserving roll
-    const currentQuaternion = camera.quaternion.clone();
-    camera.quaternion.multiplyQuaternions(quaternion, currentQuaternion);
+
+    // Reuse a module-level quaternion to avoid per-frame allocation
+    if (!orientTowardsTarget._quat) orientTowardsTarget._quat = new THREE.Quaternion();
+    if (!orientTowardsTarget._curQ) orientTowardsTarget._curQ = new THREE.Quaternion();
+    orientTowardsTarget._quat.setFromAxisAngle(_ortAxis, rotationAmount);
+    orientTowardsTarget._curQ.copy(camera.quaternion);
+    camera.quaternion.multiplyQuaternions(orientTowardsTarget._quat, orientTowardsTarget._curQ);
     
     // Update tracking for compatibility
     cameraRotationTracking.x = camera.rotation.x;
