@@ -229,7 +229,9 @@
     if (fc % 6 === 0)  { preemptiveShields(); }
     autoReadAnyTransmission();
     hideStaleLasers();
+    sweepOldExplosions();
     swarmEnemiesNearPlayer();
+    demoRollAndBoost(fc);
 
     // Clear movement keys each frame; we set what we need below
     releaseMovementKeys();
@@ -1110,6 +1112,52 @@
         // .visible=false may still contribute to the composite frame
         if (ld.material)     ld.material.opacity     = 0;
         if (ld.glowMaterial) ld.glowMaterial.opacity = 0;
+      }
+    }
+  }
+
+  // Force-complete any explosion that's been running longer than 1.5 s.
+  // Like hideStaleLasers, we don't fight the manager — we just set the
+  // explosion's opacity/particleLife to 0 so its own update() returns false
+  // on the next tick and the manager cleans it up naturally.
+  function sweepOldExplosions() {
+    if (typeof explosionManager === 'undefined') return;
+    const exps = explosionManager.activeExplosions;
+    if (!exps || !exps.length) return;
+    const now = Date.now();
+    for (let i = 0; i < exps.length; i++) {
+      const ex = exps[i];
+      if (!ex) continue;
+      if (!ex._demoCreatedAt) ex._demoCreatedAt = now;
+      if (now - ex._demoCreatedAt > 1500) {
+        // Zero the animation variables so the manager's next update()
+        // returns false and runs cleanup().  We touch nothing else.
+        if (ex.update) {
+          // Patch the update to return false immediately
+          ex.update = () => false;
+        }
+      }
+    }
+  }
+
+  // Periodic barrel roll + short W-tap boosts for cinematic flight.
+  // Roll: 4 s of gentle roll every ~18 s.
+  // Boost: brief keys.b pulse every ~8 s while cruising (not in combat).
+  function demoRollAndBoost(fc) {
+    const k = keys();
+
+    // Roll: every ~18 s, apply a short roll input for ~4 s (~240 frames)
+    const rollCycle = fc % 1080; // 1080 frames = 18 s at 60fps
+    if (rollCycle >= 0 && rollCycle < 240) {
+      k.q = (rollCycle < 120); // first half: roll left
+      k.e = (rollCycle >= 120); // second half: roll right (cancel)
+    }
+
+    // Short boost pulse every ~8 s for 0.5 s, only during travel phases
+    if (ap.phase !== 'combat' && ap.phase !== 'fightBorg') {
+      const boostCycle = fc % 480; // 480 frames = 8 s
+      if (boostCycle >= 0 && boostCycle < 30) {
+        k.b = true;
       }
     }
   }
