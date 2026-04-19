@@ -80,6 +80,7 @@
     suppressIntro: false, // true when demo mode is active — skip Intro.mp3
     volumeScale: CALM_VOLUME_SCALE,  // current ducking multiplier (0..1)
     volumeScaleTimer: null,
+    skipLockUntil: 0,     // while > Date.now(), skip-selected track is preserved
   };
 
   // ─── Preload ──────────────────────────────────────────────────────────────
@@ -308,6 +309,11 @@
 
     // Dynamic ducking — swell during combat, soften in calm.
     updateDuckingForCombat();
+
+    // Skip lock — when the player just pressed Skip to pick a specific
+    // track, don't let the context detector yank them back to the
+    // location-appropriate track for a while.  Lock auto-expires.
+    if (Date.now() < st.skipLockUntil) return;
 
     // 1) Launch screen (game not started)
     if (typeof gameState === 'undefined' || !gameState.gameStarted) {
@@ -582,12 +588,14 @@
       dbg('skip click → current=' + st.current + ' muted=' + st.muted);
       e.preventDefault();
       e.stopPropagation();
-      // Skip implies "play something now" — if the user muted and is now
-      // hitting skip, unmute so the next track actually starts.
       if (st.muted) {
         dbg('  skip while muted → unmuting');
         st.muted = false;
       }
+      // Lock the context detector for 2 minutes so the skipped-to track
+      // isn't immediately yanked back by the location detector.  Each
+      // subsequent Skip click extends the lock.
+      st.skipLockUntil = Date.now() + 120000;
       try {
         if (typeof window.resumeAudioContext === 'function') window.resumeAudioContext();
       } catch (err) { /* ignore */ }
