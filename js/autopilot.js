@@ -162,40 +162,9 @@
       }
     }
 
-    // 4) Discovery paths with no live enemies near their endpoint
-    if (typeof window !== 'undefined' && window.discoveryPaths) {
-      const paths = window.discoveryPaths;
-      for (let i = paths.length - 1; i >= 0; i--) {
-        const p = paths[i];
-        if (!p) { paths.splice(i, 1); removedPaths++; continue; }
-        const endPos = p.line && p.line.userData && p.line.userData.endPosition;
-        if (!endPos) continue;
-        let anyAlive = false;
-        if (typeof enemies !== 'undefined') {
-          for (let j = 0; j < enemies.length; j++) {
-            const e = enemies[j];
-            if (!e || !e.userData || e.userData.health <= 0) continue;
-            if (e.position.distanceTo(endPos) < 3500) { anyAlive = true; break; }
-          }
-        }
-        if (!anyAlive) {
-          try {
-            if (p.line) {
-              scene.remove(p.line);
-              if (p.line.geometry) p.line.geometry.dispose();
-              if (p.line.material) p.line.material.dispose();
-            }
-            if (p.particles) {
-              scene.remove(p.particles);
-              if (p.particles.geometry) p.particles.geometry.dispose();
-              if (p.particles.material) p.particles.material.dispose();
-            }
-          } catch (_) {}
-          paths.splice(i, 1);
-          removedPaths++;
-        }
-      }
-    }
+    // 4) Discovery paths intentionally NOT cleaned up here — they're
+    // persistent mission markers (see game-physics.js: animateDiscoveryPaths
+    // flips them white on completion instead of deleting).
 
     // 5) Force-cleanup star-trail DOM elements older than 1 s (hyperspace
     // effect — fires on every W-thrust, each creating 30 .star-trail
