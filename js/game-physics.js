@@ -3331,6 +3331,21 @@ function createDiscoveryPathToPosition(nebulaPosition, targetPosition, factionCo
     const startPos = nebulaPosition.clone();
     const endPos = targetPosition.clone();
 
+    // Snapshot the live enemies that belong to this mission's galaxy.
+    // Completion is based on these specific enemies being dead, not a
+    // proximity check (which fails when enemies are spread far from
+    // the endpoint centroid).
+    const missionEnemies = [];
+    if (typeof enemies !== 'undefined' && galaxyId >= 0) {
+        for (let i = 0; i < enemies.length; i++) {
+            const e = enemies[i];
+            if (!e || !e.userData || e.userData.health <= 0) continue;
+            if (e.userData.galaxyId === galaxyId) {
+                missionEnemies.push(e);
+            }
+        }
+    }
+
     // Create points along the path.  40 segments is plenty for a smooth
     // curved line — was 100, which meant ~100 dashed segments per path.
     // Dashed-line rendering is expensive on GPU, so fewer segments keeps
@@ -3391,7 +3406,9 @@ function createDiscoveryPathToPosition(nebulaPosition, targetPosition, factionCo
         particles: glowParticles,
         faction: factionName,
         pathType: pathType,
-        originalColor: factionColor
+        originalColor: factionColor,
+        galaxyId: galaxyId !== undefined ? galaxyId : -1,
+        missionEnemies: missionEnemies
     });
 
     console.log(`🛤️ Discovery path (${pathType}) created to ${factionName} territory`);
@@ -3916,47 +3933,48 @@ function animateDiscoveryPaths() {
             }
         }
 
-        // Mission-status check — flip color to white if every target
-        // enemy within the endpoint's radius is dead.
+        // Mission-status check — based on the specific enemies that were
+        // alive when this path was created, not a radius check (which
+        // failed because galaxy enemies can be spread far from any one
+        // endpoint).  30-second grace period so new paths don't flip
+        // white before the player has a chance to follow them.
         if (doMissionCheck) {
-            const endPos = path.line.userData && path.line.userData.endPosition;
-            if (!endPos) continue;
+            const createdAt = path.line.userData.createdAt || 0;
+            if (Date.now() - createdAt < 30000) continue;   // grace period
 
+            const tracked = path.missionEnemies;
             let alive = false;
-            if (typeof enemies !== 'undefined') {
-                for (let j = 0; j < enemies.length; j++) {
-                    const e = enemies[j];
-                    if (!e || !e.userData || e.userData.health <= 0) continue;
-                    if (e.position.distanceTo(endPos) < DISCOVERY_MISSION_RADIUS) {
+            if (tracked && tracked.length > 0) {
+                for (let j = 0; j < tracked.length; j++) {
+                    const e = tracked[j];
+                    if (e && e.userData && e.userData.health > 0) {
                         alive = true;
                         break;
                     }
                 }
+            } else {
+                alive = true;  // no tracked enemies → never auto-complete
             }
 
             const wasComplete = path.line.userData.missionComplete;
             if (!alive && !wasComplete) {
-                // Mission complete — turn white and spawn a boss
                 path.line.userData.missionComplete = true;
                 mat.color.copy(MISSION_COMPLETE_COLOR);
                 if (path.particles && path.particles.material) {
                     path.particles.material.color.copy(MISSION_COMPLETE_COLOR);
                 }
-                // Spawn a boss at the endpoint — the reward for clearing the enemies
-                const faction = path.faction || path.line.userData.faction || '';
-                const ud = path.line.userData;
-                const galaxyId = ud.galaxyId !== undefined ? ud.galaxyId : _guessGalaxyFromFaction(faction);
-                if (galaxyId >= 0 && typeof spawnBossForArea === 'function') {
-                    const areaKey = galaxyId + '-mission_' + i;
+                const gId = path.galaxyId !== undefined ? path.galaxyId
+                    : (path.line.userData.galaxyId !== undefined ? path.line.userData.galaxyId : -1);
+                if (gId >= 0 && typeof spawnBossForArea === 'function') {
+                    const areaKey = gId + '-mission_' + i;
                     if (!bossSystem || !bossSystem.areaBosses || !bossSystem.areaBosses[areaKey]) {
-                        spawnBossForArea(galaxyId, 'cosmic_feature', areaKey);
+                        spawnBossForArea(gId, 'cosmic_feature', areaKey);
                         if (typeof showAchievement === 'function') {
                             showAchievement('Boss Incoming!', 'All hostiles cleared — a boss has appeared!', true);
                         }
                     }
                 }
             } else if (alive && wasComplete) {
-                // New enemies spawned in range — restore original color
                 path.line.userData.missionComplete = false;
                 const orig = path.originalColor || path.line.userData.originalColor;
                 if (orig !== undefined) {
