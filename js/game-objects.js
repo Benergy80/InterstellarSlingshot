@@ -7910,16 +7910,16 @@ function createEnhancedPlanetClustersInNebulas() {
                 let planetSize;
                 const distanceFactor = p / planetCount;
                 
-                // Doubled sizes so nebula planets read clearly against
-                // ship/enemy scale (enemies are scaled 96-144x in world).
+                // 4x from original, 2x from previous — planets should
+                // now clearly dwarf the player ship.
                 if (distanceFactor < 0.2) {
-                    planetSize = 6 + Math.random() * 10;   // 6-16 (was 3-8)
+                    planetSize = 12 + Math.random() * 20;   // 12-32
                 } else if (distanceFactor < 0.5) {
-                    planetSize = 10 + Math.random() * 16;  // 10-26 (was 5-13)
+                    planetSize = 20 + Math.random() * 32;   // 20-52
                 } else if (distanceFactor < 0.8) {
-                    planetSize = 20 + Math.random() * 30;  // 20-50 (was 10-25)
+                    planetSize = 40 + Math.random() * 60;   // 40-100
                 } else {
-                    planetSize = 14 + Math.random() * 20;  // 14-34 (was 7-17)
+                    planetSize = 28 + Math.random() * 40;   // 28-68
                 }
                 
                 const planetGeometry = new THREE.SphereGeometry(planetSize, 32, 32);
