@@ -131,24 +131,24 @@ function createExoticSystem(center, name, centerType, systemId) {
         createSystemSolarStorm(center, systemGroup);
     }
 
-    // Orbiting brown dwarfs (2-4)
+    // Orbiting brown dwarfs (2-4) — orbit radii 2x for larger planets
     const brownDwarfCount = 2 + Math.floor(Math.random() * 3);
     for (let i = 0; i < brownDwarfCount; i++) {
-        const orbitRadius = 800 + Math.random() * 1200;
+        const orbitRadius = 1600 + Math.random() * 2400;
         createOrbitingBrownDwarf(center, orbitRadius, i, systemGroup);
         createSystemOrbitLine(center, orbitRadius, systemGroup);
     }
 
-    // Orbiting pulsars (1-3)
+    // Orbiting pulsars (1-3) — orbit radii 2x
     const pulsarCount = 1 + Math.floor(Math.random() * 3);
     for (let i = 0; i < pulsarCount; i++) {
-        const orbitRadius = 1500 + Math.random() * 1500;
+        const orbitRadius = 3000 + Math.random() * 3000;
         createOrbitingPulsar(center, orbitRadius, i, systemGroup);
         createSystemOrbitLine(center, orbitRadius, systemGroup);
     }
 
-    // Asteroid field
-    const asteroidOrbitRadius = 600 + Math.random() * 800;
+    // Asteroid field — orbit radius 2x
+    const asteroidOrbitRadius = 1200 + Math.random() * 1600;
     const asteroidCount = 20 + Math.floor(Math.random() * 30);
     for (let i = 0; i < asteroidCount; i++) {
         createOrbitingAsteroid(center, asteroidOrbitRadius, i, systemGroup);
@@ -157,7 +157,7 @@ function createExoticSystem(center, name, centerType, systemId) {
     createSystemOrbitLine(center, asteroidOrbitRadius, systemGroup);
 
     // CREATE STARFIELD FOR THIS SYSTEM
-    const maxOrbitRadius = 1500 + 1500; // Max pulsar orbit
+    const maxOrbitRadius = 3000 + 3000; // Max pulsar orbit (2x)
     const starfieldRadius = maxOrbitRadius * 0.5;
     createSystemStarfield(starfieldRadius, systemGroup);
 
@@ -240,7 +240,8 @@ function createBorgSystem(center, systemId) {
     let maxOrbitRadius = 0;
 
     for (let i = 0; i < planetCount; i++) {
-        const orbitRadius = 800 + (i * 600) + Math.random() * 400;
+        // Orbit radii 2x for larger planets
+        const orbitRadius = 1600 + (i * 1200) + Math.random() * 800;
         maxOrbitRadius = Math.max(maxOrbitRadius, orbitRadius);
         createOrbitingPlanet(systemGroup, orbitRadius, i);
         createSystemOrbitLine(center, orbitRadius, systemGroup);
@@ -270,7 +271,7 @@ function createBorgSystem(center, systemId) {
 // =============================================================================
 
 function createSystemSupernova(center, systemGroup) {
-    const coreGeo = new THREE.SphereGeometry(80, 32, 32);
+    const coreGeo = new THREE.SphereGeometry(160, 32, 32);
     const coreMat = new THREE.MeshStandardMaterial({
         color: 0xff6600,
         emissive: 0xff6600,
@@ -318,7 +319,7 @@ function createSystemSupernova(center, systemGroup) {
 }
 
 function createSystemPlasmaStorm(center, systemGroup) {
-    const coreGeo = new THREE.SphereGeometry(60, 32, 32);
+    const coreGeo = new THREE.SphereGeometry(120, 32, 32);
     const coreMat = new THREE.MeshStandardMaterial({
         color: 0xaa44ff,
         emissive: 0xaa44ff,
@@ -369,7 +370,7 @@ function createSystemPlasmaStorm(center, systemGroup) {
 }
 
 function createSystemSolarStorm(center, systemGroup) {
-    const coreGeo = new THREE.SphereGeometry(70, 32, 32);
+    const coreGeo = new THREE.SphereGeometry(140, 32, 32);
     const coreMat = new THREE.MeshStandardMaterial({
         color: 0xffff00,
         emissive: 0xffff00,
@@ -429,7 +430,7 @@ function createSystemSolarStorm(center, systemGroup) {
 // =============================================================================
 
 function createOrbitingBrownDwarf(center, orbitRadius, index, systemGroup) {
-    const geo = new THREE.SphereGeometry(35, 24, 24);
+    const geo = new THREE.SphereGeometry(70, 24, 24);
     const mat = new THREE.MeshStandardMaterial({
         color: 0x8b4513,
         metalness: 0.3,
@@ -454,7 +455,7 @@ function createOrbitingBrownDwarf(center, orbitRadius, index, systemGroup) {
         systemId: systemGroup.userData.systemId,
         systemName: systemGroup.userData.name,
         location: 'Unexplored Interstellar Space',
-        radius: 35,
+        radius: 70,
         mass: 0.08,
         slingshotMultiplier: 1.3,
         isOuterSystem: true
@@ -467,7 +468,7 @@ function createOrbitingBrownDwarf(center, orbitRadius, index, systemGroup) {
 }
 
 function createOrbitingPulsar(center, orbitRadius, index, systemGroup) {
-    const coreGeo = new THREE.SphereGeometry(20, 16, 16);
+    const coreGeo = new THREE.SphereGeometry(40, 16, 16);
     const coreMat = new THREE.MeshStandardMaterial({
         color: 0x44eeff,
         emissive: 0x44eeff,
@@ -484,7 +485,7 @@ function createOrbitingPulsar(center, orbitRadius, index, systemGroup) {
         Math.sin(angle) * orbitRadius
     );
 
-    const ringGeo = new THREE.TorusGeometry(40, 3, 8, 32);
+    const ringGeo = new THREE.TorusGeometry(80, 6, 8, 32);
     const ringMat = new THREE.MeshBasicMaterial({
         color: 0x88ffff,
         transparent: true,
@@ -505,7 +506,7 @@ function createOrbitingPulsar(center, orbitRadius, index, systemGroup) {
         systemId: systemGroup.userData.systemId,
         systemName: systemGroup.userData.name,
         location: 'Unexplored Interstellar Space',
-        radius: 20,
+        radius: 40,
         mass: 1.4,
         slingshotMultiplier: 2.5,
         isOuterSystem: true
@@ -558,7 +559,7 @@ function createOrbitingAsteroid(center, orbitRadius, index, systemGroup) {
 // =============================================================================
 
 function createBrightStar(systemGroup, starType) {
-    const starRadius = 100 + Math.random() * 50;
+    const starRadius = 200 + Math.random() * 100;
 
     const starGeo = new THREE.SphereGeometry(starRadius, 32, 32);
     const starMat = new THREE.MeshStandardMaterial({
@@ -615,7 +616,7 @@ function createBrightStar(systemGroup, starType) {
 // =============================================================================
 
 function createOrbitingPlanet(systemGroup, orbitRadius, index) {
-    const planetRadius = 20 + Math.random() * 40;
+    const planetRadius = 40 + Math.random() * 80;
 
     const planetColors = [
         0x8B7355, 0x4A90E2, 0xE86A17, 0x9B59B6,
@@ -1119,7 +1120,9 @@ function updateOuterSystems() {
 
         // Update orbiters (planets, drones, cosmic features, brown dwarfs, pulsars, asteroids)
         system.userData.orbiters.forEach(orbiter => {
-            if (!orbiter.userData.orbitAngle !== undefined) return;
+            // BUGFIX: was `if (!orbiter.userData.orbitAngle !== undefined)` — operator
+            // precedence made this always truthy, freezing ALL outer system orbiters.
+            if (orbiter.userData.orbitAngle === undefined) return;
 
             orbiter.userData.orbitAngle += orbiter.userData.orbitSpeed;
 

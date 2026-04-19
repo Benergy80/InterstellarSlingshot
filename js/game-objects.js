@@ -7910,18 +7910,16 @@ function createEnhancedPlanetClustersInNebulas() {
                 let planetSize;
                 const distanceFactor = p / planetCount;
                 
+                // Doubled sizes so nebula planets read clearly against
+                // ship/enemy scale (enemies are scaled 96-144x in world).
                 if (distanceFactor < 0.2) {
-                    // Inner rocky planets - LARGER
-                    planetSize = 3 + Math.random() * 5; // Was 1-3.5, now 3-8
+                    planetSize = 6 + Math.random() * 10;   // 6-16 (was 3-8)
                 } else if (distanceFactor < 0.5) {
-                    // Mid-range terrestrial planets - LARGER
-                    planetSize = 5 + Math.random() * 8; // Was 2-6, now 5-13
+                    planetSize = 10 + Math.random() * 16;  // 10-26 (was 5-13)
                 } else if (distanceFactor < 0.8) {
-                    // Outer gas giants - MUCH LARGER
-                    planetSize = 10 + Math.random() * 15; // Was 4-12, now 10-25
+                    planetSize = 20 + Math.random() * 30;  // 20-50 (was 10-25)
                 } else {
-                    // Distant ice giants - LARGER
-                    planetSize = 7 + Math.random() * 10; // Was 3-9, now 7-17
+                    planetSize = 14 + Math.random() * 20;  // 14-34 (was 7-17)
                 }
                 
                 const planetGeometry = new THREE.SphereGeometry(planetSize, 32, 32);
