@@ -259,6 +259,11 @@
     if (!ap.active) return;
     ap.active = false;
     releaseKeys();
+    // Disengage auto-navigate so player has full manual control
+    if (typeof gameState !== 'undefined') {
+      gameState.autoNavigating = false;
+      gameState.autoNavOrienting = false;
+    }
     removeHUD();
     document.removeEventListener('keydown', onKeyDown);
     // Restore the original showAchievement
@@ -377,6 +382,8 @@
       }
       if (gameState) {
         gameState.currentTarget = null;
+        gameState.autoNavigating = false;
+        gameState.autoNavOrienting = false;
         // Always unpause on takeover so Tab/Shields/Space all work
         gameState.paused = false;
       }
@@ -567,15 +574,14 @@
       if (typeof populateTargets === 'function') populateTargets();
     }
 
-    // Fly to orbit radius, then orbit
+    // Auto-nav handles both approach and orbital circularization
     const dist = camPos().distanceTo(ap.orbitTarget.position);
-    const radius = Math.max(((ap.orbitTarget.userData && ap.orbitTarget.userData.radius) || 20) * 6, 150);
-    if (dist > radius * 2) {
+    if (dist > 600) {
       setStatus('Approaching ' + (ap.orbitTarget.userData.name || 'planet'));
-      flyToward(ap.orbitTarget.position, 1.8);
+      flyToward(ap.orbitTarget, 1.8);
     } else {
       setStatus('Orbiting ' + (ap.orbitTarget.userData.name || 'planet'));
-      orbitAround(ap.orbitTarget.position, radius);
+      orbitAround(ap.orbitTarget);
     }
 
     // After ~30 s, hand off to enemy-hunt.  A longer intro orbit lets
@@ -620,7 +626,7 @@
       // this distant enemy.  Lock gets set by phaseCombat once we're close.
       gameState.currentTarget = detected;
       // Fly toward it aggressively
-      flyToward(detected.position, 2.5);
+      flyToward(detected, 2.5);
       // Once inside combat range, commit to the engagement
       if (d < 2200) {
         ap.combatTarget = detected;
@@ -641,7 +647,7 @@
       setStatus('Long-range contact — intercepting');
       // Nav panel only — no targetLock at this range
       gameState.currentTarget = farEnemy;
-      flyToward(farEnemy.position, 2.5);
+      flyToward(farEnemy, 2.5);
       return;
     }
 
@@ -719,7 +725,7 @@
 
     if (dist > engageRange) {
       setStatus('Pursuing ' + (enemy.userData.name || 'hostile') + ' — ' + (dist | 0) + ' u');
-      flyToward(enemy.position, 2.5);
+      flyToward(enemy, 2.5);
 
       // Double-tap W Jump when pursuing: any target beyond 2000 u gets the
       // 2-second short warp to close fast.  10 s cooldown + 25 energy
@@ -735,7 +741,7 @@
       }
     } else {
       setStatus('Engaging ' + (enemy.userData.name || 'hostile') + ' — in weapons range');
-      flyToward(enemy.position, 0.8);
+      flyToward(enemy, 0.8);
 
       // Strategic brake: if we're closing too fast and about to overshoot
       // the enemy, tap the brakes to stay in weapons range.  Triggers when
@@ -1039,16 +1045,15 @@
       }
     }
 
-    // Fly to target and orbit slowly
+    // Auto-nav handles approach and orbital circularization
     if (ap.orbitTarget) {
       const dist = camPos().distanceTo(ap.orbitTarget.position);
-      const radius = Math.max(((ap.orbitTarget.userData && ap.orbitTarget.userData.radius) || 20) * 6, 180);
-      if (dist > radius * 2.2) {
+      if (dist > 600) {
         setStatus('Approaching ' + (ap.orbitTarget.userData.name || 'planet'));
-        flyToward(ap.orbitTarget.position, 1.2);
+        flyToward(ap.orbitTarget, 1.2);
       } else {
         setStatus('Slow orbit — ' + (ap.orbitTarget.userData.name || 'planet'));
-        orbitAround(ap.orbitTarget.position, radius);
+        orbitAround(ap.orbitTarget);
       }
     }
 
@@ -1151,7 +1156,7 @@
 
     if (distToBH > 500) {
       setStatus('Approaching ' + (ap.currentBH.userData.name || 'black hole') + ' — ' + (distToBH | 0));
-      flyToward(ap.currentBH.position, 2.5);
+      flyToward(ap.currentBH, 2.5);
     } else {
       // Close to event horizon — switch to warp phase (physics takes over)
       setStatus('Event horizon — initiating warp');
@@ -1371,8 +1376,8 @@
       ap.combatTarget = target;
       const dist = camPos().distanceTo(target.position);
       setStatus('ENGAGING BORG — ' + (dist | 0) + ' units');
-      if (dist > 800) flyToward(target.position, 2.0);
-      else            flyToward(target.position, 0.8);
+      if (dist > 800) flyToward(target, 2.0);
+      else            flyToward(target, 0.8);
 
       const engageRange = (target.userData && target.userData.firingRange) || 500;
       const aimDummy = { position: target.position };
@@ -1417,105 +1422,34 @@
 
   // Reusable vectors to avoid per-frame allocation
   const _flyVec = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
-  const _flyDummy = { position: null };
-  const _avoidToP = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
-  const _avoidFwd = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
-  const _avoidRight = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
 
   function flyToward(pos, speedMult) {
+    if (typeof gameState === 'undefined') return;
     speedMult = speedMult || 1.0;
-    let target;
-    if (pos && pos.position) { target = pos.position; }
-    else if (pos && pos.isVector3) { target = pos; }
-    else if (_flyVec) { target = _flyVec.set(pos.x || 0, pos.y || 0, pos.z || 0); }
-    else { return; }
-    _flyDummy.position = target;
-    if (window.orientTowardsTarget) window.orientTowardsTarget(_flyDummy);
-    const k = keys();
-    k.w = true;
-    if (speedMult > 1.5) k.b = true;
-    // Planet collision avoidance — steer away from any non-target body
-    // in the ship's flight path.
-    avoidPlanetCollision(target);
-  }
 
-  // Scan for any planet/star/black-hole directly ahead within 1500 u.
-  // If the projected miss-distance is smaller than the body's radius plus
-  // a safety margin, apply strafe + brake inputs to dodge.  The body the
-  // autopilot is intentionally targeting (current flight target within
-  // 200 u) is exempt so we can still fly close to our goal.
-  function avoidPlanetCollision(currentTarget) {
-    if (typeof planets === 'undefined' || typeof camera === 'undefined') return;
-    if (!_avoidToP || !_avoidFwd || !_avoidRight) return;
-
-    const SCAN_RANGE = 1500;      // only care about bodies this close
-    const LOOKAHEAD  = 900;       // only consider bodies this far ahead
-    const SAFETY_BUF = 60;        // extra units around each body
-
-    camera.getWorldDirection(_avoidFwd);
-    _avoidRight.crossVectors(_avoidFwd, camera.up).normalize();
-    const cp = camPos();
-
-    let dodgeRight = 0; // > 0 = strafe right, < 0 = strafe left
-    let brake = false;
-    let danger = Infinity;
-
-    for (let i = 0; i < planets.length; i++) {
-      const p = planets[i];
-      if (!p || !p.userData) continue;
-      const ud = p.userData;
-      // Asteroid belts groups are invisible (children are the actual asteroids).
-      // Individual asteroids are too small and numerous to dodge.
-      if (ud.type === 'asteroid' || ud.type === 'asteroidBelt') continue;
-
-      _avoidToP.subVectors(p.position, cp);
-      const dist = _avoidToP.length();
-      if (dist > SCAN_RANGE) continue;
-
-      // Forward projection — how far along our trajectory the body sits.
-      const ahead = _avoidToP.dot(_avoidFwd);
-      if (ahead <= 0 || ahead > LOOKAHEAD) continue;   // behind us or too far
-
-      // Perpendicular distance from our flight line
-      const perp = Math.sqrt(Math.max(0, dist * dist - ahead * ahead));
-      const radius = (ud.radius || ud.warpThreshold || 20);
-      const threshold = radius + SAFETY_BUF;
-      if (perp > threshold) continue;                  // clean miss
-
-      // Don't dodge the body we're actively targeting if we're already close
-      if (currentTarget && p.position.distanceTo(currentTarget) < 200 && dist < 400) {
-        continue;
-      }
-
-      // Choose strafe direction: sign of the right-vector component
-      const rightComponent = _avoidToP.dot(_avoidRight);
-      dodgeRight += rightComponent > 0 ? -1 : 1;  // away from the body
-
-      if (dist < radius + 150) brake = true;          // very close → brake too
-      if (ahead < danger) danger = ahead;
+    // Build or reuse a target object that auto-nav can consume
+    let targetObj;
+    if (pos && pos.userData) {
+      targetObj = pos;
+    } else {
+      if (!ap._navDummy) ap._navDummy = { position: new THREE.Vector3(), userData: {} };
+      if (pos && pos.position) ap._navDummy.position.copy(pos.position);
+      else if (pos && pos.isVector3) ap._navDummy.position.copy(pos);
+      else ap._navDummy.position.set(pos.x || 0, pos.y || 0, pos.z || 0);
+      targetObj = ap._navDummy;
     }
 
-    if (dodgeRight !== 0) {
-      const k2 = keys();
-      if (dodgeRight > 0) { k2.d = true; k2.a = false; }
-      else                { k2.a = true; k2.d = false; }
-      if (brake) { k2.x = true; }
-      setStatus('Avoiding collision — dist ' + (danger | 0) + ' u');
-    }
+    // Delegate movement to the game's auto-navigate system
+    gameState.currentTarget = targetObj;
+    gameState.autoNavigating = true;
+    gameState.autoNavOrienting = true;
+    if (speedMult > 1.5) keys().b = true;
   }
 
-  function orbitAround(centerPos, radius) {
-    ap.orbitAngle += 0.005;
-    const orbitPoint = new THREE.Vector3(
-      centerPos.x + Math.cos(ap.orbitAngle) * radius,
-      centerPos.y + Math.sin(ap.orbitAngle * 0.3) * (radius * 0.2),
-      centerPos.z + Math.sin(ap.orbitAngle) * radius
-    );
-    flyToward(orbitPoint, 1.0);
-    // Gentle strafe to maintain orbit feel
-    const k = keys();
-    k.d = (Math.sin(ap.orbitAngle) > 0);
-    k.a = (Math.sin(ap.orbitAngle) <= 0);
+  function orbitAround(centerObj) {
+    // Auto-nav already handles orbital approach and circularization,
+    // so just keep it pointed at the target.
+    flyToward(centerObj, 1.0);
   }
 
   // Reusable vectors for isInFiringCone to avoid GC pressure

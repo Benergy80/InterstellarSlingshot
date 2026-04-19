@@ -2199,7 +2199,7 @@ function resetCameraToGamePosition() {
     const earthX = localSystemOffset.x + earthDistance;
     const earthY = localSystemOffset.y;
     const earthZ = localSystemOffset.z;
-    camera.position.set(earthX + earthOrbitOffset, earthY + 30, earthZ + earthOrbitOffset * 4);
+    camera.position.set(earthX + earthOrbitOffset, earthY + 120, earthZ + earthOrbitOffset);
     camera.lookAt(new THREE.Vector3(earthX, earthY, earthZ));
 
     // Reset camera rotation tracking
