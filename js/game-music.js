@@ -160,12 +160,22 @@
   }
 
   function play(key) {
-    if (!st.enabled || st.muted) return;
+    if (!st.enabled || st.muted) {
+      if (typeof dbg === 'function') dbg('  play(' + key + ') blocked: enabled=' + st.enabled + ' muted=' + st.muted);
+      return;
+    }
     if (key === st.current) return;
-    if (st.loadErrors.has(key)) return;
+    if (st.loadErrors.has(key)) {
+      if (typeof dbg === 'function') dbg('  play(' + key + ') blocked: load error');
+      return;
+    }
 
     const next = st.loaded[key];
-    if (!next) return;
+    if (!next) {
+      if (typeof dbg === 'function') dbg('  play(' + key + ') blocked: not loaded');
+      return;
+    }
+    if (typeof dbg === 'function') dbg('  play(' + key + ') starting');
 
     // Stop any in-progress fade and silence EVERY other loaded track.
     // This is defensive: if play() was called mid-crossfade before, the
@@ -484,6 +494,42 @@
     get muted()        { return st.muted; },
   };
 
+  // ─── Debug HUD ─────────────────────────────────────────────────────────────
+  // On-screen debug output so we can see soundtrack state without devtools.
+  // Activate by appending ?musicdebug to the URL.  Shows the current track,
+  // mute state, and the last 6 events (click received, play called, etc.).
+  // Default ON so the user can see soundtrack events without devtools.
+  // Hide by appending ?nomusicdebug to the URL.
+  const DEBUG_ON = !(typeof location !== 'undefined' &&
+                     /nomusicdebug/.test(location.search || ''));
+  let debugEl = null;
+  const debugLog = [];
+  function dbg(msg) {
+    const line = '[' + new Date().toISOString().slice(11, 23) + '] ' + msg;
+    console.log('🎵 ' + line);
+    debugLog.push(line);
+    if (debugLog.length > 12) debugLog.shift();
+    if (DEBUG_ON) renderDebug();
+  }
+  function renderDebug() {
+    if (!DEBUG_ON) return;
+    if (!debugEl) {
+      debugEl = document.createElement('div');
+      debugEl.id = 'soundtrackDebug';
+      debugEl.style.cssText =
+        'position:fixed;top:4px;right:4px;z-index:100000;' +
+        'background:rgba(0,0,0,0.85);color:#0ff;font:10px/1.3 monospace;' +
+        'padding:8px;max-width:420px;border:1px solid #0ff;border-radius:4px;' +
+        'pointer-events:none;white-space:pre-wrap;';
+      (document.body || document.documentElement).appendChild(debugEl);
+    }
+    const header =
+      'current=' + st.current + ' muted=' + st.muted +
+      ' enabled=' + st.enabled + ' loaded=' + Object.keys(st.loaded).length +
+      ' errors=' + st.loadErrors.size;
+    debugEl.textContent = header + '\n' + debugLog.join('\n');
+  }
+
   // ─── Button event delegation ──────────────────────────────────────────────
   document.addEventListener('click', function handleSoundtrackButtons(e) {
     const t = e.target;
@@ -491,26 +537,28 @@
 
     const musicBtn = t.closest('#muteBtn, #mobileMusicBtn');
     if (musicBtn) {
+      dbg('music click → was muted=' + st.muted);
       e.preventDefault();
       e.stopPropagation();
-      // Toggle MP3 soundtrack mute (single source of truth)
       st.muted = !st.muted;
       if (st.muted) {
+        dbg('  muting: stopAll()');
         stopAll();
       } else {
-        // Kick the context detector so a track starts playing now
+        dbg('  unmuting: updateMusicContext()');
         updateMusicContext();
       }
-      // Also toggle the synth music system for icon updates
       try {
         if (typeof window.resumeAudioContext === 'function') window.resumeAudioContext();
         if (typeof window.toggleMusic === 'function') window.toggleMusic();
-      } catch (err) { console.warn('toggleMusic error:', err); }
+      } catch (err) { dbg('  toggleMusic threw: ' + err.message); }
+      dbg('  now muted=' + st.muted + ' current=' + st.current);
       return;
     }
 
     const skipBtn = t.closest('#skipTrackBtn, #mobileSkipTrackBtn');
     if (skipBtn) {
+      dbg('skip click → current=' + st.current);
       e.preventDefault();
       e.stopPropagation();
       try {
@@ -522,10 +570,24 @@
 
     const pauseBtn = t.closest('#pauseBtn');
     if (pauseBtn) {
+      dbg('pause click');
       e.preventDefault();
       e.stopPropagation();
       if (typeof window.togglePause === 'function') window.togglePause();
       return;
     }
-  }, true);   // capture phase — beats any later listener that stops propagation
+  }, true);
+
+  // Log at module load so we can confirm game-music.js executed and the
+  // delegation handler registered.
+  dbg('game-music.js delegation handler registered');
+
+  // Log button presence shortly after DOM is ready
+  setTimeout(() => {
+    const ids = ['muteBtn', 'mobileMusicBtn', 'skipTrackBtn', 'mobileSkipTrackBtn', 'pauseBtn'];
+    ids.forEach(id => {
+      const el = document.getElementById(id);
+      dbg('  #' + id + ': ' + (el ? 'FOUND' : 'MISSING'));
+    });
+  }, 2000);
 })();
