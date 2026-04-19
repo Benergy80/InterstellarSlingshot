@@ -12,6 +12,9 @@
 // 40+ getElementById lookups every frame. Cache the refs and re-resolve
 // lazily if the element gets detached (hull overlay, etc).
 const _uiElCache = Object.create(null);
+// Reusable vector for event-horizon world-position queries (avoids
+// per-frame allocation in updateEventHorizonWarnings).
+const _ehwTmpVec = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
 function _uiEl(id) {
     const cached = _uiElCache[id];
     if (cached && cached.isConnected) return cached;
@@ -2011,19 +2014,36 @@ function updateEventHorizonWarnings() {
 
     const ehw = gameState.eventHorizonWarning;
 
-    // Validate the stored blackHole — if it has been despawned (parent
-    // gone), is missing, or we've drifted beyond warning range, clear
-    // the flag here rather than relying on the gravity loop, which only
-    // clears when it iterates the exact same object reference.
-    if (ehw.active && ehw.blackHole) {
+    // Self-validate every frame regardless of what the gravity loop did.
+    // Several scenarios leave the warning stuck (e.g. player warps to
+    // another galaxy and the tracked black hole is no longer in the
+    // active-planets iteration).  Clear the flag if ANY of these hold:
+    //   • active is set but blackHole reference is null
+    //   • blackHole is no longer in the scene (parent === null)
+    //   • blackHole userData lost its type
+    //   • world-space distance from camera exceeds warningDistance
+    if (ehw.active) {
         const bh = ehw.blackHole;
-        const stillInScene = bh.parent && bh.userData && bh.userData.type === 'blackhole';
-        const distance = (typeof camera !== 'undefined') ? camera.position.distanceTo(bh.position) : 0;
-        const warningDistance = ehw.warningDistance || 200;
+        const warningDistance = ehw.warningDistance || 400;
 
-        if (!stillInScene || distance > warningDistance) {
+        let shouldClear = false;
+        if (!bh) {
+            shouldClear = true;
+        } else if (!bh.parent || !bh.userData || bh.userData.type !== 'blackhole') {
+            shouldClear = true;
+        } else if (typeof camera !== 'undefined' && _ehwTmpVec) {
+            bh.getWorldPosition(_ehwTmpVec);
+            const distance = camera.position.distanceTo(_ehwTmpVec);
+            if (distance > warningDistance) shouldClear = true;
+        }
+
+        if (shouldClear) {
             ehw.active = false;
             ehw.blackHole = null;
+            // Immediately hide the DOM so there's no one-frame delay
+            if (eventHorizonWarning) eventHorizonWarning.classList.add('hidden');
+            if (blackHoleWarningHUD) blackHoleWarningHUD.classList.add('hidden');
+            if (gameTitle) gameTitle.classList.remove('title-flash');
         }
     }
 
