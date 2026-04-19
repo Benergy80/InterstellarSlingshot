@@ -280,19 +280,18 @@
       return;
     }
 
-    // 8) Far outer space (beyond galaxy perimeters or near Sagittarius A*)
-    if (gId === 8 || gId < 0) {
-      const farKey = 'farOuter' + (1 + Math.abs((typeof gameState !== 'undefined'
-        ? (gameState.frameCount || 0) : 0) % 3));
-      // Only switch far-outer track if we weren't already playing one
+    // 8) Sagittarius A* area — rotate through Far Outer Galaxy tracks
+    if (gId === 8) {
       if (st.current !== 'farOuter1' && st.current !== 'farOuter2' &&
           st.current !== 'farOuter3') {
+        const farKey = 'farOuter' + (1 + Math.abs((typeof gameState !== 'undefined'
+          ? (gameState.frameCount || 0) : 0) % 3));
         play(farKey);
       }
       return;
     }
 
-    // 9) Default — main theme
+    // 9) Interstellar space — not inside any galaxy's 20,000u perimeter
     play('mainTheme');
   }
 
