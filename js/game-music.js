@@ -23,6 +23,12 @@
   const FADE_DURATION = 2.0;   // seconds for crossfade
   const BASE_PATH = 'audio/soundtrack/';
 
+  // Per-track volume multipliers (relative to st.volume).
+  // Tracks not listed here default to 1.0.
+  const TRACK_VOLUME = {
+    launchScreen: 0.5,   // quieter on the title screen
+  };
+
   // Track registry — keys are logical names, values are file paths.
   const TRACKS = {
     launchScreen:    'Launch Screen.mp3',
@@ -66,13 +72,17 @@
   };
 
   // ─── Preload ──────────────────────────────────────────────────────────────
+  // Tracks that should play once, not loop.  When they finish naturally,
+  // the next context-detection tick picks whatever track is appropriate.
+  const NO_LOOP = new Set(['launchScreen', 'intro']);
+
   function preload() {
     const keys = Object.keys(TRACKS);
     let loadedCount = 0;
     keys.forEach(key => {
       const audio = new Audio();
       audio.preload = 'auto';
-      audio.loop = true;
+      audio.loop = !NO_LOOP.has(key);
       audio.volume = 0;
       audio.src = BASE_PATH + encodeURIComponent(TRACKS[key]);
       audio.addEventListener('canplaythrough', () => {
@@ -90,6 +100,10 @@
   }
 
   // ─── Play / Crossfade ─────────────────────────────────────────────────────
+  function trackVolume(key) {
+    return st.volume * (TRACK_VOLUME[key] || 1.0);
+  }
+
   function play(key) {
     if (!st.enabled || st.muted) return;
     if (key === st.current) return;
@@ -114,7 +128,7 @@
     if (playPromise) playPromise.catch(() => {});
 
     if (!prev) {
-      fadeIn(next);
+      fadeIn(next, key);
       return;
     }
 
@@ -123,14 +137,13 @@
     const interval = (FADE_DURATION * 1000) / steps;
     let step = 0;
     const startVol = prev.volume;
-    const targetVol = st.volume;
+    const targetVol = trackVolume(key);
 
     st.fadingOut = prev;
 
     st.fadeTimer = setInterval(() => {
       step++;
       const t = step / steps;
-      // Ease-out for old, ease-in for new
       prev.volume = Math.max(0, startVol * (1 - t));
       next.volume = Math.min(targetVol, targetVol * t);
 
@@ -145,11 +158,11 @@
     }, interval);
   }
 
-  function fadeIn(el) {
+  function fadeIn(el, key) {
     const steps = 20;
     const interval = (FADE_DURATION * 1000) / steps;
     let step = 0;
-    const target = st.volume;
+    const target = trackVolume(key || st.current);
     const timer = setInterval(() => {
       step++;
       el.volume = Math.min(target, target * (step / steps));
@@ -201,11 +214,33 @@
       return;
     }
 
+    // 1b) Let the launch-screen track finish naturally before switching.
+    if (st.current === 'launchScreen' && st.currentEl) {
+      const el = st.currentEl;
+      const remaining = el.duration - el.currentTime;
+      if (remaining > FADE_DURATION && !el.paused && !el.ended) {
+        return;
+      }
+    }
+
     // 2) Intro sequence running
     if (typeof introSequence !== 'undefined' && introSequence.active &&
         introSequence.phase !== 'complete') {
       play('intro');
       return;
+    }
+
+    // 2b) Let the intro track finish naturally before switching.
+    // The intro sequence can end (active=false) well before the MP3 is
+    // done.  If the intro audio is still playing, don't cut it — wait
+    // until the last few seconds, then let the next context-detection
+    // tick crossfade into the galaxy track.
+    if (st.current === 'intro' && st.currentEl) {
+      const el = st.currentEl;
+      const remaining = el.duration - el.currentTime;
+      if (remaining > FADE_DURATION && !el.paused && !el.ended) {
+        return;  // intro still playing — hold off
+      }
     }
 
     // 3) Borg encounter
