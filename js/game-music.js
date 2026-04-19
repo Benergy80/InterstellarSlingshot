@@ -214,15 +214,6 @@
       return;
     }
 
-    // 1b) Let the launch-screen track finish naturally before switching.
-    if (st.current === 'launchScreen' && st.currentEl) {
-      const el = st.currentEl;
-      const remaining = el.duration - el.currentTime;
-      if (remaining > FADE_DURATION && !el.paused && !el.ended) {
-        return;
-      }
-    }
-
     // 2) Intro sequence running
     if (typeof introSequence !== 'undefined' && introSequence.active &&
         introSequence.phase !== 'complete') {
