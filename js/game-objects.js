@@ -1703,8 +1703,9 @@ function createOptimizedPlanets3D() {
     // =============================================================================
     
     try {
-        // Create Sun
-        const sunGeometry = new THREE.SphereGeometry(8, 24, 24);
+        // Create Sun — 5x bigger so it reads as a proper star next to
+        // scaled-up planets (was 8).
+        const sunGeometry = new THREE.SphereGeometry(40, 32, 32);
         const sunMaterial = new THREE.MeshBasicMaterial({ color: 0xffff44 });
         const sun = new THREE.Mesh(sunGeometry, sunMaterial);
         sun.position.set(localSystemOffset.x, localSystemOffset.y, localSystemOffset.z);
@@ -1763,29 +1764,31 @@ function createOptimizedPlanets3D() {
         return;
     }
     
-    // Create local planets
+    // Create local planets — sizes 4x, orbit distances 2x so the Sol
+    // System matches the scale of the outer interstellar systems and
+    // reads clearly against the ship/enemy size.
     const localPlanets = [
-        { name: 'Earth', distance: 160, size: 5, color: 0x2233ff, moons: [{ name: 'Luna', distance: 30, size: 1.5, color: 0xdddddd }] },
-        { name: 'Venus', distance: 120, size: 4.8, color: 0xffc649, moons: [] },
-        { name: 'Mars', distance: 240, size: 3, color: 0xff4422, moons: [
-            { name: 'Phobos', distance: 16, size: 0.8, color: 0x8b4513 },
-            { name: 'Deimos', distance: 24, size: 0.6, color: 0x696969 }
+        { name: 'Earth', distance: 320, size: 20, color: 0x2233ff, moons: [{ name: 'Luna', distance: 60, size: 6, color: 0xdddddd }] },
+        { name: 'Venus', distance: 240, size: 19, color: 0xffc649, moons: [] },
+        { name: 'Mars', distance: 480, size: 12, color: 0xff4422, moons: [
+            { name: 'Phobos', distance: 32, size: 3, color: 0x8b4513 },
+            { name: 'Deimos', distance: 48, size: 2.5, color: 0x696969 }
         ]},
-        { name: 'Jupiter', distance: 500, size: 15, color: 0xffaa22, moons: [
-            { name: 'Io', distance: 50, size: 1.8, color: 0xffff99 },
-            { name: 'Europa', distance: 64, size: 1.6, color: 0x99ccff },
-            { name: 'Ganymede', distance: 84, size: 2.2, color: 0xcc9966 },
-            { name: 'Callisto', distance: 110, size: 2.0, color: 0x666666 }
+        { name: 'Jupiter', distance: 1000, size: 60, color: 0xffaa22, moons: [
+            { name: 'Io', distance: 100, size: 7, color: 0xffff99 },
+            { name: 'Europa', distance: 128, size: 6.5, color: 0x99ccff },
+            { name: 'Ganymede', distance: 168, size: 9, color: 0xcc9966 },
+            { name: 'Callisto', distance: 220, size: 8, color: 0x666666 }
         ]},
-        { name: 'Saturn', distance: 800, size: 12, color: 0xffdd88, rings: true, moons: [
-            { name: 'Titan', distance: 130, size: 2.5, color: 0xff9933 },
-            { name: 'Enceladus', distance: 90, size: 1.0, color: 0xffffff }
+        { name: 'Saturn', distance: 1600, size: 48, color: 0xffdd88, rings: true, moons: [
+            { name: 'Titan', distance: 260, size: 10, color: 0xff9933 },
+            { name: 'Enceladus', distance: 180, size: 4, color: 0xffffff }
         ]},
-        { name: 'Uranus', distance: 1100, size: 8, color: 0x4fccff, moons: [
-            { name: 'Titania', distance: 84, size: 1.4, color: 0x888888 }
+        { name: 'Uranus', distance: 2200, size: 32, color: 0x4fccff, moons: [
+            { name: 'Titania', distance: 168, size: 5.5, color: 0x888888 }
         ]},
-        { name: 'Neptune', distance: 1400, size: 7, color: 0x4169e1, moons: [
-            { name: 'Triton', distance: 44, size: 1.3, color: 0x99ccff }
+        { name: 'Neptune', distance: 2800, size: 28, color: 0x4169e1, moons: [
+            { name: 'Triton', distance: 88, size: 5, color: 0x99ccff }
         ]}
     ];
     
