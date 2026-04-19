@@ -2189,13 +2189,20 @@ function fadeCountdownTextForGameTransition() {
 }
 
 function resetCameraToGamePosition() {
-    // ADAPTED FOR SPHERICAL UNIVERSE
-    // Reset camera to normal game position (matching createOptimizedPlanets)
-    const localSystemOffset = { x: 2000, y: 0, z: 1200 }; // From createOptimizedPlanets
-    camera.position.set(localSystemOffset.x + 160, localSystemOffset.y + 40, localSystemOffset.z);
-    camera.lookAt(new THREE.Vector3(0, 0, 0)); // Face towards Sagittarius A*
+    // Position the player near Earth, looking at it, with an orbital
+    // velocity so the game opens with a slow orbit around the home planet.
+    const localSystemOffset = { x: 2000, y: 0, z: 1200 };
+    const earthDistance = 640;    // Earth's orbit radius from sun (4x scaled)
+    const earthOrbitOffset = 80;  // camera offset from Earth for a close fly-by
+    // Earth starts at (sun.x + 640, sun.y, sun.z). Place camera just
+    // behind/above Earth so it's visible in the centre of the screen.
+    const earthX = localSystemOffset.x + earthDistance;
+    const earthY = localSystemOffset.y;
+    const earthZ = localSystemOffset.z;
+    camera.position.set(earthX + earthOrbitOffset, earthY + 30, earthZ + earthOrbitOffset);
+    camera.lookAt(new THREE.Vector3(earthX, earthY, earthZ));
 
-    // Reset camera rotation
+    // Reset camera rotation tracking
     if (typeof cameraRotation !== 'undefined') {
         cameraRotation = {
             x: camera.rotation.x,
@@ -2204,16 +2211,28 @@ function resetCameraToGamePosition() {
         };
     }
 
-    // Set initial orbital velocity
+    // Give the ship a gentle orbital velocity tangent to Earth, so
+    // the demo/player starts with a slow arc around the planet.
     if (typeof gameState !== 'undefined' && gameState.velocityVector) {
-        const sunPosition = new THREE.Vector3(localSystemOffset.x, localSystemOffset.y, localSystemOffset.z);
-        const earthPosition = camera.position.clone();
-        const earthToSun = new THREE.Vector3().subVectors(sunPosition, earthPosition).normalize();
-        const orbitalDirection = new THREE.Vector3(-earthToSun.z, 0, earthToSun.x).normalize();
-        gameState.velocityVector = orbitalDirection.multiplyScalar(gameState.minVelocity || 0.2);
+        const earthPos = new THREE.Vector3(earthX, earthY, earthZ);
+        const toEarth = new THREE.Vector3().subVectors(earthPos, camera.position).normalize();
+        const orbitalDir = new THREE.Vector3(-toEarth.z, 0, toEarth.x).normalize();
+        gameState.velocityVector = orbitalDir.multiplyScalar(gameState.minVelocity || 0.2);
     }
 
-    console.log('📍 Camera reset to normal game position in spherical universe');
+    // Lock the Navigation panel on Earth so the player's first target
+    // is their home world.
+    if (typeof gameState !== 'undefined' && typeof planets !== 'undefined') {
+        for (let i = 0; i < planets.length; i++) {
+            if (planets[i].userData && planets[i].userData.name === 'Earth') {
+                gameState.currentTarget = planets[i];
+                if (typeof populateTargets === 'function') populateTargets();
+                break;
+            }
+        }
+    }
+
+    console.log('📍 Camera set to orbit Earth in Sol System');
 }
 
 function fadeOutIntroElements(progress) {
