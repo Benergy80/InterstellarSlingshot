@@ -182,7 +182,10 @@
       if (typeof dbg === 'function') dbg('  play(' + key + ') blocked: not loaded');
       return;
     }
-    if (typeof dbg === 'function') dbg('  play(' + key + ') starting');
+    if (typeof dbg === 'function') {
+      dbg('  play(' + key + ') starting readyState=' + next.readyState +
+          ' paused=' + next.paused + ' src=' + next.src.slice(-30));
+    }
 
     // Stop any in-progress fade and silence EVERY other loaded track.
     // This is defensive: if play() was called mid-crossfade before, the
@@ -213,7 +216,16 @@
       next.currentTime = 0;
     }
     const playPromise = next.play();
-    if (playPromise) playPromise.catch(() => {});
+    if (playPromise) {
+      playPromise.then(() => {
+        if (typeof dbg === 'function') {
+          dbg('  play(' + key + ') OK vol=' + next.volume.toFixed(2) +
+              ' time=' + next.currentTime.toFixed(1));
+        }
+      }).catch(err => {
+        if (typeof dbg === 'function') dbg('  play(' + key + ') REJECTED: ' + err.message);
+      });
+    }
 
     if (!prev) {
       fadeIn(next, key);
@@ -445,9 +457,11 @@
 
   // Skip the current track → fade in a random different track.
   function skipCurrentTrack() {
+    if (typeof dbg === 'function') dbg('  skipCurrentTrack() current=' + st.current);
     const keys = Object.keys(TRACKS).filter(k => k !== st.current);
     if (!keys.length) return;
     const next = keys[Math.floor(Math.random() * keys.length)];
+    if (typeof dbg === 'function') dbg('    picked: ' + next);
     play(next);
   }
 
