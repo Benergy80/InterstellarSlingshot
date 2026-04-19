@@ -2636,12 +2636,10 @@ function createLaserBeam(startPos, endPos, color = '#00ff96', isPlayer = true) {
             activeEnemyLasers.push(enemyLaserData);
         }
 
-        // 400 ms fade: 0.8 opacity / 0.05 per 25 ms interval = 16 ticks = 400 ms.
-        // Same duration for player and enemy beams so incoming fire reads
-        // on screen as long as outgoing fire.
+        // 200 ms fade: 0.8 opacity / 0.1 per 25 ms interval = 8 ticks = 200 ms.
         let opacity = 0.8;
         const fadeInterval = setInterval(() => {
-            opacity -= 0.05;
+            opacity -= 0.1;
             laserMaterial.opacity = opacity;
             glowMaterial.opacity = opacity * 0.4;
 
@@ -2790,11 +2788,9 @@ function createThirdPersonBeam(startPos, endPos, color) {
         }
         activeLasers.push(laserData);
 
-        // 400 ms fade — matches createLaserBeam (0.9 start / 0.055 per
-        // 25 ms = ~16 ticks = 400 ms).  Keeps player and enemy beams
-        // visible on screen for the same duration.
+        // 200 ms fade — 0.9 / 0.11 per 25 ms = ~8 ticks.
         const fadeInterval = setInterval(() => {
-            laserData.opacity -= 0.055;
+            laserData.opacity -= 0.11;
             laserMaterial.opacity = laserData.opacity;
             glowMaterial.opacity = laserData.opacity * 0.4;
             

@@ -3310,7 +3310,7 @@ function findPatrolEnemiesNearCosmicFeatures(galaxyId) {
 }
 
 // Create a path to a position (generalized version)
-function createDiscoveryPathToPosition(nebulaPosition, targetPosition, factionColor, factionName, pathType) {
+function createDiscoveryPathToPosition(nebulaPosition, targetPosition, factionColor, factionName, pathType, galaxyId) {
     if (!scene || !THREE) return null;
 
     const startPos = nebulaPosition.clone();
@@ -3355,13 +3355,14 @@ function createDiscoveryPathToPosition(nebulaPosition, targetPosition, factionCo
 
     pathLine.userData = {
         type: 'discovery_path',
-        pathType: pathType, // 'core' or 'patrol'
+        pathType: pathType,
         faction: factionName,
+        galaxyId: galaxyId !== undefined ? galaxyId : -1,
         startPosition: startPos.clone(),
         endPosition: endPos.clone(),
         createdAt: Date.now(),
-        originalColor: factionColor,   // preserved for mission-incomplete state
-        missionComplete: false         // flips true when all target enemies are dead
+        originalColor: factionColor,
+        missionComplete: false
     };
 
     // Add glow particles along the path
@@ -3629,115 +3630,61 @@ function checkForNebulaDeepDiscovery() {
         console.log(`🌌 ${nebulaType} nebula "${nebulaName}" → Galaxy ${galaxyId} (${factionName})`);
 
         if (nebulaType === 'clustered') {
-            // CLUSTERED: Paired system - even index = core stronghold, odd = patrol routes
+            // ALL paths lead to enemy clusters near cosmic features.
+            // Even index = "stronghold" (larger cluster), odd = "patrol"
+            // (smaller cluster at a different feature).
             const isCorePath = (index % 2 === 0);
+            const patrolData = findPatrolEnemiesNearCosmicFeatures(galaxyId);
 
-            if (isCorePath) {
-                // PATH TO BLACK HOLE CORE
+            if (patrolData) {
                 createDiscoveryPathToPosition(
                     nebula.position,
-                    galaxyCore.position,
+                    patrolData.position,
                     loreData.color,
                     factionName,
-                    'core'
+                    isCorePath ? 'core' : 'patrol',
+                    galaxyId
                 );
 
                 playDeepDiscoverySound();
 
-                // Build transmission with BOTH faction lore AND nebula-specific lore
+                let locationInfo = '';
+                if (patrolData.cosmicFeature) {
+                    locationInfo = `Our sensors have detected ${patrolData.count} ${factionName} forces ` +
+                        `operating near the ${patrolData.cosmicFeature}. They're using the ${patrolData.cosmicFeatureType} ` +
+                        `as a ${isCorePath ? 'command stronghold' : 'staging area'} in the ${galaxyType.name} Galaxy.`;
+                } else {
+                    locationInfo = `Our sensors have detected ${patrolData.count} ${factionName} forces ` +
+                        `in the ${galaxyType.name} Galaxy. They're conducting operations ` +
+                        `against civilian shipping lanes.`;
+                }
+
                 let transmissionText = `${greeting}\n\n`;
-                
-                // Faction backstory (who these enemies are)
                 transmissionText += `${factionBackstory}\n\n`;
-                
-                // Nebula-specific content (if available)
-                if (nebulaBackstory) {
-                    transmissionText += `NEBULA INTELLIGENCE: ${nebulaBackstory}\n\n`;
-                }
-                if (nebulaConnection) {
-                    transmissionText += `LOCAL SITUATION: ${nebulaConnection}\n\n`;
-                }
-                
+                if (nebulaBackstory) transmissionText += `NEBULA INTELLIGENCE: ${nebulaBackstory}\n\n`;
+                if (nebulaConnection) transmissionText += `LOCAL SITUATION: ${nebulaConnection}\n\n`;
+                transmissionText += `FORCES DETECTED: ${locationInfo}\n\n`;
                 transmissionText += `${combinedThreat}\n\n`;
-                transmissionText += `STRONGHOLD DETECTED: The ${factionName} have fortified their position around the ${galaxyType.name} Galaxy black hole, ` +
-                    `preventing interstellar travel through this region. Their command structure and elite forces are concentrated here.\n\n` +
-                    `NAVIGATION: Follow the ${colorName} dotted line from ${nebulaName} to their stronghold.\n\n` +
-                    `Strike at the heart of their operation, Captain.`;
+                transmissionText += `NAVIGATION: Follow the ${colorName} dotted line from ${nebulaName} to intercept.\n\n` +
+                    `Eliminate them and a boss will appear, Captain.`;
 
                 if (typeof showIncomingTransmission === 'function') {
-                    showIncomingTransmission('Mission Control - Stronghold Located', transmissionText, loreData.color);
+                    showIncomingTransmission(
+                        isCorePath ? 'Mission Control - Stronghold Located' : 'Mission Control - Patrol Routes Located',
+                        transmissionText, loreData.color
+                    );
                 }
 
+                const achievementText = patrolData.cosmicFeature
+                    ? `${patrolData.count} ${factionName} units near ${patrolData.cosmicFeature}. Path marked.`
+                    : `${patrolData.count} ${factionName} units detected. Path marked.`;
                 if (typeof showAchievement === 'function') {
-                    showAchievement(
-                        'Enemy Stronghold Located!',
-                        `${factionName} command center at ${galaxyType.name} Galaxy Core. Path marked.`,
-                        true
-                    );
+                    showAchievement(isCorePath ? 'Enemy Stronghold Located!' : 'Enemy Patrols Located!', achievementText, true);
                 }
 
-                console.log(`🔮 Deep discovery (CORE): ${nebulaName} → ${factionName} stronghold at galaxy ${galaxyId}`);
+                console.log(`🔮 Deep discovery (${isCorePath ? 'CORE' : 'PATROL'}): ${nebulaName} → ${factionName} (${patrolData.count} units, cosmic: ${patrolData.cosmicFeature || 'none'})`);
             } else {
-                // PATH TO PATROL ENEMIES NEAR COSMIC FEATURES
-                const patrolData = findPatrolEnemiesNearCosmicFeatures(galaxyId);
-
-                if (patrolData) {
-                    createDiscoveryPathToPosition(
-                        nebula.position,
-                        patrolData.position,
-                        loreData.color,
-                        factionName,
-                        'patrol'
-                    );
-
-                    playDeepDiscoverySound();
-
-                    let locationInfo = '';
-                    if (patrolData.cosmicFeature) {
-                        locationInfo = `Our sensors have detected ${patrolData.count} ${factionName} patrol units ` +
-                            `operating near the ${patrolData.cosmicFeature}. They're using the ${patrolData.cosmicFeatureType} ` +
-                            `as a staging area for raids on civilian shipping.`;
-                    } else {
-                        locationInfo = `Our sensors have detected ${patrolData.count} ${factionName} patrol units ` +
-                            `scattered throughout the ${galaxyType.name} Galaxy. They're conducting search-and-destroy missions ` +
-                            `against civilian shipping lanes.`;
-                    }
-
-                    // Build patrol transmission with BOTH faction lore AND nebula-specific lore
-                    let transmissionText = `${greeting}\n\n`;
-                    
-                    // Faction backstory
-                    transmissionText += `${factionBackstory}\n\n`;
-                    
-                    // Nebula-specific content
-                    if (nebulaBackstory) {
-                        transmissionText += `NEBULA INTELLIGENCE: ${nebulaBackstory}\n\n`;
-                    }
-                    if (nebulaConnection) {
-                        transmissionText += `LOCAL SITUATION: ${nebulaConnection}\n\n`;
-                    }
-                    
-                    transmissionText += `PATROL FORCES DETECTED: ${locationInfo}\n\n`;
-                    transmissionText += `${combinedThreat}\n\n`;
-                    transmissionText += `NAVIGATION: Follow the ${colorName} dotted line from ${nebulaName} to intercept their patrol routes.\n\n` +
-                        `Hunt them down before they find more victims, Captain.`;
-
-                    if (typeof showIncomingTransmission === 'function') {
-                        showIncomingTransmission('Mission Control - Patrol Routes Located', transmissionText, loreData.color);
-                    }
-
-                    const achievementText = patrolData.cosmicFeature
-                        ? `${patrolData.count} ${factionName} units near ${patrolData.cosmicFeature}. Path marked.`
-                        : `${patrolData.count} ${factionName} patrol units detected. Path marked.`;
-
-                    if (typeof showAchievement === 'function') {
-                        showAchievement('Enemy Patrols Located!', achievementText, true);
-                    }
-
-                    console.log(`🔮 Deep discovery (PATROL): ${nebulaName} → ${factionName} patrols (${patrolData.count} units, cosmic: ${patrolData.cosmicFeature || 'none'})`);
-                } else {
-                    console.log(`No patrol enemies found for ${factionName} in galaxy ${galaxyId}`);
-                }
+                console.log(`No enemies found near cosmic features for ${factionName} in galaxy ${galaxyId}`);
             }
         } else if (nebulaType === 'galaxy_formation') {
             // GALAXY-FORMATION: Black hole enemies are cleared - point to remaining scattered enemies
@@ -3749,7 +3696,8 @@ function checkForNebulaDeepDiscovery() {
                     remainingTarget.position,
                     loreData.color,
                     factionName,
-                    'patrol'
+                    'patrol',
+                    galaxyId
                 );
 
                 playDeepDiscoverySound();
@@ -3803,7 +3751,8 @@ function checkForNebulaDeepDiscovery() {
                     targetData.position,
                     loreData.color,
                     factionName,
-                    pathType
+                    pathType,
+                    galaxyId
                 );
 
                 playDeepDiscoverySound();
@@ -3910,6 +3859,16 @@ function _disposeDiscoveryPath(path) {
 // counts as "belonging to" the mission.  When none remain, the path
 // turns white to signal completion.
 const DISCOVERY_MISSION_RADIUS = 3500;
+
+function _guessGalaxyFromFaction(factionName) {
+    const map = { 'Federation': 0, 'Klingon': 1, 'Rebel': 2, 'Romulan': 3,
+                  'Galactic Empire': 4, 'Imperial': 4, 'Cardassian': 5,
+                  'Sith': 6, 'Sith Empire': 6, 'Vulcan': 7 };
+    for (const [key, id] of Object.entries(map)) {
+        if (factionName && factionName.indexOf(key) !== -1) return id;
+    }
+    return -1;
+}
 const MISSION_COMPLETE_COLOR = new THREE.Color(0xffffff);
 let _missionCheckFrame = 0;
 
@@ -3962,11 +3921,24 @@ function animateDiscoveryPaths() {
 
             const wasComplete = path.line.userData.missionComplete;
             if (!alive && !wasComplete) {
-                // Mission complete — turn white
+                // Mission complete — turn white and spawn a boss
                 path.line.userData.missionComplete = true;
                 mat.color.copy(MISSION_COMPLETE_COLOR);
                 if (path.particles && path.particles.material) {
                     path.particles.material.color.copy(MISSION_COMPLETE_COLOR);
+                }
+                // Spawn a boss at the endpoint — the reward for clearing the enemies
+                const faction = path.faction || path.line.userData.faction || '';
+                const ud = path.line.userData;
+                const galaxyId = ud.galaxyId !== undefined ? ud.galaxyId : _guessGalaxyFromFaction(faction);
+                if (galaxyId >= 0 && typeof spawnBossForArea === 'function') {
+                    const areaKey = galaxyId + '-mission_' + i;
+                    if (!bossSystem || !bossSystem.areaBosses || !bossSystem.areaBosses[areaKey]) {
+                        spawnBossForArea(galaxyId, 'cosmic_feature', areaKey);
+                        if (typeof showAchievement === 'function') {
+                            showAchievement('Boss Incoming!', 'All hostiles cleared — a boss has appeared!', true);
+                        }
+                    }
                 }
             } else if (alive && wasComplete) {
                 // New enemies spawned in range — restore original color
