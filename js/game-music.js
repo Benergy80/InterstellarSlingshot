@@ -475,10 +475,6 @@
   };
 
   // ─── Button event delegation ──────────────────────────────────────────────
-  // Document-level click delegation for Music/Skip/Pause buttons — this is
-  // bulletproof.  No cloneNode, no listener re-attachment timing issues,
-  // no per-element setup that can race.  Any click anywhere in the document
-  // that matches the button selectors fires the right action.
   document.addEventListener('click', function handleSoundtrackButtons(e) {
     const t = e.target;
     if (!t || !t.closest) return;
@@ -487,8 +483,18 @@
     if (musicBtn) {
       e.preventDefault();
       e.stopPropagation();
-      if (typeof resumeAudioContext === 'function') resumeAudioContext();
-      if (typeof toggleMusic === 'function') toggleMusic();
+      // Toggle the synth music system (icon updates happen inside)
+      try {
+        if (typeof window.resumeAudioContext === 'function') window.resumeAudioContext();
+        if (typeof window.toggleMusic === 'function') window.toggleMusic();
+      } catch (err) { console.warn('toggleMusic error:', err); }
+      // Also toggle the MP3 soundtrack directly — don't rely on
+      // toggleMusic's internal call because scoping issues may
+      // prevent it from reaching window.soundtrack.
+      st.muted = !st.muted;
+      if (st.muted) {
+        stopAll();
+      }
       return;
     }
 
@@ -496,8 +502,10 @@
     if (skipBtn) {
       e.preventDefault();
       e.stopPropagation();
-      if (typeof resumeAudioContext === 'function') resumeAudioContext();
-      if (window.soundtrack && window.soundtrack.skip) window.soundtrack.skip();
+      try {
+        if (typeof window.resumeAudioContext === 'function') window.resumeAudioContext();
+      } catch (err) { /* ignore */ }
+      skipCurrentTrack();
       return;
     }
 
