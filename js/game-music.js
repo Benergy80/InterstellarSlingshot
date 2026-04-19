@@ -429,14 +429,13 @@
 
   function detectNearbyOuterSystem() {
     if (typeof outerInterstellarSystems === 'undefined' || typeof camera === 'undefined') return -1;
-    // 7,500u radius — outer systems span ~6,000u after the 2x scaling
-    // (pulsar orbits 3-6k, Borg planet orbits up to 4.8k), so we
-    // start the music just outside the orbital envelope.
+    // 5,000u radius — matches original outer-system orbital envelope
+    // (pulsar orbits up to 3k, Borg planet orbits up to ~2.4k).
     for (let i = 0; i < outerInterstellarSystems.length; i++) {
       const sys = outerInterstellarSystems[i];
       if (!sys || !sys.position) continue;
       const d = camera.position.distanceTo(sys.position);
-      if (d < 7500) return i;
+      if (d < 5000) return i;
     }
     return -1;
   }
