@@ -1057,32 +1057,33 @@ function updateOuterSystems() {
         let opacity = 1.0;
 
         if (system.userData.systemType === 'exotic_core') {
-            // SET 1: Exotic Core Systems - Minimal visibility at start
-            // Invisible when player is >65,000 units away, fade IN as player approaches
-            const fadeStart = 65000;      // Start becoming visible at this distance
-            const fadeComplete = 5000;    // Fully visible at this distance
+            // SET 1: Exotic Core Systems — visible from ~240,000u (just
+            // inside the camera far plane at 250k) so they appear as
+            // faint specks at extreme range and grow naturally as the
+            // player approaches.  Scales with the 4x system size.
+            const fadeStart = 240000;
+            const fadeComplete = 20000;
 
             if (systemDist > fadeStart) {
-                opacity = 0;  // Invisible when far away
+                opacity = 0;
             } else if (systemDist > fadeComplete) {
-                // Fade in as player gets closer
                 opacity = 1.0 - (systemDist - fadeComplete) / (fadeStart - fadeComplete);
             } else {
-                opacity = 1.0;  // Fully visible when close
+                opacity = 1.0;
             }
         } else if (system.userData.systemType === 'borg_patrol') {
-            // SET 2: BORG Patrol Systems - Same minimal visibility as exotic systems
-            // Invisible when player is >45,000 units away, fade IN as player approaches
-            const fadeStart = 45000;      // Start becoming visible at this distance
-            const fadeComplete = 5000;    // Fully visible at this distance
+            // SET 2: BORG Patrol Systems — visible from 180,000u.
+            // Slightly closer than exotics since they're smaller in
+            // visual footprint but still need the 4x scale bump.
+            const fadeStart = 180000;
+            const fadeComplete = 20000;
 
             if (systemDist > fadeStart) {
-                opacity = 0;  // Invisible when far away
+                opacity = 0;
             } else if (systemDist > fadeComplete) {
-                // Fade in as player gets closer
                 opacity = 1.0 - (systemDist - fadeComplete) / (fadeStart - fadeComplete);
             } else {
-                opacity = 1.0;  // Fully visible when close
+                opacity = 1.0;
             }
         }
 
