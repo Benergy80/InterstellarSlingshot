@@ -1689,16 +1689,8 @@ function startBackgroundMusic() {
     if (!audioContext || !musicSystem.enabled || audioContext.state === 'suspended') {
         return;
     }
-    // If the MP3 soundtrack is loaded, let it handle all music —
-    // don't layer the procedural synth on top.
-    if (typeof soundtrack !== 'undefined' && soundtrack.enabled &&
-        !soundtrack.current && soundtrack.update) {
-        soundtrack.update();
-        return;
-    }
-    if (typeof soundtrack !== 'undefined' && soundtrack.current) return;
 
-    // Fallback: Create eerie ambient space music (procedural)
+    // Create eerie ambient space music
     createAmbientSpaceMusic();
 }
 
@@ -1942,10 +1934,11 @@ function switchToBattleMusic() {
 
     musicSystem.inBattle = true;
 
-    // Let the MP3 soundtrack handle boss music if it's active
+    // Also have the MP3 soundtrack switch to its boss-fight track —
+    // both layers play simultaneously, like sound effects layering
+    // over background music.
     if (typeof soundtrack !== 'undefined' && soundtrack.enabled) {
         soundtrack.forceTrack('bossFight');
-        return;
     }
     
     // Fade out ambient music
@@ -1975,11 +1968,6 @@ function switchToAmbientMusic() {
     if (!musicSystem.inBattle || !musicSystem.enabled) return;
 
     musicSystem.inBattle = false;
-
-    // Let the MP3 soundtrack resume location-based music
-    if (typeof soundtrack !== 'undefined' && soundtrack.enabled) {
-        return;  // updateMusicContext will pick the right track next tick
-    }
     
     // Fade out battle music
     if (musicSystem.battleMusic) {
