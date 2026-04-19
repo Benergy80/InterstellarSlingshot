@@ -1744,40 +1744,11 @@
   // LineSegments + Points meshes = growing GPU buffer and render cost.
   // Any path whose target galaxy has NO live enemies left is dead —
   // dispose it.
-  function sweepStaleDiscoveryPaths() {
-    const paths = window.discoveryPaths;
-    if (!paths || !paths.length) return;
-    for (let i = paths.length - 1; i >= 0; i--) {
-      const p = paths[i];
-      if (!p) { paths.splice(i, 1); continue; }
-      const endPos = p.line && p.line.userData && p.line.userData.endPosition;
-      if (!endPos) continue;
-      // Is any live enemy near the path endpoint? If not, retire the path.
-      let alive = false;
-      if (typeof enemies !== 'undefined') {
-        for (let j = 0; j < enemies.length; j++) {
-          const e = enemies[j];
-          if (!e || !e.userData || e.userData.health <= 0) continue;
-          if (e.position.distanceTo(endPos) < 3500) { alive = true; break; }
-        }
-      }
-      if (alive) continue;
-      // Dispose the mesh and particle system
-      try {
-        if (p.line) {
-          if (typeof scene !== 'undefined') scene.remove(p.line);
-          if (p.line.geometry && p.line.geometry.dispose) p.line.geometry.dispose();
-          if (p.line.material && p.line.material.dispose) p.line.material.dispose();
-        }
-        if (p.particles) {
-          if (typeof scene !== 'undefined') scene.remove(p.particles);
-          if (p.particles.geometry && p.particles.geometry.dispose) p.particles.geometry.dispose();
-          if (p.particles.material && p.particles.material.dispose) p.particles.material.dispose();
-        }
-      } catch (_) {}
-      paths.splice(i, 1);
-    }
-  }
+  // Discovery paths are now PERSISTENT mission markers — they stay in the
+  // scene permanently, turn white when complete, and the path-animation
+  // system in game-physics.js handles color updates.  This function is
+  // kept as a no-op for the scheduled throttle call that references it.
+  function sweepStaleDiscoveryPaths() { /* intentionally empty */ }
 
   // Diagnostic: log scene / array sizes every 5 s so we can spot leaks.
   function sceneHealthCheck() {

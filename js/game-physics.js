@@ -3310,14 +3310,14 @@ function findPatrolEnemiesNearCosmicFeatures(galaxyId) {
 // Create a path to a position (generalized version)
 function createDiscoveryPathToPosition(nebulaPosition, targetPosition, factionColor, factionName, pathType) {
     if (!scene || !THREE) return null;
-    
+
     const startPos = nebulaPosition.clone();
     const endPos = targetPosition.clone();
-    
+
     // Create points along the path
     const pathPoints = [];
     const segments = 100;
-    
+
     for (let i = 0; i <= segments; i++) {
         const t = i / segments;
         // Add slight curve for visual interest
@@ -3328,14 +3328,14 @@ function createDiscoveryPathToPosition(nebulaPosition, targetPosition, factionCo
             startPos.z + (endPos.z - startPos.z) * t
         ));
     }
-    
+
     // Create the path geometry
     const pathGeometry = new THREE.BufferGeometry().setFromPoints(pathPoints);
-    
+
     // Different dash patterns for core vs patrol
     const dashSize = pathType === 'core' ? 100 : 60;
     const gapSize = pathType === 'core' ? 50 : 40;
-    
+
     // Create dashed line material
     const pathMaterial = new THREE.LineDashedMaterial({
         color: factionColor,
@@ -3345,27 +3345,35 @@ function createDiscoveryPathToPosition(nebulaPosition, targetPosition, factionCo
         transparent: true,
         opacity: 0.7
     });
-    
+
     const pathLine = new THREE.Line(pathGeometry, pathMaterial);
     pathLine.computeLineDistances(); // Required for dashed lines
-    
+
     pathLine.userData = {
         type: 'discovery_path',
         pathType: pathType, // 'core' or 'patrol'
         faction: factionName,
         startPosition: startPos.clone(),
         endPosition: endPos.clone(),
-        createdAt: Date.now()
+        createdAt: Date.now(),
+        originalColor: factionColor,   // preserved for mission-incomplete state
+        missionComplete: false         // flips true when all target enemies are dead
     };
-    
+
     // Add glow particles along the path
     const glowParticles = createPathGlowParticles(pathPoints, factionColor);
-    
+
     scene.add(pathLine);
     if (glowParticles) scene.add(glowParticles);
-    
-    discoveryPaths.push({ line: pathLine, particles: glowParticles, faction: factionName, pathType: pathType });
-    
+
+    discoveryPaths.push({
+        line: pathLine,
+        particles: glowParticles,
+        faction: factionName,
+        pathType: pathType,
+        originalColor: factionColor
+    });
+
     console.log(`🛤️ Discovery path (${pathType}) created to ${factionName} territory`);
     return pathLine;
 }
@@ -3894,22 +3902,75 @@ function _disposeDiscoveryPath(path) {
     }
 }
 
-const DISCOVERY_PATH_CAP = 8;
+// Mission radius: an enemy within this distance of the path endpoint
+// counts as "belonging to" the mission.  When none remain, the path
+// turns white to signal completion.
+const DISCOVERY_MISSION_RADIUS = 3500;
+const MISSION_COMPLETE_COLOR = new THREE.Color(0xffffff);
+let _missionCheckFrame = 0;
 
 function animateDiscoveryPaths() {
-    while (discoveryPaths.length > DISCOVERY_PATH_CAP) {
-        _disposeDiscoveryPath(discoveryPaths.shift());
-    }
+    // Paths are NEVER removed automatically — they persist as mission
+    // markers so the player always knows where their objectives are.
 
     const time = Date.now() * 0.001;
+    const pulse1 = 0.5 + Math.sin(time * 2) * 0.2;
+    const pulse2 = 0.3 + Math.sin(time * 3) * 0.2;
+
+    // Mission-status check runs at ~2 Hz (every 30 frames) — cheap enough
+    // to handle many paths without affecting frame rate.
+    _missionCheckFrame = (_missionCheckFrame + 1) % 30;
+    const doMissionCheck = _missionCheckFrame === 0;
 
     for (let i = 0; i < discoveryPaths.length; i++) {
         const path = discoveryPaths[i];
-        if (path.line && path.line.material) {
-            path.line.material.opacity = 0.5 + Math.sin(time * 2) * 0.2;
-        }
+        if (!path.line) continue;
+        const mat = path.line.material;
+        if (!mat) continue;
+
+        // Update opacity pulse
+        mat.opacity = pulse1;
         if (path.particles && path.particles.material) {
-            path.particles.material.opacity = 0.3 + Math.sin(time * 3) * 0.2;
+            path.particles.material.opacity = pulse2;
+        }
+
+        // Mission-status check — flip color to white if every target
+        // enemy within the endpoint's radius is dead.
+        if (doMissionCheck) {
+            const endPos = path.line.userData && path.line.userData.endPosition;
+            if (!endPos) continue;
+
+            let alive = false;
+            if (typeof enemies !== 'undefined') {
+                for (let j = 0; j < enemies.length; j++) {
+                    const e = enemies[j];
+                    if (!e || !e.userData || e.userData.health <= 0) continue;
+                    if (e.position.distanceTo(endPos) < DISCOVERY_MISSION_RADIUS) {
+                        alive = true;
+                        break;
+                    }
+                }
+            }
+
+            const wasComplete = path.line.userData.missionComplete;
+            if (!alive && !wasComplete) {
+                // Mission complete — turn white
+                path.line.userData.missionComplete = true;
+                mat.color.copy(MISSION_COMPLETE_COLOR);
+                if (path.particles && path.particles.material) {
+                    path.particles.material.color.copy(MISSION_COMPLETE_COLOR);
+                }
+            } else if (alive && wasComplete) {
+                // New enemies spawned in range — restore original color
+                path.line.userData.missionComplete = false;
+                const orig = path.originalColor || path.line.userData.originalColor;
+                if (orig !== undefined) {
+                    mat.color.set(orig);
+                    if (path.particles && path.particles.material) {
+                        path.particles.material.color.set(orig);
+                    }
+                }
+            }
         }
     }
 }
