@@ -1764,31 +1764,30 @@ function createOptimizedPlanets3D() {
         return;
     }
     
-    // Create local planets — sizes 4x, orbit distances 2x so the Sol
-    // System matches the scale of the outer interstellar systems and
-    // reads clearly against the ship/enemy size.
+    // Create local planets — sizes AND orbit distances 4x so scale is
+    // consistent across the Sol System.
     const localPlanets = [
-        { name: 'Earth', distance: 320, size: 20, color: 0x2233ff, moons: [{ name: 'Luna', distance: 60, size: 6, color: 0xdddddd }] },
-        { name: 'Venus', distance: 240, size: 19, color: 0xffc649, moons: [] },
-        { name: 'Mars', distance: 480, size: 12, color: 0xff4422, moons: [
-            { name: 'Phobos', distance: 32, size: 3, color: 0x8b4513 },
-            { name: 'Deimos', distance: 48, size: 2.5, color: 0x696969 }
+        { name: 'Earth', distance: 640, size: 20, color: 0x2233ff, moons: [{ name: 'Luna', distance: 120, size: 6, color: 0xdddddd }] },
+        { name: 'Venus', distance: 480, size: 19, color: 0xffc649, moons: [] },
+        { name: 'Mars', distance: 960, size: 12, color: 0xff4422, moons: [
+            { name: 'Phobos', distance: 64, size: 3, color: 0x8b4513 },
+            { name: 'Deimos', distance: 96, size: 2.5, color: 0x696969 }
         ]},
-        { name: 'Jupiter', distance: 1000, size: 60, color: 0xffaa22, moons: [
-            { name: 'Io', distance: 100, size: 7, color: 0xffff99 },
-            { name: 'Europa', distance: 128, size: 6.5, color: 0x99ccff },
-            { name: 'Ganymede', distance: 168, size: 9, color: 0xcc9966 },
-            { name: 'Callisto', distance: 220, size: 8, color: 0x666666 }
+        { name: 'Jupiter', distance: 2000, size: 60, color: 0xffaa22, moons: [
+            { name: 'Io', distance: 200, size: 7, color: 0xffff99 },
+            { name: 'Europa', distance: 256, size: 6.5, color: 0x99ccff },
+            { name: 'Ganymede', distance: 336, size: 9, color: 0xcc9966 },
+            { name: 'Callisto', distance: 440, size: 8, color: 0x666666 }
         ]},
-        { name: 'Saturn', distance: 1600, size: 48, color: 0xffdd88, rings: true, moons: [
-            { name: 'Titan', distance: 260, size: 10, color: 0xff9933 },
-            { name: 'Enceladus', distance: 180, size: 4, color: 0xffffff }
+        { name: 'Saturn', distance: 3200, size: 48, color: 0xffdd88, rings: true, moons: [
+            { name: 'Titan', distance: 520, size: 10, color: 0xff9933 },
+            { name: 'Enceladus', distance: 360, size: 4, color: 0xffffff }
         ]},
-        { name: 'Uranus', distance: 2200, size: 32, color: 0x4fccff, moons: [
-            { name: 'Titania', distance: 168, size: 5.5, color: 0x888888 }
+        { name: 'Uranus', distance: 4400, size: 32, color: 0x4fccff, moons: [
+            { name: 'Titania', distance: 336, size: 5.5, color: 0x888888 }
         ]},
-        { name: 'Neptune', distance: 2800, size: 28, color: 0x4169e1, moons: [
-            { name: 'Triton', distance: 88, size: 5, color: 0x99ccff }
+        { name: 'Neptune', distance: 5600, size: 28, color: 0x4169e1, moons: [
+            { name: 'Triton', distance: 176, size: 5, color: 0x99ccff }
         ]}
     ];
     
@@ -7977,7 +7976,7 @@ function createEnhancedPlanetClustersInNebulas() {
                 });
                 const planet = new THREE.Mesh(planetGeometry, planetMaterial);
                 
-                const orbitRadius = 120 + p * 110; // Increased spacing for larger planets
+                const orbitRadius = 480 + p * 440; // 4x spacing for 4x-size planets
                 const orbitSpeed = 0.002 + Math.random() * 0.008;
                 const orbitPhase = Math.random() * Math.PI * 2;
                 const orbitTilt = (Math.random() - 0.5) * 0.4;
@@ -8015,8 +8014,8 @@ function createEnhancedPlanetClustersInNebulas() {
                     const ringCount = 2 + Math.floor(Math.random() * 4);
                     
                     for (let r = 0; r < ringCount; r++) {
-                        const ringInner = planetSize + 8 + r * 8; // Scaled for larger planets
-                        const ringOuter = ringInner + 4 + Math.random() * 6;
+                        const ringInner = planetSize + 32 + r * 32; // 4x offsets for 4x planets
+                        const ringOuter = ringInner + 16 + Math.random() * 24;
                         const ringGeometry = new THREE.RingGeometry(ringInner, ringOuter, 64);
                         const ringColor = new THREE.Color().setHSL(
                             planetHue + 0.08 + r * 0.04, 
@@ -8056,7 +8055,7 @@ function createEnhancedPlanetClustersInNebulas() {
                         });
                         const moon = new THREE.Mesh(moonGeometry, moonMaterial);
                         
-                        const moonOrbitRadius = planetSize + 15 + m * 12; // Scaled for larger planets
+                        const moonOrbitRadius = planetSize + 60 + m * 48; // 4x base + spacing for 4x planets
                         const moonOrbitSpeed = 0.012 + Math.random() * 0.028;
                         const moonOrbitPhase = Math.random() * Math.PI * 2;
                         
