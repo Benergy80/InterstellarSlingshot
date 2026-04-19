@@ -88,6 +88,13 @@
   const NO_LOOP = new Set(['launchScreen', 'intro']);
 
   function preload() {
+    // Idempotent — do not re-create Audio elements on repeat calls.
+    // initAudio() has 5+ call sites and each re-preload would orphan
+    // the currently-playing <audio>, making stopAll() ineffective
+    // because the orphaned element is no longer in st.loaded.
+    if (st._preloaded) return;
+    st._preloaded = true;
+
     const keys = Object.keys(TRACKS);
     let loadedCount = 0;
     keys.forEach(key => {
@@ -558,9 +565,15 @@
 
     const skipBtn = t.closest('#skipTrackBtn, #mobileSkipTrackBtn');
     if (skipBtn) {
-      dbg('skip click → current=' + st.current);
+      dbg('skip click → current=' + st.current + ' muted=' + st.muted);
       e.preventDefault();
       e.stopPropagation();
+      // Skip implies "play something now" — if the user muted and is now
+      // hitting skip, unmute so the next track actually starts.
+      if (st.muted) {
+        dbg('  skip while muted → unmuting');
+        st.muted = false;
+      }
       try {
         if (typeof window.resumeAudioContext === 'function') window.resumeAudioContext();
       } catch (err) { /* ignore */ }
