@@ -78,6 +78,14 @@ function createExoticCoreSystems() {
     const targetRadius = (innerBoundary + outerBoundary) / 2; // ~67,500
     const radiusVariation = 12500;
 
+    // Randomly select half the systems to be 2x size
+    const indices = Array.from({length: 16}, (_, i) => i);
+    for (let i = indices.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [indices[i], indices[j]] = [indices[j], indices[i]];
+    }
+    const largeSet = new Set(indices.slice(0, 8));
+
     for (let i = 0; i < 16; i++) {
         // Spherical distribution
         const phi = (i / 16) * Math.PI * 2;
@@ -92,11 +100,13 @@ function createExoticCoreSystems() {
         const centerTypes = ['supernova', 'plasma_storm', 'solar_storm'];
         const centerType = centerTypes[Math.floor(Math.random() * centerTypes.length)];
 
-        createExoticSystem(systemCenter, outerSystemNames[i], centerType, i);
+        const scale = largeSet.has(i) ? 2 : 1;
+        createExoticSystem(systemCenter, outerSystemNames[i], centerType, i, scale);
     }
 }
 
-function createExoticSystem(center, name, centerType, systemId) {
+function createExoticSystem(center, name, centerType, systemId, scale) {
+    const s = scale || 1;
     const systemGroup = new THREE.Group();
     systemGroup.position.copy(center);
 
@@ -119,7 +129,8 @@ function createExoticSystem(center, name, centerType, systemId) {
         discovered: false,
         tiltX: systemTiltX,
         tiltZ: systemTiltZ,
-        systemColor: systemColor
+        systemColor: systemColor,
+        scale: s
     };
 
     // Create center object
@@ -131,24 +142,24 @@ function createExoticSystem(center, name, centerType, systemId) {
         createSystemSolarStorm(center, systemGroup);
     }
 
-    // Orbiting brown dwarfs (2-4) — original orbit radii
+    // Orbiting brown dwarfs (2-4)
     const brownDwarfCount = 2 + Math.floor(Math.random() * 3);
     for (let i = 0; i < brownDwarfCount; i++) {
-        const orbitRadius = 800 + Math.random() * 1200;
+        const orbitRadius = (800 + Math.random() * 1200) * s;
         createOrbitingBrownDwarf(center, orbitRadius, i, systemGroup);
         createSystemOrbitLine(center, orbitRadius, systemGroup);
     }
 
-    // Orbiting pulsars (1-3) — original
+    // Orbiting pulsars (1-3)
     const pulsarCount = 1 + Math.floor(Math.random() * 3);
     for (let i = 0; i < pulsarCount; i++) {
-        const orbitRadius = 1500 + Math.random() * 1500;
+        const orbitRadius = (1500 + Math.random() * 1500) * s;
         createOrbitingPulsar(center, orbitRadius, i, systemGroup);
         createSystemOrbitLine(center, orbitRadius, systemGroup);
     }
 
-    // Asteroid field — original
-    const asteroidOrbitRadius = 600 + Math.random() * 800;
+    // Asteroid field
+    const asteroidOrbitRadius = (600 + Math.random() * 800) * s;
     const asteroidCount = 20 + Math.floor(Math.random() * 30);
     for (let i = 0; i < asteroidCount; i++) {
         createOrbitingAsteroid(center, asteroidOrbitRadius, i, systemGroup);
@@ -157,7 +168,7 @@ function createExoticSystem(center, name, centerType, systemId) {
     createSystemOrbitLine(center, asteroidOrbitRadius, systemGroup);
 
     // CREATE STARFIELD FOR THIS SYSTEM
-    const maxOrbitRadius = 1500 + 1500; // Max pulsar orbit (original)
+    const maxOrbitRadius = (1500 + 1500) * s;
     const starfieldRadius = maxOrbitRadius * 0.5;
     createSystemStarfield(starfieldRadius, systemGroup);
 
@@ -167,7 +178,8 @@ function createExoticSystem(center, name, centerType, systemId) {
     scene.add(systemGroup);
     outerInterstellarSystems.push(systemGroup);
 
-    console.log(`    🌟 ${name}: ${centerType} at ${center.length().toFixed(0)} units`);
+    const sizeLabel = s > 1 ? ' (2x)' : '';
+    console.log(`    🌟 ${name}: ${centerType}${sizeLabel} at ${center.length().toFixed(0)} units`);
 }
 
 // =============================================================================
@@ -271,7 +283,8 @@ function createBorgSystem(center, systemId) {
 // =============================================================================
 
 function createSystemSupernova(center, systemGroup) {
-    const coreGeo = new THREE.SphereGeometry(80, 32, 32);
+    const s = systemGroup.userData.scale || 1;
+    const coreGeo = new THREE.SphereGeometry(80 * s, 32, 32);
     const coreMat = new THREE.MeshStandardMaterial({
         color: 0xff6600,
         emissive: 0xff6600,
@@ -287,7 +300,7 @@ function createSystemSupernova(center, systemGroup) {
         name: `${systemGroup.userData.name} Core`,
         systemName: systemGroup.userData.name,
         location: 'Unexplored Interstellar Space',
-        radius: 80,
+        radius: 80 * s,
         mass: 3.0,
         slingshotMultiplier: 3.0,
         isOuterSystem: true
@@ -298,7 +311,7 @@ function createSystemSupernova(center, systemGroup) {
 
     // Glow layers
     for (let i = 0; i < 3; i++) {
-        const size = 60 + i * 30;
+        const size = (60 + i * 30) * s;
         const opacity = 0.4 - i * 0.1;
         const glowGeo = new THREE.SphereGeometry(size, 24, 24);
         const glowMat = new THREE.MeshBasicMaterial({
@@ -319,7 +332,8 @@ function createSystemSupernova(center, systemGroup) {
 }
 
 function createSystemPlasmaStorm(center, systemGroup) {
-    const coreGeo = new THREE.SphereGeometry(60, 32, 32);
+    const s = systemGroup.userData.scale || 1;
+    const coreGeo = new THREE.SphereGeometry(60 * s, 32, 32);
     const coreMat = new THREE.MeshStandardMaterial({
         color: 0xaa44ff,
         emissive: 0xaa44ff,
@@ -335,7 +349,7 @@ function createSystemPlasmaStorm(center, systemGroup) {
         name: `${systemGroup.userData.name} Core`,
         systemName: systemGroup.userData.name,
         location: 'Unexplored Interstellar Space',
-        radius: 60,
+        radius: 60 * s,
         mass: 2.5,
         slingshotMultiplier: 2.8,
         isOuterSystem: true
@@ -347,7 +361,7 @@ function createSystemPlasmaStorm(center, systemGroup) {
     // Plasma clouds
     for (let i = 0; i < 5; i++) {
         const angle = (i / 5) * Math.PI * 2;
-        const cloudGeo = new THREE.SphereGeometry(20, 16, 16);
+        const cloudGeo = new THREE.SphereGeometry(20 * s, 16, 16);
         const cloudMat = new THREE.MeshBasicMaterial({
             color: 0x8844ff,
             transparent: true,
@@ -357,9 +371,9 @@ function createSystemPlasmaStorm(center, systemGroup) {
         const cloud = new THREE.Mesh(cloudGeo, cloudMat);
         cloud.userData.baseOpacity = 0.6;
         cloud.position.set(
-            Math.cos(angle) * 50,
+            Math.cos(angle) * 50 * s,
             0,
-            Math.sin(angle) * 50
+            Math.sin(angle) * 50 * s
         );
         systemGroup.add(cloud);
     }
@@ -370,7 +384,8 @@ function createSystemPlasmaStorm(center, systemGroup) {
 }
 
 function createSystemSolarStorm(center, systemGroup) {
-    const coreGeo = new THREE.SphereGeometry(70, 32, 32);
+    const s = systemGroup.userData.scale || 1;
+    const coreGeo = new THREE.SphereGeometry(70 * s, 32, 32);
     const coreMat = new THREE.MeshStandardMaterial({
         color: 0xffff00,
         emissive: 0xffff00,
@@ -386,7 +401,7 @@ function createSystemSolarStorm(center, systemGroup) {
         name: `${systemGroup.userData.name} Core`,
         systemName: systemGroup.userData.name,
         location: 'Unexplored Interstellar Space',
-        radius: 70,
+        radius: 70 * s,
         mass: 2.0,
         slingshotMultiplier: 2.2,
         isOuterSystem: true
@@ -398,7 +413,7 @@ function createSystemSolarStorm(center, systemGroup) {
     // Flares
     for (let i = 0; i < 8; i++) {
         const angle = (i / 8) * Math.PI * 2;
-        const flareGeo = new THREE.ConeGeometry(10, 75, 8);
+        const flareGeo = new THREE.ConeGeometry(10 * s, 75 * s, 8);
         const flareMat = new THREE.MeshBasicMaterial({
             color: 0xffaa00,
             transparent: true,
@@ -407,14 +422,14 @@ function createSystemSolarStorm(center, systemGroup) {
         });
         const flare = new THREE.Mesh(flareGeo, flareMat);
         flare.position.set(
-            Math.cos(angle) * 45,
+            Math.cos(angle) * 45 * s,
             0,
-            Math.sin(angle) * 45
+            Math.sin(angle) * 45 * s
         );
         flare.lookAt(new THREE.Vector3(
-            Math.cos(angle) * 100,
+            Math.cos(angle) * 100 * s,
             0,
-            Math.sin(angle) * 100
+            Math.sin(angle) * 100 * s
         ));
         systemGroup.add(flare);
         flare.userData.baseOpacity = 0.7;
@@ -430,7 +445,8 @@ function createSystemSolarStorm(center, systemGroup) {
 // =============================================================================
 
 function createOrbitingBrownDwarf(center, orbitRadius, index, systemGroup) {
-    const geo = new THREE.SphereGeometry(35, 24, 24);
+    const s = systemGroup.userData.scale || 1;
+    const geo = new THREE.SphereGeometry(35 * s, 24, 24);
     const mat = new THREE.MeshStandardMaterial({
         color: 0x8b4513,
         metalness: 0.3,
@@ -455,7 +471,7 @@ function createOrbitingBrownDwarf(center, orbitRadius, index, systemGroup) {
         systemId: systemGroup.userData.systemId,
         systemName: systemGroup.userData.name,
         location: 'Unexplored Interstellar Space',
-        radius: 35,
+        radius: 35 * s,
         mass: 0.08,
         slingshotMultiplier: 1.3,
         isOuterSystem: true
@@ -468,7 +484,8 @@ function createOrbitingBrownDwarf(center, orbitRadius, index, systemGroup) {
 }
 
 function createOrbitingPulsar(center, orbitRadius, index, systemGroup) {
-    const coreGeo = new THREE.SphereGeometry(20, 16, 16);
+    const s = systemGroup.userData.scale || 1;
+    const coreGeo = new THREE.SphereGeometry(20 * s, 16, 16);
     const coreMat = new THREE.MeshStandardMaterial({
         color: 0x44eeff,
         emissive: 0x44eeff,
@@ -485,7 +502,7 @@ function createOrbitingPulsar(center, orbitRadius, index, systemGroup) {
         Math.sin(angle) * orbitRadius
     );
 
-    const ringGeo = new THREE.TorusGeometry(40, 3, 8, 32);
+    const ringGeo = new THREE.TorusGeometry(40 * s, 3 * s, 8, 32);
     const ringMat = new THREE.MeshBasicMaterial({
         color: 0x88ffff,
         transparent: true,
@@ -506,7 +523,7 @@ function createOrbitingPulsar(center, orbitRadius, index, systemGroup) {
         systemId: systemGroup.userData.systemId,
         systemName: systemGroup.userData.name,
         location: 'Unexplored Interstellar Space',
-        radius: 20,
+        radius: 20 * s,
         mass: 1.4,
         slingshotMultiplier: 2.5,
         isOuterSystem: true
