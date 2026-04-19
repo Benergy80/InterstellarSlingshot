@@ -98,25 +98,23 @@
     st._preloaded = true;
 
     const keys = Object.keys(TRACKS);
-    let loadedCount = 0;
     keys.forEach(key => {
       const audio = new Audio();
-      audio.preload = 'auto';
+      // 'metadata' loads just duration/format info up front.  The full
+      // audio data is fetched on demand when the track first plays.
+      // Using 'auto' for 22 tracks was eagerly decoding ~120 MB of MP3
+      // data in the background and competing with the main thread —
+      // that caused visible cursor/crosshair stutter.
+      audio.preload = 'metadata';
       audio.loop = !NO_LOOP.has(key);
       audio.volume = 0;
       audio.src = BASE_PATH + encodeURIComponent(TRACKS[key]);
-      audio.addEventListener('canplaythrough', () => {
-        loadedCount++;
-        if (loadedCount === keys.length) {
-          console.log('🎵 Soundtrack: all ' + keys.length + ' tracks preloaded');
-        }
-      }, { once: true });
       audio.addEventListener('error', () => {
         st.loadErrors.add(key);
       });
       st.loaded[key] = audio;
     });
-    console.log('🎵 Soundtrack: preloading ' + keys.length + ' tracks…');
+    console.log('🎵 Soundtrack: registered ' + keys.length + ' tracks (metadata only)');
   }
 
   // ─── Play / Crossfade ─────────────────────────────────────────────────────

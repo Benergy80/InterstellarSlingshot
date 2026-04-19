@@ -3116,8 +3116,10 @@ function createDiscoveryPath(nebulaPosition, galaxyBlackHole, factionColor, fact
 // Create glowing particles along the discovery path
 function createPathGlowParticles(pathPoints, color) {
     if (!THREE) return null;
-    
-    const particleCount = 50;
+
+    // 20 particles per path — enough for a glowing effect without
+    // ballooning Points count when many paths persist.
+    const particleCount = 20;
     const positions = new Float32Array(particleCount * 3);
     
     for (let i = 0; i < particleCount; i++) {
@@ -3314,13 +3316,15 @@ function createDiscoveryPathToPosition(nebulaPosition, targetPosition, factionCo
     const startPos = nebulaPosition.clone();
     const endPos = targetPosition.clone();
 
-    // Create points along the path
+    // Create points along the path.  40 segments is plenty for a smooth
+    // curved line — was 100, which meant ~100 dashed segments per path.
+    // Dashed-line rendering is expensive on GPU, so fewer segments keeps
+    // frame times low when many mission paths are active.
     const pathPoints = [];
-    const segments = 100;
+    const segments = 40;
 
     for (let i = 0; i <= segments; i++) {
         const t = i / segments;
-        // Add slight curve for visual interest
         const curveHeight = Math.sin(t * Math.PI) * 500;
         pathPoints.push(new THREE.Vector3(
             startPos.x + (endPos.x - startPos.x) * t,
@@ -3913,14 +3917,17 @@ function animateDiscoveryPaths() {
     // Paths are NEVER removed automatically — they persist as mission
     // markers so the player always knows where their objectives are.
 
+    // Throttle the opacity pulse: update every 4 frames (~15 Hz) instead
+    // of every frame.  The pulse is slow (sin at 2 Hz) so users can't
+    // perceive the difference, and we save material uniform writes.
+    _missionCheckFrame = (_missionCheckFrame + 1) % 30;
+    const doMissionCheck = _missionCheckFrame === 0;
+    const doPulse = (_missionCheckFrame % 4) === 0;
+    if (!doPulse && !doMissionCheck) return;
+
     const time = Date.now() * 0.001;
     const pulse1 = 0.5 + Math.sin(time * 2) * 0.2;
     const pulse2 = 0.3 + Math.sin(time * 3) * 0.2;
-
-    // Mission-status check runs at ~2 Hz (every 30 frames) — cheap enough
-    // to handle many paths without affecting frame rate.
-    _missionCheckFrame = (_missionCheckFrame + 1) % 30;
-    const doMissionCheck = _missionCheckFrame === 0;
 
     for (let i = 0; i < discoveryPaths.length; i++) {
         const path = discoveryPaths[i];
@@ -3928,10 +3935,11 @@ function animateDiscoveryPaths() {
         const mat = path.line.material;
         if (!mat) continue;
 
-        // Update opacity pulse
-        mat.opacity = pulse1;
-        if (path.particles && path.particles.material) {
-            path.particles.material.opacity = pulse2;
+        if (doPulse) {
+            mat.opacity = pulse1;
+            if (path.particles && path.particles.material) {
+                path.particles.material.opacity = pulse2;
+            }
         }
 
         // Mission-status check — flip color to white if every target
