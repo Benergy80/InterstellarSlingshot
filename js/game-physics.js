@@ -3234,21 +3234,83 @@ function findCosmicFeaturesForGalaxy(galaxyId) {
     return features;
 }
 
+// Find or relocate enemies to an EXOTIC outer system so discovery paths
+// can lead to enemies "hiding" out there.  Picks a random exotic_core
+// system, moves up to 4 faction enemies to positions near it (if fewer
+// are already nearby), and returns the system's position.
+// Returns null if no exotic systems exist or no enemies available.
+function findEnemiesNearExoticSystem(galaxyId) {
+    if (typeof enemies === 'undefined' ||
+        typeof outerInterstellarSystems === 'undefined') return null;
+
+    const exoticSystems = outerInterstellarSystems.filter(s =>
+        s && s.userData && s.userData.systemType === 'exotic_core');
+    if (exoticSystems.length === 0) return null;
+
+    const system = exoticSystems[Math.floor(Math.random() * exoticSystems.length)];
+    const sysPos = system.position.clone();
+    const HIDE_RADIUS = 2500;
+
+    // Who's already hiding there?
+    const alreadyThere = enemies.filter(e =>
+        e && e.userData && e.userData.galaxyId === galaxyId &&
+        e.userData.health > 0 && !e.userData.isBoss && !e.userData.isBossSupport &&
+        e.position.distanceTo(sysPos) < HIDE_RADIUS);
+
+    // Need at least 3 enemies near the system for a real mission.  If we're
+    // short, relocate some from the galaxy to hide at the exotic system.
+    const needed = Math.max(0, 3 - alreadyThere.length);
+    if (needed > 0) {
+        const candidates = enemies.filter(e =>
+            e && e.userData && e.userData.galaxyId === galaxyId &&
+            e.userData.health > 0 && !e.userData.isBoss && !e.userData.isBossSupport &&
+            e.position.distanceTo(sysPos) >= HIDE_RADIUS);
+        for (let i = 0; i < needed && i < candidates.length; i++) {
+            const pick = candidates[Math.floor(Math.random() * candidates.length)];
+            if (pick && pick.position) {
+                const off = new THREE.Vector3(
+                    (Math.random() - 0.5) * 1500,
+                    (Math.random() - 0.5) * 800,
+                    (Math.random() - 0.5) * 1500);
+                pick.position.copy(sysPos).add(off);
+                alreadyThere.push(pick);
+            }
+        }
+    }
+
+    if (alreadyThere.length === 0) return null;
+
+    return {
+        position: sysPos,
+        count: alreadyThere.length,
+        cosmicFeature: system.userData.name,
+        cosmicFeatureType: 'Exotic System (' + (system.userData.centerType || 'core') + ')'
+    };
+}
+
 // Find patrol enemies near cosmic features for a galaxy (AWAY from black hole)
 function findPatrolEnemiesNearCosmicFeatures(galaxyId) {
     if (typeof enemies === 'undefined') return null;
-    
+
+    // 35% chance the mission points to an exotic outer system instead
+    // of an in-galaxy cosmic feature.  Enemies are relocated to hide
+    // there so the dotted line leads to real hostiles.
+    if (Math.random() < 0.35) {
+        const exoticData = findEnemiesNearExoticSystem(galaxyId);
+        if (exoticData) return exoticData;
+    }
+
     // Get the black hole position to avoid it
     const galaxyCore = findGalaxyCoreById(galaxyId);
     const blackHolePos = galaxyCore ? galaxyCore.position : null;
     const minDistFromBlackHole = 2000; // Must be at least this far from black hole
-    
+
     // First, get cosmic features for this galaxy that are AWAY from the black hole
     let cosmicFeats = findCosmicFeaturesForGalaxy(galaxyId);
-    
+
     // Filter out cosmic features too close to the black hole
     if (blackHolePos) {
-        cosmicFeats = cosmicFeats.filter(f => 
+        cosmicFeats = cosmicFeats.filter(f =>
             f.position.distanceTo(blackHolePos) > minDistFromBlackHole
         );
     }
