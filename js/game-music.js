@@ -169,25 +169,12 @@
   }
 
   function play(key) {
-    if (!st.enabled || st.muted) {
-      if (typeof dbg === 'function') dbg('  play(' + key + ') blocked: enabled=' + st.enabled + ' muted=' + st.muted);
-      return;
-    }
+    if (!st.enabled || st.muted) return;
     if (key === st.current) return;
-    if (st.loadErrors.has(key)) {
-      if (typeof dbg === 'function') dbg('  play(' + key + ') blocked: load error');
-      return;
-    }
+    if (st.loadErrors.has(key)) return;
 
     const next = st.loaded[key];
-    if (!next) {
-      if (typeof dbg === 'function') dbg('  play(' + key + ') blocked: not loaded');
-      return;
-    }
-    if (typeof dbg === 'function') {
-      dbg('  play(' + key + ') starting readyState=' + next.readyState +
-          ' paused=' + next.paused + ' src=' + next.src.slice(-30));
-    }
+    if (!next) return;
 
     // Stop any in-progress fade and silence EVERY other loaded track.
     // This is defensive: if play() was called mid-crossfade before, the
@@ -218,16 +205,7 @@
       next.currentTime = 0;
     }
     const playPromise = next.play();
-    if (playPromise) {
-      playPromise.then(() => {
-        if (typeof dbg === 'function') {
-          dbg('  play(' + key + ') OK vol=' + next.volume.toFixed(2) +
-              ' time=' + next.currentTime.toFixed(1));
-        }
-      }).catch(err => {
-        if (typeof dbg === 'function') dbg('  play(' + key + ') REJECTED: ' + err.message);
-      });
-    }
+    if (playPromise) playPromise.catch(() => {});
 
     if (!prev) {
       fadeIn(next, key);
@@ -475,12 +453,8 @@
   ];
 
   function skipCurrentTrack() {
-    if (typeof dbg === 'function') dbg('  skipCurrentTrack() current=' + st.current);
     const idx = SKIP_ORDER.indexOf(st.current);
-    // If current isn't in the rotation (e.g. launchScreen or unknown),
-    // start at the top.  Otherwise advance to the next entry, wrapping.
     const next = SKIP_ORDER[(idx < 0 ? 0 : (idx + 1) % SKIP_ORDER.length)];
-    if (typeof dbg === 'function') dbg('    picked: ' + next + ' (idx=' + idx + ')');
     play(next);
   }
 
@@ -534,42 +508,6 @@
     get muted()        { return st.muted; },
   };
 
-  // ─── Debug HUD ─────────────────────────────────────────────────────────────
-  // On-screen debug output so we can see soundtrack state without devtools.
-  // Activate by appending ?musicdebug to the URL.  Shows the current track,
-  // mute state, and the last 6 events (click received, play called, etc.).
-  // Default ON so the user can see soundtrack events without devtools.
-  // Hide by appending ?nomusicdebug to the URL.
-  const DEBUG_ON = !(typeof location !== 'undefined' &&
-                     /nomusicdebug/.test(location.search || ''));
-  let debugEl = null;
-  const debugLog = [];
-  function dbg(msg) {
-    const line = '[' + new Date().toISOString().slice(11, 23) + '] ' + msg;
-    console.log('🎵 ' + line);
-    debugLog.push(line);
-    if (debugLog.length > 12) debugLog.shift();
-    if (DEBUG_ON) renderDebug();
-  }
-  function renderDebug() {
-    if (!DEBUG_ON) return;
-    if (!debugEl) {
-      debugEl = document.createElement('div');
-      debugEl.id = 'soundtrackDebug';
-      debugEl.style.cssText =
-        'position:fixed;top:4px;right:4px;z-index:100000;' +
-        'background:rgba(0,0,0,0.85);color:#0ff;font:10px/1.3 monospace;' +
-        'padding:8px;max-width:420px;border:1px solid #0ff;border-radius:4px;' +
-        'pointer-events:none;white-space:pre-wrap;';
-      (document.body || document.documentElement).appendChild(debugEl);
-    }
-    const header =
-      'current=' + st.current + ' muted=' + st.muted +
-      ' enabled=' + st.enabled + ' loaded=' + Object.keys(st.loaded).length +
-      ' errors=' + st.loadErrors.size;
-    debugEl.textContent = header + '\n' + debugLog.join('\n');
-  }
-
   // ─── Button event delegation ──────────────────────────────────────────────
   document.addEventListener('click', function handleSoundtrackButtons(e) {
     const t = e.target;
@@ -577,37 +515,26 @@
 
     const musicBtn = t.closest('#muteBtn, #mobileMusicBtn');
     if (musicBtn) {
-      dbg('music click → was muted=' + st.muted);
       e.preventDefault();
       e.stopPropagation();
       st.muted = !st.muted;
       if (st.muted) {
-        dbg('  muting: stopAll()');
         stopAll();
       } else {
-        dbg('  unmuting: updateMusicContext()');
         updateMusicContext();
       }
       try {
         if (typeof window.resumeAudioContext === 'function') window.resumeAudioContext();
         if (typeof window.toggleMusic === 'function') window.toggleMusic();
-      } catch (err) { dbg('  toggleMusic threw: ' + err.message); }
-      dbg('  now muted=' + st.muted + ' current=' + st.current);
+      } catch (err) { /* ignore */ }
       return;
     }
 
     const skipBtn = t.closest('#skipTrackBtn, #mobileSkipTrackBtn');
     if (skipBtn) {
-      dbg('skip click → current=' + st.current + ' muted=' + st.muted);
       e.preventDefault();
       e.stopPropagation();
-      if (st.muted) {
-        dbg('  skip while muted → unmuting');
-        st.muted = false;
-      }
-      // Lock the context detector for 2 minutes so the skipped-to track
-      // isn't immediately yanked back by the location detector.  Each
-      // subsequent Skip click extends the lock.
+      if (st.muted) st.muted = false;
       st.skipLockUntil = Date.now() + 120000;
       try {
         if (typeof window.resumeAudioContext === 'function') window.resumeAudioContext();
@@ -618,24 +545,10 @@
 
     const pauseBtn = t.closest('#pauseBtn');
     if (pauseBtn) {
-      dbg('pause click');
       e.preventDefault();
       e.stopPropagation();
       if (typeof window.togglePause === 'function') window.togglePause();
       return;
     }
   }, true);
-
-  // Log at module load so we can confirm game-music.js executed and the
-  // delegation handler registered.
-  dbg('game-music.js delegation handler registered');
-
-  // Log button presence shortly after DOM is ready
-  setTimeout(() => {
-    const ids = ['muteBtn', 'mobileMusicBtn', 'skipTrackBtn', 'mobileSkipTrackBtn', 'pauseBtn'];
-    ids.forEach(id => {
-      const el = document.getElementById(id);
-      dbg('  #' + id + ': ' + (el ? 'FOUND' : 'MISSING'));
-    });
-  }, 2000);
 })();
