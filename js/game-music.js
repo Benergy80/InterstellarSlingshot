@@ -308,6 +308,46 @@
     if (TRACKS[key]) play(key);
   }
 
+  // ─── Launch-screen autoplay ───────────────────────────────────────────────
+  // The game loop (which drives updateMusicContext) doesn't start until the
+  // intro sequence begins, so launch-screen music won't trigger through the
+  // normal context-detection path.  Browsers also block <audio>.play() until
+  // the user has interacted with the page.  Solution: preload immediately,
+  // then start the launch-screen track on the first user interaction (click,
+  // key press, touch) anywhere on the page.
+  function armLaunchScreen() {
+    preload();
+
+    let fired = false;
+    const trigger = () => {
+      if (fired) return;
+      fired = true;
+      // Only auto-start if the game hasn't started yet AND nothing else is
+      // already playing.  After the intro kicks off, updateMusicContext
+      // takes over and cross-fades to the right track.
+      const gameNotStarted =
+        typeof gameState === 'undefined' || !gameState.gameStarted;
+      if (gameNotStarted && !st.current) {
+        play('launchScreen');
+      }
+      document.removeEventListener('pointerdown', trigger, true);
+      document.removeEventListener('keydown', trigger, true);
+      document.removeEventListener('touchstart', trigger, true);
+    };
+
+    // Capture-phase so we catch the interaction even if the click handler
+    // on a button calls stopPropagation/preventDefault.
+    document.addEventListener('pointerdown', trigger, true);
+    document.addEventListener('keydown', trigger, true);
+    document.addEventListener('touchstart', trigger, true);
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', armLaunchScreen, { once: true });
+  } else {
+    armLaunchScreen();
+  }
+
   // ─── Public API ───────────────────────────────────────────────────────────
   window.soundtrack = {
     preload:       preload,
