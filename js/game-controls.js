@@ -1664,6 +1664,10 @@ function initAudio() {
         effectsGain.gain.value = 0.6; // RESTORED: Higher effects volume
         
         console.log('Enhanced audio system initialized (waiting for user interaction)');
+        // Preload MP3 soundtrack alongside synth audio
+        if (typeof soundtrack !== 'undefined' && soundtrack.preload) {
+            soundtrack.preload();
+        }
     } catch (e) {
         console.warn('Audio not supported');
     }
@@ -1685,8 +1689,16 @@ function startBackgroundMusic() {
     if (!audioContext || !musicSystem.enabled || audioContext.state === 'suspended') {
         return;
     }
-    
-    // Create eerie ambient space music
+    // If the MP3 soundtrack is loaded, let it handle all music —
+    // don't layer the procedural synth on top.
+    if (typeof soundtrack !== 'undefined' && soundtrack.enabled &&
+        !soundtrack.current && soundtrack.update) {
+        soundtrack.update();
+        return;
+    }
+    if (typeof soundtrack !== 'undefined' && soundtrack.current) return;
+
+    // Fallback: Create eerie ambient space music (procedural)
     createAmbientSpaceMusic();
 }
 
@@ -1920,15 +1932,21 @@ function createBattleMusic() {
 
 function switchToBattleMusic() {
     if (musicSystem.inBattle || !musicSystem.enabled) return;
-    
+
     // Resume audio context if suspended (critical for boss music)
     if (audioContext && audioContext.state === 'suspended') {
         audioContext.resume().then(() => {
             console.log('AudioContext resumed for boss battle music');
         });
     }
-    
+
     musicSystem.inBattle = true;
+
+    // Let the MP3 soundtrack handle boss music if it's active
+    if (typeof soundtrack !== 'undefined' && soundtrack.enabled) {
+        soundtrack.forceTrack('bossFight');
+        return;
+    }
     
     // Fade out ambient music
     if (musicSystem.backgroundMusic) {
@@ -1955,8 +1973,13 @@ function switchToBattleMusic() {
 
 function switchToAmbientMusic() {
     if (!musicSystem.inBattle || !musicSystem.enabled) return;
-    
+
     musicSystem.inBattle = false;
+
+    // Let the MP3 soundtrack resume location-based music
+    if (typeof soundtrack !== 'undefined' && soundtrack.enabled) {
+        return;  // updateMusicContext will pick the right track next tick
+    }
     
     // Fade out battle music
     if (musicSystem.battleMusic) {
@@ -1993,6 +2016,8 @@ function toggleMusic() {
         } else {
             startBackgroundMusic();
         }
+        // Sync MP3 soundtrack
+        if (typeof soundtrack !== 'undefined') soundtrack.setMuted(false);
         console.log('🎵 Music unmuted');
     } else {
         if (muteIcon) muteIcon.className = 'fas fa-volume-mute text-red-400';
@@ -2010,6 +2035,8 @@ function toggleMusic() {
             musicSystem.battleMusic.stop();
             musicSystem.battleMusic = null;
         }
+        // Sync MP3 soundtrack
+        if (typeof soundtrack !== 'undefined') soundtrack.setMuted(true);
         console.log('🔇 Music muted');
     }
 }

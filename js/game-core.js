@@ -2097,6 +2097,12 @@ if (typeof checkCosmicFeatureInteractions === 'function' && typeof camera !== 'u
         updateAtmosphericPerspective(camera);
     }
 
+    // SOUNDTRACK: Pick the right MP3 track based on current location.
+    // Runs every 30 frames (~2 Hz at 60 fps) — cheap check, smooth fading.
+    if (gameState.frameCount % 30 === 0 && typeof soundtrack !== 'undefined' && soundtrack.update) {
+        soundtrack.update();
+    }
+
     // Depth of field disabled for performance (was causing expensive scene traversals)
 
     // PERFORMANCE DEBUG: Time render call
