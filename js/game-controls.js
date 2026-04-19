@@ -2008,8 +2008,8 @@ function toggleMusic() {
         } else {
             startBackgroundMusic();
         }
-        // Sync MP3 soundtrack
-        if (typeof soundtrack !== 'undefined') soundtrack.setMuted(false);
+        // Note: MP3 soundtrack mute is handled by the delegation handler
+        // in game-music.js (single source of truth — avoids double toggle).
         console.log('🎵 Music unmuted');
     } else {
         if (muteIcon) muteIcon.className = 'fas fa-volume-mute text-red-400 mr-1';
@@ -2029,8 +2029,8 @@ function toggleMusic() {
             musicSystem.battleMusic.stop();
             musicSystem.battleMusic = null;
         }
-        // Sync MP3 soundtrack
-        if (typeof soundtrack !== 'undefined') soundtrack.setMuted(true);
+        // Note: MP3 soundtrack mute is handled by the delegation handler
+        // in game-music.js (single source of truth — avoids double toggle).
         console.log('🔇 Music muted');
     }
 }

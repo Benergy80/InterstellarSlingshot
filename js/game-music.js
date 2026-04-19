@@ -167,11 +167,23 @@
     const next = st.loaded[key];
     if (!next) return;
 
-    // Abort any in-progress fade
+    // Stop any in-progress fade and silence EVERY other loaded track.
+    // This is defensive: if play() was called mid-crossfade before, the
+    // previously-fading-out track could still be audible, and multiple
+    // rapid play() calls could layer 3+ tracks.
     if (st.fadeTimer) { clearInterval(st.fadeTimer); st.fadeTimer = null; }
-
-    const prev = st.currentEl;
-    const prevKey = st.current;
+    const prev = st.currentEl && st.currentEl !== next ? st.currentEl : null;
+    Object.keys(st.loaded).forEach(k => {
+      if (k === key) return;
+      const a = st.loaded[k];
+      if (!a) return;
+      // Don't pause prev yet — we'll crossfade it. But kill everything else.
+      if (a !== prev) {
+        a.pause();
+        a.volume = 0;
+      }
+    });
+    st.fadingOut = null;
 
     st.current = key;
     st.currentEl = next;
@@ -211,8 +223,6 @@
         st.fadeTimer = null;
         prev.pause();
         prev.volume = 0;
-        // Don't reset currentTime — track resumes where it left off
-        // when the player returns to that context.
         st.fadingOut = null;
       }
     }, interval);
@@ -483,18 +493,19 @@
     if (musicBtn) {
       e.preventDefault();
       e.stopPropagation();
-      // Toggle the synth music system (icon updates happen inside)
+      // Toggle MP3 soundtrack mute (single source of truth)
+      st.muted = !st.muted;
+      if (st.muted) {
+        stopAll();
+      } else {
+        // Kick the context detector so a track starts playing now
+        updateMusicContext();
+      }
+      // Also toggle the synth music system for icon updates
       try {
         if (typeof window.resumeAudioContext === 'function') window.resumeAudioContext();
         if (typeof window.toggleMusic === 'function') window.toggleMusic();
       } catch (err) { console.warn('toggleMusic error:', err); }
-      // Also toggle the MP3 soundtrack directly — don't rely on
-      // toggleMusic's internal call because scoping issues may
-      // prevent it from reaching window.soundtrack.
-      st.muted = !st.muted;
-      if (st.muted) {
-        stopAll();
-      }
       return;
     }
 
