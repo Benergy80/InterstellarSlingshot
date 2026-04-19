@@ -3953,6 +3953,13 @@ if (enemy.userData.health <= 0) {
     }, 800); // Wait for celebration music to finish
 } else {
     showAchievement('Enemy Destroyed!', `${enemy.userData.name} eliminated`);
+
+    // 30% chance for missile drop on regular kills
+    if (Math.random() < 0.3 && gameState.missiles.current < gameState.missiles.capacity) {
+        gameState.missiles.current++;
+        showAchievement('Missile Recovered!',
+            `+1 missile from debris (${gameState.missiles.current}/${gameState.missiles.capacity})`);
+    }
 }
     
     // Hull recovery from defeating enemies
@@ -4571,15 +4578,17 @@ function handleBorgCubeDestruction() {
     const cubeIndex = enemies.indexOf(cube);
     if (cubeIndex > -1) enemies.splice(cubeIndex, 1);
 
-    // Reset Borg state
+    // Reset Borg state — allow future spawns so the player can seek
+    // out more cubes in deep space.
     gameState.borg.active = false;
     gameState.borg.cube = null;
     gameState.borg.drones = [];
+    gameState.borg.spawned = false;
 
-    // Massive rewards
-    gameState.missiles.capacity += 5;
+    // Massive rewards — refill missiles to capacity (max 10)
+    gameState.missiles.capacity = Math.min(10, gameState.missiles.capacity);
     gameState.missiles.current = gameState.missiles.capacity;
-    showAchievement('ULTIMATE REWARD', `+5 Missile Capacity! Total: ${gameState.missiles.capacity}`, true);
+    showAchievement('ULTIMATE REWARD', `Missiles fully restored! (${gameState.missiles.capacity})`, true);
 
     console.log('🎊 Borg Cube defeated! Player is free!');
 }
@@ -4804,11 +4813,11 @@ function handleMissileHit(missile, enemy) {
             if (typeof createFireworkCelebration === 'function') createFireworkCelebration();
             playBossVictoryMusic();
 
-            // Boss defeated: +2 missile capacity
-            gameState.missiles.capacity += 2;
-            gameState.missiles.current = Math.min(gameState.missiles.capacity, gameState.missiles.current + 2);
-            showAchievement('Missile Capacity Increased!',
-                `Capacity now ${gameState.missiles.capacity} missiles`);
+            // Boss defeated: refill missiles (max cap 10)
+            gameState.missiles.capacity = Math.min(10, gameState.missiles.capacity);
+            gameState.missiles.current = gameState.missiles.capacity;
+            showAchievement('Missiles Restored!',
+                `Full loadout: ${gameState.missiles.current}/${gameState.missiles.capacity}`);
         } else {
             showAchievement('Enemy Destroyed!', `${enemy.userData.name} eliminated by missile`);
 

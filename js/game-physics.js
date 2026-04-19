@@ -2662,15 +2662,30 @@ function checkForNebulaDiscovery() {
 
             // Restore energy
             if (gameState.energy < 100) {
-                const energyRestored = 100 - gameState.energy;
                 gameState.energy = 100;
-                console.log(`Energy restored: +${energyRestored.toFixed(1)}%`);
             }
 
-            // ⭐ NEW: Award warp for discovering nebula
+            // Repair hull by 25%
+            if (gameState.hull < (gameState.maxHull || 100)) {
+                gameState.hull = Math.min(gameState.maxHull || 100, gameState.hull + 25);
+            }
+
+            // Speed boost for 10 seconds
+            if (gameState.velocityVector) {
+                const boostMagnitude = 3.0;
+                const dir = (typeof camera !== 'undefined')
+                    ? camera.getWorldDirection(new THREE.Vector3()) : new THREE.Vector3(0, 0, -1);
+                gameState.velocityVector.addScaledVector(dir, boostMagnitude);
+            }
+
+            // +1 missile
+            if (gameState.missiles && gameState.missiles.current < gameState.missiles.capacity) {
+                gameState.missiles.current++;
+            }
+
+            // Award warp charge
             if (gameState.emergencyWarp && gameState.emergencyWarp.available < gameState.emergencyWarp.maxWarps) {
                 gameState.emergencyWarp.available++;
-                console.log(`⚡ Warp earned from nebula discovery! Total: ${gameState.emergencyWarp.available}/${gameState.emergencyWarp.maxWarps}`);
             }
 
             // Play unique nebula music (DISABLED)
@@ -2682,7 +2697,7 @@ function checkForNebulaDiscovery() {
             // Show welcome notification with intelligence
             const nebulaName = nebula.userData.mythicalName || nebula.userData.name || 'Unknown Nebula';
 
-            let welcomeMessage = `Welcome to the ${nebulaName} Nebula. Energy restored to 100%. +1 Warp Earned!`;
+            let welcomeMessage = `Welcome to the ${nebulaName} Nebula. Energy 100%, hull +25%, speed boost, +1 missile, +1 warp!`;
 
             if (intel.nearbyGalaxy !== null && typeof galaxyTypes !== 'undefined') {
                 const galaxy = galaxyTypes[intel.nearbyGalaxy];

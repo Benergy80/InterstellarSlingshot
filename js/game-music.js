@@ -359,12 +359,24 @@
       return;
     }
 
+    // 7b) Outer interstellar systems (exotic cores + Borg patrols) —
+    // each system is randomly assigned one of the 3 Far Outer Galaxy tracks
+    // on first encounter, then keeps that assignment permanently.
+    const nearOuter = detectNearbyOuterSystem();
+    if (nearOuter >= 0) {
+      if (!st._outerTrackMap) st._outerTrackMap = {};
+      if (!st._outerTrackMap[nearOuter]) {
+        st._outerTrackMap[nearOuter] = 'farOuter' + (1 + Math.floor(Math.random() * 3));
+      }
+      play(st._outerTrackMap[nearOuter]);
+      return;
+    }
+
     // 8) Sagittarius A* area — rotate through Far Outer Galaxy tracks
     if (gId === 8) {
       if (st.current !== 'farOuter1' && st.current !== 'farOuter2' &&
           st.current !== 'farOuter3') {
-        const farKey = 'farOuter' + (1 + Math.abs((typeof gameState !== 'undefined'
-          ? (gameState.frameCount || 0) : 0) % 3));
+        const farKey = 'farOuter' + (1 + Math.floor(Math.random() * 3));
         play(farKey);
       }
       return;
@@ -404,6 +416,17 @@
     if (typeof getCurrentGalaxyId === 'function') {
       const g = getCurrentGalaxyId();
       if (g === 8) return 8;
+    }
+    return -1;
+  }
+
+  function detectNearbyOuterSystem() {
+    if (typeof outerInterstellarSystems === 'undefined' || typeof camera === 'undefined') return -1;
+    for (let i = 0; i < outerInterstellarSystems.length; i++) {
+      const sys = outerInterstellarSystems[i];
+      if (!sys || !sys.position) continue;
+      const d = camera.position.distanceTo(sys.position);
+      if (d < 5000) return i;
     }
     return -1;
   }

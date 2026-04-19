@@ -94,7 +94,7 @@ const gameState = {
     },
     missiles: {
         current: 3,
-        capacity: 3,
+        capacity: 10,
         cooldown: 0,
         cooldownTime: 1000,
         damage: 3,
