@@ -303,15 +303,8 @@
   function onKeyDown(e) {
     if (e.key === 'Escape') { stop(); return; }
 
-    // Ignore shortcuts while typing into an input/textarea
-    const tag = (e.target && e.target.tagName) || '';
-    if (tag === 'INPUT' || tag === 'TEXTAREA') return;
-
-    // T toggles player takeover (T again returns to autopilot)
-    if (!e.repeat && (e.key === 't' || e.key === 'T')) {
-      toggleTakeover();
-      return;
-    }
+    // T (toggle takeover) is handled by the global T-key binding above so
+    // it also works outside demo mode.
   }
 
   // Global O-key binding — ALWAYS active (registered once at module load, not
@@ -346,6 +339,32 @@
   }
   if (typeof document !== 'undefined') {
     document.addEventListener('keydown', handleGlobalOKey);
+  }
+
+  // Global T-key binding — ALWAYS active (registered once at module load).
+  // Works during normal gameplay AND demo:
+  //   • Not in demo → start the demo/autopilot
+  //   • In demo + driving → toggle takeover (player takes control)
+  //   • In demo + paused → toggle takeover (autopilot resumes)
+  function handleGlobalTKey(e) {
+    if (!e || e.repeat) return;
+    if (e.key !== 't' && e.key !== 'T') return;
+    const tag = (e.target && e.target.tagName) || '';
+    if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+    if (typeof gameState === 'undefined' || !gameState.gameStarted) return;
+
+    if (!ap.active) {
+      // Regular game → engage autopilot
+      start();
+    } else {
+      // Already in demo → toggle player takeover (this is also bound by
+      // onKeyDown inside demo mode, but this global binding ensures T
+      // works before and after demo start without listener re-ordering).
+      toggleTakeover();
+    }
+  }
+  if (typeof document !== 'undefined') {
+    document.addEventListener('keydown', handleGlobalTKey);
   }
 
   // Global M-key binding — desktop only.  Toggles the FLIGHT CONTROLS
