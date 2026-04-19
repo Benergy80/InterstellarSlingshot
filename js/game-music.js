@@ -296,9 +296,35 @@
   }
 
   // ─── Helpers ──────────────────────────────────────────────────────────────
+  // Music-specific galaxy detection: only switch to a galaxy's theme when
+  // the player is within 4,000 units of its galactic core (the large
+  // accretion disc's outer diameter is ~5,600–5,800u, so 4,000u keeps the
+  // theme active while you're inside the visible galaxy halo but not yet
+  // at the core).  This is intentionally tighter than the UI's 20,000u
+  // detection so the music only kicks in when the player is clearly
+  // "inside" the galaxy, not just vaguely near it.
+  const GALAXY_MUSIC_RADIUS = 4000;
+
   function detectGalaxy() {
+    if (typeof camera === 'undefined' || typeof planets === 'undefined') return -1;
+
+    for (let i = 0; i < planets.length; i++) {
+      const p = planets[i];
+      if (!p || !p.userData) continue;
+      if (p.userData.type !== 'blackhole') continue;
+      if (p.userData.isGalacticCore !== true) continue;
+      if (typeof p.userData.galaxyId !== 'number') continue;
+
+      const d = camera.position.distanceTo(p.position);
+      if (d < GALAXY_MUSIC_RADIUS) {
+        return p.userData.galaxyId;
+      }
+    }
+    // Fall back to the UI detector so Sagittarius A* (galaxy 8) still
+    // registers — its "galaxy" isn't a normal galactic-core black hole.
     if (typeof getCurrentGalaxyId === 'function') {
-      return getCurrentGalaxyId();
+      const g = getCurrentGalaxyId();
+      if (g === 8) return 8;
     }
     return -1;
   }
