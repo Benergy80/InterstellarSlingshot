@@ -672,13 +672,16 @@
                 P: Pause | M: Hide UI Panels
             </div>
             <div class="flex gap-2 mt-2 flex-wrap">
-                <button id="muteBtn" class="small-control-btn">
+                <button id="muteBtn" class="small-control-btn"
+                        onclick="if(typeof resumeAudioContext==='function')resumeAudioContext();if(typeof toggleMusic==='function')toggleMusic();">
                     <i class="fas fa-volume-up mr-1" id="muteIcon"></i>Music
                 </button>
-                <button id="skipTrackBtn" class="small-control-btn" title="Skip to next soundtrack">
+                <button id="skipTrackBtn" class="small-control-btn" title="Skip to next soundtrack"
+                        onclick="if(typeof resumeAudioContext==='function')resumeAudioContext();if(window.soundtrack&&window.soundtrack.skip)window.soundtrack.skip();">
                     <i class="fas fa-forward mr-1"></i>Skip
                 </button>
-                <button id="pauseBtn" class="small-control-btn">
+                <button id="pauseBtn" class="small-control-btn"
+                        onclick="if(typeof togglePause==='function')togglePause();">
                     <i class="fas fa-pause mr-1" id="pauseIcon"></i>Pause
                 </button>
             </div>

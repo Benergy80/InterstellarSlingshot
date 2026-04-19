@@ -3245,55 +3245,12 @@ function setupEnhancedEventListeners() {
 let controlButtonsInitialized = false;
 
 function setupControlButtons() {
-    if (controlButtonsInitialized) {
-        console.log('Control buttons already initialized, skipping...');
-        return;
-    }
-
-    console.log('Setting up control buttons...');
-
-    // Setup mute/music button — use a data-flag to avoid duplicate listeners
-    const muteBtn = document.getElementById('muteBtn');
-    if (muteBtn && !muteBtn.dataset.init) {
-        muteBtn.dataset.init = '1';
-        muteBtn.addEventListener('click', (e) => {
-            console.log('Music button clicked!');
-            e.preventDefault();
-            e.stopPropagation();
-            if (typeof resumeAudioContext === 'function') resumeAudioContext();
-            if (typeof toggleMusic === 'function') toggleMusic();
-        });
-        console.log('Music button event listener attached');
-    }
-
-    // Setup skip-track button
-    const skipBtn = document.getElementById('skipTrackBtn');
-    if (skipBtn && !skipBtn.dataset.init) {
-        skipBtn.dataset.init = '1';
-        skipBtn.addEventListener('click', (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            if (typeof resumeAudioContext === 'function') resumeAudioContext();
-            if (typeof soundtrack !== 'undefined' && soundtrack.skip) {
-                soundtrack.skip();
-            }
-        });
-        console.log('Skip track button listener attached');
-    }
-
-    // Setup pause button
-    const pauseBtn = document.getElementById('pauseBtn');
-    if (pauseBtn && !pauseBtn.dataset.init) {
-        pauseBtn.dataset.init = '1';
-        pauseBtn.addEventListener('click', (e) => {
-            console.log('Pause button clicked!');
-            e.preventDefault();
-            e.stopPropagation();
-            if (typeof togglePause === 'function') togglePause();
-        });
-        console.log('Pause button event listener attached');
-    }
-
+    // Flight Controls buttons (Music / Skip / Pause) now use inline onclick
+    // attributes in index.html that call the globals directly. That's the
+    // most reliable setup — survives DOM changes, doesn't depend on listener
+    // registration timing, and works even if this function never runs.
+    // This function is left as a no-op for backwards compatibility with any
+    // callers that still reference it.
     controlButtonsInitialized = true;
 }
 
