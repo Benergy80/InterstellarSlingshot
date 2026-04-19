@@ -2195,11 +2195,11 @@ function resetCameraToGamePosition() {
     const earthDistance = 640;    // Earth's orbit radius from sun (4x scaled)
     const earthOrbitOffset = 80;  // camera offset from Earth for a close fly-by
     // Earth starts at (sun.x + 640, sun.y, sun.z). Place camera just
-    // behind/above Earth so it's visible in the centre of the screen.
+    // behind Earth, 4x offset on Z so the orbital plane is easier to read.
     const earthX = localSystemOffset.x + earthDistance;
     const earthY = localSystemOffset.y;
     const earthZ = localSystemOffset.z;
-    camera.position.set(earthX + earthOrbitOffset, earthY + 30, earthZ + earthOrbitOffset);
+    camera.position.set(earthX + earthOrbitOffset, earthY + 30, earthZ + earthOrbitOffset * 4);
     camera.lookAt(new THREE.Vector3(earthX, earthY, earthZ));
 
     // Reset camera rotation tracking
@@ -2221,18 +2221,22 @@ function resetCameraToGamePosition() {
     }
 
     // Lock the Navigation panel on Earth so the player's first target
-    // is their home world.
+    // is their home world, and auto-engage Auto-Navigate so the game
+    // teaches the targeting system from the start.
     if (typeof gameState !== 'undefined' && typeof planets !== 'undefined') {
         for (let i = 0; i < planets.length; i++) {
             if (planets[i].userData && planets[i].userData.name === 'Earth') {
                 gameState.currentTarget = planets[i];
+                gameState.autoNavigating = true;
+                gameState.autoNavOrienting = true;
                 if (typeof populateTargets === 'function') populateTargets();
+                if (typeof updateUI === 'function') updateUI();
                 break;
             }
         }
     }
 
-    console.log('📍 Camera set to orbit Earth in Sol System');
+    console.log('📍 Camera set to orbit Earth in Sol System with Auto-Nav engaged');
 }
 
 function fadeOutIntroElements(progress) {
