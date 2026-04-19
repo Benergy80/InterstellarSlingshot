@@ -1988,12 +1988,16 @@ function toggleMusic() {
     musicSystem.enabled = !musicSystem.enabled;
     const muteIcon = document.getElementById('muteIcon');
     const muteBtn = document.getElementById('muteBtn');
-    
+    const mobileIcon = document.getElementById('mobileMusicIcon');
+    const mobileBtn = document.getElementById('mobileMusicBtn');
+
     console.log('🔊 toggleMusic called, enabled:', musicSystem.enabled);
-    
+
     if (musicSystem.enabled) {
-        if (muteIcon) muteIcon.className = 'fas fa-volume-up text-cyan-400';
+        if (muteIcon) muteIcon.className = 'fas fa-volume-up text-cyan-400 mr-1';
         if (muteBtn) muteBtn.classList.remove('muted');
+        if (mobileIcon) mobileIcon.className = 'fas fa-volume-up';
+        if (mobileBtn) mobileBtn.classList.remove('muted');
         if (musicGain && audioContext) {
             musicGain.gain.setValueAtTime(0.4, audioContext.currentTime);
         }
@@ -2008,8 +2012,10 @@ function toggleMusic() {
         if (typeof soundtrack !== 'undefined') soundtrack.setMuted(false);
         console.log('🎵 Music unmuted');
     } else {
-        if (muteIcon) muteIcon.className = 'fas fa-volume-mute text-red-400';
+        if (muteIcon) muteIcon.className = 'fas fa-volume-mute text-red-400 mr-1';
         if (muteBtn) muteBtn.classList.add('muted');
+        if (mobileIcon) mobileIcon.className = 'fas fa-volume-mute';
+        if (mobileBtn) mobileBtn.classList.add('muted');
         if (musicGain && audioContext) {
             musicGain.gain.setValueAtTime(0, audioContext.currentTime);
         }

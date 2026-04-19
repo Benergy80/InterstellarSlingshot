@@ -672,16 +672,13 @@
                 P: Pause | M: Hide UI Panels
             </div>
             <div class="flex gap-2 mt-2 flex-wrap">
-                <button id="muteBtn" class="small-control-btn"
-                        onclick="if(typeof resumeAudioContext==='function')resumeAudioContext();if(typeof toggleMusic==='function')toggleMusic();">
+                <button id="muteBtn" class="small-control-btn" type="button">
                     <i class="fas fa-volume-up mr-1" id="muteIcon"></i>Music
                 </button>
-                <button id="skipTrackBtn" class="small-control-btn" title="Skip to next soundtrack"
-                        onclick="if(typeof resumeAudioContext==='function')resumeAudioContext();if(window.soundtrack&&window.soundtrack.skip)window.soundtrack.skip();">
+                <button id="skipTrackBtn" class="small-control-btn" type="button" title="Skip to next soundtrack">
                     <i class="fas fa-forward mr-1"></i>Skip
                 </button>
-                <button id="pauseBtn" class="small-control-btn"
-                        onclick="if(typeof togglePause==='function')togglePause();">
+                <button id="pauseBtn" class="small-control-btn" type="button">
                     <i class="fas fa-pause mr-1" id="pauseIcon"></i>Pause
                 </button>
             </div>
@@ -867,10 +864,16 @@
 
 <!-- MOBILE CONTROLS -->
 <div class="mobile-controls-container">
-    <!-- Top row: Flight Controls and Emergency Warp -->
+    <!-- Top row: Flight Controls, Music, Skip, Emergency Warp -->
     <div class="mobile-controls-top">
         <button class="mobile-btn" onclick="showMobilePanel('controls')" title="Flight Controls">
             <i class="fas fa-gamepad"></i>
+        </button>
+        <button id="mobileMusicBtn" class="mobile-btn" type="button" title="Music On/Off">
+            <i class="fas fa-volume-up" id="mobileMusicIcon"></i>
+        </button>
+        <button id="mobileSkipTrackBtn" class="mobile-btn" type="button" title="Skip Track">
+            <i class="fas fa-forward"></i>
         </button>
         <button class="mobile-btn warp" onclick="mobileEmergencyWarp()" title="Emergency Warp">
             <i class="fa-solid fa-triangle-exclamation"></i>

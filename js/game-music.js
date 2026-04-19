@@ -276,24 +276,18 @@
       return;
     }
 
-    // 2) Intro sequence running — skip entirely if demo mode requested it
-    if (!st.suppressIntro &&
-        typeof introSequence !== 'undefined' && introSequence.active &&
-        introSequence.phase !== 'complete') {
-      play('intro');
-      return;
-    }
+    // 2) Intro sequence — Intro.mp3 is deliberately NOT played during the
+    //    intro cinematic.  The cinematic is short and has its own audio
+    //    feel; skipping it avoids an awkward start-cut-off-restart when
+    //    the player lands in their galaxy a moment later.  Intro.mp3 is
+    //    still available via the Skip button rotation.
 
-    // 2b) Let the intro track finish naturally before switching.
-    // The intro sequence can end (active=false) well before the MP3 is
-    // done.  If the intro audio is still playing, don't cut it — wait
-    // until the last few seconds, then let the next context-detection
-    // tick crossfade into the galaxy track.
+    // 2b) Legacy: let any leftover intro audio finish naturally.
     if (st.current === 'intro' && st.currentEl) {
       const el = st.currentEl;
       const remaining = el.duration - el.currentTime;
       if (remaining > FADE_DURATION && !el.paused && !el.ended) {
-        return;  // intro still playing — hold off
+        return;
       }
     }
 
@@ -441,60 +435,78 @@
     }
   }
 
-  // ─── Launch-screen autoplay ───────────────────────────────────────────────
-  // The game loop (which drives updateMusicContext) doesn't start until the
-  // intro sequence begins, so launch-screen music won't trigger through the
-  // normal context-detection path.  Browsers also block <audio>.play() until
-  // the user has interacted with the page.  Solution: preload immediately,
-  // then start the launch-screen track on the first user interaction (click,
-  // key press, touch) anywhere on the page.
-  function armLaunchScreen() {
+  // ─── Preload on load ──────────────────────────────────────────────────────
+  // Just preload tracks so they're ready to play.  We no longer auto-start
+  // any track on touch/pointer/key events — the user now explicitly starts
+  // music by clicking a button (Start game, Demo, Music, Skip).
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', preload, { once: true });
+  } else {
     preload();
-
-    let fired = false;
-    const trigger = () => {
-      if (fired) return;
-      fired = true;
-      // Only auto-start if the game hasn't started yet AND nothing else is
-      // already playing.  After the intro kicks off, updateMusicContext
-      // takes over and cross-fades to the right track.
-      const gameNotStarted =
-        typeof gameState === 'undefined' || !gameState.gameStarted;
-      if (gameNotStarted && !st.current) {
-        play('launchScreen');
-      }
-      document.removeEventListener('pointerdown', trigger, true);
-      document.removeEventListener('keydown', trigger, true);
-      document.removeEventListener('touchstart', trigger, true);
-    };
-
-    // Capture-phase so we catch the interaction even if the click handler
-    // on a button calls stopPropagation/preventDefault.
-    document.addEventListener('pointerdown', trigger, true);
-    document.addEventListener('keydown', trigger, true);
-    document.addEventListener('touchstart', trigger, true);
   }
 
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', armLaunchScreen, { once: true });
-  } else {
-    armLaunchScreen();
+  // Launch-screen music now starts when the user clicks the Start or Demo
+  // button (those handlers call soundtrack.forceTrack or rely on the
+  // context-detection loop).  Expose a helper for the Start button path.
+  function startLaunchScreen() {
+    const gameNotStarted =
+      typeof gameState === 'undefined' || !gameState.gameStarted;
+    if (gameNotStarted && !st.current) {
+      play('launchScreen');
+    }
   }
 
   // ─── Public API ───────────────────────────────────────────────────────────
   window.soundtrack = {
-    preload:         preload,
-    update:          updateMusicContext,
-    forceTrack:      forceTrack,
-    skip:            skipCurrentTrack,
-    setMuted:        setMuted,
-    setVolume:       setVolume,
-    setSuppressIntro: setSuppressIntro,
-    stopAll:         stopAll,
-    fadeOutCurrent:  fadeOutCurrent,
-    get current()    { return st.current; },
-    get enabled()    { return st.enabled; },
-    set enabled(v)   { st.enabled = !!v; if (!v) stopAll(); },
-    get muted()      { return st.muted; },
+    preload:           preload,
+    update:            updateMusicContext,
+    forceTrack:        forceTrack,
+    skip:              skipCurrentTrack,
+    setMuted:          setMuted,
+    setVolume:         setVolume,
+    setSuppressIntro:  setSuppressIntro,
+    stopAll:           stopAll,
+    fadeOutCurrent:    fadeOutCurrent,
+    startLaunchScreen: startLaunchScreen,
+    get current()      { return st.current; },
+    get enabled()      { return st.enabled; },
+    set enabled(v)     { st.enabled = !!v; if (!v) stopAll(); },
+    get muted()        { return st.muted; },
   };
+
+  // ─── Button event delegation ──────────────────────────────────────────────
+  // Document-level click delegation for Music/Skip/Pause buttons — this is
+  // bulletproof.  No cloneNode, no listener re-attachment timing issues,
+  // no per-element setup that can race.  Any click anywhere in the document
+  // that matches the button selectors fires the right action.
+  document.addEventListener('click', function handleSoundtrackButtons(e) {
+    const t = e.target;
+    if (!t || !t.closest) return;
+
+    const musicBtn = t.closest('#muteBtn, #mobileMusicBtn');
+    if (musicBtn) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (typeof resumeAudioContext === 'function') resumeAudioContext();
+      if (typeof toggleMusic === 'function') toggleMusic();
+      return;
+    }
+
+    const skipBtn = t.closest('#skipTrackBtn, #mobileSkipTrackBtn');
+    if (skipBtn) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (typeof resumeAudioContext === 'function') resumeAudioContext();
+      if (window.soundtrack && window.soundtrack.skip) window.soundtrack.skip();
+      return;
+    }
+
+    const pauseBtn = t.closest('#pauseBtn');
+    if (pauseBtn) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (typeof window.togglePause === 'function') window.togglePause();
+      return;
+    }
+  }, true);   // capture phase — beats any later listener that stops propagation
 })();

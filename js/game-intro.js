@@ -1181,7 +1181,15 @@ function cleanupIntroHandlers() {
 // Make sure to call cleanupIntroHandlers in your beginLaunchSequence function
 function beginLaunchSequence() {
     console.log('🚀 Player initiated launch sequence');
-    
+
+    // Start Launch Screen soundtrack now that the user has explicitly
+    // clicked Start (satisfies browser autoplay gating).  Intro.mp3 is
+    // skipped — the launch track fades straight into the galaxy track.
+    if (typeof soundtrack !== 'undefined') {
+        soundtrack.setSuppressIntro(true);
+        if (soundtrack.startLaunchScreen) soundtrack.startLaunchScreen();
+    }
+
     // Clean up intro handlers immediately
     cleanupIntroHandlers();
     
