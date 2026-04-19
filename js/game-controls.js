@@ -3249,32 +3249,28 @@ function setupControlButtons() {
         console.log('Control buttons already initialized, skipping...');
         return;
     }
-    
+
     console.log('Setting up control buttons...');
-    
-    // Setup mute button (remove any existing listeners first)
+
+    // Setup mute/music button — use a data-flag to avoid duplicate listeners
     const muteBtn = document.getElementById('muteBtn');
-    if (muteBtn) {
-        // Clone node to remove all existing listeners
-        const newMuteBtn = muteBtn.cloneNode(true);
-        muteBtn.parentNode.replaceChild(newMuteBtn, muteBtn);
-        
-        newMuteBtn.addEventListener('click', (e) => {
-            console.log('Mute button clicked!');
+    if (muteBtn && !muteBtn.dataset.init) {
+        muteBtn.dataset.init = '1';
+        muteBtn.addEventListener('click', (e) => {
+            console.log('Music button clicked!');
             e.preventDefault();
             e.stopPropagation();
             if (typeof resumeAudioContext === 'function') resumeAudioContext();
             if (typeof toggleMusic === 'function') toggleMusic();
         });
-        console.log('Mute button event listener attached');
+        console.log('Music button event listener attached');
     }
 
     // Setup skip-track button
     const skipBtn = document.getElementById('skipTrackBtn');
-    if (skipBtn) {
-        const newSkipBtn = skipBtn.cloneNode(true);
-        skipBtn.parentNode.replaceChild(newSkipBtn, skipBtn);
-        newSkipBtn.addEventListener('click', (e) => {
+    if (skipBtn && !skipBtn.dataset.init) {
+        skipBtn.dataset.init = '1';
+        skipBtn.addEventListener('click', (e) => {
             e.preventDefault();
             e.stopPropagation();
             if (typeof resumeAudioContext === 'function') resumeAudioContext();
@@ -3285,22 +3281,19 @@ function setupControlButtons() {
         console.log('Skip track button listener attached');
     }
 
-    // Setup pause button (remove any existing listeners first)
+    // Setup pause button
     const pauseBtn = document.getElementById('pauseBtn');
-    if (pauseBtn) {
-        // Clone node to remove all existing listeners
-        const newPauseBtn = pauseBtn.cloneNode(true);
-        pauseBtn.parentNode.replaceChild(newPauseBtn, pauseBtn);
-        
-        newPauseBtn.addEventListener('click', (e) => {
+    if (pauseBtn && !pauseBtn.dataset.init) {
+        pauseBtn.dataset.init = '1';
+        pauseBtn.addEventListener('click', (e) => {
             console.log('Pause button clicked!');
             e.preventDefault();
             e.stopPropagation();
-            togglePause();
+            if (typeof togglePause === 'function') togglePause();
         });
         console.log('Pause button event listener attached');
     }
-    
+
     controlButtonsInitialized = true;
 }
 
@@ -5254,19 +5247,30 @@ function togglePause() {
     if (!pauseOverlay) {
         pauseOverlay = document.createElement('div');
         pauseOverlay.id = 'pauseOverlay';
-        pauseOverlay.className = 'absolute inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 hidden';
+        pauseOverlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;' +
+            'background:rgba(0,0,0,0.75);display:none;align-items:center;' +
+            'justify-content:center;z-index:9999;';
         pauseOverlay.innerHTML = `
             <div class="text-center ui-panel rounded-lg p-8">
                 <h2 class="text-3xl font-bold text-cyan-400 mb-4">GAME PAUSED</h2>
                 <p class="text-gray-300 mb-6">Press P or click Resume to continue</p>
-                <button onclick="togglePause()" class="space-btn rounded px-6 py-3">
+                <button id="pauseResumeBtn" class="space-btn rounded px-6 py-3">
                     <i class="fas fa-play mr-2"></i>Resume Game
                 </button>
             </div>
         `;
         document.body.appendChild(pauseOverlay);
+        // Attach Resume click via addEventListener (inline onclick can fail)
+        const resumeBtn = document.getElementById('pauseResumeBtn');
+        if (resumeBtn) {
+            resumeBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                togglePause();
+            });
+        }
     }
-    
+
     pauseOverlay.style.display = gameState.paused ? 'flex' : 'none';
     
     // Update pause button

@@ -176,9 +176,13 @@
     st.current = key;
     st.currentEl = next;
 
-    // Reset the new track
+    // Resume where the track left off for looping context tracks (galaxy,
+    // nebula, main theme).  Only reset to the beginning for one-shot
+    // tracks (intro, launchScreen) or if the track has ended.
     next.volume = 0;
-    next.currentTime = 0;
+    if (NO_LOOP.has(key) || next.ended) {
+      next.currentTime = 0;
+    }
     const playPromise = next.play();
     if (playPromise) playPromise.catch(() => {});
 
@@ -207,7 +211,8 @@
         st.fadeTimer = null;
         prev.pause();
         prev.volume = 0;
-        prev.currentTime = 0;
+        // Don't reset currentTime — track resumes where it left off
+        // when the player returns to that context.
         st.fadingOut = null;
       }
     }, interval);
@@ -240,7 +245,6 @@
       if (step >= steps) {
         clearInterval(timer);
         el.pause();
-        el.currentTime = 0;
       }
     }, interval);
   }
@@ -418,25 +422,11 @@
     if (TRACKS[key]) play(key);
   }
 
-  // Skip the current track → pick a different one in the same context.
-  // Defined order so each click advances through all tracks predictably.
-  const SKIP_ORDER = [
-    'mainTheme',
-    'galaxy0', 'galaxy1', 'galaxy2', 'galaxy3',
-    'galaxy4', 'galaxy5', 'galaxy6', 'galaxy7',
-    'nebula1', 'nebula2', 'nebula3', 'nebula4', 'nebula5',
-    'farOuter1', 'farOuter2', 'farOuter3',
-    'bossFight', 'eliteGuardians', 'borg',
-    'launchScreen', 'intro',
-  ];
-
+  // Skip the current track → fade in a random different track.
   function skipCurrentTrack() {
-    if (!st.current) {
-      play('mainTheme');
-      return;
-    }
-    const idx = SKIP_ORDER.indexOf(st.current);
-    const next = SKIP_ORDER[(idx + 1) % SKIP_ORDER.length];
+    const keys = Object.keys(TRACKS).filter(k => k !== st.current);
+    if (!keys.length) return;
+    const next = keys[Math.floor(Math.random() * keys.length)];
     play(next);
   }
 
