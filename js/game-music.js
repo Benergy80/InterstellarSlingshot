@@ -52,7 +52,7 @@
   // ─── State ────────────────────────────────────────────────────────────────
   const st = {
     enabled: true,
-    volume: 0.5,
+    volume: 0.25,
     loaded: {},           // { trackKey: HTMLAudioElement }
     loadErrors: new Set(),
     current: null,        // key of currently playing/fading-in track
