@@ -28,7 +28,7 @@
   // within COMBAT_VOLUME_RADIUS of the camera, volume rises back to the
   // base level within DUCK_FADE_DURATION seconds.
   const COMBAT_VOLUME_RADIUS = 1500;
-  const CALM_VOLUME_SCALE = 0.6;     // 60% of base when no combat
+  const CALM_VOLUME_SCALE = 0.85;    // 85% of base when no combat (was 0.6)
   const DUCK_FADE_DURATION = 1.5;    // seconds
 
   // Per-track volume multipliers (relative to st.volume).
@@ -81,6 +81,7 @@
     volumeScale: CALM_VOLUME_SCALE,  // current ducking multiplier (0..1)
     volumeScaleTimer: null,
     skipLockUntil: 0,     // while > Date.now(), skip-selected track is preserved
+    _preloaded: false,    // guard for one-time preload
   };
 
   // ─── Preload ──────────────────────────────────────────────────────────────
@@ -461,13 +462,25 @@
     if (TRACKS[key]) play(key);
   }
 
-  // Skip the current track → fade in a random different track.
+  // Ordered rotation for the Skip button.  Intentionally excludes
+  // launchScreen (half-volume) and intro (cinematic cue) so every Skip
+  // advances to a normal-volume gameplay track.
+  const SKIP_ORDER = [
+    'mainTheme',
+    'galaxy0', 'galaxy1', 'galaxy2', 'galaxy3',
+    'galaxy4', 'galaxy5', 'galaxy6', 'galaxy7',
+    'nebula1', 'nebula2', 'nebula3', 'nebula4', 'nebula5',
+    'farOuter1', 'farOuter2', 'farOuter3',
+    'bossFight', 'eliteGuardians', 'borg',
+  ];
+
   function skipCurrentTrack() {
     if (typeof dbg === 'function') dbg('  skipCurrentTrack() current=' + st.current);
-    const keys = Object.keys(TRACKS).filter(k => k !== st.current);
-    if (!keys.length) return;
-    const next = keys[Math.floor(Math.random() * keys.length)];
-    if (typeof dbg === 'function') dbg('    picked: ' + next);
+    const idx = SKIP_ORDER.indexOf(st.current);
+    // If current isn't in the rotation (e.g. launchScreen or unknown),
+    // start at the top.  Otherwise advance to the next entry, wrapping.
+    const next = SKIP_ORDER[(idx < 0 ? 0 : (idx + 1) % SKIP_ORDER.length)];
+    if (typeof dbg === 'function') dbg('    picked: ' + next + ' (idx=' + idx + ')');
     play(next);
   }
 
