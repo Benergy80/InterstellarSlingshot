@@ -23,6 +23,14 @@
   const FADE_DURATION = 2.0;   // seconds for crossfade
   const BASE_PATH = 'audio/soundtrack/';
 
+  // Dynamic-volume ducking: when no enemies are actively engaging, music
+  // sits a bit quieter so the world reads calmer.  When a hostile is
+  // within COMBAT_VOLUME_RADIUS of the camera, volume rises back to the
+  // base level within DUCK_FADE_DURATION seconds.
+  const COMBAT_VOLUME_RADIUS = 1500;
+  const CALM_VOLUME_SCALE = 0.6;     // 60% of base when no combat
+  const DUCK_FADE_DURATION = 1.5;    // seconds
+
   // Per-track volume multipliers (relative to st.volume).
   // Tracks not listed here default to 1.0.
   const TRACK_VOLUME = {
@@ -69,6 +77,9 @@
     lastGalaxyId: -1,
     lastNebulaIdx: -1,
     muted: false,
+    suppressIntro: false, // true when demo mode is active — skip Intro.mp3
+    volumeScale: CALM_VOLUME_SCALE,  // current ducking multiplier (0..1)
+    volumeScaleTimer: null,
   };
 
   // ─── Preload ──────────────────────────────────────────────────────────────
@@ -101,7 +112,51 @@
 
   // ─── Play / Crossfade ─────────────────────────────────────────────────────
   function trackVolume(key) {
-    return st.volume * (TRACK_VOLUME[key] || 1.0);
+    return st.volume * (TRACK_VOLUME[key] || 1.0) * st.volumeScale;
+  }
+
+  // Ramp the global volumeScale toward a target.  Applied continuously
+  // to the currently playing track so we don't fight with crossfades.
+  function setVolumeScale(target) {
+    target = Math.max(0, Math.min(1, target));
+    if (Math.abs(target - st.volumeScale) < 0.01) return;
+    if (st.volumeScaleTimer) { clearInterval(st.volumeScaleTimer); st.volumeScaleTimer = null; }
+
+    const steps = 30;
+    const interval = (DUCK_FADE_DURATION * 1000) / steps;
+    const start = st.volumeScale;
+    let step = 0;
+    st.volumeScaleTimer = setInterval(() => {
+      step++;
+      const t = step / steps;
+      st.volumeScale = start + (target - start) * t;
+      // Apply to the currently playing track only — crossfades manage
+      // their own ramps, and we don't want to override those.
+      if (st.currentEl && !st.fadeTimer && st.current) {
+        st.currentEl.volume = trackVolume(st.current);
+      }
+      if (step >= steps) {
+        clearInterval(st.volumeScaleTimer);
+        st.volumeScaleTimer = null;
+        st.volumeScale = target;
+      }
+    }, interval);
+  }
+
+  function updateDuckingForCombat() {
+    // Any live enemy within COMBAT_VOLUME_RADIUS of the camera counts as
+    // active engagement.  Also count the targeted enemy if it's within
+    // weapons range, so the swell lines up with actual combat moments.
+    let engaged = false;
+    if (typeof enemies !== 'undefined' && typeof camera !== 'undefined') {
+      const cp = camera.position;
+      for (let i = 0; i < enemies.length; i++) {
+        const e = enemies[i];
+        if (!e || !e.userData || e.userData.health <= 0) continue;
+        if (cp.distanceTo(e.position) < COMBAT_VOLUME_RADIUS) { engaged = true; break; }
+      }
+    }
+    setVolumeScale(engaged ? 1.0 : CALM_VOLUME_SCALE);
   }
 
   function play(key) {
@@ -208,14 +263,18 @@
   function updateMusicContext() {
     if (!st.enabled || st.muted) return;
 
+    // Dynamic ducking — swell during combat, soften in calm.
+    updateDuckingForCombat();
+
     // 1) Launch screen (game not started)
     if (typeof gameState === 'undefined' || !gameState.gameStarted) {
       play('launchScreen');
       return;
     }
 
-    // 2) Intro sequence running
-    if (typeof introSequence !== 'undefined' && introSequence.active &&
+    // 2) Intro sequence running — skip entirely if demo mode requested it
+    if (!st.suppressIntro &&
+        typeof introSequence !== 'undefined' && introSequence.active &&
         introSequence.phase !== 'complete') {
       play('intro');
       return;
@@ -359,6 +418,39 @@
     if (TRACKS[key]) play(key);
   }
 
+  // Skip the current track → pick a different one in the same context.
+  // Defined order so each click advances through all tracks predictably.
+  const SKIP_ORDER = [
+    'mainTheme',
+    'galaxy0', 'galaxy1', 'galaxy2', 'galaxy3',
+    'galaxy4', 'galaxy5', 'galaxy6', 'galaxy7',
+    'nebula1', 'nebula2', 'nebula3', 'nebula4', 'nebula5',
+    'farOuter1', 'farOuter2', 'farOuter3',
+    'bossFight', 'eliteGuardians', 'borg',
+    'launchScreen', 'intro',
+  ];
+
+  function skipCurrentTrack() {
+    if (!st.current) {
+      play('mainTheme');
+      return;
+    }
+    const idx = SKIP_ORDER.indexOf(st.current);
+    const next = SKIP_ORDER[(idx + 1) % SKIP_ORDER.length];
+    play(next);
+  }
+
+  // Suppress Intro.mp3 (used by demo mode — jump straight to gameplay music).
+  function setSuppressIntro(v) {
+    st.suppressIntro = !!v;
+    if (v && st.current === 'intro') {
+      // Already playing the intro — crossfade to whatever the context
+      // wants right now instead.
+      stopAll();
+      updateMusicContext();
+    }
+  }
+
   // ─── Launch-screen autoplay ───────────────────────────────────────────────
   // The game loop (which drives updateMusicContext) doesn't start until the
   // intro sequence begins, so launch-screen music won't trigger through the
@@ -401,15 +493,18 @@
 
   // ─── Public API ───────────────────────────────────────────────────────────
   window.soundtrack = {
-    preload:       preload,
-    update:        updateMusicContext,
-    forceTrack:    forceTrack,
-    setMuted:      setMuted,
-    setVolume:     setVolume,
-    stopAll:       stopAll,
-    fadeOutCurrent: fadeOutCurrent,
-    get current()  { return st.current; },
-    get enabled()  { return st.enabled; },
-    set enabled(v) { st.enabled = !!v; if (!v) stopAll(); },
+    preload:         preload,
+    update:          updateMusicContext,
+    forceTrack:      forceTrack,
+    skip:            skipCurrentTrack,
+    setMuted:        setMuted,
+    setVolume:       setVolume,
+    setSuppressIntro: setSuppressIntro,
+    stopAll:         stopAll,
+    fadeOutCurrent:  fadeOutCurrent,
+    get current()    { return st.current; },
+    get enabled()    { return st.enabled; },
+    set enabled(v)   { st.enabled = !!v; if (!v) stopAll(); },
+    get muted()      { return st.muted; },
   };
 })();

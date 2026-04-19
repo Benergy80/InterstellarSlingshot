@@ -3269,6 +3269,22 @@ function setupControlButtons() {
         console.log('Mute button event listener attached');
     }
 
+    // Setup skip-track button
+    const skipBtn = document.getElementById('skipTrackBtn');
+    if (skipBtn) {
+        const newSkipBtn = skipBtn.cloneNode(true);
+        skipBtn.parentNode.replaceChild(newSkipBtn, skipBtn);
+        newSkipBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            if (typeof resumeAudioContext === 'function') resumeAudioContext();
+            if (typeof soundtrack !== 'undefined' && soundtrack.skip) {
+                soundtrack.skip();
+            }
+        });
+        console.log('Skip track button listener attached');
+    }
+
     // Setup pause button (remove any existing listeners first)
     const pauseBtn = document.getElementById('pauseBtn');
     if (pauseBtn) {

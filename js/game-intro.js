@@ -725,6 +725,15 @@ function createDemoButton() {
     demoButton.addEventListener('click', () => {
         window.demoModeRequested = true;
         console.log('🤖 Demo mode requested — skipping intro');
+
+        // Suppress Intro.mp3 and jump straight to the starting gameplay
+        // track so the demo begins with the Sol System theme, not the
+        // intro cinematic score.
+        if (typeof soundtrack !== 'undefined') {
+            soundtrack.setSuppressIntro(true);
+            soundtrack.forceTrack('galaxy7');  // Sol System / Local Group
+        }
+
         // Hide both buttons immediately
         if (introSequence.startButton) {
             introSequence.startButton.style.opacity = '0';
