@@ -58,6 +58,8 @@
     bossFight:       'Boss Fight.mp3',
     eliteGuardians:  'Elite Guardians.mp3',
     borg:            'Borg.mp3',
+    bewareBorg1:     'Beware the Borg.mp3',
+    bewareBorg2:     'Beware the Borg2.mp3',
     farOuter1:       'Far Outer Galaxy1.mp3',
     farOuter2:       'Far Outer Galaxy2.mp3',
     farOuter3:       'Far Outer Galaxy3.mp3',
@@ -359,14 +361,19 @@
       return;
     }
 
-    // 7b) Outer interstellar systems (exotic cores + Borg patrols) —
-    // each system is randomly assigned one of the 3 Far Outer Galaxy tracks
-    // on first encounter, then keeps that assignment permanently.
+    // 7b) Outer interstellar systems — Borg patrol systems get one of
+    // the 2 "Beware the Borg" tracks; exotic core systems get a Far
+    // Outer Galaxy track.  Each system keeps its assignment permanently.
     const nearOuter = detectNearbyOuterSystem();
     if (nearOuter >= 0) {
       if (!st._outerTrackMap) st._outerTrackMap = {};
       if (!st._outerTrackMap[nearOuter]) {
-        st._outerTrackMap[nearOuter] = 'farOuter' + (1 + Math.floor(Math.random() * 3));
+        const isBorg = detectOuterSystemIsBorg(nearOuter);
+        if (isBorg) {
+          st._outerTrackMap[nearOuter] = Math.random() < 0.5 ? 'bewareBorg1' : 'bewareBorg2';
+        } else {
+          st._outerTrackMap[nearOuter] = 'farOuter' + (1 + Math.floor(Math.random() * 3));
+        }
       }
       play(st._outerTrackMap[nearOuter]);
       return;
@@ -429,6 +436,12 @@
       if (d < 5000) return i;
     }
     return -1;
+  }
+
+  function detectOuterSystemIsBorg(idx) {
+    if (typeof outerInterstellarSystems === 'undefined') return false;
+    const sys = outerInterstellarSystems[idx];
+    return sys && sys.userData && (sys.userData.systemType === 'borg_patrol' || sys.userData.hasBorg);
   }
 
   function detectNearbyNebula() {
