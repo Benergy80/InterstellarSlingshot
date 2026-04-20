@@ -457,9 +457,11 @@
     demoRollAndBoost(fc);
 
     // Ambush detection — runs BEFORE the phase dispatch so a new combat
-    // target can be installed on this same frame.  Skipped during the
-    // opening/orbit phases (no enemies in play yet).
-    if (ap.phase !== 'init' && ap.phase !== 'orbitLocalPlanet') {
+    // target can be installed on this same frame.  Skipped only during
+    // the opening 'init' (ship hasn't loaded yet).  During the intro
+    // orbital survey, if something opens fire on the player we pivot
+    // to combat and return to the orbit after.
+    if (ap.phase !== 'init') {
       detectAmbushAndRespond();
     }
 
@@ -472,8 +474,9 @@
     // lock disengages (enemy dead / moves out of cone / lock cleared) the
     // firing stops automatically.  Runs parallel to phase logic so combat,
     // pursuit and travel all benefit from it.
-    // No weapons during the opening phases — let the scene establish first
-    if (ap.phase !== 'init' && ap.phase !== 'orbitLocalPlanet') {
+    // No weapons during init — ship isn't loaded yet.  Auto-fire IS allowed
+    // during orbitLocalPlanet so an ambush can actually be answered.
+    if (ap.phase !== 'init') {
       autoFireOnTargetLock();
       shootNearbyAsteroids();
     }
@@ -1226,6 +1229,13 @@
     ensureShieldsFor('travel');
     ensureThirdPerson();
 
+    // Reset post-warp evasion flag on first entry so a fresh arrival
+    // always gets the short W-jump escape.
+    if (ap.subState === 0) {
+      ap._postBHEvasionDone = false;
+      ap.subState = 1;
+    }
+
     // Coast lock — same rule as emergency warp: don't brake while the warp's
     // active/transition/slingshot phase is running, and keep coasting until
     // at least the full boost duration has elapsed.
@@ -1238,9 +1248,42 @@
 
     const speedNow = gameState.velocityVector ? gameState.velocityVector.length() : 0;
 
+    // Lock onto the nearest enemy as soon as one is visible in the new
+    // galaxy — this puts them on the nav panel during the coast so the
+    // demo has a clear engagement target when the coast lock ends.
+    if (!gameState.currentTarget || !gameState.currentTarget.userData ||
+        gameState.currentTarget.userData.health <= 0) {
+      const nearestE = nearestAliveEnemy(8000);
+      if (nearestE) gameState.currentTarget = nearestE;
+    }
+
     if (inLockedCoast) {
       setStatus('Warp coast — ' + Math.max(0, ((coastLockUntil - Date.now()) / 1000)).toFixed(0) + 's remaining');
       cycleScanTarget();
+      return;
+    }
+
+    // Post-warp evasion — on first exit from the locked coast, fire a
+    // double-tap W jump aimed away from any nearby black hole.  This
+    // moves the ship clear of gravity wells that might be sitting at
+    // the arrival point of the previous warp.
+    if (!ap._postBHEvasionDone &&
+        gameState.energy >= 25 &&
+        !warpCycleActive) {
+      ap._postBHEvasionDone = true;
+      const bh = nearestBlackHole();
+      if (bh && camPos().distanceTo(bh.position) < 8000) {
+        // Orient away from the black hole so the short-warp boost carries
+        // the ship safely clear of the gravity well.
+        const awayPos = camPos().clone().multiplyScalar(2).sub(bh.position);
+        const awayDummy = { position: awayPos };
+        if (window.orientTowardsTarget) window.orientTowardsTarget(awayDummy);
+      }
+      if (window.keys) {
+        window.keys.wDoubleTap = true;
+        setTimeout(() => { if (window.keys) window.keys.wDoubleTap = false; }, 120);
+      }
+      setStatus('Post-warp evasion — short jump engaged');
       return;
     }
 

@@ -286,13 +286,15 @@
   function updateMusicContext() {
     if (!st.enabled || st.muted) return;
 
-    // Dynamic ducking — swell during combat, soften in calm.
-    updateDuckingForCombat();
-
     // Skip lock — when the player just pressed Skip to pick a specific
     // track, don't let the context detector yank them back to the
-    // location-appropriate track for a while.  Lock auto-expires.
+    // location-appropriate track for a while.  Also bypass combat
+    // ducking so the player-chosen track plays at full volume.
+    // Lock auto-expires.
     if (Date.now() < st.skipLockUntil) return;
+
+    // Dynamic ducking — swell during combat, soften in calm.
+    updateDuckingForCombat();
 
     // 1) Launch screen (game not started)
     if (typeof gameState === 'undefined' || !gameState.gameStarted) {
@@ -489,6 +491,10 @@
   ];
 
   function skipCurrentTrack() {
+    // Force full volume for the skipped track — the player actively
+    // picked it, so don't duck it with calm-volume scaling.
+    if (st.volumeScaleTimer) { clearInterval(st.volumeScaleTimer); st.volumeScaleTimer = null; }
+    st.volumeScale = 1.0;
     const idx = SKIP_ORDER.indexOf(st.current);
     const next = SKIP_ORDER[(idx < 0 ? 0 : (idx + 1) % SKIP_ORDER.length)];
     play(next);
