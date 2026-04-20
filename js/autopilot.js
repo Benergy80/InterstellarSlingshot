@@ -567,7 +567,6 @@
       setStatus('Nav lock: ' + nm + ' — orbital survey');
       gameState.currentTarget = ap.orbitTarget;
       gameState.autoNavigating = true;
-      gameState.autoNavOrienting = true;
       if (typeof populateTargets === 'function') populateTargets();
     }
 
@@ -1476,13 +1475,13 @@
       targetObj = ap._navDummy;
     }
 
-    // Delegate movement to the game's auto-navigate system.  Only trigger
-    // the orient-to-target pass when the target actually CHANGES — otherwise
-    // we'd re-fire the "Target Acquired" notification every frame.
-    const targetChanged = gameState.currentTarget !== targetObj;
+    // Delegate movement to the game's auto-navigate system.  We never
+    // toggle autoNavOrienting here — the physics still orients the ship
+    // passively during distant approach (see game-physics.js auto-nav
+    // branch), so skipping the orienting flag keeps the "Target Acquired"
+    // notification from spamming every time the demo switches targets.
     gameState.currentTarget = targetObj;
     gameState.autoNavigating = true;
-    if (targetChanged) gameState.autoNavOrienting = true;
     if (speedMult > 1.5) keys().b = true;
   }
 
