@@ -621,8 +621,9 @@
       // from long range — that would make any fireWeapon call auto-aim at
       // this distant enemy.  Lock gets set by phaseCombat once we're close.
       gameState.currentTarget = detected;
-      // Fly toward it aggressively
+      // Fly toward it aggressively with human-style banking
       flyToward(detected, 2.5);
+      pursuitFlightStyle();
       // Once inside combat range, commit to the engagement
       if (d < 2200) {
         ap.combatTarget = detected;
@@ -644,6 +645,7 @@
       // Nav panel only — no targetLock at this range
       gameState.currentTarget = farEnemy;
       flyToward(farEnemy, 2.5);
+      pursuitFlightStyle();
       return;
     }
 
@@ -722,6 +724,7 @@
     if (dist > engageRange) {
       setStatus('Pursuing ' + (enemy.userData.name || 'hostile') + ' — ' + (dist | 0) + ' u');
       flyToward(enemy, 2.5);
+      pursuitFlightStyle();
 
       // Double-tap W Jump when pursuing: any target beyond 2000 u gets the
       // 2-second short warp to close fast.  10 s cooldown + 25 energy
@@ -773,13 +776,12 @@
       gameState.targetLock.target = null;
     }
 
-    // Occasional missile fire — every ~7 s while inside engagement range.
-    // No transmission; status-line only keeps the HUD quiet.
-    if (dist <= engageRange && gameState.missiles.current > 0 &&
-        Date.now() - (ap._lastMissileTime || 0) > 2500) {
+    // One missile per target, only when inside (crosshair + 500u) range
+    // and only while shields are down.  2.5 s global cooldown keeps us
+    // from burning the whole rack on a single engagement.
+    if (shouldFireMissileAt(enemy, dist)) {
       ap._lastMissileTime = Date.now();
-      ap._missileFireLock = Date.now() + 500; // hold shields off for 500 ms
-      if (shieldsActive() && window.deactivateShields) window.deactivateShields();
+      markMissileFiredAt(enemy);
       setTimeout(() => {
         if (ap.active) fireMissileAt(enemy);
       }, 150);
@@ -1412,7 +1414,7 @@
       ap.combatTarget = target;
       const dist = camPos().distanceTo(target.position);
       setStatus('ENGAGING BORG — ' + (dist | 0) + ' units');
-      if (dist > 800) flyToward(target, 2.0);
+      if (dist > 800) { flyToward(target, 2.0); pursuitFlightStyle(); }
       else            flyToward(target, 0.8);
 
       const engageRange = (target.userData && target.userData.firingRange) || 500;
@@ -1422,12 +1424,11 @@
       gameState.targetLock.target = target;
       gameState.currentTarget = target;
 
-      // Occasional missile every ~7 s — no transmission
-      if (dist <= engageRange && gameState.missiles.current > 0 &&
-          Date.now() - (ap._lastMissileTime || 0) > 2500) {
+      // Occasional missile — one per Borg target, only when shields are
+      // down and the target is within (crosshair + 500u) range.
+      if (shouldFireMissileAt(target, dist)) {
         ap._lastMissileTime = Date.now();
-        ap._missileFireLock = Date.now() + 500;
-        if (shieldsActive() && window.deactivateShields) window.deactivateShields();
+        markMissileFiredAt(target);
         setTimeout(() => { if (ap.active) fireMissileAt(target); }, 150);
       }
     } else {
@@ -1557,10 +1558,64 @@
     }
   }
 
+  // Adds occasional yaw (←/→) and roll (Q/E) input so the ship's flight
+  // path looks like a live pilot banking through pursuit instead of a
+  // straight arrow toward the target.  orientTowardsTarget reels the
+  // ship back on-axis each frame, so the net effect is a gentle
+  // weaving bank while we chase the enemy.
+  function pursuitFlightStyle() {
+    const k = keys();
+    // Drift the roll in a slow ~4-second wave so the ship lists left,
+    // then right, like a banked turn.
+    const now = Date.now();
+    const rollPhase = (now / 2000) % 2; // 0..2 → first half roll left, second half roll right
+    if (rollPhase < 1) k.q = true; else k.e = true;
+
+    // Tap the yaw keys in short 200 ms pulses every ~1.6 s so the
+    // course drifts slightly left/right of direct-line pursuit.
+    const yawCycle = Math.floor(now / 400) % 8;
+    if (yawCycle === 0) k.left = true;
+    else if (yawCycle === 4) k.right = true;
+  }
+
   function fireMissileAt(target) {
     if (!target) return;
+    // Never launch while shields are up — the game's fireMissile also
+    // blocks this, but we check here so the demo doesn't burn its
+    // per-target allowance on a shot that the engine will reject.
+    if (shieldsActive()) return;
     gameState.currentTarget = target;
     if (window.fireMissile) window.fireMissile();
+  }
+
+  // Crosshair detection uses a 2000 u forward cone (isInFiringCone).
+  // Missiles travel further than lasers, so the demo is allowed to
+  // launch at targets up to 500 u beyond the crosshair detection
+  // range — but no further.  Outside that window the missile would
+  // just chase the target forever.
+  const MISSILE_RANGE_BUFFER = 500;
+  const MISSILE_MAX_RANGE = 2000 + MISSILE_RANGE_BUFFER;
+
+  // Track which enemies already had a missile fired at them this run
+  // so the demo doesn't waste its payload on re-firing at the same
+  // target.  Cleared on phase reset (resetFlags).
+  function hasMissileBeenFiredAt(target) {
+    return !!(target && target.userData && target.userData._demoMissileFired);
+  }
+  function markMissileFiredAt(target) {
+    if (target && target.userData) target.userData._demoMissileFired = true;
+  }
+
+  // Returns true if the demo should fire a missile at `target` right
+  // now — combines range, shield, payload, and once-per-target rules.
+  function shouldFireMissileAt(target, dist) {
+    if (!target || !target.userData) return false;
+    if (shieldsActive()) return false;
+    if (!gameState.missiles || gameState.missiles.current <= 0) return false;
+    if (dist > MISSILE_MAX_RANGE) return false;
+    if (hasMissileBeenFiredAt(target)) return false;
+    if (Date.now() - (ap._lastMissileTime || 0) <= 2500) return false;
+    return true;
   }
 
   // Fire lasers ONLY when the game's auto mouse targeting has engaged on a
