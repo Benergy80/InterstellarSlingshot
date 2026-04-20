@@ -3393,16 +3393,18 @@ function createDiscoveryPathToPosition(nebulaPosition, targetPosition, factionCo
     const startPos = nebulaPosition.clone();
     const endPos = targetPosition.clone();
 
-    // Snapshot the live enemies that belong to this mission's galaxy.
-    // Completion is based on these specific enemies being dead, not a
-    // proximity check (which fails when enemies are spread far from
-    // the endpoint centroid).
+    // Snapshot live enemies near the mission ENDPOINT — not all galaxy
+    // enemies.  The path leads to a specific cluster (at a cosmic feature
+    // or exotic system), so completion should require clearing only those,
+    // not every enemy across the entire galaxy.
     const missionEnemies = [];
     if (typeof enemies !== 'undefined' && galaxyId >= 0) {
+        const MISSION_RADIUS = 3000;
         for (let i = 0; i < enemies.length; i++) {
             const e = enemies[i];
             if (!e || !e.userData || e.userData.health <= 0) continue;
-            if (e.userData.galaxyId === galaxyId) {
+            if (e.userData.galaxyId === galaxyId &&
+                e.position.distanceTo(endPos) < MISSION_RADIUS) {
                 missionEnemies.push(e);
             }
         }
