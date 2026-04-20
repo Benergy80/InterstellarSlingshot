@@ -1876,7 +1876,7 @@
   // Hide lasers after 400 ms by setting .visible = false.  This does NOT
   // touch scene.remove() or material.dispose() — we leave ALL disposal to
   // the game's native fade setInterval so we never race with it.
-  const DEMO_BEAM_HIDE_MS = 40000;
+  const DEMO_BEAM_HIDE_MS = 200;
   function hideStaleLasers() {
     if (typeof activeLasers === 'undefined') return;
     const now = Date.now();
