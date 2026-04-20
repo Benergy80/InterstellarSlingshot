@@ -623,7 +623,6 @@
       gameState.currentTarget = detected;
       // Fly toward it aggressively with human-style banking
       flyToward(detected, 2.5);
-      pursuitFlightStyle();
       // Once inside combat range, commit to the engagement
       if (d < 2200) {
         ap.combatTarget = detected;
@@ -645,7 +644,6 @@
       // Nav panel only — no targetLock at this range
       gameState.currentTarget = farEnemy;
       flyToward(farEnemy, 2.5);
-      pursuitFlightStyle();
       return;
     }
 
@@ -724,7 +722,6 @@
     if (dist > engageRange) {
       setStatus('Pursuing ' + (enemy.userData.name || 'hostile') + ' — ' + (dist | 0) + ' u');
       flyToward(enemy, 2.5);
-      pursuitFlightStyle();
 
       // Double-tap W Jump when pursuing: any target beyond 2000 u gets the
       // 2-second short warp to close fast.  10 s cooldown + 25 energy
@@ -1414,7 +1411,7 @@
       ap.combatTarget = target;
       const dist = camPos().distanceTo(target.position);
       setStatus('ENGAGING BORG — ' + (dist | 0) + ' units');
-      if (dist > 800) { flyToward(target, 2.0); pursuitFlightStyle(); }
+      if (dist > 800) flyToward(target, 2.0);
       else            flyToward(target, 0.8);
 
       const engageRange = (target.userData && target.userData.firingRange) || 500;
@@ -1556,26 +1553,6 @@
       gameState.crosshairY = window.innerHeight / 2;
       if (window.fireWeapon) window.fireWeapon();
     }
-  }
-
-  // Adds occasional yaw (←/→) and roll (Q/E) input so the ship's flight
-  // path looks like a live pilot banking through pursuit instead of a
-  // straight arrow toward the target.  orientTowardsTarget reels the
-  // ship back on-axis each frame, so the net effect is a gentle
-  // weaving bank while we chase the enemy.
-  function pursuitFlightStyle() {
-    const k = keys();
-    // Drift the roll in a slow ~4-second wave so the ship lists left,
-    // then right, like a banked turn.
-    const now = Date.now();
-    const rollPhase = (now / 2000) % 2; // 0..2 → first half roll left, second half roll right
-    if (rollPhase < 1) k.q = true; else k.e = true;
-
-    // Tap the yaw keys in short 200 ms pulses every ~1.6 s so the
-    // course drifts slightly left/right of direct-line pursuit.
-    const yawCycle = Math.floor(now / 400) % 8;
-    if (yawCycle === 0) k.left = true;
-    else if (yawCycle === 4) k.right = true;
   }
 
   function fireMissileAt(target) {
