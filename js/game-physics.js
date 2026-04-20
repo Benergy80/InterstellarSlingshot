@@ -4042,7 +4042,10 @@ function animateDiscoveryPaths() {
                 if (gId >= 0 && typeof spawnBossForArea === 'function') {
                     const areaKey = gId + '-mission_' + i;
                     if (!bossSystem || !bossSystem.areaBosses || !bossSystem.areaBosses[areaKey]) {
-                        spawnBossForArea(gId, 'cosmic_feature', areaKey);
+                        const endPos = path.endPosition ||
+                            (path.line && path.line.userData && path.line.userData.endPosition) ||
+                            null;
+                        spawnBossForArea(gId, 'cosmic_feature', areaKey, endPos);
                         if (typeof showAchievement === 'function') {
                             showAchievement('Boss Incoming!', 'All hostiles cleared — a boss has appeared!', true);
                         }

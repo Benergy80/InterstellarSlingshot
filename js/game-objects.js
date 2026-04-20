@@ -1044,7 +1044,10 @@ function checkAndSpawnAreaBosses() {
 }
 
 // ENHANCED: Spawn boss for specific area
-function spawnBossForArea(galaxyId, placementType, areaKey) {
+// `overridePosition` (optional Vector3) — if provided, the boss spawns there
+// instead of at a random galaxy position.  Used by the discovery-path
+// mission-complete trigger so the boss appears at the dotted line's endpoint.
+function spawnBossForArea(galaxyId, placementType, areaKey, overridePosition) {
     // Safety check to prevent duplicate boss spawning
     if (bossSystem.areaBosses[areaKey]) return;
 
@@ -1056,14 +1059,21 @@ function spawnBossForArea(galaxyId, placementType, areaKey) {
         defeated: false,
         bossRef: null
     };
-    
+
     const galaxyType = galaxyTypes[galaxyId];
-    
+
     // ENHANCED: Use 3D positioning if available, fallback to 2D
     let bossPosition;
-    
+
+    // Caller-supplied position takes priority — used for discovery-path
+    // boss spawns so the boss appears where the player expects it.
+    if (overridePosition && typeof overridePosition.clone === 'function') {
+        bossPosition = overridePosition.clone();
+        console.log(`Boss positioning: Using override position for galaxy ${galaxyId}`, bossPosition);
+    }
+
     // Try 3D positioning first
-    if (typeof getRandomPositionInGalaxy3D === 'function') {
+    if (!bossPosition && typeof getRandomPositionInGalaxy3D === 'function') {
         try {
             bossPosition = getRandomPositionInGalaxy3D(galaxyId);
             console.log(`Boss positioning: Using 3D system for galaxy ${galaxyId}`, bossPosition);
