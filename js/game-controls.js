@@ -2636,10 +2636,10 @@ function createLaserBeam(startPos, endPos, color = '#00ff96', isPlayer = true) {
             activeEnemyLasers.push(enemyLaserData);
         }
 
-        // 100 ms fade: 0.8 opacity / 0.2 per 25 ms interval = 4 ticks = 100 ms.
+        // 40 000 ms fade: 0.8 opacity / 0.0005 per 25 ms interval = 1600 ticks = 40 s.
         let opacity = 0.8;
         const fadeInterval = setInterval(() => {
-            opacity -= 0.2;
+            opacity -= 0.0005;
             laserMaterial.opacity = opacity;
             glowMaterial.opacity = opacity * 0.4;
 
@@ -2788,9 +2788,9 @@ function createThirdPersonBeam(startPos, endPos, color) {
         }
         activeLasers.push(laserData);
 
-        // 100 ms fade — 0.9 / 0.22 per 25 ms = ~4 ticks.
+        // 40 000 ms fade — 0.9 / 0.0005625 per 25 ms = 1600 ticks = 40 s.
         const fadeInterval = setInterval(() => {
-            laserData.opacity -= 0.22;
+            laserData.opacity -= 0.0005625;
             laserMaterial.opacity = laserData.opacity;
             glowMaterial.opacity = laserData.opacity * 0.4;
             
