@@ -1439,10 +1439,13 @@
       targetObj = ap._navDummy;
     }
 
-    // Delegate movement to the game's auto-navigate system
+    // Delegate movement to the game's auto-navigate system.  Only trigger
+    // the orient-to-target pass when the target actually CHANGES — otherwise
+    // we'd re-fire the "Target Acquired" notification every frame.
+    const targetChanged = gameState.currentTarget !== targetObj;
     gameState.currentTarget = targetObj;
     gameState.autoNavigating = true;
-    gameState.autoNavOrienting = true;
+    if (targetChanged) gameState.autoNavOrienting = true;
     if (speedMult > 1.5) keys().b = true;
   }
 
