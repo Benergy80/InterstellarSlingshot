@@ -1872,7 +1872,6 @@
     if (!canEmergencyWarp()) return false;
     return triggerOKeyWarp();
   }
-  }
 
   // Hide lasers after 400 ms by setting .visible = false.  This does NOT
   // touch scene.remove() or material.dispose() — we leave ALL disposal to
