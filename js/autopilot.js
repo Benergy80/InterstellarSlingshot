@@ -777,7 +777,7 @@
       gameState.targetLock.target = null;
     }
 
-    // One missile per target, only when inside (crosshair + 500u) range
+    // One missile per target, only when inside (crosshair + 100u) range
     // and only while shields are down.  2.5 s global cooldown keeps us
     // from burning the whole rack on a single engagement.
     if (shouldFireMissileAt(enemy, dist)) {
@@ -1431,7 +1431,7 @@
       gameState.currentTarget = target;
 
       // Occasional missile — one per Borg target, only when shields are
-      // down and the target is within (crosshair + 500u) range.
+      // down and the target is within (crosshair + 100u) range.
       if (shouldFireMissileAt(target, dist)) {
         ap._lastMissileTime = Date.now();
         markMissileFiredAt(target);
@@ -1617,10 +1617,10 @@
 
   // Crosshair detection uses a 2000 u forward cone (isInFiringCone).
   // Missiles travel further than lasers, so the demo is allowed to
-  // launch at targets up to 500 u beyond the crosshair detection
+  // launch at targets up to 100 u beyond the crosshair detection
   // range — but no further.  Outside that window the missile would
   // just chase the target forever.
-  const MISSILE_RANGE_BUFFER = 500;
+  const MISSILE_RANGE_BUFFER = 100;
   const MISSILE_MAX_RANGE = 2000 + MISSILE_RANGE_BUFFER;
 
   // Track which enemies already had a missile fired at them this run
