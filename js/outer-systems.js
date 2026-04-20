@@ -556,6 +556,8 @@ function createOrbitingAsteroid(center, orbitRadius, index, systemGroup) {
 
     asteroid.userData = {
         type: 'outer_asteroid',
+        name: 'Asteroid',
+        health: Math.ceil(size / 5),
         orbitCenter: new THREE.Vector3(0, 0, 0),
         orbitRadius: radiusVar,
         orbitSpeed: 0.0007 + Math.random() * 0.0008,

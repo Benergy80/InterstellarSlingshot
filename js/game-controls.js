@@ -5087,7 +5087,7 @@ function fireWeapon() {
                         outerInterstellarSystems.forEach(system => {
                             if (system.userData && system.userData.orbiters) {
                                 system.userData.orbiters.forEach(orbiter => {
-                                    if (orbiter.userData && orbiter.userData.type === 'asteroid') {
+                                    if (orbiter.userData && orbiter.userData.type === 'outer_asteroid') {
                                         outerAsteroids.push(orbiter);
                                     }
                                 });
@@ -5132,7 +5132,7 @@ function fireWeapon() {
     
     // Handle weapon hits based on target type
     if (targetObject) {
-        if (targetObject.userData.type === 'asteroid') {
+        if (targetObject.userData.type === 'asteroid' || targetObject.userData.type === 'outer_asteroid') {
             // Asteroid hit - restore hull, pass actual hit position
             destroyAsteroidByWeapon(targetObject, targetPosition);
         } else if (targetObject.userData.type === 'interstellar_asteroid') {

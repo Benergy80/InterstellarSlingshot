@@ -640,17 +640,17 @@ function createPlayerExplosion() {
 // RESTORED: Asteroid destruction functions
 function destroyAsteroid(asteroid) {
     scene.remove(asteroid);
-    
+
     const planetIndex = planets.indexOf(asteroid);
     if (planetIndex > -1) planets.splice(planetIndex, 1);
-    
+
     const activeIndex = activePlanets.indexOf(asteroid);
     if (activeIndex > -1) activePlanets.splice(activeIndex, 1);
-    
+
     if (asteroid.userData.beltGroup) {
         asteroid.userData.beltGroup.remove(asteroid);
     }
-    
+
     if (typeof asteroidBelts !== 'undefined') {
         asteroidBelts.forEach(belt => {
             if (belt.children) {
@@ -661,7 +661,17 @@ function destroyAsteroid(asteroid) {
             }
         });
     }
-    
+
+    // Outer-system asteroids live inside a systemGroup, not the planets array.
+    if (asteroid.userData.type === 'outer_asteroid' && asteroid.parent) {
+        const group = asteroid.parent;
+        if (group.userData && group.userData.orbiters) {
+            const idx = group.userData.orbiters.indexOf(asteroid);
+            if (idx > -1) group.userData.orbiters.splice(idx, 1);
+        }
+        group.remove(asteroid);
+    }
+
     if (typeof gameState !== 'undefined' && gameState.targetLock.target === asteroid) {
         gameState.targetLock.target = null;
     }
