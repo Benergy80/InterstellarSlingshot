@@ -34,7 +34,7 @@
   // Per-track volume multipliers (relative to st.volume).
   // Tracks not listed here default to 1.0.
   const TRACK_VOLUME = {
-    launchScreen: 0.5,   // quieter on the title screen
+    launchScreen: 1.0,
   };
 
   // Track registry — keys are logical names, values are file paths.
