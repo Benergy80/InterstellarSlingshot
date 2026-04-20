@@ -281,39 +281,10 @@
     // it also works outside demo mode.
   }
 
-  // Global O-key binding — ALWAYS active (registered once at module load, not
-  // scoped to demo start) so the player can use it during demo, during
-  // takeover, or during normal gameplay.  We dispatch a synthetic Enter
-  // keydown/keyup so the game's own handler fires exactly as if the player
-  // pressed Enter — including all the visual + audio logic that the
-  // physics-only keys.enter bypass would miss.
-  function handleGlobalOKey(e) {
-    if (!e || e.repeat) return;
-    if (e.key !== 'o' && e.key !== 'O') return;
-    const tag = (e.target && e.target.tagName) || '';
-    if (tag === 'INPUT' || tag === 'TEXTAREA') return;
-    if (typeof gameState === 'undefined' || !gameState.gameStarted) return;
-    if (!gameState.emergencyWarp) return;
-    if (gameState.emergencyWarp.available <= 0) return;
-    if (gameState.emergencyWarp.active) return;
-    if (gameState.emergencyWarp.transitioning) return;
-    if (typeof shieldSystem !== 'undefined' && shieldSystem.active) return;
-
-    // Dispatch a real Enter keystroke so the game's own keydown handler
-    // processes it — this fires both keys.enter AND all Enter-specific
-    // code paths (warp effects, sounds, etc.).
-    document.dispatchEvent(new KeyboardEvent('keydown', {
-      key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true
-    }));
-    setTimeout(() => {
-      document.dispatchEvent(new KeyboardEvent('keyup', {
-        key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true
-      }));
-    }, 350);
-  }
-  if (typeof document !== 'undefined') {
-    document.addEventListener('keydown', handleGlobalOKey);
-  }
+  // O-key emergency warp is handled natively by the game engine:
+  // game-controls.js sets keys.o = true on O-keydown, and
+  // game-physics.js processes it as a full 15 s emergency warp.
+  // No synthetic keypress dispatch needed from the autopilot.
 
   // Global T-key binding — ALWAYS active (registered once at module load).
   // Works during normal gameplay AND demo:
@@ -570,9 +541,9 @@
       if (typeof populateTargets === 'function') populateTargets();
     }
 
-    // Auto-nav handles both approach and orbital circularization
+    // Manual orbit handles circularization at a close, cinematic distance
     const dist = camPos().distanceTo(ap.orbitTarget.position);
-    if (dist > 600) {
+    if (dist > 300) {
       setStatus('Approaching ' + (ap.orbitTarget.userData.name || 'planet'));
       flyToward(ap.orbitTarget, 1.8);
     } else {
@@ -658,7 +629,8 @@
     if (t > 4000 && Date.now() - (ap.lastNebulaWarp || 0) > 20000 && canEmergencyWarp()) {
       setStatus('Empty sector — emergency warp engaged');
       transmit('PROPULSION', 'Long-range scan mode.\nEmergency warp engaged for rapid sector survey.');
-      if (triggerEmergencyWarp()) {
+      keys().w = true;
+      if (triggerOKeyWarp()) {
         ap.warpStartedAt = Date.now();
         ap.lastNebulaWarp = Date.now();
       }
@@ -791,7 +763,7 @@
       gameState.targetLock.target = null;
     }
 
-    // One missile per target, only when inside (crosshair + 100u) range
+    // One missile per target, only when inside (auto-aim + 100u) range
     // and only while shields are down.  2.5 s global cooldown keeps us
     // from burning the whole rack on a single engagement.
     if (shouldFireMissileAt(enemy, dist)) {
@@ -840,19 +812,18 @@
 
     // Pick a planet to slingshot around — prefer one in the same general
     // direction as the nebula so the boost actually points the right way.
+    // Gravitational slingshot is the PREFERRED interstellar travel method.
     if (!ap.slingshotPlanet) {
       ap.slingshotPlanet = pickSlingshotPlanet(ap.currentNebula.position);
       if (!ap.slingshotPlanet) {
-        // No planet nearby — just emergency-warp directly if we can
-        if (canEmergencyWarp()) {
-          const dummy = { position: ap.currentNebula.position };
-          if (window.orientTowardsTarget) window.orientTowardsTarget(dummy);
-          keys().w = true;
-          if (t > 1500 && triggerEmergencyWarp()) {
-            ap.warpStartedAt = Date.now();
-            ap.warpsUsed++;
-            goPhase('coastToNebulaCluster');
-          }
+        // No planet nearby — use O-key emergency warp while thrusting
+        const dummy = { position: ap.currentNebula.position };
+        if (window.orientTowardsTarget) window.orientTowardsTarget(dummy);
+        keys().w = true;
+        if (t > 1500 && canEmergencyWarp() && triggerOKeyWarp()) {
+          ap.warpStartedAt = Date.now();
+          ap.warpsUsed++;
+          goPhase('coastToNebulaCluster');
         }
         if (t > 8000) goPhase('coastToNebulaCluster');
         return;
@@ -864,49 +835,44 @@
     const distToPlanet = camPos().distanceTo(planetPos);
     const nebPos = ap.currentNebula.position;
 
-    // Phase 2a: fly toward the planet until we're inside slingshot range (<55u)
+    // Phase 2a: fly toward the planet until inside slingshot range (<55u).
+    // Keep thrusters on the whole way so the ship looks purposeful.
     if (distToPlanet > 55) {
       setStatus('Approaching ' + (ap.slingshotPlanet.userData.name || 'planet') + ' — ' + (distToPlanet | 0) + ' u');
       flyToward(planetPos, 2.0);
+      keys().w = true;
       if (t > 20000) {
-        // Safety — can't reach the planet, fall back to direct warp
         ap.slingshotPlanet = null;
       }
       return;
     }
 
-    // Phase 2b: we're at the planet — point camera at the nebula
+    // Phase 2b: at the planet — align camera toward the nebula
     const aimDummy = { position: nebPos };
     if (window.orientTowardsTarget) window.orientTowardsTarget(aimDummy);
 
-    // Check alignment
     let aligned = false;
     if (_coneVec && camera) {
       _coneVec.subVectors(nebPos, camera.position).normalize();
       camera.getWorldDirection(_coneFwd);
-      const dot = _coneFwd.dot(_coneVec);
-      aligned = dot > 0.985; // cos(~10°) — a bit looser than warp alignment
+      aligned = _coneFwd.dot(_coneVec) > 0.985;
     }
     setStatus(aligned
       ? 'SLINGSHOT — releasing!'
       : 'Orbiting ' + (ap.slingshotPlanet.userData.name || 'planet') + ' — aligning to nebula');
 
-    // Phase 2c: fire the slingshot when aligned and energy available
-    if (aligned && gameState.energy >= 20 &&
-        !(gameState.slingshot && gameState.slingshot.active) &&
-        typeof executeSlingshot === 'function') {
-      executeSlingshot();
+    // Phase 2c: fire the slingshot when aligned
+    if (aligned && triggerSlingshot()) {
       ap.warpStartedAt = Date.now();
       ap.warpsUsed++;
       goPhase('coastToNebulaCluster');
       return;
     }
 
-    // Safety timeout — if slingshot never fires, fall back to emergency warp
+    // Safety timeout — O-key warp if slingshot never fires
     if (t > 15000) {
-      if (canEmergencyWarp() && triggerEmergencyWarp()) {
-        ap.warpStartedAt = Date.now();
-      }
+      if (canEmergencyWarp()) triggerOKeyWarp();
+      ap.warpStartedAt = Date.now();
       goPhase('coastToNebulaCluster');
     }
   }
@@ -1009,8 +975,9 @@
       return;
     }
 
-    // Stall recovery
-    if (speed < 0.2 && t > 5000 && distToNebula > 500) {
+    // Keep thrusters active while coasting toward the nebula — the ship
+    // should look purposeful, not drifting.  Only thrust when NOT braking.
+    if (distToNebula >= NEBULA_BRAKE_RANGE && speed < 3) {
       const dummy = { position: ap.currentNebula.position };
       if (window.orientTowardsTarget) window.orientTowardsTarget(dummy);
       keys().w = true;
@@ -1167,13 +1134,62 @@
       return;
     }
 
-    if (distToBH > 500) {
-      setStatus('Approaching ' + (ap.currentBH.userData.name || 'black hole') + ' — ' + (distToBH | 0));
-      flyToward(ap.currentBH, 2.5);
-    } else {
-      // Close to event horizon — switch to warp phase (physics takes over)
+    if (distToBH <= 500) {
       setStatus('Event horizon — initiating warp');
       goPhase('blackHoleWarp');
+    } else if (distToBH > 2000) {
+      // Long distance — prefer interstellar slingshot, fall back to O-key
+      if (!ap._bhSlingshotPlanet) {
+        ap._bhSlingshotPlanet = pickSlingshotPlanet(ap.currentBH.position);
+      }
+      if (ap._bhSlingshotPlanet) {
+        const dtp = camPos().distanceTo(ap._bhSlingshotPlanet.position);
+        if (dtp > 55) {
+          setStatus('Slingshot approach via ' + (ap._bhSlingshotPlanet.userData.name || 'planet') + ' — ' + (dtp | 0) + ' u');
+          flyToward(ap._bhSlingshotPlanet, 2.5);
+          keys().w = true;
+        } else {
+          // At slingshot range — align toward BH and fire
+          const aimDummy = { position: ap.currentBH.position };
+          if (window.orientTowardsTarget) window.orientTowardsTarget(aimDummy);
+          let aligned = false;
+          if (_coneVec && camera) {
+            _coneVec.subVectors(ap.currentBH.position, camera.position).normalize();
+            camera.getWorldDirection(_coneFwd);
+            aligned = _coneFwd.dot(_coneVec) > 0.985;
+          }
+          setStatus(aligned ? 'SLINGSHOT to black hole!' : 'Aligning slingshot toward black hole');
+          if (aligned && triggerSlingshot()) {
+            ap._bhSlingshotPlanet = null;
+            ap.warpStartedAt = Date.now();
+          }
+        }
+      } else {
+        // No slingshot planet — O-key emergency warp with thrusters
+        setStatus('Emergency warp toward black hole — ' + (distToBH | 0));
+        flyToward(ap.currentBH, 2.5);
+        keys().w = true;
+        if (canEmergencyWarp() && t > 2000 &&
+            Date.now() - (ap._lastBHWarp || 0) > 20000) {
+          if (triggerOKeyWarp()) {
+            ap._lastBHWarp = Date.now();
+            ap.warpStartedAt = Date.now();
+          }
+        }
+      }
+    } else {
+      // Under 2000u — W double-tap to close the gap, with thrusters
+      setStatus('Approaching ' + (ap.currentBH.userData.name || 'black hole') + ' — ' + (distToBH | 0));
+      flyToward(ap.currentBH, 2.5);
+      keys().w = true;
+      if (distToBH > 800 && gameState.energy > 25 &&
+          Date.now() - (ap._lastJumpTap || 0) > 10000) {
+        ap._lastJumpTap = Date.now();
+        if (window.keys) {
+          window.keys.wDoubleTap = true;
+          setTimeout(() => { if (window.keys) window.keys.wDoubleTap = false; }, 120);
+        }
+      }
     }
   }
 
@@ -1368,8 +1384,9 @@
       }
     }
 
-    // Mid-coast: gently thrust if we've stalled
-    if (speed < 0.3 && t > 5000) keys().w = true;
+    // Keep thrusters active while coasting — the ship should look
+    // purposeful, not drifting passively.
+    if (speedNow < 3 && t > 5000) keys().w = true;
 
     if (t > 30000) {
       ap.brakingAfterWarp = false;
@@ -1449,7 +1466,7 @@
       gameState.currentTarget = target;
 
       // Occasional missile — one per Borg target, only when shields are
-      // down and the target is within (crosshair + 100u) range.
+      // down and the target is within (auto-aim + 100u) range.
       if (shouldFireMissileAt(target, dist)) {
         ap._lastMissileTime = Date.now();
         markMissileFiredAt(target);
@@ -1511,9 +1528,37 @@
   }
 
   function orbitAround(centerObj) {
-    // Auto-nav already handles orbital approach and circularization,
-    // so just keep it pointed at the target.
-    flyToward(centerObj, 1.0);
+    if (!centerObj || typeof camera === 'undefined') return;
+    const cp = camPos();
+    const targetPos = centerObj.position;
+    const dist = cp.distanceTo(targetPos);
+
+    // Desired orbit radius — close enough to feel immersive (150 u by
+    // default, scaled up slightly for very large bodies).
+    const bodySize = (centerObj.userData && centerObj.userData.size) || 20;
+    const orbitR = Math.max(bodySize * 2.5, 150);
+
+    // Radial direction (planet → ship)
+    const radial = cp.clone().sub(targetPos).normalize();
+    // Tangential direction (perpendicular to radial, in XZ plane)
+    const tangent = new THREE.Vector3(-radial.z, 0, radial.x);
+
+    if (dist > orbitR * 1.3) {
+      // Still too far — approach the orbit shell
+      flyToward(centerObj, 1.2);
+    } else if (dist < orbitR * 0.7) {
+      // Inside the orbit shell — push outward gently
+      const outPoint = cp.clone().add(radial.clone().multiplyScalar(50));
+      flyToward({ position: outPoint }, 0.8);
+    } else {
+      // On the orbit ring — thrust tangentially
+      const orbitPoint = cp.clone().add(tangent.clone().multiplyScalar(80));
+      flyToward({ position: orbitPoint }, 0.8);
+      // Keep the planet in view
+      if (window.orientTowardsTarget) {
+        window.orientTowardsTarget({ position: targetPos });
+      }
+    }
   }
 
   // Reusable vectors for isInFiringCone to avoid GC pressure
@@ -1633,13 +1678,14 @@
     k[ap._flightStyleKey] = true;
   }
 
-  // Crosshair detection uses a 2000 u forward cone (isInFiringCone).
-  // Missiles travel further than lasers, so the demo is allowed to
-  // launch at targets up to 100 u beyond the crosshair detection
-  // range — but no further.  Outside that window the missile would
-  // just chase the target forever.
+  // Missile range matches the auto-mouse crosshair snap distance
+  // (gameState.targetLock.range, default 600 u) plus a small 100 u
+  // buffer.  Outside that bubble the missile would just chase the
+  // target forever with no visual setup from the crosshair.
   const MISSILE_RANGE_BUFFER = 100;
-  const MISSILE_MAX_RANGE = 2000 + MISSILE_RANGE_BUFFER;
+  function missileMaxRange() {
+    return ((gameState.targetLock && gameState.targetLock.range) || 600) + MISSILE_RANGE_BUFFER;
+  }
 
   // Track which enemies already had a missile fired at them this run
   // so the demo doesn't waste its payload on re-firing at the same
@@ -1657,7 +1703,7 @@
     if (!target || !target.userData) return false;
     if (shieldsActive()) return false;
     if (!gameState.missiles || gameState.missiles.current <= 0) return false;
-    if (dist > MISSILE_MAX_RANGE) return false;
+    if (dist > missileMaxRange()) return false;
     if (hasMissileBeenFiredAt(target)) return false;
     if (Date.now() - (ap._lastMissileTime || 0) <= 2500) return false;
     return true;
@@ -1798,11 +1844,34 @@
     return true;
   }
 
+  // O-key emergency warp — full 15 s warp boost.  Uses a charge.
+  // Preferred for crossing interstellar distances when no slingshot
+  // planet is within reach.
+  function triggerOKeyWarp() {
+    if (!canEmergencyWarp()) return false;
+    keys().o = true;
+    setTimeout(() => { keys().o = false; }, 100);
+    return true;
+  }
+
+  // Gravitational slingshot — the preferred interstellar travel method.
+  // Only works within 60 u of a planet (game checks this).  Call
+  // executeSlingshot() directly since the autopilot has already
+  // positioned the ship and aligned the camera.
+  function triggerSlingshot() {
+    if (gameState.energy < 20) return false;
+    if (gameState.slingshot && gameState.slingshot.active) return false;
+    if (typeof executeSlingshot !== 'function') return false;
+    executeSlingshot();
+    return true;
+  }
+
+  // Legacy alias — callers that just need "any warp" can use this.
+  // Prefers slingshot (if near planet), falls back to O-key warp.
   function triggerEmergencyWarp() {
     if (!canEmergencyWarp()) return false;
-    keys().enter = true;
-    setTimeout(() => { keys().enter = false; }, 100);
-    return true;
+    return triggerOKeyWarp();
+  }
   }
 
   // Hide lasers after 400 ms by setting .visible = false.  This does NOT
@@ -2498,6 +2567,8 @@
     ap._flightStyleKey = null;
     ap._flightStyleUntil = 0;
     ap._nextFlightStyleAt = 0;
+    ap._bhSlingshotPlanet = null;
+    ap._lastBHWarp = 0;
   }
 
   function releaseKeys() {
@@ -2510,7 +2581,7 @@
     k.w = false; k.s = false; k.a = false; k.d = false;
     k.b = false; k.x = false; k.q = false; k.e = false;
     k.up = false; k.down = false; k.left = false; k.right = false;
-    // don't clear k.enter here — triggerEmergencyWarp sets it and clears via timeout
+    // don't clear k.enter or k.o here — warp functions set them and clear via timeout
   }
 
   function setStatus(msg) {
