@@ -1705,36 +1705,79 @@
     if (window.fireWeapon) window.fireWeapon();
   }
 
-  // Shoot asteroids that drift into targeting range.  Asteroids can't be
-  // auto-aimed via targetLock (the game explicitly excludes them), so we
-  // orient toward the asteroid and fire with the crosshair centered —
-  // the raycast from center-screen hits the asteroid we're pointing at.
-  // Uses a separate cooldown so it doesn't compete with enemy fire timing.
+  // Shoot asteroids that drift into the auto-mouse-target bubble (the
+  // same range the game uses for enemy auto-aim, ~600 u) to regain hull
+  // via salvage.  We do NOT steer the ship toward asteroids — we only
+  // fire when an asteroid happens to sit under the crosshair.  A
+  // pre-flight raycast from center screen confirms the hit so we never
+  // emit a "dead" laser bolt into empty space.
   function shootNearbyAsteroids() {
     if (ap._killCooldownUntil && Date.now() < ap._killCooldownUntil) return;
     if (!gameState || gameState.weapons.cooldown > 0 || gameState.weapons.energy < 10) return;
+    if (typeof camera === 'undefined') return;
+
+    // Skip if we already have an enemy/Borg target locked — combat code
+    // owns the weapon trigger in that case, and stealing aim would make
+    // the laser land on the asteroid instead of the enemy.
+    if (gameState.targetLock && gameState.targetLock.active && gameState.targetLock.target) {
+      const ud = gameState.targetLock.target.userData;
+      if (ud && (ud.type === 'enemy' || ud.isBorg)) return;
+    }
 
     const now = Date.now();
     if (now - (ap._lastAsteroidFire || 0) < 1600) return;
 
-    if (typeof planets === 'undefined') return;
+    // Auto-mouse target range (gameState.targetLock.range defaults to 600).
+    const maxRange = (gameState.targetLock && gameState.targetLock.range) || 600;
     const cp = camPos();
-    let best = null, bestDist = 300;
-    for (let i = 0; i < planets.length; i++) {
-      const p = planets[i];
-      if (!p || !p.userData) continue;
-      if (p.userData.type !== 'asteroid' || (p.userData.health !== undefined && p.userData.health <= 0)) continue;
-      const d = cp.distanceTo(p.position);
-      if (d < bestDist && isInFiringCone(p, 300)) {
-        bestDist = d;
-        best = p;
+
+    // Collect candidates: inner-system asteroids (planets[] with
+    // type='asteroid') + outer-system asteroids
+    // (outerInterstellarSystems[].userData.orbiters with
+    // type='outer_asteroid').  Outer asteroids live under a rotating
+    // system group, so use getWorldPosition for the range test.
+    if (!shootNearbyAsteroids._tmp) shootNearbyAsteroids._tmp = new THREE.Vector3();
+    const tmp = shootNearbyAsteroids._tmp;
+    const candidates = [];
+
+    if (typeof planets !== 'undefined') {
+      for (let i = 0; i < planets.length; i++) {
+        const p = planets[i];
+        if (!p || !p.userData) continue;
+        if (p.userData.type !== 'asteroid') continue;
+        if (p.userData.health !== undefined && p.userData.health <= 0) continue;
+        if (cp.distanceTo(p.position) > maxRange) continue;
+        candidates.push(p);
       }
     }
-    if (!best) return;
+    if (typeof outerInterstellarSystems !== 'undefined') {
+      for (let i = 0; i < outerInterstellarSystems.length; i++) {
+        const sys = outerInterstellarSystems[i];
+        if (!sys || !sys.userData || !sys.userData.orbiters) continue;
+        const orbs = sys.userData.orbiters;
+        for (let j = 0; j < orbs.length; j++) {
+          const o = orbs[j];
+          if (!o || !o.userData) continue;
+          if (o.userData.type !== 'outer_asteroid') continue;
+          if (o.userData.health !== undefined && o.userData.health <= 0) continue;
+          o.getWorldPosition(tmp);
+          if (cp.distanceTo(tmp) > maxRange) continue;
+          candidates.push(o);
+        }
+      }
+    }
+    if (candidates.length === 0) return;
 
-    const dummy = { position: best.position };
-    const aligned = window.orientTowardsTarget ? window.orientTowardsTarget(dummy) : false;
-    if (!aligned) return;
+    // Raycast from center-screen (crosshair) — only fire if the
+    // crosshair is actually on an asteroid.  fireWeapon() runs the same
+    // raycast against the same object sets internally, so a hit here
+    // guarantees its laser bolt lands on this asteroid.
+    if (!shootNearbyAsteroids._ray) shootNearbyAsteroids._ray = new THREE.Raycaster();
+    const ray = shootNearbyAsteroids._ray;
+    if (!shootNearbyAsteroids._origin) shootNearbyAsteroids._origin = new THREE.Vector2(0, 0);
+    ray.setFromCamera(shootNearbyAsteroids._origin, camera);
+    const hits = ray.intersectObjects(candidates, true);
+    if (!hits.length) return;
 
     gameState.crosshairX = window.innerWidth / 2;
     gameState.crosshairY = window.innerHeight / 2;
