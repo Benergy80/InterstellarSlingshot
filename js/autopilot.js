@@ -664,10 +664,15 @@
       }
     }
 
-    // Advance to the nebula objective ONLY after the first 3 kills.  If
-    // we still haven't defeated anyone, keep scanning indefinitely.
-    if (t > 18000 && ap.enemiesKilled >= 3) {
-      goPhase('warpToNebulaCluster');
+    // Scan-timeout fallback.  On the first leg (no BH warps yet) the
+    // objective is the black-hole galaxy after 5 kills; after the first
+    // BH warp the objective is the nearest nebula via interstellar
+    // slingshot after 3 kills.  If nothing has been killed yet, keep
+    // scanning indefinitely.
+    const firstLeg = (ap.warpsUsed || 0) === 0;
+    const killTarget = firstLeg ? 5 : 3;
+    if (t > 18000 && ap.enemiesKilled >= killTarget) {
+      goPhase(firstLeg ? 'gotoBlackHoleGalaxy' : 'warpToNebulaCluster');
     }
   }
 
@@ -707,12 +712,21 @@
       // snapping to the next enemy instantly.
       ap._killCooldownUntil = Date.now() + 1000;
 
-      if (ap.returnPhase === 'findLocalEnemies' && ap.segmentKills >= 3) {
-        ap.segmentKills = 0;
-        setTimeout(() => { if (ap.active) goPhase('warpToNebulaCluster'); }, 1000);
-      } else {
-        setTimeout(() => { if (ap.active) goPhase(ap.returnPhase || 'findLocalEnemies'); }, 1000);
+      // First leg (no black-hole warps yet) ends at 5 kills and pursues a
+      // black-hole warp.  After arriving in a new galaxy, the follow-up
+      // combat leg ends at 3 kills and heads for the nearest nebula via
+      // interstellar slingshot (phaseWarpToNebulaCluster).
+      if (ap.returnPhase === 'findLocalEnemies') {
+        const firstLeg = (ap.warpsUsed || 0) === 0;
+        const killTarget = firstLeg ? 5 : 3;
+        if (ap.segmentKills >= killTarget) {
+          ap.segmentKills = 0;
+          const nextPhase = firstLeg ? 'gotoBlackHoleGalaxy' : 'warpToNebulaCluster';
+          setTimeout(() => { if (ap.active) goPhase(nextPhase); }, 1000);
+          return;
+        }
       }
+      setTimeout(() => { if (ap.active) goPhase(ap.returnPhase || 'findLocalEnemies'); }, 1000);
       return;
     }
 
@@ -1283,13 +1297,15 @@
       return;
     }
 
-    // After warp coast is over, engage any hostile the nav system sees
+    // After warp coast is over, engage any hostile the nav system sees.
+    // Use findLocalEnemies as the return phase so the 3-kill post-warp
+    // rule in phaseCombat routes us to the nearest nebula via slingshot.
     if (speedNow < 3) {
       const intruder = navDetectedEnemy();
       if (intruder) {
         ap.combatTarget = intruder;
         ap.combatMissileFired = false;
-        ap.returnPhase = 'gotoBlackHoleGalaxy';
+        ap.returnPhase = 'findLocalEnemies';
         goPhase('combat');
         return;
       }
@@ -1323,7 +1339,9 @@
 
           // Immediately lock onto the nearest enemy in this new galaxy so
           // the autopilot starts engaging right away instead of drifting
-          // around looking for a target.
+          // around looking for a target.  returnPhase=findLocalEnemies so
+          // phaseCombat's 3-kill post-warp rule pushes us to the nearest
+          // nebula via interstellar slingshot when the leg finishes.
           const nearest = nearestAliveEnemy(15000);
           if (nearest) {
             // Nav panel only — phaseCombat handles the targetLock once close
@@ -1332,7 +1350,7 @@
             if (distToNearest < 2500) {
               ap.combatTarget = nearest;
               ap.combatMissileFired = false;
-              ap.returnPhase = 'gotoBlackHoleGalaxy';
+              ap.returnPhase = 'findLocalEnemies';
               goPhase('combat');
               return;
             }
@@ -1342,7 +1360,7 @@
           if (ap.loopCount >= 2) {
             goPhase('approachBorg');
           } else {
-            ap.returnPhase = 'gotoBlackHoleGalaxy';
+            ap.returnPhase = 'findLocalEnemies';
             goPhase('findLocalEnemies');
           }
         }
