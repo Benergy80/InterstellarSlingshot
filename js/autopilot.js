@@ -623,6 +623,7 @@
       gameState.currentTarget = detected;
       // Fly toward it aggressively with human-style banking
       flyToward(detected, 2.5);
+      pursuitFlightStyle('pursuit');
       // Once inside combat range, commit to the engagement
       if (d < 2200) {
         ap.combatTarget = detected;
@@ -644,6 +645,7 @@
       // Nav panel only — no targetLock at this range
       gameState.currentTarget = farEnemy;
       flyToward(farEnemy, 2.5);
+      pursuitFlightStyle('pursuit');
       return;
     }
 
@@ -722,6 +724,7 @@
     if (dist > engageRange) {
       setStatus('Pursuing ' + (enemy.userData.name || 'hostile') + ' — ' + (dist | 0) + ' u');
       flyToward(enemy, 2.5);
+      pursuitFlightStyle('pursuit');
 
       // Double-tap W Jump when pursuing: any target beyond 2000 u gets the
       // 2-second short warp to close fast.  10 s cooldown + 25 energy
@@ -738,6 +741,7 @@
     } else {
       setStatus('Engaging ' + (enemy.userData.name || 'hostile') + ' — in weapons range');
       flyToward(enemy, 0.8);
+      pursuitFlightStyle('engage');
 
       // Strategic brake: if we're closing too fast and about to overshoot
       // the enemy, tap the brakes to stay in weapons range.  Triggers when
@@ -1411,8 +1415,13 @@
       ap.combatTarget = target;
       const dist = camPos().distanceTo(target.position);
       setStatus('ENGAGING BORG — ' + (dist | 0) + ' units');
-      if (dist > 800) flyToward(target, 2.0);
-      else            flyToward(target, 0.8);
+      if (dist > 800) {
+        flyToward(target, 2.0);
+        pursuitFlightStyle('pursuit');
+      } else {
+        flyToward(target, 0.8);
+        pursuitFlightStyle('engage');
+      }
 
       const engageRange = (target.userData && target.userData.firingRange) || 500;
       const aimDummy = { position: target.position };
@@ -1563,6 +1572,47 @@
     if (shieldsActive()) return;
     gameState.currentTarget = target;
     if (window.fireMissile) window.fireMissile();
+  }
+
+  // One-shot pursuit flair: occasional single-direction roll on long chases
+  // ('pursuit' mode) or occasional bank while orbiting an opponent ('engage'
+  // mode).  Nudges are ~200–360 ms each and spaced 5–13 s apart, with a
+  // 30% chance to do nothing at all when the next window fires — keeps
+  // the flight calm instead of rhythmic.
+  function pursuitFlightStyle(mode) {
+    const now = Date.now();
+    const k = keys();
+
+    if (ap._flightStyleUntil && now < ap._flightStyleUntil) {
+      if (ap._flightStyleKey) k[ap._flightStyleKey] = true;
+      return;
+    }
+    if (ap._flightStyleUntil && now >= ap._flightStyleUntil) {
+      if (ap._flightStyleKey) k[ap._flightStyleKey] = false;
+      ap._flightStyleKey = null;
+      ap._flightStyleUntil = 0;
+      ap._nextFlightStyleAt = now + 5000 + Math.random() * 8000;
+      return;
+    }
+    if (!ap._nextFlightStyleAt) {
+      ap._nextFlightStyleAt = now + 5000 + Math.random() * 8000;
+      return;
+    }
+    if (now < ap._nextFlightStyleAt) return;
+
+    // Skip ~30% of windows so the nudges don't feel rhythmic
+    if (Math.random() < 0.3) {
+      ap._nextFlightStyleAt = now + 5000 + Math.random() * 8000;
+      return;
+    }
+
+    if (mode === 'engage') {
+      ap._flightStyleKey = Math.random() < 0.5 ? 'left' : 'right';
+    } else {
+      ap._flightStyleKey = Math.random() < 0.5 ? 'q' : 'e';
+    }
+    ap._flightStyleUntil = now + 200 + Math.random() * 160;
+    k[ap._flightStyleKey] = true;
   }
 
   // Crosshair detection uses a 2000 u forward cone (isInFiringCone).
@@ -2384,6 +2434,9 @@
     ap.currentBH = null;
     ap.slingshotPlanet = null;
     ap.lastNebulaWarp = 0;
+    ap._flightStyleKey = null;
+    ap._flightStyleUntil = 0;
+    ap._nextFlightStyleAt = 0;
   }
 
   function releaseKeys() {
