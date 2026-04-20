@@ -558,22 +558,16 @@
   function phaseOrbitLocalPlanet() {
     const t = elapsed();
 
-    // Wait 2 seconds at the start so the player can take in the scene
-    // before the demo snaps to a planet target.
-    if (t < 2000) {
-      setStatus('Surveying local space…');
-      keys().w = true; // gentle forward drift
-      return;
-    }
-
-    // Pick a planet the first time (prefer within 3000u, fall back to any)
+    // Pick Earth on the very first frame — the demo should open orbiting
+    // Earth with the Navigation System's auto-navigate already engaged.
     if (!ap.orbitTarget) {
-      ap.orbitTarget = planetNear(camPos(), 3000) || pickPlanet();
+      ap.orbitTarget = findEarth() || planetNear(camPos(), 3000) || pickPlanet();
       if (!ap.orbitTarget) { goPhase('findLocalEnemies'); return; }
       const nm = (ap.orbitTarget.userData && ap.orbitTarget.userData.name) || 'planet';
       setStatus('Nav lock: ' + nm + ' — orbital survey');
-      // Lock onto the planet on the Navigation System UI
       gameState.currentTarget = ap.orbitTarget;
+      gameState.autoNavigating = true;
+      gameState.autoNavOrienting = true;
       if (typeof populateTargets === 'function') populateTargets();
     }
 
@@ -1925,6 +1919,14 @@
       if (d < bestDist) { bestDist = d; best = b; }
     });
     return best;
+  }
+
+  function findEarth() {
+    if (typeof planets === 'undefined') return null;
+    for (let i = 0; i < planets.length; i++) {
+      if (planets[i].userData && planets[i].userData.name === 'Earth') return planets[i];
+    }
+    return null;
   }
 
   function pickPlanet() {
