@@ -551,10 +551,7 @@
       orbitAround(ap.orbitTarget);
     }
 
-    // After ~30 s, hand off to enemy-hunt.  A longer intro orbit lets
-    // the player take in the world — planets, star field, nebulas — at
-    // a relaxed pace before combat kicks off.
-    if (t > 30000) {
+    if (t > 15000) {
       ap.orbitTarget = null;
       gameState.currentTarget = null;
       goPhase('findLocalEnemies');
