@@ -1626,7 +1626,8 @@ function updateCountdownDisplay(count) {
             timer.className = 'text-8xl font-bold text-cyan-400 glow-text cyber-title mb-4';
             
             // Play NASA-style countdown beep
-            if (count > 0 && audioContext && audioContext.state !== 'suspended') {
+            if (count > 0 && audioContext) {
+                if (audioContext.state === 'suspended') audioContext.resume();
                 const oscillator = audioContext.createOscillator();
                 const gain = audioContext.createGain();
                 
@@ -1646,7 +1647,8 @@ function updateCountdownDisplay(count) {
             
             // Add a subtle echo for "mission control" feel
             setTimeout(() => {
-                if (!audioContext || audioContext.state === 'suspended') return;
+                if (!audioContext) return;
+                if (audioContext.state === 'suspended') audioContext.resume();
                 
                 const echoOsc = audioContext.createOscillator();
                 const echoGain = audioContext.createGain();

@@ -170,7 +170,14 @@
 
   function play(key) {
     if (!st.enabled || st.muted) return;
-    if (key === st.current) return;
+    if (key === st.current) {
+      if (st.currentEl && st.currentEl.paused) {
+        const p = st.currentEl.play();
+        if (p) p.catch(() => {});
+        fadeIn(st.currentEl, key);
+      }
+      return;
+    }
     if (st.loadErrors.has(key)) return;
 
     const next = st.loaded[key];

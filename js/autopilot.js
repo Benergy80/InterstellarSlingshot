@@ -712,16 +712,14 @@
       flyToward(enemy, 2.5);
       pursuitFlightStyle('pursuit');
 
-      // Double-tap W Jump when pursuing: any target beyond 2000 u gets the
-      // 2-second short warp to close fast.  10 s cooldown + 25 energy
-      // floor keeps it from firing every frame.
+      // O-key emergency warp when pursuing targets beyond 2000 u.
+      // Slingshot or O-key are preferred for long-distance travel;
+      // W double-tap is reserved for shorter hops under 2000 u.
       if (dist > 2000 &&
-          gameState.energy > 25 &&
-          Date.now() - (ap._lastJumpTap || 0) > 10000) {
-        ap._lastJumpTap = Date.now();
-        if (window.keys) {
-          window.keys.wDoubleTap = true;
-          setTimeout(() => { if (window.keys) window.keys.wDoubleTap = false; }, 120);
+          canEmergencyWarp() &&
+          Date.now() - (ap._lastBHWarp || 0) > 20000) {
+        if (triggerOKeyWarp()) {
+          ap._lastBHWarp = Date.now();
         }
       }
     } else {
@@ -855,7 +853,7 @@
     if (_coneVec && camera) {
       _coneVec.subVectors(nebPos, camera.position).normalize();
       camera.getWorldDirection(_coneFwd);
-      aligned = _coneFwd.dot(_coneVec) > 0.985;
+      aligned = _coneFwd.dot(_coneVec) > 0.92;
     }
     setStatus(aligned
       ? 'SLINGSHOT — releasing!'
@@ -1156,7 +1154,7 @@
           if (_coneVec && camera) {
             _coneVec.subVectors(ap.currentBH.position, camera.position).normalize();
             camera.getWorldDirection(_coneFwd);
-            aligned = _coneFwd.dot(_coneVec) > 0.985;
+            aligned = _coneFwd.dot(_coneVec) > 0.92;
           }
           setStatus(aligned ? 'SLINGSHOT to black hole!' : 'Aligning slingshot toward black hole');
           if (aligned && triggerSlingshot()) {
@@ -1524,6 +1522,7 @@
     // notification from spamming every time the demo switches targets.
     gameState.currentTarget = targetObj;
     gameState.autoNavigating = true;
+    keys().w = true;
     if (speedMult > 1.5) keys().b = true;
   }
 
