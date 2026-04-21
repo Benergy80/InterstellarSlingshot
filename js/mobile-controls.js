@@ -52,15 +52,18 @@ function setupMobileLaunchMusicTrigger() {
 
                         if (typeof initAudio === 'function') {
                             initAudio();
+                            console.log('🔊 Audio system initialized from mobile launch');
                         }
 
                         if (typeof resumeAudioContext === 'function') {
                             resumeAudioContext();
                         }
 
-                        if (typeof soundtrack !== 'undefined') {
-                            soundtrack.preload();
-                            soundtrack.unlockAll();
+                        if (typeof startBackgroundMusic === 'function') {
+                            setTimeout(() => {
+                                startBackgroundMusic();
+                                console.log('🎵 Background music started from mobile launch');
+                            }, 500);
                         }
 
                         if (originalClick) {
@@ -84,15 +87,18 @@ function setupMobileLaunchMusicTrigger() {
 
                 if (typeof initAudio === 'function') {
                     initAudio();
+                    console.log('🔊 Audio system initialized from mobile launch');
                 }
 
                 if (typeof resumeAudioContext === 'function') {
                     resumeAudioContext();
                 }
 
-                if (typeof soundtrack !== 'undefined') {
-                    soundtrack.preload();
-                    soundtrack.unlockAll();
+                if (typeof startBackgroundMusic === 'function') {
+                    setTimeout(() => {
+                        startBackgroundMusic();
+                        console.log('🎵 Background music started from mobile launch');
+                    }, 500);
                 }
 
                 if (originalClick) {

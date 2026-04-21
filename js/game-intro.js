@@ -2908,6 +2908,25 @@ introStyles.textContent = `
         z-index: 65 !important;
         background: radial-gradient(ellipse at center, rgba(0,20,40,0.3) 0%, rgba(0,0,0,0.7) 100%);
     }
+
+    /* Scale countdown/launch headline to fit narrow mobile screens —
+       "ASCENDING TO ORBIT" at text-8xl overflows on phones. */
+    @media (max-width: 600px) {
+        #countdownTimer {
+            font-size: clamp(2.25rem, 12vw, 4.5rem) !important;
+            line-height: 1.05 !important;
+            max-width: 95vw;
+            margin-left: auto;
+            margin-right: auto;
+            word-break: break-word;
+        }
+        #countdownStatus {
+            font-size: clamp(0.9rem, 4vw, 1.25rem) !important;
+            max-width: 95vw;
+            margin-left: auto;
+            margin-right: auto;
+        }
+    }
     
     #atmosphereFadeOverlay {
         z-index: 20 !important;
