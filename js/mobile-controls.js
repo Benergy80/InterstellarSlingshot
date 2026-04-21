@@ -49,26 +49,20 @@ function setupMobileLaunchMusicTrigger() {
                     const originalClick = node.onclick;
                     node.onclick = function(e) {
                         console.log('📱 Launch button clicked - starting music');
-                        
-                        // Initialize audio system FIRST (enables all sound effects)
+
                         if (typeof initAudio === 'function') {
                             initAudio();
-                            console.log('🔊 Audio system initialized from mobile launch');
                         }
-                        
-                        // Resume audio context (required for browsers)
+
                         if (typeof resumeAudioContext === 'function') {
                             resumeAudioContext();
                         }
-                        
-                        // Start background music
-                        if (typeof startBackgroundMusic === 'function') {
-                            setTimeout(() => {
-                                startBackgroundMusic();
-                                console.log('🎵 Background music started from mobile launch');
-                            }, 500);
+
+                        if (typeof soundtrack !== 'undefined') {
+                            soundtrack.preload();
+                            soundtrack.unlockAll();
                         }
-                        
+
                         if (originalClick) {
                             originalClick.call(this, e);
                         }
@@ -87,26 +81,20 @@ function setupMobileLaunchMusicTrigger() {
             const originalClick = existingLaunchBtn.onclick;
             existingLaunchBtn.onclick = function(e) {
                 console.log('📱 Launch button clicked - starting music');
-                
-                // Initialize audio system FIRST (enables all sound effects)
+
                 if (typeof initAudio === 'function') {
                     initAudio();
-                    console.log('🔊 Audio system initialized from mobile launch');
                 }
-                
-                // Resume audio context (required for browsers)
+
                 if (typeof resumeAudioContext === 'function') {
                     resumeAudioContext();
                 }
-                
-                // Start background music
-                if (typeof startBackgroundMusic === 'function') {
-                    setTimeout(() => {
-                        startBackgroundMusic();
-                        console.log('🎵 Background music started from mobile launch');
-                    }, 500);
+
+                if (typeof soundtrack !== 'undefined') {
+                    soundtrack.preload();
+                    soundtrack.unlockAll();
                 }
-                
+
                 if (originalClick) {
                     originalClick.call(this, e);
                 }

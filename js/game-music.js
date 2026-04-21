@@ -532,6 +532,16 @@
     }
   }
 
+  function unlockAll() {
+    Object.values(st.loaded).forEach(a => {
+      const p = a.play();
+      if (p) p.catch(() => {});
+      a.pause();
+      a.currentTime = 0;
+      a.volume = 0;
+    });
+  }
+
   // ─── Public API ───────────────────────────────────────────────────────────
   window.soundtrack = {
     preload:           preload,
@@ -544,6 +554,7 @@
     stopAll:           stopAll,
     fadeOutCurrent:    fadeOutCurrent,
     startLaunchScreen: startLaunchScreen,
+    unlockAll:         unlockAll,
     get current()      { return st.current; },
     get enabled()      { return st.enabled; },
     set enabled(v)     { st.enabled = !!v; if (!v) stopAll(); },
