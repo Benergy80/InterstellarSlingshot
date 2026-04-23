@@ -439,6 +439,12 @@
     // Clear movement keys each frame; we set what we need below
     releaseMovementKeys();
 
+    // ── Planet collision avoidance ──────────────────────────────────────
+    // Scan nearby planets every frame and hold evasion keys for sustained
+    // periods when inside a danger zone, producing smooth course changes
+    // instead of jerky single-frame taps.
+    avoidPlanetCollisions();
+
     // ── Crosshair auto-fire ─────────────────────────────────────────────
     // Whenever the game's targeting system has locked onto a live enemy
     // inside the forward mouse-aim cone, pull the laser trigger.  When the
@@ -1215,14 +1221,11 @@
       setStatus('WARPING — hands off controls');
     } else if (ap.currentBH) {
       const dist = camPos().distanceTo(ap.currentBH.position);
-      // Only nudge toward the BH if we're still clearly far away.  Inside
-      // 400 u the physics gravitational pull does the rest; we just coast.
-      if (dist > 400) {
+      if (dist > 500) {
         setStatus('Diving toward event horizon — ' + (dist | 0) + ' u');
-        const dummy = { position: ap.currentBH.position };
-        if (window.orientTowardsTarget) window.orientTowardsTarget(dummy);
-        keys().w = true;
+        flyToward(ap.currentBH, 2.0);
       } else {
+        releaseMovementKeys();
         setStatus('Coasting into event horizon — ' + (dist | 0) + ' u');
       }
     }
@@ -1553,6 +1556,38 @@
       // Keep the planet in view
       if (window.orientTowardsTarget) {
         window.orientTowardsTarget({ position: targetPos });
+      }
+    }
+  }
+
+  function avoidPlanetCollisions() {
+    if (typeof planets === 'undefined' || typeof camera === 'undefined') return;
+    const now = Date.now();
+    if (ap._evadeUntil && now < ap._evadeUntil) {
+      const k = keys();
+      if (ap._evadeKey) k[ap._evadeKey] = true;
+      k.x = true;
+      return;
+    }
+    const cp = camPos();
+    for (let i = 0; i < planets.length; i++) {
+      const p = planets[i];
+      if (!p || !p.position) continue;
+      if (p.userData && p.userData.type === 'asteroid') continue;
+      const sz = (p.userData && p.userData.size) || 20;
+      const dangerR = Math.max(sz * 1.8, 80);
+      const dist = cp.distanceTo(p.position);
+      if (dist < dangerR) {
+        const radial = cp.clone().sub(p.position).normalize();
+        const right = new THREE.Vector3(-radial.z, 0, radial.x);
+        const fwd = new THREE.Vector3();
+        camera.getWorldDirection(fwd);
+        ap._evadeKey = fwd.dot(right) > 0 ? 'a' : 'd';
+        ap._evadeUntil = now + 800;
+        const k = keys();
+        k[ap._evadeKey] = true;
+        k.x = true;
+        return;
       }
     }
   }
@@ -2564,6 +2599,8 @@
     ap._nextFlightStyleAt = 0;
     ap._bhSlingshotPlanet = null;
     ap._lastBHWarp = 0;
+    ap._evadeUntil = 0;
+    ap._evadeKey = null;
   }
 
   function releaseKeys() {

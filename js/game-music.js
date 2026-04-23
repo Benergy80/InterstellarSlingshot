@@ -63,6 +63,8 @@
     farOuter1:       'Far Outer Galaxy1.mp3',
     farOuter2:       'Far Outer Galaxy2.mp3',
     farOuter3:       'Far Outer Galaxy3.mp3',
+    gameOver1:       'GAMEOVER1.mp3',
+    gameOver2:       'GAMEOVER2.mp3',
   };
 
   // ─── State ────────────────────────────────────────────────────────────────
@@ -89,7 +91,7 @@
   // ─── Preload ──────────────────────────────────────────────────────────────
   // Tracks that should play once, not loop.  When they finish naturally,
   // the next context-detection tick picks whatever track is appropriate.
-  const NO_LOOP = new Set(['launchScreen', 'intro']);
+  const NO_LOOP = new Set(['launchScreen', 'intro', 'gameOver1', 'gameOver2']);
 
   function preload() {
     // Idempotent — do not re-create Audio elements on repeat calls.

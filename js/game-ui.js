@@ -2148,9 +2148,9 @@ function gameOver(reason) {
         gameState.gameStarted = false;
         gameState.gameOverScreenShown = true;
     }
-    
+
     console.log('💀 GAME OVER - Stopping all systems');
-    
+
     // Stop all music
     if (typeof musicSystem !== 'undefined') {
         if (musicSystem.backgroundMusic) {
@@ -2162,8 +2162,14 @@ function gameOver(reason) {
             musicSystem.battleMusic = null;
         }
     }
-    
-    // Stop audio context
+
+    // Play game over music
+    if (typeof soundtrack !== 'undefined') {
+        soundtrack.stopAll();
+        soundtrack.forceTrack(Math.random() < 0.5 ? 'gameOver1' : 'gameOver2');
+    }
+
+    // Suspend synth audio but leave <audio> elements running for game over music
     if (typeof audioContext !== 'undefined' && audioContext) {
         audioContext.suspend();
     }
@@ -2176,14 +2182,12 @@ function gameOver(reason) {
     // Clear all registered game intervals
     if (typeof clearAllGameIntervals === 'function') clearAllGameIntervals();
 
-    // Enhanced game over screen with visible mouse cursor
     const gameOverOverlay = document.createElement('div');
     gameOverOverlay.id = 'gameOverScreen';
-    gameOverOverlay.className = 'absolute inset-0 bg-black bg-opacity-95 flex items-center justify-center cyberpunk-bg';
-    gameOverOverlay.style.cursor = 'auto'; // Make mouse visible
-    gameOverOverlay.style.zIndex = '10000'; // FIXED: High z-index for iPad visibility
+    gameOverOverlay.className = 'bg-black bg-opacity-95 flex items-center justify-center cyberpunk-bg';
+    gameOverOverlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;cursor:auto;z-index:10000;pointer-events:all;';
     gameOverOverlay.innerHTML = `
-        <div class="text-center ui-panel rounded-lg p-8" style="cursor: auto;">
+        <div class="text-center ui-panel rounded-lg p-6" style="cursor:auto;max-width:90vw;max-height:90vh;overflow-y:auto;">
             <h1 class="text-4xl font-bold text-red-400 mb-4 glow-text cyber-title">MISSION FAILED</h1>
             <p class="text-gray-300 mb-6">${reason}</p>
             <div class="space-y-4">
@@ -2196,18 +2200,15 @@ function gameOver(reason) {
                     <div>Galaxies Cleared: ${gameState ? gameState.galaxiesCleared : 0}/8</div>
                     <div>Emergency Warps: ${gameState ? `${gameState.emergencyWarp.available}/${gameState.emergencyWarp.maxWarps}` : '0/10'}</div>
                 </div>
-                <button onclick="location.reload()" class="mt-6 space-btn rounded px-6 py-3" style="cursor: pointer;">
+                <button onclick="location.reload()" class="mt-6 space-btn rounded px-6 py-3" style="cursor:pointer;min-height:48px;">
                     <i class="fas fa-redo mr-2"></i>Restart Mission
                 </button>
             </div>
         </div>
     `;
     document.body.appendChild(gameOverOverlay);
-    
-    // Ensure mouse is visible and working
     document.body.style.cursor = 'auto';
-    gameOverOverlay.style.pointerEvents = 'all';
-    
+
     console.log('✅ Game over screen displayed - all systems stopped');
 }
 
@@ -2238,7 +2239,13 @@ function showGameOverScreen(title, message) {
         }
     }
 
-    // Stop audio context
+    // Play game over music
+    if (typeof soundtrack !== 'undefined') {
+        soundtrack.stopAll();
+        soundtrack.forceTrack(Math.random() < 0.5 ? 'gameOver1' : 'gameOver2');
+    }
+
+    // Suspend synth audio but leave <audio> elements running for game over music
     if (typeof audioContext !== 'undefined' && audioContext) {
         audioContext.suspend();
     }
@@ -2251,14 +2258,12 @@ function showGameOverScreen(title, message) {
     // Clear all registered game intervals
     if (typeof clearAllGameIntervals === 'function') clearAllGameIntervals();
 
-    // Enhanced game over screen with visible mouse cursor
     const gameOverOverlay = document.createElement('div');
     gameOverOverlay.id = 'gameOverScreen';
-    gameOverOverlay.className = 'absolute inset-0 bg-black bg-opacity-95 flex items-center justify-center cyberpunk-bg';
-    gameOverOverlay.style.cursor = 'auto'; // Make mouse visible
-    gameOverOverlay.style.zIndex = '10000'; // FIXED: High z-index for iPad visibility
+    gameOverOverlay.className = 'bg-black bg-opacity-95 flex items-center justify-center cyberpunk-bg';
+    gameOverOverlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;cursor:auto;z-index:10000;pointer-events:all;';
     gameOverOverlay.innerHTML = `
-        <div class="text-center ui-panel rounded-lg p-8" style="cursor: auto;">
+        <div class="text-center ui-panel rounded-lg p-6" style="cursor:auto;max-width:90vw;max-height:90vh;overflow-y:auto;">
             <h1 class="text-4xl font-bold text-red-400 mb-4 glow-text cyber-title">MISSION FAILED</h1>
             <p class="text-gray-300 mb-6">${message || 'Ship destroyed'}</p>
             <div class="space-y-4">
@@ -2271,17 +2276,14 @@ function showGameOverScreen(title, message) {
                     <div>Galaxies Cleared: ${gameState ? gameState.galaxiesCleared : 0}/8</div>
                     <div>Emergency Warps Remaining: ${gameState ? gameState.emergencyWarp.available : '0'}</div>
                 </div>
-                <button onclick="location.reload()" class="mt-6 space-btn rounded px-6 py-3" style="cursor: pointer;">
+                <button onclick="location.reload()" class="mt-6 space-btn rounded px-6 py-3" style="cursor:pointer;min-height:48px;">
                     <i class="fas fa-redo mr-2"></i>Restart Mission
                 </button>
             </div>
         </div>
     `;
     document.body.appendChild(gameOverOverlay);
-
-    // Ensure mouse is visible and working
     document.body.style.cursor = 'auto';
-    gameOverOverlay.style.pointerEvents = 'all';
 
     console.log('✅ Game over screen displayed - all systems stopped');
 }
