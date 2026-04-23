@@ -10283,8 +10283,7 @@ function updateCMBOpacity() {
     }
     
     // PART 1: Calculate base opacity based on distance from Sagittarius A* (at origin 0,0,0)
-    const sagittariusAPosition = new THREE.Vector3(0, 0, 0);
-    const distanceFromSgrA = camera.position.distanceTo(sagittariusAPosition);
+    const distanceFromSgrA = camera.position.length();
     
     // Linear interpolation: 0.01 at origin, 0.09 at 4000+ units
     const maxDistance = 110000;

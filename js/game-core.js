@@ -1661,8 +1661,8 @@ if (typeof localGalaxyStars !== 'undefined' && localGalaxyStars) {
         updateWarpSpeedStarfield();
     }
         
-    // NEW: Update CMB opacity based on distance from Sagittarius A and nebula proximity
-    if (typeof updateCMBOpacity === 'function') {
+    // Update CMB opacity based on distance from Sagittarius A and nebula proximity
+    if (gameState.frameCount % 10 === 0 && typeof updateCMBOpacity === 'function') {
         updateCMBOpacity();
     }
     
@@ -1723,7 +1723,7 @@ if (planet.userData.type === 'blackhole' && planet.userData.rotationSpeed) {
             planet.userData.tendrilTime += 0.016;
             
             // Only update every few frames for performance
-            if (gameState.frameCount % 3 === 0) {
+            if (gameState.frameCount % 6 === 0) {
                 planet.userData.tendrilGroup.children.forEach((tendril, index) => {
                     if (tendril.userData) {
                         const time = planet.userData.tendrilTime;
@@ -1929,47 +1929,29 @@ if (typeof nebulaClouds !== 'undefined' && nebulaClouds.length > 0) {
     });
 }
 
-// In your animate() function, add this with your other planet updates:
 planets.forEach(planet => {
-    if (planet.userData.type === 'blackhole' && planet.userData.starCluster) {
-        // Get rotation speed from userData, or use default based on black hole type
-        let rotationSpeed = planet.userData.rotationSpeed;
-        
-        // If no rotation speed set, assign based on type
-        if (!rotationSpeed) {
+    if (planet.userData.type === 'blackhole') {
+        if (!planet.userData.rotationSpeed) {
             if (planet.userData.isGalacticCenter || planet.userData.isSagittariusA) {
-                rotationSpeed = 0.025; // Sagittarius A* speed
+                planet.userData.rotationSpeed = 0.025;
             } else if (planet.userData.isGalacticCore) {
-                rotationSpeed = 0.020; // Other galactic cores speed
+                planet.userData.rotationSpeed = 0.020;
             } else {
-                rotationSpeed = 0.015; // Default for other black holes
+                planet.userData.rotationSpeed = 0.015;
             }
-            planet.userData.rotationSpeed = rotationSpeed; // Store for future use
         }
-        
-        planet.userData.starCluster.rotation.y += rotationSpeed;
-        
-        // Slight wobble for dynamic effect
-        planet.userData.starCluster.rotation.x = Math.sin(Date.now() * 0.0001) * 0.05;
-    }
-});
-
-planets.forEach(planet => {
-    if (planet.userData.type === 'blackhole' && planet.userData.rotationSpeed) {
-        // Rotate star cluster (small dense stars near black hole)
+        const rs = planet.userData.rotationSpeed;
         if (planet.userData.starCluster) {
-            planet.userData.starCluster.rotation.y += planet.userData.rotationSpeed;
+            planet.userData.starCluster.rotation.y += rs;
+            planet.userData.starCluster.rotation.x = Math.sin(Date.now() * 0.0001) * 0.05;
         }
-        
-        // Rotate main galaxy stars (the spiral/ring/elliptical structure)
         if (planet.userData.galaxyStars) {
-            planet.userData.galaxyStars.rotation.y += planet.userData.rotationSpeed;
+            planet.userData.galaxyStars.rotation.y += rs;
         }
     }
 });
 
-// Also add interaction checking:
-if (typeof checkCosmicFeatureInteractions === 'function' && typeof camera !== 'undefined' && typeof gameState !== 'undefined') {
+if (gameState.frameCount % 5 === 0 && typeof checkCosmicFeatureInteractions === 'function' && typeof camera !== 'undefined') {
     checkCosmicFeatureInteractions(camera.position, gameState);
 }
     

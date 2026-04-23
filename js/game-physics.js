@@ -1437,9 +1437,12 @@ if (frameDistance > 0.01) { // Only track significant movement
         gameState.velocityVector.addScaledVector(forwardDirection, boostPower);
         // B + Shift: Enhanced boost with higher energy consumption (0.15 vs 0.12)
         gameState.energy = Math.max(0, gameState.energy - (keys.shift ? 0.15 : 0.12));
-        
-        if (Math.random() > 0.6) {
-            createHyperspaceEffect();
+
+        if (Math.random() > 0.97) {
+            if (!gameState._lastBoostFx || (Date.now() - gameState._lastBoostFx) > 500) {
+                gameState._lastBoostFx = Date.now();
+                createHyperspaceEffect();
+            }
         }
     }
     
@@ -1698,9 +1701,12 @@ if (keys.x && gameState.energy > 0 && !gameState.emergencyWarp.autoBraking) {
         }
     }
     
-    if (Math.random() > 0.92) {
+    if (Math.random() > 0.97) {
         if (typeof createHyperspaceEffect === 'function') {
-            createHyperspaceEffect();
+            if (!gameState._lastBrakeFx || (Date.now() - gameState._lastBrakeFx) > 500) {
+                gameState._lastBrakeFx = Date.now();
+                createHyperspaceEffect();
+            }
         }
     }
 }
@@ -1708,6 +1714,7 @@ if (keys.x && gameState.energy > 0 && !gameState.emergencyWarp.autoBraking) {
     // PRESERVED: Complete gravitational effects system with asteroid collision
     let totalGravitationalForce = new THREE.Vector3(0, 0, 0);
     const _gravDir = new THREE.Vector3();
+    const _gravVec = new THREE.Vector3();
     const _gravSpiralForce = new THREE.Vector3();
     const _outerPos = new THREE.Vector3();
     let nearestAssistPlanet = null;
@@ -1832,7 +1839,7 @@ if (blackHoleCoreCollision || surfaceCollision) {
 
                 const gravitationalForce = gravitationalConstant * gameState.shipMass * planetMass * gravityMultiplier / (distance * distance);
                 _gravDir.subVectors(planetPosition, camera.position).normalize();
-                const gravityVector = _gravDir.clone().multiplyScalar(gravitationalForce);
+                _gravVec.copy(_gravDir).multiplyScalar(gravitationalForce);
                 
                 // Black hole effects
                 if (planet.userData.type === 'blackhole') {
@@ -1896,7 +1903,7 @@ if (blackHoleCoreCollision || surfaceCollision) {
                         return;
                     }
                     
-                    gravityVector.multiplyScalar(20);
+                    _gravVec.multiplyScalar(20);
                     
                     // Enhanced spiral effects - OPTIMIZED: reduced DOM operations
                     if (distance < 200) {
@@ -1913,8 +1920,7 @@ if (blackHoleCoreCollision || surfaceCollision) {
                         
                         if (distance < 160) {
                             camera.rotation.z += spiralStrength * 0.02 * Math.sin(now * 5);
-                            
-                            // OPTIMIZED: Cache danger overlay reference, only create once
+
                             if (!window._cachedDangerOverlay) {
                                 window._cachedDangerOverlay = document.getElementById('dangerOverlay');
                             }
@@ -1926,8 +1932,11 @@ if (blackHoleCoreCollision || surfaceCollision) {
                                 document.body.appendChild(dangerOverlay);
                                 window._cachedDangerOverlay = dangerOverlay;
                             }
-                            // Update background only (cheaper than full DOM manipulation)
-                            window._cachedDangerOverlay.style.background = `radial-gradient(circle, transparent 0%, rgba(255,255,0,${spiralStrength * 0.4}) 100%)`;
+                            const _dangerAlpha = (spiralStrength * 0.4).toFixed(2);
+                            if (window._cachedDangerOverlay._lastAlpha !== _dangerAlpha) {
+                                window._cachedDangerOverlay._lastAlpha = _dangerAlpha;
+                                window._cachedDangerOverlay.style.background = `radial-gradient(circle, transparent 0%, rgba(255,255,0,${_dangerAlpha}) 100%)`;
+                            }
                         } else if (window._cachedDangerOverlay) {
                             window._cachedDangerOverlay.remove();
                             window._cachedDangerOverlay = null;
@@ -1935,7 +1944,7 @@ if (blackHoleCoreCollision || surfaceCollision) {
                     }
                 }
                 
-                totalGravitationalForce.add(gravityVector);
+                totalGravitationalForce.add(_gravVec);
                 
                 if (distance < assistRange && distance < nearestAssistDistance) {
                     nearestAssistPlanet = planet;
