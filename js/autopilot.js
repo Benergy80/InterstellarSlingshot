@@ -1521,7 +1521,6 @@
     // notification from spamming every time the demo switches targets.
     gameState.currentTarget = targetObj;
     gameState.autoNavigating = true;
-    keys().w = true;
     if (speedMult > 1.5) keys().b = true;
   }
 

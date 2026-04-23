@@ -1334,7 +1334,7 @@ function animate() {
     
     // Update thruster glow based on W key (forward thrust)
     if (typeof updateThrusterGlow === 'function' && typeof keys !== 'undefined') {
-        const isThrusting = keys.w && gameState.energy > 0;
+        const isThrusting = (keys.w || gameState.autoNavigating) && gameState.energy > 0;
         updateThrusterGlow(isThrusting);
     }
 

@@ -2188,10 +2188,9 @@ function gameOver(reason) {
 
     const gameOverOverlay = document.createElement('div');
     gameOverOverlay.id = 'gameOverScreen';
-    gameOverOverlay.className = 'bg-black bg-opacity-95 flex items-center justify-center cyberpunk-bg';
-    gameOverOverlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;cursor:auto;z-index:10000;pointer-events:all;';
+    gameOverOverlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.97);display:flex;align-items:center;justify-content:center;cursor:auto;z-index:99999;pointer-events:auto;';
     gameOverOverlay.innerHTML = `
-        <div class="text-center ui-panel rounded-lg p-6" style="cursor:auto;max-width:90vw;max-height:90vh;overflow-y:auto;">
+        <div class="text-center ui-panel rounded-lg p-6" style="cursor:auto;max-width:90vw;max-height:90vh;overflow-y:auto;background:rgba(10,15,30,0.98);border:1px solid rgba(0,150,255,0.5);border-radius:12px;padding:24px;">
             <h1 class="text-4xl font-bold text-red-400 mb-4 glow-text cyber-title">MISSION FAILED</h1>
             <p class="text-gray-300 mb-6">${reason}</p>
             <div class="space-y-4">
@@ -2210,7 +2209,7 @@ function gameOver(reason) {
             </div>
         </div>
     `;
-    document.body.appendChild(gameOverOverlay);
+    (document.documentElement || document.body).appendChild(gameOverOverlay);
     document.body.style.cursor = 'auto';
 
     console.log('✅ Game over screen displayed - all systems stopped');
@@ -2264,10 +2263,9 @@ function showGameOverScreen(title, message) {
 
     const gameOverOverlay = document.createElement('div');
     gameOverOverlay.id = 'gameOverScreen';
-    gameOverOverlay.className = 'bg-black bg-opacity-95 flex items-center justify-center cyberpunk-bg';
-    gameOverOverlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;cursor:auto;z-index:10000;pointer-events:all;';
+    gameOverOverlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.97);display:flex;align-items:center;justify-content:center;cursor:auto;z-index:99999;pointer-events:auto;';
     gameOverOverlay.innerHTML = `
-        <div class="text-center ui-panel rounded-lg p-6" style="cursor:auto;max-width:90vw;max-height:90vh;overflow-y:auto;">
+        <div class="text-center ui-panel rounded-lg p-6" style="cursor:auto;max-width:90vw;max-height:90vh;overflow-y:auto;background:rgba(10,15,30,0.98);border:1px solid rgba(0,150,255,0.5);border-radius:12px;padding:24px;">
             <h1 class="text-4xl font-bold text-red-400 mb-4 glow-text cyber-title">MISSION FAILED</h1>
             <p class="text-gray-300 mb-6">${message || 'Ship destroyed'}</p>
             <div class="space-y-4">
@@ -2286,7 +2284,7 @@ function showGameOverScreen(title, message) {
             </div>
         </div>
     `;
-    document.body.appendChild(gameOverOverlay);
+    (document.documentElement || document.body).appendChild(gameOverOverlay);
     document.body.style.cursor = 'auto';
 
     console.log('✅ Game over screen displayed - all systems stopped');
