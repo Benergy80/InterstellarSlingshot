@@ -45,18 +45,22 @@ function updateUI() {
     const galaxiesClearedEl = _uiEl('galaxiesCleared');
     const targetLockStatusEl = _uiEl('targetLockStatus');
     
-    // Basic stats updates
-    if (velocityEl) velocityEl.textContent = (gameState.velocity * 1000).toFixed(0) + ' km/s';
-    if (distanceEl) distanceEl.textContent = gameState.distance.toFixed(1) + ' ly';
-    
+    // Basic stats updates — only touch the DOM when the displayed value changes
+    const _velText = (gameState.velocity * 1000).toFixed(0) + ' km/s';
+    if (velocityEl && velocityEl.textContent !== _velText) velocityEl.textContent = _velText;
+    const _distText = gameState.distance.toFixed(1) + ' ly';
+    if (distanceEl && distanceEl.textContent !== _distText) distanceEl.textContent = _distText;
+
     // Emergency Warp count update
     if (emergencyWarpEl && gameState.emergencyWarp) {
-        emergencyWarpEl.textContent = gameState.emergencyWarp.available;
+        const _warpText = '' + gameState.emergencyWarp.available;
+        if (emergencyWarpEl.textContent !== _warpText) emergencyWarpEl.textContent = _warpText;
     }
     // Also update mobile warp count
     const mobileWarpEl = _uiEl('mobileWarpCount');
     if (mobileWarpEl && gameState.emergencyWarp) {
-        mobileWarpEl.textContent = gameState.emergencyWarp.available;
+        const _mwText = '' + gameState.emergencyWarp.available;
+        if (mobileWarpEl.textContent !== _mwText) mobileWarpEl.textContent = _mwText;
     }
     if (energyBarEl) {
     // First, always update the width to match current energy

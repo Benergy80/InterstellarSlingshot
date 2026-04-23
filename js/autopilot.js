@@ -440,10 +440,9 @@
     releaseMovementKeys();
 
     // ── Planet collision avoidance ──────────────────────────────────────
-    // Scan nearby planets every frame and hold evasion keys for sustained
-    // periods when inside a danger zone, producing smooth course changes
-    // instead of jerky single-frame taps.
-    avoidPlanetCollisions();
+    // Runs at 10 Hz (every 6 frames). The 800ms evasion hold makes this
+    // safe to throttle — once triggered the keys stay held across frames.
+    if (fc % 6 === 0) avoidPlanetCollisions();
 
     // ── Crosshair auto-fire ─────────────────────────────────────────────
     // Whenever the game's targeting system has locked onto a live enemy
@@ -1560,6 +1559,9 @@
     }
   }
 
+  const _evadeRadial = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+  const _evadeRight = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+  const _evadeFwd = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
   function avoidPlanetCollisions() {
     if (typeof planets === 'undefined' || typeof camera === 'undefined') return;
     const now = Date.now();
@@ -1578,11 +1580,10 @@
       const dangerR = Math.max(sz * 1.8, 80);
       const dist = cp.distanceTo(p.position);
       if (dist < dangerR) {
-        const radial = cp.clone().sub(p.position).normalize();
-        const right = new THREE.Vector3(-radial.z, 0, radial.x);
-        const fwd = new THREE.Vector3();
-        camera.getWorldDirection(fwd);
-        ap._evadeKey = fwd.dot(right) > 0 ? 'a' : 'd';
+        _evadeRadial.subVectors(cp, p.position).normalize();
+        _evadeRight.set(-_evadeRadial.z, 0, _evadeRadial.x);
+        camera.getWorldDirection(_evadeFwd);
+        ap._evadeKey = _evadeFwd.dot(_evadeRight) > 0 ? 'a' : 'd';
         ap._evadeUntil = now + 800;
         const k = keys();
         k[ap._evadeKey] = true;

@@ -1707,6 +1707,9 @@ if (keys.x && gameState.energy > 0 && !gameState.emergencyWarp.autoBraking) {
     
     // PRESERVED: Complete gravitational effects system with asteroid collision
     let totalGravitationalForce = new THREE.Vector3(0, 0, 0);
+    const _gravDir = new THREE.Vector3();
+    const _gravSpiralForce = new THREE.Vector3();
+    const _outerPos = new THREE.Vector3();
     let nearestAssistPlanet = null;
     let nearestAssistDistance = Infinity;
     let gravityWellInRange = false;
@@ -1828,8 +1831,8 @@ if (blackHoleCoreCollision || surfaceCollision) {
                 }
 
                 const gravitationalForce = gravitationalConstant * gameState.shipMass * planetMass * gravityMultiplier / (distance * distance);
-                const direction = new THREE.Vector3().subVectors(planetPosition, camera.position).normalize();
-                const gravityVector = direction.clone().multiplyScalar(gravitationalForce);
+                _gravDir.subVectors(planetPosition, camera.position).normalize();
+                const gravityVector = _gravDir.clone().multiplyScalar(gravitationalForce);
                 
                 // Black hole effects
                 if (planet.userData.type === 'blackhole') {
@@ -1839,7 +1842,7 @@ if (blackHoleCoreCollision || surfaceCollision) {
                     if (distance < warningDistance && distance > criticalDistance && !gameState.eventHorizonWarning.active) {
                         gameState.eventHorizonWarning.active = true;
                         gameState.eventHorizonWarning.blackHole = planet;
-                        const eventHorizonEl = document.getElementById('eventHorizonWarning');
+                        const eventHorizonEl = window._cachedEventHorizonEl || (window._cachedEventHorizonEl = document.getElementById('eventHorizonWarning'));
                         if (eventHorizonEl) {
                             eventHorizonEl.classList.remove('hidden');
                         }
@@ -1853,7 +1856,7 @@ if (blackHoleCoreCollision || surfaceCollision) {
                     if (distance > warningDistance && gameState.eventHorizonWarning.active && gameState.eventHorizonWarning.blackHole === planet) {
                         gameState.eventHorizonWarning.active = false;
                         gameState.eventHorizonWarning.blackHole = null;
-                        const eventHorizonEl = document.getElementById('eventHorizonWarning');
+                        const eventHorizonEl = window._cachedEventHorizonEl || (window._cachedEventHorizonEl = document.getElementById('eventHorizonWarning'));
                         if (eventHorizonEl) {
                             eventHorizonEl.classList.add('hidden');
                         }
@@ -1861,7 +1864,7 @@ if (blackHoleCoreCollision || surfaceCollision) {
                     
                     if (distance < criticalDistance) {
                         if (gameState.eventHorizonWarning.active) {
-                            const eventHorizonEl = document.getElementById('eventHorizonWarning');
+                            const eventHorizonEl = window._cachedEventHorizonEl || (window._cachedEventHorizonEl = document.getElementById('eventHorizonWarning'));
                             if (eventHorizonEl) {
                                 eventHorizonEl.classList.add('hidden');
                             }
@@ -1900,13 +1903,13 @@ if (blackHoleCoreCollision || surfaceCollision) {
                         const spiralStrength = Math.pow((200 - distance) / 200, 2);
                         // Cache time once instead of calling Date.now() multiple times
                         const now = performance.now() * 0.001;
-                        const spiralForce = new THREE.Vector3(
+                        _gravSpiralForce.set(
                             Math.sin(now * spiralStrength * 3),
                             0,
                             Math.cos(now * spiralStrength * 3)
                         ).multiplyScalar(spiralStrength * 0.2);
-                        
-                        gameState.velocityVector.add(spiralForce);
+
+                        gameState.velocityVector.add(_gravSpiralForce);
                         
                         if (distance < 160) {
                             camera.rotation.z += spiralStrength * 0.02 * Math.sin(now * 5);
@@ -1951,16 +1954,14 @@ if (blackHoleCoreCollision || surfaceCollision) {
             // Center object gravity (star, supernova, plasma storm, solar storm)
             if (system.userData.centerObject) {
                 const centerObj = system.userData.centerObject;
-                const centerPos = new THREE.Vector3();
-                centerObj.getWorldPosition(centerPos);
-                const distance = camera.position.distanceTo(centerPos);
+                centerObj.getWorldPosition(_outerPos);
+                const distance = camera.position.distanceTo(_outerPos);
                 const mass = centerObj.userData.mass || 1;
 
                 if (distance > 0) {
                     const gravitationalForce = gravitationalConstant * gameState.shipMass * mass / (distance * distance);
-                    const direction = new THREE.Vector3().subVectors(centerPos, camera.position).normalize();
-                    const gravityVector = direction.clone().multiplyScalar(gravitationalForce);
-                    totalGravitationalForce.add(gravityVector);
+                    _gravDir.subVectors(_outerPos, camera.position).normalize().multiplyScalar(gravitationalForce);
+                    totalGravitationalForce.add(_gravDir);
 
                     // Check for gravity assist range
                     if (distance < assistRange && distance < nearestAssistDistance) {
@@ -1977,16 +1978,14 @@ if (blackHoleCoreCollision || surfaceCollision) {
                     // Skip asteroids and BORG drones (no significant gravity)
                     if (orbiter.userData.type === 'outer_asteroid' || orbiter.userData.type === 'borg_drone') return;
 
-                    const orbiterPos = new THREE.Vector3();
-                    orbiter.getWorldPosition(orbiterPos);
-                    const distance = camera.position.distanceTo(orbiterPos);
+                    orbiter.getWorldPosition(_outerPos);
+                    const distance = camera.position.distanceTo(_outerPos);
                     const mass = orbiter.userData.mass || 1;
 
                     if (distance > 0) {
                         const gravitationalForce = gravitationalConstant * gameState.shipMass * mass / (distance * distance);
-                        const direction = new THREE.Vector3().subVectors(orbiterPos, camera.position).normalize();
-                        const gravityVector = direction.clone().multiplyScalar(gravitationalForce);
-                        totalGravitationalForce.add(gravityVector);
+                        _gravDir.subVectors(_outerPos, camera.position).normalize().multiplyScalar(gravitationalForce);
+                        totalGravitationalForce.add(_gravDir);
 
                         // Check for gravity assist range
                         if (distance < assistRange && distance < nearestAssistDistance) {
@@ -2016,12 +2015,13 @@ if (blackHoleCoreCollision || surfaceCollision) {
     }
     
     // Enhanced slingshot mechanics
-    const warpBtn = document.getElementById('warpBtn');
+    const warpBtn = window._cachedWarpBtn || (window._cachedWarpBtn = document.getElementById('warpBtn'));
     if (nearestAssistPlanet && gameState.energy >= 20 && !gameState.slingshot.active) {
         if (warpBtn) {
             warpBtn.disabled = false;
             warpBtn.classList.add('space-btn', 'pulse');
-            warpBtn.innerHTML = `<i class="fas fa-rocket mr-2"></i>SLINGSHOT READY - Press ENTER (${nearestAssistPlanet.userData.name})`;
+            const _warpText = `<i class="fas fa-rocket mr-2"></i>SLINGSHOT READY - Press ENTER (${nearestAssistPlanet.userData.name})`;
+            if (warpBtn._lastHtml !== _warpText) { warpBtn.innerHTML = _warpText; warpBtn._lastHtml = _warpText; }
             
             const tutorialComplete = (typeof tutorialSystem === 'undefined' || tutorialSystem.completed);
             
@@ -2040,17 +2040,19 @@ if (blackHoleCoreCollision || surfaceCollision) {
     } else if (warpBtn) {
         warpBtn.disabled = true;
         warpBtn.classList.remove('pulse', 'assist-ready');
+        let _wt;
         if (nearestAssistPlanet && gameState.energy < 20) {
-            warpBtn.innerHTML = '<i class="fas fa-battery-empty mr-2"></i>Insufficient Energy for Slingshot';
+            _wt = '<i class="fas fa-battery-empty mr-2"></i>Insufficient Energy for Slingshot';
         } else if (gameState.slingshot.active) {
-            warpBtn.innerHTML = `<i class="fas fa-clock mr-2"></i>Slingshot Active (${(gameState.slingshot.timeRemaining/1000).toFixed(1)}s)`;
+            _wt = `<i class="fas fa-clock mr-2"></i>Slingshot Active (${(gameState.slingshot.timeRemaining/1000).toFixed(1)}s)`;
         } else if (gameState.slingshot.postSlingshot) {
-            warpBtn.innerHTML = `<i class="fas fa-wind mr-2"></i>Coasting on Inertia (${(gameState.velocity * 1000).toFixed(0)} km/s)`;
+            _wt = `<i class="fas fa-wind mr-2"></i>Coasting on Inertia (${(gameState.velocity * 1000).toFixed(0)} km/s)`;
         } else if (gameState.emergencyWarp.active) {
-            warpBtn.innerHTML = `<i class="fas fa-bolt mr-2"></i>Emergency Warp Active (${(gameState.emergencyWarp.timeRemaining/1000).toFixed(1)}s)`;
+            _wt = `<i class="fas fa-bolt mr-2"></i>Emergency Warp Active (${(gameState.emergencyWarp.timeRemaining/1000).toFixed(1)}s)`;
         } else {
-            warpBtn.innerHTML = '<i class="fas fa-rocket mr-2"></i>No Gravity Well in Range';
+            _wt = '<i class="fas fa-rocket mr-2"></i>No Gravity Well in Range';
         }
+        if (warpBtn._lastHtml !== _wt) { warpBtn.innerHTML = _wt; warpBtn._lastHtml = _wt; }
     }
     
     // Slingshot timer management (matching emergency warp behavior)
