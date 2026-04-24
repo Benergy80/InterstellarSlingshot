@@ -1514,14 +1514,21 @@
       targetObj = ap._navDummy;
     }
 
-    // Delegate movement to the game's auto-navigate system.  We never
-    // toggle autoNavOrienting here — the physics still orients the ship
-    // passively during distant approach (see game-physics.js auto-nav
-    // branch), so skipping the orienting flag keeps the "Target Acquired"
-    // notification from spamming every time the demo switches targets.
     gameState.currentTarget = targetObj;
     gameState.autoNavigating = true;
-    if (speedMult > 1.5) keys().b = true;
+
+    // Distance-aware speed control: brake when approaching target
+    const dist = camPos().distanceTo(targetObj.position);
+    const speed = gameState.velocityVector ? gameState.velocityVector.length() : 0;
+    const brakingDist = speed * 35;
+
+    const k = keys();
+    if (dist < brakingDist && speed > 0.3) {
+      k.b = false;
+      k.x = true;
+    } else if (speedMult > 1.5) {
+      k.b = true;
+    }
   }
 
   function orbitAround(centerObj) {
