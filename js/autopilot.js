@@ -473,6 +473,7 @@
       case 'coastAfterWarp':           phaseCoastAfterWarp();         break;
       case 'approachBorg':             phaseApproachBorg();           break;
       case 'fightBorg':                phaseFightBorg();              break;
+      case 'mineAsteroids':            phaseMineAsteroids();          break;
       default:                         goPhase('init');
     }
 
@@ -682,26 +683,27 @@
       }
       gameState.currentTarget = null;
 
-      // 1-second breather before pursuing the next target — lets the
-      // explosion + salvage animation read on screen instead of
-      // snapping to the next enemy instantly.
       ap._killCooldownUntil = Date.now() + 1000;
 
-      // First leg (no black-hole warps yet) ends at 5 kills and pursues a
-      // black-hole warp.  After arriving in a new galaxy, the follow-up
-      // combat leg ends at 3 kills and heads for the nearest nebula via
-      // interstellar slingshot (phaseWarpToNebulaCluster).
+      // Determine what comes after the breather
+      let nextPhaseAfterKill = ap.returnPhase || 'findLocalEnemies';
       if (ap.returnPhase === 'findLocalEnemies') {
         const firstLeg = (ap.warpsUsed || 0) === 0;
         const killTarget = firstLeg ? 5 : 3;
         if (ap.segmentKills >= killTarget) {
           ap.segmentKills = 0;
-          const nextPhase = firstLeg ? 'gotoBlackHoleGalaxy' : 'warpToNebulaCluster';
-          setTimeout(() => { if (ap.active) goPhase(nextPhase); }, 1000);
-          return;
+          nextPhaseAfterKill = firstLeg ? 'gotoBlackHoleGalaxy' : 'warpToNebulaCluster';
         }
       }
-      setTimeout(() => { if (ap.active) goPhase(ap.returnPhase || 'findLocalEnemies'); }, 1000);
+
+      // Mine nearby asteroids for hull if damaged, before moving on
+      if (gameState.hull < 85 && _findNearestAsteroid(600)) {
+        ap._mineReturnPhase = nextPhaseAfterKill;
+        ap._mineShotsLeft = 3;
+        setTimeout(() => { if (ap.active) goPhase('mineAsteroids'); }, 1000);
+      } else {
+        setTimeout(() => { if (ap.active) goPhase(nextPhaseAfterKill); }, 1000);
+      }
       return;
     }
 
@@ -800,6 +802,69 @@
     // PURSUIT DOCTRINE: do NOT disengage on timeout.  The autopilot stays on
     // the target until its health hits zero.  If the enemy outruns us, the
     // phase will still be fine — we keep chasing.
+  }
+
+  // ─── Asteroid mining: orient → shoot 2-3 asteroids for hull ─────────────
+  function phaseMineAsteroids() {
+    const t = elapsed();
+    ensureThirdPerson();
+
+    // Any hostile detected — abort mining, go fight
+    const intruder = navDetectedEnemy();
+    if (intruder) {
+      ap.combatTarget = intruder;
+      ap.combatMissileFired = false;
+      ap.returnPhase = ap._mineReturnPhase || 'findLocalEnemies';
+      goPhase('combat');
+      return;
+    }
+
+    // Done mining (shot enough or hull topped up or timeout)
+    if ((ap._mineShotsLeft || 0) <= 0 || gameState.hull >= 95 || t > 8000) {
+      goPhase(ap._mineReturnPhase || 'findLocalEnemies');
+      return;
+    }
+
+    const asteroid = _findNearestAsteroid(600);
+    if (!asteroid) {
+      // No asteroids nearby — move on
+      goPhase(ap._mineReturnPhase || 'findLocalEnemies');
+      return;
+    }
+
+    // Orient toward the asteroid
+    const tgtPos = asteroid.position.clone();
+    if (asteroid.parent && asteroid.parent.type === 'Group' && asteroid.parent.parent) {
+      asteroid.getWorldPosition(tgtPos);
+    }
+    if (window.orientTowardsTarget) {
+      window.orientTowardsTarget({ position: tgtPos });
+    }
+    setStatus('Mining asteroid for hull (' + (ap._mineShotsLeft || 0) + ' shots left)');
+
+    // Brake gently while aiming
+    const speed = gameState.velocityVector ? gameState.velocityVector.length() : 0;
+    if (speed > 0.5) keys().x = true;
+
+    // Only fire once on screen and confirmed by raycast
+    if (!_isOnScreen(tgtPos)) return;
+
+    const now = Date.now();
+    if (now - (ap._lastAsteroidFire || 0) < 1200) return;
+    if (gameState.weapons.cooldown > 0 || gameState.weapons.energy < 10) return;
+
+    if (!shootNearbyAsteroids._ray) shootNearbyAsteroids._ray = new THREE.Raycaster();
+    if (!shootNearbyAsteroids._origin) shootNearbyAsteroids._origin = new THREE.Vector2(0, 0);
+    const ray = shootNearbyAsteroids._ray;
+    ray.setFromCamera(shootNearbyAsteroids._origin, camera);
+    const hits = ray.intersectObjects([asteroid], true);
+    if (!hits.length) return;
+
+    gameState.crosshairX = window.innerWidth / 2;
+    gameState.crosshairY = window.innerHeight / 2;
+    ap._lastAsteroidFire = now;
+    ap._mineShotsLeft = (ap._mineShotsLeft || 0) - 1;
+    if (window.fireWeapon) window.fireWeapon();
   }
 
   // ─── 2) Slingshot off a planet toward a nebula cluster ──────────────────
@@ -1872,33 +1937,33 @@
   // game's auto-aim bubble).  Runs during combat and Borg fight phases.
   // Stops firing the instant the lock drops or the target moves out of
   // auto-aim range.
+  // Returns true if the world-position is in the camera's forward hemisphere
+  function _isOnScreen(worldPos) {
+    if (!camera || !worldPos) return false;
+    camera.getWorldDirection(_coneFwd);
+    _coneVec.subVectors(worldPos, camera.position).normalize();
+    return _coneFwd.dot(_coneVec) > 0.3; // ~73° half-cone
+  }
+
   function autoFireOnTargetLock() {
     if (ap.phase !== 'combat' && ap.phase !== 'fightBorg') return;
     if (!gameState || !gameState.targetLock || !gameState.targetLock.active) return;
     const tgt = gameState.targetLock.target;
     if (!tgt || !tgt.userData) return;
-    // Only fire on enemies, never on asteroids/planets/etc.
     if (tgt.userData.type !== 'enemy' && !tgt.userData.isBorg) return;
     if (tgt.userData.health <= 0) return;
 
-    // Only fire when inside the enemy's own firing range — the distance at
-    // which the enemy shoots back at us, creating a proper dogfight.
     const engageRange = (tgt.userData && tgt.userData.firingRange) || 500;
     const dist = camPos().distanceTo(tgt.position);
     if (dist > engageRange) return;
+
+    // Never fire at something offscreen
+    if (!_isOnScreen(tgt.position)) return;
 
     const now = Date.now();
     if (now - (ap.lastFire || 0) < 1000) return;
     if (gameState.weapons.cooldown > 0 || gameState.weapons.energy < 10) return;
 
-    // Keep rotating toward the target for visual presentation, but do
-    // NOT gate firing on alignment or firing-cone checks.  fireWeapon
-    // auto-aims at targetLock's world position, so the laser bolt
-    // already travels from the ship to the locked enemy regardless of
-    // ship facing.  Previously the strict 5°/14° gates meant lasers
-    // rarely fired while shields were up — shields imply combat, the
-    // ship is banking/turning, alignment flips on and off — giving the
-    // impression that lasers were disabled by shields.
     if (window.orientTowardsTarget) {
       window.orientTowardsTarget({ position: tgt.position });
     }
@@ -1909,78 +1974,80 @@
     if (window.fireWeapon) window.fireWeapon();
   }
 
-  // Shoot asteroids that drift into the auto-mouse-target bubble (the
-  // same range the game uses for enemy auto-aim, ~600 u) to regain hull
-  // via salvage.  We do NOT steer the ship toward asteroids — we only
-  // fire when an asteroid happens to sit under the crosshair.  A
-  // pre-flight raycast from center screen confirms the hit so we never
-  // emit a "dead" laser bolt into empty space.
-  function shootNearbyAsteroids() {
-    if (ap._killCooldownUntil && Date.now() < ap._killCooldownUntil) return;
-    if (!gameState || gameState.weapons.cooldown > 0 || gameState.weapons.energy < 10) return;
-    if (typeof camera === 'undefined') return;
-
-    // Skip if we already have an enemy/Borg target locked — combat code
-    // owns the weapon trigger in that case, and stealing aim would make
-    // the laser land on the asteroid instead of the enemy.
-    if (gameState.targetLock && gameState.targetLock.active && gameState.targetLock.target) {
-      const ud = gameState.targetLock.target.userData;
-      if (ud && (ud.type === 'enemy' || ud.isBorg)) return;
-    }
-
-    const now = Date.now();
-    if (now - (ap._lastAsteroidFire || 0) < 1600) return;
-
-    // Auto-mouse target range (gameState.targetLock.range defaults to 600).
-    const maxRange = (gameState.targetLock && gameState.targetLock.range) || 600;
+  // Find the nearest asteroid within range
+  function _findNearestAsteroid(maxRange) {
+    if (typeof camera === 'undefined') return null;
     const cp = camPos();
-
-    // Collect candidates: inner-system asteroids (planets[] with
-    // type='asteroid') + outer-system asteroids
-    // (outerInterstellarSystems[].userData.orbiters with
-    // type='outer_asteroid').  Outer asteroids live under a rotating
-    // system group, so use getWorldPosition for the range test.
-    if (!shootNearbyAsteroids._tmp) shootNearbyAsteroids._tmp = new THREE.Vector3();
-    const tmp = shootNearbyAsteroids._tmp;
-    const candidates = [];
+    if (!_findNearestAsteroid._tmp) _findNearestAsteroid._tmp = new THREE.Vector3();
+    const tmp = _findNearestAsteroid._tmp;
+    let best = null, bestDist = maxRange;
 
     if (typeof planets !== 'undefined') {
       for (let i = 0; i < planets.length; i++) {
         const p = planets[i];
-        if (!p || !p.userData) continue;
-        if (p.userData.type !== 'asteroid') continue;
+        if (!p || !p.userData || p.userData.type !== 'asteroid') continue;
         if (p.userData.health !== undefined && p.userData.health <= 0) continue;
-        if (cp.distanceTo(p.position) > maxRange) continue;
-        candidates.push(p);
+        const d = cp.distanceTo(p.position);
+        if (d < bestDist) { best = p; bestDist = d; }
       }
     }
     if (typeof outerInterstellarSystems !== 'undefined') {
       for (let i = 0; i < outerInterstellarSystems.length; i++) {
         const sys = outerInterstellarSystems[i];
         if (!sys || !sys.userData || !sys.userData.orbiters) continue;
-        const orbs = sys.userData.orbiters;
-        for (let j = 0; j < orbs.length; j++) {
-          const o = orbs[j];
+        for (let j = 0; j < sys.userData.orbiters.length; j++) {
+          const o = sys.userData.orbiters[j];
           if (!o || !o.userData) continue;
           if (o.userData.type !== 'outer_asteroid') continue;
           if (o.userData.health !== undefined && o.userData.health <= 0) continue;
           o.getWorldPosition(tmp);
-          if (cp.distanceTo(tmp) > maxRange) continue;
-          candidates.push(o);
+          const d = cp.distanceTo(tmp);
+          if (d < bestDist) { best = o; bestDist = d; }
         }
       }
     }
-    if (candidates.length === 0) return;
+    return best;
+  }
 
-    // Raycast from center-screen (crosshair) — only fire if the
-    // crosshair is actually on an asteroid.  fireWeapon() runs the same
-    // raycast against the same object sets internally, so a hit here
-    // guarantees its laser bolt lands on this asteroid.
+  // Actively orient toward and shoot nearby asteroids for hull recovery.
+  // Orients the camera first so the asteroid is on screen, then
+  // raycasts to confirm the crosshair is on it before firing.
+  function shootNearbyAsteroids() {
+    if (ap._killCooldownUntil && Date.now() < ap._killCooldownUntil) return;
+    if (!gameState || gameState.weapons.cooldown > 0 || gameState.weapons.energy < 10) return;
+    if (typeof camera === 'undefined') return;
+
+    // Skip if an enemy/Borg is target-locked — combat owns the trigger
+    if (gameState.targetLock && gameState.targetLock.active && gameState.targetLock.target) {
+      const ud = gameState.targetLock.target.userData;
+      if (ud && (ud.type === 'enemy' || ud.isBorg)) return;
+    }
+
+    const now = Date.now();
+    if (now - (ap._lastAsteroidFire || 0) < 1200) return;
+
+    const maxRange = 600;
+    const target = _findNearestAsteroid(maxRange);
+    if (!target) return;
+
+    // Orient toward the asteroid so it's on screen
+    const tgtPos = target.position.clone ? target.position : new THREE.Vector3();
+    if (target.parent && target.parent.type === 'Group' && target.parent.parent) {
+      target.getWorldPosition(tgtPos);
+    }
+    if (window.orientTowardsTarget) {
+      window.orientTowardsTarget({ position: tgtPos });
+    }
+
+    // Only fire if the asteroid is actually in front of the camera
+    if (!_isOnScreen(tgtPos)) return;
+
+    // Raycast confirm — crosshair must be ON the asteroid
     if (!shootNearbyAsteroids._ray) shootNearbyAsteroids._ray = new THREE.Raycaster();
-    const ray = shootNearbyAsteroids._ray;
     if (!shootNearbyAsteroids._origin) shootNearbyAsteroids._origin = new THREE.Vector2(0, 0);
+    const ray = shootNearbyAsteroids._ray;
     ray.setFromCamera(shootNearbyAsteroids._origin, camera);
-    const hits = ray.intersectObjects(candidates, true);
+    const hits = ray.intersectObjects([target], true);
     if (!hits.length) return;
 
     gameState.crosshairX = window.innerWidth / 2;
