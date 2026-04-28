@@ -451,9 +451,12 @@
     // lock disengages (enemy dead / moves out of cone / lock cleared) the
     // firing stops automatically.  Runs parallel to phase logic so combat,
     // pursuit and travel all benefit from it.
-    // No weapons during init — ship isn't loaded yet.  Auto-fire IS allowed
-    // during orbitLocalPlanet so an ambush can actually be answered.
-    if (ap.phase !== 'init') {
+    // No weapons during init or active warps (black hole, slingshot, emergency).
+    const _warpActive =
+      (gameState.blackHoleWarp && gameState.blackHoleWarp.active) ||
+      (gameState.slingshot && gameState.slingshot.active) ||
+      (gameState.emergencyWarp && (gameState.emergencyWarp.active || gameState.emergencyWarp.transitioning));
+    if (ap.phase !== 'init' && !_warpActive) {
       autoFireOnTargetLock();
       shootNearbyAsteroids();
     }
@@ -532,7 +535,7 @@
     }
   }
 
-  // ─── 1a) Orbit a local planet for 30 s before hunting enemies ────────────
+  // ─── 1a) Orbit a local planet for 15 s before hunting enemies ────────────
   function phaseOrbitLocalPlanet() {
     const t = elapsed();
 
@@ -1108,12 +1111,8 @@
     const distToNebula = camPos().distanceTo(ap.currentNebula.position);
     setStatus('Coasting to nebula — ' + (distToNebula | 0) + ' units');
 
-    // Only brake when VERY close to the nebula itself — within 4000 u of
-    // the nebula center (approximately the orbital-survey distance).
-    // Previously we were braking at the galaxy's asteroid belt perimeter
-    // (3600 u from the belt center) which could start 10 000+ u from the
-    // actual nebula, leaving the ship crawling for the rest of the trip.
-    const NEBULA_BRAKE_RANGE = 4000;
+    // Brake within 1000 u of the nebula center
+    const NEBULA_BRAKE_RANGE = 1000;
     if (distToNebula < NEBULA_BRAKE_RANGE) {
       setStatus('Nebula cluster — braking');
       if (!ap.brakingAfterWarp) {
@@ -1123,9 +1122,8 @@
       keys().x = true;
     }
 
-    // Close to nebula — move to orbit phase.  Threshold reduced from 3500
-    // to 2500 so we actually reach the nebula before switching modes.
-    if (distToNebula < 2500 && speed < 1.5) {
+    // Close to nebula — move to explore center phase
+    if (distToNebula < 800 && speed < 1.5) {
       ap.brakingAfterWarp = false;
       goPhase('orbitNebulaPlanet');
       return;
@@ -2828,11 +2826,13 @@
   ap._lastTransmit = 0;
 
   function notify(title, body) {
+    // Suppress during any active warp — no toast/sound spam while warping
+    if ((gameState.blackHoleWarp && gameState.blackHoleWarp.active) ||
+        (gameState.slingshot && gameState.slingshot.active) ||
+        (gameState.emergencyWarp && (gameState.emergencyWarp.active || gameState.emergencyWarp.transitioning))) return;
     const now = Date.now();
     const last = ap._lastNotify[title] || 0;
     if (now - last < NOTIFY_COOLDOWN_MS) return;
-    // If a transmission popup is currently on screen, defer this toast so we
-    // don't stack two large UI blocks on top of each other.
     if (document.getElementById('incomingTransmissionPrompt')) return;
     ap._lastNotify[title] = now;
     if (typeof showAchievement === 'function') showAchievement(title, body);
