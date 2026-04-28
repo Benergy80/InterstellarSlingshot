@@ -2129,7 +2129,12 @@ function setupNormalGameContent() {
         createAllCivilianShips();
         console.log('🌍 Civilian ships created throughout universe');
     }
-    
+
+    // Deploy ally wingmen
+    if (typeof createAllyShips === 'function') {
+        createAllyShips();
+    }
+
     // Initialize game state for normal gameplay
     if (typeof gameState !== 'undefined') {
         gameState.gameStarted = true;
