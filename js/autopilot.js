@@ -2009,9 +2009,9 @@
     return best;
   }
 
-  // Actively orient toward and shoot nearby asteroids for hull recovery.
-  // Orients the camera first so the asteroid is on screen, then
-  // raycasts to confirm the crosshair is on it before firing.
+  // Shoot nearby asteroids that are already on screen for hull recovery.
+  // Does NOT steer the camera — only fires when an asteroid happens to
+  // sit under the crosshair.  Active steering is done by phaseMineAsteroids.
   function shootNearbyAsteroids() {
     if (ap._killCooldownUntil && Date.now() < ap._killCooldownUntil) return;
     if (!gameState || gameState.weapons.cooldown > 0 || gameState.weapons.energy < 10) return;
@@ -2030,16 +2030,11 @@
     const target = _findNearestAsteroid(maxRange);
     if (!target) return;
 
-    // Orient toward the asteroid so it's on screen
-    const tgtPos = target.position.clone ? target.position : new THREE.Vector3();
+    // Only shoot if the asteroid is already in front of the camera
+    const tgtPos = target.position.clone();
     if (target.parent && target.parent.type === 'Group' && target.parent.parent) {
       target.getWorldPosition(tgtPos);
     }
-    if (window.orientTowardsTarget) {
-      window.orientTowardsTarget({ position: tgtPos });
-    }
-
-    // Only fire if the asteroid is actually in front of the camera
     if (!_isOnScreen(tgtPos)) return;
 
     // Raycast confirm — crosshair must be ON the asteroid
