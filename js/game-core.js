@@ -1022,6 +1022,10 @@ if (typeof areModelsLoaded === 'function' && areModelsLoaded()) {
         distressBeaconSystem.initialize();
         console.log('Distress beacon system initialized');
     }
+    // Deploy ally wingmen
+    if (typeof createAllyShips === 'function') {
+        createAllyShips();
+    }
 } else {
     // Models not loaded yet, wait for them
     console.log('⏳ Models not loaded yet, waiting before creating enemies...');
@@ -2020,6 +2024,11 @@ if (gameState.frameCount % 5 === 0 && typeof checkCosmicFeatureInteractions === 
     // Update Borg behavior
     if (typeof updateBorgBehavior === 'function') {
         updateBorgBehavior();
+    }
+
+    // Update ally wingmen
+    if (typeof updateAllyShips === 'function' && gameState.frameCount % 2 === 0) {
+        updateAllyShips();
     }
 
     // DEMO AUTOPILOT — runs before physics so key inputs are applied this frame

@@ -8381,95 +8381,94 @@ function createEnemies3D() {
         console.log(`   Galaxy ${g} (${galaxyTypes[g].name}): ${count} enemies`);
     }
     
-    // Create local galaxy enemies (Martian Pirates) - reduced for performance
+    // Create local galaxy enemies (Martian Pirates) — patrol in groups of 3
     const localSystemOffset = { x: 2000, y: 0, z: 1200 };
-    for (let i = 0; i < 4; i++) {
-        const enemyGeometry = createEnemyGeometry(0);
-        
-        const distance = 1800 + Math.random() * 1200;
-        const localShapeData = { color: 0xff4444 };
-        const materials = createEnemyMaterial(localShapeData, 'local', distance);
-
-        // Try to use 3D model first, fallback to geometry (use galaxy 1 model for local pirates)
-        let enemy;
-        let isGLBModel = false;
-        if (typeof createEnemyMeshWithModel === 'function') {
-            enemy = createEnemyMeshWithModel(1, enemyGeometry, materials.enemyMaterial);
-            // Check if we got a GLB model (Group) or fallback mesh
-            isGLBModel = enemy.isGroup || (enemy.children && enemy.children.length > 0 && enemy.children[0].isMesh);
-        } else {
-            enemy = new THREE.Mesh(enemyGeometry, materials.enemyMaterial);
-        }
-
-        // Only add procedural glow to fallback geometry enemies
-        // GLB models have their own materials and don't need procedural glow
-        if (!isGLBModel) {
-            const glowGeometry = enemyGeometry.clone();
-            const glow = new THREE.Mesh(glowGeometry, materials.glowMaterial);
-            glow.scale.multiplyScalar(materials.glowScale);
-
-            glow.visible = true;
-            glow.frustumCulled = false;
-
-            enemy.add(glow);
-        }
-        
-        // Position around local system
-        const angle = (i / 10) * Math.PI * 2 + Math.random() * 0.5;
-        enemy.position.set(
-            localSystemOffset.x + Math.cos(angle) * distance,
+    const patrolGroupCount = 4;
+    const piratesPerGroup = 3;
+    let pirateIndex = 0;
+    for (let g = 0; g < patrolGroupCount; g++) {
+        const groupDistance = 1800 + Math.random() * 1200;
+        const groupAngle = (g / patrolGroupCount) * Math.PI * 2 + Math.random() * 0.3;
+        const groupCenter = new THREE.Vector3(
+            localSystemOffset.x + Math.cos(groupAngle) * groupDistance,
             localSystemOffset.y + (Math.random() - 0.5) * 200,
-            localSystemOffset.z + Math.sin(angle) * distance
+            localSystemOffset.z + Math.sin(groupAngle) * groupDistance
         );
 
-        // Calculate hitbox size from scaled model (like asteroids)
-        let hitboxSize = 96; // Default for 96x scaled model
-        try {
-            const box = new THREE.Box3().setFromObject(enemy);
-            const size = new THREE.Vector3();
-            box.getSize(size);
-            hitboxSize = Math.max(size.x, size.y, size.z);
-        } catch (e) {
-            // Use default if calculation fails
-        }
+        for (let p = 0; p < piratesPerGroup; p++) {
+            pirateIndex++;
+            const enemyGeometry = createEnemyGeometry(0);
 
-        enemy.userData = {
-            name: `Martian Pirate ${i + 1}`,
-            type: 'enemy',
-            health: getEnemyHealthForDifficulty(true, false, false),
-            maxHealth: getEnemyHealthForDifficulty(true, false, false),
-            // Faster + much more aggressive than baseline pirates
-            speed: 1.2 + Math.random() * 0.8,         // 1.2–2.0 (was 0.6–1.6)
-            aggression: 0.95 + Math.random() * 0.05,   // 0.95–1.0 (was 0.7–1.0)
-            patrolCenter: new THREE.Vector3(
-                localSystemOffset.x,
-                localSystemOffset.y,
-                localSystemOffset.z
-            ),
-            patrolRadius: distance,
-            lastAttack: 0,
-            isActive: false,
-            visible: true,
-            galaxyId: 7, // Local galaxy
-            galaxyColor: 0xff4444,
-            swarmTarget: null,
-            circlePhase: Math.random() * Math.PI * 2,
-            attackMode: 'patrol',
-            detectionRange: 2400,   // doubled — pirates spot the player further out
-            firingRange: 360,        // doubled — they open fire from twice the distance
-            isMartianPirate: true,   // tag for autopilot swarm boost
-            isLocal: true,
-            isBoss: false,
-            isBossSupport: false,
-            position3D: enemy.position.clone(),
-            hitboxSize: hitboxSize // Store hitbox size for accurate collision detection
-        };
-        
-        enemy.visible = true;
-        enemy.frustumCulled = true;  // OPTIMIZATION: Enable frustum culling
-        
-        scene.add(enemy);
-        enemies.push(enemy);
+            const localShapeData = { color: 0xff4444 };
+            const materials = createEnemyMaterial(localShapeData, 'local', groupDistance);
+
+            let enemy;
+            let isGLBModel = false;
+            if (typeof createEnemyMeshWithModel === 'function') {
+                enemy = createEnemyMeshWithModel(1, enemyGeometry, materials.enemyMaterial);
+                isGLBModel = enemy.isGroup || (enemy.children && enemy.children.length > 0 && enemy.children[0].isMesh);
+            } else {
+                enemy = new THREE.Mesh(enemyGeometry, materials.enemyMaterial);
+            }
+
+            if (!isGLBModel) {
+                const glowGeometry = enemyGeometry.clone();
+                const glow = new THREE.Mesh(glowGeometry, materials.glowMaterial);
+                glow.scale.multiplyScalar(materials.glowScale);
+                glow.visible = true;
+                glow.frustumCulled = false;
+                enemy.add(glow);
+            }
+
+            // Spread within the group (tight 80-unit cluster)
+            const spreadAngle = (p / piratesPerGroup) * Math.PI * 2;
+            const spreadDist = 40 + Math.random() * 40;
+            enemy.position.set(
+                groupCenter.x + Math.cos(spreadAngle) * spreadDist,
+                groupCenter.y + (Math.random() - 0.5) * 30,
+                groupCenter.z + Math.sin(spreadAngle) * spreadDist
+            );
+
+            let hitboxSize = 96;
+            try {
+                const box = new THREE.Box3().setFromObject(enemy);
+                const size = new THREE.Vector3();
+                box.getSize(size);
+                hitboxSize = Math.max(size.x, size.y, size.z);
+            } catch (e) {}
+
+            enemy.userData = {
+                name: `Martian Pirate ${pirateIndex}`,
+                type: 'enemy',
+                health: getEnemyHealthForDifficulty(true, false, false),
+                maxHealth: getEnemyHealthForDifficulty(true, false, false),
+                speed: 1.2 + Math.random() * 0.8,
+                aggression: 0.95 + Math.random() * 0.05,
+                patrolCenter: groupCenter.clone(),
+                patrolRadius: groupDistance,
+                lastAttack: 0,
+                isActive: false,
+                visible: true,
+                galaxyId: 7,
+                galaxyColor: 0xff4444,
+                swarmTarget: null,
+                circlePhase: Math.random() * Math.PI * 2,
+                attackMode: 'patrol',
+                detectionRange: 2400,
+                firingRange: 360,
+                isMartianPirate: true,
+                isLocal: true,
+                isBoss: false,
+                isBossSupport: false,
+                position3D: enemy.position.clone(),
+                hitboxSize: hitboxSize
+            };
+
+            enemy.visible = true;
+            enemy.frustumCulled = true;
+            scene.add(enemy);
+            enemies.push(enemy);
+        }
     }
     
     console.log(`✅ Created ${enemies.length} enemies with full 3D positioning`);
