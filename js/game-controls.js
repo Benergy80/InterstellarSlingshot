@@ -5936,7 +5936,7 @@ window.toggleNebulas = function() {
 console.log('🌫️ Nebula visibility commands loaded: showNebulas(), hideNebulas(), toggleNebulas()');
 
 // =============================================================================
-// ALLY NPC SHIPS — 2 wingmen that follow the player and defend against hostiles
+// ALLY NPC SHIPS — 2 independent wingmen patrolling the Sol system
 // =============================================================================
 
 const allyShips = [];
@@ -5946,10 +5946,15 @@ const _allyTarget = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
 function createAllyShips() {
     if (typeof THREE === 'undefined' || typeof scene === 'undefined' || typeof camera === 'undefined') return;
 
+    // Starting waypoints — each wingman begins patrol at a different planet
+    const startOffsets = [
+        new THREE.Vector3(960, 20, 0),    // Alpha starts near Mars orbit
+        new THREE.Vector3(-2000, -10, 0),  // Beta starts near Jupiter orbit
+    ];
+
     for (let i = 0; i < 2; i++) {
         const group = new THREE.Group();
 
-        // Build a ship that looks like the player's — use the same model if available
         let shipMesh;
         if (typeof getPlayerModel === 'function') {
             const model = getPlayerModel();
@@ -5980,31 +5985,28 @@ function createAllyShips() {
         }
         group.add(shipMesh);
 
-        // Spawn in formation: to the side and slightly behind player, in player-local space
-        const side = i === 0 ? -1 : 1;
-        const fwd = new THREE.Vector3();
-        camera.getWorldDirection(fwd);
-        const right = new THREE.Vector3().crossVectors(fwd, new THREE.Vector3(0, 1, 0)).normalize();
-        group.position.copy(camera.position)
-            .addScaledVector(right, side * 60)
-            .addScaledVector(fwd, -30);
+        group.position.copy(startOffsets[i]);
 
         group.userData = {
             type: 'ally',
             name: i === 0 ? 'Wingman Alpha' : 'Wingman Beta',
-            health: 80,
-            maxHealth: 80,
-            speed: 4.0,
-            firingRange: 400,
-            detectionRange: 2500,
-            leashRadius: 400,
+            health: 100,
+            maxHealth: 100,
+            cruiseSpeed: 3.5,
+            combatSpeed: 5.0,
+            firingRange: 350,
+            detectionRange: 3000,
+            systemRadius: 6500,
             lastAttack: 0,
-            // formationOffset = (side, vertical, forward) in player-local space
-            formationOffset: new THREE.Vector3(side * 60, -5, -30),
-            shieldActive: false,
-            shieldCooldown: 0,
             currentTarget: null,
-            isAlly: true
+            isAlly: true,
+            // Independent AI state
+            aiState: 'patrol',
+            patrolTarget: null,
+            patrolArriveTime: 0,
+            patrolDwellMs: 4000,
+            engageTarget: null,
+            velocity: new THREE.Vector3(),
         };
 
         group.frustumCulled = false;
@@ -6012,122 +6014,213 @@ function createAllyShips() {
         allyShips.push(group);
     }
 
-    console.log('🛡️ 2 ally wingmen deployed');
+    console.log('🛡️ 2 ally wingmen deployed — independent patrol mode');
+}
+
+// Pick a random non-asteroid planet in the local Sol system as a patrol waypoint
+function _pickPatrolWaypoint(excludePos) {
+    if (typeof planets === 'undefined') return new THREE.Vector3(Math.random() * 4000 - 2000, 0, Math.random() * 4000 - 2000);
+    const candidates = [];
+    for (let i = 0; i < planets.length; i++) {
+        const p = planets[i];
+        if (!p || !p.userData) continue;
+        if (p.userData.type === 'asteroid' || p.userData.type === 'asteroidBelt') continue;
+        if (p.userData.type === 'blackhole') continue;
+        if (!p.userData.isLocal) continue;
+        if (p.userData.isLocalStar) continue;
+        candidates.push(p);
+    }
+    if (!candidates.length) return new THREE.Vector3(1000, 0, 1000);
+    // Weighted random — favour planets far from current excludePos
+    if (excludePos) {
+        candidates.sort((a, b) => b.position.distanceTo(excludePos) - a.position.distanceTo(excludePos));
+        // Pick from top half for variety
+        const pick = candidates[Math.floor(Math.random() * Math.min(candidates.length, Math.ceil(candidates.length / 2)))];
+        return pick.position.clone();
+    }
+    return candidates[Math.floor(Math.random() * candidates.length)].position.clone();
+}
+
+// Scan for the nearest alive hostile within detection range of this ally
+function _scanForEnemy(ally) {
+    const ud = ally.userData;
+    let nearest = null;
+    let nearestDist = ud.detectionRange;
+
+    if (typeof enemies !== 'undefined') {
+        for (let i = 0; i < enemies.length; i++) {
+            const e = enemies[i];
+            if (!e || !e.userData || e.userData.health <= 0) continue;
+            const d = ally.position.distanceTo(e.position);
+            if (d < nearestDist) { nearestDist = d; nearest = e; }
+        }
+    }
+    if (typeof outerInterstellarSystems !== 'undefined') {
+        outerInterstellarSystems.forEach(sys => {
+            if (!sys.userData || !sys.userData.drones) return;
+            sys.userData.drones.forEach(drone => {
+                if (!drone || !drone.userData || drone.userData.health <= 0) return;
+                const wp = new THREE.Vector3();
+                drone.getWorldPosition(wp);
+                const d = ally.position.distanceTo(wp);
+                if (d < nearestDist) { nearestDist = d; nearest = drone; }
+            });
+        });
+    }
+    return nearest;
 }
 
 function updateAllyShips() {
     if (!allyShips.length || typeof camera === 'undefined' || typeof THREE === 'undefined') return;
     if (!gameState || !gameState.gameStarted || gameState.gameOver) return;
 
-    const playerPos = camera.position;
     const now = Date.now();
-
-    // Build player-relative basis so wingmen stay alongside as the player turns
-    const playerFwd = new THREE.Vector3();
-    camera.getWorldDirection(playerFwd);
-    const worldUp = new THREE.Vector3(0, 1, 0);
-    const playerRight = new THREE.Vector3().crossVectors(playerFwd, worldUp).normalize();
-    const playerUp = new THREE.Vector3().crossVectors(playerRight, playerFwd).normalize();
 
     allyShips.forEach(ally => {
         if (!ally || ally.userData.health <= 0) return;
 
         const ud = ally.userData;
+        const pos = ally.position;
+        const distFromOrigin = pos.length();
 
-        // Formation target = player position + (right * sideOffset) + (up * vOffset) + (fwd * forwardOffset)
-        // formationOffset stores (x=side, y=vertical, z=forward) in player-local space
-        _allyTarget.copy(playerPos)
-            .addScaledVector(playerRight, ud.formationOffset.x)
-            .addScaledVector(playerUp, ud.formationOffset.y)
-            .addScaledVector(playerFwd, ud.formationOffset.z);
+        // ── Enemy scan (every call, ~30 Hz) ──────────────────────────────
+        const threat = _scanForEnemy(ally);
 
-        // Find nearest enemy to engage
-        let nearestEnemy = null;
-        let nearestDist = ud.detectionRange;
-        if (typeof enemies !== 'undefined') {
-            for (let i = 0; i < enemies.length; i++) {
-                const e = enemies[i];
-                if (!e || !e.userData || e.userData.health <= 0) continue;
-                const d = ally.position.distanceTo(e.position);
-                if (d < nearestDist) {
-                    nearestDist = d;
-                    nearestEnemy = e;
+        // ── State transitions ────────────────────────────────────────────
+        if (ud.aiState === 'patrol') {
+            if (threat) {
+                ud.aiState = 'engage';
+                ud.engageTarget = threat;
+            } else if (distFromOrigin > ud.systemRadius) {
+                ud.aiState = 'return';
+                ud.patrolTarget = null;
+            }
+        } else if (ud.aiState === 'engage') {
+            const et = ud.engageTarget;
+            if (!et || !et.userData || et.userData.health <= 0 || !et.parent) {
+                // Target dead or removed — re-scan or back to patrol
+                ud.engageTarget = null;
+                ud.aiState = threat ? 'engage' : 'patrol';
+                if (threat) ud.engageTarget = threat;
+            } else {
+                const engageDist = pos.distanceTo(et.position);
+                if (engageDist > ud.detectionRange * 1.5) {
+                    ud.aiState = 'patrol';
+                    ud.engageTarget = null;
                 }
             }
-        }
-        // Also check outer system drones
-        if (!nearestEnemy && typeof outerInterstellarSystems !== 'undefined') {
-            outerInterstellarSystems.forEach(sys => {
-                if (!sys.userData || !sys.userData.drones) return;
-                sys.userData.drones.forEach(drone => {
-                    if (!drone || !drone.userData || drone.userData.health <= 0) return;
-                    const wp = new THREE.Vector3();
-                    drone.getWorldPosition(wp);
-                    const d = ally.position.distanceTo(wp);
-                    if (d < nearestDist) {
-                        nearestDist = d;
-                        nearestEnemy = drone;
-                    }
-                });
-            });
-        }
-
-        ud.currentTarget = nearestEnemy;
-
-        const distToPlayer = ally.position.distanceTo(playerPos);
-        const leash = ud.leashRadius || 300;
-
-        if (nearestEnemy && nearestDist < ud.firingRange && distToPlayer < leash) {
-            // Combat: move toward enemy and fire (only if within leash of player)
-            const enemyPos = nearestEnemy.position ? nearestEnemy.position : new THREE.Vector3();
-            _allyDir.subVectors(enemyPos, ally.position).normalize();
-            ally.position.addScaledVector(_allyDir, ud.speed * 0.8);
-
-            // Fire at enemy
-            if (now - ud.lastAttack > 400) {
-                ud.lastAttack = now;
-                if (typeof createLaserBeam === 'function') {
-                    const color = ud.name === 'Wingman Alpha' ? '#00ff88' : '#88aaff';
-                    createLaserBeam(ally.position.clone(), enemyPos.clone(), color, false);
-
-                    if (nearestEnemy.userData) {
-                        nearestEnemy.userData.health -= 1;
-                        if (typeof flashEnemyHit === 'function') flashEnemyHit(nearestEnemy, 1);
-                    }
-                }
+        } else if (ud.aiState === 'return') {
+            if (distFromOrigin < ud.systemRadius * 0.7) {
+                ud.aiState = 'patrol';
             }
+            if (threat) {
+                ud.aiState = 'engage';
+                ud.engageTarget = threat;
+            }
+        }
+
+        // ── Execute current state ────────────────────────────────────────
+        if (ud.aiState === 'engage' && ud.engageTarget) {
+            _executeEngage(ally, ud, now);
+        } else if (ud.aiState === 'return') {
+            _executeReturn(ally, ud);
         } else {
-            // Follow player in formation — strongly bias toward target to keep up with cruising player
-            _allyDir.subVectors(_allyTarget, ally.position);
-            const distToFormation = _allyDir.length();
-            if (distToFormation > 1) {
-                // Use proportional control so far-away wingmen close fast while near ones settle smoothly
-                const lerpFactor = Math.min(0.25, distToFormation / 200);
-                ally.position.addScaledVector(_allyDir, lerpFactor);
-            }
+            _executePatrol(ally, ud, now);
         }
 
-        // Hard teleport if somehow way too far (e.g. after warp or initial spawn drift)
-        if (distToPlayer > leash * 1.5) {
-            ally.position.copy(_allyTarget);
-        }
-
-        // Face movement direction
+        // ── Face movement direction ──────────────────────────────────────
         if (_allyDir.lengthSq() > 0.001) {
-            const targetQuat = new THREE.Quaternion();
-            const lookMat = new THREE.Matrix4().lookAt(ally.position, ally.position.clone().add(_allyDir), new THREE.Vector3(0, 1, 0));
-            targetQuat.setFromRotationMatrix(lookMat);
-            ally.quaternion.slerp(targetQuat, 0.05);
+            const lookMat = new THREE.Matrix4().lookAt(
+                pos, pos.clone().add(_allyDir), new THREE.Vector3(0, 1, 0));
+            const targetQuat = new THREE.Quaternion().setFromRotationMatrix(lookMat);
+            ally.quaternion.slerp(targetQuat, 0.06);
         }
 
-        // Regenerate health slowly
+        // ── Passive health regen ─────────────────────────────────────────
         if (ud.health < ud.maxHealth && now % 3000 < 50) {
             ud.health = Math.min(ud.maxHealth, ud.health + 1);
         }
     });
 }
 
-// Prevent player weapons from damaging allies
+// ── Patrol: cruise between Sol-system planets ────────────────────────────
+function _executePatrol(ally, ud, now) {
+    if (!ud.patrolTarget) {
+        ud.patrolTarget = _pickPatrolWaypoint(ally.position);
+        ud.patrolArriveTime = 0;
+    }
+
+    _allyDir.subVectors(ud.patrolTarget, ally.position);
+    const dist = _allyDir.length();
+
+    if (dist < 120) {
+        // Arrived at waypoint — dwell briefly, then pick a new one
+        if (!ud.patrolArriveTime) ud.patrolArriveTime = now;
+        // Drift gently while dwelling
+        ud.velocity.multiplyScalar(0.92);
+        ally.position.add(ud.velocity);
+        if (now - ud.patrolArriveTime > ud.patrolDwellMs) {
+            ud.patrolTarget = _pickPatrolWaypoint(ally.position);
+            ud.patrolArriveTime = 0;
+        }
+    } else {
+        // Cruise toward waypoint with proportional speed control
+        _allyDir.normalize();
+        const targetSpeed = Math.min(ud.cruiseSpeed, dist * 0.02);
+        ud.velocity.lerp(_allyDir.clone().multiplyScalar(targetSpeed), 0.04);
+        ally.position.add(ud.velocity);
+    }
+}
+
+// ── Engage: pursue and fire at hostile ───────────────────────────────────
+function _executeEngage(ally, ud, now) {
+    const et = ud.engageTarget;
+    const enemyPos = et.position ? et.position.clone() : new THREE.Vector3();
+    // For drones parented to outer-system groups, use world position
+    if (et.parent && et.parent.type === 'Group' && et.parent.parent) {
+        et.getWorldPosition(enemyPos);
+    }
+
+    _allyDir.subVectors(enemyPos, ally.position);
+    const dist = _allyDir.length();
+    _allyDir.normalize();
+
+    if (dist > ud.firingRange) {
+        // Close the distance — pursuit speed
+        const chaseSpeed = Math.min(ud.combatSpeed, dist * 0.03);
+        ud.velocity.lerp(_allyDir.clone().multiplyScalar(chaseSpeed), 0.08);
+    } else if (dist < 60) {
+        // Too close — pull away slightly
+        ud.velocity.lerp(_allyDir.clone().multiplyScalar(-1.0), 0.06);
+    } else {
+        // Strafing range — orbit the enemy at combat distance
+        const tangent = new THREE.Vector3(-_allyDir.z, 0, _allyDir.x);
+        ud.velocity.lerp(tangent.multiplyScalar(ud.combatSpeed * 0.6), 0.05);
+    }
+    ally.position.add(ud.velocity);
+
+    // Fire lasers when in range
+    if (dist < ud.firingRange && now - ud.lastAttack > 350) {
+        ud.lastAttack = now;
+        if (typeof createLaserBeam === 'function') {
+            const color = ud.name === 'Wingman Alpha' ? '#00ff88' : '#88aaff';
+            createLaserBeam(ally.position.clone(), enemyPos, color, false);
+            if (et.userData) {
+                et.userData.health -= 1;
+                if (typeof flashEnemyHit === 'function') flashEnemyHit(et, 1);
+            }
+        }
+    }
+}
+
+// ── Return: head back toward system center ───────────────────────────────
+function _executeReturn(ally, ud) {
+    const center = new THREE.Vector3(0, 0, 0);
+    _allyDir.subVectors(center, ally.position).normalize();
+    ud.velocity.lerp(_allyDir.clone().multiplyScalar(ud.cruiseSpeed * 1.5), 0.06);
+    ally.position.add(ud.velocity);
+}
+
 function isAllyShip(obj) {
     return obj && obj.userData && obj.userData.isAlly;
 }
