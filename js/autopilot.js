@@ -697,7 +697,7 @@
       }
 
       // Mine nearby asteroids for hull if damaged, before moving on
-      if (gameState.hull < 85 && _findNearestAsteroid(600)) {
+      if (gameState.hull < 85 && _findNearestAsteroid(1000)) {
         ap._mineReturnPhase = nextPhaseAfterKill;
         ap._mineShotsLeft = 3;
         setTimeout(() => { if (ap.active) goPhase('mineAsteroids'); }, 1000);
@@ -825,7 +825,7 @@
       return;
     }
 
-    const asteroid = _findNearestAsteroid(600);
+    const asteroid = _findNearestAsteroid(1000);
     if (!asteroid) {
       // No asteroids nearby — move on
       goPhase(ap._mineReturnPhase || 'findLocalEnemies');
@@ -2026,7 +2026,7 @@
     const now = Date.now();
     if (now - (ap._lastAsteroidFire || 0) < 1200) return;
 
-    const maxRange = 600;
+    const maxRange = 1000;
     const target = _findNearestAsteroid(maxRange);
     if (!target) return;
 

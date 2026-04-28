@@ -197,10 +197,12 @@ function applyRotationalInertia(keys, allowManualRotation) {
     const speedFactor = Math.max(0, Math.min(1, (currentSpeed - minSpeed) / (maxSpeed - minSpeed)));
     
     // Apply banking proportional to both yaw velocity and current speed
+    // Demo mode adds extra camera roll for a cinematic powerslide feel
     // SKIP banking during mobile touch input to prevent unwanted roll
     let bankingFromYaw = 0;
     if (!window.mobileTouchActive) {
-        bankingFromYaw = -rotationalVelocity.yaw * rotationalInertia.bankingFactor * speedFactor;
+        const demoBoost = (window.demoPilot && window.demoPilot.active) ? 2.5 : 1.0;
+        bankingFromYaw = -rotationalVelocity.yaw * rotationalInertia.bankingFactor * speedFactor * demoBoost;
     }
     
     const totalRoll = rotationalVelocity.roll + bankingFromYaw;

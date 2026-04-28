@@ -405,14 +405,16 @@ function updateCameraView(camera) {
         const shipQuaternion = new THREE.Quaternion().setFromRotationMatrix(shipMatrix);
         
         // Add dynamic banking based on rotational velocity
+        // Demo mode exaggerates the bank for a cinematic powerslide look
         if (typeof rotationalVelocity !== 'undefined') {
-            const bankAmount = -rotationalVelocity.yaw * 15;
-            const pitchTilt = -rotationalVelocity.pitch * 5;
+            const demo = (typeof window !== 'undefined' && window.demoPilot && window.demoPilot.active);
+            const bankAmount = -rotationalVelocity.yaw * (demo ? 45 : 15);
+            const pitchTilt = -rotationalVelocity.pitch * (demo ? 12 : 5);
             const bankQuat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), bankAmount);
             const pitchQuat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), pitchTilt);
             shipQuaternion.multiply(bankQuat).multiply(pitchQuat);
         }
-        
+
         cameraState.playerShipMesh.quaternion.copy(shipQuaternion);
 
         // Make ship visible but slightly transparent for cockpit view
@@ -452,13 +454,14 @@ function updateCameraView(camera) {
         
         // Add dynamic banking based on rotational velocity
         if (typeof rotationalVelocity !== 'undefined') {
-            const bankAmount = -rotationalVelocity.yaw * 15;
-            const pitchTilt = -rotationalVelocity.pitch * 5;
+            const demo = (typeof window !== 'undefined' && window.demoPilot && window.demoPilot.active);
+            const bankAmount = -rotationalVelocity.yaw * (demo ? 45 : 15);
+            const pitchTilt = -rotationalVelocity.pitch * (demo ? 12 : 5);
             const bankQuat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), bankAmount);
             const pitchQuat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), pitchTilt);
             shipQuaternion.multiply(bankQuat).multiply(pitchQuat);
         }
-        
+
         cameraState.playerShipMesh.quaternion.copy(shipQuaternion);
 
         // Ensure the ship model is fully visible and opaque in third-person
