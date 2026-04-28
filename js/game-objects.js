@@ -559,6 +559,7 @@ const bossSystem = {
     // initialized or checkGuardianVictory / checkGalaxyClear throw when
     // reading [g] on undefined.
     galaxyBossDefeated: [false, false, false, false, false, false, false, false],
+    galaxyBossSpawned: [false, false, false, false, false, false, false, false],
     galaxyGuardiansDefeated: [false, false, false, false, false, false, false, false],
 
     activeBoss: null,
@@ -1041,6 +1042,32 @@ function checkAndSpawnAreaBosses() {
             spawnBossForArea(parseInt(galaxyId), placementType, areaKey);
         }
     });
+}
+
+// Galaxy-level boss check: when ALL regular (non-boss, non-guardian) enemies
+// in a galaxy are eliminated, spawn the galaxy boss near the galaxy's core
+// black hole.  Once the boss is defeated, checkGalaxyClear marks it clear.
+function checkGalaxyBossSpawn() {
+    if (typeof enemies === 'undefined' || typeof scene === 'undefined') return;
+    for (let g = 0; g < 8; g++) {
+        if (bossSystem.galaxyBossSpawned[g] || bossSystem.galaxyBossDefeated[g]) continue;
+        const alive = enemies.filter(e =>
+            e.userData && e.userData.health > 0 &&
+            e.userData.galaxyId === g &&
+            !e.userData.isBoss && !e.userData.isBossSupport &&
+            !e.userData.isBlackHoleGuardian
+        );
+        if (alive.length === 0) {
+            bossSystem.galaxyBossSpawned[g] = true;
+            const areaKey = g + '-galaxy_boss';
+            console.log('👑 All enemies cleared in Galaxy ' + g + ' — spawning galaxy boss');
+            spawnBossForArea(g, 'galaxy_boss', areaKey);
+            if (typeof showAchievement === 'function') {
+                const name = (typeof galaxyTypes !== 'undefined' && galaxyTypes[g]) ? galaxyTypes[g].name : 'Galaxy ' + g;
+                showAchievement('Galaxy Boss Incoming!', name + ' enemies eliminated — boss warping in!');
+            }
+        }
+    }
 }
 
 // ENHANCED: Spawn boss for specific area
@@ -10191,6 +10218,7 @@ if (typeof window !== 'undefined') {
     window.lastKillPositions = lastKillPositions;
     window.recordEnemyKillPosition = recordEnemyKillPosition;
     window.checkAndSpawnAreaBosses = checkAndSpawnAreaBosses;
+    window.checkGalaxyBossSpawn = checkGalaxyBossSpawn;
     window.checkAndSpawnEliteGuardians = checkAndSpawnEliteGuardians;
     window.spawnBossForArea = spawnBossForArea;
     window.spawnEliteGuardian = spawnEliteGuardian;

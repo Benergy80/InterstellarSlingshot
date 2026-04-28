@@ -1180,8 +1180,12 @@ function updateGalaxyMap() {
     // ========== GALACTIC VIEW ==========
     // Show nearby targets as dots (radar-style)
     
-    // Hide player triangle, show direction arrow at center
+    // Hide player and ally triangles (allies show as dots in galactic view)
     playerMapPos.style.display = 'none';
+    for (let _i = 0; _i < 2; _i++) {
+        const m = document.getElementById('allyMapMarker' + _i);
+        if (m) m.style.display = 'none';
+    }
     if (mapDirectionArrow) {
         mapDirectionArrow.style.display = 'block';
         const forward = new THREE.Vector3();
@@ -1190,13 +1194,9 @@ function updateGalaxyMap() {
         mapDirectionArrow.style.setProperty('--direction', `${angle}rad`);
     }
     
-    // Hide galaxy indicators, Sagittarius A*, and wingman markers in radar view
+    // Hide galaxy indicators and Sagittarius A* in radar view (allies stay visible)
     const galaxyIndicators = document.querySelectorAll('.galaxy-indicator');
     galaxyIndicators.forEach(el => el.style.display = 'none');
-    for (let _i = 0; _i < 2; _i++) {
-        const m = document.getElementById('allyMapMarker' + _i);
-        if (m) m.style.display = 'none';
-    }
 
     const sgrAEl = document.querySelector('[title="Sagittarius A* - Galactic Center"]');
     if (sgrAEl) sgrAEl.style.display = 'none';
@@ -1331,6 +1331,22 @@ if (typeof outerInterstellarSystems !== 'undefined') {
             }
         });
         
+        // Add ally wingmen
+        if (typeof allyShips !== 'undefined') {
+            allyShips.forEach((ally, idx) => {
+                if (!ally || !ally.position || !ally.userData || ally.userData.health <= 0) return;
+                const distance = camera.position.distanceTo(ally.position);
+                if (distance < radarRange) {
+                    nearbyObjects.push({
+                        position: ally.position,
+                        type: 'ally',
+                        name: ally.userData.name,
+                        distance: distance
+                    });
+                }
+            });
+        }
+
         // Add nearby civilian ships (trade/mining vessels)
         if (typeof tradingShips !== 'undefined') {
             tradingShips.forEach(ship => {
@@ -1433,7 +1449,10 @@ if (typeof outerInterstellarSystems !== 'undefined') {
 let dotColor = '#4488ff'; // Default blue for planets
 let dotSize = '4px';
 
-if (obj.type === 'enemy') {
+if (obj.type === 'ally') {
+    dotColor = obj.name === 'Wingman Alpha' ? '#00ff88' : '#88aaff';
+    dotSize = '7px';
+} else if (obj.type === 'enemy') {
     dotColor = obj.isBoss ? '#ff00ff' : '#ff4444';
     dotSize = obj.isBoss ? '8px' : '6px';
 } else if (obj.type === 'civilian_ship') {

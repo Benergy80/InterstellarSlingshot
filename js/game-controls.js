@@ -4016,9 +4016,12 @@ if (enemy.userData.health <= 0) {
     // 🏆 VICTORY SYSTEM: Check if guardians defeated → galaxy liberated
     checkGuardianVictory();
 
-    // ENHANCED: Check if we should spawn area bosses or elite guardians
+    // ENHANCED: Check if we should spawn area bosses, galaxy bosses, or elite guardians
     if (typeof checkAndSpawnAreaBosses === 'function') {
         checkAndSpawnAreaBosses();
+    }
+    if (typeof checkGalaxyBossSpawn === 'function') {
+        checkGalaxyBossSpawn();
     }
     if (typeof checkAndSpawnEliteGuardians === 'function') {
         checkAndSpawnEliteGuardians();
@@ -5983,11 +5986,11 @@ function createAllyShips() {
                         child.frustumCulled = false;
                     }
                 });
-                shipMesh.scale.set(48, 48, 48);
+                shipMesh.scale.set(96, 96, 96);
             }
         }
         if (!shipMesh) {
-            const geo = new THREE.ConeGeometry(3, 8, 6);
+            const geo = new THREE.ConeGeometry(6, 16, 6);
             const mat = new THREE.MeshBasicMaterial({ color: i === 0 ? 0x00ff88 : 0x88aaff });
             shipMesh = new THREE.Mesh(geo, mat);
         }
