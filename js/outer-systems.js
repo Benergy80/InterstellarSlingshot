@@ -272,7 +272,7 @@ function createBorgSystem(center, systemId) {
     scene.add(systemGroup);
     outerInterstellarSystems.push(systemGroup);
 
-    console.log(`    🟩 Unknown System #${systemId + 1}: ${starType.name} star with ${planetCount} planets and ${droneCount} BORG drones at ${center.length().toFixed(0)} units`);
+    console.log(`    🟩 Unknown System #${systemId + 1}: ${starType.name} star with ${planetCount} planets and 1 BORG cube at ${center.length().toFixed(0)} units`);
 }
 
 // =============================================================================
