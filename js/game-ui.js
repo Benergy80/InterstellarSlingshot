@@ -2210,8 +2210,13 @@ function gameOver(reason) {
             </div>
         </div>
     `;
-    (document.documentElement || document.body).appendChild(gameOverOverlay);
+    document.body.appendChild(gameOverOverlay);
     document.body.style.cursor = 'auto';
+    // Disable canvas touch events so overlay is tappable on mobile
+    const _goCanvas = document.getElementById('gameCanvas');
+    if (_goCanvas) _goCanvas.style.pointerEvents = 'none';
+    const _goBtn = gameOverOverlay.querySelector('button');
+    if (_goBtn) _goBtn.addEventListener('touchend', function(e) { e.preventDefault(); location.reload(); });
 
     console.log('✅ Game over screen displayed - all systems stopped');
 }
@@ -2285,8 +2290,13 @@ function showGameOverScreen(title, message) {
             </div>
         </div>
     `;
-    (document.documentElement || document.body).appendChild(gameOverOverlay);
+    document.body.appendChild(gameOverOverlay);
     document.body.style.cursor = 'auto';
+    // Disable canvas touch events so overlay is tappable on mobile
+    const _goCanvas = document.getElementById('gameCanvas');
+    if (_goCanvas) _goCanvas.style.pointerEvents = 'none';
+    const _goBtn = gameOverOverlay.querySelector('button');
+    if (_goBtn) _goBtn.addEventListener('touchend', function(e) { e.preventDefault(); location.reload(); });
 
     console.log('✅ Game over screen displayed - all systems stopped');
 }

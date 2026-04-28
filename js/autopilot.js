@@ -710,14 +710,40 @@
     // a proper dog-fight (enemy fires back at us, we fire at them).
     const engageRange = enemy.userData.firingRange || 500;
 
+    const speed = gameState.velocityVector ? gameState.velocityVector.length() : 0;
+
     if (dist > engageRange) {
+      // ── PURSUIT: close distance to weapons range ──────────────────
       setStatus('Pursuing ' + (enemy.userData.name || 'hostile') + ' — ' + (dist | 0) + ' u');
       flyToward(enemy, 2.5);
       pursuitFlightStyle('pursuit');
 
-      // O-key emergency warp when pursuing targets beyond 2000 u.
-      // Slingshot or O-key are preferred for long-distance travel;
-      // W double-tap is reserved for shorter hops under 2000 u.
+      // Short tactical jump toward hostiles (double-tap W) when within
+      // medium range and not already moving fast.  10 s cooldown.
+      if (dist > 400 && dist < 2000 && speed < 3 &&
+          gameState.energy > 25 &&
+          Date.now() - (ap._lastJumpTap || 0) > 10000) {
+        ap._lastJumpTap = Date.now();
+        if (window.keys) {
+          window.keys.wDoubleTap = true;
+          setTimeout(() => { if (window.keys) window.keys.wDoubleTap = false; }, 120);
+        }
+        setStatus('Tactical jump — closing on hostile');
+      }
+
+      // Brake if the jump overshoots past the target — detect by
+      // checking if we're moving AWAY from the enemy.
+      if (speed > 2 && gameState.velocityVector) {
+        _coneVec.subVectors(enemy.position, camera.position).normalize();
+        camera.getWorldDirection(_coneFwd);
+        const closing = gameState.velocityVector.clone().normalize().dot(_coneVec);
+        if (closing < 0.3) {
+          keys().x = true;
+          setStatus('Overshoot — braking');
+        }
+      }
+
+      // O-key emergency warp for very long pursuits > 2000 u
       if (dist > 2000 &&
           canEmergencyWarp() &&
           Date.now() - (ap._lastBHWarp || 0) > 20000) {
@@ -726,22 +752,18 @@
         }
       }
     } else {
+      // ── ENGAGE: inside weapons range ──────────────────────────────
       setStatus('Engaging ' + (enemy.userData.name || 'hostile') + ' — in weapons range');
       flyToward(enemy, 0.8);
       pursuitFlightStyle('engage');
 
-      // Strategic brake: if we're closing too fast and about to overshoot
-      // the enemy, tap the brakes to stay in weapons range.  Triggers when
-      // our approach velocity along the enemy-ward axis is > 1.5 AND we're
-      // already inside 2/3 of engageRange.
-      const speed = gameState.velocityVector ? gameState.velocityVector.length() : 0;
+      // Brake if overshooting: closing too fast inside 2/3 of range
       if (dist < engageRange * 0.67 && speed > 1.5) {
         keys().x = true;
         setStatus('Holding range — braking');
       }
 
-      // Also brake briefly if the enemy is sitting still/slow and we're
-      // sprinting right at them (approach speed > 2.5 inside 500 u)
+      // Brake if sprinting at a slow/stationary target
       if (dist < 500 && speed > 2.5) {
         keys().x = true;
       }
@@ -1665,19 +1687,30 @@
       return;
     }
     const cp = camPos();
+    const speed = gameState.velocityVector ? gameState.velocityVector.length() : 0;
     for (let i = 0; i < planets.length; i++) {
       const p = planets[i];
       if (!p || !p.position) continue;
       if (p.userData && p.userData.type === 'asteroid') continue;
       const sz = (p.userData && p.userData.size) || 20;
-      const dangerR = Math.max(sz * 1.8, 80);
+      const isStar = p.userData && p.userData.type === 'star';
+      // Stars get a much larger danger zone; planets use 2x size
+      const dangerR = isStar ? Math.max(sz * 4, 200) : Math.max(sz * 2, 80);
+      // At high speed, extend the danger zone proportionally
+      const effectiveR = dangerR + speed * 15;
       const dist = cp.distanceTo(p.position);
-      if (dist < dangerR) {
+      if (dist < effectiveR) {
+        // Only evade if we're actually heading toward the body
+        if (gameState.velocityVector && speed > 0.2) {
+          _evadeRadial.subVectors(p.position, cp).normalize();
+          const approach = gameState.velocityVector.clone().normalize().dot(_evadeRadial);
+          if (approach < 0.1) continue; // moving away — no danger
+        }
         _evadeRadial.subVectors(cp, p.position).normalize();
         _evadeRight.set(-_evadeRadial.z, 0, _evadeRadial.x);
         camera.getWorldDirection(_evadeFwd);
         ap._evadeKey = _evadeFwd.dot(_evadeRight) > 0 ? 'a' : 'd';
-        ap._evadeUntil = now + 800;
+        ap._evadeUntil = now + 1000;
         const k = keys();
         k[ap._evadeKey] = true;
         k.x = true;
@@ -2451,22 +2484,22 @@
       (gameState.emergencyWarp && (gameState.emergencyWarp.active || gameState.emergencyWarp.transitioning));
     if (warpLocked) return;
 
-    // Force shields on regardless of current travel state
+    // Shields + brake immediately on incoming fire
     if (typeof shieldSystem !== 'undefined' && !shieldSystem.active &&
         gameState.energy > 15 && window.activateShields) {
       window.activateShields();
     }
+    keys().x = true;
 
     // Pivot to combat if we aren't already fighting this attacker
     const alreadyFighting = ap.phase === 'combat' && ap.combatTarget === target;
     if (!alreadyFighting) {
       ap.combatTarget = target;
       ap.combatMissileFired = false;
-      // Remember where to return when the attacker is dead
       if (ap.phase !== 'combat') {
         ap.returnPhase = ap.returnPhase || ap.phase || 'findLocalEnemies';
       }
-      transmit('TACTICAL', 'Under fire! Engaging attacker.');
+      transmit('TACTICAL', 'Under fire! Shields up — engaging attacker.');
       goPhase('combat');
     }
 

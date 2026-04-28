@@ -275,8 +275,8 @@ gameState.emergencyWarp = {
         gameState.eventHorizonWarning = {
             active: false,
             blackHole: null,
-            warningDistance: 300,
-            criticalDistance: 50  // Auto-warp at 50 units from event horizon
+            warningDistance: 200,
+            criticalDistance: 50
         };
     }
     // Call this during game initialization
@@ -1842,7 +1842,7 @@ if (surfaceCollision) {
                     // Warp threshold relative to visual size so all BHs warp at
                     // a consistent visual distance from their surface
                     const criticalDistance = Math.max(planetRadius * 2.5, 50);
-                    const warningDistance = Math.max(criticalDistance * 2, gameState.eventHorizonWarning.warningDistance);
+                    const warningDistance = Math.max(criticalDistance + 50, gameState.eventHorizonWarning.warningDistance);
                     
                     if (distance < warningDistance && distance > criticalDistance && !gameState.eventHorizonWarning.active) {
                         gameState.eventHorizonWarning.active = true;

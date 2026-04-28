@@ -76,7 +76,7 @@ const gameState = {
     eventHorizonWarning: {
         active: false,
         blackHole: null,
-        warningDistance: 400, // Doubled for doubled world
+        warningDistance: 200,
         criticalDistance: 160 // Doubled for doubled world
     },
     emergencyWarp: {
