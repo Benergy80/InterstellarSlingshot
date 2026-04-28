@@ -5611,8 +5611,6 @@ if (typeof window !== 'undefined') {
     // Borg systems (spawnBorgCube/spawnBorgDrone moved to outer-systems.js)
     window.checkBorgSpawn = checkBorgSpawn;
     window.updateBorgBehavior = updateBorgBehavior;
-    window.sendBorgCommunication = sendBorgCommunication;
-    window.handleBorgCubeDestruction = handleBorgCubeDestruction;
 
     // Audio systems
     window.playSound = playSound;
