@@ -864,12 +864,14 @@
     const distToPlanet = camPos().distanceTo(planetPos);
     const nebPos = ap.currentNebula.position;
     const speedNow = gameState.velocityVector ? gameState.velocityVector.length() : 0;
+    const pRadius = ap.slingshotPlanet.geometry ? ap.slingshotPlanet.geometry.parameters.radius : 5;
+    const slingshotRange = Math.max(60, pRadius + 25);
 
-    // Phase 2a: fly toward the planet until inside slingshot range (<55u).
+    // Phase 2a: fly toward the planet until inside slingshot range.
     // The game's autoNavigating system tries to ORBIT planets at ~3x their
-    // size (often 300+ u), which keeps us outside the 60 u slingshot ring.
+    // size (often 300+ u), which keeps us outside the slingshot ring.
     // So at close range we switch to manual orient + thrust + brake.
-    if (distToPlanet > 55) {
+    if (distToPlanet > slingshotRange - 5) {
       setStatus('Approaching ' + (ap.slingshotPlanet.userData.name || 'planet') + ' — ' + (distToPlanet | 0) + ' u, ' + (speedNow | 0) + ' u/f');
 
       if (distToPlanet > 300) {

@@ -1164,11 +1164,13 @@ function isPositionTooClose(position, minDistance) {
 function executeSlingshot() {
     let nearestPlanet = null;
     let nearestDistance = Infinity;
-    
+
     if (typeof activePlanets !== 'undefined') {
         activePlanets.forEach(planet => {
             const distance = camera.position.distanceTo(planet.position);
-            if (distance < 60 && distance < nearestDistance) {
+            const radius = planet.geometry ? planet.geometry.parameters.radius : 5;
+            const slingshotRange = Math.max(60, radius + 25);
+            if (distance < slingshotRange && distance < nearestDistance) {
                 nearestPlanet = planet;
                 nearestDistance = distance;
             }
@@ -1767,14 +1769,13 @@ if (keys.x && gameState.energy > 0 && !gameState.emergencyWarp.autoBraking) {
 
             // ⚡ DEADLY COLLISION DETECTION - Crashing into celestial bodies causes mission failure
 
-// Black holes: Only collide with center core (10 units), not the surface
-const blackHoleCoreCollision = planet.userData.type === 'blackhole' && distance < 10;
+// Black holes NEVER crash — always warp (handled below in the black hole warp section)
 
-// Planets and stars: Collide with surface
+// Planets and stars: Collide with surface — proportional margin (5% of radius)
 const surfaceCollision = (planet.userData.type === 'planet' || planet.userData.type === 'star') &&
-                         distance < planetRadius + 10; // 10 unit safety margin
+                         distance < planetRadius * 1.05;
 
-if (blackHoleCoreCollision || surfaceCollision) {
+if (surfaceCollision) {
 
     // ⚡ SUN COLLISION = INSTANT DEATH
     if (planet.userData.type === 'star') {
@@ -1800,29 +1801,24 @@ if (blackHoleCoreCollision || surfaceCollision) {
         return;
     }
 
-    // ⚡ PLANET/BLACK HOLE COLLISION = EXPLOSION AND MISSION FAILURE
-    if (planet.userData.type === 'planet' || planet.userData.type === 'blackhole') {
-        // Complete hull destruction on direct collision
+    // ⚡ PLANET COLLISION = EXPLOSION AND MISSION FAILURE
+    if (planet.userData.type === 'planet') {
         gameState.hull = 0;
-        gameState.velocityVector.set(0, 0, 0); // Stop all motion
+        gameState.velocityVector.set(0, 0, 0);
 
-        // Create explosion
         if (typeof createPlayerExplosion === 'function') {
             createPlayerExplosion();
         }
 
-        // Trigger mission failed
-        const impactType = planet.userData.type === 'blackhole' ? 'CRUSHED BY SINGULARITY' : 'PLANETARY IMPACT';
         if (typeof showGameOverScreen === 'function') {
-            showGameOverScreen(impactType, `Ship destroyed by collision with ${planet.userData.name}`);
+            showGameOverScreen('PLANETARY IMPACT', `Ship destroyed by collision with ${planet.userData.name}`);
         }
 
-        // Explosion sound
         if (typeof playSound === 'function') {
             playSound('explosion');
         }
 
-        console.log(`💀 MISSION FAILED: Player collided with ${planet.userData.type} ${planet.userData.name}`);
+        console.log(`💀 MISSION FAILED: Player collided with planet ${planet.userData.name}`);
         return;
     }
 }
@@ -1843,8 +1839,10 @@ if (blackHoleCoreCollision || surfaceCollision) {
                 
                 // Black hole effects
                 if (planet.userData.type === 'blackhole') {
-                    const warningDistance = gameState.eventHorizonWarning.warningDistance;
-                    const criticalDistance = planet.userData.warpThreshold || gameState.eventHorizonWarning.criticalDistance;
+                    // Warp threshold relative to visual size so all BHs warp at
+                    // a consistent visual distance from their surface
+                    const criticalDistance = Math.max(planetRadius * 2.5, 50);
+                    const warningDistance = Math.max(criticalDistance * 2, gameState.eventHorizonWarning.warningDistance);
                     
                     if (distance < warningDistance && distance > criticalDistance && !gameState.eventHorizonWarning.active) {
                         gameState.eventHorizonWarning.active = true;

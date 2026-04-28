@@ -1968,15 +1968,16 @@ function updateWarpButton() {
     const warpBtn = document.getElementById('warpBtn');
     if (!warpBtn || typeof gameState === 'undefined') return;
     
-    // Check for nearby planets for slingshot availability
+    // Check for nearby planets for slingshot availability (range scales with planet size)
     let nearestAssistPlanet = null;
     let nearestAssistDistance = Infinity;
-    const assistRange = 60; // Doubled
-    
+
     if (typeof activePlanets !== 'undefined' && typeof camera !== 'undefined') {
         activePlanets.forEach(planet => {
             const distance = camera.position.distanceTo(planet.position);
-            if (distance < assistRange && distance < nearestAssistDistance) {
+            const radius = planet.geometry ? planet.geometry.parameters.radius : 5;
+            const slingshotRange = Math.max(60, radius + 25);
+            if (distance < slingshotRange && distance < nearestAssistDistance) {
                 nearestAssistPlanet = planet;
                 nearestAssistDistance = distance;
             }

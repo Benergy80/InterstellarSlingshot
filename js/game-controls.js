@@ -3436,7 +3436,9 @@ if (e.key === 'Tab') {
             if (typeof activePlanets !== 'undefined') {
                 activePlanets.forEach(planet => {
                     const distance = camera.position.distanceTo(planet.position);
-                    if (distance < 60 && distance < nearestDistance) {
+                    const radius = planet.geometry ? planet.geometry.parameters.radius : 5;
+                    const slingshotRange = Math.max(60, radius + 25);
+                    if (distance < slingshotRange && distance < nearestDistance) {
                         nearestPlanet = planet;
                         nearestDistance = distance;
                     }
