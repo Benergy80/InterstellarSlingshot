@@ -35,6 +35,7 @@
     nebulasVisited: 0,
     warpsUsed: 0,
     loopCount: 0,
+    slingshotMisses: 0,
 
     // Ambush detection — tracks hull between frames so we can pivot into
     // combat the moment something shoots at us, even mid-transit.
@@ -784,11 +785,54 @@
   // flies into slingshot range (< 55 u), aligns its camera with the nebula,
   // and calls executeSlingshot() for a 25,000+ km/s boost along the camera
   // forward axis — propelling the ship toward the nebula at high speed.
-  // Falls back to emergency warp if no suitable planet is nearby.
+  // After 2 missed attempts, gives up and uses emergency warp directly.
   function phaseWarpToNebulaCluster() {
     const t = elapsed();
     ensureShieldsFor('travel');
     ensureThirdPerson();
+
+    // Lock in the nebula target up front — both the slingshot and the
+    // emergency-warp fallback need it.
+    if (!ap.currentNebula) {
+      const neb = nearestNebula();
+      if (!neb) { goPhase('gotoBlackHoleGalaxy'); return; }
+      ap.currentNebula = neb;
+    }
+
+    // After 2 failed slingshot attempts, abandon the slingshot strategy and
+    // just orient to the nearest nebula and punch an emergency warp.  The
+    // demo has shown the slingshot mechanic; now it's about getting there.
+    if ((ap.slingshotMisses || 0) >= 2) {
+      const aimDummy = { position: ap.currentNebula.position };
+      if (window.orientTowardsTarget) window.orientTowardsTarget(aimDummy);
+
+      let warpAligned = false;
+      if (_coneVec && camera) {
+        _coneVec.subVectors(ap.currentNebula.position, camera.position).normalize();
+        camera.getWorldDirection(_coneFwd);
+        warpAligned = _coneFwd.dot(_coneVec) > 0.85;
+      }
+      setStatus(warpAligned
+        ? 'EMERGENCY WARP to nebula!'
+        : 'Aligning for emergency warp to nebula');
+
+      keys().w = true;
+      if (warpAligned && t > 1200 && canEmergencyWarp() && triggerOKeyWarp()) {
+        ap.warpStartedAt = Date.now();
+        ap.warpsUsed++;
+        ap.slingshotMisses = 0;
+        goPhase('coastToNebulaCluster');
+        return;
+      }
+      // Hard fallback if alignment never settles
+      if (t > 8000) {
+        if (canEmergencyWarp()) triggerOKeyWarp();
+        ap.warpStartedAt = Date.now();
+        ap.slingshotMisses = 0;
+        goPhase('coastToNebulaCluster');
+      }
+      return;
+    }
 
     // Any hostile on the nav system — break off and engage
     const intruder = navDetectedEnemy();
@@ -801,31 +845,16 @@
       return;
     }
 
-    setStatus('Plotting course to nebula cluster…');
-
-    // Target the nebula cluster first
-    if (!ap.currentNebula) {
-      const neb = nearestNebula();
-      if (!neb) { goPhase('gotoBlackHoleGalaxy'); return; }
-      ap.currentNebula = neb;
-    }
+    setStatus('Plotting course to nebula cluster… (attempt ' + ((ap.slingshotMisses || 0) + 1) + '/2)');
 
     // Pick a planet to slingshot around — prefer one in the same general
     // direction as the nebula so the boost actually points the right way.
-    // Gravitational slingshot is the PREFERRED interstellar travel method.
     if (!ap.slingshotPlanet) {
       ap.slingshotPlanet = pickSlingshotPlanet(ap.currentNebula.position);
       if (!ap.slingshotPlanet) {
-        // No planet nearby — use O-key emergency warp while thrusting
-        const dummy = { position: ap.currentNebula.position };
-        if (window.orientTowardsTarget) window.orientTowardsTarget(dummy);
-        keys().w = true;
-        if (t > 1500 && canEmergencyWarp() && triggerOKeyWarp()) {
-          ap.warpStartedAt = Date.now();
-          ap.warpsUsed++;
-          goPhase('coastToNebulaCluster');
-        }
-        if (t > 8000) goPhase('coastToNebulaCluster');
+        // No planet within reach — count as a miss, fallback path will engage
+        ap.slingshotMisses = (ap.slingshotMisses || 0) + 1;
+        ap.phaseStart = Date.now();
         return;
       }
       gameState.currentTarget = ap.slingshotPlanet;
@@ -834,20 +863,55 @@
     const planetPos = ap.slingshotPlanet.position;
     const distToPlanet = camPos().distanceTo(planetPos);
     const nebPos = ap.currentNebula.position;
+    const speedNow = gameState.velocityVector ? gameState.velocityVector.length() : 0;
 
     // Phase 2a: fly toward the planet until inside slingshot range (<55u).
-    // Keep thrusters on the whole way so the ship looks purposeful.
+    // The game's autoNavigating system tries to ORBIT planets at ~3x their
+    // size (often 300+ u), which keeps us outside the 60 u slingshot ring.
+    // So at close range we switch to manual orient + thrust + brake.
     if (distToPlanet > 55) {
-      setStatus('Approaching ' + (ap.slingshotPlanet.userData.name || 'planet') + ' — ' + (distToPlanet | 0) + ' u');
-      flyToward(planetPos, 2.0);
-      keys().w = true;
-      if (t > 20000) {
+      setStatus('Approaching ' + (ap.slingshotPlanet.userData.name || 'planet') + ' — ' + (distToPlanet | 0) + ' u, ' + (speedNow | 0) + ' u/f');
+
+      if (distToPlanet > 300) {
+        // Far/medium range — let auto-nav (flyToward) do the work
+        const approachSpeed = distToPlanet > 1500 ? 2.0 : 1.6;
+        flyToward(planetPos, approachSpeed);
+      } else {
+        // Final approach — bypass auto-nav (would orbit) and steer manually
+        gameState.autoNavigating = false;
+        gameState.autoNavOrienting = false;
+        gameState.currentTarget = ap.slingshotPlanet;
+        if (window.orientTowardsTarget) window.orientTowardsTarget(ap.slingshotPlanet);
+
+        // Brake when overshoot is likely; otherwise gentle thrust to close
+        // the gap.  At 60 u target we want to arrive near zero speed.
+        const overshootDist = speedNow * 35;
+        if (overshootDist > distToPlanet - 50 && speedNow > 0.3) {
+          keys().x = true;       // brake hard
+        } else if (distToPlanet > 100 && speedNow < 1.5) {
+          keys().w = true;       // gentle thrust to keep closing
+        } else if (distToPlanet < 90 && speedNow > 0.8) {
+          keys().x = true;       // pre-emptive brake near the ring
+        }
+      }
+
+      // Approach timeout — count as a missed slingshot attempt
+      if (t > 12000) {
+        ap.slingshotMisses = (ap.slingshotMisses || 0) + 1;
         ap.slingshotPlanet = null;
+        ap.phaseStart = Date.now();
+        gameState.autoNavigating = false;
+        setStatus('Missed approach — slingshot misses: ' + ap.slingshotMisses + '/2');
       }
       return;
     }
 
-    // Phase 2b: at the planet — align camera toward the nebula
+    // Phase 2b: at the planet — align camera toward the nebula.  Brake hard
+    // and keep auto-nav off so it doesn't push us out of the 60 u ring while
+    // we rotate to face the nebula.
+    gameState.autoNavigating = false;
+    gameState.autoNavOrienting = false;
+    if (speedNow > 0.3) keys().x = true;
     const aimDummy = { position: nebPos };
     if (window.orientTowardsTarget) window.orientTowardsTarget(aimDummy);
 
@@ -865,15 +929,18 @@
     if (aligned && triggerSlingshot()) {
       ap.warpStartedAt = Date.now();
       ap.warpsUsed++;
+      ap.slingshotMisses = 0;  // success — reset miss counter
       goPhase('coastToNebulaCluster');
       return;
     }
 
-    // Safety timeout — O-key warp if slingshot never fires
-    if (t > 15000) {
-      if (canEmergencyWarp()) triggerOKeyWarp();
-      ap.warpStartedAt = Date.now();
-      goPhase('coastToNebulaCluster');
+    // Safety timeout — alignment failed or planet too small to orbit.
+    // Count as a missed attempt; fallback path will take over after 2.
+    if (t > 12000) {
+      ap.slingshotMisses = (ap.slingshotMisses || 0) + 1;
+      ap.slingshotPlanet = null;
+      ap.phaseStart = Date.now();
+      setStatus('Slingshot timeout — misses: ' + ap.slingshotMisses + '/2');
     }
   }
 
@@ -2600,6 +2667,7 @@
     ap.currentNebula = null;
     ap.currentBH = null;
     ap.slingshotPlanet = null;
+    ap.slingshotMisses = 0;
     ap.lastNebulaWarp = 0;
     ap._flightStyleKey = null;
     ap._flightStyleUntil = 0;
