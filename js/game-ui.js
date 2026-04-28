@@ -1190,10 +1190,14 @@ function updateGalaxyMap() {
         mapDirectionArrow.style.setProperty('--direction', `${angle}rad`);
     }
     
-    // Hide galaxy indicators and Sagittarius A*
+    // Hide galaxy indicators, Sagittarius A*, and wingman markers in radar view
     const galaxyIndicators = document.querySelectorAll('.galaxy-indicator');
     galaxyIndicators.forEach(el => el.style.display = 'none');
-    
+    for (let _i = 0; _i < 2; _i++) {
+        const m = document.getElementById('allyMapMarker' + _i);
+        if (m) m.style.display = 'none';
+    }
+
     const sgrAEl = document.querySelector('[title="Sagittarius A* - Galactic Center"]');
     if (sgrAEl) sgrAEl.style.display = 'none';
     
@@ -1768,7 +1772,42 @@ mapDotPool.releaseAll();
     camera.getWorldDirection(forward);
     const angle = Math.atan2(forward.x, -forward.z);
     playerMapPos.style.transform = `translate(-50%, -50%) rotate(${angle}rad)`;
-    
+
+    // ── Ally wingmen markers (same ▲ shape, in their faction colors) ──
+    if (typeof allyShips !== 'undefined') {
+        const galaxyMap = document.getElementById('galaxyMap');
+        if (galaxyMap) {
+            // Create/reuse wingman markers
+            allyShips.forEach((ally, idx) => {
+                if (!ally || !ally.userData || ally.userData.health <= 0) return;
+                let marker = document.getElementById('allyMapMarker' + idx);
+                if (!marker) {
+                    marker = document.createElement('div');
+                    marker.id = 'allyMapMarker' + idx;
+                    marker.style.cssText = 'position:absolute;font-size:12px;font-weight:bold;transform:translate(-50%,-50%);pointer-events:none;z-index:3;';
+                    marker.textContent = '▲';
+                    galaxyMap.appendChild(marker);
+                }
+                const color = idx === 0 ? '#00ff88' : '#88aaff';
+                marker.style.color = color;
+                marker.style.filter = `drop-shadow(0 0 3px ${color})`;
+                // Project ally position using the same spherical mapping as the player
+                const ax = ally.position.x, ay = ally.position.y, az = ally.position.z;
+                const aDist = Math.sqrt(ax * ax + ay * ay + az * az);
+                const aPhi = Math.atan2(az, ax);
+                const aTheta = Math.acos(ay / Math.max(aDist, 0.001));
+                let amx = ((aPhi + Math.PI) / (Math.PI * 2)) % 1.0;
+                let amy = aTheta / Math.PI;
+                const aNorm = Math.min(aDist / universeRadius, 1.0);
+                amx = 0.5 + (amx - 0.5) * aNorm;
+                amy = 0.5 + (amy - 0.5) * aNorm;
+                marker.style.left = Math.max(5, Math.min(95, amx * 100)) + '%';
+                marker.style.top = Math.max(5, Math.min(95, amy * 100)) + '%';
+                marker.style.display = 'block';
+            });
+        }
+    }
+
     // Show all galaxy indicators
     const galaxyIndicators = document.querySelectorAll('.galaxy-indicator');
     galaxyIndicators.forEach((el, index) => {

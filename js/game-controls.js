@@ -5210,6 +5210,12 @@ function cycleTargets() {
         allTargets.push(...filterBySquaredDist(nebulaGasClouds, 3000*3000));
     }
 
+    // Add ally wingmen so the nav system detects them
+    if (typeof allyShips !== 'undefined') {
+        const aliveAllies = allyShips.filter(a => a && a.userData && a.userData.health > 0);
+        allTargets.push(...filterBySquaredDist(aliveAllies, 6000*6000));
+    }
+
     // OPTIMIZED: Cache distances in a Map to avoid recalculating during sort
     const distanceCache = new Map();
     const getDistance = (obj) => {
