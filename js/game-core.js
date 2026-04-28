@@ -1609,10 +1609,7 @@ if (typeof updateShieldSystem === 'function') {
         detectEnemiesInRegion();
     }
     
-    // OPTIMIZED: Update galaxy map less frequently (every 180 frames = ~once every 3 seconds)
-	if (gameState.frameCount % 60 === 0 && typeof updateGalaxyMap === 'function') {
-    updateGalaxyMap();
-	}
+    // Galaxy map is updated in the UI section below (every 10 frames)
     
     // NEW: Check for nebula discoveries
     if (gameState.frameCount % 30 === 0 && typeof checkForNebulaDiscovery === 'function') {
@@ -2050,15 +2047,14 @@ if (gameState.frameCount % 5 === 0 && typeof checkCosmicFeatureInteractions === 
     }
     if (typeof perfDebug !== 'undefined') perfDebug.endTimer('physics');
     
-    // FORCE NORMAL PERFORMANCE MODE - disable auto-adjustment temporarily
-    gameState.performanceMode = 'normal';
-    gameState.averageFrameTime = 16.67; // Reset to good performance
-    
     // Update UI every few frames
     if (gameState.frameCount % 2 === 0) {
         if (typeof updateUI === 'function') updateUI();
         if (typeof updateCompass === 'function') updateCompass();
-        if (typeof updateGalaxyMap === 'function') updateGalaxyMap();
+    }
+    // Map is heavier (DOM queries) — update every 10 frames (~6 Hz)
+    if (gameState.frameCount % 10 === 0 && typeof updateGalaxyMap === 'function') {
+        updateGalaxyMap();
     }
 
     // Update crosshair less frequently to avoid interfering with UI clicks

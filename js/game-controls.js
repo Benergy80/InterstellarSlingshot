@@ -5982,22 +5982,25 @@ function createAllyShips() {
         }
         group.add(shipMesh);
 
-        // Start near the player
+        // Start in front of the player so they're visible at spawn
         const side = i === 0 ? -1 : 1;
+        const fwd = new THREE.Vector3();
+        camera.getWorldDirection(fwd);
         group.position.copy(camera.position);
-        group.position.x += side * 40;
-        group.position.z -= 30;
+        group.position.addScaledVector(fwd, 60);
+        group.position.x += side * 50;
 
         group.userData = {
             type: 'ally',
             name: i === 0 ? 'Wingman Alpha' : 'Wingman Beta',
             health: 80,
             maxHealth: 80,
-            speed: 2.5,
+            speed: 4.0,
             firingRange: 400,
             detectionRange: 2500,
+            leashRadius: 300,
             lastAttack: 0,
-            formationOffset: new THREE.Vector3(side * 40, (Math.random() - 0.5) * 10, -30),
+            formationOffset: new THREE.Vector3(side * 50, (Math.random() - 0.5) * 10, 40),
             shieldActive: false,
             shieldCooldown: 0,
             currentTarget: null,
@@ -6060,8 +6063,11 @@ function updateAllyShips() {
 
         ud.currentTarget = nearestEnemy;
 
-        if (nearestEnemy && nearestDist < ud.firingRange) {
-            // Combat: move toward enemy and fire
+        const distToPlayer = ally.position.distanceTo(playerPos);
+        const leash = ud.leashRadius || 300;
+
+        if (nearestEnemy && nearestDist < ud.firingRange && distToPlayer < leash) {
+            // Combat: move toward enemy and fire (only if within leash of player)
             const enemyPos = nearestEnemy.position ? nearestEnemy.position : new THREE.Vector3();
             _allyDir.subVectors(enemyPos, ally.position).normalize();
             ally.position.addScaledVector(_allyDir, ud.speed * 0.8);
@@ -6073,7 +6079,6 @@ function updateAllyShips() {
                     const color = ud.name === 'Wingman Alpha' ? '#00ff88' : '#88aaff';
                     createLaserBeam(ally.position.clone(), enemyPos.clone(), color, false);
 
-                    // Apply damage
                     if (nearestEnemy.userData) {
                         nearestEnemy.userData.health -= 1;
                         if (typeof flashEnemyHit === 'function') flashEnemyHit(nearestEnemy, 1);
@@ -6081,14 +6086,29 @@ function updateAllyShips() {
                 }
             }
         } else {
-            // Follow player in formation
+            // Follow player in formation — snap back faster when far away
             _allyDir.subVectors(_allyTarget, ally.position);
             const distToFormation = _allyDir.length();
             if (distToFormation > 5) {
                 _allyDir.normalize();
-                const moveSpeed = Math.min(ud.speed, distToFormation * 0.05);
+                let moveSpeed;
+                if (distToPlayer > leash) {
+                    moveSpeed = ud.speed * 3;
+                } else if (distToFormation > 100) {
+                    moveSpeed = ud.speed * 1.5;
+                } else {
+                    moveSpeed = Math.min(ud.speed, distToFormation * 0.1);
+                }
                 ally.position.addScaledVector(_allyDir, moveSpeed);
             }
+        }
+
+        // Hard teleport if somehow way too far (e.g. after warp)
+        if (distToPlayer > leash * 3) {
+            const fwd = new THREE.Vector3();
+            camera.getWorldDirection(fwd);
+            ally.position.copy(playerPos).addScaledVector(fwd, 40);
+            ally.position.x += (ud.name === 'Wingman Alpha' ? -50 : 50);
         }
 
         // Face movement direction
