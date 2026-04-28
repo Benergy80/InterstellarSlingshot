@@ -5608,11 +5608,9 @@ if (typeof window !== 'undefined') {
     window.updateMissiles = updateMissiles;
     window.updateMissileUI = updateMissileUI;
 
-    // Borg systems
+    // Borg systems (spawnBorgCube/spawnBorgDrone moved to outer-systems.js)
     window.checkBorgSpawn = checkBorgSpawn;
     window.updateBorgBehavior = updateBorgBehavior;
-    window.spawnBorgCube = spawnBorgCube;
-    window.spawnBorgDrone = spawnBorgDrone;
     window.sendBorgCommunication = sendBorgCommunication;
     window.handleBorgCubeDestruction = handleBorgCubeDestruction;
 
