@@ -8382,17 +8382,17 @@ function createEnemies3D() {
     }
     
     // Create local galaxy enemies (Martian Pirates) — patrol in groups of 3
-    const localSystemOffset = { x: 2000, y: 0, z: 1200 };
+    // Positioned within the inner Sol system so players encounter them early
     const patrolGroupCount = 4;
     const piratesPerGroup = 3;
     let pirateIndex = 0;
     for (let g = 0; g < patrolGroupCount; g++) {
-        const groupDistance = 1800 + Math.random() * 1200;
+        const groupDistance = 800 + Math.random() * 1200;
         const groupAngle = (g / patrolGroupCount) * Math.PI * 2 + Math.random() * 0.3;
         const groupCenter = new THREE.Vector3(
-            localSystemOffset.x + Math.cos(groupAngle) * groupDistance,
-            localSystemOffset.y + (Math.random() - 0.5) * 200,
-            localSystemOffset.z + Math.sin(groupAngle) * groupDistance
+            Math.cos(groupAngle) * groupDistance,
+            (Math.random() - 0.5) * 100,
+            Math.sin(groupAngle) * groupDistance
         );
 
         for (let p = 0; p < piratesPerGroup; p++) {
@@ -8447,7 +8447,7 @@ function createEnemies3D() {
                 patrolCenter: groupCenter.clone(),
                 patrolRadius: groupDistance,
                 lastAttack: 0,
-                isActive: false,
+                isActive: true,
                 visible: true,
                 galaxyId: 7,
                 galaxyColor: 0xff4444,

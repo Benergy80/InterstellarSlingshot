@@ -747,7 +747,7 @@ function detectEnemiesInRegion() {
                 if (galaxyIds.length === 1 && galaxyIds[0] >= 0 && typeof galaxyTypes !== 'undefined') {
                     const galaxyType = galaxyTypes[galaxyIds[0]];
                     detectorTextNode.textContent = `${galaxyType.faction} Hostiles: `;
-                } else if (galaxyIds.includes(-1)) {
+                } else if (galaxyIds.includes(-1) || galaxyIds.includes(7)) {
                     detectorTextNode.textContent = 'Martian Pirates: ';
                 } else {
                     detectorTextNode.textContent = 'Active Hostiles: ';
