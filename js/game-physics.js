@@ -65,7 +65,14 @@ function orientTowardsTarget(target) {
     orientTowardsTarget._quat.setFromAxisAngle(_ortAxis, rotationAmount);
     orientTowardsTarget._curQ.copy(camera.quaternion);
     camera.quaternion.multiplyQuaternions(orientTowardsTarget._quat, orientTowardsTarget._curQ);
-    
+
+    // Feed the yaw component into rotationalVelocity so the ship-bank
+    // effect fires during auto-orient (same visual as arrow-key steering).
+    if (typeof rotationalVelocity !== 'undefined') {
+        const yawComponent = _ortAxis.y * rotationAmount;
+        rotationalVelocity.yaw += (yawComponent - rotationalVelocity.yaw) * 0.15;
+    }
+
     // Update tracking for compatibility
     cameraRotationTracking.x = camera.rotation.x;
     cameraRotationTracking.y = camera.rotation.y;
