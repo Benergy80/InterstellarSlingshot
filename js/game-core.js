@@ -1060,6 +1060,10 @@ if (typeof areModelsLoaded === 'function' && areModelsLoaded()) {
             if (typeof distressBeaconSystem !== 'undefined' && distressBeaconSystem.initialize) {
                 distressBeaconSystem.initialize();
             }
+            // Deploy ally wingmen
+            if (typeof createAllyShips === 'function') {
+                createAllyShips();
+            }
         }).catch(err => {
             console.warn('⚠️ Model loading error, creating enemies with fallback geometry:', err);
             // Even if models fail to load, still create enemies (they'll use fallback geometry)
@@ -1091,6 +1095,10 @@ if (typeof areModelsLoaded === 'function' && areModelsLoaded()) {
             if (typeof distressBeaconSystem !== 'undefined' && distressBeaconSystem.initialize) {
                 distressBeaconSystem.initialize();
             }
+            // Deploy ally wingmen
+            if (typeof createAllyShips === 'function') {
+                createAllyShips();
+            }
         });
     } else {
         // If loadAllModels isn't available, just create enemies normally
@@ -1102,6 +1110,10 @@ if (typeof areModelsLoaded === 'function' && areModelsLoaded()) {
         if (typeof spawnBlackHoleGuardians === 'function') {
             spawnBlackHoleGuardians();
             console.log('Black Hole Guardians spawned');
+        }
+        // Deploy ally wingmen
+        if (typeof createAllyShips === 'function') {
+            createAllyShips();
         }
     }
 }
@@ -2052,8 +2064,8 @@ if (gameState.frameCount % 5 === 0 && typeof checkCosmicFeatureInteractions === 
         if (typeof updateUI === 'function') updateUI();
         if (typeof updateCompass === 'function') updateCompass();
     }
-    // Map is heavier (DOM queries) — update every 10 frames (~6 Hz)
-    if (gameState.frameCount % 10 === 0 && typeof updateGalaxyMap === 'function') {
+    // Map updates every 3 frames (~20 Hz) for smooth player marker movement
+    if (gameState.frameCount % 3 === 0 && typeof updateGalaxyMap === 'function') {
         updateGalaxyMap();
     }
 

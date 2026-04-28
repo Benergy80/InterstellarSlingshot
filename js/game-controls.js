@@ -5980,13 +5980,14 @@ function createAllyShips() {
         }
         group.add(shipMesh);
 
-        // Start in front of the player so they're visible at spawn
+        // Spawn in formation: to the side and slightly behind player, in player-local space
         const side = i === 0 ? -1 : 1;
         const fwd = new THREE.Vector3();
         camera.getWorldDirection(fwd);
-        group.position.copy(camera.position);
-        group.position.addScaledVector(fwd, 60);
-        group.position.x += side * 50;
+        const right = new THREE.Vector3().crossVectors(fwd, new THREE.Vector3(0, 1, 0)).normalize();
+        group.position.copy(camera.position)
+            .addScaledVector(right, side * 60)
+            .addScaledVector(fwd, -30);
 
         group.userData = {
             type: 'ally',
@@ -5996,9 +5997,10 @@ function createAllyShips() {
             speed: 4.0,
             firingRange: 400,
             detectionRange: 2500,
-            leashRadius: 300,
+            leashRadius: 400,
             lastAttack: 0,
-            formationOffset: new THREE.Vector3(side * 50, (Math.random() - 0.5) * 10, 40),
+            // formationOffset = (side, vertical, forward) in player-local space
+            formationOffset: new THREE.Vector3(side * 60, -5, -30),
             shieldActive: false,
             shieldCooldown: 0,
             currentTarget: null,
@@ -6020,13 +6022,24 @@ function updateAllyShips() {
     const playerPos = camera.position;
     const now = Date.now();
 
+    // Build player-relative basis so wingmen stay alongside as the player turns
+    const playerFwd = new THREE.Vector3();
+    camera.getWorldDirection(playerFwd);
+    const worldUp = new THREE.Vector3(0, 1, 0);
+    const playerRight = new THREE.Vector3().crossVectors(playerFwd, worldUp).normalize();
+    const playerUp = new THREE.Vector3().crossVectors(playerRight, playerFwd).normalize();
+
     allyShips.forEach(ally => {
         if (!ally || ally.userData.health <= 0) return;
 
         const ud = ally.userData;
 
-        // Formation position relative to player
-        _allyTarget.copy(playerPos).add(ud.formationOffset);
+        // Formation target = player position + (right * sideOffset) + (up * vOffset) + (fwd * forwardOffset)
+        // formationOffset stores (x=side, y=vertical, z=forward) in player-local space
+        _allyTarget.copy(playerPos)
+            .addScaledVector(playerRight, ud.formationOffset.x)
+            .addScaledVector(playerUp, ud.formationOffset.y)
+            .addScaledVector(playerFwd, ud.formationOffset.z);
 
         // Find nearest enemy to engage
         let nearestEnemy = null;
@@ -6084,29 +6097,19 @@ function updateAllyShips() {
                 }
             }
         } else {
-            // Follow player in formation — snap back faster when far away
+            // Follow player in formation — strongly bias toward target to keep up with cruising player
             _allyDir.subVectors(_allyTarget, ally.position);
             const distToFormation = _allyDir.length();
-            if (distToFormation > 5) {
-                _allyDir.normalize();
-                let moveSpeed;
-                if (distToPlayer > leash) {
-                    moveSpeed = ud.speed * 3;
-                } else if (distToFormation > 100) {
-                    moveSpeed = ud.speed * 1.5;
-                } else {
-                    moveSpeed = Math.min(ud.speed, distToFormation * 0.1);
-                }
-                ally.position.addScaledVector(_allyDir, moveSpeed);
+            if (distToFormation > 1) {
+                // Use proportional control so far-away wingmen close fast while near ones settle smoothly
+                const lerpFactor = Math.min(0.25, distToFormation / 200);
+                ally.position.addScaledVector(_allyDir, lerpFactor);
             }
         }
 
-        // Hard teleport if somehow way too far (e.g. after warp)
-        if (distToPlayer > leash * 3) {
-            const fwd = new THREE.Vector3();
-            camera.getWorldDirection(fwd);
-            ally.position.copy(playerPos).addScaledVector(fwd, 40);
-            ally.position.x += (ud.name === 'Wingman Alpha' ? -50 : 50);
+        // Hard teleport if somehow way too far (e.g. after warp or initial spawn drift)
+        if (distToPlayer > leash * 1.5) {
+            ally.position.copy(_allyTarget);
         }
 
         // Face movement direction
