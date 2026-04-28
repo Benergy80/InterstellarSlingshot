@@ -1059,11 +1059,10 @@
     }
   }
 
-  // ─── 3) Target a planet in the cluster, orbit, unlock discovery ──────────
+  // ─── 3) Fly to the nebula center, wait for dotted-line discovery path ────
   function phaseOrbitNebulaPlanet() {
     const t = elapsed();
     ensureShieldsFor('travel');
-    // Stay in 3rd person throughout the demo
     ensureThirdPerson();
 
     // Break off to pursue any detected hostile
@@ -1072,47 +1071,66 @@
       ap.combatTarget = intruder;
       ap.combatMissileFired = false;
       ap.returnPhase = 'orbitNebulaPlanet';
-      if (!ap._tacticalMsgShown) {
-        ap._tacticalMsgShown = true;
-        transmit('TACTICAL', 'Hostile contact during survey!\nEngaging intruder — orbit paused.');
-      }
       goPhase('combat');
       return;
     }
 
-    if (!ap.orbitTarget) {
-      // Prefer a real planet near the nebula; fall back to the nebula itself
-      ap.orbitTarget =
-        (ap.currentNebula && planetNear(ap.currentNebula.position, 8000)) ||
-        (ap.currentNebula ? { position: ap.currentNebula.position.clone(), userData: { name: ap.currentNebula.userData.name || 'Nebula Core', radius: 120 } } : pickPlanet());
-
-      if (ap.orbitTarget) {
-        const nm = ap.orbitTarget.userData ? ap.orbitTarget.userData.name : 'nebula planet';
-        setStatus('Targeting ' + nm + ' for orbital survey');
-        transmit('NAVIGATION SYSTEM', 'Target locked: ' + nm + '\nEstablishing orbital trajectory.\nPerforming science scans.');
-        gameState.currentTarget = ap.orbitTarget;
-      }
+    // Target is always the nebula center, not a nearby planet
+    if (!ap.orbitTarget && ap.currentNebula) {
+      ap.orbitTarget = {
+        position: ap.currentNebula.position.clone(),
+        userData: { name: ap.currentNebula.userData.name || 'Nebula Core', radius: 120 }
+      };
+      const nm = ap.orbitTarget.userData.name;
+      setStatus('Navigating to ' + nm + ' center');
+      transmit('NAVIGATION SYSTEM', 'Target locked: ' + nm + '\nProceeding to nebula center.\nAwaiting intel transmission.');
+      gameState.currentTarget = ap.orbitTarget;
+      ap._pathCountAtEntry = (window.discoveryPaths || []).length;
     }
 
-    // Auto-nav handles approach and orbital circularization
-    if (ap.orbitTarget) {
-      const dist = camPos().distanceTo(ap.orbitTarget.position);
-      if (dist > 600) {
-        setStatus('Approaching ' + (ap.orbitTarget.userData.name || 'planet'));
-        flyToward(ap.orbitTarget, 1.2);
+    const nebCenter = ap.orbitTarget ? ap.orbitTarget.position : (ap.currentNebula ? ap.currentNebula.position : null);
+    if (!nebCenter) { goPhase('gotoBlackHoleGalaxy'); return; }
+
+    const dist = camPos().distanceTo(nebCenter);
+    const speed = gameState.velocityVector ? gameState.velocityVector.length() : 0;
+
+    // Fly toward nebula center, braking progressively
+    if (dist > 200) {
+      setStatus('Approaching nebula center — ' + (dist | 0) + ' u');
+      if (dist > 1000) {
+        flyToward(ap.orbitTarget, 1.6);
       } else {
-        setStatus('Slow orbit — ' + (ap.orbitTarget.userData.name || 'planet'));
-        orbitAround(ap.orbitTarget);
+        // Close approach — brake down for precision
+        gameState.autoNavigating = false;
+        if (window.orientTowardsTarget) window.orientTowardsTarget(ap.orbitTarget);
+        if (speed > 0.8) {
+          keys().x = true;
+        } else if (dist > 300) {
+          keys().w = true;
+        }
       }
+    } else {
+      // At the center — drift slowly and wait for the discovery path
+      setStatus('Scanning nebula center…');
+      if (speed > 0.3) keys().x = true;
     }
 
-    // Force discovery after we've been orbiting a while
-    if (t > 12000 && typeof checkForNebulaDeepDiscovery === 'function') {
+    // The game's physics calls checkForNebulaDeepDiscovery() every 15
+    // frames, but nudge it if we've been at the center for a while
+    if (t > 6000 && typeof checkForNebulaDeepDiscovery === 'function') {
       checkForNebulaDeepDiscovery();
     }
 
-    // Move on to follow the dotted line after 20 s of orbits
-    if (t > 20000) {
+    // Check if a NEW discovery path appeared since we entered this phase
+    const paths = window.discoveryPaths || [];
+    if (paths.length > (ap._pathCountAtEntry || 0)) {
+      transmit('NAVIGATION', 'Dotted-line path detected!\nFollowing discovery route.');
+      goPhase('followDiscoveryPath');
+      return;
+    }
+
+    // Safety timeout — path may not appear if nebula was already discovered
+    if (t > 25000) {
       goPhase('followDiscoveryPath');
     }
   }
@@ -1961,16 +1979,23 @@
     return true;
   }
 
-  // Gravitational slingshot — the preferred interstellar travel method.
-  // Only works within 60 u of a planet (game checks this).  Call
-  // executeSlingshot() directly since the autopilot has already
-  // positioned the ship and aligned the camera.
+  // Gravitational slingshot — simulate pressing Enter so the game's own
+  // "SLINGSHOT READY" handler fires, then fall back to a direct call.
   function triggerSlingshot() {
     if (gameState.energy < 20) return false;
     if (gameState.slingshot && gameState.slingshot.active) return false;
-    if (typeof executeSlingshot !== 'function') return false;
-    executeSlingshot();
-    return true;
+    // Simulate Enter key press (same input a human player uses)
+    document.dispatchEvent(new KeyboardEvent('keydown', {
+      key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true
+    }));
+    // If the event handler fired, slingshot is now active
+    if (gameState.slingshot && gameState.slingshot.active) return true;
+    // Fallback: call executeSlingshot directly
+    if (typeof executeSlingshot === 'function') {
+      executeSlingshot();
+      return !!(gameState.slingshot && gameState.slingshot.active);
+    }
+    return false;
   }
 
   // Legacy alias — callers that just need "any warp" can use this.

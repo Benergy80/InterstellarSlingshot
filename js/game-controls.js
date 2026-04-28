@@ -6019,8 +6019,21 @@ function createAllyShips() {
     console.log('🛡️ 2 ally wingmen deployed — independent patrol mode');
 }
 
-// Pick a random non-asteroid planet in the local Sol system as a patrol waypoint
-function _pickPatrolWaypoint(excludePos) {
+// Pick a patrol waypoint.  When the player is in a home system, bias
+// the waypoint toward the player so wingmen swarm within ~500 u.
+function _pickPatrolWaypoint(excludePos, attractPos) {
+    // If we have a player position to attract toward, pick a random
+    // offset within 300-500 u of that position for natural-looking cover.
+    if (attractPos) {
+        const angle = Math.random() * Math.PI * 2;
+        const dist = 200 + Math.random() * 300;
+        return new THREE.Vector3(
+            attractPos.x + Math.cos(angle) * dist,
+            attractPos.y + (Math.random() - 0.5) * 40,
+            attractPos.z + Math.sin(angle) * dist
+        );
+    }
+
     if (typeof planets === 'undefined') return new THREE.Vector3(Math.random() * 4000 - 2000, 0, Math.random() * 4000 - 2000);
     const candidates = [];
     for (let i = 0; i < planets.length; i++) {
@@ -6033,10 +6046,8 @@ function _pickPatrolWaypoint(excludePos) {
         candidates.push(p);
     }
     if (!candidates.length) return new THREE.Vector3(1000, 0, 1000);
-    // Weighted random — favour planets far from current excludePos
     if (excludePos) {
         candidates.sort((a, b) => b.position.distanceTo(excludePos) - a.position.distanceTo(excludePos));
-        // Pick from top half for variety
         const pick = candidates[Math.floor(Math.random() * Math.min(candidates.length, Math.ceil(candidates.length / 2)))];
         return pick.position.clone();
     }
@@ -6072,11 +6083,30 @@ function _scanForEnemy(ally) {
     return nearest;
 }
 
+function _isPlayerInHomeSystem() {
+    if (typeof camera === 'undefined') return false;
+    const cp = camera.position;
+    // Sol system: within ~7000u of origin
+    if (cp.length() < 7000) return true;
+    // Sagittarius A: check for nearby galactic-center black hole
+    if (typeof planets !== 'undefined') {
+        for (let i = 0; i < planets.length; i++) {
+            const p = planets[i];
+            if (p && p.userData && (p.userData.isSagittariusA || p.userData.isGalacticCenter)) {
+                if (cp.distanceTo(p.position) < 7000) return true;
+            }
+        }
+    }
+    return false;
+}
+
 function updateAllyShips() {
     if (!allyShips.length || typeof camera === 'undefined' || typeof THREE === 'undefined') return;
     if (!gameState || !gameState.gameStarted || gameState.gameOver) return;
 
     const now = Date.now();
+    const playerPos = camera.position;
+    const playerInHome = _isPlayerInHomeSystem();
 
     allyShips.forEach(ally => {
         if (!ally || ally.userData.health <= 0) return;
@@ -6084,6 +6114,7 @@ function updateAllyShips() {
         const ud = ally.userData;
         const pos = ally.position;
         const distFromOrigin = pos.length();
+        const distToPlayer = pos.distanceTo(playerPos);
 
         // ── Enemy scan (every call, ~30 Hz) ──────────────────────────────
         const threat = _scanForEnemy(ally);
@@ -6093,6 +6124,10 @@ function updateAllyShips() {
             if (threat) {
                 ud.aiState = 'engage';
                 ud.engageTarget = threat;
+            } else if (playerInHome && distToPlayer > 500) {
+                // Player is in a home system but wingman drifted too far —
+                // pick a new waypoint near the player to close the gap
+                ud.patrolTarget = null;
             } else if (distFromOrigin > ud.systemRadius) {
                 ud.aiState = 'return';
                 ud.patrolTarget = null;
@@ -6127,7 +6162,7 @@ function updateAllyShips() {
         } else if (ud.aiState === 'return') {
             _executeReturn(ally, ud);
         } else {
-            _executePatrol(ally, ud, now);
+            _executePatrol(ally, ud, now, playerInHome ? playerPos : null);
         }
 
         // ── Face movement direction ──────────────────────────────────────
@@ -6145,10 +6180,10 @@ function updateAllyShips() {
     });
 }
 
-// ── Patrol: cruise between Sol-system planets ────────────────────────────
-function _executePatrol(ally, ud, now) {
+// ── Patrol: cruise between waypoints (biased toward player in home systems)
+function _executePatrol(ally, ud, now, attractPos) {
     if (!ud.patrolTarget) {
-        ud.patrolTarget = _pickPatrolWaypoint(ally.position);
+        ud.patrolTarget = _pickPatrolWaypoint(ally.position, attractPos);
         ud.patrolArriveTime = 0;
     }
 
@@ -6162,7 +6197,7 @@ function _executePatrol(ally, ud, now) {
         ud.velocity.multiplyScalar(0.92);
         ally.position.add(ud.velocity);
         if (now - ud.patrolArriveTime > ud.patrolDwellMs) {
-            ud.patrolTarget = _pickPatrolWaypoint(ally.position);
+            ud.patrolTarget = _pickPatrolWaypoint(ally.position, attractPos);
             ud.patrolArriveTime = 0;
         }
     } else {
