@@ -2201,80 +2201,9 @@ function showVictoryScreen() {
 }
 
 function gameOver(reason) {
-    // Prevent duplicate game over screens
-    if (typeof gameState !== 'undefined') {
-        if (gameState.gameOverScreenShown) {
-            console.log('⚠️ Game over screen already shown, ignoring duplicate call');
-            return;
-        }
-        gameState.gameOver = true;
-        gameState.gameStarted = false;
-        gameState.gameOverScreenShown = true;
-    }
-
-    console.log('💀 GAME OVER - Stopping all systems');
-
-    // Stop all music
-    if (typeof musicSystem !== 'undefined') {
-        if (musicSystem.backgroundMusic) {
-            musicSystem.backgroundMusic.stop();
-            musicSystem.backgroundMusic = null;
-        }
-        if (musicSystem.battleMusic) {
-            musicSystem.battleMusic.stop();
-            musicSystem.battleMusic = null;
-        }
-    }
-
-    // Play game over music
-    if (typeof soundtrack !== 'undefined') {
-        soundtrack.stopAll();
-        soundtrack.forceTrack(Math.random() < 0.5 ? 'gameOver1' : 'gameOver2');
-    }
-
-    // Suspend synth audio but leave <audio> elements running for game over music
-    if (typeof audioContext !== 'undefined' && audioContext) {
-        audioContext.suspend();
-    }
-    
-    // Clean up any active effects
-    if (typeof cleanupEventHorizonEffects === 'function') {
-        cleanupEventHorizonEffects();
-    }
-    
-    // Clear all registered game intervals
-    if (typeof clearAllGameIntervals === 'function') clearAllGameIntervals();
-
-    const gameOverOverlay = document.createElement('div');
-    gameOverOverlay.id = 'gameOverScreen';
-    gameOverOverlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.97);display:flex;align-items:center;justify-content:center;cursor:auto;z-index:99999;pointer-events:auto;';
-    gameOverOverlay.innerHTML = `
-        <div class="text-center ui-panel rounded-lg p-6" style="cursor:auto;max-width:90vw;max-height:90vh;overflow-y:auto;background:rgba(10,15,30,0.98);border:1px solid rgba(0,150,255,0.5);border-radius:12px;padding:24px;">
-            <h1 class="text-4xl font-bold text-red-400 mb-4 glow-text cyber-title">MISSION FAILED</h1>
-            <p class="text-gray-300 mb-6">${reason}</p>
-            <div class="space-y-4">
-                <div class="text-lg text-cyan-400 glow-text">Final Stats:</div>
-                <div class="text-sm text-gray-300 space-y-1">
-                    <div>Distance Traveled: ${gameState ? gameState.distance.toFixed(1) : '0'} light years</div>
-                    <div>Final Velocity: ${gameState ? (gameState.velocity * 1000).toFixed(0) : '0'} km/s</div>
-                    <div>Energy Remaining: ${gameState ? gameState.energy.toFixed(0) : '0'}%</div>
-                    <div>Hull Integrity: ${gameState ? gameState.hull.toFixed(0) : '0'}%</div>
-                    <div>Galaxies Cleared: ${gameState ? gameState.galaxiesCleared : 0}/8</div>
-                    <div>Emergency Warps: ${gameState ? `${gameState.emergencyWarp.available}/${gameState.emergencyWarp.maxWarps}` : '0/10'}</div>
-                </div>
-                <button onclick="location.reload()" class="mt-6 space-btn rounded px-6 py-3" style="cursor:pointer;min-height:48px;">
-                    <i class="fas fa-redo mr-2"></i>Restart Mission
-                </button>
-            </div>
-        </div>
-    `;
-    document.body.appendChild(gameOverOverlay);
-    document.body.style.cursor = 'auto';
-    // Disable canvas touch events so overlay is tappable on mobile
-    const _goCanvas = document.getElementById('gameCanvas');
-    if (_goCanvas) _goCanvas.style.pointerEvents = 'none';
-    const _goBtn = gameOverOverlay.querySelector('button');
-    if (_goBtn) _goBtn.addEventListener('touchend', function(e) { e.preventDefault(); location.reload(); });
+    // Delegate to the main game over screen with full inline styles
+    showGameOverScreen('MISSION FAILED', reason || 'Ship destroyed');
+}
 
     console.log('✅ Game over screen displayed - all systems stopped');
 }
@@ -2306,55 +2235,67 @@ function showGameOverScreen(title, message) {
         }
     }
 
-    // Play game over music
     if (typeof soundtrack !== 'undefined') {
         soundtrack.stopAll();
         soundtrack.forceTrack(Math.random() < 0.5 ? 'gameOver1' : 'gameOver2');
     }
 
-    // Suspend synth audio but leave <audio> elements running for game over music
     if (typeof audioContext !== 'undefined' && audioContext) {
         audioContext.suspend();
     }
 
-    // Clean up any active effects
     if (typeof cleanupEventHorizonEffects === 'function') {
         cleanupEventHorizonEffects();
     }
 
-    // Clear all registered game intervals
     if (typeof clearAllGameIntervals === 'function') clearAllGameIntervals();
+
+    // Remove any existing game over screen first
+    const existing = document.getElementById('gameOverScreen');
+    if (existing) existing.remove();
+
+    // Build with ALL inline styles — no CSS class dependencies — so it
+    // renders correctly on mobile even if Tailwind/external CSS fails.
+    const dist = gameState ? gameState.distance.toFixed(1) : '0';
+    const vel = gameState ? (gameState.velocity * 1000).toFixed(0) : '0';
+    const nrg = gameState ? gameState.energy.toFixed(0) : '0';
+    const hull = gameState ? gameState.hull.toFixed(0) : '0';
+    const gal = gameState ? gameState.galaxiesCleared : 0;
+    const warps = gameState ? gameState.emergencyWarp.available : '0';
 
     const gameOverOverlay = document.createElement('div');
     gameOverOverlay.id = 'gameOverScreen';
-    gameOverOverlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.97);display:flex;align-items:center;justify-content:center;cursor:auto;z-index:99999;pointer-events:auto;';
+    gameOverOverlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.97);display:flex;align-items:center;justify-content:center;z-index:999999;pointer-events:auto;touch-action:auto;';
     gameOverOverlay.innerHTML = `
-        <div class="text-center ui-panel rounded-lg p-6" style="cursor:auto;max-width:90vw;max-height:90vh;overflow-y:auto;background:rgba(10,15,30,0.98);border:1px solid rgba(0,150,255,0.5);border-radius:12px;padding:24px;">
-            <h1 class="text-4xl font-bold text-red-400 mb-4 glow-text cyber-title">MISSION FAILED</h1>
-            <p class="text-gray-300 mb-6">${message || 'Ship destroyed'}</p>
-            <div class="space-y-4">
-                <div class="text-lg text-cyan-400 glow-text">Final Stats:</div>
-                <div class="text-sm text-gray-300 space-y-1">
-                    <div>Distance Traveled: ${gameState ? gameState.distance.toFixed(1) : '0'} light years</div>
-                    <div>Final Velocity: ${gameState ? (gameState.velocity * 1000).toFixed(0) : '0'} km/s</div>
-                    <div>Energy Remaining: ${gameState ? gameState.energy.toFixed(0) : '0'}%</div>
-                    <div>Hull Integrity: ${gameState ? gameState.hull.toFixed(0) : '0'}%</div>
-                    <div>Galaxies Cleared: ${gameState ? gameState.galaxiesCleared : 0}/8</div>
-                    <div>Emergency Warps Remaining: ${gameState ? gameState.emergencyWarp.available : '0'}</div>
-                </div>
-                <button onclick="location.reload()" class="mt-6 space-btn rounded px-6 py-3" style="cursor:pointer;min-height:48px;">
-                    <i class="fas fa-redo mr-2"></i>Restart Mission
-                </button>
+        <div style="text-align:center;max-width:90vw;max-height:90vh;overflow-y:auto;background:rgba(10,15,30,0.98);border:1px solid rgba(0,150,255,0.5);border-radius:12px;padding:24px;color:#fff;font-family:sans-serif;">
+            <h1 style="font-size:2rem;font-weight:bold;color:#f87171;margin-bottom:16px;text-shadow:0 0 10px rgba(248,113,113,0.5);">MISSION FAILED</h1>
+            <p style="color:#d1d5db;margin-bottom:20px;font-size:1rem;">${message || 'Ship destroyed'}</p>
+            <div style="color:#22d3ee;font-size:1.1rem;margin-bottom:12px;text-shadow:0 0 8px rgba(34,211,238,0.4);">Final Stats:</div>
+            <div style="color:#d1d5db;font-size:0.9rem;line-height:1.8;">
+                <div>Distance Traveled: ${dist} light years</div>
+                <div>Final Velocity: ${vel} km/s</div>
+                <div>Energy Remaining: ${nrg}%</div>
+                <div>Hull Integrity: ${hull}%</div>
+                <div>Galaxies Cleared: ${gal}/8</div>
+                <div>Emergency Warps Remaining: ${warps}</div>
             </div>
+            <button id="gameOverRestartBtn" style="margin-top:20px;padding:14px 28px;font-size:1rem;font-weight:bold;color:#fff;background:linear-gradient(135deg,#1e3a5f,#0d2137);border:1px solid #0ea5e9;border-radius:8px;min-height:52px;width:100%;max-width:280px;touch-action:manipulation;-webkit-tap-highlight-color:rgba(0,150,255,0.3);">
+                Restart Mission
+            </button>
         </div>
     `;
     document.body.appendChild(gameOverOverlay);
-    document.body.style.cursor = 'auto';
-    // Disable canvas touch events so overlay is tappable on mobile
+
+    // Disable the canvas so touches reach the overlay
     const _goCanvas = document.getElementById('gameCanvas');
     if (_goCanvas) _goCanvas.style.pointerEvents = 'none';
-    const _goBtn = gameOverOverlay.querySelector('button');
-    if (_goBtn) _goBtn.addEventListener('touchend', function(e) { e.preventDefault(); location.reload(); });
+
+    // Restart button — handle both click and touch
+    const _goBtn = document.getElementById('gameOverRestartBtn');
+    if (_goBtn) {
+        _goBtn.addEventListener('click', function() { location.reload(); });
+        _goBtn.addEventListener('touchend', function(e) { e.preventDefault(); location.reload(); });
+    }
 
     console.log('✅ Game over screen displayed - all systems stopped');
 }
