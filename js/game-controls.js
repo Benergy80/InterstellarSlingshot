@@ -6175,9 +6175,11 @@ function updateAllyShips() {
         }
 
         // ── Face movement direction ──────────────────────────────────────
+        // lookAt points -Z toward the target; negate so the ship's +Z
+        // (model forward) faces the travel direction.
         if (_allyDir.lengthSq() > 0.001) {
             const lookMat = new THREE.Matrix4().lookAt(
-                pos, pos.clone().add(_allyDir), new THREE.Vector3(0, 1, 0));
+                pos, pos.clone().sub(_allyDir), new THREE.Vector3(0, 1, 0));
             const targetQuat = new THREE.Quaternion().setFromRotationMatrix(lookMat);
             ally.quaternion.slerp(targetQuat, 0.06);
         }
