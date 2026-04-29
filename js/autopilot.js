@@ -461,6 +461,22 @@
       shootNearbyAsteroids();
     }
 
+    // ── Close-range intercept: never pass up an enemy within 600u ────
+    // Applies to all non-combat, non-warp phases so the demo doesn't
+    // fly past hostiles at mouse-targeting range.
+    if (!_warpActive &&
+        ap.phase !== 'combat' && ap.phase !== 'fightBorg' &&
+        ap.phase !== 'init' && ap.phase !== 'blackHoleWarp' &&
+        ap.phase !== 'mineAsteroids') {
+      const closeEnemy = nearestAliveEnemy(600);
+      if (closeEnemy) {
+        ap.combatTarget = closeEnemy;
+        ap.combatMissileFired = false;
+        ap.returnPhase = ap.returnPhase || ap.phase || 'findLocalEnemies';
+        goPhase('combat');
+      }
+    }
+
     // Dispatch
     switch (ap.phase) {
       case 'init':                     phaseInit();                   break;
@@ -643,14 +659,9 @@
       }
     }
 
-    // Scan-timeout fallback.  On the first leg (no BH warps yet) the
-    // objective is the black-hole galaxy after 5 kills; after the first
-    // BH warp the objective is the nearest nebula via interstellar
-    // slingshot after 3 kills.  If nothing has been killed yet, keep
-    // scanning indefinitely.
-    const firstLeg = (ap.warpsUsed || 0) === 0;
-    const killTarget = firstLeg ? 5 : 3;
-    if (t > 18000 && ap.enemiesKilled >= killTarget) {
+    // Only transition when ALL local enemies are cleared
+    if (t > 8000 && _countLocalEnemies() === 0 && ap.enemiesKilled >= 3) {
+      const firstLeg = (ap.warpsUsed || 0) === 0;
       goPhase(firstLeg ? 'gotoBlackHoleGalaxy' : 'warpToNebulaCluster');
     }
   }
@@ -688,13 +699,14 @@
 
       ap._killCooldownUntil = Date.now() + 1000;
 
-      // Determine what comes after the breather
+      // Only leave for the next galaxy when ALL local enemies are cleared.
+      // On the first leg we go to a black hole; after warps we go to nebulas.
       let nextPhaseAfterKill = ap.returnPhase || 'findLocalEnemies';
       if (ap.returnPhase === 'findLocalEnemies') {
-        const firstLeg = (ap.warpsUsed || 0) === 0;
-        const killTarget = firstLeg ? 5 : 3;
-        if (ap.segmentKills >= killTarget) {
+        const localAlive = _countLocalEnemies();
+        if (localAlive === 0) {
           ap.segmentKills = 0;
+          const firstLeg = (ap.warpsUsed || 0) === 0;
           nextPhaseAfterKill = firstLeg ? 'gotoBlackHoleGalaxy' : 'warpToNebulaCluster';
         }
       }
@@ -1111,10 +1123,13 @@
     const distToNebula = camPos().distanceTo(ap.currentNebula.position);
     setStatus('Coasting to nebula — ' + (distToNebula | 0) + ' units');
 
-    // Brake within 1000 u of the nebula center
+    // Brake within 1000 u of the nebula center, orient toward it
     const NEBULA_BRAKE_RANGE = 1000;
     if (distToNebula < NEBULA_BRAKE_RANGE) {
-      setStatus('Nebula cluster — braking');
+      setStatus('Nebula cluster — braking (' + (distToNebula | 0) + ' u)');
+      if (window.orientTowardsTarget) {
+        window.orientTowardsTarget({ position: ap.currentNebula.position });
+      }
       if (!ap.brakingAfterWarp) {
         ap.brakingAfterWarp = true;
         ensureThirdPerson();
@@ -1271,96 +1286,41 @@
     if (t > 60000) goPhase('gotoBlackHoleGalaxy');
   }
 
-  // ─── 5) Travel to a black hole galaxy and fight enemies there ────────────
+  // ─── 5) Fly directly to the nearest black hole and warp through it ───────
   function phaseGotoBlackHoleGalaxy() {
     const t = elapsed();
     ensureShieldsFor('travel');
     ensureThirdPerson();
 
-    // Any detected hostile → engage first
-    const intruder = navDetectedEnemy();
-    if (intruder) {
-      ap.combatTarget = intruder;
-      ap.combatMissileFired = false;
-      ap.returnPhase = 'gotoBlackHoleGalaxy';
-      goPhase('combat');
-      return;
-    }
-
-    setStatus('Plotting course to black hole galaxy…');
-
     if (!ap.currentBH) {
       ap.currentBH = nearestBlackHole();
       if (!ap.currentBH) { goPhase('approachBorg'); return; }
-      transmit('NAVIGATION', 'Black hole galaxy targeted.\nCourse locked — approach in progress.');
     }
 
     const distToBH = camPos().distanceTo(ap.currentBH.position);
+    setStatus('Course to ' + (ap.currentBH.userData.name || 'black hole') + ' — ' + (distToBH | 0) + ' u');
 
-    // While approaching, fight any enemies we encounter
-    const enemy = nearestAliveEnemy(2500);
-    if (enemy && distToBH > 800) {
-      ap.combatTarget = enemy;
-      ap.returnPhase = 'gotoBlackHoleGalaxy';
-      goPhase('combat');
-      return;
-    }
-
+    // Close enough — let the physics auto-warp handle it
     if (distToBH <= 500) {
       setStatus('Event horizon — initiating warp');
       goPhase('blackHoleWarp');
-    } else if (distToBH > 2000) {
-      // Long distance — prefer interstellar slingshot, fall back to O-key
-      if (!ap._bhSlingshotPlanet) {
-        ap._bhSlingshotPlanet = pickSlingshotPlanet(ap.currentBH.position);
-      }
-      if (ap._bhSlingshotPlanet) {
-        const dtp = camPos().distanceTo(ap._bhSlingshotPlanet.position);
-        if (dtp > 55) {
-          setStatus('Slingshot approach via ' + (ap._bhSlingshotPlanet.userData.name || 'planet') + ' — ' + (dtp | 0) + ' u');
-          flyToward(ap._bhSlingshotPlanet, 2.5);
-          keys().w = true;
-        } else {
-          // At slingshot range — align toward BH and fire
-          const aimDummy = { position: ap.currentBH.position };
-          if (window.orientTowardsTarget) window.orientTowardsTarget(aimDummy);
-          let aligned = false;
-          if (_coneVec && camera) {
-            _coneVec.subVectors(ap.currentBH.position, camera.position).normalize();
-            camera.getWorldDirection(_coneFwd);
-            aligned = _coneFwd.dot(_coneVec) > 0.92;
-          }
-          setStatus(aligned ? 'SLINGSHOT to black hole!' : 'Aligning slingshot toward black hole');
-          if (aligned && triggerSlingshot()) {
-            ap._bhSlingshotPlanet = null;
-            ap.warpStartedAt = Date.now();
-          }
-        }
-      } else {
-        // No slingshot planet — O-key emergency warp with thrusters
-        setStatus('Emergency warp toward black hole — ' + (distToBH | 0));
-        flyToward(ap.currentBH, 2.5);
-        keys().w = true;
-        if (canEmergencyWarp() && t > 2000 &&
-            Date.now() - (ap._lastBHWarp || 0) > 20000) {
-          if (triggerOKeyWarp()) {
-            ap._lastBHWarp = Date.now();
-            ap.warpStartedAt = Date.now();
-          }
-        }
-      }
-    } else {
-      // Under 2000u — W double-tap to close the gap, with thrusters
-      setStatus('Approaching ' + (ap.currentBH.userData.name || 'black hole') + ' — ' + (distToBH | 0));
-      flyToward(ap.currentBH, 2.5);
-      keys().w = true;
-      if (distToBH > 800 && gameState.energy > 25 &&
-          Date.now() - (ap._lastJumpTap || 0) > 10000) {
-        ap._lastJumpTap = Date.now();
-        if (window.keys) {
-          window.keys.wDoubleTap = true;
-          setTimeout(() => { if (window.keys) window.keys.wDoubleTap = false; }, 120);
-        }
+      return;
+    }
+
+    // Orient and thrust directly — disable auto-nav which would orbit
+    gameState.autoNavigating = false;
+    gameState.autoNavOrienting = false;
+    if (window.orientTowardsTarget) window.orientTowardsTarget(ap.currentBH);
+    keys().w = true;
+    if (distToBH > 1500) keys().b = true;
+
+    // W double-tap jump to close the gap faster (800-2000u, 10s cooldown)
+    if (distToBH > 800 && distToBH < 2000 && gameState.energy > 25 &&
+        Date.now() - (ap._lastJumpTap || 0) > 10000) {
+      ap._lastJumpTap = Date.now();
+      if (window.keys) {
+        window.keys.wDoubleTap = true;
+        setTimeout(() => { if (window.keys) window.keys.wDoubleTap = false; }, 120);
       }
     }
   }
@@ -2285,6 +2245,20 @@
     return best;
   }
 
+  // Count alive local-galaxy enemies (non-boss, non-guardian)
+  function _countLocalEnemies() {
+    if (typeof enemies === 'undefined') return 0;
+    let count = 0;
+    for (let i = 0; i < enemies.length; i++) {
+      const e = enemies[i];
+      if (!e || !e.userData || e.userData.health <= 0) continue;
+      if (e.userData.isBoss || e.userData.isBossSupport || e.userData.isBlackHoleGuardian) continue;
+      if (!e.userData.isLocal) continue;
+      count++;
+    }
+    return count;
+  }
+
   // "Navigation System detected" — matches game-ui.js populateTargets() ranges:
   //   regular enemies: 3000 units   (black-hole guardians: 10000 units)
   // Cached for ~15 frames to avoid scanning the full enemies array every frame.
@@ -2334,14 +2308,18 @@
 
   function nearestBlackHole() {
     if (typeof planets === 'undefined') return null;
-    let best = null, bestDist = Infinity;
+    // Prefer the local gateway for the first warp — it's the Sol system
+    // exit.  After that, pick the nearest black hole from current position.
+    const cp = camPos();
+    let gateway = null, best = null, bestDist = Infinity;
     planets.forEach(p => {
-      if (p.userData && p.userData.type === 'blackhole') {
-        const d = camPos().distanceTo(p.position);
-        if (d < bestDist) { bestDist = d; best = p; }
-      }
+      if (!p.userData || p.userData.type !== 'blackhole') return;
+      if (p.userData.isLocalGateway) gateway = p;
+      const d = cp.distanceTo(p.position);
+      if (d < bestDist) { bestDist = d; best = p; }
     });
-    return best;
+    const firstLeg = (ap.warpsUsed || 0) === 0;
+    return (firstLeg && gateway) ? gateway : best;
   }
 
   function nearestAsteroidBelt() {
