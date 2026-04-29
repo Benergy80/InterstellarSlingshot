@@ -461,21 +461,6 @@
       shootNearbyAsteroids();
     }
 
-    // ── Close-range intercept: never pass up an enemy within 600u ────
-    if (!_warpActive &&
-        ap.phase !== 'combat' && ap.phase !== 'fightBorg' &&
-        ap.phase !== 'init' && ap.phase !== 'blackHoleWarp' &&
-        ap.phase !== 'mineAsteroids') {
-      const closeEnemy = nearestAliveEnemy(600);
-      if (closeEnemy) {
-        ap.combatTarget = closeEnemy;
-        ap.combatMissileFired = false;
-        // Always return to findLocalEnemies so we keep hunting
-        ap.returnPhase = 'findLocalEnemies';
-        goPhase('combat');
-      }
-    }
-
     // Dispatch
     switch (ap.phase) {
       case 'init':                     phaseInit();                   break;
@@ -486,8 +471,6 @@
       case 'coastToNebulaCluster':     phaseCoastToNebulaCluster();   break;
       case 'orbitNebulaPlanet':        phaseOrbitNebulaPlanet();      break;
       case 'followDiscoveryPath':      phaseFollowDiscoveryPath();    break;
-      case 'gotoBlackHoleGalaxy':      phaseGotoBlackHoleGalaxy();    break;
-      case 'blackHoleWarp':            phaseBlackHoleWarp();          break;
       case 'coastAfterWarp':           phaseCoastAfterWarp();         break;
       case 'approachBorg':             phaseApproachBorg();           break;
       case 'fightBorg':                phaseFightBorg();              break;
@@ -501,13 +484,12 @@
   // ─── Phases ───────────────────────────────────────────────────────────────
   //
   // Goal order:
-  //   1) findLocalEnemies → combat (repeats until 3+ ships destroyed)
-  //   2) warpToNebulaCluster (emergency warp) → coastToNebulaCluster
+  //   1) findLocalEnemies → combat (repeats until all local enemies cleared)
+  //   2) warpToNebulaCluster (slingshot or emergency warp) → coastToNebulaCluster
   //   3) orbitNebulaPlanet → triggers deep discovery → followDiscoveryPath
   //   4) combat at revealed location (combat with returnPhase)
-  //   5) gotoBlackHoleGalaxy → combat at galaxy → blackHoleWarp
-  //   6) coastAfterWarp → combat loop in new galaxy (repeats a few times)
-  //   7) approachBorg → fightBorg → reset & loop
+  //   5) loop: warpToNebulaCluster → explore → combat
+  //   6) approachBorg → fightBorg → reset & loop
   // ─────────────────────────────────────────────────────────────────────────
 
   function phaseInit() {
@@ -660,8 +642,7 @@
 
     // Only transition when ALL local enemies are cleared
     if (t > 8000 && _countLocalEnemies() === 0 && ap.enemiesKilled >= 3) {
-      const firstLeg = (ap.warpsUsed || 0) === 0;
-      goPhase(firstLeg ? 'gotoBlackHoleGalaxy' : 'warpToNebulaCluster');
+      goPhase('warpToNebulaCluster');
     }
   }
 
@@ -709,7 +690,7 @@
       } else {
         ap.segmentKills = 0;
         const firstLeg = (ap.warpsUsed || 0) === 0;
-        nextPhaseAfterKill = firstLeg ? 'gotoBlackHoleGalaxy' : 'warpToNebulaCluster';
+        nextPhaseAfterKill = 'warpToNebulaCluster';
       }
 
       // Mine nearby asteroids for hull if damaged, before moving on
@@ -898,7 +879,7 @@
     // emergency-warp fallback need it.
     if (!ap.currentNebula) {
       const neb = nearestNebula();
-      if (!neb) { goPhase('gotoBlackHoleGalaxy'); return; }
+      if (!neb) { goPhase('warpToNebulaCluster'); return; }
       ap.currentNebula = neb;
     }
 
@@ -1117,7 +1098,7 @@
     const speed = speedNow;
 
     if (!ap.currentNebula) {
-      goPhase('gotoBlackHoleGalaxy');
+      goPhase('warpToNebulaCluster');
       return;
     }
 
@@ -1190,7 +1171,7 @@
     }
 
     const nebCenter = ap.orbitTarget ? ap.orbitTarget.position : (ap.currentNebula ? ap.currentNebula.position : null);
-    if (!nebCenter) { goPhase('gotoBlackHoleGalaxy'); return; }
+    if (!nebCenter) { goPhase('warpToNebulaCluster'); return; }
 
     const dist = camPos().distanceTo(nebCenter);
     const speed = gameState.velocityVector ? gameState.velocityVector.length() : 0;
@@ -1274,17 +1255,17 @@
         } else {
           // Cleared — move to black hole galaxy phase
           ap.segmentKills = 0;
-          goPhase('gotoBlackHoleGalaxy');
+          goPhase('warpToNebulaCluster');
         }
         return;
       }
     } else {
       // No active path — just look for enemies or move on
-      if (t > 3000) goPhase('gotoBlackHoleGalaxy');
+      if (t > 3000) goPhase('warpToNebulaCluster');
     }
 
     // Safety timeout
-    if (t > 60000) goPhase('gotoBlackHoleGalaxy');
+    if (t > 60000) goPhase('warpToNebulaCluster');
   }
 
   // ─── 5) Fly directly to the nearest black hole and warp through it ───────
@@ -1520,7 +1501,7 @@
 
     if (t > 30000) {
       ap.brakingAfterWarp = false;
-      ap.returnPhase = 'gotoBlackHoleGalaxy';
+      ap.returnPhase = 'warpToNebulaCluster';
       goPhase('findLocalEnemies');
     }
   }
