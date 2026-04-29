@@ -462,8 +462,6 @@
     }
 
     // ── Close-range intercept: never pass up an enemy within 600u ────
-    // Applies to all non-combat, non-warp phases so the demo doesn't
-    // fly past hostiles at mouse-targeting range.
     if (!_warpActive &&
         ap.phase !== 'combat' && ap.phase !== 'fightBorg' &&
         ap.phase !== 'init' && ap.phase !== 'blackHoleWarp' &&
@@ -472,7 +470,8 @@
       if (closeEnemy) {
         ap.combatTarget = closeEnemy;
         ap.combatMissileFired = false;
-        ap.returnPhase = ap.returnPhase || ap.phase || 'findLocalEnemies';
+        // Always return to findLocalEnemies so we keep hunting
+        ap.returnPhase = 'findLocalEnemies';
         goPhase('combat');
       }
     }
@@ -622,7 +621,7 @@
       if (d < 2200) {
         ap.combatTarget = detected;
         ap.combatMissileFired = false;
-        // TACTICAL transmission only fires ONCE per game session
+        ap.returnPhase = 'findLocalEnemies';
         if (!ap._tacticalMsgShown) {
           ap._tacticalMsgShown = true;
           transmit('TACTICAL', 'Nav system contact confirmed!\nHostile: ' + (detected.userData.name || 'Unknown') + '\nWeapon systems online.');
@@ -699,16 +698,18 @@
 
       ap._killCooldownUntil = Date.now() + 1000;
 
-      // Only leave for the next galaxy when ALL local enemies are cleared.
-      // On the first leg we go to a black hole; after warps we go to nebulas.
-      let nextPhaseAfterKill = ap.returnPhase || 'findLocalEnemies';
-      if (ap.returnPhase === 'findLocalEnemies') {
-        const localAlive = _countLocalEnemies();
-        if (localAlive === 0) {
-          ap.segmentKills = 0;
-          const firstLeg = (ap.warpsUsed || 0) === 0;
-          nextPhaseAfterKill = firstLeg ? 'gotoBlackHoleGalaxy' : 'warpToNebulaCluster';
-        }
+      // ALWAYS stay and fight if local enemies remain, regardless of
+      // what returnPhase says.  Only leave for the next galaxy when
+      // every local non-boss/non-guardian enemy is eliminated.
+      const localAlive = _countLocalEnemies();
+      let nextPhaseAfterKill;
+      if (localAlive > 0) {
+        nextPhaseAfterKill = 'findLocalEnemies';
+        ap.returnPhase = 'findLocalEnemies';
+      } else {
+        ap.segmentKills = 0;
+        const firstLeg = (ap.warpsUsed || 0) === 0;
+        nextPhaseAfterKill = firstLeg ? 'gotoBlackHoleGalaxy' : 'warpToNebulaCluster';
       }
 
       // Mine nearby asteroids for hull if damaged, before moving on
