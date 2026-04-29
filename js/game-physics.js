@@ -195,13 +195,13 @@ function applyRotationalInertia(keys, allowManualRotation) {
     }
     
     // Apply roll (barrel roll) with SPEED-DEPENDENT automatic banking from yaw
-    // Banking increases with speed - slow = minimal banking, fast = aggressive banking
+    // Banking increases with speed up to 1400 km/s, then caps
     const currentSpeed = typeof gameState !== 'undefined' && gameState.velocity ? gameState.velocity : 0;
-    const minSpeed = 0.5;  // Minimum speed for banking
-    const maxSpeed = 6.0;  // Speed at which banking reaches maximum
-    
-    // Calculate speed factor (0 to 1, where 0 = no banking, 1 = full banking)
-    const speedFactor = Math.max(0, Math.min(1, (currentSpeed - minSpeed) / (maxSpeed - minSpeed)));
+    const minSpeed = 0.5;
+    const maxSpeed = 6.0;
+    const cappedSpeed = Math.min(currentSpeed, 1.4); // Cap at 1400 km/s
+
+    const speedFactor = Math.max(0, Math.min(1, (cappedSpeed - minSpeed) / (maxSpeed - minSpeed)));
     
     // Apply banking proportional to both yaw velocity and current speed
     // Demo mode adds extra camera roll for a cinematic powerslide feel
