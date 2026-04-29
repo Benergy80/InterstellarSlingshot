@@ -963,9 +963,8 @@
         const approachSpeed = distToPlanet > 1500 ? 2.0 : 1.6;
         flyToward(planetPos, approachSpeed);
       } else {
-        // Final approach — bypass auto-nav (would orbit) and steer manually
-        gameState.autoNavigating = false;
-        gameState.autoNavOrienting = false;
+        // Final approach — steer manually without flyToward (which would
+        // engage orbital approach). Keep currentTarget for nav panel.
         gameState.currentTarget = ap.slingshotPlanet;
         if (window.orientTowardsTarget) window.orientTowardsTarget(ap.slingshotPlanet);
 
@@ -986,17 +985,13 @@
         ap.slingshotMisses = (ap.slingshotMisses || 0) + 1;
         ap.slingshotPlanet = null;
         ap.phaseStart = Date.now();
-        gameState.autoNavigating = false;
         setStatus('Missed approach — slingshot misses: ' + ap.slingshotMisses + '/2');
       }
       return;
     }
 
     // Phase 2b: at the planet — align camera toward the nebula.  Brake hard
-    // and keep auto-nav off so it doesn't push us out of the 60 u ring while
-    // we rotate to face the nebula.
-    gameState.autoNavigating = false;
-    gameState.autoNavOrienting = false;
+    // Brake hard at the planet so we don't sail past the slingshot ring
     if (speedNow > 0.3) keys().x = true;
     const aimDummy = { position: nebPos };
     if (window.orientTowardsTarget) window.orientTowardsTarget(aimDummy);
@@ -1182,8 +1177,7 @@
       if (dist > 1000) {
         flyToward(ap.orbitTarget, 1.6);
       } else {
-        // Close approach — brake down for precision
-        gameState.autoNavigating = false;
+        // Close approach — brake down for precision, steer manually
         if (window.orientTowardsTarget) window.orientTowardsTarget(ap.orbitTarget);
         if (speed > 0.8) {
           keys().x = true;
@@ -1289,9 +1283,7 @@
       return;
     }
 
-    // Orient and thrust directly — disable auto-nav which would orbit
-    gameState.autoNavigating = false;
-    gameState.autoNavOrienting = false;
+    // Orient and thrust directly toward the black hole
     if (window.orientTowardsTarget) window.orientTowardsTarget(ap.currentBH);
     keys().w = true;
     if (distToBH > 1500) keys().b = true;
@@ -2724,12 +2716,12 @@
 
     // If we are leaving combat (entering anything that isn't combat/fightBorg),
     // drop the game's auto-aim lock so it stops auto-firing at travel time.
+    // Keep currentTarget set so the navigation panel stays populated on mobile.
     if (name !== 'combat' && name !== 'fightBorg') {
       if (gameState && gameState.targetLock) {
         gameState.targetLock.active = false;
         gameState.targetLock.target = null;
       }
-      if (gameState) gameState.currentTarget = null;
       ap.combatTarget = null;
     }
     // Clear slingshot planet reference when leaving the nebula-approach phases
