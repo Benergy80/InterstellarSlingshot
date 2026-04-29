@@ -266,6 +266,25 @@ window.mobileAutoNavigate = function() {
     }, 500);
 };
 
+window.mobileClearTarget = function() {
+    if (typeof gameState !== 'undefined') {
+        gameState.currentTarget = null;
+        gameState.autoNavigating = false;
+        gameState.autoNavOrienting = false;
+        if (gameState.targetLock) {
+            gameState.targetLock.active = false;
+            gameState.targetLock.target = null;
+        }
+    }
+    if (typeof showAchievement === 'function') {
+        showAchievement('Target Cleared', 'Auto-targeting disengaged');
+    }
+    if (typeof playSound === 'function') {
+        playSound('navigation', 800, 0.12);
+    }
+    setTimeout(() => { window.hideNavPanel(); }, 400);
+};
+
 window.mobileWarpAction = function() {
     if (typeof executeSlingshot === 'function') {
         executeSlingshot();
