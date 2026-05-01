@@ -624,21 +624,25 @@
       return;
     }
 
-    // Nothing on sensors — cruise forward while scanning
-    cycleScanTarget();
-    keys().w = true;
-
-    // If local enemies still exist, keep searching — no warping away
+    // Nothing on nav sensors — find remaining local enemies directly
     const localAlive = _countLocalEnemies();
     if (localAlive > 0) {
       setStatus('Hunting ' + localAlive + ' remaining local hostiles…');
-      // Sweep wider by flying toward a random offset
-      if (t > 6000) {
-        const sweep = nearestAliveEnemy(30000);
-        if (sweep) {
-          flyToward(sweep, 2.5);
-          setStatus('Long-range intercept — ' + (camPos().distanceTo(sweep.position) | 0) + ' u');
+      const localEnemy = _nearestLocalEnemy();
+      if (localEnemy) {
+        gameState.currentTarget = localEnemy;
+        flyToward(localEnemy, 2.5);
+        const ld = camPos().distanceTo(localEnemy.position);
+        setStatus('Intercepting ' + (localEnemy.userData.name || 'hostile') + ' — ' + (ld | 0) + ' u');
+        if (ld < 2200) {
+          ap.combatTarget = localEnemy;
+          ap.combatMissileFired = false;
+          ap.returnPhase = 'findLocalEnemies';
+          goPhase('combat');
         }
+      } else {
+        cycleScanTarget();
+        keys().w = true;
       }
       return;
     }
@@ -2269,6 +2273,21 @@
         if (d < bestDist) { bestDist = d; best = p; }
       }
     });
+    return best;
+  }
+
+  function _nearestLocalEnemy() {
+    if (typeof enemies === 'undefined') return null;
+    const cp = camPos();
+    let best = null, bestDist = Infinity;
+    for (let i = 0; i < enemies.length; i++) {
+      const e = enemies[i];
+      if (!e || !e.userData || e.userData.health <= 0) continue;
+      if (!e.userData.isLocal) continue;
+      if (e.userData.isBoss || e.userData.isBossSupport || e.userData.isBlackHoleGuardian) continue;
+      const d = cp.distanceTo(e.position);
+      if (d < bestDist) { bestDist = d; best = e; }
+    }
     return best;
   }
 
