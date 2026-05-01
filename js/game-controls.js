@@ -681,11 +681,13 @@ function updateEnemyBehavior() {
                     if (_wd < nearestTargetDist) nearestTargetDist = _wd;
                 }
             }
-            // Only 4 enemies fire per frame — separate counter from activation
+            // Only ONE enemy fires per frame, AND only one fire allowed per
+            // 300ms across all enemies (~3 shots/sec system-wide).
             if (nearestTargetDist < firingRange) {
-                const currentFiring = isLocal ? firedThisFrameLocal : firedThisFrameDistant;
-                if (currentFiring < 4) {
-                    const now = Date.now();
+                const totalFiredThisFrame = firedThisFrameLocal + firedThisFrameDistant;
+                const now = Date.now();
+                const sinceLastGlobalFire = now - (window._lastEnemyFire || 0);
+                if (totalFiredThisFrame < 1 && sinceLastGlobalFire > 300) {
                     const attackCooldown = isLocal ?
                         (difficultySettings.localAttackCooldown || 2000) :
                         (enemy.userData.isBoss ? 600 : difficultySettings.distantAttackCooldown || 1200);
@@ -693,6 +695,7 @@ function updateEnemyBehavior() {
                     if (now - (enemy.userData.lastAttack || 0) > attackCooldown) {
                         fireEnemyWeapon(enemy, difficultySettings);
                         enemy.userData.lastAttack = now;
+                        window._lastEnemyFire = now;
                         if (isLocal) firedThisFrameLocal++;
                         else firedThisFrameDistant++;
                     }
@@ -6283,7 +6286,10 @@ function _executeEngage(ally, ud, now) {
     ally.position.add(ud.velocity);
 
     // Fire bright lasers when in range — wingmen do NO damage, just visuals
-    if (dist < ud.firingRange && now - ud.lastAttack > 350) {
+    // Wingmen don't fire for first 5 seconds, cooldown 500ms
+    const _gameAge = (gameState && gameState.gameStartTime) ? (Date.now() - gameState.gameStartTime) : 0;
+    if (_gameAge < 5000) return;
+    if (dist < ud.firingRange && now - ud.lastAttack > 500) {
         ud.lastAttack = now;
         const color = ud.name === 'Wingman Alpha' ? '#00ff88' : '#88aaff';
         _fireWingmanLaser(ally.position.clone(), enemyPos, color);
