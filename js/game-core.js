@@ -752,6 +752,7 @@ function simulateLoading() {
                 const loadingScreen = document.getElementById('loadingScreen');
                 if (loadingScreen) loadingScreen.style.display = 'none';
                 gameState.gameStarted = true;
+                gameState.gameStartTime = Date.now();
                 console.log('Enhanced game fully loaded and started with doubled world scale!');
             }, 500);
         }
