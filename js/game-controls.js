@@ -6253,8 +6253,10 @@ function _executeEngage(ally, ud, now) {
             const color = ud.name === 'Wingman Alpha' ? '#00ff88' : '#88aaff';
             createLaserBeam(ally.position.clone(), enemyPos, color, false);
             if (et.userData) {
-                et.userData.health -= 1;
-                if (typeof flashEnemyHit === 'function') flashEnemyHit(et, 1);
+                // Wingmen do 1/3 the damage of the player (~0.34 per hit)
+                // so dogfights last longer before enemies are wiped out
+                et.userData.health -= 0.34;
+                if (typeof flashEnemyHit === 'function') flashEnemyHit(et, 0.34);
             }
         }
     }
