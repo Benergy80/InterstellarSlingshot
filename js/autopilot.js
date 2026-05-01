@@ -624,24 +624,27 @@
       return;
     }
 
-    // Nothing on sensors — lock on to a nearby planet or object instead
+    // Nothing on sensors — cruise forward while scanning
     cycleScanTarget();
-    flyToward({ x: camPos().x + 200, y: camPos().y, z: camPos().z + 200 }, 1.0);
+    keys().w = true;
 
-    // Emergency warp to a new sector is ONLY allowed after we've defeated
-    // at least 3 enemies this run (canEmergencyWarp() enforces this).
-    if (t > 4000 && Date.now() - (ap.lastNebulaWarp || 0) > 20000 && canEmergencyWarp()) {
-      setStatus('Empty sector — emergency warp engaged');
-      transmit('PROPULSION', 'Long-range scan mode.\nEmergency warp engaged for rapid sector survey.');
-      keys().w = true;
-      if (triggerOKeyWarp()) {
-        ap.warpStartedAt = Date.now();
-        ap.lastNebulaWarp = Date.now();
+    // If local enemies still exist, keep searching — no warping away
+    const localAlive = _countLocalEnemies();
+    if (localAlive > 0) {
+      setStatus('Hunting ' + localAlive + ' remaining local hostiles…');
+      // Sweep wider by flying toward a random offset
+      if (t > 6000) {
+        const sweep = nearestAliveEnemy(30000);
+        if (sweep) {
+          flyToward(sweep, 2.5);
+          setStatus('Long-range intercept — ' + (camPos().distanceTo(sweep.position) | 0) + ' u');
+        }
       }
+      return;
     }
 
-    // Only transition when ALL local enemies are cleared
-    if (t > 8000 && _countLocalEnemies() === 0 && ap.enemiesKilled >= 3) {
+    // All local enemies cleared — move to interstellar phase
+    if (ap.enemiesKilled >= 3) {
       goPhase('warpToNebulaCluster');
     }
   }
@@ -2715,13 +2718,13 @@
     // transitions into 'combat'.
 
     // If we are leaving combat (entering anything that isn't combat/fightBorg),
-    // drop the game's auto-aim lock so it stops auto-firing at travel time.
-    // Keep currentTarget set so the navigation panel stays populated on mobile.
+    // Drop auto-aim lock and clear stale targets when leaving combat
     if (name !== 'combat' && name !== 'fightBorg') {
       if (gameState && gameState.targetLock) {
         gameState.targetLock.active = false;
         gameState.targetLock.target = null;
       }
+      if (gameState) gameState.currentTarget = null;
       ap.combatTarget = null;
     }
     // Clear slingshot planet reference when leaving the nebula-approach phases
