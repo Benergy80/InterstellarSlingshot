@@ -686,7 +686,18 @@ function updateEnemyBehavior() {
             // Cap simultaneous firing — all enemies stay active for AI/movement,
             // but only `maxAttackers` of them actually fire at any time so the
             // player isn't overwhelmed by 36 lasers at once.
-            if (distanceToPlayer < firingRange) {
+            // Compute distance to nearest TARGET (player OR any alive wingman)
+            // so enemies near wingmen still fire even when the player is far.
+            let nearestTargetDist = distanceToPlayer;
+            if (typeof allyShips !== 'undefined') {
+                for (let _ai = 0; _ai < allyShips.length; _ai++) {
+                    const _w = allyShips[_ai];
+                    if (!_w || !_w.userData || _w.userData.health <= 0) continue;
+                    const _wd = _w.position.distanceTo(enemy.position);
+                    if (_wd < nearestTargetDist) nearestTargetDist = _wd;
+                }
+            }
+            if (nearestTargetDist < firingRange) {
                 const firingCap = isLocal ? difficultySettings.maxLocalAttackers : difficultySettings.maxDistantAttackers;
                 const currentFiring = isLocal ? localActiveAttackers : activeAttackers;
                 if (currentFiring < firingCap) {
@@ -698,8 +709,6 @@ function updateEnemyBehavior() {
                     if (now - (enemy.userData.lastAttack || 0) > attackCooldown) {
                         fireEnemyWeapon(enemy, difficultySettings);
                         enemy.userData.lastAttack = now;
-                        // Mark as currently-firing for this frame so we don't
-                        // exceed the cap with multiple enemies in the same frame
                         if (isLocal) localActiveAttackers++;
                         else activeAttackers++;
                     }
