@@ -546,7 +546,6 @@
       const nm = (ap.orbitTarget.userData && ap.orbitTarget.userData.name) || 'planet';
       setStatus('Nav lock: ' + nm + ' — orbital survey');
       gameState.currentTarget = ap.orbitTarget;
-      gameState.autoNavigating = true;
       if (typeof populateTargets === 'function') populateTargets();
     }
 
@@ -660,6 +659,8 @@
         gameState.targetLock.target = null;
       }
       gameState.currentTarget = null;
+      // Invalidate nav cache so the next scan finds fresh targets
+      ap._navCacheFrame = -99;
 
       ap._killCooldownUntil = Date.now() + 1000;
 
@@ -1605,7 +1606,9 @@
     }
 
     gameState.currentTarget = targetObj;
-    gameState.autoNavigating = true;
+    // Do NOT set autoNavigating — the autopilot steers via orientTowardsTarget
+    // and key inputs. The physics auto-nav orbital approach would fight our
+    // direct steering and send the ship toward distant targets.
 
     // Distance-aware speed control: brake when approaching target
     const dist = camPos().distanceTo(targetObj.position);
