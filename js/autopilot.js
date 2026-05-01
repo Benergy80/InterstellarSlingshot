@@ -541,6 +541,8 @@
     if (!ap.orbitTarget) {
       ap.orbitTarget = findEarth() || planetNear(camPos(), 3000) || pickPlanet();
       if (!ap.orbitTarget) { goPhase('findLocalEnemies'); return; }
+      // Force nav panel refresh to clear intro "Launch Mission" text
+      if (typeof populateTargets === 'function') populateTargets();
       const nm = (ap.orbitTarget.userData && ap.orbitTarget.userData.name) || 'planet';
       setStatus('Nav lock: ' + nm + ' — orbital survey');
       gameState.currentTarget = ap.orbitTarget;
@@ -568,81 +570,52 @@
   // ─── 1) Hunt down local enemies ───────────────────────────────────────────
   function phaseFindLocalEnemies() {
     const t = elapsed();
-    // Shields OFF while scanning — we're travelling
     ensureShieldsFor('travel');
     ensureThirdPerson();
 
-    // Keep the game's Navigation System target list fresh (every ~5 s, heavy DOM)
-    if (typeof populateTargets === 'function' && t > 0 &&
-        Date.now() - (ap._lastPopulate || 0) > 5000) {
+    // Force the nav panel to refresh immediately on first entry and every 3s
+    if (typeof populateTargets === 'function' &&
+        Date.now() - (ap._lastPopulate || 0) > 3000) {
       ap._lastPopulate = Date.now();
       populateTargets();
     }
 
-    // First preference: an enemy the Navigation System has locked on to.
-    // But if we just killed someone, respect the 1 s cooldown so the
-    // explosion reads before snapping to the next target.
+    // Kill cooldown — coast gently for 1s after a kill
     if (ap._killCooldownUntil && Date.now() < ap._killCooldownUntil) {
       setStatus('Kill confirmed — scanning…');
-      // Coast forward gently during the pause
       keys().w = true;
       return;
     }
+
+    // Priority 1: nav-detected enemy within 3000u
     const detected = navDetectedEnemy();
     if (detected) {
       const d = camPos().distanceTo(detected.position);
       setStatus('NAV target: ' + (detected.userData.name || 'hostile') + ' · ' + (d | 0));
-      // Show on the nav panel (currentTarget) but do NOT activate targetLock
-      // from long range — that would make any fireWeapon call auto-aim at
-      // this distant enemy.  Lock gets set by phaseCombat once we're close.
       gameState.currentTarget = detected;
-      // Fly toward it aggressively with human-style banking
       flyToward(detected, 2.5);
       pursuitFlightStyle('pursuit');
-      // Once inside combat range, commit to the engagement
       if (d < 2200) {
         ap.combatTarget = detected;
         ap.combatMissileFired = false;
         ap.returnPhase = 'findLocalEnemies';
-        if (!ap._tacticalMsgShown) {
-          ap._tacticalMsgShown = true;
-          transmit('TACTICAL', 'Nav system contact confirmed!\nHostile: ' + (detected.userData.name || 'Unknown') + '\nWeapon systems online.');
-        }
         goPhase('combat');
       }
       return;
     }
 
-    // Fallback: widest sweep in case a distant enemy is the only option
-    const farEnemy = nearestAliveEnemy(15000);
-    if (farEnemy) {
-      setStatus('Long-range contact — intercepting');
-      // Nav panel only — no targetLock at this range
-      gameState.currentTarget = farEnemy;
-      flyToward(farEnemy, 2.5);
-      pursuitFlightStyle('pursuit');
-      return;
-    }
-
-    // Nothing on nav sensors — find remaining local enemies directly
-    const localAlive = _countLocalEnemies();
-    if (localAlive > 0) {
-      setStatus('Hunting ' + localAlive + ' remaining local hostiles…');
-      const localEnemy = _nearestLocalEnemy();
-      if (localEnemy) {
-        gameState.currentTarget = localEnemy;
-        flyToward(localEnemy, 2.5);
-        const ld = camPos().distanceTo(localEnemy.position);
-        setStatus('Intercepting ' + (localEnemy.userData.name || 'hostile') + ' — ' + (ld | 0) + ' u');
-        if (ld < 2200) {
-          ap.combatTarget = localEnemy;
-          ap.combatMissileFired = false;
-          ap.returnPhase = 'findLocalEnemies';
-          goPhase('combat');
-        }
-      } else {
-        cycleScanTarget();
-        keys().w = true;
+    // Priority 2: nearest LOCAL enemy at any distance (tracks down stragglers)
+    const localEnemy = _nearestLocalEnemy();
+    if (localEnemy) {
+      const ld = camPos().distanceTo(localEnemy.position);
+      setStatus('Intercepting ' + (localEnemy.userData.name || 'hostile') + ' — ' + (ld | 0) + ' u');
+      gameState.currentTarget = localEnemy;
+      flyToward(localEnemy, 2.5);
+      if (ld < 2200) {
+        ap.combatTarget = localEnemy;
+        ap.combatMissileFired = false;
+        ap.returnPhase = 'findLocalEnemies';
+        goPhase('combat');
       }
       return;
     }
@@ -650,6 +623,10 @@
     // All local enemies cleared — move to interstellar phase
     if (ap.enemiesKilled >= 3) {
       goPhase('warpToNebulaCluster');
+    } else {
+      // Not enough kills yet and no enemies — cruise and scan
+      cycleScanTarget();
+      keys().w = true;
     }
   }
 
