@@ -2138,6 +2138,7 @@ function setupNormalGameContent() {
     // Initialize game state for normal gameplay
     if (typeof gameState !== 'undefined') {
         gameState.gameStarted = true;
+        gameState.gameStartTime = Date.now();
         if (!gameState.velocityVector) {
             gameState.velocityVector = new THREE.Vector3(0, 0, 0);
         }
