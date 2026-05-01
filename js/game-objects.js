@@ -8414,7 +8414,8 @@ function createEnemies3D() {
     const piratesPerGroup = 3;
     let pirateIndex = 0;
     for (let g = 0; g < patrolGroupCount; g++) {
-        const groupDistance = 800 + Math.random() * 1200;
+        // Spawn beyond Mars orbit (~960u) so pirates aren't on top of Earth
+        const groupDistance = 1500 + Math.random() * 1500;
         const groupAngle = (g / patrolGroupCount) * Math.PI * 2 + Math.random() * 0.3;
         const groupCenter = new THREE.Vector3(
             Math.cos(groupAngle) * groupDistance,
