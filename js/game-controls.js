@@ -6338,8 +6338,8 @@ function _executeEngage(ally, ud, now) {
                         false
                     );
                 }
-                if (typeof createDeathEffect === 'function') {
-                    createDeathEffect(et.position);
+                if (typeof createExplosionEffect === 'function') {
+                    createExplosionEffect(et.position);
                 }
             }
         }
