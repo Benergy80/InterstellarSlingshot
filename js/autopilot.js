@@ -586,7 +586,29 @@
       return;
     }
 
-    // Priority 1: nav-detected enemy within 3000u
+    const firstLeg = (ap.warpsUsed || 0) === 0;
+
+    // First leg (in Sol): ALWAYS prefer Martian Pirates over any other
+    // enemy, even same-faction Vulcan ones in distant galaxies.
+    if (firstLeg) {
+      const localEnemy = _nearestLocalEnemy();
+      if (localEnemy) {
+        const ld = camPos().distanceTo(localEnemy.position);
+        setStatus('Intercepting ' + (localEnemy.userData.name || 'hostile') + ' — ' + (ld | 0) + ' u');
+        gameState.currentTarget = localEnemy;
+        flyToward(localEnemy, 2.5);
+        pursuitFlightStyle('pursuit');
+        if (ld < 2200) {
+          ap.combatTarget = localEnemy;
+          ap.combatMissileFired = false;
+          ap.returnPhase = 'findLocalEnemies';
+          goPhase('combat');
+        }
+        return;
+      }
+    }
+
+    // Priority 2: nearest detected enemy on nav (3000u range)
     const detected = navDetectedEnemy();
     if (detected) {
       const d = camPos().distanceTo(detected.position);
@@ -603,24 +625,9 @@
       return;
     }
 
-    // Priority 2: nearest LOCAL enemy at any distance (tracks down stragglers)
-    const localEnemy = _nearestLocalEnemy();
-    if (localEnemy) {
-      const ld = camPos().distanceTo(localEnemy.position);
-      setStatus('Intercepting ' + (localEnemy.userData.name || 'hostile') + ' — ' + (ld | 0) + ' u');
-      gameState.currentTarget = localEnemy;
-      flyToward(localEnemy, 2.5);
-      if (ld < 2200) {
-        ap.combatTarget = localEnemy;
-        ap.combatMissileFired = false;
-        ap.returnPhase = 'findLocalEnemies';
-        goPhase('combat');
-      }
-      return;
-    }
-
-    // All local enemies cleared — move to interstellar phase
-    if (ap.enemiesKilled >= 3) {
+    // All enemies cleared — move to interstellar phase
+    // First leg: must have zero local enemies remaining
+    if (ap.enemiesKilled >= 3 && (!firstLeg || _countLocalEnemies() === 0)) {
       goPhase('warpToNebulaCluster');
     } else {
       // Not enough kills yet and no enemies — cruise and scan
