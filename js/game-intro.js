@@ -2138,7 +2138,9 @@ function setupNormalGameContent() {
     // Initialize game state for normal gameplay
     if (typeof gameState !== 'undefined') {
         gameState.gameStarted = true;
-        gameState.gameStartTime = Date.now();
+        // gameStartTime is NOT set here — it's set in startNormalGameplay()
+        // after the cinematic transition completes so the 5-second combat
+        // delay starts from when the player actually sees the ship.
         if (!gameState.velocityVector) {
             gameState.velocityVector = new THREE.Vector3(0, 0, 0);
         }
@@ -2571,7 +2573,15 @@ function restoreUIBlurEffects() {
 
 function startNormalGameplay() {
     console.log('🎬 Finalizing normal gameplay start...');
-    
+
+    // Reset gameStartTime here — the player can now actually see and
+    // control the ship. Combat starts 5s from THIS moment, not from
+    // when the cinematic transition began.
+    if (typeof gameState !== 'undefined') {
+        gameState.gameStartTime = Date.now();
+        console.log('⏱️ gameStartTime reset to NOW — combat begins in 5s');
+    }
+
     // Show crosshair for normal gameplay
     const crosshair = document.getElementById('crosshair');
     if (crosshair) {
