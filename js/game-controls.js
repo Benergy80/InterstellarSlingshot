@@ -1015,6 +1015,7 @@ function fireEnemyWeapon(enemy, difficultySettings) {
 
     // Hard 600u firing range — no enemy fires beyond this
     const firingRange = 600;
+    const isLocal = isEnemyInLocalGalaxy(enemy);
 
     // Use world position for entities that are children of groups
     const enemyPos = (enemy.parent && enemy.parent.isGroup) ? enemy.getWorldPosition(_enemyWorldPos).clone() : enemy.position;
