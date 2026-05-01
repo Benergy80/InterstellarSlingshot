@@ -658,26 +658,18 @@ function updateEnemyBehavior() {
             }
         }
         
-        // PROGRESSIVE DIFFICULTY: Apply attacker limits
-        const maxAttackers = isLocal ? difficultySettings.maxLocalAttackers : difficultySettings.maxDistantAttackers;
-        const currentAttackers = isLocal ? localActiveAttackers : activeAttackers;
-        
-        if (distanceToPlayer < detectionRange && !enemy.userData.isActive && currentAttackers < maxAttackers) {
+        // ALL enemies in detection range stay active — no attacker cap.
+        // Every enemy in the system fights and attacks player + wingmen.
+        if (distanceToPlayer < detectionRange && !enemy.userData.isActive) {
             enemy.userData.isActive = true;
             enemy.userData.detectedPlayer = true;
             enemy.userData.lastSeenPlayerPos = playerPos.clone();
 
             if (isLocal) localActiveAttackers++;
             else activeAttackers++;
-        } else if (enemy.userData.isActive && !enemy.userData.isMartianPirate &&
-                   (distanceToPlayer > detectionRange * 1.5 || currentAttackers > maxAttackers)) {
-            // Martian Pirates stay active once activated — they're the opening
-            // gameplay and should never deactivate into floating props.
-            enemy.userData.isActive = false;
-            enemy.userData.detectedPlayer = false;
-            if (isLocal) localActiveAttackers--;
-            else activeAttackers--;
         }
+        // Once activated, enemies stay active permanently — they pursue the
+        // player and wingmen until destroyed.
         
         if (enemy.userData.isActive) {
             // FIXED: Enemy speeds 200-1000 km/s (0.2-1.0 game units, multiply by 1000 for km/s display)
@@ -1014,46 +1006,54 @@ function fireEnemyWeapon(enemy, difficultySettings) {
     const isLocal = isEnemyInLocalGalaxy(enemy);
     const firingRange = isLocal ? difficultySettings?.localFiringRange || 500 : difficultySettings?.distantFiringRange || 600;
 
-    const playerPos = camera.position.clone();
-    // Use world position for entities that are children of groups (outer system drones/cubes)
+    // Use world position for entities that are children of groups
     const enemyPos = (enemy.parent && enemy.parent.isGroup) ? enemy.getWorldPosition(_enemyWorldPos).clone() : enemy.position;
-    const distanceToPlayer = playerPos.distanceTo(enemyPos);
-    
-    // DEBUG: Log who is attacking (only if in range)
-    if (distanceToPlayer <= firingRange) {
-        console.log(`🔫 ${enemy.userData.name || enemy.userData.type || 'Unknown'} firing at player from distance: ${distanceToPlayer.toFixed(0)} units (range: ${firingRange})`);
+
+    // Pick the nearest target between player and wingmen
+    const playerPos = camera.position.clone();
+    let targetPos = playerPos;
+    let targetWingman = null;
+    let nearestDist = playerPos.distanceTo(enemyPos);
+
+    if (typeof allyShips !== 'undefined') {
+        for (let i = 0; i < allyShips.length; i++) {
+            const ally = allyShips[i];
+            if (!ally || !ally.userData || ally.userData.health <= 0) continue;
+            const d = ally.position.distanceTo(enemyPos);
+            if (d < nearestDist) {
+                nearestDist = d;
+                targetPos = ally.position.clone();
+                targetWingman = ally;
+            }
+        }
     }
-    
-    if (distanceToPlayer <= firingRange) {
-        // Create enemy laser beam targeting player position
+
+    if (nearestDist <= firingRange) {
         const laserColor = enemy.userData.isBoss ? '#ff4444' : (enemy.userData.isBorgCube || enemy.userData.type === 'borg_drone') ? '#00ff00' : '#ff8800';
-        createLaserBeam(enemyPos, playerPos, laserColor, false);
-        
+        createLaserBeam(enemyPos, targetPos, laserColor, false);
+
         playSound('enemy_fire');
-        
-        // Enhanced damage calculation with progressive difficulty
-        let damage = isLocal ? 
-            (difficultySettings.galaxiesCleared === 0 ? 4 : 6 + difficultySettings.galaxiesCleared) : 
+
+        let damage = isLocal ?
+            (difficultySettings.galaxiesCleared === 0 ? 4 : 6 + difficultySettings.galaxiesCleared) :
             (enemy.userData.isBoss ? 12 : enemy.userData.isBossSupport ? 8 : 6);
-        
-        // Cap damage to reasonable levels
         damage = Math.min(damage, 15);
 
-        // ENHANCED: Accuracy reduction during evasive maneuvers
-        // Base accuracy: 70%, reduced by turn rate
-        let hitChance = 0.7;  // Base 70% hit chance
-
-        // Reduce accuracy when enemy is turning (evasive maneuvers)
+        let hitChance = 0.7;
         const turnRate = enemy.userData.turnRate || 0;
-        if (turnRate > 0.01) {  // Only apply if turning significantly
-            // Turn rate of 0.15 rad/frame (max) = 50% accuracy penalty
-            // Turn rate of 0.075 rad/frame (half max) = 25% accuracy penalty
-            const accuracyPenalty = Math.min(turnRate * 3.33, 0.5);  // Max 50% penalty
-            hitChance = Math.max(0.2, hitChance - accuracyPenalty);  // Min 20% accuracy
+        if (turnRate > 0.01) {
+            const accuracyPenalty = Math.min(turnRate * 3.33, 0.5);
+            hitChance = Math.max(0.2, hitChance - accuracyPenalty);
         }
 
-        // Random chance to hit based on adjusted accuracy
         if (Math.random() < hitChance) {
+            // If firing at a wingman, damage the wingman and exit
+            if (targetWingman && targetWingman.userData) {
+                targetWingman.userData.health = Math.max(0, targetWingman.userData.health - damage);
+                if (typeof flashEnemyHit === 'function') flashEnemyHit(targetWingman, damage);
+                return;
+            }
+
             const isInvulnerable = typeof isBlackHoleWarpInvulnerable === 'function' &&
                                    isBlackHoleWarpInvulnerable();
             const shieldsActive = typeof isShieldActive === 'function' && isShieldActive();
@@ -1074,8 +1074,6 @@ function fireEnemyWeapon(enemy, difficultySettings) {
                 createShieldHitEffect(enemy.position);
             }
 
-            // Red screen flash whenever the hit connects — but suppress it
-            // when fully invulnerable (e.g. during black-hole warp).
             if (!isInvulnerable) {
                 createEnhancedScreenDamageEffect(enemy.position);
                 if (!shieldsActive) {
