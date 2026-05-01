@@ -1013,6 +1013,9 @@ const _enemyWorldPos = (typeof THREE !== 'undefined') ? new THREE.Vector3() : nu
 function fireEnemyWeapon(enemy, difficultySettings) {
     if (!enemy || !enemy.userData || enemy.userData.health <= 0) return;
 
+    // No enemy fires until 5 seconds after game start
+    if (gameState.gameStartTime && (Date.now() - gameState.gameStartTime < 5000)) return;
+
     // Hard 600u firing range — no enemy fires beyond this
     const firingRange = 600;
     const isLocal = isEnemyInLocalGalaxy(enemy);
