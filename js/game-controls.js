@@ -666,12 +666,13 @@ function updateEnemyBehavior() {
             enemy.userData.isActive = true;
             enemy.userData.detectedPlayer = true;
             enemy.userData.lastSeenPlayerPos = playerPos.clone();
-            
+
             if (isLocal) localActiveAttackers++;
             else activeAttackers++;
-            
-            console.log(`Enemy activated: ${enemy.userData.name} (${isLocal ? 'local' : 'distant'}) - Active attackers: ${currentAttackers + 1}/${maxAttackers}`);
-        } else if (enemy.userData.isActive && (distanceToPlayer > detectionRange * 1.5 || currentAttackers > maxAttackers)) {
+        } else if (enemy.userData.isActive && !enemy.userData.isMartianPirate &&
+                   (distanceToPlayer > detectionRange * 1.5 || currentAttackers > maxAttackers)) {
+            // Martian Pirates stay active once activated — they're the opening
+            // gameplay and should never deactivate into floating props.
             enemy.userData.isActive = false;
             enemy.userData.detectedPlayer = false;
             if (isLocal) localActiveAttackers--;

@@ -1450,8 +1450,14 @@ let dotColor = '#4488ff'; // Default blue for planets
 let dotSize = '4px';
 
 if (obj.type === 'ally') {
+    // Render allies as arrow markers like the player, not dots
     dotColor = obj.name === 'Wingman Alpha' ? '#00ff88' : '#88aaff';
-    dotSize = '7px';
+    dot.textContent = '▲';
+    dot.style.cssText = 'position:absolute;font-size:10px;font-weight:bold;color:' + dotColor + ';transform:translate(-50%,-50%);pointer-events:none;z-index:3;filter:drop-shadow(0 0 3px ' + dotColor + ');';
+    dot.style.left = screenX + '%';
+    dot.style.top = screenZ + '%';
+    dot.style.display = 'block';
+    return; // skip normal dot styling below
 } else if (obj.type === 'enemy') {
     dotColor = obj.isBoss ? '#ff00ff' : '#ff4444';
     dotSize = obj.isBoss ? '8px' : '6px';

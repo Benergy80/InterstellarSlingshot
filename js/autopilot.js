@@ -651,6 +651,15 @@
       return;
     }
 
+    // Abort pursuit if target is absurdly far — we were probably handed
+    // a stale or wrong-galaxy target.  Re-scan via findLocalEnemies.
+    const dist = camPos().distanceTo(enemy.position);
+    if (dist > 5000) {
+      ap.combatTarget = null;
+      goPhase('findLocalEnemies');
+      return;
+    }
+
     // Target killed — notify exactly once per actual kill
     if (enemy.userData.health <= 0) {
       ap.enemiesKilled++;
@@ -696,7 +705,6 @@
       return;
     }
 
-    const dist = camPos().distanceTo(enemy.position);
     // Use the enemy's own firing range — that's how close we need to be for
     // a proper dog-fight (enemy fires back at us, we fire at them).
     const engageRange = enemy.userData.firingRange || 500;
