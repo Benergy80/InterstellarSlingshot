@@ -1049,8 +1049,26 @@ function fireEnemyWeapon(enemy, difficultySettings) {
         if (Math.random() < hitChance) {
             // If firing at a wingman, damage the wingman and exit
             if (targetWingman && targetWingman.userData) {
+                const wasAlive = targetWingman.userData.health > 0;
                 targetWingman.userData.health = Math.max(0, targetWingman.userData.health - damage);
                 if (typeof flashEnemyHit === 'function') flashEnemyHit(targetWingman, damage);
+
+                // Wingman destroyed — large explosion + notification
+                if (wasAlive && targetWingman.userData.health <= 0) {
+                    if (typeof createWingmanExplosion === 'function') {
+                        createWingmanExplosion(targetWingman);
+                    }
+                    if (typeof showAchievement === 'function') {
+                        showAchievement(
+                            (targetWingman.userData.name || 'Wingman') + ' DESTROYED!',
+                            'Ally ship lost in combat',
+                            true
+                        );
+                    }
+                    if (typeof playSound === 'function') {
+                        playSound('explosion');
+                    }
+                }
                 return;
             }
 
@@ -6262,6 +6280,30 @@ function _executeEngage(ally, ud, now) {
         ud.lastAttack = now;
         const color = ud.name === 'Wingman Alpha' ? '#00ff88' : '#88aaff';
         _fireWingmanLaser(ally.position.clone(), enemyPos, color);
+
+        // Apply 10% damage. Wingmen are mostly visual support — the
+        // player does the heavy lifting — but they CAN finish a target
+        // if the player softens it up.
+        if (et.userData) {
+            const wasAlive = et.userData.health > 0;
+            et.userData.health -= 0.1;
+            if (typeof flashEnemyHit === 'function') flashEnemyHit(et, 0.1);
+
+            // Wingman finished off the enemy — show a notification so the
+            // player sees who got the kill
+            if (wasAlive && et.userData.health <= 0) {
+                if (typeof showAchievement === 'function') {
+                    showAchievement(
+                        ud.name + ' — Kill!',
+                        'Hostile destroyed by ally fire',
+                        false
+                    );
+                }
+                if (typeof createDeathEffect === 'function') {
+                    createDeathEffect(et.position);
+                }
+            }
+        }
     }
 }
 
@@ -6312,6 +6354,99 @@ function _fireWingmanLaser(startPos, endPos, color) {
     } catch (e) {}
 }
 
+// ── Large multi-stage explosion when a wingman is destroyed ─────────────
+function createWingmanExplosion(ally) {
+    if (!ally || !ally.position || typeof scene === 'undefined') return;
+    const center = ally.position.clone();
+    const baseColor = ally.userData && ally.userData.name === 'Wingman Alpha' ? 0x00ff88 : 0x88aaff;
+
+    // Hide the ship mesh — it's gone
+    ally.visible = false;
+
+    // Large fireball
+    const fireballGeo = new THREE.SphereGeometry(60, 20, 16);
+    const fireballMat = new THREE.MeshBasicMaterial({
+        color: 0xffcc44, transparent: true, opacity: 1.0,
+        blending: THREE.AdditiveBlending, depthWrite: false
+    });
+    const fireball = new THREE.Mesh(fireballGeo, fireballMat);
+    fireball.position.copy(center);
+    fireball.renderOrder = 60;
+    scene.add(fireball);
+
+    // Faction-colored shockwave ring
+    const shockGeo = new THREE.RingGeometry(20, 40, 32);
+    const shockMat = new THREE.MeshBasicMaterial({
+        color: baseColor, transparent: true, opacity: 0.9,
+        side: THREE.DoubleSide,
+        blending: THREE.AdditiveBlending, depthWrite: false
+    });
+    const shock = new THREE.Mesh(shockGeo, shockMat);
+    shock.position.copy(center);
+    if (typeof camera !== 'undefined') shock.lookAt(camera.position);
+    shock.renderOrder = 60;
+    scene.add(shock);
+
+    // Particle burst
+    const partCount = 80;
+    const partGeo = new THREE.BufferGeometry();
+    const positions = new Float32Array(partCount * 3);
+    const velocities = [];
+    for (let i = 0; i < partCount; i++) {
+        positions[i*3] = 0; positions[i*3+1] = 0; positions[i*3+2] = 0;
+        velocities.push(new THREE.Vector3(
+            (Math.random() - 0.5) * 4,
+            (Math.random() - 0.5) * 4,
+            (Math.random() - 0.5) * 4
+        ));
+    }
+    partGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    const partMat = new THREE.PointsMaterial({
+        color: 0xffaa44, size: 4, transparent: true, opacity: 1,
+        blending: THREE.AdditiveBlending, depthWrite: false
+    });
+    const particles = new THREE.Points(partGeo, partMat);
+    particles.position.copy(center);
+    scene.add(particles);
+
+    // Animate over 1.5s
+    const start = Date.now();
+    const duration = 1500;
+    const step = () => {
+        const elapsed = Date.now() - start;
+        const t = Math.min(1, elapsed / duration);
+
+        // Fireball: expand fast then fade
+        const fbScale = 1 + t * 3;
+        fireball.scale.set(fbScale, fbScale, fbScale);
+        fireball.material.opacity = Math.max(0, 1 - t * 1.2);
+
+        // Shockwave: expand wider, fade
+        const sScale = 1 + t * 8;
+        shock.scale.set(sScale, sScale, sScale);
+        shock.material.opacity = Math.max(0, 0.9 - t);
+
+        // Particles drift outward
+        const arr = partGeo.attributes.position.array;
+        for (let i = 0; i < partCount; i++) {
+            arr[i*3]   += velocities[i].x;
+            arr[i*3+1] += velocities[i].y;
+            arr[i*3+2] += velocities[i].z;
+        }
+        partGeo.attributes.position.needsUpdate = true;
+        partMat.opacity = Math.max(0, 1 - t);
+
+        if (t < 1) {
+            requestAnimationFrame(step);
+        } else {
+            scene.remove(fireball); fireball.geometry.dispose(); fireball.material.dispose();
+            scene.remove(shock); shock.geometry.dispose(); shock.material.dispose();
+            scene.remove(particles); particles.geometry.dispose(); particles.material.dispose();
+        }
+    };
+    requestAnimationFrame(step);
+}
+
 // ── Update or create a shield bubble around an ally ──────────────────────
 function _updateAllyShield(ally, active) {
     if (typeof THREE === 'undefined') return;
@@ -6359,4 +6494,5 @@ if (typeof window !== 'undefined') {
     window.createAllyShips = createAllyShips;
     window.updateAllyShips = updateAllyShips;
     window.isAllyShip = isAllyShip;
+    window.createWingmanExplosion = createWingmanExplosion;
 }
