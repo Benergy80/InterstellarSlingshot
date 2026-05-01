@@ -2314,6 +2314,34 @@ function logBlackHoleRotationSpeeds() {
     });
 }
 
+// DIAGNOSTIC: Wrap gameState.hull with a setter that logs every change.
+// Helps identify which damage path is killing the player at game start.
+if (typeof window !== 'undefined') {
+    let _hullValue = gameState.hull;
+    Object.defineProperty(gameState, 'hull', {
+        get: function() { return _hullValue; },
+        set: function(newVal) {
+            const oldVal = _hullValue;
+            _hullValue = newVal;
+            if (newVal < oldVal) {
+                const drop = oldVal - newVal;
+                const elapsed = gameState.gameStartTime ?
+                    ((Date.now() - gameState.gameStartTime) / 1000).toFixed(1) + 's' :
+                    'PRE-START';
+                const stack = new Error().stack;
+                // Extract the calling function from the stack (skip this setter)
+                const caller = stack ? stack.split('\n').slice(2, 5).join(' ← ').replace(/\s+/g, ' ') : 'unknown';
+                console.warn(
+                    '🩸 HULL DAMAGE: -' + drop.toFixed(1) +
+                    ' (now ' + newVal.toFixed(1) + '/' + (gameState.maxHull || 100) + ')' +
+                    ' | gameAge=' + elapsed +
+                    ' | from: ' + caller
+                );
+            }
+        }
+    });
+}
+
 // Make functions globally available for debugging
 if (typeof window !== 'undefined') {
     window.gameState = gameState;
