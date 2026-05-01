@@ -1019,7 +1019,7 @@ function fireEnemyWeapon(enemy, difficultySettings) {
     if (!enemy || !enemy.userData || enemy.userData.health <= 0) return;
 
     // No enemy fires until 5 seconds after game start
-    if (gameState.gameStartTime && (Date.now() - gameState.gameStartTime < 5000)) return;
+    if (!gameState.gameStartTime || (Date.now() - gameState.gameStartTime < 5000)) return;
 
     const isLocal = isEnemyInLocalGalaxy(enemy);
     const firingRange = isLocal ? difficultySettings?.localFiringRange || 500 : difficultySettings?.distantFiringRange || 600;
