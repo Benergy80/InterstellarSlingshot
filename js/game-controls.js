@@ -6072,6 +6072,11 @@ function createAllyShips() {
             lastAttack: 0,
             currentTarget: null,
             isAlly: true,
+            // Wingman missile system
+            missilesRemaining: 5,
+            missilesMax: 5,
+            lastMissile: 0,
+            missileCooldownMs: 8000,
             // Independent AI state
             aiState: 'patrol',
             patrolTarget: null,
@@ -6312,24 +6317,34 @@ function _executeEngage(ally, ud, now) {
     ally.position.add(ud.velocity);
 
     // Fire bright lasers when in range — wingmen do NO damage, just visuals
-    // Wingmen don't fire for first 5 seconds, cooldown 500ms
+    // Wingmen don't fire for first 5 seconds, laser cooldown 1000ms
     const _gameAge = (gameState && gameState.gameStartTime) ? (Date.now() - gameState.gameStartTime) : 0;
     if (_gameAge < 5000) return;
-    if (dist < ud.firingRange && now - ud.lastAttack > 500) {
+
+    // ── Missile fire: 8s cooldown, 5 max, ~25% player damage ──────
+    if (dist < ud.firingRange * 1.5 &&
+        (ud.missilesRemaining || 0) > 0 &&
+        now - (ud.lastMissile || 0) > (ud.missileCooldownMs || 8000)) {
+        ud.lastMissile = now;
+        ud.missilesRemaining = (ud.missilesRemaining || 0) - 1;
+        if (typeof _fireWingmanMissile === 'function') {
+            _fireWingmanMissile(ally, et, enemyPos, ud);
+        }
+    }
+
+    // ── Laser fire: 1000ms cooldown ────────────────────────────────
+    if (dist < ud.firingRange && now - ud.lastAttack > 1000) {
         ud.lastAttack = now;
         const color = ud.name === 'Wingman Alpha' ? '#00ff88' : '#88aaff';
         _fireWingmanLaser(ally.position.clone(), enemyPos, color);
 
-        // Apply 10% damage. Wingmen are mostly visual support — the
-        // player does the heavy lifting — but they CAN finish a target
-        // if the player softens it up.
+        // Apply 10% laser damage
         if (et.userData) {
             const wasAlive = et.userData.health > 0;
             et.userData.health -= 0.1;
             if (typeof flashEnemyHit === 'function') flashEnemyHit(et, 0.1);
 
-            // Wingman finished off the enemy — show a notification so the
-            // player sees who got the kill
+            // Kill notification
             if (wasAlive && et.userData.health <= 0) {
                 if (typeof showAchievement === 'function') {
                     showAchievement(
@@ -6344,6 +6359,78 @@ function _executeEngage(ally, ud, now) {
             }
         }
     }
+}
+
+// ── Fire a wingman missile (visual + tracking + damage) ──────────────────
+function _fireWingmanMissile(ally, target, targetPos, ud) {
+    if (typeof THREE === 'undefined' || typeof scene === 'undefined' || !target) return;
+    try {
+        const startPos = ally.position.clone();
+        const color = ud.name === 'Wingman Alpha' ? 0x00ff88 : 0x88aaff;
+
+        const missileGeo = new THREE.CylinderGeometry(0.4, 0.7, 3, 8);
+        const missileMat = new THREE.MeshBasicMaterial({ color: color });
+        const missile = new THREE.Mesh(missileGeo, missileMat);
+        missile.position.copy(startPos);
+
+        // Glow
+        const glowGeo = new THREE.CylinderGeometry(0.8, 1.2, 4, 8);
+        const glowMat = new THREE.MeshBasicMaterial({
+            color: color, transparent: true, opacity: 0.45,
+            blending: THREE.AdditiveBlending, depthWrite: false
+        });
+        const glow = new THREE.Mesh(glowGeo, glowMat);
+        missile.add(glow);
+
+        const direction = new THREE.Vector3().subVectors(targetPos, startPos).normalize();
+        const up = new THREE.Vector3(0, 1, 0);
+        const axis = new THREE.Vector3().crossVectors(up, direction);
+        const angle = Math.acos(up.dot(direction));
+        if (axis.length() > 0.001) missile.setRotationFromAxisAngle(axis.normalize(), angle);
+
+        scene.add(missile);
+
+        // Wingman missile damage = 25% of player missile (3 → 0.75)
+        const wingmanMissileDmg = (gameState && gameState.missiles ? gameState.missiles.damage : 3) * 0.25;
+        const speed = 5.0;
+        const velocity = direction.clone().multiplyScalar(speed);
+
+        // Animate missile toward target
+        const start = Date.now();
+        const maxLife = 4000;
+        const step = () => {
+            const elapsed = Date.now() - start;
+            if (elapsed > maxLife || !target.userData || target.userData.health <= 0) {
+                scene.remove(missile);
+                missile.geometry.dispose(); missile.material.dispose();
+                glow.geometry.dispose(); glow.material.dispose();
+                return;
+            }
+            // Track target
+            const newDir = new THREE.Vector3().subVectors(target.position, missile.position).normalize();
+            velocity.lerp(newDir.clone().multiplyScalar(speed), 0.1);
+            missile.position.add(velocity);
+
+            // Hit detection
+            if (missile.position.distanceTo(target.position) < 30) {
+                const wasAlive = target.userData.health > 0;
+                target.userData.health -= wingmanMissileDmg;
+                if (typeof flashEnemyHit === 'function') flashEnemyHit(target, wingmanMissileDmg);
+                if (typeof createExplosionEffect === 'function') createExplosionEffect(missile.position);
+                if (wasAlive && target.userData.health <= 0) {
+                    if (typeof showAchievement === 'function') {
+                        showAchievement(ud.name + ' — Missile Kill!', 'Hostile eliminated by ally missile', false);
+                    }
+                }
+                scene.remove(missile);
+                missile.geometry.dispose(); missile.material.dispose();
+                glow.geometry.dispose(); glow.material.dispose();
+                return;
+            }
+            requestAnimationFrame(step);
+        };
+        requestAnimationFrame(step);
+    } catch (e) {}
 }
 
 // ── Fire a thick bright laser from a wingman (no damage, visual only) ────
