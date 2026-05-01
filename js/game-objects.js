@@ -8497,7 +8497,97 @@ function createEnemies3D() {
             enemies.push(enemy);
         }
     }
-    
+
+    // =============================================================================
+    // VULCAN PATROL SHIPS — wider patrol around Sagittarius A* (2500-4500u)
+    // =============================================================================
+    const vulcanGroupCount = 6;
+    const vulcansPerGroup = 4;
+    let vulcanIndex = 0;
+    for (let g = 0; g < vulcanGroupCount; g++) {
+        const groupDistance = 2500 + Math.random() * 2000;
+        const groupAngle = (g / vulcanGroupCount) * Math.PI * 2 + Math.random() * 0.5;
+        const groupCenter = new THREE.Vector3(
+            Math.cos(groupAngle) * groupDistance,
+            (Math.random() - 0.5) * 200,
+            Math.sin(groupAngle) * groupDistance
+        );
+
+        for (let p = 0; p < vulcansPerGroup; p++) {
+            vulcanIndex++;
+            const enemyGeometry = createEnemyGeometry(0);
+            const localShapeData = { color: 0xff6633 };
+            const materials = createEnemyMaterial(localShapeData, 'local', groupDistance);
+
+            let enemy;
+            let isGLBModel = false;
+            if (typeof createEnemyMeshWithModel === 'function') {
+                enemy = createEnemyMeshWithModel(1, enemyGeometry, materials.enemyMaterial);
+                isGLBModel = enemy.isGroup || (enemy.children && enemy.children.length > 0 && enemy.children[0].isMesh);
+            } else {
+                enemy = new THREE.Mesh(enemyGeometry, materials.enemyMaterial);
+            }
+
+            if (!isGLBModel) {
+                const glowGeometry = enemyGeometry.clone();
+                const glow = new THREE.Mesh(glowGeometry, materials.glowMaterial);
+                glow.scale.multiplyScalar(materials.glowScale);
+                glow.visible = true;
+                glow.frustumCulled = false;
+                enemy.add(glow);
+            }
+
+            const spreadAngle = (p / vulcansPerGroup) * Math.PI * 2;
+            const spreadDist = 60 + Math.random() * 60;
+            enemy.position.set(
+                groupCenter.x + Math.cos(spreadAngle) * spreadDist,
+                groupCenter.y + (Math.random() - 0.5) * 40,
+                groupCenter.z + Math.sin(spreadAngle) * spreadDist
+            );
+
+            let hitboxSize = 96;
+            try {
+                const box = new THREE.Box3().setFromObject(enemy);
+                const size = new THREE.Vector3();
+                box.getSize(size);
+                hitboxSize = Math.max(size.x, size.y, size.z);
+            } catch (e) {}
+
+            enemy.userData = {
+                name: `Vulcan Patrol ${vulcanIndex}`,
+                type: 'enemy',
+                health: getEnemyHealthForDifficulty(true, false, false),
+                maxHealth: getEnemyHealthForDifficulty(true, false, false),
+                speed: 1.4 + Math.random() * 0.8,
+                aggression: 0.9 + Math.random() * 0.1,
+                patrolCenter: groupCenter.clone(),
+                patrolRadius: groupDistance,
+                lastAttack: 0,
+                isActive: true,
+                visible: true,
+                galaxyId: 7,
+                galaxyColor: 0xff6633,
+                swarmTarget: null,
+                circlePhase: Math.random() * Math.PI * 2,
+                attackMode: 'patrol',
+                detectionRange: 2800,
+                firingRange: 380,
+                isMartianPirate: true, // Same exemption from deactivation
+                isVulcanPatrol: true,
+                isLocal: true,
+                isBoss: false,
+                isBossSupport: false,
+                position3D: enemy.position.clone(),
+                hitboxSize: hitboxSize
+            };
+
+            enemy.visible = true;
+            enemy.frustumCulled = true;
+            scene.add(enemy);
+            enemies.push(enemy);
+        }
+    }
+
     console.log(`✅ Created ${enemies.length} enemies with full 3D positioning`);
     console.log(`📊 Breakdown: ${enemies.filter(e => e.userData.isLocal).length} local enemies, ${enemies.filter(e => !e.userData.isLocal).length} distant enemies`);
     console.log(`⏭️ Distant galaxies will load on-demand when you warp to them`);
