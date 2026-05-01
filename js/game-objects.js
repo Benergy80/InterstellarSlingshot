@@ -8410,15 +8410,11 @@ function createEnemies3D() {
     
     // Create local galaxy enemies (Martian Pirates) — patrol in groups of 3
     // Positioned within the inner Sol system so players encounter them early
-    const patrolGroupCount = 6;
+    const patrolGroupCount = 4;
     const piratesPerGroup = 3;
     let pirateIndex = 0;
     for (let g = 0; g < patrolGroupCount; g++) {
-        // Spawn far enough that pirates can't reach Earth during the
-        // 5-second orbit phase. At max pursuit speed (~120 u/sec) they
-        // can close ~600u in 5s. Minimum 3000u from origin = 2360u from
-        // Earth, leaves 1760u buffer beyond the 350u firing range.
-        const groupDistance = 3000 + Math.random() * 2000;
+        const groupDistance = 800 + Math.random() * 1200;
         const groupAngle = (g / patrolGroupCount) * Math.PI * 2 + Math.random() * 0.3;
         const groupCenter = new THREE.Vector3(
             Math.cos(groupAngle) * groupDistance,

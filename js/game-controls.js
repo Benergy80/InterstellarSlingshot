@@ -616,10 +616,19 @@ function updateEnemyBehavior() {
     
     let nearbyEnemyCount = 0;
     let inCombatRange = false;
-    // Separate counter for how many enemies have FIRED this frame.
-    // Only 4 enemies fire at any time — the rest pursue but don't shoot.
-    let firedThisFrameLocal = 0;
-    let firedThisFrameDistant = 0;
+    let activeAttackers = 0;
+    let localActiveAttackers = 0;
+
+    // Count current active attackers
+    enemies.forEach(enemy => {
+        if (enemy.userData.health <= 0) return;
+        if (enemy.userData.isActive) {
+            activeAttackers++;
+            if (isEnemyInLocalGalaxy(enemy)) {
+                localActiveAttackers++;
+            }
+        }
+    });
 
     enemies.forEach(enemy => {
         if (enemy.userData.health <= 0) return;
@@ -631,7 +640,10 @@ function updateEnemyBehavior() {
         const detectionRange = isLocal ?
             (difficultySettings.localDetectionRange || 2000) :
             (enemy.userData.detectionRange || difficultySettings.distantDetectionRange || 3000);
-        const firingRange = 600;
+        // Use the HIGHER of difficulty setting or enemy's own firingRange
+        const firingRange = isLocal ?
+            Math.max(difficultySettings.localFiringRange || 200, enemy.userData.firingRange || 0) :
+            Math.max(enemy.userData.firingRange || 0, difficultySettings.distantFiringRange || 300);
 
         // Count nearby enemies
         if (distanceToPlayer < detectionRange) {
@@ -641,11 +653,24 @@ function updateEnemyBehavior() {
             }
         }
 
-        // Activate enemies when player enters detection range
-        if (distanceToPlayer < detectionRange && !enemy.userData.isActive) {
+        // PROGRESSIVE DIFFICULTY: Apply attacker limits — only N enemies
+        // are active at once, the rest stay dormant.
+        const maxAttackers = isLocal ? difficultySettings.maxLocalAttackers : difficultySettings.maxDistantAttackers;
+        const currentAttackers = isLocal ? localActiveAttackers : activeAttackers;
+
+        if (distanceToPlayer < detectionRange && !enemy.userData.isActive && currentAttackers < maxAttackers) {
             enemy.userData.isActive = true;
             enemy.userData.detectedPlayer = true;
             enemy.userData.lastSeenPlayerPos = playerPos.clone();
+
+            if (isLocal) localActiveAttackers++;
+            else activeAttackers++;
+        } else if (enemy.userData.isActive &&
+                   (distanceToPlayer > detectionRange * 1.5 || currentAttackers > maxAttackers)) {
+            enemy.userData.isActive = false;
+            enemy.userData.detectedPlayer = false;
+            if (isLocal) localActiveAttackers--;
+            else activeAttackers--;
         }
         
         if (enemy.userData.isActive) {
@@ -667,9 +692,6 @@ function updateEnemyBehavior() {
             }
             
             // Enhanced enemy firing with progressive difficulty.
-            // Cap simultaneous firing — all enemies stay active for AI/movement,
-            // but only `maxAttackers` of them actually fire at any time so the
-            // player isn't overwhelmed by 36 lasers at once.
             // Compute distance to nearest TARGET (player OR any alive wingman)
             // so enemies near wingmen still fire even when the player is far.
             let nearestTargetDist = distanceToPlayer;
@@ -681,24 +703,17 @@ function updateEnemyBehavior() {
                     if (_wd < nearestTargetDist) nearestTargetDist = _wd;
                 }
             }
-            // Only ONE enemy fires per frame, AND only one fire allowed per
-            // 300ms across all enemies (~3 shots/sec system-wide).
+            // Standard firing — only `maxAttackers` are active so the rate
+            // is naturally capped at the original 2-day-ago levels.
             if (nearestTargetDist < firingRange) {
-                const totalFiredThisFrame = firedThisFrameLocal + firedThisFrameDistant;
                 const now = Date.now();
-                const sinceLastGlobalFire = now - (window._lastEnemyFire || 0);
-                if (totalFiredThisFrame < 1 && sinceLastGlobalFire > 300) {
-                    const attackCooldown = isLocal ?
-                        (difficultySettings.localAttackCooldown || 2000) :
-                        (enemy.userData.isBoss ? 600 : difficultySettings.distantAttackCooldown || 1200);
+                const attackCooldown = isLocal ?
+                    (difficultySettings.localAttackCooldown || 2000) :
+                    (enemy.userData.isBoss ? 600 : difficultySettings.distantAttackCooldown || 1200);
 
-                    if (now - (enemy.userData.lastAttack || 0) > attackCooldown) {
-                        fireEnemyWeapon(enemy, difficultySettings);
-                        enemy.userData.lastAttack = now;
-                        window._lastEnemyFire = now;
-                        if (isLocal) firedThisFrameLocal++;
-                        else firedThisFrameDistant++;
-                    }
+                if (now - (enemy.userData.lastAttack || 0) > attackCooldown) {
+                    fireEnemyWeapon(enemy, difficultySettings);
+                    enemy.userData.lastAttack = now;
                 }
             }
         } else {
@@ -1006,9 +1021,8 @@ function fireEnemyWeapon(enemy, difficultySettings) {
     // No enemy fires until 5 seconds after game start
     if (gameState.gameStartTime && (Date.now() - gameState.gameStartTime < 5000)) return;
 
-    // Hard 600u firing range — no enemy fires beyond this
-    const firingRange = 600;
     const isLocal = isEnemyInLocalGalaxy(enemy);
+    const firingRange = isLocal ? difficultySettings?.localFiringRange || 500 : difficultySettings?.distantFiringRange || 600;
 
     // Use world position for entities that are children of groups
     const enemyPos = (enemy.parent && enemy.parent.isGroup) ? enemy.getWorldPosition(_enemyWorldPos).clone() : enemy.position;
@@ -1076,14 +1090,8 @@ function fireEnemyWeapon(enemy, difficultySettings) {
                 return;
             }
 
-            // 7-second startup grace period — no enemy damage in the first
-            // 7s so the demo's orbit phase + first 2s of combat are safe.
-            const inStartupGrace = typeof gameState !== 'undefined' &&
-                                   gameState.gameStartTime &&
-                                   (Date.now() - gameState.gameStartTime < 7000);
-            const isInvulnerable = inStartupGrace ||
-                                   (typeof isBlackHoleWarpInvulnerable === 'function' &&
-                                    isBlackHoleWarpInvulnerable());
+            const isInvulnerable = typeof isBlackHoleWarpInvulnerable === 'function' &&
+                                   isBlackHoleWarpInvulnerable();
             const shieldsActive = typeof isShieldActive === 'function' && isShieldActive();
 
             if (!isInvulnerable) {
