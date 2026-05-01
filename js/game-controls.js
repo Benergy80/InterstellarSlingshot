@@ -637,11 +637,8 @@ function updateEnemyBehavior() {
         // Use the HIGHER of difficulty setting or enemy's own firingRange
         // so buffed enemies (Martian Pirates: 360u) aren't capped by the
         // global difficulty minimum.
-        // Hard cap enemy firing range at 600u so the player isn't sniped
-        // from across the system.
-        const firingRange = Math.min(600, isLocal ?
-            Math.max(difficultySettings.localFiringRange || 200, enemy.userData.firingRange || 0) :
-            Math.max(enemy.userData.firingRange || 0, difficultySettings.distantFiringRange || 300));
+        // Hard 600u firing range — enemies cannot fire beyond this distance
+        const firingRange = 600;
         
         // Count nearby enemies
         if (distanceToPlayer < detectionRange) {
@@ -1016,9 +1013,8 @@ const _enemyWorldPos = (typeof THREE !== 'undefined') ? new THREE.Vector3() : nu
 function fireEnemyWeapon(enemy, difficultySettings) {
     if (!enemy || !enemy.userData || enemy.userData.health <= 0) return;
 
-    const isLocal = isEnemyInLocalGalaxy(enemy);
-    // Hard cap firing range at 600u
-    const firingRange = Math.min(600, isLocal ? difficultySettings?.localFiringRange || 500 : difficultySettings?.distantFiringRange || 600);
+    // Hard 600u firing range — no enemy fires beyond this
+    const firingRange = 600;
 
     // Use world position for entities that are children of groups
     const enemyPos = (enemy.parent && enemy.parent.isGroup) ? enemy.getWorldPosition(_enemyWorldPos).clone() : enemy.position;
