@@ -1712,7 +1712,7 @@ function initAudio() {
         effectsGain.connect(masterGain);
         
         musicGain.gain.value = 0.4;
-        effectsGain.gain.value = 0.6; // RESTORED: Higher effects volume
+        effectsGain.gain.value = 0.3; // Half of previous 0.6 — quieter SFX
         
         console.log('Enhanced audio system initialized (waiting for user interaction)');
         // Preload MP3 soundtrack alongside synth audio
