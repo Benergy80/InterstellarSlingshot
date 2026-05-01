@@ -8411,7 +8411,7 @@ function createEnemies3D() {
     // Create local galaxy enemies (Martian Pirates) — patrol in groups of 3
     // Positioned within the inner Sol system so players encounter them early
     const patrolGroupCount = 6;
-    const piratesPerGroup = 4;
+    const piratesPerGroup = 3;
     let pirateIndex = 0;
     for (let g = 0; g < patrolGroupCount; g++) {
         const groupDistance = 800 + Math.random() * 1200;
@@ -8446,6 +8446,14 @@ function createEnemies3D() {
                 glow.frustumCulled = false;
                 enemy.add(glow);
             }
+
+            // Add an invisible hitbox sphere so the raycaster always has
+            // something to hit, even if a GLB model hasn't loaded yet.
+            const hitboxGeo = new THREE.SphereGeometry(40, 8, 6);
+            const hitboxMat = new THREE.MeshBasicMaterial({ visible: false });
+            const hitbox = new THREE.Mesh(hitboxGeo, hitboxMat);
+            hitbox.userData.isHitbox = true;
+            enemy.add(hitbox);
 
             // Spread within the group (tight 80-unit cluster)
             const spreadAngle = (p / piratesPerGroup) * Math.PI * 2;
@@ -8502,7 +8510,7 @@ function createEnemies3D() {
     // VULCAN PATROL SHIPS — wider patrol around Sagittarius A* (2500-4500u)
     // =============================================================================
     const vulcanGroupCount = 6;
-    const vulcansPerGroup = 4;
+    const vulcansPerGroup = 3;
     let vulcanIndex = 0;
     for (let g = 0; g < vulcanGroupCount; g++) {
         const groupDistance = 2500 + Math.random() * 2000;
@@ -8536,6 +8544,13 @@ function createEnemies3D() {
                 glow.frustumCulled = false;
                 enemy.add(glow);
             }
+
+            // Invisible hitbox sphere so the raycaster always has a target
+            const hitboxGeo = new THREE.SphereGeometry(40, 8, 6);
+            const hitboxMat = new THREE.MeshBasicMaterial({ visible: false });
+            const hitbox = new THREE.Mesh(hitboxGeo, hitboxMat);
+            hitbox.userData.isHitbox = true;
+            enemy.add(hitbox);
 
             const spreadAngle = (p / vulcansPerGroup) * Math.PI * 2;
             const spreadDist = 60 + Math.random() * 60;
