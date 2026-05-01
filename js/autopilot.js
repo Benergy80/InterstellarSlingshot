@@ -587,42 +587,50 @@
     }
 
     const firstLeg = (ap.warpsUsed || 0) === 0;
+    const MAX_TARGET_RANGE = 10000;
 
-    // First leg (in Sol): ALWAYS prefer Martian Pirates over any other
-    // enemy, even same-faction Vulcan ones in distant galaxies.
+    // First leg (in Sol): ALWAYS prefer local enemies (Martian Pirates +
+    // Vulcan Patrols around Sagittarius A*).  Deep-space hostiles are
+    // gated behind nebula discovery and should never be engaged here.
     if (firstLeg) {
       const localEnemy = _nearestLocalEnemy();
       if (localEnemy) {
         const ld = camPos().distanceTo(localEnemy.position);
-        setStatus('Intercepting ' + (localEnemy.userData.name || 'hostile') + ' — ' + (ld | 0) + ' u');
-        gameState.currentTarget = localEnemy;
-        flyToward(localEnemy, 2.5);
+        if (ld <= MAX_TARGET_RANGE) {
+          setStatus('Intercepting ' + (localEnemy.userData.name || 'hostile') + ' — ' + (ld | 0) + ' u');
+          gameState.currentTarget = localEnemy;
+          flyToward(localEnemy, 2.5);
+          pursuitFlightStyle('pursuit');
+          if (ld < 2200) {
+            ap.combatTarget = localEnemy;
+            ap.combatMissileFired = false;
+            ap.returnPhase = 'findLocalEnemies';
+            goPhase('combat');
+          }
+          return;
+        }
+      }
+    }
+
+    // Priority 2: nearest detected enemy on nav, capped at 10000u.
+    // Beyond 10000u, the demo waits for a nebula-discovery path to
+    // unlock that group — never engages "hidden" deep-space hostiles.
+    const detected = navDetectedEnemy();
+    if (detected) {
+      const d = camPos().distanceTo(detected.position);
+      if (d <= MAX_TARGET_RANGE) {
+        setStatus('NAV target: ' + (detected.userData.name || 'hostile') + ' · ' + (d | 0));
+        gameState.currentTarget = detected;
+        flyToward(detected, 2.5);
         pursuitFlightStyle('pursuit');
-        if (ld < 2200) {
-          ap.combatTarget = localEnemy;
+        if (d < 2200) {
+          ap.combatTarget = detected;
           ap.combatMissileFired = false;
           ap.returnPhase = 'findLocalEnemies';
           goPhase('combat');
         }
         return;
       }
-    }
-
-    // Priority 2: nearest detected enemy on nav (3000u range)
-    const detected = navDetectedEnemy();
-    if (detected) {
-      const d = camPos().distanceTo(detected.position);
-      setStatus('NAV target: ' + (detected.userData.name || 'hostile') + ' · ' + (d | 0));
-      gameState.currentTarget = detected;
-      flyToward(detected, 2.5);
-      pursuitFlightStyle('pursuit');
-      if (d < 2200) {
-        ap.combatTarget = detected;
-        ap.combatMissileFired = false;
-        ap.returnPhase = 'findLocalEnemies';
-        goPhase('combat');
-      }
-      return;
     }
 
     // All enemies cleared — move to interstellar phase
@@ -651,10 +659,10 @@
       return;
     }
 
-    // Abort pursuit if target is absurdly far — we were probably handed
-    // a stale or wrong-galaxy target.  Re-scan via findLocalEnemies.
+    // Abort pursuit if target gets beyond 10000u — never chase enemies
+    // that far. Re-scan via findLocalEnemies.
     const dist = camPos().distanceTo(enemy.position);
-    if (dist > 5000) {
+    if (dist > 10000) {
       ap.combatTarget = null;
       goPhase('findLocalEnemies');
       return;

@@ -6173,6 +6173,9 @@ function updateAllyShips() {
             _executePatrol(ally, ud, now, playerInHome ? playerPos : null);
         }
 
+        // ── Shield bubble: visible during combat engagement ──────────────
+        _updateAllyShield(ally, ud.aiState === 'engage' && ud.engageTarget);
+
         // ── Face movement direction ──────────────────────────────────────
         // lookAt points -Z toward the target; negate so the ship's +Z
         // (model forward) faces the travel direction.
@@ -6246,20 +6249,89 @@ function _executeEngage(ally, ud, now) {
     }
     ally.position.add(ud.velocity);
 
-    // Fire lasers when in range
+    // Fire bright lasers when in range — wingmen do NO damage, just visuals
     if (dist < ud.firingRange && now - ud.lastAttack > 350) {
         ud.lastAttack = now;
-        if (typeof createLaserBeam === 'function') {
-            const color = ud.name === 'Wingman Alpha' ? '#00ff88' : '#88aaff';
-            createLaserBeam(ally.position.clone(), enemyPos, color, false);
-            if (et.userData) {
-                // Wingmen do 1/3 the damage of the player (~0.34 per hit)
-                // so dogfights last longer before enemies are wiped out
-                et.userData.health -= 0.34;
-                if (typeof flashEnemyHit === 'function') flashEnemyHit(et, 0.34);
-            }
-        }
+        const color = ud.name === 'Wingman Alpha' ? '#00ff88' : '#88aaff';
+        _fireWingmanLaser(ally.position.clone(), enemyPos, color);
     }
+}
+
+// ── Fire a thick bright laser from a wingman (no damage, visual only) ────
+function _fireWingmanLaser(startPos, endPos, color) {
+    if (typeof THREE === 'undefined' || typeof scene === 'undefined') return;
+    try {
+        const direction = new THREE.Vector3().subVectors(endPos, startPos);
+        const length = direction.length();
+
+        // CORE — thick, fully opaque
+        const coreGeo = new THREE.CylinderGeometry(0.8, 0.8, length, 12);
+        const coreMat = new THREE.MeshBasicMaterial({ color: color, transparent: true, opacity: 1.0 });
+        const core = new THREE.Mesh(coreGeo, coreMat);
+        // OUTER GLOW — much wider, additive blend
+        const glowGeo = new THREE.CylinderGeometry(2.2, 2.2, length, 12);
+        const glowMat = new THREE.MeshBasicMaterial({
+            color: color, transparent: true, opacity: 0.45,
+            blending: THREE.AdditiveBlending, depthWrite: false
+        });
+        const glow = new THREE.Mesh(glowGeo, glowMat);
+
+        const up = new THREE.Vector3(0, 1, 0);
+        const dirNorm = direction.clone().normalize();
+        const axis = new THREE.Vector3().crossVectors(up, dirNorm);
+        const angle = Math.acos(up.dot(dirNorm));
+        const orient = (mesh) => {
+            mesh.position.copy(startPos);
+            if (axis.length() > 0.001) {
+                axis.normalize();
+                mesh.setRotationFromAxisAngle(axis, angle);
+            } else if (direction.y < 0) {
+                mesh.rotateX(Math.PI);
+            }
+            mesh.position.add(direction.clone().multiplyScalar(0.5));
+            mesh.renderOrder = 50;
+        };
+        orient(core);
+        orient(glow);
+        scene.add(core);
+        scene.add(glow);
+
+        // Fade out and dispose
+        setTimeout(() => {
+            scene.remove(core); core.geometry.dispose(); core.material.dispose();
+            scene.remove(glow); glow.geometry.dispose(); glow.material.dispose();
+        }, 250);
+    } catch (e) {}
+}
+
+// ── Update or create a shield bubble around an ally ──────────────────────
+function _updateAllyShield(ally, active) {
+    if (typeof THREE === 'undefined') return;
+    if (!active) {
+        if (ally.userData.shieldMesh) {
+            ally.remove(ally.userData.shieldMesh);
+            ally.userData.shieldMesh.geometry.dispose();
+            ally.userData.shieldMesh.material.dispose();
+            ally.userData.shieldMesh = null;
+        }
+        return;
+    }
+    if (!ally.userData.shieldMesh) {
+        const color = ally.userData.name === 'Wingman Alpha' ? 0x00ff88 : 0x88aaff;
+        const geo = new THREE.SphereGeometry(60, 16, 12);
+        const mat = new THREE.MeshBasicMaterial({
+            color: color, transparent: true, opacity: 0.18,
+            blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
+            depthWrite: false, wireframe: false
+        });
+        const mesh = new THREE.Mesh(geo, mat);
+        mesh.renderOrder = 49;
+        ally.add(mesh);
+        ally.userData.shieldMesh = mesh;
+    }
+    // Pulse opacity
+    const pulse = 0.15 + 0.08 * Math.sin(Date.now() * 0.005);
+    ally.userData.shieldMesh.material.opacity = pulse;
 }
 
 // ── Return: head back toward system center ───────────────────────────────
