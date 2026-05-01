@@ -616,30 +616,23 @@ function updateEnemyBehavior() {
     
     let nearbyEnemyCount = 0;
     let inCombatRange = false;
-    // Per-frame FIRING count (not active count) — caps how many enemies
-    // shoot the player simultaneously. Enemies still pursue/AI when not firing.
-    let activeAttackers = 0;
-    let localActiveAttackers = 0;
-    
+    // Separate counter for how many enemies have FIRED this frame.
+    // Only 4 enemies fire at any time — the rest pursue but don't shoot.
+    let firedThisFrameLocal = 0;
+    let firedThisFrameDistant = 0;
+
     enemies.forEach(enemy => {
         if (enemy.userData.health <= 0) return;
-        
-        // FIXED: Always use camera position for consistent distance checks
-        // The ship mesh can lag behind during warps, causing enemies to attack from afar
+
         const playerPos = camera.position.clone();
         const distanceToPlayer = playerPos.distanceTo(enemy.position);
         const isLocal = isEnemyInLocalGalaxy(enemy);
-        
-        // ENHANCED: Larger detection ranges
-        const detectionRange = isLocal ? 
-            (difficultySettings.localDetectionRange || 2000) : 
+
+        const detectionRange = isLocal ?
+            (difficultySettings.localDetectionRange || 2000) :
             (enemy.userData.detectionRange || difficultySettings.distantDetectionRange || 3000);
-        // Use the HIGHER of difficulty setting or enemy's own firingRange
-        // so buffed enemies (Martian Pirates: 360u) aren't capped by the
-        // global difficulty minimum.
-        // Hard 600u firing range — enemies cannot fire beyond this distance
         const firingRange = 600;
-        
+
         // Count nearby enemies
         if (distanceToPlayer < detectionRange) {
             nearbyEnemyCount++;
@@ -647,19 +640,13 @@ function updateEnemyBehavior() {
                 inCombatRange = true;
             }
         }
-        
-        // ALL enemies in detection range stay active — no attacker cap.
-        // Every enemy in the system fights and attacks player + wingmen.
+
+        // Activate enemies when player enters detection range
         if (distanceToPlayer < detectionRange && !enemy.userData.isActive) {
             enemy.userData.isActive = true;
             enemy.userData.detectedPlayer = true;
             enemy.userData.lastSeenPlayerPos = playerPos.clone();
-
-            if (isLocal) localActiveAttackers++;
-            else activeAttackers++;
         }
-        // Once activated, enemies stay active permanently — they pursue the
-        // player and wingmen until destroyed.
         
         if (enemy.userData.isActive) {
             // FIXED: Enemy speeds 200-1000 km/s (0.2-1.0 game units, multiply by 1000 for km/s display)
@@ -694,10 +681,10 @@ function updateEnemyBehavior() {
                     if (_wd < nearestTargetDist) nearestTargetDist = _wd;
                 }
             }
+            // Only 4 enemies fire per frame — separate counter from activation
             if (nearestTargetDist < firingRange) {
-                const firingCap = isLocal ? difficultySettings.maxLocalAttackers : difficultySettings.maxDistantAttackers;
-                const currentFiring = isLocal ? localActiveAttackers : activeAttackers;
-                if (currentFiring < firingCap) {
+                const currentFiring = isLocal ? firedThisFrameLocal : firedThisFrameDistant;
+                if (currentFiring < 4) {
                     const now = Date.now();
                     const attackCooldown = isLocal ?
                         (difficultySettings.localAttackCooldown || 2000) :
@@ -706,8 +693,8 @@ function updateEnemyBehavior() {
                     if (now - (enemy.userData.lastAttack || 0) > attackCooldown) {
                         fireEnemyWeapon(enemy, difficultySettings);
                         enemy.userData.lastAttack = now;
-                        if (isLocal) localActiveAttackers++;
-                        else activeAttackers++;
+                        if (isLocal) firedThisFrameLocal++;
+                        else firedThisFrameDistant++;
                     }
                 }
             }
