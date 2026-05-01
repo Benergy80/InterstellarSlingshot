@@ -728,8 +728,12 @@ function isBlackHoleWarpInvulnerable() {
 }
 
 function destroyAsteroidByCollision(asteroid) {
-    // Check black hole warp invulnerability
-    if (!isBlackHoleWarpInvulnerable()) {
+    // Skip during 7-second startup grace period
+    const _inStartupGrace = typeof gameState !== 'undefined' &&
+                            gameState.gameStartTime &&
+                            (Date.now() - gameState.gameStartTime < 7000);
+    // Check black hole warp invulnerability OR startup grace
+    if (!isBlackHoleWarpInvulnerable() && !_inStartupGrace) {
         // Apply damage with shield reduction
         const damage = 15;
         const shieldReduction = typeof getShieldDamageReduction === 'function' ?
@@ -1781,7 +1785,12 @@ if (keys.x && gameState.energy > 0 && !gameState.emergencyWarp.autoBraking) {
 // Black holes NEVER crash — always warp (handled below in the black hole warp section)
 
 // Planets and stars: Collide with surface — proportional margin (5% of radius)
-const surfaceCollision = (planet.userData.type === 'planet' || planet.userData.type === 'star') &&
+// Skip during 7-second startup grace period
+const _inStartupGrace = typeof gameState !== 'undefined' &&
+                        gameState.gameStartTime &&
+                        (Date.now() - gameState.gameStartTime < 7000);
+const surfaceCollision = !_inStartupGrace &&
+                         (planet.userData.type === 'planet' || planet.userData.type === 'star') &&
                          distance < planetRadius * 1.05;
 
 if (surfaceCollision) {
@@ -2137,11 +2146,13 @@ if (surfaceCollision) {
                     // Reduce velocity significantly on collision
                     gameState.velocityVector.multiplyScalar(0.2); // Lose 80% of speed
 
-                    // Heavy hull damage from BORG collision
+                    // Heavy hull damage from BORG collision (skip during grace)
+                    const _gracePeriod = gameState.gameStartTime &&
+                                        (Date.now() - gameState.gameStartTime < 7000);
                     const damage = 10;
                     const shieldReduction = typeof getShieldDamageReduction === 'function' ?
                                             getShieldDamageReduction() : 0;
-                    const actualDamage = damage * (1 - shieldReduction);
+                    const actualDamage = _gracePeriod ? 0 : damage * (1 - shieldReduction);
 
                     gameState.hull = Math.max(0, gameState.hull - actualDamage);
 
@@ -2207,11 +2218,13 @@ if (surfaceCollision) {
                 // Reduce velocity on collision
                 gameState.velocityVector.multiplyScalar(0.3); // Lose 70% of speed
 
-                // Hull damage based on asteroid size
+                // Hull damage based on asteroid size (skip during grace)
+                const _gracePeriod2 = gameState.gameStartTime &&
+                                     (Date.now() - gameState.gameStartTime < 7000);
                 const damage = Math.ceil(asteroid.userData.size / 5); // Larger = more damage
                 const shieldReduction = typeof getShieldDamageReduction === 'function' ?
                                         getShieldDamageReduction() : 0;
-                const actualDamage = damage * (1 - shieldReduction);
+                const actualDamage = _gracePeriod2 ? 0 : damage * (1 - shieldReduction);
 
                 gameState.hull = Math.max(0, gameState.hull - actualDamage);
 
