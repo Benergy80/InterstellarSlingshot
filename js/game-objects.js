@@ -8410,7 +8410,7 @@ function createEnemies3D() {
     
     // Create local galaxy enemies (Martian Pirates) — patrol in groups of 3
     // Positioned within the inner Sol system so players encounter them early
-    const patrolGroupCount = 4;
+    const patrolGroupCount = 8;
     const piratesPerGroup = 3;
     let pirateIndex = 0;
     for (let g = 0; g < patrolGroupCount; g++) {
