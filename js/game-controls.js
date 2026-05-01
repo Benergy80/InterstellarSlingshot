@@ -662,6 +662,10 @@ function updateEnemyBehavior() {
             enemy.userData.isActive = true;
             enemy.userData.detectedPlayer = true;
             enemy.userData.lastSeenPlayerPos = playerPos.clone();
+            // Stagger first-shot timing so 4 newly-activated enemies don't
+            // all fire on the same frame. Random offset 0-1200ms means
+            // their first shots are spread across the cooldown window.
+            enemy.userData.lastAttack = Date.now() - Math.random() * 1200;
 
             if (isLocal) localActiveAttackers++;
             else activeAttackers++;
@@ -1052,12 +1056,15 @@ function fireEnemyWeapon(enemy, difficultySettings) {
 
         playSound('enemy_fire');
 
+        // Reduced damage so combat is survivable while still threatening.
+        // Local enemies do 2 dmg base, distant 3-6 dmg. With 4 attackers
+        // firing every 1.2s at 60% hit chance: ~4 dmg/sec → 25s to die.
         let damage = isLocal ?
-            (difficultySettings.galaxiesCleared === 0 ? 4 : 6 + difficultySettings.galaxiesCleared) :
-            (enemy.userData.isBoss ? 12 : enemy.userData.isBossSupport ? 8 : 6);
-        damage = Math.min(damage, 15);
+            (difficultySettings.galaxiesCleared === 0 ? 2 : 3 + difficultySettings.galaxiesCleared) :
+            (enemy.userData.isBoss ? 8 : enemy.userData.isBossSupport ? 5 : 3);
+        damage = Math.min(damage, 10);
 
-        let hitChance = 0.7;
+        let hitChance = 0.6;
         const turnRate = enemy.userData.turnRate || 0;
         if (turnRate > 0.01) {
             const accuracyPenalty = Math.min(turnRate * 3.33, 0.5);
