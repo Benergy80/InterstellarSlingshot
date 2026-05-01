@@ -2205,9 +2205,6 @@ function gameOver(reason) {
     showGameOverScreen('MISSION FAILED', reason || 'Ship destroyed');
 }
 
-    console.log('✅ Game over screen displayed - all systems stopped');
-}
-
 // HULL ZERO GAME OVER - Dramatic full screen explosion effect
 function showGameOverScreen(title, message) {
     // Prevent duplicate game over screens
