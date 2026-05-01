@@ -587,7 +587,7 @@
     }
 
     const firstLeg = (ap.warpsUsed || 0) === 0;
-    const MAX_TARGET_RANGE = 10000;
+    const MAX_TARGET_RANGE = 5000;
 
     // First leg (in Sol): ALWAYS prefer local enemies (Martian Pirates +
     // Vulcan Patrols around Sagittarius A*).  Deep-space hostiles are
@@ -659,10 +659,10 @@
       return;
     }
 
-    // Abort pursuit if target gets beyond 10000u — never chase enemies
+    // Abort pursuit if target gets beyond 5000u — never chase enemies
     // that far. Re-scan via findLocalEnemies.
     const dist = camPos().distanceTo(enemy.position);
-    if (dist > 10000) {
+    if (dist > 5000) {
       ap.combatTarget = null;
       goPhase('findLocalEnemies');
       return;
@@ -1895,7 +1895,8 @@
     if (tgt.userData.type !== 'enemy' && !tgt.userData.isBorg) return;
     if (tgt.userData.health <= 0) return;
 
-    const engageRange = (tgt.userData && tgt.userData.firingRange) || 500;
+    // Demo player only fires when within 500u — keep dogfights close-range
+    const engageRange = Math.min(500, (tgt.userData && tgt.userData.firingRange) || 500);
     const dist = camPos().distanceTo(tgt.position);
     if (dist > engageRange) return;
 

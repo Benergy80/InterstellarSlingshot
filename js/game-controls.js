@@ -2560,40 +2560,48 @@ function createLaserBeam(startPos, endPos, color = '#00ff96', isPlayer = true) {
     try {
         const direction = new THREE.Vector3().subVectors(endPos, startPos);
         const length = direction.length();
-        
-        const laserGeometry = new THREE.CylinderGeometry(0.2, 0.2, length, 8);
+
+        // Enemy lasers get the same thick/bright treatment as wingman lasers
+        // for visibility. Player lasers stay slim so they don't block the view.
+        const coreRadius = isPlayer ? 0.2 : 0.7;
+        const glowRadius = isPlayer ? 0.4 : 2.0;
+        const coreOpacity = isPlayer ? 0.8 : 1.0;
+        const glowOpacity = isPlayer ? 0.3 : 0.45;
+
+        const laserGeometry = new THREE.CylinderGeometry(coreRadius, coreRadius, length, 8);
         const laserMaterial = new THREE.MeshBasicMaterial({
             color: color,
             transparent: true,
-            opacity: 0.8
+            opacity: coreOpacity
         });
-        
+
         const laserBeam = new THREE.Mesh(laserGeometry, laserMaterial);
-        
+
         // Better positioning and orientation (RESTORED)
         laserBeam.position.copy(startPos);
-        
+
         const up = new THREE.Vector3(0, 1, 0);
         const axis = new THREE.Vector3().crossVectors(up, direction.normalize());
         const angle = Math.acos(up.dot(direction.normalize()));
-        
+
         if (axis.length() > 0.001) {
             axis.normalize();
             laserBeam.setRotationFromAxisAngle(axis, angle);
         } else if (direction.y < 0) {
             laserBeam.rotateX(Math.PI);
         }
-        
+
         const offset = direction.clone().multiplyScalar(0.5);
         laserBeam.position.add(offset);
-        
+
         // Add glow effect
-        const glowGeometry = new THREE.CylinderGeometry(0.4, 0.4, length, 8);
+        const glowGeometry = new THREE.CylinderGeometry(glowRadius, glowRadius, length, 8);
         const glowMaterial = new THREE.MeshBasicMaterial({
             color: color,
             transparent: true,
-            opacity: 0.3,
-            blending: THREE.AdditiveBlending
+            opacity: glowOpacity,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false
         });
         const glow = new THREE.Mesh(glowGeometry, glowMaterial);
         laserBeam.add(glow);
