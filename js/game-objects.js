@@ -8531,7 +8531,8 @@ function createEnemies3D() {
             let enemy;
             let isGLBModel = false;
             if (typeof createEnemyMeshWithModel === 'function') {
-                enemy = createEnemyMeshWithModel(1, enemyGeometry, materials.enemyMaterial);
+                // Vulcan Patrols use Enemy8.glb (different from Martian Pirates' Enemy1)
+                enemy = createEnemyMeshWithModel(8, enemyGeometry, materials.enemyMaterial);
                 isGLBModel = enemy.isGroup || (enemy.children && enemy.children.length > 0 && enemy.children[0].isMesh);
             } else {
                 enemy = new THREE.Mesh(enemyGeometry, materials.enemyMaterial);
