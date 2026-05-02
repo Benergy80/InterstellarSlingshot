@@ -3785,6 +3785,11 @@ function checkForNebulaDeepDiscovery() {
 
                 playDeepDiscoverySound();
 
+                // Recruit a new wingman from this nebula (Greek-named)
+                if (typeof recruitNebulaWingman === 'function') {
+                    setTimeout(() => recruitNebulaWingman(nebulaName), 1500);
+                }
+
                 let locationInfo = '';
                 if (patrolData.cosmicFeature) {
                     locationInfo = `Our sensors have detected ${patrolData.count} ${factionName} forces ` +
@@ -3893,6 +3898,11 @@ function checkForNebulaDeepDiscovery() {
                 );
 
                 playDeepDiscoverySound();
+
+                // Recruit a new wingman from this nebula (Greek-named)
+                if (typeof recruitNebulaWingman === 'function') {
+                    setTimeout(() => recruitNebulaWingman(nebulaName), 1500);
+                }
 
                 let locationInfo = '';
                 if (patrolData && patrolData.cosmicFeature) {

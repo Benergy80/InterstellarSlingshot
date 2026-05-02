@@ -6099,6 +6099,119 @@ function createAllyShips() {
     console.log('🛡️ 2 ally wingmen deployed — independent patrol mode');
 }
 
+// ── Nebula wingman recruitment ───────────────────────────────────────────
+// Greek alphabet names + matching colors for additional wingmen unlocked
+// when the player discovers nebulas.
+const NEBULA_WINGMAN_ROSTER = [
+    { name: 'Wingman Gamma',   colorStr: '#ffaa44', colorNum: 0xffaa44 },
+    { name: 'Wingman Delta',   colorStr: '#ff44aa', colorNum: 0xff44aa },
+    { name: 'Wingman Epsilon', colorStr: '#44ffff', colorNum: 0x44ffff },
+    { name: 'Wingman Zeta',    colorStr: '#aaff44', colorNum: 0xaaff44 },
+    { name: 'Wingman Eta',     colorStr: '#ff8866', colorNum: 0xff8866 },
+    { name: 'Wingman Theta',   colorStr: '#cc88ff', colorNum: 0xcc88ff },
+    { name: 'Wingman Iota',    colorStr: '#88ff88', colorNum: 0x88ff88 },
+    { name: 'Wingman Kappa',   colorStr: '#ff6699', colorNum: 0xff6699 }
+];
+let _nextNebulaWingmanIdx = 0;
+
+function recruitNebulaWingman(nebulaName, spawnPos) {
+    if (typeof THREE === 'undefined' || typeof scene === 'undefined' || typeof camera === 'undefined') return null;
+    if (_nextNebulaWingmanIdx >= NEBULA_WINGMAN_ROSTER.length) return null; // roster exhausted
+
+    const recruit = NEBULA_WINGMAN_ROSTER[_nextNebulaWingmanIdx++];
+    const group = new THREE.Group();
+
+    let shipMesh;
+    if (typeof getPlayerModel === 'function') {
+        const model = getPlayerModel();
+        if (model) {
+            shipMesh = model.clone();
+            const box = new THREE.Box3().setFromObject(shipMesh);
+            const center = box.getCenter(new THREE.Vector3());
+            shipMesh.traverse(child => {
+                if (child.isMesh) {
+                    child.position.sub(center);
+                    child.material = new THREE.MeshBasicMaterial({
+                        color: recruit.colorNum,
+                        transparent: true,
+                        opacity: 0.85,
+                        side: THREE.FrontSide
+                    });
+                    child.visible = true;
+                    child.frustumCulled = false;
+                }
+            });
+            shipMesh.scale.set(96, 96, 96);
+        }
+    }
+    if (!shipMesh) {
+        const geo = new THREE.ConeGeometry(6, 16, 6);
+        const mat = new THREE.MeshBasicMaterial({ color: recruit.colorNum });
+        shipMesh = new THREE.Mesh(geo, mat);
+    }
+    group.add(shipMesh);
+
+    // Spawn beside the player, slightly offset to avoid overlap
+    const playerPos = camera.position.clone();
+    const angle = Math.random() * Math.PI * 2;
+    const offset = 250 + Math.random() * 150;
+    if (spawnPos) {
+        group.position.copy(spawnPos);
+    } else {
+        group.position.set(
+            playerPos.x + Math.cos(angle) * offset,
+            playerPos.y + (Math.random() - 0.5) * 60,
+            playerPos.z + Math.sin(angle) * offset
+        );
+    }
+
+    group.userData = {
+        type: 'ally',
+        name: recruit.name,
+        colorStr: recruit.colorStr,
+        recruitedFrom: nebulaName || 'unknown nebula',
+        health: 100,
+        maxHealth: 100,
+        cruiseSpeed: 3.5,
+        combatSpeed: 5.0,
+        firingRange: 350,
+        detectionRange: 3000,
+        systemRadius: 100000,
+        lastAttack: 0,
+        currentTarget: null,
+        isAlly: true,
+        missilesRemaining: 5,
+        missilesMax: 5,
+        lastMissile: 0,
+        missileCooldownMs: 8000,
+        aiState: 'patrol',
+        patrolTarget: null,
+        patrolArriveTime: 0,
+        patrolDwellMs: 4000,
+        engageTarget: null,
+        velocity: new THREE.Vector3(),
+    };
+
+    group.frustumCulled = false;
+    scene.add(group);
+    allyShips.push(group);
+
+    // Hail the player
+    if (typeof showAchievement === 'function') {
+        showAchievement(
+            recruit.name + ' has joined!',
+            'Hailing from ' + (nebulaName || 'the nebula') + '. Welcome to the squadron.',
+            true
+        );
+    }
+    if (typeof playSound === 'function') {
+        playSound('achievement', 880, 0.4);
+    }
+    console.log('🛡️ Recruited ' + recruit.name + ' from ' + (nebulaName || 'nebula'));
+
+    return group;
+}
+
 // Pick a patrol waypoint.  When the player is in a home system, bias
 // the waypoint toward the player so wingmen swarm within ~500 u.
 function _pickPatrolWaypoint(excludePos, attractPos) {
@@ -6801,4 +6914,5 @@ if (typeof window !== 'undefined') {
     window.updateAllyShips = updateAllyShips;
     window.isAllyShip = isAllyShip;
     window.createWingmanExplosion = createWingmanExplosion;
+    window.recruitNebulaWingman = recruitNebulaWingman;
 }

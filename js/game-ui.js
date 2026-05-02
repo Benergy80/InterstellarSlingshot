@@ -1184,7 +1184,7 @@ function updateGalaxyMap() {
     playerMapPos.style.display = 'none';
     const _depthBar = document.getElementById('mapDepthBar');
     if (_depthBar) _depthBar.style.display = 'none';
-    for (let _i = 0; _i < 2; _i++) {
+    for (let _i = 0; _i < 10; _i++) {
         const m = document.getElementById('allyMapMarker' + _i);
         if (m) m.style.display = 'none';
     }
@@ -1343,6 +1343,7 @@ if (typeof outerInterstellarSystems !== 'undefined') {
                         position: ally.position,
                         type: 'ally',
                         name: ally.userData.name,
+                        colorStr: ally.userData.colorStr,
                         distance: distance
                     });
                 }
@@ -1453,7 +1454,8 @@ let dotSize = '4px';
 
 if (obj.type === 'ally') {
     // Render allies as arrow markers like the player, not dots
-    dotColor = obj.name === 'Wingman Alpha' ? '#00ff88' : '#88aaff';
+    // Use the wingman's stored color (Greek-named recruits have distinct hues)
+    dotColor = (obj.colorStr) || (obj.name === 'Wingman Alpha' ? '#00ff88' : (obj.name === 'Wingman Beta' ? '#88aaff' : '#ffaa44'));
     dot.textContent = '▲';
     dot.style.cssText = 'position:absolute;font-size:10px;font-weight:bold;color:' + dotColor + ';transform:translate(-50%,-50%);pointer-events:none;z-index:3;filter:drop-shadow(0 0 3px ' + dotColor + ');';
     dot.style.left = screenX + '%';
@@ -1857,7 +1859,8 @@ mapDotPool.releaseAll();
                     marker.textContent = '▲';
                     galaxyMap.appendChild(marker);
                 }
-                const color = idx === 0 ? '#00ff88' : '#88aaff';
+                const color = (ally.userData && ally.userData.colorStr) ||
+                              (idx === 0 ? '#00ff88' : (idx === 1 ? '#88aaff' : '#ffaa44'));
                 marker.style.color = color;
                 marker.style.filter = `drop-shadow(0 0 3px ${color})`;
                 // Project ally position using the same spherical mapping as the player
