@@ -6385,7 +6385,7 @@ function _executeEngage(ally, ud, now) {
             et.userData.health -= 0.1;
             if (typeof flashEnemyHit === 'function') flashEnemyHit(et, 0.1);
 
-            // Kill notification
+            // Kill notification + cleanup (remove from scene, run boss checks)
             if (wasAlive && et.userData.health <= 0) {
                 if (typeof showAchievement === 'function') {
                     showAchievement(
@@ -6394,15 +6394,60 @@ function _executeEngage(ally, ud, now) {
                         false
                     );
                 }
-                if (typeof createExplosionEffect === 'function') {
-                    createExplosionEffect(et.position);
-                }
+                _handleWingmanKill(et);
             }
         }
     }
 }
 
 // ── Fire a wingman missile (visual + tracking + damage) ──────────────────
+// Remove a wingman-killed enemy from the scene + array, run boss-spawn checks.
+// Call when an enemy's health drops to 0 from wingman fire. Mirrors the
+// essential cleanup that fireWeapon() does for player kills.
+function _handleWingmanKill(enemy) {
+    if (!enemy || !enemy.userData || enemy.userData._removedByWingman) return;
+    enemy.userData._removedByWingman = true;
+
+    // Visual + sound
+    if (typeof createExplosionEffect === 'function') {
+        createExplosionEffect(enemy.position);
+    }
+    if (typeof playSound === 'function') {
+        playSound('explosion');
+    }
+
+    // Cluster + intel updates (some games track per-cluster kills)
+    if (typeof updateClusterStatus === 'function') {
+        try { updateClusterStatus(enemy); } catch (e) {}
+    }
+    if (typeof recordEnemyKillPosition === 'function') {
+        try { recordEnemyKillPosition(enemy); } catch (e) {}
+    }
+
+    // Clear nav lock if this was the player's target
+    if (gameState && gameState.targetLock && gameState.targetLock.target === enemy) {
+        gameState.targetLock.target = null;
+        gameState.targetLock.active = false;
+    }
+    if (gameState && gameState.currentTarget === enemy) {
+        gameState.currentTarget = null;
+    }
+
+    // Remove from scene + enemies array
+    if (typeof scene !== 'undefined' && scene.remove) scene.remove(enemy);
+    if (typeof enemies !== 'undefined') {
+        const idx = enemies.indexOf(enemy);
+        if (idx !== -1) enemies.splice(idx, 1);
+    }
+
+    // Boss spawn checks
+    if (typeof checkAndSpawnAreaBosses === 'function') checkAndSpawnAreaBosses();
+    if (typeof checkGalaxyBossSpawn === 'function') checkGalaxyBossSpawn();
+    if (typeof checkSpeciesBossSpawn === 'function') checkSpeciesBossSpawn();
+    if (typeof checkAndSpawnEliteGuardians === 'function') checkAndSpawnEliteGuardians();
+    if (typeof checkGalaxyClear === 'function') checkGalaxyClear();
+}
+
 function _fireWingmanMissile(ally, target, targetPos, ud) {
     if (typeof THREE === 'undefined' || typeof scene === 'undefined' || !target) return;
     try {
@@ -6462,6 +6507,7 @@ function _fireWingmanMissile(ally, target, targetPos, ud) {
                     if (typeof showAchievement === 'function') {
                         showAchievement(ud.name + ' — Missile Kill!', 'Hostile eliminated by ally missile', false);
                     }
+                    _handleWingmanKill(target);
                 }
                 scene.remove(missile);
                 missile.geometry.dispose(); missile.material.dispose();
