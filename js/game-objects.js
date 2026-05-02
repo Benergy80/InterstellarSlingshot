@@ -541,7 +541,7 @@ const enemyShapes = {
 
 // Enhanced enemy spawning limits per galaxy
 const galaxyEnemyLimits = {
-    0: 12, 1: 15, 2: 10, 3: 13, 4: 8, 5: 14, 6: 18, 7: 10  // Vulcan restored
+    0: 24, 1: 30, 2: 20, 3: 26, 4: 18, 5: 28, 6: 36, 7: 20  // Doubled — spread in 2-3 ship groups
 };
 
 // FIXED: Boss system initialization - SINGLE DECLARATION
@@ -8356,24 +8356,38 @@ function createEnemies3D() {
             gameState.currentGalaxyEnemies[g] = enemiesPerGalaxy;
         }
         
-        for (let i = 0; i < enemiesPerGalaxy; i++) {
-            const enemyGeometry = createEnemyGeometry(g);
-            const shapeData = enemyShapes[g];
-            
-            // Use different placement strategies for variety
-            let placementType;
-            const roll = Math.random();
-            
-            if (roll < 0.33) {
-                placementType = 'cosmic_feature';
-            } else if (roll < 0.66) {
-                placementType = 'black_hole';
+        // Spawn enemies in spread-out GROUPS of 2-3 instead of individuals
+        // so the galaxy isn't a homogeneous swarm clustered around the BH.
+        let i = 0;
+        while (i < enemiesPerGalaxy) {
+            const groupSize = Math.min(2 + Math.floor(Math.random() * 2), enemiesPerGalaxy - i); // 2 or 3
+
+            // Pick a group center, biasing toward varied placement types
+            let groupPlacementType;
+            const groupRoll = Math.random();
+            if (groupRoll < 0.40) {
+                groupPlacementType = 'cosmic_feature';
+            } else if (groupRoll < 0.65) {
+                groupPlacementType = 'black_hole';
             } else {
-                placementType = 'random';
+                groupPlacementType = 'random';
             }
-            
-            const enemyPosition = getEnemyPlacementPosition(g, placementType);
-            const distance = galaxy3DCenter.distanceTo(enemyPosition);
+            const groupCenter = getEnemyPlacementPosition(g, groupPlacementType);
+
+            for (let p = 0; p < groupSize; p++, i++) {
+                const enemyGeometry = createEnemyGeometry(g);
+                const shapeData = enemyShapes[g];
+                const placementType = groupPlacementType;
+
+                // Tight 80-150u cluster around the group center
+                const spreadAngle = (p / groupSize) * Math.PI * 2 + Math.random() * 0.5;
+                const spreadDist = 80 + Math.random() * 70;
+                const enemyPosition = new THREE.Vector3(
+                    groupCenter.x + Math.cos(spreadAngle) * spreadDist,
+                    groupCenter.y + (Math.random() - 0.5) * 60,
+                    groupCenter.z + Math.sin(spreadAngle) * spreadDist
+                );
+                const distance = galaxy3DCenter.distanceTo(enemyPosition);
 
             const materials = createEnemyMaterial(shapeData, 'regular', distance);
 
@@ -8449,9 +8463,10 @@ function createEnemies3D() {
             
             scene.add(enemy);
             enemies.push(enemy);
-        }
+            } // close inner for-each-in-group
+        } // close while groups
     }
-    
+
     console.log(`✅ Created ${enemies.length} enemies across all galaxies`);
     
     // Log breakdown by galaxy
