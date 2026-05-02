@@ -1044,6 +1044,58 @@ function checkAndSpawnAreaBosses() {
     });
 }
 
+// Per-species boss check: spawn a faction boss when ALL enemies of a
+// given sub-species are dead, even if the broader galaxy still has enemies.
+// Examples:
+//   - All Martian Pirates dead in Sol → Martian Pirate boss spawns at Sol
+//   - All Vulcan Patrols dead near Sagittarius A* → Vulcan boss spawns there
+function checkSpeciesBossSpawn() {
+    if (typeof enemies === 'undefined' || typeof scene === 'undefined') return;
+    if (typeof bossSystem === 'undefined') return;
+
+    // Initialize per-species spawn tracking on bossSystem
+    if (!bossSystem.speciesBossSpawned) bossSystem.speciesBossSpawned = {};
+
+    const groups = [
+        {
+            key: 'martianPirate',
+            label: 'Martian Pirate',
+            galaxyId: 7,
+            // A pirate is isMartianPirate=true AND NOT a Vulcan Patrol
+            isMember: (ud) => ud.isMartianPirate && !ud.isVulcanPatrol,
+            // Spawn near the Sol system's local sun (origin)
+            spawnPos: () => new THREE.Vector3(0, 0, 0)
+        },
+        {
+            key: 'vulcanPatrol',
+            label: 'Vulcan High Command',
+            galaxyId: 7,
+            isMember: (ud) => ud.isVulcanPatrol,
+            // Spawn near Sagittarius A* (which is at origin)
+            spawnPos: () => new THREE.Vector3(0, 0, 0)
+        }
+    ];
+
+    groups.forEach(g => {
+        if (bossSystem.speciesBossSpawned[g.key]) return;
+        const members = enemies.filter(e =>
+            e.userData && g.isMember(e.userData) &&
+            !e.userData.isBoss && !e.userData.isBossSupport
+        );
+        if (members.length === 0) return; // never spawned any of this species
+        const aliveMembers = members.filter(e => e.userData.health > 0);
+        if (aliveMembers.length > 0) return; // species not yet eliminated
+
+        bossSystem.speciesBossSpawned[g.key] = true;
+        const areaKey = g.galaxyId + '-' + g.key + '_boss';
+        console.log('👑 ' + g.label + ' species eliminated — spawning faction boss');
+        spawnBossForArea(g.galaxyId, g.key + '_boss', areaKey, g.spawnPos());
+        if (typeof showAchievement === 'function') {
+            showAchievement(g.label + ' Boss Incoming!', 'You\'ve provoked the leader. Prepare for combat!', true);
+        }
+    });
+}
+
 // Galaxy-level boss check: when ALL regular (non-boss, non-guardian) enemies
 // in a galaxy are eliminated, spawn the galaxy boss near the galaxy's core
 // black hole.  Once the boss is defeated, checkGalaxyClear marks it clear.
@@ -10325,6 +10377,7 @@ if (typeof window !== 'undefined') {
     window.recordEnemyKillPosition = recordEnemyKillPosition;
     window.checkAndSpawnAreaBosses = checkAndSpawnAreaBosses;
     window.checkGalaxyBossSpawn = checkGalaxyBossSpawn;
+    window.checkSpeciesBossSpawn = checkSpeciesBossSpawn;
     window.checkAndSpawnEliteGuardians = checkAndSpawnEliteGuardians;
     window.spawnBossForArea = spawnBossForArea;
     window.spawnEliteGuardian = spawnEliteGuardian;

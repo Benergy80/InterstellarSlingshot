@@ -1182,6 +1182,8 @@ function updateGalaxyMap() {
     
     // Hide player and ally triangles (allies show as dots in galactic view)
     playerMapPos.style.display = 'none';
+    const _depthBar = document.getElementById('mapDepthBar');
+    if (_depthBar) _depthBar.style.display = 'none';
     for (let _i = 0; _i < 2; _i++) {
         const m = document.getElementById('allyMapMarker' + _i);
         if (m) m.style.display = 'none';
@@ -1791,7 +1793,49 @@ mapDotPool.releaseAll();
 
     playerMapPos.style.left = `${clampedX}%`;
     playerMapPos.style.top = `${clampedZ}%`;
-    
+
+    // 3D depth indicators:
+    //   1) scale the player marker by Y elevation (above plane = larger,
+    //      below plane = smaller) so depth pops visually
+    //   2) maintain a vertical depth bar on the right edge of the map
+    const yNorm = Math.max(-1, Math.min(1, playerY / 50000));
+    const playerScale = 0.7 + yNorm * 0.6; // 0.1 (deep) to 1.3 (high)
+    playerMapPos.style.fontSize = (1.0 + yNorm * 0.4) + 'rem';
+
+    // Vertical depth bar on the right edge of the galaxy map container
+    const galaxyMap = document.getElementById('galaxyMap');
+    if (galaxyMap) {
+        let depthBar = document.getElementById('mapDepthBar');
+        if (!depthBar) {
+            depthBar = document.createElement('div');
+            depthBar.id = 'mapDepthBar';
+            depthBar.style.cssText = 'position:absolute;right:6px;top:8%;width:6px;height:84%;background:linear-gradient(to bottom,rgba(100,180,255,0.15),rgba(40,40,80,0.25),rgba(100,180,255,0.15));border:1px solid rgba(100,180,255,0.4);border-radius:3px;pointer-events:none;';
+            const tick = document.createElement('div');
+            tick.id = 'mapDepthTick';
+            tick.style.cssText = 'position:absolute;left:-4px;width:14px;height:3px;background:#00ff96;box-shadow:0 0 4px #00ff96;border-radius:2px;';
+            depthBar.appendChild(tick);
+            const lblTop = document.createElement('div');
+            lblTop.textContent = '+Y';
+            lblTop.style.cssText = 'position:absolute;left:-22px;top:-12px;font-size:8px;color:#88ccff;';
+            depthBar.appendChild(lblTop);
+            const lblMid = document.createElement('div');
+            lblMid.textContent = '0';
+            lblMid.style.cssText = 'position:absolute;left:-12px;top:50%;font-size:8px;color:#88ccff;';
+            depthBar.appendChild(lblMid);
+            const lblBot = document.createElement('div');
+            lblBot.textContent = '−Y';
+            lblBot.style.cssText = 'position:absolute;left:-22px;bottom:-12px;font-size:8px;color:#88ccff;';
+            depthBar.appendChild(lblBot);
+            galaxyMap.appendChild(depthBar);
+        }
+        const tick = document.getElementById('mapDepthTick');
+        if (tick) {
+            // Tick at 50% = on plane; lower = above plane (positive Y)
+            const tickY = 50 - (yNorm * 50);
+            tick.style.top = Math.max(0, Math.min(100, tickY)) + '%';
+        }
+    }
+
     // Rotate triangle to show direction
     const forward = new THREE.Vector3();
     camera.getWorldDirection(forward);

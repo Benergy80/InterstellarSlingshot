@@ -4080,6 +4080,9 @@ if (enemy.userData.health <= 0) {
     if (typeof checkGalaxyBossSpawn === 'function') {
         checkGalaxyBossSpawn();
     }
+    if (typeof checkSpeciesBossSpawn === 'function') {
+        checkSpeciesBossSpawn();
+    }
     if (typeof checkAndSpawnEliteGuardians === 'function') {
         checkAndSpawnEliteGuardians();
     }

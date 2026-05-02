@@ -6,10 +6,45 @@ const activeDistressCalls = [];
 const DISTRESS_DETECTION_RANGE = 5000; // Distance player can detect distress
 const CIVILIAN_DESTRUCTION_HITS = 8;
 
+// Make distressed civilians flee from their attackers
+function _updateCivilianFleeing() {
+    if (typeof tradingShips === 'undefined' || typeof THREE === 'undefined') return;
+    const now = Date.now();
+    for (let i = 0; i < tradingShips.length; i++) {
+        const ship = tradingShips[i];
+        if (!ship || !ship.userData || ship.userData.destroyed) continue;
+        if (!ship.userData.fleeFrom || !ship.userData.fleeUntil) continue;
+        if (now > ship.userData.fleeUntil) {
+            // Flee timer expired — clear state
+            ship.userData.fleeFrom = null;
+            ship.userData.fleeUntil = 0;
+            ship.userData.distressActive = false;
+            continue;
+        }
+        const attacker = ship.userData.fleeFrom;
+        if (!attacker || !attacker.position || (attacker.userData && attacker.userData.health <= 0)) {
+            ship.userData.fleeFrom = null;
+            continue;
+        }
+        // Move directly away from attacker at 1.5x normal speed
+        const fleeDir = new THREE.Vector3()
+            .subVectors(ship.position, attacker.position)
+            .normalize();
+        const fleeSpeed = (ship.userData.speed || 0.4) * 1.5;
+        ship.position.addScaledVector(fleeDir, fleeSpeed);
+        // Face the flee direction
+        const lookAt = ship.position.clone().add(fleeDir);
+        ship.lookAt(lookAt);
+    }
+}
+
 // Update function to be called from main game loop
 function updateCivilianCombat() {
     if (!tradingShips || !enemies) return;
-    
+
+    // Run flee behavior every frame for ships under attack
+    _updateCivilianFleeing();
+
     // Check each enemy for civilian targets
     enemies.forEach(enemy => {
         if (!enemy.userData || enemy.userData.isDead) return;
@@ -42,19 +77,25 @@ function updateCivilianCombat() {
 
 function attackCivilian(enemy, civilian) {
     if (!civilian.userData) civilian.userData = {};
-    
+
     // Initialize health if not set
     if (civilian.userData.health === undefined) {
         civilian.userData.health = CIVILIAN_DESTRUCTION_HITS;
     }
-    
+
+    // Mark this enemy as a known attacker for flee logic
+    civilian.userData.fleeFrom = enemy;
+    civilian.userData.fleeUntil = Date.now() + 8000; // Flee for 8s after last attack
+    civilian.userData.distressActive = true;
+    civilian.userData.showOnMap = true; // Force onto galactic radar
+
     // Check attack cooldown
     const now = Date.now();
     if (!enemy.userData.lastCivilianAttack) enemy.userData.lastCivilianAttack = 0;
     if (now - enemy.userData.lastCivilianAttack < 2000) return; // 2s cooldown
-    
+
     enemy.userData.lastCivilianAttack = now;
-    
+
     // Damage civilian
     civilian.userData.health--;
     
