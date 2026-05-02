@@ -8574,13 +8574,15 @@ function createEnemies3D() {
     }
 
     // =============================================================================
-    // VULCAN PATROL SHIPS — wider patrol around Sagittarius A* (2500-4500u)
+    // VULCAN PATROL SHIPS — tight patrol ring around Sagittarius A* (700-1500u)
+    // The player spawns at ~2470u from origin, so this keeps Vulcans guarding
+    // the galactic center rather than spawning on top of the player at start.
     // =============================================================================
     const vulcanGroupCount = 6;
     const vulcansPerGroup = 3;
     let vulcanIndex = 0;
     for (let g = 0; g < vulcanGroupCount; g++) {
-        const groupDistance = 2500 + Math.random() * 2000;
+        const groupDistance = 700 + Math.random() * 800;
         const groupAngle = (g / vulcanGroupCount) * Math.PI * 2 + Math.random() * 0.5;
         const groupCenter = new THREE.Vector3(
             Math.cos(groupAngle) * groupDistance,
@@ -8644,7 +8646,7 @@ function createEnemies3D() {
                 speed: 1.4 + Math.random() * 0.8,
                 aggression: 0.9 + Math.random() * 0.1,
                 patrolCenter: groupCenter.clone(),
-                patrolRadius: groupDistance,
+                patrolRadius: 300,
                 lastAttack: 0,
                 isActive: false,
                 visible: true,
@@ -8653,7 +8655,7 @@ function createEnemies3D() {
                 swarmTarget: null,
                 circlePhase: Math.random() * Math.PI * 2,
                 attackMode: 'patrol',
-                detectionRange: 2800,
+                detectionRange: 800,
                 firingRange: 380,
                 isMartianPirate: true,
                 isVulcanPatrol: true,
