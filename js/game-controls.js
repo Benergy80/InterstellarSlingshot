@@ -6068,7 +6068,9 @@ function createAllyShips() {
             combatSpeed: 5.0,
             firingRange: 350,
             detectionRange: 3000,
-            systemRadius: 6500,
+            // Wingmen now follow the player anywhere via the follow state,
+            // so the system radius doesn't bind them to Sol anymore.
+            systemRadius: 100000,
             lastAttack: 0,
             currentTarget: null,
             isAlly: true,
@@ -6098,10 +6100,10 @@ function createAllyShips() {
 // the waypoint toward the player so wingmen swarm within ~500 u.
 function _pickPatrolWaypoint(excludePos, attractPos) {
     // If we have a player position to attract toward, pick a random
-    // offset within 300-500 u of that position for natural-looking cover.
+    // offset within 150-400 u of that position for tight cover.
     if (attractPos) {
         const angle = Math.random() * Math.PI * 2;
-        const dist = 200 + Math.random() * 300;
+        const dist = 150 + Math.random() * 250;
         return new THREE.Vector3(
             attractPos.x + Math.cos(angle) * dist,
             attractPos.y + (Math.random() - 0.5) * 40,
@@ -6181,7 +6183,7 @@ function updateAllyShips() {
 
     const now = Date.now();
     const playerPos = camera.position;
-    const playerInHome = _isPlayerInHomeSystem();
+    const playerWarping = _isPlayerWarping();
 
     allyShips.forEach(ally => {
         if (!ally || ally.userData.health <= 0) return;
@@ -6195,22 +6197,53 @@ function updateAllyShips() {
         const threat = _scanForEnemy(ally);
 
         // ── State transitions ────────────────────────────────────────────
+        // Player is warping (slingshot/emergency/BH) — drop everything and follow
+        if (playerWarping && ud.aiState !== 'engage') {
+            ud.aiState = 'follow';
+            ud.patrolTarget = null;
+        }
+
         if (ud.aiState === 'patrol') {
             if (threat) {
                 ud.aiState = 'engage';
                 ud.engageTarget = threat;
-            } else if (playerInHome && distToPlayer > 500) {
-                // Player is in a home system but wingman drifted too far —
-                // pick a new waypoint near the player to close the gap
+            } else if (distToPlayer > 4000) {
+                // Separated by >4000u — stranded, orbit local planets here
+                ud.aiState = 'stranded';
                 ud.patrolTarget = null;
-            } else if (distFromOrigin > ud.systemRadius) {
-                ud.aiState = 'return';
+            } else if (distToPlayer > 400) {
+                // Drifted past swarm radius — re-pick a waypoint near player
                 ud.patrolTarget = null;
+            }
+        } else if (ud.aiState === 'follow') {
+            // Stay in follow until player stops warping AND is reasonably close
+            if (!playerWarping) {
+                if (distToPlayer < 600) {
+                    ud.aiState = 'patrol';
+                    ud.patrolTarget = null;
+                } else if (distToPlayer > 4000) {
+                    ud.aiState = 'stranded';
+                    ud.patrolTarget = null;
+                }
+                // else stay in follow until close enough or fully stranded
+            }
+            if (threat && !playerWarping) {
+                ud.aiState = 'engage';
+                ud.engageTarget = threat;
+            }
+        } else if (ud.aiState === 'stranded') {
+            // Reunion: player came back close enough — resume swarming
+            if (distToPlayer < 1000) {
+                ud.aiState = 'patrol';
+                ud.patrolTarget = null;
+            }
+            if (threat) {
+                ud.aiState = 'engage';
+                ud.engageTarget = threat;
             }
         } else if (ud.aiState === 'engage') {
             const et = ud.engageTarget;
             if (!et || !et.userData || et.userData.health <= 0 || !et.parent) {
-                // Target dead or removed — re-scan or back to patrol
                 ud.engageTarget = null;
                 ud.aiState = threat ? 'engage' : 'patrol';
                 if (threat) ud.engageTarget = threat;
@@ -6234,10 +6267,15 @@ function updateAllyShips() {
         // ── Execute current state ────────────────────────────────────────
         if (ud.aiState === 'engage' && ud.engageTarget) {
             _executeEngage(ally, ud, now);
+        } else if (ud.aiState === 'follow') {
+            _executeFollow(ally, ud, playerPos);
+        } else if (ud.aiState === 'stranded') {
+            _executeStranded(ally, ud, now);
         } else if (ud.aiState === 'return') {
             _executeReturn(ally, ud);
         } else {
-            _executePatrol(ally, ud, now, playerInHome ? playerPos : null);
+            // Always swarm the player when within 4000u (any galaxy)
+            _executePatrol(ally, ud, now, distToPlayer < 4000 ? playerPos : null);
         }
 
         // ── Shield bubble: visible during combat engagement ──────────────
@@ -6601,6 +6639,99 @@ function _updateAllyShield(ally, active) {
     // Pulse opacity
     const pulse = 0.15 + 0.08 * Math.sin(Date.now() * 0.005);
     ally.userData.shieldMesh.material.opacity = pulse;
+}
+
+// ── Player warp detection ────────────────────────────────────────────────
+function _isPlayerWarping() {
+    if (typeof gameState === 'undefined') return false;
+    if (gameState.slingshot && gameState.slingshot.active) return true;
+    if (gameState.emergencyWarp && (gameState.emergencyWarp.active || gameState.emergencyWarp.transitioning)) return true;
+    if (gameState.blackHoleWarp && gameState.blackHoleWarp.active) return true;
+    return false;
+}
+
+// ── Follow: player is warping — match their velocity, fly slightly ahead ──
+function _executeFollow(ally, ud, playerPos) {
+    if (!gameState || !gameState.velocityVector) return;
+    const playerVel = gameState.velocityVector.clone();
+    const playerSpeed = playerVel.length();
+
+    // Position target = 250u ahead of player along velocity vector, plus
+    // a small lateral offset so Alpha and Beta don't stack on each other
+    let aheadDir;
+    if (playerSpeed > 0.1) {
+        aheadDir = playerVel.clone().normalize();
+    } else if (typeof camera !== 'undefined') {
+        aheadDir = new THREE.Vector3();
+        camera.getWorldDirection(aheadDir);
+    } else {
+        aheadDir = new THREE.Vector3(0, 0, -1);
+    }
+    const right = new THREE.Vector3().crossVectors(aheadDir, new THREE.Vector3(0, 1, 0)).normalize();
+    const sideOffset = (ud.name === 'Wingman Alpha' ? -50 : 50);
+
+    const target = playerPos.clone()
+        .addScaledVector(aheadDir, 250)
+        .addScaledVector(right, sideOffset);
+
+    // Match the player's speed (or +20% so we keep the lead) — overrides
+    // the wingman's normal cruise/combat speed cap during warp.
+    const targetSpeed = Math.max(playerSpeed * 1.2, ud.cruiseSpeed);
+    _allyDir.subVectors(target, ally.position);
+    const dist = _allyDir.length();
+    if (dist > 1) {
+        _allyDir.normalize();
+        ud.velocity.lerp(_allyDir.clone().multiplyScalar(targetSpeed), 0.18);
+    }
+    ally.position.add(ud.velocity);
+}
+
+// ── Stranded: separated from player. Orbit local planets here ────────────
+function _executeStranded(ally, ud, now) {
+    // Pick a local planet to orbit (at the wingman's current location, not Sol)
+    if (!ud.patrolTarget || (ud.patrolArriveTime && now - ud.patrolArriveTime > 6000)) {
+        ud.patrolTarget = _pickStrandedWaypoint(ally.position);
+        ud.patrolArriveTime = 0;
+    }
+
+    _allyDir.subVectors(ud.patrolTarget, ally.position);
+    const dist = _allyDir.length();
+    if (dist < 200) {
+        if (!ud.patrolArriveTime) ud.patrolArriveTime = now;
+        ud.velocity.multiplyScalar(0.92);
+    } else {
+        _allyDir.normalize();
+        const targetSpeed = Math.min(ud.cruiseSpeed, dist * 0.02);
+        ud.velocity.lerp(_allyDir.clone().multiplyScalar(targetSpeed), 0.04);
+    }
+    ally.position.add(ud.velocity);
+}
+
+// Pick the nearest non-asteroid planet to a position (for stranded wingmen)
+function _pickStrandedWaypoint(fromPos) {
+    if (typeof planets === 'undefined') {
+        return new THREE.Vector3(fromPos.x + 500, fromPos.y, fromPos.z + 500);
+    }
+    let best = null, bestDist = 8000;
+    for (let i = 0; i < planets.length; i++) {
+        const p = planets[i];
+        if (!p || !p.userData) continue;
+        if (p.userData.type === 'asteroid' || p.userData.type === 'asteroidBelt') continue;
+        if (p.userData.type === 'blackhole') continue;
+        const d = fromPos.distanceTo(p.position);
+        if (d < bestDist && d > 100) { best = p; bestDist = d; }
+    }
+    if (best) {
+        // Orbit at radius around the planet
+        const angle = Math.random() * Math.PI * 2;
+        const r = 250 + Math.random() * 150;
+        return new THREE.Vector3(
+            best.position.x + Math.cos(angle) * r,
+            best.position.y + (Math.random() - 0.5) * 40,
+            best.position.z + Math.sin(angle) * r
+        );
+    }
+    return new THREE.Vector3(fromPos.x + 400, fromPos.y, fromPos.z + 400);
 }
 
 // ── Return: head back toward system center ───────────────────────────────
