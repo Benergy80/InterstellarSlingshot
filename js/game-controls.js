@@ -1522,13 +1522,21 @@ function showMissionCommandAlert(title, text, isVictoryMessage = false) {
     loreButtonContainer.appendChild(understoodButton);
     buttonContainer.appendChild(loreButtonContainer);
     
-    // UNDERSTOOD button dismisses the message and resumes the game if paused
+    // UNDERSTOOD button dismisses the message and flushes any deferred achievements
     const handleUnderstood = () => {
         alertElement.classList.add('hidden');
         // Restore hidden cursor for gameplay
         document.body.style.cursor = 'none';
         if (typeof renderer !== 'undefined' && renderer.domElement) {
             renderer.domElement.style.cursor = 'none';
+        }
+        // Flush queued achievements (scattered factions, etc.) staggered
+        if (window._deferredAchievements && window._deferredAchievements.length) {
+            const queue = window._deferredAchievements.slice();
+            window._deferredAchievements = [];
+            queue.forEach((a, i) => {
+                setTimeout(() => showAchievement(a.title, a.description, a.playAchievementSound), 400 * i);
+            });
         }
         // Resume the game if it was paused for this transmission
         if (typeof gameState !== 'undefined' && gameState.paused) {
@@ -1657,20 +1665,20 @@ function showIncomingTransmission(title, text, factionColor) {
 
     const dismiss = () => {
         prompt.remove();
+        // Flush deferred achievements unless a Mission Command alert is also open
+        if (!document.getElementById('missionCommandAlert') &&
+            window._deferredAchievements && window._deferredAchievements.length) {
+            const queue = window._deferredAchievements.slice();
+            window._deferredAchievements = [];
+            queue.forEach((a, i) => {
+                setTimeout(() => showAchievement(a.title, a.description, a.playAchievementSound), 400 * i);
+            });
+        }
     };
 
-    // READ: pause the game and show full lore
+    // READ: show full lore — game continues running in background
     const handleRead = () => {
         dismiss();
-        // Pause the game if not already paused
-        if (typeof gameState !== 'undefined' && !gameState.paused) {
-            gameState.paused = true;
-            // Show pause state visually but don't show the pause overlay
-            const pauseBtn = document.getElementById('pauseBtn');
-            const pauseIcon = document.getElementById('pauseIcon');
-            if (pauseBtn) pauseBtn.classList.add('paused');
-            if (pauseIcon) pauseIcon.className = 'fas fa-play mr-1';
-        }
         showMissionCommandAlert(title, text);
     };
 
@@ -5055,6 +5063,19 @@ function togglePause() {
 // =============================================================================
 
 function showAchievement(title, description, playAchievementSound = true) {
+    // Defer achievements while an incoming transmission popup is on screen
+    // so they don't visually overlap. Re-fires when the transmission closes.
+    if (document.getElementById('incomingTransmissionPrompt') ||
+        document.getElementById('missionCommandAlert')) {
+        if (!window._deferredAchievements) window._deferredAchievements = [];
+        // Avoid queueing duplicates
+        const dup = window._deferredAchievements.some(a => a.title === title && a.description === description);
+        if (!dup) {
+            window._deferredAchievements.push({ title, description, playAchievementSound });
+        }
+        return;
+    }
+
     // Check if tutorial is active and suppress non-critical achievements
     const tutorialActive = (typeof tutorialSystem !== 'undefined' && tutorialSystem.active && !tutorialSystem.completed);
     
