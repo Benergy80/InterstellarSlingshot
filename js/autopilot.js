@@ -725,11 +725,13 @@
       flyToward(enemy, 2.5);
       pursuitFlightStyle('pursuit');
 
-      // Short tactical jump toward hostiles (double-tap W) when within
-      // medium range and not already moving fast.  10 s cooldown.
-      if (dist > 400 && dist < 2000 && speed < 3 &&
-          gameState.energy > 25 &&
-          Date.now() - (ap._lastJumpTap || 0) > 10000) {
+      // Aggressive tactical jumps (double-tap W) to keep up with wingmen
+      // and close on hostiles fast. Triggers any time we're outside firing
+      // range, 200-3000u from target, not already going fast.
+      // 4 second cooldown, 15 energy minimum.
+      if (dist > 200 && dist < 3000 && speed < 4 &&
+          gameState.energy > 15 &&
+          Date.now() - (ap._lastJumpTap || 0) > 4000) {
         ap._lastJumpTap = Date.now();
         if (window.keys) {
           window.keys.wDoubleTap = true;
