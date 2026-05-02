@@ -1467,6 +1467,8 @@ if (obj.type === 'ally') {
     dot.style.left = screenX + '%';
     dot.style.top = screenZ + '%';
     dot.style.display = 'block';
+    dot.title = (obj.name || 'Wingman') + ' (' + obj.distance.toFixed(0) + 'u)';
+    galaxyMap.appendChild(dot);
     return; // skip normal dot styling below
 } else if (obj.type === 'enemy') {
     dotColor = obj.isBoss ? '#ff00ff' : '#ff4444';
@@ -1721,59 +1723,8 @@ mapDotPool.releaseAll();
     //     });
     // }
 
-    // Display interstellar asteroid fields on map
-    if (typeof interstellarAsteroids !== 'undefined' && interstellarAsteroids.length > 0) {
-        // Group asteroids by field and calculate field centers
-        const fields = {};
-        interstellarAsteroids.forEach(asteroid => {
-            const fieldIndex = asteroid.userData.fieldIndex;
-            if (!fields[fieldIndex]) {
-                fields[fieldIndex] = [];
-            }
-            fields[fieldIndex].push(asteroid);
-        });
-
-        // Display each field as a dot on the map
-        Object.keys(fields).forEach(fieldIndex => {
-            const asteroids = fields[fieldIndex];
-
-            // Calculate field center (average position)
-            let centerX = 0, centerY = 0, centerZ = 0;
-            asteroids.forEach(a => {
-                centerX += a.position.x;
-                centerY += a.position.y;
-                centerZ += a.position.z;
-            });
-            centerX /= asteroids.length;
-            centerY /= asteroids.length;
-            centerZ /= asteroids.length;
-
-            // Convert to map coordinates
-            const fieldMapX = (centerX / universeRadius) + 0.5;
-            const fieldMapZ = (centerZ / universeRadius) + 0.5;
-
-            // Only show if within map bounds
-            if (fieldMapX >= 0 && fieldMapX <= 1 && fieldMapZ >= 0 && fieldMapZ <= 1) {
-                const dot = mapDotPool.get('asteroid-field');
-                dot.className = 'asteroid-field-dot absolute';
-                dot.style.width = '8px';
-                dot.style.height = '8px';
-                dot.style.backgroundColor = 'rgba(120, 100, 80, 0.8)';
-                dot.style.borderRadius = '50%';
-                dot.style.border = '1px solid rgba(150, 130, 110, 1)';
-                dot.style.left = `${fieldMapX * 100}%`;
-                dot.style.top = `${fieldMapZ * 100}%`;
-                dot.style.transform = 'translate(-50%, -50%)';
-                dot.style.boxShadow = '0 0 6px rgba(120, 100, 80, 0.6)';
-                dot.style.pointerEvents = 'none';
-                dot.style.zIndex = '6';
-                dot.innerHTML = '';
-                dot.title = `Asteroid Field ${fieldIndex} (${asteroids.length} asteroids)`;
-
-                galaxyMap.appendChild(dot);
-            }
-        });
-    }
+    // Asteroid fields are intentionally NOT rendered on the universal view —
+    // they are short-range navigation hazards better suited to galactic view.
 
     // Show player triangle, hide direction arrow
     playerMapPos.style.display = 'block';
@@ -1815,7 +1766,10 @@ mapDotPool.releaseAll();
         if (!depthBar) {
             depthBar = document.createElement('div');
             depthBar.id = 'mapDepthBar';
-            depthBar.style.cssText = 'position:absolute;right:6px;top:8%;width:6px;height:84%;background:linear-gradient(to bottom,rgba(100,180,255,0.15),rgba(40,40,80,0.25),rgba(100,180,255,0.15));border:1px solid rgba(100,180,255,0.4);border-radius:3px;pointer-events:none;';
+            // Depth bar placed inside the round-map clip area (circle has
+            // ~85% inner radius at the edges) — keep it short and inset so it
+            // doesn't get clipped by border-radius:50%.
+            depthBar.style.cssText = 'position:absolute;right:18%;top:30%;width:4px;height:40%;background:linear-gradient(to bottom,rgba(100,180,255,0.15),rgba(40,40,80,0.25),rgba(100,180,255,0.15));border:1px solid rgba(100,180,255,0.4);border-radius:3px;pointer-events:none;z-index:9;';
             const tick = document.createElement('div');
             tick.id = 'mapDepthTick';
             tick.style.cssText = 'position:absolute;left:-4px;width:14px;height:3px;background:#00ff96;box-shadow:0 0 4px #00ff96;border-radius:2px;';
@@ -1884,16 +1838,20 @@ mapDotPool.releaseAll();
 
         nebulaClouds.forEach((nebula) => {
             if (!nebula || !nebula.position) return;
+            // Only show nebulas the player has deep-discovered — undiscovered
+            // nebulas should remain hidden so the universe map reflects the
+            // player's actual knowledge of charted regions.
+            const discovered = nebula.userData && nebula.userData.deepDiscovered;
+            if (!discovered) return;
             const nx = 50 + (nebula.position.x / universeRadius) * 50;
             const nz = 50 + (nebula.position.z / universeRadius) * 50;
             if (nx < 2 || nx > 98 || nz < 2 || nz > 98) return;
             const dot = document.createElement('div');
             dot.className = 'universe-nebula-dot';
-            const discovered = nebula.userData && nebula.userData.deepDiscovered;
-            const color = discovered ? '#88ff88' : '#ff88cc';
+            const color = '#88ff88';
             dot.style.cssText = 'position:absolute;width:6px;height:6px;border-radius:50%;background:' + color +
                 ';box-shadow:0 0 6px ' + color +
-                ';transform:translate(-50%,-50%);pointer-events:none;z-index:4;opacity:0.7;';
+                ';transform:translate(-50%,-50%);pointer-events:none;z-index:4;opacity:0.85;';
             dot.style.left = nx + '%';
             dot.style.top = nz + '%';
             dot.title = (nebula.userData && (nebula.userData.mythicalName || nebula.userData.name)) || 'Nebula';
@@ -1930,22 +1888,24 @@ mapDotPool.releaseAll();
     }
 
     // ── Current zone label ───────────────────────────────────────────
+    // Positioned at the bottom-center of the circular map so it stays inside
+    // the visible round area (round-map clips with overflow:hidden).
     let zoneLabel = document.getElementById('mapZoneLabel');
     if (!zoneLabel && galaxyMap) {
         zoneLabel = document.createElement('div');
         zoneLabel.id = 'mapZoneLabel';
-        zoneLabel.style.cssText = 'position:absolute;left:6px;top:6px;font-size:10px;color:#88ccff;background:rgba(0,0,40,0.65);padding:2px 6px;border-radius:3px;border:1px solid rgba(100,180,255,0.4);pointer-events:none;z-index:10;';
+        zoneLabel.style.cssText = 'position:absolute;left:50%;bottom:8%;transform:translateX(-50%);font-size:9px;color:#88ccff;background:rgba(0,0,40,0.7);padding:2px 6px;border-radius:3px;border:1px solid rgba(100,180,255,0.4);pointer-events:none;z-index:10;white-space:nowrap;max-width:80%;text-align:center;';
         galaxyMap.appendChild(zoneLabel);
     }
     if (zoneLabel) {
         const dist = Math.sqrt(playerX*playerX + playerY*playerY + playerZ*playerZ);
         let zone = 'Deep Space';
-        if (dist < 7000) zone = 'Sol System / Sgr A*';
+        if (dist < 7000) zone = 'Sol System';
         else if (dist < 25000) zone = 'Outer Sol';
-        else if (dist < 60000) zone = 'Interstellar Space';
-        else if (dist < 100000) zone = 'Distant Galaxy Region';
+        else if (dist < 60000) zone = 'Interstellar';
+        else if (dist < 100000) zone = 'Distant Galaxy';
         else zone = 'Cosmic Edge';
-        zoneLabel.textContent = '📍 ' + zone + ' (' + (dist|0) + 'u from origin)';
+        zoneLabel.textContent = zone + ' · ' + (dist|0) + 'u';
         zoneLabel.style.display = 'block';
     }
 
