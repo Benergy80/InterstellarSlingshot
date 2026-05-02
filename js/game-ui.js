@@ -1560,7 +1560,13 @@ if (obj.type === 'ally') {
         
     } else {
     // ========== UNIVERSAL VIEW ==========
-    
+
+    // Single galaxyMap binding shared across all universal-view rendering
+    // (asteroid fields, depth bar, ally markers, nebula dots, paths, zone label).
+    // Declared at the top of the else block to avoid TDZ when nested forEachs
+    // reference it before later const declarations.
+    const galaxyMap = document.getElementById('galaxyMap');
+
     // Use pooling instead
 mapDotPool.releaseAll();
     
@@ -1804,7 +1810,6 @@ mapDotPool.releaseAll();
     playerMapPos.style.fontSize = (1.0 + yNorm * 0.4) + 'rem';
 
     // Vertical depth bar on the right edge of the galaxy map container
-    const galaxyMap = document.getElementById('galaxyMap');
     if (galaxyMap) {
         let depthBar = document.getElementById('mapDepthBar');
         if (!depthBar) {
@@ -1845,7 +1850,6 @@ mapDotPool.releaseAll();
 
     // ── Ally wingmen markers (same ▲ shape, in their faction colors) ──
     if (typeof allyShips !== 'undefined') {
-        const galaxyMap = document.getElementById('galaxyMap');
         if (galaxyMap) {
             // Create/reuse wingman markers
             allyShips.forEach((ally, idx) => {
@@ -1873,10 +1877,9 @@ mapDotPool.releaseAll();
     }
 
     // ── Render nebulas as colored dots (universe view) ───────────────
-    const _uniMap = document.getElementById('galaxyMap');
-    if (_uniMap && typeof nebulaClouds !== 'undefined') {
+    if (galaxyMap && typeof nebulaClouds !== 'undefined') {
         // Clear previous nebula dots
-        const oldNebDots = _uniMap.querySelectorAll('.universe-nebula-dot');
+        const oldNebDots = galaxyMap.querySelectorAll('.universe-nebula-dot');
         oldNebDots.forEach(d => d.remove());
 
         nebulaClouds.forEach((nebula) => {
@@ -1894,13 +1897,13 @@ mapDotPool.releaseAll();
             dot.style.left = nx + '%';
             dot.style.top = nz + '%';
             dot.title = (nebula.userData && (nebula.userData.mythicalName || nebula.userData.name)) || 'Nebula';
-            _uniMap.appendChild(dot);
+            galaxyMap.appendChild(dot);
         });
     }
 
     // ── Render discovery paths as dashed lines ───────────────────────
-    if (_uniMap && typeof window.discoveryPaths !== 'undefined') {
-        const oldPathLines = _uniMap.querySelectorAll('.universe-path-line');
+    if (galaxyMap && typeof window.discoveryPaths !== 'undefined') {
+        const oldPathLines = galaxyMap.querySelectorAll('.universe-path-line');
         oldPathLines.forEach(d => d.remove());
 
         window.discoveryPaths.forEach(path => {
@@ -1922,17 +1925,17 @@ mapDotPool.releaseAll();
             line.style.top = y1 + '%';
             line.style.width = len + '%';
             line.style.transform = 'rotate(' + angle + 'deg)';
-            _uniMap.appendChild(line);
+            galaxyMap.appendChild(line);
         });
     }
 
     // ── Current zone label ───────────────────────────────────────────
     let zoneLabel = document.getElementById('mapZoneLabel');
-    if (!zoneLabel && _uniMap) {
+    if (!zoneLabel && galaxyMap) {
         zoneLabel = document.createElement('div');
         zoneLabel.id = 'mapZoneLabel';
         zoneLabel.style.cssText = 'position:absolute;left:6px;top:6px;font-size:10px;color:#88ccff;background:rgba(0,0,40,0.65);padding:2px 6px;border-radius:3px;border:1px solid rgba(100,180,255,0.4);pointer-events:none;z-index:10;';
-        _uniMap.appendChild(zoneLabel);
+        galaxyMap.appendChild(zoneLabel);
     }
     if (zoneLabel) {
         const dist = Math.sqrt(playerX*playerX + playerY*playerY + playerZ*playerZ);
