@@ -1061,6 +1061,11 @@ function checkSpeciesBossSpawn() {
             key: 'martianPirate',
             label: 'Martian Pirate',
             galaxyId: 7,
+            // Martian Pirates fly Federation/Human-style ships (Enemy1.glb), so
+            // their boss should also be a Boss1.glb model rather than the
+            // Vulcan Boss8.glb their host galaxyId would imply.
+            modelGalaxyId: 0,
+            factionLabel: 'Martian Pirate',
             // A pirate is isMartianPirate=true AND NOT a Vulcan Patrol
             isMember: (ud) => ud.isMartianPirate && !ud.isVulcanPatrol,
             // Spawn near the Sol system's local sun (origin)
@@ -1070,6 +1075,8 @@ function checkSpeciesBossSpawn() {
             key: 'vulcanPatrol',
             label: 'Vulcan High Command',
             galaxyId: 7,
+            modelGalaxyId: 7, // Boss8.glb — matches Vulcan Patrol Enemy8.glb
+            factionLabel: 'Vulcan High Command',
             isMember: (ud) => ud.isVulcanPatrol,
             // Spawn near Sagittarius A* (which is at origin)
             spawnPos: () => new THREE.Vector3(0, 0, 0)
@@ -1089,7 +1096,10 @@ function checkSpeciesBossSpawn() {
         bossSystem.speciesBossSpawned[g.key] = true;
         const areaKey = g.galaxyId + '-' + g.key + '_boss';
         console.log('👑 ' + g.label + ' species eliminated — spawning faction boss');
-        spawnBossForArea(g.galaxyId, g.key + '_boss', areaKey, g.spawnPos());
+        spawnBossForArea(g.galaxyId, g.key + '_boss', areaKey, g.spawnPos(), {
+            modelGalaxyId: g.modelGalaxyId,
+            factionLabel: g.factionLabel
+        });
         if (typeof showAchievement === 'function') {
             showAchievement(g.label + ' Boss Incoming!', 'You\'ve provoked the leader. Prepare for combat!', true);
         }
@@ -1126,7 +1136,10 @@ function checkGalaxyBossSpawn() {
 // `overridePosition` (optional Vector3) — if provided, the boss spawns there
 // instead of at a random galaxy position.  Used by the discovery-path
 // mission-complete trigger so the boss appears at the dotted line's endpoint.
-function spawnBossForArea(galaxyId, placementType, areaKey, overridePosition) {
+// `bossOverrides` (optional {modelGalaxyId, factionLabel, color}) — used by
+// per-species spawns (e.g. Martian Pirate boss) so the boss can use a model
+// and name independent of the galaxyId-driven faction.
+function spawnBossForArea(galaxyId, placementType, areaKey, overridePosition, bossOverrides) {
     // Safety check to prevent duplicate boss spawning
     if (bossSystem.areaBosses[areaKey]) return;
 
@@ -1140,6 +1153,10 @@ function spawnBossForArea(galaxyId, placementType, areaKey, overridePosition) {
     };
 
     const galaxyType = galaxyTypes[galaxyId];
+    // Per-species overrides — fallback to galaxyId-driven defaults
+    const modelGalaxyId = (bossOverrides && typeof bossOverrides.modelGalaxyId === 'number')
+        ? bossOverrides.modelGalaxyId : galaxyId;
+    const factionLabel = (bossOverrides && bossOverrides.factionLabel) || galaxyType.faction;
 
     // ENHANCED: Use 3D positioning if available, fallback to 2D
     let bossPosition;
@@ -1195,10 +1212,11 @@ function spawnBossForArea(galaxyId, placementType, areaKey, overridePosition) {
         emissiveIntensity: 0.8
     });
 
-    // Try to use 3D boss model first, fallback to geometry (galaxyId+1 because models are 1-8, galaxies are 0-7)
+    // Try to use 3D boss model first, fallback to geometry (modelGalaxyId+1 because models are 1-8, galaxies are 0-7)
+    // Per-species bosses (Martian Pirate) override modelGalaxyId so they use their species' ship rather than the host galaxy's model.
     let boss;
     if (typeof createBossMeshWithModel === 'function') {
-        boss = createBossMeshWithModel(galaxyId + 1, bossGeometry, bossMaterial);
+        boss = createBossMeshWithModel(modelGalaxyId + 1, bossGeometry, bossMaterial);
     } else {
         boss = new THREE.Mesh(bossGeometry, bossMaterial);
         boss.scale.multiplyScalar(2.5); // PRESERVED: Boss scaling (only if using fallback)
@@ -1237,7 +1255,7 @@ function spawnBossForArea(galaxyId, placementType, areaKey, overridePosition) {
 
     // PRESERVED: Complete boss userData with all original properties
     boss.userData = {
-        name: `${galaxyType.faction} Overlord (${placementType})`, // ENHANCED: Include area type
+        name: `${factionLabel} Overlord (${placementType})`, // ENHANCED: Include area type
         type: 'enemy',
         health: getEnemyHealthForDifficulty(false, true, false), // PRESERVED: Dynamic boss health
         maxHealth: getEnemyHealthForDifficulty(false, true, false),
@@ -1279,7 +1297,7 @@ function spawnBossForArea(galaxyId, placementType, areaKey, overridePosition) {
     
     // PRESERVED: Spawn 2-3 support ships with enhanced 3D positioning
     for (let i = 0; i < 3; i++) {
-        spawnBossSupport(galaxyId, bossPosition, i, areaKey);
+        spawnBossSupport(galaxyId, bossPosition, i, areaKey, bossOverrides);
     }
     
     // PRESERVED: Boss warning and audio systems
@@ -1307,10 +1325,15 @@ function spawnBossForArea(galaxyId, placementType, areaKey, overridePosition) {
 // ENHANCED 3D BOSS SUPPORT SPAWNING - PRESERVES ALL ORIGINAL FEATURES
 // =============================================================================
 
-function spawnBossSupport(galaxyId, bossPosition, supportIndex, areaKey = null) {
+function spawnBossSupport(galaxyId, bossPosition, supportIndex, areaKey = null, supportOverrides = null) {
     const galaxyType = galaxyTypes[galaxyId];
     const shapeData = enemyShapes[galaxyId];
-    
+    // Per-species overrides so support ships match the boss they escort
+    // (e.g. Martian Pirate boss → Martian Pirate Enemy1.glb supports).
+    const modelGalaxyId = (supportOverrides && typeof supportOverrides.modelGalaxyId === 'number')
+        ? supportOverrides.modelGalaxyId : galaxyId;
+    const factionLabel = (supportOverrides && supportOverrides.factionLabel) || galaxyType.faction;
+
     // PRESERVED: Create support geometry and material
     const supportGeometry = createEnemyGeometry(galaxyId);
     const supportMaterial = new THREE.MeshStandardMaterial({
@@ -1321,10 +1344,10 @@ function spawnBossSupport(galaxyId, bossPosition, supportIndex, areaKey = null) 
         emissiveIntensity: 0.5
     });
 
-    // Try to use 3D model first, fallback to geometry (galaxyId+1 because models are 1-8, galaxies are 0-7)
+    // Try to use 3D model first, fallback to geometry (modelGalaxyId+1 because models are 1-8, galaxies are 0-7)
     let support;
     if (typeof createEnemyMeshWithModel === 'function') {
-        support = createEnemyMeshWithModel(galaxyId + 1, supportGeometry, supportMaterial);
+        support = createEnemyMeshWithModel(modelGalaxyId + 1, supportGeometry, supportMaterial);
     } else {
         support = new THREE.Mesh(supportGeometry, supportMaterial);
     }
@@ -1354,7 +1377,7 @@ function spawnBossSupport(galaxyId, bossPosition, supportIndex, areaKey = null) 
 
     // PRESERVED: Complete support userData with all original properties
     support.userData = {
-        name: `${galaxyType.faction} Support ${supportIndex + 1}`, // PRESERVED: Support naming
+        name: `${factionLabel} Support ${supportIndex + 1}`, // PRESERVED: Support naming
         type: 'enemy',
         health: getEnemyHealthForDifficulty(false, false, true), // PRESERVED: Support health
         maxHealth: getEnemyHealthForDifficulty(false, false, true),
