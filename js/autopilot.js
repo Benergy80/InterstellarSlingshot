@@ -958,48 +958,71 @@
     const speedNow = gameState.velocityVector ? gameState.velocityVector.length() : 0;
     const pRadius = ap.slingshotPlanet.geometry ? ap.slingshotPlanet.geometry.parameters.radius : 5;
     const slingshotRange = Math.max(60, pRadius + 25);
-
-    // Phase 2a: fly toward the planet until inside slingshot range.
-    // The game's autoNavigating system tries to ORBIT planets at ~3x their
-    // size (often 300+ u), which keeps us outside the slingshot ring.
-    // So at close range we switch to manual orient + thrust + brake.
-    if (distToPlanet > slingshotRange - 5) {
-      setStatus('Approaching ' + (ap.slingshotPlanet.userData.name || 'planet') + ' — ' + (distToPlanet | 0) + ' u, ' + (speedNow | 0) + ' u/f');
-
-      if (distToPlanet > 300) {
-        // Far/medium range — let auto-nav (flyToward) do the work
-        const approachSpeed = distToPlanet > 1500 ? 2.0 : 1.6;
-        flyToward(planetPos, approachSpeed);
-      } else {
-        // Final approach — steer manually without flyToward (which would
-        // engage orbital approach). Keep currentTarget for nav panel.
-        gameState.currentTarget = ap.slingshotPlanet;
-        if (window.orientTowardsTarget) window.orientTowardsTarget(ap.slingshotPlanet);
-
-        // Brake when overshoot is likely; otherwise gentle thrust to close
-        // the gap.  At 60 u target we want to arrive near zero speed.
-        const overshootDist = speedNow * 35;
-        if (overshootDist > distToPlanet - 50 && speedNow > 0.3) {
-          keys().x = true;       // brake hard
-        } else if (distToPlanet > 100 && speedNow < 1.5) {
-          keys().w = true;       // gentle thrust to keep closing
-        } else if (distToPlanet < 90 && speedNow > 0.8) {
-          keys().x = true;       // pre-emptive brake near the ring
-        }
-      }
-
-      // Approach timeout — count as a missed slingshot attempt
-      if (t > 12000) {
-        ap.slingshotMisses = (ap.slingshotMisses || 0) + 1;
-        ap.slingshotPlanet = null;
-        ap.phaseStart = Date.now();
-        setStatus('Missed approach — slingshot misses: ' + ap.slingshotMisses + '/2');
-      }
-      return;
+    // Lead the planet by a small amount based on its orbital velocity so we
+    // don't aim at where it WAS, we aim at where it WILL BE when we arrive.
+    let leadPos = planetPos;
+    if (ap.slingshotPlanet.userData &&
+        ap.slingshotPlanet.userData.orbitRadius > 0 &&
+        ap.slingshotPlanet.userData.systemCenter) {
+        const sc = ap.slingshotPlanet.userData.systemCenter;
+        const orbitSpeed = ap.slingshotPlanet.userData.orbitSpeed || 0.01;
+        // Tangential velocity in world units per frame. At 60fps this is units/s/60
+        const radial = new THREE.Vector3(planetPos.x - sc.x, 0, planetPos.z - sc.z);
+        const tangent = new THREE.Vector3(-radial.z, 0, radial.x).normalize();
+        // Estimate frames to arrive (rough): distance / speed*60
+        const framesToArrive = Math.min(120, distToPlanet / Math.max(1, speedNow));
+        const leadDist = orbitSpeed * ap.slingshotPlanet.userData.orbitRadius * framesToArrive * 0.8;
+        leadPos = new THREE.Vector3(
+            planetPos.x + tangent.x * leadDist,
+            planetPos.y,
+            planetPos.z + tangent.z * leadDist
+        );
     }
 
-    // Phase 2b: at the planet — align camera toward the nebula.  Brake hard
-    // Brake hard at the planet so we don't sail past the slingshot ring
+    // Phase 2a: fly toward the LEAD position with speed-aware braking.
+    if (distToPlanet > slingshotRange - 5) {
+        setStatus('Approach ' + (ap.slingshotPlanet.userData.name || 'body') +
+            ' — ' + (distToPlanet | 0) + 'u, v=' + speedNow.toFixed(1));
+
+        if (distToPlanet > 1500) {
+            // Far range — full boost toward the lead position
+            flyToward({ position: leadPos }, 2.0);
+        } else if (distToPlanet > 600) {
+            // Medium range — start braking, target lead position
+            flyToward({ position: leadPos }, 1.4);
+        } else {
+            // Close range — manual fine-tune approach.
+            // Steer toward the current planet position (lead is small now).
+            gameState.currentTarget = ap.slingshotPlanet;
+            if (window.orientTowardsTarget) {
+                window.orientTowardsTarget({ position: leadPos });
+            }
+
+            // Arrival velocity should be near zero. Brake aggressively if
+            // we'd overshoot the slingshot ring.
+            const targetSpeed = Math.max(0.4, (distToPlanet - slingshotRange) * 0.02);
+            if (speedNow > targetSpeed * 1.3) {
+                keys().x = true; // brake
+            } else if (speedNow < targetSpeed * 0.7 && distToPlanet > slingshotRange + 30) {
+                keys().w = true; // gentle thrust
+            }
+            // Pre-emptive brake very close to the ring to prevent collision
+            if (distToPlanet < slingshotRange + 40 && speedNow > 0.5) {
+                keys().x = true;
+            }
+        }
+
+        // Approach timeout — count as a missed slingshot attempt
+        if (t > 14000) {
+            ap.slingshotMisses = (ap.slingshotMisses || 0) + 1;
+            ap.slingshotPlanet = null;
+            ap.phaseStart = Date.now();
+            setStatus('Missed approach — slingshot misses: ' + ap.slingshotMisses + '/2');
+        }
+        return;
+    }
+
+    // Phase 2b: in slingshot range — brake hard, align to nebula, fire ASAP
     if (speedNow > 0.3) keys().x = true;
     const aimDummy = { position: nebPos };
     if (window.orientTowardsTarget) window.orientTowardsTarget(aimDummy);
@@ -1008,17 +1031,17 @@
     if (_coneVec && camera) {
       _coneVec.subVectors(nebPos, camera.position).normalize();
       camera.getWorldDirection(_coneFwd);
-      aligned = _coneFwd.dot(_coneVec) > 0.92;
+      aligned = _coneFwd.dot(_coneVec) > 0.85; // looser alignment for quick fire
     }
     setStatus(aligned
       ? 'SLINGSHOT — releasing!'
-      : 'Orbiting ' + (ap.slingshotPlanet.userData.name || 'planet') + ' — aligning to nebula');
+      : 'In slingshot ring — aligning to nebula');
 
-    // Phase 2c: fire the slingshot when aligned
+    // Phase 2c: fire the slingshot when aligned (auto-engage)
     if (aligned && triggerSlingshot()) {
       ap.warpStartedAt = Date.now();
       ap.warpsUsed++;
-      ap.slingshotMisses = 0;  // success — reset miss counter
+      ap.slingshotMisses = 0;
       goPhase('coastToNebulaCluster');
       return;
     }
@@ -1033,32 +1056,49 @@
     }
   }
 
-  // Pick the nearest non-asteroid planet that's roughly in the direction of
-  // the nebula (within 90° cone) so the slingshot boost points the right way.
-  // Falls back to the absolute nearest planet if nothing matches.
+  // Pick the best slingshot body. Stars are STRONGLY preferred (their
+  // gravity launches the player furthest), then large planets (Jupiter,
+  // Saturn). Body must be roughly in the direction of the nebula so the
+  // slingshot boost actually heads the right way.
   function pickSlingshotPlanet(nebulaPos) {
     if (typeof planets === 'undefined' || !nebulaPos) return null;
     const cp = camPos();
     const toNebula = nebulaPos.clone().sub(cp).normalize();
-    let bestAligned = null, bestAlignedDist = Infinity;
+
+    // Pass 1: prefer STARS in the nebula direction within 6000u
+    let bestStar = null, bestStarScore = -Infinity;
+    let bestPlanet = null, bestPlanetScore = -Infinity;
     let bestAny = null, bestAnyDist = Infinity;
+
     for (let i = 0; i < planets.length; i++) {
       const p = planets[i];
       const ud = p && p.userData;
       if (!ud) continue;
       if (ud.type === 'asteroid' || ud.type === 'asteroidBelt') continue;
-      if (ud.type === 'blackhole') continue; // black holes have their own phase
+      if (ud.type === 'blackhole') continue;
       if (ud.name === 'Earth') continue;
       const dist = cp.distanceTo(p.position);
-      if (dist > 6000) continue; // too far
+      if (dist > 6000) continue;
       if (dist < bestAnyDist) { bestAny = p; bestAnyDist = dist; }
+
       const toPlanet = p.position.clone().sub(cp).normalize();
-      if (toPlanet.dot(toNebula) > 0 && dist < bestAlignedDist) {
-        bestAligned = p;
-        bestAlignedDist = dist;
+      const dirAlign = toPlanet.dot(toNebula); // -1 to 1
+      if (dirAlign < 0) continue; // skip bodies behind us relative to nebula
+
+      const radius = (p.geometry && p.geometry.parameters.radius) || ud.size || 10;
+      // Score = direction alignment + body mass bonus - distance penalty
+      // Mass proxy: radius. Stars rated 5x for gravity strength.
+      const score = dirAlign * 100 + radius * 2 - dist * 0.05;
+
+      if (ud.type === 'star') {
+        if (score > bestStarScore) { bestStar = p; bestStarScore = score; }
+      } else {
+        if (score > bestPlanetScore) { bestPlanet = p; bestPlanetScore = score; }
       }
     }
-    return bestAligned || bestAny;
+
+    // Strong preference: stars > large planets > any nearby body
+    return bestStar || bestPlanet || bestAny;
   }
 
   function phaseCoastToNebulaCluster() {
