@@ -1703,14 +1703,17 @@ function initAudio() {
         audioContext = new (window.AudioContext || window.webkitAudioContext)();
         masterGain = audioContext.createGain();
         masterGain.connect(audioContext.destination);
-        masterGain.gain.value = 0.3;
-        
+        // Start very quiet, ramp UP to target over 5 seconds. Stops early
+        // intro/launch sounds from blasting at full volume on desktop.
+        masterGain.gain.value = 0.02;
+        masterGain.gain.linearRampToValueAtTime(0.3, audioContext.currentTime + 5);
+
         // Create separate gains for music and effects (RESTORED VALUES)
         musicGain = audioContext.createGain();
         effectsGain = audioContext.createGain();
         musicGain.connect(masterGain);
         effectsGain.connect(masterGain);
-        
+
         musicGain.gain.value = 0.4;
         effectsGain.gain.value = 0.3; // Half of previous 0.6 — quieter SFX
         
