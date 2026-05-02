@@ -3844,6 +3844,11 @@ function checkForNebulaDeepDiscovery() {
 
                 playDeepDiscoverySound();
 
+                // Recruit a new wingman from this nebula
+                if (typeof recruitNebulaWingman === 'function') {
+                    setTimeout(() => recruitNebulaWingman(nebulaName), 1500);
+                }
+
                 // Build remnant transmission with BOTH faction lore AND nebula-specific lore
                 let transmissionText = `${greeting}\n\n`;
                 

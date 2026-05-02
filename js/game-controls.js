@@ -841,52 +841,83 @@ function getFactionBehavior(enemy) {
     return factionBehaviors[0];
 }
 
-// UPDATED: Local enemy behavior with FACTION-SPECIFIC AI
+// UPDATED: Local enemy behavior with FACTION-SPECIFIC AI + wingman targeting
 function updateLocalEnemyBehavior(enemy, distanceToPlayer, adjustedSpeed, difficultySettings) {
-    // Safety checks
     if (!enemy || !enemy.userData || typeof camera === 'undefined' || typeof THREE === 'undefined') {
         return;
     }
-    
+
     const time = Date.now() * 0.001;
-    const playerPos = camera.position.clone();
+    let playerPos = camera.position.clone();
     const faction = getFactionBehavior(enemy);
-    
-    // Apply faction speed bonus
     const factionSpeed = adjustedSpeed * faction.speedBonus;
-    
-    // Update last seen player position if player is visible
+
+    // ── Target selection: pursue NEAREST of player or any alive wingman ──
+    let targetPos = playerPos;
+    let targetDist = distanceToPlayer;
+    if (typeof allyShips !== 'undefined') {
+        for (let i = 0; i < allyShips.length; i++) {
+            const w = allyShips[i];
+            if (!w || !w.userData || w.userData.health <= 0) continue;
+            const d = w.position.distanceTo(enemy.position);
+            if (d < targetDist) {
+                targetDist = d;
+                targetPos = w.position.clone();
+            }
+        }
+    }
+
     if (distanceToPlayer < difficultySettings.localDetectionRange) {
         enemy.userData.lastSeenPlayerPos = playerPos.clone();
         enemy.userData.lastSeenTime = time;
     }
-    
-    // Initialize attack mode based on faction if not set
+
     if (!enemy.userData.attackMode) {
         enemy.userData.attackMode = faction.primaryBehavior;
     }
-    
-    // Faction-specific behavior changes
-    if (Math.random() < faction.behaviorChangeChance) {
-        // Switch between primary and secondary behaviors
+
+    // Faction-specific behavior changes (more frequent for active dogfighting)
+    const changeChance = (faction.behaviorChangeChance || 0.002) * 3;
+    if (Math.random() < changeChance) {
         if (enemy.userData.attackMode === faction.primaryBehavior) {
             enemy.userData.attackMode = faction.secondaryBehavior;
         } else {
             enemy.userData.attackMode = faction.primaryBehavior;
         }
     }
-    
-    // Distance-based behavior override for some factions
-    if (faction.style === 'berserker' && distanceToPlayer > 300) {
-        // Klingons always charge from distance
-        enemy.userData.attackMode = 'pursue';
-    } else if (faction.style === 'guerrilla' && distanceToPlayer < 100) {
-        // Rebels retreat when too close
+
+    // Health-triggered evasion: low-HP enemies bias toward evade
+    const healthFraction = enemy.userData.health / (enemy.userData.maxHealth || 1);
+    if (healthFraction < 0.5 && Math.random() < 0.04) {
         enemy.userData.attackMode = 'evade';
-    } else if (faction.style === 'ambush' && distanceToPlayer < faction.preferredRange) {
-        // Romulans strike hard when in range
+    }
+
+    // Multi-enemy swarming: if 2+ enemies are within 800u of the target,
+    // bias toward swarm so they converge instead of fighting individually
+    if (Math.random() < 0.02 && typeof enemies !== 'undefined') {
+        let nearbyAllies = 0;
+        for (let j = 0; j < enemies.length; j++) {
+            const e = enemies[j];
+            if (!e || e === enemy || !e.userData || e.userData.health <= 0) continue;
+            if (e.position.distanceTo(targetPos) < 800) nearbyAllies++;
+            if (nearbyAllies >= 2) break;
+        }
+        if (nearbyAllies >= 2) enemy.userData.attackMode = 'swarm';
+    }
+
+    // Distance-based overrides
+    if (faction.style === 'berserker' && targetDist > 300) {
+        enemy.userData.attackMode = 'pursue';
+    } else if (faction.style === 'guerrilla' && targetDist < 100) {
+        enemy.userData.attackMode = 'evade';
+    } else if (faction.style === 'ambush' && targetDist < faction.preferredRange) {
         enemy.userData.attackMode = 'pursue';
     }
+
+    // Override playerPos with the nearest target so all behaviors steer toward
+    // either the player OR a wingman, whichever is closer.
+    playerPos.copy(targetPos);
+    distanceToPlayer = targetDist;
     
     switch (enemy.userData.attackMode) {
         case 'pursue':
@@ -6336,6 +6367,7 @@ function updateAllyShips() {
         // ── State transitions ────────────────────────────────────────────
         // Player is warping (slingshot/emergency/BH) — drop everything and follow
         if (playerWarping && ud.aiState !== 'engage') {
+            if (ud.aiState !== 'follow') _wingmanTacticalMessage(ud, 'follow');
             ud.aiState = 'follow';
             ud.patrolTarget = null;
         }
@@ -6344,9 +6376,11 @@ function updateAllyShips() {
             if (threat) {
                 ud.aiState = 'engage';
                 ud.engageTarget = threat;
+                _wingmanTacticalMessage(ud, 'engage');
             } else if (distToPlayer > 4000) {
                 // Separated by >4000u — stranded, orbit local planets here
                 ud.aiState = 'stranded';
+                _wingmanTacticalMessage(ud, 'stranded');
                 ud.patrolTarget = null;
             } else if (distToPlayer > 400) {
                 // Drifted past swarm radius — re-pick a waypoint near player
@@ -6502,6 +6536,7 @@ function _executeEngage(ally, ud, now) {
         now - (ud.lastMissile || 0) > (ud.missileCooldownMs || 8000)) {
         ud.lastMissile = now;
         ud.missilesRemaining = (ud.missilesRemaining || 0) - 1;
+        _wingmanTacticalMessage(ud, 'missile');
         if (typeof _fireWingmanMissile === 'function') {
             _fireWingmanMissile(ally, et, enemyPos, ud);
         }
@@ -6521,13 +6556,7 @@ function _executeEngage(ally, ud, now) {
 
             // Kill notification + cleanup (remove from scene, run boss checks)
             if (wasAlive && et.userData.health <= 0) {
-                if (typeof showAchievement === 'function') {
-                    showAchievement(
-                        ud.name + ' — Kill!',
-                        'Hostile destroyed by ally fire',
-                        false
-                    );
-                }
+                _wingmanTacticalMessage(ud, 'kill');
                 _handleWingmanKill(et);
             }
         }
@@ -6638,9 +6667,7 @@ function _fireWingmanMissile(ally, target, targetPos, ud) {
                 if (typeof flashEnemyHit === 'function') flashEnemyHit(target, wingmanMissileDmg);
                 if (typeof createExplosionEffect === 'function') createExplosionEffect(missile.position);
                 if (wasAlive && target.userData.health <= 0) {
-                    if (typeof showAchievement === 'function') {
-                        showAchievement(ud.name + ' — Missile Kill!', 'Hostile eliminated by ally missile', false);
-                    }
+                    _wingmanTacticalMessage(ud, 'kill');
                     _handleWingmanKill(target);
                 }
                 scene.remove(missile);
@@ -6699,6 +6726,53 @@ function _fireWingmanLaser(startPos, endPos, color) {
             scene.remove(glow); glow.geometry.dispose(); glow.material.dispose();
         }, 250);
     } catch (e) {}
+}
+
+// ── Wingman tactical comms ──────────────────────────────────────────────
+// Tactical chatter from wingmen during combat. Auto-displays a brief HUD
+// transmission. Throttled per-wingman to once every 8s so they don't spam.
+const WINGMAN_TACTICAL_LINES = {
+    engage: [
+        'Engaging hostile, Captain!',
+        'Target acquired — moving in!',
+        'I\'ve got eyes on the bandit!',
+        'Locking on — covering you!',
+        'Bogey in my sights!'
+    ],
+    kill: [
+        'Splash one!',
+        'Target eliminated, Captain.',
+        'Got him!',
+        'Hostile down!',
+        'Scratch one bandit!'
+    ],
+    missile: [
+        'Fox three! Missile away!',
+        'Vampire away — track it!',
+        'Missile inbound on target!'
+    ],
+    stranded: [
+        'Captain, I\'ve lost contact — rendezvous when able.',
+        'I\'ve fallen behind — orbiting local planets, awaiting your return.'
+    ],
+    follow: [
+        'On your six, Captain!',
+        'Forming up on your wing!',
+        'Following you in.'
+    ]
+};
+function _wingmanTacticalMessage(ud, kind) {
+    if (!ud) return;
+    const now = Date.now();
+    if (!ud._lastTacticalMsg) ud._lastTacticalMsg = {};
+    if (now - (ud._lastTacticalMsg[kind] || 0) < 8000) return; // 8s per-kind throttle
+    ud._lastTacticalMsg[kind] = now;
+    const lines = WINGMAN_TACTICAL_LINES[kind];
+    if (!lines || !lines.length) return;
+    const text = lines[Math.floor(Math.random() * lines.length)];
+    if (typeof showAchievement === 'function') {
+        showAchievement(ud.name + ' (Comms)', text, false);
+    }
 }
 
 // ── Large multi-stage explosion when a wingman is destroyed ─────────────
