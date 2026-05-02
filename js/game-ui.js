@@ -1184,6 +1184,12 @@ function updateGalaxyMap() {
     playerMapPos.style.display = 'none';
     const _depthBar = document.getElementById('mapDepthBar');
     if (_depthBar) _depthBar.style.display = 'none';
+    const _zoneLabel = document.getElementById('mapZoneLabel');
+    if (_zoneLabel) _zoneLabel.style.display = 'none';
+    const _galaxyMap = document.getElementById('galaxyMap');
+    if (_galaxyMap) {
+        _galaxyMap.querySelectorAll('.universe-nebula-dot, .universe-path-line').forEach(d => d.remove());
+    }
     for (let _i = 0; _i < 10; _i++) {
         const m = document.getElementById('allyMapMarker' + _i);
         if (m) m.style.display = 'none';
@@ -1769,29 +1775,22 @@ mapDotPool.releaseAll();
         mapDirectionArrow.style.display = 'none';
     }
     
-    // Show player position in universe using same spherical projection as galaxies
+    // TOP-DOWN PROJECTION: X axis = map left/right, Z axis = map up/down,
+    // Y axis = depth (shown on the depth bar). Much more intuitive than the
+    // spherical projection — flying north/south on the X/Z plane moves the
+    // marker linearly, and elevation is its own dedicated indicator.
     const playerX = camera.position.x;
     const playerY = camera.position.y;
     const playerZ = camera.position.z;
 
-    // Convert player's Cartesian position to spherical coordinates
-    const playerDistance = Math.sqrt(playerX * playerX + playerY * playerY + playerZ * playerZ);
-    const playerPhi = Math.atan2(playerZ, playerX);
-    const playerTheta = Math.acos(playerY / Math.max(playerDistance, 0.001)); // Avoid division by zero
-
-    // Project spherical coordinates onto 2D map (same as galaxy projection)
-    let playerMapX = ((playerPhi + Math.PI) / (Math.PI * 2)) % 1.0;
-    let playerMapY = playerTheta / Math.PI;
-
-    // Apply distance factor for depth (same as galaxies)
-    const normalizedDistance = Math.min(playerDistance / universeRadius, 1.0);
-    const centerX = 0.5;
-    const centerY = 0.5;
-    playerMapX = centerX + (playerMapX - centerX) * normalizedDistance;
-    playerMapY = centerY + (playerMapY - centerY) * normalizedDistance;
-
-    const clampedX = Math.max(5, Math.min(95, playerMapX * 100));
-    const clampedZ = Math.max(5, Math.min(95, playerMapY * 100));
+    // Linear projection: ±universeRadius maps to 0..100% of the map area
+    const projectXZ = (x, z) => ({
+        mx: 50 + (x / universeRadius) * 50,
+        my: 50 + (z / universeRadius) * 50
+    });
+    const playerProj = projectXZ(playerX, playerZ);
+    const clampedX = Math.max(5, Math.min(95, playerProj.mx));
+    const clampedZ = Math.max(5, Math.min(95, playerProj.my));
 
     playerMapPos.style.left = `${clampedX}%`;
     playerMapPos.style.top = `${clampedZ}%`;
@@ -1863,49 +1862,107 @@ mapDotPool.releaseAll();
                               (idx === 0 ? '#00ff88' : (idx === 1 ? '#88aaff' : '#ffaa44'));
                 marker.style.color = color;
                 marker.style.filter = `drop-shadow(0 0 3px ${color})`;
-                // Project ally position using the same spherical mapping as the player
-                const ax = ally.position.x, ay = ally.position.y, az = ally.position.z;
-                const aDist = Math.sqrt(ax * ax + ay * ay + az * az);
-                const aPhi = Math.atan2(az, ax);
-                const aTheta = Math.acos(ay / Math.max(aDist, 0.001));
-                let amx = ((aPhi + Math.PI) / (Math.PI * 2)) % 1.0;
-                let amy = aTheta / Math.PI;
-                const aNorm = Math.min(aDist / universeRadius, 1.0);
-                amx = 0.5 + (amx - 0.5) * aNorm;
-                amy = 0.5 + (amy - 0.5) * aNorm;
-                marker.style.left = Math.max(5, Math.min(95, amx * 100)) + '%';
-                marker.style.top = Math.max(5, Math.min(95, amy * 100)) + '%';
+                // Top-down X/Z projection — same as player marker
+                const amx = 50 + (ally.position.x / universeRadius) * 50;
+                const amy = 50 + (ally.position.z / universeRadius) * 50;
+                marker.style.left = Math.max(5, Math.min(95, amx)) + '%';
+                marker.style.top = Math.max(5, Math.min(95, amy)) + '%';
                 marker.style.display = 'block';
             });
         }
+    }
+
+    // ── Render nebulas as colored dots (universe view) ───────────────
+    const _uniMap = document.getElementById('galaxyMap');
+    if (_uniMap && typeof nebulaClouds !== 'undefined') {
+        // Clear previous nebula dots
+        const oldNebDots = _uniMap.querySelectorAll('.universe-nebula-dot');
+        oldNebDots.forEach(d => d.remove());
+
+        nebulaClouds.forEach((nebula) => {
+            if (!nebula || !nebula.position) return;
+            const nx = 50 + (nebula.position.x / universeRadius) * 50;
+            const nz = 50 + (nebula.position.z / universeRadius) * 50;
+            if (nx < 2 || nx > 98 || nz < 2 || nz > 98) return;
+            const dot = document.createElement('div');
+            dot.className = 'universe-nebula-dot';
+            const discovered = nebula.userData && nebula.userData.deepDiscovered;
+            const color = discovered ? '#88ff88' : '#ff88cc';
+            dot.style.cssText = 'position:absolute;width:6px;height:6px;border-radius:50%;background:' + color +
+                ';box-shadow:0 0 6px ' + color +
+                ';transform:translate(-50%,-50%);pointer-events:none;z-index:4;opacity:0.7;';
+            dot.style.left = nx + '%';
+            dot.style.top = nz + '%';
+            dot.title = (nebula.userData && (nebula.userData.mythicalName || nebula.userData.name)) || 'Nebula';
+            _uniMap.appendChild(dot);
+        });
+    }
+
+    // ── Render discovery paths as dashed lines ───────────────────────
+    if (_uniMap && typeof window.discoveryPaths !== 'undefined') {
+        const oldPathLines = _uniMap.querySelectorAll('.universe-path-line');
+        oldPathLines.forEach(d => d.remove());
+
+        window.discoveryPaths.forEach(path => {
+            if (!path || !path.line || !path.line.userData) return;
+            const start = path.line.userData.startPosition;
+            const end = path.line.userData.endPosition;
+            if (!start || !end) return;
+            const x1 = 50 + (start.x / universeRadius) * 50;
+            const y1 = 50 + (start.z / universeRadius) * 50;
+            const x2 = 50 + (end.x / universeRadius) * 50;
+            const y2 = 50 + (end.z / universeRadius) * 50;
+            const dx = x2 - x1, dy = y2 - y1;
+            const len = Math.sqrt(dx * dx + dy * dy);
+            const angle = Math.atan2(dy, dx) * 180 / Math.PI;
+            const line = document.createElement('div');
+            line.className = 'universe-path-line';
+            line.style.cssText = 'position:absolute;height:1px;background:repeating-linear-gradient(to right, rgba(255,200,100,0.7) 0 4px, transparent 4px 8px);transform-origin:0 0;pointer-events:none;z-index:3;';
+            line.style.left = x1 + '%';
+            line.style.top = y1 + '%';
+            line.style.width = len + '%';
+            line.style.transform = 'rotate(' + angle + 'deg)';
+            _uniMap.appendChild(line);
+        });
+    }
+
+    // ── Current zone label ───────────────────────────────────────────
+    let zoneLabel = document.getElementById('mapZoneLabel');
+    if (!zoneLabel && _uniMap) {
+        zoneLabel = document.createElement('div');
+        zoneLabel.id = 'mapZoneLabel';
+        zoneLabel.style.cssText = 'position:absolute;left:6px;top:6px;font-size:10px;color:#88ccff;background:rgba(0,0,40,0.65);padding:2px 6px;border-radius:3px;border:1px solid rgba(100,180,255,0.4);pointer-events:none;z-index:10;';
+        _uniMap.appendChild(zoneLabel);
+    }
+    if (zoneLabel) {
+        const dist = Math.sqrt(playerX*playerX + playerY*playerY + playerZ*playerZ);
+        let zone = 'Deep Space';
+        if (dist < 7000) zone = 'Sol System / Sgr A*';
+        else if (dist < 25000) zone = 'Outer Sol';
+        else if (dist < 60000) zone = 'Interstellar Space';
+        else if (dist < 100000) zone = 'Distant Galaxy Region';
+        else zone = 'Cosmic Edge';
+        zoneLabel.textContent = '📍 ' + zone + ' (' + (dist|0) + 'u from origin)';
+        zoneLabel.style.display = 'block';
     }
 
     // Show all galaxy indicators
     const galaxyIndicators = document.querySelectorAll('.galaxy-indicator');
     galaxyIndicators.forEach((el, index) => {
         if (index < galaxyTypes.length) {
-            // ✅ FIXED: Use accurate 2D projection from 3D spherical coordinates
+            // Top-down X/Z projection — convert 3D spherical → cartesian → linear map
             let mapPos;
             if (typeof galaxy3DPositions !== 'undefined' && galaxy3DPositions[index]) {
-                // Convert 3D spherical to 2D map coordinates
                 const galaxy3D = galaxy3DPositions[index];
-                const phi = galaxy3D.phi;
-                const theta = galaxy3D.theta;
-                const distance = galaxy3D.distance;
-                
-                // Project spherical coordinates onto 2D map
-                let x = (phi / (Math.PI * 2)) % 1.0;
-                let y = theta / Math.PI;
-                
-                // Apply distance factor for depth
-                const centerX = 0.5;
-                const centerY = 0.5;
-                x = centerX + (x - centerX) * distance;
-                y = centerY + (y - centerY) * distance;
-                
-                mapPos = { x, y };
+                // Spherical → cartesian using full universe radius scale
+                const r = galaxy3D.distance * universeRadius;
+                const wx = r * Math.sin(galaxy3D.theta) * Math.cos(galaxy3D.phi);
+                const wz = r * Math.sin(galaxy3D.theta) * Math.sin(galaxy3D.phi);
+                mapPos = {
+                    x: 0.5 + (wx / universeRadius) * 0.5,
+                    y: 0.5 + (wz / universeRadius) * 0.5
+                };
             } else {
-                // Fallback to old positions
                 mapPos = galaxyMapPositions[index] || { x: 0.5, y: 0.5 };
             }
             
