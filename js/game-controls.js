@@ -6125,8 +6125,8 @@ function createAllyShips() {
             name: i === 0 ? 'Wingman Alpha' : 'Wingman Beta',
             health: 100,
             maxHealth: 100,
-            cruiseSpeed: 3.5,
-            combatSpeed: 5.0,
+            cruiseSpeed: 4.5,
+            combatSpeed: 6.5,
             firingRange: 350,
             detectionRange: 3000,
             // Wingmen now follow the player anywhere via the follow state,
@@ -6230,8 +6230,8 @@ function recruitNebulaWingman(nebulaName, spawnPos) {
         recruitedFrom: nebulaName || 'unknown nebula',
         health: 100,
         maxHealth: 100,
-        cruiseSpeed: 3.5,
-        combatSpeed: 5.0,
+        cruiseSpeed: 4.5,
+        combatSpeed: 6.5,
         firingRange: 350,
         detectionRange: 3000,
         systemRadius: 100000,
@@ -6905,22 +6905,26 @@ function _updateAllyShield(ally, active) {
 }
 
 // ── Player warp detection ────────────────────────────────────────────────
+// Returns true during dedicated warp events OR whenever the player is
+// cruising at 4 units/frame (4000 km/s) or faster — wingmen need to drop
+// patrol behavior and lock onto the player's vector to keep up.
 function _isPlayerWarping() {
     if (typeof gameState === 'undefined') return false;
     if (gameState.slingshot && gameState.slingshot.active) return true;
     if (gameState.emergencyWarp && (gameState.emergencyWarp.active || gameState.emergencyWarp.transitioning)) return true;
     if (gameState.blackHoleWarp && gameState.blackHoleWarp.active) return true;
+    if (gameState.velocityVector && gameState.velocityVector.length() >= 4.0) return true;
     return false;
 }
 
-// ── Follow: player is warping — match their velocity, fly slightly ahead ──
+// ── Follow: player is warping or flying fast — match velocity, fly ahead ─
 function _executeFollow(ally, ud, playerPos) {
     if (!gameState || !gameState.velocityVector) return;
     const playerVel = gameState.velocityVector.clone();
     const playerSpeed = playerVel.length();
 
     // Position target = 250u ahead of player along velocity vector, plus
-    // a small lateral offset so Alpha and Beta don't stack on each other
+    // a small lateral offset so wingmen don't stack on each other
     let aheadDir;
     if (playerSpeed > 0.1) {
         aheadDir = playerVel.clone().normalize();
@@ -6931,20 +6935,26 @@ function _executeFollow(ally, ud, playerPos) {
         aheadDir = new THREE.Vector3(0, 0, -1);
     }
     const right = new THREE.Vector3().crossVectors(aheadDir, new THREE.Vector3(0, 1, 0)).normalize();
-    const sideOffset = (ud.name === 'Wingman Alpha' ? -50 : 50);
+    // Lateral offset varies per wingman so up to 10 ships fan out cleanly
+    const idx = (typeof allyShips !== 'undefined') ? allyShips.indexOf(ally) : 0;
+    const sideOffset = ((idx % 2 === 0) ? -1 : 1) * (50 + Math.floor(idx / 2) * 40);
 
     const target = playerPos.clone()
         .addScaledVector(aheadDir, 250)
         .addScaledVector(right, sideOffset);
 
-    // Match the player's speed (or +20% so we keep the lead) — overrides
-    // the wingman's normal cruise/combat speed cap during warp.
+    // Match the player's speed (or +20% so we keep the lead). No upper cap —
+    // wingmen need to track up to 15+ units/frame (15000 km/s) when the
+    // player is sustained-cruising or warping, well past the patrol cap.
     const targetSpeed = Math.max(playerSpeed * 1.2, ud.cruiseSpeed);
     _allyDir.subVectors(target, ally.position);
     const dist = _allyDir.length();
     if (dist > 1) {
         _allyDir.normalize();
-        ud.velocity.lerp(_allyDir.clone().multiplyScalar(targetSpeed), 0.18);
+        // Stronger lerp factor so they accelerate hard when far behind —
+        // the 0.18 was too slow to close gaps at warp speeds.
+        const lerpRate = playerSpeed > 6 ? 0.32 : 0.18;
+        ud.velocity.lerp(_allyDir.clone().multiplyScalar(targetSpeed), lerpRate);
     }
     ally.position.add(ud.velocity);
 }
