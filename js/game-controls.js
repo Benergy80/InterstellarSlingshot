@@ -6088,6 +6088,62 @@ console.log('🌫️ Nebula visibility commands loaded: showNebulas(), hideNebul
 // =============================================================================
 
 const allyShips = [];
+
+// ── Wingman role profiles ────────────────────────────────────────────────
+// Each wingman is assigned a role that varies stat multipliers and target
+// preference, so a squad of 4+ wingmen feels like distinct personalities
+// without forking the AI state machine. Role mults are applied at use-time.
+const WINGMAN_ROLES = {
+    aggressor: {
+        label: 'Aggressor',
+        cruiseMult: 1.0, combatMult: 1.30, firingRangeMult: 1.5, detectionMult: 1.0,
+        missilesMax: 8, missileCooldownMs: 6000, patrolDwellMs: 3000,
+        // Closest enemy first
+        pickTarget: (ally, candidates) => candidates[0] || null
+    },
+    sniper: {
+        label: 'Sniper',
+        cruiseMult: 0.85, combatMult: 0.95, firingRangeMult: 3.0, detectionMult: 1.2,
+        missilesMax: 5, missileCooldownMs: 8000, patrolDwellMs: 6000,
+        // Prefer boss, then highest-HP target
+        pickTarget: (ally, candidates) => {
+            if (!candidates.length) return null;
+            const boss = candidates.find(c => c.userData && c.userData.isBoss);
+            if (boss) return boss;
+            return candidates.reduce((best, c) =>
+                (!best || (c.userData.health || 0) > (best.userData.health || 0)) ? c : best, null);
+        }
+    },
+    defender: {
+        label: 'Defender',
+        cruiseMult: 1.0, combatMult: 1.10, firingRangeMult: 1.0, detectionMult: 1.0,
+        missilesMax: 6, missileCooldownMs: 4000, patrolDwellMs: 4000,
+        // Prefer enemy nearest to the player (intercept role)
+        pickTarget: (ally, candidates) => {
+            if (!candidates.length) return null;
+            if (typeof camera === 'undefined') return candidates[0];
+            const playerPos = camera.position;
+            let best = null, bestDist = Infinity;
+            for (const c of candidates) {
+                const d = c.position.distanceTo(playerPos);
+                if (d < bestDist) { bestDist = d; best = c; }
+            }
+            return best;
+        }
+    },
+    scout: {
+        label: 'Scout',
+        cruiseMult: 1.20, combatMult: 1.10, firingRangeMult: 1.0, detectionMult: 1.5,
+        missilesMax: 5, missileCooldownMs: 8000, patrolDwellMs: 2500,
+        // Closest enemy (but with longer detection range)
+        pickTarget: (ally, candidates) => candidates[0] || null
+    }
+};
+const _ROLE_ORDER = ['aggressor', 'defender', 'sniper', 'scout'];
+function _roleFor(ally) {
+    const k = ally && ally.userData && ally.userData.role;
+    return WINGMAN_ROLES[k] || WINGMAN_ROLES.aggressor;
+}
 const _allyDir = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
 const _allyTarget = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
 
@@ -6135,9 +6191,14 @@ function createAllyShips() {
 
         group.position.copy(startOffsets[i]);
 
+        const _roleKey = i === 0 ? 'aggressor' : 'defender';
+        const _profile = WINGMAN_ROLES[_roleKey];
         group.userData = {
             type: 'ally',
             name: i === 0 ? 'Wingman Alpha' : 'Wingman Beta',
+            // Alpha is Aggressor (close-range brawler), Beta is Defender
+            // (sticks near player and intercepts threats targeting them)
+            role: _roleKey,
             health: 100,
             maxHealth: 100,
             cruiseSpeed: 4.5,
@@ -6150,16 +6211,16 @@ function createAllyShips() {
             lastAttack: 0,
             currentTarget: null,
             isAlly: true,
-            // Wingman missile system
-            missilesRemaining: 5,
-            missilesMax: 5,
+            // Missile loadout varies by role (aggressor=8, defender=6, …)
+            missilesRemaining: _profile.missilesMax,
+            missilesMax: _profile.missilesMax,
             lastMissile: 0,
-            missileCooldownMs: 8000,
+            missileCooldownMs: _profile.missileCooldownMs,
             // Independent AI state
             aiState: 'patrol',
             patrolTarget: null,
             patrolArriveTime: 0,
-            patrolDwellMs: 4000,
+            patrolDwellMs: _profile.patrolDwellMs,
             engageTarget: null,
             velocity: new THREE.Vector3(),
         };
@@ -6238,11 +6299,19 @@ function recruitNebulaWingman(nebulaName, spawnPos) {
         );
     }
 
+    // Cycle through specialist roles (sniper, scout, aggressor, defender, …)
+    // so each recruit feels distinct from Alpha/Beta and from the previous
+    // recruits.  Alpha=aggressor, Beta=defender, then sniper → scout → repeat.
+    const _recruitRoleOrder = ['sniper', 'scout', 'aggressor', 'defender'];
+    const role = _recruitRoleOrder[(_nextNebulaWingmanIdx - 1) % _recruitRoleOrder.length];
+    const profile = WINGMAN_ROLES[role] || WINGMAN_ROLES.aggressor;
+
     group.userData = {
         type: 'ally',
         name: recruit.name,
         colorStr: recruit.colorStr,
         recruitedFrom: nebulaName || 'unknown nebula',
+        role: role,
         health: 100,
         maxHealth: 100,
         cruiseSpeed: 4.5,
@@ -6253,14 +6322,14 @@ function recruitNebulaWingman(nebulaName, spawnPos) {
         lastAttack: 0,
         currentTarget: null,
         isAlly: true,
-        missilesRemaining: 5,
-        missilesMax: 5,
+        missilesRemaining: profile.missilesMax,
+        missilesMax: profile.missilesMax,
         lastMissile: 0,
-        missileCooldownMs: 8000,
+        missileCooldownMs: profile.missileCooldownMs,
         aiState: 'patrol',
         patrolTarget: null,
         patrolArriveTime: 0,
-        patrolDwellMs: 4000,
+        patrolDwellMs: profile.patrolDwellMs,
         engageTarget: null,
         velocity: new THREE.Vector3(),
     };
@@ -6269,10 +6338,11 @@ function recruitNebulaWingman(nebulaName, spawnPos) {
     scene.add(group);
     allyShips.push(group);
 
-    // Hail the player
+    // Hail the player — include the recruit's role so the squad composition
+    // is visible at a glance (Aggressor/Defender/Sniper/Scout)
     if (typeof showAchievement === 'function') {
         showAchievement(
-            recruit.name + ' has joined!',
+            recruit.name + ' (' + profile.label + ') has joined!',
             'Hailing from ' + (nebulaName || 'the nebula') + '. Welcome to the squadron.',
             true
         );
@@ -6323,30 +6393,37 @@ function _pickPatrolWaypoint(excludePos, attractPos) {
 // Scan for the nearest alive hostile within detection range of this ally
 function _scanForEnemy(ally) {
     const ud = ally.userData;
-    let nearest = null;
-    let nearestDist = ud.detectionRange;
+    const role = _roleFor(ally);
+    const range = ud.detectionRange * (role.detectionMult || 1.0);
 
+    // Collect candidates within range, sorted by distance to the wingman.
+    // Role.pickTarget then picks based on the wingman's specialty (closest,
+    // boss/highest-HP for snipers, closest-to-player for defenders, etc).
+    const candidates = [];
     if (typeof enemies !== 'undefined') {
         for (let i = 0; i < enemies.length; i++) {
             const e = enemies[i];
             if (!e || !e.userData || e.userData.health <= 0) continue;
             const d = ally.position.distanceTo(e.position);
-            if (d < nearestDist) { nearestDist = d; nearest = e; }
+            if (d < range) candidates.push({ ent: e, d });
         }
     }
     if (typeof outerInterstellarSystems !== 'undefined') {
+        const wp = new THREE.Vector3();
         outerInterstellarSystems.forEach(sys => {
             if (!sys.userData || !sys.userData.drones) return;
             sys.userData.drones.forEach(drone => {
                 if (!drone || !drone.userData || drone.userData.health <= 0) return;
-                const wp = new THREE.Vector3();
                 drone.getWorldPosition(wp);
                 const d = ally.position.distanceTo(wp);
-                if (d < nearestDist) { nearestDist = d; nearest = drone; }
+                if (d < range) candidates.push({ ent: drone, d });
             });
         });
     }
-    return nearest;
+    if (!candidates.length) return null;
+    candidates.sort((a, b) => a.d - b.d);
+    const ents = candidates.map(c => c.ent);
+    return role.pickTarget(ally, ents) || ents[0];
 }
 
 function _isPlayerInHomeSystem() {
@@ -6513,7 +6590,9 @@ function _executePatrol(ally, ud, now, attractPos) {
     } else {
         // Cruise toward waypoint with proportional speed control
         _allyDir.normalize();
-        const targetSpeed = Math.min(ud.cruiseSpeed, dist * 0.02);
+        const role = _roleFor(ally);
+        const cruise = ud.cruiseSpeed * (role.cruiseMult || 1.0);
+        const targetSpeed = Math.min(cruise, dist * 0.02);
         ud.velocity.lerp(_allyDir.clone().multiplyScalar(targetSpeed), 0.04);
         ally.position.add(ud.velocity);
     }
@@ -6528,13 +6607,17 @@ function _executeEngage(ally, ud, now) {
         et.getWorldPosition(enemyPos);
     }
 
+    const role = _roleFor(ally);
+    const combatSpeed = ud.combatSpeed * (role.combatMult || 1.0);
+    const firingRange = ud.firingRange * (role.firingRangeMult || 1.0);
+
     _allyDir.subVectors(enemyPos, ally.position);
     const dist = _allyDir.length();
     _allyDir.normalize();
 
-    if (dist > ud.firingRange) {
+    if (dist > firingRange) {
         // Close the distance — pursuit speed
-        const chaseSpeed = Math.min(ud.combatSpeed, dist * 0.03);
+        const chaseSpeed = Math.min(combatSpeed, dist * 0.03);
         ud.velocity.lerp(_allyDir.clone().multiplyScalar(chaseSpeed), 0.08);
     } else if (dist < 60) {
         // Too close — pull away slightly
@@ -6542,7 +6625,7 @@ function _executeEngage(ally, ud, now) {
     } else {
         // Strafing range — orbit the enemy at combat distance
         const tangent = new THREE.Vector3(-_allyDir.z, 0, _allyDir.x);
-        ud.velocity.lerp(tangent.multiplyScalar(ud.combatSpeed * 0.6), 0.05);
+        ud.velocity.lerp(tangent.multiplyScalar(combatSpeed * 0.6), 0.05);
     }
     ally.position.add(ud.velocity);
 
@@ -6551,8 +6634,8 @@ function _executeEngage(ally, ud, now) {
     const _gameAge = (gameState && gameState.gameStartTime) ? (Date.now() - gameState.gameStartTime) : 0;
     if (_gameAge < 5000) return;
 
-    // ── Missile fire: 8s cooldown, 5 max, ~25% player damage ──────
-    if (dist < ud.firingRange * 1.5 &&
+    // ── Missile fire: cooldown + capacity scale with role ─────────
+    if (dist < firingRange * 1.5 &&
         (ud.missilesRemaining || 0) > 0 &&
         now - (ud.lastMissile || 0) > (ud.missileCooldownMs || 8000)) {
         ud.lastMissile = now;
@@ -6564,7 +6647,7 @@ function _executeEngage(ally, ud, now) {
     }
 
     // ── Laser fire: 1000ms cooldown ────────────────────────────────
-    if (dist < ud.firingRange && now - ud.lastAttack > 1000) {
+    if (dist < firingRange && now - ud.lastAttack > 1000) {
         ud.lastAttack = now;
         const color = ud.name === 'Wingman Alpha' ? '#00ff88' : '#88aaff';
         _fireWingmanLaser(ally.position.clone(), enemyPos, color);
