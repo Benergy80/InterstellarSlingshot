@@ -1237,7 +1237,13 @@ function executeSlingshot() {
         activePlanets.forEach(planet => {
             const distance = camera.position.distanceTo(planet.position);
             const radius = planet.geometry ? planet.geometry.parameters.radius : 5;
-            const slingshotRange = Math.max(60, radius + 25);
+            // Match the body-aware assistRange used by the SLINGSHOT READY
+            // detection (game-physics planet/center/orbiter loops). Stars
+            // get 6× radius; other bodies 2.5× + 30u; min 60u floor.
+            const isStarBody = planet.userData && (planet.userData.type === 'star' || planet.userData.isLocalStar);
+            const slingshotRange = isStarBody
+                ? Math.max(60, radius * 6)
+                : Math.max(60, radius * 2.5 + 30);
             if (distance < slingshotRange && distance < nearestDistance) {
                 nearestPlanet = planet;
                 nearestDistance = distance;
@@ -2016,8 +2022,19 @@ if (surfaceCollision) {
                 }
                 
                 totalGravitationalForce.add(_gravVec);
-                
-                if (distance < assistRange && distance < nearestAssistDistance) {
+
+                // Body-aware slingshot range: stars get 6× radius (Sun radius
+                // 40 → 240u), other massive bodies (Jupiter etc.) get 2.5×
+                // radius + 30u. The flat 60u range was too tight for the Sun
+                // and gas giants — players orbiting at natural distances
+                // never saw the SLINGSHOT READY prompt.
+                const _bodyRadius = (planet.geometry && planet.geometry.parameters && planet.geometry.parameters.radius) || 5;
+                const _isStar = planet.userData.type === 'star' || planet.userData.isLocalStar;
+                const _objAssistRange = _isStar
+                    ? Math.max(assistRange, _bodyRadius * 6)
+                    : Math.max(assistRange, _bodyRadius * 2.5 + 30);
+
+                if (distance < _objAssistRange && distance < nearestAssistDistance) {
                     nearestAssistPlanet = planet;
                     nearestAssistDistance = distance;
                     gravityWellInRange = true;
@@ -2043,8 +2060,14 @@ if (surfaceCollision) {
                     _gravDir.subVectors(_outerPos, camera.position).normalize().multiplyScalar(gravitationalForce);
                     totalGravitationalForce.add(_gravDir);
 
-                    // Check for gravity assist range
-                    if (distance < assistRange && distance < nearestAssistDistance) {
+                    // Body-aware slingshot range — outer system center stars
+                    // can be very large; use the same scaling as Sol.
+                    const _crBody = (centerObj.geometry && centerObj.geometry.parameters && centerObj.geometry.parameters.radius) || 5;
+                    const _crStar = centerObj.userData.type === 'star' || centerObj.userData.isLocalStar;
+                    const _crRange = _crStar
+                        ? Math.max(assistRange, _crBody * 6)
+                        : Math.max(assistRange, _crBody * 2.5 + 30);
+                    if (distance < _crRange && distance < nearestAssistDistance) {
                         nearestAssistPlanet = centerObj;
                         nearestAssistDistance = distance;
                         gravityWellInRange = true;
@@ -2067,8 +2090,14 @@ if (surfaceCollision) {
                         _gravDir.subVectors(_outerPos, camera.position).normalize().multiplyScalar(gravitationalForce);
                         totalGravitationalForce.add(_gravDir);
 
-                        // Check for gravity assist range
-                        if (distance < assistRange && distance < nearestAssistDistance) {
+                        // Body-aware slingshot range — orbiters can be gas
+                        // giants or pulsars; scale with their actual radius.
+                        const _orBody = (orbiter.geometry && orbiter.geometry.parameters && orbiter.geometry.parameters.radius) || 5;
+                        const _orStar = orbiter.userData.type === 'star';
+                        const _orRange = _orStar
+                            ? Math.max(assistRange, _orBody * 6)
+                            : Math.max(assistRange, _orBody * 2.5 + 30);
+                        if (distance < _orRange && distance < nearestAssistDistance) {
                             nearestAssistPlanet = orbiter;
                             nearestAssistDistance = distance;
                             gravityWellInRange = true;
