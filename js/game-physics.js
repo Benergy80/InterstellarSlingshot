@@ -2126,27 +2126,49 @@ if (surfaceCollision) {
     // Enhanced slingshot mechanics
     const warpBtn = window._cachedWarpBtn || (window._cachedWarpBtn = document.getElementById('warpBtn'));
     if (nearestAssistPlanet && gameState.energy >= 20 && !gameState.slingshot.active) {
+        // Detect mobile so the prompt and notification offer a tap action
+        // instead of telling the player to press ENTER (no keyboard).
+        const _isMobile = (typeof window !== 'undefined') && (
+            window.matchMedia && window.matchMedia('(pointer: coarse)').matches ||
+            ('ontouchstart' in window) ||
+            (navigator.maxTouchPoints && navigator.maxTouchPoints > 0)
+        );
+        const _activateLabel = _isMobile ? 'TAP HERE' : 'Press ENTER';
+
         if (warpBtn) {
             warpBtn.disabled = false;
             warpBtn.classList.add('space-btn', 'pulse');
-            const _warpText = `<i class="fas fa-rocket mr-2"></i>SLINGSHOT READY - Press ENTER (${nearestAssistPlanet.userData.name})`;
+            const _warpText = `<i class="fas fa-rocket mr-2"></i>SLINGSHOT READY - ${_activateLabel} (${nearestAssistPlanet.userData.name})`;
             if (warpBtn._lastHtml !== _warpText) { warpBtn.innerHTML = _warpText; warpBtn._lastHtml = _warpText; }
-            
+
             const tutorialComplete = (typeof tutorialSystem === 'undefined' || tutorialSystem.completed);
-            
+
+            // First entry: mark assist-ready and fire the initial notification.
             if (!warpBtn.classList.contains('assist-ready')) {
                 warpBtn.classList.add('assist-ready');
-                
-                if (tutorialComplete) {
-                    if (typeof showAchievement === 'function') {
-                        showAchievement('Slingshot Ready', `Press ENTER near ${nearestAssistPlanet.userData.name} for 20,000 km/s boost!`);
-                    }
-                } else {
-                    console.log(`Slingshot available near ${nearestAssistPlanet.userData.name} (tutorial mode - popup suppressed)`);
+                gameState._lastSlingshotPrompt = 0; // reset the re-prompt timer
+            }
+
+            // Re-fire the tappable "Slingshot Ready" notification every 5s
+            // while the slingshot is still available. Without this it shows
+            // once for 4s and then disappears — mobile players who looked
+            // away briefly had no tap target left and couldn't trigger it.
+            const _now = Date.now();
+            const _last = gameState._lastSlingshotPrompt || 0;
+            if (tutorialComplete && _now - _last > 5000) {
+                gameState._lastSlingshotPrompt = _now;
+                if (typeof showAchievement === 'function') {
+                    showAchievement(
+                        'Slingshot Ready',
+                        `${_activateLabel} near ${nearestAssistPlanet.userData.name} for 20,000 km/s boost!`
+                    );
                 }
             }
         }
     } else if (warpBtn) {
+        // Slingshot no longer available — clear the re-prompt timer so the
+        // next entry into a gravity well fires a fresh notification.
+        gameState._lastSlingshotPrompt = 0;
         warpBtn.disabled = true;
         warpBtn.classList.remove('pulse', 'assist-ready');
         let _wt;
