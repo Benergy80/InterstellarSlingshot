@@ -6490,9 +6490,11 @@ function updateAllyShips() {
                 if (distToPlayer < 600) {
                     ud.aiState = 'patrol';
                     ud.patrolTarget = null;
+                    _wingmanTacticalMessage(ud, 'tether');
                 } else if (distToPlayer > 4000) {
                     ud.aiState = 'stranded';
                     ud.patrolTarget = null;
+                    _wingmanTacticalMessage(ud, 'stranded');
                 }
                 // else stay in follow until close enough or fully stranded
             }
@@ -6505,6 +6507,7 @@ function updateAllyShips() {
             if (distToPlayer < 1000) {
                 ud.aiState = 'patrol';
                 ud.patrolTarget = null;
+                _wingmanTacticalMessage(ud, 'tether');
             }
             if (threat) {
                 ud.aiState = 'engage';
@@ -6857,14 +6860,62 @@ const WINGMAN_TACTICAL_LINES = {
     ],
     stranded: [
         'Captain, I\'ve lost contact — rendezvous when able.',
-        'I\'ve fallen behind — orbiting local planets, awaiting your return.'
+        'I\'ve fallen behind — orbiting local planets, awaiting your return.',
+        'I can\'t keep up — falling out of range. I\'ll regroup at the nearest system.'
     ],
     follow: [
         'On your six, Captain!',
         'Forming up on your wing!',
         'Following you in.'
+    ],
+    // Wingman has just joined the formation (first deploy or rejoining
+    // after being stranded). Distinct from 'follow' which fires whenever
+    // the player triggers a warp event.
+    tether: [
+        'Tethered to your wing, Captain — ready to fly.',
+        'Back on station, Captain. Good to see you.',
+        'Squadron formation locked. Where to next?',
+        'Reconnected — I\'ve got your six again.'
     ]
 };
+
+// ── Global wingman comms queue ───────────────────────────────────────────
+// Multiple wingmen often hit the same state transition in the same frame
+// (e.g. all fall stranded when the player warps far). Without serializing
+// the popups they overlap and clip each other. The queue dispatches one
+// every COMMS_INTERVAL_MS so the player can read each message in turn.
+const WINGMAN_COMMS_INTERVAL_MS = 4500; // matches achievement display time
+const _wingmanCommsQueue = [];
+let _wingmanCommsLastDispatch = 0;
+let _wingmanCommsTimer = null;
+
+function _drainWingmanComms() {
+    _wingmanCommsTimer = null;
+    if (!_wingmanCommsQueue.length) return;
+    const now = Date.now();
+    const wait = (_wingmanCommsLastDispatch + WINGMAN_COMMS_INTERVAL_MS) - now;
+    if (wait > 0) {
+        _wingmanCommsTimer = setTimeout(_drainWingmanComms, wait);
+        return;
+    }
+    const msg = _wingmanCommsQueue.shift();
+    _wingmanCommsLastDispatch = now;
+    if (typeof showAchievement === 'function') {
+        showAchievement(msg.title, msg.text, false);
+    }
+    if (_wingmanCommsQueue.length) {
+        _wingmanCommsTimer = setTimeout(_drainWingmanComms, WINGMAN_COMMS_INTERVAL_MS);
+    }
+}
+
+function _enqueueWingmanComms(title, text) {
+    // De-dup identical messages already pending so a frame full of duplicate
+    // events (every wingman becomes stranded simultaneously) only shows one.
+    if (_wingmanCommsQueue.some(m => m.title === title && m.text === text)) return;
+    _wingmanCommsQueue.push({ title, text });
+    if (!_wingmanCommsTimer) _drainWingmanComms();
+}
+
 function _wingmanTacticalMessage(ud, kind) {
     if (!ud) return;
     const now = Date.now();
@@ -6874,9 +6925,7 @@ function _wingmanTacticalMessage(ud, kind) {
     const lines = WINGMAN_TACTICAL_LINES[kind];
     if (!lines || !lines.length) return;
     const text = lines[Math.floor(Math.random() * lines.length)];
-    if (typeof showAchievement === 'function') {
-        showAchievement(ud.name + ' (Comms)', text, false);
-    }
+    _enqueueWingmanComms(ud.name + ' (Comms)', text);
 }
 
 // ── Large multi-stage explosion when a wingman is destroyed ─────────────
