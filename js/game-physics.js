@@ -8,6 +8,61 @@
 // ENHANCED FLIGHT CONTROL FUNCTIONS - SPECIFICATION COMPLIANT
 // =============================================================================
 
+// =============================================================================
+// SHIP UPGRADE PROGRESSION — earned by deep-discovering nebulas
+// =============================================================================
+// Each nebula deep-discovered grants a permanent upgrade to the ship:
+//   • Energy consumption efficiency: -3% per nebula (cumulative, cap 60%)
+//   • Thruster top speed:           +0.5 per nebula (cumulative, cap +11.0)
+// At 22 nebulas (the full game count) the player reaches the ceiling:
+//   maxVelocity 4.0 → 15.0 (matches wingman max-tracking speed of 15000 km/s)
+//   energyEfficiency 1.0 → 0.40 (consumption reduced 60%)
+
+const ENERGY_EFFICIENCY_PER_NEBULA = 0.03;
+const ENERGY_EFFICIENCY_FLOOR      = 0.40; // never go below 40% (60% reduction cap)
+const SPEED_BOOST_PER_NEBULA       = 0.5;
+const SPEED_BOOST_MAX              = 11.0; // 4.0 base + 11.0 = 15.0 ceiling
+
+// Apply the per-frame energy multiplier so consumption scales with upgrades.
+function _consumeEnergy(amount) {
+    if (typeof gameState === 'undefined') return;
+    const eff = (typeof gameState.energyEfficiency === 'number') ? gameState.energyEfficiency : 1.0;
+    gameState.energy = Math.max(0, gameState.energy - amount * eff);
+}
+
+// Called once per nebula deep-discovery. Bumps the player's stats and
+// shows an achievement summarizing the new ceiling.
+function applyNebulaShipUpgrade(nebulaName) {
+    if (typeof gameState === 'undefined') return;
+    gameState.nebulasDeepDiscovered = (gameState.nebulasDeepDiscovered || 0) + 1;
+
+    // Energy efficiency: each upgrade subtracts 3% from consumption multiplier
+    const newEff = Math.max(ENERGY_EFFICIENCY_FLOOR,
+        (gameState.energyEfficiency || 1.0) - ENERGY_EFFICIENCY_PER_NEBULA);
+    gameState.energyEfficiency = newEff;
+
+    // Top speed: cumulative additive boost up to the cap
+    if (typeof gameState.baseMaxVelocity !== 'number') gameState.baseMaxVelocity = 4.0;
+    const totalBoost = Math.min(SPEED_BOOST_MAX,
+        gameState.nebulasDeepDiscovered * SPEED_BOOST_PER_NEBULA);
+    gameState.maxVelocity = gameState.baseMaxVelocity + totalBoost;
+
+    const efficiencyPct = Math.round((1 - newEff) * 100);
+    const topSpeedKmS = Math.round(gameState.maxVelocity * 1000);
+    const title = '🛠 Ship Upgrade — ' + (nebulaName || 'Unknown Nebula');
+    const desc = `Energy efficiency +${efficiencyPct}% · Top speed ${topSpeedKmS} km/s` +
+                 ` (nebulas charted: ${gameState.nebulasDeepDiscovered})`;
+    if (typeof showAchievement === 'function') {
+        showAchievement(title, desc, true);
+    }
+    console.log(`🛠 Ship upgrade applied — eff ${newEff.toFixed(2)}, maxV ${gameState.maxVelocity.toFixed(1)}`);
+}
+
+if (typeof window !== 'undefined') {
+    window._consumeEnergy = _consumeEnergy;
+    window.applyNebulaShipUpgrade = applyNebulaShipUpgrade;
+}
+
 // Initialize timing variables for auto-leveling system
 let lastPitchInputTime = 0;
 let lastRollInputTime = 0;
@@ -1418,7 +1473,7 @@ if (frameDistance > 0.01) { // Only track significant movement
         // W Key: Primary forward thrust (2x power multiplier) - consumes 0.12 energy per frame
         const wThrustPower = gameState.thrustPower * gameState.wThrustMultiplier;
         gameState.velocityVector.addScaledVector(forwardDirection, wThrustPower);
-        gameState.energy = Math.max(0, gameState.energy - 0.12);
+        _consumeEnergy(0.12);
         // Visual feedback — rate-limited to at most one effect every
         // 500 ms so holding W doesn't spawn 30 DOM star-trails multiple
         // times per second (each one hangs 300 ms and hurts long-run FPS).
@@ -1432,26 +1487,26 @@ if (frameDistance > 0.01) { // Only track significant movement
     if (keys.s && gameState.energy > 0) {
         // S Key: Reverse thrust (50% power) - consumes 0.04 energy per frame
         gameState.velocityVector.addScaledVector(forwardDirection, -gameState.thrustPower * 0.5);
-        gameState.energy = Math.max(0, gameState.energy - 0.04);
+        _consumeEnergy(0.04);
     }
     if (keys.a && gameState.energy > 0) {
         // A Key: Strafe left (70% power) - consumes 0.06 energy per frame
         gameState.velocityVector.addScaledVector(rightDirection, -gameState.thrustPower * 0.7);
-        gameState.energy = Math.max(0, gameState.energy - 0.06);
+        _consumeEnergy(0.06);
     }
     if (keys.d && gameState.energy > 0) {
         // D Key: Strafe right (70% power) - consumes 0.06 energy per frame
         gameState.velocityVector.addScaledVector(rightDirection, gameState.thrustPower * 0.7);
-        gameState.energy = Math.max(0, gameState.energy - 0.06);
+        _consumeEnergy(0.06);
     }
-    
+
     // SPECIFICATION: Boost System
     if (keys.b && gameState.energy > 0) {
         // B Key: Space boost (1.8x thrust power, or 2.5x with Shift modifier)
         const boostPower = keys.shift ? gameState.thrustPower * 2.5 : gameState.thrustPower * 1.8;
         gameState.velocityVector.addScaledVector(forwardDirection, boostPower);
         // B + Shift: Enhanced boost with higher energy consumption (0.15 vs 0.12)
-        gameState.energy = Math.max(0, gameState.energy - (keys.shift ? 0.15 : 0.12));
+        _consumeEnergy(keys.shift ? 0.15 : 0.12);
 
         if (Math.random() > 0.97) {
             if (!gameState._lastBoostFx || (Date.now() - gameState._lastBoostFx) > 500) {
@@ -1698,7 +1753,7 @@ if (keys.x && gameState.energy > 0 && !gameState.emergencyWarp.autoBraking) {
     rotationalVelocity.roll *= rotationalBrakingForce;
     
     // Small energy cost for braking
-    gameState.energy = Math.max(0, gameState.energy - 0.02);
+    _consumeEnergy(0.02);
     
     // Get current speed in km/s
     const currentSpeedKmS = gameState.velocityVector.length() * 1000;
@@ -2380,7 +2435,7 @@ if (dampedVelocity.length() >= gameState.minVelocity ||
             }
             
             gameState.velocityVector.addScaledVector(targetDirection, gameState.thrustPower * 0.4);
-            gameState.energy = Math.max(0, gameState.energy - 0.03);
+            _consumeEnergy(0.03);
             
             // Re-orient ONLY during distant approach (not during orbital insertion)
             // This prevents camera shake when trying to orbit close to target
@@ -3732,6 +3787,13 @@ function checkForNebulaDeepDiscovery() {
         // Mark as deep discovered
         console.log(`✨ DEEP DISCOVERY TRIGGERED for ${nebulaType} nebula "${nebulaName}" at distance ${distance.toFixed(0)}`);
         nebula.userData.deepDiscovered = true;
+
+        // Reward: ship upgrade (energy efficiency + top speed). Fires once
+        // per nebula. Delay slightly so the upgrade achievement appears
+        // after any incoming transmission popup that this discovery triggers.
+        if (typeof applyNebulaShipUpgrade === 'function') {
+            setTimeout(() => applyNebulaShipUpgrade(nebulaName), 2500);
+        }
 
         // CHECK: Is this faction already defeated?
         if (isFactionDefeated(galaxyId)) {

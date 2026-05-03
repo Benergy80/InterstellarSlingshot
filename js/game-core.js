@@ -41,6 +41,11 @@ const gameState = {
     wThrustMultiplier: 2.0, // W key gets 2x thrust
     minVelocity: 0.2, // Doubled for doubled world
     maxVelocity: 4.0, // 2x player boost (was 2.0 after doubled-world scale)
+    // Ship-upgrade progression (per nebula deep-discovered)
+    // Each deep-discovery increases efficiency and top speed.
+    nebulasDeepDiscovered: 0,
+    energyEfficiency: 1.0, // multiplier on consumption (lower = more efficient)
+    baseMaxVelocity: 4.0,  // captured baseline so upgrades stack additively
     mapMode: 'galactic',
     mapView: 'galactic', // 'galactic', 'universal'
     galaxiesCleared: 0,

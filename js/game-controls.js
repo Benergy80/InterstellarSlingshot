@@ -445,29 +445,44 @@ function updatePatrolBehavior(enemy, playerPos, speed, time) {
 
 function calculateDifficultySettings() {
     const galaxiesCleared = (typeof gameState !== 'undefined' && gameState.galaxiesCleared) ? gameState.galaxiesCleared : 0;
-    
+
+    // Scale active enemy count with the player's wingmen count so the fight
+    // stays meaningful as allies are recruited. Each living wingman adds
+    // 2 active local attackers and 2 active distant attackers.
+    let aliveWingmen = 0;
+    if (typeof allyShips !== 'undefined') {
+        aliveWingmen = allyShips.filter(a => a && a.userData && a.userData.health > 0).length;
+    }
+    const wingmanLocalBonus = aliveWingmen * 2;
+    const wingmanDistantBonus = aliveWingmen * 2;
+
     const baseSettings = {
         // Local galaxy settings (progressive difficulty)
-        maxLocalAttackers: Math.min(4 + galaxiesCleared, 10), // Start with 4 (all pirates), +1 per galaxy, max 10
+        // 4 base + 2 per wingman → 8 active at game start with 2 wingmen
+        // (matches the 4 Martian + 4 Vulcan opening scenario the player wanted)
+        maxLocalAttackers: Math.min(4 + galaxiesCleared + wingmanLocalBonus, 16),
         localSpeedMultiplier: 1.0 + (galaxiesCleared * 0.05), // Full speed from the start
         localHealthMultiplier: galaxiesCleared === 0 ? 1 : Math.min(1 + galaxiesCleared * 0.25, 3),
         localDetectionRange: 3500 + (galaxiesCleared * 300),
         localFiringRange: 350 + (galaxiesCleared * 25),  // Was 150 — far too close, enemies couldn't fire
         localAttackCooldown: Math.max(600, 1200 - (galaxiesCleared * 100)),
-        
+
         // Distant galaxy settings (always challenging) - MAX 3 HITS
-        maxDistantAttackers: Math.min(8 + galaxiesCleared, 15),  // More attackers
+        // 8 base + galaxiesCleared + 2 per wingman, capped at 22 (fights stay
+        // tractable but feel proportionate to the player's fleet size).
+        maxDistantAttackers: Math.min(8 + galaxiesCleared + wingmanDistantBonus, 22),
         distantSpeedMultiplier: 1.0 + (galaxiesCleared * 0.08),  // Faster enemies
         distantHealthMultiplier: Math.min(2 + galaxiesCleared * 0.125, 3), // MAX 3 hits
         distantDetectionRange: 5000 + (galaxiesCleared * 200),  // Long detection for pursuit
         distantFiringRange: 200 + (galaxiesCleared * 30),  // Must get close to fire
         distantAttackCooldown: Math.max(800, 1200 - (galaxiesCleared * 50)),
-        
+
         // General settings
         galaxiesCleared: galaxiesCleared,
+        aliveWingmen: aliveWingmen,
         difficultyLevel: Math.min(Math.floor(galaxiesCleared / 2), 4) // 0-4 difficulty levels
     };
-    
+
     return baseSettings;
 }
 
