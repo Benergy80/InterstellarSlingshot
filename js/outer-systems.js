@@ -733,6 +733,16 @@ function createBorgCubeForSystem(systemGroup, maxOrbitRadius) {
     core.frustumCulled = false;
     cubeGroup.add(core);
 
+    // Invisible hitbox sphere (300u radius) so the raycaster reliably finds
+    // the cube even at long encounter distances. The 50u box is far too small
+    // to hit at 5000-15000u typical engagement range without near-perfect aim.
+    const hitboxGeo = new THREE.SphereGeometry(300, 12, 8);
+    const hitboxMat = new THREE.MeshBasicMaterial({ visible: false });
+    const hitbox = new THREE.Mesh(hitboxGeo, hitboxMat);
+    hitbox.frustumCulled = false;
+    hitbox.userData.isHitbox = true;
+    cubeGroup.add(hitbox);
+
     // Patrol orbit
     const patrolRadius = 10000 + Math.random() * 5000;
     const angle = Math.random() * Math.PI * 2;
@@ -1294,8 +1304,10 @@ function updateBorgPatrolCombat() {
                     stopBorgAlarm();
                 }
 
-                // Borg warning message
-                if (distance < 5000 && !ud.warningShown) {
+                // Borg warning message — fires when cube enters typical
+                // visual range so the player gets immediate feedback that
+                // they've encountered a BORG threat.
+                if (distance < 10000 && !ud.warningShown) {
                     ud.warningShown = true;
                     if (typeof showAchievement === 'function') {
                         showAchievement('⚠️ CRITICAL ALERT', 'Massive BORG vessel detected! Extreme threat level!', true);
@@ -1303,8 +1315,10 @@ function updateBorgPatrolCombat() {
                     if (typeof playSound === 'function') playSound('boss');
                 }
 
-                // Borg communications
-                if (distance < 5000 && now - ud.lastCommunication > ud.communicationCooldown) {
+                // Borg communications — extended to 10000u so transmissions
+                // start arriving as soon as the cube is detected, not only
+                // once you're nearly on top of it.
+                if (distance < 10000 && now - ud.lastCommunication > ud.communicationCooldown) {
                     ud.lastCommunication = now;
                     const msgs = [
                         'We are the Borg. Resistance is futile.',

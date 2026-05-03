@@ -4890,8 +4890,14 @@ function fireWeapon() {
 
             const borgIntersects = raycaster.intersectObjects(borgDrones);
             if (borgIntersects.length > 0) {
-                targetPosition = borgIntersects[0].point;
                 targetObject = borgIntersects[0].object.parent; // Parent is the drone group
+                // Use the cube's world center as target so the proximity
+                // check in checkWeaponHits (300u radius) reliably matches.
+                // The raycast point can be up to 300u away on the hitbox
+                // sphere surface, which would be on the boundary of the test.
+                const _borgCenter = new THREE.Vector3();
+                targetObject.getWorldPosition(_borgCenter);
+                targetPosition = _borgCenter;
                 console.log('Hit detected: BORG drone', targetObject.userData.name);
             } else {
                 // Check for asteroid hits (for manual aiming only)
