@@ -422,8 +422,10 @@ function createEnemyMeshWithModel(regionId, fallbackGeometry, material, scaleOve
 
         return model;
     } else {
-        // Fallback to procedural geometry
-        console.log(`Using fallback geometry for Enemy ${regionId}`);
+        // Fallback to procedural geometry — log loudly so it's visible
+        // why the GLB didn't load.
+        const cacheState = (typeof modelCache !== 'undefined') ? modelCache.enemies[regionId] : 'UNDEFINED';
+        console.warn(`⚠️ Enemy${regionId}.glb fallback used. modelCache state: ${cacheState === null ? 'null (load failed)' : cacheState === undefined ? 'undefined (not loaded yet)' : 'unexpected ' + typeof cacheState}`);
 
         // Create base mesh with darker, more defined material
         const baseColor = new THREE.Color(material.color || 0xff0000);
@@ -472,7 +474,7 @@ function createBossMeshWithModel(regionId, fallbackGeometry, material) {
 
     if (model) {
         // Use the GLB model
-        // console.log(`Using GLB model for Boss ${regionId}`);
+        console.log(`👑 Using GLB Boss${regionId}.glb model`);
 
         // CRITICAL: Set the entire model visible first
         model.visible = true;
@@ -486,18 +488,24 @@ function createBossMeshWithModel(regionId, fallbackGeometry, material) {
                 child.visible = true;
                 child.frustumCulled = false;
 
-                // More defined material - much dimmer colors to show shape better
-                const dimmedColor = new THREE.Color(material.color || 0xff0000);
-                dimmedColor.multiplyScalar(0.3);  // Reduce brightness by 70% to see shape clearly
+                // Faction-tinted but bright enough to read clearly. The
+                // previous 0.3x multiplier was so dim that bosses appeared
+                // muddy/geometric — bumped to 0.7x and added emissive so
+                // the model silhouette pops against starfield.
+                const baseColor = new THREE.Color(material.color || 0xff0000);
+                const tintColor = baseColor.clone().multiplyScalar(0.7);
 
-                child.material = new THREE.MeshBasicMaterial({
-                    color: dimmedColor,
-                    transparent: true,
-                    opacity: 0.85,  // More opaque for better surface definition
-                    blending: THREE.NormalBlending,
+                child.material = new THREE.MeshStandardMaterial({
+                    color: tintColor,
+                    emissive: baseColor.clone().multiplyScalar(0.35),
+                    emissiveIntensity: 0.9,
+                    roughness: 0.4,
+                    metalness: 0.7,
+                    transparent: false,
+                    opacity: 1.0,
+                    side: THREE.DoubleSide,
                     depthWrite: true,
                     depthTest: true,
-                    side: THREE.DoubleSide,
                     wireframe: false
                 });
 
@@ -523,8 +531,12 @@ function createBossMeshWithModel(regionId, fallbackGeometry, material) {
 
         return model;
     } else {
-        // Fallback to procedural geometry
-        console.log(`Using fallback geometry for Boss ${regionId}`);
+        // Fallback to procedural geometry — log loudly so we can diagnose
+        // why the GLB didn't load. modelCache.bosses[regionId] === null
+        // means either the file failed to load or spawn happened before
+        // loadAllModels finished.
+        const cacheState = (typeof modelCache !== 'undefined') ? modelCache.bosses[regionId] : 'UNDEFINED';
+        console.warn(`⚠️ Boss${regionId}.glb fallback used. modelCache state: ${cacheState === null ? 'null (load failed)' : cacheState === undefined ? 'undefined (not loaded yet)' : 'unexpected ' + typeof cacheState}`);
         const mesh = new THREE.Mesh(fallbackGeometry, material);
         mesh.scale.multiplyScalar(2.5);
         return mesh;
