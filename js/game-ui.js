@@ -1536,6 +1536,14 @@ if (obj.type === 'ally') {
                 dot.style.boxShadow = `0 0 4px ${dotColor}`;
                 dot.style.pointerEvents = 'none';
                 dot.title = `${obj.name} (${obj.distance.toFixed(0)} units)`;
+                // Pulse civilians under attack so the distress signal reads
+                // distinctly from regular civilian traffic on the map.
+                if (obj.type === 'civilian_ship' && obj.underAttack) {
+                    dot.classList.add('distress-map-dot');
+                    dot.style.boxShadow = '0 0 8px ' + dotColor + ', 0 0 14px rgba(255,170,0,0.6)';
+                } else {
+                    dot.classList.remove('distress-map-dot');
+                }
                 
                 galaxyMap.appendChild(dot);
             }
@@ -2066,6 +2074,163 @@ mapDotPool.releaseAll();
         }
     }
 }  // ⭐ This should be the closing brace of updateGalaxyMap()
+
+// =============================================================================
+// DISTRESS SIGNAL INDICATOR
+// =============================================================================
+// Hybrid screen indicator for active civilian distress signals:
+//   • Off-screen edge arrow points toward the nearest distressed civilian
+//   • On-screen waypoint reticle floats at their projected screen position
+//     when they enter the camera frustum
+//   • The map dot pulses (handled in updateGalaxyMap via underAttack flag)
+// Only the nearest active distress drives the indicator — additional
+// distress signals stay map-only to avoid corner-stacking.
+
+const _distressTmpVec = new THREE.Vector3();
+
+function _ensureDistressUI() {
+    let arrow = document.getElementById('distressEdgeArrow');
+    if (!arrow) {
+        arrow = document.createElement('div');
+        arrow.id = 'distressEdgeArrow';
+        arrow.style.cssText = [
+            'position:fixed','left:50%','top:50%',
+            'width:64px','height:64px','margin:-32px 0 0 -32px',
+            'pointer-events:none','z-index:60','display:none',
+            'transform-origin:center center',
+            'color:#ffaa00',
+            'filter:drop-shadow(0 0 8px rgba(255,170,0,0.9))',
+            'font-family:monospace','font-size:11px','text-align:center',
+            'line-height:1','user-select:none'
+        ].join(';');
+        arrow.innerHTML =
+            '<div style="font-size:48px;line-height:48px">▲</div>' +
+            '<div id="distressArrowLabel" style="margin-top:2px;text-shadow:0 0 4px rgba(0,0,0,0.9)">DISTRESS</div>';
+        document.body.appendChild(arrow);
+    }
+    let reticle = document.getElementById('distressReticle');
+    if (!reticle) {
+        reticle = document.createElement('div');
+        reticle.id = 'distressReticle';
+        reticle.style.cssText = [
+            'position:fixed','left:0','top:0',
+            'width:48px','height:48px','margin:-24px 0 0 -24px',
+            'pointer-events:none','z-index:60','display:none',
+            'border:2px solid #ffaa00','border-radius:50%',
+            'box-shadow:0 0 12px rgba(255,170,0,0.8), inset 0 0 8px rgba(255,170,0,0.5)',
+            'font-family:monospace','font-size:10px','color:#ffcc66',
+            'animation:distressPulse 1s ease-in-out infinite',
+            'text-align:center','user-select:none'
+        ].join(';');
+        reticle.innerHTML = '<div id="distressReticleLabel" style="position:absolute;top:50px;left:50%;transform:translateX(-50%);white-space:nowrap;text-shadow:0 0 4px rgba(0,0,0,0.9);font-weight:bold">SOS</div>';
+        document.body.appendChild(reticle);
+    }
+    if (!document.getElementById('distressIndicatorStyle')) {
+        const style = document.createElement('style');
+        style.id = 'distressIndicatorStyle';
+        style.textContent =
+            '@keyframes distressPulse { 0%,100% { transform:scale(1); opacity:0.85 } 50% { transform:scale(1.18); opacity:1 } }' +
+            '.distress-map-dot { animation: distressPulse 0.8s ease-in-out infinite }';
+        document.head.appendChild(style);
+    }
+    return { arrow, reticle };
+}
+
+function updateDistressIndicator() {
+    if (typeof tradingShips === 'undefined' || typeof camera === 'undefined') return;
+    const { arrow, reticle } = _ensureDistressUI();
+
+    // Pick the nearest active distress signal — that's what the on-screen
+    // pointer will track. Other distresses still appear on the map.
+    let nearest = null;
+    let nearestDist = Infinity;
+    const camPos = camera.position;
+    for (let i = 0; i < tradingShips.length; i++) {
+        const s = tradingShips[i];
+        if (!s || !s.userData || s.userData.destroyed) continue;
+        if (!s.userData.distressActive) continue;
+        const d = camPos.distanceTo(s.position);
+        if (d < nearestDist) { nearestDist = d; nearest = s; }
+    }
+    if (!nearest) {
+        arrow.style.display = 'none';
+        reticle.style.display = 'none';
+        return;
+    }
+
+    // Project to clip space — w<=0 means behind the camera
+    _distressTmpVec.copy(nearest.position).project(camera);
+    const w = _distressTmpVec.z; // already in [-1,1] post-projection (z is depth)
+    const inFront = (() => {
+        // A reliable behind-camera check: dot(forward, target-cam) > 0
+        const fwd = new THREE.Vector3();
+        camera.getWorldDirection(fwd);
+        const toTarget = new THREE.Vector3().subVectors(nearest.position, camPos);
+        return fwd.dot(toTarget) > 0;
+    })();
+    const onScreen = inFront &&
+        _distressTmpVec.x > -1 && _distressTmpVec.x < 1 &&
+        _distressTmpVec.y > -1 && _distressTmpVec.y < 1;
+
+    const distLabel = nearestDist < 1000
+        ? Math.round(nearestDist) + 'u'
+        : (nearestDist / 1000).toFixed(1) + 'k u';
+
+    if (onScreen) {
+        // Show the pulsing reticle at the projected screen position
+        const sx = (_distressTmpVec.x * 0.5 + 0.5) * window.innerWidth;
+        const sy = (-_distressTmpVec.y * 0.5 + 0.5) * window.innerHeight;
+        reticle.style.left = sx + 'px';
+        reticle.style.top = sy + 'px';
+        reticle.style.display = 'block';
+        const lbl = document.getElementById('distressReticleLabel');
+        if (lbl) lbl.textContent = 'SOS · ' + distLabel;
+        arrow.style.display = 'none';
+    } else {
+        // Off-screen — show the edge arrow rotated toward the target.
+        // Compute a 2D direction from screen center, clamped to a margin
+        // ellipse so the arrow rides the edge nicely.
+        let dx, dy;
+        if (inFront) {
+            dx = _distressTmpVec.x;
+            dy = -_distressTmpVec.y;
+        } else {
+            // Behind camera — flip into a clamped offscreen direction.
+            // Use the camera-local right/up vectors to compute a 2D direction.
+            const fwd = new THREE.Vector3();
+            camera.getWorldDirection(fwd);
+            const right = new THREE.Vector3().crossVectors(fwd, new THREE.Vector3(0,1,0)).normalize();
+            const up = new THREE.Vector3().crossVectors(right, fwd).normalize();
+            const toTarget = new THREE.Vector3().subVectors(nearest.position, camPos);
+            dx = toTarget.dot(right);
+            dy = -toTarget.dot(up);
+            const m = Math.max(Math.abs(dx), Math.abs(dy)) || 1;
+            dx /= m; dy /= m;
+        }
+        const halfW = window.innerWidth * 0.5;
+        const halfH = window.innerHeight * 0.5;
+        const marginX = Math.min(halfW - 60, 0.42 * window.innerWidth);
+        const marginY = Math.min(halfH - 60, 0.42 * window.innerHeight);
+        // Scale (dx,dy) so it touches the margin rectangle
+        const sx = marginX / Math.max(Math.abs(dx) || 1e-3, 1e-3);
+        const sy = marginY / Math.max(Math.abs(dy) || 1e-3, 1e-3);
+        const scale = Math.min(sx, sy);
+        const px = halfW + dx * scale;
+        const py = halfH + dy * scale;
+        const angleRad = Math.atan2(dy, dx) + Math.PI / 2; // ▲ points up by default
+        arrow.style.left = px + 'px';
+        arrow.style.top = py + 'px';
+        arrow.style.transform = 'rotate(' + angleRad + 'rad)';
+        arrow.style.display = 'block';
+        const lbl = document.getElementById('distressArrowLabel');
+        if (lbl) lbl.textContent = 'SOS · ' + distLabel;
+        reticle.style.display = 'none';
+    }
+}
+
+if (typeof window !== 'undefined') {
+    window.updateDistressIndicator = updateDistressIndicator;
+}
 
 // =============================================================================
 // ORBIT LINES VISIBILITY CONTROL - INTEGRATED WITH CORE SYSTEM

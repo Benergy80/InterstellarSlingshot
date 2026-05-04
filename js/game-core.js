@@ -2075,6 +2075,12 @@ if (gameState.frameCount % 5 === 0 && typeof checkCosmicFeatureInteractions === 
         updateGalaxyMap();
     }
 
+    // Distress signal indicator (edge arrow / on-screen reticle) — refresh
+    // every 3 frames so it tracks fast camera rotation without DOM thrash.
+    if (gameState.frameCount % 3 === 0 && typeof updateDistressIndicator === 'function') {
+        updateDistressIndicator();
+    }
+
     // Update crosshair less frequently to avoid interfering with UI clicks
     if (gameState.frameCount % 3 === 0 && typeof updateCrosshairTargeting === 'function') {
         updateCrosshairTargeting();
