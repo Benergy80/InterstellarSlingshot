@@ -2041,9 +2041,17 @@ if (gameState.frameCount % 5 === 0 && typeof checkCosmicFeatureInteractions === 
         updateBorgBehavior();
     }
 
-    // Update ally wingmen
-    if (typeof updateAllyShips === 'function' && gameState.frameCount % 2 === 0) {
-        updateAllyShips();
+    // Update ally wingmen — every other frame normally, but every frame
+    // when the player is warping. updateAllyShips is throttled to 30 Hz
+    // for performance, but during emergency warp the player travels
+    // ~100 units/frame; if wingmen only update every 2nd frame they
+    // effectively move at half speed and can't keep up.
+    if (typeof updateAllyShips === 'function') {
+        const _playerWarp = gameState.velocityVector &&
+            gameState.velocityVector.length() >= 4.0;
+        if (gameState.frameCount % 2 === 0 || _playerWarp) {
+            updateAllyShips();
+        }
     }
 
     // DEMO AUTOPILOT — runs before physics so key inputs are applied this frame

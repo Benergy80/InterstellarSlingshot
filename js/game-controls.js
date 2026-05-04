@@ -6459,6 +6459,18 @@ function updateAllyShips() {
         const distFromOrigin = pos.length();
         const distToPlayer = pos.distanceTo(playerPos);
 
+        // ── FTL anchor: warp ended this frame and a wingman in follow
+        // state is still far from the player — pull them in via a small
+        // hyperjump near the player rather than stranding them. Keeps the
+        // squad together when emergency warp covers tens of thousands of
+        // units of interstellar space.
+        if (!playerWarping && ud._wasWarping && ud.aiState === 'follow' && distToPlayer > 1500) {
+            _ftlAnchorWingman(ally, playerPos);
+            ud._wasWarping = false;
+        }
+        // Track warping flag transition (used by the FTL anchor above)
+        ud._wasWarping = playerWarping;
+
         // ── Enemy scan (every call, ~30 Hz) ──────────────────────────────
         const threat = _scanForEnemy(ally);
 
@@ -7055,6 +7067,50 @@ function _updateAllyShield(ally, active) {
 // Returns true during dedicated warp events OR whenever the player is
 // cruising at 4 units/frame (4000 km/s) or faster — wingmen need to drop
 // patrol behavior and lock onto the player's vector to keep up.
+// ── FTL anchor: rejoin a wingman to the player after a long warp ────────
+// Teleports the wingman to a flanking position near the player and zeros
+// their velocity. Plays a brief warp-in flash so the rejoin reads as
+// intentional FTL micro-jump, not a glitch. Used when warp ends and a
+// wingman is still hopelessly far behind despite full speed-matching.
+function _ftlAnchorWingman(ally, playerPos) {
+    if (!ally || !playerPos) return;
+    // Flank offset so multiple anchored wingmen don't stack on top of each
+    // other or the player.
+    const idx = (typeof allyShips !== 'undefined') ? allyShips.indexOf(ally) : 0;
+    const ang = idx * (Math.PI * 2 / 5);
+    const r = 220 + (idx % 3) * 60;
+    const offset = new THREE.Vector3(Math.cos(ang) * r, (idx % 2 === 0 ? 30 : -30), Math.sin(ang) * r);
+    ally.position.copy(playerPos).add(offset);
+    if (ally.userData) {
+        ally.userData.velocity = new THREE.Vector3();
+        ally.userData.aiState = 'patrol';
+        ally.userData.patrolTarget = null;
+    }
+    _wingmanTacticalMessage(ally.userData, 'tether');
+
+    // Brief warp-in flash so the rejoin reads as an intentional FTL jump
+    if (typeof THREE !== 'undefined' && typeof scene !== 'undefined') {
+        const c = (ally.userData && ally.userData.colorStr) || '#88ccff';
+        const flashGeo = new THREE.SphereGeometry(80, 12, 8);
+        const flashMat = new THREE.MeshBasicMaterial({
+            color: new THREE.Color(c), transparent: true, opacity: 0.85,
+            blending: THREE.AdditiveBlending, depthWrite: false
+        });
+        const flash = new THREE.Mesh(flashGeo, flashMat);
+        flash.position.copy(ally.position);
+        scene.add(flash);
+        let t = 0;
+        const animate = () => {
+            t += 1;
+            flash.scale.multiplyScalar(0.92);
+            flash.material.opacity *= 0.88;
+            if (t < 24) requestAnimationFrame(animate);
+            else { scene.remove(flash); flash.geometry.dispose(); flash.material.dispose(); }
+        };
+        requestAnimationFrame(animate);
+    }
+}
+
 function _isPlayerWarping() {
     if (typeof gameState === 'undefined') return false;
     if (gameState.slingshot && gameState.slingshot.active) return true;
