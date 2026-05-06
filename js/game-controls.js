@@ -7121,13 +7121,15 @@ function _isPlayerWarping() {
 }
 
 // ── Follow: player is warping or flying fast — match velocity, fly ahead ─
+// Each wingman gets a unique position in the formation: staggered forward
+// distance, alternating Y-height offsets, and left/right lateral spread so
+// the squadron reads as a natural V-shape from the player's POV instead of
+// a jittering cluster all at the same depth.
 function _executeFollow(ally, ud, playerPos) {
     if (!gameState || !gameState.velocityVector) return;
     const playerVel = gameState.velocityVector.clone();
     const playerSpeed = playerVel.length();
 
-    // Position target = 250u ahead of player along velocity vector, plus
-    // a small lateral offset so wingmen don't stack on each other
     let aheadDir;
     if (playerSpeed > 0.1) {
         aheadDir = playerVel.clone().normalize();
@@ -7138,13 +7140,28 @@ function _executeFollow(ally, ud, playerPos) {
         aheadDir = new THREE.Vector3(0, 0, -1);
     }
     const right = new THREE.Vector3().crossVectors(aheadDir, new THREE.Vector3(0, 1, 0)).normalize();
-    // Lateral offset varies per wingman so up to 10 ships fan out cleanly
+    const up = new THREE.Vector3().crossVectors(right, aheadDir).normalize();
+
     const idx = (typeof allyShips !== 'undefined') ? allyShips.indexOf(ally) : 0;
-    const sideOffset = ((idx % 2 === 0) ? -1 : 1) * (50 + Math.floor(idx / 2) * 40);
+
+    // Staggered forward distance — first wingman closest (200u), each
+    // subsequent wingman 60u further back, so they fan out in depth
+    const forwardDist = 200 + idx * 60;
+
+    // Alternating lateral offset (left / right, growing wider with rank)
+    const side = ((idx % 2 === 0) ? -1 : 1) * (50 + Math.floor(idx / 2) * 40);
+
+    // Per-wingman Y-height variation so they're not on the same plane.
+    // Small consistent offset per index + a gentle sine wobble keyed to
+    // time and index, so the formation breathes a little but never jitters.
+    const baseY = ((idx % 3) - 1) * 35; // -35, 0, +35 cycling
+    const wobbleY = Math.sin(Date.now() * 0.0006 + idx * 1.8) * 12;
+    const heightOffset = baseY + wobbleY;
 
     const target = playerPos.clone()
-        .addScaledVector(aheadDir, 250)
-        .addScaledVector(right, sideOffset);
+        .addScaledVector(aheadDir, forwardDist)
+        .addScaledVector(right, side)
+        .addScaledVector(up, heightOffset);
 
     // Match the player's speed (or +20% so we keep the lead). No upper cap —
     // wingmen need to track up to 15+ units/frame (15000 km/s) when the
