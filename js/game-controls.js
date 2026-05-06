@@ -841,10 +841,25 @@ const factionBehaviors = {
         secondaryBehavior: 'evade',     // Logical retreat when needed
         aggressionMultiplier: 0.85,     // Controlled aggression
         preferredRange: 160,            // Precise range
-        behaviorChangeChance: 0.002,    // Adaptive logic
+        behaviorChangeChance: 0.008,    // Adaptive logic — raised so swarm/evade fire visibly
         speedBonus: 1.0
     }
 };
+
+// Force-activate an enemy when it takes damage. Without this, enemies
+// outside the maxAttackers cap stay in patrol mode and don't fight back
+// or evade when the player (or wingmen) shoot them — they just orbit
+// their patrolCenter looking broken.
+function _activateOnDamage(enemy) {
+    if (!enemy || !enemy.userData) return;
+    if (enemy.userData.isActive) return; // already active
+    enemy.userData.isActive = true;
+    enemy.userData.detectedPlayer = true;
+    enemy.userData.lastSeenPlayerPos = (typeof camera !== 'undefined') ? camera.position.clone() : null;
+    // Low-HP enemies evade immediately; others engage
+    const hp = enemy.userData.health / (enemy.userData.maxHealth || 1);
+    enemy.userData.attackMode = hp < 0.5 ? 'evade' : 'engage';
+}
 
 // Get faction behavior for an enemy
 function getFactionBehavior(enemy) {
@@ -4017,7 +4032,8 @@ function checkWeaponHits(targetPosition) {
             if (distance < collisionDistance) {
                 const damage = 1; // Standard damage
                 enemy.userData.health -= damage;
-                
+                _activateOnDamage(enemy);
+
                 // ENHANCED: Use improved hit effect with color changes
                 flashEnemyHit(enemy, damage);
                 playSound('weapon');
@@ -4641,6 +4657,7 @@ function handleMissileHit(missile, enemy) {
     scene.remove(missile);
 
     enemy.userData.health -= gameState.missiles.damage;
+    _activateOnDamage(enemy);
     flashEnemyHit(enemy, gameState.missiles.damage);
     createMissileExplosion(missile.position);
     playSound('missile_explosion');
@@ -6671,6 +6688,7 @@ function _executeEngage(ally, ud, now) {
         if (et.userData) {
             const wasAlive = et.userData.health > 0;
             et.userData.health -= 0.1;
+            _activateOnDamage(et);
             if (typeof flashEnemyHit === 'function') flashEnemyHit(et, 0.1);
 
             // Kill notification + cleanup (remove from scene, run boss checks)
@@ -6783,6 +6801,7 @@ function _fireWingmanMissile(ally, target, targetPos, ud) {
             if (missile.position.distanceTo(target.position) < 30) {
                 const wasAlive = target.userData.health > 0;
                 target.userData.health -= wingmanMissileDmg;
+                _activateOnDamage(target);
                 if (typeof flashEnemyHit === 'function') flashEnemyHit(target, wingmanMissileDmg);
                 if (typeof createExplosionEffect === 'function') createExplosionEffect(missile.position);
                 if (wasAlive && target.userData.health <= 0) {
