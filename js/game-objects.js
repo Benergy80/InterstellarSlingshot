@@ -3101,7 +3101,7 @@ try {
                     map: texture,
                     side: THREE.BackSide,
                     transparent: true,
-                    opacity: 0.00,  // Starts invisible, fades in further out
+                    opacity: 0.10,  // Visible immediately so the background isn't pure black at start
                     depthWrite: false
                 });
                 
@@ -10659,16 +10659,15 @@ function updateHubbleSkybox2Opacity() {
     const fadeStartDistance = 1000;        // Start fading at 5,000 units
     const fadeEndDistance = 30000;        // Reach max opacity at 100,000 units
     
-    // Calculate opacity based on distance (0.00 to 0.02)
+    // Calculate opacity based on distance (0.10 floor to 0.60 max)
     let targetOpacity;
     if (distanceFromStart < fadeStartDistance) {
-        targetOpacity = 0.00;
+        targetOpacity = 0.10; // Always slightly visible so the sky isn't pure black
     } else if (distanceFromStart > fadeEndDistance) {
-        targetOpacity = .6;
+        targetOpacity = 0.60;
     } else {
-        // Linear interpolation between 0.00 and 0.02
         const progress = (distanceFromStart - fadeStartDistance) / (fadeEndDistance - fadeStartDistance);
-        targetOpacity = 0.00 + (progress * .6); // 0.02 = 0.02 - 0.00
+        targetOpacity = 0.10 + (progress * 0.50); // 0.10 → 0.60
     }
     
     // Smoothly transition to target opacity
@@ -10702,7 +10701,9 @@ function createBossBattleSkybox() {
     bossSkybox = new THREE.Mesh(geometry, material);
     bossSkybox.name = "BossBattleSkybox";
     bossSkybox.frustumCulled = false;
-    bossSkybox.renderOrder = -1;
+    // renderOrder 0 (in front of CMB at -1 and Hubble at -2/-3) so the
+    // blood-red heartbeat reads clearly over the cosmic backgrounds.
+    bossSkybox.renderOrder = 0;
 
     scene.add(bossSkybox);
 
