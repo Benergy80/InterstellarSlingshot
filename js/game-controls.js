@@ -4396,7 +4396,7 @@ function startBorgAlarm() {
         
         borgAlarmOscillator.connect(filter);
         filter.connect(borgAlarmGain);
-        borgAlarmGain.connect(effectsGain || masterGain || audioContext.destination);
+        borgAlarmGain.connect(audioContext.destination);
         
         // Low ominous drone
         borgAlarmOscillator.type = 'sawtooth';
