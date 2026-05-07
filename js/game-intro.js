@@ -1632,8 +1632,8 @@ function updateCountdownDisplay(count) {
                 const gain = audioContext.createGain();
                 
                 oscillator.connect(gain);
-                gain.connect(audioContext.destination);
-                
+                gain.connect(typeof effectsGain !== 'undefined' && effectsGain ? effectsGain : audioContext.destination);
+
                 oscillator.frequency.setValueAtTime(800, audioContext.currentTime);
                 oscillator.type = 'sine';
                 
@@ -1654,8 +1654,8 @@ function updateCountdownDisplay(count) {
                 const echoGain = audioContext.createGain();
                 
                 echoOsc.connect(echoGain);
-                echoGain.connect(audioContext.destination);
-                
+                echoGain.connect(typeof effectsGain !== 'undefined' && effectsGain ? effectsGain : audioContext.destination);
+
                 echoOsc.frequency.setValueAtTime(800, audioContext.currentTime);
                 echoOsc.type = 'sine';
                 
@@ -2688,7 +2688,7 @@ let _countdownGain = null;
 function _getCountdownGain() {
     if (_countdownGain && _countdownGain.context.state !== 'closed') return _countdownGain;
     _countdownGain = audioContext.createGain();
-    _countdownGain.connect(audioContext.destination);
+    _countdownGain.connect(typeof effectsGain !== 'undefined' && effectsGain ? effectsGain : audioContext.destination);
     return _countdownGain;
 }
 
@@ -2725,8 +2725,8 @@ function playCountdownBeep(number) {
     
     oscillator.connect(filter);
     filter.connect(gain);
-    gain.connect(audioContext.destination);
-    
+    gain.connect(typeof effectsGain !== 'undefined' && effectsGain ? effectsGain : audioContext.destination);
+
     // Higher pitch for lower numbers (building tension)
     const frequency = 400 + (10 - number) * 100; // 400Hz to 1300Hz
     oscillator.frequency.setValueAtTime(frequency, audioContext.currentTime);
@@ -2753,8 +2753,8 @@ function playBlastOffSound() {
     const rumbleOsc = audioContext.createOscillator();
     const rumbleGain = audioContext.createGain();
     rumbleOsc.connect(rumbleGain);
-    rumbleGain.connect(audioContext.destination);
-    
+    rumbleGain.connect(typeof effectsGain !== 'undefined' && effectsGain ? effectsGain : audioContext.destination);
+
     rumbleOsc.type = 'sawtooth';
     rumbleOsc.frequency.setValueAtTime(40, audioContext.currentTime);
     rumbleOsc.frequency.exponentialRampToValueAtTime(80, audioContext.currentTime + 2);
@@ -2770,7 +2770,7 @@ function playBlastOffSound() {
     
     blastOsc.connect(blastFilter);
     blastFilter.connect(blastGain);
-    blastGain.connect(audioContext.destination);
+    blastGain.connect(typeof effectsGain !== 'undefined' && effectsGain ? effectsGain : audioContext.destination);
     
     blastOsc.type = 'square';
     blastOsc.frequency.setValueAtTime(1200, audioContext.currentTime);
@@ -2803,8 +2803,8 @@ function playLaunchRumbleSound() {
         
         osc.connect(filter);
         filter.connect(gain);
-        gain.connect(audioContext.destination);
-        
+        gain.connect(typeof effectsGain !== 'undefined' && effectsGain ? effectsGain : audioContext.destination);
+
         // Different frequencies for each layer
         const baseFreq = 30 + i * 15; // 30Hz, 45Hz, 60Hz
         osc.frequency.setValueAtTime(baseFreq, audioContext.currentTime);
