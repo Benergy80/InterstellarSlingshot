@@ -4744,13 +4744,24 @@ function handleMissileHit(missile, enemy) {
 
         if (typeof populateTargets === 'function') setTimeout(populateTargets, 100);
         checkGalaxyClear();
-        
+
         // 🏆 VICTORY SYSTEM: Check if guardians defeated → galaxy liberated
         checkGuardianVictory();
 
-        // ENHANCED: Check if we should spawn area bosses or elite guardians
+        // ENHANCED: Check if we should spawn area bosses, galaxy bosses,
+        // species bosses, or elite guardians.
+        // PREVIOUSLY: missile kills only ran area boss + elite guardian
+        // checks, missing checkGalaxyBossSpawn / checkSpeciesBossSpawn —
+        // so killing the LAST regular enemy of a galaxy/species with a
+        // missile would silently skip the boss spawn forever.
         if (typeof checkAndSpawnAreaBosses === 'function') {
             checkAndSpawnAreaBosses();
+        }
+        if (typeof checkGalaxyBossSpawn === 'function') {
+            checkGalaxyBossSpawn();
+        }
+        if (typeof checkSpeciesBossSpawn === 'function') {
+            checkSpeciesBossSpawn();
         }
         if (typeof checkAndSpawnEliteGuardians === 'function') {
             checkAndSpawnEliteGuardians();
