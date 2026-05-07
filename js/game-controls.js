@@ -2191,7 +2191,16 @@ function playSound(type, frequency = 440, duration = 0.2) {
         case 'weapon':
             oscillator.frequency.setValueAtTime(800, audioContext.currentTime);
             oscillator.frequency.exponentialRampToValueAtTime(400, audioContext.currentTime + 0.1);
-            gain.gain.setValueAtTime(0.3, audioContext.currentTime);
+            // Per-shot peak lowered from 0.3 to 0.12. With autopilot firing
+            // 5 shots/s and each shot generating 2-3 sounds (fire + hit per
+            // enemy in proximity), the old 0.3 peak summed to >1.0 instantly,
+            // triggering Chrome's implicit output limiter — that limiter has
+            // slow attack/release, so the first peaks slipped through loud
+            // before it engaged, then sustained reduction stayed applied,
+            // creating the perceived "loud-then-fades" pattern. At 0.12,
+            // even 5 stacked shots peak at 0.6 — well below the limiter
+            // threshold, so volume stays consistent from the first sound.
+            gain.gain.setValueAtTime(0.12, audioContext.currentTime);
             gain.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.1);
             oscillator.type = 'square';
             duration = 0.1;
