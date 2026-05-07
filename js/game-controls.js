@@ -3977,10 +3977,7 @@ function checkWeaponHits(targetPosition) {
                     drone.userData.health -= damage;
 
                     flashEnemyHit(drone, damage);
-                    // No playSound here — fireWeapon() already played the
-                    // weapon sound. Stacking a second 'weapon' sound on every
-                    // hit doubled the volume during heavy combat, producing
-                    // a too-loud burst until enemies thinned out.
+                    playSound('weapon');
                     const maxHp = drone.userData.maxHealth || 100;
                     showAchievement('BORG Hit!', `${drone.userData.name} damaged (${drone.userData.health}/${maxHp} HP)`);
 
@@ -4056,11 +4053,7 @@ function checkWeaponHits(targetPosition) {
 
                 // ENHANCED: Use improved hit effect with color changes
                 flashEnemyHit(enemy, damage);
-                // No playSound here — fireWeapon() already played the
-                // weapon sound. Stacking a second 'weapon' sound on every
-                // hit doubled the volume during heavy combat (player
-                // hitting multiple shots/second on Martians), producing
-                // a too-loud burst until enemies thinned out.
+                playSound('weapon');
                 showAchievement('Target Hit!', `Damaged ${enemy.userData.name} (${enemy.userData.health}/${enemy.userData.maxHealth} HP)`);
                 
                 // FIXED: Only explode and remove when enemy actually dies
