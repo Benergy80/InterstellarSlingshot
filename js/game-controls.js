@@ -1784,7 +1784,7 @@ function initAudio() {
         // active on the AudioContext timeline BEFORE any oscillator starts.
         // Direct .value assignment on a brand-new context can race with the
         // first scheduled sounds, causing a loud initial burst.
-        masterGain.gain.setValueAtTime(0.2, 0);
+        masterGain.gain.setValueAtTime(0.35, 0);
 
         // Create separate gains for music and effects
         musicGain = audioContext.createGain();
@@ -1793,7 +1793,12 @@ function initAudio() {
         effectsGain.connect(masterGain);
 
         musicGain.gain.setValueAtTime(0.4, 0);
-        effectsGain.gain.setValueAtTime(0.2, 0);
+        // effectsGain at unity — per-sound gain values (0.3 weapon, 0.4
+        // explosion, etc) are the real volume controls. masterGain alone
+        // sets the overall level. The old 0.2 × 0.2 = 0.04 chain made
+        // weapon peaks inaudible at 0.012 once the duplicate-AudioContext
+        // bug was fixed.
+        effectsGain.gain.setValueAtTime(1.0, 0);
         
         console.log('Enhanced audio system initialized (waiting for user interaction)');
         // Preload MP3 soundtrack alongside synth audio
