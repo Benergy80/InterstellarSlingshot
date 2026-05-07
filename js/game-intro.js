@@ -2753,7 +2753,7 @@ function playBlastOffSound() {
     const rumbleOsc = audioContext.createOscillator();
     const rumbleGain = audioContext.createGain();
     rumbleOsc.connect(rumbleGain);
-    rumbleGain.connect(audioContext.destination);
+    rumbleGain.connect(typeof masterGain !== 'undefined' && masterGain ? masterGain : audioContext.destination);
     
     rumbleOsc.type = 'sawtooth';
     rumbleOsc.frequency.setValueAtTime(40, audioContext.currentTime);
@@ -2770,8 +2770,8 @@ function playBlastOffSound() {
     
     blastOsc.connect(blastFilter);
     blastFilter.connect(blastGain);
-    blastGain.connect(audioContext.destination);
-    
+    blastGain.connect(typeof masterGain !== 'undefined' && masterGain ? masterGain : audioContext.destination);
+
     blastOsc.type = 'square';
     blastOsc.frequency.setValueAtTime(1200, audioContext.currentTime);
     blastOsc.frequency.exponentialRampToValueAtTime(2400, audioContext.currentTime + 0.5);
@@ -2803,8 +2803,8 @@ function playLaunchRumbleSound() {
         
         osc.connect(filter);
         filter.connect(gain);
-        gain.connect(audioContext.destination);
-        
+        gain.connect(typeof masterGain !== 'undefined' && masterGain ? masterGain : audioContext.destination);
+
         // Different frequencies for each layer
         const baseFreq = 30 + i * 15; // 30Hz, 45Hz, 60Hz
         osc.frequency.setValueAtTime(baseFreq, audioContext.currentTime);
