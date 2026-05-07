@@ -1768,6 +1768,14 @@ function showIncomingTransmission(title, text, factionColor) {
 // =============================================================================
 
 function initAudio() {
+    // Guard: only create the AudioContext once. initAudio is called from 5+
+    // places (intro ENTER, mobile touch, event setup, etc). Without this
+    // guard each call created a NEW AudioContext with new gain nodes — the
+    // old context kept running at default gain (1.0) alongside the new one,
+    // causing a loud burst on the first few sounds until the old context's
+    // oscillators expired.
+    if (audioContext) return;
+
     try {
         audioContext = new (window.AudioContext || window.webkitAudioContext)();
         masterGain = audioContext.createGain();
