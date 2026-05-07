@@ -2174,16 +2174,27 @@ function toggleMusic() {
 
 // RESTORED: Working sound parameters from game-controls13.js
 function playSound(type, frequency = 440, duration = 0.2) {
-    console.log('🔊 playSound called with type:', type); // ADD THIS LINE AT THE TOP
-    
     if (!audioContext || audioContext.state === 'suspended') {
         console.warn('⚠️ Audio context not available or suspended:', audioContext?.state);
         return;
     }
-    
+
+    // Diagnostic: log the actual gain chain values for the first 30 weapon
+    // sounds. If effectsGain or masterGain are not at the expected values
+    // (1.0 and 0.35), a chain break or bypass is in play.
+    if (type === 'weapon') {
+        if (typeof window._weaponSoundCount === 'undefined') window._weaponSoundCount = 0;
+        if (window._weaponSoundCount < 30) {
+            window._weaponSoundCount++;
+            const eg = effectsGain ? effectsGain.gain.value : 'NO_EFFECTSGAIN';
+            const mg = masterGain ? masterGain.gain.value : 'NO_MASTERGAIN';
+            console.log(`🔊 weapon #${window._weaponSoundCount}: ctx=${audioContext.state} effectsGain=${eg} masterGain=${mg} ctxTime=${audioContext.currentTime.toFixed(2)}`);
+        }
+    }
+
     const oscillator = audioContext.createOscillator();
     const gain = audioContext.createGain();
-    
+
     oscillator.connect(gain);
     gain.connect(effectsGain);
     
