@@ -112,8 +112,7 @@ const explosionManager = {
 
 // UPDATED: Pursuit behavior
 // Helper: Add smooth rotation to enemy based on movement trajectory
-function applyEnemyRotation(enemy, direction, speed) {
-    if (!enemy || !direction) return;
+function applyEnemyRotation(enemy, direction, speed) {    if (!enemy || !direction) return;
 
     try {
         // Skip if not moving enough
@@ -969,10 +968,31 @@ function updateLocalEnemyBehavior(enemy, distanceToPlayer, adjustedSpeed, diffic
             updatePursuitBehavior(enemy, playerPos, factionSpeed, distanceToPlayer);
     }
     
+    // Smooth quaternion slerp instead of instant lookAt — keeps the
+    // turning motion fluid like wingmen instead of snapping the
+    // orientation each frame when the target moves.
+    _smoothEnemyLookAt(enemy, playerPos, 0.12);
+}
+
+// Smoothly rotate an enemy to face `targetPos` over multiple frames.
+// rate is the slerp factor per frame: 0.06 = wingman smooth, 0.12 = a bit
+// snappier (enemies actively dogfighting), 0.2 = very responsive.
+const _enemyLookMat = new THREE.Matrix4();
+const _enemyLookQuat = new THREE.Quaternion();
+const _enemyUp = new THREE.Vector3(0, 1, 0);
+function _smoothEnemyLookAt(enemy, targetPos, rate) {
+    if (!enemy || !targetPos) return;
     try {
-        enemy.lookAt(playerPos);
+        // setFromUnitVectors-style approach using lookAt matrix.
+        // The trick: pass (eye, target, up) — eye is the enemy, target is
+        // where it should be looking. matrix.lookAt then composes the
+        // rotation. Negate the direction (eye - target) to face forward.
+        const pos = enemy.position;
+        _enemyLookMat.lookAt(pos, targetPos, _enemyUp);
+        _enemyLookQuat.setFromRotationMatrix(_enemyLookMat);
+        enemy.quaternion.slerp(_enemyLookQuat, rate);
     } catch (e) {
-        // Ignore lookAt errors if position is invalid
+        // Ignore — position/target may be invalid mid-cleanup
     }
 }
 
@@ -1030,11 +1050,8 @@ function updateEnhancedEnemyBehavior(enemy, distanceToPlayer, adjustedSpeed, dif
             break;
     }
     
-    try {
-        enemy.lookAt(playerPos);
-    } catch (e) {
-        // Ignore lookAt errors
-    }
+    // Smooth quaternion slerp instead of instant lookAt
+    _smoothEnemyLookAt(enemy, playerPos, 0.12);
 }
 
 // Boss behavior
