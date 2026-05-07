@@ -2175,21 +2175,7 @@ function toggleMusic() {
 // RESTORED: Working sound parameters from game-controls13.js
 function playSound(type, frequency = 440, duration = 0.2) {
     if (!audioContext || audioContext.state === 'suspended') {
-        console.warn('⚠️ Audio context not available or suspended:', audioContext?.state);
         return;
-    }
-
-    // Diagnostic: log the actual gain chain values for the first 30 weapon
-    // sounds. If effectsGain or masterGain are not at the expected values
-    // (1.0 and 0.35), a chain break or bypass is in play.
-    if (type === 'weapon') {
-        if (typeof window._weaponSoundCount === 'undefined') window._weaponSoundCount = 0;
-        if (window._weaponSoundCount < 30) {
-            window._weaponSoundCount++;
-            const eg = effectsGain ? effectsGain.gain.value : 'NO_EFFECTSGAIN';
-            const mg = masterGain ? masterGain.gain.value : 'NO_MASTERGAIN';
-            console.log(`🔊 weapon #${window._weaponSoundCount}: ctx=${audioContext.state} effectsGain=${eg} masterGain=${mg} ctxTime=${audioContext.currentTime.toFixed(2)}`);
-        }
     }
 
     const oscillator = audioContext.createOscillator();
@@ -2202,16 +2188,7 @@ function playSound(type, frequency = 440, duration = 0.2) {
         case 'weapon':
             oscillator.frequency.setValueAtTime(800, audioContext.currentTime);
             oscillator.frequency.exponentialRampToValueAtTime(400, audioContext.currentTime + 0.1);
-            // Per-shot peak lowered from 0.3 to 0.12. With autopilot firing
-            // 5 shots/s and each shot generating 2-3 sounds (fire + hit per
-            // enemy in proximity), the old 0.3 peak summed to >1.0 instantly,
-            // triggering Chrome's implicit output limiter — that limiter has
-            // slow attack/release, so the first peaks slipped through loud
-            // before it engaged, then sustained reduction stayed applied,
-            // creating the perceived "loud-then-fades" pattern. At 0.12,
-            // even 5 stacked shots peak at 0.6 — well below the limiter
-            // threshold, so volume stays consistent from the first sound.
-            gain.gain.setValueAtTime(0.12, audioContext.currentTime);
+            gain.gain.setValueAtTime(0.3, audioContext.currentTime);
             gain.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.1);
             oscillator.type = 'square';
             duration = 0.1;
@@ -4061,9 +4038,16 @@ function checkWeaponHits(targetPosition) {
                 }
             }
 
-            // Hitbox detection with safety margin (like asteroids: size + margin)
-            const safetyMargin = 20; // Safety margin for easier hitting
-            const collisionDistance = enemy.userData.hitboxSize / 2 + safetyMargin;
+            // Hitbox detection with safety margin. CRITICAL: cap the hitbox
+            // size at 200u — many enemies have a 40u invisible hitbox sphere
+            // added as a child of a 96x-scaled GLB model, which makes the
+            // bounding box ~3840u in world space. Without the cap, the
+            // proximity check fired weapon sounds for 20-30 enemies at once
+            // on every shot — the actual cause of the "loud-then-fades"
+            // pattern, not browser limiter behavior.
+            const safetyMargin = 20;
+            const sanitizedHitbox = Math.min(enemy.userData.hitboxSize || 96, 200);
+            const collisionDistance = sanitizedHitbox / 2 + safetyMargin;
             const distance = enemy.position.distanceTo(targetPosition);
 
             if (distance < collisionDistance) {
