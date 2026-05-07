@@ -1772,7 +1772,11 @@ function initAudio() {
         audioContext = new (window.AudioContext || window.webkitAudioContext)();
         masterGain = audioContext.createGain();
         masterGain.connect(audioContext.destination);
-        masterGain.gain.value = 0.2;
+        // Use setValueAtTime instead of .value = to guarantee the gain is
+        // active on the AudioContext timeline BEFORE any oscillator starts.
+        // Direct .value assignment on a brand-new context can race with the
+        // first scheduled sounds, causing a loud initial burst.
+        masterGain.gain.setValueAtTime(0.2, 0);
 
         // Create separate gains for music and effects
         musicGain = audioContext.createGain();
@@ -1780,8 +1784,8 @@ function initAudio() {
         musicGain.connect(masterGain);
         effectsGain.connect(masterGain);
 
-        musicGain.gain.value = 0.4;
-        effectsGain.gain.value = 0.2; // Lower, consistent SFX volume
+        musicGain.gain.setValueAtTime(0.4, 0);
+        effectsGain.gain.setValueAtTime(0.2, 0);
         
         console.log('Enhanced audio system initialized (waiting for user interaction)');
         // Preload MP3 soundtrack alongside synth audio
