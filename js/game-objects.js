@@ -1055,6 +1055,13 @@ function checkSpeciesBossSpawn() {
 
     // Initialize per-species spawn tracking on bossSystem
     if (!bossSystem.speciesBossSpawned) bossSystem.speciesBossSpawned = {};
+    // Track whether each species has EVER existed in the world. The
+    // enemies array gets spliced when an enemy dies, so by the time the
+    // last member of a species is killed and we check, members.length is
+    // already 0 — the boss would never spawn. We capture "ever existed"
+    // on the first call (when all enemies are still alive) so subsequent
+    // checks know the species was real.
+    if (!bossSystem.speciesEverExisted) bossSystem.speciesEverExisted = {};
 
     const groups = [
         {
@@ -1089,7 +1096,10 @@ function checkSpeciesBossSpawn() {
             e.userData && g.isMember(e.userData) &&
             !e.userData.isBoss && !e.userData.isBossSupport
         );
-        if (members.length === 0) return; // never spawned any of this species
+        // Latch "ever existed" the first time we see any members
+        if (members.length > 0) bossSystem.speciesEverExisted[g.key] = true;
+        // If we've never seen this species, skip (truly never spawned)
+        if (!bossSystem.speciesEverExisted[g.key]) return;
         const aliveMembers = members.filter(e => e.userData.health > 0);
         if (aliveMembers.length > 0) return; // species not yet eliminated
 
