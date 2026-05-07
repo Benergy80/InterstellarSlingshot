@@ -389,7 +389,7 @@ function createHyperspaceEffect() {
 
 // COMPACT: All the cool effects but much smaller scale
 function createAsteroidExplosion(position, radius = 1) {
-    console.log('Creating compact asteroid explosion at position:', position, 'with radius:', radius);
+    // Per-asteroid log silenced
 
     const explosionGroup = new THREE.Group();
     explosionGroup.position.copy(position);
@@ -745,7 +745,7 @@ function destroyAsteroid(asteroid) {
 }
 
 function destroyAsteroidByWeapon(asteroid, hitPosition = null) {
-    console.log('destroyAsteroidByWeapon called for:', asteroid.userData.name);
+    // Per-asteroid call log silenced
     
     // FIXED: Account for asteroid scale when calculating radius
     const baseRadius = asteroid.geometry ? asteroid.geometry.parameters.radius : 1;
@@ -764,7 +764,7 @@ function destroyAsteroidByWeapon(asteroid, hitPosition = null) {
     }
     
     destroyAsteroid(asteroid);
-    console.log(`Asteroid destroyed by weapon fire: ${asteroid.userData.name} (+${hullRestoration} hull) - radius: ${actualRadius.toFixed(1)}`);
+    if (window.GAME_DEBUG_VERBOSE) console.log(`Asteroid destroyed by weapon fire: ${asteroid.userData.name} (+${hullRestoration} hull) - radius: ${actualRadius.toFixed(1)}`);
 }
 
 // Black hole warp invulnerability check
@@ -820,7 +820,7 @@ function destroyAsteroidByCollision(asteroid) {
     createAsteroidExplosion(asteroid.position.clone(), actualRadius);
     
     destroyAsteroid(asteroid);
-    console.log(`Asteroid destroyed by collision: ${asteroid.userData.name} (-15 hull) - radius: ${actualRadius.toFixed(1)}`);
+    if (window.GAME_DEBUG_VERBOSE) console.log(`Asteroid destroyed by collision: ${asteroid.userData.name} (-15 hull) - radius: ${actualRadius.toFixed(1)}`);
 }
 
 // =============================================================================

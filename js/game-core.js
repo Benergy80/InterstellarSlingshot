@@ -248,8 +248,9 @@ const perfDebug = {
         }
     },
     
-    // Log current status to console
+    // Log current status to console (gated by window.GAME_DEBUG_VERBOSE)
     logStatus: function() {
+        if (!window.GAME_DEBUG_VERBOSE) return;
         const zoneColor = this.inTwinCoresZone ? 'color: red; font-weight: bold;' : 'color: green;';
         const fpsColor = this.fps < 30 ? 'color: red; font-weight: bold;' : (this.fps < 50 ? 'color: orange;' : 'color: lime;');
         

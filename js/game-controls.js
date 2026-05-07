@@ -618,8 +618,8 @@ function updateEnemyBehavior() {
     if (typeof tutorialSystem !== 'undefined' && tutorialSystem.completed) {
         // Log once when tutorial is complete and enemies should activate
         const now = Date.now();
-        if (!tutorialSystem.enemiesActivatedLogTime || (now - tutorialSystem.enemiesActivatedLogTime) > 5000) {
-            console.log('Tutorial completed - enemies now processing full AI behavior');
+        if (!tutorialSystem.enemiesActivatedLogTime) {
+            // Was: re-logged every 5s — silenced for console cleanliness.
             tutorialSystem.enemiesActivatedLogTime = now;
         }
     }
@@ -4952,7 +4952,6 @@ function fireWeapon() {
             while (targetObject.parent && targetObject.parent.userData && targetObject.parent.userData.type === 'enemy') {
                 targetObject = targetObject.parent;
             }
-            console.log('Hit detected: enemy', targetObject.userData.name);
         } else {
             // Check for BORG drone hits (from outer interstellar systems)
             let borgDrones = [];
@@ -4979,7 +4978,7 @@ function fireWeapon() {
                 const _borgCenter = new THREE.Vector3();
                 targetObject.getWorldPosition(_borgCenter);
                 targetPosition = _borgCenter;
-                console.log('Hit detected: BORG drone', targetObject.userData.name);
+                // Hit log silenced (per-shot spam)
             } else {
                 // Check for asteroid hits (for manual aiming only)
                 const asteroidTargets = planets.filter(p => p.userData.type === 'asteroid');
@@ -4987,8 +4986,6 @@ function fireWeapon() {
                 if (asteroidIntersects.length > 0) {
                     targetPosition = asteroidIntersects[0].point;
                     targetObject = asteroidIntersects[0].object;
-                    console.log('Hit detected: asteroid', targetObject.userData.name);
-                    console.log('Asteroid hit confirmed, calling destroyAsteroidByWeapon');
                 } else {
                     // Check for interstellar asteroid hits
                     if (typeof interstellarAsteroids !== 'undefined' && interstellarAsteroids.length > 0) {
@@ -4997,7 +4994,7 @@ function fireWeapon() {
                             targetPosition = interstellarIntersects[0].point;
                             targetObject = interstellarIntersects[0].object;
                             targetObject.userData.isInterstellarAsteroid = true;  // Flag for special handling
-                            console.log('Hit detected: interstellar asteroid', targetObject.userData.name);
+                            // Hit log silenced
                         }
                     }
 
@@ -5019,7 +5016,7 @@ function fireWeapon() {
                             if (outerAsteroidIntersects.length > 0) {
                                 targetPosition = outerAsteroidIntersects[0].point;
                                 targetObject = outerAsteroidIntersects[0].object;
-                                console.log('Hit detected: outer system asteroid', targetObject.userData.name);
+                                // Hit log silenced
                             }
                         }
                     }

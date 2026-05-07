@@ -1520,7 +1520,7 @@ function recordEnemyKillPosition(enemy) {
     
     // Store the kill position for this faction
     lastKillPositions[faction] = enemy.position.clone();
-    console.log(`📍 Recorded kill position for ${faction} at`, enemy.position);
+    // Per-kill log silenced (spammy during demo combat)
 }
 
 function checkAndSpawnEliteGuardians() {
@@ -6061,7 +6061,7 @@ function updateTradingShips() {
                     if (data.hasMiningRoute && data.miningDestination && Math.random() < 0.01) {
                         // Start mining route to core system
                         data.aiState = 'traveling_to_mine';
-                        console.log(`⛏️ ${data.name} departing for ${data.miningDestinationName || 'mining site'}`);
+                        if (window.GAME_DEBUG_VERBOSE) console.log(`⛏️ ${data.name} departing for ${data.miningDestinationName || 'mining site'}`);
                     } else if (!data.hasMiningRoute && Math.random() < 0.003) {
                         // Local mining (no route assigned)
                         data.aiState = 'mining';
