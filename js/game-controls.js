@@ -1187,12 +1187,6 @@ function fireEnemyWeapon(enemy, difficultySettings) {
                 if (typeof gameState !== 'undefined' && gameState.hull !== undefined) {
                     const _before = gameState.hull;
                     gameState.hull = Math.max(0, gameState.hull - actualDamage);
-                    const _elapsed = gameState.gameStartTime ?
-                        ((Date.now() - gameState.gameStartTime) / 1000).toFixed(1) + 's' : 'PRE';
-                    console.error('🩸 ENEMY HIT: -' + actualDamage.toFixed(1) +
-                        ' | hull ' + _before.toFixed(1) + ' → ' + gameState.hull.toFixed(1) +
-                        ' | t=' + _elapsed +
-                        ' | from ' + (enemy.userData.name || enemy.userData.type || '?'));
                 } else if (typeof gameState !== 'undefined' && gameState.health !== undefined) {
                     gameState.health = Math.max(0, gameState.health - actualDamage);
                 }

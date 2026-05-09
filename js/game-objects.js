@@ -924,9 +924,8 @@ function getEnemyHealthForDifficulty(isLocal, isBoss, isBossSupport) {
         // Boss support health: 2-3 hits
         return Math.min(2 + Math.floor(galaxiesCleared / 3), 3);
     } else if (isLocal) {
-        // Local enemy health: 1-3 hits
-        if (galaxiesCleared === 0) return 1; // Tutorial level
-        return Math.min(1 + Math.floor(galaxiesCleared / 3), 3);
+        // Local enemy health: 2-3 hits (was 1-3, but 1-hit kills felt too easy)
+        return Math.min(2 + Math.floor(galaxiesCleared / 3), 3);
     } else {
         // Distant enemy health: 2-3 hits
         return Math.min(2 + Math.floor(galaxiesCleared / 4), 3);

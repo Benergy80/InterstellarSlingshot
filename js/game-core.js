@@ -2141,7 +2141,7 @@ function updatePlanetOrbits() {
     
     // PERF DEBUG: Log planet count every 300 frames
     if (gameState.frameCount % 300 === 0) {
-        console.log(`📊 PERF: Processing all ${planets.length} planets (no cull distance)`);
+        if (window.GAME_DEBUG_VERBOSE) console.log(`📊 PERF: Processing all ${planets.length} planets (no cull distance)`);
     }
     
     planets.forEach((planet) => {
@@ -2343,26 +2343,9 @@ if (typeof window !== 'undefined') {
             enumerable: true,
             get: function() { return _hullValue; },
             set: function(newVal) {
-                const oldVal = _hullValue;
                 _hullValue = newVal;
-                if (newVal !== oldVal) {
-                    const delta = newVal - oldVal;
-                    const elapsed = gameState.gameStartTime ?
-                        ((Date.now() - gameState.gameStartTime) / 1000).toFixed(1) + 's' :
-                        'PRE-START';
-                    const stack = new Error().stack;
-                    const caller = stack ? stack.split('\n')[2] : '?';
-                    console.error(
-                        '🩸 HULL ' + (delta < 0 ? 'DAMAGE' : 'HEAL') + ': ' +
-                        (delta > 0 ? '+' : '') + delta.toFixed(1) +
-                        ' → ' + newVal.toFixed(1) +
-                        ' | t=' + elapsed +
-                        ' | ' + (caller ? caller.trim() : '?')
-                    );
-                }
             }
         });
-        console.error('✅ HULL SETTER INSTALLED — initial hull=' + _hullValue);
     } catch (e) {
         console.error('❌ HULL SETTER FAILED:', e);
     }

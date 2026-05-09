@@ -1074,7 +1074,7 @@ if (arrivedGalaxyId >= 0 && typeof cleanupDistantAsteroids === 'function') {
                 if (typeof gameState !== 'undefined') {
                     gameState.isBlackHoleWarping = false;
                     gameState.warping = false;
-                    console.log('Warp complete - resuming guardian spawning');
+                    if (window.GAME_DEBUG_VERBOSE) console.log('Warp complete - resuming guardian spawning');
                 }
                 
                 console.log(`Loading guardians for galaxy ${arrivedGalaxyId}...`);
@@ -1086,7 +1086,7 @@ if (arrivedGalaxyId >= 0 && typeof cleanupDistantAsteroids === 'function') {
                 if (typeof gameState !== 'undefined') {
                     gameState.isBlackHoleWarping = false;
                     gameState.warping = false;
-                    console.log('Warp complete');
+                    if (window.GAME_DEBUG_VERBOSE) console.log('Warp complete');
                 }
             }, 1200);
         }
@@ -1129,7 +1129,7 @@ if (arrivedGalaxyId >= 0 && typeof cleanupDistantAsteroids === 'function') {
         setTimeout(() => {
             if (typeof gameState !== 'undefined') {
                 gameState.suppressAchievements = false;
-                console.log('Achievement system reactivated - ready for galaxy discovery');
+                if (window.GAME_DEBUG_VERBOSE) console.log('Achievement system reactivated');
             }
         }, 3000);
         
@@ -1165,7 +1165,7 @@ if (arrivedGalaxyId >= 0 && typeof cleanupDistantAsteroids === 'function') {
         fadeOverlay.style.opacity = '0';
         setTimeout(() => {
             fadeOverlay.remove();
-            console.log('Warp fade complete - screen visible');
+            if (window.GAME_DEBUG_VERBOSE) console.log('Warp fade complete');
         }, 1500);
         
         // Update UI and populate new targets
