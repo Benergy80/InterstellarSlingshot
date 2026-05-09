@@ -1224,32 +1224,35 @@ function spawnBossForArea(galaxyId, placementType, areaKey, overridePosition, bo
     // Try to use 3D boss model first, fallback to geometry (modelGalaxyId+1 because models are 1-8, galaxies are 0-7)
     // Per-species bosses (Martian Pirate) override modelGalaxyId so they use their species' ship rather than the host galaxy's model.
     let boss;
+    let bossIsGLB = false;
     if (typeof createBossMeshWithModel === 'function') {
         boss = createBossMeshWithModel(modelGalaxyId + 1, bossGeometry, bossMaterial);
+        bossIsGLB = boss.isGroup || (boss.children && boss.children.length > 1);
     } else {
         boss = new THREE.Mesh(bossGeometry, bossMaterial);
         boss.scale.multiplyScalar(2.5); // PRESERVED: Boss scaling (only if using fallback)
     }
-    
+
     // ENHANCED: Position boss using 3D coordinates
     boss.position.copy(bossPosition);
-    
-    // PRESERVED: Enhanced boss glow with all original features
-    const bossGlowGeometry = bossGeometry.clone();
-    const bossGlowMaterial = new THREE.MeshBasicMaterial({
-        color: shapeData.color,
-        transparent: true,
-        opacity: 0.4, // PRESERVED: Boss glow opacity
-        blending: THREE.AdditiveBlending
-    });
-    const bossGlow = new THREE.Mesh(bossGlowGeometry, bossGlowMaterial);
-    bossGlow.scale.multiplyScalar(1.3); // PRESERVED: Glow scaling
-    
-    // PRESERVED: Prevent frustum culling for boss glow
-    bossGlow.visible = true;
-    bossGlow.frustumCulled = false;
-    
-    boss.add(bossGlow);
+
+    // Procedural glow shell — only added when the boss is using fallback
+    // geometry. When a GLB model loaded, the glow was a giant torus (or
+    // cone/octahedron) floating around the detailed ship model.
+    if (!bossIsGLB) {
+        const bossGlowGeometry = bossGeometry.clone();
+        const bossGlowMaterial = new THREE.MeshBasicMaterial({
+            color: shapeData.color,
+            transparent: true,
+            opacity: 0.4,
+            blending: THREE.AdditiveBlending
+        });
+        const bossGlow = new THREE.Mesh(bossGlowGeometry, bossGlowMaterial);
+        bossGlow.scale.multiplyScalar(1.3);
+        bossGlow.visible = true;
+        bossGlow.frustumCulled = false;
+        boss.add(bossGlow);
+    }
 
     // Calculate hitbox size from scaled model (like asteroids) - bosses are 144x scaled
     let bossHitboxSize = 144; // Default for 144x scaled model
@@ -1589,8 +1592,10 @@ function spawnEliteGuardian(galaxyId, faction, spawnPosition = null) {
 
     // Use boss model but with extra scaling - 200x (larger than bosses at 144x)
     let guardian;
+    let guardianIsGLB = false;
     if (typeof createBossMeshWithModel === 'function') {
         guardian = createBossMeshWithModel(galaxyId + 1, guardianGeometry, guardianMaterial);
+        guardianIsGLB = guardian.isGroup || (guardian.children && guardian.children.length > 1);
         // Apply additional scaling for elite guardian (200x total = 80% of original 250x)
         guardian.scale.multiplyScalar(200.0 / 144.0); // Scale up from boss size
     } else {
@@ -1600,19 +1605,21 @@ function spawnEliteGuardian(galaxyId, faction, spawnPosition = null) {
 
     guardian.position.copy(guardianPosition);
 
-    // Elite guardian glow - much more intense
-    const guardianGlowGeometry = guardianGeometry.clone();
-    const guardianGlowMaterial = new THREE.MeshBasicMaterial({
-        color: shapeData.color,
-        transparent: true,
-        opacity: 0.6, // More opaque than boss glow
-        blending: THREE.AdditiveBlending
-    });
-    const guardianGlow = new THREE.Mesh(guardianGlowGeometry, guardianGlowMaterial);
-    guardianGlow.scale.multiplyScalar(1.5); // Larger glow
-    guardianGlow.visible = true;
-    guardianGlow.frustumCulled = false;
-    guardian.add(guardianGlow);
+    // Procedural glow shell — skip when GLB loaded (same fix as boss)
+    if (!guardianIsGLB) {
+        const guardianGlowGeometry = guardianGeometry.clone();
+        const guardianGlowMaterial = new THREE.MeshBasicMaterial({
+            color: shapeData.color,
+            transparent: true,
+            opacity: 0.6,
+            blending: THREE.AdditiveBlending
+        });
+        const guardianGlow = new THREE.Mesh(guardianGlowGeometry, guardianGlowMaterial);
+        guardianGlow.scale.multiplyScalar(1.5);
+        guardianGlow.visible = true;
+        guardianGlow.frustumCulled = false;
+        guardian.add(guardianGlow);
+    }
 
     // Calculate hitbox size
     let guardianHitboxSize = 200; // Default for 200x scaled model
