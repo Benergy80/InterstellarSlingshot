@@ -46,6 +46,24 @@ const gameState = {
     nebulasDeepDiscovered: 0,
     energyEfficiency: 1.0, // multiplier on consumption (lower = more efficient)
     baseMaxVelocity: 4.0,  // captured baseline so upgrades stack additively
+    // Reputation-driven progression. Every meaningful action awards rep,
+    // and crossing a tier threshold unlocks a permanent ability:
+    //   Tier 1 (50 rep)  — Inertial Coasting (free maintenance at cruise)
+    //   Tier 2 (200 rep) — Capacitor Cells (max energy +50, regen +66%)
+    //   Tier 3 (500 rep) — Quick-Charge Slingshot (no energy cost, 5s CD)
+    //   Tier 4 (1000 rep)— Trajectory Solver (auto-aimed slingshot vector)
+    reputation: 0,
+    repTier: 0,
+    repTierUnlocks: {
+        coasting: false,
+        capacitor: false,
+        quickSlingshot: false,
+        trajectorySolver: false
+    },
+    slingshotCooldownUntil: 0,
+    slingshotCharge: 0,             // 0..1 charge gauge for one-second hold
+    slingshotChargeTarget: null,    // body the gauge is currently filling for
+    realisticSlingshot: false,      // toggle for physical-style boost
     mapMode: 'galactic',
     mapView: 'galactic', // 'galactic', 'universal'
     galaxiesCleared: 0,

@@ -29,9 +29,58 @@ window._invalidateUiElCache = function(id) {
     else for (const k in _uiElCache) delete _uiElCache[k];
 };
 
+// Reputation HUD widget — injected on first call so we don't have to
+// edit index.html. Shows current rep, the next tier's name, and a thin
+// progress bar to the next threshold.
+function updateRepHud() {
+    if (typeof gameState === 'undefined') return;
+    let el = document.getElementById('repHud');
+    if (!el) {
+        el = document.createElement('div');
+        el.id = 'repHud';
+        el.style.cssText = 'position:fixed;top:10px;right:14px;z-index:1000;' +
+            'font:600 11px/1.35 monospace;color:#7fd5ff;text-align:right;' +
+            'text-shadow:0 0 6px rgba(0,160,255,0.65);pointer-events:none;' +
+            'background:rgba(8,14,28,0.45);padding:6px 10px;' +
+            'border:1px solid rgba(0,160,255,0.35);border-radius:4px;';
+        el.innerHTML = '<div id="repHudVal" style="font-size:14px;color:#bdf">REP 0</div>' +
+                       '<div id="repHudNext" style="opacity:0.85">—</div>' +
+                       '<div style="height:3px;margin-top:3px;width:120px;background:rgba(0,160,255,0.18);">' +
+                         '<div id="repHudBar" style="height:100%;width:0%;background:#7fd5ff;"></div>' +
+                       '</div>';
+        document.body.appendChild(el);
+    }
+    const rep = gameState.reputation || 0;
+    const tier = gameState.repTier || 0;
+    const REP_TIERS = window.REP_TIERS;
+    const next = REP_TIERS && REP_TIERS[tier];
+    const v = document.getElementById('repHudVal');
+    const n = document.getElementById('repHudNext');
+    const b = document.getElementById('repHudBar');
+    if (v) v.textContent = 'REP ' + rep;
+    if (n) {
+        if (next) {
+            n.textContent = next.name + ' @ ' + next.threshold;
+        } else {
+            n.textContent = 'all tiers unlocked';
+        }
+    }
+    if (b) {
+        let pct;
+        if (next) {
+            const prev = tier > 0 ? REP_TIERS[tier - 1].threshold : 0;
+            pct = Math.max(0, Math.min(1, (rep - prev) / (next.threshold - prev)));
+        } else {
+            pct = 1;
+        }
+        b.style.width = (pct * 100).toFixed(0) + '%';
+    }
+}
+
 function updateUI() {
     // Safety check for game state
     if (typeof gameState === 'undefined' || !gameState) return;
+    updateRepHud();
 
     // FIXED: Properly define all UI elements at the start
     const velocityEl = _uiEl('velocity');
@@ -2747,6 +2796,9 @@ function updateUIFromExternal(updateType, data) {
                 setupGalaxyMap(); // Refresh galaxy map to show cleared status
                 if (typeof gameState !== 'undefined') {
                     gameState.galaxiesCleared++;
+                }
+                if (typeof awardReputation === 'function') {
+                    awardReputation(100, 'Galaxy liberated');
                 }
             }
             break;

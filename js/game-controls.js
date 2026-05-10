@@ -3567,6 +3567,21 @@ function initializeControlButtons() {
             e.preventDefault();
             cycleTargets();
         }
+
+        // Shift+R toggles realistic vs arcade slingshot physics.
+        if ((e.key === 'R' || e.key === 'r') && e.shiftKey) {
+            e.preventDefault();
+            gameState.realisticSlingshot = !gameState.realisticSlingshot;
+            if (typeof showAchievement === 'function') {
+                showAchievement(
+                    gameState.realisticSlingshot ? 'Realistic slingshots ON' : 'Arcade slingshots ON',
+                    gameState.realisticSlingshot
+                        ? 'Boost vector = body orbit + ≤30° aim. Periapsis matters.'
+                        : 'Boost vector = look direction. Mass-scaled magnitude.',
+                    true
+                );
+            }
+        }
         
         // Shield toggle - Caps Lock
 if (e.key === 'Tab') {
@@ -3580,23 +3595,16 @@ if (e.key === 'Tab') {
         
         if (e.key === 'Enter') {
             e.preventDefault();
-            
-            let nearestPlanet = null;
-            let nearestDistance = Infinity;
-            
-            if (typeof activePlanets !== 'undefined') {
-                activePlanets.forEach(planet => {
-                    const distance = camera.position.distanceTo(planet.position);
-                    const radius = planet.geometry ? planet.geometry.parameters.radius : 5;
-                    const slingshotRange = Math.max(60, radius + 25);
-                    if (distance < slingshotRange && distance < nearestDistance) {
-                        nearestPlanet = planet;
-                        nearestDistance = distance;
-                    }
-                });
-            }
-            
-            if (nearestPlanet && gameState.energy >= 20 && !gameState.slingshot.active) {
+
+            // Slingshot eligibility now lives entirely inside
+            // executeSlingshot (range, cooldown, energy, tier unlocks).
+            // Use findSlingshotTarget so the "no target → toggle nav"
+            // fallback below still works.
+            const nearestPlanet = (typeof findSlingshotTarget === 'function')
+                ? findSlingshotTarget()
+                : null;
+
+            if (nearestPlanet && !gameState.slingshot.active) {
                 if (typeof executeSlingshot === 'function') {
                     executeSlingshot();
                 }
@@ -4076,7 +4084,11 @@ if (enemy.userData.health <= 0) {
     // Check if this was a boss BEFORE removing it
     const wasBoss = enemy.userData.isBoss;
     const bossName = enemy.userData.name;
-    
+
+    // Reputation + small energy refund for the kill (handles boss
+    // bonuses internally: max-energy refill + warp charge).
+    if (typeof awardKillReward === 'function') awardKillReward(enemy);
+
     // Record the kill position for elite guardian spawning
     if (typeof recordEnemyKillPosition === 'function') {
         recordEnemyKillPosition(enemy);
@@ -4700,6 +4712,9 @@ function handleMissileHit(missile, enemy) {
     if (enemy.userData.health <= 0) {
         const wasBoss = enemy.userData.isBoss;
         const bossName = enemy.userData.name;
+
+        // Reputation + small energy refund for the missile kill.
+        if (typeof awardKillReward === 'function') awardKillReward(enemy);
 
         createExplosionEffect(enemy.position, 0xff4444, 15);
         playSound('explosion');

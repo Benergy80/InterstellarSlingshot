@@ -58,9 +58,96 @@ function applyNebulaShipUpgrade(nebulaName) {
     console.log(`🛠 Ship upgrade applied — eff ${newEff.toFixed(2)}, maxV ${gameState.maxVelocity.toFixed(1)}`);
 }
 
+// =============================================================================
+// REPUTATION / TIER UNLOCKS
+// Every meaningful action calls awardReputation(amount, source) which credits
+// gameState.reputation. Crossing 50 / 200 / 500 / 1000 rep grants a permanent
+// tier unlock that changes how thrust, energy, and slingshots behave.
+// =============================================================================
+const REP_TIERS = [
+    { threshold:   50, key: 'coasting',         name: 'Inertial Coasting',
+      blurb: 'Cruising at top speed costs no energy — only acceleration burns fuel.' },
+    { threshold:  200, key: 'capacitor',        name: 'Capacitor Cells',
+      blurb: 'Max energy +50, regen +66%.' },
+    { threshold:  500, key: 'quickSlingshot',   name: 'Quick-Charge Slingshot',
+      blurb: 'Slingshots cost zero energy and cool down in 5 seconds.' },
+    { threshold: 1000, key: 'trajectorySolver', name: 'Trajectory Solver',
+      blurb: 'Optimal slingshot exit vector is auto-aimed when you enter a gravity well.' }
+];
+
+function awardReputation(amount, source) {
+    if (typeof gameState === 'undefined') return;
+    if (!amount) return;
+    gameState.reputation = (gameState.reputation || 0) + amount;
+    if (typeof source === 'string' && source.length &&
+        typeof showAchievement === 'function' && amount >= 25) {
+        showAchievement('+' + amount + ' REP', source);
+    }
+    // Apply any newly-crossed tier thresholds.
+    let tier = gameState.repTier || 0;
+    while (tier < REP_TIERS.length && gameState.reputation >= REP_TIERS[tier].threshold) {
+        applyRepTier(tier);
+        tier++;
+    }
+    gameState.repTier = tier;
+}
+
+function applyRepTier(tierIndex) {
+    if (typeof gameState === 'undefined') return;
+    const t = REP_TIERS[tierIndex];
+    if (!t) return;
+    if (!gameState.repTierUnlocks) gameState.repTierUnlocks = {};
+    gameState.repTierUnlocks[t.key] = true;
+    // Tier-2 capacitor: bump max + current energy ceiling.
+    if (t.key === 'capacitor') {
+        gameState.maxEnergy = Math.max(gameState.maxEnergy || 100, 150);
+        gameState.energy = Math.min(gameState.maxEnergy, (gameState.energy || 0) + 50);
+    }
+    if (typeof showAchievement === 'function') {
+        showAchievement('UNLOCK · ' + t.name, t.blurb, true);
+    }
+    console.log('🎖 Reputation tier ' + (tierIndex + 1) + ' unlocked: ' + t.name);
+}
+
+// Reward hook for any enemy kill. Returns the rep amount awarded so the
+// caller can fold it into a single notification (rather than triggering
+// two banners on top of the "Enemy Destroyed!" toast).
+function awardKillReward(enemy) {
+    if (typeof gameState === 'undefined' || !enemy || !enemy.userData) return 0;
+    const ud = enemy.userData;
+    let amount;
+    let label;
+    if (ud.isBoss) {
+        amount = 50;
+        label  = 'Boss defeated: ' + (ud.name || 'enemy');
+        // Boss kill: top off energy and grant a warp charge.
+        gameState.energy = Math.min(gameState.maxEnergy || 100,
+            (gameState.energy || 0) + (gameState.maxEnergy || 100));
+        if (gameState.emergencyWarp) {
+            gameState.emergencyWarp.available = Math.min(10,
+                (gameState.emergencyWarp.available || 0) + 1);
+        }
+    } else if (ud.isBlackHoleGuardian || ud.isEliteGuardian) {
+        amount = 15;
+        label  = 'Elite kill';
+        gameState.energy = Math.min(gameState.maxEnergy || 100,
+            (gameState.energy || 0) + 15);
+    } else {
+        amount = 5;
+        label  = ''; // small kill, suppress banner
+        gameState.energy = Math.min(gameState.maxEnergy || 100,
+            (gameState.energy || 0) + 5);
+    }
+    awardReputation(amount, label);
+    return amount;
+}
+
 if (typeof window !== 'undefined') {
     window._consumeEnergy = _consumeEnergy;
     window.applyNebulaShipUpgrade = applyNebulaShipUpgrade;
+    window.awardReputation = awardReputation;
+    window.awardKillReward = awardKillReward;
+    window.REP_TIERS = REP_TIERS;
 }
 
 // Initialize timing variables for auto-leveling system
@@ -755,6 +842,12 @@ window.triggerPlayerDeath = triggerPlayerDeath;
 function destroyAsteroid(asteroid) {
     scene.remove(asteroid);
 
+    // Small reward for destruction so phase-5 strafing pays out.
+    if (typeof awardReputation === 'function') awardReputation(1, '');
+    if (typeof gameState !== 'undefined' && gameState.hull !== undefined) {
+        gameState.hull = Math.min(gameState.maxHull || 100, gameState.hull + 0.5);
+    }
+
     const planetIndex = planets.indexOf(asteroid);
     if (planetIndex > -1) planets.splice(planetIndex, 1);
 
@@ -1129,6 +1222,14 @@ if (arrivedGalaxyId >= 0 && typeof cleanupDistantAsteroids === 'function') {
                 
                 console.log(`Loading guardians for galaxy ${arrivedGalaxyId}...`);
                 loadGuardiansForGalaxy(arrivedGalaxyId);
+                // BH transit reward: rep + full energy refill so the
+                // player arrives in the new galaxy ready to fight.
+                if (typeof awardReputation === 'function') {
+                    awardReputation(10, 'Black-hole transit');
+                }
+                if (typeof gameState !== 'undefined') {
+                    gameState.energy = gameState.maxEnergy || 100;
+                }
             }, 1200); // Load guardians AFTER enemies and warp state cleared
         } else {
             // Clear warp flags even if we didn't load guardians
@@ -1279,49 +1380,138 @@ function isPositionTooClose(position, minDistance) {
     return false;
 }
 // PRESERVED: Slingshot execution function
-function executeSlingshot() {
-    let nearestPlanet = null;
-    let nearestDistance = Infinity;
+// Helper: compute the slingshot activation radius for a body. Used both
+// by the "SLINGSHOT READY" UI prompt and by executeSlingshot itself so the
+// two never disagree. Bumped from the original (radius*6 / radius*2.5+30)
+// to give players more reaction time at warp speed.
+function getSlingshotRange(body) {
+    const radius = body && body.geometry ? body.geometry.parameters.radius : 5;
+    const isStarBody = body && body.userData &&
+        (body.userData.type === 'star' || body.userData.isLocalStar);
+    const isBH = body && body.userData && body.userData.type === 'blackhole';
+    if (isBH) return Math.max(120, radius * 5 + (body.userData.warpThreshold || 0));
+    if (isStarBody) return Math.max(120, radius * 8);
+    return Math.max(120, radius * 4 + 60);
+}
 
-    if (typeof activePlanets !== 'undefined') {
-        activePlanets.forEach(planet => {
-            const distance = camera.position.distanceTo(planet.position);
-            const radius = planet.geometry ? planet.geometry.parameters.radius : 5;
-            // Match the body-aware assistRange used by the SLINGSHOT READY
-            // detection (game-physics planet/center/orbiter loops). Stars
-            // get 6× radius; other bodies 2.5× + 30u; min 60u floor.
-            const isStarBody = planet.userData && (planet.userData.type === 'star' || planet.userData.isLocalStar);
-            const slingshotRange = isStarBody
-                ? Math.max(60, radius * 6)
-                : Math.max(60, radius * 2.5 + 30);
-            if (distance < slingshotRange && distance < nearestDistance) {
-                nearestPlanet = planet;
-                nearestDistance = distance;
-            }
-        });
-    }
-    
-    if (nearestPlanet && gameState.energy >= 20 && !gameState.slingshot.active) {
+// Helper: find best slingshot target near the camera.
+function findSlingshotTarget() {
+    if (typeof activePlanets === 'undefined' || typeof camera === 'undefined') return null;
+    let best = null;
+    let bestDistance = Infinity;
+    activePlanets.forEach(planet => {
+        const dist = camera.position.distanceTo(planet.position);
+        if (dist < getSlingshotRange(planet) && dist < bestDistance) {
+            best = planet;
+            bestDistance = dist;
+        }
+    });
+    return best;
+}
+
+// Compute the optimal exit direction for a slingshot off `body` — the
+// body's orbital-tangent velocity vector if we know it (realistic mode),
+// otherwise the player's look direction (arcade mode). Returns a unit
+// Vector3. In realistic mode the player's look direction is allowed to
+// deflect the result by up to 30°; beyond that we hold the orbital
+// tangent and ignore aim error so a misaligned launch can't dump the
+// ship in a bad direction.
+function getSlingshotExitDirection(body) {
+    const look = new THREE.Vector3();
+    camera.getWorldDirection(look).normalize();
+    const arcade = !(typeof gameState !== 'undefined' && gameState.realisticSlingshot);
+    if (arcade) return look;
+
+    // Realistic: build the tangent to the body's orbit around its system
+    // center. If we don't know the orbit, fall back to look.
+    const ud = body && body.userData;
+    if (!ud || !ud.systemCenter || !ud.orbitRadius) return look;
+    const radial = new THREE.Vector3(
+        body.position.x - ud.systemCenter.x,
+        0,
+        body.position.z - ud.systemCenter.z
+    );
+    if (radial.lengthSq() < 1e-6) return look;
+    const tangent = new THREE.Vector3(-radial.z, 0, radial.x).normalize();
+    // Sign so it matches the body's orbital direction (CCW vs CW)
+    const orbitSpeed = ud.orbitSpeed || 0;
+    if (orbitSpeed < 0) tangent.multiplyScalar(-1);
+    // Limit look-deflection to ±30°: blend toward the look direction up
+    // to the cap.
+    const dot = tangent.dot(look);
+    if (dot >= Math.cos(Math.PI / 6)) return look; // within cone — honor aim
+    // Build a deflection at 30° from tangent toward look
+    const blend = look.clone().sub(tangent.clone().multiplyScalar(dot));
+    if (blend.lengthSq() < 1e-6) return tangent;
+    blend.normalize();
+    const cap = Math.cos(Math.PI / 6); // 30° cap
+    const sin = Math.sin(Math.PI / 6);
+    return tangent.clone().multiplyScalar(cap).addScaledVector(blend, sin).normalize();
+}
+
+// Expose target/range/exit helpers so UI and autopilot can read them.
+if (typeof window !== 'undefined') {
+    window.getSlingshotRange = getSlingshotRange;
+    window.findSlingshotTarget = findSlingshotTarget;
+    window.getSlingshotExitDirection = getSlingshotExitDirection;
+}
+
+function executeSlingshot() {
+    if (typeof gameState === 'undefined') return;
+    // 5-second cooldown after a slingshot fires (Quick-Charge tier
+    // replaces the energy cost with this CD; arcade mode also honors it
+    // so chained accidental triggers can't ping-pong the player).
+    if (Date.now() < (gameState.slingshotCooldownUntil || 0)) return;
+
+    const nearestPlanet = findSlingshotTarget();
+    if (!nearestPlanet || gameState.slingshot.active) return;
+
+    // Energy gate: Quick-Charge tier eliminates the 20-energy cost.
+    const quick = !!(gameState.repTierUnlocks && gameState.repTierUnlocks.quickSlingshot);
+    if (!quick && gameState.energy < 20) return;
+    {
         const planetMass = nearestPlanet.userData.mass || 1;
         const planetRadius = nearestPlanet.geometry ? nearestPlanet.geometry.parameters.radius : 5;
 
-        // Use the direction the player is looking (camera forward direction)
-        const lookDirection = new THREE.Vector3();
-        camera.getWorldDirection(lookDirection);
-        lookDirection.normalize();
+        // Direction: arcade = look, realistic = orbital tangent (±30° aim deflection)
+        const slingshotDirection = getSlingshotExitDirection(nearestPlanet);
 
-        // Slingshot boosts in the direction the player is looking
-        const slingshotDirection = lookDirection;
-        
-        // FIXED: Make slingshots MUCH MORE POWERFUL than emergency warps
-        // Emergency warp: ~15,000 km/s
-        // Slingshot base: 25,000 km/s, scaling up with planet mass
-        const slinghotPower = (planetMass * planetRadius) / 2; // Doubled from /5 to /2
-        const baseBoostSpeed = 25.0; // Much higher than emergency warp's 15.0
-        const boostVelocity = Math.min(baseBoostSpeed + slinghotPower, 50.0); // Max 50,000 km/s
-        
+        // Magnitude — two formulas:
+        //   Arcade (existing):   25 + mass*radius/2, capped 50
+        //   Realistic:           2 * orbitSpeed * orbitRadius, plus a
+        //                        periapsis bonus that maxes the boost
+        //                        when the player skims the body.
+        let boostVelocity;
+        const realistic = !!(gameState.realisticSlingshot);
+        if (realistic) {
+            const ud = nearestPlanet.userData || {};
+            const orbitSpeed = Math.abs(ud.orbitSpeed || 0);
+            const orbitRadius = ud.orbitRadius || planetRadius;
+            const orbitalBoost = 2 * orbitSpeed * orbitRadius;
+            // Periapsis bonus: distance / activation-range → 0..1. Closer
+            // pass = bigger multiplier (up to ×3 at the rim).
+            const dist = camera.position.distanceTo(nearestPlanet.position);
+            const range = getSlingshotRange(nearestPlanet);
+            const periapsis = Math.max(0.33, Math.min(1, dist / range));
+            const periapsisMul = 1 + (1 - periapsis) * 2; // 1.0 .. 3.0
+            // Stars/non-orbiting bodies contribute only via deflection
+            // (orbitalBoost is zero); keep them useful with a small base
+            // so a star pass still gives ~10,000 km/s when grazed.
+            const base = orbitalBoost > 0.01 ? 0 : 10;
+            boostVelocity = Math.min(60, (base + orbitalBoost) * periapsisMul);
+        } else {
+            const slinghotPower = (planetMass * planetRadius) / 2;
+            boostVelocity = Math.min(25.0 + slinghotPower, 50.0);
+        }
+
         gameState.velocityVector.copy(slingshotDirection).multiplyScalar(boostVelocity);
-        gameState.energy = Math.max(5, gameState.energy - 20);
+        if (!quick) {
+            gameState.energy = Math.max(5, gameState.energy - 20);
+        }
+        gameState.slingshotCooldownUntil = Date.now() + 5000;
+        if (typeof awardReputation === 'function') {
+            awardReputation(3, '');
+        }
 
         gameState.slingshot.active = true;
         gameState.slingshot.timeRemaining = gameState.slingshot.duration;
@@ -1355,7 +1545,7 @@ function executeSlingshot() {
             }
         }
         
-        gameState.distance += slinghotPower * 10;
+        gameState.distance += boostVelocity * 10;
         if (typeof updateUI === 'function') {
             updateUI();
         }
@@ -1526,10 +1716,20 @@ if (frameDistance > 0.01) { // Only track significant movement
     
     // SPECIFICATION: Movement Controls (WASD) with exact energy consumption rates
     if (keys.w && gameState.energy > 0) {
-        // W Key: Primary forward thrust (2x power multiplier) - consumes 0.12 energy per frame
-        const wThrustPower = gameState.thrustPower * gameState.wThrustMultiplier;
-        gameState.velocityVector.addScaledVector(forwardDirection, wThrustPower);
-        _consumeEnergy(0.12);
+        // INERTIAL COASTING (rep tier 1): at >= 90% of max velocity holding
+        // W counts as "maintain cruise" — no acceleration applied (the ship
+        // is already at the cap) and no energy consumed. Without this, the
+        // player burns fuel just to stay at top speed even though space has
+        // no drag. Below the cruise band, normal acceleration and cost
+        // apply.
+        const _speed = gameState.velocityVector.length();
+        const _coasting = !!(gameState.repTierUnlocks && gameState.repTierUnlocks.coasting) &&
+                          _speed >= (gameState.maxVelocity || 4.0) * 0.9;
+        if (!_coasting) {
+            const wThrustPower = gameState.thrustPower * gameState.wThrustMultiplier;
+            gameState.velocityVector.addScaledVector(forwardDirection, wThrustPower);
+            _consumeEnergy(0.12);
+        }
         // Visual feedback — rate-limited to at most one effect every
         // 500 ms so holding W doesn't spawn 30 DOM star-trails multiple
         // times per second (each one hangs 300 ms and hurts long-run FPS).
@@ -1797,19 +1997,27 @@ if (typeof updateShieldSystem === 'function') {
     
     // Emergency braking (X key) - GRADUAL DECELERATION
     // Skip manual braking if Jump auto-brake is active
-if (keys.x && gameState.energy > 0 && !gameState.emergencyWarp.autoBraking) {
+if (keys.x && !gameState.emergencyWarp.autoBraking) {
     // Gradual braking: reduce velocity by 1% per frame (smoother deceleration)
+    const _preBrakeSpeed = gameState.velocityVector.length();
     const brakingForce = 0.99; // 1% reduction per frame (was 0.98 = 2%)
     gameState.velocityVector.multiplyScalar(brakingForce);
-    
+
     // NEW: Also apply braking to rotational velocity (dampen turning and rolling)
     const rotationalBrakingForce = 0.95; // 5% reduction per frame for rotation
     rotationalVelocity.pitch *= rotationalBrakingForce;
     rotationalVelocity.yaw *= rotationalBrakingForce;
     rotationalVelocity.roll *= rotationalBrakingForce;
-    
-    // Small energy cost for braking
-    _consumeEnergy(0.02);
+
+    // KINETIC ENERGY HARVEST: braking from high speed dumps the
+    // kinetic flywheel back into the capacitor. Above 5 km/s (game-
+    // units 5.0) recover 0.15/frame; below that, do nothing. This
+    // replaces the old "brakes cost energy" penalty, which created the
+    // wrong incentive (don't slow down even when you should).
+    if (_preBrakeSpeed > 5.0) {
+        gameState.energy = Math.min(gameState.maxEnergy || 100,
+            (gameState.energy || 0) + 0.15);
+    }
     
     // Get current speed in km/s
     const currentSpeedKmS = gameState.velocityVector.length() * 1000;
@@ -2024,16 +2232,14 @@ if (surfaceCollision) {
                 
                 totalGravitationalForce.add(_gravVec);
 
-                // Body-aware slingshot range: stars get 6× radius (Sun radius
-                // 40 → 240u), other massive bodies (Jupiter etc.) get 2.5×
-                // radius + 30u. The flat 60u range was too tight for the Sun
-                // and gas giants — players orbiting at natural distances
-                // never saw the SLINGSHOT READY prompt.
-                const _bodyRadius = (planet.geometry && planet.geometry.parameters && planet.geometry.parameters.radius) || 5;
-                const _isStar = planet.userData.type === 'star' || planet.userData.isLocalStar;
-                const _objAssistRange = _isStar
-                    ? Math.max(assistRange, _bodyRadius * 6)
-                    : Math.max(assistRange, _bodyRadius * 2.5 + 30);
+                // Slingshot activation range — bumped vs the original
+                // (radius*6 / radius*2.5+30) so the prompt fires earlier
+                // at warp speed. Use the shared helper so the UI prompt
+                // and executeSlingshot never disagree.
+                const _objAssistRange = Math.max(assistRange,
+                    (typeof getSlingshotRange === 'function')
+                        ? getSlingshotRange(planet)
+                        : 60);
 
                 if (distance < _objAssistRange && distance < nearestAssistDistance) {
                     nearestAssistPlanet = planet;
@@ -2061,13 +2267,10 @@ if (surfaceCollision) {
                     _gravDir.subVectors(_outerPos, camera.position).normalize().multiplyScalar(gravitationalForce);
                     totalGravitationalForce.add(_gravDir);
 
-                    // Body-aware slingshot range — outer system center stars
-                    // can be very large; use the same scaling as Sol.
-                    const _crBody = (centerObj.geometry && centerObj.geometry.parameters && centerObj.geometry.parameters.radius) || 5;
-                    const _crStar = centerObj.userData.type === 'star' || centerObj.userData.isLocalStar;
-                    const _crRange = _crStar
-                        ? Math.max(assistRange, _crBody * 6)
-                        : Math.max(assistRange, _crBody * 2.5 + 30);
+                    const _crRange = Math.max(assistRange,
+                        (typeof getSlingshotRange === 'function')
+                            ? getSlingshotRange(centerObj)
+                            : 60);
                     if (distance < _crRange && distance < nearestAssistDistance) {
                         nearestAssistPlanet = centerObj;
                         nearestAssistDistance = distance;
@@ -2091,13 +2294,10 @@ if (surfaceCollision) {
                         _gravDir.subVectors(_outerPos, camera.position).normalize().multiplyScalar(gravitationalForce);
                         totalGravitationalForce.add(_gravDir);
 
-                        // Body-aware slingshot range — orbiters can be gas
-                        // giants or pulsars; scale with their actual radius.
-                        const _orBody = (orbiter.geometry && orbiter.geometry.parameters && orbiter.geometry.parameters.radius) || 5;
-                        const _orStar = orbiter.userData.type === 'star';
-                        const _orRange = _orStar
-                            ? Math.max(assistRange, _orBody * 6)
-                            : Math.max(assistRange, _orBody * 2.5 + 30);
+                        const _orRange = Math.max(assistRange,
+                            (typeof getSlingshotRange === 'function')
+                                ? getSlingshotRange(orbiter)
+                                : 60);
                         if (distance < _orRange && distance < nearestAssistDistance) {
                             nearestAssistPlanet = orbiter;
                             nearestAssistDistance = distance;
@@ -2113,6 +2313,26 @@ if (surfaceCollision) {
     gameState.velocityVector.add(totalGravitationalForce);
     
     // Enhanced title flashing for gravity well alert
+    // TRAJECTORY SOLVER (rep tier 4): auto-fires the slingshot ~1s after
+    // entering a gravity well, along the optimal exit vector. The
+    // cooldown inside executeSlingshot prevents rapid re-triggers; the
+    // slingshot.active gate prevents firing during an active boost.
+    if (gravityWellInRange && nearestAssistPlanet &&
+        gameState.repTierUnlocks && gameState.repTierUnlocks.trajectorySolver &&
+        !gameState.slingshot.active &&
+        Date.now() >= (gameState.slingshotCooldownUntil || 0)) {
+        if (gameState.slingshotChargeTarget !== nearestAssistPlanet) {
+            gameState.slingshotChargeTarget = nearestAssistPlanet;
+            gameState.slingshotChargeStart = Date.now();
+        }
+        if (Date.now() - (gameState.slingshotChargeStart || 0) > 900) {
+            executeSlingshot();
+            gameState.slingshotChargeTarget = null;
+        }
+    } else if (!gravityWellInRange) {
+        gameState.slingshotChargeTarget = null;
+    }
+
     const gameTitle = document.getElementById('gameTitle');
     if (gravityWellInRange && !gameState.slingshot.active) {
         if (gameTitle && !gameTitle.classList.contains('title-flash')) {
@@ -2510,11 +2730,19 @@ if (dampedVelocity.length() >= gameState.minVelocity ||
     // Update velocity for Ship Status panel
     gameState.velocity = gameState.velocityVector.length();
 
-    // FIXED: Energy regeneration only when NOT actively thrusting
-const isThrusting = (keys.w || keys.a || keys.s || keys.d || keys.b || keys.x) && gameState.energy > 0;
-
-if (!isThrusting && gameState.energy < 100) {
-    gameState.energy = Math.min(100, gameState.energy + 0.06); // Reduced regeneration rate
+    // ENERGY REGEN — two-rate system instead of "regen iff idle":
+    //   • Idle:    fast recharge.
+    //   • Thrusting: slow trickle so a sustained burn still recovers
+    //     a little, keeping the pool out of permanent zero.
+    //   • Capacitor (rep tier 2) gives a +66% multiplier on both rates.
+    // Brake (X) is excluded from "thrusting" — it's a regen source now
+    // via kinetic harvest above.
+const isThrusting = (keys.w || keys.a || keys.s || keys.d || keys.b) && gameState.energy > 0;
+const _maxE = gameState.maxEnergy || 100;
+if (gameState.energy < _maxE) {
+    const _capBoost = (gameState.repTierUnlocks && gameState.repTierUnlocks.capacitor) ? 1.66 : 1.0;
+    const _rate = (isThrusting ? 0.025 : 0.10) * _capBoost;
+    gameState.energy = Math.min(_maxE, gameState.energy + _rate);
 }
     
     // Update HUD
@@ -3913,6 +4141,11 @@ function checkForNebulaDeepDiscovery() {
         if (typeof applyNebulaShipUpgrade === 'function') {
             setTimeout(() => applyNebulaShipUpgrade(nebulaName), 2500);
         }
+        // Reward player for the discovery itself (separate from the
+        // ship upgrade which arrives a beat later).
+        if (typeof awardReputation === 'function') {
+            awardReputation(30, 'Nebula charted: ' + (nebulaName || 'unknown'));
+        }
 
         // CHECK: Is this faction already defeated?
         if (isFactionDefeated(galaxyId)) {
@@ -4294,6 +4527,15 @@ function animateDiscoveryPaths() {
                         spawnBossForArea(gId, 'cosmic_feature', areaKey, endPos);
                         if (typeof showAchievement === 'function') {
                             showAchievement('Boss Incoming!', 'All hostiles cleared — a boss has appeared!', true);
+                        }
+                        // Mission complete: rep + a permanent +5 to max energy
+                        // and a small heal of current energy.
+                        if (typeof awardReputation === 'function') {
+                            awardReputation(25, 'Dotted-line mission cleared');
+                        }
+                        if (typeof gameState !== 'undefined') {
+                            gameState.maxEnergy = (gameState.maxEnergy || 100) + 5;
+                            gameState.energy = Math.min(gameState.maxEnergy, (gameState.energy || 0) + 25);
                         }
                     }
                 }
