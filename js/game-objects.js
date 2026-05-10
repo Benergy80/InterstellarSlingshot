@@ -7473,6 +7473,95 @@ function createDistantEnemy(nebula, galaxyId, index) {
 
 window.createDistantExoticEnemies = createDistantExoticEnemies;
 
+// Spawn a single regular enemy for `galaxyId` at `position`, anchored to a
+// tight patrol radius.  Used when a nebula mission endpoint doesn't have
+// enough hostiles to relocate and we need to top it up with fresh spawns
+// so the dotted line always leads to a real fight.
+function spawnMissionEnemyAt(galaxyId, position) {
+    if (typeof galaxyTypes === 'undefined' || typeof enemyShapes === 'undefined') return null;
+    const galaxyType = galaxyTypes[galaxyId];
+    const shapeData = enemyShapes[galaxyId];
+    if (!galaxyType || !shapeData) return null;
+
+    const enemyGeometry = createEnemyGeometry(galaxyId);
+    const galaxyCenter = (typeof getGalaxy3DPosition === 'function')
+        ? getGalaxy3DPosition(galaxyId)
+        : new THREE.Vector3();
+    const distance = galaxyCenter.distanceTo(position);
+    const materials = createEnemyMaterial(shapeData, 'regular', distance);
+
+    let enemy;
+    let isGLBModel = false;
+    if (typeof createEnemyMeshWithModel === 'function') {
+        enemy = createEnemyMeshWithModel(galaxyId + 1, enemyGeometry, materials.enemyMaterial, 96.0);
+        isGLBModel = enemy.isGroup || (enemy.children && enemy.children.length > 0 && enemy.children[0].isMesh);
+    } else {
+        enemy = new THREE.Mesh(enemyGeometry, materials.enemyMaterial);
+    }
+
+    if (!isGLBModel) {
+        const glowGeometry = enemyGeometry.clone();
+        const glow = new THREE.Mesh(glowGeometry, materials.glowMaterial);
+        glow.scale.multiplyScalar(materials.glowScale);
+        glow.visible = true;
+        glow.frustumCulled = false;
+        enemy.add(glow);
+    }
+
+    // Scatter within a 1200u sphere around the endpoint
+    const off = new THREE.Vector3(
+        (Math.random() - 0.5) * 1500,
+        (Math.random() - 0.5) * 600,
+        (Math.random() - 0.5) * 1500
+    );
+    enemy.position.copy(position).add(off);
+
+    let hitboxSize = 96;
+    try {
+        const box = new THREE.Box3().setFromObject(enemy);
+        const size = new THREE.Vector3();
+        box.getSize(size);
+        hitboxSize = Math.max(size.x, size.y, size.z);
+    } catch (e) {}
+
+    const isLocal = (galaxyId === 7);
+    enemy.userData = {
+        name: `${galaxyType.faction} Hostile (mission)`,
+        type: 'enemy',
+        health: getEnemyHealthForDifficulty(isLocal, false, false),
+        maxHealth: getEnemyHealthForDifficulty(isLocal, false, false),
+        speed: 0.2 + Math.random() * 0.8,
+        aggression: Math.random(),
+        patrolCenter: position.clone(),
+        patrolRadius: 1200,
+        lastAttack: 0,
+        isActive: false,
+        visible: true,
+        galaxyId: galaxyId,
+        galaxyColor: shapeData.color,
+        swarmTarget: null,
+        circlePhase: Math.random() * Math.PI * 2,
+        attackMode: 'patrol',
+        detectionRange: isLocal ? 1200 : 1600,
+        firingRange: isLocal ? 180 : 240,
+        isLocal: isLocal,
+        isBoss: false,
+        isBossSupport: false,
+        position3D: enemy.position.clone(),
+        placementType: 'mission',
+        hitboxSize: hitboxSize,
+        missionAnchored: true
+    };
+
+    enemy.visible = true;
+    enemy.frustumCulled = true;
+    scene.add(enemy);
+    enemies.push(enemy);
+    return enemy;
+}
+
+window.spawnMissionEnemyAt = spawnMissionEnemyAt;
+
 // =============================================================================
 // UFO ENEMIES - Mysterious aliens patrolling exotic systems with erratic movement
 // =============================================================================
@@ -8397,21 +8486,25 @@ function createEnemies3D() {
         
         // Spawn enemies in spread-out GROUPS of 2-3 instead of individuals
         // so the galaxy isn't a homogeneous swarm clustered around the BH.
-        // First two groups are FORCED to black_hole and cosmic_feature so
-        // every galaxy is guaranteed to have hostiles guarding the black
-        // hole and at least one cosmic feature — the spots the player is
-        // most likely to visit and where missions point.
+        // Every galaxy is guaranteed at least MIN_BH_ENEMIES hostiles
+        // patrolling the black hole (in groups of 2-3) and at least one
+        // group at a cosmic feature, then the rest are randomized. Total
+        // enemy count is allowed to exceed enemiesPerGalaxy when needed
+        // to satisfy the black-hole minimum — the player should always
+        // find significant resistance there.
+        const MIN_BH_ENEMIES = 15;
         let i = 0;
-        let groupIndex = 0;
-        while (i < enemiesPerGalaxy) {
-            const groupSize = Math.min(2 + Math.floor(Math.random() * 2), enemiesPerGalaxy - i); // 2 or 3
+        let bhEnemies = 0;
+        let cosmicSpawned = false;
+        while (i < enemiesPerGalaxy || bhEnemies < MIN_BH_ENEMIES) {
+            const groupSize = 2 + Math.floor(Math.random() * 2); // 2 or 3
 
-            // Pick a group center, biasing toward varied placement types
             let groupPlacementType;
-            if (groupIndex === 0) {
+            if (bhEnemies < MIN_BH_ENEMIES) {
                 groupPlacementType = 'black_hole';
-            } else if (groupIndex === 1) {
+            } else if (!cosmicSpawned) {
                 groupPlacementType = 'cosmic_feature';
+                cosmicSpawned = true;
             } else {
                 const groupRoll = Math.random();
                 if (groupRoll < 0.40) {
@@ -8422,7 +8515,7 @@ function createEnemies3D() {
                     groupPlacementType = 'random';
                 }
             }
-            groupIndex++;
+            if (groupPlacementType === 'black_hole') bhEnemies += groupSize;
             const groupCenter = getEnemyPlacementPosition(g, groupPlacementType);
 
             for (let p = 0; p < groupSize; p++, i++) {
@@ -8526,18 +8619,22 @@ function createEnemies3D() {
         console.log(`   Galaxy ${g} (${galaxyTypes[g].name}): ${count} enemies`);
     }
     
-    // Create local galaxy enemies (Martian Pirates) — patrol in groups of 3
-    // Positioned within the inner Sol system so players encounter them early
+    // Create local galaxy enemies (Martian Pirates) — patrol in groups of 3.
+    // Distributed spherically around the inner Sol system using a Fibonacci
+    // lattice so groups occupy all three axes rather than a single plane.
     const patrolGroupCount = 8;
     const piratesPerGroup = 3;
+    const pirateGoldenAngle = Math.PI * (3 - Math.sqrt(5));
     let pirateIndex = 0;
     for (let g = 0; g < patrolGroupCount; g++) {
         const groupDistance = 800 + Math.random() * 1200;
-        const groupAngle = (g / patrolGroupCount) * Math.PI * 2 + Math.random() * 0.3;
+        const cosPolar = 1 - 2 * (g + 0.5) / patrolGroupCount;
+        const sinPolar = Math.sqrt(Math.max(0, 1 - cosPolar * cosPolar));
+        const azimuth = pirateGoldenAngle * g + Math.random() * 0.3;
         const groupCenter = new THREE.Vector3(
-            Math.cos(groupAngle) * groupDistance,
-            (Math.random() - 0.5) * 100,
-            Math.sin(groupAngle) * groupDistance
+            Math.cos(azimuth) * sinPolar * groupDistance,
+            cosPolar * groupDistance,
+            Math.sin(azimuth) * sinPolar * groupDistance
         );
 
         for (let p = 0; p < piratesPerGroup; p++) {
@@ -8631,14 +8728,19 @@ function createEnemies3D() {
     // =============================================================================
     const vulcanGroupCount = 6;
     const vulcansPerGroup = 3;
+    const vulcanGoldenAngle = Math.PI * (3 - Math.sqrt(5));
     let vulcanIndex = 0;
     for (let g = 0; g < vulcanGroupCount; g++) {
         const groupDistance = 700 + Math.random() * 800;
-        const groupAngle = (g / vulcanGroupCount) * Math.PI * 2 + Math.random() * 0.5;
+        // Fibonacci-lattice sphere: even 3D coverage around Sagittarius A*.
+        // Offset starting index so Vulcans don't overlap with Martian Pirates.
+        const cosPolar = 1 - 2 * (g + 0.5) / vulcanGroupCount;
+        const sinPolar = Math.sqrt(Math.max(0, 1 - cosPolar * cosPolar));
+        const azimuth = vulcanGoldenAngle * (g + 3.5) + Math.random() * 0.5;
         const groupCenter = new THREE.Vector3(
-            Math.cos(groupAngle) * groupDistance,
-            (Math.random() - 0.5) * 200,
-            Math.sin(groupAngle) * groupDistance
+            Math.cos(azimuth) * sinPolar * groupDistance,
+            cosPolar * groupDistance,
+            Math.sin(azimuth) * sinPolar * groupDistance
         );
 
         for (let p = 0; p < vulcansPerGroup; p++) {

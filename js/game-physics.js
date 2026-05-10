@@ -3556,7 +3556,7 @@ function createDiscoveryPathToPosition(nebulaPosition, targetPosition, factionCo
     // the mission area before the player arrives.
     const missionEnemies = [];
     const MISSION_RADIUS = 3000;
-    const MIN_MISSION_ENEMIES = 3;
+    const MIN_MISSION_ENEMIES = 7;
     const ANCHOR_RADIUS = 1200;
     if (typeof enemies !== 'undefined' && galaxyId >= 0) {
         for (let i = 0; i < enemies.length; i++) {
@@ -3593,6 +3593,19 @@ function createDiscoveryPathToPosition(nebulaPosition, targetPosition, factionCo
                 );
                 pick.position.copy(endPos).add(off);
                 missionEnemies.push(pick);
+            }
+        }
+
+        // Still short?  Spawn fresh enemies at the endpoint.  Galaxies
+        // with tight enemy budgets (or several active missions) can
+        // exhaust the relocation pool — the dotted line should still
+        // lead to a real group of 7+ hostiles, so we top up.
+        if (missionEnemies.length < MIN_MISSION_ENEMIES &&
+            typeof spawnMissionEnemyAt === 'function') {
+            const needed = MIN_MISSION_ENEMIES - missionEnemies.length;
+            for (let k = 0; k < needed; k++) {
+                const fresh = spawnMissionEnemyAt(galaxyId, endPos);
+                if (fresh) missionEnemies.push(fresh);
             }
         }
 
