@@ -706,6 +706,7 @@
                 <div class="curved-element">Distance: <span id="distance" class="text-yellow-400 font-mono">0.0 ly</span></div>
                 <div class="curved-element">Energy: <div class="w-32 h-2 bg-gray-800 rounded border border-cyan-400"><div id="energyBar" class="loading-bar h-full rounded" style="width: 100%"></div></div></div>
                 <div class="curved-element">Hull: <div class="w-32 h-2 bg-gray-800 rounded border border-green-400"><div id="hullBar" class="hull-bar h-full rounded" style="width: 100%"></div></div></div>
+                <div class="curved-element">Shields: <span id="shipShieldStatus" class="text-gray-400">OFFLINE</span></div>
                 <div class="curved-element">Emergency Warp: <span id="emergencyWarpCount" class="text-cyan-400 font-mono">5</span></div>
                 <div class="curved-element">Location: <span id="location" class="text-purple-400">Local Galaxy</span></div>
                 <div class="curved-element">Weapons: <span id="weaponStatus" class="text-green-400">ARMED</span></div>
@@ -713,6 +714,8 @@
                 <div class="curved-element">Target Lock: <span id="targetLockStatus" class="text-gray-400">INACTIVE</span></div>
                 <div id="targetInfo" class="text-orange-400 curved-element">Target: None</div>
                 <div id="galaxyProgress" class="text-cyan-400 curved-element">Galaxies Cleared: <span id="galaxiesCleared">0</span>/8</div>
+                <div class="curved-element" style="color:#7fd5ff;">Reputation: <span id="shipRepValue" class="font-mono">0</span> <span id="shipRepNext" class="text-gray-400 text-xs"></span></div>
+                <div class="curved-element" style="margin-top:-4px;"><div class="w-32 h-1 bg-gray-800 rounded border border-cyan-700"><div id="shipRepBar" style="height:100%;width:0%;background:#7fd5ff;border-radius:2px;"></div></div></div>
                 <div id="enemyDetector" class="text-red-400 curved-element hidden">Hostiles in Region: <span id="enemyCount">0</span></div>
             </div>
         </div>
