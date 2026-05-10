@@ -3406,11 +3406,15 @@ function findEnemiesNearExoticSystem(galaxyId) {
 
     // Need at least 3 enemies near the system for a real mission.  If we're
     // short, relocate some from the galaxy to hide at the exotic system.
+    // Don't pull black-hole defenders or already-anchored mission enemies
+    // — those guard locations the player expects hostiles at.
     const needed = Math.max(0, 3 - alreadyThere.length);
     if (needed > 0) {
         const candidates = enemies.filter(e =>
             e && e.userData && e.userData.galaxyId === galaxyId &&
             e.userData.health > 0 && !e.userData.isBoss && !e.userData.isBossSupport &&
+            e.userData.placementType !== 'black_hole' &&
+            !e.userData.missionAnchored &&
             e.position.distanceTo(sysPos) >= HIDE_RADIUS);
         for (let i = 0; i < needed && i < candidates.length; i++) {
             const pick = candidates[Math.floor(Math.random() * candidates.length)];
@@ -3544,16 +3548,66 @@ function createDiscoveryPathToPosition(nebulaPosition, targetPosition, factionCo
     // enemies.  The path leads to a specific cluster (at a cosmic feature
     // or exotic system), so completion should require clearing only those,
     // not every enemy across the entire galaxy.
+    //
+    // If fewer than MIN_MISSION_ENEMIES are within range, relocate galaxy
+    // enemies to the endpoint so the dotted line always leads to real
+    // hostiles.  Tracked enemies are then anchored (patrolCenter +
+    // smaller patrolRadius) to the endpoint so they don't wander out of
+    // the mission area before the player arrives.
     const missionEnemies = [];
+    const MISSION_RADIUS = 3000;
+    const MIN_MISSION_ENEMIES = 3;
+    const ANCHOR_RADIUS = 1200;
     if (typeof enemies !== 'undefined' && galaxyId >= 0) {
-        const MISSION_RADIUS = 3000;
         for (let i = 0; i < enemies.length; i++) {
             const e = enemies[i];
             if (!e || !e.userData || e.userData.health <= 0) continue;
+            if (e.userData.isBoss || e.userData.isBossSupport) continue;
             if (e.userData.galaxyId === galaxyId &&
                 e.position.distanceTo(endPos) < MISSION_RADIUS) {
                 missionEnemies.push(e);
             }
+        }
+
+        // Relocate enemies to the endpoint if the area is sparse.
+        if (missionEnemies.length < MIN_MISSION_ENEMIES) {
+            const candidates = enemies.filter(e =>
+                e && e.userData &&
+                e.userData.galaxyId === galaxyId &&
+                e.userData.health > 0 &&
+                !e.userData.isBoss && !e.userData.isBossSupport &&
+                !e.userData.isEliteGuardian &&
+                e.userData.placementType !== 'black_hole' &&
+                !e.userData.missionAnchored &&
+                missionEnemies.indexOf(e) === -1
+            );
+            const needed = MIN_MISSION_ENEMIES - missionEnemies.length;
+            for (let k = 0; k < needed && candidates.length > 0; k++) {
+                const idx = Math.floor(Math.random() * candidates.length);
+                const pick = candidates.splice(idx, 1)[0];
+                if (!pick || !pick.position) continue;
+                const off = new THREE.Vector3(
+                    (Math.random() - 0.5) * 1500,
+                    (Math.random() - 0.5) * 600,
+                    (Math.random() - 0.5) * 1500
+                );
+                pick.position.copy(endPos).add(off);
+                missionEnemies.push(pick);
+            }
+        }
+
+        // Anchor tracked enemies to the endpoint so they stay near the
+        // dotted line's destination during patrol behavior.
+        for (let m = 0; m < missionEnemies.length; m++) {
+            const e = missionEnemies[m];
+            if (!e || !e.userData) continue;
+            if (e.userData.patrolCenter && e.userData.patrolCenter.copy) {
+                e.userData.patrolCenter.copy(endPos);
+            } else {
+                e.userData.patrolCenter = endPos.clone();
+            }
+            e.userData.patrolRadius = ANCHOR_RADIUS;
+            e.userData.missionAnchored = true;
         }
     }
 
@@ -4186,7 +4240,26 @@ function animateDiscoveryPaths() {
                     }
                 }
             } else {
-                alive = true;  // no tracked enemies → never auto-complete
+                // Legacy / sparse paths with no captured snapshot: fall
+                // back to a radius check around the endpoint so the
+                // mission can still complete rather than hanging open
+                // forever.
+                const gId = path.galaxyId !== undefined ? path.galaxyId
+                    : (path.line && path.line.userData && path.line.userData.galaxyId);
+                const endPos = path.line && path.line.userData && path.line.userData.endPosition;
+                if (typeof enemies !== 'undefined' && gId !== undefined && gId >= 0 && endPos) {
+                    const MISSION_RADIUS = 3000;
+                    for (let j = 0; j < enemies.length; j++) {
+                        const e = enemies[j];
+                        if (!e || !e.userData || e.userData.health <= 0) continue;
+                        if (e.userData.isBoss || e.userData.isBossSupport) continue;
+                        if (e.userData.galaxyId === gId &&
+                            e.position.distanceTo(endPos) < MISSION_RADIUS) {
+                            alive = true;
+                            break;
+                        }
+                    }
+                }
             }
 
             const wasComplete = path.line.userData.missionComplete;

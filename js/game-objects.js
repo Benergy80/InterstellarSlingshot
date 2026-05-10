@@ -8397,20 +8397,32 @@ function createEnemies3D() {
         
         // Spawn enemies in spread-out GROUPS of 2-3 instead of individuals
         // so the galaxy isn't a homogeneous swarm clustered around the BH.
+        // First two groups are FORCED to black_hole and cosmic_feature so
+        // every galaxy is guaranteed to have hostiles guarding the black
+        // hole and at least one cosmic feature — the spots the player is
+        // most likely to visit and where missions point.
         let i = 0;
+        let groupIndex = 0;
         while (i < enemiesPerGalaxy) {
             const groupSize = Math.min(2 + Math.floor(Math.random() * 2), enemiesPerGalaxy - i); // 2 or 3
 
             // Pick a group center, biasing toward varied placement types
             let groupPlacementType;
-            const groupRoll = Math.random();
-            if (groupRoll < 0.40) {
-                groupPlacementType = 'cosmic_feature';
-            } else if (groupRoll < 0.65) {
+            if (groupIndex === 0) {
                 groupPlacementType = 'black_hole';
+            } else if (groupIndex === 1) {
+                groupPlacementType = 'cosmic_feature';
             } else {
-                groupPlacementType = 'random';
+                const groupRoll = Math.random();
+                if (groupRoll < 0.40) {
+                    groupPlacementType = 'cosmic_feature';
+                } else if (groupRoll < 0.65) {
+                    groupPlacementType = 'black_hole';
+                } else {
+                    groupPlacementType = 'random';
+                }
             }
+            groupIndex++;
             const groupCenter = getEnemyPlacementPosition(g, groupPlacementType);
 
             for (let p = 0; p < groupSize; p++, i++) {
