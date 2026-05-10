@@ -1852,8 +1852,10 @@ if (gameState.solarStormBoostActive || gameState.plasmaStormBoostActive) {
         const distance = playerPos.distanceTo(supernova.position);
         
         if (distance < 600) {
-            // Radiation damage
-            if (typeof gameState.hull !== 'undefined') {
+            // Radiation damage (skip during 7s startup grace)
+            const _grace = gameState.gameStartTime &&
+                          (Date.now() - gameState.gameStartTime < 7000);
+            if (typeof gameState.hull !== 'undefined' && !_grace) {
                 const damage = (600 - distance) / 600 * 0.5;
                 gameState.hull = Math.max(0, gameState.hull - damage);
                 

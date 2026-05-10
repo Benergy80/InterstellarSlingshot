@@ -4,7 +4,20 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, minimal-ui, viewport-fit=cover">
     <title>Interstellar Slingshot - A Gravitational Space Explorer by ChiLab</title>
-    
+
+    <!-- Open Graph / Social Media Preview -->
+    <meta property="og:title" content="Interstellar Slingshot">
+    <meta property="og:description" content="A Gravitational Space Explorer by ChiLab — explore 8 galaxies, battle hostile factions, and slingshot through the cosmos in this 3D browser game.">
+    <meta property="og:image" content="https://interstellarslingshot.com/images/og-preview.jpg">
+    <meta property="og:url" content="https://interstellarslingshot.com/">
+    <meta property="og:type" content="website">
+    <meta property="og:site_name" content="Interstellar Slingshot">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="Interstellar Slingshot">
+    <meta name="twitter:description" content="A Gravitational Space Explorer by ChiLab">
+    <meta name="twitter:image" content="https://interstellarslingshot.com/images/og-preview.jpg">
+    <meta name="description" content="Explore 8 galaxies, battle hostile factions, recruit wingmen, and slingshot through the cosmos in this free 3D browser space game.">
+
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🚀</text></svg>">
     
     <!-- External Dependencies with THREE.js Backup System -->
@@ -180,7 +193,56 @@
                 max-height: 45vh !important;
             }
         }
-        
+
+        /* Game Over / Mission Failed screen — responsive on mobile.
+           The default panel is text-4xl + p-8 which overflows narrow
+           viewports and can push the Restart button below the fold. */
+        #gameOverScreen {
+            position: fixed !important;
+            inset: 0 !important;
+            z-index: 99999 !important;
+            display: flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            padding: 16px !important;
+            background: rgba(0,0,0,0.97) !important;
+        }
+        #gameOverScreen > div {
+            max-width: 92vw !important;
+            max-height: 92vh !important;
+            overflow-y: auto !important;
+            box-sizing: border-box !important;
+        }
+        @media (max-width: 768px) {
+            #gameOverScreen > div {
+                padding: 18px !important;
+                width: 92vw !important;
+            }
+            #gameOverScreen h1 {
+                font-size: 1.6rem !important;
+                margin-bottom: 10px !important;
+                line-height: 1.2 !important;
+            }
+            #gameOverScreen p {
+                font-size: 0.95rem !important;
+                margin-bottom: 14px !important;
+            }
+            #gameOverScreen .text-lg {
+                font-size: 1rem !important;
+            }
+            #gameOverScreen .text-sm {
+                font-size: 0.85rem !important;
+                line-height: 1.4 !important;
+            }
+            #gameOverScreen button {
+                font-size: 0.95rem !important;
+                padding: 12px 22px !important;
+                margin-top: 18px !important;
+                width: 100% !important;
+                max-width: 280px !important;
+            }
+        }
+
         /* Achievement Popup Priority */
         #achievementPopup {
             z-index: 999 !important;
@@ -193,11 +255,12 @@
             pointer-events: auto !important;
         }
 
-        /* Achievement animations */
+        /* Achievement animations — popup sits below the title panel, so
+           slide in from above and fade upward on exit. */
         @keyframes achievementSlide {
-            0% { transform: translate(-50%, 100px); opacity: 0; }
-            20% { transform: translate(-50%, 0); opacity: 1; }
-            80% { transform: translate(-50%, 0); opacity: 1; }
+            0%   { transform: translate(-50%, -60px); opacity: 0; }
+            20%  { transform: translate(-50%, 0);     opacity: 1; }
+            80%  { transform: translate(-50%, 0);     opacity: 1; }
             100% { transform: translate(-50%, -20px); opacity: 0; }
         }
 
@@ -606,22 +669,30 @@
         <div class="absolute top-14 left-4 ui-panel top-left rounded-lg p-3 z-10">
             <h3 class="text-sm font-bold text-cyan-400 glow-text mb-2 cyber-title curved-element">FLIGHT CONTROLS</h3>
             <div class="text-xs text-gray-300 opacity-80 curved-element mb-3">
-                WASD: Thrust Forward/Left/Back/Right<br>
-                Arrow Keys: Look Up/Down/Left/Right<br>
-                Q/E: Roll Left/Right<br>
-                Option/Click: Fire Weapons<br>
-                Cmd/Meta: Fire Missile<br>
-                X: Brake/Stop | Tab: Engage Shields<br>
-                Enter: Auto-nav/Slingshot<br>
-                Space: Target Lock | O: Emergency Warp<br>
-                Z: Zoom Scope (Hold)<br>
-                1/3/0: 1st/3rd/No Ship POV | V: Toggle
+                W/S: Thrust Forward/Reverse<br>
+                A/D: Strafe Left/Right | Q/E: Roll<br>
+                Arrows: Pitch/Yaw (Look)<br>
+                B: Boost | X: Brake<br>
+                W×2: Jump (2s warp, 25% energy)<br>
+                Alt / Click: Fire Lasers<br>
+                Shift: Fire Missile | Z: Zoom Scope<br>
+                Space: Target Lock (hold)<br>
+                CapsLock: Cycle Targets<br>
+                Tab: Toggle Shields<br>
+                Enter: Auto-nav / Slingshot<br>
+                O: Emergency Warp (O×2: short warp)<br>
+                1/3/0: 1st/3rd/No Ship POV | V: Toggle<br>
+                T: Toggle Autopilot<br>
+                P: Pause | M: Hide UI Panels
             </div>
-            <div class="flex gap-2 mt-2">
-                <button id="muteBtn" class="small-control-btn">
-                    <i class="fas fa-volume-up mr-1" id="muteIcon"></i>Mute
+            <div class="flex gap-2 mt-2 flex-wrap">
+                <button id="muteBtn" class="small-control-btn" type="button">
+                    <i class="fas fa-volume-up mr-1" id="muteIcon"></i>Music
                 </button>
-                <button id="pauseBtn" class="small-control-btn">
+                <button id="skipTrackBtn" class="small-control-btn" type="button" title="Skip to next soundtrack">
+                    <i class="fas fa-forward mr-1"></i>Skip
+                </button>
+                <button id="pauseBtn" class="small-control-btn" type="button">
                     <i class="fas fa-pause mr-1" id="pauseIcon"></i>Pause
                 </button>
             </div>
@@ -786,7 +857,7 @@
     </div>
 
 <!-- Achievement Popup -->
-<div id="achievementPopup" class="hidden fixed bottom-20 left-1/2 transform -translate-x-1/2 pointer-events-auto" style="z-index: 999 !important;">
+<div id="achievementPopup" class="hidden fixed left-1/2 transform -translate-x-1/2 pointer-events-auto" style="z-index: 999 !important; top: 120px;">
     <div class="ui-panel rounded-lg p-4 text-center" style="min-width: 300px; background: linear-gradient(135deg, rgba(15, 23, 42, 0.3), rgba(30, 41, 59, 0.3)); backdrop-filter: blur(2px);">
         <h4 class="text-lg font-bold text-cyan-400 glow-text mb-2 cyber-title">Achievement!</h4>
         <p id="achievementText" class="text-sm text-gray-300"></p>
@@ -807,10 +878,16 @@
 
 <!-- MOBILE CONTROLS -->
 <div class="mobile-controls-container">
-    <!-- Top row: Flight Controls and Emergency Warp (aligned with indicators) -->
+    <!-- Top row: Flight Controls, Music, Skip, Emergency Warp -->
     <div class="mobile-controls-top">
         <button class="mobile-btn" onclick="showMobilePanel('controls')" title="Flight Controls">
             <i class="fas fa-gamepad"></i>
+        </button>
+        <button id="mobileMusicBtn" class="mobile-btn" type="button" title="Music On/Off">
+            <i class="fas fa-volume-up" id="mobileMusicIcon"></i>
+        </button>
+        <button id="mobileSkipTrackBtn" class="mobile-btn" type="button" title="Skip Track">
+            <i class="fas fa-forward"></i>
         </button>
         <button class="mobile-btn warp" onclick="mobileEmergencyWarp()" title="Emergency Warp">
             <i class="fa-solid fa-triangle-exclamation"></i>
@@ -827,24 +904,24 @@
             <span class="missile-count-badge" id="mobileMissileCountBadge">3</span>
         </button>
         <button class="mobile-btn"
-            ontouchstart="mobileBrakesStart()"
-            ontouchend="mobileBrakesEnd()"
+            ontouchstart="event.preventDefault();mobileBrakesStart()"
+            ontouchend="event.preventDefault();mobileBrakesEnd()"
             onmousedown="mobileBrakesStart()"
             onmouseup="mobileBrakesEnd()"
             title="Brakes (Hold)">
             <i class="fas fa-hand-paper"></i>
         </button>
         <button class="mobile-btn fire"
-            onclick="handleMobileFire()"
             ontouchstart="handleMobileFire(event)"
+            onclick="handleMobileFire(event)"
             title="Fire Weapons">
             <i class="fas fa-crosshairs"></i>
         </button>
         <button class="mobile-btn"
+            ontouchstart="event.preventDefault();startForwardThrust()"
+            ontouchend="event.preventDefault();stopForwardThrust()"
             onmousedown="startForwardThrust()"
             onmouseup="stopForwardThrust()"
-            ontouchstart="startForwardThrust()"
-            ontouchend="stopForwardThrust()"
             title="Forward Thrust">
             <i class="fas fa-arrow-up"></i>
         </button>
@@ -870,6 +947,9 @@
         
         <button id="mobileAutoNavigateBtn" onclick="mobileAutoNavigate()" class="w-full mt-2 space-btn rounded px-4 py-2 mb-2">
             <i class="fas fa-crosshairs mr-2"></i>Auto-Navigate to Target
+        </button>
+        <button id="mobileClearTargetBtn" onclick="mobileClearTarget()" class="w-full space-btn rounded px-4 py-2 mb-2" style="background:linear-gradient(135deg,#5f1e1e,#371010);border-color:#e94444;">
+            <i class="fas fa-times mr-2"></i>Clear Target / Disengage
         </button>
         <button id="mobileWarpBtn" onclick="mobileWarpAction()" class="w-full space-btn rounded px-4 py-2">
             <i class="fas fa-rocket mr-2"></i>Slingshot Status
@@ -897,16 +977,27 @@
             <div style="font-size: 12px; line-height: 1.4;">
                 <strong>TOUCH CONTROLS:</strong><br>
                 • Drag screen: Look around<br>
-                • Tap fire button: Shoot<br>
+                • Tap fire button: Shoot lasers<br>
+                • Tap missile button: Launch missile<br>
+                • Tap shields button: Toggle shields<br>
+                • Tap brakes button: Brake<br>
+                • Tap warp button: Emergency warp<br>
                 • Use navigation panel for targets<br><br>
                 <strong>DESKTOP CONTROLS:</strong><br>
-                Arrows: Pitch/Yaw | Q/E: Roll<br>
-                W/S: Throttle | A/D: Strafe<br>
-                Click/Option: Fire | Cmd: Missile<br>
-                Space: Target Lock | Tab: Cycle Targets<br>
-                Enter: Auto-nav/Slingshot<br>
-                O: Emergency Warp | Z: Zoom Scope<br>
-                1/3/0: POV (1st/3rd/None) | V: Toggle
+                W/S: Thrust Forward/Reverse<br>
+                A/D: Strafe Left/Right | Q/E: Roll<br>
+                Arrows: Pitch/Yaw (Look)<br>
+                B: Boost | X: Brake<br>
+                W×2: Jump (2s warp, 25% energy)<br>
+                Alt / Click: Fire Lasers<br>
+                Shift: Fire Missile | Z: Zoom Scope<br>
+                Space: Target Lock (hold)<br>
+                CapsLock: Cycle Targets<br>
+                Tab: Toggle Shields<br>
+                Enter: Auto-nav / Slingshot<br>
+                O: Emergency Warp (O×2: short warp)<br>
+                1/3/0: POV | V: Toggle 1st/3rd<br>
+                P: Pause
             </div>
         </div>
     </div>
@@ -1014,19 +1105,22 @@
     <!-- Game Scripts -->
     <!-- Load GLTFLoader before game-models.js -->
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
-    <script src="js/game-models.js?v=20260207-1852"></script>
-    <script src="js/camera-system.js?v=20260207-1852"></script>
+    <script src="js/game-models.js?v=20260501-0058"></script>
+    <script src="js/camera-system.js?v=20260501-0058"></script>
     <script src="js/cosmic-features.js"></script>
-    <script src="js/game-objects.js?v=20260207-1852"></script>
-    <script src="js/game-controls.js?v=20260207-1852"></script>
-    <script src="js/outer-systems.js"></script>
+    <script src="js/game-objects.js?v=20260501-0058"></script>
+    <script src="js/game-controls.js?v=20260501-0058"></script>
+    <script src="js/civilian-combat.js"></script>
+    <script src="js/outer-systems.js?v=20260501-0058"></script>
     <script src="js/interstellar-asteroids.js"></script>
-    <script src="js/game-physics.js?v=20260207-1852"></script>
-    <script src="js/game-ui.js"></script>
+    <script src="js/game-physics.js?v=20260501-0058"></script>
+    <script src="js/game-ui.js?v=20260501-0058"></script>
     <script src="js/atmospheric-perspective.js"></script>
-    <script src="js/game-intro.js?v=20260207-1852"></script>
+    <script src="js/game-intro.js?v=20260501-0058"></script>
     <script src="js/game-shields.js"></script>
-    <script src="js/game-core.js?v=20260207-1852"></script>
+    <script src="js/game-music.js"></script>
+    <script src="js/autopilot.js"></script>
+    <script src="js/game-core.js?v=20260501-0058"></script>
 
     <!-- Mobile Script -->
     <script src="js/mobile-controls.js"></script>

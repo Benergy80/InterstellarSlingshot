@@ -49,26 +49,23 @@ function setupMobileLaunchMusicTrigger() {
                     const originalClick = node.onclick;
                     node.onclick = function(e) {
                         console.log('📱 Launch button clicked - starting music');
-                        
-                        // Initialize audio system FIRST (enables all sound effects)
+
                         if (typeof initAudio === 'function') {
                             initAudio();
                             console.log('🔊 Audio system initialized from mobile launch');
                         }
-                        
-                        // Resume audio context (required for browsers)
+
                         if (typeof resumeAudioContext === 'function') {
                             resumeAudioContext();
                         }
-                        
-                        // Start background music
+
                         if (typeof startBackgroundMusic === 'function') {
                             setTimeout(() => {
                                 startBackgroundMusic();
                                 console.log('🎵 Background music started from mobile launch');
                             }, 500);
                         }
-                        
+
                         if (originalClick) {
                             originalClick.call(this, e);
                         }
@@ -87,26 +84,23 @@ function setupMobileLaunchMusicTrigger() {
             const originalClick = existingLaunchBtn.onclick;
             existingLaunchBtn.onclick = function(e) {
                 console.log('📱 Launch button clicked - starting music');
-                
-                // Initialize audio system FIRST (enables all sound effects)
+
                 if (typeof initAudio === 'function') {
                     initAudio();
                     console.log('🔊 Audio system initialized from mobile launch');
                 }
-                
-                // Resume audio context (required for browsers)
+
                 if (typeof resumeAudioContext === 'function') {
                     resumeAudioContext();
                 }
-                
-                // Start background music
+
                 if (typeof startBackgroundMusic === 'function') {
                     setTimeout(() => {
                         startBackgroundMusic();
                         console.log('🎵 Background music started from mobile launch');
                     }, 500);
                 }
-                
+
                 if (originalClick) {
                     originalClick.call(this, e);
                 }
@@ -117,18 +111,33 @@ function setupMobileLaunchMusicTrigger() {
 }
 
 // Make functions globally accessible
+// Double-tap detection for forward thrust → 2 s Jump warp
+let _lastThrustTapTime = 0;
+const THRUST_DOUBLE_TAP_MS = 300;
+
 window.startForwardThrust = function() {
     window.mobileSettings.forwardThrust = true;
-    
-    if (typeof keys !== 'undefined') {
-        keys.w = true;
+
+    const now = Date.now();
+    if (now - _lastThrustTapTime < THRUST_DOUBLE_TAP_MS) {
+        // Double-tap detected → trigger Jump (same as W×2 on desktop)
+        if (typeof keys !== 'undefined') {
+            keys.wDoubleTap = true;
+            setTimeout(() => { if (typeof keys !== 'undefined') keys.wDoubleTap = false; }, 150);
+        }
+        _lastThrustTapTime = 0; // reset so triple-tap doesn't re-fire
+        console.log('📱 Forward thrust DOUBLE-TAP → Jump warp');
+    } else {
+        // Single tap — normal thrust
+        if (typeof keys !== 'undefined') {
+            keys.w = true;
+        }
+        _lastThrustTapTime = now;
     }
-    
+
     if (typeof playSound === 'function') {
         playSound('thrust', 400, 0.1);
     }
-    
-    console.log('📱 Forward thrust started');
 };
 
 window.stopForwardThrust = function() {
@@ -257,6 +266,25 @@ window.mobileAutoNavigate = function() {
     }, 500);
 };
 
+window.mobileClearTarget = function() {
+    if (typeof gameState !== 'undefined') {
+        gameState.currentTarget = null;
+        gameState.autoNavigating = false;
+        gameState.autoNavOrienting = false;
+        if (gameState.targetLock) {
+            gameState.targetLock.active = false;
+            gameState.targetLock.target = null;
+        }
+    }
+    if (typeof showAchievement === 'function') {
+        showAchievement('Target Cleared', 'Auto-targeting disengaged');
+    }
+    if (typeof playSound === 'function') {
+        playSound('navigation', 800, 0.12);
+    }
+    setTimeout(() => { window.hideNavPanel(); }, 400);
+};
+
 window.mobileWarpAction = function() {
     if (typeof executeSlingshot === 'function') {
         executeSlingshot();
@@ -279,20 +307,23 @@ window.mobileEmergencyWarp = function() {
         return;
     }
     
-    // Check if shields are active
+    // Drop shields automatically before warping (the physics code blocks
+    // warp while shields are on, but in demo mode shields are up whenever
+    // near enemies — the player shouldn't have to manually toggle).
     if (typeof isShieldActive === 'function' && isShieldActive()) {
-        if (typeof showAchievement === 'function') {
-            showAchievement('Warp Blocked', 'Cannot warp with shields active');
+        if (typeof deactivateShields === 'function') {
+            deactivateShields();
+        } else if (typeof toggleShields === 'function') {
+            toggleShields();
         }
-        return;
     }
     
-    // Check if already warping
-    if (gameState.emergencyWarp.active) {
-        console.log('⚠️ Already warping - ignoring button press');
+    // Check if transitioning
+    if (gameState.emergencyWarp.transitioning) {
+        console.log('⚠️ Warp transitioning - ignoring');
         return;
     }
-    
+
     // Check if charges available
     if (gameState.emergencyWarp.available <= 0) {
         if (typeof showAchievement === 'function') {
@@ -300,16 +331,28 @@ window.mobileEmergencyWarp = function() {
         }
         return;
     }
-    
-    // Trigger warp by setting key (the physics handler will process it)
-    if (typeof keys !== 'undefined') {
-        keys.enter = true;
-        // Clear after a single frame to prevent loops
-        setTimeout(() => {
-            keys.enter = false;
-        }, 50);
+
+    // Block preemptiveShields from re-activating for 800 ms so the physics
+    // code sees shields-down when it processes the warp on the next frame.
+    // ap._missileFireLock is checked by preemptiveShields in autopilot.js.
+    if (typeof window.demoPilot !== 'undefined') {
+        // Access the autopilot's internal lock via a thin exposed helper
+        window._demoShieldLock = Date.now() + 800;
     }
-    
+
+    // Dispatch a real 'o' keystroke — that's the emergency warp hotkey
+    // (game-physics.js checks `keys.o` to kick off the warp).  Enter is
+    // bound to slingshot / auto-nav, NOT emergency warp, so dispatching
+    // Enter here was silently firing the wrong handler.
+    document.dispatchEvent(new KeyboardEvent('keydown', {
+        key: 'o', code: 'KeyO', keyCode: 79, which: 79, bubbles: true
+    }));
+    setTimeout(() => {
+        document.dispatchEvent(new KeyboardEvent('keyup', {
+            key: 'o', code: 'KeyO', keyCode: 79, which: 79, bubbles: true
+        }));
+    }, 300);
+
     console.log('✅ Mobile emergency warp triggered');
 };
 
@@ -506,7 +549,11 @@ window.mobileCycleTarget = function() {
 // Touch controls - isolated scope with let variables
 let touchStartX = 0;
 let touchStartY = 0;
+let tapOriginX = 0;       // never reset during drag — used for tap detection
+let tapOriginY = 0;
 let isTouching = false;
+let touchStartTime = 0;
+let hasDragged = false;    // set true once any significant touchmove fires
 let twoFingerTouchStartDistance = 0;
 let twoFingerTouchStartRotation = 0;
 
@@ -516,18 +563,25 @@ document.addEventListener('touchstart', (e) => {
         e.target.closest('.mobile-controls-container') ||
         e.target.closest('.mobile-controls') ||
         e.target.closest('.mobile-popup') ||
-        e.target.closest('.nav-panel-mobile')) {
+        e.target.closest('.nav-panel-mobile') ||
+        e.target.closest('#demoPilotHUD') ||
+        e.target.closest('.mobile-floating-status') ||
+        e.target.closest('.mobile-stat-pill') ||
+        e.target.closest('.mobile-controls-top')) {
         return; // Let button handlers work
     }
-    
+
     if (e.target.id === 'gameCanvas' || e.target.closest('#gameContainer')) {
         if (e.touches.length === 1) {
-            // Single finger - look controls
             const touch = e.touches[0];
             touchStartX = touch.clientX;
             touchStartY = touch.clientY;
+            tapOriginX  = touch.clientX;
+            tapOriginY  = touch.clientY;
+            touchStartTime = Date.now();
+            hasDragged = false;
             isTouching = true;
-            window.mobileTouchActive = true; // Prevent automatic banking during touch
+            window.mobileTouchActive = true;
         } else if (e.touches.length === 2) {
             // Two fingers - roll control
             const touch1 = e.touches[0];
@@ -568,12 +622,19 @@ document.addEventListener('touchmove', (e) => {
             // Apply rotation deltas to LOCAL axes (not world axes)
             // This matches desktop arrow key behavior exactly
             
+            // Mark as a drag once movement exceeds tap threshold so
+            // touchend doesn't false-positive as a tap-to-fire.
+            if (Math.abs(touch.clientX - tapOriginX) > 10 ||
+                Math.abs(touch.clientY - tapOriginY) > 10) {
+                hasDragged = true;
+            }
+
             // YAW (turn left/right) - rotate around LOCAL Y axis
             if (Math.abs(deltaX) > 0.5) {
                 camera.rotateY(-deltaX * sensitivity);
             }
-            
-            // PITCH (look up/down) - rotate around LOCAL X axis  
+
+            // PITCH (look up/down) - rotate around LOCAL X axis
             if (Math.abs(deltaY) > 0.5) {
                 camera.rotateX(-deltaY * sensitivity);
             }
@@ -680,14 +741,33 @@ document.addEventListener('touchmove', (e) => {
 }, { passive: false });
 
 document.addEventListener('touchend', (e) => {
+    // TAP-TO-FIRE: a genuine tap is short (< 300 ms), hasn't been marked
+    // as a drag by touchmove, and the finger stayed close to the ORIGINAL
+    // touchdown point (tapOriginX/Y — NOT the touchStartX/Y which gets
+    // reset during each move event for the look-drag system).
+    if (touchStartTime > 0 && isTouching && !hasDragged) {
+        const dt = Date.now() - touchStartTime;
+        if (dt < 300 && e.changedTouches && e.changedTouches.length > 0) {
+            const endTouch = e.changedTouches[0];
+            const dx = Math.abs(endTouch.clientX - tapOriginX);
+            const dy = Math.abs(endTouch.clientY - tapOriginY);
+            if (dx < 15 && dy < 15) {
+                if (typeof gameState !== 'undefined' && gameState.gameStarted && !gameState.gameOver) {
+                    if (typeof resumeAudioContext === 'function') resumeAudioContext();
+                    if (typeof fireWeapon === 'function') fireWeapon();
+                }
+            }
+        }
+    }
+
     isTouching = false;
-    window.mobileTouchActive = false; // Re-enable banking after touch ends
-    
-    // Reset yaw velocity to prevent banking from accumulated velocity
+    touchStartTime = 0;
+    hasDragged = false;
+    window.mobileTouchActive = false;
+
     if (typeof rotationalVelocity !== 'undefined') {
         rotationalVelocity.yaw = 0;
     }
-    // Also try window object
     if (typeof window.rotationalVelocity !== 'undefined') {
         window.rotationalVelocity.yaw = 0;
     }
@@ -766,7 +846,7 @@ document.addEventListener('click', (e) => {
 });
 
 // Periodic updates with game over check
-const mobileUpdateInterval = setInterval(() => {
+const mobileUpdateInterval = trackInterval(setInterval(() => {
     // CRITICAL: Stop interval if game is over
     if (typeof gameState !== 'undefined' && gameState.gameOver) {
         clearInterval(mobileUpdateInterval);
@@ -799,7 +879,7 @@ const mobileUpdateInterval = setInterval(() => {
             if (warpBadge) warpBadge.textContent = gameState.emergencyWarp?.available ?? 5;
         }
     }
-}, 1000);
+}, 1000));
 
 // Show mobile controls after intro
 document.addEventListener('DOMContentLoaded', () => {

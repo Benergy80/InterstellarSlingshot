@@ -541,7 +541,7 @@ const enemyShapes = {
 
 // Enhanced enemy spawning limits per galaxy
 const galaxyEnemyLimits = {
-    0: 12, 1: 15, 2: 10, 3: 13, 4: 8, 5: 14, 6: 18, 7: 10  // Vulcan restored
+    0: 24, 1: 30, 2: 20, 3: 26, 4: 18, 5: 28, 6: 36, 7: 20  // Doubled — spread in 2-3 ship groups
 };
 
 // FIXED: Boss system initialization - SINGLE DECLARATION
@@ -554,6 +554,13 @@ const bossSystem = {
     // Elite guardians: Track by species/faction (universe-wide)
     // Key format: faction name (e.g., "Borg Collective", "Crystalline Hive")
     eliteGuardians: {},
+
+    // Per-galaxy progress flags: index by galaxyId (0..7).  These MUST be
+    // initialized or checkGuardianVictory / checkGalaxyClear throw when
+    // reading [g] on undefined.
+    galaxyBossDefeated: [false, false, false, false, false, false, false, false],
+    galaxyBossSpawned: [false, false, false, false, false, false, false, false],
+    galaxyGuardiansDefeated: [false, false, false, false, false, false, false, false],
 
     activeBoss: null,
     activeBosses: [], // Track multiple active bosses
@@ -917,9 +924,8 @@ function getEnemyHealthForDifficulty(isLocal, isBoss, isBossSupport) {
         // Boss support health: 2-3 hits
         return Math.min(2 + Math.floor(galaxiesCleared / 3), 3);
     } else if (isLocal) {
-        // Local enemy health: 1-3 hits
-        if (galaxiesCleared === 0) return 1; // Tutorial level
-        return Math.min(1 + Math.floor(galaxiesCleared / 3), 3);
+        // Local enemy health: 2-3 hits (was 1-3, but 1-hit kills felt too easy)
+        return Math.min(2 + Math.floor(galaxiesCleared / 3), 3);
     } else {
         // Distant enemy health: 2-3 hits
         return Math.min(2 + Math.floor(galaxiesCleared / 4), 3);
@@ -1037,8 +1043,112 @@ function checkAndSpawnAreaBosses() {
     });
 }
 
+// Per-species boss check: spawn a faction boss when ALL enemies of a
+// given sub-species are dead, even if the broader galaxy still has enemies.
+// Examples:
+//   - All Martian Pirates dead in Sol → Martian Pirate boss spawns at Sol
+//   - All Vulcan Patrols dead near Sagittarius A* → Vulcan boss spawns there
+function checkSpeciesBossSpawn() {
+    if (typeof enemies === 'undefined' || typeof scene === 'undefined') return;
+    if (typeof bossSystem === 'undefined') return;
+
+    // Initialize per-species spawn tracking on bossSystem
+    if (!bossSystem.speciesBossSpawned) bossSystem.speciesBossSpawned = {};
+    // Track whether each species has EVER existed in the world. The
+    // enemies array gets spliced when an enemy dies, so by the time the
+    // last member of a species is killed and we check, members.length is
+    // already 0 — the boss would never spawn. We capture "ever existed"
+    // on the first call (when all enemies are still alive) so subsequent
+    // checks know the species was real.
+    if (!bossSystem.speciesEverExisted) bossSystem.speciesEverExisted = {};
+
+    const groups = [
+        {
+            key: 'martianPirate',
+            label: 'Martian Pirate',
+            galaxyId: 7,
+            // Martian Pirates fly Federation/Human-style ships (Enemy1.glb), so
+            // their boss should also be a Boss1.glb model rather than the
+            // Vulcan Boss8.glb their host galaxyId would imply.
+            modelGalaxyId: 0,
+            factionLabel: 'Martian Pirate',
+            // A pirate is isMartianPirate=true AND NOT a Vulcan Patrol
+            isMember: (ud) => ud.isMartianPirate && !ud.isVulcanPatrol,
+            // Spawn near the Sol system's local sun (origin)
+            spawnPos: () => new THREE.Vector3(0, 0, 0)
+        },
+        {
+            key: 'vulcanPatrol',
+            label: 'Vulcan High Command',
+            galaxyId: 7,
+            modelGalaxyId: 7, // Boss8.glb — matches Vulcan Patrol Enemy8.glb
+            factionLabel: 'Vulcan High Command',
+            isMember: (ud) => ud.isVulcanPatrol,
+            // Spawn near Sagittarius A* (which is at origin)
+            spawnPos: () => new THREE.Vector3(0, 0, 0)
+        }
+    ];
+
+    groups.forEach(g => {
+        if (bossSystem.speciesBossSpawned[g.key]) return;
+        const members = enemies.filter(e =>
+            e.userData && g.isMember(e.userData) &&
+            !e.userData.isBoss && !e.userData.isBossSupport
+        );
+        // Latch "ever existed" the first time we see any members
+        if (members.length > 0) bossSystem.speciesEverExisted[g.key] = true;
+        // If we've never seen this species, skip (truly never spawned)
+        if (!bossSystem.speciesEverExisted[g.key]) return;
+        const aliveMembers = members.filter(e => e.userData.health > 0);
+        if (aliveMembers.length > 0) return; // species not yet eliminated
+
+        bossSystem.speciesBossSpawned[g.key] = true;
+        const areaKey = g.galaxyId + '-' + g.key + '_boss';
+        console.log('👑 ' + g.label + ' species eliminated — spawning faction boss');
+        spawnBossForArea(g.galaxyId, g.key + '_boss', areaKey, g.spawnPos(), {
+            modelGalaxyId: g.modelGalaxyId,
+            factionLabel: g.factionLabel
+        });
+        if (typeof showAchievement === 'function') {
+            showAchievement(g.label + ' Boss Incoming!', 'You\'ve provoked the leader. Prepare for combat!', true);
+        }
+    });
+}
+
+// Galaxy-level boss check: when ALL regular (non-boss, non-guardian) enemies
+// in a galaxy are eliminated, spawn the galaxy boss near the galaxy's core
+// black hole.  Once the boss is defeated, checkGalaxyClear marks it clear.
+function checkGalaxyBossSpawn() {
+    if (typeof enemies === 'undefined' || typeof scene === 'undefined') return;
+    for (let g = 0; g < 8; g++) {
+        if (bossSystem.galaxyBossSpawned[g] || bossSystem.galaxyBossDefeated[g]) continue;
+        const alive = enemies.filter(e =>
+            e.userData && e.userData.health > 0 &&
+            e.userData.galaxyId === g &&
+            !e.userData.isBoss && !e.userData.isBossSupport &&
+            !e.userData.isBlackHoleGuardian
+        );
+        if (alive.length === 0) {
+            bossSystem.galaxyBossSpawned[g] = true;
+            const areaKey = g + '-galaxy_boss';
+            console.log('👑 All enemies cleared in Galaxy ' + g + ' — spawning galaxy boss');
+            spawnBossForArea(g, 'galaxy_boss', areaKey);
+            if (typeof showAchievement === 'function') {
+                const name = (typeof galaxyTypes !== 'undefined' && galaxyTypes[g]) ? galaxyTypes[g].name : 'Galaxy ' + g;
+                showAchievement('Galaxy Boss Incoming!', name + ' enemies eliminated — boss warping in!');
+            }
+        }
+    }
+}
+
 // ENHANCED: Spawn boss for specific area
-function spawnBossForArea(galaxyId, placementType, areaKey) {
+// `overridePosition` (optional Vector3) — if provided, the boss spawns there
+// instead of at a random galaxy position.  Used by the discovery-path
+// mission-complete trigger so the boss appears at the dotted line's endpoint.
+// `bossOverrides` (optional {modelGalaxyId, factionLabel, color}) — used by
+// per-species spawns (e.g. Martian Pirate boss) so the boss can use a model
+// and name independent of the galaxyId-driven faction.
+function spawnBossForArea(galaxyId, placementType, areaKey, overridePosition, bossOverrides) {
     // Safety check to prevent duplicate boss spawning
     if (bossSystem.areaBosses[areaKey]) return;
 
@@ -1050,14 +1160,25 @@ function spawnBossForArea(galaxyId, placementType, areaKey) {
         defeated: false,
         bossRef: null
     };
-    
+
     const galaxyType = galaxyTypes[galaxyId];
-    
+    // Per-species overrides — fallback to galaxyId-driven defaults
+    const modelGalaxyId = (bossOverrides && typeof bossOverrides.modelGalaxyId === 'number')
+        ? bossOverrides.modelGalaxyId : galaxyId;
+    const factionLabel = (bossOverrides && bossOverrides.factionLabel) || galaxyType.faction;
+
     // ENHANCED: Use 3D positioning if available, fallback to 2D
     let bossPosition;
-    
+
+    // Caller-supplied position takes priority — used for discovery-path
+    // boss spawns so the boss appears where the player expects it.
+    if (overridePosition && typeof overridePosition.clone === 'function') {
+        bossPosition = overridePosition.clone();
+        console.log(`Boss positioning: Using override position for galaxy ${galaxyId}`, bossPosition);
+    }
+
     // Try 3D positioning first
-    if (typeof getRandomPositionInGalaxy3D === 'function') {
+    if (!bossPosition && typeof getRandomPositionInGalaxy3D === 'function') {
         try {
             bossPosition = getRandomPositionInGalaxy3D(galaxyId);
             console.log(`Boss positioning: Using 3D system for galaxy ${galaxyId}`, bossPosition);
@@ -1100,34 +1221,38 @@ function spawnBossForArea(galaxyId, placementType, areaKey) {
         emissiveIntensity: 0.8
     });
 
-    // Try to use 3D boss model first, fallback to geometry (galaxyId+1 because models are 1-8, galaxies are 0-7)
+    // Try to use 3D boss model first, fallback to geometry (modelGalaxyId+1 because models are 1-8, galaxies are 0-7)
+    // Per-species bosses (Martian Pirate) override modelGalaxyId so they use their species' ship rather than the host galaxy's model.
     let boss;
+    let bossIsGLB = false;
     if (typeof createBossMeshWithModel === 'function') {
-        boss = createBossMeshWithModel(galaxyId + 1, bossGeometry, bossMaterial);
+        boss = createBossMeshWithModel(modelGalaxyId + 1, bossGeometry, bossMaterial);
+        bossIsGLB = boss.isGroup || (boss.children && boss.children.length > 1);
     } else {
         boss = new THREE.Mesh(bossGeometry, bossMaterial);
         boss.scale.multiplyScalar(2.5); // PRESERVED: Boss scaling (only if using fallback)
     }
-    
+
     // ENHANCED: Position boss using 3D coordinates
     boss.position.copy(bossPosition);
-    
-    // PRESERVED: Enhanced boss glow with all original features
-    const bossGlowGeometry = bossGeometry.clone();
-    const bossGlowMaterial = new THREE.MeshBasicMaterial({
-        color: shapeData.color,
-        transparent: true,
-        opacity: 0.4, // PRESERVED: Boss glow opacity
-        blending: THREE.AdditiveBlending
-    });
-    const bossGlow = new THREE.Mesh(bossGlowGeometry, bossGlowMaterial);
-    bossGlow.scale.multiplyScalar(1.3); // PRESERVED: Glow scaling
-    
-    // PRESERVED: Prevent frustum culling for boss glow
-    bossGlow.visible = true;
-    bossGlow.frustumCulled = false;
-    
-    boss.add(bossGlow);
+
+    // Procedural glow shell — only added when the boss is using fallback
+    // geometry. When a GLB model loaded, the glow was a giant torus (or
+    // cone/octahedron) floating around the detailed ship model.
+    if (!bossIsGLB) {
+        const bossGlowGeometry = bossGeometry.clone();
+        const bossGlowMaterial = new THREE.MeshBasicMaterial({
+            color: shapeData.color,
+            transparent: true,
+            opacity: 0.4,
+            blending: THREE.AdditiveBlending
+        });
+        const bossGlow = new THREE.Mesh(bossGlowGeometry, bossGlowMaterial);
+        bossGlow.scale.multiplyScalar(1.3);
+        bossGlow.visible = true;
+        bossGlow.frustumCulled = false;
+        boss.add(bossGlow);
+    }
 
     // Calculate hitbox size from scaled model (like asteroids) - bosses are 144x scaled
     let bossHitboxSize = 144; // Default for 144x scaled model
@@ -1142,7 +1267,7 @@ function spawnBossForArea(galaxyId, placementType, areaKey) {
 
     // PRESERVED: Complete boss userData with all original properties
     boss.userData = {
-        name: `${galaxyType.faction} Overlord (${placementType})`, // ENHANCED: Include area type
+        name: `${factionLabel} Overlord (${placementType})`, // ENHANCED: Include area type
         type: 'enemy',
         health: getEnemyHealthForDifficulty(false, true, false), // PRESERVED: Dynamic boss health
         maxHealth: getEnemyHealthForDifficulty(false, true, false),
@@ -1184,7 +1309,7 @@ function spawnBossForArea(galaxyId, placementType, areaKey) {
     
     // PRESERVED: Spawn 2-3 support ships with enhanced 3D positioning
     for (let i = 0; i < 3; i++) {
-        spawnBossSupport(galaxyId, bossPosition, i, areaKey);
+        spawnBossSupport(galaxyId, bossPosition, i, areaKey, bossOverrides);
     }
     
     // PRESERVED: Boss warning and audio systems
@@ -1212,10 +1337,15 @@ function spawnBossForArea(galaxyId, placementType, areaKey) {
 // ENHANCED 3D BOSS SUPPORT SPAWNING - PRESERVES ALL ORIGINAL FEATURES
 // =============================================================================
 
-function spawnBossSupport(galaxyId, bossPosition, supportIndex, areaKey = null) {
+function spawnBossSupport(galaxyId, bossPosition, supportIndex, areaKey = null, supportOverrides = null) {
     const galaxyType = galaxyTypes[galaxyId];
     const shapeData = enemyShapes[galaxyId];
-    
+    // Per-species overrides so support ships match the boss they escort
+    // (e.g. Martian Pirate boss → Martian Pirate Enemy1.glb supports).
+    const modelGalaxyId = (supportOverrides && typeof supportOverrides.modelGalaxyId === 'number')
+        ? supportOverrides.modelGalaxyId : galaxyId;
+    const factionLabel = (supportOverrides && supportOverrides.factionLabel) || galaxyType.faction;
+
     // PRESERVED: Create support geometry and material
     const supportGeometry = createEnemyGeometry(galaxyId);
     const supportMaterial = new THREE.MeshStandardMaterial({
@@ -1226,10 +1356,10 @@ function spawnBossSupport(galaxyId, bossPosition, supportIndex, areaKey = null) 
         emissiveIntensity: 0.5
     });
 
-    // Try to use 3D model first, fallback to geometry (galaxyId+1 because models are 1-8, galaxies are 0-7)
+    // Try to use 3D model first, fallback to geometry (modelGalaxyId+1 because models are 1-8, galaxies are 0-7)
     let support;
     if (typeof createEnemyMeshWithModel === 'function') {
-        support = createEnemyMeshWithModel(galaxyId + 1, supportGeometry, supportMaterial);
+        support = createEnemyMeshWithModel(modelGalaxyId + 1, supportGeometry, supportMaterial);
     } else {
         support = new THREE.Mesh(supportGeometry, supportMaterial);
     }
@@ -1259,7 +1389,7 @@ function spawnBossSupport(galaxyId, bossPosition, supportIndex, areaKey = null) 
 
     // PRESERVED: Complete support userData with all original properties
     support.userData = {
-        name: `${galaxyType.faction} Support ${supportIndex + 1}`, // PRESERVED: Support naming
+        name: `${factionLabel} Support ${supportIndex + 1}`, // PRESERVED: Support naming
         type: 'enemy',
         health: getEnemyHealthForDifficulty(false, false, true), // PRESERVED: Support health
         maxHealth: getEnemyHealthForDifficulty(false, false, true),
@@ -1392,7 +1522,7 @@ function recordEnemyKillPosition(enemy) {
     
     // Store the kill position for this faction
     lastKillPositions[faction] = enemy.position.clone();
-    console.log(`📍 Recorded kill position for ${faction} at`, enemy.position);
+    // Per-kill log silenced (spammy during demo combat)
 }
 
 function checkAndSpawnEliteGuardians() {
@@ -1462,8 +1592,10 @@ function spawnEliteGuardian(galaxyId, faction, spawnPosition = null) {
 
     // Use boss model but with extra scaling - 200x (larger than bosses at 144x)
     let guardian;
+    let guardianIsGLB = false;
     if (typeof createBossMeshWithModel === 'function') {
         guardian = createBossMeshWithModel(galaxyId + 1, guardianGeometry, guardianMaterial);
+        guardianIsGLB = guardian.isGroup || (guardian.children && guardian.children.length > 1);
         // Apply additional scaling for elite guardian (200x total = 80% of original 250x)
         guardian.scale.multiplyScalar(200.0 / 144.0); // Scale up from boss size
     } else {
@@ -1473,19 +1605,21 @@ function spawnEliteGuardian(galaxyId, faction, spawnPosition = null) {
 
     guardian.position.copy(guardianPosition);
 
-    // Elite guardian glow - much more intense
-    const guardianGlowGeometry = guardianGeometry.clone();
-    const guardianGlowMaterial = new THREE.MeshBasicMaterial({
-        color: shapeData.color,
-        transparent: true,
-        opacity: 0.6, // More opaque than boss glow
-        blending: THREE.AdditiveBlending
-    });
-    const guardianGlow = new THREE.Mesh(guardianGlowGeometry, guardianGlowMaterial);
-    guardianGlow.scale.multiplyScalar(1.5); // Larger glow
-    guardianGlow.visible = true;
-    guardianGlow.frustumCulled = false;
-    guardian.add(guardianGlow);
+    // Procedural glow shell — skip when GLB loaded (same fix as boss)
+    if (!guardianIsGLB) {
+        const guardianGlowGeometry = guardianGeometry.clone();
+        const guardianGlowMaterial = new THREE.MeshBasicMaterial({
+            color: shapeData.color,
+            transparent: true,
+            opacity: 0.6,
+            blending: THREE.AdditiveBlending
+        });
+        const guardianGlow = new THREE.Mesh(guardianGlowGeometry, guardianGlowMaterial);
+        guardianGlow.scale.multiplyScalar(1.5);
+        guardianGlow.visible = true;
+        guardianGlow.frustumCulled = false;
+        guardian.add(guardianGlow);
+    }
 
     // Calculate hitbox size
     let guardianHitboxSize = 200; // Default for 200x scaled model
@@ -1697,8 +1831,9 @@ function createOptimizedPlanets3D() {
     // =============================================================================
     
     try {
-        // Create Sun
-        const sunGeometry = new THREE.SphereGeometry(8, 24, 24);
+        // Create Sun — 5x bigger so it reads as a proper star next to
+        // scaled-up planets (was 8).
+        const sunGeometry = new THREE.SphereGeometry(40, 32, 32);
         const sunMaterial = new THREE.MeshBasicMaterial({ color: 0xffff44 });
         const sun = new THREE.Mesh(sunGeometry, sunMaterial);
         sun.position.set(localSystemOffset.x, localSystemOffset.y, localSystemOffset.z);
@@ -1757,29 +1892,30 @@ function createOptimizedPlanets3D() {
         return;
     }
     
-    // Create local planets
+    // Create local planets — sizes AND orbit distances 4x so scale is
+    // consistent across the Sol System.
     const localPlanets = [
-        { name: 'Earth', distance: 160, size: 5, color: 0x2233ff, moons: [{ name: 'Luna', distance: 30, size: 1.5, color: 0xdddddd }] },
-        { name: 'Venus', distance: 120, size: 4.8, color: 0xffc649, moons: [] },
-        { name: 'Mars', distance: 240, size: 3, color: 0xff4422, moons: [
-            { name: 'Phobos', distance: 16, size: 0.8, color: 0x8b4513 },
-            { name: 'Deimos', distance: 24, size: 0.6, color: 0x696969 }
+        { name: 'Earth', distance: 640, size: 20, color: 0x2233ff, moons: [{ name: 'Luna', distance: 120, size: 6, color: 0xdddddd }] },
+        { name: 'Venus', distance: 480, size: 19, color: 0xffc649, moons: [] },
+        { name: 'Mars', distance: 960, size: 12, color: 0xff4422, moons: [
+            { name: 'Phobos', distance: 64, size: 3, color: 0x8b4513 },
+            { name: 'Deimos', distance: 96, size: 2.5, color: 0x696969 }
         ]},
-        { name: 'Jupiter', distance: 500, size: 15, color: 0xffaa22, moons: [
-            { name: 'Io', distance: 50, size: 1.8, color: 0xffff99 },
-            { name: 'Europa', distance: 64, size: 1.6, color: 0x99ccff },
-            { name: 'Ganymede', distance: 84, size: 2.2, color: 0xcc9966 },
-            { name: 'Callisto', distance: 110, size: 2.0, color: 0x666666 }
+        { name: 'Jupiter', distance: 2000, size: 60, color: 0xffaa22, moons: [
+            { name: 'Io', distance: 200, size: 7, color: 0xffff99 },
+            { name: 'Europa', distance: 256, size: 6.5, color: 0x99ccff },
+            { name: 'Ganymede', distance: 336, size: 9, color: 0xcc9966 },
+            { name: 'Callisto', distance: 440, size: 8, color: 0x666666 }
         ]},
-        { name: 'Saturn', distance: 800, size: 12, color: 0xffdd88, rings: true, moons: [
-            { name: 'Titan', distance: 130, size: 2.5, color: 0xff9933 },
-            { name: 'Enceladus', distance: 90, size: 1.0, color: 0xffffff }
+        { name: 'Saturn', distance: 3200, size: 48, color: 0xffdd88, rings: true, moons: [
+            { name: 'Titan', distance: 520, size: 10, color: 0xff9933 },
+            { name: 'Enceladus', distance: 360, size: 4, color: 0xffffff }
         ]},
-        { name: 'Uranus', distance: 1100, size: 8, color: 0x4fccff, moons: [
-            { name: 'Titania', distance: 84, size: 1.4, color: 0x888888 }
+        { name: 'Uranus', distance: 4400, size: 32, color: 0x4fccff, moons: [
+            { name: 'Titania', distance: 336, size: 5.5, color: 0x888888 }
         ]},
-        { name: 'Neptune', distance: 1400, size: 7, color: 0x4169e1, moons: [
-            { name: 'Triton', distance: 44, size: 1.3, color: 0x99ccff }
+        { name: 'Neptune', distance: 5600, size: 28, color: 0x4169e1, moons: [
+            { name: 'Triton', distance: 176, size: 5, color: 0x99ccff }
         ]}
     ];
     
@@ -2981,7 +3117,7 @@ try {
                     map: texture,
                     side: THREE.BackSide,
                     transparent: true,
-                    opacity: 0.00,  // Starts invisible, fades in further out
+                    opacity: 0.10,  // Visible immediately so the background isn't pure black at start
                     depthWrite: false
                 });
                 
@@ -5050,21 +5186,21 @@ function createTradingShipsInNebulas() {
     );
     
     clusteredNebulas.forEach((nebula, nebulaIndex) => {
-        // 8-15 civilian ships per nebula (busy community feel)
-        const shipCount = 8 + Math.floor(Math.random() * 8);
+        // 15-25 civilian ships per nebula (much busier space lanes)
+        const shipCount = 15 + Math.floor(Math.random() * 11);
         
         for (let i = 0; i < shipCount; i++) {
             createTradingShip(nebula, i);
         }
         
-        // 3-6 mining ships per nebula
-        const miningCount = 3 + Math.floor(Math.random() * 4);
+        // 8-15 mining ships per nebula (increased mining activity)
+        const miningCount = 8 + Math.floor(Math.random() * 8);
         for (let i = 0; i < miningCount; i++) {
             createNebulaShip(nebula, i, 'mining');
         }
         
-        // 2-4 science ships per nebula
-        const scienceCount = 2 + Math.floor(Math.random() * 3);
+        // 3-6 science ships per nebula
+        const scienceCount = 3 + Math.floor(Math.random() * 4);
         for (let i = 0; i < scienceCount; i++) {
             createNebulaShip(nebula, i, 'science');
         }
@@ -5077,6 +5213,98 @@ function createTradingShipsInNebulas() {
     
     console.log(`✅ Created ${tradingShips.length} civilian ships across ${clusteredNebulas.length} nebulas`);
     console.log(`🚛 Created ${freighterCaravans.length} freighter caravans`);
+    
+    // Create mining expeditions at black holes
+    createBlackHoleMiningExpeditions();
+}
+
+// =============================================================================
+// BLACK HOLE MINING EXPEDITIONS - Mining ships sent from nearby nebulas to black holes
+// =============================================================================
+function createBlackHoleMiningExpeditions() {
+    console.log('⛏️ Creating mining expeditions to black holes...');
+    
+    if (typeof planets === 'undefined') return;
+    
+    const blackHoles = planets.filter(p => 
+        p && p.userData && p.userData.type === 'blackhole'
+    );
+    
+    if (blackHoles.length === 0) {
+        console.log('No black holes found for mining expeditions');
+        return;
+    }
+    
+    blackHoles.forEach((blackHole, index) => {
+        // 5-12 mining ships per black hole (resource-rich areas)
+        const minerCount = 5 + Math.floor(Math.random() * 8);
+        
+        for (let i = 0; i < minerCount; i++) {
+            // Find nearest nebula to serve as home base
+            let nearestNebula = null;
+            let minDist = Infinity;
+            
+            if (typeof nebulaClouds !== 'undefined') {
+                nebulaClouds.forEach(nebula => {
+                    if (nebula && nebula.position) {
+                        const dist = blackHole.position.distanceTo(nebula.position);
+                        if (dist < minDist) {
+                            minDist = dist;
+                            nearestNebula = nebula;
+                        }
+                    }
+                });
+            }
+            
+            // Create mining ship with route to black hole
+            if (nearestNebula) {
+                createBlackHoleMiningShip(nearestNebula, blackHole, i);
+            }
+        }
+    });
+    
+    console.log(`⛏️ Created mining expeditions to ${blackHoles.length} black holes`);
+}
+
+function createBlackHoleMiningShip(homeNebula, targetBlackHole, index) {
+    const shipCategory = 'mining';
+    let shipGroup;
+    
+    // Use civilian ship registry if available
+    if (typeof civilianShipRegistry !== 'undefined') {
+        shipGroup = civilianShipRegistry.getShipMesh(shipCategory);
+    } else {
+        // Fallback: create basic mesh
+        shipGroup = new THREE.Group();
+        const geometry = new THREE.BoxGeometry(3, 1.5, 6);
+        const material = new THREE.MeshPhongMaterial({ color: 0x888888 });
+        const mesh = new THREE.Mesh(geometry, material);
+        shipGroup.add(mesh);
+    }
+    
+    // Position near home nebula
+    const angle = (index / 12) * Math.PI * 2;
+    const radius = homeNebula.userData.radius * 1.5;
+    shipGroup.position.set(
+        homeNebula.position.x + Math.cos(angle) * radius,
+        homeNebula.position.y + (Math.random() - 0.5) * 100,
+        homeNebula.position.z + Math.sin(angle) * radius
+    );
+    
+    shipGroup.userData = {
+        type: 'mining_ship',
+        civilian: true,
+        homeNebula: homeNebula,
+        miningDestination: targetBlackHole.position.clone(),
+        health: 100,
+        maxHealth: 100,
+        speed: 2 + Math.random() * 2,
+        routePhase: 'outbound', // outbound to black hole, inbound to nebula
+        name: `Mining Vessel ${index + 1}`
+    };
+    
+    scene.add(shipGroup);
+    tradingShips.push(shipGroup); // Add to trading ships array for tracking
 }
 
 // =============================================================================
@@ -5085,8 +5313,8 @@ function createTradingShipsInNebulas() {
 function createFreighterCaravans(nebulas) {
     console.log('🚛 Creating freighter caravans between nebulas...');
     
-    // Create 2-4 caravans
-    const caravanCount = 2 + Math.floor(Math.random() * 3);
+    // Create 5-10 caravans (more trade routes)
+    const caravanCount = 5 + Math.floor(Math.random() * 6);
     
     for (let c = 0; c < caravanCount; c++) {
         // Pick two different nebulas as endpoints
@@ -5839,7 +6067,7 @@ function updateTradingShips() {
                     if (data.hasMiningRoute && data.miningDestination && Math.random() < 0.01) {
                         // Start mining route to core system
                         data.aiState = 'traveling_to_mine';
-                        console.log(`⛏️ ${data.name} departing for ${data.miningDestinationName || 'mining site'}`);
+                        if (window.GAME_DEBUG_VERBOSE) console.log(`⛏️ ${data.name} departing for ${data.miningDestinationName || 'mining site'}`);
                     } else if (!data.hasMiningRoute && Math.random() < 0.003) {
                         // Local mining (no route assigned)
                         data.aiState = 'mining';
@@ -6614,14 +6842,14 @@ function sendDistressSignal(ship, data) {
         
         // Flash the beacon
         let flashOn = true;
-        const flashInterval = setInterval(() => {
+        const flashInterval = trackInterval(setInterval(() => {
             if (!ship || !ship.userData || !ship.userData.distressBeacon) {
                 clearInterval(flashInterval);
                 return;
             }
             flashOn = !flashOn;
             ship.userData.distressBeacon.visible = flashOn;
-        }, 500);
+        }, 500));
         
         // Stop flashing after 30 seconds
         setTimeout(() => {
@@ -7812,18 +8040,16 @@ function createEnhancedPlanetClustersInNebulas() {
                 let planetSize;
                 const distanceFactor = p / planetCount;
                 
+                // 4x from original, 2x from previous — planets should
+                // now clearly dwarf the player ship.
                 if (distanceFactor < 0.2) {
-                    // Inner rocky planets - LARGER
-                    planetSize = 3 + Math.random() * 5; // Was 1-3.5, now 3-8
+                    planetSize = 12 + Math.random() * 20;   // 12-32
                 } else if (distanceFactor < 0.5) {
-                    // Mid-range terrestrial planets - LARGER
-                    planetSize = 5 + Math.random() * 8; // Was 2-6, now 5-13
+                    planetSize = 20 + Math.random() * 32;   // 20-52
                 } else if (distanceFactor < 0.8) {
-                    // Outer gas giants - MUCH LARGER
-                    planetSize = 10 + Math.random() * 15; // Was 4-12, now 10-25
+                    planetSize = 40 + Math.random() * 60;   // 40-100
                 } else {
-                    // Distant ice giants - LARGER
-                    planetSize = 7 + Math.random() * 10; // Was 3-9, now 7-17
+                    planetSize = 28 + Math.random() * 40;   // 28-68
                 }
                 
                 const planetGeometry = new THREE.SphereGeometry(planetSize, 32, 32);
@@ -7878,7 +8104,7 @@ function createEnhancedPlanetClustersInNebulas() {
                 });
                 const planet = new THREE.Mesh(planetGeometry, planetMaterial);
                 
-                const orbitRadius = 120 + p * 110; // Increased spacing for larger planets
+                const orbitRadius = 480 + p * 440; // 4x spacing for 4x-size planets
                 const orbitSpeed = 0.002 + Math.random() * 0.008;
                 const orbitPhase = Math.random() * Math.PI * 2;
                 const orbitTilt = (Math.random() - 0.5) * 0.4;
@@ -7916,8 +8142,8 @@ function createEnhancedPlanetClustersInNebulas() {
                     const ringCount = 2 + Math.floor(Math.random() * 4);
                     
                     for (let r = 0; r < ringCount; r++) {
-                        const ringInner = planetSize + 8 + r * 8; // Scaled for larger planets
-                        const ringOuter = ringInner + 4 + Math.random() * 6;
+                        const ringInner = planetSize + 32 + r * 32; // 4x offsets for 4x planets
+                        const ringOuter = ringInner + 16 + Math.random() * 24;
                         const ringGeometry = new THREE.RingGeometry(ringInner, ringOuter, 64);
                         const ringColor = new THREE.Color().setHSL(
                             planetHue + 0.08 + r * 0.04, 
@@ -7957,7 +8183,7 @@ function createEnhancedPlanetClustersInNebulas() {
                         });
                         const moon = new THREE.Mesh(moonGeometry, moonMaterial);
                         
-                        const moonOrbitRadius = planetSize + 15 + m * 12; // Scaled for larger planets
+                        const moonOrbitRadius = planetSize + 60 + m * 48; // 4x base + spacing for 4x planets
                         const moonOrbitSpeed = 0.012 + Math.random() * 0.028;
                         const moonOrbitPhase = Math.random() * Math.PI * 2;
                         
@@ -8169,24 +8395,38 @@ function createEnemies3D() {
             gameState.currentGalaxyEnemies[g] = enemiesPerGalaxy;
         }
         
-        for (let i = 0; i < enemiesPerGalaxy; i++) {
-            const enemyGeometry = createEnemyGeometry(g);
-            const shapeData = enemyShapes[g];
-            
-            // Use different placement strategies for variety
-            let placementType;
-            const roll = Math.random();
-            
-            if (roll < 0.33) {
-                placementType = 'cosmic_feature';
-            } else if (roll < 0.66) {
-                placementType = 'black_hole';
+        // Spawn enemies in spread-out GROUPS of 2-3 instead of individuals
+        // so the galaxy isn't a homogeneous swarm clustered around the BH.
+        let i = 0;
+        while (i < enemiesPerGalaxy) {
+            const groupSize = Math.min(2 + Math.floor(Math.random() * 2), enemiesPerGalaxy - i); // 2 or 3
+
+            // Pick a group center, biasing toward varied placement types
+            let groupPlacementType;
+            const groupRoll = Math.random();
+            if (groupRoll < 0.40) {
+                groupPlacementType = 'cosmic_feature';
+            } else if (groupRoll < 0.65) {
+                groupPlacementType = 'black_hole';
             } else {
-                placementType = 'random';
+                groupPlacementType = 'random';
             }
-            
-            const enemyPosition = getEnemyPlacementPosition(g, placementType);
-            const distance = galaxy3DCenter.distanceTo(enemyPosition);
+            const groupCenter = getEnemyPlacementPosition(g, groupPlacementType);
+
+            for (let p = 0; p < groupSize; p++, i++) {
+                const enemyGeometry = createEnemyGeometry(g);
+                const shapeData = enemyShapes[g];
+                const placementType = groupPlacementType;
+
+                // Tight 80-150u cluster around the group center
+                const spreadAngle = (p / groupSize) * Math.PI * 2 + Math.random() * 0.5;
+                const spreadDist = 80 + Math.random() * 70;
+                const enemyPosition = new THREE.Vector3(
+                    groupCenter.x + Math.cos(spreadAngle) * spreadDist,
+                    groupCenter.y + (Math.random() - 0.5) * 60,
+                    groupCenter.z + Math.sin(spreadAngle) * spreadDist
+                );
+                const distance = galaxy3DCenter.distanceTo(enemyPosition);
 
             const materials = createEnemyMaterial(shapeData, 'regular', distance);
 
@@ -8262,9 +8502,10 @@ function createEnemies3D() {
             
             scene.add(enemy);
             enemies.push(enemy);
-        }
+            } // close inner for-each-in-group
+        } // close while groups
     }
-    
+
     console.log(`✅ Created ${enemies.length} enemies across all galaxies`);
     
     // Log breakdown by galaxy
@@ -8273,95 +8514,204 @@ function createEnemies3D() {
         console.log(`   Galaxy ${g} (${galaxyTypes[g].name}): ${count} enemies`);
     }
     
-    // Create local galaxy enemies (Martian Pirates) - reduced for performance
-    const localSystemOffset = { x: 2000, y: 0, z: 1200 };
-    for (let i = 0; i < 4; i++) {
-        const enemyGeometry = createEnemyGeometry(0);
-        
-        const distance = 1800 + Math.random() * 1200;
-        const localShapeData = { color: 0xff4444 };
-        const materials = createEnemyMaterial(localShapeData, 'local', distance);
-
-        // Try to use 3D model first, fallback to geometry (use galaxy 1 model for local pirates)
-        let enemy;
-        let isGLBModel = false;
-        if (typeof createEnemyMeshWithModel === 'function') {
-            enemy = createEnemyMeshWithModel(1, enemyGeometry, materials.enemyMaterial);
-            // Check if we got a GLB model (Group) or fallback mesh
-            isGLBModel = enemy.isGroup || (enemy.children && enemy.children.length > 0 && enemy.children[0].isMesh);
-        } else {
-            enemy = new THREE.Mesh(enemyGeometry, materials.enemyMaterial);
-        }
-
-        // Only add procedural glow to fallback geometry enemies
-        // GLB models have their own materials and don't need procedural glow
-        if (!isGLBModel) {
-            const glowGeometry = enemyGeometry.clone();
-            const glow = new THREE.Mesh(glowGeometry, materials.glowMaterial);
-            glow.scale.multiplyScalar(materials.glowScale);
-
-            glow.visible = true;
-            glow.frustumCulled = false;
-
-            enemy.add(glow);
-        }
-        
-        // Position around local system
-        const angle = (i / 10) * Math.PI * 2 + Math.random() * 0.5;
-        enemy.position.set(
-            localSystemOffset.x + Math.cos(angle) * distance,
-            localSystemOffset.y + (Math.random() - 0.5) * 200,
-            localSystemOffset.z + Math.sin(angle) * distance
+    // Create local galaxy enemies (Martian Pirates) — patrol in groups of 3
+    // Positioned within the inner Sol system so players encounter them early
+    const patrolGroupCount = 8;
+    const piratesPerGroup = 3;
+    let pirateIndex = 0;
+    for (let g = 0; g < patrolGroupCount; g++) {
+        const groupDistance = 800 + Math.random() * 1200;
+        const groupAngle = (g / patrolGroupCount) * Math.PI * 2 + Math.random() * 0.3;
+        const groupCenter = new THREE.Vector3(
+            Math.cos(groupAngle) * groupDistance,
+            (Math.random() - 0.5) * 100,
+            Math.sin(groupAngle) * groupDistance
         );
 
-        // Calculate hitbox size from scaled model (like asteroids)
-        let hitboxSize = 96; // Default for 96x scaled model
-        try {
-            const box = new THREE.Box3().setFromObject(enemy);
-            const size = new THREE.Vector3();
-            box.getSize(size);
-            hitboxSize = Math.max(size.x, size.y, size.z);
-        } catch (e) {
-            // Use default if calculation fails
-        }
+        for (let p = 0; p < piratesPerGroup; p++) {
+            pirateIndex++;
+            const enemyGeometry = createEnemyGeometry(0);
 
-        enemy.userData = {
-            name: `Martian Pirate ${i + 1}`,
-            type: 'enemy',
-            health: getEnemyHealthForDifficulty(true, false, false),
-            maxHealth: getEnemyHealthForDifficulty(true, false, false),
-            speed: 0.6 + Math.random() * 1.0,
-            aggression: 0.7 + Math.random() * 0.3,
-            patrolCenter: new THREE.Vector3(
-                localSystemOffset.x,
-                localSystemOffset.y,
-                localSystemOffset.z
-            ),
-            patrolRadius: distance,
-            lastAttack: 0,
-            isActive: false,
-            visible: true,
-            galaxyId: 7, // Local galaxy
-            galaxyColor: 0xff4444,
-            swarmTarget: null,
-            circlePhase: Math.random() * Math.PI * 2,
-            attackMode: 'patrol',
-            detectionRange: 1200,
-            firingRange: 180,
-            isLocal: true,
-            isBoss: false,
-            isBossSupport: false,
-            position3D: enemy.position.clone(),
-            hitboxSize: hitboxSize // Store hitbox size for accurate collision detection
-        };
-        
-        enemy.visible = true;
-        enemy.frustumCulled = true;  // OPTIMIZATION: Enable frustum culling
-        
-        scene.add(enemy);
-        enemies.push(enemy);
+            const localShapeData = { color: 0xff4444 };
+            const materials = createEnemyMaterial(localShapeData, 'local', groupDistance);
+
+            let enemy;
+            let isGLBModel = false;
+            if (typeof createEnemyMeshWithModel === 'function') {
+                enemy = createEnemyMeshWithModel(1, enemyGeometry, materials.enemyMaterial);
+                isGLBModel = enemy.isGroup || (enemy.children && enemy.children.length > 0 && enemy.children[0].isMesh);
+            } else {
+                enemy = new THREE.Mesh(enemyGeometry, materials.enemyMaterial);
+            }
+
+            if (!isGLBModel) {
+                const glowGeometry = enemyGeometry.clone();
+                const glow = new THREE.Mesh(glowGeometry, materials.glowMaterial);
+                glow.scale.multiplyScalar(materials.glowScale);
+                glow.visible = true;
+                glow.frustumCulled = false;
+                enemy.add(glow);
+            }
+
+            // Add an invisible hitbox sphere so the raycaster always has
+            // something to hit, even if a GLB model hasn't loaded yet.
+            const hitboxGeo = new THREE.SphereGeometry(40, 8, 6);
+            const hitboxMat = new THREE.MeshBasicMaterial({ visible: false });
+            const hitbox = new THREE.Mesh(hitboxGeo, hitboxMat);
+            hitbox.userData.isHitbox = true;
+            enemy.add(hitbox);
+
+            // Spread within the group (tight 80-unit cluster)
+            const spreadAngle = (p / piratesPerGroup) * Math.PI * 2;
+            const spreadDist = 40 + Math.random() * 40;
+            enemy.position.set(
+                groupCenter.x + Math.cos(spreadAngle) * spreadDist,
+                groupCenter.y + (Math.random() - 0.5) * 30,
+                groupCenter.z + Math.sin(spreadAngle) * spreadDist
+            );
+
+            let hitboxSize = 96;
+            try {
+                const box = new THREE.Box3().setFromObject(enemy);
+                const size = new THREE.Vector3();
+                box.getSize(size);
+                hitboxSize = Math.max(size.x, size.y, size.z);
+            } catch (e) {}
+
+            enemy.userData = {
+                name: `Martian Pirate ${pirateIndex}`,
+                type: 'enemy',
+                health: getEnemyHealthForDifficulty(true, false, false),
+                maxHealth: getEnemyHealthForDifficulty(true, false, false),
+                speed: 1.2 + Math.random() * 0.8,
+                aggression: 0.95 + Math.random() * 0.05,
+                patrolCenter: groupCenter.clone(),
+                patrolRadius: groupDistance,
+                lastAttack: 0,
+                isActive: false,
+                visible: true,
+                galaxyId: 7,
+                galaxyColor: 0xff4444,
+                swarmTarget: null,
+                circlePhase: Math.random() * Math.PI * 2,
+                attackMode: 'patrol',
+                detectionRange: 2400,
+                firingRange: 360,
+                isMartianPirate: true,
+                isLocal: true,
+                isBoss: false,
+                isBossSupport: false,
+                position3D: enemy.position.clone(),
+                hitboxSize: hitboxSize
+            };
+
+            enemy.visible = true;
+            enemy.frustumCulled = true;
+            scene.add(enemy);
+            enemies.push(enemy);
+        }
     }
-    
+
+    // =============================================================================
+    // VULCAN PATROL SHIPS — tight patrol ring around Sagittarius A* (700-1500u)
+    // The player spawns at ~2470u from origin, so this keeps Vulcans guarding
+    // the galactic center rather than spawning on top of the player at start.
+    // =============================================================================
+    const vulcanGroupCount = 6;
+    const vulcansPerGroup = 3;
+    let vulcanIndex = 0;
+    for (let g = 0; g < vulcanGroupCount; g++) {
+        const groupDistance = 700 + Math.random() * 800;
+        const groupAngle = (g / vulcanGroupCount) * Math.PI * 2 + Math.random() * 0.5;
+        const groupCenter = new THREE.Vector3(
+            Math.cos(groupAngle) * groupDistance,
+            (Math.random() - 0.5) * 200,
+            Math.sin(groupAngle) * groupDistance
+        );
+
+        for (let p = 0; p < vulcansPerGroup; p++) {
+            vulcanIndex++;
+            const enemyGeometry = createEnemyGeometry(0);
+            const localShapeData = { color: 0xff6633 };
+            const materials = createEnemyMaterial(localShapeData, 'local', groupDistance);
+
+            let enemy;
+            let isGLBModel = false;
+            if (typeof createEnemyMeshWithModel === 'function') {
+                // Vulcan Patrols use Enemy8.glb (different from Martian Pirates' Enemy1)
+                enemy = createEnemyMeshWithModel(8, enemyGeometry, materials.enemyMaterial);
+                isGLBModel = enemy.isGroup || (enemy.children && enemy.children.length > 0 && enemy.children[0].isMesh);
+            } else {
+                enemy = new THREE.Mesh(enemyGeometry, materials.enemyMaterial);
+            }
+
+            if (!isGLBModel) {
+                const glowGeometry = enemyGeometry.clone();
+                const glow = new THREE.Mesh(glowGeometry, materials.glowMaterial);
+                glow.scale.multiplyScalar(materials.glowScale);
+                glow.visible = true;
+                glow.frustumCulled = false;
+                enemy.add(glow);
+            }
+
+            // Invisible hitbox sphere so the raycaster always has a target
+            const hitboxGeo = new THREE.SphereGeometry(40, 8, 6);
+            const hitboxMat = new THREE.MeshBasicMaterial({ visible: false });
+            const hitbox = new THREE.Mesh(hitboxGeo, hitboxMat);
+            hitbox.userData.isHitbox = true;
+            enemy.add(hitbox);
+
+            const spreadAngle = (p / vulcansPerGroup) * Math.PI * 2;
+            const spreadDist = 60 + Math.random() * 60;
+            enemy.position.set(
+                groupCenter.x + Math.cos(spreadAngle) * spreadDist,
+                groupCenter.y + (Math.random() - 0.5) * 40,
+                groupCenter.z + Math.sin(spreadAngle) * spreadDist
+            );
+
+            let hitboxSize = 96;
+            try {
+                const box = new THREE.Box3().setFromObject(enemy);
+                const size = new THREE.Vector3();
+                box.getSize(size);
+                hitboxSize = Math.max(size.x, size.y, size.z);
+            } catch (e) {}
+
+            enemy.userData = {
+                name: `Vulcan Patrol ${vulcanIndex}`,
+                type: 'enemy',
+                health: getEnemyHealthForDifficulty(true, false, false),
+                maxHealth: getEnemyHealthForDifficulty(true, false, false),
+                speed: 1.4 + Math.random() * 0.8,
+                aggression: 0.9 + Math.random() * 0.1,
+                patrolCenter: groupCenter.clone(),
+                patrolRadius: 300,
+                lastAttack: 0,
+                isActive: false,
+                visible: true,
+                galaxyId: 7,
+                galaxyColor: 0xff6633,
+                swarmTarget: null,
+                circlePhase: Math.random() * Math.PI * 2,
+                attackMode: 'patrol',
+                detectionRange: 800,
+                firingRange: 380,
+                isMartianPirate: true,
+                isVulcanPatrol: true,
+                isLocal: true,
+                isBoss: false,
+                isBossSupport: false,
+                position3D: enemy.position.clone(),
+                hitboxSize: hitboxSize
+            };
+
+            enemy.visible = true;
+            enemy.frustumCulled = true;
+            scene.add(enemy);
+            enemies.push(enemy);
+        }
+    }
+
     console.log(`✅ Created ${enemies.length} enemies with full 3D positioning`);
     console.log(`📊 Breakdown: ${enemies.filter(e => e.userData.isLocal).length} local enemies, ${enemies.filter(e => !e.userData.isLocal).length} distant enemies`);
     console.log(`⏭️ Distant galaxies will load on-demand when you warp to them`);
@@ -10082,6 +10432,8 @@ if (typeof window !== 'undefined') {
     window.lastKillPositions = lastKillPositions;
     window.recordEnemyKillPosition = recordEnemyKillPosition;
     window.checkAndSpawnAreaBosses = checkAndSpawnAreaBosses;
+    window.checkGalaxyBossSpawn = checkGalaxyBossSpawn;
+    window.checkSpeciesBossSpawn = checkSpeciesBossSpawn;
     window.checkAndSpawnEliteGuardians = checkAndSpawnEliteGuardians;
     window.spawnBossForArea = spawnBossForArea;
     window.spawnEliteGuardian = spawnEliteGuardian;
@@ -10153,11 +10505,11 @@ if (typeof window !== 'undefined') {
 // CMB OPACITY HELPER FUNCTION
 // =============================================================================
 function setCMBOpacity(value) {
-    if (window.cosmicSkybox && window.cosmicSkybox.material && window.cosmicSkybox.material.uniforms) {
+    if (window.cosmicSkybox && window.cosmicSkybox.material && window.cosmicSkybox.material.uniforms && window.cosmicSkybox.material.uniforms.opacity) {
         window.cosmicSkybox.material.uniforms.opacity.value = value;
         console.log('✅ CMB opacity set to:', value);
     } else {
-        console.log('❌ CMB not found');
+        console.warn('❌ CMB opacity uniform not available');
     }
 }
 
@@ -10173,8 +10525,7 @@ function updateCMBOpacity() {
     }
     
     // PART 1: Calculate base opacity based on distance from Sagittarius A* (at origin 0,0,0)
-    const sagittariusAPosition = new THREE.Vector3(0, 0, 0);
-    const distanceFromSgrA = camera.position.distanceTo(sagittariusAPosition);
+    const distanceFromSgrA = camera.position.length();
     
     // Linear interpolation: 0.01 at origin, 0.09 at 4000+ units
     const maxDistance = 110000;
@@ -10263,8 +10614,10 @@ function updateCMBOpacity() {
         }
     }
     
-    // Update the CMB shader uniform
-    window.cosmicSkybox.material.uniforms.opacity.value = finalOpacity;
+    // Update the CMB shader uniform (with safety check)
+    if (window.cosmicSkybox.material.uniforms && window.cosmicSkybox.material.uniforms.opacity) {
+        window.cosmicSkybox.material.uniforms.opacity.value = finalOpacity;
+    }
 }
 
 // =============================================================================
@@ -10322,16 +10675,15 @@ function updateHubbleSkybox2Opacity() {
     const fadeStartDistance = 1000;        // Start fading at 5,000 units
     const fadeEndDistance = 30000;        // Reach max opacity at 100,000 units
     
-    // Calculate opacity based on distance (0.00 to 0.02)
+    // Calculate opacity based on distance (0.10 floor to 0.60 max)
     let targetOpacity;
     if (distanceFromStart < fadeStartDistance) {
-        targetOpacity = 0.00;
+        targetOpacity = 0.10; // Always slightly visible so the sky isn't pure black
     } else if (distanceFromStart > fadeEndDistance) {
-        targetOpacity = .6;
+        targetOpacity = 0.60;
     } else {
-        // Linear interpolation between 0.00 and 0.02
         const progress = (distanceFromStart - fadeStartDistance) / (fadeEndDistance - fadeStartDistance);
-        targetOpacity = 0.00 + (progress * .6); // 0.02 = 0.02 - 0.00
+        targetOpacity = 0.10 + (progress * 0.50); // 0.10 → 0.60
     }
     
     // Smoothly transition to target opacity
@@ -10365,7 +10717,9 @@ function createBossBattleSkybox() {
     bossSkybox = new THREE.Mesh(geometry, material);
     bossSkybox.name = "BossBattleSkybox";
     bossSkybox.frustumCulled = false;
-    bossSkybox.renderOrder = -1;
+    // renderOrder 0 (in front of CMB at -1 and Hubble at -2/-3) so the
+    // blood-red heartbeat reads clearly over the cosmic backgrounds.
+    bossSkybox.renderOrder = 0;
 
     scene.add(bossSkybox);
 

@@ -78,6 +78,14 @@ function createExoticCoreSystems() {
     const targetRadius = (innerBoundary + outerBoundary) / 2; // ~67,500
     const radiusVariation = 12500;
 
+    // Randomly select half the systems to be 2x size
+    const indices = Array.from({length: 16}, (_, i) => i);
+    for (let i = indices.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [indices[i], indices[j]] = [indices[j], indices[i]];
+    }
+    const largeSet = new Set(indices.slice(0, 8));
+
     for (let i = 0; i < 16; i++) {
         // Spherical distribution
         const phi = (i / 16) * Math.PI * 2;
@@ -92,11 +100,13 @@ function createExoticCoreSystems() {
         const centerTypes = ['supernova', 'plasma_storm', 'solar_storm'];
         const centerType = centerTypes[Math.floor(Math.random() * centerTypes.length)];
 
-        createExoticSystem(systemCenter, outerSystemNames[i], centerType, i);
+        const scale = largeSet.has(i) ? 2 : 1;
+        createExoticSystem(systemCenter, outerSystemNames[i], centerType, i, scale);
     }
 }
 
-function createExoticSystem(center, name, centerType, systemId) {
+function createExoticSystem(center, name, centerType, systemId, scale) {
+    const s = scale || 1;
     const systemGroup = new THREE.Group();
     systemGroup.position.copy(center);
 
@@ -119,7 +129,8 @@ function createExoticSystem(center, name, centerType, systemId) {
         discovered: false,
         tiltX: systemTiltX,
         tiltZ: systemTiltZ,
-        systemColor: systemColor
+        systemColor: systemColor,
+        scale: s
     };
 
     // Create center object
@@ -134,7 +145,7 @@ function createExoticSystem(center, name, centerType, systemId) {
     // Orbiting brown dwarfs (2-4)
     const brownDwarfCount = 2 + Math.floor(Math.random() * 3);
     for (let i = 0; i < brownDwarfCount; i++) {
-        const orbitRadius = 800 + Math.random() * 1200;
+        const orbitRadius = (800 + Math.random() * 1200) * s;
         createOrbitingBrownDwarf(center, orbitRadius, i, systemGroup);
         createSystemOrbitLine(center, orbitRadius, systemGroup);
     }
@@ -142,13 +153,13 @@ function createExoticSystem(center, name, centerType, systemId) {
     // Orbiting pulsars (1-3)
     const pulsarCount = 1 + Math.floor(Math.random() * 3);
     for (let i = 0; i < pulsarCount; i++) {
-        const orbitRadius = 1500 + Math.random() * 1500;
+        const orbitRadius = (1500 + Math.random() * 1500) * s;
         createOrbitingPulsar(center, orbitRadius, i, systemGroup);
         createSystemOrbitLine(center, orbitRadius, systemGroup);
     }
 
     // Asteroid field
-    const asteroidOrbitRadius = 600 + Math.random() * 800;
+    const asteroidOrbitRadius = (600 + Math.random() * 800) * s;
     const asteroidCount = 20 + Math.floor(Math.random() * 30);
     for (let i = 0; i < asteroidCount; i++) {
         createOrbitingAsteroid(center, asteroidOrbitRadius, i, systemGroup);
@@ -157,7 +168,7 @@ function createExoticSystem(center, name, centerType, systemId) {
     createSystemOrbitLine(center, asteroidOrbitRadius, systemGroup);
 
     // CREATE STARFIELD FOR THIS SYSTEM
-    const maxOrbitRadius = 1500 + 1500; // Max pulsar orbit
+    const maxOrbitRadius = (1500 + 1500) * s;
     const starfieldRadius = maxOrbitRadius * 0.5;
     createSystemStarfield(starfieldRadius, systemGroup);
 
@@ -167,7 +178,8 @@ function createExoticSystem(center, name, centerType, systemId) {
     scene.add(systemGroup);
     outerInterstellarSystems.push(systemGroup);
 
-    console.log(`    🌟 ${name}: ${centerType} at ${center.length().toFixed(0)} units`);
+    const sizeLabel = s > 1 ? ' (2x)' : '';
+    console.log(`    🌟 ${name}: ${centerType}${sizeLabel} at ${center.length().toFixed(0)} units`);
 }
 
 // =============================================================================
@@ -240,6 +252,7 @@ function createBorgSystem(center, systemId) {
     let maxOrbitRadius = 0;
 
     for (let i = 0; i < planetCount; i++) {
+        // Original orbit radii
         const orbitRadius = 800 + (i * 600) + Math.random() * 400;
         maxOrbitRadius = Math.max(maxOrbitRadius, orbitRadius);
         createOrbitingPlanet(systemGroup, orbitRadius, i);
@@ -250,11 +263,8 @@ function createBorgSystem(center, systemId) {
     const starfieldRadius = maxOrbitRadius * 0.5;
     createSystemStarfield(starfieldRadius, systemGroup);
 
-    // Create 2-3 BORG drones patrolling the system
-    const droneCount = 2 + Math.floor(Math.random() * 2);
-    for (let i = 0; i < droneCount; i++) {
-        createBorgDrone(systemGroup, maxOrbitRadius, i);
-    }
+    // Create 1 BORG Cube (100HP boss) patrolling the system
+    createBorgCubeForSystem(systemGroup, maxOrbitRadius);
 
     // Create 1 cosmic feature in orbit
     createCosmicFeature(systemGroup, maxOrbitRadius);
@@ -262,7 +272,7 @@ function createBorgSystem(center, systemId) {
     scene.add(systemGroup);
     outerInterstellarSystems.push(systemGroup);
 
-    console.log(`    🟩 Unknown System #${systemId + 1}: ${starType.name} star with ${planetCount} planets and ${droneCount} BORG drones at ${center.length().toFixed(0)} units`);
+    console.log(`    🟩 Unknown System #${systemId + 1}: ${starType.name} star with ${planetCount} planets and 1 BORG cube at ${center.length().toFixed(0)} units`);
 }
 
 // =============================================================================
@@ -270,7 +280,8 @@ function createBorgSystem(center, systemId) {
 // =============================================================================
 
 function createSystemSupernova(center, systemGroup) {
-    const coreGeo = new THREE.SphereGeometry(80, 32, 32);
+    const s = systemGroup.userData.scale || 1;
+    const coreGeo = new THREE.SphereGeometry(80 * s, 32, 32);
     const coreMat = new THREE.MeshStandardMaterial({
         color: 0xff6600,
         emissive: 0xff6600,
@@ -286,7 +297,7 @@ function createSystemSupernova(center, systemGroup) {
         name: `${systemGroup.userData.name} Core`,
         systemName: systemGroup.userData.name,
         location: 'Unexplored Interstellar Space',
-        radius: 80,
+        radius: 80 * s,
         mass: 3.0,
         slingshotMultiplier: 3.0,
         isOuterSystem: true
@@ -297,7 +308,7 @@ function createSystemSupernova(center, systemGroup) {
 
     // Glow layers
     for (let i = 0; i < 3; i++) {
-        const size = 120 + i * 60;
+        const size = (60 + i * 30) * s;
         const opacity = 0.4 - i * 0.1;
         const glowGeo = new THREE.SphereGeometry(size, 24, 24);
         const glowMat = new THREE.MeshBasicMaterial({
@@ -318,7 +329,8 @@ function createSystemSupernova(center, systemGroup) {
 }
 
 function createSystemPlasmaStorm(center, systemGroup) {
-    const coreGeo = new THREE.SphereGeometry(60, 32, 32);
+    const s = systemGroup.userData.scale || 1;
+    const coreGeo = new THREE.SphereGeometry(60 * s, 32, 32);
     const coreMat = new THREE.MeshStandardMaterial({
         color: 0xaa44ff,
         emissive: 0xaa44ff,
@@ -334,7 +346,7 @@ function createSystemPlasmaStorm(center, systemGroup) {
         name: `${systemGroup.userData.name} Core`,
         systemName: systemGroup.userData.name,
         location: 'Unexplored Interstellar Space',
-        radius: 60,
+        radius: 60 * s,
         mass: 2.5,
         slingshotMultiplier: 2.8,
         isOuterSystem: true
@@ -346,7 +358,7 @@ function createSystemPlasmaStorm(center, systemGroup) {
     // Plasma clouds
     for (let i = 0; i < 5; i++) {
         const angle = (i / 5) * Math.PI * 2;
-        const cloudGeo = new THREE.SphereGeometry(40, 16, 16);
+        const cloudGeo = new THREE.SphereGeometry(20 * s, 16, 16);
         const cloudMat = new THREE.MeshBasicMaterial({
             color: 0x8844ff,
             transparent: true,
@@ -356,9 +368,9 @@ function createSystemPlasmaStorm(center, systemGroup) {
         const cloud = new THREE.Mesh(cloudGeo, cloudMat);
         cloud.userData.baseOpacity = 0.6;
         cloud.position.set(
-            Math.cos(angle) * 100,
+            Math.cos(angle) * 50 * s,
             0,
-            Math.sin(angle) * 100
+            Math.sin(angle) * 50 * s
         );
         systemGroup.add(cloud);
     }
@@ -369,7 +381,8 @@ function createSystemPlasmaStorm(center, systemGroup) {
 }
 
 function createSystemSolarStorm(center, systemGroup) {
-    const coreGeo = new THREE.SphereGeometry(70, 32, 32);
+    const s = systemGroup.userData.scale || 1;
+    const coreGeo = new THREE.SphereGeometry(70 * s, 32, 32);
     const coreMat = new THREE.MeshStandardMaterial({
         color: 0xffff00,
         emissive: 0xffff00,
@@ -385,7 +398,7 @@ function createSystemSolarStorm(center, systemGroup) {
         name: `${systemGroup.userData.name} Core`,
         systemName: systemGroup.userData.name,
         location: 'Unexplored Interstellar Space',
-        radius: 70,
+        radius: 70 * s,
         mass: 2.0,
         slingshotMultiplier: 2.2,
         isOuterSystem: true
@@ -397,7 +410,7 @@ function createSystemSolarStorm(center, systemGroup) {
     // Flares
     for (let i = 0; i < 8; i++) {
         const angle = (i / 8) * Math.PI * 2;
-        const flareGeo = new THREE.ConeGeometry(20, 150, 8);
+        const flareGeo = new THREE.ConeGeometry(10 * s, 75 * s, 8);
         const flareMat = new THREE.MeshBasicMaterial({
             color: 0xffaa00,
             transparent: true,
@@ -406,14 +419,14 @@ function createSystemSolarStorm(center, systemGroup) {
         });
         const flare = new THREE.Mesh(flareGeo, flareMat);
         flare.position.set(
-            Math.cos(angle) * 90,
+            Math.cos(angle) * 45 * s,
             0,
-            Math.sin(angle) * 90
+            Math.sin(angle) * 45 * s
         );
         flare.lookAt(new THREE.Vector3(
-            Math.cos(angle) * 200,
+            Math.cos(angle) * 100 * s,
             0,
-            Math.sin(angle) * 200
+            Math.sin(angle) * 100 * s
         ));
         systemGroup.add(flare);
         flare.userData.baseOpacity = 0.7;
@@ -429,7 +442,8 @@ function createSystemSolarStorm(center, systemGroup) {
 // =============================================================================
 
 function createOrbitingBrownDwarf(center, orbitRadius, index, systemGroup) {
-    const geo = new THREE.SphereGeometry(35, 24, 24);
+    const s = systemGroup.userData.scale || 1;
+    const geo = new THREE.SphereGeometry(35 * s, 24, 24);
     const mat = new THREE.MeshStandardMaterial({
         color: 0x8b4513,
         metalness: 0.3,
@@ -454,7 +468,7 @@ function createOrbitingBrownDwarf(center, orbitRadius, index, systemGroup) {
         systemId: systemGroup.userData.systemId,
         systemName: systemGroup.userData.name,
         location: 'Unexplored Interstellar Space',
-        radius: 35,
+        radius: 35 * s,
         mass: 0.08,
         slingshotMultiplier: 1.3,
         isOuterSystem: true
@@ -467,7 +481,8 @@ function createOrbitingBrownDwarf(center, orbitRadius, index, systemGroup) {
 }
 
 function createOrbitingPulsar(center, orbitRadius, index, systemGroup) {
-    const coreGeo = new THREE.SphereGeometry(20, 16, 16);
+    const s = systemGroup.userData.scale || 1;
+    const coreGeo = new THREE.SphereGeometry(20 * s, 16, 16);
     const coreMat = new THREE.MeshStandardMaterial({
         color: 0x44eeff,
         emissive: 0x44eeff,
@@ -484,7 +499,7 @@ function createOrbitingPulsar(center, orbitRadius, index, systemGroup) {
         Math.sin(angle) * orbitRadius
     );
 
-    const ringGeo = new THREE.TorusGeometry(40, 3, 8, 32);
+    const ringGeo = new THREE.TorusGeometry(40 * s, 3 * s, 8, 32);
     const ringMat = new THREE.MeshBasicMaterial({
         color: 0x88ffff,
         transparent: true,
@@ -505,7 +520,7 @@ function createOrbitingPulsar(center, orbitRadius, index, systemGroup) {
         systemId: systemGroup.userData.systemId,
         systemName: systemGroup.userData.name,
         location: 'Unexplored Interstellar Space',
-        radius: 20,
+        radius: 20 * s,
         mass: 1.4,
         slingshotMultiplier: 2.5,
         isOuterSystem: true
@@ -538,6 +553,8 @@ function createOrbitingAsteroid(center, orbitRadius, index, systemGroup) {
 
     asteroid.userData = {
         type: 'outer_asteroid',
+        name: 'Asteroid',
+        health: Math.ceil(size / 5),
         orbitCenter: new THREE.Vector3(0, 0, 0),
         orbitRadius: radiusVar,
         orbitSpeed: 0.0007 + Math.random() * 0.0008,
@@ -558,6 +575,7 @@ function createOrbitingAsteroid(center, orbitRadius, index, systemGroup) {
 // =============================================================================
 
 function createBrightStar(systemGroup, starType) {
+    // Central star — original size.
     const starRadius = 100 + Math.random() * 50;
 
     const starGeo = new THREE.SphereGeometry(starRadius, 32, 32);
@@ -666,12 +684,12 @@ function createOrbitingPlanet(systemGroup, orbitRadius, index) {
 // BORG DRONES (Only in BORG patrol systems)
 // =============================================================================
 
-function createBorgDrone(systemGroup, maxOrbitRadius, index) {
-    const droneGroup = new THREE.Group();
-    droneGroup.frustumCulled = false;  // Prevent group from being culled
+function createBorgCubeForSystem(systemGroup, maxOrbitRadius) {
+    const cubeGroup = new THREE.Group();
+    cubeGroup.frustumCulled = false;
 
-    // BORG cube design
-    const cubeSize = 30;
+    // Large BORG cube — 50 units, visible at great distance
+    const cubeSize = 50;
     const cubeGeo = new THREE.BoxGeometry(cubeSize, cubeSize, cubeSize);
     const cubeMat = new THREE.MeshStandardMaterial({
         color: 0x1a1a1a,
@@ -681,21 +699,30 @@ function createBorgDrone(systemGroup, maxOrbitRadius, index) {
         emissiveIntensity: 0.3
     });
     const cube = new THREE.Mesh(cubeGeo, cubeMat);
-    cube.frustumCulled = false; // FIXED: Prevent disappearing when close/out of view
-    droneGroup.add(cube);
+    cube.frustumCulled = false;
+    cubeGroup.add(cube);
 
-    // Add green glowing edges
-    const edgeGeo = new THREE.EdgesGeometry(cubeGeo);
-    const edgeMat = new THREE.LineBasicMaterial({
+    // Green wireframe glow layer
+    const glowGeo = new THREE.BoxGeometry(cubeSize * 1.2, cubeSize * 1.2, cubeSize * 1.2);
+    const glowMat = new THREE.MeshBasicMaterial({
         color: 0x00ff00,
-        linewidth: 2
+        transparent: true,
+        opacity: 0.3,
+        wireframe: true
     });
-    const edges = new THREE.LineSegments(edgeGeo, edgeMat);
-    edges.frustumCulled = false; // FIXED: Prevent disappearing when close/out of view
-    droneGroup.add(edges);
+    const glow = new THREE.Mesh(glowGeo, glowMat);
+    glow.frustumCulled = false;
+    cubeGroup.add(glow);
 
-    // Add glowing sphere in center
-    const coreGeo = new THREE.SphereGeometry(10, 16, 16);
+    // Green glowing edges
+    const edgeGeo = new THREE.EdgesGeometry(cubeGeo);
+    const edgeMat = new THREE.LineBasicMaterial({ color: 0x00ff00, linewidth: 2 });
+    const edges = new THREE.LineSegments(edgeGeo, edgeMat);
+    edges.frustumCulled = false;
+    cubeGroup.add(edges);
+
+    // Glowing core sphere
+    const coreGeo = new THREE.SphereGeometry(15, 16, 16);
     const coreMat = new THREE.MeshBasicMaterial({
         color: 0x00ff00,
         transparent: true,
@@ -703,38 +730,99 @@ function createBorgDrone(systemGroup, maxOrbitRadius, index) {
         blending: THREE.AdditiveBlending
     });
     const core = new THREE.Mesh(coreGeo, coreMat);
-    core.frustumCulled = false; // FIXED: Prevent disappearing when close/out of view
-    droneGroup.add(core);
+    core.frustumCulled = false;
+    cubeGroup.add(core);
 
-    // Position drone in MUCH larger patrol orbit (released from far distance)
-    const patrolRadius = 10000 + Math.random() * 5000; // 10,000-15,000 units from system center
-    const angle = (index / 3) * Math.PI * 2;
-    droneGroup.position.set(
+    // Invisible hitbox sphere (300u radius) so the raycaster reliably finds
+    // the cube even at long encounter distances. The 50u box is far too small
+    // to hit at 5000-15000u typical engagement range without near-perfect aim.
+    const hitboxGeo = new THREE.SphereGeometry(300, 12, 8);
+    const hitboxMat = new THREE.MeshBasicMaterial({ visible: false });
+    const hitbox = new THREE.Mesh(hitboxGeo, hitboxMat);
+    hitbox.frustumCulled = false;
+    hitbox.userData.isHitbox = true;
+    cubeGroup.add(hitbox);
+
+    // Patrol orbit
+    const patrolRadius = 10000 + Math.random() * 5000;
+    const angle = Math.random() * Math.PI * 2;
+    cubeGroup.position.set(
         Math.cos(angle) * patrolRadius,
-        (Math.random() - 0.5) * 1000, // Higher vertical variance
+        (Math.random() - 0.5) * 1000,
         Math.sin(angle) * patrolRadius
     );
 
-    droneGroup.userData = {
-        type: 'borg_drone',
-        name: `BORG Drone ${systemGroup.userData.systemId}-${index + 1}`,
+    cubeGroup.userData = {
+        type: 'borg_cube',
+        name: `BORG Cube [${systemGroup.userData.name}]`,
         systemName: systemGroup.userData.name,
         location: 'Unexplored Interstellar Space',
         orbitRadius: patrolRadius,
         orbitSpeed: 0.0001 + Math.random() * 0.0002,
         orbitAngle: angle,
         orbitCenter: new THREE.Vector3(0, 0, 0),
-        rotationSpeed: 0.01,
-        health: 2, // FIXED: Drones die in 2 hits (1 damage per hit)
+        rotationSpeed: 0.007,
+        health: 100,
+        maxHealth: 100,
         hostile: true,
-        cubeSize: cubeSize // Store cube size for explosion scaling
+        cubeSize: cubeSize,
+        isBorgCube: true,
+        speed: 2.0,
+        damage: 5,
+        detectionRange: 10000,
+        firingRange: 500,
+        lastAttack: 0,
+        pursuing: false,
+        droneCount: 0,
+        maxDrones: 16,
+        drones: [],
+        lastDroneSpawn: 0,
+        warningShown: false,
+        communicationCooldown: 15000,
+        lastCommunication: 0
     };
 
-    systemGroup.userData.orbiters.push(droneGroup);
-    systemGroup.userData.drones.push(droneGroup);
-    systemGroup.add(droneGroup);
+    systemGroup.userData.orbiters.push(cubeGroup);
+    systemGroup.userData.drones.push(cubeGroup);
+    systemGroup.add(cubeGroup);
 
-    return droneGroup;
+    return cubeGroup;
+}
+
+function spawnBorgSystemDrone(borgCube, systemGroup) {
+    if (!borgCube || borgCube.userData.droneCount >= borgCube.userData.maxDrones) return;
+
+    const droneGeo = new THREE.ConeGeometry(2, 4, 4);
+    const droneMat = new THREE.MeshBasicMaterial({ color: 0x00ff00 });
+    const drone = new THREE.Mesh(droneGeo, droneMat);
+    drone.frustumCulled = false;
+
+    // Spawn near cube with random offset
+    drone.position.copy(borgCube.position);
+    drone.position.x += (Math.random() - 0.5) * 100;
+    drone.position.y += (Math.random() - 0.5) * 100;
+    drone.position.z += (Math.random() - 0.5) * 100;
+
+    drone.userData = {
+        type: 'borg_drone',
+        name: `BORG Drone`,
+        health: 2,
+        maxHealth: 2,
+        hostile: true,
+        speed: 3.0,
+        damage: 2,
+        firingRange: 300,
+        lastAttack: 0,
+        circlePhase: Math.random() * Math.PI * 2,
+        parentCube: borgCube,
+        cubeSize: 4
+    };
+
+    borgCube.userData.drones.push(drone);
+    borgCube.userData.droneCount++;
+    systemGroup.userData.orbiters.push(drone);
+    systemGroup.add(drone);
+    return drone;
 }
 
 // =============================================================================
@@ -1054,32 +1142,28 @@ function updateOuterSystems() {
         let opacity = 1.0;
 
         if (system.userData.systemType === 'exotic_core') {
-            // SET 1: Exotic Core Systems - Minimal visibility at start
-            // Invisible when player is >65,000 units away, fade IN as player approaches
-            const fadeStart = 65000;      // Start becoming visible at this distance
-            const fadeComplete = 5000;    // Fully visible at this distance
+            // SET 1: Exotic Core Systems — original fade range.
+            const fadeStart = 65000;
+            const fadeComplete = 5000;
 
             if (systemDist > fadeStart) {
-                opacity = 0;  // Invisible when far away
+                opacity = 0;
             } else if (systemDist > fadeComplete) {
-                // Fade in as player gets closer
                 opacity = 1.0 - (systemDist - fadeComplete) / (fadeStart - fadeComplete);
             } else {
-                opacity = 1.0;  // Fully visible when close
+                opacity = 1.0;
             }
         } else if (system.userData.systemType === 'borg_patrol') {
-            // SET 2: BORG Patrol Systems - Same minimal visibility as exotic systems
-            // Invisible when player is >45,000 units away, fade IN as player approaches
-            const fadeStart = 45000;      // Start becoming visible at this distance
-            const fadeComplete = 5000;    // Fully visible at this distance
+            // SET 2: BORG Patrol Systems — original fade range.
+            const fadeStart = 45000;
+            const fadeComplete = 5000;
 
             if (systemDist > fadeStart) {
-                opacity = 0;  // Invisible when far away
+                opacity = 0;
             } else if (systemDist > fadeComplete) {
-                // Fade in as player gets closer
                 opacity = 1.0 - (systemDist - fadeComplete) / (fadeStart - fadeComplete);
             } else {
-                opacity = 1.0;  // Fully visible when close
+                opacity = 1.0;
             }
         }
 
@@ -1119,7 +1203,9 @@ function updateOuterSystems() {
 
         // Update orbiters (planets, drones, cosmic features, brown dwarfs, pulsars, asteroids)
         system.userData.orbiters.forEach(orbiter => {
-            if (!orbiter.userData.orbitAngle !== undefined) return;
+            // BUGFIX: was `if (!orbiter.userData.orbitAngle !== undefined)` — operator
+            // precedence made this always truthy, freezing ALL outer system orbiters.
+            if (orbiter.userData.orbitAngle === undefined) return;
 
             orbiter.userData.orbitAngle += orbiter.userData.orbitSpeed;
 
@@ -1159,8 +1245,8 @@ function updateOuterSystems() {
                 orbiter.rotation.z += orbiter.userData.rotationSpeedZ;
             }
 
-            // Rotate BORG drones
-            if (orbiter.userData.type === 'borg_drone' && orbiter.userData.rotationSpeed) {
+            // Rotate BORG cubes and drones
+            if ((orbiter.userData.type === 'borg_cube' || orbiter.userData.type === 'borg_drone') && orbiter.userData.rotationSpeed) {
                 orbiter.rotation.x += orbiter.userData.rotationSpeed;
                 orbiter.rotation.y += orbiter.userData.rotationSpeed * 0.7;
             }
@@ -1187,67 +1273,162 @@ function updateOuterSystems() {
 // BORG PATROL DRONE COMBAT BEHAVIOR
 // =============================================================================
 
+const _borgWorldPos = new THREE.Vector3();
+const _borgDir = new THREE.Vector3();
+const _borgDroneTarget = new THREE.Vector3();
+
 function updateBorgPatrolCombat() {
     if (typeof camera === 'undefined' || typeof outerInterstellarSystems === 'undefined') return;
     if (!gameState || !gameState.gameStarted || gameState.gameOver) return;
 
     const playerPos = camera.position;
+    const now = Date.now();
 
     outerInterstellarSystems.forEach(system => {
         if (!system.userData || !system.userData.hasBorg || !system.userData.drones) return;
 
-        system.userData.drones.forEach(drone => {
-            if (!drone || !drone.userData || drone.userData.health <= 0) return;
+        system.userData.drones.forEach(entity => {
+            if (!entity || !entity.userData || entity.userData.health <= 0) return;
 
-            // Get drone's world position
-            const droneWorldPos = new THREE.Vector3();
-            drone.getWorldPosition(droneWorldPos);
+            entity.getWorldPosition(_borgWorldPos);
+            const distance = playerPos.distanceTo(_borgWorldPos);
 
-            const distance = playerPos.distanceTo(droneWorldPos);
+            // --- BORG CUBE behavior (100HP boss) ---
+            if (entity.userData.isBorgCube) {
+                const ud = entity.userData;
 
-            // Aggressive behavior - attack if player is within 5000 units
-            if (distance < 5000) {
-                // Mark as alerted
-                if (!drone.userData.alerted) {
-                    drone.userData.alerted = true;
-                    console.log(`⚠️ ${drone.userData.name} detected player!`);
+                // Borg alarm system
+                if (distance < 15000 && typeof startBorgAlarm === 'function') {
+                    startBorgAlarm();
+                } else if (distance >= 15000 && typeof stopBorgAlarm === 'function') {
+                    stopBorgAlarm();
                 }
 
-                // If within 3500 units, pursue and attack
-                if (distance < 3500) {
-                    // Stop normal orbit behavior, pursue player
-                    const systemWorldPos = new THREE.Vector3();
-                    system.getWorldPosition(systemWorldPos);
+                // Borg warning message — fires when cube enters typical
+                // visual range so the player gets immediate feedback that
+                // they've encountered a BORG threat.
+                if (distance < 10000 && !ud.warningShown) {
+                    ud.warningShown = true;
+                    if (typeof showAchievement === 'function') {
+                        showAchievement('⚠️ CRITICAL ALERT', 'Massive BORG vessel detected! Extreme threat level!', true);
+                    }
+                    if (typeof playSound === 'function') playSound('boss');
+                }
 
-                    // Calculate direction to player in local coordinates
-                    const toPlayer = new THREE.Vector3().subVectors(playerPos, droneWorldPos);
-                    const localDirection = system.worldToLocal(toPlayer.normalize());
-
-                    // Move towards player - patrol drones are fast scouts, faster than the main cube
-                    const speed = 3.0; // Pursuit speed - faster than BORG cube (2.0) and main drones (1.5)
-                    drone.position.add(localDirection.multiplyScalar(speed));
-
-                    // Face the player
-                    drone.lookAt(system.worldToLocal(playerPos.clone()));
-
-                    // Fire weapons if in range
-                    if (distance < 2000) {
-                        const now = Date.now();
-                        if (!drone.userData.lastAttack || now - drone.userData.lastAttack > 2000) {
-                            // Fire at player
-                            if (typeof fireEnemyWeapon === 'function') {
-                                fireEnemyWeapon(drone);
-                                drone.userData.lastAttack = now;
-                                console.log(`🔴 ${drone.userData.name} firing at player!`);
-                            }
-                        }
+                // Borg communications — extended to 10000u so transmissions
+                // start arriving as soon as the cube is detected, not only
+                // once you're nearly on top of it.
+                if (distance < 10000 && now - ud.lastCommunication > ud.communicationCooldown) {
+                    ud.lastCommunication = now;
+                    const msgs = [
+                        'We are the Borg. Resistance is futile.',
+                        'Your biological distinctiveness will be added to our own.',
+                        'You will be assimilated.',
+                        'Strength is irrelevant. Resistance is futile.',
+                        'Freedom is irrelevant. Self-determination is irrelevant.'
+                    ];
+                    const msg = msgs[Math.floor(Math.random() * msgs.length)];
+                    const threat = distance < 2000 ? 'IMMINENT THREAT' : 'INCOMING THREAT';
+                    if (typeof showAchievement === 'function') {
+                        showAchievement(`⚠️ BORG TRANSMISSION [${threat}]`, msg, true);
                     }
                 }
-            } else {
-                // Reset alert state when player leaves range
-                if (drone.userData.alerted) {
-                    drone.userData.alerted = false;
-                    console.log(`${drone.userData.name} lost player contact`);
+
+                // Pursuit: when player within detection range, break orbit and pursue
+                if (distance < ud.detectionRange) {
+                    ud.pursuing = true;
+                    // Remove orbit angle so normal orbit code skips this entity
+                    if (ud.orbitAngle !== undefined) {
+                        ud._savedOrbitAngle = ud.orbitAngle;
+                        delete ud.orbitAngle;
+                    }
+
+                    _borgDir.subVectors(playerPos, _borgWorldPos).normalize();
+                    const localDir = system.worldToLocal(_borgDir.add(_borgWorldPos)).sub(entity.position).normalize();
+                    entity.position.add(localDir.multiplyScalar(ud.speed));
+
+                    // Rotate menacingly
+                    entity.rotation.x += 0.002;
+                    entity.rotation.y += 0.003;
+                    entity.rotation.z += 0.001;
+
+                    // Spawn drones when player is close
+                    if (distance < 5000 && ud.droneCount < ud.maxDrones && now - ud.lastDroneSpawn > 2000) {
+                        ud.lastDroneSpawn = now;
+                        spawnBorgSystemDrone(entity, system);
+                    }
+
+                    // Fire at player
+                    if (distance < ud.firingRange && now - ud.lastAttack > 1500) {
+                        ud.lastAttack = now;
+                        if (typeof fireEnemyWeapon === 'function') fireEnemyWeapon(entity);
+                    }
+                } else if (ud.pursuing) {
+                    // Return to patrol
+                    ud.pursuing = false;
+                    ud.warningShown = false;
+                    if (ud._savedOrbitAngle !== undefined) {
+                        ud.orbitAngle = ud._savedOrbitAngle;
+                        delete ud._savedOrbitAngle;
+                    }
+                }
+
+                // Update cube's drones
+                for (let i = ud.drones.length - 1; i >= 0; i--) {
+                    const drone = ud.drones[i];
+                    if (!drone || drone.userData.health <= 0) {
+                        ud.droneCount--;
+                        ud.drones.splice(i, 1);
+                        continue;
+                    }
+
+                    drone.getWorldPosition(_borgDroneTarget);
+                    const droneDist = playerPos.distanceTo(_borgDroneTarget);
+
+                    if (droneDist < 3500) {
+                        // Swarm attack
+                        const idx = i;
+                        const swarmAngle = now * 0.001 + (idx * Math.PI * 2 / 8);
+                        const spiralR = 80 + Math.sin(now * 0.0003) * 30;
+                        _borgDir.set(
+                            playerPos.x + Math.cos(swarmAngle) * spiralR,
+                            playerPos.y + Math.sin(swarmAngle * 0.5) * 20,
+                            playerPos.z + Math.sin(swarmAngle) * spiralR
+                        );
+                        const localTarget = system.worldToLocal(_borgDir.clone());
+                        const dir = localTarget.sub(drone.position).normalize();
+                        drone.position.add(dir.multiplyScalar(drone.userData.speed));
+                    } else {
+                        // Orbit cube
+                        entity.getWorldPosition(_borgDir);
+                        const orbitAngle = now * 0.001 + (i * Math.PI * 2 / 8);
+                        _borgDir.x += Math.cos(orbitAngle) * 80;
+                        _borgDir.z += Math.sin(orbitAngle) * 80;
+                        _borgDir.y += Math.sin(orbitAngle * 0.5) * 30;
+                        const localOrbit = system.worldToLocal(_borgDir.clone());
+                        const oDir = localOrbit.sub(drone.position).normalize();
+                        drone.position.add(oDir.multiplyScalar(drone.userData.speed * 0.5));
+                    }
+
+                    // Drone fires at player
+                    if (droneDist < 300 && now - (drone.userData.lastAttack || 0) > 1500) {
+                        drone.userData.lastAttack = now;
+                        if (typeof fireEnemyWeapon === 'function') fireEnemyWeapon(drone);
+                    }
+                }
+
+                return; // Skip generic drone behavior below
+            }
+
+            // --- Small BORG drone fallback (shouldn't normally exist standalone) ---
+            if (distance < 3500) {
+                _borgDir.subVectors(playerPos, _borgWorldPos).normalize();
+                const localDir = system.worldToLocal(_borgDir.add(_borgWorldPos)).sub(entity.position).normalize();
+                entity.position.add(localDir.multiplyScalar(entity.userData.speed || 3.0));
+
+                if (distance < 300 && now - (entity.userData.lastAttack || 0) > 1500) {
+                    entity.userData.lastAttack = now;
+                    if (typeof fireEnemyWeapon === 'function') fireEnemyWeapon(entity);
                 }
             }
         });

@@ -8,34 +8,59 @@
 // CORE UI UPDATE SYSTEM - ENHANCED INTEGRATION
 // =============================================================================
 
+// DOM element cache — updateUI/related frame-called functions used to run
+// 40+ getElementById lookups every frame. Cache the refs and re-resolve
+// lazily if the element gets detached (hull overlay, etc).
+const _uiElCache = Object.create(null);
+// Reusable vector for event-horizon world-position queries (avoids
+// per-frame allocation in updateEventHorizonWarnings).
+const _ehwTmpVec = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+function _uiEl(id) {
+    const cached = _uiElCache[id];
+    if (cached && cached.isConnected) return cached;
+    const el = document.getElementById(id);
+    if (el) _uiElCache[id] = el;
+    else delete _uiElCache[id];
+    return el;
+}
+// Expose cache invalidation for callers that delete/replace tracked elements
+window._invalidateUiElCache = function(id) {
+    if (id) delete _uiElCache[id];
+    else for (const k in _uiElCache) delete _uiElCache[k];
+};
+
 function updateUI() {
     // Safety check for game state
     if (typeof gameState === 'undefined' || !gameState) return;
-    
+
     // FIXED: Properly define all UI elements at the start
-    const velocityEl = document.getElementById('velocity');
-    const distanceEl = document.getElementById('distance');
-    const energyBarEl = document.getElementById('energyBar');
-    const hullBarEl = document.getElementById('hullBar');
-    const locationEl = document.getElementById('location');
-    const targetInfo = document.getElementById('targetInfo');
-    const emergencyWarpEl = document.getElementById('emergencyWarpCount');
-    const weaponStatusEl = document.getElementById('weaponStatus');
-    const galaxiesClearedEl = document.getElementById('galaxiesCleared');
-    const targetLockStatusEl = document.getElementById('targetLockStatus');
+    const velocityEl = _uiEl('velocity');
+    const distanceEl = _uiEl('distance');
+    const energyBarEl = _uiEl('energyBar');
+    const hullBarEl = _uiEl('hullBar');
+    const locationEl = _uiEl('location');
+    const targetInfo = _uiEl('targetInfo');
+    const emergencyWarpEl = _uiEl('emergencyWarpCount');
+    const weaponStatusEl = _uiEl('weaponStatus');
+    const galaxiesClearedEl = _uiEl('galaxiesCleared');
+    const targetLockStatusEl = _uiEl('targetLockStatus');
     
-    // Basic stats updates
-    if (velocityEl) velocityEl.textContent = (gameState.velocity * 1000).toFixed(0) + ' km/s';
-    if (distanceEl) distanceEl.textContent = gameState.distance.toFixed(1) + ' ly';
-    
+    // Basic stats updates — only touch the DOM when the displayed value changes
+    const _velText = (gameState.velocity * 1000).toFixed(0) + ' km/s';
+    if (velocityEl && velocityEl.textContent !== _velText) velocityEl.textContent = _velText;
+    const _distText = gameState.distance.toFixed(1) + ' ly';
+    if (distanceEl && distanceEl.textContent !== _distText) distanceEl.textContent = _distText;
+
     // Emergency Warp count update
     if (emergencyWarpEl && gameState.emergencyWarp) {
-        emergencyWarpEl.textContent = gameState.emergencyWarp.available;
+        const _warpText = '' + gameState.emergencyWarp.available;
+        if (emergencyWarpEl.textContent !== _warpText) emergencyWarpEl.textContent = _warpText;
     }
     // Also update mobile warp count
-    const mobileWarpEl = document.getElementById('mobileWarpCount');
+    const mobileWarpEl = _uiEl('mobileWarpCount');
     if (mobileWarpEl && gameState.emergencyWarp) {
-        mobileWarpEl.textContent = gameState.emergencyWarp.available;
+        const _mwText = '' + gameState.emergencyWarp.available;
+        if (mobileWarpEl.textContent !== _mwText) mobileWarpEl.textContent = _mwText;
     }
     if (energyBarEl) {
     // First, always update the width to match current energy
@@ -82,7 +107,7 @@ if (gameState.solarStormBoostActive || gameState.plasmaStormBoostActive) {
     const boostType = gameState.plasmaStormBoostActive ? 'PLASMA' : 'SOLAR';
     const boostColor = gameState.plasmaStormBoostActive ? '#8866ff' : '#ffd700';
     
-    const energyDisplay = document.querySelector('#energyBar').parentElement.previousElementSibling;
+    const energyDisplay = energyBarEl && energyBarEl.parentElement ? energyBarEl.parentElement.previousElementSibling : null;
     if (energyDisplay) {
         energyDisplay.innerHTML = `Energy: <span style="color: ${boostColor}; font-weight: bold; text-shadow: 0 0 10px ${boostColor};">${Math.round(gameState.energy)}% ⚡ ${boostType} (${timeLeft}s)</span>`;
     }
@@ -104,7 +129,7 @@ if (gameState.solarStormBoostActive || gameState.plasmaStormBoostActive) {
     }
     
     // ADDED: Cracked screen effect at 10% hull
-if (gameState.hull <= 10 && !document.getElementById('criticalDamageOverlay')) {
+if (gameState.hull <= 10 && !_uiEl('criticalDamageOverlay')) {
     const crackedOverlay = document.createElement('div');
     crackedOverlay.id = 'criticalDamageOverlay';
     crackedOverlay.style.cssText = `
@@ -260,7 +285,7 @@ if (gameState.hull <= 10 && !document.getElementById('criticalDamageOverlay')) {
 
 function updateCosmicEffectsUI() {
     // Navigation jamming indicator
-    const navStatus = document.getElementById('navigationStatus');
+    const navStatus = _uiEl('navigationStatus');
     if (navStatus && typeof gameState !== 'undefined') {
         if (gameState.navigationJammed) {
             navStatus.innerHTML = '<i class="fas fa-exclamation-triangle text-red-400"></i> Navigation Jammed!';
@@ -270,17 +295,17 @@ function updateCosmicEffectsUI() {
             navStatus.className = 'text-green-400 font-mono';
         }
     }
-    
+
     // Weapon power boost indicator
-    const weaponStatus = document.getElementById('weaponStatus');
+    const weaponStatus = _uiEl('weaponStatus');
     if (weaponStatus && typeof gameState !== 'undefined' && gameState.weaponPowerBoost > 1.0) {
         const boost = ((gameState.weaponPowerBoost - 1) * 100).toFixed(0);
         weaponStatus.innerHTML = `<i class="fas fa-bolt text-yellow-400"></i> Weapon Power +${boost}%`;
         weaponStatus.className = 'text-yellow-400 font-mono';
     }
-    
+
     // Concealment indicator
-    const concealmentStatus = document.getElementById('concealmentStatus');
+    const concealmentStatus = _uiEl('concealmentStatus');
     if (concealmentStatus && typeof gameState !== 'undefined' && gameState.concealment > 0) {
         const concealment = (gameState.concealment * 100).toFixed(0);
         concealmentStatus.innerHTML = `<i class="fas fa-eye-slash text-blue-400"></i> Concealed ${concealment}%`;
@@ -289,7 +314,7 @@ function updateCosmicEffectsUI() {
 }
 
 function updateAutoNavigateButton() {
-    const autoNavBtn = document.getElementById('autoNavigateBtn');
+    const autoNavBtn = _uiEl('autoNavigateBtn');
     if (!autoNavBtn || typeof gameState === 'undefined') return;
     
     if (gameState.currentTarget && !gameState.gameOver && gameState.energy > 10) {
@@ -319,22 +344,13 @@ function updateAutoNavigateButton() {
 function updateMobileFloatingStatus() {
     if (typeof gameState === 'undefined') return;
 
-    // MINIMAL STATUS: Only Hull and Energy (Emergency Warps shown on button badge)
-    const updates = {
-        'mobileFloatingHull': gameState.hull ? Math.round(gameState.hull) + '%' : '100%',
-        'mobileFloatingEnergy': gameState.energy ? Math.round(gameState.energy) + '%' : '100%'
-    };
+    const hullEl = _uiEl('mobileFloatingHull');
+    const energyEl = _uiEl('mobileFloatingEnergy');
+    if (hullEl) hullEl.textContent = gameState.hull ? Math.round(gameState.hull) + '%' : '100%';
+    if (energyEl) energyEl.textContent = gameState.energy ? Math.round(gameState.energy) + '%' : '100%';
 
-    Object.entries(updates).forEach(([id, value]) => {
-        const element = document.getElementById(id);
-        if (element) element.textContent = value;
-    });
-
-    // Update emergency warp count on button badge
-    const warpBadge = document.getElementById('mobileWarpCountBadge');
-    if (warpBadge) {
-        warpBadge.textContent = gameState.emergencyWarp?.available ?? 5;
-    }
+    const warpBadge = _uiEl('mobileWarpCountBadge');
+    if (warpBadge) warpBadge.textContent = gameState.emergencyWarp?.available ?? 5;
 }
 
 // =============================================================================
@@ -731,7 +747,7 @@ function detectEnemiesInRegion() {
                 if (galaxyIds.length === 1 && galaxyIds[0] >= 0 && typeof galaxyTypes !== 'undefined') {
                     const galaxyType = galaxyTypes[galaxyIds[0]];
                     detectorTextNode.textContent = `${galaxyType.faction} Hostiles: `;
-                } else if (galaxyIds.includes(-1)) {
+                } else if (galaxyIds.includes(-1) || galaxyIds.includes(7)) {
                     detectorTextNode.textContent = 'Martian Pirates: ';
                 } else {
                     detectorTextNode.textContent = 'Active Hostiles: ';
@@ -1164,8 +1180,20 @@ function updateGalaxyMap() {
     // ========== GALACTIC VIEW ==========
     // Show nearby targets as dots (radar-style)
     
-    // Hide player triangle, show direction arrow at center
+    // Hide player and ally triangles (allies show as dots in galactic view)
     playerMapPos.style.display = 'none';
+    const _depthBar = document.getElementById('mapDepthBar');
+    if (_depthBar) _depthBar.style.display = 'none';
+    const _zoneLabel = document.getElementById('mapZoneLabel');
+    if (_zoneLabel) _zoneLabel.style.display = 'none';
+    const _galaxyMap = document.getElementById('galaxyMap');
+    if (_galaxyMap) {
+        _galaxyMap.querySelectorAll('.universe-nebula-dot, .universe-path-line').forEach(d => d.remove());
+    }
+    for (let _i = 0; _i < 10; _i++) {
+        const m = document.getElementById('allyMapMarker' + _i);
+        if (m) m.style.display = 'none';
+    }
     if (mapDirectionArrow) {
         mapDirectionArrow.style.display = 'block';
         const forward = new THREE.Vector3();
@@ -1174,10 +1202,10 @@ function updateGalaxyMap() {
         mapDirectionArrow.style.setProperty('--direction', `${angle}rad`);
     }
     
-    // Hide galaxy indicators and Sagittarius A*
+    // Hide galaxy indicators and Sagittarius A* in radar view (allies stay visible)
     const galaxyIndicators = document.querySelectorAll('.galaxy-indicator');
     galaxyIndicators.forEach(el => el.style.display = 'none');
-    
+
     const sgrAEl = document.querySelector('[title="Sagittarius A* - Galactic Center"]');
     if (sgrAEl) sgrAEl.style.display = 'none';
     
@@ -1186,7 +1214,7 @@ function updateGalaxyMap() {
     
     // Show nearby objects as dots (enemies, planets, etc.)
     const galaxyMap = document.getElementById('galaxyMap');
-    const radarRange = 1500; // Detection range for galactic view
+    const radarRange = 3000; // Detection range for galactic view (6000u diameter)
     
     if (galaxyMap && typeof planets !== 'undefined' && typeof enemies !== 'undefined') {
         // Collect all nearby targetable objects
@@ -1310,6 +1338,41 @@ if (typeof outerInterstellarSystems !== 'undefined') {
                 });
             }
         });
+        
+        // Add ally wingmen
+        if (typeof allyShips !== 'undefined') {
+            allyShips.forEach((ally, idx) => {
+                if (!ally || !ally.position || !ally.userData || ally.userData.health <= 0) return;
+                const distance = camera.position.distanceTo(ally.position);
+                if (distance < radarRange) {
+                    nearbyObjects.push({
+                        position: ally.position,
+                        type: 'ally',
+                        name: ally.userData.name,
+                        colorStr: ally.userData.colorStr,
+                        distance: distance
+                    });
+                }
+            });
+        }
+
+        // Add nearby civilian ships (trade/mining vessels)
+        if (typeof tradingShips !== 'undefined') {
+            tradingShips.forEach(ship => {
+                if (!ship || !ship.position || !ship.userData || ship.userData.destroyed) return;
+                // Only show if marked as visible on map (within 3000 units)
+                if (ship.userData.showOnMap) {
+                    const distance = camera.position.distanceTo(ship.position);
+                    nearbyObjects.push({
+                        position: ship.position,
+                        type: 'civilian_ship',
+                        name: ship.userData.name || 'Civilian Vessel',
+                        distance: distance,
+                        underAttack: ship.userData.distressActive || false
+                    });
+                }
+            });
+        }
 
         // Add cosmic features (if available)
         if (typeof cosmicFeatures !== 'undefined') {
@@ -1395,9 +1458,24 @@ if (typeof outerInterstellarSystems !== 'undefined') {
 let dotColor = '#4488ff'; // Default blue for planets
 let dotSize = '4px';
 
-if (obj.type === 'enemy') {
+if (obj.type === 'ally') {
+    // Render allies as arrow markers like the player, not dots
+    // Use the wingman's stored color (Greek-named recruits have distinct hues)
+    dotColor = (obj.colorStr) || (obj.name === 'Wingman Alpha' ? '#00ff88' : (obj.name === 'Wingman Beta' ? '#88aaff' : '#ffaa44'));
+    dot.textContent = '▲';
+    dot.style.cssText = 'position:absolute;font-size:10px;font-weight:bold;color:' + dotColor + ';transform:translate(-50%,-50%);pointer-events:none;z-index:3;filter:drop-shadow(0 0 3px ' + dotColor + ');';
+    dot.style.left = screenX + '%';
+    dot.style.top = screenZ + '%';
+    dot.style.display = 'block';
+    dot.title = (obj.name || 'Wingman') + ' (' + obj.distance.toFixed(0) + 'u)';
+    galaxyMap.appendChild(dot);
+    return; // skip normal dot styling below
+} else if (obj.type === 'enemy') {
     dotColor = obj.isBoss ? '#ff00ff' : '#ff4444';
     dotSize = obj.isBoss ? '8px' : '6px';
+} else if (obj.type === 'civilian_ship') {
+    dotColor = obj.underAttack ? '#ffaa00' : '#00ff88';  // Orange if under attack, green otherwise
+    dotSize = '5px';
 } else if (obj.type === 'blackhole') {
     dotColor = '#000000';
     dotSize = '6px';
@@ -1458,6 +1536,14 @@ if (obj.type === 'enemy') {
                 dot.style.boxShadow = `0 0 4px ${dotColor}`;
                 dot.style.pointerEvents = 'none';
                 dot.title = `${obj.name} (${obj.distance.toFixed(0)} units)`;
+                // Pulse civilians under attack so the distress signal reads
+                // distinctly from regular civilian traffic on the map.
+                if (obj.type === 'civilian_ship' && obj.underAttack) {
+                    dot.classList.add('distress-map-dot');
+                    dot.style.boxShadow = '0 0 8px ' + dotColor + ', 0 0 14px rgba(255,170,0,0.6)';
+                } else {
+                    dot.classList.remove('distress-map-dot');
+                }
                 
                 galaxyMap.appendChild(dot);
             }
@@ -1484,7 +1570,13 @@ if (obj.type === 'enemy') {
         
     } else {
     // ========== UNIVERSAL VIEW ==========
-    
+
+    // Single galaxyMap binding shared across all universal-view rendering
+    // (asteroid fields, depth bar, ally markers, nebula dots, paths, zone label).
+    // Declared at the top of the else block to avoid TDZ when nested forEachs
+    // reference it before later const declarations.
+    const galaxyMap = document.getElementById('galaxyMap');
+
     // Use pooling instead
 mapDotPool.releaseAll();
     
@@ -1639,59 +1731,8 @@ mapDotPool.releaseAll();
     //     });
     // }
 
-    // Display interstellar asteroid fields on map
-    if (typeof interstellarAsteroids !== 'undefined' && interstellarAsteroids.length > 0) {
-        // Group asteroids by field and calculate field centers
-        const fields = {};
-        interstellarAsteroids.forEach(asteroid => {
-            const fieldIndex = asteroid.userData.fieldIndex;
-            if (!fields[fieldIndex]) {
-                fields[fieldIndex] = [];
-            }
-            fields[fieldIndex].push(asteroid);
-        });
-
-        // Display each field as a dot on the map
-        Object.keys(fields).forEach(fieldIndex => {
-            const asteroids = fields[fieldIndex];
-
-            // Calculate field center (average position)
-            let centerX = 0, centerY = 0, centerZ = 0;
-            asteroids.forEach(a => {
-                centerX += a.position.x;
-                centerY += a.position.y;
-                centerZ += a.position.z;
-            });
-            centerX /= asteroids.length;
-            centerY /= asteroids.length;
-            centerZ /= asteroids.length;
-
-            // Convert to map coordinates
-            const fieldMapX = (centerX / universeRadius) + 0.5;
-            const fieldMapZ = (centerZ / universeRadius) + 0.5;
-
-            // Only show if within map bounds
-            if (fieldMapX >= 0 && fieldMapX <= 1 && fieldMapZ >= 0 && fieldMapZ <= 1) {
-                const dot = mapDotPool.get('asteroid-field');
-                dot.className = 'asteroid-field-dot absolute';
-                dot.style.width = '8px';
-                dot.style.height = '8px';
-                dot.style.backgroundColor = 'rgba(120, 100, 80, 0.8)';
-                dot.style.borderRadius = '50%';
-                dot.style.border = '1px solid rgba(150, 130, 110, 1)';
-                dot.style.left = `${fieldMapX * 100}%`;
-                dot.style.top = `${fieldMapZ * 100}%`;
-                dot.style.transform = 'translate(-50%, -50%)';
-                dot.style.boxShadow = '0 0 6px rgba(120, 100, 80, 0.6)';
-                dot.style.pointerEvents = 'none';
-                dot.style.zIndex = '6';
-                dot.innerHTML = '';
-                dot.title = `Asteroid Field ${fieldIndex} (${asteroids.length} asteroids)`;
-
-                galaxyMap.appendChild(dot);
-            }
-        });
-    }
+    // Asteroid fields are intentionally NOT rendered on the universal view —
+    // they are short-range navigation hazards better suited to galactic view.
 
     // Show player triangle, hide direction arrow
     playerMapPos.style.display = 'block';
@@ -1699,65 +1740,200 @@ mapDotPool.releaseAll();
         mapDirectionArrow.style.display = 'none';
     }
     
-    // Show player position in universe using same spherical projection as galaxies
+    // TOP-DOWN PROJECTION: X axis = map left/right, Z axis = map up/down,
+    // Y axis = depth (shown on the depth bar). Much more intuitive than the
+    // spherical projection — flying north/south on the X/Z plane moves the
+    // marker linearly, and elevation is its own dedicated indicator.
     const playerX = camera.position.x;
     const playerY = camera.position.y;
     const playerZ = camera.position.z;
 
-    // Convert player's Cartesian position to spherical coordinates
-    const playerDistance = Math.sqrt(playerX * playerX + playerY * playerY + playerZ * playerZ);
-    const playerPhi = Math.atan2(playerZ, playerX);
-    const playerTheta = Math.acos(playerY / Math.max(playerDistance, 0.001)); // Avoid division by zero
-
-    // Project spherical coordinates onto 2D map (same as galaxy projection)
-    let playerMapX = ((playerPhi + Math.PI) / (Math.PI * 2)) % 1.0;
-    let playerMapY = playerTheta / Math.PI;
-
-    // Apply distance factor for depth (same as galaxies)
-    const normalizedDistance = Math.min(playerDistance / universeRadius, 1.0);
-    const centerX = 0.5;
-    const centerY = 0.5;
-    playerMapX = centerX + (playerMapX - centerX) * normalizedDistance;
-    playerMapY = centerY + (playerMapY - centerY) * normalizedDistance;
-
-    const clampedX = Math.max(5, Math.min(95, playerMapX * 100));
-    const clampedZ = Math.max(5, Math.min(95, playerMapY * 100));
+    // Linear projection: ±universeRadius maps to 0..100% of the map area
+    const projectXZ = (x, z) => ({
+        mx: 50 + (x / universeRadius) * 50,
+        my: 50 + (z / universeRadius) * 50
+    });
+    const playerProj = projectXZ(playerX, playerZ);
+    const clampedX = Math.max(5, Math.min(95, playerProj.mx));
+    const clampedZ = Math.max(5, Math.min(95, playerProj.my));
 
     playerMapPos.style.left = `${clampedX}%`;
     playerMapPos.style.top = `${clampedZ}%`;
-    
+
+    // 3D depth indicators:
+    //   1) scale the player marker by Y elevation (above plane = larger,
+    //      below plane = smaller) so depth pops visually
+    //   2) maintain a vertical depth bar on the right edge of the map
+    const yNorm = Math.max(-1, Math.min(1, playerY / 50000));
+    const playerScale = 0.7 + yNorm * 0.6; // 0.1 (deep) to 1.3 (high)
+    playerMapPos.style.fontSize = (1.0 + yNorm * 0.4) + 'rem';
+
+    // Vertical depth bar on the right edge of the galaxy map container
+    if (galaxyMap) {
+        let depthBar = document.getElementById('mapDepthBar');
+        if (!depthBar) {
+            depthBar = document.createElement('div');
+            depthBar.id = 'mapDepthBar';
+            // Depth bar placed inside the round-map clip area (circle has
+            // ~85% inner radius at the edges) — keep it short and inset so it
+            // doesn't get clipped by border-radius:50%.
+            depthBar.style.cssText = 'position:absolute;right:18%;top:30%;width:4px;height:40%;background:linear-gradient(to bottom,rgba(100,180,255,0.15),rgba(40,40,80,0.25),rgba(100,180,255,0.15));border:1px solid rgba(100,180,255,0.4);border-radius:3px;pointer-events:none;z-index:9;';
+            const tick = document.createElement('div');
+            tick.id = 'mapDepthTick';
+            tick.style.cssText = 'position:absolute;left:-4px;width:14px;height:3px;background:#00ff96;box-shadow:0 0 4px #00ff96;border-radius:2px;';
+            depthBar.appendChild(tick);
+            const lblTop = document.createElement('div');
+            lblTop.textContent = '+Y';
+            lblTop.style.cssText = 'position:absolute;left:-22px;top:-12px;font-size:8px;color:#88ccff;';
+            depthBar.appendChild(lblTop);
+            const lblMid = document.createElement('div');
+            lblMid.textContent = '0';
+            lblMid.style.cssText = 'position:absolute;left:-12px;top:50%;font-size:8px;color:#88ccff;';
+            depthBar.appendChild(lblMid);
+            const lblBot = document.createElement('div');
+            lblBot.textContent = '−Y';
+            lblBot.style.cssText = 'position:absolute;left:-22px;bottom:-12px;font-size:8px;color:#88ccff;';
+            depthBar.appendChild(lblBot);
+            galaxyMap.appendChild(depthBar);
+        }
+        const tick = document.getElementById('mapDepthTick');
+        if (tick) {
+            // Tick at 50% = on plane; lower = above plane (positive Y)
+            const tickY = 50 - (yNorm * 50);
+            tick.style.top = Math.max(0, Math.min(100, tickY)) + '%';
+        }
+    }
+
     // Rotate triangle to show direction
     const forward = new THREE.Vector3();
     camera.getWorldDirection(forward);
     const angle = Math.atan2(forward.x, -forward.z);
     playerMapPos.style.transform = `translate(-50%, -50%) rotate(${angle}rad)`;
-    
+
+    // ── Ally wingmen markers (same ▲ shape, in their faction colors) ──
+    if (typeof allyShips !== 'undefined') {
+        if (galaxyMap) {
+            // Create/reuse wingman markers
+            allyShips.forEach((ally, idx) => {
+                if (!ally || !ally.userData || ally.userData.health <= 0) return;
+                let marker = document.getElementById('allyMapMarker' + idx);
+                if (!marker) {
+                    marker = document.createElement('div');
+                    marker.id = 'allyMapMarker' + idx;
+                    marker.style.cssText = 'position:absolute;font-size:12px;font-weight:bold;transform:translate(-50%,-50%);pointer-events:none;z-index:3;';
+                    marker.textContent = '▲';
+                    galaxyMap.appendChild(marker);
+                }
+                const color = (ally.userData && ally.userData.colorStr) ||
+                              (idx === 0 ? '#00ff88' : (idx === 1 ? '#88aaff' : '#ffaa44'));
+                marker.style.color = color;
+                marker.style.filter = `drop-shadow(0 0 3px ${color})`;
+                // Top-down X/Z projection — same as player marker
+                const amx = 50 + (ally.position.x / universeRadius) * 50;
+                const amy = 50 + (ally.position.z / universeRadius) * 50;
+                marker.style.left = Math.max(5, Math.min(95, amx)) + '%';
+                marker.style.top = Math.max(5, Math.min(95, amy)) + '%';
+                marker.style.display = 'block';
+            });
+        }
+    }
+
+    // ── Render nebulas as colored dots (universe view) ───────────────
+    if (galaxyMap && typeof nebulaClouds !== 'undefined') {
+        // Clear previous nebula dots
+        const oldNebDots = galaxyMap.querySelectorAll('.universe-nebula-dot');
+        oldNebDots.forEach(d => d.remove());
+
+        nebulaClouds.forEach((nebula) => {
+            if (!nebula || !nebula.position) return;
+            // Only show nebulas the player has deep-discovered — undiscovered
+            // nebulas should remain hidden so the universe map reflects the
+            // player's actual knowledge of charted regions.
+            const discovered = nebula.userData && nebula.userData.deepDiscovered;
+            if (!discovered) return;
+            const nx = 50 + (nebula.position.x / universeRadius) * 50;
+            const nz = 50 + (nebula.position.z / universeRadius) * 50;
+            if (nx < 2 || nx > 98 || nz < 2 || nz > 98) return;
+            const dot = document.createElement('div');
+            dot.className = 'universe-nebula-dot';
+            const color = '#88ff88';
+            dot.style.cssText = 'position:absolute;width:6px;height:6px;border-radius:50%;background:' + color +
+                ';box-shadow:0 0 6px ' + color +
+                ';transform:translate(-50%,-50%);pointer-events:none;z-index:4;opacity:0.85;';
+            dot.style.left = nx + '%';
+            dot.style.top = nz + '%';
+            dot.title = (nebula.userData && (nebula.userData.mythicalName || nebula.userData.name)) || 'Nebula';
+            galaxyMap.appendChild(dot);
+        });
+    }
+
+    // ── Render discovery paths as dashed lines ───────────────────────
+    if (galaxyMap && typeof window.discoveryPaths !== 'undefined') {
+        const oldPathLines = galaxyMap.querySelectorAll('.universe-path-line');
+        oldPathLines.forEach(d => d.remove());
+
+        window.discoveryPaths.forEach(path => {
+            if (!path || !path.line || !path.line.userData) return;
+            const start = path.line.userData.startPosition;
+            const end = path.line.userData.endPosition;
+            if (!start || !end) return;
+            const x1 = 50 + (start.x / universeRadius) * 50;
+            const y1 = 50 + (start.z / universeRadius) * 50;
+            const x2 = 50 + (end.x / universeRadius) * 50;
+            const y2 = 50 + (end.z / universeRadius) * 50;
+            const dx = x2 - x1, dy = y2 - y1;
+            const len = Math.sqrt(dx * dx + dy * dy);
+            const angle = Math.atan2(dy, dx) * 180 / Math.PI;
+            const line = document.createElement('div');
+            line.className = 'universe-path-line';
+            line.style.cssText = 'position:absolute;height:1px;background:repeating-linear-gradient(to right, rgba(255,200,100,0.7) 0 4px, transparent 4px 8px);transform-origin:0 0;pointer-events:none;z-index:3;';
+            line.style.left = x1 + '%';
+            line.style.top = y1 + '%';
+            line.style.width = len + '%';
+            line.style.transform = 'rotate(' + angle + 'deg)';
+            galaxyMap.appendChild(line);
+        });
+    }
+
+    // ── Current zone label ───────────────────────────────────────────
+    // Positioned at the bottom-center of the circular map so it stays inside
+    // the visible round area (round-map clips with overflow:hidden).
+    let zoneLabel = document.getElementById('mapZoneLabel');
+    if (!zoneLabel && galaxyMap) {
+        zoneLabel = document.createElement('div');
+        zoneLabel.id = 'mapZoneLabel';
+        zoneLabel.style.cssText = 'position:absolute;left:50%;bottom:8%;transform:translateX(-50%);font-size:9px;color:#88ccff;background:rgba(0,0,40,0.7);padding:2px 6px;border-radius:3px;border:1px solid rgba(100,180,255,0.4);pointer-events:none;z-index:10;white-space:nowrap;max-width:80%;text-align:center;';
+        galaxyMap.appendChild(zoneLabel);
+    }
+    if (zoneLabel) {
+        const dist = Math.sqrt(playerX*playerX + playerY*playerY + playerZ*playerZ);
+        let zone = 'Deep Space';
+        if (dist < 7000) zone = 'Sol System';
+        else if (dist < 25000) zone = 'Outer Sol';
+        else if (dist < 60000) zone = 'Interstellar';
+        else if (dist < 100000) zone = 'Distant Galaxy';
+        else zone = 'Cosmic Edge';
+        zoneLabel.textContent = zone + ' · ' + (dist|0) + 'u';
+        zoneLabel.style.display = 'block';
+    }
+
     // Show all galaxy indicators
     const galaxyIndicators = document.querySelectorAll('.galaxy-indicator');
     galaxyIndicators.forEach((el, index) => {
         if (index < galaxyTypes.length) {
-            // ✅ FIXED: Use accurate 2D projection from 3D spherical coordinates
+            // Top-down X/Z projection — convert 3D spherical → cartesian → linear map
             let mapPos;
             if (typeof galaxy3DPositions !== 'undefined' && galaxy3DPositions[index]) {
-                // Convert 3D spherical to 2D map coordinates
                 const galaxy3D = galaxy3DPositions[index];
-                const phi = galaxy3D.phi;
-                const theta = galaxy3D.theta;
-                const distance = galaxy3D.distance;
-                
-                // Project spherical coordinates onto 2D map
-                let x = (phi / (Math.PI * 2)) % 1.0;
-                let y = theta / Math.PI;
-                
-                // Apply distance factor for depth
-                const centerX = 0.5;
-                const centerY = 0.5;
-                x = centerX + (x - centerX) * distance;
-                y = centerY + (y - centerY) * distance;
-                
-                mapPos = { x, y };
+                // Spherical → cartesian using full universe radius scale
+                const r = galaxy3D.distance * universeRadius;
+                const wx = r * Math.sin(galaxy3D.theta) * Math.cos(galaxy3D.phi);
+                const wz = r * Math.sin(galaxy3D.theta) * Math.sin(galaxy3D.phi);
+                mapPos = {
+                    x: 0.5 + (wx / universeRadius) * 0.5,
+                    y: 0.5 + (wz / universeRadius) * 0.5
+                };
             } else {
-                // Fallback to old positions
                 mapPos = galaxyMapPositions[index] || { x: 0.5, y: 0.5 };
             }
             
@@ -1900,6 +2076,163 @@ mapDotPool.releaseAll();
 }  // ⭐ This should be the closing brace of updateGalaxyMap()
 
 // =============================================================================
+// DISTRESS SIGNAL INDICATOR
+// =============================================================================
+// Hybrid screen indicator for active civilian distress signals:
+//   • Off-screen edge arrow points toward the nearest distressed civilian
+//   • On-screen waypoint reticle floats at their projected screen position
+//     when they enter the camera frustum
+//   • The map dot pulses (handled in updateGalaxyMap via underAttack flag)
+// Only the nearest active distress drives the indicator — additional
+// distress signals stay map-only to avoid corner-stacking.
+
+const _distressTmpVec = new THREE.Vector3();
+
+function _ensureDistressUI() {
+    let arrow = document.getElementById('distressEdgeArrow');
+    if (!arrow) {
+        arrow = document.createElement('div');
+        arrow.id = 'distressEdgeArrow';
+        arrow.style.cssText = [
+            'position:fixed','left:50%','top:50%',
+            'width:64px','height:64px','margin:-32px 0 0 -32px',
+            'pointer-events:none','z-index:60','display:none',
+            'transform-origin:center center',
+            'color:#ffaa00',
+            'filter:drop-shadow(0 0 8px rgba(255,170,0,0.9))',
+            'font-family:monospace','font-size:11px','text-align:center',
+            'line-height:1','user-select:none'
+        ].join(';');
+        arrow.innerHTML =
+            '<div style="font-size:48px;line-height:48px">▲</div>' +
+            '<div id="distressArrowLabel" style="margin-top:2px;text-shadow:0 0 4px rgba(0,0,0,0.9)">DISTRESS</div>';
+        document.body.appendChild(arrow);
+    }
+    let reticle = document.getElementById('distressReticle');
+    if (!reticle) {
+        reticle = document.createElement('div');
+        reticle.id = 'distressReticle';
+        reticle.style.cssText = [
+            'position:fixed','left:0','top:0',
+            'width:48px','height:48px','margin:-24px 0 0 -24px',
+            'pointer-events:none','z-index:60','display:none',
+            'border:2px solid #ffaa00','border-radius:50%',
+            'box-shadow:0 0 12px rgba(255,170,0,0.8), inset 0 0 8px rgba(255,170,0,0.5)',
+            'font-family:monospace','font-size:10px','color:#ffcc66',
+            'animation:distressPulse 1s ease-in-out infinite',
+            'text-align:center','user-select:none'
+        ].join(';');
+        reticle.innerHTML = '<div id="distressReticleLabel" style="position:absolute;top:50px;left:50%;transform:translateX(-50%);white-space:nowrap;text-shadow:0 0 4px rgba(0,0,0,0.9);font-weight:bold">SOS</div>';
+        document.body.appendChild(reticle);
+    }
+    if (!document.getElementById('distressIndicatorStyle')) {
+        const style = document.createElement('style');
+        style.id = 'distressIndicatorStyle';
+        style.textContent =
+            '@keyframes distressPulse { 0%,100% { transform:scale(1); opacity:0.85 } 50% { transform:scale(1.18); opacity:1 } }' +
+            '.distress-map-dot { animation: distressPulse 0.8s ease-in-out infinite }';
+        document.head.appendChild(style);
+    }
+    return { arrow, reticle };
+}
+
+function updateDistressIndicator() {
+    if (typeof tradingShips === 'undefined' || typeof camera === 'undefined') return;
+    const { arrow, reticle } = _ensureDistressUI();
+
+    // Pick the nearest active distress signal — that's what the on-screen
+    // pointer will track. Other distresses still appear on the map.
+    let nearest = null;
+    let nearestDist = Infinity;
+    const camPos = camera.position;
+    for (let i = 0; i < tradingShips.length; i++) {
+        const s = tradingShips[i];
+        if (!s || !s.userData || s.userData.destroyed) continue;
+        if (!s.userData.distressActive) continue;
+        const d = camPos.distanceTo(s.position);
+        if (d < nearestDist) { nearestDist = d; nearest = s; }
+    }
+    if (!nearest) {
+        arrow.style.display = 'none';
+        reticle.style.display = 'none';
+        return;
+    }
+
+    // Project to clip space — w<=0 means behind the camera
+    _distressTmpVec.copy(nearest.position).project(camera);
+    const w = _distressTmpVec.z; // already in [-1,1] post-projection (z is depth)
+    const inFront = (() => {
+        // A reliable behind-camera check: dot(forward, target-cam) > 0
+        const fwd = new THREE.Vector3();
+        camera.getWorldDirection(fwd);
+        const toTarget = new THREE.Vector3().subVectors(nearest.position, camPos);
+        return fwd.dot(toTarget) > 0;
+    })();
+    const onScreen = inFront &&
+        _distressTmpVec.x > -1 && _distressTmpVec.x < 1 &&
+        _distressTmpVec.y > -1 && _distressTmpVec.y < 1;
+
+    const distLabel = nearestDist < 1000
+        ? Math.round(nearestDist) + 'u'
+        : (nearestDist / 1000).toFixed(1) + 'k u';
+
+    if (onScreen) {
+        // Show the pulsing reticle at the projected screen position
+        const sx = (_distressTmpVec.x * 0.5 + 0.5) * window.innerWidth;
+        const sy = (-_distressTmpVec.y * 0.5 + 0.5) * window.innerHeight;
+        reticle.style.left = sx + 'px';
+        reticle.style.top = sy + 'px';
+        reticle.style.display = 'block';
+        const lbl = document.getElementById('distressReticleLabel');
+        if (lbl) lbl.textContent = 'SOS · ' + distLabel;
+        arrow.style.display = 'none';
+    } else {
+        // Off-screen — show the edge arrow rotated toward the target.
+        // Compute a 2D direction from screen center, clamped to a margin
+        // ellipse so the arrow rides the edge nicely.
+        let dx, dy;
+        if (inFront) {
+            dx = _distressTmpVec.x;
+            dy = -_distressTmpVec.y;
+        } else {
+            // Behind camera — flip into a clamped offscreen direction.
+            // Use the camera-local right/up vectors to compute a 2D direction.
+            const fwd = new THREE.Vector3();
+            camera.getWorldDirection(fwd);
+            const right = new THREE.Vector3().crossVectors(fwd, new THREE.Vector3(0,1,0)).normalize();
+            const up = new THREE.Vector3().crossVectors(right, fwd).normalize();
+            const toTarget = new THREE.Vector3().subVectors(nearest.position, camPos);
+            dx = toTarget.dot(right);
+            dy = -toTarget.dot(up);
+            const m = Math.max(Math.abs(dx), Math.abs(dy)) || 1;
+            dx /= m; dy /= m;
+        }
+        const halfW = window.innerWidth * 0.5;
+        const halfH = window.innerHeight * 0.5;
+        const marginX = Math.min(halfW - 60, 0.42 * window.innerWidth);
+        const marginY = Math.min(halfH - 60, 0.42 * window.innerHeight);
+        // Scale (dx,dy) so it touches the margin rectangle
+        const sx = marginX / Math.max(Math.abs(dx) || 1e-3, 1e-3);
+        const sy = marginY / Math.max(Math.abs(dy) || 1e-3, 1e-3);
+        const scale = Math.min(sx, sy);
+        const px = halfW + dx * scale;
+        const py = halfH + dy * scale;
+        const angleRad = Math.atan2(dy, dx) + Math.PI / 2; // ▲ points up by default
+        arrow.style.left = px + 'px';
+        arrow.style.top = py + 'px';
+        arrow.style.transform = 'rotate(' + angleRad + 'rad)';
+        arrow.style.display = 'block';
+        const lbl = document.getElementById('distressArrowLabel');
+        if (lbl) lbl.textContent = 'SOS · ' + distLabel;
+        reticle.style.display = 'none';
+    }
+}
+
+if (typeof window !== 'undefined') {
+    window.updateDistressIndicator = updateDistressIndicator;
+}
+
+// =============================================================================
 // ORBIT LINES VISIBILITY CONTROL - INTEGRATED WITH CORE SYSTEM
 // =============================================================================
 
@@ -1931,15 +2264,16 @@ function updateWarpButton() {
     const warpBtn = document.getElementById('warpBtn');
     if (!warpBtn || typeof gameState === 'undefined') return;
     
-    // Check for nearby planets for slingshot availability
+    // Check for nearby planets for slingshot availability (range scales with planet size)
     let nearestAssistPlanet = null;
     let nearestAssistDistance = Infinity;
-    const assistRange = 60; // Doubled
-    
+
     if (typeof activePlanets !== 'undefined' && typeof camera !== 'undefined') {
         activePlanets.forEach(planet => {
             const distance = camera.position.distanceTo(planet.position);
-            if (distance < assistRange && distance < nearestAssistDistance) {
+            const radius = planet.geometry ? planet.geometry.parameters.radius : 5;
+            const slingshotRange = Math.max(60, radius + 25);
+            if (distance < slingshotRange && distance < nearestAssistDistance) {
                 nearestAssistPlanet = planet;
                 nearestAssistDistance = distance;
             }
@@ -1972,45 +2306,64 @@ function updateWarpButton() {
 // =============================================================================
 
 function updateEventHorizonWarnings() {
-    const eventHorizonWarning = document.getElementById('eventHorizonWarning');
-    const blackHoleWarningHUD = document.getElementById('blackHoleWarningHUD');
-    const blackHoleDistanceHUD = document.getElementById('blackHoleDistanceHUD');
-    const gameTitle = document.getElementById('gameTitle');
-    
+    const eventHorizonWarning = _uiEl('eventHorizonWarning');
+    const blackHoleWarningHUD = _uiEl('blackHoleWarningHUD');
+    const blackHoleDistanceHUD = _uiEl('blackHoleDistanceHUD');
+    const gameTitle = _uiEl('gameTitle');
+
     if (typeof gameState === 'undefined' || !gameState.eventHorizonWarning) return;
-    
-    // Handle event horizon warnings
-    if (gameState.eventHorizonWarning.active && gameState.eventHorizonWarning.blackHole) {
-        const blackHole = gameState.eventHorizonWarning.blackHole;
-        
-        if (eventHorizonWarning) {
-            eventHorizonWarning.classList.remove('hidden');
+
+    const ehw = gameState.eventHorizonWarning;
+
+    // Self-validate every frame regardless of what the gravity loop did.
+    // Several scenarios leave the warning stuck (e.g. player warps to
+    // another galaxy and the tracked black hole is no longer in the
+    // active-planets iteration).  Clear the flag if ANY of these hold:
+    //   • active is set but blackHole reference is null
+    //   • blackHole is no longer in the scene (parent === null)
+    //   • blackHole userData lost its type
+    //   • world-space distance from camera exceeds warningDistance
+    if (ehw.active) {
+        const bh = ehw.blackHole;
+        const warningDistance = ehw.warningDistance || 400;
+
+        let shouldClear = false;
+        if (!bh) {
+            shouldClear = true;
+        } else if (!bh.parent || !bh.userData || bh.userData.type !== 'blackhole') {
+            shouldClear = true;
+        } else if (typeof camera !== 'undefined' && _ehwTmpVec) {
+            bh.getWorldPosition(_ehwTmpVec);
+            const distance = camera.position.distanceTo(_ehwTmpVec);
+            if (distance > warningDistance) shouldClear = true;
         }
-        
+
+        if (shouldClear) {
+            ehw.active = false;
+            ehw.blackHole = null;
+            // Immediately hide the DOM so there's no one-frame delay
+            if (eventHorizonWarning) eventHorizonWarning.classList.add('hidden');
+            if (blackHoleWarningHUD) blackHoleWarningHUD.classList.add('hidden');
+            if (gameTitle) gameTitle.classList.remove('title-flash');
+        }
+    }
+
+    if (ehw.active && ehw.blackHole) {
+        const blackHole = ehw.blackHole;
+
+        if (eventHorizonWarning) eventHorizonWarning.classList.remove('hidden');
+
         if (blackHoleWarningHUD && blackHoleDistanceHUD && typeof camera !== 'undefined') {
             blackHoleWarningHUD.classList.remove('hidden');
             const distance = camera.position.distanceTo(blackHole.position);
             blackHoleDistanceHUD.textContent = `Distance: ${distance.toFixed(1)} units`;
         }
-        
-        // Add title flashing effect
-        if (gameTitle) {
-            gameTitle.classList.add('title-flash');
-        }
+
+        if (gameTitle) gameTitle.classList.add('title-flash');
     } else {
-        // Hide warnings
-        if (eventHorizonWarning) {
-            eventHorizonWarning.classList.add('hidden');
-        }
-        
-        if (blackHoleWarningHUD) {
-            blackHoleWarningHUD.classList.add('hidden');
-        }
-        
-        // Remove title flashing effect
-        if (gameTitle) {
-            gameTitle.classList.remove('title-flash');
-        }
+        if (eventHorizonWarning) eventHorizonWarning.classList.add('hidden');
+        if (blackHoleWarningHUD) blackHoleWarningHUD.classList.add('hidden');
+        if (gameTitle) gameTitle.classList.remove('title-flash');
     }
 }
 
@@ -2086,79 +2439,8 @@ function showVictoryScreen() {
 }
 
 function gameOver(reason) {
-    // Prevent duplicate game over screens
-    if (typeof gameState !== 'undefined') {
-        if (gameState.gameOverScreenShown) {
-            console.log('⚠️ Game over screen already shown, ignoring duplicate call');
-            return;
-        }
-        gameState.gameOver = true;
-        gameState.gameStarted = false;
-        gameState.gameOverScreenShown = true;
-    }
-    
-    console.log('💀 GAME OVER - Stopping all systems');
-    
-    // Stop all music
-    if (typeof musicSystem !== 'undefined') {
-        if (musicSystem.backgroundMusic) {
-            musicSystem.backgroundMusic.stop();
-            musicSystem.backgroundMusic = null;
-        }
-        if (musicSystem.battleMusic) {
-            musicSystem.battleMusic.stop();
-            musicSystem.battleMusic = null;
-        }
-    }
-    
-    // Stop audio context
-    if (typeof audioContext !== 'undefined' && audioContext) {
-        audioContext.suspend();
-    }
-    
-    // Clean up any active effects
-    if (typeof cleanupEventHorizonEffects === 'function') {
-        cleanupEventHorizonEffects();
-    }
-    
-    // Clear any remaining timeouts/intervals
-    if (typeof window.mobileUpdateInterval !== 'undefined') {
-        clearInterval(window.mobileUpdateInterval);
-    }
-    
-    // Enhanced game over screen with visible mouse cursor
-    const gameOverOverlay = document.createElement('div');
-    gameOverOverlay.id = 'gameOverScreen';
-    gameOverOverlay.className = 'absolute inset-0 bg-black bg-opacity-95 flex items-center justify-center cyberpunk-bg';
-    gameOverOverlay.style.cursor = 'auto'; // Make mouse visible
-    gameOverOverlay.style.zIndex = '10000'; // FIXED: High z-index for iPad visibility
-    gameOverOverlay.innerHTML = `
-        <div class="text-center ui-panel rounded-lg p-8" style="cursor: auto;">
-            <h1 class="text-4xl font-bold text-red-400 mb-4 glow-text cyber-title">MISSION FAILED</h1>
-            <p class="text-gray-300 mb-6">${reason}</p>
-            <div class="space-y-4">
-                <div class="text-lg text-cyan-400 glow-text">Final Stats:</div>
-                <div class="text-sm text-gray-300 space-y-1">
-                    <div>Distance Traveled: ${gameState ? gameState.distance.toFixed(1) : '0'} light years</div>
-                    <div>Final Velocity: ${gameState ? (gameState.velocity * 1000).toFixed(0) : '0'} km/s</div>
-                    <div>Energy Remaining: ${gameState ? gameState.energy.toFixed(0) : '0'}%</div>
-                    <div>Hull Integrity: ${gameState ? gameState.hull.toFixed(0) : '0'}%</div>
-                    <div>Galaxies Cleared: ${gameState ? gameState.galaxiesCleared : 0}/8</div>
-                    <div>Emergency Warps: ${gameState ? `${gameState.emergencyWarp.available}/${gameState.emergencyWarp.maxWarps}` : '0/10'}</div>
-                </div>
-                <button onclick="location.reload()" class="mt-6 space-btn rounded px-6 py-3" style="cursor: pointer;">
-                    <i class="fas fa-redo mr-2"></i>Restart Mission
-                </button>
-            </div>
-        </div>
-    `;
-    document.body.appendChild(gameOverOverlay);
-    
-    // Ensure mouse is visible and working
-    document.body.style.cursor = 'auto';
-    gameOverOverlay.style.pointerEvents = 'all';
-    
-    console.log('✅ Game over screen displayed - all systems stopped');
+    // Delegate to the main game over screen with full inline styles
+    showGameOverScreen('MISSION FAILED', reason || 'Ship destroyed');
 }
 
 // HULL ZERO GAME OVER - Dramatic full screen explosion effect
@@ -2188,52 +2470,95 @@ function showGameOverScreen(title, message) {
         }
     }
 
-    // Stop audio context
+    if (typeof soundtrack !== 'undefined') {
+        soundtrack.stopAll();
+        soundtrack.forceTrack(Math.random() < 0.5 ? 'gameOver1' : 'gameOver2');
+    }
+
     if (typeof audioContext !== 'undefined' && audioContext) {
         audioContext.suspend();
     }
 
-    // Clean up any active effects
     if (typeof cleanupEventHorizonEffects === 'function') {
         cleanupEventHorizonEffects();
     }
 
-    // Clear any remaining timeouts/intervals
-    if (typeof window.mobileUpdateInterval !== 'undefined') {
-        clearInterval(window.mobileUpdateInterval);
-    }
+    if (typeof clearAllGameIntervals === 'function') clearAllGameIntervals();
 
-    // Enhanced game over screen with visible mouse cursor
+    // Remove any existing game over screen first
+    const existing = document.getElementById('gameOverScreen');
+    if (existing) existing.remove();
+
+    const isMobile = ('ontouchstart' in window) || navigator.maxTouchPoints > 0 || window.innerWidth < 768;
+
     const gameOverOverlay = document.createElement('div');
     gameOverOverlay.id = 'gameOverScreen';
-    gameOverOverlay.className = 'absolute inset-0 bg-black bg-opacity-95 flex items-center justify-center cyberpunk-bg';
-    gameOverOverlay.style.cursor = 'auto'; // Make mouse visible
-    gameOverOverlay.style.zIndex = '10000'; // FIXED: High z-index for iPad visibility
-    gameOverOverlay.innerHTML = `
-        <div class="text-center ui-panel rounded-lg p-8" style="cursor: auto;">
-            <h1 class="text-4xl font-bold text-red-400 mb-4 glow-text cyber-title">MISSION FAILED</h1>
-            <p class="text-gray-300 mb-6">${message || 'Ship destroyed'}</p>
-            <div class="space-y-4">
-                <div class="text-lg text-cyan-400 glow-text">Final Stats:</div>
-                <div class="text-sm text-gray-300 space-y-1">
-                    <div>Distance Traveled: ${gameState ? gameState.distance.toFixed(1) : '0'} light years</div>
-                    <div>Final Velocity: ${gameState ? (gameState.velocity * 1000).toFixed(0) : '0'} km/s</div>
-                    <div>Energy Remaining: ${gameState ? gameState.energy.toFixed(0) : '0'}%</div>
-                    <div>Hull Integrity: ${gameState ? gameState.hull.toFixed(0) : '0'}%</div>
-                    <div>Galaxies Cleared: ${gameState ? gameState.galaxiesCleared : 0}/8</div>
-                    <div>Emergency Warps Remaining: ${gameState ? gameState.emergencyWarp.available : '0'}</div>
+    gameOverOverlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.97);display:flex;align-items:center;justify-content:center;cursor:auto;z-index:99999;pointer-events:auto;';
+
+    if (isMobile) {
+        // Mobile: 100% inline styles so it renders even if Tailwind fails
+        const dist = gameState ? gameState.distance.toFixed(1) : '0';
+        const vel = gameState ? (gameState.velocity * 1000).toFixed(0) : '0';
+        const nrg = gameState ? gameState.energy.toFixed(0) : '0';
+        const hull = gameState ? gameState.hull.toFixed(0) : '0';
+        const gal = gameState ? gameState.galaxiesCleared : 0;
+        const warps = gameState ? gameState.emergencyWarp.available : '0';
+
+        gameOverOverlay.innerHTML = `
+            <div style="text-align:center;max-width:90vw;max-height:90vh;overflow-y:auto;background:rgba(10,15,30,0.98);border:1px solid rgba(0,150,255,0.5);border-radius:12px;padding:24px;color:#fff;font-family:sans-serif;">
+                <h1 style="font-size:2rem;font-weight:bold;color:#f87171;margin-bottom:16px;text-shadow:0 0 10px rgba(248,113,113,0.5);">MISSION FAILED</h1>
+                <p style="color:#d1d5db;margin-bottom:20px;font-size:1rem;">${message || 'Ship destroyed'}</p>
+                <div style="color:#22d3ee;font-size:1.1rem;margin-bottom:12px;text-shadow:0 0 8px rgba(34,211,238,0.4);">Final Stats:</div>
+                <div style="color:#d1d5db;font-size:0.9rem;line-height:1.8;">
+                    <div>Distance Traveled: ${dist} light years</div>
+                    <div>Final Velocity: ${vel} km/s</div>
+                    <div>Energy Remaining: ${nrg}%</div>
+                    <div>Hull Integrity: ${hull}%</div>
+                    <div>Galaxies Cleared: ${gal}/8</div>
+                    <div>Emergency Warps Remaining: ${warps}</div>
                 </div>
-                <button onclick="location.reload()" class="mt-6 space-btn rounded px-6 py-3" style="cursor: pointer;">
-                    <i class="fas fa-redo mr-2"></i>Restart Mission
+                <button id="gameOverRestartBtn" style="margin-top:20px;padding:14px 28px;font-size:1rem;font-weight:bold;color:#fff;background:linear-gradient(135deg,#1e3a5f,#0d2137);border:1px solid #0ea5e9;border-radius:8px;min-height:52px;width:100%;max-width:280px;">
+                    Restart Mission
                 </button>
             </div>
-        </div>
-    `;
-    document.body.appendChild(gameOverOverlay);
+        `;
+    } else {
+        // Desktop: original Tailwind-styled version with cyber-title glow
+        gameOverOverlay.innerHTML = `
+            <div class="text-center ui-panel rounded-lg p-6" style="cursor:auto;max-width:90vw;max-height:90vh;overflow-y:auto;background:rgba(10,15,30,0.98);border:1px solid rgba(0,150,255,0.5);border-radius:12px;padding:24px;">
+                <h1 class="text-4xl font-bold text-red-400 mb-4 glow-text cyber-title">MISSION FAILED</h1>
+                <p class="text-gray-300 mb-6">${message || 'Ship destroyed'}</p>
+                <div class="space-y-4">
+                    <div class="text-lg text-cyan-400 glow-text">Final Stats:</div>
+                    <div class="text-sm text-gray-300 space-y-1">
+                        <div>Distance Traveled: ${gameState ? gameState.distance.toFixed(1) : '0'} light years</div>
+                        <div>Final Velocity: ${gameState ? (gameState.velocity * 1000).toFixed(0) : '0'} km/s</div>
+                        <div>Energy Remaining: ${gameState ? gameState.energy.toFixed(0) : '0'}%</div>
+                        <div>Hull Integrity: ${gameState ? gameState.hull.toFixed(0) : '0'}%</div>
+                        <div>Galaxies Cleared: ${gameState ? gameState.galaxiesCleared : 0}/8</div>
+                        <div>Emergency Warps Remaining: ${gameState ? gameState.emergencyWarp.available : '0'}</div>
+                    </div>
+                    <button id="gameOverRestartBtn" class="mt-6 space-btn rounded px-6 py-3" style="cursor:pointer;min-height:48px;">
+                        <i class="fas fa-redo mr-2"></i>Restart Mission
+                    </button>
+                </div>
+            </div>
+        `;
+    }
 
-    // Ensure mouse is visible and working
+    document.body.appendChild(gameOverOverlay);
     document.body.style.cursor = 'auto';
-    gameOverOverlay.style.pointerEvents = 'all';
+
+    // Disable canvas so taps/clicks reach the overlay
+    const _goCanvas = document.getElementById('gameCanvas');
+    if (_goCanvas) _goCanvas.style.pointerEvents = 'none';
+
+    // Restart button — handle both click and touch
+    const _goBtn = document.getElementById('gameOverRestartBtn');
+    if (_goBtn) {
+        _goBtn.addEventListener('click', function() { location.reload(); });
+        _goBtn.addEventListener('touchend', function(e) { e.preventDefault(); location.reload(); });
+    }
 
     console.log('✅ Game over screen displayed - all systems stopped');
 }
@@ -2470,13 +2795,13 @@ function createMobileUIContainer() {
     document.body.appendChild(mobileUI);
     
     // Show mobile UI only after game starts
-    const checkGameStarted = setInterval(() => {
+    const checkGameStarted = trackInterval(setInterval(() => {
         if (typeof gameState !== 'undefined' && gameState.gameStarted && !document.body.classList.contains('intro-active')) {
             mobileUI.style.display = 'block';
             console.log('📱 Mobile UI now visible - game started');
             clearInterval(checkGameStarted);
         }
-    }, 500);
+    }, 500));
 }
 
 function createMobileTopBar() {
@@ -2559,7 +2884,7 @@ function createMobileFloatingStatus() {
     floatingStatus.id = 'mobileFloatingStatus';
     floatingStatus.style.cssText = `
         position: fixed;
-        bottom: 100px;
+        top: 50px;
         left: 50%;
         transform: translateX(-50%);
         display: flex;
@@ -2569,13 +2894,16 @@ function createMobileFloatingStatus() {
         font-family: 'Orbitron', monospace;
     `;
     
-    // MINIMAL STATUS: Only Hull and Energy (Emergency Warps shown on button badge)
+    // Hull pill — info button — Energy pill (info sits between the two meters)
     floatingStatus.innerHTML = `
-        <div class="mobile-stat-pill" style="background: rgba(0, 0, 0, 0.7); border: 1px solid rgba(248, 113, 113, 0.6); border-radius: 4px; padding: 8px 14px; font-size: 13px; font-weight: 600; color: #f87171; text-shadow: 0 0 8px rgba(248, 113, 113, 0.8); box-shadow: 0 0 10px rgba(248, 113, 113, 0.3), inset 0 0 10px rgba(248, 113, 113, 0.1); opacity: 0.7;">
+        <div class="mobile-stat-pill" style="background: rgba(0, 0, 0, 0.7); border: 1px solid rgba(248, 113, 113, 0.6); border-radius: 4px; padding: 4px 14px; font-size: 13px; font-weight: 600; color: #f87171; text-shadow: 0 0 8px rgba(248, 113, 113, 0.8); box-shadow: 0 0 10px rgba(248, 113, 113, 0.3), inset 0 0 10px rgba(248, 113, 113, 0.1); opacity: 0.7;">
             <i class="fas fa-shield-alt" style="margin-right: 6px;"></i>
             <span id="mobileFloatingHull">100%</span>
         </div>
-        <div class="mobile-stat-pill" style="background: rgba(0, 0, 0, 0.7); border: 1px solid rgba(96, 165, 250, 0.6); border-radius: 4px; padding: 8px 14px; font-size: 13px; font-weight: 600; color: #60a5fa; text-shadow: 0 0 8px rgba(96, 165, 250, 0.8); box-shadow: 0 0 10px rgba(96, 165, 250, 0.3), inset 0 0 10px rgba(96, 165, 250, 0.1); opacity: 0.7;">
+        <button onclick="if(typeof showMobilePanel==='function')showMobilePanel('status')" style="pointer-events:auto; width:36px; height:36px; border-radius:6px; background:rgba(0,0,0,0.6); border:1px solid rgba(0,150,255,0.5); color:#60a5fa; font-size:14px; display:flex; align-items:center; justify-content:center; cursor:pointer; box-shadow:0 0 8px rgba(0,150,255,0.3); -webkit-tap-highlight-color:transparent; touch-action:manipulation;">
+            <i class="fas fa-info-circle"></i>
+        </button>
+        <div class="mobile-stat-pill" style="background: rgba(0, 0, 0, 0.7); border: 1px solid rgba(96, 165, 250, 0.6); border-radius: 4px; padding: 4px 14px; font-size: 13px; font-weight: 600; color: #60a5fa; text-shadow: 0 0 8px rgba(96, 165, 250, 0.8); box-shadow: 0 0 10px rgba(96, 165, 250, 0.3), inset 0 0 10px rgba(96, 165, 250, 0.1); opacity: 0.7;">
             <i class="fas fa-bolt" style="margin-right: 6px;"></i>
             <span id="mobileFloatingEnergy">100%</span>
         </div>
@@ -2600,24 +2928,13 @@ function createMobileFloatingStatus() {
 function updateMobileFloatingStatus() {
     if (typeof gameState === 'undefined') return;
 
-    // MINIMAL STATUS: Only Hull and Energy (Emergency Warps shown on button badge)
-    const updates = {
-        'mobileFloatingHull': gameState.hull ? Math.round(gameState.hull) + '%' : '100%',
-        'mobileFloatingEnergy': gameState.energy ? Math.round(gameState.energy) + '%' : '100%'
-    };
+    const hullEl = _uiEl('mobileFloatingHull');
+    const energyEl = _uiEl('mobileFloatingEnergy');
+    if (hullEl) hullEl.textContent = gameState.hull ? Math.round(gameState.hull) + '%' : '100%';
+    if (energyEl) energyEl.textContent = gameState.energy ? Math.round(gameState.energy) + '%' : '100%';
 
-    Object.entries(updates).forEach(([id, value]) => {
-        const element = document.getElementById(id);
-        if (element) {
-            element.textContent = value;
-        }
-    });
-
-    // Update emergency warp count on button badge
-    const warpBadge = document.getElementById('mobileWarpCountBadge');
-    if (warpBadge) {
-        warpBadge.textContent = gameState.emergencyWarp?.available ?? 5;
-    }
+    const warpBadge = _uiEl('mobileWarpCountBadge');
+    if (warpBadge) warpBadge.textContent = gameState.emergencyWarp?.available ?? 5;
 }
 
 function createMobilePopups() {

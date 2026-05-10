@@ -40,7 +40,12 @@ const gameState = {
     thrustPower: 0.01, // Doubled for doubled world
     wThrustMultiplier: 2.0, // W key gets 2x thrust
     minVelocity: 0.2, // Doubled for doubled world
-    maxVelocity: 2.0, // Doubled for doubled world
+    maxVelocity: 4.0, // 2x player boost (was 2.0 after doubled-world scale)
+    // Ship-upgrade progression (per nebula deep-discovered)
+    // Each deep-discovery increases efficiency and top speed.
+    nebulasDeepDiscovered: 0,
+    energyEfficiency: 1.0, // multiplier on consumption (lower = more efficient)
+    baseMaxVelocity: 4.0,  // captured baseline so upgrades stack additively
     mapMode: 'galactic',
     mapView: 'galactic', // 'galactic', 'universal'
     galaxiesCleared: 0,
@@ -76,7 +81,7 @@ const gameState = {
     eventHorizonWarning: {
         active: false,
         blackHole: null,
-        warningDistance: 400, // Doubled for doubled world
+        warningDistance: 200,
         criticalDistance: 160 // Doubled for doubled world
     },
     emergencyWarp: {
@@ -94,7 +99,7 @@ const gameState = {
     },
     missiles: {
         current: 3,
-        capacity: 3,
+        capacity: 10,
         cooldown: 0,
         cooldownTime: 1000,
         damage: 3,
@@ -243,8 +248,9 @@ const perfDebug = {
         }
     },
     
-    // Log current status to console
+    // Log current status to console (gated by window.GAME_DEBUG_VERBOSE)
     logStatus: function() {
+        if (!window.GAME_DEBUG_VERBOSE) return;
         const zoneColor = this.inTwinCoresZone ? 'color: red; font-weight: bold;' : 'color: green;';
         const fpsColor = this.fps < 30 ? 'color: red; font-weight: bold;' : (this.fps < 50 ? 'color: orange;' : 'color: lime;');
         
@@ -303,6 +309,18 @@ const perfDebug = {
 // Export to window for console access
 window.perfDebug = perfDebug;
 console.log('%c🔧 Performance debugger loaded! Use perfDebug.report() for detailed info', 'color: cyan; font-weight: bold;');
+
+// setInterval registry — collect all long-lived interval IDs so they can
+// all be cancelled at game-end without hunting for individual variables.
+const _gameIntervalRegistry = new Set();
+window.trackInterval = function trackInterval(id) {
+    if (id != null) _gameIntervalRegistry.add(id);
+    return id;
+};
+window.clearAllGameIntervals = function clearAllGameIntervals() {
+    _gameIntervalRegistry.forEach(id => clearInterval(id));
+    _gameIntervalRegistry.clear();
+};
 
 // Three.js Setup and global arrays
 let scene, camera, renderer, stars, blackHole;
@@ -720,7 +738,7 @@ function simulateLoading() {
         "Ready for enhanced launch!"
     ];
     
-    const interval = setInterval(() => {
+    const interval = trackInterval(setInterval(() => {
         progress += 6 + Math.random() * 10;
         progress = Math.min(progress, 100);
         
@@ -740,10 +758,11 @@ function simulateLoading() {
                 const loadingScreen = document.getElementById('loadingScreen');
                 if (loadingScreen) loadingScreen.style.display = 'none';
                 gameState.gameStarted = true;
+                gameState.gameStartTime = Date.now();
                 console.log('Enhanced game fully loaded and started with doubled world scale!');
             }, 500);
         }
-    }, 180);
+    }, 180));
 }
 
 // Enhanced functions for doubled world compatibility
@@ -1010,6 +1029,10 @@ if (typeof areModelsLoaded === 'function' && areModelsLoaded()) {
         distressBeaconSystem.initialize();
         console.log('Distress beacon system initialized');
     }
+    // Deploy ally wingmen
+    if (typeof createAllyShips === 'function') {
+        createAllyShips();
+    }
 } else {
     // Models not loaded yet, wait for them
     console.log('⏳ Models not loaded yet, waiting before creating enemies...');
@@ -1044,6 +1067,10 @@ if (typeof areModelsLoaded === 'function' && areModelsLoaded()) {
             if (typeof distressBeaconSystem !== 'undefined' && distressBeaconSystem.initialize) {
                 distressBeaconSystem.initialize();
             }
+            // Deploy ally wingmen
+            if (typeof createAllyShips === 'function') {
+                createAllyShips();
+            }
         }).catch(err => {
             console.warn('⚠️ Model loading error, creating enemies with fallback geometry:', err);
             // Even if models fail to load, still create enemies (they'll use fallback geometry)
@@ -1075,6 +1102,10 @@ if (typeof areModelsLoaded === 'function' && areModelsLoaded()) {
             if (typeof distressBeaconSystem !== 'undefined' && distressBeaconSystem.initialize) {
                 distressBeaconSystem.initialize();
             }
+            // Deploy ally wingmen
+            if (typeof createAllyShips === 'function') {
+                createAllyShips();
+            }
         });
     } else {
         // If loadAllModels isn't available, just create enemies normally
@@ -1086,6 +1117,10 @@ if (typeof areModelsLoaded === 'function' && areModelsLoaded()) {
         if (typeof spawnBlackHoleGuardians === 'function') {
             spawnBlackHoleGuardians();
             console.log('Black Hole Guardians spawned');
+        }
+        // Deploy ally wingmen
+        if (typeof createAllyShips === 'function') {
+            createAllyShips();
         }
     }
 }
@@ -1199,26 +1234,28 @@ function updateTargetLock() {
     let nearestTarget = null;
     let nearestDistance = gameState.targetLock.range;
     
-    // Check enemies first (if they exist)
+    // Pooled vectors — updateTargetLock runs every frame; the old code created
+    // 2 Vector3s per enemy per frame inside the forEach.
+    if (!updateTargetLock._dir) updateTargetLock._dir = new THREE.Vector3();
+    if (!updateTargetLock._fwd) updateTargetLock._fwd = new THREE.Vector3();
+    const _tlDir = updateTargetLock._dir;
+    const _tlFwd = updateTargetLock._fwd;
+
     if (typeof enemies !== 'undefined') {
-        enemies.forEach(enemy => {
-            if (enemy.userData.health <= 0) return;
-            
+        for (let i = 0; i < enemies.length; i++) {
+            const enemy = enemies[i];
+            if (enemy.userData.health <= 0) continue;
             const distance = camera.position.distanceTo(enemy.position);
             if (distance < nearestDistance) {
-                // Check if enemy is roughly in front of player
-                const direction = new THREE.Vector3().subVectors(enemy.position, camera.position).normalize();
-                const forward = new THREE.Vector3();
-                camera.getWorldDirection(forward);
-                const angle = direction.angleTo(forward);
-                
-                // Wider lock-on arc for doubled world
-                if (angle < 1.0) { // ~57 degree lock-on arc (increased from 45)
+                _tlDir.subVectors(enemy.position, camera.position).normalize();
+                camera.getWorldDirection(_tlFwd);
+                const angle = _tlDir.angleTo(_tlFwd);
+                if (angle < 1.0) {
                     nearestTarget = enemy;
                     nearestDistance = distance;
                 }
             }
-        });
+        }
     }
     
     // REMOVED: Asteroids from auto-targeting - players prefer manual aiming for asteroids
@@ -1228,8 +1265,9 @@ function updateTargetLock() {
     
     // Enhanced crosshair following when target locked (doubled world considerations)
     if (nearestTarget) {
-        // Project target position to screen coordinates
-        const targetScreen = nearestTarget.position.clone().project(camera);
+        // Project target position to screen coordinates (reuse pooled vector)
+        if (!updateTargetLock._scr) updateTargetLock._scr = new THREE.Vector3();
+        const targetScreen = updateTargetLock._scr.copy(nearestTarget.position).project(camera);
         
         // Check if target is visible on screen
         if (targetScreen.z < 1) { // Target is in front of camera
@@ -1319,7 +1357,7 @@ function animate() {
     
     // Update thruster glow based on W key (forward thrust)
     if (typeof updateThrusterGlow === 'function' && typeof keys !== 'undefined') {
-        const isThrusting = keys.w && gameState.energy > 0;
+        const isThrusting = (keys.w || gameState.autoNavigating) && gameState.energy > 0;
         updateThrusterGlow(isThrusting);
     }
 
@@ -1428,11 +1466,41 @@ if (typeof nebulaGasClouds !== 'undefined' && nebulaGasClouds.length > 0) {
 }
 
 if (typeof asteroidBelts !== 'undefined' && asteroidBelts.length > 0) {
-    asteroidBelts.forEach(belt => {
-        if (belt.userData.rotationSpeed && belt.rotation) {
-            belt.rotation.y += belt.userData.rotationSpeed;
+    // Skip orbit/rotation updates for belts that are too far to see.
+    // Belt radius is at most ~600 units; 2000 unit cull gives comfortable margin.
+    const BELT_UPDATE_DIST_SQ = 2000 * 2000;
+    for (let bi = 0; bi < asteroidBelts.length; bi++) {
+        const belt = asteroidBelts[bi];
+        if (!belt.children || belt.children.length === 0) continue;
+        if (typeof camera !== 'undefined') {
+            const dx = camera.position.x - belt.position.x;
+            const dy = camera.position.y - belt.position.y;
+            const dz = camera.position.z - belt.position.z;
+            if (dx * dx + dy * dy + dz * dz > BELT_UPDATE_DIST_SQ) continue;
         }
-    });
+        const children = belt.children;
+        for (let ai = 0; ai < children.length; ai++) {
+            const asteroid = children[ai];
+            if (!asteroid.userData || asteroid.userData.type !== 'asteroid') continue;
+
+            // 🌑 ORBITAL MOVEMENT: Update asteroid position based on orbitSpeed
+            if (asteroid.userData.orbitSpeed && asteroid.userData.beltCenter) {
+                asteroid.userData.orbitPhase += asteroid.userData.orbitSpeed;
+                const orbitRadius = asteroid.userData.orbitRadius || 0;
+                const orbitPhase = asteroid.userData.orbitPhase;
+                const ringHeight = asteroid.position.y;
+                asteroid.position.x = Math.cos(orbitPhase) * orbitRadius;
+                asteroid.position.y = ringHeight;
+                asteroid.position.z = Math.sin(orbitPhase) * orbitRadius;
+            }
+
+            // 🌀 INDIVIDUAL ROTATION: Make asteroids spin
+            if (asteroid.userData.rotationSpeed) {
+                asteroid.rotation.y += asteroid.userData.rotationSpeed;
+                asteroid.rotation.x += asteroid.userData.rotationSpeed * 0.3;
+            }
+        }
+    }
 }
 
     // Update interstellar asteroid fields
@@ -1560,10 +1628,7 @@ if (typeof updateShieldSystem === 'function') {
         detectEnemiesInRegion();
     }
     
-    // OPTIMIZED: Update galaxy map less frequently (every 180 frames = ~once every 3 seconds)
-	if (gameState.frameCount % 60 === 0 && typeof updateGalaxyMap === 'function') {
-    updateGalaxyMap();
-	}
+    // Galaxy map is updated in the UI section below (every 10 frames)
     
     // NEW: Check for nebula discoveries
     if (gameState.frameCount % 30 === 0 && typeof checkForNebulaDiscovery === 'function') {
@@ -1616,8 +1681,8 @@ if (typeof localGalaxyStars !== 'undefined' && localGalaxyStars) {
         updateWarpSpeedStarfield();
     }
         
-    // NEW: Update CMB opacity based on distance from Sagittarius A and nebula proximity
-    if (typeof updateCMBOpacity === 'function') {
+    // Update CMB opacity based on distance from Sagittarius A and nebula proximity
+    if (gameState.frameCount % 10 === 0 && typeof updateCMBOpacity === 'function') {
         updateCMBOpacity();
     }
     
@@ -1678,7 +1743,7 @@ if (planet.userData.type === 'blackhole' && planet.userData.rotationSpeed) {
             planet.userData.tendrilTime += 0.016;
             
             // Only update every few frames for performance
-            if (gameState.frameCount % 3 === 0) {
+            if (gameState.frameCount % 6 === 0) {
                 planet.userData.tendrilGroup.children.forEach((tendril, index) => {
                     if (tendril.userData) {
                         const time = planet.userData.tendrilTime;
@@ -1884,47 +1949,29 @@ if (typeof nebulaClouds !== 'undefined' && nebulaClouds.length > 0) {
     });
 }
 
-// In your animate() function, add this with your other planet updates:
 planets.forEach(planet => {
-    if (planet.userData.type === 'blackhole' && planet.userData.starCluster) {
-        // Get rotation speed from userData, or use default based on black hole type
-        let rotationSpeed = planet.userData.rotationSpeed;
-        
-        // If no rotation speed set, assign based on type
-        if (!rotationSpeed) {
+    if (planet.userData.type === 'blackhole') {
+        if (!planet.userData.rotationSpeed) {
             if (planet.userData.isGalacticCenter || planet.userData.isSagittariusA) {
-                rotationSpeed = 0.025; // Sagittarius A* speed
+                planet.userData.rotationSpeed = 0.025;
             } else if (planet.userData.isGalacticCore) {
-                rotationSpeed = 0.020; // Other galactic cores speed
+                planet.userData.rotationSpeed = 0.020;
             } else {
-                rotationSpeed = 0.015; // Default for other black holes
+                planet.userData.rotationSpeed = 0.015;
             }
-            planet.userData.rotationSpeed = rotationSpeed; // Store for future use
         }
-        
-        planet.userData.starCluster.rotation.y += rotationSpeed;
-        
-        // Slight wobble for dynamic effect
-        planet.userData.starCluster.rotation.x = Math.sin(Date.now() * 0.0001) * 0.05;
-    }
-});
-
-planets.forEach(planet => {
-    if (planet.userData.type === 'blackhole' && planet.userData.rotationSpeed) {
-        // Rotate star cluster (small dense stars near black hole)
+        const rs = planet.userData.rotationSpeed;
         if (planet.userData.starCluster) {
-            planet.userData.starCluster.rotation.y += planet.userData.rotationSpeed;
+            planet.userData.starCluster.rotation.y += rs;
+            planet.userData.starCluster.rotation.x = Math.sin(Date.now() * 0.0001) * 0.05;
         }
-        
-        // Rotate main galaxy stars (the spiral/ring/elliptical structure)
         if (planet.userData.galaxyStars) {
-            planet.userData.galaxyStars.rotation.y += planet.userData.rotationSpeed;
+            planet.userData.galaxyStars.rotation.y += rs;
         }
     }
 });
 
-// Also add interaction checking:
-if (typeof checkCosmicFeatureInteractions === 'function' && typeof camera !== 'undefined' && typeof gameState !== 'undefined') {
+if (gameState.frameCount % 5 === 0 && typeof checkCosmicFeatureInteractions === 'function' && typeof camera !== 'undefined') {
     checkCosmicFeatureInteractions(camera.position, gameState);
 }
     
@@ -1934,6 +1981,16 @@ if (typeof checkCosmicFeatureInteractions === 'function' && typeof camera !== 'u
         updateEnemyBehavior();
     }
     if (typeof perfDebug !== 'undefined') perfDebug.endTimer('enemies');
+    
+    // Update civilian combat (enemies attacking civilians, distress calls)
+    if (gameState.frameCount % 3 === 0 && typeof updateCivilianCombat === 'function') {
+        updateCivilianCombat();
+    }
+    
+    // Update civilian map display
+    if (gameState.frameCount % 30 === 0 && typeof updateCivilianMapDisplay === 'function') {
+        updateCivilianMapDisplay();
+    }
 
     // Update missiles
     if (typeof updateMissiles === 'function') {
@@ -1985,6 +2042,31 @@ if (typeof checkCosmicFeatureInteractions === 'function' && typeof camera !== 'u
         updateBorgBehavior();
     }
 
+    // Update ally wingmen — every other frame normally, but every frame
+    // when the player is warping. updateAllyShips is throttled to 30 Hz
+    // for performance, but during emergency warp the player travels
+    // ~100 units/frame; if wingmen only update every 2nd frame they
+    // effectively move at half speed and can't keep up.
+    if (typeof updateAllyShips === 'function') {
+        const _playerWarp = gameState.velocityVector &&
+            gameState.velocityVector.length() >= 4.0;
+        if (gameState.frameCount % 2 === 0 || _playerWarp) {
+            updateAllyShips();
+        }
+    }
+
+    // DEMO AUTOPILOT — runs before physics so key inputs are applied this frame
+    if (typeof window !== 'undefined' && window.demoPilot && window.demoPilot.active) {
+        window.demoPilot.update();
+    }
+
+    // Enemy buffs (3x HP, 2x speed, close-range swarm) — applied in all
+    // gameplay modes, not just demo.  Skips when demo is driving so the
+    // demo's own update doesn't double-buff.
+    if (typeof window !== 'undefined' && typeof window.applyEnemyBuffs === 'function') {
+        window.applyEnemyBuffs();
+    }
+
     // Enhanced physics and controls for doubled world
     if (typeof perfDebug !== 'undefined') perfDebug.startTimer('physics');
     if (typeof updateEnhancedPhysics === 'function') {
@@ -1992,15 +2074,20 @@ if (typeof checkCosmicFeatureInteractions === 'function' && typeof camera !== 'u
     }
     if (typeof perfDebug !== 'undefined') perfDebug.endTimer('physics');
     
-    // FORCE NORMAL PERFORMANCE MODE - disable auto-adjustment temporarily
-    gameState.performanceMode = 'normal';
-    gameState.averageFrameTime = 16.67; // Reset to good performance
-    
     // Update UI every few frames
     if (gameState.frameCount % 2 === 0) {
         if (typeof updateUI === 'function') updateUI();
         if (typeof updateCompass === 'function') updateCompass();
-        if (typeof updateGalaxyMap === 'function') updateGalaxyMap();
+    }
+    // Map updates every 3 frames (~20 Hz) for smooth player marker movement
+    if (gameState.frameCount % 3 === 0 && typeof updateGalaxyMap === 'function') {
+        updateGalaxyMap();
+    }
+
+    // Distress signal indicator (edge arrow / on-screen reticle) — refresh
+    // every 3 frames so it tracks fast camera rotation without DOM thrash.
+    if (gameState.frameCount % 3 === 0 && typeof updateDistressIndicator === 'function') {
+        updateDistressIndicator();
     }
 
     // Update crosshair less frequently to avoid interfering with UI clicks
@@ -2030,6 +2117,12 @@ if (typeof checkCosmicFeatureInteractions === 'function' && typeof camera !== 'u
         updateAtmosphericPerspective(camera);
     }
 
+    // SOUNDTRACK: Pick the right MP3 track based on current location.
+    // Runs every 30 frames (~2 Hz at 60 fps) — cheap check, smooth fading.
+    if (gameState.frameCount % 30 === 0 && typeof soundtrack !== 'undefined' && soundtrack.update) {
+        soundtrack.update();
+    }
+
     // Depth of field disabled for performance (was causing expensive scene traversals)
 
     // PERFORMANCE DEBUG: Time render call
@@ -2048,7 +2141,7 @@ function updatePlanetOrbits() {
     
     // PERF DEBUG: Log planet count every 300 frames
     if (gameState.frameCount % 300 === 0) {
-        console.log(`📊 PERF: Processing all ${planets.length} planets (no cull distance)`);
+        if (window.GAME_DEBUG_VERBOSE) console.log(`📊 PERF: Processing all ${planets.length} planets (no cull distance)`);
     }
     
     planets.forEach((planet) => {
@@ -2239,6 +2332,23 @@ function logBlackHoleRotationSpeeds() {
             console.log(`${planet.userData.name}: ${planet.userData.rotationSpeed.toFixed(4)} rad/frame (${speedRPM.toFixed(2)} RPM)`);
         }
     });
+}
+
+// DIAGNOSTIC: Wrap gameState.hull with a setter that logs every change.
+if (typeof window !== 'undefined') {
+    let _hullValue = gameState.hull;
+    try {
+        Object.defineProperty(gameState, 'hull', {
+            configurable: true,
+            enumerable: true,
+            get: function() { return _hullValue; },
+            set: function(newVal) {
+                _hullValue = newVal;
+            }
+        });
+    } catch (e) {
+        console.error('❌ HULL SETTER FAILED:', e);
+    }
 }
 
 // Make functions globally available for debugging

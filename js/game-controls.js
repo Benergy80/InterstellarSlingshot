@@ -3,16 +3,31 @@
 // CLEANED: Removed stub functions, duplicate gameState, competing initialization
 // RESTORED: Working audio system, UI buttons, mouse crosshair, tutorial from game-controls13.js
 
-// Active lasers array - tracks beams that move with the ship
+// Active lasers array - tracks beams that move with the ship.
+// Hard-capped at 30 entries; oldest are evicted when full so the
+// array can't grow unbounded during long demo sessions.
 const activeLasers = [];
+const LASER_ARRAY_CAP = 30;
+
+// Pooled vectors for per-frame enemy behaviour — avoids 1000s of
+// throwaway Vector3 allocations per second with 100+ enemies.
+const _ebV1 = new THREE.Vector3();
+const _ebV2 = new THREE.Vector3();
+const _ebV3 = new THREE.Vector3();
 
 // Global key state
 const keys = {
   w: false, a: false, s: false, d: false,
-  q: false, e: false, enter: false,
-  shift: false, alt: false, space: false,
+  q: false, e: false, enter: false, o: false,
+  shift: false, alt: false, space: false, capsLock: false,
   up: false, down: false, left: false, right: false,
   x: false, b: false, z: false
+};
+
+// Double-tap detection for W key (short energy-based boost)
+const doubleTapState = {
+  lastWTap: 0,
+  doubleTapThreshold: 300 // ms
 };
 
 // Enhanced Audio System with Eerie Space Music (RESTORED from game-controls13.js)
@@ -97,8 +112,7 @@ const explosionManager = {
 
 // UPDATED: Pursuit behavior
 // Helper: Add smooth rotation to enemy based on movement trajectory
-function applyEnemyRotation(enemy, direction, speed) {
-    if (!enemy || !direction) return;
+function applyEnemyRotation(enemy, direction, speed) {    if (!enemy || !direction) return;
 
     try {
         // Skip if not moving enough
@@ -204,17 +218,13 @@ function updatePursuitBehavior(enemy, playerPos, speed, distance) {
         const turnRate = 0.03; // How fast they can turn (radians per frame)
         const drag = 0.98; // Slight drag for inertia feel
         
-        // Calculate desired direction to player
-        const desiredDirection = new THREE.Vector3().subVectors(playerPos, enemy.position).normalize();
-        
-        // Gradually turn facing toward desired direction (can't instant-turn)
-        const currentFacing = enemy.userData.facing.clone();
-        const angleDiff = currentFacing.angleTo(desiredDirection);
+        _ebV1.subVectors(playerPos, enemy.position).normalize();
+
+        const angleDiff = enemy.userData.facing.angleTo(_ebV1);
         
         if (angleDiff > 0.01) {
-            // Interpolate facing toward target (limited by turn rate)
             const turnAmount = Math.min(turnRate, angleDiff);
-            enemy.userData.facing.lerp(desiredDirection, turnAmount / angleDiff);
+            enemy.userData.facing.lerp(_ebV1, turnAmount / angleDiff);
             enemy.userData.facing.normalize();
         }
         
@@ -237,9 +247,8 @@ function updatePursuitBehavior(enemy, playerPos, speed, distance) {
             }
         }
         
-        // Apply thrust in facing direction (like player, can only accelerate forward)
-        const thrust = enemy.userData.facing.clone().multiplyScalar(thrustPower);
-        enemy.userData.velocity.add(thrust);
+        _ebV2.copy(enemy.userData.facing).multiplyScalar(thrustPower);
+        enemy.userData.velocity.add(_ebV2);
         
         // Clamp to max speed
         if (enemy.userData.velocity.length() > maxSpeed) {
@@ -255,17 +264,16 @@ function updatePursuitBehavior(enemy, playerPos, speed, distance) {
         // Rotate enemy to face direction of travel (not instant)
         applyEnemyRotation(enemy, enemy.userData.facing, speed);
         
-        // Swarm behavior when close - orbit around player
         if (distance < 150) {
             const orbitAngle = Date.now() * 0.0015 + (enemy.userData.circlePhase || 0);
-            const orbitOffset = new THREE.Vector3(
+            _ebV1.set(
                 Math.cos(orbitAngle) * 100,
                 Math.sin(orbitAngle * 0.5) * 30,
                 Math.sin(orbitAngle) * 100
             );
-            const orbitTarget = playerPos.clone().add(orbitOffset);
-            const orbitDir = new THREE.Vector3().subVectors(orbitTarget, enemy.position).normalize();
-            enemy.userData.facing.lerp(orbitDir, turnRate * 2);
+            _ebV2.copy(playerPos).add(_ebV1);
+            _ebV3.subVectors(_ebV2, enemy.position).normalize();
+            enemy.userData.facing.lerp(_ebV3, turnRate * 2);
             enemy.userData.facing.normalize();
         }
     } catch (e) {
@@ -302,16 +310,14 @@ function updateSwarmBehavior(enemy, playerPos, speed, time) {
         const targetZ = playerPos.z + Math.sin(swarmAngle) * spiralRadius;
         const targetY = playerPos.y + Math.sin(time * 0.2) * 30;
         
-        const targetPos = new THREE.Vector3(targetX, targetY, targetZ);
-        const desiredDirection = new THREE.Vector3().subVectors(targetPos, enemy.position).normalize();
-        
-        // Gradual turn
-        enemy.userData.facing.lerp(desiredDirection, turnRate);
+        _ebV1.set(targetX, targetY, targetZ);
+        _ebV2.subVectors(_ebV1, enemy.position).normalize();
+
+        enemy.userData.facing.lerp(_ebV2, turnRate);
         enemy.userData.facing.normalize();
-        
-        // Thrust in facing direction
-        const thrust = enemy.userData.facing.clone().multiplyScalar(acceleration);
-        enemy.userData.velocity.add(thrust);
+
+        _ebV3.copy(enemy.userData.facing).multiplyScalar(acceleration);
+        enemy.userData.velocity.add(_ebV3);
         
         // Clamp and drag
         if (enemy.userData.velocity.length() > maxSpeed) {
@@ -335,16 +341,14 @@ function updateEvasionBehavior(enemy, playerPos, speed, time) {
     }
 
     try {
-        // Move perpendicular to player direction
-        const direction = new THREE.Vector3().subVectors(enemy.position, playerPos).normalize();
-        const perpendicular = new THREE.Vector3(-direction.z, direction.y, direction.x);
+        _ebV1.subVectors(enemy.position, playerPos).normalize();
+        _ebV2.set(-_ebV1.z, _ebV1.y, _ebV1.x);
 
-        // Add some randomness and oscillation
         const oscillation = Math.sin(time * 2 + (enemy.userData.circlePhase || 0)) * 0.5;
-        const evasionVector = perpendicular.multiplyScalar(speed * (1 + oscillation));
+        _ebV2.multiplyScalar(speed * (1 + oscillation));
 
-        enemy.position.add(evasionVector);
-        applyEnemyRotation(enemy, perpendicular, speed);  // Add rotation
+        enemy.position.add(_ebV2);
+        applyEnemyRotation(enemy, _ebV2, speed);  // Add rotation
     } catch (e) {
         // Ignore movement errors
     }
@@ -366,10 +370,10 @@ function updateFlankingBehavior(enemy, playerPos, speed, time) {
         const targetZ = playerPos.z + Math.sin(flankAngle) * flankRadius;
         const targetY = playerPos.y;
 
-        const targetPos = new THREE.Vector3(targetX, targetY, targetZ);
-        const direction = new THREE.Vector3().subVectors(targetPos, enemy.position).normalize();
-        enemy.position.add(direction.multiplyScalar(speed * 0.7));
-        applyEnemyRotation(enemy, direction, speed * 0.7);  // Add rotation
+        _ebV1.set(targetX, targetY, targetZ);
+        _ebV2.subVectors(_ebV1, enemy.position).normalize();
+        enemy.position.add(_ebV2.multiplyScalar(speed * 0.7));
+        applyEnemyRotation(enemy, _ebV2, speed * 0.7);  // Add rotation
     } catch (e) {
         // Ignore movement errors
     }
@@ -387,23 +391,19 @@ function updateEngagementBehavior(enemy, playerPos, speed, time) {
         const optimalDistance = 100;
         const currentDistance = enemy.position.distanceTo(playerPos);
 
-        let direction;
         if (currentDistance > optimalDistance + 20) {
-            // Move closer
-            direction = new THREE.Vector3().subVectors(playerPos, enemy.position).normalize();
-            enemy.position.add(direction.multiplyScalar(speed));
-            applyEnemyRotation(enemy, direction, speed);  // Add rotation
+            _ebV1.subVectors(playerPos, enemy.position).normalize();
+            enemy.position.add(_ebV1.multiplyScalar(speed));
+            applyEnemyRotation(enemy, _ebV1, speed);
         } else if (currentDistance < optimalDistance - 20) {
-            // Move away
-            direction = new THREE.Vector3().subVectors(enemy.position, playerPos).normalize();
-            enemy.position.add(direction.multiplyScalar(speed * 0.5));
-            applyEnemyRotation(enemy, direction, speed * 0.5);  // Add rotation
+            _ebV1.subVectors(enemy.position, playerPos).normalize();
+            enemy.position.add(_ebV1.multiplyScalar(speed * 0.5));
+            applyEnemyRotation(enemy, _ebV1, speed * 0.5);
         } else {
-            // Maintain position with slight movement
             const angle = time * 0.5;
-            const offset = new THREE.Vector3(Math.cos(angle) * 10, 0, Math.sin(angle) * 10);
-            enemy.position.add(offset.multiplyScalar(speed * 0.3));
-            applyEnemyRotation(enemy, offset, speed * 0.3);  // Add rotation
+            _ebV1.set(Math.cos(angle) * 10, 0, Math.sin(angle) * 10);
+            enemy.position.add(_ebV1.multiplyScalar(speed * 0.3));
+            applyEnemyRotation(enemy, _ebV1, speed * 0.3);
         }
     } catch (e) {
         // Ignore movement errors
@@ -428,11 +428,10 @@ function updatePatrolBehavior(enemy, playerPos, speed, time) {
         const targetZ = enemy.userData.patrolCenter.z + Math.sin(angle) * enemy.userData.patrolRadius;
         const targetY = enemy.userData.patrolCenter.y + Math.sin(angle * 0.3) * 50;
         
-        const targetPos = new THREE.Vector3(targetX, targetY, targetZ);
-        const direction = new THREE.Vector3().subVectors(targetPos, enemy.position).normalize();
+        _ebV1.set(targetX, targetY, targetZ);
+        _ebV2.subVectors(_ebV1, enemy.position).normalize();
 
-        // ENHANCED: Increased patrol speed from 0.3 to 0.6 for smoother flowing motion
-        enemy.position.add(direction.multiplyScalar(speed * 0.6));
+        enemy.position.add(_ebV2.multiplyScalar(speed * 0.6));
         applyEnemyRotation(enemy, direction, speed * 0.6);  // Add rotation
     } catch (e) {
         // Ignore movement errors
@@ -445,29 +444,44 @@ function updatePatrolBehavior(enemy, playerPos, speed, time) {
 
 function calculateDifficultySettings() {
     const galaxiesCleared = (typeof gameState !== 'undefined' && gameState.galaxiesCleared) ? gameState.galaxiesCleared : 0;
-    
+
+    // Scale active enemy count with the player's wingmen count so the fight
+    // stays meaningful as allies are recruited. Each living wingman adds
+    // 2 active local attackers and 2 active distant attackers.
+    let aliveWingmen = 0;
+    if (typeof allyShips !== 'undefined') {
+        aliveWingmen = allyShips.filter(a => a && a.userData && a.userData.health > 0).length;
+    }
+    const wingmanLocalBonus = aliveWingmen * 2;
+    const wingmanDistantBonus = aliveWingmen * 2;
+
     const baseSettings = {
-        // Local galaxy settings (progressive difficulty) - MAX 3 HITS
-        maxLocalAttackers: Math.min(3 + galaxiesCleared, 8), // Start with 3, +1 per galaxy cleared, max 8
-        localSpeedMultiplier: 0.8 + (galaxiesCleared * 0.05), // INCREASED: Faster pursuit from the start
-        localHealthMultiplier: galaxiesCleared === 0 ? 1 : Math.min(1 + galaxiesCleared * 0.25, 3), // MAX 3 hits
-        localDetectionRange: 3500 + (galaxiesCleared * 300), // Long detection for pursuit
-        localFiringRange: 150 + (galaxiesCleared * 25),  // Must get close to fire
-        localAttackCooldown: Math.max(600, 1200 - (galaxiesCleared * 100)), // Faster attacks
-        
+        // Local galaxy settings (progressive difficulty)
+        // 4 base + 2 per wingman → 8 active at game start with 2 wingmen
+        // (matches the 4 Martian + 4 Vulcan opening scenario the player wanted)
+        maxLocalAttackers: Math.min(4 + galaxiesCleared + wingmanLocalBonus, 16),
+        localSpeedMultiplier: 1.0 + (galaxiesCleared * 0.05), // Full speed from the start
+        localHealthMultiplier: galaxiesCleared === 0 ? 1 : Math.min(1 + galaxiesCleared * 0.25, 3),
+        localDetectionRange: 3500 + (galaxiesCleared * 300),
+        localFiringRange: 350 + (galaxiesCleared * 25),  // Was 150 — far too close, enemies couldn't fire
+        localAttackCooldown: Math.max(600, 1200 - (galaxiesCleared * 100)),
+
         // Distant galaxy settings (always challenging) - MAX 3 HITS
-        maxDistantAttackers: Math.min(8 + galaxiesCleared, 15),  // More attackers
+        // 8 base + galaxiesCleared + 2 per wingman, capped at 22 (fights stay
+        // tractable but feel proportionate to the player's fleet size).
+        maxDistantAttackers: Math.min(8 + galaxiesCleared + wingmanDistantBonus, 22),
         distantSpeedMultiplier: 1.0 + (galaxiesCleared * 0.08),  // Faster enemies
         distantHealthMultiplier: Math.min(2 + galaxiesCleared * 0.125, 3), // MAX 3 hits
         distantDetectionRange: 5000 + (galaxiesCleared * 200),  // Long detection for pursuit
         distantFiringRange: 200 + (galaxiesCleared * 30),  // Must get close to fire
         distantAttackCooldown: Math.max(800, 1200 - (galaxiesCleared * 50)),
-        
+
         // General settings
         galaxiesCleared: galaxiesCleared,
+        aliveWingmen: aliveWingmen,
         difficultyLevel: Math.min(Math.floor(galaxiesCleared / 2), 4) // 0-4 difficulty levels
     };
-    
+
     return baseSettings;
 }
 
@@ -604,8 +618,8 @@ function updateEnemyBehavior() {
     if (typeof tutorialSystem !== 'undefined' && tutorialSystem.completed) {
         // Log once when tutorial is complete and enemies should activate
         const now = Date.now();
-        if (!tutorialSystem.enemiesActivatedLogTime || (now - tutorialSystem.enemiesActivatedLogTime) > 5000) {
-            console.log('Tutorial completed - enemies now processing full AI behavior');
+        if (!tutorialSystem.enemiesActivatedLogTime) {
+            // Was: re-logged every 5s — silenced for console cleanliness.
             tutorialSystem.enemiesActivatedLogTime = now;
         }
     }
@@ -618,7 +632,7 @@ function updateEnemyBehavior() {
     let inCombatRange = false;
     let activeAttackers = 0;
     let localActiveAttackers = 0;
-    
+
     // Count current active attackers
     enemies.forEach(enemy => {
         if (enemy.userData.health <= 0) return;
@@ -629,24 +643,22 @@ function updateEnemyBehavior() {
             }
         }
     });
-    
+
     enemies.forEach(enemy => {
         if (enemy.userData.health <= 0) return;
-        
-        // FIXED: Always use camera position for consistent distance checks
-        // The ship mesh can lag behind during warps, causing enemies to attack from afar
+
         const playerPos = camera.position.clone();
         const distanceToPlayer = playerPos.distanceTo(enemy.position);
         const isLocal = isEnemyInLocalGalaxy(enemy);
-        
-        // ENHANCED: Larger detection ranges
-        const detectionRange = isLocal ? 
-            (difficultySettings.localDetectionRange || 2000) : 
+
+        const detectionRange = isLocal ?
+            (difficultySettings.localDetectionRange || 2000) :
             (enemy.userData.detectionRange || difficultySettings.distantDetectionRange || 3000);
-        const firingRange = isLocal ? 
-            (difficultySettings.localFiringRange || 200) : 
-            (enemy.userData.firingRange || difficultySettings.distantFiringRange || 300);
-        
+        // Use the HIGHER of difficulty setting or enemy's own firingRange
+        const firingRange = isLocal ?
+            Math.max(difficultySettings.localFiringRange || 200, enemy.userData.firingRange || 0) :
+            Math.max(enemy.userData.firingRange || 0, difficultySettings.distantFiringRange || 300);
+
         // Count nearby enemies
         if (distanceToPlayer < detectionRange) {
             nearbyEnemyCount++;
@@ -654,21 +666,25 @@ function updateEnemyBehavior() {
                 inCombatRange = true;
             }
         }
-        
-        // PROGRESSIVE DIFFICULTY: Apply attacker limits
+
+        // PROGRESSIVE DIFFICULTY: Apply attacker limits — only N enemies
+        // are active at once, the rest stay dormant.
         const maxAttackers = isLocal ? difficultySettings.maxLocalAttackers : difficultySettings.maxDistantAttackers;
         const currentAttackers = isLocal ? localActiveAttackers : activeAttackers;
-        
+
         if (distanceToPlayer < detectionRange && !enemy.userData.isActive && currentAttackers < maxAttackers) {
             enemy.userData.isActive = true;
             enemy.userData.detectedPlayer = true;
             enemy.userData.lastSeenPlayerPos = playerPos.clone();
-            
+            // Stagger first-shot timing so 4 newly-activated enemies don't
+            // all fire on the same frame. Random offset 0-1200ms means
+            // their first shots are spread across the cooldown window.
+            enemy.userData.lastAttack = Date.now() - Math.random() * 1200;
+
             if (isLocal) localActiveAttackers++;
             else activeAttackers++;
-            
-            console.log(`Enemy activated: ${enemy.userData.name} (${isLocal ? 'local' : 'distant'}) - Active attackers: ${currentAttackers + 1}/${maxAttackers}`);
-        } else if (enemy.userData.isActive && (distanceToPlayer > detectionRange * 1.5 || currentAttackers > maxAttackers)) {
+        } else if (enemy.userData.isActive &&
+                   (distanceToPlayer > detectionRange * 1.5 || currentAttackers > maxAttackers)) {
             enemy.userData.isActive = false;
             enemy.userData.detectedPlayer = false;
             if (isLocal) localActiveAttackers--;
@@ -679,7 +695,7 @@ function updateEnemyBehavior() {
             // FIXED: Enemy speeds 200-1000 km/s (0.2-1.0 game units, multiply by 1000 for km/s display)
             const baseSpeed = enemy.userData.speed || 0.5;
             const speedMultiplier = isLocal ? difficultySettings.localSpeedMultiplier : difficultySettings.distantSpeedMultiplier;
-            const adjustedSpeed = Math.min(1.0, Math.max(0.2, baseSpeed * speedMultiplier));  // Clamp to 0.2-1.0 (200-1000 km/s)
+            const adjustedSpeed = Math.min(2.0, Math.max(0.2, baseSpeed * speedMultiplier));  // Clamp to 0.2-2.0 (200-2000 km/s)
             
             if (isLocal) {
                 updateLocalEnemyBehavior(enemy, distanceToPlayer, adjustedSpeed, difficultySettings);
@@ -693,13 +709,26 @@ function updateEnemyBehavior() {
                 }
             }
             
-            // Enhanced enemy firing with progressive difficulty
-            if (distanceToPlayer < firingRange) {
+            // Enhanced enemy firing with progressive difficulty.
+            // Compute distance to nearest TARGET (player OR any alive wingman)
+            // so enemies near wingmen still fire even when the player is far.
+            let nearestTargetDist = distanceToPlayer;
+            if (typeof allyShips !== 'undefined') {
+                for (let _ai = 0; _ai < allyShips.length; _ai++) {
+                    const _w = allyShips[_ai];
+                    if (!_w || !_w.userData || _w.userData.health <= 0) continue;
+                    const _wd = _w.position.distanceTo(enemy.position);
+                    if (_wd < nearestTargetDist) nearestTargetDist = _wd;
+                }
+            }
+            // Standard firing — only `maxAttackers` are active so the rate
+            // is naturally capped at the original 2-day-ago levels.
+            if (nearestTargetDist < firingRange) {
                 const now = Date.now();
-                const attackCooldown = isLocal ? 
-                    (difficultySettings.localAttackCooldown || 2000) : 
+                const attackCooldown = isLocal ?
+                    (difficultySettings.localAttackCooldown || 2000) :
                     (enemy.userData.isBoss ? 600 : difficultySettings.distantAttackCooldown || 1200);
-                
+
                 if (now - (enemy.userData.lastAttack || 0) > attackCooldown) {
                     fireEnemyWeapon(enemy, difficultySettings);
                     enemy.userData.lastAttack = now;
@@ -811,10 +840,25 @@ const factionBehaviors = {
         secondaryBehavior: 'evade',     // Logical retreat when needed
         aggressionMultiplier: 0.85,     // Controlled aggression
         preferredRange: 160,            // Precise range
-        behaviorChangeChance: 0.002,    // Adaptive logic
+        behaviorChangeChance: 0.008,    // Adaptive logic — raised so swarm/evade fire visibly
         speedBonus: 1.0
     }
 };
+
+// Force-activate an enemy when it takes damage. Without this, enemies
+// outside the maxAttackers cap stay in patrol mode and don't fight back
+// or evade when the player (or wingmen) shoot them — they just orbit
+// their patrolCenter looking broken.
+function _activateOnDamage(enemy) {
+    if (!enemy || !enemy.userData) return;
+    if (enemy.userData.isActive) return; // already active
+    enemy.userData.isActive = true;
+    enemy.userData.detectedPlayer = true;
+    enemy.userData.lastSeenPlayerPos = (typeof camera !== 'undefined') ? camera.position.clone() : null;
+    // Low-HP enemies evade immediately; others engage
+    const hp = enemy.userData.health / (enemy.userData.maxHealth || 1);
+    enemy.userData.attackMode = hp < 0.5 ? 'evade' : 'engage';
+}
 
 // Get faction behavior for an enemy
 function getFactionBehavior(enemy) {
@@ -826,52 +870,83 @@ function getFactionBehavior(enemy) {
     return factionBehaviors[0];
 }
 
-// UPDATED: Local enemy behavior with FACTION-SPECIFIC AI
+// UPDATED: Local enemy behavior with FACTION-SPECIFIC AI + wingman targeting
 function updateLocalEnemyBehavior(enemy, distanceToPlayer, adjustedSpeed, difficultySettings) {
-    // Safety checks
     if (!enemy || !enemy.userData || typeof camera === 'undefined' || typeof THREE === 'undefined') {
         return;
     }
-    
+
     const time = Date.now() * 0.001;
-    const playerPos = camera.position.clone();
+    let playerPos = camera.position.clone();
     const faction = getFactionBehavior(enemy);
-    
-    // Apply faction speed bonus
     const factionSpeed = adjustedSpeed * faction.speedBonus;
-    
-    // Update last seen player position if player is visible
+
+    // ── Target selection: pursue NEAREST of player or any alive wingman ──
+    let targetPos = playerPos;
+    let targetDist = distanceToPlayer;
+    if (typeof allyShips !== 'undefined') {
+        for (let i = 0; i < allyShips.length; i++) {
+            const w = allyShips[i];
+            if (!w || !w.userData || w.userData.health <= 0) continue;
+            const d = w.position.distanceTo(enemy.position);
+            if (d < targetDist) {
+                targetDist = d;
+                targetPos = w.position.clone();
+            }
+        }
+    }
+
     if (distanceToPlayer < difficultySettings.localDetectionRange) {
         enemy.userData.lastSeenPlayerPos = playerPos.clone();
         enemy.userData.lastSeenTime = time;
     }
-    
-    // Initialize attack mode based on faction if not set
+
     if (!enemy.userData.attackMode) {
         enemy.userData.attackMode = faction.primaryBehavior;
     }
-    
-    // Faction-specific behavior changes
-    if (Math.random() < faction.behaviorChangeChance) {
-        // Switch between primary and secondary behaviors
+
+    // Faction-specific behavior changes (more frequent for active dogfighting)
+    const changeChance = (faction.behaviorChangeChance || 0.002) * 3;
+    if (Math.random() < changeChance) {
         if (enemy.userData.attackMode === faction.primaryBehavior) {
             enemy.userData.attackMode = faction.secondaryBehavior;
         } else {
             enemy.userData.attackMode = faction.primaryBehavior;
         }
     }
-    
-    // Distance-based behavior override for some factions
-    if (faction.style === 'berserker' && distanceToPlayer > 300) {
-        // Klingons always charge from distance
-        enemy.userData.attackMode = 'pursue';
-    } else if (faction.style === 'guerrilla' && distanceToPlayer < 100) {
-        // Rebels retreat when too close
+
+    // Health-triggered evasion: low-HP enemies bias toward evade
+    const healthFraction = enemy.userData.health / (enemy.userData.maxHealth || 1);
+    if (healthFraction < 0.5 && Math.random() < 0.04) {
         enemy.userData.attackMode = 'evade';
-    } else if (faction.style === 'ambush' && distanceToPlayer < faction.preferredRange) {
-        // Romulans strike hard when in range
+    }
+
+    // Multi-enemy swarming: if 2+ enemies are within 800u of the target,
+    // bias toward swarm so they converge instead of fighting individually
+    if (Math.random() < 0.02 && typeof enemies !== 'undefined') {
+        let nearbyAllies = 0;
+        for (let j = 0; j < enemies.length; j++) {
+            const e = enemies[j];
+            if (!e || e === enemy || !e.userData || e.userData.health <= 0) continue;
+            if (e.position.distanceTo(targetPos) < 800) nearbyAllies++;
+            if (nearbyAllies >= 2) break;
+        }
+        if (nearbyAllies >= 2) enemy.userData.attackMode = 'swarm';
+    }
+
+    // Distance-based overrides
+    if (faction.style === 'berserker' && targetDist > 300) {
+        enemy.userData.attackMode = 'pursue';
+    } else if (faction.style === 'guerrilla' && targetDist < 100) {
+        enemy.userData.attackMode = 'evade';
+    } else if (faction.style === 'ambush' && targetDist < faction.preferredRange) {
         enemy.userData.attackMode = 'pursue';
     }
+
+    // Override playerPos with the nearest target so all behaviors steer toward
+    // either the player OR a wingman, whichever is closer.
+    playerPos.copy(targetPos);
+    distanceToPlayer = targetDist;
     
     switch (enemy.userData.attackMode) {
         case 'pursue':
@@ -893,10 +968,31 @@ function updateLocalEnemyBehavior(enemy, distanceToPlayer, adjustedSpeed, diffic
             updatePursuitBehavior(enemy, playerPos, factionSpeed, distanceToPlayer);
     }
     
+    // Smooth quaternion slerp instead of instant lookAt — keeps the
+    // turning motion fluid like wingmen instead of snapping the
+    // orientation each frame when the target moves.
+    _smoothEnemyLookAt(enemy, playerPos, 0.12);
+}
+
+// Smoothly rotate an enemy to face `targetPos` over multiple frames.
+// rate is the slerp factor per frame: 0.06 = wingman smooth, 0.12 = a bit
+// snappier (enemies actively dogfighting), 0.2 = very responsive.
+const _enemyLookMat = new THREE.Matrix4();
+const _enemyLookQuat = new THREE.Quaternion();
+const _enemyUp = new THREE.Vector3(0, 1, 0);
+function _smoothEnemyLookAt(enemy, targetPos, rate) {
+    if (!enemy || !targetPos) return;
     try {
-        enemy.lookAt(playerPos);
+        // setFromUnitVectors-style approach using lookAt matrix.
+        // The trick: pass (eye, target, up) — eye is the enemy, target is
+        // where it should be looking. matrix.lookAt then composes the
+        // rotation. Negate the direction (eye - target) to face forward.
+        const pos = enemy.position;
+        _enemyLookMat.lookAt(pos, targetPos, _enemyUp);
+        _enemyLookQuat.setFromRotationMatrix(_enemyLookMat);
+        enemy.quaternion.slerp(_enemyLookQuat, rate);
     } catch (e) {
-        // Ignore lookAt errors if position is invalid
+        // Ignore — position/target may be invalid mid-cleanup
     }
 }
 
@@ -954,11 +1050,8 @@ function updateEnhancedEnemyBehavior(enemy, distanceToPlayer, adjustedSpeed, dif
             break;
     }
     
-    try {
-        enemy.lookAt(playerPos);
-    } catch (e) {
-        // Ignore lookAt errors
-    }
+    // Smooth quaternion slerp instead of instant lookAt
+    _smoothEnemyLookAt(enemy, playerPos, 0.12);
 }
 
 // Boss behavior
@@ -1002,100 +1095,126 @@ function updateSupportBehavior(enemy, playerPos, speed) {
 }
 
 // Enhanced enemy weapon firing with directional damage and progressive difficulty
+const _enemyWorldPos = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+
 function fireEnemyWeapon(enemy, difficultySettings) {
     if (!enemy || !enemy.userData || enemy.userData.health <= 0) return;
-    
+
+    // No enemy fires until 5 seconds after game start
+    if (!gameState.gameStartTime || (Date.now() - gameState.gameStartTime < 5000)) return;
+
     const isLocal = isEnemyInLocalGalaxy(enemy);
     const firingRange = isLocal ? difficultySettings?.localFiringRange || 500 : difficultySettings?.distantFiringRange || 600;
-    
-    // FIXED: Always use camera position for consistent range checks
-    // The ship mesh can lag behind during warps, causing "invisible" attacks
+
+    // Use world position for entities that are children of groups
+    const enemyPos = (enemy.parent && enemy.parent.isGroup) ? enemy.getWorldPosition(_enemyWorldPos).clone() : enemy.position;
+
+    // Pick the nearest target between player and wingmen
     const playerPos = camera.position.clone();
-    const distanceToPlayer = playerPos.distanceTo(enemy.position);
-    
-    // DEBUG: Log who is attacking (only if in range)
-    if (distanceToPlayer <= firingRange) {
-        console.log(`🔫 ${enemy.userData.name || enemy.userData.type || 'Unknown'} firing at player from distance: ${distanceToPlayer.toFixed(0)} units (range: ${firingRange})`);
+    let targetPos = playerPos;
+    let targetWingman = null;
+    let nearestDist = playerPos.distanceTo(enemyPos);
+
+    if (typeof allyShips !== 'undefined') {
+        for (let i = 0; i < allyShips.length; i++) {
+            const ally = allyShips[i];
+            if (!ally || !ally.userData || ally.userData.health <= 0) continue;
+            const d = ally.position.distanceTo(enemyPos);
+            if (d < nearestDist) {
+                nearestDist = d;
+                targetPos = ally.position.clone();
+                targetWingman = ally;
+            }
+        }
     }
-    
-    if (distanceToPlayer <= firingRange) {
-        // Create enemy laser beam targeting player position
-        const laserColor = enemy.userData.isBoss ? '#ff4444' : '#ff8800';
-        createLaserBeam(enemy.position, playerPos, laserColor, false);
-        
+
+    if (nearestDist <= firingRange) {
+        const laserColor = enemy.userData.isBoss ? '#ff4444' : (enemy.userData.isBorgCube || enemy.userData.type === 'borg_drone') ? '#00ff00' : '#ff8800';
+        createLaserBeam(enemyPos, targetPos, laserColor, false);
+
         playSound('enemy_fire');
-        
-        // Enhanced damage calculation with progressive difficulty
-        let damage = isLocal ? 
-            (difficultySettings.galaxiesCleared === 0 ? 4 : 6 + difficultySettings.galaxiesCleared) : 
-            (enemy.userData.isBoss ? 12 : enemy.userData.isBossSupport ? 8 : 6);
-        
-        // Cap damage to reasonable levels
-        damage = Math.min(damage, 15);
 
-        // ENHANCED: Accuracy reduction during evasive maneuvers
-        // Base accuracy: 70%, reduced by turn rate
-        let hitChance = 0.7;  // Base 70% hit chance
+        // Reduced damage so combat is survivable while still threatening.
+        // Local enemies do 2 dmg base, distant 3-6 dmg. With 4 attackers
+        // firing every 1.2s at 60% hit chance: ~4 dmg/sec → 25s to die.
+        let damage = isLocal ?
+            (difficultySettings.galaxiesCleared === 0 ? 2 : 3 + difficultySettings.galaxiesCleared) :
+            (enemy.userData.isBoss ? 8 : enemy.userData.isBossSupport ? 5 : 3);
+        damage = Math.min(damage, 10);
 
-        // Reduce accuracy when enemy is turning (evasive maneuvers)
+        let hitChance = 0.6;
         const turnRate = enemy.userData.turnRate || 0;
-        if (turnRate > 0.01) {  // Only apply if turning significantly
-            // Turn rate of 0.15 rad/frame (max) = 50% accuracy penalty
-            // Turn rate of 0.075 rad/frame (half max) = 25% accuracy penalty
-            const accuracyPenalty = Math.min(turnRate * 3.33, 0.5);  // Max 50% penalty
-            hitChance = Math.max(0.2, hitChance - accuracyPenalty);  // Min 20% accuracy
+        if (turnRate > 0.01) {
+            const accuracyPenalty = Math.min(turnRate * 3.33, 0.5);
+            hitChance = Math.max(0.2, hitChance - accuracyPenalty);
         }
 
-        // Random chance to hit based on adjusted accuracy
         if (Math.random() < hitChance) {
-    // Check black hole warp invulnerability
-    const isInvulnerable = typeof isBlackHoleWarpInvulnerable === 'function' &&
-                           isBlackHoleWarpInvulnerable();
+            // If firing at a wingman, damage the wingman and exit
+            if (targetWingman && targetWingman.userData) {
+                const wasAlive = targetWingman.userData.health > 0;
+                targetWingman.userData.health = Math.max(0, targetWingman.userData.health - damage);
+                if (typeof flashEnemyHit === 'function') flashEnemyHit(targetWingman, damage);
 
-    if (!isInvulnerable) {
-        // Apply damage with shield reduction
-        const shieldReduction = typeof getShieldDamageReduction === 'function' ?
-                                getShieldDamageReduction() : 0;
-        const actualDamage = damage * (1 - shieldReduction);
+                // Wingman destroyed — large explosion + notification
+                if (wasAlive && targetWingman.userData.health <= 0) {
+                    if (typeof createWingmanExplosion === 'function') {
+                        createWingmanExplosion(targetWingman);
+                    }
+                    if (typeof showAchievement === 'function') {
+                        showAchievement(
+                            (targetWingman.userData.name || 'Wingman') + ' DESTROYED!',
+                            'Ally ship lost in combat',
+                            true
+                        );
+                    }
+                    if (typeof playSound === 'function') {
+                        playSound('explosion');
+                    }
+                }
+                return;
+            }
 
-        if (typeof gameState !== 'undefined' && gameState.hull !== undefined) {
-            gameState.hull = Math.max(0, gameState.hull - actualDamage);
-        } else if (typeof gameState !== 'undefined' && gameState.health !== undefined) {
-            gameState.health = Math.max(0, gameState.health - actualDamage);
-        }
-    }
-    
-    // Create shield hit effect if shields are active
-    const shieldsActive = typeof isShieldActive === 'function' && isShieldActive();
-    if (shieldsActive && typeof createShieldHitEffect === 'function') {
-        createShieldHitEffect(enemy.position);
-    }
-    
-    // ENHANCED: Directional damage effects with attacker position
-    createEnhancedScreenDamageEffect(enemy.position);
-    
-    // ONLY play damage sound if shields are NOT active
-    if (!shieldsActive) {
-        playSound('damage');
-    }
-    
-    // Only show damage notification if shields are NOT active
-    if (!shieldsActive) {
-        if (enemy.userData.isBoss) {
-            showAchievement('Boss Attack!', `${enemy.userData.name} hit for ${damage} damage!`, false);
+            const isInvulnerable = typeof isBlackHoleWarpInvulnerable === 'function' &&
+                                   isBlackHoleWarpInvulnerable();
+            const shieldsActive = typeof isShieldActive === 'function' && isShieldActive();
+
+            if (!isInvulnerable) {
+                const shieldReduction = typeof getShieldDamageReduction === 'function' ?
+                                        getShieldDamageReduction() : 0;
+                const actualDamage = damage * (1 - shieldReduction);
+
+                if (typeof gameState !== 'undefined' && gameState.hull !== undefined) {
+                    const _before = gameState.hull;
+                    gameState.hull = Math.max(0, gameState.hull - actualDamage);
+                } else if (typeof gameState !== 'undefined' && gameState.health !== undefined) {
+                    gameState.health = Math.max(0, gameState.health - actualDamage);
+                }
+            }
+
+            if (shieldsActive && typeof createShieldHitEffect === 'function') {
+                createShieldHitEffect(enemy.position);
+            }
+
+            if (!isInvulnerable) {
+                createEnhancedScreenDamageEffect(enemy.position);
+                if (!shieldsActive) {
+                    playSound('damage');
+                    if (enemy.userData.isBoss) {
+                        showAchievement('Boss Attack!', `${enemy.userData.name} hit for ${damage} damage!`, false);
+                    } else {
+                        showAchievement('Taking Fire!', `Enemy hit for ${damage} damage!`, false);
+                    }
+                }
+            }
+
+            const currentHealth = gameState.hull || gameState.health || 0;
+            if (currentHealth <= 0) {
+                createDeathEffect();
+            }
         } else {
-            showAchievement('Taking Fire!', `Enemy hit for ${damage} damage!`, false);
+            showAchievement('Missed!', 'Enemy shot missed!', false);
         }
-    }
-    
-    // Check for game over
-    const currentHealth = gameState.hull || gameState.health || 0;
-    if (currentHealth <= 0) {
-        createDeathEffect();
-    }
-} else {
-    showAchievement('Missed!', 'Enemy shot missed!', false);
-}
     }
 }
 
@@ -1475,13 +1594,21 @@ function showMissionCommandAlert(title, text, isVictoryMessage = false) {
     loreButtonContainer.appendChild(understoodButton);
     buttonContainer.appendChild(loreButtonContainer);
     
-    // UNDERSTOOD button dismisses the message and resumes the game if paused
+    // UNDERSTOOD button dismisses the message and flushes any deferred achievements
     const handleUnderstood = () => {
         alertElement.classList.add('hidden');
         // Restore hidden cursor for gameplay
         document.body.style.cursor = 'none';
         if (typeof renderer !== 'undefined' && renderer.domElement) {
             renderer.domElement.style.cursor = 'none';
+        }
+        // Flush queued achievements (scattered factions, etc.) staggered
+        if (window._deferredAchievements && window._deferredAchievements.length) {
+            const queue = window._deferredAchievements.slice();
+            window._deferredAchievements = [];
+            queue.forEach((a, i) => {
+                setTimeout(() => showAchievement(a.title, a.description, a.playAchievementSound), 400 * i);
+            });
         }
         // Resume the game if it was paused for this transmission
         if (typeof gameState !== 'undefined' && gameState.paused) {
@@ -1610,20 +1737,20 @@ function showIncomingTransmission(title, text, factionColor) {
 
     const dismiss = () => {
         prompt.remove();
+        // Flush deferred achievements unless a Mission Command alert is also open
+        if (!document.getElementById('missionCommandAlert') &&
+            window._deferredAchievements && window._deferredAchievements.length) {
+            const queue = window._deferredAchievements.slice();
+            window._deferredAchievements = [];
+            queue.forEach((a, i) => {
+                setTimeout(() => showAchievement(a.title, a.description, a.playAchievementSound), 400 * i);
+            });
+        }
     };
 
-    // READ: pause the game and show full lore
+    // READ: show full lore — game continues running in background
     const handleRead = () => {
         dismiss();
-        // Pause the game if not already paused
-        if (typeof gameState !== 'undefined' && !gameState.paused) {
-            gameState.paused = true;
-            // Show pause state visually but don't show the pause overlay
-            const pauseBtn = document.getElementById('pauseBtn');
-            const pauseIcon = document.getElementById('pauseIcon');
-            if (pauseBtn) pauseBtn.classList.add('paused');
-            if (pauseIcon) pauseIcon.className = 'fas fa-play mr-1';
-        }
         showMissionCommandAlert(title, text);
     };
 
@@ -1652,22 +1779,43 @@ function showIncomingTransmission(title, text, factionColor) {
 // =============================================================================
 
 function initAudio() {
+    // Guard: only create the AudioContext once. initAudio is called from 5+
+    // places (intro ENTER, mobile touch, event setup, etc). Without this
+    // guard each call created a NEW AudioContext with new gain nodes — the
+    // old context kept running at default gain (1.0) alongside the new one,
+    // causing a loud burst on the first few sounds until the old context's
+    // oscillators expired.
+    if (audioContext) return;
+
     try {
         audioContext = new (window.AudioContext || window.webkitAudioContext)();
         masterGain = audioContext.createGain();
         masterGain.connect(audioContext.destination);
-        masterGain.gain.value = 0.3;
-        
-        // Create separate gains for music and effects (RESTORED VALUES)
+        // Use setValueAtTime instead of .value = to guarantee the gain is
+        // active on the AudioContext timeline BEFORE any oscillator starts.
+        // Direct .value assignment on a brand-new context can race with the
+        // first scheduled sounds, causing a loud initial burst.
+        masterGain.gain.setValueAtTime(0.35, 0);
+
+        // Create separate gains for music and effects
         musicGain = audioContext.createGain();
         effectsGain = audioContext.createGain();
         musicGain.connect(masterGain);
         effectsGain.connect(masterGain);
-        
-        musicGain.gain.value = 0.4;
-        effectsGain.gain.value = 0.6; // RESTORED: Higher effects volume
+
+        musicGain.gain.setValueAtTime(0.4, 0);
+        // effectsGain at unity — per-sound gain values (0.3 weapon, 0.4
+        // explosion, etc) are the real volume controls. masterGain alone
+        // sets the overall level. The old 0.2 × 0.2 = 0.04 chain made
+        // weapon peaks inaudible at 0.012 once the duplicate-AudioContext
+        // bug was fixed.
+        effectsGain.gain.setValueAtTime(1.0, 0);
         
         console.log('Enhanced audio system initialized (waiting for user interaction)');
+        // Preload MP3 soundtrack alongside synth audio
+        if (typeof soundtrack !== 'undefined' && soundtrack.preload) {
+            soundtrack.preload();
+        }
     } catch (e) {
         console.warn('Audio not supported');
     }
@@ -1689,7 +1837,7 @@ function startBackgroundMusic() {
     if (!audioContext || !musicSystem.enabled || audioContext.state === 'suspended') {
         return;
     }
-    
+
     // Create eerie ambient space music
     createAmbientSpaceMusic();
 }
@@ -1924,15 +2072,22 @@ function createBattleMusic() {
 
 function switchToBattleMusic() {
     if (musicSystem.inBattle || !musicSystem.enabled) return;
-    
+
     // Resume audio context if suspended (critical for boss music)
     if (audioContext && audioContext.state === 'suspended') {
         audioContext.resume().then(() => {
             console.log('AudioContext resumed for boss battle music');
         });
     }
-    
+
     musicSystem.inBattle = true;
+
+    // Also have the MP3 soundtrack switch to its boss-fight track —
+    // both layers play simultaneously, like sound effects layering
+    // over background music.
+    if (typeof soundtrack !== 'undefined' && soundtrack.enabled) {
+        soundtrack.forceTrack('bossFight');
+    }
     
     // Fade out ambient music
     if (musicSystem.backgroundMusic) {
@@ -1959,7 +2114,7 @@ function switchToBattleMusic() {
 
 function switchToAmbientMusic() {
     if (!musicSystem.inBattle || !musicSystem.enabled) return;
-    
+
     musicSystem.inBattle = false;
     
     // Fade out battle music
@@ -1981,12 +2136,16 @@ function toggleMusic() {
     musicSystem.enabled = !musicSystem.enabled;
     const muteIcon = document.getElementById('muteIcon');
     const muteBtn = document.getElementById('muteBtn');
-    
+    const mobileIcon = document.getElementById('mobileMusicIcon');
+    const mobileBtn = document.getElementById('mobileMusicBtn');
+
     console.log('🔊 toggleMusic called, enabled:', musicSystem.enabled);
-    
+
     if (musicSystem.enabled) {
-        if (muteIcon) muteIcon.className = 'fas fa-volume-up text-cyan-400';
+        if (muteIcon) muteIcon.className = 'fas fa-volume-up text-cyan-400 mr-1';
         if (muteBtn) muteBtn.classList.remove('muted');
+        if (mobileIcon) mobileIcon.className = 'fas fa-volume-up';
+        if (mobileBtn) mobileBtn.classList.remove('muted');
         if (musicGain && audioContext) {
             musicGain.gain.setValueAtTime(0.4, audioContext.currentTime);
         }
@@ -1997,10 +2156,14 @@ function toggleMusic() {
         } else {
             startBackgroundMusic();
         }
+        // Note: MP3 soundtrack mute is handled by the delegation handler
+        // in game-music.js (single source of truth — avoids double toggle).
         console.log('🎵 Music unmuted');
     } else {
-        if (muteIcon) muteIcon.className = 'fas fa-volume-mute text-red-400';
+        if (muteIcon) muteIcon.className = 'fas fa-volume-mute text-red-400 mr-1';
         if (muteBtn) muteBtn.classList.add('muted');
+        if (mobileIcon) mobileIcon.className = 'fas fa-volume-mute';
+        if (mobileBtn) mobileBtn.classList.add('muted');
         if (musicGain && audioContext) {
             musicGain.gain.setValueAtTime(0, audioContext.currentTime);
         }
@@ -2014,22 +2177,21 @@ function toggleMusic() {
             musicSystem.battleMusic.stop();
             musicSystem.battleMusic = null;
         }
+        // Note: MP3 soundtrack mute is handled by the delegation handler
+        // in game-music.js (single source of truth — avoids double toggle).
         console.log('🔇 Music muted');
     }
 }
 
 // RESTORED: Working sound parameters from game-controls13.js
 function playSound(type, frequency = 440, duration = 0.2) {
-    console.log('🔊 playSound called with type:', type); // ADD THIS LINE AT THE TOP
-    
     if (!audioContext || audioContext.state === 'suspended') {
-        console.warn('⚠️ Audio context not available or suspended:', audioContext?.state);
         return;
     }
-    
+
     const oscillator = audioContext.createOscillator();
     const gain = audioContext.createGain();
-    
+
     oscillator.connect(gain);
     gain.connect(effectsGain);
     
@@ -2542,48 +2704,59 @@ function createLaserBeam(startPos, endPos, color = '#00ff96', isPlayer = true) {
     try {
         const direction = new THREE.Vector3().subVectors(endPos, startPos);
         const length = direction.length();
-        
-        const laserGeometry = new THREE.CylinderGeometry(0.2, 0.2, length, 8);
+
+        // Enemy lasers get the same thick/bright treatment as wingman lasers
+        // for visibility. Player lasers stay slim so they don't block the view.
+        const coreRadius = isPlayer ? 0.2 : 0.7;
+        const glowRadius = isPlayer ? 0.4 : 2.0;
+        const coreOpacity = isPlayer ? 0.8 : 1.0;
+        const glowOpacity = isPlayer ? 0.3 : 0.45;
+
+        const laserGeometry = new THREE.CylinderGeometry(coreRadius, coreRadius, length, 8);
         const laserMaterial = new THREE.MeshBasicMaterial({
             color: color,
             transparent: true,
-            opacity: 0.8
+            opacity: coreOpacity
         });
-        
+
         const laserBeam = new THREE.Mesh(laserGeometry, laserMaterial);
-        
+
         // Better positioning and orientation (RESTORED)
         laserBeam.position.copy(startPos);
-        
+
         const up = new THREE.Vector3(0, 1, 0);
         const axis = new THREE.Vector3().crossVectors(up, direction.normalize());
         const angle = Math.acos(up.dot(direction.normalize()));
-        
+
         if (axis.length() > 0.001) {
             axis.normalize();
             laserBeam.setRotationFromAxisAngle(axis, angle);
         } else if (direction.y < 0) {
             laserBeam.rotateX(Math.PI);
         }
-        
+
         const offset = direction.clone().multiplyScalar(0.5);
         laserBeam.position.add(offset);
-        
+
         // Add glow effect
-        const glowGeometry = new THREE.CylinderGeometry(0.4, 0.4, length, 8);
+        const glowGeometry = new THREE.CylinderGeometry(glowRadius, glowRadius, length, 8);
         const glowMaterial = new THREE.MeshBasicMaterial({
             color: color,
             transparent: true,
-            opacity: 0.3,
-            blending: THREE.AdditiveBlending
+            opacity: glowOpacity,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false
         });
         const glow = new THREE.Mesh(glowGeometry, glowMaterial);
         laserBeam.add(glow);
         
         scene.add(laserBeam);
         
-        // Track player lasers with ship movement (not enemy lasers)
+        // Track lasers.  Player beams go into activeLasers (they follow
+        // ship movement), enemy beams go into activeEnemyLasers (just for
+        // cleanup visibility tracking).
         let laserData = null;
+        let enemyLaserData = null;
         if (isPlayer && typeof camera !== 'undefined') {
             laserData = {
                 beam: laserBeam,
@@ -2594,20 +2767,45 @@ function createLaserBeam(startPos, endPos, color = '#00ff96', isPlayer = true) {
                 lastCameraPos: camera.position.clone(),
                 opacity: 0.8
             };
+            if (activeLasers.length >= LASER_ARRAY_CAP) {
+                const old = activeLasers.shift();
+                if (old && old.beam) { old.beam.visible = false; }
+            }
             activeLasers.push(laserData);
+        } else {
+            enemyLaserData = {
+                beam: laserBeam,
+                geometry: laserGeometry,
+                material: laserMaterial,
+                glowGeometry: glowGeometry,
+                glowMaterial: glowMaterial,
+                opacity: 0.8,
+                createdAt: Date.now()
+            };
+            if (activeEnemyLasers.length >= LASER_ARRAY_CAP) {
+                const old = activeEnemyLasers.shift();
+                if (old && old.beam) { old.beam.visible = false; }
+            }
+            activeEnemyLasers.push(enemyLaserData);
         }
-        
-        // Fast-fading laser beams
+
+        // 50 ms fade: 0.8 opacity / 0.4 per 25 ms interval = 2 ticks = 50 ms.
         let opacity = 0.8;
         const fadeInterval = setInterval(() => {
-            opacity -= 0.3;  // Fast fade
+            opacity -= 0.4;
             laserMaterial.opacity = opacity;
             glowMaterial.opacity = opacity * 0.4;
-            
-            if (laserData) laserData.opacity = opacity;
-            
+
+            if (laserData)      laserData.opacity = opacity;
+            if (enemyLaserData) enemyLaserData.opacity = opacity;
+
             if (opacity <= 0) {
                 clearInterval(fadeInterval);
+                // Remove from enemy tracking if enemy laser
+                if (enemyLaserData) {
+                    const eidx = activeEnemyLasers.indexOf(enemyLaserData);
+                    if (eidx > -1) activeEnemyLasers.splice(eidx, 1);
+                }
                 // Remove from tracking if player laser
                 if (laserData) {
                     const idx = activeLasers.indexOf(laserData);
@@ -2633,11 +2831,16 @@ function createThirdPersonLasers(playerShip, targetPosition) {
     try {
         // Calculate ship position the SAME WAY as camera-system.js does:
         // ship = camera.position + thirdPersonOffset applied with camera.quaternion
-        // This ensures lasers match the visual ship position exactly
+        // This ensures lasers match the visual ship position exactly.
+        // IMPORTANT: read the LIVE offset from cameraState so mobile (which
+        // pulls the camera back to (0, -6, -22)) still gets laser origins at
+        // the actual ship wing positions instead of the desktop offset.
         const camQuat = camera.quaternion;
-        
-        // Third person offset from camera-system.js: (0, -4, -14)
-        const shipOffset = new THREE.Vector3(0, -4, -14).applyQuaternion(camQuat);
+        const liveOffset = (typeof cameraState !== 'undefined' &&
+                            cameraState.normalThirdPersonOffset)
+            ? cameraState.normalThirdPersonOffset
+            : new THREE.Vector3(0, -4, -14);
+        const shipOffset = liveOffset.clone().applyQuaternion(camQuat);
         const shipPos = camera.position.clone().add(shipOffset);
         
         // Get model size for wing spread calculation
@@ -2732,11 +2935,15 @@ function createThirdPersonBeam(startPos, endPos, color) {
             lastCameraPos: creationCameraPos,
             opacity: 0.9
         };
+        if (activeLasers.length >= LASER_ARRAY_CAP) {
+            const old = activeLasers.shift();
+            if (old && old.beam) { old.beam.visible = false; }
+        }
         activeLasers.push(laserData);
-        
-        // Fast fade for 3rd person - snappy visual
+
+        // 50 ms fade — 0.9 / 0.45 per 25 ms = 2 ticks.
         const fadeInterval = setInterval(() => {
-            laserData.opacity -= 0.3;  // Fast fade
+            laserData.opacity -= 0.45;
             laserMaterial.opacity = laserData.opacity;
             glowMaterial.opacity = laserData.opacity * 0.4;
             
@@ -2759,29 +2966,39 @@ function createThirdPersonBeam(startPos, endPos, color) {
     }
 }
 
-// Update active lasers to track with ship movement - call this in animate()
+// Reusable delta vector — avoids `new THREE.Vector3()` every frame in
+// updateActiveLasers + updateMuzzleFlashes (was creating 60+ objects/sec).
+const _laserDelta = new THREE.Vector3();
+
 function updateActiveLasers() {
     if (typeof camera === 'undefined') return;
-    
     const currentCameraPos = camera.position;
-    
-    // Update laser beams
-    for (const laserData of activeLasers) {
-        const delta = new THREE.Vector3().subVectors(currentCameraPos, laserData.lastCameraPos);
-        laserData.beam.position.add(delta);
-        laserData.lastCameraPos.copy(currentCameraPos);
+    for (let i = 0; i < activeLasers.length; i++) {
+        const ld = activeLasers[i];
+        _laserDelta.subVectors(currentCameraPos, ld.lastCameraPos);
+        ld.beam.position.add(_laserDelta);
+        ld.lastCameraPos.copy(currentCameraPos);
     }
-    
-    // Also update muzzle flashes
     updateMuzzleFlashes();
 }
 
 // Active muzzle flashes - track with ship like lasers
 const activeMuzzleFlashes = [];
+if (typeof window !== 'undefined') window.activeMuzzleFlashes = activeMuzzleFlashes;
+
+// Active ENEMY laser beams — tracked separately from player lasers so the
+// demo/cleanup code can hide them on a timer too.  Player lasers go into
+// activeLasers; enemy beams never did (and sometimes linger if their
+// setInterval fade misfires).
+const activeEnemyLasers = [];
+if (typeof window !== 'undefined') window.activeEnemyLasers = activeEnemyLasers;
 
 // Muzzle flash effect at wing tip (brief bright sphere) - NOW TRACKS WITH SHIP
 function createMuzzleFlash(position) {
-    const flashGeometry = new THREE.SphereGeometry(0.8, 8, 8);
+    // Unified flash size that matches the pulled-back 3rd-person camera
+    // (0, -6, -22) on both desktop and mobile — keeps wing-tip flashes
+    // looking attached to the ship instead of floating as big blobs.
+    const flashGeometry = new THREE.SphereGeometry(0.45, 8, 8);
     const flashMaterial = new THREE.MeshBasicMaterial({
         color: '#00ff96',
         transparent: true,
@@ -2791,19 +3008,26 @@ function createMuzzleFlash(position) {
     flash.position.copy(position);
     scene.add(flash);
     
-    // Track for position updates
     const flashData = {
         mesh: flash,
         geometry: flashGeometry,
         material: flashMaterial,
-        lastCameraPos: camera.position.clone(),
+        lastCameraPos: new THREE.Vector3().copy(camera.position),
         opacity: 1.0
     };
+    if (activeMuzzleFlashes.length >= 20) {
+        const old = activeMuzzleFlashes.shift();
+        if (old && old.mesh) {
+            scene.remove(old.mesh);
+            if (old.geometry) old.geometry.dispose();
+            if (old.material) old.material.dispose();
+        }
+    }
     activeMuzzleFlashes.push(flashData);
-    
-    // Quick fade out
+
+    // 50 ms fade out
     const fadeInterval = setInterval(() => {
-        flashData.opacity -= 0.3;
+        flashData.opacity -= 0.5;
         flashMaterial.opacity = flashData.opacity;
         if (flashData.opacity <= 0) {
             clearInterval(fadeInterval);
@@ -2820,13 +3044,12 @@ function createMuzzleFlash(position) {
 // Update muzzle flashes to track with ship - called from updateActiveLasers
 function updateMuzzleFlashes() {
     if (typeof camera === 'undefined' || activeMuzzleFlashes.length === 0) return;
-    
     const currentCameraPos = camera.position;
-    
-    for (const flashData of activeMuzzleFlashes) {
-        const delta = new THREE.Vector3().subVectors(currentCameraPos, flashData.lastCameraPos);
-        flashData.mesh.position.add(delta);
-        flashData.lastCameraPos.copy(currentCameraPos);
+    for (let i = 0; i < activeMuzzleFlashes.length; i++) {
+        const fd = activeMuzzleFlashes[i];
+        _laserDelta.subVectors(currentCameraPos, fd.lastCameraPos);
+        fd.mesh.position.add(_laserDelta);
+        fd.lastCameraPos.copy(currentCameraPos);
     }
 }
 
@@ -2986,98 +3209,109 @@ function getAttackDirection(attackerPosition) {
     if (typeof camera === 'undefined') {
         return { primary: 'center', screenX: 0.5, screenY: 0.5, isVisible: true };
     }
-    
-    // Project attacker position to screen coordinates
-    const attackerScreen = attackerPosition.clone().project(camera);
-    
-    // Convert to screen space (-1 to 1) to (0 to 1)
-    const screenX = (attackerScreen.x * 0.5 + 0.5);
-    const screenY = -(attackerScreen.y * 0.5 - 0.5);
-    
-    // Determine primary direction
-    let direction = 'center';
-    
-    if (attackerScreen.z > 1) {
-        // Attacker is behind us
-        direction = 'behind';
+
+    // Transform the attacker into camera-local space so we can classify
+    // the incoming-fire direction reliably.  Three.js camera convention:
+    //   +X = right, -X = left
+    //   +Y = up,    -Y = down
+    //   -Z = into the scene (front), +Z = behind the camera
+    // We deliberately avoid .project() here — NDC coordinates are
+    // unreliable for points at or behind the camera plane, which made
+    // below/behind hits mis-classify as radial-from-center.
+    const local = camera.worldToLocal(attackerPosition.clone());
+    const absX = Math.abs(local.x);
+    const absY = Math.abs(local.y);
+    const absZ = Math.abs(local.z);
+
+    // Pick the dominant off-axis direction.  If the lateral/vertical
+    // offset is negligible compared to Z, fall back to 'front' (ahead)
+    // or 'behind' (straight rear) — the radial flash then makes sense.
+    let direction = 'front';
+    if (absX > absY) {
+        if (absX > absZ * 0.3) {
+            direction = local.x > 0 ? 'right' : 'left';
+        } else if (local.z > 0) {
+            direction = 'behind';
+        }
     } else {
-        // Determine side based on screen position
-        if (screenX < 0.3) {
-            direction = 'left';
-        } else if (screenX > 0.7) {
-            direction = 'right';
-        } else if (screenY < 0.3) {
-            direction = 'top';
-        } else if (screenY > 0.7) {
-            direction = 'bottom';
-        } else {
-            direction = 'front';
+        if (absY > absZ * 0.3) {
+            direction = local.y > 0 ? 'top' : 'bottom';
+        } else if (local.z > 0) {
+            direction = 'behind';
         }
     }
-    
+
+    // Screen coords are still useful for the indicator label; safe to
+    // compute even though we don't rely on them for direction.
+    const projected = attackerPosition.clone().project(camera);
+    const screenX = projected.x * 0.5 + 0.5;
+    const screenY = -projected.y * 0.5 + 0.5;
+
     return {
         primary: direction,
         screenX: screenX,
         screenY: screenY,
-        isVisible: attackerScreen.z < 1
+        isVisible: projected.z < 1
     };
 }
 
 function createDirectionalDamageEffect(attackDirection) {
     const direction = attackDirection.primary;
     let overlayStyle = '';
-    let pulseStyle = '';
-    
-    // Create directional gradient based on attack direction
+    let extraStyle = '';
+
+    // Each direction just uses a full-viewport gradient; the gradient
+    // itself fades to transparent so the colored band only shows on the
+    // correct side.  We deliberately do NOT restrict the element to a
+    // partial area — combining `top:0;bottom:0` from the base with
+    // `height:40%` was over-constrained and browsers resolved it by
+    // placing the "bottom" flash at the top of the screen (and "right"
+    // on the left).
     switch (direction) {
         case 'left':
             overlayStyle = 'background: linear-gradient(to right, rgba(255,0,0,0.8) 0%, rgba(255,0,0,0.3) 30%, transparent 60%);';
-            pulseStyle = 'left: 0; width: 40%; height: 100%; top: 0;';
             break;
         case 'right':
             overlayStyle = 'background: linear-gradient(to left, rgba(255,0,0,0.8) 0%, rgba(255,0,0,0.3) 30%, transparent 60%);';
-            pulseStyle = 'right: 0; width: 40%; height: 100%; top: 0;';
             break;
         case 'top':
             overlayStyle = 'background: linear-gradient(to bottom, rgba(255,0,0,0.8) 0%, rgba(255,0,0,0.3) 30%, transparent 60%);';
-            pulseStyle = 'top: 0; width: 100%; height: 40%; left: 0;';
             break;
         case 'bottom':
             overlayStyle = 'background: linear-gradient(to top, rgba(255,0,0,0.8) 0%, rgba(255,0,0,0.3) 30%, transparent 60%);';
-            pulseStyle = 'bottom: 0; width: 100%; height: 40%; left: 0;';
             break;
         case 'behind':
             overlayStyle = 'background: radial-gradient(circle at center, transparent 0%, rgba(255,0,0,0.4) 40%, rgba(255,0,0,0.8) 100%);';
-            pulseStyle = 'inset: 0; border: 8px solid rgba(255,0,0,0.6);';
+            extraStyle = 'box-shadow: inset 0 0 0 8px rgba(255,0,0,0.6);';
             break;
         case 'front':
         default:
             overlayStyle = 'background: radial-gradient(circle at center, rgba(255,0,0,0.6) 0%, rgba(255,0,0,0.3) 50%, transparent 80%);';
-            pulseStyle = 'inset: 20%; border-radius: 50%;';
             break;
     }
-    
-    // Create the directional damage overlay
+
+    // Z-index sits ABOVE the mission command alert (z-50) and incoming-
+    // transmission prompt (1000) so the player always sees incoming-fire
+    // warnings even during a transmission.
     const damageOverlay = document.createElement('div');
-    damageOverlay.className = 'fixed pointer-events-none z-30';
-    damageOverlay.style.cssText = overlayStyle + pulseStyle + 'opacity: 0; transition: opacity 0.1s ease-out;';
+    damageOverlay.className = 'fixed pointer-events-none';
+    damageOverlay.style.cssText =
+        'top:0;left:0;right:0;bottom:0;' +   // full viewport, always
+        overlayStyle + extraStyle +
+        'opacity: 0; transition: opacity 0.15s ease-out; z-index: 2000;';
     document.body.appendChild(damageOverlay);
-    
-    // Animate the effect
-    setTimeout(() => {
-        damageOverlay.style.opacity = '1';
-    }, 10);
-    
-    setTimeout(() => {
-        damageOverlay.style.opacity = '0';
-    }, 200);
-    
-    setTimeout(() => {
-        damageOverlay.remove();
-    }, 500);
-    
-    // Add directional damage indicator text
-    if (direction !== 'center' && direction !== 'front') {
+
+    // Extended visibility so the flash actually registers during fast
+    // combat — appears in 15 ms, holds for 500 ms, fades out over 250 ms.
+    setTimeout(() => { damageOverlay.style.opacity = '1'; }, 15);
+    setTimeout(() => { damageOverlay.style.opacity = '0'; }, 500);
+    setTimeout(() => { damageOverlay.remove(); }, 800);
+
+    // Add directional damage indicator text for every non-center
+    // direction (including FRONT — previously suppressed, but the
+    // player deserves a "FRONT" warning when an enemy ahead of them
+    // lands a hit).
+    if (direction !== 'center') {
         createDamageDirectionIndicator(direction);
     }
 }
@@ -3085,7 +3319,9 @@ function createDirectionalDamageEffect(attackDirection) {
 function createDamageDirectionIndicator(direction) {
     const indicator = document.createElement('div');
     indicator.className = 'fixed pointer-events-none text-red-400 font-bold text-lg';
-    indicator.style.zIndex = '50'; // Higher than other UI elements
+    // Above mission alert (z-50) and transmission prompt (1000) so the
+    // directional arrows always read even during a transmission.
+    indicator.style.zIndex = '2001';
     indicator.style.fontFamily = "'Orbitron', monospace";
     indicator.style.textShadow = '0 0 10px rgba(255,0,0,0.8), 0 0 20px rgba(255,0,0,0.5)';
     indicator.style.opacity = '0';
@@ -3164,46 +3400,12 @@ function setupEnhancedEventListeners() {
 let controlButtonsInitialized = false;
 
 function setupControlButtons() {
-    if (controlButtonsInitialized) {
-        console.log('Control buttons already initialized, skipping...');
-        return;
-    }
-    
-    console.log('Setting up control buttons...');
-    
-    // Setup mute button (remove any existing listeners first)
-    const muteBtn = document.getElementById('muteBtn');
-    if (muteBtn) {
-        // Clone node to remove all existing listeners
-        const newMuteBtn = muteBtn.cloneNode(true);
-        muteBtn.parentNode.replaceChild(newMuteBtn, muteBtn);
-        
-        newMuteBtn.addEventListener('click', (e) => {
-            console.log('Mute button clicked!');
-            e.preventDefault();
-            e.stopPropagation();
-            if (typeof resumeAudioContext === 'function') resumeAudioContext();
-            if (typeof toggleMusic === 'function') toggleMusic();
-        });
-        console.log('Mute button event listener attached');
-    }
-
-    // Setup pause button (remove any existing listeners first)
-    const pauseBtn = document.getElementById('pauseBtn');
-    if (pauseBtn) {
-        // Clone node to remove all existing listeners
-        const newPauseBtn = pauseBtn.cloneNode(true);
-        pauseBtn.parentNode.replaceChild(newPauseBtn, pauseBtn);
-        
-        newPauseBtn.addEventListener('click', (e) => {
-            console.log('Pause button clicked!');
-            e.preventDefault();
-            e.stopPropagation();
-            togglePause();
-        });
-        console.log('Pause button event listener attached');
-    }
-    
+    // Flight Controls buttons (Music / Skip / Pause) now use inline onclick
+    // attributes in index.html that call the globals directly. That's the
+    // most reliable setup — survives DOM changes, doesn't depend on listener
+    // registration timing, and works even if this function never runs.
+    // This function is left as a no-op for backwards compatibility with any
+    // callers that still reference it.
     controlButtonsInitialized = true;
 }
 
@@ -3271,13 +3473,53 @@ function initializeControlButtons() {
         }
         
         const key = e.key.toLowerCase();
-        if (key === 'w') keys.w = true;
+        
+        // W key with double-tap detection for Jump
+        if (key === 'w') {
+            // Ignore repeat keydown events from holding the key
+            if (e.repeat) {
+                // Key is being held - just set normal W thrust
+                keys.w = true;
+            } else {
+                // Fresh key press - check for double-tap
+                const now = Date.now();
+                if (now - doubleTapState.lastWTap < doubleTapState.doubleTapThreshold) {
+                    // Double-tap detected - Jump!
+                    keys.wDoubleTap = true;
+                    keys.w = false; // Don't also thrust
+                } else {
+                    // Single tap - normal thrust
+                    keys.w = true;
+                }
+                doubleTapState.lastWTap = now;
+            }
+        }
+        
         if (key === 'a') keys.a = true;
         if (key === 's') keys.s = true;
         if (key === 'd') keys.d = true;
         if (key === 'q') keys.q = true;
         if (key === 'e') keys.e = true;
         if (e.key === 'Enter') keys.enter = true;
+        
+        // O key for emergency warp with double-tap detection
+        if (key === 'o') {
+            const now = Date.now();
+            if (now - doubleTapState.lastOTap < doubleTapState.doubleTapThreshold) {
+                // Double-tap detected - 2-second warp
+                keys.oDoubleTap = true;
+            } else {
+                // Single tap - full emergency warp
+                keys.o = true;
+            }
+            doubleTapState.lastOTap = now;
+        }
+        
+        // CAPS LOCK detection for fast turning
+        if (e.getModifierState && e.getModifierState('CapsLock')) {
+            keys.capsLock = true;
+        }
+        
         if (e.key === 'Shift') keys.shift = true;
         if (e.key === ' ') {
     keys.space = true;
@@ -3294,7 +3536,7 @@ function initializeControlButtons() {
                 fireWeapon();
             }
         }
-        if (e.key === 'Meta' || e.key === 'Command') {
+        if (e.key === 'Shift') {
             e.preventDefault();
             fireMissile();
         }
@@ -3345,7 +3587,9 @@ if (e.key === 'Tab') {
             if (typeof activePlanets !== 'undefined') {
                 activePlanets.forEach(planet => {
                     const distance = camera.position.distanceTo(planet.position);
-                    if (distance < 60 && distance < nearestDistance) {
+                    const radius = planet.geometry ? planet.geometry.parameters.radius : 5;
+                    const slingshotRange = Math.max(60, radius + 25);
+                    if (distance < slingshotRange && distance < nearestDistance) {
                         nearestPlanet = planet;
                         nearestDistance = distance;
                     }
@@ -3376,13 +3620,26 @@ if (e.key === 'Tab') {
         if (gameState.paused) return;  // CORRECT VARIABLE
         
         const key = e.key.toLowerCase();
-        if (key === 'w') keys.w = false;
+        if (key === 'w') {
+            keys.w = false;
+            keys.wDoubleTap = false;
+        }
         if (key === 'a') keys.a = false;
         if (key === 's') keys.s = false;
         if (key === 'd') keys.d = false;
         if (key === 'q') keys.q = false;
         if (key === 'e') keys.e = false;
         if (e.key === 'Enter') keys.enter = false;
+        if (key === 'o') {
+            keys.o = false;
+            keys.oDoubleTap = false;
+        }
+        
+        // Update CAPS LOCK state
+        if (e.getModifierState) {
+            keys.capsLock = e.getModifierState('CapsLock');
+        }
+        
         if (e.key === 'Shift') keys.shift = false;
         if (e.key === ' ') {
             keys.space = false;
@@ -3729,18 +3986,38 @@ function checkWeaponHits(targetPosition) {
 
                     flashEnemyHit(drone, damage);
                     playSound('weapon');
-                    showAchievement('BORG Hit!', `${drone.userData.name} damaged (${drone.userData.health}/100 HP)`);
+                    const maxHp = drone.userData.maxHealth || 100;
+                    showAchievement('BORG Hit!', `${drone.userData.name} damaged (${drone.userData.health}/${maxHp} HP)`);
 
                     if (drone.userData.health <= 0) {
-                        // BORG cube destroyed - MASSIVE EXPLOSION scaled to cube size!
                         const cubeSize = drone.userData.cubeSize || 30;
-                        drone.getWorldPosition(droneWorldPos); // Get world pos for explosion
+                        drone.getWorldPosition(droneWorldPos);
                         createMassiveBorgExplosion(droneWorldPos, cubeSize);
                         playSound('explosion');
-                        showAchievement('BORG CUBE DESTROYED!', `${drone.userData.name} eliminated!`);
 
-                        // Remove from scene and array
-                        drone.parent.remove(drone); // Remove from parent (system group)
+                        if (drone.userData.isBorgCube) {
+                            // Full cube destroyed — clean up swarm drones
+                            showAchievement('🎉 LEGENDARY VICTORY!', `BORG Cube destroyed! The threat is neutralized!`, true);
+                            if (typeof stopBorgAlarm === 'function') stopBorgAlarm();
+                            if (typeof playBossVictoryMusic === 'function') setTimeout(() => playBossVictoryMusic(), 500);
+                            if (drone.userData.drones) {
+                                drone.userData.drones.forEach(d => {
+                                    if (d && d.parent) d.parent.remove(d);
+                                    const oi = system.userData.orbiters.indexOf(d);
+                                    if (oi > -1) system.userData.orbiters.splice(oi, 1);
+                                });
+                            }
+                            // Reward: refill missiles
+                            if (gameState.missiles) {
+                                gameState.missiles.current = gameState.missiles.capacity || 10;
+                                showAchievement('ULTIMATE REWARD', `Missiles fully restored! (${gameState.missiles.current})`, true);
+                            }
+                        } else {
+                            showAchievement('BORG DRONE DESTROYED!', `${drone.userData.name} eliminated!`);
+                        }
+
+                        // Remove from scene and arrays
+                        if (drone.parent) drone.parent.remove(drone);
                         system.userData.drones.splice(droneIndex, 1);
                         const orbiterIndex = system.userData.orbiters.indexOf(drone);
                         if (orbiterIndex > -1) {
@@ -3772,15 +4049,23 @@ function checkWeaponHits(targetPosition) {
                 }
             }
 
-            // Hitbox detection with safety margin (like asteroids: size + margin)
-            const safetyMargin = 20; // Safety margin for easier hitting
-            const collisionDistance = enemy.userData.hitboxSize / 2 + safetyMargin;
+            // Hitbox detection with safety margin. CRITICAL: cap the hitbox
+            // size at 200u — many enemies have a 40u invisible hitbox sphere
+            // added as a child of a 96x-scaled GLB model, which makes the
+            // bounding box ~3840u in world space. Without the cap, the
+            // proximity check fired weapon sounds for 20-30 enemies at once
+            // on every shot — the actual cause of the "loud-then-fades"
+            // pattern, not browser limiter behavior.
+            const safetyMargin = 20;
+            const sanitizedHitbox = Math.min(enemy.userData.hitboxSize || 96, 200);
+            const collisionDistance = sanitizedHitbox / 2 + safetyMargin;
             const distance = enemy.position.distanceTo(targetPosition);
 
             if (distance < collisionDistance) {
                 const damage = 1; // Standard damage
                 enemy.userData.health -= damage;
-                
+                _activateOnDamage(enemy);
+
                 // ENHANCED: Use improved hit effect with color changes
                 flashEnemyHit(enemy, damage);
                 playSound('weapon');
@@ -3851,6 +4136,13 @@ if (enemy.userData.health <= 0) {
     }, 800); // Wait for celebration music to finish
 } else {
     showAchievement('Enemy Destroyed!', `${enemy.userData.name} eliminated`);
+
+    // 30% chance for missile drop on regular kills
+    if (Math.random() < 0.3 && gameState.missiles.current < gameState.missiles.capacity) {
+        gameState.missiles.current++;
+        showAchievement('Missile Recovered!',
+            `+1 missile from debris (${gameState.missiles.current}/${gameState.missiles.capacity})`);
+    }
 }
     
     // Hull recovery from defeating enemies
@@ -3879,10 +4171,19 @@ if (enemy.userData.health <= 0) {
     
     // Check for galaxy clear
     checkGalaxyClear();
+    
+    // 🏆 VICTORY SYSTEM: Check if guardians defeated → galaxy liberated
+    checkGuardianVictory();
 
-    // ENHANCED: Check if we should spawn area bosses or elite guardians
+    // ENHANCED: Check if we should spawn area bosses, galaxy bosses, or elite guardians
     if (typeof checkAndSpawnAreaBosses === 'function') {
         checkAndSpawnAreaBosses();
+    }
+    if (typeof checkGalaxyBossSpawn === 'function') {
+        checkGalaxyBossSpawn();
+    }
+    if (typeof checkSpeciesBossSpawn === 'function') {
+        checkSpeciesBossSpawn();
     }
     if (typeof checkAndSpawnEliteGuardians === 'function') {
         checkAndSpawnEliteGuardians();
@@ -3916,6 +4217,15 @@ if (enemy.userData.health <= 0) {
     // The fallback checkWeaponHits() is for enemies that are near the aim line,
     // not for asteroids. Asteroids require precise aim with direct raycast hits.
 }
+
+// =============================================================================
+// 🎯 MISSION PROGRESSION - PHASE 2: BOSS BATTLE CHECK
+// =============================================================================
+// Called after every enemy death to detect when all regular enemies + boss defeated
+// Triggers: Guardian spawn, Mission Command alert, boss victory music
+// Does NOT increment galaxiesCleared - that happens in checkGuardianVictory()
+// See: PROGRESSION_SYSTEM.md for full mission flow
+// =============================================================================
 
 function checkGalaxyClear() {
     if (typeof enemies === 'undefined' || typeof gameState === 'undefined') return;
@@ -3989,7 +4299,14 @@ function checkGalaxyClear() {
 }
 
 // =============================================================================
-// GUARDIAN VICTORY SYSTEM - Final galaxy liberation check
+// =============================================================================
+// 🏆 MISSION PROGRESSION - PHASE 3: GUARDIAN VICTORY CHECK
+// =============================================================================
+// Called after every enemy death to detect when all guardians defeated
+// THIS is where galaxiesCleared increments (0 → 1 → 2 → ... → 8)
+// Triggers: "Galaxy Liberation Complete" message, victory music, fireworks
+// At 8/8 galaxies: Campaign victory screen appears
+// See: PROGRESSION_SYSTEM.md for full mission flow
 // =============================================================================
 
 function checkGuardianVictory() {
@@ -4001,8 +4318,11 @@ function checkGuardianVictory() {
     
     // Check each galaxy for remaining guardians
     for (let g = 0; g < 8; g++) {
-        // Only check galaxies where boss was defeated
-        if (typeof bossSystem !== 'undefined' && !bossSystem.galaxyBossDefeated[g]) {
+        // Only check galaxies where boss was defeated.  Guard against
+        // galaxyBossDefeated being undefined (sister checks already do this).
+        if (typeof bossSystem === 'undefined' ||
+            !bossSystem.galaxyBossDefeated ||
+            !bossSystem.galaxyBossDefeated[g]) {
             continue;
         }
         
@@ -4163,302 +4483,11 @@ function stopBorgAlarm() {
     }
 }
 
-function checkBorgSpawn() {
-    if (typeof gameState === 'undefined' || typeof camera === 'undefined') return;
-    if (gameState.borg.spawned) return; // Already spawned
-
-    // Giant BORG Cube encounter when exploring beyond 70,000 units
-    const distanceFromOrigin = camera.position.length();
-
-    if (distanceFromOrigin > 70000) {
-        // 30% chance to spawn the relentless pursuer
-        if (Math.random() < 0.3) {
-            spawnBorgCube();
-        } else {
-            // Mark as checked so we don't spam the roll
-            gameState.borg.spawned = true;
-            setTimeout(() => {
-                gameState.borg.spawned = false; // Allow another check later
-            }, 60000); // Wait 60 seconds before checking again
-        }
-    }
-}
-
-function spawnBorgCube() {
-    if (typeof THREE === 'undefined' || typeof scene === 'undefined' || typeof camera === 'undefined') return;
-
-    // Spawn ahead of player's current position
-    const spawnDistance = 5000;
-    const direction = camera.getWorldDirection(new THREE.Vector3()).normalize();
-    const spawnPosition = camera.position.clone().add(direction.multiplyScalar(spawnDistance));
-
-    // Create the Borg cube - large black/green cube
-    const cubeSize = 50; // Black hole size
-    const cubeGeometry = new THREE.BoxGeometry(cubeSize, cubeSize, cubeSize);
-    const cubeMaterial = new THREE.MeshBasicMaterial({
-        color: 0x003300,
-        wireframe: false,
-        transparent: true,
-        opacity: 0.9
-    });
-    const cube = new THREE.Mesh(cubeGeometry, cubeMaterial);
-    cube.position.copy(spawnPosition);
-
-    // Add green glow effect
-    const glowGeometry = new THREE.BoxGeometry(cubeSize * 1.2, cubeSize * 1.2, cubeSize * 1.2);
-    const glowMaterial = new THREE.MeshBasicMaterial({
-        color: 0x00ff00,
-        transparent: true,
-        opacity: 0.3,
-        wireframe: true
-    });
-    const glow = new THREE.Mesh(glowGeometry, glowMaterial);
-    cube.add(glow);
-
-    // Set cube properties
-    cube.userData = {
-        type: 'enemy',
-        health: 100,
-        maxHealth: 100,
-        name: 'Borg Cube',
-        isBorg: true,
-        isBorgCube: true,
-        speed: 2.0, // Slow but relentless
-        damage: 5,
-        detectionRange: 10000,
-        firingRange: 500,
-        lastAttack: 0,
-        droneCount: 0,
-        maxDrones: 16,  // More drones for intense swarm attacks
-        galaxyId: -1 // Special: not tied to any galaxy
-    };
-
-    scene.add(cube);
-    if (typeof enemies !== 'undefined') {
-        enemies.push(cube);
-    }
-
-    // Mark as spawned
-    gameState.borg.spawned = true;
-    gameState.borg.active = true;
-    gameState.borg.cube = cube;
-    gameState.borg.drones = [];
-
-    // Show dramatic spawn message
-    showAchievement('⚠️ CRITICAL ALERT', 'Unknown massive vessel detected! Extreme threat level!', true);
-    playSound('boss');
-
-    // Spawn initial swarm of drones after 2 seconds
-    setTimeout(() => {
-        for (let i = 0; i < 12; i++) {
-            spawnBorgDrone();
-        }
-    }, 2000);
-
-    console.log('🎯 Borg Cube spawned! Resistance is futile!');
-}
-
-function spawnBorgDrone() {
-    if (!gameState.borg.cube || !gameState.borg.active) return;
-    if (typeof THREE === 'undefined' || typeof scene === 'undefined') return;
-
-    const cube = gameState.borg.cube;
-
-    // Create small pyramid-shaped drone
-    const droneGeometry = new THREE.ConeGeometry(2, 4, 4);
-    const droneMaterial = new THREE.MeshBasicMaterial({
-        color: 0x00ff00,
-        wireframe: false
-    });
-    const drone = new THREE.Mesh(droneGeometry, droneMaterial);
-
-    // Spawn near cube with random offset
-    const offset = new THREE.Vector3(
-        (Math.random() - 0.5) * 100,
-        (Math.random() - 0.5) * 100,
-        (Math.random() - 0.5) * 100
-    );
-    drone.position.copy(cube.position).add(offset);
-
-    // Set drone properties
-    drone.userData = {
-        type: 'enemy',
-        health: 2,
-        maxHealth: 2,
-        name: 'Borg Drone',
-        isBorg: true,
-        isBorgDrone: true,
-        speed: 3.0,  // FIXED: Faster than mothership (2.0) so they can swarm around it
-        damage: 2,
-        detectionRange: 5000,
-        firingRange: 300,
-        lastAttack: 0,
-        circlePhase: Math.random() * Math.PI * 2,
-        galaxyId: -1,
-        parentCube: cube
-    };
-
-    scene.add(drone);
-    if (typeof enemies !== 'undefined') {
-        enemies.push(drone);
-    }
-
-    gameState.borg.drones.push(drone);
-    cube.userData.droneCount++;
-
-    console.log(`🤖 Borg Drone spawned (${cube.userData.droneCount}/∞)`);
-}
-
-function updateBorgBehavior() {
-    if (!gameState.borg.active || !gameState.borg.cube) return;
-    if (typeof camera === 'undefined' || typeof THREE === 'undefined') return;
-
-    const cube = gameState.borg.cube;
-
-    // Check if cube is destroyed
-    if (cube.userData.health <= 0) {
-        handleBorgCubeDestruction();
-        return;
-    }
-
-    const playerPos = camera.position;
-    const distance = cube.position.distanceTo(playerPos);
-
-    // Ominous alarm - starts when pursuing, stops when > 15000 units away
-    if (distance < 15000) {
-        startBorgAlarm();
-    } else {
-        stopBorgAlarm();
-    }
-
-    // Relentless pursuit - always move towards player
-    const direction = new THREE.Vector3().subVectors(playerPos, cube.position).normalize();
-    cube.position.add(direction.multiplyScalar(cube.userData.speed));
-
-    // Rotate cube for effect
-    cube.rotation.x += 0.002;
-    cube.rotation.y += 0.003;
-    cube.rotation.z += 0.001;
-
-    // Send communications when close
-    if (distance < 5000) {
-        sendBorgCommunication(distance);
-    }
-
-    // Spawn MORE drones when player gets close - continuous spawning
-    if (distance < 5000 && cube.userData.droneCount < 16) {  // Increased max drones to 16
-        spawnBorgDrone();
-    }
-
-    // Check for dead drones and replace them
-    gameState.borg.drones = gameState.borg.drones.filter(drone => {
-        if (!drone || drone.userData.health <= 0) {
-            cube.userData.droneCount--;
-            // Spawn replacement after short delay
-            setTimeout(() => spawnBorgDrone(), 2000);
-            return false;
-        }
-        return true;
-    });
-
-    // Update drone behavior - swarm around cube
-    gameState.borg.drones.forEach((drone, index) => {
-        if (!drone || drone.userData.health <= 0) return;
-
-        const droneDistance = drone.position.distanceTo(playerPos);
-
-        // If player is within 3500 units, drones attack
-        if (droneDistance < 3500) {
-            // Swarm attack behavior
-            const swarmAngle = Date.now() * 0.001 + (index * Math.PI * 2 / 8);
-            const spiralRadius = 80 + Math.sin(Date.now() * 0.0003) * 30;
-
-            const targetX = playerPos.x + Math.cos(swarmAngle) * spiralRadius;
-            const targetZ = playerPos.z + Math.sin(swarmAngle) * spiralRadius;
-            const targetY = playerPos.y + Math.sin(swarmAngle * 0.5) * 20;
-
-            const targetPos = new THREE.Vector3(targetX, targetY, targetZ);
-            const dir = new THREE.Vector3().subVectors(targetPos, drone.position).normalize();
-            drone.position.add(dir.multiplyScalar(drone.userData.speed));
-        } else {
-            // Orbit cube when far from player
-            const orbitAngle = Date.now() * 0.001 + (index * Math.PI * 2 / 8);
-            const orbitRadius = 80;
-
-            const targetX = cube.position.x + Math.cos(orbitAngle) * orbitRadius;
-            const targetZ = cube.position.z + Math.sin(orbitAngle) * orbitRadius;
-            const targetY = cube.position.y + Math.sin(orbitAngle * 0.5) * 30;
-
-            const targetPos = new THREE.Vector3(targetX, targetY, targetZ);
-            const dir = new THREE.Vector3().subVectors(targetPos, drone.position).normalize();
-            drone.position.add(dir.multiplyScalar(drone.userData.speed * 0.5));
-        }
-
-        // Drone attack
-        if (droneDistance < drone.userData.firingRange) {
-            const now = Date.now();
-            if (now - (drone.userData.lastAttack || 0) > 1500) {
-                fireEnemyWeapon(drone);
-                drone.userData.lastAttack = now;
-            }
-        }
-    });
-}
-
-function sendBorgCommunication(distance) {
-    const now = Date.now();
-    if (now - gameState.borg.lastCommunication < gameState.borg.communicationCooldown) return;
-
-    gameState.borg.lastCommunication = now;
-
-    const message = BORG_MESSAGES[Math.floor(Math.random() * BORG_MESSAGES.length)];
-    const threat = distance < 2000 ? 'IMMINENT THREAT' : 'INCOMING THREAT';
-
-    showAchievement(`⚠️ BORG TRANSMISSION [${threat}]`, message, true);
-    playSound('boss');
-
-    console.log(`📡 Borg: "${message}"`);
-}
-
-function handleBorgCubeDestruction() {
-    if (!gameState.borg.cube) return;
-
-    const cube = gameState.borg.cube;
-
-    // STOP THE OMINOUS ALARM IMMEDIATELY
-    stopBorgAlarm();
-
-    // Epic victory message
-    showAchievement('🎉 LEGENDARY VICTORY!', 'Borg Cube destroyed! The pursuit is over. You are free!', true);
-    playSound('achievement');
-    setTimeout(() => playBossVictoryMusic(), 500);
-
-    // Destroy all drones
-    gameState.borg.drones.forEach(drone => {
-        if (drone && scene) {
-            scene.remove(drone);
-        }
-        const index = enemies.indexOf(drone);
-        if (index > -1) enemies.splice(index, 1);
-    });
-
-    // Remove cube
-    if (scene) scene.remove(cube);
-    const cubeIndex = enemies.indexOf(cube);
-    if (cubeIndex > -1) enemies.splice(cubeIndex, 1);
-
-    // Reset Borg state
-    gameState.borg.active = false;
-    gameState.borg.cube = null;
-    gameState.borg.drones = [];
-
-    // Massive rewards
-    gameState.missiles.capacity += 5;
-    gameState.missiles.current = gameState.missiles.capacity;
-    showAchievement('ULTIMATE REWARD', `+5 Missile Capacity! Total: ${gameState.missiles.capacity}`, true);
-
-    console.log('🎊 Borg Cube defeated! Player is free!');
-}
+// Borg cubes now live in BORG patrol systems (outer-systems.js).
+// checkBorgSpawn / spawnBorgCube / spawnBorgDrone / updateBorgBehavior removed.
+// Combat behavior handled by updateBorgPatrolCombat in outer-systems.js.
+function checkBorgSpawn() {}
+function updateBorgBehavior() {}
 
 // =============================================================================
 // MISSILE SYSTEM
@@ -4660,6 +4689,7 @@ function handleMissileHit(missile, enemy) {
     scene.remove(missile);
 
     enemy.userData.health -= gameState.missiles.damage;
+    _activateOnDamage(enemy);
     flashEnemyHit(enemy, gameState.missiles.damage);
     createMissileExplosion(missile.position);
     playSound('missile_explosion');
@@ -4680,11 +4710,11 @@ function handleMissileHit(missile, enemy) {
             if (typeof createFireworkCelebration === 'function') createFireworkCelebration();
             playBossVictoryMusic();
 
-            // Boss defeated: +2 missile capacity
-            gameState.missiles.capacity += 2;
-            gameState.missiles.current = Math.min(gameState.missiles.capacity, gameState.missiles.current + 2);
-            showAchievement('Missile Capacity Increased!',
-                `Capacity now ${gameState.missiles.capacity} missiles`);
+            // Boss defeated: refill missiles (max cap 10)
+            gameState.missiles.capacity = Math.min(10, gameState.missiles.capacity);
+            gameState.missiles.current = gameState.missiles.capacity;
+            showAchievement('Missiles Restored!',
+                `Full loadout: ${gameState.missiles.current}/${gameState.missiles.capacity}`);
         } else {
             showAchievement('Enemy Destroyed!', `${enemy.userData.name} eliminated by missile`);
 
@@ -4709,9 +4739,23 @@ function handleMissileHit(missile, enemy) {
         if (typeof populateTargets === 'function') setTimeout(populateTargets, 100);
         checkGalaxyClear();
 
-        // ENHANCED: Check if we should spawn area bosses or elite guardians
+        // 🏆 VICTORY SYSTEM: Check if guardians defeated → galaxy liberated
+        checkGuardianVictory();
+
+        // ENHANCED: Check if we should spawn area bosses, galaxy bosses,
+        // species bosses, or elite guardians.
+        // PREVIOUSLY: missile kills only ran area boss + elite guardian
+        // checks, missing checkGalaxyBossSpawn / checkSpeciesBossSpawn —
+        // so killing the LAST regular enemy of a galaxy/species with a
+        // missile would silently skip the boss spawn forever.
         if (typeof checkAndSpawnAreaBosses === 'function') {
             checkAndSpawnAreaBosses();
+        }
+        if (typeof checkGalaxyBossSpawn === 'function') {
+            checkGalaxyBossSpawn();
+        }
+        if (typeof checkSpeciesBossSpawn === 'function') {
+            checkSpeciesBossSpawn();
         }
         if (typeof checkAndSpawnEliteGuardians === 'function') {
             checkAndSpawnEliteGuardians();
@@ -4878,15 +4922,9 @@ function fireWeapon() {
     let targetPosition;
     
     if (gameState.targetLock.active && gameState.targetLock.target) {
-        // Auto-aim at locked target (excludes asteroids - they can't be auto-targeted)
-        if (gameState.targetLock.target.userData.type !== 'asteroid') {
-            targetPosition = gameState.targetLock.target.position.clone();
-            targetObject = gameState.targetLock.target;
-        } else {
-            // Clear invalid asteroid target lock
-            gameState.targetLock.active = false;
-            gameState.targetLock.target = null;
-        }
+        // Auto-aim at locked target (including asteroids)
+        targetPosition = gameState.targetLock.target.position.clone();
+        targetObject = gameState.targetLock.target;
     }
     
     if (!targetObject) {
@@ -4908,7 +4946,6 @@ function fireWeapon() {
             while (targetObject.parent && targetObject.parent.userData && targetObject.parent.userData.type === 'enemy') {
                 targetObject = targetObject.parent;
             }
-            console.log('Hit detected: enemy', targetObject.userData.name);
         } else {
             // Check for BORG drone hits (from outer interstellar systems)
             let borgDrones = [];
@@ -4927,9 +4964,15 @@ function fireWeapon() {
 
             const borgIntersects = raycaster.intersectObjects(borgDrones);
             if (borgIntersects.length > 0) {
-                targetPosition = borgIntersects[0].point;
                 targetObject = borgIntersects[0].object.parent; // Parent is the drone group
-                console.log('Hit detected: BORG drone', targetObject.userData.name);
+                // Use the cube's world center as target so the proximity
+                // check in checkWeaponHits (300u radius) reliably matches.
+                // The raycast point can be up to 300u away on the hitbox
+                // sphere surface, which would be on the boundary of the test.
+                const _borgCenter = new THREE.Vector3();
+                targetObject.getWorldPosition(_borgCenter);
+                targetPosition = _borgCenter;
+                // Hit log silenced (per-shot spam)
             } else {
                 // Check for asteroid hits (for manual aiming only)
                 const asteroidTargets = planets.filter(p => p.userData.type === 'asteroid');
@@ -4937,8 +4980,6 @@ function fireWeapon() {
                 if (asteroidIntersects.length > 0) {
                     targetPosition = asteroidIntersects[0].point;
                     targetObject = asteroidIntersects[0].object;
-                    console.log('Hit detected: asteroid', targetObject.userData.name);
-                    console.log('Asteroid hit confirmed, calling destroyAsteroidByWeapon');
                 } else {
                     // Check for interstellar asteroid hits
                     if (typeof interstellarAsteroids !== 'undefined' && interstellarAsteroids.length > 0) {
@@ -4947,7 +4988,7 @@ function fireWeapon() {
                             targetPosition = interstellarIntersects[0].point;
                             targetObject = interstellarIntersects[0].object;
                             targetObject.userData.isInterstellarAsteroid = true;  // Flag for special handling
-                            console.log('Hit detected: interstellar asteroid', targetObject.userData.name);
+                            // Hit log silenced
                         }
                     }
 
@@ -4957,7 +4998,7 @@ function fireWeapon() {
                         outerInterstellarSystems.forEach(system => {
                             if (system.userData && system.userData.orbiters) {
                                 system.userData.orbiters.forEach(orbiter => {
-                                    if (orbiter.userData && orbiter.userData.type === 'asteroid') {
+                                    if (orbiter.userData && orbiter.userData.type === 'outer_asteroid') {
                                         outerAsteroids.push(orbiter);
                                     }
                                 });
@@ -4969,7 +5010,7 @@ function fireWeapon() {
                             if (outerAsteroidIntersects.length > 0) {
                                 targetPosition = outerAsteroidIntersects[0].point;
                                 targetObject = outerAsteroidIntersects[0].object;
-                                console.log('Hit detected: outer system asteroid', targetObject.userData.name);
+                                // Hit log silenced
                             }
                         }
                     }
@@ -5002,7 +5043,7 @@ function fireWeapon() {
     
     // Handle weapon hits based on target type
     if (targetObject) {
-        if (targetObject.userData.type === 'asteroid') {
+        if (targetObject.userData.type === 'asteroid' || targetObject.userData.type === 'outer_asteroid') {
             // Asteroid hit - restore hull, pass actual hit position
             destroyAsteroidByWeapon(targetObject, targetPosition);
         } else if (targetObject.userData.type === 'interstellar_asteroid') {
@@ -5085,19 +5126,30 @@ function togglePause() {
     if (!pauseOverlay) {
         pauseOverlay = document.createElement('div');
         pauseOverlay.id = 'pauseOverlay';
-        pauseOverlay.className = 'absolute inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 hidden';
+        pauseOverlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;' +
+            'background:rgba(0,0,0,0.75);display:none;align-items:center;' +
+            'justify-content:center;z-index:9999;';
         pauseOverlay.innerHTML = `
             <div class="text-center ui-panel rounded-lg p-8">
                 <h2 class="text-3xl font-bold text-cyan-400 mb-4">GAME PAUSED</h2>
                 <p class="text-gray-300 mb-6">Press P or click Resume to continue</p>
-                <button onclick="togglePause()" class="space-btn rounded px-6 py-3">
+                <button id="pauseResumeBtn" class="space-btn rounded px-6 py-3">
                     <i class="fas fa-play mr-2"></i>Resume Game
                 </button>
             </div>
         `;
         document.body.appendChild(pauseOverlay);
+        // Attach Resume click via addEventListener (inline onclick can fail)
+        const resumeBtn = document.getElementById('pauseResumeBtn');
+        if (resumeBtn) {
+            resumeBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                togglePause();
+            });
+        }
     }
-    
+
     pauseOverlay.style.display = gameState.paused ? 'flex' : 'none';
     
     // Update pause button
@@ -5120,6 +5172,19 @@ function togglePause() {
 // =============================================================================
 
 function showAchievement(title, description, playAchievementSound = true) {
+    // Defer achievements while an incoming transmission popup is on screen
+    // so they don't visually overlap. Re-fires when the transmission closes.
+    if (document.getElementById('incomingTransmissionPrompt') ||
+        document.getElementById('missionCommandAlert')) {
+        if (!window._deferredAchievements) window._deferredAchievements = [];
+        // Avoid queueing duplicates
+        const dup = window._deferredAchievements.some(a => a.title === title && a.description === description);
+        if (!dup) {
+            window._deferredAchievements.push({ title, description, playAchievementSound });
+        }
+        return;
+    }
+
     // Check if tutorial is active and suppress non-critical achievements
     const tutorialActive = (typeof tutorialSystem !== 'undefined' && tutorialSystem.active && !tutorialSystem.completed);
     
@@ -5336,6 +5401,12 @@ function cycleTargets() {
     // Add nebula gas clouds
     if (typeof nebulaGasClouds !== 'undefined') {
         allTargets.push(...filterBySquaredDist(nebulaGasClouds, 3000*3000));
+    }
+
+    // Add ally wingmen so the nav system detects them
+    if (typeof allyShips !== 'undefined') {
+        const aliveAllies = allyShips.filter(a => a && a.userData && a.userData.health > 0);
+        allTargets.push(...filterBySquaredDist(aliveAllies, 6000*6000));
     }
 
     // OPTIMIZED: Cache distances in a Map to avoid recalculating during sort
@@ -5580,6 +5651,10 @@ function enableAutoThrust() {
 // =============================================================================
 
 function createDeathEffect() {
+    console.error('💀💀💀 createDeathEffect CALLED — hull=' +
+        (gameState ? gameState.hull : '?') +
+        ' | gameStartTime=' + (gameState ? gameState.gameStartTime : '?') +
+        ' | trace:', new Error().stack);
     // ⭐ Enhanced death effect matching planet collision mechanics
     // Stop all player motion
     if (typeof gameState !== 'undefined' && gameState.velocityVector) {
@@ -5738,13 +5813,9 @@ if (typeof window !== 'undefined') {
     window.updateMissiles = updateMissiles;
     window.updateMissileUI = updateMissileUI;
 
-    // Borg systems
+    // Borg systems (spawnBorgCube/spawnBorgDrone moved to outer-systems.js)
     window.checkBorgSpawn = checkBorgSpawn;
     window.updateBorgBehavior = updateBorgBehavior;
-    window.spawnBorgCube = spawnBorgCube;
-    window.spawnBorgDrone = spawnBorgDrone;
-    window.sendBorgCommunication = sendBorgCommunication;
-    window.handleBorgCubeDestruction = handleBorgCubeDestruction;
 
     // Audio systems
     window.playSound = playSound;
@@ -6068,3 +6139,1170 @@ window.toggleNebulas = function() {
 };
 
 console.log('🌫️ Nebula visibility commands loaded: showNebulas(), hideNebulas(), toggleNebulas()');
+
+// =============================================================================
+// ALLY NPC SHIPS — 2 independent wingmen patrolling the Sol system
+// =============================================================================
+
+const allyShips = [];
+
+// ── Wingman role profiles ────────────────────────────────────────────────
+// Each wingman is assigned a role that varies stat multipliers and target
+// preference, so a squad of 4+ wingmen feels like distinct personalities
+// without forking the AI state machine. Role mults are applied at use-time.
+const WINGMAN_ROLES = {
+    aggressor: {
+        label: 'Aggressor',
+        cruiseMult: 1.0, combatMult: 1.30, firingRangeMult: 1.5, detectionMult: 1.0,
+        missilesMax: 8, missileCooldownMs: 6000, patrolDwellMs: 3000,
+        // Closest enemy first
+        pickTarget: (ally, candidates) => candidates[0] || null
+    },
+    sniper: {
+        label: 'Sniper',
+        cruiseMult: 0.85, combatMult: 0.95, firingRangeMult: 3.0, detectionMult: 1.2,
+        missilesMax: 5, missileCooldownMs: 8000, patrolDwellMs: 6000,
+        // Prefer boss, then highest-HP target
+        pickTarget: (ally, candidates) => {
+            if (!candidates.length) return null;
+            const boss = candidates.find(c => c.userData && c.userData.isBoss);
+            if (boss) return boss;
+            return candidates.reduce((best, c) =>
+                (!best || (c.userData.health || 0) > (best.userData.health || 0)) ? c : best, null);
+        }
+    },
+    defender: {
+        label: 'Defender',
+        cruiseMult: 1.0, combatMult: 1.10, firingRangeMult: 1.0, detectionMult: 1.0,
+        missilesMax: 6, missileCooldownMs: 4000, patrolDwellMs: 4000,
+        // Prefer enemy nearest to the player (intercept role)
+        pickTarget: (ally, candidates) => {
+            if (!candidates.length) return null;
+            if (typeof camera === 'undefined') return candidates[0];
+            const playerPos = camera.position;
+            let best = null, bestDist = Infinity;
+            for (const c of candidates) {
+                const d = c.position.distanceTo(playerPos);
+                if (d < bestDist) { bestDist = d; best = c; }
+            }
+            return best;
+        }
+    },
+    scout: {
+        label: 'Scout',
+        cruiseMult: 1.20, combatMult: 1.10, firingRangeMult: 1.0, detectionMult: 1.5,
+        missilesMax: 5, missileCooldownMs: 8000, patrolDwellMs: 2500,
+        // Closest enemy (but with longer detection range)
+        pickTarget: (ally, candidates) => candidates[0] || null
+    }
+};
+const _ROLE_ORDER = ['aggressor', 'defender', 'sniper', 'scout'];
+function _roleFor(ally) {
+    const k = ally && ally.userData && ally.userData.role;
+    return WINGMAN_ROLES[k] || WINGMAN_ROLES.aggressor;
+}
+const _allyDir = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+const _allyTarget = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+
+function createAllyShips() {
+    if (typeof THREE === 'undefined' || typeof scene === 'undefined' || typeof camera === 'undefined') return;
+
+    // Starting waypoints — each wingman begins patrol at a different planet
+    const startOffsets = [
+        new THREE.Vector3(960, 20, 0),    // Alpha starts near Mars orbit
+        new THREE.Vector3(-2000, -10, 0),  // Beta starts near Jupiter orbit
+    ];
+
+    for (let i = 0; i < 2; i++) {
+        const group = new THREE.Group();
+
+        let shipMesh;
+        if (typeof getPlayerModel === 'function') {
+            const model = getPlayerModel();
+            if (model) {
+                shipMesh = model.clone();
+                const box = new THREE.Box3().setFromObject(shipMesh);
+                const center = box.getCenter(new THREE.Vector3());
+                shipMesh.traverse(child => {
+                    if (child.isMesh) {
+                        child.position.sub(center);
+                        child.material = new THREE.MeshBasicMaterial({
+                            color: i === 0 ? 0x00ff88 : 0x88aaff,
+                            transparent: true,
+                            opacity: 0.85,
+                            side: THREE.FrontSide
+                        });
+                        child.visible = true;
+                        child.frustumCulled = false;
+                    }
+                });
+                shipMesh.scale.set(96, 96, 96);
+            }
+        }
+        if (!shipMesh) {
+            const geo = new THREE.ConeGeometry(6, 16, 6);
+            const mat = new THREE.MeshBasicMaterial({ color: i === 0 ? 0x00ff88 : 0x88aaff });
+            shipMesh = new THREE.Mesh(geo, mat);
+        }
+        group.add(shipMesh);
+
+        group.position.copy(startOffsets[i]);
+
+        const _roleKey = i === 0 ? 'aggressor' : 'defender';
+        const _profile = WINGMAN_ROLES[_roleKey];
+        group.userData = {
+            type: 'ally',
+            name: i === 0 ? 'Wingman Alpha' : 'Wingman Beta',
+            // Alpha is Aggressor (close-range brawler), Beta is Defender
+            // (sticks near player and intercepts threats targeting them)
+            role: _roleKey,
+            health: 100,
+            maxHealth: 100,
+            cruiseSpeed: 4.5,
+            combatSpeed: 6.5,
+            firingRange: 350,
+            detectionRange: 3000,
+            // Wingmen now follow the player anywhere via the follow state,
+            // so the system radius doesn't bind them to Sol anymore.
+            systemRadius: 100000,
+            lastAttack: 0,
+            currentTarget: null,
+            isAlly: true,
+            // Missile loadout varies by role (aggressor=8, defender=6, …)
+            missilesRemaining: _profile.missilesMax,
+            missilesMax: _profile.missilesMax,
+            lastMissile: 0,
+            missileCooldownMs: _profile.missileCooldownMs,
+            // Independent AI state
+            aiState: 'patrol',
+            patrolTarget: null,
+            patrolArriveTime: 0,
+            patrolDwellMs: _profile.patrolDwellMs,
+            engageTarget: null,
+            velocity: new THREE.Vector3(),
+        };
+
+        group.frustumCulled = false;
+        scene.add(group);
+        allyShips.push(group);
+    }
+
+    console.log('🛡️ 2 ally wingmen deployed — independent patrol mode');
+}
+
+// ── Nebula wingman recruitment ───────────────────────────────────────────
+// Greek alphabet names + matching colors for additional wingmen unlocked
+// when the player discovers nebulas.
+const NEBULA_WINGMAN_ROSTER = [
+    { name: 'Wingman Gamma',   colorStr: '#ffaa44', colorNum: 0xffaa44 },
+    { name: 'Wingman Delta',   colorStr: '#ff44aa', colorNum: 0xff44aa },
+    { name: 'Wingman Epsilon', colorStr: '#44ffff', colorNum: 0x44ffff },
+    { name: 'Wingman Zeta',    colorStr: '#aaff44', colorNum: 0xaaff44 },
+    { name: 'Wingman Eta',     colorStr: '#ff8866', colorNum: 0xff8866 },
+    { name: 'Wingman Theta',   colorStr: '#cc88ff', colorNum: 0xcc88ff },
+    { name: 'Wingman Iota',    colorStr: '#88ff88', colorNum: 0x88ff88 },
+    { name: 'Wingman Kappa',   colorStr: '#ff6699', colorNum: 0xff6699 }
+];
+let _nextNebulaWingmanIdx = 0;
+
+function recruitNebulaWingman(nebulaName, spawnPos) {
+    if (typeof THREE === 'undefined' || typeof scene === 'undefined' || typeof camera === 'undefined') return null;
+    if (_nextNebulaWingmanIdx >= NEBULA_WINGMAN_ROSTER.length) return null; // roster exhausted
+
+    const recruit = NEBULA_WINGMAN_ROSTER[_nextNebulaWingmanIdx++];
+    const group = new THREE.Group();
+
+    let shipMesh;
+    if (typeof getPlayerModel === 'function') {
+        const model = getPlayerModel();
+        if (model) {
+            shipMesh = model.clone();
+            const box = new THREE.Box3().setFromObject(shipMesh);
+            const center = box.getCenter(new THREE.Vector3());
+            shipMesh.traverse(child => {
+                if (child.isMesh) {
+                    child.position.sub(center);
+                    child.material = new THREE.MeshBasicMaterial({
+                        color: recruit.colorNum,
+                        transparent: true,
+                        opacity: 0.85,
+                        side: THREE.FrontSide
+                    });
+                    child.visible = true;
+                    child.frustumCulled = false;
+                }
+            });
+            shipMesh.scale.set(96, 96, 96);
+        }
+    }
+    if (!shipMesh) {
+        const geo = new THREE.ConeGeometry(6, 16, 6);
+        const mat = new THREE.MeshBasicMaterial({ color: recruit.colorNum });
+        shipMesh = new THREE.Mesh(geo, mat);
+    }
+    group.add(shipMesh);
+
+    // Spawn beside the player, slightly offset to avoid overlap
+    const playerPos = camera.position.clone();
+    const angle = Math.random() * Math.PI * 2;
+    const offset = 250 + Math.random() * 150;
+    if (spawnPos) {
+        group.position.copy(spawnPos);
+    } else {
+        group.position.set(
+            playerPos.x + Math.cos(angle) * offset,
+            playerPos.y + (Math.random() - 0.5) * 60,
+            playerPos.z + Math.sin(angle) * offset
+        );
+    }
+
+    // Cycle through specialist roles (sniper, scout, aggressor, defender, …)
+    // so each recruit feels distinct from Alpha/Beta and from the previous
+    // recruits.  Alpha=aggressor, Beta=defender, then sniper → scout → repeat.
+    const _recruitRoleOrder = ['sniper', 'scout', 'aggressor', 'defender'];
+    const role = _recruitRoleOrder[(_nextNebulaWingmanIdx - 1) % _recruitRoleOrder.length];
+    const profile = WINGMAN_ROLES[role] || WINGMAN_ROLES.aggressor;
+
+    group.userData = {
+        type: 'ally',
+        name: recruit.name,
+        colorStr: recruit.colorStr,
+        recruitedFrom: nebulaName || 'unknown nebula',
+        role: role,
+        health: 100,
+        maxHealth: 100,
+        cruiseSpeed: 4.5,
+        combatSpeed: 6.5,
+        firingRange: 350,
+        detectionRange: 3000,
+        systemRadius: 100000,
+        lastAttack: 0,
+        currentTarget: null,
+        isAlly: true,
+        missilesRemaining: profile.missilesMax,
+        missilesMax: profile.missilesMax,
+        lastMissile: 0,
+        missileCooldownMs: profile.missileCooldownMs,
+        aiState: 'patrol',
+        patrolTarget: null,
+        patrolArriveTime: 0,
+        patrolDwellMs: profile.patrolDwellMs,
+        engageTarget: null,
+        velocity: new THREE.Vector3(),
+    };
+
+    group.frustumCulled = false;
+    scene.add(group);
+    allyShips.push(group);
+
+    // Hail the player — include the recruit's role so the squad composition
+    // is visible at a glance (Aggressor/Defender/Sniper/Scout)
+    if (typeof showAchievement === 'function') {
+        showAchievement(
+            recruit.name + ' (' + profile.label + ') has joined!',
+            'Hailing from ' + (nebulaName || 'the nebula') + '. Welcome to the squadron.',
+            true
+        );
+    }
+    if (typeof playSound === 'function') {
+        playSound('achievement', 880, 0.4);
+    }
+    console.log('🛡️ Recruited ' + recruit.name + ' from ' + (nebulaName || 'nebula'));
+
+    return group;
+}
+
+// Pick a patrol waypoint.  When the player is in a home system, bias
+// the waypoint toward the player so wingmen swarm within ~500 u.
+function _pickPatrolWaypoint(excludePos, attractPos) {
+    // If we have a player position to attract toward, pick a random
+    // offset within 150-400 u of that position for tight cover.
+    if (attractPos) {
+        const angle = Math.random() * Math.PI * 2;
+        const dist = 150 + Math.random() * 250;
+        return new THREE.Vector3(
+            attractPos.x + Math.cos(angle) * dist,
+            attractPos.y + (Math.random() - 0.5) * 40,
+            attractPos.z + Math.sin(angle) * dist
+        );
+    }
+
+    if (typeof planets === 'undefined') return new THREE.Vector3(Math.random() * 4000 - 2000, 0, Math.random() * 4000 - 2000);
+    const candidates = [];
+    for (let i = 0; i < planets.length; i++) {
+        const p = planets[i];
+        if (!p || !p.userData) continue;
+        if (p.userData.type === 'asteroid' || p.userData.type === 'asteroidBelt') continue;
+        if (p.userData.type === 'blackhole') continue;
+        if (!p.userData.isLocal) continue;
+        if (p.userData.isLocalStar) continue;
+        candidates.push(p);
+    }
+    if (!candidates.length) return new THREE.Vector3(1000, 0, 1000);
+    if (excludePos) {
+        candidates.sort((a, b) => b.position.distanceTo(excludePos) - a.position.distanceTo(excludePos));
+        const pick = candidates[Math.floor(Math.random() * Math.min(candidates.length, Math.ceil(candidates.length / 2)))];
+        return pick.position.clone();
+    }
+    return candidates[Math.floor(Math.random() * candidates.length)].position.clone();
+}
+
+// Scan for the nearest alive hostile within detection range of this ally
+function _scanForEnemy(ally) {
+    const ud = ally.userData;
+    const role = _roleFor(ally);
+    const range = ud.detectionRange * (role.detectionMult || 1.0);
+
+    // Collect candidates within range, sorted by distance to the wingman.
+    // Role.pickTarget then picks based on the wingman's specialty (closest,
+    // boss/highest-HP for snipers, closest-to-player for defenders, etc).
+    const candidates = [];
+    if (typeof enemies !== 'undefined') {
+        for (let i = 0; i < enemies.length; i++) {
+            const e = enemies[i];
+            if (!e || !e.userData || e.userData.health <= 0) continue;
+            const d = ally.position.distanceTo(e.position);
+            if (d < range) candidates.push({ ent: e, d });
+        }
+    }
+    if (typeof outerInterstellarSystems !== 'undefined') {
+        const wp = new THREE.Vector3();
+        outerInterstellarSystems.forEach(sys => {
+            if (!sys.userData || !sys.userData.drones) return;
+            sys.userData.drones.forEach(drone => {
+                if (!drone || !drone.userData || drone.userData.health <= 0) return;
+                drone.getWorldPosition(wp);
+                const d = ally.position.distanceTo(wp);
+                if (d < range) candidates.push({ ent: drone, d });
+            });
+        });
+    }
+    if (!candidates.length) return null;
+    candidates.sort((a, b) => a.d - b.d);
+    const ents = candidates.map(c => c.ent);
+    return role.pickTarget(ally, ents) || ents[0];
+}
+
+function _isPlayerInHomeSystem() {
+    if (typeof camera === 'undefined') return false;
+    const cp = camera.position;
+    // Sol system: within ~7000u of origin
+    if (cp.length() < 7000) return true;
+    // Sagittarius A: check for nearby galactic-center black hole
+    if (typeof planets !== 'undefined') {
+        for (let i = 0; i < planets.length; i++) {
+            const p = planets[i];
+            if (p && p.userData && (p.userData.isSagittariusA || p.userData.isGalacticCenter)) {
+                if (cp.distanceTo(p.position) < 7000) return true;
+            }
+        }
+    }
+    return false;
+}
+
+function updateAllyShips() {
+    if (!allyShips.length || typeof camera === 'undefined' || typeof THREE === 'undefined') return;
+    if (!gameState || !gameState.gameStarted || gameState.gameOver) return;
+
+    const now = Date.now();
+    const playerPos = camera.position;
+    const playerWarping = _isPlayerWarping();
+
+    allyShips.forEach(ally => {
+        if (!ally || ally.userData.health <= 0) return;
+
+        const ud = ally.userData;
+        const pos = ally.position;
+        const distFromOrigin = pos.length();
+        const distToPlayer = pos.distanceTo(playerPos);
+
+        // ── FTL anchor: warp ended this frame and a wingman in follow
+        // state is still far from the player — pull them in via a small
+        // hyperjump near the player rather than stranding them. Keeps the
+        // squad together when emergency warp covers tens of thousands of
+        // units of interstellar space.
+        if (!playerWarping && ud._wasWarping && ud.aiState === 'follow' && distToPlayer > 1500) {
+            _ftlAnchorWingman(ally, playerPos);
+            ud._wasWarping = false;
+        }
+        // Track warping flag transition (used by the FTL anchor above)
+        ud._wasWarping = playerWarping;
+
+        // ── Enemy scan (every call, ~30 Hz) ──────────────────────────────
+        const threat = _scanForEnemy(ally);
+
+        // ── State transitions ────────────────────────────────────────────
+        // Player is warping (slingshot/emergency/BH) — drop everything and follow
+        if (playerWarping && ud.aiState !== 'engage') {
+            if (ud.aiState !== 'follow') _wingmanTacticalMessage(ud, 'follow');
+            ud.aiState = 'follow';
+            ud.patrolTarget = null;
+        }
+
+        if (ud.aiState === 'patrol') {
+            if (threat) {
+                ud.aiState = 'engage';
+                ud.engageTarget = threat;
+                _wingmanTacticalMessage(ud, 'engage');
+            } else if (distToPlayer > 4000) {
+                // Separated by >4000u — stranded, orbit local planets here
+                ud.aiState = 'stranded';
+                _wingmanTacticalMessage(ud, 'stranded');
+                ud.patrolTarget = null;
+            } else if (distToPlayer > 400) {
+                // Drifted past swarm radius — re-pick a waypoint near player
+                ud.patrolTarget = null;
+            }
+        } else if (ud.aiState === 'follow') {
+            // Stay in follow until player stops warping AND is reasonably close
+            if (!playerWarping) {
+                if (distToPlayer < 600) {
+                    ud.aiState = 'patrol';
+                    ud.patrolTarget = null;
+                    _wingmanTacticalMessage(ud, 'tether');
+                } else if (distToPlayer > 4000) {
+                    ud.aiState = 'stranded';
+                    ud.patrolTarget = null;
+                    _wingmanTacticalMessage(ud, 'stranded');
+                }
+                // else stay in follow until close enough or fully stranded
+            }
+            if (threat && !playerWarping) {
+                ud.aiState = 'engage';
+                ud.engageTarget = threat;
+            }
+        } else if (ud.aiState === 'stranded') {
+            // Reunion: player came back close enough — resume swarming
+            if (distToPlayer < 1000) {
+                ud.aiState = 'patrol';
+                ud.patrolTarget = null;
+                _wingmanTacticalMessage(ud, 'tether');
+            }
+            if (threat) {
+                ud.aiState = 'engage';
+                ud.engageTarget = threat;
+            }
+        } else if (ud.aiState === 'engage') {
+            const et = ud.engageTarget;
+            if (!et || !et.userData || et.userData.health <= 0 || !et.parent) {
+                ud.engageTarget = null;
+                ud.aiState = threat ? 'engage' : 'patrol';
+                if (threat) ud.engageTarget = threat;
+            } else {
+                const engageDist = pos.distanceTo(et.position);
+                if (engageDist > ud.detectionRange * 1.5) {
+                    ud.aiState = 'patrol';
+                    ud.engageTarget = null;
+                }
+            }
+        } else if (ud.aiState === 'return') {
+            if (distFromOrigin < ud.systemRadius * 0.7) {
+                ud.aiState = 'patrol';
+            }
+            if (threat) {
+                ud.aiState = 'engage';
+                ud.engageTarget = threat;
+            }
+        }
+
+        // ── Execute current state ────────────────────────────────────────
+        if (ud.aiState === 'engage' && ud.engageTarget) {
+            _executeEngage(ally, ud, now);
+        } else if (ud.aiState === 'follow') {
+            _executeFollow(ally, ud, playerPos);
+        } else if (ud.aiState === 'stranded') {
+            _executeStranded(ally, ud, now);
+        } else if (ud.aiState === 'return') {
+            _executeReturn(ally, ud);
+        } else {
+            // Always swarm the player when within 4000u (any galaxy)
+            _executePatrol(ally, ud, now, distToPlayer < 4000 ? playerPos : null);
+        }
+
+        // ── Shield bubble: visible during combat engagement ──────────────
+        _updateAllyShield(ally, ud.aiState === 'engage' && ud.engageTarget);
+
+        // ── Face movement direction ──────────────────────────────────────
+        // lookAt points -Z toward the target; negate so the ship's +Z
+        // (model forward) faces the travel direction.
+        if (_allyDir.lengthSq() > 0.001) {
+            const lookMat = new THREE.Matrix4().lookAt(
+                pos, pos.clone().sub(_allyDir), new THREE.Vector3(0, 1, 0));
+            const targetQuat = new THREE.Quaternion().setFromRotationMatrix(lookMat);
+            ally.quaternion.slerp(targetQuat, 0.06);
+        }
+
+        // ── Passive health regen ─────────────────────────────────────────
+        if (ud.health < ud.maxHealth && now % 3000 < 50) {
+            ud.health = Math.min(ud.maxHealth, ud.health + 1);
+        }
+    });
+}
+
+// ── Patrol: cruise between waypoints (biased toward player in home systems)
+function _executePatrol(ally, ud, now, attractPos) {
+    if (!ud.patrolTarget) {
+        ud.patrolTarget = _pickPatrolWaypoint(ally.position, attractPos);
+        ud.patrolArriveTime = 0;
+    }
+
+    _allyDir.subVectors(ud.patrolTarget, ally.position);
+    const dist = _allyDir.length();
+
+    if (dist < 120) {
+        // Arrived at waypoint — dwell briefly, then pick a new one
+        if (!ud.patrolArriveTime) ud.patrolArriveTime = now;
+        // Drift gently while dwelling
+        ud.velocity.multiplyScalar(0.92);
+        ally.position.add(ud.velocity);
+        if (now - ud.patrolArriveTime > ud.patrolDwellMs) {
+            ud.patrolTarget = _pickPatrolWaypoint(ally.position, attractPos);
+            ud.patrolArriveTime = 0;
+        }
+    } else {
+        // Cruise toward waypoint with proportional speed control
+        _allyDir.normalize();
+        const role = _roleFor(ally);
+        const cruise = ud.cruiseSpeed * (role.cruiseMult || 1.0);
+        const targetSpeed = Math.min(cruise, dist * 0.02);
+        ud.velocity.lerp(_allyDir.clone().multiplyScalar(targetSpeed), 0.04);
+        ally.position.add(ud.velocity);
+    }
+}
+
+// ── Engage: pursue and fire at hostile ───────────────────────────────────
+function _executeEngage(ally, ud, now) {
+    const et = ud.engageTarget;
+    const enemyPos = et.position ? et.position.clone() : new THREE.Vector3();
+    // For drones parented to outer-system groups, use world position
+    if (et.parent && et.parent.type === 'Group' && et.parent.parent) {
+        et.getWorldPosition(enemyPos);
+    }
+
+    const role = _roleFor(ally);
+    const combatSpeed = ud.combatSpeed * (role.combatMult || 1.0);
+    const firingRange = ud.firingRange * (role.firingRangeMult || 1.0);
+
+    _allyDir.subVectors(enemyPos, ally.position);
+    const dist = _allyDir.length();
+    _allyDir.normalize();
+
+    if (dist > firingRange) {
+        // Close the distance — pursuit speed
+        const chaseSpeed = Math.min(combatSpeed, dist * 0.03);
+        ud.velocity.lerp(_allyDir.clone().multiplyScalar(chaseSpeed), 0.08);
+    } else if (dist < 60) {
+        // Too close — pull away slightly
+        ud.velocity.lerp(_allyDir.clone().multiplyScalar(-1.0), 0.06);
+    } else {
+        // Strafing range — orbit the enemy at combat distance
+        const tangent = new THREE.Vector3(-_allyDir.z, 0, _allyDir.x);
+        ud.velocity.lerp(tangent.multiplyScalar(combatSpeed * 0.6), 0.05);
+    }
+    ally.position.add(ud.velocity);
+
+    // Fire bright lasers when in range — wingmen do NO damage, just visuals
+    // Wingmen don't fire for first 5 seconds, laser cooldown 1000ms
+    const _gameAge = (gameState && gameState.gameStartTime) ? (Date.now() - gameState.gameStartTime) : 0;
+    if (_gameAge < 5000) return;
+
+    // ── Missile fire: cooldown + capacity scale with role ─────────
+    if (dist < firingRange * 1.5 &&
+        (ud.missilesRemaining || 0) > 0 &&
+        now - (ud.lastMissile || 0) > (ud.missileCooldownMs || 8000)) {
+        ud.lastMissile = now;
+        ud.missilesRemaining = (ud.missilesRemaining || 0) - 1;
+        _wingmanTacticalMessage(ud, 'missile');
+        if (typeof _fireWingmanMissile === 'function') {
+            _fireWingmanMissile(ally, et, enemyPos, ud);
+        }
+    }
+
+    // ── Laser fire: 1000ms cooldown ────────────────────────────────
+    if (dist < firingRange && now - ud.lastAttack > 1000) {
+        ud.lastAttack = now;
+        const color = ud.name === 'Wingman Alpha' ? '#00ff88' : '#88aaff';
+        _fireWingmanLaser(ally.position.clone(), enemyPos, color);
+
+        // Apply 10% laser damage
+        if (et.userData) {
+            const wasAlive = et.userData.health > 0;
+            et.userData.health -= 0.1;
+            _activateOnDamage(et);
+            if (typeof flashEnemyHit === 'function') flashEnemyHit(et, 0.1);
+
+            // Kill notification + cleanup (remove from scene, run boss checks)
+            if (wasAlive && et.userData.health <= 0) {
+                _wingmanTacticalMessage(ud, 'kill');
+                _handleWingmanKill(et);
+            }
+        }
+    }
+}
+
+// ── Fire a wingman missile (visual + tracking + damage) ──────────────────
+// Remove a wingman-killed enemy from the scene + array, run boss-spawn checks.
+// Call when an enemy's health drops to 0 from wingman fire. Mirrors the
+// essential cleanup that fireWeapon() does for player kills.
+function _handleWingmanKill(enemy) {
+    if (!enemy || !enemy.userData || enemy.userData._removedByWingman) return;
+    enemy.userData._removedByWingman = true;
+
+    // Visual + sound
+    if (typeof createExplosionEffect === 'function') {
+        createExplosionEffect(enemy.position);
+    }
+    if (typeof playSound === 'function') {
+        playSound('explosion');
+    }
+
+    // Cluster + intel updates (some games track per-cluster kills)
+    if (typeof updateClusterStatus === 'function') {
+        try { updateClusterStatus(enemy); } catch (e) {}
+    }
+    if (typeof recordEnemyKillPosition === 'function') {
+        try { recordEnemyKillPosition(enemy); } catch (e) {}
+    }
+
+    // Clear nav lock if this was the player's target
+    if (gameState && gameState.targetLock && gameState.targetLock.target === enemy) {
+        gameState.targetLock.target = null;
+        gameState.targetLock.active = false;
+    }
+    if (gameState && gameState.currentTarget === enemy) {
+        gameState.currentTarget = null;
+    }
+
+    // Remove from scene + enemies array
+    if (typeof scene !== 'undefined' && scene.remove) scene.remove(enemy);
+    if (typeof enemies !== 'undefined') {
+        const idx = enemies.indexOf(enemy);
+        if (idx !== -1) enemies.splice(idx, 1);
+    }
+
+    // Boss spawn checks
+    if (typeof checkAndSpawnAreaBosses === 'function') checkAndSpawnAreaBosses();
+    if (typeof checkGalaxyBossSpawn === 'function') checkGalaxyBossSpawn();
+    if (typeof checkSpeciesBossSpawn === 'function') checkSpeciesBossSpawn();
+    if (typeof checkAndSpawnEliteGuardians === 'function') checkAndSpawnEliteGuardians();
+    if (typeof checkGalaxyClear === 'function') checkGalaxyClear();
+}
+
+function _fireWingmanMissile(ally, target, targetPos, ud) {
+    if (typeof THREE === 'undefined' || typeof scene === 'undefined' || !target) return;
+    try {
+        const startPos = ally.position.clone();
+        const color = ud.name === 'Wingman Alpha' ? 0x00ff88 : 0x88aaff;
+
+        const missileGeo = new THREE.CylinderGeometry(0.4, 0.7, 3, 8);
+        const missileMat = new THREE.MeshBasicMaterial({ color: color });
+        const missile = new THREE.Mesh(missileGeo, missileMat);
+        missile.position.copy(startPos);
+
+        // Glow
+        const glowGeo = new THREE.CylinderGeometry(0.8, 1.2, 4, 8);
+        const glowMat = new THREE.MeshBasicMaterial({
+            color: color, transparent: true, opacity: 0.45,
+            blending: THREE.AdditiveBlending, depthWrite: false
+        });
+        const glow = new THREE.Mesh(glowGeo, glowMat);
+        missile.add(glow);
+
+        const direction = new THREE.Vector3().subVectors(targetPos, startPos).normalize();
+        const up = new THREE.Vector3(0, 1, 0);
+        const axis = new THREE.Vector3().crossVectors(up, direction);
+        const angle = Math.acos(up.dot(direction));
+        if (axis.length() > 0.001) missile.setRotationFromAxisAngle(axis.normalize(), angle);
+
+        scene.add(missile);
+
+        // Wingman missile damage = 25% of player missile (3 → 0.75)
+        const wingmanMissileDmg = (gameState && gameState.missiles ? gameState.missiles.damage : 3) * 0.25;
+        const speed = 5.0;
+        const velocity = direction.clone().multiplyScalar(speed);
+
+        // Animate missile toward target
+        const start = Date.now();
+        const maxLife = 4000;
+        const step = () => {
+            const elapsed = Date.now() - start;
+            if (elapsed > maxLife || !target.userData || target.userData.health <= 0) {
+                scene.remove(missile);
+                missile.geometry.dispose(); missile.material.dispose();
+                glow.geometry.dispose(); glow.material.dispose();
+                return;
+            }
+            // Track target
+            const newDir = new THREE.Vector3().subVectors(target.position, missile.position).normalize();
+            velocity.lerp(newDir.clone().multiplyScalar(speed), 0.1);
+            missile.position.add(velocity);
+
+            // Hit detection
+            if (missile.position.distanceTo(target.position) < 30) {
+                const wasAlive = target.userData.health > 0;
+                target.userData.health -= wingmanMissileDmg;
+                _activateOnDamage(target);
+                if (typeof flashEnemyHit === 'function') flashEnemyHit(target, wingmanMissileDmg);
+                if (typeof createExplosionEffect === 'function') createExplosionEffect(missile.position);
+                if (wasAlive && target.userData.health <= 0) {
+                    _wingmanTacticalMessage(ud, 'kill');
+                    _handleWingmanKill(target);
+                }
+                scene.remove(missile);
+                missile.geometry.dispose(); missile.material.dispose();
+                glow.geometry.dispose(); glow.material.dispose();
+                return;
+            }
+            requestAnimationFrame(step);
+        };
+        requestAnimationFrame(step);
+    } catch (e) {}
+}
+
+// ── Fire a thick bright laser from a wingman (no damage, visual only) ────
+function _fireWingmanLaser(startPos, endPos, color) {
+    if (typeof THREE === 'undefined' || typeof scene === 'undefined') return;
+    try {
+        const direction = new THREE.Vector3().subVectors(endPos, startPos);
+        const length = direction.length();
+
+        // CORE — thick, fully opaque
+        const coreGeo = new THREE.CylinderGeometry(0.8, 0.8, length, 12);
+        const coreMat = new THREE.MeshBasicMaterial({ color: color, transparent: true, opacity: 1.0 });
+        const core = new THREE.Mesh(coreGeo, coreMat);
+        // OUTER GLOW — much wider, additive blend
+        const glowGeo = new THREE.CylinderGeometry(2.2, 2.2, length, 12);
+        const glowMat = new THREE.MeshBasicMaterial({
+            color: color, transparent: true, opacity: 0.45,
+            blending: THREE.AdditiveBlending, depthWrite: false
+        });
+        const glow = new THREE.Mesh(glowGeo, glowMat);
+
+        const up = new THREE.Vector3(0, 1, 0);
+        const dirNorm = direction.clone().normalize();
+        const axis = new THREE.Vector3().crossVectors(up, dirNorm);
+        const angle = Math.acos(up.dot(dirNorm));
+        const orient = (mesh) => {
+            mesh.position.copy(startPos);
+            if (axis.length() > 0.001) {
+                axis.normalize();
+                mesh.setRotationFromAxisAngle(axis, angle);
+            } else if (direction.y < 0) {
+                mesh.rotateX(Math.PI);
+            }
+            mesh.position.add(direction.clone().multiplyScalar(0.5));
+            mesh.renderOrder = 50;
+        };
+        orient(core);
+        orient(glow);
+        scene.add(core);
+        scene.add(glow);
+
+        // Fade out and dispose
+        setTimeout(() => {
+            scene.remove(core); core.geometry.dispose(); core.material.dispose();
+            scene.remove(glow); glow.geometry.dispose(); glow.material.dispose();
+        }, 250);
+    } catch (e) {}
+}
+
+// ── Wingman tactical comms ──────────────────────────────────────────────
+// Tactical chatter from wingmen during combat. Auto-displays a brief HUD
+// transmission. Throttled per-wingman to once every 8s so they don't spam.
+const WINGMAN_TACTICAL_LINES = {
+    engage: [
+        'Engaging hostile, Captain!',
+        'Target acquired — moving in!',
+        'I\'ve got eyes on the bandit!',
+        'Locking on — covering you!',
+        'Bogey in my sights!'
+    ],
+    kill: [
+        'Splash one!',
+        'Target eliminated, Captain.',
+        'Got him!',
+        'Hostile down!',
+        'Scratch one bandit!'
+    ],
+    missile: [
+        'Fox three! Missile away!',
+        'Vampire away — track it!',
+        'Missile inbound on target!'
+    ],
+    stranded: [
+        'Captain, I\'ve lost contact — rendezvous when able.',
+        'I\'ve fallen behind — orbiting local planets, awaiting your return.',
+        'I can\'t keep up — falling out of range. I\'ll regroup at the nearest system.'
+    ],
+    follow: [
+        'On your six, Captain!',
+        'Forming up on your wing!',
+        'Following you in.'
+    ],
+    // Wingman has just joined the formation (first deploy or rejoining
+    // after being stranded). Distinct from 'follow' which fires whenever
+    // the player triggers a warp event.
+    tether: [
+        'Tethered to your wing, Captain — ready to fly.',
+        'Back on station, Captain. Good to see you.',
+        'Squadron formation locked. Where to next?',
+        'Reconnected — I\'ve got your six again.'
+    ]
+};
+
+// ── Global wingman comms queue ───────────────────────────────────────────
+// Multiple wingmen often hit the same state transition in the same frame
+// (e.g. all fall stranded when the player warps far). Without serializing
+// the popups they overlap and clip each other. The queue dispatches one
+// every COMMS_INTERVAL_MS so the player can read each message in turn.
+const WINGMAN_COMMS_INTERVAL_MS = 4500; // matches achievement display time
+const _wingmanCommsQueue = [];
+let _wingmanCommsLastDispatch = 0;
+let _wingmanCommsTimer = null;
+
+function _drainWingmanComms() {
+    _wingmanCommsTimer = null;
+    if (!_wingmanCommsQueue.length) return;
+    const now = Date.now();
+    const wait = (_wingmanCommsLastDispatch + WINGMAN_COMMS_INTERVAL_MS) - now;
+    if (wait > 0) {
+        _wingmanCommsTimer = setTimeout(_drainWingmanComms, wait);
+        return;
+    }
+    const msg = _wingmanCommsQueue.shift();
+    _wingmanCommsLastDispatch = now;
+    if (typeof showAchievement === 'function') {
+        showAchievement(msg.title, msg.text, false);
+    }
+    if (_wingmanCommsQueue.length) {
+        _wingmanCommsTimer = setTimeout(_drainWingmanComms, WINGMAN_COMMS_INTERVAL_MS);
+    }
+}
+
+function _enqueueWingmanComms(title, text) {
+    // De-dup identical messages already pending so a frame full of duplicate
+    // events (every wingman becomes stranded simultaneously) only shows one.
+    if (_wingmanCommsQueue.some(m => m.title === title && m.text === text)) return;
+    _wingmanCommsQueue.push({ title, text });
+    if (!_wingmanCommsTimer) _drainWingmanComms();
+}
+
+function _wingmanTacticalMessage(ud, kind) {
+    if (!ud) return;
+    const now = Date.now();
+    if (!ud._lastTacticalMsg) ud._lastTacticalMsg = {};
+    if (now - (ud._lastTacticalMsg[kind] || 0) < 8000) return; // 8s per-kind throttle
+    ud._lastTacticalMsg[kind] = now;
+    const lines = WINGMAN_TACTICAL_LINES[kind];
+    if (!lines || !lines.length) return;
+    const text = lines[Math.floor(Math.random() * lines.length)];
+    _enqueueWingmanComms(ud.name + ' (Comms)', text);
+}
+
+// ── Large multi-stage explosion when a wingman is destroyed ─────────────
+function createWingmanExplosion(ally) {
+    if (!ally || !ally.position || typeof scene === 'undefined') return;
+    const center = ally.position.clone();
+    const baseColor = ally.userData && ally.userData.name === 'Wingman Alpha' ? 0x00ff88 : 0x88aaff;
+
+    // Hide the ship mesh — it's gone
+    ally.visible = false;
+
+    // Large fireball
+    const fireballGeo = new THREE.SphereGeometry(60, 20, 16);
+    const fireballMat = new THREE.MeshBasicMaterial({
+        color: 0xffcc44, transparent: true, opacity: 1.0,
+        blending: THREE.AdditiveBlending, depthWrite: false
+    });
+    const fireball = new THREE.Mesh(fireballGeo, fireballMat);
+    fireball.position.copy(center);
+    fireball.renderOrder = 60;
+    scene.add(fireball);
+
+    // Faction-colored shockwave ring
+    const shockGeo = new THREE.RingGeometry(20, 40, 32);
+    const shockMat = new THREE.MeshBasicMaterial({
+        color: baseColor, transparent: true, opacity: 0.9,
+        side: THREE.DoubleSide,
+        blending: THREE.AdditiveBlending, depthWrite: false
+    });
+    const shock = new THREE.Mesh(shockGeo, shockMat);
+    shock.position.copy(center);
+    if (typeof camera !== 'undefined') shock.lookAt(camera.position);
+    shock.renderOrder = 60;
+    scene.add(shock);
+
+    // Particle burst
+    const partCount = 80;
+    const partGeo = new THREE.BufferGeometry();
+    const positions = new Float32Array(partCount * 3);
+    const velocities = [];
+    for (let i = 0; i < partCount; i++) {
+        positions[i*3] = 0; positions[i*3+1] = 0; positions[i*3+2] = 0;
+        velocities.push(new THREE.Vector3(
+            (Math.random() - 0.5) * 4,
+            (Math.random() - 0.5) * 4,
+            (Math.random() - 0.5) * 4
+        ));
+    }
+    partGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    const partMat = new THREE.PointsMaterial({
+        color: 0xffaa44, size: 4, transparent: true, opacity: 1,
+        blending: THREE.AdditiveBlending, depthWrite: false
+    });
+    const particles = new THREE.Points(partGeo, partMat);
+    particles.position.copy(center);
+    scene.add(particles);
+
+    // Animate over 1.5s
+    const start = Date.now();
+    const duration = 1500;
+    const step = () => {
+        const elapsed = Date.now() - start;
+        const t = Math.min(1, elapsed / duration);
+
+        // Fireball: expand fast then fade
+        const fbScale = 1 + t * 3;
+        fireball.scale.set(fbScale, fbScale, fbScale);
+        fireball.material.opacity = Math.max(0, 1 - t * 1.2);
+
+        // Shockwave: expand wider, fade
+        const sScale = 1 + t * 8;
+        shock.scale.set(sScale, sScale, sScale);
+        shock.material.opacity = Math.max(0, 0.9 - t);
+
+        // Particles drift outward
+        const arr = partGeo.attributes.position.array;
+        for (let i = 0; i < partCount; i++) {
+            arr[i*3]   += velocities[i].x;
+            arr[i*3+1] += velocities[i].y;
+            arr[i*3+2] += velocities[i].z;
+        }
+        partGeo.attributes.position.needsUpdate = true;
+        partMat.opacity = Math.max(0, 1 - t);
+
+        if (t < 1) {
+            requestAnimationFrame(step);
+        } else {
+            scene.remove(fireball); fireball.geometry.dispose(); fireball.material.dispose();
+            scene.remove(shock); shock.geometry.dispose(); shock.material.dispose();
+            scene.remove(particles); particles.geometry.dispose(); particles.material.dispose();
+        }
+    };
+    requestAnimationFrame(step);
+}
+
+// ── Update or create a shield bubble around an ally ──────────────────────
+function _updateAllyShield(ally, active) {
+    if (typeof THREE === 'undefined') return;
+    if (!active) {
+        if (ally.userData.shieldMesh) {
+            ally.remove(ally.userData.shieldMesh);
+            ally.userData.shieldMesh.geometry.dispose();
+            ally.userData.shieldMesh.material.dispose();
+            ally.userData.shieldMesh = null;
+        }
+        return;
+    }
+    if (!ally.userData.shieldMesh) {
+        const color = ally.userData.name === 'Wingman Alpha' ? 0x00ff88 : 0x88aaff;
+        const geo = new THREE.SphereGeometry(60, 16, 12);
+        const mat = new THREE.MeshBasicMaterial({
+            color: color, transparent: true, opacity: 0.18,
+            blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
+            depthWrite: false, wireframe: false
+        });
+        const mesh = new THREE.Mesh(geo, mat);
+        mesh.renderOrder = 49;
+        ally.add(mesh);
+        ally.userData.shieldMesh = mesh;
+    }
+    // Pulse opacity
+    const pulse = 0.15 + 0.08 * Math.sin(Date.now() * 0.005);
+    ally.userData.shieldMesh.material.opacity = pulse;
+}
+
+// ── Player warp detection ────────────────────────────────────────────────
+// Returns true during dedicated warp events OR whenever the player is
+// cruising at 4 units/frame (4000 km/s) or faster — wingmen need to drop
+// patrol behavior and lock onto the player's vector to keep up.
+// ── FTL anchor: rejoin a wingman to the player after a long warp ────────
+// Teleports the wingman to a flanking position near the player and zeros
+// their velocity. Plays a brief warp-in flash so the rejoin reads as
+// intentional FTL micro-jump, not a glitch. Used when warp ends and a
+// wingman is still hopelessly far behind despite full speed-matching.
+function _ftlAnchorWingman(ally, playerPos) {
+    if (!ally || !playerPos) return;
+    // Flank offset so multiple anchored wingmen don't stack on top of each
+    // other or the player.
+    const idx = (typeof allyShips !== 'undefined') ? allyShips.indexOf(ally) : 0;
+    const ang = idx * (Math.PI * 2 / 5);
+    const r = 220 + (idx % 3) * 60;
+    const offset = new THREE.Vector3(Math.cos(ang) * r, (idx % 2 === 0 ? 30 : -30), Math.sin(ang) * r);
+    ally.position.copy(playerPos).add(offset);
+    if (ally.userData) {
+        ally.userData.velocity = new THREE.Vector3();
+        ally.userData.aiState = 'patrol';
+        ally.userData.patrolTarget = null;
+    }
+    _wingmanTacticalMessage(ally.userData, 'tether');
+
+    // Brief warp-in flash so the rejoin reads as an intentional FTL jump
+    if (typeof THREE !== 'undefined' && typeof scene !== 'undefined') {
+        const c = (ally.userData && ally.userData.colorStr) || '#88ccff';
+        const flashGeo = new THREE.SphereGeometry(80, 12, 8);
+        const flashMat = new THREE.MeshBasicMaterial({
+            color: new THREE.Color(c), transparent: true, opacity: 0.85,
+            blending: THREE.AdditiveBlending, depthWrite: false
+        });
+        const flash = new THREE.Mesh(flashGeo, flashMat);
+        flash.position.copy(ally.position);
+        scene.add(flash);
+        let t = 0;
+        const animate = () => {
+            t += 1;
+            flash.scale.multiplyScalar(0.92);
+            flash.material.opacity *= 0.88;
+            if (t < 24) requestAnimationFrame(animate);
+            else { scene.remove(flash); flash.geometry.dispose(); flash.material.dispose(); }
+        };
+        requestAnimationFrame(animate);
+    }
+}
+
+function _isPlayerWarping() {
+    if (typeof gameState === 'undefined') return false;
+    if (gameState.slingshot && gameState.slingshot.active) return true;
+    if (gameState.emergencyWarp && (gameState.emergencyWarp.active || gameState.emergencyWarp.transitioning)) return true;
+    if (gameState.blackHoleWarp && gameState.blackHoleWarp.active) return true;
+    if (gameState.velocityVector && gameState.velocityVector.length() >= 4.0) return true;
+    return false;
+}
+
+// ── Follow: player is warping or flying fast — match velocity, fly ahead ─
+// Each wingman gets a unique position in the formation: staggered forward
+// distance, alternating Y-height offsets, and left/right lateral spread so
+// the squadron reads as a natural V-shape from the player's POV instead of
+// a jittering cluster all at the same depth.
+function _executeFollow(ally, ud, playerPos) {
+    if (!gameState || !gameState.velocityVector) return;
+    const playerVel = gameState.velocityVector.clone();
+    const playerSpeed = playerVel.length();
+
+    let aheadDir;
+    if (playerSpeed > 0.1) {
+        aheadDir = playerVel.clone().normalize();
+    } else if (typeof camera !== 'undefined') {
+        aheadDir = new THREE.Vector3();
+        camera.getWorldDirection(aheadDir);
+    } else {
+        aheadDir = new THREE.Vector3(0, 0, -1);
+    }
+    const right = new THREE.Vector3().crossVectors(aheadDir, new THREE.Vector3(0, 1, 0)).normalize();
+    const up = new THREE.Vector3().crossVectors(right, aheadDir).normalize();
+
+    const idx = (typeof allyShips !== 'undefined') ? allyShips.indexOf(ally) : 0;
+
+    // Staggered forward distance — first wingman closest (200u), each
+    // subsequent wingman 60u further back, so they fan out in depth
+    const forwardDist = 200 + idx * 60;
+
+    // Alternating lateral offset (left / right, growing wider with rank)
+    const side = ((idx % 2 === 0) ? -1 : 1) * (50 + Math.floor(idx / 2) * 40);
+
+    // Per-wingman Y-height variation so they're not on the same plane.
+    // Small consistent offset per index + a gentle sine wobble keyed to
+    // time and index, so the formation breathes a little but never jitters.
+    const baseY = ((idx % 3) - 1) * 35; // -35, 0, +35 cycling
+    const wobbleY = Math.sin(Date.now() * 0.0006 + idx * 1.8) * 12;
+    const heightOffset = baseY + wobbleY;
+
+    const target = playerPos.clone()
+        .addScaledVector(aheadDir, forwardDist)
+        .addScaledVector(right, side)
+        .addScaledVector(up, heightOffset);
+
+    // Match the player's speed (or +20% so we keep the lead). No upper cap —
+    // wingmen need to track up to 15+ units/frame (15000 km/s) when the
+    // player is sustained-cruising or warping, well past the patrol cap.
+    const targetSpeed = Math.max(playerSpeed * 1.2, ud.cruiseSpeed);
+    _allyDir.subVectors(target, ally.position);
+    const dist = _allyDir.length();
+    if (dist > 1) {
+        _allyDir.normalize();
+        // Stronger lerp factor so they accelerate hard when far behind —
+        // the 0.18 was too slow to close gaps at warp speeds.
+        const lerpRate = playerSpeed > 6 ? 0.32 : 0.18;
+        ud.velocity.lerp(_allyDir.clone().multiplyScalar(targetSpeed), lerpRate);
+    }
+    ally.position.add(ud.velocity);
+}
+
+// ── Stranded: separated from player. Orbit local planets here ────────────
+function _executeStranded(ally, ud, now) {
+    // Pick a local planet to orbit (at the wingman's current location, not Sol)
+    if (!ud.patrolTarget || (ud.patrolArriveTime && now - ud.patrolArriveTime > 6000)) {
+        ud.patrolTarget = _pickStrandedWaypoint(ally.position);
+        ud.patrolArriveTime = 0;
+    }
+
+    _allyDir.subVectors(ud.patrolTarget, ally.position);
+    const dist = _allyDir.length();
+    if (dist < 200) {
+        if (!ud.patrolArriveTime) ud.patrolArriveTime = now;
+        ud.velocity.multiplyScalar(0.92);
+    } else {
+        _allyDir.normalize();
+        const targetSpeed = Math.min(ud.cruiseSpeed, dist * 0.02);
+        ud.velocity.lerp(_allyDir.clone().multiplyScalar(targetSpeed), 0.04);
+    }
+    ally.position.add(ud.velocity);
+}
+
+// Pick the nearest non-asteroid planet to a position (for stranded wingmen)
+function _pickStrandedWaypoint(fromPos) {
+    if (typeof planets === 'undefined') {
+        return new THREE.Vector3(fromPos.x + 500, fromPos.y, fromPos.z + 500);
+    }
+    let best = null, bestDist = 8000;
+    for (let i = 0; i < planets.length; i++) {
+        const p = planets[i];
+        if (!p || !p.userData) continue;
+        if (p.userData.type === 'asteroid' || p.userData.type === 'asteroidBelt') continue;
+        if (p.userData.type === 'blackhole') continue;
+        const d = fromPos.distanceTo(p.position);
+        if (d < bestDist && d > 100) { best = p; bestDist = d; }
+    }
+    if (best) {
+        // Orbit at radius around the planet
+        const angle = Math.random() * Math.PI * 2;
+        const r = 250 + Math.random() * 150;
+        return new THREE.Vector3(
+            best.position.x + Math.cos(angle) * r,
+            best.position.y + (Math.random() - 0.5) * 40,
+            best.position.z + Math.sin(angle) * r
+        );
+    }
+    return new THREE.Vector3(fromPos.x + 400, fromPos.y, fromPos.z + 400);
+}
+
+// ── Return: head back toward system center ───────────────────────────────
+function _executeReturn(ally, ud) {
+    const center = new THREE.Vector3(0, 0, 0);
+    _allyDir.subVectors(center, ally.position).normalize();
+    ud.velocity.lerp(_allyDir.clone().multiplyScalar(ud.cruiseSpeed * 1.5), 0.06);
+    ally.position.add(ud.velocity);
+}
+
+function isAllyShip(obj) {
+    return obj && obj.userData && obj.userData.isAlly;
+}
+
+if (typeof window !== 'undefined') {
+    window.allyShips = allyShips;
+    window.createAllyShips = createAllyShips;
+    window.updateAllyShips = updateAllyShips;
+    window.isAllyShip = isAllyShip;
+    window.createWingmanExplosion = createWingmanExplosion;
+    window.recruitNebulaWingman = recruitNebulaWingman;
+}

@@ -638,25 +638,117 @@ function revealIntroScene() {
 function showStartButton() {
     // Create and show the start button with fade-in
     createStartButton();
-    
+    createDemoButton();
+
     // Fade in start button
     if (introSequence.startButton) {
         introSequence.startButton.style.opacity = '0';
         introSequence.startButton.style.transition = 'opacity 1s ease-in-out';
-        
+
         // Trigger fade-in after a brief delay
         setTimeout(() => {
             introSequence.startButton.style.opacity = '1';
         }, 100);
     }
-    
+
+    // Fade in demo button
+    if (introSequence.demoButton) {
+        introSequence.demoButton.style.opacity = '0';
+        introSequence.demoButton.style.transition = 'opacity 1s ease-in-out';
+        setTimeout(() => {
+            introSequence.demoButton.style.opacity = '1';
+        }, 300);
+    }
+
     // Fade in skip button
     if (introSequence.skipButton) {
         introSequence.skipButton.style.transition = 'opacity 1s ease-in-out';
         introSequence.skipButton.style.opacity = '0.7';
     }
-    
-    console.log('🚀 Start button and skip button faded in');
+
+    console.log('🚀 Start button, demo button, and skip button faded in');
+}
+
+function createDemoButton() {
+    const demoButton = document.createElement('button');
+    demoButton.id = 'introDemoBtn';
+    // Mobile: place at the TOP of the launch screen so it doesn't overlap
+    // the main PRESS TO LAUNCH button in the middle of the view.
+    // Desktop: keep just below the main launch button as before.
+    const isMobile = window.innerWidth <= 768 ||
+                     ('ontouchstart' in window && window.innerWidth <= 1024);
+    const topPos = isMobile ? 'top: 70px' : 'top: calc(50% + 110px)';
+    demoButton.style.cssText = `
+        position: fixed;
+        ${topPos};
+        left: 50%;
+        transform: translateX(-50%);
+        z-index: 10000;
+        background: linear-gradient(135deg, rgba(0,100,255,0.2), rgba(0,50,200,0.3));
+        border: 2px solid rgba(0,150,255,0.7);
+        border-radius: 12px;
+        padding: 12px 32px;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        box-shadow: 0 0 20px rgba(0,150,255,0.4), inset 0 0 15px rgba(0,150,255,0.1);
+        font-family: 'Orbitron', monospace;
+    `;
+    demoButton.innerHTML = `
+        <div style="text-align:center;">
+            <div style="font-size:0.95rem;font-weight:bold;color:#ffe066;
+                        text-shadow:0 0 8px rgba(255,224,102,1),
+                                    0 0 16px rgba(255,200,40,0.9),
+                                    0 0 28px rgba(255,180,0,0.7);
+                        letter-spacing:3px;">
+                DEMO MODE
+            </div>
+            <div style="font-size:0.7rem;margin-top:3px;letter-spacing:1px;
+                        color:#fff1a8;
+                        text-shadow:0 0 6px rgba(255,224,102,0.9),
+                                    0 0 12px rgba(255,200,40,0.6);">
+                AUTOPILOT SHOWCASE
+            </div>
+        </div>
+    `;
+
+    demoButton.addEventListener('mouseenter', () => {
+        demoButton.style.background = 'linear-gradient(135deg, rgba(0,150,255,0.35), rgba(0,100,200,0.4))';
+        demoButton.style.boxShadow = '0 0 30px rgba(0,150,255,0.7), inset 0 0 20px rgba(0,150,255,0.2)';
+        demoButton.style.transform = 'translateX(-50%) scale(1.05)';
+    });
+    demoButton.addEventListener('mouseleave', () => {
+        demoButton.style.background = 'linear-gradient(135deg, rgba(0,100,255,0.2), rgba(0,50,200,0.3))';
+        demoButton.style.boxShadow = '0 0 20px rgba(0,150,255,0.4), inset 0 0 15px rgba(0,150,255,0.1)';
+        demoButton.style.transform = 'translateX(-50%) scale(1)';
+    });
+
+    demoButton.addEventListener('click', () => {
+        window.demoModeRequested = true;
+        console.log('🤖 Demo mode requested — skipping intro');
+
+        // Suppress Intro.mp3 and jump straight to the starting gameplay
+        // track so the demo begins with the Sol System theme, not the
+        // intro cinematic score.
+        if (typeof soundtrack !== 'undefined') {
+            soundtrack.setSuppressIntro(true);
+            soundtrack.forceTrack('galaxy7');  // Sol System / Local Group
+        }
+
+        // Hide both buttons immediately
+        if (introSequence.startButton) {
+            introSequence.startButton.style.opacity = '0';
+            setTimeout(() => { if (introSequence.startButton) { introSequence.startButton.remove(); introSequence.startButton = null; } }, 500);
+        }
+        demoButton.style.opacity = '0';
+        setTimeout(() => demoButton.remove(), 500);
+        // Skip intro and go straight to game
+        if (typeof skipIntroSequence === 'function') {
+            skipIntroSequence();
+        }
+    });
+
+    document.body.appendChild(demoButton);
+    introSequence.demoButton = demoButton;
 }
 
 // =============================================================================
@@ -985,42 +1077,51 @@ function createSkipButton() {
     skipButton.innerHTML = '<i class="fas fa-forward mr-2"></i>Skip Intro';
     skipButton.addEventListener('click', skipIntroSequence);
 
-    // FIXED: iPad uses desktop transparent styling, iPhone uses mobile styling
-    const isIPhone = /iPhone|iPod/.test(navigator.userAgent);
-    const isMobile = (window.innerWidth <= 768 || ('ontouchstart' in window && window.innerWidth <= 1024)) && isIPhone;
+    // Apply the visible mobile styling to ALL mobile devices (iPhone,
+    // Android, iPad).  Previously only iPhone got this treatment and
+    // Android / iPad fell back to the transparent space-btn class which
+    // rendered invisible on the black intro background.
+    const isMobile = window.innerWidth <= 768 ||
+                     ('ontouchstart' in window && window.innerWidth <= 1024);
 
     if (isMobile) {
-        // iPhone-specific mobile styling with solid background
+        // Match the desktop space-btn glassmorphism look — blue/cyan
+        // gradient, not a heavy dark background.  Just enforce positioning
+        // + tappable sizing so the button sits above the intro video.
         skipButton.style.cssText = `
             position: fixed !important;
             bottom: 16px !important;
             left: 50% !important;
             transform: translateX(-50%) !important;
-            width: auto !important;
-            padding: 8px 16px !important;
-            background: rgba(0, 0, 0, 0.3) !important;
-            border: 1px solid rgba(0, 150, 255, 0.5) !important;
-            border-radius: 4px !important;
-            color: #00ff88 !important;
+            padding: 10px 22px !important;
+            background: linear-gradient(135deg, rgba(0,150,255,0.2), rgba(0,100,200,0.3)) !important;
+            border: 1px solid rgba(0,150,255,0.55) !important;
+            border-radius: 8px !important;
+            color: rgba(0,255,255,0.95) !important;
             font-family: 'Orbitron', monospace !important;
-            font-size: 12px !important;
+            font-size: 13px !important;
             font-weight: 600 !important;
+            letter-spacing: 1px !important;
             cursor: pointer !important;
             opacity: 0;
-            transition: all 0.2s ease !important;
+            transition: all 0.25s ease !important;
             z-index: 10000 !important;
-            box-shadow: 0 0 10px rgba(0, 150, 255, 0.3), inset 0 0 10px rgba(0, 150, 255, 0.1) !important;
-            text-shadow: 0 0 8px rgba(0,255,136,0.6), 0 0 16px rgba(0,255,136,0.3) !important;
+            backdrop-filter: blur(5px) !important;
+            -webkit-backdrop-filter: blur(5px) !important;
+            box-shadow: 0 4px 15px rgba(0,150,255,0.2), inset 0 1px 0 rgba(0,150,255,0.3) !important;
+            text-shadow: 0 0 6px rgba(0,255,255,0.6) !important;
+            -webkit-tap-highlight-color: rgba(0,200,255,0.3) !important;
+            touch-action: manipulation !important;
         `;
 
         skipButton.addEventListener('mouseenter', () => {
-            skipButton.style.background = 'rgba(0, 255, 255, 0.2)';
-            skipButton.style.boxShadow = '0 0 15px rgba(0, 255, 255, 0.5), inset 0 0 15px rgba(0, 255, 255, 0.2)';
+            skipButton.style.background = 'linear-gradient(135deg, rgba(0,200,255,0.3), rgba(0,150,255,0.4))';
+            skipButton.style.boxShadow = '0 0 20px rgba(0,255,255,0.4), 0 6px 20px rgba(0,150,255,0.3), inset 0 1px 0 rgba(0,255,255,0.4)';
         });
 
         skipButton.addEventListener('mouseleave', () => {
-            skipButton.style.background = 'rgba(0, 0, 0, 0.3)';
-            skipButton.style.boxShadow = '0 0 10px rgba(0, 255, 255, 0.3), inset 0 0 10px rgba(0, 255, 255, 0.1)';
+            skipButton.style.background = 'linear-gradient(135deg, rgba(0,150,255,0.2), rgba(0,100,200,0.3))';
+            skipButton.style.boxShadow = '0 4px 15px rgba(0,150,255,0.2), inset 0 1px 0 rgba(0,150,255,0.3)';
         });
     } else {
         // Desktop AND iPad: transparent glassmorphism style from space-btn class
@@ -1080,7 +1181,15 @@ function cleanupIntroHandlers() {
 // Make sure to call cleanupIntroHandlers in your beginLaunchSequence function
 function beginLaunchSequence() {
     console.log('🚀 Player initiated launch sequence');
-    
+
+    // Start Launch Screen soundtrack now that the user has explicitly
+    // clicked Start (satisfies browser autoplay gating).  Intro.mp3 is
+    // skipped — the launch track fades straight into the galaxy track.
+    if (typeof soundtrack !== 'undefined') {
+        soundtrack.setSuppressIntro(true);
+        if (soundtrack.startLaunchScreen) soundtrack.startLaunchScreen();
+    }
+
     // Clean up intro handlers immediately
     cleanupIntroHandlers();
     
@@ -1107,7 +1216,21 @@ function beginLaunchSequence() {
             }
         }, 300);
     }
-    
+
+    // Hide demo button on launch
+    if (introSequence.demoButton) {
+        introSequence.demoButton.style.transition = 'opacity 0.3s ease-out';
+        introSequence.demoButton.style.opacity = '0';
+        setTimeout(() => {
+            if (introSequence.demoButton) {
+                introSequence.demoButton.remove();
+                introSequence.demoButton = null;
+            }
+        }, 300);
+    }
+    const demoBtnEl = document.getElementById('introDemoBtn');
+    if (demoBtnEl) { demoBtnEl.style.opacity = '0'; setTimeout(() => demoBtnEl.remove(), 300); }
+
     // Mark intro as active
     introSequence.active = true;
     introSequence.phase = 'countdown';
@@ -1503,7 +1626,8 @@ function updateCountdownDisplay(count) {
             timer.className = 'text-8xl font-bold text-cyan-400 glow-text cyber-title mb-4';
             
             // Play NASA-style countdown beep
-            if (count > 0 && audioContext && audioContext.state !== 'suspended') {
+            if (count > 0 && audioContext) {
+                if (audioContext.state === 'suspended') audioContext.resume();
                 const oscillator = audioContext.createOscillator();
                 const gain = audioContext.createGain();
                 
@@ -1523,7 +1647,8 @@ function updateCountdownDisplay(count) {
             
             // Add a subtle echo for "mission control" feel
             setTimeout(() => {
-                if (!audioContext || audioContext.state === 'suspended') return;
+                if (!audioContext) return;
+                if (audioContext.state === 'suspended') audioContext.resume();
                 
                 const echoOsc = audioContext.createOscillator();
                 const echoGain = audioContext.createGain();
@@ -2004,10 +2129,18 @@ function setupNormalGameContent() {
         createAllCivilianShips();
         console.log('🌍 Civilian ships created throughout universe');
     }
-    
+
+    // Deploy ally wingmen
+    if (typeof createAllyShips === 'function') {
+        createAllyShips();
+    }
+
     // Initialize game state for normal gameplay
     if (typeof gameState !== 'undefined') {
         gameState.gameStarted = true;
+        // gameStartTime is NOT set here — it's set in startNormalGameplay()
+        // after the cinematic transition completes so the 5-second combat
+        // delay starts from when the player actually sees the ship.
         if (!gameState.velocityVector) {
             gameState.velocityVector = new THREE.Vector3(0, 0, 0);
         }
@@ -2019,9 +2152,20 @@ function setupNormalGameContent() {
         console.log('🎬 Starting game animation during black screen for seamless transition');
         animate(); // Start the normal game loop now
     }
-    
+
+    // AUTO-START DEMO AUTOPILOT if requested from launch screen
+    if (window.demoModeRequested) {
+        window.demoModeRequested = false;
+        setTimeout(() => {
+            if (window.demoPilot && typeof window.demoPilot.start === 'function') {
+                console.log('🤖 Auto-starting demo autopilot');
+                window.demoPilot.start();
+            }
+        }, 2000); // Give the scene 2 s to fully initialize
+    }
+
     // Debug beacons removed - nebulas now have proper fade-in visibility
-    
+
     console.log('✨ Normal game content setup complete with ALL features including cosmic phenomena');
 }
 function fadeCountdownTextForGameTransition() {
@@ -2055,13 +2199,20 @@ function fadeCountdownTextForGameTransition() {
 }
 
 function resetCameraToGamePosition() {
-    // ADAPTED FOR SPHERICAL UNIVERSE
-    // Reset camera to normal game position (matching createOptimizedPlanets)
-    const localSystemOffset = { x: 2000, y: 0, z: 1200 }; // From createOptimizedPlanets
-    camera.position.set(localSystemOffset.x + 160, localSystemOffset.y + 40, localSystemOffset.z);
-    camera.lookAt(new THREE.Vector3(0, 0, 0)); // Face towards Sagittarius A*
+    // Position the player near Earth, looking at it, with an orbital
+    // velocity so the game opens with a slow orbit around the home planet.
+    const localSystemOffset = { x: 2000, y: 0, z: 1200 };
+    const earthDistance = 640;    // Earth's orbit radius from sun (4x scaled)
+    const earthOrbitOffset = 80;  // camera offset from Earth for a close fly-by
+    // Earth starts at (sun.x + 640, sun.y, sun.z). Place camera just
+    // behind Earth, 4x offset on Z so the orbital plane is easier to read.
+    const earthX = localSystemOffset.x + earthDistance;
+    const earthY = localSystemOffset.y;
+    const earthZ = localSystemOffset.z;
+    camera.position.set(earthX + earthOrbitOffset, earthY + 120, earthZ + earthOrbitOffset);
+    camera.lookAt(new THREE.Vector3(earthX, earthY, earthZ));
 
-    // Reset camera rotation
+    // Reset camera rotation tracking
     if (typeof cameraRotation !== 'undefined') {
         cameraRotation = {
             x: camera.rotation.x,
@@ -2070,16 +2221,32 @@ function resetCameraToGamePosition() {
         };
     }
 
-    // Set initial orbital velocity
+    // Give the ship a gentle orbital velocity tangent to Earth, so
+    // the demo/player starts with a slow arc around the planet.
     if (typeof gameState !== 'undefined' && gameState.velocityVector) {
-        const sunPosition = new THREE.Vector3(localSystemOffset.x, localSystemOffset.y, localSystemOffset.z);
-        const earthPosition = camera.position.clone();
-        const earthToSun = new THREE.Vector3().subVectors(sunPosition, earthPosition).normalize();
-        const orbitalDirection = new THREE.Vector3(-earthToSun.z, 0, earthToSun.x).normalize();
-        gameState.velocityVector = orbitalDirection.multiplyScalar(gameState.minVelocity || 0.2);
+        const earthPos = new THREE.Vector3(earthX, earthY, earthZ);
+        const toEarth = new THREE.Vector3().subVectors(earthPos, camera.position).normalize();
+        const orbitalDir = new THREE.Vector3(-toEarth.z, 0, toEarth.x).normalize();
+        gameState.velocityVector = orbitalDir.multiplyScalar(gameState.minVelocity || 0.2);
     }
 
-    console.log('📍 Camera reset to normal game position in spherical universe');
+    // Lock the Navigation panel on Earth so the player's first target
+    // is their home world, and auto-engage Auto-Navigate so the game
+    // teaches the targeting system from the start.
+    if (typeof gameState !== 'undefined' && typeof planets !== 'undefined') {
+        for (let i = 0; i < planets.length; i++) {
+            if (planets[i].userData && planets[i].userData.name === 'Earth') {
+                gameState.currentTarget = planets[i];
+                gameState.autoNavigating = true;
+                gameState.autoNavOrienting = true;
+                if (typeof populateTargets === 'function') populateTargets();
+                if (typeof updateUI === 'function') updateUI();
+                break;
+            }
+        }
+    }
+
+    console.log('📍 Camera set to orbit Earth in Sol System with Auto-Nav engaged');
 }
 
 function fadeOutIntroElements(progress) {
@@ -2096,13 +2263,23 @@ function fadeOutIntroElements(progress) {
 
 function skipIntroSequence() {
     console.log('⏭️ Skipping intro sequence with proper game transition');
-    
+
     // IMMEDIATELY remove skip button to prevent double-clicks/glitches
     if (introSequence.skipButton) {
         introSequence.skipButton.remove();
         introSequence.skipButton = null;
         console.log('🗑️ Skip button removed immediately to prevent glitches');
     }
+
+    // IMMEDIATELY remove demo button too
+    if (introSequence.demoButton) {
+        introSequence.demoButton.remove();
+        introSequence.demoButton = null;
+        console.log('🗑️ Demo button removed on skip');
+    }
+    // Also check by ID in case the reference was lost
+    const demoEl = document.getElementById('introDemoBtn');
+    if (demoEl) demoEl.remove();
     
     // DON'T remove start button yet - let it fade with the black overlay
     // It will be removed when the black overlay covers it
@@ -2396,7 +2573,15 @@ function restoreUIBlurEffects() {
 
 function startNormalGameplay() {
     console.log('🎬 Finalizing normal gameplay start...');
-    
+
+    // Reset gameStartTime here — the player can now actually see and
+    // control the ship. Combat starts 5s from THIS moment, not from
+    // when the cinematic transition began.
+    if (typeof gameState !== 'undefined') {
+        gameState.gameStartTime = Date.now();
+        console.log('⏱️ gameStartTime reset to NOW — combat begins in 5s');
+    }
+
     // Show crosshair for normal gameplay
     const crosshair = document.getElementById('crosshair');
     if (crosshair) {
@@ -2496,31 +2681,34 @@ function easeInOutCubic(x) {
 // CYBERPUNK SYNTH-WAVE INTRO SOUNDS
 // =============================================================================
 
+// Shared gain node for countdown tones — created once and reused.
+// Oscillators must still be new each call (Web Audio spec: can't restart
+// a stopped oscillator), but the gain+destination wiring is pre-built.
+let _countdownGain = null;
+function _getCountdownGain() {
+    if (_countdownGain && _countdownGain.context.state !== 'closed') return _countdownGain;
+    _countdownGain = audioContext.createGain();
+    _countdownGain.connect(audioContext.destination);
+    return _countdownGain;
+}
+
 // Custom countdown tone - clean futuristic beep
 function playCountdownTone(number) {
     if (!audioContext || audioContext.state === 'suspended') return;
-    
+
     try {
+        const gain = _getCountdownGain();
         const oscillator = audioContext.createOscillator();
-        const gain = audioContext.createGain();
-        
         oscillator.connect(gain);
-        gain.connect(audioContext.destination);
-        
-        // NASA-style consistent beep - 1000Hz (classic mission control tone)
-        // Same pitch every time for that authentic countdown feel
-        const baseFreq = 1000;  // Fixed 1kHz tone
-        oscillator.frequency.setValueAtTime(baseFreq, audioContext.currentTime);
-        
-        // Clean sine wave for clarity
+
+        oscillator.frequency.setValueAtTime(1000, audioContext.currentTime);
         oscillator.type = 'sine';
-        
-        // Short, clean beep - NASA style
-        const beepDuration = 0.1;  // 100ms beep
-        gain.gain.setValueAtTime(0.15, audioContext.currentTime);  // Immediate start
-        gain.gain.setValueAtTime(0.15, audioContext.currentTime + beepDuration - 0.01);  // Hold
-        gain.gain.linearRampToValueAtTime(0, audioContext.currentTime + beepDuration);  // Quick cutoff
-        
+
+        const beepDuration = 0.1;
+        gain.gain.setValueAtTime(0.15, audioContext.currentTime);
+        gain.gain.setValueAtTime(0.15, audioContext.currentTime + beepDuration - 0.01);
+        gain.gain.linearRampToValueAtTime(0, audioContext.currentTime + beepDuration);
+
         oscillator.start(audioContext.currentTime);
         oscillator.stop(audioContext.currentTime + beepDuration);
     } catch (e) {
@@ -2565,7 +2753,7 @@ function playBlastOffSound() {
     const rumbleOsc = audioContext.createOscillator();
     const rumbleGain = audioContext.createGain();
     rumbleOsc.connect(rumbleGain);
-    rumbleGain.connect(audioContext.destination);
+    rumbleGain.connect(typeof masterGain !== 'undefined' && masterGain ? masterGain : audioContext.destination);
     
     rumbleOsc.type = 'sawtooth';
     rumbleOsc.frequency.setValueAtTime(40, audioContext.currentTime);
@@ -2582,8 +2770,8 @@ function playBlastOffSound() {
     
     blastOsc.connect(blastFilter);
     blastFilter.connect(blastGain);
-    blastGain.connect(audioContext.destination);
-    
+    blastGain.connect(typeof masterGain !== 'undefined' && masterGain ? masterGain : audioContext.destination);
+
     blastOsc.type = 'square';
     blastOsc.frequency.setValueAtTime(1200, audioContext.currentTime);
     blastOsc.frequency.exponentialRampToValueAtTime(2400, audioContext.currentTime + 0.5);
@@ -2615,8 +2803,8 @@ function playLaunchRumbleSound() {
         
         osc.connect(filter);
         filter.connect(gain);
-        gain.connect(audioContext.destination);
-        
+        gain.connect(typeof masterGain !== 'undefined' && masterGain ? masterGain : audioContext.destination);
+
         // Different frequencies for each layer
         const baseFreq = 30 + i * 15; // 30Hz, 45Hz, 60Hz
         osc.frequency.setValueAtTime(baseFreq, audioContext.currentTime);

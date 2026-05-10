@@ -5,9 +5,10 @@
 
 // Camera state
 const cameraState = {
-    mode: 'first-person',  // Start in first-person (cockpit view)
-    playerShipMesh: null,  // Reference to the player ship 3D model
-    thirdPersonDistance: 1,   // Distance multiplier for third-person view
+    mode: 'first-person',
+    playerShipMesh: null,
+    _cachedChildMeshes: null,
+    thirdPersonDistance: 1,
     thirdPersonHeight: 0.5,   // Height multiplier for third-person view
     smoothing: 0.15,          // Camera smoothing factor (lower = smoother)
     initialized: false,       // Flag to prevent double-initialization
@@ -20,12 +21,14 @@ const cameraState = {
     transitionDuration: 800, // milliseconds - doubled for smoother visible transition
     transitionStartOffset: new THREE.Vector3(),
     transitionTargetOffset: new THREE.Vector3(),
-    
+
     // All offsets use ADD: ship.position = camera.position + offset
     // Positive Z = ship in front of camera, Negative Z = ship behind camera
     // For third-person (camera behind ship), offset is NEGATIVE Z
+    // Unified mobile/desktop offset — camera sits further back so the ship
+    // is smaller on screen on any device.
     normalFirstPersonOffset: new THREE.Vector3(0.25, -2, 0.5),   // Cockpit: ship slightly forward/below
-    normalThirdPersonOffset: new THREE.Vector3(0, -4, -14),      // Chase cam: ship ahead (negative = in front)
+    normalThirdPersonOffset: new THREE.Vector3(0, -6, -22),      // Pulled-back chase cam
     
     // Thruster glow system
     thrusterGlows: [],      // Array of thruster glow meshes
@@ -295,27 +298,48 @@ function updateCameraView(camera) {
         return; // Don't update position during intro
     }
     
-    // CRITICAL: Keep ship hidden if in 'zero-offset' mode (0 key) AND transition complete
+    // Hide the ship when it would visually cross through the camera.
+    // This happens in two cases:
+    //   a) Plain zero-offset mode (0 key), transition complete
+    //   b) DURING a transition whose animated offset is very close to
+    //      the camera origin — e.g. the intro cinematic from zero-offset
+    //      (z=+3) to third-person (z=-22) passes through z=0, where the
+    //      ship mesh would overlap the camera and clip through the view.
+    let hideShip = false;
     if (cameraState.mode === 'zero-offset' && !cameraState.isTransitioning) {
-        cameraState.playerShipMesh.visible = false;
+        hideShip = true;
+    } else if (cameraState.isTransitioning) {
+        // Snapshot the animated offset to decide visibility.
+        const elapsed0 = performance.now() - cameraState.transitionStartTime;
+        const progress0 = Math.min(elapsed0 / cameraState.transitionDuration, 1);
+        const ease0 = progress0 < 0.5
+            ? 2 * progress0 * progress0
+            : 1 - Math.pow(-2 * progress0 + 2, 2) / 2;
+        const animZ = cameraState.transitionStartOffset.z +
+                      (cameraState.transitionTargetOffset.z - cameraState.transitionStartOffset.z) * ease0;
+        const animY = cameraState.transitionStartOffset.y +
+                      (cameraState.transitionTargetOffset.y - cameraState.transitionStartOffset.y) * ease0;
+        // If the ship is within 2 units of the camera in the Z axis AND
+        // not far enough below/above it either, hide it for this frame.
+        if (Math.abs(animZ) < 2 && Math.abs(animY) < 2) {
+            hideShip = true;
+        }
+    }
+
+    // Use cached child list instead of traverse() — traverse walks the entire
+    // subtree every frame (3000+ visibility toggles/sec on a 50-child model).
+    // Cache is populated on first access and invalidated only if the mesh changes.
+    if (!cameraState._cachedChildMeshes || cameraState._cachedChildMeshes._parent !== cameraState.playerShipMesh) {
+        cameraState._cachedChildMeshes = [];
+        cameraState._cachedChildMeshes._parent = cameraState.playerShipMesh;
         cameraState.playerShipMesh.traverse((child) => {
-            if (child.isMesh) {
-                child.visible = false;
-            }
-        });
-        // Don't return - let position update run with zero offset
-    } else {
-        // Make ship visible when game is active (not in zero-offset mode)
-        cameraState.playerShipMesh.visible = true;
-        
-        // CRITICAL: Force ALL child meshes visible (fixes warp disappearing issue)
-        // During warp, the ship must remain visible on screen
-        cameraState.playerShipMesh.traverse((child) => {
-            if (child.isMesh) {
-                child.visible = true;
-            }
+            if (child.isMesh) cameraState._cachedChildMeshes.push(child);
         });
     }
+    const vis = !hideShip;
+    cameraState.playerShipMesh.visible = vis;
+    const cached = cameraState._cachedChildMeshes;
+    for (let i = 0; i < cached.length; i++) cached[i].visible = vis;
 
     // Calculate offset (with animation if transitioning)
     let currentOffset;
@@ -380,15 +404,24 @@ function updateCameraView(camera) {
         shipMatrix.lookAt(new THREE.Vector3(), shipForward, camUp);
         const shipQuaternion = new THREE.Quaternion().setFromRotationMatrix(shipMatrix);
         
-        // Add dynamic banking based on rotational velocity
+        // Dynamic banking + counter-roll spring for realistic feel.
+        // The ship leans into yaw turns and has a damped counter-roll
+        // at the end of Q/E rolls, like inertia overshooting then settling.
         if (typeof rotationalVelocity !== 'undefined') {
-            const bankAmount = -rotationalVelocity.yaw * 15;
-            const pitchTilt = -rotationalVelocity.pitch * 5;
-            const bankQuat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), bankAmount);
+            const demo = (typeof window !== 'undefined' && window.demoPilot && window.demoPilot.active);
+            const bankAmount = -rotationalVelocity.yaw * (demo ? 45 : 15);
+            const pitchTilt = -rotationalVelocity.pitch * (demo ? 12 : 5);
+            // Counter-roll spring: track smoothed roll, the overshoot creates
+            // a brief visual counter-lean when the player stops rolling.
+            if (cameraState._smoothedRoll === undefined) cameraState._smoothedRoll = 0;
+            const targetRoll = rotationalVelocity.roll * 8;
+            cameraState._smoothedRoll += (targetRoll - cameraState._smoothedRoll) * 0.08;
+            const counterRoll = (cameraState._smoothedRoll - targetRoll) * 3;
+            const bankQuat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), bankAmount + counterRoll);
             const pitchQuat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), pitchTilt);
             shipQuaternion.multiply(bankQuat).multiply(pitchQuat);
         }
-        
+
         cameraState.playerShipMesh.quaternion.copy(shipQuaternion);
 
         // Make ship visible but slightly transparent for cockpit view
@@ -428,13 +461,14 @@ function updateCameraView(camera) {
         
         // Add dynamic banking based on rotational velocity
         if (typeof rotationalVelocity !== 'undefined') {
-            const bankAmount = -rotationalVelocity.yaw * 15;
-            const pitchTilt = -rotationalVelocity.pitch * 5;
+            const demo = (typeof window !== 'undefined' && window.demoPilot && window.demoPilot.active);
+            const bankAmount = -rotationalVelocity.yaw * (demo ? 45 : 15);
+            const pitchTilt = -rotationalVelocity.pitch * (demo ? 12 : 5);
             const bankQuat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), bankAmount);
             const pitchQuat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), pitchTilt);
             shipQuaternion.multiply(bankQuat).multiply(pitchQuat);
         }
-        
+
         cameraState.playerShipMesh.quaternion.copy(shipQuaternion);
 
         // Ensure the ship model is fully visible and opaque in third-person
@@ -494,6 +528,23 @@ function setThirdPersonHeight(height) {
 /**
  * Set camera to first-person mode (1 key)
  */
+// Compute a transition duration that scales with the actual 3D distance
+// between start and target offsets.  The old 3rd-person offset (0,-4,-14)
+// was ~14.6 u from 1st-person; the new pulled-back (0,-6,-22) is ~22.9 u.
+// A fixed 400 ms duration means the pulled-back version is 57 % faster
+// per unit travelled — feels rushed / janky during warps.  Scaling by
+// distance keeps the visual pacing consistent regardless of offset:
+//   14.6 u → ~410 ms, 22.9 u → ~640 ms, clamped to [400 ms, 800 ms].
+function computeTransitionDuration(startOffset, targetOffset) {
+    if (!startOffset || !targetOffset) return 400;
+    const dx = targetOffset.x - startOffset.x;
+    const dy = targetOffset.y - startOffset.y;
+    const dz = targetOffset.z - startOffset.z;
+    const dist = Math.sqrt(dx*dx + dy*dy + dz*dz);
+    // ~28 ms per unit: matches the old pace (14.6 u / 400 ms ≈ 27.4 ms/u)
+    return Math.max(400, Math.min(800, Math.round(dist * 28)));
+}
+
 function setCameraFirstPerson() {
     if (!cameraState.playerShipMesh) {
         console.warn('⚠️ No player ship model available');
@@ -514,10 +565,11 @@ function setCameraFirstPerson() {
     cameraState.playerShipMesh.visible = true;
     cameraState.isTransitioning = true;
     cameraState.transitionStartTime = performance.now();
-    cameraState.transitionDuration = 400;
     cameraState.transitionStartOffset.copy(currentOffset);  // Start from current position
     cameraState.transitionTargetOffset.copy(cameraState.normalFirstPersonOffset);
-    
+    cameraState.transitionDuration = computeTransitionDuration(
+        cameraState.transitionStartOffset, cameraState.transitionTargetOffset);
+
     if (typeof showNotification === 'function') {
         showNotification('First-Person Camera', 2000);
     }
@@ -531,24 +583,25 @@ function setCameraThirdPerson() {
         console.warn('⚠️ No player ship model available');
         return;
     }
-    
+
     if (cameraState.mode === 'third-person' && !cameraState.isTransitioning) {
         console.log('📷 Already in third-person mode');
         return;
     }
-    
+
     console.log('📷 Setting THIRD-PERSON view');
-    
+
     // Capture current offset for smooth transition from wherever we are
     const currentOffset = getCurrentOffset();
-    
+
     cameraState.mode = 'third-person';
     cameraState.playerShipMesh.visible = true;
     cameraState.isTransitioning = true;
     cameraState.transitionStartTime = performance.now();
-    cameraState.transitionDuration = 400;
     cameraState.transitionStartOffset.copy(currentOffset);  // Start from current position
     cameraState.transitionTargetOffset.copy(cameraState.normalThirdPersonOffset);
+    cameraState.transitionDuration = computeTransitionDuration(
+        cameraState.transitionStartOffset, cameraState.transitionTargetOffset);
     
     if (typeof showNotification === 'function') {
         showNotification('Third-Person Camera', 2000);
@@ -582,29 +635,34 @@ function setCameraNoShip() {
         cameraState.mode = 'first-person';
         cameraState.isTransitioning = true;
         cameraState.transitionStartTime = performance.now();
-        cameraState.transitionDuration = 400;
         cameraState.transitionStartOffset.copy(currentOffset);
         cameraState.transitionTargetOffset.copy(cameraState.normalFirstPersonOffset);
-        
-        // Step 2: After reaching 1st person, continue to zero-offset
+        cameraState.transitionDuration = computeTransitionDuration(
+            cameraState.transitionStartOffset, cameraState.transitionTargetOffset);
+        const step1Duration = cameraState.transitionDuration;
+
+        // Step 2: After reaching 1st person, continue to zero-offset.
+        // Use the dynamic duration so Step 2 kicks in right after Step 1.
         setTimeout(() => {
             const firstPersonOffset = getCurrentOffset();
             cameraState.mode = 'zero-offset';
             cameraState.isTransitioning = true;
             cameraState.transitionStartTime = performance.now();
-            cameraState.transitionDuration = 400;
             cameraState.transitionStartOffset.copy(firstPersonOffset);
             cameraState.transitionTargetOffset.set(0.25, -1, 3);
-        }, 420);  // Slightly after 1st transition completes
+            cameraState.transitionDuration = computeTransitionDuration(
+                cameraState.transitionStartOffset, cameraState.transitionTargetOffset);
+        }, step1Duration + 20);
     } else {
         // Already in 1st person or other mode - go directly to zero-offset
         const currentOffset = getCurrentOffset();
         cameraState.mode = 'zero-offset';
         cameraState.isTransitioning = true;
         cameraState.transitionStartTime = performance.now();
-        cameraState.transitionDuration = 400;
         cameraState.transitionStartOffset.copy(currentOffset);
         cameraState.transitionTargetOffset.set(0.25, -1, 3);
+        cameraState.transitionDuration = computeTransitionDuration(
+            cameraState.transitionStartOffset, cameraState.transitionTargetOffset);
     }
     
     if (typeof showNotification === 'function') {
