@@ -800,7 +800,10 @@ body.ui-mode {
 /* Shield HUD Indicator */
 .shield-indicator {
     position: fixed;
-    top: 50%;
+    /* Pulled up from the vertical center so the left-side UNDER ATTACK
+       indicator (which lands at top:50%) doesn't overlap the panel
+       during combat. */
+    top: 30%;
     transform: translate(-20px, -50%);
     left: 20px;
     background: linear-gradient(135deg, rgba(15, 23, 42, 0.3), rgba(30, 41, 59, 0.3));

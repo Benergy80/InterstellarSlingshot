@@ -3327,10 +3327,18 @@ function createDamageDirectionIndicator(direction) {
     indicator.style.opacity = '0';
     indicator.style.transition = 'all 0.3s ease-out';
     
-    // Position and text based on direction (REMOVED EMOJIS)
+    // Position and text based on direction (REMOVED EMOJIS).
+    // On desktop the top center is occupied by the title panel and the
+    // bottom center by the DEMO AUTOPILOT pill, so we push the top and
+    // bottom indicators clear of those. Mobile keeps the tight 20px
+    // offsets — the title is smaller and the demo HUD is at the top.
+    const _isMobileViewport = (typeof window !== 'undefined') &&
+        (('ontouchstart' in window) || window.innerWidth < 768);
+    const _topOffset    = _isMobileViewport ? 20 : 110;  // below title panel
+    const _bottomOffset = _isMobileViewport ? 20 : 80;   // above demo pill
     let text = '';
     let positionStyle = '';
-    
+
     switch (direction) {
         case 'left':
             text = '< UNDER ATTACK';
@@ -3342,11 +3350,11 @@ function createDamageDirectionIndicator(direction) {
             break;
         case 'top':
             text = '^ UNDER ATTACK';
-            positionStyle = 'top: 20px; left: 50%; transform: translateX(-50%);';
+            positionStyle = 'top: ' + _topOffset + 'px; left: 50%; transform: translateX(-50%);';
             break;
         case 'bottom':
             text = 'v UNDER ATTACK';
-            positionStyle = 'bottom: 20px; left: 50%; transform: translateX(-50%);';
+            positionStyle = 'bottom: ' + _bottomOffset + 'px; left: 50%; transform: translateX(-50%);';
             break;
         case 'behind':
             text = '!!! AMBUSH !!!';
