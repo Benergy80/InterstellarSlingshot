@@ -2210,7 +2210,11 @@ function resetCameraToGamePosition() {
     const earthY = localSystemOffset.y;
     const earthZ = localSystemOffset.z;
     camera.position.set(earthX + earthOrbitOffset, earthY + 120, earthZ + earthOrbitOffset);
-    camera.lookAt(new THREE.Vector3(earthX, earthY, earthZ));
+    // Open the game facing Sagittarius A* (galactic center at the origin)
+    // so the player's first view is the heart of the Milky Way — Earth
+    // and Sol still sit just behind/below the camera and are easy to
+    // pivot back to. Looks more cinematic than staring at our home world.
+    camera.lookAt(new THREE.Vector3(0, 0, 0));
 
     // Reset camera rotation tracking
     if (typeof cameraRotation !== 'undefined') {
