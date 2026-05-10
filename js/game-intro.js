@@ -2144,6 +2144,11 @@ function setupNormalGameContent() {
         if (!gameState.velocityVector) {
             gameState.velocityVector = new THREE.Vector3(0, 0, 0);
         }
+        // The intro set location to "Earth Surface - Launch Pad" for
+        // the countdown. By the time we're here the player is in orbit
+        // around Earth in the local Sol system — update the string so
+        // the SHIP STATUS panel doesn't lie about it.
+        gameState.location = 'Sol System — Sagittarius A Galaxy';
     }
 
 

@@ -100,6 +100,14 @@ function updateUI() {
     const _distText = gameState.distance.toFixed(1) + ' ly';
     if (distanceEl && distanceEl.textContent !== _distText) distanceEl.textContent = _distText;
 
+    // Location text: the DOM element was being looked up but never
+    // written, so the SHIP STATUS panel was stuck on the initial
+    // "Earth Surface - Launch Pad" string from index.html no matter
+    // where the player flew. Mirror gameState.location into the panel.
+    if (locationEl && gameState.location && locationEl.textContent !== gameState.location) {
+        locationEl.textContent = gameState.location;
+    }
+
     // Emergency Warp count update
     if (emergencyWarpEl && gameState.emergencyWarp) {
         const _warpText = '' + gameState.emergencyWarp.available;
