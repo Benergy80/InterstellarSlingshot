@@ -2230,23 +2230,18 @@ function resetCameraToGamePosition() {
         gameState.velocityVector = orbitalDir.multiplyScalar(gameState.minVelocity || 0.2);
     }
 
-    // Lock the Navigation panel on Earth so the player's first target
-    // is their home world, and auto-engage Auto-Navigate so the game
-    // teaches the targeting system from the start.
-    if (typeof gameState !== 'undefined' && typeof planets !== 'undefined') {
-        for (let i = 0; i < planets.length; i++) {
-            if (planets[i].userData && planets[i].userData.name === 'Earth') {
-                gameState.currentTarget = planets[i];
-                gameState.autoNavigating = true;
-                gameState.autoNavOrienting = true;
-                if (typeof populateTargets === 'function') populateTargets();
-                if (typeof updateUI === 'function') updateUI();
-                break;
-            }
-        }
+    // Start the player with an empty Navigation target so they make
+    // their own first targeting choice rather than auto-flying back to
+    // Earth. Just refresh the target list so the panel is ready.
+    if (typeof gameState !== 'undefined') {
+        gameState.currentTarget = null;
+        gameState.autoNavigating = false;
+        gameState.autoNavOrienting = false;
+        if (typeof populateTargets === 'function') populateTargets();
+        if (typeof updateUI === 'function') updateUI();
     }
 
-    console.log('📍 Camera set to orbit Earth in Sol System with Auto-Nav engaged');
+    console.log('📍 Camera set to orbit Earth in Sol System (no auto-nav target)');
 }
 
 function fadeOutIntroElements(progress) {

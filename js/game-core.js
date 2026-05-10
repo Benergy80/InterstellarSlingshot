@@ -2023,11 +2023,10 @@ if (gameState.frameCount % 5 === 0 && typeof checkCosmicFeatureInteractions === 
     }
 
     // Check for hull zero - mission fail
-    if (gameState.hull <= 0 && !gameState.gameOver) {
-        if (typeof createPlayerExplosion === 'function') {
-            createPlayerExplosion();
-        }
-        if (typeof showGameOverScreen === 'function') {
+    if (gameState.hull <= 0 && !gameState.gameOver && !gameState.playerDying) {
+        if (typeof triggerPlayerDeath === 'function') {
+            triggerPlayerDeath('HULL BREACH', 'Ship destroyed - structural integrity failure');
+        } else if (typeof showGameOverScreen === 'function') {
             showGameOverScreen('HULL BREACH', 'Ship destroyed - structural integrity failure');
         }
     }

@@ -701,6 +701,56 @@ function createPlayerExplosion() {
     }, 5000);
 }
 
+// Trigger the full player-death sequence: explosion visual, layered
+// explosion audio, ship-mesh hide, then MISSION FAILED screen after a
+// short delay so the player actually sees and hears the destruction.
+// Idempotent — guarded by gameState.playerDying so repeated collision
+// events don't stack multiple explosions or game-over screens.
+function triggerPlayerDeath(title, message, delayMs) {
+    if (typeof gameState === 'undefined') return;
+    if (gameState.playerDying || gameState.gameOverScreenShown) return;
+    gameState.playerDying = true;
+    gameState.hull = 0;
+    if (gameState.velocityVector && gameState.velocityVector.set) {
+        gameState.velocityVector.set(0, 0, 0);
+    }
+
+    // Hide the third-person player ship mesh so its silhouette doesn't
+    // sit untouched inside the explosion fireball.
+    try {
+        const ship = window.cameraState && window.cameraState.playerShipMesh;
+        if (ship) ship.visible = false;
+    } catch (e) {}
+
+    // Visual: existing dramatic explosion (sphere + 100 particles + 3 shockwaves)
+    if (typeof createPlayerExplosion === 'function') {
+        createPlayerExplosion();
+    }
+
+    // Audio: layered booms so the death feels weighty rather than a single beep
+    if (typeof playSound === 'function') {
+        try { playSound('explosion'); } catch (e) {}
+        try { playSound('damage'); } catch (e) {}
+        setTimeout(() => { try { playSound('explosion'); } catch (e) {} }, 180);
+        setTimeout(() => { try { playSound('explosion'); } catch (e) {} }, 420);
+        setTimeout(() => { try { playSound('damage'); } catch (e) {} }, 650);
+    }
+
+    // Give the explosion time to play out before the mission-failed
+    // overlay covers the screen. 2.5s lets the shockwaves expand and
+    // the layered booms finish.
+    const wait = (typeof delayMs === 'number') ? delayMs : 2500;
+    setTimeout(() => {
+        if (typeof showGameOverScreen === 'function') {
+            showGameOverScreen(title || 'MISSION FAILED', message || 'Ship destroyed');
+        }
+    }, wait);
+
+    console.log(`💀 PLAYER DEATH SEQUENCE: ${title || 'MISSION FAILED'} — ${message || ''}`);
+}
+
+window.triggerPlayerDeath = triggerPlayerDeath;
+
 // RESTORED: Asteroid destruction functions
 function destroyAsteroid(asteroid) {
     scene.remove(asteroid);
@@ -1818,25 +1868,7 @@ if (keys.x && gameState.energy > 0 && !gameState.emergencyWarp.autoBraking) {
                 destroyAsteroidByCollision(planet);
 
                 if (gameState.hull <= 0) {
-                    // Stop all player motion
-                    gameState.velocityVector.set(0, 0, 0);
-
-                    // Create massive player explosion
-                    if (typeof createPlayerExplosion === 'function') {
-                        createPlayerExplosion();
-                    }
-
-                    // Play explosion/vaporizing sound
-                    if (typeof playSound === 'function') {
-                        playSound('explosion');
-                    }
-
-                    // Show game over screen
-                    if (typeof showGameOverScreen === 'function') {
-                        showGameOverScreen('HULL BREACH', 'Ship destroyed by asteroid impact');
-                    }
-
-                    console.log('💀 PLAYER DESTROYED: Killed by asteroid collision');
+                    triggerPlayerDeath('HULL BREACH', 'Ship destroyed by asteroid impact');
                     return;
                 }
             }
@@ -1858,46 +1890,15 @@ if (surfaceCollision) {
 
     // ⚡ SUN COLLISION = INSTANT DEATH
     if (planet.userData.type === 'star') {
-        gameState.hull = 0; // Instant complete hull failure
-        gameState.velocityVector.set(0, 0, 0); // Stop all motion
-
-        // Create massive explosion
-        if (typeof createPlayerExplosion === 'function') {
-            createPlayerExplosion();
-        }
-
-        // Trigger mission failed
-        if (typeof showGameOverScreen === 'function') {
-            showGameOverScreen('VAPORIZED BY STAR', `Ship destroyed by ${planet.userData.name} - hull integrity: 0%`);
-        }
-
-        // Explosion sound
-        if (typeof playSound === 'function') {
-            playSound('explosion');
-        }
-
-        console.log(`💀 INSTANT DEATH: Player collided with star ${planet.userData.name}`);
+        triggerPlayerDeath('VAPORIZED BY STAR',
+            `Ship destroyed by ${planet.userData.name} - hull integrity: 0%`);
         return;
     }
 
     // ⚡ PLANET COLLISION = EXPLOSION AND MISSION FAILURE
     if (planet.userData.type === 'planet') {
-        gameState.hull = 0;
-        gameState.velocityVector.set(0, 0, 0);
-
-        if (typeof createPlayerExplosion === 'function') {
-            createPlayerExplosion();
-        }
-
-        if (typeof showGameOverScreen === 'function') {
-            showGameOverScreen('PLANETARY IMPACT', `Ship destroyed by collision with ${planet.userData.name}`);
-        }
-
-        if (typeof playSound === 'function') {
-            playSound('explosion');
-        }
-
-        console.log(`💀 MISSION FAILED: Player collided with planet ${planet.userData.name}`);
+        triggerPlayerDeath('PLANETARY IMPACT',
+            `Ship destroyed by collision with ${planet.userData.name}`);
         return;
     }
 }

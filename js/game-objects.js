@@ -10858,8 +10858,10 @@ function updateBossSkyboxHeartbeat() {
         // Combine beats for realistic heartbeat pattern
         const heartbeat = Math.max(beat1 * 0.6, beat2 * 0.4) * pause;
 
-        // Target opacity with heartbeat
-        const targetOpacity = 0.1 + (heartbeat * 0.6);  // Range: 0.3 to 0.7
+        // Target opacity with heartbeat — range 0.3 (baseline glow) to
+        // 0.9 (peak). Bumped from 0.1-0.7 so the blood-red boss aura
+        // reads clearly over bright cosmic backdrops.
+        const targetOpacity = 0.3 + (heartbeat * 0.6);  // Range: 0.3 to 0.9
 
         // Smooth transition to target
         bossSkyboxOpacity += (targetOpacity - bossSkyboxOpacity) * 0.1;
