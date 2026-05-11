@@ -112,6 +112,54 @@ const explosionManager = {
 
 // UPDATED: Pursuit behavior
 // Helper: Add smooth rotation to enemy based on movement trajectory
+// Decide whether to start an evasive barrel-roll burst. Higher chance
+// when the player has target lock on us, after taking a recent hit, or
+// while in close-quarters combat. Sets a window during which the
+// movement code adds a sideways impulse and applyEnemyRotation overlays
+// a full 360° roll spin.
+function maybeStartEvasion(enemy, distanceToPlayer) {
+    if (!enemy || !enemy.userData || typeof gameState === 'undefined') return;
+    const ud = enemy.userData;
+    if (ud.isBoss) return; // bosses don't barrel-roll — they're heavy
+    const now = Date.now();
+    if ((ud.evasionEnd || 0) > now) return;
+    if ((ud.nextEvasionCheck || 0) > now) return;
+    ud.nextEvasionCheck = now + 600 + Math.random() * 700;
+
+    const targetedByPlayer = gameState.targetLock && gameState.targetLock.active &&
+                             gameState.targetLock.target === enemy;
+    const recentlyHit = (now - (ud.lastHitTime || 0)) < 1500;
+    const closeCombat = (typeof distanceToPlayer === 'number') && distanceToPlayer < 700;
+    let triggerChance = 0;
+    if (recentlyHit)       triggerChance = 0.7;
+    else if (targetedByPlayer) triggerChance = 0.45;
+    else if (closeCombat)  triggerChance = 0.2;
+    if (Math.random() > triggerChance) return;
+
+    ud.evasionDir = Math.random() < 0.5 ? -1 : 1;
+    ud.evasionEnd = now + 600 + Math.random() * 500;
+    ud.barrelRollEnd = now + 900 + Math.random() * 300;
+    ud.barrelRollStart = now;
+}
+
+// Apply the active evasion impulse (sideways thrust perpendicular to
+// facing). Called from each movement mode after it sets velocity.
+function applyEvasionImpulse(enemy, magnitude) {
+    if (!enemy || !enemy.userData || !enemy.userData.facing) return;
+    const ud = enemy.userData;
+    if (!((ud.evasionEnd || 0) > Date.now())) return;
+    if (!_evV1) return;
+    _evV1.set(0, 1, 0);
+    _evV2.crossVectors(ud.facing, _evV1);
+    if (_evV2.lengthSq() < 1e-6) return;
+    _evV2.normalize().multiplyScalar(magnitude * (ud.evasionDir || 1));
+    if (!ud.velocity) ud.velocity = new THREE.Vector3();
+    ud.velocity.add(_evV2);
+}
+
+const _evV1 = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+const _evV2 = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+
 function applyEnemyRotation(enemy, direction, speed) {    if (!enemy || !direction) return;
 
     try {
@@ -192,6 +240,22 @@ function applyEnemyRotation(enemy, direction, speed) {    if (!enemy || !directi
         enemy.rotation.x = THREE.MathUtils.lerp(enemy.rotation.x || 0, enemy.userData.targetRotation.x, lerpFactor);
         enemy.rotation.y = THREE.MathUtils.lerp(enemy.rotation.y || 0, enemy.userData.targetRotation.y, lerpFactor);
         enemy.rotation.z = THREE.MathUtils.lerp(enemy.rotation.z || 0, enemy.userData.targetRotation.z, lerpFactor);
+
+        // BARREL ROLL OVERLAY — while a scramble is active, add a direct
+        // Z-axis spin on top of the banked rotation. Drives a full 360°
+        // over the duration of the roll window, in the direction the
+        // enemy chose when it started evading. Drawn AFTER lerp so the
+        // spin is visible even though the lerp would otherwise smooth
+        // it out toward the target bank angle.
+        const _now = Date.now();
+        const brEnd = enemy.userData.barrelRollEnd || 0;
+        if (brEnd > _now) {
+            const brStart = enemy.userData.barrelRollStart || (brEnd - 1000);
+            const dur = Math.max(200, brEnd - brStart);
+            const progress = Math.max(0, Math.min(1, (_now - brStart) / dur));
+            const dir = enemy.userData.evasionDir || 1;
+            enemy.rotation.z += dir * Math.PI * 2 * progress;
+        }
     } catch (e) {
         // Ignore rotation errors
     }
@@ -212,11 +276,14 @@ function updatePursuitBehavior(enemy, playerPos, speed, distance) {
             enemy.userData.facing = new THREE.Vector3(0, 0, 1);
         }
         
-        // Physics constants (similar to player)
-        const maxSpeed = speed * 2;
-        const acceleration = speed * 0.08; // How fast they can accelerate
-        const turnRate = 0.03; // How fast they can turn (radians per frame)
-        const drag = 0.98; // Slight drag for inertia feel
+        // Physics constants — bumped for more aggressive forward thrust.
+        // Pursuit ships used to plod along; they now reach top speed
+        // fast and turn faster, which makes scrambles read as actual
+        // dogfighting rather than slow drifts.
+        const maxSpeed = speed * 3.0;       // was 2.0
+        const acceleration = speed * 0.14;  // was 0.08
+        const turnRate = 0.05;              // was 0.03
+        const drag = 0.985;                 // slightly less drag so the bumps land
         
         _ebV1.subVectors(playerPos, enemy.position).normalize();
 
@@ -249,21 +316,28 @@ function updatePursuitBehavior(enemy, playerPos, speed, distance) {
         
         _ebV2.copy(enemy.userData.facing).multiplyScalar(thrustPower);
         enemy.userData.velocity.add(_ebV2);
-        
+
+        // Evasion: side-thrust burst perpendicular to facing during a
+        // barrel-roll scramble. Triggered probabilistically by
+        // maybeStartEvasion when the player has target lock, just hit
+        // us, or we're inside 700u.
+        maybeStartEvasion(enemy, distance);
+        applyEvasionImpulse(enemy, thrustPower * 2.2);
+
         // Clamp to max speed
         if (enemy.userData.velocity.length() > maxSpeed) {
             enemy.userData.velocity.setLength(maxSpeed);
         }
-        
+
         // Apply drag
         enemy.userData.velocity.multiplyScalar(drag);
-        
+
         // Update position based on velocity
         enemy.position.add(enemy.userData.velocity);
-        
+
         // Rotate enemy to face direction of travel (not instant)
         applyEnemyRotation(enemy, enemy.userData.facing, speed);
-        
+
         if (distance < 150) {
             const orbitAngle = Date.now() * 0.0015 + (enemy.userData.circlePhase || 0);
             _ebV1.set(
@@ -297,19 +371,19 @@ function updateSwarmBehavior(enemy, playerPos, speed, time) {
             enemy.userData.facing = new THREE.Vector3(0, 0, 1);
         }
         
-        const maxSpeed = speed * 1.8;
-        const acceleration = speed * 0.06;
-        const turnRate = 0.04;
-        const drag = 0.97;
-        
+        const maxSpeed = speed * 2.6;        // was 1.8
+        const acceleration = speed * 0.12;   // was 0.06
+        const turnRate = 0.06;               // was 0.04
+        const drag = 0.98;                   // was 0.97
+
         // Spiraling approach from multiple angles
         const swarmAngle = time * 0.5 + (enemy.userData.circlePhase || 0);
         const spiralRadius = 120 + Math.sin(time * 0.3) * 40;
-        
+
         const targetX = playerPos.x + Math.cos(swarmAngle) * spiralRadius;
         const targetZ = playerPos.z + Math.sin(swarmAngle) * spiralRadius;
         const targetY = playerPos.y + Math.sin(time * 0.2) * 30;
-        
+
         _ebV1.set(targetX, targetY, targetZ);
         _ebV2.subVectors(_ebV1, enemy.position).normalize();
 
@@ -318,13 +392,18 @@ function updateSwarmBehavior(enemy, playerPos, speed, time) {
 
         _ebV3.copy(enemy.userData.facing).multiplyScalar(acceleration);
         enemy.userData.velocity.add(_ebV3);
-        
+
+        // Evasion side-thrust on top of swarm motion
+        const _swDist = playerPos.distanceTo(enemy.position);
+        maybeStartEvasion(enemy, _swDist);
+        applyEvasionImpulse(enemy, acceleration * 2.2);
+
         // Clamp and drag
         if (enemy.userData.velocity.length() > maxSpeed) {
             enemy.userData.velocity.setLength(maxSpeed);
         }
         enemy.userData.velocity.multiplyScalar(drag);
-        
+
         // Apply velocity
         enemy.position.add(enemy.userData.velocity);
         applyEnemyRotation(enemy, enemy.userData.facing, speed);
@@ -344,11 +423,24 @@ function updateEvasionBehavior(enemy, playerPos, speed, time) {
         _ebV1.subVectors(enemy.position, playerPos).normalize();
         _ebV2.set(-_ebV1.z, _ebV1.y, _ebV1.x);
 
+        // Boosted side-strafe + a sinusoid wobble so the evade mode
+        // actually rips sideways at speed rather than oscillating
+        // in place.
         const oscillation = Math.sin(time * 2 + (enemy.userData.circlePhase || 0)) * 0.5;
-        _ebV2.multiplyScalar(speed * (1 + oscillation));
+        _ebV2.multiplyScalar(speed * 1.6 * (1 + oscillation));
 
         enemy.position.add(_ebV2);
-        applyEnemyRotation(enemy, _ebV2, speed);  // Add rotation
+        // Force a barrel-roll while the enemy is in dedicated evade mode
+        // so the maneuver reads visually. Direction tied to the existing
+        // evasionDir or chosen if not set.
+        const _now = Date.now();
+        if (!((enemy.userData.barrelRollEnd || 0) > _now)) {
+            enemy.userData.evasionDir = enemy.userData.evasionDir ||
+                (Math.random() < 0.5 ? -1 : 1);
+            enemy.userData.barrelRollStart = _now;
+            enemy.userData.barrelRollEnd = _now + 900;
+        }
+        applyEnemyRotation(enemy, _ebV2, speed);
     } catch (e) {
         // Ignore movement errors
     }
@@ -4080,6 +4172,7 @@ function checkWeaponHits(targetPosition) {
             if (distance < collisionDistance) {
                 const damage = 1; // Standard damage
                 enemy.userData.health -= damage;
+                enemy.userData.lastHitTime = Date.now();
                 _activateOnDamage(enemy);
 
                 // ENHANCED: Use improved hit effect with color changes
@@ -4709,6 +4802,7 @@ function handleMissileHit(missile, enemy) {
     scene.remove(missile);
 
     enemy.userData.health -= gameState.missiles.damage;
+    enemy.userData.lastHitTime = Date.now();
     _activateOnDamage(enemy);
     flashEnemyHit(enemy, gameState.missiles.damage);
     createMissileExplosion(missile.position);
@@ -5674,36 +5768,26 @@ function enableAutoThrust() {
 // =============================================================================
 
 function createDeathEffect() {
-    console.error('💀💀💀 createDeathEffect CALLED — hull=' +
-        (gameState ? gameState.hull : '?') +
-        ' | gameStartTime=' + (gameState ? gameState.gameStartTime : '?') +
-        ' | trace:', new Error().stack);
-    // ⭐ Enhanced death effect matching planet collision mechanics
-    // Stop all player motion
+    // Route through the shared triggerPlayerDeath helper so the
+    // explosion plays out (visuals + layered sound) before the
+    // MISSION FAILED screen takes over. Without this hop, enemy
+    // weapon fire at hull=0 popped the game-over screen instantly,
+    // hiding the explosion entirely.
+    if (typeof triggerPlayerDeath === 'function') {
+        triggerPlayerDeath('HULL BREACH',
+            'Ship destroyed by enemy fire - hull integrity: 0%');
+        return;
+    }
+    // Last-resort fallback if the helper isn't loaded for some
+    // reason (e.g. early in the boot before game-physics.js runs).
     if (typeof gameState !== 'undefined' && gameState.velocityVector) {
         gameState.velocityVector.set(0, 0, 0);
     }
-
-    // Create massive player explosion effect
-    if (typeof createPlayerExplosion === 'function') {
-        createPlayerExplosion();
-    }
-
-    // Play explosion/vaporizing sound
-    if (typeof playSound === 'function') {
-        playSound('explosion');
-    }
-
-    // Show game over screen
+    if (typeof createPlayerExplosion === 'function') createPlayerExplosion();
+    if (typeof playSound === 'function') playSound('explosion');
     if (typeof showGameOverScreen === 'function') {
         showGameOverScreen('HULL BREACH', 'Ship destroyed by enemy fire - hull integrity: 0%');
-    } else if (typeof gameOver !== 'undefined') {
-        gameOver('Hull integrity critical - ship destroyed!');
-    } else {
-        showAchievement('GAME OVER', 'Ship destroyed - mission failed!');
     }
-
-    console.log('💀 PLAYER DESTROYED: Hull reached 0% from enemy damage');
 }
 
 function playVictoryMusic() {
