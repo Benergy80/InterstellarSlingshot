@@ -159,6 +159,27 @@ function _ensureShipThrusterCones(ship, color) {
     const coneLen = shipLengthLocal * 0.10;
     const coneRad = shipLengthLocal * 0.030;
 
+    // Read the ship's ACTUAL rear edge from its bounding box (in local
+    // coords) so the cone base hugs the model's back regardless of how
+    // much empty padding the GLB has around its mesh. Falls back to
+    // shipLengthLocal/2 (the old behaviour) if the box read fails.
+    let localBack = shipLengthLocal * 0.5;
+    try {
+        const box = new THREE.Box3().setFromObject(ship);
+        if (isFinite(box.min.z) && isFinite(box.max.z)) {
+            const wpos = new THREE.Vector3();
+            ship.getWorldPosition(wpos);
+            const sz = Math.max(0.001, Math.abs(worldScale.z || 1));
+            // Rear of model in local Z: (worldMaxZ - shipWorldZ) / shipScaleZ.
+            // The lookAt math makes -Z forward, so the larger local-Z
+            // value is "behind" the ship.
+            const computedBack = (box.max.z - wpos.z) / sz;
+            if (isFinite(computedBack) && computedBack > 0) {
+                localBack = computedBack;
+            }
+        }
+    } catch (e) {}
+
     const innerCol = color || 0xffaa00;
     const outerCol = (color === 0x00ff88) ? 0x00aa55
                   : (color === 0x88aaff) ? 0x4466cc
@@ -180,9 +201,12 @@ function _ensureShipThrusterCones(ship, color) {
         return { mesh: cone, mat: mat, geo: geo };
     }
 
-    // Two side-by-side engine plumes. back offset puts the cone bases
-    // just past the rear of the ship volume in local units.
-    const back = shipLengthLocal * 0.50 + coneLen * 0.5;
+    // Two side-by-side engine plumes. Anchor the cone BASE at the
+    // model's actual rear edge (localBack), then push it forward by
+    // coneLen/2 so the center sits at the base + apex protrudes
+    // behind. The cone is now glued to the ship instead of floating
+    // off the assumed half-length back.
+    const back = localBack + coneLen * 0.5;
     const cones = [];
     const sideOff = coneRad * 1.2;
     [-sideOff, sideOff].forEach(xOff => {
