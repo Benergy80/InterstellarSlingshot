@@ -112,11 +112,12 @@ const explosionManager = {
 
 // UPDATED: Pursuit behavior
 // Helper: Add smooth rotation to enemy based on movement trajectory
-// Decide whether to start an evasive barrel-roll burst. Higher chance
-// when the player has target lock on us, after taking a recent hit, or
-// while in close-quarters combat. Sets a window during which the
-// movement code adds a sideways impulse and applyEnemyRotation overlays
-// a full 360° roll spin.
+// Decide whether to start an evasive barrel-roll burst. Rolls are now
+// rare and slow — they layer on top of normal thrust/steering rather
+// than dominating it. Triggered by recent hits / target lock / close
+// combat, but at lower probabilities and with a long cooldown between
+// checks so the enemy spends most of its time actually flying toward
+// or around the player instead of constantly scrambling.
 function maybeStartEvasion(enemy, distanceToPlayer) {
     if (!enemy || !enemy.userData || typeof gameState === 'undefined') return;
     const ud = enemy.userData;
@@ -124,26 +125,34 @@ function maybeStartEvasion(enemy, distanceToPlayer) {
     const now = Date.now();
     if ((ud.evasionEnd || 0) > now) return;
     if ((ud.nextEvasionCheck || 0) > now) return;
-    ud.nextEvasionCheck = now + 600 + Math.random() * 700;
+    // Long gap between attempts so rolls are an occasional spectacle,
+    // not a constant tic.
+    ud.nextEvasionCheck = now + 2200 + Math.random() * 2000;
 
     const targetedByPlayer = gameState.targetLock && gameState.targetLock.active &&
                              gameState.targetLock.target === enemy;
     const recentlyHit = (now - (ud.lastHitTime || 0)) < 1500;
     const closeCombat = (typeof distanceToPlayer === 'number') && distanceToPlayer < 700;
     let triggerChance = 0;
-    if (recentlyHit)       triggerChance = 0.7;
-    else if (targetedByPlayer) triggerChance = 0.45;
-    else if (closeCombat)  triggerChance = 0.2;
+    if (recentlyHit)           triggerChance = 0.35;
+    else if (targetedByPlayer) triggerChance = 0.18;
+    else if (closeCombat)      triggerChance = 0.08;
     if (Math.random() > triggerChance) return;
 
     ud.evasionDir = Math.random() < 0.5 ? -1 : 1;
-    ud.evasionEnd = now + 600 + Math.random() * 500;
-    ud.barrelRollEnd = now + 900 + Math.random() * 300;
+    // Slower roll: 1.8-2.5 s window. The Z-spin in applyEnemyRotation
+    // spreads a full 360° over this duration, so the roll reads as a
+    // deliberate barrel rather than a quick flick.
+    const rollDur = 1800 + Math.random() * 700;
+    ud.evasionEnd = now + rollDur;
+    ud.barrelRollEnd = now + rollDur;
     ud.barrelRollStart = now;
 }
 
-// Apply the active evasion impulse (sideways thrust perpendicular to
-// facing). Called from each movement mode after it sets velocity.
+// Apply the active evasion impulse (light sideways thrust perpendicular
+// to facing). Magnitude is intentionally small — the goal is to bow the
+// flight path while the enemy keeps thrusting forward and tracking the
+// player, not to launch them off-axis.
 function applyEvasionImpulse(enemy, magnitude) {
     if (!enemy || !enemy.userData || !enemy.userData.facing) return;
     const ud = enemy.userData;
@@ -276,14 +285,14 @@ function updatePursuitBehavior(enemy, playerPos, speed, distance) {
             enemy.userData.facing = new THREE.Vector3(0, 0, 1);
         }
         
-        // Physics constants — bumped for more aggressive forward thrust.
-        // Pursuit ships used to plod along; they now reach top speed
-        // fast and turn faster, which makes scrambles read as actual
-        // dogfighting rather than slow drifts.
-        const maxSpeed = speed * 3.0;       // was 2.0
-        const acceleration = speed * 0.14;  // was 0.08
-        const turnRate = 0.05;              // was 0.03
-        const drag = 0.985;                 // slightly less drag so the bumps land
+        // Physics constants — aggressive forward thrust profile. Pursuit
+        // ships used to plod; now they reach top speed quickly and turn
+        // crisply so dogfights have real motion. Barrel rolls (when they
+        // happen) layer on top of this without replacing forward thrust.
+        const maxSpeed = speed * 4.0;       // was 3.0
+        const acceleration = speed * 0.20;  // was 0.14
+        const turnRate = 0.05;
+        const drag = 0.99;                  // lighter drag — bumps land
         
         _ebV1.subVectors(playerPos, enemy.position).normalize();
 
@@ -317,12 +326,12 @@ function updatePursuitBehavior(enemy, playerPos, speed, distance) {
         _ebV2.copy(enemy.userData.facing).multiplyScalar(thrustPower);
         enemy.userData.velocity.add(_ebV2);
 
-        // Evasion: side-thrust burst perpendicular to facing during a
-        // barrel-roll scramble. Triggered probabilistically by
-        // maybeStartEvasion when the player has target lock, just hit
-        // us, or we're inside 700u.
+        // Evasion: gentle side-thrust that bows the flight path during a
+        // barrel-roll scramble. Magnitude kept low (0.8x thrustPower) so
+        // forward thrust + steering still dominate — the roll is visual
+        // flavour, not a hard juke off-axis.
         maybeStartEvasion(enemy, distance);
-        applyEvasionImpulse(enemy, thrustPower * 2.2);
+        applyEvasionImpulse(enemy, thrustPower * 0.8);
 
         // Clamp to max speed
         if (enemy.userData.velocity.length() > maxSpeed) {
@@ -371,10 +380,10 @@ function updateSwarmBehavior(enemy, playerPos, speed, time) {
             enemy.userData.facing = new THREE.Vector3(0, 0, 1);
         }
         
-        const maxSpeed = speed * 2.6;        // was 1.8
-        const acceleration = speed * 0.12;   // was 0.06
-        const turnRate = 0.06;               // was 0.04
-        const drag = 0.98;                   // was 0.97
+        const maxSpeed = speed * 3.5;        // was 2.6
+        const acceleration = speed * 0.18;   // was 0.12
+        const turnRate = 0.06;
+        const drag = 0.985;                  // was 0.98
 
         // Spiraling approach from multiple angles
         const swarmAngle = time * 0.5 + (enemy.userData.circlePhase || 0);
@@ -393,10 +402,11 @@ function updateSwarmBehavior(enemy, playerPos, speed, time) {
         _ebV3.copy(enemy.userData.facing).multiplyScalar(acceleration);
         enemy.userData.velocity.add(_ebV3);
 
-        // Evasion side-thrust on top of swarm motion
+        // Light evasion side-thrust on top of swarm motion (the roll
+        // overlay handles the visual; this just bows the path slightly).
         const _swDist = playerPos.distanceTo(enemy.position);
         maybeStartEvasion(enemy, _swDist);
-        applyEvasionImpulse(enemy, acceleration * 2.2);
+        applyEvasionImpulse(enemy, acceleration * 0.8);
 
         // Clamp and drag
         if (enemy.userData.velocity.length() > maxSpeed) {
@@ -430,16 +440,12 @@ function updateEvasionBehavior(enemy, playerPos, speed, time) {
         _ebV2.multiplyScalar(speed * 1.6 * (1 + oscillation));
 
         enemy.position.add(_ebV2);
-        // Force a barrel-roll while the enemy is in dedicated evade mode
-        // so the maneuver reads visually. Direction tied to the existing
-        // evasionDir or chosen if not set.
-        const _now = Date.now();
-        if (!((enemy.userData.barrelRollEnd || 0) > _now)) {
-            enemy.userData.evasionDir = enemy.userData.evasionDir ||
-                (Math.random() < 0.5 ? -1 : 1);
-            enemy.userData.barrelRollStart = _now;
-            enemy.userData.barrelRollEnd = _now + 900;
-        }
+        // Dedicated 'evade' mode used to FORCE a barrel roll every frame
+        // it ran, which made low-HP enemies spin continuously. Now it
+        // just defers to maybeStartEvasion's rate-limited check so the
+        // roll fires occasionally on top of the steady side-strafe.
+        const _evDist = playerPos.distanceTo(enemy.position);
+        maybeStartEvasion(enemy, _evDist);
         applyEnemyRotation(enemy, _ebV2, speed);
     } catch (e) {
         // Ignore movement errors
