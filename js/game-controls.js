@@ -159,12 +159,12 @@ function _ensureShipThrusterCones(ship, color) {
         }
     } catch (e) {}
 
-    // Cone target dimensions in LOCAL units. Length = 12% of the
-    // ship's longest axis, radius = 3%. With the cone base anchored
-    // INSIDE the ship at the back edge, the visible plume sticks out
-    // by about coneLen/2 — looks like a proper engine exhaust glued
-    // to the rear of the model.
-    const coneLen = localLen * 0.12;
+    // Cone target dimensions in LOCAL units. Length = 10% of the
+    // ship's longest axis, radius = 3% — restored from the previous
+    // pass which looked right; this version keeps the bounding-box
+    // placement (cone base glued to the actual rear of the model)
+    // and reverts only the sizing multipliers.
+    const coneLen = localLen * 0.10;
     const coneRad = localLen * 0.030;
 
     const innerCol = color || 0xffaa00;
