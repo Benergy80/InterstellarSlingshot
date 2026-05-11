@@ -9094,14 +9094,16 @@ function createEnemyMaterial(shapeData, enemyType, distance) {
 // =============================================================================
 
 function createEnhancedWormholes() {
-    const initialWormholes = 4;
-    
+    // More wormholes from the start — bumped from 4 to 12 so the
+    // universe always has spatial anomalies to find.
+    const initialWormholes = 12;
+
     for (let i = 0; i < initialWormholes; i++) {
-        if (Math.random() < 0.8) {
+        if (Math.random() < 0.85) {
             spawnEnhancedWormhole();
         }
     }
-    
+
     console.log(`Spawned ${wormholes.length} enhanced whirlpool wormholes`);
 }
 
@@ -9110,35 +9112,36 @@ function spawnEnhancedWormhole() {
     let attempts = 0;
     do {
         position = new THREE.Vector3(
-            (Math.random() - 0.5) * 30000, // Doubled
-            (Math.random() - 0.5) * 1600, // Doubled
-            (Math.random() - 0.5) * 30000 // Doubled
+            (Math.random() - 0.5) * 30000,
+            (Math.random() - 0.5) * 1600,
+            (Math.random() - 0.5) * 30000
         );
         attempts++;
-    } while (attempts < 15 && isPositionTooClose(position, 300)); // Doubled
-    
-    // Create whirlpool wormhole
+    } while (attempts < 15 && isPositionTooClose(position, 900));
+
+    // Create whirlpool wormhole. All sizes tripled vs the original
+    // so wormholes read as proper galactic-scale phenomena.
     const wormholeGroup = new THREE.Group();
-    
+
     // Central void
-    const voidGeometry = new THREE.SphereGeometry(8, 16, 16); // Size remains the same
+    const voidGeometry = new THREE.SphereGeometry(24, 16, 16);
     const voidMaterial = new THREE.MeshBasicMaterial({
         color: 0x000000,
         transparent: true,
         opacity: 0.9
     });
     const voidMesh = new THREE.Mesh(voidGeometry, voidMaterial);
-    
+
     // FIXED: Prevent frustum culling for wormhole void
     voidMesh.visible = true;
     voidMesh.frustumCulled = false;
-    
+
     wormholeGroup.add(voidMesh);
-    
-    // Spiral rings
+
+    // Spiral rings — base radius and step both 3x.
     for (let i = 0; i < 5; i++) {
-        const ringRadius = 12 + i * 4; // Size remains the same
-        const ringGeometry = new THREE.TorusGeometry(ringRadius, 1.5, 8, 32);
+        const ringRadius = 36 + i * 12;
+        const ringGeometry = new THREE.TorusGeometry(ringRadius, 4.5, 8, 32);
         const ringMaterial = new THREE.MeshBasicMaterial({
             color: new THREE.Color().setHSL(0.8 + i * 0.05, 0.8, 0.6),
             transparent: true,
@@ -9148,21 +9151,18 @@ function spawnEnhancedWormhole() {
         const ring = new THREE.Mesh(ringGeometry, ringMaterial);
         ring.rotation.x = Math.PI / 2;
         ring.rotation.z = i * 0.3;
-        
-        // FIXED: Prevent frustum culling for wormhole rings
         ring.visible = true;
-        ring.frustumCulled = true;  // OPTIMIZATION: Enable frustum culling
-        
+        ring.frustumCulled = true;
         wormholeGroup.add(ring);
     }
-    
-    // Particle effect (doubled range)
+
+    // Particle halo — 3x radius range and 3x height.
     const particleGeometry = new THREE.BufferGeometry();
     const particleVertices = [];
     for (let i = 0; i < 200; i++) {
         const angle = Math.random() * Math.PI * 2;
-        const radius = 20 + Math.random() * 40; // Doubled
-        const height = (Math.random() - 0.5) * 30; // Doubled
+        const radius = 60 + Math.random() * 120;
+        const height = (Math.random() - 0.5) * 90;
         particleVertices.push(
             Math.cos(angle) * radius,
             height,
@@ -9172,16 +9172,15 @@ function spawnEnhancedWormhole() {
     particleGeometry.setAttribute('position', new THREE.Float32BufferAttribute(particleVertices, 3));
     const particleMaterial = new THREE.PointsMaterial({
         color: 0xaa44ff,
-        size: 1.5,
+        size: 4.5,
         transparent: true,
         opacity: 0.6
     });
     const particles = new THREE.Points(particleGeometry, particleMaterial);
-    
-    // FIXED: Prevent frustum culling for wormhole particles
+
     particles.visible = true;
     particles.frustumCulled = false;
-    
+
     wormholeGroup.add(particles);
     
     wormholeGroup.position.copy(position);
@@ -9193,19 +9192,21 @@ function spawnEnhancedWormhole() {
     wormholeGroup.userData = {
         name: `Spatial Whirlpool ${wormholes.length + 1}`,
         type: 'wormhole',
-        lifeTime: 120000 + Math.random() * 60000,
+        // Triple the lifetime — wormholes now last 6-9 minutes instead
+        // of 2-3, so the player has time to find and use them.
+        lifeTime: 360000 + Math.random() * 180000,
         age: 0,
-        warpThreshold: 40, // Doubled
+        warpThreshold: 120,            // 3x: easier to enter the throat
         isTemporary: true,
-        detectionRange: 1200, // Doubled
+        detectionRange: 3600,          // 3x: spotted from much farther away
         detected: false,
         spiralSpeed: 0.02 + Math.random() * 0.03,
         // Instability properties
         unstable: true,
         phaseTimer: 0,
-        phaseInterval: 5000 + Math.random() * 10000, // 5-15 seconds per phase
+        phaseInterval: 5000 + Math.random() * 10000,
         isVisible: true,
-        colorHue: Math.random(), // Starting hue
+        colorHue: Math.random(),
         colorSpeed: 0.0001 + Math.random() * 0.0002
     };
     
@@ -10007,6 +10008,141 @@ beltGroup.frustumCulled = false; // Don't cull the entire group
     });
     
     console.log(`✅ Created ${asteroidBelts.length} OPTIMIZED asteroid belts around actual black holes`);
+
+    // Add extra scattered, breakable asteroid clusters across the
+    // universe so the player has obstacles to use (and shoot for hull)
+    // during dogfights, not just at the BH-orbit rings.
+    if (typeof createScatteredAsteroidFields === 'function') {
+        try { createScatteredAsteroidFields(); } catch (e) {
+            console.warn('createScatteredAsteroidFields failed:', e);
+        }
+    }
+}
+
+// =============================================================================
+// SCATTERED ASTEROID FIELDS — small breakable clusters placed both
+// inside each black-hole galaxy and out in deep interstellar space.
+// Each cluster is a tight ~30-asteroid swarm that the player can shoot
+// apart (uses the same userData shape as the main belts), so it
+// integrates with destroyAsteroid, asteroid-mining rewards, and the
+// raycast targeting that already exists.
+// =============================================================================
+function createScatteredAsteroidFields() {
+    if (typeof window.asteroidBelts === 'undefined') window.asteroidBelts = [];
+    if (!asteroidResources || !asteroidResources.geometries) {
+        initializeAsteroidResources();
+    }
+
+    function _spawnCluster(galaxyIndex, center, opts) {
+        const cluster = new THREE.Group();
+        const count = (opts && opts.count) || (22 + Math.floor(Math.random() * 16));
+        const spread = (opts && opts.spread) || (350 + Math.random() * 250);
+        const minScale = (opts && opts.minScale) || 2.5;
+        const scaleRange = (opts && opts.scaleRange) || 4.5;
+        const galaxyType = (typeof galaxyTypes !== 'undefined' && galaxyTypes[galaxyIndex])
+            ? galaxyTypes[galaxyIndex] : { name: 'Deep Space' };
+
+        for (let j = 0; j < count; j++) {
+            const geom = asteroidResources.geometries[Math.floor(Math.random() * asteroidResources.geometries.length)];
+            const mat  = asteroidResources.materials[Math.floor(Math.random() * asteroidResources.materials.length)];
+            const a = new THREE.Mesh(geom, mat);
+            a.scale.setScalar(minScale + Math.random() * scaleRange);
+            a.frustumCulled = false;
+            // Random within a flattened sphere so it reads as a clumpy
+            // field rather than a tight ring.
+            const phi = Math.random() * Math.PI * 2;
+            const r   = Math.random() * spread;
+            const h   = (Math.random() - 0.5) * spread * 0.4;
+            a.position.set(Math.cos(phi) * r, h, Math.sin(phi) * r);
+            a.rotation.set(
+                Math.random() * Math.PI * 2,
+                Math.random() * Math.PI * 2,
+                Math.random() * Math.PI * 2
+            );
+            a.userData = {
+                name: `${galaxyType.name} Scatter ${j + 1}`,
+                type: 'asteroid',
+                health: 2,
+                maxHealth: 2,
+                orbitSpeed: 0.0003 + Math.random() * 0.0008,
+                rotationSpeed: (Math.random() - 0.5) * 0.012,
+                beltCenter: center.clone(),
+                orbitRadius: r,
+                orbitPhase: phi,
+                galaxyId: galaxyIndex,
+                isTargetable: true,
+                isDestructible: true,
+                beltGroup: cluster
+            };
+            cluster.add(a);
+            planets.push(a);
+        }
+
+        cluster.position.copy(center);
+        cluster.visible = true;
+        cluster.frustumCulled = false;
+        cluster.userData = {
+            name: `${galaxyType.name} Asteroid Cluster`,
+            type: 'asteroidBelt',
+            center: center.clone(),
+            radius: spread,
+            asteroidCount: count,
+            galaxyId: galaxyIndex,
+            isScatterCluster: true,
+            blackHolePosition: center.clone()
+        };
+        scene.add(cluster);
+        asteroidBelts.push(cluster);
+    }
+
+    let added = 0;
+    // 1) Inside each black-hole galaxy: 3-5 extra clusters at random
+    //    positions in the galactic plane, used as cover during fights.
+    const blackHoles = planets.filter(p =>
+        p.userData && p.userData.type === 'blackhole' &&
+        typeof p.userData.galaxyId === 'number' &&
+        !p.userData.isLocalGateway);
+    blackHoles.forEach(bh => {
+        const galaxyIndex = bh.userData.galaxyId;
+        const clusters = 3 + Math.floor(Math.random() * 3);
+        for (let k = 0; k < clusters; k++) {
+            const ang = Math.random() * Math.PI * 2;
+            // Place 3,000-7,000 units from the BH so they don't pile on
+            // the existing BH ring and they overlap the regular combat
+            // zones where enemies spawn.
+            const dist = 3000 + Math.random() * 4000;
+            const yJitter = (Math.random() - 0.5) * 600;
+            const center = new THREE.Vector3(
+                bh.position.x + Math.cos(ang) * dist,
+                bh.position.y + yJitter,
+                bh.position.z + Math.sin(ang) * dist
+            );
+            _spawnCluster(galaxyIndex, center, { count: 25 + Math.floor(Math.random() * 15) });
+            added++;
+        }
+    });
+
+    // 2) Interstellar space between galaxies: 12 deep-space clusters
+    //    placed at random points within ±45,000 of the origin so the
+    //    player encounters them while warping or coasting.
+    for (let k = 0; k < 12; k++) {
+        const center = new THREE.Vector3(
+            (Math.random() - 0.5) * 90000,
+            (Math.random() - 0.5) * 18000,
+            (Math.random() - 0.5) * 90000
+        );
+        // Larger spread + sparser fill — these are loose asteroid
+        // streams between galaxies, not tight combat-cover clusters.
+        _spawnCluster(-1, center, {
+            count: 18 + Math.floor(Math.random() * 14),
+            spread: 700 + Math.random() * 400,
+            minScale: 3.0,
+            scaleRange: 6.0
+        });
+        added++;
+    }
+
+    console.log(`💎 Created ${added} extra scattered asteroid clusters (galaxy + interstellar)`);
 }
 
 // =============================================================================
@@ -10621,6 +10757,7 @@ if (typeof window !== 'undefined') {
     window.createDistantNebulas = createDistantNebulas;
     window.createExoticCoreNebulas = createExoticCoreNebulas;
     window.createAsteroidBelts = createAsteroidBelts;
+    window.createScatteredAsteroidFields = createScatteredAsteroidFields;
     window.isPositionTooClose = isPositionTooClose;
     
     // Utility functions

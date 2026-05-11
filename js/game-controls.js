@@ -2643,6 +2643,157 @@ function createExplosionEffect(targetObject) {
 }
 
 // =============================================================================
+// BOSS / GUARDIAN EXPLOSION
+// A larger, multi-stage detonation reserved for boss and elite-guardian
+// kills. Three escalating waves:
+//   t=0     - core fireball + faction-colored shockwave ring
+//   t=200ms - secondary detonation, ~50% larger
+//   t=450ms - massive expanding plasma bubble + 250-particle burst
+// The whole sequence lasts ~2.5s and uses additive blending so it
+// reads brightly against any backdrop.
+// =============================================================================
+function createBossExplosion(position, options) {
+    if (!position || typeof scene === 'undefined') return;
+    options = options || {};
+    const factionColor = options.color || 0xff5522;
+    const scaleMul = options.scale || 1.0;
+    const center = position.clone ? position.clone() : new THREE.Vector3(position.x, position.y, position.z);
+
+    function _addAdditiveSphere(radius, color, opacity, life, growth) {
+        const geo = new THREE.SphereGeometry(radius, 24, 16);
+        const mat = new THREE.MeshBasicMaterial({
+            color: color, transparent: true, opacity: opacity,
+            blending: THREE.AdditiveBlending, depthWrite: false
+        });
+        const mesh = new THREE.Mesh(geo, mat);
+        mesh.position.copy(center);
+        mesh.frustumCulled = false;
+        scene.add(mesh);
+        let scl = 1;
+        let op = opacity;
+        explosionManager.addExplosion({
+            update(dt) {
+                scl += growth * (dt / 50);
+                op  -= (opacity / life) * (dt / 50);
+                mesh.scale.set(scl, scl, scl);
+                mat.opacity = Math.max(0, op);
+                return op > 0;
+            },
+            cleanup() {
+                scene.remove(mesh);
+                geo.dispose();
+                mat.dispose();
+            }
+        });
+    }
+
+    function _addShockRing(color, radius, growth, life) {
+        const geo = new THREE.RingGeometry(radius, radius * 1.15, 48);
+        const mat = new THREE.MeshBasicMaterial({
+            color: color, transparent: true, opacity: 0.85,
+            side: THREE.DoubleSide,
+            blending: THREE.AdditiveBlending, depthWrite: false
+        });
+        const ring = new THREE.Mesh(geo, mat);
+        ring.position.copy(center);
+        if (typeof camera !== 'undefined') ring.lookAt(camera.position);
+        ring.frustumCulled = false;
+        scene.add(ring);
+        let scl = 1;
+        let op = 0.85;
+        explosionManager.addExplosion({
+            update(dt) {
+                scl += growth * (dt / 50);
+                op  -= (0.85 / life) * (dt / 50);
+                ring.scale.set(scl, scl, 1);
+                mat.opacity = Math.max(0, op);
+                return op > 0;
+            },
+            cleanup() {
+                scene.remove(ring);
+                geo.dispose();
+                mat.dispose();
+            }
+        });
+    }
+
+    // Wave 1 — core fireball + faction ring
+    _addAdditiveSphere(60 * scaleMul, 0xffeecc, 1.0, 18, 3.5);   // white-hot core
+    _addAdditiveSphere(80 * scaleMul, 0xff7733, 0.9, 22, 2.8);   // orange shell
+    _addShockRing(factionColor, 30 * scaleMul, 6, 16);
+
+    // Wave 2 — secondary at +200ms
+    setTimeout(() => {
+        _addAdditiveSphere(95 * scaleMul, factionColor, 0.8, 24, 3.2);
+        _addShockRing(0xffaa55, 50 * scaleMul, 8, 20);
+        if (typeof playSound === 'function') {
+            try { playSound('explosion'); } catch (e) {}
+        }
+    }, 200);
+
+    // Wave 3 — massive plasma bubble + 250-particle debris at +450ms
+    setTimeout(() => {
+        _addAdditiveSphere(140 * scaleMul, 0xaa44ff, 0.55, 30, 4.0);
+
+        // Debris field
+        const partCount = 250;
+        const partGeo = new THREE.BufferGeometry();
+        const positions = new Float32Array(partCount * 3);
+        const velocities = [];
+        for (let i = 0; i < partCount; i++) {
+            positions[i*3] = center.x;
+            positions[i*3+1] = center.y;
+            positions[i*3+2] = center.z;
+            velocities.push(new THREE.Vector3(
+                (Math.random() - 0.5) * 8 * scaleMul,
+                (Math.random() - 0.5) * 8 * scaleMul,
+                (Math.random() - 0.5) * 8 * scaleMul
+            ));
+        }
+        partGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        const partMat = new THREE.PointsMaterial({
+            color: 0xffcc66, size: 6 * scaleMul, transparent: true, opacity: 1,
+            blending: THREE.AdditiveBlending, depthWrite: false
+        });
+        const particles = new THREE.Points(partGeo, partMat);
+        particles.frustumCulled = false;
+        scene.add(particles);
+
+        let life = 1.0;
+        explosionManager.addExplosion({
+            update(dt) {
+                life -= 0.025 * (dt / 50);
+                partMat.opacity = Math.max(0, life);
+                const arr = partGeo.attributes.position.array;
+                const f = dt / 50;
+                for (let i = 0; i < partCount; i++) {
+                    arr[i*3]   += velocities[i].x * f;
+                    arr[i*3+1] += velocities[i].y * f;
+                    arr[i*3+2] += velocities[i].z * f;
+                }
+                partGeo.attributes.position.needsUpdate = true;
+                return life > 0;
+            },
+            cleanup() {
+                scene.remove(particles);
+                partGeo.dispose();
+                partMat.dispose();
+            }
+        });
+
+        if (typeof playSound === 'function') {
+            try { playSound('death_boom'); } catch (e) {}
+        }
+    }, 450);
+
+    // Layered audio
+    if (typeof playSound === 'function') {
+        try { playSound('explosion'); } catch (e) {}
+        try { playSound('damage');    } catch (e) {}
+    }
+}
+
+// =============================================================================
 // MASSIVE BORG CUBE EXPLOSION - For 100 HP BORG destruction
 // =============================================================================
 
@@ -4352,9 +4503,22 @@ if (enemy.userData.health <= 0) {
         distressBeaconSystem.onEnemyDestroyed(enemy);
     }
     
-    // Enemy destroyed - NOW create explosion and remove
-    createExplosionEffect(enemy.position, 0xff4444, 15);
-    playSound('explosion');
+    // Enemy destroyed - NOW create explosion and remove. Bosses and
+    // elite/black-hole guardians get the larger multi-stage detonation
+    // so the player feels the weight of the kill; regulars use the
+    // standard puff.
+    const _enemyUD = enemy.userData || {};
+    const _bigKill = _enemyUD.isBoss || _enemyUD.isEliteGuardian || _enemyUD.isBlackHoleGuardian;
+    if (_bigKill && typeof createBossExplosion === 'function') {
+        const _color = _enemyUD.galaxyColor || 0xff5522;
+        createBossExplosion(enemy.position, {
+            color: _color,
+            scale: _enemyUD.isBoss ? 1.8 : 1.3
+        });
+    } else {
+        createExplosionEffect(enemy.position, 0xff4444, 15);
+        playSound('explosion');
+    }
     
     // UFOs always drop missiles when destroyed
     if (enemy.userData.isUFO || enemy.userData.alwaysDropMissile) {
@@ -4960,8 +5124,19 @@ function handleMissileHit(missile, enemy) {
         // Reputation + small energy refund for the missile kill.
         if (typeof awardKillReward === 'function') awardKillReward(enemy);
 
-        createExplosionEffect(enemy.position, 0xff4444, 15);
-        playSound('explosion');
+        // Same big-kill upgrade for missile finishes.
+        const _missUD = enemy.userData || {};
+        const _missBig = _missUD.isBoss || _missUD.isEliteGuardian || _missUD.isBlackHoleGuardian;
+        if (_missBig && typeof createBossExplosion === 'function') {
+            const _color = _missUD.galaxyColor || 0xff5522;
+            createBossExplosion(enemy.position, {
+                color: _color,
+                scale: _missUD.isBoss ? 1.8 : 1.3
+            });
+        } else {
+            createExplosionEffect(enemy.position, 0xff4444, 15);
+            playSound('explosion');
+        }
 
         if (wasBoss) {
             showAchievement('BOSS DEFEATED!', `${bossName} destroyed by missile!`);
@@ -7257,7 +7432,53 @@ function createWingmanExplosion(ally) {
     // Hide the ship mesh — it's gone
     ally.visible = false;
 
-    // Large fireball
+    // Wingman deaths get a unique two-stage signature so the player
+    // notices immediately and from a distance:
+    //   1) An "implosion flash" — a small white-hot core that briefly
+    //      contracts (scales from 1.4 -> 0.4) before the main blast.
+    //   2) Eight radiating energy beams in the wingman's faction colour,
+    //      shooting out from the center as the fireball blooms.
+    // Plus the classic fireball + shockwave + drifting particles below.
+
+    // 1) Implosion flash
+    const implGeo = new THREE.SphereGeometry(80, 16, 12);
+    const implMat = new THREE.MeshBasicMaterial({
+        color: 0xffffff, transparent: true, opacity: 1.0,
+        blending: THREE.AdditiveBlending, depthWrite: false
+    });
+    const impl = new THREE.Mesh(implGeo, implMat);
+    impl.position.copy(center);
+    impl.renderOrder = 61;
+    scene.add(impl);
+
+    // 2) Eight radiating energy beams (cylinders pointing outward).
+    // Stored on a group so we can scale/fade them together.
+    const beamGroup = new THREE.Group();
+    beamGroup.position.copy(center);
+    const beams = [];
+    for (let i = 0; i < 8; i++) {
+        const beamGeo = new THREE.CylinderGeometry(2, 6, 200, 6);
+        const beamMat = new THREE.MeshBasicMaterial({
+            color: baseColor, transparent: true, opacity: 0.0,
+            blending: THREE.AdditiveBlending, depthWrite: false
+        });
+        const beam = new THREE.Mesh(beamGeo, beamMat);
+        // Move pivot to base so the beam extends outward along +Y when scaled
+        beam.position.set(0, 100, 0);
+        const pivot = new THREE.Group();
+        pivot.add(beam);
+        // Distribute around the sphere using Fibonacci-ish polar coords
+        const polar = Math.acos(1 - 2 * (i + 0.5) / 8);
+        const az    = Math.PI * (3 - Math.sqrt(5)) * i;
+        pivot.rotation.x = polar - Math.PI / 2;
+        pivot.rotation.y = az;
+        beamGroup.add(pivot);
+        beams.push({ pivot, mesh: beam, mat: beamMat });
+    }
+    beamGroup.renderOrder = 62;
+    scene.add(beamGroup);
+
+    // 3) Large fireball
     const fireballGeo = new THREE.SphereGeometry(60, 20, 16);
     const fireballMat = new THREE.MeshBasicMaterial({
         color: 0xffcc44, transparent: true, opacity: 1.0,
@@ -7268,7 +7489,7 @@ function createWingmanExplosion(ally) {
     fireball.renderOrder = 60;
     scene.add(fireball);
 
-    // Faction-colored shockwave ring
+    // 4) Faction-colored shockwave ring
     const shockGeo = new THREE.RingGeometry(20, 40, 32);
     const shockMat = new THREE.MeshBasicMaterial({
         color: baseColor, transparent: true, opacity: 0.9,
@@ -7281,8 +7502,8 @@ function createWingmanExplosion(ally) {
     shock.renderOrder = 60;
     scene.add(shock);
 
-    // Particle burst
-    const partCount = 80;
+    // 5) Particle burst (count bumped from 80 to 140)
+    const partCount = 140;
     const partGeo = new THREE.BufferGeometry();
     const positions = new Float32Array(partCount * 3);
     const velocities = [];
@@ -7303,12 +7524,34 @@ function createWingmanExplosion(ally) {
     particles.position.copy(center);
     scene.add(particles);
 
-    // Animate over 1.5s
+    // Animate over 1.8s — longer than before to give the implosion +
+    // beams + fireball + drift time to read distinctly.
     const start = Date.now();
-    const duration = 1500;
+    const duration = 1800;
     const step = () => {
         const elapsed = Date.now() - start;
         const t = Math.min(1, elapsed / duration);
+
+        // Implosion flash: scales DOWN over the first 250ms, white-hot,
+        // then disappears. Reads as the wingman's ship being yanked
+        // inward right before the burst.
+        const implPhase = Math.min(1, elapsed / 250);
+        const implScale = 1.4 - implPhase * 1.0;       // 1.4 -> 0.4
+        impl.scale.set(implScale, implScale, implScale);
+        impl.material.opacity = Math.max(0, 1 - implPhase);
+
+        // Energy beams: extend over the first 700ms (held visible),
+        // then fade. They scale along +Y, the cylinder's long axis.
+        const beamPhase = Math.min(1, elapsed / 700);
+        const beamScale = 0.2 + beamPhase * 1.6;       // grows to 1.8x length
+        for (let i = 0; i < beams.length; i++) {
+            beams[i].mesh.scale.set(1, beamScale, 1);
+            // Fade in fast, fade out after the 700ms mark.
+            const beamOp = elapsed < 700
+                ? Math.min(1, elapsed / 100)
+                : Math.max(0, 1 - (elapsed - 700) / 700);
+            beams[i].mat.opacity = beamOp;
+        }
 
         // Fireball: expand fast then fade
         const fbScale = 1 + t * 3;
@@ -7333,12 +7576,26 @@ function createWingmanExplosion(ally) {
         if (t < 1) {
             requestAnimationFrame(step);
         } else {
+            scene.remove(impl); impl.geometry.dispose(); impl.material.dispose();
+            scene.remove(beamGroup);
+            for (let i = 0; i < beams.length; i++) {
+                beams[i].mesh.geometry.dispose();
+                beams[i].mat.dispose();
+            }
             scene.remove(fireball); fireball.geometry.dispose(); fireball.material.dispose();
             scene.remove(shock); shock.geometry.dispose(); shock.material.dispose();
             scene.remove(particles); particles.geometry.dispose(); particles.material.dispose();
         }
     };
     requestAnimationFrame(step);
+
+    // Layered wingman-death audio: two booms + a damage tone (distinct
+    // from the player's death stack, but unmistakable as "we lost one").
+    if (typeof playSound === 'function') {
+        try { playSound('explosion'); } catch (e) {}
+        try { playSound('damage');    } catch (e) {}
+        setTimeout(() => { try { playSound('explosion'); } catch (e) {} }, 260);
+    }
 }
 
 // ── Update or create a shield bubble around an ally ──────────────────────

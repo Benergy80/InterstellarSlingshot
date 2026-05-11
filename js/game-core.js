@@ -1812,6 +1812,20 @@ if (planet.userData.type === 'blackhole' && planet.userData.rotationSpeed) {
         }
     });
     
+    // Periodic wormhole respawn — keep the universe well-stocked with
+    // spatial anomalies. Every ~12 seconds, if the active count has
+    // dropped below 10, spawn a fresh one. With the new 6-9 min
+    // lifetimes this keeps the player surprised by new throats
+    // appearing instead of relying solely on the initial 12.
+    if (typeof wormholes !== 'undefined' && typeof spawnEnhancedWormhole === 'function') {
+        const _now = Date.now();
+        if (!window._lastWormholeRespawn) window._lastWormholeRespawn = _now;
+        if (_now - window._lastWormholeRespawn > 12000 && wormholes.length < 10) {
+            spawnEnhancedWormhole();
+            window._lastWormholeRespawn = _now;
+        }
+    }
+
     // Enhanced wormhole updates for doubled world (performance optimized)
     if (typeof wormholes !== 'undefined') {
         wormholes.forEach((wormhole, index) => {
