@@ -128,32 +128,36 @@ const explosionManager = {
 function _ensureShipThrusterCones(ship, color) {
     if (!ship || ship.userData._thrusters) return;
     if (typeof THREE === 'undefined') return;
-    // Compute the ship's bounding box in WORLD space, then convert into
-    // LOCAL units by dividing by the ship's own scale. Cones attached
-    // as children get re-multiplied by that scale when rendered, so
-    // this gives us a stable world-space cone size regardless of how
-    // dramatically the model itself was scaled (enemies are typically
-    // scaled by ~96, wingmen by 1.0).
-    let longest_local = 1.0;
-    let shipScale = 1.0;
-    try {
-        const box = new THREE.Box3().setFromObject(ship);
-        const size = new THREE.Vector3();
-        box.getSize(size);
-        const longest_world = Math.max(size.x, size.y, size.z, 0.01);
-        shipScale = Math.max(0.001, Math.abs(ship.scale.x || 1));
-        longest_local = longest_world / shipScale;
-    } catch (e) {}
 
-    // Target world-space dimensions: cone length ~22% of the ship's
-    // longest axis, base radius ~6%. That puts the inner cone roughly
-    // 1/5 the ship's length sticking out the back — visible but not
-    // dominating. (Previous values 0.45 / 0.12 were 2x too big AND
-    // got double-scaled by parent.)
-    const coneLen_world = Math.max(8, longest_local * shipScale * 0.22);
-    const coneRad_world = Math.max(2, longest_local * shipScale * 0.06);
-    const coneLen = coneLen_world / shipScale;     // local units
-    const coneRad = coneRad_world / shipScale;
+    // The cone we attach is a CHILD of the ship, so its visible size
+    // comes from `local_cone_size × ship.world_scale`. Different
+    // factions use different model scales (Pirates/Vulcans/etc. at
+    // ~96, Sith at ~24, wingmen at 1, bosses at ~144), so we read the
+    // ship's actual world scale and pick a local cone size that lands
+    // on a consistent visual proportion.
+    const worldScale = new THREE.Vector3();
+    try { ship.getWorldScale(worldScale); } catch (e) { worldScale.set(1,1,1); }
+    const sScale = Math.max(0.001, Math.abs(worldScale.x || 1));
+
+    // Per-faction visual "ship length" hint — keeps the cone the same
+    // relative size on every ship in the game without depending on a
+    // GLB bounding box (which can lie when the model hasn't fully
+    // hydrated). Numbers are tuned so the final on-screen cone is the
+    // same fraction of each ship regardless of model scale.
+    //   GLB enemy at scale 96   -> ship ~1 unit in its local frame
+    //   GLB enemy at scale 144  -> bosses, larger silhouette
+    //   wingmen at scale 1      -> ship ~12-20 units local
+    let shipLengthLocal = 1.0;
+    if (sScale >= 80)        shipLengthLocal = 1.0;   // regular GLB enemy (~96 world units)
+    else if (sScale >= 20)   shipLengthLocal = 4.0;   // Sith / smaller-scaled GLB
+    else if (sScale >= 5)    shipLengthLocal = 18.0;  // legacy mid-scale meshes
+    else                     shipLengthLocal = 16.0;  // wingmen (scale 1)
+
+    // Cone target: 10% of the ship's length, base radius 3%. Lots
+    // smaller than the earlier 22% / 6% — even with many ships nearby
+    // the additive cones now read as engine flame, not a wall of fire.
+    const coneLen = shipLengthLocal * 0.10;
+    const coneRad = shipLengthLocal * 0.030;
 
     const innerCol = color || 0xffaa00;
     const outerCol = (color === 0x00ff88) ? 0x00aa55
@@ -161,14 +165,14 @@ function _ensureShipThrusterCones(ship, color) {
                   : 0xff5500;
 
     function _makeCone(rad, len, col, zOff) {
-        const geo = new THREE.ConeGeometry(rad, len, 12);
+        const geo = new THREE.ConeGeometry(rad, len, 10);
         const mat = new THREE.MeshBasicMaterial({
             color: col, transparent: true, opacity: 0,
             blending: THREE.AdditiveBlending, depthWrite: false
         });
         const cone = new THREE.Mesh(geo, mat);
-        // Cone's default axis is +Y. Rotate so the apex points along +Z
-        // (out the rear of a ship whose forward direction is -Z).
+        // Cone's default apex is +Y. Rotate so apex points along +Z,
+        // i.e. out the rear of a ship whose forward direction is -Z.
         cone.rotation.x = Math.PI / 2;
         cone.position.set(0, 0, zOff);
         cone.frustumCulled = false;
@@ -176,17 +180,17 @@ function _ensureShipThrusterCones(ship, color) {
         return { mesh: cone, mat: mat, geo: geo };
     }
 
-    // Two side-by-side engine plumes — inner brighter, outer dimmer.
-    // back offset puts the cone bases at the rear of the ship volume.
-    const back = (longest_local * 0.45) + coneLen * 0.5;
+    // Two side-by-side engine plumes. back offset puts the cone bases
+    // just past the rear of the ship volume in local units.
+    const back = shipLengthLocal * 0.50 + coneLen * 0.5;
     const cones = [];
-    const sideOff = coneRad * 1.1;
+    const sideOff = coneRad * 1.2;
     [-sideOff, sideOff].forEach(xOff => {
-        const inner = _makeCone(coneRad * 0.5, coneLen, innerCol, back);
+        const inner = _makeCone(coneRad * 0.55, coneLen,        innerCol, back);
         inner.mesh.position.x = xOff;
         ship.add(inner.mesh);
         cones.push(inner);
-        const outer = _makeCone(coneRad * 0.85, coneLen * 1.35, outerCol, back + coneLen * 0.18);
+        const outer = _makeCone(coneRad * 0.85, coneLen * 1.3,  outerCol, back + coneLen * 0.15);
         outer.mesh.position.x = xOff;
         ship.add(outer.mesh);
         cones.push(outer);
@@ -206,15 +210,17 @@ function _updateShipThrusterCones(ship, thrusting) {
     const cones = ship.userData._thrusters;
     for (let i = 0; i < cones.length; i++) {
         const c = cones[i];
-        // Caps lowered: inner 0.55, outer 0.25. Additive blending stacks
-        // aggressively when multiple ships are on-screen, so keeping
-        // each cone subtle prevents white-out.
-        const base = (i % 2 === 0) ? 0.55 : 0.25;
+        // Very subtle caps — inner 0.35, outer 0.15. With multiple
+        // ships clustered in formation (and additive blending),
+        // anything brighter than this stacks into a screen-wide
+        // orange wash. These look like real engine plumes on each
+        // ship without overpowering the scene.
+        const base = (i % 2 === 0) ? 0.35 : 0.15;
         c.mat.opacity = next * base * flicker;
-        // Scale stays compact — no big bloom on full thrust.
-        const sX = 0.85 + next * 0.20;
-        const sY = 0.7  + next * 0.55;
-        const sZ = 0.85 + next * 0.20;
+        // Almost no bloom — keep cones a tight engine flame.
+        const sX = 0.9 + next * 0.15;
+        const sY = 0.8 + next * 0.35;
+        const sZ = 0.9 + next * 0.15;
         c.mesh.scale.set(sX, sY, sZ);
     }
 }
