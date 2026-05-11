@@ -4573,22 +4573,54 @@ const areaClearTracker = {
     checkAreaCleared: function(galaxyId, areaType) {
         const areaKey = `${galaxyId}-${areaType}`;
         if (this.clearedAreas.has(areaKey)) return false;
-        
+
         // Count remaining enemies in this area
         let remainingEnemies = 0;
         if (typeof enemies !== 'undefined') {
-            remainingEnemies = enemies.filter(e => 
-                e && e.userData && 
+            remainingEnemies = enemies.filter(e =>
+                e && e.userData &&
                 e.userData.galaxyId === galaxyId &&
                 (areaType === 'all' || e.userData.placementType === areaType)
             ).length;
         }
-        
-        if (remainingEnemies === 0) {
-            this.clearedAreas.add(areaKey);
-            return true;
+
+        if (remainingEnemies !== 0) return false;
+
+        // Regulars are dead — but the area-clear announcement was firing
+        // before the boss for this mission ever spawned (the discovery-
+        // path system waits up to ~30s before spawning the boss). Hold
+        // the notification until any boss attached to this area / galaxy
+        // is also down. Three conditions block "cleared":
+        //   (a) An areaBosses entry for this exact areaKey is alive.
+        //   (b) Any mission-spawned boss for this galaxy is alive
+        //       (areaKey form "galaxyId-mission_N").
+        //   (c) A discovery-path mission for this galaxy is still
+        //       outstanding (missionComplete === false) — the boss is
+        //       pending and hasn't been added to enemies yet.
+        if (typeof bossSystem !== 'undefined' && bossSystem.areaBosses) {
+            for (const key in bossSystem.areaBosses) {
+                if (!key.startsWith(galaxyId + '-')) continue;
+                const boss = bossSystem.areaBosses[key];
+                if (boss && boss.userData && boss.userData.health > 0) {
+                    return false;
+                }
+            }
         }
-        return false;
+        if (typeof window !== 'undefined' && Array.isArray(window.discoveryPaths)) {
+            for (let i = 0; i < window.discoveryPaths.length; i++) {
+                const p = window.discoveryPaths[i];
+                if (!p) continue;
+                const pid = (p.galaxyId !== undefined)
+                    ? p.galaxyId
+                    : (p.line && p.line.userData && p.line.userData.galaxyId);
+                if (pid !== galaxyId) continue;
+                const done = p.line && p.line.userData && p.line.userData.missionComplete;
+                if (!done) return false; // boss hasn't been spawned yet
+            }
+        }
+
+        this.clearedAreas.add(areaKey);
+        return true;
     },
     
     // Notify Mission Command of cleared area
