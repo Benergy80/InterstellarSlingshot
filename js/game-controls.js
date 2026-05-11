@@ -128,33 +128,47 @@ const explosionManager = {
 function _ensureShipThrusterCones(ship, color) {
     if (!ship || ship.userData._thrusters) return;
     if (typeof THREE === 'undefined') return;
-    // Pick cone size based on the ship's bounding box so it scales for
-    // big bosses and small fighters alike.
-    let coneLen = 18, coneRad = 6;
+    // Compute the ship's bounding box in WORLD space, then convert into
+    // LOCAL units by dividing by the ship's own scale. Cones attached
+    // as children get re-multiplied by that scale when rendered, so
+    // this gives us a stable world-space cone size regardless of how
+    // dramatically the model itself was scaled (enemies are typically
+    // scaled by ~96, wingmen by 1.0).
+    let longest_local = 1.0;
+    let shipScale = 1.0;
     try {
         const box = new THREE.Box3().setFromObject(ship);
         const size = new THREE.Vector3();
         box.getSize(size);
-        const longest = Math.max(size.x, size.y, size.z);
-        coneLen = Math.max(12, longest * 0.45);
-        coneRad = Math.max(4, longest * 0.12);
+        const longest_world = Math.max(size.x, size.y, size.z, 0.01);
+        shipScale = Math.max(0.001, Math.abs(ship.scale.x || 1));
+        longest_local = longest_world / shipScale;
     } catch (e) {}
+
+    // Target world-space dimensions: cone length ~22% of the ship's
+    // longest axis, base radius ~6%. That puts the inner cone roughly
+    // 1/5 the ship's length sticking out the back — visible but not
+    // dominating. (Previous values 0.45 / 0.12 were 2x too big AND
+    // got double-scaled by parent.)
+    const coneLen_world = Math.max(8, longest_local * shipScale * 0.22);
+    const coneRad_world = Math.max(2, longest_local * shipScale * 0.06);
+    const coneLen = coneLen_world / shipScale;     // local units
+    const coneRad = coneRad_world / shipScale;
 
     const innerCol = color || 0xffaa00;
     const outerCol = (color === 0x00ff88) ? 0x00aa55
                   : (color === 0x88aaff) ? 0x4466cc
                   : 0xff5500;
 
-    function _makeCone(rad, len, col, op, zOff) {
+    function _makeCone(rad, len, col, zOff) {
         const geo = new THREE.ConeGeometry(rad, len, 12);
         const mat = new THREE.MeshBasicMaterial({
-            color: col, transparent: true, opacity: op,
+            color: col, transparent: true, opacity: 0,
             blending: THREE.AdditiveBlending, depthWrite: false
         });
         const cone = new THREE.Mesh(geo, mat);
-        // Cone defaults to +Y up. We want it pointing -Z (out the back),
-        // so rotate around X so the apex faces -Z. Then offset so the
-        // cone base sits at the rear of the ship.
+        // Cone's default axis is +Y. Rotate so the apex points along +Z
+        // (out the rear of a ship whose forward direction is -Z).
         cone.rotation.x = Math.PI / 2;
         cone.position.set(0, 0, zOff);
         cone.frustumCulled = false;
@@ -162,23 +176,18 @@ function _ensureShipThrusterCones(ship, color) {
         return { mesh: cone, mat: mat, geo: geo };
     }
 
-    // Two cones — inner brighter, outer deeper colour — flank centre.
-    // Z offset is positive because the ship's "forward" in three.js
-    // world space typically points along -Z but the cone is attached
-    // to the ship's local frame; positive Z puts it behind the ship.
-    const back = coneLen * 0.55;
+    // Two side-by-side engine plumes — inner brighter, outer dimmer.
+    // back offset puts the cone bases at the rear of the ship volume.
+    const back = (longest_local * 0.45) + coneLen * 0.5;
     const cones = [];
-    const offsets = [
-        new THREE.Vector3(-coneRad * 0.55, 0, back),
-        new THREE.Vector3( coneRad * 0.55, 0, back)
-    ];
-    offsets.forEach(off => {
-        const inner = _makeCone(coneRad * 0.55, coneLen, innerCol, 0, off.z);
-        inner.mesh.position.x = off.x;
+    const sideOff = coneRad * 1.1;
+    [-sideOff, sideOff].forEach(xOff => {
+        const inner = _makeCone(coneRad * 0.5, coneLen, innerCol, back);
+        inner.mesh.position.x = xOff;
         ship.add(inner.mesh);
         cones.push(inner);
-        const outer = _makeCone(coneRad * 0.9, coneLen * 1.4, outerCol, 0, off.z + coneLen * 0.18);
-        outer.mesh.position.x = off.x;
+        const outer = _makeCone(coneRad * 0.85, coneLen * 1.35, outerCol, back + coneLen * 0.18);
+        outer.mesh.position.x = xOff;
         ship.add(outer.mesh);
         cones.push(outer);
     });
@@ -197,11 +206,15 @@ function _updateShipThrusterCones(ship, thrusting) {
     const cones = ship.userData._thrusters;
     for (let i = 0; i < cones.length; i++) {
         const c = cones[i];
-        const base = (i % 2 === 0) ? 0.85 : 0.45;
+        // Caps lowered: inner 0.55, outer 0.25. Additive blending stacks
+        // aggressively when multiple ships are on-screen, so keeping
+        // each cone subtle prevents white-out.
+        const base = (i % 2 === 0) ? 0.55 : 0.25;
         c.mat.opacity = next * base * flicker;
-        const sX = 0.7 + next * 0.6;
-        const sY = 0.5 + next * 1.1;
-        const sZ = 0.7 + next * 0.6;
+        // Scale stays compact — no big bloom on full thrust.
+        const sX = 0.85 + next * 0.20;
+        const sY = 0.7  + next * 0.55;
+        const sZ = 0.85 + next * 0.20;
         c.mesh.scale.set(sX, sY, sZ);
     }
 }
