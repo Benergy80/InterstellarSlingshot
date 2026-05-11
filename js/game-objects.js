@@ -8787,6 +8787,20 @@ function createEnemies3D() {
                 // Vulcan Patrols use Enemy8.glb (different from Martian Pirates' Enemy1)
                 enemy = createEnemyMeshWithModel(8, enemyGeometry, materials.enemyMaterial);
                 isGLBModel = enemy.isGroup || (enemy.children && enemy.children.length > 0 && enemy.children[0].isMesh);
+                // Enemy8.glb was authored with its nose pointing +Z, but
+                // the game's lookAt math orients the ROOT so its local
+                // -Z faces the target. Setting root.rotation.y here
+                // wouldn't survive because lookAt overwrites the whole
+                // quaternion. Instead, flip every existing GLB child
+                // 180° on Y — those local rotations are preserved when
+                // the root quaternion changes, so the visible mesh
+                // ends up nose-forward.
+                if (enemy && enemy.children) {
+                    for (let _ci = 0; _ci < enemy.children.length; _ci++) {
+                        const _gc = enemy.children[_ci];
+                        if (_gc && _gc.rotateY) _gc.rotateY(Math.PI);
+                    }
+                }
             } else {
                 enemy = new THREE.Mesh(enemyGeometry, materials.enemyMaterial);
             }

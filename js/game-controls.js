@@ -129,35 +129,43 @@ function _ensureShipThrusterCones(ship, color) {
     if (!ship || ship.userData._thrusters) return;
     if (typeof THREE === 'undefined') return;
 
-    // The cone we attach is a CHILD of the ship, so its visible size
-    // comes from `local_cone_size × ship.world_scale`. Different
-    // factions use different model scales (Pirates/Vulcans/etc. at
-    // ~96, Sith at ~24, wingmen at 1, bosses at ~144), so we read the
-    // ship's actual world scale and pick a local cone size that lands
-    // on a consistent visual proportion.
-    const worldScale = new THREE.Vector3();
-    try { ship.getWorldScale(worldScale); } catch (e) { worldScale.set(1,1,1); }
-    const sScale = Math.max(0.001, Math.abs(worldScale.x || 1));
+    // Read the ship's *actual* extent via its bounding box, then
+    // convert that into the ship's LOCAL coordinate frame by dividing
+    // out its world scale. A cone attached as a child of the ship is
+    // rendered at `local_size × ship.world_scale`, so by working in
+    // local-frame units we get a stable visible size regardless of how
+    // each faction's model was scaled (regular GLB at 96, Sith at 24,
+    // bosses at 144, wingmen at 1).
+    let localLen = 1.0;   // ship's longest axis in local coords
+    let localBack = 0.5;  // local Z of the ship's rearmost point
+    try {
+        const box = new THREE.Box3().setFromObject(ship);
+        if (isFinite(box.min.x) && isFinite(box.max.x)) {
+            const worldScale = new THREE.Vector3();
+            ship.getWorldScale(worldScale);
+            const sx = Math.max(0.001, Math.abs(worldScale.x || 1));
+            const sz = Math.max(0.001, Math.abs(worldScale.z || 1));
+            const worldSize = new THREE.Vector3();
+            box.getSize(worldSize);
+            localLen = Math.max(worldSize.x, worldSize.y, worldSize.z) / sx;
+            // The ship's rearmost point in local Z. Convert world max.z
+            // (relative to ship.position) into local units. ship.position
+            // is the center, so back = (worldMaxZ - shipZ) / scaleZ.
+            // We approximate by assuming the local box is centered:
+            //   localBack = worldSize.z / (2 * sz)
+            // which is the half-length on Z. That's close enough for
+            // attaching cones to the back of the model.
+            localBack = worldSize.z / (2 * sz);
+        }
+    } catch (e) {}
 
-    // Per-faction visual "ship length" hint — keeps the cone the same
-    // relative size on every ship in the game without depending on a
-    // GLB bounding box (which can lie when the model hasn't fully
-    // hydrated). Numbers are tuned so the final on-screen cone is the
-    // same fraction of each ship regardless of model scale.
-    //   GLB enemy at scale 96   -> ship ~1 unit in its local frame
-    //   GLB enemy at scale 144  -> bosses, larger silhouette
-    //   wingmen at scale 1      -> ship ~12-20 units local
-    let shipLengthLocal = 1.0;
-    if (sScale >= 80)        shipLengthLocal = 1.0;   // regular GLB enemy (~96 world units)
-    else if (sScale >= 20)   shipLengthLocal = 4.0;   // Sith / smaller-scaled GLB
-    else if (sScale >= 5)    shipLengthLocal = 18.0;  // legacy mid-scale meshes
-    else                     shipLengthLocal = 16.0;  // wingmen (scale 1)
-
-    // Cone target: 10% of the ship's length, base radius 3%. Lots
-    // smaller than the earlier 22% / 6% — even with many ships nearby
-    // the additive cones now read as engine flame, not a wall of fire.
-    const coneLen = shipLengthLocal * 0.10;
-    const coneRad = shipLengthLocal * 0.030;
+    // Cone target dimensions in LOCAL units. Length = 12% of the
+    // ship's longest axis, radius = 3%. With the cone base anchored
+    // INSIDE the ship at the back edge, the visible plume sticks out
+    // by about coneLen/2 — looks like a proper engine exhaust glued
+    // to the rear of the model.
+    const coneLen = localLen * 0.12;
+    const coneRad = localLen * 0.030;
 
     const innerCol = color || 0xffaa00;
     const outerCol = (color === 0x00ff88) ? 0x00aa55
@@ -171,8 +179,17 @@ function _ensureShipThrusterCones(ship, color) {
             blending: THREE.AdditiveBlending, depthWrite: false
         });
         const cone = new THREE.Mesh(geo, mat);
-        // Cone's default apex is +Y. Rotate so apex points along +Z,
-        // i.e. out the rear of a ship whose forward direction is -Z.
+        // Cone's default apex is +Y. Rotate -π/2 around X so the apex
+        // points along +Z (behind a ship whose forward direction is
+        // local -Z). Note: +Math.PI/2 would flip the cone's apex to
+        // -Z, which would point the tip AHEAD of the ship — that was
+        // the previous bug. -Math.PI/2 gives apex in +Z, base in -Z.
+        // Wait — actually rotation.x = +π/2 maps +Y -> +Z and -Y -> -Z,
+        // so the cone's apex (originally at +Y/2) lands at +Z (behind
+        // the ship), which is what we want. The base ends up at -Z
+        // (inside the ship). We then push the cone forward by coneLen/2
+        // so the BASE sits at the ship's back edge and the apex sticks
+        // out behind it.
         cone.rotation.x = Math.PI / 2;
         cone.position.set(0, 0, zOff);
         cone.frustumCulled = false;
@@ -180,17 +197,20 @@ function _ensureShipThrusterCones(ship, color) {
         return { mesh: cone, mat: mat, geo: geo };
     }
 
-    // Two side-by-side engine plumes. back offset puts the cone bases
-    // just past the rear of the ship volume in local units.
-    const back = shipLengthLocal * 0.50 + coneLen * 0.5;
+    // Anchor the cone BASE at the ship's actual rear edge, then push
+    // the center forward by half the cone length so the apex protrudes
+    // behind the ship. This keeps the cone visually glued to the
+    // model regardless of how compact (or sprawling) the GLB mesh is.
+    const innerZ = localBack + coneLen * 0.5;
+    const outerZ = innerZ + coneLen * 0.10; // outer plume slightly behind inner
     const cones = [];
     const sideOff = coneRad * 1.2;
     [-sideOff, sideOff].forEach(xOff => {
-        const inner = _makeCone(coneRad * 0.55, coneLen,        innerCol, back);
+        const inner = _makeCone(coneRad * 0.55, coneLen,         innerCol, innerZ);
         inner.mesh.position.x = xOff;
         ship.add(inner.mesh);
         cones.push(inner);
-        const outer = _makeCone(coneRad * 0.85, coneLen * 1.3,  outerCol, back + coneLen * 0.15);
+        const outer = _makeCone(coneRad * 0.85, coneLen * 1.30,  outerCol, outerZ);
         outer.mesh.position.x = xOff;
         ship.add(outer.mesh);
         cones.push(outer);
