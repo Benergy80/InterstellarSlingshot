@@ -814,13 +814,22 @@ function triggerPlayerDeath(title, message, delayMs) {
         createPlayerExplosion();
     }
 
-    // Audio: layered booms so the death feels weighty rather than a single beep
+    // Audio: full death-sequence stack. A deep sub-bass rumble anchors
+    // the moment while four layered booms hit on top, then a final
+    // long boom + rumble closes it out. About 2.5s of escalating
+    // intensity — meant to read as a finishing blow / "game over"
+    // beat, not a generic enemy explosion.
     if (typeof playSound === 'function') {
+        try { playSound('death_rumble'); } catch (e) {}
+        try { playSound('death_boom'); } catch (e) {}
         try { playSound('explosion'); } catch (e) {}
         try { playSound('damage'); } catch (e) {}
-        setTimeout(() => { try { playSound('explosion'); } catch (e) {} }, 180);
-        setTimeout(() => { try { playSound('explosion'); } catch (e) {} }, 420);
-        setTimeout(() => { try { playSound('damage'); } catch (e) {} }, 650);
+        setTimeout(() => { try { playSound('explosion'); } catch (e) {} }, 160);
+        setTimeout(() => { try { playSound('explosion'); } catch (e) {} }, 360);
+        setTimeout(() => { try { playSound('death_boom'); } catch (e) {} }, 600);
+        setTimeout(() => { try { playSound('damage'); } catch (e) {} }, 820);
+        setTimeout(() => { try { playSound('explosion'); } catch (e) {} }, 1100);
+        setTimeout(() => { try { playSound('death_rumble'); } catch (e) {} }, 1300);
     }
 
     // Give the explosion time to play out before the mission-failed

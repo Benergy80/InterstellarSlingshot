@@ -284,6 +284,25 @@ function updateCameraView(camera) {
         return; // No ship model loaded yet
     }
 
+    // Hide the ship the moment the death sequence begins, and KEEP it
+    // hidden — triggerPlayerDeath flips this flag, but without a gate
+    // here updateCameraView (which runs every frame) would just turn
+    // the ship's mesh visible again on the very next tick and the
+    // player would see the intact model floating inside their own
+    // explosion. Same goes for the cached child meshes.
+    if (typeof gameState !== 'undefined' && gameState.playerDying) {
+        cameraState.playerShipMesh.visible = false;
+        if (cameraState._cachedChildMeshes) {
+            const cached = cameraState._cachedChildMeshes;
+            for (let i = 0; i < cached.length; i++) cached[i].visible = false;
+        } else {
+            cameraState.playerShipMesh.traverse((child) => {
+                if (child.isMesh) child.visible = false;
+            });
+        }
+        return;
+    }
+
     // CRITICAL: Hide ship during intro sequence
     if (typeof introSequence !== 'undefined' && introSequence.active) {
         if (window.updateCameraViewCallCount % 120 === 0) {

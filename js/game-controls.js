@@ -485,23 +485,27 @@ function updateEngagementBehavior(enemy, playerPos, speed, time) {
     }
 
     try {
-        // Maintain optimal attack distance
+        // Maintain optimal attack distance. Per-frame position deltas
+        // here used to be tiny (raw speed, no inertia, no multiplier) so
+        // precision-style factions (Vulcans) appeared to crawl. Bumped
+        // approach/back-off/orbit speeds 3-4x so they actually keep up
+        // with the player while holding the engagement bracket.
         const optimalDistance = 100;
         const currentDistance = enemy.position.distanceTo(playerPos);
 
         if (currentDistance > optimalDistance + 20) {
             _ebV1.subVectors(playerPos, enemy.position).normalize();
-            enemy.position.add(_ebV1.multiplyScalar(speed));
-            applyEnemyRotation(enemy, _ebV1, speed);
+            enemy.position.add(_ebV1.multiplyScalar(speed * 4.0));
+            applyEnemyRotation(enemy, _ebV1, speed * 4.0);
         } else if (currentDistance < optimalDistance - 20) {
             _ebV1.subVectors(enemy.position, playerPos).normalize();
-            enemy.position.add(_ebV1.multiplyScalar(speed * 0.5));
-            applyEnemyRotation(enemy, _ebV1, speed * 0.5);
+            enemy.position.add(_ebV1.multiplyScalar(speed * 2.0));
+            applyEnemyRotation(enemy, _ebV1, speed * 2.0);
         } else {
             const angle = time * 0.5;
             _ebV1.set(Math.cos(angle) * 10, 0, Math.sin(angle) * 10);
-            enemy.position.add(_ebV1.multiplyScalar(speed * 0.3));
-            applyEnemyRotation(enemy, _ebV1, speed * 0.3);
+            enemy.position.add(_ebV1.multiplyScalar(speed * 1.2));
+            applyEnemyRotation(enemy, _ebV1, speed * 1.2);
         }
     } catch (e) {
         // Ignore movement errors
@@ -1033,12 +1037,16 @@ const factionBehaviors = {
     7: {
         name: 'Vulcan',
         style: 'precision',
-        primaryBehavior: 'engage',      // Optimal positioning
-        secondaryBehavior: 'evade',     // Logical retreat when needed
-        aggressionMultiplier: 0.85,     // Controlled aggression
-        preferredRange: 160,            // Precise range
-        behaviorChangeChance: 0.008,    // Adaptive logic — raised so swarm/evade fire visibly
-        speedBonus: 1.0
+        // Vulcans used to default to 'engage' which only applies tiny
+        // per-frame position deltas — they crept while pirates ripped.
+        // Switched to 'pursue' for primary (velocity-based, fast) and
+        // kept 'engage' as the secondary tactical-hold mode.
+        primaryBehavior: 'pursue',
+        secondaryBehavior: 'engage',
+        aggressionMultiplier: 1.0,      // bumped from 0.85
+        preferredRange: 200,            // a bit wider so engage doesn't lock them in place
+        behaviorChangeChance: 0.008,
+        speedBonus: 1.1                 // a touch faster than baseline
     }
 };
 
@@ -2428,6 +2436,27 @@ function playSound(type, frequency = 440, duration = 0.2) {
             gain.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.4);
             oscillator.type = 'sawtooth';
             duration = 0.4;
+            break;
+        case 'death_boom':
+            // Deep, sustained game-over rumble. Longer envelope and
+            // lower frequency floor than 'explosion' so the layered
+            // death sequence reads as a finishing blow rather than a
+            // generic hit.
+            oscillator.frequency.setValueAtTime(120, audioContext.currentTime);
+            oscillator.frequency.exponentialRampToValueAtTime(28, audioContext.currentTime + 1.5);
+            gain.gain.setValueAtTime(0.7, audioContext.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 1.6);
+            oscillator.type = 'sawtooth';
+            duration = 1.6;
+            break;
+        case 'death_rumble':
+            // Sub-bass tail that sits under the booms for body.
+            oscillator.frequency.setValueAtTime(48, audioContext.currentTime);
+            oscillator.frequency.exponentialRampToValueAtTime(22, audioContext.currentTime + 2.2);
+            gain.gain.setValueAtTime(0.55, audioContext.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 2.2);
+            oscillator.type = 'sine';
+            duration = 2.2;
             break;
         case 'damage':
             oscillator.frequency.setValueAtTime(200, audioContext.currentTime);
