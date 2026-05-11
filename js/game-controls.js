@@ -3233,17 +3233,17 @@ function createFireworkCelebrationWithSound() {
 // NOW TRACKS WITH SHIP for player lasers (1st person / cockpit view)
 function createLaserBeam(startPos, endPos, color = '#00ff96', isPlayer = true) {
     if (typeof THREE === 'undefined' || typeof scene === 'undefined') return;
-    
+
     try {
         const direction = new THREE.Vector3().subVectors(endPos, startPos);
         const length = direction.length();
 
         // Enemy lasers get the same thick/bright treatment as wingman lasers
         // for visibility. Player lasers stay slim so they don't block the view.
-        const coreRadius = isPlayer ? 0.2 : 0.7;
-        const glowRadius = isPlayer ? 0.4 : 2.0;
+        const coreRadius = isPlayer ? 0.2 : 0.9;
+        const glowRadius = isPlayer ? 0.4 : 2.6;
         const coreOpacity = isPlayer ? 0.8 : 1.0;
-        const glowOpacity = isPlayer ? 0.3 : 0.45;
+        const glowOpacity = isPlayer ? 0.3 : 0.55;
 
         const laserGeometry = new THREE.CylinderGeometry(coreRadius, coreRadius, length, 8);
         const laserMaterial = new THREE.MeshBasicMaterial({
@@ -3253,6 +3253,14 @@ function createLaserBeam(startPos, endPos, color = '#00ff96', isPlayer = true) {
         });
 
         const laserBeam = new THREE.Mesh(laserGeometry, laserMaterial);
+        // Render enemy lasers in front of background nebulae / asteroid
+        // belts / CMB starfields so beams from BH-galaxy hostiles aren't
+        // hidden behind whatever cosmic feature happens to lie along the
+        // line of sight. Player lasers render normally.
+        if (!isPlayer) {
+            laserBeam.renderOrder = 70;
+            laserBeam.frustumCulled = false;
+        }
 
         // Better positioning and orientation (RESTORED)
         laserBeam.position.copy(startPos);
@@ -3322,12 +3330,22 @@ function createLaserBeam(startPos, endPos, color = '#00ff96', isPlayer = true) {
             activeEnemyLasers.push(enemyLaserData);
         }
 
-        // 50 ms fade: 0.8 opacity / 0.4 per 25 ms interval = 2 ticks = 50 ms.
-        let opacity = 0.8;
+        // Fade. Player lasers vanish in 50 ms (just a muzzle flash —
+        // they don't need to hang around, the player just fired them).
+        // Enemy lasers persist ~300 ms so the player can SEE incoming
+        // fire from distant black-hole-galaxy hostiles — previously
+        // they used the same 50 ms fade and were imperceptible at the
+        // hundreds-to-thousands-of-units ranges typical of BH combat.
+        const startOpacity = isPlayer ? 0.8 : 1.0;
+        const opacityStep   = isPlayer ? 0.4 : 0.08;   // 0.08 / tick * 12 ticks = ~300 ms
+        const fadeIntervalMs = 25;
+        let opacity = startOpacity;
+        laserMaterial.opacity = opacity;
+        glowMaterial.opacity = (isPlayer ? opacity * 0.4 : opacity * 0.55);
         const fadeInterval = setInterval(() => {
-            opacity -= 0.4;
-            laserMaterial.opacity = opacity;
-            glowMaterial.opacity = opacity * 0.4;
+            opacity -= opacityStep;
+            laserMaterial.opacity = Math.max(0, opacity);
+            glowMaterial.opacity = Math.max(0, opacity) * (isPlayer ? 0.4 : 0.55);
 
             if (laserData)      laserData.opacity = opacity;
             if (enemyLaserData) enemyLaserData.opacity = opacity;
@@ -3350,7 +3368,7 @@ function createLaserBeam(startPos, endPos, color = '#00ff96', isPlayer = true) {
                 glowGeometry.dispose();
                 glowMaterial.dispose();
             }
-        }, 25);  // Fast interval
+        }, fadeIntervalMs);
         
     } catch (error) {
         console.warn('Failed to create laser beam:', error);
