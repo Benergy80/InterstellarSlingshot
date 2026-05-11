@@ -669,12 +669,107 @@ nearbyEnemies.forEach(enemy => {
 // =============================================================================
 
 // ENHANCED: Enemy Behavior System with Progressive Difficulty and Tutorial Safety
+// Per-target attacker cap. Up to 3 enemies may engage the player at a
+// time, and up to 3 may engage each living wingman. Beyond that, the
+// extras fall back to whichever target is closest — they still chase,
+// they just don't push the per-target count above 3 if room exists
+// elsewhere. Called once per frame from updateEnemyBehavior.
+const _ENEMY_ATTACKERS_PER_TARGET = 3;
+
+// Resolve a stored engagedTarget tag into a concrete position-bearing
+// object. Player is stored as the string 'player' so the assignment is
+// stable across frames (camera position is a single Vector3 that
+// updates in place, not a reusable wrapper).
+function _resolveEngagedTarget(tag) {
+    if (!tag) return null;
+    if (tag === 'player') {
+        return (typeof camera !== 'undefined') ? camera : null;
+    }
+    // Wingman object — must still be alive
+    if (tag.userData && tag.userData.health > 0) return tag;
+    return null;
+}
+
+function _assignEngagementTargets() {
+    if (typeof enemies === 'undefined') return;
+    // Build target list: player first, then living wingmen.
+    const targets = ['player'];
+    if (typeof allyShips !== 'undefined') {
+        for (let i = 0; i < allyShips.length; i++) {
+            const w = allyShips[i];
+            if (!w || !w.userData || w.userData.health <= 0) continue;
+            targets.push(w);
+        }
+    }
+    const counts = new Map();
+    for (let i = 0; i < targets.length; i++) counts.set(targets[i], 0);
+
+    // First pass: validate existing assignments and tally them.
+    for (let i = 0; i < enemies.length; i++) {
+        const e = enemies[i];
+        if (!e || !e.userData || e.userData.health <= 0) continue;
+        const tag = e.userData.engagedTarget;
+        if (tag && counts.has(tag) && _resolveEngagedTarget(tag)) {
+            const c = counts.get(tag);
+            if (c < _ENEMY_ATTACKERS_PER_TARGET) {
+                counts.set(tag, c + 1);
+                continue; // keep this assignment
+            }
+        }
+        // Existing target invalid / capped / gone — clear it.
+        e.userData.engagedTarget = null;
+    }
+
+    // Second pass: any active enemy without a target picks the closest
+    // under-capped target. If everyone's capped, fall back to closest.
+    for (let i = 0; i < enemies.length; i++) {
+        const e = enemies[i];
+        if (!e || !e.userData || e.userData.health <= 0) continue;
+        if (!e.userData.isActive) continue;
+        if (e.userData.engagedTarget) continue;
+        let best = null, bestDist = Infinity;
+        for (let j = 0; j < targets.length; j++) {
+            const t = targets[j];
+            if ((counts.get(t) || 0) >= _ENEMY_ATTACKERS_PER_TARGET) continue;
+            const tObj = _resolveEngagedTarget(t);
+            if (!tObj || !tObj.position) continue;
+            const d = e.position.distanceTo(tObj.position);
+            if (d < bestDist) { bestDist = d; best = t; }
+        }
+        if (!best) {
+            // All capped — fall back to absolute closest target.
+            for (let j = 0; j < targets.length; j++) {
+                const t = targets[j];
+                const tObj = _resolveEngagedTarget(t);
+                if (!tObj || !tObj.position) continue;
+                const d = e.position.distanceTo(tObj.position);
+                if (d < bestDist) { bestDist = d; best = t; }
+            }
+        }
+        if (best) {
+            e.userData.engagedTarget = best;
+            counts.set(best, (counts.get(best) || 0) + 1);
+        }
+    }
+}
+
+// Resolve an enemy's current engagement target position. Falls back to
+// the player when no assignment exists (e.g. enemy not yet active).
+function _engagedTargetPos(enemy) {
+    if (!enemy || !enemy.userData) {
+        return (typeof camera !== 'undefined') ? camera.position : null;
+    }
+    const obj = _resolveEngagedTarget(enemy.userData.engagedTarget);
+    if (obj && obj.position) return obj.position;
+    return (typeof camera !== 'undefined') ? camera.position : null;
+}
+
 function updateEnemyBehavior() {
     // Safety checks
     if (typeof enemies === 'undefined' || typeof gameState === 'undefined' || typeof camera === 'undefined') {
         return;
     }
-    
+
     if (gamePaused || !gameState.gameStarted || gameState.gameOver) {
         return;
     }
@@ -725,7 +820,11 @@ function updateEnemyBehavior() {
     // PROGRESSIVE DIFFICULTY: Calculate based on galaxies cleared
     const galaxiesCleared = gameState.galaxiesCleared || 0;
     const difficultySettings = calculateDifficultySettings(galaxiesCleared);
-    
+
+    // Up-to-3-attackers-per-target assignment runs once before per-enemy
+    // behavior so each enemy can read enemy.userData.engagedTarget below.
+    _assignEngagementTargets();
+
     let nearbyEnemyCount = 0;
     let inCombatRange = false;
     let activeAttackers = 0;
@@ -979,19 +1078,16 @@ function updateLocalEnemyBehavior(enemy, distanceToPlayer, adjustedSpeed, diffic
     const faction = getFactionBehavior(enemy);
     const factionSpeed = adjustedSpeed * faction.speedBonus;
 
-    // ── Target selection: pursue NEAREST of player or any alive wingman ──
+    // ── Target selection: honor the per-frame engagement assignment so
+    // at most 3 enemies pile on the player and at most 3 on each wingman.
+    // _assignEngagementTargets sets enemy.userData.engagedTarget; we
+    // resolve it here to a concrete position.
     let targetPos = playerPos;
     let targetDist = distanceToPlayer;
-    if (typeof allyShips !== 'undefined') {
-        for (let i = 0; i < allyShips.length; i++) {
-            const w = allyShips[i];
-            if (!w || !w.userData || w.userData.health <= 0) continue;
-            const d = w.position.distanceTo(enemy.position);
-            if (d < targetDist) {
-                targetDist = d;
-                targetPos = w.position.clone();
-            }
-        }
+    const _assigned = _engagedTargetPos(enemy);
+    if (_assigned) {
+        targetPos = _assigned.clone();
+        targetDist = enemy.position.distanceTo(_assigned);
     }
 
     if (distanceToPlayer < difficultySettings.localDetectionRange) {
@@ -1069,7 +1165,10 @@ function updateLocalEnemyBehavior(enemy, distanceToPlayer, adjustedSpeed, diffic
     // Smooth quaternion slerp instead of instant lookAt — keeps the
     // turning motion fluid like wingmen instead of snapping the
     // orientation each frame when the target moves.
-    _smoothEnemyLookAt(enemy, playerPos, 0.12);
+    // Snappier slerp than wingmen so "enemy turns to face you" reads
+    // as deliberate combat orientation. Still smooth enough to avoid
+    // the rigid lookAt snap.
+    _smoothEnemyLookAt(enemy, playerPos, 0.20);
 }
 
 // Smoothly rotate an enemy to face `targetPos` over multiple frames.
@@ -1100,9 +1199,14 @@ function updateEnhancedEnemyBehavior(enemy, distanceToPlayer, adjustedSpeed, dif
     if (!enemy || !enemy.userData || typeof camera === 'undefined' || typeof THREE === 'undefined') {
         return;
     }
-    
+
     const time = Date.now() * 0.001;
-    const playerPos = camera.position.clone();
+    // Honor the engagement assignment so distant enemies steer toward
+    // the player OR a wingman (whichever the cap put them on) instead
+    // of always tracking the camera.
+    const _assignedPos = _engagedTargetPos(enemy);
+    const playerPos = _assignedPos ? _assignedPos.clone() : camera.position.clone();
+    distanceToPlayer = enemy.position.distanceTo(playerPos);
     
     // Enhanced AI state machine
     if (!enemy.userData.behaviorState) {
@@ -1149,7 +1253,10 @@ function updateEnhancedEnemyBehavior(enemy, distanceToPlayer, adjustedSpeed, dif
     }
     
     // Smooth quaternion slerp instead of instant lookAt
-    _smoothEnemyLookAt(enemy, playerPos, 0.12);
+    // Snappier slerp than wingmen so "enemy turns to face you" reads
+    // as deliberate combat orientation. Still smooth enough to avoid
+    // the rigid lookAt snap.
+    _smoothEnemyLookAt(enemy, playerPos, 0.20);
 }
 
 // Boss behavior
