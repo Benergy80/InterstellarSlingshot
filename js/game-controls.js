@@ -112,63 +112,99 @@ const explosionManager = {
 
 // UPDATED: Pursuit behavior
 // Helper: Add smooth rotation to enemy based on movement trajectory
-// Decide whether to start an evasive barrel-roll burst. Rolls are now
-// rare and slow — they layer on top of normal thrust/steering rather
-// than dominating it. Triggered by recent hits / target lock / close
-// combat, but at lower probabilities and with a long cooldown between
-// checks so the enemy spends most of its time actually flying toward
-// or around the player instead of constantly scrambling.
-function maybeStartEvasion(enemy, distanceToPlayer) {
-    if (!enemy || !enemy.userData || typeof gameState === 'undefined') return;
-    const ud = enemy.userData;
-    if (ud.isBoss) return; // bosses don't barrel-roll — they're heavy
-    const now = Date.now();
-    if ((ud.evasionEnd || 0) > now) return;
-    if ((ud.nextEvasionCheck || 0) > now) return;
-    // Long gap between attempts so rolls are an occasional spectacle,
-    // not a constant tic.
-    ud.nextEvasionCheck = now + 2200 + Math.random() * 2000;
+// (Enemy barrel-roll system removed — it was making distant hostiles
+// scramble too often and was less important than just having them
+// swarm the player. applyEnemyRotation now only banks/pitches with
+// the flight path; no Z-spin overlay.)
 
-    const targetedByPlayer = gameState.targetLock && gameState.targetLock.active &&
-                             gameState.targetLock.target === enemy;
-    const recentlyHit = (now - (ud.lastHitTime || 0)) < 1500;
-    const closeCombat = (typeof distanceToPlayer === 'number') && distanceToPlayer < 700;
-    let triggerChance = 0;
-    if (recentlyHit)           triggerChance = 0.35;
-    else if (targetedByPlayer) triggerChance = 0.18;
-    else if (closeCombat)      triggerChance = 0.08;
-    if (Math.random() > triggerChance) return;
+// =============================================================================
+// SHIP THRUSTER GLOW (enemies + wingmen)
+// Attaches two additive-blended cones to the rear of a ship the first
+// time it thrusts, then fades them in/out per-frame based on whether
+// the ship is currently accelerating. Mirrors the player's exhaust look
+// (orange-yellow inner + deeper orange outer) so combat reads as a
+// proper ballet of thruster trails.
+// =============================================================================
+function _ensureShipThrusterCones(ship, color) {
+    if (!ship || ship.userData._thrusters) return;
+    if (typeof THREE === 'undefined') return;
+    // Pick cone size based on the ship's bounding box so it scales for
+    // big bosses and small fighters alike.
+    let coneLen = 18, coneRad = 6;
+    try {
+        const box = new THREE.Box3().setFromObject(ship);
+        const size = new THREE.Vector3();
+        box.getSize(size);
+        const longest = Math.max(size.x, size.y, size.z);
+        coneLen = Math.max(12, longest * 0.45);
+        coneRad = Math.max(4, longest * 0.12);
+    } catch (e) {}
 
-    ud.evasionDir = Math.random() < 0.5 ? -1 : 1;
-    // Slower roll: 1.8-2.5 s window. The Z-spin in applyEnemyRotation
-    // spreads a full 360° over this duration, so the roll reads as a
-    // deliberate barrel rather than a quick flick.
-    const rollDur = 1800 + Math.random() * 700;
-    ud.evasionEnd = now + rollDur;
-    ud.barrelRollEnd = now + rollDur;
-    ud.barrelRollStart = now;
+    const innerCol = color || 0xffaa00;
+    const outerCol = (color === 0x00ff88) ? 0x00aa55
+                  : (color === 0x88aaff) ? 0x4466cc
+                  : 0xff5500;
+
+    function _makeCone(rad, len, col, op, zOff) {
+        const geo = new THREE.ConeGeometry(rad, len, 12);
+        const mat = new THREE.MeshBasicMaterial({
+            color: col, transparent: true, opacity: op,
+            blending: THREE.AdditiveBlending, depthWrite: false
+        });
+        const cone = new THREE.Mesh(geo, mat);
+        // Cone defaults to +Y up. We want it pointing -Z (out the back),
+        // so rotate around X so the apex faces -Z. Then offset so the
+        // cone base sits at the rear of the ship.
+        cone.rotation.x = Math.PI / 2;
+        cone.position.set(0, 0, zOff);
+        cone.frustumCulled = false;
+        cone.renderOrder = 80;
+        return { mesh: cone, mat: mat, geo: geo };
+    }
+
+    // Two cones — inner brighter, outer deeper colour — flank centre.
+    // Z offset is positive because the ship's "forward" in three.js
+    // world space typically points along -Z but the cone is attached
+    // to the ship's local frame; positive Z puts it behind the ship.
+    const back = coneLen * 0.55;
+    const cones = [];
+    const offsets = [
+        new THREE.Vector3(-coneRad * 0.55, 0, back),
+        new THREE.Vector3( coneRad * 0.55, 0, back)
+    ];
+    offsets.forEach(off => {
+        const inner = _makeCone(coneRad * 0.55, coneLen, innerCol, 0, off.z);
+        inner.mesh.position.x = off.x;
+        ship.add(inner.mesh);
+        cones.push(inner);
+        const outer = _makeCone(coneRad * 0.9, coneLen * 1.4, outerCol, 0, off.z + coneLen * 0.18);
+        outer.mesh.position.x = off.x;
+        ship.add(outer.mesh);
+        cones.push(outer);
+    });
+    ship.userData._thrusters = cones;
+    ship.userData._thrusterIntensity = 0;
 }
 
-// Apply the active evasion impulse (light sideways thrust perpendicular
-// to facing). Magnitude is intentionally small — the goal is to bow the
-// flight path while the enemy keeps thrusting forward and tracking the
-// player, not to launch them off-axis.
-function applyEvasionImpulse(enemy, magnitude) {
-    if (!enemy || !enemy.userData || !enemy.userData.facing) return;
-    const ud = enemy.userData;
-    if (!((ud.evasionEnd || 0) > Date.now())) return;
-    if (!_evV1) return;
-    _evV1.set(0, 1, 0);
-    _evV2.crossVectors(ud.facing, _evV1);
-    if (_evV2.lengthSq() < 1e-6) return;
-    _evV2.normalize().multiplyScalar(magnitude * (ud.evasionDir || 1));
-    if (!ud.velocity) ud.velocity = new THREE.Vector3();
-    ud.velocity.add(_evV2);
+function _updateShipThrusterCones(ship, thrusting) {
+    if (!ship || !ship.userData || !ship.userData._thrusters) return;
+    const target = thrusting ? 1.0 : 0.0;
+    const cur = ship.userData._thrusterIntensity || 0;
+    const speed = thrusting ? 0.22 : 0.15;
+    const next = cur + (target - cur) * speed;
+    ship.userData._thrusterIntensity = next;
+    const flicker = thrusting ? (0.85 + Math.sin(Date.now() * 0.04 + (ship.id || 0)) * 0.15) : 1.0;
+    const cones = ship.userData._thrusters;
+    for (let i = 0; i < cones.length; i++) {
+        const c = cones[i];
+        const base = (i % 2 === 0) ? 0.85 : 0.45;
+        c.mat.opacity = next * base * flicker;
+        const sX = 0.7 + next * 0.6;
+        const sY = 0.5 + next * 1.1;
+        const sZ = 0.7 + next * 0.6;
+        c.mesh.scale.set(sX, sY, sZ);
+    }
 }
-
-const _evV1 = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
-const _evV2 = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
-
 function applyEnemyRotation(enemy, direction, speed) {    if (!enemy || !direction) return;
 
     try {
@@ -249,22 +285,6 @@ function applyEnemyRotation(enemy, direction, speed) {    if (!enemy || !directi
         enemy.rotation.x = THREE.MathUtils.lerp(enemy.rotation.x || 0, enemy.userData.targetRotation.x, lerpFactor);
         enemy.rotation.y = THREE.MathUtils.lerp(enemy.rotation.y || 0, enemy.userData.targetRotation.y, lerpFactor);
         enemy.rotation.z = THREE.MathUtils.lerp(enemy.rotation.z || 0, enemy.userData.targetRotation.z, lerpFactor);
-
-        // BARREL ROLL OVERLAY — while a scramble is active, add a direct
-        // Z-axis spin on top of the banked rotation. Drives a full 360°
-        // over the duration of the roll window, in the direction the
-        // enemy chose when it started evading. Drawn AFTER lerp so the
-        // spin is visible even though the lerp would otherwise smooth
-        // it out toward the target bank angle.
-        const _now = Date.now();
-        const brEnd = enemy.userData.barrelRollEnd || 0;
-        if (brEnd > _now) {
-            const brStart = enemy.userData.barrelRollStart || (brEnd - 1000);
-            const dur = Math.max(200, brEnd - brStart);
-            const progress = Math.max(0, Math.min(1, (_now - brStart) / dur));
-            const dir = enemy.userData.evasionDir || 1;
-            enemy.rotation.z += dir * Math.PI * 2 * progress;
-        }
     } catch (e) {
         // Ignore rotation errors
     }
@@ -326,12 +346,8 @@ function updatePursuitBehavior(enemy, playerPos, speed, distance) {
         _ebV2.copy(enemy.userData.facing).multiplyScalar(thrustPower);
         enemy.userData.velocity.add(_ebV2);
 
-        // Evasion: gentle side-thrust that bows the flight path during a
-        // barrel-roll scramble. Magnitude kept low (0.8x thrustPower) so
-        // forward thrust + steering still dominate — the roll is visual
-        // flavour, not a hard juke off-axis.
-        maybeStartEvasion(enemy, distance);
-        applyEvasionImpulse(enemy, thrustPower * 0.8);
+        // (Side-thrust evasion was removed with the barrel-roll system —
+        // enemies now focus on tracking/swarming instead.)
 
         // Clamp to max speed
         if (enemy.userData.velocity.length() > maxSpeed) {
@@ -402,12 +418,6 @@ function updateSwarmBehavior(enemy, playerPos, speed, time) {
         _ebV3.copy(enemy.userData.facing).multiplyScalar(acceleration);
         enemy.userData.velocity.add(_ebV3);
 
-        // Light evasion side-thrust on top of swarm motion (the roll
-        // overlay handles the visual; this just bows the path slightly).
-        const _swDist = playerPos.distanceTo(enemy.position);
-        maybeStartEvasion(enemy, _swDist);
-        applyEvasionImpulse(enemy, acceleration * 0.8);
-
         // Clamp and drag
         if (enemy.userData.velocity.length() > maxSpeed) {
             enemy.userData.velocity.setLength(maxSpeed);
@@ -440,15 +450,81 @@ function updateEvasionBehavior(enemy, playerPos, speed, time) {
         _ebV2.multiplyScalar(speed * 1.6 * (1 + oscillation));
 
         enemy.position.add(_ebV2);
-        // Dedicated 'evade' mode used to FORCE a barrel roll every frame
-        // it ran, which made low-HP enemies spin continuously. Now it
-        // just defers to maybeStartEvasion's rate-limited check so the
-        // roll fires occasionally on top of the steady side-strafe.
-        const _evDist = playerPos.distanceTo(enemy.position);
-        maybeStartEvasion(enemy, _evDist);
+        // Dedicated 'evade' mode now just steers sideways relative to the
+        // player — the barrel-roll system that used to layer on top of
+        // this has been removed in favour of letting low-HP enemies
+        // commit to evading or swarming without spinning out.
         applyEnemyRotation(enemy, _ebV2, speed);
     } catch (e) {
         // Ignore movement errors
+    }
+}
+
+// FORMATION PATROL — used for inactive local hostiles (Martian Pirates,
+// Vulcan Patrols). Two effects:
+//   • Each ship's patrolCenter drifts slowly through space, so the
+//     whole group is always moving forward rather than camped on a
+//     fixed point. The drift direction is shared by every ship that
+//     started life in the same group (matching patrolCenter values
+//     coming out of createEnemies3D), so the formation stays together.
+//   • Each ship orbits its (drifting) patrolCenter at a tight radius,
+//     turning to face the direction of travel so jet cones light up
+//     out the back.
+function _updateLocalFormationPatrol(enemy) {
+    if (!enemy || !enemy.userData || typeof THREE === 'undefined') return;
+    const ud = enemy.userData;
+    if (!ud.patrolCenter) ud.patrolCenter = enemy.position.clone();
+
+    // Lazy-init a stable drift heading per group. Hashing the rounded
+    // patrolCenter coordinates means every ship in the same starting
+    // group derives the same heading, so they fly the same way without
+    // needing an explicit group id.
+    if (!ud.formationHeading) {
+        const key = Math.round(ud.patrolCenter.x / 50) + ':' +
+                    Math.round(ud.patrolCenter.y / 50) + ':' +
+                    Math.round(ud.patrolCenter.z / 50);
+        let h = 0;
+        for (let i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i)) >>> 0;
+        const ang = (h % 1000) / 1000 * Math.PI * 2;
+        const vy  = (((h >> 10) % 1000) / 1000 - 0.5) * 0.25;
+        ud.formationHeading = new THREE.Vector3(Math.cos(ang), vy, Math.sin(ang)).normalize();
+        ud.formationSpeed = 0.35 + (((h >> 20) % 100) / 100) * 0.25; // 0.35-0.60 u/frame
+    }
+
+    // Drift the patrol center along the formation heading. We also
+    // add a slow sine wave so the route bends rather than running in
+    // a perfectly straight line.
+    const t = Date.now() * 0.0003;
+    const heading = ud.formationHeading;
+    ud.patrolCenter.x += heading.x * ud.formationSpeed;
+    ud.patrolCenter.y += heading.y * ud.formationSpeed + Math.sin(t * 0.7) * 0.2;
+    ud.patrolCenter.z += heading.z * ud.formationSpeed;
+
+    // Orbit the (moving) patrol center at a small radius so wingmates
+    // stay tight to one another. circlePhase distributes them around
+    // the ring.
+    const phase = ud.circlePhase || 0;
+    const r = 80;
+    const angle = t * 4 + phase;
+    const targetX = ud.patrolCenter.x + Math.cos(angle) * r + heading.x * 60;
+    const targetY = ud.patrolCenter.y + Math.sin(angle * 0.6) * 12;
+    const targetZ = ud.patrolCenter.z + Math.sin(angle) * r + heading.z * 60;
+
+    // Velocity-based motion so the thruster check (which reads
+    // userData.velocity) lights up the cones.
+    if (!ud.velocity) ud.velocity = new THREE.Vector3();
+    const desired = new THREE.Vector3(
+        targetX - enemy.position.x,
+        targetY - enemy.position.y,
+        targetZ - enemy.position.z
+    );
+    const dlen = desired.length();
+    if (dlen > 0.001) desired.divideScalar(dlen);
+    ud.velocity.lerp(desired.multiplyScalar(0.6), 0.18);
+    enemy.position.add(ud.velocity);
+
+    if (typeof applyEnemyRotation === 'function') {
+        applyEnemyRotation(enemy, ud.velocity, ud.velocity.length());
     }
 }
 
@@ -897,7 +973,7 @@ function updateEnemyBehavior() {
             const baseSpeed = enemy.userData.speed || 0.5;
             const speedMultiplier = isLocal ? difficultySettings.localSpeedMultiplier : difficultySettings.distantSpeedMultiplier;
             const adjustedSpeed = Math.min(2.0, Math.max(0.2, baseSpeed * speedMultiplier));  // Clamp to 0.2-2.0 (200-2000 km/s)
-            
+
             if (isLocal) {
                 updateLocalEnemyBehavior(enemy, distanceToPlayer, adjustedSpeed, difficultySettings);
             } else {
@@ -909,6 +985,26 @@ function updateEnemyBehavior() {
                     updateEnhancedEnemyBehavior(enemy, distanceToPlayer, adjustedSpeed, difficultySettings);
                 }
             }
+        } else if (isLocal && (enemy.userData.isMartianPirate || enemy.userData.isVulcanPatrol)) {
+            // Idle Pirates / Vulcans should ALWAYS be moving, not loitering.
+            // Run a formation-flight patrol that slowly drifts the whole
+            // group's patrol centre through space so they read as ships
+            // on a route. Faster than the old tutorial-only patrol.
+            _updateLocalFormationPatrol(enemy);
+        }
+
+        // Thruster cones: ensure they exist, then fade them in/out based
+        // on whether the ship is moving meaningfully this frame. Applies
+        // to every enemy so distant fighters AND local pirates/Vulcans
+        // visibly fire their engines.
+        if (typeof _ensureShipThrusterCones === 'function') {
+            _ensureShipThrusterCones(enemy, enemy.userData.galaxyColor || 0xff5522);
+            const _v = enemy.userData.velocity;
+            const _speedNow = _v ? _v.length() : (enemy.userData.isActive ? 0.5 : 0.2);
+            _updateShipThrusterCones(enemy, _speedNow > 0.08);
+        }
+
+        if (enemy.userData.isActive) {
             
             // Enhanced enemy firing with progressive difficulty.
             // Compute distance to nearest TARGET (player OR any alive wingman)
@@ -1123,14 +1219,17 @@ function updateLocalEnemyBehavior(enemy, distanceToPlayer, adjustedSpeed, diffic
         enemy.userData.attackMode = 'evade';
     }
 
-    // Multi-enemy swarming: if 2+ enemies are within 800u of the target,
-    // bias toward swarm so they converge instead of fighting individually
-    if (Math.random() < 0.02 && typeof enemies !== 'undefined') {
+    // Multi-enemy swarming: if 2+ enemies are within 1200u of the target,
+    // bias toward swarm so they converge instead of fighting individually.
+    // Check chance bumped 0.02 -> 0.10 (5x) and radius widened 800 -> 1200
+    // so groups commit to a swarm much more often than they did before —
+    // user feedback was that enemies needed to swarm the player better.
+    if (Math.random() < 0.10 && typeof enemies !== 'undefined') {
         let nearbyAllies = 0;
         for (let j = 0; j < enemies.length; j++) {
             const e = enemies[j];
             if (!e || e === enemy || !e.userData || e.userData.health <= 0) continue;
-            if (e.position.distanceTo(targetPos) < 800) nearbyAllies++;
+            if (e.position.distanceTo(targetPos) < 1200) nearbyAllies++;
             if (nearbyAllies >= 2) break;
         }
         if (nearbyAllies >= 2) enemy.userData.attackMode = 'swarm';
@@ -6939,6 +7038,17 @@ function updateAllyShips() {
         const pos = ally.position;
         const distFromOrigin = pos.length();
         const distToPlayer = pos.distanceTo(playerPos);
+
+        // Wingman thruster cones — same orange + faction-tint scheme
+        // as enemies, but tinted toward their wingman colour so the
+        // friendly formation reads at a glance.
+        if (typeof _ensureShipThrusterCones === 'function') {
+            const wcol = (ud.name === 'Wingman Alpha') ? 0x00ff88 :
+                         (ud.colorNum) ? ud.colorNum : 0x88aaff;
+            _ensureShipThrusterCones(ally, wcol);
+            const vmag = ud.velocity ? ud.velocity.length() : 0;
+            _updateShipThrusterCones(ally, vmag > 0.08);
+        }
 
         // ── FTL anchor: warp ended this frame and a wingman in follow
         // state is still far from the player — pull them in via a small
