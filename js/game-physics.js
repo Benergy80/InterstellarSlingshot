@@ -1731,13 +1731,31 @@ if (frameDistance > 0.01) { // Only track significant movement
         // player burns fuel just to stay at top speed even though space has
         // no drag. Below the cruise band, normal acceleration and cost
         // apply.
+        // EXCEPTION: during emergency warp / slingshot, the player IS
+        // way above maxVelocity (warp speed ~100 vs cap ~4), so coasting
+        // would silently swallow the W key. We disable coasting in
+        // those phases and amplify the thrust so holding W actually
+        // helps accelerate the warp, as requested.
         const _speed = gameState.velocityVector.length();
-        const _coasting = !!(gameState.repTierUnlocks && gameState.repTierUnlocks.coasting) &&
+        const _warpAccel = !!(gameState.emergencyWarp &&
+                              (gameState.emergencyWarp.active ||
+                               gameState.emergencyWarp.transitioning ||
+                               gameState.emergencyWarp.postWarp)) ||
+                           !!(gameState.slingshot && gameState.slingshot.active);
+        const _coasting = !_warpAccel &&
+                          !!(gameState.repTierUnlocks && gameState.repTierUnlocks.coasting) &&
                           _speed >= (gameState.maxVelocity || 4.0) * 0.9;
         if (!_coasting) {
-            const wThrustPower = gameState.thrustPower * gameState.wThrustMultiplier;
+            // Boost the thrust during warp so it visibly accelerates
+            // the player (the warp baseline is ~100u/frame; without
+            // this multiplier the standard 0.02 contribution is
+            // imperceptible against the warp drift).
+            const warpMul = _warpAccel ? 12 : 1;
+            const wThrustPower = gameState.thrustPower * gameState.wThrustMultiplier * warpMul;
             gameState.velocityVector.addScaledVector(forwardDirection, wThrustPower);
-            _consumeEnergy(0.12);
+            // Energy cost halved during warp — the warp already burns
+            // capacitor charge implicitly, no need to double-tax.
+            _consumeEnergy(_warpAccel ? 0.06 : 0.12);
         }
         // Visual feedback — rate-limited to at most one effect every
         // 500 ms so holding W doesn't spawn 30 DOM star-trails multiple

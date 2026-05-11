@@ -161,24 +161,30 @@ function _ensureShipThrusterCones(ship, color) {
 
     // Read the ship's ACTUAL rear edge from its bounding box (in local
     // coords) so the cone base hugs the model's back regardless of how
-    // much empty padding the GLB has around its mesh. Falls back to
-    // shipLengthLocal/2 (the old behaviour) if the box read fails.
-    let localBack = shipLengthLocal * 0.5;
+    // much empty padding the GLB has around its mesh. If the bounds
+    // come back invalid (GLB still hydrating, or a model that hasn't
+    // received any geometry yet), BAIL — _ensureShipThrusterCones is
+    // called every frame from the update loop, so the next tick will
+    // try again. The early-out via _thrusters means once we DO attach,
+    // we never re-run.
+    let localBack = null;
     try {
         const box = new THREE.Box3().setFromObject(ship);
-        if (isFinite(box.min.z) && isFinite(box.max.z)) {
+        if (isFinite(box.min.z) && isFinite(box.max.z) &&
+            box.max.z > box.min.z) {
             const wpos = new THREE.Vector3();
             ship.getWorldPosition(wpos);
             const sz = Math.max(0.001, Math.abs(worldScale.z || 1));
-            // Rear of model in local Z: (worldMaxZ - shipWorldZ) / shipScaleZ.
-            // The lookAt math makes -Z forward, so the larger local-Z
-            // value is "behind" the ship.
             const computedBack = (box.max.z - wpos.z) / sz;
-            if (isFinite(computedBack) && computedBack > 0) {
+            if (isFinite(computedBack) && computedBack > 0.001) {
                 localBack = computedBack;
             }
         }
     } catch (e) {}
+    // No usable bounds yet — wait until next frame to attach cones,
+    // otherwise we'd glue them to a fallback position that's nowhere
+    // near the actual rear of the model.
+    if (localBack === null) return;
 
     const innerCol = color || 0xffaa00;
     const outerCol = (color === 0x00ff88) ? 0x00aa55

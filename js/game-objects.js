@@ -8787,19 +8787,28 @@ function createEnemies3D() {
                 // Vulcan Patrols use Enemy8.glb (different from Martian Pirates' Enemy1)
                 enemy = createEnemyMeshWithModel(8, enemyGeometry, materials.enemyMaterial);
                 isGLBModel = enemy.isGroup || (enemy.children && enemy.children.length > 0 && enemy.children[0].isMesh);
-                // Enemy8.glb was authored with its nose pointing +Z, but
-                // the game's lookAt math orients the ROOT so its local
-                // -Z faces the target. Setting root.rotation.y here
-                // wouldn't survive because lookAt overwrites the whole
-                // quaternion. Instead, flip every existing GLB child
-                // 180° on Y — those local rotations are preserved when
-                // the root quaternion changes, so the visible mesh
-                // ends up nose-forward.
-                if (enemy && enemy.children) {
-                    for (let _ci = 0; _ci < enemy.children.length; _ci++) {
-                        const _gc = enemy.children[_ci];
-                        if (_gc && _gc.rotateY) _gc.rotateY(Math.PI);
-                    }
+                // Enemy8.glb was authored nose-toward-+Z, but the rest
+                // of the game assumes ships face local -Z. Earlier
+                // attempts (root.rotation.y, child.rotateY) didn't
+                // survive subsequent lookAt / Euler-rotation updates
+                // and either reverted or only flipped some pieces of
+                // the model. Bake the 180° Y rotation directly into
+                // each mesh's geometry — this permanently rewrites
+                // every vertex (x→-x, z→-z), so the visual rotation is
+                // immune to whatever the transform stack does later.
+                if (enemy && typeof THREE !== 'undefined') {
+                    const _flipMat = new THREE.Matrix4().makeRotationY(Math.PI);
+                    enemy.traverse(node => {
+                        if (node && node.isMesh && node.geometry && !node.userData._flipped) {
+                            try {
+                                node.geometry.applyMatrix4(_flipMat);
+                                if (node.geometry.attributes && node.geometry.attributes.normal) {
+                                    node.geometry.computeVertexNormals();
+                                }
+                                node.userData._flipped = true;
+                            } catch (e) {}
+                        }
+                    });
                 }
             } else {
                 enemy = new THREE.Mesh(enemyGeometry, materials.enemyMaterial);
