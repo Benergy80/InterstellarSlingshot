@@ -737,53 +737,108 @@ function updateClusterStatus(deadEnemy) {
     });
 }
 
+// True if a boss / elite guardian / BH guardian has EVER been spawned
+// for this galaxy (so we don't fire the "neutralized" banner before
+// the boss phase has even started).
+function _galaxyBossSpawned(galaxyId) {
+    if (typeof bossSystem === 'undefined') return false;
+    if (bossSystem.galaxyBossSpawned && bossSystem.galaxyBossSpawned[galaxyId]) return true;
+    if (bossSystem.areaBosses) {
+        for (const k in bossSystem.areaBosses) {
+            if (k.indexOf(galaxyId + '-') === 0) return true;
+        }
+    }
+    const fac = (typeof galaxyTypes !== 'undefined' && galaxyTypes[galaxyId])
+        ? galaxyTypes[galaxyId].faction : null;
+    if (fac && bossSystem.eliteGuardians && bossSystem.eliteGuardians[fac] &&
+        bossSystem.eliteGuardians[fac].spawned) return true;
+    return false;
+}
+
+// True while ANY boss / elite guardian / BH guardian for this galaxy
+// is still alive.
+function _galaxyBossAlive(galaxyId) {
+    if (typeof enemies === 'undefined') return false;
+    return enemies.some(e => e && e.userData && e.userData.health > 0 &&
+        e.userData.galaxyId === galaxyId &&
+        (e.userData.isBoss || e.userData.isEliteGuardian || e.userData.isBlackHoleGuardian));
+}
+
+// Emit any deferred "FORCES NEUTRALIZED" banners whose galaxy now has
+// its boss spawned AND fully defeated. Called from checkBossVictory.
+function flushFactionClearedMessages() {
+    if (!nebulaIntelSystem.pendingCleared) return;
+    if (!nebulaIntelSystem.clearedAnnounced) nebulaIntelSystem.clearedAnnounced = {};
+    Object.keys(nebulaIntelSystem.pendingCleared).forEach(gidStr => {
+        const gid = parseInt(gidStr, 10);
+        if (_galaxyBossSpawned(gid) && !_galaxyBossAlive(gid)) {
+            const p = nebulaIntelSystem.pendingCleared[gid];
+            delete nebulaIntelSystem.pendingCleared[gid];
+            nebulaIntelSystem.clearedAnnounced[gid] = true;
+            showFactionClearedMission(p.faction, p.nebulaName, p.galaxyId);
+        }
+    });
+}
+if (typeof window !== 'undefined') window.flushFactionClearedMessages = flushFactionClearedMessages;
+
 // Check if all enemies of a faction are cleared in an area
 function checkFactionCleared(galaxyId) {
     const factionClusters = nebulaIntelSystem.enemyClusters.filter(c => c.galaxyId === galaxyId);
     const allCleared = factionClusters.every(c => c.defeated);
-    
+
     if (allCleared && factionClusters.length > 0) {
         const faction = galaxyTypes[galaxyId];
-        
+
         // Find nearest nebula tracking this faction
-        const trackingNebula = nebulaClouds.find(n => 
+        const trackingNebula = nebulaClouds.find(n =>
             n && n.userData && n.userData.assignedFaction === galaxyId
         );
-        
+
         const nebulaName = trackingNebula ? trackingNebula.userData.name : 'nearest nebula';
-        
-        // Show Mission Command
-        showFactionClearedMission(faction, nebulaName, galaxyId);
+
+        if (!nebulaIntelSystem.pendingCleared) nebulaIntelSystem.pendingCleared = {};
+        if (!nebulaIntelSystem.clearedAnnounced) nebulaIntelSystem.clearedAnnounced = {};
+
+        // DEFER the "FORCES NEUTRALIZED" banner. Clearing the regular
+        // cluster enemies is what makes the boss spawn — the sector is
+        // NOT actually neutralized until that boss (and any elite / BH
+        // guardian) is dead. Stash it and let flushFactionClearedMessages
+        // emit it once the boss phase is truly over. The intel line +
+        // boss-spawn trigger still fire now so the boss appears.
+        if (!nebulaIntelSystem.pendingCleared[galaxyId] &&
+            !nebulaIntelSystem.clearedAnnounced[galaxyId]) {
+            nebulaIntelSystem.pendingCleared[galaxyId] = { faction, nebulaName, galaxyId };
+            console.log(`🎖️ ${faction.faction} clusters cleared — banner deferred until boss defeated`);
+            if (typeof createGalaxyToNebulaLine === 'function') {
+                createGalaxyToNebulaLine(galaxyId);
+            }
+            if (typeof checkAndSpawnAreaBosses === 'function') {
+                setTimeout(() => checkAndSpawnAreaBosses(), 5000);
+            }
+        }
+        // Edge case: boss already came and went — flush immediately.
+        flushFactionClearedMessages();
     }
 }
 
-// Show Mission Command when faction is cleared in an area
+// Show Mission Command when a faction's sector is TRULY cleared (every
+// regular cluster + the boss + any elite / BH guardian dead). The line
+// + boss spawn are handled earlier in checkFactionCleared's deferred
+// path, so this function is now purely the victory banner.
 function showFactionClearedMission(faction, nebulaName, galaxyId) {
-    console.log(`🎖️ ${faction.faction} forces cleared! Directing to ${nebulaName}`);
-    
-    // Create line from galaxy black hole to tracking nebula
-    createGalaxyToNebulaLine(galaxyId);
-    
-    // Use the existing mission command alert system
+    console.log(`🎖️ ${faction.faction} sector fully neutralized (boss down)! Directing to ${nebulaName}`);
+
     if (typeof showMissionCommandAlert === 'function') {
         const title = `${faction.faction.toUpperCase()} FORCES NEUTRALIZED`;
-        const message = `Congratulations, Captain! All ${faction.faction} hostiles have been eliminated in this sector.\n\n` +
-            `Navigate to ${nebulaName} for intel on remaining hostile activity.\n\n` +
-            `The flagship commander will arrive soon to reclaim this territory. Prepare for heavy resistance.`;
-        
+        const message = `Outstanding, Captain! The ${faction.faction} fleet AND their flagship commander have been destroyed in this sector.\n\n` +
+            `Navigate to ${nebulaName} for intel on remaining hostile activity across the galaxy.`;
+
         showMissionCommandAlert(title, message, faction.color);
     } else if (typeof showAchievement === 'function') {
         showAchievement(
-            `🎖️ ${faction.faction} CLEARED`,
-            `Seek ${nebulaName} for intel on remaining hostiles`
+            `🎖️ ${faction.faction} SECTOR CLEARED`,
+            `Flagship down. Seek ${nebulaName} for intel on remaining hostiles`
         );
-    }
-    
-    // Now trigger boss spawn check
-    if (typeof checkAndSpawnAreaBosses === 'function') {
-        setTimeout(() => {
-            checkAndSpawnAreaBosses();
-        }, 5000); // Delay boss spawn by 5 seconds for dramatic effect
     }
 }
 
@@ -1506,6 +1561,12 @@ function checkBossVictory(defeatedEnemy) {
                 `${defeatedEnemy.userData.name} (${faction}) has fallen — that faction's last defender is down.`);
         }
 
+        // A guardian dying may complete a deferred "sector neutralized"
+        // banner for its galaxy.
+        if (typeof flushFactionClearedMessages === 'function') {
+            setTimeout(flushFactionClearedMessages, 60);
+        }
+
         return true;
 
     } else if (defeatedEnemy.userData.isBoss) {
@@ -1560,6 +1621,14 @@ function checkBossVictory(defeatedEnemy) {
 
         // Check if we should spawn elite guardians now
         checkAndSpawnEliteGuardians();
+
+        // The boss dying may complete a deferred "sector neutralized"
+        // banner — but only if no elite/BH guardian for this galaxy is
+        // still alive (flushFactionClearedMessages re-checks that).
+        // Slight delay so the boss has been removed from `enemies`.
+        if (typeof flushFactionClearedMessages === 'function') {
+            setTimeout(flushFactionClearedMessages, 120);
+        }
 
         return true;
     }
