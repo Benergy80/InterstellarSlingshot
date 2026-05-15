@@ -3265,9 +3265,20 @@ function createLaserBeam(startPos, endPos, color = '#00ff96', isPlayer = true) {
         // Better positioning and orientation (RESTORED)
         laserBeam.position.copy(startPos);
 
+        // BUGFIX: clone `direction` before normalizing. The old code
+        // called direction.normalize() which mutates the vector to
+        // unit length, so the later `direction.clone().multiplyScalar(
+        // 0.5)` offset was only 0.5 units instead of half the beam
+        // length. The cylinder (length = full start→end distance) then
+        // sat centered on the enemy and extended HALF ITS LENGTH IN
+        // BOTH DIRECTIONS — i.e. the beam appeared to fire backwards
+        // out of the enemy too. _fireWingmanLaser does it correctly
+        // with a clone; mirror that here so enemy beams travel only
+        // from the enemy toward the target.
+        const dirNorm = direction.clone().normalize();
         const up = new THREE.Vector3(0, 1, 0);
-        const axis = new THREE.Vector3().crossVectors(up, direction.normalize());
-        const angle = Math.acos(up.dot(direction.normalize()));
+        const axis = new THREE.Vector3().crossVectors(up, dirNorm);
+        const angle = Math.acos(up.dot(dirNorm));
 
         if (axis.length() > 0.001) {
             axis.normalize();
@@ -3276,6 +3287,8 @@ function createLaserBeam(startPos, endPos, color = '#00ff96', isPlayer = true) {
             laserBeam.rotateX(Math.PI);
         }
 
+        // Offset by HALF the full-length direction so the cylinder's
+        // center lands at the midpoint between start and end.
         const offset = direction.clone().multiplyScalar(0.5);
         laserBeam.position.add(offset);
 
