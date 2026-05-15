@@ -3078,6 +3078,77 @@ function createFactionExplosion(position, galaxyId, scale) {
 if (typeof window !== 'undefined') window.createFactionExplosion = createFactionExplosion;
 
 // =============================================================================
+// HIT SPARKS — small impact burst when a laser/missile strikes a hostile
+// that SURVIVES the hit (the destruction explosion is separate). Kept
+// cheap because sustained fire calls this many times per second.
+// =============================================================================
+function createHitSparks(worldPos, tint) {
+    if (!worldPos || typeof scene === 'undefined' || typeof THREE === 'undefined') return;
+    const center = worldPos.clone ? worldPos.clone()
+                 : new THREE.Vector3(worldPos.x, worldPos.y, worldPos.z);
+
+    // Bright short-lived flash at the impact point.
+    const flashGeo = new THREE.SphereGeometry(3, 8, 6);
+    const flashMat = new THREE.MeshBasicMaterial({
+        color: 0xffffcc, transparent: true, opacity: 0.95,
+        blending: THREE.AdditiveBlending, depthWrite: false
+    });
+    const flash = new THREE.Mesh(flashGeo, flashMat);
+    flash.position.copy(center);
+    flash.frustumCulled = false;
+    scene.add(flash);
+    let fs = 1, fop = 0.95;
+    explosionManager.addExplosion({
+        update(dt) {
+            fs += 0.9 * (dt / 50);
+            fop -= 0.18 * (dt / 50);
+            flash.scale.set(fs, fs, fs);
+            flashMat.opacity = Math.max(0, fop);
+            return fop > 0;
+        },
+        cleanup() { scene.remove(flash); flashGeo.dispose(); flashMat.dispose(); }
+    });
+
+    // ~12 spark points spraying outward, faction-tinted.
+    const N = 12;
+    const geo = new THREE.BufferGeometry();
+    const pos = new Float32Array(N * 3);
+    const vel = [];
+    for (let i = 0; i < N; i++) {
+        pos[i*3] = center.x; pos[i*3+1] = center.y; pos[i*3+2] = center.z;
+        vel.push(new THREE.Vector3(
+            Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5
+        ).normalize().multiplyScalar(3 + Math.random() * 5));
+    }
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    const mat = new THREE.PointsMaterial({
+        color: tint || 0xffaa33, size: 2.4, transparent: true, opacity: 1,
+        blending: THREE.AdditiveBlending, depthWrite: false
+    });
+    const pts = new THREE.Points(geo, mat);
+    pts.frustumCulled = false;
+    scene.add(pts);
+    let life = 1.0;
+    explosionManager.addExplosion({
+        update(dt) {
+            life -= 0.10 * (dt / 50);
+            mat.opacity = Math.max(0, life);
+            const arr = geo.attributes.position.array;
+            const f = dt / 50;
+            for (let i = 0; i < N; i++) {
+                arr[i*3]   += vel[i].x * f;
+                arr[i*3+1] += vel[i].y * f;
+                arr[i*3+2] += vel[i].z * f;
+            }
+            geo.attributes.position.needsUpdate = true;
+            return life > 0;
+        },
+        cleanup() { scene.remove(pts); geo.dispose(); mat.dispose(); }
+    });
+}
+if (typeof window !== 'undefined') window.createHitSparks = createHitSparks;
+
+// =============================================================================
 // BOSS / GUARDIAN EXPLOSION
 // A larger, multi-stage detonation reserved for boss and elite-guardian
 // kills. Three escalating waves:
@@ -4057,8 +4128,25 @@ function createTracerProjectile(startPos, endPos, color) {
 
 // FIXED: Enemy hit flash that works with MeshBasicMaterial (no emissive properties)
 function flashEnemyHit(enemy, damage = 1) {
-    if (!enemy || !enemy.material) return;
-    
+    if (!enemy) return;
+
+    // Impact sparks — fire for EVERY surviving hit, regardless of
+    // whether the model has a top-level .material (GLB enemies are
+    // Groups and don't, so the color-flash below is skipped for them;
+    // the sparks are what the player actually sees on those). Use the
+    // world position so it lands on the ship even when the enemy is a
+    // child of a system group (e.g. Borg drones).
+    if (enemy.userData && enemy.userData.health > 0 &&
+        typeof createHitSparks === 'function' && typeof THREE !== 'undefined') {
+        const wp = new THREE.Vector3();
+        if (enemy.getWorldPosition) enemy.getWorldPosition(wp);
+        else if (enemy.position) wp.copy(enemy.position);
+        const tint = (enemy.userData && enemy.userData.galaxyColor) || 0xffaa33;
+        createHitSparks(wp, tint);
+    }
+
+    if (!enemy.material) return;
+
     // Store original material if not already stored
     if (!enemy.userData.originalMaterial) {
         enemy.userData.originalMaterial = {
