@@ -3068,26 +3068,95 @@ function createBossExplosion(position, options) {
         });
     }
 
-    // Wave 1 — core fireball + faction ring
-    _addAdditiveSphere(60 * scaleMul, 0xffeecc, 1.0, 18, 3.5);   // white-hot core
-    _addAdditiveSphere(80 * scaleMul, 0xff7733, 0.9, 22, 2.8);   // orange shell
-    _addShockRing(factionColor, 30 * scaleMul, 6, 16);
+    // Tumbling debris chunks — small lit boxes that fly out and spin,
+    // for a "the ship is coming apart" read on top of the particle haze.
+    function _addDebrisChunks(count, color, speed, life) {
+        const chunks = [];
+        for (let i = 0; i < count; i++) {
+            const sz = (3 + Math.random() * 5) * scaleMul;
+            const geo = new THREE.BoxGeometry(sz, sz * (0.5 + Math.random()), sz * (0.4 + Math.random()));
+            const mat = new THREE.MeshBasicMaterial({
+                color: color, transparent: true, opacity: 1,
+                blending: THREE.AdditiveBlending, depthWrite: false
+            });
+            const m = new THREE.Mesh(geo, mat);
+            m.position.copy(center);
+            m.frustumCulled = false;
+            scene.add(m);
+            chunks.push({
+                mesh: m, geo: geo, mat: mat,
+                vel: new THREE.Vector3(
+                    (Math.random() - 0.5) * speed,
+                    (Math.random() - 0.5) * speed,
+                    (Math.random() - 0.5) * speed),
+                spin: new THREE.Vector3(
+                    (Math.random() - 0.5) * 0.4,
+                    (Math.random() - 0.5) * 0.4,
+                    (Math.random() - 0.5) * 0.4)
+            });
+        }
+        let l = 1.0;
+        explosionManager.addExplosion({
+            update(dt) {
+                l -= (1 / life) * (dt / 50);
+                const f = dt / 50;
+                for (let i = 0; i < chunks.length; i++) {
+                    const c = chunks[i];
+                    c.mesh.position.addScaledVector(c.vel, f);
+                    c.mesh.rotation.x += c.spin.x * f;
+                    c.mesh.rotation.y += c.spin.y * f;
+                    c.mesh.rotation.z += c.spin.z * f;
+                    c.mat.opacity = Math.max(0, l);
+                }
+                return l > 0;
+            },
+            cleanup() {
+                for (let i = 0; i < chunks.length; i++) {
+                    scene.remove(chunks[i].mesh);
+                    chunks[i].geo.dispose();
+                    chunks[i].mat.dispose();
+                }
+            }
+        });
+    }
 
-    // Wave 2 — secondary at +200ms
+    // ── WAVE 0 (t=0): blinding white flash ───────────────────────────
+    // A huge, very brief white sphere that whites out the immediate
+    // area — sells the "detonation" before the fireball blooms.
+    _addAdditiveSphere(180 * scaleMul, 0xffffff, 1.0, 7, 1.4);
+
+    // ── WAVE 1 (t=0): core fireball + triple shockwave + lightning ──
+    _addAdditiveSphere(70 * scaleMul, 0xffeecc, 1.0, 18, 3.6);   // white-hot core
+    _addAdditiveSphere(95 * scaleMul, 0xff7733, 0.95, 22, 3.0);  // orange shell
+    _addShockRing(0xffffff,    26 * scaleMul, 9, 14);
+    _addShockRing(factionColor, 34 * scaleMul, 6, 18);
+    _addShockRing(0xffaa55,    20 * scaleMul, 12, 22);
+    if (typeof _fxLightning === 'function') {
+        _fxLightning(center, 10, factionColor, 120 * scaleMul);
+    }
+    _addDebrisChunks(22, 0xffcc88, 9 * scaleMul, 34);
+
+    // ── WAVE 2 (t=180ms): secondary detonation, bigger ──────────────
     setTimeout(() => {
-        _addAdditiveSphere(95 * scaleMul, factionColor, 0.8, 24, 3.2);
-        _addShockRing(0xffaa55, 50 * scaleMul, 8, 20);
+        _addAdditiveSphere(120 * scaleMul, factionColor, 0.85, 24, 3.4);
+        _addAdditiveSphere(60 * scaleMul, 0xffffff, 0.9, 12, 3.0);
+        _addShockRing(0xffaa55, 56 * scaleMul, 9, 22);
+        _addShockRing(factionColor, 44 * scaleMul, 13, 24);
+        if (typeof _fxLightning === 'function') {
+            _fxLightning(center, 8, 0xffffff, 150 * scaleMul);
+        }
         if (typeof playSound === 'function') {
             try { playSound('explosion'); } catch (e) {}
+            try { playSound('death_boom'); } catch (e) {}
         }
-    }, 200);
+    }, 180);
 
-    // Wave 3 — massive plasma bubble + 250-particle debris at +450ms
+    // ── WAVE 3 (t=420ms): massive plasma bubble + 360-particle burst
     setTimeout(() => {
-        _addAdditiveSphere(140 * scaleMul, 0xaa44ff, 0.55, 30, 4.0);
+        _addAdditiveSphere(170 * scaleMul, 0xaa44ff, 0.55, 32, 4.2);
+        _addAdditiveSphere(120 * scaleMul, factionColor, 0.4, 30, 4.6);
 
-        // Debris field
-        const partCount = 250;
+        const partCount = 360;
         const partGeo = new THREE.BufferGeometry();
         const positions = new Float32Array(partCount * 3);
         const velocities = [];
@@ -3095,25 +3164,25 @@ function createBossExplosion(position, options) {
             positions[i*3] = center.x;
             positions[i*3+1] = center.y;
             positions[i*3+2] = center.z;
-            velocities.push(new THREE.Vector3(
-                (Math.random() - 0.5) * 8 * scaleMul,
-                (Math.random() - 0.5) * 8 * scaleMul,
-                (Math.random() - 0.5) * 8 * scaleMul
-            ));
+            const d = new THREE.Vector3(
+                Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5
+            ).normalize().multiplyScalar((4 + Math.random() * 9) * scaleMul);
+            velocities.push(d);
         }
         partGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
         const partMat = new THREE.PointsMaterial({
-            color: 0xffcc66, size: 6 * scaleMul, transparent: true, opacity: 1,
+            color: 0xffcc66, size: 7 * scaleMul, transparent: true, opacity: 1,
             blending: THREE.AdditiveBlending, depthWrite: false
         });
         const particles = new THREE.Points(partGeo, partMat);
         particles.frustumCulled = false;
         scene.add(particles);
+        _addDebrisChunks(18, factionColor, 7 * scaleMul, 40);
 
         let life = 1.0;
         explosionManager.addExplosion({
             update(dt) {
-                life -= 0.025 * (dt / 50);
+                life -= 0.02 * (dt / 50);
                 partMat.opacity = Math.max(0, life);
                 const arr = partGeo.attributes.position.array;
                 const f = dt / 50;
@@ -3134,13 +3203,24 @@ function createBossExplosion(position, options) {
 
         if (typeof playSound === 'function') {
             try { playSound('death_boom'); } catch (e) {}
+            try { playSound('death_rumble'); } catch (e) {}
         }
-    }, 450);
+    }, 420);
 
-    // Layered audio
+    // ── WAVE 4 (t=750ms): final expanding faction ring + afterglow ──
+    setTimeout(() => {
+        _addShockRing(factionColor, 70 * scaleMul, 16, 26);
+        _addAdditiveSphere(220 * scaleMul, factionColor, 0.3, 34, 3.4);
+        if (typeof playSound === 'function') {
+            try { playSound('explosion'); } catch (e) {}
+        }
+    }, 750);
+
+    // Layered launch audio
     if (typeof playSound === 'function') {
         try { playSound('explosion'); } catch (e) {}
         try { playSound('damage');    } catch (e) {}
+        try { playSound('death_boom'); } catch (e) {}
     }
 }
 

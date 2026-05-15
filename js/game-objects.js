@@ -1013,32 +1013,55 @@ function isEnemyInLocalGalaxy(enemy) {
 function checkAndSpawnAreaBosses() {
     if (typeof enemies === 'undefined' || typeof scene === 'undefined') return;
 
-    // Track all enemy areas (combinations of galaxyId and placementType)
-    const areaEnemyCounts = {};
+    // Persistent set of areas that have EVER had hostiles. Without
+    // this, a fully-cleared area simply vanishes from the per-frame
+    // count map, so the old code (which only iterated areas with >=1
+    // living enemy) could never detect "area now empty" and never
+    // spawned the boss. We only track the meaningful combat zones —
+    // black_hole and cosmic_feature — so clearing scattered 'random'
+    // filler doesn't spam bosses.
+    if (!bossSystem.knownAreas) bossSystem.knownAreas = {};
 
-    // Count enemies by area
+    const areaEnemyCounts = {};
     enemies.forEach(enemy => {
         if (!enemy.userData || enemy.userData.health <= 0) return;
         if (enemy.userData.isBoss || enemy.userData.isBossSupport || enemy.userData.isEliteGuardian) return;
 
         const galaxyId = enemy.userData.galaxyId;
         const placementType = enemy.userData.placementType || 'random';
+        if (placementType !== 'black_hole' && placementType !== 'cosmic_feature') return;
         const areaKey = `${galaxyId}-${placementType}`;
 
         areaEnemyCounts[areaKey] = (areaEnemyCounts[areaKey] || 0) + 1;
+        // Remember this area existed (and how many it started with —
+        // require at least 3 so a single straggler doesn't count as
+        // a "zone" whose boss should spawn).
+        if (!bossSystem.knownAreas[areaKey]) {
+            bossSystem.knownAreas[areaKey] = { peak: 0 };
+        }
+        bossSystem.knownAreas[areaKey].peak = Math.max(
+            bossSystem.knownAreas[areaKey].peak, areaEnemyCounts[areaKey]);
     });
 
-    // Check each area - spawn boss if area is cleared
-    Object.keys(areaEnemyCounts).forEach(areaKey => {
-        const count = areaEnemyCounts[areaKey];
-
-        // Check if this area's boss has already been spawned/defeated
-        if (bossSystem.areaBosses[areaKey]) return;
-
-        // Spawn boss when all enemies in area are cleared
-        if (count <= bossSystem.bossThreshold) {
-            const [galaxyId, placementType] = areaKey.split('-');
-            spawnBossForArea(parseInt(galaxyId), placementType, areaKey);
+    // For every area that has ever held a real cluster, spawn its boss
+    // the moment the live count drops to zero.
+    Object.keys(bossSystem.knownAreas).forEach(areaKey => {
+        if (bossSystem.areaBosses[areaKey]) return;        // boss already handled
+        if (bossSystem.knownAreas[areaKey].peak < 3) return; // never a real cluster
+        const liveCount = areaEnemyCounts[areaKey] || 0;
+        if (liveCount <= bossSystem.bossThreshold) {
+            const sep = areaKey.indexOf('-');
+            const galaxyId = parseInt(areaKey.slice(0, sep), 10);
+            const placementType = areaKey.slice(sep + 1);
+            console.log(`👑 Area ${areaKey} cleared — spawning area boss`);
+            spawnBossForArea(galaxyId, placementType, areaKey);
+            if (typeof showAchievement === 'function') {
+                const gname = (typeof galaxyTypes !== 'undefined' && galaxyTypes[galaxyId])
+                    ? galaxyTypes[galaxyId].name : ('Galaxy ' + galaxyId);
+                const where = placementType === 'black_hole'
+                    ? (gname + ' black hole') : (gname + ' patrol zone');
+                showAchievement('Boss Incoming!', 'Hostiles cleared at the ' + where + ' — boss warping in!', true);
+            }
         }
     });
 }
@@ -1175,6 +1198,26 @@ function spawnBossForArea(galaxyId, placementType, areaKey, overridePosition, bo
     if (overridePosition && typeof overridePosition.clone === 'function') {
         bossPosition = overridePosition.clone();
         console.log(`Boss positioning: Using override position for galaxy ${galaxyId}`, bossPosition);
+    }
+
+    // Black-hole-area bosses spawn AT the galaxy's black hole (offset
+    // out past the warp threshold) so the player who just cleared the
+    // BH defenders sees the boss warp in right there, not somewhere
+    // random across the galaxy.
+    if (!bossPosition && placementType === 'black_hole' && typeof planets !== 'undefined') {
+        const bh = planets.find(p =>
+            p.userData && p.userData.type === 'blackhole' &&
+            p.userData.galaxyId === galaxyId && !p.userData.isLocalGateway);
+        if (bh) {
+            const ang = Math.random() * Math.PI * 2;
+            const r = (bh.userData.warpThreshold || 600) + 700 + Math.random() * 500;
+            bossPosition = new THREE.Vector3(
+                bh.position.x + Math.cos(ang) * r,
+                bh.position.y + (Math.random() - 0.5) * 400,
+                bh.position.z + Math.sin(ang) * r
+            );
+            console.log(`Boss positioning: black-hole area boss at galaxy ${galaxyId} BH`, bossPosition);
+        }
     }
 
     // Try 3D positioning first
