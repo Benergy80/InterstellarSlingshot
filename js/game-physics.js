@@ -4536,39 +4536,75 @@ function animateDiscoveryPaths() {
                 }
             }
 
-            const wasComplete = path.line.userData.missionComplete;
-            if (!alive && !wasComplete) {
-                path.line.userData.missionComplete = true;
-                mat.color.copy(MISSION_COMPLETE_COLOR);
-                if (path.particles && path.particles.material) {
-                    path.particles.material.color.copy(MISSION_COMPLETE_COLOR);
-                }
+            const ud = path.line.userData;
+            const wasComplete = ud.missionComplete;
+
+            // PHASE 1 — tracked hostiles cleared: spawn the boss and
+            // enter "boss phase". The mission is NOT complete yet; the
+            // line stays its faction colour and no reward fires. We
+            // only announce the boss arrival here.
+            if (!alive && !wasComplete && !ud.bossPhase) {
                 const gId = path.galaxyId !== undefined ? path.galaxyId
-                    : (path.line.userData.galaxyId !== undefined ? path.line.userData.galaxyId : -1);
+                    : (ud.galaxyId !== undefined ? ud.galaxyId : -1);
                 if (gId >= 0 && typeof spawnBossForArea === 'function') {
                     const areaKey = gId + '-mission_' + i;
                     if (!bossSystem || !bossSystem.areaBosses || !bossSystem.areaBosses[areaKey]) {
                         const endPos = path.endPosition ||
-                            (path.line && path.line.userData && path.line.userData.endPosition) ||
-                            null;
+                            (ud && ud.endPosition) || null;
                         spawnBossForArea(gId, 'cosmic_feature', areaKey, endPos);
                         if (typeof showAchievement === 'function') {
-                            showAchievement('Boss Incoming!', 'All hostiles cleared — a boss has appeared!', true);
+                            showAchievement('Boss Incoming!', 'All hostiles cleared — a boss has appeared! Destroy it to complete the mission.', true);
                         }
-                        // Mission complete: rep + a permanent +5 to max energy
-                        // and a small heal of current energy.
-                        if (typeof awardReputation === 'function') {
-                            awardReputation(25, 'Dotted-line mission cleared');
-                        }
-                        if (typeof gameState !== 'undefined') {
-                            gameState.maxEnergy = (gameState.maxEnergy || 100) + 5;
-                            gameState.energy = Math.min(gameState.maxEnergy, (gameState.energy || 0) + 25);
-                        }
+                        ud.bossPhase = true;
+                        ud.bossAreaKey = areaKey;
+                    } else {
+                        // A boss already exists for this area (e.g. from
+                        // the area-cleared system) — adopt it.
+                        ud.bossPhase = true;
+                        ud.bossAreaKey = areaKey;
+                    }
+                } else {
+                    // No galaxy / no boss system — fall back to the old
+                    // behaviour so the path can still complete.
+                    ud.missionComplete = true;
+                    mat.color.copy(MISSION_COMPLETE_COLOR);
+                    if (path.particles && path.particles.material) {
+                        path.particles.material.color.copy(MISSION_COMPLETE_COLOR);
+                    }
+                }
+            }
+            // PHASE 2 — boss phase: wait for THAT boss to be destroyed.
+            // Only then mark the mission complete, recolour the line,
+            // and pay out the reward + notification.
+            else if (ud.bossPhase && !wasComplete) {
+                const ab = (typeof bossSystem !== 'undefined' && bossSystem.areaBosses)
+                    ? bossSystem.areaBosses[ud.bossAreaKey] : null;
+                const bossDead = ab && ab.spawned && ab.defeated;
+                if (bossDead) {
+                    ud.missionComplete = true;
+                    ud.bossPhase = false;
+                    mat.color.copy(MISSION_COMPLETE_COLOR);
+                    if (path.particles && path.particles.material) {
+                        path.particles.material.color.copy(MISSION_COMPLETE_COLOR);
+                    }
+                    if (typeof showAchievement === 'function') {
+                        showAchievement('Mission Complete!', 'Boss eliminated — the dotted-line objective is cleared.', true);
+                    }
+                    if (typeof awardReputation === 'function') {
+                        awardReputation(25, 'Dotted-line mission cleared');
+                    }
+                    if (typeof gameState !== 'undefined') {
+                        gameState.maxEnergy = (gameState.maxEnergy || 100) + 5;
+                        gameState.energy = Math.min(gameState.maxEnergy, (gameState.energy || 0) + 25);
+                    }
+                    // Trigger the wingman victory celebration swarm.
+                    if (typeof triggerWingmanCelebration === 'function') {
+                        triggerWingmanCelebration();
                     }
                 }
             } else if (alive && wasComplete) {
-                path.line.userData.missionComplete = false;
-                const orig = path.originalColor || path.line.userData.originalColor;
+                ud.missionComplete = false;
+                const orig = path.originalColor || ud.originalColor;
                 if (orig !== undefined) {
                     mat.color.set(orig);
                     if (path.particles && path.particles.material) {

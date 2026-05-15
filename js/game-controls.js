@@ -2791,6 +2791,209 @@ function createExplosionEffect(targetObject) {
 }
 
 // =============================================================================
+// FACTION-UNIQUE EXPLOSIONS
+// Each of the 8 factions gets a visually distinct death effect so the
+// player can tell at a glance who they just killed. All effects run
+// through explosionManager and use additive blending. Reusable
+// primitive builders keep each faction recipe short.
+// =============================================================================
+const FACTION_EXPLOSION = {
+    0: { name: 'Federation',  style: 'electric',   core: 0xffffff, accent: 0x33ddff, spark: 0x66ccff },
+    1: { name: 'Klingon',     style: 'shrapnel',   core: 0xffcc44, accent: 0xff3300, spark: 0xff6600 },
+    2: { name: 'Rebel',       style: 'ionbloom',   core: 0xccffaa, accent: 0x66ff33, spark: 0x99ff44 },
+    3: { name: 'Romulan',     style: 'singularity',core: 0xffffff, accent: 0x33ff88, spark: 0x00ffaa },
+    4: { name: 'Imperial',    style: 'tieblast',   core: 0xffffff, accent: 0x66ff66, spark: 0xaaffaa },
+    5: { name: 'Cardassian',  style: 'spiral',     core: 0xffdd66, accent: 0xff9922, spark: 0xffbb44 },
+    6: { name: 'Sith',        style: 'darkenergy', core: 0xff2222, accent: 0xaa00ff, spark: 0xff0044 },
+    7: { name: 'Vulcan',      style: 'goldrings',  core: 0xfff0cc, accent: 0xffcc66, spark: 0xffd699 }
+};
+
+function _fxSphere(center, radius, color, opacity, life, growth) {
+    const geo = new THREE.SphereGeometry(radius, 16, 12);
+    const mat = new THREE.MeshBasicMaterial({
+        color: color, transparent: true, opacity: opacity,
+        blending: THREE.AdditiveBlending, depthWrite: false
+    });
+    const m = new THREE.Mesh(geo, mat);
+    m.position.copy(center);
+    m.frustumCulled = false;
+    scene.add(m);
+    let s = 1, op = opacity;
+    explosionManager.addExplosion({
+        update(dt) {
+            s += growth * (dt / 50);
+            op -= (opacity / life) * (dt / 50);
+            m.scale.set(s, s, s);
+            mat.opacity = Math.max(0, op);
+            return op > 0;
+        },
+        cleanup() { scene.remove(m); geo.dispose(); mat.dispose(); }
+    });
+}
+
+function _fxRing(center, radius, color, growth, life, opacity) {
+    const geo = new THREE.RingGeometry(radius, radius * 1.18, 40);
+    const mat = new THREE.MeshBasicMaterial({
+        color: color, transparent: true, opacity: opacity || 0.85,
+        side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false
+    });
+    const ring = new THREE.Mesh(geo, mat);
+    ring.position.copy(center);
+    if (typeof camera !== 'undefined') ring.lookAt(camera.position);
+    ring.frustumCulled = false;
+    scene.add(ring);
+    let s = 1, op = (opacity || 0.85);
+    explosionManager.addExplosion({
+        update(dt) {
+            s += growth * (dt / 50);
+            op -= ((opacity || 0.85) / life) * (dt / 50);
+            ring.scale.set(s, s, 1);
+            mat.opacity = Math.max(0, op);
+            return op > 0;
+        },
+        cleanup() { scene.remove(ring); geo.dispose(); mat.dispose(); }
+    });
+}
+
+function _fxParticles(center, count, color, size, speed, life, swirl) {
+    const geo = new THREE.BufferGeometry();
+    const pos = new Float32Array(count * 3);
+    const vel = [];
+    for (let i = 0; i < count; i++) {
+        pos[i*3] = center.x; pos[i*3+1] = center.y; pos[i*3+2] = center.z;
+        const dir = new THREE.Vector3(
+            (Math.random() - 0.5), (Math.random() - 0.5), (Math.random() - 0.5)
+        ).normalize().multiplyScalar(speed * (0.5 + Math.random()));
+        if (swirl) {
+            // Add a tangential component for a spiral look
+            const tang = new THREE.Vector3(-dir.z, dir.y * 0.3, dir.x).multiplyScalar(swirl);
+            dir.add(tang);
+        }
+        vel.push(dir);
+    }
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    const mat = new THREE.PointsMaterial({
+        color: color, size: size, transparent: true, opacity: 1,
+        blending: THREE.AdditiveBlending, depthWrite: false
+    });
+    const pts = new THREE.Points(geo, mat);
+    pts.frustumCulled = false;
+    scene.add(pts);
+    let l = 1.0;
+    explosionManager.addExplosion({
+        update(dt) {
+            l -= (1 / life) * (dt / 50);
+            mat.opacity = Math.max(0, l);
+            const arr = geo.attributes.position.array;
+            const f = dt / 50;
+            for (let i = 0; i < count; i++) {
+                arr[i*3]   += vel[i].x * f;
+                arr[i*3+1] += vel[i].y * f;
+                arr[i*3+2] += vel[i].z * f;
+            }
+            geo.attributes.position.needsUpdate = true;
+            return l > 0;
+        },
+        cleanup() { scene.remove(pts); geo.dispose(); mat.dispose(); }
+    });
+}
+
+function _fxLightning(center, count, color, len) {
+    for (let i = 0; i < count; i++) {
+        const geo = new THREE.CylinderGeometry(0.6, 0.1, len, 5);
+        const mat = new THREE.MeshBasicMaterial({
+            color: color, transparent: true, opacity: 0.9,
+            blending: THREE.AdditiveBlending, depthWrite: false
+        });
+        const bolt = new THREE.Mesh(geo, mat);
+        bolt.position.copy(center);
+        const dir = new THREE.Vector3(
+            Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).normalize();
+        const up = new THREE.Vector3(0, 1, 0);
+        const axis = new THREE.Vector3().crossVectors(up, dir);
+        if (axis.length() > 0.001) {
+            axis.normalize();
+            bolt.setRotationFromAxisAngle(axis, Math.acos(up.dot(dir)));
+        }
+        bolt.position.add(dir.clone().multiplyScalar(len * 0.5));
+        bolt.frustumCulled = false;
+        scene.add(bolt);
+        let op = 0.9;
+        explosionManager.addExplosion({
+            update(dt) {
+                op -= 0.12 * (dt / 50);
+                mat.opacity = Math.max(0, op);
+                return op > 0;
+            },
+            cleanup() { scene.remove(bolt); geo.dispose(); mat.dispose(); }
+        });
+    }
+}
+
+// Public: faction-flavored regular-kill explosion. galaxyId picks the
+// recipe; scale multiplies all sizes (defaults to 1).
+function createFactionExplosion(position, galaxyId, scale) {
+    if (!position || typeof scene === 'undefined' || typeof THREE === 'undefined') return;
+    const center = position.clone ? position.clone()
+                 : new THREE.Vector3(position.x, position.y, position.z);
+    const S = scale || 1;
+    const cfg = FACTION_EXPLOSION[galaxyId] || FACTION_EXPLOSION[0];
+
+    switch (cfg.style) {
+        case 'electric': // Federation — crisp white core, fast cyan ring, blue sparks
+            _fxSphere(center, 7 * S, cfg.core, 1.0, 14, 2.6);
+            _fxRing(center, 5 * S, cfg.accent, 7, 14, 0.9);
+            _fxParticles(center, 26, cfg.spark, 2.4 * S, 7 * S, 16, 0);
+            break;
+        case 'shrapnel': // Klingon — jagged double burst, fast orange shards
+            _fxSphere(center, 8 * S, cfg.core, 0.95, 12, 2.2);
+            _fxParticles(center, 40, cfg.spark, 2.8 * S, 11 * S, 14, 0);
+            setTimeout(() => {
+                _fxSphere(center, 11 * S, cfg.accent, 0.8, 14, 2.8);
+                _fxParticles(center, 28, cfg.core, 2.2 * S, 8 * S, 12, 0);
+            }, 140);
+            break;
+        case 'ionbloom': // Rebel — slow green bloom + lingering haze
+            _fxSphere(center, 9 * S, cfg.accent, 0.75, 26, 1.6);
+            _fxSphere(center, 5 * S, cfg.core, 0.9, 18, 2.0);
+            _fxParticles(center, 30, cfg.spark, 3.0 * S, 4 * S, 28, 0);
+            break;
+        case 'singularity': // Romulan — implode then green outward flash
+            _fxParticles(center, 30, cfg.accent, 2.4 * S, -6 * S, 10, 0); // inward
+            setTimeout(() => {
+                _fxSphere(center, 6 * S, cfg.core, 1.0, 12, 3.4);
+                _fxRing(center, 4 * S, cfg.spark, 9, 14, 0.85);
+            }, 220);
+            break;
+        case 'tieblast': // Imperial — sharp white flash + thin green ring
+            _fxSphere(center, 9 * S, cfg.core, 1.0, 9, 3.0);
+            _fxRing(center, 6 * S, cfg.accent, 11, 16, 0.8);
+            _fxRing(center, 6 * S, cfg.spark, 6, 16, 0.5);
+            break;
+        case 'spiral': // Cardassian — swirling orange particles
+            _fxSphere(center, 6 * S, cfg.core, 0.9, 14, 2.2);
+            _fxParticles(center, 44, cfg.accent, 2.6 * S, 6 * S, 22, 3.2);
+            break;
+        case 'darkenergy': // Sith — red core + radiating lightning + purple smoke
+            _fxSphere(center, 7 * S, cfg.core, 1.0, 14, 2.4);
+            _fxLightning(center, 7, cfg.spark, 70 * S);
+            _fxSphere(center, 12 * S, cfg.accent, 0.45, 30, 2.0);
+            break;
+        case 'goldrings': // Vulcan — concentric expanding gold rings
+            _fxSphere(center, 5 * S, cfg.core, 0.9, 14, 2.0);
+            _fxRing(center, 4 * S, cfg.accent, 6, 18, 0.8);
+            setTimeout(() => _fxRing(center, 4 * S, cfg.spark, 8, 18, 0.7), 130);
+            setTimeout(() => _fxRing(center, 4 * S, cfg.accent, 10, 18, 0.6), 280);
+            break;
+        default:
+            _fxSphere(center, 7 * S, cfg.core, 1.0, 14, 2.5);
+            _fxParticles(center, 24, cfg.spark, 2.4 * S, 7 * S, 14, 0);
+    }
+    try { playSound('explosion'); } catch (e) {}
+}
+if (typeof window !== 'undefined') window.createFactionExplosion = createFactionExplosion;
+
+// =============================================================================
 // BOSS / GUARDIAN EXPLOSION
 // A larger, multi-stage detonation reserved for boss and elite-guardian
 // kills. Three escalating waves:
@@ -4694,6 +4897,10 @@ if (enemy.userData.health <= 0) {
             color: _color,
             scale: _enemyUD.isBoss ? 1.8 : 1.3
         });
+    } else if (typeof createFactionExplosion === 'function' &&
+               typeof _enemyUD.galaxyId === 'number') {
+        // Regular hostile: faction-flavoured death effect.
+        createFactionExplosion(enemy.position, _enemyUD.galaxyId, 1.0);
     } else {
         createExplosionEffect(enemy.position, 0xff4444, 15);
         playSound('explosion');
@@ -5312,6 +5519,9 @@ function handleMissileHit(missile, enemy) {
                 color: _color,
                 scale: _missUD.isBoss ? 1.8 : 1.3
             });
+        } else if (typeof createFactionExplosion === 'function' &&
+                   typeof _missUD.galaxyId === 'number') {
+            createFactionExplosion(enemy.position, _missUD.galaxyId, 1.0);
         } else {
             createExplosionEffect(enemy.position, 0xff4444, 15);
             playSound('explosion');
@@ -7103,6 +7313,20 @@ function _isPlayerInHomeSystem() {
     return false;
 }
 
+// Boss-victory wingman celebration. When an area boss (or mission
+// boss) dies, every living wingman drops what it's doing and orbits
+// the player tightly for a few seconds — a "we won" fly-by — before
+// resuming patrol. triggerWingmanCelebration just stamps a global
+// deadline; updateAllyShips reads it and switches state.
+let _wingmanCelebrateUntil = 0;
+function triggerWingmanCelebration(durationMs) {
+    _wingmanCelebrateUntil = Date.now() + (durationMs || 5500);
+    if (typeof showAchievement === 'function') {
+        showAchievement('Squadron Victory Roll', 'Your wingmen rally around you to celebrate the kill!', false);
+    }
+}
+if (typeof window !== 'undefined') window.triggerWingmanCelebration = triggerWingmanCelebration;
+
 function updateAllyShips() {
     if (!allyShips.length || typeof camera === 'undefined' || typeof THREE === 'undefined') return;
     if (!gameState || !gameState.gameStarted || gameState.gameOver) return;
@@ -7110,6 +7334,7 @@ function updateAllyShips() {
     const now = Date.now();
     const playerPos = camera.position;
     const playerWarping = _isPlayerWarping();
+    const celebrating = now < _wingmanCelebrateUntil;
 
     allyShips.forEach(ally => {
         if (!ally || ally.userData.health <= 0) return;
@@ -7146,6 +7371,29 @@ function updateAllyShips() {
         const threat = _scanForEnemy(ally);
 
         // ── State transitions ────────────────────────────────────────────
+        // Boss-victory celebration takes priority over everything except
+        // an active warp (we never want wingmen stranded). They abandon
+        // combat/patrol and rally into a tight orbit around the player.
+        if (celebrating && !playerWarping) {
+            if (ud.aiState !== 'celebrate') {
+                _wingmanTacticalMessage(ud, 'kill');
+                // Give each wingman a distinct orbit phase + radius so
+                // they form a ring rather than stacking on one point.
+                const idx = allyShips.indexOf(ally);
+                ud._celebPhase = idx * (Math.PI * 2 / Math.max(1, allyShips.length));
+                ud._celebRadius = 130 + (idx % 3) * 55;
+                ud._celebHeight = (idx % 2 === 0 ? 1 : -1) * (30 + (idx % 3) * 20);
+            }
+            ud.aiState = 'celebrate';
+            ud.engageTarget = null;
+            ud.patrolTarget = null;
+        } else if (!celebrating && ud.aiState === 'celebrate') {
+            // Party's over — drop back to patrol (which biases toward
+            // following the player, then on to the nebula).
+            ud.aiState = 'patrol';
+            ud.patrolTarget = null;
+        }
+
         // Player is warping (slingshot/emergency/BH) — drop everything and follow
         if (playerWarping && ud.aiState !== 'engage') {
             if (ud.aiState !== 'follow') _wingmanTacticalMessage(ud, 'follow');
@@ -7220,7 +7468,9 @@ function updateAllyShips() {
         }
 
         // ── Execute current state ────────────────────────────────────────
-        if (ud.aiState === 'engage' && ud.engageTarget) {
+        if (ud.aiState === 'celebrate') {
+            _executeCelebrate(ally, ud, now, playerPos);
+        } else if (ud.aiState === 'engage' && ud.engageTarget) {
             _executeEngage(ally, ud, now);
         } else if (ud.aiState === 'follow') {
             _executeFollow(ally, ud, playerPos);
@@ -7987,6 +8237,30 @@ function _executeReturn(ally, ud) {
     const center = new THREE.Vector3(0, 0, 0);
     _allyDir.subVectors(center, ally.position).normalize();
     ud.velocity.lerp(_allyDir.clone().multiplyScalar(ud.cruiseSpeed * 1.5), 0.06);
+    ally.position.add(ud.velocity);
+}
+
+// ── Celebrate: tight victory orbit around the player ─────────────────────
+// Each wingman spirals into its assigned ring slot around the player
+// and circles fast. The per-wingman phase/radius/height (set on entry
+// to the state) keeps them spaced into a proper encircling formation
+// rather than dogpiling one point.
+function _executeCelebrate(ally, ud, now, playerPos) {
+    const t = now * 0.004; // orbital speed
+    const phase = ud._celebPhase || 0;
+    const r = ud._celebRadius || 150;
+    const h = ud._celebHeight || 0;
+    const target = new THREE.Vector3(
+        playerPos.x + Math.cos(t + phase) * r,
+        playerPos.y + h + Math.sin(t * 1.5 + phase) * 25,
+        playerPos.z + Math.sin(t + phase) * r
+    );
+    _allyDir.subVectors(target, ally.position);
+    const dist = _allyDir.length();
+    _allyDir.normalize();
+    // Snappy chase so the ring forms quickly and circles with energy.
+    const spd = Math.min((ud.combatSpeed || ud.cruiseSpeed || 4) * 1.4, Math.max(2, dist * 0.06));
+    ud.velocity.lerp(_allyDir.clone().multiplyScalar(spd), 0.14);
     ally.position.add(ud.velocity);
 }
 

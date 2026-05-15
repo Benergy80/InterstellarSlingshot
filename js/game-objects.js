@@ -1499,6 +1499,12 @@ function checkBossVictory(defeatedEnemy) {
 
         console.log(`Boss victory: Defeated ${defeatedEnemy.userData.name} and ${supportShips.length} support ships in area ${areaKey}`);
 
+        // Wingmen rally around the player in a victory orbit before
+        // resuming patrol / heading to the next nebula.
+        if (typeof triggerWingmanCelebration === 'function') {
+            triggerWingmanCelebration();
+        }
+
         // Check if we should spawn elite guardians now
         checkAndSpawnEliteGuardians();
 
