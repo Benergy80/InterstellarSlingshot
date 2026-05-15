@@ -1496,10 +1496,14 @@ function checkBossVictory(defeatedEnemy) {
             bossSystem.activeBosses.splice(bossIndex, 1);
         }
 
-        // Show victory message
+        // Show victory message. NOTE: this is ONE guardian (there is
+        // exactly one Elite Guardian per faction). The old copy said
+        // "Hostile Forces have been Eliminated!" which made it read as
+        // though every enemy had just died — misleading. Keep it
+        // specific to this single defender.
         if (typeof showAchievement === 'function') {
             showAchievement('Elite Guardian Eliminated!',
-                `${defeatedEnemy.userData.name} has been defeated! Hostile Forces have been Eliminated!`);
+                `${defeatedEnemy.userData.name} (${faction}) has fallen — that faction's last defender is down.`);
         }
 
         return true;
@@ -1524,23 +1528,29 @@ function checkBossVictory(defeatedEnemy) {
             bossSystem.activeBoss = null;
         }
 
-        // Remove all support ships for this area
+        // Boss escorts DO NOT instantly vanish when the boss dies — that
+        // made it look like "all the enemies disappeared the moment the
+        // boss died". Instead they're demoted to regular hostiles: they
+        // keep flying and fighting and must be cleared individually.
+        // Clearing the isBossSupport flag also lets the normal
+        // area-clear / galaxy-clear logic count them again.
         const supportShips = enemies.filter(enemy =>
             enemy.userData.isBossSupport &&
-            enemy.userData.areaKey === areaKey
+            enemy.userData.areaKey === areaKey &&
+            enemy.userData.health > 0
         );
 
         supportShips.forEach(support => {
-            if (typeof createExplosionEffect === 'function') {
-                createExplosionEffect(support);
+            support.userData.isBossSupport = false;
+            support.userData.attackMode = 'pursue';
+            support.userData.isActive = true;
+            // Keep them in the same galaxy/area so area-clear still works.
+            if (support.userData.galaxyId === undefined) {
+                support.userData.galaxyId = galaxyId;
             }
-
-            scene.remove(support);
-            const index = enemies.indexOf(support);
-            if (index > -1) enemies.splice(index, 1);
         });
 
-        console.log(`Boss victory: Defeated ${defeatedEnemy.userData.name} and ${supportShips.length} support ships in area ${areaKey}`);
+        console.log(`Boss victory: Defeated ${defeatedEnemy.userData.name}; ${supportShips.length} escorts demoted to regular hostiles in area ${areaKey}`);
 
         // Wingmen rally around the player in a victory orbit before
         // resuming patrol / heading to the next nebula.

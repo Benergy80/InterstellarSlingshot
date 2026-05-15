@@ -2855,6 +2855,88 @@ function _fxRing(center, radius, color, growth, life, opacity) {
     });
 }
 
+// Flying angular SHARDS — tetrahedra / octahedra that burst outward
+// and tumble. Gives factions a sharp, non-circular signature.
+function _fxShards(center, count, color, size, speed, life, kind) {
+    const shards = [];
+    for (let i = 0; i < count; i++) {
+        const s = size * (0.6 + Math.random() * 0.8);
+        let g;
+        if (kind === 'octa')      g = new THREE.OctahedronGeometry(s, 0);
+        else if (kind === 'tetra')g = new THREE.TetrahedronGeometry(s, 0);
+        else                      g = new THREE.TetrahedronGeometry(s, 0);
+        const m = new THREE.MeshBasicMaterial({
+            color: color, transparent: true, opacity: 1,
+            blending: THREE.AdditiveBlending, depthWrite: false
+        });
+        const mesh = new THREE.Mesh(g, m);
+        mesh.position.copy(center);
+        mesh.frustumCulled = false;
+        scene.add(mesh);
+        shards.push({
+            mesh: mesh, geo: g, mat: m,
+            vel: new THREE.Vector3(
+                Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5
+            ).normalize().multiplyScalar(speed * (0.5 + Math.random())),
+            spin: new THREE.Vector3(
+                (Math.random() - 0.5) * 0.5,
+                (Math.random() - 0.5) * 0.5,
+                (Math.random() - 0.5) * 0.5)
+        });
+    }
+    let l = 1.0;
+    explosionManager.addExplosion({
+        update(dt) {
+            l -= (1 / life) * (dt / 50);
+            const f = dt / 50;
+            for (let i = 0; i < shards.length; i++) {
+                const c = shards[i];
+                c.mesh.position.addScaledVector(c.vel, f);
+                c.mesh.rotation.x += c.spin.x * f;
+                c.mesh.rotation.y += c.spin.y * f;
+                c.mesh.rotation.z += c.spin.z * f;
+                c.mat.opacity = Math.max(0, l);
+            }
+            return l > 0;
+        },
+        cleanup() {
+            for (let i = 0; i < shards.length; i++) {
+                scene.remove(shards[i].mesh);
+                shards[i].geo.dispose();
+                shards[i].mat.dispose();
+            }
+        }
+    });
+}
+
+// Low-segment ring = a polygon outline (3 = triangle, 5 = pentagon,
+// 6 = hexagon). A crisp geometric alternative to the round shockwave.
+function _fxPolyRing(center, radius, color, sides, growth, life, opacity) {
+    const geo = new THREE.RingGeometry(radius, radius * 1.22, Math.max(3, sides), 1);
+    const mat = new THREE.MeshBasicMaterial({
+        color: color, transparent: true, opacity: opacity || 0.85,
+        side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false
+    });
+    const ring = new THREE.Mesh(geo, mat);
+    ring.position.copy(center);
+    if (typeof camera !== 'undefined') ring.lookAt(camera.position);
+    ring.rotation.z = Math.random() * Math.PI;
+    ring.frustumCulled = false;
+    scene.add(ring);
+    let s = 1, op = (opacity || 0.85);
+    explosionManager.addExplosion({
+        update(dt) {
+            s += growth * (dt / 50);
+            op -= ((opacity || 0.85) / life) * (dt / 50);
+            ring.scale.set(s, s, 1);
+            ring.rotation.z += 0.03 * (dt / 50);
+            mat.opacity = Math.max(0, op);
+            return op > 0;
+        },
+        cleanup() { scene.remove(ring); geo.dispose(); mat.dispose(); }
+    });
+}
+
 function _fxParticles(center, count, color, size, speed, life, swirl) {
     const geo = new THREE.BufferGeometry();
     const pos = new Float32Array(count * 3);
@@ -2940,17 +3022,17 @@ function createFactionExplosion(position, galaxyId, scale) {
     const cfg = FACTION_EXPLOSION[galaxyId] || FACTION_EXPLOSION[0];
 
     switch (cfg.style) {
-        case 'electric': // Federation — crisp white core, fast cyan ring, blue sparks
+        case 'electric': // Federation — white core + crisp TRIANGULAR ring + blue sparks
             _fxSphere(center, 7 * S, cfg.core, 1.0, 14, 2.6);
-            _fxRing(center, 5 * S, cfg.accent, 7, 14, 0.9);
+            _fxPolyRing(center, 5 * S, cfg.accent, 3, 7, 14, 0.9);  // triangle
             _fxParticles(center, 26, cfg.spark, 2.4 * S, 7 * S, 16, 0);
             break;
-        case 'shrapnel': // Klingon — jagged double burst, fast orange shards
+        case 'shrapnel': // Klingon — jagged TETRAHEDRON shrapnel double-burst
             _fxSphere(center, 8 * S, cfg.core, 0.95, 12, 2.2);
-            _fxParticles(center, 40, cfg.spark, 2.8 * S, 11 * S, 14, 0);
+            _fxShards(center, 26, cfg.spark, 4 * S, 12 * S, 16, 'tetra');
             setTimeout(() => {
                 _fxSphere(center, 11 * S, cfg.accent, 0.8, 14, 2.8);
-                _fxParticles(center, 28, cfg.core, 2.2 * S, 8 * S, 12, 0);
+                _fxShards(center, 18, cfg.core, 3 * S, 9 * S, 14, 'tetra');
             }, 140);
             break;
         case 'ionbloom': // Rebel — slow green bloom + lingering haze
@@ -2965,25 +3047,27 @@ function createFactionExplosion(position, galaxyId, scale) {
                 _fxRing(center, 4 * S, cfg.spark, 9, 14, 0.85);
             }, 220);
             break;
-        case 'tieblast': // Imperial — sharp white flash + thin green ring
+        case 'tieblast': // Imperial — white flash + HEXAGONAL twin rings
             _fxSphere(center, 9 * S, cfg.core, 1.0, 9, 3.0);
-            _fxRing(center, 6 * S, cfg.accent, 11, 16, 0.8);
-            _fxRing(center, 6 * S, cfg.spark, 6, 16, 0.5);
+            _fxPolyRing(center, 6 * S, cfg.accent, 6, 11, 16, 0.8);  // hexagon
+            _fxPolyRing(center, 6 * S, cfg.spark, 6, 6, 16, 0.5);
             break;
-        case 'spiral': // Cardassian — swirling orange particles
+        case 'spiral': // Cardassian — swirling orange particles + spinning shards
             _fxSphere(center, 6 * S, cfg.core, 0.9, 14, 2.2);
-            _fxParticles(center, 44, cfg.accent, 2.6 * S, 6 * S, 22, 3.2);
+            _fxParticles(center, 36, cfg.accent, 2.6 * S, 6 * S, 22, 3.2);
+            _fxShards(center, 12, cfg.spark, 3 * S, 5 * S, 20, 'tetra');
             break;
-        case 'darkenergy': // Sith — red core + radiating lightning + purple smoke
+        case 'darkenergy': // Sith — red core + OCTAHEDRON shards + lightning + smoke
             _fxSphere(center, 7 * S, cfg.core, 1.0, 14, 2.4);
-            _fxLightning(center, 7, cfg.spark, 70 * S);
+            _fxLightning(center, 8, cfg.spark, 80 * S);
+            _fxShards(center, 16, cfg.accent, 4 * S, 8 * S, 18, 'octa');
             _fxSphere(center, 12 * S, cfg.accent, 0.45, 30, 2.0);
             break;
-        case 'goldrings': // Vulcan — concentric expanding gold rings
+        case 'goldrings': // Vulcan — concentric expanding TRIANGULAR gold rings
             _fxSphere(center, 5 * S, cfg.core, 0.9, 14, 2.0);
-            _fxRing(center, 4 * S, cfg.accent, 6, 18, 0.8);
-            setTimeout(() => _fxRing(center, 4 * S, cfg.spark, 8, 18, 0.7), 130);
-            setTimeout(() => _fxRing(center, 4 * S, cfg.accent, 10, 18, 0.6), 280);
+            _fxPolyRing(center, 4 * S, cfg.accent, 3, 6, 18, 0.8);
+            setTimeout(() => _fxPolyRing(center, 4 * S, cfg.spark, 3, 8, 18, 0.7), 130);
+            setTimeout(() => _fxPolyRing(center, 4 * S, cfg.accent, 3, 10, 18, 0.6), 280);
             break;
         default:
             _fxSphere(center, 7 * S, cfg.core, 1.0, 14, 2.5);
@@ -4971,12 +5055,23 @@ if (enemy.userData.health <= 0) {
     // standard puff.
     const _enemyUD = enemy.userData || {};
     const _bigKill = _enemyUD.isBoss || _enemyUD.isEliteGuardian || _enemyUD.isBlackHoleGuardian;
-    if (_bigKill && typeof createBossExplosion === 'function') {
+    const _isBorg = _enemyUD.isBorgCube || _enemyUD.type === 'borg_drone' || _enemyUD.isBorg;
+    // Martian Pirates (but NOT Vulcan Patrols — they share galaxyId 7)
+    // keep the original simple explosion the player is used to.
+    const _isPirate = _enemyUD.isMartianPirate && !_enemyUD.isVulcanPatrol;
+    if (_isBorg && typeof createMassiveBorgExplosion === 'function') {
+        createMassiveBorgExplosion(enemy.position, _enemyUD.cubeSize || 30);
+        playSound('explosion');
+    } else if (_bigKill && typeof createBossExplosion === 'function') {
         const _color = _enemyUD.galaxyColor || 0xff5522;
         createBossExplosion(enemy.position, {
             color: _color,
             scale: _enemyUD.isBoss ? 1.8 : 1.3
         });
+    } else if (_isPirate) {
+        // Original pre-upgrade explosion for Martian Pirates.
+        createExplosionEffect(enemy.position, 0xff4444, 15);
+        playSound('explosion');
     } else if (typeof createFactionExplosion === 'function' &&
                typeof _enemyUD.galaxyId === 'number') {
         // Regular hostile: faction-flavoured death effect.
@@ -5593,12 +5688,20 @@ function handleMissileHit(missile, enemy) {
         // Same big-kill upgrade for missile finishes.
         const _missUD = enemy.userData || {};
         const _missBig = _missUD.isBoss || _missUD.isEliteGuardian || _missUD.isBlackHoleGuardian;
-        if (_missBig && typeof createBossExplosion === 'function') {
+        const _missBorg = _missUD.isBorgCube || _missUD.type === 'borg_drone' || _missUD.isBorg;
+        const _missPirate = _missUD.isMartianPirate && !_missUD.isVulcanPatrol;
+        if (_missBorg && typeof createMassiveBorgExplosion === 'function') {
+            createMassiveBorgExplosion(enemy.position, _missUD.cubeSize || 30);
+            playSound('explosion');
+        } else if (_missBig && typeof createBossExplosion === 'function') {
             const _color = _missUD.galaxyColor || 0xff5522;
             createBossExplosion(enemy.position, {
                 color: _color,
                 scale: _missUD.isBoss ? 1.8 : 1.3
             });
+        } else if (_missPirate) {
+            createExplosionEffect(enemy.position, 0xff4444, 15);
+            playSound('explosion');
         } else if (typeof createFactionExplosion === 'function' &&
                    typeof _missUD.galaxyId === 'number') {
             createFactionExplosion(enemy.position, _missUD.galaxyId, 1.0);
