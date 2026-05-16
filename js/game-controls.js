@@ -5377,8 +5377,11 @@ if (enemy.userData.health <= 0) {
         playSound('explosion');
     } else if (typeof createFactionExplosion === 'function' &&
                typeof _enemyUD.galaxyId === 'number') {
-        // Regular hostile: faction-flavoured death effect.
-        createFactionExplosion(enemy.position, _enemyUD.galaxyId, 1.0);
+        // Regular hostile: faction-flavoured death effect. Hostiles in
+        // the black-hole (distant, non-local) galaxies detonate at half
+        // diameter; the local-galaxy fights keep full size.
+        createFactionExplosion(enemy.position, _enemyUD.galaxyId,
+            isEnemyInLocalGalaxy(enemy) ? 1.0 : 0.5);
     } else {
         createExplosionEffect(enemy.position, 0xff4444, 15);
         playSound('explosion');
@@ -6007,7 +6010,9 @@ function handleMissileHit(missile, enemy) {
             playSound('explosion');
         } else if (typeof createFactionExplosion === 'function' &&
                    typeof _missUD.galaxyId === 'number') {
-            createFactionExplosion(enemy.position, _missUD.galaxyId, 1.0);
+            // Half diameter for black-hole (distant) galaxy hostiles.
+            createFactionExplosion(enemy.position, _missUD.galaxyId,
+                isEnemyInLocalGalaxy(enemy) ? 1.0 : 0.5);
         } else {
             createExplosionEffect(enemy.position, 0xff4444, 15);
             playSound('explosion');

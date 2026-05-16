@@ -1797,7 +1797,7 @@
     gameState.currentTarget = target;
 
     // Only fire inside the enemy's own firing range AND when lined up
-    const engageRange = (target.userData && target.userData.firingRange) || 500;
+    const engageRange = (target.userData && target.userData.firingRange) || 400;
     const dist = camPos().distanceTo(target.position);
     if (dist > engageRange) return;
     if (!isInFiringCone(target, engageRange + 100)) return;
@@ -1864,13 +1864,13 @@
     k[ap._flightStyleKey] = true;
   }
 
-  // Missile range matches the auto-mouse crosshair snap distance
-  // (gameState.targetLock.range, default 600 u) plus a small 100 u
-  // buffer.  Outside that bubble the missile would just chase the
-  // target forever with no visual setup from the crosshair.
+  // Demo missile engagement bubble: a fixed 500 u lock + 100 u buffer
+  // = 600 u. Deliberately decoupled from gameState.targetLock.range
+  // (now 400 u for the laser auto-aim) so missiles reach a bit further
+  // than the close-range laser dogfight without chasing forever.
   const MISSILE_RANGE_BUFFER = 100;
   function missileMaxRange() {
-    return ((gameState.targetLock && gameState.targetLock.range) || 600) + MISSILE_RANGE_BUFFER;
+    return 500 + MISSILE_RANGE_BUFFER;
   }
 
   // Track which enemies already had a missile fired at them this run
@@ -1890,8 +1890,14 @@
     if (shieldsActive()) return false;
     if (!gameState.missiles || gameState.missiles.current <= 0) return false;
     if (dist > missileMaxRange()) return false;
-    if (hasMissileBeenFiredAt(target)) return false;
-    if (Date.now() - (ap._lastMissileTime || 0) <= 2500) return false;
+    // Bosses / elite guardians / black-hole guardians have NO once-per-
+    // target limit — the demo may keep missiling these big targets
+    // (still rate-limited by the 1.5 s pacing below).
+    const _bigTarget = target.userData.isBoss ||
+                       target.userData.isEliteGuardian ||
+                       target.userData.isBlackHoleGuardian;
+    if (!_bigTarget && hasMissileBeenFiredAt(target)) return false;
+    if (Date.now() - (ap._lastMissileTime || 0) <= 1500) return false;
     return true;
   }
 
@@ -1926,8 +1932,8 @@
     if (tgt.userData.type !== 'enemy' && !tgt.userData.isBorg) return;
     if (tgt.userData.health <= 0) return;
 
-    // Demo player only fires when within 500u — keep dogfights close-range
-    const engageRange = Math.min(500, (tgt.userData && tgt.userData.firingRange) || 500);
+    // Demo player only fires when within 400u — keep dogfights close-range
+    const engageRange = Math.min(400, (tgt.userData && tgt.userData.firingRange) || 400);
     const dist = camPos().distanceTo(tgt.position);
     if (dist > engageRange) return;
 
