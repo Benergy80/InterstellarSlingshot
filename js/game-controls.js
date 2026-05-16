@@ -4152,13 +4152,21 @@ function flashEnemyHit(enemy, damage = 1) {
     // the sparks are what the player actually sees on those). Use the
     // world position so it lands on the ship even when the enemy is a
     // child of a system group (e.g. Borg drones).
+    // Rate-limited to one burst per target per 120ms. Sustained
+    // autopilot/wingman fire calls flashEnemyHit many times a second;
+    // without this each tick spawned a fresh particle system +
+    // explosionManager entry, which was a measurable jitter source.
     if (enemy.userData && enemy.userData.health > 0 &&
         typeof createHitSparks === 'function' && typeof THREE !== 'undefined') {
-        const wp = new THREE.Vector3();
-        if (enemy.getWorldPosition) enemy.getWorldPosition(wp);
-        else if (enemy.position) wp.copy(enemy.position);
-        const tint = (enemy.userData && enemy.userData.galaxyColor) || 0xffaa33;
-        createHitSparks(wp, tint);
+        const _now = Date.now();
+        if (!enemy.userData._lastSparkTime || (_now - enemy.userData._lastSparkTime) > 120) {
+            enemy.userData._lastSparkTime = _now;
+            const wp = new THREE.Vector3();
+            if (enemy.getWorldPosition) enemy.getWorldPosition(wp);
+            else if (enemy.position) wp.copy(enemy.position);
+            const tint = (enemy.userData && enemy.userData.galaxyColor) || 0xffaa33;
+            createHitSparks(wp, tint);
+        }
     }
 
     if (!enemy.material) return;

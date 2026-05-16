@@ -1246,7 +1246,11 @@ function updateGalaxyMap() {
     if (_zoneLabel) _zoneLabel.style.display = 'none';
     const _galaxyMap = document.getElementById('galaxyMap');
     if (_galaxyMap) {
-        _galaxyMap.querySelectorAll('.universe-nebula-dot, .universe-path-line, .galactic-path-dot').forEach(d => d.remove());
+        // NOTE: .galactic-path-dot is intentionally NOT purged here — those
+        // dots are POOLED (created once, repositioned/hidden) and refreshed
+        // on a throttle, not rebuilt every frame. Destroying them per-frame
+        // was ~2-3k DOM create/remove ops per second in demo mode.
+        _galaxyMap.querySelectorAll('.universe-nebula-dot, .universe-path-line').forEach(d => d.remove());
     }
     for (let _i = 0; _i < 10; _i++) {
         const m = document.getElementById('allyMapMarker' + _i);
@@ -1609,49 +1613,75 @@ if (obj.type === 'ally') {
     }
     
     // ── Unlocked nebula mission (dotted-line) paths ──────────────────
-    // Once a discovery path exists it represents an UNLOCKED objective,
-    // so it should be visible on the radar. The in-world line spans tens
-    // of thousands of units (far beyond the 3000u radar), so we sample
-    // points along start→end and plot any that fall inside the radar as
-    // small dots in the path's current colour (faction colour while
-    // active, white-ish once the mission is complete).
-    if (galaxyMap && typeof window !== 'undefined' &&
-        Array.isArray(window.discoveryPaths) && window.discoveryPaths.length) {
-        const SAMPLES = 28;
-        window.discoveryPaths.forEach(path => {
-            if (!path || !path.line || !path.line.userData) return;
-            const ud = path.line.userData;
-            const a = ud.startPosition, b = ud.endPosition;
-            if (!a || !b) return;
-            let colHex = '#7fd5ff';
-            try {
-                if (path.line.material && path.line.material.color) {
-                    colHex = '#' + path.line.material.color.getHexString();
-                }
-            } catch (e) {}
-            const complete = !!ud.missionComplete;
-            for (let s = 0; s <= SAMPLES; s++) {
-                const t = s / SAMPLES;
-                const wx = a.x + (b.x - a.x) * t;
-                const wz = a.z + (b.z - a.z) * t;
-                const rx = (wx - camera.position.x) / radarRange;
-                const rz = (wz - camera.position.z) / radarRange;
-                const sx = 50 + rx * 50;
-                const sz = 50 + rz * 50;
-                if (sx < 2 || sx > 98 || sz < 2 || sz > 98) continue;
-                const d = document.createElement('div');
-                d.className = 'galactic-path-dot';
+    // Each discovery path is an UNLOCKED objective and shows on the
+    // radar. The in-world line spans tens of thousands of units (far
+    // past the 3000u radar) so we sample along start→end and plot the
+    // in-range points as small dots in the path's current colour.
+    //
+    // PERFORMANCE: the dot elements are POOLED (created once, then
+    // repositioned/hidden) and only refreshed on a ~6 Hz throttle
+    // rather than rebuilt at the map's 20 Hz. Demo mode discovers many
+    // paths; the old create/destroy-every-frame approach was ~2-3k DOM
+    // ops/sec and a real jitter source. Samples also cut 28 → 14.
+    if (galaxyMap && typeof window !== 'undefined') {
+        if (!updateGalaxyMap._pathDots) updateGalaxyMap._pathDots = [];
+        const pool = updateGalaxyMap._pathDots;
+        const nowMs = Date.now();
+        if (!updateGalaxyMap._lastPathUpdate ||
+            (nowMs - updateGalaxyMap._lastPathUpdate) > 170) {
+            updateGalaxyMap._lastPathUpdate = nowMs;
+            const SAMPLES = 14;
+            const paths = Array.isArray(window.discoveryPaths) ? window.discoveryPaths : [];
+            let used = 0;
+            for (let pi = 0; pi < paths.length; pi++) {
+                const path = paths[pi];
+                if (!path || !path.line || !path.line.userData) continue;
+                const ud = path.line.userData;
+                const a = ud.startPosition, b = ud.endPosition;
+                if (!a || !b) continue;
+                let colHex = '#7fd5ff';
+                try {
+                    if (path.line.material && path.line.material.color) {
+                        colHex = '#' + path.line.material.color.getHexString();
+                    }
+                } catch (e) {}
+                const complete = !!ud.missionComplete;
                 const sizePx = complete ? 3 : 2.5;
-                d.style.cssText =
-                    'position:absolute;width:' + sizePx + 'px;height:' + sizePx + 'px;' +
-                    'border-radius:50%;background:' + colHex + ';' +
-                    'left:' + sx + '%;top:' + sz + '%;' +
-                    'transform:translate(-50%,-50%);pointer-events:none;z-index:2;' +
-                    'opacity:' + (complete ? 0.55 : 0.85) + ';' +
-                    'box-shadow:0 0 3px ' + colHex + ';';
-                galaxyMap.appendChild(d);
+                const op = complete ? '0.55' : '0.85';
+                for (let s = 0; s <= SAMPLES; s++) {
+                    const t = s / SAMPLES;
+                    const wx = a.x + (b.x - a.x) * t;
+                    const wz = a.z + (b.z - a.z) * t;
+                    const sx = 50 + ((wx - camera.position.x) / radarRange) * 50;
+                    const sz = 50 + ((wz - camera.position.z) / radarRange) * 50;
+                    if (sx < 2 || sx > 98 || sz < 2 || sz > 98) continue;
+                    let d = pool[used];
+                    if (!d) {
+                        d = document.createElement('div');
+                        d.className = 'galactic-path-dot';
+                        d.style.position = 'absolute';
+                        d.style.borderRadius = '50%';
+                        d.style.transform = 'translate(-50%,-50%)';
+                        d.style.pointerEvents = 'none';
+                        d.style.zIndex = '2';
+                        galaxyMap.appendChild(d);
+                        pool[used] = d;
+                    }
+                    d.style.width = sizePx + 'px';
+                    d.style.height = sizePx + 'px';
+                    d.style.background = colHex;
+                    d.style.boxShadow = '0 0 3px ' + colHex;
+                    d.style.left = sx + '%';
+                    d.style.top = sz + '%';
+                    d.style.opacity = op;
+                    d.style.display = 'block';
+                    used++;
+                }
             }
-        });
+            for (let k = used; k < pool.length; k++) {
+                if (pool[k]) pool[k].style.display = 'none';
+            }
+        }
     }
 
     // Update current target indicator
@@ -1674,6 +1704,14 @@ if (obj.type === 'ally') {
         
     } else {
     // ========== UNIVERSAL VIEW ==========
+
+    // Hide the pooled galactic-view mission-path dots so they don't
+    // linger on the universal map (they're radar-relative).
+    if (updateGalaxyMap._pathDots) {
+        for (let k = 0; k < updateGalaxyMap._pathDots.length; k++) {
+            if (updateGalaxyMap._pathDots[k]) updateGalaxyMap._pathDots[k].style.display = 'none';
+        }
+    }
 
     // Single galaxyMap binding shared across all universal-view rendering
     // (asteroid fields, depth bar, ally markers, nebula dots, paths, zone label).
