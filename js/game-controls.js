@@ -4215,7 +4215,7 @@ function createScreenDamageEffect(attackerPosition = null) {
     if (!attackerPosition) {
         // Fallback to old full-screen effect if no attacker position provided
         const damageOverlay = document.createElement('div');
-        damageOverlay.className = 'absolute inset-0 bg-red-500 pointer-events-none z-30';
+        damageOverlay.className = 'absolute inset-0 bg-red-500 pointer-events-none z-30 combat-damage-fx';
         damageOverlay.style.opacity = '0';
         damageOverlay.style.animation = 'damageFlash 0.5s ease-out forwards';
         document.body.appendChild(damageOverlay);
@@ -4329,7 +4329,7 @@ function createDirectionalDamageEffect(attackDirection) {
     // transmission prompt (1000) so the player always sees incoming-fire
     // warnings even during a transmission.
     const damageOverlay = document.createElement('div');
-    damageOverlay.className = 'fixed pointer-events-none';
+    damageOverlay.className = 'fixed pointer-events-none combat-damage-fx';
     damageOverlay.style.cssText =
         'top:0;left:0;right:0;bottom:0;' +   // full viewport, always
         overlayStyle + extraStyle +
@@ -4353,7 +4353,7 @@ function createDirectionalDamageEffect(attackDirection) {
 
 function createDamageDirectionIndicator(direction) {
     const indicator = document.createElement('div');
-    indicator.className = 'fixed pointer-events-none text-red-400 font-bold text-lg';
+    indicator.className = 'fixed pointer-events-none text-red-400 font-bold text-lg combat-damage-fx';
     // Above mission alert (z-50) and transmission prompt (1000) so the
     // directional arrows always read even during a transmission.
     indicator.style.zIndex = '2001';

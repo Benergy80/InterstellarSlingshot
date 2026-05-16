@@ -809,6 +809,17 @@ function triggerPlayerDeath(title, message, delayMs) {
         if (ship) ship.visible = false;
     } catch (e) {}
 
+    // Clear any combat damage overlays / "UNDER ATTACK" indicators and
+    // the black-hole danger vignette so the death explosion isn't
+    // muddied by a red screen wash. New ones can't appear because
+    // playerDying is now set and fireEnemyWeapon / collision handlers
+    // stop running.
+    try {
+        document.querySelectorAll('.combat-damage-fx').forEach(el => el.remove());
+        const danger = document.getElementById('dangerOverlay');
+        if (danger) { danger.remove(); window._cachedDangerOverlay = null; }
+    } catch (e) {}
+
     // Visual: existing dramatic explosion (sphere + 100 particles + 3 shockwaves)
     if (typeof createPlayerExplosion === 'function') {
         createPlayerExplosion();
