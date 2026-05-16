@@ -11088,6 +11088,13 @@ function updateHubbleSkyboxOpacity() {
         targetOpacity = 0.00 + (progress * 0.02); // 0.59 = 0.6 - 0.01
     }
     
+    // Boss / elite-guardian battle: hide the Hubble galaxy backdrop so
+    // the blood-red pulsing boss skybox dominates. Resumes its normal
+    // distance-based opacity automatically once the boss is defeated.
+    if (typeof isBossBattleActive === "function" && isBossBattleActive()) {
+        targetOpacity = 0;
+    }
+
     // Smoothly transition to target opacity
     const currentOpacity = window.hubbleSkybox.material.opacity;
     const lerpSpeed = 0.02; // Smooth transition speed
@@ -11123,6 +11130,13 @@ function updateHubbleSkybox2Opacity() {
         targetOpacity = 0.20 + (progress * 0.40); // 0.20 → 0.60
     }
     
+    // Boss / elite-guardian battle: hide this deeper Hubble layer too so
+    // only the pulsing blood-red boss skybox shows. Auto-resumes when
+    // the boss/guardian is defeated.
+    if (typeof isBossBattleActive === "function" && isBossBattleActive()) {
+        targetOpacity = 0;
+    }
+
     // Smoothly transition to target opacity
     const currentOpacity = window.hubbleSkybox2.material.opacity;
     const lerpSpeed = 0.02; // Smooth transition speed
@@ -11137,6 +11151,28 @@ function updateHubbleSkybox2Opacity() {
 let bossSkybox = null;
 let bossSkyboxOpacity = 0;
 let bossHeartbeatPhase = 0;
+
+// Single source of truth: is a boss OR elite/black-hole guardian fight
+// currently live? Drives the pulsing boss skybox AND the Hubble fade-out.
+function isBossBattleActive() {
+    if (typeof bossSystem !== "undefined" && bossSystem &&
+        Array.isArray(bossSystem.activeBosses) &&
+        bossSystem.activeBosses.some(b => b && b.userData && b.userData.health > 0)) {
+        return true;
+    }
+    // Fallback: scan live enemies for any boss-tier set-piece.
+    if (typeof enemies !== "undefined" && Array.isArray(enemies)) {
+        for (let i = 0; i < enemies.length; i++) {
+            const e = enemies[i];
+            if (e && e.userData && e.userData.health > 0 &&
+                (e.userData.isBoss || e.userData.isEliteGuardian || e.userData.isBlackHoleGuardian)) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+if (typeof window !== "undefined") window.isBossBattleActive = isBossBattleActive;
 
 function createBossBattleSkybox() {
     console.log("Creating boss battle skybox...");
@@ -11167,7 +11203,9 @@ function createBossBattleSkybox() {
 function updateBossSkyboxHeartbeat() {
     if (!bossSkybox || typeof bossSystem === "undefined") return;
 
-    const hasBoss = bossSystem.activeBoss !== null;
+    // Boss OR elite/black-hole guardian — not just bossSystem.activeBoss
+    // (which only tracks regular bosses, never elite guardians).
+    const hasBoss = isBossBattleActive();
 
     if (hasBoss) {
         // Heartbeat pulsing effect
