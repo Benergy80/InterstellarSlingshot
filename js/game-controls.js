@@ -7564,8 +7564,8 @@ function createAllyShips() {
             // Alpha is Aggressor (close-range brawler), Beta is Defender
             // (sticks near player and intercepts threats targeting them)
             role: _roleKey,
-            health: 100,
-            maxHealth: 100,
+            health: 50,
+            maxHealth: 50,
             cruiseSpeed: 4.5,
             combatSpeed: 6.5,
             firingRange: 350,
@@ -7677,8 +7677,8 @@ function recruitNebulaWingman(nebulaName, spawnPos) {
         colorStr: recruit.colorStr,
         recruitedFrom: nebulaName || 'unknown nebula',
         role: role,
-        health: 100,
-        maxHealth: 100,
+        health: 50,
+        maxHealth: 50,
         cruiseSpeed: 4.5,
         combatSpeed: 6.5,
         firingRange: 350,
