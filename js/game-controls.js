@@ -3930,14 +3930,11 @@ function createLaserBeam(startPos, endPos, color = '#00ff96', isPlayer = true) {
             activeEnemyLasers.push(enemyLaserData);
         }
 
-        // Fade. Player lasers vanish in 50 ms (just a muzzle flash —
-        // they don't need to hang around, the player just fired them).
-        // Enemy lasers persist ~300 ms so the player can SEE incoming
-        // fire from distant black-hole-galaxy hostiles — previously
-        // they used the same 50 ms fade and were imperceptible at the
-        // hundreds-to-thousands-of-units ranges typical of BH combat.
+        // Fade. Both player AND enemy beams vanish fast (~50-75 ms) —
+        // just a muzzle flash. Enemy beams previously lingered ~300 ms;
+        // per request they now fade as quickly as the player's.
         const startOpacity = isPlayer ? 0.8 : 1.0;
-        const opacityStep   = isPlayer ? 0.4 : 0.08;   // 0.08 / tick * 12 ticks = ~300 ms
+        const opacityStep   = 0.4;   // ~2-3 ticks * 25 ms = ~50-75 ms
         const fadeIntervalMs = 25;
         let opacity = startOpacity;
         laserMaterial.opacity = opacity;
@@ -8260,11 +8257,19 @@ function _fireWingmanLaser(startPos, endPos, color) {
         scene.add(core);
         scene.add(glow);
 
-        // Fade out and dispose
-        setTimeout(() => {
-            scene.remove(core); core.geometry.dispose(); core.material.dispose();
-            scene.remove(glow); glow.geometry.dispose(); glow.material.dispose();
-        }, 250);
+        // Fade out fast — same quick muzzle-flash fade as the player's
+        // lasers (was a hard 250 ms hold then instant removal).
+        let wlOpacity = 1.0;
+        const wlFade = setInterval(() => {
+            wlOpacity -= 0.4;
+            coreMat.opacity = Math.max(0, wlOpacity);
+            glowMat.opacity = Math.max(0, wlOpacity) * 0.45;
+            if (wlOpacity <= 0) {
+                clearInterval(wlFade);
+                scene.remove(core); core.geometry.dispose(); core.material.dispose();
+                scene.remove(glow); glow.geometry.dispose(); glow.material.dispose();
+            }
+        }, 25);
     } catch (e) {}
 }
 
