@@ -415,8 +415,13 @@ function createEnemyMeshWithModel(regionId, fallbackGeometry, material, scaleOve
             child.add(glowMesh);
         });
 
-        // Scale enemy models (default 96x = 80% of original 120x, but can be overridden)
-        const finalScale = scaleOverride !== undefined ? scaleOverride : 96.0;
+        // Scale enemy models. ENEMY_SCALE_FACTOR halves every enemy
+        // (default-96 path AND explicit scaleOverride callers, e.g.
+        // galaxy enemies passing 96.0, plus local Pirates/Vulcans) at
+        // a single point so all enemy ships are 50% of their previous
+        // size. Bosses are unaffected (separate createBossMeshWithModel).
+        const ENEMY_SCALE_FACTOR = 0.5;
+        const finalScale = (scaleOverride !== undefined ? scaleOverride : 96.0) * ENEMY_SCALE_FACTOR;
         const correction = _enemyModelScaleCorrection[regionId] || 1.0;
         model.scale.multiplyScalar(finalScale * correction);
 
