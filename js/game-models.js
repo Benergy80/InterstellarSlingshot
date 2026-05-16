@@ -322,8 +322,14 @@ function getModelLoadingProgress() {
 // HELPER FUNCTIONS FOR MODEL INTEGRATION
 // =============================================================================
 
+// Per-region fine-tune knob, multiplied ON TOP of bounding-box
+// normalization. Now that every model is normalized to a common
+// target size, the old Sith 0.25 hack (which only existed to undo the
+// un-normalized flat ×96) is gone — all factions come out uniform.
+// Add an entry here only to deliberately make one faction's ship
+// bigger/smaller than the rest.
 const _enemyModelScaleCorrection = {
-    7: 0.25  // Sith Empire model is 4x oversized
+    // (empty — normalization handles sizing uniformly)
 };
 
 // Create enemy mesh using GLB model or fallback geometry
@@ -383,6 +389,12 @@ function createEnemyMeshWithModel(regionId, fallbackGeometry, material, scaleOve
         // STEP 2: Center the model BEFORE adding glow layers
         const box = new THREE.Box3().setFromObject(model);
         const center = box.getCenter(new THREE.Vector3());
+        // Capture the model's NATURAL size now (pre-scale) so we can
+        // normalize it. Every Enemy{N}.glb is authored at a different
+        // intrinsic size; the old code applied a flat ×96 to all of
+        // them, so larger-authored models came out ~2x oversized.
+        const _natSize = box.getSize(new THREE.Vector3());
+        const _natMax = Math.max(_natSize.x, _natSize.y, _natSize.z);
 
         model.traverse((child) => {
             if (child.isMesh) {
@@ -415,10 +427,19 @@ function createEnemyMeshWithModel(regionId, fallbackGeometry, material, scaleOve
             child.add(glowMesh);
         });
 
-        // Scale enemy models (default 96x = 80% of original 120x, but can be overridden)
-        const finalScale = scaleOverride !== undefined ? scaleOverride : 96.0;
+        // Normalize EVERY enemy model to the same on-screen size
+        // regardless of how big its GLB was authored. `scaleOverride`
+        // (callers pass 96) is now the TARGET max-dimension in world
+        // units, not a raw multiplier. _enemyModelScaleCorrection
+        // remains a per-region fine-tune knob (default 1.0). Falls back
+        // to the old flat multiply if the model has no measurable size.
+        const targetSize = scaleOverride !== undefined ? scaleOverride : 96.0;
         const correction = _enemyModelScaleCorrection[regionId] || 1.0;
-        model.scale.multiplyScalar(finalScale * correction);
+        if (_natMax > 0.0001) {
+            model.scale.multiplyScalar((targetSize / _natMax) * correction);
+        } else {
+            model.scale.multiplyScalar(targetSize * correction);
+        }
 
         return model;
     } else {
@@ -517,6 +538,8 @@ function createBossMeshWithModel(regionId, fallbackGeometry, material) {
         // Center the model to fix position offset issues
         const box = new THREE.Box3().setFromObject(model);
         const center = box.getCenter(new THREE.Vector3());
+        const _natSize = box.getSize(new THREE.Vector3());
+        const _natMax = Math.max(_natSize.x, _natSize.y, _natSize.z);
 
         // Offset all children to center the model at origin
         model.traverse((child) => {
@@ -525,9 +548,16 @@ function createBossMeshWithModel(regionId, fallbackGeometry, material) {
             }
         });
 
-        // Bosses are larger than enemies (144x = 80% of original 180x)
+        // Normalize every boss model to the same ~144-unit silhouette
+        // (≈1.5× a normalized enemy) instead of a flat ×144 that made
+        // larger-authored boss GLBs roughly twice their intended size.
         const bossCorrection = _enemyModelScaleCorrection[regionId] || 1.0;
-        model.scale.multiplyScalar(144.0 * bossCorrection);
+        const bossTarget = 144.0;
+        if (_natMax > 0.0001) {
+            model.scale.multiplyScalar((bossTarget / _natMax) * bossCorrection);
+        } else {
+            model.scale.multiplyScalar(bossTarget * bossCorrection);
+        }
 
         return model;
     } else {
