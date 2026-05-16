@@ -1224,3 +1224,258 @@ body.intro-active .swipe-indicator {
         display: none !important;
     }
 }
+
+/* ============================================================================
+   HUD REBUILD — flat ornate-bezel skin (ref mockup 2026-05).
+   Scoped to .hud2 so it layers on top of .ui-panel without disturbing the
+   legacy panels used by loading / tutorial / mission-command / mobile code.
+   Real-data IDs are preserved inside the rebuilt markup; this is skin only.
+   ============================================================================ */
+:root {
+    --hud-cyan: #2fd4ff;
+    --hud-cyan-dim: rgba(47, 212, 255, 0.55);
+    --hud-cyan-faint: rgba(47, 212, 255, 0.16);
+    --hud-green: #39ff9b;
+    --hud-amber: #f5a623;
+    --hud-red: #ff3b54;
+    --hud-ink: rgba(6, 14, 24, 0.78);
+    --hud-notch: 14px;
+}
+
+/* Flat panel: kill the legacy 3D tilt, add clipped octagonal corners. */
+.ui-panel.hud2 {
+    transform: none !important;
+    background: var(--hud-ink);
+    border: none;
+    border-radius: 0;
+    backdrop-filter: blur(3px);
+    box-shadow: none;
+    clip-path: polygon(
+        var(--hud-notch) 0, calc(100% - var(--hud-notch)) 0, 100% var(--hud-notch),
+        100% calc(100% - var(--hud-notch)), calc(100% - var(--hud-notch)) 100%,
+        var(--hud-notch) 100%, 0 calc(100% - var(--hud-notch)), 0 var(--hud-notch));
+    padding: 14px 16px;
+}
+.ui-panel.hud2::before {
+    /* inner bezel outline that follows the same notched silhouette */
+    content: "";
+    position: absolute;
+    inset: 4px;
+    pointer-events: none;
+    border: 1px solid var(--hud-cyan-dim);
+    clip-path: polygon(
+        12px 0, calc(100% - 12px) 0, 100% 12px,
+        100% calc(100% - 12px), calc(100% - 12px) 100%,
+        12px 100%, 0 calc(100% - 12px), 0 12px);
+    box-shadow: 0 0 18px rgba(47, 212, 255, 0.25),
+                inset 0 0 22px rgba(47, 212, 255, 0.10);
+}
+.ui-panel.hud2::after {
+    /* outer hairline frame + ambient glow */
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    border: 1px solid rgba(47, 212, 255, 0.85);
+    clip-path: inherit;
+    box-shadow: 0 0 26px rgba(47, 212, 255, 0.28);
+}
+
+/* Section heading: "/// LABEL" + trailing tick rule */
+.hud2-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-family: 'Orbitron', monospace;
+    font-weight: 700;
+    font-size: 13px;
+    letter-spacing: 3px;
+    color: var(--hud-cyan);
+    text-shadow: 0 0 10px rgba(47, 212, 255, 0.7);
+    margin-bottom: 12px;
+    text-transform: uppercase;
+}
+.hud2-head::before { content: "///"; opacity: 0.85; letter-spacing: 1px; }
+.hud2-head .hud2-rule {
+    flex: 1;
+    height: 1px;
+    background: linear-gradient(90deg, var(--hud-cyan-dim), transparent);
+}
+
+/* Key-cap chips for the controls list */
+.hud2-key {
+    display: inline-block;
+    min-width: 22px;
+    padding: 2px 7px;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 11px;
+    color: var(--hud-cyan);
+    text-align: center;
+    border: 1px solid var(--hud-cyan-dim);
+    background: var(--hud-cyan-faint);
+    border-radius: 3px;
+}
+.hud2-ctl-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: #cdd9e5;
+    margin-bottom: 7px;
+    font-family: 'Rajdhani', sans-serif;
+}
+
+/* Stat label/value rows + horizontal segmented bars */
+.hud2-stat {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    font-family: 'Orbitron', monospace;
+    font-size: 12px;
+    letter-spacing: 1.5px;
+    color: #8fa6b8;
+    text-transform: uppercase;
+    margin: 9px 0 4px;
+}
+.hud2-stat b {
+    font-weight: 700;
+    color: var(--hud-cyan);
+    font-size: 14px;
+}
+.hud2-stat .v-green { color: var(--hud-green); }
+.hud2-stat .v-amber { color: var(--hud-amber); }
+.hud2-stat .v-red   { color: var(--hud-red); }
+.hud2-bar {
+    height: 7px;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid var(--hud-cyan-faint);
+    position: relative;
+    overflow: hidden;
+}
+.hud2-bar > i {
+    display: block;
+    height: 100%;
+    width: 0%;
+    background: linear-gradient(90deg, #1597d8, var(--hud-cyan));
+    box-shadow: 0 0 10px rgba(47, 212, 255, 0.6);
+    transition: width 0.25s ease;
+}
+.hud2-bar.is-hull > i  { background: linear-gradient(90deg, #1f9d4f, var(--hud-green)); box-shadow: 0 0 10px rgba(57,255,155,0.5); }
+.hud2-bar.is-shield > i{ background: linear-gradient(90deg, #b3203a, var(--hud-red));   box-shadow: 0 0 10px rgba(255,59,84,0.5); }
+.hud2-bar::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background-image: repeating-linear-gradient(90deg, transparent 0 11px, rgba(0,0,0,0.45) 11px 13px);
+}
+
+/* Circular ring gauge — pass percentage via style="--p: 73" */
+.hud2-ring {
+    --p: 0;
+    width: 42px;
+    height: 42px;
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
+    background:
+        radial-gradient(closest-side, var(--hud-ink) 78%, transparent 79%),
+        conic-gradient(var(--hud-green) calc(var(--p) * 1%), rgba(255,255,255,0.10) 0);
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 10px;
+    color: var(--hud-green);
+    flex: none;
+}
+
+/* Hex widgets (gravity assist / ETA) */
+.hud2-hex {
+    background: var(--hud-ink);
+    border: 1px solid rgba(47, 212, 255, 0.7);
+    clip-path: polygon(50% 0, 100% 22%, 100% 78%, 50% 100%, 0 78%, 0 22%);
+    padding: 18px 30px;
+    text-align: center;
+    backdrop-filter: blur(3px);
+}
+
+/* Center vertical reticle scales (VEL / DIST) */
+.hud2-scale {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 64px;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 11px;
+    color: var(--hud-cyan-dim);
+    text-align: center;
+    pointer-events: none;
+    z-index: 8;
+}
+.hud2-scale .cap { color: var(--hud-cyan); letter-spacing: 2px; margin-bottom: 6px; }
+.hud2-scale ol { list-style: none; margin: 0; padding: 0; }
+.hud2-scale li { height: 30px; line-height: 30px; opacity: 0.55; }
+.hud2-scale li.on {
+    color: var(--hud-cyan);
+    opacity: 1;
+    font-size: 15px;
+    text-shadow: 0 0 10px rgba(47,212,255,0.8);
+}
+
+/* Orientation widget canvas frame */
+.hud2-orient {
+    width: 130px;
+    height: 116px;
+    position: relative;
+    flex: none;
+}
+.hud2-orient canvas { width: 100%; height: 100%; display: block; }
+
+/* Bottom-center autopilot status bar */
+.hud2-autobar {
+    position: fixed;
+    bottom: 14px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--hud-ink);
+    border: 1px solid rgba(47, 212, 255, 0.7);
+    clip-path: polygon(18px 0, calc(100% - 18px) 0, 100% 50%, calc(100% - 18px) 100%, 18px 100%, 0 50%);
+    padding: 10px 46px;
+    text-align: center;
+    z-index: 900;
+    backdrop-filter: blur(3px);
+}
+.hud2-autobar .t {
+    font-family: 'Orbitron', monospace;
+    font-weight: 700;
+    letter-spacing: 4px;
+    color: var(--hud-cyan);
+    text-shadow: 0 0 12px rgba(47,212,255,0.7);
+    font-size: 15px;
+}
+.hud2-autobar .s {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 11px;
+    color: #8fa6b8;
+    margin-top: 3px;
+}
+
+/* Round map frame restyle to match the flat bezel look */
+.ui-panel.hud2 .round-map {
+    transform: none;
+    border: 2px solid rgba(47, 212, 255, 0.7);
+    box-shadow: 0 0 22px rgba(47,212,255,0.3), inset 0 0 26px rgba(0,0,0,0.65);
+}
+
+/* Sector / sys strip under the title */
+.hud2-strip {
+    display: flex;
+    justify-content: space-between;
+    gap: 24px;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 11px;
+    letter-spacing: 2px;
+    color: var(--hud-cyan-dim);
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid var(--hud-cyan-faint);
+}
+.hud2-strip b { color: var(--hud-cyan); }
