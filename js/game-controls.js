@@ -893,6 +893,83 @@ function _engagedTargetPos(enemy) {
     return (typeof camera !== 'undefined') ? camera.position : null;
 }
 
+// Reusable temp vectors for enemy flight-hygiene (no per-frame GC).
+const _fhA = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+const _fhB = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+const _fhC = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+const _fhD = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+
+// Per-frame post-behavior pass for ACTIVE enemies. Two jobs:
+//   1) Anti-cluster / always-in-flight: if the enemy barely moved this
+//      frame (engage/hold modes park them on the player and they pile
+//      up), glide it along its heading — or, lacking one, drift it
+//      outward from the player — so it always reads as a ship in
+//      motion instead of a hovering blob.
+//   2) Camera-line clearance: keep the enemy out of the thin corridor
+//      between the camera and the player's ship so hostiles don't
+//      occlude the player model during 3rd-person combat.
+function _enemyFlightHygiene(enemy, shipPos, camPos, playerPos, isLocal) {
+    if (!enemy || !enemy.userData || !_fhA) return;
+    const ud = enemy.userData;
+    const pos = enemy.position;
+
+    // ---- 1) Minimum flight speed ----
+    if (!ud._prevPos) ud._prevPos = pos.clone();
+    const moved = pos.distanceTo(ud._prevPos);
+    // ~400 km/s local, ~520 km/s distant — enough to always look like
+    // they're flying, not loitering.
+    const MIN_STEP = isLocal ? 0.40 : 0.52;
+    if (moved < MIN_STEP) {
+        let haveDir = false;
+        if (ud.velocity && ud.velocity.lengthSq() > 1e-5) {
+            _fhA.copy(ud.velocity).normalize();
+            haveDir = true;
+        } else if (ud.facing && ud.facing.lengthSq && ud.facing.lengthSq() > 1e-5) {
+            _fhA.copy(ud.facing).normalize();
+            haveDir = true;
+        }
+        if (!haveDir) {
+            // No heading — drift away from the player so the enemy
+            // doesn't sit on top of the camera/ship.
+            _fhA.subVectors(pos, playerPos);
+            if (_fhA.lengthSq() < 1e-5) _fhA.set(1, 0, 0);
+            _fhA.normalize();
+        }
+        pos.addScaledVector(_fhA, MIN_STEP - moved);
+    }
+
+    // ---- 2) Camera→ship sightline clearance ----
+    if (camPos && shipPos) {
+        _fhB.subVectors(shipPos, camPos);           // A=cam, B=ship, AB
+        const abLen2 = _fhB.lengthSq();
+        if (abLen2 > 1e-3) {
+            _fhC.subVectors(pos, camPos);           // AP
+            let t = _fhC.dot(_fhB) / abLen2;
+            if (t > 0.04 && t < 1.20) {             // roughly in front of cam, near/just past ship
+                t = Math.max(0, Math.min(1, t));
+                _fhD.copy(camPos).addScaledVector(_fhB, t); // closest point on segment
+                _fhA.subVectors(pos, _fhD);
+                const d = _fhA.length();
+                const CORRIDOR = 160;               // keep this clear of the ship sightline
+                if (d < CORRIDOR) {
+                    if (d < 0.001) {
+                        // Dead on the line — shove sideways using world up × AB.
+                        _fhA.set(0, 1, 0).cross(_fhB);
+                        if (_fhA.lengthSq() < 1e-5) _fhA.set(1, 0, 0);
+                    }
+                    _fhA.normalize();
+                    // Persistent but smooth: clear ~40% of the intrusion
+                    // per frame so it slides off the sightline in a few
+                    // frames without snapping.
+                    pos.addScaledVector(_fhA, (CORRIDOR - d) * 0.4);
+                }
+            }
+        }
+    }
+
+    ud._prevPos.copy(pos);
+}
+
 function updateEnemyBehavior() {
     // Safety checks
     if (typeof enemies === 'undefined' || typeof gameState === 'undefined' || typeof camera === 'undefined') {
@@ -970,6 +1047,21 @@ function updateEnemyBehavior() {
         }
     });
 
+    // Precompute camera + player-ship world positions once for the
+    // flight-hygiene pass. shipPos is only set when the 3rd-person
+    // ship mesh is actually visible (so corridor clearance is skipped
+    // in zero-offset / no-ship views where there's nothing to occlude).
+    const _fhCam = (typeof camera !== 'undefined') ? camera.position : null;
+    let _fhShip = null;
+    try {
+        const _cs = window.cameraState;
+        const _ship = _cs && _cs.playerShipMesh;
+        if (_ship && _ship.visible) {
+            _fhShip = _ship.getWorldPosition(new THREE.Vector3());
+            if (!isFinite(_fhShip.x)) _fhShip = null;
+        }
+    } catch (e) { _fhShip = null; }
+
     enemies.forEach(enemy => {
         if (enemy.userData.health <= 0) return;
 
@@ -1040,6 +1132,14 @@ function updateEnemyBehavior() {
             // group's patrol centre through space so they read as ships
             // on a route. Faster than the old tutorial-only patrol.
             _updateLocalFormationPatrol(enemy);
+        }
+
+        // Post-behavior flight hygiene for ACTIVE combatants: enforce a
+        // minimum drift so they don't park/cluster on the player, and
+        // keep them out of the camera→ship sightline so they don't
+        // block the player's view of their own ship during combat.
+        if (enemy.userData.isActive && typeof _enemyFlightHygiene === 'function') {
+            _enemyFlightHygiene(enemy, _fhShip, _fhCam, playerPos, isLocal);
         }
 
         // Thruster cones: ensure they exist, then fade them in/out based

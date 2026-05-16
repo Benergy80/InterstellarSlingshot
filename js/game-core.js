@@ -39,7 +39,7 @@ const gameState = {
     baseSpeed: 0.2, // Doubled for doubled world
     thrustPower: 0.01, // Doubled for doubled world
     wThrustMultiplier: 2.0, // W key gets 2x thrust
-    minVelocity: 0.2, // Doubled for doubled world
+    minVelocity: 0.4, // ~400 km/s floor so the ship always reads as in-flight (was 0.2)
     maxVelocity: 4.0, // 2x player boost (was 2.0 after doubled-world scale)
     // Ship-upgrade progression (per nebula deep-discovered)
     // Each deep-discovery increases efficiency and top speed.
