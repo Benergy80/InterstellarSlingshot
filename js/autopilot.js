@@ -58,7 +58,8 @@
     toggleTakeover: toggleTakeover,
     get active() { return ap.active; },
     get driving() { return ap.active && !ap.paused; },
-    get paused() { return ap.paused; }
+    get paused() { return ap.paused; },
+    get status() { return ap.statusText; }
   };
 
   // Per-frame enemy buffs + swarm — previously only applied while demo
