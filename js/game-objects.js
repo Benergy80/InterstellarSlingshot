@@ -1622,10 +1622,32 @@ function checkBossVictory(defeatedEnemy) {
         // Check if we should spawn elite guardians now
         checkAndSpawnEliteGuardians();
 
-        // The boss dying may complete a deferred "sector neutralized"
-        // banner — but only if no elite/BH guardian for this galaxy is
-        // still alive (flushFactionClearedMessages re-checks that).
-        // Slight delay so the boss has been removed from `enemies`.
+        // The boss dying completes the "FORCES NEUTRALIZED" banner for
+        // this faction. Black-hole galaxies are lazy-loaded AFTER
+        // createEnemyClusters() runs, so they have NO clusters and
+        // checkFactionCleared() never deferred a banner — which is why
+        // it never appeared. Synthesize the pending entry here so it
+        // fires on every boss clear. flushFactionClearedMessages() still
+        // guards on the boss being spawned + no guardian alive and
+        // dedups via clearedAnnounced (shows once per galaxy).
+        if (typeof galaxyId === 'number' && galaxyId >= 0 &&
+            typeof galaxyTypes !== 'undefined' && galaxyTypes[galaxyId] &&
+            typeof nebulaIntelSystem !== 'undefined') {
+            if (!nebulaIntelSystem.pendingCleared) nebulaIntelSystem.pendingCleared = {};
+            if (!nebulaIntelSystem.clearedAnnounced) nebulaIntelSystem.clearedAnnounced = {};
+            if (!nebulaIntelSystem.pendingCleared[galaxyId] &&
+                !nebulaIntelSystem.clearedAnnounced[galaxyId]) {
+                const _fac = galaxyTypes[galaxyId];
+                let _nbName = 'nearest nebula';
+                if (typeof nebulaClouds !== 'undefined') {
+                    const _nb = nebulaClouds.find(n => n && n.userData &&
+                        n.userData.assignedFaction === galaxyId);
+                    if (_nb) _nbName = _nb.userData.name;
+                }
+                nebulaIntelSystem.pendingCleared[galaxyId] =
+                    { faction: _fac, nebulaName: _nbName, galaxyId: galaxyId };
+            }
+        }
         if (typeof flushFactionClearedMessages === 'function') {
             setTimeout(flushFactionClearedMessages, 120);
         }
