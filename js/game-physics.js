@@ -818,6 +818,10 @@ function triggerPlayerDeath(title, message, delayMs) {
         // Black-hole danger vignette + its proximity flash.
         const danger = document.getElementById('dangerOverlay');
         if (danger) { danger.remove(); window._cachedDangerOverlay = null; }
+        // CRT-flicker "heavy damage" cracked-screen overlay (created by
+        // updateUI when hull <= 10; hull is 0 on death so it'd persist).
+        const crit = document.getElementById('criticalDamageOverlay');
+        if (crit) crit.remove();
         // First-person shield bubble overlay — force it off and drop the
         // shield system so the blue hex render doesn't sit over the
         // fireball.

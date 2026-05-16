@@ -186,8 +186,14 @@ if (gameState.solarStormBoostActive || gameState.plasmaStormBoostActive) {
         }
     }
     
-    // ADDED: Cracked screen effect at 10% hull
-if (gameState.hull <= 10 && !_uiEl('criticalDamageOverlay')) {
+    // ADDED: Cracked screen effect at 10% hull.
+    // Suppress (and tear down) while the player is dying / game over —
+    // hull is 0 then, so this CRT-flicker "heavy damage" overlay would
+    // otherwise stay plastered over the death explosion.
+if (gameState.playerDying || gameState.gameOver || gameState.gameOverScreenShown) {
+    const _cdo = document.getElementById('criticalDamageOverlay');
+    if (_cdo) _cdo.remove();
+} else if (gameState.hull <= 10 && !_uiEl('criticalDamageOverlay')) {
     const crackedOverlay = document.createElement('div');
     crackedOverlay.id = 'criticalDamageOverlay';
     crackedOverlay.style.cssText = `
@@ -2646,12 +2652,23 @@ function showGameOverScreen(title, message) {
         const gal = gameState ? gameState.galaxiesCleared : 0;
         const warps = gameState ? gameState.emergencyWarp.available : '0';
 
+        // Mobile uses fully inline styles (so it renders even if the
+        // Tailwind CDN fails) but now mirrors the DESKTOP look exactly:
+        // Orbitron cyber-title, the blue glow-text shadow, ui-panel
+        // gradient/border, cyan "Final Stats", and a space-btn button.
+        const _glow = '0 0 8px rgba(0,150,255,0.9),0 0 16px rgba(0,150,255,0.7),0 0 24px rgba(0,150,255,0.5)';
         gameOverOverlay.innerHTML = `
-            <div style="text-align:center;max-width:90vw;max-height:90vh;overflow-y:auto;background:rgba(10,15,30,0.98);border:1px solid rgba(0,150,255,0.5);border-radius:12px;padding:24px;color:#fff;font-family:sans-serif;">
-                <h1 style="font-size:2rem;font-weight:bold;color:#f87171;margin-bottom:16px;text-shadow:0 0 10px rgba(248,113,113,0.5);">MISSION FAILED</h1>
-                <p style="color:#d1d5db;margin-bottom:20px;font-size:1rem;">${message || 'Ship destroyed'}</p>
-                <div style="color:#22d3ee;font-size:1.1rem;margin-bottom:12px;text-shadow:0 0 8px rgba(34,211,238,0.4);">Final Stats:</div>
-                <div style="color:#d1d5db;font-size:0.9rem;line-height:1.8;">
+            <div style="text-align:center;max-width:90vw;max-height:90vh;overflow-y:auto;
+                        background:linear-gradient(135deg,rgba(15,23,42,0.97) 0%,rgba(30,41,59,0.97) 100%);
+                        border:1px solid rgba(0,150,255,0.5);border-radius:12px;padding:24px;
+                        box-shadow:0 12px 40px rgba(0,150,255,0.3),inset 0 1px 0 rgba(0,150,255,0.4);
+                        color:#fff;font-family:'Rajdhani',sans-serif;">
+                <h1 style="font-family:'Orbitron',monospace;font-weight:900;letter-spacing:3px;
+                           font-size:2.25rem;color:#f87171;margin:0 0 16px;text-shadow:${_glow};">MISSION FAILED</h1>
+                <p style="color:#d1d5db;margin:0 0 24px;font-size:1rem;">${message || 'Ship destroyed'}</p>
+                <div style="font-family:'Orbitron',monospace;letter-spacing:2px;color:#22d3ee;
+                            font-size:1.125rem;margin-bottom:12px;text-shadow:${_glow};">Final Stats:</div>
+                <div style="color:#d1d5db;font-size:0.9rem;line-height:1.85;">
                     <div>Distance Traveled: ${dist} light years</div>
                     <div>Final Velocity: ${vel} km/s</div>
                     <div>Energy Remaining: ${nrg}%</div>
@@ -2659,7 +2676,13 @@ function showGameOverScreen(title, message) {
                     <div>Galaxies Cleared: ${gal}/8</div>
                     <div>Emergency Warps Remaining: ${warps}</div>
                 </div>
-                <button id="gameOverRestartBtn" style="margin-top:20px;padding:14px 28px;font-size:1rem;font-weight:bold;color:#fff;background:linear-gradient(135deg,#1e3a5f,#0d2137);border:1px solid #0ea5e9;border-radius:8px;min-height:52px;width:100%;max-width:280px;">
+                <button id="gameOverRestartBtn" style="margin-top:24px;padding:14px 28px;font-size:1rem;
+                        font-weight:700;font-family:'Orbitron',monospace;letter-spacing:1px;
+                        color:rgba(0,255,255,0.95);
+                        background:linear-gradient(135deg,rgba(0,150,255,0.25),rgba(0,100,200,0.35));
+                        border:1px solid rgba(0,150,255,0.6);border-radius:8px;
+                        box-shadow:0 4px 15px rgba(0,150,255,0.25),inset 0 1px 0 rgba(0,150,255,0.3);
+                        min-height:52px;width:100%;max-width:280px;">
                     Restart Mission
                 </button>
             </div>
