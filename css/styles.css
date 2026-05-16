@@ -1479,3 +1479,68 @@ body.intro-active .swipe-indicator {
     border-top: 1px solid var(--hud-cyan-faint);
 }
 .hud2-strip b { color: var(--hud-cyan); }
+
+/* --- HUD rebuild: layout glue for rebuilt markup --- */
+
+/* Free-floating centre overlays: never block the gameplay viewport */
+.hud2-aux { position: absolute; pointer-events: none; z-index: 12; }
+#hudVelScale  { left: calc(50% - 360px); }
+#hudDistScale { right: calc(50% - 360px); }
+#hudGravityHex { left: calc(50% - 250px); bottom: 22px; }
+#hudEtaHex     { right: calc(50% - 250px); bottom: 22px; }
+.hud2-hex .lbl {
+    font-family: 'Orbitron', monospace;
+    font-size: 11px;
+    letter-spacing: 2px;
+    color: #8fa6b8;
+    text-transform: uppercase;
+}
+.hud2-hex .big {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 22px;
+    color: var(--hud-cyan);
+    text-shadow: 0 0 12px rgba(47,212,255,0.7);
+    margin-top: 4px;
+}
+.hud2-hex .hud2-ring { margin: 8px auto 0; }
+
+/* Flight-controls keymap as a tidy two-column-ish list */
+.hud2-ctl-grid { display: grid; grid-template-columns: 1fr; gap: 0; }
+.hud2-orient-wrap { display: flex; gap: 14px; align-items: flex-start; }
+.hud2-orient-wrap .hud2-ctl-grid { flex: 1; }
+
+/* Wide navigation action buttons (Auto-Navigate / Slingshot status) */
+.ui-panel.hud2 .space-btn {
+    transform: none;
+    border-radius: 0;
+    clip-path: polygon(10px 0, 100% 0, 100% calc(100% - 10px), calc(100% - 10px) 100%, 0 100%, 0 10px);
+    letter-spacing: 2px;
+    font-size: 12px;
+}
+
+/* Restyle the JS-generated nav target rows (populateTargets .planet-card) */
+.ui-panel.hud2 #availableTargets .planet-card {
+    background: rgba(47, 212, 255, 0.05) !important;
+    border: 1px solid var(--hud-cyan-faint) !important;
+    border-radius: 0 !important;
+    transform: none !important;
+    clip-path: polygon(6px 0, 100% 0, 100% calc(100% - 6px), calc(100% - 6px) 100%, 0 100%, 0 6px);
+    margin-bottom: 6px;
+}
+.ui-panel.hud2 #availableTargets .planet-card:hover {
+    background: rgba(47, 212, 255, 0.12) !important;
+    border-color: var(--hud-cyan-dim) !important;
+    transform: none !important;
+}
+.ui-panel.hud2 #availableTargets .planet-card.selected {
+    border-color: var(--hud-green) !important;
+    background: rgba(57, 255, 155, 0.12) !important;
+}
+
+/* Map legend rows */
+.ui-panel.hud2 .round-map { margin: 0 auto; }
+
+/* Centre overlays + autopilot bar follow the HUD hide / mobile behaviour */
+body.mobile-mode .hud2-aux,
+body.mobile-mode .hud2-autobar { display: none !important; }
+.hud2-aux.hud2-off, .hud2-autobar.hud2-off { display: none !important; }

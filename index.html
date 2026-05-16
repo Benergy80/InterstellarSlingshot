@@ -660,32 +660,37 @@
     <!-- Main Game Container -->
     <div id="gameContainer" class="relative w-full h-screen">
         <!-- Title Header -->
-        <div class="absolute top-4 left-1/2 ui-panel title-header rounded-lg p-4 z-10">
-            <h1 class="text-2xl font-bold text-cyan-400 glow-text cyber-title curved-element" id="gameTitle">INTERSTELLAR SLINGSHOT</h1>
-            <div class="text-xs text-center text-gray-400 mt-1 opacity-80">A Gravitational Space Explorer by ChiLab</div>
+        <div class="absolute top-4 left-1/2 ui-panel hud2 title-header z-10" style="text-align:center;">
+            <h1 class="cyber-title" id="gameTitle" style="font-size:1.9rem;color:var(--hud-cyan);text-shadow:0 0 14px rgba(47,212,255,0.7);margin:0;">INTERSTELLAR SLINGSHOT</h1>
+            <div style="font-family:'Share Tech Mono',monospace;font-size:11px;letter-spacing:3px;color:#8fa6b8;margin-top:2px;">A GRAVITATIONAL SPACE EXPLORER BY CHILAB</div>
+            <div class="hud2-strip">
+                <span>SECTOR: <b id="hudSector">—</b></span>
+                <span>GALAXIES: <b id="hudTitleGalaxies">0/8</b></span>
+            </div>
         </div>
 
         <!-- Flight Controls Panel (Top Left) -->
-        <div class="absolute top-14 left-4 ui-panel top-left rounded-lg p-3 z-10">
-            <h3 class="text-sm font-bold text-cyan-400 glow-text mb-2 cyber-title curved-element">FLIGHT CONTROLS</h3>
-            <div class="text-xs text-gray-300 opacity-80 curved-element mb-3">
-                W/S: Thrust Forward/Reverse<br>
-                A/D: Strafe Left/Right | Q/E: Roll<br>
-                Arrows: Pitch/Yaw (Look)<br>
-                B: Boost | X: Brake<br>
-                W×2: Jump (2s warp, 25% energy)<br>
-                Alt / Click: Fire Lasers<br>
-                Shift: Fire Missile | Z: Zoom Scope<br>
-                Space: Target Lock (hold)<br>
-                CapsLock: Cycle Targets<br>
-                Tab: Toggle Shields<br>
-                Enter: Auto-nav / Slingshot<br>
-                O: Emergency Warp (O×2: short warp)<br>
-                1/3/0: 1st/3rd/No Ship POV | V: Toggle<br>
-                T: Toggle Autopilot<br>
-                P: Pause | M: Hide UI Panels
+        <div class="absolute top-14 left-4 ui-panel hud2 top-left z-10">
+            <div class="hud2-head">FLIGHT CONTROLS<span class="hud2-rule"></span></div>
+            <div class="hud2-orient-wrap">
+                <div class="hud2-ctl-grid">
+                    <div class="hud2-ctl-row"><span class="hud2-key">W / S</span> Thrust Forward / Reverse</div>
+                    <div class="hud2-ctl-row"><span class="hud2-key">A / D</span> Strafe Left / Right</div>
+                    <div class="hud2-ctl-row"><span class="hud2-key">Q / E</span> Roll Left / Right</div>
+                    <div class="hud2-ctl-row"><span class="hud2-key">ARROWS</span> Pitch / Yaw (Look)</div>
+                    <div class="hud2-ctl-row"><span class="hud2-key">B</span> Boost <span class="hud2-key">X</span> Brake</div>
+                    <div class="hud2-ctl-row"><span class="hud2-key">ALT</span> Fire Lasers <span class="hud2-key">SHIFT</span> Missile</div>
+                    <div class="hud2-ctl-row"><span class="hud2-key">Z</span> Zoom Scope <span class="hud2-key">SPACE</span> Lock</div>
+                    <div class="hud2-ctl-row"><span class="hud2-key">CAPS</span> Cycle Targets <span class="hud2-key">TAB</span> Shields</div>
+                    <div class="hud2-ctl-row"><span class="hud2-key">ENTER</span> Auto-nav / Slingshot</div>
+                    <div class="hud2-ctl-row"><span class="hud2-key">O</span> Emergency Warp <span class="hud2-key">T</span> Autopilot</div>
+                    <div class="hud2-ctl-row"><span class="hud2-key">1/3/0</span> POV <span class="hud2-key">P</span> Pause <span class="hud2-key">M</span> Hide UI</div>
+                </div>
+                <div class="hud2-orient" title="Ship attitude">
+                    <canvas id="hudOrientCanvas" width="260" height="232"></canvas>
+                </div>
             </div>
-            <div class="flex gap-2 mt-2 flex-wrap">
+            <div class="flex gap-2 mt-3 flex-wrap">
                 <button id="muteBtn" class="small-control-btn" type="button">
                     <i class="fas fa-volume-up mr-1" id="muteIcon"></i>Music
                 </button>
@@ -699,58 +704,76 @@
         </div>
 
         <!-- Status Panel (Bottom Left) -->
-        <div class="absolute bottom-4 left-4 ui-panel bottom-left rounded-lg p-3 z-10">
-            <h3 class="text-sm font-bold text-cyan-400 glow-text mb-2 cyber-title curved-element">SHIP STATUS</h3>
-            <div class="space-y-2 text-sm curved-element">
-                <div class="curved-element">Velocity: <span id="velocity" class="text-green-400 font-mono">0.0 km/s</span></div>
-                <div class="curved-element">Distance: <span id="distance" class="text-yellow-400 font-mono">0.0 ly</span></div>
-                <div class="curved-element">Energy: <div class="w-32 h-2 bg-gray-800 rounded border border-cyan-400"><div id="energyBar" class="loading-bar h-full rounded" style="width: 100%"></div></div></div>
-                <div class="curved-element">Hull: <div class="w-32 h-2 bg-gray-800 rounded border border-green-400"><div id="hullBar" class="hull-bar h-full rounded" style="width: 100%"></div></div></div>
-                <div class="curved-element">Shields: <span id="shipShieldStatus" class="text-gray-400">OFFLINE</span></div>
-                <div class="curved-element">Emergency Warp: <span id="emergencyWarpCount" class="text-cyan-400 font-mono">5</span></div>
-                <div class="curved-element">Location: <span id="location" class="text-purple-400">Local Galaxy</span></div>
-                <div class="curved-element">Weapons: <span id="weaponStatus" class="text-green-400">ARMED</span></div>
-                <div class="curved-element">Missiles: <span id="missileCount" class="text-orange-400 font-mono">3/3</span></div>
-                <div class="curved-element">Target Lock: <span id="targetLockStatus" class="text-gray-400">INACTIVE</span></div>
-                <div id="targetInfo" class="text-orange-400 curved-element">Target: None</div>
-                <div id="galaxyProgress" class="text-cyan-400 curved-element">Galaxies Cleared: <span id="galaxiesCleared">0</span>/8</div>
-                <div class="curved-element" style="color:#7fd5ff;">Reputation: <span id="shipRepValue" class="font-mono">0</span> <span id="shipRepNext" class="text-gray-400 text-xs"></span></div>
-                <div class="curved-element" style="margin-top:-4px;"><div class="w-32 h-1 bg-gray-800 rounded border border-cyan-700"><div id="shipRepBar" style="height:100%;width:0%;background:#7fd5ff;border-radius:2px;"></div></div></div>
-                <div id="enemyDetector" class="text-red-400 curved-element hidden">Hostiles in Region: <span id="enemyCount">0</span></div>
+        <div class="absolute bottom-4 left-4 ui-panel hud2 bottom-left z-10" style="width:330px;">
+            <div class="hud2-head">SHIP STATUS<span class="hud2-rule"></span></div>
+
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:6px;">
+                <div>
+                    <div style="font-family:'Orbitron',monospace;font-size:11px;letter-spacing:1.5px;color:#8fa6b8;">VELOCITY</div>
+                    <div><span id="velocity" style="font-family:'Share Tech Mono',monospace;font-size:20px;color:var(--hud-green);">0 km/s</span></div>
+                </div>
+                <span class="hud2-ring" id="velRing" style="--p:0;">0%</span>
+                <div style="text-align:right;">
+                    <div style="font-family:'Orbitron',monospace;font-size:11px;letter-spacing:1.5px;color:#8fa6b8;">DISTANCE TO TARGET</div>
+                    <div><span id="distance" style="font-family:'Share Tech Mono',monospace;font-size:20px;color:var(--hud-cyan);">0.0 ly</span></div>
+                </div>
+            </div>
+
+            <div class="hud2-stat">ENERGY <b id="energyPct">100%</b></div>
+            <div class="hud2-bar"><i id="energyBar" style="width:100%"></i></div>
+
+            <div class="hud2-stat">HULL INTEGRITY <b id="hullPct" class="v-green">100%</b></div>
+            <div class="hud2-bar is-hull"><i id="hullBar" style="width:100%"></i></div>
+
+            <div class="hud2-stat">SHIELDS <span id="shipShieldStatus" class="v-red">OFFLINE</span></div>
+            <div class="hud2-bar is-shield"><i id="shieldBar" style="width:0%"></i></div>
+
+            <div class="hud2-stat" style="margin-top:12px;">EMERGENCY WARP <b id="emergencyWarpCount">5</b></div>
+
+            <div style="font-family:'Share Tech Mono',monospace;font-size:12px;line-height:1.7;color:#cdd9e5;margin-top:8px;">
+                <div>LOCATION <span id="location" style="color:var(--hud-cyan);">Local Galaxy</span></div>
+                <div>WEAPONS <span id="weaponStatus" class="text-green-400">ARMED</span></div>
+                <div>MISSILES <span id="missileCount" style="color:var(--hud-amber);">3/3</span></div>
+                <div>TARGET LOCK <span id="targetLockStatus" style="color:#8fa6b8;">INACTIVE</span></div>
+                <div><span id="targetInfo" style="color:var(--hud-amber);">Target: None</span></div>
+                <div id="galaxyProgress">GALAXIES CLEARED <span id="galaxiesCleared">0</span>/8</div>
+                <div style="color:#7fd5ff;">REPUTATION <span id="shipRepValue">0</span> <span id="shipRepNext" style="color:#8fa6b8;font-size:11px;"></span></div>
+                <div class="hud2-bar" style="margin-top:3px;height:4px;"><i id="shipRepBar" style="width:0%;background:#7fd5ff;box-shadow:0 0 8px rgba(127,213,255,0.6);"></i></div>
+                <div id="enemyDetector" class="hidden" style="color:var(--hud-red);margin-top:4px;font-weight:600;">Hostiles: <span id="enemyCount">0</span></div>
             </div>
         </div>
         
         <!-- Navigation Panel -->
-        <div class="absolute top-14 right-4 ui-panel top-right rounded-lg p-4 z-10 max-w-sm">
-            <div class="flex justify-between items-center mb-3">
-                <h3 class="text-lg font-bold text-cyan-400 glow-text">Navigation System</h3>
-                <button id="toggleOrbitsBtn" class="space-btn rounded px-2 py-1 text-xs">
+        <div class="absolute top-14 right-4 ui-panel hud2 top-right z-10" style="width:340px;">
+            <div class="hud2-head" style="margin-bottom:8px;">
+                NAVIGATION SYSTEM<span class="hud2-rule"></span>
+                <button id="toggleOrbitsBtn" class="space-btn px-2 py-1 text-xs" style="letter-spacing:1px;">
                     <i class="fas fa-circle-notch mr-1"></i>Orbits ON
                 </button>
             </div>
-            
-            <div id="blackHoleWarningHUD" class="hidden bg-yellow-900 bg-opacity-80 border border-yellow-400 rounded p-2 mb-3 text-center">
+
+            <div id="blackHoleWarningHUD" class="hidden border border-yellow-400 p-2 mb-3 text-center" style="background:rgba(120,90,0,0.4);">
                 <div class="text-yellow-300 text-sm font-bold">⚠️ EVENT HORIZON PROXIMITY ⚠️</div>
                 <div id="blackHoleDistanceHUD" class="text-yellow-100 text-xs"></div>
             </div>
-            
-            <div id="availableTargets" class="space-y-2 max-h-40 overflow-y-auto">
+
+            <div id="availableTargets" class="space-y-2" style="max-height:200px;overflow-y:auto;">
                 <!-- Dynamic content will be inserted here -->
             </div>
-            
-            <button id="autoNavigateBtn" class="w-full mt-4 space-btn rounded px-4 py-2 disabled:opacity-50 disabled:cursor-not-allowed">
-                <i class="fas fa-crosshairs mr-2"></i>Auto-Navigate to Target
+
+            <button id="autoNavigateBtn" class="w-full mt-4 space-btn px-4 py-2 disabled:opacity-50 disabled:cursor-not-allowed">
+                <i class="fas fa-crosshairs mr-2"></i>AUTO-NAVIGATE TO TARGET
             </button>
-            <button id="warpBtn" class="w-full mt-2 space-btn rounded px-4 py-2 disabled:opacity-50 disabled:cursor-not-allowed">
-                <i class="fas fa-rocket mr-2"></i>Slingshot Status
+            <button id="warpBtn" class="w-full mt-2 space-btn px-4 py-2 disabled:opacity-50 disabled:cursor-not-allowed">
+                <i class="fas fa-rocket mr-2"></i>SLINGSHOT STATUS
             </button>
         </div>
 
         <!-- Round Galaxy Map -->
-        <div class="absolute bottom-4 right-4 ui-panel bottom-right rounded-lg p-4 z-10">
-            <div class="flex justify-between items-center mb-2">
-                <h3 class="text-sm font-bold text-cyan-400 glow-text">Map</h3>
-                <button id="mapViewToggle" class="space-btn rounded px-2 py-1 text-xs">Galactic View</button>
+        <div class="absolute bottom-4 right-4 ui-panel hud2 bottom-right z-10">
+            <div class="hud2-head" style="margin-bottom:10px;">
+                MAP<span class="hud2-rule"></span>
+                <button id="mapViewToggle" class="space-btn px-2 py-1 text-xs" style="letter-spacing:1px;">GALACTIC VIEW</button>
             </div>
             <div class="round-map cyberpunk-bg" id="galaxyMap">
                 <div class="map-toggle-btn" id="mapToggle" title="Toggle Map Mode">GAL</div>
@@ -761,21 +784,40 @@
                 <div id="playerMapPosition" class="absolute text-green-400 text-lg font-bold" style="top: 50%; left: 50%; transform: translate(-50%, -50%); filter: drop-shadow(0 0 3px #00ff96);">▲</div>
                 <div id="targetMapPosition" class="absolute w-3 h-3 bg-red-400 rounded-full hidden" style="box-shadow: 0 0 6px #ef4444; animation: pulse 1s infinite;"></div>
             </div>
-            <div class="text-xs text-gray-300 mt-2 opacity-80">
-                <div class="flex items-center gap-2">
-                    <div class="text-green-400">▲</div>
-                    <span>You</span>
-                    <div class="w-2 h-2 bg-red-400 rounded-full ml-2"></div>
-                    <span>Target</span>
-                    <div class="w-3 h-1 bg-yellow-400 ml-2"></div>
-                    <span>Compass → Sgr A*</span>
+            <div style="font-family:'Share Tech Mono',monospace;font-size:10px;color:#8fa6b8;margin-top:10px;letter-spacing:1px;">
+                <div class="flex items-center gap-2" style="flex-wrap:wrap;">
+                    <span style="color:var(--hud-green);">▲</span><span>YOU</span>
+                    <span style="color:var(--hud-red);margin-left:6px;">●</span><span>TARGET</span>
+                    <span style="color:var(--hud-amber);margin-left:6px;">━</span><span>COMPASS → SGR A*</span>
                 </div>
-                <div class="text-xs text-purple-300 mt-1">8 Known Galaxies + Unexplored Space</div>
-                <div class="flex justify-between items-center mt-1">
-                    <div class="text-xs text-green-300" id="mapViewStatus">Galaxy View</div>
-                    <div class="text-xs text-cyan-300 font-semibold" id="currentGalaxyRegion">Sagittarius A</div>
+                <div style="color:#9b7fd5;margin-top:3px;">8 KNOWN GALAXIES + UNEXPLORED SPACE</div>
+                <div class="flex justify-between items-center" style="margin-top:5px;padding-top:5px;border-top:1px solid var(--hud-cyan-faint);">
+                    <span style="color:var(--hud-green);" id="mapViewStatus">Galaxy View</span>
+                    <span style="color:var(--hud-cyan);font-weight:600;" id="currentGalaxyRegion">Sagittarius A</span>
                 </div>
             </div>
+        </div>
+
+        <!-- Centre reticle scales + slingshot/ETA widgets + autopilot bar (real data) -->
+        <div class="hud2-aux hud2-scale" id="hudVelScale">
+            <div class="cap">VEL<br>km/s</div>
+            <ol id="hudVelTicks"></ol>
+        </div>
+        <div class="hud2-aux hud2-scale" id="hudDistScale">
+            <div class="cap">DIST<br>ly</div>
+            <ol id="hudDistTicks"></ol>
+        </div>
+        <div class="hud2-aux hud2-hex" id="hudGravityHex">
+            <div class="lbl">Gravity Assist<br>Slingshot Charge</div>
+            <span class="hud2-ring" id="hudSlingRing" style="--p:0;">0%</span>
+        </div>
+        <div class="hud2-aux hud2-hex" id="hudEtaHex">
+            <div class="lbl">ETA to Target</div>
+            <div class="big" id="hudEta">—</div>
+        </div>
+        <div class="hud2-autobar hud2-off" id="hudAutoBar">
+            <div class="t">DEMO AUTOPILOT ACTIVE</div>
+            <div class="s" id="hudAutoStatus">Course locked</div>
         </div>
 
          <!-- Event Horizon Warning -->
