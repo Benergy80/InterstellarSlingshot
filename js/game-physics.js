@@ -940,7 +940,11 @@ function destroyAsteroidByWeapon(asteroid, hitPosition = null) {
     
     gameState.hull = Math.min(gameState.maxHull, gameState.hull + hullRestoration);
     
-    const explosionPosition = hitPosition ? hitPosition.clone() : asteroid.position.clone();
+    // Belt asteroids are children of a positioned beltGroup, so
+    // asteroid.position is LOCAL. Use the world position for the
+    // explosion when there's no raycast hit point.
+    const explosionPosition = hitPosition ? hitPosition.clone()
+        : asteroid.getWorldPosition(new THREE.Vector3());
     
     // FIXED: Pass actual visual radius to explosion, not base radius
     createAsteroidExplosion(explosionPosition, actualRadius);
@@ -986,7 +990,7 @@ function destroyAsteroidByCollision(asteroid) {
     
     if (typeof isShieldActive === 'function' && isShieldActive() &&
         typeof createShieldHitEffect === 'function') {
-        createShieldHitEffect(asteroid.position);
+        createShieldHitEffect(asteroid.getWorldPosition(new THREE.Vector3()));
     }
 
     if (!isBlackHoleWarpInvulnerable() &&
@@ -1003,7 +1007,7 @@ function destroyAsteroidByCollision(asteroid) {
     // FIXED: Account for scale in collision explosions too
     const baseRadius = asteroid.geometry ? asteroid.geometry.parameters.radius : 1;
     const actualRadius = baseRadius * (asteroid.scale.x || 1);
-    createAsteroidExplosion(asteroid.position.clone(), actualRadius);
+    createAsteroidExplosion(asteroid.getWorldPosition(new THREE.Vector3()), actualRadius);
     
     destroyAsteroid(asteroid);
     if (window.GAME_DEBUG_VERBOSE) console.log(`Asteroid destroyed by collision: ${asteroid.userData.name} (-15 hull) - radius: ${actualRadius.toFixed(1)}`);

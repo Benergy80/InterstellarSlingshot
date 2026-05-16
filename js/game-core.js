@@ -1738,13 +1738,17 @@ if (planet.userData.type === 'blackhole' && planet.userData.rotationSpeed) {
     });
 }
     
-        // Asteroid orbital mechanics - update EVERY frame for smooth motion
-        if (planet.userData.type === 'asteroid' && planet.userData.beltGroup) {
+        // Asteroid orbital mechanics. Grouped belt asteroids are owned
+        // by the dedicated, distance-culled belt loop (see asteroidBelts
+        // update above) which advances orbitPhase and preserves each
+        // asteroid's ringHeight. Running this second updater on them too
+        // double-stepped the orbit and forced Y to a ±10 oscillation,
+        // so it now only handles any ungrouped (non-belt) asteroid.
+        if (planet.userData.type === 'asteroid' && !planet.userData.beltGroup) {
     // Update orbital position every frame (no skipping)
     const time = Date.now() * 0.001 * planet.userData.orbitSpeed;
     const orbitPhase = planet.userData.orbitPhase || 0;
-    
-    // FIXED: Use LOCAL coordinates since asteroids are children of positioned beltGroup
+
     const orbitX = Math.cos(time + orbitPhase) * planet.userData.orbitRadius;
     const orbitZ = Math.sin(time + orbitPhase) * planet.userData.orbitRadius;
     const orbitY = Math.sin(time * 0.5 + orbitPhase) * 10;
