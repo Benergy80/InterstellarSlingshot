@@ -3225,13 +3225,16 @@ if (typeof window !== 'undefined') window.createFactionExplosion = createFaction
 // that SURVIVES the hit (the destruction explosion is separate). Kept
 // cheap because sustained fire calls this many times per second.
 // =============================================================================
-function createHitSparks(worldPos, tint) {
+function createHitSparks(worldPos, tint, scale) {
     if (!worldPos || typeof scene === 'undefined' || typeof THREE === 'undefined') return;
     const center = worldPos.clone ? worldPos.clone()
                  : new THREE.Vector3(worldPos.x, worldPos.y, worldPos.z);
+    // Match the hit ship's size (regular enemies are halved via
+    // ENEMY_SCALE_FACTOR; bosses pass 1). Defaults to 1 if unspecified.
+    const S = (typeof scale === 'number' && scale > 0) ? scale : 1;
 
     // Bright short-lived flash at the impact point.
-    const flashGeo = new THREE.SphereGeometry(3, 8, 6);
+    const flashGeo = new THREE.SphereGeometry(3 * S, 8, 6);
     const flashMat = new THREE.MeshBasicMaterial({
         color: 0xffffcc, transparent: true, opacity: 0.95,
         blending: THREE.AdditiveBlending, depthWrite: false
@@ -3261,11 +3264,11 @@ function createHitSparks(worldPos, tint) {
         pos[i*3] = center.x; pos[i*3+1] = center.y; pos[i*3+2] = center.z;
         vel.push(new THREE.Vector3(
             Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5
-        ).normalize().multiplyScalar(3 + Math.random() * 5));
+        ).normalize().multiplyScalar((3 + Math.random() * 5) * S));
     }
     geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
     const mat = new THREE.PointsMaterial({
-        color: tint || 0xffaa33, size: 2.4, transparent: true, opacity: 1,
+        color: tint || 0xffaa33, size: 2.4 * S, transparent: true, opacity: 1,
         blending: THREE.AdditiveBlending, depthWrite: false
     });
     const pts = new THREE.Points(geo, mat);
@@ -4349,7 +4352,11 @@ function flashEnemyHit(enemy, damage = 1) {
             if (enemy.getWorldPosition) enemy.getWorldPosition(wp);
             else if (enemy.position) wp.copy(enemy.position);
             const tint = (enemy.userData && enemy.userData.galaxyColor) || 0xffaa33;
-            createHitSparks(wp, tint);
+            // Regular enemies are 50% scale (ENEMY_SCALE_FACTOR); bosses /
+            // guardians keep full size, so their sparks stay full size too.
+            const _ud = enemy.userData || {};
+            const sparkScale = (_ud.isBoss || _ud.isEliteGuardian || _ud.isBlackHoleGuardian) ? 1.0 : 0.5;
+            createHitSparks(wp, tint, sparkScale);
         }
     }
 

@@ -76,7 +76,7 @@ const gameState = {
     targetLock: {
         active: false,
         target: null,
-        range: 600, // Increased for better target acquisition
+        range: 400, // Tightened: enemies are now 50% scale, so auto-lock acquires closer
         autoAim: true,
         smoothing: 0.25
     },
