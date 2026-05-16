@@ -1470,8 +1470,27 @@ function fireEnemyWeapon(enemy, difficultySettings) {
     // Use world position for entities that are children of groups
     const enemyPos = (enemy.parent && enemy.parent.isGroup) ? enemy.getWorldPosition(_enemyWorldPos).clone() : enemy.position;
 
+    // Aim at the player's SHIP, not the camera. In 3rd-person the ship
+    // mesh is offset well in front of/below the camera, so beams aimed
+    // at camera.position visibly streak past the ship. When the ship
+    // mesh is present and visible (3rd-person / cockpit), use its world
+    // position; otherwise (zero-offset / no-ship POV) fall back to the
+    // camera.
+    function _playerAimPos() {
+        try {
+            const cs = window.cameraState;
+            const ship = cs && cs.playerShipMesh;
+            if (ship && ship.visible) {
+                const wp = new THREE.Vector3();
+                ship.getWorldPosition(wp);
+                if (isFinite(wp.x)) return wp;
+            }
+        } catch (e) {}
+        return camera.position.clone();
+    }
+
     // Pick the nearest target between player and wingmen
-    const playerPos = camera.position.clone();
+    const playerPos = _playerAimPos();
     let targetPos = playerPos;
     let targetWingman = null;
     let nearestDist = playerPos.distanceTo(enemyPos);
