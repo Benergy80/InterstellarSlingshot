@@ -1246,7 +1246,7 @@ function updateGalaxyMap() {
     if (_zoneLabel) _zoneLabel.style.display = 'none';
     const _galaxyMap = document.getElementById('galaxyMap');
     if (_galaxyMap) {
-        _galaxyMap.querySelectorAll('.universe-nebula-dot, .universe-path-line').forEach(d => d.remove());
+        _galaxyMap.querySelectorAll('.universe-nebula-dot, .universe-path-line, .galactic-path-dot').forEach(d => d.remove());
     }
     for (let _i = 0; _i < 10; _i++) {
         const m = document.getElementById('allyMapMarker' + _i);
@@ -1608,6 +1608,52 @@ if (obj.type === 'ally') {
         });
     }
     
+    // ── Unlocked nebula mission (dotted-line) paths ──────────────────
+    // Once a discovery path exists it represents an UNLOCKED objective,
+    // so it should be visible on the radar. The in-world line spans tens
+    // of thousands of units (far beyond the 3000u radar), so we sample
+    // points along start→end and plot any that fall inside the radar as
+    // small dots in the path's current colour (faction colour while
+    // active, white-ish once the mission is complete).
+    if (galaxyMap && typeof window !== 'undefined' &&
+        Array.isArray(window.discoveryPaths) && window.discoveryPaths.length) {
+        const SAMPLES = 28;
+        window.discoveryPaths.forEach(path => {
+            if (!path || !path.line || !path.line.userData) return;
+            const ud = path.line.userData;
+            const a = ud.startPosition, b = ud.endPosition;
+            if (!a || !b) return;
+            let colHex = '#7fd5ff';
+            try {
+                if (path.line.material && path.line.material.color) {
+                    colHex = '#' + path.line.material.color.getHexString();
+                }
+            } catch (e) {}
+            const complete = !!ud.missionComplete;
+            for (let s = 0; s <= SAMPLES; s++) {
+                const t = s / SAMPLES;
+                const wx = a.x + (b.x - a.x) * t;
+                const wz = a.z + (b.z - a.z) * t;
+                const rx = (wx - camera.position.x) / radarRange;
+                const rz = (wz - camera.position.z) / radarRange;
+                const sx = 50 + rx * 50;
+                const sz = 50 + rz * 50;
+                if (sx < 2 || sx > 98 || sz < 2 || sz > 98) continue;
+                const d = document.createElement('div');
+                d.className = 'galactic-path-dot';
+                const sizePx = complete ? 3 : 2.5;
+                d.style.cssText =
+                    'position:absolute;width:' + sizePx + 'px;height:' + sizePx + 'px;' +
+                    'border-radius:50%;background:' + colHex + ';' +
+                    'left:' + sx + '%;top:' + sz + '%;' +
+                    'transform:translate(-50%,-50%);pointer-events:none;z-index:2;' +
+                    'opacity:' + (complete ? 0.55 : 0.85) + ';' +
+                    'box-shadow:0 0 3px ' + colHex + ';';
+                galaxyMap.appendChild(d);
+            }
+        });
+    }
+
     // Update current target indicator
     if (gameState.currentTarget && targetMapPos) {
         const targetRelativeX = (gameState.currentTarget.position.x - camera.position.x) / radarRange;

@@ -2639,6 +2639,20 @@ function playSound(type, frequency = 440, duration = 0.2) {
     oscillator.type = 'sine'; // Smoother wave = less harsh
     duration = 2.0;
     break;
+        case 'wormhole_warp':
+    // Shimmering, otherworldly sweep — distinct from the deep
+    // black-hole rumble. A high triangle tone that wobbles UP then
+    // resolves, evoking spatial folding rather than gravitational
+    // collapse.
+    oscillator.frequency.setValueAtTime(420, audioContext.currentTime);
+    oscillator.frequency.linearRampToValueAtTime(1700, audioContext.currentTime + 0.5);
+    oscillator.frequency.linearRampToValueAtTime(700, audioContext.currentTime + 1.0);
+    oscillator.frequency.exponentialRampToValueAtTime(2600, audioContext.currentTime + 1.8);
+    gain.gain.setValueAtTime(0.28, audioContext.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 1.8);
+    oscillator.type = 'triangle';
+    duration = 1.8;
+    break;
         case 'enemy_fire':
             oscillator.frequency.setValueAtTime(600, audioContext.currentTime);
             oscillator.frequency.exponentialRampToValueAtTime(300, audioContext.currentTime + 0.2);

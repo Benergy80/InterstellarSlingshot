@@ -990,8 +990,9 @@ function destroyAsteroidByCollision(asteroid) {
 // - Galaxy discovery system integration
 // - Safe positioning with collision avoidance
 
-function transitionToRandomLocation(sourceBlackHole) {
-    console.log('BLACK HOLE WARP INITIATED from:', sourceBlackHole);
+function transitionToRandomLocation(sourceBlackHole, transitType) {
+    const _isWormhole = (transitType === 'wormhole');
+    console.log((_isWormhole ? 'WORMHOLE' : 'BLACK HOLE') + ' WARP INITIATED from:', sourceBlackHole);
     
     // ==========================================================================
     // PHASE 1: SET WARP STATE AND SUPPRESS SYSTEMS
@@ -1032,37 +1033,85 @@ function transitionToRandomLocation(sourceBlackHole) {
     // PHASE 2: VISUAL AND AUDIO EFFECTS
     // ==========================================================================
     
-    // Play black hole warp sound
+    // Warp sound — wormholes get their own shimmering sweep.
     if (typeof playSound !== 'undefined') {
-        playSound('blackhole_warp');
+        playSound(_isWormhole ? 'wormhole_warp' : 'blackhole_warp');
     }
-    
-    // Create bright white fade effect for warp
-    const fadeOverlay = document.createElement('div');
-    fadeOverlay.className = 'black-hole-warp-effect';
-    fadeOverlay.style.cssText = `
-        position: fixed;
-        top: 0;
-        left: 0;
-        width: 100vw;
-        height: 100vh;
-        background: radial-gradient(circle at center, 
-            rgba(255,255,255,0) 0%, 
-            rgba(255,255,255,0.3) 30%, 
-            rgba(255,255,255,0.8) 70%, 
-            rgba(255,255,255,1) 100%);
-        z-index: 30;
-        opacity: 0;
-        transition: opacity 1.5s ease-in-out;
-        pointer-events: none;
-    `;
-    document.body.appendChild(fadeOverlay);
 
-    // Fade to bright white
-    setTimeout(() => {
-        fadeOverlay.style.opacity = '1';
-        console.log('Warp fade effect: Screen fading to white');
-    }, 100);
+    const fadeOverlay = document.createElement('div');
+
+    if (_isWormhole) {
+        // ── UNIQUE WORMHOLE ANIMATION ────────────────────────────────
+        // A spinning violet vortex tunnel that zooms toward the camera,
+        // rather than the black hole's flat white-out. Built from a
+        // conic gradient (the "swirl") layered over a radial throat,
+        // animated via a one-shot keyframe so it reads as folding
+        // space, not gravitational collapse.
+        if (!document.getElementById('wormholeWarpKeyframes')) {
+            const st = document.createElement('style');
+            st.id = 'wormholeWarpKeyframes';
+            st.textContent =
+                '@keyframes wormholeVortex {' +
+                '0% { opacity:0; transform:scale(0.2) rotate(0deg); }' +
+                '25% { opacity:0.85; }' +
+                '70% { opacity:1; }' +
+                '100% { opacity:1; transform:scale(3.4) rotate(900deg); } }';
+            document.head.appendChild(st);
+        }
+        fadeOverlay.className = 'wormhole-warp-effect';
+        fadeOverlay.style.cssText = [
+            'position:fixed', 'top:50%', 'left:50%',
+            'width:240vmax', 'height:240vmax',
+            'margin-left:-120vmax', 'margin-top:-120vmax',
+            'border-radius:50%',
+            'background:' +
+              'radial-gradient(circle at center,' +
+                ' rgba(255,255,255,1) 0%,' +
+                ' rgba(200,120,255,0.9) 8%,' +
+                ' rgba(120,40,220,0.55) 22%,' +
+                ' rgba(60,10,120,0.25) 45%,' +
+                ' rgba(10,0,30,0) 70%),' +
+              'conic-gradient(from 0deg,' +
+                ' rgba(170,68,255,0.0) 0deg,' +
+                ' rgba(200,120,255,0.55) 40deg,' +
+                ' rgba(120,40,220,0.0) 80deg,' +
+                ' rgba(220,150,255,0.55) 130deg,' +
+                ' rgba(120,40,220,0.0) 180deg,' +
+                ' rgba(200,120,255,0.55) 250deg,' +
+                ' rgba(120,40,220,0.0) 300deg,' +
+                ' rgba(220,150,255,0.55) 360deg)',
+            'z-index:30', 'opacity:0', 'pointer-events:none',
+            'will-change:transform,opacity',
+            'animation:wormholeVortex 1.5s ease-in forwards'
+        ].join(';');
+        document.body.appendChild(fadeOverlay);
+    } else {
+        // Black-hole warp: original bright white radial collapse.
+        fadeOverlay.className = 'black-hole-warp-effect';
+        fadeOverlay.style.cssText = `
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            background: radial-gradient(circle at center,
+                rgba(255,255,255,0) 0%,
+                rgba(255,255,255,0.3) 30%,
+                rgba(255,255,255,0.8) 70%,
+                rgba(255,255,255,1) 100%);
+            z-index: 30;
+            opacity: 0;
+            transition: opacity 1.5s ease-in-out;
+            pointer-events: none;
+        `;
+        document.body.appendChild(fadeOverlay);
+
+        // Fade to bright white
+        setTimeout(() => {
+            fadeOverlay.style.opacity = '1';
+            console.log('Warp fade effect: Screen fading to white');
+        }, 100);
+    }
 
     // ==========================================================================
     // PHASE 3: WARP EXECUTION (after fade completes)
@@ -1321,8 +1370,20 @@ if (arrivedGalaxyId >= 0 && typeof cleanupDistantAsteroids === 'function') {
         // PHASE 11: FADE BACK FROM WHITE AND UPDATE UI
         // ==========================================================================
         
-        // Fade back from bright white
-        fadeOverlay.style.opacity = '0';
+        // Fade back out. The wormhole overlay uses a CSS animation with
+        // fill:forwards (holds opacity:1), so a plain style.opacity='0'
+        // wouldn't visually fade it — cancel the animation and apply a
+        // transition instead. The black-hole overlay already uses a
+        // transition, so the simple assignment works for it.
+        if (_isWormhole) {
+            fadeOverlay.style.animation = 'none';
+            fadeOverlay.style.transition = 'opacity 1.2s ease-out';
+            // Force reflow so the transition picks up the new baseline.
+            void fadeOverlay.offsetWidth;
+            fadeOverlay.style.opacity = '0';
+        } else {
+            fadeOverlay.style.opacity = '0';
+        }
         setTimeout(() => {
             fadeOverlay.remove();
             if (window.GAME_DEBUG_VERBOSE) console.log('Warp fade complete');

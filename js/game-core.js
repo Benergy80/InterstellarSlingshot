@@ -1867,7 +1867,7 @@ if (distanceToPlayer < wormhole.userData.detectionRange && !wormhole.userData.de
                 scene.remove(wormhole);
                 wormholes.splice(index, 1);
                 if (typeof transitionToRandomLocation === 'function') {
-                    transitionToRandomLocation(wormhole.userData.name);
+                    transitionToRandomLocation(wormhole.userData.name, 'wormhole');
                 }
                 return;
             }
