@@ -1028,17 +1028,6 @@ function updateEnemyBehavior() {
     // behavior so each enemy can read enemy.userData.engagedTarget below.
     _assignEngagementTargets();
 
-    // Cache the player's current galaxy. getCurrentGalaxyId() walks every
-    // galactic core (and logs in its interstellar fallback), so refresh at
-    // most ~2x/sec rather than every processed frame.
-    const _pgNow = Date.now();
-    if (!updateEnemyBehavior._pgCacheT || _pgNow - updateEnemyBehavior._pgCacheT > 500) {
-        updateEnemyBehavior._pgCache =
-            (typeof getCurrentGalaxyId === 'function') ? getCurrentGalaxyId() : -1;
-        updateEnemyBehavior._pgCacheT = _pgNow;
-    }
-    const _playerGalaxyId = updateEnemyBehavior._pgCache;
-
     let nearbyEnemyCount = 0;
     let inCombatRange = false;
     let activeAttackers = 0;
@@ -1077,21 +1066,6 @@ function updateEnemyBehavior() {
         const distanceToPlayer = playerPos.distanceTo(enemy.position);
         const isLocal = isEnemyInLocalGalaxy(enemy);
 
-        // GALAXY GATE: a regular fighter that belongs to a different galaxy
-        // than the one the player is currently in must not engage or fire,
-        // otherwise every other galaxy's enemies pile onto the player at
-        // once. Bosses / boss-support / guardians are intentional
-        // cross-space set-pieces and stay exempt. Only enforced while the
-        // player is actually inside a galaxy (id !== -1); interstellar
-        // space keeps the original spatial behaviour.
-        const _eGid = (typeof enemy.userData.galaxyId === 'number') ? enemy.userData.galaxyId : -1;
-        const _isSetPiece = enemy.userData.isBoss || enemy.userData.isBossSupport ||
-                             enemy.userData.isEliteGuardian || enemy.userData.isBlackHoleGuardian;
-        const otherGalaxyEnemy =
-            !isLocal && !_isSetPiece &&
-            _playerGalaxyId !== -1 && _eGid !== -1 &&
-            _eGid !== _playerGalaxyId;
-
         const detectionRange = isLocal ?
             (difficultySettings.localDetectionRange || 2000) :
             (enemy.userData.detectionRange || difficultySettings.distantDetectionRange || 3000);
@@ -1113,19 +1087,21 @@ function updateEnemyBehavior() {
         const maxAttackers = isLocal ? difficultySettings.maxLocalAttackers : difficultySettings.maxDistantAttackers;
         const currentAttackers = isLocal ? localActiveAttackers : activeAttackers;
 
-        if (!otherGalaxyEnemy && distanceToPlayer < detectionRange && !enemy.userData.isActive && currentAttackers < maxAttackers) {
+        if (distanceToPlayer < detectionRange && !enemy.userData.isActive && currentAttackers < maxAttackers) {
             enemy.userData.isActive = true;
             enemy.userData.detectedPlayer = true;
             enemy.userData.lastSeenPlayerPos = playerPos.clone();
-            // Stagger first-shot timing so 4 newly-activated enemies don't
-            // all fire on the same frame. Random offset 0-1200ms means
-            // their first shots are spread across the cooldown window.
+            // Stagger the opening shot. Warping into a distant black-hole
+            // galaxy activates a whole batch of enemies on the SAME frame,
+            // so spread their first shots across a wide ~1.6s window
+            // instead of letting them all fire on frame one.
             enemy.userData.lastAttack = Date.now() - Math.random() * 1200;
+            enemy.userData.nextFire = Date.now() + Math.random() * 1600;
 
             if (isLocal) localActiveAttackers++;
             else activeAttackers++;
         } else if (enemy.userData.isActive &&
-                   (otherGalaxyEnemy || distanceToPlayer > detectionRange * 1.5 || currentAttackers > maxAttackers)) {
+                   (distanceToPlayer > detectionRange * 1.5 || currentAttackers > maxAttackers)) {
             enemy.userData.isActive = false;
             enemy.userData.detectedPlayer = false;
             if (isLocal) localActiveAttackers--;
@@ -1192,15 +1168,21 @@ function updateEnemyBehavior() {
             }
             // Standard firing — only `maxAttackers` are active so the rate
             // is naturally capped at the original 2-day-ago levels.
-            if (!otherGalaxyEnemy && nearestTargetDist < firingRange) {
+            if (nearestTargetDist < firingRange) {
                 const now = Date.now();
                 const attackCooldown = isLocal ?
                     (difficultySettings.localAttackCooldown || 2000) :
                     (enemy.userData.isBoss ? 600 : difficultySettings.distantAttackCooldown || 1200);
 
-                if (now - (enemy.userData.lastAttack || 0) > attackCooldown) {
+                // Per-enemy JITTERED schedule (±35%) rather than a shared
+                // fixed cooldown. A distant galaxy activated on a single
+                // frame would otherwise re-converge into one synchronized
+                // volley; continuous jitter keeps every ship on its own
+                // phase so it reads like staggered local-galaxy combat.
+                if (now >= (enemy.userData.nextFire || 0)) {
                     fireEnemyWeapon(enemy, difficultySettings);
                     enemy.userData.lastAttack = now;
+                    enemy.userData.nextFire = now + attackCooldown * (0.65 + Math.random() * 0.7);
                 }
             }
         } else {
@@ -3222,12 +3204,12 @@ function createFactionExplosion(position, galaxyId, scale) {
             _fxSphere(center, 12 * S, cfg.accent, 0.45, 30, 2.0);
             break;
         case 'goldrings': // Vulcan — small concentric CIRCULAR gold rings
-            // Kept circular (not poly) and noticeably smaller so the
-            // early-game Vulcan fights stay grounded/realistic.
-            _fxSphere(center, 3.5 * S, cfg.core, 0.9, 14, 1.6);
-            _fxRing(center, 3 * S, cfg.accent, 4, 16, 0.75);
-            setTimeout(() => _fxRing(center, 3 * S, cfg.spark, 5, 16, 0.6), 130);
-            setTimeout(() => _fxRing(center, 3 * S, cfg.accent, 6, 16, 0.5), 280);
+            // Halved per request: Vulcan kills are a compact pop, not a
+            // big bloom. Initial radius AND expansion growth both x0.5.
+            _fxSphere(center, 1.75 * S, cfg.core, 0.9, 14, 0.8);
+            _fxRing(center, 1.5 * S, cfg.accent, 2, 16, 0.75);
+            setTimeout(() => _fxRing(center, 1.5 * S, cfg.spark, 2.5, 16, 0.6), 130);
+            setTimeout(() => _fxRing(center, 1.5 * S, cfg.accent, 3, 16, 0.5), 280);
             break;
         default:
             _fxSphere(center, 7 * S, cfg.core, 1.0, 14, 2.5);
