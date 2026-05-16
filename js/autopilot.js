@@ -1798,6 +1798,8 @@
     const dist = camPos().distanceTo(target.position);
     if (dist > engageRange) return;
     if (!isInFiringCone(target, engageRange + 100)) return;
+    // Never fire at something that isn't actually visible onscreen.
+    if (!_isOnScreen(target.position)) return;
 
     const now = Date.now();
     if (now - ap.lastFire > 1000 && gameState.weapons.cooldown <= 0 && gameState.weapons.energy >= 10) {
@@ -1896,11 +1898,21 @@
   // Stops firing the instant the lock drops or the target moves out of
   // auto-aim range.
   // Returns true if the world-position is in the camera's forward hemisphere
+  // True only when worldPos is actually inside the viewport. The old
+  // version was a 146°-wide cone (dot > 0.3) that let the demo fire at
+  // things well off-screen. Now: must be in front of the camera AND
+  // project inside the screen (slight inset so it never fires at a
+  // target hugging / just past the edge).
   function _isOnScreen(worldPos) {
-    if (!camera || !worldPos) return false;
+    if (!camera || !worldPos || typeof THREE === 'undefined') return false;
     camera.getWorldDirection(_coneFwd);
-    _coneVec.subVectors(worldPos, camera.position).normalize();
-    return _coneFwd.dot(_coneVec) > 0.3; // ~73° half-cone
+    _coneVec.subVectors(worldPos, camera.position);
+    if (_coneFwd.dot(_coneVec) <= 0) return false; // behind camera
+    if (!_isOnScreen._v) _isOnScreen._v = new THREE.Vector3();
+    const v = _isOnScreen._v.set(worldPos.x, worldPos.y, worldPos.z).project(camera);
+    return v.z < 1 &&
+           v.x >= -0.95 && v.x <= 0.95 &&
+           v.y >= -0.95 && v.y <= 0.95;
   }
 
   function autoFireOnTargetLock() {
@@ -2618,6 +2630,7 @@
       gameState.weapons &&
       gameState.weapons.cooldown <= 0 &&
       gameState.weapons.energy >= 10 &&
+      _isOnScreen(target.position) &&          // never fire at off-screen attackers
       now - (ap._lastAmbushFire || 0) > 300;   // ~3 shots per second
     if (canFireLaser && window.fireWeapon) {
       ap._lastAmbushFire = now;
