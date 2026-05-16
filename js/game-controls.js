@@ -1679,6 +1679,8 @@ function fireEnemyWeapon(enemy, difficultySettings) {
             if (!isInvulnerable) {
                 createEnhancedScreenDamageEffect(enemy.position);
                 if (!shieldsActive) {
+                    // Direct hull hit — flash the ship red (3rd person).
+                    if (typeof flashPlayerShipHit === 'function') flashPlayerShipHit();
                     playSound('damage');
                     if (enemy.userData.isBoss) {
                         showAchievement('Boss Attack!', `${enemy.userData.name} hit for ${damage} damage!`, false);
@@ -4260,6 +4262,48 @@ function createTracerProjectile(startPos, endPos, color) {
 // =============================================================================
 // ENHANCED VISUAL FEEDBACK: ENEMY HIT COLOR CHANGES
 // =============================================================================
+
+// Flash the player's ship mesh RED on a direct (unshielded) hit so
+// 3rd-person players get clear feedback that they took hull damage.
+// The GLB is a Group of meshes; we tint every child material's color
+// red, caching the original once per material on the material itself
+// (mat.userData._origHitColor) so rapid hits never bake red in — they
+// just re-extend the red window.
+let _playerShipFlashTimer = null;
+function flashPlayerShipHit() {
+    try {
+        const cs = window.cameraState;
+        const ship = cs && cs.playerShipMesh;
+        if (!ship) return;
+        const mats = [];
+        ship.traverse(node => {
+            if (node && node.isMesh && node.material) {
+                const list = Array.isArray(node.material) ? node.material : [node.material];
+                list.forEach(mat => {
+                    if (!mat || !mat.color) return;
+                    if (!mat.userData) mat.userData = {};
+                    if (mat.userData._origHitColor === undefined) {
+                        mat.userData._origHitColor = mat.color.getHex();
+                    }
+                    mat.color.setHex(0xff2233);
+                    mats.push(mat);
+                });
+            }
+        });
+        if (!mats.length) return;
+        if (_playerShipFlashTimer) clearTimeout(_playerShipFlashTimer);
+        _playerShipFlashTimer = setTimeout(() => {
+            mats.forEach(mat => {
+                if (mat && mat.color && mat.userData &&
+                    mat.userData._origHitColor !== undefined) {
+                    mat.color.setHex(mat.userData._origHitColor);
+                }
+            });
+            _playerShipFlashTimer = null;
+        }, 180);
+    } catch (e) {}
+}
+if (typeof window !== 'undefined') window.flashPlayerShipHit = flashPlayerShipHit;
 
 // FIXED: Enemy hit flash that works with MeshBasicMaterial (no emissive properties)
 function flashEnemyHit(enemy, damage = 1) {

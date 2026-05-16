@@ -520,6 +520,10 @@ function createShieldHitEffect(hitPosition) {
     // Create stronger flicker on hit
     shieldSystem.flickerIntensity = Math.min(0.8, shieldSystem.flickerIntensity + 0.5);
     console.log('🔥 Flicker intensity set to:', shieldSystem.flickerIntensity);
+
+    // Flash the 3rd-person shield bubble RED on impact (the 2D ripple
+    // above only shows in first-person).
+    flashShield3DHit();
     
     // Play shield absorption sound (energy deadening the impact)
     console.log('🔊 Attempting to play shield_hit sound...');
@@ -529,6 +533,33 @@ function createShieldHitEffect(hitPosition) {
     } else {
         console.error('❌ playSound function not found!');
     }
+}
+
+// Briefly tint the 3D shield bubble + glow RED on a hit, then ease
+// back to the normal cyan. Idempotent under rapid fire — restoring
+// always targets the known base colour (0x00d4ff), so overlapping
+// hits just re-extend the red window rather than baking red in.
+const _SHIELD_BASE_COLOR = 0x00d4ff;
+let _shield3DFlashTimer = null;
+function flashShield3DHit() {
+    if (!shieldSystem.mesh3D || !shieldSystem.mesh3D.material) return;
+    const m = shieldSystem.mesh3D.material;
+    const g = shieldSystem.glowMesh3D && shieldSystem.glowMesh3D.material;
+    m.color.setHex(0xff2233);
+    m.opacity = 0.9;
+    if (g) { g.color.setHex(0xff2233); g.opacity = 0.35; }
+    if (_shield3DFlashTimer) clearTimeout(_shield3DFlashTimer);
+    _shield3DFlashTimer = setTimeout(() => {
+        if (shieldSystem.mesh3D && shieldSystem.mesh3D.material) {
+            shieldSystem.mesh3D.material.color.setHex(_SHIELD_BASE_COLOR);
+            shieldSystem.mesh3D.material.opacity = 0.6;
+        }
+        if (shieldSystem.glowMesh3D && shieldSystem.glowMesh3D.material) {
+            shieldSystem.glowMesh3D.material.color.setHex(_SHIELD_BASE_COLOR);
+            shieldSystem.glowMesh3D.material.opacity = 0.15;
+        }
+        _shield3DFlashTimer = null;
+    }, 200);
 }
 
 function updateHitEffects(ctx) {
