@@ -3812,10 +3812,13 @@ function createLaserBeam(startPos, endPos, color = '#00ff96', isPlayer = true) {
 
         // Enemy lasers get the same thick/bright treatment as wingman lasers
         // for visibility. Player lasers stay slim so they don't block the view.
-        const coreRadius = isPlayer ? 0.2 : 0.9;
-        const glowRadius = isPlayer ? 0.4 : 2.6;
+        // Enemy beams slimmed toward the player's beam profile — still
+        // a touch thicker so incoming fire reads, but no longer the
+        // heavy 0.9/2.6 tube.
+        const coreRadius = isPlayer ? 0.2 : 0.32;
+        const glowRadius = isPlayer ? 0.4 : 0.85;
         const coreOpacity = isPlayer ? 0.8 : 1.0;
-        const glowOpacity = isPlayer ? 0.3 : 0.55;
+        const glowOpacity = isPlayer ? 0.3 : 0.5;
 
         const laserGeometry = new THREE.CylinderGeometry(coreRadius, coreRadius, length, 8);
         const laserMaterial = new THREE.MeshBasicMaterial({
@@ -4266,7 +4269,7 @@ function createTracerProjectile(startPos, endPos, color) {
 // red, caching the original once per material on the material itself
 // (mat.userData._origHitColor) so rapid hits never bake red in — they
 // just re-extend the red window.
-let _playerShipFlashTimer = null;
+let _playerShipFlashTimers = [];
 function flashPlayerShipHit() {
     try {
         const cs = window.cameraState;
@@ -4282,22 +4285,34 @@ function flashPlayerShipHit() {
                     if (mat.userData._origHitColor === undefined) {
                         mat.userData._origHitColor = mat.color.getHex();
                     }
-                    mat.color.setHex(0xff2233);
                     mats.push(mat);
                 });
             }
         });
         if (!mats.length) return;
-        if (_playerShipFlashTimer) clearTimeout(_playerShipFlashTimer);
-        _playerShipFlashTimer = setTimeout(() => {
-            mats.forEach(mat => {
-                if (mat && mat.color && mat.userData &&
-                    mat.userData._origHitColor !== undefined) {
-                    mat.color.setHex(mat.userData._origHitColor);
-                }
-            });
-            _playerShipFlashTimer = null;
-        }, 180);
+
+        const setRed = () => mats.forEach(m => { if (m && m.color) m.color.setHex(0xff2233); });
+        const setOrig = () => mats.forEach(m => {
+            if (m && m.color && m.userData && m.userData._origHitColor !== undefined) {
+                m.color.setHex(m.userData._origHitColor);
+            }
+        });
+
+        // Cancel any in-flight blink sequence so overlapping hits
+        // restart cleanly (and never leave the ship stuck red).
+        _playerShipFlashTimers.forEach(t => clearTimeout(t));
+        _playerShipFlashTimers = [];
+
+        // Exactly 3 rapid red blinks within 0.5s. Phases (100ms each):
+        //   0ms red, 100 off, 200 red, 300 off, 400 red, 500 off.
+        // 3 reds total, guaranteed to end on the original colour.
+        const STEP = 100;
+        setRed(); // phase 0 (now)
+        for (let i = 1; i <= 5; i++) {
+            const red = (i % 2 === 0); // i=2,4 → red ; i=1,3,5 → original
+            _playerShipFlashTimers.push(setTimeout(
+                red ? setRed : setOrig, i * STEP));
+        }
     } catch (e) {}
 }
 if (typeof window !== 'undefined') window.flashPlayerShipHit = flashPlayerShipHit;
