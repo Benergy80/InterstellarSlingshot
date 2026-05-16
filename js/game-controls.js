@@ -3077,11 +3077,13 @@ function createFactionExplosion(position, galaxyId, scale) {
             _fxShards(center, 16, cfg.accent, 4 * S, 8 * S, 18, 'octa');
             _fxSphere(center, 12 * S, cfg.accent, 0.45, 30, 2.0);
             break;
-        case 'goldrings': // Vulcan — concentric expanding TRIANGULAR gold rings
-            _fxSphere(center, 5 * S, cfg.core, 0.9, 14, 2.0);
-            _fxPolyRing(center, 4 * S, cfg.accent, 3, 6, 18, 0.8);
-            setTimeout(() => _fxPolyRing(center, 4 * S, cfg.spark, 3, 8, 18, 0.7), 130);
-            setTimeout(() => _fxPolyRing(center, 4 * S, cfg.accent, 3, 10, 18, 0.6), 280);
+        case 'goldrings': // Vulcan — small concentric CIRCULAR gold rings
+            // Kept circular (not poly) and noticeably smaller so the
+            // early-game Vulcan fights stay grounded/realistic.
+            _fxSphere(center, 3.5 * S, cfg.core, 0.9, 14, 1.6);
+            _fxRing(center, 3 * S, cfg.accent, 4, 16, 0.75);
+            setTimeout(() => _fxRing(center, 3 * S, cfg.spark, 5, 16, 0.6), 130);
+            setTimeout(() => _fxRing(center, 3 * S, cfg.accent, 6, 16, 0.5), 280);
             break;
         default:
             _fxSphere(center, 7 * S, cfg.core, 1.0, 14, 2.5);
