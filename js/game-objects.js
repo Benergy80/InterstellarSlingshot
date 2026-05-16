@@ -8915,28 +8915,31 @@ function createEnemies3D() {
                 // Vulcan Patrols use Enemy8.glb (different from Martian Pirates' Enemy1)
                 enemy = createEnemyMeshWithModel(8, enemyGeometry, materials.enemyMaterial);
                 isGLBModel = enemy.isGroup || (enemy.children && enemy.children.length > 0 && enemy.children[0].isMesh);
-                // Enemy8.glb was authored nose-toward-+Z, but the rest
-                // of the game assumes ships face local -Z. Earlier
-                // attempts (root.rotation.y, child.rotateY) didn't
-                // survive subsequent lookAt / Euler-rotation updates
-                // and either reverted or only flipped some pieces of
-                // the model. Bake the 180° Y rotation directly into
-                // each mesh's geometry — this permanently rewrites
-                // every vertex (x→-x, z→-z), so the visual rotation is
-                // immune to whatever the transform stack does later.
-                if (enemy && typeof THREE !== 'undefined') {
-                    const _flipMat = new THREE.Matrix4().makeRotationY(Math.PI);
-                    enemy.traverse(node => {
-                        if (node && node.isMesh && node.geometry && !node.userData._flipped) {
-                            try {
-                                node.geometry.applyMatrix4(_flipMat);
-                                if (node.geometry.attributes && node.geometry.attributes.normal) {
-                                    node.geometry.computeVertexNormals();
-                                }
-                                node.userData._flipped = true;
-                            } catch (e) {}
-                        }
-                    });
+                // Enemy8.glb is authored nose-toward-+Z, but the game's
+                // lookAt makes a ship's local -Z face its target. Every
+                // prior fix failed for a real reason:
+                //   • root.rotation.y / child.rotateY were overwritten by
+                //     _smoothEnemyLookAt's quaternion.slerp every frame.
+                //   • geometry.applyMatrix4 mutated the SHARED cached
+                //     BufferGeometry (model.clone() shares geometry), so
+                //     every Vulcan spawn re-flipped the same mesh and the
+                //     net rotation depended on spawn count.
+                // Clone-safe, transform-stack-safe fix: wrap the model in
+                // an outer Group. The game drives the WRAPPER (position /
+                // quaternion / userData); the inner model keeps a
+                // permanent local 180° Y rotation that lookAt never
+                // touches. Move the model's scale onto the wrapper so the
+                // thruster-cone sizing (which reads ship.getWorldScale)
+                // still sees ~96 and matches every other GLB enemy.
+                if (enemy && isGLBModel && typeof THREE !== 'undefined') {
+                    const inner = enemy;
+                    const wrapper = new THREE.Group();
+                    wrapper.scale.copy(inner.scale);     // carry the 96x scale
+                    inner.scale.set(1, 1, 1);            // wrapper owns scale now
+                    inner.position.set(0, 0, 0);
+                    inner.rotation.set(0, Math.PI, 0);   // persistent nose flip
+                    wrapper.add(inner);
+                    enemy = wrapper;
                 }
             } else {
                 enemy = new THREE.Mesh(enemyGeometry, materials.enemyMaterial);

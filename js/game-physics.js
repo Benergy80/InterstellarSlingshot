@@ -809,15 +809,34 @@ function triggerPlayerDeath(title, message, delayMs) {
         if (ship) ship.visible = false;
     } catch (e) {}
 
-    // Clear any combat damage overlays / "UNDER ATTACK" indicators and
-    // the black-hole danger vignette so the death explosion isn't
-    // muddied by a red screen wash. New ones can't appear because
-    // playerDying is now set and fireEnemyWeapon / collision handlers
-    // stop running.
+    // Clear EVERY screen overlay so the death explosion plays on a
+    // clean screen. New ones can't reappear because playerDying is set
+    // and the fire / collision / shield handlers bail on it.
     try {
+        // Transient combat damage flashes + "UNDER ATTACK" indicators.
         document.querySelectorAll('.combat-damage-fx').forEach(el => el.remove());
+        // Black-hole danger vignette + its proximity flash.
         const danger = document.getElementById('dangerOverlay');
         if (danger) { danger.remove(); window._cachedDangerOverlay = null; }
+        // First-person shield bubble overlay — force it off and drop the
+        // shield system so the blue hex render doesn't sit over the
+        // fireball.
+        const shieldOv = document.getElementById('shieldOverlay');
+        if (shieldOv) {
+            shieldOv.classList.remove('active');
+            shieldOv.style.display = 'none';
+        }
+        if (typeof window.shieldSystem !== 'undefined' && window.shieldSystem) {
+            window.shieldSystem.active = false;
+        }
+        if (typeof gameState !== 'undefined' && gameState.shields) {
+            gameState.shields.active = false;
+        }
+        // Event-horizon / warp HUD warnings.
+        ['eventHorizonWarning', 'blackHoleWarningHUD'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.classList.add('hidden');
+        });
     } catch (e) {}
 
     // Visual: existing dramatic explosion (sphere + 100 particles + 3 shockwaves)
@@ -2264,7 +2283,7 @@ if (surfaceCollision) {
                             gameState.eventHorizonWarning.blackHole = null;
                             
                             const flashOverlay = document.createElement('div');
-                            flashOverlay.className = 'absolute inset-0 bg-yellow-400 z-50';
+                            flashOverlay.className = 'absolute inset-0 bg-yellow-400 z-50 combat-damage-fx';
                             flashOverlay.style.opacity = '0.7';
                             document.body.appendChild(flashOverlay);
                             
