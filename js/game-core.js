@@ -121,7 +121,7 @@ const gameState = {
         cooldown: 0,
         cooldownTime: 1000,
         damage: 3,
-        speed: 5.0,
+        speed: 7.5,   // ~7500 km/s (1 unit/frame ≈ 1000 km/s HUD scale)
         selected: false
     },
     borg: {
