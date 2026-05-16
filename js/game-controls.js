@@ -1614,6 +1614,26 @@ function fireEnemyWeapon(enemy, difficultySettings) {
         }
     }
 
+    // Opportunistic: a mining vessel that's the CLOSEST target also
+    // draws fire. Active hostiles don't divert to hunt them — they just
+    // shoot whatever (player / wingman / mining ship) is nearest & in
+    // range. Undefended, the vessel is whittled down and destroyed.
+    let targetMining = null;
+    if (typeof civilianShips !== 'undefined') {
+        for (let i = 0; i < civilianShips.length; i++) {
+            const cv = civilianShips[i];
+            if (!cv || !cv.userData || cv.userData._destroyed) continue;
+            if (cv.userData.shipCategory !== 'mining') continue;
+            const d = cv.position.distanceTo(enemyPos);
+            if (d < nearestDist) {
+                nearestDist = d;
+                targetPos = cv.position.clone();
+                targetMining = cv;
+                targetWingman = null; // mining vessel is the nearer target
+            }
+        }
+    }
+
     if (nearestDist <= firingRange) {
         const laserColor = enemy.userData.isBoss ? '#ff4444' : (enemy.userData.isBorgCube || enemy.userData.type === 'borg_drone') ? '#00ff00' : '#ff8800';
         createLaserBeam(enemyPos, targetPos, laserColor, false);
@@ -1656,6 +1676,44 @@ function fireEnemyWeapon(enemy, difficultySettings) {
                     }
                     if (typeof playSound === 'function') {
                         playSound('explosion');
+                    }
+                }
+                return;
+            }
+
+            // Mining vessel hit — distress call on the first strike, then
+            // destroyed (explosion) if the player doesn't drive the
+            // attackers off in time. Tough hull (~10 hits @3 dmg).
+            if (targetMining && targetMining.userData && !targetMining.userData._destroyed) {
+                const mv = targetMining;
+                if (typeof mv.userData.maxHealth !== 'number') {
+                    mv.userData.maxHealth = 30;
+                    mv.userData.health = 30;
+                }
+                if (!mv.userData._distressSent) {
+                    mv.userData._distressSent = true;
+                    if (typeof showIncomingTransmission === 'function') {
+                        showIncomingTransmission(
+                            mv.userData.name || 'Mining Vessel',
+                            'Mayday! We are under hostile fire with no escort — requesting immediate assistance!',
+                            true);
+                    }
+                }
+                mv.userData.health = Math.max(0, (mv.userData.health || 30) - damage);
+                if (typeof flashEnemyHit === 'function') flashEnemyHit(mv, damage);
+
+                if (mv.userData.health <= 0) {
+                    mv.userData._destroyed = true;
+                    if (typeof createWingmanExplosion === 'function') createWingmanExplosion(mv);
+                    if (typeof showAchievement === 'function') {
+                        showAchievement((mv.userData.name || 'Mining Vessel') + ' LOST',
+                            'A mining vessel was destroyed by hostiles', true);
+                    }
+                    if (typeof playSound === 'function') playSound('explosion');
+                    if (typeof scene !== 'undefined') scene.remove(mv);
+                    if (typeof civilianShips !== 'undefined') {
+                        const ci = civilianShips.indexOf(mv);
+                        if (ci > -1) civilianShips.splice(ci, 1);
                     }
                 }
                 return;
