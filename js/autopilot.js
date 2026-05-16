@@ -1377,9 +1377,12 @@
     const warpCycleActive =
       (gameState.emergencyWarp && (gameState.emergencyWarp.active || gameState.emergencyWarp.transitioning)) ||
       (gameState.slingshot && gameState.slingshot.active);
-    const warpMinCoastMs = (gameState.emergencyWarp && gameState.emergencyWarp.boostDuration) || 15000;
-    const coastLockUntil = (ap.warpStartedAt || 0) + warpMinCoastMs;
-    const inLockedCoast = warpCycleActive || Date.now() < coastLockUntil;
+    // Black-hole warp coast is no longer a thing: don't hold the ship in
+    // an idle timed coast after a BH warp. We still avoid braking while
+    // the warp's own slingshot/emergency-warp cycle is physically running
+    // (so we don't fight the teleport animation), but the instant that
+    // cycle ends the demo drops straight into evasion + engagement.
+    const inLockedCoast = warpCycleActive;
 
     const speedNow = gameState.velocityVector ? gameState.velocityVector.length() : 0;
 
@@ -1393,7 +1396,7 @@
     }
 
     if (inLockedCoast) {
-      setStatus('Warp coast — ' + Math.max(0, ((coastLockUntil - Date.now()) / 1000)).toFixed(0) + 's remaining');
+      setStatus('Warp transit…');
       cycleScanTarget();
       return;
     }
@@ -2631,7 +2634,7 @@
       gameState.weapons.cooldown <= 0 &&
       gameState.weapons.energy >= 10 &&
       _isOnScreen(target.position) &&          // never fire at off-screen attackers
-      now - (ap._lastAmbushFire || 0) > 300;   // ~3 shots per second
+      now - (ap._lastAmbushFire || 0) > 500;   // ~2 shots per second
     if (canFireLaser && window.fireWeapon) {
       ap._lastAmbushFire = now;
       ap.lastFire = now;                        // sync with autoFireOnTargetLock cooldown
