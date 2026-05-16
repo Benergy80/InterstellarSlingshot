@@ -723,11 +723,13 @@ function update3DShield() {
     const _hf = shieldSystem.hitFlash;
     if (_hf && Date.now() - _hf.start < _hf.duration) {
         const _red = Math.floor((Date.now() - _hf.start) / 100) % 2 === 0;
-        const _c = _red ? _SHIELD_HIT_COLOR : _SHIELD_BASE_COLOR;
-        shieldSystem.mesh3D.material.color.setHex(_c);
-        shieldSystem.glowMesh3D.material.color.setHex(_c);
+        // Only the OUTER WIREFRAME lines strobe red. The translucent inner
+        // sphere stays the player's cyan/blue so a hit reads as an outline
+        // flash, not a full red screen wash that hides the ship.
+        shieldSystem.mesh3D.material.color.setHex(_red ? _SHIELD_HIT_COLOR : _SHIELD_BASE_COLOR);
         shieldSystem.mesh3D.material.opacity = _red ? 0.95 : 0.6;
-        shieldSystem.glowMesh3D.material.opacity = _red ? 0.4 : 0.15;
+        shieldSystem.glowMesh3D.material.color.setHex(_SHIELD_BASE_COLOR);
+        shieldSystem.glowMesh3D.material.opacity = 0.1 + (pulse * 0.5);
         return;
     }
 
