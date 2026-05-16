@@ -1028,6 +1028,17 @@ function updateEnemyBehavior() {
     // behavior so each enemy can read enemy.userData.engagedTarget below.
     _assignEngagementTargets();
 
+    // Cache the player's current galaxy. getCurrentGalaxyId() walks every
+    // galactic core (and logs in its interstellar fallback), so refresh at
+    // most ~2x/sec rather than every processed frame.
+    const _pgNow = Date.now();
+    if (!updateEnemyBehavior._pgCacheT || _pgNow - updateEnemyBehavior._pgCacheT > 500) {
+        updateEnemyBehavior._pgCache =
+            (typeof getCurrentGalaxyId === 'function') ? getCurrentGalaxyId() : -1;
+        updateEnemyBehavior._pgCacheT = _pgNow;
+    }
+    const _playerGalaxyId = updateEnemyBehavior._pgCache;
+
     let nearbyEnemyCount = 0;
     let inCombatRange = false;
     let activeAttackers = 0;
@@ -1066,6 +1077,21 @@ function updateEnemyBehavior() {
         const distanceToPlayer = playerPos.distanceTo(enemy.position);
         const isLocal = isEnemyInLocalGalaxy(enemy);
 
+        // GALAXY GATE: a regular fighter that belongs to a different galaxy
+        // than the one the player is currently in must not engage or fire,
+        // otherwise every other galaxy's enemies pile onto the player at
+        // once. Bosses / boss-support / guardians are intentional
+        // cross-space set-pieces and stay exempt. Only enforced while the
+        // player is actually inside a galaxy (id !== -1); interstellar
+        // space keeps the original spatial behaviour.
+        const _eGid = (typeof enemy.userData.galaxyId === 'number') ? enemy.userData.galaxyId : -1;
+        const _isSetPiece = enemy.userData.isBoss || enemy.userData.isBossSupport ||
+                             enemy.userData.isEliteGuardian || enemy.userData.isBlackHoleGuardian;
+        const otherGalaxyEnemy =
+            !isLocal && !_isSetPiece &&
+            _playerGalaxyId !== -1 && _eGid !== -1 &&
+            _eGid !== _playerGalaxyId;
+
         const detectionRange = isLocal ?
             (difficultySettings.localDetectionRange || 2000) :
             (enemy.userData.detectionRange || difficultySettings.distantDetectionRange || 3000);
@@ -1087,7 +1113,7 @@ function updateEnemyBehavior() {
         const maxAttackers = isLocal ? difficultySettings.maxLocalAttackers : difficultySettings.maxDistantAttackers;
         const currentAttackers = isLocal ? localActiveAttackers : activeAttackers;
 
-        if (distanceToPlayer < detectionRange && !enemy.userData.isActive && currentAttackers < maxAttackers) {
+        if (!otherGalaxyEnemy && distanceToPlayer < detectionRange && !enemy.userData.isActive && currentAttackers < maxAttackers) {
             enemy.userData.isActive = true;
             enemy.userData.detectedPlayer = true;
             enemy.userData.lastSeenPlayerPos = playerPos.clone();
@@ -1099,7 +1125,7 @@ function updateEnemyBehavior() {
             if (isLocal) localActiveAttackers++;
             else activeAttackers++;
         } else if (enemy.userData.isActive &&
-                   (distanceToPlayer > detectionRange * 1.5 || currentAttackers > maxAttackers)) {
+                   (otherGalaxyEnemy || distanceToPlayer > detectionRange * 1.5 || currentAttackers > maxAttackers)) {
             enemy.userData.isActive = false;
             enemy.userData.detectedPlayer = false;
             if (isLocal) localActiveAttackers--;
@@ -1166,7 +1192,7 @@ function updateEnemyBehavior() {
             }
             // Standard firing — only `maxAttackers` are active so the rate
             // is naturally capped at the original 2-day-ago levels.
-            if (nearestTargetDist < firingRange) {
+            if (!otherGalaxyEnemy && nearestTargetDist < firingRange) {
                 const now = Date.now();
                 const attackCooldown = isLocal ?
                     (difficultySettings.localAttackCooldown || 2000) :

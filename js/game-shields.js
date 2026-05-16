@@ -554,38 +554,18 @@ function createShieldHitEffect(hitPosition) {
     }
 }
 
-// Briefly tint the 3D shield bubble + glow RED on a hit, then ease
-// back to the normal cyan. Idempotent under rapid fire — restoring
-// always targets the known base colour (0x00d4ff), so overlapping
-// hits just re-extend the red window rather than baking red in.
+// Trigger a RED hit-blink on the 3rd-person shield wireframe + glow.
+// State-based (not setTimeout) on purpose: update3DShield() rewrites the
+// wireframe colour every frame, so a timer-driven tint was being clobbered
+// within ~16ms and the lines never visibly flashed. The blink cadence is
+// read back in update3DShield() so the wireframe lines strobe red exactly
+// like the player-ship hit feedback. Overlapping hits just restart the
+// window (always ends on the base cyan).
 const _SHIELD_BASE_COLOR = 0x00d4ff;
-let _shield3DFlashTimers = [];
+const _SHIELD_HIT_COLOR = 0xff2233;
 function flashShield3DHit() {
-    if (!shieldSystem.mesh3D || !shieldSystem.mesh3D.material) return;
-
-    const toRed = () => {
-        const m = shieldSystem.mesh3D && shieldSystem.mesh3D.material;
-        const g = shieldSystem.glowMesh3D && shieldSystem.glowMesh3D.material;
-        if (m) { m.color.setHex(0xff2233); m.opacity = 0.9; }
-        if (g) { g.color.setHex(0xff2233); g.opacity = 0.35; }
-    };
-    const toBase = () => {
-        const m = shieldSystem.mesh3D && shieldSystem.mesh3D.material;
-        const g = shieldSystem.glowMesh3D && shieldSystem.glowMesh3D.material;
-        if (m) { m.color.setHex(_SHIELD_BASE_COLOR); m.opacity = 0.6; }
-        if (g) { g.color.setHex(_SHIELD_BASE_COLOR); g.opacity = 0.15; }
-    };
-
-    // Match the player-ship hit feedback: exactly 3 fast red blinks
-    // within 0.5s (100ms step), always ending on the base cyan.
-    _shield3DFlashTimers.forEach(t => clearTimeout(t));
-    _shield3DFlashTimers = [];
-    const STEP = 100;
-    toRed(); // phase 0
-    for (let i = 1; i <= 5; i++) {
-        const red = (i % 2 === 0); // i=2,4 red ; i=1,3,5 base
-        _shield3DFlashTimers.push(setTimeout(red ? toRed : toBase, i * STEP));
-    }
+    // 6 × 100ms blinks (~0.6s), ending on base — matches player hit feel.
+    shieldSystem.hitFlash = { start: Date.now(), duration: 600 };
 }
 
 function updateHitEffects(ctx) {
@@ -735,16 +715,32 @@ function update3DShield() {
     // Pulse opacity based on energy level
     const pulse = Math.sin(Date.now() * 0.003) * 0.1;
     const energyFactor = gameState.energy / 100;
+
+    // RED hit-flash wins over the normal recolor so the wireframe lines
+    // visibly strobe red like the player-ship hit feedback. This MUST be
+    // applied here every frame — a setTimeout tint was being overwritten
+    // by the recolor below within one frame (the original bug).
+    const _hf = shieldSystem.hitFlash;
+    if (_hf && Date.now() - _hf.start < _hf.duration) {
+        const _red = Math.floor((Date.now() - _hf.start) / 100) % 2 === 0;
+        const _c = _red ? _SHIELD_HIT_COLOR : _SHIELD_BASE_COLOR;
+        shieldSystem.mesh3D.material.color.setHex(_c);
+        shieldSystem.glowMesh3D.material.color.setHex(_c);
+        shieldSystem.mesh3D.material.opacity = _red ? 0.95 : 0.6;
+        shieldSystem.glowMesh3D.material.opacity = _red ? 0.4 : 0.15;
+        return;
+    }
+
     shieldSystem.mesh3D.material.opacity = 0.5 + pulse + (energyFactor * 0.2);
     shieldSystem.glowMesh3D.material.opacity = 0.1 + (pulse * 0.5);
-    
+
     // Change color when energy is low
     if (gameState.energy < 15) {
         shieldSystem.mesh3D.material.color.setHex(0xff6600);
         shieldSystem.glowMesh3D.material.color.setHex(0xff6600);
     } else {
-        shieldSystem.mesh3D.material.color.setHex(0x00d4ff);
-        shieldSystem.glowMesh3D.material.color.setHex(0x00d4ff);
+        shieldSystem.mesh3D.material.color.setHex(_SHIELD_BASE_COLOR);
+        shieldSystem.glowMesh3D.material.color.setHex(_SHIELD_BASE_COLOR);
     }
 }
 
