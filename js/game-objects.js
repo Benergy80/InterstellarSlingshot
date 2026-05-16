@@ -11109,15 +11109,15 @@ function updateHubbleSkybox2Opacity() {
     const fadeStartDistance = 1000;        // Start fading at 5,000 units
     const fadeEndDistance = 30000;        // Reach max opacity at 100,000 units
     
-    // Calculate opacity based on distance (0.10 floor to 0.60 max)
+    // Calculate opacity based on distance (0.40 floor to 0.80 max)
     let targetOpacity;
     if (distanceFromStart < fadeStartDistance) {
-        targetOpacity = 0.10; // Always slightly visible so the sky isn't pure black
+        targetOpacity = 0.40; // Always clearly visible so the deep field reads from the start
     } else if (distanceFromStart > fadeEndDistance) {
-        targetOpacity = 0.60;
+        targetOpacity = 0.80;
     } else {
         const progress = (distanceFromStart - fadeStartDistance) / (fadeEndDistance - fadeStartDistance);
-        targetOpacity = 0.10 + (progress * 0.50); // 0.10 → 0.60
+        targetOpacity = 0.40 + (progress * 0.40); // 0.40 → 0.80
     }
     
     // Smoothly transition to target opacity
