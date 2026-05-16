@@ -151,6 +151,13 @@ function toggleShields() {
 }
 
 function activateShields() {
+    // Never raise shields once the player is dying / game over — the
+    // pixelated hex overlay must not pop back up over the death
+    // explosion (reactive/auto shield code could otherwise re-raise it).
+    if (typeof gameState !== 'undefined' &&
+        (gameState.playerDying || gameState.gameOver || gameState.gameOverScreenShown)) {
+        return;
+    }
     // Check if system is initialized
     if (!shieldSystem.canvas || !shieldSystem.ctx) {
         console.warn('⚠️ Shield system not initialized, attempting to initialize now...');
@@ -251,6 +258,18 @@ function deactivateShields(forced = false) {
 // =============================================================================
 
 function updateShieldSystem() {
+    // Player death — kill the shield instantly so the hex overlay
+    // can't linger or re-render over the explosion (this runs every
+    // frame from the animate loop, so it's the reliable chokepoint).
+    if (typeof gameState !== 'undefined' &&
+        (gameState.playerDying || gameState.gameOver || gameState.gameOverScreenShown)) {
+        if (shieldSystem.active) shieldSystem.active = false;
+        const ov = document.getElementById('shieldOverlay');
+        if (ov) { ov.classList.remove('active'); ov.style.display = 'none'; }
+        if (shieldSystem.mesh3D) shieldSystem.mesh3D.visible = false;
+        if (shieldSystem.glowMesh3D) shieldSystem.glowMesh3D.visible = false;
+        return;
+    }
     if (!shieldSystem.active) return;
     if (typeof gameState === 'undefined') return;
     
@@ -540,26 +559,33 @@ function createShieldHitEffect(hitPosition) {
 // always targets the known base colour (0x00d4ff), so overlapping
 // hits just re-extend the red window rather than baking red in.
 const _SHIELD_BASE_COLOR = 0x00d4ff;
-let _shield3DFlashTimer = null;
+let _shield3DFlashTimers = [];
 function flashShield3DHit() {
     if (!shieldSystem.mesh3D || !shieldSystem.mesh3D.material) return;
-    const m = shieldSystem.mesh3D.material;
-    const g = shieldSystem.glowMesh3D && shieldSystem.glowMesh3D.material;
-    m.color.setHex(0xff2233);
-    m.opacity = 0.9;
-    if (g) { g.color.setHex(0xff2233); g.opacity = 0.35; }
-    if (_shield3DFlashTimer) clearTimeout(_shield3DFlashTimer);
-    _shield3DFlashTimer = setTimeout(() => {
-        if (shieldSystem.mesh3D && shieldSystem.mesh3D.material) {
-            shieldSystem.mesh3D.material.color.setHex(_SHIELD_BASE_COLOR);
-            shieldSystem.mesh3D.material.opacity = 0.6;
-        }
-        if (shieldSystem.glowMesh3D && shieldSystem.glowMesh3D.material) {
-            shieldSystem.glowMesh3D.material.color.setHex(_SHIELD_BASE_COLOR);
-            shieldSystem.glowMesh3D.material.opacity = 0.15;
-        }
-        _shield3DFlashTimer = null;
-    }, 200);
+
+    const toRed = () => {
+        const m = shieldSystem.mesh3D && shieldSystem.mesh3D.material;
+        const g = shieldSystem.glowMesh3D && shieldSystem.glowMesh3D.material;
+        if (m) { m.color.setHex(0xff2233); m.opacity = 0.9; }
+        if (g) { g.color.setHex(0xff2233); g.opacity = 0.35; }
+    };
+    const toBase = () => {
+        const m = shieldSystem.mesh3D && shieldSystem.mesh3D.material;
+        const g = shieldSystem.glowMesh3D && shieldSystem.glowMesh3D.material;
+        if (m) { m.color.setHex(_SHIELD_BASE_COLOR); m.opacity = 0.6; }
+        if (g) { g.color.setHex(_SHIELD_BASE_COLOR); g.opacity = 0.15; }
+    };
+
+    // Match the player-ship hit feedback: exactly 3 fast red blinks
+    // within 0.5s (100ms step), always ending on the base cyan.
+    _shield3DFlashTimers.forEach(t => clearTimeout(t));
+    _shield3DFlashTimers = [];
+    const STEP = 100;
+    toRed(); // phase 0
+    for (let i = 1; i <= 5; i++) {
+        const red = (i % 2 === 0); // i=2,4 red ; i=1,3,5 base
+        _shield3DFlashTimers.push(setTimeout(red ? toRed : toBase, i * STEP));
+    }
 }
 
 function updateHitEffects(ctx) {
