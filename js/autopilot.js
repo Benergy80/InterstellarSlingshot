@@ -390,6 +390,15 @@
     if (ap.paused) { tickHUD(); return; }
     if (typeof gameState === 'undefined' || !gameState.gameStarted) return;
     if (gameState.gameOver) { gameState.gameOver = false; return; }
+    // Player death sequence started — freeze the demo immediately so it
+    // can't keep flying or auto-firing lasers through the explosion.
+    // (playerDying is set ~2.5s before the game-over screen appears.)
+    if (gameState.playerDying || gameState.gameOverScreenShown) {
+        if (typeof releaseMovementKeys === 'function') releaseMovementKeys();
+        if (gameState.targetLock) gameState.targetLock.active = false;
+        tickHUD();
+        return;
+    }
 
     // Defensively keep the tutorial system disabled every frame
     if (typeof tutorialSystem !== 'undefined' && tutorialSystem.active) {

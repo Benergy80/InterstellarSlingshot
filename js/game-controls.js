@@ -129,62 +129,58 @@ function _ensureShipThrusterCones(ship, color) {
     if (!ship || ship.userData._thrusters) return;
     if (typeof THREE === 'undefined') return;
 
-    // The cone we attach is a CHILD of the ship, so its visible size
-    // comes from `local_cone_size × ship.world_scale`. Different
-    // factions use different model scales (Pirates/Vulcans/etc. at
-    // ~96, Sith at ~24, wingmen at 1, bosses at ~144), so we read the
-    // ship's actual world scale and pick a local cone size that lands
-    // on a consistent visual proportion.
+    // Cone size & placement are derived from the model's ACTUAL visible
+    // world bounding box, NOT from scale buckets — those broke the
+    // moment enemy/boss scale changed (e.g. halving 96→48). This is
+    // fully scale-agnostic: it works at any ship scale (48, 72, 96, 1
+    // wingmen, the Vulcan wrapper, etc.).
+    //
+    // The box is built MANUALLY over real hull meshes only, skipping
+    // the invisible 40u collision-hitbox sphere, the additive glow
+    // layers, and any previously-attached cones — Box3.setFromObject
+    // would otherwise be dominated by the giant hitbox and place the
+    // cones far off the model.
     const worldScale = new THREE.Vector3();
     try { ship.getWorldScale(worldScale); } catch (e) { worldScale.set(1,1,1); }
-    const sScale = Math.max(0.001, Math.abs(worldScale.x || 1));
+    const sx = Math.max(0.001, Math.abs(worldScale.x || 1));
+    const sz = Math.max(0.001, Math.abs(worldScale.z || 1));
 
-    // Per-faction visual "ship length" hint — keeps the cone the same
-    // relative size on every ship in the game without depending on a
-    // GLB bounding box (which can lie when the model hasn't fully
-    // hydrated). Numbers are tuned so the final on-screen cone is the
-    // same fraction of each ship regardless of model scale.
-    //   GLB enemy at scale 96   -> ship ~1 unit in its local frame
-    //   GLB enemy at scale 144  -> bosses, larger silhouette
-    //   wingmen at scale 1      -> ship ~12-20 units local
-    let shipLengthLocal = 1.0;
-    if (sScale >= 80)        shipLengthLocal = 1.0;   // regular GLB enemy (~96 world units)
-    else if (sScale >= 20)   shipLengthLocal = 4.0;   // Sith / smaller-scaled GLB
-    else if (sScale >= 5)    shipLengthLocal = 18.0;  // legacy mid-scale meshes
-    else                     shipLengthLocal = 16.0;  // wingmen (scale 1)
-
-    // Cone target: 10% of the ship's length, base radius 3%. Lots
-    // smaller than the earlier 22% / 6% — even with many ships nearby
-    // the additive cones now read as engine flame, not a wall of fire.
-    const coneLen = shipLengthLocal * 0.10;
-    const coneRad = shipLengthLocal * 0.030;
-
-    // Read the ship's ACTUAL rear edge from its bounding box (in local
-    // coords) so the cone base hugs the model's back regardless of how
-    // much empty padding the GLB has around its mesh. If the bounds
-    // come back invalid (GLB still hydrating, or a model that hasn't
-    // received any geometry yet), BAIL — _ensureShipThrusterCones is
-    // called every frame from the update loop, so the next tick will
-    // try again. The early-out via _thrusters means once we DO attach,
-    // we never re-run.
-    let localBack = null;
+    let coneLen = null, coneRad = null, localBack = null;
     try {
-        const box = new THREE.Box3().setFromObject(ship);
-        if (isFinite(box.min.z) && isFinite(box.max.z) &&
-            box.max.z > box.min.z) {
-            const wpos = new THREE.Vector3();
-            ship.getWorldPosition(wpos);
-            const sz = Math.max(0.001, Math.abs(worldScale.z || 1));
-            const computedBack = (box.max.z - wpos.z) / sz;
-            if (isFinite(computedBack) && computedBack > 0.001) {
-                localBack = computedBack;
+        ship.updateWorldMatrix(true, true);
+        const _box = new THREE.Box3();
+        _box.makeEmpty();
+        const _mb = new THREE.Box3();
+        let any = false;
+        ship.traverse(node => {
+            if (!node.isMesh || !node.geometry) return;
+            const ud = node.userData || {};
+            if (ud.isHitbox || ud.isGlowLayer || ud._isThrusterCone) return;
+            if (!node.geometry.boundingBox) node.geometry.computeBoundingBox();
+            if (!node.geometry.boundingBox) return;
+            _mb.copy(node.geometry.boundingBox).applyMatrix4(node.matrixWorld);
+            _box.union(_mb);
+            any = true;
+        });
+        if (any && isFinite(_box.min.x) && _box.max.x > _box.min.x) {
+            const size = _box.getSize(new THREE.Vector3());
+            const worldLen = Math.max(size.x, size.y, size.z);
+            if (worldLen > 0.0001) {
+                const wpos = ship.getWorldPosition(new THREE.Vector3());
+                // Rear of the hull behind ship centre, WORLD units →
+                // converted to the ship's LOCAL frame (cone is a child).
+                localBack = (_box.max.z - wpos.z) / sz;
+                // Cone ≈ 16% of the visible ship length, base ≈ 4.5%.
+                coneLen = (worldLen * 0.16) / sx;
+                coneRad = (worldLen * 0.045) / sx;
             }
         }
     } catch (e) {}
-    // No usable bounds yet — wait until next frame to attach cones,
-    // otherwise we'd glue them to a fallback position that's nowhere
-    // near the actual rear of the model.
-    if (localBack === null) return;
+    // Not hydrated yet (no hull meshes / zero size) — bail; this runs
+    // every frame so it retries next tick. The _thrusters early-out
+    // means once attached we never re-measure.
+    if (coneLen === null || localBack === null ||
+        !isFinite(localBack) || !isFinite(coneLen)) return;
 
     const innerCol = color || 0xffaa00;
     const outerCol = (color === 0x00ff88) ? 0x00aa55
@@ -204,6 +200,7 @@ function _ensureShipThrusterCones(ship, color) {
         cone.position.set(0, 0, zOff);
         cone.frustumCulled = false;
         cone.renderOrder = 80;
+        cone.userData._isThrusterCone = true; // excluded from hull box
         return { mesh: cone, mat: mat, geo: geo };
     }
 
@@ -6189,6 +6186,13 @@ function updateMissileUI() {
 
 // RESTORED: Working weapon system with asteroid targeting
 function fireWeapon() {
+    // Once the player is dying / game over, stop all player weapon fire
+    // so the demo (or a held trigger) can't keep shooting lasers
+    // through the death-explosion sequence.
+    if (typeof gameState !== 'undefined' &&
+        (gameState.playerDying || gameState.gameOver || gameState.gameOverScreenShown)) {
+        return;
+    }
     // Resume audio context on user interaction to fix suspended state warning
     resumeAudioContext();
 
