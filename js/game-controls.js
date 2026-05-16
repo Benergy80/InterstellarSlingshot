@@ -1174,15 +1174,16 @@ function updateEnemyBehavior() {
                     (difficultySettings.localAttackCooldown || 2000) :
                     (enemy.userData.isBoss ? 600 : difficultySettings.distantAttackCooldown || 1200);
 
-                // Per-enemy JITTERED schedule (±35%) rather than a shared
-                // fixed cooldown. A distant galaxy activated on a single
-                // frame would otherwise re-converge into one synchronized
-                // volley; continuous jitter keeps every ship on its own
-                // phase so it reads like staggered local-galaxy combat.
+                // Per-enemy JITTERED schedule rather than a shared fixed
+                // cooldown. Jitter only ever ADDS delay (1.0-1.7x), so no
+                // enemy ever fires faster than the original fixed rate —
+                // this keeps the demo player from being baited into
+                // constant return fire — while the random per-ship period
+                // still breaks the synchronized distant-galaxy volley.
                 if (now >= (enemy.userData.nextFire || 0)) {
                     fireEnemyWeapon(enemy, difficultySettings);
                     enemy.userData.lastAttack = now;
-                    enemy.userData.nextFire = now + attackCooldown * (0.65 + Math.random() * 0.7);
+                    enemy.userData.nextFire = now + attackCooldown * (1.0 + Math.random() * 0.7);
                 }
             }
         } else {
