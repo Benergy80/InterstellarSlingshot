@@ -1484,9 +1484,13 @@ if (typeof nebulaGasClouds !== 'undefined' && nebulaGasClouds.length > 0) {
 }
 
 if (typeof asteroidBelts !== 'undefined' && asteroidBelts.length > 0) {
-    // Skip orbit/rotation updates for belts that are too far to see.
-    // Belt radius is at most ~600 units; 2000 unit cull gives comfortable margin.
-    const BELT_UPDATE_DIST_SQ = 2000 * 2000;
+    // Skip orbit/rotation updates for belts that are genuinely far away.
+    // Asteroids sit beltRadius(1600-2600) ± beltWidth/2 from the belt
+    // centre — up to ~3200 u out — so the old 2000 u cull skipped the
+    // update exactly when the player was flying THROUGH the belt, leaving
+    // it frozen / not orbiting. 8000 u comfortably covers the whole belt
+    // (plus approach) while still culling distant belts for perf.
+    const BELT_UPDATE_DIST_SQ = 8000 * 8000;
     for (let bi = 0; bi < asteroidBelts.length; bi++) {
         const belt = asteroidBelts[bi];
         if (!belt.children || belt.children.length === 0) continue;
