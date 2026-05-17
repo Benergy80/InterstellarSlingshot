@@ -10074,9 +10074,20 @@ function createAsteroidBelts() {
             console.warn(`No black hole found for galaxy ${galaxyIndex}`);
             return;
         }
-        
-        const galaxyCenter = blackHole.position.clone();
-        
+
+        // Galaxy 7 is the local Sol system. Its only non-gateway black
+        // hole is the Companion Core near the universe origin (~0,±500,0),
+        // but the Sol system — and the player start — live at the local
+        // system offset (~2000,0,1200). Anchoring the "local" belt to the
+        // origin black hole put it ~2600u from the player and nowhere near
+        // the solar plane the offset code claims to use. Anchor it to the
+        // Sol star instead so it spawns in the local system as intended.
+        let galaxyCenter = blackHole.position.clone();
+        if (galaxyIndex === 7) {
+            const solStar = planets.find(p => p.userData && p.userData.isLocalStar);
+            if (solStar) galaxyCenter = solStar.position.clone();
+        }
+
         // CHECK DISTANCE: Only create if player is nearby
         const distanceToPlayer = camera.position.distanceTo(galaxyCenter);
         if (distanceToPlayer > nearbyDistance) {
@@ -10366,8 +10377,14 @@ function loadAsteroidsForGalaxy(galaxyId) {
     }
     
     const galaxyType = galaxyTypes[galaxyId];
-    const galaxyCenter = blackHole.position.clone();
-    
+    // Galaxy 7 (local Sol): anchor the belt to the Sol star, not the
+    // origin Companion Core — see createAsteroidBelts for rationale.
+    let galaxyCenter = blackHole.position.clone();
+    if (galaxyId === 7) {
+        const solStar = planets.find(p => p.userData && p.userData.isLocalStar);
+        if (solStar) galaxyCenter = solStar.position.clone();
+    }
+
     console.log(`Creating asteroid belt for galaxy ${galaxyId} (${galaxyType.name})`);
     
     const beltCount = Math.random() > 0.5 ? 2 : 1;
