@@ -1749,12 +1749,16 @@ if (planet.userData.type === 'blackhole' && planet.userData.rotationSpeed) {
         if (child.type === 'Points') { // Star particles
             child.rotation.y += planet.userData.rotationSpeed;
         }
-        if (child.geometry && child.geometry.type === 'RingGeometry') { // Accretion disk
-            child.rotation.x = Math.PI / 2; // Keep flat
-            child.rotation.z = 0; // No tumbling
+        if (child.geometry && child.geometry.type === 'RingGeometry'
+            && !child.userData.isGargantuaDisk) { // legacy ring: keep flat
+            child.rotation.x = Math.PI / 2;
+            child.rotation.z = 0;
         }
     });
 }
+    if (planet.userData._gargantua && typeof updateGargantuaDoppler === 'function') {
+        updateGargantuaDoppler(planet, camera);
+    }
     
         // Asteroid orbital mechanics. Grouped belt asteroids are owned
         // by the dedicated, distance-culled belt loop (see asteroidBelts

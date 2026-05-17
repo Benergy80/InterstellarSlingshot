@@ -1970,19 +1970,88 @@ function addGargantuaVisuals(blackHole, radius, color) {
         opacity: 0.9,
         side: THREE.DoubleSide,
         blending: THREE.AdditiveBlending,
-        depthWrite: false
+        depthWrite: false,
+        vertexColors: true
     });
     const disk = new THREE.Mesh(diskGeo, diskMat);
     disk.rotation.x = Math.PI / 2;
     disk.frustumCulled = false;
     disk.renderOrder = 68;
     disk.userData.isGargantuaDisk = true;
+
+    // Doppler beaming: the disk limb whose orbital motion heads toward
+    // the viewer is relativistically brightened (and slightly blue); the
+    // receding limb is dimmed (and reddened). We fake it per-frame with
+    // vertex colors — MeshBasicMaterial multiplies vertexColor × the
+    // radial gradient map, so the soft falloff is preserved and only the
+    // angular brightness is modulated. RingGeometry sits in its own local
+    // XY plane (normal +Z); precompute each vertex's in-plane orbital
+    // tangent ONCE so the per-frame cost is just a dot product per vertex.
+    const _pos = diskGeo.attributes.position;
+    const vCount = _pos.count;
+    diskGeo.setAttribute('color',
+        new THREE.BufferAttribute(new Float32Array(vCount * 3).fill(1), 3));
+    const _tan = new Float32Array(vCount * 2); // local (x,y) unit tangent
+    for (let i = 0; i < vCount; i++) {
+        const x = _pos.getX(i), y = _pos.getY(i);
+        const inv = 1 / (Math.hypot(x, y) || 1);
+        // Orbital velocity = radial rotated +90° about local +Z.
+        _tan[i * 2]     = -y * inv;
+        _tan[i * 2 + 1] =  x * inv;
+    }
+    disk.userData._dopplerTan = _tan;
+    disk.userData._dopplerCol = diskGeo.attributes.color;
     blackHole.add(disk);
+    blackHole.userData._gargantuaDisk = disk;
 
     if (!blackHole.userData) blackHole.userData = {};
     blackHole.userData._gargantua = true;
 }
 if (typeof window !== 'undefined') window.addGargantuaVisuals = addGargantuaVisuals;
+
+// Per-frame Doppler beaming. Camera is transformed into the disk's local
+// frame ONCE (1 quaternion + 1 position); each vertex is then a 2D dot
+// product against its precomputed orbital tangent — ~130 verts/disk,
+// trivial even on mobile. Approaching limb brightens (+ slightly bluer),
+// receding limb dims (+ slightly redder); the asymmetry fades to nothing
+// when the disk is viewed face-on (down the spin axis), as in reality.
+const _dopQ = (typeof THREE !== 'undefined') ? new THREE.Quaternion() : null;
+const _dopC = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+const _dopD = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+function updateGargantuaDoppler(blackHole, camera) {
+    if (!blackHole || !blackHole.userData || !camera || !_dopQ) return;
+    const disk = blackHole.userData._gargantuaDisk;
+    if (!disk) return;
+    const tan = disk.userData._dopplerTan;
+    const colAttr = disk.userData._dopplerCol;
+    if (!tan || !colAttr) return;
+
+    disk.getWorldQuaternion(_dopQ);
+    disk.getWorldPosition(_dopC);
+    _dopD.copy(camera.position).sub(_dopC);     // center -> camera (world)
+    _dopD.applyQuaternion(_dopQ.conjugate());   // -> disk local frame
+    const len = _dopD.length() || 1;
+    const dx = _dopD.x / len, dy = _dopD.y / len, dz = _dopD.z / len;
+
+    // |dz| = face-on component (disk normal is local +Z). Beaming is
+    // strongest edge-on, zero down the axis.
+    const incline = 1 - Math.min(1, Math.abs(dz));
+    const B = 1.15 * incline;
+
+    const arr = colAttr.array;
+    const n = colAttr.count;
+    for (let i = 0; i < n; i++) {
+        const beam = tan[i * 2] * dx + tan[i * 2 + 1] * dy; // tangent · view
+        let m = 1 + B * beam;
+        if (m < 0.12) m = 0.12; else if (m > 2.4) m = 2.4;
+        const j = i * 3;
+        arr[j]     = m * (beam < 0 ? 1 + (-beam) * 0.15 * incline : 1); // redshift
+        arr[j + 1] = m;
+        arr[j + 2] = m * (beam > 0 ? 1 + beam * 0.20 * incline : 1);    // blueshift
+    }
+    colAttr.needsUpdate = true;
+}
+if (typeof window !== 'undefined') window.updateGargantuaDoppler = updateGargantuaDoppler;
 
 
 function calculateBlackHoleRotationSpeed(galaxyType, galaxyId, position) {
@@ -3694,9 +3763,14 @@ const galaxyStarsToAdd = galaxyMainStars;
             const ring = new THREE.Mesh(ringGeometry, ringMaterial);
             
             // Apply random rotation offset to the ring relative to galaxy
-            ring.rotation.x = Math.PI / 2 + (Math.random() - 0.5) * 0.4;
-            ring.rotation.y = (Math.random() - 0.5) * 0.6;
-            ring.rotation.z = (Math.random() - 0.5) * 0.4;
+            // Lie in the galaxy's own plane: rotation.x = PI/2 puts the
+            // ring in the parent black hole's equatorial plane, and the
+            // parent already carries galaxyData.rotation, so the disk
+            // shares the galaxy's tilt. The previous random per-axis
+            // offsets tilted each ring OUT of its galaxy (visible axis
+            // mismatch); the Gargantua disk has no such offset, so they
+            // disagreed. Keep them coplanar.
+            ring.rotation.set(Math.PI / 2, 0, 0);
             
             ring.visible = true;
             ring.frustumCulled = true;  // OPTIMIZATION: Enable frustum culling
@@ -3720,10 +3794,8 @@ const galaxyStarsToAdd = galaxyMainStars;
             });
             const largeRing = new THREE.Mesh(largeRingGeometry, largeRingMaterial);
 
-            // Apply same rotation as smaller ring with slight variation
-            largeRing.rotation.x = Math.PI / 2 + (Math.random() - 0.5) * 0.3;
-            largeRing.rotation.y = (Math.random() - 0.5) * 0.5;
-            largeRing.rotation.z = (Math.random() - 0.5) * 0.3;
+            // Coplanar with the galaxy (see ring above).
+            largeRing.rotation.set(Math.PI / 2, 0, 0);
 
             largeRing.visible = true;
             largeRing.frustumCulled = true;
