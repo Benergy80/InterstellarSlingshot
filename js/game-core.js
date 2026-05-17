@@ -820,8 +820,26 @@ function startGame() {
         // Store camera reference for player model attachment later
         window.gameCamera = camera;
 
-        renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+        // Mobile GPUs are fill-rate bound. Rendering at full retina
+        // devicePixelRatio (often 2-3x) means 4-9x the fragments, and
+        // MSAA on top of that is brutal. preserveDrawingBuffer was set
+        // but nothing reads the canvas back, so it's pure cost. These
+        // three knobs are the single biggest mobile-FPS lever and change
+        // nothing about scene content.
+        if (typeof window.__isMobileGPU === 'undefined') {
+            window.__isMobileGPU = (window.innerWidth <= 768) ||
+                ('ontouchstart' in window) ||
+                (navigator.maxTouchPoints > 0) ||
+                /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent || '');
+        }
+        const _isMobileGPU = window.__isMobileGPU;
+        renderer = new THREE.WebGLRenderer({
+            antialias: !_isMobileGPU,
+            preserveDrawingBuffer: false,
+            powerPreference: 'high-performance'
+        });
         renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, _isMobileGPU ? 1 : 2));
         renderer.setClearColor(0x000003);
 
         const gameContainer = document.getElementById('gameContainer');

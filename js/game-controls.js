@@ -1145,7 +1145,12 @@ function updateEnemyBehavior() {
         // on whether the ship is moving meaningfully this frame. Applies
         // to every enemy so distant fighters AND local pirates/Vulcans
         // visibly fire their engines.
-        if (typeof _ensureShipThrusterCones === 'function') {
+        // Each enemy's cones are 4 additive-blended, frustumCulled=false
+        // meshes that draw every frame even off-screen. With many enemies
+        // that's pure fill-rate overdraw — the kind of cost mobile GPUs
+        // handle worst. Skip the whole enemy-cone system on mobile; the
+        // player's own thruster glow (separate, single-ship) is untouched.
+        if (!window.__isMobileGPU && typeof _ensureShipThrusterCones === 'function') {
             _ensureShipThrusterCones(enemy, enemy.userData.galaxyColor || 0xff5522);
             const _v = enemy.userData.velocity;
             const _speedNow = _v ? _v.length() : (enemy.userData.isActive ? 0.5 : 0.2);

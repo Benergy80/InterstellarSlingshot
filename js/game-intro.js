@@ -189,8 +189,19 @@ function initializeThreeJSForIntro() {
     // Store camera reference for player model attachment
     window.gameCamera = camera;
 
-    renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+    if (typeof window.__isMobileGPU === 'undefined') {
+        window.__isMobileGPU = (window.innerWidth <= 768) ||
+            ('ontouchstart' in window) ||
+            (navigator.maxTouchPoints > 0) ||
+            /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent || '');
+    }
+    renderer = new THREE.WebGLRenderer({
+        antialias: !window.__isMobileGPU,
+        preserveDrawingBuffer: false,
+        powerPreference: 'high-performance'
+    });
     renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, window.__isMobileGPU ? 1 : 2));
 
     // Keep background black - no automatic fade
     renderer.setClearColor(0x000000);
@@ -290,8 +301,19 @@ function initializeMinimalThreeJS() {
     // Store camera reference for player model attachment
     window.gameCamera = camera;
 
-    renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+    if (typeof window.__isMobileGPU === 'undefined') {
+        window.__isMobileGPU = (window.innerWidth <= 768) ||
+            ('ontouchstart' in window) ||
+            (navigator.maxTouchPoints > 0) ||
+            /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent || '');
+    }
+    renderer = new THREE.WebGLRenderer({
+        antialias: !window.__isMobileGPU,
+        preserveDrawingBuffer: false,
+        powerPreference: 'high-performance'
+    });
     renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, window.__isMobileGPU ? 1 : 2));
     renderer.setClearColor(0x000003); // dark blue not black
     
     const gameContainer = document.getElementById('gameContainer');
