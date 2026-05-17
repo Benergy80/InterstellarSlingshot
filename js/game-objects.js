@@ -2005,6 +2005,37 @@ function addGargantuaVisuals(blackHole, radius, color) {
     blackHole.userData._gargantuaDisk = disk;
 
     if (!blackHole.userData) blackHole.userData = {};
+
+    // Proximity fade. Far away the whole effect is barely a glow; as the
+    // player closes in, the halo, accretion disk, legacy rings and the
+    // event-horizon sphere fade up to full. This also stops the additive
+    // glow from being washed flat by the (screen-blend) shield overlay at
+    // a distance — far black holes are now too faint for that to matter.
+    // Distances scale with the hole's radius so a 4x-bigger hole reads
+    // from proportionally farther. Each entry fades opacity floor→base.
+    const fade = [
+        { m: glowMat, base: 1.0,  floor: 0.04 },
+        { m: diskMat, base: 0.9,  floor: 0.03 }
+    ];
+    if (blackHole.material && typeof blackHole.material.opacity === 'number') {
+        blackHole.material.transparent = true;
+        fade.push({ m: blackHole.material,
+                    base: blackHole.material.opacity || 0.95, floor: 0.10 });
+    }
+    // Legacy accretion rings already attached to this hole (Sgr A* /
+    // Companion Core add theirs before calling us) fade in together.
+    blackHole.children.forEach(ch => {
+        if (ch !== disk && ch !== glow && ch.material &&
+            ch.geometry && ch.geometry.type === 'RingGeometry' &&
+            typeof ch.material.opacity === 'number') {
+            ch.material.transparent = true;
+            fade.push({ m: ch.material,
+                        base: ch.material.opacity || 0.6, floor: 0.02 });
+        }
+    });
+    blackHole.userData._gargFade = fade;
+    blackHole.userData._gargNear = radius * 14;   // full effect within this
+    blackHole.userData._gargFar  = radius * 110;  // barely glowing beyond
     blackHole.userData._gargantua = true;
 }
 if (typeof window !== 'undefined') window.addGargantuaVisuals = addGargantuaVisuals;
@@ -2020,6 +2051,24 @@ const _dopC = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
 const _dopD = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
 function updateGargantuaDoppler(blackHole, camera) {
     if (!blackHole || !blackHole.userData || !camera || !_dopQ) return;
+
+    // Proximity fade first — runs even if the disk/doppler data is
+    // missing, so the halo + event horizon always honour distance.
+    const fade = blackHole.userData._gargFade;
+    if (fade) {
+        blackHole.getWorldPosition(_dopC);
+        const d = camera.position.distanceTo(_dopC);
+        const near = blackHole.userData._gargNear || 1;
+        const far = blackHole.userData._gargFar || (near * 8);
+        let p = (far - d) / (far - near);
+        p = p < 0 ? 0 : (p > 1 ? 1 : p);
+        p = p * p * (3 - 2 * p); // smoothstep
+        for (let k = 0; k < fade.length; k++) {
+            const f = fade[k];
+            f.m.opacity = f.floor + (f.base - f.floor) * p;
+        }
+    }
+
     const disk = blackHole.userData._gargantuaDisk;
     if (!disk) return;
     const tan = disk.userData._dopplerTan;
@@ -2636,7 +2685,7 @@ try {
     // =============================================================================
     
     try {
-        const centralBlackHoleGeometry = new THREE.SphereGeometry(70, 24, 24);
+        const centralBlackHoleGeometry = new THREE.SphereGeometry(280, 24, 24); // 4x
         const centralBlackHoleMaterial = new THREE.MeshBasicMaterial({ 
             color: 0x000000,
             transparent: true,
@@ -2652,7 +2701,7 @@ try {
             type: 'blackhole',
             mass: 8000,
             gravity: 400.0,
-            warpThreshold: 160,
+            warpThreshold: 640,
             isGalacticCenter: true,
             isSagittariusA: true,
             targetGalaxy: Math.floor(Math.random() * 8),
@@ -2670,7 +2719,7 @@ try {
         }
         
         // Add accretion disk
-        const centralRingGeometry = new THREE.RingGeometry(60, 90, 48);
+        const centralRingGeometry = new THREE.RingGeometry(240, 360, 48); // 4x
         const centralRingMaterial = new THREE.MeshBasicMaterial({ 
             color: 0xff4500,
             transparent: true,
@@ -2685,7 +2734,7 @@ try {
         if (centralBlackHole && centralBlackHole.add) {
             centralBlackHole.add(centralRing);
         }
-        addGargantuaVisuals(centralBlackHole, 70, 0xff4500);
+        addGargantuaVisuals(centralBlackHole, 280, 0xff4500); // 4x
 
         console.log('✅ Sagittarius A* created at galactic center');
         
@@ -2701,8 +2750,8 @@ try {
     console.log('Creating Companion Core near Sagittarius A*...');
     
    // Random distance between 400 and 620, randomly above or below Sagittarius A*
-const core8Distance = (400 + Math.random() * 220) * (Math.random() < 0.5 ? 1 : -1);
-    const core8Geometry = new THREE.SphereGeometry(45, 24, 24); // Smaller than Sagittarius A* (45 vs 80)
+const core8Distance = (1600 + Math.random() * 880) * (Math.random() < 0.5 ? 1 : -1); // 4x (kept clear of the 4x-bigger Sgr A*)
+    const core8Geometry = new THREE.SphereGeometry(180, 24, 24); // 4x; still smaller than Sgr A* (180 vs 280)
     const core8Material = new THREE.MeshBasicMaterial({ 
         color: 0x000000,
         transparent: true,
@@ -2718,7 +2767,7 @@ const core8Distance = (400 + Math.random() * 220) * (Math.random() < 0.5 ? 1 : -
     type: 'blackhole',
     mass: 2800, // Smaller mass than Sagittarius A*
     gravity: 150.0,
-    warpThreshold: 80,
+    warpThreshold: 320,
     isGalacticCore: true,
     isCompanionCore: true, // New flag
     galaxyId: 7,
@@ -2735,7 +2784,7 @@ const core8Distance = (400 + Math.random() * 220) * (Math.random() < 0.5 ? 1 : -
     }
     
     // Add accretion disk
-    const core8RingGeometry = new THREE.RingGeometry(25, 40, 48);
+    const core8RingGeometry = new THREE.RingGeometry(100, 160, 48); // 4x
    const core8RingMaterial = new THREE.MeshBasicMaterial({ 
     color: 0x6644dd, // Darker purple to distinguish from Sagittarius A*
     transparent: true,
@@ -2750,7 +2799,7 @@ const core8Distance = (400 + Math.random() * 220) * (Math.random() < 0.5 ? 1 : -
     if (core8BlackHole && core8BlackHole.add) {
         core8BlackHole.add(core8Ring);
     }
-    addGargantuaVisuals(core8BlackHole, 45, 0xff6a1a);
+    addGargantuaVisuals(core8BlackHole, 180, 0xff6a1a); // 4x
     // ADD SPIRAL GALAXY STARFIELD around 8th core (same as local galaxy)
 const core8GalaxyStarsGeometry = new THREE.BufferGeometry();
 const core8GalaxyStarsMaterial = new THREE.PointsMaterial({
