@@ -1855,6 +1855,136 @@ function generatePlanetName(galaxyId) {
 }
 
 
+// =============================================================================
+// GARGANTUA-STYLE BLACK HOLE VISUALS
+// =============================================================================
+// The reference look (Interstellar / EHT images) is a black shadow with a
+// bright "photon ring" that appears to wrap up over the top and down under
+// the bottom of the sphere, plus a warm accretion disk receding to the
+// sides. True gravitational lensing is a per-pixel raymarch — far too
+// expensive here (mobile already struggles). Instead we fake it with two
+// cheap, shader-free pieces:
+//
+//   1. A camera-facing Sprite whose texture is a transparent core (the
+//      black sphere shows through as the shadow), a sharp bright photon
+//      ring, then a warm glow falloff. Because a Sprite always faces the
+//      camera, the bright ring automatically wraps over/under the sphere
+//      from EVERY angle — exactly the silhouette in the reference images,
+//      with zero per-frame JS.
+//   2. A wide flat gradient disk (RingGeometry) in the equatorial plane,
+//      which the existing animate() loop already keeps flat — viewed
+//      edge-on it reads as the bright bar through the middle, and from
+//      above as the receding disk.
+//
+// Canvas textures are cached per color so 10+ black holes share a few.
+const _gargantuaTexCache = {};
+
+function _gargantuaGlowTexture(color) {
+    const key = 'g' + color;
+    if (_gargantuaTexCache[key]) return _gargantuaTexCache[key];
+    const c = new THREE.Color(color);
+    const r = Math.round(c.r * 255), g = Math.round(c.g * 255), b = Math.round(c.b * 255);
+    const size = 256, cv = document.createElement('canvas');
+    cv.width = cv.height = size;
+    const ctx = cv.getContext('2d');
+    const cx = size / 2;
+    const grad = ctx.createRadialGradient(cx, cx, 0, cx, cx, cx);
+    // Transparent core — the black event-horizon sphere shows through here.
+    grad.addColorStop(0.00, 'rgba(0,0,0,0)');
+    grad.addColorStop(0.30, 'rgba(0,0,0,0)');
+    // Photon ring: a tight near-white band hugging the shadow edge.
+    grad.addColorStop(0.34, `rgba(255,255,255,0)`);
+    grad.addColorStop(0.37, `rgba(255,250,240,0.95)`);
+    grad.addColorStop(0.40, `rgba(${Math.min(255,r+120)},${Math.min(255,g+90)},${Math.min(255,b+40)},0.85)`);
+    // Warm lensed glow band fading out into a soft halo.
+    grad.addColorStop(0.52, `rgba(${r},${g},${b},0.35)`);
+    grad.addColorStop(0.74, `rgba(${r},${Math.round(g*0.6)},${Math.round(b*0.5)},0.10)`);
+    grad.addColorStop(1.00, 'rgba(0,0,0,0)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, size, size);
+    const tex = new THREE.CanvasTexture(cv);
+    tex.needsUpdate = true;
+    _gargantuaTexCache[key] = tex;
+    return tex;
+}
+
+function _gargantuaDiskTexture(color) {
+    const key = 'd' + color;
+    if (_gargantuaTexCache[key]) return _gargantuaTexCache[key];
+    const c = new THREE.Color(color);
+    const r = Math.round(c.r * 255), g = Math.round(c.g * 255), b = Math.round(c.b * 255);
+    const size = 256, cv = document.createElement('canvas');
+    cv.width = cv.height = size;
+    const ctx = cv.getContext('2d');
+    const cx = size / 2;
+    const grad = ctx.createRadialGradient(cx, cx, 0, cx, cx, cx);
+    // White-hot inner edge → warm body → dark outer rim (RingGeometry UVs
+    // map this square radially across the annulus).
+    grad.addColorStop(0.00, `rgba(255,250,235,0.0)`);
+    grad.addColorStop(0.46, `rgba(255,250,235,0.0)`);
+    grad.addColorStop(0.50, `rgba(255,248,230,0.95)`);
+    grad.addColorStop(0.58, `rgba(${Math.min(255,r+90)},${Math.min(255,g+50)},${b},0.7)`);
+    grad.addColorStop(0.78, `rgba(${r},${Math.round(g*0.55)},${Math.round(b*0.4)},0.35)`);
+    grad.addColorStop(1.00, `rgba(0,0,0,0)`);
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, size, size);
+    const tex = new THREE.CanvasTexture(cv);
+    tex.needsUpdate = true;
+    _gargantuaTexCache[key] = tex;
+    return tex;
+}
+
+// Attach the photon-ring glow Sprite + a wide gradient accretion disk to
+// an existing black-hole sphere. `radius` is the sphere radius; `color`
+// the warm disk/glow tint (defaults to a fiery orange).
+function addGargantuaVisuals(blackHole, radius, color) {
+    if (!blackHole || typeof THREE === 'undefined') return;
+    if (blackHole.userData && blackHole.userData._gargantua) return;
+    const col = (color === undefined || color === null) ? 0xff6a1a : color;
+
+    // 1. Camera-facing glow + photon ring. Photon ring sits at ~0.37 of
+    //    the texture, so a sprite of full-width W puts it at 0.37*W from
+    //    centre — size it so that lands just outside the sphere.
+    const glowMat = new THREE.SpriteMaterial({
+        map: _gargantuaGlowTexture(col),
+        color: 0xffffff,
+        transparent: true,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        depthTest: true
+    });
+    const glow = new THREE.Sprite(glowMat);
+    const glowSize = radius * 3.1; // photon ring ≈ radius * 1.15
+    glow.scale.set(glowSize * 2, glowSize * 2, 1);
+    glow.frustumCulled = false;
+    glow.renderOrder = 70;
+    glow.userData.isGargantuaGlow = true;
+    blackHole.add(glow);
+
+    // 2. Wide flat gradient accretion disk. RingGeometry so the existing
+    //    animate() blackhole loop keeps it flat in the equatorial plane.
+    const diskGeo = new THREE.RingGeometry(radius * 1.05, radius * 4.0, 64);
+    const diskMat = new THREE.MeshBasicMaterial({
+        map: _gargantuaDiskTexture(col),
+        transparent: true,
+        opacity: 0.9,
+        side: THREE.DoubleSide,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false
+    });
+    const disk = new THREE.Mesh(diskGeo, diskMat);
+    disk.rotation.x = Math.PI / 2;
+    disk.frustumCulled = false;
+    disk.renderOrder = 68;
+    disk.userData.isGargantuaDisk = true;
+    blackHole.add(disk);
+
+    if (!blackHole.userData) blackHole.userData = {};
+    blackHole.userData._gargantua = true;
+}
+if (typeof window !== 'undefined') window.addGargantuaVisuals = addGargantuaVisuals;
+
+
 function calculateBlackHoleRotationSpeed(galaxyType, galaxyId, position) {
     // Base speed varies by galaxy type
     let baseSpeed = 0.001; // Default speed
@@ -2486,7 +2616,8 @@ try {
         if (centralBlackHole && centralBlackHole.add) {
             centralBlackHole.add(centralRing);
         }
-        
+        addGargantuaVisuals(centralBlackHole, 70, 0xff4500);
+
         console.log('✅ Sagittarius A* created at galactic center');
         
     } catch (sgrAError) {
@@ -2550,6 +2681,7 @@ const core8Distance = (400 + Math.random() * 220) * (Math.random() < 0.5 ? 1 : -
     if (core8BlackHole && core8BlackHole.add) {
         core8BlackHole.add(core8Ring);
     }
+    addGargantuaVisuals(core8BlackHole, 45, 0xff6a1a);
     // ADD SPIRAL GALAXY STARFIELD around 8th core (same as local galaxy)
 const core8GalaxyStarsGeometry = new THREE.BufferGeometry();
 const core8GalaxyStarsMaterial = new THREE.PointsMaterial({
@@ -2966,6 +3098,7 @@ try {
         if (blackHole && blackHole.add) {
             blackHole.add(ring);
         }
+        addGargantuaVisuals(blackHole, 44, 0xff7a2a);
         
         console.log('✅ Local gateway black hole created');
         
@@ -3570,6 +3703,7 @@ const galaxyStarsToAdd = galaxyMainStars;
             ring.matrixAutoUpdate = true;
             ring.updateMatrix();
             galaxyBlackHole.add(ring);
+            addGargantuaVisuals(galaxyBlackHole, blackHoleSize, galaxyType.color);
 
             // Create large outer accretion disc (2.5x spherical starfield radius) with high transparency
             // Reuse sphericalStarfieldMaxRadius from earlier calculation
