@@ -117,10 +117,8 @@ function generateHexagonGrid() {
             const depthFactor = 1 - (normalizedDist * 0.5); // 0.5 to 1.0
             const curvature = Math.pow(depthFactor, 3); // Exponential falloff for sphere effect
             
-            // Base opacity decreases towards edges. Kept deliberately low
-            // so the shield reads as a faint energy shimmer you can see
-            // the black-hole / scene effects through, not an opaque dome.
-            const baseOpacity = 0.16 * curvature;
+            // Base opacity decreases towards edges
+            const baseOpacity = 0.4 * curvature;
             
             shieldSystem.hexagons.push({
                 x: x,
@@ -369,7 +367,7 @@ function renderShield() {
     
     // Update global opacity pulse (entire shield slowly pulses from 0.5 to 0.9)
 shieldSystem.globalOpacityPulse += 0.008; // Slow pulse speed
-const globalOpacity = 0.34 + Math.sin(shieldSystem.globalOpacityPulse) * 0.12; // Oscillates ~0.22–0.46 (subtle)
+const globalOpacity = 0.7 + Math.sin(shieldSystem.globalOpacityPulse) * 0.2; // Oscillates between 0.5 and 0.9
     
     // Ensure flickerIntensity is a valid number
     if (typeof shieldSystem.flickerIntensity !== 'number' || isNaN(shieldSystem.flickerIntensity)) {
@@ -446,8 +444,8 @@ function drawHexagon(ctx, x, y, size, opacity, curvature) {
     const gradient = ctx.createRadialGradient(x, y, 0, x, y, size);
     
     // Calculate brightness with safety checks
-    const centerBrightness = opacity * 0.18 * curvature;
-    const edgeBrightness = opacity * 0.02 * curvature;
+    const centerBrightness = opacity * 0.4 * curvature;
+    const edgeBrightness = opacity * 0.03 * curvature;
     
     // Final validation before adding color stops
     if (isNaN(centerBrightness) || isNaN(edgeBrightness)) {
@@ -463,14 +461,14 @@ function drawHexagon(ctx, x, y, size, opacity, curvature) {
     ctx.fill();
     
     // Glowing outline - more prominent in center, subtle at edges
-    const strokeOpacity = opacity * curvature * 0.4;
-
+    const strokeOpacity = opacity * curvature * 0.8;
+    
     // Validate stroke opacity
     if (!isNaN(strokeOpacity) && strokeOpacity > 0) {
         ctx.strokeStyle = `rgba(100, 200, 255, ${strokeOpacity})`;
-        ctx.lineWidth = 1.5;
-        ctx.shadowBlur = 6 * curvature;
-        ctx.shadowColor = `rgba(100, 200, 255, ${strokeOpacity * 0.5})`;
+        ctx.lineWidth = 2;
+        ctx.shadowBlur = 10 * curvature;
+        ctx.shadowColor = `rgba(100, 200, 255, ${strokeOpacity * 0.6})`;
         ctx.stroke();
     }
     
@@ -653,12 +651,17 @@ function create3DShield() {
     const detail = 1;   // Subdivision level for buckyball look
     const geometry = new THREE.IcosahedronGeometry(radius, detail);
     
-    // Wireframe material for energy shield look
+    // Wireframe material for energy shield look. Additive + no depth
+    // write so the bubble ADDS light instead of covering the scene —
+    // bright additive effects behind it (black-hole glow / accretion)
+    // stay fully visible through the shield instead of being dimmed.
     const material = new THREE.MeshBasicMaterial({
         color: 0x00d4ff,
         wireframe: true,
         transparent: true,
-        opacity: 0.6
+        opacity: 0.55,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false
     });
     
     shieldSystem.mesh3D = new THREE.Mesh(geometry, material);
@@ -666,11 +669,16 @@ function create3DShield() {
     
     // Add inner glow sphere
     const glowGeometry = new THREE.IcosahedronGeometry(radius * 0.95, detail);
+    // Inner glow: the filled back-side sphere was the main culprit
+    // tinting/dimming the black hole. Additive + no depth write turns
+    // it into a faint cyan light wash that never occludes what's behind.
     const glowMaterial = new THREE.MeshBasicMaterial({
         color: 0x00d4ff,
         transparent: true,
-        opacity: 0.15,
-        side: THREE.BackSide
+        opacity: 0.10,
+        side: THREE.BackSide,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false
     });
     shieldSystem.glowMesh3D = new THREE.Mesh(glowGeometry, glowMaterial);
     shieldSystem.glowMesh3D.renderOrder = 49;

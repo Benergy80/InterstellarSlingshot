@@ -780,10 +780,10 @@ body.ui-mode {
     z-index: 500;
     opacity: 0;
     transition: opacity 0.5s ease;
-    /* Blend mode lives on #shieldCanvas (below), not this container.
-       The old transform / blend / isolation lines here were malformed
-       (stray "*/" with no opening "/*"), so the cascade parsed them
-       inconsistently — removed for a clean, subtle shield. */
+    transform: perspective(1200px) rotateX(2deg) translateZ(-3px);
+    transform-style: preserve-3d; */
+    mix-blend-mode: screen; */
+    isolation: isolate; */
 }
 
 /* Hexagonal Pattern Canvas */
