@@ -2006,21 +2006,20 @@ function addGargantuaVisuals(blackHole, radius, color, nearK, farK) {
 
     if (!blackHole.userData) blackHole.userData = {};
 
-    // Proximity fade. Far away the whole effect is barely a glow; as the
-    // player closes in, the halo, accretion disk, legacy rings and the
-    // event-horizon sphere fade up to full. This also stops the additive
-    // glow from being washed flat by the (screen-blend) shield overlay at
-    // a distance — far black holes are now too faint for that to matter.
-    // Distances scale with the hole's radius so a 4x-bigger hole reads
-    // from proportionally farther. Each entry fades opacity floor→base.
+    // Proximity fade. Every entry's opacity scales LINEARLY with how
+    // close the camera is: ~5% of its design opacity out at `_gargFar`
+    // (barely a glow), ramping smoothly to ~95% at `_gargNear` (very
+    // close). Linear — not eased — so it visibly fades the whole way in
+    // instead of staying invisible then popping. `base` is each
+    // material's full-strength design opacity.
     const fade = [
-        { m: glowMat, base: 1.0,  floor: 0.04 },
-        { m: diskMat, base: 0.9,  floor: 0.03 }
+        { m: glowMat, base: 1.0 },
+        { m: diskMat, base: 0.9 }
     ];
     if (blackHole.material && typeof blackHole.material.opacity === 'number') {
         blackHole.material.transparent = true;
         fade.push({ m: blackHole.material,
-                    base: blackHole.material.opacity || 0.95, floor: 0.10 });
+                    base: blackHole.material.opacity || 0.95 });
     }
     // Legacy accretion rings already attached to this hole (Sgr A* /
     // Companion Core add theirs before calling us) fade in together.
@@ -2030,16 +2029,16 @@ function addGargantuaVisuals(blackHole, radius, color, nearK, farK) {
             typeof ch.material.opacity === 'number') {
             ch.material.transparent = true;
             fade.push({ m: ch.material,
-                        base: ch.material.opacity || 0.6, floor: 0.02 });
+                        base: ch.material.opacity || 0.6 });
         }
     });
     blackHole.userData._gargFade = fade;
     // Defaults (14 / 110) keep the 8 galaxy holes glowing from far enough
-    // to navigate toward. Sgr A* / Companion Core pass a tighter band so
-    // they're barely glowing at the Sol start (~9.5k away) and bloom in
-    // only as you actually approach.
-    blackHole.userData._gargNear = radius * (nearK || 14);   // full within
-    blackHole.userData._gargFar  = radius * (farK  || 110);  // faint beyond
+    // to navigate toward. Sgr A* / Companion Core pass a wide band tuned
+    // so the effect sits at ~5% from the Sol start (~9.5k away) and
+    // ramps the whole way to ~95% as the player closes in.
+    blackHole.userData._gargNear = radius * (nearK || 14);   // ~95% within
+    blackHole.userData._gargFar  = radius * (farK  || 110);  // ~5% beyond
     blackHole.userData._gargantua = true;
 }
 if (typeof window !== 'undefined') window.addGargantuaVisuals = addGargantuaVisuals;
@@ -2065,11 +2064,10 @@ function updateGargantuaDoppler(blackHole, camera) {
         const near = blackHole.userData._gargNear || 1;
         const far = blackHole.userData._gargFar || (near * 8);
         let p = (far - d) / (far - near);
-        p = p < 0 ? 0 : (p > 1 ? 1 : p);
-        p = p * p * (3 - 2 * p); // smoothstep
+        p = p < 0 ? 0 : (p > 1 ? 1 : p);   // linear: 0 at/ beyond far, 1 within near
+        const vis = 0.05 + 0.90 * p;        // 5% .. 95% of each material's design opacity
         for (let k = 0; k < fade.length; k++) {
-            const f = fade[k];
-            f.m.opacity = f.floor + (f.base - f.floor) * p;
+            fade[k].m.opacity = fade[k].base * vis;
         }
     }
 
@@ -2227,7 +2225,10 @@ function createOptimizedPlanets3D() {
     console.log('✅ All required globals found. Proceeding with universe creation...');
     
     const localSystemOffset = { x: 8000, y: 0, z: 4800 }; // 4x further from Sgr A* (origin)
-    
+    // Single source of truth for everything that needs the Sol-system
+    // centre outside this function's scope (enemy spawns, music regions).
+    if (typeof window !== 'undefined') window.localSystemOffset = localSystemOffset;
+
     // =============================================================================
     // LOCAL SOLAR SYSTEM
     // =============================================================================
@@ -2738,7 +2739,7 @@ try {
         if (centralBlackHole && centralBlackHole.add) {
             centralBlackHole.add(centralRing);
         }
-        addGargantuaVisuals(centralBlackHole, 280, 0xff4500, 7, 36); // 4x; faint until approached
+        addGargantuaVisuals(centralBlackHole, 280, 0xff4500, 2, 34); // 4x; ~5% at Sol start (~9.5k) → ~95% close
 
         console.log('✅ Sagittarius A* created at galactic center');
         
@@ -2803,7 +2804,7 @@ const core8Distance = (1600 + Math.random() * 880) * (Math.random() < 0.5 ? 1 : 
     if (core8BlackHole && core8BlackHole.add) {
         core8BlackHole.add(core8Ring);
     }
-    addGargantuaVisuals(core8BlackHole, 180, 0xff6a1a, 7, 40); // 4x; faint until approached
+    addGargantuaVisuals(core8BlackHole, 180, 0xff6a1a, 3, 55); // 4x; ~5% at Sol start (~9.7k) → ~95% close
     // ADD SPIRAL GALAXY STARFIELD around 8th core (same as local galaxy)
 const core8GalaxyStarsGeometry = new THREE.BufferGeometry();
 const core8GalaxyStarsMaterial = new THREE.PointsMaterial({
@@ -9066,6 +9067,11 @@ function createEnemies3D() {
     const patrolGroupCount = 8;
     const piratesPerGroup = 3;
     const pirateGoldenAngle = Math.PI * (3 - Math.sqrt(5));
+    // Martian Pirates patrol the Sol system, so their lattice is centred
+    // on the Sol-system offset (not the origin, which is Sgr A* — that's
+    // Vulcan turf below).
+    const solCenter = (typeof window !== 'undefined' && window.localSystemOffset)
+        ? window.localSystemOffset : { x: 8000, y: 0, z: 4800 };
     let pirateIndex = 0;
     for (let g = 0; g < patrolGroupCount; g++) {
         const groupDistance = 800 + Math.random() * 1200;
@@ -9073,9 +9079,9 @@ function createEnemies3D() {
         const sinPolar = Math.sqrt(Math.max(0, 1 - cosPolar * cosPolar));
         const azimuth = pirateGoldenAngle * g + Math.random() * 0.3;
         const groupCenter = new THREE.Vector3(
-            Math.cos(azimuth) * sinPolar * groupDistance,
-            cosPolar * groupDistance,
-            Math.sin(azimuth) * sinPolar * groupDistance
+            solCenter.x + Math.cos(azimuth) * sinPolar * groupDistance,
+            solCenter.y + cosPolar * groupDistance,
+            solCenter.z + Math.sin(azimuth) * sinPolar * groupDistance
         );
 
         for (let p = 0; p < piratesPerGroup; p++) {
@@ -9163,9 +9169,10 @@ function createEnemies3D() {
     }
 
     // =============================================================================
-    // VULCAN PATROL SHIPS — tight patrol ring around Sagittarius A* (700-1500u)
-    // The player spawns at ~2470u from origin, so this keeps Vulcans guarding
-    // the galactic center rather than spawning on top of the player at start.
+    // VULCAN PATROL SHIPS — tight patrol ring around Sagittarius A* (700-1500u
+    // from the origin). The player now starts ~9.5k away at Sol (Martian
+    // Pirate turf), so Vulcans stay origin-centred, guarding the galactic
+    // centre well clear of the spawn.
     // =============================================================================
     const vulcanGroupCount = 6;
     const vulcansPerGroup = 3;

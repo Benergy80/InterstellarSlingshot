@@ -2229,6 +2229,7 @@ function resetCameraToGamePosition() {
     // Position the player near Earth, looking at it, with an orbital
     // velocity so the game opens with a slow orbit around the home planet.
     const localSystemOffset = { x: 8000, y: 0, z: 4800 }; // 4x further from Sgr A* (origin) — keep in sync with game-objects.js
+    if (typeof window !== 'undefined' && !window.localSystemOffset) window.localSystemOffset = localSystemOffset;
     const earthDistance = 640;    // Earth's orbit radius from sun (4x scaled)
     const earthOrbitOffset = 80;  // camera offset from Earth for a close fly-by
     // Earth starts at (sun.x + 640, sun.y, sun.z). Place camera just

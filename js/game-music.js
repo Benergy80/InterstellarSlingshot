@@ -400,6 +400,35 @@
       return;
     }
 
+    // 8b) "Home space" guard. The Sol system now sits ~9.5k from Sgr A*,
+    // so at game start the player is outside every galaxy's music
+    // perimeter and steps 7/8 don't fire — without this it would cut
+    // straight to interstellar travel music. Treat both the Sol local
+    // system and the Sgr A* core region as home: keep the Sol galaxy
+    // theme / Far Outer rotation until the player has actually left BOTH
+    // (heading out toward another galaxy). The radii overlap along the
+    // direct Sol↔Sgr A* route, so that whole corridor stays "home".
+    if (typeof camera !== 'undefined' && typeof THREE !== 'undefined') {
+      const SOL_AREA_RADIUS = 6000;
+      const SGRA_AREA_RADIUS = 6000;
+      const lso = (typeof window !== 'undefined' && window.localSystemOffset)
+        ? window.localSystemOffset : { x: 8000, y: 0, z: 4800 };
+      const dSol = camera.position.distanceTo(
+        new THREE.Vector3(lso.x, lso.y, lso.z));
+      const dSgrA = camera.position.length(); // origin = Sagittarius A*
+      if (dSol < SOL_AREA_RADIUS) {
+        play('galaxy7'); // Sol / local system theme
+        return;
+      }
+      if (dSgrA < SGRA_AREA_RADIUS) {
+        if (st.current !== 'farOuter1' && st.current !== 'farOuter2' &&
+            st.current !== 'farOuter3') {
+          play('farOuter' + (1 + Math.floor(Math.random() * 3)));
+        }
+        return;
+      }
+    }
+
     // 9) Interstellar space — not inside any galaxy's 20,000u perimeter
     play('mainTheme');
   }
