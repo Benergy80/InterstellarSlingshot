@@ -11310,9 +11310,20 @@ function updateHubbleSkyboxOpacity() {
         return;
     }
     
-    // Calculate total distance traveled from origin
-    const distanceFromStart = camera.position.length();
-    
+    // Distance the player has actually travelled FROM their start (the
+    // relocated Sol system), not from the world origin. The origin is
+    // Sgr A*; since the SOL relocation the player begins ~9.3k units
+    // out, so camera.position.length() started this skybox already
+    // ~30% faded and even faded it the WRONG way when flying toward
+    // Sgr A*. Anchoring to the Sol offset makes it sit at its floor at
+    // spawn and fade in only as you genuinely travel away from home.
+    const _solA = (typeof window !== 'undefined' && window.localSystemOffset)
+        ? window.localSystemOffset : { x: 8000, y: 0, z: 4800 };
+    const _sdx = camera.position.x - _solA.x;
+    const _sdy = camera.position.y - _solA.y;
+    const _sdz = camera.position.z - _solA.z;
+    const distanceFromStart = Math.sqrt(_sdx * _sdx + _sdy * _sdy + _sdz * _sdz);
+
     // Define fade-in range (adjust these values to control the fade speed)
     const fadeStartDistance = 5000;        // Start fading at origin
     const fadeEndDistance = 75000;      // Reach max opacity at 50,000 units
@@ -11353,9 +11364,19 @@ function updateHubbleSkybox2Opacity() {
         return;
     }
     
-    // Calculate total distance traveled from origin
-    const distanceFromStart = camera.position.length();
-    
+    // Distance travelled FROM the player's start (relocated Sol system),
+    // not from the world origin. Pre-fix this used camera.position
+    // .length(); after the SOL relocation the player spawns ~9.3k units
+    // from origin, so this deep layer started at ~0.31 instead of its
+    // 0.20 floor and washed out the early sky / scene. Sol-anchored, it
+    // sits at the 0.20 floor at spawn and fades in only on real travel.
+    const _solB = (typeof window !== 'undefined' && window.localSystemOffset)
+        ? window.localSystemOffset : { x: 8000, y: 0, z: 4800 };
+    const _s2dx = camera.position.x - _solB.x;
+    const _s2dy = camera.position.y - _solB.y;
+    const _s2dz = camera.position.z - _solB.z;
+    const distanceFromStart = Math.sqrt(_s2dx * _s2dx + _s2dy * _s2dy + _s2dz * _s2dz);
+
     // Define fade-in range (starts later, for deeper exploration)
     const fadeStartDistance = 1000;        // Start fading at 5,000 units
     const fadeEndDistance = 30000;        // Reach max opacity at 100,000 units
