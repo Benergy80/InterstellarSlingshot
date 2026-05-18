@@ -5122,10 +5122,19 @@ setTimeout(() => {
         ctx.arc(125, 125, 125, 0, Math.PI * 2);
         ctx.clip();
 
+        // Sample the in-tick frame snapshot taken by the main render
+        // loop. renderer.domElement itself is an empty buffer here
+        // (preserveDrawingBuffer:false), so reading it directly is what
+        // made the scope blank — use the snapshot, fall back only if it
+        // hasn't been produced yet this session.
+        const scopeSource = (typeof window !== 'undefined' && window.__zoomFrameCanvas)
+            ? window.__zoomFrameCanvas
+            : renderer.domElement;
+
         // Draw magnified portion (now clipped to circle)
         try {
             ctx.drawImage(
-                renderer.domElement,
+                scopeSource,
                 Math.max(0, sourceX),
                 Math.max(0, sourceY),
                 sourceWidth,

@@ -1979,68 +1979,26 @@ function addGargantuaVisuals(blackHole, radius, color, nearK, farK) {
         opacity: 0.9,
         side: THREE.DoubleSide,
         blending: THREE.AdditiveBlending,
-        depthWrite: false,
-        vertexColors: true
+        depthWrite: false
     });
     const disk = new THREE.Mesh(diskGeo, diskMat);
     disk.rotation.x = Math.PI / 2;
     disk.frustumCulled = false;
     disk.renderOrder = 68;
     disk.userData.isGargantuaDisk = true;
-
-    // Doppler beaming: the disk limb whose orbital motion heads toward
-    // the viewer is relativistically brightened (and slightly blue); the
-    // receding limb is dimmed (and reddened). We fake it per-frame with
-    // vertex colors — MeshBasicMaterial multiplies vertexColor × the
-    // radial gradient map, so the soft falloff is preserved and only the
-    // angular brightness is modulated. RingGeometry sits in its own local
-    // XY plane (normal +Z); precompute each vertex's in-plane orbital
-    // tangent ONCE so the per-frame cost is just a dot product per vertex.
-    const _pos = diskGeo.attributes.position;
-    const vCount = _pos.count;
-    diskGeo.setAttribute('color',
-        new THREE.BufferAttribute(new Float32Array(vCount * 3).fill(1), 3));
-    const _tan = new Float32Array(vCount * 2); // local (x,y) unit tangent
-    for (let i = 0; i < vCount; i++) {
-        const x = _pos.getX(i), y = _pos.getY(i);
-        const inv = 1 / (Math.hypot(x, y) || 1);
-        // Orbital velocity = radial rotated +90° about local +Z.
-        _tan[i * 2]     = -y * inv;
-        _tan[i * 2 + 1] =  x * inv;
-    }
-    disk.userData._dopplerTan = _tan;
-    disk.userData._dopplerCol = diskGeo.attributes.color;
     blackHole.add(disk);
-    blackHole.userData._gargantuaDisk = disk;
 
     if (!blackHole.userData) blackHole.userData = {};
 
-    // Proximity fade. Every entry's opacity scales LINEARLY with how
-    // close the camera is: ~5% of its design opacity out at `_gargFar`
-    // (barely a glow), ramping smoothly to ~95% at `_gargNear` (very
-    // close). Linear — not eased — so it visibly fades the whole way in
-    // instead of staying invisible then popping. `base` is each
-    // material's full-strength design opacity.
+    // Proximity fade. ONLY the fake-Gargantua additions (the camera-
+    // facing glow sprite + the wide accretion disk) fade with distance.
+    // The original black-hole sphere material and any legacy accretion
+    // rings are intentionally left untouched — they keep their normal
+    // opacity regardless of how close the camera is.
     const fade = [
         { m: glowMat, base: 1.0 },
         { m: diskMat, base: 0.9 }
     ];
-    if (blackHole.material && typeof blackHole.material.opacity === 'number') {
-        blackHole.material.transparent = true;
-        fade.push({ m: blackHole.material,
-                    base: blackHole.material.opacity || 0.95 });
-    }
-    // Legacy accretion rings already attached to this hole (Sgr A* /
-    // Companion Core add theirs before calling us) fade in together.
-    blackHole.children.forEach(ch => {
-        if (ch !== disk && ch !== glow && ch.material &&
-            ch.geometry && ch.geometry.type === 'RingGeometry' &&
-            typeof ch.material.opacity === 'number') {
-            ch.material.transparent = true;
-            fade.push({ m: ch.material,
-                        base: ch.material.opacity || 0.6 });
-        }
-    });
     blackHole.userData._gargFade = fade;
     // Defaults (14 / 110) keep the 8 galaxy holes glowing from far enough
     // to navigate toward. Sgr A* / Companion Core pass a wide band tuned
@@ -2055,66 +2013,28 @@ function addGargantuaVisuals(blackHole, radius, color, nearK, farK) {
 }
 if (typeof window !== 'undefined') window.addGargantuaVisuals = addGargantuaVisuals;
 
-// Per-frame Doppler beaming. Camera is transformed into the disk's local
-// frame ONCE (1 quaternion + 1 position); each vertex is then a 2D dot
-// product against its precomputed orbital tangent — ~130 verts/disk,
-// trivial even on mobile. Approaching limb brightens (+ slightly bluer),
-// receding limb dims (+ slightly redder); the asymmetry fades to nothing
-// when the disk is viewed face-on (down the spin axis), as in reality.
-const _dopQ = (typeof THREE !== 'undefined') ? new THREE.Quaternion() : null;
-const _dopC = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
-const _dopD = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
-function updateGargantuaDoppler(blackHole, camera) {
-    if (!blackHole || !blackHole.userData || !camera || !_dopQ) return;
-
-    // Proximity fade first — runs even if the disk/doppler data is
-    // missing, so the halo + event horizon always honour distance.
+// Per-frame proximity fade for the fake-Gargantua glow + accretion disk.
+// (The old per-vertex Doppler-beaming pass has been removed.) Opacity
+// scales linearly with camera distance across the hole's
+// _gargNear.._gargFar band so the effect ramps the whole way in instead
+// of popping. Only the glow/disk materials are touched here.
+const _gargTmp = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+function updateGargantuaProximityFade(blackHole, camera) {
+    if (!blackHole || !blackHole.userData || !camera || !_gargTmp) return;
     const fade = blackHole.userData._gargFade;
-    if (fade) {
-        blackHole.getWorldPosition(_dopC);
-        const d = camera.position.distanceTo(_dopC);
-        const near = blackHole.userData._gargNear || 1;
-        const far = blackHole.userData._gargFar || (near * 8);
-        let p = (far - d) / (far - near);
-        p = p < 0 ? 0 : (p > 1 ? 1 : p);   // linear: 0 at/ beyond far, 1 within near
-        const vis = 0.05 + 0.90 * p;        // 5% .. 95% of each material's design opacity
-        for (let k = 0; k < fade.length; k++) {
-            fade[k].m.opacity = fade[k].base * vis;
-        }
+    if (!fade) return;
+    blackHole.getWorldPosition(_gargTmp);
+    const d = camera.position.distanceTo(_gargTmp);
+    const near = blackHole.userData._gargNear || 1;
+    const far = blackHole.userData._gargFar || (near * 8);
+    let p = (far - d) / (far - near);
+    p = p < 0 ? 0 : (p > 1 ? 1 : p);   // 0 at/beyond far, 1 within near
+    const vis = 0.05 + 0.90 * p;        // 5% .. 95% of each design opacity
+    for (let k = 0; k < fade.length; k++) {
+        fade[k].m.opacity = fade[k].base * vis;
     }
-
-    const disk = blackHole.userData._gargantuaDisk;
-    if (!disk) return;
-    const tan = disk.userData._dopplerTan;
-    const colAttr = disk.userData._dopplerCol;
-    if (!tan || !colAttr) return;
-
-    disk.getWorldQuaternion(_dopQ);
-    disk.getWorldPosition(_dopC);
-    _dopD.copy(camera.position).sub(_dopC);     // center -> camera (world)
-    _dopD.applyQuaternion(_dopQ.conjugate());   // -> disk local frame
-    const len = _dopD.length() || 1;
-    const dx = _dopD.x / len, dy = _dopD.y / len, dz = _dopD.z / len;
-
-    // |dz| = face-on component (disk normal is local +Z). Beaming is
-    // strongest edge-on, zero down the axis.
-    const incline = 1 - Math.min(1, Math.abs(dz));
-    const B = 1.15 * incline;
-
-    const arr = colAttr.array;
-    const n = colAttr.count;
-    for (let i = 0; i < n; i++) {
-        const beam = tan[i * 2] * dx + tan[i * 2 + 1] * dy; // tangent · view
-        let m = 1 + B * beam;
-        if (m < 0.12) m = 0.12; else if (m > 2.4) m = 2.4;
-        const j = i * 3;
-        arr[j]     = m * (beam < 0 ? 1 + (-beam) * 0.15 * incline : 1); // redshift
-        arr[j + 1] = m;
-        arr[j + 2] = m * (beam > 0 ? 1 + beam * 0.20 * incline : 1);    // blueshift
-    }
-    colAttr.needsUpdate = true;
 }
-if (typeof window !== 'undefined') window.updateGargantuaDoppler = updateGargantuaDoppler;
+if (typeof window !== 'undefined') window.updateGargantuaProximityFade = updateGargantuaProximityFade;
 
 
 function calculateBlackHoleRotationSpeed(galaxyType, galaxyId, position) {
@@ -9086,7 +9006,11 @@ function createEnemies3D() {
         ? window.localSystemOffset : { x: 8000, y: 0, z: 4800 };
     let pirateIndex = 0;
     for (let g = 0; g < patrolGroupCount; g++) {
-        const groupDistance = 800 + Math.random() * 1200;
+        // Keep patrol groups well clear of the Sol-system core where the
+        // player spawns (near Earth). The old 800-unit floor put pirates
+        // on top of the player immediately; a ~2800-unit minimum gives a
+        // few seconds to get oriented before any patrol is in range.
+        const groupDistance = 2800 + Math.random() * 1600;
         const cosPolar = 1 - 2 * (g + 0.5) / patrolGroupCount;
         const sinPolar = Math.sqrt(Math.max(0, 1 - cosPolar * cosPolar));
         const azimuth = pirateGoldenAngle * g + Math.random() * 0.3;

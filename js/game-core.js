@@ -1747,10 +1747,10 @@ if (typeof localGalaxyStars !== 'undefined' && localGalaxyStars) {
     // gating this on activePlanets froze their glow/disk at full opacity
     // beyond 2000 instead of fading it the whole way in.
     if (typeof window !== 'undefined' && window.gargantuaBlackHoles &&
-        typeof updateGargantuaDoppler === 'function') {
+        typeof updateGargantuaProximityFade === 'function') {
         const _gbh = window.gargantuaBlackHoles;
         for (let i = 0; i < _gbh.length; i++) {
-            updateGargantuaDoppler(_gbh[i], camera);
+            updateGargantuaProximityFade(_gbh[i], camera);
         }
     }
     
@@ -2201,6 +2201,30 @@ if (gameState.frameCount % 5 === 0 && typeof checkCosmicFeatureInteractions === 
     if (typeof perfDebug !== 'undefined') {
         perfDebug.endTimer('render');
         perfDebug.endTimer('total');
+    }
+
+    // Zoom scope frame capture. The renderer runs with
+    // preserveDrawingBuffer:false (mobile FPS), so the WebGL drawing
+    // buffer is only readable in THIS tick, right after render. The
+    // scope's own rAF loop runs in a different tick and would only ever
+    // copy an empty buffer (the "zoom is broken" bug), so while the
+    // scope is held we snapshot the frame into a 2D canvas here that it
+    // can safely sample later.
+    if (gameState.missiles && gameState.missiles.selected &&
+        typeof window !== 'undefined' && renderer && renderer.domElement) {
+        const rc = renderer.domElement;
+        let zc = window.__zoomFrameCanvas;
+        if (!zc) {
+            zc = window.__zoomFrameCanvas = document.createElement('canvas');
+        }
+        if (zc.width !== rc.width || zc.height !== rc.height) {
+            zc.width = rc.width;
+            zc.height = rc.height;
+        }
+        const zctx = zc.getContext('2d');
+        if (zctx) {
+            try { zctx.drawImage(rc, 0, 0); } catch (e) {}
+        }
     }
 }
 
