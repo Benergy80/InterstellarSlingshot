@@ -659,7 +659,7 @@ function create3DShield() {
         color: 0x00d4ff,
         wireframe: true,
         transparent: true,
-        opacity: 0.55,
+        opacity: 0.5,
         blending: THREE.AdditiveBlending,
         depthWrite: false
     });
