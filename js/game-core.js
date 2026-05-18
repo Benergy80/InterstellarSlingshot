@@ -1740,6 +1740,19 @@ if (typeof localGalaxyStars !== 'undefined' && localGalaxyStars) {
     if (typeof updateBossSkyboxHeartbeat === 'function') {
         updateBossSkyboxHeartbeat();
     }
+
+    // Gargantua proximity fade — driven from its own small registry every
+    // frame, NOT from activePlanets. Sgr A* / Companion Core fade across
+    // ~560→9.9k units, far beyond the ~2000-unit activePlanets cull range;
+    // gating this on activePlanets froze their glow/disk at full opacity
+    // beyond 2000 instead of fading it the whole way in.
+    if (typeof window !== 'undefined' && window.gargantuaBlackHoles &&
+        typeof updateGargantuaDoppler === 'function') {
+        const _gbh = window.gargantuaBlackHoles;
+        for (let i = 0; i < _gbh.length; i++) {
+            updateGargantuaDoppler(_gbh[i], camera);
+        }
+    }
     
     // PERFORMANCE: Update only expensive effects for active planets (tendrils, glows, etc.)
     activePlanets.forEach((planet) => {
@@ -1756,10 +1769,6 @@ if (planet.userData.type === 'blackhole' && planet.userData.rotationSpeed) {
         }
     });
 }
-    if (planet.userData._gargantua && typeof updateGargantuaDoppler === 'function') {
-        updateGargantuaDoppler(planet, camera);
-    }
-    
         // Asteroid orbital mechanics. Grouped belt asteroids are owned
         // by the dedicated, distance-culled belt loop (see asteroidBelts
         // update above) which advances orbitPhase and preserves each

@@ -1934,6 +1934,15 @@ function _gargantuaDiskTexture(color) {
     return tex;
 }
 
+// Registry of every black hole that has gargantua visuals + a proximity
+// fade. The per-frame fade band (Sgr A* / Companion Core reach ~9.5–9.9k
+// units) is far wider than the ~2000-unit `activePlanets` cull range, so
+// the fade MUST be driven from this dedicated list every frame rather
+// than from activePlanets — otherwise beyond ~2000 units the effects
+// never update and stay stuck at full design opacity instead of fading.
+const gargantuaBlackHoles = [];
+if (typeof window !== 'undefined') window.gargantuaBlackHoles = gargantuaBlackHoles;
+
 // Attach the photon-ring glow Sprite + a wide gradient accretion disk to
 // an existing black-hole sphere. `radius` is the sphere radius; `color`
 // the warm disk/glow tint (defaults to a fiery orange).
@@ -2040,6 +2049,9 @@ function addGargantuaVisuals(blackHole, radius, color, nearK, farK) {
     blackHole.userData._gargNear = radius * (nearK || 14);   // ~95% within
     blackHole.userData._gargFar  = radius * (farK  || 110);  // ~5% beyond
     blackHole.userData._gargantua = true;
+    if (gargantuaBlackHoles.indexOf(blackHole) === -1) {
+        gargantuaBlackHoles.push(blackHole);
+    }
 }
 if (typeof window !== 'undefined') window.addGargantuaVisuals = addGargantuaVisuals;
 
