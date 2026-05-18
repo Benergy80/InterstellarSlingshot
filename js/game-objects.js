@@ -1937,7 +1937,7 @@ function _gargantuaDiskTexture(color) {
 // Attach the photon-ring glow Sprite + a wide gradient accretion disk to
 // an existing black-hole sphere. `radius` is the sphere radius; `color`
 // the warm disk/glow tint (defaults to a fiery orange).
-function addGargantuaVisuals(blackHole, radius, color) {
+function addGargantuaVisuals(blackHole, radius, color, nearK, farK) {
     if (!blackHole || typeof THREE === 'undefined') return;
     if (blackHole.userData && blackHole.userData._gargantua) return;
     const col = (color === undefined || color === null) ? 0xff6a1a : color;
@@ -2034,8 +2034,12 @@ function addGargantuaVisuals(blackHole, radius, color) {
         }
     });
     blackHole.userData._gargFade = fade;
-    blackHole.userData._gargNear = radius * 14;   // full effect within this
-    blackHole.userData._gargFar  = radius * 110;  // barely glowing beyond
+    // Defaults (14 / 110) keep the 8 galaxy holes glowing from far enough
+    // to navigate toward. Sgr A* / Companion Core pass a tighter band so
+    // they're barely glowing at the Sol start (~9.5k away) and bloom in
+    // only as you actually approach.
+    blackHole.userData._gargNear = radius * (nearK || 14);   // full within
+    blackHole.userData._gargFar  = radius * (farK  || 110);  // faint beyond
     blackHole.userData._gargantua = true;
 }
 if (typeof window !== 'undefined') window.addGargantuaVisuals = addGargantuaVisuals;
@@ -2222,7 +2226,7 @@ function createOptimizedPlanets3D() {
     
     console.log('✅ All required globals found. Proceeding with universe creation...');
     
-    const localSystemOffset = { x: 2000, y: 0, z: 1200 };
+    const localSystemOffset = { x: 8000, y: 0, z: 4800 }; // 4x further from Sgr A* (origin)
     
     // =============================================================================
     // LOCAL SOLAR SYSTEM
@@ -2734,7 +2738,7 @@ try {
         if (centralBlackHole && centralBlackHole.add) {
             centralBlackHole.add(centralRing);
         }
-        addGargantuaVisuals(centralBlackHole, 280, 0xff4500); // 4x
+        addGargantuaVisuals(centralBlackHole, 280, 0xff4500, 7, 36); // 4x; faint until approached
 
         console.log('✅ Sagittarius A* created at galactic center');
         
@@ -2799,7 +2803,7 @@ const core8Distance = (1600 + Math.random() * 880) * (Math.random() < 0.5 ? 1 : 
     if (core8BlackHole && core8BlackHole.add) {
         core8BlackHole.add(core8Ring);
     }
-    addGargantuaVisuals(core8BlackHole, 180, 0xff6a1a); // 4x
+    addGargantuaVisuals(core8BlackHole, 180, 0xff6a1a, 7, 40); // 4x; faint until approached
     // ADD SPIRAL GALAXY STARFIELD around 8th core (same as local galaxy)
 const core8GalaxyStarsGeometry = new THREE.BufferGeometry();
 const core8GalaxyStarsMaterial = new THREE.PointsMaterial({
