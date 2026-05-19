@@ -2000,6 +2000,11 @@ function addGargantuaVisuals(blackHole, radius, color, nearK, farK) {
         { m: diskMat, base: 0.9 }
     ];
     blackHole.userData._gargFade = fade;
+    // Refs for the slow "alive / unstable" corona pulse. Random phase so
+    // every hole breathes out of sync with the others.
+    blackHole.userData._gargGlow = glow;
+    blackHole.userData._gargGlowScale = glowSize * 2;
+    blackHole.userData._gargPulsePhase = Math.random() * Math.PI * 2;
     // Defaults (14 / 110) keep the 8 galaxy holes glowing from far enough
     // to navigate toward. Sgr A* / Companion Core pass a wide band tuned
     // so the effect sits at ~5% from the Sol start (~9.5k away) and
@@ -2013,11 +2018,13 @@ function addGargantuaVisuals(blackHole, radius, color, nearK, farK) {
 }
 if (typeof window !== 'undefined') window.addGargantuaVisuals = addGargantuaVisuals;
 
-// Per-frame proximity fade for the fake-Gargantua glow + accretion disk.
-// (The old per-vertex Doppler-beaming pass has been removed.) Opacity
-// scales linearly with camera distance across the hole's
-// _gargNear.._gargFar band so the effect ramps the whole way in instead
-// of popping. Only the glow/disk materials are touched here.
+// Per-frame update for the fake-Gargantua glow + accretion disk.
+// (The old per-vertex Doppler-beaming pass has been removed.)
+//  • Proximity fade: opacity scales linearly with camera distance
+//    across the hole's _gargNear.._gargFar band so the effect ramps
+//    the whole way in instead of popping.
+//  • Corona pulse: the halo glow slowly breathes brighter/dimmer and
+//    grows/shrinks on two detuned sines so it reads as alive/unstable.
 const _gargTmp = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
 function updateGargantuaProximityFade(blackHole, camera) {
     if (!blackHole || !blackHole.userData || !camera || !_gargTmp) return;
@@ -2032,6 +2039,24 @@ function updateGargantuaProximityFade(blackHole, camera) {
     const vis = 0.05 + 0.90 * p;        // 5% .. 95% of each design opacity
     for (let k = 0; k < fade.length; k++) {
         fade[k].m.opacity = fade[k].base * vis;
+    }
+
+    // Slow, irregular corona pulse layered on top of the proximity
+    // fade. Two detuned low-freq sines (~11s and ~27s periods) so it
+    // wanders rather than ticking like a metronome — alive/unstable.
+    const glow = blackHole.userData._gargGlow;
+    if (glow && glow.material) {
+        const t = (typeof performance !== 'undefined'
+            ? performance.now() : Date.now()) * 0.001;
+        const ph = blackHole.userData._gargPulsePhase || 0;
+        const wob = Math.sin(t * 0.55 + ph) * 0.62 +
+                    Math.sin(t * 0.236 + ph * 1.7) * 0.38;   // ~[-1, 1]
+        const grow = (blackHole.userData._gargGlowScale || 1) * (1 + wob * 0.10);
+        glow.scale.set(grow, grow, 1);
+        // glow.material.opacity was just set to base*vis above; flare it
+        // ±30% and clamp so additive blending doesn't blow out.
+        let o = glow.material.opacity * (1 + wob * 0.30);
+        glow.material.opacity = o < 0 ? 0 : (o > 1.25 ? 1.25 : o);
     }
 }
 if (typeof window !== 'undefined') window.updateGargantuaProximityFade = updateGargantuaProximityFade;
