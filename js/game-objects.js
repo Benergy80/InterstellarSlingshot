@@ -1943,6 +1943,23 @@ function _gargantuaDiskTexture(color) {
 const gargantuaBlackHoles = [];
 if (typeof window !== 'undefined') window.gargantuaBlackHoles = gargantuaBlackHoles;
 
+// Mobile render tier. Mirrors the heuristic in game-core.js (renderer
+// init) and caches it on window, so star fields / shields can scale
+// themselves down regardless of whether they build before or after the
+// renderer sets window.__isMobileGPU. Mobile gets AA off + pixelRatio
+// 1, which makes additive star/shield pixels pile up to harsh white —
+// these call sites use this to cut count + opacity on mobile only.
+function _isMobileRenderTier() {
+    if (typeof window === 'undefined') return false;
+    if (typeof window.__isMobileGPU !== 'undefined') return window.__isMobileGPU;
+    window.__isMobileGPU = (window.innerWidth <= 768) ||
+        ('ontouchstart' in window) ||
+        (navigator.maxTouchPoints > 0) ||
+        /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent || '');
+    return window.__isMobileGPU;
+}
+if (typeof window !== 'undefined') window._isMobileRenderTier = _isMobileRenderTier;
+
 // Attach the photon-ring glow Sprite + a wide gradient accretion disk to
 // an existing black-hole sphere. `radius` is the sphere radius; `color`
 // the warm disk/glow tint (defaults to a fiery orange).
@@ -2690,7 +2707,10 @@ try {
         });
         const centralRing = new THREE.Mesh(centralRingGeometry, centralRingMaterial);
         centralRing.rotation.x = Math.PI / 2;
-        centralRing.visible = true;
+        // Hidden for review — the legacy flat accretion ring competes
+        // with the Gargantua disk/glow on Sgr A*. Flip back to true to
+        // restore it.
+        centralRing.visible = false;
         centralRing.frustumCulled = false;
         
         if (centralBlackHole && centralBlackHole.add) {
@@ -2767,7 +2787,7 @@ const core8GalaxyStarsGeometry = new THREE.BufferGeometry();
 const core8GalaxyStarsMaterial = new THREE.PointsMaterial({
     size: 2.0,
     transparent: true,
-    opacity: 0.9,
+    opacity: _isMobileRenderTier() ? 0.5 : 0.9,
     vertexColors: true,
     blending: THREE.AdditiveBlending,
     sizeAttenuation: true
@@ -2776,10 +2796,13 @@ const core8GalaxyStarsMaterial = new THREE.PointsMaterial({
 const core8LocalStarsVertices = [];
 const core8LocalStarsColors = [];
 
-// Create 3000 stars in spiral pattern for Core8. 4× spatial scale to
-// match the 4×-enlarged black hole + Gargantua disk (so the vertical
-// structure clears the hole again like it did on main).
-for (let i = 0; i < 3000; i++) {
+// Create stars in spiral pattern for Core8. 4× spatial scale to match
+// the 4×-enlarged black hole + Gargantua disk (so the vertical
+// structure clears the hole again like it did on main). Halved on
+// mobile — additive points with no AA / pixelRatio 1 read far brighter
+// and denser there.
+const _core8StarCount = _isMobileRenderTier() ? 1500 : 3000;
+for (let i = 0; i < _core8StarCount; i++) {
     const armAngle = Math.random() * Math.PI * 2;
     const armDistance = Math.pow(Math.random(), 1.8) * 8000;
     const armWidth = 0.20;
@@ -3552,17 +3575,18 @@ const localGalaxyStarsMaterial = new THREE.PointsMaterial({
     color: 0xffffff,
     size: 1.0,
     transparent: true,
-    opacity: 1.0,
+    opacity: _isMobileRenderTier() ? 0.5 : 1.0,
     sizeAttenuation: true
 });
 
 const localStarsVertices = [];
 
-// Local galaxy stars (6000 stars in spiral pattern around Sagittarius
-// A*). 4× spatial scale to match the 4×-enlarged Sgr A* + Gargantua
-// disk so the vertical axis is visible above/below the hole again like
-// on main.
-for (let i = 0; i < 6000; i++) {
+// Local galaxy stars in spiral pattern around Sagittarius A*. 4×
+// spatial scale to match the 4×-enlarged Sgr A* + Gargantua disk so
+// the vertical axis is visible above/below the hole again like on
+// main. Halved on mobile (harsh additive pile-up with no AA there).
+const _sgrAStarCount = _isMobileRenderTier() ? 3000 : 6000;
+for (let i = 0; i < _sgrAStarCount; i++) {
     const armAngle = Math.random() * Math.PI * 2;
     const armDistance = Math.pow(Math.random(), 1.8) * 16000;
     const armWidth = 0.25;
@@ -3631,7 +3655,8 @@ if (scene && scene.add) {
             
             const galaxyCenter = galaxyData.position;
             const galaxySize = galaxyType.size;
-            const armStars = galaxyType.name === 'Quasar' ? 6000 : galaxyType.name === 'Dwarf' ? 2000 : 4000;
+            const _galaxyStarMul = _isMobileRenderTier() ? 0.5 : 1;
+            const armStars = Math.round((galaxyType.name === 'Quasar' ? 6000 : galaxyType.name === 'Dwarf' ? 2000 : 4000) * _galaxyStarMul);
             
             console.log(`Creating 3D galaxy ${g} (${galaxyType.name}) at spherical position:`, galaxyCenter);
 
@@ -3712,7 +3737,7 @@ galaxyStarsGeometry.setAttribute('color', new THREE.Float32BufferAttribute(galax
 const galaxyStarsMaterial = new THREE.PointsMaterial({
     size: 1.0,
     transparent: true,
-    opacity: 0.8,
+    opacity: _isMobileRenderTier() ? 0.5 : 0.8,
     vertexColors: true,
     blending: THREE.AdditiveBlending,
     sizeAttenuation: true

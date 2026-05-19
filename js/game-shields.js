@@ -655,11 +655,24 @@ function create3DShield() {
     // write so the bubble ADDS light instead of covering the scene —
     // bright additive effects behind it (black-hole glow / accretion)
     // stay fully visible through the shield instead of being dimmed.
+    // Mobile renders with AA off + pixelRatio 1, so additive 1px
+    // wireframe lines pile onto single device pixels and read much
+    // brighter than on desktop — dim them there.
+    const _shieldIsMobile = (typeof window !== 'undefined')
+        ? (typeof window._isMobileRenderTier === 'function'
+            ? window._isMobileRenderTier()
+            : (typeof window.__isMobileGPU !== 'undefined'
+                ? window.__isMobileGPU
+                : ((window.innerWidth <= 768) ||
+                   ('ontouchstart' in window) ||
+                   (navigator.maxTouchPoints > 0) ||
+                   /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent || ''))))
+        : false;
     const material = new THREE.MeshBasicMaterial({
         color: 0x00d4ff,
         wireframe: true,
         transparent: true,
-        opacity: 0.5,
+        opacity: _shieldIsMobile ? 0.3 : 0.5,
         blending: THREE.AdditiveBlending,
         depthWrite: false
     });
