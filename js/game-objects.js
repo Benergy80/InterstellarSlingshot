@@ -2751,11 +2751,10 @@ const core8GalaxyStarsMaterial = new THREE.PointsMaterial({
 const core8LocalStarsVertices = [];
 const core8LocalStarsColors = [];
 
-// Create 6000 stars in spiral pattern for Core8. 4× spatial scale to
+// Create 3000 stars in spiral pattern for Core8. 4× spatial scale to
 // match the 4×-enlarged black hole + Gargantua disk (so the vertical
-// structure clears the hole again like it did on main); star count ×4
-// so the larger volume doesn't look sparse.
-for (let i = 0; i < 6000; i++) {
+// structure clears the hole again like it did on main).
+for (let i = 0; i < 3000; i++) {
     const armAngle = Math.random() * Math.PI * 2;
     const armDistance = Math.pow(Math.random(), 1.8) * 8000;
     const armWidth = 0.20;
@@ -3534,11 +3533,11 @@ const localGalaxyStarsMaterial = new THREE.PointsMaterial({
 
 const localStarsVertices = [];
 
-// Local galaxy stars (12000 stars in spiral pattern around Sagittarius
+// Local galaxy stars (6000 stars in spiral pattern around Sagittarius
 // A*). 4× spatial scale to match the 4×-enlarged Sgr A* + Gargantua
 // disk so the vertical axis is visible above/below the hole again like
-// on main; star count ×4 so the larger volume doesn't look sparse.
-for (let i = 0; i < 12000; i++) {
+// on main.
+for (let i = 0; i < 6000; i++) {
     const armAngle = Math.random() * Math.PI * 2;
     const armDistance = Math.pow(Math.random(), 1.8) * 16000;
     const armWidth = 0.25;
