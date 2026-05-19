@@ -4347,6 +4347,25 @@ function flashPlayerShipHit() {
         const cs = window.cameraState;
         const ship = cs && cs.playerShipMesh;
         if (!ship) return;
+
+        // Impact sparks on the player ship too. Enemy fire on wingmen
+        // and enemies already sparks via flashEnemyHit -> createHitSparks;
+        // the player was the only combatant that just blinked red with
+        // no spark. Same burst + same 120ms rate-limit as flashEnemyHit
+        // so sustained fire doesn't spawn a particle system every tick.
+        try {
+            if (typeof createHitSparks === 'function' && typeof THREE !== 'undefined') {
+                const _now = Date.now();
+                if (!window._lastPlayerHitSparkTime ||
+                    (_now - window._lastPlayerHitSparkTime) > 120) {
+                    window._lastPlayerHitSparkTime = _now;
+                    const _wp = new THREE.Vector3();
+                    ship.getWorldPosition(_wp);
+                    createHitSparks(_wp, 0xffaa33, 1.0);
+                }
+            }
+        } catch (e) {}
+
         const mats = [];
         ship.traverse(node => {
             if (node && node.isMesh && node.material) {
