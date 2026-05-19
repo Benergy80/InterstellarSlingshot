@@ -1578,6 +1578,17 @@ function checkBossVictory(defeatedEnemy) {
             bossSystem.areaBosses[areaKey].defeated = true;
         }
 
+        // Mark THIS GALAXY's boss as defeated. This is the single flag
+        // checkGalaxyClear() and checkGuardianVictory() gate on, but
+        // nothing ever set it: checkGalaxyClear only set it behind its
+        // own `bossDefeated` precondition (a deadlock with itself), so
+        // galaxyBossDefeated[g] stayed false forever and galaxiesCleared
+        // never incremented even after every guardian was destroyed.
+        if (bossSystem.galaxyBossDefeated &&
+            typeof galaxyId === 'number' && galaxyId >= 0 && galaxyId < 8) {
+            bossSystem.galaxyBossDefeated[galaxyId] = true;
+        }
+
         // Remove from active bosses list
         const bossIndex = bossSystem.activeBosses.indexOf(defeatedEnemy);
         if (bossIndex > -1) {
@@ -11470,17 +11481,32 @@ let bossSkyboxOpacity = 0;
 let bossHeartbeatPhase = 0;
 
 // Single source of truth: is a real boss / elite-guardian set-piece
-// fight currently live? Drives the pulsing boss skybox AND the Hubble
-// fade-out. NOTE: black-hole guardians are deliberately excluded —
-// they LOAD as a persistent patrol the moment a galaxy's boss is
-// beaten (loadGuardiansForGalaxy), so counting them kept
-// isBossBattleActive() permanently true and the Hubble skybox never
-// returned after a boss was defeated. Bosses and elite guardians
-// (which only appear on a universe-wide species wipe) still trigger it.
+// fight currently live AND in front of the player? Drives the pulsing
+// boss skybox AND the Hubble fade-out.
+//   • Black-hole guardians are excluded — they LOAD as a persistent
+//     patrol the moment a galaxy's boss is beaten, so counting them
+//     pinned this true forever.
+//   • PROXIMITY-SCOPED: a boss only counts if it's within
+//     BATTLE_RADIUS of the player. Galaxies sit ≥25k apart, so this
+//     was effectively game-wide before — a live boss in ANY other
+//     galaxy kept the blood-red skybox up and the Hubble backdrop
+//     never returned once the local fight ended.
+const _bossNearTmp = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
 function isBossBattleActive() {
+    const BATTLE_RADIUS = 12000;   // ≫ combat range, ≪ inter-galaxy gap
+    const haveCam = (typeof camera !== 'undefined' && camera && camera.position);
+    const _near = (obj) => {
+        if (!haveCam || !_bossNearTmp || !obj) return true; // can't tell → assume in-fight
+        if (obj.getWorldPosition) obj.getWorldPosition(_bossNearTmp);
+        else if (obj.position) _bossNearTmp.copy(obj.position);
+        else return true;
+        return camera.position.distanceTo(_bossNearTmp) <= BATTLE_RADIUS;
+    };
+
     if (typeof bossSystem !== "undefined" && bossSystem &&
         Array.isArray(bossSystem.activeBosses) &&
-        bossSystem.activeBosses.some(b => b && b.userData && b.userData.health > 0)) {
+        bossSystem.activeBosses.some(b =>
+            b && b.userData && b.userData.health > 0 && _near(b))) {
         return true;
     }
     // Fallback: scan live enemies for any boss-tier set-piece. Excludes
@@ -11489,7 +11515,7 @@ function isBossBattleActive() {
         for (let i = 0; i < enemies.length; i++) {
             const e = enemies[i];
             if (e && e.userData && e.userData.health > 0 &&
-                (e.userData.isBoss || e.userData.isEliteGuardian)) {
+                (e.userData.isBoss || e.userData.isEliteGuardian) && _near(e)) {
                 return true;
             }
         }
