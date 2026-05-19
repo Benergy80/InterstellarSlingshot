@@ -5103,15 +5103,42 @@ setTimeout(() => {
         zoomScope.style.left = scopeCurrentX + 'px';
         zoomScope.style.top = scopeCurrentY + 'px';
 
-        // Get mouse position - check crosshair position first (this is what's properly tracked!)
-        const mouseX = gameState.crosshairX || gameState.mouseX || window.innerWidth / 2;
-        const mouseY = gameState.crosshairY || gameState.mouseY || window.innerHeight / 2;
+        // Sample the in-tick frame snapshot taken by the main render
+        // loop. renderer.domElement itself is an empty buffer here
+        // (preserveDrawingBuffer:false), so reading it directly is what
+        // made the scope blank — use the snapshot, fall back only if it
+        // hasn't been produced yet this session.
+        const scopeSource = (typeof window !== 'undefined' && window.__zoomFrameCanvas)
+            ? window.__zoomFrameCanvas
+            : renderer.domElement;
 
-        // Calculate source area on the renderer canvas
-        const sourceWidth = 250 / zoomFactor;
-        const sourceHeight = 250 / zoomFactor;
-        const sourceX = mouseX - (sourceWidth / 2);
-        const sourceY = mouseY - (sourceHeight / 2);
+        // Centre the magnified region on the scope's OWN on-screen
+        // centre (it follows the real mouse via scopeTarget = clientX).
+        // The old code used gameState.crosshairX/Y, which aim-assist /
+        // target-lock continuously pulls away from the cursor — that's
+        // why the loupe didn't zoom where the mouse was.
+        const scopeCenterX = scopeCurrentX + 125;
+        const scopeCenterY = scopeCurrentY + 125;
+
+        // The snapshot canvas is sized in DEVICE pixels
+        // (innerWidth × devicePixelRatio); mouse/scope coords are CSS
+        // pixels. Without converting, on any HiDPI display the sample
+        // is offset toward the top-left and over-magnified.
+        const srcCanvasW = scopeSource.width || window.innerWidth;
+        const srcCanvasH = scopeSource.height || window.innerHeight;
+        const dpScaleX = srcCanvasW / window.innerWidth;
+        const dpScaleY = srcCanvasH / window.innerHeight;
+
+        const regionCssW = 250 / zoomFactor;   // CSS px sampled around centre
+        const regionCssH = 250 / zoomFactor;
+        const sw = regionCssW * dpScaleX;       // → device px
+        const sh = regionCssH * dpScaleY;
+        let sx = (scopeCenterX - regionCssW / 2) * dpScaleX;
+        let sy = (scopeCenterY - regionCssH / 2) * dpScaleY;
+        // Keep the sampled rect fully inside the source by shifting its
+        // origin (never shrinking it — shrinking would distort zoom).
+        sx = Math.max(0, Math.min(sx, srcCanvasW - sw));
+        sy = Math.max(0, Math.min(sy, srcCanvasH - sh));
 
         // Clear canvas
         ctx.clearRect(0, 0, 250, 250);
@@ -5122,28 +5149,9 @@ setTimeout(() => {
         ctx.arc(125, 125, 125, 0, Math.PI * 2);
         ctx.clip();
 
-        // Sample the in-tick frame snapshot taken by the main render
-        // loop. renderer.domElement itself is an empty buffer here
-        // (preserveDrawingBuffer:false), so reading it directly is what
-        // made the scope blank — use the snapshot, fall back only if it
-        // hasn't been produced yet this session.
-        const scopeSource = (typeof window !== 'undefined' && window.__zoomFrameCanvas)
-            ? window.__zoomFrameCanvas
-            : renderer.domElement;
-
         // Draw magnified portion (now clipped to circle)
         try {
-            ctx.drawImage(
-                scopeSource,
-                Math.max(0, sourceX),
-                Math.max(0, sourceY),
-                sourceWidth,
-                sourceHeight,
-                0,
-                0,
-                250,
-                250
-            );
+            ctx.drawImage(scopeSource, sx, sy, sw, sh, 0, 0, 250, 250);
         } catch (err) {
             console.warn('Zoom scope render error:', err);
         }
