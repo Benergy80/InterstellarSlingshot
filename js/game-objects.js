@@ -11469,20 +11469,27 @@ let bossSkybox = null;
 let bossSkyboxOpacity = 0;
 let bossHeartbeatPhase = 0;
 
-// Single source of truth: is a boss OR elite/black-hole guardian fight
-// currently live? Drives the pulsing boss skybox AND the Hubble fade-out.
+// Single source of truth: is a real boss / elite-guardian set-piece
+// fight currently live? Drives the pulsing boss skybox AND the Hubble
+// fade-out. NOTE: black-hole guardians are deliberately excluded —
+// they LOAD as a persistent patrol the moment a galaxy's boss is
+// beaten (loadGuardiansForGalaxy), so counting them kept
+// isBossBattleActive() permanently true and the Hubble skybox never
+// returned after a boss was defeated. Bosses and elite guardians
+// (which only appear on a universe-wide species wipe) still trigger it.
 function isBossBattleActive() {
     if (typeof bossSystem !== "undefined" && bossSystem &&
         Array.isArray(bossSystem.activeBosses) &&
         bossSystem.activeBosses.some(b => b && b.userData && b.userData.health > 0)) {
         return true;
     }
-    // Fallback: scan live enemies for any boss-tier set-piece.
+    // Fallback: scan live enemies for any boss-tier set-piece. Excludes
+    // isBlackHoleGuardian on purpose (post-boss patrol, not a fight).
     if (typeof enemies !== "undefined" && Array.isArray(enemies)) {
         for (let i = 0; i < enemies.length; i++) {
             const e = enemies[i];
             if (e && e.userData && e.userData.health > 0 &&
-                (e.userData.isBoss || e.userData.isEliteGuardian || e.userData.isBlackHoleGuardian)) {
+                (e.userData.isBoss || e.userData.isEliteGuardian)) {
                 return true;
             }
         }
