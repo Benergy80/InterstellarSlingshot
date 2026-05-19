@@ -2751,19 +2751,22 @@ const core8GalaxyStarsMaterial = new THREE.PointsMaterial({
 const core8LocalStarsVertices = [];
 const core8LocalStarsColors = [];
 
-// Create 1500 stars in spiral pattern for Core8
-for (let i = 0; i < 1500; i++) {
+// Create 6000 stars in spiral pattern for Core8. 4× spatial scale to
+// match the 4×-enlarged black hole + Gargantua disk (so the vertical
+// structure clears the hole again like it did on main); star count ×4
+// so the larger volume doesn't look sparse.
+for (let i = 0; i < 6000; i++) {
     const armAngle = Math.random() * Math.PI * 2;
-    const armDistance = Math.pow(Math.random(), 1.8) * 2000;
+    const armDistance = Math.pow(Math.random(), 1.8) * 8000;
     const armWidth = 0.20;
     
     let x, y, z;
     
     if (Math.random() < 0.3) {
         // Dense center bulge
-        const bulgeRadius = Math.pow(Math.random(), 3) * 700;
+        const bulgeRadius = Math.pow(Math.random(), 3) * 2800;
         const bulgeAngle = Math.random() * Math.PI * 2;
-        const bulgeHeight = (Math.random() - 0.5) * 300;
+        const bulgeHeight = (Math.random() - 0.5) * 1200;
         x = Math.cos(bulgeAngle) * bulgeRadius;
         z = Math.sin(bulgeAngle) * bulgeRadius;
         y = bulgeHeight;
@@ -2772,7 +2775,7 @@ for (let i = 0; i < 1500; i++) {
         const angle = armAngle + (armDistance / 360) * Math.PI;
         x = Math.cos(angle) * armDistance + (Math.random() - 0.5) * armWidth * armDistance;
         z = Math.sin(angle) * armDistance + (Math.random() - 0.5) * armWidth * armDistance;
-        y = (Math.random() - 0.5) * 120;
+        y = (Math.random() - 0.5) * 480;
     }
     
     // Position is relative to the black hole, so no offset needed
@@ -3531,17 +3534,20 @@ const localGalaxyStarsMaterial = new THREE.PointsMaterial({
 
 const localStarsVertices = [];
 
-// Local galaxy stars (3000 stars in spiral pattern around Sagittarius A*)
-for (let i = 0; i < 3000; i++) {
+// Local galaxy stars (12000 stars in spiral pattern around Sagittarius
+// A*). 4× spatial scale to match the 4×-enlarged Sgr A* + Gargantua
+// disk so the vertical axis is visible above/below the hole again like
+// on main; star count ×4 so the larger volume doesn't look sparse.
+for (let i = 0; i < 12000; i++) {
     const armAngle = Math.random() * Math.PI * 2;
-    const armDistance = Math.pow(Math.random(), 1.8) * 4000;
+    const armDistance = Math.pow(Math.random(), 1.8) * 16000;
     const armWidth = 0.25;
     
     if (Math.random() < 0.3) {
         // Dense center bulge
-        const bulgeRadius = Math.pow(Math.random(), 3) * 700;
+        const bulgeRadius = Math.pow(Math.random(), 3) * 2800;
         const bulgeAngle = Math.random() * Math.PI * 2;
-        const bulgeHeight = (Math.random() - 0.5) * 300;
+        const bulgeHeight = (Math.random() - 0.5) * 1200;
         const x = Math.cos(bulgeAngle) * bulgeRadius;
         const z = Math.sin(bulgeAngle) * bulgeRadius;
         const y = bulgeHeight;
@@ -3551,7 +3557,7 @@ for (let i = 0; i < 3000; i++) {
         const angle = armAngle + (armDistance / 360) * Math.PI;
         const x = Math.cos(angle) * armDistance + (Math.random() - 0.5) * armWidth * armDistance;
         const z = Math.sin(angle) * armDistance + (Math.random() - 0.5) * armWidth * armDistance;
-        const y = (Math.random() - 0.5) * 120;
+        const y = (Math.random() - 0.5) * 480;
         localStarsVertices.push(x, y, z);
     }
 }
