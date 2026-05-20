@@ -2248,6 +2248,221 @@ function enhanceEarth(earth, radius) {
 }
 if (typeof window !== 'undefined') window.enhanceEarth = enhanceEarth;
 
+// =============================================================================
+// PROCEDURAL PLANET TEXTURES — Mercury craters, Mars rust, gas-giant bands.
+// Same canvas-painting approach as Earth, but per-planet. No assets bundled.
+// =============================================================================
+const _planetTexCache = {};
+
+function _mercurySurfaceTexture() {
+    if (_planetTexCache.mercury) return _planetTexCache.mercury;
+    const w = 1024, h = 512;
+    const cv = document.createElement('canvas');
+    cv.width = w; cv.height = h;
+    const ctx = cv.getContext('2d');
+
+    ctx.fillStyle = '#a89080';
+    ctx.fillRect(0, 0, w, h);
+
+    // Soft regional highland/lowland patches.
+    for (let i = 0; i < 60; i++) {
+        const cx = Math.random() * w;
+        const cy = Math.random() * h;
+        const r = 40 + Math.random() * 110;
+        const grd = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
+        const lighter = Math.random() < 0.5;
+        grd.addColorStop(0, lighter ? 'rgba(200,180,160,0.40)' : 'rgba(80,70,60,0.40)');
+        grd.addColorStop(1, lighter ? 'rgba(200,180,160,0)' : 'rgba(80,70,60,0)');
+        ctx.fillStyle = grd;
+        ctx.beginPath();
+        ctx.arc(cx, cy, r, 0, Math.PI * 2);
+        ctx.fill();
+    }
+
+    // 500-ish craters at varied sizes: lighter rim + dark centre.
+    for (let i = 0; i < 500; i++) {
+        const cx = Math.random() * w;
+        const cy = Math.random() * h;
+        const r = 1.5 + Math.random() * 11;
+        ctx.beginPath();
+        ctx.arc(cx, cy, r + 1, 0, Math.PI * 2);
+        ctx.strokeStyle = 'rgba(210,190,170,0.55)';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(cx, cy, r, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(60,52,44,0.65)';
+        ctx.fill();
+    }
+
+    const tex = new THREE.CanvasTexture(cv);
+    tex.needsUpdate = true;
+    _planetTexCache.mercury = tex;
+    return tex;
+}
+
+function _marsSurfaceTexture() {
+    if (_planetTexCache.mars) return _planetTexCache.mars;
+    const w = 1024, h = 512;
+    const cv = document.createElement('canvas');
+    cv.width = w; cv.height = h;
+    const ctx = cv.getContext('2d');
+
+    // Banded latitudinal base — paler at poles, deep rust at equator.
+    const grd = ctx.createLinearGradient(0, 0, 0, h);
+    grd.addColorStop(0.00, '#d8a890');
+    grd.addColorStop(0.10, '#c2603a');
+    grd.addColorStop(0.50, '#a23a1c');
+    grd.addColorStop(0.90, '#c2603a');
+    grd.addColorStop(1.00, '#d8a890');
+    ctx.fillStyle = grd;
+    ctx.fillRect(0, 0, w, h);
+
+    // Darker rust regions (Tharsis / Valles-style smudges).
+    for (let i = 0; i < 36; i++) {
+        const cx = Math.random() * w;
+        const cy = h * 0.15 + Math.random() * h * 0.7;
+        const rx = 50 + Math.random() * 130;
+        const ry = 25 + Math.random() * 70;
+        ctx.fillStyle = 'rgba(110,48,24,0.42)';
+        ctx.beginPath();
+        ctx.ellipse(cx, cy, rx, ry, Math.random() * Math.PI, 0, Math.PI * 2);
+        ctx.fill();
+    }
+
+    // Polar ice caps.
+    const cap = ctx.createLinearGradient(0, 0, 0, h);
+    cap.addColorStop(0.00, 'rgba(255,255,255,0.72)');
+    cap.addColorStop(0.06, 'rgba(255,255,255,0)');
+    cap.addColorStop(0.94, 'rgba(255,255,255,0)');
+    cap.addColorStop(1.00, 'rgba(255,255,255,0.72)');
+    ctx.fillStyle = cap;
+    ctx.fillRect(0, 0, w, h);
+
+    const tex = new THREE.CanvasTexture(cv);
+    tex.needsUpdate = true;
+    _planetTexCache.mars = tex;
+    return tex;
+}
+
+function _gasGiantTexture(bands, turbulence, spot) {
+    const w = 1024, h = 512;
+    const cv = document.createElement('canvas');
+    cv.width = w; cv.height = h;
+    const ctx = cv.getContext('2d');
+
+    // Horizontal band stripes.
+    for (const b of bands) {
+        ctx.fillStyle = b.color;
+        ctx.fillRect(0, b.y0 * h, w, (b.y1 - b.y0) * h);
+    }
+
+    // Per-band turbulence — small horizontal smudges in lighter and
+    // darker tints, so the rigid stripes feather into one another.
+    for (let i = 0; i < turbulence.count; i++) {
+        const y = Math.random() * h;
+        const x = Math.random() * w;
+        const rx = turbulence.rxMin + Math.random() * (turbulence.rxMax - turbulence.rxMin);
+        const ry = turbulence.ryMin + Math.random() * (turbulence.ryMax - turbulence.ryMin);
+        ctx.fillStyle = Math.random() < 0.5 ? turbulence.lightTint : turbulence.darkTint;
+        ctx.beginPath();
+        ctx.ellipse(x, y, rx, ry, 0, 0, Math.PI * 2);
+        ctx.fill();
+    }
+
+    // Optional storm spot (Jupiter only).
+    if (spot) {
+        const grd = ctx.createRadialGradient(spot.x, spot.y, 0, spot.x, spot.y, spot.r);
+        grd.addColorStop(0, spot.coreColor);
+        grd.addColorStop(0.6, spot.midColor);
+        grd.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = grd;
+        ctx.beginPath();
+        ctx.ellipse(spot.x, spot.y, spot.r, spot.r * 0.55, 0, 0, Math.PI * 2);
+        ctx.fill();
+    }
+
+    const tex = new THREE.CanvasTexture(cv);
+    tex.needsUpdate = true;
+    return tex;
+}
+
+function _jupiterSurfaceTexture() {
+    if (_planetTexCache.jupiter) return _planetTexCache.jupiter;
+    const bands = [
+        { y0: 0.00, y1: 0.06, color: '#b08868' },
+        { y0: 0.06, y1: 0.12, color: '#d4a878' },
+        { y0: 0.12, y1: 0.20, color: '#9c6c4c' },
+        { y0: 0.20, y1: 0.28, color: '#e8c898' },
+        { y0: 0.28, y1: 0.34, color: '#a87858' },
+        { y0: 0.34, y1: 0.40, color: '#e0b888' },
+        { y0: 0.40, y1: 0.48, color: '#f0d8b0' },
+        { y0: 0.48, y1: 0.54, color: '#d8a878' },
+        { y0: 0.54, y1: 0.60, color: '#e8c898' },
+        { y0: 0.60, y1: 0.66, color: '#9c6c4c' },
+        { y0: 0.66, y1: 0.74, color: '#d4a878' },
+        { y0: 0.74, y1: 0.80, color: '#a87858' },
+        { y0: 0.80, y1: 0.88, color: '#d4a878' },
+        { y0: 0.88, y1: 0.94, color: '#9c6c4c' },
+        { y0: 0.94, y1: 1.00, color: '#b08868' }
+    ];
+    const tex = _gasGiantTexture(bands, {
+        count: 700, rxMin: 18, rxMax: 90, ryMin: 2.5, ryMax: 8,
+        lightTint: 'rgba(255,238,205,0.18)', darkTint: 'rgba(95,65,38,0.18)'
+    }, {
+        x: 1024 * 0.65, y: 512 * 0.62, r: 70,
+        coreColor: '#cc4422', midColor: '#aa3318'
+    });
+    _planetTexCache.jupiter = tex;
+    return tex;
+}
+
+function _saturnSurfaceTexture() {
+    if (_planetTexCache.saturn) return _planetTexCache.saturn;
+    const bands = [
+        { y0: 0.00, y1: 0.10, color: '#b89858' },
+        { y0: 0.10, y1: 0.20, color: '#d4b878' },
+        { y0: 0.20, y1: 0.30, color: '#e0c898' },
+        { y0: 0.30, y1: 0.40, color: '#d4b878' },
+        { y0: 0.40, y1: 0.50, color: '#e8cca0' },
+        { y0: 0.50, y1: 0.60, color: '#d8b888' },
+        { y0: 0.60, y1: 0.70, color: '#e0c898' },
+        { y0: 0.70, y1: 0.80, color: '#c8a868' },
+        { y0: 0.80, y1: 0.90, color: '#d4b878' },
+        { y0: 0.90, y1: 1.00, color: '#b89858' }
+    ];
+    const tex = _gasGiantTexture(bands, {
+        count: 320, rxMin: 18, rxMax: 70, ryMin: 1.5, ryMax: 5,
+        lightTint: 'rgba(255,240,210,0.10)', darkTint: 'rgba(140,100,60,0.10)'
+    }, null);
+    _planetTexCache.saturn = tex;
+    return tex;
+}
+
+// Apply a procedural texture to non-Earth planets that benefit from one.
+// Venus / Uranus / Neptune are intentionally left as their solid-colour
+// Lambert disc — they read fine that way against the reference image.
+function enhancePlanet(planet, name, radius) {
+    if (!planet || typeof THREE === 'undefined') return;
+    if (planet.userData && planet.userData._textured) return;
+    let tex = null;
+    let usePhong = false;
+    switch (name) {
+        case 'Mercury': tex = _mercurySurfaceTexture(); break;
+        case 'Mars':    tex = _marsSurfaceTexture(); break;
+        case 'Jupiter': tex = _jupiterSurfaceTexture(); usePhong = true; break;
+        case 'Saturn':  tex = _saturnSurfaceTexture(); usePhong = true; break;
+        default: return;
+    }
+    const newMat = usePhong
+        ? new THREE.MeshPhongMaterial({ map: tex, specular: 0x553322, shininess: 8 })
+        : new THREE.MeshLambertMaterial({ map: tex });
+    if (planet.material && planet.material.dispose) planet.material.dispose();
+    planet.material = newMat;
+    planet.userData._textured = true;
+}
+if (typeof window !== 'undefined') window.enhancePlanet = enhancePlanet;
+
 // Slow independent cloud drift so weather parallaxes against the surface.
 function updateEarthClouds() {
     for (let i = 0; i < _earthClouds.length; i++) {
@@ -2906,12 +3121,16 @@ try {
                 scene.add(planet);
             }
 
-            // Earth: upgrade the flat blue Lambert sphere to a procedural
-            // blue-marble look (surface texture + cloud shell + atmosphere
-            // fresnel rim). Only Earth gets this; other planets keep their
-            // simple Lambert disc.
+            // Earth: full blue-marble (procedural surface + cloud shell +
+            // atmosphere fresnel rim). Mercury / Mars / Jupiter / Saturn
+            // get just a procedural surface texture via enhancePlanet —
+            // craters for Mercury, rusty bands for Mars, banded gas-giant
+            // canvases for Jupiter & Saturn (plus the Great Red Spot).
+            // Venus / Uranus / Neptune stay as their solid Lambert disc.
             if (planetData.name === 'Earth' && typeof enhanceEarth === 'function') {
                 enhanceEarth(planet, planetData.size);
+            } else if (typeof enhancePlanet === 'function') {
+                enhancePlanet(planet, planetData.name, planetData.size);
             }
 
             // Add rings for Saturn

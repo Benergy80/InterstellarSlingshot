@@ -114,6 +114,15 @@ function updateUI() {
         const _warpText = '' + gameState.emergencyWarp.available;
         if (emergencyWarpEl.textContent !== _warpText) emergencyWarpEl.textContent = _warpText;
     }
+
+    // Galaxies Cleared (Ship Status panel). Element was fetched at
+    // init but never written, so the span sat at its HTML default "0"
+    // even though gameState.galaxiesCleared was incrementing (the
+    // achievement banner reads the same field correctly).
+    if (galaxiesClearedEl) {
+        const _galText = '' + (gameState.galaxiesCleared || 0);
+        if (galaxiesClearedEl.textContent !== _galText) galaxiesClearedEl.textContent = _galText;
+    }
     // Also update mobile warp count
     const mobileWarpEl = _uiEl('mobileWarpCount');
     if (mobileWarpEl && gameState.emergencyWarp) {
