@@ -804,8 +804,11 @@ function startGame() {
         // Initialize Three.js
         scene = new THREE.Scene();
         
-        // Add enhanced ambient light for doubled world
-        const globalAmbientLight = new THREE.AmbientLight(0x333333, 0.4);
+        // Global ambient dropped from 0.4 to a near-vacuum 0.06 so the
+        // local-system terminator goes black like the Apollo reference
+        // (and every other system gets the same stark single-source
+        // sun look — each system star already has its own PointLight).
+        const globalAmbientLight = new THREE.AmbientLight(0x333333, 0.06);
         scene.add(globalAmbientLight);
         
         camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 250000);

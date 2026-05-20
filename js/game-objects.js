@@ -2344,7 +2344,11 @@ function createOptimizedPlanets3D() {
         sun.visible = true;
         sun.frustumCulled = false;
 
-        const sunLight = new THREE.PointLight(0xffff88, 1.5, 4000, 0.8);
+        // Apollo-style stark sunlight: warm-white, brighter direct
+        // beam, reach extended past Neptune (orbit 5600 in the new
+        // 4×-scaled distances) and a more physical decay (1.0) so the
+        // lit side reads bright and the shadow side goes nearly black.
+        const sunLight = new THREE.PointLight(0xfff5d0, 3.0, 12000, 1.0);
         sunLight.position.copy(sun.position);
         sunLight.castShadow = false;
         
@@ -2352,7 +2356,9 @@ function createOptimizedPlanets3D() {
             scene.add(sunLight);
         }
 
-        const localAmbientLight = new THREE.AmbientLight(0x404040, 0.2);
+        // Local ambient almost zero — vacuum doesn't scatter, so the
+        // terminator should be a hard knife-edge between lit and black.
+        const localAmbientLight = new THREE.AmbientLight(0x404040, 0.02);
         if (scene && scene.add) {
             scene.add(localAmbientLight);
         }
