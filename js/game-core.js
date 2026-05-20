@@ -1726,11 +1726,6 @@ if (typeof localGalaxyStars !== 'undefined' && localGalaxyStars) {
         updateCMBOpacity();
     }
     
-    // Update Hubble skybox opacity based on distance traveled
-    if (typeof updateHubbleSkyboxOpacity === 'function') {
-        updateHubbleSkyboxOpacity();
-    }
-
     // Update second Hubble skybox opacity (deeper space layer)
     if (typeof updateHubbleSkybox2Opacity === 'function') {
         updateHubbleSkybox2Opacity();
