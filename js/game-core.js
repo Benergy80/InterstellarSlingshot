@@ -1759,6 +1759,12 @@ if (typeof localGalaxyStars !== 'undefined' && localGalaxyStars) {
         updateStarCoronas();
     }
 
+    // Earth's cloud shell drifts slightly faster than the surface
+    // rotates, giving subtle parallax between weather and continents.
+    if (typeof updateEarthClouds === 'function') {
+        updateEarthClouds();
+    }
+
     // PERFORMANCE: Update only expensive effects for active planets (tendrils, glows, etc.)
     activePlanets.forEach((planet) => {
     // FIXED: Only rotate star particles, keep disk stable

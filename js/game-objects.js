@@ -2085,6 +2085,178 @@ function updateStarCoronas() {
 }
 if (typeof window !== 'undefined') window.updateStarCoronas = updateStarCoronas;
 
+// =============================================================================
+// EARTH ENHANCEMENT — procedural surface + cloud shell + atmosphere rim
+// No external textures are bundled; this draws a "blue marble"-ish look on
+// canvas so Earth reads with continents, clouds and a fresnel limb glow
+// instead of a flat blue Lambert ball.
+// =============================================================================
+const _earthTexCache = {};
+
+function _earthSurfaceTexture() {
+    if (_earthTexCache.surface) return _earthTexCache.surface;
+    const w = 1024, h = 512;
+    const cv = document.createElement('canvas');
+    cv.width = w; cv.height = h;
+    const ctx = cv.getContext('2d');
+
+    // Ocean base — vertical gradient so poles are slightly icier.
+    const oceanGrad = ctx.createLinearGradient(0, 0, 0, h);
+    oceanGrad.addColorStop(0.00, '#9fc0d6');
+    oceanGrad.addColorStop(0.12, '#2c4a78');
+    oceanGrad.addColorStop(0.50, '#1a3a66');
+    oceanGrad.addColorStop(0.88, '#2c4a78');
+    oceanGrad.addColorStop(1.00, '#9fc0d6');
+    ctx.fillStyle = oceanGrad;
+    ctx.fillRect(0, 0, w, h);
+
+    // Continent blobs — clusters of overlapping ellipses in earth tones.
+    // Not real geography, but reads as "land masses on a blue planet".
+    const landTones = ['#5a6b3a', '#7a6a3a', '#8a7a4a', '#b59565', '#6a5a3a', '#4a5530'];
+    const continents = 14;
+    for (let c = 0; c < continents; c++) {
+        const cx = Math.random() * w;
+        const cy = h * 0.15 + Math.random() * h * 0.7;   // avoid poles
+        const blobs = 18 + Math.floor(Math.random() * 24);
+        const baseR = 18 + Math.random() * 50;
+        for (let b = 0; b < blobs; b++) {
+            const ang = Math.random() * Math.PI * 2;
+            const off = Math.random() * baseR * 2.4;
+            const rx = baseR * (0.6 + Math.random() * 0.8);
+            const ry = baseR * (0.5 + Math.random() * 0.7);
+            const x = cx + Math.cos(ang) * off;
+            const y = cy + Math.sin(ang) * off * 0.6;
+            ctx.fillStyle = landTones[(b + c) % landTones.length];
+            ctx.beginPath();
+            ctx.ellipse(x, y, rx, ry, Math.random() * Math.PI, 0, Math.PI * 2);
+            ctx.fill();
+        }
+    }
+
+    // Polar ice caps.
+    const capGrad = ctx.createLinearGradient(0, 0, 0, h);
+    capGrad.addColorStop(0.00, 'rgba(255,255,255,0.9)');
+    capGrad.addColorStop(0.08, 'rgba(255,255,255,0)');
+    capGrad.addColorStop(0.92, 'rgba(255,255,255,0)');
+    capGrad.addColorStop(1.00, 'rgba(255,255,255,0.9)');
+    ctx.fillStyle = capGrad;
+    ctx.fillRect(0, 0, w, h);
+
+    const tex = new THREE.CanvasTexture(cv);
+    tex.needsUpdate = true;
+    _earthTexCache.surface = tex;
+    return tex;
+}
+
+function _earthCloudTexture() {
+    if (_earthTexCache.clouds) return _earthTexCache.clouds;
+    const w = 1024, h = 512;
+    const cv = document.createElement('canvas');
+    cv.width = w; cv.height = h;
+    const ctx = cv.getContext('2d');
+    // Transparent background.
+    ctx.clearRect(0, 0, w, h);
+    // Layered semi-opaque blobs at three scales → wispy bands.
+    const passes = [
+        { count: 60,  rmin: 40, rmax: 110, alpha: 0.20 },
+        { count: 180, rmin: 12, rmax: 36,  alpha: 0.14 },
+        { count: 450, rmin: 3,  rmax: 10,  alpha: 0.10 }
+    ];
+    for (const p of passes) {
+        ctx.fillStyle = `rgba(255,255,255,${p.alpha})`;
+        for (let i = 0; i < p.count; i++) {
+            const x = Math.random() * w;
+            const y = h * 0.08 + Math.random() * h * 0.84;   // gentle taper toward poles
+            const r = p.rmin + Math.random() * (p.rmax - p.rmin);
+            ctx.beginPath();
+            ctx.arc(x, y, r, 0, Math.PI * 2);
+            ctx.fill();
+        }
+    }
+    const tex = new THREE.CanvasTexture(cv);
+    tex.needsUpdate = true;
+    _earthTexCache.clouds = tex;
+    return tex;
+}
+
+const _earthClouds = [];
+
+function enhanceEarth(earth, radius) {
+    if (!earth || typeof THREE === 'undefined') return;
+    if (earth.userData && earth.userData._enhanced) return;
+    earth.userData._enhanced = true;
+
+    // 1. Upgrade the surface to Phong with a procedural land/ocean
+    //    canvas + mild specular sheen so the lit ocean catches a soft
+    //    highlight under the new directional sunlight.
+    const phong = new THREE.MeshPhongMaterial({
+        map: _earthSurfaceTexture(),
+        specular: 0x335577,
+        shininess: 22,
+        emissive: 0x000000
+    });
+    if (earth.material && earth.material.dispose) earth.material.dispose();
+    earth.material = phong;
+
+    // 2. Cloud shell — slightly larger sphere with the procedural
+    //    cloud canvas. Independent rotation via updateEarthClouds()
+    //    gives subtle parallax against the surface.
+    const clouds = new THREE.Mesh(
+        new THREE.SphereGeometry(radius * 1.02, 40, 40),
+        new THREE.MeshLambertMaterial({
+            map: _earthCloudTexture(),
+            transparent: true,
+            opacity: 0.9,
+            depthWrite: false
+        })
+    );
+    clouds.frustumCulled = false;
+    earth.add(clouds);
+    earth.userData._cloudLayer = clouds;
+    _earthClouds.push(clouds);
+
+    // 3. Atmosphere fresnel rim — the iconic Apollo-photo blue glow.
+    //    BackSide additive shell, fragments at the viewing limb light
+    //    up while the centre stays transparent so Earth shows through.
+    const atmoMat = new THREE.ShaderMaterial({
+        uniforms: {},
+        vertexShader: [
+            'varying vec3 vNormal;',
+            'void main() {',
+            '  vNormal = normalize(normalMatrix * normal);',
+            '  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);',
+            '}'
+        ].join('\n'),
+        fragmentShader: [
+            'varying vec3 vNormal;',
+            'void main() {',
+            '  float intensity = pow(0.72 - dot(vNormal, vec3(0.0, 0.0, 1.0)), 4.0);',
+            '  gl_FragColor = vec4(0.45, 0.72, 1.0, 1.0) * intensity;',
+            '}'
+        ].join('\n'),
+        side: THREE.BackSide,
+        blending: THREE.AdditiveBlending,
+        transparent: true,
+        depthWrite: false
+    });
+    const atmo = new THREE.Mesh(
+        new THREE.SphereGeometry(radius * 1.10, 40, 40),
+        atmoMat
+    );
+    atmo.frustumCulled = false;
+    earth.add(atmo);
+}
+if (typeof window !== 'undefined') window.enhanceEarth = enhanceEarth;
+
+// Slow independent cloud drift so weather parallaxes against the surface.
+function updateEarthClouds() {
+    for (let i = 0; i < _earthClouds.length; i++) {
+        const c = _earthClouds[i];
+        if (c) c.rotation.y += 0.0002;
+    }
+}
+if (typeof window !== 'undefined') window.updateEarthClouds = updateEarthClouds;
+
 // Attach the photon-ring glow Sprite + a wide gradient accretion disk to
 // an existing black-hole sphere. `radius` is the sphere radius; `color`
 // the warm disk/glow tint (defaults to a fiery orange).
@@ -2724,7 +2896,15 @@ try {
             if (scene && scene.add) {
                 scene.add(planet);
             }
-            
+
+            // Earth: upgrade the flat blue Lambert sphere to a procedural
+            // blue-marble look (surface texture + cloud shell + atmosphere
+            // fresnel rim). Only Earth gets this; other planets keep their
+            // simple Lambert disc.
+            if (planetData.name === 'Earth' && typeof enhanceEarth === 'function') {
+                enhanceEarth(planet, planetData.size);
+            }
+
             // Add rings for Saturn
             if (planetData.rings) {
                 for (let r = 0; r < 3; r++) {
