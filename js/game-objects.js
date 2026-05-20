@@ -11332,7 +11332,7 @@ function createBossBattleSkybox() {
 
     const geometry = new THREE.SphereGeometry(90000, 64, 64);
     const material = new THREE.MeshBasicMaterial({
-        color: 0x8b0000,  // Deep blood red
+        color: 0xdd2222,  // Vivid crimson — old 0x8b0000 (R=139) read muted
         side: THREE.BackSide,
         transparent: true,
         opacity: 0,
@@ -11372,10 +11372,11 @@ function updateBossSkyboxHeartbeat() {
         // Combine beats for realistic heartbeat pattern
         const heartbeat = Math.max(beat1 * 0.6, beat2 * 0.4) * pause;
 
-        // Target opacity with heartbeat — range 0.3 (baseline glow) to
-        // 0.9 (peak). Bumped from 0.1-0.7 so the blood-red boss aura
-        // reads clearly over bright cosmic backdrops.
-        const targetOpacity = 0.3 + (heartbeat * 0.6);  // Range: 0.3 to 0.9
+        // Target opacity with heartbeat — range 0.5 (baseline) to 1.0
+        // (peak fully opaque). Floor was 0.3 and peak 0.9, which left
+        // the boss aura visibly washed out by the scene behind it; the
+        // brighter color + a 1.0 peak make it dominate cleanly.
+        const targetOpacity = 0.5 + (heartbeat * 0.5);  // Range: 0.5 to 1.0
 
         // Smooth transition to target
         bossSkyboxOpacity += (targetOpacity - bossSkyboxOpacity) * 0.1;
