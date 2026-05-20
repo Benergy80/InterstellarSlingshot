@@ -2505,11 +2505,11 @@ function createOptimizedPlanets3D() {
     // =============================================================================
     
     try {
-        // Sun radius 160 — additional 4× bump on top of the earlier 5×
-        // (40 → 160) so it dominates the Sol system like a real star.
-        // Mass / gravity (userData below) deliberately unchanged so
-        // slingshot physics stay the same; only the visual scales up.
-        const sunGeometry = new THREE.SphereGeometry(160, 32, 32);
+        // Sun radius 80 — 2× bump (40 → 80) on top of the earlier 5× so
+        // it reads as a proper star without dominating the system; mass
+        // / gravity (userData below) deliberately unchanged so slingshot
+        // physics stay the same.
+        const sunGeometry = new THREE.SphereGeometry(80, 32, 32);
         const sunMaterial = new THREE.MeshBasicMaterial({ color: 0xffff44 });
         const sun = new THREE.Mesh(sunGeometry, sunMaterial);
         sun.position.set(localSystemOffset.x, localSystemOffset.y, localSystemOffset.z);
@@ -2558,7 +2558,7 @@ function createOptimizedPlanets3D() {
         // Replaces the old tiny 12-unit inner glow sphere which read as
         // a flat dim yellow halo and didn't sell "star".
         if (typeof addStarCorona === 'function') {
-            addStarCorona(sun, 160, 0xff8833);
+            addStarCorona(sun, 80, 0xff8833);
         }
 
         console.log('✅ Sun created successfully');
@@ -2569,30 +2569,30 @@ function createOptimizedPlanets3D() {
     }
     
     // Sol-system planets & moons: orbit distances unchanged, all sizes
-    // 4× bumped so they read at the scale of the new 4×-larger Sun
-    // without the player needing to fly right on top to see them.
+    // 2× bumped from the original (was briefly 4× — that read too big
+    // against the cosmic scale).
     const localPlanets = [
-        { name: 'Earth', distance: 640, size: 80, color: 0x2233ff, moons: [{ name: 'Luna', distance: 120, size: 24, color: 0xdddddd }] },
-        { name: 'Venus', distance: 480, size: 76, color: 0xffc649, moons: [] },
-        { name: 'Mars', distance: 960, size: 48, color: 0xff4422, moons: [
-            { name: 'Phobos', distance: 64, size: 12, color: 0x8b4513 },
-            { name: 'Deimos', distance: 96, size: 10, color: 0x696969 }
+        { name: 'Earth', distance: 640, size: 40, color: 0x2233ff, moons: [{ name: 'Luna', distance: 120, size: 12, color: 0xdddddd }] },
+        { name: 'Venus', distance: 480, size: 38, color: 0xffc649, moons: [] },
+        { name: 'Mars', distance: 960, size: 24, color: 0xff4422, moons: [
+            { name: 'Phobos', distance: 64, size: 6, color: 0x8b4513 },
+            { name: 'Deimos', distance: 96, size: 5, color: 0x696969 }
         ]},
-        { name: 'Jupiter', distance: 2000, size: 240, color: 0xffaa22, moons: [
-            { name: 'Io', distance: 200, size: 28, color: 0xffff99 },
-            { name: 'Europa', distance: 256, size: 26, color: 0x99ccff },
-            { name: 'Ganymede', distance: 336, size: 36, color: 0xcc9966 },
-            { name: 'Callisto', distance: 440, size: 32, color: 0x666666 }
+        { name: 'Jupiter', distance: 2000, size: 120, color: 0xffaa22, moons: [
+            { name: 'Io', distance: 200, size: 14, color: 0xffff99 },
+            { name: 'Europa', distance: 256, size: 13, color: 0x99ccff },
+            { name: 'Ganymede', distance: 336, size: 18, color: 0xcc9966 },
+            { name: 'Callisto', distance: 440, size: 16, color: 0x666666 }
         ]},
-        { name: 'Saturn', distance: 3200, size: 192, color: 0xffdd88, rings: true, moons: [
-            { name: 'Titan', distance: 520, size: 40, color: 0xff9933 },
-            { name: 'Enceladus', distance: 360, size: 16, color: 0xffffff }
+        { name: 'Saturn', distance: 3200, size: 96, color: 0xffdd88, rings: true, moons: [
+            { name: 'Titan', distance: 520, size: 20, color: 0xff9933 },
+            { name: 'Enceladus', distance: 360, size: 8, color: 0xffffff }
         ]},
-        { name: 'Uranus', distance: 4400, size: 128, color: 0x4fccff, moons: [
-            { name: 'Titania', distance: 336, size: 22, color: 0x888888 }
+        { name: 'Uranus', distance: 4400, size: 64, color: 0x4fccff, moons: [
+            { name: 'Titania', distance: 336, size: 11, color: 0x888888 }
         ]},
-        { name: 'Neptune', distance: 5600, size: 112, color: 0x4169e1, moons: [
-            { name: 'Triton', distance: 176, size: 20, color: 0x99ccff }
+        { name: 'Neptune', distance: 5600, size: 56, color: 0x4169e1, moons: [
+            { name: 'Triton', distance: 176, size: 10, color: 0x99ccff }
         ]}
     ];
     
@@ -2729,7 +2729,7 @@ try {
         // so the star reads at the new larger Sol scale; mass / gravity
         // below intentionally still use the unscaled value so slingshot
         // physics aren't changed by the visual resize.
-        const _starVisualSize = systemData.starSize * 4;
+        const _starVisualSize = systemData.starSize * 2;
         const starGeometry = new THREE.SphereGeometry(_starVisualSize, 24, 24);
         const starMaterial = new THREE.MeshBasicMaterial({ color: systemData.starColor });
         const star = new THREE.Mesh(starGeometry, starMaterial);
@@ -3260,7 +3260,7 @@ try {
     
     // Create star with emissive glow. Visual radius 4× of
     // systemData.starSize (mass / gravity unchanged below).
-    const _starVisualSize = systemData.starSize * 4;
+    const _starVisualSize = systemData.starSize * 2;
     const starGeometry = new THREE.SphereGeometry(_starVisualSize, 24, 24);
     const starMaterial = new THREE.MeshBasicMaterial({
         color: systemData.starColor
@@ -8695,7 +8695,7 @@ function createEnhancedPlanetClustersInNebulas() {
             // mass / gravity below still use starSize so slingshot
             // physics stay tuned to the original scale.
             const starSize = 15 + Math.random() * 20;
-            const _starVisualSize = starSize * 4;
+            const _starVisualSize = starSize * 2;
             const starGeometry = new THREE.SphereGeometry(_starVisualSize, 32, 32);
             const starColor = nebula.userData.color || new THREE.Color().setHSL(Math.random(), 0.8, 0.6);
             const starMaterial = new THREE.MeshBasicMaterial({ 

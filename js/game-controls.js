@@ -4408,6 +4408,39 @@ function flashPlayerShipHit() {
 }
 if (typeof window !== 'undefined') window.flashPlayerShipHit = flashPlayerShipHit;
 
+// BORG cube hit pulse. The cube is a THREE.Group of children (cube body
+// with MeshStandardMaterial emissive 0x00ff00, wireframe glow box,
+// edges, core sphere); none of the standard hit-flash paths touched
+// them, so hits felt silent. Briefly punches up the emissive + wireframe
+// opacity for ~140 ms, then eases back — restores the "I clearly hit
+// the cube" feedback from early builds. Rate-limited per cube.
+const _borgHitTimers = new WeakMap();
+function flashBorgCubeOnHit(cube) {
+    if (!cube || typeof cube.traverse !== 'function') return;
+    const prev = _borgHitTimers.get(cube);
+    if (prev) prev.forEach(t => clearTimeout(t));
+
+    const restore = [];
+    cube.traverse(node => {
+        if (!node || node.userData && node.userData.isHitbox) return;
+        const m = node.material;
+        if (!m) return;
+        if (typeof m.emissiveIntensity === 'number') {
+            restore.push({ m, key: 'emissiveIntensity', orig: m.emissiveIntensity });
+            m.emissiveIntensity = Math.min(2.5, m.emissiveIntensity + 1.4);
+        }
+        if (m.wireframe && typeof m.opacity === 'number') {
+            restore.push({ m, key: 'opacity', orig: m.opacity });
+            m.opacity = Math.min(1.0, m.opacity + 0.6);
+        }
+    });
+    const t = setTimeout(() => {
+        restore.forEach(r => { r.m[r.key] = r.orig; });
+    }, 140);
+    _borgHitTimers.set(cube, [t]);
+}
+if (typeof window !== 'undefined') window.flashBorgCubeOnHit = flashBorgCubeOnHit;
+
 // FIXED: Enemy hit flash that works with MeshBasicMaterial (no emissive properties)
 function flashEnemyHit(enemy, damage = 1) {
     if (!enemy) return;
@@ -4432,11 +4465,24 @@ function flashEnemyHit(enemy, damage = 1) {
             else if (enemy.position) wp.copy(enemy.position);
             const tint = (enemy.userData && enemy.userData.galaxyColor) || 0xffaa33;
             // Regular enemies are 50% scale (ENEMY_SCALE_FACTOR); bosses /
-            // guardians keep full size, so their sparks stay full size too.
+            // guardians / BORG cubes keep full size so their sparks read
+            // at the long engagement ranges those set-pieces sit at.
             const _ud = enemy.userData || {};
-            const sparkScale = (_ud.isBoss || _ud.isEliteGuardian || _ud.isBlackHoleGuardian) ? 1.0 : 0.5;
+            const _isBigTarget = _ud.isBoss || _ud.isEliteGuardian ||
+                                 _ud.isBlackHoleGuardian || _ud.isBorgCube ||
+                                 _ud.type === 'borg_cube';
+            const sparkScale = _isBigTarget ? 1.0 : 0.5;
             createHitSparks(wp, tint, sparkScale);
         }
+    }
+
+    // BORG cubes are Groups with no top-level material, so the colour
+    // flash below would early-return and the player had no hit cue
+    // beyond the small sparks. Pulse the cube's emissive + wireframe
+    // glow on the children directly instead.
+    if (enemy.userData && (enemy.userData.isBorgCube ||
+                           enemy.userData.type === 'borg_cube')) {
+        flashBorgCubeOnHit(enemy);
     }
 
     if (!enemy.material) return;
