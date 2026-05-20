@@ -2517,10 +2517,11 @@ function createOptimizedPlanets3D() {
         sun.frustumCulled = false;
 
         // Apollo-style stark sunlight: warm-white, brighter direct
-        // beam, reach extended past Neptune (orbit 5600 in the new
-        // 4×-scaled distances) and a more physical decay (1.0) so the
-        // lit side reads bright and the shadow side goes nearly black.
-        const sunLight = new THREE.PointLight(0xfff5d0, 3.0, 12000, 1.0);
+        // beam, reach extended past Neptune (now at ~19,238 units in
+        // the AU-proportional layout — bumped range to 25k so Neptune
+        // still receives ~0.7 effective intensity with decay 1.0,
+        // which matches its real-world dim sunlight).
+        const sunLight = new THREE.PointLight(0xfff5d0, 3.0, 25000, 1.0);
         sunLight.position.copy(sun.position);
         sunLight.castShadow = false;
         
@@ -2568,30 +2569,38 @@ function createOptimizedPlanets3D() {
         return;
     }
     
-    // Sol-system planets & moons: orbit distances unchanged, all sizes
-    // 2× bumped from the original (was briefly 4× — that read too big
-    // against the cosmic scale).
+    // Sol-system planets & moons. Orbit distances are AU-proportional
+    // (Earth = 640 units = 1.00 AU). Mercury is now included so the
+    // inner system matches the reference; Jupiter–Neptune sit at their
+    // true relative distances (Neptune lands ~19.2k out — the Sun
+    // PointLight range is extended below to cover them).
+    //   Mercury 0.39 → 250    Jupiter 5.20 →  3328
+    //   Venus   0.72 → 461    Saturn  9.54 →  6106
+    //   Earth   1.00 → 640    Uranus 19.20 → 12288
+    //   Mars    1.52 → 973    Neptune 30.06→ 19238
+    // Sizes are not to scale (matches the reference image's caption).
     const localPlanets = [
-        { name: 'Earth', distance: 640, size: 40, color: 0x2233ff, moons: [{ name: 'Luna', distance: 120, size: 12, color: 0xdddddd }] },
-        { name: 'Venus', distance: 480, size: 38, color: 0xffc649, moons: [] },
-        { name: 'Mars', distance: 960, size: 24, color: 0xff4422, moons: [
+        { name: 'Mercury', distance: 250,   size: 15, color: 0xa89080, moons: [] },
+        { name: 'Venus',   distance: 461,   size: 38, color: 0xffc649, moons: [] },
+        { name: 'Earth',   distance: 640,   size: 40, color: 0x2233ff, moons: [{ name: 'Luna', distance: 120, size: 12, color: 0xdddddd }] },
+        { name: 'Mars',    distance: 973,   size: 24, color: 0xff4422, moons: [
             { name: 'Phobos', distance: 64, size: 6, color: 0x8b4513 },
             { name: 'Deimos', distance: 96, size: 5, color: 0x696969 }
         ]},
-        { name: 'Jupiter', distance: 2000, size: 120, color: 0xffaa22, moons: [
+        { name: 'Jupiter', distance: 3328,  size: 120, color: 0xd9a06b, moons: [
             { name: 'Io', distance: 200, size: 14, color: 0xffff99 },
             { name: 'Europa', distance: 256, size: 13, color: 0x99ccff },
             { name: 'Ganymede', distance: 336, size: 18, color: 0xcc9966 },
             { name: 'Callisto', distance: 440, size: 16, color: 0x666666 }
         ]},
-        { name: 'Saturn', distance: 3200, size: 96, color: 0xffdd88, rings: true, moons: [
+        { name: 'Saturn',  distance: 6106,  size: 96,  color: 0xe8c587, rings: true, moons: [
             { name: 'Titan', distance: 520, size: 20, color: 0xff9933 },
             { name: 'Enceladus', distance: 360, size: 8, color: 0xffffff }
         ]},
-        { name: 'Uranus', distance: 4400, size: 64, color: 0x4fccff, moons: [
+        { name: 'Uranus',  distance: 12288, size: 64, color: 0xafdbe5, moons: [
             { name: 'Titania', distance: 336, size: 11, color: 0x888888 }
         ]},
-        { name: 'Neptune', distance: 5600, size: 56, color: 0x4169e1, moons: [
+        { name: 'Neptune', distance: 19238, size: 56, color: 0x3457c4, moons: [
             { name: 'Triton', distance: 176, size: 10, color: 0x99ccff }
         ]}
     ];

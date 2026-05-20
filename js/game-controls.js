@@ -7657,91 +7657,121 @@ function _roleFor(ally) {
 const _allyDir = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
 const _allyTarget = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
 
+// Build a wingman group + mesh + userData. Returns the group ready to
+// be positioned and added to the scene. Used for both the Sol-start
+// Alpha and the rescue-Beta parked near Sagittarius A*.
+function _makeWingman(roleKey, name, primaryColor) {
+    const group = new THREE.Group();
+    let shipMesh;
+    if (typeof getPlayerModel === 'function') {
+        const model = getPlayerModel();
+        if (model) {
+            shipMesh = model.clone();
+            const box = new THREE.Box3().setFromObject(shipMesh);
+            const center = box.getCenter(new THREE.Vector3());
+            shipMesh.traverse(child => {
+                if (child.isMesh) {
+                    child.position.sub(center);
+                    child.material = new THREE.MeshBasicMaterial({
+                        color: primaryColor,
+                        transparent: true,
+                        opacity: 0.85,
+                        side: THREE.FrontSide
+                    });
+                    child.visible = true;
+                    child.frustumCulled = false;
+                }
+            });
+            shipMesh.scale.set(96, 96, 96);
+        }
+    }
+    if (!shipMesh) {
+        const geo = new THREE.ConeGeometry(6, 16, 6);
+        const mat = new THREE.MeshBasicMaterial({ color: primaryColor });
+        shipMesh = new THREE.Mesh(geo, mat);
+    }
+    group.add(shipMesh);
+
+    const profile = WINGMAN_ROLES[roleKey];
+    group.userData = {
+        type: 'ally',
+        name: name,
+        role: roleKey,
+        health: 50,
+        maxHealth: 50,
+        cruiseSpeed: 4.5,
+        combatSpeed: 6.5,
+        firingRange: 350,
+        detectionRange: 3000,
+        systemRadius: 100000,
+        lastAttack: 0,
+        currentTarget: null,
+        isAlly: true,
+        missilesRemaining: profile.missilesMax,
+        missilesMax: profile.missilesMax,
+        lastMissile: 0,
+        missileCooldownMs: profile.missileCooldownMs,
+        aiState: 'patrol',
+        patrolTarget: null,
+        patrolArriveTime: 0,
+        patrolDwellMs: profile.patrolDwellMs,
+        engageTarget: null,
+        velocity: new THREE.Vector3(),
+    };
+    group.frustumCulled = false;
+    return group;
+}
+
 function createAllyShips() {
     if (typeof THREE === 'undefined' || typeof scene === 'undefined' || typeof camera === 'undefined') return;
 
-    // Starting waypoints — each wingman begins patrol at a different planet
-    const startOffsets = [
-        new THREE.Vector3(960, 20, 0),    // Alpha starts near Mars orbit
-        new THREE.Vector3(-2000, -10, 0),  // Beta starts near Jupiter orbit
-    ];
+    const sol = (typeof window !== 'undefined' && window.localSystemOffset)
+        ? window.localSystemOffset
+        : { x: 8000, y: 0, z: 4800 };
 
-    for (let i = 0; i < 2; i++) {
-        const group = new THREE.Group();
+    // Alpha (Aggressor) starts WITH the player in the Sol system, just
+    // off Earth's spawn position so the player has an immediate
+    // wingman from frame 1.
+    const alpha = _makeWingman('aggressor', 'Wingman Alpha', 0x00ff88);
+    alpha.position.set(sol.x + 720, sol.y + 20, sol.z + 80);
+    scene.add(alpha);
+    allyShips.push(alpha);
 
-        let shipMesh;
-        if (typeof getPlayerModel === 'function') {
-            const model = getPlayerModel();
-            if (model) {
-                shipMesh = model.clone();
-                const box = new THREE.Box3().setFromObject(shipMesh);
-                const center = box.getCenter(new THREE.Vector3());
-                shipMesh.traverse(child => {
-                    if (child.isMesh) {
-                        child.position.sub(center);
-                        child.material = new THREE.MeshBasicMaterial({
-                            color: i === 0 ? 0x00ff88 : 0x88aaff,
-                            transparent: true,
-                            opacity: 0.85,
-                            side: THREE.FrontSide
-                        });
-                        child.visible = true;
-                        child.frustumCulled = false;
-                    }
-                });
-                shipMesh.scale.set(96, 96, 96);
-            }
-        }
-        if (!shipMesh) {
-            const geo = new THREE.ConeGeometry(6, 16, 6);
-            const mat = new THREE.MeshBasicMaterial({ color: i === 0 ? 0x00ff88 : 0x88aaff });
-            shipMesh = new THREE.Mesh(geo, mat);
-        }
-        group.add(shipMesh);
+    // Beta (Defender) is parked idle near Sagittarius A* (world origin),
+    // waiting to be picked up. NOT in allyShips yet — pickup adds it.
+    // Position is ~600 units off the event horizon so the player can
+    // approach without falling into the hole.
+    const beta = _makeWingman('defender', 'Wingman Beta', 0x88aaff);
+    beta.position.set(600, 60, 0);
+    beta.userData.aiState = 'idle';
+    beta.userData.idleAtSgrA = true;
+    beta.userData.systemCenter = null;   // doesn't drift; sits stationary
+    scene.add(beta);
+    if (typeof window !== 'undefined') window.idleSgrABeta = beta;
 
-        group.position.copy(startOffsets[i]);
-
-        const _roleKey = i === 0 ? 'aggressor' : 'defender';
-        const _profile = WINGMAN_ROLES[_roleKey];
-        group.userData = {
-            type: 'ally',
-            name: i === 0 ? 'Wingman Alpha' : 'Wingman Beta',
-            // Alpha is Aggressor (close-range brawler), Beta is Defender
-            // (sticks near player and intercepts threats targeting them)
-            role: _roleKey,
-            health: 50,
-            maxHealth: 50,
-            cruiseSpeed: 4.5,
-            combatSpeed: 6.5,
-            firingRange: 350,
-            detectionRange: 3000,
-            // Wingmen now follow the player anywhere via the follow state,
-            // so the system radius doesn't bind them to Sol anymore.
-            systemRadius: 100000,
-            lastAttack: 0,
-            currentTarget: null,
-            isAlly: true,
-            // Missile loadout varies by role (aggressor=8, defender=6, …)
-            missilesRemaining: _profile.missilesMax,
-            missilesMax: _profile.missilesMax,
-            lastMissile: 0,
-            missileCooldownMs: _profile.missileCooldownMs,
-            // Independent AI state
-            aiState: 'patrol',
-            patrolTarget: null,
-            patrolArriveTime: 0,
-            patrolDwellMs: _profile.patrolDwellMs,
-            engageTarget: null,
-            velocity: new THREE.Vector3(),
-        };
-
-        group.frustumCulled = false;
-        scene.add(group);
-        allyShips.push(group);
-    }
-
-    console.log('🛡️ 2 ally wingmen deployed — independent patrol mode');
+    console.log('🛡️ Wingman Alpha deployed at Sol; Wingman Beta awaits rescue near Sgr A*');
 }
+
+// Pickup check for the rescue wingman parked at Sgr A*. Runs every
+// frame from updateAllyShips(); promotes Beta into the active roster
+// the first time the player flies within range, then never again.
+let _sgrABetaPickedUp = false;
+function checkSgrABetaPickup() {
+    if (_sgrABetaPickedUp) return;
+    const beta = (typeof window !== 'undefined') ? window.idleSgrABeta : null;
+    if (!beta || !beta.position || typeof camera === 'undefined') return;
+    if (camera.position.distanceTo(beta.position) > 800) return;
+    _sgrABetaPickedUp = true;
+    beta.userData.aiState = 'follow';
+    beta.userData.idleAtSgrA = false;
+    if (allyShips.indexOf(beta) === -1) allyShips.push(beta);
+    if (typeof showAchievement === 'function') {
+        showAchievement('🛸 Wingman Beta Recovered',
+            'Defender wingman picked up near Sagittarius A* — squadron at 2.', true);
+    }
+    if (typeof playSound === 'function') playSound('powerup');
+}
+if (typeof window !== 'undefined') window.checkSgrABetaPickup = checkSgrABetaPickup;
 
 // ── Nebula wingman recruitment ───────────────────────────────────────────
 // Greek alphabet names + matching colors for additional wingmen unlocked
@@ -7968,8 +7998,14 @@ function triggerWingmanCelebration(durationMs) {
 if (typeof window !== 'undefined') window.triggerWingmanCelebration = triggerWingmanCelebration;
 
 function updateAllyShips() {
-    if (!allyShips.length || typeof camera === 'undefined' || typeof THREE === 'undefined') return;
+    if (typeof camera === 'undefined' || typeof THREE === 'undefined') return;
     if (!gameState || !gameState.gameStarted || gameState.gameOver) return;
+
+    // Sgr A* pickup is checked even with only one ally on the roster,
+    // so it MUST run before the !allyShips.length early-return below.
+    if (typeof checkSgrABetaPickup === 'function') checkSgrABetaPickup();
+
+    if (!allyShips.length) return;
 
     const now = Date.now();
     const playerPos = camera.position;
