@@ -1923,7 +1923,7 @@ if (frameDistance > 0.01) { // Only track significant movement
         setTimeout(() => {
             gameState.emergencyWarp.active = true;
             gameState.emergencyWarp.transitioning = false;
-            gameState.emergencyWarp.timeRemaining = 1000; // 1 second
+            gameState.emergencyWarp.timeRemaining = 2000; // 2 seconds — covers more ground in the 4×-scaled world (HUD label was always "2s warp")
             gameState.velocityVector.copy(capturedForwardDirection).multiplyScalar(capturedBoostSpeed);
 
             for (let i = 0; i < 2; i++) {
