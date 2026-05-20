@@ -1971,6 +1971,120 @@ function _isMobileRenderTier() {
 }
 if (typeof window !== 'undefined') window._isMobileRenderTier = _isMobileRenderTier;
 
+// =============================================================================
+// STAR CORONA — wispy halo + bright rim shell + slow alive pulse
+// Lifts plain coloured spheres to a "hot core + radiating corona" look like
+// real photographic suns: bright near-white disc, a thin white-hot rim, and
+// a wide additive halo sprite that pulses irregularly over ~10–25 s.
+// =============================================================================
+const _starCoronaTexCache = {};
+function _starCoronaTexture(color) {
+    const key = 's' + color;
+    if (_starCoronaTexCache[key]) return _starCoronaTexCache[key];
+    const c = new THREE.Color(color);
+    const r = Math.round(c.r * 255), g = Math.round(c.g * 255), b = Math.round(c.b * 255);
+    const size = 256, cv = document.createElement('canvas');
+    cv.width = cv.height = size;
+    const ctx = cv.getContext('2d');
+    const cx = size / 2;
+    const grad = ctx.createRadialGradient(cx, cx, 0, cx, cx, cx);
+    // Hot near-white inner halo blending into a warm wispy outer corona.
+    grad.addColorStop(0.00, 'rgba(255,250,235,0.85)');
+    grad.addColorStop(0.18, `rgba(${Math.min(255,r+90)},${Math.min(255,g+60)},${Math.min(255,b+20)},0.55)`);
+    grad.addColorStop(0.38, `rgba(${r},${Math.round(g*0.75)},${Math.round(b*0.45)},0.30)`);
+    grad.addColorStop(0.65, `rgba(${r},${Math.round(g*0.50)},${Math.round(b*0.22)},0.10)`);
+    grad.addColorStop(1.00, 'rgba(0,0,0,0)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, size, size);
+    const tex = new THREE.CanvasTexture(cv);
+    tex.needsUpdate = true;
+    _starCoronaTexCache[key] = tex;
+    return tex;
+}
+
+const starCoronas = [];
+if (typeof window !== 'undefined') window.starCoronas = starCoronas;
+
+function addStarCorona(star, radius, baseColor) {
+    if (!star || typeof THREE === 'undefined') return;
+    if (star.userData && star.userData._hasCorona) return;
+    const tint = (baseColor === undefined || baseColor === null) ? 0xffaa44 : baseColor;
+
+    // Lift the disc itself toward a hot white-yellow so the core reads
+    // as overexposed rather than a flat colour. Lerp 40% so individual
+    // star palette colours still come through.
+    if (star.material && star.material.color) {
+        const hot = new THREE.Color(0xfff2c0);
+        star.material.color.lerp(hot, 0.4);
+    }
+
+    // Camera-facing wispy outer halo. Additive, no depth-write so it
+    // never occludes nearby objects; renderOrder above most things.
+    const coronaMat = new THREE.SpriteMaterial({
+        map: _starCoronaTexture(tint),
+        color: 0xffffff,
+        transparent: true,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        depthTest: true
+    });
+    const corona = new THREE.Sprite(coronaMat);
+    const coronaSize = radius * 3.2;
+    corona.scale.set(coronaSize * 2, coronaSize * 2, 1);
+    corona.frustumCulled = false;
+    corona.renderOrder = 65;
+    star.add(corona);
+
+    // Thin bright white-hot rim shell just outside the disc edge.
+    const rimGeo = new THREE.SphereGeometry(radius * 1.04, 24, 24);
+    const rimMat = new THREE.MeshBasicMaterial({
+        color: 0xfff2c0,
+        transparent: true,
+        opacity: 0.35,
+        side: THREE.BackSide,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false
+    });
+    const rim = new THREE.Mesh(rimGeo, rimMat);
+    rim.frustumCulled = false;
+    star.add(rim);
+
+    star.userData._hasCorona = true;
+    star.userData._coronaSprite = corona;
+    star.userData._coronaBaseScale = coronaSize * 2;
+    star.userData._coronaRim = rim;
+    star.userData._coronaPulsePhase = Math.random() * Math.PI * 2;
+    if (starCoronas.indexOf(star) === -1) starCoronas.push(star);
+}
+if (typeof window !== 'undefined') window.addStarCorona = addStarCorona;
+
+// Per-frame: slow irregular pulse so the corona breathes like a real
+// star. Two detuned low-frequency sines (~14s and ~28s periods) summed,
+// with a per-star random phase so suns don't beat in sync.
+function updateStarCoronas() {
+    if (!starCoronas.length) return;
+    const t = (typeof performance !== 'undefined' ? performance.now() : Date.now()) * 0.001;
+    for (let i = 0; i < starCoronas.length; i++) {
+        const s = starCoronas[i];
+        if (!s || !s.userData) continue;
+        const sprite = s.userData._coronaSprite;
+        const rim = s.userData._coronaRim;
+        if (!sprite || !sprite.material) continue;
+        const ph = s.userData._coronaPulsePhase || 0;
+        const wob = Math.sin(t * 0.45 + ph) * 0.6 +
+                    Math.sin(t * 0.22 + ph * 1.7) * 0.4;       // ~[-1, 1]
+        const grow = (s.userData._coronaBaseScale || 1) * (1 + wob * 0.07);
+        sprite.scale.set(grow, grow, 1);
+        let o = 0.85 + wob * 0.25;
+        sprite.material.opacity = o < 0 ? 0 : (o > 1.20 ? 1.20 : o);
+        if (rim && rim.material) {
+            let ro = 0.32 + wob * 0.12;
+            rim.material.opacity = ro < 0 ? 0 : (ro > 0.55 ? 0.55 : ro);
+        }
+    }
+}
+if (typeof window !== 'undefined') window.updateStarCoronas = updateStarCoronas;
+
 // Attach the photon-ring glow Sprite + a wide gradient accretion disk to
 // an existing black-hole sphere. `radius` is the sphere radius; `color`
 // the warm disk/glow tint (defaults to a fiery orange).
@@ -2260,19 +2374,13 @@ function createOptimizedPlanets3D() {
             scene.add(sun);
         }
 
-        const glowGeometry = new THREE.SphereGeometry(12, 16, 16);
-        const glowMaterial = new THREE.MeshBasicMaterial({
-            color: 0xffdd44,
-            transparent: true,
-            opacity: 0.3,
-            blending: THREE.AdditiveBlending
-        });
-        const glowSphere = new THREE.Mesh(glowGeometry, glowMaterial);
-        glowSphere.visible = true;
-        glowSphere.frustumCulled = false;
-        sun.add(glowSphere);
-        sun.userData.glowSphere = glowSphere;
-        
+        // Wispy white-hot corona + bright rim + slow alive pulse.
+        // Replaces the old tiny 12-unit inner glow sphere which read as
+        // a flat dim yellow halo and didn't sell "star".
+        if (typeof addStarCorona === 'function') {
+            addStarCorona(sun, 40, 0xff8833);
+        }
+
         console.log('✅ Sun created successfully');
         
     } catch (error) {
@@ -2457,11 +2565,14 @@ try {
         
         planets.push(star);
         scene.add(star);
-        
+        if (typeof addStarCorona === 'function') {
+            addStarCorona(star, systemData.starSize, systemData.starColor);
+        }
+
         // Create planets for this system
         systemData.planets.forEach((planetData, pIndex) => {
             const planetGeometry = new THREE.SphereGeometry(planetData.size, 20, 20);
-            const planetMaterial = new THREE.MeshLambertMaterial({ 
+            const planetMaterial = new THREE.MeshLambertMaterial({
                 color: planetData.color,
                 emissive: new THREE.Color(planetData.color).multiplyScalar(0.05)
             });
@@ -2998,6 +3109,9 @@ star.userData = {
 
 planets.push(star);
 scene.add(star);
+if (typeof addStarCorona === 'function') {
+    addStarCorona(star, systemData.starSize, systemData.starColor);
+}
 
 console.log(`✅ Created ${star.userData.name} orbiting local gateway with point light`);
     
@@ -8417,7 +8531,10 @@ function createEnhancedPlanetClustersInNebulas() {
             star.frustumCulled = false;
             scene.add(star);
             planets.push(star);
-            
+            if (typeof addStarCorona === 'function') {
+                addStarCorona(star, starSize, starColor);
+            }
+
             // PERF: Reduced from 5-12 to 3-7 planets per star
             const planetCount = 3 + Math.floor(Math.random() * 5);
             console.log(`    🪐 Creating ${planetCount} planets for System ${c + 1}...`);

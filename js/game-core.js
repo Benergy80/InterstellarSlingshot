@@ -1748,7 +1748,14 @@ if (typeof localGalaxyStars !== 'undefined' && localGalaxyStars) {
             updateGargantuaProximityFade(_gbh[i], camera);
         }
     }
-    
+
+    // Slow alive/unstable pulse on every star's wispy corona — same
+    // dedicated-registry approach as gargantua, so this runs no matter
+    // where the star sits relative to the activePlanets cull range.
+    if (typeof updateStarCoronas === 'function') {
+        updateStarCoronas();
+    }
+
     // PERFORMANCE: Update only expensive effects for active planets (tendrils, glows, etc.)
     activePlanets.forEach((planet) => {
     // FIXED: Only rotate star particles, keep disk stable
