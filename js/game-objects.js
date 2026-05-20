@@ -11250,15 +11250,15 @@ function updateHubbleSkybox2Opacity() {
     const fadeStartDistance = 1000;        // Start fading at 1,000 units from Sol
     const fadeEndDistance = 75000;         // Reach max opacity at 75,000 units
     
-    // Calculate opacity based on distance (0.10 floor to 0.50 max)
+    // Calculate opacity based on distance (0.15 floor to 0.50 max)
     let targetOpacity;
     if (distanceFromStart < fadeStartDistance) {
-        targetOpacity = 0.10; // Visible from the start without washing out the early sky
+        targetOpacity = 0.15; // Visible from the start without washing out the early sky
     } else if (distanceFromStart > fadeEndDistance) {
         targetOpacity = 0.50;
     } else {
         const progress = (distanceFromStart - fadeStartDistance) / (fadeEndDistance - fadeStartDistance);
-        targetOpacity = 0.10 + (progress * 0.40); // 0.10 → 0.50
+        targetOpacity = 0.15 + (progress * 0.35); // 0.15 → 0.50
     }
     
     // Boss / elite-guardian battle: hide this deeper Hubble layer too so
