@@ -2463,6 +2463,7 @@ function enhancePlanet(planet, name, radius) {
 }
 if (typeof window !== 'undefined') window.enhancePlanet = enhancePlanet;
 
+
 // Slow independent cloud drift so weather parallaxes against the surface.
 function updateEarthClouds() {
     for (let i = 0; i < _earthClouds.length; i++) {
@@ -3545,6 +3546,24 @@ if (typeof addStarCorona === 'function') {
 }
 
 console.log(`✅ Created ${star.userData.name} orbiting local gateway with point light`);
+
+// Garrison this far-off-plane gateway system with a UFO squadron,
+// reusing the canonical createUFOEnemy (erratic-flight AI, procedural/
+// GLB saucer, missile drops) so they behave like every other UFO.
+if (typeof createUFOEnemy === 'function' && typeof THREE !== 'undefined') {
+    const _ufoCount = 3 + Math.floor(Math.random() * 2);   // 3–4 per system
+    for (let _u = 0; _u < _ufoCount; _u++) {
+        const _ua = (_u / _ufoCount) * Math.PI * 2 + Math.random() * 0.6;
+        const _ur = 500 + Math.random() * 700;
+        const _uy = (Math.random() - 0.5) * 500;
+        const _upos = new THREE.Vector3(
+            systemOffset.x + Math.cos(_ua) * _ur,
+            systemOffset.y + _uy,
+            systemOffset.z + Math.sin(_ua) * _ur
+        );
+        createUFOEnemy(_upos, systemData.name, _u);
+    }
+}
     
     // Create planets for this system
 systemData.planets.forEach((planetData, pIndex) => {
