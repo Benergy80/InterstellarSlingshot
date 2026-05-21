@@ -1781,8 +1781,14 @@ function checkAndSpawnEliteGuardians() {
         if (!enemy.userData || enemy.userData.health <= 0) return;
         if (enemy.userData.isBoss || enemy.userData.isBossSupport || enemy.userData.isEliteGuardian) return;
 
+        // Skip factionless hostiles (UFOs use galaxyId -1, etc.) — they
+        // don't belong to any galaxy species, so galaxyTypes[galaxyId]
+        // is undefined and they must not count toward elite-guardian
+        // species elimination.
         const galaxyId = enemy.userData.galaxyId;
-        const faction = galaxyTypes[galaxyId].faction;
+        const gt = galaxyTypes[galaxyId];
+        if (!gt) return;
+        const faction = gt.faction;
 
         factionCounts[faction] = (factionCounts[faction] || 0) + 1;
     });
