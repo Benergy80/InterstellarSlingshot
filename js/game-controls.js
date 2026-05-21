@@ -903,19 +903,36 @@ const _fhD = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
 // the player across the threshold. Position is projected back to the
 // keep-out sphere and inward velocity is bled off.
 const _bhAvoid = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+// Cached black-hole list (+ precomputed keep-out radius) so the
+// avoidance check doesn't re-scan the whole planets array for every
+// enemy every frame. Rebuilt at most every 2s — black holes are static.
+let _bhCache = null, _bhCacheStamp = 0;
+function _getBlackHoleAvoidList() {
+    const now = Date.now();
+    if (_bhCache && (now - _bhCacheStamp) < 2000) return _bhCache;
+    _bhCache = [];
+    if (typeof planets !== 'undefined') {
+        for (let i = 0; i < planets.length; i++) {
+            const p = planets[i];
+            if (!p || !p.userData || p.userData.type !== 'blackhole' || !p.position) continue;
+            const radius = (p.geometry && p.geometry.parameters && p.geometry.parameters.radius) || 50;
+            _bhCache.push({ pos: p.position, keepOut: Math.max(radius * 2.5, 50) + 600 });
+        }
+    }
+    _bhCacheStamp = now;
+    return _bhCache;
+}
 function _enemyAvoidBlackHoles(enemy) {
-    if (!_bhAvoid || !enemy || !enemy.position || typeof planets === 'undefined') return;
-    for (let i = 0; i < planets.length; i++) {
-        const p = planets[i];
-        if (!p || !p.userData || p.userData.type !== 'blackhole' || !p.position) continue;
-        const radius = (p.geometry && p.geometry.parameters && p.geometry.parameters.radius) || 50;
-        const critical = Math.max(radius * 2.5, 50);   // matches the player warp trigger
-        const keepOut = critical + 600;                // + combat-range buffer
-        _bhAvoid.subVectors(enemy.position, p.position);
+    if (!_bhAvoid || !enemy || !enemy.position) return;
+    const list = _getBlackHoleAvoidList();
+    for (let i = 0; i < list.length; i++) {
+        const bh = list[i];
+        const keepOut = bh.keepOut;
+        _bhAvoid.subVectors(enemy.position, bh.pos);
         const d = _bhAvoid.length();
         if (d > 0.001 && d < keepOut) {
             _bhAvoid.multiplyScalar(keepOut / d);              // out to the boundary
-            enemy.position.copy(p.position).add(_bhAvoid);
+            enemy.position.copy(bh.pos).add(_bhAvoid);
             const ud = enemy.userData;
             if (ud && ud.velocity && ud.velocity.dot) {
                 _bhAvoid.normalize();
@@ -4543,6 +4560,16 @@ function _enemyShieldAbsorbHit(enemy, isMissile) {
     return true;
 }
 
+// Shield shatter FX. One InstancedMesh per shatter (1 draw call for all
+// shards instead of 14 separate meshes) animated on the main rAF loop
+// via updateShieldShatterFX() — no per-effect setInterval (those ran
+// off-frame and stacked GC/timer pressure when several shields broke at
+// once). Geometry is shared across every shatter; only a tiny material
+// is allocated per burst so overlapping shatters fade independently.
+const _shieldShardGeo = (typeof THREE !== 'undefined') ? new THREE.TetrahedronGeometry(1, 0) : null;
+const _shatterDummy = (typeof THREE !== 'undefined') ? new THREE.Object3D() : null;
+const _shieldShatterFX = [];
+
 function _shatterEnemyShield(enemy) {
     const ud = enemy && enemy.userData;
     if (!ud || !ud._shieldMesh) return;
@@ -4550,33 +4577,32 @@ function _shatterEnemyShield(enemy) {
     const wp = sm.getWorldPosition(new THREE.Vector3());
     const r = ud._shieldRadius || 60;
 
-    const shards = [];
-    for (let i = 0; i < 14; i++) {
-        const m = new THREE.MeshBasicMaterial({
-            color: 0xff8800, transparent: true, opacity: 0.9,
-            blending: THREE.AdditiveBlending, depthWrite: false
-        });
-        const shard = new THREE.Mesh(new THREE.TetrahedronGeometry(r * 0.18), m);
-        shard.position.copy(wp);
+    const COUNT = 12;
+    const shardSize = r * 0.18;
+    const mat = new THREE.MeshBasicMaterial({
+        color: 0xff8800, transparent: true, opacity: 0.9,
+        blending: THREE.AdditiveBlending, depthWrite: false
+    });
+    const inst = new THREE.InstancedMesh(_shieldShardGeo, mat, COUNT);
+    inst.frustumCulled = false;
+    inst.renderOrder = 55;
+
+    const pos = [], vel = [], rot = [], spin = [];
+    for (let i = 0; i < COUNT; i++) {
         const dir = new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).normalize();
-        shard.userData._vel = dir.multiplyScalar(r * (0.045 + Math.random() * 0.05));
-        shard.frustumCulled = false;
-        scene.add(shard);
-        shards.push(shard);
+        pos.push(wp.clone());
+        vel.push(dir.multiplyScalar(r * (0.045 + Math.random() * 0.05)));
+        rot.push({ x: Math.random() * 6.28, y: Math.random() * 6.28, z: Math.random() * 6.28 });
+        spin.push({ x: (Math.random() - 0.5) * 0.4, y: (Math.random() - 0.5) * 0.4, z: (Math.random() - 0.5) * 0.4 });
+        _shatterDummy.position.copy(wp);
+        _shatterDummy.rotation.set(rot[i].x, rot[i].y, rot[i].z);
+        _shatterDummy.scale.setScalar(shardSize);
+        _shatterDummy.updateMatrix();
+        inst.setMatrixAt(i, _shatterDummy.matrix);
     }
-    let life = 1.0;
-    const iv = setInterval(() => {
-        life -= 0.07;
-        for (const s of shards) {
-            s.position.add(s.userData._vel);
-            s.rotation.x += 0.2; s.rotation.y += 0.16;
-            s.material.opacity = Math.max(0, 0.9 * life);
-        }
-        if (life <= 0) {
-            clearInterval(iv);
-            for (const s of shards) { scene.remove(s); s.geometry.dispose(); s.material.dispose(); }
-        }
-    }, 40);
+    inst.instanceMatrix.needsUpdate = true;
+    scene.add(inst);
+    _shieldShatterFX.push({ inst, mat, pos, vel, rot, spin, shardSize, life: 1.0 });
 
     if (sm.parent) sm.parent.remove(sm);
     sm.geometry.dispose(); sm.material.dispose();
@@ -4585,6 +4611,36 @@ function _shatterEnemyShield(enemy) {
     ud.shieldBroken = true;   // gone for good — hull is now exposed
     if (typeof playSound === 'function') playSound('explosion');
 }
+
+// Advance all active shield-shatter bursts. Called once per frame from
+// the animate loop. Frame-rate-independent decay keeps the look stable.
+function updateShieldShatterFX() {
+    if (!_shieldShatterFX.length || !_shatterDummy) return;
+    for (let k = _shieldShatterFX.length - 1; k >= 0; k--) {
+        const fx = _shieldShatterFX[k];
+        fx.life -= 0.06;
+        if (fx.life <= 0) {
+            scene.remove(fx.inst);
+            if (fx.inst.dispose) fx.inst.dispose();
+            fx.mat.dispose();
+            _shieldShatterFX.splice(k, 1);
+            continue;
+        }
+        fx.mat.opacity = 0.9 * fx.life;
+        for (let i = 0; i < fx.pos.length; i++) {
+            fx.pos[i].add(fx.vel[i]);
+            const ro = fx.rot[i], sp = fx.spin[i];
+            ro.x += sp.x; ro.y += sp.y; ro.z += sp.z;
+            _shatterDummy.position.copy(fx.pos[i]);
+            _shatterDummy.rotation.set(ro.x, ro.y, ro.z);
+            _shatterDummy.scale.setScalar(fx.shardSize);
+            _shatterDummy.updateMatrix();
+            fx.inst.setMatrixAt(i, _shatterDummy.matrix);
+        }
+        fx.inst.instanceMatrix.needsUpdate = true;
+    }
+}
+if (typeof window !== 'undefined') window.updateShieldShatterFX = updateShieldShatterFX;
 
 // BORG cube hit pulse. The cube is a THREE.Group of children (cube body
 // with MeshStandardMaterial emissive 0x00ff00, wireframe glow box,

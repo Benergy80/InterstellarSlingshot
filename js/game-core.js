@@ -1759,6 +1759,11 @@ if (typeof localGalaxyStars !== 'undefined' && localGalaxyStars) {
         updateStarCoronas();
     }
 
+    // Shield-shatter shards (instanced; rAF-driven instead of setInterval).
+    if (typeof updateShieldShatterFX === 'function') {
+        updateShieldShatterFX();
+    }
+
     // Earth's cloud shell drifts slightly faster than the surface
     // rotates, giving subtle parallax between weather and continents.
     if (typeof updateEarthClouds === 'function') {
