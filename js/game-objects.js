@@ -3463,18 +3463,24 @@ try {
     ];
     
     duneSystems.forEach((systemData, sysIndex) => {
-    // ✅ ENHANCED: Much larger vertical spacing (±400 to ±1000 units from gateway plane)
-    const verticalOffset = (Math.random() > 0.5 ? 1 : -1) * (400 + Math.random() * 600);
-    
+    // Push each gateway system FAR off the Sol plane, alternating up and
+    // down on Y, so it sits well outside the Sun's 25k light radius (and
+    // clear of Sagittarius A* at the origin). Out here each system is lit
+    // only by its own central star — see the brighter PointLight below.
+    const _ySign = (sysIndex % 2 === 0) ? 1 : -1;
+    const verticalOffset = _ySign * (28000 + Math.random() * 12000); // ±28k … ±40k off the Sol plane
+
     // ✅ ENHANCED: Much more dramatic orbital plane tilts (up to ±30 degrees)
     const orbitalTilt = {
         x: (Math.random() - 0.5) * 1.0, // Tilt up to ±28.6 degrees around X-axis
         z: (Math.random() - 0.5) * 1.0  // Tilt up to ±28.6 degrees around Z-axis
     };
-    
-    // Calculate system position orbiting the local gateway
+
+    // Horizontal placement keeps the spread around the gateway; Y is
+    // anchored to the Sol plane (localSystemOffset.y) so the huge
+    // vertical offset is measured from Sol, not the gateway's −3000.
     const systemX = localGatewayPosition.x + Math.cos(systemData.orbitalAngle) * systemData.orbitalDistance;
-    const systemY = localGatewayPosition.y + verticalOffset; // ✅ Use calculated vertical offset
+    const systemY = localSystemOffset.y + verticalOffset;
     const systemZ = localGatewayPosition.z + Math.sin(systemData.orbitalAngle) * systemData.orbitalDistance;
     
     const systemOffset = { 
@@ -3498,11 +3504,13 @@ star.position.set(systemOffset.x, systemOffset.y, systemOffset.z);
 star.visible = true;
 star.frustumCulled = false;
 
-// ✅ ADD POINT LIGHT to make star visible and illuminate nearby planets
+// Each gateway system is now far outside the Sun's reach, so its own
+// star is the ONLY light source — brighter + longer reach so the whole
+// little system (planets orbit out to ~400u) is clearly self-lit.
 const starLight = new THREE.PointLight(
     systemData.starColor, // Use star's color
-    3.0,  // Intensity - bright enough to see
-    800,  // Distance - light reaches to planets
+    4.5,  // Intensity
+    3000, // Distance — covers the system with margin now the Sun can't
     1.0   // Decay
 );
 starLight.position.copy(star.position);
