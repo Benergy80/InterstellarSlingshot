@@ -198,7 +198,10 @@ function _ensureShipThrusterCones(ship, color) {
         // i.e. out the rear of a ship whose forward direction is -Z.
         cone.rotation.x = Math.PI / 2;
         cone.position.set(0, 0, zOff);
-        cone.frustumCulled = false;
+        // Frustum-cull cones: when the ship is off-screen the cones are
+        // invisible anyway, so skip the additive overdraw. (Was false —
+        // pure cost for off-screen enemies in big battles.)
+        cone.frustumCulled = true;
         cone.renderOrder = 80;
         cone.userData._isThrusterCone = true; // excluded from hull box
         return { mesh: cone, mat: mat, geo: geo };
@@ -3938,6 +3941,47 @@ function createFireworkCelebrationWithSound() {
     createFireworkCelebration();
 }
 
+// Shared fading-beam registry. Laser beams register here and fade on
+// the main rAF loop (updateFadingBeams) instead of each spawning its
+// own setInterval — in sustained combat the per-beam timers were the
+// dominant off-frame cost. ~0.22 opacity/frame ≈ 75 ms at 60 fps.
+const _fadingBeams = [];
+function _registerFadingBeam(d) {
+    if (d.opacity === undefined) d.opacity = (d.material && d.material.opacity) || 1.0;
+    _fadingBeams.push(d);
+}
+function updateFadingBeams() {
+    if (!_fadingBeams.length) return;
+    for (let k = _fadingBeams.length - 1; k >= 0; k--) {
+        const d = _fadingBeams[k];
+        d.opacity -= 0.22;
+        const o = Math.max(0, d.opacity);
+        if (d.material) d.material.opacity = o;
+        if (d.glowMaterial) d.glowMaterial.opacity = o * (d.glowFactor || 0.4);
+        if (d.laserData) d.laserData.opacity = d.opacity;
+        if (d.enemyLaserData) d.enemyLaserData.opacity = d.opacity;
+        if (d.opacity <= 0) {
+            if (d.enemyLaserData && typeof activeEnemyLasers !== 'undefined') {
+                const i = activeEnemyLasers.indexOf(d.enemyLaserData);
+                if (i > -1) activeEnemyLasers.splice(i, 1);
+            }
+            if (d.laserData && typeof activeLasers !== 'undefined') {
+                const i = activeLasers.indexOf(d.laserData);
+                if (i > -1) activeLasers.splice(i, 1);
+            }
+            if (d.beam) scene.remove(d.beam);
+            if (d.extra) d.extra.forEach(m => scene.remove(m));
+            if (d.geometry && d.geometry.dispose) d.geometry.dispose();
+            if (d.material && d.material.dispose) d.material.dispose();
+            if (d.glowGeometry && d.glowGeometry.dispose) d.glowGeometry.dispose();
+            if (d.glowMaterial && d.glowMaterial.dispose) d.glowMaterial.dispose();
+            if (d.disposeExtra) d.disposeExtra();
+            _fadingBeams.splice(k, 1);
+        }
+    }
+}
+if (typeof window !== 'undefined') window.updateFadingBeams = updateFadingBeams;
+
 // RESTORED: Working laser beam from game-controls13.js (FIXES POSITIONING)
 // NOW TRACKS WITH SHIP for player lasers (1st person / cockpit view)
 function createLaserBeam(startPos, endPos, color = '#00ff96', isPlayer = true) {
@@ -4055,43 +4099,22 @@ function createLaserBeam(startPos, endPos, color = '#00ff96', isPlayer = true) {
             activeEnemyLasers.push(enemyLaserData);
         }
 
-        // Fade. Both player AND enemy beams vanish fast (~50-75 ms) —
-        // just a muzzle flash. Enemy beams previously lingered ~300 ms;
-        // per request they now fade as quickly as the player's.
+        // Fade. Both player AND enemy beams vanish fast (~75 ms) — just
+        // a muzzle flash. Driven by the shared rAF updater
+        // (updateFadingBeams) instead of a per-beam setInterval — every
+        // shot used to spawn its own timer, which stacked up badly in
+        // sustained combat.
         const startOpacity = isPlayer ? 0.8 : 1.0;
-        const opacityStep   = 0.4;   // ~2-3 ticks * 25 ms = ~50-75 ms
-        const fadeIntervalMs = 25;
-        let opacity = startOpacity;
-        laserMaterial.opacity = opacity;
-        glowMaterial.opacity = (isPlayer ? opacity * 0.4 : opacity * 0.55);
-        const fadeInterval = setInterval(() => {
-            opacity -= opacityStep;
-            laserMaterial.opacity = Math.max(0, opacity);
-            glowMaterial.opacity = Math.max(0, opacity) * (isPlayer ? 0.4 : 0.55);
+        laserMaterial.opacity = startOpacity;
+        glowMaterial.opacity = startOpacity * (isPlayer ? 0.4 : 0.55);
+        _registerFadingBeam({
+            beam: laserBeam, geometry: laserGeometry, material: laserMaterial,
+            glowGeometry: glowGeometry, glowMaterial: glowMaterial,
+            glowFactor: isPlayer ? 0.4 : 0.55,
+            laserData: laserData, enemyLaserData: enemyLaserData,
+            opacity: startOpacity
+        });
 
-            if (laserData)      laserData.opacity = opacity;
-            if (enemyLaserData) enemyLaserData.opacity = opacity;
-
-            if (opacity <= 0) {
-                clearInterval(fadeInterval);
-                // Remove from enemy tracking if enemy laser
-                if (enemyLaserData) {
-                    const eidx = activeEnemyLasers.indexOf(enemyLaserData);
-                    if (eidx > -1) activeEnemyLasers.splice(eidx, 1);
-                }
-                // Remove from tracking if player laser
-                if (laserData) {
-                    const idx = activeLasers.indexOf(laserData);
-                    if (idx > -1) activeLasers.splice(idx, 1);
-                }
-                scene.remove(laserBeam);
-                laserGeometry.dispose();
-                laserMaterial.dispose();
-                glowGeometry.dispose();
-                glowMaterial.dispose();
-            }
-        }, fadeIntervalMs);
-        
     } catch (error) {
         console.warn('Failed to create laser beam:', error);
     }
@@ -4518,7 +4541,7 @@ function _ensureEnemyShield(enemy) {
         blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide
     });
     const shield = new THREE.Mesh(new THREE.SphereGeometry(localR, 18, 14), mat);
-    shield.frustumCulled = false;
+    shield.frustumCulled = true;   // off-screen enemies skip the shield draw
     shield.userData.isEnemyShield = true;
     shield.userData.isGlowLayer = true;   // skipped by thruster-cone bbox
     enemy.add(shield);

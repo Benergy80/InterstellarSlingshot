@@ -1764,6 +1764,11 @@ if (typeof localGalaxyStars !== 'undefined' && localGalaxyStars) {
         updateShieldShatterFX();
     }
 
+    // Laser-beam fades (shared rAF updater; replaces per-beam setIntervals).
+    if (typeof updateFadingBeams === 'function') {
+        updateFadingBeams();
+    }
+
     // Earth's cloud shell drifts slightly faster than the surface
     // rotates, giving subtle parallax between weather and continents.
     if (typeof updateEarthClouds === 'function') {
