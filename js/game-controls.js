@@ -1133,6 +1133,13 @@ function updateEnemyBehavior() {
             _updateLocalFormationPatrol(enemy);
         }
 
+        // Orange combat shield: only raised while the enemy is actively
+        // engaging (isActive — it has detected and is targeting the
+        // player or a wingman). Drops when it disengages.
+        if (typeof _setEnemyShieldEngaged === 'function') {
+            _setEnemyShieldEngaged(enemy, !!enemy.userData.isActive);
+        }
+
         // Post-behavior flight hygiene for ACTIVE combatants: enforce a
         // minimum drift so they don't park/cluster on the player, and
         // keep them out of the camera→ship sightline so they don't
@@ -4408,6 +4415,139 @@ function flashPlayerShipHit() {
 }
 if (typeof window !== 'undefined') window.flashPlayerShipHit = flashPlayerShipHit;
 
+// =============================================================================
+// ENEMY ORANGE COMBAT SHIELD
+// Raised only while a hostile is actively engaging the player/wingman.
+// Absorbs 2 laser hits (flashing red on each) or 1 missile hit, then
+// shatters into flying shards. Borg cubes/drones and UFOs are excluded
+// (they have their own hit mechanics).
+// =============================================================================
+function _ensureEnemyShield(enemy) {
+    if (!enemy || !enemy.userData || enemy.userData._shieldMesh ||
+        enemy.userData.shieldBroken || typeof THREE === 'undefined') return;
+
+    // Size from the VISIBLE hull bounding box in WORLD units (skip the
+    // oversized invisible hitbox sphere, glow + cone layers), exactly
+    // like _ensureShipThrusterCones — enemy GLB models are scaled ~48×,
+    // so the raw hitboxSize is hugely inflated. Then convert that world
+    // radius into the enemy's LOCAL frame (the shield is a child).
+    let worldR = 90;
+    try {
+        enemy.updateWorldMatrix(true, true);
+        const box = new THREE.Box3(); box.makeEmpty();
+        const mb = new THREE.Box3();
+        let any = false;
+        enemy.traverse(node => {
+            if (!node.isMesh || !node.geometry) return;
+            const u = node.userData || {};
+            if (u.isHitbox || u.isGlowLayer || u._isThrusterCone || u.isEnemyShield) return;
+            if (!node.geometry.boundingBox) node.geometry.computeBoundingBox();
+            if (!node.geometry.boundingBox) return;
+            mb.copy(node.geometry.boundingBox).applyMatrix4(node.matrixWorld);
+            box.union(mb); any = true;
+        });
+        if (any && isFinite(box.min.x) && box.max.x > box.min.x) {
+            const sz = box.getSize(new THREE.Vector3());
+            worldR = Math.max(sz.x, sz.y, sz.z) * 0.62;
+        }
+    } catch (e) {}
+    worldR = Math.max(45, Math.min(worldR, 280));
+
+    const ws = new THREE.Vector3();
+    try { enemy.getWorldScale(ws); } catch (e) { ws.set(1, 1, 1); }
+    const s = Math.max(0.0001, (Math.abs(ws.x) + Math.abs(ws.y) + Math.abs(ws.z)) / 3);
+    const localR = worldR / s;
+
+    const mat = new THREE.MeshBasicMaterial({
+        color: 0xff8800, transparent: true, opacity: 0.0,
+        blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide
+    });
+    const shield = new THREE.Mesh(new THREE.SphereGeometry(localR, 18, 14), mat);
+    shield.frustumCulled = false;
+    shield.userData.isEnemyShield = true;
+    shield.userData.isGlowLayer = true;   // skipped by thruster-cone bbox
+    enemy.add(shield);
+    enemy.userData._shieldMesh = shield;
+    enemy.userData._shieldRadius = worldR;   // WORLD units, for shard sizing
+    enemy.userData.shieldHits = 0;
+    enemy.userData.shieldActive = false;
+}
+
+function _setEnemyShieldEngaged(enemy, engaged) {
+    const ud = enemy && enemy.userData;
+    if (!ud || ud.shieldBroken) return;
+    if (ud.isBorgCube || ud.type === 'borg_drone' || ud.isUFO) return; // own mechanics
+    if (engaged && !ud._shieldMesh) _ensureEnemyShield(enemy);
+    const sm = ud._shieldMesh;
+    if (!sm) return;
+    ud.shieldActive = !!engaged;
+    if (!engaged) { sm.material.opacity = 0; return; }
+    // Hold the red flash if one is in progress, else gentle orange pulse.
+    if (!ud._shieldFlashUntil || Date.now() > ud._shieldFlashUntil) {
+        sm.material.color.setHex(0xff8800);
+        sm.material.opacity = 0.16 + Math.sin(Date.now() * 0.006 + (enemy.id || 0)) * 0.05;
+    }
+}
+
+// Returns true if the shield absorbed the hit (caller skips health
+// damage + kill check). isMissile=true shatters in one hit.
+function _enemyShieldAbsorbHit(enemy, isMissile) {
+    const ud = enemy && enemy.userData;
+    if (!ud || !ud.shieldActive || ud.shieldBroken || !ud._shieldMesh) return false;
+    ud.shieldHits = (ud.shieldHits || 0) + 1;
+    const breakNow = isMissile || ud.shieldHits >= 2;
+    // Red flash on every shield hit.
+    ud._shieldFlashUntil = Date.now() + 170;
+    ud._shieldMesh.material.color.setHex(0xff2200);
+    ud._shieldMesh.material.opacity = 0.6;
+    if (typeof playSound === 'function') playSound('weapon');
+    if (breakNow) _shatterEnemyShield(enemy);
+    return true;
+}
+
+function _shatterEnemyShield(enemy) {
+    const ud = enemy && enemy.userData;
+    if (!ud || !ud._shieldMesh) return;
+    const sm = ud._shieldMesh;
+    const wp = sm.getWorldPosition(new THREE.Vector3());
+    const r = ud._shieldRadius || 60;
+
+    const shards = [];
+    for (let i = 0; i < 14; i++) {
+        const m = new THREE.MeshBasicMaterial({
+            color: 0xff8800, transparent: true, opacity: 0.9,
+            blending: THREE.AdditiveBlending, depthWrite: false
+        });
+        const shard = new THREE.Mesh(new THREE.TetrahedronGeometry(r * 0.18), m);
+        shard.position.copy(wp);
+        const dir = new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).normalize();
+        shard.userData._vel = dir.multiplyScalar(r * (0.045 + Math.random() * 0.05));
+        shard.frustumCulled = false;
+        scene.add(shard);
+        shards.push(shard);
+    }
+    let life = 1.0;
+    const iv = setInterval(() => {
+        life -= 0.07;
+        for (const s of shards) {
+            s.position.add(s.userData._vel);
+            s.rotation.x += 0.2; s.rotation.y += 0.16;
+            s.material.opacity = Math.max(0, 0.9 * life);
+        }
+        if (life <= 0) {
+            clearInterval(iv);
+            for (const s of shards) { scene.remove(s); s.geometry.dispose(); s.material.dispose(); }
+        }
+    }, 40);
+
+    if (sm.parent) sm.parent.remove(sm);
+    sm.geometry.dispose(); sm.material.dispose();
+    ud._shieldMesh = null;
+    ud.shieldActive = false;
+    ud.shieldBroken = true;   // gone for good — hull is now exposed
+    if (typeof playSound === 'function') playSound('explosion');
+}
+
 // BORG cube hit pulse. The cube is a THREE.Group of children (cube body
 // with MeshStandardMaterial emissive 0x00ff00, wireframe glow box,
 // edges, core sphere); none of the standard hit-flash paths touched
@@ -5454,6 +5594,14 @@ function checkWeaponHits(targetPosition) {
             const distance = enemy.position.distanceTo(targetPosition);
 
             if (distance < collisionDistance) {
+                // Orange combat shield intercepts laser fire first — 1st
+                // hit flashes red & holds, 2nd hit shatters it. Either way
+                // no health damage passes while the shield is up.
+                if (typeof _enemyShieldAbsorbHit === 'function' &&
+                    _enemyShieldAbsorbHit(enemy, false)) {
+                    _activateOnDamage(enemy);
+                    return; // shield ate the shot
+                }
                 const damage = 1; // Standard damage
                 enemy.userData.health -= damage;
                 enemy.userData.lastHitTime = Date.now();
@@ -6115,6 +6263,17 @@ function updateMissiles() {
 
 function handleMissileHit(missile, enemy) {
     scene.remove(missile);
+
+    // A missile shatters an active orange shield in one hit. The shield
+    // consumes the missile (no health damage that strike); subsequent
+    // fire hits the now-exposed hull.
+    if (typeof _enemyShieldAbsorbHit === 'function' &&
+        _enemyShieldAbsorbHit(enemy, true)) {
+        _activateOnDamage(enemy);
+        createMissileExplosion(missile.position);
+        if (typeof playSound === 'function') playSound('missile_explosion');
+        return;
+    }
 
     enemy.userData.health -= gameState.missiles.damage;
     enemy.userData.lastHitTime = Date.now();
@@ -8306,6 +8465,13 @@ function _executeEngage(ally, ud, now) {
 
         // Apply 10% laser damage
         if (et.userData) {
+            // Wingman fire is also intercepted by the orange shield
+            // (counts toward its 2-laser-hit break).
+            if (typeof _enemyShieldAbsorbHit === 'function' &&
+                _enemyShieldAbsorbHit(et, false)) {
+                _activateOnDamage(et);
+                return;
+            }
             const wasAlive = et.userData.health > 0;
             et.userData.health -= 0.1;
             _activateOnDamage(et);

@@ -2300,36 +2300,8 @@ function enhanceEarth(earth, radius) {
     earth.userData._cloudLayer = clouds;
     _earthClouds.push(clouds);
 
-    // 3. Atmosphere fresnel rim — the iconic Apollo-photo blue glow.
-    //    BackSide additive shell, fragments at the viewing limb light
-    //    up while the centre stays transparent so Earth shows through.
-    const atmoMat = new THREE.ShaderMaterial({
-        uniforms: {},
-        vertexShader: [
-            'varying vec3 vNormal;',
-            'void main() {',
-            '  vNormal = normalize(normalMatrix * normal);',
-            '  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);',
-            '}'
-        ].join('\n'),
-        fragmentShader: [
-            'varying vec3 vNormal;',
-            'void main() {',
-            '  float intensity = pow(0.72 - dot(vNormal, vec3(0.0, 0.0, 1.0)), 4.0);',
-            '  gl_FragColor = vec4(0.45, 0.72, 1.0, 1.0) * intensity;',
-            '}'
-        ].join('\n'),
-        side: THREE.BackSide,
-        blending: THREE.AdditiveBlending,
-        transparent: true,
-        depthWrite: false
-    });
-    const atmo = new THREE.Mesh(
-        new THREE.SphereGeometry(radius * 1.10, 40, 40),
-        atmoMat
-    );
-    atmo.frustumCulled = false;
-    earth.add(atmo);
+    // (Atmosphere fresnel rim glow removed — Earth keeps its surface +
+    // cloud shell only.)
 }
 if (typeof window !== 'undefined') window.enhanceEarth = enhanceEarth;
 
