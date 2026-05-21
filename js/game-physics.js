@@ -1159,12 +1159,30 @@ function transitionToRandomLocation(sourceBlackHole, transitType) {
         console.log('Executing warp transition...');
         
         // Find available black holes for warp destination (exclude current one)
-        const blackHoles = (typeof planets !== 'undefined') ? 
-            planets.filter(p => 
-                p.userData.type === 'blackhole' && 
+        let blackHoles = (typeof planets !== 'undefined') ?
+            planets.filter(p =>
+                p.userData.type === 'blackhole' &&
                 p.userData.name !== sourceBlackHole
             ) : [];
-        
+
+        // PROGRESSION GATE: until the Sol / Sagittarius A* system is
+        // liberated (Martian Pirate boss + Vulcan boss both defeated),
+        // black-hole warps only shuttle the player between the two LOCAL
+        // galactic cores — Sgr A* and the Companion Core. Liberation
+        // unlocks galaxy-wide warping (full black-hole list).
+        const _liberated = (typeof isSolSystemLiberated === 'function')
+            ? isSolSystemLiberated()
+            : (typeof window !== 'undefined' && typeof window.isSolSystemLiberated === 'function'
+                ? window.isSolSystemLiberated() : true);
+        if (!_liberated) {
+            const localCores = blackHoles.filter(p => p.userData &&
+                (p.userData.isSagittariusA || p.userData.isGalacticCenter || p.userData.isCompanionCore));
+            if (localCores.length > 0) {
+                blackHoles = localCores;
+                console.log('Warp gated to local cores (Sol system not yet liberated)');
+            }
+        }
+
         if (blackHoles.length === 0) {
             console.error('No black holes found for warp destination!');
             fadeOverlay.remove();

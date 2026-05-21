@@ -1525,6 +1525,85 @@ function spawnBossSupport(galaxyId, bossPosition, supportIndex, areaKey = null, 
 }
 
 // =============================================================================
+// SAGITTARIUS A* LIBERATION — gates black-hole warp range until the two
+// local set-piece bosses (Martian Pirate + Vulcan High Command) are dead.
+// On liberation: galaxy-wide black-hole warping unlocks (the warp picker
+// reads isSolSystemLiberated() live) and a white dotted line is drawn to
+// the nearest twin nebula.
+// =============================================================================
+function isSolSystemLiberated() {
+    if (typeof bossSystem === 'undefined' || !bossSystem.areaBosses) return false;
+    const mp = bossSystem.areaBosses['7-martianPirate_boss'];
+    const vp = bossSystem.areaBosses['7-vulcanPatrol_boss'];
+    return !!(mp && mp.defeated && vp && vp.defeated);
+}
+if (typeof window !== 'undefined') window.isSolSystemLiberated = isSolSystemLiberated;
+
+// Centre of the nearest paired/clustered ("twin") nebula to `fromPos`.
+function findNearestTwinNebulaCenter(fromPos) {
+    if (typeof nebulaClouds === 'undefined' || !nebulaClouds.length || typeof THREE === 'undefined') return null;
+    const clusters = {};
+    for (let i = 0; i < nebulaClouds.length; i++) {
+        const n = nebulaClouds[i];
+        if (!n || !n.userData) continue;
+        if (n.userData.isDistant || n.userData.isExoticCore) continue;
+        const ci = n.userData.cluster;
+        if (ci === undefined || ci === null) continue;
+        (clusters[ci] = clusters[ci] || []).push(n);
+    }
+    let best = null, bestDist = Infinity;
+    for (const ci in clusters) {
+        const pair = clusters[ci];
+        if (pair.length < 2) continue;   // only true twins
+        const center = new THREE.Vector3();
+        pair.forEach(n => center.add(n.position));
+        center.divideScalar(pair.length);
+        const d = fromPos.distanceTo(center);
+        if (d < bestDist) { bestDist = d; best = center; }
+    }
+    return best;
+}
+
+// Draw a persistent white dashed line from Sgr A* to the nearest twin
+// nebula, guiding the freshly-liberated player onward.
+function showLiberationPathToTwinNebula() {
+    if (typeof THREE === 'undefined' || typeof scene === 'undefined') return;
+    if (typeof window !== 'undefined' && window.liberationNebulaPath) return; // once
+    const fromPos = new THREE.Vector3(0, 0, 0); // Sagittarius A*
+    const target = findNearestTwinNebulaCenter(fromPos);
+    if (!target) { console.warn('🌌 Liberation: no twin nebula found for path'); return; }
+    const geom = new THREE.BufferGeometry().setFromPoints([fromPos, target]);
+    const mat = new THREE.LineDashedMaterial({
+        color: 0xffffff, transparent: true, opacity: 0.85,
+        dashSize: 140, gapSize: 100, depthWrite: false
+    });
+    const line = new THREE.Line(geom, mat);
+    line.computeLineDistances();
+    line.frustumCulled = false;
+    line.renderOrder = 60;
+    line.name = 'LiberationTwinNebulaPath';
+    scene.add(line);
+    if (typeof window !== 'undefined') window.liberationNebulaPath = line;
+    console.log('🌌 Liberation path to nearest twin nebula drawn');
+}
+
+function maybeTriggerSolLiberation() {
+    if (typeof bossSystem === 'undefined') return;
+    if (bossSystem._solLiberationFired) return;
+    if (!isSolSystemLiberated()) return;
+    bossSystem._solLiberationFired = true;
+    showLiberationPathToTwinNebula();
+    if (typeof showAchievement === 'function') {
+        showAchievement('Sagittarius A* Liberated!',
+            'Black holes now warp you galaxy-wide. Follow the white path to the nearest twin nebula.', true);
+    }
+    if (typeof playGalaxyVictoryMusic === 'function') {
+        try { playGalaxyVictoryMusic(); } catch (e) {}
+    }
+}
+if (typeof window !== 'undefined') window.maybeTriggerSolLiberation = maybeTriggerSolLiberation;
+
+// =============================================================================
 // ENHANCED BOSS VICTORY SYSTEM - PRESERVES ALL ORIGINAL FEATURES
 // =============================================================================
 
@@ -1587,6 +1666,12 @@ function checkBossVictory(defeatedEnemy) {
         if (bossSystem.galaxyBossDefeated &&
             typeof galaxyId === 'number' && galaxyId >= 0 && galaxyId < 8) {
             bossSystem.galaxyBossDefeated[galaxyId] = true;
+        }
+
+        // Defeating either local set-piece boss may complete the Sol /
+        // Sagittarius A* liberation (Martian Pirate boss + Vulcan boss).
+        if (typeof maybeTriggerSolLiberation === 'function') {
+            maybeTriggerSolLiberation();
         }
 
         // Remove from active bosses list
