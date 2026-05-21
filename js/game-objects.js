@@ -3384,10 +3384,14 @@ for (let i = 0; i < _core8StarCount; i++) {
 try {
     console.log('Creating Dune star systems around local black hole gateway...');
     
-    // Local gateway position
+    // Local gateway position. Pushed far BELOW the Sol plane (−32k) so
+    // the gateway black hole and the systems that cluster around it all
+    // sit well outside the Sun's 25k light radius — lit only by their
+    // own stars. The gateway black hole (created later) reads its
+    // position straight from here so the two never drift apart.
     const localGatewayPosition = {
     x: localSystemOffset.x + 2600,
-    y: localSystemOffset.y - 3000,  // ✅ FIXED: Match the actual gateway Y position
+    y: localSystemOffset.y - 32000,
     z: localSystemOffset.z + 2000
 };
     
@@ -3464,12 +3468,11 @@ try {
     ];
     
     duneSystems.forEach((systemData, sysIndex) => {
-    // Push each gateway system FAR off the Sol plane, alternating up and
-    // down on Y, so it sits well outside the Sun's 25k light radius (and
-    // clear of Sagittarius A* at the origin). Out here each system is lit
-    // only by its own central star — see the brighter PointLight below.
-    const _ySign = (sysIndex % 2 === 0) ? 1 : -1;
-    const verticalOffset = _ySign * (28000 + Math.random() * 12000); // ±28k … ±40k off the Sol plane
+    // Systems cluster AROUND the gateway, which now lives far below the
+    // Sol plane (localGatewayPosition.y ≈ −32k). A modest vertical
+    // spread keeps them grouped with the gateway rather than scattered
+    // across the whole Y axis.
+    const verticalOffset = (Math.random() > 0.5 ? 1 : -1) * (400 + Math.random() * 1500);
 
     // ✅ ENHANCED: Much more dramatic orbital plane tilts (up to ±30 degrees)
     const orbitalTilt = {
@@ -3477,12 +3480,11 @@ try {
         z: (Math.random() - 0.5) * 1.0  // Tilt up to ±28.6 degrees around Z-axis
     };
 
-    // Horizontal placement keeps the spread around the gateway; Y is
-    // anchored to the Sol plane (localSystemOffset.y) so the huge
-    // vertical offset is measured from Sol, not the gateway's −3000.
+    // Orbit the gateway in its own (off-plane) neighbourhood.
     const systemX = localGatewayPosition.x + Math.cos(systemData.orbitalAngle) * systemData.orbitalDistance;
-    const systemY = localSystemOffset.y + verticalOffset;
+    const systemY = localGatewayPosition.y + verticalOffset;
     const systemZ = localGatewayPosition.z + Math.sin(systemData.orbitalAngle) * systemData.orbitalDistance;
+
     
     const systemOffset = { 
         x: systemX, 
@@ -3734,11 +3736,12 @@ try {
     });
     const blackHole = new THREE.Mesh(localBlackHoleGeometry, localBlackHoleMaterial);
     
-    // **UPDATED: Position 1500 units ABOVE the solar system plane**
+    // Sit exactly at the (now far-below-plane) gateway position so the
+    // black hole stays the hub of its system cluster.
     blackHole.position.set(
-        localSystemOffset.x + 2600, 
-        localSystemOffset.y - 3000,  // **Changed from 0 to +1500**
-        localSystemOffset.z + 2000
+        localGatewayPosition.x,
+        localGatewayPosition.y,
+        localGatewayPosition.z
     );
         blackHole.visible = true;
         blackHole.frustumCulled = false;
@@ -8458,55 +8461,79 @@ async function loadUFOModel() {
 
 function createProceduralUFO() {
     const ufoGroup = new THREE.Group();
-    
-    // Classic saucer shape
+
+    // Hostile palette to match the rest of the enemies (Martian Pirate
+    // red 0xff4444 family) — the old green/cyan read as friendly, the
+    // same colour as the wingmen. Dark metal hull + red glow accents +
+    // an additive glow layer like createEnemyMaterial uses.
+    const HOSTILE = 0xff4444;
+    const HOT = 0xff7733;
+
+    // Classic saucer shape — dark warm metal.
     const saucerGeom = new THREE.CylinderGeometry(40, 50, 12, 24);
     const saucerMat = new THREE.MeshStandardMaterial({
-        color: 0x556677,
+        color: 0x3a2a2a,
         metalness: 0.9,
-        roughness: 0.2
+        roughness: 0.25,
+        emissive: 0x220808,
+        emissiveIntensity: 0.6
     });
     const saucer = new THREE.Mesh(saucerGeom, saucerMat);
     ufoGroup.add(saucer);
-    
-    // Dome on top
+
+    // Additive glow shell around the hull (enemy-style aura).
+    const auraMat = new THREE.MeshBasicMaterial({
+        color: HOSTILE, transparent: true, opacity: 0.35,
+        blending: THREE.AdditiveBlending, depthWrite: false
+    });
+    const aura = new THREE.Mesh(new THREE.CylinderGeometry(46, 58, 14, 24), auraMat);
+    ufoGroup.add(aura);
+
+    // Dome on top — glowing red cockpit.
     const domeGeom = new THREE.SphereGeometry(20, 16, 12, 0, Math.PI * 2, 0, Math.PI / 2);
     const domeMat = new THREE.MeshStandardMaterial({
-        color: 0x88ffaa,
+        color: 0xff6655,
         metalness: 0.3,
         roughness: 0.1,
         transparent: true,
-        opacity: 0.7
+        opacity: 0.75,
+        emissive: 0xff3322,
+        emissiveIntensity: 0.8
     });
     const dome = new THREE.Mesh(domeGeom, domeMat);
     dome.position.y = 6;
     ufoGroup.add(dome);
-    
-    // Glowing underside
+
+    // Glowing underside (the abduction-beam ring) — hostile red.
     const glowGeom = new THREE.RingGeometry(15, 45, 24);
     const glowMat = new THREE.MeshBasicMaterial({
-        color: 0x00ff88,
+        color: HOSTILE,
         transparent: true,
-        opacity: 0.6,
-        side: THREE.DoubleSide
+        opacity: 0.7,
+        side: THREE.DoubleSide,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false
     });
     const glow = new THREE.Mesh(glowGeom, glowMat);
     glow.rotation.x = Math.PI / 2;
     glow.position.y = -6;
     ufoGroup.add(glow);
-    
-    // Pulsing lights around edge
+
+    // Pulsing rim lights — hot orange.
     for (let i = 0; i < 8; i++) {
         const angle = (i / 8) * Math.PI * 2;
         const light = new THREE.Mesh(
             new THREE.SphereGeometry(3, 8, 8),
-            new THREE.MeshBasicMaterial({ color: 0x00ffff })
+            new THREE.MeshBasicMaterial({
+                color: HOT, transparent: true, opacity: 0.95,
+                blending: THREE.AdditiveBlending
+            })
         );
         light.position.set(Math.cos(angle) * 42, 0, Math.sin(angle) * 42);
         light.userData.lightIndex = i;
         ufoGroup.add(light);
     }
-    
+
     return ufoGroup;
 }
 
@@ -8517,13 +8544,18 @@ function createUFOEnemy(position, systemName, index) {
         ufo = ufoModelCache.clone();
         ufo.scale.set(3, 3, 3); // Reasonable UFO scale
         
-        // Enhance materials for game style
+        // Enhance materials for game style + a hostile red emissive so
+        // GLB UFOs read as enemies (not the friendly-green default).
         ufo.traverse((child) => {
             if (child.isMesh && child.material) {
                 if (child.material.isMeshStandardMaterial) {
                     child.material.metalness = 0.85;
                     child.material.roughness = 0.15;
                     child.material.envMapIntensity = 2.0;
+                    if (child.material.emissive) {
+                        child.material.emissive.setHex(0xff3322);
+                        child.material.emissiveIntensity = 0.5;
+                    }
                 }
             }
         });
@@ -8548,10 +8580,12 @@ function createUFOEnemy(position, systemName, index) {
         isActive: false,
         visible: true,
         galaxyId: -1, // No faction
-        galaxyColor: 0x00ff88,
+        galaxyColor: 0xff4444, // hostile red on radar/HUD, like other enemies
         attackMode: 'erratic',
-        detectionRange: 2500,
-        firingRange: 350,
+        detectionRange: 3200,
+        firingRange: 700,
+        beamCooldownMs: 1500,
+        beamDamage: 5,
         isLocal: false,
         isBoss: false,
         isUFO: true,
@@ -8616,47 +8650,139 @@ function createUFOsInExoticSystems() {
 }
 
 // UFO erratic movement update
+const _ufoV1 = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+const _ufoV2 = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+const _ufoV3 = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+
+// Intelligent UFO update. Patrol erratically until the player comes
+// within detectionRange, then HUNT: hold a strafing standoff just inside
+// firing range, orbit the player, and fire ray beams on cooldown.
 function updateUFOMovement() {
-    const time = Date.now() * 0.001;
-    
+    if (!_ufoV1) return;
+    const now = Date.now();
+    const live = (typeof camera !== 'undefined' && camera &&
+                  typeof gameState !== 'undefined' && gameState &&
+                  gameState.gameStarted && !gameState.gameOver);
+    const playerPos = live ? camera.position : null;
+
     ufoEnemies.forEach(ufo => {
         if (!ufo || !ufo.userData || ufo.userData.health <= 0) return;
-        
         const data = ufo.userData;
-        
-        // Only apply erratic movement when not actively chasing player
-        if (data.attackMode === 'erratic' || !data.isActive) {
-            // Complex erratic movement pattern
+
+        // Saucers always spin lazily on their axis.
+        ufo.rotation.y += 0.03;
+
+        const dist = playerPos ? ufo.position.distanceTo(playerPos) : Infinity;
+        const hunting = playerPos && dist < (data.detectionRange || 3000);
+        data.isActive = !!hunting;
+        data.attackMode = hunting ? 'hunting' : 'erratic';
+
+        if (hunting) {
+            // Desired point: a strafing standoff ~85% of firing range from
+            // the player, drifting tangentially so the UFO circles rather
+            // than charging straight in.
+            data.circlePhase = (data.circlePhase || 0) + 0.012;
+            data.verticalBob = (data.verticalBob || 0) + 0.02;
+            const standoff = Math.max(260, (data.firingRange || 700) * 0.85);
+
+            const toU = _ufoV1.subVectors(ufo.position, playerPos);
+            const horiz = Math.hypot(toU.x, toU.z) || 1;
+            const tang = _ufoV2.set(-toU.z / horiz, 0, toU.x / horiz); // tangential unit
+            const radial = _ufoV3.copy(toU).normalize();
+
+            const desX = playerPos.x + radial.x * standoff + tang.x * Math.sin(data.circlePhase) * 140;
+            const desY = playerPos.y + radial.y * standoff + Math.sin(data.verticalBob) * 90;
+            const desZ = playerPos.z + radial.z * standoff + tang.z * Math.sin(data.circlePhase) * 140;
+
+            const lerp = 0.04;
+            ufo.position.x += (desX - ufo.position.x) * lerp;
+            ufo.position.y += (desY - ufo.position.y) * lerp;
+            ufo.position.z += (desZ - ufo.position.z) * lerp;
+            ufo.rotation.x = 0.12;   // slight aggressive tilt
+            ufo.rotation.z = 0;
+
+            // Fire a ray beam when roughly in range and off cooldown.
+            if (dist < (data.firingRange || 700) * 1.3 &&
+                now - (data.lastAttack || 0) > (data.beamCooldownMs || 1500)) {
+                data.lastAttack = now;
+                _fireUFORayBeam(ufo.position.clone(), playerPos.clone());
+                _ufoDamagePlayer(ufo, data.beamDamage || 5);
+            }
+        } else {
+            // Erratic patrol around the system (original behaviour).
             data.erraticPhase += data.erraticSpeed;
             data.spiralPhase += 0.01;
             data.verticalBob += 0.03;
-            
-            // Spiral + wobble pattern
             const spiralRadius = data.wobbleAmplitude * (0.5 + 0.5 * Math.sin(data.spiralPhase * 0.3));
-            const wobbleX = Math.cos(data.erraticPhase) * spiralRadius;
-            const wobbleZ = Math.sin(data.erraticPhase * 1.3) * spiralRadius;
-            const wobbleY = Math.sin(data.verticalBob) * 150;
-            
-            // Target position
-            const targetX = data.patrolCenter.x + wobbleX;
-            const targetY = data.patrolCenter.y + wobbleY;
-            const targetZ = data.patrolCenter.z + wobbleZ;
-            
-            // Smooth but quick movement
+            const targetX = data.patrolCenter.x + Math.cos(data.erraticPhase) * spiralRadius;
+            const targetY = data.patrolCenter.y + Math.sin(data.verticalBob) * 150;
+            const targetZ = data.patrolCenter.z + Math.sin(data.erraticPhase * 1.3) * spiralRadius;
             ufo.position.x += (targetX - ufo.position.x) * 0.02;
             ufo.position.y += (targetY - ufo.position.y) * 0.02;
             ufo.position.z += (targetZ - ufo.position.z) * 0.02;
-            
-            // UFO tilt based on movement
-            const tiltX = (targetZ - ufo.position.z) * 0.01;
-            const tiltZ = -(targetX - ufo.position.x) * 0.01;
-            ufo.rotation.x = tiltX;
-            ufo.rotation.z = tiltZ;
-            
-            // Slow spin
-            ufo.rotation.y += 0.01;
+            ufo.rotation.x = (targetZ - ufo.position.z) * 0.01;
+            ufo.rotation.z = -(targetX - ufo.position.x) * 0.01;
         }
     });
+}
+
+// Special UFO weapon — a thick pulsing red ray beam (distinct from the
+// thin faction lasers). Visual only; damage is applied separately.
+function _fireUFORayBeam(startPos, endPos) {
+    if (typeof THREE === 'undefined' || typeof scene === 'undefined') return;
+    const dir = new THREE.Vector3().subVectors(endPos, startPos);
+    const len = dir.length();
+    if (len < 1) return;
+    const quat = new THREE.Quaternion().setFromUnitVectors(
+        new THREE.Vector3(0, 1, 0), dir.clone().normalize());
+    const mid = new THREE.Vector3().addVectors(startPos, endPos).multiplyScalar(0.5);
+
+    const coreMat = new THREE.MeshBasicMaterial({ color: 0xff2211, transparent: true, opacity: 0.95 });
+    const core = new THREE.Mesh(new THREE.CylinderGeometry(2.4, 2.4, len, 10), coreMat);
+    const glowMat = new THREE.MeshBasicMaterial({
+        color: 0xff7744, transparent: true, opacity: 0.45,
+        blending: THREE.AdditiveBlending, depthWrite: false
+    });
+    const glow = new THREE.Mesh(new THREE.CylinderGeometry(7, 7, len, 10), glowMat);
+
+    [core, glow].forEach(m => {
+        m.position.copy(mid);
+        m.quaternion.copy(quat);
+        m.frustumCulled = false;
+        m.renderOrder = 55;
+        scene.add(m);
+    });
+
+    let op = 1.0;
+    const iv = setInterval(() => {
+        op -= 0.25;
+        coreMat.opacity = Math.max(0, 0.95 * op);
+        glowMat.opacity = Math.max(0, 0.45 * op);
+        if (op <= 0) {
+            clearInterval(iv);
+            scene.remove(core); scene.remove(glow);
+            core.geometry.dispose(); glow.geometry.dispose();
+            coreMat.dispose(); glowMat.dispose();
+        }
+    }, 55);
+
+    if (typeof playSound === 'function') playSound('enemy_fire');
+}
+
+// Apply ray-beam damage to the player, honouring shields / warp
+// invulnerability — mirrors the player-hit path in fireEnemyWeapon.
+function _ufoDamagePlayer(ufo, damage) {
+    if (typeof gameState === 'undefined') return;
+    const invuln = typeof isBlackHoleWarpInvulnerable === 'function' && isBlackHoleWarpInvulnerable();
+    const shielded = typeof isShieldActive === 'function' && isShieldActive();
+    if (invuln) return;
+    const reduction = (typeof getShieldDamageReduction === 'function') ? getShieldDamageReduction() : 0;
+    const actual = damage * (1 - reduction);
+    if (gameState.hull !== undefined) gameState.hull = Math.max(0, gameState.hull - actual);
+    else if (gameState.health !== undefined) gameState.health = Math.max(0, gameState.health - actual);
+    if (shielded && typeof createShieldHitEffect === 'function') createShieldHitEffect(ufo.position);
+    if (typeof createEnhancedScreenDamageEffect === 'function') createEnhancedScreenDamageEffect(ufo.position);
+    if (!shielded && typeof flashPlayerShipHit === 'function') flashPlayerShipHit();
 }
 
 window.ufoEnemies = ufoEnemies;
