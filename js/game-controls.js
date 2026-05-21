@@ -8013,81 +8013,27 @@ function createAllyShips() {
     scene.add(alpha);
     allyShips.push(alpha);
 
-    // Beta (Defender) + Gamma (Aggressor) wait near Sagittarius A*
-    // (world origin). Both are parked idle, NOT in allyShips yet — the
-    // pickup adds them. Beta sits stationary ~600u off the event
-    // horizon; Gamma actively patrols a wider ring around Sgr A*.
+    // Beta (Defender) + Gamma (Aggressor) deploy at Sagittarius A*
+    // (world origin), ALREADY in the fight against the Vulcan patrols
+    // there — active from frame 1, on opposite sides ~1500u out (just
+    // beyond the black-hole keep-out, right in the Vulcan ring). The
+    // wingman AI's _scanForEnemy picks up the nearby Vulcans and they
+    // engage; while the player is far away in Sol they hold the line
+    // here (patrol→engage, or stranded→engage between waves).
     const beta = _makeWingman('defender', 'Wingman Beta', 0x88aaff);
-    beta.position.set(600, 60, 0);
-    beta.userData.aiState = 'idle';
-    beta.userData.idleAtSgrA = true;
-    beta.userData.systemCenter = null;   // doesn't drift; sits stationary
+    beta.userData.colorNum = 0x88aaff;
+    beta.position.set(1500, 80, 400);
     scene.add(beta);
+    allyShips.push(beta);
 
     const gamma = _makeWingman('aggressor', 'Wingman Gamma', 0xffcc44);
     gamma.userData.colorNum = 0xffcc44;  // amber — read by thruster/radar tint
-    gamma.position.set(-900, -40, 300);
-    gamma.userData.aiState = 'idlePatrol';
-    gamma.userData.idleAtSgrA = true;
-    gamma.userData.sgrAPatrolPhase = Math.random() * Math.PI * 2;
-    gamma.userData.sgrAPatrolRadius = 950 + Math.random() * 400;
+    gamma.position.set(-1400, -60, -500);
     scene.add(gamma);
+    allyShips.push(gamma);
 
-    if (typeof window !== 'undefined') {
-        window.idleSgrABeta = beta;
-        window.idleSgrAWingmen = [beta, gamma];
-    }
-
-    console.log('🛡️ Wingman Alpha deployed at Sol; Beta + Gamma await rescue near Sgr A*');
+    console.log('🛡️ 3 wingmen deployed: Alpha at Sol, Beta + Gamma battling Vulcans at Sgr A*');
 }
-
-// Pickup check for the rescue wingmen parked at Sgr A*. Runs every frame
-// from updateAllyShips(): animates Gamma's idle patrol orbit around the
-// galactic centre, and the first time the player flies within range
-// promotes BOTH Beta and Gamma into the active roster.
-let _sgrABetaPickedUp = false;
-function checkSgrABetaPickup() {
-    const idle = (typeof window !== 'undefined') ? window.idleSgrAWingmen : null;
-    if (!idle || !idle.length || typeof camera === 'undefined') return;
-
-    // Animate any still-idle patroller (Gamma orbits Sgr A*).
-    for (let i = 0; i < idle.length; i++) {
-        const w = idle[i];
-        if (!w || !w.userData || w.userData.aiState !== 'idlePatrol') continue;
-        const ud = w.userData;
-        ud.sgrAPatrolPhase += 0.004;
-        const r = ud.sgrAPatrolRadius || 950;
-        w.position.set(
-            Math.cos(ud.sgrAPatrolPhase) * r,
-            Math.sin(ud.sgrAPatrolPhase * 0.7) * 200,
-            Math.sin(ud.sgrAPatrolPhase) * r
-        );
-        w.rotation.y += 0.01;
-    }
-
-    if (_sgrABetaPickedUp) return;
-    // Pick up when the player gets near EITHER waiting wingman.
-    let near = false;
-    for (let i = 0; i < idle.length; i++) {
-        if (idle[i] && idle[i].position &&
-            camera.position.distanceTo(idle[i].position) <= 900) { near = true; break; }
-    }
-    if (!near) return;
-    _sgrABetaPickedUp = true;
-    for (let i = 0; i < idle.length; i++) {
-        const w = idle[i];
-        if (!w || !w.userData) continue;
-        w.userData.aiState = 'follow';
-        w.userData.idleAtSgrA = false;
-        if (allyShips.indexOf(w) === -1) allyShips.push(w);
-    }
-    if (typeof showAchievement === 'function') {
-        showAchievement('🛸 Wingmen Recovered',
-            'Beta and Gamma picked up near Sagittarius A* — squadron at full strength.', true);
-    }
-    if (typeof playSound === 'function') playSound('powerup');
-}
-if (typeof window !== 'undefined') window.checkSgrABetaPickup = checkSgrABetaPickup;
 
 // ── Nebula wingman recruitment ───────────────────────────────────────────
 // Greek alphabet names + matching colors for additional wingmen unlocked
@@ -8316,10 +8262,6 @@ if (typeof window !== 'undefined') window.triggerWingmanCelebration = triggerWin
 function updateAllyShips() {
     if (typeof camera === 'undefined' || typeof THREE === 'undefined') return;
     if (!gameState || !gameState.gameStarted || gameState.gameOver) return;
-
-    // Sgr A* pickup is checked even with only one ally on the roster,
-    // so it MUST run before the !allyShips.length early-return below.
-    if (typeof checkSgrABetaPickup === 'function') checkSgrABetaPickup();
 
     if (!allyShips.length) return;
 
