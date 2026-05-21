@@ -2800,16 +2800,26 @@ if (dampedVelocity.length() >= gameState.minVelocity ||
             const toTarget = new THREE.Vector3().subVectors(targetPos, camera.position);
             const approachDistance = toTarget.length();
             
-            // Determine safe orbital radius based on target type
-            let orbitRadius = 500; // Default orbit radius for enemies
-            if (gameState.currentTarget.userData) {
-                if (gameState.currentTarget.userData.type === 'planet') {
-                    orbitRadius = (gameState.currentTarget.userData.size || 100) * 3; // 3x planet radius
-                } else if (gameState.currentTarget.userData.type === 'blackhole') {
-                    orbitRadius = (gameState.currentTarget.userData.size || 200) * 2; // 2x black hole radius
-                } else if (gameState.currentTarget.userData.isEnemy) {
-                    orbitRadius = 300; // Close approach for enemies (combat range)
-                }
+            // Determine the approach standoff. For slingshot-capable
+            // bodies (planets / black holes) aim to PASS WITHIN the
+            // body's slingshot activation range — getSlingshotRange() is
+            // the same range findSlingshotTarget() / the "SLINGSHOT
+            // READY" prompt use — so an auto-nav route always brings the
+            // ship close enough to trigger an Interstellar Slingshot at
+            // closest approach. 0.7× keeps it comfortably inside range
+            // with margin. Enemies keep a fixed combat-range approach.
+            let orbitRadius = 500; // Default
+            const _navUD = gameState.currentTarget.userData || {};
+            const _slingable = _navUD.type === 'planet' || _navUD.type === 'blackhole' ||
+                               _navUD.type === 'star' || _navUD.type === 'moon';
+            if (_slingable && typeof getSlingshotRange === 'function') {
+                orbitRadius = Math.max(120, getSlingshotRange(gameState.currentTarget) * 0.7);
+            } else if (_navUD.type === 'planet') {
+                orbitRadius = (_navUD.size || 100) * 3;
+            } else if (_navUD.type === 'blackhole') {
+                orbitRadius = (_navUD.size || 200) * 2;
+            } else if (_navUD.isEnemy) {
+                orbitRadius = 300; // Close approach for enemies (combat range)
             }
             
             let targetDirection;
