@@ -896,6 +896,37 @@ const _fhB = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
 const _fhC = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
 const _fhD = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
 
+// Hard keep-out from black-hole event-horizon warp zones, applied to
+// enemies (and UFOs). The player warps when within criticalDistance =
+// max(radius*2.5, 50) of a hole; enemies are clamped to that + a
+// combat-range buffer so chasing a hostile toward a hole never pulls
+// the player across the threshold. Position is projected back to the
+// keep-out sphere and inward velocity is bled off.
+const _bhAvoid = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+function _enemyAvoidBlackHoles(enemy) {
+    if (!_bhAvoid || !enemy || !enemy.position || typeof planets === 'undefined') return;
+    for (let i = 0; i < planets.length; i++) {
+        const p = planets[i];
+        if (!p || !p.userData || p.userData.type !== 'blackhole' || !p.position) continue;
+        const radius = (p.geometry && p.geometry.parameters && p.geometry.parameters.radius) || 50;
+        const critical = Math.max(radius * 2.5, 50);   // matches the player warp trigger
+        const keepOut = critical + 600;                // + combat-range buffer
+        _bhAvoid.subVectors(enemy.position, p.position);
+        const d = _bhAvoid.length();
+        if (d > 0.001 && d < keepOut) {
+            _bhAvoid.multiplyScalar(keepOut / d);              // out to the boundary
+            enemy.position.copy(p.position).add(_bhAvoid);
+            const ud = enemy.userData;
+            if (ud && ud.velocity && ud.velocity.dot) {
+                _bhAvoid.normalize();
+                const inward = ud.velocity.dot(_bhAvoid);      // <0 means heading inward
+                if (inward < 0) ud.velocity.addScaledVector(_bhAvoid, -inward);
+            }
+        }
+    }
+}
+if (typeof window !== 'undefined') window._enemyAvoidBlackHoles = _enemyAvoidBlackHoles;
+
 // Per-frame post-behavior pass for ACTIVE enemies. Two jobs:
 //   1) Anti-cluster / always-in-flight: if the enemy barely moved this
 //      frame (engage/hold modes park them on the player and they pile
@@ -1146,6 +1177,13 @@ function updateEnemyBehavior() {
         // block the player's view of their own ship during combat.
         if (enemy.userData.isActive && typeof _enemyFlightHygiene === 'function') {
             _enemyFlightHygiene(enemy, _fhShip, _fhCam, playerPos, isLocal);
+        }
+
+        // Keep enemies OUT of every black hole's event-horizon warp zone
+        // (with a combat-range buffer) so the player can't be lured into
+        // a warp by chasing a hostile that dives toward the hole.
+        if (typeof _enemyAvoidBlackHoles === 'function') {
+            _enemyAvoidBlackHoles(enemy);
         }
 
         // Thruster cones: ensure they exist, then fade them in/out based

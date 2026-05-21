@@ -8786,6 +8786,11 @@ function updateUFOMovement() {
             ufo.rotation.x = (targetZ - ufo.position.z) * 0.01;
             ufo.rotation.z = -(targetX - ufo.position.x) * 0.01;
         }
+
+        // UFOs also stay out of black-hole event-horizon warp zones.
+        if (typeof window !== 'undefined' && typeof window._enemyAvoidBlackHoles === 'function') {
+            window._enemyAvoidBlackHoles(ufo);
+        }
     });
 }
 
