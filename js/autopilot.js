@@ -470,6 +470,19 @@
       shootNearbyAsteroids();
     }
 
+    // ── Global anti-overshoot ───────────────────────────────────────────
+    // A tactical JUMP commits a high velocity for its whole duration,
+    // which (especially with the longer far-pursuit holds) could sail the
+    // demo straight past whatever it was heading for and out into empty
+    // space. The moment we're within arrival range of the current target,
+    // cut the jump so the physics auto-brake takes over.
+    if (gameState.emergencyWarp && gameState.emergencyWarp.active &&
+        gameState.emergencyWarp.isJump && gameState.currentTarget &&
+        gameState.currentTarget.position) {
+      const _td = camPos().distanceTo(gameState.currentTarget.position);
+      if (_td < 900) gameState.emergencyWarp.timeRemaining = 0;
+    }
+
     // ── Surprise black-hole warp recovery ──────────────────────────────
     // If the player gets caught by a black hole's gravity well during a
     // non-BH phase (e.g. while orbiting a nebula center near a BH, or
@@ -742,24 +755,35 @@
       flyToward(enemy, 2.5);
       pursuitFlightStyle('pursuit');
 
-      // Aggressive tactical jumps (double-tap W) to keep up with wingmen
-      // and close on hostiles fast. Triggers any time we're outside firing
-      // range, 200-3000u from target, not already going fast.
-      // 4 second cooldown, 15 energy minimum.
-      if (dist > 200 && dist < 3000 && speed < 4 &&
+      // If a tactical jump is still carrying us but we've already reached
+      // the target, CUT IT SHORT so we don't blow past and sail out of
+      // bounds. Ending the jump (timeRemaining→0) triggers the physics
+      // auto-brake next tick. This is the main guard against the demo
+      // overshooting enemies/nebulae.
+      if (gameState.emergencyWarp && gameState.emergencyWarp.active &&
+          gameState.emergencyWarp.isJump &&
+          dist < Math.max(800, engageRange * 1.3)) {
+        gameState.emergencyWarp.timeRemaining = 0;
+      }
+
+      // Aggressive tactical jumps (double-tap W) to close BIG gaps fast.
+      // Only when genuinely far (>1200u) so close-range "finish him" work
+      // is done by normal thrust+brake, not a jump that overshoots. A
+      // jump while already near the target was what flung the demo past
+      // enemies and out of bounds. 4s cooldown, 15 energy minimum, and
+      // not while a jump/warp is already active.
+      const _warpBusy = gameState.emergencyWarp &&
+          (gameState.emergencyWarp.active || gameState.emergencyWarp.transitioning);
+      if (dist > 1200 && dist < 6000 && speed < 4 && !_warpBusy &&
           gameState.energy > 15 &&
           Date.now() - (ap._lastJumpTap || 0) > 4000) {
         ap._lastJumpTap = Date.now();
         if (window.keys) {
-          // Longer jump the farther the target: chasing a hostile well
-          // beyond firing range, a 2s hop barely dents the gap. Scale the
-          // hold from 2s (≤500u) up to ~5s, so the demo actually closes
-          // distance instead of repeatedly micro-hopping. Player jumps
-          // are unaffected (they never set this).
+          // Scale the hold with distance but stay conservative so the
+          // jump closes most of the gap without sailing past — the
+          // close-range abort above mops up any remaining overshoot.
           if (typeof gameState !== 'undefined') {
-            gameState._pendingJumpMs = (dist > 500)
-              ? Math.min(5000, 2000 + (dist - 500) * 1.2)
-              : 2000;
+            gameState._pendingJumpMs = Math.min(3800, 2000 + (dist - 1200) * 0.6);
           }
           window.keys.wDoubleTap = true;
           setTimeout(() => { if (window.keys) window.keys.wDoubleTap = false; }, 120);
