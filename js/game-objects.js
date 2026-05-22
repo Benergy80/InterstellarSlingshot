@@ -8338,6 +8338,63 @@ window.civilianShips = civilianShips;
 window.createAllCivilianShips = createAllCivilianShips;
 window.updateCivilianShips = updateCivilianShips;
 
+// Fast-forward every nebula fleet (civilian / mining / science / trading
+// orbital ships AND freighter caravans) to where they'd be after N
+// minutes of play, so the universe looks "lived-in" the instant the
+// game starts instead of every ship sitting at its spawn phase. Phases
+// (orbitAngle / routeProgress / caravan.progress) are advanced
+// deterministically and orbital positions snapped. Latched so it runs
+// once.
+function prewarmNebulaFleets(minutes) {
+    if (typeof window !== 'undefined') {
+        if (window._fleetsPrewarmed) return;
+        window._fleetsPrewarmed = true;
+    }
+    const frames = (minutes || 20) * 3600; // minutes × 60s × 60fps
+
+    if (typeof civilianShips !== 'undefined') {
+        for (let i = 0; i < civilianShips.length; i++) {
+            const ship = civilianShips[i];
+            const d = ship && ship.userData;
+            if (!d) continue;
+            // Orbital workers (orbit a planet/belt/anomaly/nebula center)
+            if (typeof d.orbitSpeed === 'number' && typeof d.orbitRadius === 'number') {
+                if (typeof d.orbitAngle !== 'number') d.orbitAngle = Math.random() * Math.PI * 2;
+                d.orbitAngle += d.orbitSpeed * frames;
+                const c = d.planetPosition || d.beltPosition || d.targetPosition || d.nebulaPosition;
+                if (c) {
+                    ship.position.x = c.x + Math.cos(d.orbitAngle) * d.orbitRadius;
+                    ship.position.z = c.z + Math.sin(d.orbitAngle) * d.orbitRadius;
+                }
+            }
+            // Route runners (clustered-nebula mining ships)
+            if (typeof d.routeProgress === 'number' && typeof d.routeSpeed === 'number') {
+                let p = (d.routeProgress + d.routeSpeed * frames) % 1;
+                d.routeProgress = p < 0 ? p + 1 : p;
+            }
+        }
+    }
+
+    // Freighter caravans ping-pong source↔destination; walk the travel
+    // over the elapsed time so they end up mid-route in either direction.
+    if (typeof freighterCaravans !== 'undefined') {
+        for (let i = 0; i < freighterCaravans.length; i++) {
+            const cv = freighterCaravans[i];
+            if (!cv || typeof cv.progress !== 'number') continue;
+            let p = cv.progress, dir = cv.direction || 1, travel = (cv.speed || 0.0002) * frames;
+            let guard = 0;
+            while (travel > 1e-6 && guard++ < 100000) {
+                const rem = dir > 0 ? (1 - p) : p;
+                if (travel <= rem) { p += dir * travel; travel = 0; }
+                else { travel -= rem; p = (dir > 0) ? 1 : 0; dir = -dir; }
+            }
+            cv.progress = p; cv.direction = dir;
+        }
+    }
+    console.log('🛰️ Nebula fleets pre-warmed to ~' + (minutes || 20) + ' min of play');
+}
+if (typeof window !== 'undefined') window.prewarmNebulaFleets = prewarmNebulaFleets;
+
 // =============================================================================
 // ENEMIES IN DISTANT/EXOTIC GALAXIES - Add patrols to outer regions
 // =============================================================================

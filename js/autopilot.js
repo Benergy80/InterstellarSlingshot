@@ -751,6 +751,16 @@
           Date.now() - (ap._lastJumpTap || 0) > 4000) {
         ap._lastJumpTap = Date.now();
         if (window.keys) {
+          // Longer jump the farther the target: chasing a hostile well
+          // beyond firing range, a 2s hop barely dents the gap. Scale the
+          // hold from 2s (≤500u) up to ~5s, so the demo actually closes
+          // distance instead of repeatedly micro-hopping. Player jumps
+          // are unaffected (they never set this).
+          if (typeof gameState !== 'undefined') {
+            gameState._pendingJumpMs = (dist > 500)
+              ? Math.min(5000, 2000 + (dist - 500) * 1.2)
+              : 2000;
+          }
           window.keys.wDoubleTap = true;
           setTimeout(() => { if (window.keys) window.keys.wDoubleTap = false; }, 120);
         }

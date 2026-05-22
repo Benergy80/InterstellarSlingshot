@@ -1950,7 +1950,14 @@ if (frameDistance > 0.01) { // Only track significant movement
         setTimeout(() => {
             gameState.emergencyWarp.active = true;
             gameState.emergencyWarp.transitioning = false;
-            gameState.emergencyWarp.timeRemaining = 2000; // 2 seconds — covers more ground in the 4×-scaled world (HUD label was always "2s warp")
+            // 2s default. The demo autopilot can request a longer hold
+            // (gameState._pendingJumpMs) when chasing a distant hostile so
+            // it actually closes the gap; cleared after use. Manual player
+            // jumps leave it null → the standard 2s.
+            const _jumpMs = (typeof gameState._pendingJumpMs === 'number' && gameState._pendingJumpMs > 0)
+                ? Math.min(8000, gameState._pendingJumpMs) : 2000;
+            gameState._pendingJumpMs = null;
+            gameState.emergencyWarp.timeRemaining = _jumpMs;
             gameState.velocityVector.copy(capturedForwardDirection).multiplyScalar(capturedBoostSpeed);
 
             for (let i = 0; i < 2; i++) {

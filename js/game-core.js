@@ -1047,6 +1047,11 @@ if (typeof areModelsLoaded === 'function' && areModelsLoaded()) {
         createAllCivilianShips();
         console.log('Civilian ships created throughout universe');
     }
+    // Fast-forward all nebula fleets to a ~20-min "lived-in" state so the
+    // universe isn't sitting at spawn phase when the game opens.
+    if (typeof prewarmNebulaFleets === 'function') {
+        prewarmNebulaFleets(20);
+    }
     // Load UFO model and create UFOs in exotic systems
     if (typeof loadUFOModel === 'function') {
         loadUFOModel().then(() => {
