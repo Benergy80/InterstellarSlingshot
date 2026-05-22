@@ -186,19 +186,28 @@ function orientTowardsTarget(target) {
     camera.getWorldDirection(_ortFwd);
     const angle = _ortFwd.angleTo(_ortDir);
 
-    const orientationThreshold = 0.087; // ~5 degrees
+    // Tight "aligned" threshold (~0.9°). The old 5° dead-zone made the
+    // demo jerk: it would snap to within 5° of a moving target, STOP
+    // dead, let the target drift back past 5°, then lurch to catch up —
+    // a continuous start/stop stutter. A small threshold keeps the ship
+    // tracking almost continuously instead.
+    const orientationThreshold = 0.016;
     if (angle < orientationThreshold) {
         return true;
     }
 
     _ortAxis.crossVectors(_ortFwd, _ortDir).normalize();
-    
+
     if (_ortAxis.length() < 0.001) {
         _ortAxis.set(0, 1, 0);
     }
 
-    const rotationSpeed = 0.03;
-    const maxRotationPerFrame = 0.05;
+    // Proportional turn (eases as it converges) with a higher gain so it
+    // keeps pace with moving targets instead of lagging then jerking,
+    // capped to a smooth max turn rate for large initial swings. Below
+    // ~25° the eased proportional region gives the smooth tracking.
+    const rotationSpeed = 0.12;
+    const maxRotationPerFrame = 0.055;
     const rotationAmount = Math.min(angle * rotationSpeed, maxRotationPerFrame);
 
     // Reuse a module-level quaternion to avoid per-frame allocation
