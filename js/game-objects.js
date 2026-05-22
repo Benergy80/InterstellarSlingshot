@@ -1139,6 +1139,9 @@ function checkSpeciesBossSpawn() {
     // on the first call (when all enemies are still alive) so subsequent
     // checks know the species was real.
     if (!bossSystem.speciesEverExisted) bossSystem.speciesEverExisted = {};
+    // Peak roster size per species — the basis for the "majority
+    // eliminated" trigger below.
+    if (!bossSystem.speciesTotalCount) bossSystem.speciesTotalCount = {};
 
     const groups = [
         {
@@ -1150,6 +1153,7 @@ function checkSpeciesBossSpawn() {
             // Vulcan Boss8.glb their host galaxyId would imply.
             modelGalaxyId: 0,
             factionLabel: 'Martian Pirate',
+            withGuardians: false,
             // A pirate is isMartianPirate=true AND NOT a Vulcan Patrol
             isMember: (ud) => ud.isMartianPirate && !ud.isVulcanPatrol,
             // Spawn near the Sol system's local sun (origin)
@@ -1161,6 +1165,7 @@ function checkSpeciesBossSpawn() {
             galaxyId: 7,
             modelGalaxyId: 7, // Boss8.glb — matches Vulcan Patrol Enemy8.glb
             factionLabel: 'Vulcan High Command',
+            withGuardians: true,   // elite guardians appear with the Vulcan boss
             isMember: (ud) => ud.isVulcanPatrol,
             // Spawn near Sagittarius A* (which is at origin)
             spawnPos: () => new THREE.Vector3(0, 0, 0)
@@ -1173,22 +1178,40 @@ function checkSpeciesBossSpawn() {
             e.userData && g.isMember(e.userData) &&
             !e.userData.isBoss && !e.userData.isBossSupport
         );
-        // Latch "ever existed" the first time we see any members
-        if (members.length > 0) bossSystem.speciesEverExisted[g.key] = true;
+        // Latch "ever existed" + peak roster size while members are alive.
+        if (members.length > 0) {
+            bossSystem.speciesEverExisted[g.key] = true;
+            bossSystem.speciesTotalCount[g.key] =
+                Math.max(bossSystem.speciesTotalCount[g.key] || 0, members.length);
+        }
         // If we've never seen this species, skip (truly never spawned)
         if (!bossSystem.speciesEverExisted[g.key]) return;
-        const aliveMembers = members.filter(e => e.userData.health > 0);
-        if (aliveMembers.length > 0) return; // species not yet eliminated
+
+        const total = bossSystem.speciesTotalCount[g.key] || 0;
+        const alive = members.filter(e => e.userData.health > 0).length;
+        // Boss (and, for Vulcan, the elite guardians) appear TOGETHER once
+        // a MAJORITY — 60% — of the species has been eliminated: not at
+        // the first kill, not only after the last. Killing the boss then
+        // scatters/destroys the remaining stragglers (checkBossVictory).
+        if (total <= 0 || alive > Math.ceil(total * 0.4)) return;
 
         bossSystem.speciesBossSpawned[g.key] = true;
         const areaKey = g.galaxyId + '-' + g.key + '_boss';
-        console.log('👑 ' + g.label + ' species eliminated — spawning faction boss');
+        console.log('👑 ' + g.label + ' majority eliminated — spawning boss' +
+                    (g.withGuardians ? ' + guardians' : ''));
         spawnBossForArea(g.galaxyId, g.key + '_boss', areaKey, g.spawnPos(), {
             modelGalaxyId: g.modelGalaxyId,
             factionLabel: g.factionLabel
         });
+        // Elite guardians deploy alongside the boss (Vulcan only).
+        if (g.withGuardians && typeof spawnEliteGuardian === 'function') {
+            const faction = (typeof galaxyTypes !== 'undefined' && galaxyTypes[g.galaxyId])
+                ? galaxyTypes[g.galaxyId].faction : g.factionLabel;
+            spawnEliteGuardian(g.galaxyId, faction, g.spawnPos());
+        }
         if (typeof showAchievement === 'function') {
-            showAchievement(g.label + ' Boss Incoming!', 'You\'ve provoked the leader. Prepare for combat!', true);
+            showAchievement(g.label + (g.withGuardians ? ' Boss & Guardians Incoming!' : ' Boss Incoming!'),
+                'The leadership commits to the fight — defeat the boss to scatter the rest!', true);
         }
     });
 }
@@ -1532,12 +1555,37 @@ function spawnBossSupport(galaxyId, bossPosition, supportIndex, areaKey = null, 
 // the nearest twin nebula.
 // =============================================================================
 function isSolSystemLiberated() {
+    // Galaxy-wide black-hole warping unlocks once the VULCAN boss (the
+    // Sagittarius A* set-piece) is defeated — the Martian Pirate boss is
+    // no longer required for the gate.
     if (typeof bossSystem === 'undefined' || !bossSystem.areaBosses) return false;
-    const mp = bossSystem.areaBosses['7-martianPirate_boss'];
     const vp = bossSystem.areaBosses['7-vulcanPatrol_boss'];
-    return !!(mp && mp.defeated && vp && vp.defeated);
+    return !!(vp && vp.defeated);
 }
 if (typeof window !== 'undefined') window.isSolSystemLiberated = isSolSystemLiberated;
+
+// Destroy every still-alive enemy matching `predicate` (used to scatter
+// a species when its boss dies). Skips other bosses/support. Returns the
+// count removed.
+function eliminateRemainingSpecies(predicate) {
+    if (typeof enemies === 'undefined') return 0;
+    let removed = 0;
+    for (let i = enemies.length - 1; i >= 0; i--) {
+        const e = enemies[i];
+        if (!e || !e.userData || e.userData.health <= 0) continue;
+        if (e.userData.isBoss || e.userData.isBossSupport) continue;
+        if (!predicate(e.userData)) continue;
+        e.userData.health = 0;
+        const pos = e.position;
+        if (typeof createExplosionEffect === 'function') { try { createExplosionEffect(pos); } catch (_) {} }
+        else if (typeof createFactionExplosion === 'function') { try { createFactionExplosion(pos, e.userData.galaxyId, 0.6); } catch (_) {} }
+        if (typeof scene !== 'undefined' && scene.remove) scene.remove(e);
+        enemies.splice(i, 1);
+        removed++;
+    }
+    return removed;
+}
+if (typeof window !== 'undefined') window.eliminateRemainingSpecies = eliminateRemainingSpecies;
 
 // Centre of the nearest paired/clustered ("twin") nebula to `fromPos`.
 function findNearestTwinNebulaCenter(fromPos) {
@@ -1668,8 +1716,26 @@ function checkBossVictory(defeatedEnemy) {
             bossSystem.galaxyBossDefeated[galaxyId] = true;
         }
 
-        // Defeating either local set-piece boss may complete the Sol /
-        // Sagittarius A* liberation (Martian Pirate boss + Vulcan boss).
+        // Decapitation: killing a species boss scatters/destroys its
+        // remaining rank-and-file. Detect the species from the boss's
+        // areaKey ('7-vulcanPatrol_boss' / '7-martianPirate_boss').
+        const _ak = defeatedEnemy.userData.areaKey || areaKey || '';
+        if (_ak.indexOf('vulcanPatrol') >= 0 && typeof eliminateRemainingSpecies === 'function') {
+            const n = eliminateRemainingSpecies(ud => ud.isVulcanPatrol);
+            if (typeof showAchievement === 'function') {
+                showAchievement('Vulcan High Command Routed',
+                    `Their leader is dead — ${n} remaining ship${n === 1 ? '' : 's'} scattered and destroyed.`, true);
+            }
+        } else if (_ak.indexOf('martianPirate') >= 0 && typeof eliminateRemainingSpecies === 'function') {
+            const n = eliminateRemainingSpecies(ud => ud.isMartianPirate && !ud.isVulcanPatrol);
+            if (typeof showAchievement === 'function') {
+                showAchievement('Martian Pirates Routed',
+                    `Their leader is dead — ${n} remaining raider${n === 1 ? '' : 's'} scattered and destroyed.`, true);
+            }
+        }
+
+        // Defeating the Vulcan (Sgr A*) boss liberates the system and
+        // unlocks galaxy-wide black-hole warping + the twin-nebula path.
         if (typeof maybeTriggerSolLiberation === 'function') {
             maybeTriggerSolLiberation();
         }
