@@ -1219,8 +1219,17 @@ function transitionToRandomLocation(sourceBlackHole, transitType) {
         // PHASE 4: CALCULATE SAFE POSITION
         // ==========================================================================
         
-        // Calculate safe spawn position near destination black hole
-        const warpDistance = 400 + Math.random() * 600; // Safe distance from black hole
+        // Calculate safe spawn position near destination black hole.
+        // Must land OUTSIDE the destination's event-horizon warp zone —
+        // the player re-warps within criticalDistance = max(radius*2.5,
+        // 50). Sgr A* (r=280 → 700) and the Companion Core (r=180 → 450)
+        // are big enough now that the old fixed 400-1000u landed inside,
+        // re-triggering a warp on arrival. Anchor the landing to the
+        // destination's own critical radius + a clear buffer.
+        const _destRadius = (targetBlackHole.geometry && targetBlackHole.geometry.parameters &&
+            targetBlackHole.geometry.parameters.radius) || 50;
+        const _destCritical = Math.max(_destRadius * 2.5, 50);
+        const warpDistance = _destCritical + 650 + Math.random() * 600;
         const warpAngle = Math.random() * Math.PI * 2;   // Random angle around black hole
         const warpHeight = (Math.random() - 0.5) * 200;  // Random height variation
         

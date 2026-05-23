@@ -3184,7 +3184,7 @@ try {
                             name: moonData.name,
                             type: 'moon',
                             orbitRadius: moonData.distance,
-                            orbitSpeed: 0.1 + moonIndex * 0.02,
+                            orbitSpeed: Math.max(0.04, Math.min(0.45, 0.14 * Math.pow(160 / (moonData.distance || 160), 1.3))), // inner moons orbit FASTER (Kepler-like) — was 0.1+index*0.02 which made outer moons fastest
                             orbitPhase: moonIndex * Math.PI * 0.5,
                             parentPlanet: planet,
                             mass: moonData.size * 2,
@@ -3304,7 +3304,7 @@ try {
                         name: moonData.name,
                         type: 'moon',
                         orbitRadius: moonData.distance,
-                        orbitSpeed: 0.1 + moonIndex * 0.02,
+                        orbitSpeed: Math.max(0.04, Math.min(0.45, 0.14 * Math.pow(160 / (moonData.distance || 160), 1.3))), // inner moons orbit FASTER (Kepler-like) — was 0.1+index*0.02 which made outer moons fastest
                         orbitPhase: moonIndex * Math.PI * 0.5,
                         parentPlanet: planet,
                         mass: moonData.size * 2,
