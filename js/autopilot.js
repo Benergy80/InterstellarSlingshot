@@ -2795,6 +2795,8 @@
   // We handle BOTH: click READ on the first type, and the second auto-fades.
   ap._seenPrompt = null;
   ap._seenPromptTime = 0;
+  ap._seenUnderstood = null;
+  ap._seenUnderstoodTime = 0;
   function autoReadAnyTransmission() {
     // Type 1: READ/SKIP prompt from game-controls.js deep-discovery etc.
     const prompt = document.getElementById('incomingTransmissionPrompt');
@@ -2836,6 +2838,26 @@
       setTimeout(() => {
         if (textTx) textTx.style.opacity = '0';
       }, 1500);
+    }
+
+    // Type 3: Mission Control galaxy-cleared alert ("N hostile galaxies
+    // remain") with an UNDERSTOOD button. The demo clicks it 2 s after
+    // it appears so the campaign progresses without a human.
+    const understoodBtn = document.getElementById('missionCommandUnderstood');
+    if (understoodBtn) {
+      if (ap._seenUnderstood !== understoodBtn) {
+        ap._seenUnderstood = understoodBtn;
+        ap._seenUnderstoodTime = Date.now();
+      } else if (Date.now() - ap._seenUnderstoodTime > 2000) {
+        understoodBtn.click();
+        ap._seenUnderstood = null;
+        if (typeof gameState !== 'undefined') gameState.paused = false;
+        if (typeof renderer !== 'undefined' && renderer && renderer.domElement) {
+          renderer.domElement.style.cursor = 'none';
+        }
+      }
+    } else {
+      ap._seenUnderstood = null;
     }
   }
 
