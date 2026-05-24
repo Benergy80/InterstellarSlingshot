@@ -8778,7 +8778,7 @@ function createUFOEnemy(position, systemName, index) {
         isUFO: true,
         alwaysDropMissile: true, // Always drop missile on death
         systemName: systemName,
-        hitboxSize: 80,
+        hitboxSize: 190,
         // Erratic movement parameters
         erraticPhase: Math.random() * Math.PI * 2,
         erraticSpeed: 0.02 + Math.random() * 0.03,
@@ -8789,11 +8789,25 @@ function createUFOEnemy(position, systemName, index) {
     
     ufo.visible = true;
     ufo.frustumCulled = false;
-    
+
+    // Invisible hitbox sphere so the UFO is reliably TARGETABLE. A UFO is
+    // a Group with no top-level geometry, so raycast-based targeting/lock
+    // (which other enemies satisfy via this same isHitbox child) would
+    // skip it. Sized ~95 world units regardless of the GLB/procedural
+    // scale so the reticle catches the whole saucer.
+    let _uws = new THREE.Vector3();
+    try { ufo.getWorldScale(_uws); } catch (e) { _uws.set(1, 1, 1); }
+    const _us = Math.max(0.0001, (Math.abs(_uws.x) + Math.abs(_uws.y) + Math.abs(_uws.z)) / 3);
+    const _hbMat = new THREE.MeshBasicMaterial({ visible: false });
+    const _hitbox = new THREE.Mesh(new THREE.SphereGeometry(95 / _us, 10, 8), _hbMat);
+    _hitbox.userData.isHitbox = true;
+    _hitbox.frustumCulled = false;
+    ufo.add(_hitbox);
+
     scene.add(ufo);
     enemies.push(ufo);
     ufoEnemies.push(ufo);
-    
+
     return ufo;
 }
 
