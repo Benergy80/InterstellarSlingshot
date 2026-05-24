@@ -8812,13 +8812,20 @@ function createUFOEnemy(position, systemName, index) {
 }
 
 function createUFOsInExoticSystems() {
+    // Latch so the various startup paths (and the loadUFOModel.then) can
+    // all call this without double-spawning.
+    if (typeof window !== 'undefined') {
+        if (window._exoticUFOsCreated) return;
+        window._exoticUFOsCreated = true;
+    }
     console.log('🛸 Creating UFO enemies in exotic systems...');
-    
+
     if (typeof outerInterstellarSystems === 'undefined' || outerInterstellarSystems.length === 0) {
         console.log('No outer systems found, skipping UFOs');
+        if (typeof window !== 'undefined') window._exoticUFOsCreated = false; // allow a retry once systems exist
         return;
     }
-    
+
     let ufosCreated = 0;
     
     // Add UFOs to exotic core systems only

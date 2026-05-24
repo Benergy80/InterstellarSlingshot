@@ -1223,6 +1223,14 @@ if (typeof initializeCosmicFeatures === 'function') {
 if (typeof createOuterInterstellarSystems === 'function') {
     createOuterInterstellarSystems();
     console.log('🌌 Outer interstellar systems created');
+    // Populate the exotic systems with UFOs now that the systems exist.
+    // (The earlier loadUFOModel.then path only ran in the models-already-
+    // loaded branch, so most starts never spawned exotic UFOs.) Uses the
+    // procedural saucer immediately; loadUFOModel upgrades future visuals.
+    if (typeof createUFOsInExoticSystems === 'function') {
+        createUFOsInExoticSystems();
+    }
+    if (typeof loadUFOModel === 'function') { try { loadUFOModel(); } catch (e) {} }
 }
 
 // ADD THIS RIGHT HERE:

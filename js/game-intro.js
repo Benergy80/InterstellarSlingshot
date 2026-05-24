@@ -2055,6 +2055,12 @@ function setupNormalGameContent() {
     if (typeof createOuterInterstellarSystems === 'function') {
         createOuterInterstellarSystems();
         console.log('Outer interstellar systems created');
+        // Spawn UFOs in the exotic systems (this intro path never did
+        // before, so exotic-system UFOs were absent on normal starts).
+        if (typeof createUFOsInExoticSystems === 'function') {
+            createUFOsInExoticSystems();
+        }
+        if (typeof loadUFOModel === 'function') { try { loadUFOModel(); } catch (e) {} }
     }
     
     // Create nebulas (all 3 types)
