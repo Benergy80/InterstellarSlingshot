@@ -653,9 +653,28 @@
     if (ap.enemiesKilled >= 3 && (!firstLeg || _countLocalEnemies() === 0)) {
       goPhase('warpToNebulaCluster');
     } else {
-      // Not enough kills yet and no enemies — cruise and scan
+      // Not enough kills yet and no enemy in engage range. DON'T
+      // blind-thrust forward (keys().w) — that flew the demo straight
+      // out of bounds, especially now that the tighter engage range
+      // drops us here more often. Instead steer toward something real:
+      // nearest hostile (local-only on the first leg), else a nebula,
+      // else the Sol core. flyToward brakes on arrival, and if we're
+      // already sitting on the anchor with nothing to do we coast/brake
+      // rather than fly off.
       cycleScanTarget();
-      keys().w = true;
+      let cruiseTo = firstLeg ? _nearestLocalEnemy() : nearestAliveEnemy(100000);
+      if (!cruiseTo && typeof nearestTwinNebula === 'function') cruiseTo = nearestTwinNebula();
+      if (!cruiseTo) {
+        const sol = (typeof window !== 'undefined' && window.localSystemOffset) || { x: 8000, y: 0, z: 4800 };
+        if (!ap._solDummy) ap._solDummy = { position: new THREE.Vector3(), userData: {} };
+        ap._solDummy.position.set(sol.x, sol.y, sol.z);
+        cruiseTo = ap._solDummy;
+      }
+      if (cruiseTo && cruiseTo.position && camPos().distanceTo(cruiseTo.position) > 300) {
+        flyToward(cruiseTo, 1.6);
+      } else if (gameState.velocityVector && gameState.velocityVector.length() > 0.5) {
+        keys().x = true; // arrived at anchor, nothing to do → brake, don't drift off
+      }
     }
   }
 
