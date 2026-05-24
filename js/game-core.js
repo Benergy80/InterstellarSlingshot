@@ -606,9 +606,35 @@ function toggleOrbitLines() {
             }
         });
     }
-    
+
     return orbitLinesVisible;
 }
+
+// ── MINUS WORLD ──────────────────────────────────────────────────────────
+// Wormholes drop the player into an inverted-colour "Minus World"; passing
+// through another wormhole flips back. Implemented as a CSS colour-invert
+// on the WebGL canvas only (the HUD stays readable). Black-hole warps move
+// you AROUND within whichever world you're in — only wormholes toggle it.
+function toggleMinusWorld() {
+    if (typeof gameState === 'undefined') return false;
+    gameState.minusWorld = !gameState.minusWorld;
+    if (typeof renderer !== 'undefined' && renderer && renderer.domElement) {
+        renderer.domElement.style.transition = 'filter 0.7s ease';
+        renderer.domElement.style.filter = gameState.minusWorld
+            ? 'invert(1) hue-rotate(180deg)' : '';
+    }
+    if (typeof showAchievement === 'function') {
+        if (gameState.minusWorld) {
+            showAchievement('⊟ ENTERED THE MINUS WORLD',
+                'Colours inverted. Find another wormhole to return to normal space.', true);
+        } else {
+            showAchievement('Normal Space Restored',
+                'You slipped back out of the Minus World.', true);
+        }
+    }
+    return gameState.minusWorld;
+}
+if (typeof window !== 'undefined') window.toggleMinusWorld = toggleMinusWorld;
 
 // FIXED: Helper function to create a single orbit line - NO MOON ORBITS
 function createSingleOrbitLine(planet, isLocal) {
@@ -1941,6 +1967,9 @@ if (distanceToPlayer < wormhole.userData.detectionRange && !wormhole.userData.de
                 }
                 scene.remove(wormhole);
                 wormholes.splice(index, 1);
+                // Wormholes flip you into / out of the inverted Minus World,
+                // then warp you somewhere new within it.
+                if (typeof toggleMinusWorld === 'function') toggleMinusWorld();
                 if (typeof transitionToRandomLocation === 'function') {
                     transitionToRandomLocation(wormhole.userData.name, 'wormhole');
                 }
