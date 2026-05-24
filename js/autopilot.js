@@ -470,19 +470,6 @@
       shootNearbyAsteroids();
     }
 
-    // ── Global anti-overshoot ───────────────────────────────────────────
-    // A tactical JUMP commits a high velocity for its whole duration,
-    // which (especially with the longer far-pursuit holds) could sail the
-    // demo straight past whatever it was heading for and out into empty
-    // space. The moment we're within arrival range of the current target,
-    // cut the jump so the physics auto-brake takes over.
-    if (gameState.emergencyWarp && gameState.emergencyWarp.active &&
-        gameState.emergencyWarp.isJump && gameState.currentTarget &&
-        gameState.currentTarget.position) {
-      const _td = camPos().distanceTo(gameState.currentTarget.position);
-      if (_td < 900) gameState.emergencyWarp.timeRemaining = 0;
-    }
-
     // ── Surprise black-hole warp recovery ──────────────────────────────
     // If the player gets caught by a black hole's gravity well during a
     // non-BH phase (e.g. while orbiting a nebula center near a BH, or
@@ -610,7 +597,12 @@
     }
 
     const firstLeg = (ap.warpsUsed || 0) === 0;
-    const MAX_TARGET_RANGE = 10000;
+    // Only engage genuinely-nearby hostiles. The old 10,000u reach let
+    // the demo lock a target half a system away and fly off toward it
+    // forever — THAT was the "flying into infinity", not the jump. Local
+    // pirates sit ~2.8-4.4k out, so 5,500 covers a real local fight while
+    // anything farther waits for a nebula-discovery path / warp.
+    const MAX_TARGET_RANGE = 5500;
 
     // First leg (in Sol): ALWAYS prefer local enemies (Martian Pirates +
     // Vulcan Patrols around Sagittarius A*).  Deep-space hostiles are
@@ -682,10 +674,10 @@
       return;
     }
 
-    // Abort pursuit if target gets beyond 10000u — never chase enemies
-    // that far. Re-scan via findLocalEnemies.
+    // Abort pursuit if the target runs beyond 6500u — don't chase a
+    // fleeing/distant enemy out into empty space; drop it and re-scan.
     const dist = camPos().distanceTo(enemy.position);
-    if (dist > 10000) {
+    if (dist > 6500) {
       ap.combatTarget = null;
       goPhase('findLocalEnemies');
       return;
@@ -755,35 +747,20 @@
       flyToward(enemy, 2.5);
       pursuitFlightStyle('pursuit');
 
-      // If a tactical jump is still carrying us but we've already reached
-      // the target, CUT IT SHORT so we don't blow past and sail out of
-      // bounds. Ending the jump (timeRemaining→0) triggers the physics
-      // auto-brake next tick. This is the main guard against the demo
-      // overshooting enemies/nebulae.
-      if (gameState.emergencyWarp && gameState.emergencyWarp.active &&
-          gameState.emergencyWarp.isJump &&
-          dist < Math.max(800, engageRange * 1.3)) {
-        gameState.emergencyWarp.timeRemaining = 0;
-      }
-
-      // Aggressive tactical jumps (double-tap W) to close BIG gaps fast.
-      // Only when genuinely far (>1200u) so close-range "finish him" work
-      // is done by normal thrust+brake, not a jump that overshoots. A
-      // jump while already near the target was what flung the demo past
-      // enemies and out of bounds. 4s cooldown, 15 energy minimum, and
-      // not while a jump/warp is already active.
+      // Tactical jumps (double-tap W) to close the gap fast — this is the
+      // good-looking part of the pursuit, so let it run its full hold
+      // (no early abort). Generous distance-scaled duration; the natural
+      // jump end + the overshoot-brake below settle it onto the target.
+      // 4s cooldown, 15 energy minimum, not while a jump/warp is active.
       const _warpBusy = gameState.emergencyWarp &&
           (gameState.emergencyWarp.active || gameState.emergencyWarp.transitioning);
-      if (dist > 1200 && dist < 6000 && speed < 4 && !_warpBusy &&
+      if (dist > 500 && speed < 4 && !_warpBusy &&
           gameState.energy > 15 &&
           Date.now() - (ap._lastJumpTap || 0) > 4000) {
         ap._lastJumpTap = Date.now();
         if (window.keys) {
-          // Scale the hold with distance but stay conservative so the
-          // jump closes most of the gap without sailing past — the
-          // close-range abort above mops up any remaining overshoot.
           if (typeof gameState !== 'undefined') {
-            gameState._pendingJumpMs = Math.min(3800, 2000 + (dist - 1200) * 0.6);
+            gameState._pendingJumpMs = Math.min(5000, 2000 + (dist - 500) * 1.0);
           }
           window.keys.wDoubleTap = true;
           setTimeout(() => { if (window.keys) window.keys.wDoubleTap = false; }, 120);
