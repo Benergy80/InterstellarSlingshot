@@ -536,11 +536,13 @@ function createOrbitLines() {
         const orbitRadius = planet.userData.orbitRadius;
         const systemCenter = planet.userData.systemCenter;
         
-        // Create orbit geometry - simpler approach
+        // Create orbit geometry - segment count scales with radius so
+        // big orbits (Neptune ~19k) read as smooth circles instead of
+        // visible polygons, without over-tessellating tiny moon orbits.
         const orbitGeometry = new THREE.RingGeometry(
             orbitRadius - 2, // Inner radius
             orbitRadius + 2, // Outer radius
-            32 // Segments
+            Math.min(220, Math.max(64, Math.round(orbitRadius / 40))) // Segments (radius-scaled)
         );
         
         // Determine color based on galaxy type
@@ -629,7 +631,7 @@ function createSingleOrbitLine(planet, isLocal) {
         const orbitGeometry = new THREE.RingGeometry(
             orbitRadius - baseThickness, // Inner radius
             orbitRadius + baseThickness, // Outer radius
-            isLocal ? 64 : 32 // More segments for local orbits
+            Math.min(220, Math.max(64, Math.round(orbitRadius / 40))) // Segments scale with radius for smooth large rings
         );
         
         // FIXED: Better color coding for distant galaxies
