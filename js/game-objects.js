@@ -459,7 +459,7 @@ function getGalaxyMapPosition(galaxyId) {
 function generateSphericalGalaxyPositions() {
     const galaxySphericalPositions = [];
     const minRadius = 25000; // Minimum distance from Sagittarius A*
-    const maxRadius = 45000; // Maximum distance for outer galaxies
+    const maxRadius = 75000; // Maximum distance for outer galaxies
     
     galaxyTypes.forEach((galaxyType, index) => {
         // Skip local galaxy (index 7) - it's at the center with Sagittarius A*
@@ -502,7 +502,7 @@ function generateSphericalGalaxyPositions() {
 function generateSphericalNebulaPositions(clusterCount = 3) {
     const nebulaClusterPositions = [];
     const minRadius = 20000; // Pushed further from twin cores for performance
-    const maxRadius = 35000;
+    const maxRadius = 45000;
     
     for (let i = 0; i < clusterCount; i++) {
         const radius = minRadius + Math.random() * (maxRadius - minRadius);
@@ -3061,11 +3061,12 @@ try {
     ];
     
     additionalSystems.forEach((systemData, sysIndex) => {
-        // ✅ FIXED: Random Y positioning between 500-2000 units above or below solar plane
-        const randomYOffset = (Math.random() > 0.5 ? 1 : -1) * (500 + Math.random() * 1500); // ±500 to ±2000
-        
-        // ✅ FIXED: Random Z positioning between -2000 and +2000 units
-        const randomZOffset = (Math.random() - 0.5) * 4000; // -2000 to +2000
+        // Sit ABOVE the Sol plane — the opposite side from the Dune
+        // gateway systems (which live ~32k BELOW). +1000 to +4000 on Y.
+        const randomYOffset = 1000 + Math.random() * 3000; // +1000 to +4000 (always above)
+
+        // Z spread ±4000.
+        const randomZOffset = (Math.random() - 0.5) * 8000; // -4000 to +4000
         
         // Keep X positioning varied but more controlled
         const baseXOffsets = [-1200, 1400, -800];
@@ -10623,59 +10624,88 @@ function updateAmbientSpaceDebris() {
 function createEnhancedComets() {
     const cometCount = 25;
     for (let i = 0; i < cometCount; i++) {
-        const cometGeometry = new THREE.SphereGeometry(0.8 + Math.random() * 1.5, 8, 8); // Size remains the same
+        const headR = 0.8 + Math.random() * 1.5;
+        // Bright white-pink nucleus.
+        const cometGeometry = new THREE.SphereGeometry(headR, 10, 10);
         const cometMaterial = new THREE.MeshBasicMaterial({
-            color: new THREE.Color().setHSL(0.6 + Math.random() * 0.2, 0.8, 0.7),
+            color: 0xfff0f5,
             transparent: true,
-            opacity: 0.9
+            opacity: 0.97
         });
-        
+
         const comet = new THREE.Mesh(cometGeometry, cometMaterial);
-        
-        // FIXED: Prevent frustum culling for comets
         comet.visible = true;
         comet.frustumCulled = false;
-        
-        // Doubled scale for positioning
+
         comet.position.set(
-            (Math.random() - 0.5) * 36000, // Doubled
-            (Math.random() - 0.5) * 2400, // Doubled
-            (Math.random() - 0.5) * 36000 // Doubled
+            (Math.random() - 0.5) * 36000,
+            (Math.random() - 0.5) * 2400,
+            (Math.random() - 0.5) * 36000
         );
-        
+
         const velocity = new THREE.Vector3(
-            (Math.random() - 0.5) * 6, // Doubled
-            (Math.random() - 0.5) * 1.6, // Doubled
-            (Math.random() - 0.5) * 6 // Doubled
+            (Math.random() - 0.5) * 6,
+            (Math.random() - 0.5) * 1.6,
+            (Math.random() - 0.5) * 6
         );
-        
-        // Enhanced comet tail (doubled scale)
+
+        // Soft glowing coma around the head — additive radial sprite,
+        // pink-white, so the nucleus blooms like the reference photo.
+        if (typeof _starCoronaTexture === 'function') {
+            const comaMat = new THREE.SpriteMaterial({
+                map: _starCoronaTexture(0xff9ec8),
+                color: 0xffffff, transparent: true,
+                blending: THREE.AdditiveBlending, depthWrite: false
+            });
+            const coma = new THREE.Sprite(comaMat);
+            const cs = headR * 11;
+            coma.scale.set(cs, cs, 1);
+            coma.frustumCulled = false;
+            comet.add(coma);
+        }
+
+        // Long FANNED dust tail: vertex-coloured white→pink→peach with
+        // the spread widening toward the tail and brightness fading out,
+        // streaming opposite the velocity (like a real dust tail).
+        const TAIL_N = 140;
         const tailGeometry = new THREE.BufferGeometry();
         const tailVertices = [];
-        for (let j = 0; j < 50; j++) {
-            const offset = j * 1.0; // Doubled
+        const tailColors = [];
+        const dir = velocity.clone().normalize();
+        // Two perpendicular axes to fan the tail into a sheet.
+        const up = Math.abs(dir.y) > 0.9 ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 1, 0);
+        const perpA = new THREE.Vector3().crossVectors(dir, up).normalize();
+        const perpB = new THREE.Vector3().crossVectors(dir, perpA).normalize();
+        for (let j = 0; j < TAIL_N; j++) {
+            const t = j / TAIL_N;                 // 0 head → 1 tail tip
+            const offset = j * 1.6;               // length along the tail
+            const spread = 1.5 + t * 26;          // fans out toward the tip
+            const sa = (Math.random() - 0.5) * spread;
+            const sb = (Math.random() - 0.5) * spread * 0.5; // flatter sheet
             tailVertices.push(
-                -velocity.x * offset + (Math.random() - 0.5) * 4, // Doubled
-                -velocity.y * offset + (Math.random() - 0.5) * 4, // Doubled
-                -velocity.z * offset + (Math.random() - 0.5) * 4 // Doubled
+                -dir.x * offset + perpA.x * sa + perpB.x * sb,
+                -dir.y * offset + perpA.y * sa + perpB.y * sb,
+                -dir.z * offset + perpA.z * sa + perpB.z * sb
             );
+            // White at the head → pink → peach, dimming toward the tip.
+            const b = Math.max(0, 1 - t * 0.9);
+            tailColors.push(b * 1.0, b * (0.8 - t * 0.2), b * (0.92 - t * 0.45));
         }
         tailGeometry.setAttribute('position', new THREE.Float32BufferAttribute(tailVertices, 3));
+        tailGeometry.setAttribute('color', new THREE.Float32BufferAttribute(tailColors, 3));
         const tailMaterial = new THREE.PointsMaterial({
-    color: 0xaaccff,
-    size: 1.2,
-    transparent: true,
-    opacity: 0.6, // Increased from 0.4
-    vertexColors: false,
-    blending: THREE.AdditiveBlending,
-    sizeAttenuation: true
+            size: 2.4,
+            transparent: true,
+            opacity: 0.85,
+            vertexColors: true,
+            blending: THREE.AdditiveBlending,
+            sizeAttenuation: true,
+            depthWrite: false
         });
         const tail = new THREE.Points(tailGeometry, tailMaterial);
-        
-        // FIXED: Prevent frustum culling for comet tail
         tail.visible = true;
         tail.frustumCulled = false;
-        
+
         comet.add(tail);
         
         comet.userData = {
@@ -12218,7 +12248,7 @@ if (typeof window !== "undefined") window.isBossBattleActive = isBossBattleActiv
 function createBossBattleSkybox() {
     console.log("Creating boss battle skybox...");
 
-    const geometry = new THREE.SphereGeometry(90000, 64, 64);
+    const geometry = new THREE.SphereGeometry(135000, 64, 64);
     const material = new THREE.MeshBasicMaterial({
         color: 0xdd2222,  // Vivid crimson — old 0x8b0000 (R=139) read muted
         side: THREE.BackSide,
@@ -12243,6 +12273,16 @@ function createBossBattleSkybox() {
 // Update boss skybox opacity with heartbeat effect
 function updateBossSkyboxHeartbeat() {
     if (!bossSkybox || typeof bossSystem === "undefined") return;
+
+    // Keep the dome CENTERED ON THE PLAYER so it always envelops them.
+    // It used to sit at the world origin (radius 90k), so during boss
+    // fights far from origin (distant galaxies out to 75k, the gateway at
+    // −32k, etc.) the player was near/outside its edge and the blood-red
+    // never showed. Following the camera (radius now 135k) guarantees it
+    // surrounds the player wherever the fight happens.
+    if (typeof camera !== 'undefined' && camera) {
+        bossSkybox.position.copy(camera.position);
+    }
 
     // Boss OR elite/black-hole guardian — not just bossSystem.activeBoss
     // (which only tracks regular bosses, never elite guardians).
