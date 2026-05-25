@@ -8286,7 +8286,13 @@ function updateAllyShips() {
                          (ud.colorNum) ? ud.colorNum : 0x88aaff;
             _ensureShipThrusterCones(ally, wcol);
             const vmag = ud.velocity ? ud.velocity.length() : 0;
-            _updateShipThrusterCones(ally, vmag > 0.08);
+            const prevSpeed = (typeof ud._prevConeSpeed === 'number') ? ud._prevConeSpeed : vmag;
+            // Fire when speeding up (accelerating) or warping; the cone has its
+            // own smooth fade so brief frames between accel pulses stay lit.
+            const accelerating = vmag > prevSpeed + 0.0006;
+            const underPower = vmag > 0.4;
+            _updateShipThrusterCones(ally, ud._wasWarping || accelerating || underPower);
+            ud._prevConeSpeed = vmag;
         }
 
         // ── FTL anchor: warp ended this frame and a wingman in follow

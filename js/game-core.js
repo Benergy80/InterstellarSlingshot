@@ -1435,9 +1435,11 @@ function animate() {
         updateActiveLasers();
     }
     
-    // Update thruster glow based on W key (forward thrust)
+    // Update thruster glow when accelerating (forward thrust, boost, auto-nav, or warp/jump)
     if (typeof updateThrusterGlow === 'function' && typeof keys !== 'undefined') {
-        const isThrusting = (keys.w || gameState.autoNavigating) && gameState.energy > 0;
+        const _boosting = keys.w || keys.b;
+        const _warping = gameState.emergencyWarp && (gameState.emergencyWarp.active || gameState.emergencyWarp.transitioning || (gameState.emergencyWarp.timeRemaining > 0));
+        const isThrusting = (_boosting || gameState.autoNavigating || _warping) && gameState.energy > 0;
         updateThrusterGlow(isThrusting);
     }
 
