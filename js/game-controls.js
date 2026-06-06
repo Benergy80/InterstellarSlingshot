@@ -4524,12 +4524,25 @@ function _ensureEnemyShield(enemy) {
             mb.copy(node.geometry.boundingBox).applyMatrix4(node.matrixWorld);
             box.union(mb); any = true;
         });
+        // Bubble hugs the hull for normal fighters (0.31); bosses,
+        // boss-support, elite + black-hole guardians keep the larger
+        // bubble (0.62) so their bigger silhouette reads correctly.
+        const _ud0 = enemy.userData || {};
+        const _bigShield = _ud0.isBoss || _ud0.isBossSupport ||
+                           _ud0.isEliteGuardian || _ud0.isBlackHoleGuardian;
         if (any && isFinite(box.min.x) && box.max.x > box.min.x) {
             const sz = box.getSize(new THREE.Vector3());
-            worldR = Math.max(sz.x, sz.y, sz.z) * 0.62;
+            worldR = Math.max(sz.x, sz.y, sz.z) * (_bigShield ? 0.62 : 0.31);
         }
     } catch (e) {}
-    worldR = Math.max(45, Math.min(worldR, 280));
+    {
+        const _ud1 = enemy.userData || {};
+        const _bigShield = _ud1.isBoss || _ud1.isBossSupport ||
+                           _ud1.isEliteGuardian || _ud1.isBlackHoleGuardian;
+        const minR = _bigShield ? 45 : 22;
+        const maxR = _bigShield ? 320 : 140;
+        worldR = Math.max(minR, Math.min(worldR, maxR));
+    }
 
     const ws = new THREE.Vector3();
     try { enemy.getWorldScale(ws); } catch (e) { ws.set(1, 1, 1); }
@@ -9013,7 +9026,7 @@ function _updateAllyShield(ally, active) {
     }
     if (!ally.userData.shieldMesh) {
         const color = ally.userData.name === 'Wingman Alpha' ? 0x00ff88 : 0x88aaff;
-        const geo = new THREE.SphereGeometry(60, 16, 12);
+        const geo = new THREE.SphereGeometry(30, 16, 12);
         const mat = new THREE.MeshBasicMaterial({
             color: color, transparent: true, opacity: 0.18,
             blending: THREE.AdditiveBlending, side: THREE.DoubleSide,

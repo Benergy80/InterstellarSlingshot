@@ -117,8 +117,10 @@ function generateHexagonGrid() {
             const depthFactor = 1 - (normalizedDist * 0.5); // 0.5 to 1.0
             const curvature = Math.pow(depthFactor, 3); // Exponential falloff for sphere effect
             
-            // Base opacity decreases towards edges
-            const baseOpacity = 0.4 * curvature;
+            // Base opacity decreases towards edges. Bumped from 0.4 ->
+            // 0.7 so the first-person hex overlay reads as the more
+            // opaque shield it was in earlier builds.
+            const baseOpacity = 0.7 * curvature;
             
             shieldSystem.hexagons.push({
                 x: x,
