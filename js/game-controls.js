@@ -4594,8 +4594,10 @@ function _enemyShieldAbsorbHit(enemy, isMissile) {
     if (!ud || !ud.shieldActive || ud.shieldBroken || !ud._shieldMesh) return false;
     ud.shieldHits = (ud.shieldHits || 0) + 1;
     const breakNow = isMissile || ud.shieldHits >= 2;
-    // Red flash on every shield hit.
-    ud._shieldFlashUntil = Date.now() + 170;
+    // Red flash on every shield hit (matches the hit-flash window
+    // used by flashEnemyHit so a shield-then-hull combo doesn't
+    // visually flicker between two flash lengths).
+    ud._shieldFlashUntil = Date.now() + 350;
     ud._shieldMesh.material.color.setHex(0xff2200);
     ud._shieldMesh.material.opacity = 0.6;
     if (typeof playSound === 'function') playSound('weapon');
@@ -4726,9 +4728,10 @@ function flashEnemyHit(enemy, damage = 1) {
     // The per-frame _setEnemyShieldEngaged / _updateAllyShield pickers
     // honour _shieldFlashUntil and lazy-create the bubble mesh if
     // needed, then fade it back out when the window expires. Matches
-    // the player's first-person hex-shield reaction.
+    // the player's first-person hex-shield reaction. ~350ms window so
+    // the flash actually reads across the spark + screen-shake noise.
     if (enemy.userData && enemy.userData.health > 0) {
-        enemy.userData._shieldFlashUntil = Date.now() + 170;
+        enemy.userData._shieldFlashUntil = Date.now() + 350;
     }
 
     // Impact sparks — fire for EVERY surviving hit, regardless of
