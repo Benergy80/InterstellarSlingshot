@@ -189,8 +189,19 @@ function initializeThreeJSForIntro() {
     // Store camera reference for player model attachment
     window.gameCamera = camera;
 
-    renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+    if (typeof window.__isMobileGPU === 'undefined') {
+        window.__isMobileGPU = (window.innerWidth <= 768) ||
+            ('ontouchstart' in window) ||
+            (navigator.maxTouchPoints > 0) ||
+            /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent || '');
+    }
+    renderer = new THREE.WebGLRenderer({
+        antialias: !window.__isMobileGPU,
+        preserveDrawingBuffer: false,
+        powerPreference: 'high-performance'
+    });
     renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, window.__isMobileGPU ? 1 : 2));
 
     // Keep background black - no automatic fade
     renderer.setClearColor(0x000000);
@@ -290,8 +301,19 @@ function initializeMinimalThreeJS() {
     // Store camera reference for player model attachment
     window.gameCamera = camera;
 
-    renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+    if (typeof window.__isMobileGPU === 'undefined') {
+        window.__isMobileGPU = (window.innerWidth <= 768) ||
+            ('ontouchstart' in window) ||
+            (navigator.maxTouchPoints > 0) ||
+            /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent || '');
+    }
+    renderer = new THREE.WebGLRenderer({
+        antialias: !window.__isMobileGPU,
+        preserveDrawingBuffer: false,
+        powerPreference: 'high-performance'
+    });
     renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, window.__isMobileGPU ? 1 : 2));
     renderer.setClearColor(0x000003); // dark blue not black
     
     const gameContainer = document.getElementById('gameContainer');
@@ -2033,6 +2055,12 @@ function setupNormalGameContent() {
     if (typeof createOuterInterstellarSystems === 'function') {
         createOuterInterstellarSystems();
         console.log('Outer interstellar systems created');
+        // Spawn UFOs in the exotic systems (this intro path never did
+        // before, so exotic-system UFOs were absent on normal starts).
+        if (typeof createUFOsInExoticSystems === 'function') {
+            createUFOsInExoticSystems();
+        }
+        if (typeof loadUFOModel === 'function') { try { loadUFOModel(); } catch (e) {} }
     }
     
     // Create nebulas (all 3 types)
@@ -2144,6 +2172,11 @@ function setupNormalGameContent() {
         if (!gameState.velocityVector) {
             gameState.velocityVector = new THREE.Vector3(0, 0, 0);
         }
+        // The intro set location to "Earth Surface - Launch Pad" for
+        // the countdown. By the time we're here the player is in orbit
+        // around Earth in the local Sol system — update the string so
+        // the SHIP STATUS panel doesn't lie about it.
+        gameState.location = 'Sol System — Sagittarius A Galaxy';
     }
 
 
@@ -2201,7 +2234,8 @@ function fadeCountdownTextForGameTransition() {
 function resetCameraToGamePosition() {
     // Position the player near Earth, looking at it, with an orbital
     // velocity so the game opens with a slow orbit around the home planet.
-    const localSystemOffset = { x: 2000, y: 0, z: 1200 };
+    const localSystemOffset = { x: 8000, y: 0, z: 4800 }; // 4x further from Sgr A* (origin) — keep in sync with game-objects.js
+    if (typeof window !== 'undefined' && !window.localSystemOffset) window.localSystemOffset = localSystemOffset;
     const earthDistance = 640;    // Earth's orbit radius from sun (4x scaled)
     const earthOrbitOffset = 80;  // camera offset from Earth for a close fly-by
     // Earth starts at (sun.x + 640, sun.y, sun.z). Place camera just
@@ -2210,7 +2244,11 @@ function resetCameraToGamePosition() {
     const earthY = localSystemOffset.y;
     const earthZ = localSystemOffset.z;
     camera.position.set(earthX + earthOrbitOffset, earthY + 120, earthZ + earthOrbitOffset);
-    camera.lookAt(new THREE.Vector3(earthX, earthY, earthZ));
+    // Open the game facing Sagittarius A* (galactic center at the origin)
+    // so the player's first view is the heart of the Milky Way — Earth
+    // and Sol still sit just behind/below the camera and are easy to
+    // pivot back to. Looks more cinematic than staring at our home world.
+    camera.lookAt(new THREE.Vector3(0, 0, 0));
 
     // Reset camera rotation tracking
     if (typeof cameraRotation !== 'undefined') {
@@ -2230,23 +2268,18 @@ function resetCameraToGamePosition() {
         gameState.velocityVector = orbitalDir.multiplyScalar(gameState.minVelocity || 0.2);
     }
 
-    // Lock the Navigation panel on Earth so the player's first target
-    // is their home world, and auto-engage Auto-Navigate so the game
-    // teaches the targeting system from the start.
-    if (typeof gameState !== 'undefined' && typeof planets !== 'undefined') {
-        for (let i = 0; i < planets.length; i++) {
-            if (planets[i].userData && planets[i].userData.name === 'Earth') {
-                gameState.currentTarget = planets[i];
-                gameState.autoNavigating = true;
-                gameState.autoNavOrienting = true;
-                if (typeof populateTargets === 'function') populateTargets();
-                if (typeof updateUI === 'function') updateUI();
-                break;
-            }
-        }
+    // Start the player with an empty Navigation target so they make
+    // their own first targeting choice rather than auto-flying back to
+    // Earth. Just refresh the target list so the panel is ready.
+    if (typeof gameState !== 'undefined') {
+        gameState.currentTarget = null;
+        gameState.autoNavigating = false;
+        gameState.autoNavOrienting = false;
+        if (typeof populateTargets === 'function') populateTargets();
+        if (typeof updateUI === 'function') updateUI();
     }
 
-    console.log('📍 Camera set to orbit Earth in Sol System with Auto-Nav engaged');
+    console.log('📍 Camera set to orbit Earth in Sol System (no auto-nav target)');
 }
 
 function fadeOutIntroElements(progress) {

@@ -459,7 +459,7 @@ function getGalaxyMapPosition(galaxyId) {
 function generateSphericalGalaxyPositions() {
     const galaxySphericalPositions = [];
     const minRadius = 25000; // Minimum distance from Sagittarius A*
-    const maxRadius = 45000; // Maximum distance for outer galaxies
+    const maxRadius = 75000; // Maximum distance for outer galaxies
     
     galaxyTypes.forEach((galaxyType, index) => {
         // Skip local galaxy (index 7) - it's at the center with Sagittarius A*
@@ -502,7 +502,7 @@ function generateSphericalGalaxyPositions() {
 function generateSphericalNebulaPositions(clusterCount = 3) {
     const nebulaClusterPositions = [];
     const minRadius = 20000; // Pushed further from twin cores for performance
-    const maxRadius = 35000;
+    const maxRadius = 45000;
     
     for (let i = 0; i < clusterCount; i++) {
         const radius = minRadius + Math.random() * (maxRadius - minRadius);
@@ -737,53 +737,108 @@ function updateClusterStatus(deadEnemy) {
     });
 }
 
+// True if a boss / elite guardian / BH guardian has EVER been spawned
+// for this galaxy (so we don't fire the "neutralized" banner before
+// the boss phase has even started).
+function _galaxyBossSpawned(galaxyId) {
+    if (typeof bossSystem === 'undefined') return false;
+    if (bossSystem.galaxyBossSpawned && bossSystem.galaxyBossSpawned[galaxyId]) return true;
+    if (bossSystem.areaBosses) {
+        for (const k in bossSystem.areaBosses) {
+            if (k.indexOf(galaxyId + '-') === 0) return true;
+        }
+    }
+    const fac = (typeof galaxyTypes !== 'undefined' && galaxyTypes[galaxyId])
+        ? galaxyTypes[galaxyId].faction : null;
+    if (fac && bossSystem.eliteGuardians && bossSystem.eliteGuardians[fac] &&
+        bossSystem.eliteGuardians[fac].spawned) return true;
+    return false;
+}
+
+// True while ANY boss / elite guardian / BH guardian for this galaxy
+// is still alive.
+function _galaxyBossAlive(galaxyId) {
+    if (typeof enemies === 'undefined') return false;
+    return enemies.some(e => e && e.userData && e.userData.health > 0 &&
+        e.userData.galaxyId === galaxyId &&
+        (e.userData.isBoss || e.userData.isEliteGuardian || e.userData.isBlackHoleGuardian));
+}
+
+// Emit any deferred "FORCES NEUTRALIZED" banners whose galaxy now has
+// its boss spawned AND fully defeated. Called from checkBossVictory.
+function flushFactionClearedMessages() {
+    if (!nebulaIntelSystem.pendingCleared) return;
+    if (!nebulaIntelSystem.clearedAnnounced) nebulaIntelSystem.clearedAnnounced = {};
+    Object.keys(nebulaIntelSystem.pendingCleared).forEach(gidStr => {
+        const gid = parseInt(gidStr, 10);
+        if (_galaxyBossSpawned(gid) && !_galaxyBossAlive(gid)) {
+            const p = nebulaIntelSystem.pendingCleared[gid];
+            delete nebulaIntelSystem.pendingCleared[gid];
+            nebulaIntelSystem.clearedAnnounced[gid] = true;
+            showFactionClearedMission(p.faction, p.nebulaName, p.galaxyId);
+        }
+    });
+}
+if (typeof window !== 'undefined') window.flushFactionClearedMessages = flushFactionClearedMessages;
+
 // Check if all enemies of a faction are cleared in an area
 function checkFactionCleared(galaxyId) {
     const factionClusters = nebulaIntelSystem.enemyClusters.filter(c => c.galaxyId === galaxyId);
     const allCleared = factionClusters.every(c => c.defeated);
-    
+
     if (allCleared && factionClusters.length > 0) {
         const faction = galaxyTypes[galaxyId];
-        
+
         // Find nearest nebula tracking this faction
-        const trackingNebula = nebulaClouds.find(n => 
+        const trackingNebula = nebulaClouds.find(n =>
             n && n.userData && n.userData.assignedFaction === galaxyId
         );
-        
+
         const nebulaName = trackingNebula ? trackingNebula.userData.name : 'nearest nebula';
-        
-        // Show Mission Command
-        showFactionClearedMission(faction, nebulaName, galaxyId);
+
+        if (!nebulaIntelSystem.pendingCleared) nebulaIntelSystem.pendingCleared = {};
+        if (!nebulaIntelSystem.clearedAnnounced) nebulaIntelSystem.clearedAnnounced = {};
+
+        // DEFER the "FORCES NEUTRALIZED" banner. Clearing the regular
+        // cluster enemies is what makes the boss spawn — the sector is
+        // NOT actually neutralized until that boss (and any elite / BH
+        // guardian) is dead. Stash it and let flushFactionClearedMessages
+        // emit it once the boss phase is truly over. The intel line +
+        // boss-spawn trigger still fire now so the boss appears.
+        if (!nebulaIntelSystem.pendingCleared[galaxyId] &&
+            !nebulaIntelSystem.clearedAnnounced[galaxyId]) {
+            nebulaIntelSystem.pendingCleared[galaxyId] = { faction, nebulaName, galaxyId };
+            console.log(`🎖️ ${faction.faction} clusters cleared — banner deferred until boss defeated`);
+            if (typeof createGalaxyToNebulaLine === 'function') {
+                createGalaxyToNebulaLine(galaxyId);
+            }
+            if (typeof checkAndSpawnAreaBosses === 'function') {
+                setTimeout(() => checkAndSpawnAreaBosses(), 5000);
+            }
+        }
+        // Edge case: boss already came and went — flush immediately.
+        flushFactionClearedMessages();
     }
 }
 
-// Show Mission Command when faction is cleared in an area
+// Show Mission Command when a faction's sector is TRULY cleared (every
+// regular cluster + the boss + any elite / BH guardian dead). The line
+// + boss spawn are handled earlier in checkFactionCleared's deferred
+// path, so this function is now purely the victory banner.
 function showFactionClearedMission(faction, nebulaName, galaxyId) {
-    console.log(`🎖️ ${faction.faction} forces cleared! Directing to ${nebulaName}`);
-    
-    // Create line from galaxy black hole to tracking nebula
-    createGalaxyToNebulaLine(galaxyId);
-    
-    // Use the existing mission command alert system
+    console.log(`🎖️ ${faction.faction} sector fully neutralized (boss down)! Directing to ${nebulaName}`);
+
     if (typeof showMissionCommandAlert === 'function') {
         const title = `${faction.faction.toUpperCase()} FORCES NEUTRALIZED`;
-        const message = `Congratulations, Captain! All ${faction.faction} hostiles have been eliminated in this sector.\n\n` +
-            `Navigate to ${nebulaName} for intel on remaining hostile activity.\n\n` +
-            `The flagship commander will arrive soon to reclaim this territory. Prepare for heavy resistance.`;
-        
+        const message = `Outstanding, Captain! The ${faction.faction} fleet AND their flagship commander have been destroyed in this sector.\n\n` +
+            `Navigate to ${nebulaName} for intel on remaining hostile activity across the galaxy.`;
+
         showMissionCommandAlert(title, message, faction.color);
     } else if (typeof showAchievement === 'function') {
         showAchievement(
-            `🎖️ ${faction.faction} CLEARED`,
-            `Seek ${nebulaName} for intel on remaining hostiles`
+            `🎖️ ${faction.faction} SECTOR CLEARED`,
+            `Flagship down. Seek ${nebulaName} for intel on remaining hostiles`
         );
-    }
-    
-    // Now trigger boss spawn check
-    if (typeof checkAndSpawnAreaBosses === 'function') {
-        setTimeout(() => {
-            checkAndSpawnAreaBosses();
-        }, 5000); // Delay boss spawn by 5 seconds for dramatic effect
     }
 }
 
@@ -1013,32 +1068,55 @@ function isEnemyInLocalGalaxy(enemy) {
 function checkAndSpawnAreaBosses() {
     if (typeof enemies === 'undefined' || typeof scene === 'undefined') return;
 
-    // Track all enemy areas (combinations of galaxyId and placementType)
-    const areaEnemyCounts = {};
+    // Persistent set of areas that have EVER had hostiles. Without
+    // this, a fully-cleared area simply vanishes from the per-frame
+    // count map, so the old code (which only iterated areas with >=1
+    // living enemy) could never detect "area now empty" and never
+    // spawned the boss. We only track the meaningful combat zones —
+    // black_hole and cosmic_feature — so clearing scattered 'random'
+    // filler doesn't spam bosses.
+    if (!bossSystem.knownAreas) bossSystem.knownAreas = {};
 
-    // Count enemies by area
+    const areaEnemyCounts = {};
     enemies.forEach(enemy => {
         if (!enemy.userData || enemy.userData.health <= 0) return;
         if (enemy.userData.isBoss || enemy.userData.isBossSupport || enemy.userData.isEliteGuardian) return;
 
         const galaxyId = enemy.userData.galaxyId;
         const placementType = enemy.userData.placementType || 'random';
+        if (placementType !== 'black_hole' && placementType !== 'cosmic_feature') return;
         const areaKey = `${galaxyId}-${placementType}`;
 
         areaEnemyCounts[areaKey] = (areaEnemyCounts[areaKey] || 0) + 1;
+        // Remember this area existed (and how many it started with —
+        // require at least 3 so a single straggler doesn't count as
+        // a "zone" whose boss should spawn).
+        if (!bossSystem.knownAreas[areaKey]) {
+            bossSystem.knownAreas[areaKey] = { peak: 0 };
+        }
+        bossSystem.knownAreas[areaKey].peak = Math.max(
+            bossSystem.knownAreas[areaKey].peak, areaEnemyCounts[areaKey]);
     });
 
-    // Check each area - spawn boss if area is cleared
-    Object.keys(areaEnemyCounts).forEach(areaKey => {
-        const count = areaEnemyCounts[areaKey];
-
-        // Check if this area's boss has already been spawned/defeated
-        if (bossSystem.areaBosses[areaKey]) return;
-
-        // Spawn boss when all enemies in area are cleared
-        if (count <= bossSystem.bossThreshold) {
-            const [galaxyId, placementType] = areaKey.split('-');
-            spawnBossForArea(parseInt(galaxyId), placementType, areaKey);
+    // For every area that has ever held a real cluster, spawn its boss
+    // the moment the live count drops to zero.
+    Object.keys(bossSystem.knownAreas).forEach(areaKey => {
+        if (bossSystem.areaBosses[areaKey]) return;        // boss already handled
+        if (bossSystem.knownAreas[areaKey].peak < 3) return; // never a real cluster
+        const liveCount = areaEnemyCounts[areaKey] || 0;
+        if (liveCount <= bossSystem.bossThreshold) {
+            const sep = areaKey.indexOf('-');
+            const galaxyId = parseInt(areaKey.slice(0, sep), 10);
+            const placementType = areaKey.slice(sep + 1);
+            console.log(`👑 Area ${areaKey} cleared — spawning area boss`);
+            spawnBossForArea(galaxyId, placementType, areaKey);
+            if (typeof showAchievement === 'function') {
+                const gname = (typeof galaxyTypes !== 'undefined' && galaxyTypes[galaxyId])
+                    ? galaxyTypes[galaxyId].name : ('Galaxy ' + galaxyId);
+                const where = placementType === 'black_hole'
+                    ? (gname + ' black hole') : (gname + ' patrol zone');
+                showAchievement('Boss Incoming!', 'Hostiles cleared at the ' + where + ' — boss warping in!', true);
+            }
         }
     });
 }
@@ -1061,6 +1139,9 @@ function checkSpeciesBossSpawn() {
     // on the first call (when all enemies are still alive) so subsequent
     // checks know the species was real.
     if (!bossSystem.speciesEverExisted) bossSystem.speciesEverExisted = {};
+    // Peak roster size per species — the basis for the "majority
+    // eliminated" trigger below.
+    if (!bossSystem.speciesTotalCount) bossSystem.speciesTotalCount = {};
 
     const groups = [
         {
@@ -1072,6 +1153,7 @@ function checkSpeciesBossSpawn() {
             // Vulcan Boss8.glb their host galaxyId would imply.
             modelGalaxyId: 0,
             factionLabel: 'Martian Pirate',
+            withGuardians: false,
             // A pirate is isMartianPirate=true AND NOT a Vulcan Patrol
             isMember: (ud) => ud.isMartianPirate && !ud.isVulcanPatrol,
             // Spawn near the Sol system's local sun (origin)
@@ -1083,6 +1165,7 @@ function checkSpeciesBossSpawn() {
             galaxyId: 7,
             modelGalaxyId: 7, // Boss8.glb — matches Vulcan Patrol Enemy8.glb
             factionLabel: 'Vulcan High Command',
+            withGuardians: true,   // elite guardians appear with the Vulcan boss
             isMember: (ud) => ud.isVulcanPatrol,
             // Spawn near Sagittarius A* (which is at origin)
             spawnPos: () => new THREE.Vector3(0, 0, 0)
@@ -1095,22 +1178,40 @@ function checkSpeciesBossSpawn() {
             e.userData && g.isMember(e.userData) &&
             !e.userData.isBoss && !e.userData.isBossSupport
         );
-        // Latch "ever existed" the first time we see any members
-        if (members.length > 0) bossSystem.speciesEverExisted[g.key] = true;
+        // Latch "ever existed" + peak roster size while members are alive.
+        if (members.length > 0) {
+            bossSystem.speciesEverExisted[g.key] = true;
+            bossSystem.speciesTotalCount[g.key] =
+                Math.max(bossSystem.speciesTotalCount[g.key] || 0, members.length);
+        }
         // If we've never seen this species, skip (truly never spawned)
         if (!bossSystem.speciesEverExisted[g.key]) return;
-        const aliveMembers = members.filter(e => e.userData.health > 0);
-        if (aliveMembers.length > 0) return; // species not yet eliminated
+
+        const total = bossSystem.speciesTotalCount[g.key] || 0;
+        const alive = members.filter(e => e.userData.health > 0).length;
+        // Boss (and, for Vulcan, the elite guardians) appear TOGETHER once
+        // a MAJORITY — 60% — of the species has been eliminated: not at
+        // the first kill, not only after the last. Killing the boss then
+        // scatters/destroys the remaining stragglers (checkBossVictory).
+        if (total <= 0 || alive > Math.ceil(total * 0.4)) return;
 
         bossSystem.speciesBossSpawned[g.key] = true;
         const areaKey = g.galaxyId + '-' + g.key + '_boss';
-        console.log('👑 ' + g.label + ' species eliminated — spawning faction boss');
+        console.log('👑 ' + g.label + ' majority eliminated — spawning boss' +
+                    (g.withGuardians ? ' + guardians' : ''));
         spawnBossForArea(g.galaxyId, g.key + '_boss', areaKey, g.spawnPos(), {
             modelGalaxyId: g.modelGalaxyId,
             factionLabel: g.factionLabel
         });
+        // Elite guardians deploy alongside the boss (Vulcan only).
+        if (g.withGuardians && typeof spawnEliteGuardian === 'function') {
+            const faction = (typeof galaxyTypes !== 'undefined' && galaxyTypes[g.galaxyId])
+                ? galaxyTypes[g.galaxyId].faction : g.factionLabel;
+            spawnEliteGuardian(g.galaxyId, faction, g.spawnPos());
+        }
         if (typeof showAchievement === 'function') {
-            showAchievement(g.label + ' Boss Incoming!', 'You\'ve provoked the leader. Prepare for combat!', true);
+            showAchievement(g.label + (g.withGuardians ? ' Boss & Guardians Incoming!' : ' Boss Incoming!'),
+                'The leadership commits to the fight — defeat the boss to scatter the rest!', true);
         }
     });
 }
@@ -1175,6 +1276,26 @@ function spawnBossForArea(galaxyId, placementType, areaKey, overridePosition, bo
     if (overridePosition && typeof overridePosition.clone === 'function') {
         bossPosition = overridePosition.clone();
         console.log(`Boss positioning: Using override position for galaxy ${galaxyId}`, bossPosition);
+    }
+
+    // Black-hole-area bosses spawn AT the galaxy's black hole (offset
+    // out past the warp threshold) so the player who just cleared the
+    // BH defenders sees the boss warp in right there, not somewhere
+    // random across the galaxy.
+    if (!bossPosition && placementType === 'black_hole' && typeof planets !== 'undefined') {
+        const bh = planets.find(p =>
+            p.userData && p.userData.type === 'blackhole' &&
+            p.userData.galaxyId === galaxyId && !p.userData.isLocalGateway);
+        if (bh) {
+            const ang = Math.random() * Math.PI * 2;
+            const r = (bh.userData.warpThreshold || 600) + 700 + Math.random() * 500;
+            bossPosition = new THREE.Vector3(
+                bh.position.x + Math.cos(ang) * r,
+                bh.position.y + (Math.random() - 0.5) * 400,
+                bh.position.z + Math.sin(ang) * r
+            );
+            console.log(`Boss positioning: black-hole area boss at galaxy ${galaxyId} BH`, bossPosition);
+        }
     }
 
     // Try 3D positioning first
@@ -1427,6 +1548,110 @@ function spawnBossSupport(galaxyId, bossPosition, supportIndex, areaKey = null, 
 }
 
 // =============================================================================
+// SAGITTARIUS A* LIBERATION — gates black-hole warp range until the two
+// local set-piece bosses (Martian Pirate + Vulcan High Command) are dead.
+// On liberation: galaxy-wide black-hole warping unlocks (the warp picker
+// reads isSolSystemLiberated() live) and a white dotted line is drawn to
+// the nearest twin nebula.
+// =============================================================================
+function isSolSystemLiberated() {
+    // Galaxy-wide black-hole warping unlocks once the VULCAN boss (the
+    // Sagittarius A* set-piece) is defeated — the Martian Pirate boss is
+    // no longer required for the gate.
+    if (typeof bossSystem === 'undefined' || !bossSystem.areaBosses) return false;
+    const vp = bossSystem.areaBosses['7-vulcanPatrol_boss'];
+    return !!(vp && vp.defeated);
+}
+if (typeof window !== 'undefined') window.isSolSystemLiberated = isSolSystemLiberated;
+
+// Destroy every still-alive enemy matching `predicate` (used to scatter
+// a species when its boss dies). Skips other bosses/support. Returns the
+// count removed.
+function eliminateRemainingSpecies(predicate) {
+    if (typeof enemies === 'undefined') return 0;
+    let removed = 0;
+    for (let i = enemies.length - 1; i >= 0; i--) {
+        const e = enemies[i];
+        if (!e || !e.userData || e.userData.health <= 0) continue;
+        if (e.userData.isBoss || e.userData.isBossSupport) continue;
+        if (!predicate(e.userData)) continue;
+        e.userData.health = 0;
+        const pos = e.position;
+        if (typeof createExplosionEffect === 'function') { try { createExplosionEffect(pos); } catch (_) {} }
+        else if (typeof createFactionExplosion === 'function') { try { createFactionExplosion(pos, e.userData.galaxyId, 0.6); } catch (_) {} }
+        if (typeof scene !== 'undefined' && scene.remove) scene.remove(e);
+        enemies.splice(i, 1);
+        removed++;
+    }
+    return removed;
+}
+if (typeof window !== 'undefined') window.eliminateRemainingSpecies = eliminateRemainingSpecies;
+
+// Centre of the nearest paired/clustered ("twin") nebula to `fromPos`.
+function findNearestTwinNebulaCenter(fromPos) {
+    if (typeof nebulaClouds === 'undefined' || !nebulaClouds.length || typeof THREE === 'undefined') return null;
+    const clusters = {};
+    for (let i = 0; i < nebulaClouds.length; i++) {
+        const n = nebulaClouds[i];
+        if (!n || !n.userData) continue;
+        if (n.userData.isDistant || n.userData.isExoticCore) continue;
+        const ci = n.userData.cluster;
+        if (ci === undefined || ci === null) continue;
+        (clusters[ci] = clusters[ci] || []).push(n);
+    }
+    let best = null, bestDist = Infinity;
+    for (const ci in clusters) {
+        const pair = clusters[ci];
+        if (pair.length < 2) continue;   // only true twins
+        const center = new THREE.Vector3();
+        pair.forEach(n => center.add(n.position));
+        center.divideScalar(pair.length);
+        const d = fromPos.distanceTo(center);
+        if (d < bestDist) { bestDist = d; best = center; }
+    }
+    return best;
+}
+
+// Draw a persistent white dashed line from Sgr A* to the nearest twin
+// nebula, guiding the freshly-liberated player onward.
+function showLiberationPathToTwinNebula() {
+    if (typeof THREE === 'undefined' || typeof scene === 'undefined') return;
+    if (typeof window !== 'undefined' && window.liberationNebulaPath) return; // once
+    const fromPos = new THREE.Vector3(0, 0, 0); // Sagittarius A*
+    const target = findNearestTwinNebulaCenter(fromPos);
+    if (!target) { console.warn('🌌 Liberation: no twin nebula found for path'); return; }
+    const geom = new THREE.BufferGeometry().setFromPoints([fromPos, target]);
+    const mat = new THREE.LineDashedMaterial({
+        color: 0xffffff, transparent: true, opacity: 0.85,
+        dashSize: 140, gapSize: 100, depthWrite: false
+    });
+    const line = new THREE.Line(geom, mat);
+    line.computeLineDistances();
+    line.frustumCulled = false;
+    line.renderOrder = 60;
+    line.name = 'LiberationTwinNebulaPath';
+    scene.add(line);
+    if (typeof window !== 'undefined') window.liberationNebulaPath = line;
+    console.log('🌌 Liberation path to nearest twin nebula drawn');
+}
+
+function maybeTriggerSolLiberation() {
+    if (typeof bossSystem === 'undefined') return;
+    if (bossSystem._solLiberationFired) return;
+    if (!isSolSystemLiberated()) return;
+    bossSystem._solLiberationFired = true;
+    showLiberationPathToTwinNebula();
+    if (typeof showAchievement === 'function') {
+        showAchievement('Sagittarius A* Liberated!',
+            'Black holes now warp you galaxy-wide. Follow the white path to the nearest twin nebula.', true);
+    }
+    if (typeof playGalaxyVictoryMusic === 'function') {
+        try { playGalaxyVictoryMusic(); } catch (e) {}
+    }
+}
+if (typeof window !== 'undefined') window.maybeTriggerSolLiberation = maybeTriggerSolLiberation;
+
+// =============================================================================
 // ENHANCED BOSS VICTORY SYSTEM - PRESERVES ALL ORIGINAL FEATURES
 // =============================================================================
 
@@ -1453,10 +1678,20 @@ function checkBossVictory(defeatedEnemy) {
             bossSystem.activeBosses.splice(bossIndex, 1);
         }
 
-        // Show victory message
+        // Show victory message. NOTE: this is ONE guardian (there is
+        // exactly one Elite Guardian per faction). The old copy said
+        // "Hostile Forces have been Eliminated!" which made it read as
+        // though every enemy had just died — misleading. Keep it
+        // specific to this single defender.
         if (typeof showAchievement === 'function') {
             showAchievement('Elite Guardian Eliminated!',
-                `${defeatedEnemy.userData.name} has been defeated! Hostile Forces have been Eliminated!`);
+                `${defeatedEnemy.userData.name} (${faction}) has fallen — that faction's last defender is down.`);
+        }
+
+        // A guardian dying may complete a deferred "sector neutralized"
+        // banner for its galaxy.
+        if (typeof flushFactionClearedMessages === 'function') {
+            setTimeout(flushFactionClearedMessages, 60);
         }
 
         return true;
@@ -1470,6 +1705,41 @@ function checkBossVictory(defeatedEnemy) {
             bossSystem.areaBosses[areaKey].defeated = true;
         }
 
+        // Mark THIS GALAXY's boss as defeated. This is the single flag
+        // checkGalaxyClear() and checkGuardianVictory() gate on, but
+        // nothing ever set it: checkGalaxyClear only set it behind its
+        // own `bossDefeated` precondition (a deadlock with itself), so
+        // galaxyBossDefeated[g] stayed false forever and galaxiesCleared
+        // never incremented even after every guardian was destroyed.
+        if (bossSystem.galaxyBossDefeated &&
+            typeof galaxyId === 'number' && galaxyId >= 0 && galaxyId < 8) {
+            bossSystem.galaxyBossDefeated[galaxyId] = true;
+        }
+
+        // Decapitation: killing a species boss scatters/destroys its
+        // remaining rank-and-file. Detect the species from the boss's
+        // areaKey ('7-vulcanPatrol_boss' / '7-martianPirate_boss').
+        const _ak = defeatedEnemy.userData.areaKey || areaKey || '';
+        if (_ak.indexOf('vulcanPatrol') >= 0 && typeof eliminateRemainingSpecies === 'function') {
+            const n = eliminateRemainingSpecies(ud => ud.isVulcanPatrol);
+            if (typeof showAchievement === 'function') {
+                showAchievement('Vulcan High Command Routed',
+                    `Their leader is dead — ${n} remaining ship${n === 1 ? '' : 's'} scattered and destroyed.`, true);
+            }
+        } else if (_ak.indexOf('martianPirate') >= 0 && typeof eliminateRemainingSpecies === 'function') {
+            const n = eliminateRemainingSpecies(ud => ud.isMartianPirate && !ud.isVulcanPatrol);
+            if (typeof showAchievement === 'function') {
+                showAchievement('Martian Pirates Routed',
+                    `Their leader is dead — ${n} remaining raider${n === 1 ? '' : 's'} scattered and destroyed.`, true);
+            }
+        }
+
+        // Defeating the Vulcan (Sgr A*) boss liberates the system and
+        // unlocks galaxy-wide black-hole warping + the twin-nebula path.
+        if (typeof maybeTriggerSolLiberation === 'function') {
+            maybeTriggerSolLiberation();
+        }
+
         // Remove from active bosses list
         const bossIndex = bossSystem.activeBosses.indexOf(defeatedEnemy);
         if (bossIndex > -1) {
@@ -1481,26 +1751,68 @@ function checkBossVictory(defeatedEnemy) {
             bossSystem.activeBoss = null;
         }
 
-        // Remove all support ships for this area
+        // Boss escorts DO NOT instantly vanish when the boss dies — that
+        // made it look like "all the enemies disappeared the moment the
+        // boss died". Instead they're demoted to regular hostiles: they
+        // keep flying and fighting and must be cleared individually.
+        // Clearing the isBossSupport flag also lets the normal
+        // area-clear / galaxy-clear logic count them again.
         const supportShips = enemies.filter(enemy =>
             enemy.userData.isBossSupport &&
-            enemy.userData.areaKey === areaKey
+            enemy.userData.areaKey === areaKey &&
+            enemy.userData.health > 0
         );
 
         supportShips.forEach(support => {
-            if (typeof createExplosionEffect === 'function') {
-                createExplosionEffect(support);
+            support.userData.isBossSupport = false;
+            support.userData.attackMode = 'pursue';
+            support.userData.isActive = true;
+            // Keep them in the same galaxy/area so area-clear still works.
+            if (support.userData.galaxyId === undefined) {
+                support.userData.galaxyId = galaxyId;
             }
-
-            scene.remove(support);
-            const index = enemies.indexOf(support);
-            if (index > -1) enemies.splice(index, 1);
         });
 
-        console.log(`Boss victory: Defeated ${defeatedEnemy.userData.name} and ${supportShips.length} support ships in area ${areaKey}`);
+        console.log(`Boss victory: Defeated ${defeatedEnemy.userData.name}; ${supportShips.length} escorts demoted to regular hostiles in area ${areaKey}`);
+
+        // Wingmen rally around the player in a victory orbit before
+        // resuming patrol / heading to the next nebula.
+        if (typeof triggerWingmanCelebration === 'function') {
+            triggerWingmanCelebration();
+        }
 
         // Check if we should spawn elite guardians now
         checkAndSpawnEliteGuardians();
+
+        // The boss dying completes the "FORCES NEUTRALIZED" banner for
+        // this faction. Black-hole galaxies are lazy-loaded AFTER
+        // createEnemyClusters() runs, so they have NO clusters and
+        // checkFactionCleared() never deferred a banner — which is why
+        // it never appeared. Synthesize the pending entry here so it
+        // fires on every boss clear. flushFactionClearedMessages() still
+        // guards on the boss being spawned + no guardian alive and
+        // dedups via clearedAnnounced (shows once per galaxy).
+        if (typeof galaxyId === 'number' && galaxyId >= 0 &&
+            typeof galaxyTypes !== 'undefined' && galaxyTypes[galaxyId] &&
+            typeof nebulaIntelSystem !== 'undefined') {
+            if (!nebulaIntelSystem.pendingCleared) nebulaIntelSystem.pendingCleared = {};
+            if (!nebulaIntelSystem.clearedAnnounced) nebulaIntelSystem.clearedAnnounced = {};
+            if (!nebulaIntelSystem.pendingCleared[galaxyId] &&
+                !nebulaIntelSystem.clearedAnnounced[galaxyId]) {
+                const _fac = galaxyTypes[galaxyId];
+                let _nbName = 'nearest nebula';
+                if (typeof nebulaClouds !== 'undefined') {
+                    const _nb = nebulaClouds.find(n => n && n.userData &&
+                        n.userData.assignedFaction === galaxyId);
+                    if (_nb) _nbName = _nb.userData.name;
+                }
+                nebulaIntelSystem.pendingCleared[galaxyId] =
+                    { faction: _fac, nebulaName: _nbName, galaxyId: galaxyId };
+            }
+        }
+        if (typeof flushFactionClearedMessages === 'function') {
+            setTimeout(flushFactionClearedMessages, 120);
+        }
 
         return true;
     }
@@ -1535,8 +1847,14 @@ function checkAndSpawnEliteGuardians() {
         if (!enemy.userData || enemy.userData.health <= 0) return;
         if (enemy.userData.isBoss || enemy.userData.isBossSupport || enemy.userData.isEliteGuardian) return;
 
+        // Skip factionless hostiles (UFOs use galaxyId -1, etc.) — they
+        // don't belong to any galaxy species, so galaxyTypes[galaxyId]
+        // is undefined and they must not count toward elite-guardian
+        // species elimination.
         const galaxyId = enemy.userData.galaxyId;
-        const faction = galaxyTypes[galaxyId].faction;
+        const gt = galaxyTypes[galaxyId];
+        if (!gt) return;
+        const faction = gt.faction;
 
         factionCounts[faction] = (factionCounts[faction] || 0) + 1;
     });
@@ -1705,6 +2023,704 @@ function generatePlanetName(galaxyId) {
 }
 
 
+// =============================================================================
+// GARGANTUA-STYLE BLACK HOLE VISUALS
+// =============================================================================
+// The reference look (Interstellar / EHT images) is a black shadow with a
+// bright "photon ring" that appears to wrap up over the top and down under
+// the bottom of the sphere, plus a warm accretion disk receding to the
+// sides. True gravitational lensing is a per-pixel raymarch — far too
+// expensive here (mobile already struggles). Instead we fake it with two
+// cheap, shader-free pieces:
+//
+//   1. A camera-facing Sprite whose texture is a transparent core (the
+//      black sphere shows through as the shadow), a sharp bright photon
+//      ring, then a warm glow falloff. Because a Sprite always faces the
+//      camera, the bright ring automatically wraps over/under the sphere
+//      from EVERY angle — exactly the silhouette in the reference images,
+//      with zero per-frame JS.
+//   2. A wide flat gradient disk (RingGeometry) in the equatorial plane,
+//      which the existing animate() loop already keeps flat — viewed
+//      edge-on it reads as the bright bar through the middle, and from
+//      above as the receding disk.
+//
+// Canvas textures are cached per color so 10+ black holes share a few.
+const _gargantuaTexCache = {};
+
+function _gargantuaGlowTexture(color) {
+    const key = 'g' + color;
+    if (_gargantuaTexCache[key]) return _gargantuaTexCache[key];
+    const c = new THREE.Color(color);
+    const r = Math.round(c.r * 255), g = Math.round(c.g * 255), b = Math.round(c.b * 255);
+    const size = 256, cv = document.createElement('canvas');
+    cv.width = cv.height = size;
+    const ctx = cv.getContext('2d');
+    const cx = size / 2;
+    const grad = ctx.createRadialGradient(cx, cx, 0, cx, cx, cx);
+    // Transparent core — the black event-horizon sphere shows through here.
+    grad.addColorStop(0.00, 'rgba(0,0,0,0)');
+    grad.addColorStop(0.30, 'rgba(0,0,0,0)');
+    // Photon ring: a tight near-white band hugging the shadow edge.
+    grad.addColorStop(0.34, `rgba(255,255,255,0)`);
+    grad.addColorStop(0.37, `rgba(255,250,240,0.95)`);
+    grad.addColorStop(0.40, `rgba(${Math.min(255,r+120)},${Math.min(255,g+90)},${Math.min(255,b+40)},0.85)`);
+    // Warm lensed glow band fading out into a soft halo.
+    grad.addColorStop(0.52, `rgba(${r},${g},${b},0.35)`);
+    grad.addColorStop(0.74, `rgba(${r},${Math.round(g*0.6)},${Math.round(b*0.5)},0.10)`);
+    grad.addColorStop(1.00, 'rgba(0,0,0,0)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, size, size);
+    const tex = new THREE.CanvasTexture(cv);
+    tex.needsUpdate = true;
+    _gargantuaTexCache[key] = tex;
+    return tex;
+}
+
+function _gargantuaDiskTexture(color) {
+    const key = 'd' + color;
+    if (_gargantuaTexCache[key]) return _gargantuaTexCache[key];
+    const c = new THREE.Color(color);
+    const r = Math.round(c.r * 255), g = Math.round(c.g * 255), b = Math.round(c.b * 255);
+    const size = 256, cv = document.createElement('canvas');
+    cv.width = cv.height = size;
+    const ctx = cv.getContext('2d');
+    const cx = size / 2;
+    const grad = ctx.createRadialGradient(cx, cx, 0, cx, cx, cx);
+    // White-hot inner edge → warm body → dark outer rim (RingGeometry UVs
+    // map this square radially across the annulus).
+    grad.addColorStop(0.00, `rgba(255,250,235,0.0)`);
+    grad.addColorStop(0.46, `rgba(255,250,235,0.0)`);
+    grad.addColorStop(0.50, `rgba(255,248,230,0.95)`);
+    grad.addColorStop(0.58, `rgba(${Math.min(255,r+90)},${Math.min(255,g+50)},${b},0.7)`);
+    grad.addColorStop(0.78, `rgba(${r},${Math.round(g*0.55)},${Math.round(b*0.4)},0.35)`);
+    grad.addColorStop(1.00, `rgba(0,0,0,0)`);
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, size, size);
+    const tex = new THREE.CanvasTexture(cv);
+    tex.needsUpdate = true;
+    _gargantuaTexCache[key] = tex;
+    return tex;
+}
+
+// Registry of every black hole that has gargantua visuals + a proximity
+// fade. The per-frame fade band (Sgr A* / Companion Core reach ~9.5–9.9k
+// units) is far wider than the ~2000-unit `activePlanets` cull range, so
+// the fade MUST be driven from this dedicated list every frame rather
+// than from activePlanets — otherwise beyond ~2000 units the effects
+// never update and stay stuck at full design opacity instead of fading.
+const gargantuaBlackHoles = [];
+if (typeof window !== 'undefined') window.gargantuaBlackHoles = gargantuaBlackHoles;
+
+// Mobile render tier. Mirrors the heuristic in game-core.js (renderer
+// init) and caches it on window, so star fields / shields can scale
+// themselves down regardless of whether they build before or after the
+// renderer sets window.__isMobileGPU. Mobile gets AA off + pixelRatio
+// 1, which makes additive star/shield pixels pile up to harsh white —
+// these call sites use this to cut count + opacity on mobile only.
+function _isMobileRenderTier() {
+    if (typeof window === 'undefined') return false;
+    if (typeof window.__isMobileGPU !== 'undefined') return window.__isMobileGPU;
+    window.__isMobileGPU = (window.innerWidth <= 768) ||
+        ('ontouchstart' in window) ||
+        (navigator.maxTouchPoints > 0) ||
+        /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent || '');
+    return window.__isMobileGPU;
+}
+if (typeof window !== 'undefined') window._isMobileRenderTier = _isMobileRenderTier;
+
+// =============================================================================
+// STAR CORONA — wispy halo + bright rim shell + slow alive pulse
+// Lifts plain coloured spheres to a "hot core + radiating corona" look like
+// real photographic suns: bright near-white disc, a thin white-hot rim, and
+// a wide additive halo sprite that pulses irregularly over ~10–25 s.
+// =============================================================================
+const _starCoronaTexCache = {};
+function _starCoronaTexture(color) {
+    const key = 's' + color;
+    if (_starCoronaTexCache[key]) return _starCoronaTexCache[key];
+    const c = new THREE.Color(color);
+    const r = Math.round(c.r * 255), g = Math.round(c.g * 255), b = Math.round(c.b * 255);
+    const size = 256, cv = document.createElement('canvas');
+    cv.width = cv.height = size;
+    const ctx = cv.getContext('2d');
+    const cx = size / 2;
+    const grad = ctx.createRadialGradient(cx, cx, 0, cx, cx, cx);
+    // Hot near-white inner halo blending into a warm wispy outer corona.
+    grad.addColorStop(0.00, 'rgba(255,250,235,0.85)');
+    grad.addColorStop(0.18, `rgba(${Math.min(255,r+90)},${Math.min(255,g+60)},${Math.min(255,b+20)},0.55)`);
+    grad.addColorStop(0.38, `rgba(${r},${Math.round(g*0.75)},${Math.round(b*0.45)},0.30)`);
+    grad.addColorStop(0.65, `rgba(${r},${Math.round(g*0.50)},${Math.round(b*0.22)},0.10)`);
+    grad.addColorStop(1.00, 'rgba(0,0,0,0)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, size, size);
+    const tex = new THREE.CanvasTexture(cv);
+    tex.needsUpdate = true;
+    _starCoronaTexCache[key] = tex;
+    return tex;
+}
+
+const starCoronas = [];
+if (typeof window !== 'undefined') window.starCoronas = starCoronas;
+
+function addStarCorona(star, radius, baseColor) {
+    if (!star || typeof THREE === 'undefined') return;
+    if (star.userData && star.userData._hasCorona) return;
+    const tint = (baseColor === undefined || baseColor === null) ? 0xffaa44 : baseColor;
+
+    // Lift the disc itself toward a hot white-yellow so the core reads
+    // as overexposed rather than a flat colour. Lerp 40% so individual
+    // star palette colours still come through.
+    if (star.material && star.material.color) {
+        const hot = new THREE.Color(0xfff2c0);
+        star.material.color.lerp(hot, 0.4);
+    }
+
+    // Camera-facing wispy outer halo. Additive, no depth-write so it
+    // never occludes nearby objects; renderOrder above most things.
+    const coronaMat = new THREE.SpriteMaterial({
+        map: _starCoronaTexture(tint),
+        color: 0xffffff,
+        transparent: true,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        depthTest: true
+    });
+    const corona = new THREE.Sprite(coronaMat);
+    const coronaSize = radius * 3.2;
+    corona.scale.set(coronaSize * 2, coronaSize * 2, 1);
+    corona.frustumCulled = false;
+    corona.renderOrder = 65;
+    star.add(corona);
+
+    // Thin bright white-hot rim shell just outside the disc edge.
+    const rimGeo = new THREE.SphereGeometry(radius * 1.04, 24, 24);
+    const rimMat = new THREE.MeshBasicMaterial({
+        color: 0xfff2c0,
+        transparent: true,
+        opacity: 0.35,
+        side: THREE.BackSide,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false
+    });
+    const rim = new THREE.Mesh(rimGeo, rimMat);
+    rim.frustumCulled = false;
+    star.add(rim);
+
+    star.userData._hasCorona = true;
+    star.userData._coronaSprite = corona;
+    star.userData._coronaBaseScale = coronaSize * 2;
+    star.userData._coronaRim = rim;
+    star.userData._coronaPulsePhase = Math.random() * Math.PI * 2;
+    if (starCoronas.indexOf(star) === -1) starCoronas.push(star);
+}
+if (typeof window !== 'undefined') window.addStarCorona = addStarCorona;
+
+// Per-frame: slow irregular pulse so the corona breathes like a real
+// star. Two detuned low-frequency sines (~14s and ~28s periods) summed,
+// with a per-star random phase so suns don't beat in sync.
+function updateStarCoronas() {
+    if (!starCoronas.length) return;
+    const t = (typeof performance !== 'undefined' ? performance.now() : Date.now()) * 0.001;
+    for (let i = 0; i < starCoronas.length; i++) {
+        const s = starCoronas[i];
+        if (!s || !s.userData) continue;
+        const sprite = s.userData._coronaSprite;
+        const rim = s.userData._coronaRim;
+        if (!sprite || !sprite.material) continue;
+        const ph = s.userData._coronaPulsePhase || 0;
+        const wob = Math.sin(t * 0.45 + ph) * 0.6 +
+                    Math.sin(t * 0.22 + ph * 1.7) * 0.4;       // ~[-1, 1]
+        const grow = (s.userData._coronaBaseScale || 1) * (1 + wob * 0.07);
+        sprite.scale.set(grow, grow, 1);
+        let o = 0.85 + wob * 0.25;
+        sprite.material.opacity = o < 0 ? 0 : (o > 1.20 ? 1.20 : o);
+        if (rim && rim.material) {
+            let ro = 0.32 + wob * 0.12;
+            rim.material.opacity = ro < 0 ? 0 : (ro > 0.55 ? 0.55 : ro);
+        }
+    }
+}
+if (typeof window !== 'undefined') window.updateStarCoronas = updateStarCoronas;
+
+// =============================================================================
+// EARTH ENHANCEMENT — procedural surface + cloud shell + atmosphere rim
+// No external textures are bundled; this draws a "blue marble"-ish look on
+// canvas so Earth reads with continents, clouds and a fresnel limb glow
+// instead of a flat blue Lambert ball.
+// =============================================================================
+const _earthTexCache = {};
+
+function _earthSurfaceTexture() {
+    if (_earthTexCache.surface) return _earthTexCache.surface;
+    const w = 1024, h = 512;
+    const cv = document.createElement('canvas');
+    cv.width = w; cv.height = h;
+    const ctx = cv.getContext('2d');
+
+    // Ocean base — vertical gradient so poles are slightly icier.
+    const oceanGrad = ctx.createLinearGradient(0, 0, 0, h);
+    oceanGrad.addColorStop(0.00, '#9fc0d6');
+    oceanGrad.addColorStop(0.12, '#2c4a78');
+    oceanGrad.addColorStop(0.50, '#1a3a66');
+    oceanGrad.addColorStop(0.88, '#2c4a78');
+    oceanGrad.addColorStop(1.00, '#9fc0d6');
+    ctx.fillStyle = oceanGrad;
+    ctx.fillRect(0, 0, w, h);
+
+    // Continent blobs — clusters of overlapping ellipses in earth tones.
+    // Not real geography, but reads as "land masses on a blue planet".
+    const landTones = ['#5a6b3a', '#7a6a3a', '#8a7a4a', '#b59565', '#6a5a3a', '#4a5530'];
+    const continents = 14;
+    for (let c = 0; c < continents; c++) {
+        const cx = Math.random() * w;
+        const cy = h * 0.15 + Math.random() * h * 0.7;   // avoid poles
+        const blobs = 18 + Math.floor(Math.random() * 24);
+        const baseR = 18 + Math.random() * 50;
+        for (let b = 0; b < blobs; b++) {
+            const ang = Math.random() * Math.PI * 2;
+            const off = Math.random() * baseR * 2.4;
+            const rx = baseR * (0.6 + Math.random() * 0.8);
+            const ry = baseR * (0.5 + Math.random() * 0.7);
+            const x = cx + Math.cos(ang) * off;
+            const y = cy + Math.sin(ang) * off * 0.6;
+            ctx.fillStyle = landTones[(b + c) % landTones.length];
+            ctx.beginPath();
+            ctx.ellipse(x, y, rx, ry, Math.random() * Math.PI, 0, Math.PI * 2);
+            ctx.fill();
+        }
+    }
+
+    // Polar ice caps.
+    const capGrad = ctx.createLinearGradient(0, 0, 0, h);
+    capGrad.addColorStop(0.00, 'rgba(255,255,255,0.9)');
+    capGrad.addColorStop(0.08, 'rgba(255,255,255,0)');
+    capGrad.addColorStop(0.92, 'rgba(255,255,255,0)');
+    capGrad.addColorStop(1.00, 'rgba(255,255,255,0.9)');
+    ctx.fillStyle = capGrad;
+    ctx.fillRect(0, 0, w, h);
+
+    const tex = new THREE.CanvasTexture(cv);
+    tex.needsUpdate = true;
+    _earthTexCache.surface = tex;
+    return tex;
+}
+
+function _earthCloudTexture() {
+    if (_earthTexCache.clouds) return _earthTexCache.clouds;
+    const w = 1024, h = 512;
+    const cv = document.createElement('canvas');
+    cv.width = w; cv.height = h;
+    const ctx = cv.getContext('2d');
+    // Transparent background.
+    ctx.clearRect(0, 0, w, h);
+    // Layered semi-opaque blobs at three scales → wispy bands.
+    const passes = [
+        { count: 60,  rmin: 40, rmax: 110, alpha: 0.20 },
+        { count: 180, rmin: 12, rmax: 36,  alpha: 0.14 },
+        { count: 450, rmin: 3,  rmax: 10,  alpha: 0.10 }
+    ];
+    for (const p of passes) {
+        ctx.fillStyle = `rgba(255,255,255,${p.alpha})`;
+        for (let i = 0; i < p.count; i++) {
+            const x = Math.random() * w;
+            const y = h * 0.08 + Math.random() * h * 0.84;   // gentle taper toward poles
+            const r = p.rmin + Math.random() * (p.rmax - p.rmin);
+            ctx.beginPath();
+            ctx.arc(x, y, r, 0, Math.PI * 2);
+            ctx.fill();
+        }
+    }
+    const tex = new THREE.CanvasTexture(cv);
+    tex.needsUpdate = true;
+    _earthTexCache.clouds = tex;
+    return tex;
+}
+
+const _earthClouds = [];
+
+function enhanceEarth(earth, radius) {
+    if (!earth || typeof THREE === 'undefined') return;
+    if (earth.userData && earth.userData._enhanced) return;
+    earth.userData._enhanced = true;
+
+    // 1. Upgrade the surface to Phong with a procedural land/ocean
+    //    canvas + mild specular sheen so the lit ocean catches a soft
+    //    highlight under the new directional sunlight.
+    const phong = new THREE.MeshPhongMaterial({
+        map: _earthSurfaceTexture(),
+        specular: 0x335577,
+        shininess: 22,
+        emissive: 0x000000
+    });
+    if (earth.material && earth.material.dispose) earth.material.dispose();
+    earth.material = phong;
+
+    // 2. Cloud shell — slightly larger sphere with the procedural
+    //    cloud canvas. Independent rotation via updateEarthClouds()
+    //    gives subtle parallax against the surface.
+    const clouds = new THREE.Mesh(
+        new THREE.SphereGeometry(radius * 1.02, 40, 40),
+        new THREE.MeshLambertMaterial({
+            map: _earthCloudTexture(),
+            transparent: true,
+            opacity: 0.9,
+            depthWrite: false
+        })
+    );
+    clouds.frustumCulled = false;
+    earth.add(clouds);
+    earth.userData._cloudLayer = clouds;
+    _earthClouds.push(clouds);
+
+    // (Atmosphere fresnel rim glow removed — Earth keeps its surface +
+    // cloud shell only.)
+}
+if (typeof window !== 'undefined') window.enhanceEarth = enhanceEarth;
+
+// =============================================================================
+// PROCEDURAL PLANET TEXTURES — Mercury craters, Mars rust, gas-giant bands.
+// Same canvas-painting approach as Earth, but per-planet. No assets bundled.
+// =============================================================================
+const _planetTexCache = {};
+
+function _mercurySurfaceTexture() {
+    if (_planetTexCache.mercury) return _planetTexCache.mercury;
+    const w = 1024, h = 512;
+    const cv = document.createElement('canvas');
+    cv.width = w; cv.height = h;
+    const ctx = cv.getContext('2d');
+
+    ctx.fillStyle = '#a89080';
+    ctx.fillRect(0, 0, w, h);
+
+    // Soft regional highland/lowland patches.
+    for (let i = 0; i < 60; i++) {
+        const cx = Math.random() * w;
+        const cy = Math.random() * h;
+        const r = 40 + Math.random() * 110;
+        const grd = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
+        const lighter = Math.random() < 0.5;
+        grd.addColorStop(0, lighter ? 'rgba(200,180,160,0.40)' : 'rgba(80,70,60,0.40)');
+        grd.addColorStop(1, lighter ? 'rgba(200,180,160,0)' : 'rgba(80,70,60,0)');
+        ctx.fillStyle = grd;
+        ctx.beginPath();
+        ctx.arc(cx, cy, r, 0, Math.PI * 2);
+        ctx.fill();
+    }
+
+    // 500-ish craters at varied sizes: lighter rim + dark centre.
+    for (let i = 0; i < 500; i++) {
+        const cx = Math.random() * w;
+        const cy = Math.random() * h;
+        const r = 1.5 + Math.random() * 11;
+        ctx.beginPath();
+        ctx.arc(cx, cy, r + 1, 0, Math.PI * 2);
+        ctx.strokeStyle = 'rgba(210,190,170,0.55)';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(cx, cy, r, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(60,52,44,0.65)';
+        ctx.fill();
+    }
+
+    const tex = new THREE.CanvasTexture(cv);
+    tex.needsUpdate = true;
+    _planetTexCache.mercury = tex;
+    return tex;
+}
+
+function _marsSurfaceTexture() {
+    if (_planetTexCache.mars) return _planetTexCache.mars;
+    const w = 1024, h = 512;
+    const cv = document.createElement('canvas');
+    cv.width = w; cv.height = h;
+    const ctx = cv.getContext('2d');
+
+    // Banded latitudinal base — paler at poles, deep rust at equator.
+    const grd = ctx.createLinearGradient(0, 0, 0, h);
+    grd.addColorStop(0.00, '#d8a890');
+    grd.addColorStop(0.10, '#c2603a');
+    grd.addColorStop(0.50, '#a23a1c');
+    grd.addColorStop(0.90, '#c2603a');
+    grd.addColorStop(1.00, '#d8a890');
+    ctx.fillStyle = grd;
+    ctx.fillRect(0, 0, w, h);
+
+    // Darker rust regions (Tharsis / Valles-style smudges).
+    for (let i = 0; i < 36; i++) {
+        const cx = Math.random() * w;
+        const cy = h * 0.15 + Math.random() * h * 0.7;
+        const rx = 50 + Math.random() * 130;
+        const ry = 25 + Math.random() * 70;
+        ctx.fillStyle = 'rgba(110,48,24,0.42)';
+        ctx.beginPath();
+        ctx.ellipse(cx, cy, rx, ry, Math.random() * Math.PI, 0, Math.PI * 2);
+        ctx.fill();
+    }
+
+    // Polar ice caps.
+    const cap = ctx.createLinearGradient(0, 0, 0, h);
+    cap.addColorStop(0.00, 'rgba(255,255,255,0.72)');
+    cap.addColorStop(0.06, 'rgba(255,255,255,0)');
+    cap.addColorStop(0.94, 'rgba(255,255,255,0)');
+    cap.addColorStop(1.00, 'rgba(255,255,255,0.72)');
+    ctx.fillStyle = cap;
+    ctx.fillRect(0, 0, w, h);
+
+    const tex = new THREE.CanvasTexture(cv);
+    tex.needsUpdate = true;
+    _planetTexCache.mars = tex;
+    return tex;
+}
+
+function _gasGiantTexture(bands, turbulence, spot) {
+    const w = 1024, h = 512;
+    const cv = document.createElement('canvas');
+    cv.width = w; cv.height = h;
+    const ctx = cv.getContext('2d');
+
+    // Horizontal band stripes.
+    for (const b of bands) {
+        ctx.fillStyle = b.color;
+        ctx.fillRect(0, b.y0 * h, w, (b.y1 - b.y0) * h);
+    }
+
+    // Per-band turbulence — small horizontal smudges in lighter and
+    // darker tints, so the rigid stripes feather into one another.
+    for (let i = 0; i < turbulence.count; i++) {
+        const y = Math.random() * h;
+        const x = Math.random() * w;
+        const rx = turbulence.rxMin + Math.random() * (turbulence.rxMax - turbulence.rxMin);
+        const ry = turbulence.ryMin + Math.random() * (turbulence.ryMax - turbulence.ryMin);
+        ctx.fillStyle = Math.random() < 0.5 ? turbulence.lightTint : turbulence.darkTint;
+        ctx.beginPath();
+        ctx.ellipse(x, y, rx, ry, 0, 0, Math.PI * 2);
+        ctx.fill();
+    }
+
+    // Optional storm spot (Jupiter only).
+    if (spot) {
+        const grd = ctx.createRadialGradient(spot.x, spot.y, 0, spot.x, spot.y, spot.r);
+        grd.addColorStop(0, spot.coreColor);
+        grd.addColorStop(0.6, spot.midColor);
+        grd.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = grd;
+        ctx.beginPath();
+        ctx.ellipse(spot.x, spot.y, spot.r, spot.r * 0.55, 0, 0, Math.PI * 2);
+        ctx.fill();
+    }
+
+    const tex = new THREE.CanvasTexture(cv);
+    tex.needsUpdate = true;
+    return tex;
+}
+
+function _jupiterSurfaceTexture() {
+    if (_planetTexCache.jupiter) return _planetTexCache.jupiter;
+    const bands = [
+        { y0: 0.00, y1: 0.06, color: '#b08868' },
+        { y0: 0.06, y1: 0.12, color: '#d4a878' },
+        { y0: 0.12, y1: 0.20, color: '#9c6c4c' },
+        { y0: 0.20, y1: 0.28, color: '#e8c898' },
+        { y0: 0.28, y1: 0.34, color: '#a87858' },
+        { y0: 0.34, y1: 0.40, color: '#e0b888' },
+        { y0: 0.40, y1: 0.48, color: '#f0d8b0' },
+        { y0: 0.48, y1: 0.54, color: '#d8a878' },
+        { y0: 0.54, y1: 0.60, color: '#e8c898' },
+        { y0: 0.60, y1: 0.66, color: '#9c6c4c' },
+        { y0: 0.66, y1: 0.74, color: '#d4a878' },
+        { y0: 0.74, y1: 0.80, color: '#a87858' },
+        { y0: 0.80, y1: 0.88, color: '#d4a878' },
+        { y0: 0.88, y1: 0.94, color: '#9c6c4c' },
+        { y0: 0.94, y1: 1.00, color: '#b08868' }
+    ];
+    const tex = _gasGiantTexture(bands, {
+        count: 700, rxMin: 18, rxMax: 90, ryMin: 2.5, ryMax: 8,
+        lightTint: 'rgba(255,238,205,0.18)', darkTint: 'rgba(95,65,38,0.18)'
+    }, {
+        x: 1024 * 0.65, y: 512 * 0.62, r: 70,
+        coreColor: '#cc4422', midColor: '#aa3318'
+    });
+    _planetTexCache.jupiter = tex;
+    return tex;
+}
+
+function _saturnSurfaceTexture() {
+    if (_planetTexCache.saturn) return _planetTexCache.saturn;
+    const bands = [
+        { y0: 0.00, y1: 0.10, color: '#b89858' },
+        { y0: 0.10, y1: 0.20, color: '#d4b878' },
+        { y0: 0.20, y1: 0.30, color: '#e0c898' },
+        { y0: 0.30, y1: 0.40, color: '#d4b878' },
+        { y0: 0.40, y1: 0.50, color: '#e8cca0' },
+        { y0: 0.50, y1: 0.60, color: '#d8b888' },
+        { y0: 0.60, y1: 0.70, color: '#e0c898' },
+        { y0: 0.70, y1: 0.80, color: '#c8a868' },
+        { y0: 0.80, y1: 0.90, color: '#d4b878' },
+        { y0: 0.90, y1: 1.00, color: '#b89858' }
+    ];
+    const tex = _gasGiantTexture(bands, {
+        count: 320, rxMin: 18, rxMax: 70, ryMin: 1.5, ryMax: 5,
+        lightTint: 'rgba(255,240,210,0.10)', darkTint: 'rgba(140,100,60,0.10)'
+    }, null);
+    _planetTexCache.saturn = tex;
+    return tex;
+}
+
+// Apply a procedural texture to non-Earth planets that benefit from one.
+// Venus / Uranus / Neptune are intentionally left as their solid-colour
+// Lambert disc — they read fine that way against the reference image.
+function enhancePlanet(planet, name, radius) {
+    if (!planet || typeof THREE === 'undefined') return;
+    if (planet.userData && planet.userData._textured) return;
+    let tex = null;
+    let usePhong = false;
+    switch (name) {
+        case 'Mercury': tex = _mercurySurfaceTexture(); break;
+        case 'Mars':    tex = _marsSurfaceTexture(); break;
+        case 'Jupiter': tex = _jupiterSurfaceTexture(); usePhong = true; break;
+        case 'Saturn':  tex = _saturnSurfaceTexture(); usePhong = true; break;
+        default: return;
+    }
+    const newMat = usePhong
+        ? new THREE.MeshPhongMaterial({ map: tex, specular: 0x553322, shininess: 8 })
+        : new THREE.MeshLambertMaterial({ map: tex });
+    if (planet.material && planet.material.dispose) planet.material.dispose();
+    planet.material = newMat;
+    planet.userData._textured = true;
+}
+if (typeof window !== 'undefined') window.enhancePlanet = enhancePlanet;
+
+
+// Slow independent cloud drift so weather parallaxes against the surface.
+function updateEarthClouds() {
+    for (let i = 0; i < _earthClouds.length; i++) {
+        const c = _earthClouds[i];
+        if (c) c.rotation.y += 0.0002;
+    }
+}
+if (typeof window !== 'undefined') window.updateEarthClouds = updateEarthClouds;
+
+// Attach the photon-ring glow Sprite + a wide gradient accretion disk to
+// an existing black-hole sphere. `radius` is the sphere radius; `color`
+// the warm disk/glow tint (defaults to a fiery orange).
+function addGargantuaVisuals(blackHole, radius, color, nearK, farK) {
+    if (!blackHole || typeof THREE === 'undefined') return;
+    if (blackHole.userData && blackHole.userData._gargantua) return;
+    const col = (color === undefined || color === null) ? 0xff6a1a : color;
+
+    // 1. Camera-facing glow + photon ring. Photon ring sits at ~0.37 of
+    //    the texture, so a sprite of full-width W puts it at 0.37*W from
+    //    centre — size it so that lands just outside the sphere.
+    const glowMat = new THREE.SpriteMaterial({
+        map: _gargantuaGlowTexture(col),
+        color: 0xffffff,
+        transparent: true,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        depthTest: true
+    });
+    const glow = new THREE.Sprite(glowMat);
+    const glowSize = radius * 3.1; // photon ring ≈ radius * 1.15
+    glow.scale.set(glowSize * 2, glowSize * 2, 1);
+    glow.frustumCulled = false;
+    glow.renderOrder = 70;
+    glow.userData.isGargantuaGlow = true;
+    blackHole.add(glow);
+
+    // 2. Wide flat gradient accretion disk. RingGeometry so the existing
+    //    animate() blackhole loop keeps it flat in the equatorial plane.
+    const diskGeo = new THREE.RingGeometry(radius * 1.05, radius * 4.0, 64);
+    const diskMat = new THREE.MeshBasicMaterial({
+        map: _gargantuaDiskTexture(col),
+        transparent: true,
+        opacity: 0.9,
+        side: THREE.DoubleSide,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false
+    });
+    const disk = new THREE.Mesh(diskGeo, diskMat);
+    disk.rotation.x = Math.PI / 2;
+    disk.frustumCulled = false;
+    disk.renderOrder = 68;
+    disk.userData.isGargantuaDisk = true;
+    blackHole.add(disk);
+
+    if (!blackHole.userData) blackHole.userData = {};
+
+    // Proximity fade. ONLY the fake-Gargantua additions (the camera-
+    // facing glow sprite + the wide accretion disk) fade with distance.
+    // The original black-hole sphere material and any legacy accretion
+    // rings are intentionally left untouched — they keep their normal
+    // opacity regardless of how close the camera is.
+    const fade = [
+        { m: glowMat, base: 1.0 },
+        { m: diskMat, base: 0.9 }
+    ];
+    blackHole.userData._gargFade = fade;
+    // Refs for the slow "alive / unstable" corona pulse. Random phase so
+    // every hole breathes out of sync with the others.
+    blackHole.userData._gargGlow = glow;
+    blackHole.userData._gargGlowScale = glowSize * 2;
+    blackHole.userData._gargPulsePhase = Math.random() * Math.PI * 2;
+    // Defaults (14 / 110) keep the 8 galaxy holes glowing from far enough
+    // to navigate toward. Sgr A* / Companion Core pass a wide band tuned
+    // so the effect sits at ~5% from the Sol start (~9.5k away) and
+    // ramps the whole way to ~95% as the player closes in.
+    blackHole.userData._gargNear = radius * (nearK || 14);   // ~95% within
+    blackHole.userData._gargFar  = radius * (farK  || 110);  // ~5% beyond
+    blackHole.userData._gargantua = true;
+    if (gargantuaBlackHoles.indexOf(blackHole) === -1) {
+        gargantuaBlackHoles.push(blackHole);
+    }
+}
+if (typeof window !== 'undefined') window.addGargantuaVisuals = addGargantuaVisuals;
+
+// Per-frame update for the fake-Gargantua glow + accretion disk.
+// (The old per-vertex Doppler-beaming pass has been removed.)
+//  • Proximity fade: opacity scales linearly with camera distance
+//    across the hole's _gargNear.._gargFar band so the effect ramps
+//    the whole way in instead of popping.
+//  • Corona pulse: the halo glow slowly breathes brighter/dimmer and
+//    grows/shrinks on two detuned sines so it reads as alive/unstable.
+const _gargTmp = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+function updateGargantuaProximityFade(blackHole, camera) {
+    if (!blackHole || !blackHole.userData || !camera || !_gargTmp) return;
+    const fade = blackHole.userData._gargFade;
+    if (!fade) return;
+    blackHole.getWorldPosition(_gargTmp);
+    const d = camera.position.distanceTo(_gargTmp);
+    const near = blackHole.userData._gargNear || 1;
+    const far = blackHole.userData._gargFar || (near * 8);
+    let p = (far - d) / (far - near);
+    p = p < 0 ? 0 : (p > 1 ? 1 : p);   // 0 at/beyond far, 1 within near
+    const vis = 0.05 + 0.90 * p;        // 5% .. 95% of each design opacity
+    for (let k = 0; k < fade.length; k++) {
+        fade[k].m.opacity = fade[k].base * vis;
+    }
+
+    // Slow, irregular corona pulse layered on top of the proximity
+    // fade. Two detuned low-freq sines (~11s and ~27s periods) so it
+    // wanders rather than ticking like a metronome — alive/unstable.
+    const glow = blackHole.userData._gargGlow;
+    if (glow && glow.material) {
+        const t = (typeof performance !== 'undefined'
+            ? performance.now() : Date.now()) * 0.001;
+        const ph = blackHole.userData._gargPulsePhase || 0;
+        const wob = Math.sin(t * 0.55 + ph) * 0.62 +
+                    Math.sin(t * 0.236 + ph * 1.7) * 0.38;   // ~[-1, 1]
+        const grow = (blackHole.userData._gargGlowScale || 1) * (1 + wob * 0.10);
+        glow.scale.set(grow, grow, 1);
+        // glow.material.opacity was just set to base*vis above; flare it
+        // ±30% and clamp so additive blending doesn't blow out.
+        let o = glow.material.opacity * (1 + wob * 0.30);
+        glow.material.opacity = o < 0 ? 0 : (o > 1.25 ? 1.25 : o);
+    }
+}
+if (typeof window !== 'undefined') window.updateGargantuaProximityFade = updateGargantuaProximityFade;
+
+
 function calculateBlackHoleRotationSpeed(galaxyType, galaxyId, position) {
     // Base speed varies by galaxy type
     let baseSpeed = 0.001; // Default speed
@@ -1824,23 +2840,33 @@ function createOptimizedPlanets3D() {
     
     console.log('✅ All required globals found. Proceeding with universe creation...');
     
-    const localSystemOffset = { x: 2000, y: 0, z: 1200 };
-    
+    const localSystemOffset = { x: 8000, y: 0, z: 4800 }; // 4x further from Sgr A* (origin)
+    // Single source of truth for everything that needs the Sol-system
+    // centre outside this function's scope (enemy spawns, music regions).
+    if (typeof window !== 'undefined') window.localSystemOffset = localSystemOffset;
+
     // =============================================================================
     // LOCAL SOLAR SYSTEM
     // =============================================================================
     
     try {
-        // Create Sun — 5x bigger so it reads as a proper star next to
-        // scaled-up planets (was 8).
-        const sunGeometry = new THREE.SphereGeometry(40, 32, 32);
+        // Sun radius 80 — 2× bump (40 → 80) on top of the earlier 5× so
+        // it reads as a proper star without dominating the system; mass
+        // / gravity (userData below) deliberately unchanged so slingshot
+        // physics stay the same.
+        const sunGeometry = new THREE.SphereGeometry(80, 32, 32);
         const sunMaterial = new THREE.MeshBasicMaterial({ color: 0xffff44 });
         const sun = new THREE.Mesh(sunGeometry, sunMaterial);
         sun.position.set(localSystemOffset.x, localSystemOffset.y, localSystemOffset.z);
         sun.visible = true;
         sun.frustumCulled = false;
 
-        const sunLight = new THREE.PointLight(0xffff88, 1.5, 4000, 0.8);
+        // Apollo-style stark sunlight: warm-white, brighter direct
+        // beam, reach extended past Neptune (now at ~19,238 units in
+        // the AU-proportional layout — bumped range to 25k so Neptune
+        // still receives ~0.7 effective intensity with decay 1.0,
+        // which matches its real-world dim sunlight).
+        const sunLight = new THREE.PointLight(0xfff5d0, 3.0, 25000, 1.0);
         sunLight.position.copy(sun.position);
         sunLight.castShadow = false;
         
@@ -1848,7 +2874,9 @@ function createOptimizedPlanets3D() {
             scene.add(sunLight);
         }
 
-        const localAmbientLight = new THREE.AmbientLight(0x404040, 0.2);
+        // Local ambient almost zero — vacuum doesn't scatter, so the
+        // terminator should be a hard knife-edge between lit and black.
+        const localAmbientLight = new THREE.AmbientLight(0x404040, 0.02);
         if (scene && scene.add) {
             scene.add(localAmbientLight);
         }
@@ -1872,19 +2900,13 @@ function createOptimizedPlanets3D() {
             scene.add(sun);
         }
 
-        const glowGeometry = new THREE.SphereGeometry(12, 16, 16);
-        const glowMaterial = new THREE.MeshBasicMaterial({
-            color: 0xffdd44,
-            transparent: true,
-            opacity: 0.3,
-            blending: THREE.AdditiveBlending
-        });
-        const glowSphere = new THREE.Mesh(glowGeometry, glowMaterial);
-        glowSphere.visible = true;
-        glowSphere.frustumCulled = false;
-        sun.add(glowSphere);
-        sun.userData.glowSphere = glowSphere;
-        
+        // Wispy white-hot corona + bright rim + slow alive pulse.
+        // Replaces the old tiny 12-unit inner glow sphere which read as
+        // a flat dim yellow halo and didn't sell "star".
+        if (typeof addStarCorona === 'function') {
+            addStarCorona(sun, 80, 0xff8833);
+        }
+
         console.log('✅ Sun created successfully');
         
     } catch (error) {
@@ -1892,30 +2914,39 @@ function createOptimizedPlanets3D() {
         return;
     }
     
-    // Create local planets — sizes AND orbit distances 4x so scale is
-    // consistent across the Sol System.
+    // Sol-system planets & moons. Orbit distances are AU-proportional
+    // (Earth = 640 units = 1.00 AU). Mercury is now included so the
+    // inner system matches the reference; Jupiter–Neptune sit at their
+    // true relative distances (Neptune lands ~19.2k out — the Sun
+    // PointLight range is extended below to cover them).
+    //   Mercury 0.39 → 250    Jupiter 5.20 →  3328
+    //   Venus   0.72 → 461    Saturn  9.54 →  6106
+    //   Earth   1.00 → 640    Uranus 19.20 → 12288
+    //   Mars    1.52 → 973    Neptune 30.06→ 19238
+    // Sizes are not to scale (matches the reference image's caption).
     const localPlanets = [
-        { name: 'Earth', distance: 640, size: 20, color: 0x2233ff, moons: [{ name: 'Luna', distance: 120, size: 6, color: 0xdddddd }] },
-        { name: 'Venus', distance: 480, size: 19, color: 0xffc649, moons: [] },
-        { name: 'Mars', distance: 960, size: 12, color: 0xff4422, moons: [
-            { name: 'Phobos', distance: 64, size: 3, color: 0x8b4513 },
-            { name: 'Deimos', distance: 96, size: 2.5, color: 0x696969 }
+        { name: 'Mercury', distance: 250,   size: 15, color: 0xa89080, moons: [] },
+        { name: 'Venus',   distance: 461,   size: 38, color: 0xffc649, moons: [] },
+        { name: 'Earth',   distance: 640,   size: 40, color: 0x2233ff, moons: [{ name: 'Luna', distance: 120, size: 12, color: 0xdddddd }] },
+        { name: 'Mars',    distance: 973,   size: 24, color: 0xff4422, moons: [
+            { name: 'Phobos', distance: 64, size: 6, color: 0x8b4513 },
+            { name: 'Deimos', distance: 96, size: 5, color: 0x696969 }
         ]},
-        { name: 'Jupiter', distance: 2000, size: 60, color: 0xffaa22, moons: [
-            { name: 'Io', distance: 200, size: 7, color: 0xffff99 },
-            { name: 'Europa', distance: 256, size: 6.5, color: 0x99ccff },
-            { name: 'Ganymede', distance: 336, size: 9, color: 0xcc9966 },
-            { name: 'Callisto', distance: 440, size: 8, color: 0x666666 }
+        { name: 'Jupiter', distance: 3328,  size: 120, color: 0xd9a06b, moons: [
+            { name: 'Io', distance: 200, size: 14, color: 0xffff99 },
+            { name: 'Europa', distance: 256, size: 13, color: 0x99ccff },
+            { name: 'Ganymede', distance: 336, size: 18, color: 0xcc9966 },
+            { name: 'Callisto', distance: 440, size: 16, color: 0x666666 }
         ]},
-        { name: 'Saturn', distance: 3200, size: 48, color: 0xffdd88, rings: true, moons: [
-            { name: 'Titan', distance: 520, size: 10, color: 0xff9933 },
-            { name: 'Enceladus', distance: 360, size: 4, color: 0xffffff }
+        { name: 'Saturn',  distance: 6106,  size: 96,  color: 0xe8c587, rings: true, moons: [
+            { name: 'Titan', distance: 520, size: 20, color: 0xff9933 },
+            { name: 'Enceladus', distance: 360, size: 8, color: 0xffffff }
         ]},
-        { name: 'Uranus', distance: 4400, size: 32, color: 0x4fccff, moons: [
-            { name: 'Titania', distance: 336, size: 5.5, color: 0x888888 }
+        { name: 'Uranus',  distance: 12288, size: 64, color: 0xafdbe5, moons: [
+            { name: 'Titania', distance: 336, size: 11, color: 0x888888 }
         ]},
-        { name: 'Neptune', distance: 5600, size: 28, color: 0x4169e1, moons: [
-            { name: 'Triton', distance: 176, size: 5, color: 0x99ccff }
+        { name: 'Neptune', distance: 19238, size: 56, color: 0x3457c4, moons: [
+            { name: 'Triton', distance: 176, size: 10, color: 0x99ccff }
         ]}
     ];
     
@@ -2030,11 +3061,12 @@ try {
     ];
     
     additionalSystems.forEach((systemData, sysIndex) => {
-        // ✅ FIXED: Random Y positioning between 500-2000 units above or below solar plane
-        const randomYOffset = (Math.random() > 0.5 ? 1 : -1) * (500 + Math.random() * 1500); // ±500 to ±2000
-        
-        // ✅ FIXED: Random Z positioning between -2000 and +2000 units
-        const randomZOffset = (Math.random() - 0.5) * 4000; // -2000 to +2000
+        // Sit ABOVE the Sol plane — the opposite side from the Dune
+        // gateway systems (which live ~32k BELOW). +1000 to +4000 on Y.
+        const randomYOffset = 1000 + Math.random() * 3000; // +1000 to +4000 (always above)
+
+        // Z spread ±4000.
+        const randomZOffset = (Math.random() - 0.5) * 8000; // -4000 to +4000
         
         // Keep X positioning varied but more controlled
         const baseXOffsets = [-1200, 1400, -800];
@@ -2048,8 +3080,12 @@ try {
         
         console.log(`Creating ${systemData.name} at offset: Y=${randomYOffset.toFixed(0)}, Z=${randomZOffset.toFixed(0)}`);
         
-        // Create star
-        const starGeometry = new THREE.SphereGeometry(systemData.starSize, 24, 24);
+        // Create star. Visual radius bumped 4× from systemData.starSize
+        // so the star reads at the new larger Sol scale; mass / gravity
+        // below intentionally still use the unscaled value so slingshot
+        // physics aren't changed by the visual resize.
+        const _starVisualSize = systemData.starSize * 2;
+        const starGeometry = new THREE.SphereGeometry(_starVisualSize, 24, 24);
         const starMaterial = new THREE.MeshBasicMaterial({ color: systemData.starColor });
         const star = new THREE.Mesh(starGeometry, starMaterial);
         star.position.set(systemOffset.x, systemOffset.y, systemOffset.z);
@@ -2069,11 +3105,14 @@ try {
         
         planets.push(star);
         scene.add(star);
-        
+        if (typeof addStarCorona === 'function') {
+            addStarCorona(star, _starVisualSize, systemData.starColor);
+        }
+
         // Create planets for this system
         systemData.planets.forEach((planetData, pIndex) => {
             const planetGeometry = new THREE.SphereGeometry(planetData.size, 20, 20);
-            const planetMaterial = new THREE.MeshLambertMaterial({ 
+            const planetMaterial = new THREE.MeshLambertMaterial({
                 color: planetData.color,
                 emissive: new THREE.Color(planetData.color).multiplyScalar(0.05)
             });
@@ -2146,7 +3185,7 @@ try {
                             name: moonData.name,
                             type: 'moon',
                             orbitRadius: moonData.distance,
-                            orbitSpeed: 0.1 + moonIndex * 0.02,
+                            orbitSpeed: Math.max(0.04, Math.min(0.45, 0.14 * Math.pow(160 / (moonData.distance || 160), 1.3))), // inner moons orbit FASTER (Kepler-like) — was 0.1+index*0.02 which made outer moons fastest
                             orbitPhase: moonIndex * Math.PI * 0.5,
                             parentPlanet: planet,
                             mass: moonData.size * 2,
@@ -2212,7 +3251,19 @@ try {
             if (scene && scene.add) {
                 scene.add(planet);
             }
-            
+
+            // Earth: full blue-marble (procedural surface + cloud shell +
+            // atmosphere fresnel rim). Mercury / Mars / Jupiter / Saturn
+            // get just a procedural surface texture via enhancePlanet —
+            // craters for Mercury, rusty bands for Mars, banded gas-giant
+            // canvases for Jupiter & Saturn (plus the Great Red Spot).
+            // Venus / Uranus / Neptune stay as their solid Lambert disc.
+            if (planetData.name === 'Earth' && typeof enhanceEarth === 'function') {
+                enhanceEarth(planet, planetData.size);
+            } else if (typeof enhancePlanet === 'function') {
+                enhancePlanet(planet, planetData.name, planetData.size);
+            }
+
             // Add rings for Saturn
             if (planetData.rings) {
                 for (let r = 0; r < 3; r++) {
@@ -2254,7 +3305,7 @@ try {
                         name: moonData.name,
                         type: 'moon',
                         orbitRadius: moonData.distance,
-                        orbitSpeed: 0.1 + moonIndex * 0.02,
+                        orbitSpeed: Math.max(0.04, Math.min(0.45, 0.14 * Math.pow(160 / (moonData.distance || 160), 1.3))), // inner moons orbit FASTER (Kepler-like) — was 0.1+index*0.02 which made outer moons fastest
                         orbitPhase: moonIndex * Math.PI * 0.5,
                         parentPlanet: planet,
                         mass: moonData.size * 2,
@@ -2287,7 +3338,7 @@ try {
     // =============================================================================
     
     try {
-        const centralBlackHoleGeometry = new THREE.SphereGeometry(70, 24, 24);
+        const centralBlackHoleGeometry = new THREE.SphereGeometry(280, 24, 24); // 4x
         const centralBlackHoleMaterial = new THREE.MeshBasicMaterial({ 
             color: 0x000000,
             transparent: true,
@@ -2303,7 +3354,7 @@ try {
             type: 'blackhole',
             mass: 8000,
             gravity: 400.0,
-            warpThreshold: 160,
+            warpThreshold: 640,
             isGalacticCenter: true,
             isSagittariusA: true,
             targetGalaxy: Math.floor(Math.random() * 8),
@@ -2321,7 +3372,7 @@ try {
         }
         
         // Add accretion disk
-        const centralRingGeometry = new THREE.RingGeometry(60, 90, 48);
+        const centralRingGeometry = new THREE.RingGeometry(240, 360, 48); // 4x
         const centralRingMaterial = new THREE.MeshBasicMaterial({ 
             color: 0xff4500,
             transparent: true,
@@ -2330,13 +3381,17 @@ try {
         });
         const centralRing = new THREE.Mesh(centralRingGeometry, centralRingMaterial);
         centralRing.rotation.x = Math.PI / 2;
-        centralRing.visible = true;
+        // Hidden for review — the legacy flat accretion ring competes
+        // with the Gargantua disk/glow on Sgr A*. Flip back to true to
+        // restore it.
+        centralRing.visible = false;
         centralRing.frustumCulled = false;
         
         if (centralBlackHole && centralBlackHole.add) {
             centralBlackHole.add(centralRing);
         }
-        
+        addGargantuaVisuals(centralBlackHole, 280, 0xff4500, 2, 34); // 4x; ~5% at Sol start (~9.5k) → ~95% close
+
         console.log('✅ Sagittarius A* created at galactic center');
         
     } catch (sgrAError) {
@@ -2351,8 +3406,8 @@ try {
     console.log('Creating Companion Core near Sagittarius A*...');
     
    // Random distance between 400 and 620, randomly above or below Sagittarius A*
-const core8Distance = (400 + Math.random() * 220) * (Math.random() < 0.5 ? 1 : -1);
-    const core8Geometry = new THREE.SphereGeometry(45, 24, 24); // Smaller than Sagittarius A* (45 vs 80)
+const core8Distance = (1600 + Math.random() * 880) * (Math.random() < 0.5 ? 1 : -1); // 4x (kept clear of the 4x-bigger Sgr A*)
+    const core8Geometry = new THREE.SphereGeometry(180, 24, 24); // 4x; still smaller than Sgr A* (180 vs 280)
     const core8Material = new THREE.MeshBasicMaterial({ 
         color: 0x000000,
         transparent: true,
@@ -2368,7 +3423,7 @@ const core8Distance = (400 + Math.random() * 220) * (Math.random() < 0.5 ? 1 : -
     type: 'blackhole',
     mass: 2800, // Smaller mass than Sagittarius A*
     gravity: 150.0,
-    warpThreshold: 80,
+    warpThreshold: 320,
     isGalacticCore: true,
     isCompanionCore: true, // New flag
     galaxyId: 7,
@@ -2385,7 +3440,7 @@ const core8Distance = (400 + Math.random() * 220) * (Math.random() < 0.5 ? 1 : -
     }
     
     // Add accretion disk
-    const core8RingGeometry = new THREE.RingGeometry(25, 40, 48);
+    const core8RingGeometry = new THREE.RingGeometry(100, 160, 48); // 4x
    const core8RingMaterial = new THREE.MeshBasicMaterial({ 
     color: 0x6644dd, // Darker purple to distinguish from Sagittarius A*
     transparent: true,
@@ -2400,12 +3455,13 @@ const core8Distance = (400 + Math.random() * 220) * (Math.random() < 0.5 ? 1 : -
     if (core8BlackHole && core8BlackHole.add) {
         core8BlackHole.add(core8Ring);
     }
+    addGargantuaVisuals(core8BlackHole, 180, 0xff6a1a, 3, 55); // 4x; ~5% at Sol start (~9.7k) → ~95% close
     // ADD SPIRAL GALAXY STARFIELD around 8th core (same as local galaxy)
 const core8GalaxyStarsGeometry = new THREE.BufferGeometry();
 const core8GalaxyStarsMaterial = new THREE.PointsMaterial({
     size: 2.0,
     transparent: true,
-    opacity: 0.9,
+    opacity: _isMobileRenderTier() ? 0.5 : 0.9,
     vertexColors: true,
     blending: THREE.AdditiveBlending,
     sizeAttenuation: true
@@ -2414,19 +3470,24 @@ const core8GalaxyStarsMaterial = new THREE.PointsMaterial({
 const core8LocalStarsVertices = [];
 const core8LocalStarsColors = [];
 
-// Create 1500 stars in spiral pattern for Core8
-for (let i = 0; i < 1500; i++) {
+// Create stars in spiral pattern for Core8. 4× spatial scale to match
+// the 4×-enlarged black hole + Gargantua disk (so the vertical
+// structure clears the hole again like it did on main). Halved on
+// mobile — additive points with no AA / pixelRatio 1 read far brighter
+// and denser there.
+const _core8StarCount = _isMobileRenderTier() ? 1500 : 3000;
+for (let i = 0; i < _core8StarCount; i++) {
     const armAngle = Math.random() * Math.PI * 2;
-    const armDistance = Math.pow(Math.random(), 1.8) * 2000;
+    const armDistance = Math.pow(Math.random(), 1.8) * 8000;
     const armWidth = 0.20;
     
     let x, y, z;
     
     if (Math.random() < 0.3) {
         // Dense center bulge
-        const bulgeRadius = Math.pow(Math.random(), 3) * 700;
+        const bulgeRadius = Math.pow(Math.random(), 3) * 2800;
         const bulgeAngle = Math.random() * Math.PI * 2;
-        const bulgeHeight = (Math.random() - 0.5) * 300;
+        const bulgeHeight = (Math.random() - 0.5) * 1200;
         x = Math.cos(bulgeAngle) * bulgeRadius;
         z = Math.sin(bulgeAngle) * bulgeRadius;
         y = bulgeHeight;
@@ -2435,7 +3496,7 @@ for (let i = 0; i < 1500; i++) {
         const angle = armAngle + (armDistance / 360) * Math.PI;
         x = Math.cos(angle) * armDistance + (Math.random() - 0.5) * armWidth * armDistance;
         z = Math.sin(angle) * armDistance + (Math.random() - 0.5) * armWidth * armDistance;
-        y = (Math.random() - 0.5) * 120;
+        y = (Math.random() - 0.5) * 480;
     }
     
     // Position is relative to the black hole, so no offset needed
@@ -2450,15 +3511,21 @@ for (let i = 0; i < 1500; i++) {
 // DUNE STAR SYSTEMS - ORBIT THE LOCAL BLACK HOLE GATEWAY
 // =============================================================================
 
-try {
-    console.log('Creating Dune star systems around local black hole gateway...');
-    
-    // Local gateway position
-    const localGatewayPosition = {
+// Local gateway position. Pushed far BELOW the Sol plane (−32k) so the
+// gateway black hole and the systems that cluster around it all sit well
+// outside the Sun's 25k light radius — lit only by their own stars. The
+// gateway black hole (created later) reads its position straight from
+// here so the two never drift apart. Hoisted above the Dune try-block
+// so the later black-hole try-block can still see it.
+const localGatewayPosition = {
     x: localSystemOffset.x + 2600,
-    y: localSystemOffset.y - 3000,  // ✅ FIXED: Match the actual gateway Y position
+    y: localSystemOffset.y - 32000,
     z: localSystemOffset.z + 2000
 };
+if (typeof window !== 'undefined') window.localGatewayPosition = localGatewayPosition;
+
+try {
+    console.log('Creating Dune star systems around local black hole gateway...');
     
     const duneSystems = [
         {
@@ -2533,19 +3600,23 @@ try {
     ];
     
     duneSystems.forEach((systemData, sysIndex) => {
-    // ✅ ENHANCED: Much larger vertical spacing (±400 to ±1000 units from gateway plane)
-    const verticalOffset = (Math.random() > 0.5 ? 1 : -1) * (400 + Math.random() * 600);
-    
+    // Systems cluster AROUND the gateway, which now lives far below the
+    // Sol plane (localGatewayPosition.y ≈ −32k). A modest vertical
+    // spread keeps them grouped with the gateway rather than scattered
+    // across the whole Y axis.
+    const verticalOffset = (Math.random() > 0.5 ? 1 : -1) * (400 + Math.random() * 1500);
+
     // ✅ ENHANCED: Much more dramatic orbital plane tilts (up to ±30 degrees)
     const orbitalTilt = {
         x: (Math.random() - 0.5) * 1.0, // Tilt up to ±28.6 degrees around X-axis
         z: (Math.random() - 0.5) * 1.0  // Tilt up to ±28.6 degrees around Z-axis
     };
-    
-    // Calculate system position orbiting the local gateway
+
+    // Orbit the gateway in its own (off-plane) neighbourhood.
     const systemX = localGatewayPosition.x + Math.cos(systemData.orbitalAngle) * systemData.orbitalDistance;
-    const systemY = localGatewayPosition.y + verticalOffset; // ✅ Use calculated vertical offset
+    const systemY = localGatewayPosition.y + verticalOffset;
     const systemZ = localGatewayPosition.z + Math.sin(systemData.orbitalAngle) * systemData.orbitalDistance;
+
     
     const systemOffset = { 
         x: systemX, 
@@ -2556,21 +3627,25 @@ try {
     
     console.log(`${systemData.name}: Y-offset=${verticalOffset.toFixed(0)}, Tilt=(${(orbitalTilt.x * 57.3).toFixed(1)}°, ${(orbitalTilt.z * 57.3).toFixed(1)}°)`);
     
-    // Create star with emissive glow
-const starGeometry = new THREE.SphereGeometry(systemData.starSize, 24, 24);
-const starMaterial = new THREE.MeshBasicMaterial({ 
-    color: systemData.starColor
-});
+    // Create star with emissive glow. Visual radius 4× of
+    // systemData.starSize (mass / gravity unchanged below).
+    const _starVisualSize = systemData.starSize * 2;
+    const starGeometry = new THREE.SphereGeometry(_starVisualSize, 24, 24);
+    const starMaterial = new THREE.MeshBasicMaterial({
+        color: systemData.starColor
+    });
 const star = new THREE.Mesh(starGeometry, starMaterial);
 star.position.set(systemOffset.x, systemOffset.y, systemOffset.z);
 star.visible = true;
 star.frustumCulled = false;
 
-// ✅ ADD POINT LIGHT to make star visible and illuminate nearby planets
+// Each gateway system is now far outside the Sun's reach, so its own
+// star is the ONLY light source — brighter + longer reach so the whole
+// little system (planets orbit out to ~400u) is clearly self-lit.
 const starLight = new THREE.PointLight(
     systemData.starColor, // Use star's color
-    3.0,  // Intensity - bright enough to see
-    800,  // Distance - light reaches to planets
+    4.5,  // Intensity
+    3000, // Distance — covers the system with margin now the Sun can't
     1.0   // Decay
 );
 starLight.position.copy(star.position);
@@ -2600,8 +3675,29 @@ star.userData = {
 
 planets.push(star);
 scene.add(star);
+if (typeof addStarCorona === 'function') {
+    addStarCorona(star, _starVisualSize, systemData.starColor);
+}
 
 console.log(`✅ Created ${star.userData.name} orbiting local gateway with point light`);
+
+// Garrison this far-off-plane gateway system with a UFO squadron,
+// reusing the canonical createUFOEnemy (erratic-flight AI, procedural/
+// GLB saucer, missile drops) so they behave like every other UFO.
+if (typeof createUFOEnemy === 'function' && typeof THREE !== 'undefined') {
+    const _ufoCount = 3 + Math.floor(Math.random() * 2);   // 3–4 per system
+    for (let _u = 0; _u < _ufoCount; _u++) {
+        const _ua = (_u / _ufoCount) * Math.PI * 2 + Math.random() * 0.6;
+        const _ur = 500 + Math.random() * 700;
+        const _uy = (Math.random() - 0.5) * 500;
+        const _upos = new THREE.Vector3(
+            systemOffset.x + Math.cos(_ua) * _ur,
+            systemOffset.y + _uy,
+            systemOffset.z + Math.sin(_ua) * _ur
+        );
+        createUFOEnemy(_upos, systemData.name, _u);
+    }
+}
     
     // Create planets for this system
 systemData.planets.forEach((planetData, pIndex) => {
@@ -2772,11 +3868,12 @@ try {
     });
     const blackHole = new THREE.Mesh(localBlackHoleGeometry, localBlackHoleMaterial);
     
-    // **UPDATED: Position 1500 units ABOVE the solar system plane**
+    // Sit exactly at the (now far-below-plane) gateway position so the
+    // black hole stays the hub of its system cluster.
     blackHole.position.set(
-        localSystemOffset.x + 2600, 
-        localSystemOffset.y - 3000,  // **Changed from 0 to +1500**
-        localSystemOffset.z + 2000
+        localGatewayPosition.x,
+        localGatewayPosition.y,
+        localGatewayPosition.z
     );
         blackHole.visible = true;
         blackHole.frustumCulled = false;
@@ -2816,6 +3913,7 @@ try {
         if (blackHole && blackHole.add) {
             blackHole.add(ring);
         }
+        addGargantuaVisuals(blackHole, 44, 0xff7a2a);
         
         console.log('✅ Local gateway black hole created');
         
@@ -2954,148 +4052,6 @@ try {
     }
     
     // =============================================================================
-    // HUBBLE ULTRA DEEP FIELD SKYBOX - DISTANT GALAXIES BACKGROUND
-    // =============================================================================
-    
-    console.log('Creating Hubble Ultra Deep Field galaxy background...');
-    
-    try {
-        const textureLoader = new THREE.TextureLoader();
-        
-        // Local Hubble Ultra Deep Field image path
-        const hubbleImageURL = './images/hubble_ultra_deep_field_high_rez_edit3.jpg';
-        
-        console.log('Loading Hubble Ultra Deep Field image from local path...');
-        
-        textureLoader.load(
-            hubbleImageURL,
-            function(texture) {
-                // Create material with the Hubble texture
-                const hubbleMaterial = new THREE.MeshBasicMaterial({
-                    map: texture,
-                    side: THREE.BackSide,
-                    transparent: true,
-                    opacity: 0,  // Subtle so it doesn't overpower the scene
-                    depthWrite: false
-                });
-                
-                // Create even larger sphere behind the CMB skybox
-                const hubbleGeometry = new THREE.SphereGeometry(140000, 64, 64);
-                const hubbleSkybox = new THREE.Mesh(hubbleGeometry, hubbleMaterial);
-                hubbleSkybox.renderOrder = -2; // Render behind CMB skybox
-                hubbleSkybox.visible = true;
-                hubbleSkybox.frustumCulled = false;
-                
-                scene.add(hubbleSkybox);
-                
-                // Store reference
-                window.hubbleSkybox = hubbleSkybox;
-                if (typeof gameState !== 'undefined') {
-                    gameState.hubbleSkybox = hubbleSkybox;
-                }
-                
-                console.log('✅ Hubble Ultra Deep Field skybox loaded - distant galaxies visible');
-            },
-            function(progress) {
-                console.log(`Loading Hubble texture: ${(progress.loaded / progress.total * 100).toFixed(0)}%`);
-            },
-            function(error) {
-                console.warn('❌ Failed to load Hubble image from /images/, creating procedural galaxy background...');
-                console.error('Error details:', error);
-                createProceduralGalaxyBackground();
-            }
-        );
-        
-        function createProceduralGalaxyBackground() {
-            const fallbackMaterial = new THREE.ShaderMaterial({
-                uniforms: {
-                    time: { value: 0 }
-                },
-                vertexShader: `
-                    varying vec3 vPosition;
-                    varying vec2 vUv;
-                    
-                    void main() {
-                        vPosition = position;
-                        vUv = uv;
-                        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-                    }
-                `,
-                fragmentShader: `
-                    uniform float time;
-                    varying vec3 vPosition;
-                    varying vec2 vUv;
-                    
-                    float random(vec2 st) {
-                        return fract(sin(dot(st.xy, vec2(12.9898,78.233))) * 43758.5453123);
-                    }
-                    
-                    void main() {
-                        vec3 direction = normalize(vPosition);
-                        float theta = atan(direction.z, direction.x);
-                        float phi = acos(direction.y);
-                        vec2 sphereUV = vec2(theta / (2.0 * 3.14159), phi / 3.14159);
-                        
-                        vec3 color = vec3(0.0);
-                        
-                        // Create thousands of tiny galaxy-like dots (Hubble-style)
-                        for(int i = 0; i < 5000; i++) {
-                            vec2 galaxyPos = vec2(random(vec2(float(i) * 0.1, float(i) * 0.2)), 
-                                                  random(vec2(float(i) * 0.3, float(i) * 0.4)));
-                            float dist = distance(sphereUV, galaxyPos);
-                            
-                            if(dist < 0.002) {
-                                float brightness = (0.002 - dist) / 0.002;
-                                float size = random(vec2(float(i) * 0.5));
-                                
-                                // Varied galaxy colors (like in Hubble deep field)
-                                float colorSeed = random(vec2(float(i)));
-                                vec3 galaxyColor;
-                                if(colorSeed < 0.25) {
-                                    galaxyColor = vec3(1.0, 0.95, 0.8); // Yellow-white (old galaxies)
-                                } else if(colorSeed < 0.5) {
-                                    galaxyColor = vec3(0.7, 0.85, 1.0); // Blue-white (young galaxies)
-                                } else if(colorSeed < 0.75) {
-                                    galaxyColor = vec3(1.0, 0.8, 0.7); // Orange (intermediate)
-                                } else {
-                                    galaxyColor = vec3(1.0, 0.6, 0.5); // Red-shifted (very distant)
-                                }
-                                
-                                // Vary galaxy shapes slightly
-                                float shape = 1.0 + random(vec2(float(i) * 0.7)) * 0.5;
-                                color += galaxyColor * brightness * size * shape * 0.25;
-                            }
-                        }
-                        
-                        gl_FragColor = vec4(color, 0.5);
-                    }
-                `,
-                transparent: true,
-                side: THREE.BackSide,
-                depthWrite: false
-            });
-            
-            const fallbackGeometry = new THREE.SphereGeometry(140000, 64, 64);
-            const fallbackSkybox = new THREE.Mesh(fallbackGeometry, fallbackMaterial);
-            fallbackSkybox.renderOrder = -2;
-            fallbackSkybox.visible = true;
-            fallbackSkybox.frustumCulled = false;
-            
-            scene.add(fallbackSkybox);
-            
-            window.hubbleSkybox = fallbackSkybox;
-            if (typeof gameState !== 'undefined') {
-                gameState.hubbleSkybox = fallbackSkybox;
-            }
-            
-            console.log('✅ Procedural Hubble-style galaxy background created');
-        }
-        
-    } catch (hubbleError) {
-        console.error('❌ Error creating Hubble skybox:', hubbleError);
-    }
-
-    // =============================================================================
     // HUBBLE ULTRA DEEP FIELD SKYBOX 2 - SECOND LAYER OF DISTANT GALAXIES
     // =============================================================================
     
@@ -3187,23 +4143,27 @@ const localGalaxyStarsMaterial = new THREE.PointsMaterial({
     color: 0xffffff,
     size: 1.0,
     transparent: true,
-    opacity: 1.0,
+    opacity: _isMobileRenderTier() ? 0.5 : 1.0,
     sizeAttenuation: true
 });
 
 const localStarsVertices = [];
 
-// Local galaxy stars (3000 stars in spiral pattern around Sagittarius A*)
-for (let i = 0; i < 3000; i++) {
+// Local galaxy stars in spiral pattern around Sagittarius A*. 4×
+// spatial scale to match the 4×-enlarged Sgr A* + Gargantua disk so
+// the vertical axis is visible above/below the hole again like on
+// main. Halved on mobile (harsh additive pile-up with no AA there).
+const _sgrAStarCount = _isMobileRenderTier() ? 3000 : 6000;
+for (let i = 0; i < _sgrAStarCount; i++) {
     const armAngle = Math.random() * Math.PI * 2;
-    const armDistance = Math.pow(Math.random(), 1.8) * 4000;
+    const armDistance = Math.pow(Math.random(), 1.8) * 16000;
     const armWidth = 0.25;
     
     if (Math.random() < 0.3) {
         // Dense center bulge
-        const bulgeRadius = Math.pow(Math.random(), 3) * 700;
+        const bulgeRadius = Math.pow(Math.random(), 3) * 2800;
         const bulgeAngle = Math.random() * Math.PI * 2;
-        const bulgeHeight = (Math.random() - 0.5) * 300;
+        const bulgeHeight = (Math.random() - 0.5) * 1200;
         const x = Math.cos(bulgeAngle) * bulgeRadius;
         const z = Math.sin(bulgeAngle) * bulgeRadius;
         const y = bulgeHeight;
@@ -3213,7 +4173,7 @@ for (let i = 0; i < 3000; i++) {
         const angle = armAngle + (armDistance / 360) * Math.PI;
         const x = Math.cos(angle) * armDistance + (Math.random() - 0.5) * armWidth * armDistance;
         const z = Math.sin(angle) * armDistance + (Math.random() - 0.5) * armWidth * armDistance;
-        const y = (Math.random() - 0.5) * 120;
+        const y = (Math.random() - 0.5) * 480;
         localStarsVertices.push(x, y, z);
     }
 }
@@ -3263,7 +4223,8 @@ if (scene && scene.add) {
             
             const galaxyCenter = galaxyData.position;
             const galaxySize = galaxyType.size;
-            const armStars = galaxyType.name === 'Quasar' ? 6000 : galaxyType.name === 'Dwarf' ? 2000 : 4000;
+            const _galaxyStarMul = _isMobileRenderTier() ? 0.5 : 1;
+            const armStars = Math.round((galaxyType.name === 'Quasar' ? 6000 : galaxyType.name === 'Dwarf' ? 2000 : 4000) * _galaxyStarMul);
             
             console.log(`Creating 3D galaxy ${g} (${galaxyType.name}) at spherical position:`, galaxyCenter);
 
@@ -3344,7 +4305,7 @@ galaxyStarsGeometry.setAttribute('color', new THREE.Float32BufferAttribute(galax
 const galaxyStarsMaterial = new THREE.PointsMaterial({
     size: 1.0,
     transparent: true,
-    opacity: 0.8,
+    opacity: _isMobileRenderTier() ? 0.5 : 0.8,
     vertexColors: true,
     blending: THREE.AdditiveBlending,
     sizeAttenuation: true
@@ -3411,15 +4372,21 @@ const galaxyStarsToAdd = galaxyMainStars;
             const ring = new THREE.Mesh(ringGeometry, ringMaterial);
             
             // Apply random rotation offset to the ring relative to galaxy
-            ring.rotation.x = Math.PI / 2 + (Math.random() - 0.5) * 0.4;
-            ring.rotation.y = (Math.random() - 0.5) * 0.6;
-            ring.rotation.z = (Math.random() - 0.5) * 0.4;
+            // Lie in the galaxy's own plane: rotation.x = PI/2 puts the
+            // ring in the parent black hole's equatorial plane, and the
+            // parent already carries galaxyData.rotation, so the disk
+            // shares the galaxy's tilt. The previous random per-axis
+            // offsets tilted each ring OUT of its galaxy (visible axis
+            // mismatch); the Gargantua disk has no such offset, so they
+            // disagreed. Keep them coplanar.
+            ring.rotation.set(Math.PI / 2, 0, 0);
             
             ring.visible = true;
             ring.frustumCulled = true;  // OPTIMIZATION: Enable frustum culling
             ring.matrixAutoUpdate = true;
             ring.updateMatrix();
             galaxyBlackHole.add(ring);
+            addGargantuaVisuals(galaxyBlackHole, blackHoleSize, galaxyType.color);
 
             // Create large outer accretion disc (2.5x spherical starfield radius) with high transparency
             // Reuse sphericalStarfieldMaxRadius from earlier calculation
@@ -3436,10 +4403,8 @@ const galaxyStarsToAdd = galaxyMainStars;
             });
             const largeRing = new THREE.Mesh(largeRingGeometry, largeRingMaterial);
 
-            // Apply same rotation as smaller ring with slight variation
-            largeRing.rotation.x = Math.PI / 2 + (Math.random() - 0.5) * 0.3;
-            largeRing.rotation.y = (Math.random() - 0.5) * 0.5;
-            largeRing.rotation.z = (Math.random() - 0.5) * 0.3;
+            // Coplanar with the galaxy (see ring above).
+            largeRing.rotation.set(Math.PI / 2, 0, 0);
 
             largeRing.visible = true;
             largeRing.frustumCulled = true;
@@ -4573,22 +5538,54 @@ const areaClearTracker = {
     checkAreaCleared: function(galaxyId, areaType) {
         const areaKey = `${galaxyId}-${areaType}`;
         if (this.clearedAreas.has(areaKey)) return false;
-        
+
         // Count remaining enemies in this area
         let remainingEnemies = 0;
         if (typeof enemies !== 'undefined') {
-            remainingEnemies = enemies.filter(e => 
-                e && e.userData && 
+            remainingEnemies = enemies.filter(e =>
+                e && e.userData &&
                 e.userData.galaxyId === galaxyId &&
                 (areaType === 'all' || e.userData.placementType === areaType)
             ).length;
         }
-        
-        if (remainingEnemies === 0) {
-            this.clearedAreas.add(areaKey);
-            return true;
+
+        if (remainingEnemies !== 0) return false;
+
+        // Regulars are dead — but the area-clear announcement was firing
+        // before the boss for this mission ever spawned (the discovery-
+        // path system waits up to ~30s before spawning the boss). Hold
+        // the notification until any boss attached to this area / galaxy
+        // is also down. Three conditions block "cleared":
+        //   (a) An areaBosses entry for this exact areaKey is alive.
+        //   (b) Any mission-spawned boss for this galaxy is alive
+        //       (areaKey form "galaxyId-mission_N").
+        //   (c) A discovery-path mission for this galaxy is still
+        //       outstanding (missionComplete === false) — the boss is
+        //       pending and hasn't been added to enemies yet.
+        if (typeof bossSystem !== 'undefined' && bossSystem.areaBosses) {
+            for (const key in bossSystem.areaBosses) {
+                if (!key.startsWith(galaxyId + '-')) continue;
+                const boss = bossSystem.areaBosses[key];
+                if (boss && boss.userData && boss.userData.health > 0) {
+                    return false;
+                }
+            }
         }
-        return false;
+        if (typeof window !== 'undefined' && Array.isArray(window.discoveryPaths)) {
+            for (let i = 0; i < window.discoveryPaths.length; i++) {
+                const p = window.discoveryPaths[i];
+                if (!p) continue;
+                const pid = (p.galaxyId !== undefined)
+                    ? p.galaxyId
+                    : (p.line && p.line.userData && p.line.userData.galaxyId);
+                if (pid !== galaxyId) continue;
+                const done = p.line && p.line.userData && p.line.userData.missionComplete;
+                if (!done) return false; // boss hasn't been spawned yet
+            }
+        }
+
+        this.clearedAreas.add(areaKey);
+        return true;
     },
     
     // Notify Mission Command of cleared area
@@ -7344,6 +8341,63 @@ window.civilianShips = civilianShips;
 window.createAllCivilianShips = createAllCivilianShips;
 window.updateCivilianShips = updateCivilianShips;
 
+// Fast-forward every nebula fleet (civilian / mining / science / trading
+// orbital ships AND freighter caravans) to where they'd be after N
+// minutes of play, so the universe looks "lived-in" the instant the
+// game starts instead of every ship sitting at its spawn phase. Phases
+// (orbitAngle / routeProgress / caravan.progress) are advanced
+// deterministically and orbital positions snapped. Latched so it runs
+// once.
+function prewarmNebulaFleets(minutes) {
+    if (typeof window !== 'undefined') {
+        if (window._fleetsPrewarmed) return;
+        window._fleetsPrewarmed = true;
+    }
+    const frames = (minutes || 20) * 3600; // minutes × 60s × 60fps
+
+    if (typeof civilianShips !== 'undefined') {
+        for (let i = 0; i < civilianShips.length; i++) {
+            const ship = civilianShips[i];
+            const d = ship && ship.userData;
+            if (!d) continue;
+            // Orbital workers (orbit a planet/belt/anomaly/nebula center)
+            if (typeof d.orbitSpeed === 'number' && typeof d.orbitRadius === 'number') {
+                if (typeof d.orbitAngle !== 'number') d.orbitAngle = Math.random() * Math.PI * 2;
+                d.orbitAngle += d.orbitSpeed * frames;
+                const c = d.planetPosition || d.beltPosition || d.targetPosition || d.nebulaPosition;
+                if (c) {
+                    ship.position.x = c.x + Math.cos(d.orbitAngle) * d.orbitRadius;
+                    ship.position.z = c.z + Math.sin(d.orbitAngle) * d.orbitRadius;
+                }
+            }
+            // Route runners (clustered-nebula mining ships)
+            if (typeof d.routeProgress === 'number' && typeof d.routeSpeed === 'number') {
+                let p = (d.routeProgress + d.routeSpeed * frames) % 1;
+                d.routeProgress = p < 0 ? p + 1 : p;
+            }
+        }
+    }
+
+    // Freighter caravans ping-pong source↔destination; walk the travel
+    // over the elapsed time so they end up mid-route in either direction.
+    if (typeof freighterCaravans !== 'undefined') {
+        for (let i = 0; i < freighterCaravans.length; i++) {
+            const cv = freighterCaravans[i];
+            if (!cv || typeof cv.progress !== 'number') continue;
+            let p = cv.progress, dir = cv.direction || 1, travel = (cv.speed || 0.0002) * frames;
+            let guard = 0;
+            while (travel > 1e-6 && guard++ < 100000) {
+                const rem = dir > 0 ? (1 - p) : p;
+                if (travel <= rem) { p += dir * travel; travel = 0; }
+                else { travel -= rem; p = (dir > 0) ? 1 : 0; dir = -dir; }
+            }
+            cv.progress = p; cv.direction = dir;
+        }
+    }
+    console.log('🛰️ Nebula fleets pre-warmed to ~' + (minutes || 20) + ' min of play');
+}
+if (typeof window !== 'undefined') window.prewarmNebulaFleets = prewarmNebulaFleets;
+
 // =============================================================================
 // ENEMIES IN DISTANT/EXOTIC GALAXIES - Add patrols to outer regions
 // =============================================================================
@@ -7473,6 +8527,95 @@ function createDistantEnemy(nebula, galaxyId, index) {
 
 window.createDistantExoticEnemies = createDistantExoticEnemies;
 
+// Spawn a single regular enemy for `galaxyId` at `position`, anchored to a
+// tight patrol radius.  Used when a nebula mission endpoint doesn't have
+// enough hostiles to relocate and we need to top it up with fresh spawns
+// so the dotted line always leads to a real fight.
+function spawnMissionEnemyAt(galaxyId, position) {
+    if (typeof galaxyTypes === 'undefined' || typeof enemyShapes === 'undefined') return null;
+    const galaxyType = galaxyTypes[galaxyId];
+    const shapeData = enemyShapes[galaxyId];
+    if (!galaxyType || !shapeData) return null;
+
+    const enemyGeometry = createEnemyGeometry(galaxyId);
+    const galaxyCenter = (typeof getGalaxy3DPosition === 'function')
+        ? getGalaxy3DPosition(galaxyId)
+        : new THREE.Vector3();
+    const distance = galaxyCenter.distanceTo(position);
+    const materials = createEnemyMaterial(shapeData, 'regular', distance);
+
+    let enemy;
+    let isGLBModel = false;
+    if (typeof createEnemyMeshWithModel === 'function') {
+        enemy = createEnemyMeshWithModel(galaxyId + 1, enemyGeometry, materials.enemyMaterial, 96.0);
+        isGLBModel = enemy.isGroup || (enemy.children && enemy.children.length > 0 && enemy.children[0].isMesh);
+    } else {
+        enemy = new THREE.Mesh(enemyGeometry, materials.enemyMaterial);
+    }
+
+    if (!isGLBModel) {
+        const glowGeometry = enemyGeometry.clone();
+        const glow = new THREE.Mesh(glowGeometry, materials.glowMaterial);
+        glow.scale.multiplyScalar(materials.glowScale);
+        glow.visible = true;
+        glow.frustumCulled = false;
+        enemy.add(glow);
+    }
+
+    // Scatter within a 1200u sphere around the endpoint
+    const off = new THREE.Vector3(
+        (Math.random() - 0.5) * 1500,
+        (Math.random() - 0.5) * 600,
+        (Math.random() - 0.5) * 1500
+    );
+    enemy.position.copy(position).add(off);
+
+    let hitboxSize = 96;
+    try {
+        const box = new THREE.Box3().setFromObject(enemy);
+        const size = new THREE.Vector3();
+        box.getSize(size);
+        hitboxSize = Math.max(size.x, size.y, size.z);
+    } catch (e) {}
+
+    const isLocal = (galaxyId === 7);
+    enemy.userData = {
+        name: `${galaxyType.faction} Hostile (mission)`,
+        type: 'enemy',
+        health: getEnemyHealthForDifficulty(isLocal, false, false),
+        maxHealth: getEnemyHealthForDifficulty(isLocal, false, false),
+        speed: 0.2 + Math.random() * 0.8,
+        aggression: Math.random(),
+        patrolCenter: position.clone(),
+        patrolRadius: 1200,
+        lastAttack: 0,
+        isActive: false,
+        visible: true,
+        galaxyId: galaxyId,
+        galaxyColor: shapeData.color,
+        swarmTarget: null,
+        circlePhase: Math.random() * Math.PI * 2,
+        attackMode: 'patrol',
+        detectionRange: isLocal ? 1200 : 1600,
+        firingRange: isLocal ? 180 : 240,
+        isLocal: isLocal,
+        isBoss: false,
+        isBossSupport: false,
+        position3D: enemy.position.clone(),
+        placementType: 'mission',
+        hitboxSize: hitboxSize,
+        missionAnchored: true
+    };
+
+    enemy.visible = true;
+    enemy.frustumCulled = true;
+    scene.add(enemy);
+    enemies.push(enemy);
+    return enemy;
+}
+
+window.spawnMissionEnemyAt = spawnMissionEnemyAt;
+
 // =============================================================================
 // UFO ENEMIES - Mysterious aliens patrolling exotic systems with erratic movement
 // =============================================================================
@@ -7507,55 +8650,79 @@ async function loadUFOModel() {
 
 function createProceduralUFO() {
     const ufoGroup = new THREE.Group();
-    
-    // Classic saucer shape
+
+    // Hostile palette to match the rest of the enemies (Martian Pirate
+    // red 0xff4444 family) — the old green/cyan read as friendly, the
+    // same colour as the wingmen. Dark metal hull + red glow accents +
+    // an additive glow layer like createEnemyMaterial uses.
+    const HOSTILE = 0xff4444;
+    const HOT = 0xff7733;
+
+    // Classic saucer shape — dark warm metal.
     const saucerGeom = new THREE.CylinderGeometry(40, 50, 12, 24);
     const saucerMat = new THREE.MeshStandardMaterial({
-        color: 0x556677,
+        color: 0x3a2a2a,
         metalness: 0.9,
-        roughness: 0.2
+        roughness: 0.25,
+        emissive: 0x220808,
+        emissiveIntensity: 0.6
     });
     const saucer = new THREE.Mesh(saucerGeom, saucerMat);
     ufoGroup.add(saucer);
-    
-    // Dome on top
+
+    // Additive glow shell around the hull (enemy-style aura).
+    const auraMat = new THREE.MeshBasicMaterial({
+        color: HOSTILE, transparent: true, opacity: 0.35,
+        blending: THREE.AdditiveBlending, depthWrite: false
+    });
+    const aura = new THREE.Mesh(new THREE.CylinderGeometry(46, 58, 14, 24), auraMat);
+    ufoGroup.add(aura);
+
+    // Dome on top — glowing red cockpit.
     const domeGeom = new THREE.SphereGeometry(20, 16, 12, 0, Math.PI * 2, 0, Math.PI / 2);
     const domeMat = new THREE.MeshStandardMaterial({
-        color: 0x88ffaa,
+        color: 0xff6655,
         metalness: 0.3,
         roughness: 0.1,
         transparent: true,
-        opacity: 0.7
+        opacity: 0.75,
+        emissive: 0xff3322,
+        emissiveIntensity: 0.8
     });
     const dome = new THREE.Mesh(domeGeom, domeMat);
     dome.position.y = 6;
     ufoGroup.add(dome);
-    
-    // Glowing underside
+
+    // Glowing underside (the abduction-beam ring) — hostile red.
     const glowGeom = new THREE.RingGeometry(15, 45, 24);
     const glowMat = new THREE.MeshBasicMaterial({
-        color: 0x00ff88,
+        color: HOSTILE,
         transparent: true,
-        opacity: 0.6,
-        side: THREE.DoubleSide
+        opacity: 0.7,
+        side: THREE.DoubleSide,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false
     });
     const glow = new THREE.Mesh(glowGeom, glowMat);
     glow.rotation.x = Math.PI / 2;
     glow.position.y = -6;
     ufoGroup.add(glow);
-    
-    // Pulsing lights around edge
+
+    // Pulsing rim lights — hot orange.
     for (let i = 0; i < 8; i++) {
         const angle = (i / 8) * Math.PI * 2;
         const light = new THREE.Mesh(
             new THREE.SphereGeometry(3, 8, 8),
-            new THREE.MeshBasicMaterial({ color: 0x00ffff })
+            new THREE.MeshBasicMaterial({
+                color: HOT, transparent: true, opacity: 0.95,
+                blending: THREE.AdditiveBlending
+            })
         );
         light.position.set(Math.cos(angle) * 42, 0, Math.sin(angle) * 42);
         light.userData.lightIndex = i;
         ufoGroup.add(light);
     }
-    
+
     return ufoGroup;
 }
 
@@ -7566,13 +8733,18 @@ function createUFOEnemy(position, systemName, index) {
         ufo = ufoModelCache.clone();
         ufo.scale.set(3, 3, 3); // Reasonable UFO scale
         
-        // Enhance materials for game style
+        // Enhance materials for game style + a hostile red emissive so
+        // GLB UFOs read as enemies (not the friendly-green default).
         ufo.traverse((child) => {
             if (child.isMesh && child.material) {
                 if (child.material.isMeshStandardMaterial) {
                     child.material.metalness = 0.85;
                     child.material.roughness = 0.15;
                     child.material.envMapIntensity = 2.0;
+                    if (child.material.emissive) {
+                        child.material.emissive.setHex(0xff3322);
+                        child.material.emissiveIntensity = 0.5;
+                    }
                 }
             }
         });
@@ -7597,16 +8769,18 @@ function createUFOEnemy(position, systemName, index) {
         isActive: false,
         visible: true,
         galaxyId: -1, // No faction
-        galaxyColor: 0x00ff88,
+        galaxyColor: 0xff4444, // hostile red on radar/HUD, like other enemies
         attackMode: 'erratic',
-        detectionRange: 2500,
-        firingRange: 350,
+        detectionRange: 3200,
+        firingRange: 700,
+        beamCooldownMs: 1500,
+        beamDamage: 5,
         isLocal: false,
         isBoss: false,
         isUFO: true,
         alwaysDropMissile: true, // Always drop missile on death
         systemName: systemName,
-        hitboxSize: 80,
+        hitboxSize: 190,
         // Erratic movement parameters
         erraticPhase: Math.random() * Math.PI * 2,
         erraticSpeed: 0.02 + Math.random() * 0.03,
@@ -7617,22 +8791,43 @@ function createUFOEnemy(position, systemName, index) {
     
     ufo.visible = true;
     ufo.frustumCulled = false;
-    
+
+    // Invisible hitbox sphere so the UFO is reliably TARGETABLE. A UFO is
+    // a Group with no top-level geometry, so raycast-based targeting/lock
+    // (which other enemies satisfy via this same isHitbox child) would
+    // skip it. Sized ~95 world units regardless of the GLB/procedural
+    // scale so the reticle catches the whole saucer.
+    let _uws = new THREE.Vector3();
+    try { ufo.getWorldScale(_uws); } catch (e) { _uws.set(1, 1, 1); }
+    const _us = Math.max(0.0001, (Math.abs(_uws.x) + Math.abs(_uws.y) + Math.abs(_uws.z)) / 3);
+    const _hbMat = new THREE.MeshBasicMaterial({ visible: false });
+    const _hitbox = new THREE.Mesh(new THREE.SphereGeometry(95 / _us, 10, 8), _hbMat);
+    _hitbox.userData.isHitbox = true;
+    _hitbox.frustumCulled = false;
+    ufo.add(_hitbox);
+
     scene.add(ufo);
     enemies.push(ufo);
     ufoEnemies.push(ufo);
-    
+
     return ufo;
 }
 
 function createUFOsInExoticSystems() {
+    // Latch so the various startup paths (and the loadUFOModel.then) can
+    // all call this without double-spawning.
+    if (typeof window !== 'undefined') {
+        if (window._exoticUFOsCreated) return;
+        window._exoticUFOsCreated = true;
+    }
     console.log('🛸 Creating UFO enemies in exotic systems...');
-    
+
     if (typeof outerInterstellarSystems === 'undefined' || outerInterstellarSystems.length === 0) {
         console.log('No outer systems found, skipping UFOs');
+        if (typeof window !== 'undefined') window._exoticUFOsCreated = false; // allow a retry once systems exist
         return;
     }
-    
+
     let ufosCreated = 0;
     
     // Add UFOs to exotic core systems only
@@ -7665,47 +8860,144 @@ function createUFOsInExoticSystems() {
 }
 
 // UFO erratic movement update
+const _ufoV1 = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+const _ufoV2 = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+const _ufoV3 = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+
+// Intelligent UFO update. Patrol erratically until the player comes
+// within detectionRange, then HUNT: hold a strafing standoff just inside
+// firing range, orbit the player, and fire ray beams on cooldown.
 function updateUFOMovement() {
-    const time = Date.now() * 0.001;
-    
+    if (!_ufoV1) return;
+    const now = Date.now();
+    const live = (typeof camera !== 'undefined' && camera &&
+                  typeof gameState !== 'undefined' && gameState &&
+                  gameState.gameStarted && !gameState.gameOver);
+    const playerPos = live ? camera.position : null;
+
     ufoEnemies.forEach(ufo => {
         if (!ufo || !ufo.userData || ufo.userData.health <= 0) return;
-        
         const data = ufo.userData;
-        
-        // Only apply erratic movement when not actively chasing player
-        if (data.attackMode === 'erratic' || !data.isActive) {
-            // Complex erratic movement pattern
+
+        // Saucers always spin lazily on their axis.
+        ufo.rotation.y += 0.03;
+
+        const dist = playerPos ? ufo.position.distanceTo(playerPos) : Infinity;
+        const hunting = playerPos && dist < (data.detectionRange || 3000);
+        data.isActive = !!hunting;
+        data.attackMode = hunting ? 'hunting' : 'erratic';
+
+        if (hunting) {
+            // Desired point: a strafing standoff ~85% of firing range from
+            // the player, drifting tangentially so the UFO circles rather
+            // than charging straight in.
+            data.circlePhase = (data.circlePhase || 0) + 0.012;
+            data.verticalBob = (data.verticalBob || 0) + 0.02;
+            const standoff = Math.max(260, (data.firingRange || 700) * 0.85);
+
+            const toU = _ufoV1.subVectors(ufo.position, playerPos);
+            const horiz = Math.hypot(toU.x, toU.z) || 1;
+            const tang = _ufoV2.set(-toU.z / horiz, 0, toU.x / horiz); // tangential unit
+            const radial = _ufoV3.copy(toU).normalize();
+
+            const desX = playerPos.x + radial.x * standoff + tang.x * Math.sin(data.circlePhase) * 140;
+            const desY = playerPos.y + radial.y * standoff + Math.sin(data.verticalBob) * 90;
+            const desZ = playerPos.z + radial.z * standoff + tang.z * Math.sin(data.circlePhase) * 140;
+
+            const lerp = 0.04;
+            ufo.position.x += (desX - ufo.position.x) * lerp;
+            ufo.position.y += (desY - ufo.position.y) * lerp;
+            ufo.position.z += (desZ - ufo.position.z) * lerp;
+            ufo.rotation.x = 0.12;   // slight aggressive tilt
+            ufo.rotation.z = 0;
+
+            // Fire a ray beam when roughly in range and off cooldown.
+            if (dist < (data.firingRange || 700) * 1.3 &&
+                now - (data.lastAttack || 0) > (data.beamCooldownMs || 1500)) {
+                data.lastAttack = now;
+                _fireUFORayBeam(ufo.position.clone(), playerPos.clone());
+                _ufoDamagePlayer(ufo, data.beamDamage || 5);
+            }
+        } else {
+            // Erratic patrol around the system (original behaviour).
             data.erraticPhase += data.erraticSpeed;
             data.spiralPhase += 0.01;
             data.verticalBob += 0.03;
-            
-            // Spiral + wobble pattern
             const spiralRadius = data.wobbleAmplitude * (0.5 + 0.5 * Math.sin(data.spiralPhase * 0.3));
-            const wobbleX = Math.cos(data.erraticPhase) * spiralRadius;
-            const wobbleZ = Math.sin(data.erraticPhase * 1.3) * spiralRadius;
-            const wobbleY = Math.sin(data.verticalBob) * 150;
-            
-            // Target position
-            const targetX = data.patrolCenter.x + wobbleX;
-            const targetY = data.patrolCenter.y + wobbleY;
-            const targetZ = data.patrolCenter.z + wobbleZ;
-            
-            // Smooth but quick movement
+            const targetX = data.patrolCenter.x + Math.cos(data.erraticPhase) * spiralRadius;
+            const targetY = data.patrolCenter.y + Math.sin(data.verticalBob) * 150;
+            const targetZ = data.patrolCenter.z + Math.sin(data.erraticPhase * 1.3) * spiralRadius;
             ufo.position.x += (targetX - ufo.position.x) * 0.02;
             ufo.position.y += (targetY - ufo.position.y) * 0.02;
             ufo.position.z += (targetZ - ufo.position.z) * 0.02;
-            
-            // UFO tilt based on movement
-            const tiltX = (targetZ - ufo.position.z) * 0.01;
-            const tiltZ = -(targetX - ufo.position.x) * 0.01;
-            ufo.rotation.x = tiltX;
-            ufo.rotation.z = tiltZ;
-            
-            // Slow spin
-            ufo.rotation.y += 0.01;
+            ufo.rotation.x = (targetZ - ufo.position.z) * 0.01;
+            ufo.rotation.z = -(targetX - ufo.position.x) * 0.01;
+        }
+
+        // UFOs also stay out of black-hole event-horizon warp zones.
+        if (typeof window !== 'undefined' && typeof window._enemyAvoidBlackHoles === 'function') {
+            window._enemyAvoidBlackHoles(ufo);
         }
     });
+}
+
+// Special UFO weapon — a thick pulsing red ray beam (distinct from the
+// thin faction lasers). Visual only; damage is applied separately.
+function _fireUFORayBeam(startPos, endPos) {
+    if (typeof THREE === 'undefined' || typeof scene === 'undefined') return;
+    const dir = new THREE.Vector3().subVectors(endPos, startPos);
+    const len = dir.length();
+    if (len < 1) return;
+    const quat = new THREE.Quaternion().setFromUnitVectors(
+        new THREE.Vector3(0, 1, 0), dir.clone().normalize());
+    const mid = new THREE.Vector3().addVectors(startPos, endPos).multiplyScalar(0.5);
+
+    const coreMat = new THREE.MeshBasicMaterial({ color: 0xff2211, transparent: true, opacity: 0.95 });
+    const core = new THREE.Mesh(new THREE.CylinderGeometry(2.4, 2.4, len, 10), coreMat);
+    const glowMat = new THREE.MeshBasicMaterial({
+        color: 0xff7744, transparent: true, opacity: 0.45,
+        blending: THREE.AdditiveBlending, depthWrite: false
+    });
+    const glow = new THREE.Mesh(new THREE.CylinderGeometry(7, 7, len, 10), glowMat);
+
+    [core, glow].forEach(m => {
+        m.position.copy(mid);
+        m.quaternion.copy(quat);
+        m.frustumCulled = false;
+        m.renderOrder = 55;
+        scene.add(m);
+    });
+
+    let op = 1.0;
+    const iv = setInterval(() => {
+        op -= 0.25;
+        coreMat.opacity = Math.max(0, 0.95 * op);
+        glowMat.opacity = Math.max(0, 0.45 * op);
+        if (op <= 0) {
+            clearInterval(iv);
+            scene.remove(core); scene.remove(glow);
+            core.geometry.dispose(); glow.geometry.dispose();
+            coreMat.dispose(); glowMat.dispose();
+        }
+    }, 55);
+
+    if (typeof playSound === 'function') playSound('enemy_fire');
+}
+
+// Apply ray-beam damage to the player, honouring shields / warp
+// invulnerability — mirrors the player-hit path in fireEnemyWeapon.
+function _ufoDamagePlayer(ufo, damage) {
+    if (typeof gameState === 'undefined') return;
+    const invuln = typeof isBlackHoleWarpInvulnerable === 'function' && isBlackHoleWarpInvulnerable();
+    const shielded = typeof isShieldActive === 'function' && isShieldActive();
+    if (invuln) return;
+    const reduction = (typeof getShieldDamageReduction === 'function') ? getShieldDamageReduction() : 0;
+    const actual = damage * (1 - reduction);
+    if (gameState.hull !== undefined) gameState.hull = Math.max(0, gameState.hull - actual);
+    else if (gameState.health !== undefined) gameState.health = Math.max(0, gameState.health - actual);
+    if (shielded && typeof createShieldHitEffect === 'function') createShieldHitEffect(ufo.position);
+    if (typeof createEnhancedScreenDamageEffect === 'function') createEnhancedScreenDamageEffect(ufo.position);
+    if (!shielded && typeof flashPlayerShipHit === 'function') flashPlayerShipHit();
 }
 
 window.ufoEnemies = ufoEnemies;
@@ -7994,9 +9286,13 @@ function createEnhancedPlanetClustersInNebulas() {
             
             const clusterCenter = new THREE.Vector3(clusterX, clusterY, clusterZ);
             
-            // Create central star - LARGER
-            const starSize = 15 + Math.random() * 20; // Was 8-20, now 15-35
-            const starGeometry = new THREE.SphereGeometry(starSize, 32, 32);
+            // Create central star — 4× visual bump (60–140 vs the
+            // earlier 15–35) so it dominates the cluster like a sun.
+            // mass / gravity below still use starSize so slingshot
+            // physics stay tuned to the original scale.
+            const starSize = 15 + Math.random() * 20;
+            const _starVisualSize = starSize * 2;
+            const starGeometry = new THREE.SphereGeometry(_starVisualSize, 32, 32);
             const starColor = nebula.userData.color || new THREE.Color().setHSL(Math.random(), 0.8, 0.6);
             const starMaterial = new THREE.MeshBasicMaterial({ 
                 color: starColor,
@@ -8006,8 +9302,8 @@ function createEnhancedPlanetClustersInNebulas() {
             const star = new THREE.Mesh(starGeometry, starMaterial);
             star.position.copy(clusterCenter);
             
-            // Add star glow
-            const glowGeometry = new THREE.SphereGeometry(starSize * 1.5, 32, 32);
+            // Add star glow (scaled with the 4× visual radius)
+            const glowGeometry = new THREE.SphereGeometry(_starVisualSize * 1.5, 32, 32);
             const glowMaterial = new THREE.MeshBasicMaterial({
                 color: starColor,
                 transparent: true,
@@ -8030,7 +9326,10 @@ function createEnhancedPlanetClustersInNebulas() {
             star.frustumCulled = false;
             scene.add(star);
             planets.push(star);
-            
+            if (typeof addStarCorona === 'function') {
+                addStarCorona(star, _starVisualSize, starColor);
+            }
+
             // PERF: Reduced from 5-12 to 3-7 planets per star
             const planetCount = 3 + Math.floor(Math.random() * 5);
             console.log(`    🪐 Creating ${planetCount} planets for System ${c + 1}...`);
@@ -8397,20 +9696,36 @@ function createEnemies3D() {
         
         // Spawn enemies in spread-out GROUPS of 2-3 instead of individuals
         // so the galaxy isn't a homogeneous swarm clustered around the BH.
+        // Every galaxy is guaranteed at least MIN_BH_ENEMIES hostiles
+        // patrolling the black hole (in groups of 2-3) and at least one
+        // group at a cosmic feature, then the rest are randomized. Total
+        // enemy count is allowed to exceed enemiesPerGalaxy when needed
+        // to satisfy the black-hole minimum — the player should always
+        // find significant resistance there.
+        const MIN_BH_ENEMIES = 15;
         let i = 0;
-        while (i < enemiesPerGalaxy) {
-            const groupSize = Math.min(2 + Math.floor(Math.random() * 2), enemiesPerGalaxy - i); // 2 or 3
+        let bhEnemies = 0;
+        let cosmicSpawned = false;
+        while (i < enemiesPerGalaxy || bhEnemies < MIN_BH_ENEMIES) {
+            const groupSize = 2 + Math.floor(Math.random() * 2); // 2 or 3
 
-            // Pick a group center, biasing toward varied placement types
             let groupPlacementType;
-            const groupRoll = Math.random();
-            if (groupRoll < 0.40) {
-                groupPlacementType = 'cosmic_feature';
-            } else if (groupRoll < 0.65) {
+            if (bhEnemies < MIN_BH_ENEMIES) {
                 groupPlacementType = 'black_hole';
+            } else if (!cosmicSpawned) {
+                groupPlacementType = 'cosmic_feature';
+                cosmicSpawned = true;
             } else {
-                groupPlacementType = 'random';
+                const groupRoll = Math.random();
+                if (groupRoll < 0.40) {
+                    groupPlacementType = 'cosmic_feature';
+                } else if (groupRoll < 0.65) {
+                    groupPlacementType = 'black_hole';
+                } else {
+                    groupPlacementType = 'random';
+                }
             }
+            if (groupPlacementType === 'black_hole') bhEnemies += groupSize;
             const groupCenter = getEnemyPlacementPosition(g, groupPlacementType);
 
             for (let p = 0; p < groupSize; p++, i++) {
@@ -8514,18 +9829,31 @@ function createEnemies3D() {
         console.log(`   Galaxy ${g} (${galaxyTypes[g].name}): ${count} enemies`);
     }
     
-    // Create local galaxy enemies (Martian Pirates) — patrol in groups of 3
-    // Positioned within the inner Sol system so players encounter them early
+    // Create local galaxy enemies (Martian Pirates) — patrol in groups of 3.
+    // Distributed spherically around the inner Sol system using a Fibonacci
+    // lattice so groups occupy all three axes rather than a single plane.
     const patrolGroupCount = 8;
     const piratesPerGroup = 3;
+    const pirateGoldenAngle = Math.PI * (3 - Math.sqrt(5));
+    // Martian Pirates patrol the Sol system, so their lattice is centred
+    // on the Sol-system offset (not the origin, which is Sgr A* — that's
+    // Vulcan turf below).
+    const solCenter = (typeof window !== 'undefined' && window.localSystemOffset)
+        ? window.localSystemOffset : { x: 8000, y: 0, z: 4800 };
     let pirateIndex = 0;
     for (let g = 0; g < patrolGroupCount; g++) {
-        const groupDistance = 800 + Math.random() * 1200;
-        const groupAngle = (g / patrolGroupCount) * Math.PI * 2 + Math.random() * 0.3;
+        // Keep patrol groups well clear of the Sol-system core where the
+        // player spawns (near Earth). The old 800-unit floor put pirates
+        // on top of the player immediately; a ~2800-unit minimum gives a
+        // few seconds to get oriented before any patrol is in range.
+        const groupDistance = 2800 + Math.random() * 1600;
+        const cosPolar = 1 - 2 * (g + 0.5) / patrolGroupCount;
+        const sinPolar = Math.sqrt(Math.max(0, 1 - cosPolar * cosPolar));
+        const azimuth = pirateGoldenAngle * g + Math.random() * 0.3;
         const groupCenter = new THREE.Vector3(
-            Math.cos(groupAngle) * groupDistance,
-            (Math.random() - 0.5) * 100,
-            Math.sin(groupAngle) * groupDistance
+            solCenter.x + Math.cos(azimuth) * sinPolar * groupDistance,
+            solCenter.y + cosPolar * groupDistance,
+            solCenter.z + Math.sin(azimuth) * sinPolar * groupDistance
         );
 
         for (let p = 0; p < piratesPerGroup; p++) {
@@ -8613,20 +9941,26 @@ function createEnemies3D() {
     }
 
     // =============================================================================
-    // VULCAN PATROL SHIPS — tight patrol ring around Sagittarius A* (700-1500u)
-    // The player spawns at ~2470u from origin, so this keeps Vulcans guarding
-    // the galactic center rather than spawning on top of the player at start.
+    // VULCAN PATROL SHIPS — tight patrol ring around Sagittarius A* (700-1500u
+    // from the origin). The player now starts ~9.5k away at Sol (Martian
+    // Pirate turf), so Vulcans stay origin-centred, guarding the galactic
+    // centre well clear of the spawn.
     // =============================================================================
     const vulcanGroupCount = 6;
     const vulcansPerGroup = 3;
+    const vulcanGoldenAngle = Math.PI * (3 - Math.sqrt(5));
     let vulcanIndex = 0;
     for (let g = 0; g < vulcanGroupCount; g++) {
         const groupDistance = 700 + Math.random() * 800;
-        const groupAngle = (g / vulcanGroupCount) * Math.PI * 2 + Math.random() * 0.5;
+        // Fibonacci-lattice sphere: even 3D coverage around Sagittarius A*.
+        // Offset starting index so Vulcans don't overlap with Martian Pirates.
+        const cosPolar = 1 - 2 * (g + 0.5) / vulcanGroupCount;
+        const sinPolar = Math.sqrt(Math.max(0, 1 - cosPolar * cosPolar));
+        const azimuth = vulcanGoldenAngle * (g + 3.5) + Math.random() * 0.5;
         const groupCenter = new THREE.Vector3(
-            Math.cos(groupAngle) * groupDistance,
-            (Math.random() - 0.5) * 200,
-            Math.sin(groupAngle) * groupDistance
+            Math.cos(azimuth) * sinPolar * groupDistance,
+            cosPolar * groupDistance,
+            Math.sin(azimuth) * sinPolar * groupDistance
         );
 
         for (let p = 0; p < vulcansPerGroup; p++) {
@@ -8641,6 +9975,32 @@ function createEnemies3D() {
                 // Vulcan Patrols use Enemy8.glb (different from Martian Pirates' Enemy1)
                 enemy = createEnemyMeshWithModel(8, enemyGeometry, materials.enemyMaterial);
                 isGLBModel = enemy.isGroup || (enemy.children && enemy.children.length > 0 && enemy.children[0].isMesh);
+                // Enemy8.glb is authored nose-toward-+Z, but the game's
+                // lookAt makes a ship's local -Z face its target. Every
+                // prior fix failed for a real reason:
+                //   • root.rotation.y / child.rotateY were overwritten by
+                //     _smoothEnemyLookAt's quaternion.slerp every frame.
+                //   • geometry.applyMatrix4 mutated the SHARED cached
+                //     BufferGeometry (model.clone() shares geometry), so
+                //     every Vulcan spawn re-flipped the same mesh and the
+                //     net rotation depended on spawn count.
+                // Clone-safe, transform-stack-safe fix: wrap the model in
+                // an outer Group. The game drives the WRAPPER (position /
+                // quaternion / userData); the inner model keeps a
+                // permanent local 180° Y rotation that lookAt never
+                // touches. Move the model's scale onto the wrapper so the
+                // thruster-cone sizing (which reads ship.getWorldScale)
+                // still sees ~96 and matches every other GLB enemy.
+                if (enemy && isGLBModel && typeof THREE !== 'undefined') {
+                    const inner = enemy;
+                    const wrapper = new THREE.Group();
+                    wrapper.scale.copy(inner.scale);     // carry the 96x scale
+                    inner.scale.set(1, 1, 1);            // wrapper owns scale now
+                    inner.position.set(0, 0, 0);
+                    inner.rotation.set(0, Math.PI, 0);   // persistent nose flip
+                    wrapper.add(inner);
+                    enemy = wrapper;
+                }
             } else {
                 enemy = new THREE.Mesh(enemyGeometry, materials.enemyMaterial);
             }
@@ -8948,14 +10308,16 @@ function createEnemyMaterial(shapeData, enemyType, distance) {
 // =============================================================================
 
 function createEnhancedWormholes() {
-    const initialWormholes = 4;
-    
+    // More wormholes from the start — bumped from 4 to 12 so the
+    // universe always has spatial anomalies to find.
+    const initialWormholes = 12;
+
     for (let i = 0; i < initialWormholes; i++) {
-        if (Math.random() < 0.8) {
+        if (Math.random() < 0.85) {
             spawnEnhancedWormhole();
         }
     }
-    
+
     console.log(`Spawned ${wormholes.length} enhanced whirlpool wormholes`);
 }
 
@@ -8964,35 +10326,36 @@ function spawnEnhancedWormhole() {
     let attempts = 0;
     do {
         position = new THREE.Vector3(
-            (Math.random() - 0.5) * 30000, // Doubled
-            (Math.random() - 0.5) * 1600, // Doubled
-            (Math.random() - 0.5) * 30000 // Doubled
+            (Math.random() - 0.5) * 30000,
+            (Math.random() - 0.5) * 1600,
+            (Math.random() - 0.5) * 30000
         );
         attempts++;
-    } while (attempts < 15 && isPositionTooClose(position, 300)); // Doubled
-    
-    // Create whirlpool wormhole
+    } while (attempts < 15 && isPositionTooClose(position, 900));
+
+    // Create whirlpool wormhole. All sizes tripled vs the original
+    // so wormholes read as proper galactic-scale phenomena.
     const wormholeGroup = new THREE.Group();
-    
+
     // Central void
-    const voidGeometry = new THREE.SphereGeometry(8, 16, 16); // Size remains the same
+    const voidGeometry = new THREE.SphereGeometry(24, 16, 16);
     const voidMaterial = new THREE.MeshBasicMaterial({
         color: 0x000000,
         transparent: true,
         opacity: 0.9
     });
     const voidMesh = new THREE.Mesh(voidGeometry, voidMaterial);
-    
+
     // FIXED: Prevent frustum culling for wormhole void
     voidMesh.visible = true;
     voidMesh.frustumCulled = false;
-    
+
     wormholeGroup.add(voidMesh);
-    
-    // Spiral rings
+
+    // Spiral rings — base radius and step both 3x.
     for (let i = 0; i < 5; i++) {
-        const ringRadius = 12 + i * 4; // Size remains the same
-        const ringGeometry = new THREE.TorusGeometry(ringRadius, 1.5, 8, 32);
+        const ringRadius = 36 + i * 12;
+        const ringGeometry = new THREE.TorusGeometry(ringRadius, 4.5, 8, 32);
         const ringMaterial = new THREE.MeshBasicMaterial({
             color: new THREE.Color().setHSL(0.8 + i * 0.05, 0.8, 0.6),
             transparent: true,
@@ -9002,21 +10365,18 @@ function spawnEnhancedWormhole() {
         const ring = new THREE.Mesh(ringGeometry, ringMaterial);
         ring.rotation.x = Math.PI / 2;
         ring.rotation.z = i * 0.3;
-        
-        // FIXED: Prevent frustum culling for wormhole rings
         ring.visible = true;
-        ring.frustumCulled = true;  // OPTIMIZATION: Enable frustum culling
-        
+        ring.frustumCulled = true;
         wormholeGroup.add(ring);
     }
-    
-    // Particle effect (doubled range)
+
+    // Particle halo — 3x radius range and 3x height.
     const particleGeometry = new THREE.BufferGeometry();
     const particleVertices = [];
     for (let i = 0; i < 200; i++) {
         const angle = Math.random() * Math.PI * 2;
-        const radius = 20 + Math.random() * 40; // Doubled
-        const height = (Math.random() - 0.5) * 30; // Doubled
+        const radius = 60 + Math.random() * 120;
+        const height = (Math.random() - 0.5) * 90;
         particleVertices.push(
             Math.cos(angle) * radius,
             height,
@@ -9026,16 +10386,15 @@ function spawnEnhancedWormhole() {
     particleGeometry.setAttribute('position', new THREE.Float32BufferAttribute(particleVertices, 3));
     const particleMaterial = new THREE.PointsMaterial({
         color: 0xaa44ff,
-        size: 1.5,
+        size: 4.5,
         transparent: true,
         opacity: 0.6
     });
     const particles = new THREE.Points(particleGeometry, particleMaterial);
-    
-    // FIXED: Prevent frustum culling for wormhole particles
+
     particles.visible = true;
     particles.frustumCulled = false;
-    
+
     wormholeGroup.add(particles);
     
     wormholeGroup.position.copy(position);
@@ -9047,19 +10406,21 @@ function spawnEnhancedWormhole() {
     wormholeGroup.userData = {
         name: `Spatial Whirlpool ${wormholes.length + 1}`,
         type: 'wormhole',
-        lifeTime: 120000 + Math.random() * 60000,
+        // Triple the lifetime — wormholes now last 6-9 minutes instead
+        // of 2-3, so the player has time to find and use them.
+        lifeTime: 360000 + Math.random() * 180000,
         age: 0,
-        warpThreshold: 40, // Doubled
+        warpThreshold: 120,            // 3x: easier to enter the throat
         isTemporary: true,
-        detectionRange: 1200, // Doubled
+        detectionRange: 3600,          // 3x: spotted from much farther away
         detected: false,
         spiralSpeed: 0.02 + Math.random() * 0.03,
         // Instability properties
         unstable: true,
         phaseTimer: 0,
-        phaseInterval: 5000 + Math.random() * 10000, // 5-15 seconds per phase
+        phaseInterval: 5000 + Math.random() * 10000,
         isVisible: true,
-        colorHue: Math.random(), // Starting hue
+        colorHue: Math.random(),
         colorSpeed: 0.0001 + Math.random() * 0.0002
     };
     
@@ -9286,59 +10647,88 @@ function updateAmbientSpaceDebris() {
 function createEnhancedComets() {
     const cometCount = 25;
     for (let i = 0; i < cometCount; i++) {
-        const cometGeometry = new THREE.SphereGeometry(0.8 + Math.random() * 1.5, 8, 8); // Size remains the same
+        const headR = 0.8 + Math.random() * 1.5;
+        // Bright white-pink nucleus.
+        const cometGeometry = new THREE.SphereGeometry(headR, 10, 10);
         const cometMaterial = new THREE.MeshBasicMaterial({
-            color: new THREE.Color().setHSL(0.6 + Math.random() * 0.2, 0.8, 0.7),
+            color: 0xfff0f5,
             transparent: true,
-            opacity: 0.9
+            opacity: 0.97
         });
-        
+
         const comet = new THREE.Mesh(cometGeometry, cometMaterial);
-        
-        // FIXED: Prevent frustum culling for comets
         comet.visible = true;
         comet.frustumCulled = false;
-        
-        // Doubled scale for positioning
+
         comet.position.set(
-            (Math.random() - 0.5) * 36000, // Doubled
-            (Math.random() - 0.5) * 2400, // Doubled
-            (Math.random() - 0.5) * 36000 // Doubled
+            (Math.random() - 0.5) * 36000,
+            (Math.random() - 0.5) * 2400,
+            (Math.random() - 0.5) * 36000
         );
-        
+
         const velocity = new THREE.Vector3(
-            (Math.random() - 0.5) * 6, // Doubled
-            (Math.random() - 0.5) * 1.6, // Doubled
-            (Math.random() - 0.5) * 6 // Doubled
+            (Math.random() - 0.5) * 6,
+            (Math.random() - 0.5) * 1.6,
+            (Math.random() - 0.5) * 6
         );
-        
-        // Enhanced comet tail (doubled scale)
+
+        // Soft glowing coma around the head — additive radial sprite,
+        // pink-white, so the nucleus blooms like the reference photo.
+        if (typeof _starCoronaTexture === 'function') {
+            const comaMat = new THREE.SpriteMaterial({
+                map: _starCoronaTexture(0xff9ec8),
+                color: 0xffffff, transparent: true,
+                blending: THREE.AdditiveBlending, depthWrite: false
+            });
+            const coma = new THREE.Sprite(comaMat);
+            const cs = headR * 11;
+            coma.scale.set(cs, cs, 1);
+            coma.frustumCulled = false;
+            comet.add(coma);
+        }
+
+        // Long FANNED dust tail: vertex-coloured white→pink→peach with
+        // the spread widening toward the tail and brightness fading out,
+        // streaming opposite the velocity (like a real dust tail).
+        const TAIL_N = 140;
         const tailGeometry = new THREE.BufferGeometry();
         const tailVertices = [];
-        for (let j = 0; j < 50; j++) {
-            const offset = j * 1.0; // Doubled
+        const tailColors = [];
+        const dir = velocity.clone().normalize();
+        // Two perpendicular axes to fan the tail into a sheet.
+        const up = Math.abs(dir.y) > 0.9 ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 1, 0);
+        const perpA = new THREE.Vector3().crossVectors(dir, up).normalize();
+        const perpB = new THREE.Vector3().crossVectors(dir, perpA).normalize();
+        for (let j = 0; j < TAIL_N; j++) {
+            const t = j / TAIL_N;                 // 0 head → 1 tail tip
+            const offset = j * 1.6;               // length along the tail
+            const spread = 1.5 + t * 26;          // fans out toward the tip
+            const sa = (Math.random() - 0.5) * spread;
+            const sb = (Math.random() - 0.5) * spread * 0.5; // flatter sheet
             tailVertices.push(
-                -velocity.x * offset + (Math.random() - 0.5) * 4, // Doubled
-                -velocity.y * offset + (Math.random() - 0.5) * 4, // Doubled
-                -velocity.z * offset + (Math.random() - 0.5) * 4 // Doubled
+                -dir.x * offset + perpA.x * sa + perpB.x * sb,
+                -dir.y * offset + perpA.y * sa + perpB.y * sb,
+                -dir.z * offset + perpA.z * sa + perpB.z * sb
             );
+            // White at the head → pink → peach, dimming toward the tip.
+            const b = Math.max(0, 1 - t * 0.9);
+            tailColors.push(b * 1.0, b * (0.8 - t * 0.2), b * (0.92 - t * 0.45));
         }
         tailGeometry.setAttribute('position', new THREE.Float32BufferAttribute(tailVertices, 3));
+        tailGeometry.setAttribute('color', new THREE.Float32BufferAttribute(tailColors, 3));
         const tailMaterial = new THREE.PointsMaterial({
-    color: 0xaaccff,
-    size: 1.2,
-    transparent: true,
-    opacity: 0.6, // Increased from 0.4
-    vertexColors: false,
-    blending: THREE.AdditiveBlending,
-    sizeAttenuation: true
+            size: 2.4,
+            transparent: true,
+            opacity: 0.85,
+            vertexColors: true,
+            blending: THREE.AdditiveBlending,
+            sizeAttenuation: true,
+            depthWrite: false
         });
         const tail = new THREE.Points(tailGeometry, tailMaterial);
-        
-        // FIXED: Prevent frustum culling for comet tail
         tail.visible = true;
         tail.frustumCulled = false;
-        
+
         comet.add(tail);
         
         comet.userData = {
@@ -9751,9 +11141,20 @@ function createAsteroidBelts() {
             console.warn(`No black hole found for galaxy ${galaxyIndex}`);
             return;
         }
-        
-        const galaxyCenter = blackHole.position.clone();
-        
+
+        // Galaxy 7 is the local Sol system. Its only non-gateway black
+        // hole is the Companion Core near the universe origin (~0,±500,0),
+        // but the Sol system — and the player start — live at the local
+        // system offset (~2000,0,1200). Anchoring the "local" belt to the
+        // origin black hole put it ~2600u from the player and nowhere near
+        // the solar plane the offset code claims to use. Anchor it to the
+        // Sol star instead so it spawns in the local system as intended.
+        let galaxyCenter = blackHole.position.clone();
+        if (galaxyIndex === 7) {
+            const solStar = planets.find(p => p.userData && p.userData.isLocalStar);
+            if (solStar) galaxyCenter = solStar.position.clone();
+        }
+
         // CHECK DISTANCE: Only create if player is nearby
         const distanceToPlayer = camera.position.distanceTo(galaxyCenter);
         if (distanceToPlayer > nearbyDistance) {
@@ -9861,6 +11262,141 @@ beltGroup.frustumCulled = false; // Don't cull the entire group
     });
     
     console.log(`✅ Created ${asteroidBelts.length} OPTIMIZED asteroid belts around actual black holes`);
+
+    // Add extra scattered, breakable asteroid clusters across the
+    // universe so the player has obstacles to use (and shoot for hull)
+    // during dogfights, not just at the BH-orbit rings.
+    if (typeof createScatteredAsteroidFields === 'function') {
+        try { createScatteredAsteroidFields(); } catch (e) {
+            console.warn('createScatteredAsteroidFields failed:', e);
+        }
+    }
+}
+
+// =============================================================================
+// SCATTERED ASTEROID FIELDS — small breakable clusters placed both
+// inside each black-hole galaxy and out in deep interstellar space.
+// Each cluster is a tight ~30-asteroid swarm that the player can shoot
+// apart (uses the same userData shape as the main belts), so it
+// integrates with destroyAsteroid, asteroid-mining rewards, and the
+// raycast targeting that already exists.
+// =============================================================================
+function createScatteredAsteroidFields() {
+    if (typeof window.asteroidBelts === 'undefined') window.asteroidBelts = [];
+    if (!asteroidResources || !asteroidResources.geometries) {
+        initializeAsteroidResources();
+    }
+
+    function _spawnCluster(galaxyIndex, center, opts) {
+        const cluster = new THREE.Group();
+        const count = (opts && opts.count) || (22 + Math.floor(Math.random() * 16));
+        const spread = (opts && opts.spread) || (350 + Math.random() * 250);
+        const minScale = (opts && opts.minScale) || 2.5;
+        const scaleRange = (opts && opts.scaleRange) || 4.5;
+        const galaxyType = (typeof galaxyTypes !== 'undefined' && galaxyTypes[galaxyIndex])
+            ? galaxyTypes[galaxyIndex] : { name: 'Deep Space' };
+
+        for (let j = 0; j < count; j++) {
+            const geom = asteroidResources.geometries[Math.floor(Math.random() * asteroidResources.geometries.length)];
+            const mat  = asteroidResources.materials[Math.floor(Math.random() * asteroidResources.materials.length)];
+            const a = new THREE.Mesh(geom, mat);
+            a.scale.setScalar(minScale + Math.random() * scaleRange);
+            a.frustumCulled = false;
+            // Random within a flattened sphere so it reads as a clumpy
+            // field rather than a tight ring.
+            const phi = Math.random() * Math.PI * 2;
+            const r   = Math.random() * spread;
+            const h   = (Math.random() - 0.5) * spread * 0.4;
+            a.position.set(Math.cos(phi) * r, h, Math.sin(phi) * r);
+            a.rotation.set(
+                Math.random() * Math.PI * 2,
+                Math.random() * Math.PI * 2,
+                Math.random() * Math.PI * 2
+            );
+            a.userData = {
+                name: `${galaxyType.name} Scatter ${j + 1}`,
+                type: 'asteroid',
+                health: 2,
+                maxHealth: 2,
+                orbitSpeed: 0.0003 + Math.random() * 0.0008,
+                rotationSpeed: (Math.random() - 0.5) * 0.012,
+                beltCenter: center.clone(),
+                orbitRadius: r,
+                orbitPhase: phi,
+                galaxyId: galaxyIndex,
+                isTargetable: true,
+                isDestructible: true,
+                beltGroup: cluster
+            };
+            cluster.add(a);
+            planets.push(a);
+        }
+
+        cluster.position.copy(center);
+        cluster.visible = true;
+        cluster.frustumCulled = false;
+        cluster.userData = {
+            name: `${galaxyType.name} Asteroid Cluster`,
+            type: 'asteroidBelt',
+            center: center.clone(),
+            radius: spread,
+            asteroidCount: count,
+            galaxyId: galaxyIndex,
+            isScatterCluster: true,
+            blackHolePosition: center.clone()
+        };
+        scene.add(cluster);
+        asteroidBelts.push(cluster);
+    }
+
+    let added = 0;
+    // 1) Inside each black-hole galaxy: 3-5 extra clusters at random
+    //    positions in the galactic plane, used as cover during fights.
+    const blackHoles = planets.filter(p =>
+        p.userData && p.userData.type === 'blackhole' &&
+        typeof p.userData.galaxyId === 'number' &&
+        !p.userData.isLocalGateway);
+    blackHoles.forEach(bh => {
+        const galaxyIndex = bh.userData.galaxyId;
+        const clusters = 3 + Math.floor(Math.random() * 3);
+        for (let k = 0; k < clusters; k++) {
+            const ang = Math.random() * Math.PI * 2;
+            // Place 3,000-7,000 units from the BH so they don't pile on
+            // the existing BH ring and they overlap the regular combat
+            // zones where enemies spawn.
+            const dist = 3000 + Math.random() * 4000;
+            const yJitter = (Math.random() - 0.5) * 600;
+            const center = new THREE.Vector3(
+                bh.position.x + Math.cos(ang) * dist,
+                bh.position.y + yJitter,
+                bh.position.z + Math.sin(ang) * dist
+            );
+            _spawnCluster(galaxyIndex, center, { count: 25 + Math.floor(Math.random() * 15) });
+            added++;
+        }
+    });
+
+    // 2) Interstellar space between galaxies: 12 deep-space clusters
+    //    placed at random points within ±45,000 of the origin so the
+    //    player encounters them while warping or coasting.
+    for (let k = 0; k < 12; k++) {
+        const center = new THREE.Vector3(
+            (Math.random() - 0.5) * 90000,
+            (Math.random() - 0.5) * 18000,
+            (Math.random() - 0.5) * 90000
+        );
+        // Larger spread + sparser fill — these are loose asteroid
+        // streams between galaxies, not tight combat-cover clusters.
+        _spawnCluster(-1, center, {
+            count: 18 + Math.floor(Math.random() * 14),
+            spread: 700 + Math.random() * 400,
+            minScale: 3.0,
+            scaleRange: 6.0
+        });
+        added++;
+    }
+
+    console.log(`💎 Created ${added} extra scattered asteroid clusters (galaxy + interstellar)`);
 }
 
 // =============================================================================
@@ -9908,8 +11444,14 @@ function loadAsteroidsForGalaxy(galaxyId) {
     }
     
     const galaxyType = galaxyTypes[galaxyId];
-    const galaxyCenter = blackHole.position.clone();
-    
+    // Galaxy 7 (local Sol): anchor the belt to the Sol star, not the
+    // origin Companion Core — see createAsteroidBelts for rationale.
+    let galaxyCenter = blackHole.position.clone();
+    if (galaxyId === 7) {
+        const solStar = planets.find(p => p.userData && p.userData.isLocalStar);
+        if (solStar) galaxyCenter = solStar.position.clone();
+    }
+
     console.log(`Creating asteroid belt for galaxy ${galaxyId} (${galaxyType.name})`);
     
     const beltCount = Math.random() > 0.5 ? 2 : 1;
@@ -10475,6 +12017,7 @@ if (typeof window !== 'undefined') {
     window.createDistantNebulas = createDistantNebulas;
     window.createExoticCoreNebulas = createExoticCoreNebulas;
     window.createAsteroidBelts = createAsteroidBelts;
+    window.createScatteredAsteroidFields = createScatteredAsteroidFields;
     window.isPositionTooClose = isPositionTooClose;
     
     // Utility functions
@@ -10497,7 +12040,6 @@ if (typeof window !== 'undefined') {
     window.createEnhancedPlanetClustersInNebulas = createEnhancedPlanetClustersInNebulas;
     window.createNebulaGasCloud = createNebulaGasCloud;
 	window.updateCMBOpacity = updateCMBOpacity;
-    window.updateHubbleSkyboxOpacity = updateHubbleSkyboxOpacity;
 	window.updateHubbleSkybox2Opacity = updateHubbleSkybox2Opacity;
     
     console.log('Enhanced game objects with planet clusters loaded');
@@ -10621,42 +12163,6 @@ function updateCMBOpacity() {
 }
 
 // =============================================================================
-// HUBBLE SKYBOX OPACITY CONTROL - FADES IN AS PLAYER TRAVELS
-// =============================================================================
-function updateHubbleSkyboxOpacity() {
-    if (!window.hubbleSkybox || !window.hubbleSkybox.material) {
-        return;
-    }
-    
-    if (typeof camera === 'undefined' || typeof gameState === 'undefined') {
-        return;
-    }
-    
-    // Calculate total distance traveled from origin
-    const distanceFromStart = camera.position.length();
-    
-    // Define fade-in range (adjust these values to control the fade speed)
-    const fadeStartDistance = 5000;        // Start fading at origin
-    const fadeEndDistance = 75000;      // Reach max opacity at 50,000 units
-    
-    // Calculate opacity based on distance (0.01 to 0.6)
-    let targetOpacity;
-    if (distanceFromStart < fadeStartDistance) {
-        targetOpacity = 0.00;
-    } else if (distanceFromStart > fadeEndDistance) {
-        targetOpacity = 0.02;
-    } else {
-        // Linear interpolation between 0.01 and 0.6
-        const progress = (distanceFromStart - fadeStartDistance) / (fadeEndDistance - fadeStartDistance);
-        targetOpacity = 0.00 + (progress * 0.02); // 0.59 = 0.6 - 0.01
-    }
-    
-    // Smoothly transition to target opacity
-    const currentOpacity = window.hubbleSkybox.material.opacity;
-    const lerpSpeed = 0.02; // Smooth transition speed
-    window.hubbleSkybox.material.opacity = currentOpacity + (targetOpacity - currentOpacity) * lerpSpeed;
-}
-// =============================================================================
 // HUBBLE SKYBOX 2 OPACITY CONTROL - FADES IN AS PLAYER TRAVELS DEEPER
 // =============================================================================
 function updateHubbleSkybox2Opacity() {
@@ -10668,24 +12174,41 @@ function updateHubbleSkybox2Opacity() {
         return;
     }
     
-    // Calculate total distance traveled from origin
-    const distanceFromStart = camera.position.length();
-    
+    // Distance travelled FROM the player's start (relocated Sol system),
+    // not from the world origin. Pre-fix this used camera.position
+    // .length(); after the SOL relocation the player spawns ~9.3k units
+    // from origin, so this deep layer started at ~0.31 instead of its
+    // 0.20 floor and washed out the early sky / scene. Sol-anchored, it
+    // sits at the 0.20 floor at spawn and fades in only on real travel.
+    const _solB = (typeof window !== 'undefined' && window.localSystemOffset)
+        ? window.localSystemOffset : { x: 8000, y: 0, z: 4800 };
+    const _s2dx = camera.position.x - _solB.x;
+    const _s2dy = camera.position.y - _solB.y;
+    const _s2dz = camera.position.z - _solB.z;
+    const distanceFromStart = Math.sqrt(_s2dx * _s2dx + _s2dy * _s2dy + _s2dz * _s2dz);
+
     // Define fade-in range (starts later, for deeper exploration)
-    const fadeStartDistance = 1000;        // Start fading at 5,000 units
-    const fadeEndDistance = 30000;        // Reach max opacity at 100,000 units
+    const fadeStartDistance = 1000;        // Start fading at 1,000 units from Sol
+    const fadeEndDistance = 75000;         // Reach max opacity at 75,000 units
     
-    // Calculate opacity based on distance (0.10 floor to 0.60 max)
+    // Calculate opacity based on distance (0.20 floor to 0.50 max)
     let targetOpacity;
     if (distanceFromStart < fadeStartDistance) {
-        targetOpacity = 0.10; // Always slightly visible so the sky isn't pure black
+        targetOpacity = 0.20; // Visible from the start without washing out the early sky
     } else if (distanceFromStart > fadeEndDistance) {
-        targetOpacity = 0.60;
+        targetOpacity = 0.50;
     } else {
         const progress = (distanceFromStart - fadeStartDistance) / (fadeEndDistance - fadeStartDistance);
-        targetOpacity = 0.10 + (progress * 0.50); // 0.10 → 0.60
+        targetOpacity = 0.20 + (progress * 0.30); // 0.20 → 0.50
     }
     
+    // Boss / elite-guardian battle: hide this deeper Hubble layer too so
+    // only the pulsing blood-red boss skybox shows. Auto-resumes when
+    // the boss/guardian is defeated.
+    if (typeof isBossBattleActive === "function" && isBossBattleActive()) {
+        targetOpacity = 0;
+    }
+
     // Smoothly transition to target opacity
     const currentOpacity = window.hubbleSkybox2.material.opacity;
     const lerpSpeed = 0.02; // Smooth transition speed
@@ -10701,12 +12224,56 @@ let bossSkybox = null;
 let bossSkyboxOpacity = 0;
 let bossHeartbeatPhase = 0;
 
+// Single source of truth: is a real boss / elite-guardian set-piece
+// fight currently live AND in front of the player? Drives the pulsing
+// boss skybox AND the Hubble fade-out.
+//   • Black-hole guardians are excluded — they LOAD as a persistent
+//     patrol the moment a galaxy's boss is beaten, so counting them
+//     pinned this true forever.
+//   • PROXIMITY-SCOPED: a boss only counts if it's within
+//     BATTLE_RADIUS of the player. Galaxies sit ≥25k apart, so this
+//     was effectively game-wide before — a live boss in ANY other
+//     galaxy kept the blood-red skybox up and the Hubble backdrop
+//     never returned once the local fight ended.
+const _bossNearTmp = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+function isBossBattleActive() {
+    const BATTLE_RADIUS = 12000;   // ≫ combat range, ≪ inter-galaxy gap
+    const haveCam = (typeof camera !== 'undefined' && camera && camera.position);
+    const _near = (obj) => {
+        if (!haveCam || !_bossNearTmp || !obj) return true; // can't tell → assume in-fight
+        if (obj.getWorldPosition) obj.getWorldPosition(_bossNearTmp);
+        else if (obj.position) _bossNearTmp.copy(obj.position);
+        else return true;
+        return camera.position.distanceTo(_bossNearTmp) <= BATTLE_RADIUS;
+    };
+
+    if (typeof bossSystem !== "undefined" && bossSystem &&
+        Array.isArray(bossSystem.activeBosses) &&
+        bossSystem.activeBosses.some(b =>
+            b && b.userData && b.userData.health > 0 && _near(b))) {
+        return true;
+    }
+    // Fallback: scan live enemies for any boss-tier set-piece. Excludes
+    // isBlackHoleGuardian on purpose (post-boss patrol, not a fight).
+    if (typeof enemies !== "undefined" && Array.isArray(enemies)) {
+        for (let i = 0; i < enemies.length; i++) {
+            const e = enemies[i];
+            if (e && e.userData && e.userData.health > 0 &&
+                (e.userData.isBoss || e.userData.isEliteGuardian) && _near(e)) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+if (typeof window !== "undefined") window.isBossBattleActive = isBossBattleActive;
+
 function createBossBattleSkybox() {
     console.log("Creating boss battle skybox...");
 
-    const geometry = new THREE.SphereGeometry(90000, 64, 64);
+    const geometry = new THREE.SphereGeometry(135000, 64, 64);
     const material = new THREE.MeshBasicMaterial({
-        color: 0x8b0000,  // Deep blood red
+        color: 0xdd2222,  // Vivid crimson — old 0x8b0000 (R=139) read muted
         side: THREE.BackSide,
         transparent: true,
         opacity: 0,
@@ -10730,7 +12297,19 @@ function createBossBattleSkybox() {
 function updateBossSkyboxHeartbeat() {
     if (!bossSkybox || typeof bossSystem === "undefined") return;
 
-    const hasBoss = bossSystem.activeBoss !== null;
+    // Keep the dome CENTERED ON THE PLAYER so it always envelops them.
+    // It used to sit at the world origin (radius 90k), so during boss
+    // fights far from origin (distant galaxies out to 75k, the gateway at
+    // −32k, etc.) the player was near/outside its edge and the blood-red
+    // never showed. Following the camera (radius now 135k) guarantees it
+    // surrounds the player wherever the fight happens.
+    if (typeof camera !== 'undefined' && camera) {
+        bossSkybox.position.copy(camera.position);
+    }
+
+    // Boss OR elite/black-hole guardian — not just bossSystem.activeBoss
+    // (which only tracks regular bosses, never elite guardians).
+    const hasBoss = isBossBattleActive();
 
     if (hasBoss) {
         // Heartbeat pulsing effect
@@ -10744,8 +12323,11 @@ function updateBossSkyboxHeartbeat() {
         // Combine beats for realistic heartbeat pattern
         const heartbeat = Math.max(beat1 * 0.6, beat2 * 0.4) * pause;
 
-        // Target opacity with heartbeat
-        const targetOpacity = 0.1 + (heartbeat * 0.6);  // Range: 0.3 to 0.7
+        // Target opacity with heartbeat — range 0.5 (baseline) to 1.0
+        // (peak fully opaque). Floor was 0.3 and peak 0.9, which left
+        // the boss aura visibly washed out by the scene behind it; the
+        // brighter color + a 1.0 peak make it dominate cleanly.
+        const targetOpacity = 0.5 + (heartbeat * 0.5);  // Range: 0.5 to 1.0
 
         // Smooth transition to target
         bossSkyboxOpacity += (targetOpacity - bossSkyboxOpacity) * 0.1;

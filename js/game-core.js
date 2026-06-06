@@ -39,13 +39,31 @@ const gameState = {
     baseSpeed: 0.2, // Doubled for doubled world
     thrustPower: 0.01, // Doubled for doubled world
     wThrustMultiplier: 2.0, // W key gets 2x thrust
-    minVelocity: 0.2, // Doubled for doubled world
+    minVelocity: 0.4, // ~400 km/s floor so the ship always reads as in-flight (was 0.2)
     maxVelocity: 4.0, // 2x player boost (was 2.0 after doubled-world scale)
     // Ship-upgrade progression (per nebula deep-discovered)
     // Each deep-discovery increases efficiency and top speed.
     nebulasDeepDiscovered: 0,
     energyEfficiency: 1.0, // multiplier on consumption (lower = more efficient)
     baseMaxVelocity: 4.0,  // captured baseline so upgrades stack additively
+    // Reputation-driven progression. Every meaningful action awards rep,
+    // and crossing a tier threshold unlocks a permanent ability:
+    //   Tier 1 (50 rep)  — Inertial Coasting (free maintenance at cruise)
+    //   Tier 2 (200 rep) — Capacitor Cells (max energy +50, regen +66%)
+    //   Tier 3 (500 rep) — Quick-Charge Slingshot (no energy cost, 5s CD)
+    //   Tier 4 (1000 rep)— Trajectory Solver (auto-aimed slingshot vector)
+    reputation: 0,
+    repTier: 0,
+    repTierUnlocks: {
+        coasting: false,
+        capacitor: false,
+        quickSlingshot: false,
+        trajectorySolver: false
+    },
+    slingshotCooldownUntil: 0,
+    slingshotCharge: 0,             // 0..1 charge gauge for one-second hold
+    slingshotChargeTarget: null,    // body the gauge is currently filling for
+    realisticSlingshot: false,      // toggle for physical-style boost
     mapMode: 'galactic',
     mapView: 'galactic', // 'galactic', 'universal'
     galaxiesCleared: 0,
@@ -58,7 +76,7 @@ const gameState = {
     targetLock: {
         active: false,
         target: null,
-        range: 600, // Increased for better target acquisition
+        range: 400, // Tightened: enemies are now 50% scale, so auto-lock acquires closer
         autoAim: true,
         smoothing: 0.25
     },
@@ -103,7 +121,7 @@ const gameState = {
         cooldown: 0,
         cooldownTime: 1000,
         damage: 3,
-        speed: 5.0,
+        speed: 7.5,   // ~7500 km/s (1 unit/frame ≈ 1000 km/s HUD scale)
         selected: false
     },
     borg: {
@@ -518,11 +536,13 @@ function createOrbitLines() {
         const orbitRadius = planet.userData.orbitRadius;
         const systemCenter = planet.userData.systemCenter;
         
-        // Create orbit geometry - simpler approach
+        // Create orbit geometry - segment count scales with radius so
+        // big orbits (Neptune ~19k) read as smooth circles instead of
+        // visible polygons, without over-tessellating tiny moon orbits.
         const orbitGeometry = new THREE.RingGeometry(
             orbitRadius - 2, // Inner radius
             orbitRadius + 2, // Outer radius
-            32 // Segments
+            Math.min(220, Math.max(64, Math.round(orbitRadius / 40))) // Segments (radius-scaled)
         );
         
         // Determine color based on galaxy type
@@ -586,9 +606,35 @@ function toggleOrbitLines() {
             }
         });
     }
-    
+
     return orbitLinesVisible;
 }
+
+// ── MINUS WORLD ──────────────────────────────────────────────────────────
+// Wormholes drop the player into an inverted-colour "Minus World"; passing
+// through another wormhole flips back. Implemented as a CSS colour-invert
+// on the WebGL canvas only (the HUD stays readable). Black-hole warps move
+// you AROUND within whichever world you're in — only wormholes toggle it.
+function toggleMinusWorld() {
+    if (typeof gameState === 'undefined') return false;
+    gameState.minusWorld = !gameState.minusWorld;
+    if (typeof renderer !== 'undefined' && renderer && renderer.domElement) {
+        renderer.domElement.style.transition = 'filter 0.7s ease';
+        renderer.domElement.style.filter = gameState.minusWorld
+            ? 'invert(1) hue-rotate(180deg)' : '';
+    }
+    if (typeof showAchievement === 'function') {
+        if (gameState.minusWorld) {
+            showAchievement('⊟ ENTERED THE MINUS WORLD',
+                'Colours inverted. Find another wormhole to return to normal space.', true);
+        } else {
+            showAchievement('Normal Space Restored',
+                'You slipped back out of the Minus World.', true);
+        }
+    }
+    return gameState.minusWorld;
+}
+if (typeof window !== 'undefined') window.toggleMinusWorld = toggleMinusWorld;
 
 // FIXED: Helper function to create a single orbit line - NO MOON ORBITS
 function createSingleOrbitLine(planet, isLocal) {
@@ -611,7 +657,7 @@ function createSingleOrbitLine(planet, isLocal) {
         const orbitGeometry = new THREE.RingGeometry(
             orbitRadius - baseThickness, // Inner radius
             orbitRadius + baseThickness, // Outer radius
-            isLocal ? 64 : 32 // More segments for local orbits
+            Math.min(220, Math.max(64, Math.round(orbitRadius / 40))) // Segments scale with radius for smooth large rings
         );
         
         // FIXED: Better color coding for distant galaxies
@@ -786,8 +832,11 @@ function startGame() {
         // Initialize Three.js
         scene = new THREE.Scene();
         
-        // Add enhanced ambient light for doubled world
-        const globalAmbientLight = new THREE.AmbientLight(0x333333, 0.4);
+        // Global ambient dropped from 0.4 to a near-vacuum 0.06 so the
+        // local-system terminator goes black like the Apollo reference
+        // (and every other system gets the same stark single-source
+        // sun look — each system star already has its own PointLight).
+        const globalAmbientLight = new THREE.AmbientLight(0x333333, 0.06);
         scene.add(globalAmbientLight);
         
         camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 250000);
@@ -802,8 +851,26 @@ function startGame() {
         // Store camera reference for player model attachment later
         window.gameCamera = camera;
 
-        renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+        // Mobile GPUs are fill-rate bound. Rendering at full retina
+        // devicePixelRatio (often 2-3x) means 4-9x the fragments, and
+        // MSAA on top of that is brutal. preserveDrawingBuffer was set
+        // but nothing reads the canvas back, so it's pure cost. These
+        // three knobs are the single biggest mobile-FPS lever and change
+        // nothing about scene content.
+        if (typeof window.__isMobileGPU === 'undefined') {
+            window.__isMobileGPU = (window.innerWidth <= 768) ||
+                ('ontouchstart' in window) ||
+                (navigator.maxTouchPoints > 0) ||
+                /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent || '');
+        }
+        const _isMobileGPU = window.__isMobileGPU;
+        renderer = new THREE.WebGLRenderer({
+            antialias: !_isMobileGPU,
+            preserveDrawingBuffer: false,
+            powerPreference: 'high-performance'
+        });
         renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, _isMobileGPU ? 1 : 2));
         renderer.setClearColor(0x000003);
 
         const gameContainer = document.getElementById('gameContainer');
@@ -1008,6 +1075,11 @@ if (typeof areModelsLoaded === 'function' && areModelsLoaded()) {
         createAllCivilianShips();
         console.log('Civilian ships created throughout universe');
     }
+    // Fast-forward all nebula fleets to a ~20-min "lived-in" state so the
+    // universe isn't sitting at spawn phase when the game opens.
+    if (typeof prewarmNebulaFleets === 'function') {
+        prewarmNebulaFleets(20);
+    }
     // Load UFO model and create UFOs in exotic systems
     if (typeof loadUFOModel === 'function') {
         loadUFOModel().then(() => {
@@ -1177,6 +1249,14 @@ if (typeof initializeCosmicFeatures === 'function') {
 if (typeof createOuterInterstellarSystems === 'function') {
     createOuterInterstellarSystems();
     console.log('🌌 Outer interstellar systems created');
+    // Populate the exotic systems with UFOs now that the systems exist.
+    // (The earlier loadUFOModel.then path only ran in the models-already-
+    // loaded branch, so most starts never spawned exotic UFOs.) Uses the
+    // procedural saucer immediately; loadUFOModel upgrades future visuals.
+    if (typeof createUFOsInExoticSystems === 'function') {
+        createUFOsInExoticSystems();
+    }
+    if (typeof loadUFOModel === 'function') { try { loadUFOModel(); } catch (e) {} }
 }
 
 // ADD THIS RIGHT HERE:
@@ -1355,9 +1435,11 @@ function animate() {
         updateActiveLasers();
     }
     
-    // Update thruster glow based on W key (forward thrust)
+    // Update thruster glow when accelerating (forward thrust, boost, auto-nav, or warp/jump)
     if (typeof updateThrusterGlow === 'function' && typeof keys !== 'undefined') {
-        const isThrusting = (keys.w || gameState.autoNavigating) && gameState.energy > 0;
+        const _boosting = keys.w || keys.b;
+        const _warping = gameState.emergencyWarp && (gameState.emergencyWarp.active || gameState.emergencyWarp.transitioning || (gameState.emergencyWarp.timeRemaining > 0));
+        const isThrusting = (_boosting || gameState.autoNavigating || _warping) && gameState.energy > 0;
         updateThrusterGlow(isThrusting);
     }
 
@@ -1466,9 +1548,13 @@ if (typeof nebulaGasClouds !== 'undefined' && nebulaGasClouds.length > 0) {
 }
 
 if (typeof asteroidBelts !== 'undefined' && asteroidBelts.length > 0) {
-    // Skip orbit/rotation updates for belts that are too far to see.
-    // Belt radius is at most ~600 units; 2000 unit cull gives comfortable margin.
-    const BELT_UPDATE_DIST_SQ = 2000 * 2000;
+    // Skip orbit/rotation updates for belts that are genuinely far away.
+    // Asteroids sit beltRadius(1600-2600) ± beltWidth/2 from the belt
+    // centre — up to ~3200 u out — so the old 2000 u cull skipped the
+    // update exactly when the player was flying THROUGH the belt, leaving
+    // it frozen / not orbiting. 8000 u comfortably covers the whole belt
+    // (plus approach) while still culling distant belts for perf.
+    const BELT_UPDATE_DIST_SQ = 8000 * 8000;
     for (let bi = 0; bi < asteroidBelts.length; bi++) {
         const belt = asteroidBelts[bi];
         if (!belt.children || belt.children.length === 0) continue;
@@ -1686,11 +1772,6 @@ if (typeof localGalaxyStars !== 'undefined' && localGalaxyStars) {
         updateCMBOpacity();
     }
     
-    // Update Hubble skybox opacity based on distance traveled
-    if (typeof updateHubbleSkyboxOpacity === 'function') {
-        updateHubbleSkyboxOpacity();
-    }
-
     // Update second Hubble skybox opacity (deeper space layer)
     if (typeof updateHubbleSkybox2Opacity === 'function') {
         updateHubbleSkybox2Opacity();
@@ -1700,7 +1781,43 @@ if (typeof localGalaxyStars !== 'undefined' && localGalaxyStars) {
     if (typeof updateBossSkyboxHeartbeat === 'function') {
         updateBossSkyboxHeartbeat();
     }
-    
+
+    // Gargantua proximity fade — driven from its own small registry every
+    // frame, NOT from activePlanets. Sgr A* / Companion Core fade across
+    // ~560→9.9k units, far beyond the ~2000-unit activePlanets cull range;
+    // gating this on activePlanets froze their glow/disk at full opacity
+    // beyond 2000 instead of fading it the whole way in.
+    if (typeof window !== 'undefined' && window.gargantuaBlackHoles &&
+        typeof updateGargantuaProximityFade === 'function') {
+        const _gbh = window.gargantuaBlackHoles;
+        for (let i = 0; i < _gbh.length; i++) {
+            updateGargantuaProximityFade(_gbh[i], camera);
+        }
+    }
+
+    // Slow alive/unstable pulse on every star's wispy corona — same
+    // dedicated-registry approach as gargantua, so this runs no matter
+    // where the star sits relative to the activePlanets cull range.
+    if (typeof updateStarCoronas === 'function') {
+        updateStarCoronas();
+    }
+
+    // Shield-shatter shards (instanced; rAF-driven instead of setInterval).
+    if (typeof updateShieldShatterFX === 'function') {
+        updateShieldShatterFX();
+    }
+
+    // Laser-beam fades (shared rAF updater; replaces per-beam setIntervals).
+    if (typeof updateFadingBeams === 'function') {
+        updateFadingBeams();
+    }
+
+    // Earth's cloud shell drifts slightly faster than the surface
+    // rotates, giving subtle parallax between weather and continents.
+    if (typeof updateEarthClouds === 'function') {
+        updateEarthClouds();
+    }
+
     // PERFORMANCE: Update only expensive effects for active planets (tendrils, glows, etc.)
     activePlanets.forEach((planet) => {
     // FIXED: Only rotate star particles, keep disk stable
@@ -1709,20 +1826,24 @@ if (planet.userData.type === 'blackhole' && planet.userData.rotationSpeed) {
         if (child.type === 'Points') { // Star particles
             child.rotation.y += planet.userData.rotationSpeed;
         }
-        if (child.geometry && child.geometry.type === 'RingGeometry') { // Accretion disk
-            child.rotation.x = Math.PI / 2; // Keep flat
-            child.rotation.z = 0; // No tumbling
+        if (child.geometry && child.geometry.type === 'RingGeometry'
+            && !child.userData.isGargantuaDisk) { // legacy ring: keep flat
+            child.rotation.x = Math.PI / 2;
+            child.rotation.z = 0;
         }
     });
 }
-    
-        // Asteroid orbital mechanics - update EVERY frame for smooth motion
-        if (planet.userData.type === 'asteroid' && planet.userData.beltGroup) {
+        // Asteroid orbital mechanics. Grouped belt asteroids are owned
+        // by the dedicated, distance-culled belt loop (see asteroidBelts
+        // update above) which advances orbitPhase and preserves each
+        // asteroid's ringHeight. Running this second updater on them too
+        // double-stepped the orbit and forced Y to a ±10 oscillation,
+        // so it now only handles any ungrouped (non-belt) asteroid.
+        if (planet.userData.type === 'asteroid' && !planet.userData.beltGroup) {
     // Update orbital position every frame (no skipping)
     const time = Date.now() * 0.001 * planet.userData.orbitSpeed;
     const orbitPhase = planet.userData.orbitPhase || 0;
-    
-    // FIXED: Use LOCAL coordinates since asteroids are children of positioned beltGroup
+
     const orbitX = Math.cos(time + orbitPhase) * planet.userData.orbitRadius;
     const orbitZ = Math.sin(time + orbitPhase) * planet.userData.orbitRadius;
     const orbitY = Math.sin(time * 0.5 + orbitPhase) * 10;
@@ -1794,6 +1915,20 @@ if (planet.userData.type === 'blackhole' && planet.userData.rotationSpeed) {
         }
     });
     
+    // Periodic wormhole respawn — keep the universe well-stocked with
+    // spatial anomalies. Every ~12 seconds, if the active count has
+    // dropped below 10, spawn a fresh one. With the new 6-9 min
+    // lifetimes this keeps the player surprised by new throats
+    // appearing instead of relying solely on the initial 12.
+    if (typeof wormholes !== 'undefined' && typeof spawnEnhancedWormhole === 'function') {
+        const _now = Date.now();
+        if (!window._lastWormholeRespawn) window._lastWormholeRespawn = _now;
+        if (_now - window._lastWormholeRespawn > 12000 && wormholes.length < 10) {
+            spawnEnhancedWormhole();
+            window._lastWormholeRespawn = _now;
+        }
+    }
+
     // Enhanced wormhole updates for doubled world (performance optimized)
     if (typeof wormholes !== 'undefined') {
         wormholes.forEach((wormhole, index) => {
@@ -1834,8 +1969,11 @@ if (distanceToPlayer < wormhole.userData.detectionRange && !wormhole.userData.de
                 }
                 scene.remove(wormhole);
                 wormholes.splice(index, 1);
+                // Wormholes flip you into / out of the inverted Minus World,
+                // then warp you somewhere new within it.
+                if (typeof toggleMinusWorld === 'function') toggleMinusWorld();
                 if (typeof transitionToRandomLocation === 'function') {
-                    transitionToRandomLocation(wormhole.userData.name);
+                    transitionToRandomLocation(wormhole.userData.name, 'wormhole');
                 }
                 return;
             }
@@ -2023,11 +2161,10 @@ if (gameState.frameCount % 5 === 0 && typeof checkCosmicFeatureInteractions === 
     }
 
     // Check for hull zero - mission fail
-    if (gameState.hull <= 0 && !gameState.gameOver) {
-        if (typeof createPlayerExplosion === 'function') {
-            createPlayerExplosion();
-        }
-        if (typeof showGameOverScreen === 'function') {
+    if (gameState.hull <= 0 && !gameState.gameOver && !gameState.playerDying) {
+        if (typeof triggerPlayerDeath === 'function') {
+            triggerPlayerDeath('HULL BREACH', 'Ship destroyed - structural integrity failure');
+        } else if (typeof showGameOverScreen === 'function') {
             showGameOverScreen('HULL BREACH', 'Ship destroyed - structural integrity failure');
         }
     }
@@ -2131,6 +2268,30 @@ if (gameState.frameCount % 5 === 0 && typeof checkCosmicFeatureInteractions === 
     if (typeof perfDebug !== 'undefined') {
         perfDebug.endTimer('render');
         perfDebug.endTimer('total');
+    }
+
+    // Zoom scope frame capture. The renderer runs with
+    // preserveDrawingBuffer:false (mobile FPS), so the WebGL drawing
+    // buffer is only readable in THIS tick, right after render. The
+    // scope's own rAF loop runs in a different tick and would only ever
+    // copy an empty buffer (the "zoom is broken" bug), so while the
+    // scope is held we snapshot the frame into a 2D canvas here that it
+    // can safely sample later.
+    if (gameState.missiles && gameState.missiles.selected &&
+        typeof window !== 'undefined' && renderer && renderer.domElement) {
+        const rc = renderer.domElement;
+        let zc = window.__zoomFrameCanvas;
+        if (!zc) {
+            zc = window.__zoomFrameCanvas = document.createElement('canvas');
+        }
+        if (zc.width !== rc.width || zc.height !== rc.height) {
+            zc.width = rc.width;
+            zc.height = rc.height;
+        }
+        const zctx = zc.getContext('2d');
+        if (zctx) {
+            try { zctx.drawImage(rc, 0, 0); } catch (e) {}
+        }
     }
 }
 

@@ -390,6 +390,15 @@
     if (ap.paused) { tickHUD(); return; }
     if (typeof gameState === 'undefined' || !gameState.gameStarted) return;
     if (gameState.gameOver) { gameState.gameOver = false; return; }
+    // Player death sequence started — freeze the demo immediately so it
+    // can't keep flying or auto-firing lasers through the explosion.
+    // (playerDying is set ~2.5s before the game-over screen appears.)
+    if (gameState.playerDying || gameState.gameOverScreenShown) {
+        if (typeof releaseMovementKeys === 'function') releaseMovementKeys();
+        if (gameState.targetLock) gameState.targetLock.active = false;
+        tickHUD();
+        return;
+    }
 
     // Defensively keep the tutorial system disabled every frame
     if (typeof tutorialSystem !== 'undefined' && tutorialSystem.active) {
@@ -461,16 +470,81 @@
       shootNearbyAsteroids();
     }
 
+    // ── Surprise black-hole warp recovery ──────────────────────────────
+    // If the player gets caught by a black hole's gravity well during a
+    // non-BH phase (e.g. while orbiting a nebula center near a BH, or
+    // while pursuing an enemy that drifted toward one), the physics will
+    // teleport us into another galaxy. Detect that, then push the demo
+    // into post-warp recovery so it (a) jumps away from the BH instead
+    // of falling back in and (b) clears the new galaxy's local enemies
+    // before continuing the canonical loop.
+    const _bhExpected = (ap.phase === 'blackHoleWarp' ||
+                         ap.phase === 'gotoBlackHoleGalaxy');
+    if (gameState.isBlackHoleWarping && !_bhExpected) {
+      ap.surpriseBHWarp = true;
+      setStatus('Caught by black hole — riding warp out');
+    }
+    if (ap.surpriseBHWarp && !gameState.isBlackHoleWarping &&
+        (!gameState.eventHorizonWarning || !gameState.eventHorizonWarning.active)) {
+      // Warp completed unexpectedly — recover.
+      ap.surpriseBHWarp = false;
+      ap.warpsUsed = (ap.warpsUsed || 0) + 1;
+      ap.warpStartedAt = Date.now();
+      ap._postBHEvasionDone = false;  // re-arm the away-from-BH jump
+      ap.combatTarget = null;
+      ap.currentNebula = null;
+      ap.currentBH = null;
+      ap.returnPhase = 'findLocalEnemies';
+      resetTargetsAfterWarp();
+      setStatus('Survived unexpected BH transit — recovering');
+      goPhase('coastAfterWarp');
+    }
+
+    // ── Universe leash ─────────────────────────────────────────────────
+    // The demo player must never sit more than 140,000u from the galactic
+    // origin (Sagittarius A*). If something — a runaway warp, a bad
+    // pursuit, a black-hole overshoot — has put us past that, override
+    // the phase this frame: brake if we're still drifting outward, then
+    // thrust back toward the origin. The phase logic resumes once we're
+    // back inside the boundary.
+    if (ap.phase !== 'init') {
+      const _cp = camPos();
+      const _distFromOrigin = _cp.length();
+      if (_distFromOrigin > 140000) {
+        if (!ap._originDummy) ap._originDummy = { position: new THREE.Vector3(0, 0, 0), userData: { name: 'Galactic Center' } };
+        if (window.orientTowardsTarget) window.orientTowardsTarget(ap._originDummy);
+        // If velocity still has an outward component, brake. Otherwise
+        // thrust inward toward the origin.
+        const vv = gameState.velocityVector;
+        let outward = false;
+        if (vv && vv.lengthSq() > 0.01) {
+          // outward = velocity · (position normalized) > 0
+          outward = (vv.x * _cp.x + vv.y * _cp.y + vv.z * _cp.z) > 0;
+        }
+        if (outward) {
+          keys().x = true;
+          setStatus('Universe boundary — braking (' + (_distFromOrigin | 0) + ' u)');
+        } else {
+          keys().w = true;
+          setStatus('Recalling to galactic center (' + (_distFromOrigin | 0) + ' u)');
+        }
+        tickHUD();
+        return;
+      }
+    }
+
     // Dispatch
     switch (ap.phase) {
       case 'init':                     phaseInit();                   break;
-      case 'orbitLocalPlanet':         phaseOrbitLocalPlanet();       break;
       case 'findLocalEnemies':         phaseFindLocalEnemies();       break;
       case 'combat':                   phaseCombat();                 break;
+      case 'bossEngage':               phaseBossEngage();             break;
       case 'warpToNebulaCluster':      phaseWarpToNebulaCluster();    break;
       case 'coastToNebulaCluster':     phaseCoastToNebulaCluster();   break;
       case 'orbitNebulaPlanet':        phaseOrbitNebulaPlanet();      break;
       case 'followDiscoveryPath':      phaseFollowDiscoveryPath();    break;
+      case 'gotoBlackHoleGalaxy':      phaseGotoBlackHoleGalaxy();    break;
+      case 'blackHoleWarp':            phaseBlackHoleWarp();          break;
       case 'coastAfterWarp':           phaseCoastAfterWarp();         break;
       case 'approachBorg':             phaseApproachBorg();           break;
       case 'fightBorg':                phaseFightBorg();              break;
@@ -526,43 +600,12 @@
       ensureThirdPerson();
       ap.segmentKills = 0;
       ap.returnPhase = 'findLocalEnemies';
-      goPhase('orbitLocalPlanet');
+      // Skip the Earth-orbit beat — the demo opens straight into hunting
+      // hostiles so the player learns combat/nav-locking right away
+      // (instead of watching the ship orbit Earth for 5 seconds).
+      goPhase('findLocalEnemies');
     } else {
       setStatus('Awaiting scene ready…');
-    }
-  }
-
-  // ─── 1a) Orbit a local planet for 5 s before hunting enemies ────────────
-  function phaseOrbitLocalPlanet() {
-    const t = elapsed();
-
-    // Pick Earth on the very first frame — the demo should open orbiting
-    // Earth with the Navigation System's auto-navigate already engaged.
-    if (!ap.orbitTarget) {
-      ap.orbitTarget = findEarth() || planetNear(camPos(), 3000) || pickPlanet();
-      if (!ap.orbitTarget) { goPhase('findLocalEnemies'); return; }
-      // Force nav panel refresh to clear intro "Launch Mission" text
-      if (typeof populateTargets === 'function') populateTargets();
-      const nm = (ap.orbitTarget.userData && ap.orbitTarget.userData.name) || 'planet';
-      setStatus('Nav lock: ' + nm + ' — orbital survey');
-      gameState.currentTarget = ap.orbitTarget;
-      if (typeof populateTargets === 'function') populateTargets();
-    }
-
-    // Manual orbit handles circularization at a close, cinematic distance
-    const dist = camPos().distanceTo(ap.orbitTarget.position);
-    if (dist > 300) {
-      setStatus('Approaching ' + (ap.orbitTarget.userData.name || 'planet'));
-      flyToward(ap.orbitTarget, 1.8);
-    } else {
-      setStatus('Orbiting ' + (ap.orbitTarget.userData.name || 'planet'));
-      orbitAround(ap.orbitTarget);
-    }
-
-    if (t > 5000) {
-      ap.orbitTarget = null;
-      gameState.currentTarget = null;
-      goPhase('findLocalEnemies');
     }
   }
 
@@ -587,7 +630,12 @@
     }
 
     const firstLeg = (ap.warpsUsed || 0) === 0;
-    const MAX_TARGET_RANGE = 10000;
+    // Only engage genuinely-nearby hostiles. The old 10,000u reach let
+    // the demo lock a target half a system away and fly off toward it
+    // forever — THAT was the "flying into infinity", not the jump. Local
+    // pirates sit ~2.8-4.4k out, so 5,500 covers a real local fight while
+    // anything farther waits for a nebula-discovery path / warp.
+    const MAX_TARGET_RANGE = 5500;
 
     // First leg (in Sol): ALWAYS prefer local enemies (Martian Pirates +
     // Vulcan Patrols around Sagittarius A*).  Deep-space hostiles are
@@ -638,9 +686,46 @@
     if (ap.enemiesKilled >= 3 && (!firstLeg || _countLocalEnemies() === 0)) {
       goPhase('warpToNebulaCluster');
     } else {
-      // Not enough kills yet and no enemies — cruise and scan
+      // Not enough kills yet and no enemy in engage range. DON'T
+      // blind-thrust forward (keys().w) — that flew the demo straight
+      // out of bounds, especially now that the tighter engage range
+      // drops us here more often. Instead steer toward something real:
+      // nearest hostile (local-only on the first leg), else a nebula,
+      // else the Sol core. flyToward brakes on arrival, and if we're
+      // already sitting on the anchor with nothing to do we coast/brake
+      // rather than fly off.
       cycleScanTarget();
-      keys().w = true;
+      let cruiseTo = firstLeg ? _nearestLocalEnemy() : nearestAliveEnemy(100000);
+      if (!cruiseTo && typeof nearestTwinNebula === 'function') cruiseTo = nearestTwinNebula();
+      if (!cruiseTo) {
+        const sol = (typeof window !== 'undefined' && window.localSystemOffset) || { x: 8000, y: 0, z: 4800 };
+        if (!ap._solDummy) ap._solDummy = { position: new THREE.Vector3(), userData: {} };
+        ap._solDummy.position.set(sol.x, sol.y, sol.z);
+        cruiseTo = ap._solDummy;
+      }
+      if (cruiseTo && cruiseTo.position && camPos().distanceTo(cruiseTo.position) > 300) {
+        // Reorient FIRST. flyToward only sets thrusters — without an
+        // active reorient the ship can keep adding thrust along its old
+        // heading (e.g. residual outward velocity after a jump overshoot),
+        // which is how the demo ends up "lost" in interstellar space.
+        if (window.orientTowardsTarget) window.orientTowardsTarget(cruiseTo);
+        // Detect outward drift: velocity pointing away from cruise target
+        // means thrusters would just accelerate the wrong direction. Brake
+        // hard instead until either velocity drops or we've rotated back.
+        const vv = gameState.velocityVector;
+        if (vv && vv.lengthSq() > 4) { // speed > 2
+          const _to = cruiseTo.position.clone().sub(camPos()).normalize();
+          const _vn = vv.clone().normalize();
+          if (_vn.dot(_to) < 0.3) {
+            keys().x = true;
+            setStatus('Drift recovery — braking back toward ' + ((cruiseTo.userData && cruiseTo.userData.name) || 'objective'));
+            return;
+          }
+        }
+        flyToward(cruiseTo, 1.6);
+      } else if (gameState.velocityVector && gameState.velocityVector.length() > 0.5) {
+        keys().x = true; // arrived at anchor, nothing to do → brake, don't drift off
+      }
     }
   }
 
@@ -659,10 +744,24 @@
       return;
     }
 
-    // Abort pursuit if target gets beyond 10000u — never chase enemies
-    // that far. Re-scan via findLocalEnemies.
+    // Abort pursuit if the target runs beyond 6500u — but only when the
+    // ship isn't already trying to crash through that gap via residual
+    // jump velocity. A 5s tactical W-jump can dump us 8k+ past a target;
+    // if we bail on bare distance the cruise fallback then carries the
+    // overshoot outward forever. Give the overshoot a brake-and-reacquire
+    // window first.
     const dist = camPos().distanceTo(enemy.position);
-    if (dist > 10000) {
+    if (dist > 6500) {
+      const _speedNow = gameState.velocityVector ? gameState.velocityVector.length() : 0;
+      if (_speedNow > 2 && gameState.velocityVector) {
+        // Brake and aim back at the target. Stay in combat — we'll either
+        // re-enter engage range as we decelerate, or speed will drop and
+        // the abort below will fire on the next frame.
+        if (window.orientTowardsTarget) window.orientTowardsTarget({ position: enemy.position });
+        keys().x = true;
+        setStatus('Overshoot — braking to re-acquire (' + (dist | 0) + ' u)');
+        return;
+      }
       ap.combatTarget = null;
       goPhase('findLocalEnemies');
       return;
@@ -698,12 +797,18 @@
         ap.returnPhase = 'findLocalEnemies';
       } else {
         ap.segmentKills = 0;
-        const firstLeg = (ap.warpsUsed || 0) === 0;
-        nextPhaseAfterKill = 'warpToNebulaCluster';
+        // After the last local kill, give the boss-spawn machinery a
+        // beat to react, then check for an active boss.  If one
+        // exists (or appears within the timeout), the demo engages
+        // it BEFORE warping out so the player sees the blood-red
+        // skybox heartbeat and the boss-tier fight.
+        nextPhaseAfterKill = 'bossEngage';
       }
 
-      // Mine nearby asteroids for hull if damaged, before moving on
-      if (gameState.hull < 85 && _findNearestAsteroid(500)) {
+      // 40% chance to detour to an asteroid showcase before resuming;
+      // otherwise route directly to the next phase. The next-phase
+      // decision is committed via _mineReturnPhase.
+      if (Math.random() < 0.40 && _findNearestAsteroid(900)) {
         ap._mineReturnPhase = nextPhaseAfterKill;
         ap._mineShotsLeft = 3;
         setTimeout(() => { if (ap.active) goPhase('mineAsteroids'); }, 1000);
@@ -725,15 +830,27 @@
       flyToward(enemy, 2.5);
       pursuitFlightStyle('pursuit');
 
-      // Aggressive tactical jumps (double-tap W) to keep up with wingmen
-      // and close on hostiles fast. Triggers any time we're outside firing
-      // range, 200-3000u from target, not already going fast.
-      // 4 second cooldown, 15 energy minimum.
-      if (dist > 200 && dist < 3000 && speed < 4 &&
+      // Tactical jumps (double-tap W) to close the gap. No distance gate
+      // — short jumps fire on close targets, longer jumps on far ones,
+      // duration scales with range. 4s cooldown, 15 energy minimum, not
+      // while a warp is already in flight, not when a missile is in
+      // flight at the current target (the demo holds station for the
+      // missile's terminal phase).
+      const _warpBusy = gameState.emergencyWarp &&
+          (gameState.emergencyWarp.active || gameState.emergencyWarp.transitioning);
+      if (speed < 4 && !_warpBusy &&
           gameState.energy > 15 &&
+          !_isMissileInFlightAt(enemy) &&
           Date.now() - (ap._lastJumpTap || 0) > 4000) {
         ap._lastJumpTap = Date.now();
         if (window.keys) {
+          if (typeof gameState !== 'undefined') {
+            // Scale jump duration with range. Tight floor (700ms) so a
+            // close target gets a quick blink instead of being overshot
+            // by an unconditional 2s warp. Far targets still get the
+            // full 5s push.
+            gameState._pendingJumpMs = Math.min(5000, Math.max(700, dist * 0.7));
+          }
           window.keys.wDoubleTap = true;
           setTimeout(() => { if (window.keys) window.keys.wDoubleTap = false; }, 120);
         }
@@ -783,6 +900,19 @@
     if (window.orientTowardsTarget) window.orientTowardsTarget(aimDummy);
     gameState.currentTarget = enemy;
 
+    // Missile in flight at this target → lock onto it: cancel any active
+    // pursuit-flair roll, hold the bow on the target until the missile
+    // resolves (impact, miss, or expiry).
+    if (_isMissileInFlightAt(enemy)) {
+      if (ap._flightStyleKey) {
+        keys()[ap._flightStyleKey] = false;
+      }
+      ap._flightStyleKey = null;
+      ap._flightStyleUntil = 0;
+      ap._nextFlightStyleAt = Date.now() + 2000;
+      setStatus('Missile away — holding bow on ' + (enemy.userData.name || 'target'));
+    }
+
     // ONLY activate targetLock when inside engage range.  When outside,
     // clear it — otherwise fireWeapon auto-aims at the far-off locked
     // target whenever any fire call happens (asteroid shots, etc.),
@@ -811,6 +941,63 @@
     // phase will still be fine — we keep chasing.
   }
 
+  // ─── Boss engagement — after clearing local hostiles, hunt the area boss
+  // the game spawned (bossSystem.activeBoss or any enemy with isBoss). Falls
+  // through to warpToNebulaCluster when no boss is around within 12 s, so
+  // legs that don't trigger a boss-spawn still progress to the next nebula.
+  function phaseBossEngage() {
+    const t = elapsed();
+    ensureShieldsFor('travel');
+    ensureThirdPerson();
+
+    let boss = null;
+    if (typeof bossSystem !== 'undefined' && bossSystem.activeBoss &&
+        bossSystem.activeBoss.userData && bossSystem.activeBoss.userData.health > 0) {
+      boss = bossSystem.activeBoss;
+    }
+    if (!boss && typeof enemies !== 'undefined') {
+      const cp = camPos();
+      let bestD = 18000;
+      for (let i = 0; i < enemies.length; i++) {
+        const e = enemies[i];
+        if (!e || !e.userData) continue;
+        if (!e.userData.isBoss) continue;
+        if (e.userData.health <= 0) continue;
+        const d = cp.distanceTo(e.position);
+        if (d < bestD) { bestD = d; boss = e; }
+      }
+    }
+
+    // No boss yet — wait up to 12 s for spawn machinery to catch up,
+    // then move on. The blood-red skybox heartbeat only triggers when a
+    // boss exists, so a "no boss this leg" outcome is fine.
+    if (!boss) {
+      setStatus('Scanning for boss signature…');
+      if (t > 12000) {
+        const firstLeg = (ap.warpsUsed || 0) === 0;
+        goPhase('warpToNebulaCluster');
+      }
+      return;
+    }
+
+    const dist = camPos().distanceTo(boss.position);
+    setStatus('BOSS ENGAGEMENT — ' + (boss.userData.name || 'enemy') + ' · ' + (dist | 0) + ' u');
+    gameState.currentTarget = boss;
+    if (dist < 5000) {
+      ap.combatTarget = boss;
+      ap.combatMissileFired = false;
+      // Returning to bossEngage keeps the demo looping until the boss
+      // (and any escort that spawned alongside) is gone, then we fall
+      // through to warpToNebulaCluster on the next entry with no boss
+      // present.
+      ap.returnPhase = 'bossEngage';
+      goPhase('combat');
+      return;
+    }
+    flyToward(boss, 2.5);
+    pursuitFlightStyle('pursuit');
+  }
+
   // ─── Asteroid mining: orient → shoot 2-3 asteroids for hull ─────────────
   function phaseMineAsteroids() {
     const t = elapsed();
@@ -826,15 +1013,20 @@
       return;
     }
 
-    // Done mining (shot enough or hull topped up or timeout)
-    if ((ap._mineShotsLeft || 0) <= 0 || gameState.hull >= 95 || t > 8000) {
+    // Showcase mode: shoot until shots-left runs out or 8 s elapses.
+    // The hull-threshold gate has been dropped so the demo always
+    // visually destroys a few asteroids regardless of hull state.
+    if ((ap._mineShotsLeft || 0) <= 0 || t > 8000) {
       goPhase(ap._mineReturnPhase || 'findLocalEnemies');
       return;
     }
 
-    const asteroid = _findNearestAsteroid(500);
+    // Look further out for asteroids (up to 1800u) so the demo doesn't
+    // bail just because nothing is within point-blank range. Orient and
+    // thrust toward the asteroid so the player sees a deliberate strafe.
+    const asteroid = _findNearestAsteroid(1800);
     if (!asteroid) {
-      // No asteroids nearby — move on
+      // No asteroids in range — move on
       goPhase(ap._mineReturnPhase || 'findLocalEnemies');
       return;
     }
@@ -847,11 +1039,18 @@
     if (window.orientTowardsTarget) {
       window.orientTowardsTarget({ position: tgtPos });
     }
-    setStatus('Mining asteroid for hull (' + (ap._mineShotsLeft || 0) + ' shots left)');
+    setStatus('Strafing asteroid (' + (ap._mineShotsLeft || 0) + ' shots left)');
 
-    // Brake gently while aiming
+    // Thrust toward the asteroid when it's far, brake when close so the
+    // ship comes to a clean firing solution rather than overflying.
+    const cp = camPos();
+    const distToAsteroid = cp.distanceTo(tgtPos);
     const speed = gameState.velocityVector ? gameState.velocityVector.length() : 0;
-    if (speed > 0.5) keys().x = true;
+    if (distToAsteroid > 400) {
+      keys().w = true;
+    } else if (speed > 0.5) {
+      keys().x = true;
+    }
 
     // Only fire once on screen and confirmed by raycast
     if (!_isOnScreen(tgtPos)) return;
@@ -874,187 +1073,55 @@
     if (window.fireWeapon) window.fireWeapon();
   }
 
-  // ─── 2) Slingshot off a planet toward a nebula cluster ──────────────────
-  // Instead of just punching an emergency warp, the demo now finds a planet,
-  // flies into slingshot range (< 55 u), aligns its camera with the nebula,
-  // and calls executeSlingshot() for a 25,000+ km/s boost along the camera
-  // forward axis — propelling the ship toward the nebula at high speed.
-  // After 2 missed attempts, gives up and uses emergency warp directly.
+  // ─── 2) Emergency-warp toward a nearby twin (clustered) nebula ─────────
+  // The demo orients on the center between a paired clustered nebulas and
+  // punches an emergency warp directly — no planetary slingshot.  Falls
+  // back to any nebula and finally a plain warp if no twin pair is found.
   function phaseWarpToNebulaCluster() {
     const t = elapsed();
     ensureShieldsFor('travel');
     ensureThirdPerson();
 
-    // Lock in the nebula target up front — both the slingshot and the
-    // emergency-warp fallback need it.
+    // Lock in the destination on first entry — prefer a twin (clustered)
+    // pair; fall back to nearest nebula if no twin cluster exists.
     if (!ap.currentNebula) {
-      const neb = nearestNebula();
-      if (!neb) { goPhase('warpToNebulaCluster'); return; }
-      ap.currentNebula = neb;
+      const twin = nearestTwinNebula();
+      ap.currentNebula = twin || nearestNebula();
+      if (!ap.currentNebula) { setStatus('No nebula in range — waiting'); return; }
     }
 
-    // After 2 failed slingshot attempts, abandon the slingshot strategy and
-    // just orient to the nearest nebula and punch an emergency warp.  The
-    // demo has shown the slingshot mechanic; now it's about getting there.
-    if ((ap.slingshotMisses || 0) >= 2) {
-      const aimDummy = { position: ap.currentNebula.position };
-      if (window.orientTowardsTarget) window.orientTowardsTarget(aimDummy);
-
-      let warpAligned = false;
-      if (_coneVec && camera) {
-        _coneVec.subVectors(ap.currentNebula.position, camera.position).normalize();
-        camera.getWorldDirection(_coneFwd);
-        warpAligned = _coneFwd.dot(_coneVec) > 0.85;
-      }
-      setStatus(warpAligned
-        ? 'EMERGENCY WARP to nebula!'
-        : 'Aligning for emergency warp to nebula');
-
-      keys().w = true;
-      if (warpAligned && t > 1200 && canEmergencyWarp() && triggerOKeyWarp()) {
-        ap.warpStartedAt = Date.now();
-        ap.warpsUsed++;
-        ap.slingshotMisses = 0;
-        goPhase('coastToNebulaCluster');
-        return;
-      }
-      // Hard fallback if alignment never settles
-      if (t > 8000) {
-        if (canEmergencyWarp()) triggerOKeyWarp();
-        ap.warpStartedAt = Date.now();
-        ap.slingshotMisses = 0;
-        goPhase('coastToNebulaCluster');
-      }
-      return;
-    }
-
-    // Any hostile on the nav system — break off and engage
-    const intruder = navDetectedEnemy();
-    if (intruder && !gameState.emergencyWarp.active && !gameState.emergencyWarp.transitioning &&
-        (!gameState.slingshot || !gameState.slingshot.active)) {
-      ap.combatTarget = intruder;
-      ap.combatMissileFired = false;
-      ap.returnPhase = 'warpToNebulaCluster';
-      goPhase('combat');
-      return;
-    }
-
-    setStatus('Plotting course to nebula cluster… (attempt ' + ((ap.slingshotMisses || 0) + 1) + '/2)');
-
-    // Pick a planet to slingshot around — prefer one in the same general
-    // direction as the nebula so the boost actually points the right way.
-    if (!ap.slingshotPlanet) {
-      ap.slingshotPlanet = pickSlingshotPlanet(ap.currentNebula.position);
-      if (!ap.slingshotPlanet) {
-        // No planet within reach — count as a miss, fallback path will engage
-        ap.slingshotMisses = (ap.slingshotMisses || 0) + 1;
-        ap.phaseStart = Date.now();
-        return;
-      }
-      gameState.currentTarget = ap.slingshotPlanet;
-    }
-
-    const planetPos = ap.slingshotPlanet.position;
-    const distToPlanet = camPos().distanceTo(planetPos);
-    const nebPos = ap.currentNebula.position;
-    const speedNow = gameState.velocityVector ? gameState.velocityVector.length() : 0;
-    const pRadius = ap.slingshotPlanet.geometry ? ap.slingshotPlanet.geometry.parameters.radius : 5;
-    const slingshotRange = Math.max(60, pRadius + 25);
-    // Lead the planet by a small amount based on its orbital velocity so we
-    // don't aim at where it WAS, we aim at where it WILL BE when we arrive.
-    let leadPos = planetPos;
-    if (ap.slingshotPlanet.userData &&
-        ap.slingshotPlanet.userData.orbitRadius > 0 &&
-        ap.slingshotPlanet.userData.systemCenter) {
-        const sc = ap.slingshotPlanet.userData.systemCenter;
-        const orbitSpeed = ap.slingshotPlanet.userData.orbitSpeed || 0.01;
-        // Tangential velocity in world units per frame. At 60fps this is units/s/60
-        const radial = new THREE.Vector3(planetPos.x - sc.x, 0, planetPos.z - sc.z);
-        const tangent = new THREE.Vector3(-radial.z, 0, radial.x).normalize();
-        // Estimate frames to arrive (rough): distance / speed*60
-        const framesToArrive = Math.min(120, distToPlanet / Math.max(1, speedNow));
-        const leadDist = orbitSpeed * ap.slingshotPlanet.userData.orbitRadius * framesToArrive * 0.8;
-        leadPos = new THREE.Vector3(
-            planetPos.x + tangent.x * leadDist,
-            planetPos.y,
-            planetPos.z + tangent.z * leadDist
-        );
-    }
-
-    // Phase 2a: fly toward the LEAD position with speed-aware braking.
-    if (distToPlanet > slingshotRange - 5) {
-        setStatus('Approach ' + (ap.slingshotPlanet.userData.name || 'body') +
-            ' — ' + (distToPlanet | 0) + 'u, v=' + speedNow.toFixed(1));
-
-        if (distToPlanet > 1500) {
-            // Far range — full boost toward the lead position
-            flyToward({ position: leadPos }, 2.0);
-        } else if (distToPlanet > 600) {
-            // Medium range — start braking, target lead position
-            flyToward({ position: leadPos }, 1.4);
-        } else {
-            // Close range — manual fine-tune approach.
-            // Steer toward the current planet position (lead is small now).
-            gameState.currentTarget = ap.slingshotPlanet;
-            if (window.orientTowardsTarget) {
-                window.orientTowardsTarget({ position: leadPos });
-            }
-
-            // Arrival velocity should be near zero. Brake aggressively if
-            // we'd overshoot the slingshot ring.
-            const targetSpeed = Math.max(0.4, (distToPlanet - slingshotRange) * 0.02);
-            if (speedNow > targetSpeed * 1.3) {
-                keys().x = true; // brake
-            } else if (speedNow < targetSpeed * 0.7 && distToPlanet > slingshotRange + 30) {
-                keys().w = true; // gentle thrust
-            }
-            // Pre-emptive brake very close to the ring to prevent collision
-            if (distToPlanet < slingshotRange + 40 && speedNow > 0.5) {
-                keys().x = true;
-            }
-        }
-
-        // Approach timeout — count as a missed slingshot attempt
-        if (t > 14000) {
-            ap.slingshotMisses = (ap.slingshotMisses || 0) + 1;
-            ap.slingshotPlanet = null;
-            ap.phaseStart = Date.now();
-            setStatus('Missed approach — slingshot misses: ' + ap.slingshotMisses + '/2');
-        }
-        return;
-    }
-
-    // Phase 2b: in slingshot range — brake hard, align to nebula, fire ASAP
-    if (speedNow > 0.3) keys().x = true;
-    const aimDummy = { position: nebPos };
+    const target = ap.currentNebula;
+    const targetPos = target.position;
+    const aimDummy = { position: targetPos };
     if (window.orientTowardsTarget) window.orientTowardsTarget(aimDummy);
 
-    let aligned = false;
+    let warpAligned = false;
     if (_coneVec && camera) {
-      _coneVec.subVectors(nebPos, camera.position).normalize();
+      _coneVec.subVectors(targetPos, camera.position).normalize();
       camera.getWorldDirection(_coneFwd);
-      aligned = _coneFwd.dot(_coneVec) > 0.85; // looser alignment for quick fire
+      warpAligned = _coneFwd.dot(_coneVec) > 0.85;
     }
-    setStatus(aligned
-      ? 'SLINGSHOT — releasing!'
-      : 'In slingshot ring — aligning to nebula');
 
-    // Phase 2c: fire the slingshot when aligned (auto-engage)
-    if (aligned && triggerSlingshot()) {
+    const targetName = (target.userData && target.userData.isTwinCluster)
+      ? 'twin nebula center'
+      : ((target.userData && target.userData.name) || 'nebula');
+    setStatus(warpAligned
+      ? ('EMERGENCY WARP → ' + targetName)
+      : ('Aligning for warp → ' + targetName));
+
+    keys().w = true;
+    if (warpAligned && t > 1200 && canEmergencyWarp() && triggerOKeyWarp()) {
       ap.warpStartedAt = Date.now();
       ap.warpsUsed++;
-      ap.slingshotMisses = 0;
       goPhase('coastToNebulaCluster');
       return;
     }
 
-    // Safety timeout — alignment failed or planet too small to orbit.
-    // Count as a missed attempt; fallback path will take over after 2.
-    if (t > 12000) {
-      ap.slingshotMisses = (ap.slingshotMisses || 0) + 1;
-      ap.slingshotPlanet = null;
-      ap.phaseStart = Date.now();
-      setStatus('Slingshot timeout — misses: ' + ap.slingshotMisses + '/2');
+    // Hard fallback — punch the warp even if alignment never settles
+    if (t > 8000) {
+      if (canEmergencyWarp()) triggerOKeyWarp();
+      ap.warpStartedAt = Date.now();
+      goPhase('coastToNebulaCluster');
     }
   }
 
@@ -1120,11 +1187,35 @@
 
     const speedNow = gameState.velocityVector ? gameState.velocityVector.length() : 0;
 
-    // While the warp cycle is locked, keep firing planet-target demos to the
-    // nav system and suppress all braking / intruder break-off.
+    // While the warp cycle is locked, keep firing planet-target demos to
+    // the nav system. Braking and intruder break-off remain suppressed
+    // (the warp boost owns the velocity), but the ship is allowed to
+    // steer so it can keep its nose on the destination — and retarget
+    // if a different nebula passes closer than the original.
     if (inLockedCoast) {
-      setStatus('Warp coast — ' + Math.max(0, ((coastLockUntil - Date.now()) / 1000)).toFixed(0) + 's remaining');
+      const _dstName = (ap.currentNebula && ap.currentNebula.userData && ap.currentNebula.userData.name) || 'destination';
+      const _dstDist = ap.currentNebula ? (camPos().distanceTo(ap.currentNebula.position) | 0) : null;
+      setStatus(_dstDist !== null
+        ? 'Warp transit → ' + _dstName + ' · ' + _dstDist + ' u'
+        : 'Warp transit → ' + _dstName);
       cycleScanTarget();
+      if (ap.currentNebula) {
+        // Don't pass by nebulas: if another nebula is meaningfully nearer
+        // mid-warp, switch target so we coast into the closer one instead.
+        const nearer = nearestNebula();
+        if (nearer && nearer !== ap.currentNebula) {
+          const dCur  = camPos().distanceTo(ap.currentNebula.position);
+          const dAlt  = camPos().distanceTo(nearer.position);
+          if (dAlt < dCur * 0.75) {
+            ap.currentNebula = nearer;
+            ap.orbitTarget = null;
+            setStatus('Re-routing to closer nebula: ' + (nearer.userData.name || 'nebula'));
+          }
+        }
+        if (window.orientTowardsTarget) {
+          window.orientTowardsTarget({ position: ap.currentNebula.position });
+        }
+      }
       return;
     }
 
@@ -1147,11 +1238,37 @@
       return;
     }
 
+    // Don't pass by nebulas: if a closer nebula appears post-warp, switch
+    // to it instead of overshooting toward the original target.
+    const _altNeb = nearestNebula();
+    if (_altNeb && _altNeb !== ap.currentNebula) {
+      const dCur = camPos().distanceTo(ap.currentNebula.position);
+      const dAlt = camPos().distanceTo(_altNeb.position);
+      if (dAlt < dCur * 0.75) {
+        ap.currentNebula = _altNeb;
+        ap.orbitTarget = null;
+        setStatus('Re-routing to closer nebula: ' + (_altNeb.userData.name || 'nebula'));
+      }
+    }
+
     const distToNebula = camPos().distanceTo(ap.currentNebula.position);
     setStatus('Coasting to nebula — ' + (distToNebula | 0) + ' units');
 
-    // Brake within 1000 u of the nebula center, orient toward it
-    const NEBULA_BRAKE_RANGE = 1000;
+    // If distance to the destination is growing (moving away), brake and
+    // reorient toward it instead of continuing on the bad heading.
+    const _prevDist = ap._prevNebDist;
+    ap._prevNebDist = distToNebula;
+    const _drifting = (typeof _prevDist === 'number') && (distToNebula > _prevDist + 0.5);
+    if (_drifting) {
+      if (window.orientTowardsTarget) {
+        window.orientTowardsTarget({ position: ap.currentNebula.position });
+      }
+      keys().x = true;
+      setStatus('Drifting away — braking and reorienting (' + (distToNebula | 0) + ' u)');
+    }
+
+    // Brake within 2000 u of the nebula center, orient toward it
+    const NEBULA_BRAKE_RANGE = 2000;
     if (distToNebula < NEBULA_BRAKE_RANGE) {
       setStatus('Nebula cluster — braking (' + (distToNebula | 0) + ' u)');
       if (window.orientTowardsTarget) {
@@ -1167,13 +1284,15 @@
     // Close to nebula — move to explore center phase
     if (distToNebula < 800 && speed < 1.5) {
       ap.brakingAfterWarp = false;
+      ap._prevNebDist = undefined;
       goPhase('orbitNebulaPlanet');
       return;
     }
 
     // Keep thrusters active while coasting toward the nebula — the ship
-    // should look purposeful, not drifting.  Only thrust when NOT braking.
-    if (distToNebula >= NEBULA_BRAKE_RANGE && speed < 3) {
+    // should look purposeful, not drifting.  Only thrust when NOT braking
+    // and not already drifting away (drift case brakes above).
+    if (!_drifting && distToNebula >= NEBULA_BRAKE_RANGE && speed < 3) {
       const dummy = { position: ap.currentNebula.position };
       if (window.orientTowardsTarget) window.orientTowardsTarget(dummy);
       keys().w = true;
@@ -1202,7 +1321,9 @@
       return;
     }
 
-    // Target is always the nebula center, not a nearby planet
+    // Movement target = nebula center; nav-lock = a planet inside the
+    // nebula (HUD reads as "tracking <planet>") so the viewer sees a
+    // proper navigation cue while the ship laps the cloud.
     if (!ap.orbitTarget && ap.currentNebula) {
       ap.orbitTarget = {
         position: ap.currentNebula.position.clone(),
@@ -1211,8 +1332,32 @@
       const nm = ap.orbitTarget.userData.name;
       setStatus('Navigating to ' + nm + ' center');
       transmit('NAVIGATION SYSTEM', 'Target locked: ' + nm + '\nProceeding to nebula center.\nAwaiting intel transmission.');
-      gameState.currentTarget = ap.orbitTarget;
+      // Find a planet inside the nebula to nav-lock for the HUD
+      ap._orbitNavPlanet = _findPlanetNearNebula(ap.currentNebula) || null;
+    }
+    // Snapshot the discovery-path roster on every entry into this phase
+    // (not just when orbitTarget is first set) so re-entries from combat
+    // don't compare against a stale baseline and immediately false-trigger
+    // followDiscoveryPath against an old path from a previous nebula.
+    if (ap._orbitPhaseStart !== ap.phaseStart) {
+      ap._orbitPhaseStart = ap.phaseStart;
       ap._pathCountAtEntry = (window.discoveryPaths || []).length;
+    }
+
+    // Refresh planet nav-lock periodically (planets orbit; the chosen one
+    // may have rotated to the far side of the nebula). Cheap scan.
+    if (!ap._orbitNavPlanet ||
+        (ap._orbitNavPlanet.userData && ap._orbitNavPlanet.userData.health !== undefined && ap._orbitNavPlanet.userData.health <= 0)) {
+      ap._orbitNavPlanet = _findPlanetNearNebula(ap.currentNebula);
+    }
+    if (ap._orbitNavPlanet) {
+      gameState.currentTarget = ap._orbitNavPlanet;
+      if (gameState.targetLock) {
+        gameState.targetLock.active = true;
+        gameState.targetLock.target = ap._orbitNavPlanet;
+      }
+    } else {
+      gameState.currentTarget = ap.orbitTarget;
     }
 
     const nebCenter = ap.orbitTarget ? ap.orbitTarget.position : (ap.currentNebula ? ap.currentNebula.position : null);
@@ -1221,24 +1366,27 @@
     const dist = camPos().distanceTo(nebCenter);
     const speed = gameState.velocityVector ? gameState.velocityVector.length() : 0;
 
-    // Fly toward nebula center, braking progressively
-    if (dist > 200) {
+    // Approach the nebula, then orbit at a fixed radius around the center.
+    const ORBIT_RADIUS = 500;
+    if (dist > ORBIT_RADIUS + 200) {
       setStatus('Approaching nebula center — ' + (dist | 0) + ' u');
-      if (dist > 1000) {
-        flyToward(ap.orbitTarget, 1.6);
-      } else {
-        // Close approach — brake down for precision, steer manually
-        if (window.orientTowardsTarget) window.orientTowardsTarget(ap.orbitTarget);
-        if (speed > 0.8) {
-          keys().x = true;
-        } else if (dist > 300) {
-          keys().w = true;
-        }
-      }
+      flyToward(ap.orbitTarget, 1.6);
     } else {
-      // At the center — drift slowly and wait for the discovery path
-      setStatus('Scanning nebula center…');
-      if (speed > 0.3) keys().x = true;
+      // Orbit: aim at a slowly-rotating offset point ORBIT_RADIUS from the
+      // center. Thrusting toward a moving point produces a stable lap.
+      if (!ap._orbitAngle) ap._orbitAngle = Math.random() * Math.PI * 2;
+      ap._orbitAngle += 0.012; // ~0.7 rad/s at 60fps — slow, photogenic
+      if (!ap._lapDummy) ap._lapDummy = { position: new THREE.Vector3(), userData: { name: 'Nebula Orbit' } };
+      ap._lapDummy.position.set(
+        nebCenter.x + Math.cos(ap._orbitAngle) * ORBIT_RADIUS,
+        nebCenter.y,
+        nebCenter.z + Math.sin(ap._orbitAngle) * ORBIT_RADIUS
+      );
+      setStatus('Orbiting nebula center — scanning for discovery path');
+      if (window.orientTowardsTarget) window.orientTowardsTarget(ap._lapDummy);
+      // Gentle thrust to maintain lap speed; brake if we're sprinting
+      if (speed > 1.6) keys().x = true;
+      else keys().w = true;
     }
 
     // The game's physics calls checkForNebulaDeepDiscovery() every 15
@@ -1247,17 +1395,31 @@
       checkForNebulaDeepDiscovery();
     }
 
-    // Check if a NEW discovery path appeared since we entered this phase
+    // Check if a NEW discovery path appeared since we entered this phase.
+    // Snapshot the actual path reference so phaseFollowDiscoveryPath can
+    // use THIS path, not whatever happens to be last in the array later
+    // (the discoveryPaths array is never pruned, so [length-1] can point
+    // at an old path from a previous galaxy halfway across the universe).
     const paths = window.discoveryPaths || [];
     if (paths.length > (ap._pathCountAtEntry || 0)) {
-      transmit('NAVIGATION', 'Dotted-line path detected!\nFollowing discovery route.');
-      goPhase('followDiscoveryPath');
-      return;
+      const newPath = paths[paths.length - 1];
+      const endPos = newPath && newPath.line && newPath.line.userData && newPath.line.userData.endPosition;
+      // Sanity check: the path should lead somewhere within reach. If it
+      // points >50,000u away the path is almost certainly stale or
+      // misattributed — bail to a fresh nebula warp instead of chasing it.
+      if (endPos && camPos().distanceTo(endPos) < 50000) {
+        ap._followingPath = newPath;
+        transmit('NAVIGATION', 'Dotted-line path detected!\nFollowing discovery route.');
+        goPhase('followDiscoveryPath');
+        return;
+      }
     }
 
-    // Safety timeout — path may not appear if nebula was already discovered
+    // Safety timeout — no discovery path materialised. Don't fall through
+    // to followDiscoveryPath (it would pick a stale path); warp to a new
+    // nebula and try discovery again there.
     if (t > 25000) {
-      goPhase('followDiscoveryPath');
+      goPhase('warpToNebulaCluster');
     }
   }
 
@@ -1266,9 +1428,25 @@
     const t = elapsed();
     ensureShieldsFor('travel');
     ensureThirdPerson();
-    const paths = window.discoveryPaths || [];
-    const path = paths.length > 0 ? paths[paths.length - 1] : null;
+    // Prefer the path snapshot taken when this transition was triggered.
+    // discoveryPaths is never pruned, so [length-1] can drift to a path
+    // from a different galaxy that was created mid-flight.
+    let path = ap._followingPath || null;
+    if (!path || !path.line || !path.line.userData) {
+      const paths = window.discoveryPaths || [];
+      path = paths.length > 0 ? paths[paths.length - 1] : null;
+    }
     const endPos = path && path.line && path.line.userData && path.line.userData.endPosition;
+
+    // Guard against runaway chases: if the snapshotted path's endpoint is
+    // unreasonably far (stale path slipped through, or the snapshot got
+    // cleared and we fell back to a foreign [length-1]), abort to a fresh
+    // nebula warp instead of flying to the edge of the universe.
+    if (endPos && camPos().distanceTo(endPos) > 50000) {
+      ap._followingPath = null;
+      goPhase('warpToNebulaCluster');
+      return;
+    }
 
     // Check for an enemy in front of us as we travel
     const enemyAhead = nearestAliveEnemy(3500);
@@ -1297,14 +1475,16 @@
           ap.returnPhase = 'followDiscoveryPath';
           goPhase('combat');
         } else {
-          // Cleared — move to black hole galaxy phase
+          // Cleared — head for the nearest black hole and warp through
+          // to the next galaxy.
           ap.segmentKills = 0;
-          goPhase('warpToNebulaCluster');
+          ap.currentBH = null;
+          goPhase('gotoBlackHoleGalaxy');
         }
         return;
       }
     } else {
-      // No active path — just look for enemies or move on
+      // No active path — drift back to nebula warp behavior
       if (t > 3000) goPhase('warpToNebulaCluster');
     }
 
@@ -1421,9 +1601,12 @@
     const warpCycleActive =
       (gameState.emergencyWarp && (gameState.emergencyWarp.active || gameState.emergencyWarp.transitioning)) ||
       (gameState.slingshot && gameState.slingshot.active);
-    const warpMinCoastMs = (gameState.emergencyWarp && gameState.emergencyWarp.boostDuration) || 15000;
-    const coastLockUntil = (ap.warpStartedAt || 0) + warpMinCoastMs;
-    const inLockedCoast = warpCycleActive || Date.now() < coastLockUntil;
+    // Black-hole warp coast is no longer a thing: don't hold the ship in
+    // an idle timed coast after a BH warp. We still avoid braking while
+    // the warp's own slingshot/emergency-warp cycle is physically running
+    // (so we don't fight the teleport animation), but the instant that
+    // cycle ends the demo drops straight into evasion + engagement.
+    const inLockedCoast = warpCycleActive;
 
     const speedNow = gameState.velocityVector ? gameState.velocityVector.length() : 0;
 
@@ -1437,7 +1620,7 @@
     }
 
     if (inLockedCoast) {
-      setStatus('Warp coast — ' + Math.max(0, ((coastLockUntil - Date.now()) / 1000)).toFixed(0) + 's remaining');
+      setStatus('Warp transit…');
       cycleScanTarget();
       return;
     }
@@ -1737,14 +1920,32 @@
     }
     const cp = camPos();
     const speed = gameState.velocityVector ? gameState.velocityVector.length() : 0;
+    // The demo is "headed for" a black hole during these phases only.
+    // Outside them, treat BHs as a much larger danger zone so we don't
+    // get accidentally sucked back in after a surprise warp.
+    const _bhIntended = (ap.phase === 'blackHoleWarp' ||
+                         ap.phase === 'gotoBlackHoleGalaxy');
     for (let i = 0; i < planets.length; i++) {
       const p = planets[i];
       if (!p || !p.position) continue;
       if (p.userData && p.userData.type === 'asteroid') continue;
       const sz = (p.userData && p.userData.size) || 20;
       const isStar = p.userData && p.userData.type === 'star';
-      // Stars get a much larger danger zone; planets use 2x size
-      const dangerR = isStar ? Math.max(sz * 4, 200) : Math.max(sz * 2, 80);
+      const isBlackHole = p.userData && p.userData.type === 'blackhole';
+      // Black holes get the biggest danger zone — unless the demo is in
+      // a phase that deliberately wants to dive into one.  Stars and
+      // planets keep their existing margins.
+      let dangerR;
+      if (isBlackHole && !_bhIntended) {
+        const warpThresh = (p.userData && p.userData.warpThreshold) || 600;
+        dangerR = warpThresh + 1200;
+      } else if (isBlackHole) {
+        dangerR = 200; // intended dive — just don't grind the boundary
+      } else if (isStar) {
+        dangerR = Math.max(sz * 4, 200);
+      } else {
+        dangerR = Math.max(sz * 2, 80);
+      }
       // At high speed, extend the danger zone proportionally
       const effectiveR = dangerR + speed * 15;
       const dist = cp.distanceTo(p.position);
@@ -1820,10 +2021,12 @@
     gameState.currentTarget = target;
 
     // Only fire inside the enemy's own firing range AND when lined up
-    const engageRange = (target.userData && target.userData.firingRange) || 500;
+    const engageRange = (target.userData && target.userData.firingRange) || 400;
     const dist = camPos().distanceTo(target.position);
     if (dist > engageRange) return;
     if (!isInFiringCone(target, engageRange + 100)) return;
+    // Never fire at something that isn't actually visible onscreen.
+    if (!_isOnScreen(target.position)) return;
 
     const now = Date.now();
     if (now - ap.lastFire > 1000 && gameState.weapons.cooldown <= 0 && gameState.weapons.energy >= 10) {
@@ -1885,13 +2088,13 @@
     k[ap._flightStyleKey] = true;
   }
 
-  // Missile range matches the auto-mouse crosshair snap distance
-  // (gameState.targetLock.range, default 600 u) plus a small 100 u
-  // buffer.  Outside that bubble the missile would just chase the
-  // target forever with no visual setup from the crosshair.
+  // Demo missile engagement bubble: a fixed 500 u lock + 100 u buffer
+  // = 600 u. Deliberately decoupled from gameState.targetLock.range
+  // (now 400 u for the laser auto-aim) so missiles reach a bit further
+  // than the close-range laser dogfight without chasing forever.
   const MISSILE_RANGE_BUFFER = 100;
   function missileMaxRange() {
-    return ((gameState.targetLock && gameState.targetLock.range) || 600) + MISSILE_RANGE_BUFFER;
+    return 500 + MISSILE_RANGE_BUFFER;
   }
 
   // Track which enemies already had a missile fired at them this run
@@ -1904,6 +2107,20 @@
     if (target && target.userData) target.userData._demoMissileFired = true;
   }
 
+  // True while a launched missile is still tracking `target` in the
+  // active-missiles list. Used by combat to (a) suppress laser fire at the
+  // missile's victim until impact and (b) hold the ship square-on to the
+  // target regardless of the missile's curved path.
+  function _isMissileInFlightAt(target) {
+    if (!target || !window.activeMissiles) return false;
+    const list = window.activeMissiles;
+    for (let i = 0; i < list.length; i++) {
+      const m = list[i];
+      if (m && m.userData && m.userData.target === target) return true;
+    }
+    return false;
+  }
+
   // Returns true if the demo should fire a missile at `target` right
   // now — combines range, shield, payload, and once-per-target rules.
   function shouldFireMissileAt(target, dist) {
@@ -1911,8 +2128,14 @@
     if (shieldsActive()) return false;
     if (!gameState.missiles || gameState.missiles.current <= 0) return false;
     if (dist > missileMaxRange()) return false;
-    if (hasMissileBeenFiredAt(target)) return false;
-    if (Date.now() - (ap._lastMissileTime || 0) <= 2500) return false;
+    // Bosses / elite guardians / black-hole guardians have NO once-per-
+    // target limit — the demo may keep missiling these big targets
+    // (still rate-limited by the 1.5 s pacing below).
+    const _bigTarget = target.userData.isBoss ||
+                       target.userData.isEliteGuardian ||
+                       target.userData.isBlackHoleGuardian;
+    if (!_bigTarget && hasMissileBeenFiredAt(target)) return false;
+    if (Date.now() - (ap._lastMissileTime || 0) <= 1500) return false;
     return true;
   }
 
@@ -1922,11 +2145,21 @@
   // Stops firing the instant the lock drops or the target moves out of
   // auto-aim range.
   // Returns true if the world-position is in the camera's forward hemisphere
+  // True only when worldPos is actually inside the viewport. The old
+  // version was a 146°-wide cone (dot > 0.3) that let the demo fire at
+  // things well off-screen. Now: must be in front of the camera AND
+  // project inside the screen (slight inset so it never fires at a
+  // target hugging / just past the edge).
   function _isOnScreen(worldPos) {
-    if (!camera || !worldPos) return false;
+    if (!camera || !worldPos || typeof THREE === 'undefined') return false;
     camera.getWorldDirection(_coneFwd);
-    _coneVec.subVectors(worldPos, camera.position).normalize();
-    return _coneFwd.dot(_coneVec) > 0.3; // ~73° half-cone
+    _coneVec.subVectors(worldPos, camera.position);
+    if (_coneFwd.dot(_coneVec) <= 0) return false; // behind camera
+    if (!_isOnScreen._v) _isOnScreen._v = new THREE.Vector3();
+    const v = _isOnScreen._v.set(worldPos.x, worldPos.y, worldPos.z).project(camera);
+    return v.z < 1 &&
+           v.x >= -0.95 && v.x <= 0.95 &&
+           v.y >= -0.95 && v.y <= 0.95;
   }
 
   function autoFireOnTargetLock() {
@@ -1936,9 +2169,12 @@
     if (!tgt || !tgt.userData) return;
     if (tgt.userData.type !== 'enemy' && !tgt.userData.isBorg) return;
     if (tgt.userData.health <= 0) return;
+    // While a missile is en route to this target, hold lasers — the demo
+    // commits to the missile resolution and resumes lasers post-impact.
+    if (_isMissileInFlightAt(tgt)) return;
 
-    // Demo player only fires when within 500u — keep dogfights close-range
-    const engageRange = Math.min(500, (tgt.userData && tgt.userData.firingRange) || 500);
+    // Demo player only fires when within 400u — keep dogfights close-range
+    const engageRange = Math.min(400, (tgt.userData && tgt.userData.firingRange) || 400);
     const dist = camPos().distanceTo(tgt.position);
     if (dist > engageRange) return;
 
@@ -1957,6 +2193,33 @@
     gameState.crosshairX = window.innerWidth / 2;
     gameState.crosshairY = window.innerHeight / 2;
     if (window.fireWeapon) window.fireWeapon();
+  }
+
+  // Pick a planet near a nebula center to use as the orbit phase's
+  // nav-lock target. Prefers the largest planet inside ~6000u so the HUD
+  // reads with a notable body name. Falls back to nearest planet of any
+  // kind within that range, then null.
+  function _findPlanetNearNebula(nebula) {
+    if (!nebula || typeof planets === 'undefined') return null;
+    if (!_findPlanetNearNebula._tmp) _findPlanetNearNebula._tmp = new THREE.Vector3();
+    const center = nebula.position;
+    const MAX = 6000;
+    let bestBig = null, bestBigScore = -1;
+    let bestAny = null, bestAnyDist = MAX;
+    for (let i = 0; i < planets.length; i++) {
+      const p = planets[i];
+      if (!p || !p.userData) continue;
+      if (p.userData.type !== 'planet') continue;
+      if (p.userData.health !== undefined && p.userData.health <= 0) continue;
+      const d = center.distanceTo(p.position);
+      if (d > MAX) continue;
+      // Prefer larger bodies — radius proxy: userData.radius if present
+      const r = (p.userData.radius || p.scale && p.scale.x) || 1;
+      const score = r - d * 0.0002;
+      if (score > bestBigScore) { bestBigScore = score; bestBig = p; }
+      if (d < bestAnyDist) { bestAnyDist = d; bestAny = p; }
+    }
+    return bestBig || bestAny;
   }
 
   // Find the nearest asteroid within range
@@ -2348,6 +2611,48 @@
     return best;
   }
 
+  // Twin/clustered nebulas — the paired ones (not distant/exotic).
+  // Each cluster index holds two nebulas; pick the cluster center
+  // (average of the pair) as the warp destination so the boost
+  // delivers the player into the middle of a twin formation.
+  function nearestTwinNebula() {
+    if (typeof nebulaClouds === 'undefined' || !nebulaClouds.length) return null;
+    const cp = camPos();
+    // Group by cluster index
+    const clusters = {};
+    for (let i = 0; i < nebulaClouds.length; i++) {
+      const n = nebulaClouds[i];
+      if (!n || !n.userData) continue;
+      if (n.userData.isDistant || n.userData.isExoticCore) continue;
+      if (n.userData.deepDiscovered) continue;
+      const ci = n.userData.cluster;
+      if (ci === undefined || ci === null) continue;
+      if (!clusters[ci]) clusters[ci] = [];
+      clusters[ci].push(n);
+    }
+    let bestCenter = null, bestPair = null, bestDist = Infinity;
+    for (const ci in clusters) {
+      const pair = clusters[ci];
+      if (pair.length < 2) continue; // Only true twins
+      const center = new THREE.Vector3();
+      pair.forEach(n => center.add(n.position));
+      center.divideScalar(pair.length);
+      const d = cp.distanceTo(center);
+      if (d < bestDist) { bestDist = d; bestCenter = center; bestPair = pair; }
+    }
+    if (!bestCenter) return null;
+    // Synthesize a target object the rest of the autopilot can consume.
+    return {
+      position: bestCenter,
+      userData: {
+        name: 'Twin Nebula (' + (bestPair[0].userData.name || '?') + ' / ' +
+              (bestPair[1].userData.name || '?') + ')',
+        isTwinCluster: true,
+        pair: bestPair
+      }
+    };
+  }
+
   function nearestBlackHole() {
     if (typeof planets === 'undefined') return null;
     // Prefer the local gateway for the first warp — it's the Sol system
@@ -2602,7 +2907,8 @@
       gameState.weapons &&
       gameState.weapons.cooldown <= 0 &&
       gameState.weapons.energy >= 10 &&
-      now - (ap._lastAmbushFire || 0) > 300;   // ~3 shots per second
+      _isOnScreen(target.position) &&          // never fire at off-screen attackers
+      now - (ap._lastAmbushFire || 0) > 500;   // ~2 shots per second
     if (canFireLaser && window.fireWeapon) {
       ap._lastAmbushFire = now;
       ap.lastFire = now;                        // sync with autoFireOnTargetLock cooldown
@@ -2723,6 +3029,8 @@
   // We handle BOTH: click READ on the first type, and the second auto-fades.
   ap._seenPrompt = null;
   ap._seenPromptTime = 0;
+  ap._seenUnderstood = null;
+  ap._seenUnderstoodTime = 0;
   function autoReadAnyTransmission() {
     // Type 1: READ/SKIP prompt from game-controls.js deep-discovery etc.
     const prompt = document.getElementById('incomingTransmissionPrompt');
@@ -2765,6 +3073,26 @@
         if (textTx) textTx.style.opacity = '0';
       }, 1500);
     }
+
+    // Type 3: Mission Control galaxy-cleared alert ("N hostile galaxies
+    // remain") with an UNDERSTOOD button. The demo clicks it 2 s after
+    // it appears so the campaign progresses without a human.
+    const understoodBtn = document.getElementById('missionCommandUnderstood');
+    if (understoodBtn) {
+      if (ap._seenUnderstood !== understoodBtn) {
+        ap._seenUnderstood = understoodBtn;
+        ap._seenUnderstoodTime = Date.now();
+      } else if (Date.now() - ap._seenUnderstoodTime > 2000) {
+        understoodBtn.click();
+        ap._seenUnderstood = null;
+        if (typeof gameState !== 'undefined') gameState.paused = false;
+        if (typeof renderer !== 'undefined' && renderer && renderer.domElement) {
+          renderer.domElement.style.cursor = 'none';
+        }
+      }
+    } else {
+      ap._seenUnderstood = null;
+    }
   }
 
   function elapsed() {
@@ -2796,6 +3124,11 @@
     if (name !== 'warpToNebulaCluster' && name !== 'coastToNebulaCluster') {
       ap.slingshotPlanet = null;
     }
+    // Drop the discovery-path snapshot the moment we leave the follow
+    // phase so a stale reference can't be reused on a later trigger.
+    if (name !== 'followDiscoveryPath') {
+      ap._followingPath = null;
+    }
   }
 
   function resetFlags() {
@@ -2816,6 +3149,9 @@
     ap._lastBHWarp = 0;
     ap._evadeUntil = 0;
     ap._evadeKey = null;
+    ap._followingPath = null;
+    ap._pathCountAtEntry = 0;
+    ap._orbitPhaseStart = 0;
   }
 
   function releaseKeys() {

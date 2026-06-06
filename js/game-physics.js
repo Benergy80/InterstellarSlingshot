@@ -58,9 +58,96 @@ function applyNebulaShipUpgrade(nebulaName) {
     console.log(`🛠 Ship upgrade applied — eff ${newEff.toFixed(2)}, maxV ${gameState.maxVelocity.toFixed(1)}`);
 }
 
+// =============================================================================
+// REPUTATION / TIER UNLOCKS
+// Every meaningful action calls awardReputation(amount, source) which credits
+// gameState.reputation. Crossing 50 / 200 / 500 / 1000 rep grants a permanent
+// tier unlock that changes how thrust, energy, and slingshots behave.
+// =============================================================================
+const REP_TIERS = [
+    { threshold:   50, key: 'coasting',         name: 'Inertial Coasting',
+      blurb: 'Cruising at top speed costs no energy — only acceleration burns fuel.' },
+    { threshold:  200, key: 'capacitor',        name: 'Capacitor Cells',
+      blurb: 'Max energy +50, regen +66%.' },
+    { threshold:  500, key: 'quickSlingshot',   name: 'Quick-Charge Slingshot',
+      blurb: 'Slingshots cost zero energy and cool down in 5 seconds.' },
+    { threshold: 1000, key: 'trajectorySolver', name: 'Trajectory Solver',
+      blurb: 'Optimal slingshot exit vector is auto-aimed when you enter a gravity well.' }
+];
+
+function awardReputation(amount, source) {
+    if (typeof gameState === 'undefined') return;
+    if (!amount) return;
+    gameState.reputation = (gameState.reputation || 0) + amount;
+    if (typeof source === 'string' && source.length &&
+        typeof showAchievement === 'function' && amount >= 25) {
+        showAchievement('+' + amount + ' REP', source);
+    }
+    // Apply any newly-crossed tier thresholds.
+    let tier = gameState.repTier || 0;
+    while (tier < REP_TIERS.length && gameState.reputation >= REP_TIERS[tier].threshold) {
+        applyRepTier(tier);
+        tier++;
+    }
+    gameState.repTier = tier;
+}
+
+function applyRepTier(tierIndex) {
+    if (typeof gameState === 'undefined') return;
+    const t = REP_TIERS[tierIndex];
+    if (!t) return;
+    if (!gameState.repTierUnlocks) gameState.repTierUnlocks = {};
+    gameState.repTierUnlocks[t.key] = true;
+    // Tier-2 capacitor: bump max + current energy ceiling.
+    if (t.key === 'capacitor') {
+        gameState.maxEnergy = Math.max(gameState.maxEnergy || 100, 150);
+        gameState.energy = Math.min(gameState.maxEnergy, (gameState.energy || 0) + 50);
+    }
+    if (typeof showAchievement === 'function') {
+        showAchievement('UNLOCK · ' + t.name, t.blurb, true);
+    }
+    console.log('🎖 Reputation tier ' + (tierIndex + 1) + ' unlocked: ' + t.name);
+}
+
+// Reward hook for any enemy kill. Returns the rep amount awarded so the
+// caller can fold it into a single notification (rather than triggering
+// two banners on top of the "Enemy Destroyed!" toast).
+function awardKillReward(enemy) {
+    if (typeof gameState === 'undefined' || !enemy || !enemy.userData) return 0;
+    const ud = enemy.userData;
+    let amount;
+    let label;
+    if (ud.isBoss) {
+        amount = 50;
+        label  = 'Boss defeated: ' + (ud.name || 'enemy');
+        // Boss kill: top off energy and grant a warp charge.
+        gameState.energy = Math.min(gameState.maxEnergy || 100,
+            (gameState.energy || 0) + (gameState.maxEnergy || 100));
+        if (gameState.emergencyWarp) {
+            gameState.emergencyWarp.available = Math.min(10,
+                (gameState.emergencyWarp.available || 0) + 1);
+        }
+    } else if (ud.isBlackHoleGuardian || ud.isEliteGuardian) {
+        amount = 15;
+        label  = 'Elite kill';
+        gameState.energy = Math.min(gameState.maxEnergy || 100,
+            (gameState.energy || 0) + 15);
+    } else {
+        amount = 5;
+        label  = ''; // small kill, suppress banner
+        gameState.energy = Math.min(gameState.maxEnergy || 100,
+            (gameState.energy || 0) + 5);
+    }
+    awardReputation(amount, label);
+    return amount;
+}
+
 if (typeof window !== 'undefined') {
     window._consumeEnergy = _consumeEnergy;
     window.applyNebulaShipUpgrade = applyNebulaShipUpgrade;
+    window.awardReputation = awardReputation;
+    window.awardKillReward = awardKillReward;
+    window.REP_TIERS = REP_TIERS;
 }
 
 // Initialize timing variables for auto-leveling system
@@ -99,19 +186,28 @@ function orientTowardsTarget(target) {
     camera.getWorldDirection(_ortFwd);
     const angle = _ortFwd.angleTo(_ortDir);
 
-    const orientationThreshold = 0.087; // ~5 degrees
+    // Tight "aligned" threshold (~0.9°). The old 5° dead-zone made the
+    // demo jerk: it would snap to within 5° of a moving target, STOP
+    // dead, let the target drift back past 5°, then lurch to catch up —
+    // a continuous start/stop stutter. A small threshold keeps the ship
+    // tracking almost continuously instead.
+    const orientationThreshold = 0.016;
     if (angle < orientationThreshold) {
         return true;
     }
 
     _ortAxis.crossVectors(_ortFwd, _ortDir).normalize();
-    
+
     if (_ortAxis.length() < 0.001) {
         _ortAxis.set(0, 1, 0);
     }
 
-    const rotationSpeed = 0.03;
-    const maxRotationPerFrame = 0.05;
+    // Proportional turn (eases as it converges) with a higher gain so it
+    // keeps pace with moving targets instead of lagging then jerking,
+    // capped to a smooth max turn rate for large initial swings. Below
+    // ~25° the eased proportional region gives the smooth tracking.
+    const rotationSpeed = 0.12;
+    const maxRotationPerFrame = 0.055;
     const rotationAmount = Math.min(angle * rotationSpeed, maxRotationPerFrame);
 
     // Reuse a module-level quaternion to avoid per-frame allocation
@@ -701,9 +797,108 @@ function createPlayerExplosion() {
     }, 5000);
 }
 
+// Trigger the full player-death sequence: explosion visual, layered
+// explosion audio, ship-mesh hide, then MISSION FAILED screen after a
+// short delay so the player actually sees and hears the destruction.
+// Idempotent — guarded by gameState.playerDying so repeated collision
+// events don't stack multiple explosions or game-over screens.
+function triggerPlayerDeath(title, message, delayMs) {
+    if (typeof gameState === 'undefined') return;
+    if (gameState.playerDying || gameState.gameOverScreenShown) return;
+    gameState.playerDying = true;
+    gameState.hull = 0;
+    if (gameState.velocityVector && gameState.velocityVector.set) {
+        gameState.velocityVector.set(0, 0, 0);
+    }
+
+    // Hide the third-person player ship mesh so its silhouette doesn't
+    // sit untouched inside the explosion fireball.
+    try {
+        const ship = window.cameraState && window.cameraState.playerShipMesh;
+        if (ship) ship.visible = false;
+    } catch (e) {}
+
+    // Clear EVERY screen overlay so the death explosion plays on a
+    // clean screen. New ones can't reappear because playerDying is set
+    // and the fire / collision / shield handlers bail on it.
+    try {
+        // Transient combat damage flashes + "UNDER ATTACK" indicators.
+        document.querySelectorAll('.combat-damage-fx').forEach(el => el.remove());
+        // Black-hole danger vignette + its proximity flash.
+        const danger = document.getElementById('dangerOverlay');
+        if (danger) { danger.remove(); window._cachedDangerOverlay = null; }
+        // CRT-flicker "heavy damage" cracked-screen overlay (created by
+        // updateUI when hull <= 10; hull is 0 on death so it'd persist).
+        const crit = document.getElementById('criticalDamageOverlay');
+        if (crit) crit.remove();
+        // First-person shield bubble overlay — force it off and drop the
+        // shield system so the blue hex render doesn't sit over the
+        // fireball.
+        const shieldOv = document.getElementById('shieldOverlay');
+        if (shieldOv) {
+            shieldOv.classList.remove('active');
+            shieldOv.style.display = 'none';
+        }
+        if (typeof window.shieldSystem !== 'undefined' && window.shieldSystem) {
+            window.shieldSystem.active = false;
+        }
+        if (typeof gameState !== 'undefined' && gameState.shields) {
+            gameState.shields.active = false;
+        }
+        // Event-horizon / warp HUD warnings.
+        ['eventHorizonWarning', 'blackHoleWarningHUD'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.classList.add('hidden');
+        });
+    } catch (e) {}
+
+    // Visual: existing dramatic explosion (sphere + 100 particles + 3 shockwaves)
+    if (typeof createPlayerExplosion === 'function') {
+        createPlayerExplosion();
+    }
+
+    // Audio: full death-sequence stack. A deep sub-bass rumble anchors
+    // the moment while four layered booms hit on top, then a final
+    // long boom + rumble closes it out. About 2.5s of escalating
+    // intensity — meant to read as a finishing blow / "game over"
+    // beat, not a generic enemy explosion.
+    if (typeof playSound === 'function') {
+        try { playSound('death_rumble'); } catch (e) {}
+        try { playSound('death_boom'); } catch (e) {}
+        try { playSound('explosion'); } catch (e) {}
+        try { playSound('damage'); } catch (e) {}
+        setTimeout(() => { try { playSound('explosion'); } catch (e) {} }, 160);
+        setTimeout(() => { try { playSound('explosion'); } catch (e) {} }, 360);
+        setTimeout(() => { try { playSound('death_boom'); } catch (e) {} }, 600);
+        setTimeout(() => { try { playSound('damage'); } catch (e) {} }, 820);
+        setTimeout(() => { try { playSound('explosion'); } catch (e) {} }, 1100);
+        setTimeout(() => { try { playSound('death_rumble'); } catch (e) {} }, 1300);
+    }
+
+    // Give the explosion time to play out before the mission-failed
+    // overlay covers the screen. 2.5s lets the shockwaves expand and
+    // the layered booms finish.
+    const wait = (typeof delayMs === 'number') ? delayMs : 2500;
+    setTimeout(() => {
+        if (typeof showGameOverScreen === 'function') {
+            showGameOverScreen(title || 'MISSION FAILED', message || 'Ship destroyed');
+        }
+    }, wait);
+
+    console.log(`💀 PLAYER DEATH SEQUENCE: ${title || 'MISSION FAILED'} — ${message || ''}`);
+}
+
+window.triggerPlayerDeath = triggerPlayerDeath;
+
 // RESTORED: Asteroid destruction functions
 function destroyAsteroid(asteroid) {
     scene.remove(asteroid);
+
+    // Small reward for destruction so phase-5 strafing pays out.
+    if (typeof awardReputation === 'function') awardReputation(1, '');
+    if (typeof gameState !== 'undefined' && gameState.hull !== undefined) {
+        gameState.hull = Math.min(gameState.maxHull || 100, gameState.hull + 0.5);
+    }
 
     const planetIndex = planets.indexOf(asteroid);
     if (planetIndex > -1) planets.splice(planetIndex, 1);
@@ -754,7 +949,11 @@ function destroyAsteroidByWeapon(asteroid, hitPosition = null) {
     
     gameState.hull = Math.min(gameState.maxHull, gameState.hull + hullRestoration);
     
-    const explosionPosition = hitPosition ? hitPosition.clone() : asteroid.position.clone();
+    // Belt asteroids are children of a positioned beltGroup, so
+    // asteroid.position is LOCAL. Use the world position for the
+    // explosion when there's no raycast hit point.
+    const explosionPosition = hitPosition ? hitPosition.clone()
+        : asteroid.getWorldPosition(new THREE.Vector3());
     
     // FIXED: Pass actual visual radius to explosion, not base radius
     createAsteroidExplosion(explosionPosition, actualRadius);
@@ -800,7 +999,7 @@ function destroyAsteroidByCollision(asteroid) {
     
     if (typeof isShieldActive === 'function' && isShieldActive() &&
         typeof createShieldHitEffect === 'function') {
-        createShieldHitEffect(asteroid.position);
+        createShieldHitEffect(asteroid.getWorldPosition(new THREE.Vector3()));
     }
 
     if (!isBlackHoleWarpInvulnerable() &&
@@ -817,7 +1016,7 @@ function destroyAsteroidByCollision(asteroid) {
     // FIXED: Account for scale in collision explosions too
     const baseRadius = asteroid.geometry ? asteroid.geometry.parameters.radius : 1;
     const actualRadius = baseRadius * (asteroid.scale.x || 1);
-    createAsteroidExplosion(asteroid.position.clone(), actualRadius);
+    createAsteroidExplosion(asteroid.getWorldPosition(new THREE.Vector3()), actualRadius);
     
     destroyAsteroid(asteroid);
     if (window.GAME_DEBUG_VERBOSE) console.log(`Asteroid destroyed by collision: ${asteroid.userData.name} (-15 hull) - radius: ${actualRadius.toFixed(1)}`);
@@ -838,8 +1037,9 @@ function destroyAsteroidByCollision(asteroid) {
 // - Galaxy discovery system integration
 // - Safe positioning with collision avoidance
 
-function transitionToRandomLocation(sourceBlackHole) {
-    console.log('BLACK HOLE WARP INITIATED from:', sourceBlackHole);
+function transitionToRandomLocation(sourceBlackHole, transitType) {
+    const _isWormhole = (transitType === 'wormhole');
+    console.log((_isWormhole ? 'WORMHOLE' : 'BLACK HOLE') + ' WARP INITIATED from:', sourceBlackHole);
     
     // ==========================================================================
     // PHASE 1: SET WARP STATE AND SUPPRESS SYSTEMS
@@ -880,37 +1080,85 @@ function transitionToRandomLocation(sourceBlackHole) {
     // PHASE 2: VISUAL AND AUDIO EFFECTS
     // ==========================================================================
     
-    // Play black hole warp sound
+    // Warp sound — wormholes get their own shimmering sweep.
     if (typeof playSound !== 'undefined') {
-        playSound('blackhole_warp');
+        playSound(_isWormhole ? 'wormhole_warp' : 'blackhole_warp');
     }
-    
-    // Create bright white fade effect for warp
-    const fadeOverlay = document.createElement('div');
-    fadeOverlay.className = 'black-hole-warp-effect';
-    fadeOverlay.style.cssText = `
-        position: fixed;
-        top: 0;
-        left: 0;
-        width: 100vw;
-        height: 100vh;
-        background: radial-gradient(circle at center, 
-            rgba(255,255,255,0) 0%, 
-            rgba(255,255,255,0.3) 30%, 
-            rgba(255,255,255,0.8) 70%, 
-            rgba(255,255,255,1) 100%);
-        z-index: 30;
-        opacity: 0;
-        transition: opacity 1.5s ease-in-out;
-        pointer-events: none;
-    `;
-    document.body.appendChild(fadeOverlay);
 
-    // Fade to bright white
-    setTimeout(() => {
-        fadeOverlay.style.opacity = '1';
-        console.log('Warp fade effect: Screen fading to white');
-    }, 100);
+    const fadeOverlay = document.createElement('div');
+
+    if (_isWormhole) {
+        // ── UNIQUE WORMHOLE ANIMATION ────────────────────────────────
+        // A spinning violet vortex tunnel that zooms toward the camera,
+        // rather than the black hole's flat white-out. Built from a
+        // conic gradient (the "swirl") layered over a radial throat,
+        // animated via a one-shot keyframe so it reads as folding
+        // space, not gravitational collapse.
+        if (!document.getElementById('wormholeWarpKeyframes')) {
+            const st = document.createElement('style');
+            st.id = 'wormholeWarpKeyframes';
+            st.textContent =
+                '@keyframes wormholeVortex {' +
+                '0% { opacity:0; transform:scale(0.2) rotate(0deg); }' +
+                '25% { opacity:0.85; }' +
+                '70% { opacity:1; }' +
+                '100% { opacity:1; transform:scale(3.4) rotate(900deg); } }';
+            document.head.appendChild(st);
+        }
+        fadeOverlay.className = 'wormhole-warp-effect';
+        fadeOverlay.style.cssText = [
+            'position:fixed', 'top:50%', 'left:50%',
+            'width:240vmax', 'height:240vmax',
+            'margin-left:-120vmax', 'margin-top:-120vmax',
+            'border-radius:50%',
+            'background:' +
+              'radial-gradient(circle at center,' +
+                ' rgba(255,255,255,1) 0%,' +
+                ' rgba(200,120,255,0.9) 8%,' +
+                ' rgba(120,40,220,0.55) 22%,' +
+                ' rgba(60,10,120,0.25) 45%,' +
+                ' rgba(10,0,30,0) 70%),' +
+              'conic-gradient(from 0deg,' +
+                ' rgba(170,68,255,0.0) 0deg,' +
+                ' rgba(200,120,255,0.55) 40deg,' +
+                ' rgba(120,40,220,0.0) 80deg,' +
+                ' rgba(220,150,255,0.55) 130deg,' +
+                ' rgba(120,40,220,0.0) 180deg,' +
+                ' rgba(200,120,255,0.55) 250deg,' +
+                ' rgba(120,40,220,0.0) 300deg,' +
+                ' rgba(220,150,255,0.55) 360deg)',
+            'z-index:30', 'opacity:0', 'pointer-events:none',
+            'will-change:transform,opacity',
+            'animation:wormholeVortex 1.5s ease-in forwards'
+        ].join(';');
+        document.body.appendChild(fadeOverlay);
+    } else {
+        // Black-hole warp: original bright white radial collapse.
+        fadeOverlay.className = 'black-hole-warp-effect';
+        fadeOverlay.style.cssText = `
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            background: radial-gradient(circle at center,
+                rgba(255,255,255,0) 0%,
+                rgba(255,255,255,0.3) 30%,
+                rgba(255,255,255,0.8) 70%,
+                rgba(255,255,255,1) 100%);
+            z-index: 30;
+            opacity: 0;
+            transition: opacity 1.5s ease-in-out;
+            pointer-events: none;
+        `;
+        document.body.appendChild(fadeOverlay);
+
+        // Fade to bright white
+        setTimeout(() => {
+            fadeOverlay.style.opacity = '1';
+            console.log('Warp fade effect: Screen fading to white');
+        }, 100);
+    }
 
     // ==========================================================================
     // PHASE 3: WARP EXECUTION (after fade completes)
@@ -920,12 +1168,30 @@ function transitionToRandomLocation(sourceBlackHole) {
         console.log('Executing warp transition...');
         
         // Find available black holes for warp destination (exclude current one)
-        const blackHoles = (typeof planets !== 'undefined') ? 
-            planets.filter(p => 
-                p.userData.type === 'blackhole' && 
+        let blackHoles = (typeof planets !== 'undefined') ?
+            planets.filter(p =>
+                p.userData.type === 'blackhole' &&
                 p.userData.name !== sourceBlackHole
             ) : [];
-        
+
+        // PROGRESSION GATE: until the Sol / Sagittarius A* system is
+        // liberated (Martian Pirate boss + Vulcan boss both defeated),
+        // black-hole warps only shuttle the player between the two LOCAL
+        // galactic cores — Sgr A* and the Companion Core. Liberation
+        // unlocks galaxy-wide warping (full black-hole list).
+        const _liberated = (typeof isSolSystemLiberated === 'function')
+            ? isSolSystemLiberated()
+            : (typeof window !== 'undefined' && typeof window.isSolSystemLiberated === 'function'
+                ? window.isSolSystemLiberated() : true);
+        if (!_liberated) {
+            const localCores = blackHoles.filter(p => p.userData &&
+                (p.userData.isSagittariusA || p.userData.isGalacticCenter || p.userData.isCompanionCore));
+            if (localCores.length > 0) {
+                blackHoles = localCores;
+                console.log('Warp gated to local cores (Sol system not yet liberated)');
+            }
+        }
+
         if (blackHoles.length === 0) {
             console.error('No black holes found for warp destination!');
             fadeOverlay.remove();
@@ -953,8 +1219,17 @@ function transitionToRandomLocation(sourceBlackHole) {
         // PHASE 4: CALCULATE SAFE POSITION
         // ==========================================================================
         
-        // Calculate safe spawn position near destination black hole
-        const warpDistance = 400 + Math.random() * 600; // Safe distance from black hole
+        // Calculate safe spawn position near destination black hole.
+        // Must land OUTSIDE the destination's event-horizon warp zone —
+        // the player re-warps within criticalDistance = max(radius*2.5,
+        // 50). Sgr A* (r=280 → 700) and the Companion Core (r=180 → 450)
+        // are big enough now that the old fixed 400-1000u landed inside,
+        // re-triggering a warp on arrival. Anchor the landing to the
+        // destination's own critical radius + a clear buffer.
+        const _destRadius = (targetBlackHole.geometry && targetBlackHole.geometry.parameters &&
+            targetBlackHole.geometry.parameters.radius) || 50;
+        const _destCritical = Math.max(_destRadius * 2.5, 50);
+        const warpDistance = _destCritical + 650 + Math.random() * 600;
         const warpAngle = Math.random() * Math.PI * 2;   // Random angle around black hole
         const warpHeight = (Math.random() - 0.5) * 200;  // Random height variation
         
@@ -1079,6 +1354,14 @@ if (arrivedGalaxyId >= 0 && typeof cleanupDistantAsteroids === 'function') {
                 
                 console.log(`Loading guardians for galaxy ${arrivedGalaxyId}...`);
                 loadGuardiansForGalaxy(arrivedGalaxyId);
+                // BH transit reward: rep + full energy refill so the
+                // player arrives in the new galaxy ready to fight.
+                if (typeof awardReputation === 'function') {
+                    awardReputation(10, 'Black-hole transit');
+                }
+                if (typeof gameState !== 'undefined') {
+                    gameState.energy = gameState.maxEnergy || 100;
+                }
             }, 1200); // Load guardians AFTER enemies and warp state cleared
         } else {
             // Clear warp flags even if we didn't load guardians
@@ -1161,8 +1444,20 @@ if (arrivedGalaxyId >= 0 && typeof cleanupDistantAsteroids === 'function') {
         // PHASE 11: FADE BACK FROM WHITE AND UPDATE UI
         // ==========================================================================
         
-        // Fade back from bright white
-        fadeOverlay.style.opacity = '0';
+        // Fade back out. The wormhole overlay uses a CSS animation with
+        // fill:forwards (holds opacity:1), so a plain style.opacity='0'
+        // wouldn't visually fade it — cancel the animation and apply a
+        // transition instead. The black-hole overlay already uses a
+        // transition, so the simple assignment works for it.
+        if (_isWormhole) {
+            fadeOverlay.style.animation = 'none';
+            fadeOverlay.style.transition = 'opacity 1.2s ease-out';
+            // Force reflow so the transition picks up the new baseline.
+            void fadeOverlay.offsetWidth;
+            fadeOverlay.style.opacity = '0';
+        } else {
+            fadeOverlay.style.opacity = '0';
+        }
         setTimeout(() => {
             fadeOverlay.remove();
             if (window.GAME_DEBUG_VERBOSE) console.log('Warp fade complete');
@@ -1229,49 +1524,138 @@ function isPositionTooClose(position, minDistance) {
     return false;
 }
 // PRESERVED: Slingshot execution function
-function executeSlingshot() {
-    let nearestPlanet = null;
-    let nearestDistance = Infinity;
+// Helper: compute the slingshot activation radius for a body. Used both
+// by the "SLINGSHOT READY" UI prompt and by executeSlingshot itself so the
+// two never disagree. Bumped from the original (radius*6 / radius*2.5+30)
+// to give players more reaction time at warp speed.
+function getSlingshotRange(body) {
+    const radius = body && body.geometry ? body.geometry.parameters.radius : 5;
+    const isStarBody = body && body.userData &&
+        (body.userData.type === 'star' || body.userData.isLocalStar);
+    const isBH = body && body.userData && body.userData.type === 'blackhole';
+    if (isBH) return Math.max(120, radius * 5 + (body.userData.warpThreshold || 0));
+    if (isStarBody) return Math.max(120, radius * 8);
+    return Math.max(120, radius * 4 + 60);
+}
 
-    if (typeof activePlanets !== 'undefined') {
-        activePlanets.forEach(planet => {
-            const distance = camera.position.distanceTo(planet.position);
-            const radius = planet.geometry ? planet.geometry.parameters.radius : 5;
-            // Match the body-aware assistRange used by the SLINGSHOT READY
-            // detection (game-physics planet/center/orbiter loops). Stars
-            // get 6× radius; other bodies 2.5× + 30u; min 60u floor.
-            const isStarBody = planet.userData && (planet.userData.type === 'star' || planet.userData.isLocalStar);
-            const slingshotRange = isStarBody
-                ? Math.max(60, radius * 6)
-                : Math.max(60, radius * 2.5 + 30);
-            if (distance < slingshotRange && distance < nearestDistance) {
-                nearestPlanet = planet;
-                nearestDistance = distance;
-            }
-        });
-    }
-    
-    if (nearestPlanet && gameState.energy >= 20 && !gameState.slingshot.active) {
+// Helper: find best slingshot target near the camera.
+function findSlingshotTarget() {
+    if (typeof activePlanets === 'undefined' || typeof camera === 'undefined') return null;
+    let best = null;
+    let bestDistance = Infinity;
+    activePlanets.forEach(planet => {
+        const dist = camera.position.distanceTo(planet.position);
+        if (dist < getSlingshotRange(planet) && dist < bestDistance) {
+            best = planet;
+            bestDistance = dist;
+        }
+    });
+    return best;
+}
+
+// Compute the optimal exit direction for a slingshot off `body` — the
+// body's orbital-tangent velocity vector if we know it (realistic mode),
+// otherwise the player's look direction (arcade mode). Returns a unit
+// Vector3. In realistic mode the player's look direction is allowed to
+// deflect the result by up to 30°; beyond that we hold the orbital
+// tangent and ignore aim error so a misaligned launch can't dump the
+// ship in a bad direction.
+function getSlingshotExitDirection(body) {
+    const look = new THREE.Vector3();
+    camera.getWorldDirection(look).normalize();
+    const arcade = !(typeof gameState !== 'undefined' && gameState.realisticSlingshot);
+    if (arcade) return look;
+
+    // Realistic: build the tangent to the body's orbit around its system
+    // center. If we don't know the orbit, fall back to look.
+    const ud = body && body.userData;
+    if (!ud || !ud.systemCenter || !ud.orbitRadius) return look;
+    const radial = new THREE.Vector3(
+        body.position.x - ud.systemCenter.x,
+        0,
+        body.position.z - ud.systemCenter.z
+    );
+    if (radial.lengthSq() < 1e-6) return look;
+    const tangent = new THREE.Vector3(-radial.z, 0, radial.x).normalize();
+    // Sign so it matches the body's orbital direction (CCW vs CW)
+    const orbitSpeed = ud.orbitSpeed || 0;
+    if (orbitSpeed < 0) tangent.multiplyScalar(-1);
+    // Limit look-deflection to ±30°: blend toward the look direction up
+    // to the cap.
+    const dot = tangent.dot(look);
+    if (dot >= Math.cos(Math.PI / 6)) return look; // within cone — honor aim
+    // Build a deflection at 30° from tangent toward look
+    const blend = look.clone().sub(tangent.clone().multiplyScalar(dot));
+    if (blend.lengthSq() < 1e-6) return tangent;
+    blend.normalize();
+    const cap = Math.cos(Math.PI / 6); // 30° cap
+    const sin = Math.sin(Math.PI / 6);
+    return tangent.clone().multiplyScalar(cap).addScaledVector(blend, sin).normalize();
+}
+
+// Expose target/range/exit helpers so UI and autopilot can read them.
+if (typeof window !== 'undefined') {
+    window.getSlingshotRange = getSlingshotRange;
+    window.findSlingshotTarget = findSlingshotTarget;
+    window.getSlingshotExitDirection = getSlingshotExitDirection;
+}
+
+function executeSlingshot() {
+    if (typeof gameState === 'undefined') return;
+    // 5-second cooldown after a slingshot fires (Quick-Charge tier
+    // replaces the energy cost with this CD; arcade mode also honors it
+    // so chained accidental triggers can't ping-pong the player).
+    if (Date.now() < (gameState.slingshotCooldownUntil || 0)) return;
+
+    const nearestPlanet = findSlingshotTarget();
+    if (!nearestPlanet || gameState.slingshot.active) return;
+
+    // Energy gate: Quick-Charge tier eliminates the 20-energy cost.
+    const quick = !!(gameState.repTierUnlocks && gameState.repTierUnlocks.quickSlingshot);
+    if (!quick && gameState.energy < 20) return;
+    {
         const planetMass = nearestPlanet.userData.mass || 1;
         const planetRadius = nearestPlanet.geometry ? nearestPlanet.geometry.parameters.radius : 5;
 
-        // Use the direction the player is looking (camera forward direction)
-        const lookDirection = new THREE.Vector3();
-        camera.getWorldDirection(lookDirection);
-        lookDirection.normalize();
+        // Direction: arcade = look, realistic = orbital tangent (±30° aim deflection)
+        const slingshotDirection = getSlingshotExitDirection(nearestPlanet);
 
-        // Slingshot boosts in the direction the player is looking
-        const slingshotDirection = lookDirection;
-        
-        // FIXED: Make slingshots MUCH MORE POWERFUL than emergency warps
-        // Emergency warp: ~15,000 km/s
-        // Slingshot base: 25,000 km/s, scaling up with planet mass
-        const slinghotPower = (planetMass * planetRadius) / 2; // Doubled from /5 to /2
-        const baseBoostSpeed = 25.0; // Much higher than emergency warp's 15.0
-        const boostVelocity = Math.min(baseBoostSpeed + slinghotPower, 50.0); // Max 50,000 km/s
-        
+        // Magnitude — two formulas:
+        //   Arcade (existing):   25 + mass*radius/2, capped 50
+        //   Realistic:           2 * orbitSpeed * orbitRadius, plus a
+        //                        periapsis bonus that maxes the boost
+        //                        when the player skims the body.
+        let boostVelocity;
+        const realistic = !!(gameState.realisticSlingshot);
+        if (realistic) {
+            const ud = nearestPlanet.userData || {};
+            const orbitSpeed = Math.abs(ud.orbitSpeed || 0);
+            const orbitRadius = ud.orbitRadius || planetRadius;
+            const orbitalBoost = 2 * orbitSpeed * orbitRadius;
+            // Periapsis bonus: distance / activation-range → 0..1. Closer
+            // pass = bigger multiplier (up to ×3 at the rim).
+            const dist = camera.position.distanceTo(nearestPlanet.position);
+            const range = getSlingshotRange(nearestPlanet);
+            const periapsis = Math.max(0.33, Math.min(1, dist / range));
+            const periapsisMul = 1 + (1 - periapsis) * 2; // 1.0 .. 3.0
+            // Stars/non-orbiting bodies contribute only via deflection
+            // (orbitalBoost is zero); keep them useful with a small base
+            // so a star pass still gives ~10,000 km/s when grazed.
+            const base = orbitalBoost > 0.01 ? 0 : 10;
+            boostVelocity = Math.min(60, (base + orbitalBoost) * periapsisMul);
+        } else {
+            const slinghotPower = (planetMass * planetRadius) / 2;
+            boostVelocity = Math.min(25.0 + slinghotPower, 50.0);
+        }
+
         gameState.velocityVector.copy(slingshotDirection).multiplyScalar(boostVelocity);
-        gameState.energy = Math.max(5, gameState.energy - 20);
+        if (!quick) {
+            gameState.energy = Math.max(5, gameState.energy - 20);
+        }
+        gameState.slingshotCooldownUntil = Date.now() + 5000;
+        if (typeof awardReputation === 'function') {
+            awardReputation(3, '');
+        }
 
         gameState.slingshot.active = true;
         gameState.slingshot.timeRemaining = gameState.slingshot.duration;
@@ -1305,7 +1689,7 @@ function executeSlingshot() {
             }
         }
         
-        gameState.distance += slinghotPower * 10;
+        gameState.distance += boostVelocity * 10;
         if (typeof updateUI === 'function') {
             updateUI();
         }
@@ -1476,10 +1860,38 @@ if (frameDistance > 0.01) { // Only track significant movement
     
     // SPECIFICATION: Movement Controls (WASD) with exact energy consumption rates
     if (keys.w && gameState.energy > 0) {
-        // W Key: Primary forward thrust (2x power multiplier) - consumes 0.12 energy per frame
-        const wThrustPower = gameState.thrustPower * gameState.wThrustMultiplier;
-        gameState.velocityVector.addScaledVector(forwardDirection, wThrustPower);
-        _consumeEnergy(0.12);
+        // INERTIAL COASTING (rep tier 1): at >= 90% of max velocity holding
+        // W counts as "maintain cruise" — no acceleration applied (the ship
+        // is already at the cap) and no energy consumed. Without this, the
+        // player burns fuel just to stay at top speed even though space has
+        // no drag. Below the cruise band, normal acceleration and cost
+        // apply.
+        // EXCEPTION: during emergency warp / slingshot, the player IS
+        // way above maxVelocity (warp speed ~100 vs cap ~4), so coasting
+        // would silently swallow the W key. We disable coasting in
+        // those phases and amplify the thrust so holding W actually
+        // helps accelerate the warp, as requested.
+        const _speed = gameState.velocityVector.length();
+        const _warpAccel = !!(gameState.emergencyWarp &&
+                              (gameState.emergencyWarp.active ||
+                               gameState.emergencyWarp.transitioning ||
+                               gameState.emergencyWarp.postWarp)) ||
+                           !!(gameState.slingshot && gameState.slingshot.active);
+        const _coasting = !_warpAccel &&
+                          !!(gameState.repTierUnlocks && gameState.repTierUnlocks.coasting) &&
+                          _speed >= (gameState.maxVelocity || 4.0) * 0.9;
+        if (!_coasting) {
+            // Boost the thrust during warp so it visibly accelerates
+            // the player (the warp baseline is ~100u/frame; without
+            // this multiplier the standard 0.02 contribution is
+            // imperceptible against the warp drift).
+            const warpMul = _warpAccel ? 12 : 1;
+            const wThrustPower = gameState.thrustPower * gameState.wThrustMultiplier * warpMul;
+            gameState.velocityVector.addScaledVector(forwardDirection, wThrustPower);
+            // Energy cost halved during warp — the warp already burns
+            // capacitor charge implicitly, no need to double-tax.
+            _consumeEnergy(_warpAccel ? 0.06 : 0.12);
+        }
         // Visual feedback — rate-limited to at most one effect every
         // 500 ms so holding W doesn't spawn 30 DOM star-trails multiple
         // times per second (each one hangs 300 ms and hurts long-run FPS).
@@ -1547,7 +1959,14 @@ if (frameDistance > 0.01) { // Only track significant movement
         setTimeout(() => {
             gameState.emergencyWarp.active = true;
             gameState.emergencyWarp.transitioning = false;
-            gameState.emergencyWarp.timeRemaining = 1000; // 1 second
+            // 2s default. The demo autopilot can request a longer hold
+            // (gameState._pendingJumpMs) when chasing a distant hostile so
+            // it actually closes the gap; cleared after use. Manual player
+            // jumps leave it null → the standard 2s.
+            const _jumpMs = (typeof gameState._pendingJumpMs === 'number' && gameState._pendingJumpMs > 0)
+                ? Math.min(8000, gameState._pendingJumpMs) : 2000;
+            gameState._pendingJumpMs = null;
+            gameState.emergencyWarp.timeRemaining = _jumpMs;
             gameState.velocityVector.copy(capturedForwardDirection).multiplyScalar(capturedBoostSpeed);
 
             for (let i = 0; i < 2; i++) {
@@ -1747,19 +2166,27 @@ if (typeof updateShieldSystem === 'function') {
     
     // Emergency braking (X key) - GRADUAL DECELERATION
     // Skip manual braking if Jump auto-brake is active
-if (keys.x && gameState.energy > 0 && !gameState.emergencyWarp.autoBraking) {
+if (keys.x && !gameState.emergencyWarp.autoBraking) {
     // Gradual braking: reduce velocity by 1% per frame (smoother deceleration)
+    const _preBrakeSpeed = gameState.velocityVector.length();
     const brakingForce = 0.99; // 1% reduction per frame (was 0.98 = 2%)
     gameState.velocityVector.multiplyScalar(brakingForce);
-    
+
     // NEW: Also apply braking to rotational velocity (dampen turning and rolling)
     const rotationalBrakingForce = 0.95; // 5% reduction per frame for rotation
     rotationalVelocity.pitch *= rotationalBrakingForce;
     rotationalVelocity.yaw *= rotationalBrakingForce;
     rotationalVelocity.roll *= rotationalBrakingForce;
-    
-    // Small energy cost for braking
-    _consumeEnergy(0.02);
+
+    // KINETIC ENERGY HARVEST: braking from high speed dumps the
+    // kinetic flywheel back into the capacitor. Above 5 km/s (game-
+    // units 5.0) recover 0.15/frame; below that, do nothing. This
+    // replaces the old "brakes cost energy" penalty, which created the
+    // wrong incentive (don't slow down even when you should).
+    if (_preBrakeSpeed > 5.0) {
+        gameState.energy = Math.min(gameState.maxEnergy || 100,
+            (gameState.energy || 0) + 0.15);
+    }
     
     // Get current speed in km/s
     const currentSpeedKmS = gameState.velocityVector.length() * 1000;
@@ -1818,25 +2245,7 @@ if (keys.x && gameState.energy > 0 && !gameState.emergencyWarp.autoBraking) {
                 destroyAsteroidByCollision(planet);
 
                 if (gameState.hull <= 0) {
-                    // Stop all player motion
-                    gameState.velocityVector.set(0, 0, 0);
-
-                    // Create massive player explosion
-                    if (typeof createPlayerExplosion === 'function') {
-                        createPlayerExplosion();
-                    }
-
-                    // Play explosion/vaporizing sound
-                    if (typeof playSound === 'function') {
-                        playSound('explosion');
-                    }
-
-                    // Show game over screen
-                    if (typeof showGameOverScreen === 'function') {
-                        showGameOverScreen('HULL BREACH', 'Ship destroyed by asteroid impact');
-                    }
-
-                    console.log('💀 PLAYER DESTROYED: Killed by asteroid collision');
+                    triggerPlayerDeath('HULL BREACH', 'Ship destroyed by asteroid impact');
                     return;
                 }
             }
@@ -1858,46 +2267,15 @@ if (surfaceCollision) {
 
     // ⚡ SUN COLLISION = INSTANT DEATH
     if (planet.userData.type === 'star') {
-        gameState.hull = 0; // Instant complete hull failure
-        gameState.velocityVector.set(0, 0, 0); // Stop all motion
-
-        // Create massive explosion
-        if (typeof createPlayerExplosion === 'function') {
-            createPlayerExplosion();
-        }
-
-        // Trigger mission failed
-        if (typeof showGameOverScreen === 'function') {
-            showGameOverScreen('VAPORIZED BY STAR', `Ship destroyed by ${planet.userData.name} - hull integrity: 0%`);
-        }
-
-        // Explosion sound
-        if (typeof playSound === 'function') {
-            playSound('explosion');
-        }
-
-        console.log(`💀 INSTANT DEATH: Player collided with star ${planet.userData.name}`);
+        triggerPlayerDeath('VAPORIZED BY STAR',
+            `Ship destroyed by ${planet.userData.name} - hull integrity: 0%`);
         return;
     }
 
     // ⚡ PLANET COLLISION = EXPLOSION AND MISSION FAILURE
     if (planet.userData.type === 'planet') {
-        gameState.hull = 0;
-        gameState.velocityVector.set(0, 0, 0);
-
-        if (typeof createPlayerExplosion === 'function') {
-            createPlayerExplosion();
-        }
-
-        if (typeof showGameOverScreen === 'function') {
-            showGameOverScreen('PLANETARY IMPACT', `Ship destroyed by collision with ${planet.userData.name}`);
-        }
-
-        if (typeof playSound === 'function') {
-            playSound('explosion');
-        }
-
-        console.log(`💀 MISSION FAILED: Player collided with planet ${planet.userData.name}`);
+        triggerPlayerDeath('PLANETARY IMPACT',
+            `Ship destroyed by collision with ${planet.userData.name}`);
         return;
     }
 }
@@ -1956,7 +2334,7 @@ if (surfaceCollision) {
                             gameState.eventHorizonWarning.blackHole = null;
                             
                             const flashOverlay = document.createElement('div');
-                            flashOverlay.className = 'absolute inset-0 bg-yellow-400 z-50';
+                            flashOverlay.className = 'absolute inset-0 bg-yellow-400 z-50 combat-damage-fx';
                             flashOverlay.style.opacity = '0.7';
                             document.body.appendChild(flashOverlay);
                             
@@ -2023,16 +2401,14 @@ if (surfaceCollision) {
                 
                 totalGravitationalForce.add(_gravVec);
 
-                // Body-aware slingshot range: stars get 6× radius (Sun radius
-                // 40 → 240u), other massive bodies (Jupiter etc.) get 2.5×
-                // radius + 30u. The flat 60u range was too tight for the Sun
-                // and gas giants — players orbiting at natural distances
-                // never saw the SLINGSHOT READY prompt.
-                const _bodyRadius = (planet.geometry && planet.geometry.parameters && planet.geometry.parameters.radius) || 5;
-                const _isStar = planet.userData.type === 'star' || planet.userData.isLocalStar;
-                const _objAssistRange = _isStar
-                    ? Math.max(assistRange, _bodyRadius * 6)
-                    : Math.max(assistRange, _bodyRadius * 2.5 + 30);
+                // Slingshot activation range — bumped vs the original
+                // (radius*6 / radius*2.5+30) so the prompt fires earlier
+                // at warp speed. Use the shared helper so the UI prompt
+                // and executeSlingshot never disagree.
+                const _objAssistRange = Math.max(assistRange,
+                    (typeof getSlingshotRange === 'function')
+                        ? getSlingshotRange(planet)
+                        : 60);
 
                 if (distance < _objAssistRange && distance < nearestAssistDistance) {
                     nearestAssistPlanet = planet;
@@ -2060,13 +2436,10 @@ if (surfaceCollision) {
                     _gravDir.subVectors(_outerPos, camera.position).normalize().multiplyScalar(gravitationalForce);
                     totalGravitationalForce.add(_gravDir);
 
-                    // Body-aware slingshot range — outer system center stars
-                    // can be very large; use the same scaling as Sol.
-                    const _crBody = (centerObj.geometry && centerObj.geometry.parameters && centerObj.geometry.parameters.radius) || 5;
-                    const _crStar = centerObj.userData.type === 'star' || centerObj.userData.isLocalStar;
-                    const _crRange = _crStar
-                        ? Math.max(assistRange, _crBody * 6)
-                        : Math.max(assistRange, _crBody * 2.5 + 30);
+                    const _crRange = Math.max(assistRange,
+                        (typeof getSlingshotRange === 'function')
+                            ? getSlingshotRange(centerObj)
+                            : 60);
                     if (distance < _crRange && distance < nearestAssistDistance) {
                         nearestAssistPlanet = centerObj;
                         nearestAssistDistance = distance;
@@ -2090,13 +2463,10 @@ if (surfaceCollision) {
                         _gravDir.subVectors(_outerPos, camera.position).normalize().multiplyScalar(gravitationalForce);
                         totalGravitationalForce.add(_gravDir);
 
-                        // Body-aware slingshot range — orbiters can be gas
-                        // giants or pulsars; scale with their actual radius.
-                        const _orBody = (orbiter.geometry && orbiter.geometry.parameters && orbiter.geometry.parameters.radius) || 5;
-                        const _orStar = orbiter.userData.type === 'star';
-                        const _orRange = _orStar
-                            ? Math.max(assistRange, _orBody * 6)
-                            : Math.max(assistRange, _orBody * 2.5 + 30);
+                        const _orRange = Math.max(assistRange,
+                            (typeof getSlingshotRange === 'function')
+                                ? getSlingshotRange(orbiter)
+                                : 60);
                         if (distance < _orRange && distance < nearestAssistDistance) {
                             nearestAssistPlanet = orbiter;
                             nearestAssistDistance = distance;
@@ -2112,6 +2482,26 @@ if (surfaceCollision) {
     gameState.velocityVector.add(totalGravitationalForce);
     
     // Enhanced title flashing for gravity well alert
+    // TRAJECTORY SOLVER (rep tier 4): auto-fires the slingshot ~1s after
+    // entering a gravity well, along the optimal exit vector. The
+    // cooldown inside executeSlingshot prevents rapid re-triggers; the
+    // slingshot.active gate prevents firing during an active boost.
+    if (gravityWellInRange && nearestAssistPlanet &&
+        gameState.repTierUnlocks && gameState.repTierUnlocks.trajectorySolver &&
+        !gameState.slingshot.active &&
+        Date.now() >= (gameState.slingshotCooldownUntil || 0)) {
+        if (gameState.slingshotChargeTarget !== nearestAssistPlanet) {
+            gameState.slingshotChargeTarget = nearestAssistPlanet;
+            gameState.slingshotChargeStart = Date.now();
+        }
+        if (Date.now() - (gameState.slingshotChargeStart || 0) > 900) {
+            executeSlingshot();
+            gameState.slingshotChargeTarget = null;
+        }
+    } else if (!gravityWellInRange) {
+        gameState.slingshotChargeTarget = null;
+    }
+
     const gameTitle = document.getElementById('gameTitle');
     if (gravityWellInRange && !gameState.slingshot.active) {
         if (gameTitle && !gameTitle.classList.contains('title-flash')) {
@@ -2453,16 +2843,26 @@ if (dampedVelocity.length() >= gameState.minVelocity ||
             const toTarget = new THREE.Vector3().subVectors(targetPos, camera.position);
             const approachDistance = toTarget.length();
             
-            // Determine safe orbital radius based on target type
-            let orbitRadius = 500; // Default orbit radius for enemies
-            if (gameState.currentTarget.userData) {
-                if (gameState.currentTarget.userData.type === 'planet') {
-                    orbitRadius = (gameState.currentTarget.userData.size || 100) * 3; // 3x planet radius
-                } else if (gameState.currentTarget.userData.type === 'blackhole') {
-                    orbitRadius = (gameState.currentTarget.userData.size || 200) * 2; // 2x black hole radius
-                } else if (gameState.currentTarget.userData.isEnemy) {
-                    orbitRadius = 300; // Close approach for enemies (combat range)
-                }
+            // Determine the approach standoff. For slingshot-capable
+            // bodies (planets / black holes) aim to PASS WITHIN the
+            // body's slingshot activation range — getSlingshotRange() is
+            // the same range findSlingshotTarget() / the "SLINGSHOT
+            // READY" prompt use — so an auto-nav route always brings the
+            // ship close enough to trigger an Interstellar Slingshot at
+            // closest approach. 0.7× keeps it comfortably inside range
+            // with margin. Enemies keep a fixed combat-range approach.
+            let orbitRadius = 500; // Default
+            const _navUD = gameState.currentTarget.userData || {};
+            const _slingable = _navUD.type === 'planet' || _navUD.type === 'blackhole' ||
+                               _navUD.type === 'star' || _navUD.type === 'moon';
+            if (_slingable && typeof getSlingshotRange === 'function') {
+                orbitRadius = Math.max(120, getSlingshotRange(gameState.currentTarget) * 0.7);
+            } else if (_navUD.type === 'planet') {
+                orbitRadius = (_navUD.size || 100) * 3;
+            } else if (_navUD.type === 'blackhole') {
+                orbitRadius = (_navUD.size || 200) * 2;
+            } else if (_navUD.isEnemy) {
+                orbitRadius = 300; // Close approach for enemies (combat range)
             }
             
             let targetDirection;
@@ -2509,11 +2909,19 @@ if (dampedVelocity.length() >= gameState.minVelocity ||
     // Update velocity for Ship Status panel
     gameState.velocity = gameState.velocityVector.length();
 
-    // FIXED: Energy regeneration only when NOT actively thrusting
-const isThrusting = (keys.w || keys.a || keys.s || keys.d || keys.b || keys.x) && gameState.energy > 0;
-
-if (!isThrusting && gameState.energy < 100) {
-    gameState.energy = Math.min(100, gameState.energy + 0.06); // Reduced regeneration rate
+    // ENERGY REGEN — two-rate system instead of "regen iff idle":
+    //   • Idle:    fast recharge.
+    //   • Thrusting: slow trickle so a sustained burn still recovers
+    //     a little, keeping the pool out of permanent zero.
+    //   • Capacitor (rep tier 2) gives a +66% multiplier on both rates.
+    // Brake (X) is excluded from "thrusting" — it's a regen source now
+    // via kinetic harvest above.
+const isThrusting = (keys.w || keys.a || keys.s || keys.d || keys.b) && gameState.energy > 0;
+const _maxE = gameState.maxEnergy || 100;
+if (gameState.energy < _maxE) {
+    const _capBoost = (gameState.repTierUnlocks && gameState.repTierUnlocks.capacitor) ? 1.66 : 1.0;
+    const _rate = (isThrusting ? 0.025 : 0.10) * _capBoost;
+    gameState.energy = Math.min(_maxE, gameState.energy + _rate);
 }
     
     // Update HUD
@@ -3406,11 +3814,15 @@ function findEnemiesNearExoticSystem(galaxyId) {
 
     // Need at least 3 enemies near the system for a real mission.  If we're
     // short, relocate some from the galaxy to hide at the exotic system.
+    // Don't pull black-hole defenders or already-anchored mission enemies
+    // — those guard locations the player expects hostiles at.
     const needed = Math.max(0, 3 - alreadyThere.length);
     if (needed > 0) {
         const candidates = enemies.filter(e =>
             e && e.userData && e.userData.galaxyId === galaxyId &&
             e.userData.health > 0 && !e.userData.isBoss && !e.userData.isBossSupport &&
+            e.userData.placementType !== 'black_hole' &&
+            !e.userData.missionAnchored &&
             e.position.distanceTo(sysPos) >= HIDE_RADIUS);
         for (let i = 0; i < needed && i < candidates.length; i++) {
             const pick = candidates[Math.floor(Math.random() * candidates.length)];
@@ -3544,16 +3956,79 @@ function createDiscoveryPathToPosition(nebulaPosition, targetPosition, factionCo
     // enemies.  The path leads to a specific cluster (at a cosmic feature
     // or exotic system), so completion should require clearing only those,
     // not every enemy across the entire galaxy.
+    //
+    // If fewer than MIN_MISSION_ENEMIES are within range, relocate galaxy
+    // enemies to the endpoint so the dotted line always leads to real
+    // hostiles.  Tracked enemies are then anchored (patrolCenter +
+    // smaller patrolRadius) to the endpoint so they don't wander out of
+    // the mission area before the player arrives.
     const missionEnemies = [];
+    const MISSION_RADIUS = 3000;
+    const MIN_MISSION_ENEMIES = 7;
+    const ANCHOR_RADIUS = 1200;
     if (typeof enemies !== 'undefined' && galaxyId >= 0) {
-        const MISSION_RADIUS = 3000;
         for (let i = 0; i < enemies.length; i++) {
             const e = enemies[i];
             if (!e || !e.userData || e.userData.health <= 0) continue;
+            if (e.userData.isBoss || e.userData.isBossSupport) continue;
             if (e.userData.galaxyId === galaxyId &&
                 e.position.distanceTo(endPos) < MISSION_RADIUS) {
                 missionEnemies.push(e);
             }
+        }
+
+        // Relocate enemies to the endpoint if the area is sparse.
+        if (missionEnemies.length < MIN_MISSION_ENEMIES) {
+            const candidates = enemies.filter(e =>
+                e && e.userData &&
+                e.userData.galaxyId === galaxyId &&
+                e.userData.health > 0 &&
+                !e.userData.isBoss && !e.userData.isBossSupport &&
+                !e.userData.isEliteGuardian &&
+                e.userData.placementType !== 'black_hole' &&
+                !e.userData.missionAnchored &&
+                missionEnemies.indexOf(e) === -1
+            );
+            const needed = MIN_MISSION_ENEMIES - missionEnemies.length;
+            for (let k = 0; k < needed && candidates.length > 0; k++) {
+                const idx = Math.floor(Math.random() * candidates.length);
+                const pick = candidates.splice(idx, 1)[0];
+                if (!pick || !pick.position) continue;
+                const off = new THREE.Vector3(
+                    (Math.random() - 0.5) * 1500,
+                    (Math.random() - 0.5) * 600,
+                    (Math.random() - 0.5) * 1500
+                );
+                pick.position.copy(endPos).add(off);
+                missionEnemies.push(pick);
+            }
+        }
+
+        // Still short?  Spawn fresh enemies at the endpoint.  Galaxies
+        // with tight enemy budgets (or several active missions) can
+        // exhaust the relocation pool — the dotted line should still
+        // lead to a real group of 7+ hostiles, so we top up.
+        if (missionEnemies.length < MIN_MISSION_ENEMIES &&
+            typeof spawnMissionEnemyAt === 'function') {
+            const needed = MIN_MISSION_ENEMIES - missionEnemies.length;
+            for (let k = 0; k < needed; k++) {
+                const fresh = spawnMissionEnemyAt(galaxyId, endPos);
+                if (fresh) missionEnemies.push(fresh);
+            }
+        }
+
+        // Anchor tracked enemies to the endpoint so they stay near the
+        // dotted line's destination during patrol behavior.
+        for (let m = 0; m < missionEnemies.length; m++) {
+            const e = missionEnemies[m];
+            if (!e || !e.userData) continue;
+            if (e.userData.patrolCenter && e.userData.patrolCenter.copy) {
+                e.userData.patrolCenter.copy(endPos);
+            } else {
+                e.userData.patrolCenter = endPos.clone();
+            }
+            e.userData.patrolRadius = ANCHOR_RADIUS;
+            e.userData.missionAnchored = true;
         }
     }
 
@@ -3844,6 +4319,11 @@ function checkForNebulaDeepDiscovery() {
         // after any incoming transmission popup that this discovery triggers.
         if (typeof applyNebulaShipUpgrade === 'function') {
             setTimeout(() => applyNebulaShipUpgrade(nebulaName), 2500);
+        }
+        // Reward player for the discovery itself (separate from the
+        // ship upgrade which arrives a beat later).
+        if (typeof awardReputation === 'function') {
+            awardReputation(30, 'Nebula charted: ' + (nebulaName || 'unknown'));
         }
 
         // CHECK: Is this faction already defeated?
@@ -4186,33 +4666,97 @@ function animateDiscoveryPaths() {
                     }
                 }
             } else {
-                alive = true;  // no tracked enemies → never auto-complete
+                // Legacy / sparse paths with no captured snapshot: fall
+                // back to a radius check around the endpoint so the
+                // mission can still complete rather than hanging open
+                // forever.
+                const gId = path.galaxyId !== undefined ? path.galaxyId
+                    : (path.line && path.line.userData && path.line.userData.galaxyId);
+                const endPos = path.line && path.line.userData && path.line.userData.endPosition;
+                if (typeof enemies !== 'undefined' && gId !== undefined && gId >= 0 && endPos) {
+                    const MISSION_RADIUS = 3000;
+                    for (let j = 0; j < enemies.length; j++) {
+                        const e = enemies[j];
+                        if (!e || !e.userData || e.userData.health <= 0) continue;
+                        if (e.userData.isBoss || e.userData.isBossSupport) continue;
+                        if (e.userData.galaxyId === gId &&
+                            e.position.distanceTo(endPos) < MISSION_RADIUS) {
+                            alive = true;
+                            break;
+                        }
+                    }
+                }
             }
 
-            const wasComplete = path.line.userData.missionComplete;
-            if (!alive && !wasComplete) {
-                path.line.userData.missionComplete = true;
-                mat.color.copy(MISSION_COMPLETE_COLOR);
-                if (path.particles && path.particles.material) {
-                    path.particles.material.color.copy(MISSION_COMPLETE_COLOR);
-                }
+            const ud = path.line.userData;
+            const wasComplete = ud.missionComplete;
+
+            // PHASE 1 — tracked hostiles cleared: spawn the boss and
+            // enter "boss phase". The mission is NOT complete yet; the
+            // line stays its faction colour and no reward fires. We
+            // only announce the boss arrival here.
+            if (!alive && !wasComplete && !ud.bossPhase) {
                 const gId = path.galaxyId !== undefined ? path.galaxyId
-                    : (path.line.userData.galaxyId !== undefined ? path.line.userData.galaxyId : -1);
+                    : (ud.galaxyId !== undefined ? ud.galaxyId : -1);
                 if (gId >= 0 && typeof spawnBossForArea === 'function') {
                     const areaKey = gId + '-mission_' + i;
                     if (!bossSystem || !bossSystem.areaBosses || !bossSystem.areaBosses[areaKey]) {
                         const endPos = path.endPosition ||
-                            (path.line && path.line.userData && path.line.userData.endPosition) ||
-                            null;
+                            (ud && ud.endPosition) || null;
                         spawnBossForArea(gId, 'cosmic_feature', areaKey, endPos);
                         if (typeof showAchievement === 'function') {
-                            showAchievement('Boss Incoming!', 'All hostiles cleared — a boss has appeared!', true);
+                            showAchievement('Boss Incoming!', 'All hostiles cleared — a boss has appeared! Destroy it to complete the mission.', true);
                         }
+                        ud.bossPhase = true;
+                        ud.bossAreaKey = areaKey;
+                    } else {
+                        // A boss already exists for this area (e.g. from
+                        // the area-cleared system) — adopt it.
+                        ud.bossPhase = true;
+                        ud.bossAreaKey = areaKey;
+                    }
+                } else {
+                    // No galaxy / no boss system — fall back to the old
+                    // behaviour so the path can still complete.
+                    ud.missionComplete = true;
+                    mat.color.copy(MISSION_COMPLETE_COLOR);
+                    if (path.particles && path.particles.material) {
+                        path.particles.material.color.copy(MISSION_COMPLETE_COLOR);
+                    }
+                }
+            }
+            // PHASE 2 — boss phase: wait for THAT boss to be destroyed.
+            // Only then mark the mission complete, recolour the line,
+            // and pay out the reward + notification.
+            else if (ud.bossPhase && !wasComplete) {
+                const ab = (typeof bossSystem !== 'undefined' && bossSystem.areaBosses)
+                    ? bossSystem.areaBosses[ud.bossAreaKey] : null;
+                const bossDead = ab && ab.spawned && ab.defeated;
+                if (bossDead) {
+                    ud.missionComplete = true;
+                    ud.bossPhase = false;
+                    mat.color.copy(MISSION_COMPLETE_COLOR);
+                    if (path.particles && path.particles.material) {
+                        path.particles.material.color.copy(MISSION_COMPLETE_COLOR);
+                    }
+                    if (typeof showAchievement === 'function') {
+                        showAchievement('Mission Complete!', 'Boss eliminated — the dotted-line objective is cleared.', true);
+                    }
+                    if (typeof awardReputation === 'function') {
+                        awardReputation(25, 'Dotted-line mission cleared');
+                    }
+                    if (typeof gameState !== 'undefined') {
+                        gameState.maxEnergy = (gameState.maxEnergy || 100) + 5;
+                        gameState.energy = Math.min(gameState.maxEnergy, (gameState.energy || 0) + 25);
+                    }
+                    // Trigger the wingman victory celebration swarm.
+                    if (typeof triggerWingmanCelebration === 'function') {
+                        triggerWingmanCelebration();
                     }
                 }
             } else if (alive && wasComplete) {
-                path.line.userData.missionComplete = false;
-                const orig = path.originalColor || path.line.userData.originalColor;
+                ud.missionComplete = false;
+                const orig = path.originalColor || ud.originalColor;
                 if (orig !== undefined) {
                     mat.color.set(orig);
                     if (path.particles && path.particles.material) {

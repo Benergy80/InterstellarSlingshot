@@ -112,6 +112,148 @@ const explosionManager = {
 
 // UPDATED: Pursuit behavior
 // Helper: Add smooth rotation to enemy based on movement trajectory
+// (Enemy barrel-roll system removed — it was making distant hostiles
+// scramble too often and was less important than just having them
+// swarm the player. applyEnemyRotation now only banks/pitches with
+// the flight path; no Z-spin overlay.)
+
+// =============================================================================
+// SHIP THRUSTER GLOW (enemies + wingmen)
+// Attaches two additive-blended cones to the rear of a ship the first
+// time it thrusts, then fades them in/out per-frame based on whether
+// the ship is currently accelerating. Mirrors the player's exhaust look
+// (orange-yellow inner + deeper orange outer) so combat reads as a
+// proper ballet of thruster trails.
+// =============================================================================
+function _ensureShipThrusterCones(ship, color) {
+    if (!ship || ship.userData._thrusters) return;
+    if (typeof THREE === 'undefined') return;
+
+    // Cone size & placement are derived from the model's ACTUAL visible
+    // world bounding box, NOT from scale buckets — those broke the
+    // moment enemy/boss scale changed (e.g. halving 96→48). This is
+    // fully scale-agnostic: it works at any ship scale (48, 72, 96, 1
+    // wingmen, the Vulcan wrapper, etc.).
+    //
+    // The box is built MANUALLY over real hull meshes only, skipping
+    // the invisible 40u collision-hitbox sphere, the additive glow
+    // layers, and any previously-attached cones — Box3.setFromObject
+    // would otherwise be dominated by the giant hitbox and place the
+    // cones far off the model.
+    const worldScale = new THREE.Vector3();
+    try { ship.getWorldScale(worldScale); } catch (e) { worldScale.set(1,1,1); }
+    const sx = Math.max(0.001, Math.abs(worldScale.x || 1));
+    const sz = Math.max(0.001, Math.abs(worldScale.z || 1));
+
+    let coneLen = null, coneRad = null, localBack = null;
+    try {
+        ship.updateWorldMatrix(true, true);
+        const _box = new THREE.Box3();
+        _box.makeEmpty();
+        const _mb = new THREE.Box3();
+        let any = false;
+        ship.traverse(node => {
+            if (!node.isMesh || !node.geometry) return;
+            const ud = node.userData || {};
+            if (ud.isHitbox || ud.isGlowLayer || ud._isThrusterCone) return;
+            if (!node.geometry.boundingBox) node.geometry.computeBoundingBox();
+            if (!node.geometry.boundingBox) return;
+            _mb.copy(node.geometry.boundingBox).applyMatrix4(node.matrixWorld);
+            _box.union(_mb);
+            any = true;
+        });
+        if (any && isFinite(_box.min.x) && _box.max.x > _box.min.x) {
+            const size = _box.getSize(new THREE.Vector3());
+            const worldLen = Math.max(size.x, size.y, size.z);
+            if (worldLen > 0.0001) {
+                const wpos = ship.getWorldPosition(new THREE.Vector3());
+                // Rear of the hull behind ship centre, WORLD units →
+                // converted to the ship's LOCAL frame (cone is a child).
+                localBack = (_box.max.z - wpos.z) / sz;
+                // Cone ≈ 16% of the visible ship length, base ≈ 4.5%.
+                coneLen = (worldLen * 0.16) / sx;
+                coneRad = (worldLen * 0.045) / sx;
+            }
+        }
+    } catch (e) {}
+    // Not hydrated yet (no hull meshes / zero size) — bail; this runs
+    // every frame so it retries next tick. The _thrusters early-out
+    // means once attached we never re-measure.
+    if (coneLen === null || localBack === null ||
+        !isFinite(localBack) || !isFinite(coneLen)) return;
+
+    const innerCol = color || 0xffaa00;
+    const outerCol = (color === 0x00ff88) ? 0x00aa55
+                  : (color === 0x88aaff) ? 0x4466cc
+                  : 0xff5500;
+
+    function _makeCone(rad, len, col, zOff) {
+        const geo = new THREE.ConeGeometry(rad, len, 10);
+        const mat = new THREE.MeshBasicMaterial({
+            color: col, transparent: true, opacity: 0,
+            blending: THREE.AdditiveBlending, depthWrite: false
+        });
+        const cone = new THREE.Mesh(geo, mat);
+        // Cone's default apex is +Y. Rotate so apex points along +Z,
+        // i.e. out the rear of a ship whose forward direction is -Z.
+        cone.rotation.x = Math.PI / 2;
+        cone.position.set(0, 0, zOff);
+        // Frustum-cull cones: when the ship is off-screen the cones are
+        // invisible anyway, so skip the additive overdraw. (Was false —
+        // pure cost for off-screen enemies in big battles.)
+        cone.frustumCulled = true;
+        cone.renderOrder = 80;
+        cone.userData._isThrusterCone = true; // excluded from hull box
+        return { mesh: cone, mat: mat, geo: geo };
+    }
+
+    // Two side-by-side engine plumes. Anchor the cone BASE at the
+    // model's actual rear edge (localBack), then push it forward by
+    // coneLen/2 so the center sits at the base + apex protrudes
+    // behind. The cone is now glued to the ship instead of floating
+    // off the assumed half-length back.
+    const back = localBack + coneLen * 0.5;
+    const cones = [];
+    const sideOff = coneRad * 1.2;
+    [-sideOff, sideOff].forEach(xOff => {
+        const inner = _makeCone(coneRad * 0.55, coneLen,        innerCol, back);
+        inner.mesh.position.x = xOff;
+        ship.add(inner.mesh);
+        cones.push(inner);
+        const outer = _makeCone(coneRad * 0.85, coneLen * 1.3,  outerCol, back + coneLen * 0.15);
+        outer.mesh.position.x = xOff;
+        ship.add(outer.mesh);
+        cones.push(outer);
+    });
+    ship.userData._thrusters = cones;
+    ship.userData._thrusterIntensity = 0;
+}
+
+function _updateShipThrusterCones(ship, thrusting) {
+    if (!ship || !ship.userData || !ship.userData._thrusters) return;
+    const target = thrusting ? 1.0 : 0.0;
+    const cur = ship.userData._thrusterIntensity || 0;
+    const speed = thrusting ? 0.22 : 0.15;
+    const next = cur + (target - cur) * speed;
+    ship.userData._thrusterIntensity = next;
+    const flicker = thrusting ? (0.85 + Math.sin(Date.now() * 0.04 + (ship.id || 0)) * 0.15) : 1.0;
+    const cones = ship.userData._thrusters;
+    for (let i = 0; i < cones.length; i++) {
+        const c = cones[i];
+        // Very subtle caps — inner 0.35, outer 0.15. With multiple
+        // ships clustered in formation (and additive blending),
+        // anything brighter than this stacks into a screen-wide
+        // orange wash. These look like real engine plumes on each
+        // ship without overpowering the scene.
+        const base = (i % 2 === 0) ? 0.35 : 0.15;
+        c.mat.opacity = next * base * flicker;
+        // Almost no bloom — keep cones a tight engine flame.
+        const sX = 0.9 + next * 0.15;
+        const sY = 0.8 + next * 0.35;
+        const sZ = 0.9 + next * 0.15;
+        c.mesh.scale.set(sX, sY, sZ);
+    }
+}
 function applyEnemyRotation(enemy, direction, speed) {    if (!enemy || !direction) return;
 
     try {
@@ -212,11 +354,14 @@ function updatePursuitBehavior(enemy, playerPos, speed, distance) {
             enemy.userData.facing = new THREE.Vector3(0, 0, 1);
         }
         
-        // Physics constants (similar to player)
-        const maxSpeed = speed * 2;
-        const acceleration = speed * 0.08; // How fast they can accelerate
-        const turnRate = 0.03; // How fast they can turn (radians per frame)
-        const drag = 0.98; // Slight drag for inertia feel
+        // Physics constants — aggressive forward thrust profile. Pursuit
+        // ships used to plod; now they reach top speed quickly and turn
+        // crisply so dogfights have real motion. Barrel rolls (when they
+        // happen) layer on top of this without replacing forward thrust.
+        const maxSpeed = speed * 4.0;       // was 3.0
+        const acceleration = speed * 0.20;  // was 0.14
+        const turnRate = 0.05;
+        const drag = 0.99;                  // lighter drag — bumps land
         
         _ebV1.subVectors(playerPos, enemy.position).normalize();
 
@@ -249,21 +394,24 @@ function updatePursuitBehavior(enemy, playerPos, speed, distance) {
         
         _ebV2.copy(enemy.userData.facing).multiplyScalar(thrustPower);
         enemy.userData.velocity.add(_ebV2);
-        
+
+        // (Side-thrust evasion was removed with the barrel-roll system —
+        // enemies now focus on tracking/swarming instead.)
+
         // Clamp to max speed
         if (enemy.userData.velocity.length() > maxSpeed) {
             enemy.userData.velocity.setLength(maxSpeed);
         }
-        
+
         // Apply drag
         enemy.userData.velocity.multiplyScalar(drag);
-        
+
         // Update position based on velocity
         enemy.position.add(enemy.userData.velocity);
-        
+
         // Rotate enemy to face direction of travel (not instant)
         applyEnemyRotation(enemy, enemy.userData.facing, speed);
-        
+
         if (distance < 150) {
             const orbitAngle = Date.now() * 0.0015 + (enemy.userData.circlePhase || 0);
             _ebV1.set(
@@ -297,19 +445,19 @@ function updateSwarmBehavior(enemy, playerPos, speed, time) {
             enemy.userData.facing = new THREE.Vector3(0, 0, 1);
         }
         
-        const maxSpeed = speed * 1.8;
-        const acceleration = speed * 0.06;
-        const turnRate = 0.04;
-        const drag = 0.97;
-        
+        const maxSpeed = speed * 3.5;        // was 2.6
+        const acceleration = speed * 0.18;   // was 0.12
+        const turnRate = 0.06;
+        const drag = 0.985;                  // was 0.98
+
         // Spiraling approach from multiple angles
         const swarmAngle = time * 0.5 + (enemy.userData.circlePhase || 0);
         const spiralRadius = 120 + Math.sin(time * 0.3) * 40;
-        
+
         const targetX = playerPos.x + Math.cos(swarmAngle) * spiralRadius;
         const targetZ = playerPos.z + Math.sin(swarmAngle) * spiralRadius;
         const targetY = playerPos.y + Math.sin(time * 0.2) * 30;
-        
+
         _ebV1.set(targetX, targetY, targetZ);
         _ebV2.subVectors(_ebV1, enemy.position).normalize();
 
@@ -318,13 +466,13 @@ function updateSwarmBehavior(enemy, playerPos, speed, time) {
 
         _ebV3.copy(enemy.userData.facing).multiplyScalar(acceleration);
         enemy.userData.velocity.add(_ebV3);
-        
+
         // Clamp and drag
         if (enemy.userData.velocity.length() > maxSpeed) {
             enemy.userData.velocity.setLength(maxSpeed);
         }
         enemy.userData.velocity.multiplyScalar(drag);
-        
+
         // Apply velocity
         enemy.position.add(enemy.userData.velocity);
         applyEnemyRotation(enemy, enemy.userData.facing, speed);
@@ -344,13 +492,88 @@ function updateEvasionBehavior(enemy, playerPos, speed, time) {
         _ebV1.subVectors(enemy.position, playerPos).normalize();
         _ebV2.set(-_ebV1.z, _ebV1.y, _ebV1.x);
 
+        // Boosted side-strafe + a sinusoid wobble so the evade mode
+        // actually rips sideways at speed rather than oscillating
+        // in place.
         const oscillation = Math.sin(time * 2 + (enemy.userData.circlePhase || 0)) * 0.5;
-        _ebV2.multiplyScalar(speed * (1 + oscillation));
+        _ebV2.multiplyScalar(speed * 1.6 * (1 + oscillation));
 
         enemy.position.add(_ebV2);
-        applyEnemyRotation(enemy, _ebV2, speed);  // Add rotation
+        // Dedicated 'evade' mode now just steers sideways relative to the
+        // player — the barrel-roll system that used to layer on top of
+        // this has been removed in favour of letting low-HP enemies
+        // commit to evading or swarming without spinning out.
+        applyEnemyRotation(enemy, _ebV2, speed);
     } catch (e) {
         // Ignore movement errors
+    }
+}
+
+// FORMATION PATROL — used for inactive local hostiles (Martian Pirates,
+// Vulcan Patrols). Two effects:
+//   • Each ship's patrolCenter drifts slowly through space, so the
+//     whole group is always moving forward rather than camped on a
+//     fixed point. The drift direction is shared by every ship that
+//     started life in the same group (matching patrolCenter values
+//     coming out of createEnemies3D), so the formation stays together.
+//   • Each ship orbits its (drifting) patrolCenter at a tight radius,
+//     turning to face the direction of travel so jet cones light up
+//     out the back.
+function _updateLocalFormationPatrol(enemy) {
+    if (!enemy || !enemy.userData || typeof THREE === 'undefined') return;
+    const ud = enemy.userData;
+    if (!ud.patrolCenter) ud.patrolCenter = enemy.position.clone();
+
+    // Lazy-init a stable drift heading per group. Hashing the rounded
+    // patrolCenter coordinates means every ship in the same starting
+    // group derives the same heading, so they fly the same way without
+    // needing an explicit group id.
+    if (!ud.formationHeading) {
+        const key = Math.round(ud.patrolCenter.x / 50) + ':' +
+                    Math.round(ud.patrolCenter.y / 50) + ':' +
+                    Math.round(ud.patrolCenter.z / 50);
+        let h = 0;
+        for (let i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i)) >>> 0;
+        const ang = (h % 1000) / 1000 * Math.PI * 2;
+        const vy  = (((h >> 10) % 1000) / 1000 - 0.5) * 0.25;
+        ud.formationHeading = new THREE.Vector3(Math.cos(ang), vy, Math.sin(ang)).normalize();
+        ud.formationSpeed = 0.35 + (((h >> 20) % 100) / 100) * 0.25; // 0.35-0.60 u/frame
+    }
+
+    // Drift the patrol center along the formation heading. We also
+    // add a slow sine wave so the route bends rather than running in
+    // a perfectly straight line.
+    const t = Date.now() * 0.0003;
+    const heading = ud.formationHeading;
+    ud.patrolCenter.x += heading.x * ud.formationSpeed;
+    ud.patrolCenter.y += heading.y * ud.formationSpeed + Math.sin(t * 0.7) * 0.2;
+    ud.patrolCenter.z += heading.z * ud.formationSpeed;
+
+    // Orbit the (moving) patrol center at a small radius so wingmates
+    // stay tight to one another. circlePhase distributes them around
+    // the ring.
+    const phase = ud.circlePhase || 0;
+    const r = 80;
+    const angle = t * 4 + phase;
+    const targetX = ud.patrolCenter.x + Math.cos(angle) * r + heading.x * 60;
+    const targetY = ud.patrolCenter.y + Math.sin(angle * 0.6) * 12;
+    const targetZ = ud.patrolCenter.z + Math.sin(angle) * r + heading.z * 60;
+
+    // Velocity-based motion so the thruster check (which reads
+    // userData.velocity) lights up the cones.
+    if (!ud.velocity) ud.velocity = new THREE.Vector3();
+    const desired = new THREE.Vector3(
+        targetX - enemy.position.x,
+        targetY - enemy.position.y,
+        targetZ - enemy.position.z
+    );
+    const dlen = desired.length();
+    if (dlen > 0.001) desired.divideScalar(dlen);
+    ud.velocity.lerp(desired.multiplyScalar(0.6), 0.18);
+    enemy.position.add(ud.velocity);
+
+    if (typeof applyEnemyRotation === 'function') {
+        applyEnemyRotation(enemy, ud.velocity, ud.velocity.length());
     }
 }
 
@@ -387,23 +610,27 @@ function updateEngagementBehavior(enemy, playerPos, speed, time) {
     }
 
     try {
-        // Maintain optimal attack distance
+        // Maintain optimal attack distance. Per-frame position deltas
+        // here used to be tiny (raw speed, no inertia, no multiplier) so
+        // precision-style factions (Vulcans) appeared to crawl. Bumped
+        // approach/back-off/orbit speeds 3-4x so they actually keep up
+        // with the player while holding the engagement bracket.
         const optimalDistance = 100;
         const currentDistance = enemy.position.distanceTo(playerPos);
 
         if (currentDistance > optimalDistance + 20) {
             _ebV1.subVectors(playerPos, enemy.position).normalize();
-            enemy.position.add(_ebV1.multiplyScalar(speed));
-            applyEnemyRotation(enemy, _ebV1, speed);
+            enemy.position.add(_ebV1.multiplyScalar(speed * 4.0));
+            applyEnemyRotation(enemy, _ebV1, speed * 4.0);
         } else if (currentDistance < optimalDistance - 20) {
             _ebV1.subVectors(enemy.position, playerPos).normalize();
-            enemy.position.add(_ebV1.multiplyScalar(speed * 0.5));
-            applyEnemyRotation(enemy, _ebV1, speed * 0.5);
+            enemy.position.add(_ebV1.multiplyScalar(speed * 2.0));
+            applyEnemyRotation(enemy, _ebV1, speed * 2.0);
         } else {
             const angle = time * 0.5;
             _ebV1.set(Math.cos(angle) * 10, 0, Math.sin(angle) * 10);
-            enemy.position.add(_ebV1.multiplyScalar(speed * 0.3));
-            applyEnemyRotation(enemy, _ebV1, speed * 0.3);
+            enemy.position.add(_ebV1.multiplyScalar(speed * 1.2));
+            applyEnemyRotation(enemy, _ebV1, speed * 1.2);
         }
     } catch (e) {
         // Ignore movement errors
@@ -571,12 +798,232 @@ nearbyEnemies.forEach(enemy => {
 // =============================================================================
 
 // ENHANCED: Enemy Behavior System with Progressive Difficulty and Tutorial Safety
+// Per-target attacker cap. Up to 3 enemies may engage the player at a
+// time, and up to 3 may engage each living wingman. Beyond that, the
+// extras fall back to whichever target is closest — they still chase,
+// they just don't push the per-target count above 3 if room exists
+// elsewhere. Called once per frame from updateEnemyBehavior.
+const _ENEMY_ATTACKERS_PER_TARGET = 3;
+
+// Resolve a stored engagedTarget tag into a concrete position-bearing
+// object. Player is stored as the string 'player' so the assignment is
+// stable across frames (camera position is a single Vector3 that
+// updates in place, not a reusable wrapper).
+function _resolveEngagedTarget(tag) {
+    if (!tag) return null;
+    if (tag === 'player') {
+        return (typeof camera !== 'undefined') ? camera : null;
+    }
+    // Wingman object — must still be alive
+    if (tag.userData && tag.userData.health > 0) return tag;
+    return null;
+}
+
+function _assignEngagementTargets() {
+    if (typeof enemies === 'undefined') return;
+    // Build target list: player first, then living wingmen.
+    const targets = ['player'];
+    if (typeof allyShips !== 'undefined') {
+        for (let i = 0; i < allyShips.length; i++) {
+            const w = allyShips[i];
+            if (!w || !w.userData || w.userData.health <= 0) continue;
+            targets.push(w);
+        }
+    }
+    const counts = new Map();
+    for (let i = 0; i < targets.length; i++) counts.set(targets[i], 0);
+
+    // First pass: validate existing assignments and tally them.
+    for (let i = 0; i < enemies.length; i++) {
+        const e = enemies[i];
+        if (!e || !e.userData || e.userData.health <= 0) continue;
+        const tag = e.userData.engagedTarget;
+        if (tag && counts.has(tag) && _resolveEngagedTarget(tag)) {
+            const c = counts.get(tag);
+            if (c < _ENEMY_ATTACKERS_PER_TARGET) {
+                counts.set(tag, c + 1);
+                continue; // keep this assignment
+            }
+        }
+        // Existing target invalid / capped / gone — clear it.
+        e.userData.engagedTarget = null;
+    }
+
+    // Second pass: any active enemy without a target picks the closest
+    // under-capped target. If everyone's capped, fall back to closest.
+    for (let i = 0; i < enemies.length; i++) {
+        const e = enemies[i];
+        if (!e || !e.userData || e.userData.health <= 0) continue;
+        if (!e.userData.isActive) continue;
+        if (e.userData.engagedTarget) continue;
+        let best = null, bestDist = Infinity;
+        for (let j = 0; j < targets.length; j++) {
+            const t = targets[j];
+            if ((counts.get(t) || 0) >= _ENEMY_ATTACKERS_PER_TARGET) continue;
+            const tObj = _resolveEngagedTarget(t);
+            if (!tObj || !tObj.position) continue;
+            const d = e.position.distanceTo(tObj.position);
+            if (d < bestDist) { bestDist = d; best = t; }
+        }
+        if (!best) {
+            // All capped — fall back to absolute closest target.
+            for (let j = 0; j < targets.length; j++) {
+                const t = targets[j];
+                const tObj = _resolveEngagedTarget(t);
+                if (!tObj || !tObj.position) continue;
+                const d = e.position.distanceTo(tObj.position);
+                if (d < bestDist) { bestDist = d; best = t; }
+            }
+        }
+        if (best) {
+            e.userData.engagedTarget = best;
+            counts.set(best, (counts.get(best) || 0) + 1);
+        }
+    }
+}
+
+// Resolve an enemy's current engagement target position. Falls back to
+// the player when no assignment exists (e.g. enemy not yet active).
+function _engagedTargetPos(enemy) {
+    if (!enemy || !enemy.userData) {
+        return (typeof camera !== 'undefined') ? camera.position : null;
+    }
+    const obj = _resolveEngagedTarget(enemy.userData.engagedTarget);
+    if (obj && obj.position) return obj.position;
+    return (typeof camera !== 'undefined') ? camera.position : null;
+}
+
+// Reusable temp vectors for enemy flight-hygiene (no per-frame GC).
+const _fhA = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+const _fhB = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+const _fhC = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+const _fhD = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+
+// Hard keep-out from black-hole event-horizon warp zones, applied to
+// enemies (and UFOs). The player warps when within criticalDistance =
+// max(radius*2.5, 50) of a hole; enemies are clamped to that + a
+// combat-range buffer so chasing a hostile toward a hole never pulls
+// the player across the threshold. Position is projected back to the
+// keep-out sphere and inward velocity is bled off.
+const _bhAvoid = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+// Cached black-hole list (+ precomputed keep-out radius) so the
+// avoidance check doesn't re-scan the whole planets array for every
+// enemy every frame. Rebuilt at most every 2s — black holes are static.
+let _bhCache = null, _bhCacheStamp = 0;
+function _getBlackHoleAvoidList() {
+    const now = Date.now();
+    if (_bhCache && (now - _bhCacheStamp) < 2000) return _bhCache;
+    _bhCache = [];
+    if (typeof planets !== 'undefined') {
+        for (let i = 0; i < planets.length; i++) {
+            const p = planets[i];
+            if (!p || !p.userData || p.userData.type !== 'blackhole' || !p.position) continue;
+            const radius = (p.geometry && p.geometry.parameters && p.geometry.parameters.radius) || 50;
+            _bhCache.push({ pos: p.position, keepOut: Math.max(radius * 2.5, 50) + 600 });
+        }
+    }
+    _bhCacheStamp = now;
+    return _bhCache;
+}
+function _enemyAvoidBlackHoles(enemy) {
+    if (!_bhAvoid || !enemy || !enemy.position) return;
+    const list = _getBlackHoleAvoidList();
+    for (let i = 0; i < list.length; i++) {
+        const bh = list[i];
+        const keepOut = bh.keepOut;
+        _bhAvoid.subVectors(enemy.position, bh.pos);
+        const d = _bhAvoid.length();
+        if (d > 0.001 && d < keepOut) {
+            _bhAvoid.multiplyScalar(keepOut / d);              // out to the boundary
+            enemy.position.copy(bh.pos).add(_bhAvoid);
+            const ud = enemy.userData;
+            if (ud && ud.velocity && ud.velocity.dot) {
+                _bhAvoid.normalize();
+                const inward = ud.velocity.dot(_bhAvoid);      // <0 means heading inward
+                if (inward < 0) ud.velocity.addScaledVector(_bhAvoid, -inward);
+            }
+        }
+    }
+}
+if (typeof window !== 'undefined') window._enemyAvoidBlackHoles = _enemyAvoidBlackHoles;
+
+// Per-frame post-behavior pass for ACTIVE enemies. Two jobs:
+//   1) Anti-cluster / always-in-flight: if the enemy barely moved this
+//      frame (engage/hold modes park them on the player and they pile
+//      up), glide it along its heading — or, lacking one, drift it
+//      outward from the player — so it always reads as a ship in
+//      motion instead of a hovering blob.
+//   2) Camera-line clearance: keep the enemy out of the thin corridor
+//      between the camera and the player's ship so hostiles don't
+//      occlude the player model during 3rd-person combat.
+function _enemyFlightHygiene(enemy, shipPos, camPos, playerPos, isLocal) {
+    if (!enemy || !enemy.userData || !_fhA) return;
+    const ud = enemy.userData;
+    const pos = enemy.position;
+
+    // ---- 1) Minimum flight speed ----
+    if (!ud._prevPos) ud._prevPos = pos.clone();
+    const moved = pos.distanceTo(ud._prevPos);
+    // ~400 km/s local, ~520 km/s distant — enough to always look like
+    // they're flying, not loitering.
+    const MIN_STEP = isLocal ? 0.40 : 0.52;
+    if (moved < MIN_STEP) {
+        let haveDir = false;
+        if (ud.velocity && ud.velocity.lengthSq() > 1e-5) {
+            _fhA.copy(ud.velocity).normalize();
+            haveDir = true;
+        } else if (ud.facing && ud.facing.lengthSq && ud.facing.lengthSq() > 1e-5) {
+            _fhA.copy(ud.facing).normalize();
+            haveDir = true;
+        }
+        if (!haveDir) {
+            // No heading — drift away from the player so the enemy
+            // doesn't sit on top of the camera/ship.
+            _fhA.subVectors(pos, playerPos);
+            if (_fhA.lengthSq() < 1e-5) _fhA.set(1, 0, 0);
+            _fhA.normalize();
+        }
+        pos.addScaledVector(_fhA, MIN_STEP - moved);
+    }
+
+    // ---- 2) Camera→ship sightline clearance ----
+    if (camPos && shipPos) {
+        _fhB.subVectors(shipPos, camPos);           // A=cam, B=ship, AB
+        const abLen2 = _fhB.lengthSq();
+        if (abLen2 > 1e-3) {
+            _fhC.subVectors(pos, camPos);           // AP
+            let t = _fhC.dot(_fhB) / abLen2;
+            if (t > 0.04 && t < 1.20) {             // roughly in front of cam, near/just past ship
+                t = Math.max(0, Math.min(1, t));
+                _fhD.copy(camPos).addScaledVector(_fhB, t); // closest point on segment
+                _fhA.subVectors(pos, _fhD);
+                const d = _fhA.length();
+                const CORRIDOR = 160;               // keep this clear of the ship sightline
+                if (d < CORRIDOR) {
+                    if (d < 0.001) {
+                        // Dead on the line — shove sideways using world up × AB.
+                        _fhA.set(0, 1, 0).cross(_fhB);
+                        if (_fhA.lengthSq() < 1e-5) _fhA.set(1, 0, 0);
+                    }
+                    _fhA.normalize();
+                    // Persistent but smooth: clear ~40% of the intrusion
+                    // per frame so it slides off the sightline in a few
+                    // frames without snapping.
+                    pos.addScaledVector(_fhA, (CORRIDOR - d) * 0.4);
+                }
+            }
+        }
+    }
+
+    ud._prevPos.copy(pos);
+}
+
 function updateEnemyBehavior() {
     // Safety checks
     if (typeof enemies === 'undefined' || typeof gameState === 'undefined' || typeof camera === 'undefined') {
         return;
     }
-    
+
     if (gamePaused || !gameState.gameStarted || gameState.gameOver) {
         return;
     }
@@ -627,7 +1074,11 @@ function updateEnemyBehavior() {
     // PROGRESSIVE DIFFICULTY: Calculate based on galaxies cleared
     const galaxiesCleared = gameState.galaxiesCleared || 0;
     const difficultySettings = calculateDifficultySettings(galaxiesCleared);
-    
+
+    // Up-to-3-attackers-per-target assignment runs once before per-enemy
+    // behavior so each enemy can read enemy.userData.engagedTarget below.
+    _assignEngagementTargets();
+
     let nearbyEnemyCount = 0;
     let inCombatRange = false;
     let activeAttackers = 0;
@@ -643,6 +1094,21 @@ function updateEnemyBehavior() {
             }
         }
     });
+
+    // Precompute camera + player-ship world positions once for the
+    // flight-hygiene pass. shipPos is only set when the 3rd-person
+    // ship mesh is actually visible (so corridor clearance is skipped
+    // in zero-offset / no-ship views where there's nothing to occlude).
+    const _fhCam = (typeof camera !== 'undefined') ? camera.position : null;
+    let _fhShip = null;
+    try {
+        const _cs = window.cameraState;
+        const _ship = _cs && _cs.playerShipMesh;
+        if (_ship && _ship.visible) {
+            _fhShip = _ship.getWorldPosition(new THREE.Vector3());
+            if (!isFinite(_fhShip.x)) _fhShip = null;
+        }
+    } catch (e) { _fhShip = null; }
 
     enemies.forEach(enemy => {
         if (enemy.userData.health <= 0) return;
@@ -676,10 +1142,12 @@ function updateEnemyBehavior() {
             enemy.userData.isActive = true;
             enemy.userData.detectedPlayer = true;
             enemy.userData.lastSeenPlayerPos = playerPos.clone();
-            // Stagger first-shot timing so 4 newly-activated enemies don't
-            // all fire on the same frame. Random offset 0-1200ms means
-            // their first shots are spread across the cooldown window.
+            // Stagger the opening shot. Warping into a distant black-hole
+            // galaxy activates a whole batch of enemies on the SAME frame,
+            // so spread their first shots across a wide ~1.6s window
+            // instead of letting them all fire on frame one.
             enemy.userData.lastAttack = Date.now() - Math.random() * 1200;
+            enemy.userData.nextFire = Date.now() + Math.random() * 1600;
 
             if (isLocal) localActiveAttackers++;
             else activeAttackers++;
@@ -696,7 +1164,7 @@ function updateEnemyBehavior() {
             const baseSpeed = enemy.userData.speed || 0.5;
             const speedMultiplier = isLocal ? difficultySettings.localSpeedMultiplier : difficultySettings.distantSpeedMultiplier;
             const adjustedSpeed = Math.min(2.0, Math.max(0.2, baseSpeed * speedMultiplier));  // Clamp to 0.2-2.0 (200-2000 km/s)
-            
+
             if (isLocal) {
                 updateLocalEnemyBehavior(enemy, distanceToPlayer, adjustedSpeed, difficultySettings);
             } else {
@@ -708,6 +1176,53 @@ function updateEnemyBehavior() {
                     updateEnhancedEnemyBehavior(enemy, distanceToPlayer, adjustedSpeed, difficultySettings);
                 }
             }
+        } else if (isLocal && (enemy.userData.isMartianPirate || enemy.userData.isVulcanPatrol)) {
+            // Idle Pirates / Vulcans should ALWAYS be moving, not loitering.
+            // Run a formation-flight patrol that slowly drifts the whole
+            // group's patrol centre through space so they read as ships
+            // on a route. Faster than the old tutorial-only patrol.
+            _updateLocalFormationPatrol(enemy);
+        }
+
+        // Orange combat shield: only raised while the enemy is actively
+        // engaging (isActive — it has detected and is targeting the
+        // player or a wingman). Drops when it disengages.
+        if (typeof _setEnemyShieldEngaged === 'function') {
+            _setEnemyShieldEngaged(enemy, !!enemy.userData.isActive);
+        }
+
+        // Post-behavior flight hygiene for ACTIVE combatants: enforce a
+        // minimum drift so they don't park/cluster on the player, and
+        // keep them out of the camera→ship sightline so they don't
+        // block the player's view of their own ship during combat.
+        if (enemy.userData.isActive && typeof _enemyFlightHygiene === 'function') {
+            _enemyFlightHygiene(enemy, _fhShip, _fhCam, playerPos, isLocal);
+        }
+
+        // Keep enemies OUT of every black hole's event-horizon warp zone
+        // (with a combat-range buffer) so the player can't be lured into
+        // a warp by chasing a hostile that dives toward the hole.
+        if (typeof _enemyAvoidBlackHoles === 'function') {
+            _enemyAvoidBlackHoles(enemy);
+        }
+
+        // Thruster cones: ensure they exist, then fade them in/out based
+        // on whether the ship is moving meaningfully this frame. Applies
+        // to every enemy so distant fighters AND local pirates/Vulcans
+        // visibly fire their engines.
+        // Each enemy's cones are 4 additive-blended, frustumCulled=false
+        // meshes that draw every frame even off-screen. With many enemies
+        // that's pure fill-rate overdraw — the kind of cost mobile GPUs
+        // handle worst. Skip the whole enemy-cone system on mobile; the
+        // player's own thruster glow (separate, single-ship) is untouched.
+        if (!window.__isMobileGPU && typeof _ensureShipThrusterCones === 'function') {
+            _ensureShipThrusterCones(enemy, enemy.userData.galaxyColor || 0xff5522);
+            const _v = enemy.userData.velocity;
+            const _speedNow = _v ? _v.length() : (enemy.userData.isActive ? 0.5 : 0.2);
+            _updateShipThrusterCones(enemy, _speedNow > 0.08);
+        }
+
+        if (enemy.userData.isActive) {
             
             // Enhanced enemy firing with progressive difficulty.
             // Compute distance to nearest TARGET (player OR any alive wingman)
@@ -729,9 +1244,16 @@ function updateEnemyBehavior() {
                     (difficultySettings.localAttackCooldown || 2000) :
                     (enemy.userData.isBoss ? 600 : difficultySettings.distantAttackCooldown || 1200);
 
-                if (now - (enemy.userData.lastAttack || 0) > attackCooldown) {
+                // Per-enemy JITTERED schedule rather than a shared fixed
+                // cooldown. Jitter only ever ADDS delay (1.0-1.7x), so no
+                // enemy ever fires faster than the original fixed rate —
+                // this keeps the demo player from being baited into
+                // constant return fire — while the random per-ship period
+                // still breaks the synchronized distant-galaxy volley.
+                if (now >= (enemy.userData.nextFire || 0)) {
                     fireEnemyWeapon(enemy, difficultySettings);
                     enemy.userData.lastAttack = now;
+                    enemy.userData.nextFire = now + attackCooldown * (1.0 + Math.random() * 0.7);
                 }
             }
         } else {
@@ -836,12 +1358,16 @@ const factionBehaviors = {
     7: {
         name: 'Vulcan',
         style: 'precision',
-        primaryBehavior: 'engage',      // Optimal positioning
-        secondaryBehavior: 'evade',     // Logical retreat when needed
-        aggressionMultiplier: 0.85,     // Controlled aggression
-        preferredRange: 160,            // Precise range
-        behaviorChangeChance: 0.008,    // Adaptive logic — raised so swarm/evade fire visibly
-        speedBonus: 1.0
+        // Vulcans used to default to 'engage' which only applies tiny
+        // per-frame position deltas — they crept while pirates ripped.
+        // Switched to 'pursue' for primary (velocity-based, fast) and
+        // kept 'engage' as the secondary tactical-hold mode.
+        primaryBehavior: 'pursue',
+        secondaryBehavior: 'engage',
+        aggressionMultiplier: 1.0,      // bumped from 0.85
+        preferredRange: 200,            // a bit wider so engage doesn't lock them in place
+        behaviorChangeChance: 0.008,
+        speedBonus: 1.1                 // a touch faster than baseline
     }
 };
 
@@ -881,19 +1407,16 @@ function updateLocalEnemyBehavior(enemy, distanceToPlayer, adjustedSpeed, diffic
     const faction = getFactionBehavior(enemy);
     const factionSpeed = adjustedSpeed * faction.speedBonus;
 
-    // ── Target selection: pursue NEAREST of player or any alive wingman ──
+    // ── Target selection: honor the per-frame engagement assignment so
+    // at most 3 enemies pile on the player and at most 3 on each wingman.
+    // _assignEngagementTargets sets enemy.userData.engagedTarget; we
+    // resolve it here to a concrete position.
     let targetPos = playerPos;
     let targetDist = distanceToPlayer;
-    if (typeof allyShips !== 'undefined') {
-        for (let i = 0; i < allyShips.length; i++) {
-            const w = allyShips[i];
-            if (!w || !w.userData || w.userData.health <= 0) continue;
-            const d = w.position.distanceTo(enemy.position);
-            if (d < targetDist) {
-                targetDist = d;
-                targetPos = w.position.clone();
-            }
-        }
+    const _assigned = _engagedTargetPos(enemy);
+    if (_assigned) {
+        targetPos = _assigned.clone();
+        targetDist = enemy.position.distanceTo(_assigned);
     }
 
     if (distanceToPlayer < difficultySettings.localDetectionRange) {
@@ -921,14 +1444,17 @@ function updateLocalEnemyBehavior(enemy, distanceToPlayer, adjustedSpeed, diffic
         enemy.userData.attackMode = 'evade';
     }
 
-    // Multi-enemy swarming: if 2+ enemies are within 800u of the target,
-    // bias toward swarm so they converge instead of fighting individually
-    if (Math.random() < 0.02 && typeof enemies !== 'undefined') {
+    // Multi-enemy swarming: if 2+ enemies are within 1200u of the target,
+    // bias toward swarm so they converge instead of fighting individually.
+    // Check chance bumped 0.02 -> 0.10 (5x) and radius widened 800 -> 1200
+    // so groups commit to a swarm much more often than they did before —
+    // user feedback was that enemies needed to swarm the player better.
+    if (Math.random() < 0.10 && typeof enemies !== 'undefined') {
         let nearbyAllies = 0;
         for (let j = 0; j < enemies.length; j++) {
             const e = enemies[j];
             if (!e || e === enemy || !e.userData || e.userData.health <= 0) continue;
-            if (e.position.distanceTo(targetPos) < 800) nearbyAllies++;
+            if (e.position.distanceTo(targetPos) < 1200) nearbyAllies++;
             if (nearbyAllies >= 2) break;
         }
         if (nearbyAllies >= 2) enemy.userData.attackMode = 'swarm';
@@ -971,7 +1497,10 @@ function updateLocalEnemyBehavior(enemy, distanceToPlayer, adjustedSpeed, diffic
     // Smooth quaternion slerp instead of instant lookAt — keeps the
     // turning motion fluid like wingmen instead of snapping the
     // orientation each frame when the target moves.
-    _smoothEnemyLookAt(enemy, playerPos, 0.12);
+    // Snappier slerp than wingmen so "enemy turns to face you" reads
+    // as deliberate combat orientation. Still smooth enough to avoid
+    // the rigid lookAt snap.
+    _smoothEnemyLookAt(enemy, playerPos, 0.20);
 }
 
 // Smoothly rotate an enemy to face `targetPos` over multiple frames.
@@ -1002,9 +1531,14 @@ function updateEnhancedEnemyBehavior(enemy, distanceToPlayer, adjustedSpeed, dif
     if (!enemy || !enemy.userData || typeof camera === 'undefined' || typeof THREE === 'undefined') {
         return;
     }
-    
+
     const time = Date.now() * 0.001;
-    const playerPos = camera.position.clone();
+    // Honor the engagement assignment so distant enemies steer toward
+    // the player OR a wingman (whichever the cap put them on) instead
+    // of always tracking the camera.
+    const _assignedPos = _engagedTargetPos(enemy);
+    const playerPos = _assignedPos ? _assignedPos.clone() : camera.position.clone();
+    distanceToPlayer = enemy.position.distanceTo(playerPos);
     
     // Enhanced AI state machine
     if (!enemy.userData.behaviorState) {
@@ -1051,7 +1585,10 @@ function updateEnhancedEnemyBehavior(enemy, distanceToPlayer, adjustedSpeed, dif
     }
     
     // Smooth quaternion slerp instead of instant lookAt
-    _smoothEnemyLookAt(enemy, playerPos, 0.12);
+    // Snappier slerp than wingmen so "enemy turns to face you" reads
+    // as deliberate combat orientation. Still smooth enough to avoid
+    // the rigid lookAt snap.
+    _smoothEnemyLookAt(enemy, playerPos, 0.20);
 }
 
 // Boss behavior
@@ -1109,8 +1646,27 @@ function fireEnemyWeapon(enemy, difficultySettings) {
     // Use world position for entities that are children of groups
     const enemyPos = (enemy.parent && enemy.parent.isGroup) ? enemy.getWorldPosition(_enemyWorldPos).clone() : enemy.position;
 
+    // Aim at the player's SHIP, not the camera. In 3rd-person the ship
+    // mesh is offset well in front of/below the camera, so beams aimed
+    // at camera.position visibly streak past the ship. When the ship
+    // mesh is present and visible (3rd-person / cockpit), use its world
+    // position; otherwise (zero-offset / no-ship POV) fall back to the
+    // camera.
+    function _playerAimPos() {
+        try {
+            const cs = window.cameraState;
+            const ship = cs && cs.playerShipMesh;
+            if (ship && ship.visible) {
+                const wp = new THREE.Vector3();
+                ship.getWorldPosition(wp);
+                if (isFinite(wp.x)) return wp;
+            }
+        } catch (e) {}
+        return camera.position.clone();
+    }
+
     // Pick the nearest target between player and wingmen
-    const playerPos = camera.position.clone();
+    const playerPos = _playerAimPos();
     let targetPos = playerPos;
     let targetWingman = null;
     let nearestDist = playerPos.distanceTo(enemyPos);
@@ -1124,6 +1680,26 @@ function fireEnemyWeapon(enemy, difficultySettings) {
                 nearestDist = d;
                 targetPos = ally.position.clone();
                 targetWingman = ally;
+            }
+        }
+    }
+
+    // Opportunistic: a mining vessel that's the CLOSEST target also
+    // draws fire. Active hostiles don't divert to hunt them — they just
+    // shoot whatever (player / wingman / mining ship) is nearest & in
+    // range. Undefended, the vessel is whittled down and destroyed.
+    let targetMining = null;
+    if (typeof civilianShips !== 'undefined') {
+        for (let i = 0; i < civilianShips.length; i++) {
+            const cv = civilianShips[i];
+            if (!cv || !cv.userData || cv.userData._destroyed) continue;
+            if (cv.userData.shipCategory !== 'mining') continue;
+            const d = cv.position.distanceTo(enemyPos);
+            if (d < nearestDist) {
+                nearestDist = d;
+                targetPos = cv.position.clone();
+                targetMining = cv;
+                targetWingman = null; // mining vessel is the nearer target
             }
         }
     }
@@ -1175,6 +1751,44 @@ function fireEnemyWeapon(enemy, difficultySettings) {
                 return;
             }
 
+            // Mining vessel hit — distress call on the first strike, then
+            // destroyed (explosion) if the player doesn't drive the
+            // attackers off in time. Tough hull (~10 hits @3 dmg).
+            if (targetMining && targetMining.userData && !targetMining.userData._destroyed) {
+                const mv = targetMining;
+                if (typeof mv.userData.maxHealth !== 'number') {
+                    mv.userData.maxHealth = 30;
+                    mv.userData.health = 30;
+                }
+                if (!mv.userData._distressSent) {
+                    mv.userData._distressSent = true;
+                    if (typeof showIncomingTransmission === 'function') {
+                        showIncomingTransmission(
+                            mv.userData.name || 'Mining Vessel',
+                            'Mayday! We are under hostile fire with no escort — requesting immediate assistance!',
+                            true);
+                    }
+                }
+                mv.userData.health = Math.max(0, (mv.userData.health || 30) - damage);
+                if (typeof flashEnemyHit === 'function') flashEnemyHit(mv, damage);
+
+                if (mv.userData.health <= 0) {
+                    mv.userData._destroyed = true;
+                    if (typeof createWingmanExplosion === 'function') createWingmanExplosion(mv);
+                    if (typeof showAchievement === 'function') {
+                        showAchievement((mv.userData.name || 'Mining Vessel') + ' LOST',
+                            'A mining vessel was destroyed by hostiles', true);
+                    }
+                    if (typeof playSound === 'function') playSound('explosion');
+                    if (typeof scene !== 'undefined') scene.remove(mv);
+                    if (typeof civilianShips !== 'undefined') {
+                        const ci = civilianShips.indexOf(mv);
+                        if (ci > -1) civilianShips.splice(ci, 1);
+                    }
+                }
+                return;
+            }
+
             const isInvulnerable = typeof isBlackHoleWarpInvulnerable === 'function' &&
                                    isBlackHoleWarpInvulnerable();
             const shieldsActive = typeof isShieldActive === 'function' && isShieldActive();
@@ -1199,6 +1813,8 @@ function fireEnemyWeapon(enemy, difficultySettings) {
             if (!isInvulnerable) {
                 createEnhancedScreenDamageEffect(enemy.position);
                 if (!shieldsActive) {
+                    // Direct hull hit — flash the ship red (3rd person).
+                    if (typeof flashPlayerShipHit === 'function') flashPlayerShipHit();
                     playSound('damage');
                     if (enemy.userData.isBoss) {
                         showAchievement('Boss Attack!', `${enemy.userData.name} hit for ${damage} damage!`, false);
@@ -2224,6 +2840,27 @@ function playSound(type, frequency = 440, duration = 0.2) {
             oscillator.type = 'sawtooth';
             duration = 0.4;
             break;
+        case 'death_boom':
+            // Deep, sustained game-over rumble. Longer envelope and
+            // lower frequency floor than 'explosion' so the layered
+            // death sequence reads as a finishing blow rather than a
+            // generic hit.
+            oscillator.frequency.setValueAtTime(120, audioContext.currentTime);
+            oscillator.frequency.exponentialRampToValueAtTime(28, audioContext.currentTime + 1.5);
+            gain.gain.setValueAtTime(0.7, audioContext.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 1.6);
+            oscillator.type = 'sawtooth';
+            duration = 1.6;
+            break;
+        case 'death_rumble':
+            // Sub-bass tail that sits under the booms for body.
+            oscillator.frequency.setValueAtTime(48, audioContext.currentTime);
+            oscillator.frequency.exponentialRampToValueAtTime(22, audioContext.currentTime + 2.2);
+            gain.gain.setValueAtTime(0.55, audioContext.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 2.2);
+            oscillator.type = 'sine';
+            duration = 2.2;
+            break;
         case 'damage':
             oscillator.frequency.setValueAtTime(200, audioContext.currentTime);
             gain.gain.setValueAtTime(0.5, audioContext.currentTime);
@@ -2256,6 +2893,20 @@ function playSound(type, frequency = 440, duration = 0.2) {
     gain.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 2.0);
     oscillator.type = 'sine'; // Smoother wave = less harsh
     duration = 2.0;
+    break;
+        case 'wormhole_warp':
+    // Shimmering, otherworldly sweep — distinct from the deep
+    // black-hole rumble. A high triangle tone that wobbles UP then
+    // resolves, evoking spatial folding rather than gravitational
+    // collapse.
+    oscillator.frequency.setValueAtTime(420, audioContext.currentTime);
+    oscillator.frequency.linearRampToValueAtTime(1700, audioContext.currentTime + 0.5);
+    oscillator.frequency.linearRampToValueAtTime(700, audioContext.currentTime + 1.0);
+    oscillator.frequency.exponentialRampToValueAtTime(2600, audioContext.currentTime + 1.8);
+    gain.gain.setValueAtTime(0.28, audioContext.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 1.8);
+    oscillator.type = 'triangle';
+    duration = 1.8;
     break;
         case 'enemy_fire':
             oscillator.frequency.setValueAtTime(600, audioContext.currentTime);
@@ -2406,6 +3057,600 @@ function createExplosionEffect(targetObject) {
 
     // Play explosion sound
     playSound('explosion');
+}
+
+// =============================================================================
+// FACTION-UNIQUE EXPLOSIONS
+// Each of the 8 factions gets a visually distinct death effect so the
+// player can tell at a glance who they just killed. All effects run
+// through explosionManager and use additive blending. Reusable
+// primitive builders keep each faction recipe short.
+// =============================================================================
+const FACTION_EXPLOSION = {
+    0: { name: 'Federation',  style: 'electric',   core: 0xffffff, accent: 0x33ddff, spark: 0x66ccff },
+    1: { name: 'Klingon',     style: 'shrapnel',   core: 0xffcc44, accent: 0xff3300, spark: 0xff6600 },
+    2: { name: 'Rebel',       style: 'ionbloom',   core: 0xccffaa, accent: 0x66ff33, spark: 0x99ff44 },
+    3: { name: 'Romulan',     style: 'singularity',core: 0xffffff, accent: 0x33ff88, spark: 0x00ffaa },
+    4: { name: 'Imperial',    style: 'tieblast',   core: 0xffffff, accent: 0x66ff66, spark: 0xaaffaa },
+    5: { name: 'Cardassian',  style: 'spiral',     core: 0xffdd66, accent: 0xff9922, spark: 0xffbb44 },
+    6: { name: 'Sith',        style: 'darkenergy', core: 0xff2222, accent: 0xaa00ff, spark: 0xff0044 },
+    7: { name: 'Vulcan',      style: 'goldrings',  core: 0xfff0cc, accent: 0xffcc66, spark: 0xffd699 }
+};
+
+function _fxSphere(center, radius, color, opacity, life, growth) {
+    const geo = new THREE.SphereGeometry(radius, 16, 12);
+    const mat = new THREE.MeshBasicMaterial({
+        color: color, transparent: true, opacity: opacity,
+        blending: THREE.AdditiveBlending, depthWrite: false
+    });
+    const m = new THREE.Mesh(geo, mat);
+    m.position.copy(center);
+    m.frustumCulled = false;
+    scene.add(m);
+    let s = 1, op = opacity;
+    explosionManager.addExplosion({
+        update(dt) {
+            s += growth * (dt / 50);
+            op -= (opacity / life) * (dt / 50);
+            m.scale.set(s, s, s);
+            mat.opacity = Math.max(0, op);
+            return op > 0;
+        },
+        cleanup() { scene.remove(m); geo.dispose(); mat.dispose(); }
+    });
+}
+
+function _fxRing(center, radius, color, growth, life, opacity) {
+    const geo = new THREE.RingGeometry(radius, radius * 1.18, 40);
+    const mat = new THREE.MeshBasicMaterial({
+        color: color, transparent: true, opacity: opacity || 0.85,
+        side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false
+    });
+    const ring = new THREE.Mesh(geo, mat);
+    ring.position.copy(center);
+    if (typeof camera !== 'undefined') ring.lookAt(camera.position);
+    ring.frustumCulled = false;
+    scene.add(ring);
+    let s = 1, op = (opacity || 0.85);
+    explosionManager.addExplosion({
+        update(dt) {
+            s += growth * (dt / 50);
+            op -= ((opacity || 0.85) / life) * (dt / 50);
+            ring.scale.set(s, s, 1);
+            mat.opacity = Math.max(0, op);
+            return op > 0;
+        },
+        cleanup() { scene.remove(ring); geo.dispose(); mat.dispose(); }
+    });
+}
+
+// Flying angular SHARDS — tetrahedra / octahedra that burst outward
+// and tumble. Gives factions a sharp, non-circular signature.
+function _fxShards(center, count, color, size, speed, life, kind) {
+    const shards = [];
+    for (let i = 0; i < count; i++) {
+        const s = size * (0.6 + Math.random() * 0.8);
+        let g;
+        if (kind === 'octa')      g = new THREE.OctahedronGeometry(s, 0);
+        else if (kind === 'tetra')g = new THREE.TetrahedronGeometry(s, 0);
+        else                      g = new THREE.TetrahedronGeometry(s, 0);
+        const m = new THREE.MeshBasicMaterial({
+            color: color, transparent: true, opacity: 1,
+            blending: THREE.AdditiveBlending, depthWrite: false
+        });
+        const mesh = new THREE.Mesh(g, m);
+        mesh.position.copy(center);
+        mesh.frustumCulled = false;
+        scene.add(mesh);
+        shards.push({
+            mesh: mesh, geo: g, mat: m,
+            vel: new THREE.Vector3(
+                Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5
+            ).normalize().multiplyScalar(speed * (0.5 + Math.random())),
+            spin: new THREE.Vector3(
+                (Math.random() - 0.5) * 0.5,
+                (Math.random() - 0.5) * 0.5,
+                (Math.random() - 0.5) * 0.5)
+        });
+    }
+    let l = 1.0;
+    explosionManager.addExplosion({
+        update(dt) {
+            l -= (1 / life) * (dt / 50);
+            const f = dt / 50;
+            for (let i = 0; i < shards.length; i++) {
+                const c = shards[i];
+                c.mesh.position.addScaledVector(c.vel, f);
+                c.mesh.rotation.x += c.spin.x * f;
+                c.mesh.rotation.y += c.spin.y * f;
+                c.mesh.rotation.z += c.spin.z * f;
+                c.mat.opacity = Math.max(0, l);
+            }
+            return l > 0;
+        },
+        cleanup() {
+            for (let i = 0; i < shards.length; i++) {
+                scene.remove(shards[i].mesh);
+                shards[i].geo.dispose();
+                shards[i].mat.dispose();
+            }
+        }
+    });
+}
+
+// Low-segment ring = a polygon outline (3 = triangle, 5 = pentagon,
+// 6 = hexagon). A crisp geometric alternative to the round shockwave.
+function _fxPolyRing(center, radius, color, sides, growth, life, opacity) {
+    const geo = new THREE.RingGeometry(radius, radius * 1.22, Math.max(3, sides), 1);
+    const mat = new THREE.MeshBasicMaterial({
+        color: color, transparent: true, opacity: opacity || 0.85,
+        side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false
+    });
+    const ring = new THREE.Mesh(geo, mat);
+    ring.position.copy(center);
+    if (typeof camera !== 'undefined') ring.lookAt(camera.position);
+    ring.rotation.z = Math.random() * Math.PI;
+    ring.frustumCulled = false;
+    scene.add(ring);
+    let s = 1, op = (opacity || 0.85);
+    explosionManager.addExplosion({
+        update(dt) {
+            s += growth * (dt / 50);
+            op -= ((opacity || 0.85) / life) * (dt / 50);
+            ring.scale.set(s, s, 1);
+            ring.rotation.z += 0.03 * (dt / 50);
+            mat.opacity = Math.max(0, op);
+            return op > 0;
+        },
+        cleanup() { scene.remove(ring); geo.dispose(); mat.dispose(); }
+    });
+}
+
+function _fxParticles(center, count, color, size, speed, life, swirl) {
+    const geo = new THREE.BufferGeometry();
+    const pos = new Float32Array(count * 3);
+    const vel = [];
+    for (let i = 0; i < count; i++) {
+        pos[i*3] = center.x; pos[i*3+1] = center.y; pos[i*3+2] = center.z;
+        const dir = new THREE.Vector3(
+            (Math.random() - 0.5), (Math.random() - 0.5), (Math.random() - 0.5)
+        ).normalize().multiplyScalar(speed * (0.5 + Math.random()));
+        if (swirl) {
+            // Add a tangential component for a spiral look
+            const tang = new THREE.Vector3(-dir.z, dir.y * 0.3, dir.x).multiplyScalar(swirl);
+            dir.add(tang);
+        }
+        vel.push(dir);
+    }
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    const mat = new THREE.PointsMaterial({
+        color: color, size: size, transparent: true, opacity: 1,
+        blending: THREE.AdditiveBlending, depthWrite: false
+    });
+    const pts = new THREE.Points(geo, mat);
+    pts.frustumCulled = false;
+    scene.add(pts);
+    let l = 1.0;
+    explosionManager.addExplosion({
+        update(dt) {
+            l -= (1 / life) * (dt / 50);
+            mat.opacity = Math.max(0, l);
+            const arr = geo.attributes.position.array;
+            const f = dt / 50;
+            for (let i = 0; i < count; i++) {
+                arr[i*3]   += vel[i].x * f;
+                arr[i*3+1] += vel[i].y * f;
+                arr[i*3+2] += vel[i].z * f;
+            }
+            geo.attributes.position.needsUpdate = true;
+            return l > 0;
+        },
+        cleanup() { scene.remove(pts); geo.dispose(); mat.dispose(); }
+    });
+}
+
+function _fxLightning(center, count, color, len) {
+    for (let i = 0; i < count; i++) {
+        const geo = new THREE.CylinderGeometry(0.6, 0.1, len, 5);
+        const mat = new THREE.MeshBasicMaterial({
+            color: color, transparent: true, opacity: 0.9,
+            blending: THREE.AdditiveBlending, depthWrite: false
+        });
+        const bolt = new THREE.Mesh(geo, mat);
+        bolt.position.copy(center);
+        const dir = new THREE.Vector3(
+            Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).normalize();
+        const up = new THREE.Vector3(0, 1, 0);
+        const axis = new THREE.Vector3().crossVectors(up, dir);
+        if (axis.length() > 0.001) {
+            axis.normalize();
+            bolt.setRotationFromAxisAngle(axis, Math.acos(up.dot(dir)));
+        }
+        bolt.position.add(dir.clone().multiplyScalar(len * 0.5));
+        bolt.frustumCulled = false;
+        scene.add(bolt);
+        let op = 0.9;
+        explosionManager.addExplosion({
+            update(dt) {
+                op -= 0.12 * (dt / 50);
+                mat.opacity = Math.max(0, op);
+                return op > 0;
+            },
+            cleanup() { scene.remove(bolt); geo.dispose(); mat.dispose(); }
+        });
+    }
+}
+
+// Public: faction-flavored regular-kill explosion. galaxyId picks the
+// recipe; scale multiplies all sizes (defaults to 1).
+function createFactionExplosion(position, galaxyId, scale) {
+    if (!position || typeof scene === 'undefined' || typeof THREE === 'undefined') return;
+    const center = position.clone ? position.clone()
+                 : new THREE.Vector3(position.x, position.y, position.z);
+    const S = scale || 1;
+    const cfg = FACTION_EXPLOSION[galaxyId] || FACTION_EXPLOSION[0];
+
+    switch (cfg.style) {
+        case 'electric': // Federation — white core + crisp TRIANGULAR ring + blue sparks
+            _fxSphere(center, 7 * S, cfg.core, 1.0, 14, 2.6);
+            _fxPolyRing(center, 5 * S, cfg.accent, 3, 7, 14, 0.9);  // triangle
+            _fxParticles(center, 26, cfg.spark, 2.4 * S, 7 * S, 16, 0);
+            break;
+        case 'shrapnel': // Klingon — jagged TETRAHEDRON shrapnel double-burst
+            _fxSphere(center, 8 * S, cfg.core, 0.95, 12, 2.2);
+            _fxShards(center, 26, cfg.spark, 4 * S, 12 * S, 16, 'tetra');
+            setTimeout(() => {
+                _fxSphere(center, 11 * S, cfg.accent, 0.8, 14, 2.8);
+                _fxShards(center, 18, cfg.core, 3 * S, 9 * S, 14, 'tetra');
+            }, 140);
+            break;
+        case 'ionbloom': // Rebel — slow green bloom + lingering haze
+            _fxSphere(center, 9 * S, cfg.accent, 0.75, 26, 1.6);
+            _fxSphere(center, 5 * S, cfg.core, 0.9, 18, 2.0);
+            _fxParticles(center, 30, cfg.spark, 3.0 * S, 4 * S, 28, 0);
+            break;
+        case 'singularity': // Romulan — implode then green outward flash
+            _fxParticles(center, 30, cfg.accent, 2.4 * S, -6 * S, 10, 0); // inward
+            setTimeout(() => {
+                _fxSphere(center, 6 * S, cfg.core, 1.0, 12, 3.4);
+                _fxRing(center, 4 * S, cfg.spark, 9, 14, 0.85);
+            }, 220);
+            break;
+        case 'tieblast': // Imperial — white flash + HEXAGONAL twin rings
+            _fxSphere(center, 9 * S, cfg.core, 1.0, 9, 3.0);
+            _fxPolyRing(center, 6 * S, cfg.accent, 6, 11, 16, 0.8);  // hexagon
+            _fxPolyRing(center, 6 * S, cfg.spark, 6, 6, 16, 0.5);
+            break;
+        case 'spiral': // Cardassian — swirling orange particles + spinning shards
+            _fxSphere(center, 6 * S, cfg.core, 0.9, 14, 2.2);
+            _fxParticles(center, 36, cfg.accent, 2.6 * S, 6 * S, 22, 3.2);
+            _fxShards(center, 12, cfg.spark, 3 * S, 5 * S, 20, 'tetra');
+            break;
+        case 'darkenergy': // Sith — red core + OCTAHEDRON shards + lightning + smoke
+            _fxSphere(center, 7 * S, cfg.core, 1.0, 14, 2.4);
+            _fxLightning(center, 8, cfg.spark, 80 * S);
+            _fxShards(center, 16, cfg.accent, 4 * S, 8 * S, 18, 'octa');
+            _fxSphere(center, 12 * S, cfg.accent, 0.45, 30, 2.0);
+            break;
+        case 'goldrings': // Vulcan — small concentric CIRCULAR gold rings
+            // Halved per request: Vulcan kills are a compact pop, not a
+            // big bloom. Initial radius AND expansion growth both x0.5.
+            _fxSphere(center, 1.75 * S, cfg.core, 0.9, 14, 0.8);
+            _fxRing(center, 1.5 * S, cfg.accent, 2, 16, 0.75);
+            setTimeout(() => _fxRing(center, 1.5 * S, cfg.spark, 2.5, 16, 0.6), 130);
+            setTimeout(() => _fxRing(center, 1.5 * S, cfg.accent, 3, 16, 0.5), 280);
+            break;
+        default:
+            _fxSphere(center, 7 * S, cfg.core, 1.0, 14, 2.5);
+            _fxParticles(center, 24, cfg.spark, 2.4 * S, 7 * S, 14, 0);
+    }
+    try { playSound('explosion'); } catch (e) {}
+}
+if (typeof window !== 'undefined') window.createFactionExplosion = createFactionExplosion;
+
+// =============================================================================
+// HIT SPARKS — small impact burst when a laser/missile strikes a hostile
+// that SURVIVES the hit (the destruction explosion is separate). Kept
+// cheap because sustained fire calls this many times per second.
+// =============================================================================
+function createHitSparks(worldPos, tint, scale) {
+    if (!worldPos || typeof scene === 'undefined' || typeof THREE === 'undefined') return;
+    const center = worldPos.clone ? worldPos.clone()
+                 : new THREE.Vector3(worldPos.x, worldPos.y, worldPos.z);
+    // Match the hit ship's size (regular enemies are halved via
+    // ENEMY_SCALE_FACTOR; bosses pass 1). Defaults to 1 if unspecified.
+    const S = (typeof scale === 'number' && scale > 0) ? scale : 1;
+
+    // Bright short-lived flash at the impact point.
+    const flashGeo = new THREE.SphereGeometry(3 * S, 8, 6);
+    const flashMat = new THREE.MeshBasicMaterial({
+        color: 0xffffcc, transparent: true, opacity: 0.95,
+        blending: THREE.AdditiveBlending, depthWrite: false
+    });
+    const flash = new THREE.Mesh(flashGeo, flashMat);
+    flash.position.copy(center);
+    flash.frustumCulled = false;
+    scene.add(flash);
+    let fs = 1, fop = 0.95;
+    explosionManager.addExplosion({
+        update(dt) {
+            fs += 0.9 * (dt / 50);
+            fop -= 0.18 * (dt / 50);
+            flash.scale.set(fs, fs, fs);
+            flashMat.opacity = Math.max(0, fop);
+            return fop > 0;
+        },
+        cleanup() { scene.remove(flash); flashGeo.dispose(); flashMat.dispose(); }
+    });
+
+    // ~12 spark points spraying outward, faction-tinted.
+    const N = 12;
+    const geo = new THREE.BufferGeometry();
+    const pos = new Float32Array(N * 3);
+    const vel = [];
+    for (let i = 0; i < N; i++) {
+        pos[i*3] = center.x; pos[i*3+1] = center.y; pos[i*3+2] = center.z;
+        vel.push(new THREE.Vector3(
+            Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5
+        ).normalize().multiplyScalar((3 + Math.random() * 5) * S));
+    }
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    const mat = new THREE.PointsMaterial({
+        color: tint || 0xffaa33, size: 2.4 * S, transparent: true, opacity: 1,
+        blending: THREE.AdditiveBlending, depthWrite: false
+    });
+    const pts = new THREE.Points(geo, mat);
+    pts.frustumCulled = false;
+    scene.add(pts);
+    let life = 1.0;
+    explosionManager.addExplosion({
+        update(dt) {
+            life -= 0.10 * (dt / 50);
+            mat.opacity = Math.max(0, life);
+            const arr = geo.attributes.position.array;
+            const f = dt / 50;
+            for (let i = 0; i < N; i++) {
+                arr[i*3]   += vel[i].x * f;
+                arr[i*3+1] += vel[i].y * f;
+                arr[i*3+2] += vel[i].z * f;
+            }
+            geo.attributes.position.needsUpdate = true;
+            return life > 0;
+        },
+        cleanup() { scene.remove(pts); geo.dispose(); mat.dispose(); }
+    });
+}
+if (typeof window !== 'undefined') window.createHitSparks = createHitSparks;
+
+// =============================================================================
+// BOSS / GUARDIAN EXPLOSION
+// A larger, multi-stage detonation reserved for boss and elite-guardian
+// kills. Three escalating waves:
+//   t=0     - core fireball + faction-colored shockwave ring
+//   t=200ms - secondary detonation, ~50% larger
+//   t=450ms - massive expanding plasma bubble + 250-particle burst
+// The whole sequence lasts ~2.5s and uses additive blending so it
+// reads brightly against any backdrop.
+// =============================================================================
+function createBossExplosion(position, options) {
+    if (!position || typeof scene === 'undefined') return;
+    options = options || {};
+    const factionColor = options.color || 0xff5522;
+    const scaleMul = options.scale || 1.0;
+    const center = position.clone ? position.clone() : new THREE.Vector3(position.x, position.y, position.z);
+
+    function _addAdditiveSphere(radius, color, opacity, life, growth) {
+        const geo = new THREE.SphereGeometry(radius, 24, 16);
+        const mat = new THREE.MeshBasicMaterial({
+            color: color, transparent: true, opacity: opacity,
+            blending: THREE.AdditiveBlending, depthWrite: false
+        });
+        const mesh = new THREE.Mesh(geo, mat);
+        mesh.position.copy(center);
+        mesh.frustumCulled = false;
+        scene.add(mesh);
+        let scl = 1;
+        let op = opacity;
+        explosionManager.addExplosion({
+            update(dt) {
+                scl += growth * (dt / 50);
+                op  -= (opacity / life) * (dt / 50);
+                mesh.scale.set(scl, scl, scl);
+                mat.opacity = Math.max(0, op);
+                return op > 0;
+            },
+            cleanup() {
+                scene.remove(mesh);
+                geo.dispose();
+                mat.dispose();
+            }
+        });
+    }
+
+    function _addShockRing(color, radius, growth, life) {
+        const geo = new THREE.RingGeometry(radius, radius * 1.15, 48);
+        const mat = new THREE.MeshBasicMaterial({
+            color: color, transparent: true, opacity: 0.85,
+            side: THREE.DoubleSide,
+            blending: THREE.AdditiveBlending, depthWrite: false
+        });
+        const ring = new THREE.Mesh(geo, mat);
+        ring.position.copy(center);
+        if (typeof camera !== 'undefined') ring.lookAt(camera.position);
+        ring.frustumCulled = false;
+        scene.add(ring);
+        let scl = 1;
+        let op = 0.85;
+        explosionManager.addExplosion({
+            update(dt) {
+                scl += growth * (dt / 50);
+                op  -= (0.85 / life) * (dt / 50);
+                ring.scale.set(scl, scl, 1);
+                mat.opacity = Math.max(0, op);
+                return op > 0;
+            },
+            cleanup() {
+                scene.remove(ring);
+                geo.dispose();
+                mat.dispose();
+            }
+        });
+    }
+
+    // Tumbling debris chunks — small lit boxes that fly out and spin,
+    // for a "the ship is coming apart" read on top of the particle haze.
+    function _addDebrisChunks(count, color, speed, life) {
+        const chunks = [];
+        for (let i = 0; i < count; i++) {
+            const sz = (3 + Math.random() * 5) * scaleMul;
+            const geo = new THREE.BoxGeometry(sz, sz * (0.5 + Math.random()), sz * (0.4 + Math.random()));
+            const mat = new THREE.MeshBasicMaterial({
+                color: color, transparent: true, opacity: 1,
+                blending: THREE.AdditiveBlending, depthWrite: false
+            });
+            const m = new THREE.Mesh(geo, mat);
+            m.position.copy(center);
+            m.frustumCulled = false;
+            scene.add(m);
+            chunks.push({
+                mesh: m, geo: geo, mat: mat,
+                vel: new THREE.Vector3(
+                    (Math.random() - 0.5) * speed,
+                    (Math.random() - 0.5) * speed,
+                    (Math.random() - 0.5) * speed),
+                spin: new THREE.Vector3(
+                    (Math.random() - 0.5) * 0.4,
+                    (Math.random() - 0.5) * 0.4,
+                    (Math.random() - 0.5) * 0.4)
+            });
+        }
+        let l = 1.0;
+        explosionManager.addExplosion({
+            update(dt) {
+                l -= (1 / life) * (dt / 50);
+                const f = dt / 50;
+                for (let i = 0; i < chunks.length; i++) {
+                    const c = chunks[i];
+                    c.mesh.position.addScaledVector(c.vel, f);
+                    c.mesh.rotation.x += c.spin.x * f;
+                    c.mesh.rotation.y += c.spin.y * f;
+                    c.mesh.rotation.z += c.spin.z * f;
+                    c.mat.opacity = Math.max(0, l);
+                }
+                return l > 0;
+            },
+            cleanup() {
+                for (let i = 0; i < chunks.length; i++) {
+                    scene.remove(chunks[i].mesh);
+                    chunks[i].geo.dispose();
+                    chunks[i].mat.dispose();
+                }
+            }
+        });
+    }
+
+    // ── WAVE 0 (t=0): blinding white flash ───────────────────────────
+    // A huge, very brief white sphere that whites out the immediate
+    // area — sells the "detonation" before the fireball blooms.
+    _addAdditiveSphere(180 * scaleMul, 0xffffff, 1.0, 7, 1.4);
+
+    // ── WAVE 1 (t=0): core fireball + triple shockwave + lightning ──
+    _addAdditiveSphere(70 * scaleMul, 0xffeecc, 1.0, 18, 3.6);   // white-hot core
+    _addAdditiveSphere(95 * scaleMul, 0xff7733, 0.95, 22, 3.0);  // orange shell
+    _addShockRing(0xffffff,    26 * scaleMul, 9, 14);
+    _addShockRing(factionColor, 34 * scaleMul, 6, 18);
+    _addShockRing(0xffaa55,    20 * scaleMul, 12, 22);
+    if (typeof _fxLightning === 'function') {
+        _fxLightning(center, 10, factionColor, 120 * scaleMul);
+    }
+    _addDebrisChunks(22, 0xffcc88, 9 * scaleMul, 34);
+
+    // ── WAVE 2 (t=180ms): secondary detonation, bigger ──────────────
+    setTimeout(() => {
+        _addAdditiveSphere(120 * scaleMul, factionColor, 0.85, 24, 3.4);
+        _addAdditiveSphere(60 * scaleMul, 0xffffff, 0.9, 12, 3.0);
+        _addShockRing(0xffaa55, 56 * scaleMul, 9, 22);
+        _addShockRing(factionColor, 44 * scaleMul, 13, 24);
+        if (typeof _fxLightning === 'function') {
+            _fxLightning(center, 8, 0xffffff, 150 * scaleMul);
+        }
+        if (typeof playSound === 'function') {
+            try { playSound('explosion'); } catch (e) {}
+            try { playSound('death_boom'); } catch (e) {}
+        }
+    }, 180);
+
+    // ── WAVE 3 (t=420ms): massive plasma bubble + 360-particle burst
+    setTimeout(() => {
+        _addAdditiveSphere(170 * scaleMul, 0xaa44ff, 0.55, 32, 4.2);
+        _addAdditiveSphere(120 * scaleMul, factionColor, 0.4, 30, 4.6);
+
+        const partCount = 360;
+        const partGeo = new THREE.BufferGeometry();
+        const positions = new Float32Array(partCount * 3);
+        const velocities = [];
+        for (let i = 0; i < partCount; i++) {
+            positions[i*3] = center.x;
+            positions[i*3+1] = center.y;
+            positions[i*3+2] = center.z;
+            const d = new THREE.Vector3(
+                Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5
+            ).normalize().multiplyScalar((4 + Math.random() * 9) * scaleMul);
+            velocities.push(d);
+        }
+        partGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        const partMat = new THREE.PointsMaterial({
+            color: 0xffcc66, size: 7 * scaleMul, transparent: true, opacity: 1,
+            blending: THREE.AdditiveBlending, depthWrite: false
+        });
+        const particles = new THREE.Points(partGeo, partMat);
+        particles.frustumCulled = false;
+        scene.add(particles);
+        _addDebrisChunks(18, factionColor, 7 * scaleMul, 40);
+
+        let life = 1.0;
+        explosionManager.addExplosion({
+            update(dt) {
+                life -= 0.02 * (dt / 50);
+                partMat.opacity = Math.max(0, life);
+                const arr = partGeo.attributes.position.array;
+                const f = dt / 50;
+                for (let i = 0; i < partCount; i++) {
+                    arr[i*3]   += velocities[i].x * f;
+                    arr[i*3+1] += velocities[i].y * f;
+                    arr[i*3+2] += velocities[i].z * f;
+                }
+                partGeo.attributes.position.needsUpdate = true;
+                return life > 0;
+            },
+            cleanup() {
+                scene.remove(particles);
+                partGeo.dispose();
+                partMat.dispose();
+            }
+        });
+
+        if (typeof playSound === 'function') {
+            try { playSound('death_boom'); } catch (e) {}
+            try { playSound('death_rumble'); } catch (e) {}
+        }
+    }, 420);
+
+    // ── WAVE 4 (t=750ms): final expanding faction ring + afterglow ──
+    setTimeout(() => {
+        _addShockRing(factionColor, 70 * scaleMul, 16, 26);
+        _addAdditiveSphere(220 * scaleMul, factionColor, 0.3, 34, 3.4);
+        if (typeof playSound === 'function') {
+            try { playSound('explosion'); } catch (e) {}
+        }
+    }, 750);
+
+    // Layered launch audio
+    if (typeof playSound === 'function') {
+        try { playSound('explosion'); } catch (e) {}
+        try { playSound('damage');    } catch (e) {}
+        try { playSound('death_boom'); } catch (e) {}
+    }
 }
 
 // =============================================================================
@@ -2696,21 +3941,65 @@ function createFireworkCelebrationWithSound() {
     createFireworkCelebration();
 }
 
+// Shared fading-beam registry. Laser beams register here and fade on
+// the main rAF loop (updateFadingBeams) instead of each spawning its
+// own setInterval — in sustained combat the per-beam timers were the
+// dominant off-frame cost. ~0.22 opacity/frame ≈ 75 ms at 60 fps.
+const _fadingBeams = [];
+function _registerFadingBeam(d) {
+    if (d.opacity === undefined) d.opacity = (d.material && d.material.opacity) || 1.0;
+    _fadingBeams.push(d);
+}
+function updateFadingBeams() {
+    if (!_fadingBeams.length) return;
+    for (let k = _fadingBeams.length - 1; k >= 0; k--) {
+        const d = _fadingBeams[k];
+        d.opacity -= 0.22;
+        const o = Math.max(0, d.opacity);
+        if (d.material) d.material.opacity = o;
+        if (d.glowMaterial) d.glowMaterial.opacity = o * (d.glowFactor || 0.4);
+        if (d.laserData) d.laserData.opacity = d.opacity;
+        if (d.enemyLaserData) d.enemyLaserData.opacity = d.opacity;
+        if (d.opacity <= 0) {
+            if (d.enemyLaserData && typeof activeEnemyLasers !== 'undefined') {
+                const i = activeEnemyLasers.indexOf(d.enemyLaserData);
+                if (i > -1) activeEnemyLasers.splice(i, 1);
+            }
+            if (d.laserData && typeof activeLasers !== 'undefined') {
+                const i = activeLasers.indexOf(d.laserData);
+                if (i > -1) activeLasers.splice(i, 1);
+            }
+            if (d.beam) scene.remove(d.beam);
+            if (d.extra) d.extra.forEach(m => scene.remove(m));
+            if (d.geometry && d.geometry.dispose) d.geometry.dispose();
+            if (d.material && d.material.dispose) d.material.dispose();
+            if (d.glowGeometry && d.glowGeometry.dispose) d.glowGeometry.dispose();
+            if (d.glowMaterial && d.glowMaterial.dispose) d.glowMaterial.dispose();
+            if (d.disposeExtra) d.disposeExtra();
+            _fadingBeams.splice(k, 1);
+        }
+    }
+}
+if (typeof window !== 'undefined') window.updateFadingBeams = updateFadingBeams;
+
 // RESTORED: Working laser beam from game-controls13.js (FIXES POSITIONING)
 // NOW TRACKS WITH SHIP for player lasers (1st person / cockpit view)
 function createLaserBeam(startPos, endPos, color = '#00ff96', isPlayer = true) {
     if (typeof THREE === 'undefined' || typeof scene === 'undefined') return;
-    
+
     try {
         const direction = new THREE.Vector3().subVectors(endPos, startPos);
         const length = direction.length();
 
         // Enemy lasers get the same thick/bright treatment as wingman lasers
         // for visibility. Player lasers stay slim so they don't block the view.
-        const coreRadius = isPlayer ? 0.2 : 0.7;
-        const glowRadius = isPlayer ? 0.4 : 2.0;
+        // Enemy beams slimmed toward the player's beam profile — still
+        // a touch thicker so incoming fire reads, but no longer the
+        // heavy 0.9/2.6 tube.
+        const coreRadius = isPlayer ? 0.2 : 0.32;
+        const glowRadius = isPlayer ? 0.4 : 0.85;
         const coreOpacity = isPlayer ? 0.8 : 1.0;
-        const glowOpacity = isPlayer ? 0.3 : 0.45;
+        const glowOpacity = isPlayer ? 0.3 : 0.5;
 
         const laserGeometry = new THREE.CylinderGeometry(coreRadius, coreRadius, length, 8);
         const laserMaterial = new THREE.MeshBasicMaterial({
@@ -2720,13 +4009,32 @@ function createLaserBeam(startPos, endPos, color = '#00ff96', isPlayer = true) {
         });
 
         const laserBeam = new THREE.Mesh(laserGeometry, laserMaterial);
+        // Render enemy lasers in front of background nebulae / asteroid
+        // belts / CMB starfields so beams from BH-galaxy hostiles aren't
+        // hidden behind whatever cosmic feature happens to lie along the
+        // line of sight. Player lasers render normally.
+        if (!isPlayer) {
+            laserBeam.renderOrder = 70;
+            laserBeam.frustumCulled = false;
+        }
 
         // Better positioning and orientation (RESTORED)
         laserBeam.position.copy(startPos);
 
+        // BUGFIX: clone `direction` before normalizing. The old code
+        // called direction.normalize() which mutates the vector to
+        // unit length, so the later `direction.clone().multiplyScalar(
+        // 0.5)` offset was only 0.5 units instead of half the beam
+        // length. The cylinder (length = full start→end distance) then
+        // sat centered on the enemy and extended HALF ITS LENGTH IN
+        // BOTH DIRECTIONS — i.e. the beam appeared to fire backwards
+        // out of the enemy too. _fireWingmanLaser does it correctly
+        // with a clone; mirror that here so enemy beams travel only
+        // from the enemy toward the target.
+        const dirNorm = direction.clone().normalize();
         const up = new THREE.Vector3(0, 1, 0);
-        const axis = new THREE.Vector3().crossVectors(up, direction.normalize());
-        const angle = Math.acos(up.dot(direction.normalize()));
+        const axis = new THREE.Vector3().crossVectors(up, dirNorm);
+        const angle = Math.acos(up.dot(dirNorm));
 
         if (axis.length() > 0.001) {
             axis.normalize();
@@ -2735,6 +4043,8 @@ function createLaserBeam(startPos, endPos, color = '#00ff96', isPlayer = true) {
             laserBeam.rotateX(Math.PI);
         }
 
+        // Offset by HALF the full-length direction so the cylinder's
+        // center lands at the midpoint between start and end.
         const offset = direction.clone().multiplyScalar(0.5);
         laserBeam.position.add(offset);
 
@@ -2789,36 +4099,22 @@ function createLaserBeam(startPos, endPos, color = '#00ff96', isPlayer = true) {
             activeEnemyLasers.push(enemyLaserData);
         }
 
-        // 50 ms fade: 0.8 opacity / 0.4 per 25 ms interval = 2 ticks = 50 ms.
-        let opacity = 0.8;
-        const fadeInterval = setInterval(() => {
-            opacity -= 0.4;
-            laserMaterial.opacity = opacity;
-            glowMaterial.opacity = opacity * 0.4;
+        // Fade. Both player AND enemy beams vanish fast (~75 ms) — just
+        // a muzzle flash. Driven by the shared rAF updater
+        // (updateFadingBeams) instead of a per-beam setInterval — every
+        // shot used to spawn its own timer, which stacked up badly in
+        // sustained combat.
+        const startOpacity = isPlayer ? 0.8 : 1.0;
+        laserMaterial.opacity = startOpacity;
+        glowMaterial.opacity = startOpacity * (isPlayer ? 0.4 : 0.55);
+        _registerFadingBeam({
+            beam: laserBeam, geometry: laserGeometry, material: laserMaterial,
+            glowGeometry: glowGeometry, glowMaterial: glowMaterial,
+            glowFactor: isPlayer ? 0.4 : 0.55,
+            laserData: laserData, enemyLaserData: enemyLaserData,
+            opacity: startOpacity
+        });
 
-            if (laserData)      laserData.opacity = opacity;
-            if (enemyLaserData) enemyLaserData.opacity = opacity;
-
-            if (opacity <= 0) {
-                clearInterval(fadeInterval);
-                // Remove from enemy tracking if enemy laser
-                if (enemyLaserData) {
-                    const eidx = activeEnemyLasers.indexOf(enemyLaserData);
-                    if (eidx > -1) activeEnemyLasers.splice(eidx, 1);
-                }
-                // Remove from tracking if player laser
-                if (laserData) {
-                    const idx = activeLasers.indexOf(laserData);
-                    if (idx > -1) activeLasers.splice(idx, 1);
-                }
-                scene.remove(laserBeam);
-                laserGeometry.dispose();
-                laserMaterial.dispose();
-                glowGeometry.dispose();
-                glowMaterial.dispose();
-            }
-        }, 25);  // Fast interval
-        
     } catch (error) {
         console.warn('Failed to create laser beam:', error);
     }
@@ -3124,10 +4420,330 @@ function createTracerProjectile(startPos, endPos, color) {
 // ENHANCED VISUAL FEEDBACK: ENEMY HIT COLOR CHANGES
 // =============================================================================
 
+// Flash the player's ship mesh RED on a direct (unshielded) hit so
+// 3rd-person players get clear feedback that they took hull damage.
+// The GLB is a Group of meshes; we tint every child material's color
+// red, caching the original once per material on the material itself
+// (mat.userData._origHitColor) so rapid hits never bake red in — they
+// just re-extend the red window.
+let _playerShipFlashTimers = [];
+function flashPlayerShipHit() {
+    try {
+        const cs = window.cameraState;
+        const ship = cs && cs.playerShipMesh;
+        if (!ship) return;
+
+        // Impact sparks on the player ship too. Enemy fire on wingmen
+        // and enemies already sparks via flashEnemyHit -> createHitSparks;
+        // the player was the only combatant that just blinked red with
+        // no spark. Same burst + same 120ms rate-limit as flashEnemyHit
+        // so sustained fire doesn't spawn a particle system every tick.
+        try {
+            if (typeof createHitSparks === 'function' && typeof THREE !== 'undefined') {
+                const _now = Date.now();
+                if (!window._lastPlayerHitSparkTime ||
+                    (_now - window._lastPlayerHitSparkTime) > 120) {
+                    window._lastPlayerHitSparkTime = _now;
+                    const _wp = new THREE.Vector3();
+                    ship.getWorldPosition(_wp);
+                    createHitSparks(_wp, 0xffaa33, 1.0);
+                }
+            }
+        } catch (e) {}
+
+        const mats = [];
+        ship.traverse(node => {
+            if (node && node.isMesh && node.material) {
+                const list = Array.isArray(node.material) ? node.material : [node.material];
+                list.forEach(mat => {
+                    if (!mat || !mat.color) return;
+                    if (!mat.userData) mat.userData = {};
+                    if (mat.userData._origHitColor === undefined) {
+                        mat.userData._origHitColor = mat.color.getHex();
+                    }
+                    mats.push(mat);
+                });
+            }
+        });
+        if (!mats.length) return;
+
+        const setRed = () => mats.forEach(m => { if (m && m.color) m.color.setHex(0xff2233); });
+        const setOrig = () => mats.forEach(m => {
+            if (m && m.color && m.userData && m.userData._origHitColor !== undefined) {
+                m.color.setHex(m.userData._origHitColor);
+            }
+        });
+
+        // Cancel any in-flight blink sequence so overlapping hits
+        // restart cleanly (and never leave the ship stuck red).
+        _playerShipFlashTimers.forEach(t => clearTimeout(t));
+        _playerShipFlashTimers = [];
+
+        // Exactly 3 rapid red blinks within 0.5s. Phases (100ms each):
+        //   0ms red, 100 off, 200 red, 300 off, 400 red, 500 off.
+        // 3 reds total, guaranteed to end on the original colour.
+        const STEP = 100;
+        setRed(); // phase 0 (now)
+        for (let i = 1; i <= 5; i++) {
+            const red = (i % 2 === 0); // i=2,4 → red ; i=1,3,5 → original
+            _playerShipFlashTimers.push(setTimeout(
+                red ? setRed : setOrig, i * STEP));
+        }
+    } catch (e) {}
+}
+if (typeof window !== 'undefined') window.flashPlayerShipHit = flashPlayerShipHit;
+
+// =============================================================================
+// ENEMY ORANGE COMBAT SHIELD
+// Raised only while a hostile is actively engaging the player/wingman.
+// Absorbs 2 laser hits (flashing red on each) or 1 missile hit, then
+// shatters into flying shards. Borg cubes/drones and UFOs are excluded
+// (they have their own hit mechanics).
+// =============================================================================
+function _ensureEnemyShield(enemy) {
+    if (!enemy || !enemy.userData || enemy.userData._shieldMesh ||
+        enemy.userData.shieldBroken || typeof THREE === 'undefined') return;
+
+    // Size from the VISIBLE hull bounding box in WORLD units (skip the
+    // oversized invisible hitbox sphere, glow + cone layers), exactly
+    // like _ensureShipThrusterCones — enemy GLB models are scaled ~48×,
+    // so the raw hitboxSize is hugely inflated. Then convert that world
+    // radius into the enemy's LOCAL frame (the shield is a child).
+    let worldR = 90;
+    try {
+        enemy.updateWorldMatrix(true, true);
+        const box = new THREE.Box3(); box.makeEmpty();
+        const mb = new THREE.Box3();
+        let any = false;
+        enemy.traverse(node => {
+            if (!node.isMesh || !node.geometry) return;
+            const u = node.userData || {};
+            if (u.isHitbox || u.isGlowLayer || u._isThrusterCone || u.isEnemyShield) return;
+            if (!node.geometry.boundingBox) node.geometry.computeBoundingBox();
+            if (!node.geometry.boundingBox) return;
+            mb.copy(node.geometry.boundingBox).applyMatrix4(node.matrixWorld);
+            box.union(mb); any = true;
+        });
+        if (any && isFinite(box.min.x) && box.max.x > box.min.x) {
+            const sz = box.getSize(new THREE.Vector3());
+            worldR = Math.max(sz.x, sz.y, sz.z) * 0.62;
+        }
+    } catch (e) {}
+    worldR = Math.max(45, Math.min(worldR, 280));
+
+    const ws = new THREE.Vector3();
+    try { enemy.getWorldScale(ws); } catch (e) { ws.set(1, 1, 1); }
+    const s = Math.max(0.0001, (Math.abs(ws.x) + Math.abs(ws.y) + Math.abs(ws.z)) / 3);
+    const localR = worldR / s;
+
+    const mat = new THREE.MeshBasicMaterial({
+        color: 0xff8800, transparent: true, opacity: 0.0,
+        blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide
+    });
+    const shield = new THREE.Mesh(new THREE.SphereGeometry(localR, 18, 14), mat);
+    shield.frustumCulled = true;   // off-screen enemies skip the shield draw
+    shield.userData.isEnemyShield = true;
+    shield.userData.isGlowLayer = true;   // skipped by thruster-cone bbox
+    enemy.add(shield);
+    enemy.userData._shieldMesh = shield;
+    enemy.userData._shieldRadius = worldR;   // WORLD units, for shard sizing
+    enemy.userData.shieldHits = 0;
+    enemy.userData.shieldActive = false;
+}
+
+function _setEnemyShieldEngaged(enemy, engaged) {
+    const ud = enemy && enemy.userData;
+    if (!ud || ud.shieldBroken) return;
+    if (ud.isBorgCube || ud.type === 'borg_drone' || ud.isUFO) return; // own mechanics
+    if (engaged && !ud._shieldMesh) _ensureEnemyShield(enemy);
+    const sm = ud._shieldMesh;
+    if (!sm) return;
+    ud.shieldActive = !!engaged;
+    if (!engaged) { sm.material.opacity = 0; return; }
+    // Hold the red flash if one is in progress, else gentle orange pulse.
+    if (!ud._shieldFlashUntil || Date.now() > ud._shieldFlashUntil) {
+        sm.material.color.setHex(0xff8800);
+        sm.material.opacity = 0.16 + Math.sin(Date.now() * 0.006 + (enemy.id || 0)) * 0.05;
+    }
+}
+
+// Returns true if the shield absorbed the hit (caller skips health
+// damage + kill check). isMissile=true shatters in one hit.
+function _enemyShieldAbsorbHit(enemy, isMissile) {
+    const ud = enemy && enemy.userData;
+    if (!ud || !ud.shieldActive || ud.shieldBroken || !ud._shieldMesh) return false;
+    ud.shieldHits = (ud.shieldHits || 0) + 1;
+    const breakNow = isMissile || ud.shieldHits >= 2;
+    // Red flash on every shield hit.
+    ud._shieldFlashUntil = Date.now() + 170;
+    ud._shieldMesh.material.color.setHex(0xff2200);
+    ud._shieldMesh.material.opacity = 0.6;
+    if (typeof playSound === 'function') playSound('weapon');
+    if (breakNow) _shatterEnemyShield(enemy);
+    return true;
+}
+
+// Shield shatter FX. One InstancedMesh per shatter (1 draw call for all
+// shards instead of 14 separate meshes) animated on the main rAF loop
+// via updateShieldShatterFX() — no per-effect setInterval (those ran
+// off-frame and stacked GC/timer pressure when several shields broke at
+// once). Geometry is shared across every shatter; only a tiny material
+// is allocated per burst so overlapping shatters fade independently.
+const _shieldShardGeo = (typeof THREE !== 'undefined') ? new THREE.TetrahedronGeometry(1, 0) : null;
+const _shatterDummy = (typeof THREE !== 'undefined') ? new THREE.Object3D() : null;
+const _shieldShatterFX = [];
+
+function _shatterEnemyShield(enemy) {
+    const ud = enemy && enemy.userData;
+    if (!ud || !ud._shieldMesh) return;
+    const sm = ud._shieldMesh;
+    const wp = sm.getWorldPosition(new THREE.Vector3());
+    const r = ud._shieldRadius || 60;
+
+    const COUNT = 12;
+    const shardSize = r * 0.18;
+    const mat = new THREE.MeshBasicMaterial({
+        color: 0xff8800, transparent: true, opacity: 0.9,
+        blending: THREE.AdditiveBlending, depthWrite: false
+    });
+    const inst = new THREE.InstancedMesh(_shieldShardGeo, mat, COUNT);
+    inst.frustumCulled = false;
+    inst.renderOrder = 55;
+
+    const pos = [], vel = [], rot = [], spin = [];
+    for (let i = 0; i < COUNT; i++) {
+        const dir = new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).normalize();
+        pos.push(wp.clone());
+        vel.push(dir.multiplyScalar(r * (0.045 + Math.random() * 0.05)));
+        rot.push({ x: Math.random() * 6.28, y: Math.random() * 6.28, z: Math.random() * 6.28 });
+        spin.push({ x: (Math.random() - 0.5) * 0.4, y: (Math.random() - 0.5) * 0.4, z: (Math.random() - 0.5) * 0.4 });
+        _shatterDummy.position.copy(wp);
+        _shatterDummy.rotation.set(rot[i].x, rot[i].y, rot[i].z);
+        _shatterDummy.scale.setScalar(shardSize);
+        _shatterDummy.updateMatrix();
+        inst.setMatrixAt(i, _shatterDummy.matrix);
+    }
+    inst.instanceMatrix.needsUpdate = true;
+    scene.add(inst);
+    _shieldShatterFX.push({ inst, mat, pos, vel, rot, spin, shardSize, life: 1.0 });
+
+    if (sm.parent) sm.parent.remove(sm);
+    sm.geometry.dispose(); sm.material.dispose();
+    ud._shieldMesh = null;
+    ud.shieldActive = false;
+    ud.shieldBroken = true;   // gone for good — hull is now exposed
+    if (typeof playSound === 'function') playSound('explosion');
+}
+
+// Advance all active shield-shatter bursts. Called once per frame from
+// the animate loop. Frame-rate-independent decay keeps the look stable.
+function updateShieldShatterFX() {
+    if (!_shieldShatterFX.length || !_shatterDummy) return;
+    for (let k = _shieldShatterFX.length - 1; k >= 0; k--) {
+        const fx = _shieldShatterFX[k];
+        fx.life -= 0.06;
+        if (fx.life <= 0) {
+            scene.remove(fx.inst);
+            if (fx.inst.dispose) fx.inst.dispose();
+            fx.mat.dispose();
+            _shieldShatterFX.splice(k, 1);
+            continue;
+        }
+        fx.mat.opacity = 0.9 * fx.life;
+        for (let i = 0; i < fx.pos.length; i++) {
+            fx.pos[i].add(fx.vel[i]);
+            const ro = fx.rot[i], sp = fx.spin[i];
+            ro.x += sp.x; ro.y += sp.y; ro.z += sp.z;
+            _shatterDummy.position.copy(fx.pos[i]);
+            _shatterDummy.rotation.set(ro.x, ro.y, ro.z);
+            _shatterDummy.scale.setScalar(fx.shardSize);
+            _shatterDummy.updateMatrix();
+            fx.inst.setMatrixAt(i, _shatterDummy.matrix);
+        }
+        fx.inst.instanceMatrix.needsUpdate = true;
+    }
+}
+if (typeof window !== 'undefined') window.updateShieldShatterFX = updateShieldShatterFX;
+
+// BORG cube hit pulse. The cube is a THREE.Group of children (cube body
+// with MeshStandardMaterial emissive 0x00ff00, wireframe glow box,
+// edges, core sphere); none of the standard hit-flash paths touched
+// them, so hits felt silent. Briefly punches up the emissive + wireframe
+// opacity for ~140 ms, then eases back — restores the "I clearly hit
+// the cube" feedback from early builds. Rate-limited per cube.
+const _borgHitTimers = new WeakMap();
+function flashBorgCubeOnHit(cube) {
+    if (!cube || typeof cube.traverse !== 'function') return;
+    const prev = _borgHitTimers.get(cube);
+    if (prev) prev.forEach(t => clearTimeout(t));
+
+    const restore = [];
+    cube.traverse(node => {
+        if (!node || node.userData && node.userData.isHitbox) return;
+        const m = node.material;
+        if (!m) return;
+        if (typeof m.emissiveIntensity === 'number') {
+            restore.push({ m, key: 'emissiveIntensity', orig: m.emissiveIntensity });
+            m.emissiveIntensity = Math.min(2.5, m.emissiveIntensity + 1.4);
+        }
+        if (m.wireframe && typeof m.opacity === 'number') {
+            restore.push({ m, key: 'opacity', orig: m.opacity });
+            m.opacity = Math.min(1.0, m.opacity + 0.6);
+        }
+    });
+    const t = setTimeout(() => {
+        restore.forEach(r => { r.m[r.key] = r.orig; });
+    }, 140);
+    _borgHitTimers.set(cube, [t]);
+}
+if (typeof window !== 'undefined') window.flashBorgCubeOnHit = flashBorgCubeOnHit;
+
 // FIXED: Enemy hit flash that works with MeshBasicMaterial (no emissive properties)
 function flashEnemyHit(enemy, damage = 1) {
-    if (!enemy || !enemy.material) return;
-    
+    if (!enemy) return;
+
+    // Impact sparks — fire for EVERY surviving hit, regardless of
+    // whether the model has a top-level .material (GLB enemies are
+    // Groups and don't, so the color-flash below is skipped for them;
+    // the sparks are what the player actually sees on those). Use the
+    // world position so it lands on the ship even when the enemy is a
+    // child of a system group (e.g. Borg drones).
+    // Rate-limited to one burst per target per 120ms. Sustained
+    // autopilot/wingman fire calls flashEnemyHit many times a second;
+    // without this each tick spawned a fresh particle system +
+    // explosionManager entry, which was a measurable jitter source.
+    if (enemy.userData && enemy.userData.health > 0 &&
+        typeof createHitSparks === 'function' && typeof THREE !== 'undefined') {
+        const _now = Date.now();
+        if (!enemy.userData._lastSparkTime || (_now - enemy.userData._lastSparkTime) > 120) {
+            enemy.userData._lastSparkTime = _now;
+            const wp = new THREE.Vector3();
+            if (enemy.getWorldPosition) enemy.getWorldPosition(wp);
+            else if (enemy.position) wp.copy(enemy.position);
+            const tint = (enemy.userData && enemy.userData.galaxyColor) || 0xffaa33;
+            // Regular enemies are 50% scale (ENEMY_SCALE_FACTOR); bosses /
+            // guardians / BORG cubes keep full size so their sparks read
+            // at the long engagement ranges those set-pieces sit at.
+            const _ud = enemy.userData || {};
+            const _isBigTarget = _ud.isBoss || _ud.isEliteGuardian ||
+                                 _ud.isBlackHoleGuardian || _ud.isBorgCube ||
+                                 _ud.type === 'borg_cube';
+            const sparkScale = _isBigTarget ? 1.0 : 0.5;
+            createHitSparks(wp, tint, sparkScale);
+        }
+    }
+
+    // BORG cubes are Groups with no top-level material, so the colour
+    // flash below would early-return and the player had no hit cue
+    // beyond the small sparks. Pulse the cube's emissive + wireframe
+    // glow on the children directly instead.
+    if (enemy.userData && (enemy.userData.isBorgCube ||
+                           enemy.userData.type === 'borg_cube')) {
+        flashBorgCubeOnHit(enemy);
+    }
+
+    if (!enemy.material) return;
+
     // Store original material if not already stored
     if (!enemy.userData.originalMaterial) {
         enemy.userData.originalMaterial = {
@@ -3180,7 +4796,7 @@ function createScreenDamageEffect(attackerPosition = null) {
     if (!attackerPosition) {
         // Fallback to old full-screen effect if no attacker position provided
         const damageOverlay = document.createElement('div');
-        damageOverlay.className = 'absolute inset-0 bg-red-500 pointer-events-none z-30';
+        damageOverlay.className = 'absolute inset-0 bg-red-500 pointer-events-none z-30 combat-damage-fx';
         damageOverlay.style.opacity = '0';
         damageOverlay.style.animation = 'damageFlash 0.5s ease-out forwards';
         document.body.appendChild(damageOverlay);
@@ -3294,7 +4910,7 @@ function createDirectionalDamageEffect(attackDirection) {
     // transmission prompt (1000) so the player always sees incoming-fire
     // warnings even during a transmission.
     const damageOverlay = document.createElement('div');
-    damageOverlay.className = 'fixed pointer-events-none';
+    damageOverlay.className = 'fixed pointer-events-none combat-damage-fx';
     damageOverlay.style.cssText =
         'top:0;left:0;right:0;bottom:0;' +   // full viewport, always
         overlayStyle + extraStyle +
@@ -3318,7 +4934,7 @@ function createDirectionalDamageEffect(attackDirection) {
 
 function createDamageDirectionIndicator(direction) {
     const indicator = document.createElement('div');
-    indicator.className = 'fixed pointer-events-none text-red-400 font-bold text-lg';
+    indicator.className = 'fixed pointer-events-none text-red-400 font-bold text-lg combat-damage-fx';
     // Above mission alert (z-50) and transmission prompt (1000) so the
     // directional arrows always read even during a transmission.
     indicator.style.zIndex = '2001';
@@ -3327,10 +4943,18 @@ function createDamageDirectionIndicator(direction) {
     indicator.style.opacity = '0';
     indicator.style.transition = 'all 0.3s ease-out';
     
-    // Position and text based on direction (REMOVED EMOJIS)
+    // Position and text based on direction (REMOVED EMOJIS).
+    // On desktop the top center is occupied by the title panel and the
+    // bottom center by the DEMO AUTOPILOT pill, so we push the top and
+    // bottom indicators clear of those. Mobile keeps the tight 20px
+    // offsets — the title is smaller and the demo HUD is at the top.
+    const _isMobileViewport = (typeof window !== 'undefined') &&
+        (('ontouchstart' in window) || window.innerWidth < 768);
+    const _topOffset    = _isMobileViewport ? 20 : 110;  // below title panel
+    const _bottomOffset = _isMobileViewport ? 20 : 80;   // above demo pill
     let text = '';
     let positionStyle = '';
-    
+
     switch (direction) {
         case 'left':
             text = '< UNDER ATTACK';
@@ -3342,11 +4966,11 @@ function createDamageDirectionIndicator(direction) {
             break;
         case 'top':
             text = '^ UNDER ATTACK';
-            positionStyle = 'top: 20px; left: 50%; transform: translateX(-50%);';
+            positionStyle = 'top: ' + _topOffset + 'px; left: 50%; transform: translateX(-50%);';
             break;
         case 'bottom':
             text = 'v UNDER ATTACK';
-            positionStyle = 'bottom: 20px; left: 50%; transform: translateX(-50%);';
+            positionStyle = 'bottom: ' + _bottomOffset + 'px; left: 50%; transform: translateX(-50%);';
             break;
         case 'behind':
             text = '!!! AMBUSH !!!';
@@ -3567,6 +5191,21 @@ function initializeControlButtons() {
             e.preventDefault();
             cycleTargets();
         }
+
+        // Shift+R toggles realistic vs arcade slingshot physics.
+        if ((e.key === 'R' || e.key === 'r') && e.shiftKey) {
+            e.preventDefault();
+            gameState.realisticSlingshot = !gameState.realisticSlingshot;
+            if (typeof showAchievement === 'function') {
+                showAchievement(
+                    gameState.realisticSlingshot ? 'Realistic slingshots ON' : 'Arcade slingshots ON',
+                    gameState.realisticSlingshot
+                        ? 'Boost vector = body orbit + ≤30° aim. Periapsis matters.'
+                        : 'Boost vector = look direction. Mass-scaled magnitude.',
+                    true
+                );
+            }
+        }
         
         // Shield toggle - Caps Lock
 if (e.key === 'Tab') {
@@ -3580,23 +5219,16 @@ if (e.key === 'Tab') {
         
         if (e.key === 'Enter') {
             e.preventDefault();
-            
-            let nearestPlanet = null;
-            let nearestDistance = Infinity;
-            
-            if (typeof activePlanets !== 'undefined') {
-                activePlanets.forEach(planet => {
-                    const distance = camera.position.distanceTo(planet.position);
-                    const radius = planet.geometry ? planet.geometry.parameters.radius : 5;
-                    const slingshotRange = Math.max(60, radius + 25);
-                    if (distance < slingshotRange && distance < nearestDistance) {
-                        nearestPlanet = planet;
-                        nearestDistance = distance;
-                    }
-                });
-            }
-            
-            if (nearestPlanet && gameState.energy >= 20 && !gameState.slingshot.active) {
+
+            // Slingshot eligibility now lives entirely inside
+            // executeSlingshot (range, cooldown, energy, tier unlocks).
+            // Use findSlingshotTarget so the "no target → toggle nav"
+            // fallback below still works.
+            const nearestPlanet = (typeof findSlingshotTarget === 'function')
+                ? findSlingshotTarget()
+                : null;
+
+            if (nearestPlanet && !gameState.slingshot.active) {
                 if (typeof executeSlingshot === 'function') {
                     executeSlingshot();
                 }
@@ -3793,15 +5425,42 @@ setTimeout(() => {
         zoomScope.style.left = scopeCurrentX + 'px';
         zoomScope.style.top = scopeCurrentY + 'px';
 
-        // Get mouse position - check crosshair position first (this is what's properly tracked!)
-        const mouseX = gameState.crosshairX || gameState.mouseX || window.innerWidth / 2;
-        const mouseY = gameState.crosshairY || gameState.mouseY || window.innerHeight / 2;
+        // Sample the in-tick frame snapshot taken by the main render
+        // loop. renderer.domElement itself is an empty buffer here
+        // (preserveDrawingBuffer:false), so reading it directly is what
+        // made the scope blank — use the snapshot, fall back only if it
+        // hasn't been produced yet this session.
+        const scopeSource = (typeof window !== 'undefined' && window.__zoomFrameCanvas)
+            ? window.__zoomFrameCanvas
+            : renderer.domElement;
 
-        // Calculate source area on the renderer canvas
-        const sourceWidth = 250 / zoomFactor;
-        const sourceHeight = 250 / zoomFactor;
-        const sourceX = mouseX - (sourceWidth / 2);
-        const sourceY = mouseY - (sourceHeight / 2);
+        // Centre the magnified region on the scope's OWN on-screen
+        // centre (it follows the real mouse via scopeTarget = clientX).
+        // The old code used gameState.crosshairX/Y, which aim-assist /
+        // target-lock continuously pulls away from the cursor — that's
+        // why the loupe didn't zoom where the mouse was.
+        const scopeCenterX = scopeCurrentX + 125;
+        const scopeCenterY = scopeCurrentY + 125;
+
+        // The snapshot canvas is sized in DEVICE pixels
+        // (innerWidth × devicePixelRatio); mouse/scope coords are CSS
+        // pixels. Without converting, on any HiDPI display the sample
+        // is offset toward the top-left and over-magnified.
+        const srcCanvasW = scopeSource.width || window.innerWidth;
+        const srcCanvasH = scopeSource.height || window.innerHeight;
+        const dpScaleX = srcCanvasW / window.innerWidth;
+        const dpScaleY = srcCanvasH / window.innerHeight;
+
+        const regionCssW = 250 / zoomFactor;   // CSS px sampled around centre
+        const regionCssH = 250 / zoomFactor;
+        const sw = regionCssW * dpScaleX;       // → device px
+        const sh = regionCssH * dpScaleY;
+        let sx = (scopeCenterX - regionCssW / 2) * dpScaleX;
+        let sy = (scopeCenterY - regionCssH / 2) * dpScaleY;
+        // Keep the sampled rect fully inside the source by shifting its
+        // origin (never shrinking it — shrinking would distort zoom).
+        sx = Math.max(0, Math.min(sx, srcCanvasW - sw));
+        sy = Math.max(0, Math.min(sy, srcCanvasH - sh));
 
         // Clear canvas
         ctx.clearRect(0, 0, 250, 250);
@@ -3814,17 +5473,7 @@ setTimeout(() => {
 
         // Draw magnified portion (now clipped to circle)
         try {
-            ctx.drawImage(
-                renderer.domElement,
-                Math.max(0, sourceX),
-                Math.max(0, sourceY),
-                sourceWidth,
-                sourceHeight,
-                0,
-                0,
-                250,
-                250
-            );
+            ctx.drawImage(scopeSource, sx, sy, sw, sh, 0, 0, 250, 250);
         } catch (err) {
             console.warn('Zoom scope render error:', err);
         }
@@ -4062,8 +5711,17 @@ function checkWeaponHits(targetPosition) {
             const distance = enemy.position.distanceTo(targetPosition);
 
             if (distance < collisionDistance) {
+                // Orange combat shield intercepts laser fire first — 1st
+                // hit flashes red & holds, 2nd hit shatters it. Either way
+                // no health damage passes while the shield is up.
+                if (typeof _enemyShieldAbsorbHit === 'function' &&
+                    _enemyShieldAbsorbHit(enemy, false)) {
+                    _activateOnDamage(enemy);
+                    return; // shield ate the shot
+                }
                 const damage = 1; // Standard damage
                 enemy.userData.health -= damage;
+                enemy.userData.lastHitTime = Date.now();
                 _activateOnDamage(enemy);
 
                 // ENHANCED: Use improved hit effect with color changes
@@ -4076,7 +5734,11 @@ if (enemy.userData.health <= 0) {
     // Check if this was a boss BEFORE removing it
     const wasBoss = enemy.userData.isBoss;
     const bossName = enemy.userData.name;
-    
+
+    // Reputation + small energy refund for the kill (handles boss
+    // bonuses internally: max-energy refill + warp charge).
+    if (typeof awardKillReward === 'function') awardKillReward(enemy);
+
     // Record the kill position for elite guardian spawning
     if (typeof recordEnemyKillPosition === 'function') {
         recordEnemyKillPosition(enemy);
@@ -4097,9 +5759,40 @@ if (enemy.userData.health <= 0) {
         distressBeaconSystem.onEnemyDestroyed(enemy);
     }
     
-    // Enemy destroyed - NOW create explosion and remove
-    createExplosionEffect(enemy.position, 0xff4444, 15);
-    playSound('explosion');
+    // Enemy destroyed - NOW create explosion and remove. Bosses and
+    // elite/black-hole guardians get the larger multi-stage detonation
+    // so the player feels the weight of the kill; regulars use the
+    // standard puff.
+    const _enemyUD = enemy.userData || {};
+    const _bigKill = _enemyUD.isBoss || _enemyUD.isEliteGuardian || _enemyUD.isBlackHoleGuardian;
+    const _isBorg = _enemyUD.isBorgCube || _enemyUD.type === 'borg_drone' || _enemyUD.isBorg;
+    // Martian Pirates (but NOT Vulcan Patrols — they share galaxyId 7)
+    // keep the original simple explosion the player is used to.
+    const _isPirate = _enemyUD.isMartianPirate && !_enemyUD.isVulcanPatrol;
+    if (_isBorg && typeof createMassiveBorgExplosion === 'function') {
+        createMassiveBorgExplosion(enemy.position, _enemyUD.cubeSize || 30);
+        playSound('explosion');
+    } else if (_bigKill && typeof createBossExplosion === 'function') {
+        const _color = _enemyUD.galaxyColor || 0xff5522;
+        createBossExplosion(enemy.position, {
+            color: _color,
+            scale: _enemyUD.isBoss ? 1.8 : 1.3
+        });
+    } else if (_isPirate) {
+        // Original pre-upgrade explosion for Martian Pirates.
+        createExplosionEffect(enemy.position, 0xff4444, 15);
+        playSound('explosion');
+    } else if (typeof createFactionExplosion === 'function' &&
+               typeof _enemyUD.galaxyId === 'number') {
+        // Regular hostile: faction-flavoured death effect. Hostiles in
+        // the black-hole (distant, non-local) galaxies detonate at half
+        // diameter; the local-galaxy fights keep full size.
+        createFactionExplosion(enemy.position, _enemyUD.galaxyId,
+            isEnemyInLocalGalaxy(enemy) ? 1.0 : 0.5);
+    } else {
+        createExplosionEffect(enemy.position, 0xff4444, 15);
+        playSound('explosion');
+    }
     
     // UFOs always drop missiles when destroyed
     if (enemy.userData.isUFO || enemy.userData.alwaysDropMissile) {
@@ -4688,7 +6381,19 @@ function updateMissiles() {
 function handleMissileHit(missile, enemy) {
     scene.remove(missile);
 
+    // A missile shatters an active orange shield in one hit. The shield
+    // consumes the missile (no health damage that strike); subsequent
+    // fire hits the now-exposed hull.
+    if (typeof _enemyShieldAbsorbHit === 'function' &&
+        _enemyShieldAbsorbHit(enemy, true)) {
+        _activateOnDamage(enemy);
+        createMissileExplosion(missile.position);
+        if (typeof playSound === 'function') playSound('missile_explosion');
+        return;
+    }
+
     enemy.userData.health -= gameState.missiles.damage;
+    enemy.userData.lastHitTime = Date.now();
     _activateOnDamage(enemy);
     flashEnemyHit(enemy, gameState.missiles.damage);
     createMissileExplosion(missile.position);
@@ -4701,8 +6406,35 @@ function handleMissileHit(missile, enemy) {
         const wasBoss = enemy.userData.isBoss;
         const bossName = enemy.userData.name;
 
-        createExplosionEffect(enemy.position, 0xff4444, 15);
-        playSound('explosion');
+        // Reputation + small energy refund for the missile kill.
+        if (typeof awardKillReward === 'function') awardKillReward(enemy);
+
+        // Same big-kill upgrade for missile finishes.
+        const _missUD = enemy.userData || {};
+        const _missBig = _missUD.isBoss || _missUD.isEliteGuardian || _missUD.isBlackHoleGuardian;
+        const _missBorg = _missUD.isBorgCube || _missUD.type === 'borg_drone' || _missUD.isBorg;
+        const _missPirate = _missUD.isMartianPirate && !_missUD.isVulcanPatrol;
+        if (_missBorg && typeof createMassiveBorgExplosion === 'function') {
+            createMassiveBorgExplosion(enemy.position, _missUD.cubeSize || 30);
+            playSound('explosion');
+        } else if (_missBig && typeof createBossExplosion === 'function') {
+            const _color = _missUD.galaxyColor || 0xff5522;
+            createBossExplosion(enemy.position, {
+                color: _color,
+                scale: _missUD.isBoss ? 1.8 : 1.3
+            });
+        } else if (_missPirate) {
+            createExplosionEffect(enemy.position, 0xff4444, 15);
+            playSound('explosion');
+        } else if (typeof createFactionExplosion === 'function' &&
+                   typeof _missUD.galaxyId === 'number') {
+            // Half diameter for black-hole (distant) galaxy hostiles.
+            createFactionExplosion(enemy.position, _missUD.galaxyId,
+                isEnemyInLocalGalaxy(enemy) ? 1.0 : 0.5);
+        } else {
+            createExplosionEffect(enemy.position, 0xff4444, 15);
+            playSound('explosion');
+        }
 
         if (wasBoss) {
             showAchievement('BOSS DEFEATED!', `${bossName} destroyed by missile!`);
@@ -4908,6 +6640,13 @@ function updateMissileUI() {
 
 // RESTORED: Working weapon system with asteroid targeting
 function fireWeapon() {
+    // Once the player is dying / game over, stop all player weapon fire
+    // so the demo (or a held trigger) can't keep shooting lasers
+    // through the death-explosion sequence.
+    if (typeof gameState !== 'undefined' &&
+        (gameState.playerDying || gameState.gameOver || gameState.gameOverScreenShown)) {
+        return;
+    }
     // Resume audio context on user interaction to fix suspended state warning
     resumeAudioContext();
 
@@ -5651,36 +7390,26 @@ function enableAutoThrust() {
 // =============================================================================
 
 function createDeathEffect() {
-    console.error('💀💀💀 createDeathEffect CALLED — hull=' +
-        (gameState ? gameState.hull : '?') +
-        ' | gameStartTime=' + (gameState ? gameState.gameStartTime : '?') +
-        ' | trace:', new Error().stack);
-    // ⭐ Enhanced death effect matching planet collision mechanics
-    // Stop all player motion
+    // Route through the shared triggerPlayerDeath helper so the
+    // explosion plays out (visuals + layered sound) before the
+    // MISSION FAILED screen takes over. Without this hop, enemy
+    // weapon fire at hull=0 popped the game-over screen instantly,
+    // hiding the explosion entirely.
+    if (typeof triggerPlayerDeath === 'function') {
+        triggerPlayerDeath('HULL BREACH',
+            'Ship destroyed by enemy fire - hull integrity: 0%');
+        return;
+    }
+    // Last-resort fallback if the helper isn't loaded for some
+    // reason (e.g. early in the boot before game-physics.js runs).
     if (typeof gameState !== 'undefined' && gameState.velocityVector) {
         gameState.velocityVector.set(0, 0, 0);
     }
-
-    // Create massive player explosion effect
-    if (typeof createPlayerExplosion === 'function') {
-        createPlayerExplosion();
-    }
-
-    // Play explosion/vaporizing sound
-    if (typeof playSound === 'function') {
-        playSound('explosion');
-    }
-
-    // Show game over screen
+    if (typeof createPlayerExplosion === 'function') createPlayerExplosion();
+    if (typeof playSound === 'function') playSound('explosion');
     if (typeof showGameOverScreen === 'function') {
         showGameOverScreen('HULL BREACH', 'Ship destroyed by enemy fire - hull integrity: 0%');
-    } else if (typeof gameOver !== 'undefined') {
-        gameOver('Hull integrity critical - ship destroyed!');
-    } else {
-        showAchievement('GAME OVER', 'Ship destroyed - mission failed!');
     }
-
-    console.log('💀 PLAYER DESTROYED: Hull reached 0% from enemy damage');
 }
 
 function playVictoryMusic() {
@@ -6204,90 +7933,106 @@ function _roleFor(ally) {
 const _allyDir = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
 const _allyTarget = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
 
+// Build a wingman group + mesh + userData. Returns the group ready to
+// be positioned and added to the scene. Used for both the Sol-start
+// Alpha and the rescue-Beta parked near Sagittarius A*.
+function _makeWingman(roleKey, name, primaryColor) {
+    const group = new THREE.Group();
+    let shipMesh;
+    if (typeof getPlayerModel === 'function') {
+        const model = getPlayerModel();
+        if (model) {
+            shipMesh = model.clone();
+            const box = new THREE.Box3().setFromObject(shipMesh);
+            const center = box.getCenter(new THREE.Vector3());
+            shipMesh.traverse(child => {
+                if (child.isMesh) {
+                    child.position.sub(center);
+                    child.material = new THREE.MeshBasicMaterial({
+                        color: primaryColor,
+                        transparent: true,
+                        opacity: 0.85,
+                        side: THREE.FrontSide
+                    });
+                    child.visible = true;
+                    child.frustumCulled = false;
+                }
+            });
+            shipMesh.scale.set(96, 96, 96);
+        }
+    }
+    if (!shipMesh) {
+        const geo = new THREE.ConeGeometry(6, 16, 6);
+        const mat = new THREE.MeshBasicMaterial({ color: primaryColor });
+        shipMesh = new THREE.Mesh(geo, mat);
+    }
+    group.add(shipMesh);
+
+    const profile = WINGMAN_ROLES[roleKey];
+    group.userData = {
+        type: 'ally',
+        name: name,
+        role: roleKey,
+        health: 50,
+        maxHealth: 50,
+        cruiseSpeed: 4.5,
+        combatSpeed: 6.5,
+        firingRange: 350,
+        detectionRange: 3000,
+        systemRadius: 100000,
+        lastAttack: 0,
+        currentTarget: null,
+        isAlly: true,
+        missilesRemaining: profile.missilesMax,
+        missilesMax: profile.missilesMax,
+        lastMissile: 0,
+        missileCooldownMs: profile.missileCooldownMs,
+        aiState: 'patrol',
+        patrolTarget: null,
+        patrolArriveTime: 0,
+        patrolDwellMs: profile.patrolDwellMs,
+        engageTarget: null,
+        velocity: new THREE.Vector3(),
+    };
+    group.frustumCulled = false;
+    return group;
+}
+
 function createAllyShips() {
     if (typeof THREE === 'undefined' || typeof scene === 'undefined' || typeof camera === 'undefined') return;
 
-    // Starting waypoints — each wingman begins patrol at a different planet
-    const startOffsets = [
-        new THREE.Vector3(960, 20, 0),    // Alpha starts near Mars orbit
-        new THREE.Vector3(-2000, -10, 0),  // Beta starts near Jupiter orbit
-    ];
+    const sol = (typeof window !== 'undefined' && window.localSystemOffset)
+        ? window.localSystemOffset
+        : { x: 8000, y: 0, z: 4800 };
 
-    for (let i = 0; i < 2; i++) {
-        const group = new THREE.Group();
+    // Alpha (Aggressor) starts WITH the player in the Sol system, just
+    // off Earth's spawn position so the player has an immediate
+    // wingman from frame 1.
+    const alpha = _makeWingman('aggressor', 'Wingman Alpha', 0x00ff88);
+    alpha.position.set(sol.x + 720, sol.y + 20, sol.z + 80);
+    scene.add(alpha);
+    allyShips.push(alpha);
 
-        let shipMesh;
-        if (typeof getPlayerModel === 'function') {
-            const model = getPlayerModel();
-            if (model) {
-                shipMesh = model.clone();
-                const box = new THREE.Box3().setFromObject(shipMesh);
-                const center = box.getCenter(new THREE.Vector3());
-                shipMesh.traverse(child => {
-                    if (child.isMesh) {
-                        child.position.sub(center);
-                        child.material = new THREE.MeshBasicMaterial({
-                            color: i === 0 ? 0x00ff88 : 0x88aaff,
-                            transparent: true,
-                            opacity: 0.85,
-                            side: THREE.FrontSide
-                        });
-                        child.visible = true;
-                        child.frustumCulled = false;
-                    }
-                });
-                shipMesh.scale.set(96, 96, 96);
-            }
-        }
-        if (!shipMesh) {
-            const geo = new THREE.ConeGeometry(6, 16, 6);
-            const mat = new THREE.MeshBasicMaterial({ color: i === 0 ? 0x00ff88 : 0x88aaff });
-            shipMesh = new THREE.Mesh(geo, mat);
-        }
-        group.add(shipMesh);
+    // Beta (Defender) + Gamma (Aggressor) deploy at Sagittarius A*
+    // (world origin), ALREADY in the fight against the Vulcan patrols
+    // there — active from frame 1, on opposite sides ~1500u out (just
+    // beyond the black-hole keep-out, right in the Vulcan ring). The
+    // wingman AI's _scanForEnemy picks up the nearby Vulcans and they
+    // engage; while the player is far away in Sol they hold the line
+    // here (patrol→engage, or stranded→engage between waves).
+    const beta = _makeWingman('defender', 'Wingman Beta', 0x88aaff);
+    beta.userData.colorNum = 0x88aaff;
+    beta.position.set(1500, 80, 400);
+    scene.add(beta);
+    allyShips.push(beta);
 
-        group.position.copy(startOffsets[i]);
+    const gamma = _makeWingman('aggressor', 'Wingman Gamma', 0xffcc44);
+    gamma.userData.colorNum = 0xffcc44;  // amber — read by thruster/radar tint
+    gamma.position.set(-1400, -60, -500);
+    scene.add(gamma);
+    allyShips.push(gamma);
 
-        const _roleKey = i === 0 ? 'aggressor' : 'defender';
-        const _profile = WINGMAN_ROLES[_roleKey];
-        group.userData = {
-            type: 'ally',
-            name: i === 0 ? 'Wingman Alpha' : 'Wingman Beta',
-            // Alpha is Aggressor (close-range brawler), Beta is Defender
-            // (sticks near player and intercepts threats targeting them)
-            role: _roleKey,
-            health: 100,
-            maxHealth: 100,
-            cruiseSpeed: 4.5,
-            combatSpeed: 6.5,
-            firingRange: 350,
-            detectionRange: 3000,
-            // Wingmen now follow the player anywhere via the follow state,
-            // so the system radius doesn't bind them to Sol anymore.
-            systemRadius: 100000,
-            lastAttack: 0,
-            currentTarget: null,
-            isAlly: true,
-            // Missile loadout varies by role (aggressor=8, defender=6, …)
-            missilesRemaining: _profile.missilesMax,
-            missilesMax: _profile.missilesMax,
-            lastMissile: 0,
-            missileCooldownMs: _profile.missileCooldownMs,
-            // Independent AI state
-            aiState: 'patrol',
-            patrolTarget: null,
-            patrolArriveTime: 0,
-            patrolDwellMs: _profile.patrolDwellMs,
-            engageTarget: null,
-            velocity: new THREE.Vector3(),
-        };
-
-        group.frustumCulled = false;
-        scene.add(group);
-        allyShips.push(group);
-    }
-
-    console.log('🛡️ 2 ally wingmen deployed — independent patrol mode');
+    console.log('🛡️ 3 wingmen deployed: Alpha at Sol, Beta + Gamma battling Vulcans at Sgr A*');
 }
 
 // ── Nebula wingman recruitment ───────────────────────────────────────────
@@ -6369,8 +8114,8 @@ function recruitNebulaWingman(nebulaName, spawnPos) {
         colorStr: recruit.colorStr,
         recruitedFrom: nebulaName || 'unknown nebula',
         role: role,
-        health: 100,
-        maxHealth: 100,
+        health: 50,
+        maxHealth: 50,
         cruiseSpeed: 4.5,
         combatSpeed: 6.5,
         firingRange: 350,
@@ -6500,13 +8245,30 @@ function _isPlayerInHomeSystem() {
     return false;
 }
 
+// Boss-victory wingman celebration. When an area boss (or mission
+// boss) dies, every living wingman drops what it's doing and orbits
+// the player tightly for a few seconds — a "we won" fly-by — before
+// resuming patrol. triggerWingmanCelebration just stamps a global
+// deadline; updateAllyShips reads it and switches state.
+let _wingmanCelebrateUntil = 0;
+function triggerWingmanCelebration(durationMs) {
+    _wingmanCelebrateUntil = Date.now() + (durationMs || 5500);
+    if (typeof showAchievement === 'function') {
+        showAchievement('Squadron Victory Roll', 'Your wingmen rally around you to celebrate the kill!', false);
+    }
+}
+if (typeof window !== 'undefined') window.triggerWingmanCelebration = triggerWingmanCelebration;
+
 function updateAllyShips() {
-    if (!allyShips.length || typeof camera === 'undefined' || typeof THREE === 'undefined') return;
+    if (typeof camera === 'undefined' || typeof THREE === 'undefined') return;
     if (!gameState || !gameState.gameStarted || gameState.gameOver) return;
+
+    if (!allyShips.length) return;
 
     const now = Date.now();
     const playerPos = camera.position;
     const playerWarping = _isPlayerWarping();
+    const celebrating = now < _wingmanCelebrateUntil;
 
     allyShips.forEach(ally => {
         if (!ally || ally.userData.health <= 0) return;
@@ -6515,6 +8277,23 @@ function updateAllyShips() {
         const pos = ally.position;
         const distFromOrigin = pos.length();
         const distToPlayer = pos.distanceTo(playerPos);
+
+        // Wingman thruster cones — same orange + faction-tint scheme
+        // as enemies, but tinted toward their wingman colour so the
+        // friendly formation reads at a glance.
+        if (typeof _ensureShipThrusterCones === 'function') {
+            const wcol = (ud.name === 'Wingman Alpha') ? 0x00ff88 :
+                         (ud.colorNum) ? ud.colorNum : 0x88aaff;
+            _ensureShipThrusterCones(ally, wcol);
+            const vmag = ud.velocity ? ud.velocity.length() : 0;
+            const prevSpeed = (typeof ud._prevConeSpeed === 'number') ? ud._prevConeSpeed : vmag;
+            // Fire when speeding up (accelerating) or warping; the cone has its
+            // own smooth fade so brief frames between accel pulses stay lit.
+            const accelerating = vmag > prevSpeed + 0.0006;
+            const underPower = vmag > 0.4;
+            _updateShipThrusterCones(ally, ud._wasWarping || accelerating || underPower);
+            ud._prevConeSpeed = vmag;
+        }
 
         // ── FTL anchor: warp ended this frame and a wingman in follow
         // state is still far from the player — pull them in via a small
@@ -6532,6 +8311,29 @@ function updateAllyShips() {
         const threat = _scanForEnemy(ally);
 
         // ── State transitions ────────────────────────────────────────────
+        // Boss-victory celebration takes priority over everything except
+        // an active warp (we never want wingmen stranded). They abandon
+        // combat/patrol and rally into a tight orbit around the player.
+        if (celebrating && !playerWarping) {
+            if (ud.aiState !== 'celebrate') {
+                _wingmanTacticalMessage(ud, 'kill');
+                // Give each wingman a distinct orbit phase + radius so
+                // they form a ring rather than stacking on one point.
+                const idx = allyShips.indexOf(ally);
+                ud._celebPhase = idx * (Math.PI * 2 / Math.max(1, allyShips.length));
+                ud._celebRadius = 130 + (idx % 3) * 55;
+                ud._celebHeight = (idx % 2 === 0 ? 1 : -1) * (30 + (idx % 3) * 20);
+            }
+            ud.aiState = 'celebrate';
+            ud.engageTarget = null;
+            ud.patrolTarget = null;
+        } else if (!celebrating && ud.aiState === 'celebrate') {
+            // Party's over — drop back to patrol (which biases toward
+            // following the player, then on to the nebula).
+            ud.aiState = 'patrol';
+            ud.patrolTarget = null;
+        }
+
         // Player is warping (slingshot/emergency/BH) — drop everything and follow
         if (playerWarping && ud.aiState !== 'engage') {
             if (ud.aiState !== 'follow') _wingmanTacticalMessage(ud, 'follow');
@@ -6606,7 +8408,9 @@ function updateAllyShips() {
         }
 
         // ── Execute current state ────────────────────────────────────────
-        if (ud.aiState === 'engage' && ud.engageTarget) {
+        if (ud.aiState === 'celebrate') {
+            _executeCelebrate(ally, ud, now, playerPos);
+        } else if (ud.aiState === 'engage' && ud.engageTarget) {
             _executeEngage(ally, ud, now);
         } else if (ud.aiState === 'follow') {
             _executeFollow(ally, ud, playerPos);
@@ -6726,6 +8530,13 @@ function _executeEngage(ally, ud, now) {
 
         // Apply 10% laser damage
         if (et.userData) {
+            // Wingman fire is also intercepted by the orange shield
+            // (counts toward its 2-laser-hit break).
+            if (typeof _enemyShieldAbsorbHit === 'function' &&
+                _enemyShieldAbsorbHit(et, false)) {
+                _activateOnDamage(et);
+                return;
+            }
             const wasAlive = et.userData.health > 0;
             et.userData.health -= 0.1;
             _activateOnDamage(et);
@@ -6898,11 +8709,19 @@ function _fireWingmanLaser(startPos, endPos, color) {
         scene.add(core);
         scene.add(glow);
 
-        // Fade out and dispose
-        setTimeout(() => {
-            scene.remove(core); core.geometry.dispose(); core.material.dispose();
-            scene.remove(glow); glow.geometry.dispose(); glow.material.dispose();
-        }, 250);
+        // Fade out fast — same quick muzzle-flash fade as the player's
+        // lasers (was a hard 250 ms hold then instant removal).
+        let wlOpacity = 1.0;
+        const wlFade = setInterval(() => {
+            wlOpacity -= 0.4;
+            coreMat.opacity = Math.max(0, wlOpacity);
+            glowMat.opacity = Math.max(0, wlOpacity) * 0.45;
+            if (wlOpacity <= 0) {
+                clearInterval(wlFade);
+                scene.remove(core); core.geometry.dispose(); core.material.dispose();
+                scene.remove(glow); glow.geometry.dispose(); glow.material.dispose();
+            }
+        }, 25);
     } catch (e) {}
 }
 
@@ -7008,7 +8827,53 @@ function createWingmanExplosion(ally) {
     // Hide the ship mesh — it's gone
     ally.visible = false;
 
-    // Large fireball
+    // Wingman deaths get a unique two-stage signature so the player
+    // notices immediately and from a distance:
+    //   1) An "implosion flash" — a small white-hot core that briefly
+    //      contracts (scales from 1.4 -> 0.4) before the main blast.
+    //   2) Eight radiating energy beams in the wingman's faction colour,
+    //      shooting out from the center as the fireball blooms.
+    // Plus the classic fireball + shockwave + drifting particles below.
+
+    // 1) Implosion flash
+    const implGeo = new THREE.SphereGeometry(80, 16, 12);
+    const implMat = new THREE.MeshBasicMaterial({
+        color: 0xffffff, transparent: true, opacity: 1.0,
+        blending: THREE.AdditiveBlending, depthWrite: false
+    });
+    const impl = new THREE.Mesh(implGeo, implMat);
+    impl.position.copy(center);
+    impl.renderOrder = 61;
+    scene.add(impl);
+
+    // 2) Eight radiating energy beams (cylinders pointing outward).
+    // Stored on a group so we can scale/fade them together.
+    const beamGroup = new THREE.Group();
+    beamGroup.position.copy(center);
+    const beams = [];
+    for (let i = 0; i < 8; i++) {
+        const beamGeo = new THREE.CylinderGeometry(2, 6, 200, 6);
+        const beamMat = new THREE.MeshBasicMaterial({
+            color: baseColor, transparent: true, opacity: 0.0,
+            blending: THREE.AdditiveBlending, depthWrite: false
+        });
+        const beam = new THREE.Mesh(beamGeo, beamMat);
+        // Move pivot to base so the beam extends outward along +Y when scaled
+        beam.position.set(0, 100, 0);
+        const pivot = new THREE.Group();
+        pivot.add(beam);
+        // Distribute around the sphere using Fibonacci-ish polar coords
+        const polar = Math.acos(1 - 2 * (i + 0.5) / 8);
+        const az    = Math.PI * (3 - Math.sqrt(5)) * i;
+        pivot.rotation.x = polar - Math.PI / 2;
+        pivot.rotation.y = az;
+        beamGroup.add(pivot);
+        beams.push({ pivot, mesh: beam, mat: beamMat });
+    }
+    beamGroup.renderOrder = 62;
+    scene.add(beamGroup);
+
+    // 3) Large fireball
     const fireballGeo = new THREE.SphereGeometry(60, 20, 16);
     const fireballMat = new THREE.MeshBasicMaterial({
         color: 0xffcc44, transparent: true, opacity: 1.0,
@@ -7019,7 +8884,7 @@ function createWingmanExplosion(ally) {
     fireball.renderOrder = 60;
     scene.add(fireball);
 
-    // Faction-colored shockwave ring
+    // 4) Faction-colored shockwave ring
     const shockGeo = new THREE.RingGeometry(20, 40, 32);
     const shockMat = new THREE.MeshBasicMaterial({
         color: baseColor, transparent: true, opacity: 0.9,
@@ -7032,8 +8897,8 @@ function createWingmanExplosion(ally) {
     shock.renderOrder = 60;
     scene.add(shock);
 
-    // Particle burst
-    const partCount = 80;
+    // 5) Particle burst (count bumped from 80 to 140)
+    const partCount = 140;
     const partGeo = new THREE.BufferGeometry();
     const positions = new Float32Array(partCount * 3);
     const velocities = [];
@@ -7054,12 +8919,34 @@ function createWingmanExplosion(ally) {
     particles.position.copy(center);
     scene.add(particles);
 
-    // Animate over 1.5s
+    // Animate over 1.8s — longer than before to give the implosion +
+    // beams + fireball + drift time to read distinctly.
     const start = Date.now();
-    const duration = 1500;
+    const duration = 1800;
     const step = () => {
         const elapsed = Date.now() - start;
         const t = Math.min(1, elapsed / duration);
+
+        // Implosion flash: scales DOWN over the first 250ms, white-hot,
+        // then disappears. Reads as the wingman's ship being yanked
+        // inward right before the burst.
+        const implPhase = Math.min(1, elapsed / 250);
+        const implScale = 1.4 - implPhase * 1.0;       // 1.4 -> 0.4
+        impl.scale.set(implScale, implScale, implScale);
+        impl.material.opacity = Math.max(0, 1 - implPhase);
+
+        // Energy beams: extend over the first 700ms (held visible),
+        // then fade. They scale along +Y, the cylinder's long axis.
+        const beamPhase = Math.min(1, elapsed / 700);
+        const beamScale = 0.2 + beamPhase * 1.6;       // grows to 1.8x length
+        for (let i = 0; i < beams.length; i++) {
+            beams[i].mesh.scale.set(1, beamScale, 1);
+            // Fade in fast, fade out after the 700ms mark.
+            const beamOp = elapsed < 700
+                ? Math.min(1, elapsed / 100)
+                : Math.max(0, 1 - (elapsed - 700) / 700);
+            beams[i].mat.opacity = beamOp;
+        }
 
         // Fireball: expand fast then fade
         const fbScale = 1 + t * 3;
@@ -7084,12 +8971,26 @@ function createWingmanExplosion(ally) {
         if (t < 1) {
             requestAnimationFrame(step);
         } else {
+            scene.remove(impl); impl.geometry.dispose(); impl.material.dispose();
+            scene.remove(beamGroup);
+            for (let i = 0; i < beams.length; i++) {
+                beams[i].mesh.geometry.dispose();
+                beams[i].mat.dispose();
+            }
             scene.remove(fireball); fireball.geometry.dispose(); fireball.material.dispose();
             scene.remove(shock); shock.geometry.dispose(); shock.material.dispose();
             scene.remove(particles); particles.geometry.dispose(); particles.material.dispose();
         }
     };
     requestAnimationFrame(step);
+
+    // Layered wingman-death audio: two booms + a damage tone (distinct
+    // from the player's death stack, but unmistakable as "we lost one").
+    if (typeof playSound === 'function') {
+        try { playSound('explosion'); } catch (e) {}
+        try { playSound('damage');    } catch (e) {}
+        setTimeout(() => { try { playSound('explosion'); } catch (e) {} }, 260);
+    }
 }
 
 // ── Update or create a shield bubble around an ally ──────────────────────
@@ -7291,6 +9192,30 @@ function _executeReturn(ally, ud) {
     const center = new THREE.Vector3(0, 0, 0);
     _allyDir.subVectors(center, ally.position).normalize();
     ud.velocity.lerp(_allyDir.clone().multiplyScalar(ud.cruiseSpeed * 1.5), 0.06);
+    ally.position.add(ud.velocity);
+}
+
+// ── Celebrate: tight victory orbit around the player ─────────────────────
+// Each wingman spirals into its assigned ring slot around the player
+// and circles fast. The per-wingman phase/radius/height (set on entry
+// to the state) keeps them spaced into a proper encircling formation
+// rather than dogpiling one point.
+function _executeCelebrate(ally, ud, now, playerPos) {
+    const t = now * 0.004; // orbital speed
+    const phase = ud._celebPhase || 0;
+    const r = ud._celebRadius || 150;
+    const h = ud._celebHeight || 0;
+    const target = new THREE.Vector3(
+        playerPos.x + Math.cos(t + phase) * r,
+        playerPos.y + h + Math.sin(t * 1.5 + phase) * 25,
+        playerPos.z + Math.sin(t + phase) * r
+    );
+    _allyDir.subVectors(target, ally.position);
+    const dist = _allyDir.length();
+    _allyDir.normalize();
+    // Snappy chase so the ring forms quickly and circles with energy.
+    const spd = Math.min((ud.combatSpeed || ud.cruiseSpeed || 4) * 1.4, Math.max(2, dist * 0.06));
+    ud.velocity.lerp(_allyDir.clone().multiplyScalar(spd), 0.14);
     ally.position.add(ud.velocity);
 }
 

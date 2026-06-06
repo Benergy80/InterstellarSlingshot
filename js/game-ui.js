@@ -29,9 +29,59 @@ window._invalidateUiElCache = function(id) {
     else for (const k in _uiElCache) delete _uiElCache[k];
 };
 
+// Mirror reputation + shield state into the SHIP STATUS panel. Replaces
+// the standalone REP HUD widget and the standalone .shield-indicator
+// pill — both of which floated over the existing UI panels.
+function updateRepHud() {
+    if (typeof gameState === 'undefined') return;
+
+    // Reputation rows in SHIP STATUS
+    const repVal  = document.getElementById('shipRepValue');
+    const repNext = document.getElementById('shipRepNext');
+    const repBar  = document.getElementById('shipRepBar');
+    if (repVal || repNext || repBar) {
+        const rep  = gameState.reputation || 0;
+        const tier = gameState.repTier || 0;
+        const REP_TIERS = window.REP_TIERS;
+        const next = REP_TIERS && REP_TIERS[tier];
+        if (repVal && repVal.textContent !== String(rep)) repVal.textContent = String(rep);
+        if (repNext) {
+            const nextText = next ? ('· ' + next.name + ' @ ' + next.threshold) : '· all tiers unlocked';
+            if (repNext.textContent !== nextText) repNext.textContent = nextText;
+        }
+        if (repBar) {
+            let pct = 1;
+            if (next) {
+                const prev = tier > 0 ? REP_TIERS[tier - 1].threshold : 0;
+                pct = Math.max(0, Math.min(1, (rep - prev) / (next.threshold - prev)));
+            }
+            const w = (pct * 100).toFixed(0) + '%';
+            if (repBar.style.width !== w) repBar.style.width = w;
+        }
+    }
+
+    // Shield row in SHIP STATUS (replaces the floating .shield-indicator).
+    // Source-of-truth is shieldSystem.active (game-shields.js); fall back
+    // to the existing #shieldStatus span the shield system writes to.
+    const shipShield = document.getElementById('shipShieldStatus');
+    if (shipShield) {
+        const active = (typeof shieldSystem !== 'undefined' && shieldSystem && shieldSystem.active);
+        let label = 'OFFLINE';
+        let color = '#888';
+        if (active) {
+            const critical = (gameState.energy || 0) < 15;
+            label = critical ? 'CRITICAL' : 'ACTIVE';
+            color = critical ? '#ff6600' : '#00d4ff';
+        }
+        if (shipShield.textContent !== label) shipShield.textContent = label;
+        if (shipShield.style.color !== color) shipShield.style.color = color;
+    }
+}
+
 function updateUI() {
     // Safety check for game state
     if (typeof gameState === 'undefined' || !gameState) return;
+    updateRepHud();
 
     // FIXED: Properly define all UI elements at the start
     const velocityEl = _uiEl('velocity');
@@ -51,10 +101,27 @@ function updateUI() {
     const _distText = gameState.distance.toFixed(1) + ' ly';
     if (distanceEl && distanceEl.textContent !== _distText) distanceEl.textContent = _distText;
 
+    // Location text: the DOM element was being looked up but never
+    // written, so the SHIP STATUS panel was stuck on the initial
+    // "Earth Surface - Launch Pad" string from index.html no matter
+    // where the player flew. Mirror gameState.location into the panel.
+    if (locationEl && gameState.location && locationEl.textContent !== gameState.location) {
+        locationEl.textContent = gameState.location;
+    }
+
     // Emergency Warp count update
     if (emergencyWarpEl && gameState.emergencyWarp) {
         const _warpText = '' + gameState.emergencyWarp.available;
         if (emergencyWarpEl.textContent !== _warpText) emergencyWarpEl.textContent = _warpText;
+    }
+
+    // Galaxies Cleared (Ship Status panel). Element was fetched at
+    // init but never written, so the span sat at its HTML default "0"
+    // even though gameState.galaxiesCleared was incrementing (the
+    // achievement banner reads the same field correctly).
+    if (galaxiesClearedEl) {
+        const _galText = '' + (gameState.galaxiesCleared || 0);
+        if (galaxiesClearedEl.textContent !== _galText) galaxiesClearedEl.textContent = _galText;
     }
     // Also update mobile warp count
     const mobileWarpEl = _uiEl('mobileWarpCount');
@@ -128,8 +195,14 @@ if (gameState.solarStormBoostActive || gameState.plasmaStormBoostActive) {
         }
     }
     
-    // ADDED: Cracked screen effect at 10% hull
-if (gameState.hull <= 10 && !_uiEl('criticalDamageOverlay')) {
+    // ADDED: Cracked screen effect at 10% hull.
+    // Suppress (and tear down) while the player is dying / game over —
+    // hull is 0 then, so this CRT-flicker "heavy damage" overlay would
+    // otherwise stay plastered over the death explosion.
+if (gameState.playerDying || gameState.gameOver || gameState.gameOverScreenShown) {
+    const _cdo = document.getElementById('criticalDamageOverlay');
+    if (_cdo) _cdo.remove();
+} else if (gameState.hull <= 10 && !_uiEl('criticalDamageOverlay')) {
     const crackedOverlay = document.createElement('div');
     crackedOverlay.id = 'criticalDamageOverlay';
     crackedOverlay.style.cssText = `
@@ -1188,6 +1261,10 @@ function updateGalaxyMap() {
     if (_zoneLabel) _zoneLabel.style.display = 'none';
     const _galaxyMap = document.getElementById('galaxyMap');
     if (_galaxyMap) {
+        // NOTE: .galactic-path-dot is intentionally NOT purged here — those
+        // dots are POOLED (created once, repositioned/hidden) and refreshed
+        // on a throttle, not rebuilt every frame. Destroying them per-frame
+        // was ~2-3k DOM create/remove ops per second in demo mode.
         _galaxyMap.querySelectorAll('.universe-nebula-dot, .universe-path-line').forEach(d => d.remove());
     }
     for (let _i = 0; _i < 10; _i++) {
@@ -1550,6 +1627,78 @@ if (obj.type === 'ally') {
         });
     }
     
+    // ── Unlocked nebula mission (dotted-line) paths ──────────────────
+    // Each discovery path is an UNLOCKED objective and shows on the
+    // radar. The in-world line spans tens of thousands of units (far
+    // past the 3000u radar) so we sample along start→end and plot the
+    // in-range points as small dots in the path's current colour.
+    //
+    // PERFORMANCE: the dot elements are POOLED (created once, then
+    // repositioned/hidden) and only refreshed on a ~6 Hz throttle
+    // rather than rebuilt at the map's 20 Hz. Demo mode discovers many
+    // paths; the old create/destroy-every-frame approach was ~2-3k DOM
+    // ops/sec and a real jitter source. Samples also cut 28 → 14.
+    if (galaxyMap && typeof window !== 'undefined') {
+        if (!updateGalaxyMap._pathDots) updateGalaxyMap._pathDots = [];
+        const pool = updateGalaxyMap._pathDots;
+        const nowMs = Date.now();
+        if (!updateGalaxyMap._lastPathUpdate ||
+            (nowMs - updateGalaxyMap._lastPathUpdate) > 170) {
+            updateGalaxyMap._lastPathUpdate = nowMs;
+            const SAMPLES = 14;
+            const paths = Array.isArray(window.discoveryPaths) ? window.discoveryPaths : [];
+            let used = 0;
+            for (let pi = 0; pi < paths.length; pi++) {
+                const path = paths[pi];
+                if (!path || !path.line || !path.line.userData) continue;
+                const ud = path.line.userData;
+                const a = ud.startPosition, b = ud.endPosition;
+                if (!a || !b) continue;
+                let colHex = '#7fd5ff';
+                try {
+                    if (path.line.material && path.line.material.color) {
+                        colHex = '#' + path.line.material.color.getHexString();
+                    }
+                } catch (e) {}
+                const complete = !!ud.missionComplete;
+                const sizePx = complete ? 3 : 2.5;
+                const op = complete ? '0.55' : '0.85';
+                for (let s = 0; s <= SAMPLES; s++) {
+                    const t = s / SAMPLES;
+                    const wx = a.x + (b.x - a.x) * t;
+                    const wz = a.z + (b.z - a.z) * t;
+                    const sx = 50 + ((wx - camera.position.x) / radarRange) * 50;
+                    const sz = 50 + ((wz - camera.position.z) / radarRange) * 50;
+                    if (sx < 2 || sx > 98 || sz < 2 || sz > 98) continue;
+                    let d = pool[used];
+                    if (!d) {
+                        d = document.createElement('div');
+                        d.className = 'galactic-path-dot';
+                        d.style.position = 'absolute';
+                        d.style.borderRadius = '50%';
+                        d.style.transform = 'translate(-50%,-50%)';
+                        d.style.pointerEvents = 'none';
+                        d.style.zIndex = '2';
+                        galaxyMap.appendChild(d);
+                        pool[used] = d;
+                    }
+                    d.style.width = sizePx + 'px';
+                    d.style.height = sizePx + 'px';
+                    d.style.background = colHex;
+                    d.style.boxShadow = '0 0 3px ' + colHex;
+                    d.style.left = sx + '%';
+                    d.style.top = sz + '%';
+                    d.style.opacity = op;
+                    d.style.display = 'block';
+                    used++;
+                }
+            }
+            for (let k = used; k < pool.length; k++) {
+                if (pool[k]) pool[k].style.display = 'none';
+            }
+        }
+    }
+
     // Update current target indicator
     if (gameState.currentTarget && targetMapPos) {
         const targetRelativeX = (gameState.currentTarget.position.x - camera.position.x) / radarRange;
@@ -1570,6 +1719,14 @@ if (obj.type === 'ally') {
         
     } else {
     // ========== UNIVERSAL VIEW ==========
+
+    // Hide the pooled galactic-view mission-path dots so they don't
+    // linger on the universal map (they're radar-relative).
+    if (updateGalaxyMap._pathDots) {
+        for (let k = 0; k < updateGalaxyMap._pathDots.length; k++) {
+            if (updateGalaxyMap._pathDots[k]) updateGalaxyMap._pathDots[k].style.display = 'none';
+        }
+    }
 
     // Single galaxyMap binding shared across all universal-view rendering
     // (asteroid fields, depth bar, ally markers, nebula dots, paths, zone label).
@@ -2504,12 +2661,23 @@ function showGameOverScreen(title, message) {
         const gal = gameState ? gameState.galaxiesCleared : 0;
         const warps = gameState ? gameState.emergencyWarp.available : '0';
 
+        // Mobile uses fully inline styles (so it renders even if the
+        // Tailwind CDN fails) but now mirrors the DESKTOP look exactly:
+        // Orbitron cyber-title, the blue glow-text shadow, ui-panel
+        // gradient/border, cyan "Final Stats", and a space-btn button.
+        const _glow = '0 0 8px rgba(0,150,255,0.9),0 0 16px rgba(0,150,255,0.7),0 0 24px rgba(0,150,255,0.5)';
         gameOverOverlay.innerHTML = `
-            <div style="text-align:center;max-width:90vw;max-height:90vh;overflow-y:auto;background:rgba(10,15,30,0.98);border:1px solid rgba(0,150,255,0.5);border-radius:12px;padding:24px;color:#fff;font-family:sans-serif;">
-                <h1 style="font-size:2rem;font-weight:bold;color:#f87171;margin-bottom:16px;text-shadow:0 0 10px rgba(248,113,113,0.5);">MISSION FAILED</h1>
-                <p style="color:#d1d5db;margin-bottom:20px;font-size:1rem;">${message || 'Ship destroyed'}</p>
-                <div style="color:#22d3ee;font-size:1.1rem;margin-bottom:12px;text-shadow:0 0 8px rgba(34,211,238,0.4);">Final Stats:</div>
-                <div style="color:#d1d5db;font-size:0.9rem;line-height:1.8;">
+            <div style="text-align:center;max-width:90vw;max-height:90vh;overflow-y:auto;
+                        background:linear-gradient(135deg,rgba(15,23,42,0.97) 0%,rgba(30,41,59,0.97) 100%);
+                        border:1px solid rgba(0,150,255,0.5);border-radius:12px;padding:24px;
+                        box-shadow:0 12px 40px rgba(0,150,255,0.3),inset 0 1px 0 rgba(0,150,255,0.4);
+                        color:#fff;font-family:'Rajdhani',sans-serif;">
+                <h1 style="font-family:'Orbitron',monospace;font-weight:900;letter-spacing:3px;
+                           font-size:2.25rem;color:#f87171;margin:0 0 16px;text-shadow:${_glow};">MISSION FAILED</h1>
+                <p style="color:#d1d5db;margin:0 0 24px;font-size:1rem;">${message || 'Ship destroyed'}</p>
+                <div style="font-family:'Orbitron',monospace;letter-spacing:2px;color:#22d3ee;
+                            font-size:1.125rem;margin-bottom:12px;text-shadow:${_glow};">Final Stats:</div>
+                <div style="color:#d1d5db;font-size:0.9rem;line-height:1.85;">
                     <div>Distance Traveled: ${dist} light years</div>
                     <div>Final Velocity: ${vel} km/s</div>
                     <div>Energy Remaining: ${nrg}%</div>
@@ -2517,7 +2685,13 @@ function showGameOverScreen(title, message) {
                     <div>Galaxies Cleared: ${gal}/8</div>
                     <div>Emergency Warps Remaining: ${warps}</div>
                 </div>
-                <button id="gameOverRestartBtn" style="margin-top:20px;padding:14px 28px;font-size:1rem;font-weight:bold;color:#fff;background:linear-gradient(135deg,#1e3a5f,#0d2137);border:1px solid #0ea5e9;border-radius:8px;min-height:52px;width:100%;max-width:280px;">
+                <button id="gameOverRestartBtn" style="margin-top:24px;padding:14px 28px;font-size:1rem;
+                        font-weight:700;font-family:'Orbitron',monospace;letter-spacing:1px;
+                        color:rgba(0,255,255,0.95);
+                        background:linear-gradient(135deg,rgba(0,150,255,0.25),rgba(0,100,200,0.35));
+                        border:1px solid rgba(0,150,255,0.6);border-radius:8px;
+                        box-shadow:0 4px 15px rgba(0,150,255,0.25),inset 0 1px 0 rgba(0,150,255,0.3);
+                        min-height:52px;width:100%;max-width:280px;">
                     Restart Mission
                 </button>
             </div>
@@ -2747,6 +2921,9 @@ function updateUIFromExternal(updateType, data) {
                 setupGalaxyMap(); // Refresh galaxy map to show cleared status
                 if (typeof gameState !== 'undefined') {
                     gameState.galaxiesCleared++;
+                }
+                if (typeof awardReputation === 'function') {
+                    awardReputation(100, 'Galaxy liberated');
                 }
             }
             break;

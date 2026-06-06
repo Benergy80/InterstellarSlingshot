@@ -1211,54 +1211,57 @@ function createPlasmaStorms() {
         
         console.log(`⚡ Creating plasma storm in galaxy ${galaxyId} at position`, position);
         
-        // **UPDATED: Storm cloud 10x larger**
+        // Storm cloud — PERF: switched to MeshBasicMaterial + lower-res
+        // sphere geometry. PBR (MeshStandardMaterial) is expensive when
+        // the player flies close because every nearby light recomputes
+        // shading on each sphere. These clouds are self-emissive anyway,
+        // so a basic additive-blended sphere looks the same for far less
+        // work. Sphere count and tessellation also cut roughly in half.
         const stormCloudGroup = new THREE.Group();
         const cloudSpheres = [];
-        const sphereCount = 8 + Math.floor(Math.random() * 6);
-        
+        const sphereCount = 4 + Math.floor(Math.random() * 4); // was 8-13
+
         // Create outer cloud spheres
         for (let sphere = 0; sphere < sphereCount; sphere++) {
-            const sphereRadius = 150 + Math.random() * 250; // **10x larger (was 15-40)**
-            const sphereGeometry = new THREE.SphereGeometry(sphereRadius, 16, 16);
-            const sphereMaterial = new THREE.MeshStandardMaterial({
+            const sphereRadius = 150 + Math.random() * 250;
+            const sphereGeometry = new THREE.SphereGeometry(sphereRadius, 10, 8); // was 16x16
+            const sphereMaterial = new THREE.MeshBasicMaterial({
                 color: Math.random() > 0.5 ? 0x6644ff : 0x4466ff,
-                emissive: Math.random() > 0.5 ? 0x2200ff : 0x0044ff,
-                emissiveIntensity: 1.5,
-                roughness: 0.4,
-                metalness: 0.3,
                 transparent: true,
-                opacity: 0.6
+                opacity: 0.55,
+                blending: THREE.AdditiveBlending,
+                depthWrite: false
             });
             const sphereMesh = new THREE.Mesh(sphereGeometry, sphereMaterial);
-            
-            const cloudRadius = 600; // **10x larger (was 60)**
+
+            const cloudRadius = 600;
             const cloudAngle = Math.random() * Math.PI * 2;
             const cloudElevation = (Math.random() - 0.5) * Math.PI * 0.5;
-            
+
             sphereMesh.position.set(
                 cloudRadius * Math.cos(cloudAngle) * Math.cos(cloudElevation),
                 cloudRadius * Math.sin(cloudElevation),
                 cloudRadius * Math.sin(cloudAngle) * Math.cos(cloudElevation)
             );
-            
+
             stormCloudGroup.add(sphereMesh);
             cloudSpheres.push(sphereMesh);
         }
-        
+
         stormCloudGroup.position.copy(position);
-        
-        // **UPDATED: Lightning tendrils 10x larger with animation data**
+
+        // Lightning tendrils — PERF: half as many, simpler geometry,
+        // MeshBasicMaterial. They're self-glowing so PBR adds nothing
+        // visually but costs significantly when near the camera.
         const tendrilGroup = new THREE.Group();
-        for (let tendril = 0; tendril < 12; tendril++) {
-            const tendrilGeometry = new THREE.CylinderGeometry(10, 2, 800, 6); // **10x larger (was 1, 0.2, 80)**
-            const tendrilMaterial = new THREE.MeshStandardMaterial({
-                color: 0xffffff,
-                emissive: 0x8888ff,
-                emissiveIntensity: 2.0,
-                roughness: 0.2,
-                metalness: 0.6,
+        for (let tendril = 0; tendril < 6; tendril++) { // was 12
+            const tendrilGeometry = new THREE.CylinderGeometry(10, 2, 800, 4); // was 6 radial seg
+            const tendrilMaterial = new THREE.MeshBasicMaterial({
+                color: 0xaaaaff,
                 transparent: true,
-                opacity: 0.8
+                opacity: 0.8,
+                blending: THREE.AdditiveBlending,
+                depthWrite: false
             });
             const tendrilMesh = new THREE.Mesh(tendrilGeometry, tendrilMaterial);
             
@@ -1282,52 +1285,48 @@ function createPlasmaStorms() {
         }
         stormCloudGroup.add(tendrilGroup);
         
-        // ⭐ NEW: Central energy core - glowing pulsing sphere (REPLACES wireframe discharge)
-        const coreGeometry = new THREE.SphereGeometry(250, 32, 32);
+        // Central energy core — PERF: reduced from 32x32 to 16x16
+        // segments. Three nested glowing spheres are already additive-
+        // blended MeshBasicMaterials, so the high tessellation was wasted.
+        const coreGeometry = new THREE.SphereGeometry(250, 16, 16);
         const coreMaterial = new THREE.MeshBasicMaterial({
             color: 0x6644ff,
             transparent: true,
             opacity: 0.4,
-            blending: THREE.AdditiveBlending
+            blending: THREE.AdditiveBlending,
+            depthWrite: false
         });
         const energyCore = new THREE.Mesh(coreGeometry, coreMaterial);
-        
-        // Add outer glow layer
-        const glowGeometry = new THREE.SphereGeometry(280, 32, 32);
+
+        const glowGeometry = new THREE.SphereGeometry(280, 16, 16);
         const glowMaterial = new THREE.MeshBasicMaterial({
             color: 0x8866ff,
             transparent: true,
             opacity: 0.2,
-            blending: THREE.AdditiveBlending
+            blending: THREE.AdditiveBlending,
+            depthWrite: false
         });
         const glowSphere = new THREE.Mesh(glowGeometry, glowMaterial);
         energyCore.add(glowSphere);
-        
-        // Add inner bright core
-        const innerCoreGeometry = new THREE.SphereGeometry(180, 32, 32);
+
+        const innerCoreGeometry = new THREE.SphereGeometry(180, 16, 16);
         const innerCoreMaterial = new THREE.MeshBasicMaterial({
             color: 0xffffff,
             transparent: true,
             opacity: 0.6,
-            blending: THREE.AdditiveBlending
+            blending: THREE.AdditiveBlending,
+            depthWrite: false
         });
         const innerCore = new THREE.Mesh(innerCoreGeometry, innerCoreMaterial);
         energyCore.add(innerCore);
-        
+
         stormCloudGroup.add(energyCore);
-        
-        // ⭐ ADD POINT LIGHT for flickering lightning effect
-        const plasmaLight = new THREE.PointLight(
-            0x8866ff,      // Purple-blue plasma color
-            20.0,          // High intensity for dramatic effect
-            3000,          // Large range
-            2.0            // Decay
-        );
-        plasmaLight.position.copy(position);
-        plasmaLight.castShadow = false;
-        scene.add(plasmaLight);
-        
-        console.log(`  💡 Added flickering plasma light to storm at`, position);
+
+        // No dynamic PointLight — it was the dominant cost when the
+        // player flew near a storm because every PBR material in range
+        // had to recompute lighting each frame. The additive-blended
+        // emissive core already reads as a bright plasma source.
+        const plasmaLight = null;
         
         // ⭐ UPDATED: Store all new components in userData
         stormCloudGroup.userData = {
@@ -1509,14 +1508,26 @@ function updateCosmicFeatures() {
     // Update plasma storms (movement and lightning animation) - OPTIMIZED
 cosmicFeatures.plasmaStorms.forEach((storm, stormIndex) => {
     if (!storm.userData) return;
-    
-    // Move storm (always update position)
+
+    // Move storm (always update position — cheap)
     if (storm.userData.direction) {
         storm.position.add(storm.userData.direction.clone().multiplyScalar(storm.userData.movementSpeed));
     }
-    
-    // ⚡ PERFORMANCE: Only animate visual effects every 2 frames (still 30fps, smooth)
-    if (typeof gameState !== 'undefined' && gameState.frameCount % 2 !== stormIndex % 2) return;
+
+    // ⚡ PERFORMANCE: distance gating. When the player is far from a
+    // storm there's no visual benefit to pulsing its inner spheres
+    // every frame, so we drop the per-storm work to zero past 5000u
+    // and to every-8th-frame past 2500u. This is the biggest win when
+    // the player has flown out of a system but storms still exist
+    // elsewhere in the galaxy.
+    let cameraDist = 0;
+    if (typeof camera !== 'undefined' && camera.position) {
+        cameraDist = camera.position.distanceTo(storm.position);
+    }
+    if (cameraDist > 5000) return;
+    const frame = (typeof gameState !== 'undefined' && gameState.frameCount) || 0;
+    const skipMod = cameraDist > 2500 ? 8 : 2;
+    if (frame % skipMod !== stormIndex % skipMod) return;
     
     // Pre-calculate shared values to avoid redundant sin() calls
     const corePulse = Math.sin(time * 2) * 0.15 + 1.0;
@@ -1542,35 +1553,8 @@ cosmicFeatures.plasmaStorms.forEach((storm, stormIndex) => {
         }
     }
     
-    // ⚡ FLICKERING LIGHTNING EFFECT - Reduced frequency
-    if (storm.userData.plasmaLight && storm.userData.baseLightIntensity) {
-        // Check for flicker less frequently (every 10 frames instead of every frame)
-        if (typeof gameState !== 'undefined' && gameState.frameCount % 10 === stormIndex % 10 && Math.random() < 0.3) {
-            // Lightning flash!
-            storm.userData.plasmaLight.intensity = storm.userData.baseLightIntensity * (3.0 + Math.random() * 2.0);
-            storm.userData.plasmaLight.color.setHex(0xffffff);
-            storm.userData.lightningActive = true;
-            
-            // Schedule color return (avoid creating too many timeouts)
-            if (!storm.userData.lightningTimeout) {
-                storm.userData.lightningTimeout = setTimeout(() => {
-                    if (storm.userData.plasmaLight) {
-                        storm.userData.plasmaLight.color.setHex(0x8866ff);
-                    }
-                    storm.userData.lightningTimeout = null;
-                    storm.userData.lightningActive = false;
-                }, 50);
-            }
-        } else if (!storm.userData.lightningActive) {
-            // Normal pulsing
-            const lightPulse = Math.sin(time * 3) * 0.4 + 0.8;
-            storm.userData.plasmaLight.intensity = storm.userData.baseLightIntensity * lightPulse;
-            
-            // Color shift (less frequent calculation)
-            const hueShift = Math.sin(time * 0.8) * 0.05;
-            storm.userData.plasmaLight.color.setHSL(0.7 + hueShift, 0.8, 0.5);
-        }
-    }
+    // (PointLight removed; the additive-blended cores already convey
+    // the lightning flicker through their own pulsing opacity.)
     
     // Animate cloud spheres - SIMPLIFIED (only every other sphere)
     if (storm.userData.spheres && storm.userData.spheres.length > 0) {
