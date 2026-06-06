@@ -1448,6 +1448,16 @@
       return;
     }
 
+    // From the moment a path is acquired, the ship's bow tracks the
+    // path's DESTINATION end (where the revealed hostiles are hiding),
+    // not the nebula end we just came from.
+    if (endPos && window.orientTowardsTarget) {
+      if (!ap._followPathAimDummy) ap._followPathAimDummy = { position: new THREE.Vector3(), userData: { name: 'Discovery endpoint' } };
+      ap._followPathAimDummy.position.copy(endPos);
+      window.orientTowardsTarget(ap._followPathAimDummy);
+      gameState.currentTarget = ap._followPathAimDummy;
+    }
+
     // Check for an enemy in front of us as we travel
     const enemyAhead = nearestAliveEnemy(3500);
     if (enemyAhead) {
@@ -1464,9 +1474,37 @@
 
     if (endPos) {
       const dist = camPos().distanceTo(endPos);
-      setStatus('Following discovery path — ' + (dist | 0) + ' units');
+      const speed = gameState.velocityVector ? gameState.velocityVector.length() : 0;
+
+      // Long approach: fire an emergency warp once toward the endpoint
+      // so the demo doesn't slow-cruise across thousands of units of
+      // empty space. Single-shot per phase entry, gated by warp charge
+      // availability and our 20s O-key cooldown.
+      const _warpBusy = (gameState.emergencyWarp && (gameState.emergencyWarp.active || gameState.emergencyWarp.transitioning));
+      if (!ap._followPathWarpFired && dist > 3500 && !_warpBusy &&
+          canEmergencyWarp() &&
+          Date.now() - (ap._lastBHWarp || 0) > 20000) {
+        if (triggerOKeyWarp()) {
+          ap._lastBHWarp = Date.now();
+          ap._followPathWarpFired = true;
+          ap.warpStartedAt = Date.now();
+          setStatus('Emergency warp → revealed hostile sector');
+          return;
+        }
+      }
+
+      // Brake band: within engagement range of the endpoint, kill speed
+      // so the demo arrives ready to fight rather than rocketing past.
+      const BRAKE_RANGE = 2500;
+      if (dist < BRAKE_RANGE && speed > 1.0) {
+        setStatus('Approaching revealed hostiles — braking (' + (dist | 0) + ' u)');
+        keys().x = true;
+        return;
+      }
+
       if (dist > 300) {
-        flyToward(endPos, 2.0);
+        setStatus('Following discovery path → ' + (dist | 0) + ' units');
+        flyToward(endPos, dist > BRAKE_RANGE ? 2.0 : 1.0);
       } else {
         // At end of path — look for enemies
         const near = nearestAliveEnemy(5000);
@@ -3129,6 +3167,12 @@
     if (name !== 'followDiscoveryPath') {
       ap._followingPath = null;
     }
+    // Re-arm the single emergency-warp shot each time the demo enters
+    // the follow phase, so every new dotted-line mission gets one.
+    if (name === 'followDiscoveryPath') {
+      ap._followPathWarpFired = false;
+      ap._tacticalMsgShown = false;
+    }
   }
 
   function resetFlags() {
@@ -3152,6 +3196,8 @@
     ap._followingPath = null;
     ap._pathCountAtEntry = 0;
     ap._orbitPhaseStart = 0;
+    ap._followPathWarpFired = false;
+    ap._tacticalMsgShown = false;
   }
 
   function releaseKeys() {
