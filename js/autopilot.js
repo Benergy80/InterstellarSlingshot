@@ -2771,6 +2771,10 @@
   function preemptiveShields() {
     if (typeof shieldSystem === 'undefined') return;
     if (typeof enemies === 'undefined') return;
+    // Skip until the shield canvas is wired up. game-core.js initialises
+    // it on a 100ms setTimeout; calling activateShields() before that
+    // makes it lazy-init with a noisy console warning every frame.
+    if (!shieldSystem.canvas || !shieldSystem.ctx) return;
 
     // While a missile fire sequence is in-flight, do NOT re-raise shields
     // (fireMissile aborts if shields are up).
