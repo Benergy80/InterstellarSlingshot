@@ -1157,7 +1157,11 @@
     // steer so it can keep its nose on the destination — and retarget
     // if a different nebula passes closer than the original.
     if (inLockedCoast) {
-      setStatus('Warp coast — ' + Math.max(0, ((coastLockUntil - Date.now()) / 1000)).toFixed(0) + 's remaining');
+      const _dstName = (ap.currentNebula && ap.currentNebula.userData && ap.currentNebula.userData.name) || 'destination';
+      const _dstDist = ap.currentNebula ? (camPos().distanceTo(ap.currentNebula.position) | 0) : null;
+      setStatus(_dstDist !== null
+        ? 'Warp transit → ' + _dstName + ' · ' + _dstDist + ' u'
+        : 'Warp transit → ' + _dstName);
       cycleScanTarget();
       if (ap.currentNebula) {
         // Don't pass by nebulas: if another nebula is meaningfully nearer
