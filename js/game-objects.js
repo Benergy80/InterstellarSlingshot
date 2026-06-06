@@ -4800,6 +4800,30 @@ if (Math.random() < moonProbability) {
     console.log('- Enhanced starfield with multiple layers');
 }
 
+// Lazily-built, SHARED soft radial-gradient point sprite for all nebula
+// particle clouds. Replaces the default hard square GL point with a soft
+// glowing dot — gas reads as gas, not pixels, and the softened falloff
+// lets the (now reduced) particle counts look fuller. One 64px texture
+// is reused by every nebula material, so this is essentially free.
+let _nebulaPointTex = null;
+function _getNebulaPointTexture() {
+    if (_nebulaPointTex) return _nebulaPointTex;
+    if (typeof document === 'undefined' || typeof THREE === 'undefined') return null;
+    const cv = document.createElement('canvas');
+    cv.width = cv.height = 64;
+    const ctx = cv.getContext('2d');
+    const g = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+    g.addColorStop(0.0, 'rgba(255,255,255,1.0)');
+    g.addColorStop(0.35, 'rgba(255,255,255,0.55)');
+    g.addColorStop(0.7, 'rgba(255,255,255,0.12)');
+    g.addColorStop(1.0, 'rgba(255,255,255,0.0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, 64, 64);
+    _nebulaPointTex = new THREE.CanvasTexture(cv);
+    return _nebulaPointTex;
+}
+if (typeof window !== 'undefined') window._getNebulaPointTexture = _getNebulaPointTexture;
+
 function createClusteredNebulas() {
     console.log('Creating clustered nebulas with central supernovas and orbiting brown dwarfs...');
     
@@ -4883,11 +4907,13 @@ function createClusteredNebulas() {
         particleGeometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
         
         const nebulaMaterial = new THREE.PointsMaterial({
-            size: 2.5,
+            size: 3.2,
+            map: _getNebulaPointTexture(),   // shared soft glow sprite
             vertexColors: true,
             transparent: true,
             opacity: 0.65,
             blending: THREE.AdditiveBlending,
+            depthWrite: false,
             sizeAttenuation: true
         });
         
@@ -5161,11 +5187,13 @@ function createDistantNebulas() {
 
         // MATCHED TO GALAXY-FORMATION: Same particle material settings
         const nebulaMaterial = new THREE.PointsMaterial({
-            size: 2.5,
+            size: 3.2,
+            map: _getNebulaPointTexture(),   // shared soft glow sprite
             vertexColors: true,
             transparent: true,
             opacity: 0.65,
             blending: THREE.AdditiveBlending,
+            depthWrite: false,
             sizeAttenuation: true
         });
 
@@ -5342,11 +5370,13 @@ function createExoticCoreNebulas() {
 
         // MATCHED TO GALAXY-FORMATION: Same particle material settings
         const nebulaMaterial = new THREE.PointsMaterial({
-            size: 2.5,
+            size: 3.2,
+            map: _getNebulaPointTexture(),   // shared soft glow sprite
             vertexColors: true,
             transparent: true,
             opacity: 0.65,
             blending: THREE.AdditiveBlending,
+            depthWrite: false,
             sizeAttenuation: true
         });
 
@@ -11072,11 +11102,13 @@ function createNebulas() {
         nebulaGeometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
         
         const nebulaMaterial = new THREE.PointsMaterial({
-            size: 2.5,
+            size: 3.2,
+            map: _getNebulaPointTexture(),   // shared soft glow sprite
             vertexColors: true,
             transparent: true,
             opacity: 0.65,
             blending: THREE.AdditiveBlending,
+            depthWrite: false,
             sizeAttenuation: true
         });
         
