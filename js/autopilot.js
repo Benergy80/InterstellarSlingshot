@@ -3093,23 +3093,24 @@
         if (alertEl) alertEl.querySelectorAll('button').forEach(b => b.remove());
       }
       ap._seenPrompt = null;
-      // Close the full alert 2 s after opening
+      // Close the full alert 6 s after opening (was 2 s; tripled so
+      // the viewer can actually read the lore the demo just opened).
       setTimeout(() => {
         const alertEl = document.getElementById('missionCommandAlert');
         if (alertEl) alertEl.classList.add('hidden');
         if (typeof gameState !== 'undefined') gameState.paused = false;
-      }, 2000);
+      }, 6000);
     }
 
-    // Type 2: Auto-fade text from game-objects.js — nothing to do, it
-    // handles its own timeout.  But hide it faster (1.5 s) in demo mode
-    // so it doesn't obstruct the view too long.
+    // Type 2: Auto-fade text from game-objects.js handles its own
+    // timeout. Demo used to slam it to 1.5s; now 4.5s (3x) so demo
+    // viewers can read it.
     const textTx = document.getElementById('incomingTransmission');
     if (textTx && !textTx._demoShortenSet) {
       textTx._demoShortenSet = true;
       setTimeout(() => {
         if (textTx) textTx.style.opacity = '0';
-      }, 1500);
+      }, 4500);
     }
 
     // Type 3: Mission Control galaxy-cleared alert ("N hostile galaxies

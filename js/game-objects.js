@@ -7808,8 +7808,10 @@ function showIncomingTransmission(sender, message, isDistress = false) {
         container.style.opacity = '1';
     });
     
-    // Auto-hide after delay
-    const hideDelay = isDistress ? 6000 : 4500;
+    // Auto-hide after delay. 3x the originals (6s/4.5s -> 18s/13.5s)
+    // so message reads aren't snatched off the screen before they
+    // can be read.
+    const hideDelay = isDistress ? 18000 : 13500;
     setTimeout(() => {
         container.style.opacity = '0';
     }, hideDelay);

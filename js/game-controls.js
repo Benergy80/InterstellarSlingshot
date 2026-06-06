@@ -7075,8 +7075,10 @@ function showAchievement(title, description, playAchievementSound = true) {
 
         console.log(`✨ Achievement displaying: ${title}`);
 
-        // Longer display time for important achievements
-        const displayTime = 4000;
+        // Longer display time for important achievements.
+        // 3x the old 4s — congratulations/victory toasts need time
+        // to be read and savoured.
+        const displayTime = 12000;
 
         // Play sound if requested
         if (playAchievementSound && typeof playSound === 'function') {
@@ -8812,7 +8814,9 @@ const WINGMAN_TACTICAL_LINES = {
 // (e.g. all fall stranded when the player warps far). Without serializing
 // the popups they overlap and clip each other. The queue dispatches one
 // every COMMS_INTERVAL_MS so the player can read each message in turn.
-const WINGMAN_COMMS_INTERVAL_MS = 4500; // matches achievement display time
+// Wingman comms serialize through this interval. Kept in step with the
+// achievement display time (now 12s) so consecutive popups don't overlap.
+const WINGMAN_COMMS_INTERVAL_MS = 12000;
 const _wingmanCommsQueue = [];
 let _wingmanCommsLastDispatch = 0;
 let _wingmanCommsTimer = null;
