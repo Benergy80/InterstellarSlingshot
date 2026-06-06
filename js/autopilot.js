@@ -849,7 +849,7 @@
             // close target gets a quick blink instead of being overshot
             // by an unconditional 2s warp. Far targets still get the
             // full 5s push.
-            gameState._pendingJumpMs = Math.min(5000, Math.max(700, dist * 0.7));
+            gameState._pendingJumpMs = Math.min(15000, Math.max(2100, dist * 2.1));
           }
           window.keys.wDoubleTap = true;
           setTimeout(() => { if (window.keys) window.keys.wDoubleTap = false; }, 120);

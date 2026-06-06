@@ -1959,12 +1959,12 @@ if (frameDistance > 0.01) { // Only track significant movement
         setTimeout(() => {
             gameState.emergencyWarp.active = true;
             gameState.emergencyWarp.transitioning = false;
-            // 2s default. The demo autopilot can request a longer hold
-            // (gameState._pendingJumpMs) when chasing a distant hostile so
-            // it actually closes the gap; cleared after use. Manual player
-            // jumps leave it null → the standard 2s.
+            // 2s default for manual player jumps. The demo autopilot can
+            // request a longer hold via gameState._pendingJumpMs when
+            // chasing distant hostiles; clamp lifted from 8s to 24s so
+            // the demo's tripled range can actually land.
             const _jumpMs = (typeof gameState._pendingJumpMs === 'number' && gameState._pendingJumpMs > 0)
-                ? Math.min(8000, gameState._pendingJumpMs) : 2000;
+                ? Math.min(24000, gameState._pendingJumpMs) : 2000;
             gameState._pendingJumpMs = null;
             gameState.emergencyWarp.timeRemaining = _jumpMs;
             gameState.velocityVector.copy(capturedForwardDirection).multiplyScalar(capturedBoostSpeed);
