@@ -3511,19 +3511,21 @@ for (let i = 0; i < _core8StarCount; i++) {
 // DUNE STAR SYSTEMS - ORBIT THE LOCAL BLACK HOLE GATEWAY
 // =============================================================================
 
-try {
-    console.log('Creating Dune star systems around local black hole gateway...');
-    
-    // Local gateway position. Pushed far BELOW the Sol plane (−32k) so
-    // the gateway black hole and the systems that cluster around it all
-    // sit well outside the Sun's 25k light radius — lit only by their
-    // own stars. The gateway black hole (created later) reads its
-    // position straight from here so the two never drift apart.
-    const localGatewayPosition = {
+// Local gateway position. Pushed far BELOW the Sol plane (−32k) so the
+// gateway black hole and the systems that cluster around it all sit well
+// outside the Sun's 25k light radius — lit only by their own stars. The
+// gateway black hole (created later) reads its position straight from
+// here so the two never drift apart. Hoisted above the Dune try-block
+// so the later black-hole try-block can still see it.
+const localGatewayPosition = {
     x: localSystemOffset.x + 2600,
     y: localSystemOffset.y - 32000,
     z: localSystemOffset.z + 2000
 };
+if (typeof window !== 'undefined') window.localGatewayPosition = localGatewayPosition;
+
+try {
+    console.log('Creating Dune star systems around local black hole gateway...');
     
     const duneSystems = [
         {
