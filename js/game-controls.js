@@ -4568,16 +4568,23 @@ function _setEnemyShieldEngaged(enemy, engaged) {
     const ud = enemy && enemy.userData;
     if (!ud || ud.shieldBroken) return;
     if (ud.isBorgCube || ud.type === 'borg_drone' || ud.isUFO) return; // own mechanics
-    if (engaged && !ud._shieldMesh) _ensureEnemyShield(enemy);
+    // Show the shield bubble briefly even when not "engaged" so a hit on
+    // the hull still flashes the shield red — matches the player's
+    // shield reaction. We lazy-create the mesh for the flash window.
+    const flashing = ud._shieldFlashUntil && Date.now() < ud._shieldFlashUntil;
+    if ((engaged || flashing) && !ud._shieldMesh) _ensureEnemyShield(enemy);
     const sm = ud._shieldMesh;
     if (!sm) return;
     ud.shieldActive = !!engaged;
-    if (!engaged) { sm.material.opacity = 0; return; }
-    // Hold the red flash if one is in progress, else gentle orange pulse.
-    if (!ud._shieldFlashUntil || Date.now() > ud._shieldFlashUntil) {
-        sm.material.color.setHex(0xff8800);
-        sm.material.opacity = 0.16 + Math.sin(Date.now() * 0.006 + (enemy.id || 0)) * 0.05;
+    if (flashing) {
+        sm.material.color.setHex(0xff2200);
+        sm.material.opacity = 0.6;
+        return;
     }
+    if (!engaged) { sm.material.opacity = 0; return; }
+    // Gentle orange pulse while engaged and not flashing.
+    sm.material.color.setHex(0xff8800);
+    sm.material.opacity = 0.16 + Math.sin(Date.now() * 0.006 + (enemy.id || 0)) * 0.05;
 }
 
 // Returns true if the shield absorbed the hit (caller skips health
@@ -4714,6 +4721,15 @@ if (typeof window !== 'undefined') window.flashBorgCubeOnHit = flashBorgCubeOnHi
 // FIXED: Enemy hit flash that works with MeshBasicMaterial (no emissive properties)
 function flashEnemyHit(enemy, damage = 1) {
     if (!enemy) return;
+
+    // Shield flash on EVERY hit — hull or shield, enemy or wingman.
+    // The per-frame _setEnemyShieldEngaged / _updateAllyShield pickers
+    // honour _shieldFlashUntil and lazy-create the bubble mesh if
+    // needed, then fade it back out when the window expires. Matches
+    // the player's first-person hex-shield reaction.
+    if (enemy.userData && enemy.userData.health > 0) {
+        enemy.userData._shieldFlashUntil = Date.now() + 170;
+    }
 
     // Impact sparks — fire for EVERY surviving hit, regardless of
     // whether the model has a top-level .material (GLB enemies are
@@ -9015,17 +9031,23 @@ function createWingmanExplosion(ally) {
 // ── Update or create a shield bubble around an ally ──────────────────────
 function _updateAllyShield(ally, active) {
     if (typeof THREE === 'undefined') return;
-    if (!active) {
-        if (ally.userData.shieldMesh) {
-            ally.remove(ally.userData.shieldMesh);
-            ally.userData.shieldMesh.geometry.dispose();
-            ally.userData.shieldMesh.material.dispose();
-            ally.userData.shieldMesh = null;
+    const ud = ally.userData;
+    // Brief red flash when the wingman is hit — even when they're not
+    // engaging — matches the player's shield reaction. The flash flag
+    // is set by flashEnemyHit; we lazy-create the mesh just for the
+    // flash window if no engagement shield is currently up.
+    const flashing = ud._shieldFlashUntil && Date.now() < ud._shieldFlashUntil;
+    if (!active && !flashing) {
+        if (ud.shieldMesh) {
+            ally.remove(ud.shieldMesh);
+            ud.shieldMesh.geometry.dispose();
+            ud.shieldMesh.material.dispose();
+            ud.shieldMesh = null;
         }
         return;
     }
-    if (!ally.userData.shieldMesh) {
-        const color = ally.userData.name === 'Wingman Alpha' ? 0x00ff88 : 0x88aaff;
+    if (!ud.shieldMesh) {
+        const color = ud.name === 'Wingman Alpha' ? 0x00ff88 : 0x88aaff;
         const geo = new THREE.SphereGeometry(30, 16, 12);
         const mat = new THREE.MeshBasicMaterial({
             color: color, transparent: true, opacity: 0.18,
@@ -9035,11 +9057,17 @@ function _updateAllyShield(ally, active) {
         const mesh = new THREE.Mesh(geo, mat);
         mesh.renderOrder = 49;
         ally.add(mesh);
-        ally.userData.shieldMesh = mesh;
+        ud.shieldMesh = mesh;
+        ud._shieldBaseColor = color;
     }
-    // Pulse opacity
-    const pulse = 0.15 + 0.08 * Math.sin(Date.now() * 0.005);
-    ally.userData.shieldMesh.material.opacity = pulse;
+    const mat = ud.shieldMesh.material;
+    if (flashing) {
+        mat.color.setHex(0xff2200);
+        mat.opacity = 0.6;
+    } else {
+        if (ud._shieldBaseColor) mat.color.setHex(ud._shieldBaseColor);
+        mat.opacity = 0.15 + 0.08 * Math.sin(Date.now() * 0.005);
+    }
 }
 
 // ── Player warp detection ────────────────────────────────────────────────
