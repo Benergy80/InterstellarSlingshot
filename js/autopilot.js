@@ -704,6 +704,24 @@
         cruiseTo = ap._solDummy;
       }
       if (cruiseTo && cruiseTo.position && camPos().distanceTo(cruiseTo.position) > 300) {
+        // Reorient FIRST. flyToward only sets thrusters — without an
+        // active reorient the ship can keep adding thrust along its old
+        // heading (e.g. residual outward velocity after a jump overshoot),
+        // which is how the demo ends up "lost" in interstellar space.
+        if (window.orientTowardsTarget) window.orientTowardsTarget(cruiseTo);
+        // Detect outward drift: velocity pointing away from cruise target
+        // means thrusters would just accelerate the wrong direction. Brake
+        // hard instead until either velocity drops or we've rotated back.
+        const vv = gameState.velocityVector;
+        if (vv && vv.lengthSq() > 4) { // speed > 2
+          const _to = cruiseTo.position.clone().sub(camPos()).normalize();
+          const _vn = vv.clone().normalize();
+          if (_vn.dot(_to) < 0.3) {
+            keys().x = true;
+            setStatus('Drift recovery — braking back toward ' + ((cruiseTo.userData && cruiseTo.userData.name) || 'objective'));
+            return;
+          }
+        }
         flyToward(cruiseTo, 1.6);
       } else if (gameState.velocityVector && gameState.velocityVector.length() > 0.5) {
         keys().x = true; // arrived at anchor, nothing to do → brake, don't drift off
@@ -726,10 +744,24 @@
       return;
     }
 
-    // Abort pursuit if the target runs beyond 6500u — don't chase a
-    // fleeing/distant enemy out into empty space; drop it and re-scan.
+    // Abort pursuit if the target runs beyond 6500u — but only when the
+    // ship isn't already trying to crash through that gap via residual
+    // jump velocity. A 5s tactical W-jump can dump us 8k+ past a target;
+    // if we bail on bare distance the cruise fallback then carries the
+    // overshoot outward forever. Give the overshoot a brake-and-reacquire
+    // window first.
     const dist = camPos().distanceTo(enemy.position);
     if (dist > 6500) {
+      const _speedNow = gameState.velocityVector ? gameState.velocityVector.length() : 0;
+      if (_speedNow > 2 && gameState.velocityVector) {
+        // Brake and aim back at the target. Stay in combat — we'll either
+        // re-enter engage range as we decelerate, or speed will drop and
+        // the abort below will fire on the next frame.
+        if (window.orientTowardsTarget) window.orientTowardsTarget({ position: enemy.position });
+        keys().x = true;
+        setStatus('Overshoot — braking to re-acquire (' + (dist | 0) + ' u)');
+        return;
+      }
       ap.combatTarget = null;
       goPhase('findLocalEnemies');
       return;
@@ -813,7 +845,11 @@
         ap._lastJumpTap = Date.now();
         if (window.keys) {
           if (typeof gameState !== 'undefined') {
-            gameState._pendingJumpMs = Math.min(5000, Math.max(2000, 2000 + (dist - 500) * 1.0));
+            // Scale jump duration with range. Tight floor (700ms) so a
+            // close target gets a quick blink instead of being overshot
+            // by an unconditional 2s warp. Far targets still get the
+            // full 5s push.
+            gameState._pendingJumpMs = Math.min(5000, Math.max(700, dist * 0.7));
           }
           window.keys.wDoubleTap = true;
           setTimeout(() => { if (window.keys) window.keys.wDoubleTap = false; }, 120);
