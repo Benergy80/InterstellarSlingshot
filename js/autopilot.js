@@ -1292,9 +1292,16 @@
       const nm = ap.orbitTarget.userData.name;
       setStatus('Navigating to ' + nm + ' center');
       transmit('NAVIGATION SYSTEM', 'Target locked: ' + nm + '\nProceeding to nebula center.\nAwaiting intel transmission.');
-      ap._pathCountAtEntry = (window.discoveryPaths || []).length;
       // Find a planet inside the nebula to nav-lock for the HUD
       ap._orbitNavPlanet = _findPlanetNearNebula(ap.currentNebula) || null;
+    }
+    // Snapshot the discovery-path roster on every entry into this phase
+    // (not just when orbitTarget is first set) so re-entries from combat
+    // don't compare against a stale baseline and immediately false-trigger
+    // followDiscoveryPath against an old path from a previous nebula.
+    if (ap._orbitPhaseStart !== ap.phaseStart) {
+      ap._orbitPhaseStart = ap.phaseStart;
+      ap._pathCountAtEntry = (window.discoveryPaths || []).length;
     }
 
     // Refresh planet nav-lock periodically (planets orbit; the chosen one
@@ -1348,17 +1355,31 @@
       checkForNebulaDeepDiscovery();
     }
 
-    // Check if a NEW discovery path appeared since we entered this phase
+    // Check if a NEW discovery path appeared since we entered this phase.
+    // Snapshot the actual path reference so phaseFollowDiscoveryPath can
+    // use THIS path, not whatever happens to be last in the array later
+    // (the discoveryPaths array is never pruned, so [length-1] can point
+    // at an old path from a previous galaxy halfway across the universe).
     const paths = window.discoveryPaths || [];
     if (paths.length > (ap._pathCountAtEntry || 0)) {
-      transmit('NAVIGATION', 'Dotted-line path detected!\nFollowing discovery route.');
-      goPhase('followDiscoveryPath');
-      return;
+      const newPath = paths[paths.length - 1];
+      const endPos = newPath && newPath.line && newPath.line.userData && newPath.line.userData.endPosition;
+      // Sanity check: the path should lead somewhere within reach. If it
+      // points >50,000u away the path is almost certainly stale or
+      // misattributed — bail to a fresh nebula warp instead of chasing it.
+      if (endPos && camPos().distanceTo(endPos) < 50000) {
+        ap._followingPath = newPath;
+        transmit('NAVIGATION', 'Dotted-line path detected!\nFollowing discovery route.');
+        goPhase('followDiscoveryPath');
+        return;
+      }
     }
 
-    // Safety timeout — path may not appear if nebula was already discovered
+    // Safety timeout — no discovery path materialised. Don't fall through
+    // to followDiscoveryPath (it would pick a stale path); warp to a new
+    // nebula and try discovery again there.
     if (t > 25000) {
-      goPhase('followDiscoveryPath');
+      goPhase('warpToNebulaCluster');
     }
   }
 
@@ -1367,9 +1388,25 @@
     const t = elapsed();
     ensureShieldsFor('travel');
     ensureThirdPerson();
-    const paths = window.discoveryPaths || [];
-    const path = paths.length > 0 ? paths[paths.length - 1] : null;
+    // Prefer the path snapshot taken when this transition was triggered.
+    // discoveryPaths is never pruned, so [length-1] can drift to a path
+    // from a different galaxy that was created mid-flight.
+    let path = ap._followingPath || null;
+    if (!path || !path.line || !path.line.userData) {
+      const paths = window.discoveryPaths || [];
+      path = paths.length > 0 ? paths[paths.length - 1] : null;
+    }
     const endPos = path && path.line && path.line.userData && path.line.userData.endPosition;
+
+    // Guard against runaway chases: if the snapshotted path's endpoint is
+    // unreasonably far (stale path slipped through, or the snapshot got
+    // cleared and we fell back to a foreign [length-1]), abort to a fresh
+    // nebula warp instead of flying to the edge of the universe.
+    if (endPos && camPos().distanceTo(endPos) > 50000) {
+      ap._followingPath = null;
+      goPhase('warpToNebulaCluster');
+      return;
+    }
 
     // Check for an enemy in front of us as we travel
     const enemyAhead = nearestAliveEnemy(3500);
@@ -3047,6 +3084,11 @@
     if (name !== 'warpToNebulaCluster' && name !== 'coastToNebulaCluster') {
       ap.slingshotPlanet = null;
     }
+    // Drop the discovery-path snapshot the moment we leave the follow
+    // phase so a stale reference can't be reused on a later trigger.
+    if (name !== 'followDiscoveryPath') {
+      ap._followingPath = null;
+    }
   }
 
   function resetFlags() {
@@ -3067,6 +3109,9 @@
     ap._lastBHWarp = 0;
     ap._evadeUntil = 0;
     ap._evadeKey = null;
+    ap._followingPath = null;
+    ap._pathCountAtEntry = 0;
+    ap._orbitPhaseStart = 0;
   }
 
   function releaseKeys() {
