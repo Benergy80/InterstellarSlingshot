@@ -3326,58 +3326,58 @@ const FACTION_LORE = {
     'Federation': {
         species: 'Human',
         color: 0x4488ff,
-        greeting: 'INCOMING TRANSMISSION - STARFLEET INTELLIGENCE',
-        lore: `Captain, our sensors detect Federation renegades in this sector. These former Starfleet officers turned to piracy after the Dominion War, stealing military-grade vessels and preying on civilian convoys. Their commander, Admiral Kane, believes the Federation abandoned the outer colonies. Approach with extreme caution - they fight with the precision of trained officers but none of the mercy.`,
-        threat: 'TACTICAL ASSESSMENT: Coordinated strike formations. Shield modulation tactics. High weapons accuracy.'
+        greeting: 'STARFLEET INTELLIGENCE',
+        lore: `Federation renegades, Captain — former Starfleet officers turned pirate after the Dominion War. Admiral Kane believes the colonies were abandoned, and he fights with trained precision and no mercy.`,
+        threat: 'TACTICAL: Strike formations. Shield modulation. High accuracy.'
     },
     'Klingon Empire': {
         species: 'Klingon',
         color: 0xff8844,
-        greeting: 'INTELLIGENCE BRIEFING - KLINGON THREAT DETECTED',
-        lore: `A rogue Klingon warband has claimed this nebula as their hunting ground. Led by General Koth of House Duras, these warriors were exiled for dishonorable combat against civilians. They seek glory through slaughter, caring nothing for the warrior\'s code. Their battle cry: "Today IS a good day for YOU to die!" They will not retreat, they will not surrender.`,
-        threat: 'TACTICAL ASSESSMENT: Aggressive ramming tactics. Cloaking devices possible. Berserker combat style.'
+        greeting: 'KLINGON THREAT DETECTED',
+        lore: `General Koth of House Duras has claimed this nebula as his hunting ground. Exiled for dishonor against civilians, his warband seeks glory through slaughter and will not retreat.`,
+        threat: 'TACTICAL: Ramming tactics. Possible cloaks. Berserker combat.'
     },
     'Rebel Alliance': {
         species: 'Mon Calamari',
         color: 0x88ff44,
-        greeting: 'PRIORITY ALERT - REBEL CELL IDENTIFIED',
-        lore: `Mon Calamari insurgents have established a hidden base near this nebula. Survivors of a brutal Imperial occupation, they now strike at any vessel they perceive as a threat. Their leader, Admiral Ackbar\'s former lieutenant, commands converted civilian cruisers armed with salvaged turbolasers. They fight for vengeance, not peace - and they see all outsiders as potential enemies.`,
-        threat: 'TACTICAL ASSESSMENT: Ambush specialists. Superior sensors. "It\'s a trap!" formations.'
+        greeting: 'REBEL CELL IDENTIFIED',
+        lore: `Mon Calamari insurgents — survivors of Imperial occupation now striking any vessel they don't trust. Tessek's converted cruisers run on vengeance, and outsiders are enemies first.`,
+        threat: 'TACTICAL: Ambush specialists. Superior sensors. "It\'s a trap!"'
     },
     'Romulan Star Empire': {
         species: 'Romulan',
         color: 0xff4488,
-        greeting: 'CLASSIFIED INTERCEPT - ROMULAN ACTIVITY',
-        lore: `The Tal Shiar have deployed a covert operations fleet to this region. These shadow agents answer to no one - not even the Romulan Senate. Their mission: eliminate all witnesses to their activities in this sector. Commander T\'Vok leads the operation, a woman whose name is whispered in fear across a dozen star systems. Trust nothing you see - Romulan holographic deception is legendary.`,
-        threat: 'TACTICAL ASSESSMENT: Cloaking technology. Plasma torpedoes. Psychological warfare specialists.'
+        greeting: 'ROMULAN ACTIVITY',
+        lore: `A Tal Shiar covert fleet under Commander T\'Vok answers to no one. Their orders: eliminate every witness. Trust nothing you see — Romulan deception is legendary.`,
+        threat: 'TACTICAL: Cloaks. Plasma torpedoes. Psyops.'
     },
     'Galactic Empire': {
         species: 'Imperial',
         color: 0x44ffff,
-        greeting: 'IMPERIAL REMNANT FORCES DETECTED',
-        lore: `An Imperial Remnant fleet lurks within this nebula, still flying the banner of a fallen Empire. Moff Jerec commands this force of fanatics, seeking ancient artifacts they believe will restore Imperial glory. Their TIE squadrons are piloted by veterans of a hundred battles, and their Star Destroyer captains show no mercy. The Empire\'s shadow stretches even here.`,
-        threat: 'TACTICAL ASSESSMENT: Overwhelming numbers. Fighter swarms. Heavy capital ship firepower.'
+        greeting: 'IMPERIAL REMNANT',
+        lore: `Moff Jerec's Imperial Remnant fleet hides here, hunting relics they believe will restore Imperial glory. TIE squadrons crewed by veterans; capital captains show no mercy.`,
+        threat: 'TACTICAL: Overwhelming numbers. Fighter swarms. Heavy capital firepower.'
     },
     'Cardassian Union': {
         species: 'Cardassian',
         color: 0xff44ff,
-        greeting: 'OBSIDIAN ORDER WARNING - CARDASSIAN PRESENCE',
-        lore: `Cardassian forces have infiltrated this region, remnants of the Obsidian Order\'s darkest programs. Gul Madred, infamous for his interrogation techniques, leads a fleet of warships equipped with experimental weapons. The Cardassians lost everything in the Dominion War - now they take from others. They specialize in disabling ships and capturing crews for... processing.`,
-        threat: 'TACTICAL ASSESSMENT: Disabling weapons priority. Tractor beam traps. Torture specialists aboard.'
+        greeting: 'CARDASSIAN PRESENCE',
+        lore: `Obsidian Order remnants under Gul Madred operate in this region — infamous interrogator, experimental weapons. They prefer to disable ships and take crews alive for processing.`,
+        threat: 'TACTICAL: Disabling weapons. Tractor traps. Torturers aboard.'
     },
     'Sith Empire': {
         species: 'Sith',
         color: 0xff8888,
-        greeting: 'DARK SIDE PRESENCE - SITH LORD DETECTED',
-        lore: `The Force trembles with dark energy from this nebula. A Sith Lord, Darth Malachar, has gathered an army of dark acolytes and corrupted soldiers. They seek to drain the life force of entire worlds to fuel their master\'s immortality. Their ships run red with the blood of innocents, and their weapons fire burns with the hatred of the Dark Side itself. Fear is their greatest weapon.`,
-        threat: 'TACTICAL ASSESSMENT: Force-enhanced pilots. Lightning weapons. Unpredictable aggression.'
+        greeting: 'SITH LORD DETECTED',
+        lore: `Darth Malachar's acolytes drain the life of whole worlds to feed his immortality. Their weapons burn with the Dark Side, and fear is their finest blade.`,
+        threat: 'TACTICAL: Force-enhanced pilots. Lightning weapons. Unpredictable aggression.'
     },
     'Vulcan High Command': {
         species: 'Vulcan',
         color: 0xffaa88,
-        greeting: 'LOGIC PROTOCOL VIOLATION - VULCAN EXTREMISTS',
-        lore: `Disturbing intelligence, Captain. A sect of Vulcan extremists called the "V\'tosh ka\'tur" - Vulcans without logic - have established operations here. Led by T\'Pol\'s distant ancestor, Administrator Soval, they believe emotion must be purged from the galaxy - by force. Their ships are crewed by the most brilliant tactical minds in the quadrant, now turned to genocide. Cold, calculating, merciless.`,
-        threat: 'TACTICAL ASSESSMENT: Perfect tactical efficiency. No fear. No hesitation. No mercy.'
+        greeting: 'VULCAN EXTREMISTS',
+        lore: `The V\'tosh ka\'tur — Vulcans without logic — under Administrator Soval believe emotion must be purged by force. Brilliant tactical minds turned to genocide.`,
+        threat: 'TACTICAL: Perfect efficiency. No fear. No hesitation. No mercy.'
     }
 };
 
@@ -3395,80 +3395,80 @@ const NEBULA_LORE = {
         galaxyId: 0,
         faction: 'Federation',
         species: 'Human',
-        greeting: 'PRIORITY TRANSMISSION - OLYMPUS SECTOR INTELLIGENCE',
-        backstory: `The Olympus Nebula was once home to the Federation's most prestigious deep-space academy. Thousands of officers trained here among the swirling gases, learning navigation and combat tactics in the nebula's challenging electromagnetic fields. When the Dominion War ended, the academy was decommissioned - but Admiral Kane and his followers refused to leave.`,
-        connection: `Kane transformed the abandoned academy into a fortress. His "New Olympians" believe they are the true inheritors of Starfleet's legacy, gods among mortals. They've been recruiting disillusioned veterans and raiding supply convoys to build their fleet. The nebula's sensor-scrambling properties make them nearly impossible to track.`,
-        threat: 'TACTICAL ASSESSMENT: Academy-trained pilots with intimate knowledge of nebula navigation. Expect coordinated ambushes using the gas clouds for cover.'
+        greeting: 'OLYMPUS SECTOR INTEL',
+        backstory: `Olympus was Starfleet's premier deep-space academy until the Dominion War ended and it was decommissioned. Admiral Kane and his followers refused the recall order and stayed.`,
+        connection: `Kane has turned the academy into a fortress for his "New Olympians." The nebula's sensor scramble makes them ghosts.`,
+        threat: 'TACTICAL: Academy-trained pilots ambushing from the gas clouds.'
     },
-    
+
     'Titan Nebula': {
         galaxyId: 1,
         faction: 'Klingon Empire',
         species: 'Klingon',
-        greeting: 'URGENT BRIEFING - TITAN NEBULA INCURSION',
-        backstory: `The Titan Nebula earned its name from the colossal stellar remnants at its core - the bones of ancient giant stars. Klingon legend speaks of this place as where Kahless himself slew the tyrant Molor's war fleet in a battle that shook the heavens. For centuries, warriors have made pilgrimages here.`,
-        connection: `General Koth of House Duras has claimed the Titan Nebula as his personal hunting ground. Exiled from the Empire for slaughtering civilians, he now leads a warband of the most bloodthirsty Klingons in the quadrant. They believe dying in this sacred nebula guarantees entry to Sto-vo-kor. They actively seek glorious death - and will take you with them.`,
-        threat: 'TACTICAL ASSESSMENT: Berserker tactics. Ships rigged for ramming. Warriors who consider retreat a fate worse than death.'
+        greeting: 'TITAN NEBULA INCURSION',
+        backstory: `Klingons hold Titan sacred — legend says Kahless slew Molor's fleet here. Warriors come to die well.`,
+        connection: `General Koth's exiled warband believes a death in Titan opens the gates of Sto-vo-kor. They'll happily take you with them.`,
+        threat: 'TACTICAL: Berserker tactics. Ramming-rigged hulls. Retreat is unthinkable.'
     },
-    
+
     'Atlantis Nebula': {
         galaxyId: 2,
         faction: 'Rebel Alliance',
         species: 'Mon Calamari',
-        greeting: 'CLASSIFIED ALERT - ATLANTIS NEBULA SITUATION',
-        backstory: `The Atlantis Nebula's unique composition creates pockets of liquid-phase matter suspended in space - the closest thing to ocean that exists in the void. Mon Calamari refugees discovered this miracle during their exodus from Imperial occupation, naming it after the legendary lost city of their own mythology.`,
-        connection: `What began as a refugee sanctuary has become a militarized zone. Admiral Raddus's former lieutenant, Commander Tessek, leads the survivors. Years of trauma have transformed them from peaceful beings into paranoid warriors who see threats everywhere. Their converted cruisers patrol the liquid pockets, attacking any vessel that enters their "territorial waters."`,
-        threat: 'TACTICAL ASSESSMENT: Superior sensor arrays adapted to nebula conditions. Ambush specialists who use the liquid-matter pockets as cover. "It\'s a trap!" is not just a meme here.'
+        greeting: 'ATLANTIS NEBULA SITUATION',
+        backstory: `Atlantis suspends pockets of liquid matter — Mon Calamari refugees found it during their Imperial exodus and called it home.`,
+        connection: `Commander Tessek's survivors are paranoid now. Any inbound vessel is a hunter unless proven otherwise.`,
+        threat: 'TACTICAL: Adapted sensors, liquid-pocket ambushes. "It\'s a trap!" is literal here.'
     },
-    
+
     'Prometheus Nebula': {
         galaxyId: 3,
         faction: 'Romulan Star Empire',
         species: 'Romulan',
-        greeting: 'ENCRYPTED INTERCEPT - PROMETHEUS SECTOR',
-        backstory: `The Prometheus Nebula burns with the fire of a star that refused to die. Its core contains a proto-star in perpetual ignition, providing unlimited energy to anyone who can harness it. The Romulans discovered this secret decades ago and built a hidden research station here, developing weapons that would make singularity drives look primitive.`,
-        connection: `Commander T'Vok of the Tal Shiar oversees "Project Prometheus" - an attempt to weaponize the proto-star's energy. Her station is crewed by scientists who've been declared dead to their families, agents who officially don't exist. Anyone who stumbles upon their operation is eliminated. No witnesses. No evidence. No mercy.`,
-        threat: 'TACTICAL ASSESSMENT: Experimental plasma weapons of unknown power. Holographic decoys. Ships equipped with enhanced cloaking that works even inside the nebula.'
+        greeting: 'PROMETHEUS SECTOR INTERCEPT',
+        backstory: `Prometheus burns around a proto-star in perpetual ignition — unlimited power for anyone who can tame it. The Romulans got there first.`,
+        connection: `Commander T'Vok runs Project Prometheus inside a station crewed by agents declared officially dead. Witnesses don't leave.`,
+        threat: 'TACTICAL: Experimental plasma. Holo decoys. Cloaks that hold inside the nebula.'
     },
-    
+
     'Elysium Nebula': {
         galaxyId: 4,
         faction: 'Galactic Empire',
         species: 'Imperial',
-        greeting: 'IMPERIAL REMNANT DETECTED - ELYSIUM SECTOR',
-        backstory: `The Elysium Nebula was named by its discoverers for its almost paradise-like conditions - stable temperatures, rich minerals, and stunning auroral displays. It became a popular destination for wealthy travelers seeking the ultimate luxury cruise. Then the Empire fell, and paradise became a prison.`,
-        connection: `Moff Jerec seized the luxury liners and their passengers as hostages, converting the pleasure vessels into warships. The former tourists are now slave labor, mining the nebula's resources to fund his restoration of Imperial glory. He broadcasts propaganda promising that Elysium will be the capital of a New Empire. His TIE squadrons are crewed by fanatics who believe every word.`,
-        threat: 'TACTICAL ASSESSMENT: Overwhelming fighter numbers. Heavy weapons salvaged from the Imperial fleet. Hostage situations likely.'
+        greeting: 'ELYSIUM SECTOR — IMPERIAL REMNANT',
+        backstory: `Elysium was a luxury-cruise destination until the Empire fell. Then the liners became warships and the tourists became hostages.`,
+        connection: `Moff Jerec's fanatics mine the nebula with slave labor, broadcasting that Elysium will be the capital of a New Empire.`,
+        threat: 'TACTICAL: Massive fighter numbers, salvaged Imperial weapons, hostages on every hull.'
     },
-    
+
     'Tartarus Nebula': {
         galaxyId: 5,
         faction: 'Cardassian Union',
         species: 'Cardassian',
-        greeting: 'OBSIDIAN ORDER WARNING - TARTARUS SECTOR',
-        backstory: `The Tartarus Nebula is a place of darkness - literally. Its dense molecular clouds block nearly all light, creating a void so complete that ships have been lost for weeks, unable to find their way out. Ancient spacers called it the "abyss," and avoided it at all costs.`,
-        connection: `Gul Madred chose Tartarus specifically for its horror. The Obsidian Order's most classified interrogation facility operates here, hidden in the absolute darkness. Ships that enter are captured, their crews subjected to psychological torment until they break. Madred has perfected techniques that leave no physical marks but shatter the mind completely. "There are FIVE lights," Captain. Always five.`,
-        threat: 'TACTICAL ASSESSMENT: Disabling weapons prioritized - they want prisoners, not corpses. Tractor beam networks. Sensor-dampening fields. The darkness itself is a weapon.'
+        greeting: 'TARTARUS SECTOR — OBSIDIAN ORDER',
+        backstory: `Tartarus is so dense it swallows light. Old spacers called it the abyss and steered clear.`,
+        connection: `Gul Madred runs the Order's most classified interrogation site inside it. The darkness is half the cell. "There are FIVE lights," Captain.`,
+        threat: 'TACTICAL: Disablers, tractor nets, sensor blinds. The dark itself is a weapon.'
     },
-    
+
     'Hyperion Nebula': {
         galaxyId: 6,
         faction: 'Sith Empire',
         species: 'Sith',
-        greeting: 'DARK SIDE CONVERGENCE - HYPERION SECTOR',
-        backstory: `The Hyperion Nebula blazes with light from a binary star system at its heart, so bright it can be seen across sectors. Ancient Jedi texts speak of it as a place of balance, where light and dark exist in equal measure. They were wrong. The light is a lie.`,
-        connection: `Darth Malachar discovered that the Hyperion's brilliance masks a wound in the Force itself - a place where the Dark Side bleeds through from some other realm. He has built a temple at the wound's heart, drawing power that makes him nearly immortal. His acolytes drain the life force of entire crews to fuel their master's existence. The light you see is the glow of consumed souls.`,
-        threat: 'TACTICAL ASSESSMENT: Force-enhanced reflexes and precognition. Lightning weapons that bypass shields. Pilots who feel no fear because they welcome death as transformation.'
+        greeting: 'HYPERION SECTOR — DARK SIDE CONVERGENCE',
+        backstory: `A binary star at Hyperion's heart hides a wound in the Force where the Dark Side bleeds through.`,
+        connection: `Darth Malachar's temple at the wound draws the life force of whole crews. The light you see is the glow of consumed souls.`,
+        threat: 'TACTICAL: Force-enhanced pilots, shield-bypassing lightning, no fear of death.'
     },
-    
+
     'Chronos Nebula': {
         galaxyId: 7,
         faction: 'Vulcan High Command',
         species: 'Vulcan',
-        greeting: 'TEMPORAL ANOMALY ALERT - CHRONOS SECTOR',
-        backstory: `The Chronos Nebula contains gravitational anomalies that affect the flow of time itself. Ships passing through experience temporal distortions - minutes can become hours, or hours can become seconds. Early Vulcan explorers mapped these anomalies with mathematical precision, believing they held the key to understanding the universe.`,
-        connection: `Administrator Soval's V'tosh ka'tur cult has claimed the Chronos Nebula as their sanctuary. They've learned to navigate the time distortions, using them to appear and disappear without warning. Their philosophy is terrifyingly simple: emotion is inefficiency, and inefficiency must be purged. They've calculated that eliminating all emotional species will optimize the universe. Your death is simply... logical.`,
-        threat: 'TACTICAL ASSESSMENT: Temporal ambush tactics - they strike from moments you haven\'t experienced yet. Perfect coordination. Zero emotional response to threats or losses.'
+        greeting: 'CHRONOS SECTOR — TEMPORAL ANOMALY',
+        backstory: `Chronos warps the flow of time. Minutes become hours, or seconds.`,
+        connection: `The V'tosh ka'tur under Administrator Soval ride those distortions, striking from moments you haven't experienced yet. Your death is simply logical.`,
+        threat: 'TACTICAL: Temporal ambushes. Perfect coordination. Zero emotion.'
     },
     
     // =========================================================================
@@ -3479,60 +3479,60 @@ const NEBULA_LORE = {
         galaxyId: 4,
         faction: 'Galactic Empire',
         species: 'Imperial',
-        greeting: 'LONG-RANGE SCAN - DISTANT ALPHA SECTOR',
-        backstory: `Distant Nebula Alpha was the first extragalactic nebula to be catalogued by deep-space probes. Its immense distance from civilized space made it seem irrelevant - until Imperial scouts discovered it contained rare hypermatter deposits capable of powering a thousand Star Destroyers.`,
-        connection: `Admiral Thrawn's secret contingency plans included establishing a hidden shipyard in Alpha sector. When the Empire fell, Captain Pellaeon followed those plans to the letter. Now a fleet of warships grows in the nebula's depths, crewed by the most loyal Imperial survivors. They're building an armada for a war of reconquest that hasn't started yet - but will soon.`,
-        threat: 'TACTICAL ASSESSMENT: State-of-the-art Imperial vessels. Veterans of a hundred campaigns. A commander brilliant enough to earn Thrawn\'s trust.'
+        greeting: 'DISTANT ALPHA — LONG-RANGE SCAN',
+        backstory: `Alpha holds hypermatter deposits enough to power a thousand Star Destroyers. Thrawn left contingency orders to build a shipyard here.`,
+        connection: `Captain Pellaeon followed those orders to the letter — an Imperial armada is growing in the depths, crewed by survivors loyal to a dead Empire.`,
+        threat: 'TACTICAL: State-of-the-art hulls. Veteran crews. A commander Thrawn trusted.'
     },
-    
+
     'Distant Nebula Beta': {
         galaxyId: 5,
         faction: 'Cardassian Union',
         species: 'Cardassian',
-        greeting: 'DEEP SPACE INTERCEPT - DISTANT BETA SECTOR',
-        backstory: `Distant Nebula Beta exists at the very edge of charted space, so remote that signals take years to reach civilization. It was considered worthless until Cardassian surveyors discovered something impossible: ruins of a civilization that predates all known species by millions of years.`,
-        connection: `The Obsidian Order dispatched their top archaeologists to study the ruins, hoping to find weapons or technology that could restore Cardassian power. What they found instead drove half of them mad. Gul Dukat's cousin, Gul Revok, leads the survivors in a desperate attempt to weaponize what they've uncovered. Ships that investigate Beta sector don't return - or return... changed.`,
-        threat: 'TACTICAL ASSESSMENT: Conventional Cardassian tactics augmented by unknown alien technology. Crews report strange readings and hallucinations near Beta sector.'
+        greeting: 'DISTANT BETA — DEEP-SPACE INTERCEPT',
+        backstory: `Beta hides ruins predating every known species. The Cardassian survey team that found them lost half their minds.`,
+        connection: `Gul Revok is trying to weaponize the alien tech that survives. Ships that go in either don't come back, or come back wrong.`,
+        threat: 'TACTICAL: Cardassian doctrine plus alien tech. Crews report hallucinations near the sector.'
     },
-    
+
     'Distant Nebula Gamma': {
         galaxyId: 6,
         faction: 'Sith Empire',
         species: 'Sith',
-        greeting: 'FORCE DISTURBANCE - DISTANT GAMMA SECTOR',
-        backstory: `Distant Nebula Gamma pulses with energy that defies scientific analysis. Sensors register it as electromagnetic radiation, but Force-sensitives feel it as something else entirely - a heartbeat, slow and ancient and hungry. The Jedi Council once forbade all travel to Gamma sector. The Sith had other ideas.`,
-        connection: `Darth Malachar sent his most promising apprentice, Darth Nihira, to Gamma sector to commune with whatever entity dwells there. She has not returned, but her followers have. They speak of "the Awakening" and gather sacrifices for their mistress. The nebula itself seems to be growing, reaching toward inhabited systems like a hand grasping for prey.`,
-        threat: 'TACTICAL ASSESSMENT: Cultists with Force abilities that shouldn\'t be possible. Ships that seem to heal damage. An enemy that may not be entirely physical.'
+        greeting: 'DISTANT GAMMA — FORCE DISTURBANCE',
+        backstory: `Gamma pulses with energy the Jedi Council forbade approaching. Force-sensitives feel a slow, hungry heartbeat inside it.`,
+        connection: `Darth Nihira went in to commune with whatever lives there. She hasn't returned — but her followers have, gathering sacrifices for "the Awakening."`,
+        threat: 'TACTICAL: Cultists with impossible Force abilities. Ships that mend damage. An enemy possibly not entirely physical.'
     },
-    
+
     'Distant Nebula Delta': {
         galaxyId: 7,
         faction: 'Vulcan High Command',
         species: 'Vulcan',
-        greeting: 'LOGIC BREACH - DISTANT DELTA SECTOR',
-        backstory: `Distant Nebula Delta was the site of Vulcan's most ambitious scientific project: an attempt to create a stable artificial wormhole. The experiment succeeded beyond expectations - the wormhole opened to a parallel universe where Vulcans never adopted logic. The project was immediately classified and abandoned.`,
-        connection: `The V'tosh ka'tur discovered the abandoned facility and reopened the wormhole. Now they smuggle weapons, ships, and warriors from a universe where Vulcans conquered through emotional manipulation and telepathic domination. Your counterpart in that universe is probably already dead. Administrator Soval's forces grow stronger with each crossing.`,
-        threat: 'TACTICAL ASSESSMENT: Vulcan intellect combined with emotional ruthlessness. Telepathic attacks. Technology that works on principles our physics can\'t explain.'
+        greeting: 'DISTANT DELTA — LOGIC BREACH',
+        backstory: `Delta houses a Vulcan wormhole experiment that opened on a parallel universe where Vulcans never embraced logic. The project was classified and buried.`,
+        connection: `The V'tosh ka'tur reopened it. They're smuggling ships, weapons and warriors across. Soval's forces grow with every crossing.`,
+        threat: 'TACTICAL: Vulcan intellect plus emotional ruthlessness. Telepathic attacks. Physics-defying tech.'
     },
-    
+
     'Distant Nebula Epsilon': {
         galaxyId: 0,
         faction: 'Federation',
         species: 'Human',
-        greeting: 'FEDERATION ALERT - DISTANT EPSILON SECTOR',
-        backstory: `Distant Nebula Epsilon was colonized during the Federation's golden age of expansion, a utopian project meant to prove that humanity could thrive anywhere. The colony of New Eden flourished for decades, then went silent. By the time rescue ships arrived, the colonists had become something else entirely.`,
-        connection: `Admiral Kane's New Olympians made contact with New Eden's survivors and found kindred spirits. The colonists had abandoned Federation ideals after being "abandoned" during a supply crisis, developing their own brutal philosophy of survival at any cost. Now they serve as Kane's shock troops, humans who've forgotten how to be human. They don't take prisoners - they don't see the point.`,
-        threat: 'TACTICAL ASSESSMENT: Federation training combined with frontier savagery. No rules of engagement. No concept of surrender - theirs or yours.'
+        greeting: 'DISTANT EPSILON — FEDERATION ALERT',
+        backstory: `The colony of New Eden flourished for decades, then went silent. By the time relief arrived, the colonists had become something else.`,
+        connection: `Kane's New Olympians found kindred spirits in those survivors and recruited them as shock troops — humans who've forgotten how to be human.`,
+        threat: 'TACTICAL: Starfleet training plus frontier savagery. No surrender, theirs or yours.'
     },
-    
+
     'Distant Nebula Zeta': {
         galaxyId: 1,
         faction: 'Klingon Empire',
         species: 'Klingon',
-        greeting: 'WARRIOR ALERT - DISTANT ZETA SECTOR',
-        backstory: `Distant Nebula Zeta is known to Klingons as "Gre'thor's Shadow" - a place where dishonored warriors are said to wander for eternity. Legend claims that those who die here are denied entry to either Sto-vo-kor or Gre'thor, cursed to fight forever without glory or rest.`,
-        connection: `General Koth has transformed the legend into reality. He sends his most troublesome warriors to Zeta sector as "punishment" - but in truth, he's building an army of the desperate. These Klingons have nothing to lose and everything to prove. They fight with the ferocity of the damned because that's exactly what they believe they are. Death in battle is their only hope of redemption.`,
-        threat: 'TACTICAL ASSESSMENT: No retreat, no surrender, no sanity. Warriors who have already accepted death. Ships held together by rage and prayer.'
+        greeting: 'DISTANT ZETA — WARRIOR ALERT',
+        backstory: `Klingons call Zeta "Gre'thor's Shadow" — the dishonored are said to wander it forever, denied either Sto-vo-kor or Gre'thor.`,
+        connection: `Koth exiles his most dangerous warriors here as "punishment." They're really an army of the damned with nothing to lose.`,
+        threat: 'TACTICAL: No retreat, no surrender, no sanity. Ships held together by rage.'
     },
     
     // =========================================================================
@@ -3543,80 +3543,80 @@ const NEBULA_LORE = {
         galaxyId: 2,
         faction: 'Rebel Alliance',
         species: 'Mon Calamari',
-        greeting: 'FRONTIER ALERT - UNCHARTED TERRITORY',
-        backstory: `The Frontier Nebula marks the boundary between explored space and the true unknown. It's a place where star charts end and legends begin. Smugglers, explorers, and refugees have used it as a waypoint for generations, each adding their own stories to its mystique.`,
-        connection: `Commander Tessek chose the Frontier Nebula as the final fallback position for Mon Calamari survivors. Here, at the edge of everything, they've built a hidden fleet from salvaged ships and stolen parts. They call themselves "The Last Tide" and consider themselves the final guardians of their species. Any ship that approaches is assumed to be an Imperial hunter - and dealt with accordingly.`,
-        threat: 'TACTICAL ASSESSMENT: Desperate defenders with nothing left to lose. Improvised weapons that don\'t follow standard configurations. Home field advantage in terrain they\'ve mapped for years.'
+        greeting: 'FRONTIER ALERT — UNCHARTED',
+        backstory: `Where the star charts end. Smugglers and refugees have used Frontier as a waypoint for generations.`,
+        connection: `Tessek's "Last Tide" hide a salvaged fleet here. Any approaching ship is presumed an Imperial hunter.`,
+        threat: 'TACTICAL: Desperate defenders. Improvised weapons. Home turf they know cold.'
     },
-    
+
     'Outer Veil Nebula': {
         galaxyId: 3,
         faction: 'Romulan Star Empire',
         species: 'Romulan',
-        greeting: 'CLASSIFIED - OUTER VEIL INTELLIGENCE',
-        backstory: `The Outer Veil Nebula is surrounded by a shell of ionized gas that blocks all signals from passing through - a natural cloaking device on a cosmic scale. What happens inside the Veil stays inside the Veil. The Romulans noticed this immediately.`,
-        connection: `The Tal Shiar maintains their most secret facility inside the Outer Veil: a prison for enemies of the state too valuable to kill but too dangerous to keep anywhere else. Commander T'Vok personally oversees the interrogation of captured admirals, scientists, and diplomats. The intelligence gathered here has toppled governments. If you enter the Veil, you will join her collection.`,
-        threat: 'TACTICAL ASSESSMENT: No communications possible once inside. Prisoners used as bait for rescue attempts. Guards who\'ve spent years perfecting the art of capture.'
+        greeting: 'OUTER VEIL INTEL — CLASSIFIED',
+        backstory: `An ionized shell around the Veil blocks every signal in or out — a cosmic-scale cloak.`,
+        connection: `Inside, the Tal Shiar keep their highest-value prisoners. T'Vok personally runs the interrogations. Enter the Veil and you join the collection.`,
+        threat: 'TACTICAL: No comms inside. Prisoners used as bait. Capture specialists.'
     },
-    
+
     'Deep Space Nebula': {
         galaxyId: 4,
         faction: 'Galactic Empire',
         species: 'Imperial',
-        greeting: 'IMPERIAL PRESENCE - DEEP SPACE SECTOR',
-        backstory: `The Deep Space Nebula earned its name by being further from any star system than any other nebula on record. It exists in a void so empty that the nearest civilization is weeks away at maximum warp. It's the perfect place to hide something you never want found.`,
-        connection: `Moff Jerec has established his command center here, surrounded by the elite of the Imperial Remnant. The Deep Space Nebula is more than a hiding place - it's a proving ground where his officers compete for advancement through increasingly ruthless tests of loyalty. Those who survive become the core of his future conquest fleet. Those who fail become examples.`,
-        threat: 'TACTICAL ASSESSMENT: Elite Imperial forces. Officers who\'ve proven their willingness to do anything. No backup coming - for either side.'
+        greeting: 'DEEP SPACE SECTOR — IMPERIAL PRESENCE',
+        backstory: `Deep Space is further from any star than any nebula on record. Weeks from civilization at max warp — the perfect hiding place.`,
+        connection: `Moff Jerec runs his command from inside, using it as a loyalty-test proving ground for his elite officers.`,
+        threat: 'TACTICAL: Elite Imperial crews. No backup coming — for either side.'
     },
-    
+
     'Void Nebula': {
         galaxyId: 5,
         faction: 'Cardassian Union',
         species: 'Cardassian',
-        greeting: 'VOID SECTOR - EXTREME CAUTION',
-        backstory: `The Void Nebula isn't just dark - it's hungry. Something about its composition absorbs not just light but energy itself. Ships that enter report power failures, sensor ghosts, and crew members who swear they hear whispers in the darkness. Most never report anything at all.`,
-        connection: `Gul Madred considers the Void Nebula his masterpiece. He's learned to navigate its horrors and uses them as tools. Prisoners are left adrift in the darkness until the whispers break their minds, then retrieved for interrogation. His guards wear devices that shield them from the Void's effects - devices they can deactivate remotely if any crew member shows signs of disloyalty.`,
-        threat: 'TACTICAL ASSESSMENT: Environmental hazards beyond normal parameters. Enemies who\'ve adapted to conditions that drive others insane. Your own sensors may lie to you.'
+        greeting: 'VOID SECTOR — EXTREME CAUTION',
+        backstory: `The Void doesn't just absorb light, it absorbs energy. Ships that enter report failures, whispers, and ghosts.`,
+        connection: `Madred uses it as a tool: prisoners drift in the dark until the whispers break them. His guards wear shield devices that can be cut remotely.`,
+        threat: 'TACTICAL: Environmental hazards off the charts. Crews adapted to conditions that drive others mad. Your sensors may lie.'
     },
-    
+
     'Boundary Nebula': {
         galaxyId: 6,
         faction: 'Sith Empire',
         species: 'Sith',
-        greeting: 'FORCE NEXUS - BOUNDARY SECTOR',
-        backstory: `The Boundary Nebula exists at a point where multiple cosmic forces intersect - gravity wells, radiation streams, and something else that defies measurement. Ancient holocrons speak of it as a "thin place" where the walls between dimensions weaken. The Jedi built warning beacons around it. The Sith built temples inside it.`,
-        connection: `Darth Malachar's inner circle gathers at the Boundary Nebula to perform rituals that would be impossible anywhere else. Here, they can reach across the veil between life and death, summoning knowledge from Sith Lords who perished millennia ago. The spirits they contact are not always cooperative - but they are always dangerous.`,
-        threat: 'TACTICAL ASSESSMENT: Sith sorcery of the most forbidden kind. Enemies who may not be entirely alive. Weapons that strike at the soul as much as the body.'
+        greeting: 'BOUNDARY SECTOR — FORCE NEXUS',
+        backstory: `A "thin place" where the walls between dimensions weaken. Jedi ringed it with warning beacons; the Sith built temples inside.`,
+        connection: `Malachar's inner circle perform rituals here that reach across life and death, summoning dead Sith Lords. Those spirits are always dangerous.`,
+        threat: 'TACTICAL: Forbidden Sith sorcery. Enemies that may not be entirely alive. Weapons that strike the soul.'
     },
-    
+
     'Edge Nebula': {
         galaxyId: 7,
         faction: 'Vulcan High Command',
         species: 'Vulcan',
-        greeting: 'LOGIC EXTREMITY - EDGE SECTOR',
-        backstory: `The Edge Nebula sits at the rim of the galaxy itself, where stars thin out and the intergalactic void begins. It's a place of extremes - extreme cold, extreme isolation, extreme... perspective. Those who spend time here often return changed, seeing the galaxy from a viewpoint few can comprehend.`,
-        connection: `Administrator Soval brought his followers to the Edge Nebula specifically for this effect. From here, they can see all of civilization as a single organism - an inefficient, chaotic, emotional organism that offends their logic. The V'tosh ka'tur have calculated the optimal path to "curing" the galaxy of its irrationality. Your death is simply one step in an equation that spans centuries.`,
-        threat: 'TACTICAL ASSESSMENT: Enemies with perfect long-term planning. Traps set years in advance. A commander who has already calculated your most likely responses.'
+        greeting: 'EDGE SECTOR — LOGIC EXTREMITY',
+        backstory: `Edge sits at the rim of the galaxy where stars thin out. People who spend time here come back seeing things differently.`,
+        connection: `Soval brought the V'tosh ka'tur here on purpose — to view civilization as a single inefficient organism that must be cured. Your death is one step in a centuries-long equation.`,
+        threat: 'TACTICAL: Perfect long-term planning. Traps set years in advance. Your responses already calculated.'
     },
-    
+
     'Threshold Nebula': {
         galaxyId: 0,
         faction: 'Federation',
         species: 'Human',
-        greeting: 'THRESHOLD ALERT - CRITICAL SECTOR',
-        backstory: `The Threshold Nebula marks the point where Federation space officially ends and lawless territory begins. It's been a haven for smugglers, pirates, and those fleeing justice for as long as the Federation has existed. The name refers to crossing a threshold from which there's no return.`,
-        connection: `Admiral Kane's recruitment center operates from the Threshold Nebula, processing disillusioned officers and angry veterans into his New Olympian fleet. Here, they shed their Federation uniforms and receive new identities, new ships, and new purpose. Anyone who crosses the Threshold is considered to have died to their old life - and is treated as an enemy if they try to go back.`,
-        threat: 'TACTICAL ASSESSMENT: Mix of recent defectors and hardened pirates. Unpredictable tactics combining Federation discipline with frontier brutality. No official records - these people don\'t exist.'
+        greeting: 'THRESHOLD — CRITICAL SECTOR',
+        backstory: `Threshold marks the end of Federation space and the start of lawless territory — a haven for smugglers and the wanted.`,
+        connection: `Kane's New Olympians run their recruitment center here. Crossing the Threshold is treated as dying to your old life — and as defection if you try to go back.`,
+        threat: 'TACTICAL: Defectors and pirates mixed. Federation discipline with frontier brutality. No records.'
     },
-    
+
     'Horizon Nebula': {
         galaxyId: 1,
         faction: 'Klingon Empire',
         species: 'Klingon',
-        greeting: 'WARRIOR WARNING - HORIZON SECTOR',
-        backstory: `The Horizon Nebula glows with the light of a thousand dying stars, creating a permanent sunset effect that stretches across light-years. Klingon poets call it "the edge of today" - the last light before eternal night. Warriors come here to contemplate their mortality before their final battles.`,
-        connection: `General Koth has perverted this tradition. He forces captured enemies to fight in gladiatorial combat at the Horizon Nebula, broadcasting the battles to boost morale among his followers. The winner earns a quick death. The loser... doesn't. Klingon warriors from across the quadrant travel here to witness the spectacle and join Koth's warband.`,
-        threat: 'TACTICAL ASSESSMENT: Arena-hardened warriors. Crowds of bloodthirsty spectators who may join the fight. A commander who treats combat as entertainment.'
+        greeting: 'HORIZON SECTOR — WARRIOR WARNING',
+        backstory: `A thousand dying stars give Horizon a permanent sunset glow — "the edge of today" in Klingon poetry, the last light before eternal night.`,
+        connection: `Koth runs gladiatorial combat here, broadcasting the kills for morale. Winners get a quick death; losers don't.`,
+        threat: 'TACTICAL: Arena-hardened warriors. Bloodthirsty spectators who join in. A commander who fights for sport.'
     }
 };
 
@@ -4332,13 +4332,9 @@ function checkForNebulaDeepDiscovery() {
             playDeepDiscoverySound();
 
             const liberationText =
-                `INCOMING TRANSMISSION - LIBERATED TERRITORY\n\n` +
-                `Captain, welcome to the ${nebulaName}.\n\n` +
-                `Thanks to your heroic efforts, the ${factionName} forces that once terrorized this region have been completely eliminated. ` +
-                `The ${galaxyType.species} hostiles who controlled the ${galaxyType.name} Galaxy are no more.\n\n` +
-                `The inhabitants of this nebula and surrounding systems wish to express their deepest gratitude. ` +
-                `Civilian shipping lanes have been reopened, and reconstruction efforts are underway.\n\n` +
-                `This sector is now safe, Captain. Your courage will not be forgotten.`;
+                `LIBERATED TERRITORY\n\n` +
+                `Welcome to the ${nebulaName}, Captain. The ${factionName} in the ${galaxyType.name} Galaxy are gone.\n\n` +
+                `Shipping lanes are reopen, reconstruction underway. This sector is yours.`;
 
             if (typeof showIncomingTransmission === 'function') {
                 showIncomingTransmission('Mission Control - Liberated Sector', liberationText, loreData.color);
@@ -4385,23 +4381,17 @@ function checkForNebulaDeepDiscovery() {
 
                 let locationInfo = '';
                 if (patrolData.cosmicFeature) {
-                    locationInfo = `Our sensors have detected ${patrolData.count} ${factionName} forces ` +
-                        `operating near the ${patrolData.cosmicFeature}. They're using the ${patrolData.cosmicFeatureType} ` +
-                        `as a ${isCorePath ? 'command stronghold' : 'staging area'} in the ${galaxyType.name} Galaxy.`;
+                    locationInfo = `${patrolData.count} ${factionName} forces near the ${patrolData.cosmicFeature} — ` +
+                        `${isCorePath ? 'command stronghold' : 'staging area'} in the ${galaxyType.name} Galaxy.`;
                 } else {
-                    locationInfo = `Our sensors have detected ${patrolData.count} ${factionName} forces ` +
-                        `in the ${galaxyType.name} Galaxy. They're conducting operations ` +
-                        `against civilian shipping lanes.`;
+                    locationInfo = `${patrolData.count} ${factionName} forces hitting shipping lanes in the ${galaxyType.name} Galaxy.`;
                 }
 
-                let transmissionText = `${greeting}\n\n`;
-                transmissionText += `${factionBackstory}\n\n`;
-                if (nebulaBackstory) transmissionText += `NEBULA INTELLIGENCE: ${nebulaBackstory}\n\n`;
-                if (nebulaConnection) transmissionText += `LOCAL SITUATION: ${nebulaConnection}\n\n`;
-                transmissionText += `FORCES DETECTED: ${locationInfo}\n\n`;
-                transmissionText += `${combinedThreat}\n\n`;
-                transmissionText += `NAVIGATION: Follow the ${colorName} dotted line from ${nebulaName} to intercept.\n\n` +
-                    `Eliminate them and a boss will appear, Captain.`;
+                let transmissionText = `${greeting}\n\n${factionBackstory}\n\n`;
+                if (nebulaBackstory) transmissionText += `${nebulaBackstory}\n\n`;
+                if (nebulaConnection) transmissionText += `${nebulaConnection}\n\n`;
+                transmissionText += `FORCES: ${locationInfo}\n\n${combinedThreat}\n\n`;
+                transmissionText += `Follow the ${colorName} line from ${nebulaName}. Clear them and the boss surfaces.`;
 
                 if (typeof showIncomingTransmission === 'function') {
                     showIncomingTransmission(
@@ -4442,25 +4432,12 @@ function checkForNebulaDeepDiscovery() {
                     setTimeout(() => recruitNebulaWingman(nebulaName), 1500);
                 }
 
-                // Build remnant transmission with BOTH faction lore AND nebula-specific lore
-                let transmissionText = `${greeting}\n\n`;
-                
-                // Faction backstory
-                transmissionText += `${factionBackstory}\n\n`;
-                
-                // Nebula-specific content
-                if (nebulaBackstory) {
-                    transmissionText += `NEBULA INTELLIGENCE: ${nebulaBackstory}\n\n`;
-                }
-                if (nebulaConnection) {
-                    transmissionText += `LOCAL SITUATION: ${nebulaConnection}\n\n`;
-                }
-                
-                transmissionText += `STRONGHOLD FALLEN: Captain, the ${factionName} black hole stronghold in the ${galaxyType.name} Galaxy has been destroyed! ` +
-                    `However, ${remainingTarget.count} ${galaxyType.species} survivors have scattered across the sector and remain dangerous.\n\n`;
+                let transmissionText = `${greeting}\n\n${factionBackstory}\n\n`;
+                if (nebulaBackstory) transmissionText += `${nebulaBackstory}\n\n`;
+                if (nebulaConnection) transmissionText += `${nebulaConnection}\n\n`;
+                transmissionText += `STRONGHOLD DOWN: ${remainingTarget.count} ${galaxyType.species} survivors are scattered and still dangerous.\n\n`;
                 transmissionText += `${combinedThreat}\n\n`;
-                transmissionText += `NAVIGATION: Follow the ${colorName} dotted line from the ${nebulaName} to intercept the remaining forces.\n\n` +
-                    `Finish what you started, Captain. Leave no threat standing.`;
+                transmissionText += `Follow the ${colorName} line from ${nebulaName}. Finish it.`;
 
                 if (typeof showIncomingTransmission === 'function') {
                     showIncomingTransmission('Mission Control - Remnant Forces Detected', transmissionText, loreData.color);
@@ -4504,31 +4481,16 @@ function checkForNebulaDeepDiscovery() {
 
                 let locationInfo = '';
                 if (patrolData && patrolData.cosmicFeature) {
-                    locationInfo = `ENEMY STAGING AREA: ${targetData.count} ${factionName} forces detected near the ${patrolData.cosmicFeature}. ` +
-                        `They're using the ${patrolData.cosmicFeatureType} as a forward operating base deep in the ${galaxyType.name} Galaxy.`;
+                    locationInfo = `STAGING: ${targetData.count} ${factionName} forces near the ${patrolData.cosmicFeature} — forward base in the ${galaxyType.name} Galaxy.`;
                 } else {
-                    locationInfo = `HOSTILE TERRITORY: ${targetData.count} ${factionName} forces detected in the ${galaxyType.name} Galaxy. ` +
-                        `Their ${galaxyType.species} warriors control this region of space and threaten all who pass through.`;
+                    locationInfo = `HOSTILE: ${targetData.count} ${factionName} forces hold this region of the ${galaxyType.name} Galaxy.`;
                 }
 
-                // Build distant/exotic transmission with BOTH faction lore AND nebula-specific lore
-                let transmissionText = `${greeting}\n\n`;
-                
-                // Faction backstory
-                transmissionText += `${factionBackstory}\n\n`;
-                
-                // Nebula-specific content
-                if (nebulaBackstory) {
-                    transmissionText += `NEBULA INTELLIGENCE: ${nebulaBackstory}\n\n`;
-                }
-                if (nebulaConnection) {
-                    transmissionText += `LOCAL SITUATION: ${nebulaConnection}\n\n`;
-                }
-                
-                transmissionText += `${locationInfo}\n\n`;
-                transmissionText += `${combinedThreat}\n\n`;
-                transmissionText += `NAVIGATION: Follow the ${colorName} dotted line from ${nebulaName} to engage.\n\n` +
-                    `The universe is counting on you, Captain.`;
+                let transmissionText = `${greeting}\n\n${factionBackstory}\n\n`;
+                if (nebulaBackstory) transmissionText += `${nebulaBackstory}\n\n`;
+                if (nebulaConnection) transmissionText += `${nebulaConnection}\n\n`;
+                transmissionText += `${locationInfo}\n\n${combinedThreat}\n\n`;
+                transmissionText += `Follow the ${colorName} line from ${nebulaName}.`;
 
                 if (typeof showIncomingTransmission === 'function') {
                     showIncomingTransmission('Mission Control - Hostile Forces Located', transmissionText, loreData.color);

@@ -1888,32 +1888,32 @@ const tutorialSystem = {
     messages: [
         {
             title: "Mission Command",
-            text: "Captain Bo, this is Mission Command. You are going to need to use planetary gravitational forces in order to get out of this galaxy and into Interstellar space.",
+            text: "Captain Bo, you'll need gravitational slingshots to leave this galaxy.",
             delay: 5000
         },
         {
             title: "Navigation Training",
-            text: "Fly close to a planet and hit the Enter/Return key to engage the Gravitational Slingshot. Use WASD to thrust and arrow keys to look around.",
+            text: "Approach any planet and press Enter to slingshot. WASD thrusts; arrow keys look.",
             delay: 15000
         },
         {
-    		title: "Combat Systems",
-    		text: "Your ship is equipped with energy weapons and hull repair systems. Destroying enemies will restore hull integrity. Press Tab to toggle shields (drains energy). Watch your energy levels during combat.",
-    		delay: 25000
-		},
+            title: "Combat Systems",
+            text: "Kills restore hull. Tab toggles shields (drains energy). Watch your levels.",
+            delay: 25000
+        },
         {
             title: "Primary Objective",
-            text: "We need you to eliminate all the hostile forces in each galaxy including Sagittarius A. Use your weapons with left click or Option key. Hold Space for target lock.",
+            text: "Clear every galaxy of hostiles, including Sagittarius A*. Left-click or Option fires; hold Space to lock.",
             delay: 35000
         },
         {
             title: "Emergency Systems",
-            text: "You have 5 Emergency Warp charges that can help boost you into Hyperspace, but they alone are not enough to get you to the next Galaxy. Press Enter to activate Emergency Warp.",
+            text: "5 Emergency Warp charges (Enter) boost you to hyperspace — handy, but you'll still need slingshots between galaxies.",
             delay: 45000
         },
         {
             title: "Final Orders",
-            text: "Navigate to distant galaxies, clear them of hostiles, and defeat the boss flagships. Use the galactic map to track your progress. Good luck, Captain!",
+            text: "Hunt the boss flagship in each galaxy. Galactic map tracks progress. Good luck, Captain.",
             delay: 55000
         }
     ]
@@ -6011,8 +6011,8 @@ function checkGalaxyClear() {
         // Mission Control message about guardians
         setTimeout(() => {
             if (typeof showMissionCommandAlert === 'function') {
-                showMissionCommandAlert('Mission Control', 
-                    `Well done, Captain! The ${clearedGalaxyType.name} Galaxy boss has been destroyed. Now eliminate the black hole guardians to fully liberate this galaxy!`, 
+                showMissionCommandAlert('Mission Control',
+                    `Boss down, Captain. ${clearedGalaxyType.name} Galaxy still has guardians — clear them to liberate the sector.`,
                     true);
             }
         }, 2000);
@@ -6098,9 +6098,9 @@ function checkGuardianVictory() {
             let missionControlMessage = '';
             
             if (remainingGalaxies > 0) {
-                missionControlMessage = `Excellent work, Captain! The ${galaxyType.name} Galaxy controlled by the ${galaxyType.faction} has been completely liberated. ${remainingGalaxies} hostile ${remainingGalaxies === 1 ? 'galaxy remains' : 'galaxies remain'}. Continue the mission!`;
+                missionControlMessage = `${galaxyType.name} Galaxy liberated — ${galaxyType.faction} purged. ${remainingGalaxies} ${remainingGalaxies === 1 ? 'galaxy remains' : 'galaxies remain'}.`;
             } else {
-                missionControlMessage = `Outstanding, Captain! All hostile forces have been eliminated. The universe is safe thanks to your heroic efforts. Mission accomplished!`;
+                missionControlMessage = `All hostiles eliminated. The universe is safe — well done, Captain.`;
             }
             
             setTimeout(() => {

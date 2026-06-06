@@ -149,9 +149,12 @@
         #missionCommandText {
             font-size: 1rem !important;
             line-height: 1.6 !important;
-            max-height: 50vh !important;
+            /* Let the window size to its text. Cap only at extreme
+               lengths so the panel never overflows the viewport. */
+            max-height: 70vh !important;
             overflow-y: auto !important;
             padding-right: 10px !important;
+            white-space: pre-wrap !important;
         }
         
         /* Scrollbar styling for lore text */
@@ -789,8 +792,8 @@
         </div>
         
         <!-- Mission Command Alert - Green ORBITRON Styling -->
-        <div id="missionCommandAlert" class="absolute mission-command-alert p-6 hidden z-50" 
-     style="top: 50%; left: 50%; transform: translate(-50%, -50%); max-width: 90%; width: 600px;">
+        <div id="missionCommandAlert" class="absolute mission-command-alert p-6 hidden z-50"
+     style="top: 50%; left: 50%; transform: translate(-50%, -50%); width: auto; min-width: 280px; max-width: min(640px, 90vw);">
     <div class="text-center">
         <h2 class="text-xl font-bold text-cyan-400 mb-2">MISSION COMMAND</h2>
         <div id="missionCommandText" class="text-gray-300 mb-4"></div>
