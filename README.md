@@ -6,7 +6,7 @@ Live at **[interstellarslingshot.com](https://interstellarslingshot.com)**.
 
 ## Play
 
-Open `index.html` in any modern desktop or mobile browser — there is no build step. A simple static server works too:
+Open `index.html` in any modern desktop or mobile browser. A simple static server works too:
 
 ```sh
 python3 -m http.server 8000
@@ -14,6 +14,20 @@ python3 -m http.server 8000
 ```
 
 From the launch screen pick **Start**, **Demo** (autopilot plays the game), or **Skip Intro** to drop straight into the Sol system.
+
+The compiled Tailwind stylesheet (`css/tailwind.css`) is checked into the repo, so no `npm install` is needed to run the game.
+
+### Rebuilding the stylesheet
+
+Only needed if you change a Tailwind class in `index.html` or any `js/` file:
+
+```sh
+npm install            # one-time
+npm run build:css      # writes css/tailwind.css (minified)
+npm run watch:css      # rebuild on every change while developing
+```
+
+Config lives in `tailwind.config.js`; the source file is `src/tailwind.css`.
 
 ## What's in the universe
 
@@ -89,8 +103,8 @@ Volume ducks 15% when no enemies are within 1,500u and ramps back to full in com
 ## Tech
 
 - **Engine:** [Three.js](https://threejs.org/) r128 (CDN, with a fallback loader if the primary CDN fails).
-- **UI:** Tailwind CSS (CDN) + custom CSS in `css/`.
-- **No build, no bundler, no dependencies to install.** Vanilla JS modules loaded directly by `index.html`.
+- **UI:** Tailwind CSS (precompiled, ~16 KB minified) + custom CSS in `css/`.
+- **No bundler.** Vanilla JS modules loaded directly by `index.html`. Tailwind is the only build step and its output is committed.
 - **Mobile aware:** automatic render‑tier downgrade (`_isMobileRenderTier()`) tunes star counts, shield opacity, and effect density.
 
 ## Repository layout
@@ -98,7 +112,10 @@ Volume ducks 15% when no enemies are within 1,500u and ramps back to full in com
 ```
 index.html               # Entry point
 CNAME                    # Custom domain mapping
-css/                     # Stylesheets
+package.json             # Tailwind build scripts
+tailwind.config.js       # Tailwind content scan paths
+src/tailwind.css         # Tailwind source (compiled to css/tailwind.css)
+css/                     # Stylesheets (styles.css + compiled tailwind.css)
 images/                  # UI art, OG previews, planet textures
 models/                  # GLB models (ships, asteroids, UFOs)
 audio/soundtrack/        # 26 music tracks
