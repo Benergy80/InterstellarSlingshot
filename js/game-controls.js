@@ -5801,10 +5801,16 @@ if (enemy.userData.health <= 0) {
             spawnMissilePickup(enemy.position.clone());
             console.log('🛸 UFO destroyed - missile dropped!');
         } else {
-            // Fallback: just add missiles directly
-            if (typeof gameState !== 'undefined' && typeof gameState.missiles !== 'undefined') {
-                gameState.missiles = Math.min((gameState.missiles || 0) + 1, 10);
-                showAchievement('MISSILE ACQUIRED!', `Alien technology salvaged! (${gameState.missiles}/10)`);
+            // Fallback: just add a missile directly. gameState.missiles is
+            // an object ({current, capacity, ...}) — earlier code here
+            // overwrote it with a number, which made the HUD read
+            // "Missiles: undefined/undefined" from that point on.
+            if (typeof gameState !== 'undefined' && gameState.missiles &&
+                typeof gameState.missiles.current === 'number') {
+                const cap = gameState.missiles.capacity || 10;
+                gameState.missiles.current = Math.min(cap, gameState.missiles.current + 1);
+                showAchievement('MISSILE ACQUIRED!',
+                    `Alien technology salvaged! (${gameState.missiles.current}/${cap})`);
             }
         }
     }
