@@ -533,6 +533,32 @@
       }
     }
 
+    // ── Global nav-detected combat pivot ───────────────────────────────
+    // Any enemy inside the player's nav-scanner range (3,000u, or
+    // 10,000u for black-hole guardians) interrupts whatever the demo
+    // was doing and drops it into a fight — the demo should never
+    // cruise past hostiles. Excluded phases either ARE combat,
+    // can't break out (warp lock), or are pre-game.
+    if (ap.phase !== 'init' &&
+        ap.phase !== 'combat' &&
+        ap.phase !== 'fightBorg' &&
+        ap.phase !== 'blackHoleWarp') {
+      const _navHostile = navDetectedEnemy();
+      // Don't interrupt the locked warp cycle — physics owns velocity
+      // and braking is futile. coastToNebulaCluster already breaks off
+      // on its own once the lock ends.
+      const _warpLocked = (ap.phase === 'coastToNebulaCluster') &&
+          ((gameState.emergencyWarp && (gameState.emergencyWarp.active || gameState.emergencyWarp.transitioning)) ||
+           (gameState.slingshot && gameState.slingshot.active));
+      if (_navHostile && !_warpLocked && _navHostile !== ap.combatTarget) {
+        ap.combatTarget = _navHostile;
+        ap.combatMissileFired = false;
+        ap.returnPhase = ap.phase;
+        setStatus('Hostile on nav — engaging ' + (_navHostile.userData.name || 'target'));
+        goPhase('combat');
+      }
+    }
+
     // Dispatch
     switch (ap.phase) {
       case 'init':                     phaseInit();                   break;
