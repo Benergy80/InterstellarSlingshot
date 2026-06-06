@@ -10307,183 +10307,198 @@ function createEnemyMaterial(shapeData, enemyType, distance) {
 // WORMHOLES, COMETS, AND OTHER SPACE OBJECTS
 // =============================================================================
 
-function createEnhancedWormholes() {
-    // More wormholes from the start — bumped from 4 to 12 so the
-    // universe always has spatial anomalies to find.
-    const initialWormholes = 12;
+// =============================================================================
+// WORMHOLE NETWORK
+//
+// 3 shortcut pairs (6 mouths) + 2 reward pockets (4 mouths) = 10 total,
+// all persistent (no more 12-and-growing random spawns that fade out).
+//
+//   Shortcut pair  →  enter mouth A, pop out at mouth B halfway across
+//                     the universe with your velocity preserved. Mouths
+//                     are colour-matched so the player learns the network.
+//
+//   Reward pocket  →  enter a small isolated bubble far out in space.
+//                     Grants a one-off bonus (warp charge, missile reload,
+//                     hull repair, energy refill) the FIRST time it's
+//                     visited. A return mouth at the destination drops
+//                     the player back at the entry side.
+//
+// All wormhole logic that used to flip the renderer into the inverted
+// "Minus World" has been removed.
+// =============================================================================
 
-    for (let i = 0; i < initialWormholes; i++) {
-        if (Math.random() < 0.85) {
-            spawnEnhancedWormhole();
+// Generated descriptors for the network. transitionHandler in game-core.js
+// reads `_partner`, `_pairId`, `_isRewardPocket` and `_pocketReward` to
+// decide what to do on entry.
+const WORMHOLE_NETWORK = [
+    // ── 3 shortcut pairs (entry, exit) ────────────────────────────────
+    { pairId: 'cyan',    color: 0x44d9ff, label: 'Cyan Shortcut',
+      a: { x:   9000, y:   0, z:   4800 },   // near Sol
+      b: { x: -38000, y: 1200, z:  32000 } },// across the galactic plane
+    { pairId: 'magenta', color: 0xff44cc, label: 'Magenta Shortcut',
+      a: { x:  28000, y: -800, z: -22000 },
+      b: { x: -30000, y:  800, z: -20000 } },
+    { pairId: 'gold',    color: 0xffcc33, label: 'Gold Shortcut',
+      a: { x:  15000, y: 2000, z:  18000 },
+      b: { x:  42000, y:-1500, z: -34000 } },
+
+    // ── 2 reward pockets (entry → pocket destination + return mouth) ──
+    // pocketReward is granted ONCE per entry mouth, on first transit.
+    { pairId: 'pocket-orange', color: 0xff7733, label: 'Anomaly: Munitions Cache',
+      a: { x:   6000, y: -1800, z:  -7000 },                     // entry
+      b: { x: 110000, y:  6500, z:  90000 },                     // pocket return mouth
+      isRewardPocket: true,
+      pocketReward: { type: 'munitions', missiles: 3, warpCharge: 1,
+                      message: 'Derelict cache: +3 missiles, +1 emergency warp charge.' } },
+    { pairId: 'pocket-green',  color: 0x66ff88, label: 'Anomaly: Resupply Depot',
+      a: { x:  -8000, y:  1500, z:   6000 },                     // entry
+      b: { x:-115000, y: -5500, z: -88000 },                     // pocket return mouth
+      isRewardPocket: true,
+      pocketReward: { type: 'resupply', hull: 60, energy: 100,
+                      message: 'Resupply depot: hull patched, energy fully restored.' } }
+];
+
+function createEnhancedWormholes() {
+    if (typeof wormholes === 'undefined') {
+        if (typeof window !== 'undefined' && Array.isArray(window.wormholes)) {
+            // existing global
+        } else {
+            console.warn('wormholes array not defined; skipping network build');
+            return;
         }
     }
 
-    console.log(`Spawned ${wormholes.length} enhanced whirlpool wormholes`);
+    WORMHOLE_NETWORK.forEach(spec => {
+        const mouthA = _createWormholeMouth(spec.a, spec.color);
+        const mouthB = _createWormholeMouth(spec.b, spec.color);
+
+        const baseUD = {
+            type: 'wormhole',
+            warpThreshold: 120,
+            detectionRange: 3600,
+            detected: false,
+            isTemporary: false,
+            _pairId: spec.pairId,
+            _color: spec.color,
+            _isRewardPocket: !!spec.isRewardPocket,
+            _pocketReward: spec.pocketReward || null
+        };
+
+        mouthA.userData = Object.assign({}, baseUD, {
+            name: spec.isRewardPocket ? spec.label : (spec.label + ' (A)'),
+            _isPocketEntry: !!spec.isRewardPocket,
+            _isPocketReturn: false
+        });
+        mouthB.userData = Object.assign({}, baseUD, {
+            name: spec.isRewardPocket ? (spec.label + ' Return') : (spec.label + ' (B)'),
+            _isPocketEntry: false,
+            _isPocketReturn: !!spec.isRewardPocket
+        });
+
+        // Cross-link partners.
+        mouthA.userData._partner = mouthB;
+        mouthB.userData._partner = mouthA;
+
+        scene.add(mouthA);
+        scene.add(mouthB);
+        wormholes.push(mouthA, mouthB);
+
+        // For reward pockets, decorate the destination with a small
+        // asteroid shrine so the pocket has a clear visual landmark.
+        if (spec.isRewardPocket) _decoratePocketDestination(mouthB);
+    });
+
+    console.log(`🌀 Wormhole network built: ${wormholes.length} mouths ` +
+                `(${WORMHOLE_NETWORK.filter(s => !s.isRewardPocket).length} shortcut pairs, ` +
+                `${WORMHOLE_NETWORK.filter(s => s.isRewardPocket).length} reward pockets)`);
 }
 
-function spawnEnhancedWormhole() {
-    let position;
-    let attempts = 0;
-    do {
-        position = new THREE.Vector3(
-            (Math.random() - 0.5) * 30000,
-            (Math.random() - 0.5) * 1600,
-            (Math.random() - 0.5) * 30000
-        );
-        attempts++;
-    } while (attempts < 15 && isPositionTooClose(position, 900));
+// Build one wormhole mouth at `position` tinted `colorNum`. The
+// whirlpool visual (void + spiral rings + particle halo) is preserved
+// from the original spawner so the network feels familiar.
+function _createWormholeMouth(position, colorNum) {
+    const group = new THREE.Group();
+    const baseHue = new THREE.Color(colorNum).getHSL({}).h;
 
-    // Create whirlpool wormhole. All sizes tripled vs the original
-    // so wormholes read as proper galactic-scale phenomena.
-    const wormholeGroup = new THREE.Group();
-
-    // Central void
-    const voidGeometry = new THREE.SphereGeometry(24, 16, 16);
-    const voidMaterial = new THREE.MeshBasicMaterial({
-        color: 0x000000,
-        transparent: true,
-        opacity: 0.9
-    });
-    const voidMesh = new THREE.Mesh(voidGeometry, voidMaterial);
-
-    // FIXED: Prevent frustum culling for wormhole void
-    voidMesh.visible = true;
+    // Central void.
+    const voidMesh = new THREE.Mesh(
+        new THREE.SphereGeometry(24, 16, 16),
+        new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.9 })
+    );
     voidMesh.frustumCulled = false;
+    group.add(voidMesh);
 
-    wormholeGroup.add(voidMesh);
-
-    // Spiral rings — base radius and step both 3x.
+    // Spiral rings — tinted around the mouth's hue so a colour-matched
+    // pair reads as a pair at distance.
     for (let i = 0; i < 5; i++) {
         const ringRadius = 36 + i * 12;
-        const ringGeometry = new THREE.TorusGeometry(ringRadius, 4.5, 8, 32);
-        const ringMaterial = new THREE.MeshBasicMaterial({
-            color: new THREE.Color().setHSL(0.8 + i * 0.05, 0.8, 0.6),
-            transparent: true,
-            opacity: 0.7 - i * 0.1,
-            wireframe: true
-        });
-        const ring = new THREE.Mesh(ringGeometry, ringMaterial);
+        const ring = new THREE.Mesh(
+            new THREE.TorusGeometry(ringRadius, 4.5, 8, 32),
+            new THREE.MeshBasicMaterial({
+                color: new THREE.Color().setHSL(baseHue, 0.85, 0.55 + i * 0.04),
+                transparent: true,
+                opacity: 0.7 - i * 0.1,
+                wireframe: true
+            })
+        );
         ring.rotation.x = Math.PI / 2;
         ring.rotation.z = i * 0.3;
-        ring.visible = true;
         ring.frustumCulled = true;
-        wormholeGroup.add(ring);
+        group.add(ring);
     }
 
-    // Particle halo — 3x radius range and 3x height.
+    // Particle halo, tinted to the mouth colour.
     const particleGeometry = new THREE.BufferGeometry();
-    const particleVertices = [];
+    const verts = [];
     for (let i = 0; i < 200; i++) {
         const angle = Math.random() * Math.PI * 2;
         const radius = 60 + Math.random() * 120;
         const height = (Math.random() - 0.5) * 90;
-        particleVertices.push(
-            Math.cos(angle) * radius,
-            height,
-            Math.sin(angle) * radius
-        );
+        verts.push(Math.cos(angle) * radius, height, Math.sin(angle) * radius);
     }
-    particleGeometry.setAttribute('position', new THREE.Float32BufferAttribute(particleVertices, 3));
-    const particleMaterial = new THREE.PointsMaterial({
-        color: 0xaa44ff,
-        size: 4.5,
-        transparent: true,
-        opacity: 0.6
-    });
-    const particles = new THREE.Points(particleGeometry, particleMaterial);
-
-    particles.visible = true;
+    particleGeometry.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
+    const particles = new THREE.Points(particleGeometry, new THREE.PointsMaterial({
+        color: colorNum, size: 4.5, transparent: true, opacity: 0.6
+    }));
     particles.frustumCulled = false;
+    group.add(particles);
 
-    wormholeGroup.add(particles);
-    
-    wormholeGroup.position.copy(position);
-    
-    // FIXED: Prevent frustum culling for wormhole group
-    wormholeGroup.visible = true;
-    wormholeGroup.frustumCulled = false;
-    
-    wormholeGroup.userData = {
-        name: `Spatial Whirlpool ${wormholes.length + 1}`,
-        type: 'wormhole',
-        // Triple the lifetime — wormholes now last 6-9 minutes instead
-        // of 2-3, so the player has time to find and use them.
-        lifeTime: 360000 + Math.random() * 180000,
-        age: 0,
-        warpThreshold: 120,            // 3x: easier to enter the throat
-        isTemporary: true,
-        detectionRange: 3600,          // 3x: spotted from much farther away
-        detected: false,
-        spiralSpeed: 0.02 + Math.random() * 0.03,
-        // Instability properties
-        unstable: true,
-        phaseTimer: 0,
-        phaseInterval: 5000 + Math.random() * 10000,
-        isVisible: true,
-        colorHue: Math.random(),
-        colorSpeed: 0.0001 + Math.random() * 0.0002
-    };
-    
-    scene.add(wormholeGroup);
-    wormholes.push(wormholeGroup);
+    group.position.set(position.x, position.y, position.z);
+    group.frustumCulled = false;
+    group.userData = group.userData || {};
+    group.userData.spiralSpeed = 0.02 + Math.random() * 0.02;
+    return group;
 }
 
-// Update unstable wormholes - call from animate loop
-function updateUnstableWormholes(deltaTime = 16.67) {
-    if (typeof wormholes === 'undefined' || !wormholes) return;
-
-    wormholes.forEach(wormhole => {
-        if (!wormhole.userData.unstable) return;
-
-        // Update phase timer
-        wormhole.userData.phaseTimer += deltaTime;
-
-        // Color shift over time
-        wormhole.userData.colorHue += wormhole.userData.colorSpeed;
-        if (wormhole.userData.colorHue > 1) wormhole.userData.colorHue -= 1;
-
-        // Update ring colors
-        wormhole.children.forEach((child, index) => {
-            if (child.material && child.geometry && child.geometry.type === 'TorusGeometry') {
-                const hue = (wormhole.userData.colorHue + index * 0.05) % 1;
-                child.material.color.setHSL(hue, 0.8, 0.6);
-            }
-        });
-
-        // Phase transition (appear/disappear)
-        if (wormhole.userData.phaseTimer >= wormhole.userData.phaseInterval) {
-            wormhole.userData.phaseTimer = 0;
-            wormhole.userData.isVisible = !wormhole.userData.isVisible;
-            wormhole.userData.phaseInterval = 5000 + Math.random() * 10000;
-
-            if (wormhole.userData.isVisible) {
-                // Appearing - burst of light
-                createWormholeBurst(wormhole.position, true);
-                wormhole.visible = true;
-            } else {
-                // Disappearing - burst of light
-                createWormholeBurst(wormhole.position, false);
-                setTimeout(() => {
-                    wormhole.visible = false;
-                }, 500);
-            }
-        }
-
-        // Fade in/out transition
-        if (wormhole.visible) {
-            wormhole.children.forEach(child => {
-                if (child.material && child.material.opacity !== undefined) {
-                    const baseOpacity = child.userData.baseOpacity || child.material.opacity;
-                    if (!child.userData.baseOpacity) child.userData.baseOpacity = baseOpacity;
-
-                    if (wormhole.userData.isVisible) {
-                        child.material.opacity = Math.min(baseOpacity, child.material.opacity + 0.02);
-                    }
-                }
-            });
-        }
-    });
+// Drop a few inert asteroid-sized rocks around a reward-pocket return
+// mouth so the destination has a visual landmark instead of empty
+// space. Purely cosmetic; not added to the gameplay asteroids list.
+function _decoratePocketDestination(returnMouth) {
+    if (typeof THREE === 'undefined') return;
+    const COUNT = 7;
+    for (let i = 0; i < COUNT; i++) {
+        const r = 380 + Math.random() * 520;
+        const a = Math.random() * Math.PI * 2;
+        const y = (Math.random() - 0.5) * 220;
+        const size = 18 + Math.random() * 26;
+        const rock = new THREE.Mesh(
+            new THREE.IcosahedronGeometry(size, 0),
+            new THREE.MeshBasicMaterial({ color: 0x665544 })
+        );
+        rock.position.set(
+            returnMouth.position.x + Math.cos(a) * r,
+            returnMouth.position.y + y,
+            returnMouth.position.z + Math.sin(a) * r
+        );
+        rock.frustumCulled = true;
+        scene.add(rock);
+    }
 }
+
+// Kept as a no-op so any leftover callers don't crash. The previous
+// "phasing-in-and-out" behaviour was dropped — network mouths are
+// persistent so the player can rely on them.
+function updateUnstableWormholes(/* deltaTime */) { /* intentionally empty */ }
 
 // Create burst of light effect for wormhole phase transitions
 function createWormholeBurst(position, appearing) {
@@ -12023,7 +12038,6 @@ if (typeof window !== 'undefined') {
     // Utility functions
     window.generatePlanetName = generatePlanetName;
     window.createEnemyGeometry = createEnemyGeometry;
-    window.spawnEnhancedWormhole = spawnEnhancedWormhole;
     window.createSunSpikes = createSunSpikes;
     window.createPlasmaTendril = createPlasmaTendril;
     window.isPositionTooClose = isPositionTooClose;
