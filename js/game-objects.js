@@ -8983,7 +8983,9 @@ function _fireUFORayBeam(startPos, endPos) {
         }
     }, 55);
 
-    if (typeof playSound === 'function') playSound('enemy_fire');
+    // UFO ray beams get their own profile via the faction-laser synth.
+    if (typeof playFactionLaserSound === 'function') playFactionLaserSound('ufo');
+    else if (typeof playSound === 'function') playSound('enemy_fire');
 }
 
 // Apply ray-beam damage to the player, honouring shields / warp

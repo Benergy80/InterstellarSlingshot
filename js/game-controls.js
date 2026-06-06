@@ -1708,7 +1708,7 @@ function fireEnemyWeapon(enemy, difficultySettings) {
         const laserColor = enemy.userData.isBoss ? '#ff4444' : (enemy.userData.isBorgCube || enemy.userData.type === 'borg_drone') ? '#00ff00' : '#ff8800';
         createLaserBeam(enemyPos, targetPos, laserColor, false);
 
-        playSound('enemy_fire');
+        playEnemyLaserSound(enemy);
 
         // Reduced damage so combat is survivable while still threatening.
         // Local enemies do 2 dmg base, distant 3-6 dmg. With 4 attackers
@@ -2813,8 +2813,13 @@ function playSound(type, frequency = 440, duration = 0.2) {
     
     switch (type) {
         case 'weapon':
-            oscillator.frequency.setValueAtTime(800, audioContext.currentTime);
-            oscillator.frequency.exponentialRampToValueAtTime(400, audioContext.currentTime + 0.1);
+            // Per-shot pitch jitter so rapid fire doesn't feel
+            // monotonous. ~±4% around the base 800→400Hz sweep.
+            {
+                const j = 1 + (Math.random() - 0.5) * 0.08;
+                oscillator.frequency.setValueAtTime(800 * j, audioContext.currentTime);
+                oscillator.frequency.exponentialRampToValueAtTime(400 * j, audioContext.currentTime + 0.1);
+            }
             gain.gain.setValueAtTime(0.3, audioContext.currentTime);
             gain.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.1);
             oscillator.type = 'square';
@@ -2971,6 +2976,94 @@ function playSound(type, frequency = 440, duration = 0.2) {
     
     oscillator.start();
     oscillator.stop(audioContext.currentTime + duration);
+}
+
+// =============================================================================
+// FACTION-FLAVOURED LASER SOUNDS
+//
+// Each hostile faction (and the special set: bosses, guardians, Borg, UFOs,
+// Martian Pirates) gets its own oscillator profile so a busy fight reads
+// as distinct voices instead of one generic blaster loop. Bossy / heavy
+// shooters get a second layered oscillator for body. Every shot gets a
+// ~±4% pitch jitter so rapid fire feels alive, not metronomic.
+// =============================================================================
+const ENEMY_LASER_PROFILES = {
+    // 8 canonical hostile factions
+    'Federation':            { type: 'square',   f0:  720, f1:  480, dur: 0.13, gain: 0.28 },
+    'Klingon Empire':        { type: 'sawtooth', f0:  380, f1:  200, dur: 0.20, gain: 0.32,
+                               layer: { type: 'sine',     f0:   95, f1:   60, dur: 0.20, gain: 0.18 } },
+    'Rebel Alliance':        { type: 'square',   f0:  850, f1:  520, dur: 0.13, gain: 0.28 },
+    'Romulan Star Empire':   { type: 'sine',     f0:  500, f1:  200, dur: 0.22, gain: 0.30,
+                               layer: { type: 'triangle', f0: 1100, f1:  700, dur: 0.22, gain: 0.16 } },
+    'Galactic Empire':       { type: 'sawtooth', f0: 1100, f1:  600, dur: 0.09, gain: 0.30 },
+    'Cardassian Union':      { type: 'triangle', f0:  480, f1:  240, dur: 0.18, gain: 0.30 },
+    'Sith Empire':           { type: 'square',   f0: 1500, f1:  180, dur: 0.16, gain: 0.32 },
+    'Vulcan High Command':   { type: 'sine',     f0:  720, f1:  480, dur: 0.13, gain: 0.28 },
+    // Special enemy categories
+    'pirate':                { type: 'sawtooth', f0:  700, f1:  350, dur: 0.18, gain: 0.30 },
+    'borg':                  { type: 'square',   f0:  220, f1:  110, dur: 0.25, gain: 0.32,
+                               layer: { type: 'sine',     f0:   65, f1:   50, dur: 0.25, gain: 0.20 } },
+    'ufo':                   { type: 'sine',     f0: 1800, f1: 1500, dur: 0.22, gain: 0.26,
+                               layer: { type: 'triangle', f0: 2400, f1: 2100, dur: 0.22, gain: 0.14 } },
+    'boss':                  { type: 'sawtooth', f0:  280, f1:  140, dur: 0.30, gain: 0.42,
+                               layer: { type: 'square',   f0:   90, f1:   55, dur: 0.30, gain: 0.22 } },
+    'guardian':              { type: 'sawtooth', f0:  320, f1:  180, dur: 0.22, gain: 0.38,
+                               layer: { type: 'sine',     f0:  100, f1:   60, dur: 0.22, gain: 0.20 } },
+    'default':               { type: 'sawtooth', f0:  600, f1:  300, dur: 0.20, gain: 0.30 }
+};
+
+// Resolve an enemy object → profile key. Type-based wins (boss/guardian/
+// Borg/UFO/pirate) override faction so a Klingon BOSS sounds like a boss,
+// not a Klingon fighter.
+function _enemyFactionKey(enemy) {
+    if (!enemy || !enemy.userData) return 'default';
+    const ud = enemy.userData;
+    if (ud.isBoss) return 'boss';
+    if (ud.isBlackHoleGuardian || ud.isEliteGuardian) return 'guardian';
+    if (ud.isBorgCube || ud.isBorg || ud.type === 'borg_drone' || ud.type === 'borg_cube') return 'borg';
+    if (ud.isUFO) return 'ufo';
+    if (ud.isMartianPirate) return 'pirate';
+    if (typeof ud.galaxyId === 'number' &&
+        typeof galaxyTypes !== 'undefined' && galaxyTypes[ud.galaxyId]) {
+        const f = galaxyTypes[ud.galaxyId].faction;
+        if (f && ENEMY_LASER_PROFILES[f]) return f;
+    }
+    if (ud.faction && ENEMY_LASER_PROFILES[ud.faction]) return ud.faction;
+    return 'default';
+}
+
+// One oscillator burst with pitch jitter. Used by playFactionLaserSound
+// for both the base shot and (if present) the layered overtone.
+function _fireLaserOsc(p, jitter) {
+    if (!audioContext || audioContext.state === 'suspended') return;
+    const t = audioContext.currentTime;
+    const osc = audioContext.createOscillator();
+    const g = audioContext.createGain();
+    osc.connect(g);
+    g.connect(typeof effectsGain !== 'undefined' ? effectsGain : audioContext.destination);
+    osc.type = p.type;
+    osc.frequency.setValueAtTime(p.f0 * jitter, t);
+    osc.frequency.exponentialRampToValueAtTime(Math.max(20, p.f1 * jitter), t + p.dur);
+    g.gain.setValueAtTime(p.gain, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + p.dur);
+    osc.start(t);
+    osc.stop(t + p.dur);
+}
+
+function playFactionLaserSound(factionKey) {
+    const prof = ENEMY_LASER_PROFILES[factionKey] || ENEMY_LASER_PROFILES.default;
+    const jitter = 1 + (Math.random() - 0.5) * 0.08;  // ±4 %
+    _fireLaserOsc(prof, jitter);
+    if (prof.layer) _fireLaserOsc(prof.layer, jitter);
+}
+
+function playEnemyLaserSound(enemy) {
+    playFactionLaserSound(_enemyFactionKey(enemy));
+}
+
+if (typeof window !== 'undefined') {
+    window.playFactionLaserSound = playFactionLaserSound;
+    window.playEnemyLaserSound = playEnemyLaserSound;
 }
 
 // =============================================================================
