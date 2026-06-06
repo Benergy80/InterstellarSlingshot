@@ -4526,10 +4526,12 @@ function _ensureEnemyShield(enemy) {
         });
         if (any && isFinite(box.min.x) && box.max.x > box.min.x) {
             const sz = box.getSize(new THREE.Vector3());
-            worldR = Math.max(sz.x, sz.y, sz.z) * 0.62;
+            // ~half-bbox sphere; tightened from 0.62 so the bubble hugs
+            // the hull instead of dwarfing it.
+            worldR = Math.max(sz.x, sz.y, sz.z) * 0.31;
         }
     } catch (e) {}
-    worldR = Math.max(45, Math.min(worldR, 280));
+    worldR = Math.max(22, Math.min(worldR, 140));
 
     const ws = new THREE.Vector3();
     try { enemy.getWorldScale(ws); } catch (e) { ws.set(1, 1, 1); }
@@ -9007,7 +9009,7 @@ function _updateAllyShield(ally, active) {
     }
     if (!ally.userData.shieldMesh) {
         const color = ally.userData.name === 'Wingman Alpha' ? 0x00ff88 : 0x88aaff;
-        const geo = new THREE.SphereGeometry(60, 16, 12);
+        const geo = new THREE.SphereGeometry(30, 16, 12);
         const mat = new THREE.MeshBasicMaterial({
             color: color, transparent: true, opacity: 0.18,
             blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
