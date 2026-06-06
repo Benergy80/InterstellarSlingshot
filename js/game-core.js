@@ -1564,16 +1564,30 @@ if (typeof distressBeaconSystem !== 'undefined' && distressBeaconSystem.updateBe
 }
     
     // â­ ENHANCED: Animate nebula gas clouds with individual pulsing per cloud
-if (typeof nebulaGasClouds !== 'undefined' && nebulaGasClouds.length > 0) {
-    // OPTIMIZATION: Cache Date.now() once per frame instead of per cloud
+if (typeof nebulaGasClouds !== 'undefined' && nebulaGasClouds.length > 0 && gameState.frameCount % 2 === 0) {
+    // OPTIMIZATION: Cache Date.now() once per frame instead of per cloud.
+    // Throttled to 30Hz (% 2) — the pulse is slow enough that half-rate
+    // is imperceptible. Per-cluster distance gate skips the expensive
+    // per-child pulse/opacity work for clusters the player isn't near.
     const currentTime = Date.now();
+    const _camP = (typeof camera !== 'undefined') ? camera.position : null;
+    const NEB_ANIM_DIST_SQ = 14000 * 14000;
 
     nebulaGasClouds.forEach(cloudCluster => {
-        // Rotate entire cluster slowly
+        // Rotate entire cluster slowly (cheap — always do it)
         if (cloudCluster.rotation) {
-            cloudCluster.rotation.x += 0.0002;
-            cloudCluster.rotation.y += 0.0003;
-            cloudCluster.rotation.z += 0.0001;
+            cloudCluster.rotation.x += 0.0004;
+            cloudCluster.rotation.y += 0.0006;
+            cloudCluster.rotation.z += 0.0002;
+        }
+
+        // Skip the per-child pulse/opacity work for distant clusters —
+        // the breathing detail isn't visible from far away anyway.
+        if (_camP) {
+            const dx = _camP.x - cloudCluster.position.x;
+            const dy = _camP.y - cloudCluster.position.y;
+            const dz = _camP.z - cloudCluster.position.z;
+            if (dx * dx + dy * dy + dz * dz > NEB_ANIM_DIST_SQ) return;
         }
 
         // Animate each individual cloud in the cluster
@@ -1916,10 +1930,22 @@ if (planet.userData.type === 'blackhole' && planet.userData.rotationSpeed) {
         
         // PERFORMANCE: Optimized tendril animations for distant stars (active only)
         if (planet.userData.tendrilGroup && !planet.userData.isLocalStar && gameState.performanceMode !== 'minimal') {
+            // Distance gate: the writhe animation rebuilds a TubeGeometry
+            // per tendril (allocate + dispose) — the single biggest
+            // per-frame allocation source. These belong to distant
+            // background stars, so only animate the geometry when the
+            // player is actually near enough to see the writhe (12k u).
+            // Far tendrils just hold their last shape — indistinguishable
+            // at range. Mobile updates at half the rate on top of that.
+            const _tdx = camera.position.x - planet.position.x;
+            const _tdy = camera.position.y - planet.position.y;
+            const _tdz = camera.position.z - planet.position.z;
+            const _tendrilNear = (_tdx * _tdx + _tdy * _tdy + _tdz * _tdz) < (12000 * 12000);
+            const _tendrilStep = (typeof _isMobileRenderTier === 'function' && _isMobileRenderTier()) ? 12 : 6;
             planet.userData.tendrilTime += 0.016;
-            
-            // Only update every few frames for performance
-            if (gameState.frameCount % 6 === 0) {
+
+            // Only update every few frames for performance, and only when near
+            if (_tendrilNear && gameState.frameCount % _tendrilStep === 0) {
                 planet.userData.tendrilGroup.children.forEach((tendril, index) => {
                     if (tendril.userData) {
                         const time = planet.userData.tendrilTime;
@@ -2076,14 +2102,26 @@ if (typeof updateCosmicFeatures === 'function') {
 
 // Animate nebula rotation
 if (typeof nebulaClouds !== 'undefined' && nebulaClouds.length > 0) {
+    const _nebCamP = (typeof camera !== 'undefined') ? camera.position : null;
+    const NEB_CHILD_DIST_SQ = 14000 * 14000;
     nebulaClouds.forEach(nebula => {
         if (!nebula.userData) return;
-        
-        // Rotate entire nebula cloud
+        if (nebula.visible === false) return;  // hidden distant/exotic — nothing to animate
+
+        // Rotate entire nebula cloud (cheap — always)
         if (nebula.userData.rotationSpeed) {
             nebula.rotation.y += nebula.userData.rotationSpeed;
         }
-        
+
+        // Skip per-child brown-dwarf / supernova animation for nebulas
+        // the player isn't near — invisible detail at distance.
+        if (_nebCamP) {
+            const dx = _nebCamP.x - nebula.position.x;
+            const dy = _nebCamP.y - nebula.position.y;
+            const dz = _nebCamP.z - nebula.position.z;
+            if (dx * dx + dy * dy + dz * dz > NEB_CHILD_DIST_SQ) return;
+        }
+
         // Animate brown dwarfs orbiting supernova cores
         nebula.children.forEach(child => {
             // Check if this is a brown dwarf

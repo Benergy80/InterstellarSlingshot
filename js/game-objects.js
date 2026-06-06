@@ -4842,8 +4842,10 @@ function createClusteredNebulas() {
         const nebulaZ = clusterCenter.z + offsetZ;
         const nebulaY = clusterCenter.y + offsetY;
         
-        // Create nebula cloud particles
-        const particleCount = 1200;
+        // Create nebula cloud particles. Mobile renders ~40% the count —
+        // these are additive points and fill-rate, not vertex count, is
+        // the mobile killer, but fewer points still cuts overdraw.
+        const particleCount = _isMobileRenderTier() ? 500 : 1200;
         const particleGeometry = new THREE.BufferGeometry();
         const positions = new Float32Array(particleCount * 3);
         const colors = new Float32Array(particleCount * 3);
@@ -4891,18 +4893,20 @@ function createClusteredNebulas() {
         
         const nebulaPoints = new THREE.Points(particleGeometry, nebulaMaterial);
         nebulaPoints.visible = true;
-        nebulaPoints.frustumCulled = false;
+        // Frustum-cull the point cloud: its bounding sphere is centred and
+        // accurate, so off-screen nebulas (most of the cluster when you're
+        // flying through it) skip the additive draw entirely. Was false.
+        nebulaPoints.frustumCulled = true;
         nebulaGroup.add(nebulaPoints);
-        
+
         // **NEW: Add central supernova to some nebulas**
         if (Math.random() > 0.5) {
             const supernovaGeometry = new THREE.SphereGeometry(30, 16, 16);
-            const supernovaMaterial = new THREE.MeshStandardMaterial({
-                color: 0xff6600,
-                emissive: 0xff4400,
-                emissiveIntensity: 2.0,
-                roughness: 0.2,
-                metalness: 0.5
+            // MeshBasic, not MeshStandard: the scene runs at ~0.06 ambient
+            // so a PBR shader resolves to essentially its emissive colour
+            // anyway. Basic is far cheaper and looks identical here.
+            const supernovaMaterial = new THREE.MeshBasicMaterial({
+                color: 0xff5520
             });
             const supernova = new THREE.Mesh(supernovaGeometry, supernovaMaterial);
             supernova.position.set(0, 0, 0); // Center of nebula
@@ -4932,13 +4936,10 @@ function createClusteredNebulas() {
                 const bdOrbitRadius = 100 + Math.random() * 150;
                 const bdOrbitAngle = (bd / brownDwarfCount) * Math.PI * 2;
                 
-                const brownDwarfGeometry = new THREE.SphereGeometry(12, 12, 12);
-                const brownDwarfMaterial = new THREE.MeshStandardMaterial({
-                    color: 0xaa6633,
-                    emissive: 0x663311,
-                    emissiveIntensity: 0.8,
-                    roughness: 0.6,
-                    metalness: 0.4
+                const brownDwarfGeometry = new THREE.SphereGeometry(12, 10, 10);
+                // MeshBasic (see supernova note) — cheap, identical look.
+                const brownDwarfMaterial = new THREE.MeshBasicMaterial({
+                    color: 0x995522
                 });
                 const brownDwarf = new THREE.Mesh(brownDwarfGeometry, brownDwarfMaterial);
                 
@@ -5000,28 +5001,37 @@ function createClusteredNebulas() {
 function createSpectacularClusteredNebulas() {
     console.log('Creating spectacular multi-layered clustered nebulas...');
 
-    // Create 3 layers with slight timing delays for variety
+    // Desktop layers the cluster 3× for rich colour intermingling. On
+    // mobile that's 24 overlapping additive point clouds in the same
+    // cluster centres — the worst fill-rate case in the game — so mobile
+    // builds a single layer (8 nebulas) instead.
+    const _mobile = (typeof _isMobileRenderTier === 'function') && _isMobileRenderTier();
+
     createClusteredNebulas(); // Layer 1
 
-    setTimeout(() => {
-        createClusteredNebulas(); // Layer 2
-    }, 300);
+    if (!_mobile) {
+        setTimeout(() => {
+            createClusteredNebulas(); // Layer 2
+        }, 300);
 
-    setTimeout(() => {
-        createClusteredNebulas(); // Layer 3
-    }, 600);
+        setTimeout(() => {
+            createClusteredNebulas(); // Layer 3
+        }, 600);
+    }
 
     // Create distant nebulas in the outer regions (50,000-75,000 units)
     setTimeout(() => {
         createDistantNebulas();
-    }, 900);
+    }, _mobile ? 300 : 900);
 
     // Create exotic core nebulas (45,000-65,000 units)
     setTimeout(() => {
         createExoticCoreNebulas();
-    }, 1200);
+    }, _mobile ? 600 : 1200);
 
-    console.log('Triple-layered clustered nebulas with maximum color intermingling created!');
+    console.log(_mobile
+        ? 'Single-layer clustered nebulas (mobile tier) created!'
+        : 'Triple-layered clustered nebulas with maximum color intermingling created!');
 }
 
 // =============================================================================
@@ -5063,8 +5073,11 @@ function createDistantNebulas() {
         const nebulaY = distanceFromOrigin * Math.cos(theta);
         const nebulaZ = distanceFromOrigin * Math.sin(theta) * Math.sin(phi);
 
-        // MATCHED TO GALAXY-FORMATION: High particle count
-        const particleCount = 4000 + Math.floor(Math.random() * 2000);
+        // MATCHED TO GALAXY-FORMATION: High particle count. Mobile gets
+        // ~40% to keep additive fill-rate manageable on weak GPUs.
+        const particleCount = _isMobileRenderTier()
+            ? (1600 + Math.floor(Math.random() * 800))
+            : (4000 + Math.floor(Math.random() * 2000));
         const nebulaGeometry = new THREE.BufferGeometry();
         const positions = new Float32Array(particleCount * 3);
         const colors = new Float32Array(particleCount * 3);
@@ -5158,7 +5171,7 @@ function createDistantNebulas() {
 
         const nebulaPoints = new THREE.Points(nebulaGeometry, nebulaMaterial);
         nebulaPoints.visible = true;
-        nebulaPoints.frustumCulled = false;
+        nebulaPoints.frustumCulled = true;  // PERF: off-screen nebulas skip the additive draw
         nebulaGroup.add(nebulaPoints);
 
         nebulaGroup.position.set(nebulaX, nebulaY, nebulaZ);
@@ -5226,8 +5239,11 @@ function createExoticCoreNebulas() {
         const nebulaY = distanceFromOrigin * Math.cos(theta);
         const nebulaZ = distanceFromOrigin * Math.sin(theta) * Math.sin(phi);
 
-        // MATCHED TO GALAXY-FORMATION: High particle count
-        const particleCount = 4000 + Math.floor(Math.random() * 2000);
+        // MATCHED TO GALAXY-FORMATION: High particle count. Mobile gets
+        // ~40% to keep additive fill-rate manageable on weak GPUs.
+        const particleCount = _isMobileRenderTier()
+            ? (1600 + Math.floor(Math.random() * 800))
+            : (4000 + Math.floor(Math.random() * 2000));
         const nebulaGeometry = new THREE.BufferGeometry();
         const positions = new Float32Array(particleCount * 3);
         const colors = new Float32Array(particleCount * 3);
@@ -5336,7 +5352,7 @@ function createExoticCoreNebulas() {
 
         const nebulaPoints = new THREE.Points(nebulaGeometry, nebulaMaterial);
         nebulaPoints.visible = true;
-        nebulaPoints.frustumCulled = false;
+        nebulaPoints.frustumCulled = true;  // PERF: off-screen nebulas skip the additive draw
         nebulaGroup.add(nebulaPoints);
 
         nebulaGroup.position.set(nebulaX, nebulaY, nebulaZ);
@@ -5434,9 +5450,14 @@ function updateNebulaVisibility() {
             }
         }
         
-        // Apply opacity to nebula particles
+        // Apply opacity to nebula particles — only write when it actually
+        // changed, so a settled (fully-faded-in or hidden) nebula doesn't
+        // dirty the material every 15 frames for no reason.
         if (nebula.children[0] && nebula.children[0].material) {
-            nebula.children[0].material.opacity = nebula.userData.currentOpacity;
+            const mat = nebula.children[0].material;
+            if (mat.opacity !== nebula.userData.currentOpacity) {
+                mat.opacity = nebula.userData.currentOpacity;
+            }
         }
     });
 }
@@ -9575,7 +9596,9 @@ function createNebulaGasCloud(centerPos, nebulaId, starColor) {
         const sizeMultiplier = 0.6 + (i * 0.3); // 0.6x, 0.9x, 1.2x, 1.5x
         const cloudSize = (120 + Math.random() * 180) * sizeMultiplier;
         
-        const cloudGeometry = new THREE.SphereGeometry(cloudSize, 16, 16);
+        // 10×10 is plenty for a blurry additive blob — halves the
+        // triangle count vs the old 16×16 with no visible difference.
+        const cloudGeometry = new THREE.SphereGeometry(cloudSize, 10, 10);
         
         // Vary colors slightly within the cluster
         const colorVariation = starColor.clone();
@@ -9626,8 +9649,10 @@ function createNebulaGasCloud(centerPos, nebulaId, starColor) {
         };
         
         gasCloud.visible = true;
-        gasCloud.frustumCulled = false;
-        
+        // PERF: these additive spheres are a big overdraw source; cull
+        // them when off-screen. Their bounding sphere is exact.
+        gasCloud.frustumCulled = true;
+
         cloudCluster.add(gasCloud);
     }
     
@@ -10883,8 +10908,11 @@ function createNebulas() {
         const nebulaY = cluster.center.y + localDistance * Math.cos(localTheta);
         const nebulaZ = cluster.center.z + localDistance * Math.sin(localTheta) * Math.sin(localPhi);
         
-        // Create particles with realistic galaxy-like distribution
-        const particleCount = 4000 + Math.floor(Math.random() * 2000);
+        // Create particles with realistic galaxy-like distribution.
+        // Mobile gets ~40% to keep additive fill-rate manageable.
+        const particleCount = _isMobileRenderTier()
+            ? (1600 + Math.floor(Math.random() * 800))
+            : (4000 + Math.floor(Math.random() * 2000));
         const nebulaGeometry = new THREE.BufferGeometry();
         const positions = new Float32Array(particleCount * 3);
         const colors = new Float32Array(particleCount * 3);
@@ -11054,7 +11082,7 @@ function createNebulas() {
         
         const nebulaPoints = new THREE.Points(nebulaGeometry, nebulaMaterial);
         nebulaPoints.visible = true;
-        nebulaPoints.frustumCulled = false;
+        nebulaPoints.frustumCulled = true;  // PERF: off-screen nebulas skip the additive draw
         
         nebulaGroup.add(nebulaPoints);
         nebulaGroup.position.set(nebulaX, nebulaY, nebulaZ);
