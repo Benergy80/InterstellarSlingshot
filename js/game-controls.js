@@ -240,12 +240,13 @@ function _updateShipThrusterCones(ship, thrusting) {
     const cones = ship.userData._thrusters;
     for (let i = 0; i < cones.length; i++) {
         const c = cones[i];
-        // Very subtle caps — inner 0.35, outer 0.15. With multiple
-        // ships clustered in formation (and additive blending),
-        // anything brighter than this stacks into a screen-wide
-        // orange wash. These look like real engine plumes on each
-        // ship without overpowering the scene.
-        const base = (i % 2 === 0) ? 0.35 : 0.15;
+        // Inner core (i even) and outer halo (i odd). Bumped from
+        // 0.35 / 0.15 → 0.65 / 0.32 so cones actually read at
+        // typical engagement distance, especially on the smaller
+        // wingmen and far-away enemies that the old caps washed out.
+        // Additive blending still keeps formation-stacked cones from
+        // saturating to white — each cone tops out under 1.0 alpha.
+        const base = (i % 2 === 0) ? 0.65 : 0.32;
         c.mat.opacity = next * base * flicker;
         // Almost no bloom — keep cones a tight engine flame.
         const sX = 0.9 + next * 0.15;
@@ -8420,10 +8421,13 @@ function updateAllyShips() {
             _ensureShipThrusterCones(ally, wcol);
             const vmag = ud.velocity ? ud.velocity.length() : 0;
             const prevSpeed = (typeof ud._prevConeSpeed === 'number') ? ud._prevConeSpeed : vmag;
-            // Fire when speeding up (accelerating) or warping; the cone has its
+            // Fire when speeding up, warping, or under any meaningful
+            // thrust. Lowered the under-power floor from 0.4 → 0.05 so
+            // a wingman in slow patrol drift still lights its engines
+            // (was going dark during dwell waypoints). The cone has its
             // own smooth fade so brief frames between accel pulses stay lit.
             const accelerating = vmag > prevSpeed + 0.0006;
-            const underPower = vmag > 0.4;
+            const underPower = vmag > 0.05;
             _updateShipThrusterCones(ally, ud._wasWarping || accelerating || underPower);
             ud._prevConeSpeed = vmag;
         }
