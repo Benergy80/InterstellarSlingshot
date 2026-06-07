@@ -2121,8 +2121,12 @@ if (gameState.emergencyWarp.autoBraking) {
     const currentSpeed = gameState.velocityVector.length();
     const minVelocity = gameState.minVelocity || 2.0;
     
-    // Apply natural braking force (stronger than manual brake for faster stop)
-    const brakingForce = 0.97; // 3% reduction per frame (natural deceleration)
+    // Gentle natural deceleration after a jump — 1.5%/frame (was 3%).
+    // Softened so a short warp-dash CARRIES momentum and coasts toward
+    // the target instead of slamming to a stop the instant the boost
+    // ends. Overshoots are corrected by braking (X) — which is now
+    // permitted during auto-braking (see the manual-brake block below).
+    const brakingForce = 0.985; // 1.5% reduction per frame
     gameState.velocityVector.multiplyScalar(brakingForce);
     
     // Also apply rotational braking for smooth camera transitions
@@ -2163,9 +2167,13 @@ if (typeof updateShieldSystem === 'function') {
     updateShieldSystem();
 }
     
-    // Emergency braking (X key) - GRADUAL DECELERATION
-    // Skip manual braking if Jump auto-brake is active
-if (keys.x && !gameState.emergencyWarp.autoBraking) {
+    // Emergency braking (X key) - GRADUAL DECELERATION.
+    // Now ALSO allowed during the jump auto-brake: the gentle auto-brake
+    // lets a dash carry momentum, and pressing X (e.g. the demo's
+    // overshoot brake) adds firmer deceleration to stop on the target.
+    // Combined with the 0.985 auto-brake this is ~0.975/frame when both
+    // are active, vs the gentle 0.985 coast when X is released.
+if (keys.x) {
     // Gradual braking: reduce velocity by 1% per frame (smoother deceleration)
     const _preBrakeSpeed = gameState.velocityVector.length();
     const brakingForce = 0.99; // 1% reduction per frame (was 0.98 = 2%)

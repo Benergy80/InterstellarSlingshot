@@ -856,13 +856,14 @@
       flyToward(enemy, 2.5);
       pursuitFlightStyle('pursuit');
 
-      // Tactical jumps (double-tap W) to close a BIG gap only. Targets
-      // closer than JUMP_MIN_DIST are reached by normal cruise — jumping
-      // to them gave a sub-second blip that immediately auto-braked
-      // (the "de-accelerating so fast" twitch in dense clusters like
-      // Sgr A*). 4s cooldown, 25+ energy, not while a warp is in flight,
-      // not when a missile is in flight at the current target.
-      const JUMP_MIN_DIST = 2500;
+      // Tactical jumps (double-tap W) to shift momentum toward a target.
+      // Allowed for anything beyond point-blank (>800u) — short dashes
+      // are a great way to change direction faster than coasting. The
+      // post-jump deceleration is now gentle (physics auto-brake 0.985)
+      // so a dash carries momentum, and the overshoot brake below stops
+      // it if it sails past. 4s cooldown, 25+ energy, not while a warp
+      // is in flight, not when a missile is in flight at the target.
+      const JUMP_MIN_DIST = 800;
       const _warpBusy = gameState.emergencyWarp &&
           (gameState.emergencyWarp.active || gameState.emergencyWarp.transitioning);
       if (dist > JUMP_MIN_DIST && speed < 4 && !_warpBusy &&
@@ -872,13 +873,11 @@
         ap._lastJumpTap = Date.now();
         if (window.keys) {
           if (typeof gameState !== 'undefined') {
-            // Size the jump to land just SHORT of the target (within
-            // weapons range) in a single tap. At boostSpeed 15 (~0.9
-            // u/ms) plus the ~camera-delay and auto-brake tail, a jump
-            // travels ≈ 0.9*t + ~750u. So aim for (dist - 700) and let
-            // the approach-brake settle the last bit. With the 2500u
-            // gate the floor is ~1800ms, so no more sub-second blips.
-            gameState._pendingJumpMs = Math.min(6000, Math.max(1500, (dist - 700) * 1.0));
+            // Size the jump to land near the target in one tap. At
+            // boostSpeed 15 (~0.9 u/ms) plus the gentle coast tail it
+            // travels a bit past 0.9*t, so aim for (dist - 700) and let
+            // the overshoot brake settle the last bit. 700-6000ms.
+            gameState._pendingJumpMs = Math.min(6000, Math.max(700, (dist - 700) * 1.0));
           }
           window.keys.wDoubleTap = true;
           setTimeout(() => { if (window.keys) window.keys.wDoubleTap = false; }, 120);
