@@ -120,7 +120,7 @@ function generateHexagonGrid() {
             // Base opacity decreases towards edges. Bumped from 0.4 ->
             // 0.7 so the first-person hex overlay reads as the more
             // opaque shield it was in earlier builds.
-            const baseOpacity = 0.7 * curvature;
+            const baseOpacity = 0.49 * curvature;
             
             shieldSystem.hexagons.push({
                 x: x,

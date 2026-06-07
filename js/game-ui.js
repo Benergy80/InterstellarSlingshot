@@ -845,10 +845,15 @@ function detectEnemiesInRegion() {
 // CROSSHAIR AND TARGETING SYSTEM - ENHANCED INTEGRATION
 // =============================================================================
 
+// Reused across calls — updateCrosshairTargeting runs at ~20Hz and used
+// to allocate a fresh Raycaster + Vector2 every time.
+const _chRaycaster = (typeof THREE !== 'undefined') ? new THREE.Raycaster() : null;
+const _chMouseNDC = (typeof THREE !== 'undefined') ? new THREE.Vector2() : null;
+
 function updateCrosshairTargeting() {
     const crosshair = document.getElementById('crosshair');
     if (!crosshair || typeof gameState === 'undefined' || typeof camera === 'undefined') return;
-    
+
     // Check if enemy is in crosshairs (doubled range)
     let enemyInSights = false;
     const detectionRange = 400; // Doubled range
@@ -877,35 +882,43 @@ function updateCrosshairTargeting() {
             gameState.crosshairY = gameState.mouseY;
         }
         
-        // Check for enemies under crosshair
-        const mousePos = new THREE.Vector2(
-            (gameState.crosshairX / window.innerWidth) * 2 - 1,
-            -(gameState.crosshairY / window.innerHeight) * 2 + 1
-        );
-        
-        const raycaster = new THREE.Raycaster();
-        raycaster.setFromCamera(mousePos, camera);
-        
-        // Check for enemies under crosshair (asteroids excluded from auto-targeting)
-        const targetableObjects = [];
-        if (typeof enemies !== 'undefined') {
-            targetableObjects.push(...enemies.filter(e => e.userData && e.userData.health > 0));
-        }
-        if (typeof planets !== 'undefined') {
-            targetableObjects.push(...planets.filter(p => p.userData && p.userData.type === 'asteroid' && p.userData.health > 0));
-        }
-        
-        targetableObjects.forEach(obj => {
-            const distance = camera.position.distanceTo(obj.position);
-            if (distance <= detectionRange) {
-                const intersects = raycaster.intersectObject(obj);
-                if (intersects.length > 0) {
-                    enemyInSights = true;
+        // Check for enemies under crosshair. Reuse the raycaster/vector,
+        // cap the ray distance, and break out the moment a hit is found —
+        // the old version raycast EVERY enemy (300+) + asteroid every
+        // call with fresh allocations and no early exit.
+        if (_chRaycaster && _chMouseNDC) {
+            _chMouseNDC.set(
+                (gameState.crosshairX / window.innerWidth) * 2 - 1,
+                -(gameState.crosshairY / window.innerHeight) * 2 + 1
+            );
+            _chRaycaster.setFromCamera(_chMouseNDC, camera);
+            _chRaycaster.far = detectionRange;
+
+            const camP = camera.position;
+            const rangeSq = detectionRange * detectionRange;
+
+            if (typeof enemies !== 'undefined') {
+                for (let i = 0; i < enemies.length; i++) {
+                    const e = enemies[i];
+                    if (!e || !e.userData || e.userData.health <= 0) continue;
+                    const dx = camP.x - e.position.x, dy = camP.y - e.position.y, dz = camP.z - e.position.z;
+                    if (dx * dx + dy * dy + dz * dz > rangeSq) continue;   // cheap prefilter
+                    if (_chRaycaster.intersectObject(e, true).length > 0) { enemyInSights = true; break; }
                 }
             }
-        });
-        
-        // Update crosshair position
+            if (!enemyInSights && typeof planets !== 'undefined') {
+                for (let i = 0; i < planets.length; i++) {
+                    const p = planets[i];
+                    if (!p || !p.userData || p.userData.type !== 'asteroid' || p.userData.health <= 0) continue;
+                    const dx = camP.x - p.position.x, dy = camP.y - p.position.y, dz = camP.z - p.position.z;
+                    if (dx * dx + dy * dy + dz * dz > rangeSq) continue;
+                    if (_chRaycaster.intersectObject(p, true).length > 0) { enemyInSights = true; break; }
+                }
+            }
+        }
+
+        // Update crosshair position (mousemove also writes this at native
+        // rate; this keeps it correct when crosshairX changed without a move)
         crosshair.style.left = gameState.crosshairX + 'px';
         crosshair.style.top = gameState.crosshairY + 'px';
     }
@@ -913,32 +926,27 @@ function updateCrosshairTargeting() {
     // Update crosshair color based on enemy detection
     crosshair.classList.toggle('enemy-target', enemyInSights);
     
-    // IMPROVED: Better UI detection that doesn't interfere with planet cards
-    // Temporarily hide crosshair to get element underneath
-    const originalVisibility = crosshair.style.visibility;
-    crosshair.style.visibility = 'hidden';
-
+    // UI detection. The crosshair is pointer-events:none, so
+    // elementFromPoint already skips it — no need for the old
+    // hide-then-restore visibility toggle (which forced a reflow
+    // every call).
     const elementUnder = document.elementFromPoint(gameState.mouseX, gameState.mouseY);
-    const isOverUI = elementUnder?.closest('.ui-panel');
-    const isOverPlanetCard = elementUnder?.closest('.planet-card');
+    const isOverUI = elementUnder && elementUnder.closest('.ui-panel');
 
-    // Restore crosshair visibility
-    crosshair.style.visibility = originalVisibility;
-
-    if (isOverUI) {
-        crosshair.style.opacity = '0.1';
-        crosshair.style.zIndex = '5';  // LOWER than UI panels (which are z-10 to z-20)
-        
-        // CRITICAL: Use pointer cursor for planet cards, auto for other UI
-        if (isOverPlanetCard) {
+    // Only write these styles when the over-UI state actually flips —
+    // avoids a style recalc on every 20Hz tick.
+    const _overUI = !!isOverUI;
+    if (_overUI !== updateCrosshairTargeting._lastOverUI) {
+        updateCrosshairTargeting._lastOverUI = _overUI;
+        if (_overUI) {
+            crosshair.style.opacity = '0.1';
+            crosshair.style.zIndex = '5';  // LOWER than UI panels (which are z-10 to z-20)
             document.body.style.cursor = 'auto';
         } else {
-            document.body.style.cursor = 'auto';
+            crosshair.style.opacity = '1';
+            crosshair.style.zIndex = '45';
+            document.body.style.cursor = 'none';
         }
-    } else {
-        crosshair.style.opacity = '1';
-        crosshair.style.zIndex = '45';
-        document.body.style.cursor = 'none';
     }
 }
 

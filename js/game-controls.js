@@ -5480,6 +5480,7 @@ document.addEventListener('click', (e) => {
 });
     
     // Mouse movement tracking for crosshair - FIXED POSITION TRACKING
+let _crosshairEl = null;  // cached #crosshair element for native-rate tracking
 document.addEventListener('mousemove', (e) => {
     if (typeof gameState === 'undefined' || !gameState.gameStarted || gameState.gameOver || typeof gamePaused !== 'undefined' && gamePaused) return;
 
@@ -5492,6 +5493,14 @@ document.addEventListener('mousemove', (e) => {
     if (!gameState.targetLock.active) {
         gameState.crosshairX = e.clientX;
         gameState.crosshairY = e.clientY;
+        // Move the crosshair DOM element HERE, at native mouse rate, so it
+        // tracks the cursor 1:1 instead of stepping at the 20Hz rate of
+        // updateCrosshairTargeting(). Cache the element lookup.
+        if (!_crosshairEl) _crosshairEl = document.getElementById('crosshair');
+        if (_crosshairEl) {
+            _crosshairEl.style.left = e.clientX + 'px';
+            _crosshairEl.style.top = e.clientY + 'px';
+        }
     }
     // Note: When target lock is active, crosshair position is controlled by updateTargetLock()
     // but we still track real mouse position for UI interaction
