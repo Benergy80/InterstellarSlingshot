@@ -856,16 +856,17 @@
       flyToward(enemy, 2.5);
       pursuitFlightStyle('pursuit');
 
-      // Tactical jumps (double-tap W) to close the gap. No distance gate
-      // — short jumps fire on close targets, longer jumps on far ones,
-      // duration scales with range. 4s cooldown, 15 energy minimum, not
-      // while a warp is already in flight, not when a missile is in
-      // flight at the current target (the demo holds station for the
-      // missile's terminal phase).
+      // Tactical jumps (double-tap W) to close a BIG gap only. Targets
+      // closer than JUMP_MIN_DIST are reached by normal cruise — jumping
+      // to them gave a sub-second blip that immediately auto-braked
+      // (the "de-accelerating so fast" twitch in dense clusters like
+      // Sgr A*). 4s cooldown, 25+ energy, not while a warp is in flight,
+      // not when a missile is in flight at the current target.
+      const JUMP_MIN_DIST = 2500;
       const _warpBusy = gameState.emergencyWarp &&
           (gameState.emergencyWarp.active || gameState.emergencyWarp.transitioning);
-      if (speed < 4 && !_warpBusy &&
-          gameState.energy > 15 &&
+      if (dist > JUMP_MIN_DIST && speed < 4 && !_warpBusy &&
+          gameState.energy > 25 &&
           !_isMissileInFlightAt(enemy) &&
           Date.now() - (ap._lastJumpTap || 0) > 4000) {
         ap._lastJumpTap = Date.now();
@@ -875,10 +876,9 @@
             // weapons range) in a single tap. At boostSpeed 15 (~0.9
             // u/ms) plus the ~camera-delay and auto-brake tail, a jump
             // travels ≈ 0.9*t + ~750u. So aim for (dist - 700) and let
-            // the approach-brake settle the last bit. Biasing short
-            // avoids the overshoot oscillation that made the demo
-            // double-tap 3-4 times. Clamp 600-6000ms.
-            gameState._pendingJumpMs = Math.min(6000, Math.max(600, (dist - 700) * 1.0));
+            // the approach-brake settle the last bit. With the 2500u
+            // gate the floor is ~1800ms, so no more sub-second blips.
+            gameState._pendingJumpMs = Math.min(6000, Math.max(1500, (dist - 700) * 1.0));
           }
           window.keys.wDoubleTap = true;
           setTimeout(() => { if (window.keys) window.keys.wDoubleTap = false; }, 120);
