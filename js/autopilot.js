@@ -819,12 +819,31 @@
 
       ap._killCooldownUntil = Date.now() + 1000;
 
-      // ALWAYS stay and fight if local enemies remain, regardless of
-      // what returnPhase says.  Only leave for the next galaxy when
-      // every local non-boss/non-guardian enemy is eliminated.
+      // Resume the prior phase if it was a deliberate mission step
+      // (following a path, engaging a boss, approaching a nebula).
+      // Otherwise: stay and fight nearby locals; or if local space is
+      // clear, give the boss-spawn machinery a beat and look for a boss.
+      //
+      // The previous code unconditionally forced returnPhase to
+      // 'findLocalEnemies' whenever any local enemy was alive, which
+      // hijacked followDiscoveryPath (combat→kill→back to Vulcans near
+      // the nebula instead of resuming the path to the revealed sector).
+      const MISSION_RETURN_PHASES = new Set([
+        'followDiscoveryPath',
+        'bossEngage',
+        'coastToNebulaCluster',
+        'orbitNebulaPlanet',
+        'warpToNebulaCluster',
+        'gotoBlackHoleGalaxy',
+        'approachBorg',
+        'fightBorg'
+      ]);
       const localAlive = _countLocalEnemies();
       let nextPhaseAfterKill;
-      if (localAlive > 0) {
+      if (ap.returnPhase && MISSION_RETURN_PHASES.has(ap.returnPhase)) {
+        // Mission step — resume it.
+        nextPhaseAfterKill = ap.returnPhase;
+      } else if (localAlive > 0) {
         nextPhaseAfterKill = 'findLocalEnemies';
         ap.returnPhase = 'findLocalEnemies';
       } else {
