@@ -850,6 +850,19 @@
 
     const speed = gameState.velocityVector ? gameState.velocityVector.length() : 0;
 
+    // While a tactical jump / warp is ACTIVE, do not issue any steering or
+    // brake input. The boost velocity is locked to the captured heading and
+    // the autopilot's overshoot/approach braking (flyToward + the overshoot
+    // guard below) would otherwise cancel the jump within a frame or two —
+    // which is exactly why long jumps "didn't last". Just keep the bow on
+    // the target for looks and let the jump ride its full timeRemaining.
+    if (gameState.emergencyWarp && gameState.emergencyWarp.active) {
+      if (window.orientTowardsTarget) window.orientTowardsTarget({ position: enemy.position });
+      gameState.currentTarget = enemy;
+      setStatus('Tactical jump — closing on ' + (enemy.userData.name || 'hostile') + ' (' + (dist | 0) + ' u)');
+      return;
+    }
+
     if (dist > engageRange) {
       // ── PURSUIT: close distance to weapons range ──────────────────
       setStatus('Pursuing ' + (enemy.userData.name || 'hostile') + ' — ' + (dist | 0) + ' u');

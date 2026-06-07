@@ -165,20 +165,27 @@ function _ensureShipThrusterCones(ship, color) {
         if (any && isFinite(_box.min.x) && _box.max.x > _box.min.x) {
             const size = _box.getSize(new THREE.Vector3());
             const worldLen = Math.max(size.x, size.y, size.z);
-            if (worldLen > 0.0001) {
+            // Guard against the not-yet-loaded case: _makeWingman (and the
+            // enemy builders) fall back to a tiny ~16u placeholder mesh when
+            // the GLB isn't cached yet. Measuring that bakes permanent
+            // micro-cones (invisible). Real ships measure in the hundreds of
+            // world units, so require >40u before committing — otherwise
+            // bail and let the next frame re-measure once the model loads.
+            if (worldLen > 40) {
                 const wpos = ship.getWorldPosition(new THREE.Vector3());
                 // Rear of the hull behind ship centre, WORLD units →
                 // converted to the ship's LOCAL frame (cone is a child).
                 localBack = (_box.max.z - wpos.z) / sz;
-                // Cone ≈ 16% of the visible ship length, base ≈ 4.5%.
-                coneLen = (worldLen * 0.16) / sx;
-                coneRad = (worldLen * 0.045) / sx;
+                // Cone ≈ 22% of the visible ship length, base ≈ 6% — bumped
+                // from 0.16/0.045 so the plume reads at engagement range.
+                coneLen = (worldLen * 0.22) / sx;
+                coneRad = (worldLen * 0.06) / sx;
             }
         }
     } catch (e) {}
-    // Not hydrated yet (no hull meshes / zero size) — bail; this runs
-    // every frame so it retries next tick. The _thrusters early-out
-    // means once attached we never re-measure.
+    // Not hydrated yet (no hull meshes / too small) — bail; this runs every
+    // frame so it retries next tick. The _thrusters early-out means once
+    // attached we never re-measure, so we must wait for a real size first.
     if (coneLen === null || localBack === null ||
         !isFinite(localBack) || !isFinite(coneLen)) return;
 
@@ -240,13 +247,11 @@ function _updateShipThrusterCones(ship, thrusting) {
     const cones = ship.userData._thrusters;
     for (let i = 0; i < cones.length; i++) {
         const c = cones[i];
-        // Inner core (i even) and outer halo (i odd). Bumped from
-        // 0.35 / 0.15 → 0.65 / 0.32 so cones actually read at
-        // typical engagement distance, especially on the smaller
-        // wingmen and far-away enemies that the old caps washed out.
+        // Inner core (i even) and outer halo (i odd). 0.85 / 0.45 so the
+        // plume clearly reads on the smaller wingmen and far enemies.
         // Additive blending still keeps formation-stacked cones from
         // saturating to white — each cone tops out under 1.0 alpha.
-        const base = (i % 2 === 0) ? 0.65 : 0.32;
+        const base = (i % 2 === 0) ? 0.85 : 0.45;
         c.mat.opacity = next * base * flicker;
         // Almost no bloom — keep cones a tight engine flame.
         const sX = 0.9 + next * 0.15;

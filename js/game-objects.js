@@ -10364,7 +10364,7 @@ function createEnemyMaterial(shapeData, enemyType, distance) {
 const WORMHOLE_NETWORK = [
     // ── 3 shortcut pairs (entry, exit) ────────────────────────────────
     { pairId: 'cyan',    color: 0x44d9ff, label: 'Cyan Shortcut',
-      a: { x:   9000, y:   0, z:   4800 },   // near Sol
+      a: { x:  16000, y: 800, z:  12000 },   // outside the Sol system (~11k from Sol)
       b: { x: -38000, y: 1200, z:  32000 } },// across the galactic plane
     { pairId: 'magenta', color: 0xff44cc, label: 'Magenta Shortcut',
       a: { x:  28000, y: -800, z: -22000 },
