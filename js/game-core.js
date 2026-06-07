@@ -1531,6 +1531,11 @@ if (typeof updateOrbitLineVisibility === 'function') {
     updateOrbitLineVisibility();
 }
 
+// PERF: distance-cull far planets/asteroids/comets/ships to cut draw calls
+if (typeof updateDistanceCulling === 'function') {
+    updateDistanceCulling();
+}
+
 if (typeof perfDebug !== 'undefined') perfDebug.endTimer('nebulas');
 
 // Update trading ships in nebulas

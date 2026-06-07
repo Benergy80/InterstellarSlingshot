@@ -5470,6 +5470,56 @@ function updateNebulaVisibility() {
 window.updateNebulaVisibility = updateNebulaVisibility;
 
 // =============================================================================
+// DISTANCE CULLING - Hide far-away objects to cut draw calls (PERF)
+// =============================================================================
+// The entire universe lives in one scene with a 250k-unit camera far plane, so
+// without this every distant galaxy's planets, asteroid belts, comets and ships
+// are submitted to the GPU every frame even when they're sub-pixel specks. That
+// was measured at ~2,700-2,900 draw calls/frame at the Sol start. Toggling
+// .visible lets three.js skip the whole subtree (no draw call, no matrix work).
+//
+// We only RESTORE visibility for objects we ourselves hid (tracked via
+// userData._distCulled) so we never fight other visibility systems such as the
+// distant-nebula opacity fade in updateNebulaVisibility(). Enemies are
+// deliberately NOT culled here because combat logic reads enemy.visible.
+let _cullFrameCount = 0;
+function updateDistanceCulling() {
+    if (typeof camera === 'undefined' || !camera) return;
+    // Throttle: visibility doesn't need per-frame precision. Every 10 frames
+    // is ~6x/sec at 60fps, far faster than anything pops into meaningful view.
+    _cullFrameCount++;
+    if (_cullFrameCount % 10 !== 0) return;
+
+    const cx = camera.position.x, cy = camera.position.y, cz = camera.position.z;
+
+    const cullArray = (arr, range) => {
+        if (typeof arr === 'undefined' || !arr || !arr.length) return;
+        const r2 = range * range;
+        for (let i = 0; i < arr.length; i++) {
+            const o = arr[i];
+            if (!o || !o.position) continue;
+            const dx = o.position.x - cx, dy = o.position.y - cy, dz = o.position.z - cz;
+            const inRange = (dx * dx + dy * dy + dz * dz) <= r2;
+            if (!inRange) {
+                if (o.visible) { o.visible = false; o.userData._distCulled = true; }
+            } else if (o.userData._distCulled) {
+                o.visible = true; o.userData._distCulled = false;
+            }
+        }
+    };
+
+    // Cosmetic/static content: range sits just beyond the ~25k nebula-cloud
+    // fade so a system's planets never wink out while its cloud is still drawn.
+    cullArray(typeof planets !== 'undefined' ? planets : null, 30000);
+    cullArray(typeof asteroidBelts !== 'undefined' ? asteroidBelts : null, 30000);
+    cullArray(typeof interstellarAsteroids !== 'undefined' ? interstellarAsteroids : null, 30000);
+    cullArray(typeof comets !== 'undefined' ? comets : null, 35000);
+    // Trading ships read as a single dot well before this range.
+    cullArray(typeof tradingShips !== 'undefined' ? tradingShips : null, 18000);
+}
+window.updateDistanceCulling = updateDistanceCulling;
+
+// =============================================================================
 // ORBIT LINE VISIBILITY - Show orbits when near nebulas or black holes
 // =============================================================================
 // Frame counter for throttling
@@ -7059,9 +7109,20 @@ function updateTradingShips() {
     
     tradingShips.forEach(ship => {
         if (!ship || !ship.userData) return;
-        
+
+        // PERF: skip AI for ships far from the player. They're distance-culled
+        // from view anyway and their drift is imperceptible at this range, so
+        // running the full state machine for all 584 ships every frame is pure
+        // waste (was the single most expensive per-frame update function).
+        if (playerPos) {
+            const sdx = ship.position.x - playerPos.x;
+            const sdy = ship.position.y - playerPos.y;
+            const sdz = ship.position.z - playerPos.z;
+            if (sdx * sdx + sdy * sdy + sdz * sdz > 20000 * 20000) return;
+        }
+
         const data = ship.userData;
-        
+
         // Skip caravan freighters - they have their own update via updateFreighterCaravans
         if (data.isCaravan) return;
         
