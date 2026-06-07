@@ -850,19 +850,6 @@
 
     const speed = gameState.velocityVector ? gameState.velocityVector.length() : 0;
 
-    // While a tactical jump / warp is ACTIVE, do not issue any steering or
-    // brake input. The boost velocity is locked to the captured heading and
-    // the autopilot's overshoot/approach braking (flyToward + the overshoot
-    // guard below) would otherwise cancel the jump within a frame or two —
-    // which is exactly why long jumps "didn't last". Just keep the bow on
-    // the target for looks and let the jump ride its full timeRemaining.
-    if (gameState.emergencyWarp && gameState.emergencyWarp.active) {
-      if (window.orientTowardsTarget) window.orientTowardsTarget({ position: enemy.position });
-      gameState.currentTarget = enemy;
-      setStatus('Tactical jump — closing on ' + (enemy.userData.name || 'hostile') + ' (' + (dist | 0) + ' u)');
-      return;
-    }
-
     if (dist > engageRange) {
       // ── PURSUIT: close distance to weapons range ──────────────────
       setStatus('Pursuing ' + (enemy.userData.name || 'hostile') + ' — ' + (dist | 0) + ' u');
@@ -884,11 +871,14 @@
         ap._lastJumpTap = Date.now();
         if (window.keys) {
           if (typeof gameState !== 'undefined') {
-            // Scale jump duration with range. Tight floor (700ms) so a
-            // close target gets a quick blink instead of being overshot
-            // by an unconditional 2s warp. Far targets still get the
-            // full 5s push.
-            gameState._pendingJumpMs = Math.min(15000, Math.max(2100, dist * 2.1));
+            // Size the jump to land just SHORT of the target (within
+            // weapons range) in a single tap. At boostSpeed 15 (~0.9
+            // u/ms) plus the ~camera-delay and auto-brake tail, a jump
+            // travels ≈ 0.9*t + ~750u. So aim for (dist - 700) and let
+            // the approach-brake settle the last bit. Biasing short
+            // avoids the overshoot oscillation that made the demo
+            // double-tap 3-4 times. Clamp 600-6000ms.
+            gameState._pendingJumpMs = Math.min(6000, Math.max(600, (dist - 700) * 1.0));
           }
           window.keys.wDoubleTap = true;
           setTimeout(() => { if (window.keys) window.keys.wDoubleTap = false; }, 120);

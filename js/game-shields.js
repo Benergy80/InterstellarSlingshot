@@ -680,7 +680,9 @@ function create3DShield() {
         color: 0x00d4ff,
         wireframe: true,
         transparent: true,
-        opacity: _shieldIsMobile ? 0.3 : 0.5,
+        // Tuned to match the 1st-person hex overlay's centre line opacity
+        // (~0.31) so the shield reads consistently across both views.
+        opacity: _shieldIsMobile ? 0.22 : 0.32,
         blending: THREE.AdditiveBlending,
         depthWrite: false
     });
@@ -758,13 +760,15 @@ function update3DShield() {
         // sphere stays the player's cyan/blue so a hit reads as an outline
         // flash, not a full red screen wash that hides the ship.
         shieldSystem.mesh3D.material.color.setHex(_red ? _SHIELD_HIT_COLOR : _SHIELD_BASE_COLOR);
-        shieldSystem.mesh3D.material.opacity = _red ? 0.95 : 0.6;
+        shieldSystem.mesh3D.material.opacity = _red ? 0.95 : 0.45;
         shieldSystem.glowMesh3D.material.color.setHex(_SHIELD_BASE_COLOR);
         shieldSystem.glowMesh3D.material.opacity = 0.1 + (pulse * 0.5);
         return;
     }
 
-    shieldSystem.mesh3D.material.opacity = 0.5 + pulse + (energyFactor * 0.2);
+    // ~0.3 base so the wireframe lines match the 1st-person overlay's
+    // centre line opacity (was 0.5 + … which read at 0.6-0.8).
+    shieldSystem.mesh3D.material.opacity = 0.3 + pulse + (energyFactor * 0.1);
     shieldSystem.glowMesh3D.material.opacity = 0.1 + (pulse * 0.5);
 
     // Change color when energy is low
