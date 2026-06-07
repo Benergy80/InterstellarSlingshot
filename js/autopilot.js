@@ -539,10 +539,16 @@
     // was doing and drops it into a fight — the demo should never
     // cruise past hostiles. Excluded phases either ARE combat,
     // can't break out (warp lock), or are pre-game.
+    // followDiscoveryPath is also excluded: the path leads SPECIFICALLY
+    // to the revealed hostile sector at its endpoint, and the phase has
+    // its own enemyAhead pivot for combat at the destination. Letting
+    // the global pivot fire on every ambient enemy along the way kept
+    // yanking the demo off the path before it could arrive.
     if (ap.phase !== 'init' &&
         ap.phase !== 'combat' &&
         ap.phase !== 'fightBorg' &&
-        ap.phase !== 'blackHoleWarp') {
+        ap.phase !== 'blackHoleWarp' &&
+        ap.phase !== 'followDiscoveryPath') {
       const _navHostile = navDetectedEnemy();
       // Don't interrupt the locked warp cycle — physics owns velocity
       // and braking is futile. coastToNebulaCluster already breaks off
@@ -1503,13 +1509,12 @@
     if (endPos) {
       const dist = camPos().distanceTo(endPos);
       const speed = gameState.velocityVector ? gameState.velocityVector.length() : 0;
-
-      // Long approach: fire an emergency warp once toward the endpoint
-      // so the demo doesn't slow-cruise across thousands of units of
-      // empty space. Single-shot per phase entry, gated by warp charge
-      // availability and our 20s O-key cooldown.
       const _warpBusy = (gameState.emergencyWarp && (gameState.emergencyWarp.active || gameState.emergencyWarp.transitioning));
-      if (!ap._followPathWarpFired && dist > 3500 && !_warpBusy &&
+
+      // VERY long initial approach (>8k): fire ONE emergency warp on
+      // entry to cover the big gap fast. Single-shot, gated by warp
+      // charge availability and our 20s O-key cooldown.
+      if (!ap._followPathWarpFired && dist > 8000 && !_warpBusy &&
           canEmergencyWarp() &&
           Date.now() - (ap._lastBHWarp || 0) > 20000) {
         if (triggerOKeyWarp()) {
@@ -1527,6 +1532,27 @@
       if (dist < BRAKE_RANGE && speed > 1.0) {
         setStatus('Approaching revealed hostiles — braking (' + (dist | 0) + ' u)');
         keys().x = true;
+        return;
+      }
+
+      // Outside the brake band but past the immediate target: repeated
+      // W-jumps every ~5s to make real progress toward the endpoint,
+      // adjusting heading between each dash. Each jump is sized to land
+      // near the endpoint; the orient-toward-endpoint call above
+      // re-aims the bow before every jump. Gated on dist > 1200 so the
+      // final approach is a smooth cruise+brake, not a final jump.
+      if (dist > 1200 && speed < 4 && !_warpBusy &&
+          gameState.energy > 25 &&
+          Date.now() - (ap._lastJumpTap || 0) > 5000) {
+        ap._lastJumpTap = Date.now();
+        if (window.keys) {
+          if (typeof gameState !== 'undefined') {
+            gameState._pendingJumpMs = Math.min(6000, Math.max(700, (dist - 700) * 1.0));
+          }
+          window.keys.wDoubleTap = true;
+          setTimeout(() => { if (window.keys) window.keys.wDoubleTap = false; }, 120);
+        }
+        setStatus('Tactical jump → discovery endpoint (' + (dist | 0) + ' u)');
         return;
       }
 
