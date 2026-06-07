@@ -612,29 +612,84 @@ function toggleOrbitLines() {
 
 // ── MINUS WORLD ──────────────────────────────────────────────────────────
 // Wormholes drop the player into an inverted-colour "Minus World"; passing
-// through another wormhole flips back. Implemented as a CSS colour-invert
-// on the WebGL canvas only (the HUD stays readable). Black-hole warps move
-// you AROUND within whichever world you're in — only wormholes toggle it.
-function toggleMinusWorld() {
-    if (typeof gameState === 'undefined') return false;
-    gameState.minusWorld = !gameState.minusWorld;
-    if (typeof renderer !== 'undefined' && renderer && renderer.domElement) {
-        renderer.domElement.style.transition = 'filter 0.7s ease';
-        renderer.domElement.style.filter = gameState.minusWorld
-            ? 'invert(1) hue-rotate(180deg)' : '';
+// Wormhole transit dispatcher. The wormhole network in game-objects.js
+// builds 3 colour-matched shortcut pairs and 2 reward-pocket pairs at
+// startup; entering a mouth lands you at its partner. Reward pockets
+// also grant a one-off bonus the first time their entry mouth is used.
+function _handleWormholeEntry(mouth) {
+    if (!mouth || !mouth.userData) return;
+    const ud = mouth.userData;
+    const partner = ud._partner;
+    if (!partner || !partner.position) {
+        console.warn('Wormhole has no partner:', ud.name);
+        return;
     }
-    if (typeof showAchievement === 'function') {
-        if (gameState.minusWorld) {
-            showAchievement('⊟ ENTERED THE MINUS WORLD',
-                'Colours inverted. Find another wormhole to return to normal space.', true);
+
+    // Move the player out at the partner mouth, offset along the
+    // partner's local +Z so the player doesn't immediately re-enter the
+    // mouth they just popped out of.
+    const exitOffset = 220;
+    let outX = partner.position.x;
+    let outY = partner.position.y;
+    let outZ = partner.position.z;
+    if (typeof gameState !== 'undefined' && gameState.velocityVector) {
+        const v = gameState.velocityVector;
+        const speed = v.length();
+        if (speed > 0.01) {
+            outX += (v.x / speed) * exitOffset;
+            outY += (v.y / speed) * exitOffset;
+            outZ += (v.z / speed) * exitOffset;
         } else {
-            showAchievement('Normal Space Restored',
-                'You slipped back out of the Minus World.', true);
+            outZ += exitOffset;
         }
     }
-    return gameState.minusWorld;
+    if (typeof camera !== 'undefined' && camera && camera.position) {
+        camera.position.set(outX, outY, outZ);
+    }
+
+    // Reward pocket: grant the bonus on first transit through the
+    // entry mouth, then leave the return mouth in place so the player
+    // can hop back out the same way.
+    if (ud._isRewardPocket && ud._isPocketEntry && !ud._rewardClaimed && ud._pocketReward) {
+        ud._rewardClaimed = true;
+        const r = ud._pocketReward;
+        if (typeof gameState !== 'undefined') {
+            if (r.missiles && gameState.missiles && typeof gameState.missiles.current === 'number') {
+                const cap = gameState.missiles.capacity || 10;
+                gameState.missiles.current = Math.min(cap, gameState.missiles.current + r.missiles);
+            }
+            if (r.warpCharge && gameState.emergencyWarp) {
+                gameState.emergencyWarp.available =
+                    Math.min((gameState.emergencyWarp.capacity || 5),
+                             (gameState.emergencyWarp.available || 0) + r.warpCharge);
+            }
+            if (r.hull) {
+                gameState.hull = Math.min(gameState.maxHull || 100, (gameState.hull || 0) + r.hull);
+            }
+            if (r.energy) {
+                gameState.energy = Math.min(100, (gameState.energy || 0) + r.energy);
+            }
+        }
+        if (typeof showAchievement === 'function') {
+            showAchievement('REWARD POCKET', r.message || 'Bonus collected.', true);
+        }
+    } else if (ud._isRewardPocket && ud._isPocketReturn) {
+        if (typeof showAchievement === 'function') {
+            showAchievement('Wormhole Transit', `Returning from the ${ud.name.replace(/ Return$/, '')}.`);
+        }
+    } else {
+        if (typeof showAchievement === 'function') {
+            showAchievement('Wormhole Transit', `${ud._pairId.toUpperCase()} shortcut — emerging at partner mouth.`);
+        }
+    }
+
+    if (typeof playSound === 'function') playSound('wormhole_warp');
+
+    // Refresh the nav target list so the new partner mouth (now nearby)
+    // shows up in the panel.
+    if (typeof populateTargets === 'function') populateTargets();
 }
-if (typeof window !== 'undefined') window.toggleMinusWorld = toggleMinusWorld;
+if (typeof window !== 'undefined') window._handleWormholeEntry = _handleWormholeEntry;
 
 // FIXED: Helper function to create a single orbit line - NO MOON ORBITS
 function createSingleOrbitLine(planet, isLocal) {
@@ -1509,16 +1564,30 @@ if (typeof distressBeaconSystem !== 'undefined' && distressBeaconSystem.updateBe
 }
     
     // â­ ENHANCED: Animate nebula gas clouds with individual pulsing per cloud
-if (typeof nebulaGasClouds !== 'undefined' && nebulaGasClouds.length > 0) {
-    // OPTIMIZATION: Cache Date.now() once per frame instead of per cloud
+if (typeof nebulaGasClouds !== 'undefined' && nebulaGasClouds.length > 0 && gameState.frameCount % 2 === 0) {
+    // OPTIMIZATION: Cache Date.now() once per frame instead of per cloud.
+    // Throttled to 30Hz (% 2) — the pulse is slow enough that half-rate
+    // is imperceptible. Per-cluster distance gate skips the expensive
+    // per-child pulse/opacity work for clusters the player isn't near.
     const currentTime = Date.now();
+    const _camP = (typeof camera !== 'undefined') ? camera.position : null;
+    const NEB_ANIM_DIST_SQ = 14000 * 14000;
 
     nebulaGasClouds.forEach(cloudCluster => {
-        // Rotate entire cluster slowly
+        // Rotate entire cluster slowly (cheap — always do it)
         if (cloudCluster.rotation) {
-            cloudCluster.rotation.x += 0.0002;
-            cloudCluster.rotation.y += 0.0003;
-            cloudCluster.rotation.z += 0.0001;
+            cloudCluster.rotation.x += 0.0004;
+            cloudCluster.rotation.y += 0.0006;
+            cloudCluster.rotation.z += 0.0002;
+        }
+
+        // Skip the per-child pulse/opacity work for distant clusters —
+        // the breathing detail isn't visible from far away anyway.
+        if (_camP) {
+            const dx = _camP.x - cloudCluster.position.x;
+            const dy = _camP.y - cloudCluster.position.y;
+            const dz = _camP.z - cloudCluster.position.z;
+            if (dx * dx + dy * dy + dz * dz > NEB_ANIM_DIST_SQ) return;
         }
 
         // Animate each individual cloud in the cluster
@@ -1861,10 +1930,22 @@ if (planet.userData.type === 'blackhole' && planet.userData.rotationSpeed) {
         
         // PERFORMANCE: Optimized tendril animations for distant stars (active only)
         if (planet.userData.tendrilGroup && !planet.userData.isLocalStar && gameState.performanceMode !== 'minimal') {
+            // Distance gate: the writhe animation rebuilds a TubeGeometry
+            // per tendril (allocate + dispose) — the single biggest
+            // per-frame allocation source. These belong to distant
+            // background stars, so only animate the geometry when the
+            // player is actually near enough to see the writhe (12k u).
+            // Far tendrils just hold their last shape — indistinguishable
+            // at range. Mobile updates at half the rate on top of that.
+            const _tdx = camera.position.x - planet.position.x;
+            const _tdy = camera.position.y - planet.position.y;
+            const _tdz = camera.position.z - planet.position.z;
+            const _tendrilNear = (_tdx * _tdx + _tdy * _tdy + _tdz * _tdz) < (12000 * 12000);
+            const _tendrilStep = (typeof _isMobileRenderTier === 'function' && _isMobileRenderTier()) ? 12 : 6;
             planet.userData.tendrilTime += 0.016;
-            
-            // Only update every few frames for performance
-            if (gameState.frameCount % 6 === 0) {
+
+            // Only update every few frames for performance, and only when near
+            if (_tendrilNear && gameState.frameCount % _tendrilStep === 0) {
                 planet.userData.tendrilGroup.children.forEach((tendril, index) => {
                     if (tendril.userData) {
                         const time = planet.userData.tendrilTime;
@@ -1917,25 +1998,18 @@ if (planet.userData.type === 'blackhole' && planet.userData.rotationSpeed) {
     
     // Periodic wormhole respawn — keep the universe well-stocked with
     // spatial anomalies. Every ~12 seconds, if the active count has
-    // dropped below 10, spawn a fresh one. With the new 6-9 min
-    // lifetimes this keeps the player surprised by new throats
-    // appearing instead of relying solely on the initial 12.
-    if (typeof wormholes !== 'undefined' && typeof spawnEnhancedWormhole === 'function') {
-        const _now = Date.now();
-        if (!window._lastWormholeRespawn) window._lastWormholeRespawn = _now;
-        if (_now - window._lastWormholeRespawn > 12000 && wormholes.length < 10) {
-            spawnEnhancedWormhole();
-            window._lastWormholeRespawn = _now;
-        }
-    }
-
-    // Enhanced wormhole updates for doubled world (performance optimized)
+    // Wormhole network animation + entry detection. The network is
+    // fixed (see WORMHOLE_NETWORK in game-objects.js): 3 colour-matched
+    // shortcut pairs plus 2 reward-pocket pairs, all persistent — no
+    // more random spawn/despawn loops. Entry teleports the player to
+    // the partner mouth via _handleWormholeEntry.
     if (typeof wormholes !== 'undefined') {
-        wormholes.forEach((wormhole, index) => {
+        for (let i = 0; i < wormholes.length; i++) {
+            const wormhole = wormholes[i];
+            if (!wormhole || !wormhole.userData) continue;
+
             if (wormhole.userData.spiralSpeed) {
                 wormhole.rotation.y += wormhole.userData.spiralSpeed;
-                
-                // Only update child rotations every few frames
                 if (gameState.frameCount % 2 === 0) {
                     wormhole.children.forEach((child, childIndex) => {
                         if (child.geometry?.type === 'TorusGeometry') {
@@ -1944,40 +2018,24 @@ if (planet.userData.type === 'blackhole' && planet.userData.rotationSpeed) {
                     });
                 }
             }
-            
+
             const pulseScale = 1 + Math.sin(Date.now() * 0.004) * 0.15;
             wormhole.scale.set(pulseScale, pulseScale, pulseScale);
-            
+
             const distanceToPlayer = wormhole.position.distanceTo(camera.position);
 
-if (distanceToPlayer < wormhole.userData.detectionRange && !wormhole.userData.detected) {
-    wormhole.userData.detected = true;
-    if (typeof showAchievement === 'function') {
-        showAchievement('Spatial Anomaly Detected', `${wormhole.userData.name} discovered!`);
-    }
-}
-            
-            wormhole.userData.age += 16.67;
-            if (wormhole.userData.age > wormhole.userData.lifeTime) {
-                scene.remove(wormhole);
-                wormholes.splice(index, 1);
-            }
-            
-            if (distanceToPlayer < wormhole.userData.warpThreshold) {
+            if (distanceToPlayer < wormhole.userData.detectionRange && !wormhole.userData.detected) {
+                wormhole.userData.detected = true;
                 if (typeof showAchievement === 'function') {
-                    showAchievement('Wormhole Transit', `Entering ${wormhole.userData.name}!`);
+                    showAchievement('Spatial Anomaly Detected', `${wormhole.userData.name} discovered!`);
                 }
-                scene.remove(wormhole);
-                wormholes.splice(index, 1);
-                // Wormholes flip you into / out of the inverted Minus World,
-                // then warp you somewhere new within it.
-                if (typeof toggleMinusWorld === 'function') toggleMinusWorld();
-                if (typeof transitionToRandomLocation === 'function') {
-                    transitionToRandomLocation(wormhole.userData.name, 'wormhole');
-                }
+            }
+
+            if (distanceToPlayer < wormhole.userData.warpThreshold) {
+                _handleWormholeEntry(wormhole);
                 return;
             }
-        });
+        }
     }
     
     // FIXED: Enhanced comet updates with proper trailing tails
@@ -2044,14 +2102,26 @@ if (typeof updateCosmicFeatures === 'function') {
 
 // Animate nebula rotation
 if (typeof nebulaClouds !== 'undefined' && nebulaClouds.length > 0) {
+    const _nebCamP = (typeof camera !== 'undefined') ? camera.position : null;
+    const NEB_CHILD_DIST_SQ = 14000 * 14000;
     nebulaClouds.forEach(nebula => {
         if (!nebula.userData) return;
-        
-        // Rotate entire nebula cloud
+        if (nebula.visible === false) return;  // hidden distant/exotic — nothing to animate
+
+        // Rotate entire nebula cloud (cheap — always)
         if (nebula.userData.rotationSpeed) {
             nebula.rotation.y += nebula.userData.rotationSpeed;
         }
-        
+
+        // Skip per-child brown-dwarf / supernova animation for nebulas
+        // the player isn't near — invisible detail at distance.
+        if (_nebCamP) {
+            const dx = _nebCamP.x - nebula.position.x;
+            const dy = _nebCamP.y - nebula.position.y;
+            const dz = _nebCamP.z - nebula.position.z;
+            if (dx * dx + dy * dy + dz * dz > NEB_CHILD_DIST_SQ) return;
+        }
+
         // Animate brown dwarfs orbiting supernova cores
         nebula.children.forEach(child => {
             // Check if this is a brown dwarf

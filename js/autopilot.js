@@ -533,6 +533,38 @@
       }
     }
 
+    // ── Global nav-detected combat pivot ───────────────────────────────
+    // Any enemy inside the player's nav-scanner range (3,000u, or
+    // 10,000u for black-hole guardians) interrupts whatever the demo
+    // was doing and drops it into a fight — the demo should never
+    // cruise past hostiles. Excluded phases either ARE combat,
+    // can't break out (warp lock), or are pre-game.
+    // followDiscoveryPath is also excluded: the path leads SPECIFICALLY
+    // to the revealed hostile sector at its endpoint, and the phase has
+    // its own enemyAhead pivot for combat at the destination. Letting
+    // the global pivot fire on every ambient enemy along the way kept
+    // yanking the demo off the path before it could arrive.
+    if (ap.phase !== 'init' &&
+        ap.phase !== 'combat' &&
+        ap.phase !== 'fightBorg' &&
+        ap.phase !== 'blackHoleWarp' &&
+        ap.phase !== 'followDiscoveryPath') {
+      const _navHostile = navDetectedEnemy();
+      // Don't interrupt the locked warp cycle — physics owns velocity
+      // and braking is futile. coastToNebulaCluster already breaks off
+      // on its own once the lock ends.
+      const _warpLocked = (ap.phase === 'coastToNebulaCluster') &&
+          ((gameState.emergencyWarp && (gameState.emergencyWarp.active || gameState.emergencyWarp.transitioning)) ||
+           (gameState.slingshot && gameState.slingshot.active));
+      if (_navHostile && !_warpLocked && _navHostile !== ap.combatTarget) {
+        ap.combatTarget = _navHostile;
+        ap.combatMissileFired = false;
+        ap.returnPhase = ap.phase;
+        setStatus('Hostile on nav — engaging ' + (_navHostile.userData.name || 'target'));
+        goPhase('combat');
+      }
+    }
+
     // Dispatch
     switch (ap.phase) {
       case 'init':                     phaseInit();                   break;
@@ -787,12 +819,31 @@
 
       ap._killCooldownUntil = Date.now() + 1000;
 
-      // ALWAYS stay and fight if local enemies remain, regardless of
-      // what returnPhase says.  Only leave for the next galaxy when
-      // every local non-boss/non-guardian enemy is eliminated.
+      // Resume the prior phase if it was a deliberate mission step
+      // (following a path, engaging a boss, approaching a nebula).
+      // Otherwise: stay and fight nearby locals; or if local space is
+      // clear, give the boss-spawn machinery a beat and look for a boss.
+      //
+      // The previous code unconditionally forced returnPhase to
+      // 'findLocalEnemies' whenever any local enemy was alive, which
+      // hijacked followDiscoveryPath (combat→kill→back to Vulcans near
+      // the nebula instead of resuming the path to the revealed sector).
+      const MISSION_RETURN_PHASES = new Set([
+        'followDiscoveryPath',
+        'bossEngage',
+        'coastToNebulaCluster',
+        'orbitNebulaPlanet',
+        'warpToNebulaCluster',
+        'gotoBlackHoleGalaxy',
+        'approachBorg',
+        'fightBorg'
+      ]);
       const localAlive = _countLocalEnemies();
       let nextPhaseAfterKill;
-      if (localAlive > 0) {
+      if (ap.returnPhase && MISSION_RETURN_PHASES.has(ap.returnPhase)) {
+        // Mission step — resume it.
+        nextPhaseAfterKill = ap.returnPhase;
+      } else if (localAlive > 0) {
         nextPhaseAfterKill = 'findLocalEnemies';
         ap.returnPhase = 'findLocalEnemies';
       } else {
@@ -830,26 +881,28 @@
       flyToward(enemy, 2.5);
       pursuitFlightStyle('pursuit');
 
-      // Tactical jumps (double-tap W) to close the gap. No distance gate
-      // — short jumps fire on close targets, longer jumps on far ones,
-      // duration scales with range. 4s cooldown, 15 energy minimum, not
-      // while a warp is already in flight, not when a missile is in
-      // flight at the current target (the demo holds station for the
-      // missile's terminal phase).
+      // Tactical jumps (double-tap W) to shift momentum toward a target.
+      // Allowed for anything beyond point-blank (>800u) — short dashes
+      // are a great way to change direction faster than coasting. The
+      // post-jump deceleration is now gentle (physics auto-brake 0.985)
+      // so a dash carries momentum, and the overshoot brake below stops
+      // it if it sails past. 4s cooldown, 25+ energy, not while a warp
+      // is in flight, not when a missile is in flight at the target.
+      const JUMP_MIN_DIST = 800;
       const _warpBusy = gameState.emergencyWarp &&
           (gameState.emergencyWarp.active || gameState.emergencyWarp.transitioning);
-      if (speed < 4 && !_warpBusy &&
-          gameState.energy > 15 &&
+      if (dist > JUMP_MIN_DIST && speed < 4 && !_warpBusy &&
+          gameState.energy > 25 &&
           !_isMissileInFlightAt(enemy) &&
           Date.now() - (ap._lastJumpTap || 0) > 4000) {
         ap._lastJumpTap = Date.now();
         if (window.keys) {
           if (typeof gameState !== 'undefined') {
-            // Scale jump duration with range. Tight floor (700ms) so a
-            // close target gets a quick blink instead of being overshot
-            // by an unconditional 2s warp. Far targets still get the
-            // full 5s push.
-            gameState._pendingJumpMs = Math.min(5000, Math.max(700, dist * 0.7));
+            // Size the jump to land near the target in one tap. At
+            // boostSpeed 15 (~0.9 u/ms) plus the gentle coast tail it
+            // travels a bit past 0.9*t, so aim for (dist - 700) and let
+            // the overshoot brake settle the last bit. 700-6000ms.
+            gameState._pendingJumpMs = Math.min(6000, Math.max(700, (dist - 700) * 1.0));
           }
           window.keys.wDoubleTap = true;
           setTimeout(() => { if (window.keys) window.keys.wDoubleTap = false; }, 120);
@@ -1448,6 +1501,16 @@
       return;
     }
 
+    // From the moment a path is acquired, the ship's bow tracks the
+    // path's DESTINATION end (where the revealed hostiles are hiding),
+    // not the nebula end we just came from.
+    if (endPos && window.orientTowardsTarget) {
+      if (!ap._followPathAimDummy) ap._followPathAimDummy = { position: new THREE.Vector3(), userData: { name: 'Discovery endpoint' } };
+      ap._followPathAimDummy.position.copy(endPos);
+      window.orientTowardsTarget(ap._followPathAimDummy);
+      gameState.currentTarget = ap._followPathAimDummy;
+    }
+
     // Check for an enemy in front of us as we travel
     const enemyAhead = nearestAliveEnemy(3500);
     if (enemyAhead) {
@@ -1464,9 +1527,57 @@
 
     if (endPos) {
       const dist = camPos().distanceTo(endPos);
-      setStatus('Following discovery path — ' + (dist | 0) + ' units');
+      const speed = gameState.velocityVector ? gameState.velocityVector.length() : 0;
+      const _warpBusy = (gameState.emergencyWarp && (gameState.emergencyWarp.active || gameState.emergencyWarp.transitioning));
+
+      // VERY long initial approach (>8k): fire ONE emergency warp on
+      // entry to cover the big gap fast. Single-shot, gated by warp
+      // charge availability and our 20s O-key cooldown.
+      if (!ap._followPathWarpFired && dist > 8000 && !_warpBusy &&
+          canEmergencyWarp() &&
+          Date.now() - (ap._lastBHWarp || 0) > 20000) {
+        if (triggerOKeyWarp()) {
+          ap._lastBHWarp = Date.now();
+          ap._followPathWarpFired = true;
+          ap.warpStartedAt = Date.now();
+          setStatus('Emergency warp → revealed hostile sector');
+          return;
+        }
+      }
+
+      // Brake band: within engagement range of the endpoint, kill speed
+      // so the demo arrives ready to fight rather than rocketing past.
+      const BRAKE_RANGE = 2500;
+      if (dist < BRAKE_RANGE && speed > 1.0) {
+        setStatus('Approaching revealed hostiles — braking (' + (dist | 0) + ' u)');
+        keys().x = true;
+        return;
+      }
+
+      // Outside the brake band but past the immediate target: repeated
+      // W-jumps every ~5s to make real progress toward the endpoint,
+      // adjusting heading between each dash. Each jump is sized to land
+      // near the endpoint; the orient-toward-endpoint call above
+      // re-aims the bow before every jump. Gated on dist > 1200 so the
+      // final approach is a smooth cruise+brake, not a final jump.
+      if (dist > 1200 && speed < 4 && !_warpBusy &&
+          gameState.energy > 25 &&
+          Date.now() - (ap._lastJumpTap || 0) > 5000) {
+        ap._lastJumpTap = Date.now();
+        if (window.keys) {
+          if (typeof gameState !== 'undefined') {
+            gameState._pendingJumpMs = Math.min(6000, Math.max(700, (dist - 700) * 1.0));
+          }
+          window.keys.wDoubleTap = true;
+          setTimeout(() => { if (window.keys) window.keys.wDoubleTap = false; }, 120);
+        }
+        setStatus('Tactical jump → discovery endpoint (' + (dist | 0) + ' u)');
+        return;
+      }
+
       if (dist > 300) {
-        flyToward(endPos, 2.0);
+        setStatus('Following discovery path → ' + (dist | 0) + ' units');
+        flyToward(endPos, dist > BRAKE_RANGE ? 2.0 : 1.0);
       } else {
         // At end of path — look for enemies
         const near = nearestAliveEnemy(5000);
@@ -3055,23 +3166,24 @@
         if (alertEl) alertEl.querySelectorAll('button').forEach(b => b.remove());
       }
       ap._seenPrompt = null;
-      // Close the full alert 2 s after opening
+      // Close the full alert 6 s after opening (was 2 s; tripled so
+      // the viewer can actually read the lore the demo just opened).
       setTimeout(() => {
         const alertEl = document.getElementById('missionCommandAlert');
         if (alertEl) alertEl.classList.add('hidden');
         if (typeof gameState !== 'undefined') gameState.paused = false;
-      }, 2000);
+      }, 6000);
     }
 
-    // Type 2: Auto-fade text from game-objects.js — nothing to do, it
-    // handles its own timeout.  But hide it faster (1.5 s) in demo mode
-    // so it doesn't obstruct the view too long.
+    // Type 2: Auto-fade text from game-objects.js handles its own
+    // timeout. Demo used to slam it to 1.5s; now 4.5s (3x) so demo
+    // viewers can read it.
     const textTx = document.getElementById('incomingTransmission');
     if (textTx && !textTx._demoShortenSet) {
       textTx._demoShortenSet = true;
       setTimeout(() => {
         if (textTx) textTx.style.opacity = '0';
-      }, 1500);
+      }, 4500);
     }
 
     // Type 3: Mission Control galaxy-cleared alert ("N hostile galaxies
@@ -3129,6 +3241,12 @@
     if (name !== 'followDiscoveryPath') {
       ap._followingPath = null;
     }
+    // Re-arm the single emergency-warp shot each time the demo enters
+    // the follow phase, so every new dotted-line mission gets one.
+    if (name === 'followDiscoveryPath') {
+      ap._followPathWarpFired = false;
+      ap._tacticalMsgShown = false;
+    }
   }
 
   function resetFlags() {
@@ -3152,6 +3270,8 @@
     ap._followingPath = null;
     ap._pathCountAtEntry = 0;
     ap._orbitPhaseStart = 0;
+    ap._followPathWarpFired = false;
+    ap._tacticalMsgShown = false;
   }
 
   function releaseKeys() {

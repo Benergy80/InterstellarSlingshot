@@ -165,20 +165,27 @@ function _ensureShipThrusterCones(ship, color) {
         if (any && isFinite(_box.min.x) && _box.max.x > _box.min.x) {
             const size = _box.getSize(new THREE.Vector3());
             const worldLen = Math.max(size.x, size.y, size.z);
-            if (worldLen > 0.0001) {
+            // Guard against the not-yet-loaded case: _makeWingman (and the
+            // enemy builders) fall back to a tiny ~16u placeholder mesh when
+            // the GLB isn't cached yet. Measuring that bakes permanent
+            // micro-cones (invisible). Real ships measure in the hundreds of
+            // world units, so require >40u before committing — otherwise
+            // bail and let the next frame re-measure once the model loads.
+            if (worldLen > 40) {
                 const wpos = ship.getWorldPosition(new THREE.Vector3());
                 // Rear of the hull behind ship centre, WORLD units →
                 // converted to the ship's LOCAL frame (cone is a child).
                 localBack = (_box.max.z - wpos.z) / sz;
-                // Cone ≈ 16% of the visible ship length, base ≈ 4.5%.
-                coneLen = (worldLen * 0.16) / sx;
-                coneRad = (worldLen * 0.045) / sx;
+                // Cone ≈ 22% of the visible ship length, base ≈ 6% — bumped
+                // from 0.16/0.045 so the plume reads at engagement range.
+                coneLen = (worldLen * 0.22) / sx;
+                coneRad = (worldLen * 0.06) / sx;
             }
         }
     } catch (e) {}
-    // Not hydrated yet (no hull meshes / zero size) — bail; this runs
-    // every frame so it retries next tick. The _thrusters early-out
-    // means once attached we never re-measure.
+    // Not hydrated yet (no hull meshes / too small) — bail; this runs every
+    // frame so it retries next tick. The _thrusters early-out means once
+    // attached we never re-measure, so we must wait for a real size first.
     if (coneLen === null || localBack === null ||
         !isFinite(localBack) || !isFinite(coneLen)) return;
 
@@ -240,12 +247,11 @@ function _updateShipThrusterCones(ship, thrusting) {
     const cones = ship.userData._thrusters;
     for (let i = 0; i < cones.length; i++) {
         const c = cones[i];
-        // Very subtle caps — inner 0.35, outer 0.15. With multiple
-        // ships clustered in formation (and additive blending),
-        // anything brighter than this stacks into a screen-wide
-        // orange wash. These look like real engine plumes on each
-        // ship without overpowering the scene.
-        const base = (i % 2 === 0) ? 0.35 : 0.15;
+        // Inner core (i even) and outer halo (i odd). 0.85 / 0.45 so the
+        // plume clearly reads on the smaller wingmen and far enemies.
+        // Additive blending still keeps formation-stacked cones from
+        // saturating to white — each cone tops out under 1.0 alpha.
+        const base = (i % 2 === 0) ? 0.85 : 0.45;
         c.mat.opacity = next * base * flicker;
         // Almost no bloom — keep cones a tight engine flame.
         const sX = 0.9 + next * 0.15;
@@ -1708,7 +1714,7 @@ function fireEnemyWeapon(enemy, difficultySettings) {
         const laserColor = enemy.userData.isBoss ? '#ff4444' : (enemy.userData.isBorgCube || enemy.userData.type === 'borg_drone') ? '#00ff00' : '#ff8800';
         createLaserBeam(enemyPos, targetPos, laserColor, false);
 
-        playSound('enemy_fire');
+        playEnemyLaserSound(enemy);
 
         // Reduced damage so combat is survivable while still threatening.
         // Local enemies do 2 dmg base, distant 3-6 dmg. With 4 attackers
@@ -1888,32 +1894,32 @@ const tutorialSystem = {
     messages: [
         {
             title: "Mission Command",
-            text: "Captain Bo, this is Mission Command. You are going to need to use planetary gravitational forces in order to get out of this galaxy and into Interstellar space.",
+            text: "Captain Bo, you'll need gravitational slingshots to leave this galaxy.",
             delay: 5000
         },
         {
             title: "Navigation Training",
-            text: "Fly close to a planet and hit the Enter/Return key to engage the Gravitational Slingshot. Use WASD to thrust and arrow keys to look around.",
+            text: "Approach any planet and press Enter to slingshot. WASD thrusts; arrow keys look.",
             delay: 15000
         },
         {
-    		title: "Combat Systems",
-    		text: "Your ship is equipped with energy weapons and hull repair systems. Destroying enemies will restore hull integrity. Press Tab to toggle shields (drains energy). Watch your energy levels during combat.",
-    		delay: 25000
-		},
+            title: "Combat Systems",
+            text: "Kills restore hull. Tab toggles shields (drains energy). Watch your levels.",
+            delay: 25000
+        },
         {
             title: "Primary Objective",
-            text: "We need you to eliminate all the hostile forces in each galaxy including Sagittarius A. Use your weapons with left click or Option key. Hold Space for target lock.",
+            text: "Clear every galaxy of hostiles, including Sagittarius A*. Left-click or Option fires; hold Space to lock.",
             delay: 35000
         },
         {
             title: "Emergency Systems",
-            text: "You have 5 Emergency Warp charges that can help boost you into Hyperspace, but they alone are not enough to get you to the next Galaxy. Press Enter to activate Emergency Warp.",
+            text: "5 Emergency Warp charges (Enter) boost you to hyperspace — handy, but you'll still need slingshots between galaxies.",
             delay: 45000
         },
         {
             title: "Final Orders",
-            text: "Navigate to distant galaxies, clear them of hostiles, and defeat the boss flagships. Use the galactic map to track your progress. Good luck, Captain!",
+            text: "Hunt the boss flagship in each galaxy. Galactic map tracks progress. Good luck, Captain.",
             delay: 55000
         }
     ]
@@ -2813,8 +2819,13 @@ function playSound(type, frequency = 440, duration = 0.2) {
     
     switch (type) {
         case 'weapon':
-            oscillator.frequency.setValueAtTime(800, audioContext.currentTime);
-            oscillator.frequency.exponentialRampToValueAtTime(400, audioContext.currentTime + 0.1);
+            // Per-shot pitch jitter so rapid fire doesn't feel
+            // monotonous. ~±4% around the base 800→400Hz sweep.
+            {
+                const j = 1 + (Math.random() - 0.5) * 0.08;
+                oscillator.frequency.setValueAtTime(800 * j, audioContext.currentTime);
+                oscillator.frequency.exponentialRampToValueAtTime(400 * j, audioContext.currentTime + 0.1);
+            }
             gain.gain.setValueAtTime(0.3, audioContext.currentTime);
             gain.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.1);
             oscillator.type = 'square';
@@ -2971,6 +2982,94 @@ function playSound(type, frequency = 440, duration = 0.2) {
     
     oscillator.start();
     oscillator.stop(audioContext.currentTime + duration);
+}
+
+// =============================================================================
+// FACTION-FLAVOURED LASER SOUNDS
+//
+// Each hostile faction (and the special set: bosses, guardians, Borg, UFOs,
+// Martian Pirates) gets its own oscillator profile so a busy fight reads
+// as distinct voices instead of one generic blaster loop. Bossy / heavy
+// shooters get a second layered oscillator for body. Every shot gets a
+// ~±4% pitch jitter so rapid fire feels alive, not metronomic.
+// =============================================================================
+const ENEMY_LASER_PROFILES = {
+    // 8 canonical hostile factions
+    'Federation':            { type: 'square',   f0:  720, f1:  480, dur: 0.13, gain: 0.28 },
+    'Klingon Empire':        { type: 'sawtooth', f0:  380, f1:  200, dur: 0.20, gain: 0.32,
+                               layer: { type: 'sine',     f0:   95, f1:   60, dur: 0.20, gain: 0.18 } },
+    'Rebel Alliance':        { type: 'square',   f0:  850, f1:  520, dur: 0.13, gain: 0.28 },
+    'Romulan Star Empire':   { type: 'sine',     f0:  500, f1:  200, dur: 0.22, gain: 0.30,
+                               layer: { type: 'triangle', f0: 1100, f1:  700, dur: 0.22, gain: 0.16 } },
+    'Galactic Empire':       { type: 'sawtooth', f0: 1100, f1:  600, dur: 0.09, gain: 0.30 },
+    'Cardassian Union':      { type: 'triangle', f0:  480, f1:  240, dur: 0.18, gain: 0.30 },
+    'Sith Empire':           { type: 'square',   f0: 1500, f1:  180, dur: 0.16, gain: 0.32 },
+    'Vulcan High Command':   { type: 'sine',     f0:  720, f1:  480, dur: 0.13, gain: 0.28 },
+    // Special enemy categories
+    'pirate':                { type: 'sawtooth', f0:  700, f1:  350, dur: 0.18, gain: 0.30 },
+    'borg':                  { type: 'square',   f0:  220, f1:  110, dur: 0.25, gain: 0.32,
+                               layer: { type: 'sine',     f0:   65, f1:   50, dur: 0.25, gain: 0.20 } },
+    'ufo':                   { type: 'sine',     f0: 1800, f1: 1500, dur: 0.22, gain: 0.26,
+                               layer: { type: 'triangle', f0: 2400, f1: 2100, dur: 0.22, gain: 0.14 } },
+    'boss':                  { type: 'sawtooth', f0:  280, f1:  140, dur: 0.30, gain: 0.42,
+                               layer: { type: 'square',   f0:   90, f1:   55, dur: 0.30, gain: 0.22 } },
+    'guardian':              { type: 'sawtooth', f0:  320, f1:  180, dur: 0.22, gain: 0.38,
+                               layer: { type: 'sine',     f0:  100, f1:   60, dur: 0.22, gain: 0.20 } },
+    'default':               { type: 'sawtooth', f0:  600, f1:  300, dur: 0.20, gain: 0.30 }
+};
+
+// Resolve an enemy object → profile key. Type-based wins (boss/guardian/
+// Borg/UFO/pirate) override faction so a Klingon BOSS sounds like a boss,
+// not a Klingon fighter.
+function _enemyFactionKey(enemy) {
+    if (!enemy || !enemy.userData) return 'default';
+    const ud = enemy.userData;
+    if (ud.isBoss) return 'boss';
+    if (ud.isBlackHoleGuardian || ud.isEliteGuardian) return 'guardian';
+    if (ud.isBorgCube || ud.isBorg || ud.type === 'borg_drone' || ud.type === 'borg_cube') return 'borg';
+    if (ud.isUFO) return 'ufo';
+    if (ud.isMartianPirate) return 'pirate';
+    if (typeof ud.galaxyId === 'number' &&
+        typeof galaxyTypes !== 'undefined' && galaxyTypes[ud.galaxyId]) {
+        const f = galaxyTypes[ud.galaxyId].faction;
+        if (f && ENEMY_LASER_PROFILES[f]) return f;
+    }
+    if (ud.faction && ENEMY_LASER_PROFILES[ud.faction]) return ud.faction;
+    return 'default';
+}
+
+// One oscillator burst with pitch jitter. Used by playFactionLaserSound
+// for both the base shot and (if present) the layered overtone.
+function _fireLaserOsc(p, jitter) {
+    if (!audioContext || audioContext.state === 'suspended') return;
+    const t = audioContext.currentTime;
+    const osc = audioContext.createOscillator();
+    const g = audioContext.createGain();
+    osc.connect(g);
+    g.connect(typeof effectsGain !== 'undefined' ? effectsGain : audioContext.destination);
+    osc.type = p.type;
+    osc.frequency.setValueAtTime(p.f0 * jitter, t);
+    osc.frequency.exponentialRampToValueAtTime(Math.max(20, p.f1 * jitter), t + p.dur);
+    g.gain.setValueAtTime(p.gain, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + p.dur);
+    osc.start(t);
+    osc.stop(t + p.dur);
+}
+
+function playFactionLaserSound(factionKey) {
+    const prof = ENEMY_LASER_PROFILES[factionKey] || ENEMY_LASER_PROFILES.default;
+    const jitter = 1 + (Math.random() - 0.5) * 0.08;  // ±4 %
+    _fireLaserOsc(prof, jitter);
+    if (prof.layer) _fireLaserOsc(prof.layer, jitter);
+}
+
+function playEnemyLaserSound(enemy) {
+    playFactionLaserSound(_enemyFactionKey(enemy));
+}
+
+if (typeof window !== 'undefined') {
+    window.playFactionLaserSound = playFactionLaserSound;
+    window.playEnemyLaserSound = playEnemyLaserSound;
 }
 
 // =============================================================================
@@ -4524,12 +4623,25 @@ function _ensureEnemyShield(enemy) {
             mb.copy(node.geometry.boundingBox).applyMatrix4(node.matrixWorld);
             box.union(mb); any = true;
         });
+        // Bubble hugs the hull for normal fighters (0.31); bosses,
+        // boss-support, elite + black-hole guardians keep the larger
+        // bubble (0.62) so their bigger silhouette reads correctly.
+        const _ud0 = enemy.userData || {};
+        const _bigShield = _ud0.isBoss || _ud0.isBossSupport ||
+                           _ud0.isEliteGuardian || _ud0.isBlackHoleGuardian;
         if (any && isFinite(box.min.x) && box.max.x > box.min.x) {
             const sz = box.getSize(new THREE.Vector3());
-            worldR = Math.max(sz.x, sz.y, sz.z) * 0.62;
+            worldR = Math.max(sz.x, sz.y, sz.z) * (_bigShield ? 0.62 : 0.31);
         }
     } catch (e) {}
-    worldR = Math.max(45, Math.min(worldR, 280));
+    {
+        const _ud1 = enemy.userData || {};
+        const _bigShield = _ud1.isBoss || _ud1.isBossSupport ||
+                           _ud1.isEliteGuardian || _ud1.isBlackHoleGuardian;
+        const minR = _bigShield ? 45 : 22;
+        const maxR = _bigShield ? 320 : 140;
+        worldR = Math.max(minR, Math.min(worldR, maxR));
+    }
 
     const ws = new THREE.Vector3();
     try { enemy.getWorldScale(ws); } catch (e) { ws.set(1, 1, 1); }
@@ -4555,16 +4667,23 @@ function _setEnemyShieldEngaged(enemy, engaged) {
     const ud = enemy && enemy.userData;
     if (!ud || ud.shieldBroken) return;
     if (ud.isBorgCube || ud.type === 'borg_drone' || ud.isUFO) return; // own mechanics
-    if (engaged && !ud._shieldMesh) _ensureEnemyShield(enemy);
+    // Show the shield bubble briefly even when not "engaged" so a hit on
+    // the hull still flashes the shield red — matches the player's
+    // shield reaction. We lazy-create the mesh for the flash window.
+    const flashing = ud._shieldFlashUntil && Date.now() < ud._shieldFlashUntil;
+    if ((engaged || flashing) && !ud._shieldMesh) _ensureEnemyShield(enemy);
     const sm = ud._shieldMesh;
     if (!sm) return;
     ud.shieldActive = !!engaged;
-    if (!engaged) { sm.material.opacity = 0; return; }
-    // Hold the red flash if one is in progress, else gentle orange pulse.
-    if (!ud._shieldFlashUntil || Date.now() > ud._shieldFlashUntil) {
-        sm.material.color.setHex(0xff8800);
-        sm.material.opacity = 0.16 + Math.sin(Date.now() * 0.006 + (enemy.id || 0)) * 0.05;
+    if (flashing) {
+        sm.material.color.setHex(0xff2200);
+        sm.material.opacity = 0.6;
+        return;
     }
+    if (!engaged) { sm.material.opacity = 0; return; }
+    // Gentle orange pulse while engaged and not flashing.
+    sm.material.color.setHex(0xff8800);
+    sm.material.opacity = 0.16 + Math.sin(Date.now() * 0.006 + (enemy.id || 0)) * 0.05;
 }
 
 // Returns true if the shield absorbed the hit (caller skips health
@@ -4574,8 +4693,10 @@ function _enemyShieldAbsorbHit(enemy, isMissile) {
     if (!ud || !ud.shieldActive || ud.shieldBroken || !ud._shieldMesh) return false;
     ud.shieldHits = (ud.shieldHits || 0) + 1;
     const breakNow = isMissile || ud.shieldHits >= 2;
-    // Red flash on every shield hit.
-    ud._shieldFlashUntil = Date.now() + 170;
+    // Red flash on every shield hit (matches the hit-flash window
+    // used by flashEnemyHit so a shield-then-hull combo doesn't
+    // visually flicker between two flash lengths).
+    ud._shieldFlashUntil = Date.now() + 350;
     ud._shieldMesh.material.color.setHex(0xff2200);
     ud._shieldMesh.material.opacity = 0.6;
     if (typeof playSound === 'function') playSound('weapon');
@@ -4701,6 +4822,16 @@ if (typeof window !== 'undefined') window.flashBorgCubeOnHit = flashBorgCubeOnHi
 // FIXED: Enemy hit flash that works with MeshBasicMaterial (no emissive properties)
 function flashEnemyHit(enemy, damage = 1) {
     if (!enemy) return;
+
+    // Shield flash on EVERY hit — hull or shield, enemy or wingman.
+    // The per-frame _setEnemyShieldEngaged / _updateAllyShield pickers
+    // honour _shieldFlashUntil and lazy-create the bubble mesh if
+    // needed, then fade it back out when the window expires. Matches
+    // the player's first-person hex-shield reaction. ~350ms window so
+    // the flash actually reads across the spark + screen-shake noise.
+    if (enemy.userData && enemy.userData.health > 0) {
+        enemy.userData._shieldFlashUntil = Date.now() + 350;
+    }
 
     // Impact sparks — fire for EVERY surviving hit, regardless of
     // whether the model has a top-level .material (GLB enemies are
@@ -5354,6 +5485,7 @@ document.addEventListener('click', (e) => {
 });
     
     // Mouse movement tracking for crosshair - FIXED POSITION TRACKING
+let _crosshairEl = null;  // cached #crosshair element for native-rate tracking
 document.addEventListener('mousemove', (e) => {
     if (typeof gameState === 'undefined' || !gameState.gameStarted || gameState.gameOver || typeof gamePaused !== 'undefined' && gamePaused) return;
 
@@ -5366,6 +5498,14 @@ document.addEventListener('mousemove', (e) => {
     if (!gameState.targetLock.active) {
         gameState.crosshairX = e.clientX;
         gameState.crosshairY = e.clientY;
+        // Move the crosshair DOM element HERE, at native mouse rate, so it
+        // tracks the cursor 1:1 instead of stepping at the 20Hz rate of
+        // updateCrosshairTargeting(). Cache the element lookup.
+        if (!_crosshairEl) _crosshairEl = document.getElementById('crosshair');
+        if (_crosshairEl) {
+            _crosshairEl.style.left = e.clientX + 'px';
+            _crosshairEl.style.top = e.clientY + 'px';
+        }
     }
     // Note: When target lock is active, crosshair position is controlled by updateTargetLock()
     // but we still track real mouse position for UI interaction
@@ -5801,10 +5941,16 @@ if (enemy.userData.health <= 0) {
             spawnMissilePickup(enemy.position.clone());
             console.log('🛸 UFO destroyed - missile dropped!');
         } else {
-            // Fallback: just add missiles directly
-            if (typeof gameState !== 'undefined' && typeof gameState.missiles !== 'undefined') {
-                gameState.missiles = Math.min((gameState.missiles || 0) + 1, 10);
-                showAchievement('MISSILE ACQUIRED!', `Alien technology salvaged! (${gameState.missiles}/10)`);
+            // Fallback: just add a missile directly. gameState.missiles is
+            // an object ({current, capacity, ...}) — earlier code here
+            // overwrote it with a number, which made the HUD read
+            // "Missiles: undefined/undefined" from that point on.
+            if (typeof gameState !== 'undefined' && gameState.missiles &&
+                typeof gameState.missiles.current === 'number') {
+                const cap = gameState.missiles.capacity || 10;
+                gameState.missiles.current = Math.min(cap, gameState.missiles.current + 1);
+                showAchievement('MISSILE ACQUIRED!',
+                    `Alien technology salvaged! (${gameState.missiles.current}/${cap})`);
             }
         }
     }
@@ -5976,8 +6122,8 @@ function checkGalaxyClear() {
         // Mission Control message about guardians
         setTimeout(() => {
             if (typeof showMissionCommandAlert === 'function') {
-                showMissionCommandAlert('Mission Control', 
-                    `Well done, Captain! The ${clearedGalaxyType.name} Galaxy boss has been destroyed. Now eliminate the black hole guardians to fully liberate this galaxy!`, 
+                showMissionCommandAlert('Mission Control',
+                    `Boss down, Captain. ${clearedGalaxyType.name} Galaxy still has guardians — clear them to liberate the sector.`,
                     true);
             }
         }, 2000);
@@ -6063,9 +6209,9 @@ function checkGuardianVictory() {
             let missionControlMessage = '';
             
             if (remainingGalaxies > 0) {
-                missionControlMessage = `Excellent work, Captain! The ${galaxyType.name} Galaxy controlled by the ${galaxyType.faction} has been completely liberated. ${remainingGalaxies} hostile ${remainingGalaxies === 1 ? 'galaxy remains' : 'galaxies remain'}. Continue the mission!`;
+                missionControlMessage = `${galaxyType.name} Galaxy liberated — ${galaxyType.faction} purged. ${remainingGalaxies} ${remainingGalaxies === 1 ? 'galaxy remains' : 'galaxies remain'}.`;
             } else {
-                missionControlMessage = `Outstanding, Captain! All hostile forces have been eliminated. The universe is safe thanks to your heroic efforts. Mission accomplished!`;
+                missionControlMessage = `All hostiles eliminated. The universe is safe — well done, Captain.`;
             }
             
             setTimeout(() => {
@@ -7037,8 +7183,10 @@ function showAchievement(title, description, playAchievementSound = true) {
 
         console.log(`✨ Achievement displaying: ${title}`);
 
-        // Longer display time for important achievements
-        const displayTime = 4000;
+        // Longer display time for important achievements.
+        // 3x the old 4s — congratulations/victory toasts need time
+        // to be read and savoured.
+        const displayTime = 12000;
 
         // Play sound if requested
         if (playAchievementSound && typeof playSound === 'function') {
@@ -7939,9 +8087,11 @@ const _allyTarget = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
 function _makeWingman(roleKey, name, primaryColor) {
     const group = new THREE.Group();
     let shipMesh;
+    let usedRealModel = false;
     if (typeof getPlayerModel === 'function') {
         const model = getPlayerModel();
         if (model) {
+            usedRealModel = true;
             shipMesh = model.clone();
             const box = new THREE.Box3().setFromObject(shipMesh);
             const center = box.getCenter(new THREE.Vector3());
@@ -7968,10 +8118,21 @@ function _makeWingman(roleKey, name, primaryColor) {
     }
     group.add(shipMesh);
 
+    // Engine thruster glows — the SAME system the player ship uses
+    // (createThrusterGlowsForModel), attached to the wingman's cloned
+    // model at the identical local exhaust points. Only when the real
+    // model was used (the fallback placeholder has no matching exhausts).
+    let _wmThrusterGlows = [];
+    if (usedRealModel && typeof createThrusterGlowsForModel === 'function') {
+        _wmThrusterGlows = createThrusterGlowsForModel(shipMesh);
+    }
+
     const profile = WINGMAN_ROLES[roleKey];
     group.userData = {
         type: 'ally',
         name: name,
+        _thrusterGlows: _wmThrusterGlows,
+        _thrusterGlowState: { intensity: 0 },
         role: roleKey,
         health: 50,
         maxHealth: 50,
@@ -8278,21 +8439,18 @@ function updateAllyShips() {
         const distFromOrigin = pos.length();
         const distToPlayer = pos.distanceTo(playerPos);
 
-        // Wingman thruster cones — same orange + faction-tint scheme
-        // as enemies, but tinted toward their wingman colour so the
-        // friendly formation reads at a glance.
-        if (typeof _ensureShipThrusterCones === 'function') {
-            const wcol = (ud.name === 'Wingman Alpha') ? 0x00ff88 :
-                         (ud.colorNum) ? ud.colorNum : 0x88aaff;
-            _ensureShipThrusterCones(ally, wcol);
+        // Wingman engine thrusters — driven exactly like the player ship's
+        // (model-attached exhaust glows via updateThrusterGlowArray), not
+        // the procedural enemy cone system. Lit when speeding up, warping,
+        // or under any meaningful thrust.
+        if (typeof updateThrusterGlowArray === 'function' && ud._thrusterGlows) {
             const vmag = ud.velocity ? ud.velocity.length() : 0;
-            const prevSpeed = (typeof ud._prevConeSpeed === 'number') ? ud._prevConeSpeed : vmag;
-            // Fire when speeding up (accelerating) or warping; the cone has its
-            // own smooth fade so brief frames between accel pulses stay lit.
+            const prevSpeed = (typeof ud._prevGlowSpeed === 'number') ? ud._prevGlowSpeed : vmag;
             const accelerating = vmag > prevSpeed + 0.0006;
-            const underPower = vmag > 0.4;
-            _updateShipThrusterCones(ally, ud._wasWarping || accelerating || underPower);
-            ud._prevConeSpeed = vmag;
+            const underPower = vmag > 0.05;
+            const thrusting = ud._wasWarping || accelerating || underPower;
+            updateThrusterGlowArray(ud._thrusterGlows, ud._thrusterGlowState, thrusting);
+            ud._prevGlowSpeed = vmag;
         }
 
         // ── FTL anchor: warp ended this frame and a wingman in follow
@@ -8774,7 +8932,9 @@ const WINGMAN_TACTICAL_LINES = {
 // (e.g. all fall stranded when the player warps far). Without serializing
 // the popups they overlap and clip each other. The queue dispatches one
 // every COMMS_INTERVAL_MS so the player can read each message in turn.
-const WINGMAN_COMMS_INTERVAL_MS = 4500; // matches achievement display time
+// Wingman comms serialize through this interval. Kept in step with the
+// achievement display time (now 12s) so consecutive popups don't overlap.
+const WINGMAN_COMMS_INTERVAL_MS = 12000;
 const _wingmanCommsQueue = [];
 let _wingmanCommsLastDispatch = 0;
 let _wingmanCommsTimer = null;
@@ -8996,18 +9156,24 @@ function createWingmanExplosion(ally) {
 // ── Update or create a shield bubble around an ally ──────────────────────
 function _updateAllyShield(ally, active) {
     if (typeof THREE === 'undefined') return;
-    if (!active) {
-        if (ally.userData.shieldMesh) {
-            ally.remove(ally.userData.shieldMesh);
-            ally.userData.shieldMesh.geometry.dispose();
-            ally.userData.shieldMesh.material.dispose();
-            ally.userData.shieldMesh = null;
+    const ud = ally.userData;
+    // Brief red flash when the wingman is hit — even when they're not
+    // engaging — matches the player's shield reaction. The flash flag
+    // is set by flashEnemyHit; we lazy-create the mesh just for the
+    // flash window if no engagement shield is currently up.
+    const flashing = ud._shieldFlashUntil && Date.now() < ud._shieldFlashUntil;
+    if (!active && !flashing) {
+        if (ud.shieldMesh) {
+            ally.remove(ud.shieldMesh);
+            ud.shieldMesh.geometry.dispose();
+            ud.shieldMesh.material.dispose();
+            ud.shieldMesh = null;
         }
         return;
     }
-    if (!ally.userData.shieldMesh) {
-        const color = ally.userData.name === 'Wingman Alpha' ? 0x00ff88 : 0x88aaff;
-        const geo = new THREE.SphereGeometry(60, 16, 12);
+    if (!ud.shieldMesh) {
+        const color = ud.name === 'Wingman Alpha' ? 0x00ff88 : 0x88aaff;
+        const geo = new THREE.SphereGeometry(30, 16, 12);
         const mat = new THREE.MeshBasicMaterial({
             color: color, transparent: true, opacity: 0.18,
             blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
@@ -9016,11 +9182,17 @@ function _updateAllyShield(ally, active) {
         const mesh = new THREE.Mesh(geo, mat);
         mesh.renderOrder = 49;
         ally.add(mesh);
-        ally.userData.shieldMesh = mesh;
+        ud.shieldMesh = mesh;
+        ud._shieldBaseColor = color;
     }
-    // Pulse opacity
-    const pulse = 0.15 + 0.08 * Math.sin(Date.now() * 0.005);
-    ally.userData.shieldMesh.material.opacity = pulse;
+    const mat = ud.shieldMesh.material;
+    if (flashing) {
+        mat.color.setHex(0xff2200);
+        mat.opacity = 0.6;
+    } else {
+        if (ud._shieldBaseColor) mat.color.setHex(ud._shieldBaseColor);
+        mat.opacity = 0.15 + 0.08 * Math.sin(Date.now() * 0.005);
+    }
 }
 
 // ── Player warp detection ────────────────────────────────────────────────

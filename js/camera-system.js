@@ -746,6 +746,8 @@ if (typeof window !== 'undefined') {
     window.cameraState = cameraState;
     window.createThrusterGlows = createThrusterGlows;
     window.updateThrusterGlow = updateThrusterGlow;
+    window.createThrusterGlowsForModel = createThrusterGlowsForModel;
+    window.updateThrusterGlowArray = updateThrusterGlowArray;
 
     console.log('✅ Camera system loaded (with thruster glow system)');
 }
@@ -759,24 +761,39 @@ if (typeof window !== 'undefined') {
  */
 function createThrusterGlows(playerModel) {
     if (!playerModel || typeof THREE === 'undefined') return;
-    
+
     // Clear existing glows
     cameraState.thrusterGlows.forEach(glow => {
         if (glow.parent) glow.parent.remove(glow);
         if (glow.geometry) glow.geometry.dispose();
         if (glow.material) glow.material.dispose();
     });
-    cameraState.thrusterGlows = [];
-    
-    // Two thruster positions at rear engine exhausts (in local model space, small values)
-    // Aligned with the 2 downward-facing points at back of ship
+
+    cameraState.thrusterGlows = createThrusterGlowsForModel(playerModel);
+
+    console.log(`🔥 Created ${cameraState.thrusterGlows.length} thruster glow effects`);
+}
+
+/**
+ * Reusable builder: attach the same engine-exhaust glow cones the player
+ * ship uses to ANY ship model (e.g. wingmen, which are clones of the
+ * player model at the same 96x scale, so the fixed local exhaust
+ * positions line up exactly). Returns the array of glow meshes; does NOT
+ * touch cameraState, so callers own the lifecycle.
+ */
+function createThrusterGlowsForModel(model) {
+    if (!model || typeof THREE === 'undefined') return [];
+    const glows = [];
+
+    // Two thruster positions at rear engine exhausts (local model space,
+    // small values — tuned to the player ship's exhaust points).
     const thrusterPositions = [
         new THREE.Vector3(-0.022, 0, -0.125),   // Left engine exhaust
         new THREE.Vector3(0.022, 0, -0.125)     // Right engine exhaust
     ];
-    
-    thrusterPositions.forEach((pos, index) => {
-        // Create glow cone for engine exhaust
+
+    thrusterPositions.forEach((pos) => {
+        // Inner glow cone for engine exhaust
         const glowGeometry = new THREE.ConeGeometry(0.01, 0.035, 8);
         const glowMaterial = new THREE.MeshBasicMaterial({
             color: 0xffaa00,  // Orange-yellow
@@ -784,16 +801,15 @@ function createThrusterGlows(playerModel) {
             opacity: 0,
             blending: THREE.AdditiveBlending
         });
-        
         const glow = new THREE.Mesh(glowGeometry, glowMaterial);
         glow.position.copy(pos);
         glow.rotation.x = -Math.PI / 2;  // Cone points outward from ship
-        glow.renderOrder = 101;  // Render on top of ship
-        
-        playerModel.add(glow);
-        cameraState.thrusterGlows.push(glow);
-        
-        // Add a second larger, dimmer glow for effect
+        glow.renderOrder = 101;
+        glow.frustumCulled = false;
+        model.add(glow);
+        glows.push(glow);
+
+        // Outer, larger, dimmer glow
         const outerGlowGeometry = new THREE.ConeGeometry(0.015, 0.05, 8);
         const outerGlowMaterial = new THREE.MeshBasicMaterial({
             color: 0xff6600,  // Deeper orange
@@ -801,18 +817,42 @@ function createThrusterGlows(playerModel) {
             opacity: 0,
             blending: THREE.AdditiveBlending
         });
-        
         const outerGlow = new THREE.Mesh(outerGlowGeometry, outerGlowMaterial);
         outerGlow.position.copy(pos);
-        outerGlow.position.z -= 0.008;  // Slightly further back (more negative Z)
-        outerGlow.rotation.x = -Math.PI / 2;  // Cone points outward from ship
+        outerGlow.position.z -= 0.008;  // Slightly further back
+        outerGlow.rotation.x = -Math.PI / 2;
         outerGlow.renderOrder = 100;
-        
-        playerModel.add(outerGlow);
-        cameraState.thrusterGlows.push(outerGlow);
+        outerGlow.frustumCulled = false;
+        model.add(outerGlow);
+        glows.push(outerGlow);
     });
-    
-    console.log(`🔥 Created ${cameraState.thrusterGlows.length} thruster glow effects`);
+
+    return glows;
+}
+
+/**
+ * Reusable updater for a glow array built by createThrusterGlowsForModel.
+ * `state` is any object that holds the ramped `.intensity` (so each ship
+ * keeps its own). Mirrors updateThrusterGlow exactly.
+ */
+function updateThrusterGlowArray(glows, state, isThrusting) {
+    if (!glows || glows.length === 0 || !state) return;
+
+    const targetIntensity = isThrusting ? 1.0 : 0.0;
+    const transitionSpeed = isThrusting ? 0.2 : 0.15;
+    const cur = state.intensity || 0;
+    state.intensity = cur + (targetIntensity - cur) * transitionSpeed;
+
+    const time = Date.now() * 0.01;
+    for (let index = 0; index < glows.length; index++) {
+        const glow = glows[index];
+        if (!glow || !glow.material) continue;
+        const flicker = isThrusting ? (0.8 + Math.sin(time + index) * 0.2) : 1.0;
+        const baseOpacity = index % 2 === 0 ? 0.8 : 0.4;  // Inner glows brighter
+        glow.material.opacity = state.intensity * baseOpacity * flicker;
+        const scale = 0.5 + state.intensity * 0.5;
+        glow.scale.set(scale, scale + state.intensity * 0.3, scale);
+    }
 }
 
 /**

@@ -6,6 +6,12 @@ const activeDistressCalls = [];
 const DISTRESS_DETECTION_RANGE = 5000; // Distance player can detect distress
 const CIVILIAN_DESTRUCTION_HITS = 8;
 
+// Scratch vectors reused across the flee loop so a nebula full of
+// fleeing civilians doesn't allocate two THREE.Vector3 per ship per
+// frame (this runs at 20Hz over every trading ship).
+const _fleeDir = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+const _fleeLookAt = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+
 // Make distressed civilians flee from their attackers
 function _updateCivilianFleeing() {
     if (typeof tradingShips === 'undefined' || typeof THREE === 'undefined') return;
@@ -26,15 +32,13 @@ function _updateCivilianFleeing() {
             ship.userData.fleeFrom = null;
             continue;
         }
-        // Move directly away from attacker at 1.5x normal speed
-        const fleeDir = new THREE.Vector3()
-            .subVectors(ship.position, attacker.position)
-            .normalize();
+        // Move directly away from attacker at 1.5x normal speed (pooled vecs)
+        _fleeDir.subVectors(ship.position, attacker.position).normalize();
         const fleeSpeed = (ship.userData.speed || 0.4) * 1.5;
-        ship.position.addScaledVector(fleeDir, fleeSpeed);
+        ship.position.addScaledVector(_fleeDir, fleeSpeed);
         // Face the flee direction
-        const lookAt = ship.position.clone().add(fleeDir);
-        ship.lookAt(lookAt);
+        _fleeLookAt.copy(ship.position).add(_fleeDir);
+        ship.lookAt(_fleeLookAt);
     }
 }
 

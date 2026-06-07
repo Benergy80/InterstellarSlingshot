@@ -117,8 +117,11 @@ function generateHexagonGrid() {
             const depthFactor = 1 - (normalizedDist * 0.5); // 0.5 to 1.0
             const curvature = Math.pow(depthFactor, 3); // Exponential falloff for sphere effect
             
-            // Base opacity decreases towards edges
-            const baseOpacity = 0.4 * curvature;
+            // Base opacity decreases towards edges. Stepped down 0.49 ->
+            // 0.44 (-10%); baseOpacity multiplies through every downstream
+            // alpha (centre gradient, edge stop, hex stroke, glow shadow)
+            // so the whole overlay drops uniformly across the spectrum.
+            const baseOpacity = 0.44 * curvature;
             
             shieldSystem.hexagons.push({
                 x: x,
@@ -440,35 +443,41 @@ function drawHexagon(ctx, x, y, size, opacity, curvature) {
     }
     ctx.closePath();
     
-    // Spherical gradient fill - brighter in center, darker at edges
+    // Spherical gradient fill — colour and brightness match the
+    // 3rd-person buckyball shield (0x00d4ff = rgb(0,212,255) at
+    // opacity 0.5) so the two views feel like the same shield.
     const gradient = ctx.createRadialGradient(x, y, 0, x, y, size);
-    
-    // Calculate brightness with safety checks
-    const centerBrightness = opacity * 0.4 * curvature;
-    const edgeBrightness = opacity * 0.03 * curvature;
-    
+
+    // Calculate brightness with safety checks. Previous values (0.4 /
+    // 0.03) hit a peak alpha of ~0.25, well below the 3rd-person 0.5
+    // bubble. Bumped to 1.0 / 0.35 so the hexes read at the same
+    // brightness in 1st person as the bubble does outside.
+    const centerBrightness = opacity * 1.0 * curvature;
+    const edgeBrightness = opacity * 0.35 * curvature;
+
     // Final validation before adding color stops
     if (isNaN(centerBrightness) || isNaN(edgeBrightness)) {
         ctx.restore();
         return;
     }
-    
-    gradient.addColorStop(0, `rgba(100, 200, 255, ${centerBrightness})`);
-    gradient.addColorStop(0.4, `rgba(50, 150, 255, ${edgeBrightness})`);
-    gradient.addColorStop(1, `rgba(0, 100, 255, 0)`);
-    
+
+    gradient.addColorStop(0, `rgba(0, 212, 255, ${centerBrightness})`);
+    gradient.addColorStop(0.4, `rgba(0, 180, 235, ${edgeBrightness})`);
+    gradient.addColorStop(1, `rgba(0, 130, 200, 0)`);
+
     ctx.fillStyle = gradient;
     ctx.fill();
-    
-    // Glowing outline - more prominent in center, subtle at edges
-    const strokeOpacity = opacity * curvature * 0.8;
+
+    // Glowing outline — match the wireframe sheen of the 3D bubble.
+    const strokeOpacity = opacity * curvature * 1.0;
     
     // Validate stroke opacity
     if (!isNaN(strokeOpacity) && strokeOpacity > 0) {
-        ctx.strokeStyle = `rgba(100, 200, 255, ${strokeOpacity})`;
+        // Outline tinted to the 3D buckyball's 0x00d4ff cyan.
+        ctx.strokeStyle = `rgba(0, 212, 255, ${strokeOpacity})`;
         ctx.lineWidth = 2;
         ctx.shadowBlur = 10 * curvature;
-        ctx.shadowColor = `rgba(100, 200, 255, ${strokeOpacity * 0.6})`;
+        ctx.shadowColor = `rgba(0, 212, 255, ${strokeOpacity * 0.6})`;
         ctx.stroke();
     }
     
@@ -672,7 +681,9 @@ function create3DShield() {
         color: 0x00d4ff,
         wireframe: true,
         transparent: true,
-        opacity: _shieldIsMobile ? 0.3 : 0.5,
+        // Tuned to match the 1st-person hex overlay's centre line opacity
+        // (~0.31) so the shield reads consistently across both views.
+        opacity: _shieldIsMobile ? 0.22 : 0.32,
         blending: THREE.AdditiveBlending,
         depthWrite: false
     });
@@ -750,13 +761,15 @@ function update3DShield() {
         // sphere stays the player's cyan/blue so a hit reads as an outline
         // flash, not a full red screen wash that hides the ship.
         shieldSystem.mesh3D.material.color.setHex(_red ? _SHIELD_HIT_COLOR : _SHIELD_BASE_COLOR);
-        shieldSystem.mesh3D.material.opacity = _red ? 0.95 : 0.6;
+        shieldSystem.mesh3D.material.opacity = _red ? 0.95 : 0.45;
         shieldSystem.glowMesh3D.material.color.setHex(_SHIELD_BASE_COLOR);
         shieldSystem.glowMesh3D.material.opacity = 0.1 + (pulse * 0.5);
         return;
     }
 
-    shieldSystem.mesh3D.material.opacity = 0.5 + pulse + (energyFactor * 0.2);
+    // ~0.3 base so the wireframe lines match the 1st-person overlay's
+    // centre line opacity (was 0.5 + … which read at 0.6-0.8).
+    shieldSystem.mesh3D.material.opacity = 0.3 + pulse + (energyFactor * 0.1);
     shieldSystem.glowMesh3D.material.opacity = 0.1 + (pulse * 0.5);
 
     // Change color when energy is low
