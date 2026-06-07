@@ -4800,30 +4800,6 @@ if (Math.random() < moonProbability) {
     console.log('- Enhanced starfield with multiple layers');
 }
 
-// Lazily-built, SHARED soft radial-gradient point sprite for all nebula
-// particle clouds. Replaces the default hard square GL point with a soft
-// glowing dot — gas reads as gas, not pixels, and the softened falloff
-// lets the (now reduced) particle counts look fuller. One 64px texture
-// is reused by every nebula material, so this is essentially free.
-let _nebulaPointTex = null;
-function _getNebulaPointTexture() {
-    if (_nebulaPointTex) return _nebulaPointTex;
-    if (typeof document === 'undefined' || typeof THREE === 'undefined') return null;
-    const cv = document.createElement('canvas');
-    cv.width = cv.height = 64;
-    const ctx = cv.getContext('2d');
-    const g = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
-    g.addColorStop(0.0, 'rgba(255,255,255,1.0)');
-    g.addColorStop(0.35, 'rgba(255,255,255,0.55)');
-    g.addColorStop(0.7, 'rgba(255,255,255,0.12)');
-    g.addColorStop(1.0, 'rgba(255,255,255,0.0)');
-    ctx.fillStyle = g;
-    ctx.fillRect(0, 0, 64, 64);
-    _nebulaPointTex = new THREE.CanvasTexture(cv);
-    return _nebulaPointTex;
-}
-if (typeof window !== 'undefined') window._getNebulaPointTexture = _getNebulaPointTexture;
-
 function createClusteredNebulas() {
     console.log('Creating clustered nebulas with central supernovas and orbiting brown dwarfs...');
     
@@ -4907,13 +4883,11 @@ function createClusteredNebulas() {
         particleGeometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
         
         const nebulaMaterial = new THREE.PointsMaterial({
-            size: 3.2,
-            map: _getNebulaPointTexture(),   // shared soft glow sprite
+            size: 2.5,
             vertexColors: true,
             transparent: true,
             opacity: 0.65,
             blending: THREE.AdditiveBlending,
-            depthWrite: false,
             sizeAttenuation: true
         });
         
@@ -4928,11 +4902,12 @@ function createClusteredNebulas() {
         // **NEW: Add central supernova to some nebulas**
         if (Math.random() > 0.5) {
             const supernovaGeometry = new THREE.SphereGeometry(30, 16, 16);
-            // MeshBasic, not MeshStandard: the scene runs at ~0.06 ambient
-            // so a PBR shader resolves to essentially its emissive colour
-            // anyway. Basic is far cheaper and looks identical here.
-            const supernovaMaterial = new THREE.MeshBasicMaterial({
-                color: 0xff5520
+            const supernovaMaterial = new THREE.MeshStandardMaterial({
+                color: 0xff6600,
+                emissive: 0xff4400,
+                emissiveIntensity: 2.0,
+                roughness: 0.2,
+                metalness: 0.5
             });
             const supernova = new THREE.Mesh(supernovaGeometry, supernovaMaterial);
             supernova.position.set(0, 0, 0); // Center of nebula
@@ -4962,10 +4937,13 @@ function createClusteredNebulas() {
                 const bdOrbitRadius = 100 + Math.random() * 150;
                 const bdOrbitAngle = (bd / brownDwarfCount) * Math.PI * 2;
                 
-                const brownDwarfGeometry = new THREE.SphereGeometry(12, 10, 10);
-                // MeshBasic (see supernova note) — cheap, identical look.
-                const brownDwarfMaterial = new THREE.MeshBasicMaterial({
-                    color: 0x995522
+                const brownDwarfGeometry = new THREE.SphereGeometry(12, 12, 12);
+                const brownDwarfMaterial = new THREE.MeshStandardMaterial({
+                    color: 0xaa6633,
+                    emissive: 0x663311,
+                    emissiveIntensity: 0.8,
+                    roughness: 0.6,
+                    metalness: 0.4
                 });
                 const brownDwarf = new THREE.Mesh(brownDwarfGeometry, brownDwarfMaterial);
                 
@@ -5187,13 +5165,11 @@ function createDistantNebulas() {
 
         // MATCHED TO GALAXY-FORMATION: Same particle material settings
         const nebulaMaterial = new THREE.PointsMaterial({
-            size: 3.2,
-            map: _getNebulaPointTexture(),   // shared soft glow sprite
+            size: 2.5,
             vertexColors: true,
             transparent: true,
             opacity: 0.65,
             blending: THREE.AdditiveBlending,
-            depthWrite: false,
             sizeAttenuation: true
         });
 
@@ -5370,13 +5346,11 @@ function createExoticCoreNebulas() {
 
         // MATCHED TO GALAXY-FORMATION: Same particle material settings
         const nebulaMaterial = new THREE.PointsMaterial({
-            size: 3.2,
-            map: _getNebulaPointTexture(),   // shared soft glow sprite
+            size: 2.5,
             vertexColors: true,
             transparent: true,
             opacity: 0.65,
             blending: THREE.AdditiveBlending,
-            depthWrite: false,
             sizeAttenuation: true
         });
 
@@ -9626,9 +9600,7 @@ function createNebulaGasCloud(centerPos, nebulaId, starColor) {
         const sizeMultiplier = 0.6 + (i * 0.3); // 0.6x, 0.9x, 1.2x, 1.5x
         const cloudSize = (120 + Math.random() * 180) * sizeMultiplier;
         
-        // 10×10 is plenty for a blurry additive blob — halves the
-        // triangle count vs the old 16×16 with no visible difference.
-        const cloudGeometry = new THREE.SphereGeometry(cloudSize, 10, 10);
+        const cloudGeometry = new THREE.SphereGeometry(cloudSize, 16, 16);
         
         // Vary colors slightly within the cluster
         const colorVariation = starColor.clone();
@@ -11102,13 +11074,11 @@ function createNebulas() {
         nebulaGeometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
         
         const nebulaMaterial = new THREE.PointsMaterial({
-            size: 3.2,
-            map: _getNebulaPointTexture(),   // shared soft glow sprite
+            size: 2.5,
             vertexColors: true,
             transparent: true,
             opacity: 0.65,
             blending: THREE.AdditiveBlending,
-            depthWrite: false,
             sizeAttenuation: true
         });
         
