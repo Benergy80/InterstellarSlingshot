@@ -182,6 +182,16 @@ const _explVel = new THREE.Vector3();
 function orientTowardsTarget(target) {
     if (!target || typeof camera === 'undefined') return false;
 
+    // Delta-time: compute ms since last call. Clamped to [4, 100] so a
+    // first-call (no _lastTime) or a frame-rate hiccup doesn't produce
+    // a huge instantaneous jump. The whole turn budget for this frame is
+    // sliced into sub-steps below so even a long delta turns smoothly.
+    const _nowMs = performance.now();
+    if (!orientTowardsTarget._lastTime) orientTowardsTarget._lastTime = _nowMs - 16.67;
+    const _rawDelta = _nowMs - orientTowardsTarget._lastTime;
+    orientTowardsTarget._lastTime = _nowMs;
+    const _deltaMs = Math.max(4, Math.min(100, _rawDelta));
+
     _ortDir.subVectors(target.position, camera.position).normalize();
     camera.getWorldDirection(_ortFwd);
     const angle = _ortFwd.angleTo(_ortDir);
@@ -202,25 +212,51 @@ function orientTowardsTarget(target) {
         _ortAxis.set(0, 1, 0);
     }
 
-    // Proportional turn (eases as it converges) with a higher gain so it
-    // keeps pace with moving targets instead of lagging then jerking,
-    // capped to a smooth max turn rate for large initial swings. Below
-    // ~25° the eased proportional region gives the smooth tracking.
-    const rotationSpeed = 0.12;
+    // Time-based proportional turn. Rates are EXPRESSED PER 16.67ms (one
+    // 60fps frame) so the old hand-tuned 0.12 / 0.055 numbers still apply
+    // at 60fps — but on a 120Hz display or a stuttering frame the actual
+    // amount scales with real elapsed time, so the turn rate is consistent
+    // regardless of FPS.
+    const rotationSpeedPerFrame = 0.12;
     const maxRotationPerFrame = 0.055;
-    const rotationAmount = Math.min(angle * rotationSpeed, maxRotationPerFrame);
+    const FRAME_MS = 16.67;
+    const frames = _deltaMs / FRAME_MS;
 
-    // Reuse a module-level quaternion to avoid per-frame allocation
+    // Sub-step the rotation: instead of one large step per call, apply
+    // ceil(frames * 3) small substeps. At 60fps this is ~3 substeps; at
+    // 30fps (a stutter) it becomes ~6. Each substep is a small eased
+    // proportional turn against the LATEST angular delta, so as the
+    // camera converges the next substep gets smaller — much smoother
+    // tracking than one big step against a stale delta.
+    const SUBSTEPS_PER_FRAME = 3;
+    const subSteps = Math.max(1, Math.min(12, Math.ceil(frames * SUBSTEPS_PER_FRAME)));
+    const subFrac = frames / subSteps;   // fraction of one 60fps frame per substep
+
     if (!orientTowardsTarget._quat) orientTowardsTarget._quat = new THREE.Quaternion();
-    if (!orientTowardsTarget._curQ) orientTowardsTarget._curQ = new THREE.Quaternion();
-    orientTowardsTarget._quat.setFromAxisAngle(_ortAxis, rotationAmount);
-    orientTowardsTarget._curQ.copy(camera.quaternion);
-    camera.quaternion.multiplyQuaternions(orientTowardsTarget._quat, orientTowardsTarget._curQ);
+    let totalRotation = 0;
+    for (let s = 0; s < subSteps; s++) {
+        camera.getWorldDirection(_ortFwd);
+        const curAngle = _ortFwd.angleTo(_ortDir);
+        if (curAngle < orientationThreshold) break;
+        _ortAxis.crossVectors(_ortFwd, _ortDir).normalize();
+        if (_ortAxis.length() < 0.001) _ortAxis.set(0, 1, 0);
+
+        // Eased proportional + per-substep cap, both scaled by this
+        // substep's fraction of a 60fps frame.
+        const stepCap = maxRotationPerFrame * subFrac;
+        const stepProp = curAngle * rotationSpeedPerFrame * subFrac;
+        const stepAmt = Math.min(stepProp, stepCap);
+
+        orientTowardsTarget._quat.setFromAxisAngle(_ortAxis, stepAmt);
+        camera.quaternion.premultiply(orientTowardsTarget._quat);
+        totalRotation += stepAmt;
+    }
 
     // Feed the yaw component into rotationalVelocity so the ship-bank
     // effect fires during auto-orient (same visual as arrow-key steering).
+    // Use the cumulative rotation so the bank intensity matches actual turn.
     if (typeof rotationalVelocity !== 'undefined') {
-        const yawComponent = _ortAxis.y * rotationAmount;
+        const yawComponent = _ortAxis.y * totalRotation;
         rotationalVelocity.yaw += (yawComponent - rotationalVelocity.yaw) * 0.15;
     }
 
@@ -228,12 +264,12 @@ function orientTowardsTarget(target) {
     cameraRotationTracking.x = camera.rotation.x;
     cameraRotationTracking.y = camera.rotation.y;
     cameraRotationTracking.z = camera.rotation.z;
-    
+
     // Update timing to prevent auto-level interference during auto-navigation
     const now = performance.now();
     lastPitchInputTime = now;
     lastRollInputTime = now;
-    
+
     // Check if we're close enough to target direction (re-sample after rotation)
     camera.getWorldDirection(_ortFwd);
     const finalAngle = _ortFwd.angleTo(_ortDir);
