@@ -8087,9 +8087,11 @@ const _allyTarget = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
 function _makeWingman(roleKey, name, primaryColor) {
     const group = new THREE.Group();
     let shipMesh;
+    let usedRealModel = false;
     if (typeof getPlayerModel === 'function') {
         const model = getPlayerModel();
         if (model) {
+            usedRealModel = true;
             shipMesh = model.clone();
             const box = new THREE.Box3().setFromObject(shipMesh);
             const center = box.getCenter(new THREE.Vector3());
@@ -8116,10 +8118,21 @@ function _makeWingman(roleKey, name, primaryColor) {
     }
     group.add(shipMesh);
 
+    // Engine thruster glows — the SAME system the player ship uses
+    // (createThrusterGlowsForModel), attached to the wingman's cloned
+    // model at the identical local exhaust points. Only when the real
+    // model was used (the fallback placeholder has no matching exhausts).
+    let _wmThrusterGlows = [];
+    if (usedRealModel && typeof createThrusterGlowsForModel === 'function') {
+        _wmThrusterGlows = createThrusterGlowsForModel(shipMesh);
+    }
+
     const profile = WINGMAN_ROLES[roleKey];
     group.userData = {
         type: 'ally',
         name: name,
+        _thrusterGlows: _wmThrusterGlows,
+        _thrusterGlowState: { intensity: 0 },
         role: roleKey,
         health: 50,
         maxHealth: 50,
@@ -8426,24 +8439,18 @@ function updateAllyShips() {
         const distFromOrigin = pos.length();
         const distToPlayer = pos.distanceTo(playerPos);
 
-        // Wingman thruster cones — same orange + faction-tint scheme
-        // as enemies, but tinted toward their wingman colour so the
-        // friendly formation reads at a glance.
-        if (typeof _ensureShipThrusterCones === 'function') {
-            const wcol = (ud.name === 'Wingman Alpha') ? 0x00ff88 :
-                         (ud.colorNum) ? ud.colorNum : 0x88aaff;
-            _ensureShipThrusterCones(ally, wcol);
+        // Wingman engine thrusters — driven exactly like the player ship's
+        // (model-attached exhaust glows via updateThrusterGlowArray), not
+        // the procedural enemy cone system. Lit when speeding up, warping,
+        // or under any meaningful thrust.
+        if (typeof updateThrusterGlowArray === 'function' && ud._thrusterGlows) {
             const vmag = ud.velocity ? ud.velocity.length() : 0;
-            const prevSpeed = (typeof ud._prevConeSpeed === 'number') ? ud._prevConeSpeed : vmag;
-            // Fire when speeding up, warping, or under any meaningful
-            // thrust. Lowered the under-power floor from 0.4 → 0.05 so
-            // a wingman in slow patrol drift still lights its engines
-            // (was going dark during dwell waypoints). The cone has its
-            // own smooth fade so brief frames between accel pulses stay lit.
+            const prevSpeed = (typeof ud._prevGlowSpeed === 'number') ? ud._prevGlowSpeed : vmag;
             const accelerating = vmag > prevSpeed + 0.0006;
             const underPower = vmag > 0.05;
-            _updateShipThrusterCones(ally, ud._wasWarping || accelerating || underPower);
-            ud._prevConeSpeed = vmag;
+            const thrusting = ud._wasWarping || accelerating || underPower;
+            updateThrusterGlowArray(ud._thrusterGlows, ud._thrusterGlowState, thrusting);
+            ud._prevGlowSpeed = vmag;
         }
 
         // ── FTL anchor: warp ended this frame and a wingman in follow
