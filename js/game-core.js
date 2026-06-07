@@ -1436,9 +1436,24 @@ function updateTargetLock() {
 // MAIN ANIMATION LOOP - SIMPLIFIED AND OPTIMIZED
 // =============================================================================
 
-function animate() {
+// PERF: animate() is kicked off from several entry points (Three.js init and
+// two intro/demo transitions). Each call starts its own self-perpetuating
+// requestAnimationFrame chain, so duplicate kickoffs were running the whole
+// game loop ~2x per displayed frame — doubling render + update cost and
+// double-stepping physics/AI. The rAF self-loop always passes a timestamp
+// argument; external kickoffs call animate() with no argument. So we let the
+// first external start through and ignore any later ones — only ONE chain runs.
+let _loopRunning = false;
+function animate(rafTime) {
+    if (rafTime === undefined) {
+        if (_loopRunning) {
+            console.warn('animate(): game loop already running — ignoring duplicate start');
+            return;
+        }
+        _loopRunning = true;
+    }
     requestAnimationFrame(animate);
-        
+
     gameState.frameCount++;
     
     if (gameState.paused) {
