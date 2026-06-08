@@ -69,8 +69,12 @@ const modelCache = {
 // Load a single GLB model
 function loadGLBModel(path) {
     return new Promise((resolve, reject) => {
-        // Add cache-busting parameter to force reload
-        const cacheBustPath = `${path}?v=${Date.now()}`;
+        // Version GLB URLs by the build tag (not Date.now()). A per-load
+        // timestamp gave every model a unique URL, so the browser re-downloaded
+        // ~3-5MB of models on EVERY visit (incl. SpaceProbe 2MB, Satellite2 1.4MB).
+        // Keying on BUILD_TAG lets returning visitors cache models and only
+        // re-fetch when a new build ships.
+        const cacheBustPath = `${path}?v=${window.BUILD_TAG || 'v1'}`;
         console.log(`📥 Attempting to load: ${cacheBustPath}`);
 
         try {
