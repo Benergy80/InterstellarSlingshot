@@ -1,0 +1,165 @@
+/* ============================================================================
+   HUD CHROME RESTYLE — PROTOTYPE  (visual only; no layout / JS changes)
+
+   Loaded AFTER styles.css so it layers on top of the existing panels. To revert
+   instantly, remove the single <link href="css/hud-chrome.css"> in index.html.
+
+   Scoped to desktop (min-width:769px) because the mobile media query already
+   hides .ui-panel. Goal: bring the live HUD closer to the cockpit concept art —
+   crisper cyan edges, corner brackets, an inner frame line, faint scanlines,
+   segmented status bars, and sharper buttons/typography.
+   ============================================================================ */
+
+@media (min-width: 769px) {
+
+  :root {
+    --hud-cyan: 120, 225, 255;          /* rgb triple for rgba() composition */
+    --hud-edge: rgba(90, 210, 255, 0.65);
+    --hud-bracket: rgba(165, 244, 255, 0.95);
+    --hud-glass-a: rgba(7, 18, 34, 0.66);
+    --hud-glass-b: rgba(10, 26, 48, 0.52);
+  }
+
+  /* --- Panel glass + crisp edge + inner frame ------------------------------ */
+  .ui-panel.top-left,
+  .ui-panel.bottom-left,
+  .ui-panel.top-right,
+  .ui-panel.bottom-right {
+    background:
+      linear-gradient(135deg, var(--hud-glass-a) 0%, var(--hud-glass-b) 100%) !important;
+    border: 1px solid var(--hud-edge) !important;
+    box-shadow:
+      0 14px 48px rgba(0, 140, 255, 0.30),
+      inset 0 0 22px rgba(0, 90, 160, 0.22),
+      inset 0 0 0 1px rgba(10, 44, 76, 0.65) !important;   /* inner frame line */
+    backdrop-filter: blur(4px) saturate(1.15) !important;
+  }
+
+  /* --- Corner brackets: four L-shapes via 8 gradient slices ---------------- */
+  .ui-panel.top-left::before,
+  .ui-panel.bottom-left::before,
+  .ui-panel.top-right::before,
+  .ui-panel.bottom-right::before {
+    content: "";
+    position: absolute;
+    inset: 5px;
+    pointer-events: none;
+    z-index: 3;
+    --b: var(--hud-bracket);
+    --len: 17px;   /* arm length */
+    --thk: 2px;    /* arm thickness */
+    background:
+      linear-gradient(var(--b), var(--b)) top left     / var(--len) var(--thk) no-repeat,
+      linear-gradient(var(--b), var(--b)) top left     / var(--thk) var(--len) no-repeat,
+      linear-gradient(var(--b), var(--b)) top right    / var(--len) var(--thk) no-repeat,
+      linear-gradient(var(--b), var(--b)) top right    / var(--thk) var(--len) no-repeat,
+      linear-gradient(var(--b), var(--b)) bottom left  / var(--len) var(--thk) no-repeat,
+      linear-gradient(var(--b), var(--b)) bottom left  / var(--thk) var(--len) no-repeat,
+      linear-gradient(var(--b), var(--b)) bottom right / var(--len) var(--thk) no-repeat,
+      linear-gradient(var(--b), var(--b)) bottom right / var(--thk) var(--len) no-repeat;
+    filter: drop-shadow(0 0 4px rgba(var(--hud-cyan), 0.7));
+  }
+
+  /* --- Faint scanline texture (CRT feel) ----------------------------------- */
+  .ui-panel.top-left::after,
+  .ui-panel.bottom-left::after,
+  .ui-panel.top-right::after,
+  .ui-panel.bottom-right::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 1;
+    border-radius: inherit;
+    background: repeating-linear-gradient(
+      to bottom,
+      rgba(var(--hud-cyan), 0.045) 0 1px,
+      transparent 1px 4px);
+    opacity: 0.55;
+  }
+
+  /* keep panel text above the scanline layer */
+  .ui-panel.top-left > *,
+  .ui-panel.bottom-left > *,
+  .ui-panel.top-right > *,
+  .ui-panel.bottom-right > * {
+    position: relative;
+    z-index: 2;
+  }
+
+  /* --- Title header chrome -------------------------------------------------- */
+  .ui-panel.title-header {
+    border: 1px solid var(--hud-edge) !important;
+    box-shadow:
+      0 18px 60px rgba(0, 150, 255, 0.45),
+      inset 0 0 26px rgba(0, 90, 160, 0.30) !important;
+  }
+  #gameTitle {
+    letter-spacing: 6px !important;
+    text-shadow:
+      0 0 8px rgba(var(--hud-cyan), 0.95),
+      0 0 20px rgba(var(--hud-cyan), 0.65),
+      0 0 36px rgba(60, 170, 255, 0.45) !important;
+  }
+  /* thin accent rule under the title */
+  .ui-panel.title-header::after {
+    content: "";
+    position: absolute;
+    left: 14%;
+    right: 14%;
+    bottom: 8px;
+    height: 1px;
+    background: linear-gradient(90deg,
+      transparent,
+      rgba(var(--hud-cyan), 0.8) 20%,
+      rgba(var(--hud-cyan), 0.8) 80%,
+      transparent);
+    pointer-events: none;
+  }
+
+  /* --- Segmented status bars (Energy / Hull) ------------------------------- */
+  #energyBar,
+  #hullBar,
+  #shipRepBar {
+    position: relative;
+    box-shadow: 0 0 8px rgba(80, 180, 255, 0.55);
+  }
+  #hullBar { box-shadow: 0 0 8px rgba(90, 255, 150, 0.5); }
+  #energyBar::after,
+  #hullBar::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    pointer-events: none;
+    background: repeating-linear-gradient(
+      90deg,
+      transparent 0 4px,
+      rgba(2, 10, 20, 0.9) 4px 5px);   /* segment dividers */
+  }
+
+  /* --- Buttons: sharper, glowing ------------------------------------------- */
+  .ui-panel .space-btn {
+    background: linear-gradient(180deg, rgba(22, 64, 104, 0.5), rgba(10, 30, 60, 0.5)) !important;
+    border: 1px solid rgba(90, 200, 255, 0.5) !important;
+    box-shadow:
+      inset 0 0 12px rgba(0, 120, 200, 0.25),
+      0 0 10px rgba(0, 140, 255, 0.18) !important;
+    letter-spacing: 1px;
+    transition: box-shadow 0.15s ease, border-color 0.15s ease;
+  }
+  .ui-panel .space-btn:hover {
+    border-color: rgba(140, 225, 255, 0.85) !important;
+    box-shadow:
+      inset 0 0 16px rgba(0, 160, 255, 0.4),
+      0 0 16px rgba(0, 180, 255, 0.4) !important;
+  }
+
+  /* --- Round map: crisper ring -------------------------------------------- */
+  .round-map {
+    border: 1px solid rgba(90, 200, 255, 0.55) !important;
+    box-shadow:
+      inset 0 0 30px rgba(0, 90, 160, 0.35),
+      0 0 18px rgba(0, 140, 255, 0.25) !important;
+  }
+}
