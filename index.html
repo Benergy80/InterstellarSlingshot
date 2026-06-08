@@ -29,6 +29,17 @@
         '%c🚀 BUILD: ' + window.BUILD_ID + '  ·  ' + window.BUILD_TAG,
         'background:#0a7d2c;color:#fff;font-size:14px;font-weight:bold;padding:4px 10px;border-radius:4px;'
       );
+
+      // PERF/CLEANLINESS: the game emits ~1,800 console.log lines per session,
+      // almost all of it world-generation chatter (ship scaling, planet/moon/gas
+      // creation). It's not per-frame, but it adds synchronous I/O during the
+      // heavy world-gen phase and buries real diagnostics. Silence console.log
+      // by default; warn/error/info are always preserved, and the banner above
+      // already printed. Opt back in for debugging with:
+      //   window.GAME_DEBUG_VERBOSE = true   (set before load, or re-set + reload)
+      if (!window.GAME_DEBUG_VERBOSE) {
+        console.log = function () {};
+      }
     </script>
 
     <!-- External Dependencies with THREE.js Backup System -->
