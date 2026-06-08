@@ -1,53 +1,91 @@
 /* ============================================================================
-   HUD CHROME RESTYLE — PROTOTYPE  (visual only; no layout / JS changes)
+   HUD CHROME RESTYLE — PROTOTYPE v2  (visual only; no layout / JS changes)
 
-   Loaded AFTER styles.css so it layers on top of the existing panels. To revert
-   instantly, remove the single <link href="css/hud-chrome.css"> in index.html.
+   Loaded AFTER styles.css. Remove the <link href="css/hud-chrome.css"> in
+   index.html (and the #cockpitFrame <div>) to revert.
 
-   Scoped to desktop (min-width:769px) because the mobile media query already
-   hides .ui-panel. Goal: bring the live HUD closer to the cockpit concept art —
-   crisper cyan edges, corner brackets, an inner frame line, faint scanlines,
-   segmented status bars, and sharper buttons/typography.
+   v2 dials up the look toward the cockpit concept art:
+     - chamfered (angled) panel corners via clip-path
+     - bright, thick corner brackets + a glowing chamfered edge ring
+     - faint scanlines, segmented status bars, sharper buttons
+     - a cockpit canopy frame: edge vignette + dashboard lip + corner struts
+   Desktop only (mobile already hides .ui-panel and #cockpitFrame).
    ============================================================================ */
 
 @media (min-width: 769px) {
 
   :root {
-    --hud-cyan: 120, 225, 255;          /* rgb triple for rgba() composition */
-    --hud-edge: rgba(90, 210, 255, 0.65);
-    --hud-bracket: rgba(165, 244, 255, 0.95);
-    --hud-glass-a: rgba(7, 18, 34, 0.66);
-    --hud-glass-b: rgba(10, 26, 48, 0.52);
+    --hud-cyan: 130, 230, 255;
+    --hud-edge: rgba(95, 215, 255, 0.75);
+    --hud-bracket: rgba(180, 248, 255, 0.98);
+    --hud-glass-a: rgba(7, 18, 34, 0.70);
+    --hud-glass-b: rgba(10, 28, 50, 0.55);
   }
 
-  /* --- Panel glass + crisp edge + inner frame ------------------------------ */
+  /* --- Panels: chamfered glass with glow ----------------------------------- */
   .ui-panel.top-left,
   .ui-panel.bottom-left,
   .ui-panel.top-right,
   .ui-panel.bottom-right {
+    --ch: 15px;                         /* corner chamfer size */
+    --clip: polygon(
+      var(--ch) 0%, calc(100% - var(--ch)) 0%,
+      100% var(--ch), 100% calc(100% - var(--ch)),
+      calc(100% - var(--ch)) 100%, var(--ch) 100%,
+      0% calc(100% - var(--ch)), 0% var(--ch));
+    border: none !important;
+    border-radius: 0 !important;
     background:
+      repeating-linear-gradient(to bottom,
+        rgba(var(--hud-cyan), 0.05) 0 1px, transparent 1px 4px),
       linear-gradient(135deg, var(--hud-glass-a) 0%, var(--hud-glass-b) 100%) !important;
-    border: 1px solid var(--hud-edge) !important;
-    box-shadow:
-      0 14px 48px rgba(0, 140, 255, 0.30),
-      inset 0 0 22px rgba(0, 90, 160, 0.22),
-      inset 0 0 0 1px rgba(10, 44, 76, 0.65) !important;   /* inner frame line */
-    backdrop-filter: blur(4px) saturate(1.15) !important;
+    -webkit-clip-path: var(--clip);
+    clip-path: var(--clip);
+    backdrop-filter: blur(4px) saturate(1.18) !important;
+    filter:
+      drop-shadow(0 10px 26px rgba(0, 140, 255, 0.32))
+      drop-shadow(0 0 8px rgba(var(--hud-cyan), 0.20));
   }
 
-  /* --- Corner brackets: four L-shapes via 8 gradient slices ---------------- */
+  /* glowing chamfered edge ring (replaces the clipped-away CSS border) */
   .ui-panel.top-left::before,
   .ui-panel.bottom-left::before,
   .ui-panel.top-right::before,
   .ui-panel.bottom-right::before {
     content: "";
     position: absolute;
-    inset: 5px;
+    inset: 0;
     pointer-events: none;
-    z-index: 3;
+    z-index: 4;
+    -webkit-clip-path: var(--clip);
+    clip-path: var(--clip);
+    padding: 1.5px;
+    background: linear-gradient(135deg,
+      rgba(190, 245, 255, 0.95), rgba(70, 185, 255, 0.7));
+    -webkit-mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    mask-composite: exclude;
+    filter: drop-shadow(0 0 5px rgba(var(--hud-cyan), 0.8));
+  }
+
+  /* bright, thick corner brackets, sitting just inside the chamfer */
+  .ui-panel.top-left::after,
+  .ui-panel.bottom-left::after,
+  .ui-panel.top-right::after,
+  .ui-panel.bottom-right::after {
+    content: "";
+    position: absolute;
+    inset: 14px;
+    pointer-events: none;
+    z-index: 5;
     --b: var(--hud-bracket);
-    --len: 17px;   /* arm length */
-    --thk: 2px;    /* arm thickness */
+    --len: 22px;
+    --thk: 3px;
     background:
       linear-gradient(var(--b), var(--b)) top left     / var(--len) var(--thk) no-repeat,
       linear-gradient(var(--b), var(--b)) top left     / var(--thk) var(--len) no-repeat,
@@ -57,109 +95,133 @@
       linear-gradient(var(--b), var(--b)) bottom left  / var(--thk) var(--len) no-repeat,
       linear-gradient(var(--b), var(--b)) bottom right / var(--len) var(--thk) no-repeat,
       linear-gradient(var(--b), var(--b)) bottom right / var(--thk) var(--len) no-repeat;
-    filter: drop-shadow(0 0 4px rgba(var(--hud-cyan), 0.7));
-  }
-
-  /* --- Faint scanline texture (CRT feel) ----------------------------------- */
-  .ui-panel.top-left::after,
-  .ui-panel.bottom-left::after,
-  .ui-panel.top-right::after,
-  .ui-panel.bottom-right::after {
-    content: "";
-    position: absolute;
-    inset: 0;
-    pointer-events: none;
-    z-index: 1;
-    border-radius: inherit;
-    background: repeating-linear-gradient(
-      to bottom,
-      rgba(var(--hud-cyan), 0.045) 0 1px,
-      transparent 1px 4px);
-    opacity: 0.55;
-  }
-
-  /* keep panel text above the scanline layer */
-  .ui-panel.top-left > *,
-  .ui-panel.bottom-left > *,
-  .ui-panel.top-right > *,
-  .ui-panel.bottom-right > * {
-    position: relative;
-    z-index: 2;
+    filter: drop-shadow(0 0 4px rgba(var(--hud-cyan), 0.85));
   }
 
   /* --- Title header chrome -------------------------------------------------- */
   .ui-panel.title-header {
     border: 1px solid var(--hud-edge) !important;
     box-shadow:
-      0 18px 60px rgba(0, 150, 255, 0.45),
-      inset 0 0 26px rgba(0, 90, 160, 0.30) !important;
+      0 18px 60px rgba(0, 150, 255, 0.48),
+      inset 0 0 28px rgba(0, 90, 160, 0.32) !important;
   }
   #gameTitle {
     letter-spacing: 6px !important;
+    white-space: nowrap !important;
     text-shadow:
       0 0 8px rgba(var(--hud-cyan), 0.95),
-      0 0 20px rgba(var(--hud-cyan), 0.65),
-      0 0 36px rgba(60, 170, 255, 0.45) !important;
+      0 0 22px rgba(var(--hud-cyan), 0.65),
+      0 0 40px rgba(60, 170, 255, 0.5) !important;
   }
-  /* thin accent rule under the title */
   .ui-panel.title-header::after {
     content: "";
     position: absolute;
-    left: 14%;
-    right: 14%;
-    bottom: 8px;
+    left: 12%; right: 12%; bottom: 8px;
     height: 1px;
-    background: linear-gradient(90deg,
-      transparent,
-      rgba(var(--hud-cyan), 0.8) 20%,
-      rgba(var(--hud-cyan), 0.8) 80%,
-      transparent);
+    background: linear-gradient(90deg, transparent,
+      rgba(var(--hud-cyan), 0.85) 20%, rgba(var(--hud-cyan), 0.85) 80%, transparent);
     pointer-events: none;
   }
 
-  /* --- Segmented status bars (Energy / Hull) ------------------------------- */
-  #energyBar,
-  #hullBar,
-  #shipRepBar {
+  /* --- Segmented status bars ------------------------------------------------ */
+  #energyBar, #hullBar, #shipRepBar {
     position: relative;
-    box-shadow: 0 0 8px rgba(80, 180, 255, 0.55);
+    box-shadow: 0 0 9px rgba(80, 180, 255, 0.6);
   }
-  #hullBar { box-shadow: 0 0 8px rgba(90, 255, 150, 0.5); }
-  #energyBar::after,
-  #hullBar::after {
+  #hullBar { box-shadow: 0 0 9px rgba(90, 255, 150, 0.55); }
+  #energyBar::after, #hullBar::after {
     content: "";
-    position: absolute;
-    inset: 0;
-    border-radius: inherit;
-    pointer-events: none;
-    background: repeating-linear-gradient(
-      90deg,
-      transparent 0 4px,
-      rgba(2, 10, 20, 0.9) 4px 5px);   /* segment dividers */
+    position: absolute; inset: 0;
+    border-radius: inherit; pointer-events: none;
+    background: repeating-linear-gradient(90deg,
+      transparent 0 4px, rgba(2, 10, 20, 0.92) 4px 5px);
   }
 
-  /* --- Buttons: sharper, glowing ------------------------------------------- */
+  /* --- Buttons -------------------------------------------------------------- */
   .ui-panel .space-btn {
-    background: linear-gradient(180deg, rgba(22, 64, 104, 0.5), rgba(10, 30, 60, 0.5)) !important;
-    border: 1px solid rgba(90, 200, 255, 0.5) !important;
+    background: linear-gradient(180deg, rgba(24, 70, 112, 0.5), rgba(10, 30, 60, 0.5)) !important;
+    border: 1px solid rgba(95, 205, 255, 0.55) !important;
     box-shadow:
-      inset 0 0 12px rgba(0, 120, 200, 0.25),
-      0 0 10px rgba(0, 140, 255, 0.18) !important;
+      inset 0 0 12px rgba(0, 120, 200, 0.28),
+      0 0 10px rgba(0, 140, 255, 0.2) !important;
     letter-spacing: 1px;
     transition: box-shadow 0.15s ease, border-color 0.15s ease;
   }
   .ui-panel .space-btn:hover {
-    border-color: rgba(140, 225, 255, 0.85) !important;
+    border-color: rgba(150, 230, 255, 0.9) !important;
     box-shadow:
-      inset 0 0 16px rgba(0, 160, 255, 0.4),
-      0 0 16px rgba(0, 180, 255, 0.4) !important;
+      inset 0 0 16px rgba(0, 160, 255, 0.42),
+      0 0 18px rgba(0, 180, 255, 0.45) !important;
   }
 
-  /* --- Round map: crisper ring -------------------------------------------- */
+  /* --- Round map ------------------------------------------------------------ */
   .round-map {
-    border: 1px solid rgba(90, 200, 255, 0.55) !important;
+    border: 1px solid rgba(95, 205, 255, 0.6) !important;
     box-shadow:
-      inset 0 0 30px rgba(0, 90, 160, 0.35),
-      0 0 18px rgba(0, 140, 255, 0.25) !important;
+      inset 0 0 30px rgba(0, 90, 160, 0.38),
+      0 0 18px rgba(0, 140, 255, 0.28) !important;
   }
+
+  /* ==========================================================================
+     COCKPIT CANOPY FRAME  (#cockpitFrame is added in index.html; pointer-events
+     none so it never blocks input; sits below the panels, above the canvas)
+     ========================================================================== */
+  #cockpitFrame {
+    position: fixed;
+    inset: 0;
+    z-index: 4;
+    pointer-events: none;
+    /* canopy vignette — darken the edges like looking through a viewport */
+    box-shadow:
+      inset 0 0 220px 36px rgba(0, 0, 0, 0.58),
+      inset 0 0 70px rgba(8, 30, 55, 0.45);
+  }
+
+  /* top + bottom edge accent lines */
+  #cockpitFrame::before,
+  #cockpitFrame::after {
+    content: "";
+    position: absolute;
+    left: 4%; right: 4%;
+    height: 2px;
+    background: linear-gradient(90deg, transparent,
+      rgba(var(--hud-cyan), 0.45) 28%, rgba(var(--hud-cyan), 0.45) 72%, transparent);
+  }
+  #cockpitFrame::before { top: 7px; }
+  #cockpitFrame::after  { bottom: 7px; }
+
+  /* dashboard lip across the bottom */
+  #cockpitFrame .cf-dash {
+    position: absolute;
+    left: 0; right: 0; bottom: 0;
+    height: 64px;
+    background: linear-gradient(to top,
+      rgba(4, 12, 22, 0.92) 0%,
+      rgba(6, 18, 32, 0.55) 55%,
+      transparent 100%);
+    border-top: 1px solid rgba(var(--hud-cyan), 0.28);
+  }
+
+  /* angular corner struts */
+  #cockpitFrame .cf-corner {
+    position: absolute;
+    width: 168px;
+    height: 120px;
+    border-style: solid;
+    border-color: rgba(var(--hud-cyan), 0.40);
+    border-width: 0;
+    filter: drop-shadow(0 0 6px rgba(var(--hud-cyan), 0.25));
+  }
+  #cockpitFrame .cf-tl { top: 0; left: 0; border-top-width: 3px; border-left-width: 3px;
+    -webkit-clip-path: polygon(0 0, 100% 0, 100% 18px, 30px 18px, 18px 30px, 18px 100%, 0 100%);
+            clip-path: polygon(0 0, 100% 0, 100% 18px, 30px 18px, 18px 30px, 18px 100%, 0 100%); }
+  #cockpitFrame .cf-tr { top: 0; right: 0; border-top-width: 3px; border-right-width: 3px;
+    -webkit-clip-path: polygon(0 0, 100% 0, 100% 100%, calc(100% - 18px) 100%, calc(100% - 18px) 30px, calc(100% - 30px) 18px, 0 18px);
+            clip-path: polygon(0 0, 100% 0, 100% 100%, calc(100% - 18px) 100%, calc(100% - 18px) 30px, calc(100% - 30px) 18px, 0 18px); }
+  #cockpitFrame .cf-bl { bottom: 0; left: 0; border-bottom-width: 3px; border-left-width: 3px;
+    -webkit-clip-path: polygon(0 0, 18px 0, 18px calc(100% - 30px), 30px calc(100% - 18px), 100% calc(100% - 18px), 100% 100%, 0 100%);
+            clip-path: polygon(0 0, 18px 0, 18px calc(100% - 30px), 30px calc(100% - 18px), 100% calc(100% - 18px), 100% 100%, 0 100%); }
+  #cockpitFrame .cf-br { bottom: 0; right: 0; border-bottom-width: 3px; border-right-width: 3px;
+    -webkit-clip-path: polygon(100% 0, 100% 100%, 0 100%, 0 calc(100% - 18px), calc(100% - 30px) calc(100% - 18px), calc(100% - 18px) calc(100% - 30px), calc(100% - 18px) 0);
+            clip-path: polygon(100% 0, 100% 100%, 0 100%, 0 calc(100% - 18px), calc(100% - 30px) calc(100% - 18px), calc(100% - 18px) calc(100% - 30px), calc(100% - 18px) 0); }
 }
