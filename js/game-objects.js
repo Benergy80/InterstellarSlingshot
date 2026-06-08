@@ -6354,9 +6354,12 @@ function createBlackHoleMiningShip(homeNebula, targetBlackHole, index) {
         shipGroup.add(mesh);
     }
     
-    // Position near home nebula
+    // Position near home nebula. Nebulas store their extent in userData.size,
+    // NOT userData.radius — reading .radius gave undefined, so `undefined * 1.5`
+    // = NaN, which set x/z to NaN for every black-hole mining ship (spawned them
+    // invisible and unmovable). Fall back through radius -> size -> 2000.
     const angle = (index / 12) * Math.PI * 2;
-    const radius = homeNebula.userData.radius * 1.5;
+    const radius = (homeNebula.userData.radius || homeNebula.userData.size || 2000) * 1.5;
     shipGroup.position.set(
         homeNebula.position.x + Math.cos(angle) * radius,
         homeNebula.position.y + (Math.random() - 0.5) * 100,
