@@ -12507,12 +12507,11 @@ function updateBossSkyboxHeartbeat() {
         // Combine beats for realistic heartbeat pattern
         const heartbeat = Math.max(beat1 * 0.6, beat2 * 0.4) * pause;
 
-        // Target opacity with heartbeat — range 0.3 (baseline) to 0.65
-        // (peak). The old 0.5–1.0 range was tuned while the dome was
-        // accidentally never created on normal launches; with it actually
-        // rendering, a 1.0 peak drowned the whole scene in red. The vivid
-        // 0xdd2222 color reads clearly at these lower values.
-        const targetOpacity = 0.3 + (heartbeat * 0.35);  // Range: 0.3 to 0.65
+        // Target opacity with heartbeat — range 0.2 (baseline) to 0.45
+        // (peak). Tuned down twice from the original 0.5–1.0, which was
+        // set while the dome was accidentally never created on normal
+        // launches; the vivid 0xdd2222 color reads clearly even this low.
+        const targetOpacity = 0.2 + (heartbeat * 0.25);  // Range: 0.2 to 0.45
 
         // Smooth transition to target
         bossSkyboxOpacity += (targetOpacity - bossSkyboxOpacity) * 0.1;
