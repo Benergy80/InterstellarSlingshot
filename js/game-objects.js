@@ -12506,7 +12506,12 @@ function _makeBossCloudTexture() {
     const tex = new THREE.CanvasTexture(canvas);
     tex.wrapS = THREE.MirroredRepeatWrapping;
     tex.wrapT = THREE.MirroredRepeatWrapping;
-    tex.repeat.set(3, 2);
+    // Repeat counts must be EVEN: mirrored wrapping only meets itself
+    // seamlessly when the pattern completes a full mirror cycle, so an
+    // odd count (was 3) left a hard discontinuity on the sphere's UV
+    // seam — the "strong line" across the sky. Even counts make the
+    // texture's mirrored edge land exactly on the wrap.
+    tex.repeat.set(4, 2);
     return tex;
 }
 
@@ -12650,7 +12655,7 @@ function updateGalaxyAtmosphere() {
     // accretion rings — and builds to full strength by 5,000u from the core.
     const FADE_START = 28000;
     const FADE_FULL = 5000;
-    const MAX_OPACITY = 0.30;
+    const MAX_OPACITY = 0.22; // trimmed from 0.30 — regional tint should whisper, not shout
 
     let targetOpacity = 0;
     if (_gaCores) {
