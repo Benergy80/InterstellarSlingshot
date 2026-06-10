@@ -1871,6 +1871,12 @@ if (typeof localGalaxyStars !== 'undefined' && localGalaxyStars) {
         updateNebulaBreathing();
     }
 
+    // Regional galaxy atmosphere — cloudy faction-tinted dome that builds
+    // with proximity to the nearest black-hole galaxy core
+    if (typeof updateGalaxyAtmosphere === 'function') {
+        updateGalaxyAtmosphere();
+    }
+
     // Update boss battle skybox with heartbeat pulsing
     if (typeof updateBossSkyboxHeartbeat === 'function') {
         updateBossSkyboxHeartbeat();

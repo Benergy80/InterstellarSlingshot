@@ -168,18 +168,23 @@ function _ensureShipThrusterCones(ship, color) {
             // Guard against the not-yet-loaded case: _makeWingman (and the
             // enemy builders) fall back to a tiny ~16u placeholder mesh when
             // the GLB isn't cached yet. Measuring that bakes permanent
-            // micro-cones (invisible). Real ships measure in the hundreds of
-            // world units, so require >40u before committing — otherwise
-            // bail and let the next frame re-measure once the model loads.
-            if (worldLen > 40) {
+            // micro-cones (invisible). The old guard required >40u, but the
+            // 50%-enemy-scale change left REAL GLB hulls at ~12-16u world
+            // (Enemy*.glb natives are ~0.3u × scale 48), so the guard
+            // rejected every standard enemy and cones silently vanished.
+            // GLB ships are Groups / multi-child, placeholders are a single
+            // Mesh + glow child — use structure + a lower floor instead.
+            const _isGLBStruct = ship.isGroup || (ship.children && ship.children.length > 1);
+            if (worldLen > 40 || (_isGLBStruct && worldLen > 8)) {
                 const wpos = ship.getWorldPosition(new THREE.Vector3());
                 // Rear of the hull behind ship centre, WORLD units →
                 // converted to the ship's LOCAL frame (cone is a child).
                 localBack = (_box.max.z - wpos.z) / sz;
-                // Cone ≈ 22% of the visible ship length, base ≈ 6% — bumped
-                // from 0.16/0.045 so the plume reads at engagement range.
-                coneLen = (worldLen * 0.22) / sx;
-                coneRad = (worldLen * 0.06) / sx;
+                // Cone ≈ 22% of the visible ship length, base ≈ 6% — with
+                // absolute floors (5u / 1.4u world) so the small 12-16u
+                // hulls still get a readable plume instead of a 3u speck.
+                coneLen = Math.max(worldLen * 0.22, 5) / sx;
+                coneRad = Math.max(worldLen * 0.06, 1.4) / sx;
             }
         }
     } catch (e) {}
@@ -3110,6 +3115,71 @@ if (typeof window !== 'undefined') {
 // VISUAL EFFECTS SYSTEM
 // =============================================================================
 
+// Martian Pirate explosion variants — same skeleton as createExplosionEffect
+// but color/density parameterized, with a delayed secondary pop. The variant
+// doubles as the LOOT TELL (PewPew-style color discipline): the explosion
+// color announces what the kill drops.
+//   ember  (red/orange) → bonus hull salvage   (common)
+//   flare  (gold)       → +20 energy cells     (uncommon)
+//   plasma (cyan)       → +1 missile           (rare)
+const PIRATE_EXPLOSION_VARIANTS = {
+    ember:  { core: 0xff4422, particles: 0xff8833, count: 30, secondary: 0xff6600 },
+    flare:  { core: 0xffcc33, particles: 0xffee88, count: 38, secondary: 0xffaa00 },
+    plasma: { core: 0x33ddff, particles: 0x88eeff, count: 24, secondary: 0x00aaff }
+};
+function createPirateExplosionVariant(position, variant) {
+    const cfg = PIRATE_EXPLOSION_VARIANTS[variant] || PIRATE_EXPLOSION_VARIANTS.ember;
+    const explosionGeometry = new THREE.SphereGeometry(2, 8, 8);
+    const explosionMaterial = new THREE.MeshBasicMaterial({ color: cfg.core, transparent: true });
+    const explosion = new THREE.Mesh(explosionGeometry, explosionMaterial);
+    explosion.position.copy(position);
+    scene.add(explosion);
+
+    const particles = new THREE.BufferGeometry();
+    const positions = new Float32Array(cfg.count * 3);
+    for (let i = 0; i < cfg.count; i++) {
+        positions[i * 3] = (Math.random() - 0.5) * 22;
+        positions[i * 3 + 1] = (Math.random() - 0.5) * 22;
+        positions[i * 3 + 2] = (Math.random() - 0.5) * 22;
+    }
+    particles.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    const particleMaterial = new THREE.PointsMaterial({
+        color: cfg.particles, size: 1.1, transparent: true, opacity: 1
+    });
+    const particleSystem = new THREE.Points(particles, particleMaterial);
+    particleSystem.position.copy(position);
+    scene.add(particleSystem);
+
+    let scale = 1, opacity = 1, elapsed = 0;
+    explosionManager.addExplosion({
+        update(deltaTime) {
+            elapsed += deltaTime;
+            scale += 0.5 * (deltaTime / 60);
+            opacity -= 0.05 * (deltaTime / 60);
+            explosion.scale.set(scale, scale, scale);
+            explosionMaterial.opacity = Math.max(0, opacity);
+            particleSystem.scale.set(scale * 1.2, scale * 1.2, scale * 1.2);
+            particleMaterial.opacity = Math.max(0, opacity);
+            if (opacity <= 0) {
+                scene.remove(explosion); scene.remove(particleSystem);
+                explosionGeometry.dispose(); explosionMaterial.dispose();
+                particles.dispose(); particleMaterial.dispose();
+                return false;
+            }
+            return true;
+        }
+    });
+
+    // Delayed secondary pop — small offset burst so each variant reads as
+    // a two-beat detonation rather than a single flash.
+    const offset = position.clone().add(new THREE.Vector3(
+        (Math.random() - 0.5) * 10, (Math.random() - 0.5) * 10, (Math.random() - 0.5) * 10));
+    setTimeout(() => {
+        if (typeof createExplosionEffect === 'function') createExplosionEffect(offset);
+    }, variant === 'plasma' ? 200 : 130);
+}
+window.createPirateExplosionVariant = createPirateExplosionVariant;
+
 function createExplosionEffect(targetObject) {
     // Support both object with position property and direct position vector
     let position;
@@ -5953,8 +6023,17 @@ if (enemy.userData.health <= 0) {
             scale: _enemyUD.isBoss ? 1.8 : 1.3
         });
     } else if (_isPirate) {
-        // Original pre-upgrade explosion for Martian Pirates.
-        createExplosionEffect(enemy.position, 0xff4444, 15);
+        // Martian Pirate kills roll one of three explosion variants; the
+        // explosion color IS the loot tell (see PIRATE_EXPLOSION_VARIANTS):
+        // red ember → hull, gold flare → energy, cyan plasma → missile.
+        const _roll = Math.random();
+        const _variant = _roll < 0.55 ? 'ember' : (_roll < 0.85 ? 'flare' : 'plasma');
+        _enemyUD._pirateLootVariant = _variant;
+        if (typeof createPirateExplosionVariant === 'function') {
+            createPirateExplosionVariant(enemy.position, _variant);
+        } else {
+            createExplosionEffect(enemy.position, 0xff4444, 15);
+        }
         playSound('explosion');
     } else if (typeof createFactionExplosion === 'function' &&
                typeof _enemyUD.galaxyId === 'number') {
@@ -6010,16 +6089,31 @@ if (enemy.userData.health <= 0) {
 } else {
     showAchievement('Enemy Destroyed!', `${enemy.userData.name} eliminated`);
 
-    // 30% chance for missile drop on regular kills
-    if (Math.random() < 0.3 && gameState.missiles.current < gameState.missiles.capacity) {
+    const _lootVariant = enemy.userData._pirateLootVariant;
+    if (_lootVariant === 'flare') {
+        // Gold flare explosion → energy cells
+        gameState.energy = Math.min(gameState.maxEnergy || 100, (gameState.energy || 0) + 20);
+        showAchievement('Energy Cells Recovered!', '+20 energy salvaged from the golden flare');
+    } else if (_lootVariant === 'plasma' &&
+               gameState.missiles.current < gameState.missiles.capacity) {
+        // Cyan plasma explosion → guaranteed missile
+        gameState.missiles.current++;
+        showAchievement('Missile Recovered!',
+            `Plasma-burst salvage (${gameState.missiles.current}/${gameState.missiles.capacity})`);
+    } else if (!_lootVariant &&
+               Math.random() < 0.3 && gameState.missiles.current < gameState.missiles.capacity) {
+        // Non-pirate kills keep the original 30% missile chance
         gameState.missiles.current++;
         showAchievement('Missile Recovered!',
             `+1 missile from debris (${gameState.missiles.current}/${gameState.missiles.capacity})`);
     }
+    // ('ember' variant pays out through the hull-recovery bonus below.)
 }
-    
-    // Hull recovery from defeating enemies
-    const hullRecovery = wasBoss ? 15 + Math.random() * 15 : 5 + Math.random() * 10; // More recovery for bosses
+
+    // Hull recovery from defeating enemies. Red-ember pirate kills add a
+    // +8 salvage bonus — that's their loot identity.
+    const _emberBonus = (enemy.userData._pirateLootVariant === 'ember') ? 8 : 0;
+    const hullRecovery = wasBoss ? 15 + Math.random() * 15 : 5 + Math.random() * 10 + _emberBonus; // More recovery for bosses
     if (typeof gameState !== 'undefined' && gameState.hull !== undefined) {
         gameState.hull = Math.min(gameState.maxHull || 100, gameState.hull + hullRecovery);
         showAchievement('Hull Repaired', `+${hullRecovery.toFixed(1)} hull integrity from salvage`);

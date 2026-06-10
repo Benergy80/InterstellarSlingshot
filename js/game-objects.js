@@ -1386,6 +1386,11 @@ function spawnBossForArea(galaxyId, placementType, areaKey, overridePosition, bo
         boss.add(bossGlow);
     }
 
+    // Bosses are 2× their previous size — set-piece fights should read
+    // as a monster on screen. Applied BEFORE the hitbox measurement below
+    // so the collision sphere scales with it automatically.
+    boss.scale.multiplyScalar(2.0);
+
     // Calculate hitbox size from scaled model (like asteroids) - bosses are 144x scaled
     let bossHitboxSize = 144; // Default for 144x scaled model
     try {
@@ -1439,8 +1444,9 @@ function spawnBossForArea(galaxyId, placementType, areaKey, overridePosition, bo
     bossSystem.activeBosses.push(boss);
     bossSystem.activeBoss = boss; // Keep for backwards compatibility
     
-    // PRESERVED: Spawn 2-3 support ships with enhanced 3D positioning
-    for (let i = 0; i < 3; i++) {
+    // Spawn the escort swarm — bumped 3 → 7 so the (now 2×-sized) boss
+    // arrives with a proper entourage swirling around it.
+    for (let i = 0; i < 7; i++) {
         spawnBossSupport(galaxyId, bossPosition, i, areaKey, bossOverrides);
     }
     
@@ -6035,10 +6041,10 @@ const distressBeaconSystem = {
         
         let boss;
         if (typeof createEnemyMeshWithModel === 'function') {
-            boss = createEnemyMeshWithModel(galaxyId + 1, bossGeometry, materials.enemyMaterial, 200); // 2x size
+            boss = createEnemyMeshWithModel(galaxyId + 1, bossGeometry, materials.enemyMaterial, 400); // was 200 — bosses 2x bigger
         } else {
             boss = new THREE.Mesh(bossGeometry, materials.enemyMaterial);
-            boss.scale.set(2, 2, 2);
+            boss.scale.set(4, 4, 4); // was 2 — bosses 2x bigger
         }
         
         // Add glow
@@ -6086,8 +6092,8 @@ const distressBeaconSystem = {
         scene.add(boss);
         enemies.push(boss);
         
-        // Spawn 3-5 support enemies
-        const supportCount = 3 + Math.floor(Math.random() * 3);
+        // Spawn the escort swarm (was 3-5, now 6-9 to match the bigger boss)
+        const supportCount = 6 + Math.floor(Math.random() * 4);
         for (let i = 0; i < supportCount; i++) {
             this.spawnBossSupport(galaxyId, bossPosition, i);
         }
@@ -12578,6 +12584,90 @@ function updateBossSkyboxHeartbeat() {
     // Apply opacity
     bossSkybox.material.opacity = bossSkyboxOpacity;
 }
+
+// =============================================================================
+// GALAXY ATMOSPHERE DOME — the boss dome's calm sibling. While flying deep
+// space, a cloudy camera-following dome fades in tinted with the NEAREST
+// black-hole galaxy's faction color. No pulse: opacity scales purely with
+// proximity to that galaxy core. The fade begins FAR out — well beyond even
+// the largest accretion rings — so the region announces itself long before
+// the core is reached. Suppressed during boss battles (the blood-red
+// heartbeat owns the sky) and in the home system.
+// =============================================================================
+let galaxyAtmosphereDome = null;
+let _gaCores = null;
+const _gaTargetColor = (typeof THREE !== 'undefined') ? new THREE.Color() : null;
+
+function updateGalaxyAtmosphere() {
+    if (typeof THREE === 'undefined' || typeof scene === 'undefined' ||
+        typeof camera === 'undefined' || typeof gameState === 'undefined') return;
+    if (!gameState.gameStarted) return;
+
+    if (!galaxyAtmosphereDome) {
+        const mat = new THREE.MeshBasicMaterial({
+            color: 0xffffff,
+            map: _makeBossCloudTexture(),
+            side: THREE.BackSide,
+            transparent: true,
+            opacity: 0,
+            fog: false,
+            depthWrite: false
+        });
+        galaxyAtmosphereDome = new THREE.Mesh(new THREE.SphereGeometry(140000, 48, 48), mat);
+        galaxyAtmosphereDome.name = 'GalaxyAtmosphereDome';
+        galaxyAtmosphereDome.frustumCulled = false;
+        galaxyAtmosphereDome.renderOrder = -0.5; // behind boss dome (0), over CMB (-1)
+        scene.add(galaxyAtmosphereDome);
+    }
+
+    // Envelop the player; drift slowly (mismatched rates ≠ spin).
+    galaxyAtmosphereDome.position.copy(camera.position);
+    galaxyAtmosphereDome.rotation.y += 0.00022;
+    galaxyAtmosphereDome.rotation.x -= 0.00007;
+
+    // Cache the distant galaxy cores once (home system / companion excluded).
+    if (!_gaCores && typeof planets !== 'undefined' && planets.length) {
+        const cores = planets.filter(p => p && p.userData &&
+            p.userData.type === 'blackhole' && p.userData.isGalacticCore &&
+            !p.userData.isCompanionCore &&
+            typeof p.userData.galaxyId === 'number' && p.userData.galaxyId !== 7);
+        if (cores.length) _gaCores = cores;
+    }
+
+    // Proximity ramp: begins at 28,000u out — far beyond the largest
+    // accretion rings — and builds to full strength by 5,000u from the core.
+    const FADE_START = 28000;
+    const FADE_FULL = 5000;
+    const MAX_OPACITY = 0.30;
+
+    let targetOpacity = 0;
+    if (_gaCores) {
+        let best = null, bestD = Infinity;
+        for (let i = 0; i < _gaCores.length; i++) {
+            const d = camera.position.distanceTo(_gaCores[i].position);
+            if (d < bestD) { bestD = d; best = _gaCores[i]; }
+        }
+        if (best && bestD < FADE_START) {
+            const t = Math.max(0, Math.min(1, (FADE_START - bestD) / (FADE_START - FADE_FULL)));
+            targetOpacity = MAX_OPACITY * t;
+            const gid = best.userData.galaxyId;
+            const hex = (typeof galaxyTypes !== 'undefined' && galaxyTypes[gid] && galaxyTypes[gid].color)
+                ? galaxyTypes[gid].color : 0x8888ff;
+            if (_gaTargetColor) {
+                _gaTargetColor.setHex(hex);
+                galaxyAtmosphereDome.material.color.lerp(_gaTargetColor, 0.02);
+            }
+        }
+    }
+
+    // Boss fights own the sky.
+    if (typeof isBossBattleActive === 'function' && isBossBattleActive()) targetOpacity = 0;
+
+    // Soft fade toward target — no pulsing.
+    const cur = galaxyAtmosphereDome.material.opacity;
+    galaxyAtmosphereDome.material.opacity = cur + (targetOpacity - cur) * 0.015;
+}
+window.updateGalaxyAtmosphere = updateGalaxyAtmosphere;
 
 // Export functions
 window.createBossBattleSkybox = createBossBattleSkybox;
