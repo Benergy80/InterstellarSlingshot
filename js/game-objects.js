@@ -886,11 +886,14 @@ function createGalaxyToNebulaLine(galaxyId) {
     const points = [galaxyBlackHole.position.clone(), trackingNebula.position.clone()];
     const geometry = new THREE.BufferGeometry().setFromPoints(points);
     
-    // Use faction color with dashed style
+    // Use faction color with dashed style. Alpha discipline (PewPew-style):
+    // background-tier guidance sits at ~0.6 so gameplay objects remain the
+    // only full-saturation elements on screen (orbit lines 0.3, discovery
+    // paths 0.7, this 0.6).
     const lineMaterial = new THREE.LineDashedMaterial({
         color: faction.color,
         transparent: true,
-        opacity: 0.9,
+        opacity: 0.6,
         linewidth: 2,
         dashSize: 100,
         gapSize: 50,
@@ -1629,8 +1632,12 @@ function showLiberationPathToTwinNebula() {
     const target = findNearestTwinNebulaCenter(fromPos);
     if (!target) { console.warn('🌌 Liberation: no twin nebula found for path'); return; }
     const geom = new THREE.BufferGeometry().setFromPoints([fromPos, target]);
+    // Direction gradient (PewPew-style): dim at Sgr A*, full white at the
+    // twin nebula — brightness ramps toward where the player should fly.
+    geom.setAttribute('color', new THREE.BufferAttribute(
+        new Float32Array([0.25, 0.25, 0.25, 1, 1, 1]), 3));
     const mat = new THREE.LineDashedMaterial({
-        color: 0xffffff, transparent: true, opacity: 0.85,
+        color: 0xffffff, vertexColors: true, transparent: true, opacity: 0.85,
         dashSize: 140, gapSize: 100, depthWrite: false
     });
     const line = new THREE.Line(geom, mat);
@@ -5480,6 +5487,37 @@ function updateNebulaVisibility() {
 
 // Export visibility update function
 window.updateNebulaVisibility = updateNebulaVisibility;
+
+// =============================================================================
+// NEBULA IDLE BREATHING (PewPew-inspired) — modulate each nebula cloud's
+// alpha ±8% on a slow (~13 s) cycle so the backdrop never reads as a static
+// image. Multiplies AROUND the base opacity the visibility system computed
+// (userData.currentOpacity), so the two systems don't fight; nebulas without
+// a managed opacity snapshot their material value once as the base. Each
+// nebula gets a phase offset so the field shimmers instead of pulsing in
+// lockstep.
+// =============================================================================
+let _nebBreathPhase = 0;
+function updateNebulaBreathing() {
+    if (typeof nebulaClouds === 'undefined' || !nebulaClouds.length) return;
+    _nebBreathPhase += 0.008; // full cycle ~13 s at 60 fps
+    for (let i = 0; i < nebulaClouds.length; i++) {
+        const n = nebulaClouds[i];
+        if (!n || !n.visible || !n.children[0]) continue;
+        const mat = n.children[0].material;
+        if (!mat || mat.opacity === undefined) continue;
+        let base = (n.userData && typeof n.userData.currentOpacity === 'number')
+            ? n.userData.currentOpacity
+            : (n.userData ? n.userData._breathBase : undefined);
+        if (base === undefined) {
+            base = mat.opacity;
+            if (n.userData) n.userData._breathBase = base;
+        }
+        const breath = 0.92 + 0.08 * Math.sin(_nebBreathPhase + i * 0.7);
+        mat.opacity = base * breath;
+    }
+}
+window.updateNebulaBreathing = updateNebulaBreathing;
 
 // =============================================================================
 // DISTANCE CULLING - Hide far-away objects to cut draw calls (PERF)

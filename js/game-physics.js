@@ -160,16 +160,16 @@ let cameraRotationTracking = { x: 0, y: 0, z: 0 };
 // NEW: Rotational inertia system for space-like flight feel
 let rotationalVelocity = { pitch: 0, yaw: 0, roll: 0 };
 const rotationalInertia = {
-    // Precision mode (CAPS LOCK held) — slowed ~20% from 0.0020/0.015
-    acceleration: 0.0016,       // Slower turn response (precision)
+    // Precision mode (CAPS LOCK held) — slowed again from 0.0016/0.012
+    acceleration: 0.0014,       // Slower turn response (precision)
     deceleration: 0.93,        // Slightly faster slowdown for snappier control
-    maxSpeed: 0.012,           // Slower max turn speed (precision)
+    maxSpeed: 0.010,           // Slower max turn speed (precision)
     bankingFactor: -2.5,        // How much to bank when turning at full speed (scaled by velocity)
     bankingSmoothing: 0.2,     // How smoothly banking is applied
 
-    // Default turning values (no CAPS LOCK) — slowed ~22% from 0.0030/0.022
-    fastAcceleration: 0.0024,   // Turn response (default)
-    fastMaxSpeed: 0.017         // Max turn speed (default, ~58°/s at 60fps)
+    // Default turning values (no CAPS LOCK) — slowed again from 0.0024/0.017
+    fastAcceleration: 0.0020,   // Turn response (default)
+    fastMaxSpeed: 0.014         // Max turn speed (default, ~48°/s at 60fps)
 };
 
 // Pooled vectors for orientTowardsTarget — called every frame, was creating
@@ -217,8 +217,8 @@ function orientTowardsTarget(target) {
     // at 60fps — but on a 120Hz display or a stuttering frame the actual
     // amount scales with real elapsed time, so the turn rate is consistent
     // regardless of FPS.
-    const rotationSpeedPerFrame = 0.10; // approach rate: was 0.12, slowed for calmer demo tracking
-    const maxRotationPerFrame = 0.035;  // max turn speed cap: 0.055 (~189°/s) -> 0.045 (~155°/s) -> 0.035 (~120°/s)
+    const rotationSpeedPerFrame = 0.085; // approach rate: 0.12 -> 0.10 -> 0.085, calmer demo tracking
+    const maxRotationPerFrame = 0.030;  // max turn cap: 0.055 (~189°/s) -> 0.045 -> 0.035 -> 0.030 (~103°/s)
     const FRAME_MS = 16.67;
     const frames = _deltaMs / FRAME_MS;
 
@@ -4086,6 +4086,21 @@ function createDiscoveryPathToPosition(nebulaPosition, targetPosition, factionCo
     // Create the path geometry
     const pathGeometry = new THREE.BufferGeometry().setFromPoints(pathPoints);
 
+    // PewPew-style direction gradient: dim at the nebula of origin, full
+    // brightness at the destination — the ramp itself tells the player
+    // which way to fly, no arrowheads needed. Implemented as a GRAYSCALE
+    // per-vertex ramp so it multiplies with material.color: the existing
+    // mission-complete / reset recolor logic (which writes material.color)
+    // keeps working and the gradient survives the recolor.
+    const gradColors = new Float32Array((segments + 1) * 3);
+    for (let i = 0; i <= segments; i++) {
+        const b = 0.15 + 0.85 * (i / segments);
+        gradColors[i * 3] = b;
+        gradColors[i * 3 + 1] = b;
+        gradColors[i * 3 + 2] = b;
+    }
+    pathGeometry.setAttribute('color', new THREE.BufferAttribute(gradColors, 3));
+
     // Different dash patterns for core vs patrol
     const dashSize = pathType === 'core' ? 100 : 60;
     const gapSize = pathType === 'core' ? 50 : 40;
@@ -4093,6 +4108,7 @@ function createDiscoveryPathToPosition(nebulaPosition, targetPosition, factionCo
     // Create dashed line material
     const pathMaterial = new THREE.LineDashedMaterial({
         color: factionColor,
+        vertexColors: true,
         dashSize: dashSize,
         gapSize: gapSize,
         linewidth: 2,

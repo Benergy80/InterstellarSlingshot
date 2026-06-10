@@ -1866,6 +1866,11 @@ if (typeof localGalaxyStars !== 'undefined' && localGalaxyStars) {
         updateHubbleSkybox2Opacity();
     }
 
+    // Nebula idle breathing — slow ±8% alpha shimmer (PewPew-inspired)
+    if (typeof updateNebulaBreathing === 'function') {
+        updateNebulaBreathing();
+    }
+
     // Update boss battle skybox with heartbeat pulsing
     if (typeof updateBossSkyboxHeartbeat === 'function') {
         updateBossSkyboxHeartbeat();
