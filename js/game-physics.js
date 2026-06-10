@@ -4284,7 +4284,10 @@ function checkForNebulaDeepDiscovery() {
         // Discovery range depends on nebula category
         let deepDiscoveryRange;
         if (nebulaType === 'clustered') {
-            deepDiscoveryRange = 100; // Close approach required
+            // 500 matches the demo autopilot's 500u orbit radius around the
+            // twin-pair CENTER — at 100u the demo could lap forever without
+            // ever triggering discovery, then warp away on its 25s timeout.
+            deepDiscoveryRange = 500;
         } else {
             // Galaxy-formation, distant, and exotic all use nebula size as range.
             // Galaxy-formation triggers while the player is fighting near the black hole

@@ -794,7 +794,9 @@ function checkFactionCleared(galaxyId) {
             n && n.userData && n.userData.assignedFaction === galaxyId
         );
 
-        const nebulaName = trackingNebula ? trackingNebula.userData.name : 'nearest nebula';
+        const nebulaName = (galaxyId === 7)
+            ? 'the twin nebulas marked by the white path'
+            : (trackingNebula ? trackingNebula.userData.name : 'nearest nebula');
 
         if (!nebulaIntelSystem.pendingCleared) nebulaIntelSystem.pendingCleared = {};
         if (!nebulaIntelSystem.clearedAnnounced) nebulaIntelSystem.clearedAnnounced = {};
@@ -809,7 +811,13 @@ function checkFactionCleared(galaxyId) {
             !nebulaIntelSystem.clearedAnnounced[galaxyId]) {
             nebulaIntelSystem.pendingCleared[galaxyId] = { faction, nebulaName, galaxyId };
             console.log(`🎖️ ${faction.faction} clusters cleared — banner deferred until boss defeated`);
-            if (typeof createGalaxyToNebulaLine === 'function') {
+            // Galaxy 7 (Sol / Sgr A*): NO intel line. Its target would be
+            // the round-robin "tracking" nebula from assignFactionsToNebulas
+            // — geographically arbitrary — which pointed the demo viewer
+            // away from the real progression. Local guidance is the white
+            // liberation path (Sgr A* → nearest twin nebula) drawn when the
+            // Vulcan boss dies (maybeTriggerSolLiberation).
+            if (galaxyId !== 7 && typeof createGalaxyToNebulaLine === 'function') {
                 createGalaxyToNebulaLine(galaxyId);
             }
             if (typeof checkAndSpawnAreaBosses === 'function') {
@@ -1801,7 +1809,11 @@ function checkBossVictory(defeatedEnemy) {
                 !nebulaIntelSystem.clearedAnnounced[galaxyId]) {
                 const _fac = galaxyTypes[galaxyId];
                 let _nbName = 'nearest nebula';
-                if (typeof nebulaClouds !== 'undefined') {
+                if (galaxyId === 7) {
+                    // Local system: direct to the white liberation path,
+                    // not the arbitrary round-robin "tracking" nebula.
+                    _nbName = 'the twin nebulas marked by the white path';
+                } else if (typeof nebulaClouds !== 'undefined') {
                     const _nb = nebulaClouds.find(n => n && n.userData &&
                         n.userData.assignedFaction === galaxyId);
                     if (_nb) _nbName = _nb.userData.name;
