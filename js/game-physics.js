@@ -160,16 +160,16 @@ let cameraRotationTracking = { x: 0, y: 0, z: 0 };
 // NEW: Rotational inertia system for space-like flight feel
 let rotationalVelocity = { pitch: 0, yaw: 0, roll: 0 };
 const rotationalInertia = {
-    // Default slower turning (original values restored)
-    acceleration: 0.0020,       // Slower turn response (default)
+    // Precision mode (CAPS LOCK held) — slowed ~20% from 0.0020/0.015
+    acceleration: 0.0016,       // Slower turn response (precision)
     deceleration: 0.93,        // Slightly faster slowdown for snappier control
-    maxSpeed: 0.015,           // Slower max turn speed (default)
+    maxSpeed: 0.012,           // Slower max turn speed (precision)
     bankingFactor: -2.5,        // How much to bank when turning at full speed (scaled by velocity)
     bankingSmoothing: 0.2,     // How smoothly banking is applied
-    
-    // Fast turning values (activated with CAPS LOCK)
-    fastAcceleration: 0.0030,   // Faster turn response
-    fastMaxSpeed: 0.022         // Faster max turn speed
+
+    // Default turning values (no CAPS LOCK) — slowed ~22% from 0.0030/0.022
+    fastAcceleration: 0.0024,   // Turn response (default)
+    fastMaxSpeed: 0.017         // Max turn speed (default, ~58°/s at 60fps)
 };
 
 // Pooled vectors for orientTowardsTarget — called every frame, was creating
@@ -217,8 +217,8 @@ function orientTowardsTarget(target) {
     // at 60fps — but on a 120Hz display or a stuttering frame the actual
     // amount scales with real elapsed time, so the turn rate is consistent
     // regardless of FPS.
-    const rotationSpeedPerFrame = 0.12;
-    const maxRotationPerFrame = 0.045;  // max turn speed cap: was 0.055 (~189°/s) -> 0.045 (~155°/s)
+    const rotationSpeedPerFrame = 0.10; // approach rate: was 0.12, slowed for calmer demo tracking
+    const maxRotationPerFrame = 0.035;  // max turn speed cap: 0.055 (~189°/s) -> 0.045 (~155°/s) -> 0.035 (~120°/s)
     const FRAME_MS = 16.67;
     const frames = _deltaMs / FRAME_MS;
 

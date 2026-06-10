@@ -922,6 +922,23 @@
         }
       }
 
+      // RUNAWAY GUARD: beyond 800u with the gap GROWING → brake now.
+      // Before this, the only hard distance turnaround was the 6,500u
+      // pursuit abort, so a bad jump/warp exit could carry the demo
+      // 5,000+ units past a target (nose locked on it the whole way,
+      // momentum pointing elsewhere) before anything corrected.
+      if (ap._prevCombatTarget !== enemy) {
+        ap._prevCombatTarget = enemy;
+        ap._prevCombatDist = undefined;
+      }
+      const _prevCD = ap._prevCombatDist;
+      ap._prevCombatDist = dist;
+      if (dist > 800 && typeof _prevCD === 'number' &&
+          dist > _prevCD + 0.5 && speed > 1) {
+        keys().x = true;
+        setStatus('Receding from target — braking (' + (dist | 0) + ' u)');
+      }
+
       // O-key emergency warp for very long pursuits > 2000 u
       if (dist > 2000 &&
           canEmergencyWarp() &&
@@ -3334,6 +3351,8 @@
     ap._followingPath = null;
     ap._followedPathLines = [];
     ap._originReturnActive = false;
+    ap._prevCombatTarget = null;
+    ap._prevCombatDist = undefined;
     ap._followPathWarpFired = false;
     ap._tacticalMsgShown = false;
   }
