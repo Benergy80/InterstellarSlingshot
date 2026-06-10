@@ -1436,9 +1436,24 @@ function updateTargetLock() {
 // MAIN ANIMATION LOOP - SIMPLIFIED AND OPTIMIZED
 // =============================================================================
 
-function animate() {
+// PERF: animate() is kicked off from several entry points (Three.js init and
+// two intro/demo transitions). Each call starts its own self-perpetuating
+// requestAnimationFrame chain, so duplicate kickoffs were running the whole
+// game loop ~2x per displayed frame — doubling render + update cost and
+// double-stepping physics/AI. The rAF self-loop always passes a timestamp
+// argument; external kickoffs call animate() with no argument. So we let the
+// first external start through and ignore any later ones — only ONE chain runs.
+let _loopRunning = false;
+function animate(rafTime) {
+    if (rafTime === undefined) {
+        if (_loopRunning) {
+            console.warn('animate(): game loop already running — ignoring duplicate start');
+            return;
+        }
+        _loopRunning = true;
+    }
     requestAnimationFrame(animate);
-        
+
     gameState.frameCount++;
     
     if (gameState.paused) {
@@ -1529,6 +1544,11 @@ if (typeof updateNebulaVisibility === 'function') {
 // Update orbit line visibility based on proximity to nebulas/black holes
 if (typeof updateOrbitLineVisibility === 'function') {
     updateOrbitLineVisibility();
+}
+
+// PERF: distance-cull far planets/asteroids/comets/ships to cut draw calls
+if (typeof updateDistanceCulling === 'function') {
+    updateDistanceCulling();
 }
 
 if (typeof perfDebug !== 'undefined') perfDebug.endTimer('nebulas');
@@ -2183,10 +2203,56 @@ if (gameState.frameCount % 5 === 0 && typeof checkCosmicFeatureInteractions === 
     checkCosmicFeatureInteractions(camera.position, gameState);
 }
     
-    // Enhanced enemy behavior update
+    // Enhanced enemy behavior update.
+    // The AI still RUNS at 30Hz (every 2nd frame) — cheap, and plenty for
+    // decisions — but its position/rotation result is captured as an
+    // interpolation target and the RENDERED transform glides toward it every
+    // frame, so enemies no longer hop at half rate (the "choppy" motion).
     if (typeof perfDebug !== 'undefined') perfDebug.startTimer('enemies');
-    if (gameState.frameCount % 2 === 0 && typeof updateEnemyBehavior === 'function') {
-        updateEnemyBehavior();
+    if (typeof enemies !== 'undefined' && enemies && enemies.length) {
+        const _efc = gameState.frameCount;
+        const _AI_INTERVAL = 2;
+        // (1) Glide the rendered transform START -> END EVERY frame. On an
+        //     AI-tick frame this completes the previous interval (a -> 1) BEFORE
+        //     the tick below snapshots it, so the next interval begins exactly
+        //     where this one ended (continuous — no mid-glide snapshot).
+        for (let i = 0; i < enemies.length; i++) {
+            const e = enemies[i]; if (!e || !e.userData || !e.userData._interp) continue;
+            const u = e.userData;
+            const a = Math.min(1, (_efc - u._iTick) / _AI_INTERVAL);
+            e.position.lerpVectors(u._iFrom, u._iTo, a);
+            let dy = u._iToRot.y - u._iFromRot.y; dy = Math.atan2(Math.sin(dy), Math.cos(dy)); // shortest yaw
+            e.rotation.y = u._iFromRot.y + dy * a;
+            e.rotation.x = u._iFromRot.x + (u._iToRot.x - u._iFromRot.x) * a;
+            e.rotation.z = u._iFromRot.z + (u._iToRot.z - u._iFromRot.z) * a;
+        }
+        // (2) AI tick at 30Hz: snapshot START (= where the glide just ended),
+        //     run the AI to get the new target, capture it as END, rewind render.
+        if (_efc % _AI_INTERVAL === 0 && typeof updateEnemyBehavior === 'function') {
+            for (let i = 0; i < enemies.length; i++) {
+                const e = enemies[i]; if (!e || !e.userData || !e.rotation) continue;
+                // UFOs (and the removed Borg) move via their OWN per-frame mechanics
+                // outside updateEnemyBehavior; interpolating would freeze them.
+                if (e.userData.isUFO || e.userData.isBorgCube || e.userData.type === 'borg_drone') continue;
+                const u = e.userData;
+                if (!u._iFrom)    u._iFrom    = new THREE.Vector3();
+                if (!u._iTo)      u._iTo      = new THREE.Vector3();
+                if (!u._iFromRot) u._iFromRot = { x: 0, y: 0, z: 0 };
+                if (!u._iToRot)   u._iToRot   = { x: 0, y: 0, z: 0 };
+                u._iFrom.copy(e.position);
+                u._iFromRot.x = e.rotation.x; u._iFromRot.y = e.rotation.y; u._iFromRot.z = e.rotation.z;
+            }
+            updateEnemyBehavior();   // AI moves e.position / e.rotation to the new target
+            for (let i = 0; i < enemies.length; i++) {
+                const e = enemies[i]; if (!e || !e.userData || !e.userData._iFrom) continue;
+                const u = e.userData;
+                u._iTo.copy(e.position);
+                u._iToRot.x = e.rotation.x; u._iToRot.y = e.rotation.y; u._iToRot.z = e.rotation.z;
+                e.position.copy(u._iFrom);
+                e.rotation.x = u._iFromRot.x; e.rotation.y = u._iFromRot.y; e.rotation.z = u._iFromRot.z;
+                u._iTick = _efc; u._interp = true;
+            }
+        }
     }
     if (typeof perfDebug !== 'undefined') perfDebug.endTimer('enemies');
     
@@ -2254,11 +2320,45 @@ if (gameState.frameCount % 5 === 0 && typeof checkCosmicFeatureInteractions === 
     // for performance, but during emergency warp the player travels
     // ~100 units/frame; if wingmen only update every 2nd frame they
     // effectively move at half speed and can't keep up.
-    if (typeof updateAllyShips === 'function') {
-        const _playerWarp = gameState.velocityVector &&
-            gameState.velocityVector.length() >= 4.0;
-        if (gameState.frameCount % 2 === 0 || _playerWarp) {
+    // Same render-interpolation as enemies: the AI runs at 30Hz (60Hz while
+    // warping so wingmen keep up), but the rendered transform glides toward the
+    // AI target EVERY frame so wingmen don't hop at half rate.
+    if (typeof updateAllyShips === 'function' && typeof allyShips !== 'undefined' && allyShips && allyShips.length) {
+        const _wfc = gameState.frameCount;
+        const _warp = gameState.velocityVector && gameState.velocityVector.length() >= 4.0;
+        // (1) glide every frame (completes the interval before the tick below)
+        for (let i = 0; i < allyShips.length; i++) {
+            const w = allyShips[i]; if (!w || !w.userData || !w.userData._interp) continue;
+            const u = w.userData;
+            const t = Math.min(1, (_wfc - u._iTick) / (u._iInterval || 2));
+            w.position.lerpVectors(u._iFrom, u._iTo, t);
+            let dy = u._iToRot.y - u._iFromRot.y; dy = Math.atan2(Math.sin(dy), Math.cos(dy));
+            w.rotation.y = u._iFromRot.y + dy * t;
+            w.rotation.x = u._iFromRot.x + (u._iToRot.x - u._iFromRot.x) * t;
+            w.rotation.z = u._iFromRot.z + (u._iToRot.z - u._iFromRot.z) * t;
+        }
+        // (2) AI tick: 30Hz normally, every frame while warping
+        if (_wfc % 2 === 0 || _warp) {
+            for (let i = 0; i < allyShips.length; i++) {
+                const w = allyShips[i]; if (!w || !w.userData || !w.rotation) continue;
+                const u = w.userData;
+                if (!u._iFrom)    u._iFrom    = new THREE.Vector3();
+                if (!u._iTo)      u._iTo      = new THREE.Vector3();
+                if (!u._iFromRot) u._iFromRot = { x: 0, y: 0, z: 0 };
+                if (!u._iToRot)   u._iToRot   = { x: 0, y: 0, z: 0 };
+                u._iFrom.copy(w.position);
+                u._iFromRot.x = w.rotation.x; u._iFromRot.y = w.rotation.y; u._iFromRot.z = w.rotation.z;
+            }
             updateAllyShips();
+            for (let i = 0; i < allyShips.length; i++) {
+                const w = allyShips[i]; if (!w || !w.userData || !w.userData._iFrom) continue;
+                const u = w.userData;
+                u._iTo.copy(w.position);
+                u._iToRot.x = w.rotation.x; u._iToRot.y = w.rotation.y; u._iToRot.z = w.rotation.z;
+                w.position.copy(u._iFrom);
+                w.rotation.x = u._iFromRot.x; w.rotation.y = u._iFromRot.y; w.rotation.z = u._iFromRot.z;
+                u._iTick = _wfc; u._iInterval = _warp ? 1 : 2; u._interp = true;
+            }
         }
     }
 

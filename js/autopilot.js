@@ -1255,7 +1255,9 @@
       if (ap.currentNebula) {
         // Don't pass by nebulas: if another nebula is meaningfully nearer
         // mid-warp, switch target so we coast into the closer one instead.
-        const nearer = nearestNebula();
+        // (Suppressed while returning to a nebula of origin for a second
+        // discovery path — that trip has a specific destination.)
+        const nearer = ap._originReturnActive ? null : nearestNebula();
         if (nearer && nearer !== ap.currentNebula) {
           const dCur  = camPos().distanceTo(ap.currentNebula.position);
           const dAlt  = camPos().distanceTo(nearer.position);
@@ -1293,7 +1295,8 @@
 
     // Don't pass by nebulas: if a closer nebula appears post-warp, switch
     // to it instead of overshooting toward the original target.
-    const _altNeb = nearestNebula();
+    // (Suppressed while returning to a nebula of origin for a second path.)
+    const _altNeb = ap._originReturnActive ? null : nearestNebula();
     if (_altNeb && _altNeb !== ap.currentNebula) {
       const dCur = camPos().distanceTo(ap.currentNebula.position);
       const dAlt = camPos().distanceTo(_altNeb.position);
@@ -1388,15 +1391,6 @@
       // Find a planet inside the nebula to nav-lock for the HUD
       ap._orbitNavPlanet = _findPlanetNearNebula(ap.currentNebula) || null;
     }
-    // Snapshot the discovery-path roster on every entry into this phase
-    // (not just when orbitTarget is first set) so re-entries from combat
-    // don't compare against a stale baseline and immediately false-trigger
-    // followDiscoveryPath against an old path from a previous nebula.
-    if (ap._orbitPhaseStart !== ap.phaseStart) {
-      ap._orbitPhaseStart = ap.phaseStart;
-      ap._pathCountAtEntry = (window.discoveryPaths || []).length;
-    }
-
     // Refresh planet nav-lock periodically (planets orbit; the chosen one
     // may have rotated to the far side of the nebula). Cheap scan.
     if (!ap._orbitNavPlanet ||
@@ -1448,24 +1442,21 @@
       checkForNebulaDeepDiscovery();
     }
 
-    // Check if a NEW discovery path appeared since we entered this phase.
-    // Snapshot the actual path reference so phaseFollowDiscoveryPath can
-    // use THIS path, not whatever happens to be last in the array later
-    // (the discoveryPaths array is never pruned, so [length-1] can point
-    // at an old path from a previous galaxy halfway across the universe).
-    const paths = window.discoveryPaths || [];
-    if (paths.length > (ap._pathCountAtEntry || 0)) {
-      const newPath = paths[paths.length - 1];
-      const endPos = newPath && newPath.line && newPath.line.userData && newPath.line.userData.endPosition;
-      // Sanity check: the path should lead somewhere within reach. If it
-      // points >50,000u away the path is almost certainly stale or
-      // misattributed — bail to a fresh nebula warp instead of chasing it.
-      if (endPos && camPos().distanceTo(endPos) < 50000) {
-        ap._followingPath = newPath;
-        transmit('NAVIGATION', 'Dotted-line path detected!\nFollowing discovery route.');
-        goPhase('followDiscoveryPath');
-        return;
-      }
+    // Follow any open path that ORIGINATES at this nebula cluster and
+    // hasn't been followed yet. The old count-snapshot ("did a path
+    // appear since phase entry?") missed paths created during the
+    // approach/coast — discovery often fires BEFORE this phase starts,
+    // so the demo lapped next to a freshly-drawn line for 25 s and then
+    // warped away without ever following it. A twin pair can open two
+    // paths at once: take the one with the closer endpoint first; the
+    // other is picked up when the demo returns to this nebula after
+    // clearing the first (see phaseFollowDiscoveryPath).
+    const candidates = eligibleDiscoveryPathsFrom(nebCenter, 8000);
+    if (candidates.length) {
+      ap._followingPath = candidates[0];
+      transmit('NAVIGATION', 'Dotted-line path detected!\nFollowing discovery route.');
+      goPhase('followDiscoveryPath');
+      return;
     }
 
     // Safety timeout — no discovery path materialised. Don't fall through
@@ -1586,11 +1577,31 @@
           ap.returnPhase = 'followDiscoveryPath';
           goPhase('combat');
         } else {
-          // Cleared — head for the nearest black hole and warp through
-          // to the next galaxy.
-          ap.segmentKills = 0;
-          ap.currentBH = null;
-          goPhase('gotoBlackHoleGalaxy');
+          // Cleared — never re-follow this path.
+          if (!ap._followedPathLines) ap._followedPathLines = [];
+          if (path && path.line && ap._followedPathLines.indexOf(path.line) < 0) {
+            ap._followedPathLines.push(path.line);
+          }
+          // A twin pair opens TWO paths (core + patrol). If the other
+          // one is still waiting back at the nebula cluster we came
+          // from, return to the nebula of origin — the orbit phase's
+          // path scan will pick it up and follow it. Otherwise head
+          // for the nearest black hole and warp to the next galaxy.
+          const sp = path && path.line && path.line.userData && path.line.userData.startPosition;
+          const remaining = sp ? eligibleDiscoveryPathsFrom(sp, 8000) : [];
+          if (remaining.length) {
+            ap.currentNebula = _nebulaNearPosition(sp, 6000) ||
+              { position: sp.clone(), userData: { name: 'Nebula of Origin' } };
+            ap.orbitTarget = null;
+            ap._originReturnActive = true; // suppress mid-flight nebula re-routing
+            transmit('NAVIGATION', 'Second discovery route waiting!\nReturning to nebula of origin.');
+            setStatus('Returning to nebula of origin — second path waiting');
+            goPhase('coastToNebulaCluster');
+          } else {
+            ap.segmentKills = 0;
+            ap.currentBH = null;
+            goPhase('gotoBlackHoleGalaxy');
+          }
         }
         return;
       }
@@ -2711,6 +2722,46 @@
     return best;
   }
 
+  // Discovery paths that ORIGINATE within originRadius of originPos and
+  // still need following: not already followed by the demo, mission not
+  // complete, endpoint within sane reach (50k — beyond that the path is
+  // stale or points at a galaxy we should reach by black hole instead).
+  // Sorted by endpoint distance from the player, closest first.
+  function eligibleDiscoveryPathsFrom(originPos, originRadius) {
+    const out = [];
+    const paths = (typeof window !== 'undefined' && window.discoveryPaths) || [];
+    if (!ap._followedPathLines) ap._followedPathLines = [];
+    for (let i = 0; i < paths.length; i++) {
+      const p = paths[i];
+      const ud = p && p.line && p.line.userData;
+      if (!ud || !ud.startPosition || !ud.endPosition) continue;
+      if (ud.missionComplete) continue;
+      if (ap._followedPathLines.indexOf(p.line) >= 0) continue;
+      if (originPos && ud.startPosition.distanceTo(originPos) > originRadius) continue;
+      if (camPos().distanceTo(ud.endPosition) > 50000) continue;
+      out.push(p);
+    }
+    out.sort((a, b) =>
+      camPos().distanceTo(a.line.userData.endPosition) -
+      camPos().distanceTo(b.line.userData.endPosition));
+    return out;
+  }
+
+  // The actual nebula object closest to a position (any discovery state —
+  // unlike nearestNebula(), which skips deep-discovered nebulas and so can
+  // never find a nebula we already opened paths from).
+  function _nebulaNearPosition(pos, radius) {
+    if (typeof nebulaClouds === 'undefined' || !pos) return null;
+    let best = null, bestD = radius || 6000;
+    for (let i = 0; i < nebulaClouds.length; i++) {
+      const n = nebulaClouds[i];
+      if (!n || !n.userData) continue;
+      const d = n.position.distanceTo(pos);
+      if (d < bestD) { bestD = d; best = n; }
+    }
+    return best;
+  }
+
   function nearestNebula() {
     if (typeof nebulaClouds === 'undefined') return null;
     let best = null, bestDist = Infinity;
@@ -2927,6 +2978,7 @@
     ap.combatMissileFired = false;
     ap.currentNebula = null;
     ap.discoveryPath = null;
+    ap._originReturnActive = false; // warp invalidates any return trip
     ap._lastAttacker = null;
     ap._navCache = null;
     ap._navCacheFrame = -999;       // force navDetectedEnemy to re-scan
@@ -3130,6 +3182,13 @@
       let pull = dist < CLOSE_RANGE ? 2.0 : 0.8;
       if (e.userData.isMartianPirate) pull *= 1.75;
       e.position.addScaledVector(_swarmVec, pull);
+      // If this enemy is render-interpolated (see game-core enemy block), shift
+      // BOTH lerp endpoints by the same pull so the swarm motion rides along the
+      // glide instead of being overwritten by interpolation next frame.
+      if (e.userData._interp && e.userData._iFrom && e.userData._iTo) {
+        e.userData._iFrom.addScaledVector(_swarmVec, pull);
+        e.userData._iTo.addScaledVector(_swarmVec, pull);
+      }
     }
   }
 
@@ -3247,6 +3306,11 @@
       ap._followPathWarpFired = false;
       ap._tacticalMsgShown = false;
     }
+    // The origin-return trip is over once we're following the second
+    // path — or abandoned if we picked a brand-new warp destination.
+    if (name === 'followDiscoveryPath' || name === 'warpToNebulaCluster') {
+      ap._originReturnActive = false;
+    }
   }
 
   function resetFlags() {
@@ -3268,8 +3332,8 @@
     ap._evadeUntil = 0;
     ap._evadeKey = null;
     ap._followingPath = null;
-    ap._pathCountAtEntry = 0;
-    ap._orbitPhaseStart = 0;
+    ap._followedPathLines = [];
+    ap._originReturnActive = false;
     ap._followPathWarpFired = false;
     ap._tacticalMsgShown = false;
   }

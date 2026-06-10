@@ -1,0 +1,13 @@
+{
+  "name": "interstellar-slingshot",
+  "private": true,
+  "version": "1.0.0",
+  "description": "A gravitational space explorer built with Three.js.",
+  "scripts": {
+    "build:css": "tailwindcss -i ./src/tailwind.css -o ./css/tailwind.css --minify",
+    "watch:css": "tailwindcss -i ./src/tailwind.css -o ./css/tailwind.css --watch"
+  },
+  "devDependencies": {
+    "tailwindcss": "^3.4.13"
+  }
+}

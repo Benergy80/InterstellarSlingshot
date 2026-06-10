@@ -1434,20 +1434,33 @@ function updateLocalEnemyBehavior(enemy, distanceToPlayer, adjustedSpeed, diffic
         enemy.userData.attackMode = faction.primaryBehavior;
     }
 
+    // Mode-switch dwell: these RANDOM attackMode rolls each fire per-frame (a
+    // faction primary/secondary flip, a low-HP evade roll, and a 10% swarm
+    // roll). Re-rolling several times a second flips the enemy between modes
+    // that move in opposite directions (pursue=toward, evade=away,
+    // swarm=converge), so its motion reverses frame-to-frame — that is the
+    // "enemies move jittery" vibration. Commit to a chosen maneuver for ~0.9s
+    // before another RANDOM switch may fire. Distance-based overrides below are
+    // deterministic and stay instant.
+    const _now = Date.now();
+    const _modeLocked = (_now - (enemy.userData._lastModeChange || 0)) < 900;
+
     // Faction-specific behavior changes (more frequent for active dogfighting)
     const changeChance = (faction.behaviorChangeChance || 0.002) * 3;
-    if (Math.random() < changeChance) {
+    if (!_modeLocked && Math.random() < changeChance) {
         if (enemy.userData.attackMode === faction.primaryBehavior) {
             enemy.userData.attackMode = faction.secondaryBehavior;
         } else {
             enemy.userData.attackMode = faction.primaryBehavior;
         }
+        enemy.userData._lastModeChange = _now;
     }
 
     // Health-triggered evasion: low-HP enemies bias toward evade
     const healthFraction = enemy.userData.health / (enemy.userData.maxHealth || 1);
-    if (healthFraction < 0.5 && Math.random() < 0.04) {
+    if (!_modeLocked && healthFraction < 0.5 && Math.random() < 0.04) {
         enemy.userData.attackMode = 'evade';
+        enemy.userData._lastModeChange = _now;
     }
 
     // Multi-enemy swarming: if 2+ enemies are within 1200u of the target,
@@ -1455,7 +1468,7 @@ function updateLocalEnemyBehavior(enemy, distanceToPlayer, adjustedSpeed, diffic
     // Check chance bumped 0.02 -> 0.10 (5x) and radius widened 800 -> 1200
     // so groups commit to a swarm much more often than they did before —
     // user feedback was that enemies needed to swarm the player better.
-    if (Math.random() < 0.10 && typeof enemies !== 'undefined') {
+    if (!_modeLocked && Math.random() < 0.10 && typeof enemies !== 'undefined') {
         let nearbyAllies = 0;
         for (let j = 0; j < enemies.length; j++) {
             const e = enemies[j];
@@ -1463,7 +1476,10 @@ function updateLocalEnemyBehavior(enemy, distanceToPlayer, adjustedSpeed, diffic
             if (e.position.distanceTo(targetPos) < 1200) nearbyAllies++;
             if (nearbyAllies >= 2) break;
         }
-        if (nearbyAllies >= 2) enemy.userData.attackMode = 'swarm';
+        if (nearbyAllies >= 2) {
+            enemy.userData.attackMode = 'swarm';
+            enemy.userData._lastModeChange = _now;
+        }
     }
 
     // Distance-based overrides
@@ -2588,7 +2604,20 @@ function createAmbientSpaceMusic() {
 
 function createBattleMusic() {
     if (!audioContext || !musicSystem.enabled) return;
-    
+
+    // Old synthesized battle-music layer RETIRED. switchToBattleMusic() already
+    // plays Boss Fight.mp3 via soundtrack.forceTrack('bossFight'); this synth
+    // (menacing sawtooth bass/pad/lead) used to play SIMULTANEOUSLY behind it —
+    // the "boss sound effect heard behind Boss Fight.mp3" we were asked to
+    // disable. It's raw Web Audio (bypasses playSound), which is why the
+    // playSound('boss') guard didn't silence it. Return before creating any
+    // oscillators; remove this `return` to bring the synth layer back. A
+    // harmless stub is set so switchToAmbientMusic()'s cleanup still runs
+    // (fades the ambient layer back in + restores music gain after the fight) —
+    // it just has nothing real to stop.
+    musicSystem.battleMusic = { stop() {} };
+    return;
+
     // MENACING SYNTH-WAVE BOSS MUSIC
     
     // Deep, ominous bass synth
@@ -2810,6 +2839,11 @@ function playSound(type, frequency = 440, duration = 0.2) {
     if (!audioContext || audioContext.state === 'suspended') {
         return;
     }
+
+    // Boss SFX retired: the Boss Fight.mp3 music track now covers boss
+    // appearances, so the old synthesized 'boss' stinger is disabled. (Called
+    // from game-objects.js x2 and outer-systems.js; guarded here centrally.)
+    if (type === 'boss') return;
 
     const oscillator = audioContext.createOscillator();
     const gain = audioContext.createGain();

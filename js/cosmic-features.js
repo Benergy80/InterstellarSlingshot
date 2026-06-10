@@ -1500,8 +1500,13 @@ function updateCosmicFeatures() {
             });
         }
         
-        // Gradual growth
-        const growthFactor = 1 + formation.userData.growthRate * Math.sin(time * 0.1);
+        // Gradual growth. growthRate defaults to 0 because outer-system crystal
+        // structures (outer-systems.js createOuterCosmicFeature) get pushed into
+        // this same crystalFormations array WITHOUT a growthRate. undefined * sin()
+        // is NaN, which set every such crystal's scale to NaN — making them
+        // invisible and poisoning the gravity/slingshot arrays they live in.
+        const growthRate = formation.userData.growthRate || 0;
+        const growthFactor = 1 + growthRate * Math.sin(time * 0.1);
         formation.scale.setScalar(growthFactor);
     });
     
