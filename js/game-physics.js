@@ -218,38 +218,29 @@ function orientTowardsTarget(target) {
     // amount scales with real elapsed time, so the turn rate is consistent
     // regardless of FPS.
     const rotationSpeedPerFrame = 0.12;
-    const maxRotationPerFrame = 0.055;
+    const maxRotationPerFrame = 0.045;  // max turn speed cap: was 0.055 (~189°/s) -> 0.045 (~155°/s)
     const FRAME_MS = 16.67;
     const frames = _deltaMs / FRAME_MS;
 
-    // Sub-step the rotation: instead of one large step per call, apply
-    // ceil(frames * 3) small substeps. At 60fps this is ~3 substeps; at
-    // 30fps (a stutter) it becomes ~6. Each substep is a small eased
-    // proportional turn against the LATEST angular delta, so as the
-    // camera converges the next substep gets smaller — much smoother
-    // tracking than one big step against a stale delta.
-    const SUBSTEPS_PER_FRAME = 3;
-    const subSteps = Math.max(1, Math.min(12, Math.ceil(frames * SUBSTEPS_PER_FRAME)));
-    const subFrac = frames / subSteps;   // fraction of one 60fps frame per substep
-
+    // Closed-form exponential smoothing — the N->infinity limit of the old
+    // sub-step loop. Rotating a fraction (1 - e^(-rate*frames)) of the REMAINING
+    // angle toward the target each frame is mathematically equivalent to
+    // infinitely many tiny eased sub-steps, so it's maximally smooth AND
+    // frame-rate-independent, for the cost of ONE rotation (no sub-step count to
+    // tune). The fraction matches the old rate: 1-e^(-0.12) ≈ 0.113/frame vs the
+    // old 3-substep 0.115/frame. Same per-frame cap as before.
     if (!orientTowardsTarget._quat) orientTowardsTarget._quat = new THREE.Quaternion();
     let totalRotation = 0;
-    for (let s = 0; s < subSteps; s++) {
-        camera.getWorldDirection(_ortFwd);
-        const curAngle = _ortFwd.angleTo(_ortDir);
-        if (curAngle < orientationThreshold) break;
+    camera.getWorldDirection(_ortFwd);
+    const curAngle = _ortFwd.angleTo(_ortDir);
+    if (curAngle >= orientationThreshold) {
         _ortAxis.crossVectors(_ortFwd, _ortDir).normalize();
         if (_ortAxis.length() < 0.001) _ortAxis.set(0, 1, 0);
-
-        // Eased proportional + per-substep cap, both scaled by this
-        // substep's fraction of a 60fps frame.
-        const stepCap = maxRotationPerFrame * subFrac;
-        const stepProp = curAngle * rotationSpeedPerFrame * subFrac;
-        const stepAmt = Math.min(stepProp, stepCap);
-
-        orientTowardsTarget._quat.setFromAxisAngle(_ortAxis, stepAmt);
+        const t = 1 - Math.exp(-rotationSpeedPerFrame * frames);          // exact eased fraction
+        const rot = Math.min(curAngle * t, maxRotationPerFrame * frames); // same cap as before
+        orientTowardsTarget._quat.setFromAxisAngle(_ortAxis, rot);
         camera.quaternion.premultiply(orientTowardsTarget._quat);
-        totalRotation += stepAmt;
+        totalRotation = rot;
     }
 
     // Feed the yaw component into rotationalVelocity so the ship-bank
