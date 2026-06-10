@@ -12318,8 +12318,8 @@ function updateHubbleSkybox2Opacity() {
     // not from the world origin. Pre-fix this used camera.position
     // .length(); after the SOL relocation the player spawns ~9.3k units
     // from origin, so this deep layer started at ~0.31 instead of its
-    // 0.20 floor and washed out the early sky / scene. Sol-anchored, it
-    // sits at the 0.20 floor at spawn and fades in only on real travel.
+    // floor and washed out the early sky / scene. Sol-anchored, it
+    // sits at the 0.25 floor at spawn and fades in only on real travel.
     const _solB = (typeof window !== 'undefined' && window.localSystemOffset)
         ? window.localSystemOffset : { x: 8000, y: 0, z: 4800 };
     const _s2dx = camera.position.x - _solB.x;
@@ -12331,15 +12331,15 @@ function updateHubbleSkybox2Opacity() {
     const fadeStartDistance = 1000;        // Start fading at 1,000 units from Sol
     const fadeEndDistance = 75000;         // Reach max opacity at 75,000 units
     
-    // Calculate opacity based on distance (0.20 floor to 0.50 max)
+    // Calculate opacity based on distance (0.25 floor to 0.50 max)
     let targetOpacity;
     if (distanceFromStart < fadeStartDistance) {
-        targetOpacity = 0.20; // Visible from the start without washing out the early sky
+        targetOpacity = 0.25; // Visible from the start without washing out the early sky
     } else if (distanceFromStart > fadeEndDistance) {
         targetOpacity = 0.50;
     } else {
         const progress = (distanceFromStart - fadeStartDistance) / (fadeEndDistance - fadeStartDistance);
-        targetOpacity = 0.20 + (progress * 0.30); // 0.20 → 0.50
+        targetOpacity = 0.25 + (progress * 0.25); // 0.25 → 0.50
     }
     
     // Boss / elite-guardian battle: hide this deeper Hubble layer too so
@@ -12409,6 +12409,8 @@ function isBossBattleActive() {
 if (typeof window !== "undefined") window.isBossBattleActive = isBossBattleActive;
 
 function createBossBattleSkybox() {
+    // Re-entry guard: both init paths may call this; one dome only.
+    if (bossSkybox) return;
     console.log("Creating boss battle skybox...");
 
     const geometry = new THREE.SphereGeometry(135000, 64, 64);
@@ -12429,6 +12431,10 @@ function createBossBattleSkybox() {
     bossSkybox.renderOrder = 0;
 
     scene.add(bossSkybox);
+    // Re-export: the load-time `window.bossSkybox = bossSkybox` below ran
+    // while this was still null, which made console checks read null even
+    // when the dome existed.
+    if (typeof window !== 'undefined') window.bossSkybox = bossSkybox;
 
     console.log("✅ Boss battle skybox created (initially transparent)");
 }
