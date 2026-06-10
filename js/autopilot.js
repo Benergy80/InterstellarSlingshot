@@ -584,6 +584,22 @@
       default:                         goPhase('init');
     }
 
+    // WARP INTEGRITY: a full O-key emergency warp must run its whole 15 s
+    // boost. Phase logic was pressing X mid-boost — flyToward's distance
+    // brake (speed×35 = 3,500 u at warp speed!), combat's overshoot brake,
+    // the runaway guard — and physics honors X during an active warp
+    // (×0.99/frame), so the boost bled off in ~2-3 s and the starfield cut
+    // out: the "demo always stops its warps too soon" bug. Clear X while a
+    // non-jump warp boost is active. Exception: an active planet-collision
+    // evade keeps its brake (dumping warp speed is correct there).
+    // coastToNebulaCluster already had its own version of this lock; this
+    // covers the combat / followDiscoveryPath warps too.
+    if (typeof gameState !== 'undefined' && gameState.emergencyWarp &&
+        gameState.emergencyWarp.active && !gameState.emergencyWarp.isJump &&
+        !(ap._evadeUntil && Date.now() < ap._evadeUntil)) {
+      keys().x = false;
+    }
+
     tickHUD();
   }
 

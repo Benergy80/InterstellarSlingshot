@@ -221,13 +221,14 @@ function orientTowardsTarget(target) {
     // amount scales with real elapsed time, so the turn rate is consistent
     // regardless of FPS.
     // The DEMO gets its own (slower, more cinematic) turn tuning. This
-    // function also serves the player's auto-nav orientation, which keeps
-    // the snappier rates — demoPilot.driving is true only while the
-    // autopilot is actually flying the ship (false on player takeover).
+    // function also serves the player's auto-nav orientation, which uses
+    // the rates main had a week ago (0.12 / 0.055) — demoPilot.driving is
+    // true only while the autopilot is actually flying the ship, and goes
+    // false on player takeover, so manual feel is never affected.
     const _demoDriving = (typeof window !== 'undefined' && window.demoPilot &&
                           window.demoPilot.driving);
     const rotationSpeedPerFrame = _demoDriving ? 0.08 : 0.12;  // approach rate
-    const maxRotationPerFrame   = _demoDriving ? 0.025 : 0.045; // cap: demo ~86°/s, manual/auto-nav ~155°/s
+    const maxRotationPerFrame   = _demoDriving ? 0.025 : 0.055; // cap: demo ~86°/s, player auto-nav ~189°/s
     const FRAME_MS = 16.67;
     const frames = _deltaMs / FRAME_MS;
 
