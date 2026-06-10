@@ -1831,6 +1831,14 @@ function fireEnemyWeapon(enemy, difficultySettings) {
                 } else if (typeof gameState !== 'undefined' && gameState.health !== undefined) {
                     gameState.health = Math.max(0, gameState.health - actualDamage);
                 }
+
+                // Knockback: enemy blasts shove the ship slightly along the
+                // shot line (softened while shields are up). ~5% of max
+                // velocity per hit — felt, not destabilizing.
+                if (typeof camera !== 'undefined' && gameState.velocityVector && enemy && enemy.position) {
+                    const _kb = camera.position.clone().sub(enemy.position).normalize();
+                    gameState.velocityVector.addScaledVector(_kb, shieldsActive ? 0.10 : 0.22);
+                }
             }
 
             if (shieldsActive && typeof createShieldHitEffect === 'function') {
@@ -3150,23 +3158,25 @@ function createPirateExplosionVariant(position, variant) {
     particleSystem.position.copy(position);
     scene.add(particleSystem);
 
-    let scale = 1, opacity = 1, elapsed = 0;
+    // IMPORTANT: scene removal/disposal must live in cleanup(), not inline
+    // in update() — explosionManager.clearAll() drops entries by calling
+    // cleanup(), so an entry without one gets orphaned in the scene,
+    // frozen mid-fade (that was the "explosions not cleaning up" bug).
+    let scale = 1, opacity = 1;
     explosionManager.addExplosion({
         update(deltaTime) {
-            elapsed += deltaTime;
             scale += 0.5 * (deltaTime / 60);
             opacity -= 0.05 * (deltaTime / 60);
             explosion.scale.set(scale, scale, scale);
             explosionMaterial.opacity = Math.max(0, opacity);
             particleSystem.scale.set(scale * 1.2, scale * 1.2, scale * 1.2);
             particleMaterial.opacity = Math.max(0, opacity);
-            if (opacity <= 0) {
-                scene.remove(explosion); scene.remove(particleSystem);
-                explosionGeometry.dispose(); explosionMaterial.dispose();
-                particles.dispose(); particleMaterial.dispose();
-                return false;
-            }
-            return true;
+            return opacity > 0;
+        },
+        cleanup() {
+            scene.remove(explosion); scene.remove(particleSystem);
+            explosionGeometry.dispose(); explosionMaterial.dispose();
+            particles.dispose(); particleMaterial.dispose();
         }
     });
 
@@ -4742,8 +4752,11 @@ function _ensureEnemyShield(enemy) {
         const _ud1 = enemy.userData || {};
         const _bigShield = _ud1.isBoss || _ud1.isBossSupport ||
                            _ud1.isEliteGuardian || _ud1.isBlackHoleGuardian;
+        // Big-shield ceiling raised 320 → 640: bosses are now 2× scale and
+        // the bubble (plus the shard shatter, which reads _shieldRadius)
+        // must scale with the doubled hull instead of clamping below it.
         const minR = _bigShield ? 45 : 22;
-        const maxR = _bigShield ? 320 : 140;
+        const maxR = _bigShield ? 640 : 140;
         worldR = Math.max(minR, Math.min(worldR, maxR));
     }
 
@@ -5967,6 +5980,18 @@ function checkWeaponHits(targetPosition) {
                 enemy.userData.health -= damage;
                 enemy.userData.lastHitTime = Date.now();
                 _activateOnDamage(enemy);
+
+                // Knockback: laser hits shove the target a touch along the
+                // shot line. The position nudge survives the AI's render
+                // interpolation (behaviors continue from the moved spot),
+                // which smooths it into a visible recoil.
+                if (typeof camera !== 'undefined' && enemy.position) {
+                    const _kb = enemy.position.clone().sub(camera.position).normalize();
+                    enemy.position.addScaledVector(_kb, 6);
+                    if (enemy.userData.velocity && enemy.userData.velocity.addScaledVector) {
+                        enemy.userData.velocity.addScaledVector(_kb, 0.15);
+                    }
+                }
 
                 // ENHANCED: Use improved hit effect with color changes
                 flashEnemyHit(enemy, damage);
