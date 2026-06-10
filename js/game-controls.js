@@ -179,16 +179,11 @@ function _ensureShipThrusterCones(ship, color) {
                 const wpos = ship.getWorldPosition(new THREE.Vector3());
                 // Rear of the hull behind ship centre, WORLD units →
                 // converted to the ship's LOCAL frame (cone is a child).
-                // Enemy8.glb (Vulcan ships) has its nose on +Z — opposite
-                // the -Z-forward convention of every other model — so the
-                // +Z "rear" mount put plumes on the FRONT (verified live:
-                // cone-vs-movement dot +0.67..+0.94). Flip to the -Z face
-                // for Vulcan patrol ships, their boss, and boss support.
-                const _ud2 = ship.userData || {};
-                const _rearFlip = !!(_ud2.isVulcanPatrol ||
-                    (typeof _ud2.areaKey === 'string' && _ud2.areaKey.indexOf('vulcanPatrol') >= 0));
-                ship.userData._thrusterApexSign = _rearFlip ? -1 : 1;
-                localBack = (_rearFlip ? (_box.min.z - wpos.z) : (_box.max.z - wpos.z)) / sz;
+                // +Z-nosed models (Enemy1/Enemy8) are now corrected at
+                // model build time (_applyNoseFlip in game-models.js), so
+                // the uniform +Z rear mount is right for every ship again.
+                ship.userData._thrusterApexSign = 1;
+                localBack = (_box.max.z - wpos.z) / sz;
                 // Cone ≈ 22% of the visible ship length, base ≈ 6% — with
                 // absolute floors (5u / 1.4u world) so the small 12-16u
                 // hulls still get a readable plume instead of a 3u speck.
@@ -1101,6 +1096,9 @@ function updateEnemyBehavior() {
     // behavior so each enemy can read enemy.userData.engagedTarget below.
     _assignEngagementTargets();
 
+    // Boss homing missiles fly every behavior pass (30 Hz)
+    if (typeof _updateBossMissiles === 'function') _updateBossMissiles();
+
     let nearbyEnemyCount = 0;
     let inCombatRange = false;
     let activeAttackers = 0;
@@ -1634,8 +1632,12 @@ function updateBossBehavior(enemy, playerPos, speed) {
     // Bosses use more complex movement patterns
     const time = Date.now() * 0.001;
     const distance = enemy.position.distanceTo(playerPos);
-    
-    if (distance > 150) {
+
+    // Standoff scales with the (now 2×) hull so the boss circles OUTSIDE
+    // the player's personal space instead of parking inside it at 120u.
+    const standoff = Math.max(350, (enemy.userData.hitboxSize || 288) * 0.9);
+
+    if (distance > standoff * 1.6) {
         // Approach with weaving pattern
         const direction = new THREE.Vector3().subVectors(playerPos, enemy.position).normalize();
         const weave = new THREE.Vector3(Math.sin(time * 2) * 20, Math.cos(time * 1.5) * 15, 0);
@@ -1644,13 +1646,176 @@ function updateBossBehavior(enemy, playerPos, speed) {
     } else {
         // Circle strafe at optimal distance
         const angle = time * 0.8;
-        const targetX = playerPos.x + Math.cos(angle) * 120;
-        const targetZ = playerPos.z + Math.sin(angle) * 120;
-        const targetY = playerPos.y + Math.sin(angle * 0.3) * 30;
-        
+        const targetX = playerPos.x + Math.cos(angle) * standoff;
+        const targetZ = playerPos.z + Math.sin(angle) * standoff;
+        const targetY = playerPos.y + Math.sin(angle * 0.3) * standoff * 0.25;
+
         const targetPos = new THREE.Vector3(targetX, targetY, targetZ);
         const direction = new THREE.Vector3().subVectors(targetPos, enemy.position).normalize();
         enemy.position.add(direction.multiplyScalar(speed * 0.6));
+    }
+
+    // Special attacks: missile volleys + spinning laser sweeps
+    if (typeof _updateBossSpecials === 'function') {
+        _updateBossSpecials(enemy, playerPos, distance);
+    }
+}
+
+// =============================================================================
+// BOSS SPECIAL ATTACKS — missile volleys and spinning laser sweeps. Both
+// punish camping: the volley reaches far (so the player keeps moving) and
+// the sweep punishes sitting close to the hull (so the player keeps range).
+// =============================================================================
+const _bossMissiles = [];
+const _BOSS_MISSILE_CAP = 24;
+
+function _bossPlayerAimPos() {
+    try {
+        const cs = window.cameraState;
+        const ship = cs && cs.playerShipMesh;
+        if (ship && ship.visible) {
+            const wp = new THREE.Vector3();
+            ship.getWorldPosition(wp);
+            if (isFinite(wp.x)) return wp;
+        }
+    } catch (e) {}
+    return camera.position.clone();
+}
+
+function _spawnBossMissile(boss) {
+    if (!boss || !boss.userData || boss.userData.health <= 0) return;
+    if (_bossMissiles.length >= _BOSS_MISSILE_CAP) return;
+    const geo = new THREE.ConeGeometry(3, 14, 6);
+    const mat = new THREE.MeshBasicMaterial({
+        color: 0xff3322, transparent: true, opacity: 0.95,
+        blending: THREE.AdditiveBlending, depthWrite: false
+    });
+    const m = new THREE.Mesh(geo, mat);
+    m.position.copy(boss.position);
+    // Launch in a fanned direction toward the player
+    const aim = _bossPlayerAimPos();
+    const dir = aim.sub(boss.position).normalize();
+    dir.x += (Math.random() - 0.5) * 0.5;
+    dir.y += (Math.random() - 0.5) * 0.3;
+    dir.z += (Math.random() - 0.5) * 0.5;
+    dir.normalize();
+    scene.add(m);
+    _bossMissiles.push({ mesh: m, vel: dir.multiplyScalar(2.2), born: Date.now() });
+}
+
+// Called once per behavior pass (30 Hz) from updateEnemyBehavior.
+function _updateBossMissiles() {
+    if (!_bossMissiles.length) return;
+    const aim = _bossPlayerAimPos();
+    for (let i = _bossMissiles.length - 1; i >= 0; i--) {
+        const bm = _bossMissiles[i];
+        const age = Date.now() - bm.born;
+        // Homing: bend velocity toward the player, capped turn per tick
+        const want = aim.clone().sub(bm.mesh.position).normalize().multiplyScalar(2.2);
+        bm.vel.lerp(want, 0.045).setLength(2.2);
+        bm.mesh.position.add(bm.vel);
+        bm.mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), bm.vel.clone().normalize());
+
+        const dist = bm.mesh.position.distanceTo(camera.position);
+        let done = false;
+        if (dist < 40) {
+            // Impact: damage + knockback + screen shake
+            const isInvuln = typeof isBlackHoleWarpInvulnerable === 'function' && isBlackHoleWarpInvulnerable();
+            if (!isInvuln && typeof gameState !== 'undefined' && gameState.hull !== undefined) {
+                const red = typeof getShieldDamageReduction === 'function' ? getShieldDamageReduction() : 0;
+                gameState.hull = Math.max(0, gameState.hull - 6 * (1 - red));
+                if (gameState.velocityVector) {
+                    gameState.velocityVector.addScaledVector(bm.vel.clone().normalize(), 0.35);
+                }
+                if (typeof createEnhancedScreenDamageEffect === 'function') {
+                    createEnhancedScreenDamageEffect(bm.mesh.position);
+                }
+            }
+            if (typeof createExplosionEffect === 'function') createExplosionEffect(bm.mesh.position);
+            done = true;
+        } else if (age > 9000) {
+            done = true;
+        }
+        if (done) {
+            scene.remove(bm.mesh);
+            bm.mesh.geometry.dispose(); bm.mesh.material.dispose();
+            _bossMissiles.splice(i, 1);
+        }
+    }
+}
+if (typeof window !== 'undefined') window._updateBossMissiles = _updateBossMissiles;
+
+function _updateBossSpecials(boss, playerPos, distance) {
+    const ud = boss.userData;
+    const now = Date.now();
+    if (!ud._nextVolleyAt) ud._nextVolleyAt = now + 6000 + Math.random() * 4000;
+    if (!ud._nextSweepAt) ud._nextSweepAt = now + 12000 + Math.random() * 5000;
+
+    // MISSILE VOLLEY — 5 homing bolts, staggered, every 11-16 s
+    if (now >= ud._nextVolleyAt && distance > 250 && distance < 3500) {
+        ud._nextVolleyAt = now + 11000 + Math.random() * 5000;
+        for (let i = 0; i < 5; i++) {
+            setTimeout(() => _spawnBossMissile(boss), i * 170);
+        }
+        if (typeof showAchievement === 'function') {
+            showAchievement('⚠ MISSILE VOLLEY', (ud.name || 'Boss') + ' launched a homing volley — evade!', true);
+        }
+    }
+
+    // SPINNING LASER SWEEP — 3 beams rotating around the boss for 3.5 s,
+    // every 14-19 s, only triggers (and only hurts) at close range
+    if (now >= ud._nextSweepAt && distance < 1600) {
+        ud._nextSweepAt = now + 14000 + Math.random() * 5000;
+        ud._sweepUntil = now + 3500;
+        ud._sweepAngle = Math.random() * Math.PI * 2;
+        if (typeof showAchievement === 'function') {
+            showAchievement('⚠ LASER SWEEP', (ud.name || 'Boss') + ' is spinning up rotating beams — keep your distance!', true);
+        }
+    }
+    if (ud._sweepUntil && now < ud._sweepUntil) {
+        ud._sweepAngle += 0.062; // ~1.9 rad/s at 30 Hz
+        const SWEEP_LEN = 1200;
+        const drawThisTick = (typeof gameState !== 'undefined') ? (gameState.frameCount % 4 === 0) : true;
+        for (let k = 0; k < 3; k++) {
+            const a = ud._sweepAngle + k * (Math.PI * 2 / 3);
+            const end = new THREE.Vector3(
+                boss.position.x + Math.cos(a) * SWEEP_LEN,
+                boss.position.y + Math.sin(a * 0.5) * 80,
+                boss.position.z + Math.sin(a) * SWEEP_LEN
+            );
+            if (drawThisTick && typeof createLaserBeam === 'function') {
+                createLaserBeam(boss.position.clone(), end, '#ff2222', false);
+            }
+        }
+        // Damage check: player inside sweep radius AND angularly near a beam
+        const toPlayer = camera.position.clone().sub(boss.position);
+        const distXZ = Math.sqrt(toPlayer.x * toPlayer.x + toPlayer.z * toPlayer.z);
+        if (distXZ < SWEEP_LEN && Math.abs(toPlayer.y) < 250 &&
+            now - (ud._lastSweepHit || 0) > 450) {
+            const playerAngle = Math.atan2(toPlayer.z, toPlayer.x);
+            for (let k = 0; k < 3; k++) {
+                let diff = (playerAngle - (ud._sweepAngle + k * (Math.PI * 2 / 3))) % (Math.PI * 2);
+                if (diff > Math.PI) diff -= Math.PI * 2;
+                if (diff < -Math.PI) diff += Math.PI * 2;
+                if (Math.abs(diff) < 0.13) {
+                    ud._lastSweepHit = now;
+                    const isInvuln = typeof isBlackHoleWarpInvulnerable === 'function' && isBlackHoleWarpInvulnerable();
+                    if (!isInvuln && typeof gameState !== 'undefined' && gameState.hull !== undefined) {
+                        const red = typeof getShieldDamageReduction === 'function' ? getShieldDamageReduction() : 0;
+                        gameState.hull = Math.max(0, gameState.hull - 4 * (1 - red));
+                        // Knock outward, away from the sweep
+                        if (gameState.velocityVector && distXZ > 1) {
+                            gameState.velocityVector.x += (toPlayer.x / distXZ) * 0.3;
+                            gameState.velocityVector.z += (toPlayer.z / distXZ) * 0.3;
+                        }
+                        if (typeof createEnhancedScreenDamageEffect === 'function') {
+                            createEnhancedScreenDamageEffect(boss.position);
+                        }
+                    }
+                    break;
+                }
+            }
+        }
     }
 }
 

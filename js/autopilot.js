@@ -565,6 +565,29 @@
       }
     }
 
+    // BOSS MAGNET: a live boss-tier enemy within 15,000u pulls the demo
+    // into the set-piece fight from any explore/travel phase. Excluded:
+    // phases that ARE the fight, warp-locked transits (physics owns the
+    // velocity), and pre-game. Throttled — it's a full enemies scan.
+    if (fc % 30 === 0 &&
+        ap.phase !== 'init' && ap.phase !== 'combat' &&
+        ap.phase !== 'bossEngage' && ap.phase !== 'fightBorg' &&
+        ap.phase !== 'blackHoleWarp' &&
+        ap.phase !== 'warpToNebulaCluster' && ap.phase !== 'coastToNebulaCluster' &&
+        typeof enemies !== 'undefined') {
+      const _cp = camPos();
+      for (let i = 0; i < enemies.length; i++) {
+        const e = enemies[i];
+        if (!e || !e.userData || e.userData.health <= 0) continue;
+        if (!e.userData.isBoss && !e.userData.isEliteGuardian) continue;
+        if (_cp.distanceTo(e.position) > 15000) continue;
+        setStatus('Boss signature detected — diverting to engage');
+        transmit('TACTICAL', 'Boss-class signature detected!\nDiverting to engage.');
+        goPhase('bossEngage');
+        break;
+      }
+    }
+
     // Dispatch
     switch (ap.phase) {
       case 'init':                     phaseInit();                   break;
@@ -887,7 +910,14 @@
 
     // Use the enemy's own firing range — that's how close we need to be for
     // a proper dog-fight (enemy fires back at us, we fire at them).
-    const engageRange = enemy.userData.firingRange || 500;
+    // BOSS TIER: hold a much bigger standoff — bosses are 2× scale with
+    // missile volleys (long reach) and spinning laser sweeps that punish
+    // anything inside ~1,200u of the hull.
+    const _bossTier = enemy.userData.isBoss || enemy.userData.isEliteGuardian ||
+                      enemy.userData.isBlackHoleGuardian;
+    const engageRange = _bossTier
+      ? Math.max(enemy.userData.firingRange || 500, (enemy.userData.hitboxSize || 288) * 1.5, 1400)
+      : (enemy.userData.firingRange || 500);
 
     const speed = gameState.velocityVector ? gameState.velocityVector.length() : 0;
 
@@ -968,6 +998,14 @@
       setStatus('Engaging ' + (enemy.userData.name || 'hostile') + ' — in weapons range');
       flyToward(enemy, 0.8);
       pursuitFlightStyle('engage');
+
+      // Boss standoff: too close to a boss means eating the laser sweep.
+      // Back away until we're outside half the engage range again.
+      if (_bossTier && dist < engageRange * 0.55) {
+        keys().s = true;
+        keys().x = true;
+        setStatus('Boss standoff — backing away (' + (dist | 0) + ' u)');
+      }
 
       // Brake if overshooting: closing too fast inside 2/3 of range
       if (dist < engageRange * 0.67 && speed > 1.5) {
@@ -2282,13 +2320,21 @@
     if (!target || !target.userData) return false;
     if (shieldsActive()) return false;
     if (!gameState.missiles || gameState.missiles.current <= 0) return false;
-    if (dist > missileMaxRange()) return false;
+    // Boss-tier targets are engaged from the long standoff — skip the
+    // close-range gate for them (their own cap is applied below).
+    const _bossRangeTier = target.userData.isBoss ||
+                           target.userData.isEliteGuardian ||
+                           target.userData.isBlackHoleGuardian;
+    if (!_bossRangeTier && dist > missileMaxRange()) return false;
     // Bosses / elite guardians / black-hole guardians have NO once-per-
     // target limit — the demo may keep missiling these big targets
     // (still rate-limited by the 1.5 s pacing below).
     const _bigTarget = target.userData.isBoss ||
                        target.userData.isEliteGuardian ||
                        target.userData.isBlackHoleGuardian;
+    // Big targets are fought from the 1,400u+ standoff — let missiles
+    // reach them from there instead of demanding point-blank range.
+    if (_bigTarget && dist > 2000) return false;
     if (!_bigTarget && hasMissileBeenFiredAt(target)) return false;
     if (Date.now() - (ap._lastMissileTime || 0) <= 1500) return false;
     return true;
@@ -2328,8 +2374,14 @@
     // commits to the missile resolution and resumes lasers post-impact.
     if (_isMissileInFlightAt(tgt)) return;
 
-    // Demo player only fires when within 400u — keep dogfights close-range
-    const engageRange = Math.min(400, (tgt.userData && tgt.userData.firingRange) || 400);
+    // Demo player only fires when within 400u — keep dogfights close-range.
+    // Boss-tier targets are engaged from the 1,400u+ standoff, so lasers
+    // get the reach to match.
+    const _bossTgt = tgt.userData.isBoss || tgt.userData.isEliteGuardian ||
+                     tgt.userData.isBlackHoleGuardian;
+    const engageRange = _bossTgt
+      ? 1800
+      : Math.min(400, (tgt.userData && tgt.userData.firingRange) || 400);
     const dist = camPos().distanceTo(tgt.position);
     if (dist > engageRange) return;
 

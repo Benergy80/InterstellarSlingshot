@@ -1765,6 +1765,20 @@ function checkBossVictory(defeatedEnemy) {
                 showAchievement('Martian Pirates Routed',
                     `Their leader is dead — ${n} remaining raider${n === 1 ? '' : 's'} scattered and destroyed.`, true);
             }
+        } else if (typeof galaxyId === 'number' && galaxyId !== 7 &&
+                   typeof eliminateRemainingSpecies === 'function') {
+            // FACTION COLLAPSE: a dead flagship takes its faction's
+            // remaining rank-and-file with it — their ships detonate
+            // across the galaxy (same treatment the local Vulcan/Martian
+            // species get above). Boss escorts are spared here; they're
+            // demoted to regular hostiles below and fight on.
+            const n = eliminateRemainingSpecies(ud => ud.galaxyId === galaxyId);
+            if (n > 0 && typeof showAchievement === 'function') {
+                const facName = (typeof galaxyTypes !== 'undefined' && galaxyTypes[galaxyId])
+                    ? galaxyTypes[galaxyId].faction : 'Enemy';
+                showAchievement(facName + ' Collapse',
+                    `Their flagship is down — ${n} remaining ship${n === 1 ? '' : 's'} destroyed in the rout.`, true);
+            }
         }
 
         // Defeating the Vulcan (Sgr A*) boss liberates the system and
