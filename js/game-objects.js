@@ -12446,6 +12446,52 @@ function isBossBattleActive() {
 }
 if (typeof window !== "undefined") window.isBossBattleActive = isBossBattleActive;
 
+// One-time procedural cloud texture for the boss dome: 5-octave value
+// noise baked into a canvas — white billows in the ALPHA channel, so the
+// material's red tint colors them and the heartbeat opacity pulse breathes
+// through the cloud pattern instead of a flat wash. MirroredRepeat hides
+// the tiling seam on the sphere wrap.
+function _makeBossCloudTexture() {
+    const SIZE = 512;
+    const canvas = document.createElement('canvas');
+    canvas.width = SIZE; canvas.height = SIZE;
+    const ctx = canvas.getContext('2d');
+    const img = ctx.createImageData(SIZE, SIZE);
+    const rand = (x, y) => {
+        const n = Math.sin(x * 127.1 + y * 311.7) * 43758.5453;
+        return n - Math.floor(n);
+    };
+    const smooth = t => t * t * (3 - 2 * t);
+    const noise2 = (x, y) => {
+        const xi = Math.floor(x), yi = Math.floor(y);
+        const xf = x - xi, yf = y - yi;
+        const a = rand(xi, yi), b = rand(xi + 1, yi);
+        const c = rand(xi, yi + 1), d = rand(xi + 1, yi + 1);
+        const u = smooth(xf), v = smooth(yf);
+        return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v;
+    };
+    for (let y = 0; y < SIZE; y++) {
+        for (let x = 0; x < SIZE; x++) {
+            let v = 0, amp = 0.5, freq = 4 / SIZE;
+            for (let o = 0; o < 5; o++) {
+                v += amp * noise2(x * freq, y * freq);
+                amp *= 0.5; freq *= 2;
+            }
+            // Billowy contrast: hollow out the troughs, keep bright crests
+            v = Math.max(0, Math.min(1, (v - 0.35) * 1.8));
+            const i = (y * SIZE + x) * 4;
+            img.data[i] = 255; img.data[i + 1] = 255; img.data[i + 2] = 255;
+            img.data[i + 3] = Math.floor(v * 255);
+        }
+    }
+    ctx.putImageData(img, 0, 0);
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.wrapS = THREE.MirroredRepeatWrapping;
+    tex.wrapT = THREE.MirroredRepeatWrapping;
+    tex.repeat.set(3, 2);
+    return tex;
+}
+
 function createBossBattleSkybox() {
     // Re-entry guard: both init paths may call this; one dome only.
     if (bossSkybox) return;
@@ -12454,6 +12500,7 @@ function createBossBattleSkybox() {
     const geometry = new THREE.SphereGeometry(135000, 64, 64);
     const material = new THREE.MeshBasicMaterial({
         color: 0xdd2222,  // Vivid crimson — old 0x8b0000 (R=139) read muted
+        map: _makeBossCloudTexture(),
         side: THREE.BackSide,
         transparent: true,
         opacity: 0,
@@ -12490,6 +12537,12 @@ function updateBossSkyboxHeartbeat() {
     if (typeof camera !== 'undefined' && camera) {
         bossSkybox.position.copy(camera.position);
     }
+
+    // Drift the cloud layer slowly so the red billows crawl during the
+    // fight — two mismatched axis rates so the motion never reads as a
+    // simple spin.
+    bossSkybox.rotation.y += 0.00035;
+    bossSkybox.rotation.x += 0.00011;
 
     // Boss OR elite/black-hole guardian — not just bossSystem.activeBoss
     // (which only tracks regular bosses, never elite guardians).
