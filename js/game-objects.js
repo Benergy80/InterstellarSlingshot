@@ -811,13 +811,23 @@ function checkFactionCleared(galaxyId) {
             !nebulaIntelSystem.clearedAnnounced[galaxyId]) {
             nebulaIntelSystem.pendingCleared[galaxyId] = { faction, nebulaName, galaxyId };
             console.log(`🎖️ ${faction.faction} clusters cleared — banner deferred until boss defeated`);
-            // Galaxy 7 (Sol / Sgr A*): NO intel line. Its target would be
-            // the round-robin "tracking" nebula from assignFactionsToNebulas
-            // — geographically arbitrary — which pointed the demo viewer
-            // away from the real progression. Local guidance is the white
-            // liberation path (Sgr A* → nearest twin nebula) drawn when the
-            // Vulcan boss dies (maybeTriggerSolLiberation).
-            if (galaxyId !== 7 && typeof createGalaxyToNebulaLine === 'function') {
+            // Intel lines only draw when the player is actually IN that
+            // galaxy's region (<15,000u from its core). Galaxy 7 (Sol /
+            // Sgr A*) never draws one — the white liberation path is the
+            // local guidance. Without the proximity gate, remote factions
+            // whose wandering ships died in the LOCAL fight (the demo's
+            // swarm pull drags them in) popped their colored dashed lines
+            // across the sky at the exact "Sagittarius A cleared" moment.
+            let _nearThisGalaxy = false;
+            if (galaxyId !== 7 && typeof planets !== 'undefined' &&
+                typeof camera !== 'undefined') {
+                const _core = planets.find(p => p && p.userData &&
+                    p.userData.type === 'blackhole' && p.userData.isGalacticCore &&
+                    p.userData.galaxyId === galaxyId);
+                if (_core) _nearThisGalaxy =
+                    camera.position.distanceTo(_core.position) < 15000;
+            }
+            if (_nearThisGalaxy && typeof createGalaxyToNebulaLine === 'function') {
                 createGalaxyToNebulaLine(galaxyId);
             }
             if (typeof checkAndSpawnAreaBosses === 'function') {
@@ -1638,10 +1648,12 @@ function showLiberationPathToTwinNebula() {
     const target = findNearestTwinNebulaCenter(fromPos);
     if (!target) { console.warn('🌌 Liberation: no twin nebula found for path'); return; }
     const geom = new THREE.BufferGeometry().setFromPoints([fromPos, target]);
-    // Direction gradient (PewPew-style): dim at Sgr A*, full white at the
-    // twin nebula — brightness ramps toward where the player should fly.
+    // Direction gradient (PewPew-style): dimmer at Sgr A*, full white at
+    // the twin nebula — brightness ramps toward where the player should
+    // fly. Floor 0.45 (was 0.25) so the near end still clearly reads as
+    // THE WHITE LINE when standing at Sgr A*.
     geom.setAttribute('color', new THREE.BufferAttribute(
-        new Float32Array([0.25, 0.25, 0.25, 1, 1, 1]), 3));
+        new Float32Array([0.45, 0.45, 0.45, 1, 1, 1]), 3));
     const mat = new THREE.LineDashedMaterial({
         color: 0xffffff, vertexColors: true, transparent: true, opacity: 0.85,
         dashSize: 140, gapSize: 100, depthWrite: false
