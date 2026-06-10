@@ -11286,8 +11286,15 @@ function createAsteroidBelts() {
             const asteroidCount = 75 + Math.random() * 37; // Reduced 25% for performance
             
             // CLOSER: 800-2000 units from black hole
-        	const beltRadius = 1600 + Math.random() * 1000;
-            const beltWidth = 400 + Math.random() * 800;
+        	let beltRadius = 1600 + Math.random() * 1000;
+            let beltWidth = 400 + Math.random() * 800;
+
+            // Local Sol system (galaxy 7): a much larger belt that rings the
+            // outer system instead of hugging the star (was radius ~1600-2600).
+            if (galaxyIndex === 7) {
+                beltRadius = 5000 + Math.random() * 2000; // ~5000-7000
+                beltWidth = 1000 + Math.random() * 1200;  // fuller band at the larger radius
+            }
             
             for (let j = 0; j < asteroidCount; j++) {
     // Use shared resources
