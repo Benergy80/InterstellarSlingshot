@@ -167,7 +167,7 @@ const rotationalInertia = {
     acceleration: 0.0020,       // Slower turn response (precision)
     deceleration: 0.93,        // Slightly faster slowdown for snappier control
     maxSpeed: 0.015,           // Slower max turn speed (precision)
-    bankingFactor: -2.5,        // How much to bank when turning at full speed (scaled by velocity)
+    bankingFactor: -1.5,        // How much to bank when turning at full speed (scaled by velocity; was -2.5, too intense)
     bankingSmoothing: 0.2,     // How smoothly banking is applied
 
     // Default turning values (no CAPS LOCK)
@@ -396,7 +396,9 @@ function applyRotationalInertia(keys, allowManualRotation) {
     // SKIP banking during mobile touch input to prevent unwanted roll
     let bankingFromYaw = 0;
     if (!window.mobileTouchActive) {
-        const demoBoost = (window.demoPilot && window.demoPilot.active) ? 2.5 : 1.0;
+        // Demo cinematic-roll boost trimmed 2.5 -> 1.8: combined with the
+        // bankingFactor cut, demo banking lands at ~43% of its old intensity.
+        const demoBoost = (window.demoPilot && window.demoPilot.active) ? 1.8 : 1.0;
         bankingFromYaw = -rotationalVelocity.yaw * rotationalInertia.bankingFactor * speedFactor * demoBoost;
     }
     
