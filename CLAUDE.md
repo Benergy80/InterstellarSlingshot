@@ -69,3 +69,23 @@ plain `<script>` tags in `index.html`; globals are shared across `js/*.js`.
 ## Deferred / known issues (see memory too)
 - Autopilot can fly into a planet on long warp transits (root-caused; on-rails evade + unvalidated warp exit). See `~/.claude/projects/-Users-benstagl-InterstellarSlingshot/memory/autopilot-warp-planet-collision.md`.
 - Dense galaxy cores drop to ~27 fps from in-view planet count — needs planet `InstancedMesh` (culling can't help in-view).
+
+## Branch landscape (snapshot 2026-06-10 — re-derive with `git fetch` + the commands below)
+`main` was last advanced 2026-06-06 by merging `fix-missiles-undefined-hud` (PR #17).
+To refresh: `git for-each-ref --sort=-committerdate refs/remotes/origin --format='%(committerdate:short) %(refname:short) :: %(subject)'`
+and per-branch `git rev-list --count origin/main..origin/<branch>` (0 = merged/contained in main).
+
+**Active**
+- `claude/fps-drawcall-culling` — **+12 vs main, PR #16.** This session's work: perf/integrity (draw-call culling, loop dedup, console gate, GLB caching, 2 NaN fixes) + demo feel (closed-form steering, enemy/wingman/boss render-interpolation, UFO dt-easing, enemy mode-dwell, boss-SFX/synth-music retire, larger Sol belt) + this CLAUDE.md. **PR #16 now targets `main`** (its old base `fix-missiles-undefined-hud` is already merged into main).
+
+**Open / unmerged (has work NOT in main)**
+- `claude/hud-chrome-restyle` (+8) — HUD chamfered-panel + cockpit-frame prototype (CSS-only). **User rejected the look — parked.** Also carries the perf commits it was branched from.
+- `claude/rewards-energy-slingshot` (+4, behind 32) — shield-bubble sizing, **Tailwind CDN → precompiled stylesheet (fixes the prod console warning)**, startup shield-warning silence. Worth cherry-picking the Tailwind fix.
+- `claude/hud-rebuild` (+3, behind 112) — an earlier "ornate-bezel" HUD rebuild, **incomplete (1–3 of 4)**. Stale.
+- `claude/check-browser-tools-3DhDS` (+1, behind 112) — a local Claude Code setup-guide doc. Stale.
+- `test/5x-cosmic-scale` (+4, behind 536) — experiment scaling cosmic features 5×. Very stale.
+- `claude/analyze-fps-bottlenecks-*` (2025, +2) — plasma-storm geometry/animation reductions on a stale 2025 base. **Superseded by fps-drawcall-culling** (main already has a different/better plasma optimization).
+
+**Merged / contained in main (done — no action)**
+- 2026: `fix-missiles-undefined-hud`, `fix-missing-enemies-*`, `add-autopilot-demo-mode-*`, `revert-camera-merge-rebind-warp-*`, `fix-mobile-camera-ui-*`, `define-nebula-types-*`, `feature/gameplay-improvements`, `feature/mission-system-improvements`.
+- 2025: `implement-game-models-*`, `style-mobile-indicators-*`, `implement-gravity-mechanics-*`, `nebula-visibility-atmosphere-test-*`, `minimize-exotic-systems-visibility-*`, `add-outer-interstellar-systems-*`, `add-missile-system-*`.
