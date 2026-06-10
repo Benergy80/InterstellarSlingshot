@@ -2008,12 +2008,12 @@ function fireEnemyWeapon(enemy, difficultySettings) {
                     gameState.health = Math.max(0, gameState.health - actualDamage);
                 }
 
-                // Knockback: enemy blasts shove the ship slightly along the
-                // shot line (softened while shields are up). ~5% of max
-                // velocity per hit — felt, not destabilizing.
+                // Knockback: enemy blasts shove the ship along the shot
+                // line (softened while shields are up). ~10% of max
+                // velocity per hit (doubled from 5% per playtest).
                 if (typeof camera !== 'undefined' && gameState.velocityVector && enemy && enemy.position) {
                     const _kb = camera.position.clone().sub(enemy.position).normalize();
-                    gameState.velocityVector.addScaledVector(_kb, shieldsActive ? 0.10 : 0.22);
+                    gameState.velocityVector.addScaledVector(_kb, shieldsActive ? 0.20 : 0.44);
                 }
             }
 
@@ -6157,15 +6157,15 @@ function checkWeaponHits(targetPosition) {
                 enemy.userData.lastHitTime = Date.now();
                 _activateOnDamage(enemy);
 
-                // Knockback: laser hits shove the target a touch along the
-                // shot line. The position nudge survives the AI's render
-                // interpolation (behaviors continue from the moved spot),
-                // which smooths it into a visible recoil.
+                // Knockback: laser hits shove the target along the shot
+                // line (doubled per playtest). The position nudge survives
+                // the AI's render interpolation (behaviors continue from
+                // the moved spot), which smooths it into a visible recoil.
                 if (typeof camera !== 'undefined' && enemy.position) {
                     const _kb = enemy.position.clone().sub(camera.position).normalize();
-                    enemy.position.addScaledVector(_kb, 6);
+                    enemy.position.addScaledVector(_kb, 12);
                     if (enemy.userData.velocity && enemy.userData.velocity.addScaledVector) {
-                        enemy.userData.velocity.addScaledVector(_kb, 0.15);
+                        enemy.userData.velocity.addScaledVector(_kb, 0.3);
                     }
                 }
 

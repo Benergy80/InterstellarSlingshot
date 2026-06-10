@@ -1396,10 +1396,9 @@ function spawnBossForArea(galaxyId, placementType, areaKey, overridePosition, bo
         boss.add(bossGlow);
     }
 
-    // Bosses are 2× their previous size — set-piece fights should read
-    // as a monster on screen. Applied BEFORE the hitbox measurement below
-    // so the collision sphere scales with it automatically.
-    boss.scale.multiplyScalar(2.0);
+    // (Boss 2× scaling tried 2026-06-10 and reverted same day — at 2× the
+    // set-piece read as oversized. Boss presence now comes from the escort
+    // swarm + missile volleys / laser sweeps instead.)
 
     // Calculate hitbox size from scaled model (like asteroids) - bosses are 144x scaled
     let bossHitboxSize = 144; // Default for 144x scaled model
@@ -6067,10 +6066,10 @@ const distressBeaconSystem = {
         
         let boss;
         if (typeof createEnemyMeshWithModel === 'function') {
-            boss = createEnemyMeshWithModel(galaxyId + 1, bossGeometry, materials.enemyMaterial, 400); // was 200 — bosses 2x bigger
+            boss = createEnemyMeshWithModel(galaxyId + 1, bossGeometry, materials.enemyMaterial, 200); // 2x size
         } else {
             boss = new THREE.Mesh(bossGeometry, materials.enemyMaterial);
-            boss.scale.set(4, 4, 4); // was 2 — bosses 2x bigger
+            boss.scale.set(2, 2, 2);
         }
         
         // Add glow
