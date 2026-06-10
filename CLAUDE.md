@@ -1,7 +1,9 @@
 # Interstellar Slingshot — working notes for Claude
 
-A 3D browser space game (vanilla JS + Three.js r128, no build step). Files are
-plain `<script>` tags in `index.html`; globals are shared across `js/*.js`.
+A 3D browser space game (vanilla JS + Three.js r128, essentially no build step —
+runtime is static files). Files are plain `<script>` tags in `index.html`;
+globals are shared across `js/*.js`. The one build artifact is the Tailwind CSS
+(committed output; see below).
 
 ## Repo / GitHub / current work
 - **Local:** `/Users/benstagl/InterstellarSlingshot`
@@ -65,6 +67,7 @@ plain `<script>` tags in `index.html`; globals are shared across `js/*.js`.
 
 **HUD**
 - Panels are HTML in `index.html` (`.ui-panel.{top-left,bottom-left,top-right,bottom-right,title-header}`), styled in `css/styles.css`. Build banner + console-gate + cache-buster are in `index.html` `<head>`.
+- **Tailwind:** loaded as a **precompiled** stylesheet `css/tailwind.css` (NOT the runtime CDN — that emitted a prod console warning). It's a committed, purged build. **After editing any Tailwind utility classes in `index.html` or `js/**`, rebuild it:** `npm install` (once) then `npm run build:css` (`tailwind.config.js` content globs = `index.html` + `js/**/*.js`), and commit `css/tailwind.css`. Dev deps (`package.json`/`package-lock.json`) are committed; `node_modules` is gitignored. **Caveat:** the purged build only includes class strings the scanner finds *literally* — Tailwind classes built dynamically in JS (`'text-' + color`) won't be emitted, so prefer full literal class names.
 
 ## Deferred / known issues (see memory too)
 - Autopilot can fly into a planet on long warp transits (root-caused; on-rails evade + unvalidated warp exit). See `~/.claude/projects/-Users-benstagl-InterstellarSlingshot/memory/autopilot-warp-planet-collision.md`.
