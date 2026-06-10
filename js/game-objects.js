@@ -8961,6 +8961,14 @@ const _ufoV3 = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
 function updateUFOMovement() {
     if (!_ufoV1) return;
     const now = Date.now();
+    // Frame-rate-independent easing: scale the per-frame lerps / spin / phase
+    // advance by elapsed frames so UFO motion stays smooth and consistent
+    // whether the game is at 30 or 60fps (the old fixed 0.02/0.04 factors ran
+    // faster at high FPS and slower at low FPS, which read as uneven motion).
+    const _ufoNow = (typeof performance !== 'undefined') ? performance.now() : now;
+    if (!updateUFOMovement._lt) updateUFOMovement._lt = _ufoNow - 16.67;
+    const _f = Math.max(0.5, Math.min(4, (_ufoNow - updateUFOMovement._lt) / 16.67));
+    updateUFOMovement._lt = _ufoNow;
     const live = (typeof camera !== 'undefined' && camera &&
                   typeof gameState !== 'undefined' && gameState &&
                   gameState.gameStarted && !gameState.gameOver);
@@ -8971,7 +8979,7 @@ function updateUFOMovement() {
         const data = ufo.userData;
 
         // Saucers always spin lazily on their axis.
-        ufo.rotation.y += 0.03;
+        ufo.rotation.y += 0.03 * _f;
 
         const dist = playerPos ? ufo.position.distanceTo(playerPos) : Infinity;
         const hunting = playerPos && dist < (data.detectionRange || 3000);
@@ -8982,8 +8990,8 @@ function updateUFOMovement() {
             // Desired point: a strafing standoff ~85% of firing range from
             // the player, drifting tangentially so the UFO circles rather
             // than charging straight in.
-            data.circlePhase = (data.circlePhase || 0) + 0.012;
-            data.verticalBob = (data.verticalBob || 0) + 0.02;
+            data.circlePhase = (data.circlePhase || 0) + 0.012 * _f;
+            data.verticalBob = (data.verticalBob || 0) + 0.02 * _f;
             const standoff = Math.max(260, (data.firingRange || 700) * 0.85);
 
             const toU = _ufoV1.subVectors(ufo.position, playerPos);
@@ -8995,7 +9003,7 @@ function updateUFOMovement() {
             const desY = playerPos.y + radial.y * standoff + Math.sin(data.verticalBob) * 90;
             const desZ = playerPos.z + radial.z * standoff + tang.z * Math.sin(data.circlePhase) * 140;
 
-            const lerp = 0.04;
+            const lerp = 1 - Math.pow(0.96, _f); // ~0.04/frame, dt-scaled
             ufo.position.x += (desX - ufo.position.x) * lerp;
             ufo.position.y += (desY - ufo.position.y) * lerp;
             ufo.position.z += (desZ - ufo.position.z) * lerp;
@@ -9011,16 +9019,17 @@ function updateUFOMovement() {
             }
         } else {
             // Erratic patrol around the system (original behaviour).
-            data.erraticPhase += data.erraticSpeed;
-            data.spiralPhase += 0.01;
-            data.verticalBob += 0.03;
+            data.erraticPhase += data.erraticSpeed * _f;
+            data.spiralPhase += 0.01 * _f;
+            data.verticalBob += 0.03 * _f;
             const spiralRadius = data.wobbleAmplitude * (0.5 + 0.5 * Math.sin(data.spiralPhase * 0.3));
             const targetX = data.patrolCenter.x + Math.cos(data.erraticPhase) * spiralRadius;
             const targetY = data.patrolCenter.y + Math.sin(data.verticalBob) * 150;
             const targetZ = data.patrolCenter.z + Math.sin(data.erraticPhase * 1.3) * spiralRadius;
-            ufo.position.x += (targetX - ufo.position.x) * 0.02;
-            ufo.position.y += (targetY - ufo.position.y) * 0.02;
-            ufo.position.z += (targetZ - ufo.position.z) * 0.02;
+            const _pl = 1 - Math.pow(0.98, _f); // ~0.02/frame, dt-scaled
+            ufo.position.x += (targetX - ufo.position.x) * _pl;
+            ufo.position.y += (targetY - ufo.position.y) * _pl;
+            ufo.position.z += (targetZ - ufo.position.z) * _pl;
             ufo.rotation.x = (targetZ - ufo.position.z) * 0.01;
             ufo.rotation.z = -(targetX - ufo.position.x) * 0.01;
         }
