@@ -3130,6 +3130,13 @@
       let pull = dist < CLOSE_RANGE ? 2.0 : 0.8;
       if (e.userData.isMartianPirate) pull *= 1.75;
       e.position.addScaledVector(_swarmVec, pull);
+      // If this enemy is render-interpolated (see game-core enemy block), shift
+      // BOTH lerp endpoints by the same pull so the swarm motion rides along the
+      // glide instead of being overwritten by interpolation next frame.
+      if (e.userData._interp && e.userData._iFrom && e.userData._iTo) {
+        e.userData._iFrom.addScaledVector(_swarmVec, pull);
+        e.userData._iTo.addScaledVector(_swarmVec, pull);
+      }
     }
   }
 
