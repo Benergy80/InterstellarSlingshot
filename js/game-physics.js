@@ -160,16 +160,19 @@ let cameraRotationTracking = { x: 0, y: 0, z: 0 };
 // NEW: Rotational inertia system for space-like flight feel
 let rotationalVelocity = { pitch: 0, yaw: 0, roll: 0 };
 const rotationalInertia = {
-    // Precision mode (CAPS LOCK held) — slowed again from 0.0016/0.012
-    acceleration: 0.0014,       // Slower turn response (precision)
+    // Precision mode (CAPS LOCK held). Player arrow-key rates are back at
+    // their original values — the session's "slow the turning" passes were
+    // meant for the DEMO, whose tuning now lives in orientTowardsTarget
+    // (demo-driving branch), decoupled from manual flight.
+    acceleration: 0.0020,       // Slower turn response (precision)
     deceleration: 0.93,        // Slightly faster slowdown for snappier control
-    maxSpeed: 0.010,           // Slower max turn speed (precision)
+    maxSpeed: 0.015,           // Slower max turn speed (precision)
     bankingFactor: -2.5,        // How much to bank when turning at full speed (scaled by velocity)
     bankingSmoothing: 0.2,     // How smoothly banking is applied
 
-    // Default turning values (no CAPS LOCK) — slowed again from 0.0024/0.017
-    fastAcceleration: 0.0020,   // Turn response (default)
-    fastMaxSpeed: 0.014         // Max turn speed (default, ~48°/s at 60fps)
+    // Default turning values (no CAPS LOCK)
+    fastAcceleration: 0.0030,   // Turn response (default)
+    fastMaxSpeed: 0.022         // Max turn speed (default, ~76°/s at 60fps)
 };
 
 // Pooled vectors for orientTowardsTarget — called every frame, was creating
@@ -217,8 +220,14 @@ function orientTowardsTarget(target) {
     // at 60fps — but on a 120Hz display or a stuttering frame the actual
     // amount scales with real elapsed time, so the turn rate is consistent
     // regardless of FPS.
-    const rotationSpeedPerFrame = 0.085; // approach rate: 0.12 -> 0.10 -> 0.085, calmer demo tracking
-    const maxRotationPerFrame = 0.030;  // max turn cap: 0.055 (~189°/s) -> 0.045 -> 0.035 -> 0.030 (~103°/s)
+    // The DEMO gets its own (slower, more cinematic) turn tuning. This
+    // function also serves the player's auto-nav orientation, which keeps
+    // the snappier rates — demoPilot.driving is true only while the
+    // autopilot is actually flying the ship (false on player takeover).
+    const _demoDriving = (typeof window !== 'undefined' && window.demoPilot &&
+                          window.demoPilot.driving);
+    const rotationSpeedPerFrame = _demoDriving ? 0.08 : 0.12;  // approach rate
+    const maxRotationPerFrame   = _demoDriving ? 0.025 : 0.045; // cap: demo ~86°/s, manual/auto-nav ~155°/s
     const FRAME_MS = 16.67;
     const frames = _deltaMs / FRAME_MS;
 
