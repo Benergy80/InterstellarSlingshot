@@ -179,7 +179,16 @@ function _ensureShipThrusterCones(ship, color) {
                 const wpos = ship.getWorldPosition(new THREE.Vector3());
                 // Rear of the hull behind ship centre, WORLD units →
                 // converted to the ship's LOCAL frame (cone is a child).
-                localBack = (_box.max.z - wpos.z) / sz;
+                // Enemy8.glb (Vulcan ships) has its nose on +Z — opposite
+                // the -Z-forward convention of every other model — so the
+                // +Z "rear" mount put plumes on the FRONT (verified live:
+                // cone-vs-movement dot +0.67..+0.94). Flip to the -Z face
+                // for Vulcan patrol ships, their boss, and boss support.
+                const _ud2 = ship.userData || {};
+                const _rearFlip = !!(_ud2.isVulcanPatrol ||
+                    (typeof _ud2.areaKey === 'string' && _ud2.areaKey.indexOf('vulcanPatrol') >= 0));
+                ship.userData._thrusterApexSign = _rearFlip ? -1 : 1;
+                localBack = (_rearFlip ? (_box.min.z - wpos.z) : (_box.max.z - wpos.z)) / sz;
                 // Cone ≈ 22% of the visible ship length, base ≈ 6% — with
                 // absolute floors (5u / 1.4u world) so the small 12-16u
                 // hulls still get a readable plume instead of a 3u speck.
@@ -206,9 +215,10 @@ function _ensureShipThrusterCones(ship, color) {
             blending: THREE.AdditiveBlending, depthWrite: false
         });
         const cone = new THREE.Mesh(geo, mat);
-        // Cone's default apex is +Y. Rotate so apex points along +Z,
-        // i.e. out the rear of a ship whose forward direction is -Z.
-        cone.rotation.x = Math.PI / 2;
+        // Cone's default apex is +Y. Rotate so apex points along the
+        // ship's rear axis (+Z for the standard -Z-forward models,
+        // -Z for the flipped Vulcan Enemy8.glb — see _thrusterApexSign).
+        cone.rotation.x = (ship.userData._thrusterApexSign || 1) * Math.PI / 2;
         cone.position.set(0, 0, zOff);
         // Frustum-cull cones: when the ship is off-screen the cones are
         // invisible anyway, so skip the additive overdraw. (Was false —
@@ -224,7 +234,8 @@ function _ensureShipThrusterCones(ship, color) {
     // coneLen/2 so the center sits at the base + apex protrudes
     // behind. The cone is now glued to the ship instead of floating
     // off the assumed half-length back.
-    const back = localBack + coneLen * 0.5;
+    const _apex = ship.userData._thrusterApexSign || 1;
+    const back = localBack + _apex * coneLen * 0.5;
     const cones = [];
     const sideOff = coneRad * 1.2;
     [-sideOff, sideOff].forEach(xOff => {
@@ -232,7 +243,7 @@ function _ensureShipThrusterCones(ship, color) {
         inner.mesh.position.x = xOff;
         ship.add(inner.mesh);
         cones.push(inner);
-        const outer = _makeCone(coneRad * 0.85, coneLen * 1.3,  outerCol, back + coneLen * 0.15);
+        const outer = _makeCone(coneRad * 0.85, coneLen * 1.3,  outerCol, back + _apex * coneLen * 0.15);
         outer.mesh.position.x = xOff;
         ship.add(outer.mesh);
         cones.push(outer);
