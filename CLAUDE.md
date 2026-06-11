@@ -18,7 +18,7 @@ globals are shared across `js/*.js`. The one build artifact is the Tailwind CSS
 - **chrome-devtools MCP drives the user's VISIBLE browser.** `navigate`/`reload`/`click` disrupt what they're watching — only do them when asked. To *observe*, use read-only `evaluate_script` + `take_screenshot`.
 
 ## ⚠️ Gotchas that wasted hours last session
-- **CACHE:** JS is loaded with a STATIC `?v=20260607-perfbranch` cache-buster, so a normal reload (Cmd+R) can serve **stale JS** — your edit won't take effect. Use a **hard reload** (`ignoreCache`/Cmd+Shift+R) or DevTools ▸ Network ▸ "Disable cache". If "the fix didn't work," suspect cache first; verify with `someFn.toString()` in the page.
+- **CACHE:** JS is loaded with a static `?v=…` cache-buster (10 spots in index.html: 9 script tags + `BUILD_TAG`). **Bump it (e.g. `?v=20260610b`) whenever you edit js/ files** — then a plain reload suffices. Without a bump, even a user "hard reload" has served stale JS in practice (devtools `ignoreCache` reload works). If "the fix didn't work," suspect cache first; verify with `someFn.toString()` in the page.
 - **Git identity:** the machine hostname can be `(none)`, which breaks commit auto-identity. Set locally: `git config user.name "Benjamin Stagl"` / `git config user.email benjaminstagl@gmail.com`.
 - **Push:** repo owner is `Benergy80`, but the active `gh` account may be `maxdavis3` (→ 403). Fix: `gh auth switch --hostname github.com --user Benergy80`, then push with `git -c credential.helper='!gh auth git-credential' push`.
 - Always `node --check js/<file>.js` after editing, before reloading.

@@ -1866,6 +1866,17 @@ if (typeof localGalaxyStars !== 'undefined' && localGalaxyStars) {
         updateHubbleSkybox2Opacity();
     }
 
+    // Nebula idle breathing — slow ±8% alpha shimmer (PewPew-inspired)
+    if (typeof updateNebulaBreathing === 'function') {
+        updateNebulaBreathing();
+    }
+
+    // Regional galaxy atmosphere — cloudy faction-tinted dome that builds
+    // with proximity to the nearest black-hole galaxy core
+    if (typeof updateGalaxyAtmosphere === 'function') {
+        updateGalaxyAtmosphere();
+    }
+
     // Update boss battle skybox with heartbeat pulsing
     if (typeof updateBossSkyboxHeartbeat === 'function') {
         updateBossSkyboxHeartbeat();

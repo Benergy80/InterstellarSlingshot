@@ -168,18 +168,27 @@ function _ensureShipThrusterCones(ship, color) {
             // Guard against the not-yet-loaded case: _makeWingman (and the
             // enemy builders) fall back to a tiny ~16u placeholder mesh when
             // the GLB isn't cached yet. Measuring that bakes permanent
-            // micro-cones (invisible). Real ships measure in the hundreds of
-            // world units, so require >40u before committing — otherwise
-            // bail and let the next frame re-measure once the model loads.
-            if (worldLen > 40) {
+            // micro-cones (invisible). The old guard required >40u, but the
+            // 50%-enemy-scale change left REAL GLB hulls at ~12-16u world
+            // (Enemy*.glb natives are ~0.3u × scale 48), so the guard
+            // rejected every standard enemy and cones silently vanished.
+            // GLB ships are Groups / multi-child, placeholders are a single
+            // Mesh + glow child — use structure + a lower floor instead.
+            const _isGLBStruct = ship.isGroup || (ship.children && ship.children.length > 1);
+            if (worldLen > 40 || (_isGLBStruct && worldLen > 8)) {
                 const wpos = ship.getWorldPosition(new THREE.Vector3());
                 // Rear of the hull behind ship centre, WORLD units →
                 // converted to the ship's LOCAL frame (cone is a child).
+                // +Z-nosed models (Enemy1/Enemy8) are now corrected at
+                // model build time (_applyNoseFlip in game-models.js), so
+                // the uniform +Z rear mount is right for every ship again.
+                ship.userData._thrusterApexSign = 1;
                 localBack = (_box.max.z - wpos.z) / sz;
-                // Cone ≈ 22% of the visible ship length, base ≈ 6% — bumped
-                // from 0.16/0.045 so the plume reads at engagement range.
-                coneLen = (worldLen * 0.22) / sx;
-                coneRad = (worldLen * 0.06) / sx;
+                // Cone ≈ 22% of the visible ship length, base ≈ 6% — with
+                // absolute floors (5u / 1.4u world) so the small 12-16u
+                // hulls still get a readable plume instead of a 3u speck.
+                coneLen = Math.max(worldLen * 0.22, 5) / sx;
+                coneRad = Math.max(worldLen * 0.06, 1.4) / sx;
             }
         }
     } catch (e) {}
@@ -201,9 +210,10 @@ function _ensureShipThrusterCones(ship, color) {
             blending: THREE.AdditiveBlending, depthWrite: false
         });
         const cone = new THREE.Mesh(geo, mat);
-        // Cone's default apex is +Y. Rotate so apex points along +Z,
-        // i.e. out the rear of a ship whose forward direction is -Z.
-        cone.rotation.x = Math.PI / 2;
+        // Cone's default apex is +Y. Rotate so apex points along the
+        // ship's rear axis (+Z for the standard -Z-forward models,
+        // -Z for the flipped Vulcan Enemy8.glb — see _thrusterApexSign).
+        cone.rotation.x = (ship.userData._thrusterApexSign || 1) * Math.PI / 2;
         cone.position.set(0, 0, zOff);
         // Frustum-cull cones: when the ship is off-screen the cones are
         // invisible anyway, so skip the additive overdraw. (Was false —
@@ -219,7 +229,8 @@ function _ensureShipThrusterCones(ship, color) {
     // coneLen/2 so the center sits at the base + apex protrudes
     // behind. The cone is now glued to the ship instead of floating
     // off the assumed half-length back.
-    const back = localBack + coneLen * 0.5;
+    const _apex = ship.userData._thrusterApexSign || 1;
+    const back = localBack + _apex * coneLen * 0.5;
     const cones = [];
     const sideOff = coneRad * 1.2;
     [-sideOff, sideOff].forEach(xOff => {
@@ -227,7 +238,7 @@ function _ensureShipThrusterCones(ship, color) {
         inner.mesh.position.x = xOff;
         ship.add(inner.mesh);
         cones.push(inner);
-        const outer = _makeCone(coneRad * 0.85, coneLen * 1.3,  outerCol, back + coneLen * 0.15);
+        const outer = _makeCone(coneRad * 0.85, coneLen * 1.3,  outerCol, back + _apex * coneLen * 0.15);
         outer.mesh.position.x = xOff;
         ship.add(outer.mesh);
         cones.push(outer);
@@ -1085,6 +1096,9 @@ function updateEnemyBehavior() {
     // behavior so each enemy can read enemy.userData.engagedTarget below.
     _assignEngagementTargets();
 
+    // Boss homing missiles fly every behavior pass (30 Hz)
+    if (typeof _updateBossMissiles === 'function') _updateBossMissiles();
+
     let nearbyEnemyCount = 0;
     let inCombatRange = false;
     let activeAttackers = 0;
@@ -1618,8 +1632,12 @@ function updateBossBehavior(enemy, playerPos, speed) {
     // Bosses use more complex movement patterns
     const time = Date.now() * 0.001;
     const distance = enemy.position.distanceTo(playerPos);
-    
-    if (distance > 150) {
+
+    // Standoff scales with the (now 2×) hull so the boss circles OUTSIDE
+    // the player's personal space instead of parking inside it at 120u.
+    const standoff = Math.max(350, (enemy.userData.hitboxSize || 288) * 0.9);
+
+    if (distance > standoff * 1.6) {
         // Approach with weaving pattern
         const direction = new THREE.Vector3().subVectors(playerPos, enemy.position).normalize();
         const weave = new THREE.Vector3(Math.sin(time * 2) * 20, Math.cos(time * 1.5) * 15, 0);
@@ -1628,13 +1646,176 @@ function updateBossBehavior(enemy, playerPos, speed) {
     } else {
         // Circle strafe at optimal distance
         const angle = time * 0.8;
-        const targetX = playerPos.x + Math.cos(angle) * 120;
-        const targetZ = playerPos.z + Math.sin(angle) * 120;
-        const targetY = playerPos.y + Math.sin(angle * 0.3) * 30;
-        
+        const targetX = playerPos.x + Math.cos(angle) * standoff;
+        const targetZ = playerPos.z + Math.sin(angle) * standoff;
+        const targetY = playerPos.y + Math.sin(angle * 0.3) * standoff * 0.25;
+
         const targetPos = new THREE.Vector3(targetX, targetY, targetZ);
         const direction = new THREE.Vector3().subVectors(targetPos, enemy.position).normalize();
         enemy.position.add(direction.multiplyScalar(speed * 0.6));
+    }
+
+    // Special attacks: missile volleys + spinning laser sweeps
+    if (typeof _updateBossSpecials === 'function') {
+        _updateBossSpecials(enemy, playerPos, distance);
+    }
+}
+
+// =============================================================================
+// BOSS SPECIAL ATTACKS — missile volleys and spinning laser sweeps. Both
+// punish camping: the volley reaches far (so the player keeps moving) and
+// the sweep punishes sitting close to the hull (so the player keeps range).
+// =============================================================================
+const _bossMissiles = [];
+const _BOSS_MISSILE_CAP = 24;
+
+function _bossPlayerAimPos() {
+    try {
+        const cs = window.cameraState;
+        const ship = cs && cs.playerShipMesh;
+        if (ship && ship.visible) {
+            const wp = new THREE.Vector3();
+            ship.getWorldPosition(wp);
+            if (isFinite(wp.x)) return wp;
+        }
+    } catch (e) {}
+    return camera.position.clone();
+}
+
+function _spawnBossMissile(boss) {
+    if (!boss || !boss.userData || boss.userData.health <= 0) return;
+    if (_bossMissiles.length >= _BOSS_MISSILE_CAP) return;
+    const geo = new THREE.ConeGeometry(3, 14, 6);
+    const mat = new THREE.MeshBasicMaterial({
+        color: 0xff3322, transparent: true, opacity: 0.95,
+        blending: THREE.AdditiveBlending, depthWrite: false
+    });
+    const m = new THREE.Mesh(geo, mat);
+    m.position.copy(boss.position);
+    // Launch in a fanned direction toward the player
+    const aim = _bossPlayerAimPos();
+    const dir = aim.sub(boss.position).normalize();
+    dir.x += (Math.random() - 0.5) * 0.5;
+    dir.y += (Math.random() - 0.5) * 0.3;
+    dir.z += (Math.random() - 0.5) * 0.5;
+    dir.normalize();
+    scene.add(m);
+    _bossMissiles.push({ mesh: m, vel: dir.multiplyScalar(2.2), born: Date.now() });
+}
+
+// Called once per behavior pass (30 Hz) from updateEnemyBehavior.
+function _updateBossMissiles() {
+    if (!_bossMissiles.length) return;
+    const aim = _bossPlayerAimPos();
+    for (let i = _bossMissiles.length - 1; i >= 0; i--) {
+        const bm = _bossMissiles[i];
+        const age = Date.now() - bm.born;
+        // Homing: bend velocity toward the player, capped turn per tick
+        const want = aim.clone().sub(bm.mesh.position).normalize().multiplyScalar(2.2);
+        bm.vel.lerp(want, 0.045).setLength(2.2);
+        bm.mesh.position.add(bm.vel);
+        bm.mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), bm.vel.clone().normalize());
+
+        const dist = bm.mesh.position.distanceTo(camera.position);
+        let done = false;
+        if (dist < 40) {
+            // Impact: damage + knockback + screen shake
+            const isInvuln = typeof isBlackHoleWarpInvulnerable === 'function' && isBlackHoleWarpInvulnerable();
+            if (!isInvuln && typeof gameState !== 'undefined' && gameState.hull !== undefined) {
+                const red = typeof getShieldDamageReduction === 'function' ? getShieldDamageReduction() : 0;
+                gameState.hull = Math.max(0, gameState.hull - 6 * (1 - red));
+                if (gameState.velocityVector) {
+                    gameState.velocityVector.addScaledVector(bm.vel.clone().normalize(), 0.35);
+                }
+                if (typeof createEnhancedScreenDamageEffect === 'function') {
+                    createEnhancedScreenDamageEffect(bm.mesh.position);
+                }
+            }
+            if (typeof createExplosionEffect === 'function') createExplosionEffect(bm.mesh.position);
+            done = true;
+        } else if (age > 9000) {
+            done = true;
+        }
+        if (done) {
+            scene.remove(bm.mesh);
+            bm.mesh.geometry.dispose(); bm.mesh.material.dispose();
+            _bossMissiles.splice(i, 1);
+        }
+    }
+}
+if (typeof window !== 'undefined') window._updateBossMissiles = _updateBossMissiles;
+
+function _updateBossSpecials(boss, playerPos, distance) {
+    const ud = boss.userData;
+    const now = Date.now();
+    if (!ud._nextVolleyAt) ud._nextVolleyAt = now + 6000 + Math.random() * 4000;
+    if (!ud._nextSweepAt) ud._nextSweepAt = now + 12000 + Math.random() * 5000;
+
+    // MISSILE VOLLEY — 5 homing bolts, staggered, every 11-16 s
+    if (now >= ud._nextVolleyAt && distance > 250 && distance < 3500) {
+        ud._nextVolleyAt = now + 11000 + Math.random() * 5000;
+        for (let i = 0; i < 5; i++) {
+            setTimeout(() => _spawnBossMissile(boss), i * 170);
+        }
+        if (typeof showAchievement === 'function') {
+            showAchievement('⚠ MISSILE VOLLEY', (ud.name || 'Boss') + ' launched a homing volley — evade!', true);
+        }
+    }
+
+    // SPINNING LASER SWEEP — 3 beams rotating around the boss for 3.5 s,
+    // every 14-19 s, only triggers (and only hurts) at close range
+    if (now >= ud._nextSweepAt && distance < 1600) {
+        ud._nextSweepAt = now + 14000 + Math.random() * 5000;
+        ud._sweepUntil = now + 3500;
+        ud._sweepAngle = Math.random() * Math.PI * 2;
+        if (typeof showAchievement === 'function') {
+            showAchievement('⚠ LASER SWEEP', (ud.name || 'Boss') + ' is spinning up rotating beams — keep your distance!', true);
+        }
+    }
+    if (ud._sweepUntil && now < ud._sweepUntil) {
+        ud._sweepAngle += 0.062; // ~1.9 rad/s at 30 Hz
+        const SWEEP_LEN = 1200;
+        const drawThisTick = (typeof gameState !== 'undefined') ? (gameState.frameCount % 4 === 0) : true;
+        for (let k = 0; k < 3; k++) {
+            const a = ud._sweepAngle + k * (Math.PI * 2 / 3);
+            const end = new THREE.Vector3(
+                boss.position.x + Math.cos(a) * SWEEP_LEN,
+                boss.position.y + Math.sin(a * 0.5) * 80,
+                boss.position.z + Math.sin(a) * SWEEP_LEN
+            );
+            if (drawThisTick && typeof createLaserBeam === 'function') {
+                createLaserBeam(boss.position.clone(), end, '#ff2222', false);
+            }
+        }
+        // Damage check: player inside sweep radius AND angularly near a beam
+        const toPlayer = camera.position.clone().sub(boss.position);
+        const distXZ = Math.sqrt(toPlayer.x * toPlayer.x + toPlayer.z * toPlayer.z);
+        if (distXZ < SWEEP_LEN && Math.abs(toPlayer.y) < 250 &&
+            now - (ud._lastSweepHit || 0) > 450) {
+            const playerAngle = Math.atan2(toPlayer.z, toPlayer.x);
+            for (let k = 0; k < 3; k++) {
+                let diff = (playerAngle - (ud._sweepAngle + k * (Math.PI * 2 / 3))) % (Math.PI * 2);
+                if (diff > Math.PI) diff -= Math.PI * 2;
+                if (diff < -Math.PI) diff += Math.PI * 2;
+                if (Math.abs(diff) < 0.13) {
+                    ud._lastSweepHit = now;
+                    const isInvuln = typeof isBlackHoleWarpInvulnerable === 'function' && isBlackHoleWarpInvulnerable();
+                    if (!isInvuln && typeof gameState !== 'undefined' && gameState.hull !== undefined) {
+                        const red = typeof getShieldDamageReduction === 'function' ? getShieldDamageReduction() : 0;
+                        gameState.hull = Math.max(0, gameState.hull - 4 * (1 - red));
+                        // Knock outward, away from the sweep
+                        if (gameState.velocityVector && distXZ > 1) {
+                            gameState.velocityVector.x += (toPlayer.x / distXZ) * 0.3;
+                            gameState.velocityVector.z += (toPlayer.z / distXZ) * 0.3;
+                        }
+                        if (typeof createEnhancedScreenDamageEffect === 'function') {
+                            createEnhancedScreenDamageEffect(boss.position);
+                        }
+                    }
+                    break;
+                }
+            }
+        }
     }
 }
 
@@ -1825,6 +2006,14 @@ function fireEnemyWeapon(enemy, difficultySettings) {
                     gameState.hull = Math.max(0, gameState.hull - actualDamage);
                 } else if (typeof gameState !== 'undefined' && gameState.health !== undefined) {
                     gameState.health = Math.max(0, gameState.health - actualDamage);
+                }
+
+                // Knockback: enemy blasts shove the ship along the shot
+                // line (softened while shields are up). ~10% of max
+                // velocity per hit (doubled from 5% per playtest).
+                if (typeof camera !== 'undefined' && gameState.velocityVector && enemy && enemy.position) {
+                    const _kb = camera.position.clone().sub(enemy.position).normalize();
+                    gameState.velocityVector.addScaledVector(_kb, shieldsActive ? 0.20 : 0.44);
                 }
             }
 
@@ -3109,6 +3298,73 @@ if (typeof window !== 'undefined') {
 // =============================================================================
 // VISUAL EFFECTS SYSTEM
 // =============================================================================
+
+// Martian Pirate explosion variants — same skeleton as createExplosionEffect
+// but color/density parameterized, with a delayed secondary pop. The variant
+// doubles as the LOOT TELL (PewPew-style color discipline): the explosion
+// color announces what the kill drops.
+//   ember  (red/orange) → bonus hull salvage   (common)
+//   flare  (gold)       → +20 energy cells     (uncommon)
+//   plasma (cyan)       → +1 missile           (rare)
+const PIRATE_EXPLOSION_VARIANTS = {
+    ember:  { core: 0xff4422, particles: 0xff8833, count: 30, secondary: 0xff6600 },
+    flare:  { core: 0xffcc33, particles: 0xffee88, count: 38, secondary: 0xffaa00 },
+    plasma: { core: 0x33ddff, particles: 0x88eeff, count: 24, secondary: 0x00aaff }
+};
+function createPirateExplosionVariant(position, variant) {
+    const cfg = PIRATE_EXPLOSION_VARIANTS[variant] || PIRATE_EXPLOSION_VARIANTS.ember;
+    const explosionGeometry = new THREE.SphereGeometry(2, 8, 8);
+    const explosionMaterial = new THREE.MeshBasicMaterial({ color: cfg.core, transparent: true });
+    const explosion = new THREE.Mesh(explosionGeometry, explosionMaterial);
+    explosion.position.copy(position);
+    scene.add(explosion);
+
+    const particles = new THREE.BufferGeometry();
+    const positions = new Float32Array(cfg.count * 3);
+    for (let i = 0; i < cfg.count; i++) {
+        positions[i * 3] = (Math.random() - 0.5) * 22;
+        positions[i * 3 + 1] = (Math.random() - 0.5) * 22;
+        positions[i * 3 + 2] = (Math.random() - 0.5) * 22;
+    }
+    particles.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    const particleMaterial = new THREE.PointsMaterial({
+        color: cfg.particles, size: 1.1, transparent: true, opacity: 1
+    });
+    const particleSystem = new THREE.Points(particles, particleMaterial);
+    particleSystem.position.copy(position);
+    scene.add(particleSystem);
+
+    // IMPORTANT: scene removal/disposal must live in cleanup(), not inline
+    // in update() — explosionManager.clearAll() drops entries by calling
+    // cleanup(), so an entry without one gets orphaned in the scene,
+    // frozen mid-fade (that was the "explosions not cleaning up" bug).
+    let scale = 1, opacity = 1;
+    explosionManager.addExplosion({
+        update(deltaTime) {
+            scale += 0.5 * (deltaTime / 60);
+            opacity -= 0.05 * (deltaTime / 60);
+            explosion.scale.set(scale, scale, scale);
+            explosionMaterial.opacity = Math.max(0, opacity);
+            particleSystem.scale.set(scale * 1.2, scale * 1.2, scale * 1.2);
+            particleMaterial.opacity = Math.max(0, opacity);
+            return opacity > 0;
+        },
+        cleanup() {
+            scene.remove(explosion); scene.remove(particleSystem);
+            explosionGeometry.dispose(); explosionMaterial.dispose();
+            particles.dispose(); particleMaterial.dispose();
+        }
+    });
+
+    // Delayed secondary pop — small offset burst so each variant reads as
+    // a two-beat detonation rather than a single flash.
+    const offset = position.clone().add(new THREE.Vector3(
+        (Math.random() - 0.5) * 10, (Math.random() - 0.5) * 10, (Math.random() - 0.5) * 10));
+    setTimeout(() => {
+        if (typeof createExplosionEffect === 'function') createExplosionEffect(offset);
+    }, variant === 'plasma' ? 200 : 130);
+}
+window.createPirateExplosionVariant = createPirateExplosionVariant;
 
 function createExplosionEffect(targetObject) {
     // Support both object with position property and direct position vector
@@ -4672,8 +4928,11 @@ function _ensureEnemyShield(enemy) {
         const _ud1 = enemy.userData || {};
         const _bigShield = _ud1.isBoss || _ud1.isBossSupport ||
                            _ud1.isEliteGuardian || _ud1.isBlackHoleGuardian;
+        // Big-shield ceiling raised 320 → 640: bosses are now 2× scale and
+        // the bubble (plus the shard shatter, which reads _shieldRadius)
+        // must scale with the doubled hull instead of clamping below it.
         const minR = _bigShield ? 45 : 22;
-        const maxR = _bigShield ? 320 : 140;
+        const maxR = _bigShield ? 640 : 140;
         worldR = Math.max(minR, Math.min(worldR, maxR));
     }
 
@@ -5898,6 +6157,18 @@ function checkWeaponHits(targetPosition) {
                 enemy.userData.lastHitTime = Date.now();
                 _activateOnDamage(enemy);
 
+                // Knockback: laser hits shove the target along the shot
+                // line (doubled per playtest). The position nudge survives
+                // the AI's render interpolation (behaviors continue from
+                // the moved spot), which smooths it into a visible recoil.
+                if (typeof camera !== 'undefined' && enemy.position) {
+                    const _kb = enemy.position.clone().sub(camera.position).normalize();
+                    enemy.position.addScaledVector(_kb, 12);
+                    if (enemy.userData.velocity && enemy.userData.velocity.addScaledVector) {
+                        enemy.userData.velocity.addScaledVector(_kb, 0.3);
+                    }
+                }
+
                 // ENHANCED: Use improved hit effect with color changes
                 flashEnemyHit(enemy, damage);
                 playSound('weapon');
@@ -5953,8 +6224,17 @@ if (enemy.userData.health <= 0) {
             scale: _enemyUD.isBoss ? 1.8 : 1.3
         });
     } else if (_isPirate) {
-        // Original pre-upgrade explosion for Martian Pirates.
-        createExplosionEffect(enemy.position, 0xff4444, 15);
+        // Martian Pirate kills roll one of three explosion variants; the
+        // explosion color IS the loot tell (see PIRATE_EXPLOSION_VARIANTS):
+        // red ember → hull, gold flare → energy, cyan plasma → missile.
+        const _roll = Math.random();
+        const _variant = _roll < 0.55 ? 'ember' : (_roll < 0.85 ? 'flare' : 'plasma');
+        _enemyUD._pirateLootVariant = _variant;
+        if (typeof createPirateExplosionVariant === 'function') {
+            createPirateExplosionVariant(enemy.position, _variant);
+        } else {
+            createExplosionEffect(enemy.position, 0xff4444, 15);
+        }
         playSound('explosion');
     } else if (typeof createFactionExplosion === 'function' &&
                typeof _enemyUD.galaxyId === 'number') {
@@ -6010,16 +6290,31 @@ if (enemy.userData.health <= 0) {
 } else {
     showAchievement('Enemy Destroyed!', `${enemy.userData.name} eliminated`);
 
-    // 30% chance for missile drop on regular kills
-    if (Math.random() < 0.3 && gameState.missiles.current < gameState.missiles.capacity) {
+    const _lootVariant = enemy.userData._pirateLootVariant;
+    if (_lootVariant === 'flare') {
+        // Gold flare explosion → energy cells
+        gameState.energy = Math.min(gameState.maxEnergy || 100, (gameState.energy || 0) + 20);
+        showAchievement('Energy Cells Recovered!', '+20 energy salvaged from the golden flare');
+    } else if (_lootVariant === 'plasma' &&
+               gameState.missiles.current < gameState.missiles.capacity) {
+        // Cyan plasma explosion → guaranteed missile
+        gameState.missiles.current++;
+        showAchievement('Missile Recovered!',
+            `Plasma-burst salvage (${gameState.missiles.current}/${gameState.missiles.capacity})`);
+    } else if (!_lootVariant &&
+               Math.random() < 0.3 && gameState.missiles.current < gameState.missiles.capacity) {
+        // Non-pirate kills keep the original 30% missile chance
         gameState.missiles.current++;
         showAchievement('Missile Recovered!',
             `+1 missile from debris (${gameState.missiles.current}/${gameState.missiles.capacity})`);
     }
+    // ('ember' variant pays out through the hull-recovery bonus below.)
 }
-    
-    // Hull recovery from defeating enemies
-    const hullRecovery = wasBoss ? 15 + Math.random() * 15 : 5 + Math.random() * 10; // More recovery for bosses
+
+    // Hull recovery from defeating enemies. Red-ember pirate kills add a
+    // +8 salvage bonus — that's their loot identity.
+    const _emberBonus = (enemy.userData._pirateLootVariant === 'ember') ? 8 : 0;
+    const hullRecovery = wasBoss ? 15 + Math.random() * 15 : 5 + Math.random() * 10 + _emberBonus; // More recovery for bosses
     if (typeof gameState !== 'undefined' && gameState.hull !== undefined) {
         gameState.hull = Math.min(gameState.maxHull || 100, gameState.hull + hullRecovery);
         showAchievement('Hull Repaired', `+${hullRecovery.toFixed(1)} hull integrity from salvage`);

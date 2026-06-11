@@ -330,6 +330,28 @@ const _enemyModelScaleCorrection = {
     7: 0.25  // Sith Empire model is 4x oversized
 };
 
+// Models whose noses point +Z in the source GLB — opposite the game's
+// -Z-forward flight convention — so they flew visually BACKWARDS and
+// their thruster cones (mounted on the +Z "rear") sat on the bow.
+// Verified live for both: cone-vs-movement dots showed the +Z face
+// leading for Vulcans, and players saw pirate cones "on the front".
+// Baking a 180° yaw makes them fly nose-first with cones at the rear.
+const _enemyModelNoseFlip = {
+    1: true, // Enemy1/Boss1 — Federation/Human ships (Martian Pirates fly these)
+    8: true  // Enemy8/Boss8 — Vulcan ships
+};
+
+// Wrap all of a model's children in a 180°-yawed inner group. Applied
+// AFTER centering so the flip is about the hull's own center; the outer
+// group keeps identity rotation so flight code can drive it normally.
+function _applyNoseFlip(model, regionId) {
+    if (!_enemyModelNoseFlip[regionId]) return;
+    const inner = new THREE.Group();
+    inner.rotation.y = Math.PI;
+    while (model.children.length) inner.add(model.children[0]);
+    model.add(inner);
+}
+
 // Create enemy mesh using GLB model or fallback geometry
 function createEnemyMeshWithModel(regionId, fallbackGeometry, material, scaleOverride) {
     const model = getEnemyModel(regionId);
@@ -428,6 +450,9 @@ function createEnemyMeshWithModel(regionId, fallbackGeometry, material, scaleOve
         const finalScale = (scaleOverride !== undefined ? scaleOverride : 96.0) * ENEMY_SCALE_FACTOR;
         const correction = _enemyModelScaleCorrection[regionId] || 1.0;
         model.scale.multiplyScalar(finalScale * correction);
+
+        // Nose-flip models authored +Z-forward so they fly nose-first
+        _applyNoseFlip(model, regionId);
 
         return model;
     } else {
@@ -539,6 +564,9 @@ function createBossMeshWithModel(regionId, fallbackGeometry, material) {
         const BOSS_SCALE_FACTOR = 0.5;
         const bossCorrection = _enemyModelScaleCorrection[regionId] || 1.0;
         model.scale.multiplyScalar(144.0 * BOSS_SCALE_FACTOR * bossCorrection);
+
+        // Boss1/Boss8 share the +Z-nose authoring of their fighter models
+        _applyNoseFlip(model, regionId);
 
         return model;
     } else {

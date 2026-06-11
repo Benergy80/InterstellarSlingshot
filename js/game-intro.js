@@ -2050,6 +2050,16 @@ function setupNormalGameContent() {
         createWarpSpeedStarfield();
         console.log('🚀 3D warp speed starfield created');
     }
+
+    // Boss battle skybox (blood-red heartbeat dome, starts transparent).
+    // Previously only created in the legacy startGame() fallback path, so
+    // on every normal (intro) launch bossSkybox stayed null and the dome
+    // never appeared during boss fights — same class of bug as the
+    // exotic-system UFOs note below.
+    if (typeof createBossBattleSkybox === 'function') {
+        createBossBattleSkybox();
+        console.log('🩸 Boss battle skybox created');
+    }
     
     // CREATE OUTER INTERSTELLAR SYSTEMS
     if (typeof createOuterInterstellarSystems === 'function') {

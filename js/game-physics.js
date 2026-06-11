@@ -160,16 +160,19 @@ let cameraRotationTracking = { x: 0, y: 0, z: 0 };
 // NEW: Rotational inertia system for space-like flight feel
 let rotationalVelocity = { pitch: 0, yaw: 0, roll: 0 };
 const rotationalInertia = {
-    // Default slower turning (original values restored)
-    acceleration: 0.0020,       // Slower turn response (default)
+    // Precision mode (CAPS LOCK held). Player arrow-key rates are back at
+    // their original values — the session's "slow the turning" passes were
+    // meant for the DEMO, whose tuning now lives in orientTowardsTarget
+    // (demo-driving branch), decoupled from manual flight.
+    acceleration: 0.0020,       // Slower turn response (precision)
     deceleration: 0.93,        // Slightly faster slowdown for snappier control
-    maxSpeed: 0.015,           // Slower max turn speed (default)
-    bankingFactor: -2.5,        // How much to bank when turning at full speed (scaled by velocity)
+    maxSpeed: 0.015,           // Slower max turn speed (precision)
+    bankingFactor: -1.5,        // How much to bank when turning at full speed (scaled by velocity; was -2.5, too intense)
     bankingSmoothing: 0.2,     // How smoothly banking is applied
-    
-    // Fast turning values (activated with CAPS LOCK)
-    fastAcceleration: 0.0030,   // Faster turn response
-    fastMaxSpeed: 0.022         // Faster max turn speed
+
+    // Default turning values (no CAPS LOCK)
+    fastAcceleration: 0.0030,   // Turn response (default)
+    fastMaxSpeed: 0.022         // Max turn speed (default, ~76°/s at 60fps)
 };
 
 // Pooled vectors for orientTowardsTarget — called every frame, was creating
@@ -217,8 +220,15 @@ function orientTowardsTarget(target) {
     // at 60fps — but on a 120Hz display or a stuttering frame the actual
     // amount scales with real elapsed time, so the turn rate is consistent
     // regardless of FPS.
-    const rotationSpeedPerFrame = 0.12;
-    const maxRotationPerFrame = 0.045;  // max turn speed cap: was 0.055 (~189°/s) -> 0.045 (~155°/s)
+    // The DEMO gets its own (slower, more cinematic) turn tuning. This
+    // function also serves the player's auto-nav orientation, which keeps
+    // this branch's 0.12 / 0.045 — demoPilot.driving is true only while
+    // the autopilot is actually flying the ship, and goes false on player
+    // takeover, so manual feel is never affected.
+    const _demoDriving = (typeof window !== 'undefined' && window.demoPilot &&
+                          window.demoPilot.driving);
+    const rotationSpeedPerFrame = _demoDriving ? 0.08 : 0.12;  // approach rate
+    const maxRotationPerFrame   = _demoDriving ? 0.025 : 0.045; // cap: demo ~86°/s, player auto-nav ~155°/s
     const FRAME_MS = 16.67;
     const frames = _deltaMs / FRAME_MS;
 
@@ -386,7 +396,9 @@ function applyRotationalInertia(keys, allowManualRotation) {
     // SKIP banking during mobile touch input to prevent unwanted roll
     let bankingFromYaw = 0;
     if (!window.mobileTouchActive) {
-        const demoBoost = (window.demoPilot && window.demoPilot.active) ? 2.5 : 1.0;
+        // Demo cinematic-roll boost trimmed 2.5 -> 1.8: combined with the
+        // bankingFactor cut, demo banking lands at ~43% of its old intensity.
+        const demoBoost = (window.demoPilot && window.demoPilot.active) ? 1.8 : 1.0;
         bankingFromYaw = -rotationalVelocity.yaw * rotationalInertia.bankingFactor * speedFactor * demoBoost;
     }
     
@@ -4086,6 +4098,21 @@ function createDiscoveryPathToPosition(nebulaPosition, targetPosition, factionCo
     // Create the path geometry
     const pathGeometry = new THREE.BufferGeometry().setFromPoints(pathPoints);
 
+    // PewPew-style direction gradient: dim at the nebula of origin, full
+    // brightness at the destination — the ramp itself tells the player
+    // which way to fly, no arrowheads needed. Implemented as a GRAYSCALE
+    // per-vertex ramp so it multiplies with material.color: the existing
+    // mission-complete / reset recolor logic (which writes material.color)
+    // keeps working and the gradient survives the recolor.
+    const gradColors = new Float32Array((segments + 1) * 3);
+    for (let i = 0; i <= segments; i++) {
+        const b = 0.15 + 0.85 * (i / segments);
+        gradColors[i * 3] = b;
+        gradColors[i * 3 + 1] = b;
+        gradColors[i * 3 + 2] = b;
+    }
+    pathGeometry.setAttribute('color', new THREE.BufferAttribute(gradColors, 3));
+
     // Different dash patterns for core vs patrol
     const dashSize = pathType === 'core' ? 100 : 60;
     const gapSize = pathType === 'core' ? 50 : 40;
@@ -4093,6 +4120,7 @@ function createDiscoveryPathToPosition(nebulaPosition, targetPosition, factionCo
     // Create dashed line material
     const pathMaterial = new THREE.LineDashedMaterial({
         color: factionColor,
+        vertexColors: true,
         dashSize: dashSize,
         gapSize: gapSize,
         linewidth: 2,

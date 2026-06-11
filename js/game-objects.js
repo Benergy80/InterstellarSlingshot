@@ -811,13 +811,23 @@ function checkFactionCleared(galaxyId) {
             !nebulaIntelSystem.clearedAnnounced[galaxyId]) {
             nebulaIntelSystem.pendingCleared[galaxyId] = { faction, nebulaName, galaxyId };
             console.log(`🎖️ ${faction.faction} clusters cleared — banner deferred until boss defeated`);
-            // Galaxy 7 (Sol / Sgr A*): NO intel line. Its target would be
-            // the round-robin "tracking" nebula from assignFactionsToNebulas
-            // — geographically arbitrary — which pointed the demo viewer
-            // away from the real progression. Local guidance is the white
-            // liberation path (Sgr A* → nearest twin nebula) drawn when the
-            // Vulcan boss dies (maybeTriggerSolLiberation).
-            if (galaxyId !== 7 && typeof createGalaxyToNebulaLine === 'function') {
+            // Intel lines only draw when the player is actually IN that
+            // galaxy's region (<15,000u from its core). Galaxy 7 (Sol /
+            // Sgr A*) never draws one — the white liberation path is the
+            // local guidance. Without the proximity gate, remote factions
+            // whose wandering ships died in the LOCAL fight (the demo's
+            // swarm pull drags them in) popped their colored dashed lines
+            // across the sky at the exact "Sagittarius A cleared" moment.
+            let _nearThisGalaxy = false;
+            if (galaxyId !== 7 && typeof planets !== 'undefined' &&
+                typeof camera !== 'undefined') {
+                const _core = planets.find(p => p && p.userData &&
+                    p.userData.type === 'blackhole' && p.userData.isGalacticCore &&
+                    p.userData.galaxyId === galaxyId);
+                if (_core) _nearThisGalaxy =
+                    camera.position.distanceTo(_core.position) < 15000;
+            }
+            if (_nearThisGalaxy && typeof createGalaxyToNebulaLine === 'function') {
                 createGalaxyToNebulaLine(galaxyId);
             }
             if (typeof checkAndSpawnAreaBosses === 'function') {
@@ -886,11 +896,14 @@ function createGalaxyToNebulaLine(galaxyId) {
     const points = [galaxyBlackHole.position.clone(), trackingNebula.position.clone()];
     const geometry = new THREE.BufferGeometry().setFromPoints(points);
     
-    // Use faction color with dashed style
+    // Use faction color with dashed style. Alpha discipline (PewPew-style):
+    // background-tier guidance sits at ~0.6 so gameplay objects remain the
+    // only full-saturation elements on screen (orbit lines 0.3, discovery
+    // paths 0.7, this 0.6).
     const lineMaterial = new THREE.LineDashedMaterial({
         color: faction.color,
         transparent: true,
-        opacity: 0.9,
+        opacity: 0.6,
         linewidth: 2,
         dashSize: 100,
         gapSize: 50,
@@ -1383,6 +1396,10 @@ function spawnBossForArea(galaxyId, placementType, areaKey, overridePosition, bo
         boss.add(bossGlow);
     }
 
+    // (Boss 2× scaling tried 2026-06-10 and reverted same day — at 2× the
+    // set-piece read as oversized. Boss presence now comes from the escort
+    // swarm + missile volleys / laser sweeps instead.)
+
     // Calculate hitbox size from scaled model (like asteroids) - bosses are 144x scaled
     let bossHitboxSize = 144; // Default for 144x scaled model
     try {
@@ -1436,8 +1453,9 @@ function spawnBossForArea(galaxyId, placementType, areaKey, overridePosition, bo
     bossSystem.activeBosses.push(boss);
     bossSystem.activeBoss = boss; // Keep for backwards compatibility
     
-    // PRESERVED: Spawn 2-3 support ships with enhanced 3D positioning
-    for (let i = 0; i < 3; i++) {
+    // Spawn the escort swarm — bumped 3 → 7 so the (now 2×-sized) boss
+    // arrives with a proper entourage swirling around it.
+    for (let i = 0; i < 7; i++) {
         spawnBossSupport(galaxyId, bossPosition, i, areaKey, bossOverrides);
     }
     
@@ -1629,8 +1647,14 @@ function showLiberationPathToTwinNebula() {
     const target = findNearestTwinNebulaCenter(fromPos);
     if (!target) { console.warn('🌌 Liberation: no twin nebula found for path'); return; }
     const geom = new THREE.BufferGeometry().setFromPoints([fromPos, target]);
+    // Direction gradient (PewPew-style): dimmer at Sgr A*, full white at
+    // the twin nebula — brightness ramps toward where the player should
+    // fly. Floor 0.45 (was 0.25) so the near end still clearly reads as
+    // THE WHITE LINE when standing at Sgr A*.
+    geom.setAttribute('color', new THREE.BufferAttribute(
+        new Float32Array([0.45, 0.45, 0.45, 1, 1, 1]), 3));
     const mat = new THREE.LineDashedMaterial({
-        color: 0xffffff, transparent: true, opacity: 0.85,
+        color: 0xffffff, vertexColors: true, transparent: true, opacity: 0.85,
         dashSize: 140, gapSize: 100, depthWrite: false
     });
     const line = new THREE.Line(geom, mat);
@@ -1739,6 +1763,20 @@ function checkBossVictory(defeatedEnemy) {
             if (typeof showAchievement === 'function') {
                 showAchievement('Martian Pirates Routed',
                     `Their leader is dead — ${n} remaining raider${n === 1 ? '' : 's'} scattered and destroyed.`, true);
+            }
+        } else if (typeof galaxyId === 'number' && galaxyId !== 7 &&
+                   typeof eliminateRemainingSpecies === 'function') {
+            // FACTION COLLAPSE: a dead flagship takes its faction's
+            // remaining rank-and-file with it — their ships detonate
+            // across the galaxy (same treatment the local Vulcan/Martian
+            // species get above). Boss escorts are spared here; they're
+            // demoted to regular hostiles below and fight on.
+            const n = eliminateRemainingSpecies(ud => ud.galaxyId === galaxyId);
+            if (n > 0 && typeof showAchievement === 'function') {
+                const facName = (typeof galaxyTypes !== 'undefined' && galaxyTypes[galaxyId])
+                    ? galaxyTypes[galaxyId].faction : 'Enemy';
+                showAchievement(facName + ' Collapse',
+                    `Their flagship is down — ${n} remaining ship${n === 1 ? '' : 's'} destroyed in the rout.`, true);
             }
         }
 
@@ -5482,6 +5520,37 @@ function updateNebulaVisibility() {
 window.updateNebulaVisibility = updateNebulaVisibility;
 
 // =============================================================================
+// NEBULA IDLE BREATHING (PewPew-inspired) — modulate each nebula cloud's
+// alpha ±8% on a slow (~13 s) cycle so the backdrop never reads as a static
+// image. Multiplies AROUND the base opacity the visibility system computed
+// (userData.currentOpacity), so the two systems don't fight; nebulas without
+// a managed opacity snapshot their material value once as the base. Each
+// nebula gets a phase offset so the field shimmers instead of pulsing in
+// lockstep.
+// =============================================================================
+let _nebBreathPhase = 0;
+function updateNebulaBreathing() {
+    if (typeof nebulaClouds === 'undefined' || !nebulaClouds.length) return;
+    _nebBreathPhase += 0.008; // full cycle ~13 s at 60 fps
+    for (let i = 0; i < nebulaClouds.length; i++) {
+        const n = nebulaClouds[i];
+        if (!n || !n.visible || !n.children[0]) continue;
+        const mat = n.children[0].material;
+        if (!mat || mat.opacity === undefined) continue;
+        let base = (n.userData && typeof n.userData.currentOpacity === 'number')
+            ? n.userData.currentOpacity
+            : (n.userData ? n.userData._breathBase : undefined);
+        if (base === undefined) {
+            base = mat.opacity;
+            if (n.userData) n.userData._breathBase = base;
+        }
+        const breath = 0.92 + 0.08 * Math.sin(_nebBreathPhase + i * 0.7);
+        mat.opacity = base * breath;
+    }
+}
+window.updateNebulaBreathing = updateNebulaBreathing;
+
+// =============================================================================
 // DISTANCE CULLING - Hide far-away objects to cut draw calls (PERF)
 // =============================================================================
 // The entire universe lives in one scene with a 250k-unit camera far plane, so
@@ -6048,8 +6117,8 @@ const distressBeaconSystem = {
         scene.add(boss);
         enemies.push(boss);
         
-        // Spawn 3-5 support enemies
-        const supportCount = 3 + Math.floor(Math.random() * 3);
+        // Spawn the escort swarm (was 3-5, now 6-9 to match the bigger boss)
+        const supportCount = 6 + Math.floor(Math.random() * 4);
         for (let i = 0; i < supportCount; i++) {
             this.spawnBossSupport(galaxyId, bossPosition, i);
         }
@@ -12318,8 +12387,8 @@ function updateHubbleSkybox2Opacity() {
     // not from the world origin. Pre-fix this used camera.position
     // .length(); after the SOL relocation the player spawns ~9.3k units
     // from origin, so this deep layer started at ~0.31 instead of its
-    // 0.20 floor and washed out the early sky / scene. Sol-anchored, it
-    // sits at the 0.20 floor at spawn and fades in only on real travel.
+    // floor and washed out the early sky / scene. Sol-anchored, it
+    // sits at the 0.25 floor at spawn and fades in only on real travel.
     const _solB = (typeof window !== 'undefined' && window.localSystemOffset)
         ? window.localSystemOffset : { x: 8000, y: 0, z: 4800 };
     const _s2dx = camera.position.x - _solB.x;
@@ -12331,15 +12400,15 @@ function updateHubbleSkybox2Opacity() {
     const fadeStartDistance = 1000;        // Start fading at 1,000 units from Sol
     const fadeEndDistance = 75000;         // Reach max opacity at 75,000 units
     
-    // Calculate opacity based on distance (0.20 floor to 0.50 max)
+    // Calculate opacity based on distance (0.25 floor to 0.50 max)
     let targetOpacity;
     if (distanceFromStart < fadeStartDistance) {
-        targetOpacity = 0.20; // Visible from the start without washing out the early sky
+        targetOpacity = 0.25; // Visible from the start without washing out the early sky
     } else if (distanceFromStart > fadeEndDistance) {
         targetOpacity = 0.50;
     } else {
         const progress = (distanceFromStart - fadeStartDistance) / (fadeEndDistance - fadeStartDistance);
-        targetOpacity = 0.20 + (progress * 0.30); // 0.20 → 0.50
+        targetOpacity = 0.25 + (progress * 0.25); // 0.25 → 0.50
     }
     
     // Boss / elite-guardian battle: hide this deeper Hubble layer too so
@@ -12408,12 +12477,66 @@ function isBossBattleActive() {
 }
 if (typeof window !== "undefined") window.isBossBattleActive = isBossBattleActive;
 
+// One-time procedural cloud texture for the boss dome: 5-octave value
+// noise baked into a canvas — white billows in the ALPHA channel, so the
+// material's red tint colors them and the heartbeat opacity pulse breathes
+// through the cloud pattern instead of a flat wash. MirroredRepeat hides
+// the tiling seam on the sphere wrap.
+function _makeBossCloudTexture() {
+    const SIZE = 512;
+    const canvas = document.createElement('canvas');
+    canvas.width = SIZE; canvas.height = SIZE;
+    const ctx = canvas.getContext('2d');
+    const img = ctx.createImageData(SIZE, SIZE);
+    const rand = (x, y) => {
+        const n = Math.sin(x * 127.1 + y * 311.7) * 43758.5453;
+        return n - Math.floor(n);
+    };
+    const smooth = t => t * t * (3 - 2 * t);
+    const noise2 = (x, y) => {
+        const xi = Math.floor(x), yi = Math.floor(y);
+        const xf = x - xi, yf = y - yi;
+        const a = rand(xi, yi), b = rand(xi + 1, yi);
+        const c = rand(xi, yi + 1), d = rand(xi + 1, yi + 1);
+        const u = smooth(xf), v = smooth(yf);
+        return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v;
+    };
+    for (let y = 0; y < SIZE; y++) {
+        for (let x = 0; x < SIZE; x++) {
+            let v = 0, amp = 0.5, freq = 4 / SIZE;
+            for (let o = 0; o < 5; o++) {
+                v += amp * noise2(x * freq, y * freq);
+                amp *= 0.5; freq *= 2;
+            }
+            // Billowy contrast: hollow out the troughs, keep bright crests
+            v = Math.max(0, Math.min(1, (v - 0.35) * 1.8));
+            const i = (y * SIZE + x) * 4;
+            img.data[i] = 255; img.data[i + 1] = 255; img.data[i + 2] = 255;
+            img.data[i + 3] = Math.floor(v * 255);
+        }
+    }
+    ctx.putImageData(img, 0, 0);
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.wrapS = THREE.MirroredRepeatWrapping;
+    tex.wrapT = THREE.MirroredRepeatWrapping;
+    // Repeat counts must be EVEN: mirrored wrapping only meets itself
+    // seamlessly when the pattern completes a full mirror cycle, so an
+    // odd count (was 3) left a hard discontinuity on the sphere's UV
+    // seam — the "strong line" across the sky. Even counts make the
+    // texture's mirrored edge land exactly on the wrap.
+    tex.repeat.set(4, 2);
+    return tex;
+}
+
 function createBossBattleSkybox() {
+    // Re-entry guard: both init paths may call this; one dome only.
+    if (bossSkybox) return;
     console.log("Creating boss battle skybox...");
 
     const geometry = new THREE.SphereGeometry(135000, 64, 64);
     const material = new THREE.MeshBasicMaterial({
         color: 0xdd2222,  // Vivid crimson — old 0x8b0000 (R=139) read muted
+        map: _makeBossCloudTexture(),
         side: THREE.BackSide,
         transparent: true,
         opacity: 0,
@@ -12429,6 +12552,10 @@ function createBossBattleSkybox() {
     bossSkybox.renderOrder = 0;
 
     scene.add(bossSkybox);
+    // Re-export: the load-time `window.bossSkybox = bossSkybox` below ran
+    // while this was still null, which made console checks read null even
+    // when the dome existed.
+    if (typeof window !== 'undefined') window.bossSkybox = bossSkybox;
 
     console.log("✅ Boss battle skybox created (initially transparent)");
 }
@@ -12447,6 +12574,12 @@ function updateBossSkyboxHeartbeat() {
         bossSkybox.position.copy(camera.position);
     }
 
+    // Drift the cloud layer slowly so the red billows crawl during the
+    // fight — two mismatched axis rates so the motion never reads as a
+    // simple spin.
+    bossSkybox.rotation.y += 0.00035;
+    bossSkybox.rotation.x += 0.00011;
+
     // Boss OR elite/black-hole guardian — not just bossSystem.activeBoss
     // (which only tracks regular bosses, never elite guardians).
     const hasBoss = isBossBattleActive();
@@ -12463,11 +12596,11 @@ function updateBossSkyboxHeartbeat() {
         // Combine beats for realistic heartbeat pattern
         const heartbeat = Math.max(beat1 * 0.6, beat2 * 0.4) * pause;
 
-        // Target opacity with heartbeat — range 0.5 (baseline) to 1.0
-        // (peak fully opaque). Floor was 0.3 and peak 0.9, which left
-        // the boss aura visibly washed out by the scene behind it; the
-        // brighter color + a 1.0 peak make it dominate cleanly.
-        const targetOpacity = 0.5 + (heartbeat * 0.5);  // Range: 0.5 to 1.0
+        // Target opacity with heartbeat — range 0.2 (baseline) to 0.45
+        // (peak). Tuned down twice from the original 0.5–1.0, which was
+        // set while the dome was accidentally never created on normal
+        // launches; the vivid 0xdd2222 color reads clearly even this low.
+        const targetOpacity = 0.2 + (heartbeat * 0.25);  // Range: 0.2 to 0.45
 
         // Smooth transition to target
         bossSkyboxOpacity += (targetOpacity - bossSkyboxOpacity) * 0.1;
@@ -12481,6 +12614,90 @@ function updateBossSkyboxHeartbeat() {
     // Apply opacity
     bossSkybox.material.opacity = bossSkyboxOpacity;
 }
+
+// =============================================================================
+// GALAXY ATMOSPHERE DOME — the boss dome's calm sibling. While flying deep
+// space, a cloudy camera-following dome fades in tinted with the NEAREST
+// black-hole galaxy's faction color. No pulse: opacity scales purely with
+// proximity to that galaxy core. The fade begins FAR out — well beyond even
+// the largest accretion rings — so the region announces itself long before
+// the core is reached. Suppressed during boss battles (the blood-red
+// heartbeat owns the sky) and in the home system.
+// =============================================================================
+let galaxyAtmosphereDome = null;
+let _gaCores = null;
+const _gaTargetColor = (typeof THREE !== 'undefined') ? new THREE.Color() : null;
+
+function updateGalaxyAtmosphere() {
+    if (typeof THREE === 'undefined' || typeof scene === 'undefined' ||
+        typeof camera === 'undefined' || typeof gameState === 'undefined') return;
+    if (!gameState.gameStarted) return;
+
+    if (!galaxyAtmosphereDome) {
+        const mat = new THREE.MeshBasicMaterial({
+            color: 0xffffff,
+            map: _makeBossCloudTexture(),
+            side: THREE.BackSide,
+            transparent: true,
+            opacity: 0,
+            fog: false,
+            depthWrite: false
+        });
+        galaxyAtmosphereDome = new THREE.Mesh(new THREE.SphereGeometry(140000, 48, 48), mat);
+        galaxyAtmosphereDome.name = 'GalaxyAtmosphereDome';
+        galaxyAtmosphereDome.frustumCulled = false;
+        galaxyAtmosphereDome.renderOrder = -0.5; // behind boss dome (0), over CMB (-1)
+        scene.add(galaxyAtmosphereDome);
+    }
+
+    // Envelop the player; drift slowly (mismatched rates ≠ spin).
+    galaxyAtmosphereDome.position.copy(camera.position);
+    galaxyAtmosphereDome.rotation.y += 0.00022;
+    galaxyAtmosphereDome.rotation.x -= 0.00007;
+
+    // Cache the distant galaxy cores once (home system / companion excluded).
+    if (!_gaCores && typeof planets !== 'undefined' && planets.length) {
+        const cores = planets.filter(p => p && p.userData &&
+            p.userData.type === 'blackhole' && p.userData.isGalacticCore &&
+            !p.userData.isCompanionCore &&
+            typeof p.userData.galaxyId === 'number' && p.userData.galaxyId !== 7);
+        if (cores.length) _gaCores = cores;
+    }
+
+    // Proximity ramp: begins at 28,000u out — far beyond the largest
+    // accretion rings — and builds to full strength by 5,000u from the core.
+    const FADE_START = 28000;
+    const FADE_FULL = 5000;
+    const MAX_OPACITY = 0.22; // trimmed from 0.30 — regional tint should whisper, not shout
+
+    let targetOpacity = 0;
+    if (_gaCores) {
+        let best = null, bestD = Infinity;
+        for (let i = 0; i < _gaCores.length; i++) {
+            const d = camera.position.distanceTo(_gaCores[i].position);
+            if (d < bestD) { bestD = d; best = _gaCores[i]; }
+        }
+        if (best && bestD < FADE_START) {
+            const t = Math.max(0, Math.min(1, (FADE_START - bestD) / (FADE_START - FADE_FULL)));
+            targetOpacity = MAX_OPACITY * t;
+            const gid = best.userData.galaxyId;
+            const hex = (typeof galaxyTypes !== 'undefined' && galaxyTypes[gid] && galaxyTypes[gid].color)
+                ? galaxyTypes[gid].color : 0x8888ff;
+            if (_gaTargetColor) {
+                _gaTargetColor.setHex(hex);
+                galaxyAtmosphereDome.material.color.lerp(_gaTargetColor, 0.02);
+            }
+        }
+    }
+
+    // Boss fights own the sky.
+    if (typeof isBossBattleActive === 'function' && isBossBattleActive()) targetOpacity = 0;
+
+    // Soft fade toward target — no pulsing.
+    const cur = galaxyAtmosphereDome.material.opacity;
+    galaxyAtmosphereDome.material.opacity = cur + (targetOpacity - cur) * 0.015;
+}
+window.updateGalaxyAtmosphere = updateGalaxyAtmosphere;
 
 // Export functions
 window.createBossBattleSkybox = createBossBattleSkybox;
