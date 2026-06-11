@@ -132,7 +132,7 @@ export function createPlayer({ camera, scene, world, traffic, fx, hud, audio, on
     if (e.key === 'Enter') { e.preventDefault(); interact(); }
     if (k === 'm') audio.toggleMute();
     if (k === 'n') { const r = hud.cycleMapZoom(); hud.toast('MAP RANGE', `${r} u across`); audio.sfx('ui'); }
-    if (k === 'r') fx.toggleRain();
+    if (k === 'r') hud.setWeather(fx.toggleRain());
   }
   function onKeyUp(e) {
     if (e.getModifierState) state.capsPrecision = e.getModifierState('CapsLock');
@@ -266,7 +266,10 @@ export function createPlayer({ camera, scene, world, traffic, fx, hud, audio, on
     for (const it of world.interactables) {
       const label = typeof it.label === 'function' ? it.label() : it.label;
       if (!label) continue;
-      if (state.pos.distanceTo(it.pos) < it.radius + 1.5) {
+      const d = it.horizontal
+        ? Math.hypot(state.pos.x - it.pos.x, state.pos.z - it.pos.z)
+        : state.pos.distanceTo(it.pos);
+      if (d < it.radius + 1.5) {
         it.action();
         audio.sfx('ui');
         return;
@@ -616,7 +619,11 @@ export function createPlayer({ camera, scene, world, traffic, fx, hud, audio, on
     if (!prompt) {
       for (const it of world.interactables) {
         const label = typeof it.label === 'function' ? it.label() : it.label;
-        if (label && state.pos.distanceTo(it.pos) < it.radius) { prompt = `ENTER — ${label}`; break; }
+        if (!label) continue;
+        const d = it.horizontal
+          ? Math.hypot(state.pos.x - it.pos.x, state.pos.z - it.pos.z)
+          : state.pos.distanceTo(it.pos);
+        if (d < it.radius) { prompt = `ENTER — ${label}`; break; }
       }
     }
     hud.setPrompt(prompt);

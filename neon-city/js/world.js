@@ -289,7 +289,7 @@ export function buildWorld(scene, renderer) {
       return bd < 2.4 ? best : -1;
     };
     S.interactables.push({
-      pos: cab.position, radius: half + 2.6,
+      pos: cab.position, radius: half + 2.8, horizontal: true,
       label: () => {
         const feetY = elev._feetY;
         if (feetY === undefined) return null;
@@ -347,7 +347,7 @@ export function buildWorld(scene, renderer) {
     g.addColorStop(1.0, '#4a1747');
     ctx.fillStyle = g; ctx.fillRect(0, 0, 16, 256);
     const skyTex = canvasTexture(c);
-    const skyMat = new THREE.MeshBasicMaterial({ map: skyTex, side: THREE.BackSide, fog: false, depthWrite: false, transparent: true, opacity: 0.2 });
+    const skyMat = new THREE.MeshBasicMaterial({ map: skyTex, side: THREE.BackSide, fog: false, depthWrite: false, transparent: true, opacity: 0.15 });
     const sky = new THREE.Mesh(new THREE.SphereGeometry(140000, 32, 20), skyMat);
     sky.renderOrder = -10;
     scene.add(sky);
@@ -386,7 +386,7 @@ export function buildWorld(scene, renderer) {
     // white cloud layer (the mothergame's cloud skybox) — drifts in while raining
     const cloudMat = new THREE.MeshBasicMaterial({
       side: THREE.BackSide, fog: false, depthWrite: false, transparent: true, opacity: 0,
-      color: new THREE.Color(0.65, 0.68, 0.78),
+      color: new THREE.Color(0.85, 0.88, 0.98),
     });
     {
       // procedural soft cloud bank (the repo has no real cloud photo —
@@ -395,10 +395,10 @@ export function buildWorld(scene, renderer) {
       cctx.fillStyle = '#0a0d16';
       cctx.fillRect(0, 0, 512, 256);
       const crnd = mulberry32(77);
-      for (let i = 0; i < 90; i++) {
-        const x = crnd() * 512, y = 60 + crnd() * 150, r = 18 + crnd() * 46;
+      for (let i = 0; i < 150; i++) {
+        const x = crnd() * 512, y = 50 + crnd() * 160, r = 26 + crnd() * 72;
         const g2 = cctx.createRadialGradient(x, y, 0, x, y, r);
-        const a = 0.05 + crnd() * 0.1;
+        const a = 0.16 + crnd() * 0.24;
         g2.addColorStop(0, `rgba(225,230,242,${a})`);
         g2.addColorStop(1, 'rgba(225,230,242,0)');
         cctx.fillStyle = g2;
@@ -711,15 +711,6 @@ export function buildWorld(scene, renderer) {
   }
   world.buildings = buildings;
 
-  // Skyline silhouette ring (outside playable bounds, swallowed by fog)
-  const skyline = [];
-  for (let i = 0; i < 70; i++) {
-    const a = rnd() * Math.PI * 2;
-    if (Math.abs(a) < 0.45 || Math.abs(a - Math.PI * 2) < 0.45) continue; // spaceport's eastern sky stays open
-    if (Math.abs(a - Math.PI) < 0.6) continue;  // open water to the west — Lake Mishigami
-    const r = 660 + rnd() * 240;
-    skyline.push({ x: Math.cos(a) * r, z: Math.sin(a) * r, w: 40 + rnd() * 70, d: 40 + rnd() * 70, h: 90 + rnd() * 260 });
-  }
 
   // Instance everything (tiers for variety: tall buildings get a set-back top)
   {
@@ -751,7 +742,6 @@ export function buildWorld(scene, renderer) {
         if (side === 3) signSpots.push({ x: b.x + off * b.w, y: sh, z: b.z - b.d / 2 - 0.35, rotY: Math.PI, arcade: b.arcade, dk: b.dk });
       }
     }
-    for (const s of skyline) items.push({ x: s.x, z: s.z, w: s.w, d: s.d, y0: 0, h: s.h, seed: rnd() * 100, far: true });
 
     const geo = new THREE.BoxGeometry(1, 1, 1);
     geo.translate(0, 0.5, 0); // origin at base

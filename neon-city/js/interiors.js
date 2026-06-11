@@ -255,6 +255,11 @@ export function buildInteriors(scene, world) {
           const p = toWorld((sx0 + sx1) / 2, (runZb + runZf) / 2);
           g.translate(p.x, yb + half / 2 + (slope === 1 ? half : 0), p.z);
           solidGeos.push(g);
+          const gl = new THREE.BoxGeometry(sx1 - sx0 - 0.2, 0.05, runLen - 0.2);
+          gl.rotateX(slope * ang);
+          if (Math.abs(sinR) > 0.5) gl.rotateY(rot);
+          gl.translate(p.x, yb + half / 2 + (slope === 1 ? half : 0) + 0.13, p.z);
+          glowGeos.push(gl);
         }
       }
       // central divider between the two flights, full height
@@ -266,6 +271,8 @@ export function buildInteriors(scene, world) {
       const fence = rectW(stairX1 - 0.06, backZ, stairX1 + 0.06, stairZ1 - 0.05);
       interior.colliders.push({ ...fence, minY: 0, maxY: F * FLOOR_H + 2.5 });
       pushBox(glowGeos, (fx1 + gx0) / 2, (runZb + runZf) / 2, F * FLOOR_H + 0.4, 0.1, 0.1, runZf - runZb);
+      // stair entry beacon at the lobby
+      pushBox(glowGeos, (stairX0 + stairX1) / 2, stairZ1 + 0.4, 2.9, 2.4, 0.18, 0.18);
     }
 
     // ── interior elevator (gated cab; roof stop on short towers) ──
