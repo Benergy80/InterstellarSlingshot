@@ -2449,7 +2449,11 @@ function updateWarpButton() {
     if (nearestAssistPlanet && gameState.energy >= 20 && (!gameState.slingshot || !gameState.slingshot.active)) {
         warpBtn.disabled = false;
         warpBtn.classList.add('space-btn', 'pulse');
-        warpBtn.innerHTML = `<i class="fas fa-rocket mr-2"></i>SLINGSHOT READY - Press ENTER (${nearestAssistPlanet.userData.name})`;
+        // Show the launch destination: locked nav target wins, else "your aim"
+        const _whipDest = (gameState.currentTarget && gameState.currentTarget.userData &&
+                           gameState.currentTarget.userData.name)
+            ? gameState.currentTarget.userData.name : 'your aim';
+        warpBtn.innerHTML = `<i class="fas fa-rocket mr-2"></i>GRAVITY WHIP READY - ENTER (${nearestAssistPlanet.userData.name} → ${_whipDest})`;
         
         if (!warpBtn.classList.contains('assist-ready')) {
             warpBtn.classList.add('assist-ready');

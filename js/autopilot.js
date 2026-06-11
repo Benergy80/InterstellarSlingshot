@@ -1216,6 +1216,53 @@
 
     const target = ap.currentNebula;
     const targetPos = target.position;
+
+    const targetName = (target.userData && target.userData.isTwinCluster)
+      ? 'twin nebula center'
+      : ((target.userData && target.userData.name) || 'nebula');
+
+    // ── GRAVITY-WHIP FIRST ────────────────────────────────────────────
+    // The slingshot is the renewable interstellar engine (warp charges
+    // are scarce now). If a usable body is within reach, fly into its
+    // gravity well, lock the nebula as the nav target, and whip. O-key
+    // warp is the fallback when no body is near or the approach stalls.
+    if (!ap._slingshotTried && !(gameState.slingshot && gameState.slingshot.active)) {
+      if (!ap.slingshotPlanet) {
+        ap.slingshotPlanet = pickSlingshotPlanet(targetPos) || null;
+        if (!ap.slingshotPlanet) ap._slingshotTried = true;
+      }
+      const sp = ap.slingshotPlanet;
+      if (sp && gameState.energy > 25) {
+        const spDist = camPos().distanceTo(sp.position);
+        const range = (typeof window.getSlingshotRange === 'function')
+          ? window.getSlingshotRange(sp) * 0.8 : 150;
+        if (spDist > 6500 || t > 14000) {
+          // Body drifted away or approach stalled — fall back to warp
+          ap._slingshotTried = true;
+        } else if (spDist > range) {
+          setStatus('Gravity-whip approach → ' + (sp.userData.name || 'body') +
+                    ' (' + (spDist | 0) + ' u)');
+          // Aim target = the nebula, so the whip launches toward it
+          gameState.currentTarget = target;
+          if (window.orientTowardsTarget) window.orientTowardsTarget(sp);
+          flyToward(sp, 2.0);
+          return;
+        } else {
+          gameState.currentTarget = target;
+          if (typeof triggerSlingshot === 'function' && triggerSlingshot()) {
+            setStatus('GRAVITY WHIP → ' + targetName);
+            transmit('NAVIGATION', 'Gravity whip engaged!\nSlinging around ' +
+                     (sp.userData.name || 'the body') + ' → ' + targetName);
+            ap.warpStartedAt = Date.now();
+            ap.warpsUsed++;
+            goPhase('coastToNebulaCluster');
+            return;
+          }
+          ap._slingshotTried = true; // cooldown/energy refused — warp instead
+        }
+      }
+    }
+
     const aimDummy = { position: targetPos };
     if (window.orientTowardsTarget) window.orientTowardsTarget(aimDummy);
 
@@ -1226,9 +1273,6 @@
       warpAligned = _coneFwd.dot(_coneVec) > 0.85;
     }
 
-    const targetName = (target.userData && target.userData.isTwinCluster)
-      ? 'twin nebula center'
-      : ((target.userData && target.userData.name) || 'nebula');
     setStatus(warpAligned
       ? ('EMERGENCY WARP → ' + targetName)
       : ('Aligning for warp → ' + targetName));
@@ -1242,7 +1286,8 @@
     }
 
     // Hard fallback — punch the warp even if alignment never settles
-    if (t > 8000) {
+    // (extended window when a slingshot approach was in progress)
+    if (t > (ap.slingshotPlanet ? 16000 : 8000)) {
       if (canEmergencyWarp()) triggerOKeyWarp();
       ap.warpStartedAt = Date.now();
       goPhase('coastToNebulaCluster');
@@ -1338,7 +1383,9 @@
             setStatus('Re-routing to closer nebula: ' + (nearer.userData.name || 'nebula'));
           }
         }
-        if (window.orientTowardsTarget) {
+        // Don't fight the gravity whip's on-rails camera while it's
+        // carrying the ship around the body.
+        if (window.orientTowardsTarget && !(gameState.slingshotWhip)) {
           window.orientTowardsTarget({ position: ap.currentNebula.position });
         }
       }
@@ -3395,6 +3442,11 @@
     // path — or abandoned if we picked a brand-new warp destination.
     if (name === 'followDiscoveryPath' || name === 'warpToNebulaCluster') {
       ap._originReturnActive = false;
+    }
+    // Fresh interstellar leg → re-evaluate the gravity-whip option
+    if (name === 'warpToNebulaCluster') {
+      ap._slingshotTried = false;
+      ap.slingshotPlanet = null;
     }
   }
 

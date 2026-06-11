@@ -103,7 +103,7 @@ const gameState = {
         criticalDistance: 160 // Doubled for doubled world
     },
     emergencyWarp: {
-        available: 5,
+        available: 2, // was 5 — the gravity whip is the renewable interstellar engine now; warps are the scarce convenience (boss kills award more)
         cooldown: 0,
         boostDuration: 15000,  // 15 seconds for debugging (was 8000)
         boostSpeed: 100.0,     // Much faster for debugging (was 30.0)
