@@ -255,7 +255,7 @@ export function buildTraffic(scene, world, models) {
       },
       {
         name: 'LINE B — RIM CIRCLE', color: NEON.magenta, h: 23,
-        i0: 2, j0: 2, i1: 9, j1: 9, dir: -1, trains: 2,
+        i0: 2, j0: 2, i1: 9, j1: 9, dir: -1, trains: 2, gateNames: true,
         stations: ['HOHMANN', 'LAGRANGE', 'GAGARIN WEST', 'VULCAN GATE'],
       },
     ];
@@ -369,27 +369,39 @@ export function buildTraffic(scene, world, models) {
           g.add(sup);
           world.colliders.push({ minX: sup.position.x - 0.8, maxX: sup.position.x + 0.8, minZ: sup.position.z - 0.8, maxZ: sup.position.z + 0.8 });
         }
-        // station name holo sign
-        {
-          const name = def.stations[k];
+        // station name holo sign — redrawable for the live arrival countdown
+        const dName = (world.districtAt && def.gateNames) ? `${world.districtAt(px, pz).short} GATE` : null;
+        const stName = dName || def.stations[k];
+        const signKit = (() => {
           const cnv = document.createElement('canvas');
-          cnv.width = 512; cnv.height = 96;
+          cnv.width = 512; cnv.height = 128;
           const ctx = cnv.getContext('2d');
-          ctx.fillStyle = 'rgba(4,6,14,0.92)'; ctx.fillRect(0, 0, 512, 96);
-          ctx.strokeStyle = `#${new THREE.Color(def.color).getHexString()}`;
-          ctx.lineWidth = 4; ctx.strokeRect(4, 4, 504, 88);
-          ctx.font = 'bold 44px Orbitron, monospace';
-          ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-          ctx.shadowColor = ctx.strokeStyle; ctx.shadowBlur = 16;
-          ctx.fillStyle = '#fff';
-          ctx.fillText(`◊ ${name}`, 256, 48);
           const tex = new THREE.CanvasTexture(cnv);
           tex.colorSpace = THREE.SRGBColorSpace;
-          const sign = new THREE.Mesh(new THREE.PlaneGeometry(9, 1.7), new THREE.MeshBasicMaterial({ map: tex, side: THREE.DoubleSide }));
-          sign.position.set(px, platY + 3.6, pz);
+          const colorCss = `#${new THREE.Color(def.color).getHexString()}`;
+          const draw = (line2) => {
+            ctx.clearRect(0, 0, 512, 128);
+            ctx.fillStyle = 'rgba(4,6,14,0.92)'; ctx.fillRect(0, 0, 512, 128);
+            ctx.strokeStyle = colorCss;
+            ctx.lineWidth = 4; ctx.strokeRect(4, 4, 504, 120);
+            ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+            ctx.shadowColor = colorCss; ctx.shadowBlur = 16;
+            ctx.font = 'bold 40px Orbitron, monospace';
+            ctx.fillStyle = '#fff';
+            ctx.fillText(`◊ ${stName}`, 256, 38);
+            ctx.font = '30px "Share Tech Mono", monospace';
+            ctx.fillStyle = colorCss;
+            ctx.shadowBlur = 8;
+            ctx.fillText(line2 || '', 256, 90);
+            tex.needsUpdate = true;
+          };
+          draw('');
+          const sign = new THREE.Mesh(new THREE.PlaneGeometry(9, 2.25), new THREE.MeshBasicMaterial({ map: tex, side: THREE.DoubleSide }));
+          sign.position.set(px, platY + 3.65, pz);
           if (!alongX) sign.rotation.y = Math.PI / 2;
           g.add(sign);
-        }
+          return { draw, last: '' };
+        })();
         scene.add(g);
 
         // walkable platform + stairs (two ramps from ground at both ends)
@@ -447,14 +459,19 @@ export function buildTraffic(scene, world, models) {
           scene.add(rail);
         }
 
-        const station = { name: def.stations[k], s: bestS, x: px, z: pz, platY, line: def.name, doorPoint: new THREE.Vector3(sm.x + ox * 2.0, platY, sm.z + oz * 2.0) };
+        const station = {
+          name: stName, s: bestS, x: px, z: pz, platY, line: def.name,
+          doorPoint: new THREE.Vector3(sm.x + ox * 2.0, platY, sm.z + oz * 2.0),
+          bounds: surf, signKit,
+        };
         stations.push(station);
-        world.pois.push({ name: `STN ${def.stations[k]}`, pos: new THREE.Vector3(px, platY, pz), desc: def.name, elevated: true });
+        world.pois.push({ name: `STN ${stName}`, pos: new THREE.Vector3(px, platY, pz), desc: def.name, elevated: true });
       });
       stations.sort((a, b) => a.s - b.s);
 
       // ── trains ──
       const carBodies = makeTrainCarTemplate(def.color);
+      const lineTrains = [];
       for (let tn = 0; tn < def.trains; tn++) {
         const cars = [];
         for (let k = 0; k < C.RAIL.cars; k++) {
@@ -472,6 +489,39 @@ export function buildTraffic(scene, world, models) {
         // find next station ahead
         train.nextStation = nearestStationAhead(train);
         traffic.trains.push(train);
+        lineTrains.push(train);
+      }
+
+      // live arrival countdown on the station holo signs (~3 Hz)
+      {
+        let acc = 0;
+        traffic.updateFns.push((dt) => {
+          acc += dt;
+          if (acc < 0.35) return;
+          acc = 0;
+          for (const st of stations) {
+            let text;
+            const dwelling = lineTrains.find(tr => tr.state === 'dwell' && tr.nextStation === st);
+            if (dwelling) {
+              text = `BOARDING  0:${String(Math.max(0, dwelling.dwellT) | 0).padStart(2, '0')}`;
+            } else {
+              let eta = Infinity;
+              for (const tr of lineTrains) {
+                const L = tr.loop.total;
+                let d = (st.s - ((tr.s % L) + L) % L) * tr.dir;
+                d = ((d % L) + L) % L;
+                let e = d / C.RAIL.speed;
+                if (tr.state === 'dwell') e += Math.max(0, tr.dwellT);
+                if (e < eta) eta = e;
+              }
+              text = eta < 4 ? 'ARRIVING' : `NEXT  ${(eta / 60) | 0}:${String((eta % 60) | 0).padStart(2, '0')}`;
+            }
+            if (text !== st.signKit.last) {
+              st.signKit.last = text;
+              st.signKit.draw(text);
+            }
+          }
+        });
       }
     }
 
@@ -920,17 +970,26 @@ export function buildTraffic(scene, world, models) {
   }
 
   // ── boarding helper for the player ──
+  // Forgiving: anywhere on the station platform while a train dwells there
+  // counts; you board the nearest car. (Old strict mode needed you within a
+  // few units of a car door.)
   traffic.getBoardable = (playerPos, playerFeetY) => {
     for (const train of traffic.trains) {
       if (train.state !== 'dwell') continue;
       const st = train.nextStation;
+      const b = st.bounds;
+      const onPlatform = b &&
+        playerPos.x > b.minX - 1.5 && playerPos.x < b.maxX + 1.5 &&
+        playerPos.z > b.minZ - 1.5 && playerPos.z < b.maxZ + 1.5 &&
+        Math.abs(st.platY - playerFeetY) < 2.4;
+      let bestK = -1, bestD = onPlatform ? Infinity : 23;
       for (let k = 0; k < train.cars.length; k++) {
         const c = train.cars[k];
         const dx = c.position.x - playerPos.x, dz = c.position.z - playerPos.z;
-        if (dx * dx + dz * dz < 23 && Math.abs((c.position.y - 1.4) - playerFeetY) < 2.2) {
-          return { train, carIdx: k, station: st };
-        }
+        const d = dx * dx + dz * dz;
+        if (d < bestD && Math.abs((c.position.y - 1.4) - playerFeetY) < 2.6) { bestD = d; bestK = k; }
       }
+      if (bestK >= 0) return { train, carIdx: bestK, station: st };
     }
     return null;
   };

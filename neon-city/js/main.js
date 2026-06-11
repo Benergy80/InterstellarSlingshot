@@ -15,6 +15,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
 import { C } from './config.js';
 import { buildWorld } from './world.js';
+import { buildInteriors } from './interiors.js';
 import { buildTraffic } from './traffic.js';
 import { createPlayer } from './player.js';
 import { createFX } from './fx.js';
@@ -100,9 +101,14 @@ async function boot() {
   hud.setProgress(0.45, 'REQUESTING SHIPS FROM ORBIT');
   const models = await loadModels();
 
+  hud.setProgress(0.55, 'FURNISHING THE INTERIORS');
+  await frame();
+  buildInteriors(scene, world);
+
   hud.setProgress(0.62, 'SPINNING UP TRAFFIC & RAIL');
   await frame();
   traffic = buildTraffic(scene, world, models);
+  hud.initMap(world);
 
   hud.setProgress(0.78, 'CHARGING WEAPONS & WEATHER');
   await frame();
@@ -134,6 +140,7 @@ const clock = new THREE.Clock();
 let elapsed = 0;
 let fpsEMA = 60, fpsTimer = 0;
 let qualityCooldown = 0;
+let lowFpsTime = 0;   // rain only sheds after a sustained dip, not a teleport spike
 
 function animate() {
   requestAnimationFrame(animate);
@@ -145,14 +152,15 @@ function animate() {
   if (!paused && world) {
     elapsed += dt;
     world.uTime.value = elapsed;
-    world.update(dt, elapsed);
+    world.update(dt, elapsed, player.state.pos);
     traffic.update(dt, elapsed, player.state.pos);
     player.update(dt, elapsed);
     fx.update(dt, elapsed);
-    hud.update(dt, elapsed, player, traffic, camera, fpsEMA);
+    hud.update(dt, elapsed, player, traffic, camera, fpsEMA, world);
   }
 
   // adaptive quality — shed pixel ratio first, then rain (skip warm-up frames)
+  lowFpsTime = fpsEMA < 36 ? lowFpsTime + dt : 0;
   qualityCooldown -= dt;
   if (qualityCooldown <= 0 && world && elapsed > 6) {
     if (fpsEMA < 42 && pixelRatio > 1.0) {
@@ -160,7 +168,7 @@ function animate() {
       renderer.setPixelRatio(pixelRatio);
       composer.setSize(innerWidth, innerHeight);
       qualityCooldown = 3;
-    } else if (fpsEMA < 34 && fx && fx.rainOn) {
+    } else if (fpsEMA < 34 && fx && fx.rainOn && lowFpsTime > 4) {
       fx.toggleRain();
       hud.setWeather(false);
       qualityCooldown = 5;

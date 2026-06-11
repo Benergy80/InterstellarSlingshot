@@ -275,9 +275,17 @@ export function createPlayer({ camera, scene, world, traffic, fx, hud, audio, on
   function demoShots() {
     const spire = new THREE.Vector3(0, 70, 0);
     const H = C.HALF;
+    const poi = (name) => {
+      const p = world.pois.find(q => q.name === name);
+      return p ? p.pos : spire;
+    };
+    const oldT = poi('OLD TOWN'), plaza = poi('CORPORATE PLAZA'), stacks = poi('RESIDENTIAL STACKS');
     return [
       { dur: 12, pos: (k) => _v.set(Math.cos(k * 1.9 + 2.2) * 52, 6 + k * 26, Math.sin(k * 1.9 + 2.2) * 52), look: () => _v2.set(0, 40, -10) },
       { dur: 10, pos: (k) => _v.set(lerp(-160, 120, k), 3.2, H - C.CELL - 9), look: (k) => _v2.set(lerp(-60, 220, k), 6, H - C.CELL - 9) },
+      { dur: 9, pos: (k) => _v.set(oldT.x + Math.cos(k * 1.6 + 0.6) * 44, 6.5, oldT.z + Math.sin(k * 1.6 + 0.6) * 44), look: () => _v2.set(oldT.x, 10, oldT.z) },
+      { dur: 9, pos: (k) => _v.set(plaza.x - 50 + k * 30, lerp(9, 64, k), plaza.z + 40 - k * 20), look: () => _v2.set(plaza.x, 36, plaza.z) },
+      { dur: 8, pos: (k) => _v.set(stacks.x + lerp(-55, 55, k), 24, stacks.z + 28), look: (k) => _v2.set(stacks.x + lerp(-25, 25, k), 20, stacks.z - 20) },
       { dur: 10, pos: (k) => _v.set(34, lerp(4, 126, k), 34), look: (k) => _v2.copy(spire).setY(lerp(30, 116, k)) },
       {
         dur: 13,
@@ -315,12 +323,10 @@ export function createPlayer({ camera, scene, world, traffic, fx, hud, audio, on
   }
 
   // ════════════════ COLLISION ════════════════
-  function collide() {
-    const r = P.radius;
-    const feetY = state.pos.y - P.eye;
-    for (const c of world.colliders) {
+  function collideList(list, r, feetY) {
+    for (const c of list) {
+      if (c.enabled !== undefined && !(typeof c.enabled === 'function' ? c.enabled() : c.enabled)) continue;
       if (c.minY !== undefined && (feetY + 1.8 < c.minY || feetY > c.maxY)) continue;
-      // skip tall-building gates when above their roofline isn't tracked — buildings block at any height
       if (state.pos.x > c.minX - r && state.pos.x < c.maxX + r &&
           state.pos.z > c.minZ - r && state.pos.z < c.maxZ + r) {
         const dxMin = state.pos.x - (c.minX - r), dxMax = (c.maxX + r) - state.pos.x;
@@ -332,6 +338,12 @@ export function createPlayer({ camera, scene, world, traffic, fx, hud, audio, on
         else { state.pos.z = c.maxZ + r; state.vel.z = Math.max(0, state.vel.z); }
       }
     }
+  }
+  function collide() {
+    const r = P.radius;
+    const feetY = state.pos.y - P.eye;
+    collideList(world.colliders, r, feetY);
+    if (world.activeInterior) collideList(world.activeInterior.colliders, r, feetY);
   }
 
   // ════════════════ UPDATE ════════════════
@@ -391,6 +403,15 @@ export function createPlayer({ camera, scene, world, traffic, fx, hud, audio, on
       const car = train.cars[carIdx];
       state.pos.set(car.position.x, car.position.y + 0.35, car.position.z);
       state.vel.set(0, 0, 0);
+      // the view turns with the track — add the car's yaw delta to ours
+      _v.set(0, 0, -1).applyQuaternion(car.quaternion);
+      const carYaw = Math.atan2(-_v.x, -_v.z);
+      if (state.ride.prevCarYaw === undefined) state.ride.prevCarYaw = carYaw;
+      let dyaw = carYaw - state.ride.prevCarYaw;
+      while (dyaw > Math.PI) dyaw -= Math.PI * 2;
+      while (dyaw < -Math.PI) dyaw += Math.PI * 2;
+      state.yaw += dyaw;
+      state.ride.prevCarYaw = carYaw;
       if (train.arrived) {
         train.arrived = false;
         hud.toast(`◊ ${train.nextStation.name}`, 'ENTER to disembark');

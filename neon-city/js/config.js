@@ -60,7 +60,7 @@ export const C = {
   RAIL: {
     height: 16,
     speed: 26,           // u/s cruise
-    dwell: 6.5,          // station stop seconds
+    dwell: 9.0,          // station stop seconds
     carLen: 11,
     carGap: 12.2,
     cars: 5,

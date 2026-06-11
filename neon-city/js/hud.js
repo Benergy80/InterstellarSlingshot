@@ -105,9 +105,10 @@ export function createHUD() {
     setWeather(rainOn) { el.wx.textContent = rainOn ? 'ACID RAIN ▼' : 'OVERCAST'; },
 
     // ── per-frame ──
-    update(dt, t, player, traffic, camera, fps) {
+    update(dt, t, player, traffic, camera, fps, world) {
       const p = player.state.pos;
       el.pos.textContent = `${p.x < 0 ? '−' : '+'}${Math.abs(p.x) | 0} ${p.z < 0 ? '−' : '+'}${Math.abs(p.z) | 0}`;
+      if (world && world.districtAt) el.sector.textContent = world.districtAt(p.x, p.z).name;
       const spd = player.state.mode === 'ride' && player.state.ride
         ? player.state.ride.train.v : player.state.speed;
       el.speed.textContent = `${spd.toFixed(1)} m/s`;
@@ -140,11 +141,12 @@ export function createHUD() {
   const RANGE = 360;     // world units shown across the radar
   const SZ = 220;
 
-  // static layer: roads grid + rail rings + spaceport, drawn once at high res
+  // static layer: district tints + roads grid + rail rings + spaceport,
+  // drawn once (after the world exists) at high res
   const staticCv = document.createElement('canvas');
   const STATIC_SZ = 1024;
   const WORLD_W = 1700;  // covers city + spaceport + margin
-  {
+  hud.initMap = (world) => {
     const c = staticCv;
     c.width = c.height = STATIC_SZ;
     const x2px = (wx) => (wx + WORLD_W / 2) / WORLD_W * STATIC_SZ;
@@ -152,6 +154,16 @@ export function createHUD() {
     ctx.fillStyle = 'rgba(2,10,18,0.92)';
     ctx.fillRect(0, 0, STATIC_SZ, STATIC_SZ);
     const H = C.HALF;
+    // district tints
+    if (world && world.districtOf) {
+      const cellPx = C.CELL / WORLD_W * STATIC_SZ;
+      const blockPx = C.BLOCK / WORLD_W * STATIC_SZ;
+      for (let bx = 0; bx < C.GRID; bx++) for (let bz = 0; bz < C.GRID; bz++) {
+        const D = world.districtOf(bx, bz);
+        ctx.fillStyle = D.tint || 'rgba(0,240,255,0.06)';
+        ctx.fillRect(x2px(-H + bx * C.CELL + C.ROAD / 2), x2px(-H + bz * C.CELL + C.ROAD / 2), blockPx, blockPx);
+      }
+    }
     // roads
     ctx.strokeStyle = 'rgba(0,240,255,0.30)';
     ctx.lineWidth = Math.max(1.5, C.ROAD / WORLD_W * STATIC_SZ * 0.55);
@@ -168,11 +180,6 @@ export function createHUD() {
     ctx.strokeStyle = 'rgba(255,179,0,0.55)';
     ctx.strokeRect(x2px(H + 6), x2px(-158), 262 / WORLD_W * STATIC_SZ, 316 / WORLD_W * STATIC_SZ);
     // monorail rings
-    const rail = (i0, color) => {
-      const a = -H + i0 * C.CELL - C.ROAD / 2;
-      const b = -H + (C.GRID + 1 - i0 + (i0 === 4 ? 2 : 0)) * 0; // unused
-      return { a };
-    };
     const ringRect = (i0, i1, color) => {
       const a = -H + i0 * C.CELL - C.ROAD / 2, b = -H + i1 * C.CELL - C.ROAD / 2;
       ctx.strokeStyle = color;
@@ -181,10 +188,19 @@ export function createHUD() {
     };
     ringRect(4, 7, 'rgba(0,240,255,0.85)');
     ringRect(2, 9, 'rgba(255,43,214,0.85)');
+    // enterable buildings — small lit squares
+    if (world && world.interiors) {
+      ctx.fillStyle = 'rgba(255,179,0,0.9)';
+      for (const it of world.interiors) {
+        const bb = it.bounds;
+        ctx.fillRect(x2px((bb.minX + bb.maxX) / 2) - 2, x2px((bb.minZ + bb.maxZ) / 2) - 2, 4, 4);
+      }
+    }
     // plaza
     ctx.fillStyle = 'rgba(0,240,255,0.4)';
     ctx.beginPath(); ctx.arc(x2px(0), x2px(0), 4, 0, Math.PI * 2); ctx.fill();
-  }
+  };
+  hud.initMap(null);   // placeholder until the world exists
 
   function drawMinimap(player, traffic) {
     const p = player.state.pos;

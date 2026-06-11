@@ -12,10 +12,33 @@ import { C, NEON, NEON_LIST, mulberry32, pick, clamp, makeCanvas, canvasTexture,
 
 const Y_AXIS = new THREE.Vector3(0, 1, 0);
 
+// ════════════════ SIX DISTRICTS ════════════════
+// Center 3×3 = Uptown Core; the rest of the grid splits into five 72°
+// wedges. Each config drives heights, window density/palette/flicker,
+// curb color, sign pool, and storefront probability.
+export const DISTRICTS = {
+  CORE:    { key: 'CORE', name: 'UPTOWN CORE', short: 'UPTOWN', curb: 0x00f0ff, accent: 0x00f0ff, h: [90, 205], lots: [1, 2], fp: [22, 46], litP: 0.38, warm: 0.16, flick: 0.6, store: 0.25, tint: 'rgba(0,240,255,0.10)' },
+  MARKET:  { key: 'MARKET', name: 'NEON MARKET', short: 'MARKET', curb: 0xff2bd6, accent: 0xffb300, h: [10, 30], lots: [3, 5], fp: [11, 24], litP: 0.52, warm: 0.55, flick: 1.7, store: 0.95, tint: 'rgba(255,43,214,0.10)' },
+  FOUNDRY: { key: 'FOUNDRY', name: 'THE FOUNDRY', short: 'FOUNDRY', curb: 0xffb300, accent: 0xffb300, h: [16, 58], lots: [2, 3], fp: [16, 32], litP: 0.2, warm: 0.8, flick: 0.9, store: 0.2, tint: 'rgba(255,179,0,0.09)' },
+  STACKS:  { key: 'STACKS', name: 'RESIDENTIAL STACKS', short: 'STACKS', curb: 0x9d4cff, accent: 0x9d4cff, h: [30, 85], lots: [2, 4], fp: [14, 28], litP: 0.5, warm: 0.75, flick: 0.7, store: 0.45, tint: 'rgba(157,76,255,0.10)' },
+  PLAZA:   { key: 'PLAZA', name: 'CORPORATE PLAZA', short: 'PLAZA', curb: 0x3d7bff, accent: 0x3d7bff, h: [55, 130], lots: [1, 3], fp: [18, 36], litP: 0.42, warm: 0.1, flick: 0.5, store: 0.3, tint: 'rgba(61,123,255,0.10)' },
+  OLD:     { key: 'OLD', name: 'OLD TOWN', short: 'OLD TOWN', curb: 0xff3355, accent: 0x53ffe9, h: [10, 42], lots: [3, 5], fp: [11, 22], litP: 0.3, warm: 0.6, flick: 2.4, store: 0.7, tint: 'rgba(255,51,85,0.09)' },
+};
+const CENTER_B = (C.GRID - 1) / 2;
+export function districtOf(bx, bz) {
+  if (Math.max(Math.abs(bx - CENTER_B), Math.abs(bz - CENTER_B)) <= 1) return DISTRICTS.CORE;
+  const a = Math.atan2(bz - CENTER_B, bx - CENTER_B) * 180 / Math.PI; // 0° = east (+x, spaceport side)
+  if (a >= -36 && a < 36) return DISTRICTS.FOUNDRY;    // east, toward the spaceport gate
+  if (a >= 36 && a < 108) return DISTRICTS.MARKET;     // south band (arcade strip lives here)
+  if (a >= 108) return DISTRICTS.OLD;                  // southwest
+  if (a < -108) return DISTRICTS.STACKS;               // northwest
+  return DISTRICTS.PLAZA;                              // north
+}
+
 export function buildWorld(scene, renderer) {
   const rnd = mulberry32(C.SEED);
   const world = {
-    colliders: [],     // {minX,maxX,minZ,maxZ} — block XZ motion
+    colliders: [],     // {minX,maxX,minZ,maxZ[,minY,maxY,enabled]} — block XZ motion
     surfaces: [],      // {minX,maxX,minZ,maxZ,y} — walkable elevated floors (y may mutate)
     pois: [],          // {name, pos:Vector3, desc}
     interactables: [], // {label, pos, radius, action()}
@@ -23,14 +46,45 @@ export function buildWorld(scene, renderer) {
     flicker: { value: 1 },
     updateFns: [],
     raycastTargets: [],   // meshes lasers can hit
-    update(dt, t) { for (const f of this.updateFns) f(dt, t); },
+    interiors: [],        // filled by interiors.js — {bounds, colliders, surfaces, group, ...}
+    activeInterior: null,
+    update(dt, t, playerPos) {
+      if (playerPos) {
+        let act = null;
+        for (const it of this.interiors) {
+          const b = it.bounds;
+          if (playerPos.x > b.minX - 2 && playerPos.x < b.maxX + 2 &&
+              playerPos.z > b.minZ - 2 && playerPos.z < b.maxZ + 2) { act = it; break; }
+        }
+        this.activeInterior = act;
+        for (const it of this.interiors) {
+          const b = it.bounds;
+          const dx = playerPos.x - (b.minX + b.maxX) / 2, dz = playerPos.z - (b.minZ + b.maxZ) / 2;
+          it.group.visible = (dx * dx + dz * dz) < 90 * 90;
+        }
+        // one shared fill light follows you into whichever interior is active
+        if (this.interiorLight) {
+          this.interiorLight.visible = !!act;
+          if (act) {
+            this.interiorLight.position.set(playerPos.x, playerPos.y + 2.2, playerPos.z);
+          }
+        }
+      }
+      for (const f of this.updateFns) f(dt, t, playerPos);
+    },
+  };
+  world.districtOf = districtOf;
+  world.districtAt = (x, z) => {
+    if (x > C.HALF) return { key: 'PORT', name: 'GAGARIN SPACEPORT', short: 'SPACEPORT' };
+    const bx = clamp(Math.floor((x + C.HALF) / C.CELL), 0, C.GRID - 1);
+    const bz = clamp(Math.floor((z + C.HALF) / C.CELL), 0, C.GRID - 1);
+    return districtOf(bx, bz);
   };
 
   // Walkable height under (x,z) given current player y — picks the highest
   // surface at or below (py + step). Ground level 0 everywhere in-bounds.
-  world.groundHeightAt = (x, z, py = 0) => {
-    let h = 0;
-    for (const s of world.surfaces) {
+  const scanSurfaces = (list, x, z, py, h) => {
+    for (const s of list) {
       if (x >= s.minX && x <= s.maxX && z >= s.minZ && z <= s.maxZ) {
         const sy = (typeof s.y === 'function') ? s.y(x, z) : s.y;
         if (sy <= py + 1.1 && sy > h) h = sy;
@@ -38,8 +92,206 @@ export function buildWorld(scene, renderer) {
     }
     return h;
   };
+  world.groundHeightAt = (x, z, py = 0) => {
+    let h = scanSurfaces(world.surfaces, x, z, py, 0);
+    if (world.activeInterior) h = scanSurfaces(world.activeInterior.surfaces, x, z, py, h);
+    return h;
+  };
 
   const addBox = (minX, maxX, minZ, maxZ) => world.colliders.push({ minX, maxX, minZ, maxZ });
+
+  // ════════════════ GATED ELEVATORS (floor stops, doors, no clipping) ════════════════
+  // A cab that dwells at discrete stops; sliding door panel per stop; the
+  // shaft's open side is blocked by per-stop gate colliders unless the cab
+  // is parked there with doors open — you can never step into the void or
+  // be pushed through a slab.
+  world.makeElevator = ({ x, z, stops, gate, size = 3.4, color = 0x00f0ff, name = 'ELEVATOR', sets = null, parent = null }) => {
+    const S = sets || { surfaces: world.surfaces, colliders: world.colliders, interactables: world.interactables };
+    const half = size / 2;
+    const gx = gate.dx, gz = gate.dz;          // unit direction of the opening
+    const px = -gz, pz = gx;                   // axis the door slides along
+    const elev = {
+      x, z, stops, idx: 0, y: stops[0], target: 0,
+      phase: 'idle', doorK: 0, speed: 11, name,
+    };
+
+    const grp = new THREE.Group();
+    const solidMat = new THREE.MeshStandardMaterial({ color: 0x232c44, roughness: 0.35, metalness: 0.7 });
+    const glassMat = new THREE.MeshStandardMaterial({
+      color: 0x9fe2ff, transparent: true, opacity: 0.2, roughness: 0.12, metalness: 0.3,
+      side: THREE.DoubleSide, depthWrite: false,
+    });
+    const trimMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(color).multiplyScalar(1.05), toneMapped: false });
+
+    // cab — floor, ceiling, three glass sides (gate side open), glowing rim
+    const cab = new THREE.Group();
+    const floor = new THREE.Mesh(new THREE.BoxGeometry(size, 0.3, size), solidMat);
+    floor.position.y = 0.03;
+    cab.add(floor);
+    const ceil = new THREE.Mesh(new THREE.BoxGeometry(size, 0.18, size), solidMat);
+    ceil.position.y = 2.95;
+    cab.add(ceil);
+    const rim = new THREE.Mesh(new THREE.BoxGeometry(size + 0.06, 0.08, size + 0.06), trimMat);
+    rim.position.y = 0.2;
+    cab.add(rim);
+    for (const [wx, wz] of [[-gx, -gz], [px, pz], [-px, -pz]]) {
+      const wall = new THREE.Mesh(new THREE.PlaneGeometry(size - 0.1, 2.7), glassMat);
+      wall.position.set(wx * (half - 0.05), 1.55, wz * (half - 0.05));
+      wall.lookAt(cab.position.x, 1.55, cab.position.z);
+      cab.add(wall);
+    }
+    const ceilLight = new THREE.Mesh(new THREE.PlaneGeometry(size * 0.6, size * 0.6),
+      new THREE.MeshBasicMaterial({ color: 0xfff3da, toneMapped: false }));
+    ceilLight.rotation.x = Math.PI / 2;
+    ceilLight.position.y = 2.85;
+    cab.add(ceilLight);
+    cab.position.set(x, elev.y, z);
+    grp.add(cab);
+
+    // guide rails up the two rear corners
+    const topY = stops[stops.length - 1] + 3.4;
+    for (const e of [1, -1]) {
+      const rail = new THREE.Mesh(new THREE.BoxGeometry(0.18, topY - stops[0] + 1, 0.18), trimMat);
+      rail.position.set(x - gx * half + px * half * e, (topY + stops[0]) / 2, z - gz * half + pz * half * e);
+      grp.add(rail);
+    }
+
+    // per-stop door panel + frame + gate collider
+    const panels = [];
+    stops.forEach((sy, k) => {
+      const frame = new THREE.Mesh(new THREE.BoxGeometry(
+        Math.abs(px) * (size + 0.3) + Math.abs(gx) * 0.22,
+        0.22,
+        Math.abs(pz) * (size + 0.3) + Math.abs(gz) * 0.22
+      ), trimMat);
+      frame.position.set(x + gx * (half + 0.12), sy + 2.85, z + gz * (half + 0.12));
+      grp.add(frame);
+      const panel = new THREE.Mesh(new THREE.BoxGeometry(
+        Math.abs(px) * (size - 0.25) + Math.abs(gx) * 0.14,
+        2.62,
+        Math.abs(pz) * (size - 0.25) + Math.abs(gz) * 0.14
+      ), solidMat);
+      panel.position.set(x + gx * (half + 0.12), sy + 1.45, z + gz * (half + 0.12));
+      grp.add(panel);
+      panels.push({ panel, sy, baseX: panel.position.x, baseZ: panel.position.z });
+      S.colliders.push({
+        minX: x + gx * half - (Math.abs(px) * half + 0.3), maxX: x + gx * half + (Math.abs(px) * half + 0.3),
+        minZ: z + gz * half - (Math.abs(pz) * half + 0.3), maxZ: z + gz * half + (Math.abs(pz) * half + 0.3),
+        minY: sy - 0.6, maxY: sy + 2.8,
+        enabled: () => !(elev.idx === k && elev.phase === 'idle' && elev.doorK > 0.65),
+      });
+    });
+    // gate side blocked at every height while the cab is anywhere but parked
+    S.colliders.push({
+      minX: x + gx * half - (Math.abs(px) * half + 0.3), maxX: x + gx * half + (Math.abs(px) * half + 0.3),
+      minZ: z + gz * half - (Math.abs(pz) * half + 0.3), maxZ: z + gz * half + (Math.abs(pz) * half + 0.3),
+      minY: stops[0] - 0.5, maxY: topY,
+      enabled: () => elev.phase !== 'idle',
+    });
+    // three solid shaft sides, full height
+    const sideDefs = [[-gx, -gz], [px, pz], [-px, -pz]];
+    for (const [wx, wz] of sideDefs) {
+      S.colliders.push({
+        minX: x + wx * half - (Math.abs(wz) * half + 0.25), maxX: x + wx * half + (Math.abs(wz) * half + 0.25),
+        minZ: z + wz * half - (Math.abs(wx) * half + 0.25), maxZ: z + wz * half + (Math.abs(wx) * half + 0.25),
+        minY: stops[0] - 0.5, maxY: topY,
+      });
+    }
+    // cab floor — walkable, moves
+    S.surfaces.push({
+      minX: x - half + 0.05, maxX: x + half - 0.05,
+      minZ: z - half + 0.05, maxZ: z + half - 0.05,
+      y: () => elev.y + 0.18,
+    });
+    (parent || scene).add(grp);
+    elev.group = grp;
+
+    elev.send = (k) => {
+      k = clamp(k, 0, stops.length - 1);
+      if (k === elev.idx && elev.phase === 'idle') return;
+      elev.target = k;
+      if (elev.phase === 'idle') elev.phase = 'closing';
+    };
+
+    let near = false;
+    world.updateFns.push((dt, t, playerPos) => {
+      if (playerPos) {
+        const dx = playerPos.x - x, dz = playerPos.z - z;
+        const dy = (playerPos.y - 1.75) - elev.y;
+        near = (dx * dx + dz * dz) < 30 && dy > -2 && dy < 3;
+      }
+      switch (elev.phase) {
+        case 'idle': {
+          const want = near ? 1 : 0;
+          elev.doorK += clamp(want - elev.doorK, -dt * 2.6, dt * 2.6);
+          break;
+        }
+        case 'closing':
+          elev.doorK -= dt * 2.6;
+          if (elev.doorK <= 0) { elev.doorK = 0; elev.phase = 'moving'; }
+          break;
+        case 'moving': {
+          const ty = stops[elev.target];
+          const dy = ty - elev.y;
+          const step = clamp(dy, -elev.speed * dt, elev.speed * dt);
+          elev.y += step;
+          if (Math.abs(ty - elev.y) < 0.02) { elev.y = ty; elev.idx = elev.target; elev.phase = 'opening'; }
+          break;
+        }
+        case 'opening':
+          elev.doorK += dt * 2.6;
+          if (elev.doorK >= 1) { elev.doorK = 1; elev.phase = 'idle'; }
+          break;
+      }
+      cab.position.y = elev.y;
+      // animate the panel at the cab's floor; keep all others shut
+      for (let k = 0; k < panels.length; k++) {
+        const open = (k === elev.idx && elev.phase !== 'moving') ? elev.doorK : 0;
+        const off = open * (size - 0.4);
+        panels[k].panel.position.x = panels[k].baseX + px * off;
+        panels[k].panel.position.z = panels[k].baseZ + pz * off;
+      }
+    });
+
+    const floorOf = (feetY) => {
+      let best = 0, bd = 1e9;
+      stops.forEach((sy, k) => { const d = Math.abs(sy - feetY); if (d < bd) { bd = d; best = k; } });
+      return bd < 2.4 ? best : -1;
+    };
+    S.interactables.push({
+      pos: cab.position, radius: half + 2.6,
+      label: () => {
+        const feetY = elev._feetY;
+        if (feetY === undefined) return null;
+        const onCab = Math.abs(feetY - (elev.y + 0.18)) < 1.2;
+        if (onCab && elev.phase === 'idle') {
+          const next = (elev.idx + 1) % stops.length;
+          return stops.length === 2
+            ? (elev.idx === 0 ? `${name} ▲` : `${name} ▼`)
+            : `${name} → ${next === 0 ? 'GROUND' : 'FLOOR ' + next}`;
+        }
+        const f = floorOf(feetY);
+        if (f >= 0 && f !== elev.idx && elev.phase === 'idle') return `CALL ${name}`;
+        return null;
+      },
+      action: () => {
+        const feetY = elev._feetY;
+        if (feetY === undefined) return;
+        const onCab = Math.abs(feetY - (elev.y + 0.18)) < 1.2;
+        if (onCab) elev.send((elev.idx + 1) % stops.length);
+        else {
+          const f = floorOf(feetY);
+          if (f >= 0) elev.send(f);
+        }
+      },
+    });
+    // the interactable needs the caller's feet height — player feeds it
+    world.updateFns.push((dt, t, playerPos) => {
+      if (playerPos) elev._feetY = playerPos.y - 1.75;
+    });
+
+    return elev;
+  };
 
   // ─────────────────────────── LIGHTING ───────────────────────────
   const hemi = new THREE.HemisphereLight(0x564397, 0x16102a, 0.92);
@@ -48,6 +300,11 @@ export function buildWorld(scene, renderer) {
   moon.position.set(-300, 500, -200);
   scene.add(moon);
   world.hemi = hemi;
+  // fill light for enterable interiors — off until you step inside one
+  const interiorLight = new THREE.PointLight(0xbfd9ff, 26, 34, 1.6);
+  interiorLight.visible = false;
+  scene.add(interiorLight);
+  world.interiorLight = interiorLight;
 
   // ─────────────────────────── SKY ───────────────────────────
   {
@@ -199,13 +456,10 @@ export function buildWorld(scene, renderer) {
     const nBlocks = C.GRID * C.GRID;
     const curbs = new THREE.InstancedMesh(strip, stripMat, nBlocks * 4);
     const dummy = new THREE.Object3D();
-    const cCyan = new THREE.Color(NEON.cyan).multiplyScalar(0.55);
-    const cMag = new THREE.Color(NEON.magenta).multiplyScalar(0.5);
-    const cPur = new THREE.Color(NEON.purple).multiplyScalar(0.5);
     let ci = 0;
     for (let bx = 0; bx < C.GRID; bx++) for (let bz = 0; bz < C.GRID; bz++) {
       const x0 = -H + bx * C.CELL + C.ROAD / 2, z0 = -H + bz * C.CELL + C.ROAD / 2;
-      const col = [cCyan, cCyan, cMag, cPur][(bx + bz * 3) % 4];
+      const col = new THREE.Color(districtOf(bx, bz).curb).multiplyScalar(0.55);
       const edges = [
         [x0 + C.BLOCK / 2, z0, C.BLOCK, 0.3],
         [x0 + C.BLOCK / 2, z0 + C.BLOCK, C.BLOCK, 0.3],
@@ -249,20 +503,21 @@ export function buildWorld(scene, renderer) {
   // Unit cube instances; window cells computed in-shader from per-instance
   // scale so panes stay ~3u regardless of building size. Hash decides lit /
   // dark / color; a sparse subset flickers with uTime. Base floors darkened.
-  function makeBuildingMaterial(litDensity, brightness) {
+  function makeBuildingMaterial(brightness) {
     const mat = new THREE.MeshStandardMaterial({
       color: 0x171a26, roughness: 0.48, metalness: 0.42, envMapIntensity: 0.5,
     });
     mat.onBeforeCompile = (shader) => {
       shader.uniforms.uTime = world.uTime;
-      shader.uniforms.uLitP = { value: litDensity };
       shader.uniforms.uBright = { value: brightness };
       shader.vertexShader = `
         attribute float aSeed;
+        attribute vec3 aTuning;   // per-district: (lit density, warm ratio, flicker boost)
         varying vec2 vBoxUv;
         varying float vSeed;
         varying float vSideMask;
         varying float vBH;
+        varying vec3 vTuning;
       ` + shader.vertexShader.replace('#include <begin_vertex>', `
         #include <begin_vertex>
         vec3 iS = vec3(length(instanceMatrix[0].xyz), length(instanceMatrix[1].xyz), length(instanceMatrix[2].xyz));
@@ -271,15 +526,16 @@ export function buildWorld(scene, renderer) {
         vSideMask = 1.0 - step(0.5, abs(normal.y));
         vSeed = aSeed;
         vBH = iS.y;
+        vTuning = aTuning;
       `);
       shader.fragmentShader = `
         uniform float uTime;
-        uniform float uLitP;
         uniform float uBright;
         varying vec2 vBoxUv;
         varying float vSeed;
         varying float vSideMask;
         varying float vBH;
+        varying vec3 vTuning;
         float nhash(vec2 p) {
           return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
         }
@@ -298,15 +554,16 @@ export function buildWorld(scene, renderer) {
             vec2 f = fract(cuv);
             float inWin = step(0.22, f.x) * step(f.x, 0.78) * step(0.30, f.y) * step(f.y, 0.74);
             float h = nhash(id + vSeed * 13.7);
-            float lit = step(1.0 - uLitP, h);
+            float lit = step(1.0 - vTuning.x, h);
             float hc = nhash(id * 1.7 + vSeed * 7.3);
             vec3 warm = vec3(1.0, 0.72, 0.38);
             vec3 cool = vec3(0.45, 0.83, 1.0);
             vec3 tealc = vec3(0.32, 1.0, 0.86);
-            vec3 wcol = hc < 0.45 ? warm : (hc < 0.85 ? cool : tealc);
+            float wThr = vTuning.y;
+            vec3 wcol = hc < wThr ? warm : (hc < wThr + (1.0 - wThr) * 0.78 ? cool : tealc);
             float vary = 0.35 + 0.65 * nhash(id * 2.3 + vSeed * 3.1);  // per-window brightness spread
             float fl = nhash(id + floor(uTime * 1.7) + vSeed);
-            float flicker = mix(1.0, step(0.22, fl), step(0.93, nhash(id * 3.1 + vSeed)));
+            float flicker = mix(1.0, step(0.22, fl), step(1.0 - 0.07 * vTuning.z, nhash(id * 3.1 + vSeed)));
             float ground = step(5.5, vBoxUv.y);
             float topFade = 1.0 - smoothstep(vBH - 2.0, vBH, vBoxUv.y);
             totalEmissiveRadiance += inWin * lit * vary * flicker * wcol * uBright * vSideMask * ground * topFade;
@@ -323,35 +580,31 @@ export function buildWorld(scene, renderer) {
   const signSpots = [];      // candidate wall mounts for neon signs {pos, rotY, h}
   const CENTER = (C.GRID - 1) / 2;
 
+  const districtBlocks = {};   // key -> [{bx,bz,cx,cz}]
   for (let bx = 0; bx < C.GRID; bx++) for (let bz = 0; bz < C.GRID; bz++) {
     const x0 = -H + bx * C.CELL + C.ROAD / 2;
     const z0 = -H + bz * C.CELL + C.ROAD / 2;
     const cx = x0 + C.BLOCK / 2, cz = z0 + C.BLOCK / 2;
-    const dist = Math.max(Math.abs(bx - CENTER), Math.abs(bz - CENTER));
     const isCenter = (bx === CENTER && bz === CENTER);
-    const isArcade = (bz === C.GRID - 1 && bx >= 3 && bx <= 7);
+    const D = districtOf(bx, bz);
+    (districtBlocks[D.key] = districtBlocks[D.key] || []).push({ bx, bz, cx, cz });
     if (isCenter) continue;   // Spire + plaza handled separately
 
-    let lots;
-    if (dist <= 1) lots = 1 + (rnd() * 2 | 0);          // downtown: 1–2 big towers
-    else if (dist <= 3) lots = 2 + (rnd() * 3 | 0);     // midtown
-    else lots = 3 + (rnd() * 3 | 0);                    // outskirts: more, lower
+    const isArcade = (D === DISTRICTS.MARKET && bz >= C.GRID - 2);
+    const lots = D.lots[0] + ((rnd() * (D.lots[1] - D.lots[0] + 1)) | 0);
 
-    // subdivide block into lots (simple quadrant scatter)
+    // subdivide block into lots (simple scatter, district footprint range)
     for (let l = 0; l < lots; l++) {
-      const w = dist <= 1 ? 20 + rnd() * 24 : 12 + rnd() * 18;
-      const d = dist <= 1 ? 20 + rnd() * 24 : 12 + rnd() * 18;
-      const px = x0 + 4 + w / 2 + rnd() * (C.BLOCK - w - 8);
-      const pz = z0 + 4 + d / 2 + rnd() * (C.BLOCK - d - 8);
-      let h;
-      if (dist <= 1) h = 85 + rnd() * 120;
-      else if (dist === 2) h = 48 + rnd() * 75;
-      else if (dist === 3) h = 30 + rnd() * 55;
-      else h = 14 + rnd() * 38;
-      if (isArcade) h = 12 + rnd() * 22;
-      buildings.push({ x: px, z: pz, w, d, h, dist, arcade: isArcade });
+      const w = D.fp[0] + rnd() * (D.fp[1] - D.fp[0]);
+      const d = D.fp[0] + rnd() * (D.fp[1] - D.fp[0]);
+      const px = x0 + 4 + w / 2 + rnd() * Math.max(1, C.BLOCK - w - 8);
+      const pz = z0 + 4 + d / 2 + rnd() * Math.max(1, C.BLOCK - d - 8);
+      let h = D.h[0] + rnd() * (D.h[1] - D.h[0]);
+      if (isArcade) h = 11 + rnd() * 18;
+      buildings.push({ x: px, z: pz, w, d, h, dk: D.key, D, arcade: isArcade });
     }
   }
+  world.buildings = buildings;
 
   // Skyline silhouette ring (outside playable bounds, swallowed by fog)
   const skyline = [];
@@ -366,28 +619,30 @@ export function buildWorld(scene, renderer) {
   {
     const items = [];
     for (const b of buildings) {
-      items.push({ x: b.x, z: b.z, w: b.w, d: b.d, y0: 0, h: b.h, seed: rnd() * 100 });
+      items.push({ x: b.x, z: b.z, w: b.w, d: b.d, y0: 0, h: b.h, seed: rnd() * 100, D: b.D });
       if (b.h > 70 && rnd() < 0.7) {
         const w2 = b.w * (0.5 + rnd() * 0.25), d2 = b.d * (0.5 + rnd() * 0.25), h2 = b.h * (0.25 + rnd() * 0.3);
-        items.push({ x: b.x, z: b.z, w: w2, d: d2, y0: b.h, h: h2, seed: rnd() * 100 });
-        if (rnd() < 0.5) towerTrims.push({ x: b.x, z: b.z, w: b.w, d: b.d, h: b.h });
+        items.push({ x: b.x, z: b.z, w: w2, d: d2, y0: b.h, h: h2, seed: rnd() * 100, D: b.D });
+        b.t2 = { w2, d2, h2 };
+        if (rnd() < 0.5) towerTrims.push({ x: b.x, z: b.z, w: b.w, d: b.d, h: b.h, accent: b.D.accent });
       } else if (b.h > 110) {
-        towerTrims.push({ x: b.x, z: b.z, w: b.w, d: b.d, h: b.h });
+        towerTrims.push({ x: b.x, z: b.z, w: b.w, d: b.d, h: b.h, accent: b.D.accent });
       }
-      // colliders + roof surface (jump-on-able for low ones)
-      world.colliders.push({ minX: b.x - b.w / 2, maxX: b.x + b.w / 2, minZ: b.z - b.d / 2, maxZ: b.z + b.d / 2 });
+      // collider — keep the ref so interiors can replace it with walls
+      const col = { minX: b.x - b.w / 2, maxX: b.x + b.w / 2, minZ: b.z - b.d / 2, maxZ: b.z + b.d / 2 };
+      b.collider = col;
+      world.colliders.push(col);
       // storefront strip + sign spots on faces toward roads
-      if (!b.arcade && b.dist >= 2 && rnd() < 0.55) storefronts.push(b);
-      if (b.arcade) storefronts.push(b);
-      const nSigns = b.arcade ? 3 : (b.dist <= 1 ? 2 : (rnd() < 0.5 ? 1 : 0));
+      if (b.arcade || rnd() < b.D.store) storefronts.push(b);
+      const nSigns = b.arcade ? 3 : (b.D === DISTRICTS.MARKET || b.D === DISTRICTS.OLD ? 2 : (rnd() < 0.5 ? 1 : 0));
       for (let s = 0; s < nSigns; s++) {
         const side = (rnd() * 4) | 0;
         const sh = 6 + rnd() * Math.min(b.h - 10, 26);
         const off = (rnd() - 0.5) * 0.5;
-        if (side === 0) signSpots.push({ x: b.x + b.w / 2 + 0.35, y: sh, z: b.z + off * b.d, rotY: Math.PI / 2, arcade: b.arcade });
-        if (side === 1) signSpots.push({ x: b.x - b.w / 2 - 0.35, y: sh, z: b.z + off * b.d, rotY: -Math.PI / 2, arcade: b.arcade });
-        if (side === 2) signSpots.push({ x: b.x + off * b.w, y: sh, z: b.z + b.d / 2 + 0.35, rotY: 0, arcade: b.arcade });
-        if (side === 3) signSpots.push({ x: b.x + off * b.w, y: sh, z: b.z - b.d / 2 - 0.35, rotY: Math.PI, arcade: b.arcade });
+        if (side === 0) signSpots.push({ x: b.x + b.w / 2 + 0.35, y: sh, z: b.z + off * b.d, rotY: Math.PI / 2, arcade: b.arcade, dk: b.dk });
+        if (side === 1) signSpots.push({ x: b.x - b.w / 2 - 0.35, y: sh, z: b.z + off * b.d, rotY: -Math.PI / 2, arcade: b.arcade, dk: b.dk });
+        if (side === 2) signSpots.push({ x: b.x + off * b.w, y: sh, z: b.z + b.d / 2 + 0.35, rotY: 0, arcade: b.arcade, dk: b.dk });
+        if (side === 3) signSpots.push({ x: b.x + off * b.w, y: sh, z: b.z - b.d / 2 - 0.35, rotY: Math.PI, arcade: b.arcade, dk: b.dk });
       }
     }
     for (const s of skyline) items.push({ x: s.x, z: s.z, w: s.w, d: s.d, y0: 0, h: s.h, seed: rnd() * 100, far: true });
@@ -395,9 +650,17 @@ export function buildWorld(scene, renderer) {
     const geo = new THREE.BoxGeometry(1, 1, 1);
     geo.translate(0, 0.5, 0); // origin at base
     const seeds = new Float32Array(items.length);
-    items.forEach((it, i) => { seeds[i] = it.seed; });
+    const tuning = new Float32Array(items.length * 3);
+    items.forEach((it, i) => {
+      seeds[i] = it.seed;
+      const D = it.D;
+      tuning[i * 3] = it.far ? 0.08 : D.litP;
+      tuning[i * 3 + 1] = it.far ? 0.4 : D.warm;
+      tuning[i * 3 + 2] = it.far ? 0.4 : D.flick;
+    });
     geo.setAttribute('aSeed', new THREE.InstancedBufferAttribute(seeds, 1));
-    const mat = makeBuildingMaterial(0.34, 0.95);
+    geo.setAttribute('aTuning', new THREE.InstancedBufferAttribute(tuning, 3));
+    const mat = makeBuildingMaterial(0.95);
     const mesh = new THREE.InstancedMesh(geo, mat, items.length);
     const dummy = new THREE.Object3D();
     const tintA = new THREE.Color(0x232838), tintB = new THREE.Color(0x1a2030), tintC = new THREE.Color(0x262033);
@@ -425,7 +688,7 @@ export function buildWorld(scene, renderer) {
     const dummy = new THREE.Object3D();
     let i = 0;
     for (const tower of towerTrims) {
-      const col = new THREE.Color(pick(rnd, [NEON.cyan, NEON.magenta, NEON.purple])).multiplyScalar(1.15);
+      const col = new THREE.Color(tower.accent || NEON.cyan).multiplyScalar(1.15);
       for (const [sx, sz] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) {
         dummy.position.set(tower.x + sx * tower.w / 2, 0, tower.z + sz * tower.d / 2);
         dummy.scale.set(1, tower.h, 1);
@@ -498,27 +761,34 @@ export function buildWorld(scene, renderer) {
 
   {
     const variants = [
-      { text: 'ネオン', color: NEON.magenta, vertical: true },
-      { text: 'RAMEN', color: NEON.amber, vertical: true },
-      { text: 'HOTEL', color: NEON.cyan, vertical: true },
-      { text: '拉麺横丁', color: NEON.red, vertical: true },
-      { text: 'CYBER', color: NEON.purple, vertical: true },
-      { text: 'オービタル', color: NEON.lime, vertical: true },
-      { text: 'PRINTWIRE', color: NEON.cyan, vertical: false },
-      { text: 'DMLS-3D', color: NEON.amber, vertical: false, sub: 'TITANIUM · DIRECT METAL' },
-      { text: 'MAXCNC', color: NEON.magenta, vertical: false, sub: 'ROBOTIC FABRICATION' },
-      { text: 'SLINGSHOT', color: NEON.blue, vertical: false, sub: 'TRANSIT AUTHORITY' },
-      { text: 'ENERGY+', color: NEON.lime, vertical: false },
-      { text: 'ホロ寿司', color: NEON.cyan, vertical: false },
+      { text: 'ネオン', color: NEON.magenta, vertical: true, pool: ['MARKET', 'OLD'] },
+      { text: 'RAMEN', color: NEON.amber, vertical: true, pool: ['MARKET', 'OLD'] },
+      { text: 'HOTEL', color: NEON.cyan, vertical: true, pool: ['STACKS', 'OLD'] },
+      { text: '拉麺横丁', color: NEON.red, vertical: true, pool: ['MARKET'] },
+      { text: 'CYBER', color: NEON.purple, vertical: true, pool: ['OLD', 'MARKET', 'STACKS'] },
+      { text: 'オービタル', color: NEON.lime, vertical: true, pool: ['CORE', 'PLAZA'] },
+      { text: 'PRINTWIRE', color: NEON.cyan, vertical: false, pool: ['PLAZA', 'CORE'] },
+      { text: 'DMLS-3D', color: NEON.amber, vertical: false, sub: 'TITANIUM · DIRECT METAL', pool: ['FOUNDRY'] },
+      { text: 'MAXCNC', color: NEON.magenta, vertical: false, sub: 'ROBOTIC FABRICATION', pool: ['FOUNDRY'] },
+      { text: 'SLINGSHOT', color: NEON.blue, vertical: false, sub: 'TRANSIT AUTHORITY', pool: ['CORE', 'PLAZA'] },
+      { text: 'ENERGY+', color: NEON.lime, vertical: false, pool: ['FOUNDRY', 'STACKS'] },
+      { text: 'ホロ寿司', color: NEON.cyan, vertical: false, pool: ['MARKET'] },
     ];
     const spots = [...signSpots];
     // shuffle deterministically
     for (let i = spots.length - 1; i > 0; i--) { const j = (rnd() * (i + 1)) | 0;[spots[i], spots[j]] = [spots[j], spots[i]]; }
-    let cursor = 0;
     for (const v of variants) {
       const take = v.vertical ? 14 : 9;
-      const mine = spots.slice(cursor, cursor + take);
-      cursor += take;
+      // district-appropriate spots first, then anything left
+      const mine = [];
+      for (const s of spots) {
+        if (mine.length >= take) break;
+        if (!s.used && v.pool.includes(s.dk)) { s.used = true; mine.push(s); }
+      }
+      for (const s of spots) {
+        if (mine.length >= take) break;
+        if (!s.used) { s.used = true; mine.push(s); }
+      }
       if (!mine.length) break;
       const tex = signCanvas(v.text, v.color, v.vertical, v.sub);
       const gw = v.vertical ? 2.6 : 10.5, gh = v.vertical ? 10.5 : 2.6;
@@ -728,51 +998,43 @@ export function buildWorld(scene, renderer) {
     const R = 19.6;
     world.colliders.push(
       { minX: cx - R - 0.4, maxX: cx + R + 0.4, minZ: cz - R - 0.4, maxZ: cz - R + 0.1, minY: deckY - 1, maxY: deckY + 2.4 },
-      { minX: cx - R - 0.4, maxX: cx + R + 0.4, minZ: cz + R - 0.1, maxZ: cz + R + 0.4, minY: deckY - 1, maxY: deckY + 2.4 },
+      // south railing splits around the elevator-bridge gate
+      { minX: cx - R - 0.4, maxX: cx - 1.9, minZ: cz + R - 0.1, maxZ: cz + R + 0.4, minY: deckY - 1, maxY: deckY + 2.4 },
+      { minX: cx + 1.9, maxX: cx + R + 0.4, minZ: cz + R - 0.1, maxZ: cz + R + 0.4, minY: deckY - 1, maxY: deckY + 2.4 },
       { minX: cx - R - 0.4, maxX: cx - R + 0.1, minZ: cz - R, maxZ: cz + R, minY: deckY - 1, maxY: deckY + 2.4 },
       { minX: cx + R - 0.1, maxX: cx + R + 0.4, minZ: cz - R, maxZ: cz + R, minY: deckY - 1, maxY: deckY + 2.4 },
     );
     world.surfaces.push({ minX: cx - 20.6, maxX: cx + 20.6, minZ: cz - 20.6, maxZ: cz + 20.6, y: deckY });
 
-    // ── Glass elevator on south face ──
-    const ELEV = { bottom: 0.6, top: deckY, y: 0.6, state: 'down', t: 0, speed: 14 };
-    world.elevator = ELEV;
-    const padMat = new THREE.MeshStandardMaterial({
-      color: 0x66f2ff, roughness: 0.15, metalness: 0.4, transparent: true, opacity: 0.5,
-      emissive: 0x0aa7c4, emissiveIntensity: 0.7,
+    // ── Gated glass elevator, docked OUTSIDE the deck rim (no clipping
+    // through the slab) — a short bridge crosses the railing gap.
+    const spireElev = world.makeElevator({
+      x: cx, z: cz + 24.9, stops: [0.6, deckY],
+      gate: { dx: 0, dz: -1 },     // opens toward the tower / deck bridge
+      size: 3.6, color: NEON.cyan, name: 'SPIRE ELEVATOR',
     });
-    const pad = new THREE.Mesh(new THREE.CylinderGeometry(2.6, 2.6, 0.3, 10), padMat);
-    pad.position.set(cx, ELEV.y, cz + 19.5);
-    scene.add(pad);
-    const shaftMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(NEON.cyan).multiplyScalar(0.8), toneMapped: false, transparent: true, opacity: 0.35 });
-    for (const dxz of [-2.9, 2.9]) {
-      const rail1 = new THREE.Mesh(new THREE.BoxGeometry(0.22, deckY + 2, 0.22), shaftMat);
-      rail1.position.set(cx + dxz, (deckY + 2) / 2, cz + 19.5 + 2.4);
-      scene.add(rail1);
-      const rail2 = new THREE.Mesh(new THREE.BoxGeometry(0.22, deckY + 2, 0.22), shaftMat);
-      rail2.position.set(cx + dxz, (deckY + 2) / 2, cz + 19.5 - 2.4);
-      scene.add(rail2);
-    }
-    const padSurface = { minX: cx - 2.5, maxX: cx + 2.5, minZ: cz + 17.1, maxZ: cz + 21.9, y: () => ELEV.y + 0.18 };
-    world.surfaces.push(padSurface);
-    world.updateFns.push((dt) => {
-      if (ELEV.state === 'up') {
-        ELEV.y = Math.min(ELEV.top, ELEV.y + ELEV.speed * dt);
-        if (ELEV.y >= ELEV.top) ELEV.state = 'topIdle';
-      } else if (ELEV.state === 'downGo') {
-        ELEV.y = Math.max(ELEV.bottom, ELEV.y - ELEV.speed * dt);
-        if (ELEV.y <= ELEV.bottom) ELEV.state = 'down';
+    world.spireElevator = spireElev;
+    {
+      const plate = new THREE.Mesh(
+        new THREE.BoxGeometry(3.4, 0.25, 3.6),
+        new THREE.MeshStandardMaterial({ color: 0x232940, roughness: 0.4, metalness: 0.55 })
+      );
+      plate.position.set(cx, deckY - 0.13, cz + 21.4);
+      scene.add(plate);
+      world.raycastTargets.push(plate);
+      const glowEdge = new THREE.MeshBasicMaterial({ color: new THREE.Color(NEON.cyan).multiplyScalar(0.9), toneMapped: false });
+      for (const e of [-1, 1]) {
+        const strip = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.1, 3.6), glowEdge);
+        strip.position.set(cx + e * 1.66, deckY + 0.02, cz + 21.4);
+        scene.add(strip);
       }
-      pad.position.y = ELEV.y;
-    });
-    world.interactables.push({
-      label: () => (ELEV.state === 'down' ? 'RIDE SPIRE ELEVATOR ▲' : ELEV.state === 'topIdle' ? 'DESCEND ELEVATOR ▼' : null),
-      pos: pad.position, radius: 4.2,
-      action: () => {
-        if (ELEV.state === 'down') ELEV.state = 'up';
-        else if (ELEV.state === 'topIdle') ELEV.state = 'downGo';
-      },
-    });
+      world.surfaces.push({ minX: cx - 1.7, maxX: cx + 1.7, minZ: cz + 19.9, maxZ: cz + 23.25, y: deckY });
+      // bridge side rails so the gap is safe
+      world.colliders.push(
+        { minX: cx - 2.0, maxX: cx - 1.6, minZ: cz + 19.6, maxZ: cz + 23.3, minY: deckY - 1, maxY: deckY + 2.4 },
+        { minX: cx + 1.6, maxX: cx + 2.0, minZ: cz + 19.6, maxZ: cz + 23.3, minY: deckY - 1, maxY: deckY + 2.4 },
+      );
+    }
 
     // Plaza dressing: holo-planet fountain
     const holoMat = new THREE.MeshBasicMaterial({
@@ -1035,6 +1297,158 @@ export function buildWorld(scene, renderer) {
     panels.instanceColor.needsUpdate = true;
     boxes.frustumCulled = panels.frustumCulled = false;
     scene.add(boxes, panels);
+  }
+
+  // ─────────────────────── WALLIZE (shared with interiors.js) ───────────────────────
+  // Swap a building's solid AABB for four wall strips (optionally with a
+  // doorway gap and a parapet top) so its inside / roof become real places.
+  world.wallizeBuilding = (b, { gaps = [], maxY = null } = {}) => {
+    const i = world.colliders.indexOf(b.collider);
+    if (i >= 0) world.colliders.splice(i, 1);
+    const x0 = b.x - b.w / 2, x1 = b.x + b.w / 2, z0 = b.z - b.d / 2, z1 = b.z + b.d / 2;
+    const T = 0.6, MY = maxY === null ? b.h + 1.1 : maxY;
+    const walls = [];
+    const seg = (def) => { def.minY = 0; def.maxY = MY; walls.push(def); world.colliders.push(def); };
+    const split = (side, a0, a1, fixed0, fixed1, horiz) => {
+      const myGaps = gaps.filter(g => g.side === side).sort((p, q) => p.center - q.center);
+      let cur = a0;
+      for (const g of myGaps) {
+        const g0 = g.center - g.width / 2, g1 = g.center + g.width / 2;
+        if (g0 > cur) seg(horiz ? { minX: cur, maxX: g0, minZ: fixed0, maxZ: fixed1 } : { minX: fixed0, maxX: fixed1, minZ: cur, maxZ: g0 });
+        cur = Math.max(cur, g1);
+      }
+      if (cur < a1) seg(horiz ? { minX: cur, maxX: a1, minZ: fixed0, maxZ: fixed1 } : { minX: fixed0, maxX: fixed1, minZ: cur, maxZ: a1 });
+    };
+    split('n', x0, x1, z0, z0 + T, true);
+    split('s', x0, x1, z1 - T, z1, true);
+    split('w', z0, z1, x0, x0 + T, false);
+    split('e', z0, z1, x1 - T, x1, false);
+    return walls;
+  };
+
+  // ─────────────────────── GATEWAY ARCHES (district borders) ───────────────────────
+  {
+    const seen = new Set();
+    const archMat = new THREE.MeshStandardMaterial({ color: 0x1c2336, roughness: 0.4, metalness: 0.65 });
+    let count = 0;
+    const tryArch = (Da, Db, roadX, roadZ, alongZ) => {
+      const key = [Da.key, Db.key].sort().join('|');
+      if (Da === Db || seen.has(key) || count >= 10) return;
+      seen.add(key);
+      count++;
+      const g = new THREE.Group();
+      const span = C.ROAD + 3.6;
+      const mkSign = (D) => {
+        const [c, ctx] = makeCanvas(512, 96);
+        ctx.fillStyle = 'rgba(4,6,14,0.9)'; ctx.fillRect(0, 0, 512, 96);
+        const cc = hexCss(D.curb, 0.95);
+        ctx.strokeStyle = cc; ctx.lineWidth = 5; ctx.strokeRect(5, 5, 502, 86);
+        ctx.font = 'bold 44px Orbitron, monospace';
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.shadowColor = cc; ctx.shadowBlur = 16;
+        ctx.fillStyle = '#fff';
+        ctx.fillText(`◊ ${D.name} ◊`, 256, 48);
+        return new THREE.MeshBasicMaterial({ map: canvasTexture(c) });
+      };
+      for (const e of [-1, 1]) {
+        const p = new THREE.Mesh(new THREE.BoxGeometry(0.9, 10, 0.9), archMat);
+        const ox = alongZ ? e * span / 2 : 0, oz = alongZ ? 0 : e * span / 2;
+        p.position.set(roadX + ox, 5, roadZ + oz);
+        g.add(p);
+        world.colliders.push({ minX: p.position.x - 0.55, maxX: p.position.x + 0.55, minZ: p.position.z - 0.55, maxZ: p.position.z + 0.55 });
+      }
+      const lintel = new THREE.Mesh(new THREE.BoxGeometry(alongZ ? span : 0.9, 1.5, alongZ ? 0.9 : span), archMat);
+      lintel.position.set(roadX, 10.1, roadZ);
+      g.add(lintel);
+      const lintelGlow = new THREE.Mesh(
+        new THREE.BoxGeometry(alongZ ? span : 0.24, 0.18, alongZ ? 0.24 : span),
+        new THREE.MeshBasicMaterial({ color: new THREE.Color(Db.curb).multiplyScalar(1.0), toneMapped: false })
+      );
+      lintelGlow.position.set(roadX, 9.3, roadZ);
+      g.add(lintelGlow);
+      // each face names the district you're entering
+      const sA = new THREE.Mesh(new THREE.PlaneGeometry(10.5, 2), mkSign(Db));
+      const sB = new THREE.Mesh(new THREE.PlaneGeometry(10.5, 2), mkSign(Da));
+      if (alongZ) {  // road runs along z → faces look ±z
+        sA.position.set(roadX, 8.2, roadZ - 0.7); sA.rotation.y = Math.PI;
+        sB.position.set(roadX, 8.2, roadZ + 0.7);
+      } else {       // faces look ±x
+        sA.position.set(roadX - 0.7, 8.2, roadZ); sA.rotation.y = -Math.PI / 2;
+        sB.position.set(roadX + 0.7, 8.2, roadZ); sB.rotation.y = Math.PI / 2;
+      }
+      g.add(sA, sB);
+      scene.add(g);
+    };
+    for (let bx = 0; bx < C.GRID - 1; bx++) for (let bz = 0; bz < C.GRID; bz++) {
+      const Da = districtOf(bx, bz), Db = districtOf(bx + 1, bz);
+      const cz0 = -H + bz * C.CELL + C.ROAD / 2 + C.BLOCK / 2;
+      tryArch(Da, Db, -H + (bx + 1) * C.CELL - C.ROAD / 2, cz0, false);
+    }
+    for (let bz = 0; bz < C.GRID - 1; bz++) for (let bx = 0; bx < C.GRID; bx++) {
+      const Da = districtOf(bx, bz), Db = districtOf(bx, bz + 1);
+      const cx0 = -H + bx * C.CELL + C.ROAD / 2 + C.BLOCK / 2;
+      tryArch(Da, Db, cx0, -H + (bz + 1) * C.CELL - C.ROAD / 2, true);
+    }
+  }
+
+  // ─────────────────────── DISTRICT POIs ───────────────────────
+  for (const key of ['MARKET', 'FOUNDRY', 'STACKS', 'PLAZA', 'OLD']) {
+    const blocks = (districtBlocks[key] || []);
+    if (!blocks.length) continue;
+    const mx = blocks.reduce((s, b) => s + b.cx, 0) / blocks.length;
+    const mz = blocks.reduce((s, b) => s + b.cz, 0) / blocks.length;
+    let best = blocks[0], bd = 1e9;
+    for (const blk of blocks) {
+      const d = (blk.cx - mx) ** 2 + (blk.cz - mz) ** 2;
+      if (d < bd) { bd = d; best = blk; }
+    }
+    const D = DISTRICTS[key];
+    world.pois.push({ name: D.name, pos: new THREE.Vector3(best.cx, 1, best.cz), desc: 'District heart' });
+  }
+
+  // ─────────────────────── FLAGSHIP ROOFTOP ELEVATORS ───────────────────────
+  // One external glass lift per flagship district tower → walkable roof.
+  for (const key of ['PLAZA', 'STACKS', 'FOUNDRY']) {
+    const candidates = buildings.filter(b => b.dk === key && b.w >= 18 && b.d >= 18);
+    if (!candidates.length) continue;
+    const b = candidates.sort((p, q) => q.h - p.h)[0];
+    const D = DISTRICTS[key];
+    // cab 4.6u south of the wall; bridge crosses onto the roof through a parapet gap
+    const ex = b.x, ez = b.z + b.d / 2 + 4.6;
+    world.wallizeBuilding(b, { gaps: [{ side: 's', center: ex, width: 3.2 }] });
+    const roofY = b.h + 0.02;
+    world.makeElevator({
+      x: ex, z: ez, stops: [0.6, roofY - 0.18],
+      gate: { dx: 0, dz: -1 }, size: 3.2, color: D.accent, name: `${D.short} SKYLIFT`,
+    });
+    // dock bridge over the gap
+    const plate = new THREE.Mesh(
+      new THREE.BoxGeometry(3.0, 0.22, 4.6),
+      new THREE.MeshStandardMaterial({ color: 0x232940, roughness: 0.4, metalness: 0.55 })
+    );
+    plate.position.set(ex, roofY - 0.11, b.z + b.d / 2 + 2.0);
+    scene.add(plate);
+    world.surfaces.push({ minX: ex - 1.5, maxX: ex + 1.5, minZ: b.z + b.d / 2 - 0.6, maxZ: ez - 1.5, y: roofY });
+    world.colliders.push(
+      { minX: ex - 1.85, maxX: ex - 1.45, minZ: b.z + b.d / 2 - 0.2, maxZ: ez - 1.4, minY: roofY - 1, maxY: roofY + 2.2 },
+      { minX: ex + 1.45, maxX: ex + 1.85, minZ: b.z + b.d / 2 - 0.2, maxZ: ez - 1.4, minY: roofY - 1, maxY: roofY + 2.2 },
+    );
+    // roof surface — ring around the set-back upper tier if there is one
+    if (b.t2) {
+      const rw = b.t2.w2 / 2 + 0.2, rd = b.t2.d2 / 2 + 0.2;
+      const x0 = b.x - b.w / 2 + 0.3, x1 = b.x + b.w / 2 - 0.3, z0 = b.z - b.d / 2 + 0.3, z1 = b.z + b.d / 2 - 0.3;
+      world.surfaces.push(
+        { minX: x0, maxX: x1, minZ: z0, maxZ: b.z - rd, y: roofY },
+        { minX: x0, maxX: x1, minZ: b.z + rd, maxZ: z1, y: roofY },
+        { minX: x0, maxX: b.x - rw, minZ: b.z - rd, maxZ: b.z + rd, y: roofY },
+        { minX: b.x + rw, maxX: x1, minZ: b.z - rd, maxZ: b.z + rd, y: roofY },
+      );
+      world.colliders.push({ minX: b.x - rw, maxX: b.x + rw, minZ: b.z - rd, maxZ: b.z + rd, minY: b.h, maxY: b.h + b.t2.h2 });
+    } else {
+      world.surfaces.push({ minX: b.x - b.w / 2 + 0.3, maxX: b.x + b.w / 2 - 0.3, minZ: b.z - b.d / 2 + 0.3, maxZ: b.z + b.d / 2 - 0.3, y: roofY });
+    }
+    b.hasRoofLift = true;
+    world.pois.push({ name: `${D.short} SKYDECK`, pos: new THREE.Vector3(b.x, roofY, b.z), desc: `${D.name} rooftop`, elevated: true });
   }
 
   return world;
