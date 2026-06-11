@@ -1,0 +1,320 @@
+/* ════════════════════════════════════════════════════════════════
+   NEON CITY // NC-2287 — HUD styling matched to Interstellar
+   Slingshot's UI language (Orbitron headers, Rajdhani body,
+   Share Tech Mono readouts, cyan panels w/ magenta accents).
+   ════════════════════════════════════════════════════════════════ */
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+:root {
+  --cyan: #00f0ff;
+  --cyan-dim: rgba(0, 240, 255, 0.55);
+  --magenta: #ff2bd6;
+  --amber: #ffb300;
+  --panel-bg: rgba(2, 8, 18, 0.72);
+  --panel-border: rgba(0, 240, 255, 0.35);
+  --text: #cfeef5;
+}
+
+html, body {
+  width: 100%; height: 100%;
+  overflow: hidden;
+  background: #05030f;
+  font-family: 'Rajdhani', sans-serif;
+  color: var(--text);
+  cursor: default;
+}
+
+#scene { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+
+.hidden { display: none !important; }
+.mono { font-family: 'Share Tech Mono', monospace; }
+.dim { opacity: 0.55; font-size: 0.8em; letter-spacing: 1px; }
+
+/* ══════════ LAUNCH SCREEN ══════════ */
+
+#launch {
+  position: fixed; inset: 0; z-index: 100;
+  display: flex; align-items: center; justify-content: center;
+  background:
+    radial-gradient(ellipse at 50% 120%, rgba(255, 43, 214, 0.16), transparent 55%),
+    radial-gradient(ellipse at 50% -20%, rgba(0, 240, 255, 0.12), transparent 55%),
+    linear-gradient(#04020c, #090318);
+  transition: opacity 1.2s ease;
+}
+#launch.fading { opacity: 0; pointer-events: none; }
+
+.launch-inner { text-align: center; max-width: 780px; padding: 24px; }
+
+.launch-kicker {
+  font-family: 'Orbitron', monospace;
+  font-size: 13px; letter-spacing: 6px;
+  color: var(--cyan-dim);
+}
+
+.launch-title {
+  font-family: 'Orbitron', monospace;
+  font-size: clamp(54px, 11vw, 110px);
+  font-weight: 900; letter-spacing: 10px;
+  margin: 6px 0 2px;
+  color: #eafcff;
+  text-shadow:
+    0 0 12px rgba(0, 240, 255, 0.9),
+    0 0 48px rgba(0, 240, 255, 0.45),
+    0 0 90px rgba(255, 43, 214, 0.5);
+  animation: titlePulse 3.2s ease-in-out infinite;
+}
+@keyframes titlePulse {
+  0%, 100% { text-shadow: 0 0 12px rgba(0,240,255,.9), 0 0 48px rgba(0,240,255,.45), 0 0 90px rgba(255,43,214,.5); }
+  50%      { text-shadow: 0 0 16px rgba(0,240,255,1), 0 0 64px rgba(0,240,255,.6), 0 0 120px rgba(255,43,214,.7); }
+}
+
+.launch-sub {
+  font-size: 17px; letter-spacing: 5px; font-weight: 500;
+  color: rgba(255, 43, 214, 0.85);
+  margin-bottom: 26px;
+}
+
+.launch-status {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 13px; letter-spacing: 2px; color: var(--cyan-dim);
+  margin-bottom: 8px; min-height: 18px;
+}
+.dots::after { content: ''; animation: dots 1.4s steps(4) infinite; }
+@keyframes dots { 0% { content: ''; } 25% { content: '.'; } 50% { content: '..'; } 75% { content: '...'; } }
+
+.launch-bar {
+  width: 380px; max-width: 80vw; height: 4px; margin: 0 auto 30px;
+  background: rgba(0, 240, 255, 0.12);
+  border: 1px solid rgba(0, 240, 255, 0.25);
+}
+#launch-bar-fill {
+  width: 0%; height: 100%;
+  background: linear-gradient(90deg, var(--cyan), var(--magenta));
+  box-shadow: 0 0 12px rgba(0, 240, 255, 0.8);
+  transition: width 0.3s ease;
+}
+
+.launch-buttons { display: flex; gap: 18px; justify-content: center; margin-bottom: 30px; flex-wrap: wrap; }
+
+.launch-btn {
+  font-family: 'Orbitron', monospace;
+  font-size: 16px; font-weight: 700; letter-spacing: 3px;
+  padding: 16px 34px;
+  color: var(--cyan);
+  background: rgba(0, 240, 255, 0.06);
+  border: 1px solid var(--cyan);
+  cursor: pointer;
+  transition: all 0.25s ease;
+  text-shadow: 0 0 8px rgba(0, 240, 255, 0.7);
+}
+.launch-btn:hover:not(:disabled) {
+  background: rgba(0, 240, 255, 0.18);
+  box-shadow: 0 0 24px rgba(0, 240, 255, 0.5), inset 0 0 18px rgba(0, 240, 255, 0.15);
+  transform: translateY(-2px);
+}
+.launch-btn.alt { color: var(--magenta); border-color: var(--magenta); background: rgba(255, 43, 214, 0.05); text-shadow: 0 0 8px rgba(255, 43, 214, 0.7); }
+.launch-btn.alt:hover:not(:disabled) { background: rgba(255, 43, 214, 0.16); box-shadow: 0 0 24px rgba(255, 43, 214, 0.45); }
+.launch-btn:disabled { opacity: 0.3; cursor: wait; }
+
+.launch-controls table {
+  margin: 0 auto; border-collapse: collapse;
+  font-size: 13.5px; letter-spacing: 0.5px;
+}
+.launch-controls td { padding: 2.5px 14px; text-align: left; color: rgba(207, 238, 245, 0.75); }
+.launch-controls td:nth-child(odd) {
+  font-family: 'Share Tech Mono', monospace;
+  color: var(--cyan); text-align: right;
+}
+
+.launch-foot {
+  margin-top: 24px;
+  font-family: 'Orbitron', monospace;
+  font-size: 10px; letter-spacing: 4px;
+  color: rgba(255, 179, 0, 0.6);
+}
+
+/* ══════════ HUD PANELS ══════════ */
+
+#hud { position: fixed; inset: 0; pointer-events: none; z-index: 50; }
+
+.ui-panel {
+  position: absolute;
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  padding: 10px 14px;
+  backdrop-filter: blur(3px);
+  box-shadow: 0 0 18px rgba(0, 240, 255, 0.08), inset 0 0 24px rgba(0, 240, 255, 0.03);
+  min-width: 200px;
+}
+.ui-panel.top-left { top: 16px; left: 16px; }
+.ui-panel.top-right { top: 16px; right: 16px; min-width: 0; }
+.ui-panel.bottom-left { bottom: 16px; left: 16px; }
+.ui-panel.bottom-right { bottom: 16px; right: 16px; width: 260px; }
+
+.panel-title {
+  font-family: 'Orbitron', monospace;
+  font-size: 12px; font-weight: 700; letter-spacing: 2.5px;
+  color: var(--cyan);
+  border-bottom: 1px solid rgba(0, 240, 255, 0.2);
+  padding-bottom: 5px; margin-bottom: 7px;
+  text-shadow: 0 0 6px rgba(0, 240, 255, 0.5);
+}
+
+.info-row { display: flex; justify-content: space-between; gap: 18px; font-size: 13.5px; line-height: 1.55; }
+.info-row .label { color: rgba(207, 238, 245, 0.5); letter-spacing: 1.5px; font-size: 11.5px; padding-top: 1px; }
+.info-row .value { color: var(--text); }
+
+.round-map {
+  width: 220px; height: 220px;
+  border-radius: 50%;
+  overflow: hidden;
+  border: 1px solid rgba(0, 240, 255, 0.3);
+  box-shadow: 0 0 16px rgba(0, 240, 255, 0.15), inset 0 0 30px rgba(0, 0, 0, 0.6);
+}
+#minimap { width: 100%; height: 100%; }
+
+.target-name {
+  font-family: 'Orbitron', monospace;
+  font-size: 16px; font-weight: 700; letter-spacing: 1.5px;
+  color: var(--amber); text-shadow: 0 0 8px rgba(255, 179, 0, 0.5);
+}
+.target-dist { font-size: 13px; color: var(--cyan-dim); min-height: 17px; }
+.mode-line { margin-top: 6px; font-size: 12px; letter-spacing: 2px; color: rgba(255, 43, 214, 0.8); }
+
+.bar-row { display: flex; align-items: center; gap: 10px; margin: 7px 0; }
+.bar-row .label { width: 56px; font-size: 11px; letter-spacing: 1.5px; color: rgba(207, 238, 245, 0.55); }
+.bar { flex: 1; height: 9px; background: rgba(0, 240, 255, 0.07); border: 1px solid rgba(0, 240, 255, 0.2); }
+.bar-fill { height: 100%; width: 100%; transition: width 0.18s linear; }
+.bar-fill.energy { background: linear-gradient(90deg, #00f0ff, #53ffe9); box-shadow: 0 0 8px rgba(0, 240, 255, 0.6); }
+.bar-fill.hull { background: linear-gradient(90deg, #2eff7b, #b8ff53); box-shadow: 0 0 8px rgba(46, 255, 123, 0.5); }
+.bar-fill.shield { background: linear-gradient(90deg, #9d4cff, #ff2bd6); box-shadow: 0 0 8px rgba(157, 76, 255, 0.6); }
+.shield-state { font-family: 'Share Tech Mono', monospace; font-size: 11px; color: var(--cyan-dim); width: 30px; }
+
+/* ══════════ CROSSHAIR (mouse-following, like the mothergame) ══════════ */
+
+#crosshair {
+  position: fixed; left: 50%; top: 50%;
+  width: 0; height: 0; pointer-events: none; z-index: 60;
+}
+.ch-dot {
+  position: absolute; left: -2px; top: -2px; width: 4px; height: 4px;
+  background: var(--cyan); border-radius: 50%;
+  box-shadow: 0 0 6px var(--cyan);
+}
+.ch-ring {
+  position: absolute; left: -13px; top: -13px; width: 26px; height: 26px;
+  border: 1px solid rgba(0, 240, 255, 0.55); border-radius: 50%;
+  box-shadow: 0 0 8px rgba(0, 240, 255, 0.25), inset 0 0 8px rgba(0, 240, 255, 0.15);
+  transition: transform 0.15s ease, border-color 0.15s ease;
+}
+#crosshair.interact .ch-ring {
+  transform: scale(1.45);
+  border-color: var(--amber);
+  box-shadow: 0 0 12px rgba(255, 179, 0, 0.5);
+}
+
+/* ══════════ TARGET MARKER (nav diamond) ══════════ */
+
+#target-marker { position: fixed; pointer-events: none; z-index: 55; }
+.tm-diamond {
+  width: 18px; height: 18px; margin: 0 auto;
+  border: 2px solid var(--amber);
+  transform: rotate(45deg);
+  box-shadow: 0 0 10px rgba(255, 179, 0, 0.6), inset 0 0 6px rgba(255, 179, 0, 0.3);
+  animation: tmPulse 1.6s ease-in-out infinite;
+}
+@keyframes tmPulse { 0%,100% { transform: rotate(45deg) scale(1); } 50% { transform: rotate(45deg) scale(1.25); } }
+.tm-label {
+  margin-top: 9px; text-align: center;
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 11px; letter-spacing: 1px; color: var(--amber);
+  text-shadow: 0 0 6px rgba(0, 0, 0, 0.9);
+  white-space: nowrap;
+}
+
+/* ══════════ PROMPTS / TOASTS ══════════ */
+
+#interact-prompt {
+  position: fixed; left: 50%; bottom: 21%;
+  transform: translateX(-50%);
+  font-family: 'Orbitron', monospace;
+  font-size: 14px; font-weight: 700; letter-spacing: 2px;
+  color: var(--amber);
+  background: rgba(2, 8, 18, 0.8);
+  border: 1px solid rgba(255, 179, 0, 0.5);
+  padding: 10px 22px;
+  text-shadow: 0 0 8px rgba(255, 179, 0, 0.6);
+  box-shadow: 0 0 18px rgba(255, 179, 0, 0.2);
+  animation: promptBob 1.8s ease-in-out infinite;
+}
+@keyframes promptBob { 0%,100% { transform: translateX(-50%) translateY(0); } 50% { transform: translateX(-50%) translateY(-4px); } }
+
+#toast {
+  position: fixed; left: 50%; top: 9%;
+  transform: translateX(-50%);
+  text-align: center;
+  background: rgba(2, 8, 18, 0.82);
+  border: 1px solid var(--panel-border);
+  border-left: 3px solid var(--cyan);
+  border-right: 3px solid var(--cyan);
+  padding: 12px 34px;
+  box-shadow: 0 0 26px rgba(0, 240, 255, 0.2);
+  opacity: 0; transition: opacity 0.3s ease;
+}
+#toast.show { opacity: 1; }
+#toast-title {
+  font-family: 'Orbitron', monospace;
+  font-size: 16px; font-weight: 700; letter-spacing: 2px;
+  color: var(--cyan); text-shadow: 0 0 10px rgba(0, 240, 255, 0.7);
+}
+#toast-sub { font-size: 13px; letter-spacing: 1px; color: rgba(207, 238, 245, 0.7); margin-top: 3px; }
+
+#demo-banner {
+  position: fixed; left: 50%; top: 16px;
+  transform: translateX(-50%);
+  font-family: 'Orbitron', monospace;
+  font-size: 12px; letter-spacing: 2px;
+  color: var(--magenta);
+  background: rgba(20, 2, 16, 0.75);
+  border: 1px solid rgba(255, 43, 214, 0.5);
+  padding: 8px 20px;
+  text-shadow: 0 0 8px rgba(255, 43, 214, 0.6);
+  animation: bannerBlink 2.4s ease-in-out infinite;
+}
+@keyframes bannerBlink { 0%,100% { opacity: 1; } 50% { opacity: 0.55; } }
+
+/* ══════════ SCREEN FX ══════════ */
+
+#vignette {
+  position: fixed; inset: 0; pointer-events: none;
+  background: radial-gradient(ellipse at center, transparent 58%, rgba(2, 0, 10, 0.55) 100%);
+}
+#shield-tint {
+  position: fixed; inset: 0; pointer-events: none; opacity: 0;
+  background: radial-gradient(ellipse at center, transparent 40%, rgba(157, 76, 255, 0.16) 100%);
+  transition: opacity 0.4s ease;
+}
+#shield-tint.on { opacity: 1; }
+
+/* ══════════ PAUSE ══════════ */
+
+#pause-overlay {
+  position: fixed; inset: 0; z-index: 90;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(2, 0, 10, 0.72);
+  backdrop-filter: blur(4px);
+}
+.pause-box { text-align: center; }
+.pause-title {
+  font-family: 'Orbitron', monospace;
+  font-size: 46px; font-weight: 900; letter-spacing: 8px;
+  color: var(--cyan); text-shadow: 0 0 24px rgba(0, 240, 255, 0.6);
+}
+.pause-sub { font-size: 15px; letter-spacing: 3px; color: rgba(255, 43, 214, 0.8); margin: 10px 0 18px; }
+.pause-hint { font-family: 'Share Tech Mono', monospace; font-size: 13px; color: var(--cyan-dim); }
+
+@media (max-width: 900px) {
+  .ui-panel.top-right, .ui-panel.bottom-right { display: none; }
+  .launch-controls { display: none; }
+}
