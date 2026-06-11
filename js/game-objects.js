@@ -12519,6 +12519,13 @@ function _makeBossCloudTexture() {
             }
             // Billowy contrast: hollow out the troughs, keep bright crests
             v = Math.max(0, Math.min(1, (v - 0.35) * 1.8));
+            // POLE FADE: the sphere's UV rows converge at the poles, which
+            // pinched the pattern into a swirl. The texture's vertical
+            // edges land exactly on the poles (mirrored repeat.y = 2), so
+            // fading cloud alpha to zero over the outer 12% of rows clears
+            // the polar caps smoothly — no clouds to pinch.
+            const edge = Math.min(y, SIZE - 1 - y) / (SIZE * 0.12);
+            if (edge < 1) v *= edge * edge * (3 - 2 * edge); // smoothstep
             const i = (y * SIZE + x) * 4;
             img.data[i] = 255; img.data[i + 1] = 255; img.data[i + 2] = 255;
             img.data[i + 3] = Math.floor(v * 255);
@@ -12625,7 +12632,7 @@ function updateBossSkyboxHeartbeat() {
     let _lEnv = 0;
     const _now = Date.now();
     if (hasBoss) {
-        if (!_bossLightning.nextAt) _bossLightning.nextAt = _now + 2500 + Math.random() * 5000;
+        if (!_bossLightning.nextAt) _bossLightning.nextAt = _now + 1200 + Math.random() * 2500;
         if (!_bossLightning.flash && _now >= _bossLightning.nextAt) {
             if (_bossLightning.strokes <= 0) _bossLightning.strokes = 1 + Math.floor(Math.random() * 3);
             _bossLightning.flash = {
@@ -12646,7 +12653,7 @@ function updateBossSkyboxHeartbeat() {
                 _bossLightning.strokes--;
                 _bossLightning.nextAt = _bossLightning.strokes > 0
                     ? _now + 100 + Math.random() * 400    // next stroke in this cell
-                    : _now + 4000 + Math.random() * 9000; // next storm cell
+                    : _now + 2200 + Math.random() * 4500; // next storm cell (2.2-6.7s)
             }
         }
     } else {
@@ -12661,7 +12668,9 @@ function updateBossSkyboxHeartbeat() {
         _bossSkyTmp.copy(_bossSkyBaseColor).lerp(_bossSkyWhite, Math.min(1, _lEnv * 1.4));
         bossSkybox.material.color.copy(_bossSkyTmp);
     }
-    bossSkybox.material.opacity = Math.min(0.85, bossSkyboxOpacity + _lEnv * 0.35);
+    // Opacity lift trimmed (0.35 → 0.16, cap 0.85 → 0.58): the flash should
+    // read in the COLOR shift to white more than in raw opacity.
+    bossSkybox.material.opacity = Math.min(0.58, bossSkyboxOpacity + _lEnv * 0.16);
 }
 
 // =============================================================================
