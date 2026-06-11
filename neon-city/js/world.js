@@ -347,7 +347,7 @@ export function buildWorld(scene, renderer) {
     g.addColorStop(1.0, '#4a1747');
     ctx.fillStyle = g; ctx.fillRect(0, 0, 16, 256);
     const skyTex = canvasTexture(c);
-    const skyMat = new THREE.MeshBasicMaterial({ map: skyTex, side: THREE.BackSide, fog: false, depthWrite: false, transparent: true, opacity: 0.6 });
+    const skyMat = new THREE.MeshBasicMaterial({ map: skyTex, side: THREE.BackSide, fog: false, depthWrite: false, transparent: true, opacity: 0.3 });
     const sky = new THREE.Mesh(new THREE.SphereGeometry(140000, 32, 20), skyMat);
     sky.renderOrder = -10;
     scene.add(sky);
@@ -388,13 +388,27 @@ export function buildWorld(scene, renderer) {
       side: THREE.BackSide, fog: false, depthWrite: false, transparent: true, opacity: 0,
       color: new THREE.Color(0.65, 0.68, 0.78),
     });
-    new THREE.TextureLoader().load('../images/IMG_FD98AABFB890-1.jpeg', (t) => {
-      t.colorSpace = THREE.SRGBColorSpace;
-      t.wrapS = THREE.RepeatWrapping;
-      t.repeat.set(3, 1.4);
+    {
+      // procedural soft cloud bank (the repo has no real cloud photo —
+      // IMG_FD98… turned out to be a phone screenshot of the game)
+      const [cc, cctx] = makeCanvas(512, 256);
+      cctx.fillStyle = '#0a0d16';
+      cctx.fillRect(0, 0, 512, 256);
+      const crnd = mulberry32(77);
+      for (let i = 0; i < 90; i++) {
+        const x = crnd() * 512, y = 60 + crnd() * 150, r = 18 + crnd() * 46;
+        const g2 = cctx.createRadialGradient(x, y, 0, x, y, r);
+        const a = 0.05 + crnd() * 0.1;
+        g2.addColorStop(0, `rgba(225,230,242,${a})`);
+        g2.addColorStop(1, 'rgba(225,230,242,0)');
+        cctx.fillStyle = g2;
+        cctx.fillRect(x - r, y - r, r * 2, r * 2);
+        if (x < 100) { cctx.save(); cctx.translate(512, 0); cctx.fillRect(x - r, y - r, r * 2, r * 2); cctx.restore(); }
+      }
+      const t = canvasTexture(cc, { repeat: [3, 1] });
       cloudMat.map = t;
       cloudMat.needsUpdate = true;
-    });
+    }
     const clouds = new THREE.Mesh(new THREE.SphereGeometry(100000, 28, 16), cloudMat);
     clouds.renderOrder = -9;
     scene.add(clouds);
