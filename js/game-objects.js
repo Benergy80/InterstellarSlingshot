@@ -12676,6 +12676,10 @@ function updateBossSkyboxHeartbeat() {
 let galaxyAtmosphereDome = null;
 let _gaCores = null;
 const _gaTargetColor = (typeof THREE !== 'undefined') ? new THREE.Color() : null;
+// Deep-space haze: in open space the cloud layer occasionally breathes up
+// in plain WHITE at whisper opacity, then fades back out — ambient texture
+// for the long empty stretches, distinct from the colored regional tints.
+const _gaHaze = { nextAt: 0, until: 0, peak: 0 };
 
 function updateGalaxyAtmosphere() {
     if (typeof THREE === 'undefined' || typeof scene === 'undefined' ||
@@ -12735,6 +12739,30 @@ function updateGalaxyAtmosphere() {
             if (_gaTargetColor) {
                 _gaTargetColor.setHex(hex);
                 galaxyAtmosphereDome.material.color.lerp(_gaTargetColor, 0.02);
+            }
+        }
+    }
+
+    // DEEP-SPACE HAZE: when no galaxy region is tinting the sky, run an
+    // occasional white fade-up episode. The slow opacity lerp below gives
+    // it the gradual swell and fade; color drifts to plain white.
+    if (targetOpacity <= 0) {
+        const _hNow = Date.now();
+        if (!_gaHaze.nextAt) _gaHaze.nextAt = _hNow + 15000 + Math.random() * 30000;
+        if (!_gaHaze.until && _hNow >= _gaHaze.nextAt) {
+            _gaHaze.until = _hNow + 12000 + Math.random() * 12000; // 12-24s episode
+            _gaHaze.peak = 0.05 + Math.random() * 0.05;            // whisper: 0.05-0.10
+        }
+        if (_gaHaze.until) {
+            if (_hNow >= _gaHaze.until) {
+                _gaHaze.until = 0;
+                _gaHaze.nextAt = _hNow + 25000 + Math.random() * 45000; // next episode 25-70s
+            } else {
+                targetOpacity = _gaHaze.peak;
+                if (_gaTargetColor) {
+                    _gaTargetColor.setHex(0xffffff);
+                    galaxyAtmosphereDome.material.color.lerp(_gaTargetColor, 0.02);
+                }
             }
         }
     }
