@@ -386,7 +386,7 @@ export function createFX(scene, camera, world, audio) {
         cloudy = !cloudy && fx.rainOn;
         cloudTimer = cloudy ? 28 + rnd() * 28 : 35 + rnd() * 55;
       }
-      const want = fx.rainOn ? 0.10 : 0;   // white clouds, 10%, whenever it rains
+      const want = fx.rainOn ? 0.20 : 0;   // white clouds, 20%, whenever it rains
       cloudK += clamp2(want - cloudK, -dt * 0.12, dt * 0.12);
       if (world.cloudMat) world.cloudMat.opacity = cloudK;
     });

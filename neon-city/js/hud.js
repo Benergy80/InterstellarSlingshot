@@ -138,7 +138,12 @@ export function createHUD() {
 
   // ════════════════ MINIMAP (player-centered radar) ════════════════
   const mctx = el.minimap.getContext('2d');
-  const RANGE = 360;     // world units shown across the radar
+  const RANGES = [360, 750, 1500];   // N cycles the radar zoom
+  let rangeIdx = 0;
+  hud.cycleMapZoom = () => {
+    rangeIdx = (rangeIdx + 1) % RANGES.length;
+    return RANGES[rangeIdx];
+  };
   const SZ = 220;
 
   // static layer: district tints + roads grid + rail rings + spaceport,
@@ -188,6 +193,28 @@ export function createHUD() {
     };
     ringRect(4, 7, 'rgba(0,240,255,0.85)');
     ringRect(2, 9, 'rgba(255,43,214,0.85)');
+    // lake + park + runway detail
+    ctx.fillStyle = 'rgba(20,60,110,0.5)';
+    ctx.fillRect(0, 0, x2px(-H - 26), STATIC_SZ);
+    if (world && world.reserved && world.reserved.park) {
+      for (const blk of world.reserved.park) {
+        ctx.fillStyle = 'rgba(30,120,60,0.5)';
+        ctx.fillRect(x2px(blk.x0), x2px(blk.z0), C.BLOCK / WORLD_W * STATIC_SZ, C.BLOCK / WORLD_W * STATIC_SZ);
+      }
+    }
+    ctx.strokeStyle = 'rgba(255,242,207,0.7)';
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(x2px(H + 156), x2px(-140)); ctx.lineTo(x2px(H + 156), x2px(140)); ctx.stroke();
+    // monorail stations
+    if (world && world._stations) {
+      for (const st of world._stations) {
+        ctx.fillStyle = '#fff';
+        ctx.beginPath(); ctx.arc(x2px(st.x), x2px(st.z), 3.4, 0, Math.PI * 2); ctx.fill();
+        ctx.strokeStyle = st.line.includes('LOOP') ? 'rgba(0,240,255,0.9)' : 'rgba(255,43,214,0.9)';
+        ctx.lineWidth = 1.6;
+        ctx.beginPath(); ctx.arc(x2px(st.x), x2px(st.z), 5, 0, Math.PI * 2); ctx.stroke();
+      }
+    }
     // enterable buildings — small lit squares
     if (world && world.interiors) {
       ctx.fillStyle = 'rgba(255,179,0,0.9)';
@@ -212,6 +239,7 @@ export function createHUD() {
     mctx.fillStyle = 'rgba(2,8,16,0.85)';
     mctx.fillRect(0, 0, SZ, SZ);
 
+    const RANGE = RANGES[rangeIdx];
     const scale = SZ / RANGE;                       // px per world unit
     const sScale = (WORLD_W / STATIC_SZ);           // world units per static px
     const sw = RANGE / sScale;                      // static px across the view

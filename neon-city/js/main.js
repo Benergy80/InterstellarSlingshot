@@ -113,6 +113,11 @@ async function boot() {
   hud.setProgress(0.62, 'SPINNING UP TRAFFIC & RAIL');
   await frame();
   traffic = buildTraffic(scene, world, models);
+  world._stations = [];
+  const seen = new Set();
+  for (const tr of traffic.trains) for (const st of tr.stations) {
+    if (!seen.has(st.name)) { seen.add(st.name); world._stations.push(st); }
+  }
   hud.initMap(world);
 
   hud.setProgress(0.78, 'CHARGING WEAPONS & WEATHER');

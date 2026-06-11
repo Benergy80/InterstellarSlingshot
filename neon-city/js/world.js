@@ -347,7 +347,7 @@ export function buildWorld(scene, renderer) {
     g.addColorStop(1.0, '#4a1747');
     ctx.fillStyle = g; ctx.fillRect(0, 0, 16, 256);
     const skyTex = canvasTexture(c);
-    const skyMat = new THREE.MeshBasicMaterial({ map: skyTex, side: THREE.BackSide, fog: false, depthWrite: false, transparent: true, opacity: 0.3 });
+    const skyMat = new THREE.MeshBasicMaterial({ map: skyTex, side: THREE.BackSide, fog: false, depthWrite: false, transparent: true, opacity: 0.2 });
     const sky = new THREE.Mesh(new THREE.SphereGeometry(140000, 32, 20), skyMat);
     sky.renderOrder = -10;
     scene.add(sky);
@@ -740,7 +740,7 @@ export function buildWorld(scene, renderer) {
       world.colliders.push(col);
       // storefront strip + sign spots on faces toward roads
       if (b.arcade || rnd() < b.D.store) storefronts.push(b);
-      const nSigns = b.arcade ? 3 : (b.D === DISTRICTS.MARKET || b.D === DISTRICTS.OLD ? 2 : (rnd() < 0.5 ? 1 : 0));
+      const nSigns = b.arcade ? 4 : (b.D === DISTRICTS.MARKET || b.D === DISTRICTS.OLD ? 3 : (rnd() < 0.75 ? 2 : 1));
       for (let s = 0; s < nSigns; s++) {
         const side = (rnd() * 4) | 0;
         const sh = 6 + rnd() * Math.min(b.h - 10, 26);
@@ -883,12 +883,16 @@ export function buildWorld(scene, renderer) {
       { text: 'DEEP DISH', color: NEON.red, vertical: false, sub: 'GIORDANIX · SINCE 2189', pool: ['MARKET', 'OLD'] },
       { text: 'MALÖRT', color: NEON.lime, vertical: true, pool: ['OLD'] },
       { text: 'WGN-9K', color: NEON.blue, vertical: false, pool: ['PLAZA', 'CORE'] },
+      { text: 'SLINGSHOT', color: NEON.cyan, vertical: true, pool: ['CORE', 'PLAZA', 'MARKET', 'OLD', 'STACKS', 'FOUNDRY'] },
+      { text: 'INTERSTELLAR', color: NEON.magenta, vertical: false, sub: 'SLINGSHOT — PLAY TONIGHT', pool: ['CORE', 'PLAZA', 'MARKET'] },
+      { text: 'PLAY SLINGSHOT', color: NEON.amber, vertical: false, sub: 'EIGHT GALAXIES AWAIT', pool: ['MARKET', 'OLD', 'STACKS'] },
+      { text: '8 GALAXIES', color: NEON.lime, vertical: false, sub: 'ONE SLINGSHOT', pool: ['FOUNDRY', 'PLAZA', 'OLD'] },
     ];
     const spots = [...signSpots];
     // shuffle deterministically
     for (let i = spots.length - 1; i > 0; i--) { const j = (rnd() * (i + 1)) | 0;[spots[i], spots[j]] = [spots[j], spots[i]]; }
     for (const v of variants) {
-      const take = v.vertical ? 14 : 9;
+      const take = v.vertical ? 20 : 14;
       // district-appropriate spots first, then anything left
       const mine = [];
       for (const s of spots) {
@@ -925,8 +929,12 @@ export function buildWorld(scene, renderer) {
       { main: 'NEW CHICAGO', sub: 'CROSSROADS OF EIGHT GALAXIES', color: NEON.magenta },
       { main: 'PRINTWIRE', sub: '194 WORLDS · ONE NETWORK', color: NEON.amber },
       { main: 'INTERSTELLAR', sub: 'SLINGSHOT — PLAY TONIGHT', color: NEON.purple },
+      { main: 'SLINGSHOT', sub: 'GRAVITY IS A WEAPON', color: NEON.cyan },
+      { main: 'SLINGSHOT', sub: 'RIDE THE BLACK HOLES', color: NEON.red },
+      { main: 'BEAT THE BORG', sub: 'SLINGSHOT SEASON 8', color: NEON.lime },
+      { main: 'SLINGSHOT', sub: 'FREE AT BENERGY80.GITHUB.IO', color: NEON.blue },
     ];
-    const tall = buildings.filter(b => b.h > 100).sort((a, b) => b.h - a.h).slice(0, 8);
+    const tall = buildings.filter(b => b.h > 80).sort((a, b) => b.h - a.h).slice(0, 14);
     ads.forEach((ad, k) => {
       const b = tall[k % tall.length];
       if (!b) return;

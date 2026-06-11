@@ -131,6 +131,7 @@ export function createPlayer({ camera, scene, world, traffic, fx, hud, audio, on
     if (e.key === 'Escape' && state.mode === 'demo') stopDemo();
     if (e.key === 'Enter') { e.preventDefault(); interact(); }
     if (k === 'm') audio.toggleMute();
+    if (k === 'n') { const r = hud.cycleMapZoom(); hud.toast('MAP RANGE', `${r} u across`); audio.sfx('ui'); }
     if (k === 'r') fx.toggleRain();
   }
   function onKeyUp(e) {
