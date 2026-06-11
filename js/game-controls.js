@@ -6178,6 +6178,10 @@ function checkWeaponHits(targetPosition) {
 
                 // ENHANCED: Use improved hit effect with color changes
                 flashEnemyHit(enemy, damage);
+                // Impact sparks at the hit point (pairs with the knockback)
+                if (typeof createHitSparks === 'function') {
+                    createHitSparks(targetPosition || enemy.position, enemy.userData.galaxyColor || 0xffcc66);
+                }
                 playSound('weapon');
                 showAchievement('Target Hit!', `Damaged ${enemy.userData.name} (${enemy.userData.health}/${enemy.userData.maxHealth} HP)`);
                 
@@ -6296,6 +6300,16 @@ if (enemy.userData.health <= 0) {
     }, 800); // Wait for celebration music to finish
 } else {
     showAchievement('Enemy Destroyed!', `${enemy.userData.name} eliminated`);
+
+    // Floating kill text at the kill position — loot-colored for pirates
+    // (matches the explosion variant), gold rep text otherwise.
+    if (typeof spawnKillText === 'function') {
+        const _kv = enemy.userData._pirateLootVariant;
+        if (_kv === 'flare') spawnKillText(enemy.position, '+ENERGY', '#ffcc33');
+        else if (_kv === 'plasma') spawnKillText(enemy.position, '+MISSILE', '#33ddff');
+        else if (_kv === 'ember') spawnKillText(enemy.position, '+HULL', '#ff6644');
+        else spawnKillText(enemy.position, '+REP', '#ffcc44');
+    }
 
     const _lootVariant = enemy.userData._pirateLootVariant;
     if (_lootVariant === 'flare') {
@@ -7208,6 +7222,9 @@ function fireWeapon() {
                         while (_root.parent && _civPool.indexOf(_root) === -1) _root = _root.parent;
                         if (_civPool.indexOf(_root) !== -1) {
                             targetObject = _root;
+                            if (typeof createHitSparks === 'function') {
+                                createHitSparks(civIntersects[0].point, 0x66ddff);
+                            }
                             damageCivilianShip(_root, 1,
                                 (typeof _civilianPlayerProxy !== 'undefined') ? _civilianPlayerProxy
                                     : { position: camera.position, isPlayerProxy: true, userData: { health: 1 } });

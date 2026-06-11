@@ -299,6 +299,11 @@ function _updateMilitaryReturnFire() {
 function createDistressCall(civilian) {
     civilian.userData.distressActive = true;
     civilian.userData.distressTime = Date.now();
+
+    // Visible SOS flare rising off the ship
+    if (typeof createDistressFlare === 'function') {
+        try { createDistressFlare(civilian.position.clone()); } catch (e) {}
+    }
     
     const distressCall = {
         civilian: civilian,

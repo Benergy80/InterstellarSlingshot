@@ -1877,6 +1877,12 @@ if (typeof localGalaxyStars !== 'undefined' && localGalaxyStars) {
         updateGalaxyAtmosphere();
     }
 
+    // Visual flair layer: player trail, warp tunnel, whip preview, lens
+    // flares, accretion spirals, rim-glow atmospheres (visual-flair.js)
+    if (typeof updateVisualFlair === 'function') {
+        updateVisualFlair();
+    }
+
     // Update boss battle skybox with heartbeat pulsing
     if (typeof updateBossSkyboxHeartbeat === 'function') {
         updateBossSkyboxHeartbeat();

@@ -1448,6 +1448,10 @@ function spawnBossForArea(galaxyId, placementType, areaKey, overridePosition, bo
     scene.add(boss);
     enemies.push(boss);
 
+    // Spawn-in beat: materialize the hull + letterbox name card
+    if (typeof materializeShip === 'function') materializeShip(boss, 800);
+    if (typeof playBossIntro === 'function') playBossIntro(boss.userData.name);
+
     // ENHANCED: Update boss system tracking
     bossSystem.areaBosses[areaKey].bossRef = boss;
     bossSystem.activeBosses.push(boss);
@@ -1569,6 +1573,7 @@ function spawnBossSupport(galaxyId, bossPosition, supportIndex, areaKey = null, 
     
     scene.add(support);
     enemies.push(support);
+    if (typeof materializeShip === 'function') materializeShip(support, 600);
     
     console.log(`Boss support spawned: ${support.userData.name} at 3D position:`, supportPosition);
 }
