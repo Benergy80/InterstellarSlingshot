@@ -61,11 +61,26 @@ export function createFX(scene, camera, world, audio) {
         const step = b.vel.length() * dt;
         b.travel += step;
         b.m.position.addScaledVector(b.vel, dt);
+        // car hit mid-flight → explode it
+        if (fx._traffic) {
+          const ci = fx._traffic.testCarHit(b.m.position, 2.4);
+          if (ci >= 0) {
+            const cp = fx._traffic.killCar(ci);
+            if (cp) fx.explodeCar(cp);
+            b.alive = false;
+            b.m.visible = false;
+            continue;
+          }
+        }
         if (b.travel >= b.max) {
           b.alive = false;
           b.m.visible = false;
-          sparkBurst(b.end, 14, 0x9fe8ff);
-          scorch(b.end);
+          if (b.hit && b.hit.object === world.buildingMesh && b.end.y > 5.5) {
+            fx.breakWindow(b.end);        // shatter the pane
+          } else {
+            sparkBurst(b.end, 14, 0x9fe8ff);
+            scorch(b.end);
+          }
         }
       }
     });
@@ -200,6 +215,14 @@ export function createFX(scene, camera, world, audio) {
     function explode(at) {
       sparkBurst(at, 60, 0xffc46b, 16);
       sparkBurst(at, 30, 0xff5a3c, 11);
+      if (fx._traffic) {
+        for (let k = 0; k < 4; k++) {   // chain anything parked in the blast
+          const ci = fx._traffic.testCarHit(at, 7);
+          if (ci < 0) break;
+          const cp = fx._traffic.killCar(ci);
+          if (cp) fx.debrisBurst(cp);
+        }
+      }
       const R = rings[ringHead]; const F = flashes[ringHead];
       ringHead = (ringHead + 1) % rings.length;
       R.life = 0.8; R.r.visible = true; R.r.position.copy(at); R.r.scale.setScalar(0.6);
@@ -209,6 +232,7 @@ export function createFX(scene, camera, world, audio) {
       audio.sfx('boom');
     }
 
+    fx._boomAt = explode;
     fx.fireMissile = (origin, dir) => {
       const it = items[head]; head = (head + 1) % POOL;
       it.alive = true;
@@ -353,6 +377,116 @@ export function createFX(scene, camera, world, audio) {
           next = 16 + rnd() * 26;
           setTimeout(() => audio.sfx('thunder'), 600 + rnd() * 1800);
         }
+      }
+    });
+  }
+
+  // ════════════════ BREAKABLE WINDOWS ════════════════
+  {
+    let hitHead = 0;
+    // crack decal sprites
+    const crackTex = (() => {
+      const c = document.createElement('canvas');
+      c.width = c.height = 96;
+      const ctx = c.getContext('2d');
+      ctx.strokeStyle = 'rgba(210,235,255,0.85)';
+      ctx.lineWidth = 1.6;
+      for (let k = 0; k < 9; k++) {
+        const a = (k / 9) * Math.PI * 2 + rnd() * 0.4;
+        ctx.beginPath();
+        ctx.moveTo(48, 48);
+        ctx.lineTo(48 + Math.cos(a) * (22 + rnd() * 22), 48 + Math.sin(a) * (22 + rnd() * 22));
+        ctx.stroke();
+      }
+      const t = new THREE.CanvasTexture(c);
+      return t;
+    })();
+    const cracks = [];
+    for (let i = 0; i < 16; i++) {
+      const s2 = new THREE.Sprite(new THREE.SpriteMaterial({ map: crackTex, transparent: true, opacity: 0, depthWrite: false }));
+      s2.scale.setScalar(2.6);
+      scene.add(s2);
+      cracks.push(s2);
+    }
+    fx.breakWindow = (at) => {
+      world.windowHitVecs[hitHead % 16].copy(at);
+      const cr = cracks[hitHead % 16];
+      cr.position.copy(at);
+      cr.material.opacity = 0.9;
+      hitHead++;
+      sparkBurst(at, 22, 0xbfe8ff, 7);   // glass shards
+      audio.sfx('glass');
+    };
+    fx.updateFns.push((dt) => {
+      for (const cr of cracks) if (cr.material.opacity > 0) cr.material.opacity = Math.max(0, cr.material.opacity - dt * 0.05);
+    });
+  }
+
+  // ════════════════ CAR EXPLOSIONS — burning debris left behind ════════════════
+  {
+    const D_MAX = 30, F_MAX = 12;
+    const dGeo = new THREE.BoxGeometry(0.55, 0.3, 0.7);
+    const dMat = new THREE.MeshStandardMaterial({ color: 0x14161f, roughness: 0.5, metalness: 0.7, emissive: 0xff5a22, emissiveIntensity: 0.55 });
+    const debris = new THREE.InstancedMesh(dGeo, dMat, D_MAX);
+    debris.frustumCulled = false;
+    scene.add(debris);
+    const dS = [];
+    for (let i = 0; i < D_MAX; i++) dS.push({ p: new THREE.Vector3(0, -60, 0), v: new THREE.Vector3(), rot: 0, spin: 0, life: 0 });
+    const dDummy = new THREE.Object3D();
+
+    const fireTexW = glowTexture(96, 'rgba(255,170,70,1)');
+    const fires = [];
+    for (let i = 0; i < F_MAX; i++) {
+      const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: fireTexW, color: 0xffa040, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending }));
+      scene.add(sp);
+      fires.push({ sp, life: 0, ph: rnd() * 9 });
+    }
+    let dHead = 0, fHead = 0;
+
+    fx.debrisBurst = (at) => {
+      for (let k = 0; k < 9; k++) {
+        const d = dS[dHead]; dHead = (dHead + 1) % D_MAX;
+        d.p.set(at.x, Math.max(0.6, at.y), at.z);
+        const a = rnd() * Math.PI * 2;
+        d.v.set(Math.cos(a) * (3 + rnd() * 7), 5 + rnd() * 8, Math.sin(a) * (3 + rnd() * 7));
+        d.spin = (rnd() - 0.5) * 9;
+        d.rot = rnd() * Math.PI;
+        d.life = 22;
+      }
+      for (let k = 0; k < 3; k++) {
+        const f = fires[fHead]; fHead = (fHead + 1) % F_MAX;
+        f.sp.position.set(at.x + (rnd() - 0.5) * 2.4, 1.0, at.z + (rnd() - 0.5) * 2.4);
+        f.life = 19 + rnd() * 4;
+      }
+    };
+    fx.explodeCar = (at) => {
+      fx._boomAt(at);
+      fx.debrisBurst(at);
+    };
+    fx.updateFns.push((dt, t) => {
+      for (let i = 0; i < D_MAX; i++) {
+        const d = dS[i];
+        if (d.life <= 0) continue;
+        d.life -= dt;
+        if (d.p.y > 0.2 || d.v.y > 0) {
+          d.v.y -= 22 * dt;
+          d.p.addScaledVector(d.v, dt);
+          d.rot += d.spin * dt;
+          if (d.p.y < 0.18) { d.p.y = 0.18; d.v.set(0, 0, 0); d.spin = 0; }
+        }
+        dDummy.position.copy(d.p);
+        dDummy.rotation.set(d.rot, d.rot * 1.7, 0);
+        dDummy.scale.setScalar(d.life > 1 ? 1 : Math.max(0.01, d.life));
+        dDummy.updateMatrix();
+        debris.setMatrixAt(i, dDummy.matrix);
+      }
+      debris.instanceMatrix.needsUpdate = true;
+      for (const f of fires) {
+        if (f.life <= 0) { f.sp.material.opacity = 0; continue; }
+        f.life -= dt;
+        const flick = 0.75 + 0.25 * Math.sin(t * 17 + f.ph) * Math.sin(t * 7.3 + f.ph * 2);
+        f.sp.material.opacity = Math.min(0.85, f.life * 0.3) * flick;
+        f.sp.scale.set(2.2 + flick * 1.3, 3.0 + flick * 1.8, 1);
       }
     });
   }

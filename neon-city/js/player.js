@@ -34,6 +34,7 @@ export function createPlayer({ camera, scene, world, traffic, fx, hud, audio, on
     hull: 100,
     shield: false,
     targetIdx: -1,
+    vehicle: null,
     speed: 0,
     paused: false,
     started: false,
@@ -191,6 +192,46 @@ export function createPlayer({ camera, scene, world, traffic, fx, hud, audio, on
 
   function interact() {
     audio.resume();
+    // 0 — flying car: land & exit, or board one nearby
+    if (state.mode === 'fly' && state.vehicle) {
+      const vehY = state.pos.y - 0.9;
+      const gh = world.groundHeightAt(state.pos.x, state.pos.z, vehY - 0.5);
+      if (state.speed < 6 && vehY - gh < 2.6) {
+        const v = state.vehicle;
+        v.grp.position.set(state.pos.x, gh + 0.85, state.pos.z);
+        v.grp.rotation.set(0, state.yaw + Math.PI, 0);
+        v.occupied = false;
+        state.vehicle = null;
+        state.mode = 'walk';
+        state.vel.set(0, 0, 0);
+        _right.set(Math.cos(state.yaw), 0, -Math.sin(state.yaw));
+        state.pos.set(v.grp.position.x + _right.x * 3, gh + P.eye, v.grp.position.z + _right.z * 3);
+        avatar.visible = camMode === 'tp';
+        hud.toast('AV PARKED', 'On foot');
+        hud.setMode('SURFACE MODE');
+        audio.sfx('doors');
+      } else {
+        hud.toast('TOO FAST / TOO HIGH', 'Slow down near the ground to land');
+      }
+      return;
+    }
+    if (state.mode === 'walk' && traffic.getVehicleNear) {
+      const v = traffic.getVehicleNear(state.pos);
+      if (v) {
+        v.occupied = true;
+        state.vehicle = v;
+        state.mode = 'fly';
+        state.autoNav = false;
+        state.vel.set(0, 0, 0);
+        state.pos.set(v.grp.position.x, v.grp.position.y + 0.9, v.grp.position.z);
+        avatar.visible = false;
+        bubble.visible = false;
+        hud.toast('AV ONLINE', 'Ship rules — W thrust where you look, no gravity. ENTER to land.');
+        hud.setMode('AV FLIGHT');
+        audio.sfx('warp');
+        return;
+      }
+    }
     // 1 — disembark while dwelling
     if (state.ride) {
       const { train } = state.ride;
@@ -397,6 +438,44 @@ export function createPlayer({ camera, scene, world, traffic, fx, hud, audio, on
       state.pitch = clamp(state.pitch + rotVel.pitch * frameScale, -1.45, 1.45);
     }
 
+    // ── AV FLIGHT: the ship's flight model, no gravity ──
+    if (state.mode === 'fly' && state.vehicle) {
+      const boosting = keys.b && state.energy > 1;
+      if (boosting) state.energy = Math.max(0, state.energy - P.boostDrain * 0.7 * dt);
+      const acc = boosting ? 46 : 27;
+      const cap = boosting ? 100 : 55;
+      _fwd.set(
+        -Math.sin(state.yaw) * Math.cos(state.pitch),
+        Math.sin(state.pitch),
+        -Math.cos(state.yaw) * Math.cos(state.pitch)
+      );
+      _right.set(Math.cos(state.yaw), 0, -Math.sin(state.yaw));
+      if (keys.w) state.vel.addScaledVector(_fwd, acc * dt);
+      if (keys.s) state.vel.addScaledVector(_fwd, -acc * 0.6 * dt);
+      if (keys.d) state.vel.addScaledVector(_right, acc * 0.7 * dt);
+      if (keys.a) state.vel.addScaledVector(_right, -acc * 0.7 * dt);
+      const damp = keys.x ? 3.0 : 0.5;
+      state.vel.multiplyScalar(Math.max(0, 1 - damp * dt));
+      if (state.vel.length() > cap) state.vel.setLength(cap);
+      state.pos.addScaledVector(state.vel, dt);
+      collide();
+      const vehY = state.pos.y - 0.9;
+      const gh = world.groundHeightAt(state.pos.x, state.pos.z, vehY - 0.5);
+      if (vehY - 0.55 < gh) { state.pos.y = gh + 1.45; if (state.vel.y < 0) state.vel.y = 0; }
+      if (state.pos.y > 290) { state.pos.y = 290; state.vel.y = Math.min(0, state.vel.y); }
+      state.speed = state.vel.length();
+      // vehicle follows
+      const g = state.vehicle.grp;
+      g.position.set(state.pos.x, state.pos.y - 0.9, state.pos.z);
+      g.rotation.set(-state.pitch * 0.5, state.yaw + Math.PI, state.rollVis * 2.2, 'YXZ');
+      if (fireHeld) tryFire();
+      const exitOK = state.speed < 6 && vehY - gh < 2.6;
+      hud.setPrompt(exitOK ? 'ENTER — LAND & EXIT' : null);
+      applyCamera(dt, t);
+      hud.setBars(state);
+      return;
+    }
+
     // ── RIDING THE MONORAIL ──
     if (state.mode === 'ride' && state.ride) {
       const { train, carIdx } = state.ride;
@@ -529,7 +608,9 @@ export function createPlayer({ camera, scene, world, traffic, fx, hud, audio, on
 
     // prompts (boarding / interactables)
     let prompt = null;
-    const b = traffic.getBoardable(state.pos, state.pos.y - P.eye);
+    const veh = traffic.getVehicleNear && traffic.getVehicleNear(state.pos);
+    if (veh) prompt = 'ENTER — BOARD AV';
+    const b = prompt ? null : traffic.getBoardable(state.pos, state.pos.y - P.eye);
     if (b) prompt = `ENTER — BOARD ${b.train.line.split('—')[0].trim()}`;
     if (!prompt) {
       for (const it of world.interactables) {
@@ -594,9 +675,11 @@ export function createPlayer({ camera, scene, world, traffic, fx, hud, audio, on
       }
     } else {
       _fwd.set(-Math.sin(state.yaw), 0, -Math.cos(state.yaw));
+      const boom = state.mode === 'fly' ? 12.5 : 6.8;
+      const lift = state.mode === 'fly' ? 3.4 : 2.0;
       _v.copy(state.pos)
-        .addScaledVector(_fwd, -6.8)
-        .add(_v2.set(0, 2.0 - state.pitch * 3.4, 0));
+        .addScaledVector(_fwd, -boom)
+        .add(_v2.set(0, lift - state.pitch * 3.4, 0));
       // keep boom out of buildings: nudge up if inside a collider
       if (!tpInit) { tpCam.copy(_v); tpInit = true; }
       tpCam.lerp(_v, 1 - Math.exp(-dt * 7));

@@ -16,6 +16,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { C } from './config.js';
 import { buildWorld } from './world.js';
 import { buildInteriors } from './interiors.js';
+import { buildLandmarks } from './landmarks.js';
 import { buildTraffic } from './traffic.js';
 import { createPlayer } from './player.js';
 import { createFX } from './fx.js';
@@ -101,6 +102,10 @@ async function boot() {
   hud.setProgress(0.45, 'REQUESTING SHIPS FROM ORBIT');
   const models = await loadModels();
 
+  hud.setProgress(0.5, 'FILLING LAKE MISHIGAMI');
+  await frame();
+  buildLandmarks(scene, world);
+
   hud.setProgress(0.55, 'FURNISHING THE INTERIORS');
   await frame();
   buildInteriors(scene, world);
@@ -113,6 +118,7 @@ async function boot() {
   hud.setProgress(0.78, 'CHARGING WEAPONS & WEATHER');
   await frame();
   fx = createFX(scene, camera, world, audio);
+  fx._traffic = traffic;
 
   player = createPlayer({ camera, scene, world, traffic, fx, hud, audio, onPauseToggle });
 

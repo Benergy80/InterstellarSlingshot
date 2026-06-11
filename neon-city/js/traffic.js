@@ -141,9 +141,29 @@ export function buildTraffic(scene, world, models) {
 
     traffic.carXZ = new Float32Array(N * 2);
 
+    traffic.killCar = (i) => {
+      if (traffic.deadCars.has(i)) return null;
+      const pos = new THREE.Vector3(traffic.carXZ[i * 2], 1.0, traffic.carXZ[i * 2 + 1]);
+      traffic.deadCars.set(i, 26);   // seconds until respawn
+      return pos;
+    };
     traffic.updateFns.push((dt) => {
       for (let i = 0; i < N; i++) {
         const car = cars[i];
+        if (traffic.deadCars.has(i)) {
+          const left = traffic.deadCars.get(i) - dt;
+          if (left <= 0) { traffic.deadCars.delete(i); car.s += 40; }
+          else {
+            traffic.deadCars.set(i, left);
+            _dummy.position.set(0, -50, 0);
+            _dummy.scale.setScalar(0.001);
+            _dummy.updateMatrix();
+            bodies.setMatrixAt(i, _dummy.matrix);
+            lights.setMatrixAt(i, _dummy.matrix);
+            if (i < uN) under.setMatrixAt(i, _dummy.matrix);
+            continue;
+          }
+        }
         // crude spacing: slow if the car ahead on the same loop is close
         car.s += car.v * dt;
         car.loop.at(car.s, _v1, _v2);
@@ -249,9 +269,9 @@ export function buildTraffic(scene, world, models) {
     const CTR = (C.GRID - 1) / 2; // 5 — rings use road indices around downtown
     const lineDefs = [
       {
-        name: 'LINE A — KESSLER LOOP', color: NEON.cyan, h: 16,
+        name: 'LINE A — THE LOOP', color: NEON.cyan, h: 16,
         i0: 4, j0: 4, i1: 7, j1: 7, dir: 1, trains: 2,
-        stations: ['AZIMUTH', 'PERIHELION', 'KESSLER CENTRAL', 'KUIPER'],
+        stations: ['WACKER', 'STATE/LAKE', 'MILLENNIUM', 'UNION'],
       },
       {
         name: 'LINE B — RIM CIRCLE', color: NEON.magenta, h: 23,
@@ -459,6 +479,18 @@ export function buildTraffic(scene, world, models) {
           scene.add(rail);
         }
 
+        // station elevator — street to platform, beside the far platform edge
+        {
+          let lx = px + ox * (W / 2 + 2.4), lz = pz + oz * (W / 2 + 2.4);
+          for (const nudge of [0, 6, -6, 11, -11]) {
+            const tx2 = lx + (alongX ? nudge : 0), tz2 = lz + (alongX ? 0 : nudge);
+            if (world.shaftClear(tx2, tz2, 1.7)) { lx = tx2; lz = tz2; break; }
+          }
+          world.makeElevator({
+            x: lx, z: lz, stops: [0, platY - 0.18],
+            gate: { dx: -ox, dz: -oz }, size: 3.0, color: def.color, name: 'STATION LIFT',
+          });
+        }
         const station = {
           name: stName, s: bestS, x: px, z: pz, platY, line: def.name,
           doorPoint: new THREE.Vector3(sm.x + ox * 2.0, platY, sm.z + oz * 2.0),
@@ -968,6 +1000,72 @@ export function buildTraffic(scene, world, models) {
       }
     });
   }
+
+  // ════════════════ PILOTABLE AVs (flying cars) ════════════════
+  {
+    const mkAV = () => {
+      const g = new THREE.Group();
+      const body = new THREE.Mesh((() => {
+        const b = new THREE.CylinderGeometry(0, 1.35, 5.6, 4);
+        b.rotateX(-Math.PI / 2);
+        b.scale(1.5, 0.55, 1);
+        return b;
+      })(), new THREE.MeshStandardMaterial({ color: 0x1b2236, roughness: 0.25, metalness: 0.85, envMapIntensity: 1.3 }));
+      g.add(body);
+      const canopy = new THREE.Mesh(new THREE.SphereGeometry(0.85, 12, 8),
+        new THREE.MeshStandardMaterial({ color: 0x73e8ff, roughness: 0.1, metalness: 0.4, emissive: 0x1d6e88, emissiveIntensity: 0.7, transparent: true, opacity: 0.85 }));
+      canopy.scale.set(1, 0.6, 1.5);
+      canopy.position.set(0, 0.5, -0.4);
+      g.add(canopy);
+      const under = new THREE.Mesh(new THREE.PlaneGeometry(2.2, 4.4),
+        new THREE.MeshBasicMaterial({ map: glowTexture(64, 'rgba(120,240,255,0.9)'), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, toneMapped: false }));
+      under.rotation.x = -Math.PI / 2;
+      under.position.y = -0.55;
+      g.add(under);
+      const tail = new THREE.Mesh(new THREE.PlaneGeometry(1.4, 0.24),
+        new THREE.MeshBasicMaterial({ color: new THREE.Color(2.4, 0.2, 0.3), toneMapped: false, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }));
+      tail.position.set(0, 0, 2.85);
+      g.add(tail);
+      scene.add(g);
+      return g;
+    };
+    const spots = [
+      new THREE.Vector3(26, 0.85, 12),                                 // Millennium Plaza east
+      new THREE.Vector3(world.spaceport.x0 + 28, 0.85, 30),            // O'Hare apron
+      new THREE.Vector3(-C.HALF - 14, 1.15, -60),                      // lakefront esplanade
+    ];
+    if (world.flagships[0]) {
+      const f = world.flagships[0];
+      spots.push(new THREE.Vector3(f.b.x - 6, f.roofY + 0.85, f.b.z - 6));  // skydeck pad
+    }
+    traffic.vehicles = spots.map(p => {
+      const grp = mkAV();
+      grp.position.copy(p);
+      grp.rotation.y = rnd() * Math.PI * 2;
+      return { grp, occupied: false };
+    });
+    traffic.getVehicleNear = (pos) => {
+      for (const v of traffic.vehicles) {
+        if (v.occupied) continue;
+        const dx = v.grp.position.x - pos.x, dz = v.grp.position.z - pos.z;
+        if (dx * dx + dz * dz < 22 && Math.abs(v.grp.position.y - (pos.y - 1.75)) < 4) return v;
+      }
+      return null;
+    };
+  }
+
+  // ── car destruction hooks (fx drives the explosion visuals) ──
+  traffic.deadCars = new Map();
+  traffic.testCarHit = (p, r) => {
+    if (p.y > 4.5) return -1;
+    const r2 = r * r;
+    for (let i = 0; i < traffic.carXZ.length / 2; i++) {
+      if (traffic.deadCars.has(i)) continue;
+      const dx = traffic.carXZ[i * 2] - p.x, dz = traffic.carXZ[i * 2 + 1] - p.z;
+      if (dx * dx + dz * dz < r2) return i;
+    }
+    return -1;
+  };
 
   // ── boarding helper for the player ──
   // Forgiving: anywhere on the station platform while a train dwells there

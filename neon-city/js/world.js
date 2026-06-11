@@ -17,14 +17,20 @@ const Y_AXIS = new THREE.Vector3(0, 1, 0);
 // wedges. Each config drives heights, window density/palette/flicker,
 // curb color, sign pool, and storefront probability.
 export const DISTRICTS = {
-  CORE:    { key: 'CORE', name: 'UPTOWN CORE', short: 'UPTOWN', curb: 0x00f0ff, accent: 0x00f0ff, h: [90, 205], lots: [1, 2], fp: [22, 46], litP: 0.38, warm: 0.16, flick: 0.6, store: 0.25, tint: 'rgba(0,240,255,0.10)' },
-  MARKET:  { key: 'MARKET', name: 'NEON MARKET', short: 'MARKET', curb: 0xff2bd6, accent: 0xffb300, h: [10, 30], lots: [3, 5], fp: [11, 24], litP: 0.52, warm: 0.55, flick: 1.7, store: 0.95, tint: 'rgba(255,43,214,0.10)' },
-  FOUNDRY: { key: 'FOUNDRY', name: 'THE FOUNDRY', short: 'FOUNDRY', curb: 0xffb300, accent: 0xffb300, h: [16, 58], lots: [2, 3], fp: [16, 32], litP: 0.2, warm: 0.8, flick: 0.9, store: 0.2, tint: 'rgba(255,179,0,0.09)' },
-  STACKS:  { key: 'STACKS', name: 'RESIDENTIAL STACKS', short: 'STACKS', curb: 0x9d4cff, accent: 0x9d4cff, h: [30, 85], lots: [2, 4], fp: [14, 28], litP: 0.5, warm: 0.75, flick: 0.7, store: 0.45, tint: 'rgba(157,76,255,0.10)' },
+  CORE:    { key: 'CORE', name: 'THE LOOP', short: 'LOOP', curb: 0x00f0ff, accent: 0x00f0ff, h: [90, 205], lots: [1, 2], fp: [22, 46], litP: 0.38, warm: 0.16, flick: 0.6, store: 0.25, tint: 'rgba(0,240,255,0.10)' },
+  MARKET:  { key: 'MARKET', name: 'MAG MILE MARKET', short: 'MAG MILE', curb: 0xff2bd6, accent: 0xffb300, h: [10, 30], lots: [3, 5], fp: [11, 24], litP: 0.52, warm: 0.55, flick: 1.7, store: 0.95, tint: 'rgba(255,43,214,0.10)' },
+  FOUNDRY: { key: 'FOUNDRY', name: 'BACK OF THE YARDS', short: 'YARDS', curb: 0xffb300, accent: 0xffb300, h: [16, 58], lots: [2, 3], fp: [16, 32], litP: 0.2, warm: 0.8, flick: 0.9, store: 0.2, tint: 'rgba(255,179,0,0.09)' },
+  STACKS:  { key: 'STACKS', name: 'WRIGLEYVILLE STACKS', short: 'WRIGLEY', curb: 0x9d4cff, accent: 0x9d4cff, h: [30, 85], lots: [2, 4], fp: [14, 28], litP: 0.5, warm: 0.75, flick: 0.7, store: 0.45, tint: 'rgba(157,76,255,0.10)' },
   PLAZA:   { key: 'PLAZA', name: 'CORPORATE PLAZA', short: 'PLAZA', curb: 0x3d7bff, accent: 0x3d7bff, h: [55, 130], lots: [1, 3], fp: [18, 36], litP: 0.42, warm: 0.1, flick: 0.5, store: 0.3, tint: 'rgba(61,123,255,0.10)' },
   OLD:     { key: 'OLD', name: 'OLD TOWN', short: 'OLD TOWN', curb: 0xff3355, accent: 0x53ffe9, h: [10, 42], lots: [3, 5], fp: [11, 22], litP: 0.3, warm: 0.6, flick: 2.4, store: 0.7, tint: 'rgba(255,51,85,0.09)' },
 };
 const CENTER_B = (C.GRID - 1) / 2;
+// blocks handed to landmarks.js: Grant Park, Holy Name cathedral, City Hall,
+// the Yards fusion plant, and a row of lakefront suburb homes
+const RESERVED = {
+  '2,5': 'park', '3,8': 'cathedral', '6,1': 'cityhall', '9,6': 'plant',
+  '1,0': 'suburb', '2,0': 'suburb', '3,0': 'suburb',
+};
 export function districtOf(bx, bz) {
   if (Math.max(Math.abs(bx - CENTER_B), Math.abs(bz - CENTER_B)) <= 1) return DISTRICTS.CORE;
   const a = Math.atan2(bz - CENTER_B, bx - CENTER_B) * 180 / Math.PI; // 0° = east (+x, spaceport side)
@@ -47,6 +53,9 @@ export function buildWorld(scene, renderer) {
     updateFns: [],
     raycastTargets: [],   // meshes lasers can hit
     interiors: [],        // filled by interiors.js — {bounds, colliders, surfaces, group, ...}
+    reserved: {},         // landmark blocks (park/cathedral/cityhall/plant/suburb)
+    flagships: [],        // skylift towers {b, roofY}
+    windowHitVecs: Array.from({ length: 16 }, () => new THREE.Vector3(0, -9999, 0)),
     activeInterior: null,
     update(dt, t, playerPos) {
       if (playerPos) {
@@ -99,6 +108,27 @@ export function buildWorld(scene, renderer) {
   };
 
   const addBox = (minX, maxX, minZ, maxZ) => world.colliders.push({ minX, maxX, minZ, maxZ });
+
+  // Is a shaft footprint clear of solid colliders and the monorail beam bands?
+  world.shaftClear = (x, z, half) => {
+    for (const c of world.colliders) {
+      if (c.enabled !== undefined) continue;
+      if (x + half + 0.6 > c.minX && x - half - 0.6 < c.maxX &&
+          z + half + 0.6 > c.minZ && z - half - 0.6 < c.maxZ) return false;
+    }
+    const rails = [4, 7, 2, 9].map(i => -C.HALF + i * C.CELL - C.ROAD / 2);
+    for (const r of rails) {
+      const off = C.ROAD / 2 + 1.2;
+      for (const line of [r - off, r + off]) {
+        if (Math.abs(x - line) < half + 2.6 || Math.abs(z - line) < half + 2.6) {
+          // only matters near the actual ring sides — cheap conservative test
+          if (Math.abs(x - line) < half + 2.6 && Math.abs(z) < C.HALF) return false;
+          if (Math.abs(z - line) < half + 2.6 && Math.abs(x) < C.HALF) return false;
+        }
+      }
+    }
+    return true;
+  };
 
   // ════════════════ GATED ELEVATORS (floor stops, doors, no clipping) ════════════════
   // A cab that dwells at discrete stops; sliding door panel per stop; the
@@ -317,12 +347,19 @@ export function buildWorld(scene, renderer) {
     g.addColorStop(1.0, '#4a1747');
     ctx.fillStyle = g; ctx.fillRect(0, 0, 16, 256);
     const skyTex = canvasTexture(c);
-    const sky = new THREE.Mesh(
-      new THREE.SphereGeometry(1380, 24, 18),
-      new THREE.MeshBasicMaterial({ map: skyTex, side: THREE.BackSide, fog: false, depthWrite: false })
-    );
+    const skyMat = new THREE.MeshBasicMaterial({ map: skyTex, side: THREE.BackSide, fog: false, depthWrite: false });
+    const sky = new THREE.Mesh(new THREE.SphereGeometry(1380, 32, 20), skyMat);
     sky.renderOrder = -10;
     scene.add(sky);
+    // the mothergame's Hubble Ultra Deep Field skybox, planetside
+    new THREE.TextureLoader().load('../images/hubble_ultra_deep_field_high_rez_edit1.jpg', (t) => {
+      t.colorSpace = THREE.SRGBColorSpace;
+      t.wrapS = THREE.RepeatWrapping;
+      t.repeat.set(2, 1);
+      skyMat.map = t;
+      skyMat.color = new THREE.Color(0.5, 0.52, 0.62);  // keep it night-dim under bloom
+      skyMat.needsUpdate = true;
+    });
 
     // Stars — upper hemisphere only
     const N = 900, pos = new Float32Array(N * 3), col = new Float32Array(N * 3);
@@ -510,6 +547,8 @@ export function buildWorld(scene, renderer) {
     mat.onBeforeCompile = (shader) => {
       shader.uniforms.uTime = world.uTime;
       shader.uniforms.uBright = { value: brightness };
+      shader.uniforms.uHits = { value: world.windowHitVecs };
+      world._buildingShader = shader;
       shader.vertexShader = `
         attribute float aSeed;
         attribute vec3 aTuning;   // per-district: (lit density, warm ratio, flicker boost)
@@ -518,6 +557,7 @@ export function buildWorld(scene, renderer) {
         varying float vSideMask;
         varying float vBH;
         varying vec3 vTuning;
+        varying vec3 vWorldPos;
       ` + shader.vertexShader.replace('#include <begin_vertex>', `
         #include <begin_vertex>
         vec3 iS = vec3(length(instanceMatrix[0].xyz), length(instanceMatrix[1].xyz), length(instanceMatrix[2].xyz));
@@ -527,6 +567,7 @@ export function buildWorld(scene, renderer) {
         vSeed = aSeed;
         vBH = iS.y;
         vTuning = aTuning;
+        vWorldPos = (modelMatrix * instanceMatrix * vec4(position, 1.0)).xyz;
       `);
       shader.fragmentShader = `
         uniform float uTime;
@@ -536,6 +577,8 @@ export function buildWorld(scene, renderer) {
         varying float vSideMask;
         varying float vBH;
         varying vec3 vTuning;
+        varying vec3 vWorldPos;
+        uniform vec3 uHits[16];
         float nhash(vec2 p) {
           return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
         }
@@ -566,7 +609,12 @@ export function buildWorld(scene, renderer) {
             float flicker = mix(1.0, step(0.22, fl), step(1.0 - 0.07 * vTuning.z, nhash(id * 3.1 + vSeed)));
             float ground = step(5.5, vBoxUv.y);
             float topFade = 1.0 - smoothstep(vBH - 2.0, vBH, vBoxUv.y);
-            totalEmissiveRadiance += inWin * lit * vary * flicker * wcol * uBright * vSideMask * ground * topFade;
+            float intact = 1.0;
+            for (int hi = 0; hi < 16; hi++) {
+              intact *= 1.0 - step(distance(vWorldPos, uHits[hi]), 1.5);
+            }
+            totalEmissiveRadiance += inWin * lit * vary * flicker * wcol * uBright * vSideMask * ground * topFade * intact;
+            diffuseColor.rgb *= mix(0.45, 1.0, intact);
           }
         `);
     };
@@ -591,6 +639,12 @@ export function buildWorld(scene, renderer) {
     if (isCenter) continue;   // Spire + plaza handled separately
 
     const isArcade = (D === DISTRICTS.MARKET && bz >= C.GRID - 2);
+    const rkey = RESERVED[`${bx},${bz}`];
+    if (rkey) {
+      world.reserved[rkey] = world.reserved[rkey] || [];
+      world.reserved[rkey].push({ bx, bz, x0, z0, cx, cz });
+      continue;   // landmarks.js builds these blocks
+    }
     const lots = D.lots[0] + ((rnd() * (D.lots[1] - D.lots[0] + 1)) | 0);
 
     // subdivide block into lots (simple scatter, district footprint range)
@@ -610,7 +664,8 @@ export function buildWorld(scene, renderer) {
   const skyline = [];
   for (let i = 0; i < 70; i++) {
     const a = rnd() * Math.PI * 2;
-    if (Math.abs(a) < 0.45 || Math.abs(a - Math.PI * 2) < 0.45) continue; // leave the spaceport's eastern sky open
+    if (Math.abs(a) < 0.45 || Math.abs(a - Math.PI * 2) < 0.45) continue; // spaceport's eastern sky stays open
+    if (Math.abs(a - Math.PI) < 0.6) continue;  // open water to the west — Lake Mishigami
     const r = 660 + rnd() * 240;
     skyline.push({ x: Math.cos(a) * r, z: Math.sin(a) * r, w: 40 + rnd() * 70, d: 40 + rnd() * 70, h: 90 + rnd() * 260 });
   }
@@ -629,7 +684,7 @@ export function buildWorld(scene, renderer) {
         towerTrims.push({ x: b.x, z: b.z, w: b.w, d: b.d, h: b.h, accent: b.D.accent });
       }
       // collider — keep the ref so interiors can replace it with walls
-      const col = { minX: b.x - b.w / 2, maxX: b.x + b.w / 2, minZ: b.z - b.d / 2, maxZ: b.z + b.d / 2 };
+      const col = { minX: b.x - b.w / 2, maxX: b.x + b.w / 2, minZ: b.z - b.d / 2, maxZ: b.z + b.d / 2, minY: 0, maxY: b.h + (b.t2 ? 0 : 0.0) };
       b.collider = col;
       world.colliders.push(col);
       // storefront strip + sign spots on faces toward roads
@@ -677,6 +732,7 @@ export function buildWorld(scene, renderer) {
     mesh.frustumCulled = false;
     scene.add(mesh);
     world.raycastTargets.push(mesh);
+    world.buildingMesh = mesh;
   }
 
   // Tower corner trim — vertical neon edges on the downtown giants
@@ -773,6 +829,9 @@ export function buildWorld(scene, renderer) {
       { text: 'SLINGSHOT', color: NEON.blue, vertical: false, sub: 'TRANSIT AUTHORITY', pool: ['CORE', 'PLAZA'] },
       { text: 'ENERGY+', color: NEON.lime, vertical: false, pool: ['FOUNDRY', 'STACKS'] },
       { text: 'ホロ寿司', color: NEON.cyan, vertical: false, pool: ['MARKET'] },
+      { text: 'DEEP DISH', color: NEON.red, vertical: false, sub: 'GIORDANIX · SINCE 2189', pool: ['MARKET', 'OLD'] },
+      { text: 'MALÖRT', color: NEON.lime, vertical: true, pool: ['OLD'] },
+      { text: 'WGN-9K', color: NEON.blue, vertical: false, pool: ['PLAZA', 'CORE'] },
     ];
     const spots = [...signSpots];
     // shuffle deterministically
@@ -812,7 +871,7 @@ export function buildWorld(scene, renderer) {
   {
     const ads = [
       { main: 'OFF-WORLD', sub: 'COLONIES NOW BOARDING', color: NEON.cyan },
-      { main: '新東京', sub: 'NEW CHIBA WELCOMES YOU', color: NEON.magenta },
+      { main: 'NEW CHICAGO', sub: 'CROSSROADS OF EIGHT GALAXIES', color: NEON.magenta },
       { main: 'PRINTWIRE', sub: '194 WORLDS · ONE NETWORK', color: NEON.amber },
       { main: 'INTERSTELLAR', sub: 'SLINGSHOT — PLAY TONIGHT', color: NEON.purple },
     ];
@@ -960,6 +1019,8 @@ export function buildWorld(scene, renderer) {
         'BORG SIGNALS AT GALACTIC RIM — ADVISORY LEVEL 3  ◇  ',
         'EIGHT GALAXIES TRADE ACCORD SIGNED AT SPIRE SUMMIT  ◇  ',
         'ACID RAIN UNTIL 04:00 — DRONES GROUNDED BELOW LANE 2  ◇  ',
+        'LAKE MISHIGAMI FERRY DELAYED — KAIJU SIGHTING UNCONFIRMED  ◇  ',
+        'DA BEARS CLINCH ORBITAL DIVISION — SOLDIER FIELD 2287 ERUPTS  ◇  ',
       ];
       ctx.fillStyle = '#040209'; ctx.fillRect(0, 0, 2048, 64);
       ctx.font = 'bold 40px "Share Tech Mono", monospace';
@@ -976,7 +1037,7 @@ export function buildWorld(scene, renderer) {
       world.updateFns.push((dt) => { tex.offset.x += dt * 0.045; });
     }
     scene.add(grp);
-    world.colliders.push({ minX: cx - 15, maxX: cx + 15, minZ: cz - 15, maxZ: cz + 15 });
+    world.colliders.push({ minX: cx - 15, maxX: cx + 15, minZ: cz - 15, maxZ: cz + 15, minY: 0, maxY: 226 });
 
     // ── Observation deck at 110 (atop tier 2) ──
     const deckY = 110.6;
@@ -1061,7 +1122,7 @@ export function buildWorld(scene, renderer) {
     );
     fount.position.set(holo.position.x, 0.55, holo.position.z);
     scene.add(fount);
-    world.colliders.push({ minX: holo.position.x - 10, maxX: holo.position.x + 10, minZ: holo.position.z - 10, maxZ: holo.position.z + 10 });
+    world.colliders.push({ minX: holo.position.x - 10, maxX: holo.position.x + 10, minZ: holo.position.z - 10, maxZ: holo.position.z + 10, minY: 0, maxY: 24 });
     world.updateFns.push((dt, t) => {
       holo.rotation.y += dt * 0.5;
       holoRing.rotation.z += dt * 0.3;
@@ -1069,7 +1130,7 @@ export function buildWorld(scene, renderer) {
     });
 
     world.pois.push(
-      { name: 'KESSLER PLAZA', pos: new THREE.Vector3(cx, 1, cz - 26), desc: 'Holo-fountain & Spire forecourt' },
+      { name: 'MILLENNIUM PLAZA', pos: new THREE.Vector3(cx, 1, cz - 26), desc: 'The Bean & Willis Spire forecourt' },
       { name: 'SPIRE OBSERVATION DECK', pos: new THREE.Vector3(cx, deckY, cz + 19.5), desc: 'Elevator on the south face', elevated: true },
     );
   }
@@ -1167,7 +1228,7 @@ export function buildWorld(scene, renderer) {
     strobe.position.set(tx, 57.5, tz);
     tower.add(strobe);
     scene.add(tower);
-    world.colliders.push({ minX: tx - 6, maxX: tx + 6, minZ: tz - 6, maxZ: tz + 6 });
+    world.colliders.push({ minX: tx - 6, maxX: tx + 6, minZ: tz - 6, maxZ: tz + 6, minY: 0, maxY: 60 });
     world.updateFns.push((dt, t) => {
       dishPivot.rotation.y += dt * 0.9;
       strobe.visible = (t % 1.4) < 0.12;
@@ -1208,7 +1269,7 @@ export function buildWorld(scene, renderer) {
       const doorStrip = new THREE.Mesh(new THREE.BoxGeometry(0.3, 14, 30), doorMat);
       doorStrip.position.set(hx - 23.2, 8, hz);
       scene.add(doorStrip);
-      world.colliders.push({ minX: hx - 23, maxX: hx + 23, minZ: hz - 17, maxZ: hz + 17 });
+      world.colliders.push({ minX: hx - 23, maxX: hx + 23, minZ: hz - 17, maxZ: hz + 17, minY: 0, maxY: 36 });
     }
 
     // Terminal connecting to the city
@@ -1218,16 +1279,16 @@ export function buildWorld(scene, renderer) {
     term.position.set(termX, 6, termZ);
     scene.add(term);
     world.raycastTargets.push(term);
-    world.colliders.push({ minX: termX - 8, maxX: termX + 8, minZ: termZ - 37, maxZ: termZ + 37 });
+    world.colliders.push({ minX: termX - 8, maxX: termX + 8, minZ: termZ - 37, maxZ: termZ + 37, minY: 0, maxY: 13 });
     const termSign = new THREE.Mesh(
       new THREE.PlaneGeometry(30, 4.6),
-      new THREE.MeshBasicMaterial({ map: signCanvas('GAGARIN ◇ SPACEPORT', NEON.amber, false) })
+      new THREE.MeshBasicMaterial({ map: signCanvas("O'HARE ◇ ORBITAL", NEON.amber, false) })
     );
     termSign.position.set(termX - 8.2, 14.6, termZ);
     termSign.rotation.y = -Math.PI / 2;
     scene.add(termSign);
 
-    world.pois.push({ name: 'GAGARIN SPACEPORT', pos: new THREE.Vector3(SP.x0 + 30, 1, 0), desc: 'Orbital shuttles & atmospheric craft' });
+    world.pois.push({ name: "O'HARE ORBITAL", pos: new THREE.Vector3(SP.x0 + 30, 1, 0), desc: 'Orbital shuttles & atmospheric craft' });
 
     // perimeter walls (keep player on apron, gap to the city on the west)
     addBox(SP.x0 - 2, SP.x1, SP.z0 - 2, SP.z0);
@@ -1235,8 +1296,7 @@ export function buildWorld(scene, renderer) {
     addBox(SP.x1, SP.x1 + 2, SP.z0, SP.z1);
   }
 
-  // City boundary walls — east side leaves a gate to the spaceport
-  addBox(-H - 2, -H, -H, H);
+  // City boundary walls — east gate to the spaceport, west open to the lake
   addBox(-H, H, -H - 2, -H);
   addBox(-H, H, H, H + 2);
   addBox(H, H + 2, -H, SP.z0);
@@ -1245,7 +1305,7 @@ export function buildWorld(scene, renderer) {
   // ─────────────────────── ARCADE ALLEY + steam ───────────────────────
   {
     const z = H - C.CELL / 2 - C.ROAD / 2;
-    world.pois.push({ name: 'ARCADE ALLEY', pos: new THREE.Vector3(0, 1, H - C.CELL - 4), desc: 'Noodle stalls & pachinko glow' });
+    world.pois.push({ name: 'MAG MILE ARCADE', pos: new THREE.Vector3(0, 1, H - C.CELL - 4), desc: 'Deep dish, pachinko & malört' });
     const steamTex = glowTexture(64, 'rgba(200,210,235,0.55)');
     world.steam = [];
     for (let i = 0; i < 8; i++) {
@@ -1413,26 +1473,49 @@ export function buildWorld(scene, renderer) {
     if (!candidates.length) continue;
     const b = candidates.sort((p, q) => q.h - p.h)[0];
     const D = DISTRICTS[key];
-    // cab 4.6u south of the wall; bridge crosses onto the roof through a parapet gap
-    const ex = b.x, ez = b.z + b.d / 2 + 4.6;
-    world.wallizeBuilding(b, { gaps: [{ side: 's', center: ex, width: 3.2 }] });
+    // cab 4.6u off a wall — pick the first face whose shaft is clear of
+    // beams, pylons, lights and neighbors so the cab can't clip anything
+    const faces = [
+      { side: 's', ex: b.x, ez: b.z + b.d / 2 + 4.6 },
+      { side: 'n', ex: b.x, ez: b.z - b.d / 2 - 4.6 },
+      { side: 'e', ex: b.x + b.w / 2 + 4.6, ez: b.z },
+      { side: 'w', ex: b.x - b.w / 2 - 4.6, ez: b.z },
+    ];
+    const face = faces.find(f => world.shaftClear(f.ex, f.ez, 1.8)) || faces[0];
+    const ex = face.ex, ez = face.ez;
+    world.wallizeBuilding(b, { gaps: [{ side: face.side, center: face.side === 'e' || face.side === 'w' ? ez : ex, width: 3.2 }] });
     const roofY = b.h + 0.02;
+    const dir = { s: [0, 1], n: [0, -1], e: [1, 0], w: [-1, 0] }[face.side];
+    const px = -dir[1], pz = dir[0];   // across-bridge axis
     world.makeElevator({
       x: ex, z: ez, stops: [0.6, roofY - 0.18],
-      gate: { dx: 0, dz: -1 }, size: 3.2, color: D.accent, name: `${D.short} SKYLIFT`,
+      gate: { dx: -dir[0], dz: -dir[1] }, size: 3.2, color: D.accent, name: `${D.short} SKYLIFT`,
     });
-    // dock bridge over the gap
+    // dock bridge from the wall face to the cab gate
+    const fx0 = ex - dir[0] * 4.6, fz0 = ez - dir[1] * 4.6;   // wall face point
+    const bx = (fx0 + ex - dir[0] * 1.6) / 2, bz2 = (fz0 + ez - dir[1] * 1.6) / 2;
     const plate = new THREE.Mesh(
-      new THREE.BoxGeometry(3.0, 0.22, 4.6),
+      new THREE.BoxGeometry(Math.abs(px) * 3.0 + Math.abs(dir[0]) * 4.6, 0.22, Math.abs(pz) * 3.0 + Math.abs(dir[1]) * 4.6),
       new THREE.MeshStandardMaterial({ color: 0x232940, roughness: 0.4, metalness: 0.55 })
     );
-    plate.position.set(ex, roofY - 0.11, b.z + b.d / 2 + 2.0);
+    plate.position.set(bx, roofY - 0.11, bz2);
     scene.add(plate);
-    world.surfaces.push({ minX: ex - 1.5, maxX: ex + 1.5, minZ: b.z + b.d / 2 - 0.6, maxZ: ez - 1.5, y: roofY });
-    world.colliders.push(
-      { minX: ex - 1.85, maxX: ex - 1.45, minZ: b.z + b.d / 2 - 0.2, maxZ: ez - 1.4, minY: roofY - 1, maxY: roofY + 2.2 },
-      { minX: ex + 1.45, maxX: ex + 1.85, minZ: b.z + b.d / 2 - 0.2, maxZ: ez - 1.4, minY: roofY - 1, maxY: roofY + 2.2 },
-    );
+    const sw = (a, b2) => [Math.min(a, b2), Math.max(a, b2)];
+    const [sx0, sx1] = sw(fx0 - dir[0] * 0.6, ex - dir[0] * 1.5);
+    const [sz0, sz1] = sw(fz0 - dir[1] * 0.6, ez - dir[1] * 1.5);
+    world.surfaces.push({
+      minX: Math.abs(px) ? ex - 1.5 : sx0, maxX: Math.abs(px) ? ex + 1.5 : sx1,
+      minZ: Math.abs(pz) ? ez - 1.5 : sz0, maxZ: Math.abs(pz) ? ez + 1.5 : sz1,
+      y: roofY,
+    });
+    for (const e2 of [-1, 1]) {
+      world.colliders.push({
+        minX: (Math.abs(px) ? ex + e2 * 1.65 - 0.2 : Math.min(fx0, ex)) , maxX: (Math.abs(px) ? ex + e2 * 1.65 + 0.2 : Math.max(fx0, ex)),
+        minZ: (Math.abs(pz) ? ez + e2 * 1.65 - 0.2 : Math.min(fz0, ez)), maxZ: (Math.abs(pz) ? ez + e2 * 1.65 + 0.2 : Math.max(fz0, ez)),
+        minY: roofY - 1, maxY: roofY + 2.2,
+      });
+    }
+    world.flagships.push({ b, roofY });
     // roof surface — ring around the set-back upper tier if there is one
     if (b.t2) {
       const rw = b.t2.w2 / 2 + 0.2, rd = b.t2.d2 / 2 + 0.2;
