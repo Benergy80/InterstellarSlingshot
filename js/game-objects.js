@@ -6598,7 +6598,10 @@ function createTradingShip(nebula, index) {
     let shipCategory;
     
     // Pick appropriate ship type for nebula location
-    const nebulaShipTypes = ['freighter', 'tanker', 'science', 'shuttle', 'passenger'];
+    // 'military' patrol craft now spawn among nebula traffic — they're the
+    // armed escorts: when fired upon (or when a nearby civilian raises a
+    // distress call) they return fire while retreating (civilian-combat.js).
+    const nebulaShipTypes = ['freighter', 'tanker', 'science', 'shuttle', 'passenger', 'military', 'military'];
     shipCategory = nebulaShipTypes[Math.floor(Math.random() * nebulaShipTypes.length)];
     
     // Get distinct colors for this ship type

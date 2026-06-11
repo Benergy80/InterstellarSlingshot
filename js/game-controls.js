@@ -1972,8 +1972,15 @@ function fireEnemyWeapon(enemy, difficultySettings) {
                             true);
                     }
                 }
-                mv.userData.health = Math.max(0, (mv.userData.health || 30) - damage);
                 if (typeof flashEnemyHit === 'function') flashEnemyHit(mv, damage);
+                if (typeof damageCivilianShip === 'function') {
+                    // Shared civilian-combat entry point: shield bubble,
+                    // evasive flee via the mining AI, distress on the map,
+                    // and destruction handling.
+                    damageCivilianShip(mv, damage, enemy);
+                    return;
+                }
+                mv.userData.health = Math.max(0, (mv.userData.health || 30) - damage);
 
                 if (mv.userData.health <= 0) {
                     mv.userData._destroyed = true;
@@ -7176,7 +7183,46 @@ function fireWeapon() {
                 });
             }
 
-            const borgIntersects = raycaster.intersectObjects(borgDrones);
+            // Civilian / military ships are full combat participants:
+            // player lasers hit them (hitscan), they shield up / flee /
+            // call distress (civilians) or return fire (military).
+            if (typeof damageCivilianShip === 'function') {
+                const _civPool = [];
+                if (typeof tradingShips !== 'undefined') {
+                    for (let _ci = 0; _ci < tradingShips.length; _ci++) {
+                        const s = tradingShips[_ci];
+                        if (s && (!s.userData || !s.userData.destroyed)) _civPool.push(s);
+                    }
+                }
+                if (typeof civilianShips !== 'undefined') {
+                    for (let _ci = 0; _ci < civilianShips.length; _ci++) {
+                        const s = civilianShips[_ci];
+                        if (s && (!s.userData || !s.userData._destroyed)) _civPool.push(s);
+                    }
+                }
+                if (_civPool.length) {
+                    const civIntersects = raycaster.intersectObjects(_civPool, true);
+                    if (civIntersects.length > 0) {
+                        targetPosition = civIntersects[0].point;
+                        let _root = civIntersects[0].object;
+                        while (_root.parent && _civPool.indexOf(_root) === -1) _root = _root.parent;
+                        if (_civPool.indexOf(_root) !== -1) {
+                            targetObject = _root;
+                            damageCivilianShip(_root, 1,
+                                (typeof _civilianPlayerProxy !== 'undefined') ? _civilianPlayerProxy
+                                    : { position: camera.position, isPlayerProxy: true, userData: { health: 1 } });
+                            // Firing on unarmed civilians costs reputation;
+                            // military patrol craft shoot back instead.
+                            if (_root.userData && _root.userData.shipCategory !== 'military' &&
+                                typeof awardReputation === 'function') {
+                                awardReputation(-2, 'Civilian vessel fired upon');
+                            }
+                        }
+                    }
+                }
+            }
+
+            const borgIntersects = (!targetObject) ? raycaster.intersectObjects(borgDrones) : [];
             if (borgIntersects.length > 0) {
                 targetObject = borgIntersects[0].object.parent; // Parent is the drone group
                 // Use the cube's world center as target so the proximity
@@ -7188,8 +7234,9 @@ function fireWeapon() {
                 targetPosition = _borgCenter;
                 // Hit log silenced (per-shot spam)
             } else {
-                // Check for asteroid hits (for manual aiming only)
-                const asteroidTargets = planets.filter(p => p.userData.type === 'asteroid');
+                // Check for asteroid hits (for manual aiming only; skip if
+                // a civilian ship already took this shot)
+                const asteroidTargets = targetObject ? [] : planets.filter(p => p.userData.type === 'asteroid');
                 const asteroidIntersects = raycaster.intersectObjects(asteroidTargets);
                 if (asteroidIntersects.length > 0) {
                     targetPosition = asteroidIntersects[0].point;
