@@ -348,7 +348,7 @@ export function buildWorld(scene, renderer) {
     ctx.fillStyle = g; ctx.fillRect(0, 0, 16, 256);
     const skyTex = canvasTexture(c);
     const skyMat = new THREE.MeshBasicMaterial({ map: skyTex, side: THREE.BackSide, fog: false, depthWrite: false, transparent: true, opacity: 0.6 });
-    const sky = new THREE.Mesh(new THREE.SphereGeometry(2950, 32, 20), skyMat);
+    const sky = new THREE.Mesh(new THREE.SphereGeometry(140000, 32, 20), skyMat);
     sky.renderOrder = -10;
     scene.add(sky);
     // the mothergame's Hubble Ultra Deep Field skybox, planetside
@@ -364,7 +364,7 @@ export function buildWorld(scene, renderer) {
     // Stars — upper hemisphere only
     const N = 900, pos = new Float32Array(N * 3), col = new Float32Array(N * 3);
     for (let i = 0; i < N; i++) {
-      const a = rnd() * Math.PI * 2, e = 0.12 + rnd() * 1.35, r = 2820;
+      const a = rnd() * Math.PI * 2, e = 0.12 + rnd() * 1.35, r = 120000;
       pos[i * 3] = Math.cos(a) * Math.cos(e) * r;
       pos[i * 3 + 1] = Math.sin(e) * r;
       pos[i * 3 + 2] = Math.sin(a) * Math.cos(e) * r;
@@ -377,7 +377,7 @@ export function buildWorld(scene, renderer) {
     sg.setAttribute('position', new THREE.BufferAttribute(pos, 3));
     sg.setAttribute('color', new THREE.BufferAttribute(col, 3));
     const stars = new THREE.Points(sg, new THREE.PointsMaterial({
-      size: 2.2, sizeAttenuation: false, vertexColors: true, fog: false,
+      size: 2.6, sizeAttenuation: false, vertexColors: true, fog: false,
       transparent: true, opacity: 0.85, depthWrite: false,
     }));
     stars.renderOrder = -9;
@@ -395,7 +395,7 @@ export function buildWorld(scene, renderer) {
       cloudMat.map = t;
       cloudMat.needsUpdate = true;
     });
-    const clouds = new THREE.Mesh(new THREE.SphereGeometry(2500, 28, 16), cloudMat);
+    const clouds = new THREE.Mesh(new THREE.SphereGeometry(100000, 28, 16), cloudMat);
     clouds.renderOrder = -9;
     scene.add(clouds);
     world.cloudMat = cloudMat;

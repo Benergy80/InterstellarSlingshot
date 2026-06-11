@@ -19,7 +19,7 @@ export const C = {
   // ── Atmosphere ──
   FOG_COLOR: 0x0a0618,
   FOG_DENSITY: 0.0036,
-  CAM_FAR: 3200,
+  CAM_FAR: 150000,   // mothergame scale — Hubble dome sits at 140k
 
   // ── Bloom (UnrealBloomPass) ──
   BLOOM: { strength: 0.62, radius: 0.42, threshold: 0.52 },
