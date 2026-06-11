@@ -409,7 +409,26 @@ export function buildWorld(scene, renderer) {
       cloudMat.map = t;
       cloudMat.needsUpdate = true;
     }
-    const clouds = new THREE.Mesh(new THREE.SphereGeometry(100000, 28, 16), cloudMat);
+    // constant low-opacity atmosphere haze — separates building silhouettes
+    // from the deep-field backdrop at the horizon
+    {
+      const [ac2, actx2] = makeCanvas(8, 256);
+      const ag = actx2.createLinearGradient(0, 256, 0, 0);
+      ag.addColorStop(0, 'rgba(116,134,178,0.85)');
+      ag.addColorStop(0.35, 'rgba(96,112,158,0.38)');
+      ag.addColorStop(0.7, 'rgba(80,96,140,0.08)');
+      ag.addColorStop(1, 'rgba(80,96,140,0)');
+      actx2.fillStyle = ag;
+      actx2.fillRect(0, 0, 8, 256);
+      const hazeMat = new THREE.MeshBasicMaterial({
+        map: canvasTexture(ac2), side: THREE.BackSide, fog: false,
+        depthWrite: false, transparent: true, opacity: 0.5,
+      });
+      const haze = new THREE.Mesh(new THREE.SphereGeometry(120000, 28, 16), hazeMat);
+      haze.renderOrder = -9;
+      scene.add(haze);
+    }
+    const clouds = new THREE.Mesh(new THREE.SphereGeometry(130000, 28, 16), cloudMat);
     clouds.renderOrder = -9;
     scene.add(clouds);
     world.cloudMat = cloudMat;
