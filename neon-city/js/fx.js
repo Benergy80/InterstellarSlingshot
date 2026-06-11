@@ -353,8 +353,44 @@ export function createFX(scene, camera, world, audio) {
     });
   }
 
-  // ════════════════ LIGHTNING ════════════════
+  // ════════════════ LIGHTNING + STORM CLOUDS ════════════════
   {
+    // jagged strike bolt
+    const boltMat = new THREE.LineBasicMaterial({
+      color: new THREE.Color(2.2, 2.3, 2.6), transparent: true, opacity: 0,
+      blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false,
+    });
+    const boltGeo = new THREE.BufferGeometry();
+    boltGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(12 * 3), 3));
+    const bolt = new THREE.Line(boltGeo, boltMat);
+    bolt.frustumCulled = false;
+    scene.add(bolt);
+    const strike = () => {
+      const px = camera.position.x + (rnd() - 0.5) * 700;
+      const pz = camera.position.z + (rnd() - 0.5) * 700;
+      const arr = boltGeo.attributes.position.array;
+      let x = px, z = pz;
+      for (let i = 0; i < 12; i++) {
+        const y = 420 - (i / 11) * 400;
+        arr[i * 3] = x; arr[i * 3 + 1] = y; arr[i * 3 + 2] = z;
+        x += (rnd() - 0.5) * 26;
+        z += (rnd() - 0.5) * 26;
+      }
+      boltGeo.attributes.position.needsUpdate = true;
+    };
+    // cloud cover drifts in and out while it rains
+    let cloudTimer = 20 + rnd() * 30, cloudy = false, cloudK = 0;
+    fx.updateFns.push((dt) => {
+      cloudTimer -= dt;
+      if (cloudTimer <= 0) {
+        cloudy = !cloudy && fx.rainOn;
+        cloudTimer = cloudy ? 28 + rnd() * 28 : 35 + rnd() * 55;
+      }
+      const want = (cloudy && fx.rainOn) ? 0.42 : 0;
+      cloudK += clamp2(want - cloudK, -dt * 0.12, dt * 0.12);
+      if (world.cloudMat) world.cloudMat.opacity = cloudK;
+    });
+    const clamp2 = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
     let next = 14 + rnd() * 20, flashT = 0;
     const baseHemi = world.hemi.intensity;
     const baseBg = new THREE.Color(0x0a0618);
@@ -366,13 +402,16 @@ export function createFX(scene, camera, world, audio) {
         const burst = (Math.sin(flashT * 42) > -0.2 ? 1 : 0.25) * Math.min(1, k);
         world.hemi.intensity = baseHemi + burst * 2.0;
         if (scene.background && scene.background.isColor) scene.background.lerpColors(baseBg, flashBg, burst * 0.8);
+        boltMat.opacity = burst * 0.9;
         if (flashT <= 0) {
           world.hemi.intensity = baseHemi;
+          boltMat.opacity = 0;
           if (scene.background && scene.background.isColor) scene.background.copy(baseBg);
         }
       } else {
         next -= dt;
         if (next <= 0 && fx.rainOn) {
+          strike();
           flashT = 0.34;
           next = 16 + rnd() * 26;
           setTimeout(() => audio.sfx('thunder'), 600 + rnd() * 1800);

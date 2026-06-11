@@ -347,8 +347,8 @@ export function buildWorld(scene, renderer) {
     g.addColorStop(1.0, '#4a1747');
     ctx.fillStyle = g; ctx.fillRect(0, 0, 16, 256);
     const skyTex = canvasTexture(c);
-    const skyMat = new THREE.MeshBasicMaterial({ map: skyTex, side: THREE.BackSide, fog: false, depthWrite: false });
-    const sky = new THREE.Mesh(new THREE.SphereGeometry(1380, 32, 20), skyMat);
+    const skyMat = new THREE.MeshBasicMaterial({ map: skyTex, side: THREE.BackSide, fog: false, depthWrite: false, transparent: true, opacity: 0.6 });
+    const sky = new THREE.Mesh(new THREE.SphereGeometry(2950, 32, 20), skyMat);
     sky.renderOrder = -10;
     scene.add(sky);
     // the mothergame's Hubble Ultra Deep Field skybox, planetside
@@ -357,14 +357,14 @@ export function buildWorld(scene, renderer) {
       t.wrapS = THREE.RepeatWrapping;
       t.repeat.set(2, 1);
       skyMat.map = t;
-      skyMat.color = new THREE.Color(0.5, 0.52, 0.62);  // keep it night-dim under bloom
+      skyMat.color = new THREE.Color(0.78, 0.8, 0.9);   // dim + 60% opacity, far layer
       skyMat.needsUpdate = true;
     });
 
     // Stars — upper hemisphere only
     const N = 900, pos = new Float32Array(N * 3), col = new Float32Array(N * 3);
     for (let i = 0; i < N; i++) {
-      const a = rnd() * Math.PI * 2, e = 0.12 + rnd() * 1.35, r = 1280;
+      const a = rnd() * Math.PI * 2, e = 0.12 + rnd() * 1.35, r = 2820;
       pos[i * 3] = Math.cos(a) * Math.cos(e) * r;
       pos[i * 3 + 1] = Math.sin(e) * r;
       pos[i * 3 + 2] = Math.sin(a) * Math.cos(e) * r;
@@ -382,6 +382,24 @@ export function buildWorld(scene, renderer) {
     }));
     stars.renderOrder = -9;
     scene.add(stars);
+
+    // white cloud layer (the mothergame's cloud skybox) — drifts in while raining
+    const cloudMat = new THREE.MeshBasicMaterial({
+      side: THREE.BackSide, fog: false, depthWrite: false, transparent: true, opacity: 0,
+      color: new THREE.Color(0.65, 0.68, 0.78),
+    });
+    new THREE.TextureLoader().load('../images/IMG_FD98AABFB890-1.jpeg', (t) => {
+      t.colorSpace = THREE.SRGBColorSpace;
+      t.wrapS = THREE.RepeatWrapping;
+      t.repeat.set(3, 1.4);
+      cloudMat.map = t;
+      cloudMat.needsUpdate = true;
+    });
+    const clouds = new THREE.Mesh(new THREE.SphereGeometry(2500, 28, 16), cloudMat);
+    clouds.renderOrder = -9;
+    scene.add(clouds);
+    world.cloudMat = cloudMat;
+    world.updateFns.push((dt) => { clouds.rotation.y += dt * 0.004; });
 
     // Gas giant on the horizon — Interstellar Slingshot is up there somewhere.
     const [pc, pctx] = makeCanvas(256, 256);

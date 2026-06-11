@@ -19,7 +19,7 @@ export const C = {
   // ── Atmosphere ──
   FOG_COLOR: 0x0a0618,
   FOG_DENSITY: 0.0036,
-  CAM_FAR: 1600,
+  CAM_FAR: 3200,
 
   // ── Bloom (UnrealBloomPass) ──
   BLOOM: { strength: 0.62, radius: 0.42, threshold: 0.52 },
