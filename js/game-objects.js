@@ -12737,7 +12737,19 @@ function updateGalaxyAtmosphere() {
             const hex = (typeof galaxyTypes !== 'undefined' && galaxyTypes[gid] && galaxyTypes[gid].color)
                 ? galaxyTypes[gid].color : 0x8888ff;
             if (_gaTargetColor) {
+                // COMPLEMENTARY tint: rotate the faction hue 180° so the
+                // regional sky CONTRASTS with that galaxy's ships, lines,
+                // and orbit colors instead of drowning in the same hue.
+                // Saturation/lightness clamped so every faction's
+                // complement reads as a usable sky color.
                 _gaTargetColor.setHex(hex);
+                const _hsl = { h: 0, s: 0, l: 0 };
+                _gaTargetColor.getHSL(_hsl);
+                _gaTargetColor.setHSL(
+                    (_hsl.h + 0.5) % 1,
+                    Math.min(0.9, Math.max(0.45, _hsl.s)),
+                    Math.min(0.62, Math.max(0.42, _hsl.l))
+                );
                 galaxyAtmosphereDome.material.color.lerp(_gaTargetColor, 0.02);
             }
         }
