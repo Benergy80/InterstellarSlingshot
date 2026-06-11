@@ -330,6 +330,46 @@ export function buildWorld(scene, renderer) {
   moon.position.set(-300, 500, -200);
   scene.add(moon);
   world.hemi = hemi;
+  // ── day/night cycle (8 min) with a large sun + moon ──
+  world.dayNight = { k: 0 };   // 0 = midnight, 1 = noon
+  {
+    const sunTex = glowTexture(128, 'rgba(255,225,170,1)');
+    const sun = new THREE.Sprite(new THREE.SpriteMaterial({ map: sunTex, color: 0xffe2a8, transparent: true, fog: false, depthWrite: false }));
+    sun.scale.set(26000, 26000, 1);
+    scene.add(sun);
+    const [mc, mctx2] = makeCanvas(128, 128);
+    const mg = mctx2.createRadialGradient(64, 64, 6, 64, 64, 62);
+    mg.addColorStop(0, '#e8ecf4'); mg.addColorStop(0.85, '#b9c2d4'); mg.addColorStop(1, 'rgba(185,194,212,0)');
+    mctx2.fillStyle = mg; mctx2.beginPath(); mctx2.arc(64, 64, 62, 0, Math.PI * 2); mctx2.fill();
+    mctx2.fillStyle = 'rgba(120,130,150,0.55)';
+    const mr = mulberry32(5);
+    for (let i = 0; i < 12; i++) { mctx2.beginPath(); mctx2.arc(20 + mr() * 88, 20 + mr() * 88, 3 + mr() * 9, 0, Math.PI * 2); mctx2.fill(); }
+    const moonSpr = new THREE.Sprite(new THREE.SpriteMaterial({ map: canvasTexture(mc), transparent: true, fog: false, depthWrite: false }));
+    moonSpr.scale.set(15000, 15000, 1);
+    scene.add(moonSpr);
+    const DAY = 480;             // seconds per full cycle
+    const nightBg = new THREE.Color(C.FOG_COLOR), dayBg = new THREE.Color(0x7e96bd);
+    const tmpC = new THREE.Color();
+    world.updateFns.push((dt, t) => {
+      const a = (t / DAY) * Math.PI * 2 - Math.PI / 2;   // start at midnight
+      const elev = Math.sin(a);
+      const k = clamp(elev * 1.6 + 0.5, 0, 1);           // day factor
+      world.dayNight.k = k;
+      sun.position.set(Math.cos(a) * 90000, Math.sin(a) * 90000, -28000);
+      moonSpr.position.set(-Math.cos(a) * 90000, -Math.sin(a) * 90000, 30000);
+      sun.material.opacity = clamp(elev * 3 + 0.4, 0, 1);
+      moonSpr.material.opacity = clamp(-elev * 3 + 0.4, 0.0, 1);
+      hemi.intensity = 0.92 + k * 1.25;
+      moon.intensity = 0.5 + k * 0.9;
+      moon.color.setHex(k > 0.4 ? 0xfff1d0 : 0x8fb4ff);
+      moon.position.set(Math.cos(a) * 300, Math.max(140, Math.sin(a) * 500), -200);
+      tmpC.lerpColors(nightBg, dayBg, k);
+      if (scene.background && scene.background.isColor) scene.background.copy(tmpC);
+      if (scene.fog) scene.fog.color.copy(tmpC);
+    });
+    world.sunRef = sun;
+  }
+
   // fill light for enterable interiors — off until you step inside one
   const interiorLight = new THREE.PointLight(0xbfd9ff, 26, 34, 1.6);
   interiorLight.visible = false;
@@ -898,6 +938,20 @@ export function buildWorld(scene, renderer) {
       const gw = v.vertical ? 2.6 : 10.5, gh = v.vertical ? 10.5 : 2.6;
       const geo = new THREE.PlaneGeometry(gw, gh);
       const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: false });
+      if (v.pool.includes('OLD') || v.pool.includes('FOUNDRY')) {
+        mat.onBeforeCompile = (sh) => {
+          sh.uniforms.uTime = world.uTime;
+          sh.fragmentShader = 'uniform float uTime;\n' + sh.fragmentShader.replace('#include <map_fragment>', `
+            vec2 gUv = vMapUv;
+            float gRow = step(0.94, fract(sin(floor(gUv.y * 24.0) * 91.7 + floor(uTime * 9.0) * 13.1) * 43758.5));
+            gUv.x += gRow * 0.08 * sin(uTime * 60.0);
+            vec4 sampledDiffuseColor = texture2D(map, gUv);
+            diffuseColor *= sampledDiffuseColor;
+            float blackout = step(0.93, fract(sin(floor(uTime * 3.0) * 47.9) * 23421.6));
+            diffuseColor.rgb *= mix(1.0, 0.18, blackout);
+          `);
+        };
+      }
       const mesh = new THREE.InstancedMesh(geo, mat, mine.length);
       const dummy = new THREE.Object3D();
       mine.forEach((s, i) => {
@@ -961,6 +1015,48 @@ export function buildWorld(scene, renderer) {
       mesh.rotation.y = off[2];
       scene.add(mesh);
     });
+  }
+
+  // ─────────────────────── LED MEGABOARDS (Times Square pass) ───────────────────────
+  {
+    const [lc, lctx] = makeCanvas(512, 128);
+    const ledTex = canvasTexture(lc);
+    const msgs = ['PLAY INTERSTELLAR SLINGSHOT', 'EIGHT GALAXIES · ONE SHIP', 'BEAT THE BORG — SEASON 8', 'スリングショット 発進!', 'GRAVITY IS A WEAPON', 'NEW CHICAGO ♥ SLINGSHOT', 'RIDE THE BLACK HOLES'];
+    let mi = 0, acc = 0, scrollX = 0;
+    const hueArr = ['#00f0ff', '#ff2bd6', '#ffb300', '#53ffe9', '#ff3355'];
+    world.updateFns.push((dt) => {
+      acc += dt;
+      if (acc < 0.09) return;
+      scrollX += acc * 160;
+      acc = 0;
+      const msg = msgs[mi % msgs.length];
+      lctx.fillStyle = '#04060d';
+      lctx.fillRect(0, 0, 512, 128);
+      lctx.font = 'bold 86px Orbitron, monospace';
+      lctx.textBaseline = 'middle';
+      const w = lctx.measureText(msg).width + 360;
+      if (scrollX > w) { scrollX = 0; mi++; }
+      lctx.fillStyle = hueArr[mi % hueArr.length];
+      lctx.shadowColor = lctx.fillStyle; lctx.shadowBlur = 18;
+      lctx.fillText(msg, 512 - scrollX, 66);
+      ledTex.needsUpdate = true;
+    });
+    world.ledTex = ledTex;
+    const ledMat = new THREE.MeshBasicMaterial({ map: ledTex });
+    const boards = new THREE.InstancedMesh(new THREE.PlaneGeometry(18, 4.5), ledMat, 30);
+    const dummy2 = new THREE.Object3D();
+    const cands = buildings.filter(b => b.h > 42).sort(() => rnd() - 0.5).slice(0, 30);
+    cands.forEach((b, i) => {
+      const side = (rnd() * 4) | 0;
+      const off = [[b.w / 2 + 0.65, 0, Math.PI / 2], [-b.w / 2 - 0.65, 0, -Math.PI / 2], [0, b.d / 2 + 0.65, 0], [0, -b.d / 2 - 0.65, Math.PI]][side];
+      dummy2.position.set(b.x + off[0], 8 + rnd() * Math.min(b.h - 16, 40), b.z + off[1]);
+      dummy2.rotation.set(0, off[2], 0);
+      dummy2.scale.setScalar(0.7 + rnd() * 0.9);
+      dummy2.updateMatrix();
+      boards.setMatrixAt(i, dummy2.matrix);
+    });
+    boards.frustumCulled = false;
+    scene.add(boards);
   }
 
   // ─────────────────────── STREET LIGHTS ───────────────────────
@@ -1068,7 +1164,7 @@ export function buildWorld(scene, renderer) {
         'BORG SIGNALS AT GALACTIC RIM — ADVISORY LEVEL 3  ◇  ',
         'EIGHT GALAXIES TRADE ACCORD SIGNED AT SPIRE SUMMIT  ◇  ',
         'ACID RAIN UNTIL 04:00 — DRONES GROUNDED BELOW LANE 2  ◇  ',
-        'LAKE MISHIGAMI FERRY DELAYED — KAIJU SIGHTING UNCONFIRMED  ◇  ',
+        'LAKE MICHIGAN FERRY DELAYED — KAIJU SIGHTING UNCONFIRMED  ◇  ',
         'DA BEARS CLINCH ORBITAL DIVISION — SOLDIER FIELD 2287 ERUPTS  ◇  ',
       ];
       ctx.fillStyle = '#040209'; ctx.fillRect(0, 0, 2048, 64);

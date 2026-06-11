@@ -37,9 +37,14 @@ html, body {
   position: fixed; inset: 0; z-index: 100;
   display: flex; align-items: center; justify-content: center;
   background:
-    radial-gradient(ellipse at 50% 120%, rgba(255, 43, 214, 0.16), transparent 55%),
-    radial-gradient(ellipse at 50% -20%, rgba(0, 240, 255, 0.12), transparent 55%),
-    linear-gradient(#04020c, #090318);
+    radial-gradient(1.6px 1.6px at 12% 22%, rgba(255,255,255,0.9), transparent 60%),
+    radial-gradient(1.2px 1.2px at 78% 12%, rgba(200,230,255,0.8), transparent 60%),
+    radial-gradient(1.4px 1.4px at 32% 68%, rgba(255,255,255,0.7), transparent 60%),
+    radial-gradient(1.1px 1.1px at 64% 44%, rgba(190,255,230,0.7), transparent 60%),
+    radial-gradient(1.5px 1.5px at 88% 76%, rgba(255,255,255,0.8), transparent 60%),
+    radial-gradient(1px 1px at 45% 88%, rgba(200,230,255,0.7), transparent 60%),
+    radial-gradient(ellipse at 50% -20%, rgba(0, 240, 255, 0.10), transparent 55%),
+    linear-gradient(#000208, #020a14);
   transition: opacity 1.2s ease;
 }
 #launch.fading { opacity: 0; pointer-events: none; }
@@ -61,17 +66,17 @@ html, body {
   text-shadow:
     0 0 12px rgba(0, 240, 255, 0.9),
     0 0 48px rgba(0, 240, 255, 0.45),
-    0 0 90px rgba(255, 43, 214, 0.5);
+    0 0 90px rgba(46, 255, 123, 0.35);
   animation: titlePulse 3.2s ease-in-out infinite;
 }
 @keyframes titlePulse {
   0%, 100% { text-shadow: 0 0 12px rgba(0,240,255,.9), 0 0 48px rgba(0,240,255,.45), 0 0 90px rgba(255,43,214,.5); }
-  50%      { text-shadow: 0 0 16px rgba(0,240,255,1), 0 0 64px rgba(0,240,255,.6), 0 0 120px rgba(255,43,214,.7); }
+  50%      { text-shadow: 0 0 16px rgba(0,240,255,1), 0 0 64px rgba(0,240,255,.6), 0 0 120px rgba(46,255,123,.5); }
 }
 
 .launch-sub {
   font-size: 17px; letter-spacing: 5px; font-weight: 500;
-  color: rgba(255, 43, 214, 0.85);
+  color: rgba(46, 255, 123, 0.9);
   margin-bottom: 26px;
 }
 
@@ -113,8 +118,8 @@ html, body {
   box-shadow: 0 0 24px rgba(0, 240, 255, 0.5), inset 0 0 18px rgba(0, 240, 255, 0.15);
   transform: translateY(-2px);
 }
-.launch-btn.alt { color: var(--magenta); border-color: var(--magenta); background: rgba(255, 43, 214, 0.05); text-shadow: 0 0 8px rgba(255, 43, 214, 0.7); }
-.launch-btn.alt:hover:not(:disabled) { background: rgba(255, 43, 214, 0.16); box-shadow: 0 0 24px rgba(255, 43, 214, 0.45); }
+.launch-btn.alt { color: #2eff7b; border-color: #2eff7b; background: rgba(46, 255, 123, 0.05); text-shadow: 0 0 8px rgba(46, 255, 123, 0.7); }
+.launch-btn.alt:hover:not(:disabled) { background: rgba(46, 255, 123, 0.14); box-shadow: 0 0 24px rgba(46, 255, 123, 0.4); }
 .launch-btn:disabled { opacity: 0.3; cursor: wait; }
 
 .launch-controls table {

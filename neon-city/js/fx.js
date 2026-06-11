@@ -386,8 +386,15 @@ export function createFX(scene, camera, world, audio) {
         cloudy = !cloudy && fx.rainOn;
         cloudTimer = cloudy ? 28 + rnd() * 28 : 35 + rnd() * 55;
       }
-      const want = fx.rainOn ? 0.20 : 0;   // white clouds, 20%, whenever it rains
-      cloudK += clamp2(want - cloudK, -dt * 0.12, dt * 0.12);
+      // Mothergame deep-layer behavior (updateHubbleSkybox2Opacity):
+      // 0.20 floor → 0.50 max, fading with travel — here, with altitude —
+      // and eased toward the target rather than snapped.
+      let want = 0;
+      if (fx.rainOn) {
+        const alt = clamp2((camera.position.y - 20) / 240, 0, 1);
+        want = 0.20 + alt * 0.30;
+      }
+      cloudK += (want - cloudK) * Math.min(1, dt * 0.5);
       if (world.cloudMat) world.cloudMat.opacity = cloudK;
     });
     const clamp2 = (v, lo, hi) => Math.max(lo, Math.min(hi, v));

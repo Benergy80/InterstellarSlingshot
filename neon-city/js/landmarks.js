@@ -1,6 +1,6 @@
 // ════════════════════════════════════════════════════════════════
 // NEW CHICAGO — landmarks & lakefront
-// Lake Mishigami (animated water, esplanade, beach), Neon Pier with
+// Lake Michigan (animated water, esplanade, beach), Neon Pier with
 // a working Ferris wheel, marina + boats, Soldier Field 2287, a
 // container port with cranes, Grant Park, lakefront suburb homes,
 // Holy Name Cathedral (gothic), City Hall, the Yards fusion plant,
@@ -20,7 +20,7 @@ export function buildLandmarks(scene, world) {
   const addCol = (minX, maxX, minZ, maxZ, minY, maxY) => world.colliders.push(
     maxY === undefined ? { minX, maxX, minZ, maxZ } : { minX, maxX, minZ, maxZ, minY, maxY });
 
-  // ════════════════ LAKE MISHIGAMI ════════════════
+  // ════════════════ LAKE MICHIGAN ════════════════
   const SHORE = -H - 26;          // esplanade edge; water beyond
   {
     // water — big plane with gentle shader swell, env-reflective
@@ -58,7 +58,7 @@ export function buildLandmarks(scene, world) {
     const beach = new THREE.Mesh(new THREE.BoxGeometry(30, 0.5, 150), solid(0x59513e, 0.9, 0.05));
     beach.position.set(-H - 15, -0.42, -H + 95);
     scene.add(beach);
-    world.pois.push({ name: 'NORTH AVE BEACH', pos: new THREE.Vector3(-H - 10, 0, -H + 100), desc: 'Lake Mishigami sands' });
+    world.pois.push({ name: 'NORTH AVE BEACH', pos: new THREE.Vector3(-H - 10, 0, -H + 100), desc: 'Lake Michigan sands' });
 
     // palms→trees along the esplanade
     treeRow(-H - 6, -H + 30, H - 30, 14, 'z');
@@ -123,7 +123,7 @@ export function buildLandmarks(scene, world) {
         c.cab.position.set(wx, wy - Math.cos(a) * wr, pz + Math.sin(a) * wr);
       }
     });
-    world.pois.push({ name: 'NEON PIER', pos: new THREE.Vector3(SHORE - 30, 0.4, pz), desc: 'Ferris wheel over Lake Mishigami' });
+    world.pois.push({ name: 'NEON PIER', pos: new THREE.Vector3(SHORE - 30, 0.4, pz), desc: 'Ferris wheel over Lake Michigan' });
 
     // marina — moored boats bobbing + one night cruiser
     const mkBoat = (len) => {
@@ -547,6 +547,53 @@ export function buildLandmarks(scene, world) {
     scene.add(strobe);
     world.updateFns.push((dt, t) => { strobe.visible = ((t + tx) % 1.5) < 0.18; });
     addCol(tx - 2.5, tx + 2.5, tz - 2.5, tz + 2.5, 0, 65);
+  }
+
+  // ════════════════ ZEPPELINS (searchlights + neon marquees) ════════════════
+  for (let zi = 0; zi < 3; zi++) {
+    const g = new THREE.Group();
+    const hull = new THREE.Mesh(new THREE.SphereGeometry(7, 18, 12),
+      new THREE.MeshStandardMaterial({ color: 0x2a3148, roughness: 0.45, metalness: 0.55 }));
+    hull.scale.set(2.7, 1, 1);
+    g.add(hull);
+    const gond = new THREE.Mesh(new THREE.BoxGeometry(6, 1.6, 2.2), solid(0x1a2030, 0.4, 0.6));
+    gond.position.y = -7.2;
+    g.add(gond);
+    for (const e of [-1, 1]) {
+      const fin = new THREE.Mesh(new THREE.BoxGeometry(4.5, 3.2, 0.35), solid(0x232c44, 0.5, 0.5));
+      fin.position.set(-16.5, e * 2.2, 0);
+      fin.rotation.x = e * 0.5;
+      g.add(fin);
+    }
+    // neon marquees on both flanks — share the animated LED canvas
+    for (const e of [-1, 1]) {
+      const mq = new THREE.Mesh(new THREE.PlaneGeometry(22, 5.5),
+        new THREE.MeshBasicMaterial({ map: world.ledTex }));
+      mq.position.set(0, 0.4, e * 7.15);
+      mq.rotation.y = e > 0 ? 0 : Math.PI;
+      g.add(mq);
+      const trim = new THREE.Mesh(new THREE.BoxGeometry(22.6, 0.18, 0.18), glow(NEON.cyan, 1.0));
+      trim.position.set(0, 3.3, e * 7.1);
+      g.add(trim);
+    }
+    // sweeping searchlight
+    const beam = new THREE.Mesh(new THREE.ConeGeometry(10, 130, 12, 1, true),
+      new THREE.MeshBasicMaterial({ color: 0xcfe6ff, transparent: true, opacity: 0.06, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, toneMapped: false }));
+    beam.geometry.translate(0, -65, 0);
+    const pivot = new THREE.Group();
+    pivot.position.y = -7;
+    pivot.add(beam);
+    g.add(pivot);
+    scene.add(g);
+    const ph = zi * 2.1, rad = 200 + zi * 90, hgt = 150 + zi * 18, w = 0.022 - zi * 0.004;
+    world.updateFns.push((dt, t) => {
+      const a = t * w + ph;
+      g.position.set(Math.cos(a) * rad, hgt + Math.sin(t * 0.3 + ph) * 5, Math.sin(a) * rad * 0.8);
+      const ta = a + 0.05;
+      g.lookAt(Math.cos(ta) * rad, g.position.y, Math.sin(ta) * rad * 0.8);
+      pivot.rotation.x = Math.sin(t * 0.3 + ph) * 0.35;
+      pivot.rotation.z = Math.cos(t * 0.23 + ph) * 0.35;
+    });
   }
 
   // ── helpers ──
