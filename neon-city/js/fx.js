@@ -8,6 +8,7 @@ import * as THREE from 'three';
 import { NEON, glowTexture, streakTexture, mulberry32 } from './config.js';
 
 const _v = new THREE.Vector3(), _v2 = new THREE.Vector3();
+const _cloudTint = new THREE.Color();
 const _ray = new THREE.Raycaster();
 _ray.far = 600;
 
@@ -386,16 +387,28 @@ export function createFX(scene, camera, world, audio) {
         cloudy = !cloudy && fx.rainOn;
         cloudTimer = cloudy ? 28 + rnd() * 28 : 35 + rnd() * 55;
       }
-      // Mothergame deep-layer behavior (updateHubbleSkybox2Opacity):
-      // 0.20 floor → 0.50 max, fading with travel — here, with altitude —
-      // and eased toward the target rather than snapped.
-      let want = 0;
-      if (fx.rainOn) {
-        const alt = clamp2((camera.position.y - 20) / 240, 0, 1);
-        want = 0.20 + alt * 0.30;
+      // Mothergame galaxy-core/boss dome behavior (createBossBattleSkybox +
+      // updateBossSkyboxHeartbeat): a color dome that follows the player and
+      // FADES IN AS YOU APPROACH THE CORE, eased += (target−o)·0.1/frame.
+      // Here the core is the Spire; the tint is the complement of the
+      // district you're standing in.
+      const coreD = Math.hypot(camera.position.x, camera.position.z);
+      let want = coreD < 120 ? 0.5 : coreD > 650 ? 0 : 0.5 * (1 - (coreD - 120) / 530);
+      if (fx.rainOn) want = Math.max(want, 0.18);
+      cloudK += (want - cloudK) * Math.min(1, dt * 6);
+      if (world.cloudMat) {
+        world.cloudMat.opacity = cloudK;
+        if (world.districtAt) {
+          const D = world.districtAt(camera.position.x, camera.position.z);
+          if (D.curb) {
+            _cloudTint.setHex(D.curb);
+            const hsl = {};
+            _cloudTint.getHSL(hsl);
+            _cloudTint.setHSL((hsl.h + 0.5) % 1, hsl.s * 0.55, 0.72);  // complementary, soft
+            world.cloudMat.color.lerp(_cloudTint, Math.min(1, dt * 1.2));
+          }
+        }
       }
-      cloudK += (want - cloudK) * Math.min(1, dt * 0.5);
-      if (world.cloudMat) world.cloudMat.opacity = cloudK;
     });
     const clamp2 = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
     let next = 14 + rnd() * 20, flashT = 0;

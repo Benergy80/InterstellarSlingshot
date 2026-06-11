@@ -469,10 +469,14 @@ export function buildWorld(scene, renderer) {
       scene.add(haze);
     }
     const clouds = new THREE.Mesh(new THREE.SphereGeometry(130000, 28, 16), cloudMat);
-    clouds.renderOrder = -9;
+    clouds.renderOrder = 0;          // in front of the deep layers, like the boss dome
+    clouds.frustumCulled = false;
     scene.add(clouds);
     world.cloudMat = cloudMat;
-    world.updateFns.push((dt) => { clouds.rotation.y += dt * 0.004; });
+    world.updateFns.push((dt, t, playerPos) => {
+      clouds.rotation.y += dt * 0.004;
+      if (playerPos) clouds.position.set(playerPos.x, 0, playerPos.z);  // always envelops the player
+    });
 
     // Gas giant on the horizon — Interstellar Slingshot is up there somewhere.
     const [pc, pctx] = makeCanvas(256, 256);
