@@ -12433,6 +12433,15 @@ let bossSkybox = null;
 let bossSkyboxOpacity = 0;
 let bossHeartbeatPhase = 0;
 
+// Lightning in the boss sky — occasional storm cells of 1-3 white strokes.
+// Each stroke is an ENVELOPE (fast-but-smooth attack, slower decay), not a
+// hard strobe, so the flash reads as lightning behind the clouds: the dome
+// color lerps crimson → white and opacity lifts with the envelope.
+const _bossLightning = { nextAt: 0, strokes: 0, flash: null };
+const _bossSkyBaseColor = (typeof THREE !== 'undefined') ? new THREE.Color(0xdd2222) : null;
+const _bossSkyWhite = (typeof THREE !== 'undefined') ? new THREE.Color(0xffffff) : null;
+const _bossSkyTmp = (typeof THREE !== 'undefined') ? new THREE.Color() : null;
+
 // Single source of truth: is a real boss / elite-guardian set-piece
 // fight currently live AND in front of the player? Drives the pulsing
 // boss skybox AND the Hubble fade-out.
@@ -12611,8 +12620,48 @@ function updateBossSkyboxHeartbeat() {
         if (bossSkyboxOpacity < 0.01) bossSkyboxOpacity = 0;
     }
 
-    // Apply opacity
-    bossSkybox.material.opacity = bossSkyboxOpacity;
+    // LIGHTNING: storm cells fire every 4-13s while a boss is up; each
+    // cell is 1-3 strokes ~0.1-0.5s apart with smooth rise/fade envelopes.
+    let _lEnv = 0;
+    const _now = Date.now();
+    if (hasBoss) {
+        if (!_bossLightning.nextAt) _bossLightning.nextAt = _now + 2500 + Math.random() * 5000;
+        if (!_bossLightning.flash && _now >= _bossLightning.nextAt) {
+            if (_bossLightning.strokes <= 0) _bossLightning.strokes = 1 + Math.floor(Math.random() * 3);
+            _bossLightning.flash = {
+                t0: _now,
+                attack: 80 + Math.random() * 140,   // gradual rise (ms)
+                decay: 260 + Math.random() * 380,   // slower fade (ms)
+                peak: 0.45 + Math.random() * 0.55   // stroke intensity varies
+            };
+        }
+        if (_bossLightning.flash) {
+            const f = _bossLightning.flash;
+            const dt = _now - f.t0;
+            _lEnv = (dt < f.attack
+                ? dt / f.attack
+                : Math.max(0, 1 - (dt - f.attack) / f.decay)) * f.peak;
+            if (dt > f.attack + f.decay) {
+                _bossLightning.flash = null;
+                _bossLightning.strokes--;
+                _bossLightning.nextAt = _bossLightning.strokes > 0
+                    ? _now + 100 + Math.random() * 400    // next stroke in this cell
+                    : _now + 4000 + Math.random() * 9000; // next storm cell
+            }
+        }
+    } else {
+        _bossLightning.flash = null;
+        _bossLightning.strokes = 0;
+        _bossLightning.nextAt = 0;
+    }
+
+    // Apply: the flash whitens the cloud tint and lifts opacity on top of
+    // the heartbeat, then hands the sky back to the red pulse.
+    if (_bossSkyTmp && _bossSkyBaseColor && _bossSkyWhite) {
+        _bossSkyTmp.copy(_bossSkyBaseColor).lerp(_bossSkyWhite, Math.min(1, _lEnv * 1.4));
+        bossSkybox.material.color.copy(_bossSkyTmp);
+    }
+    bossSkybox.material.opacity = Math.min(0.85, bossSkyboxOpacity + _lEnv * 0.35);
 }
 
 // =============================================================================
