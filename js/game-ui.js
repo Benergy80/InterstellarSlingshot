@@ -2263,7 +2263,7 @@ function _ensureDistressUI() {
             'width:64px','height:64px','margin:-32px 0 0 -32px',
             'pointer-events:none','z-index:60','display:none',
             'transform-origin:center center',
-            'color:#ffaa00',
+            'color:#ffaa00','opacity:0.8',
             'filter:drop-shadow(0 0 8px rgba(255,170,0,0.9))',
             'font-family:monospace','font-size:11px','text-align:center',
             'line-height:1','user-select:none'
@@ -2294,7 +2294,8 @@ function _ensureDistressUI() {
         const style = document.createElement('style');
         style.id = 'distressIndicatorStyle';
         style.textContent =
-            '@keyframes distressPulse { 0%,100% { transform:scale(1); opacity:0.85 } 50% { transform:scale(1.18); opacity:1 } }' +
+            // Pulse peaks at 0.8 — SOS indicators sit at 80% opacity max
+            '@keyframes distressPulse { 0%,100% { transform:scale(1); opacity:0.65 } 50% { transform:scale(1.18); opacity:0.8 } }' +
             '.distress-map-dot { animation: distressPulse 0.8s ease-in-out infinite }';
         document.head.appendChild(style);
     }
