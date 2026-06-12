@@ -32,51 +32,108 @@ function _vfGlowTexture() {
     return _vfGlowTexture._tex;
 }
 
-// ── 1. PLAYER ENGINE TRAIL ──────────────────────────────────────────────────
-// Ribbon behind the 3rd-person ship; lengthens with speed, color shifts
-// amber (cruise) → cyan (boost) → violet (warp).
-const _ptTrail = { points: [], line: null, mat: null, lastPush: null };
-const _ptColorSlow = new THREE.Color(0xffaa33);
-const _ptColorFast = new THREE.Color(0x33ccff);
-const _ptColorWarp = new THREE.Color(0x9944ff);
-const _ptTmpColor = new THREE.Color();
+// ── 1. PLAYER ENGINE TRAIL — FLAME RIBBON ──────────────────────────────────
+// A camera-facing triangle strip behind the 3rd-person ship: tapers to
+// nothing at the tail, vertex-colored with a time-shifting rainbow gradient
+// (bright at the head, dark at the tail — under additive blending dark IS
+// transparent, so it fades out like flame). Length breathes on two unsynced
+// sines + speed, so the streamer looks alive rather than mechanical.
+const _PT_MAX = 64;
+const _ptTrail = {
+    points: [], mesh: null, geo: null, lastPush: null,
+    pos: new Float32Array(_PT_MAX * 2 * 3),
+    col: new Float32Array(_PT_MAX * 2 * 3)
+};
+const _ptDir = new THREE.Vector3();
+const _ptView = new THREE.Vector3();
+const _ptSide = new THREE.Vector3();
+const _ptHSL = new THREE.Color();
+
+function _ptEnsureMesh() {
+    if (_ptTrail.mesh) return;
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(_ptTrail.pos, 3));
+    geo.setAttribute('color', new THREE.BufferAttribute(_ptTrail.col, 3));
+    // Static strip index for the max point count
+    const idx = [];
+    for (let i = 0; i < _PT_MAX - 1; i++) {
+        const a = i * 2, b = i * 2 + 1, c = i * 2 + 2, d = i * 2 + 3;
+        idx.push(a, b, c, b, d, c);
+    }
+    geo.setIndex(idx);
+    const mat = new THREE.MeshBasicMaterial({
+        vertexColors: true, transparent: true, opacity: 0.85,
+        blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide
+    });
+    _ptTrail.mesh = new THREE.Mesh(geo, mat);
+    _ptTrail.mesh.frustumCulled = false;
+    _ptTrail.geo = geo;
+    scene.add(_ptTrail.mesh);
+}
 
 function _updatePlayerTrail() {
     const cs = window.cameraState;
     const ship = cs && cs.playerShipMesh;
     const speed = (gameState.velocityVector) ? gameState.velocityVector.length() : 0;
     const visible = ship && ship.visible && speed > 0.8;
+    const t = Date.now();
 
     if (visible) {
         const wp = ship.getWorldPosition(new THREE.Vector3());
         if (!_ptTrail.lastPush || wp.distanceTo(_ptTrail.lastPush) > Math.max(2, speed * 0.5)) {
             _ptTrail.points.push(wp.clone());
             _ptTrail.lastPush = wp.clone();
-            const maxLen = Math.min(60, 12 + Math.floor(speed * 4));
-            while (_ptTrail.points.length > maxLen) _ptTrail.points.shift();
         }
-    } else if (_ptTrail.points.length) {
-        _ptTrail.points.shift(); // shrink away when idle/hidden
     }
+    // ALIVE LENGTH: target breathes on two unsynced sines around the
+    // speed-driven base; the tail sheds toward it (and fully when hidden).
+    const breathe = 0.7 + 0.18 * Math.sin(t * 0.0021) + 0.12 * Math.sin(t * 0.0047);
+    const targetLen = visible
+        ? Math.max(6, Math.floor(Math.min(_PT_MAX, 14 + speed * 4) * breathe))
+        : 0;
+    if (_ptTrail.points.length > targetLen) _ptTrail.points.shift();
+    if (_ptTrail.points.length > targetLen) _ptTrail.points.shift(); // shed faster when over
 
-    if (_ptTrail.points.length > 1) {
-        if (!_ptTrail.line) {
-            _ptTrail.mat = new THREE.LineBasicMaterial({
-                color: 0xffaa33, transparent: true, opacity: 0.55,
-                blending: THREE.AdditiveBlending, depthWrite: false
-            });
-            _ptTrail.line = new THREE.Line(new THREE.BufferGeometry(), _ptTrail.mat);
-            _ptTrail.line.frustumCulled = false;
-            scene.add(_ptTrail.line);
+    const N = _ptTrail.points.length;
+    if (N > 2) {
+        _ptEnsureMesh();
+        _ptTrail.mesh.visible = true;
+        const pts = _ptTrail.points;
+        const headWidth = 1.4 + Math.min(3.2, speed * 0.18); // wider at speed
+        for (let i = 0; i < N; i++) {
+            const p = pts[i];
+            // Segment direction (central difference)
+            _ptDir.subVectors(pts[Math.min(i + 1, N - 1)], pts[Math.max(i - 1, 0)]);
+            if (_ptDir.lengthSq() < 1e-8) _ptDir.set(0, 1, 0);
+            _ptDir.normalize();
+            _ptView.subVectors(p, camera.position).normalize();
+            _ptSide.crossVectors(_ptDir, _ptView);
+            if (_ptSide.lengthSq() < 1e-8) _ptSide.set(0, 1, 0);
+            _ptSide.normalize();
+            const f = i / (N - 1);               // 0 = tail … 1 = head
+            const width = headWidth * Math.pow(f, 1.15) + 0.06; // taper to a point
+            const o = i * 6;
+            _ptTrail.pos[o]     = p.x + _ptSide.x * width;
+            _ptTrail.pos[o + 1] = p.y + _ptSide.y * width;
+            _ptTrail.pos[o + 2] = p.z + _ptSide.z * width;
+            _ptTrail.pos[o + 3] = p.x - _ptSide.x * width;
+            _ptTrail.pos[o + 4] = p.y - _ptSide.y * width;
+            _ptTrail.pos[o + 5] = p.z - _ptSide.z * width;
+            // RAINBOW FLAME: hue slides along the band and drifts with
+            // time; brightness falls toward the tail (= additive fade),
+            // with a per-segment flicker so the band shimmers.
+            const hue = (f * 0.78 + t * 0.00013) % 1;
+            const flick = 0.86 + 0.14 * Math.sin(t * 0.013 + i * 1.7);
+            const bright = (0.08 + 0.5 * Math.pow(f, 1.4)) * flick;
+            _ptHSL.setHSL(hue, 1.0, Math.min(0.62, bright));
+            _ptTrail.col[o]     = _ptHSL.r; _ptTrail.col[o + 1] = _ptHSL.g; _ptTrail.col[o + 2] = _ptHSL.b;
+            _ptTrail.col[o + 3] = _ptHSL.r; _ptTrail.col[o + 4] = _ptHSL.g; _ptTrail.col[o + 5] = _ptHSL.b;
         }
-        _ptTrail.line.visible = true;
-        _ptTrail.line.geometry.setFromPoints(_ptTrail.points);
-        // Color by speed: 0-3 amber→cyan, 3-20+ cyan→violet
-        if (speed < 3) _ptTmpColor.copy(_ptColorSlow).lerp(_ptColorFast, speed / 3);
-        else _ptTmpColor.copy(_ptColorFast).lerp(_ptColorWarp, Math.min(1, (speed - 3) / 17));
-        _ptTrail.mat.color.lerp(_ptTmpColor, 0.1);
-    } else if (_ptTrail.line) {
-        _ptTrail.line.visible = false;
+        _ptTrail.geo.attributes.position.needsUpdate = true;
+        _ptTrail.geo.attributes.color.needsUpdate = true;
+        _ptTrail.geo.setDrawRange(0, (N - 1) * 6);
+    } else if (_ptTrail.mesh) {
+        _ptTrail.mesh.visible = false;
     }
 }
 
