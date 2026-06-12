@@ -885,7 +885,7 @@ export function buildWorld(scene, renderer) {
       items.push({ x: b.x, z: b.z, w: b.w, d: b.d, y0: 0, h: b.h, seed: rnd() * 100, D: b.D, b });
       if (b.h > 70 && rnd() < 0.7) {
         const w2 = b.w * (0.5 + rnd() * 0.25), d2 = b.d * (0.5 + rnd() * 0.25), h2 = b.h * (0.25 + rnd() * 0.3);
-        items.push({ x: b.x, z: b.z, w: w2, d: d2, y0: b.h, h: h2, seed: rnd() * 100, D: b.D });
+        items.push({ x: b.x, z: b.z, w: w2, d: d2, y0: b.h, h: h2, seed: rnd() * 100, D: b.D, b2: b });
         b.t2 = { w2, d2, h2 };
       }
       // every building gets the neon edge treatment, in its district color
@@ -901,10 +901,10 @@ export function buildWorld(scene, renderer) {
         const side = (rnd() * 4) | 0;
         const sh = 6 + rnd() * Math.min(b.h - 10, 26);
         const off = (rnd() - 0.5) * 0.5;
-        if (side === 0) signSpots.push({ x: b.x + b.w / 2 + 0.35, y: sh, z: b.z + off * b.d, rotY: Math.PI / 2, arcade: b.arcade, dk: b.dk });
-        if (side === 1) signSpots.push({ x: b.x - b.w / 2 - 0.35, y: sh, z: b.z + off * b.d, rotY: -Math.PI / 2, arcade: b.arcade, dk: b.dk });
-        if (side === 2) signSpots.push({ x: b.x + off * b.w, y: sh, z: b.z + b.d / 2 + 0.35, rotY: 0, arcade: b.arcade, dk: b.dk });
-        if (side === 3) signSpots.push({ x: b.x + off * b.w, y: sh, z: b.z - b.d / 2 - 0.35, rotY: Math.PI, arcade: b.arcade, dk: b.dk });
+        if (side === 0) signSpots.push({ x: b.x + b.w / 2 + 0.35, y: sh, z: b.z + off * b.d, rotY: Math.PI / 2, arcade: b.arcade, dk: b.dk, bRef: b });
+        if (side === 1) signSpots.push({ x: b.x - b.w / 2 - 0.35, y: sh, z: b.z + off * b.d, rotY: -Math.PI / 2, arcade: b.arcade, dk: b.dk, bRef: b });
+        if (side === 2) signSpots.push({ x: b.x + off * b.w, y: sh, z: b.z + b.d / 2 + 0.35, rotY: 0, arcade: b.arcade, dk: b.dk, bRef: b });
+        if (side === 3) signSpots.push({ x: b.x + off * b.w, y: sh, z: b.z - b.d / 2 - 0.35, rotY: Math.PI, arcade: b.arcade, dk: b.dk, bRef: b });
       }
     }
 
@@ -927,6 +927,7 @@ export function buildWorld(scene, renderer) {
     const tintA = new THREE.Color(0x232838), tintB = new THREE.Color(0x1a2030), tintC = new THREE.Color(0x262033);
     items.forEach((it, i) => {
       if (it.b) it.b._instIdx = i;
+      if (it.b2) it.b2._instIdx2 = i;
       dummy.position.set(it.x, it.y0, it.z);
       dummy.scale.set(it.w, it.h, it.d);
       dummy.rotation.set(0, 0, 0);
@@ -1088,6 +1089,7 @@ export function buildWorld(scene, renderer) {
         dummy.scale.setScalar(s.arcade ? 0.62 : 1);
         dummy.updateMatrix();
         mesh.setMatrixAt(i, dummy.matrix);
+        if (s.bRef) (s.bRef._signRefs = s.bRef._signRefs || []).push({ mesh, i });
       });
       mesh.frustumCulled = false;
       scene.add(mesh);
@@ -1142,6 +1144,7 @@ export function buildWorld(scene, renderer) {
       mesh.position.set(b.x + off[0], b.h * 0.62, b.z + off[1]);
       mesh.rotation.y = off[2];
       scene.add(mesh);
+      (b._bbMeshes = b._bbMeshes || []).push(mesh);
     });
   }
 
@@ -1182,6 +1185,7 @@ export function buildWorld(scene, renderer) {
       dummy2.scale.setScalar(0.7 + rnd() * 0.9);
       dummy2.updateMatrix();
       boards.setMatrixAt(i, dummy2.matrix);
+      (b._signRefs = b._signRefs || []).push({ mesh: boards, i });
     });
     boards.frustumCulled = false;
     scene.add(boards);

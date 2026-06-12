@@ -914,6 +914,12 @@ export function buildLandmarks(scene, world) {
           if (b._trimIdx !== undefined && world.trimMesh) {
             for (let k = 0; k < 4; k++) world.trimMesh.setMatrixAt(b._trimIdx + k, zero);
           }
+          // retire the old box's floating setback tier + wall signs + billboards
+          if (b._instIdx2 !== undefined && world.buildingMesh) world.buildingMesh.setMatrixAt(b._instIdx2, zero);
+          if (b._signRefs) {
+            for (const r of b._signRefs) { r.mesh.setMatrixAt(r.i, zero); r.mesh.instanceMatrix.needsUpdate = true; }
+          }
+          if (b._bbMeshes) for (const m of b._bbMeshes) m.visible = false;
           b.collider.maxY = actualH + 1;
         });
         if (world.buildingMesh) world.buildingMesh.instanceMatrix.needsUpdate = true;
