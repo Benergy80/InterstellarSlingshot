@@ -1902,7 +1902,8 @@ function updateSlingshotWhip() {
         gameState.slingshot.timeRemaining = gameState.slingshot.duration;
         gameState.slingshotWhip = null;
         _whipTrailFadeOut();
-        _fovKick();
+        // (FOV kick now handled by the camera system's warp framing —
+        // slingshot.active drives the eased zoom+FOV, so no impulse here.)
         if (typeof toggleWarpSpeedStarfield === 'function') toggleWarpSpeedStarfield(true);
         for (let i = 0; i < 4; i++) setTimeout(() => createHyperspaceEffect(), i * 140);
         if (typeof showAchievement === 'function') {

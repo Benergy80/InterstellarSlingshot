@@ -532,6 +532,54 @@ function wingmanTracerFade(ship) {
     }, 45);
 }
 
+// ── 16. WINGMAN ENGINE RIBBONS ──────────────────────────────────────────────
+// Short persistent trails behind every live wingman (the player's ribbon's
+// little siblings). Fade out and dispose when a wingman dies or despawns.
+const _wingRibbons = [];
+
+function _updateWingmanRibbons() {
+    if (typeof allyShips === 'undefined') return;
+    for (let i = 0; i < allyShips.length; i++) {
+        const a = allyShips[i];
+        if (!a || !a.userData || a.userData.health <= 0) continue;
+        let tr = a.userData._engineRibbon;
+        if (!tr) {
+            const mat = new THREE.LineBasicMaterial({
+                color: 0x66ddcc, transparent: true, opacity: 0.38,
+                blending: THREE.AdditiveBlending, depthWrite: false
+            });
+            tr = { points: [], line: new THREE.Line(new THREE.BufferGeometry(), mat), mat, ally: a };
+            tr.line.frustumCulled = false;
+            scene.add(tr.line);
+            a.userData._engineRibbon = tr;
+            _wingRibbons.push(tr);
+        }
+        const last = tr.points[tr.points.length - 1];
+        if (!last || last.distanceTo(a.position) > 4) {
+            tr.points.push(a.position.clone());
+            if (tr.points.length > 16) tr.points.shift();
+            tr.line.geometry.setFromPoints(tr.points);
+        }
+    }
+    // Fade + dispose ribbons whose wingman is gone
+    for (let i = _wingRibbons.length - 1; i >= 0; i--) {
+        const tr = _wingRibbons[i];
+        const a = tr.ally;
+        const gone = !a || !a.userData || a.userData.health <= 0 ||
+            (typeof allyShips !== 'undefined' && allyShips.indexOf(a) === -1);
+        if (gone) {
+            tr.mat.opacity -= 0.05;
+            if (tr.mat.opacity <= 0) {
+                scene.remove(tr.line);
+                tr.line.geometry.dispose();
+                tr.mat.dispose();
+                if (a && a.userData) a.userData._engineRibbon = null;
+                _wingRibbons.splice(i, 1);
+            }
+        }
+    }
+}
+
 // ── Per-frame entry point ───────────────────────────────────────────────────
 function updateVisualFlair() {
     if (typeof gameState === 'undefined' || !gameState.gameStarted ||
@@ -539,6 +587,7 @@ function updateVisualFlair() {
         typeof THREE === 'undefined') return;
     const fc = gameState.frameCount || 0;
     try { _updatePlayerTrail(); } catch (e) {}
+    try { _updateWingmanRibbons(); } catch (e) {}
     try { _updateWhipPreview(fc); } catch (e) {}
     try { _updateLensFlares(fc); } catch (e) {}
     try { _updateAccretionSpiral(fc); } catch (e) {}
