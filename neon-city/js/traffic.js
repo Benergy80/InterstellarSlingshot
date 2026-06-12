@@ -430,67 +430,53 @@ export function buildTraffic(scene, world, models) {
           : { minX: px - W / 2, maxX: px + W / 2, minZ: pz - L / 2, maxZ: pz + L / 2, y: platY };
         world.surfaces.push(surf);
 
-        const stairLen = 26, stairW = 3;
+        // ── access ramps: straight continuations of the platform ends,
+        // in the platform's own lane (the curb band — never the street),
+        // overlapping the deck at the top so there is no gap ──
+        const RUN = 24;
         for (const e of [-1, 1]) {
-          // ramp descends outward from the platform end, doubling back along the outside
-          const sx0 = px + (alongX ? e * L / 2 : ox * (W / 2 + stairW / 2 + 0.3));
-          const sz0 = pz + (alongX ? oz * (W / 2 + stairW / 2 + 0.3) : e * L / 2);
-          let ramp;
-          if (alongX) {
-            const xA = sx0, xB = sx0 + e * stairLen;
-            ramp = {
-              minX: Math.min(xA, xB), maxX: Math.max(xA, xB),
-              minZ: sz0 - stairW / 2, maxZ: sz0 + stairW / 2,
-              yFn: (x, z) => platY * clamp(1 - Math.abs(x - xA) / stairLen, 0, 1),
-            };
-          } else {
-            const zA = sz0, zB = sz0 + e * stairLen;
-            ramp = {
-              minX: sx0 - stairW / 2, maxX: sx0 + stairW / 2,
-              minZ: Math.min(zA, zB), maxZ: Math.max(zA, zB),
-              yFn: (x, z) => platY * clamp(1 - Math.abs(z - zA) / stairLen, 0, 1),
-            };
-          }
-          // walkable ramp: y as a function of position
-          world.surfaces.push({
-            minX: ramp.minX, maxX: ramp.maxX, minZ: ramp.minZ, maxZ: ramp.maxZ,
-            y: ramp.yFn,
-          });
-          // visual ramp
-          const rampLenActual = Math.hypot(stairLen, platY);
-          const rampMesh = new THREE.Mesh(
-            new THREE.BoxGeometry(alongX ? rampLenActual : stairW, 0.35, alongX ? stairW : rampLenActual),
+          const a0 = (alongX ? px : pz) + e * (L / 2 - 0.5);   // overlap start
+          const a1 = (alongX ? px : pz) + e * (L / 2 + RUN);
+          const lo = Math.min(a0, a1), hi = Math.max(a0, a1);
+          const edge = (alongX ? px : pz) + e * L / 2;          // platform end
+          const yFn = (x2, z2) => {
+            const a = alongX ? x2 : z2;
+            return platY * clamp(1 - (e * (a - edge)) / RUN, 0, 1);
+          };
+          world.surfaces.push(alongX
+            ? { minX: lo, maxX: hi, minZ: pz - W / 2, maxZ: pz + W / 2, y: yFn }
+            : { minX: px - W / 2, maxX: px + W / 2, minZ: lo, maxZ: hi, y: yFn });
+          // ramp slab visual
+          const runLen = Math.hypot(RUN, platY);
+          const slab2 = new THREE.Mesh(
+            new THREE.BoxGeometry(alongX ? runLen : W, 0.4, alongX ? W : runLen),
             slab.material
           );
-          const midX = alongX ? (sx0 + e * stairLen / 2) : sx0;
-          const midZ = alongX ? sz0 : (sz0 + e * stairLen / 2);
-          rampMesh.position.set(midX, platY / 2, midZ);
-          const ang = Math.atan2(platY, stairLen);
-          if (alongX) rampMesh.rotation.z = -e * ang; else rampMesh.rotation.x = e * ang;
-          scene.add(rampMesh);
-          world.raycastTargets.push(rampMesh);
-          // glow handrail
-          const rail = new THREE.Mesh(
-            new THREE.BoxGeometry(alongX ? rampLenActual : 0.12, 0.12, alongX ? 0.12 : rampLenActual),
-            new THREE.MeshBasicMaterial({ color: new THREE.Color(def.color).multiplyScalar(0.8), toneMapped: false })
-          );
-          rail.position.set(midX + (alongX ? 0 : (ox * stairW * 0.55)), platY / 2 + 1.05, midZ + (alongX ? oz * stairW * 0.55 : 0));
-          if (alongX) rail.rotation.z = -e * ang; else rail.rotation.x = e * ang;
-          scene.add(rail);
+          const midA = edge + e * RUN / 2;
+          slab2.position.set(alongX ? midA : px, platY / 2 - 0.1, alongX ? pz : midA);
+          const ang = Math.atan2(platY, RUN);
+          if (alongX) slab2.rotation.z = e * ang; else slab2.rotation.x = -e * ang;
+          scene.add(slab2);
+          world.raycastTargets.push(slab2);
+          // side rails: glow + fall guards along both edges (open at the foot)
+          const guardA = edge + e * 0;            // top of run
+          const guardB = edge + e * (RUN - 4);    // stop 4u short of the ground
+          const gLo = Math.min(guardA, guardB), gHi = Math.max(guardA, guardB);
+          for (const s2 of [-1, 1]) {
+            const off = (W / 2 + 0.12) * s2;
+            world.colliders.push(alongX
+              ? { minX: gLo, maxX: gHi, minZ: pz + off - 0.12, maxZ: pz + off + 0.12, minY: 0, maxY: platY + 2.2 }
+              : { minX: px + off - 0.12, maxX: px + off + 0.12, minZ: gLo, maxZ: gHi, minY: 0, maxY: platY + 2.2 });
+            const rail = new THREE.Mesh(
+              new THREE.BoxGeometry(alongX ? runLen : 0.14, 0.12, alongX ? 0.14 : runLen),
+              new THREE.MeshBasicMaterial({ color: new THREE.Color(def.color).multiplyScalar(0.8), toneMapped: false })
+            );
+            rail.position.set(alongX ? midA : px + off, platY / 2 + 0.95, alongX ? pz + off : midA);
+            if (alongX) rail.rotation.z = e * ang; else rail.rotation.x = -e * ang;
+            scene.add(rail);
+          }
         }
 
-        // station elevator — street to platform, beside the far platform edge
-        {
-          let lx = px + ox * (W / 2 + 2.4), lz = pz + oz * (W / 2 + 2.4);
-          for (const nudge of [0, 6, -6, 11, -11]) {
-            const tx2 = lx + (alongX ? nudge : 0), tz2 = lz + (alongX ? 0 : nudge);
-            if (world.shaftClear(tx2, tz2, 1.7)) { lx = tx2; lz = tz2; break; }
-          }
-          world.makeElevator({
-            x: lx, z: lz, stops: [0, platY - 0.18],
-            gate: { dx: -ox, dz: -oz }, size: 3.0, color: def.color, name: 'STATION LIFT',
-          });
-        }
         const station = {
           name: stName, s: bestS, x: px, z: pz, platY, line: def.name,
           doorPoint: new THREE.Vector3(sm.x + ox * 2.0, platY, sm.z + oz * 2.0),
