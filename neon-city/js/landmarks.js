@@ -555,7 +555,7 @@ export function buildLandmarks(scene, world) {
     // hull is modeled along +X; lookAt() steers -Z — the inner group
     // turns the body 90° so the nose leads the travel direction
     const inner = new THREE.Group();
-    inner.rotation.y = Math.PI / 2;
+    inner.rotation.y = -Math.PI / 2;   // Object3D.lookAt steers +Z (not -Z): nose +X → +Z
     g.add(inner);
     const hull = new THREE.Mesh(new THREE.SphereGeometry(7, 18, 12),
       new THREE.MeshStandardMaterial({ color: 0x2a3148, roughness: 0.45, metalness: 0.55 }));
