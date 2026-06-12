@@ -395,7 +395,7 @@ export function buildWorld(scene, renderer) {
     // the mothergame's Hubble Ultra Deep Field skybox, planetside
     new THREE.TextureLoader().load('../images/hubble_ultra_deep_field_high_rez_edit1.jpg', (t) => {
       t.colorSpace = THREE.SRGBColorSpace;
-      t.wrapS = THREE.RepeatWrapping;
+      t.wrapS = THREE.MirroredRepeatWrapping;   // reflect at the wrap — no seam
       t.repeat.set(2, 1);
       skyMat.map = t;
       skyMat.color = new THREE.Color(0.78, 0.8, 0.9);   // dim + 60% opacity, far layer
@@ -447,6 +447,7 @@ export function buildWorld(scene, renderer) {
         if (x < 100) { cctx.save(); cctx.translate(512, 0); cctx.fillRect(x - r, y - r, r * 2, r * 2); cctx.restore(); }
       }
       const t = canvasTexture(cc, { repeat: [3, 1] });
+      t.wrapS = THREE.MirroredRepeatWrapping;   // same trick for the cloud bank
       cloudMat.map = t;
       cloudMat.needsUpdate = true;
     }
