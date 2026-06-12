@@ -889,7 +889,7 @@ export function buildWorld(scene, renderer) {
         b.t2 = { w2, d2, h2 };
       }
       // every building gets the neon edge treatment, in its district color
-      towerTrims.push({ x: b.x, z: b.z, w: b.w, d: b.d, h: b.h, accent: b.D.accent });
+      towerTrims.push({ x: b.x, z: b.z, w: b.w, d: b.d, h: b.h, accent: b.D.accent, b });
       // collider — keep the ref so interiors can replace it with walls
       const col = { minX: b.x - b.w / 2, maxX: b.x + b.w / 2, minZ: b.z - b.d / 2, maxZ: b.z + b.d / 2, minY: 0, maxY: b.h + (b.t2 ? 0 : 0.0) };
       b.collider = col;
@@ -951,6 +951,7 @@ export function buildWorld(scene, renderer) {
     const dummy = new THREE.Object3D();
     let i = 0;
     for (const tower of towerTrims) {
+      if (tower.b) tower.b._trimIdx = i;   // so GLB swaps can retire these strips
       const col = new THREE.Color(tower.accent || NEON.cyan).multiplyScalar(1.15);
       for (const [sx, sz] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) {
         dummy.position.set(tower.x + sx * tower.w / 2, 0, tower.z + sz * tower.d / 2);
@@ -965,6 +966,7 @@ export function buildWorld(scene, renderer) {
     mesh.instanceColor.needsUpdate = true;
     mesh.frustumCulled = false;
     scene.add(mesh);
+    world.trimMesh = mesh;
   }
 
   // Storefront glow strips at street level

@@ -910,9 +910,14 @@ export function buildLandmarks(scene, world) {
           node.rotation.y = ((i % 4) * Math.PI) / 2;
           scene.add(node);
           if (world.buildingMesh) world.buildingMesh.setMatrixAt(b._instIdx, zero);
+          // retire the box-corner trims — the model carries its own traced edges
+          if (b._trimIdx !== undefined && world.trimMesh) {
+            for (let k = 0; k < 4; k++) world.trimMesh.setMatrixAt(b._trimIdx + k, zero);
+          }
           b.collider.maxY = actualH + 1;
         });
         if (world.buildingMesh) world.buildingMesh.instanceMatrix.needsUpdate = true;
+        if (world.trimMesh) world.trimMesh.instanceMatrix.needsUpdate = true;
       }, undefined, () => {});
     });
   }
