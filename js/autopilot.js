@@ -1119,6 +1119,26 @@
       goPhase('combat');
       return;
     }
+
+    // Tactical W-jumps to close big gaps fast (NOT the 15s O-warp — see
+    // phaseCombat). Without these, a post-overshoot approach from 6k+
+    // was a multi-minute crawl at cruise speed.
+    const _beSpeed = gameState.velocityVector ? gameState.velocityVector.length() : 0;
+    const _beWarpBusy = gameState.emergencyWarp &&
+        (gameState.emergencyWarp.active || gameState.emergencyWarp.transitioning);
+    if (dist > 2000 && _beSpeed < 4 && !_beWarpBusy &&
+        gameState.energy > 25 &&
+        Date.now() - (ap._lastJumpTap || 0) > 5000) {
+      ap._lastJumpTap = Date.now();
+      gameState._pendingJumpMs = Math.min(6000, Math.max(700, (dist - 700) * 1.0));
+      if (window.keys) {
+        window.keys.wDoubleTap = true;
+        setTimeout(() => { if (window.keys) window.keys.wDoubleTap = false; }, 120);
+      }
+      setStatus('Tactical jump → boss (' + (dist | 0) + ' u)');
+      return;
+    }
+
     flyToward(boss, 2.5);
     pursuitFlightStyle('pursuit');
   }
