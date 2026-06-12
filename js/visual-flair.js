@@ -266,12 +266,17 @@ function _updateWarpTunnel() {
         _wtState.group = new THREE.Group();
         const cols = [0xff5555, 0x55ff88, 0x6688ff]; // chromatic split
         for (let i = 0; i < 3; i++) {
-            const geo = new THREE.RingGeometry(15 + i * 3.5, 16.2 + i * 3.5, 48);
+            // Thin rings STAGGERED IN DEPTH (-0/-35/-70 local z) so they
+            // read as a receding tunnel aperture (~10° each), not three
+            // giant overlapping circles filling the screen. Radii grow
+            // slightly with depth so the nesting reads in perspective.
+            const geo = new THREE.RingGeometry(11 + i * 1.5, 11.8 + i * 1.5, 48);
             const mat = new THREE.MeshBasicMaterial({
                 color: cols[i], transparent: true, opacity: 0,
                 blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide
             });
             const ring = new THREE.Mesh(geo, mat);
+            ring.position.z = -(i * 35);
             _wtState.group.add(ring);
             _wtState.rings.push({ ring, mat, spin: (i % 2 ? -1 : 1) * (0.01 + i * 0.004) });
         }
@@ -281,7 +286,7 @@ function _updateWarpTunnel() {
     _wtState.group.visible = true;
     const fwd = new THREE.Vector3();
     camera.getWorldDirection(fwd);
-    _wtState.group.position.copy(camera.position).addScaledVector(fwd, 60);
+    _wtState.group.position.copy(camera.position).addScaledVector(fwd, 95);
     _wtState.group.quaternion.copy(camera.quaternion);
     const pulse = 1 + Math.sin(Date.now() * 0.006) * 0.06;
     _wtState.group.scale.setScalar(pulse);
