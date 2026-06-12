@@ -128,6 +128,9 @@ const explosionManager = {
 function _ensureShipThrusterCones(ship, color) {
     if (!ship || ship.userData._thrusters) return;
     if (typeof THREE === 'undefined') return;
+    // Don't measure mid-materialization (hull is at 12% scale; cones baked
+    // now would be permanently undersized). Retried every tick.
+    if (ship.userData._materializing) return;
 
     // Cone size & placement are derived from the model's ACTUAL visible
     // world bounding box, NOT from scale buckets — those broke the
@@ -4903,6 +4906,13 @@ if (typeof window !== 'undefined') window.flashPlayerShipHit = flashPlayerShipHi
 function _ensureEnemyShield(enemy) {
     if (!enemy || !enemy.userData || enemy.userData._shieldMesh ||
         enemy.userData.shieldBroken || typeof THREE === 'undefined') return;
+
+    // MATERIALIZATION RACE GUARD: spawn-in shrinks the ship to 12% scale
+    // for ~0.8s. A shield created in that window is sized against the tiny
+    // hull and parent scale, then inflates 8x when the ship scales back up
+    // — the "giant shield" bug on discovery-path bosses. Wait it out; this
+    // is retried every behavior tick.
+    if (enemy.userData._materializing) return;
 
     // Size from the VISIBLE hull bounding box in WORLD units (skip the
     // oversized invisible hitbox sphere, glow + cone layers), exactly

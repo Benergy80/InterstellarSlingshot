@@ -747,6 +747,71 @@ function populateTargets() {
         div.textContent = 'No nearby objects detected...';
         container.appendChild(div);
     }
+
+    // ── DESTINATIONS — far systems for gravity-whip aiming ──────────────
+    // The nearby list caps at 6,000u, so galaxies and nebula clusters
+    // (20k-45k+) could never be locked — which made the slingshot
+    // unaimable at the places it exists to reach. These are listed
+    // ALWAYS, sorted by distance: lock one, fly into any gravity well,
+    // and the whip launches you toward it.
+    try {
+        const destinations = [];
+        if (typeof planets !== 'undefined') {
+            for (let i = 0; i < planets.length; i++) {
+                const p = planets[i];
+                if (p && p.userData && p.userData.type === 'blackhole' &&
+                    p.userData.isGalacticCore && !p.userData.isCompanionCore &&
+                    typeof p.userData.galaxyId === 'number' && p.userData.galaxyId !== 7) {
+                    destinations.push(p);
+                }
+            }
+        }
+        // Nearest twin nebula cluster (stable synthetic target object)
+        if (typeof findNearestTwinNebulaCenter === 'function' && typeof camera !== 'undefined') {
+            const c = findNearestTwinNebulaCenter(camera.position);
+            if (c) {
+                if (!window._navTwinNebulaDest) {
+                    window._navTwinNebulaDest = {
+                        position: new THREE.Vector3(),
+                        userData: { name: 'Twin Nebula Cluster', type: 'nebula_cluster' }
+                    };
+                }
+                window._navTwinNebulaDest.position.copy(c);
+                destinations.push(window._navTwinNebulaDest);
+            }
+        }
+        if (destinations.length) {
+            destinations.sort((a, b) =>
+                camera.position.distanceTo(a.position) - camera.position.distanceTo(b.position));
+            const header = document.createElement('div');
+            header.className = 'text-xs text-purple-300 font-bold mt-2 mb-1 px-1';
+            header.style.letterSpacing = '2px';
+            header.textContent = '— DESTINATIONS · WHIP / WARP —';
+            container.appendChild(header);
+            destinations.slice(0, 9).forEach(obj => {
+                const dist = camera.position.distanceTo(obj.position);
+                const div = document.createElement('div');
+                div.className = 'planet-card rounded-lg p-2 cursor-auto transition-all duration-300';
+                if (gameState.currentTarget === obj) div.classList.add('selected');
+                const label = obj.userData.type === 'nebula_cluster'
+                    ? 'Nebula Cluster' : 'Galaxy Core';
+                div.innerHTML =
+                    '<div class="flex justify-between items-center">' +
+                    '<div><h4 class="font-bold text-purple-300 text-xs">' + (obj.userData.name || 'Destination') + '</h4>' +
+                    '<p class="text-xs text-gray-400">' + label + '</p></div>' +
+                    '<div class="text-xs text-yellow-400">' + (dist / 1000).toFixed(1) + 'k u</div>' +
+                    '</div>';
+                div.addEventListener('click', (e) => {
+                    e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
+                    if (typeof selectTarget === 'function') selectTarget(obj);
+                    else selectTargetUI(obj);
+                    if (typeof updateUI === 'function') updateUI();
+                    setTimeout(populateTargets, 20);
+                });
+                container.appendChild(div);
+            });
+        }
+    } catch (e) {}
 }
 
 // Local target selection for UI (fallback)
