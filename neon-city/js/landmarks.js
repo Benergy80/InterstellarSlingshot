@@ -654,7 +654,7 @@ export function buildLandmarks(scene, world) {
               m.material = mat;
               world.raycastTargets.push(m);
               m.add(new THREE.LineSegments(new THREE.EdgesGeometry(m.geometry, 24),
-                new THREE.LineBasicMaterial({ color: new THREE.Color(0x00f0ff).multiplyScalar(0.9), toneMapped: false, transparent: true, opacity: 0.8 })));
+                new THREE.LineBasicMaterial({ color: new THREE.Color(0x00f0ff).multiplyScalar(1.5), toneMapped: false, transparent: true, opacity: 1.0 })));
             }
           });
           const wrap = new THREE.Group();
@@ -881,10 +881,23 @@ export function buildLandmarks(scene, world) {
       new GLTFLoader().load('../models/NewChicagoTowers2.glb', (gl) => {
         const zero = new THREE.Matrix4().makeScale(0.0001, 0.0001, 0.0001);
         const towers = gl.scene.children.slice();
+        // glassy monolith with lit floor bands (horizontal world-Y stripes
+        // read on any geometry — no projected-window smearing)
         const bodyMat = new THREE.MeshStandardMaterial({
-          color: 0x1c2233, roughness: 0.4, metalness: 0.6, envMapIntensity: 0.85,
-          emissive: 0x0a1420, emissiveIntensity: 0.6,
+          color: 0x2a3554, roughness: 0.3, metalness: 0.75, envMapIntensity: 1.4,
+          emissive: 0xffffff, emissiveIntensity: 1.0,
         });
+        bodyMat.onBeforeCompile = (sh) => {
+          sh.vertexShader = 'varying vec3 vWp;\n' + sh.vertexShader
+            .replace('#include <begin_vertex>', '#include <begin_vertex>\n          vWp = (modelMatrix * vec4(position, 1.0)).xyz;');
+          sh.fragmentShader = 'varying vec3 vWp;\n' + sh.fragmentShader
+            .replace('#include <emissivemap_fragment>', `
+              #include <emissivemap_fragment>
+              float fband = smoothstep(0.78, 0.86, fract(vWp.y / 7.2)) * (1.0 - smoothstep(0.94, 1.0, fract(vWp.y / 7.2)));
+              float base = smoothstep(4.0, 14.0, vWp.y);
+              totalEmissiveRadiance = vec3(0.36, 0.78, 0.95) * fband * 0.5 * base + vec3(0.04, 0.10, 0.16);
+            `);
+        };
         sites.forEach((b, i) => {
           const node = towers[i % towers.length].clone(true);
           const h = (node.userData && node.userData.h) || 0.04;
@@ -893,8 +906,8 @@ export function buildLandmarks(scene, world) {
           sc = Math.min(sc, (Math.min(b.w, b.d) * 1.25) / fw);
           const actualH = h * sc;
           const lineMat = new THREE.LineBasicMaterial({
-            color: new THREE.Color(b.D.accent).multiplyScalar(1.0), toneMapped: false,
-            transparent: true, opacity: 0.85,
+            color: new THREE.Color(b.D.accent).multiplyScalar(1.6), toneMapped: false,
+            transparent: true, opacity: 1.0,
           });
           node.traverse(m => {
             if (m.isMesh) {
