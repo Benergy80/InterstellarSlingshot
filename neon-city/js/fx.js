@@ -62,6 +62,11 @@ export function createFX(scene, camera, world, audio) {
         const step = b.vel.length() * dt;
         b.travel += step;
         b.m.position.addScaledVector(b.vel, dt);
+        if (fx.testEnemyHit && fx.testEnemyHit(b.m.position)) {
+          b.alive = false;
+          b.m.visible = false;
+          continue;
+        }
         // car hit mid-flight → explode it
         if (fx._traffic) {
           const ci = fx._traffic.testCarHit(b.m.position, 2.4);
@@ -392,9 +397,11 @@ export function createFX(scene, camera, world, audio) {
       // FADES IN AS YOU APPROACH THE CORE, eased += (target−o)·0.1/frame.
       // Here the core is the Spire; the tint is the complement of the
       // district you're standing in.
-      const coreD = Math.hypot(camera.position.x, camera.position.z);
-      let want = coreD < 120 ? 0.5 : coreD > 650 ? 0 : 0.5 * (1 - (coreD - 120) / 530);
-      if (fx.rainOn) want = Math.max(want, 0.18);
+      let want = 0;
+      if (fx.rainOn) {   // clouds exist only while it rains
+        const coreD = Math.hypot(camera.position.x, camera.position.z);
+        want = coreD < 120 ? 0.5 : coreD > 650 ? 0.18 : Math.max(0.18, 0.5 * (1 - (coreD - 120) / 530));
+      }
       cloudK += (want - cloudK) * Math.min(1, dt * 6);
       if (world.cloudPuffs) world.cloudPuffs.opacity = cloudK * 0.62;   // game nebulas run 0.65 additive
       if (world.cloudMat) {
@@ -550,6 +557,174 @@ export function createFX(scene, camera, world, audio) {
         f.sp.scale.set(2.2 + flick * 1.3, 3.0 + flick * 1.8, 1);
       }
     });
+  }
+
+  // ════════════════ WEATHER CYCLE — rain 40% of the time ════════════════
+  {
+    let wxTimer = 50 + rnd() * 40;
+    fx.updateFns.push((dt) => {
+      wxTimer -= dt;
+      if (wxTimer > 0) return;
+      wxTimer = 70 + rnd() * 60;
+      const shouldRain = rnd() < 0.4;
+      if (shouldRain !== fx.rainOn) {
+        fx.toggleRain();
+        if (fx._hud) {
+          fx._hud.setWeather(fx.rainOn);
+          fx._hud.toast(fx.rainOn ? 'ACID RAIN MOVING IN' : 'SKIES CLEARING', 'New Chicago weather service');
+        }
+      }
+    });
+  }
+
+  // ════════════════ SPOTLIGHT AMBUSH — the boss-skybox event ════════════════
+  // Step into a zeppelin searchlight pool → the mothergame's crimson
+  // heartbeat dome (createBossBattleSkybox) + hunter drones for 30 s.
+  // Hide inside a building (they hold fire) or shoot them down.
+  {
+    const dome = new THREE.Mesh(
+      new THREE.SphereGeometry(118000, 32, 20),
+      new THREE.MeshBasicMaterial({ color: 0xdd2222, side: THREE.BackSide, transparent: true, opacity: 0, fog: false, depthWrite: false })
+    );
+    dome.renderOrder = 1;
+    dome.frustumCulled = false;
+    scene.add(dome);
+    const EV = { active: false, t: 0, cooldown: 0, beat: 0, op: 0, enemies: [] };
+    fx.bossEvent = EV;
+    const eGeo = new THREE.SphereGeometry(1.1, 10, 8);
+    const eMat = new THREE.MeshStandardMaterial({ color: 0x1a1020, roughness: 0.35, metalness: 0.8 });
+    const eyeMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(2.2, 0.2, 0.25), toneMapped: false });
+    for (let i = 0; i < 4; i++) {
+      const g = new THREE.Group();
+      g.add(new THREE.Mesh(eGeo, eMat));
+      const eye = new THREE.Mesh(new THREE.SphereGeometry(0.34, 8, 6), eyeMat);
+      eye.position.z = -0.95;
+      g.add(eye);
+      const ring = new THREE.Mesh(new THREE.TorusGeometry(1.5, 0.1, 6, 18), eyeMat);
+      ring.rotation.x = Math.PI / 2;
+      g.add(ring);
+      g.visible = false;
+      scene.add(g);
+      EV.enemies.push({ g, alive: false, fireT: 0, ph: i * 1.7 });
+    }
+    // hostile bolts
+    const hb = [];
+    const hbGeo = new THREE.BoxGeometry(0.12, 0.12, 2.2);
+    const hbMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(2.4, 0.2, 0.3), transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false });
+    for (let i = 0; i < 8; i++) {
+      const m = new THREE.Mesh(hbGeo, hbMat);
+      m.visible = false;
+      scene.add(m);
+      hb.push({ m, alive: false, vel: new THREE.Vector3(), life: 0 });
+    }
+    let hbHead = 0;
+
+    fx.startBossEvent = (at) => {
+      if (EV.active || EV.cooldown > 0) return;
+      EV.active = true;
+      EV.t = 30;
+      EV.beat = 0;
+      for (const e of EV.enemies) {
+        e.alive = true;
+        e.g.visible = true;
+        e.g.position.set(at.x + (rnd() - 0.5) * 40, 16 + rnd() * 14, at.z + (rnd() - 0.5) * 40);
+        e.fireT = 1 + rnd();
+      }
+      audio.sfx('alarm');
+      if (fx._hud) {
+        fx._hud.toast('⚠ SPOTTED — HUNTERS INBOUND', 'Hide indoors or fight — 30 seconds');
+        fx._hud.setMode('THREAT — HUNTED');
+      }
+    };
+
+    fx.updateFns.push((dt, t) => {
+      EV.cooldown = Math.max(0, EV.cooldown - dt);
+      // trigger: standing in a searchlight pool
+      const P = fx._player;
+      if (!EV.active && EV.cooldown <= 0 && P && world.spotlights && P.state.mode !== 'demo') {
+        for (const sp of world.spotlights) {
+          const dx = P.state.pos.x - sp.x, dz = P.state.pos.z - sp.z;
+          if (dx * dx + dz * dz < 56 && P.state.pos.y < 12) { fx.startBossEvent(P.state.pos); break; }
+        }
+      }
+      if (!EV.active) {
+        EV.op += (0 - EV.op) * 0.05;
+        dome.material.opacity = EV.op;
+        return;
+      }
+      dome.position.copy(camera.position);
+      // the game's double-beat heartbeat (updateBossSkyboxHeartbeat)
+      EV.beat += 0.08;
+      const beat1 = Math.sin(EV.beat * 2) * 0.5 + 0.5;
+      const beat2 = Math.sin((EV.beat - 0.3) * 2) * 0.5 + 0.5;
+      const pause = Math.sin(EV.beat) * 0.5 + 0.5;
+      const heartbeat = Math.max(beat1 * 0.6, beat2 * 0.4) * pause;
+      EV.op += ((0.5 + heartbeat * 0.5) * 0.55 - EV.op) * 0.1;   // scaled for the city night
+      dome.material.opacity = EV.op;
+      EV.t -= dt;
+      const hidden = !!world.activeInterior;
+      let aliveCount = 0;
+      for (const e of EV.enemies) {
+        if (!e.alive) continue;
+        aliveCount++;
+        if (P) {
+          _v.copy(P.state.pos);
+          _v.y += 4 + Math.sin(t * 1.3 + e.ph) * 2.5;
+          _v.x += Math.cos(t * 0.7 + e.ph) * 9;
+          _v.z += Math.sin(t * 0.8 + e.ph) * 9;
+          e.g.position.lerp(_v, Math.min(1, dt * (hidden ? 0.25 : 0.9)));
+          e.g.lookAt(P.state.pos);
+          e.fireT -= dt;
+          const d2 = e.g.position.distanceToSquared(P.state.pos);
+          if (!hidden && e.fireT <= 0 && d2 < 8100) {
+            e.fireT = 1.4 + rnd() * 0.7;
+            const b = hb[hbHead]; hbHead = (hbHead + 1) % hb.length;
+            b.alive = true; b.m.visible = true;
+            b.m.position.copy(e.g.position);
+            b.vel.copy(P.state.pos).sub(e.g.position).normalize().multiplyScalar(56);
+            b.m.lookAt(_v.copy(e.g.position).add(b.vel));
+            b.life = 2.4;
+            audio.sfx('laser');
+          }
+        }
+      }
+      for (const b of hb) {
+        if (!b.alive) continue;
+        b.life -= dt;
+        b.m.position.addScaledVector(b.vel, dt);
+        if (P && b.m.position.distanceToSquared(P.state.pos) < 2.6) {
+          b.alive = false; b.m.visible = false;
+          if (P.state.shield) P.state.energy = Math.max(0, P.state.energy - 12);
+          else P.state.hull = Math.max(3, P.state.hull - 5);
+          fx.shake(0.45);
+          audio.sfx('land');
+          if (fx._hud && P.state.hull <= 20) fx._hud.toast('HULL CRITICAL', 'Find cover!');
+        } else if (b.life <= 0) { b.alive = false; b.m.visible = false; }
+      }
+      if (EV.t <= 0 || aliveCount === 0) {
+        EV.active = false;
+        EV.cooldown = 45;
+        for (const e of EV.enemies) { e.alive = false; e.g.visible = false; }
+        for (const b of hb) { b.alive = false; b.m.visible = false; }
+        if (fx._hud) {
+          fx._hud.toast(aliveCount === 0 ? 'THREAT NEUTRALIZED' : 'ZONE CLEAR', 'They lost your trail');
+          fx._hud.setMode('SURFACE MODE');
+        }
+      }
+    });
+    // player lasers can kill hunters
+    fx.testEnemyHit = (p) => {
+      if (!EV.active) return false;
+      for (const e of EV.enemies) {
+        if (e.alive && e.g.position.distanceToSquared(p) < 4.8) {
+          e.alive = false; e.g.visible = false;
+          fx.sparkBurst(e.g.position, 30, 0xff4455, 12);
+          audio.sfx('boom');
+          return true;
+        }
+      }
+      return false;
+    };
   }
 
   // ════════════════ SCREEN SHAKE ════════════════

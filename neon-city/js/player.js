@@ -395,6 +395,10 @@ export function createPlayer({ camera, scene, world, traffic, fx, hud, audio, on
   function update(dt, t) {
     if (!state.started || state.paused) return;
 
+    // hull knits itself back together outside combat
+    if (!(fx.bossEvent && fx.bossEvent.active) && state.hull < 100) {
+      state.hull = Math.min(100, state.hull + 0.6 * dt);
+    }
     // energy
     let drain = 0;
     if (state.shield) drain += P.shieldDrain;

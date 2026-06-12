@@ -590,6 +590,17 @@ export function buildLandmarks(scene, world) {
     pivot.add(beam);
     inner.add(pivot);
     scene.add(g);
+    // ground contact: lit pool where the beam lands (and the ambush trigger)
+    const spotGlow = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: glowTexture(96, 'rgba(220,238,255,0.95)'), color: 0xcfe6ff,
+      transparent: true, opacity: 0.5, depthWrite: false, blending: THREE.AdditiveBlending,
+    }));
+    spotGlow.scale.set(16, 16, 1);
+    scene.add(spotGlow);
+    const spotPos = new THREE.Vector3();
+    world.spotlights = world.spotlights || [];
+    world.spotlights.push(spotPos);
+    const _sq = new THREE.Quaternion(), _sd = new THREE.Vector3(), _so = new THREE.Vector3();
     const ph = zi * 2.1, rad = 200 + zi * 90, hgt = 150 + zi * 18, w = 0.022 - zi * 0.004;
     world.updateFns.push((dt, t) => {
       const a = t * w + ph;
@@ -598,6 +609,20 @@ export function buildLandmarks(scene, world) {
       g.lookAt(Math.cos(ta) * rad, g.position.y, Math.sin(ta) * rad * 0.8);
       pivot.rotation.x = Math.sin(t * 0.3 + ph) * 0.35;
       pivot.rotation.z = Math.cos(t * 0.23 + ph) * 0.35;
+      // stretch the beam to the street and park the pool there
+      pivot.getWorldQuaternion(_sq);
+      pivot.getWorldPosition(_so);
+      _sd.set(0, -1, 0).applyQuaternion(_sq);
+      if (_sd.y < -0.25) {
+        const reach = -_so.y / _sd.y;
+        beam.scale.y = reach / 130;
+        spotPos.set(_so.x + _sd.x * reach, 0, _so.z + _sd.z * reach);
+        spotGlow.position.set(spotPos.x, 0.4, spotPos.z);
+        spotGlow.material.opacity = 0.42 + Math.sin(t * 2.2 + ph) * 0.1;
+      } else {
+        spotPos.set(99999, 0, 99999);   // beam pointing skyward — no pool
+        spotGlow.material.opacity = 0;
+      }
     });
   }
 

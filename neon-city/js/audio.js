@@ -241,6 +241,18 @@ export function createAudio() {
       o.connect(g).connect(sfxBus);
       o.start(t0); o.stop(t0 + 1.0);
     },
+    alarm(t0) {
+      for (let k = 0; k < 3; k++) {
+        const o = ctx.createOscillator();
+        o.type = 'square';
+        o.frequency.setValueAtTime(620, t0 + k * 0.34);
+        o.frequency.setValueAtTime(440, t0 + k * 0.34 + 0.17);
+        const g = ctx.createGain();
+        env(g, t0 + k * 0.34, 0.01, 0.12, 0.3);
+        o.connect(g).connect(sfxBus);
+        o.start(t0 + k * 0.34); o.stop(t0 + k * 0.34 + 0.33);
+      }
+    },
     glass(t0) {
       const n = ctx.createBufferSource();
       n.buffer = noiseBuffer(0.4);

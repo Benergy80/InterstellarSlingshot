@@ -126,6 +126,8 @@ async function boot() {
   fx._traffic = traffic;
 
   player = createPlayer({ camera, scene, world, traffic, fx, hud, audio, onPauseToggle });
+  fx._player = player;
+  fx._hud = hud;
 
   hud.setProgress(0.92, 'FINAL APPROACH');
   await frame();
