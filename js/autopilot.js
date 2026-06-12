@@ -580,7 +580,9 @@
         const e = enemies[i];
         if (!e || !e.userData || e.userData.health <= 0) continue;
         if (!e.userData.isBoss && !e.userData.isEliteGuardian) continue;
-        if (_cp.distanceTo(e.position) > 15000) continue;
+        // 25k reach (was 15k): a combat overshoot can strand the demo
+        // 16k+ from a wounded boss — the magnet must still pull it back.
+        if (_cp.distanceTo(e.position) > 25000) continue;
         setStatus('Boss signature detected — diverting to engage');
         transmit('TACTICAL', 'Boss-class signature detected!\nDiverting to engage.');
         goPhase('bossEngage');
@@ -987,14 +989,11 @@
         setStatus('Receding from target — braking (' + (dist | 0) + ' u)');
       }
 
-      // O-key emergency warp for very long pursuits > 2000 u
-      if (dist > 2000 &&
-          canEmergencyWarp() &&
-          Date.now() - (ap._lastBHWarp || 0) > 20000) {
-        if (triggerOKeyWarp()) {
-          ap._lastBHWarp = Date.now();
-        }
-      }
+      // NO long warps in combat. The 15s O-warp used to fire for any
+      // pursuit > 2000u — and once warp-integrity stopped mid-boost
+      // braking, that warp sailed tens of thousands of units past the
+      // target (seen live: demo stranded 16k from a 9-HP boss). The
+      // range-scaled W-jump above already covers combat gap-closing.
     } else {
       // ── ENGAGE: inside weapons range ──────────────────────────────
       setStatus('Engaging ' + (enemy.userData.name || 'hostile') + ' — in weapons range');
