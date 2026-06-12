@@ -99,19 +99,26 @@ function _updatePlayerTrail() {
         _ptEnsureMesh();
         _ptTrail.mesh.visible = true;
         const pts = _ptTrail.points;
-        const headWidth = 1.4 + Math.min(3.2, speed * 0.18); // wider at speed
+        const headWidth = 0.9 + Math.min(2.2, speed * 0.10); // wider at speed
         for (let i = 0; i < N; i++) {
             const p = pts[i];
             // Segment direction (central difference)
             _ptDir.subVectors(pts[Math.min(i + 1, N - 1)], pts[Math.max(i - 1, 0)]);
             if (_ptDir.lengthSq() < 1e-8) _ptDir.set(0, 1, 0);
             _ptDir.normalize();
+            const distToCam = p.distanceTo(camera.position);
             _ptView.subVectors(p, camera.position).normalize();
             _ptSide.crossVectors(_ptDir, _ptView);
             if (_ptSide.lengthSq() < 1e-8) _ptSide.set(0, 1, 0);
             _ptSide.normalize();
+            // NEAR-CAMERA FADE: in chase view the trail runs straight at
+            // the camera under the ship — without this the closest
+            // segments projected into a giant wedge that blocked the
+            // ship. Width and brightness both collapse within ~70u of
+            // the camera, so the band only materializes well behind.
+            const nearFade = Math.max(0, Math.min(1, (distToCam - 26) / 46));
             const f = i / (N - 1);               // 0 = tail … 1 = head
-            const width = headWidth * Math.pow(f, 1.15) + 0.06; // taper to a point
+            const width = (headWidth * Math.pow(f, 1.15) + 0.06) * (0.25 + 0.75 * nearFade);
             const o = i * 6;
             _ptTrail.pos[o]     = p.x + _ptSide.x * width;
             _ptTrail.pos[o + 1] = p.y + _ptSide.y * width;
@@ -124,7 +131,7 @@ function _updatePlayerTrail() {
             // with a per-segment flicker so the band shimmers.
             const hue = (f * 0.78 + t * 0.00013) % 1;
             const flick = 0.86 + 0.14 * Math.sin(t * 0.013 + i * 1.7);
-            const bright = (0.08 + 0.5 * Math.pow(f, 1.4)) * flick;
+            const bright = (0.06 + 0.38 * Math.pow(f, 1.4)) * flick * nearFade;
             _ptHSL.setHSL(hue, 1.0, Math.min(0.62, bright));
             _ptTrail.col[o]     = _ptHSL.r; _ptTrail.col[o + 1] = _ptHSL.g; _ptTrail.col[o + 2] = _ptHSL.b;
             _ptTrail.col[o + 3] = _ptHSL.r; _ptTrail.col[o + 4] = _ptHSL.g; _ptTrail.col[o + 5] = _ptHSL.b;
