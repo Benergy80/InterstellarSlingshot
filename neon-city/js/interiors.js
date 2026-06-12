@@ -55,10 +55,9 @@ export function buildInteriors(scene, world) {
 
   // exterior shell with a genuine doorway opening (replaces the instanced box)
   function buildOpenShell(b, door, doorPos) {
-    const mat = new THREE.MeshStandardMaterial({
-      color: 0x39404f, roughness: 0.5, metalness: 0.4,
-      emissive: 0xffffff, emissiveIntensity: 0.85,
-    });
+    // same hashed-pane shader as the instanced buildings (and just as
+    // shootable) — world-position panes are exact on axis-aligned walls
+    const mat = world.makeTowerWindowMat((b.x * 13.37 + b.z) % 97, b.D);
     const geos = [];
     const T = 0.5, DW = 3.6, DH = 3.5;
     const wall = (w, h2, d2, x, y, z) => {
@@ -89,11 +88,6 @@ export function buildInteriors(scene, world) {
     roof.translate(b.x, b.h - 0.25, b.z);
     geos.push(roof);
     const mesh = new THREE.Mesh(BufferGeometryUtils.mergeGeometries(geos), mat);
-    const tex = windowTexture().clone();
-    tex.needsUpdate = true;
-    tex.repeat.set(b.w / 6.2, b.h / 7.4);
-    mat.map = tex;
-    mat.emissiveMap = tex;
     scene.add(mesh);
     world.raycastTargets.push(mesh);
   }
