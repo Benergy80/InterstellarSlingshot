@@ -669,6 +669,199 @@ export function buildLandmarks(scene, world) {
     });
   }
 
+  // ════════════════ STREETSCAPE — vendors, markets, alleys, graffiti ════════════════
+  {
+    const B = world.buildings;
+    // ── graffiti: gang-coded tags on building bases ──
+    const tagTex = (seed) => {
+      const [c, ctx] = makeCanvas(160, 96);
+      const r2 = mulberry32(seed);
+      ctx.lineWidth = 5; ctx.lineCap = 'round';
+      ctx.strokeStyle = '#ffffff';
+      for (let k = 0; k < 7; k++) {
+        ctx.beginPath();
+        ctx.moveTo(10 + r2() * 140, 12 + r2() * 70);
+        ctx.bezierCurveTo(10 + r2() * 140, 12 + r2() * 70, 10 + r2() * 140, 12 + r2() * 70, 10 + r2() * 140, 12 + r2() * 70);
+        ctx.stroke();
+      }
+      ctx.font = 'bold 30px Rajdhani, sans-serif';
+      ctx.fillStyle = '#ffffff';
+      ctx.fillText(['SAINTS', 'BORG BOYZ', '2287', 'LOOP RATS'][seed % 4], 18 + r2() * 30, 56);
+      const t = canvasTexture(c);
+      return t;
+    };
+    const gangColor = { OLD: [0x00f0ff, 0xff3355], FOUNDRY: [0x53ffe9, 0xffb300], MARKET: [0xff2bd6, 0x9d4cff] };
+    for (let v = 0; v < 2; v++) {
+      const cands = B.filter(b => gangColor[b.dk] && b.w > 10).sort(() => rnd() - 0.5).slice(0, 36);
+      const geo = new THREE.PlaneGeometry(3.6, 2.2);
+      const mat = new THREE.MeshBasicMaterial({ map: tagTex(v * 2 + 1), transparent: true, opacity: 0.85 });
+      const mesh = new THREE.InstancedMesh(geo, mat, cands.length);
+      const col = new THREE.Color();
+      cands.forEach((b, i) => {
+        const side = (rnd() * 4) | 0;
+        const off = [[b.w / 2 + 0.18, 0, Math.PI / 2], [-b.w / 2 - 0.18, 0, -Math.PI / 2], [0, b.d / 2 + 0.18, 0], [0, -b.d / 2 - 0.18, Math.PI]][side];
+        dummy.position.set(b.x + off[0] + (rnd() - 0.5) * b.w * 0.4 * (off[0] === 0 ? 1 : 0), 1.7, b.z + off[1] + (rnd() - 0.5) * b.d * 0.4 * (off[1] === 0 ? 1 : 0));
+        dummy.rotation.set(0, off[2], (rnd() - 0.5) * 0.12);
+        dummy.scale.setScalar(0.8 + rnd() * 0.8);
+        dummy.updateMatrix();
+        mesh.setMatrixAt(i, dummy.matrix);
+        mesh.setColorAt(i, col.setHex(pick(rnd, gangColor[b.dk])).multiplyScalar(0.9));
+      });
+      mesh.instanceColor.needsUpdate = true;
+      mesh.frustumCulled = false;
+      scene.add(mesh);
+    }
+
+    // ── food vendors + street markets (stall rows) ──
+    const stallGeo = (() => {
+      const counter = new THREE.BoxGeometry(3.2, 1.1, 1.6); counter.translate(0, 0.55, 0);
+      const post = new THREE.BoxGeometry(0.12, 2.4, 0.12);
+      const posts = [];
+      for (const ex of [-1.5, 1.5]) for (const ez of [-0.7, 0.7]) {
+        const p = post.clone(); p.translate(ex, 1.2, ez); posts.push(p);
+      }
+      const canopy = new THREE.CylinderGeometry(1.35, 1.35, 3.5, 3, 1);
+      canopy.rotateZ(Math.PI / 2); canopy.rotateY(Math.PI / 2);
+      canopy.scale(1, 0.5, 1);
+      canopy.translate(0, 2.75, 0);
+      return BufferGeometryUtils.mergeGeometries([counter, ...posts, canopy]);
+    })();
+    const H2 = C.HALF;
+    const spots = [];
+    for (let k = 0; k < 10; k++) spots.push([-150 + k * 32, H2 - C.CELL - C.ROAD / 2 - 3.4, 0]);           // Mag Mile arcade row
+    for (let k = 0; k < 6; k++) spots.push([-H2 + 2 * C.CELL + 10 + k * 9, -40 + (k % 2) * 6, Math.PI / 2]); // Old Town market lane
+    for (let k = 0; k < 4; k++) spots.push([-34 + k * 19, 44, Math.PI]);                                     // plaza food row
+    const stalls = new THREE.InstancedMesh(stallGeo, solid(0x2a3148, 0.55, 0.35), spots.length);
+    const stripGeo = new THREE.BoxGeometry(3.4, 0.16, 0.16);
+    const strips = new THREE.InstancedMesh(stripGeo, glow(0xffffff, 1.0), spots.length);
+    const scol = new THREE.Color();
+    spots.forEach(([x, z, ry], i) => {
+      dummy.position.set(x, 0, z);
+      dummy.rotation.set(0, ry + (rnd() - 0.5) * 0.2, 0);
+      dummy.scale.setScalar(0.95 + rnd() * 0.2);
+      dummy.updateMatrix();
+      stalls.setMatrixAt(i, dummy.matrix);
+      dummy.position.y = 2.15;
+      dummy.updateMatrix();
+      strips.setMatrixAt(i, dummy.matrix);
+      strips.setColorAt(i, scol.setHex(pick(rnd, NEON_LIST)).multiplyScalar(1.1));
+      addCol(x - 1.7, x + 1.7, z - 1, z + 1, 0, 3);
+      if (i % 3 === 0) {
+        const spr = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTexture(64, 'rgba(225,230,245,0.5)'), transparent: true, opacity: 0, depthWrite: false }));
+        spr.position.set(x, 1.6, z);
+        scene.add(spr);
+        const ph2 = rnd() * 9;
+        world.updateFns.push((dt, t) => {
+          const k2 = (t * 0.4 + ph2) % 1;
+          spr.position.y = 1.4 + k2 * 4;
+          spr.material.opacity = 0.3 * Math.sin(k2 * Math.PI);
+          spr.scale.set(1.6 + k2 * 2.4, 1.6 + k2 * 2.6, 1);
+        });
+      }
+    });
+    strips.instanceColor.needsUpdate = true;
+    stalls.frustumCulled = strips.frustumCulled = false;
+    scene.add(stalls, strips);
+    world.pois.push({ name: 'MAXWELL ST MARKET', pos: new THREE.Vector3(-H2 + 2 * C.CELL + 32, 1, -37), desc: 'Old Town stalls & street food' });
+
+    // ── string lights over the market lanes ──
+    {
+      const pts = [], cols = [];
+      const strand = (x0, z0, x1, z1, n) => {
+        for (let k = 0; k <= n; k++) {
+          const t2 = k / n;
+          pts.push(x0 + (x1 - x0) * t2, 3.4 - Math.sin(t2 * Math.PI) * 0.7, z0 + (z1 - z0) * t2);
+          const c2 = new THREE.Color(pick(rnd, NEON_LIST));
+          cols.push(c2.r * 1.4, c2.g * 1.4, c2.b * 1.4);
+        }
+      };
+      for (let k = 0; k < 9; k++) strand(-150 + k * 32, H2 - C.CELL - C.ROAD / 2 + 2, -118 + k * 32, H2 - C.CELL - C.ROAD / 2 - 8, 14);
+      for (let k = 0; k < 5; k++) strand(-H2 + 2 * C.CELL + 10 + k * 9, -44, -H2 + 2 * C.CELL + 19 + k * 9, -32, 12);
+      const g2 = new THREE.BufferGeometry();
+      g2.setAttribute('position', new THREE.BufferAttribute(new Float32Array(pts), 3));
+      g2.setAttribute('color', new THREE.BufferAttribute(new Float32Array(cols), 3));
+      const lights = new THREE.Points(g2, new THREE.PointsMaterial({
+        map: glowTexture(32, 'rgba(255,255,255,1)'), size: 0.55, vertexColors: true,
+        transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, sizeAttenuation: true,
+      }));
+      lights.frustumCulled = false;
+      scene.add(lights);
+    }
+
+    // ── skybridges → lit underpasses beneath ──
+    {
+      const pairs = [];
+      for (const b of B) {
+        if (b.h < 46 || pairs.length >= 6) continue;
+        const m = B.find(o => o !== b && o.h > 40 && Math.abs(o.z - b.z) < 8 &&
+          o.x - b.x > b.w / 2 + 12 && o.x - b.x < b.w / 2 + o.w / 2 + 30);
+        if (m) pairs.push([b, m]);
+      }
+      for (const [a2, b2] of pairs) {
+        const x0 = a2.x + a2.w / 2, x1 = b2.x - b2.w / 2;
+        const len = x1 - x0, cx2 = (x0 + x1) / 2, cz2 = (a2.z + b2.z) / 2;
+        const hgt2 = Math.min(a2.h, b2.h) * 0.45;
+        const br = new THREE.Mesh(new THREE.BoxGeometry(len, 3.2, 4.2), solid(0x232c44, 0.4, 0.6));
+        br.position.set(cx2, hgt2, cz2);
+        scene.add(br);
+        world.raycastTargets.push(br);
+        const band = new THREE.Mesh(new THREE.BoxGeometry(len, 0.5, 4.3), glow(0x9fd8ff, 0.5));
+        band.position.set(cx2, hgt2 + 0.4, cz2);
+        scene.add(band);
+        // underpass glow on the street below
+        const pool = new THREE.Mesh(new THREE.PlaneGeometry(len, 6),
+          new THREE.MeshBasicMaterial({ map: glowTexture(64, 'rgba(160,210,255,0.5)'), transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, opacity: 0.5 }));
+        pool.rotation.x = -Math.PI / 2;
+        pool.position.set(cx2, 0.06, cz2);
+        scene.add(pool);
+        addCol(x0, x1, cz2 - 2.1, cz2 + 2.1, hgt2 - 1.6, hgt2 + 1.6);
+      }
+    }
+
+    // ── service corridors: piped narrow gaps + hazard lights ──
+    {
+      let made = 0;
+      for (const b of B) {
+        if (made >= 8) break;
+        const m = B.find(o => o !== b && Math.abs(o.z - b.z) < 6 && o.x - b.x > b.w / 2 + 2.2 && o.x - b.x < b.w / 2 + o.w / 2 + 6);
+        if (!m || b.dk === 'CORE') continue;
+        made++;
+        const gx = (b.x + b.w / 2 + m.x - m.w / 2) / 2, gz = (b.z + m.z) / 2;
+        for (let k = 0; k < 3; k++) {
+          const pipe = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 9, 5), solid(0x39415e, 0.5, 0.6));
+          pipe.rotation.x = Math.PI / 2;
+          pipe.position.set(b.x + b.w / 2 + 0.25, 2 + k * 1.1, gz);
+          scene.add(pipe);
+        }
+        const hz = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.3, 0.3), glow(0xffb300, 1.3));
+        hz.position.set(gx, 2.6, gz);
+        scene.add(hz);
+        const ph3 = rnd() * 2;
+        world.updateFns.push((dt, t) => { hz.visible = ((t + ph3) % 1.6) < 0.9; });
+      }
+    }
+
+    // ── rooftop clutter: AC units + vents on random roofs ──
+    {
+      const acGeo = (() => {
+        const box = new THREE.BoxGeometry(2.2, 1.2, 1.6); box.translate(0, 0.6, 0);
+        const fan = new THREE.CylinderGeometry(0.55, 0.55, 0.3, 8); fan.translate(0.5, 1.25, 0);
+        return BufferGeometryUtils.mergeGeometries([box, fan]);
+      })();
+      const cands = B.filter(b => !b.t2 && b.w > 12 && rnd() < 0.5).slice(0, 70);
+      const ac = new THREE.InstancedMesh(acGeo, solid(0x222a3c, 0.6, 0.4), cands.length);
+      cands.forEach((b, i) => {
+        dummy.position.set(b.x + (rnd() - 0.5) * b.w * 0.4, b.h, b.z + (rnd() - 0.5) * b.d * 0.4);
+        dummy.rotation.set(0, rnd() * Math.PI, 0);
+        dummy.scale.setScalar(0.8 + rnd() * 0.7);
+        dummy.updateMatrix();
+        ac.setMatrixAt(i, dummy.matrix);
+      });
+      ac.frustumCulled = false;
+      scene.add(ac);
+    }
+  }
+
   // ── helpers ──
   function statueAt(x, z) {
     const ped = new THREE.Mesh(new THREE.BoxGeometry(2, 1.8, 2), solid(0x2c3450, 0.5, 0.5));
