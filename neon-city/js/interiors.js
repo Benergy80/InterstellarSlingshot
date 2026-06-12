@@ -13,6 +13,33 @@ import { C, NEON, mulberry32, clamp, hexCss, makeCanvas, canvasTexture } from '.
 
 const FLOOR_H = 3.6;
 
+let _winTex = null;
+function windowTexture() {
+  if (_winTex) return _winTex;
+  const c = document.createElement('canvas');
+  c.width = 64; c.height = 64;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#10131e';
+  ctx.fillRect(0, 0, 64, 64);
+  const r = mulberry32(606);
+  const cols = ['#ffc66b', '#9fd8ff', '#53ffe9'];
+  if (r() < 2) {
+    ctx.fillStyle = r() < 0.5 ? cols[0] : cols[1];
+  }
+  for (let gx = 0; gx < 2; gx++) for (let gy = 0; gy < 2; gy++) {
+    if (r() < 0.42) {
+      ctx.fillStyle = cols[(r() * 3) | 0];
+      ctx.globalAlpha = 0.5 + r() * 0.5;
+      ctx.fillRect(gx * 32 + 7, gy * 32 + 9, 18, 14);
+      ctx.globalAlpha = 1;
+    }
+  }
+  _winTex = new THREE.CanvasTexture(c);
+  _winTex.colorSpace = THREE.SRGBColorSpace;
+  _winTex.wrapS = _winTex.wrapT = THREE.RepeatWrapping;
+  return _winTex;
+}
+
 export function buildInteriors(scene, world) {
   const rnd = mulberry32(C.SEED + 4242);
   const H = C.HALF;
@@ -41,6 +68,51 @@ export function buildInteriors(scene, world) {
   for (const b of chosen) buildOne(b);
   return world.interiors;
 
+  // exterior shell with a genuine doorway opening (replaces the instanced box)
+  function buildOpenShell(b, door, doorPos) {
+    const mat = new THREE.MeshStandardMaterial({
+      color: 0x39404f, roughness: 0.5, metalness: 0.4,
+      emissive: 0xffffff, emissiveIntensity: 0.85,
+    });
+    const geos = [];
+    const T = 0.5, DW = 3.6, DH = 3.5;
+    const wall = (w, h2, d2, x, y, z) => {
+      const g = new THREE.BoxGeometry(w, h2, d2);
+      g.translate(x, y, z);
+      geos.push(g);
+    };
+    for (const side of ['n', 's', 'w', 'e']) {
+      const horiz = side === 'n' || side === 's';
+      const fz = side === 'n' ? b.z - b.d / 2 + T / 2 : b.z + b.d / 2 - T / 2;
+      const fxx = side === 'w' ? b.x - b.w / 2 + T / 2 : b.x + b.w / 2 - T / 2;
+      if (side !== door.side) {
+        if (horiz) wall(b.w, b.h, T, b.x, b.h / 2, fz);
+        else wall(T, b.h, b.d, fxx, b.h / 2, b.z);
+      } else if (horiz) {
+        const c2 = doorPos.x;
+        wall(Math.max(0.1, (c2 - DW / 2) - (b.x - b.w / 2)), b.h, T, ((c2 - DW / 2) + (b.x - b.w / 2)) / 2, b.h / 2, fz);
+        wall(Math.max(0.1, (b.x + b.w / 2) - (c2 + DW / 2)), b.h, T, ((b.x + b.w / 2) + (c2 + DW / 2)) / 2, b.h / 2, fz);
+        wall(DW, b.h - DH, T, c2, DH + (b.h - DH) / 2, fz);
+      } else {
+        const c2 = doorPos.z;
+        wall(T, b.h, Math.max(0.1, (c2 - DW / 2) - (b.z - b.d / 2)), fxx, b.h / 2, ((c2 - DW / 2) + (b.z - b.d / 2)) / 2);
+        wall(T, b.h, Math.max(0.1, (b.z + b.d / 2) - (c2 + DW / 2)), fxx, b.h / 2, ((b.z + b.d / 2) + (c2 + DW / 2)) / 2);
+        wall(T, b.h - DH, DW, fxx, DH + (b.h - DH) / 2, c2);
+      }
+    }
+    const roof = new THREE.BoxGeometry(b.w, 0.5, b.d);
+    roof.translate(b.x, b.h - 0.25, b.z);
+    geos.push(roof);
+    const mesh = new THREE.Mesh(BufferGeometryUtils.mergeGeometries(geos), mat);
+    const tex = windowTexture().clone();
+    tex.needsUpdate = true;
+    tex.repeat.set(b.w / 6.2, b.h / 7.4);
+    mat.map = tex;
+    mat.emissiveMap = tex;
+    scene.add(mesh);
+    world.raycastTargets.push(mesh);
+  }
+
   // ════════════════ one enterable building ════════════════
   function buildOne(b) {
     const D = b.D;
@@ -67,9 +139,18 @@ export function buildInteriors(scene, world) {
     if (door.dx === 0) doorPos.x = clamp(doorPos.x, b.x - b.w / 2 + 4, b.x + b.w / 2 - 4);
     else doorPos.z = clamp(doorPos.z, b.z - b.d / 2 + 4, b.z + b.d / 2 - 4);
 
+    // vacate the instanced exterior — this building gets a real shell with
+    // an actual hole where the door is, so you can see into the lobby
+    if (b._instIdx !== undefined && world.buildingMesh) {
+      const zero = new THREE.Matrix4().makeScale(0.0001, 0.0001, 0.0001);
+      world.buildingMesh.setMatrixAt(b._instIdx, zero);
+      world.buildingMesh.instanceMatrix.needsUpdate = true;
+    }
+    buildOpenShell(b, door, doorPos);
+
     // walls with a doorway gap (also gives the roof a parapet)
     const gapCenter = door.dx === 0 ? doorPos.x : doorPos.z;
-    world.wallizeBuilding(b, { gaps: [{ side: door.side, center: gapCenter, width: 3.0 }] });
+    world.wallizeBuilding(b, { gaps: [{ side: door.side, center: gapCenter, width: 3.6 }] });
 
     const group = new THREE.Group();
     scene.add(group);
@@ -175,7 +256,7 @@ export function buildInteriors(scene, world) {
     // ── stair + shaft zones (local frame, door at +z, back wall at -z) ──
     const lw = W / 2 - 0.45, ld = Dep / 2 - 0.45;
     const backZ = -ld;
-    const stairX0 = -lw, stairX1 = -lw + 3.4;
+    const stairX0 = -lw, stairX1 = -lw + 5.2;
     const stairZ0 = backZ, stairZ1 = backZ + 6.8;
     const shaftX0 = lw - 3.4, shaftX1 = lw;
     const shaftZ0 = backZ, shaftZ1 = backZ + 3.4;
@@ -213,8 +294,8 @@ export function buildInteriors(scene, world) {
     // (z = stairZ1): west strip rises toward the back landing, east strip
     // arrives from it — so every floor connects cleanly at its slab edge.
     {
-      const fx0 = stairX0 + 0.1, fx1 = stairX0 + 1.55;   // west strip (up)
-      const gx0 = stairX0 + 1.85, gx1 = stairX1 - 0.1;   // east strip (down from above)
+      const fx0 = stairX0 + 0.1, fx1 = stairX0 + 2.45;   // west strip (up) — player-wide
+      const gx0 = stairX0 + 3.0, gx1 = stairX1 - 0.1;    // east strip (down from above)
       const runZf = stairZ1;                              // front (floor connection)
       const runZb = backZ + 1.5;                          // back (landing edge)
       const landZ0 = backZ + 0.15, landZ1 = runZb;

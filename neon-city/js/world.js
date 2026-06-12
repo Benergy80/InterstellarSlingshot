@@ -798,7 +798,7 @@ export function buildWorld(scene, renderer) {
   {
     const items = [];
     for (const b of buildings) {
-      items.push({ x: b.x, z: b.z, w: b.w, d: b.d, y0: 0, h: b.h, seed: rnd() * 100, D: b.D });
+      items.push({ x: b.x, z: b.z, w: b.w, d: b.d, y0: 0, h: b.h, seed: rnd() * 100, D: b.D, b });
       if (b.h > 70 && rnd() < 0.7) {
         const w2 = b.w * (0.5 + rnd() * 0.25), d2 = b.d * (0.5 + rnd() * 0.25), h2 = b.h * (0.25 + rnd() * 0.3);
         items.push({ x: b.x, z: b.z, w: w2, d: d2, y0: b.h, h: h2, seed: rnd() * 100, D: b.D });
@@ -843,6 +843,7 @@ export function buildWorld(scene, renderer) {
     const dummy = new THREE.Object3D();
     const tintA = new THREE.Color(0x232838), tintB = new THREE.Color(0x1a2030), tintC = new THREE.Color(0x262033);
     items.forEach((it, i) => {
+      if (it.b) it.b._instIdx = i;
       dummy.position.set(it.x, it.y0, it.z);
       dummy.scale.set(it.w, it.h, it.d);
       dummy.rotation.set(0, 0, 0);
