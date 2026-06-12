@@ -440,10 +440,13 @@ function triggerCaravanRescue(call) {
         }
     }
 
-    // Notification banner
+    // Notification banner + cinematic card
     if (typeof showAchievement === 'function') {
         showAchievement('🛡️ CARAVAN RESCUED',
             `${name} saved! Full resupply: hull, energy, missiles, warps`);
+    }
+    if (typeof flashEventText === 'function') {
+        flashEventText('CARAVAN RESCUED', '#00ff88', name + ' · full resupply transferred');
     }
 
     // Thank-you transmission from the caravan

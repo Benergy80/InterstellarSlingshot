@@ -1947,6 +1947,10 @@ function fireEnemyWeapon(enemy, difficultySettings) {
                             true
                         );
                     }
+                    if (typeof flashEventText === 'function') {
+                        flashEventText('WINGMAN DOWN', '#ff5555',
+                            (targetWingman.userData.name || 'Ally ship') + ' lost in combat');
+                    }
                     if (typeof playSound === 'function') {
                         playSound('explosion');
                     }
@@ -6636,6 +6640,11 @@ let borgAlarmActive = false;
 
 function startBorgAlarm() {
     if (borgAlarmActive || !audioContext || audioContext.state === 'suspended') return;
+
+    // Cinematic arrival card alongside the alarm
+    if (typeof flashEventText === 'function') {
+        flashEventText('⬢ THE BORG ⬢', '#33ff55', 'RESISTANCE IS FUTILE');
+    }
     
     try {
         borgAlarmOscillator = audioContext.createOscillator();
@@ -8730,6 +8739,10 @@ function recruitNebulaWingman(nebulaName, spawnPos) {
             true
         );
     }
+    if (typeof flashEventText === 'function') {
+        flashEventText('WINGMAN ACQUIRED', '#66ffcc',
+            recruit.name + ' · ' + profile.label);
+    }
     if (typeof playSound === 'function') {
         playSound('achievement', 880, 0.4);
     }
@@ -8999,6 +9012,37 @@ function updateAllyShips() {
         } else {
             // Always swarm the player when within 4000u (any galaxy)
             _executePatrol(ally, ud, now, distToPlayer < 4000 ? playerPos : null);
+        }
+
+        // ── Tactical short-jump (the wingman's double-tap-W) ─────────────
+        // When far from the objective — catching up to the player or
+        // closing on an engaged target — wingmen burst-dash with a glowing
+        // tracer streak, like the player's W×2 jump.
+        {
+            const _objective = (ud.aiState === 'engage' && ud.engageTarget && ud.engageTarget.position)
+                ? ud.engageTarget.position
+                : (distToPlayer > 1200 ? playerPos : null);
+            if (!ud._jumpUntil && _objective &&
+                pos.distanceTo(_objective) > 1200 &&
+                now - (ud._lastJumpAt || 0) > 7000 + ((ally.id || 0) % 4000)) {
+                ud._lastJumpAt = now;
+                ud._jumpUntil = now + 850;
+            }
+            if (ud._jumpUntil) {
+                if (now > ud._jumpUntil || !_objective) {
+                    ud._jumpUntil = 0;
+                    if (typeof wingmanTracerFade === 'function') wingmanTracerFade(ally);
+                } else {
+                    if (!updateAllyShips._jumpVec) updateAllyShips._jumpVec = new THREE.Vector3();
+                    const jv = updateAllyShips._jumpVec.subVectors(_objective, pos);
+                    const jd = jv.length();
+                    const step = Math.min(jd * 0.08, 14); // burst, easing on approach
+                    ally.position.addScaledVector(jv.normalize(), step);
+                    if (typeof wingmanTracerPush === 'function') {
+                        wingmanTracerPush(ally, 0x88ffee);
+                    }
+                }
+            }
         }
 
         // ── Shield bubble: visible during combat engagement ──────────────

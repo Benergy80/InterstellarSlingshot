@@ -471,6 +471,67 @@ function spawnKillText(worldPos, text, cssColor) {
     } catch (e) {}
 }
 
+// ── 14. EVENT TEXT — cinematic center-screen announcements ─────────────────
+// Bigger moment-marker than achievements: scales in, holds, fades. Used for
+// Borg arrival, wingman deaths/recruits, caravan rescues, etc.
+function flashEventText(title, cssColor, subtext) {
+    try {
+        if (!document.getElementById('eventTextStyle')) {
+            const st = document.createElement('style');
+            st.id = 'eventTextStyle';
+            st.textContent = '@keyframes eventTextIn{0%{opacity:0;transform:translateX(-50%) scale(1.6)}' +
+                '18%{opacity:1;transform:translateX(-50%) scale(1)}78%{opacity:1}' +
+                '100%{opacity:0;transform:translateX(-50%) scale(0.96)}}';
+            document.head.appendChild(st);
+        }
+        const div = document.createElement('div');
+        div.style.cssText = 'position:fixed;left:50%;top:26%;transform:translateX(-50%);z-index:72;' +
+            'pointer-events:none;text-align:center;font-family:Orbitron,monospace;font-weight:bold;' +
+            'max-width:80vw;animation:eventTextIn 2s ease forwards;color:' + (cssColor || '#ffcc44') + ';' +
+            'text-shadow:0 0 16px currentColor';
+        div.innerHTML = '<div style="font-size:24px;letter-spacing:8px">' + title + '</div>' +
+            (subtext ? '<div style="font-size:13px;letter-spacing:3px;opacity:0.85;margin-top:4px">' +
+                subtext + '</div>' : '');
+        document.body.appendChild(div);
+        setTimeout(() => div.remove(), 2100);
+    } catch (e) {}
+}
+
+// ── 15. WINGMAN JUMP TRACERS ────────────────────────────────────────────────
+// Short-lived additive streak behind a wingman during its tactical jump.
+function wingmanTracerPush(ship, colorHex) {
+    if (!ship || typeof scene === 'undefined') return;
+    let tr = ship.userData._jumpTracer;
+    if (!tr) {
+        const mat = new THREE.LineBasicMaterial({
+            color: colorHex || 0x88ffee, transparent: true, opacity: 0.8,
+            blending: THREE.AdditiveBlending, depthWrite: false
+        });
+        tr = { points: [], line: new THREE.Line(new THREE.BufferGeometry(), mat), mat };
+        tr.line.frustumCulled = false;
+        scene.add(tr.line);
+        ship.userData._jumpTracer = tr;
+    }
+    tr.points.push(ship.position.clone());
+    if (tr.points.length > 24) tr.points.shift();
+    tr.line.geometry.setFromPoints(tr.points);
+}
+
+function wingmanTracerFade(ship) {
+    const tr = ship && ship.userData && ship.userData._jumpTracer;
+    if (!tr) return;
+    ship.userData._jumpTracer = null;
+    const iv = setInterval(() => {
+        tr.mat.opacity -= 0.06;
+        if (tr.mat.opacity <= 0) {
+            clearInterval(iv);
+            scene.remove(tr.line);
+            tr.line.geometry.dispose();
+            tr.mat.dispose();
+        }
+    }, 45);
+}
+
 // ── Per-frame entry point ───────────────────────────────────────────────────
 function updateVisualFlair() {
     if (typeof gameState === 'undefined' || !gameState.gameStarted ||
@@ -492,4 +553,7 @@ if (typeof window !== 'undefined') {
     window.createDistressFlare = createDistressFlare;
     window.playBossIntro = playBossIntro;
     window.spawnKillText = spawnKillText;
+    window.flashEventText = flashEventText;
+    window.wingmanTracerPush = wingmanTracerPush;
+    window.wingmanTracerFade = wingmanTracerFade;
 }
