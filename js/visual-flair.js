@@ -321,11 +321,14 @@ function playBossIntro(bossName) {
         bot.className = 'boss-bar'; bot.style.bottom = '0';
         const card = document.createElement('div');
         card.id = 'bossIntroCard';
-        card.style.cssText = 'position:fixed;left:50%;top:18%;transform:translateX(-50%);' +
-            'z-index:71;color:#ff3333;font-family:Orbitron,monospace;font-size:30px;font-weight:bold;' +
-            'text-shadow:0 0 18px rgba(255,40,40,0.9);pointer-events:none;white-space:nowrap;' +
-            'animation:bossCardIn 2.4s ease forwards';
-        card.textContent = '⚠ ' + (bossName || 'BOSS DETECTED') + ' ⚠';
+        card.style.cssText = 'position:fixed;left:50%;top:16%;transform:translateX(-50%);' +
+            'z-index:71;color:#ff3333;font-family:Orbitron,monospace;font-weight:bold;' +
+            'text-shadow:0 0 18px rgba(255,40,40,0.9);pointer-events:none;text-align:center;' +
+            'max-width:72vw;animation:bossCardIn 2.4s ease forwards';
+        // Two lines: warning label on top, the (long) boss name wraps below
+        card.innerHTML =
+            '<div style="font-size:16px;letter-spacing:6px;opacity:0.85;margin-bottom:6px">⚠ BOSS DETECTED ⚠</div>' +
+            '<div style="font-size:26px;line-height:1.25">' + (bossName || 'UNKNOWN FLAGSHIP') + '</div>';
         document.body.appendChild(top); document.body.appendChild(bot); document.body.appendChild(card);
         requestAnimationFrame(() => { top.style.height = '7%'; bot.style.height = '7%'; });
         setTimeout(() => { top.style.height = '0'; bot.style.height = '0'; }, 1900);

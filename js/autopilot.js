@@ -910,13 +910,15 @@
 
     // Use the enemy's own firing range — that's how close we need to be for
     // a proper dog-fight (enemy fires back at us, we fire at them).
-    // BOSS TIER: hold a much bigger standoff — bosses are 2× scale with
-    // missile volleys (long reach) and spinning laser sweeps that punish
-    // anything inside ~1,200u of the hull.
+    // BOSS TIER: hold a standoff — bosses have missile volleys (long
+    // reach) and spinning laser sweeps that punish point-blank camping.
+    // Halved from the original 1,400u floor per playtest: the demo now
+    // fights from ~700u, inside the sweep radius occasionally (drama)
+    // but with the back-off below still preventing hull-scraping.
     const _bossTier = enemy.userData.isBoss || enemy.userData.isEliteGuardian ||
                       enemy.userData.isBlackHoleGuardian;
     const engageRange = _bossTier
-      ? Math.max(enemy.userData.firingRange || 500, (enemy.userData.hitboxSize || 288) * 1.5, 1400)
+      ? Math.max(enemy.userData.firingRange || 500, (enemy.userData.hitboxSize || 288) * 0.75, 700)
       : (enemy.userData.firingRange || 500);
 
     const speed = gameState.velocityVector ? gameState.velocityVector.length() : 0;

@@ -6074,6 +6074,16 @@ function checkWeaponHits(targetPosition) {
                     drone.userData.health -= damage;
 
                     flashEnemyHit(drone, damage);
+                    // Borg fights happen at long range — float a HIT confirm
+                    // (kill-text style) so distant shots visibly land.
+                    if (typeof spawnKillText === 'function' &&
+                        Date.now() - (drone.userData._lastHitTextAt || 0) > 400) {
+                        drone.userData._lastHitTextAt = Date.now();
+                        spawnKillText(droneWorldPos, 'HIT', '#88ff88');
+                    }
+                    if (typeof createHitSparks === 'function') {
+                        createHitSparks(droneWorldPos, 0x88ff88);
+                    }
                     playSound('weapon');
                     const maxHp = drone.userData.maxHealth || 100;
                     showAchievement('BORG Hit!', `${drone.userData.name} damaged (${drone.userData.health}/${maxHp} HP)`);
@@ -6181,6 +6191,15 @@ function checkWeaponHits(targetPosition) {
                 // Impact sparks at the hit point (pairs with the knockback)
                 if (typeof createHitSparks === 'function') {
                     createHitSparks(targetPosition || enemy.position, enemy.userData.galaxyColor || 0xffcc66);
+                }
+                // Far-target hit confirm: beyond 700u the spark is sub-pixel,
+                // so float a HIT marker at the target (kill-text style),
+                // throttled per enemy so rapid fire doesn't stack text.
+                if (typeof spawnKillText === 'function' &&
+                    camera.position.distanceTo(enemy.position) > 700 &&
+                    Date.now() - (enemy.userData._lastHitTextAt || 0) > 400) {
+                    enemy.userData._lastHitTextAt = Date.now();
+                    spawnKillText(enemy.position, 'HIT', '#ffee88');
                 }
                 playSound('weapon');
                 showAchievement('Target Hit!', `Damaged ${enemy.userData.name} (${enemy.userData.health}/${enemy.userData.maxHealth} HP)`);
