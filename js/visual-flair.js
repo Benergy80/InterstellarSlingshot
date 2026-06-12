@@ -32,117 +32,9 @@ function _vfGlowTexture() {
     return _vfGlowTexture._tex;
 }
 
-// ── 1. PLAYER ENGINE TRAIL — FLAME RIBBON ──────────────────────────────────
-// A camera-facing triangle strip behind the 3rd-person ship: tapers to
-// nothing at the tail, vertex-colored with a time-shifting rainbow gradient
-// (bright at the head, dark at the tail — under additive blending dark IS
-// transparent, so it fades out like flame). Length breathes on two unsynced
-// sines + speed, so the streamer looks alive rather than mechanical.
-const _PT_MAX = 64;
-const _ptTrail = {
-    points: [], mesh: null, geo: null, lastPush: null,
-    pos: new Float32Array(_PT_MAX * 2 * 3),
-    col: new Float32Array(_PT_MAX * 2 * 3)
-};
-const _ptDir = new THREE.Vector3();
-const _ptView = new THREE.Vector3();
-const _ptSide = new THREE.Vector3();
-const _ptHSL = new THREE.Color();
-
-function _ptEnsureMesh() {
-    if (_ptTrail.mesh) return;
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.BufferAttribute(_ptTrail.pos, 3));
-    geo.setAttribute('color', new THREE.BufferAttribute(_ptTrail.col, 3));
-    // Static strip index for the max point count
-    const idx = [];
-    for (let i = 0; i < _PT_MAX - 1; i++) {
-        const a = i * 2, b = i * 2 + 1, c = i * 2 + 2, d = i * 2 + 3;
-        idx.push(a, b, c, b, d, c);
-    }
-    geo.setIndex(idx);
-    const mat = new THREE.MeshBasicMaterial({
-        vertexColors: true, transparent: true, opacity: 0.85,
-        blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide
-    });
-    _ptTrail.mesh = new THREE.Mesh(geo, mat);
-    _ptTrail.mesh.frustumCulled = false;
-    _ptTrail.geo = geo;
-    scene.add(_ptTrail.mesh);
-}
-
-function _updatePlayerTrail() {
-    const cs = window.cameraState;
-    const ship = cs && cs.playerShipMesh;
-    const speed = (gameState.velocityVector) ? gameState.velocityVector.length() : 0;
-    const visible = ship && ship.visible && speed > 0.8;
-    const t = Date.now();
-
-    if (visible) {
-        const wp = ship.getWorldPosition(new THREE.Vector3());
-        if (!_ptTrail.lastPush || wp.distanceTo(_ptTrail.lastPush) > Math.max(2, speed * 0.5)) {
-            _ptTrail.points.push(wp.clone());
-            _ptTrail.lastPush = wp.clone();
-        }
-    }
-    // ALIVE LENGTH: target breathes on two unsynced sines around the
-    // speed-driven base; the tail sheds toward it (and fully when hidden).
-    const breathe = 0.7 + 0.18 * Math.sin(t * 0.0021) + 0.12 * Math.sin(t * 0.0047);
-    const targetLen = visible
-        ? Math.max(6, Math.floor(Math.min(_PT_MAX, 14 + speed * 4) * breathe))
-        : 0;
-    if (_ptTrail.points.length > targetLen) _ptTrail.points.shift();
-    if (_ptTrail.points.length > targetLen) _ptTrail.points.shift(); // shed faster when over
-
-    const N = _ptTrail.points.length;
-    if (N > 2) {
-        _ptEnsureMesh();
-        _ptTrail.mesh.visible = true;
-        const pts = _ptTrail.points;
-        const headWidth = 0.9 + Math.min(2.2, speed * 0.10); // wider at speed
-        for (let i = 0; i < N; i++) {
-            const p = pts[i];
-            // Segment direction (central difference)
-            _ptDir.subVectors(pts[Math.min(i + 1, N - 1)], pts[Math.max(i - 1, 0)]);
-            if (_ptDir.lengthSq() < 1e-8) _ptDir.set(0, 1, 0);
-            _ptDir.normalize();
-            const distToCam = p.distanceTo(camera.position);
-            _ptView.subVectors(p, camera.position).normalize();
-            _ptSide.crossVectors(_ptDir, _ptView);
-            if (_ptSide.lengthSq() < 1e-8) _ptSide.set(0, 1, 0);
-            _ptSide.normalize();
-            // NEAR-CAMERA FADE: in chase view the trail runs straight at
-            // the camera under the ship — without this the closest
-            // segments projected into a giant wedge that blocked the
-            // ship. Width and brightness both collapse within ~70u of
-            // the camera, so the band only materializes well behind.
-            const nearFade = Math.max(0, Math.min(1, (distToCam - 26) / 46));
-            const f = i / (N - 1);               // 0 = tail … 1 = head
-            const width = (headWidth * Math.pow(f, 1.15) + 0.06) * (0.25 + 0.75 * nearFade);
-            const o = i * 6;
-            _ptTrail.pos[o]     = p.x + _ptSide.x * width;
-            _ptTrail.pos[o + 1] = p.y + _ptSide.y * width;
-            _ptTrail.pos[o + 2] = p.z + _ptSide.z * width;
-            _ptTrail.pos[o + 3] = p.x - _ptSide.x * width;
-            _ptTrail.pos[o + 4] = p.y - _ptSide.y * width;
-            _ptTrail.pos[o + 5] = p.z - _ptSide.z * width;
-            // RAINBOW FLAME: hue slides along the band and drifts with
-            // time; brightness falls toward the tail (= additive fade),
-            // with a per-segment flicker so the band shimmers.
-            const hue = (f * 0.78 + t * 0.00013) % 1;
-            const flick = 0.86 + 0.14 * Math.sin(t * 0.013 + i * 1.7);
-            const bright = (0.06 + 0.38 * Math.pow(f, 1.4)) * flick * nearFade;
-            _ptHSL.setHSL(hue, 1.0, Math.min(0.62, bright));
-            _ptTrail.col[o]     = _ptHSL.r; _ptTrail.col[o + 1] = _ptHSL.g; _ptTrail.col[o + 2] = _ptHSL.b;
-            _ptTrail.col[o + 3] = _ptHSL.r; _ptTrail.col[o + 4] = _ptHSL.g; _ptTrail.col[o + 5] = _ptHSL.b;
-        }
-        _ptTrail.geo.attributes.position.needsUpdate = true;
-        _ptTrail.geo.attributes.color.needsUpdate = true;
-        _ptTrail.geo.setDrawRange(0, (N - 1) * 6);
-    } else if (_ptTrail.mesh) {
-        _ptTrail.mesh.visible = false;
-    }
-}
+// ── 1. PLAYER ENGINE TRAIL — REMOVED ────────────────────────────────────────
+// (Flame-ribbon streamer tried 2026-06-11, cut same day per playtest: even
+// with the near-camera fade it competed with the ship in chase view.)
 
 // ── 2. SPAWN-IN MATERIALIZATION ─────────────────────────────────────────────
 // Ships scale in from 12% with an eased pop + a one-shot flash glow.
@@ -596,52 +488,65 @@ function wingmanTracerFade(ship) {
     }, 45);
 }
 
-// ── 16. WINGMAN ENGINE RIBBONS ──────────────────────────────────────────────
-// Short persistent trails behind every live wingman (the player's ribbon's
-// little siblings). Fade out and dispose when a wingman dies or despawns.
-const _wingRibbons = [];
+// ── 16. WINGMAN ENGINE RIBBONS — REMOVED (same playtest cut as the player
+// streamer; the jump TRACERS in section 15 remain — those were requested
+// and only appear during tactical dashes). ─────────────────────────────────
 
-function _updateWingmanRibbons() {
-    if (typeof allyShips === 'undefined') return;
-    for (let i = 0; i < allyShips.length; i++) {
-        const a = allyShips[i];
-        if (!a || !a.userData || a.userData.health <= 0) continue;
-        let tr = a.userData._engineRibbon;
-        if (!tr) {
-            const mat = new THREE.LineBasicMaterial({
-                color: 0x66ddcc, transparent: true, opacity: 0.38,
-                blending: THREE.AdditiveBlending, depthWrite: false
-            });
-            tr = { points: [], line: new THREE.Line(new THREE.BufferGeometry(), mat), mat, ally: a };
-            tr.line.frustumCulled = false;
-            scene.add(tr.line);
-            a.userData._engineRibbon = tr;
-            _wingRibbons.push(tr);
-        }
-        const last = tr.points[tr.points.length - 1];
-        if (!last || last.distanceTo(a.position) > 4) {
-            tr.points.push(a.position.clone());
-            if (tr.points.length > 16) tr.points.shift();
-            tr.line.geometry.setFromPoints(tr.points);
-        }
+// ── 17. SPEED SCREEN FX ─────────────────────────────────────────────────────
+// The streamer's replacement: speed feedback as a layered SCREEN effect
+// (GPU-composited DOM, never occludes the ship). Three layers driven by a
+// single eased intensity level (speed 5 → 30, warp forces ~max):
+//   vignette  — edges darken as speed builds (tunnel vision)
+//   streaks   — faint anamorphic spokes sweeping at the screen edge
+//   chroma    — red/blue fringe at the rim during warp (lens stress)
+const _sfx = { wrap: null, vig: null, streaks: null, chroma: null, level: 0 };
+
+function _ensureScreenFX() {
+    if (_sfx.wrap) return;
+    const wrap = document.createElement('div');
+    wrap.id = 'speedFxLayer';
+    wrap.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:40;display:none;';
+    const vig = document.createElement('div');
+    vig.style.cssText = 'position:absolute;inset:0;opacity:0;' +
+        'background:radial-gradient(ellipse at center, rgba(0,0,0,0) 52%, rgba(2,6,20,0.55) 78%, rgba(0,0,10,0.85) 100%)';
+    const streaks = document.createElement('div');
+    streaks.style.cssText = 'position:absolute;inset:-12%;opacity:0;' +
+        'background:repeating-conic-gradient(from 0deg, rgba(150,200,255,0) 0deg 4deg, ' +
+        'rgba(170,210,255,0.22) 4.6deg 5deg, rgba(150,200,255,0) 5.6deg 9deg);' +
+        '-webkit-mask-image:radial-gradient(circle at center, transparent 40%, black 74%);' +
+        'mask-image:radial-gradient(circle at center, transparent 40%, black 74%)';
+    const chroma = document.createElement('div');
+    chroma.style.cssText = 'position:absolute;inset:0;opacity:0;mix-blend-mode:screen;' +
+        'background:radial-gradient(ellipse at 49.55% 50%, transparent 62%, rgba(255,0,60,0.16) 88%, transparent 100%),' +
+        'radial-gradient(ellipse at 50.45% 50%, transparent 62%, rgba(0,120,255,0.16) 88%, transparent 100%)';
+    wrap.appendChild(vig); wrap.appendChild(streaks); wrap.appendChild(chroma);
+    document.body.appendChild(wrap);
+    _sfx.wrap = wrap; _sfx.vig = vig; _sfx.streaks = streaks; _sfx.chroma = chroma;
+}
+
+function _updateScreenFX() {
+    const speed = gameState.velocityVector ? gameState.velocityVector.length() : 0;
+    const warping = !!((gameState.emergencyWarp && gameState.emergencyWarp.active) ||
+        (gameState.slingshot && gameState.slingshot.active && !gameState.slingshotWhip));
+    let target = Math.max(0, Math.min(1, (speed - 5) / 25));
+    if (warping) target = Math.max(target, 0.85);
+    _sfx.level += (target - _sfx.level) * 0.05;
+    if (_sfx.level < 0.012) {
+        if (_sfx.wrap) _sfx.wrap.style.display = 'none';
+        return;
     }
-    // Fade + dispose ribbons whose wingman is gone
-    for (let i = _wingRibbons.length - 1; i >= 0; i--) {
-        const tr = _wingRibbons[i];
-        const a = tr.ally;
-        const gone = !a || !a.userData || a.userData.health <= 0 ||
-            (typeof allyShips !== 'undefined' && allyShips.indexOf(a) === -1);
-        if (gone) {
-            tr.mat.opacity -= 0.05;
-            if (tr.mat.opacity <= 0) {
-                scene.remove(tr.line);
-                tr.line.geometry.dispose();
-                tr.mat.dispose();
-                if (a && a.userData) a.userData._engineRibbon = null;
-                _wingRibbons.splice(i, 1);
-            }
-        }
-    }
+    _ensureScreenFX();
+    _sfx.wrap.style.display = 'block';
+    const L = _sfx.level;
+    const t = Date.now();
+    _sfx.vig.style.opacity = (L * 0.8).toFixed(3);
+    _sfx.streaks.style.opacity = (Math.max(0, L - 0.25) * 0.65).toFixed(3);
+    // Slow sweep + breathing scale so the spokes feel like rushing light,
+    // not a static stencil
+    _sfx.streaks.style.transform =
+        'rotate(' + ((t * (0.004 + L * 0.006)) % 360).toFixed(1) + 'deg) ' +
+        'scale(' + (1 + L * 0.04 + Math.sin(t * 0.003) * 0.012).toFixed(3) + ')';
+    _sfx.chroma.style.opacity = (Math.max(0, L - 0.45) * 0.9).toFixed(3);
 }
 
 // ── Per-frame entry point ───────────────────────────────────────────────────
@@ -650,8 +555,7 @@ function updateVisualFlair() {
         typeof camera === 'undefined' || typeof scene === 'undefined' ||
         typeof THREE === 'undefined') return;
     const fc = gameState.frameCount || 0;
-    try { _updatePlayerTrail(); } catch (e) {}
-    try { _updateWingmanRibbons(); } catch (e) {}
+    try { _updateScreenFX(); } catch (e) {}
     try { _updateWhipPreview(fc); } catch (e) {}
     try { _updateLensFlares(fc); } catch (e) {}
     try { _updateAccretionSpiral(fc); } catch (e) {}
