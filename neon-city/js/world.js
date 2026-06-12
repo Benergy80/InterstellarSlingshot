@@ -518,34 +518,64 @@ export function buildWorld(scene, renderer) {
       if (playerPos) clouds.position.set(playerPos.x, 0, playerPos.z);  // always envelops the player
     });
 
-    // Gas giant on the horizon — Interstellar Slingshot is up there somewhere.
-    const [pc, pctx] = makeCanvas(256, 256);
-    const pg = pctx.createLinearGradient(0, 30, 0, 226);
-    pg.addColorStop(0, '#6b3d8f'); pg.addColorStop(0.3, '#9a4f9e');
-    pg.addColorStop(0.5, '#c96a9a'); pg.addColorStop(0.65, '#8f4585');
-    pg.addColorStop(1, '#3a1f55');
-    pctx.fillStyle = pg; pctx.beginPath(); pctx.arc(128, 128, 98, 0, Math.PI * 2); pctx.fill();
-    pctx.globalAlpha = 0.28; pctx.fillStyle = '#e9c9ff';
-    for (let i = 0; i < 9; i++) pctx.fillRect(30, 52 + i * 18 + (rnd() * 6 | 0), 196, 3 + (rnd() * 4 | 0));
-    pctx.globalAlpha = 1;
-    const planetTex = canvasTexture(pc);
-    const planet = new THREE.Mesh(
-      new THREE.PlaneGeometry(420, 420),
-      new THREE.MeshBasicMaterial({ map: planetTex, transparent: true, fog: false, depthWrite: false, opacity: 0.92 })
-    );
-    planet.position.set(-880, 290, -940);
-    planet.lookAt(0, 60, 0);
-    planet.renderOrder = -8;
+    // Gas giant over Lake Michigan — a real banded sphere with a tilted
+    // ring, dimming with the day/night cycle (no more 2D billboard)
+    const planetMat = new THREE.MeshBasicMaterial({ fog: false });
+    planetMat.onBeforeCompile = (sh) => {
+      sh.vertexShader = 'varying vec3 vP;\n' + sh.vertexShader
+        .replace('#include <begin_vertex>', '#include <begin_vertex>\n        vP = normalize(position);');
+      sh.fragmentShader = `
+        varying vec3 vP;
+        float bandN(float x) { return fract(sin(x * 91.7) * 43758.5453); }
+      ` + sh.fragmentShader.replace('#include <color_fragment>', `
+        #include <color_fragment>
+        float lat = vP.y;
+        float warp = sin(vP.x * 6.0 + lat * 14.0) * 0.04;
+        float b = lat * 9.0 + warp;
+        float band = 0.5 + 0.5 * sin(b * 3.14159);
+        float bid = floor(b);
+        vec3 c1 = vec3(0.43, 0.24, 0.56);
+        vec3 c2 = vec3(0.79, 0.42, 0.62);
+        vec3 c3 = vec3(0.93, 0.72, 0.62);
+        vec3 col = mix(mix(c1, c2, band), c3, 0.35 * bandN(bid));
+        // terminator: lit from the city side
+        float lit = clamp(dot(vP, normalize(vec3(0.85, 0.25, 0.45))) * 0.9 + 0.55, 0.12, 1.0);
+        diffuseColor.rgb = col * lit;
+      `);
+    };
+    const planet = new THREE.Mesh(new THREE.SphereGeometry(1050, 48, 32), planetMat);
+    planet.position.set(-4200, 980, -1400);
+    planet.rotation.z = 0.18;
     scene.add(planet);
+    // tilted ring with banded alpha
+    const [rc, rctx] = makeCanvas(256, 8);
+    for (let i = 0; i < 256; i++) {
+      const t2 = i / 255;
+      const a = (Math.sin(t2 * 40) * 0.5 + 0.5) * (0.5 - Math.abs(t2 - 0.5)) * 1.6;
+      rctx.fillStyle = `rgba(196,170,224,${Math.max(0, Math.min(0.55, a))})`;
+      rctx.fillRect(i, 0, 1, 8);
+    }
+    const ringTex = canvasTexture(rc);
+    ringTex.rotation = 0;
     const ring = new THREE.Mesh(
-      new THREE.RingGeometry(118, 196, 48),
-      new THREE.MeshBasicMaterial({ color: 0xc9a6e8, transparent: true, opacity: 0.25, side: THREE.DoubleSide, fog: false, depthWrite: false })
+      new THREE.RingGeometry(1350, 2150, 96, 1),
+      new THREE.MeshBasicMaterial({ map: ringTex, transparent: true, side: THREE.DoubleSide, fog: false, depthWrite: false })
     );
+    // map the strip radially
+    const uv = ring.geometry.attributes.uv, posR = ring.geometry.attributes.position;
+    for (let i = 0; i < uv.count; i++) {
+      const r2 = Math.hypot(posR.getX(i), posR.getY(i));
+      uv.setXY(i, (r2 - 1350) / 800, 0.5);
+    }
     ring.position.copy(planet.position);
-    ring.lookAt(0, 60, 0);
-    ring.rotateX(1.18);
-    ring.renderOrder = -8;
+    ring.rotation.set(Math.PI / 2.35, 0.22, 0.3);
     scene.add(ring);
+    world.updateFns.push(() => {
+      const k = world.dayNight ? world.dayNight.k : 0;
+      const dim = 1 - k * 0.6;
+      planetMat.color.setScalar(dim);
+      ring.material.opacity = 0.95 - k * 0.65;
+    });
   }
 
   // ─────────────────────── ENVIRONMENT MAP (wet streets) ───────────────────────
