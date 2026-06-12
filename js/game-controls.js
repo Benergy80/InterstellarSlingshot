@@ -4935,11 +4935,11 @@ function _ensureEnemyShield(enemy) {
         const _ud1 = enemy.userData || {};
         const _bigShield = _ud1.isBoss || _ud1.isBossSupport ||
                            _ud1.isEliteGuardian || _ud1.isBlackHoleGuardian;
-        // Big-shield ceiling raised 320 → 640: bosses are now 2× scale and
-        // the bubble (plus the shard shatter, which reads _shieldRadius)
-        // must scale with the doubled hull instead of clamping below it.
+        // Big-shield ceiling 360 (was briefly 640 for the 2×-boss
+        // experiment; with boss scale reverted, 640 left guardians inside
+        // screen-filling orange spheres whenever the player got close).
         const minR = _bigShield ? 45 : 22;
-        const maxR = _bigShield ? 640 : 140;
+        const maxR = _bigShield ? 360 : 140;
         worldR = Math.max(minR, Math.min(worldR, maxR));
     }
 
@@ -4975,6 +4975,14 @@ function _setEnemyShieldEngaged(enemy, engaged) {
     const sm = ud._shieldMesh;
     if (!sm) return;
     ud.shieldActive = !!engaged;
+    // Camera INSIDE the bubble → hide it. A DoubleSide additive sphere
+    // viewed from within washes the whole screen orange (seen at close
+    // boss standoff); the shield still works, it just doesn't render.
+    if (typeof camera !== 'undefined' &&
+        camera.position.distanceTo(enemy.position) < (ud._shieldRadius || 100) * 1.1) {
+        sm.material.opacity = 0;
+        return;
+    }
     if (flashing) {
         sm.material.color.setHex(0xff2200);
         sm.material.opacity = 0.6;
