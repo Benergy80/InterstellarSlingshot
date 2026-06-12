@@ -62,16 +62,24 @@ html, body {
   font-size: clamp(54px, 11vw, 110px);
   font-weight: 900; letter-spacing: 10px;
   margin: 6px 0 2px;
-  color: #eafcff;
-  text-shadow:
-    0 0 12px rgba(0, 240, 255, 0.9),
-    0 0 48px rgba(0, 240, 255, 0.45),
-    0 0 90px rgba(46, 255, 123, 0.35);
-  animation: titlePulse 3.2s ease-in-out infinite;
+  /* the mothergame's titleFlash banner — cyan ⇆ amber, verbatim keyframes */
+  animation: titleFlash 1.4s ease-in-out infinite alternate;
 }
-@keyframes titlePulse {
-  0%, 100% { text-shadow: 0 0 12px rgba(0,240,255,.9), 0 0 48px rgba(0,240,255,.45), 0 0 90px rgba(255,43,214,.5); }
-  50%      { text-shadow: 0 0 16px rgba(0,240,255,1), 0 0 64px rgba(0,240,255,.6), 0 0 120px rgba(46,255,123,.5); }
+@keyframes titleFlash {
+  0% {
+    color: #22d3ee;
+    text-shadow:
+      0 0 8px rgba(0,150,255,0.9),
+      0 0 16px rgba(0,150,255,0.7),
+      0 0 24px rgba(0,150,255,0.5);
+  }
+  100% {
+    color: #fbbf24;
+    text-shadow:
+      0 0 8px rgba(251,191,36,0.9),
+      0 0 16px rgba(251,191,36,0.7),
+      0 0 24px rgba(251,191,36,0.5);
+  }
 }
 
 .launch-sub {
