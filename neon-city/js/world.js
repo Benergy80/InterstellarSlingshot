@@ -28,7 +28,7 @@ const CENTER_B = (C.GRID - 1) / 2;
 // blocks handed to landmarks.js: Grant Park, Holy Name cathedral, City Hall,
 // the Yards fusion plant, and a row of lakefront suburb homes
 const RESERVED = {
-  '2,5': 'park', '3,8': 'cathedral', '6,1': 'cityhall', '9,6': 'plant',
+  '2,5': 'park', '3,8': 'cathedral', '6,1': 'cityhall', '9,6': 'plant', '7,2': 'models',
   '1,0': 'suburb', '2,0': 'suburb', '3,0': 'suburb',
 };
 export function districtOf(bx, bz) {

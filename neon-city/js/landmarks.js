@@ -596,6 +596,49 @@ export function buildLandmarks(scene, world) {
     });
   }
 
+  // ════════════════ ARCHITECTURE GARDEN — real Chicago towers ════════════════
+  // 12 buildings extracted from the user's NewChicago.glb print model
+  // (models/NewChicagoLandmarks.glb, Y-up, recentered per tower).
+  for (const blk of (res.models || [])) {
+    const plinth = new THREE.Mesh(new THREE.BoxGeometry(C.BLOCK, 0.6, C.BLOCK), solid(0x232a3c, 0.5, 0.5));
+    plinth.position.set(blk.cx, 0.3, blk.cz);
+    scene.add(plinth);
+    world.surfaces.push({ minX: blk.x0, maxX: blk.x0 + C.BLOCK, minZ: blk.z0, maxZ: blk.z0 + C.BLOCK, y: 0.6 });
+    world.pois.push({ name: 'ARCHITECTURE GARDEN', pos: new THREE.Vector3(blk.cx, 1, blk.cz), desc: 'Old Chicago, cast in monument' });
+    new (THREE.TextureLoader)();  // no-op keepalive
+    import('three/addons/loaders/GLTFLoader.js').then(({ GLTFLoader }) => {
+      new GLTFLoader().load('../models/NewChicagoLandmarks.glb', (g) => {
+        const mat = new THREE.MeshStandardMaterial({
+          color: 0x2c3450, roughness: 0.3, metalness: 0.8, envMapIntensity: 1.2,
+          emissive: 0x0c1a28, emissiveIntensity: 0.8,
+        });
+        const towers = g.scene.children.slice();
+        towers.forEach((node, i) => {
+          const h = (node.userData && node.userData.h) || 0.05;
+          const target = 8 + (h / 0.087) * 18;          // monument scale — tallest ≈ 26u
+          const sc = target / h;
+          const gx = blk.x0 + 9 + (i % 4) * 15.4;
+          const gz = blk.z0 + 10 + ((i / 4) | 0) * 21.5;
+          node.traverse(m => { if (m.isMesh) { m.material = mat; world.raycastTargets.push(m); } });
+          const wrap = new THREE.Group();
+          wrap.add(node);
+          node.scale.setScalar(sc);
+          wrap.position.set(gx, 0.6, gz);
+          wrap.rotation.y = (rnd() - 0.5) * 0.3;
+          scene.add(wrap);
+          const fw = ((node.userData && node.userData.fw) || 0.02) * sc;
+          addCol(gx - fw / 2, gx + fw / 2, gz - fw / 2, gz + fw / 2, 0, target + 2);
+          // corner studs instead of a full glow plate (footprints are wide)
+          for (const [ex, ez] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) {
+            const stud = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.18, 0.5), glow(NEON.cyan, 0.9));
+            stud.position.set(gx + ex * (fw / 2 + 0.5), 0.72, gz + ez * (fw / 2 + 0.5));
+            scene.add(stud);
+          }
+        });
+      }, undefined, () => {});
+    });
+  }
+
   // ── helpers ──
   function statueAt(x, z) {
     const ped = new THREE.Mesh(new THREE.BoxGeometry(2, 1.8, 2), solid(0x2c3450, 0.5, 0.5));
