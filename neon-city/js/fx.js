@@ -396,8 +396,9 @@ export function createFX(scene, camera, world, audio) {
       let want = coreD < 120 ? 0.5 : coreD > 650 ? 0 : 0.5 * (1 - (coreD - 120) / 530);
       if (fx.rainOn) want = Math.max(want, 0.18);
       cloudK += (want - cloudK) * Math.min(1, dt * 6);
+      if (world.cloudPuffs) world.cloudPuffs.opacity = cloudK * 0.62;   // game nebulas run 0.65 additive
       if (world.cloudMat) {
-        world.cloudMat.opacity = cloudK;
+        world.cloudMat.opacity = cloudK * 0.5;   // dome becomes a faint backwash behind the puffs
         if (world.districtAt) {
           const D = world.districtAt(camera.position.x, camera.position.z);
           if (D.curb) {
@@ -406,6 +407,7 @@ export function createFX(scene, camera, world, audio) {
             _cloudTint.getHSL(hsl);
             _cloudTint.setHSL((hsl.h + 0.5) % 1, hsl.s * 0.55, 0.72);  // complementary, soft
             world.cloudMat.color.lerp(_cloudTint, Math.min(1, dt * 1.2));
+            if (world.cloudPuffs) world.cloudPuffs.color.lerp(_cloudTint, Math.min(1, dt * 1.2));
           }
         }
       }

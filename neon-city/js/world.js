@@ -473,6 +473,44 @@ export function buildWorld(scene, renderer) {
     clouds.frustumCulled = false;
     scene.add(clouds);
     world.cloudMat = cloudMat;
+    // nebula-style particle cloud bank — the mothergame's technique
+    // (createNebula: ~1200 vertex-colored points, additive, soft sprites)
+    {
+      const N = 1100, pos = new Float32Array(N * 3), col = new Float32Array(N * 3);
+      const crnd2 = mulberry32(31337);
+      const blobs = [];
+      for (let b = 0; b < 9; b++) {
+        blobs.push({
+          x: (crnd2() - 0.5) * 2400, y: 380 + crnd2() * 320, z: (crnd2() - 0.5) * 2400,
+          r: 220 + crnd2() * 380,
+        });
+      }
+      for (let i = 0; i < N; i++) {
+        const b = blobs[(crnd2() * blobs.length) | 0];
+        const a = crnd2() * Math.PI * 2, e = (crnd2() - 0.5) * Math.PI;
+        const r = Math.pow(crnd2(), 0.5) * b.r;
+        pos[i * 3] = b.x + Math.cos(a) * Math.cos(e) * r * 1.6;
+        pos[i * 3 + 1] = b.y + Math.sin(e) * r * 0.38;
+        pos[i * 3 + 2] = b.z + Math.sin(a) * Math.cos(e) * r * 1.6;
+        const w = 0.75 + crnd2() * 0.25;
+        col[i * 3] = w; col[i * 3 + 1] = w * (0.92 + crnd2() * 0.08); col[i * 3 + 2] = w;
+      }
+      const pg = new THREE.BufferGeometry();
+      pg.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+      pg.setAttribute('color', new THREE.BufferAttribute(col, 3));
+      const pm = new THREE.PointsMaterial({
+        map: glowTexture(128, 'rgba(235,240,250,1)'),
+        size: 210, sizeAttenuation: true, vertexColors: true,
+        transparent: true, opacity: 0, depthWrite: false,
+        blending: THREE.AdditiveBlending, fog: false,
+      });
+      const puffs = new THREE.Points(pg, pm);
+      puffs.frustumCulled = false;
+      puffs.renderOrder = -1;
+      scene.add(puffs);
+      world.cloudPuffs = pm;
+      world.updateFns.push((dt) => { puffs.rotation.y += dt * 0.0035; });
+    }
     world.updateFns.push((dt, t, playerPos) => {
       clouds.rotation.y += dt * 0.004;
       if (playerPos) clouds.position.set(playerPos.x, 0, playerPos.z);  // always envelops the player
