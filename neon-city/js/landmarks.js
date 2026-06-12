@@ -649,7 +649,14 @@ export function buildLandmarks(scene, world) {
           const sc = target / h;
           const gx = blk.x0 + 9 + (i % 4) * 15.4;
           const gz = blk.z0 + 10 + ((i / 4) | 0) * 21.5;
-          node.traverse(m => { if (m.isMesh) { m.material = mat; world.raycastTargets.push(m); } });
+          node.traverse(m => {
+            if (m.isMesh) {
+              m.material = mat;
+              world.raycastTargets.push(m);
+              m.add(new THREE.LineSegments(new THREE.EdgesGeometry(m.geometry, 24),
+                new THREE.LineBasicMaterial({ color: new THREE.Color(0x00f0ff).multiplyScalar(0.9), toneMapped: false, transparent: true, opacity: 0.8 })));
+            }
+          });
           const wrap = new THREE.Group();
           wrap.add(node);
           node.scale.setScalar(sc);
@@ -874,12 +881,10 @@ export function buildLandmarks(scene, world) {
       new GLTFLoader().load('../models/NewChicagoTowers2.glb', (gl) => {
         const zero = new THREE.Matrix4().makeScale(0.0001, 0.0001, 0.0001);
         const towers = gl.scene.children.slice();
-        const trims = new THREE.InstancedMesh(
-          new THREE.BoxGeometry(0.3, 1, 0.3),
-          new THREE.MeshBasicMaterial({ color: 0xffffff, toneMapped: false }),
-          sites.length * 4);
-        let ti = 0;
-        const tcol = new THREE.Color();
+        const bodyMat = new THREE.MeshStandardMaterial({
+          color: 0x1c2233, roughness: 0.4, metalness: 0.6, envMapIntensity: 0.85,
+          emissive: 0x0a1420, emissiveIntensity: 0.6,
+        });
         sites.forEach((b, i) => {
           const node = towers[i % towers.length].clone(true);
           const h = (node.userData && node.userData.h) || 0.04;
@@ -887,30 +892,26 @@ export function buildLandmarks(scene, world) {
           let sc = b.h / h;
           sc = Math.min(sc, (Math.min(b.w, b.d) * 1.25) / fw);
           const actualH = h * sc;
-          const mat = world.makeTowerWindowMat(i * 7.31 + 2, b.D);
-          node.traverse(m => { if (m.isMesh) { m.material = mat; world.raycastTargets.push(m); } });
+          const lineMat = new THREE.LineBasicMaterial({
+            color: new THREE.Color(b.D.accent).multiplyScalar(1.0), toneMapped: false,
+            transparent: true, opacity: 0.85,
+          });
+          node.traverse(m => {
+            if (m.isMesh) {
+              m.material = bodyMat;
+              world.raycastTargets.push(m);
+              // trace the real architecture — setbacks, crowns, rooflines
+              const edges = new THREE.LineSegments(new THREE.EdgesGeometry(m.geometry, 24), lineMat);
+              m.add(edges);
+            }
+          });
           node.scale.setScalar(sc);
           node.position.set(b.x, 0, b.z);
           node.rotation.y = ((i % 4) * Math.PI) / 2;
           scene.add(node);
           if (world.buildingMesh) world.buildingMesh.setMatrixAt(b._instIdx, zero);
           b.collider.maxY = actualH + 1;
-          // neon edges at the scaled footprint corners
-          const ew = fw * sc * 0.5;
-          for (const [ex, ez] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) {
-            dummy.position.set(b.x + ex * ew, actualH / 2, b.z + ez * ew);
-            dummy.scale.set(1, actualH, 1);
-            dummy.rotation.set(0, 0, 0);
-            dummy.updateMatrix();
-            trims.setMatrixAt(ti, dummy.matrix);
-            trims.setColorAt(ti, tcol.setHex(b.D.accent).multiplyScalar(1.1));
-            ti++;
-          }
         });
-        trims.count = ti;
-        trims.instanceColor.needsUpdate = true;
-        trims.frustumCulled = false;
-        scene.add(trims);
         if (world.buildingMesh) world.buildingMesh.instanceMatrix.needsUpdate = true;
       }, undefined, () => {});
     });
