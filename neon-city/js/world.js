@@ -247,6 +247,7 @@ export function buildWorld(scene, renderer) {
     world.updateFns.push((dt, t, playerPos) => {
       if (playerPos) {
         const dx = playerPos.x - x, dz = playerPos.z - z;
+        if (dx * dx + dz * dz > 32400 && elev.phase === 'idle') return;   // >180u away and parked — skip
         const dy = (playerPos.y - 1.75) - elev.y;
         near = (dx * dx + dz * dz) < 30 && dy > -2 && dy < 3;
       }
@@ -754,6 +755,58 @@ export function buildWorld(scene, renderer) {
     return mat;
   }
 
+  // window material for non-instanced (GLB) towers — same look, but the
+  // panes are computed from WORLD position (the print model has no UVs)
+  world.makeTowerWindowMat = (seed, D) => {
+    const mat = new THREE.MeshStandardMaterial({
+      color: 0x1c2030, roughness: 0.45, metalness: 0.45, envMapIntensity: 0.6,
+    });
+    mat.onBeforeCompile = (shader) => {
+      shader.uniforms.uTime = world.uTime;
+      shader.uniforms.uHits = { value: world.windowHitVecs };
+      shader.uniforms.uSeed = { value: seed };
+      shader.uniforms.uTun = { value: new THREE.Vector3(D.litP, D.warm, D.flick) };
+      shader.vertexShader = 'varying vec3 vWPos;\nvarying vec3 vWNorm;\n' + shader.vertexShader
+        .replace('#include <begin_vertex>', `
+          #include <begin_vertex>
+          vWPos = (modelMatrix * vec4(position, 1.0)).xyz;
+          vWNorm = normalize(mat3(modelMatrix) * normal);
+        `);
+      shader.fragmentShader = `
+        uniform float uTime; uniform float uSeed; uniform vec3 uTun;
+        uniform vec3 uHits[16];
+        varying vec3 vWPos; varying vec3 vWNorm;
+        float nh2(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123); }
+      ` + shader.fragmentShader
+        .replace('#include <color_fragment>', `
+          #include <color_fragment>
+          diffuseColor.rgb *= (0.42 + 0.58 * smoothstep(0.0, 16.0, vWPos.y));
+        `)
+        .replace('#include <emissivemap_fragment>', `
+          #include <emissivemap_fragment>
+          {
+            float side = 1.0 - step(0.6, abs(vWNorm.y));
+            float fc = abs(vWNorm.x) > abs(vWNorm.z) ? vWPos.z : vWPos.x;
+            vec2 cuv = vec2(fc, vWPos.y) / vec2(3.1, 3.7);
+            vec2 id = floor(cuv); vec2 f = fract(cuv);
+            float inWin = step(0.22, f.x) * step(f.x, 0.78) * step(0.30, f.y) * step(f.y, 0.74);
+            float lit = step(1.0 - uTun.x, nh2(id + uSeed * 13.7));
+            float hc = nh2(id * 1.7 + uSeed * 7.3);
+            vec3 wcol = hc < uTun.y ? vec3(1.0,0.72,0.38) : (hc < uTun.y + (1.0-uTun.y)*0.78 ? vec3(0.45,0.83,1.0) : vec3(0.32,1.0,0.86));
+            float vary = 0.35 + 0.65 * nh2(id * 2.3 + uSeed * 3.1);
+            float fl = nh2(id + floor(uTime * 1.7) + uSeed);
+            float flicker = mix(1.0, step(0.22, fl), step(1.0 - 0.07 * uTun.z, nh2(id * 3.1 + uSeed)));
+            float ground = step(5.5, vWPos.y);
+            float intact = 1.0;
+            for (int hi = 0; hi < 16; hi++) intact *= 1.0 - step(distance(vWPos, uHits[hi]), 1.5);
+            totalEmissiveRadiance += inWin * lit * vary * flicker * wcol * 0.95 * side * ground * intact;
+            diffuseColor.rgb *= mix(0.45, 1.0, intact);
+          }
+        `);
+    };
+    return mat;
+  };
+
   // ─────────────────────── CITY BLOCKS ───────────────────────
   const buildings = [];      // {x,z,w,d,h, district}
   const towerTrims = [];     // corner neon strips on selected towers
@@ -803,10 +856,9 @@ export function buildWorld(scene, renderer) {
         const w2 = b.w * (0.5 + rnd() * 0.25), d2 = b.d * (0.5 + rnd() * 0.25), h2 = b.h * (0.25 + rnd() * 0.3);
         items.push({ x: b.x, z: b.z, w: w2, d: d2, y0: b.h, h: h2, seed: rnd() * 100, D: b.D });
         b.t2 = { w2, d2, h2 };
-        if (rnd() < 0.5) towerTrims.push({ x: b.x, z: b.z, w: b.w, d: b.d, h: b.h, accent: b.D.accent });
-      } else if (b.h > 110) {
-        towerTrims.push({ x: b.x, z: b.z, w: b.w, d: b.d, h: b.h, accent: b.D.accent });
       }
+      // every building gets the neon edge treatment, in its district color
+      towerTrims.push({ x: b.x, z: b.z, w: b.w, d: b.d, h: b.h, accent: b.D.accent });
       // collider — keep the ref so interiors can replace it with walls
       const col = { minX: b.x - b.w / 2, maxX: b.x + b.w / 2, minZ: b.z - b.d / 2, maxZ: b.z + b.d / 2, minY: 0, maxY: b.h + (b.t2 ? 0 : 0.0) };
       b.collider = col;

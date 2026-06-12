@@ -44,26 +44,11 @@ export function buildInteriors(scene, world) {
   const rnd = mulberry32(C.SEED + 4242);
   const H = C.HALF;
 
-  // ── pick 2–3 candidates per district, biggest footprints first ──
-  const byDistrict = {};
-  for (const b of world.buildings) {
-    if (b.hasRoofLift || b.arcade) continue;
-    if (b.w < 17 || b.d < 17 || b.h < 13) continue;
-    (byDistrict[b.dk] = byDistrict[b.dk] || []).push(b);
-  }
-  const chosen = [];
-  for (const key of Object.keys(byDistrict)) {
-    const list = byDistrict[key].sort((p, q) => (q.w * q.d) - (p.w * p.d));
-    const n = key === 'CORE' ? 2 : (key === 'MARKET' || key === 'OLD' ? 3 : 2);
-    // skip overlapping picks (same block twins)
-    const taken = [];
-    for (const b of list) {
-      if (taken.length >= n) break;
-      if (taken.some(t => Math.abs(t.x - b.x) < 40 && Math.abs(t.z - b.z) < 40)) continue;
-      taken.push(b);
-    }
-    chosen.push(...taken);
-  }
+  // every procedural building big enough to hold a lobby gets an interior
+  const chosen = world.buildings
+    .filter(b => !b.hasRoofLift && !b.arcade && !b.glbTower && b.w >= 13 && b.d >= 13 && b.h >= 11)
+    .sort((p, q) => (q.w * q.d) - (p.w * p.d))
+    .slice(0, 150);
 
   for (const b of chosen) buildOne(b);
   return world.interiors;

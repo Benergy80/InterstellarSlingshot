@@ -862,6 +862,60 @@ export function buildLandmarks(scene, world) {
     }
   }
 
+  // ════════════════ 30 REAL CHICAGO TOWERS swap into the skyline ════════════════
+  {
+    const sites = world.buildings
+      .filter(b => !b.hasRoofLift && !b.arcade && b.h > 34 && b._instIdx !== undefined)
+      .sort((p, q) => q.h - p.h)
+      .filter((b, i) => i % 2 === 0)     // every other tall site → spread across town
+      .slice(0, 30);
+    sites.forEach(b => { b.glbTower = true; });
+    import('three/addons/loaders/GLTFLoader.js').then(({ GLTFLoader }) => {
+      new GLTFLoader().load('../models/NewChicagoTowers2.glb', (gl) => {
+        const zero = new THREE.Matrix4().makeScale(0.0001, 0.0001, 0.0001);
+        const towers = gl.scene.children.slice();
+        const trims = new THREE.InstancedMesh(
+          new THREE.BoxGeometry(0.3, 1, 0.3),
+          new THREE.MeshBasicMaterial({ color: 0xffffff, toneMapped: false }),
+          sites.length * 4);
+        let ti = 0;
+        const tcol = new THREE.Color();
+        sites.forEach((b, i) => {
+          const node = towers[i % towers.length].clone(true);
+          const h = (node.userData && node.userData.h) || 0.04;
+          const fw = (node.userData && node.userData.fw) || 0.03;
+          let sc = b.h / h;
+          sc = Math.min(sc, (Math.min(b.w, b.d) * 1.25) / fw);
+          const actualH = h * sc;
+          const mat = world.makeTowerWindowMat(i * 7.31 + 2, b.D);
+          node.traverse(m => { if (m.isMesh) { m.material = mat; world.raycastTargets.push(m); } });
+          node.scale.setScalar(sc);
+          node.position.set(b.x, 0, b.z);
+          node.rotation.y = ((i % 4) * Math.PI) / 2;
+          scene.add(node);
+          if (world.buildingMesh) world.buildingMesh.setMatrixAt(b._instIdx, zero);
+          b.collider.maxY = actualH + 1;
+          // neon edges at the scaled footprint corners
+          const ew = fw * sc * 0.5;
+          for (const [ex, ez] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) {
+            dummy.position.set(b.x + ex * ew, actualH / 2, b.z + ez * ew);
+            dummy.scale.set(1, actualH, 1);
+            dummy.rotation.set(0, 0, 0);
+            dummy.updateMatrix();
+            trims.setMatrixAt(ti, dummy.matrix);
+            trims.setColorAt(ti, tcol.setHex(b.D.accent).multiplyScalar(1.1));
+            ti++;
+          }
+        });
+        trims.count = ti;
+        trims.instanceColor.needsUpdate = true;
+        trims.frustumCulled = false;
+        scene.add(trims);
+        if (world.buildingMesh) world.buildingMesh.instanceMatrix.needsUpdate = true;
+      }, undefined, () => {});
+    });
+  }
+
   // ── helpers ──
   function statueAt(x, z) {
     const ped = new THREE.Mesh(new THREE.BoxGeometry(2, 1.8, 2), solid(0x2c3450, 0.5, 0.5));
