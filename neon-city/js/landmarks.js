@@ -552,18 +552,23 @@ export function buildLandmarks(scene, world) {
   // ════════════════ ZEPPELINS (searchlights + neon marquees) ════════════════
   for (let zi = 0; zi < 3; zi++) {
     const g = new THREE.Group();
+    // hull is modeled along +X; lookAt() steers -Z — the inner group
+    // turns the body 90° so the nose leads the travel direction
+    const inner = new THREE.Group();
+    inner.rotation.y = Math.PI / 2;
+    g.add(inner);
     const hull = new THREE.Mesh(new THREE.SphereGeometry(7, 18, 12),
       new THREE.MeshStandardMaterial({ color: 0x2a3148, roughness: 0.45, metalness: 0.55 }));
     hull.scale.set(2.7, 1, 1);
-    g.add(hull);
+    inner.add(hull);
     const gond = new THREE.Mesh(new THREE.BoxGeometry(6, 1.6, 2.2), solid(0x1a2030, 0.4, 0.6));
     gond.position.y = -7.2;
-    g.add(gond);
+    inner.add(gond);
     for (const e of [-1, 1]) {
       const fin = new THREE.Mesh(new THREE.BoxGeometry(4.5, 3.2, 0.35), solid(0x232c44, 0.5, 0.5));
       fin.position.set(-16.5, e * 2.2, 0);
       fin.rotation.x = e * 0.5;
-      g.add(fin);
+      inner.add(fin);
     }
     // neon marquees on both flanks — share the animated LED canvas
     for (const e of [-1, 1]) {
@@ -571,10 +576,10 @@ export function buildLandmarks(scene, world) {
         new THREE.MeshBasicMaterial({ map: world.ledTex }));
       mq.position.set(0, 0.4, e * 7.15);
       mq.rotation.y = e > 0 ? 0 : Math.PI;
-      g.add(mq);
+      inner.add(mq);
       const trim = new THREE.Mesh(new THREE.BoxGeometry(22.6, 0.18, 0.18), glow(NEON.cyan, 1.0));
       trim.position.set(0, 3.3, e * 7.1);
-      g.add(trim);
+      inner.add(trim);
     }
     // sweeping searchlight
     const beam = new THREE.Mesh(new THREE.ConeGeometry(10, 130, 12, 1, true),
@@ -583,7 +588,7 @@ export function buildLandmarks(scene, world) {
     const pivot = new THREE.Group();
     pivot.position.y = -7;
     pivot.add(beam);
-    g.add(pivot);
+    inner.add(pivot);
     scene.add(g);
     const ph = zi * 2.1, rad = 200 + zi * 90, hgt = 150 + zi * 18, w = 0.022 - zi * 0.004;
     world.updateFns.push((dt, t) => {
