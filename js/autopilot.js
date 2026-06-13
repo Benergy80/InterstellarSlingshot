@@ -1120,17 +1120,45 @@
       return;
     }
 
-    // Tactical W-jumps to close big gaps fast (NOT the 15s O-warp — see
-    // phaseCombat). Without these, a post-overshoot approach from 6k+
-    // was a multi-minute crawl at cruise speed.
+    // ORIENT FIRST, every frame. Without this the phase only set thrusters
+    // (flyToward doesn't steer) and fired W-jumps along the ship's CURRENT
+    // heading — which, after any overshoot, points AWAY from the boss. That
+    // was the demo "flying away from the boss it's targeting": each jump
+    // flung it further out. Now the bow tracks the boss before anything.
+    if (window.orientTowardsTarget) window.orientTowardsTarget({ position: boss.position });
+
+    // Are we actually pointed at the boss yet? (don't thrust/jump until so)
+    let facing = 1;
+    if (_coneVec && camera) {
+      _coneVec.subVectors(boss.position, camera.position).normalize();
+      camera.getWorldDirection(_coneFwd);
+      facing = _coneFwd.dot(_coneVec);
+    }
+
     const _beSpeed = gameState.velocityVector ? gameState.velocityVector.length() : 0;
     const _beWarpBusy = gameState.emergencyWarp &&
         (gameState.emergencyWarp.active || gameState.emergencyWarp.transitioning);
-    if (dist > 2000 && _beSpeed < 4 && !_beWarpBusy &&
+
+    // Drifting AWAY from the boss (residual velocity from a prior overshoot)
+    // → brake and keep turning, don't add thrust along a bad heading.
+    if (_beSpeed > 2 && facing < 0.2) {
+      keys().x = true;
+      setStatus('Reorienting on boss — braking (' + (dist | 0) + ' u)');
+      return;
+    }
+
+    // Tactical W-jump to close big gaps fast — ONLY when pointed at the
+    // boss. Uses a gentle boost speed (45 vs the 100 emergency boost) sized
+    // to land ~80% of the way, so it closes distance without the 10k+
+    // overshoot the full boost produced.
+    if (dist > 3500 && facing > 0.92 && _beSpeed < 4 && !_beWarpBusy &&
         gameState.energy > 25 &&
         Date.now() - (ap._lastJumpTap || 0) > 5000) {
       ap._lastJumpTap = Date.now();
-      gameState._pendingJumpMs = Math.min(6000, Math.max(700, (dist - 700) * 1.0));
+      const S = 45;                    // matches _pendingJumpSpeed below
+      const coast = S * 65;            // ~auto-brake coast distance
+      gameState._pendingJumpSpeed = S;
+      gameState._pendingJumpMs = Math.min(5000, Math.max(450, (dist * 0.8 - coast) / S * 16.67));
       if (window.keys) {
         window.keys.wDoubleTap = true;
         setTimeout(() => { if (window.keys) window.keys.wDoubleTap = false; }, 120);

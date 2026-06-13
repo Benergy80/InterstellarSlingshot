@@ -2168,8 +2168,16 @@ if (frameDistance > 0.01) { // Only track significant movement
         keys.wDoubleTap = false;
         
         const capturedForwardDirection = forwardDirection.clone();
-        const capturedBoostSpeed = gameState.emergencyWarp.boostSpeed;
-        
+        // Demo tactical jumps can request a GENTLER boost speed via
+        // gameState._pendingJumpSpeed. The player's emergency boostSpeed
+        // is 100 — at that speed even a short jump coasts ~6,600u, so a
+        // jump aimed to close a 5k gap overshot to 10k+ (the demo
+        // "flying away from the boss"). A modest override keeps tactical
+        // jumps controllable.
+        const capturedBoostSpeed = (typeof gameState._pendingJumpSpeed === 'number' && gameState._pendingJumpSpeed > 0)
+            ? gameState._pendingJumpSpeed : gameState.emergencyWarp.boostSpeed;
+        gameState._pendingJumpSpeed = null;
+
         // Use 25% energy instead of warp charge
         gameState.energy = Math.max(0, gameState.energy - 25);
         gameState.emergencyWarp.transitioning = true;

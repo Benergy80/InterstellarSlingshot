@@ -9047,7 +9047,13 @@ function updateAllyShips() {
                     const jv = updateAllyShips._jumpVec.subVectors(_objective, pos);
                     const jd = jv.length();
                     const step = Math.min(jd * 0.08, 14); // burst, easing on approach
-                    ally.position.addScaledVector(jv.normalize(), step);
+                    jv.normalize();
+                    ally.position.addScaledVector(jv, step);
+                    // Face the JUMP direction — otherwise the facing block
+                    // below uses the stale _allyDir from the state-execute
+                    // (e.g. a patrol waypoint behind us), making the wingman
+                    // fly backwards during the dash.
+                    _allyDir.copy(jv);
                     if (typeof wingmanTracerPush === 'function') {
                         wingmanTracerPush(ally, 0x88ffee);
                     }
