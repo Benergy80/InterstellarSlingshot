@@ -495,7 +495,16 @@ export function createPlayer({ camera, scene, world, traffic, fx, hud, audio, on
     if (state.mode === 'ride' && state.ride) {
       const { train, carIdx } = state.ride;
       const car = train.cars[carIdx];
-      state.pos.set(car.position.x, car.position.y + 0.35, car.position.z);
+      // walk off: a movement key while stopped at a station steps you onto the platform
+      if (train.state === 'dwell' && (keys.w || keys.a || keys.s || keys.d)) {
+        const st = train.nextStation;
+        state.ride = null; state.mode = 'walk'; state.boardCooldown = 1.6;
+        state.pos.set(st.doorPoint.x, st.platY + P.eye, st.doorPoint.z); state.vel.set(0, 0, 0);
+        hud.toast(`ARRIVED — ${st.name}`, train.line); hud.setMode('SURFACE MODE'); audio.sfx('doors');
+        return;
+      }
+      // ride standing at platform-floor height (camera clear of the car body)
+      state.pos.set(car.position.x, train.platY + P.eye, car.position.z);
       state.vel.set(0, 0, 0);
       // the view turns with the track — add the car's yaw delta to ours
       _v.set(0, 0, -1).applyQuaternion(car.quaternion);
@@ -635,8 +644,20 @@ export function createPlayer({ camera, scene, world, traffic, fx, hud, audio, on
     let prompt = null;
     const veh = traffic.getVehicleNear && traffic.getVehicleNear(state.pos);
     if (veh) prompt = 'ENTER — BOARD AV';
+    if (state.boardCooldown > 0) state.boardCooldown -= dt;
     const b = prompt ? null : traffic.getBoardable(state.pos, state.pos.y - P.eye);
-    if (b) prompt = `ENTER — BOARD ${b.train.line.split('—')[0].trim()}`;
+    if (b) {
+      // just walk on: step onto a stopped car and you board automatically
+      const car = b.train.cars[b.carIdx];
+      const onCar = Math.hypot(car.position.x - state.pos.x, car.position.z - state.pos.z) < 2.4;
+      if (onCar && (state.boardCooldown || 0) <= 0) {
+        state.ride = b; state.mode = 'ride'; state.vel.set(0, 0, 0);
+        hud.toast(`BOARDED — ${b.train.line}`, `Departing ${b.station.name}`);
+        hud.setMode(`RIDING ${b.train.line}`); audio.sfx('doors');
+      } else {
+        prompt = `WALK ON — ${b.train.line.split('—')[0].trim()}`;
+      }
+    }
     if (!prompt) {
       for (const it of world.interactables) {
         const label = typeof it.label === 'function' ? it.label() : it.label;

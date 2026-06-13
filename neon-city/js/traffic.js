@@ -610,7 +610,7 @@ export function buildTraffic(scene, world, models) {
           train.loop.at(sk, _v1, _v2);
           const sAhead = sk + train.dir * 2.5;
           train.loop.at(sAhead, _v3);
-          _v1.y = train.railTop + 1.7;
+          _v1.y = train.railTop + 0.16;   // car floor sits at the platform floor (platY)
           _v3.y = _v1.y;
           const car = train.cars[k];
           car.position.copy(_v1);
