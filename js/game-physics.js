@@ -1911,6 +1911,13 @@ function updateSlingshotWhip() {
                 (body.userData.name || 'Gravity assist') + ' → ' +
                 (w.destName || 'deep space') + ' @ ' + Math.round(w.boost * 1000) + ' km/s');
         }
+        // Big arcade praise for a successful slingshot (black-hole whips rate higher)
+        if (typeof window !== 'undefined' && typeof window.flashArcadeText === 'function') {
+            const bh = (body.userData && body.userData.type === 'blackhole');
+            const words = bh ? ['ORBITAL PERFECTION!', 'GRAVITY SURFER!', 'STARSKIMMER!']
+                             : ['PERFECT SLINGSHOT!', 'GRAVITY ASSIST!', 'ORBITAL BOOST!', 'ESCAPE VELOCITY!'];
+            window.flashArcadeText(words[Math.floor(Math.random() * words.length)], bh ? 5 : 3);
+        }
         if (typeof playSound === 'function') { try { playSound('warp'); } catch (e) {} }
         return false;
     }

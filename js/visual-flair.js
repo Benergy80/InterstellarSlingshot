@@ -310,67 +310,83 @@ function playBossIntro(bossName, faction, colorHex) {
 }
 
 // ── 11. BLACK-HOLE ACCRETION SPIRAL ─────────────────────────────────────────
-// Particles spiral into the nearest black hole within 12,000u.
-const _acc = { bh: null, pts: null, geo: null, mat: null, data: null };
+// Small CHROMATIC particles spiral into EVERY black hole within range — so
+// both twin cores (Sgr A* + Companion Core) get a disk when you're in the Sol
+// region, plus any galaxy core you visit. One pooled Points system per hole.
+const _accMap = new Map(); // bh.uuid -> { pts, geo, mat, data, r0, bh }
+const _ACC_RANGE = 13000;
+const _ACC_N = 150;
+
+function _accMakeSpiral(bh) {
+    const r0 = (bh.geometry && bh.geometry.parameters ? bh.geometry.parameters.radius : 100);
+    const geo = new THREE.BufferGeometry();
+    const pos = new Float32Array(_ACC_N * 3);
+    const col = new Float32Array(_ACC_N * 3);
+    const data = [];
+    const c = new THREE.Color();
+    for (let i = 0; i < _ACC_N; i++) {
+        data.push({
+            a: Math.random() * Math.PI * 2,
+            r: r0 * (1.4 + Math.random() * 4.6),
+            y: (Math.random() - 0.5) * r0 * 0.5,
+            s: 0.5 + Math.random()
+        });
+        // Chromatic: rainbow hue spread around the disk, bright + saturated
+        c.setHSL(i / _ACC_N, 0.95, 0.6);
+        col[i * 3] = c.r; col[i * 3 + 1] = c.g; col[i * 3 + 2] = c.b;
+    }
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    const mat = new THREE.PointsMaterial({
+        size: Math.max(1.6, r0 * 0.022), // SMALLER (was r0*0.06)
+        vertexColors: true, transparent: true,
+        opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false
+    });
+    const pts = new THREE.Points(geo, mat);
+    pts.frustumCulled = false;
+    scene.add(pts);
+    return { pts, geo, mat, data, r0, bh };
+}
 
 function _updateAccretionSpiral(fc) {
-    // Re-pick nearest BH every ~2s
-    if (fc % 120 === 0 || !_acc.bh) {
-        let best = null, bestD = 12000;
+    // Refresh which black holes are in range every ~2s
+    if (fc % 120 === 0 || _accMap.size === 0) {
+        const inRange = new Set();
         if (typeof planets !== 'undefined') {
             for (let i = 0; i < planets.length; i++) {
                 const p = planets[i];
                 if (!p || !p.userData || p.userData.type !== 'blackhole') continue;
-                const d = camera.position.distanceTo(p.position);
-                if (d < bestD) { bestD = d; best = p; }
+                if (camera.position.distanceTo(p.position) > _ACC_RANGE) continue;
+                inRange.add(p.uuid);
+                if (!_accMap.has(p.uuid)) _accMap.set(p.uuid, _accMakeSpiral(p));
             }
         }
-        if (best !== _acc.bh) {
-            if (_acc.pts) { scene.remove(_acc.pts); _acc.geo.dispose(); _acc.mat.dispose(); _acc.pts = null; }
-            _acc.bh = best;
-            if (best) {
-                const N = 220;
-                const r0 = (best.geometry && best.geometry.parameters ? best.geometry.parameters.radius : 100);
-                _acc.geo = new THREE.BufferGeometry();
-                const pos = new Float32Array(N * 3);
-                _acc.data = [];
-                for (let i = 0; i < N; i++) {
-                    _acc.data.push({
-                        a: Math.random() * Math.PI * 2,
-                        r: r0 * (1.5 + Math.random() * 4.5),
-                        y: (Math.random() - 0.5) * r0 * 0.5,
-                        s: 0.5 + Math.random()
-                    });
-                }
-                _acc.geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-                _acc.mat = new THREE.PointsMaterial({
-                    color: 0xbb88ff, size: Math.max(4, r0 * 0.06), transparent: true,
-                    opacity: 0.8, blending: THREE.AdditiveBlending, depthWrite: false
-                });
-                _acc.pts = new THREE.Points(_acc.geo, _acc.mat);
-                _acc.pts.frustumCulled = false;
-                scene.add(_acc.pts);
+        // Dispose spirals whose hole left range
+        _accMap.forEach((s, uuid) => {
+            if (!inRange.has(uuid)) {
+                scene.remove(s.pts); s.geo.dispose(); s.mat.dispose();
+                _accMap.delete(uuid);
             }
-        }
+        });
     }
-    if (!_acc.bh || !_acc.pts) return;
-    const r0 = (_acc.bh.geometry && _acc.bh.geometry.parameters ? _acc.bh.geometry.parameters.radius : 100);
-    const arr = _acc.geo.attributes.position.array;
-    const bp = _acc.bh.position;
-    for (let i = 0; i < _acc.data.length; i++) {
-        const d = _acc.data[i];
-        d.a += (0.02 * d.s * r0 * 2) / d.r;  // faster spin closer in
-        d.r -= 0.12 * d.s;                    // inward drift
-        if (d.r < r0 * 1.1) {                 // crossed the horizon — respawn outside
-            d.r = r0 * (4 + Math.random() * 2);
-            d.a = Math.random() * Math.PI * 2;
-            d.y = (Math.random() - 0.5) * r0 * 0.5;
+    // Animate every active spiral
+    _accMap.forEach((s) => {
+        const r0 = s.r0, arr = s.geo.attributes.position.array, bp = s.bh.position;
+        for (let i = 0; i < s.data.length; i++) {
+            const d = s.data[i];
+            d.a += (0.02 * d.s * r0 * 2) / d.r; // faster spin closer in
+            d.r -= 0.12 * d.s;                   // inward drift
+            if (d.r < r0 * 1.1) {                // crossed the horizon — respawn outside
+                d.r = r0 * (4 + Math.random() * 2);
+                d.a = Math.random() * Math.PI * 2;
+                d.y = (Math.random() - 0.5) * r0 * 0.5;
+            }
+            arr[i * 3] = bp.x + Math.cos(d.a) * d.r;
+            arr[i * 3 + 1] = bp.y + d.y * (d.r / (r0 * 6));
+            arr[i * 3 + 2] = bp.z + Math.sin(d.a) * d.r;
         }
-        arr[i * 3] = bp.x + Math.cos(d.a) * d.r;
-        arr[i * 3 + 1] = bp.y + d.y * (d.r / (r0 * 6));
-        arr[i * 3 + 2] = bp.z + Math.sin(d.a) * d.r;
-    }
-    _acc.geo.attributes.position.needsUpdate = true;
+        s.geo.attributes.position.needsUpdate = true;
+    });
 }
 
 // ── 12. PLANET RIM-GLOW ATMOSPHERES ─────────────────────────────────────────
@@ -420,7 +436,9 @@ function _updateRimGlow(fc) {
 }
 
 // ── 13. FLOATING KILL TEXT ──────────────────────────────────────────────────
-function spawnKillText(worldPos, text, cssColor) {
+// sizePx optional: caller passes a proximity-scaled size (closer hit = bigger
+// word). Defaults to 15 if omitted.
+function spawnKillText(worldPos, text, cssColor, sizePx) {
     try {
         if (!document.getElementById('killTextStyle')) {
             const st = document.createElement('style');
@@ -431,9 +449,10 @@ function spawnKillText(worldPos, text, cssColor) {
         }
         const v = worldPos.clone().project(camera);
         if (v.z > 1 || v.x < -1 || v.x > 1 || v.y < -1 || v.y > 1) return; // off-screen
+        const fs = Math.round(sizePx || 15);
         const div = document.createElement('div');
         div.style.cssText = 'position:fixed;z-index:55;pointer-events:none;font-family:Orbitron,monospace;' +
-            'font-weight:bold;font-size:15px;text-shadow:0 0 8px rgba(0,0,0,0.9);' +
+            'font-weight:bold;font-size:' + fs + 'px;text-shadow:0 0 8px rgba(0,0,0,0.9);' +
             'animation:killTextFloat 1.4s ease-out forwards;' +
             'left:' + ((v.x + 1) / 2 * window.innerWidth).toFixed(0) + 'px;' +
             'top:' + ((1 - v.y) / 2 * window.innerHeight).toFixed(0) + 'px;' +
@@ -442,6 +461,13 @@ function spawnKillText(worldPos, text, cssColor) {
         document.body.appendChild(div);
         setTimeout(() => div.remove(), 1500);
     } catch (e) {}
+}
+
+// Proximity → font size: a hit at point-blank reads ~34px, fading to ~13px
+// by 4,000u. Used for the HIT/CRIT markers so close kills feel bigger.
+function killTextSizeForDistance(dist) {
+    const t = Math.max(0, Math.min(1, (dist - 250) / 3750)); // 0 near .. 1 far
+    return Math.round(34 - t * 21); // 34 .. 13
 }
 
 // ── 14. EVENT TEXT — cinematic center-screen announcements ─────────────────
@@ -468,6 +494,76 @@ function flashEventText(title, cssColor, subtext) {
         document.body.appendChild(div);
         setTimeout(() => div.remove(), 2100);
     } catch (e) {}
+}
+
+// ── 14b. ARCADE PRAISE — big tiered words, upper-middle of the screen ───────
+// Pops like HIT/CRIT but LARGER and screen-centered (not at the target).
+// Tiered by rarity so the biggest words are reserved for the rarest moments;
+// a kill-streak escalates the tier (rapid kills → bigger praise).
+const _TIER_STYLE = {
+    1: { size: 30, color: '#9fe8ff' },   // good
+    2: { size: 38, color: '#ffe066' },   // better
+    3: { size: 46, color: '#ff9a3c' },   // rare
+    4: { size: 55, color: '#ff5db1' },   // very rare
+    5: { size: 62, color: '#c08cff' },   // extremely rare
+    6: { size: 72, color: '#ff3df0' },   // legendary
+};
+const _PRAISE = {
+    1: ['NICE SHOT!', 'CLEAN SHOT!', 'DIRECT HIT!', 'SOLID IMPACT!', 'TARGET STRUCK!'],
+    2: ['EXCELLENT!', 'PRECISION HIT!', 'BULLSEYE!', 'DEADLY ACCURACY!', 'OUTSTANDING!'],
+    3: ['INCREDIBLE SHOT!', 'DEVASTATING HIT!', 'SPECTACULAR!', 'PERFECT SHOT!', 'PHENOMENAL!'],
+    4: ['IMPOSSIBLE SHOT!', 'UNBELIEVABLE!', 'ASTONISHING!', 'ABSOLUTE DESTRUCTION!'],
+    5: ['ORBITAL PERFECTION!', 'COSMIC FORCE!', 'TRANSCENDENT!', 'GALACTIC ACE!'],
+    6: ['REALITY BENT!', 'GODLIKE!', 'LEGENDARY!', 'STARBORN!'],
+};
+const _STREAK_WORD = { 2:'DOUBLE KILL!', 3:'TRIPLE KILL!', 4:'QUAD KILL!', 5:'MULTI-KILL!',
+    7:'RAMPAGE!', 10:'UNSTOPPABLE!', 15:'DOMINATING!', 20:'GODLIKE!' };
+const _arcade = { last: 0, streak: 0, lastKill: 0 };
+const _pick = (a) => a[Math.floor(Math.random() * a.length)];
+
+function flashArcadeText(text, tier) {
+    try {
+        const ts = _TIER_STYLE[tier] || _TIER_STYLE[1];
+        if (!document.getElementById('arcadeTextStyle')) {
+            const st = document.createElement('style');
+            st.id = 'arcadeTextStyle';
+            st.textContent = '@keyframes arcadePop{0%{opacity:0;transform:translateX(-50%) scale(2.1)}' +
+                '14%{opacity:1;transform:translateX(-50%) scale(0.92)}24%{transform:translateX(-50%) scale(1.04)}' +
+                '34%{transform:translateX(-50%) scale(1)}74%{opacity:1}100%{opacity:0;transform:translateX(-50%) scale(1.08)}}';
+            document.head.appendChild(st);
+        }
+        const old = document.getElementById('arcadeText'); if (old) old.remove();
+        const div = document.createElement('div');
+        div.id = 'arcadeText';
+        div.style.cssText = 'position:fixed;left:50%;top:19%;transform:translateX(-50%);z-index:73;' +
+            'pointer-events:none;text-align:center;white-space:nowrap;font-family:Orbitron,monospace;' +
+            'font-weight:900;font-size:' + ts.size + 'px;letter-spacing:3px;color:' + ts.color + ';' +
+            'text-shadow:0 0 18px ' + ts.color + ',0 0 36px rgba(0,0,0,0.7);' +
+            'animation:arcadePop 1.6s ease-out forwards';
+        div.textContent = text;
+        document.body.appendChild(div);
+        setTimeout(() => { if (div.parentNode) div.remove(); }, 1700);
+    } catch (e) {}
+}
+
+// Called on each enemy kill. Manages the streak and picks a tier so the
+// biggest words stay rare (most kills → tier 1; streaks + bosses escalate).
+function arcadePraiseKill(isBoss) {
+    const now = Date.now();
+    if (now - (_arcade.lastKill || 0) > 3500) _arcade.streak = 0;
+    _arcade.streak++; _arcade.lastKill = now;
+
+    if (_STREAK_WORD[_arcade.streak]) {
+        flashArcadeText(_STREAK_WORD[_arcade.streak], Math.min(6, 2 + Math.floor(_arcade.streak / 3)));
+        return;
+    }
+    let tier = 1;
+    const roll = Math.random();
+    if (roll > 0.985) tier = 3; else if (roll > 0.88) tier = 2;
+    tier += Math.floor(_arcade.streak / 4);          // streak escalates the praise
+    if (isBoss) tier = Math.max(tier, 4);            // boss kills always feel huge
+    tier = Math.max(1, Math.min(6, tier));
+    flashArcadeText(_pick(_PRAISE[tier]), tier);
 }
 
 // ── 15. WINGMAN JUMP TRACERS ────────────────────────────────────────────────
@@ -587,6 +683,9 @@ if (typeof window !== 'undefined') {
     window.createDistressFlare = createDistressFlare;
     window.playBossIntro = playBossIntro;
     window.spawnKillText = spawnKillText;
+    window.killTextSizeForDistance = killTextSizeForDistance;
+    window.flashArcadeText = flashArcadeText;
+    window.arcadePraiseKill = arcadePraiseKill;
     window.flashEventText = flashEventText;
     window.wingmanTracerPush = wingmanTracerPush;
     window.wingmanTracerFade = wingmanTracerFade;

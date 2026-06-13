@@ -6222,8 +6222,11 @@ function checkWeaponHits(targetPosition) {
                     Date.now() - (enemy.userData._lastHitTextAt || 0) > 300) {
                     enemy.userData._lastHitTextAt = Date.now();
                     const crit = Math.random() < 0.18;
+                    // Size scales with proximity — a close hit reads big.
+                    const _hd = camera.position.distanceTo(enemy.position);
+                    const _hs = (typeof killTextSizeForDistance === 'function') ? killTextSizeForDistance(_hd) : 15;
                     spawnKillText(enemy.position, crit ? 'CRIT!' : 'HIT',
-                        crit ? '#ff8844' : '#ffee88');
+                        crit ? '#ff8844' : '#ffee88', crit ? _hs * 1.25 : _hs);
                 }
                 playSound('weapon');
                 showAchievement('Target Hit!', `Damaged ${enemy.userData.name} (${enemy.userData.health}/${enemy.userData.maxHealth} HP)`);
@@ -6325,6 +6328,11 @@ if (enemy.userData.health <= 0) {
     
     if (wasBoss) {
     showAchievement('BOSS DEFEATED!', `${bossName} destroyed!`);
+    // Top-tier arcade praise for a flagship kill
+    if (typeof flashArcadeText === 'function') {
+        const _bw = ['TARGET ELIMINATED!', 'THREAT NEUTRALIZED!', 'FLAGSHIP DOWN!', 'REALITY BENT!'];
+        flashArcadeText(_bw[Math.floor(Math.random() * _bw.length)], 6);
+    }
     // Call boss victory check and fireworks
     if (typeof checkBossVictory === 'function') {
         checkBossVictory(enemy);
@@ -6353,6 +6361,8 @@ if (enemy.userData.health <= 0) {
         else if (_kv === 'ember') spawnKillText(enemy.position, '+HULL', '#ff6644');
         else spawnKillText(enemy.position, '+REP', '#ffcc44');
     }
+    // Big tiered arcade praise, upper-middle of the screen (streak-aware).
+    if (typeof arcadePraiseKill === 'function') arcadePraiseKill(false);
 
     const _lootVariant = enemy.userData._pirateLootVariant;
     if (_lootVariant === 'flare') {
