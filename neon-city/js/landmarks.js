@@ -923,6 +923,153 @@ export function buildLandmarks(scene, world) {
     trunks.frustumCulled = crowns.frustumCulled = false;
     scene.add(trunks, crowns);
   };
+  // ════════════ LAKE LIFE — ships, jetty+lighthouse, fireworks, harbor, island ════════════
+  {
+    const lrnd = mulberry32(C.SEED + 333);
+    const winMat = (c, k) => glow(c, k);
+    // ---- a reusable ship hull builder (hull + decks + lit windows + funnels) ----
+    const makeShip = (len, wid, decks, hullCol, accent) => {
+      const g = new THREE.Group();
+      const hull = new THREE.Mesh(new THREE.BoxGeometry(len, 7, wid), solid(hullCol, 0.5, 0.5)); hull.position.y = 2.5; g.add(hull);
+      const bow = new THREE.Mesh(new THREE.CylinderGeometry(wid / 2, wid / 2, 7, 16, 1, false, 0, Math.PI), solid(hullCol, 0.5, 0.5));
+      bow.rotation.z = Math.PI / 2; bow.position.set(len / 2, 2.5, 0); bow.scale.set(1, 0.6, 1); g.add(bow);
+      for (let d = 0; d < decks; d++) {
+        const dl = len - 8 - d * (len * 0.12), dw = wid - 1.5 - d * 1.2;
+        const deck = new THREE.Mesh(new THREE.BoxGeometry(dl, 3.4, dw), solid(0xe9eef6, 0.6, 0.2));
+        deck.position.set(-d * 1.5, 6 + d * 3.6, 0); g.add(deck);
+        const strip = new THREE.Mesh(new THREE.BoxGeometry(dl, 0.5, dw + 0.1), winMat(accent, 1.0));
+        strip.position.set(-d * 1.5, 5.2 + d * 3.6, 0); g.add(strip);
+      }
+      for (const fx of [-len * 0.12, len * 0.06]) { const f = new THREE.Mesh(new THREE.CylinderGeometry(1.4, 1.6, 5, 10), solid(0x33405c, 0.5, 0.4)); f.position.set(fx, decks * 3.6 + 7.5, 0); g.add(f); }
+      return g;
+    };
+
+    // ---- cruise ships drifting along the lake (wrap around) ----
+    const cruisers = [];
+    for (let i = 0; i < 2; i++) {
+      const s = makeShip(64, 14, 3, 0x12203a, pick(lrnd, NEON_LIST));
+      s.position.set(SHORE - 180 - i * 230, 0, -H + 120 + i * 360);
+      scene.add(s); cruisers.push({ s, sp: 7 + i * 3, dir: i % 2 ? -1 : 1 });
+    }
+    world.pois.push({ name: 'LAKE CRUISE', pos: new THREE.Vector3(SHORE - 180, 4, -H + 120), desc: 'Mishigami pleasure cruisers' });
+    world.updateFns.push((dt, t) => {
+      for (const c of cruisers) {
+        c.s.position.z += c.dir * c.sp * dt;
+        if (c.s.position.z > H + 200) c.s.position.z = -H - 200;
+        if (c.s.position.z < -H - 200) c.s.position.z = H + 200;
+        c.s.rotation.y = c.dir > 0 ? 0 : Math.PI;
+        c.s.position.y = Math.sin(t * 0.6 + c.s.position.x) * 0.3;
+      }
+    });
+
+    // ---- many small boats bobbing on the lake (instanced) ----
+    const boatGeo = (() => { const h = new THREE.BoxGeometry(4.2, 1.2, 1.8); h.translate(0, 0.6, 0); const c = new THREE.BoxGeometry(1.8, 1.1, 1.4); c.translate(-0.4, 1.6, 0); return BufferGeometryUtils.mergeGeometries([h, c]); })();
+    const NB = 30, boats = new THREE.InstancedMesh(boatGeo, solid(0xcfd6e4, 0.6, 0.3), NB), bst = [];
+    for (let i = 0; i < NB; i++) bst.push({ x: SHORE - 60 - lrnd() * 520, z: -H + lrnd() * C.SPAN, ph: lrnd() * 9, yaw: lrnd() * 6, drift: (lrnd() - 0.5) * 2 });
+    boats.frustumCulled = false; scene.add(boats);
+    const bdum = new THREE.Object3D();
+    world.updateFns.push((dt, t) => { for (let i = 0; i < NB; i++) { const b = bst[i]; b.z += b.drift * dt; if (b.z > H) b.z = -H; if (b.z < -H) b.z = H; bdum.position.set(b.x, 0.2 + Math.sin(t * 1.2 + b.ph) * 0.25, b.z); bdum.rotation.set(Math.sin(t + b.ph) * 0.06, b.yaw, Math.cos(t * 1.1 + b.ph) * 0.05); bdum.updateMatrix(); boats.setMatrixAt(i, bdum.matrix); } boats.instanceMatrix.needsUpdate = true; });
+
+    // ---- breakwater JETTY + LIGHTHOUSE with a sweeping beam ----
+    {
+      const jz = -H + 250, jLen = 120;
+      const jetty = new THREE.Mesh(new THREE.BoxGeometry(jLen, 2.2, 7), solid(0x3a3f4d, 0.85, 0.15));
+      jetty.position.set(SHORE - jLen / 2, 0.4, jz); scene.add(jetty);
+      world.surfaces.push({ minX: SHORE - jLen, maxX: SHORE, minZ: jz - 3.5, maxZ: jz + 3.5, y: 1.5 });
+      const lx = SHORE - jLen + 4;
+      const base = new THREE.Mesh(new THREE.CylinderGeometry(3, 3.6, 14, 14), solid(0xe8ecf2, 0.7, 0.1)); base.position.set(lx, 7, jz); scene.add(base);
+      for (let b = 0; b < 3; b++) { const band = new THREE.Mesh(new THREE.CylinderGeometry(3.05, 3.4, 2, 14), glow(NEON.red, 0.8)); band.position.set(lx, 3 + b * 4.5, jz); scene.add(band); }
+      const lantern = new THREE.Mesh(new THREE.CylinderGeometry(2.2, 2.2, 3, 12), glow(0xffe9b0, 1.2)); lantern.position.set(lx, 15.5, jz); scene.add(lantern);
+      const beam = new THREE.Mesh(new THREE.ConeGeometry(5, 90, 16, 1, true), new THREE.MeshBasicMaterial({ color: 0xfff0c0, transparent: true, opacity: 0.12, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, toneMapped: false }));
+      beam.rotation.z = Math.PI / 2; beam.position.set(lx, 15.5, jz); const beamPivot = new THREE.Group(); beamPivot.position.set(lx, 15.5, jz); beam.position.set(0, 0, 0); beam.position.x = -45; beamPivot.add(beam); scene.add(beamPivot);
+      world.pois.push({ name: 'HARBOR LIGHT', pos: new THREE.Vector3(lx, 2, jz), desc: 'Mishigami breakwater lighthouse' });
+      world.updateFns.push((dt, t) => { beamPivot.rotation.y = t * 0.7; lantern.material.opacity = 0.9 + 0.1 * Math.sin(t * 4); });
+    }
+
+    // ---- FIREWORKS BARGE ----
+    {
+      const barge = new THREE.Mesh(new THREE.BoxGeometry(20, 1.6, 11), solid(0x20242e, 0.6, 0.4)); barge.position.set(SHORE - 170, 0.4, -120); scene.add(barge);
+      const FW = 200, pos = new Float32Array(FW * 3).fill(-9999), col = new Float32Array(FW * 3);
+      const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.BufferAttribute(pos, 3)); geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+      const pts = new THREE.Points(geo, new THREE.PointsMaterial({ size: 2.0, map: glowTexture(32, 'rgba(255,255,255,1)'), vertexColors: true, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, sizeAttenuation: true }));
+      pts.frustumCulled = false; scene.add(pts);
+      const parts = []; let timer = 2; const lx2 = SHORE - 170, lz2 = -120;
+      world.updateFns.push((dt, t) => {
+        timer -= dt;
+        if (timer <= 0) { parts.push({ x: lx2 + (lrnd() - 0.5) * 8, y: 2, z: lz2 + (lrnd() - 0.5) * 6, vx: (lrnd() - 0.5) * 3, vy: 34 + lrnd() * 12, vz: (lrnd() - 0.5) * 3, life: 1.5, shell: true, col: new THREE.Color(pick(lrnd, NEON_LIST)) }); timer = 1.3 + lrnd() * 2.4; }
+        for (let i = parts.length - 1; i >= 0; i--) { const p = parts[i]; p.life -= dt; p.vy -= 17 * dt; p.x += p.vx * dt; p.y += p.vy * dt; p.z += p.vz * dt;
+          if (p.shell && (p.vy < 3 || p.life < 0.2)) { for (let k = 0; k < 44; k++) { const a = lrnd() * Math.PI * 2, e = Math.acos(2 * lrnd() - 1), sp = 9 + lrnd() * 10; parts.push({ x: p.x, y: p.y, z: p.z, vx: Math.sin(e) * Math.cos(a) * sp, vy: Math.cos(e) * sp, vz: Math.sin(e) * Math.sin(a) * sp, life: 1.1 + lrnd() * 0.6, shell: false, col: p.col }); } parts.splice(i, 1); continue; }
+          if (p.life <= 0) parts.splice(i, 1);
+        }
+        const n = Math.min(parts.length, FW);
+        for (let i = 0; i < n; i++) { const p = parts[i], f = Math.max(0, Math.min(1, p.life)); pos[i * 3] = p.x; pos[i * 3 + 1] = p.y; pos[i * 3 + 2] = p.z; col[i * 3] = p.col.r * f; col[i * 3 + 1] = p.col.g * f; col[i * 3 + 2] = p.col.b * f; }
+        for (let i = n; i < FW; i++) pos[i * 3 + 1] = -9999;
+        geo.attributes.position.needsUpdate = true; geo.attributes.color.needsUpdate = true;
+      });
+      world.pois.push({ name: 'FIREWORKS BARGE', pos: new THREE.Vector3(lx2, 2, lz2), desc: 'Nightly pyrotechnics over Mishigami' });
+    }
+
+    // ---- SHIPPING HARBOR at the south end: cranes, container stacks, cargo ship ----
+    {
+      const hz = H - 160, hx = SHORE - 40;
+      const contColors = [0xc0492f, 0x2f6cc0, 0x2fa34a, 0xc7a52f, 0x8a3fb0];
+      const cont = new THREE.InstancedMesh(new THREE.BoxGeometry(6, 2.6, 2.6), solid(0xffffff, 0.7, 0.3), 120);
+      const cdum = new THREE.Object3D(), ccol = new THREE.Color(); let ci = 0;
+      for (let row = 0; row < 5; row++) for (let cidx = 0; cidx < 8; cidx++) for (let stack = 0; stack < (1 + ((row + cidx) % 3)); stack++) {
+        if (ci >= 120) break;
+        cdum.position.set(hx - 10 - row * 7, 1.4 + stack * 2.7, hz - 24 + cidx * 6.4); cdum.updateMatrix();
+        cont.setMatrixAt(ci, cdum.matrix); cont.setColorAt(ci, ccol.setHex(contColors[(row + cidx + stack) % contColors.length])); ci++;
+      }
+      cont.count = ci; cont.instanceColor.needsUpdate = true; cont.frustumCulled = false; scene.add(cont);
+      addCol(hx - 50, hx, hz - 28, hz + 28, 0, 9);
+      // gantry cranes
+      for (let k = 0; k < 3; k++) {
+        const cz = hz - 18 + k * 18, g = new THREE.Group();
+        for (const e of [-1, 1]) { const leg = new THREE.Mesh(new THREE.BoxGeometry(1.2, 26, 1.2), solid(0xb24a2a, 0.5, 0.5)); leg.position.set(hx - 4, 13, cz + e * 6); g.add(leg); }
+        const boom = new THREE.Mesh(new THREE.BoxGeometry(40, 1.4, 1.4), glow(NEON.amber, 0.6)); boom.position.set(hx - 16, 26, cz); g.add(boom);
+        scene.add(g);
+      }
+      // a docked cargo ship
+      const cargo = makeShip(70, 16, 1, 0x223047, NEON.amber); cargo.position.set(hx - 60, 0, hz + 8); cargo.rotation.y = Math.PI; scene.add(cargo);
+      world.pois.push({ name: 'GAGARIN HARBOR', pos: new THREE.Vector3(hx - 20, 2, hz), desc: 'New Chicago container terminal' });
+    }
+
+    // ---- MILLIONAIRE ISLAND with mansions + ferries to shore ----
+    {
+      const ix = SHORE - 320, iz = 60, ir = 64;
+      const isle = new THREE.Mesh(new THREE.CylinderGeometry(ir, ir + 6, 4, 36), solid(0x1d3324, 0.9, 0.05));
+      isle.position.set(ix, 0.4, iz); scene.add(isle);
+      const beach = new THREE.Mesh(new THREE.CylinderGeometry(ir + 9, ir + 11, 1.4, 36), solid(0x59513e, 0.9, 0.05)); beach.position.set(ix, -0.2, iz); scene.add(beach);
+      addCol(ix - ir, ix + ir, iz - ir, iz + ir, 0, 3.5);
+      world.surfaces.push({ minX: ix - ir + 4, maxX: ix + ir - 4, minZ: iz - ir + 4, maxZ: iz + ir - 4, y: 2.4 });
+      // mansions ringed around the island
+      for (let m = 0; m < 6; m++) {
+        const a = (m / 6) * Math.PI * 2, mx = ix + Math.cos(a) * ir * 0.55, mz = iz + Math.sin(a) * ir * 0.55;
+        const w = 14 + lrnd() * 8, d = 11 + lrnd() * 6, h = 9 + lrnd() * 7;
+        const man = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), solid(0x2c3550, 0.5, 0.35)); man.position.set(mx, 2.4 + h / 2, mz); scene.add(man);
+        const roof = new THREE.Mesh(new THREE.BoxGeometry(w + 1.5, 0.6, d + 1.5), glow(pick(lrnd, NEON_LIST), 0.7)); roof.position.set(mx, 2.4 + h + 0.3, mz); scene.add(roof);
+        const win = new THREE.Mesh(new THREE.BoxGeometry(w - 1, h - 2, d - 1), winMat(0xffe6a8, 0.45)); win.position.set(mx, 2.4 + h / 2, mz); win.material.transparent = true; win.material.opacity = 0.5; scene.add(win);
+        addCol(mx - w / 2, mx + w / 2, mz - d / 2, mz + d / 2, 0, 2.4 + h);
+      }
+      scatterTrees(ix - ir * 0.7, iz - ir * 0.7, ir * 1.4, ir * 1.4, 22, [ix, iz, 22]);
+      world.pois.push({ name: 'PLATINUM ISLE', pos: new THREE.Vector3(ix, 3, iz), desc: 'Billionaires’ island estates' });
+      // docks: island + mainland, and two ferries shuttling between them
+      const mainDockX = SHORE - 6, mainDockZ = iz;
+      const islDockX = ix + ir, islDockZ = iz;
+      for (const [dx, dz] of [[mainDockX - 8, mainDockZ], [islDockX + 6, islDockZ]]) { const dk = new THREE.Mesh(new THREE.BoxGeometry(16, 1, 6), solid(0x2a3145, 0.5, 0.4)); dk.position.set(dx, 0.3, dz); scene.add(dk); }
+      const ferries = [];
+      for (let f = 0; f < 2; f++) { const fy = makeShip(16, 6, 1, 0x2a3a52, NEON.cyan); scene.add(fy); ferries.push({ fy, p: f * 0.5 }); }
+      world.updateFns.push((dt, t) => {
+        for (const fr of ferries) {
+          fr.p = (fr.p + dt * 0.04) % 1; const tri = fr.p < 0.5 ? fr.p * 2 : (1 - fr.p) * 2;
+          fr.fy.position.set(mainDockX + (islDockX - mainDockX) * tri, Math.sin(t + fr.p * 9) * 0.2, mainDockZ);
+          fr.fy.rotation.y = fr.p < 0.5 ? Math.PI : 0;
+        }
+      });
+      world.pois.push({ name: 'ISLE FERRY', pos: new THREE.Vector3(mainDockX - 8, 1, mainDockZ), desc: 'Shuttles to Platinum Isle' });
+    }
+  }
+
   // ════════════ PARK ACTIVITY — fountain, holo tree, strollers, drones, path lights ════════════
   for (const blk of res.park || []) {
     const cx = blk.cx, cz = blk.cz;
