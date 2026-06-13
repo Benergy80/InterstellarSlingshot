@@ -1419,6 +1419,9 @@ export function buildWorld(scene, renderer) {
         };
         addRail(cwx + nx * D1, cwz + nz * D1, nx !== 0 ? 0.07 : AW / 2, nz !== 0 ? 0.07 : AW / 2);      // outer edge
         for (const s of [-1, 1]) addRail(cwx + nx * omid + awx * s * AW / 2, cwz + nz * omid + awz * s * AW / 2, awx ? 0.07 : OW / 2, awz ? 0.07 : OW / 2);
+        // walkable rooftop the escape delivers you onto
+        world.surfaces.push({ minX: b.x - b.w / 2 + 0.5, maxX: b.x + b.w / 2 - 0.5, minZ: b.z - b.d / 2 + 0.5, maxZ: b.z + b.d / 2 - 0.5, y: levels * STEP });
+        b._roofY = levels * STEP;
         world.pois.push({ name: 'FIRE ESCAPE', pos: new THREE.Vector3(cwx + nx * D1, 2, cwz + nz * D1), desc: 'Climbable switchback to the roof' });
       });
       if (escGeo.length) { const m = new THREE.Mesh(BufferGeometryUtils.mergeGeometries(escGeo), metalMat); m.frustumCulled = false; scene.add(m); }
@@ -1484,32 +1487,43 @@ export function buildWorld(scene, renderer) {
       if (buttGeo.length) { const m = new THREE.Mesh(BufferGeometryUtils.mergeGeometries(buttGeo), stoneMat); m.frustumCulled = false; scene.add(m); }
     }
 
-    // ── sky bridges between nearby towers ──
+    // ── CLIMBABLE sky bridges — walkable decks linking similar-height rooftops ──
     {
-      const tube = [], trim = [];
-      const tall = buildings.filter(b => !b.arcade && b.h >= 55).sort(() => drnd() - 0.5);
+      const tube = [], rails = [];
+      const tall = buildings.filter(b => !b.arcade && !b.glbTower && b.h >= 40).sort(() => drnd() - 0.5);
       const used = new Set(); let made = 0;
-      for (let i = 0; i < tall.length && made < 18; i++) {
+      const ensureRoof = (b, y) => { world.surfaces.push({ minX: b.x - b.w / 2 + 0.5, maxX: b.x + b.w / 2 - 0.5, minZ: b.z - b.d / 2 + 0.5, maxZ: b.z + b.d / 2 - 0.5, y }); };
+      for (let i = 0; i < tall.length && made < 16; i++) {
         if (used.has(i)) continue; const a = tall[i];
-        for (let j = i + 1; j < tall.length && made < 18; j++) {
+        for (let j = i + 1; j < tall.length && made < 16; j++) {
           if (used.has(j)) continue; const b = tall[j];
+          if (Math.abs(a.h - b.h) > 5) continue;                 // similar heights → both ends meet a roof
           const dx = b.x - a.x, dz = b.z - a.z, dist = Math.hypot(dx, dz);
-          if (dist < 30 || dist > 95) continue;
-          const len = dist - (Math.max(a.w, a.d) + Math.max(b.w, b.d)) / 2;
-          if (len < 12) continue;
-          const y = Math.min(a.h, b.h) * (0.45 + drnd() * 0.3); if (y < 24) continue;
-          const mx = (a.x + b.x) / 2, mz = (a.z + b.z) / 2, ry = Math.atan2(dx, dz);
-          const bg = new THREE.BoxGeometry(2.4, 2.6, len); bg.rotateY(ry); bg.translate(mx, y, mz); tube.push(bg);
-          const t1 = new THREE.BoxGeometry(2.6, 0.12, len); t1.rotateY(ry); t1.translate(mx, y + 1.4, mz); trim.push(t1);
-          const t2 = new THREE.BoxGeometry(2.6, 0.12, len); t2.rotateY(ry); t2.translate(mx, y - 1.4, mz); trim.push(t2);
+          if (dist < 28 || dist > 88) continue;
+          if (Math.min(Math.abs(dx), Math.abs(dz)) > 6) continue; // axis-aligned only (valid AABB deck)
+          const along = Math.abs(dx) > Math.abs(dz);
+          const y = Math.min(a.h, b.h) + 0.1, mx = (a.x + b.x) / 2, mz = (a.z + b.z) / 2, ry = Math.atan2(dx, dz), DW = 4;
+          // walkable deck surface (overlaps both rooftops at the ends)
+          world.surfaces.push(along
+            ? { minX: Math.min(a.x, b.x), maxX: Math.max(a.x, b.x), minZ: mz - DW / 2, maxZ: mz + DW / 2, y }
+            : { minX: mx - DW / 2, maxX: mx + DW / 2, minZ: Math.min(a.z, b.z), maxZ: Math.max(a.z, b.z), y });
+          const deck = new THREE.BoxGeometry(DW, 0.3, dist); deck.rotateY(ry); deck.translate(mx, y - 0.2, mz); tube.push(deck);
+          const gl = new THREE.BoxGeometry(DW, 2.6, dist); gl.rotateY(ry); gl.translate(mx, y + 1.2, mz); tube.push(gl);
+          for (const e of [-1, 1]) {
+            const r = new THREE.BoxGeometry(0.16, 1.0, dist); r.rotateY(ry); r.translate(mx + (along ? 0 : e * DW / 2), y + 0.5, mz + (along ? e * DW / 2 : 0)); rails.push(r);
+            world.colliders.push(along
+              ? { minX: Math.min(a.x, b.x), maxX: Math.max(a.x, b.x), minZ: mz + e * DW / 2 - 0.12, maxZ: mz + e * DW / 2 + 0.12, minY: y, maxY: y + 1.3 }
+              : { minX: mx + e * DW / 2 - 0.12, maxX: mx + e * DW / 2 + 0.12, minZ: Math.min(a.z, b.z), maxZ: Math.max(a.z, b.z), minY: y, maxY: y + 1.3 });
+          }
+          ensureRoof(a, y); ensureRoof(b, y);
           used.add(i); used.add(j); made++; break;
         }
       }
       if (tube.length) {
-        const glass = new THREE.MeshStandardMaterial({ color: 0x10202f, roughness: 0.1, metalness: 0.6, transparent: true, opacity: 0.5 });
+        const glass = new THREE.MeshStandardMaterial({ color: 0x12243a, roughness: 0.12, metalness: 0.6, transparent: true, opacity: 0.42 });
         const m = new THREE.Mesh(BufferGeometryUtils.mergeGeometries(tube), glass); m.frustumCulled = false; scene.add(m);
       }
-      if (trim.length) { const m = new THREE.Mesh(BufferGeometryUtils.mergeGeometries(trim), new THREE.MeshBasicMaterial({ color: new THREE.Color(NEON.cyan).multiplyScalar(1.1), toneMapped: false })); m.frustumCulled = false; scene.add(m); }
+      if (rails.length) { const m = new THREE.Mesh(BufferGeometryUtils.mergeGeometries(rails), new THREE.MeshBasicMaterial({ color: new THREE.Color(NEON.cyan).multiplyScalar(1.2), toneMapped: false })); m.frustumCulled = false; scene.add(m); }
     }
 
     // ── neoclassical institutions: columned porticos on civic buildings ──
