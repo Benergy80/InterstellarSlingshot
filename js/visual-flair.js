@@ -500,6 +500,14 @@ function _updateAccretionSpiral(fc) {
 const _rimShells = new Map(); // planet.uuid -> { planet, shell, mat }
 
 function _updateRimGlow(fc) {
+    // EVERY FRAME: keep each shell glued to its planet. Planets orbit/move
+    // every frame; doing this only on the 20-frame rescan made the
+    // atmosphere visibly lag behind the planet. Cheap (≤6 position copies).
+    _rimShells.forEach((entry) => {
+        if (entry.planet && entry.shell) entry.shell.position.copy(entry.planet.position);
+    });
+
+    // Throttle only the EXPENSIVE part — choosing which planets get a shell.
     if (fc % 20 !== 0) return;
     if (typeof activePlanets === 'undefined') return;
     const RANGE = 4500, MAX_SHELLS = 6;
@@ -535,9 +543,8 @@ function _updateRimGlow(fc) {
             scene.remove(entry.shell);
             entry.shell.geometry.dispose(); entry.mat.dispose();
             _rimShells.delete(uuid);
-        } else {
-            entry.shell.position.copy(entry.planet.position); // follow orbits
         }
+        // (position-follow now happens every frame at the top of this fn)
     });
 }
 
