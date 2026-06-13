@@ -6225,8 +6225,10 @@ function checkWeaponHits(targetPosition) {
                     // Size scales with proximity — a close hit reads big.
                     const _hd = camera.position.distanceTo(enemy.position);
                     const _hs = (typeof killTextSizeForDistance === 'function') ? killTextSizeForDistance(_hd) : 15;
+                    // HIT and CRIT share the size (matches +MISSILE at mid range);
+                    // CRIT is distinguished by its word + orange color, not size.
                     spawnKillText(enemy.position, crit ? 'CRIT!' : 'HIT',
-                        crit ? '#ff8844' : '#ffee88', crit ? _hs * 1.25 : _hs);
+                        crit ? '#ff8844' : '#ffee88', _hs);
                 }
                 playSound('weapon');
                 showAchievement('Target Hit!', `Damaged ${enemy.userData.name} (${enemy.userData.health}/${enemy.userData.maxHealth} HP)`);

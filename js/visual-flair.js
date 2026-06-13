@@ -463,11 +463,11 @@ function spawnKillText(worldPos, text, cssColor, sizePx) {
     } catch (e) {}
 }
 
-// Proximity → font size: a hit at point-blank reads ~34px, fading to ~13px
-// by 4,000u. Used for the HIT/CRIT markers so close kills feel bigger.
+// Proximity → font size, TIGHT range so mid-distance matches the 15px
+// pickup text (+MISSILE etc.): ~19px point-blank, 15px at mid, ~11px far.
 function killTextSizeForDistance(dist) {
     const t = Math.max(0, Math.min(1, (dist - 250) / 3750)); // 0 near .. 1 far
-    return Math.round(34 - t * 21); // 34 .. 13
+    return Math.round(19 - t * 8); // 19 (near) .. 15 (mid) .. 11 (far)
 }
 
 // ── 14. EVENT TEXT — cinematic center-screen announcements ─────────────────
