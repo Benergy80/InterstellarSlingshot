@@ -1157,7 +1157,7 @@ export function buildLandmarks(scene, world) {
     const wrnd = mulberry32(C.SEED + 909);
     const rockMat = new THREE.MeshStandardMaterial({ color: 0x2a2f33, roughness: 0.95, metalness: 0.05, flatShading: true });
     const snowMat = new THREE.MeshStandardMaterial({ color: 0xdfe8f2, roughness: 0.7, metalness: 0.05, emissive: 0x26303f, emissiveIntensity: 0.4, flatShading: true });
-    const grassMat = new THREE.MeshStandardMaterial({ color: 0x16241a, roughness: 0.95, metalness: 0.0 });
+    const grassMat = new THREE.MeshStandardMaterial({ color: 0x231b12, roughness: 0.97, metalness: 0.0 });   // dusty wasteland flats
     const rock = [], snow = [];
     const peak = (x, z, r, h) => {
       const c = new THREE.ConeGeometry(r, h, 7 + (wrnd() * 4 | 0), 1); c.translate(x, h / 2 - 1, z); rock.push(c);
@@ -1181,11 +1181,31 @@ export function buildLandmarks(scene, world) {
     ridge('x', 1); ridge('z', -1); ridge('z', 1);
     if (rock.length) { const m = new THREE.Mesh(BufferGeometryUtils.mergeGeometries(rock), rockMat); m.frustumCulled = false; scene.add(m); }
     if (snow.length) { const m = new THREE.Mesh(BufferGeometryUtils.mergeGeometries(snow), snowMat); m.frustumCulled = false; scene.add(m); }
-    // foothill forest in the wilderness band on each land side
-    scatterTrees(H + 100, -H + 40, 240, H * 1.6, 60);
-    scatterTrees(-H + 40, -(H + 240), H * 1.6, 240, 60);
-    scatterTrees(-H + 40, H + 60, H * 1.6, 240, 60);
-    world.pois.push({ name: 'THE WILDS', pos: new THREE.Vector3(H + 420, 6, 0), desc: 'Wilderness ranges beyond New Chicago' });
+    // ── WASTELAND flora — sparse Joshua trees + boulders (a badlands, not a forest) ──
+    {
+      const jtGeo = (() => {
+        const P = [];
+        const tr = new THREE.CylinderGeometry(0.45, 0.7, 5.5, 6); tr.translate(0, 2.75, 0); P.push(tr);
+        for (let a = 0; a < 4; a++) {
+          const ang = a * 1.57 + 0.5, up = 3.6 + (a % 2) * 1.3;
+          const arm = new THREE.CylinderGeometry(0.24, 0.32, 2.6, 5); arm.rotateZ(0.8); arm.rotateY(ang); arm.translate(Math.cos(ang) * 1.2, up, Math.sin(ang) * 1.2); P.push(arm);
+          const tuft = new THREE.ConeGeometry(0.75, 1.4, 6); tuft.translate(Math.cos(ang) * 2.0, up + 1.2, Math.sin(ang) * 2.0); P.push(tuft);
+        }
+        const top = new THREE.ConeGeometry(0.8, 1.6, 6); top.translate(0, 5.9, 0); P.push(top);
+        return BufferGeometryUtils.mergeGeometries(P);
+      })();
+      const jtMat = new THREE.MeshStandardMaterial({ color: 0x2b3324, roughness: 0.9, metalness: 0.05, flatShading: true });
+      const rockGeo = new THREE.IcosahedronGeometry(1, 0);
+      const rockMat = new THREE.MeshStandardMaterial({ color: 0x2c2820, roughness: 0.96, metalness: 0.04, flatShading: true });
+      const rects = [[H + 50, H + 680, -H, H], [-H, H, -(H + 680), -(H + 50)], [-H, H, H + 50, H + 680]];
+      const NJ = 150, jt = new THREE.InstancedMesh(jtGeo, jtMat, NJ), jd = new THREE.Object3D();
+      for (let i = 0; i < NJ; i++) { const r = rects[i % 3]; jd.position.set(r[0] + wrnd() * (r[1] - r[0]), 0, r[2] + wrnd() * (r[3] - r[2])); jd.rotation.y = wrnd() * 6; jd.scale.setScalar(0.7 + wrnd() * 1.2); jd.updateMatrix(); jt.setMatrixAt(i, jd.matrix); }
+      jt.frustumCulled = false; scene.add(jt);
+      const NR = 110, rk = new THREE.InstancedMesh(rockGeo, rockMat, NR), rd = new THREE.Object3D();
+      for (let i = 0; i < NR; i++) { const r = rects[i % 3]; rd.position.set(r[0] + wrnd() * (r[1] - r[0]), 0.3, r[2] + wrnd() * (r[3] - r[2])); rd.rotation.set(wrnd() * 6, wrnd() * 6, wrnd() * 6); rd.scale.set(1 + wrnd() * 4.5, 0.7 + wrnd() * 2.5, 1 + wrnd() * 4.5); rd.updateMatrix(); rk.setMatrixAt(i, rd.matrix); }
+      rk.frustumCulled = false; scene.add(rk);
+    }
+    world.pois.push({ name: 'THE WASTES', pos: new THREE.Vector3(H + 420, 6, 0), desc: 'Irradiated badlands beyond New Chicago' });
   }
 
   // ════════════ NEW CHICAGO RIVER — through downtown, crossed by bridges ════════════

@@ -267,6 +267,10 @@ export function buildTraffic(scene, world, models) {
   // ════════════════ MONORAIL ════════════════
   {
     const CTR = (C.GRID - 1) / 2; // 5 — rings use road indices around downtown
+    // SPACEPORT EXPRESS: a long racetrack from downtown out east to Gagarin
+    const _rxx = (i) => -C.HALF + i * C.CELL - C.ROAD / 2;
+    const _zr1 = _rxx(5), _zr2 = _rxx(6), _xW = _rxx(3), _xE = C.HALF + 150;
+    const SPACEPORT_LOOP = [[_xW, _zr1], [_xE, _zr1], [_xE, _zr2], [_xW, _zr2]];
     const lineDefs = [
       {
         name: 'LINE A — THE LOOP', color: NEON.cyan, h: 16,
@@ -278,12 +282,18 @@ export function buildTraffic(scene, world, models) {
         i0: 2, j0: 2, i1: 9, j1: 9, dir: -1, trains: 2, gateNames: true,
         stations: ['HOHMANN', 'LAGRANGE', 'GAGARIN WEST', 'VULCAN GATE'],
       },
+      {
+        name: 'LINE C — SPACEPORT EXPRESS', color: NEON.amber, h: 19, dir: 1, trains: 2,
+        loopPts: SPACEPORT_LOOP, stations: ['UNION HUB', 'MIDWAY', 'GAGARIN SPACEPORT'], stationS: [0.05, 0.24, 0.43],
+      },
     ];
 
     const railOffset = C.ROAD / 2 + 1.2; // run the beam along the curb line, not mid-road
 
     for (const def of lineDefs) {
-      const loop = rectLoop(def.i0, def.j0, def.i1, def.j1, def.h, 16, -railOffset);
+      const loop = def.loopPts
+        ? new Loop(def.loopPts.map(p => new THREE.Vector3(p[0], def.h, p[1])))
+        : rectLoop(def.i0, def.j0, def.i1, def.j1, def.h, 16, -railOffset);
 
       // ── track beam + glow strip (smooth curve from dense samples) ──
       const samples = [];
@@ -345,10 +355,13 @@ export function buildTraffic(scene, world, models) {
         { x: rx(def.i0) - railOffset, z: zm, out: [-1, 0] },
       ];
       const stations = [];
-      sideMid.forEach((sm, k) => {
-        // arc position on loop nearest this point
-        let bestS = 0, bestD = 1e9;
-        for (let s = 0; s < loop.total; s += 2) {
+      const stationList = def.loopPts
+        ? def.stationS.map((frac) => { const p = new THREE.Vector3(), d = new THREE.Vector3(); loop.at(frac * loop.total, p, d); return { x: p.x, z: p.z, out: [d.z, -d.x], s: frac * loop.total }; })
+        : sideMid;
+      stationList.forEach((sm, k) => {
+        // arc position on loop nearest this point (custom lines pin it directly)
+        let bestS = sm.s !== undefined ? sm.s : 0, bestD = 1e9;
+        if (sm.s === undefined) for (let s = 0; s < loop.total; s += 2) {
           loop.at(s, _v1);
           const d = (_v1.x - sm.x) ** 2 + (_v1.z - sm.z) ** 2;
           if (d < bestD) { bestD = d; bestS = s; }

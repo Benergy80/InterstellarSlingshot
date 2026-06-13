@@ -437,7 +437,7 @@ export function createFX(scene, camera, world, audio) {
       }
     });
     const clamp2 = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
-    let next = 14 + rnd() * 20, flashT = 0;
+    let next = 2 + rnd() * 5, flashT = 0;
     const baseHemi = world.hemi.intensity;
     const baseBg = new THREE.Color(0x0a0618);
     const flashBg = new THREE.Color(0x2c2450);
@@ -459,7 +459,7 @@ export function createFX(scene, camera, world, audio) {
         if (next <= 0 && fx.rainOn) {
           strike();
           flashT = 0.34;
-          next = 16 + rnd() * 26;
+          next = (rnd() < 0.4 ? 0.12 : 2.5) + rnd() * 6;   // frequent, with occasional double-strikes
           setTimeout(() => audio.sfx('thunder'), 600 + rnd() * 1800);
         }
       }
@@ -583,7 +583,7 @@ export function createFX(scene, camera, world, audio) {
       wxTimer -= dt;
       if (wxTimer > 0) return;
       wxTimer = 70 + rnd() * 60;
-      const shouldRain = rnd() < 0.4;
+      const shouldRain = rnd() < 0.62;
       if (shouldRain !== fx.rainOn) {
         fx.toggleRain();
         if (fx._hud) {
