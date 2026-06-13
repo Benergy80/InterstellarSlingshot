@@ -1450,7 +1450,10 @@ function spawnBossForArea(galaxyId, placementType, areaKey, overridePosition, bo
 
     // Spawn-in beat: materialize the hull + letterbox name card
     if (typeof materializeShip === 'function') materializeShip(boss, 800);
-    if (typeof playBossIntro === 'function') playBossIntro(boss.userData.name);
+    if (typeof playBossIntro === 'function') {
+        const _bfac = (typeof galaxyTypes !== 'undefined' && galaxyTypes[galaxyId] && galaxyTypes[galaxyId].faction) || null;
+        playBossIntro(boss.userData.name, _bfac, boss.userData.galaxyColor);
+    }
 
     // ENHANCED: Update boss system tracking
     bossSystem.areaBosses[areaKey].bossRef = boss;

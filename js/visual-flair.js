@@ -260,7 +260,7 @@ function _updateLensFlares(fc) {
 
 // ── 10. BOSS INTRO BEAT ─────────────────────────────────────────────────────
 // Letterbox bars + name card for ~2.4s when a boss spawns.
-function playBossIntro(bossName) {
+function playBossIntro(bossName, faction, colorHex) {
     try {
         if (document.getElementById('bossIntroCard')) return; // one at a time
         if (!document.getElementById('bossIntroStyle')) {
@@ -275,20 +275,37 @@ function playBossIntro(bossName) {
         top.className = 'boss-bar'; top.style.top = '0';
         const bot = document.createElement('div');
         bot.className = 'boss-bar'; bot.style.bottom = '0';
+
+        // THREE lines:
+        //   1) faction threat label  — "⚠ VULCAN HIGH COMMAND FLAGSHIP ⚠"
+        //   2) the boss's name        — tinted to the faction color
+        //   3) the player's directive — states the goal, ties to liberation
+        const factionLabel = faction
+            ? ('⚠ ' + String(faction).toUpperCase() + ' FLAGSHIP ⚠')
+            : '⚠ ENEMY FLAGSHIP DETECTED ⚠';
+        // faction color, lightened so the name reads against black bars
+        let nameColor = '#ff5544';
+        try {
+            if (typeof colorHex === 'number' && typeof THREE !== 'undefined') {
+                const c = new THREE.Color(colorHex).lerp(new THREE.Color(0xffffff), 0.45);
+                nameColor = '#' + c.getHexString();
+            }
+        } catch (_) {}
+
         const card = document.createElement('div');
         card.id = 'bossIntroCard';
-        card.style.cssText = 'position:fixed;left:50%;top:16%;transform:translateX(-50%);' +
-            'z-index:71;color:#ff3333;font-family:Orbitron,monospace;font-weight:bold;' +
-            'text-shadow:0 0 18px rgba(255,40,40,0.9);pointer-events:none;text-align:center;' +
-            'max-width:72vw;animation:bossCardIn 2.4s ease forwards';
-        // Two lines: warning label on top, the (long) boss name wraps below
+        card.style.cssText = 'position:fixed;left:50%;top:15%;transform:translateX(-50%);' +
+            'z-index:71;font-family:Orbitron,monospace;font-weight:bold;' +
+            'pointer-events:none;text-align:center;max-width:74vw;' +
+            'animation:bossCardIn 2.6s ease forwards';
         card.innerHTML =
-            '<div style="font-size:16px;letter-spacing:6px;opacity:0.85;margin-bottom:6px">⚠ BOSS DETECTED ⚠</div>' +
-            '<div style="font-size:26px;line-height:1.25">' + (bossName || 'UNKNOWN FLAGSHIP') + '</div>';
+            '<div style="font-size:16px;letter-spacing:6px;color:#ff3333;text-shadow:0 0 14px rgba(255,40,40,.9);margin-bottom:8px">' + factionLabel + '</div>' +
+            '<div style="font-size:30px;line-height:1.2;color:' + nameColor + ';text-shadow:0 0 20px ' + nameColor + '">' + (bossName || 'UNKNOWN FLAGSHIP') + '</div>' +
+            '<div style="font-size:14px;letter-spacing:4px;color:#ffcc55;text-shadow:0 0 10px rgba(0,0,0,.9);margin-top:10px">ELIMINATE TO LIBERATE THE SECTOR</div>';
         document.body.appendChild(top); document.body.appendChild(bot); document.body.appendChild(card);
-        requestAnimationFrame(() => { top.style.height = '7%'; bot.style.height = '7%'; });
-        setTimeout(() => { top.style.height = '0'; bot.style.height = '0'; }, 1900);
-        setTimeout(() => { top.remove(); bot.remove(); card.remove(); }, 2600);
+        requestAnimationFrame(() => { top.style.height = '8%'; bot.style.height = '8%'; });
+        setTimeout(() => { top.style.height = '0'; bot.style.height = '0'; }, 2100);
+        setTimeout(() => { top.remove(); bot.remove(); card.remove(); }, 2800);
     } catch (e) {}
 }
 

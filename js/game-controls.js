@@ -6214,14 +6214,16 @@ function checkWeaponHits(targetPosition) {
                 if (typeof createHitSparks === 'function') {
                     createHitSparks(targetPosition || enemy.position, enemy.userData.galaxyColor || 0xffcc66);
                 }
-                // Far-target hit confirm: beyond 700u the spark is sub-pixel,
-                // so float a HIT marker at the target (kill-text style),
-                // throttled per enemy so rapid fire doesn't stack text.
+                // Floating HIT marker on EVERY hit (kill-text style), with a
+                // per-enemy throttle so rapid auto-fire on one target can't
+                // stack text. Was gated to >700u; players liked it, so it now
+                // pops at all ranges. Occasional "CRIT!" for variety/punch.
                 if (typeof spawnKillText === 'function' &&
-                    camera.position.distanceTo(enemy.position) > 700 &&
-                    Date.now() - (enemy.userData._lastHitTextAt || 0) > 400) {
+                    Date.now() - (enemy.userData._lastHitTextAt || 0) > 300) {
                     enemy.userData._lastHitTextAt = Date.now();
-                    spawnKillText(enemy.position, 'HIT', '#ffee88');
+                    const crit = Math.random() < 0.18;
+                    spawnKillText(enemy.position, crit ? 'CRIT!' : 'HIT',
+                        crit ? '#ff8844' : '#ffee88');
                 }
                 playSound('weapon');
                 showAchievement('Target Hit!', `Damaged ${enemy.userData.name} (${enemy.userData.health}/${enemy.userData.maxHealth} HP)`);
