@@ -103,7 +103,7 @@
         // Additive transparent spheres that aren't the known huge skyboxes,
         // with a world radius > 900 = an inflated shield (legit cap ~640).
         try {
-            let worst = 0, worstName = '';
+            let worst = 0, worstObj = null;
             const _ws = new THREE.Vector3();
             scene.traverse((o) => {
                 if (!o.isMesh || !o.geometry || o.geometry.type !== 'SphereGeometry') return;
@@ -113,10 +113,37 @@
                 if (r >= 50000) return; // a skybox by size
                 o.getWorldScale(_ws);
                 const worldR = r * Math.max(Math.abs(_ws.x), Math.abs(_ws.y), Math.abs(_ws.z));
-                if (worldR > worst) { worst = worldR; worstName = o.name || o.parent && o.parent.userData && o.parent.userData.name || '?'; }
+                if (worldR > worst) { worst = worldR; worstObj = o; }
             });
-            set('noGiantBubbles', worst <= 900,
-                worst > 900 ? ('bubble ' + Math.round(worst) + 'u on ' + worstName) : ('max ' + Math.round(worst) + 'u'));
+            // Capture full identity of any offender so the bug is diagnosable
+            // without a human watching (the "strengthen the sensor" step).
+            if (worst > 900 && worstObj) {
+                const p = worstObj.parent;
+                const flags = (p && p.userData) ? ['isBoss', 'isEliteGuardian', 'isBlackHoleGuardian', 'isBossSupport']
+                    .filter(f => p.userData[f]).join(',') : '';
+                PROBE._lastGiant = {
+                    t: now, worldR: Math.round(worst),
+                    geomR: (worstObj.geometry.parameters && worstObj.geometry.parameters.radius) || 0,
+                    name: worstObj.name || '(none)',
+                    isEnemyShield: !!(worstObj.userData && worstObj.userData.isEnemyShield),
+                    isGlowLayer: !!(worstObj.userData && worstObj.userData.isGlowLayer),
+                    parentName: (p && p.userData && p.userData.name) || '(none)',
+                    parentFlags: flags,
+                };
+            }
+            // PERSISTENCE GATE: a boss/guardian DEATH throws a legit
+            // additive flash sphere (createBossExplosion, 1300-1700u) that
+            // grows then fades within a sample — desirable VFX, not a bug.
+            // The real defect (an inflated SHIELD washing the screen) stays
+            // up for the whole engagement. So only FAIL when an oversized
+            // bubble persists across >=2 consecutive runs (~4s); a one-shot
+            // spike is reported but passes.
+            PROBE._giantStreak = (worst > 900) ? (PROBE._giantStreak || 0) + 1 : 0;
+            const persistent = PROBE._giantStreak >= 2;
+            const nm = worstObj ? ((worstObj.parent && worstObj.parent.userData && worstObj.parent.userData.name) || worstObj.name || '?') : '?';
+            set('noGiantBubbles', !persistent,
+                persistent ? ('persistent bubble ' + Math.round(worst) + 'u on ' + nm)
+                    : (worst > 900 ? ('transient ' + Math.round(worst) + 'u flash (ok)') : ('max ' + Math.round(worst) + 'u')));
         } catch (e) {}
 
         // 5. NO STUCK MATERIALIZATION (class: spawn-in race leaves ship at 12%)
