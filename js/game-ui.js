@@ -284,9 +284,19 @@ if (gameState.playerDying || gameState.gameOver || gameState.gameOverScreenShown
     
     // Enhanced target information display with special status indicators
     if (targetInfo) {
+        // In demo mode the target + warp readout is already duplicated by the
+        // bottom autopilot banner ("Pursuing X — Nu") and the floating
+        // on-screen text, so hide this line. Manual play keeps it (it's the
+        // player's only target readout).
+        const _demoDriving = (typeof window !== 'undefined' && window.demoPilot && window.demoPilot.driving);
+        if (_demoDriving) {
+            targetInfo.style.display = 'none';
+        } else {
+            targetInfo.style.display = '';
+
         let targetInfoText = 'Target: None';
         let targetInfoClass = 'text-gray-400';
-        
+
         if (gameState.currentTarget) {
             const target = gameState.currentTarget;
             const distance = typeof camera !== 'undefined' ? 
@@ -331,8 +341,9 @@ if (gameState.playerDying || gameState.gameOver || gameState.gameOverScreenShown
         // Apply the final text and class
         targetInfo.textContent = targetInfoText;
         targetInfo.className = targetInfoClass + ' curved-element';
+        } // end manual-play branch
     }
-    
+
     // Update auto-navigate button with enhanced state tracking
     updateAutoNavigateButton();
     

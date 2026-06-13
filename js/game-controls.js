@@ -6364,7 +6364,10 @@ if (enemy.userData.health <= 0) {
         else spawnKillText(enemy.position, '+REP', '#ffcc44');
     }
     // Big tiered arcade praise, upper-middle of the screen (streak-aware).
-    if (typeof arcadePraiseKill === 'function') arcadePraiseKill(false);
+    // Distance gates the basic words to far kills.
+    if (typeof arcadePraiseKill === 'function') {
+        arcadePraiseKill(false, (typeof camera !== 'undefined') ? camera.position.distanceTo(enemy.position) : 0);
+    }
 
     const _lootVariant = enemy.userData._pirateLootVariant;
     if (_lootVariant === 'flare') {

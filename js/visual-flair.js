@@ -263,6 +263,9 @@ function _updateLensFlares(fc) {
 function playBossIntro(bossName, faction, colorHex) {
     try {
         if (document.getElementById('bossIntroCard')) return; // one at a time
+        // Strip any trailing internal "(placementType)" parenthetical so no
+        // boss ever shows e.g. "Overlord (vulcanPatrol_boss)" — same for all.
+        if (bossName) bossName = String(bossName).replace(/\s*\([^)]*\)\s*$/, '');
         if (!document.getElementById('bossIntroStyle')) {
             const st = document.createElement('style');
             st.id = 'bossIntroStyle';
@@ -508,8 +511,12 @@ const _TIER_STYLE = {
     5: { size: 62, color: '#c08cff' },   // extremely rare
     6: { size: 72, color: '#ff3df0' },   // legendary
 };
+// Tier 1 is split by distance: the plain/utilitarian acknowledgements
+// (TARGET STRUCK, SOLID IMPACT, LONG-RANGE HIT) are reserved for FAR kills
+// where there's little to see; close kills get punchier common words.
+const _PRAISE1_FAR = ['TARGET STRUCK!', 'SOLID IMPACT!', 'DIRECT HIT!', 'LONG-RANGE HIT!', 'CONTACT!'];
+const _PRAISE1_NEAR = ['NICE SHOT!', 'CLEAN SHOT!', 'GOOD HIT!', 'ON TARGET!', 'TAGGED!'];
 const _PRAISE = {
-    1: ['NICE SHOT!', 'CLEAN SHOT!', 'DIRECT HIT!', 'SOLID IMPACT!', 'TARGET STRUCK!'],
     2: ['EXCELLENT!', 'PRECISION HIT!', 'BULLSEYE!', 'DEADLY ACCURACY!', 'OUTSTANDING!'],
     3: ['INCREDIBLE SHOT!', 'DEVASTATING HIT!', 'SPECTACULAR!', 'PERFECT SHOT!', 'PHENOMENAL!'],
     4: ['IMPOSSIBLE SHOT!', 'UNBELIEVABLE!', 'ASTONISHING!', 'ABSOLUTE DESTRUCTION!'],
@@ -527,9 +534,17 @@ function flashArcadeText(text, tier) {
         if (!document.getElementById('arcadeTextStyle')) {
             const st = document.createElement('style');
             st.id = 'arcadeTextStyle';
-            st.textContent = '@keyframes arcadePop{0%{opacity:0;transform:translateX(-50%) scale(2.1)}' +
-                '14%{opacity:1;transform:translateX(-50%) scale(0.92)}24%{transform:translateX(-50%) scale(1.04)}' +
-                '34%{transform:translateX(-50%) scale(1)}74%{opacity:1}100%{opacity:0;transform:translateX(-50%) scale(1.08)}}';
+            // Pop in big + transparent, two settle PULSES, then slowly GROW
+            // while fading to transparent — feels alive and energetic.
+            st.textContent = '@keyframes arcadePop{' +
+                '0%{opacity:0;transform:translateX(-50%) scale(2.5)}' +
+                '11%{opacity:1;transform:translateX(-50%) scale(0.86)}' +
+                '20%{transform:translateX(-50%) scale(1.10)}' +              // pulse 1
+                '29%{transform:translateX(-50%) scale(0.96)}' +
+                '38%{transform:translateX(-50%) scale(1.06)}' +              // pulse 2
+                '46%{opacity:1;transform:translateX(-50%) scale(1.0)}' +
+                '68%{opacity:0.85;transform:translateX(-50%) scale(1.14)}' + // grow
+                '100%{opacity:0;transform:translateX(-50%) scale(1.45)}}';   // grow + fade
             document.head.appendChild(st);
         }
         const old = document.getElementById('arcadeText'); if (old) old.remove();
@@ -538,17 +553,17 @@ function flashArcadeText(text, tier) {
         div.style.cssText = 'position:fixed;left:50%;top:19%;transform:translateX(-50%);z-index:73;' +
             'pointer-events:none;text-align:center;white-space:nowrap;font-family:Orbitron,monospace;' +
             'font-weight:900;font-size:' + ts.size + 'px;letter-spacing:3px;color:' + ts.color + ';' +
-            'text-shadow:0 0 18px ' + ts.color + ',0 0 36px rgba(0,0,0,0.7);' +
-            'animation:arcadePop 1.6s ease-out forwards';
+            'text-shadow:0 0 22px ' + ts.color + ',0 0 44px ' + ts.color + ',0 0 12px rgba(0,0,0,0.8);' +
+            'will-change:transform,opacity;animation:arcadePop 2s cubic-bezier(.2,.7,.3,1) forwards';
         div.textContent = text;
         document.body.appendChild(div);
-        setTimeout(() => { if (div.parentNode) div.remove(); }, 1700);
+        setTimeout(() => { if (div.parentNode) div.remove(); }, 2050);
     } catch (e) {}
 }
 
 // Called on each enemy kill. Manages the streak and picks a tier so the
 // biggest words stay rare (most kills → tier 1; streaks + bosses escalate).
-function arcadePraiseKill(isBoss) {
+function arcadePraiseKill(isBoss, dist) {
     const now = Date.now();
     if (now - (_arcade.lastKill || 0) > 3500) _arcade.streak = 0;
     _arcade.streak++; _arcade.lastKill = now;
@@ -563,7 +578,14 @@ function arcadePraiseKill(isBoss) {
     tier += Math.floor(_arcade.streak / 4);          // streak escalates the praise
     if (isBoss) tier = Math.max(tier, 4);            // boss kills always feel huge
     tier = Math.max(1, Math.min(6, tier));
-    flashArcadeText(_pick(_PRAISE[tier]), tier);
+    if (tier === 1) {
+        // Basic utilitarian words only for far kills; close kills get the
+        // punchier common pool.
+        const far = (typeof dist === 'number') ? dist > 1600 : false;
+        flashArcadeText(_pick(far ? _PRAISE1_FAR : _PRAISE1_NEAR), 1);
+    } else {
+        flashArcadeText(_pick(_PRAISE[tier]), tier);
+    }
 }
 
 // ── 15. WINGMAN JUMP TRACERS ────────────────────────────────────────────────
@@ -620,8 +642,9 @@ function _ensureScreenFX() {
     wrap.id = 'speedFxLayer';
     wrap.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:40;display:none;';
     const vig = document.createElement('div');
+    // Stronger tunnel-vision: darkening starts earlier and goes deeper.
     vig.style.cssText = 'position:absolute;inset:0;opacity:0;' +
-        'background:radial-gradient(ellipse at center, rgba(0,0,0,0) 52%, rgba(2,6,20,0.55) 78%, rgba(0,0,10,0.85) 100%)';
+        'background:radial-gradient(ellipse at center, rgba(0,0,0,0) 42%, rgba(2,6,20,0.78) 72%, rgba(0,0,8,0.97) 100%)';
     const streaks = document.createElement('div');
     streaks.style.cssText = 'position:absolute;inset:-12%;opacity:0;' +
         'background:repeating-conic-gradient(from 0deg, rgba(150,200,255,0) 0deg 4deg, ' +
@@ -652,7 +675,7 @@ function _updateScreenFX() {
     _sfx.wrap.style.display = 'block';
     const L = _sfx.level;
     const t = Date.now();
-    _sfx.vig.style.opacity = (L * 0.8).toFixed(3);
+    _sfx.vig.style.opacity = Math.min(1, L * 1.15).toFixed(3);
     _sfx.streaks.style.opacity = (Math.max(0, L - 0.25) * 0.65).toFixed(3);
     // Slow sweep + breathing scale so the spokes feel like rushing light,
     // not a static stencil

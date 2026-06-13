@@ -1413,7 +1413,7 @@ function spawnBossForArea(galaxyId, placementType, areaKey, overridePosition, bo
 
     // PRESERVED: Complete boss userData with all original properties
     boss.userData = {
-        name: `${factionLabel} Overlord (${placementType})`, // ENHANCED: Include area type
+        name: `${factionLabel} Overlord`, // (internal placementType no longer leaked into the display name)
         type: 'enemy',
         health: getEnemyHealthForDifficulty(false, true, false), // PRESERVED: Dynamic boss health
         maxHealth: getEnemyHealthForDifficulty(false, true, false),
