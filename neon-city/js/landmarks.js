@@ -923,5 +923,88 @@ export function buildLandmarks(scene, world) {
     trunks.frustumCulled = crowns.frustumCulled = false;
     scene.add(trunks, crowns);
   };
+  // ════════════ PARK ACTIVITY — fountain, holo tree, strollers, drones, path lights ════════════
+  for (const blk of res.park || []) {
+    const cx = blk.cx, cz = blk.cz;
+    // fountain: basin + reflective water + animated jet spray
+    const basin = new THREE.Mesh(new THREE.CylinderGeometry(4, 4.6, 0.8, 20), solid(0x223047, 0.3, 0.6));
+    basin.position.set(cx, 0.4, cz); scene.add(basin);
+    const water = new THREE.Mesh(new THREE.CircleGeometry(3.6, 20),
+      new THREE.MeshStandardMaterial({ color: 0x0e2a40, roughness: 0.05, metalness: 0.9, envMapIntensity: 1.5 }));
+    water.rotation.x = -Math.PI / 2; water.position.set(cx, 0.82, cz); scene.add(water);
+    const sprayPts = [], sprayPh = [];
+    for (let i = 0; i < 40; i++) { sprayPts.push(cx + (rnd() - 0.5) * 1.4, 1, cz + (rnd() - 0.5) * 1.4); sprayPh.push(rnd() * Math.PI * 2); }
+    const sprayGeo = new THREE.BufferGeometry();
+    sprayGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(sprayPts), 3));
+    const spray = new THREE.Points(sprayGeo, new THREE.PointsMaterial({ map: glowTexture(32, 'rgba(180,220,255,0.9)'), size: 0.6, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, color: 0x9fd8ff }));
+    spray.frustumCulled = false; scene.add(spray);
+    world.updateFns.push((dt, t) => { const p = spray.geometry.attributes.position.array; for (let i = 0; i < 40; i++) { const k = (t * 1.4 + sprayPh[i]) % 1; p[i * 3 + 1] = 1 + Math.sin(k * Math.PI) * 3.0; } spray.geometry.attributes.position.needsUpdate = true; });
+    // holographic tree centerpiece
+    const holoTree = new THREE.Mesh(new THREE.ConeGeometry(3, 7, 8),
+      new THREE.MeshBasicMaterial({ color: NEON.lime, wireframe: true, transparent: true, opacity: 0.4, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false }));
+    holoTree.position.set(cx, 6.5, cz); scene.add(holoTree);
+    world.updateFns.push((dt, t) => { holoTree.rotation.y += dt * 0.3; holoTree.material.opacity = 0.3 + 0.15 * Math.sin(t * 2); });
+    // path bollard lights
+    for (let i = -2; i <= 2; i++) for (const [bx, bz] of [[cx + i * 8, cz], [cx, cz + i * 8]]) {
+      const boll = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.22, 1.2, 8), solid(0x2a3142, 0.6, 0.4));
+      boll.position.set(bx, 0.6, bz); scene.add(boll);
+      const cap = new THREE.Mesh(new THREE.SphereGeometry(0.26, 8, 6), glow(NEON.cyan, 1.2));
+      cap.position.set(bx, 1.3, bz); scene.add(cap);
+    }
+    // strollers circulating the paths
+    const peopleGeo = (() => { const body = new THREE.CapsuleGeometry(0.28, 0.9, 4, 8); body.translate(0, 0.9, 0); const head = new THREE.SphereGeometry(0.22, 8, 6); head.translate(0, 1.62, 0); return BufferGeometryUtils.mergeGeometries([body, head]); })();
+    const N = 12, people = new THREE.InstancedMesh(peopleGeo, new THREE.MeshStandardMaterial({ color: 0x6a7390, roughness: 0.7 }), N);
+    const pcol = new THREE.Color(), pState = [];
+    for (let i = 0; i < N; i++) { pState.push({ r: 9 + rnd() * 18, a: rnd() * Math.PI * 2, sp: (0.5 + rnd() * 0.6) * (rnd() < 0.5 ? -1 : 1) }); people.setColorAt(i, pcol.setHSL(rnd(), 0.4, 0.6)); }
+    people.instanceColor.needsUpdate = true; people.frustumCulled = false; scene.add(people);
+    const pdum = new THREE.Object3D();
+    world.updateFns.push((dt, t) => { for (let i = 0; i < N; i++) { const s = pState[i]; s.a += dt * s.sp / Math.max(5, s.r); const x = cx + Math.cos(s.a) * s.r, z = cz + Math.sin(s.a) * s.r; pdum.position.set(x, 0, z); pdum.rotation.y = -s.a + (s.sp > 0 ? 0 : Math.PI); pdum.updateMatrix(); people.setMatrixAt(i, pdum.matrix); } people.instanceMatrix.needsUpdate = true; });
+    // drifting drones above the park
+    const droneGeo = (() => { const bx = new THREE.BoxGeometry(0.5, 0.2, 0.5); const r = new THREE.TorusGeometry(0.4, 0.06, 6, 12); r.rotateX(Math.PI / 2); return BufferGeometryUtils.mergeGeometries([bx, r]); })();
+    const D = 6, drones = new THREE.InstancedMesh(droneGeo, glow(NEON.magenta, 1.0), D), dState = [];
+    for (let i = 0; i < D; i++) dState.push({ r: 6 + rnd() * 16, a: rnd() * 6, h: 8 + rnd() * 10, sp: 0.3 + rnd() * 0.4, ph: rnd() * 6 });
+    drones.frustumCulled = false; scene.add(drones);
+    const ddum = new THREE.Object3D();
+    world.updateFns.push((dt, t) => { for (let i = 0; i < D; i++) { const s = dState[i]; s.a += dt * s.sp / 4; const x = cx + Math.cos(s.a) * s.r, z = cz + Math.sin(s.a) * s.r, y = s.h + Math.sin(t + s.ph) * 1.2; ddum.position.set(x, y, z); ddum.rotation.y = t * 2 + s.ph; ddum.updateMatrix(); drones.setMatrixAt(i, ddum.matrix); } drones.instanceMatrix.needsUpdate = true; });
+    world.pois.push({ name: 'PARK FOUNTAIN', pos: new THREE.Vector3(cx, 1, cz), desc: 'Grant Park plaza & fountain' });
+  }
+
+  // ════════════ CRIME ALLEYS — dumpsters, barrel fires, flicker lights, steam ════════════
+  {
+    const arnd = mulberry32(C.SEED + 5151);
+    const B = (world.buildings || []).filter(b => !b.glbTower && !b.arcade && (b.dk === 'OLD' || b.dk === 'MARKET' || b.dk === 'FOUNDRY')).sort(() => arnd() - 0.5).slice(0, 14);
+    const dumps = new THREE.InstancedMesh(new THREE.BoxGeometry(2.2, 1.4, 1.2), solid(0x243018, 0.7, 0.3), B.length * 2);
+    const ddum = new THREE.Object3D(); let di = 0; const fxList = [];
+    B.forEach(b => {
+      const side = (arnd() * 4) | 0;
+      const ox = [b.w / 2 + 1.6, -b.w / 2 - 1.6, 0, 0][side], oz = [0, 0, b.d / 2 + 1.6, -b.d / 2 - 1.6][side];
+      const ax = side < 2 ? 0 : 1, az = side < 2 ? 1 : 0;
+      const x = b.x + ox, z = b.z + oz;
+      for (const o of [-2.5, 2.5]) { ddum.position.set(x + ax * o, 0.7, z + az * o); ddum.rotation.y = (side < 2 ? 0 : Math.PI / 2) + (arnd() - 0.5) * 0.3; ddum.updateMatrix(); if (di < dumps.count) dumps.setMatrixAt(di++, ddum.matrix); }
+      const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.4, 1, 8), solid(0x141414, 0.8, 0.3)); barrel.position.set(x + ax, 0.5, z + az); scene.add(barrel);
+      const fire = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTexture(32, 'rgba(255,160,60,1)'), color: 0xffa040, transparent: true, opacity: 0.9, depthWrite: false, blending: THREE.AdditiveBlending }));
+      fire.position.set(x + ax, 1.2, z + az); fire.scale.set(1.4, 1.8, 1); scene.add(fire);
+      const door = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTexture(32, 'rgba(255,60,80,1)'), color: 0xff3355, transparent: true, opacity: 0.7, depthWrite: false, blending: THREE.AdditiveBlending }));
+      door.position.set(x - ax * 3, 2.5, z - az * 3); door.scale.set(0.9, 0.9, 1); scene.add(door);
+      const steamPts = []; for (let i = 0; i < 10; i++) steamPts.push(x + (arnd() - 0.5), 0.5 + i * 0.5, z + (arnd() - 0.5));
+      const sg = new THREE.BufferGeometry(); sg.setAttribute('position', new THREE.BufferAttribute(new Float32Array(steamPts), 3));
+      const steam = new THREE.Points(sg, new THREE.PointsMaterial({ map: glowTexture(32, 'rgba(160,170,190,0.5)'), size: 1.6, transparent: true, opacity: 0.22, depthWrite: false, blending: THREE.AdditiveBlending }));
+      steam.frustumCulled = false; scene.add(steam);
+      fxList.push({ fire, door, steam, base: steamPts.slice(), ph: arnd() * 6 });
+    });
+    dumps.count = di; dumps.instanceMatrix.needsUpdate = true; dumps.frustumCulled = false; scene.add(dumps);
+    world.updateFns.push((dt, t) => {
+      for (const f of fxList) {
+        const fl = 0.65 + 0.3 * Math.sin(t * 17 + f.ph) + (Math.sin(t * 41 + f.ph) > 0.8 ? 0.2 : 0);
+        f.fire.material.opacity = Math.min(1, Math.max(0.4, fl));
+        f.fire.scale.set(1.2 + 0.3 * Math.sin(t * 12 + f.ph), 1.7 + 0.4 * Math.sin(t * 15 + f.ph), 1);
+        f.door.material.opacity = 0.35 + 0.4 * (Math.sin(t * 9 + f.ph) > 0.3 ? 1 : 0.2);
+        const p = f.steam.geometry.attributes.position.array;
+        for (let i = 0; i < 10; i++) p[i * 3 + 1] = f.base[i * 3 + 1] + ((t * 0.6 + i * 0.15) % 2.2);
+        f.steam.geometry.attributes.position.needsUpdate = true;
+      }
+    });
+  }
+
   world._finishTrees();
 }

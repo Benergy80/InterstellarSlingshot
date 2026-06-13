@@ -361,28 +361,42 @@ export function createFX(scene, camera, world, audio) {
 
   // ════════════════ LIGHTNING + STORM CLOUDS ════════════════
   {
-    // jagged strike bolt
-    const boltMat = new THREE.LineBasicMaterial({
+    // forked lightning — the mothergame's _fxLightning style (additive tapered
+    // cylinder segments) arranged into a jagged sky-to-ground bolt with branches
+    const boltMat = new THREE.MeshBasicMaterial({
       color: new THREE.Color(2.2, 2.3, 2.6), transparent: true, opacity: 0,
       blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false,
     });
-    const boltGeo = new THREE.BufferGeometry();
-    boltGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(12 * 3), 3));
-    const bolt = new THREE.Line(boltGeo, boltMat);
-    bolt.frustumCulled = false;
-    scene.add(bolt);
+    const SEG = 18;
+    const segGeo = new THREE.CylinderGeometry(0.6, 0.1, 1, 5);
+    const segs = [];
+    for (let i = 0; i < SEG; i++) { const m = new THREE.Mesh(segGeo, boltMat); m.visible = false; m.frustumCulled = false; scene.add(m); segs.push(m); }
+    const _up = new THREE.Vector3(0, 1, 0), _dir = new THREE.Vector3(), _axis = new THREE.Vector3();
+    const placeSeg = (m, ax, ay, az, bx, by, bz) => {
+      _dir.set(bx - ax, by - ay, bz - az); const len = _dir.length();
+      if (len < 0.001) { m.visible = false; return; }
+      _dir.divideScalar(len);
+      m.position.set((ax + bx) / 2, (ay + by) / 2, (az + bz) / 2);
+      _axis.crossVectors(_up, _dir);
+      if (_axis.length() > 0.001) { _axis.normalize(); m.quaternion.setFromAxisAngle(_axis, Math.acos(Math.max(-1, Math.min(1, _up.dot(_dir))))); }
+      else m.quaternion.identity();
+      m.scale.set(1, len, 1); m.visible = true;
+    };
     const strike = () => {
-      const px = camera.position.x + (rnd() - 0.5) * 700;
-      const pz = camera.position.z + (rnd() - 0.5) * 700;
-      const arr = boltGeo.attributes.position.array;
-      let x = px, z = pz;
-      for (let i = 0; i < 12; i++) {
-        const y = 420 - (i / 11) * 400;
-        arr[i * 3] = x; arr[i * 3 + 1] = y; arr[i * 3 + 2] = z;
-        x += (rnd() - 0.5) * 26;
-        z += (rnd() - 0.5) * 26;
+      for (const m of segs) m.visible = false;
+      let si = 0;
+      let x = camera.position.x + (rnd() - 0.5) * 700, y = 430, z = camera.position.z + (rnd() - 0.5) * 700;
+      const nodes = [[x, y, z]], trunk = 11;
+      for (let i = 1; i <= trunk; i++) { x += (rnd() - 0.5) * 34; z += (rnd() - 0.5) * 34; y = 430 - (i / trunk) * 410; nodes.push([x, y, z]); }
+      for (let i = 0; i < nodes.length - 1 && si < SEG; i++) placeSeg(segs[si++], ...nodes[i], ...nodes[i + 1]);
+      for (let br = 0; br < 2 && si < SEG; br++) {
+        const n = nodes[2 + ((rnd() * (nodes.length - 4)) | 0)];
+        let bx = n[0], by = n[1], bz = n[2];
+        for (let j = 0; j < 3 && si < SEG; j++) {
+          const nx = bx + (rnd() - 0.5) * 60, ny = by - 30 - rnd() * 40, nz = bz + (rnd() - 0.5) * 60;
+          placeSeg(segs[si++], bx, by, bz, nx, ny, nz); bx = nx; by = ny; bz = nz;
+        }
       }
-      boltGeo.attributes.position.needsUpdate = true;
     };
     // cloud cover drifts in and out while it rains
     let cloudTimer = 20 + rnd() * 30, cloudy = false, cloudK = 0;
@@ -402,8 +416,11 @@ export function createFX(scene, camera, world, audio) {
         const coreD = Math.hypot(camera.position.x, camera.position.z);
         want = coreD < 120 ? 0.5 : coreD > 650 ? 0.18 : Math.max(0.18, 0.5 * (1 - (coreD - 120) / 530));
       }
-      cloudK += (want - cloudK) * Math.min(1, dt * 6);
+      cloudK += (want - cloudK) * Math.min(1, dt * 0.7);   // slow crossfade as weather rolls in/out
       if (world.cloudPuffs) world.cloudPuffs.opacity = cloudK * 0.62;   // game nebulas run 0.65 additive
+      // Hubble deep field goes soft + dim under storm cover, sharpens when it lifts
+      if (world.skyBlurMat) world.skyBlurMat.opacity = cloudK * 0.6;
+      if (world.skyMat) world.skyMat.opacity = (world.skyBaseOpacity || 0.15) * (1 - cloudK * 0.55);
       if (world.cloudMat) {
         world.cloudMat.opacity = cloudK * 0.5;   // dome becomes a faint backwash behind the puffs
         if (world.districtAt) {

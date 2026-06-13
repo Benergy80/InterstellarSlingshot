@@ -425,6 +425,8 @@ export function buildWorld(scene, renderer) {
     sky.renderOrder = -10;
     scene.add(sky);
     // the mothergame's Hubble Ultra Deep Field skybox, planetside
+    world.skyMat = skyMat;
+    world.skyBaseOpacity = 0.15;
     new THREE.TextureLoader().load('../images/hubble_ultra_deep_field_high_rez_edit1.jpg', (t) => {
       t.colorSpace = THREE.SRGBColorSpace;
       t.wrapS = THREE.MirroredRepeatWrapping;   // reflect at the wrap — no seam
@@ -432,6 +434,28 @@ export function buildWorld(scene, renderer) {
       skyMat.map = t;
       skyMat.color = new THREE.Color(0.78, 0.8, 0.9);   // dim + 60% opacity, far layer
       skyMat.needsUpdate = true;
+      // blurred twin dome — crossfades in under storm cover so the deep field
+      // goes soft/hazy when it's cloudy, then sharpens again as skies clear
+      try {
+        const img = t.image;
+        const bc = document.createElement('canvas');
+        bc.width = Math.min(1024, img.width || 1024);
+        bc.height = Math.min(512, img.height || 512);
+        const bx = bc.getContext('2d');
+        bx.filter = 'blur(7px)';
+        bx.drawImage(img, 0, 0, bc.width, bc.height);
+        const bt = new THREE.CanvasTexture(bc);
+        bt.colorSpace = THREE.SRGBColorSpace;
+        bt.wrapS = THREE.MirroredRepeatWrapping; bt.repeat.set(2, 1);
+        const blurMat = new THREE.MeshBasicMaterial({
+          map: bt, side: THREE.BackSide, fog: false, depthWrite: false,
+          transparent: true, opacity: 0, color: new THREE.Color(0.68, 0.7, 0.84),
+        });
+        const blurDome = new THREE.Mesh(new THREE.SphereGeometry(139000, 32, 20), blurMat);
+        blurDome.renderOrder = -9;
+        scene.add(blurDome);
+        world.skyBlurMat = blurMat;
+      } catch (e) { /* no image / tainted canvas — skip the blur twin */ }
     });
 
     // Stars — upper hemisphere only
