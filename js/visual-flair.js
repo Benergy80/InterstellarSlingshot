@@ -530,6 +530,10 @@ const _pick = (a) => a[Math.floor(Math.random() * a.length)];
 
 function flashArcadeText(text, tier) {
     try {
+        // Never cover the boss SPAWN announcement — it owns the same upper
+        // band of the screen. Skip arcade praise while the boss intro card
+        // is up (it's only on screen ~2.6s).
+        if (document.getElementById('bossIntroCard')) return;
         const ts = _TIER_STYLE[tier] || _TIER_STYLE[1];
         if (!document.getElementById('arcadeTextStyle')) {
             const st = document.createElement('style');
