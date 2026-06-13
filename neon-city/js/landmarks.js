@@ -1189,5 +1189,48 @@ export function buildLandmarks(scene, world) {
     world.pois.push({ name: 'THE WILDS', pos: new THREE.Vector3(H + 420, 6, 0), desc: 'Wilderness ranges beyond New Chicago' });
   }
 
+  // ════════════ NEW CHICAGO RIVER — through downtown, crossed by bridges ════════════
+  {
+    const RW = C.ROAD * 1.15;
+    // central E-W road line, nudged off the spire plaza at z=0
+    let zR = -H + 2 * C.CELL - C.ROAD / 2, best = 1e9;
+    for (let i = 1; i < C.GRID; i++) { const z = -H + i * C.CELL - C.ROAD / 2; const d = Math.abs(z - C.CELL); if (d < best && Math.abs(z) > C.CELL * 0.6) { best = d; zR = z; } }
+    const span = C.SPAN;
+    // flowing water
+    const wmat = new THREE.MeshStandardMaterial({ color: 0x0b2536, roughness: 0.07, metalness: 0.9, envMapIntensity: 1.4 });
+    wmat.onBeforeCompile = (sh) => { sh.uniforms.uTime = world.uTime; sh.vertexShader = 'uniform float uTime;\n' + sh.vertexShader.replace('#include <begin_vertex>', `#include <begin_vertex>\n transformed.z += sin(position.x * 0.05 + uTime * 0.9) * 0.22;`); };
+    const water = new THREE.Mesh(new THREE.PlaneGeometry(span, RW, 140, 2), wmat);
+    water.rotation.x = -Math.PI / 2; water.position.set(0, 0.07, zR); scene.add(water); world.raycastTargets.push(water);
+    const crossings = []; for (let i = 1; i < C.GRID; i++) crossings.push(-H + i * C.CELL - C.ROAD / 2);
+    // embankment walls between crossings (gaps left for the bridges)
+    const bankMat = solid(0x232a36, 0.7, 0.2), bankGeo = [];
+    const edges = [-span / 2, ...crossings, span / 2];
+    for (let s = 0; s < edges.length - 1; s++) {
+      let a = edges[s], b = edges[s + 1];
+      if (s > 0) a += C.ROAD * 0.75; if (s < edges.length - 2) b -= C.ROAD * 0.75;
+      if (b - a < 2) continue;
+      for (const e of [-1, 1]) {
+        const g = new THREE.BoxGeometry(b - a, 2.4, 1.3); g.translate((a + b) / 2, 0.4, zR + e * (RW / 2)); bankGeo.push(g);
+        addCol(a, b, zR + e * (RW / 2) - 0.65, zR + e * (RW / 2) + 0.65, -1, 1.7);
+      }
+    }
+    if (bankGeo.length) { const m = new THREE.Mesh(BufferGeometryUtils.mergeGeometries(bankGeo), bankMat); m.frustumCulled = false; scene.add(m); }
+    for (const e of [-1, 1]) { const r = new THREE.Mesh(new THREE.BoxGeometry(span, 0.12, 0.14), glow(NEON.cyan, 0.7)); r.position.set(0, 1.6, zR + e * (RW / 2)); scene.add(r); }
+    // bridges at each N-S crossing — walkable decks with rails + a glowing arch
+    for (const cx of crossings) {
+      const dW = C.ROAD, dD = RW + 5;
+      const deck = new THREE.Mesh(new THREE.BoxGeometry(dW, 0.5, dD), solid(0x2a3145, 0.5, 0.5));
+      deck.position.set(cx, 0.55, zR); scene.add(deck);
+      world.surfaces.push({ minX: cx - dW / 2, maxX: cx + dW / 2, minZ: zR - dD / 2, maxZ: zR + dD / 2, y: 0.8 });
+      for (const e of [-1, 1]) {
+        const rail = new THREE.Mesh(new THREE.BoxGeometry(dW, 0.7, 0.14), glow(NEON.magenta, 0.85)); rail.position.set(cx, 1.15, zR + e * (dD / 2 - 0.2)); scene.add(rail);
+        addCol(cx - dW / 2, cx + dW / 2, zR + e * (dD / 2) - 0.15, zR + e * (dD / 2) + 0.15, 0.5, 2.2);
+      }
+      const arch = new THREE.Mesh(new THREE.TorusGeometry(RW * 0.55, 0.5, 6, 14, Math.PI), glow(NEON.cyan, 0.5));
+      arch.rotation.y = Math.PI / 2; arch.position.set(cx, 0.4, zR); scene.add(arch);
+    }
+    world.pois.push({ name: 'NEW CHICAGO RIVER', pos: new THREE.Vector3(0, 1, zR), desc: 'The river through downtown — cross at the bridges' });
+  }
+
   world._finishTrees();
 }
