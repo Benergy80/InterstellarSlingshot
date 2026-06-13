@@ -1153,5 +1153,41 @@ export function buildLandmarks(scene, world) {
     });
   }
 
+  // ════════════ WILDERNESS & MOUNTAINS — ranges beyond the city (E / N / S; lake is W) ════════════
+  {
+    const wrnd = mulberry32(C.SEED + 909);
+    const rockMat = new THREE.MeshStandardMaterial({ color: 0x2a2f33, roughness: 0.95, metalness: 0.05, flatShading: true });
+    const snowMat = new THREE.MeshStandardMaterial({ color: 0xdfe8f2, roughness: 0.7, metalness: 0.05, emissive: 0x26303f, emissiveIntensity: 0.4, flatShading: true });
+    const grassMat = new THREE.MeshStandardMaterial({ color: 0x16241a, roughness: 0.95, metalness: 0.0 });
+    const rock = [], snow = [];
+    const peak = (x, z, r, h) => {
+      const c = new THREE.ConeGeometry(r, h, 7 + (wrnd() * 4 | 0), 1); c.translate(x, h / 2 - 1, z); rock.push(c);
+      const ch = h * (0.22 + wrnd() * 0.12); const sc = new THREE.ConeGeometry(r * (ch / h) * 1.1, ch, 7, 1); sc.translate(x, h - ch / 2 - 1, z); snow.push(sc);
+    };
+    const apron = (cx, cz, w, d) => { const m = new THREE.Mesh(new THREE.PlaneGeometry(w, d), grassMat); m.rotation.x = -Math.PI / 2; m.position.set(cx, -0.25, cz); m.frustumCulled = false; scene.add(m); };
+    const FAR = H + 1400;
+    apron(H + 760, 0, 1560, FAR * 2);
+    apron(0, -(H + 760), FAR * 2, 1560);
+    apron(0, H + 760, FAR * 2, 1560);
+    const ridge = (axis, sign) => {
+      for (let row = 0; row < 2; row++) {
+        const dist = H + 380 + row * 340;
+        for (let k = -9; k <= 9; k++) {
+          const along = k * 150 + (wrnd() - 0.5) * 80;
+          const r = 70 + wrnd() * 110, h = 110 + wrnd() * 200 + row * 60;
+          if (axis === 'x') peak(sign * dist, along, r, h); else peak(along, sign * dist, r, h);
+        }
+      }
+    };
+    ridge('x', 1); ridge('z', -1); ridge('z', 1);
+    if (rock.length) { const m = new THREE.Mesh(BufferGeometryUtils.mergeGeometries(rock), rockMat); m.frustumCulled = false; scene.add(m); }
+    if (snow.length) { const m = new THREE.Mesh(BufferGeometryUtils.mergeGeometries(snow), snowMat); m.frustumCulled = false; scene.add(m); }
+    // foothill forest in the wilderness band on each land side
+    scatterTrees(H + 100, -H + 40, 240, H * 1.6, 60);
+    scatterTrees(-H + 40, -(H + 240), H * 1.6, 240, 60);
+    scatterTrees(-H + 40, H + 60, H * 1.6, 240, 60);
+    world.pois.push({ name: 'THE WILDS', pos: new THREE.Vector3(H + 420, 6, 0), desc: 'Wilderness ranges beyond New Chicago' });
+  }
+
   world._finishTrees();
 }
