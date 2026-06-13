@@ -590,7 +590,15 @@ export function createPlayer({ camera, scene, world, traffic, fx, hud, audio, on
     // ground stick / landing
     const feetY = state.pos.y - P.eye;
     const gH = world.groundHeightAt(state.pos.x, state.pos.z, feetY);
-    if (feetY <= gH + 0.02 && state.vel.y <= 0) {
+    // snap-down: while already standing, follow a floor that drops away under
+    // us (descending lifts, ramps/stairs walked down) instead of free-falling
+    // off it. dt is clamped to 0.05 and the fastest mover is the lift at 11u/s,
+    // so the floor can fall at most ~0.55/frame — a 0.7 base always catches it.
+    // Real ledges (gap ≫ snap) still fall normally.
+    const snap = (state.grounded && state.vel.y <= 0)
+      ? 0.7 + Math.max(0, -state.vel.y) * dt
+      : 0.02;
+    if (feetY <= gH + snap && state.vel.y <= 0) {
       if (!state.grounded && state.vel.y < -13) {
         const impact = -state.vel.y;
         audio.sfx('land');

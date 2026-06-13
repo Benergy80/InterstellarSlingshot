@@ -455,7 +455,10 @@ export function buildTraffic(scene, world, models) {
           const midA = edge + e * RUN / 2;
           slab2.position.set(alongX ? midA : px, platY / 2 - 0.1, alongX ? pz : midA);
           const ang = Math.atan2(platY, RUN);
-          if (alongX) slab2.rotation.z = e * ang; else slab2.rotation.x = -e * ang;
+          // slab must rise toward the platform edge (high y) and fall to the foot
+          // (y=0) — same direction as the walk surface. The sign was inverted, so
+          // the graphic sloped the opposite way and the surface looked reversed.
+          if (alongX) slab2.rotation.z = -e * ang; else slab2.rotation.x = e * ang;
           scene.add(slab2);
           world.raycastTargets.push(slab2);
           // side rails: glow + fall guards along both edges (open at the foot)
@@ -472,7 +475,7 @@ export function buildTraffic(scene, world, models) {
               new THREE.MeshBasicMaterial({ color: new THREE.Color(def.color).multiplyScalar(0.8), toneMapped: false })
             );
             rail.position.set(alongX ? midA : px + off, platY / 2 + 0.95, alongX ? pz + off : midA);
-            if (alongX) rail.rotation.z = e * ang; else rail.rotation.x = -e * ang;
+            if (alongX) rail.rotation.z = -e * ang; else rail.rotation.x = e * ang;
             scene.add(rail);
           }
         }

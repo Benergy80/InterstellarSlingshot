@@ -107,6 +107,37 @@ export function buildWorld(scene, renderer) {
     return h;
   };
 
+  // Lamp poles are stamped on a fixed road grid before the elevators, ramps and
+  // platforms exist, so some land in an elevator doorway or on a station ramp
+  // and wall the player out. Once everything is built, drop any pole (collider
+  // + visual) that overlaps a walkable surface, plus a margin so the approach
+  // to a gate or ramp foot stays clear too.
+  world.clearFurnitureUnderWalkables = (margin = 1.2) => {
+    const sl = world._streetLights;
+    if (!sl) return 0;
+    const rects = world.surfaces.slice();
+    for (const it of world.interiors) for (const s of it.surfaces) rects.push(s);
+    const zero = new THREE.Matrix4().makeScale(1e-4, 1e-4, 1e-4);
+    const drop = new Set();
+    for (const pc of sl.cols) {
+      for (const r of rects) {
+        if (pc.x > r.minX - margin && pc.x < r.maxX + margin &&
+            pc.z > r.minZ - margin && pc.z < r.maxZ + margin) {
+          drop.add(pc.col);
+          sl.poles.setMatrixAt(pc.i, zero);
+          sl.heads.setMatrixAt(pc.i, zero);
+          break;
+        }
+      }
+    }
+    if (drop.size) {
+      world.colliders = world.colliders.filter(c => !drop.has(c));
+      sl.poles.instanceMatrix.needsUpdate = true;
+      sl.heads.instanceMatrix.needsUpdate = true;
+    }
+    return drop.size;
+  };
+
   const addBox = (minX, maxX, minZ, maxZ) => world.colliders.push({ minX, maxX, minZ, maxZ });
 
   // Is a shaft footprint clear of solid colliders and the monorail beam bands?
@@ -1148,6 +1179,108 @@ export function buildWorld(scene, renderer) {
     });
   }
 
+  // ─────────────── POLITICAL BILLBOARDS — NC-2287 campaign season ───────────────
+  // In-world campaign ads & ballot props pulled from Interstellar Slingshot lore:
+  // the warp network, the Borg rim threat, the Dune spice trade, Sol-vs-colonies
+  // isolationism, the Minus World, the slingshot pilots' union — spread across the
+  // districts at street-readable heights. Visual planes only (no colliders).
+  {
+    const props = [
+      { party: 'SOL FIRST',             slogan: 'CLOSE THE\nGATEWAY',        by: 'Sen. Hale Brennan · Terra Bloc',  paid: 'Sol Sovereignty PAC',        color: NEON.amber },
+      { party: 'OFF-WORLD UNION',       slogan: 'EIGHT GALAXIES\nONE PEOPLE', by: 'Colonial Expansion · YES on 12',  paid: 'United Colonies',            color: NEON.cyan },
+      { party: 'VULCAN HIGH COMMAND',   slogan: 'ORDER THROUGH\nDISCIPLINE',  by: 'Logic on the Ballot · Prop 7',    paid: 'High Command Logic Council', color: NEON.blue },
+      { party: 'FREE MARS',             slogan: 'NO FLAGS\nNO FENCES',        by: 'Martian Liberty Front',           paid: 'Red Planet Volunteers',      color: NEON.red },
+      { party: 'THE SPICE CAUCUS',      slogan: 'THE SPICE\nMUST FLOW',       by: 'Dune Gateway Trade Bloc',         paid: 'Spice Exporters Guild',      color: NEON.amber },
+      { party: 'RIM DEFENSE LEAGUE',    slogan: 'FUND THE\nRIM FLEET',        by: 'Stop the Borg Before Sol',        paid: 'Citizens for a Hard Border', color: NEON.lime },
+      { party: 'THE COLLECTIVE',        slogan: 'VOTE UNITY\nWE ARE ONE',     by: 'Resistance Is Inefficient',       paid: 'Borg Outreach Node 7',       color: NEON.lime },
+      { party: 'SLINGSHOT PILOTS 2287', slogan: 'GRAVITY IS\nA RIGHT',        by: 'Pilots & Haulers United',         paid: 'Local 2287',                 color: NEON.cyan },
+      { party: 'WARP NETWORK AUTH.',    slogan: 'KEEP THE\nNETWORK OPEN',     by: 'Re-Elect the Core Council',       paid: 'Companion Core Caucus',      color: NEON.purple },
+      { party: 'OSTROVA FOR MAYOR',     slogan: 'A SPIRE FOR\nEVERY DISTRICT', by: 'Mayor Vela Ostrova · NC ’87', paid: 'New Chicago Forward',       color: NEON.magenta },
+      { party: 'WORMHOLE TRUTH',        slogan: 'THE MINUS\nWORLD IS REAL',   by: 'Wake Up, New Chicago',            paid: 'Inverted Citizens Front',    color: NEON.purple },
+      { party: 'GAGARIN BOND',          slogan: 'YES ON\nPROP 2287',          by: 'Expand Off-World Boarding',       paid: 'Spaceport Workers',          color: NEON.cyan },
+    ];
+    const hosts = buildings
+      .filter(b => b.h >= 36 && b.h <= 96 && !b.arcade && !b.glbTower && !b._bbMeshes)
+      .sort((a, b) => Math.atan2(a.z, a.x) - Math.atan2(b.z, b.x));   // order by bearing around city center
+    props.forEach((p, k) => {
+      // even bearing spacing → the ads ring the whole city, hitting every district
+      const b = hosts.length ? hosts[Math.floor((k + 0.5) * hosts.length / props.length)] : null;
+      if (!b) return;
+      const [c, ctx] = makeCanvas(512, 288);
+      const g = ctx.createLinearGradient(0, 0, 0, 288);
+      g.addColorStop(0, '#080611'); g.addColorStop(1, '#150a24');
+      ctx.fillStyle = g; ctx.fillRect(0, 0, 512, 288);
+      // party-color side bar + star
+      ctx.fillStyle = hexCss(p.color, 0.9); ctx.fillRect(0, 0, 26, 288);
+      ctx.fillStyle = '#0a0a12'; ctx.textAlign = 'center';
+      ctx.font = 'bold 22px Orbitron, monospace'; ctx.fillText('★', 13, 150);
+      // neon frame
+      ctx.strokeStyle = hexCss(p.color, 0.85); ctx.lineWidth = 7; ctx.strokeRect(8, 8, 496, 272);
+      // party name
+      ctx.shadowColor = hexCss(p.color, 1); ctx.shadowBlur = 12;
+      ctx.fillStyle = hexCss(p.color, 1); ctx.textAlign = 'left';
+      ctx.font = 'bold 26px Rajdhani, sans-serif'; ctx.fillText(p.party, 46, 52);
+      // slogan (wraps on \n)
+      const lines = p.slogan.split('\n');
+      ctx.fillStyle = '#fff'; ctx.shadowBlur = 22; ctx.textAlign = 'center';
+      ctx.font = `bold ${lines.length > 1 ? 54 : 68}px Orbitron, monospace`;
+      const y0 = lines.length > 1 ? 116 : 150;
+      lines.forEach((ln, i) => ctx.fillText(ln, 268, y0 + i * 56));
+      // candidate / measure
+      ctx.shadowBlur = 8; ctx.fillStyle = hexCss(p.color, 1);
+      ctx.font = '27px Rajdhani, sans-serif'; ctx.fillText(p.by, 268, 232);
+      // tiny disclaimer
+      ctx.shadowBlur = 0; ctx.fillStyle = 'rgba(200,210,235,0.55)';
+      ctx.font = '15px Rajdhani, sans-serif';
+      ctx.fillText('PAID FOR BY ' + p.paid.toUpperCase() + ' · NC-2287', 268, 262);
+      const tex = canvasTexture(c);
+      const mat = new THREE.MeshBasicMaterial({ map: tex });
+      mat.onBeforeCompile = (shader) => {
+        shader.uniforms.uTime = world.uTime;
+        shader.uniforms.uPhase = { value: k * 2.3 };
+        // glitchy propaganda screen: chroma split + horizontal slip bands +
+        // scanlines + flicker + occasional dropout / inverted-band burst
+        shader.fragmentShader = 'uniform float uTime;\nuniform float uPhase;\n' + shader.fragmentShader
+          .replace('#include <map_fragment>', `
+            #ifdef USE_MAP
+            float gT = uTime;
+            // time-quantized glitch burst (most frames calm, some frames tear up)
+            float burst = step(0.84, fract(sin(floor(gT * 6.0 + uPhase) * 45.13) * 271.7));
+            vec2 gUv = vMapUv;
+            // per-horizontal-band random horizontal slip, mostly during bursts
+            float band = floor(vMapUv.y * 26.0);
+            float bandRand = fract(sin(band * 12.9898 + floor(gT * 14.0) * 7.77) * 43758.5453);
+            float slip = step(0.7, bandRand) * (bandRand - 0.85) * (0.04 + burst * 0.16);
+            gUv.x += slip;
+            // chromatic aberration, wider during a burst
+            float ca = 0.0035 + burst * 0.02 * bandRand;
+            vec4 cR = texture2D(map, gUv + vec2(ca, 0.0));
+            vec4 cG = texture2D(map, gUv);
+            vec4 cB = texture2D(map, gUv - vec2(ca, 0.0));
+            vec4 sampledDiffuseColor = vec4(cR.r, cG.g, cB.b, cG.a);
+            diffuseColor *= sampledDiffuseColor;
+            // rolling scanlines
+            float scan = 0.84 + 0.16 * step(0.5, fract(vMapUv.y * 130.0 - gT * 6.0));
+            // brightness flicker keyed to the board's phase
+            float blink = 0.78 + 0.22 * step(0.5, fract(gT * 0.6 + uPhase));
+            // rare hard dropout (screen briefly dims)
+            float drop = 1.0 - 0.55 * step(0.965, fract(sin(floor(gT * 9.0 + uPhase * 3.0) * 91.7) * 4385.5));
+            diffuseColor.rgb *= scan * blink * drop;
+            // inverted flash on a torn band during a burst
+            diffuseColor.rgb = mix(diffuseColor.rgb, vec3(1.0) - diffuseColor.rgb, burst * step(0.9, bandRand) * 0.7);
+            #endif
+          `);
+      };
+      const mesh = new THREE.Mesh(new THREE.PlaneGeometry(20, 11.25), mat);
+      const side = k % 4;
+      const off = [[b.w / 2 + 0.5, 0, Math.PI / 2], [-b.w / 2 - 0.5, 0, -Math.PI / 2], [0, b.d / 2 + 0.5, 0], [0, -b.d / 2 - 0.5, Math.PI]][side];
+      mesh.position.set(b.x + off[0], Math.min(b.h - 7, 13 + (k % 3) * 9), b.z + off[1]);
+      mesh.rotation.y = off[2];
+      scene.add(mesh);
+      (b._bbMeshes = b._bbMeshes || []).push(mesh);
+    });
+  }
+
   // ─────────────────────── LED MEGABOARDS (Times Square pass) ───────────────────────
   {
     const [lc, lctx] = makeCanvas(512, 128);
@@ -1214,6 +1347,7 @@ export function buildWorld(scene, renderer) {
     const heads = new THREE.InstancedMesh(headGeo, headMat, positions.length);
     const dummy = new THREE.Object3D();
     const glowPts = [];
+    const poleCols = [];
     positions.forEach((p, i) => {
       dummy.position.set(p.x, 0, p.z);
       dummy.rotation.set(0, p.rot, 0);
@@ -1222,10 +1356,13 @@ export function buildWorld(scene, renderer) {
       heads.setMatrixAt(i, dummy.matrix);
       const hx = p.x + Math.sin(p.rot) * 1.1, hz = p.z + Math.cos(p.rot) * 1.1;
       glowPts.push(hx, 9.05, hz);
-      world.colliders.push({ minX: p.x - 0.3, maxX: p.x + 0.3, minZ: p.z - 0.3, maxZ: p.z + 0.3 });
+      const col = { minX: p.x - 0.3, maxX: p.x + 0.3, minZ: p.z - 0.3, maxZ: p.z + 0.3 };
+      world.colliders.push(col);
+      poleCols.push({ i, x: p.x, z: p.z, col });
     });
     poles.frustumCulled = heads.frustumCulled = false;
     scene.add(poles, heads);
+    world._streetLights = { poles, heads, cols: poleCols };
 
     const gGeo = new THREE.BufferGeometry();
     gGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(glowPts), 3));

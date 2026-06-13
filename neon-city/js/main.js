@@ -23,6 +23,10 @@ import { createFX } from './fx.js';
 import { createHUD } from './hud.js';
 import { createAudio } from './audio.js';
 
+// ── build stamp (so we can confirm which code is actually loaded) ──
+const NC_BUILD = 'NC-2287 build 2026-06-13e · ramp-slab-flip + glitchy-political-billboards';
+console.log('%c' + NC_BUILD, 'color:#00f0ff;font-weight:bold;font-size:14px');
+
 // ── renderer ──
 const canvas = document.getElementById('scene');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
@@ -119,6 +123,10 @@ async function boot() {
     if (!seen.has(st.name)) { seen.add(st.name); world._stations.push(st); }
   }
   hud.initMap(world);
+
+  // ramps, elevators and platforms now exist — clear any lamp poles the road
+  // grid stamped into their doorways / footpaths so the player can get on them
+  world.clearFurnitureUnderWalkables();
 
   hud.setProgress(0.78, 'CHARGING WEAPONS & WEATHER');
   await frame();
