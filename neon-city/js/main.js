@@ -24,7 +24,7 @@ import { createHUD } from './hud.js';
 import { createAudio } from './audio.js';
 
 // ── build stamp (so we can confirm which code is actually loaded) ──
-const NC_BUILD = 'NC-2287 build 2026-06-13e · ramp-slab-flip + glitchy-political-billboards';
+const NC_BUILD = 'NC-2287 build 2026-06-13f · interiors + holograms + gothic/fire-escapes/skybridges/institutions';
 console.log('%c' + NC_BUILD, 'color:#00f0ff;font-weight:bold;font-size:14px');
 
 // ── renderer ──

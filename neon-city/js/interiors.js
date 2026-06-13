@@ -178,7 +178,7 @@ export function buildInteriors(scene, world) {
         new THREE.BoxGeometry(b.w - 0.35, interiorH, b.d - 0.35),
         new THREE.MeshStandardMaterial({
           color: 0x1a2233, roughness: 0.65, metalness: 0.25, side: THREE.BackSide,
-          emissive: 0x13202f, emissiveIntensity: 1.0,
+          emissive: 0x1d3350, emissiveIntensity: 1.7,
         })
       );
       shell.position.set(b.x, interiorH / 2 - 0.05, b.z);
@@ -235,8 +235,8 @@ export function buildInteriors(scene, world) {
     // ── stair + shaft zones (local frame, door at +z, back wall at -z) ──
     const lw = W / 2 - 0.45, ld = Dep / 2 - 0.45;
     const backZ = -ld;
-    const stairX0 = -lw, stairX1 = -lw + 5.2;
-    const stairZ0 = backZ, stairZ1 = backZ + 6.8;
+    const stairX0 = -lw, stairX1 = -lw + 7.0;          // wider stairwell — easy to climb
+    const stairZ0 = backZ, stairZ1 = backZ + 7.6;
     const shaftX0 = lw - 3.4, shaftX1 = lw;
     const shaftZ0 = backZ, shaftZ1 = backZ + 3.4;
     const shaftC = toWorld((shaftX0 + shaftX1) / 2, (shaftZ0 + shaftZ1) / 2);
@@ -267,16 +267,31 @@ export function buildInteriors(scene, world) {
     for (let k = 0; k <= F; k++) {
       pushBox(glowGeos, (shaftX0 + shaftX1) / 2, shaftZ1 + 0.1, k * FLOOR_H + 2.9, 3.2, 0.12, 0.12);
     }
+    // brighter interiors: per-floor edge-light ribbon + flanking ceiling strips
+    for (let k = 1; k <= F; k++) {
+      const fy = k * FLOOR_H + 0.22;                 // skirting glow just above the slab
+      const cy = k * FLOOR_H + 3.3;                  // ceiling
+      const z0 = stairZ1 + 0.4, z1 = ld - 0.4, x0 = -lw + 0.4, x1 = lw - 0.4;
+      if (z1 - z0 > 1 && x1 - x0 > 1) {
+        pushBox(glowGeos, (x0 + x1) / 2, z0, fy, x1 - x0, 0.07, 0.12);
+        pushBox(glowGeos, (x0 + x1) / 2, z1, fy, x1 - x0, 0.07, 0.12);
+        pushBox(glowGeos, x0, (z0 + z1) / 2, fy, 0.12, 0.07, z1 - z0);
+        pushBox(glowGeos, x1, (z0 + z1) / 2, fy, 0.12, 0.07, z1 - z0);
+        // two extra ceiling runs flanking the central strip
+        pushBox(glowGeos, -lw * 0.5, (stairZ1 + ld) / 2, cy, 0.4, 0.1, Math.max(2, ld - stairZ1 - 2));
+        pushBox(glowGeos, lw * 0.5, (stairZ1 + ld) / 2, cy, 0.4, 0.1, Math.max(2, ld - stairZ1 - 2));
+      }
+    }
 
     // ── switchback stairs ──
     // Both flights meet the slab line at the FRONT of the stairwell
     // (z = stairZ1): west strip rises toward the back landing, east strip
     // arrives from it — so every floor connects cleanly at its slab edge.
     {
-      const fx0 = stairX0 + 0.1, fx1 = stairX0 + 2.45;   // west strip (up) — player-wide
-      const gx0 = stairX0 + 3.0, gx1 = stairX1 - 0.1;    // east strip (down from above)
+      const fx0 = stairX0 + 0.15, fx1 = stairX0 + 3.25;  // west ramp (up) — wide, walkable
+      const gx0 = stairX0 + 3.75, gx1 = stairX1 - 0.15;  // east ramp (down from above)
       const runZf = stairZ1;                              // front (floor connection)
-      const runZb = backZ + 1.5;                          // back (landing edge)
+      const runZb = backZ + 2.0;                          // back (landing edge) — roomier turn
       const landZ0 = backZ + 0.15, landZ1 = runZb;
       const localZ = (x, z) => (x - b.x) * sinR + (z - b.z) * cosR;
       for (let k = 0; k < F; k++) {
@@ -310,13 +325,13 @@ export function buildInteriors(scene, world) {
         const ang = Math.atan2(half, runZf - runZb);
         for (const [sx0, sx1, slope] of [[fx0, fx1, -1], [gx0, gx1, 1]]) {
           const g = new THREE.BoxGeometry(sx1 - sx0, 0.18, runLen);
-          g.rotateX(slope * ang);
+          g.rotateX(-slope * ang);
           if (Math.abs(sinR) > 0.5) g.rotateY(rot);
           const p = toWorld((sx0 + sx1) / 2, (runZb + runZf) / 2);
           g.translate(p.x, yb + half / 2 + (slope === 1 ? half : 0), p.z);
           solidGeos.push(g);
           const gl = new THREE.BoxGeometry(sx1 - sx0 - 0.2, 0.05, runLen - 0.2);
-          gl.rotateX(slope * ang);
+          gl.rotateX(-slope * ang);
           if (Math.abs(sinR) > 0.5) gl.rotateY(rot);
           gl.translate(p.x, yb + half / 2 + (slope === 1 ? half : 0) + 0.13, p.z);
           glowGeos.push(gl);
@@ -415,7 +430,7 @@ export function buildInteriors(scene, world) {
     if (glowGeos.length) {
       const glow = new THREE.Mesh(
         BufferGeometryUtils.mergeGeometries(glowGeos),
-        new THREE.MeshBasicMaterial({ color: accent.clone().multiplyScalar(0.85), toneMapped: false })
+        new THREE.MeshBasicMaterial({ color: accent.clone().multiplyScalar(1.35), toneMapped: false })
       );
       group.add(glow);
     }

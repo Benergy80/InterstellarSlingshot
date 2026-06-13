@@ -8,6 +8,7 @@
 // surfaces, groundHeightAt() and POIs.
 // ════════════════════════════════════════════════════════════════
 import * as THREE from 'three';
+import * as BufferGeometryUtils from 'three/addons/utils/BufferGeometryUtils.js';
 import { C, NEON, NEON_LIST, mulberry32, pick, clamp, makeCanvas, canvasTexture, glowTexture, hexCss } from './config.js';
 
 const Y_AXIS = new THREE.Vector3(0, 1, 0);
@@ -1322,6 +1323,207 @@ export function buildWorld(scene, renderer) {
     });
     boards.frustumCulled = false;
     scene.add(boards);
+  }
+
+  // ════════════ BUILDING CHARACTER — fire escapes, gothic, institutions, sky bridges ════════════
+  {
+    const drnd = mulberry32(C.SEED + 9001);
+    const metalMat = new THREE.MeshStandardMaterial({ color: 0x262b38, roughness: 0.55, metalness: 0.7 });
+    const stoneMat = new THREE.MeshStandardMaterial({ color: 0x3c4150, roughness: 0.82, metalness: 0.15 });
+    const ironGlow = new THREE.MeshBasicMaterial({ color: new THREE.Color(NEON.amber).multiplyScalar(0.9), toneMapped: false });
+    const faces = (b) => [
+      [b.w / 2, 0, 1, 0], [-b.w / 2, 0, -1, 0],
+      [0, b.d / 2, 0, 1], [0, -b.d / 2, 0, -1],
+    ];
+
+    // ── exterior fire escapes (Old Town / Market / Core mid-rises) ──
+    {
+      const escGeo = [], railGeo = [];
+      const hosts = buildings.filter(b => !b.glbTower && !b.arcade && b.h >= 20 && b.h <= 110 &&
+        (b.dk === 'OLD' || b.dk === 'MARKET' || b.dk === 'CORE' || drnd() < 0.2)).slice(0, 80);
+      hosts.forEach(b => {
+        const [ox, oz, nx, nz] = faces(b)[(drnd() * 4) | 0];
+        const along = nx !== 0 ? b.d : b.w;
+        const pw = Math.min(along - 1.2, 3.2);
+        if (pw < 1.4) return;
+        const wx = b.x + ox, wz = b.z + oz;
+        const top = Math.min(b.h - 2.5, 5 + Math.floor((b.h - 7) / 3.4) * 3.4);
+        for (let y = 5; y <= top; y += 3.4) {
+          const pg = new THREE.BoxGeometry(nx !== 0 ? 1.3 : pw, 0.12, nx !== 0 ? pw : 1.3);
+          pg.translate(wx + nx * 0.65, y, wz + nz * 0.65); escGeo.push(pg);
+          const gg = new THREE.BoxGeometry(nx !== 0 ? 0.07 : pw, 0.55, nx !== 0 ? pw : 0.07);
+          gg.translate(wx + nx * 1.25, y + 0.55, wz + nz * 1.25); railGeo.push(gg);
+          if (y + 3.4 <= top) {
+            const lg = new THREE.BoxGeometry(0.12, 3.5, 0.5);
+            lg.rotateX(0.5); if (nx !== 0) lg.rotateY(Math.PI / 2);
+            lg.translate(wx + nx * 0.95 + nz * pw * 0.3, y + 1.75, wz + nz * 0.95 + nx * pw * 0.3); escGeo.push(lg);
+          }
+        }
+      });
+      if (escGeo.length) { const m = new THREE.Mesh(BufferGeometryUtils.mergeGeometries(escGeo), metalMat); m.frustumCulled = false; scene.add(m); }
+      if (railGeo.length) { const m = new THREE.Mesh(BufferGeometryUtils.mergeGeometries(railGeo), ironGlow); m.frustumCulled = false; scene.add(m); }
+    }
+
+    // ── gothic crowns: corner gargoyles, roof finials, flying buttresses ──
+    {
+      const gargoyle = (() => {
+        const body = new THREE.BoxGeometry(0.6, 0.5, 1.1); body.translate(0, 0.25, 0);
+        const head = new THREE.BoxGeometry(0.5, 0.45, 0.5); head.translate(0, 0.5, 0.55);
+        const jaw = new THREE.BoxGeometry(0.45, 0.18, 0.45); jaw.translate(0, 0.3, 0.75);
+        const wingL = new THREE.BoxGeometry(0.1, 0.6, 0.7); wingL.translate(-0.35, 0.5, -0.1);
+        const wingR = new THREE.BoxGeometry(0.1, 0.6, 0.7); wingR.translate(0.35, 0.5, -0.1);
+        return BufferGeometryUtils.mergeGeometries([body, head, jaw, wingL, wingR]);
+      })();
+      const finial = (() => {
+        const shaft = new THREE.ConeGeometry(0.4, 3.2, 6); shaft.translate(0, 1.6, 0);
+        const ball = new THREE.SphereGeometry(0.28, 6, 5); ball.translate(0, 3.4, 0);
+        return BufferGeometryUtils.mergeGeometries([shaft, ball]);
+      })();
+      const gothic = buildings.filter(b => !b.glbTower && !b.arcade && b.h >= 40 &&
+        (b.dk === 'CORE' || b.dk === 'PLAZA' || drnd() < 0.15)).slice(0, 36);
+      const cap = gothic.length * 4;
+      const gargM = new THREE.InstancedMesh(gargoyle, stoneMat, cap);
+      const finM = new THREE.InstancedMesh(finial, stoneMat, cap);
+      const dum = new THREE.Object3D();
+      let gi = 0, fi = 0; const buttGeo = [];
+      gothic.forEach(b => {
+        const hw = b.w / 2 - 0.3, hd = b.d / 2 - 0.3, ry = b.h + 0.2;
+        for (const [cx, cz] of [[hw, hd], [-hw, hd], [hw, -hd], [-hw, -hd]]) {
+          dum.position.set(b.x + cx, ry, b.z + cz);
+          dum.rotation.set(0.35, Math.atan2(cx, cz), 0);
+          dum.scale.setScalar(0.9 + drnd() * 0.6); dum.updateMatrix();
+          if (gi < cap) gargM.setMatrixAt(gi++, dum.matrix);
+          dum.position.set(b.x + cx * 0.96, ry, b.z + cz * 0.96);
+          dum.rotation.set(0, 0, 0); dum.scale.setScalar(0.8 + drnd() * 0.5); dum.updateMatrix();
+          if (fi < cap) finM.setMatrixAt(fi++, dum.matrix);
+        }
+        if (b.h >= 70) {
+          for (const [ox, oz, nx, nz] of faces(b)) {
+            if (drnd() < 0.5) continue;
+            const baseY = b.h * 0.62, topY = b.h * 0.86, reach = 3.6, segs = 5;
+            for (let s = 0; s < segs; s++) {
+              const t0 = s / segs, t1 = (s + 1) / segs;
+              const p0 = new THREE.Vector3(b.x + ox + nx * reach * t0, topY - (topY - baseY) * t0 * t0, b.z + oz + nz * reach * t0);
+              const p1 = new THREE.Vector3(b.x + ox + nx * reach * t1, topY - (topY - baseY) * t1 * t1, b.z + oz + nz * reach * t1);
+              const len = p0.distanceTo(p1);
+              const seg = new THREE.BoxGeometry(0.35, 0.35, len);
+              const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), p1.clone().sub(p0).normalize());
+              seg.applyQuaternion(q); seg.translate((p0.x + p1.x) / 2, (p0.y + p1.y) / 2, (p0.z + p1.z) / 2);
+              buttGeo.push(seg);
+            }
+            const pier = new THREE.BoxGeometry(1.0, baseY, 1.0);
+            pier.translate(b.x + ox + nx * reach, baseY / 2, b.z + oz + nz * reach); buttGeo.push(pier);
+          }
+        }
+      });
+      gargM.count = gi; finM.count = fi;
+      gargM.instanceMatrix.needsUpdate = finM.instanceMatrix.needsUpdate = true;
+      gargM.frustumCulled = finM.frustumCulled = false;
+      scene.add(gargM, finM);
+      if (buttGeo.length) { const m = new THREE.Mesh(BufferGeometryUtils.mergeGeometries(buttGeo), stoneMat); m.frustumCulled = false; scene.add(m); }
+    }
+
+    // ── sky bridges between nearby towers ──
+    {
+      const tube = [], trim = [];
+      const tall = buildings.filter(b => !b.arcade && b.h >= 55).sort(() => drnd() - 0.5);
+      const used = new Set(); let made = 0;
+      for (let i = 0; i < tall.length && made < 18; i++) {
+        if (used.has(i)) continue; const a = tall[i];
+        for (let j = i + 1; j < tall.length && made < 18; j++) {
+          if (used.has(j)) continue; const b = tall[j];
+          const dx = b.x - a.x, dz = b.z - a.z, dist = Math.hypot(dx, dz);
+          if (dist < 30 || dist > 95) continue;
+          const len = dist - (Math.max(a.w, a.d) + Math.max(b.w, b.d)) / 2;
+          if (len < 12) continue;
+          const y = Math.min(a.h, b.h) * (0.45 + drnd() * 0.3); if (y < 24) continue;
+          const mx = (a.x + b.x) / 2, mz = (a.z + b.z) / 2, ry = Math.atan2(dx, dz);
+          const bg = new THREE.BoxGeometry(2.4, 2.6, len); bg.rotateY(ry); bg.translate(mx, y, mz); tube.push(bg);
+          const t1 = new THREE.BoxGeometry(2.6, 0.12, len); t1.rotateY(ry); t1.translate(mx, y + 1.4, mz); trim.push(t1);
+          const t2 = new THREE.BoxGeometry(2.6, 0.12, len); t2.rotateY(ry); t2.translate(mx, y - 1.4, mz); trim.push(t2);
+          used.add(i); used.add(j); made++; break;
+        }
+      }
+      if (tube.length) {
+        const glass = new THREE.MeshStandardMaterial({ color: 0x10202f, roughness: 0.1, metalness: 0.6, transparent: true, opacity: 0.5 });
+        const m = new THREE.Mesh(BufferGeometryUtils.mergeGeometries(tube), glass); m.frustumCulled = false; scene.add(m);
+      }
+      if (trim.length) { const m = new THREE.Mesh(BufferGeometryUtils.mergeGeometries(trim), new THREE.MeshBasicMaterial({ color: new THREE.Color(NEON.cyan).multiplyScalar(1.1), toneMapped: false })); m.frustumCulled = false; scene.add(m); }
+    }
+
+    // ── neoclassical institutions: columned porticos on civic buildings ──
+    {
+      const names = ['HALL OF RECORDS', 'SOL EXCHANGE', 'GRAND LIBRARY', 'COURT OF NINE GALAXIES', 'ACADEMY OF FLIGHT', 'CUSTOMS HOUSE'];
+      const cand = buildings.filter(b => !b.glbTower && !b.arcade && b.w >= 18 && b.d >= 18 && b.h >= 24 && b.h <= 90).sort(() => drnd() - 0.5).slice(0, names.length);
+      const colGeo = [], capGeo = [];
+      const colTpl = new THREE.CylinderGeometry(0.7, 0.8, 9, 12);
+      cand.forEach((b, idx) => {
+        const [ox, oz, nx, nz] = faces(b)[(drnd() * 4) | 0];
+        const along = nx !== 0 ? b.d : b.w;
+        const span = Math.min(along - 2, 16);
+        const n = Math.max(4, Math.round(span / 2.6));
+        const wx = b.x + ox + nx * 1.2, wz = b.z + oz + nz * 1.2;
+        const ax = nz !== 0 ? 1 : 0, az = nx !== 0 ? 1 : 0;
+        for (let c = 0; c < n; c++) {
+          const t = (c / (n - 1) - 0.5) * span;
+          const cg = colTpl.clone(); cg.translate(wx + ax * t, 4.5, wz + az * t); colGeo.push(cg);
+        }
+        const ent = new THREE.BoxGeometry(nx !== 0 ? 2.6 : span + 1.5, 1.6, nx !== 0 ? span + 1.5 : 2.6);
+        ent.translate(wx, 9.8, wz); capGeo.push(ent);
+        const capb = new THREE.BoxGeometry(nx !== 0 ? 2.2 : span, 0.8, nx !== 0 ? span : 2.2);
+        capb.translate(wx, 10.9, wz); capGeo.push(capb);
+        for (let s = 0; s < 3; s++) {
+          const st = new THREE.BoxGeometry(nx !== 0 ? 3 + s : span + 2 + s, 0.4, nx !== 0 ? span + 2 + s : 3 + s);
+          st.translate(b.x + ox + nx * (0.5 + s * 0.6), 0.2 + s * 0.4, b.z + oz + nz * (0.5 + s * 0.6)); capGeo.push(st);
+        }
+        b._institution = names[idx];
+        world.pois.push({ name: names[idx], pos: new THREE.Vector3(b.x, 2, b.z), desc: 'Neoclassical institution of New Chicago' });
+      });
+      if (colGeo.length) { const m = new THREE.Mesh(BufferGeometryUtils.mergeGeometries(colGeo), stoneMat); m.frustumCulled = false; scene.add(m); }
+      if (capGeo.length) { const m = new THREE.Mesh(BufferGeometryUtils.mergeGeometries(capGeo), stoneMat); m.frustumCulled = false; scene.add(m); }
+    }
+  }
+
+  // ════════════ CITY HOLOGRAMS — rotating translucent projections + light columns ════════════
+  {
+    const hrnd = mulberry32(C.SEED + 1212);
+    const holos = [];
+    const holoMat = (c, op) => new THREE.MeshBasicMaterial({ color: new THREE.Color(c), wireframe: true, transparent: true, opacity: op, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false });
+    const beamMat = (c) => new THREE.MeshBasicMaterial({ color: new THREE.Color(c), transparent: true, opacity: 0.05, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, toneMapped: false });
+    const makeForm = (kind, c) => {
+      const g = new THREE.Group();
+      if (kind === 'planet') { g.add(new THREE.Mesh(new THREE.SphereGeometry(4, 12, 10), holoMat(c, 0.45))); const r = new THREE.Mesh(new THREE.TorusGeometry(6, 0.5, 6, 28), holoMat(c, 0.6)); r.rotation.x = 1.2; g.add(r); }
+      else if (kind === 'cube') { g.add(new THREE.Mesh(new THREE.BoxGeometry(6, 6, 6), holoMat(c, 0.55))); }
+      else if (kind === 'ship') { const bd = new THREE.Mesh(new THREE.ConeGeometry(1.6, 6, 8), holoMat(c, 0.55)); bd.rotation.x = Math.PI / 2; g.add(bd); g.add(new THREE.Mesh(new THREE.BoxGeometry(8, 0.3, 2), holoMat(c, 0.5))); }
+      else { const k = new THREE.Mesh(new THREE.SphereGeometry(3, 10, 8), holoMat(c, 0.5)); k.scale.set(1.8, 0.6, 1); g.add(k); }
+      return g;
+    };
+    const kinds = ['planet', 'cube', 'ship', 'koi'];
+    const cols = [NEON.cyan, NEON.magenta, NEON.lime, NEON.purple, NEON.blue];
+    const H = C.HALF;
+    for (let n = 0; n < 16; n++) {
+      const gx = 1 + Math.floor(hrnd() * (C.GRID - 1));
+      const gz = Math.floor(hrnd() * C.GRID);
+      const x = -H + gx * C.CELL - C.ROAD / 2;
+      const z = -H + gz * C.CELL + C.CELL / 2 - C.ROAD / 2;
+      const c = cols[(hrnd() * cols.length) | 0];
+      const y = 28 + hrnd() * 40;
+      const form = makeForm(kinds[n % kinds.length], c);
+      form.position.set(x, y, z); form.scale.setScalar(0.7 + hrnd() * 0.9); scene.add(form);
+      const beam = new THREE.Mesh(new THREE.ConeGeometry(2.6, y, 14, 1, true), beamMat(c));
+      beam.position.set(x, y / 2, z); scene.add(beam);
+      const pad = new THREE.Mesh(new THREE.CylinderGeometry(2.2, 2.4, 0.4, 16), new THREE.MeshBasicMaterial({ color: new THREE.Color(c).multiplyScalar(1.1), toneMapped: false }));
+      pad.position.set(x, 0.2, z); scene.add(pad);
+      holos.push({ form, beam, ph: hrnd() * 9, spin: 0.2 + hrnd() * 0.5 });
+    }
+    world.updateFns.push((dt, t) => {
+      for (const h of holos) {
+        h.form.rotation.y += dt * h.spin;
+        const flick = 0.4 + 0.16 * Math.sin(t * 3 + h.ph) + (Math.sin(t * 47 + h.ph) > 0.93 ? -0.22 : 0);
+        h.form.traverse(o => { if (o.material) o.material.opacity = Math.max(0.12, flick); });
+        h.beam.material.opacity = 0.04 + 0.03 * (0.5 + 0.5 * Math.sin(t * 2 + h.ph));
+      }
+    });
   }
 
   // ─────────────────────── STREET LIGHTS ───────────────────────
