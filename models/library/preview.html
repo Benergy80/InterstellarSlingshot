@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Asset Library Preview — Interstellar Slingshot</title>
+<style>
+  html,body{margin:0;height:100%;background:#06080f;color:#bfe3ff;font-family:monospace;overflow:hidden}
+  #bar{position:fixed;top:0;left:0;right:0;z-index:10;padding:8px 12px;background:rgba(8,14,28,.85);
+       border-bottom:1px solid #1d4e7a;display:flex;gap:14px;align-items:center;flex-wrap:wrap}
+  #bar h1{font-size:14px;margin:0;color:#5cc8ff;letter-spacing:2px}
+  button{background:#0d2438;color:#9fe;border:1px solid #2a6a9c;border-radius:5px;padding:5px 12px;
+         cursor:pointer;font-family:monospace;font-size:12px}
+  button.on{background:#1d6fb0;color:#fff}
+  input{background:#0a1726;color:#cfe;border:1px solid #2a6a9c;border-radius:5px;padding:5px 10px;font-family:monospace}
+  #count{opacity:.7;font-size:12px}
+  #labels{position:fixed;inset:0;pointer-events:none;z-index:5}
+  .lbl{position:absolute;transform:translate(-50%,0);font-size:10px;color:#8fd0ff;text-shadow:0 0 4px #000;
+       white-space:nowrap;letter-spacing:.5px}
+  #hint{position:fixed;bottom:8px;left:12px;font-size:11px;opacity:.6;z-index:10}
+</style>
+</head>
+<body>
+<div id="bar">
+  <h1>ASSET LIBRARY</h1>
+  <button id="btnSpace" class="on">Space Kit</button>
+  <button id="btnStation">Station Kit</button>
+  <input id="filter" placeholder="filter: craft, rocket, wall…" size="22">
+  <span id="count"></span>
+</div>
+<div id="labels"></div>
+<div id="hint">drag = orbit · scroll = zoom · right-drag = pan · models auto-scaled to a unit cell</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script src="filelist.js"></script>
+<script>
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x06080f);
+const camera = new THREE.PerspectiveCamera(55, innerWidth/innerHeight, 0.01, 5000);
+const renderer = new THREE.WebGLRenderer({antialias:true});
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(Math.min(2, devicePixelRatio));
+document.body.appendChild(renderer.domElement);
+const controls = new THREE.OrbitControls(camera, renderer.domElement);
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+const key = new THREE.DirectionalLight(0xffffff, 1.1); key.position.set(3,6,4); scene.add(key);
+const rim = new THREE.DirectionalLight(0x66aaff, 0.5); rim.position.set(-4,-2,-3); scene.add(rim);
+
+const loader = new THREE.GLTFLoader();
+const labelsEl = document.getElementById('labels');
+let grid = new THREE.Group(); scene.add(grid);
+let labels = [];     // {el, obj}
+let activePack = 'space';
+let filterText = '';
+
+function clearGrid(){
+  scene.remove(grid);
+  grid.traverse(o=>{ if(o.geometry) o.geometry.dispose(); if(o.material){ (Array.isArray(o.material)?o.material:[o.material]).forEach(m=>m.dispose()); }});
+  grid = new THREE.Group(); scene.add(grid);
+  labels.forEach(l=>l.el.remove()); labels = [];
+}
+
+function build(){
+  clearGrid();
+  const dir = activePack==='space' ? 'kenney-space-kit/' : 'kenney-station-kit/';
+  let list = (activePack==='space' ? window.SPACE_KIT : window.STATION_KIT) || [];
+  if(filterText) list = list.filter(n=>n.toLowerCase().includes(filterText));
+  document.getElementById('count').textContent = list.length + ' models';
+  const cols = Math.ceil(Math.sqrt(list.length)) || 1;
+  const spacing = 1.7;
+  list.forEach((name, i)=>{
+    const cx = (i % cols) - cols/2;
+    const cz = Math.floor(i / cols) - cols/2;
+    loader.load(dir + name, gltf=>{
+      const m = gltf.scene;
+      // normalize to ~1 unit cell
+      const box = new THREE.Box3().setFromObject(m);
+      const size = box.getSize(new THREE.Vector3());
+      const ctr = box.getCenter(new THREE.Vector3());
+      const s = 1 / (Math.max(size.x,size.y,size.z) || 1);
+      m.scale.setScalar(s);
+      m.position.set(cx*spacing - ctr.x*s, -ctr.y*s, cz*spacing - ctr.z*s);
+      grid.add(m);
+      const el = document.createElement('div'); el.className='lbl';
+      el.textContent = name.replace('.glb','');
+      labelsEl.appendChild(el);
+      labels.push({el, pos:new THREE.Vector3(cx*spacing, -0.55, cz*spacing)});
+    }, undefined, ()=>{ /* skip load errors */ });
+  });
+  // frame the grid
+  const span = cols*spacing;
+  camera.position.set(0, span*0.5, span*0.9);
+  controls.target.set(0,0,0); controls.update();
+}
+
+document.getElementById('btnSpace').onclick = ()=>{ activePack='space';
+  btnSpace.classList.add('on'); btnStation.classList.remove('on'); build(); };
+document.getElementById('btnStation').onclick = ()=>{ activePack='station';
+  btnStation.classList.add('on'); btnSpace.classList.remove('on'); build(); };
+document.getElementById('filter').oninput = e=>{ filterText = e.target.value.toLowerCase().trim(); build(); };
+
+addEventListener('resize', ()=>{ camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth,innerHeight); });
+
+const _v = new THREE.Vector3();
+function animate(){
+  requestAnimationFrame(animate);
+  grid.rotation.y += 0.0015;
+  controls.update();
+  // project labels
+  for(const l of labels){
+    _v.copy(l.pos).applyMatrix4(grid.matrixWorld).project(camera);
+    if(_v.z>1){ l.el.style.display='none'; continue; }
+    l.el.style.display='block';
+    l.el.style.left = ((_v.x+1)/2*innerWidth)+'px';
+    l.el.style.top  = ((1-_v.y)/2*innerHeight)+'px';
+  }
+  renderer.render(scene, camera);
+}
+build();
+animate();
+</script>
+</body>
+</html>
