@@ -1369,29 +1369,47 @@ export function buildWorld(scene, renderer) {
       [0, b.d / 2, 0, 1], [0, -b.d / 2, 0, -1],
     ];
 
-    // ── exterior fire escapes (Old Town / Market / Core mid-rises) ──
+    // ── exterior fire escapes — CLIMBABLE switchback ramps from street to roof ──
     {
       const escGeo = [], railGeo = [];
-      const hosts = buildings.filter(b => !b.glbTower && !b.arcade && b.h >= 20 && b.h <= 110 &&
-        (b.dk === 'OLD' || b.dk === 'MARKET' || b.dk === 'CORE' || drnd() < 0.2)).slice(0, 80);
+      const D0 = 0.5, D1 = 3.1, OW = D1 - D0, AW = 5.4, STEP = 3.4;   // outward band + along-wall run
+      const hosts = buildings.filter(b => !b.glbTower && !b.arcade && b.h >= 16 && b.h <= 110 &&
+        (b.dk === 'OLD' || b.dk === 'MARKET' || b.dk === 'CORE' || drnd() < 0.25)).slice(0, 34);
       hosts.forEach(b => {
         const [ox, oz, nx, nz] = faces(b)[(drnd() * 4) | 0];
-        const along = nx !== 0 ? b.d : b.w;
-        const pw = Math.min(along - 1.2, 3.2);
-        if (pw < 1.4) return;
-        const wx = b.x + ox, wz = b.z + oz;
-        const top = Math.min(b.h - 2.5, 5 + Math.floor((b.h - 7) / 3.4) * 3.4);
-        for (let y = 5; y <= top; y += 3.4) {
-          const pg = new THREE.BoxGeometry(nx !== 0 ? 1.3 : pw, 0.12, nx !== 0 ? pw : 1.3);
-          pg.translate(wx + nx * 0.65, y, wz + nz * 0.65); escGeo.push(pg);
-          const gg = new THREE.BoxGeometry(nx !== 0 ? 0.07 : pw, 0.55, nx !== 0 ? pw : 0.07);
-          gg.translate(wx + nx * 1.25, y + 0.55, wz + nz * 1.25); railGeo.push(gg);
-          if (y + 3.4 <= top) {
-            const lg = new THREE.BoxGeometry(0.12, 3.5, 0.5);
-            lg.rotateX(0.5); if (nx !== 0) lg.rotateY(Math.PI / 2);
-            lg.translate(wx + nx * 0.95 + nz * pw * 0.3, y + 1.75, wz + nz * 0.95 + nx * pw * 0.3); escGeo.push(lg);
-          }
+        if ((nx !== 0 ? b.d : b.w) < AW + 1) return;
+        const awx = nx !== 0 ? 0 : 1, awz = nx !== 0 ? 1 : 0;   // along-wall axis
+        const cwx = b.x + ox, cwz = b.z + oz, omid = (D0 + D1) / 2;
+        const rect = {
+          minX: Math.min(cwx + nx * D0 - awx * AW / 2, cwx + nx * D1 + awx * AW / 2),
+          maxX: Math.max(cwx + nx * D0 - awx * AW / 2, cwx + nx * D1 + awx * AW / 2),
+          minZ: Math.min(cwz + nz * D0 - awz * AW / 2, cwz + nz * D1 + awz * AW / 2),
+          maxZ: Math.max(cwz + nz * D0 - awz * AW / 2, cwz + nz * D1 + awz * AW / 2),
+        };
+        const top = Math.min(b.h - 1.5, b.h * 0.97);
+        const levels = Math.max(2, Math.floor(top / STEP));
+        const alongOf = (x, z) => (x - cwx) * awx + (z - cwz) * awz;
+        const runLen = Math.hypot(AW, STEP), ang = Math.atan2(STEP, AW);
+        for (let i = 0; i < levels; i++) {
+          const yb = i * STEP, yt = (i + 1) * STEP, dir = i % 2 === 0 ? 1 : -1;
+          world.surfaces.push({
+            ...rect,
+            y: (x, z) => { const u = clamp((alongOf(x, z) + AW / 2) / AW, 0, 1); return yb + (yt - yb) * (dir > 0 ? u : 1 - u); },
+          });
+          const slab = new THREE.BoxGeometry(nx !== 0 ? OW : runLen, 0.16, nx !== 0 ? runLen : OW);
+          if (nx !== 0) slab.rotateX(-dir * ang); else slab.rotateZ(dir * ang);
+          slab.translate(cwx + nx * omid, (yb + yt) / 2, cwz + nz * omid);
+          escGeo.push(slab);
         }
+        // outer guard rail + along-wall end rails (above the open street entry)
+        const railY0 = 3.6, railH = top + 1.2 - railY0;
+        const addRail = (cx, cz, sx, sz) => {
+          world.colliders.push({ minX: cx - sx, maxX: cx + sx, minZ: cz - sz, maxZ: cz + sz, minY: railY0, maxY: top + 1.2 });
+          const g = new THREE.BoxGeometry(sx * 2 || 0.14, railH, sz * 2 || 0.14); g.translate(cx, railY0 + railH / 2, cz); railGeo.push(g);
+        };
+        addRail(cwx + nx * D1, cwz + nz * D1, nx !== 0 ? 0.07 : AW / 2, nz !== 0 ? 0.07 : AW / 2);      // outer edge
+        for (const s of [-1, 1]) addRail(cwx + nx * omid + awx * s * AW / 2, cwz + nz * omid + awz * s * AW / 2, awx ? 0.07 : OW / 2, awz ? 0.07 : OW / 2);
+        world.pois.push({ name: 'FIRE ESCAPE', pos: new THREE.Vector3(cwx + nx * D1, 2, cwz + nz * D1), desc: 'Climbable switchback to the roof' });
       });
       if (escGeo.length) { const m = new THREE.Mesh(BufferGeometryUtils.mergeGeometries(escGeo), metalMat); m.frustumCulled = false; scene.add(m); }
       if (railGeo.length) { const m = new THREE.Mesh(BufferGeometryUtils.mergeGeometries(railGeo), ironGlow); m.frustumCulled = false; scene.add(m); }
