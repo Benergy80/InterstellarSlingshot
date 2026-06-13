@@ -102,9 +102,18 @@ export function buildWorld(scene, renderer) {
     }
     return h;
   };
+  world.entranceHoles = [];   // XZ rects where the street is open so you can descend underground
   world.groundHeightAt = (x, z, py = 0) => {
-    let h = scanSurfaces(world.surfaces, x, z, py, 0);
+    // street is the floor (0) — except when already underground, or standing
+    // over an open entrance shaft, where the floor opens to whatever's below
+    let base = 0;
+    if (py < -1) base = -1e4;
+    else for (const r of world.entranceHoles) {
+      if (x >= r.minX && x <= r.maxX && z >= r.minZ && z <= r.maxZ) { base = -1e4; break; }
+    }
+    let h = scanSurfaces(world.surfaces, x, z, py, base);
     if (world.activeInterior) h = scanSurfaces(world.activeInterior.surfaces, x, z, py, h);
+    if (world.underground) h = scanSurfaces(world.underground.surfaces, x, z, py, h);
     return h;
   };
 
@@ -1547,6 +1556,109 @@ export function buildWorld(scene, renderer) {
         h.form.traverse(o => { if (o.material) o.material.opacity = Math.max(0.12, flick); });
         h.beam.material.opacity = 0.04 + 0.03 * (0.5 + 0.5 * Math.sin(t * 2 + h.ph));
       }
+    });
+  }
+
+  // ════════════ UNDERGROUND — enterable sewers + interconnected subway ════════════
+  {
+    const U = world.underground = { surfaces: [], colliders: [] };
+    const FY = -7, CY = -1, RL = 15;
+    const floorGeo = [], wallGeo = [], ceilGeo = [], glowGeo = [], railGeo = [];
+    const waterPanels = [];
+    const floorMat = new THREE.MeshStandardMaterial({ color: 0x1c212d, roughness: 0.92, metalness: 0.1, emissive: 0x18233a, emissiveIntensity: 0.85 });
+    const wallMat = new THREE.MeshStandardMaterial({ color: 0x232a3a, roughness: 0.85, metalness: 0.2, emissive: 0x141d30, emissiveIntensity: 0.7 });
+    const railMat = new THREE.MeshStandardMaterial({ color: 0x3a3f4d, roughness: 0.4, metalness: 0.85 });
+
+    const tunnel = (x0, z0, x1, z1, halfW, kind) => {
+      const alongX = Math.abs(x1 - x0) >= Math.abs(z1 - z0);
+      const len = Math.hypot(x1 - x0, z1 - z0), cx = (x0 + x1) / 2, cz = (z0 + z1) / 2, L = len + halfW * 2;
+      U.surfaces.push(alongX
+        ? { minX: Math.min(x0, x1) - halfW, maxX: Math.max(x0, x1) + halfW, minZ: cz - halfW, maxZ: cz + halfW, y: FY + 0.14 }
+        : { minX: cx - halfW, maxX: cx + halfW, minZ: Math.min(z0, z1) - halfW, maxZ: Math.max(z0, z1) + halfW, y: FY + 0.14 });
+      const fg = new THREE.BoxGeometry(alongX ? L : halfW * 2, 0.3, alongX ? halfW * 2 : L); fg.translate(cx, FY - 0.02, cz); floorGeo.push(fg);
+      const cg = new THREE.BoxGeometry(alongX ? L : halfW * 2 + 0.6, 0.3, alongX ? halfW * 2 + 0.6 : L); cg.translate(cx, CY + 0.15, cz); ceilGeo.push(cg);
+      for (const s of [-1, 1]) {
+        if (alongX) {
+          U.colliders.push({ minX: cx - L / 2, maxX: cx + L / 2, minZ: cz + s * halfW - 0.3, maxZ: cz + s * halfW + 0.3, minY: FY, maxY: CY + 0.4 });
+          const wg = new THREE.BoxGeometry(L, CY - FY + 0.6, 0.5); wg.translate(cx, (FY + CY) / 2, cz + s * halfW); wallGeo.push(wg);
+          const gg = new THREE.BoxGeometry(L, 0.14, 0.14); gg.translate(cx, CY - 0.7, cz + s * (halfW - 0.25)); glowGeo.push(gg);
+        } else {
+          U.colliders.push({ minX: cx + s * halfW - 0.3, maxX: cx + s * halfW + 0.3, minZ: cz - L / 2, maxZ: cz + L / 2, minY: FY, maxY: CY + 0.4 });
+          const wg = new THREE.BoxGeometry(0.5, CY - FY + 0.6, L); wg.translate(cx + s * halfW, (FY + CY) / 2, cz); wallGeo.push(wg);
+          const gg = new THREE.BoxGeometry(0.14, 0.14, L); gg.translate(cx + s * (halfW - 0.25), CY - 0.7, cz); glowGeo.push(gg);
+        }
+      }
+      if (kind === 'subway') {
+        for (const s of [-1, 1]) { const rg = new THREE.BoxGeometry(alongX ? L : 0.14, 0.14, alongX ? 0.14 : L); rg.translate(cx + (alongX ? 0 : s), FY + 0.22, cz + (alongX ? s : 0)); railGeo.push(rg); }
+      } else {
+        const w = new THREE.Mesh(new THREE.PlaneGeometry(alongX ? L : halfW * 1.1, alongX ? halfW * 1.1 : L),
+          new THREE.MeshStandardMaterial({ color: 0x123322, roughness: 0.08, metalness: 0.8, transparent: true, opacity: 0.85 }));
+        w.rotation.x = -Math.PI / 2; w.position.set(cx, FY + 0.18, cz); scene.add(w); waterPanels.push(w);
+      }
+    };
+
+    const endRamp = (ex, ez, dx, dz, halfW, color) => {
+      const alongX = dx !== 0, x1 = ex + dx * RL, z1 = ez + dz * RL;
+      const rect = alongX
+        ? { minX: Math.min(ex, x1), maxX: Math.max(ex, x1), minZ: ez - halfW, maxZ: ez + halfW }
+        : { minX: ex - halfW, maxX: ex + halfW, minZ: Math.min(ez, z1), maxZ: Math.max(ez, z1) };
+      U.surfaces.push({ ...rect, y: (x2, z2) => FY * (1 - clamp(((x2 - ex) * dx + (z2 - ez) * dz) / RL, 0, 1)) });
+      world.entranceHoles.push(rect);
+      for (const s of [-1, 1]) U.colliders.push(alongX
+        ? { minX: rect.minX, maxX: rect.maxX, minZ: ez + s * halfW - 0.3, maxZ: ez + s * halfW + 0.3, minY: FY, maxY: 3 }
+        : { minX: ex + s * halfW - 0.3, maxX: ex + s * halfW + 0.3, minZ: rect.minZ, maxZ: rect.maxZ, minY: FY, maxY: 3 });
+      const runLen = Math.hypot(RL, -FY), ang = Math.atan2(-FY, RL);
+      const slab = new THREE.Mesh(new THREE.BoxGeometry(alongX ? runLen : halfW * 2, 0.3, alongX ? halfW * 2 : runLen), wallMat);
+      slab.position.set((ex + x1) / 2, FY / 2, (ez + z1) / 2);
+      if (alongX) slab.rotation.z = Math.sign(dx) * ang; else slab.rotation.x = -Math.sign(dz) * ang;
+      scene.add(slab);
+      // street kiosk + glowing entry sign at the top of the run
+      const kiosk = new THREE.Mesh(new THREE.BoxGeometry(alongX ? 1.4 : halfW * 2 + 1.4, 3.2, alongX ? halfW * 2 + 1.4 : 1.4),
+        new THREE.MeshStandardMaterial({ color: 0x202637, roughness: 0.5, metalness: 0.55 }));
+      kiosk.position.set(x1 + dx * 0.8, 1.6, z1 + dz * 0.8); scene.add(kiosk);
+      const sign = new THREE.Mesh(new THREE.BoxGeometry(alongX ? 0.2 : 2.6, 0.7, alongX ? 2.6 : 0.2), new THREE.MeshBasicMaterial({ color: new THREE.Color(color), toneMapped: false }));
+      sign.position.set(x1 + dx * 0.8, 3.5, z1 + dz * 0.8); scene.add(sign);
+      world.pois.push({ name: color === NEON.lime ? 'SEWER ACCESS' : 'SUBWAY ENTRANCE', pos: new THREE.Vector3(x1, 1, z1), desc: 'Descends to the New Chicago underground' });
+    };
+
+    // ── network: a subway cross (interconnected at origin, under the spire) ──
+    tunnel(-200, 0, 200, 0, 3.6, 'subway');
+    tunnel(0, -200, 0, 200, 3.6, 'subway');
+    // ── sewer branches tapping the subway lines ──
+    tunnel(0, 80, 150, 80, 2.6, 'sewer');     // meets the N-S line at (0,80)
+    tunnel(80, 0, 80, -150, 2.6, 'sewer');    // meets the E-W line at (80,0)
+    // ── street entrances (subway at the line ends, sewers at the branch ends) ──
+    endRamp(200, 0, 1, 0, 2.4, NEON.cyan);
+    endRamp(-200, 0, -1, 0, 2.4, NEON.cyan);
+    endRamp(0, 200, 0, 1, 2.4, NEON.cyan);
+    endRamp(0, -200, 0, -1, 2.4, NEON.cyan);
+    endRamp(150, 80, 1, 0, 2.0, NEON.lime);
+    endRamp(80, -150, 0, -1, 2.0, NEON.lime);
+
+    // ── a parked subway car on the E-W line ──
+    {
+      const car = new THREE.Group();
+      const body = new THREE.Mesh(new THREE.BoxGeometry(22, 3.4, 5.4), new THREE.MeshStandardMaterial({ color: 0x2a3450, roughness: 0.4, metalness: 0.7 }));
+      body.position.y = FY + 2.2; car.add(body);
+      const winMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(NEON.cyan).multiplyScalar(0.9), toneMapped: false });
+      for (let i = -4; i <= 4; i++) { const w = new THREE.Mesh(new THREE.BoxGeometry(1.4, 1.1, 5.5), winMat); w.position.set(i * 2.3, FY + 2.6, 0); car.add(w); }
+      car.position.set(-120, 0, 0); scene.add(car);
+    }
+
+    if (floorGeo.length) { const m = new THREE.Mesh(BufferGeometryUtils.mergeGeometries(floorGeo), floorMat); m.frustumCulled = false; scene.add(m); }
+    if (ceilGeo.length) { const m = new THREE.Mesh(BufferGeometryUtils.mergeGeometries(ceilGeo), wallMat); m.frustumCulled = false; scene.add(m); }
+    if (wallGeo.length) { const m = new THREE.Mesh(BufferGeometryUtils.mergeGeometries(wallGeo), wallMat); m.frustumCulled = false; scene.add(m); }
+    if (railGeo.length) { const m = new THREE.Mesh(BufferGeometryUtils.mergeGeometries(railGeo), railMat); m.frustumCulled = false; scene.add(m); }
+    if (glowGeo.length) { const m = new THREE.Mesh(BufferGeometryUtils.mergeGeometries(glowGeo), new THREE.MeshBasicMaterial({ color: new THREE.Color(NEON.cyan).multiplyScalar(1.2), toneMapped: false })); m.frustumCulled = false; scene.add(m); }
+
+    // a gentle fill light that follows the player while they're underground
+    const uLight = new THREE.PointLight(0x9fc4ff, 9, 38, 1.4); uLight.visible = false; scene.add(uLight);
+    world.updateFns.push((dt, t, pp) => {
+      if (!pp) return;
+      const under = pp.y < -1.5;
+      uLight.visible = under;
+      if (under) uLight.position.set(pp.x, pp.y + 1.6, pp.z);
+      for (const w of waterPanels) w.material.opacity = 0.78 + 0.12 * Math.sin(t * 1.5 + w.position.x);
     });
   }
 

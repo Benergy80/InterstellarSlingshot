@@ -387,8 +387,13 @@ export function createPlayer({ camera, scene, world, traffic, fx, hud, audio, on
   function collide() {
     const r = P.radius;
     const feetY = state.pos.y - P.eye;
-    collideList(world.colliders, r, feetY);
-    if (world.activeInterior) collideList(world.activeInterior.colliders, r, feetY);
+    if (feetY < -1.5 && world.underground) {
+      collideList(world.underground.colliders, r, feetY);   // underground: only tunnel walls
+    } else {
+      collideList(world.colliders, r, feetY);
+      if (world.activeInterior) collideList(world.activeInterior.colliders, r, feetY);
+      if (world.underground) collideList(world.underground.colliders, r, feetY);   // shaft walls near grade
+    }
   }
 
   // ════════════════ UPDATE ════════════════
