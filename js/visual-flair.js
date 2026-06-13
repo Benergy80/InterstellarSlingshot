@@ -32,9 +32,105 @@ function _vfGlowTexture() {
     return _vfGlowTexture._tex;
 }
 
-// ── 1. PLAYER ENGINE TRAIL — REMOVED ────────────────────────────────────────
-// (Flame-ribbon streamer tried 2026-06-11, cut same day per playtest: even
-// with the near-camera fade it competed with the ship in chase view.)
+// ── 1. PLAYER ENGINE TRAIL — FLAME RIBBON (restored from 86b9535) ───────────
+// A camera-facing triangle strip behind the 3rd-person ship: tapers to
+// nothing at the tail, vertex-colored with a time-shifting rainbow gradient
+// (bright at the head, dark at the tail — under additive blending dark IS
+// transparent, so it fades out like flame). Length breathes on two unsynced
+// sines + speed. Near-camera fade keeps it from covering the ship.
+const _PT_MAX = 64;
+const _ptTrail = {
+    points: [], mesh: null, geo: null, lastPush: null,
+    pos: new Float32Array(_PT_MAX * 2 * 3),
+    col: new Float32Array(_PT_MAX * 2 * 3)
+};
+const _ptDir = new THREE.Vector3();
+const _ptView = new THREE.Vector3();
+const _ptSide = new THREE.Vector3();
+const _ptHSL = new THREE.Color();
+
+function _ptEnsureMesh() {
+    if (_ptTrail.mesh) return;
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(_ptTrail.pos, 3));
+    geo.setAttribute('color', new THREE.BufferAttribute(_ptTrail.col, 3));
+    const idx = [];
+    for (let i = 0; i < _PT_MAX - 1; i++) {
+        const a = i * 2, b = i * 2 + 1, c = i * 2 + 2, d = i * 2 + 3;
+        idx.push(a, b, c, b, d, c);
+    }
+    geo.setIndex(idx);
+    const mat = new THREE.MeshBasicMaterial({
+        vertexColors: true, transparent: true, opacity: 0.85,
+        blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide
+    });
+    _ptTrail.mesh = new THREE.Mesh(geo, mat);
+    _ptTrail.mesh.frustumCulled = false;
+    _ptTrail.geo = geo;
+    scene.add(_ptTrail.mesh);
+}
+
+function _updatePlayerTrail() {
+    const cs = window.cameraState;
+    const ship = cs && cs.playerShipMesh;
+    const speed = (gameState.velocityVector) ? gameState.velocityVector.length() : 0;
+    const visible = ship && ship.visible && speed > 0.8;
+    const t = Date.now();
+
+    if (visible) {
+        const wp = ship.getWorldPosition(new THREE.Vector3());
+        if (!_ptTrail.lastPush || wp.distanceTo(_ptTrail.lastPush) > Math.max(2, speed * 0.5)) {
+            _ptTrail.points.push(wp.clone());
+            _ptTrail.lastPush = wp.clone();
+        }
+    }
+    const breathe = 0.7 + 0.18 * Math.sin(t * 0.0021) + 0.12 * Math.sin(t * 0.0047);
+    const targetLen = visible
+        ? Math.max(6, Math.floor(Math.min(_PT_MAX, 14 + speed * 4) * breathe))
+        : 0;
+    if (_ptTrail.points.length > targetLen) _ptTrail.points.shift();
+    if (_ptTrail.points.length > targetLen) _ptTrail.points.shift();
+
+    const N = _ptTrail.points.length;
+    if (N > 2) {
+        _ptEnsureMesh();
+        _ptTrail.mesh.visible = true;
+        const pts = _ptTrail.points;
+        const headWidth = 0.9 + Math.min(2.2, speed * 0.10);
+        for (let i = 0; i < N; i++) {
+            const p = pts[i];
+            _ptDir.subVectors(pts[Math.min(i + 1, N - 1)], pts[Math.max(i - 1, 0)]);
+            if (_ptDir.lengthSq() < 1e-8) _ptDir.set(0, 1, 0);
+            _ptDir.normalize();
+            const distToCam = p.distanceTo(camera.position);
+            _ptView.subVectors(p, camera.position).normalize();
+            _ptSide.crossVectors(_ptDir, _ptView);
+            if (_ptSide.lengthSq() < 1e-8) _ptSide.set(0, 1, 0);
+            _ptSide.normalize();
+            const nearFade = Math.max(0, Math.min(1, (distToCam - 26) / 46));
+            const f = i / (N - 1);
+            const width = (headWidth * Math.pow(f, 1.15) + 0.06) * (0.25 + 0.75 * nearFade);
+            const o = i * 6;
+            _ptTrail.pos[o]     = p.x + _ptSide.x * width;
+            _ptTrail.pos[o + 1] = p.y + _ptSide.y * width;
+            _ptTrail.pos[o + 2] = p.z + _ptSide.z * width;
+            _ptTrail.pos[o + 3] = p.x - _ptSide.x * width;
+            _ptTrail.pos[o + 4] = p.y - _ptSide.y * width;
+            _ptTrail.pos[o + 5] = p.z - _ptSide.z * width;
+            const hue = (f * 0.78 + t * 0.00013) % 1;
+            const flick = 0.86 + 0.14 * Math.sin(t * 0.013 + i * 1.7);
+            const bright = (0.06 + 0.38 * Math.pow(f, 1.4)) * flick * nearFade;
+            _ptHSL.setHSL(hue, 1.0, Math.min(0.62, bright));
+            _ptTrail.col[o]     = _ptHSL.r; _ptTrail.col[o + 1] = _ptHSL.g; _ptTrail.col[o + 2] = _ptHSL.b;
+            _ptTrail.col[o + 3] = _ptHSL.r; _ptTrail.col[o + 4] = _ptHSL.g; _ptTrail.col[o + 5] = _ptHSL.b;
+        }
+        _ptTrail.geo.attributes.position.needsUpdate = true;
+        _ptTrail.geo.attributes.color.needsUpdate = true;
+        _ptTrail.geo.setDrawRange(0, (N - 1) * 6);
+    } else if (_ptTrail.mesh) {
+        _ptTrail.mesh.visible = false;
+    }
+}
 
 // ── 2. SPAWN-IN MATERIALIZATION ─────────────────────────────────────────────
 // Ships scale in from 12% with an eased pop + a one-shot flash glow.
@@ -534,7 +630,7 @@ function _pick(a) {
     return w;
 }
 
-function flashArcadeText(text, tier) {
+function flashArcadeText(text, tier, subtitle) {
     try {
         // Never cover the boss SPAWN announcement — it owns the same upper
         // band of the screen. Skip arcade praise while the boss intro card
@@ -567,21 +663,45 @@ function flashArcadeText(text, tier) {
             'font-weight:900;font-size:' + ts.size + 'px;letter-spacing:3px;color:' + ts.color + ';' +
             'text-shadow:0 0 22px ' + ts.color + ',0 0 44px ' + ts.color + ',0 0 12px rgba(0,0,0,0.8);' +
             'will-change:transform,opacity;animation:arcadePop 2s cubic-bezier(.2,.7,.3,1) forwards';
-        div.textContent = text;
+        // Optional subtitle names what was killed ("VULCAN HIGH COMMAND
+        // ELIMINATED") under the praise word — smaller, dimmer, same color.
+        if (subtitle) {
+            div.innerHTML = '<div>' + text + '</div>' +
+                '<div style="font-size:' + Math.round(ts.size * 0.34) + 'px;letter-spacing:4px;' +
+                'opacity:0.7;margin-top:4px;font-weight:700">' + subtitle + '</div>';
+        } else {
+            div.textContent = text;
+        }
         document.body.appendChild(div);
         setTimeout(() => { if (div.parentNode) div.remove(); }, 2050);
     } catch (e) {}
 }
 
+// Short faction/type label for a killed enemy, for the kill subtitle.
+function _killLabel(ud) {
+    if (!ud) return null;
+    if (ud.isVulcanPatrol) return 'VULCAN HIGH COMMAND';
+    if (ud.isMartianPirate) return 'MARTIAN PIRATES';
+    if (typeof galaxyTypes !== 'undefined' && typeof ud.galaxyId === 'number' &&
+        galaxyTypes[ud.galaxyId] && galaxyTypes[ud.galaxyId].faction) {
+        return String(galaxyTypes[ud.galaxyId].faction).toUpperCase();
+    }
+    // Fall back to the name with any trailing number/role stripped
+    if (ud.name) return String(ud.name).replace(/\s+(Hostile|Support|Patrol)?\s*\d+.*$/i, '').toUpperCase();
+    return null;
+}
+
 // Called on each enemy kill. Manages the streak and picks a tier so the
 // biggest words stay rare (most kills → tier 1; streaks + bosses escalate).
-function arcadePraiseKill(isBoss, dist) {
+function arcadePraiseKill(isBoss, dist, killedUd) {
     const now = Date.now();
     if (now - (_arcade.lastKill || 0) > 3500) _arcade.streak = 0;
     _arcade.streak++; _arcade.lastKill = now;
+    const sub = (killedUd ? _killLabel(killedUd) : null);
+    const subEliminated = sub ? (sub + ' ELIMINATED') : null;
 
     if (_STREAK_WORD[_arcade.streak]) {
-        flashArcadeText(_STREAK_WORD[_arcade.streak], Math.min(6, 2 + Math.floor(_arcade.streak / 3)));
+        flashArcadeText(_STREAK_WORD[_arcade.streak], Math.min(6, 2 + Math.floor(_arcade.streak / 3)), subEliminated);
         return;
     }
     // Don't praise EVERY kill — a constant word stream reads as noise. Show
@@ -600,9 +720,9 @@ function arcadePraiseKill(isBoss, dist) {
     tier = Math.max(1, Math.min(6, tier));
     if (tier === 1) {
         const far = (typeof dist === 'number') ? dist > 1600 : false;
-        flashArcadeText(_pick(far ? _PRAISE1_FAR : _PRAISE1_NEAR), 1);
+        flashArcadeText(_pick(far ? _PRAISE1_FAR : _PRAISE1_NEAR), 1, subEliminated);
     } else {
-        flashArcadeText(_pick(_PRAISE[tier]), tier);
+        flashArcadeText(_pick(_PRAISE[tier]), tier, subEliminated);
     }
 }
 
@@ -709,6 +829,7 @@ function updateVisualFlair() {
         typeof camera === 'undefined' || typeof scene === 'undefined' ||
         typeof THREE === 'undefined') return;
     const fc = gameState.frameCount || 0;
+    try { _updatePlayerTrail(); } catch (e) {}
     try { _updateScreenFX(); } catch (e) {}
     try { _updateWhipPreview(fc); } catch (e) {}
     try { _updateLensFlares(fc); } catch (e) {}

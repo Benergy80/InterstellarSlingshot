@@ -3941,35 +3941,40 @@ function createDiscoveryPath(nebulaPosition, galaxyBlackHole, factionColor, fact
 function createPathGlowParticles(pathPoints, color) {
     if (!THREE) return null;
 
-    // 20 particles per path — enough for a glowing effect without
-    // ballooning Points count when many paths persist.
-    const particleCount = 20;
+    // 16 small particles that FLOW along the path toward the destination
+    // (animated in animateDiscoveryPaths). Replaces the old static, scattered
+    // 30px additive blobs that read as graphical noise. Each particle holds a
+    // progress t in [0,1] along the curve and a small speed; positions are
+    // interpolated through pathPoints every pulse tick.
+    const particleCount = 16;
     const positions = new Float32Array(particleCount * 3);
-    
+    const flowPts = pathPoints.map(p => p.clone());
+    const flowProg = new Float32Array(particleCount);
+    const flowSpd = new Float32Array(particleCount);
     for (let i = 0; i < particleCount; i++) {
-        const pointIndex = Math.floor((i / particleCount) * pathPoints.length);
-        const point = pathPoints[Math.min(pointIndex, pathPoints.length - 1)];
-        
-        positions[i * 3] = point.x + (Math.random() - 0.5) * 50;
-        positions[i * 3 + 1] = point.y + (Math.random() - 0.5) * 50;
-        positions[i * 3 + 2] = point.z + (Math.random() - 0.5) * 50;
+        flowProg[i] = i / particleCount;            // evenly spaced along the line
+        flowSpd[i] = 0.0024 + Math.random() * 0.0012; // slow drift toward dest
+        const p = pathPoints[Math.min(Math.floor(flowProg[i] * pathPoints.length), pathPoints.length - 1)];
+        positions[i * 3] = p.x; positions[i * 3 + 1] = p.y; positions[i * 3 + 2] = p.z;
     }
-    
+
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    
+
     const material = new THREE.PointsMaterial({
         color: color,
-        size: 30,
+        size: 11,                 // SMALLER (was 30)
         transparent: true,
-        opacity: 0.5,
+        opacity: 0.6,
         blending: THREE.AdditiveBlending,
+        depthWrite: false,
         sizeAttenuation: true
     });
-    
+
     const particles = new THREE.Points(geometry, material);
-    particles.userData = { type: 'discovery_path_particles' };
-    
+    particles.frustumCulled = false;
+    particles.userData = { type: 'discovery_path_particles', flowPts, flowProg, flowSpd };
+
     return particles;
 }
 
@@ -4876,8 +4881,27 @@ function animateDiscoveryPaths() {
 
         if (doPulse) {
             mat.opacity = pulse1;
-            if (path.particles && path.particles.material) {
-                path.particles.material.opacity = pulse2;
+            const parts = path.particles;
+            if (parts && parts.material) {
+                parts.material.opacity = pulse2 + 0.25; // keep flow visible
+                // FLOW: advance each particle along the path toward the dest.
+                const u = parts.userData;
+                if (u && u.flowPts && u.flowPts.length > 1) {
+                    const pts = u.flowPts, prog = u.flowProg, spd = u.flowSpd;
+                    const arr = parts.geometry.attributes.position.array;
+                    const seg = pts.length - 1;
+                    for (let k = 0; k < prog.length; k++) {
+                        prog[k] += spd[k] * 4; // *4: animate runs every 4th frame
+                        if (prog[k] >= 1) prog[k] -= 1;
+                        const f = prog[k] * seg;
+                        const i0 = Math.floor(f), i1 = Math.min(i0 + 1, seg), ft = f - i0;
+                        const a = pts[i0], b = pts[i1];
+                        arr[k * 3] = a.x + (b.x - a.x) * ft;
+                        arr[k * 3 + 1] = a.y + (b.y - a.y) * ft;
+                        arr[k * 3 + 2] = a.z + (b.z - a.z) * ft;
+                    }
+                    parts.geometry.attributes.position.needsUpdate = true;
+                }
             }
         }
 

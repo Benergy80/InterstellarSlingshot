@@ -625,6 +625,20 @@
       keys().x = false;
     }
 
+    // NAV SYSTEM REFLECTS THE DEMO'S TARGET: the demo sets
+    // gameState.currentTarget directly, but the Navigation panel only
+    // re-highlights on a populateTargets() call. Refresh it whenever the
+    // demo's target changes (throttled) so the panel visibly tracks what
+    // the autopilot is engaging — the demo "uses" the nav system.
+    if (typeof populateTargets === 'function' && typeof gameState !== 'undefined') {
+      const _ct = gameState.currentTarget;
+      if (_ct !== ap._lastNavTarget && Date.now() - (ap._lastNavRefresh || 0) > 400) {
+        ap._lastNavTarget = _ct;
+        ap._lastNavRefresh = Date.now();
+        populateTargets();
+      }
+    }
+
     tickHUD();
   }
 
@@ -897,12 +911,12 @@
         nextPhaseAfterKill = 'bossEngage';
       }
 
-      // 40% chance to detour to an asteroid showcase before resuming;
-      // otherwise route directly to the next phase. The next-phase
-      // decision is committed via _mineReturnPhase.
-      if (Math.random() < 0.40 && _findNearestAsteroid(900)) {
+      // 70% chance (was 40) to detour to an asteroid showcase before
+      // resuming, with a wider search; otherwise route directly to the
+      // next phase. The next-phase decision is committed via _mineReturnPhase.
+      if (Math.random() < 0.70 && _findNearestAsteroid(1600)) {
         ap._mineReturnPhase = nextPhaseAfterKill;
-        ap._mineShotsLeft = 3;
+        ap._mineShotsLeft = 4;
         setTimeout(() => { if (ap.active) goPhase('mineAsteroids'); }, 1000);
       } else {
         setTimeout(() => { if (ap.active) goPhase(nextPhaseAfterKill); }, 1000);

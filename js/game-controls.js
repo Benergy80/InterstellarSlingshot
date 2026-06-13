@@ -6330,10 +6330,17 @@ if (enemy.userData.health <= 0) {
     
     if (wasBoss) {
     showAchievement('BOSS DEFEATED!', `${bossName} destroyed!`);
-    // Top-tier arcade praise for a flagship kill
+    // Top-tier arcade praise for a flagship kill, naming the faction
     if (typeof flashArcadeText === 'function') {
         const _bw = ['TARGET ELIMINATED!', 'THREAT NEUTRALIZED!', 'FLAGSHIP DOWN!', 'REALITY BENT!'];
-        flashArcadeText(_bw[Math.floor(Math.random() * _bw.length)], 6);
+        let _bsub = null;
+        try {
+            const _f = (enemy.userData.isVulcanPatrol) ? 'VULCAN HIGH COMMAND'
+                : (enemy.userData.isMartianPirate) ? 'MARTIAN PIRATES'
+                : (typeof galaxyTypes !== 'undefined' && galaxyTypes[enemy.userData.galaxyId] ? String(galaxyTypes[enemy.userData.galaxyId].faction).toUpperCase() : null);
+            if (_f) _bsub = _f + ' FLAGSHIP DESTROYED';
+        } catch (_) {}
+        flashArcadeText(_bw[Math.floor(Math.random() * _bw.length)], 6, _bsub);
     }
     // Call boss victory check and fireworks
     if (typeof checkBossVictory === 'function') {
@@ -6364,9 +6371,10 @@ if (enemy.userData.health <= 0) {
         else spawnKillText(enemy.position, '+REP', '#ffcc44');
     }
     // Big tiered arcade praise, upper-middle of the screen (streak-aware).
-    // Distance gates the basic words to far kills.
+    // Distance gates the basic words to far kills; the killed enemy's
+    // userData drives the "<FACTION> ELIMINATED" subtitle.
     if (typeof arcadePraiseKill === 'function') {
-        arcadePraiseKill(false, (typeof camera !== 'undefined') ? camera.position.distanceTo(enemy.position) : 0);
+        arcadePraiseKill(false, (typeof camera !== 'undefined') ? camera.position.distanceTo(enemy.position) : 0, enemy.userData);
     }
 
     const _lootVariant = enemy.userData._pirateLootVariant;
@@ -9058,7 +9066,6 @@ function updateAllyShips() {
             if (ud._jumpUntil) {
                 if (now > ud._jumpUntil || !_objective) {
                     ud._jumpUntil = 0;
-                    if (typeof wingmanTracerFade === 'function') wingmanTracerFade(ally);
                 } else {
                     if (!updateAllyShips._jumpVec) updateAllyShips._jumpVec = new THREE.Vector3();
                     const jv = updateAllyShips._jumpVec.subVectors(_objective, pos);
@@ -9071,15 +9078,30 @@ function updateAllyShips() {
                     // (e.g. a patrol waypoint behind us), making the wingman
                     // fly backwards during the dash.
                     _allyDir.copy(jv);
-                    if (typeof wingmanTracerPush === 'function') {
-                        wingmanTracerPush(ally, 0x88ffee);
-                    }
+                    // (Jump TRACER streaks removed — they read as glitchy
+                    // lines off the wingmen's backs. The dash still happens.)
                 }
             }
         }
 
         // ── Shield bubble: visible during combat engagement ──────────────
         _updateAllyShield(ally, ud.aiState === 'engage' && ud.engageTarget);
+
+        // ── Idle asteroid target practice ────────────────────────────────
+        // When not engaging an enemy, wingmen occasionally blast a nearby
+        // asteroid — keeps the squadron looking active. ~5-9s per wingman.
+        if (ud.aiState !== 'engage' && typeof _wingmanNearestAsteroid === 'function' &&
+            now - (ud._lastAstFire || 0) > 5000 + ((ally.id || 0) % 4000)) {
+            const ast = _wingmanNearestAsteroid(ally.position, 1400);
+            if (ast) {
+                ud._lastAstFire = now;
+                const _ap = new THREE.Vector3();
+                if (ast.getWorldPosition) ast.getWorldPosition(_ap); else _ap.copy(ast.position);
+                const color = ud.name === 'Wingman Alpha' ? '#00ff88' : '#88aaff';
+                _fireWingmanLaser(ally.position.clone(), _ap, color);
+                if (typeof createHitSparks === 'function') createHitSparks(_ap, 0xffcc66);
+            }
+        }
 
         // ── Face movement direction ──────────────────────────────────────
         // lookAt points -Z toward the target; negate so the ship's +Z
@@ -9326,6 +9348,21 @@ function _fireWingmanMissile(ally, target, targetPos, ud) {
 }
 
 // ── Fire a thick bright laser from a wingman (no damage, visual only) ────
+// Nearest asteroid to a position (world-space, handles belt-parented rocks).
+const _wnaTmp = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+function _wingmanNearestAsteroid(pos, range) {
+    if (typeof planets === 'undefined' || !_wnaTmp) return null;
+    let best = null, bestD = range || 1400;
+    for (let i = 0; i < planets.length; i++) {
+        const p = planets[i];
+        if (!p || !p.userData || p.userData.type !== 'asteroid') continue;
+        if (p.getWorldPosition) p.getWorldPosition(_wnaTmp); else _wnaTmp.copy(p.position);
+        const d = pos.distanceTo(_wnaTmp);
+        if (d < bestD) { bestD = d; best = p; }
+    }
+    return best;
+}
+
 function _fireWingmanLaser(startPos, endPos, color) {
     if (typeof THREE === 'undefined' || typeof scene === 'undefined') return;
     try {
