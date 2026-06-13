@@ -9090,11 +9090,17 @@ function updateAllyShips() {
         // ── Idle asteroid target practice ────────────────────────────────
         // When not engaging an enemy, wingmen occasionally blast a nearby
         // asteroid — keeps the squadron looking active. ~5-9s per wingman.
+        // THROTTLE THE SCAN ITSELF (not just the fire): the scan iterates
+        // every planet (~3,500) at ~1ms. The old gate only updated its
+        // timestamp on a successful fire, so in deep space with no asteroid
+        // in range it re-scanned EVERY FRAME × every wingman — ~3ms/frame of
+        // pure waste, the cause of the discovery-path chop. Stamp on every
+        // scan attempt so it runs at most once per 5-9s per wingman.
         if (ud.aiState !== 'engage' && typeof _wingmanNearestAsteroid === 'function' &&
-            now - (ud._lastAstFire || 0) > 5000 + ((ally.id || 0) % 4000)) {
+            now - (ud._lastAstScan || 0) > 5000 + ((ally.id || 0) % 4000)) {
+            ud._lastAstScan = now;
             const ast = _wingmanNearestAsteroid(ally.position, 1400);
             if (ast) {
-                ud._lastAstFire = now;
                 const _ap = new THREE.Vector3();
                 if (ast.getWorldPosition) ast.getWorldPosition(_ap); else _ap.copy(ast.position);
                 const color = ud.name === 'Wingman Alpha' ? '#00ff88' : '#88aaff';
@@ -9352,13 +9358,13 @@ function _fireWingmanMissile(ally, target, targetPos, ud) {
 const _wnaTmp = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
 function _wingmanNearestAsteroid(pos, range) {
     if (typeof planets === 'undefined' || !_wnaTmp) return null;
-    let best = null, bestD = range || 1400;
+    let best = null, bestD2 = (range || 1400) * (range || 1400); // squared — no sqrt
     for (let i = 0; i < planets.length; i++) {
         const p = planets[i];
         if (!p || !p.userData || p.userData.type !== 'asteroid') continue;
         if (p.getWorldPosition) p.getWorldPosition(_wnaTmp); else _wnaTmp.copy(p.position);
-        const d = pos.distanceTo(_wnaTmp);
-        if (d < bestD) { bestD = d; best = p; }
+        const d2 = pos.distanceToSquared(_wnaTmp);
+        if (d2 < bestD2) { bestD2 = d2; best = p; }
     }
     return best;
 }
