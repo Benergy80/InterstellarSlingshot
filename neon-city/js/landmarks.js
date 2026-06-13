@@ -1318,5 +1318,84 @@ export function buildLandmarks(scene, world) {
     world.updateFns.push((dt, t) => { const p = sg.attributes.position.array; for (let i = 0; i < NS; i++) { const b = sb[i]; p[i * 3 + 1] = ((t * b.sp + b.ph) % 1) * b.h; } sg.attributes.position.needsUpdate = true; });
   }
 
+  // ════════════ CYBERPUNK SKYLINE — rooftop neon, aviation lights, screens, puddles ════════════
+  {
+    const crnd = mulberry32(C.SEED + 8181);
+    const tall = world.buildings.filter(b => !b.arcade && b.h > 48);
+
+    // ── red aviation warning lights blinking on every tall structure ──
+    {
+      const pts = [], ph = [];
+      for (const b of tall) { pts.push(b.x, b.h + 1.5, b.z); ph.push(crnd() * 6); if (b.h > 90) { pts.push(b.x + b.w * 0.35, b.h + 1, b.z + b.d * 0.35); ph.push(crnd() * 6); } }
+      const N = ph.length, pos = new Float32Array(pts), col = new Float32Array(N * 3);
+      const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(pos, 3)); g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+      const m = new THREE.Points(g, new THREE.PointsMaterial({ map: glowTexture(32, 'rgba(255,80,80,1)'), size: 4.5, vertexColors: true, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, sizeAttenuation: true }));
+      m.frustumCulled = false; scene.add(m);
+      world.updateFns.push((dt, t) => { for (let i = 0; i < N; i++) { const on = Math.sin(t * 2.4 + ph[i]) > 0 ? 1 : 0.12; col[i * 3] = on; col[i * 3 + 1] = on * 0.12; col[i * 3 + 2] = on * 0.12; } g.attributes.color.needsUpdate = true; });
+    }
+
+    // ── big rooftop neon (horizontal kanji + brand) ──
+    {
+      const mkRoof = (txt, fg) => {
+        const [c, ctx] = makeCanvas(512, 128);
+        ctx.clearRect(0, 0, 512, 128);
+        ctx.fillStyle = fg; ctx.shadowColor = fg; ctx.shadowBlur = 30; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.font = 'bold 92px "Hiragino Sans", "Orbitron", sans-serif'; ctx.fillText(txt, 256, 66);
+        return canvasTexture(c);
+      };
+      const defs = [['24時間営業', '#ff3355'], ['歌舞伎町', '#ff2bd6'], ['電脳市場', '#00f0ff'], ['営業中', '#ffb300'], ['新世界', '#9d4cff'], ['KIROSHI', '#53ffe9'], ['満員御礼', '#ff3355'], ['ARASAKA', '#3d7bff']];
+      const tex = defs.map(([txt, fg]) => ({ mat: new THREE.MeshBasicMaterial({ map: mkRoof(txt, fg), transparent: true, toneMapped: false, side: THREE.DoubleSide }), geos: [] }));
+      for (const b of tall) {
+        if (crnd() > 0.5) continue;
+        const w = Math.min(b.w, b.d) * (0.7 + crnd() * 0.3), h = w * 0.26;
+        const dir = crnd() * 4 | 0, ry = dir * Math.PI / 2;
+        const t = tex[crnd() * tex.length | 0];
+        const g = new THREE.PlaneGeometry(w, h); g.rotateY(ry); g.translate(b.x, b.h + h / 2 + 0.5, b.z); t.geos.push(g);
+      }
+      for (const t of tex) if (t.geos.length) { const m = new THREE.Mesh(BufferGeometryUtils.mergeGeometries(t.geos), t.mat); m.frustumCulled = false; scene.add(m); }
+    }
+
+    // ── a few huge vertical mega-screens on the tallest towers ──
+    {
+      const big = tall.filter(b => b.h > 80).sort((a, b) => b.h - a.h).slice(0, 6);
+      for (const b of big) {
+        const dir = crnd() * 4 | 0, nx = [1, -1, 0, 0][dir], nz = [0, 0, 1, -1][dir];
+        const sw = Math.min(b.w, b.d) * 0.8, sh = Math.min(b.h * 0.5, 46);
+        const scr = new THREE.Mesh(new THREE.PlaneGeometry(sw, sh), new THREE.MeshBasicMaterial({ map: world.ledTex, toneMapped: false }));
+        scr.position.set(b.x + nx * (b.w / 2 + 0.4), b.h * 0.55, b.z + nz * (b.d / 2 + 0.4));
+        scr.rotation.y = Math.atan2(nx, nz); scene.add(scr);
+        const frame = new THREE.Mesh(new THREE.PlaneGeometry(sw + 1.2, sh + 1.2), glow(NEON.cyan, 0.5));
+        frame.position.copy(scr.position).add(new THREE.Vector3(nx * -0.1, 0, nz * -0.1)); frame.rotation.y = scr.rotation.y; scene.add(frame);
+      }
+    }
+
+    // ── sky searchlight shafts rising from rooftops ──
+    {
+      const beams = [];
+      const hosts = tall.filter(b => b.h > 70).sort(() => crnd() - 0.5).slice(0, 9);
+      for (const b of hosts) {
+        const beam = new THREE.Mesh(new THREE.ConeGeometry(7, 320, 14, 1, true),
+          new THREE.MeshBasicMaterial({ color: new THREE.Color(pick(crnd, NEON_LIST)), transparent: true, opacity: 0.05, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, toneMapped: false }));
+        beam.position.set(b.x, b.h + 160, b.z); scene.add(beam);
+        beams.push({ beam, ph: crnd() * 6 });
+      }
+      world.updateFns.push((dt, t) => { for (const o of beams) { o.beam.rotation.z = Math.sin(t * 0.15 + o.ph) * 0.12; o.beam.material.opacity = 0.04 + 0.025 * (0.5 + 0.5 * Math.sin(t * 0.6 + o.ph)); } });
+    }
+
+    // ── puddles — reflective patches mirroring the neon on the wet ground ──
+    {
+      const puddle = new THREE.InstancedMesh(new THREE.CircleGeometry(1, 14),
+        new THREE.MeshStandardMaterial({ color: 0x05070c, roughness: 0.04, metalness: 0.98, envMapIntensity: 1.6 }), 140);
+      const d = new THREE.Object3D();
+      for (let i = 0; i < 140; i++) {
+        d.position.set(-H + crnd() * C.SPAN, 0.03, -H + crnd() * C.SPAN);
+        d.rotation.set(-Math.PI / 2, 0, crnd() * 6);
+        d.scale.set(1.5 + crnd() * 4, 1 + crnd() * 3, 1);
+        d.updateMatrix(); puddle.setMatrixAt(i, d.matrix);
+      }
+      puddle.frustumCulled = false; scene.add(puddle);
+    }
+  }
+
   world._finishTrees();
 }
