@@ -232,11 +232,13 @@ export function createPlayer({ camera, scene, world, traffic, fx, hud, audio, on
     }
     // 1 — disembark while dwelling
     if (state.ride) {
-      const { train } = state.ride;
+      const { train, carIdx } = state.ride;
       if (train.state === 'dwell') {
         const st = train.nextStation;
+        train.cars[carIdx].visible = true;
         state.ride = null;
         state.mode = 'walk';
+        state.boardCooldown = 1.6;
         state.pos.set(st.doorPoint.x, st.platY + P.eye, st.doorPoint.z);
         state.vel.set(0, 0, 0);
         hud.toast(`ARRIVED — ${st.name}`, train.line);
@@ -498,6 +500,7 @@ export function createPlayer({ camera, scene, world, traffic, fx, hud, audio, on
       // walk off: a movement key while stopped at a station steps you onto the platform
       if (train.state === 'dwell' && (keys.w || keys.a || keys.s || keys.d)) {
         const st = train.nextStation;
+        car.visible = true;
         state.ride = null; state.mode = 'walk'; state.boardCooldown = 1.6;
         state.pos.set(st.doorPoint.x, st.platY + P.eye, st.doorPoint.z); state.vel.set(0, 0, 0);
         hud.toast(`ARRIVED — ${st.name}`, train.line); hud.setMode('SURFACE MODE'); audio.sfx('doors');
@@ -647,10 +650,9 @@ export function createPlayer({ camera, scene, world, traffic, fx, hud, audio, on
     if (state.boardCooldown > 0) state.boardCooldown -= dt;
     const b = prompt ? null : traffic.getBoardable(state.pos, state.pos.y - P.eye);
     if (b) {
-      // just walk on: step onto a stopped car and you board automatically
-      const car = b.train.cars[b.carIdx];
-      const onCar = Math.hypot(car.position.x - state.pos.x, car.position.z - state.pos.z) < 2.4;
-      if (onCar && (state.boardCooldown || 0) <= 0) {
+      // just walk on: step toward a stopped train on its platform and you board
+      if ((keys.w || keys.a || keys.s || keys.d) && (state.boardCooldown || 0) <= 0) {
+        b.train.cars[b.carIdx].visible = false;   // hide the ridden car so the camera isn't buried in it
         state.ride = b; state.mode = 'ride'; state.vel.set(0, 0, 0);
         hud.toast(`BOARDED — ${b.train.line}`, `Departing ${b.station.name}`);
         hud.setMode(`RIDING ${b.train.line}`); audio.sfx('doors');

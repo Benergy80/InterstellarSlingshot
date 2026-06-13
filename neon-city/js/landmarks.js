@@ -906,6 +906,7 @@ export function buildLandmarks(scene, world) {
   }
   // build instanced trees once all scatter calls have run
   world._finishTrees = () => {
+    return;   // leafy trees removed — the world is a dystopian desert (only wasteland flora remains)
     if (!treeSpots.length) return;
     const tp = treeMesh();
     const trunks = new THREE.InstancedMesh(tp.trunkGeo, solid(0x2b2118, 0.8, 0.1), treeSpots.length);
@@ -1204,6 +1205,11 @@ export function buildLandmarks(scene, world) {
       const NR = 110, rk = new THREE.InstancedMesh(rockGeo, rockMat, NR), rd = new THREE.Object3D();
       for (let i = 0; i < NR; i++) { const r = rects[i % 3]; rd.position.set(r[0] + wrnd() * (r[1] - r[0]), 0.3, r[2] + wrnd() * (r[3] - r[2])); rd.rotation.set(wrnd() * 6, wrnd() * 6, wrnd() * 6); rd.scale.set(1 + wrnd() * 4.5, 0.7 + wrnd() * 2.5, 1 + wrnd() * 4.5); rd.updateMatrix(); rk.setMatrixAt(i, rd.matrix); }
       rk.frustumCulled = false; scene.add(rk);
+      // rock mesas / buttes — the badlands silhouette
+      const mesaGeo = new THREE.CylinderGeometry(0.72, 1, 1, 7, 1);
+      const NM = 18, ms = new THREE.InstancedMesh(mesaGeo, rockMat, NM), md = new THREE.Object3D();
+      for (let i = 0; i < NM; i++) { const r = rects[i % 3]; const w = 18 + wrnd() * 42, h = 22 + wrnd() * 72; md.position.set(r[0] + wrnd() * (r[1] - r[0]), h / 2 - 2, r[2] + wrnd() * (r[3] - r[2])); md.rotation.y = wrnd() * 6; md.scale.set(w, h, w * (0.7 + wrnd() * 0.5)); md.updateMatrix(); ms.setMatrixAt(i, md.matrix); }
+      ms.frustumCulled = false; scene.add(ms);
     }
     world.pois.push({ name: 'THE WASTES', pos: new THREE.Vector3(H + 420, 6, 0), desc: 'Irradiated badlands beyond New Chicago' });
   }
