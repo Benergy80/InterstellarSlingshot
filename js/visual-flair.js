@@ -511,22 +511,28 @@ const _TIER_STYLE = {
     5: { size: 62, color: '#c08cff' },   // extremely rare
     6: { size: 72, color: '#ff3df0' },   // legendary
 };
-// Tier 1 is split by distance: the plain/utilitarian acknowledgements
-// (TARGET STRUCK, SOLID IMPACT, LONG-RANGE HIT) are reserved for FAR kills
-// where there's little to see; close kills get punchier common words.
-const _PRAISE1_FAR = ['TARGET STRUCK!', 'SOLID IMPACT!', 'DIRECT HIT!', 'LONG-RANGE HIT!', 'CONTACT!'];
-const _PRAISE1_NEAR = ['NICE SHOT!', 'CLEAN SHOT!', 'GOOD HIT!', 'ON TARGET!', 'TAGGED!'];
+// Tier 1 is COLORFUL (no bland "good shot"): close kills get punchy
+// destruction verbs, far kills get sniper flavor. Distance-split.
+const _PRAISE1_FAR = ['SNIPED!', 'PICKED OFF!', 'LONG-RANGE KILL!', 'CLEAN SNIPE!', 'NAILED IT!', 'TAGGED FROM RANGE!'];
+const _PRAISE1_NEAR = ['VAPORIZED!', 'BLASTED!', 'SHREDDED!', 'TORCHED!', 'WRECKED!', 'SMOKED!', 'OBLITERATED!', 'SCRAPPED!'];
 const _PRAISE = {
-    2: ['EXCELLENT!', 'PRECISION HIT!', 'BULLSEYE!', 'DEADLY ACCURACY!', 'OUTSTANDING!'],
-    3: ['INCREDIBLE SHOT!', 'DEVASTATING HIT!', 'SPECTACULAR!', 'PERFECT SHOT!', 'PHENOMENAL!'],
-    4: ['IMPOSSIBLE SHOT!', 'UNBELIEVABLE!', 'ASTONISHING!', 'ABSOLUTE DESTRUCTION!'],
-    5: ['ORBITAL PERFECTION!', 'COSMIC FORCE!', 'TRANSCENDENT!', 'GALACTIC ACE!'],
-    6: ['REALITY BENT!', 'GODLIKE!', 'LEGENDARY!', 'STARBORN!'],
+    2: ['EXCELLENT!', 'PRECISION HIT!', 'BULLSEYE!', 'DEADLY ACCURACY!', 'OUTSTANDING!', 'LASER PERFECT!', 'DEAD CENTER!'],
+    3: ['INCREDIBLE SHOT!', 'DEVASTATING HIT!', 'SPECTACULAR!', 'PERFECT SHOT!', 'PHENOMENAL!', 'BRUTAL!'],
+    4: ['IMPOSSIBLE SHOT!', 'UNBELIEVABLE!', 'ASTONISHING!', 'ABSOLUTE DESTRUCTION!', 'CATACLYSMIC!'],
+    5: ['ORBITAL PERFECTION!', 'COSMIC FORCE!', 'TRANSCENDENT!', 'GALACTIC ACE!', 'ANNIHILATION!'],
+    6: ['REALITY BENT!', 'GODLIKE!', 'LEGENDARY!', 'STARBORN!', 'APOCALYPSE!'],
 };
 const _STREAK_WORD = { 2:'DOUBLE KILL!', 3:'TRIPLE KILL!', 4:'QUAD KILL!', 5:'MULTI-KILL!',
     7:'RAMPAGE!', 10:'UNSTOPPABLE!', 15:'DOMINATING!', 20:'GODLIKE!' };
-const _arcade = { last: 0, streak: 0, lastKill: 0 };
-const _pick = (a) => a[Math.floor(Math.random() * a.length)];
+const _arcade = { last: 0, streak: 0, lastKill: 0, lastWord: '' };
+// Pick from a pool, avoiding an immediate repeat of the last word shown.
+function _pick(a) {
+    if (!a || !a.length) return '';
+    let w = a[Math.floor(Math.random() * a.length)];
+    if (a.length > 1 && w === _arcade.lastWord) w = a[(a.indexOf(w) + 1) % a.length];
+    _arcade.lastWord = w;
+    return w;
+}
 
 function flashArcadeText(text, tier) {
     try {
@@ -540,15 +546,17 @@ function flashArcadeText(text, tier) {
             st.id = 'arcadeTextStyle';
             // Pop in big + transparent, two settle PULSES, then slowly GROW
             // while fading to transparent — feels alive and energetic.
+            // More translucent overall (peak ~0.8) and a LARGER grow on the
+            // fade-out — the word swells well past 2x as it dissolves.
             st.textContent = '@keyframes arcadePop{' +
-                '0%{opacity:0;transform:translateX(-50%) scale(2.5)}' +
-                '11%{opacity:1;transform:translateX(-50%) scale(0.86)}' +
+                '0%{opacity:0;transform:translateX(-50%) scale(2.6)}' +
+                '11%{opacity:0.82;transform:translateX(-50%) scale(0.86)}' +
                 '20%{transform:translateX(-50%) scale(1.10)}' +              // pulse 1
                 '29%{transform:translateX(-50%) scale(0.96)}' +
-                '38%{transform:translateX(-50%) scale(1.06)}' +              // pulse 2
-                '46%{opacity:1;transform:translateX(-50%) scale(1.0)}' +
-                '68%{opacity:0.85;transform:translateX(-50%) scale(1.14)}' + // grow
-                '100%{opacity:0;transform:translateX(-50%) scale(1.45)}}';   // grow + fade
+                '38%{opacity:0.8;transform:translateX(-50%) scale(1.06)}' +  // pulse 2
+                '48%{opacity:0.72;transform:translateX(-50%) scale(1.05)}' +
+                '64%{opacity:0.5;transform:translateX(-50%) scale(1.5)}' +   // grow + fade
+                '100%{opacity:0;transform:translateX(-50%) scale(2.4)}}';    // big swell as it vanishes
             document.head.appendChild(st);
         }
         const old = document.getElementById('arcadeText'); if (old) old.remove();
@@ -576,15 +584,21 @@ function arcadePraiseKill(isBoss, dist) {
         flashArcadeText(_STREAK_WORD[_arcade.streak], Math.min(6, 2 + Math.floor(_arcade.streak / 3)));
         return;
     }
-    let tier = 1;
+    // Don't praise EVERY kill — a constant word stream reads as noise. Show
+    // praise on a minority of routine single kills (so it's a highlight),
+    // biased toward the more colorful tiers. Streaks (handled above) and
+    // bosses always show.
+    let tier;
     const roll = Math.random();
-    if (roll > 0.985) tier = 3; else if (roll > 0.88) tier = 2;
+    if (roll > 0.97) tier = 3;        // ~3%  rare, very colorful
+    else if (roll > 0.74) tier = 2;   // ~23% colorful
+    else if (roll > 0.52) tier = 1;   // ~22% colorful-common
+    else if (_arcade.streak < 2) return; // ~52% of lone kills: stay quiet
+    else tier = 1;
     tier += Math.floor(_arcade.streak / 4);          // streak escalates the praise
     if (isBoss) tier = Math.max(tier, 4);            // boss kills always feel huge
     tier = Math.max(1, Math.min(6, tier));
     if (tier === 1) {
-        // Basic utilitarian words only for far kills; close kills get the
-        // punchier common pool.
         const far = (typeof dist === 'number') ? dist > 1600 : false;
         flashArcadeText(_pick(far ? _PRAISE1_FAR : _PRAISE1_NEAR), 1);
     } else {
