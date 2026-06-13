@@ -44,7 +44,7 @@ export const C = {
   CAM_FAR: 150000,   // mothergame scale — Hubble dome sits at 140k
 
   // ── Bloom (UnrealBloomPass) ──
-  BLOOM: { strength: 0.62, radius: 0.42, threshold: 0.52 },
+  BLOOM: { strength: 0.72, radius: 0.44, threshold: 0.48 },
 
   // ── Player (Interstellar Slingshot scheme, gravity-adapted) ──
   PLAYER: {

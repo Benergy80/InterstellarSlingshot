@@ -24,7 +24,7 @@ import { createHUD } from './hud.js';
 import { createAudio } from './audio.js';
 
 // ── build stamp (so we can confirm which code is actually loaded) ──
-const NC_BUILD = 'NC-2287 build 2026-06-13p · cyberpunk skyline — rooftop neon, aviation lights, screens, puddles';
+const NC_BUILD = 'NC-2287 build 2026-06-13q · warm pools + god-rays + parked spinner + grade';
 console.log('%c' + NC_BUILD, 'color:#00f0ff;font-weight:bold;font-size:14px');
 
 // ── renderer ──
@@ -34,7 +34,7 @@ renderer.setSize(innerWidth, innerHeight);
 let pixelRatio = Math.min(devicePixelRatio, C.QUALITY.maxPixelRatio);
 renderer.setPixelRatio(pixelRatio);
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.18;
+renderer.toneMappingExposure = 1.28;
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(C.FOG_COLOR);

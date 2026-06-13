@@ -1397,5 +1397,43 @@ export function buildLandmarks(scene, world) {
     }
   }
 
+  // ════════════ WET-STREET POLISH — warm pools, god-rays, a parked spinner ════════════
+  {
+    const wrnd = mulberry32(C.SEED + 2929);
+    // warm light pools spilling onto the pavement near storefronts
+    {
+      const tex = glowTexture(96, 'rgba(255,185,95,0.9)'); const geos = [];
+      for (const b of world.buildings) {
+        if (b.h < 7 || b.glbTower || wrnd() > 0.4) continue;
+        const f = [[b.w / 2, 0, 1, 0], [-b.w / 2, 0, -1, 0], [0, b.d / 2, 0, 1], [0, -b.d / 2, 0, -1]][wrnd() * 4 | 0];
+        const px = b.x + f[0] + f[2] * (1.4 + wrnd() * 2.2), pz = b.z + f[1] + f[3] * (1.4 + wrnd() * 2.2), r = 2.5 + wrnd() * 3.5;
+        const g = new THREE.PlaneGeometry(r * 2, r * 2); g.rotateX(-Math.PI / 2); g.translate(px, 0.05, pz); geos.push(g);
+      }
+      if (geos.length) { const m = new THREE.Mesh(BufferGeometryUtils.mergeGeometries(geos), new THREE.MeshBasicMaterial({ map: tex, transparent: true, opacity: 0.45, depthWrite: false, blending: THREE.AdditiveBlending, color: 0xffb060, toneMapped: false })); m.frustumCulled = false; scene.add(m); }
+    }
+    // god-ray shafts under the streetlights, catching the steam
+    {
+      const sl = world._streetLights, geos = [];
+      if (sl && sl.cols.length) { const step = Math.max(1, (sl.cols.length / 60) | 0); for (let i = 0; i < sl.cols.length; i += step) { const c = sl.cols[i]; const cone = new THREE.ConeGeometry(2.6, 9, 12, 1, true); cone.translate(c.x, 4.5, c.z); geos.push(cone); } }
+      if (geos.length) { const m = new THREE.Mesh(BufferGeometryUtils.mergeGeometries(geos), new THREE.MeshBasicMaterial({ color: 0xfff0d0, transparent: true, opacity: 0.05, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, toneMapped: false })); m.frustumCulled = false; scene.add(m); }
+    }
+    // a parked NCPD spinner, hovering over a central avenue intersection
+    {
+      const sx = -H + 5 * C.CELL - C.ROAD / 2, sz = -H + 6 * C.CELL - C.ROAD / 2;
+      const sp = new THREE.Group();
+      const body = new THREE.Mesh(new THREE.CapsuleGeometry(1.15, 4.2, 6, 12), solid(0x0f1320, 0.3, 0.75)); body.rotation.z = Math.PI / 2; body.scale.set(1, 1, 0.66); sp.add(body);
+      const canopy = new THREE.Mesh(new THREE.SphereGeometry(1.0, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2), new THREE.MeshStandardMaterial({ color: 0x16203a, roughness: 0.08, metalness: 0.5, transparent: true, opacity: 0.55 })); canopy.position.set(0.7, 0.65, 0); sp.add(canopy);
+      for (const e of [-1, 1]) {
+        const pod = new THREE.Mesh(new THREE.CylinderGeometry(0.72, 0.72, 1.5, 12), solid(0x090b12, 0.3, 0.75)); pod.rotation.x = Math.PI / 2; pod.position.set(-1.7, -0.25, e * 1.55); sp.add(pod);
+        const ring = new THREE.Mesh(new THREE.TorusGeometry(0.72, 0.12, 8, 18), glow(NEON.cyan, 1.3)); ring.rotation.y = Math.PI / 2; ring.position.set(-1.7, -0.25, e * 1.55); sp.add(ring);
+      }
+      const side = new THREE.Mesh(new THREE.BoxGeometry(4.6, 0.12, 0.06), glow(NEON.cyan, 1.1)); side.position.set(0, 0.15, 0.78); sp.add(side);
+      const bar = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.22, 0.5), glow(NEON.red, 1.0)); bar.position.set(0.5, 1.05, 0); sp.add(bar);
+      sp.position.set(sx, 2.4, sz); sp.rotation.y = 0.5; scene.add(sp);
+      world.pois.push({ name: 'NCPD SPINNER', pos: new THREE.Vector3(sx, 1, sz), desc: 'A parked police spinner, hovering' });
+      world.updateFns.push((dt, t) => { sp.position.y = 2.4 + Math.sin(t * 1.4) * 0.14; bar.material.color.setHex(Math.sin(t * 7) > 0 ? 0xff2233 : 0x2244ff); });
+    }
+  }
+
   world._finishTrees();
 }
