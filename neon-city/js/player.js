@@ -528,8 +528,13 @@ export function createPlayer({ camera, scene, world, traffic, fx, hud, audio, on
         if (train.nextStation) hud.toast('DEPARTING', `Next stop — ${train.nextStation.name}`);
         audio.sfx('chime');
       }
-      hud.setPrompt(train.state === 'dwell' ? 'ENTER — DISEMBARK' : null);
-      applyCamera(dt, t);
+      hud.setPrompt(train.state === 'dwell' ? 'WALK OFF (move) / ENTER — DISEMBARK' : null);
+      // chase camera — watch your car glide along the track (car stays visible)
+      avatar.visible = false;
+      _fwd.set(0, 0, -1).applyQuaternion(car.quaternion);
+      _v2.set(car.position.x - _fwd.x * 14, car.position.y + 6.5, car.position.z - _fwd.z * 14);
+      camera.position.lerp(_v2, 1 - Math.exp(-dt * 6));
+      camera.lookAt(car.position.x + _fwd.x * 5, car.position.y + 1.0, car.position.z + _fwd.z * 5);
       hud.setBars(state);
       if (fireHeld) tryFire();
       return;
@@ -652,7 +657,6 @@ export function createPlayer({ camera, scene, world, traffic, fx, hud, audio, on
     if (b) {
       // just walk on: step toward a stopped train on its platform and you board
       if ((keys.w || keys.a || keys.s || keys.d) && (state.boardCooldown || 0) <= 0) {
-        b.train.cars[b.carIdx].visible = false;   // hide the ridden car so the camera isn't buried in it
         state.ride = b; state.mode = 'ride'; state.vel.set(0, 0, 0);
         hud.toast(`BOARDED — ${b.train.line}`, `Departing ${b.station.name}`);
         hud.setMode(`RIDING ${b.train.line}`); audio.sfx('doors');
