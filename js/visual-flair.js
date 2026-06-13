@@ -249,6 +249,13 @@ function createDistressFlare(position) {
 const _wpPreview = { line: null, mat: null };
 
 function _updateWhipPreview(fc) {
+    // DISABLED — the dotted preview ray streaked across the foreground
+    // whenever in slingshot range (constant near Sgr A*/Companion Core) and
+    // read as a graphical glitch. The "SLINGSHOT READY" button already
+    // signals readiness. Keep the line hidden if it was ever created.
+    if (_wpPreview.line) _wpPreview.line.visible = false;
+    return;
+    /* eslint-disable no-unreachable */
     if (fc % 6 !== 0) return;
     let show = false;
     if (typeof findSlingshotTarget === 'function' &&
