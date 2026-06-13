@@ -69,6 +69,20 @@ globals are shared across `js/*.js`. The one build artifact is the Tailwind CSS
 - Panels are HTML in `index.html` (`.ui-panel.{top-left,bottom-left,top-right,bottom-right,title-header}`), styled in `css/styles.css`. Build banner + console-gate + cache-buster are in `index.html` `<head>`.
 - **Tailwind:** loaded as a **precompiled** stylesheet `css/tailwind.css` (NOT the runtime CDN — that emitted a prod console warning). It's a committed, purged build. **After editing any Tailwind utility classes in `index.html` or `js/**`, rebuild it:** `npm install` (once) then `npm run build:css` (`tailwind.config.js` content globs = `index.html` + `js/**/*.js`), and commit `css/tailwind.css`. Dev deps (`package.json`/`package-lock.json`) are committed; `node_modules` is gitignored. **Caveat:** the purged build only includes class strings the scanner finds *literally* — Tailwind classes built dynamically in JS (`'text-' + color`) won't be emitted, so prefer full literal class names.
 
+## Self-improvement loop (see SELF-IMPROVE.md)
+- `js/playtest-probe.js` is an always-on regression sensor exposing `window.__selftest`
+  (`.report()`, `.fails()`, `.fps`). Read it via chrome-devtools `evaluate_script` to
+  know if the demo/game is healthy without watching. Run the loop per `SELF-IMPROVE.md`.
+- **Learnings ledger** (each is now a probe invariant — don't reintroduce):
+  - **Cache:** edits don't take effect until the `?v=` buster is bumped in `index.html` (all refs). Bump every js/ edit.
+  - **NaN positions** come from `radius`/`size` mixups and unguarded math on un-hydrated models → blank-screen freezes. (`finitePositions`)
+  - **Materialization race:** `materializeShip` shrinks a ship to 12% for ~0.8s; anything sized off the hull in that window (shields, thruster cones) inflates ~8× when it scales back → giant orange bubbles. Guard creation behind `!userData._materializing`. (`noGiantBubbles`, `noStuckSpawnIn`)
+  - **Demo flies away from its target** when a phase sets a target but never calls `orientTowardsTarget` before thrusting/jumping — thrust/jumps fire along the stale heading. Always orient first; gate jumps on `facing > 0.9`. (`notRecedingFromTarget`)
+  - **W-jump overshoot:** emergency `boostSpeed` is 100 → a jump coasts ~6,600u; demo tactical jumps must set `gameState._pendingJumpSpeed` (~45) or they overshoot 10k+.
+  - **Model nose axis:** player model + wingmen are **+Z-forward**; standard enemies are −Z; Enemy1/Boss1 & Enemy8/Boss8 are +Z (nose-flipped at build). Moving a ship without updating its facing vector → flies backward. (`wingmenForward`)
+  - **Effects must dispose via `explosionManager.cleanup()`**, not inline in `update()`; inline disposal leaks when `clearAll()` drops the entry. (`effectBudget`)
+  - **Additive DoubleSide spheres** (shields, atmospheres) wash the whole screen when the camera is inside them — hide them within ~1.1× radius.
+
 ## Deferred / known issues (see memory too)
 - Autopilot can fly into a planet on long warp transits (root-caused; on-rails evade + unvalidated warp exit). See `~/.claude/projects/-Users-benstagl-InterstellarSlingshot/memory/autopilot-warp-planet-collision.md`.
 - Dense galaxy cores drop to ~27 fps from in-view planet count — needs planet `InstancedMesh` (culling can't help in-view).
