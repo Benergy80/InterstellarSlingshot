@@ -119,6 +119,7 @@ export function createPlayer({ camera, scene, world, traffic, fx, hud, audio, on
     if (k === 'e') keys.e = true;
     if (k === 'b') keys.b = true;
     if (k === 'x') keys.x = true;
+    if (k === 'n') { e.preventDefault(); toggleAutoNav(); return; }
     if (k === 'z') { keys.z = true; tryMissile(); }
     if (e.key === ' ') { e.preventDefault(); fireHeld = true; audio.resume(); }
     if (e.key === 'ArrowUp') { keys.up = true; e.preventDefault(); }
@@ -275,14 +276,16 @@ export function createPlayer({ camera, scene, world, traffic, fx, hud, audio, on
         return;
       }
     }
-    // 4 — auto-nav to current target (the game's Enter auto-nav, on foot)
-    if (state.targetIdx >= 0) {
-      state.autoNav = !state.autoNav;
-      hud.toast(state.autoNav ? 'AUTO-NAV ENGAGED' : 'AUTO-NAV DISENGAGED',
-        state.autoNav ? `Walking to ${world.pois[state.targetIdx].name}` : 'Manual control resumed');
-      hud.setMode(state.autoNav ? 'AUTO-NAV' : 'SURFACE MODE');
-      audio.sfx('ui');
-    }
+  }
+
+  // auto-nav toggle — moved off Enter onto its own key (N) so Enter only interacts
+  function toggleAutoNav() {
+    if (state.targetIdx < 0 || state.mode !== 'walk') return;
+    state.autoNav = !state.autoNav;
+    hud.toast(state.autoNav ? 'AUTO-NAV ENGAGED' : 'AUTO-NAV DISENGAGED',
+      state.autoNav ? `Walking to ${world.pois[state.targetIdx].name}` : 'Manual control resumed');
+    hud.setMode(state.autoNav ? 'AUTO-NAV' : 'SURFACE MODE');
+    audio.sfx('ui');
   }
 
   function aimDir() {
@@ -473,7 +476,10 @@ export function createPlayer({ camera, scene, world, traffic, fx, hud, audio, on
       state.pos.addScaledVector(state.vel, dt);
       collide();
       const vehY = state.pos.y - 0.9;
-      const gh = world.groundHeightAt(state.pos.x, state.pos.z, vehY - 0.5);
+      let gh = world.groundHeightAt(state.pos.x, state.pos.z, vehY - 0.5);
+      // set down on a rooftop when hovering near/above it (not while flying below it)
+      const roof = world.roofHeightAt ? world.roofHeightAt(state.pos.x, state.pos.z) : 0;
+      if (roof > gh && vehY > roof - 2.5) gh = roof;
       if (vehY - 0.55 < gh) { state.pos.y = gh + 1.45; if (state.vel.y < 0) state.vel.y = 0; }
       if (state.pos.y > 290) { state.pos.y = 290; state.vel.y = Math.min(0, state.vel.y); }
       state.speed = state.vel.length();
@@ -560,7 +566,9 @@ export function createPlayer({ camera, scene, world, traffic, fx, hud, audio, on
     const hasInput = _wish.lengthSq() > 0;
     if (hasInput) _wish.normalize();
 
-    const accel = state.grounded ? P.accel : P.airAccel;
+    // boosting needs extra accel or damping pins the speed near walk (the cap
+    // alone is never reached) — pour on enough to actually hit the sprint cap
+    const accel = (state.grounded ? P.accel : P.airAccel) * (boosting ? 2.6 : 1);
     state.vel.x += _wish.x * accel * dt;
     state.vel.z += _wish.z * accel * dt;
 

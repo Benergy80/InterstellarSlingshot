@@ -117,6 +117,16 @@ export function buildWorld(scene, renderer) {
     return h;
   };
 
+  // highest building roof under (x,z), or 0 — lets aircraft set down on rooftops
+  world.roofHeightAt = (x, z) => {
+    let h = 0;
+    const list = world.buildings || [];
+    for (const b of list) {
+      if (x > b.x - b.w / 2 && x < b.x + b.w / 2 && z > b.z - b.d / 2 && z < b.z + b.d / 2 && b.h > h) h = b.h;
+    }
+    return h;
+  };
+
   // Lamp poles are stamped on a fixed road grid before the elevators, ramps and
   // platforms exist, so some land in an elevator doorway or on a station ramp
   // and wall the player out. Once everything is built, drop any pole (collider
