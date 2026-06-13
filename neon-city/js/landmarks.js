@@ -8,7 +8,7 @@
 // ════════════════════════════════════════════════════════════════
 import * as THREE from 'three';
 import * as BufferGeometryUtils from 'three/addons/utils/BufferGeometryUtils.js';
-import { C, NEON, NEON_LIST, mulberry32, pick, clamp, makeCanvas, canvasTexture, glowTexture, hexCss } from './config.js';
+import { C, NEON, NEON_LIST, mulberry32, pick, clamp, makeCanvas, canvasTexture, glowTexture, hexCss, humanoidGeo } from './config.js';
 
 export function buildLandmarks(scene, world) {
   const rnd = mulberry32(C.SEED + 1871);   // Great Fire remix
@@ -1099,8 +1099,7 @@ export function buildLandmarks(scene, world) {
       cap.position.set(bx, 1.3, bz); scene.add(cap);
     }
     // strollers circulating the paths
-    const peopleGeo = (() => { const body = new THREE.CapsuleGeometry(0.28, 0.9, 4, 8); body.translate(0, 0.9, 0); const head = new THREE.SphereGeometry(0.22, 8, 6); head.translate(0, 1.62, 0); return BufferGeometryUtils.mergeGeometries([body, head]); })();
-    const N = 12, people = new THREE.InstancedMesh(peopleGeo, new THREE.MeshStandardMaterial({ color: 0x6a7390, roughness: 0.7 }), N);
+    const N = 12, people = new THREE.InstancedMesh(humanoidGeo(), new THREE.MeshStandardMaterial({ color: 0x6a7390, roughness: 0.7 }), N);
     const pcol = new THREE.Color(), pState = [];
     for (let i = 0; i < N; i++) { pState.push({ r: 9 + rnd() * 18, a: rnd() * Math.PI * 2, sp: (0.5 + rnd() * 0.6) * (rnd() < 0.5 ? -1 : 1) }); people.setColorAt(i, pcol.setHSL(rnd(), 0.4, 0.6)); }
     people.instanceColor.needsUpdate = true; people.frustumCulled = false; scene.add(people);
@@ -1230,6 +1229,33 @@ export function buildLandmarks(scene, world) {
       arch.rotation.y = Math.PI / 2; arch.position.set(cx, 0.4, zR); scene.add(arch);
     }
     world.pois.push({ name: 'NEW CHICAGO RIVER', pos: new THREE.Vector3(0, 1, zR), desc: 'The river through downtown — cross at the bridges' });
+  }
+
+  // ════════════ STREET CROWDS — pedestrians on the sidewalks ════════════
+  {
+    const prnd = mulberry32(C.SEED + 6161);
+    const NPED = 48;
+    const ped = new THREE.InstancedMesh(humanoidGeo(), new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.7, metalness: 0.1 }), NPED);
+    const pcol = new THREE.Color(), st = [];
+    for (let i = 0; i < NPED; i++) {
+      const gi = 1 + (prnd() * (C.GRID - 1) | 0);
+      const roadP = -H + gi * C.CELL - C.ROAD / 2;
+      const lane = roadP + (prnd() < 0.5 ? 1 : -1) * (C.ROAD / 2 + 1.6);   // sidewalk just off a road
+      st.push({ axisX: prnd() < 0.5, lane, a: prnd() * 6, sp: (0.7 + prnd() * 0.8) * (prnd() < 0.5 ? -1 : 1), base: -H + prnd() * C.SPAN, range: 9 + prnd() * 16 });
+      ped.setColorAt(i, pcol.setHSL(prnd(), 0.4, 0.5 + prnd() * 0.25));
+    }
+    ped.instanceColor.needsUpdate = true; ped.frustumCulled = false; scene.add(ped);
+    const pd = new THREE.Object3D();
+    world.updateFns.push((dt, t) => {
+      for (let i = 0; i < NPED; i++) {
+        const s = st[i]; s.a += dt * s.sp / 6; const off = Math.sin(s.a) * s.range, mv = Math.cos(s.a) * s.sp;
+        const x = s.axisX ? s.base + off : s.lane, z = s.axisX ? s.lane : s.base + off;
+        pd.position.set(x, Math.abs(Math.sin(s.a * 9)) * 0.05, z);
+        pd.rotation.y = s.axisX ? (mv > 0 ? Math.PI / 2 : -Math.PI / 2) : (mv > 0 ? 0 : Math.PI);
+        pd.updateMatrix(); ped.setMatrixAt(i, pd.matrix);
+      }
+      ped.instanceMatrix.needsUpdate = true;
+    });
   }
 
   world._finishTrees();

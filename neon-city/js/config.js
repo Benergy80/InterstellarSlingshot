@@ -4,6 +4,28 @@
 // (js/game-physics.js rotationalInertia, game-controls.js doubleTap).
 // ════════════════════════════════════════════════════════════════
 import * as THREE from 'three';
+import * as BufferGeometryUtils from 'three/addons/utils/BufferGeometryUtils.js';
+
+// A merged humanoid body (head, torso, arms, legs) ~1.8m tall, feet at y=0.
+// Shared by the player avatar and the city's pedestrians.
+export function humanoidGeo() {
+  const P = [];
+  const torso = new THREE.BoxGeometry(0.5, 0.66, 0.28); torso.translate(0, 1.18, 0); P.push(torso);
+  const hips = new THREE.BoxGeometry(0.46, 0.3, 0.26); hips.translate(0, 0.82, 0); P.push(hips);
+  const neck = new THREE.CylinderGeometry(0.08, 0.08, 0.12, 6); neck.translate(0, 1.58, 0); P.push(neck);
+  const head = new THREE.SphereGeometry(0.17, 10, 8); head.translate(0, 1.74, 0); P.push(head);
+  for (const s of [-1, 1]) {
+    const sh = new THREE.SphereGeometry(0.1, 6, 5); sh.translate(s * 0.33, 1.44, 0); P.push(sh);
+    const up = new THREE.CapsuleGeometry(0.08, 0.3, 3, 6); up.translate(s * 0.33, 1.22, 0); P.push(up);
+    const lo = new THREE.CapsuleGeometry(0.07, 0.3, 3, 6); lo.translate(s * 0.33, 0.88, 0.03); P.push(lo);
+    const th = new THREE.CapsuleGeometry(0.1, 0.34, 3, 6); th.translate(s * 0.13, 0.52, 0); P.push(th);
+    const sk = new THREE.CapsuleGeometry(0.09, 0.34, 3, 6); sk.translate(s * 0.13, 0.16, 0.02); P.push(sk);
+    const ft = new THREE.BoxGeometry(0.13, 0.09, 0.27); ft.translate(s * 0.13, -0.02, 0.06); P.push(ft);
+  }
+  const g = BufferGeometryUtils.mergeGeometries(P);
+  g.translate(0, 0.06, 0);   // lift so the soles sit at y=0
+  return g;
+}
 
 export const C = {
   SEED: 22870,

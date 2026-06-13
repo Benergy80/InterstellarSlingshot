@@ -10,7 +10,7 @@
 //   · T demo autopilot tour · gravity keeps you tethered.
 // ════════════════════════════════════════════════════════════════
 import * as THREE from 'three';
-import { C, NEON, clamp, lerp } from './config.js';
+import { C, NEON, clamp, lerp, humanoidGeo } from './config.js';
 
 const _fwd = new THREE.Vector3(), _right = new THREE.Vector3(), _wish = new THREE.Vector3();
 const _v = new THREE.Vector3(), _v2 = new THREE.Vector3(), _ndc = new THREE.Vector2();
@@ -55,26 +55,22 @@ export function createPlayer({ camera, scene, world, traffic, fx, hud, audio, on
   // ── third-person avatar ──
   const avatar = new THREE.Group();
   {
-    const suit = new THREE.MeshStandardMaterial({ color: 0x161a28, roughness: 0.45, metalness: 0.6 });
-    const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.32, 0.85, 4, 10), suit);
-    body.position.y = 1.0;
+    const suit = new THREE.MeshStandardMaterial({ color: 0x1b2034, roughness: 0.45, metalness: 0.6 });
+    const body = new THREE.Mesh(humanoidGeo(), suit);
     avatar.add(body);
-    const head = new THREE.Mesh(new THREE.SphereGeometry(0.21, 12, 10), suit);
-    head.position.y = 1.72;
-    avatar.add(head);
     const visor = new THREE.Mesh(
-      new THREE.SphereGeometry(0.19, 12, 8, -0.7, 1.4, 0.9, 1.1),
+      new THREE.SphereGeometry(0.16, 12, 8, -0.7, 1.4, 0.9, 1.1),
       new THREE.MeshBasicMaterial({ color: new THREE.Color(NEON.cyan).multiplyScalar(1.3), toneMapped: false })
     );
-    visor.position.y = 1.74;
+    visor.position.set(0, 1.8, 0.05);
     avatar.add(visor);
     const packMat = new THREE.MeshStandardMaterial({ color: 0x232a40, roughness: 0.4, metalness: 0.7 });
-    const pack = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.55, 0.2), packMat);
-    pack.position.set(0, 1.18, 0.3);
+    const pack = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.5, 0.18), packMat);
+    pack.position.set(0, 1.2, 0.22);
     avatar.add(pack);
-    const trim = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.06, 0.22),
+    const trim = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.06, 0.04),
       new THREE.MeshBasicMaterial({ color: new THREE.Color(NEON.magenta).multiplyScalar(1.2), toneMapped: false }));
-    trim.position.set(0, 1.45, 0.3);
+    trim.position.set(0, 1.3, 0.16);
     avatar.add(trim);
     avatar.visible = false;
     scene.add(avatar);
