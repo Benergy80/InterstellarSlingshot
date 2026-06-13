@@ -24,7 +24,7 @@ import { createHUD } from './hud.js';
 import { createAudio } from './audio.js';
 
 // ── build stamp (so we can confirm which code is actually loaded) ──
-const NC_BUILD = 'NC-2287 build 2026-06-13n · humanoid character models + street crowds';
+const NC_BUILD = 'NC-2287 build 2026-06-13o · blade runner street dressing — neon, steam, cables';
 console.log('%c' + NC_BUILD, 'color:#00f0ff;font-weight:bold;font-size:14px');
 
 // ── renderer ──

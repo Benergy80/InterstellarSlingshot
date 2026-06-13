@@ -1258,5 +1258,65 @@ export function buildLandmarks(scene, world) {
     });
   }
 
+  // ════════════ BLADE RUNNER STREET DRESSING — dense neon, steam, cross-cables ════════════
+  {
+    const srnd = mulberry32(C.SEED + 4747);
+    // shared vertical neon sign textures (kana/kanji + brand homages)
+    const mkSign = (lines, fg) => {
+      const [c, ctx] = makeCanvas(128, 384);
+      ctx.fillStyle = '#0a0712'; ctx.fillRect(0, 0, 128, 384);
+      ctx.strokeStyle = fg; ctx.lineWidth = 7; ctx.strokeRect(9, 9, 110, 366);
+      ctx.fillStyle = fg; ctx.shadowColor = fg; ctx.shadowBlur = 22; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      const n = lines.length;
+      lines.forEach((ln, i) => { ctx.font = `bold ${ln.length > 2 ? 44 : 78}px "Orbitron", "Hiragino Sans", sans-serif`; ctx.fillText(ln, 64, (i + 0.5) * (366 / n) + 9); });
+      return canvasTexture(c);
+    };
+    const defs = [
+      [['電', '気'], '#00f0ff'], [['酒'], '#ff2bd6'], [['麺', '屋'], '#ffb300'],
+      [['ATARI'], '#53ffe9'], [['薬'], '#ff3355'], [['新', '世', '界'], '#9d4cff'],
+      [['CASH'], '#3d7bff'], [['ラーメン'], '#ff2bd6'], [['東', '京'], '#00f0ff'],
+      [['ネオ', 'バー'], '#ffb300'], [['カジノ'], '#ff3355'], [['OFF', 'WORLD'], '#53ffe9'],
+    ];
+    const tex = defs.map(([lines, fg]) => ({ mat: new THREE.MeshBasicMaterial({ map: mkSign(lines, fg), toneMapped: false, side: THREE.DoubleSide }), geos: [] }));
+    for (const b of world.buildings) {
+      if (b.h < 8 || b.glbTower) continue;
+      const faces = [[b.w / 2, 0, 1, 0], [-b.w / 2, 0, -1, 0], [0, b.d / 2, 0, 1], [0, -b.d / 2, 0, -1]];
+      const count = 1 + (srnd() * 3 | 0);
+      for (let k = 0; k < count; k++) {
+        if (srnd() > 0.72) continue;
+        const [ox, oz, nx, nz] = faces[srnd() * 4 | 0];
+        const sh = 2.4 + srnd() * 2.2, sw = sh * 0.32;
+        const y = 3 + srnd() * Math.min(b.h - 5, 16);
+        const along = (nx !== 0 ? (srnd() - 0.5) * Math.max(0.2, b.d - 2.5) : (srnd() - 0.5) * Math.max(0.2, b.w - 2.5));
+        const px = b.x + ox + nx * 0.45 + (nx !== 0 ? 0 : along), pz = b.z + oz + nz * 0.45 + (nx !== 0 ? along : 0);
+        const t = tex[srnd() * tex.length | 0];
+        const g = new THREE.PlaneGeometry(sw, sh); g.rotateY(Math.atan2(nx, nz)); g.translate(px, y, pz); t.geos.push(g);
+      }
+    }
+    for (const t of tex) if (t.geos.length) { const m = new THREE.Mesh(BufferGeometryUtils.mergeGeometries(t.geos), t.mat); m.frustumCulled = false; scene.add(m); }
+
+    // cross-street cables strung over the roads
+    const wireGeo = [];
+    for (let i = 0; i < 70; i++) {
+      const gi = 1 + (srnd() * (C.GRID - 1) | 0), rp = -H + gi * C.CELL - C.ROAD / 2;
+      const along = -H + srnd() * C.SPAN, y = 9 + srnd() * 16, span = C.ROAD + 7;
+      const g = new THREE.CylinderGeometry(0.06, 0.06, span, 4);
+      if (srnd() < 0.5) { g.rotateX(Math.PI / 2); g.translate(along, y, rp); }
+      else { g.rotateZ(Math.PI / 2); g.translate(rp, y, along); }
+      wireGeo.push(g);
+    }
+    if (wireGeo.length) { const m = new THREE.Mesh(BufferGeometryUtils.mergeGeometries(wireGeo), new THREE.MeshStandardMaterial({ color: 0x0a0c12, roughness: 0.9, metalness: 0.2 })); m.frustumCulled = false; scene.add(m); }
+
+    // drifting street steam from road vents (whitish haze, not additive)
+    const spots = [];
+    for (let i = 0; i < 40; i++) { const gi = 1 + (srnd() * (C.GRID - 1) | 0), rp = -H + gi * C.CELL - C.ROAD / 2, al = -H + srnd() * C.SPAN; spots.push(srnd() < 0.5 ? { x: al, z: rp } : { x: rp, z: al }); }
+    const NS = 320, sp = new Float32Array(NS * 3), sb = [];
+    for (let i = 0; i < NS; i++) { const s = spots[i % spots.length]; const bx = s.x + (srnd() - 0.5) * 3.5, bz = s.z + (srnd() - 0.5) * 3.5; sb.push({ x: bx, z: bz, ph: srnd(), sp: 0.25 + srnd() * 0.4, h: 7 + srnd() * 9 }); sp[i * 3] = bx; sp[i * 3 + 2] = bz; }
+    const sg = new THREE.BufferGeometry(); sg.setAttribute('position', new THREE.BufferAttribute(sp, 3));
+    const steam = new THREE.Points(sg, new THREE.PointsMaterial({ map: glowTexture(48, 'rgba(180,190,210,0.5)'), size: 6, transparent: true, opacity: 0.13, depthWrite: false, sizeAttenuation: true, color: 0x8893a8 }));
+    steam.frustumCulled = false; scene.add(steam);
+    world.updateFns.push((dt, t) => { const p = sg.attributes.position.array; for (let i = 0; i < NS; i++) { const b = sb[i]; p[i * 3 + 1] = ((t * b.sp + b.ph) % 1) * b.h; } sg.attributes.position.needsUpdate = true; });
+  }
+
   world._finishTrees();
 }
