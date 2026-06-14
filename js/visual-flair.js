@@ -794,9 +794,9 @@ function _ensureScreenFX() {
     wrap.id = 'speedFxLayer';
     wrap.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:40;display:none;';
     const vig = document.createElement('div');
-    // Stronger tunnel-vision: darkening starts earlier and goes deeper.
+    // Tunnel-vision vignette — toned back down per playtest (was 0.78/0.97).
     vig.style.cssText = 'position:absolute;inset:0;opacity:0;' +
-        'background:radial-gradient(ellipse at center, rgba(0,0,0,0) 42%, rgba(2,6,20,0.78) 72%, rgba(0,0,8,0.97) 100%)';
+        'background:radial-gradient(ellipse at center, rgba(0,0,0,0) 50%, rgba(2,6,20,0.5) 78%, rgba(0,0,10,0.78) 100%)';
     const streaks = document.createElement('div');
     streaks.style.cssText = 'position:absolute;inset:-12%;opacity:0;' +
         'background:repeating-conic-gradient(from 0deg, rgba(150,200,255,0) 0deg 4deg, ' +
@@ -827,7 +827,7 @@ function _updateScreenFX() {
     _sfx.wrap.style.display = 'block';
     const L = _sfx.level;
     const t = Date.now();
-    _sfx.vig.style.opacity = Math.min(1, L * 1.15).toFixed(3);
+    _sfx.vig.style.opacity = Math.min(1, L * 0.8).toFixed(3);
     _sfx.streaks.style.opacity = (Math.max(0, L - 0.25) * 0.65).toFixed(3);
     // Slow sweep + breathing scale so the spokes feel like rushing light,
     // not a static stencil
@@ -843,7 +843,10 @@ function updateVisualFlair() {
         typeof camera === 'undefined' || typeof scene === 'undefined' ||
         typeof THREE === 'undefined') return;
     const fc = gameState.frameCount || 0;
-    try { _updatePlayerTrail(); } catch (e) {}
+    // Player flame-ribbon streamer DISABLED per playtest (toggled off again).
+    // Hide the mesh if it was ever created.
+    if (_ptTrail.mesh) _ptTrail.mesh.visible = false;
+    // try { _updatePlayerTrail(); } catch (e) {}
     try { _updateScreenFX(); } catch (e) {}
     try { _updateWhipPreview(fc); } catch (e) {}
     try { _updateLensFlares(fc); } catch (e) {}

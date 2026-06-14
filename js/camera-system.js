@@ -469,16 +469,24 @@ function updateCameraView(camera) {
         // at the end of Q/E rolls, like inertia overshooting then settling.
         if (typeof rotationalVelocity !== 'undefined') {
             const demo = (typeof window !== 'undefined' && window.demoPilot && window.demoPilot.active);
-            const bankAmount = -rotationalVelocity.yaw * (demo ? 45 : 15);
-            const pitchTilt = -rotationalVelocity.pitch * (demo ? 12 : 5);
-            // Counter-roll spring: track smoothed roll, the overshoot creates
-            // a brief visual counter-lean when the player stops rolling.
+            // SMOOTH the bank/pitch tilt. Previously the bank was raw
+            // angular velocity × 15-45, applied every frame — so the noisy
+            // per-frame yaw (inertia overshoot + the orient closed-form step)
+            // mapped straight to a big roll that visibly jittered/shook the
+            // ship during fast turns. Easing the applied angle removes it.
+            const targetBank = -rotationalVelocity.yaw * (demo ? 38 : 14);
+            const targetPitch = -rotationalVelocity.pitch * (demo ? 10 : 5);
+            if (cameraState._smBank === undefined) cameraState._smBank = 0;
+            if (cameraState._smPitch === undefined) cameraState._smPitch = 0;
+            cameraState._smBank += (targetBank - cameraState._smBank) * 0.18;
+            cameraState._smPitch += (targetPitch - cameraState._smPitch) * 0.18;
+            // Counter-roll spring (for Q/E rolls), gentler multiplier (3→1.5).
             if (cameraState._smoothedRoll === undefined) cameraState._smoothedRoll = 0;
             const targetRoll = rotationalVelocity.roll * 8;
             cameraState._smoothedRoll += (targetRoll - cameraState._smoothedRoll) * 0.08;
-            const counterRoll = (cameraState._smoothedRoll - targetRoll) * 3;
-            const bankQuat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), bankAmount + counterRoll);
-            const pitchQuat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), pitchTilt);
+            const counterRoll = (cameraState._smoothedRoll - targetRoll) * 1.5;
+            const bankQuat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), cameraState._smBank + counterRoll);
+            const pitchQuat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), cameraState._smPitch);
             shipQuaternion.multiply(bankQuat).multiply(pitchQuat);
         }
 

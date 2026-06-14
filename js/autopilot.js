@@ -945,6 +945,33 @@
       flyToward(enemy, 2.5);
       pursuitFlightStyle('pursuit');
 
+      // Orient toward the target FIRST (so the jump/warp below never fires
+      // along a stale heading at game start). Compute how aligned the bow is.
+      if (window.orientTowardsTarget) window.orientTowardsTarget({ position: enemy.position });
+      let _facingEnemy = 1;
+      if (_coneVec && camera) {
+        _coneVec.subVectors(enemy.position, camera.position).normalize();
+        camera.getWorldDirection(_coneFwd);
+        _facingEnemy = _coneFwd.dot(_coneVec);
+      }
+
+      // MARTIAN PIRATE LONG INTERCEPT: beyond 2,000u, emergency-warp toward
+      // it (once aligned) and DON'T brake until within 500u. Pirate-only.
+      const _isPirateTgt = !!(enemy.userData.isMartianPirate && !enemy.userData.isVulcanPatrol);
+      const _warpBusyNow = gameState.emergencyWarp &&
+          (gameState.emergencyWarp.active || gameState.emergencyWarp.transitioning);
+      if (_isPirateTgt && dist > 2000 && !_warpBusyNow && _facingEnemy > 0.92 &&
+          canEmergencyWarp() && Date.now() - (ap._lastBHWarp || 0) > 20000) {
+        if (triggerOKeyWarp()) {
+          ap._lastBHWarp = Date.now();
+          ap._pirateNoBrake = true;
+          setStatus('Emergency warp → Martian Pirate (' + (dist | 0) + ' u)');
+          return;
+        }
+      }
+      // Clear the no-brake flag once we're close enough to engage.
+      if (dist <= 500) ap._pirateNoBrake = false;
+
       // Tactical jumps (double-tap W) to shift momentum toward a target.
       // Allowed for anything beyond point-blank (>800u) — short dashes
       // are a great way to change direction faster than coasting. The
@@ -955,7 +982,10 @@
       const JUMP_MIN_DIST = 800;
       const _warpBusy = gameState.emergencyWarp &&
           (gameState.emergencyWarp.active || gameState.emergencyWarp.transitioning);
+      // Only jump once the bow is actually ON the target (_facingEnemy > 0.9)
+      // — so a fresh interception at game start orients before dashing.
       if (dist > JUMP_MIN_DIST && speed < 4 && !_warpBusy &&
+          _facingEnemy > 0.9 &&
           gameState.energy > 25 &&
           !_isMissileInFlightAt(enemy) &&
           Date.now() - (ap._lastJumpTap || 0) > 4000) {
@@ -975,8 +1005,9 @@
       }
 
       // Brake if the jump overshoots past the target — detect by
-      // checking if we're moving AWAY from the enemy.
-      if (speed > 2 && gameState.velocityVector) {
+      // checking if we're moving AWAY from the enemy. (Suppressed during a
+      // Martian-pirate emergency-warp intercept until within 500u.)
+      if (!ap._pirateNoBrake && speed > 2 && gameState.velocityVector) {
         _coneVec.subVectors(enemy.position, camera.position).normalize();
         camera.getWorldDirection(_coneFwd);
         const closing = gameState.velocityVector.clone().normalize().dot(_coneVec);
@@ -997,7 +1028,7 @@
       }
       const _prevCD = ap._prevCombatDist;
       ap._prevCombatDist = dist;
-      if (dist > 800 && typeof _prevCD === 'number' &&
+      if (!ap._pirateNoBrake && dist > 800 && typeof _prevCD === 'number' &&
           dist > _prevCD + 0.5 && speed > 1) {
         keys().x = true;
         setStatus('Receding from target — braking (' + (dist | 0) + ' u)');
