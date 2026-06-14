@@ -24,7 +24,7 @@
          This lives only on the feature branch; main will not print it. -->
     <script>
       window.BUILD_ID = 'claude/fix-missiles-undefined-hud';
-      window.BUILD_TAG = '20260614j';
+      window.BUILD_TAG = '20260614k';
       console.log(
         '%c🚀 BUILD: ' + window.BUILD_ID + '  ·  ' + window.BUILD_TAG,
         'background:#0a7d2c;color:#fff;font-size:14px;font-weight:bold;padding:4px 10px;border-radius:4px;'
@@ -135,20 +135,15 @@
             }
         }
 
-        /* Mission Command Alert - GREEN ORBITRON STYLING */
+        /* Mission Command Alert - chrome-less: no window panel, just the
+           glowing comms text floating above the UNDERSTOOD button. */
         .mission-command-alert {
-            background: linear-gradient(135deg, rgba(15, 23, 42, 0.3) 0%, rgba(30, 41, 59, 0.3) 100%);
-            backdrop-filter: blur(2px);
-            border: 1px solid rgba(0, 150, 255, 0.5);
-            border-radius: 15px;
-            box-shadow:
-                0 12px 40px rgba(0, 150, 255, 0.3),
-                inset 0 1px 0 rgba(0,150,255,0.4),
-                inset 0 -1px 0 rgba(0,150,255,0.2);
+            background: none !important;
+            backdrop-filter: none !important;
+            border: none !important;
+            border-radius: 0 !important;
+            box-shadow: none !important;
             pointer-events: none !important;
-            transform-style: preserve-3d;
-            perspective: 1200px;
-            transform: perspective(1000px) rotateX(-2deg) translateZ(5px);
         }
 
         .mission-command-alert button {
@@ -160,33 +155,36 @@
         #missionCommandText {
             font-family: 'Orbitron', monospace !important;
             color: #00ff88 !important;
-            text-shadow: 0 0 8px rgba(0,255,136,0.6), 0 0 16px rgba(0,255,136,0.3) !important;
+            /* No panel behind the text now — add a hard dark shadow so the
+               glowing comms text stays legible over bright planets/stars. */
+            text-shadow: 0 0 8px rgba(0,255,136,0.6), 0 0 16px rgba(0,255,136,0.3), 0 2px 5px rgba(0,0,0,0.95) !important;
         }
 
         #missionCommandAlert h2 {
-            font-size: 1.05rem !important;
+            font-size: 1.15rem !important;
             font-weight: 700 !important;
             letter-spacing: 1.5px !important;
             margin-bottom: 8px !important;
         }
 
         #missionCommandText {
-            font-size: 0.86rem !important;
-            line-height: 1.45 !important;
-            /* Docked low as a compact comms console — keep it short so the
-               central flying view stays clear; scroll only on long lore. */
-            max-height: 26vh !important;
+            font-size: 1.15rem !important;
+            line-height: 1.5 !important;
+            /* Chrome-less comms readout, docked low so the central flying
+               view stays clear; scrolls only on long lore. */
+            max-height: 30vh !important;
             overflow-y: auto !important;
             padding-right: 10px !important;
             white-space: pre-wrap !important;
         }
-        
-        /* Typewriter caret while the lore transmission is decoding */
+
+        /* Commodore-PET style block cursor while the transmission decodes */
         #missionCommandText.mc-typing::after {
-            content: '_';
-            margin-left: 1px;
-            animation: mcCaret 0.7s steps(1) infinite;
+            content: '\2588';   /* █ full block */
+            margin-left: 2px;
+            animation: mcCaret 0.6s steps(1) infinite;
             color: #00ff88;
+            text-shadow: 0 0 8px rgba(0,255,136,0.8);
         }
         @keyframes mcCaret { 50% { opacity: 0; } }
 
@@ -1144,25 +1142,25 @@
     <!-- Game Scripts -->
     <!-- Load GLTFLoader before game-models.js -->
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
-    <script src="js/game-models.js?v=20260614j"></script>
-    <script src="js/camera-system.js?v=20260614j"></script>
+    <script src="js/game-models.js?v=20260614k"></script>
+    <script src="js/camera-system.js?v=20260614k"></script>
     <script src="js/cosmic-features.js"></script>
-    <script src="js/game-objects.js?v=20260614j"></script>
-    <script src="js/game-controls.js?v=20260614j"></script>
-    <script src="js/civilian-combat.js?v=20260614j"></script>
-    <script src="js/visual-flair.js?v=20260614j"></script>
-    <script src="js/playtest-probe.js?v=20260614j"></script>
-    <script src="js/arcade.js?v=20260614j"></script>
-    <script src="js/outer-systems.js?v=20260614j"></script>
+    <script src="js/game-objects.js?v=20260614k"></script>
+    <script src="js/game-controls.js?v=20260614k"></script>
+    <script src="js/civilian-combat.js?v=20260614k"></script>
+    <script src="js/visual-flair.js?v=20260614k"></script>
+    <script src="js/playtest-probe.js?v=20260614k"></script>
+    <script src="js/arcade.js?v=20260614k"></script>
+    <script src="js/outer-systems.js?v=20260614k"></script>
     <script src="js/interstellar-asteroids.js"></script>
-    <script src="js/game-physics.js?v=20260614j"></script>
-    <script src="js/game-ui.js?v=20260614j"></script>
+    <script src="js/game-physics.js?v=20260614k"></script>
+    <script src="js/game-ui.js?v=20260614k"></script>
     <script src="js/atmospheric-perspective.js"></script>
-    <script src="js/game-intro.js?v=20260614j"></script>
+    <script src="js/game-intro.js?v=20260614k"></script>
     <script src="js/game-shields.js"></script>
     <script src="js/game-music.js"></script>
-    <script src="js/autopilot.js?v=20260614j"></script>
-    <script src="js/game-core.js?v=20260614j"></script>
+    <script src="js/autopilot.js?v=20260614k"></script>
+    <script src="js/game-core.js?v=20260614k"></script>
 
     <!-- Mobile Script -->
     <script src="js/mobile-controls.js"></script>
