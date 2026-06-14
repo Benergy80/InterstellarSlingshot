@@ -166,6 +166,53 @@ function createInterstellarAsteroid(position, size, velocity, fieldIndex, astero
     // console.log(`  Created ${asteroid.userData.name} at (${position.x.toFixed(0)}, ${position.y.toFixed(0)}, ${position.z.toFixed(0)}) - size: ${size.toFixed(1)}, health: ${asteroid.userData.health}`);
 }
 
+// =============================================================================
+// DENSE GALAXY ASTEROID FIELDS — a few black-hole galaxies get a GIANT, packed
+// field of breakable asteroids around their core, dense enough to make the
+// boss/guardian fights a real navigation challenge (ASTEROIDS / PewPew feel).
+// Reuses the breakable interstellar-asteroid system (fragments on hit).
+// =============================================================================
+function createDenseGalaxyAsteroidFields() {
+    if (typeof planets === 'undefined' || typeof THREE === 'undefined') return;
+    // Distant galaxy cores only (skip Sol / Sgr A* / Companion at origin).
+    const cores = planets.filter(p => p && p.userData && p.userData.type === 'blackhole' &&
+        p.userData.isGalacticCore && !p.userData.isCompanionCore &&
+        typeof p.userData.galaxyId === 'number' && p.userData.galaxyId !== 7);
+    // ~3 of them get the giant field (every other core, deterministic order).
+    const chosen = cores.filter((c, i) => i % 2 === 0).slice(0, 3);
+    chosen.forEach((core, idx) => {
+        createDenseAsteroidField(core.position, 100 + idx);
+        core.userData.hasDenseAsteroidField = true;
+    });
+    console.log('🪨 Dense asteroid fields created in ' + chosen.length + ' galaxies');
+}
+
+function createDenseAsteroidField(center, fieldIndex) {
+    const COUNT = 200;          // packed
+    const CORE_CLEAR = 800;     // keep the very center flyable
+    const REACH = 5500;         // field radius
+    for (let i = 0; i < COUNT; i++) {
+        // Bias inward (pow<1) so it's DENSE near the core/combat zone, and
+        // flatten vertically into a rough disk so it reads as a belt.
+        const r = CORE_CLEAR + Math.pow(Math.random(), 0.6) * REACH;
+        const theta = Math.random() * Math.PI * 2;
+        const phi = Math.acos(1 - 2 * Math.random());
+        const pos = {
+            x: center.x + r * Math.sin(phi) * Math.cos(theta),
+            y: center.y + (r * Math.cos(phi)) * 0.45,
+            z: center.z + r * Math.sin(phi) * Math.sin(theta)
+        };
+        const size = 16 + Math.random() * 64; // 16-80, varied — big ones break into a cloud
+        const vel = new THREE.Vector3(
+            (Math.random() - 0.5) * 0.22,
+            (Math.random() - 0.5) * 0.10,
+            (Math.random() - 0.5) * 0.22
+        );
+        createInterstellarAsteroid(pos, size, vel, fieldIndex, i);
+    }
+}
+if (typeof window !== 'undefined') window.createDenseGalaxyAsteroidFields = createDenseGalaxyAsteroidFields;
+
 // Update interstellar asteroids (movement and rotation)
 function updateInterstellarAsteroids() {
     if (typeof interstellarAsteroids === 'undefined' || interstellarAsteroids.length === 0) return;

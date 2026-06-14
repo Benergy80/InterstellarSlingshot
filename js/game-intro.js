@@ -2113,6 +2113,12 @@ function setupNormalGameContent() {
         console.log('🌌 Interstellar asteroid fields created');
     }
 
+    // Giant dense breakable fields around a few galaxy cores (navigation
+    // challenge during boss fights). Deferred so galaxy cores exist.
+    if (typeof createDenseGalaxyAsteroidFields === 'function') {
+        setTimeout(() => { try { createDenseGalaxyAsteroidFields(); } catch (e) {} }, 1500);
+    }
+
     if (typeof createEnhancedComets === 'function') {
         createEnhancedComets();
         console.log('☄️ Comets created');

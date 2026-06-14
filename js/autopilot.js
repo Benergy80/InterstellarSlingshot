@@ -934,7 +934,7 @@
     const _bossTier = enemy.userData.isBoss || enemy.userData.isEliteGuardian ||
                       enemy.userData.isBlackHoleGuardian;
     const engageRange = _bossTier
-      ? Math.max(enemy.userData.firingRange || 500, (enemy.userData.hitboxSize || 288) * 0.75, 700)
+      ? Math.max((enemy.userData.firingRange || 500) * 0.67, (enemy.userData.hitboxSize || 288) * 0.5, 470)
       : (enemy.userData.firingRange || 500);
 
     const speed = gameState.velocityVector ? gameState.velocityVector.length() : 0;
@@ -2554,6 +2554,15 @@
         if (p.userData.health !== undefined && p.userData.health <= 0) continue;
         const d = cp.distanceTo(p.position);
         if (d < bestDist) { best = p; bestDist = d; }
+      }
+    }
+    // Interstellar / dense-galaxy-field asteroids (the breakable ones).
+    if (typeof interstellarAsteroids !== 'undefined') {
+      for (let i = 0; i < interstellarAsteroids.length; i++) {
+        const a = interstellarAsteroids[i];
+        if (!a || !a.userData || (a.userData.health !== undefined && a.userData.health <= 0)) continue;
+        const d = cp.distanceTo(a.position);
+        if (d < bestDist) { best = a; bestDist = d; }
       }
     }
     if (typeof outerInterstellarSystems !== 'undefined') {

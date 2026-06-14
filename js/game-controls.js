@@ -5607,6 +5607,9 @@ function initializeControlButtons() {
 }
         if (e.key === 'Alt' || e.altKey) {
             keys.alt = true;
+            // Start the laser charge timer on the FIRST press (not key-repeat),
+            // so holding Alt builds a charged blast released on keyup.
+            if (!e.repeat) gameState._laserChargeStart = Date.now();
             // Fire weapon on Alt key press
             if (!gameState.gameOver && gameState.gameStarted) {
                 resumeAudioContext();
@@ -5735,6 +5738,10 @@ if (e.key === 'Tab') {
         }
         if (e.key === 'Alt' || e.altKey) {
             keys.alt = false;
+            // Released after holding ≥650ms → fire the charged blast.
+            const _held = Date.now() - (gameState._laserChargeStart || Date.now());
+            gameState._laserChargeStart = 0;
+            if (_held >= 650 && typeof fireChargedBlast === 'function') fireChargedBlast();
         }
         if (key === 'x') keys.x = false;
         if (key === 'b') keys.b = false;
@@ -6076,6 +6083,19 @@ setTimeout(() => {
     
     console.log('âœ… Enhanced event listeners setup complete');
 
+// CHARGED BLAST: hold Alt to charge, release to fire a 4x-damage bolt. Reuses
+// all of fireWeapon's targeting via the _chargedShot flag. Needs 28 energy.
+function fireChargedBlast() {
+    if (typeof gameState === 'undefined' || gameState.gameOver || !gameState.gameStarted) return;
+    if (!gameState.weapons || gameState.weapons.energy < 28) return; // not enough charge
+    gameState._chargedShot = true;
+    gameState.weapons.cooldown = 0; // the blast fires even mid-cooldown
+    if (typeof playSound === 'function') { try { playSound('weapon'); } catch (e) {} }
+    fireWeapon(); // reads + clears _chargedShot
+    if (typeof flashArcadeText === 'function') flashArcadeText('CHARGED BLAST!', 3);
+}
+if (typeof window !== 'undefined') window.fireChargedBlast = fireChargedBlast;
+
 function checkWeaponHits(targetPosition) {
     const hitRadius = 300;  // Increased from 150 to 300 for better mouse aiming hit detection (2x larger hitboxes)
 
@@ -6092,7 +6112,7 @@ function checkWeaponHits(targetPosition) {
                 drone.getWorldPosition(droneWorldPos);
                 const distance = droneWorldPos.distanceTo(targetPosition);
                 if (distance < hitRadius) { // Normal hit radius
-                    const damage = 1;
+                    const damage = (typeof gameState !== 'undefined' && gameState._chargedShot) ? 4 : 1;
                     drone.userData.health -= damage;
 
                     flashEnemyHit(drone, damage);
@@ -6191,7 +6211,7 @@ function checkWeaponHits(targetPosition) {
                     _activateOnDamage(enemy);
                     return; // shield ate the shot
                 }
-                const damage = 1; // Standard damage
+                const damage = (typeof gameState !== 'undefined' && gameState._chargedShot) ? 4 : 1; // charged blast = 4x
                 enemy.userData.health -= damage;
                 enemy.userData.lastHitTime = Date.now();
                 _activateOnDamage(enemy);
@@ -7221,7 +7241,7 @@ function fireWeapon() {
     if (gameState.weapons.cooldown > 0 || gameState.weapons.energy < 10) return;
     
     gameState.weapons.cooldown = 200; // Even faster: 0.2 seconds
-    gameState.weapons.energy = Math.max(0, gameState.weapons.energy - 10);
+    gameState.weapons.energy = Math.max(0, gameState.weapons.energy - (gameState._chargedShot ? 28 : 10));
     
     // Enhanced targeting with doubled ranges
     let targetObject = null;
@@ -7386,8 +7406,13 @@ function fireWeapon() {
         const leftOffset = new THREE.Vector3(-3, -2, 0).applyQuaternion(camera.quaternion);
         const rightOffset = new THREE.Vector3(3, -2, 0).applyQuaternion(camera.quaternion);
         
-        createLaserBeam(camera.position.clone().add(leftOffset), targetPosition, '#00ff96', true);
-        createLaserBeam(camera.position.clone().add(rightOffset), targetPosition, '#00ff96', true);
+        const _beamCol = gameState._chargedShot ? '#aaffff' : '#00ff96';
+        createLaserBeam(camera.position.clone().add(leftOffset), targetPosition, _beamCol, true);
+        createLaserBeam(camera.position.clone().add(rightOffset), targetPosition, _beamCol, true);
+        if (gameState._chargedShot) {
+            // extra central bright bolt for the charged blast
+            createLaserBeam(camera.position.clone(), targetPosition, '#ffffff', true);
+        }
     }
     
     // Handle weapon hits based on target type
@@ -7421,6 +7446,9 @@ function fireWeapon() {
         checkWeaponHits(targetPosition);
     }
     
+    // Charged blast consumed — clear the flag now that targeting/damage ran.
+    if (typeof gameState !== 'undefined') gameState._chargedShot = false;
+
     // Apply weapon power boost from solar storms
     if (typeof gameState !== 'undefined' && gameState.weaponPowerBoost > 1.0) {
         // Increase damage or effect based on boost
@@ -9357,14 +9385,25 @@ function _fireWingmanMissile(ally, target, targetPos, ud) {
 // Nearest asteroid to a position (world-space, handles belt-parented rocks).
 const _wnaTmp = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
 function _wingmanNearestAsteroid(pos, range) {
-    if (typeof planets === 'undefined' || !_wnaTmp) return null;
+    if (!_wnaTmp) return null;
     let best = null, bestD2 = (range || 1400) * (range || 1400); // squared — no sqrt
-    for (let i = 0; i < planets.length; i++) {
-        const p = planets[i];
-        if (!p || !p.userData || p.userData.type !== 'asteroid') continue;
-        if (p.getWorldPosition) p.getWorldPosition(_wnaTmp); else _wnaTmp.copy(p.position);
-        const d2 = pos.distanceToSquared(_wnaTmp);
-        if (d2 < bestD2) { bestD2 = d2; best = p; }
+    if (typeof planets !== 'undefined') {
+        for (let i = 0; i < planets.length; i++) {
+            const p = planets[i];
+            if (!p || !p.userData || p.userData.type !== 'asteroid') continue;
+            if (p.getWorldPosition) p.getWorldPosition(_wnaTmp); else _wnaTmp.copy(p.position);
+            const d2 = pos.distanceToSquared(_wnaTmp);
+            if (d2 < bestD2) { bestD2 = d2; best = p; }
+        }
+    }
+    // Interstellar / dense-galaxy-field asteroids (breakable rocks)
+    if (typeof interstellarAsteroids !== 'undefined') {
+        for (let i = 0; i < interstellarAsteroids.length; i++) {
+            const a = interstellarAsteroids[i];
+            if (!a || !a.userData || (a.userData.health !== undefined && a.userData.health <= 0)) continue;
+            const d2 = pos.distanceToSquared(a.position);
+            if (d2 < bestD2) { bestD2 = d2; best = a; }
+        }
     }
     return best;
 }
