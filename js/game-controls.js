@@ -1912,9 +1912,6 @@ function fireEnemyWeapon(enemy, difficultySettings) {
 
     if (nearestDist <= firingRange) {
         const laserColor = enemy.userData.isBoss ? '#ff4444' : (enemy.userData.isBorgCube || enemy.userData.type === 'borg_drone') ? '#00ff00' : '#ff8800';
-        createLaserBeam(enemyPos, targetPos, laserColor, false);
-
-        playEnemyLaserSound(enemy);
 
         // Reduced damage so combat is survivable while still threatening.
         // Local enemies do 2 dmg base, distant 3-6 dmg. With 4 attackers
@@ -1931,7 +1928,32 @@ function fireEnemyWeapon(enemy, difficultySettings) {
             hitChance = Math.max(0.2, hitChance - accuracyPenalty);
         }
 
-        if (Math.random() < hitChance) {
+        const isHit = Math.random() < hitChance;
+
+        // Draw the bolt. A HIT terminates at the target; a MISS is nudged to
+        // the side and extended well past the target so it streaks on by for a
+        // longer distance instead of stopping dead at the player.
+        let beamEnd = targetPos;
+        if (!isHit && typeof THREE !== 'undefined') {
+            const _aim = targetPos.clone().sub(enemyPos);
+            const _distToTarget = _aim.length() || 1;
+            _aim.normalize();
+            let _perp = new THREE.Vector3().crossVectors(_aim, new THREE.Vector3(0, 1, 0));
+            if (_perp.lengthSq() < 1e-4) _perp.set(1, 0, 0);
+            _perp.normalize();
+            const _side = (Math.random() < 0.5 ? -1 : 1) * (90 + Math.random() * 160);
+            const _vert = (Math.random() - 0.5) * 180;
+            const _overshoot = 4000 + Math.random() * 4500;   // continue well past
+            beamEnd = enemyPos.clone()
+                .addScaledVector(_aim, _distToTarget + _overshoot)
+                .addScaledVector(_perp, _side)
+                .addScaledVector(new THREE.Vector3(0, 1, 0), _vert);
+        }
+        createLaserBeam(enemyPos, beamEnd, laserColor, false);
+
+        playEnemyLaserSound(enemy);
+
+        if (isHit) {
             // If firing at a wingman, damage the wingman and exit
             if (targetWingman && targetWingman.userData) {
                 const wasAlive = targetWingman.userData.health > 0;
