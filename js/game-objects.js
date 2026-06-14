@@ -1483,6 +1483,11 @@ function spawnBossForArea(galaxyId, placementType, areaKey, overridePosition, bo
         switchToBattleMusic();
     }
 
+    // Attract the (demo) player toward the boss the moment it appears — the
+    // autopilot consumes this flag and diverts to bossEngage regardless of
+    // range (its proximity magnet only reaches 25k).
+    if (typeof gameState !== 'undefined') gameState._pendingBossEngage = true;
+
     console.log(`Boss spawned: ${boss.userData.name} in ${galaxyType.name} Galaxy at 3D position:`, bossPosition);
     return boss;
 }

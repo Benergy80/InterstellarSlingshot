@@ -565,6 +565,23 @@
       }
     }
 
+    // BOSS APPEARED: spawnBossForArea sets gameState._pendingBossEngage the
+    // moment a boss spawns. Divert to engage immediately, regardless of range
+    // (the proximity magnet below only reaches 25k). Keep the flag through
+    // warp-locked transits (physics owns the velocity then) and consume it
+    // silently if we're already fighting.
+    if (typeof gameState !== 'undefined' && gameState._pendingBossEngage) {
+      if (ap.phase === 'bossEngage' || ap.phase === 'combat' || ap.phase === 'fightBorg') {
+        gameState._pendingBossEngage = false;
+      } else if (ap.phase !== 'init' && ap.phase !== 'blackHoleWarp' &&
+                 ap.phase !== 'warpToNebulaCluster' && ap.phase !== 'coastToNebulaCluster') {
+        gameState._pendingBossEngage = false;
+        setStatus('Boss signature detected — diverting to engage');
+        transmit('TACTICAL', 'Boss-class signature detected!\nDiverting to engage.');
+        goPhase('bossEngage');
+      }
+    }
+
     // BOSS MAGNET: a live boss-tier enemy within 15,000u pulls the demo
     // into the set-piece fight from any explore/travel phase. Excluded:
     // phases that ARE the fight, warp-locked transits (physics owns the

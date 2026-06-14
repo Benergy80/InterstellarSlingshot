@@ -901,6 +901,26 @@ function detectEnemiesInRegion() {
                 } else {
                     detectorTextNode.textContent = 'Active Hostiles: ';
                 }
+
+                // First contact of this encounter -> prominent alert flash
+                // (same style as the discovery / power-up flashes), naming the
+                // faction (or the boss) that was detected.
+                if (wasHidden && typeof flashEventText === 'function') {
+                    let hostileName = 'UNKNOWN HOSTILES';
+                    if (galaxyIds.length === 1 && galaxyIds[0] >= 0 && typeof galaxyTypes !== 'undefined' && galaxyTypes[galaxyIds[0]]) {
+                        hostileName = String(galaxyTypes[galaxyIds[0]].faction || 'HOSTILES').toUpperCase();
+                    } else if (galaxyIds.includes(-1) || galaxyIds.includes(7)) {
+                        hostileName = 'MARTIAN PIRATES';
+                    }
+                    const bossContact = nearbyEnemies.find(e => e.userData && e.userData.isBoss);
+                    const n = nearbyEnemies.length;
+                    flashEventText(
+                        bossContact ? 'BOSS DETECTED' : 'HOSTILES DETECTED',
+                        bossContact ? '#ff3df0' : '#ff5555',
+                        (bossContact && bossContact.userData.name ? String(bossContact.userData.name).toUpperCase() : hostileName)
+                            + ' · ' + n + (n === 1 ? ' CONTACT' : ' CONTACTS')
+                    );
+                }
             }
         }
         
