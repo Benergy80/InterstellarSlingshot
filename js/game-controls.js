@@ -2321,6 +2321,22 @@ function _scheduleCommsAutoScroll(textEl) {
     const scrollMs = Math.min(16000, Math.max(2600, overflow * 28));
     setTimeout(() => _mcSmoothScroll(textEl, overflow, scrollMs), 1000);
 }
+
+// Auto-dismiss a (non-tutorial) message once it's been read: a long message
+// that auto-scrolls is held until the scroll finishes + a beat; a short one
+// gets a read beat scaled to its length. No button — it just disappears.
+function _scheduleCommsAutoDismiss(textEl, overflowed) {
+    if (_mcDismissTimer) { clearTimeout(_mcDismissTimer); _mcDismissTimer = null; }
+    let delay;
+    if (overflowed) {
+        const overflow = Math.max(0, textEl.scrollHeight - textEl.clientHeight);
+        const scrollMs = Math.min(16000, Math.max(2600, overflow * 28));
+        delay = 1000 + scrollMs + 2600;   // 1s pre-scroll pause + scroll + read beat
+    } else {
+        delay = Math.max(5000, (textEl.textContent || '').length * 55);
+    }
+    _mcDismissTimer = setTimeout(_dismissMissionAlert, delay);
+}
 // Expose for other modules (e.g. showIncomingTransmission in game-objects.js).
 if (typeof window !== 'undefined') window.__commsTypewriter = _typewriterReveal;
 
@@ -2358,6 +2374,7 @@ function showMissionCommandAlert(title, text, isVictoryMessage = false, channelC
         textElement.style.removeProperty('text-shadow');
     }
     if (_mcScrollRAF) { cancelAnimationFrame(_mcScrollRAF); _mcScrollRAF = null; }
+    if (_mcDismissTimer) { clearTimeout(_mcDismissTimer); _mcDismissTimer = null; }
     alertElement.classList.remove('hidden');
     // Reveal style by length: a message that fits the 2-line window types in
     // with the block cursor; a longer one appears at once then, after ~1s,
@@ -2367,7 +2384,8 @@ function showMissionCommandAlert(title, text, isVictoryMessage = false, channelC
     textElement.classList.remove('mc-typing');
     textElement.textContent = (text == null ? '' : String(text));
     textElement.scrollTop = 0;
-    if (textElement.scrollHeight > textElement.clientHeight + 2) {
+    const commsOverflow = textElement.scrollHeight > textElement.clientHeight + 2;
+    if (commsOverflow) {
         _scheduleCommsAutoScroll(textElement);
     } else {
         _typewriterReveal(textElement, text);
@@ -2426,31 +2444,10 @@ function showMissionCommandAlert(title, text, isVictoryMessage = false, channelC
 
         buttonContainer.appendChild(row);
     } else {
-        // Lore / transmission / victory: a single SKIP button that just
-        // dismisses the message. No auto-dismiss — the message (and its
-        // discovery path) stays up until the player clicks SKIP.
-        const row = document.createElement('div');
-        row.className = 'mc-btnrow';
-        row.style.cssText = 'display:flex;justify-content:center;margin-top:1rem;width:100%;';
-
-        const skipButton = document.createElement('button');
-        skipButton.id = 'missionCommandSkip';
-        skipButton.className = 'space-btn rounded px-6 py-2';
-        skipButton.innerHTML = '<i class="fas fa-forward mr-2"></i>SKIP';
-        skipButton.style.cssText = `
-            pointer-events: auto;
-            touch-action: manipulation;
-            cursor: pointer;
-            white-space: nowrap;
-            min-width: 120px;
-        `;
-        row.appendChild(skipButton);
-
-        const handleSkip = () => _dismissMissionAlert();
-        skipButton.onclick = handleSkip;
-        skipButton.ontouchend = (e) => { e.preventDefault(); e.stopPropagation(); handleSkip(); };
-
-        buttonContainer.appendChild(row);
+        // Lore / transmission / victory: no button — these messages reveal
+        // (typing or slow auto-scroll), then disappear on their own after a
+        // read beat, like a normal transmission.
+        _scheduleCommsAutoDismiss(textElement, commsOverflow);
     }
 
     // Only play sound if not suppressed

@@ -201,7 +201,7 @@ function initializeThreeJSForIntro() {
         powerPreference: 'high-performance'
     });
     renderer.setSize(window.innerWidth, window.innerHeight);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, window.__isMobileGPU ? 1 : 2));
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, window.__isMobileGPU ? 1 : 1.5));
 
     // Keep background black - no automatic fade
     renderer.setClearColor(0x000000);
@@ -313,7 +313,7 @@ function initializeMinimalThreeJS() {
         powerPreference: 'high-performance'
     });
     renderer.setSize(window.innerWidth, window.innerHeight);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, window.__isMobileGPU ? 1 : 2));
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, window.__isMobileGPU ? 1 : 1.5));
     renderer.setClearColor(0x000003); // dark blue not black
     
     const gameContainer = document.getElementById('gameContainer');

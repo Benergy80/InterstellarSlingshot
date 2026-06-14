@@ -11603,6 +11603,10 @@ function createScatteredAsteroidFields() {
         !p.userData.isLocalGateway);
     blackHoles.forEach(bh => {
         const galaxyIndex = bh.userData.galaxyId;
+        // Skip the local Sol system (galaxy 7): it already has its dedicated
+        // asteroid belt; the extra scattered clusters near the Companion Core
+        // are unnecessary clutter right by the player start (and cost draw calls).
+        if (galaxyIndex === 7) return;
         const clusters = 3 + Math.floor(Math.random() * 3);
         for (let k = 0; k < clusters; k++) {
             const ang = Math.random() * Math.PI * 2;
