@@ -7943,16 +7943,16 @@ function showIncomingTransmission(sender, message, isDistress = false) {
     
     container.style.cssText = `
         position: fixed;
-        top: 100px;
+        top: 72px;
         left: 50%;
         transform: translateX(-50%);
         background: linear-gradient(135deg, rgba(15, 23, 42, 0.35) 0%, rgba(30, 41, 59, 0.35) 100%);
         border: 1px solid ${borderColor};
         border-radius: 4px;
-        padding: 16px 24px;
+        padding: 11px 18px;
         z-index: 1000;
-        min-width: 320px;
-        max-width: 480px;
+        min-width: 240px;
+        max-width: 360px;
         font-family: 'Orbitron', 'Courier New', monospace;
         opacity: 0;
         transition: opacity 0.4s ease;

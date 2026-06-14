@@ -24,7 +24,7 @@
          This lives only on the feature branch; main will not print it. -->
     <script>
       window.BUILD_ID = 'claude/fix-missiles-undefined-hud';
-      window.BUILD_TAG = '20260614g';
+      window.BUILD_TAG = '20260614h';
       console.log(
         '%c🚀 BUILD: ' + window.BUILD_ID + '  ·  ' + window.BUILD_TAG,
         'background:#0a7d2c;color:#fff;font-size:14px;font-weight:bold;padding:4px 10px;border-radius:4px;'
@@ -164,17 +164,18 @@
         }
 
         #missionCommandAlert h2 {
-            font-size: 1.5rem !important;
+            font-size: 1.05rem !important;
             font-weight: 700 !important;
-            letter-spacing: 2px !important;
+            letter-spacing: 1.5px !important;
+            margin-bottom: 8px !important;
         }
 
         #missionCommandText {
-            font-size: 1rem !important;
-            line-height: 1.6 !important;
-            /* Let the window size to its text. Cap only at extreme
-               lengths so the panel never overflows the viewport. */
-            max-height: 70vh !important;
+            font-size: 0.86rem !important;
+            line-height: 1.45 !important;
+            /* Docked low as a compact comms console — keep it short so the
+               central flying view stays clear; scroll only on long lore. */
+            max-height: 26vh !important;
             overflow-y: auto !important;
             padding-right: 10px !important;
             white-space: pre-wrap !important;
@@ -815,8 +816,8 @@
         </div>
         
         <!-- Mission Command Alert - Green ORBITRON Styling -->
-        <div id="missionCommandAlert" class="absolute mission-command-alert p-6 hidden z-50"
-     style="top: 50%; left: 50%; transform: translate(-50%, -50%); width: auto; min-width: 280px; max-width: min(640px, 90vw);">
+        <div id="missionCommandAlert" class="absolute mission-command-alert p-4 hidden z-50"
+     style="top: auto; bottom: 6vh; left: 50%; transform: translateX(-50%); width: auto; min-width: 260px; max-width: min(460px, 80vw);">
     <div class="text-center">
         <h2 class="text-xl font-bold text-cyan-400 mb-2">MISSION COMMAND</h2>
         <div id="missionCommandText" class="text-gray-300 mb-4"></div>
@@ -1134,25 +1135,25 @@
     <!-- Game Scripts -->
     <!-- Load GLTFLoader before game-models.js -->
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
-    <script src="js/game-models.js?v=20260614g"></script>
-    <script src="js/camera-system.js?v=20260614g"></script>
+    <script src="js/game-models.js?v=20260614h"></script>
+    <script src="js/camera-system.js?v=20260614h"></script>
     <script src="js/cosmic-features.js"></script>
-    <script src="js/game-objects.js?v=20260614g"></script>
-    <script src="js/game-controls.js?v=20260614g"></script>
-    <script src="js/civilian-combat.js?v=20260614g"></script>
-    <script src="js/visual-flair.js?v=20260614g"></script>
-    <script src="js/playtest-probe.js?v=20260614g"></script>
-    <script src="js/arcade.js?v=20260614g"></script>
-    <script src="js/outer-systems.js?v=20260614g"></script>
+    <script src="js/game-objects.js?v=20260614h"></script>
+    <script src="js/game-controls.js?v=20260614h"></script>
+    <script src="js/civilian-combat.js?v=20260614h"></script>
+    <script src="js/visual-flair.js?v=20260614h"></script>
+    <script src="js/playtest-probe.js?v=20260614h"></script>
+    <script src="js/arcade.js?v=20260614h"></script>
+    <script src="js/outer-systems.js?v=20260614h"></script>
     <script src="js/interstellar-asteroids.js"></script>
-    <script src="js/game-physics.js?v=20260614g"></script>
-    <script src="js/game-ui.js?v=20260614g"></script>
+    <script src="js/game-physics.js?v=20260614h"></script>
+    <script src="js/game-ui.js?v=20260614h"></script>
     <script src="js/atmospheric-perspective.js"></script>
-    <script src="js/game-intro.js?v=20260614g"></script>
+    <script src="js/game-intro.js?v=20260614h"></script>
     <script src="js/game-shields.js"></script>
     <script src="js/game-music.js"></script>
-    <script src="js/autopilot.js?v=20260614g"></script>
-    <script src="js/game-core.js?v=20260614g"></script>
+    <script src="js/autopilot.js?v=20260614h"></script>
+    <script src="js/game-core.js?v=20260614h"></script>
 
     <!-- Mobile Script -->
     <script src="js/mobile-controls.js"></script>
