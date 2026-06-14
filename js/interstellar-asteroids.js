@@ -307,6 +307,10 @@ function breakInterstellarAsteroid(asteroid, hitPosition, hitNormal) {
 
 // Destroy an interstellar asteroid
 function destroyInterstellarAsteroid(asteroid) {
+    // Arcade: chance to drop a collectible pickup (energy / missile / power-up).
+    if (typeof window !== 'undefined' && window.arcade && asteroid && asteroid.position && Math.random() < 0.28) {
+        try { window.arcade.spawnPickup(asteroid.position.clone()); } catch (e) {}
+    }
     scene.remove(asteroid);
 
     const index = interstellarAsteroids.indexOf(asteroid);

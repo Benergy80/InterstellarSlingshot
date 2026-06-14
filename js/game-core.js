@@ -1465,6 +1465,18 @@ function animate(rafTime) {
         renderer.render(scene, camera);
         return; // Skip all other game updates when paused
     }
+
+    // ARCADE JUICE — hitstop (brief freeze on big impacts) and slow-mo
+    // (bullet-time on a flagship kill): render only, skip the game update.
+    const _ajNow = performance.now();
+    if (gameState._hitstopUntil && _ajNow < gameState._hitstopUntil) {
+        renderer.render(scene, camera);
+        return;
+    }
+    if (gameState._slowmoUntil && _ajNow < gameState._slowmoUntil) {
+        gameState._slowmoSkip = !gameState._slowmoSkip;
+        if (gameState._slowmoSkip) { renderer.render(scene, camera); return; } // ~half speed
+    }
     
     // PERFORMANCE: Monitor frame times and adjust quality
     const currentTime = performance.now();

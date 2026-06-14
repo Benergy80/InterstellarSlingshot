@@ -924,6 +924,42 @@
       return;
     }
 
+    // PROACTIVE RECOVERY: if the gap to the target keeps GROWING past 1,500u
+    // for more than 3 s, reorient and W-jump back toward it (don't let the
+    // demo slowly drift away). Brakes the outward drift while turning, then
+    // dashes back once the bow is on the target.
+    if (ap._recTgt !== enemy) { ap._recTgt = enemy; ap._recSince = 0; ap._recPrev = dist; ap._recJump = false; }
+    const _recGrowing = dist > (ap._recPrev || dist) + 0.5;
+    ap._recPrev = dist;
+    if (dist > 1500 && _recGrowing) { if (!ap._recSince) ap._recSince = Date.now(); }
+    else { ap._recSince = 0; }
+    const _recWarpBusy = gameState.emergencyWarp &&
+        (gameState.emergencyWarp.active || gameState.emergencyWarp.transitioning);
+    if (ap._recSince && Date.now() - ap._recSince > 3000) { ap._recJump = true; ap._recSince = 0; }
+    if (ap._recJump && !_recWarpBusy) {
+      if (window.orientTowardsTarget) window.orientTowardsTarget({ position: enemy.position });
+      keys().x = true; // kill the outward drift while turning back
+      let _recF = 1;
+      if (_coneVec && camera) {
+        _coneVec.subVectors(enemy.position, camera.position).normalize();
+        camera.getWorldDirection(_coneFwd);
+        _recF = _coneFwd.dot(_coneVec);
+      }
+      if (_recF > 0.9 && gameState.energy > 25) {
+        ap._recJump = false;
+        gameState._pendingJumpSpeed = 45;
+        gameState._pendingJumpMs = Math.min(6000, Math.max(700, (dist * 0.8 - 45 * 65) / 45 * 16.67));
+        if (window.keys) {
+          window.keys.wDoubleTap = true;
+          setTimeout(() => { if (window.keys) window.keys.wDoubleTap = false; }, 120);
+        }
+        setStatus('Reorient + warp back to target (' + (dist | 0) + ' u)');
+      } else {
+        setStatus('Reorienting on target (' + (dist | 0) + ' u)');
+      }
+      return; // hold this frame for the recovery maneuver
+    }
+
     // Use the enemy's own firing range — that's how close we need to be for
     // a proper dog-fight (enemy fires back at us, we fire at them).
     // BOSS TIER: hold a standoff — bosses have missile volleys (long

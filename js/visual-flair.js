@@ -897,6 +897,7 @@ function updateVisualFlair() {
     if (_ptTrail.mesh) _ptTrail.mesh.visible = false;
     // try { _updatePlayerTrail(); } catch (e) {}
     try { _updateLaserCharge(); } catch (e) {}
+    try { if (window.arcade) window.arcade.update(); } catch (e) {}
     try { _updateScreenFX(); } catch (e) {}
     try { _updateWhipPreview(fc); } catch (e) {}
     try { _updateLensFlares(fc); } catch (e) {}

@@ -2027,7 +2027,7 @@ function fireEnemyWeapon(enemy, difficultySettings) {
                 // velocity per hit (doubled from 5% per playtest).
                 if (typeof camera !== 'undefined' && gameState.velocityVector && enemy && enemy.position) {
                     const _kb = camera.position.clone().sub(enemy.position).normalize();
-                    gameState.velocityVector.addScaledVector(_kb, shieldsActive ? 0.20 : 0.44);
+                    gameState.velocityVector.addScaledVector(_kb, shieldsActive ? 0.10 : 0.22);
                 }
             }
 
@@ -6109,6 +6109,7 @@ function fireChargedBlast(power) {
     gameState._chargedPower = power;
     gameState.weapons.cooldown = 0; // the blast fires even mid-cooldown
     if (typeof playSound === 'function') { try { playSound('weapon'); } catch (e) {} }
+    if (window.arcade) window.arcade.flash('rgba(255,220,60,' + (0.4 + power * 0.5) + ')', 0.3 + power * 0.5);
     fireWeapon(); // reads + clears _chargedShot / _chargedPower
     if (typeof flashArcadeText === 'function') {
         flashArcadeText(power > 0.8 ? 'MAX CHARGE BLAST!' : 'CHARGED BLAST!', power > 0.8 ? 5 : (power > 0.5 ? 4 : 3));
@@ -6242,9 +6243,9 @@ function checkWeaponHits(targetPosition) {
                 // the moved spot), which smooths it into a visible recoil.
                 if (typeof camera !== 'undefined' && enemy.position) {
                     const _kb = enemy.position.clone().sub(camera.position).normalize();
-                    enemy.position.addScaledVector(_kb, 12);
+                    enemy.position.addScaledVector(_kb, 6);
                     if (enemy.userData.velocity && enemy.userData.velocity.addScaledVector) {
-                        enemy.userData.velocity.addScaledVector(_kb, 0.3);
+                        enemy.userData.velocity.addScaledVector(_kb, 0.15);
                     }
                 }
 
@@ -6370,6 +6371,11 @@ if (enemy.userData.health <= 0) {
     
     if (wasBoss) {
     showAchievement('BOSS DEFEATED!', `${bossName} destroyed!`);
+    // Flagship kill: full-screen flash + bullet-time slow-mo as it dies.
+    if (window.arcade) {
+        window.arcade.flash('rgba(255,200,80,0.9)', 0.85);
+        window.arcade.slowmo(700);
+    }
     // Top-tier arcade praise for a flagship kill, naming the faction
     if (typeof flashArcadeText === 'function') {
         const _bw = ['TARGET ELIMINATED!', 'THREAT NEUTRALIZED!', 'FLAGSHIP DOWN!', 'REALITY BENT!'];
@@ -6415,6 +6421,11 @@ if (enemy.userData.health <= 0) {
     // userData drives the "<FACTION> ELIMINATED" subtitle.
     if (typeof arcadePraiseKill === 'function') {
         arcadePraiseKill(false, (typeof camera !== 'undefined') ? camera.position.distanceTo(enemy.position) : 0, enemy.userData);
+    }
+    // Arcade: score + combo + floating number, and a meaty hitstop.
+    if (window.arcade) {
+        window.arcade.addKill(enemy.userData, enemy.position, !!enemy.userData.isBoss);
+        window.arcade.hitstop(enemy.userData.isBoss ? 90 : 45);
     }
 
     const _lootVariant = enemy.userData._pirateLootVariant;
@@ -6648,7 +6659,15 @@ function checkGuardianVictory() {
             
             // NOW increment galaxy clear count
             gameState.galaxiesCleared = (gameState.galaxiesCleared || 0) + 1;
-            
+
+            // Arcade: RANK stamp on sector clear (grade by hull remaining).
+            if (window.arcade) {
+                const _hp = (gameState.maxHull ? (gameState.hull / gameState.maxHull) : 1);
+                const _rank = _hp > 0.85 ? 'S' : _hp > 0.6 ? 'A' : _hp > 0.35 ? 'B' : 'C';
+                window.arcade.grade(_rank, 'SECTOR LIBERATED');
+                window.arcade.flash('rgba(120,255,160,0.7)', 0.6);
+            }
+
             // Play galaxy victory music
             playGalaxyVictoryMusic();
 
@@ -7022,6 +7041,10 @@ function handleMissileHit(missile, enemy) {
                 (typeof camera !== 'undefined') ? camera.position.distanceTo(enemy.position) : 0,
                 enemy.userData);
         }
+        if (window.arcade) {
+            window.arcade.addKill(enemy.userData, enemy.position, !!enemy.userData.isBoss);
+            window.arcade.hitstop(enemy.userData.isBoss ? 90 : 45);
+        }
         const wasBoss = enemy.userData.isBoss;
         const bossName = enemy.userData.name;
 
@@ -7272,7 +7295,8 @@ function fireWeapon() {
     // Faster weapon cooldown (RESTORED)
     if (gameState.weapons.cooldown > 0 || gameState.weapons.energy < 10) return;
     
-    gameState.weapons.cooldown = 200; // Even faster: 0.2 seconds
+    // OVERDRIVE power-up halves the cooldown for rapid fire.
+    gameState.weapons.cooldown = (window.arcade && window.arcade.hasPowerup && window.arcade.hasPowerup('overdrive')) ? 90 : 200;
     gameState.weapons.energy = Math.max(0, gameState.weapons.energy - (gameState._chargedShot ? Math.round(12 + (gameState._chargedPower || 0.5) * 28) : 10));
     
     // Enhanced targeting with doubled ranges
@@ -7441,6 +7465,16 @@ function fireWeapon() {
         const _beamCol = gameState._chargedShot ? '#ffdd33' : '#00ff96'; // charged = yellow
         createLaserBeam(camera.position.clone().add(leftOffset), targetPosition, _beamCol, true);
         createLaserBeam(camera.position.clone().add(rightOffset), targetPosition, _beamCol, true);
+        // SPREAD SHOT power-up: two extra fanned beams.
+        if (window.arcade && window.arcade.hasPowerup && window.arcade.hasPowerup('spread')) {
+            const _fwd = new THREE.Vector3(); camera.getWorldDirection(_fwd);
+            const _up = new THREE.Vector3(0, 1, 0).applyQuaternion(camera.quaternion);
+            [-0.12, 0.12].forEach(ang => {
+                const _d = _fwd.clone().applyAxisAngle(_up, ang);
+                const _end = camera.position.clone().addScaledVector(_d, 6000);
+                createLaserBeam(camera.position.clone(), _end, '#99ff66', true);
+            });
+        }
         if (gameState._chargedShot) {
             // Charged blast: yellow bolts from the CHARGE CENTER (the glow
             // midpoint), more bolts with higher charge.
