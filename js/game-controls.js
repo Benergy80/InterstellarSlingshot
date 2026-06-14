@@ -2227,6 +2227,46 @@ function completeTutorial() {
     console.log('Tutorial completed - enemies now active');
 }
 
+// Typewriter reveal for mission-command lore — types the text in with a soft
+// comms blip and a blinking cursor. Clicking the panel fills it instantly.
+let _mcTypeTimer = null;
+function _mcBlip() {
+    if (typeof audioContext === 'undefined' || !audioContext || audioContext.state !== 'running') return;
+    const o = audioContext.createOscillator(), g = audioContext.createGain();
+    o.type = 'square';
+    o.frequency.value = 1150 + Math.random() * 500;
+    g.gain.value = 0.012;
+    o.connect(g); g.connect(audioContext.destination);
+    const t = audioContext.currentTime;
+    o.start(t);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.04);
+    o.stop(t + 0.05);
+}
+function _typewriterReveal(el, text) {
+    if (_mcTypeTimer) { clearInterval(_mcTypeTimer); _mcTypeTimer = null; }
+    const full = String(text == null ? '' : text);
+    el.textContent = '';
+    // Very long lore: skip the effect so reads aren't slow.
+    if (full.length > 600) { el.textContent = full; return; }
+    let i = 0;
+    // Reveal speed: short lore types char-by-char for feel; medium/long step
+    // faster so reads don't drag (and to absorb timer throttling under load).
+    const step = full.length > 240 ? 3 : (full.length > 110 ? 2 : 1);
+    el.classList.add('mc-typing');
+    const flush = () => {
+        if (_mcTypeTimer) { clearInterval(_mcTypeTimer); _mcTypeTimer = null; }
+        el.textContent = full;
+        el.classList.remove('mc-typing');
+    };
+    el._mcFlush = flush;
+    _mcTypeTimer = setInterval(() => {
+        i += step;
+        el.textContent = full.slice(0, i);
+        if (i % 6 < step) { try { _mcBlip(); } catch (e) {} }   // soft blip ~every 6 chars
+        if (i >= full.length) flush();
+    }, 16);
+}
+
 function showMissionCommandAlert(title, text, isVictoryMessage = false) {
     const alertElement = document.getElementById('missionCommandAlert');
     const titleElement = alertElement ? alertElement.querySelector('h2') : null;
@@ -2244,7 +2284,7 @@ function showMissionCommandAlert(title, text, isVictoryMessage = false) {
     }
     
     titleElement.textContent = title;
-    textElement.textContent = text;
+    _typewriterReveal(textElement, text);
     alertElement.classList.remove('hidden');
     
     // Get or create button container
