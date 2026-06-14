@@ -154,19 +154,30 @@ function _updateLaserCharge() {
     const prog = (charging && ship && ship.visible)
         ? Math.max(0, Math.min(1, (Date.now() - gameState._laserChargeStart) / 3000)) : 0;
     if (prog <= 0.01) { _chargeGlow.sprites.forEach(s => { s.material.opacity = 0; s.scale.setScalar(0); }); return; }
+    // Position the glows at the SAME wing tips the lasers fire from
+    // (createThirdPersonLasers: ±size.x*0.35, up -2, fwd -size.z*0.15, in
+    // camera space) so the charge builds right at the beam origins.
     const box = new THREE.Box3().setFromObject(ship);
-    const center = box.getCenter(new THREE.Vector3());
-    const r = (box.getBoundingSphere(new THREE.Sphere()).radius) || 30;
-    const right = new THREE.Vector3(1, 0, 0).applyQuaternion(ship.quaternion).normalize();
-    const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(ship.quaternion).normalize();
+    const size = box.getSize(new THREE.Vector3());
+    const shipPos = ship.getWorldPosition(new THREE.Vector3());
+    const cq = camera.quaternion;
+    const wingSpread = size.x * 0.35, wingForward = -size.z * 0.15, wingUp = -2;
+    const lOff = new THREE.Vector3(-wingSpread, wingUp, wingForward).applyQuaternion(cq);
+    const rOff = new THREE.Vector3(wingSpread, wingUp, wingForward).applyQuaternion(cq);
+    const leftWing = shipPos.clone().add(lOff);
+    const rightWing = shipPos.clone().add(rOff);
+    // Expose for the blast origin (emit from the charge center).
+    gameState._chargeWings = [leftWing, rightWing];
+    gameState._chargeCenter = leftWing.clone().add(rightWing).multiplyScalar(0.5);
     const t = Date.now();
+    const wings = [leftWing, rightWing];
     _chargeGlow.sprites.forEach((sp, i) => {
-        const side = i === 0 ? -1 : 1;
-        sp.position.copy(center).addScaledVector(right, side * r * 0.5).addScaledVector(fwd, r * 0.3);
+        sp.position.copy(wings[i]);
         const flick = 0.82 + 0.18 * Math.sin(t * 0.03 + i * 2);
-        sp.scale.setScalar(r * (0.12 + prog * 0.6) * flick);
+        sp.scale.setScalar(Math.max(size.x, 8) * (0.08 + prog * 0.34) * flick);
         sp.material.opacity = prog * 0.95;
-        sp.material.color.setHSL(0.55 - prog * 0.1, 1, 0.5 + prog * 0.45); // cyan → near-white
+        // YELLOW build (matches the yellow blast): gold → bright yellow-white
+        sp.material.color.setHSL(0.13, 1, 0.5 + prog * 0.45);
     });
 }
 

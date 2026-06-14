@@ -4561,10 +4561,19 @@ function createThirdPersonLasers(playerShip, targetPosition) {
         // Create muzzle flash at wing tips
         createMuzzleFlash(leftWing.clone());
         createMuzzleFlash(rightWing.clone());
-        
-        // Create full-length static laser beams
-        createThirdPersonBeam(leftWing, targetPosition, '#00ff96');
-        createThirdPersonBeam(rightWing, targetPosition, '#00ff96');
+
+        // Charged blast = YELLOW beams from the wings + bright bolts from the
+        // CHARGE CENTER (between the two wing glows), scaled by charge power.
+        const _charged = (typeof gameState !== 'undefined' && gameState._chargedShot);
+        const _beamCol = _charged ? '#ffdd33' : '#00ff96';
+        createThirdPersonBeam(leftWing, targetPosition, _beamCol);
+        createThirdPersonBeam(rightWing, targetPosition, _beamCol);
+        if (_charged) {
+            const _center = leftWing.clone().add(rightWing).multiplyScalar(0.5);
+            createMuzzleFlash(_center.clone());
+            const _bolts = 1 + Math.round((gameState._chargedPower || 0.5) * 3);
+            for (let _b = 0; _b < _bolts; _b++) createThirdPersonBeam(_center, targetPosition, '#ffee66');
+        }
         
     } catch (error) {
         console.warn('Failed to create third-person lasers:', error);
@@ -7429,15 +7438,17 @@ function fireWeapon() {
         const leftOffset = new THREE.Vector3(-3, -2, 0).applyQuaternion(camera.quaternion);
         const rightOffset = new THREE.Vector3(3, -2, 0).applyQuaternion(camera.quaternion);
         
-        const _beamCol = gameState._chargedShot ? '#aaffff' : '#00ff96';
+        const _beamCol = gameState._chargedShot ? '#ffdd33' : '#00ff96'; // charged = yellow
         createLaserBeam(camera.position.clone().add(leftOffset), targetPosition, _beamCol, true);
         createLaserBeam(camera.position.clone().add(rightOffset), targetPosition, _beamCol, true);
         if (gameState._chargedShot) {
-            // Charged blast: extra central bolts, more with higher charge.
+            // Charged blast: yellow bolts from the CHARGE CENTER (the glow
+            // midpoint), more bolts with higher charge.
+            const _origin = gameState._chargeCenter ? gameState._chargeCenter.clone() : camera.position.clone();
             const _bolts = 1 + Math.round((gameState._chargedPower || 0.5) * 3); // 1-4
             for (let _b = 0; _b < _bolts; _b++) {
                 const _j = new THREE.Vector3((Math.random() - 0.5) * 1.5, (Math.random() - 0.5) * 1.5, 0).applyQuaternion(camera.quaternion);
-                createLaserBeam(camera.position.clone().add(_j), targetPosition, '#ffffff', true);
+                createLaserBeam(_origin.clone().add(_j), targetPosition, '#ffee66', true);
             }
         }
     }
