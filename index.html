@@ -24,7 +24,7 @@
          This lives only on the feature branch; main will not print it. -->
     <script>
       window.BUILD_ID = 'claude/fix-missiles-undefined-hud';
-      window.BUILD_TAG = '20260614k';
+      window.BUILD_TAG = '20260614m';
       console.log(
         '%c🚀 BUILD: ' + window.BUILD_ID + '  ·  ' + window.BUILD_TAG,
         'background:#0a7d2c;color:#fff;font-size:14px;font-weight:bold;padding:4px 10px;border-radius:4px;'
@@ -170,12 +170,19 @@
         #missionCommandText {
             font-size: 1.15rem !important;
             line-height: 1.5 !important;
-            /* Chrome-less comms readout, docked low so the central flying
-               view stays clear; scrolls only on long lore. */
-            max-height: 30vh !important;
+            /* Fixed 2-line readout: reserves room for exactly 2 lines so the
+               text never grows and the buttons never shift between messages.
+               Longer lore scrolls within this box (auto-follows while typing,
+               scroll up/down to re-read). 2 lines = 2 x 1.5em = 3em. */
+            height: 3em !important;
+            min-height: 3em !important;
+            max-height: 3em !important;
             overflow-y: auto !important;
             padding-right: 10px !important;
             white-space: pre-wrap !important;
+            /* Re-enable interaction (the panel is pointer-events:none) so the
+               player can wheel/drag-scroll long transmissions. */
+            pointer-events: auto !important;
         }
 
         /* Commodore-PET style block cursor while the transmission decodes */
@@ -1142,25 +1149,25 @@
     <!-- Game Scripts -->
     <!-- Load GLTFLoader before game-models.js -->
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
-    <script src="js/game-models.js?v=20260614k"></script>
-    <script src="js/camera-system.js?v=20260614k"></script>
+    <script src="js/game-models.js?v=20260614m"></script>
+    <script src="js/camera-system.js?v=20260614m"></script>
     <script src="js/cosmic-features.js"></script>
-    <script src="js/game-objects.js?v=20260614k"></script>
-    <script src="js/game-controls.js?v=20260614k"></script>
-    <script src="js/civilian-combat.js?v=20260614k"></script>
-    <script src="js/visual-flair.js?v=20260614k"></script>
-    <script src="js/playtest-probe.js?v=20260614k"></script>
-    <script src="js/arcade.js?v=20260614k"></script>
-    <script src="js/outer-systems.js?v=20260614k"></script>
+    <script src="js/game-objects.js?v=20260614m"></script>
+    <script src="js/game-controls.js?v=20260614m"></script>
+    <script src="js/civilian-combat.js?v=20260614m"></script>
+    <script src="js/visual-flair.js?v=20260614m"></script>
+    <script src="js/playtest-probe.js?v=20260614m"></script>
+    <script src="js/arcade.js?v=20260614m"></script>
+    <script src="js/outer-systems.js?v=20260614m"></script>
     <script src="js/interstellar-asteroids.js"></script>
-    <script src="js/game-physics.js?v=20260614k"></script>
-    <script src="js/game-ui.js?v=20260614k"></script>
+    <script src="js/game-physics.js?v=20260614m"></script>
+    <script src="js/game-ui.js?v=20260614m"></script>
     <script src="js/atmospheric-perspective.js"></script>
-    <script src="js/game-intro.js?v=20260614k"></script>
+    <script src="js/game-intro.js?v=20260614m"></script>
     <script src="js/game-shields.js"></script>
     <script src="js/game-music.js"></script>
-    <script src="js/autopilot.js?v=20260614k"></script>
-    <script src="js/game-core.js?v=20260614k"></script>
+    <script src="js/autopilot.js?v=20260614m"></script>
+    <script src="js/game-core.js?v=20260614m"></script>
 
     <!-- Mobile Script -->
     <script src="js/mobile-controls.js"></script>

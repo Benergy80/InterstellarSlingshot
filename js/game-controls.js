@@ -2256,12 +2256,15 @@ function _typewriterReveal(el, text) {
     const flush = () => {
         if (_mcTypeTimer) { clearInterval(_mcTypeTimer); _mcTypeTimer = null; }
         el.textContent = full;
+        el.scrollTop = 0;   // settle back to the top so reading starts at line 1
         el.classList.remove('mc-typing');
     };
     el._mcFlush = flush;
+    el.scrollTop = 0;
     _mcTypeTimer = setInterval(() => {
         i += step;
         el.textContent = full.slice(0, i);
+        el.scrollTop = el.scrollHeight;   // follow the latest line within the 2-line box
         if (i % 6 < step) { try { _mcBlip(); } catch (e) {} }   // soft blip ~every 6 chars
         if (i >= full.length) flush();
     }, 16);
@@ -2291,9 +2294,11 @@ function showMissionCommandAlert(title, text, isVictoryMessage = false) {
     const buttonContainer = alertElement.querySelector('.text-center');
     if (!buttonContainer) return;
     
-    // Clear existing buttons
-    const existingButtons = buttonContainer.querySelectorAll('button');
-    existingButtons.forEach(btn => btn.remove());
+    // Clear previous button ROWS entirely — not just the <button>s. The
+    // wrapper divs (each with its own margin-top) were accumulating on every
+    // message, pushing the buttons down and the text up. Remove the rows too.
+    buttonContainer.querySelectorAll('.mc-btnrow').forEach(row => row.remove());
+    buttonContainer.querySelectorAll('button').forEach(btn => btn.remove());
     
     // Determine if this is a tutorial message
     const isTutorialActive = tutorialSystem && tutorialSystem.active && !tutorialSystem.completed;
@@ -2304,7 +2309,7 @@ function showMissionCommandAlert(title, text, isVictoryMessage = false) {
     if (isTutorialActive && !isVictoryMessage) {
     // ⭐ Create button container with flex layout for OK and SKIP buttons
     const tutorialButtonContainer = document.createElement('div');
-    tutorialButtonContainer.className = 'flex gap-4 mt-4';
+    tutorialButtonContainer.className = 'flex gap-4 mt-4 mc-btnrow';
     tutorialButtonContainer.style.cssText = `
         display: flex;
         gap: 1rem;
@@ -2426,6 +2431,7 @@ function showMissionCommandAlert(title, text, isVictoryMessage = false) {
 } else {
     // Create centered button container for lore/victory messages
     const loreButtonContainer = document.createElement('div');
+    loreButtonContainer.className = 'mc-btnrow';
     loreButtonContainer.style.cssText = `
         display: flex;
         justify-content: center;
