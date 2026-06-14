@@ -1644,6 +1644,26 @@
       if (window.orientTowardsTarget) {
         window.orientTowardsTarget({ position: ap.currentNebula.position });
       }
+      // OVERSHOOT → O-KEY EMERGENCY WARP: if we sailed past the destination,
+      // warp to change trajectory back toward it (once the bow is on it)
+      // instead of braking and crawling back. Brake is the fallback when no
+      // warp charge is available or we're not yet aligned.
+      let _ovFacing = 1;
+      if (_coneVec && camera) {
+        _coneVec.subVectors(ap.currentNebula.position, camera.position).normalize();
+        camera.getWorldDirection(_coneFwd);
+        _ovFacing = _coneFwd.dot(_coneVec);
+      }
+      const _ovWarpBusy = gameState.emergencyWarp &&
+        (gameState.emergencyWarp.active || gameState.emergencyWarp.transitioning);
+      if (distToNebula > 2500 && !_ovWarpBusy && _ovFacing > 0.9 &&
+          canEmergencyWarp() && Date.now() - (ap._lastBHWarp || 0) > 8000) {
+        if (triggerOKeyWarp()) {
+          ap._lastBHWarp = Date.now();
+          setStatus('Overshot — emergency warp to re-aim (' + (distToNebula | 0) + ' u)');
+          return;
+        }
+      }
       keys().x = true;
       setStatus('Drifting away — braking and reorienting (' + (distToNebula | 0) + ' u)');
     }
