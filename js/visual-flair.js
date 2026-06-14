@@ -152,7 +152,7 @@ function _updateLaserCharge() {
         }
     }
     const prog = (charging && ship && ship.visible)
-        ? Math.max(0, Math.min(1, (Date.now() - gameState._laserChargeStart) / 3000)) : 0;
+        ? Math.max(0, Math.min(1, (Date.now() - gameState._laserChargeStart) / 2000)) : 0;
     if (prog <= 0.01) { _chargeGlow.sprites.forEach(s => { s.material.opacity = 0; s.scale.setScalar(0); }); return; }
     // Position the glows at the SAME wing tips the lasers fire from
     // (createThirdPersonLasers: ±size.x*0.35, up -2, fwd -size.z*0.15, in

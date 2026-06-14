@@ -5634,11 +5634,11 @@ if (e.key === 'Tab') {
         }
         if (e.key === 'Alt' || e.altKey) {
             keys.alt = false;
-            // Release → charged blast scaled by hold time (300ms..3s → 0..1).
+            // Release → charged blast scaled by hold time (300ms..2s → 0..1).
             const _held = Date.now() - (gameState._laserChargeStart || Date.now());
             gameState._laserChargeStart = 0;
             if (_held >= 300 && typeof fireChargedBlast === 'function') {
-                fireChargedBlast(Math.min(1, _held / 3000));
+                fireChargedBlast(Math.min(1, _held / 2000));
             }
         }
         if (key === 'x') keys.x = false;
