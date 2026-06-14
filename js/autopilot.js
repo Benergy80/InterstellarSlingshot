@@ -1035,9 +1035,21 @@
       const JUMP_MIN_DIST = 800;
       const _warpBusy = gameState.emergencyWarp &&
           (gameState.emergencyWarp.active || gameState.emergencyWarp.transitioning);
-      // Only jump once the bow is actually ON the target (_facingEnemy > 0.9)
-      // — so a fresh interception at game start orients before dashing.
-      if (dist > JUMP_MIN_DIST && speed < 4 && !_warpBusy &&
+      // How aligned our MOMENTUM (not the bow) is with the target.
+      let _closing = 1;
+      if (speed > 0.5 && gameState.velocityVector && _coneVec && camera) {
+        _coneVec.subVectors(enemy.position, camera.position).normalize();
+        _closing = gameState.velocityVector.clone().normalize().dot(_coneVec);
+      }
+      // Tactical W-jump: dash toward the target. Fires from cruise (speed < 12,
+      // which the old "speed < 4" gate never hit since pursuit cruise sits at
+      // ~4u, so the demo just crawled at far targets) OR at ANY speed when our
+      // momentum isn't already pointed at the hostile (_closing < 0.5) — once
+      // the bow is on target a double-tap W slings that momentum straight onto
+      // it, turning on a dime (works best at high speed). The jump owns the
+      // frame (returns), so the overshoot/runaway brakes below only run when a
+      // jump isn't available (cooldown / misaligned / low energy).
+      if (dist > JUMP_MIN_DIST && (speed < 12 || _closing < 0.5) && !_warpBusy &&
           _facingEnemy > 0.9 &&
           gameState.energy > 25 &&
           !_isMissileInFlightAt(enemy) &&
@@ -1055,6 +1067,7 @@
           setTimeout(() => { if (window.keys) window.keys.wDoubleTap = false; }, 120);
         }
         setStatus('Tactical jump — closing on hostile');
+        return;
       }
 
       // Brake if the jump overshoots past the target — detect by
