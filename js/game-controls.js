@@ -6986,10 +6986,22 @@ function handleMissileHit(missile, enemy) {
     createMissileExplosion(missile.position);
     playSound('missile_explosion');
 
+    // Arcade praise on a player missile IMPACT (a kill below overrides it
+    // with the bigger kill praise).
+    if (enemy.userData.health > 0 && typeof flashArcadeText === 'function') {
+        flashArcadeText('MISSILE STRIKE!', 2);
+    }
+
     showAchievement('Missile Hit!',
         `Damaged ${enemy.userData.name} (${enemy.userData.health}/${enemy.userData.maxHealth} HP)`);
 
     if (enemy.userData.health <= 0) {
+        // Big tiered kill praise (streak-aware) for missile finishes too.
+        if (typeof arcadePraiseKill === 'function') {
+            arcadePraiseKill(!!enemy.userData.isBoss,
+                (typeof camera !== 'undefined') ? camera.position.distanceTo(enemy.position) : 0,
+                enemy.userData);
+        }
         const wasBoss = enemy.userData.isBoss;
         const bossName = enemy.userData.name;
 

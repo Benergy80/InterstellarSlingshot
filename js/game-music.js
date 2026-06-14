@@ -361,6 +361,16 @@
       const nebulaKey = 'nebula' + (1 + (nebulaIdx % 5));
       play(nebulaKey);
       st.lastNebulaIdx = nebulaIdx;
+      // DISCOVERY FLASH — first time this nebula's music area is entered.
+      if (typeof window !== 'undefined' && typeof window.flashEventText === 'function') {
+        if (!st._discoveredNebulas) st._discoveredNebulas = {};
+        if (!st._discoveredNebulas[nebulaIdx]) {
+          st._discoveredNebulas[nebulaIdx] = true;
+          const _n = (typeof nebulaClouds !== 'undefined' && nebulaClouds[nebulaIdx] && nebulaClouds[nebulaIdx].userData) ? nebulaClouds[nebulaIdx].userData : null;
+          const _nm = _n ? (_n.mythicalName || _n.name || 'Unknown Nebula') : 'Unknown Nebula';
+          window.flashEventText('NEBULA DISCOVERED', '#88ddff', String(_nm).toUpperCase());
+        }
+      }
       return;
     }
 
@@ -369,6 +379,17 @@
     if (gId >= 0 && gId <= 7) {
       play('galaxy' + gId);
       st.lastGalaxyId = gId;
+      // DISCOVERY FLASH — first entry of a DISTANT galaxy's music area
+      // (gId 7 is the home Sgr A*/Sol region — never "discovered").
+      if (gId !== 7 && typeof window !== 'undefined' && typeof window.flashEventText === 'function') {
+        if (!st._discoveredGalaxies) st._discoveredGalaxies = {};
+        if (!st._discoveredGalaxies[gId]) {
+          st._discoveredGalaxies[gId] = true;
+          const _gt = (typeof galaxyTypes !== 'undefined') ? galaxyTypes[gId] : null;
+          const _gm = _gt ? ((_gt.name || 'Unknown') + ' GALAXY · ' + (_gt.faction || '')) : ('GALAXY ' + gId);
+          window.flashEventText('GALAXY DISCOVERED', '#ffcc66', String(_gm).toUpperCase());
+        }
+      }
       return;
     }
 
