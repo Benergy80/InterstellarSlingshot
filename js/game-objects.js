@@ -7922,6 +7922,10 @@ function hailPlayer(ship, data) {
 }
 
 // Show incoming transmission with game-matching UI style
+// NOTE: This is dead code — game-controls.js defines a later (and active)
+// showIncomingTransmission(title, text, factionColor) that overrides this one
+// (both are global function declarations; the last-loaded wins). Kept as-is;
+// the live comms styling/colour-coding lives in game-controls.js.
 function showIncomingTransmission(sender, message, isDistress = false) {
     // Check if transmission container exists, create if not
     let container = document.getElementById('incomingTransmission');
@@ -7930,17 +7934,17 @@ function showIncomingTransmission(sender, message, isDistress = false) {
         container.id = 'incomingTransmission';
         document.body.appendChild(container);
     }
-    
+
     // Match game UI style - transparent like HUD elements
     // Keep border color matching (cyan for normal, red for distress)
     const borderColor = isDistress ? 'rgba(255, 80, 80, 0.5)' : 'rgba(0, 150, 255, 0.5)';
     const glowColor = isDistress ? 'rgba(255, 50, 50, 0.3)' : 'rgba(0, 150, 255, 0.3)';
     const titleColor = isDistress ? '#ff6666' : '#00ddff';
     const accentColor = isDistress ? 'rgba(255, 80, 80, 0.3)' : 'rgba(0, 150, 255, 0.3)';
-    
+
     // Transmission type label - NO emoji for distress
     const transmissionLabel = isDistress ? 'DISTRESS SIGNAL' : 'INCOMING TRANSMISSION';
-    
+
     container.style.cssText = `
         position: fixed;
         top: 72px;
@@ -7957,20 +7961,20 @@ function showIncomingTransmission(sender, message, isDistress = false) {
         opacity: 0;
         transition: opacity 0.4s ease;
         pointer-events: none;
-        box-shadow: 
+        box-shadow:
             0 12px 40px ${glowColor},
             inset 0 1px 0 ${accentColor},
             inset 0 -1px 0 ${accentColor};
         backdrop-filter: blur(4px);
         -webkit-backdrop-filter: blur(4px);
     `;
-    
+
     container.innerHTML = `
         <div style="
-            color: ${titleColor}; 
-            font-size: 10px; 
-            text-transform: uppercase; 
-            letter-spacing: 3px; 
+            color: ${titleColor};
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 3px;
             margin-bottom: 10px;
             text-shadow: 0 0 8px ${titleColor};
             border-bottom: 1px solid ${borderColor};
@@ -7979,17 +7983,17 @@ function showIncomingTransmission(sender, message, isDistress = false) {
             ${transmissionLabel}
         </div>
         <div style="
-            color: #aaccff; 
-            font-size: 12px; 
-            font-weight: bold; 
+            color: #aaccff;
+            font-size: 12px;
+            font-weight: bold;
             margin-bottom: 8px;
             text-shadow: 0 0 5px rgba(100, 150, 255, 0.5);
         ">
             FROM: ${sender.toUpperCase()}
         </div>
         <div style="
-            color: #88aacc; 
-            font-size: 11px; 
+            color: #88aacc;
+            font-size: 11px;
             line-height: 1.5;
             font-style: italic;
             padding-left: 8px;
@@ -7998,12 +8002,12 @@ function showIncomingTransmission(sender, message, isDistress = false) {
             "${message}"
         </div>
     `;
-    
+
     // Show with fade in
     requestAnimationFrame(() => {
         container.style.opacity = '1';
     });
-    
+
     // Auto-hide after delay. 3x the originals (6s/4.5s -> 18s/13.5s)
     // so message reads aren't snatched off the screen before they
     // can be read.

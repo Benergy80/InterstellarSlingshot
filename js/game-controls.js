@@ -2227,9 +2227,9 @@ function completeTutorial() {
     console.log('Tutorial completed - enemies now active');
 }
 
-// Typewriter reveal for mission-command lore — types the text in with a soft
-// comms blip and a blinking cursor. Clicking the panel fills it instantly.
-let _mcTypeTimer = null;
+// Typewriter reveal for comms text (Mission Command + incoming transmissions)
+// — types in with a soft blip and a blinking block cursor. The timer is stored
+// per-element (el._mcTimer) so independent channels can type simultaneously.
 function _mcBlip() {
     if (typeof audioContext === 'undefined' || !audioContext || audioContext.state !== 'running') return;
     const o = audioContext.createOscillator(), g = audioContext.createGain();
@@ -2243,7 +2243,7 @@ function _mcBlip() {
     o.stop(t + 0.05);
 }
 function _typewriterReveal(el, text) {
-    if (_mcTypeTimer) { clearInterval(_mcTypeTimer); _mcTypeTimer = null; }
+    if (el._mcTimer) { clearInterval(el._mcTimer); el._mcTimer = null; }
     const full = String(text == null ? '' : text);
     el.textContent = '';
     // Very long lore: skip the effect so reads aren't slow.
@@ -2254,14 +2254,14 @@ function _typewriterReveal(el, text) {
     const step = full.length > 240 ? 3 : (full.length > 110 ? 2 : 1);
     el.classList.add('mc-typing');
     const flush = () => {
-        if (_mcTypeTimer) { clearInterval(_mcTypeTimer); _mcTypeTimer = null; }
+        if (el._mcTimer) { clearInterval(el._mcTimer); el._mcTimer = null; }
         el.textContent = full;
         el.scrollTop = 0;   // settle back to the top so reading starts at line 1
         el.classList.remove('mc-typing');
     };
     el._mcFlush = flush;
     el.scrollTop = 0;
-    _mcTypeTimer = setInterval(() => {
+    el._mcTimer = setInterval(() => {
         i += step;
         el.textContent = full.slice(0, i);
         el.scrollTop = el.scrollHeight;   // follow the latest line within the 2-line box
@@ -2269,8 +2269,10 @@ function _typewriterReveal(el, text) {
         if (i >= full.length) flush();
     }, 16);
 }
+// Expose for other modules (e.g. showIncomingTransmission in game-objects.js).
+if (typeof window !== 'undefined') window.__commsTypewriter = _typewriterReveal;
 
-function showMissionCommandAlert(title, text, isVictoryMessage = false) {
+function showMissionCommandAlert(title, text, isVictoryMessage = false, channelColor = null) {
     const alertElement = document.getElementById('missionCommandAlert');
     const titleElement = alertElement ? alertElement.querySelector('h2') : null;
     const textElement = document.getElementById('missionCommandText');
@@ -2287,6 +2289,22 @@ function showMissionCommandAlert(title, text, isVictoryMessage = false) {
     }
     
     titleElement.textContent = title;
+    // Channel colour: default is mission-control green (from CSS). A transmission
+    // can pass a colour (cyan lore / yellow distress / orange ship-to-ship) and
+    // we override the title + body inline (caret inherits via currentColor).
+    if (channelColor) {
+        const glow = `0 0 8px ${channelColor}, 0 0 16px ${channelColor}88, 0 2px 5px rgba(0,0,0,0.95)`;
+        titleElement.style.setProperty('color', channelColor, 'important');
+        titleElement.style.setProperty('text-shadow', glow, 'important');
+        textElement.style.setProperty('color', channelColor, 'important');
+        textElement.style.setProperty('text-shadow', glow, 'important');
+    } else {
+        // Reset to the green default so a prior coloured message doesn't linger.
+        titleElement.style.removeProperty('color');
+        titleElement.style.removeProperty('text-shadow');
+        textElement.style.removeProperty('color');
+        textElement.style.removeProperty('text-shadow');
+    }
     _typewriterReveal(textElement, text);
     alertElement.classList.remove('hidden');
     
@@ -2531,89 +2549,77 @@ function showIncomingTransmission(title, text, factionColor) {
     const existing = document.getElementById('incomingTransmissionPrompt');
     if (existing) existing.remove();
 
-    const colorHex = factionColor
-        ? '#' + new THREE.Color(factionColor).getHexString()
-        : '#00ff88';
+    // Classify the comms channel -> colour. distress=yellow, lore=cyan,
+    // ship-to-ship=orange. (Direct command briefings via showMissionCommandAlert
+    // stay mission-control green.) The chosen colour is carried into the
+    // READ panel so the full message text matches the channel.
+    let channel;
+    if (factionColor === true || /distress|mayday|under\s*(attack|fire)/i.test(String(title))) channel = 'distress';
+    else if (/mission control/i.test(String(title))) channel = 'lore';
+    else channel = 'ship';
+    const colorHex = { distress: '#ffd633', lore: '#00e5ff', ship: '#ff9a33' }[channel];
+    const channelLabel = { distress: 'DISTRESS SIGNAL', lore: 'TRANSMISSION', ship: 'INCOMING TRANSMISSION' }[channel];
 
     const prompt = document.createElement('div');
     prompt.id = 'incomingTransmissionPrompt';
+    // Chrome-less notification: no panel — just glowing colour-coded text + buttons.
     prompt.style.cssText = `
         position: fixed;
         top: 12%;
         left: 50%;
         transform: translateX(-50%);
         z-index: 1000;
-        background: linear-gradient(135deg, rgba(15, 23, 42, 0.85) 0%, rgba(30, 41, 59, 0.85) 100%);
-        border: 1px solid ${colorHex};
-        border-radius: 8px;
-        padding: 16px 28px;
+        padding: 4px 12px;
         text-align: center;
-        box-shadow: 0 0 20px ${colorHex}44, inset 0 0 15px ${colorHex}22;
         font-family: 'Orbitron', monospace;
-        animation: transmissionPulse 1.5s ease-in-out infinite;
         pointer-events: auto;
-        max-width: 420px;
-        width: 90%;
-        backdrop-filter: blur(4px);
-        -webkit-backdrop-filter: blur(4px);
+        max-width: min(560px, 86vw);
     `;
 
     prompt.innerHTML = `
-        <div style="color: ${colorHex}; font-size: 0.75rem; letter-spacing: 3px; margin-bottom: 6px; opacity: 0.8;">
-            INCOMING TRANSMISSION
+        <div style="color: ${colorHex}; font-size: 0.72rem; letter-spacing: 3px; margin-bottom: 6px;
+                     text-shadow: 0 0 8px ${colorHex}, 0 2px 5px rgba(0,0,0,0.95);">
+            ${channelLabel}
         </div>
-        <div style="color: #ffffff; font-size: 1rem; font-weight: 700; margin-bottom: 14px; letter-spacing: 1px;
-                     text-shadow: 0 0 8px ${colorHex}88;">
+        <div style="color: ${colorHex}; font-size: 1.15rem; font-weight: 700; margin-bottom: 14px; letter-spacing: 1px;
+                     text-shadow: 0 0 10px ${colorHex}, 0 0 18px ${colorHex}66, 0 2px 5px rgba(0,0,0,0.95);">
             ${title}
         </div>
         <div style="display: flex; gap: 12px; justify-content: center;">
             <button id="transmissionRead" style="
-                background: rgba(0, 200, 100, 0.2);
-                border: 1px solid rgba(0, 255, 136, 0.6);
+                background: transparent;
+                border: 1px solid ${colorHex};
                 border-radius: 4px;
-                color: #00ff88;
+                color: ${colorHex};
                 font-family: 'Orbitron', monospace;
                 font-size: 0.85rem;
                 font-weight: 600;
                 padding: 8px 24px;
                 cursor: pointer;
                 letter-spacing: 2px;
-                text-shadow: 0 0 8px rgba(0,255,136,0.5);
+                text-shadow: 0 0 8px ${colorHex};
                 transition: all 0.2s ease;
                 pointer-events: auto;
                 touch-action: manipulation;
             ">READ</button>
             <button id="transmissionSkip" style="
-                background: rgba(255, 150, 0, 0.15);
-                border: 1px solid rgba(255, 200, 0, 0.4);
+                background: transparent;
+                border: 1px solid rgba(255,255,255,0.3);
                 border-radius: 4px;
-                color: #ffcc44;
+                color: rgba(255,255,255,0.75);
                 font-family: 'Orbitron', monospace;
                 font-size: 0.85rem;
                 font-weight: 600;
                 padding: 8px 24px;
                 cursor: pointer;
                 letter-spacing: 2px;
-                text-shadow: 0 0 8px rgba(255,200,0,0.4);
+                text-shadow: 0 2px 5px rgba(0,0,0,0.95);
                 transition: all 0.2s ease;
                 pointer-events: auto;
                 touch-action: manipulation;
             ">SKIP</button>
         </div>
     `;
-
-    // Inject keyframe animation if not already present
-    if (!document.getElementById('transmissionPulseStyle')) {
-        const style = document.createElement('style');
-        style.id = 'transmissionPulseStyle';
-        style.textContent = `
-            @keyframes transmissionPulse {
-                0%, 100% { box-shadow: 0 0 20px ${colorHex}44, inset 0 0 15px ${colorHex}22; }
-                50% { box-shadow: 0 0 30px ${colorHex}66, inset 0 0 20px ${colorHex}33; }
-            }
-        `;
-        document.head.appendChild(style);
-    }
 
     document.body.appendChild(prompt);
 
@@ -2638,7 +2644,7 @@ function showIncomingTransmission(title, text, factionColor) {
     // READ: show full lore — game continues running in background
     const handleRead = () => {
         dismiss();
-        showMissionCommandAlert(title, text);
+        showMissionCommandAlert(title, text, false, colorHex);
     };
 
     // SKIP: dismiss and keep playing
