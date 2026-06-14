@@ -6,10 +6,16 @@
 (function () {
     function gs() { return (typeof gameState !== 'undefined') ? gameState : null; }
 
+    // Feature toggles — these three overlapped the HUD, disabled for now.
+    // Score/combo are still TRACKED internally; just not displayed.
+    const HUD_ENABLED = false;     // center-top SCORE / ×N COMBO / power-up timers
+    const FLOAT_SCORE = false;     // floating "+pts" numbers at the kill point
+    const GRADE_ENABLED = false;   // "RANK S" stamp on sector clear
+
     // ── DOM HUD (score + combo + power-up timers) ────────────────────────────
     let _hud = null, _scoreEl = null, _comboEl = null, _puEl = null;
     function _ensureHud() {
-        if (_hud) return;
+        if (!HUD_ENABLED || _hud) return;
         _hud = document.createElement('div');
         _hud.id = 'arcadeHud';
         _hud.style.cssText = 'position:fixed;top:84px;left:50%;transform:translateX(-50%);z-index:58;' +
@@ -24,6 +30,7 @@
         document.body.appendChild(_hud);
     }
     function _renderHud() {
+        if (!HUD_ENABLED) return;
         const g = gs(); if (!g) return;
         _ensureHud();
         _scoreEl.textContent = 'SCORE ' + (g.score || 0).toLocaleString();
@@ -57,7 +64,7 @@
         const base = isBoss ? 500 : (elite ? 300 : 100);
         const pts = base * g._comboMult;
         g.score = (g.score || 0) + pts;
-        if (worldPos && typeof spawnKillText === 'function') {
+        if (FLOAT_SCORE && worldPos && typeof spawnKillText === 'function') {
             spawnKillText(worldPos, '+' + pts + (isBoss ? ' BOSS' : (elite ? ' ELITE' : '')),
                 isBoss ? '#ff66cc' : '#ffee66', isBoss ? 26 : 16);
         }
@@ -93,6 +100,7 @@
 
     // ── GRADE POP (sector clear) ─────────────────────────────────────────────
     function grade(rank, subtitle) {
+        if (!GRADE_ENABLED) return;
         try {
             if (!document.getElementById('arcadeGradeStyle')) {
                 const st = document.createElement('style');
