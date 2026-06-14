@@ -132,6 +132,44 @@ function _updatePlayerTrail() {
     }
 }
 
+// ── 1b. LASER CHARGE GLOW ───────────────────────────────────────────────────
+// Two additive glows on the ship's wing/laser points that GROW + brighten
+// (cyan→white) the longer the fire button is held (gameState._laserChargeStart),
+// up to the 3s max. Shows for the player AND the demo (both set the timer).
+const _chargeGlow = { sprites: null };
+function _updateLaserCharge() {
+    const ship = window.cameraState && window.cameraState.playerShipMesh;
+    const charging = (typeof gameState !== 'undefined' && gameState._laserChargeStart > 0);
+    if (!_chargeGlow.sprites) {
+        if (!charging) return;
+        _chargeGlow.sprites = [];
+        for (let i = 0; i < 2; i++) {
+            const sm = new THREE.SpriteMaterial({ map: _vfGlowTexture(), color: 0x66ccff,
+                transparent: true, opacity: 0, blending: THREE.AdditiveBlending,
+                depthWrite: false, depthTest: false });
+            const sp = new THREE.Sprite(sm); sp.renderOrder = 93; scene.add(sp);
+            _chargeGlow.sprites.push(sp);
+        }
+    }
+    const prog = (charging && ship && ship.visible)
+        ? Math.max(0, Math.min(1, (Date.now() - gameState._laserChargeStart) / 3000)) : 0;
+    if (prog <= 0.01) { _chargeGlow.sprites.forEach(s => { s.material.opacity = 0; s.scale.setScalar(0); }); return; }
+    const box = new THREE.Box3().setFromObject(ship);
+    const center = box.getCenter(new THREE.Vector3());
+    const r = (box.getBoundingSphere(new THREE.Sphere()).radius) || 30;
+    const right = new THREE.Vector3(1, 0, 0).applyQuaternion(ship.quaternion).normalize();
+    const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(ship.quaternion).normalize();
+    const t = Date.now();
+    _chargeGlow.sprites.forEach((sp, i) => {
+        const side = i === 0 ? -1 : 1;
+        sp.position.copy(center).addScaledVector(right, side * r * 0.5).addScaledVector(fwd, r * 0.3);
+        const flick = 0.82 + 0.18 * Math.sin(t * 0.03 + i * 2);
+        sp.scale.setScalar(r * (0.12 + prog * 0.6) * flick);
+        sp.material.opacity = prog * 0.95;
+        sp.material.color.setHSL(0.55 - prog * 0.1, 1, 0.5 + prog * 0.45); // cyan → near-white
+    });
+}
+
 // ── 2. SPAWN-IN MATERIALIZATION ─────────────────────────────────────────────
 // Ships scale in from 12% with an eased pop + a one-shot flash glow.
 function materializeShip(ship, durMs) {
@@ -847,6 +885,7 @@ function updateVisualFlair() {
     // Hide the mesh if it was ever created.
     if (_ptTrail.mesh) _ptTrail.mesh.visible = false;
     // try { _updatePlayerTrail(); } catch (e) {}
+    try { _updateLaserCharge(); } catch (e) {}
     try { _updateScreenFX(); } catch (e) {}
     try { _updateWhipPreview(fc); } catch (e) {}
     try { _updateLensFlares(fc); } catch (e) {}

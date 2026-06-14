@@ -1065,6 +1065,29 @@
       }
     }
 
+    // ── Demo charged-blast showcase ───────────────────────────────────────
+    // Occasionally the demo HOLDS the charge (the wing glow builds for
+    // 1.2-2.8s) then releases a power-scaled blast — so viewers see the
+    // charge mechanic. Starts only in weapons range; one at a time.
+    if (typeof gameState !== 'undefined') {
+      if (!ap._demoChargeUntil && dist <= engageRange && speed < 3 &&
+          Date.now() - (ap._lastDemoCharge || 0) > 14000 && Math.random() < 0.02) {
+        const _dur = 1200 + Math.random() * 1600;
+        gameState._laserChargeStart = Date.now(); // drives the wing glow
+        ap._demoChargeUntil = Date.now() + _dur;
+        ap._lastDemoCharge = Date.now();
+        setStatus('Charging blast…');
+      }
+      if (ap._demoChargeUntil) {
+        if (Date.now() >= ap._demoChargeUntil) {
+          const _pw = Math.min(1, (Date.now() - (gameState._laserChargeStart || Date.now())) / 3000);
+          gameState._laserChargeStart = 0;
+          ap._demoChargeUntil = 0;
+          if (typeof window.fireChargedBlast === 'function') window.fireChargedBlast(_pw);
+        }
+      }
+    }
+
     // Always orient toward the enemy so the ship visually tracks it
     const aimDummy = { position: enemy.position };
     if (window.orientTowardsTarget) window.orientTowardsTarget(aimDummy);

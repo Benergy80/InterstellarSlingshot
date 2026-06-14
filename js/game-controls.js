@@ -5607,13 +5607,16 @@ function initializeControlButtons() {
 }
         if (e.key === 'Alt' || e.altKey) {
             keys.alt = true;
-            // Start the laser charge timer on the FIRST press (not key-repeat),
-            // so holding Alt builds a charged blast released on keyup.
-            if (!e.repeat) gameState._laserChargeStart = Date.now();
-            // Fire weapon on Alt key press
-            if (!gameState.gameOver && gameState.gameStarted) {
-                resumeAudioContext();
-                fireWeapon();
+            // HOLD-TO-CHARGE: the first press fires one tap shot and starts
+            // the charge timer; key-repeat while held does NOT rapid-fire —
+            // it builds the charge (a glow grows on the wings) released on
+            // keyup as a blast scaled by hold time (max 3s).
+            if (!e.repeat) {
+                gameState._laserChargeStart = Date.now();
+                if (!gameState.gameOver && gameState.gameStarted) {
+                    resumeAudioContext();
+                    fireWeapon();
+                }
             }
         }
         if (e.key === 'Shift') {
@@ -5738,10 +5741,12 @@ if (e.key === 'Tab') {
         }
         if (e.key === 'Alt' || e.altKey) {
             keys.alt = false;
-            // Released after holding ≥650ms → fire the charged blast.
+            // Release → charged blast scaled by hold time (300ms..3s → 0..1).
             const _held = Date.now() - (gameState._laserChargeStart || Date.now());
             gameState._laserChargeStart = 0;
-            if (_held >= 650 && typeof fireChargedBlast === 'function') fireChargedBlast();
+            if (_held >= 300 && typeof fireChargedBlast === 'function') {
+                fireChargedBlast(Math.min(1, _held / 3000));
+            }
         }
         if (key === 'x') keys.x = false;
         if (key === 'b') keys.b = false;
@@ -6083,16 +6088,22 @@ setTimeout(() => {
     
     console.log('âœ… Enhanced event listeners setup complete');
 
-// CHARGED BLAST: hold Alt to charge, release to fire a 4x-damage bolt. Reuses
-// all of fireWeapon's targeting via the _chargedShot flag. Needs 28 energy.
-function fireChargedBlast() {
+// CHARGED BLAST: hold Alt to charge (glow builds on the wings), release for a
+// blast whose damage/energy/beam scale with the charge `power` (0..1 = up to
+// 3s held). Reuses all of fireWeapon's targeting via the _chargedShot flag.
+function fireChargedBlast(power) {
     if (typeof gameState === 'undefined' || gameState.gameOver || !gameState.gameStarted) return;
-    if (!gameState.weapons || gameState.weapons.energy < 28) return; // not enough charge
+    power = Math.max(0, Math.min(1, (typeof power === 'number') ? power : 1));
+    const cost = Math.round(12 + power * 28); // 12 (light) .. 40 (max)
+    if (!gameState.weapons || gameState.weapons.energy < cost) return;
     gameState._chargedShot = true;
+    gameState._chargedPower = power;
     gameState.weapons.cooldown = 0; // the blast fires even mid-cooldown
     if (typeof playSound === 'function') { try { playSound('weapon'); } catch (e) {} }
-    fireWeapon(); // reads + clears _chargedShot
-    if (typeof flashArcadeText === 'function') flashArcadeText('CHARGED BLAST!', 3);
+    fireWeapon(); // reads + clears _chargedShot / _chargedPower
+    if (typeof flashArcadeText === 'function') {
+        flashArcadeText(power > 0.8 ? 'MAX CHARGE BLAST!' : 'CHARGED BLAST!', power > 0.8 ? 5 : (power > 0.5 ? 4 : 3));
+    }
 }
 if (typeof window !== 'undefined') window.fireChargedBlast = fireChargedBlast;
 
@@ -6112,7 +6123,7 @@ function checkWeaponHits(targetPosition) {
                 drone.getWorldPosition(droneWorldPos);
                 const distance = droneWorldPos.distanceTo(targetPosition);
                 if (distance < hitRadius) { // Normal hit radius
-                    const damage = (typeof gameState !== 'undefined' && gameState._chargedShot) ? 4 : 1;
+                    const damage = (typeof gameState !== 'undefined' && gameState._chargedShot) ? Math.round(2 + (gameState._chargedPower || 0.5) * 6) : 1;
                     drone.userData.health -= damage;
 
                     flashEnemyHit(drone, damage);
@@ -6211,7 +6222,7 @@ function checkWeaponHits(targetPosition) {
                     _activateOnDamage(enemy);
                     return; // shield ate the shot
                 }
-                const damage = (typeof gameState !== 'undefined' && gameState._chargedShot) ? 4 : 1; // charged blast = 4x
+                const damage = (typeof gameState !== 'undefined' && gameState._chargedShot) ? Math.round(2 + (gameState._chargedPower || 0.5) * 6) : 1; // charged blast = 4x
                 enemy.userData.health -= damage;
                 enemy.userData.lastHitTime = Date.now();
                 _activateOnDamage(enemy);
@@ -7253,7 +7264,7 @@ function fireWeapon() {
     if (gameState.weapons.cooldown > 0 || gameState.weapons.energy < 10) return;
     
     gameState.weapons.cooldown = 200; // Even faster: 0.2 seconds
-    gameState.weapons.energy = Math.max(0, gameState.weapons.energy - (gameState._chargedShot ? 28 : 10));
+    gameState.weapons.energy = Math.max(0, gameState.weapons.energy - (gameState._chargedShot ? Math.round(12 + (gameState._chargedPower || 0.5) * 28) : 10));
     
     // Enhanced targeting with doubled ranges
     let targetObject = null;
@@ -7422,8 +7433,12 @@ function fireWeapon() {
         createLaserBeam(camera.position.clone().add(leftOffset), targetPosition, _beamCol, true);
         createLaserBeam(camera.position.clone().add(rightOffset), targetPosition, _beamCol, true);
         if (gameState._chargedShot) {
-            // extra central bright bolt for the charged blast
-            createLaserBeam(camera.position.clone(), targetPosition, '#ffffff', true);
+            // Charged blast: extra central bolts, more with higher charge.
+            const _bolts = 1 + Math.round((gameState._chargedPower || 0.5) * 3); // 1-4
+            for (let _b = 0; _b < _bolts; _b++) {
+                const _j = new THREE.Vector3((Math.random() - 0.5) * 1.5, (Math.random() - 0.5) * 1.5, 0).applyQuaternion(camera.quaternion);
+                createLaserBeam(camera.position.clone().add(_j), targetPosition, '#ffffff', true);
+            }
         }
     }
     
@@ -7458,8 +7473,8 @@ function fireWeapon() {
         checkWeaponHits(targetPosition);
     }
     
-    // Charged blast consumed — clear the flag now that targeting/damage ran.
-    if (typeof gameState !== 'undefined') gameState._chargedShot = false;
+    // Charged blast consumed — clear the flags now that targeting/damage ran.
+    if (typeof gameState !== 'undefined') { gameState._chargedShot = false; gameState._chargedPower = 0; }
 
     // Apply weapon power boost from solar storms
     if (typeof gameState !== 'undefined' && gameState.weaponPowerBoost > 1.0) {
