@@ -2242,12 +2242,15 @@ function _mcBlip() {
     g.gain.exponentialRampToValueAtTime(0.0001, t + 0.04);
     o.stop(t + 0.05);
 }
-function _typewriterReveal(el, text) {
+function _typewriterReveal(el, text, onDone) {
     if (el._mcTimer) { clearInterval(el._mcTimer); el._mcTimer = null; }
     const full = String(text == null ? '' : text);
     el.textContent = '';
-    // Very long lore: skip the effect so reads aren't slow.
-    if (full.length > 600) { el.textContent = full; return; }
+    el.scrollTop = 0;
+    // Very long lore: skip the effect so reads aren't slow (onDone gets true =
+    // "shown instantly" so the caller knows to auto-scroll instead of relying
+    // on the typewriter's follow to have revealed it).
+    if (full.length > 600) { el.textContent = full; if (onDone) onDone(true); return; }
     let i = 0;
     // Reveal speed: short lore types char-by-char for feel; medium/long step
     // faster so reads don't drag (and to absorb timer throttling under load).
@@ -2256,18 +2259,67 @@ function _typewriterReveal(el, text) {
     const flush = () => {
         if (el._mcTimer) { clearInterval(el._mcTimer); el._mcTimer = null; }
         el.textContent = full;
-        el.scrollTop = 0;   // settle back to the top so reading starts at line 1
         el.classList.remove('mc-typing');
+        if (onDone) onDone(false);
     };
     el._mcFlush = flush;
-    el.scrollTop = 0;
     el._mcTimer = setInterval(() => {
         i += step;
         el.textContent = full.slice(0, i);
-        el.scrollTop = el.scrollHeight;   // follow the latest line within the 2-line box
+        el.scrollTop = el.scrollHeight;   // follow the latest line as it types
         if (i % 6 < step) { try { _mcBlip(); } catch (e) {} }   // soft blip ~every 6 chars
         if (i >= full.length) flush();
     }, 16);
+}
+
+// Shared dismiss for the comms panel: hide, restore the gameplay cursor, flush
+// any deferred achievements, and resume the game if it was paused for a message.
+let _mcDismissTimer = null, _mcScrollRAF = null;
+function _dismissMissionAlert() {
+    if (_mcDismissTimer) { clearTimeout(_mcDismissTimer); _mcDismissTimer = null; }
+    if (_mcScrollRAF) { cancelAnimationFrame(_mcScrollRAF); _mcScrollRAF = null; }
+    const alertElement = document.getElementById('missionCommandAlert');
+    if (alertElement) alertElement.classList.add('hidden');
+    document.body.style.cursor = 'none';
+    if (typeof renderer !== 'undefined' && renderer.domElement) renderer.domElement.style.cursor = 'none';
+    if (window._deferredAchievements && window._deferredAchievements.length) {
+        const queue = window._deferredAchievements.slice();
+        window._deferredAchievements = [];
+        queue.forEach((a, i) => setTimeout(() => showAchievement(a.title, a.description, a.playAchievementSound), 400 * i));
+    }
+    if (typeof gameState !== 'undefined' && gameState.paused) {
+        gameState.paused = false;
+        const pauseBtn = document.getElementById('pauseBtn');
+        const pauseIcon = document.getElementById('pauseIcon');
+        if (pauseBtn) pauseBtn.classList.remove('paused');
+        if (pauseIcon) pauseIcon.className = 'fas fa-pause mr-1';
+    }
+}
+
+// Smoothly scroll a comms element from top to its bottom over `ms`.
+function _mcSmoothScroll(el, distance, ms) {
+    if (_mcScrollRAF) { cancelAnimationFrame(_mcScrollRAF); _mcScrollRAF = null; }
+    let start = null;
+    const step = (now) => {
+        if (start === null) start = now;
+        const t = Math.min(1, (now - start) / ms);
+        el.scrollTop = distance * t;
+        if (t < 1) _mcScrollRAF = requestAnimationFrame(step);
+    };
+    _mcScrollRAF = requestAnimationFrame(step);
+}
+
+// After a message finishes revealing: if it overflows the 2-line window, wait
+// ~1s then slowly auto-scroll to the bottom so the whole message displays
+// without the player touching the mouse. NO auto-dismiss — messages persist
+// until SKIP (or, for tutorial, until the next scheduled step replaces them).
+function _scheduleCommsAutoScroll(textEl) {
+    if (_mcScrollRAF) { cancelAnimationFrame(_mcScrollRAF); _mcScrollRAF = null; }
+    const overflow = Math.max(0, textEl.scrollHeight - textEl.clientHeight);
+    if (overflow <= 2) return;
+    textEl.scrollTop = 0;
+    const scrollMs = Math.min(16000, Math.max(2600, overflow * 28));
+    setTimeout(() => _mcSmoothScroll(textEl, overflow, scrollMs), 1000);
 }
 // Expose for other modules (e.g. showIncomingTransmission in game-objects.js).
 if (typeof window !== 'undefined') window.__commsTypewriter = _typewriterReveal;
@@ -2305,8 +2357,21 @@ function showMissionCommandAlert(title, text, isVictoryMessage = false, channelC
         textElement.style.removeProperty('color');
         textElement.style.removeProperty('text-shadow');
     }
-    _typewriterReveal(textElement, text);
+    if (_mcScrollRAF) { cancelAnimationFrame(_mcScrollRAF); _mcScrollRAF = null; }
     alertElement.classList.remove('hidden');
+    // Reveal style by length: a message that fits the 2-line window types in
+    // with the block cursor; a longer one appears at once then, after ~1s,
+    // slowly auto-scrolls so the whole thing displays hands-free. (Measuring is
+    // synchronous here — set full text, read scrollHeight, decide — so there's
+    // no visible flash before the typewriter clears it.)
+    textElement.classList.remove('mc-typing');
+    textElement.textContent = (text == null ? '' : String(text));
+    textElement.scrollTop = 0;
+    if (textElement.scrollHeight > textElement.clientHeight + 2) {
+        _scheduleCommsAutoScroll(textElement);
+    } else {
+        _typewriterReveal(textElement, text);
+    }
     
     // Get or create button container
     const buttonContainer = alertElement.querySelector('.text-center');
@@ -2325,213 +2390,68 @@ function showMissionCommandAlert(title, text, isVictoryMessage = false, channelC
     const isFinalTutorialMessage = title === "Final Orders";
     
     if (isTutorialActive && !isVictoryMessage) {
-    // ⭐ Create button container with flex layout for OK and SKIP buttons
-    const tutorialButtonContainer = document.createElement('div');
-    tutorialButtonContainer.className = 'flex gap-4 mt-4 mc-btnrow';
-    tutorialButtonContainer.style.cssText = `
-        display: flex;
-        gap: 1rem;
-        margin-top: 1rem;
-        justify-content: center;
-        flex-wrap: wrap;
-    `;
+        // Tutorial: a single SKIP TUTORIAL button (no UNDERSTOOD — the tutorial
+        // auto-advances on its own ~10s schedule; the message just persists
+        // until the next step replaces it).
+        const row = document.createElement('div');
+        row.className = 'mc-btnrow';
+        row.style.cssText = 'display:flex;justify-content:center;margin-top:1rem;width:100%;';
 
-    // ⭐ Create UNDERSTOOD button to immediately advance to next tutorial message
-    const understoodButton = document.createElement('button');
-    understoodButton.id = 'missionCommandUnderstood';
-    understoodButton.className = 'space-btn rounded px-6 py-2';
-    understoodButton.innerHTML = '<i class="fas fa-check mr-2"></i>UNDERSTOOD';
-
-    // Apply mobile button styling only on mobile devices
-    const isMobile = window.innerWidth <= 768 || ('ontouchstart' in window && window.innerWidth <= 1024);
-
-    if (isMobile) {
-        understoodButton.style.cssText = `
-            background: rgba(0, 0, 0, 0.7);
-            border: 1px solid rgba(0, 150, 255, 0.5);
-            border-radius: 4px;
-            color: #00ff88;
-            font-family: 'Orbitron', monospace;
-            font-weight: 600;
-            box-shadow: 0 0 10px rgba(0, 150, 255, 0.3), inset 0 0 10px rgba(0, 150, 255, 0.1);
-            text-shadow: 0 0 8px rgba(0,255,136,0.6), 0 0 16px rgba(0,255,136,0.3);
-            opacity: 0.7;
-            transition: all 0.2s ease;
+        const skipButton = document.createElement('button');
+        skipButton.id = 'missionCommandSkip';
+        skipButton.className = 'space-btn rounded px-6 py-2';
+        skipButton.innerHTML = '<i class="fas fa-forward mr-2"></i>SKIP TUTORIAL';
+        skipButton.style.cssText = `
+            background: linear-gradient(135deg, rgba(255, 150, 0, 0.5), rgba(200, 100, 0, 0.5));
+            border-color: rgba(255, 200, 0, 0.6);
             pointer-events: auto;
             touch-action: manipulation;
-            -webkit-tap-highlight-color: rgba(0, 150, 255, 0.3);
+            -webkit-tap-highlight-color: rgba(255, 150, 0, 0.3);
             cursor: pointer;
-            flex: 1;
-            min-width: 120px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
+            white-space: nowrap;
+            min-width: 140px;
         `;
+        row.appendChild(skipButton);
+
+        const handleSkip = () => {
+            _dismissMissionAlert();
+            if (tutorialSystem.active) {
+                tutorialSystem.active = false;
+                completeTutorial();
+                showAchievement('Tutorial Skipped', 'All hostile forces are now active!');
+            }
+        };
+        skipButton.onclick = handleSkip;
+        skipButton.ontouchend = (e) => { e.preventDefault(); e.stopPropagation(); handleSkip(); };
+
+        buttonContainer.appendChild(row);
     } else {
-        // Desktop: use default space-btn styling from CSS
-        understoodButton.style.cssText = `
+        // Lore / transmission / victory: a single SKIP button that just
+        // dismisses the message. No auto-dismiss — the message (and its
+        // discovery path) stays up until the player clicks SKIP.
+        const row = document.createElement('div');
+        row.className = 'mc-btnrow';
+        row.style.cssText = 'display:flex;justify-content:center;margin-top:1rem;width:100%;';
+
+        const skipButton = document.createElement('button');
+        skipButton.id = 'missionCommandSkip';
+        skipButton.className = 'space-btn rounded px-6 py-2';
+        skipButton.innerHTML = '<i class="fas fa-forward mr-2"></i>SKIP';
+        skipButton.style.cssText = `
             pointer-events: auto;
             touch-action: manipulation;
             cursor: pointer;
-            flex: 1;
+            white-space: nowrap;
             min-width: 120px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
         `;
+        row.appendChild(skipButton);
+
+        const handleSkip = () => _dismissMissionAlert();
+        skipButton.onclick = handleSkip;
+        skipButton.ontouchend = (e) => { e.preventDefault(); e.stopPropagation(); handleSkip(); };
+
+        buttonContainer.appendChild(row);
     }
-    tutorialButtonContainer.appendChild(understoodButton);
-
-    // ⭐ UNDERSTOOD button dismisses current and immediately shows next tutorial message
-    const handleUnderstood = () => {
-        alertElement.classList.add('hidden');
-        // Restore hidden cursor for gameplay
-        document.body.style.cursor = 'none';
-        if (typeof renderer !== 'undefined' && renderer.domElement) {
-            renderer.domElement.style.cursor = 'none';
-        }
-        // Immediately show next tutorial message
-        if (typeof showNextTutorialMessage === 'function') {
-            showNextTutorialMessage();
-        }
-    };
-
-    understoodButton.onclick = handleUnderstood;
-    understoodButton.ontouchend = (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        handleUnderstood();
-    };
-
-    // ⭐ Create orange SKIP TUTORIAL button
-    const skipButton = document.createElement('button');
-    skipButton.id = 'missionCommandSkip';
-    skipButton.className = 'space-btn rounded px-6 py-2';
-    skipButton.innerHTML = '<i class="fas fa-forward mr-2"></i>SKIP TUTORIAL';
-    skipButton.style.cssText = `
-        background: linear-gradient(135deg, rgba(255, 150, 0, 0.5), rgba(200, 100, 0, 0.5));
-        border-color: rgba(255, 200, 0, 0.6);
-        pointer-events: auto;
-        touch-action: manipulation;
-        -webkit-tap-highlight-color: rgba(255, 150, 0, 0.3);
-        cursor: pointer;
-        flex: 1;
-        min-width: 120px;
-    `;
-    tutorialButtonContainer.appendChild(skipButton);
-
-    // SKIP TUTORIAL button immediately completes tutorial
-    const handleSkip = () => {
-        alertElement.classList.add('hidden');
-        // Restore hidden cursor for gameplay
-        document.body.style.cursor = 'none';
-        if (typeof renderer !== 'undefined' && renderer.domElement) {
-            renderer.domElement.style.cursor = 'none';
-        }
-
-        // Skip ALL remaining tutorial messages
-        if (tutorialSystem.active) {
-            tutorialSystem.active = false;
-            completeTutorial();
-            showAchievement('Tutorial Skipped', 'All hostile forces are now active!');
-        }
-    };
-
-    skipButton.onclick = handleSkip;
-    skipButton.ontouchend = (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        handleSkip();
-    };
-
-    // Add the button container to the main container
-    buttonContainer.appendChild(tutorialButtonContainer);
-} else {
-    // Create centered button container for lore/victory messages
-    const loreButtonContainer = document.createElement('div');
-    loreButtonContainer.className = 'mc-btnrow';
-    loreButtonContainer.style.cssText = `
-        display: flex;
-        justify-content: center;
-        margin-top: 1.5rem;
-        width: 100%;
-    `;
-
-    // Create UNDERSTOOD button for victory messages and non-tutorial messages
-    const understoodButton = document.createElement('button');
-    understoodButton.id = 'missionCommandUnderstood';
-    understoodButton.className = 'space-btn rounded px-6 py-2';
-    understoodButton.innerHTML = '<i class="fas fa-check mr-2"></i>UNDERSTOOD';
-
-    // Apply mobile button styling only on mobile devices
-    const isMobile = window.innerWidth <= 768 || ('ontouchstart' in window && window.innerWidth <= 1024);
-
-    if (isMobile) {
-        understoodButton.style.cssText = `
-            background: rgba(0, 0, 0, 0.7);
-            border: 1px solid rgba(0, 255, 255, 0.4);
-            border-radius: 4px;
-            color: #00ffff;
-            font-family: 'Orbitron', monospace;
-            font-weight: 600;
-            box-shadow: 0 0 10px rgba(0, 255, 255, 0.3), inset 0 0 10px rgba(0, 255, 255, 0.1);
-            opacity: 0.7;
-            transition: all 0.2s ease;
-            pointer-events: auto;
-            touch-action: manipulation;
-            -webkit-tap-highlight-color: rgba(0, 255, 255, 0.3);
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        `;
-    } else {
-        // Desktop: use default space-btn styling from CSS
-        understoodButton.style.cssText = `
-            pointer-events: auto;
-            touch-action: manipulation;
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        `;
-    }
-    loreButtonContainer.appendChild(understoodButton);
-    buttonContainer.appendChild(loreButtonContainer);
-    
-    // UNDERSTOOD button dismisses the message and flushes any deferred achievements
-    const handleUnderstood = () => {
-        alertElement.classList.add('hidden');
-        // Restore hidden cursor for gameplay
-        document.body.style.cursor = 'none';
-        if (typeof renderer !== 'undefined' && renderer.domElement) {
-            renderer.domElement.style.cursor = 'none';
-        }
-        // Flush queued achievements (scattered factions, etc.) staggered
-        if (window._deferredAchievements && window._deferredAchievements.length) {
-            const queue = window._deferredAchievements.slice();
-            window._deferredAchievements = [];
-            queue.forEach((a, i) => {
-                setTimeout(() => showAchievement(a.title, a.description, a.playAchievementSound), 400 * i);
-            });
-        }
-        // Resume the game if it was paused for this transmission
-        if (typeof gameState !== 'undefined' && gameState.paused) {
-            gameState.paused = false;
-            const pauseBtn = document.getElementById('pauseBtn');
-            const pauseIcon = document.getElementById('pauseIcon');
-            if (pauseBtn) pauseBtn.classList.remove('paused');
-            if (pauseIcon) pauseIcon.className = 'fas fa-pause mr-1';
-        }
-    };
-
-    understoodButton.onclick = handleUnderstood;
-    understoodButton.ontouchend = (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        handleUnderstood();
-    };
-}
 
     // Only play sound if not suppressed
 if (typeof gameState === 'undefined' || !gameState.suppressAchievements) {
@@ -2540,131 +2460,24 @@ if (typeof gameState === 'undefined' || !gameState.suppressAchievements) {
 }
 
 // =============================================================================
-// INCOMING TRANSMISSION PROMPT - READ / SKIP choice for discovery missions
-// Shows a brief notification; READ pauses the game and displays full lore.
+// INCOMING TRANSMISSION — delivers a discovery/comms message straight to the
+// chrome-less comms panel (no separate READ/SKIP prompt). The discovery path
+// opens on its own when the area is found; here the lore just scrolls in below,
+// colour-coded by channel, and stays up until the player clicks SKIP.
 // =============================================================================
 
 function showIncomingTransmission(title, text, factionColor) {
-    // Remove any existing prompt
-    const existing = document.getElementById('incomingTransmissionPrompt');
-    if (existing) existing.remove();
-
     // Classify the comms channel -> colour. distress=yellow, lore=cyan,
-    // ship-to-ship=orange. (Direct command briefings via showMissionCommandAlert
-    // stay mission-control green.) The chosen colour is carried into the
-    // READ panel so the full message text matches the channel.
+    // ship-to-ship=orange. (Direct command briefings stay mission-control green.)
     let channel;
     if (factionColor === true || /distress|mayday|under\s*(attack|fire)/i.test(String(title))) channel = 'distress';
     else if (/mission control/i.test(String(title))) channel = 'lore';
     else channel = 'ship';
     const colorHex = { distress: '#ffd633', lore: '#00e5ff', ship: '#ff9a33' }[channel];
-    const channelLabel = { distress: 'DISTRESS SIGNAL', lore: 'TRANSMISSION', ship: 'INCOMING TRANSMISSION' }[channel];
 
-    const prompt = document.createElement('div');
-    prompt.id = 'incomingTransmissionPrompt';
-    // Chrome-less notification: no panel — just glowing colour-coded text + buttons.
-    prompt.style.cssText = `
-        position: fixed;
-        top: 12%;
-        left: 50%;
-        transform: translateX(-50%);
-        z-index: 1000;
-        padding: 4px 12px;
-        text-align: center;
-        font-family: 'Orbitron', monospace;
-        pointer-events: auto;
-        max-width: min(560px, 86vw);
-    `;
-
-    prompt.innerHTML = `
-        <div style="color: ${colorHex}; font-size: 0.72rem; letter-spacing: 3px; margin-bottom: 6px;
-                     text-shadow: 0 0 8px ${colorHex}, 0 2px 5px rgba(0,0,0,0.95);">
-            ${channelLabel}
-        </div>
-        <div style="color: ${colorHex}; font-size: 1.15rem; font-weight: 700; margin-bottom: 14px; letter-spacing: 1px;
-                     text-shadow: 0 0 10px ${colorHex}, 0 0 18px ${colorHex}66, 0 2px 5px rgba(0,0,0,0.95);">
-            ${title}
-        </div>
-        <div style="display: flex; gap: 12px; justify-content: center;">
-            <button id="transmissionRead" style="
-                background: transparent;
-                border: 1px solid ${colorHex};
-                border-radius: 4px;
-                color: ${colorHex};
-                font-family: 'Orbitron', monospace;
-                font-size: 0.85rem;
-                font-weight: 600;
-                padding: 8px 24px;
-                cursor: pointer;
-                letter-spacing: 2px;
-                text-shadow: 0 0 8px ${colorHex};
-                transition: all 0.2s ease;
-                pointer-events: auto;
-                touch-action: manipulation;
-            ">READ</button>
-            <button id="transmissionSkip" style="
-                background: transparent;
-                border: 1px solid rgba(255,255,255,0.3);
-                border-radius: 4px;
-                color: rgba(255,255,255,0.75);
-                font-family: 'Orbitron', monospace;
-                font-size: 0.85rem;
-                font-weight: 600;
-                padding: 8px 24px;
-                cursor: pointer;
-                letter-spacing: 2px;
-                text-shadow: 0 2px 5px rgba(0,0,0,0.95);
-                transition: all 0.2s ease;
-                pointer-events: auto;
-                touch-action: manipulation;
-            ">SKIP</button>
-        </div>
-    `;
-
-    document.body.appendChild(prompt);
-
-    // Play a short comm-link beep
-    if (typeof playSound === 'function') {
-        playSound('achievement');
-    }
-
-    const dismiss = () => {
-        prompt.remove();
-        // Flush deferred achievements unless a Mission Command alert is also open
-        if (!document.getElementById('missionCommandAlert') &&
-            window._deferredAchievements && window._deferredAchievements.length) {
-            const queue = window._deferredAchievements.slice();
-            window._deferredAchievements = [];
-            queue.forEach((a, i) => {
-                setTimeout(() => showAchievement(a.title, a.description, a.playAchievementSound), 400 * i);
-            });
-        }
-    };
-
-    // READ: show full lore — game continues running in background
-    const handleRead = () => {
-        dismiss();
-        showMissionCommandAlert(title, text, false, colorHex);
-    };
-
-    // SKIP: dismiss and keep playing
-    const handleSkip = () => {
-        dismiss();
-    };
-
-    const readBtn = prompt.querySelector('#transmissionRead');
-    const skipBtn = prompt.querySelector('#transmissionSkip');
-
-    readBtn.onclick = handleRead;
-    readBtn.ontouchend = (e) => { e.preventDefault(); e.stopPropagation(); handleRead(); };
-    skipBtn.onclick = handleSkip;
-    skipBtn.ontouchend = (e) => { e.preventDefault(); e.stopPropagation(); handleSkip(); };
-
-    // Auto-dismiss after 15 seconds if no action taken
-    const autoTimeout = setTimeout(dismiss, 15000);
-    // Clear timeout on any interaction
-    readBtn.addEventListener('click', () => clearTimeout(autoTimeout));
-    skipBtn.addEventListener('click', () => clearTimeout(autoTimeout));
+    // Short comm-link beep, then deliver straight to the comms panel.
+    if (typeof playSound === 'function') playSound('achievement');
+    showMissionCommandAlert(title, text, false, colorHex);
 }
 
 // =============================================================================
