@@ -201,7 +201,7 @@ function initializeThreeJSForIntro() {
         powerPreference: 'high-performance'
     });
     renderer.setSize(window.innerWidth, window.innerHeight);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, window.__isMobileGPU ? 1 : 2));
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, window.__isMobileGPU ? 1 : 1.5));
 
     // Keep background black - no automatic fade
     renderer.setClearColor(0x000000);
@@ -313,7 +313,7 @@ function initializeMinimalThreeJS() {
         powerPreference: 'high-performance'
     });
     renderer.setSize(window.innerWidth, window.innerHeight);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, window.__isMobileGPU ? 1 : 2));
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, window.__isMobileGPU ? 1 : 1.5));
     renderer.setClearColor(0x000003); // dark blue not black
     
     const gameContainer = document.getElementById('gameContainer');
@@ -2111,6 +2111,12 @@ function setupNormalGameContent() {
     if (typeof createInterstellarAsteroidFields === 'function') {
         createInterstellarAsteroidFields();
         console.log('🌌 Interstellar asteroid fields created');
+    }
+
+    // Giant dense breakable fields around a few galaxy cores (navigation
+    // challenge during boss fights). Deferred so galaxy cores exist.
+    if (typeof createDenseGalaxyAsteroidFields === 'function') {
+        setTimeout(() => { try { createDenseGalaxyAsteroidFields(); } catch (e) {} }, 1500);
     }
 
     if (typeof createEnhancedComets === 'function') {

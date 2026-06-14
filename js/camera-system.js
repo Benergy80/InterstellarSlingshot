@@ -397,6 +397,47 @@ function updateCameraView(camera) {
         currentOffset = cameraState.normalThirdPersonOffset.clone();
     }
 
+    // ── CINEMATIC WARP FRAMING ──────────────────────────────────────────
+    // During warp / slingshot boosts the chase framing eases BACK (offset
+    // ×1.55 so the ship strains ahead), the FOV widens with it, the frame
+    // drifts gently, and ignition/exit get a ~0.5s micro-shake. Everything
+    // is a per-frame ease off the LIVE warp state — the same lerp runs in
+    // both directions, so entering and leaving warp is seamless (no
+    // setTimeout snaps). Only the SHIP-IN-FRAME offset moves; the camera's
+    // gameplay position is untouched.
+    if (typeof gameState !== 'undefined' && gameState.gameStarted) {
+        if (cameraState._warpZoom === undefined) { cameraState._warpZoom = 1; cameraState._wasWarping = false; }
+        const _warpingNow = !!((gameState.emergencyWarp && gameState.emergencyWarp.active) ||
+            (gameState.slingshot && gameState.slingshot.active && !gameState.slingshotWhip));
+        if (_warpingNow !== cameraState._wasWarping) {
+            cameraState._wasWarping = _warpingNow;
+            cameraState._warpShakeUntil = performance.now() + 550; // ignition / exit thump
+        }
+        const _zTarget = (_warpingNow && cameraState.mode === 'third-person') ? 1.55 : 1.0;
+        cameraState._warpZoom += (_zTarget - cameraState._warpZoom) * 0.04;
+        const _zAmt = cameraState._warpZoom - 1;
+        if (Math.abs(_zAmt) > 0.004) {
+            currentOffset.multiplyScalar(cameraState._warpZoom);
+            // Slow cinematic float while warped-out
+            const _wt = performance.now();
+            currentOffset.x += Math.sin(_wt * 0.0008) * 0.6 * _zAmt;
+            currentOffset.y += Math.cos(_wt * 0.0006) * 0.4 * _zAmt;
+        }
+        if (cameraState._warpShakeUntil && performance.now() < cameraState._warpShakeUntil) {
+            const _sAmp = 0.25 * ((cameraState._warpShakeUntil - performance.now()) / 550);
+            currentOffset.x += (Math.random() - 0.5) * _sAmp;
+            currentOffset.y += (Math.random() - 0.5) * _sAmp;
+        }
+        // FOV follows the zoom: 75 at rest → ~86 fully warped, eased both ways
+        if (camera.isPerspectiveCamera) {
+            const _fovT = 75 + _zAmt * 20;
+            if (Math.abs(camera.fov - _fovT) > 0.05) {
+                camera.fov = _fovT;
+                camera.updateProjectionMatrix();
+            }
+        }
+    }
+
     if (cameraState.mode === 'first-person') {
         // FIRST-PERSON MODE (COCKPIT VIEW):
         // Camera IS the player position - enemies target this location
@@ -428,16 +469,24 @@ function updateCameraView(camera) {
         // at the end of Q/E rolls, like inertia overshooting then settling.
         if (typeof rotationalVelocity !== 'undefined') {
             const demo = (typeof window !== 'undefined' && window.demoPilot && window.demoPilot.active);
-            const bankAmount = -rotationalVelocity.yaw * (demo ? 45 : 15);
-            const pitchTilt = -rotationalVelocity.pitch * (demo ? 12 : 5);
-            // Counter-roll spring: track smoothed roll, the overshoot creates
-            // a brief visual counter-lean when the player stops rolling.
+            // SMOOTH the bank/pitch tilt. Previously the bank was raw
+            // angular velocity × 15-45, applied every frame — so the noisy
+            // per-frame yaw (inertia overshoot + the orient closed-form step)
+            // mapped straight to a big roll that visibly jittered/shook the
+            // ship during fast turns. Easing the applied angle removes it.
+            const targetBank = -rotationalVelocity.yaw * (demo ? 38 : 14);
+            const targetPitch = -rotationalVelocity.pitch * (demo ? 10 : 5);
+            if (cameraState._smBank === undefined) cameraState._smBank = 0;
+            if (cameraState._smPitch === undefined) cameraState._smPitch = 0;
+            cameraState._smBank += (targetBank - cameraState._smBank) * 0.18;
+            cameraState._smPitch += (targetPitch - cameraState._smPitch) * 0.18;
+            // Counter-roll spring (for Q/E rolls), gentler multiplier (3→1.5).
             if (cameraState._smoothedRoll === undefined) cameraState._smoothedRoll = 0;
             const targetRoll = rotationalVelocity.roll * 8;
             cameraState._smoothedRoll += (targetRoll - cameraState._smoothedRoll) * 0.08;
-            const counterRoll = (cameraState._smoothedRoll - targetRoll) * 3;
-            const bankQuat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), bankAmount + counterRoll);
-            const pitchQuat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), pitchTilt);
+            const counterRoll = (cameraState._smoothedRoll - targetRoll) * 1.5;
+            const bankQuat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), cameraState._smBank + counterRoll);
+            const pitchQuat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), cameraState._smPitch);
             shipQuaternion.multiply(bankQuat).multiply(pitchQuat);
         }
 

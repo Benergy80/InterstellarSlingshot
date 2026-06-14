@@ -5,6 +5,16 @@
 const activeDistressCalls = [];
 const DISTRESS_DETECTION_RANGE = 5000; // Distance player can detect distress
 const CIVILIAN_DESTRUCTION_HITS = 8;
+const MILITARY_DESTRUCTION_HITS = 14;  // patrol craft are tougher
+const CIVILIAN_SHIELD_HP = 5;          // hits the cyan bubble absorbs before hull
+
+// Player-as-attacker proxy: flee/return-fire logic only needs a live
+// .position and a health check; camera.position is a live reference.
+const _playerAttackerProxy = {
+    isPlayerProxy: true,
+    get position() { return (typeof camera !== 'undefined') ? camera.position : null; },
+    userData: { health: 1 }
+};
 
 // Scratch vectors reused across the flee loop so a nebula full of
 // fleeing civilians doesn't allocate two THREE.Vector3 per ship per
@@ -32,8 +42,15 @@ function _updateCivilianFleeing() {
             ship.userData.fleeFrom = null;
             continue;
         }
-        // Move directly away from attacker at 1.5x normal speed (pooled vecs)
+        // Move away from the attacker at 1.5x normal speed with an EVASIVE
+        // WEAVE — a sinusoidal perpendicular component (per-ship phase) so
+        // retreating ships juke instead of flying a straight, easy line.
         _fleeDir.subVectors(ship.position, attacker.position).normalize();
+        const weave = Math.sin(now * 0.004 + (ship.id || 0)) * 0.55;
+        _fleeDir.x += -_fleeDir.z * weave;
+        _fleeDir.z += _fleeDir.x * weave;
+        _fleeDir.y += Math.sin(now * 0.0027 + (ship.id || 0) * 1.7) * 0.25;
+        _fleeDir.normalize();
         const fleeSpeed = (ship.userData.speed || 0.4) * 1.5;
         ship.position.addScaledVector(_fleeDir, fleeSpeed);
         // Face the flee direction
@@ -48,6 +65,10 @@ function updateCivilianCombat() {
 
     // Run flee behavior every frame for ships under attack
     _updateCivilianFleeing();
+
+    // Shield bubble visuals + military return fire
+    _updateCivilianShields();
+    _updateMilitaryReturnFire();
 
     // Check each enemy for civilian targets
     enemies.forEach(enemy => {
@@ -68,9 +89,9 @@ function updateCivilianCombat() {
         // Pick random nearby civilian to attack
         const target = nearbyCivilians[Math.floor(Math.random() * nearbyCivilians.length)];
         
-        // Attack if close enough
+        // Attack if close enough (laser range — the attack draws a beam now)
         const distToTarget = enemy.position.distanceTo(target.position);
-        if (distToTarget < 200) {
+        if (distToTarget < 500) {
             attackCivilian(enemy, target);
         }
     });
@@ -80,43 +101,209 @@ function updateCivilianCombat() {
 }
 
 function attackCivilian(enemy, civilian) {
-    if (!civilian.userData) civilian.userData = {};
-
-    // Initialize health if not set
-    if (civilian.userData.health === undefined) {
-        civilian.userData.health = CIVILIAN_DESTRUCTION_HITS;
-    }
-
-    // Mark this enemy as a known attacker for flee logic
-    civilian.userData.fleeFrom = enemy;
-    civilian.userData.fleeUntil = Date.now() + 8000; // Flee for 8s after last attack
-    civilian.userData.distressActive = true;
-    civilian.userData.showOnMap = true; // Force onto galactic radar
-
     // Check attack cooldown
     const now = Date.now();
     if (!enemy.userData.lastCivilianAttack) enemy.userData.lastCivilianAttack = 0;
     if (now - enemy.userData.lastCivilianAttack < 2000) return; // 2s cooldown
-
     enemy.userData.lastCivilianAttack = now;
 
-    // Damage civilian
-    civilian.userData.health--;
-    
-    // Create distress call if not already active
-    if (!civilian.userData.distressActive) {
-        createDistressCall(civilian);
+    // Visible attack: the enemy fires an actual beam at the civilian
+    if (typeof createLaserBeam === 'function') {
+        try { createLaserBeam(enemy.position.clone(), civilian.position.clone(), '#ff8800', false); } catch (e) {}
     }
-    
-    // Destroy if health depleted
-    if (civilian.userData.health <= 0) {
-        destroyCivilian(civilian);
+
+    damageCivilianShip(civilian, 1, enemy);
+}
+
+// ── SHARED DAMAGE ENTRY POINT ────────────────────────────────────────────
+// Every hit on a civilian/military ship — from enemies OR the player —
+// routes through here: shields absorb first (non-military), the ship
+// flees with evasive weave, civilians raise a distress call (map + screen
+// indicator), military ships mark the attacker for return fire.
+function damageCivilianShip(ship, damage, attacker) {
+    if (!ship || ship.userData === undefined) return;
+    const ud = ship.userData;
+    if (ud.destroyed || ud._destroyed) return;
+
+    const isMilitary = ud.shipCategory === 'military';
+    if (ud.health === undefined) {
+        ud.health = isMilitary ? MILITARY_DESTRUCTION_HITS : CIVILIAN_DESTRUCTION_HITS;
+    }
+
+    // Flee + evade (military retreats too — but shoots over its shoulder)
+    ud.fleeFrom = attacker || null;
+    ud.fleeUntil = Date.now() + 8000;
+    ud.showOnMap = true;
+
+    // Mining vessels (civilianShips array) flee through their own AI
+    // state machine rather than the trading-ship flee loop.
+    if (typeof civilianShips !== 'undefined' && civilianShips.indexOf(ship) !== -1 &&
+        attacker && attacker.position) {
+        ud.aiState = 'fleeing';
+        ud.fleeDirection = new THREE.Vector3()
+            .subVectors(ship.position, attacker.position).normalize();
+        ud.stateTimer = 0;
+    }
+
+    if (isMilitary) {
+        // Patrol craft return fire while retreating
+        ud._returnFireAt = attacker || null;
+        ud._returnFireUntil = Date.now() + 12000;
+    } else {
+        // CIVILIAN SHIELD: cyan bubble absorbs the first hits
+        _ensureCivilianShieldBubble(ship);
+        if (ud._civShieldHP === undefined) ud._civShieldHP = CIVILIAN_SHIELD_HP;
+        // Distress call: map dot pulses + screen indicator + rescue system
+        if (!ud.distressActive) createDistressCall(ship);
+        ud.distressActive = true;
+        if (ud._civShieldHP > 0) {
+            ud._civShieldHP -= damage;
+            if (ud._shieldMeshCiv) {
+                ud._shieldMeshCiv.material.opacity = 0.55; // flash; decays per-frame
+            }
+            return; // shield ate the hit
+        }
+    }
+
+    ud.health -= damage;
+    if (ud.health <= 0) {
+        destroyCivilian(ship);
+    }
+}
+
+// Cyan shield bubble sized from the ship's visible bounds (lazy, once).
+function _ensureCivilianShieldBubble(ship) {
+    if (!ship || ship.userData._shieldMeshCiv || typeof THREE === 'undefined' ||
+        typeof scene === 'undefined') return;
+    let r = 30;
+    try {
+        const box = new THREE.Box3().setFromObject(ship);
+        const s = box.getSize(new THREE.Vector3());
+        r = Math.max(15, Math.min(120, Math.max(s.x, s.y, s.z) * 0.62));
+    } catch (e) {}
+    const ws = new THREE.Vector3(1, 1, 1);
+    try { ship.getWorldScale(ws); } catch (e) {}
+    const sc = Math.max(0.0001, (Math.abs(ws.x) + Math.abs(ws.y) + Math.abs(ws.z)) / 3);
+    const mat = new THREE.MeshBasicMaterial({
+        color: 0x66ddff, transparent: true, opacity: 0,
+        blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide
+    });
+    const bubble = new THREE.Mesh(new THREE.SphereGeometry(r / sc, 16, 12), mat);
+    bubble.userData.isGlowLayer = true; // skipped by bbox measurements
+    ship.add(bubble);
+    ship.userData._shieldMeshCiv = bubble;
+}
+
+// Per-frame shield visuals: flash decays toward an idle shimmer while the
+// ship is in distress with shield charge left, 0 otherwise.
+function _updateCivilianShields() {
+    const pools = [];
+    if (typeof tradingShips !== 'undefined') pools.push(tradingShips);
+    if (typeof civilianShips !== 'undefined') pools.push(civilianShips);
+    const now = Date.now();
+    for (let p = 0; p < pools.length; p++) {
+        const arr = pools[p];
+        for (let i = 0; i < arr.length; i++) {
+            const ship = arr[i];
+            const ud = ship && ship.userData;
+            if (!ud || !ud._shieldMeshCiv) continue;
+            const idle = (ud.distressActive && (ud._civShieldHP || 0) > 0)
+                ? 0.14 + Math.sin(now * 0.005 + i) * 0.05 : 0;
+            const mat = ud._shieldMeshCiv.material;
+            mat.opacity = Math.max(idle, mat.opacity * 0.93);
+        }
+    }
+}
+
+// ── MILITARY RETURN FIRE ─────────────────────────────────────────────────
+// Patrol craft shoot back at their attacker while retreating, and answer
+// nearby distress calls by engaging the civilian's attacker.
+function _militaryKillEnemy(e) {
+    if (!e || !e.userData) return;
+    e.userData.health = 0;
+    if (typeof createFactionExplosion === 'function' && typeof e.userData.galaxyId === 'number') {
+        try { createFactionExplosion(e.position, e.userData.galaxyId, 0.6); } catch (err) {}
+    } else if (typeof createExplosionEffect === 'function') {
+        try { createExplosionEffect(e.position); } catch (err) {}
+    }
+    if (typeof scene !== 'undefined') scene.remove(e);
+    if (typeof enemies !== 'undefined') {
+        const idx = enemies.indexOf(e);
+        if (idx > -1) enemies.splice(idx, 1);
+    }
+}
+
+function _updateMilitaryReturnFire() {
+    if (typeof tradingShips === 'undefined') return;
+    const now = Date.now();
+    for (let i = 0; i < tradingShips.length; i++) {
+        const ship = tradingShips[i];
+        const ud = ship && ship.userData;
+        if (!ud || ud.destroyed || ud.shipCategory !== 'military') continue;
+
+        // Answer nearby distress calls: target the civilian's attacker
+        if (!ud._returnFireAt && activeDistressCalls.length &&
+            (now - (ud._lastDistressScan || 0)) > 1500) {
+            ud._lastDistressScan = now;
+            for (let c = 0; c < activeDistressCalls.length; c++) {
+                const call = activeDistressCalls[c];
+                const civ = call.civilian;
+                if (!civ || !civ.userData || !civ.userData.fleeFrom) continue;
+                const atk = civ.userData.fleeFrom;
+                if (atk.isPlayerProxy) continue; // don't posse up on the player from afar
+                if (!atk.userData || atk.userData.health <= 0) continue;
+                if (ship.position.distanceTo(civ.position) < 2500) {
+                    ud._returnFireAt = atk;
+                    ud._returnFireUntil = now + 15000;
+                    break;
+                }
+            }
+        }
+
+        const tgt = ud._returnFireAt;
+        if (!tgt) continue;
+        if (now > (ud._returnFireUntil || 0)) { ud._returnFireAt = null; continue; }
+        const tgtPos = tgt.position;
+        if (!tgtPos) { ud._returnFireAt = null; continue; }
+        if (!tgt.isPlayerProxy && (!tgt.userData || tgt.userData.health <= 0)) {
+            ud._returnFireAt = null; continue;
+        }
+        const dist = ship.position.distanceTo(tgtPos);
+        if (dist > 1500) continue;
+        if (now - (ud._lastReturnFire || 0) < 1100) continue;
+        ud._lastReturnFire = now;
+
+        if (typeof createLaserBeam === 'function') {
+            try { createLaserBeam(ship.position.clone(), tgtPos.clone(), '#44ff88', false); } catch (e) {}
+        }
+        if (Math.random() < 0.6) {
+            if (tgt.isPlayerProxy) {
+                // Shooting back at the player who attacked them
+                const invuln = typeof isBlackHoleWarpInvulnerable === 'function' && isBlackHoleWarpInvulnerable();
+                if (!invuln && typeof gameState !== 'undefined' && gameState.hull !== undefined) {
+                    const red = typeof getShieldDamageReduction === 'function' ? getShieldDamageReduction() : 0;
+                    gameState.hull = Math.max(0, gameState.hull - 2 * (1 - red));
+                    if (typeof createEnhancedScreenDamageEffect === 'function') {
+                        createEnhancedScreenDamageEffect(ship.position);
+                    }
+                }
+            } else if (tgt.userData) {
+                tgt.userData.health -= 2;
+                if (typeof flashEnemyHit === 'function') { try { flashEnemyHit(tgt, 2); } catch (e) {} }
+                if (tgt.userData.health <= 0) _militaryKillEnemy(tgt);
+            }
+        }
     }
 }
 
 function createDistressCall(civilian) {
     civilian.userData.distressActive = true;
     civilian.userData.distressTime = Date.now();
+
+    // Visible SOS flare rising off the ship
+    if (typeof createDistressFlare === 'function') {
+        try { createDistressFlare(civilian.position.clone()); } catch (e) {}
+    }
     
     const distressCall = {
         civilian: civilian,
@@ -141,21 +328,29 @@ function createDistressCall(civilian) {
 
 function destroyCivilian(civilian) {
     civilian.userData.destroyed = true;
-    
-    // Create explosion
+    civilian.userData._destroyed = true; // mining-vessel path checks this flag
+
+    // Create explosion (createExplosion if present, else the standard effect)
     if (typeof createExplosion === 'function') {
         createExplosion(civilian.position, 'small');
+    } else if (typeof createExplosionEffect === 'function') {
+        try { createExplosionEffect(civilian.position); } catch (e) {}
     }
+    if (typeof playSound === 'function') { try { playSound('explosion'); } catch (e) {} }
     
     // Remove from scene
     if (typeof scene !== 'undefined' && scene.remove) {
         scene.remove(civilian);
     }
     
-    // Remove from tracking arrays
+    // Remove from tracking arrays (trading ships AND mining vessels)
     const shipIndex = tradingShips.indexOf(civilian);
     if (shipIndex !== -1) {
         tradingShips.splice(shipIndex, 1);
+    }
+    if (typeof civilianShips !== 'undefined') {
+        const cvIndex = civilianShips.indexOf(civilian);
+        if (cvIndex !== -1) civilianShips.splice(cvIndex, 1);
     }
     
     // Alert player if nearby
@@ -245,10 +440,13 @@ function triggerCaravanRescue(call) {
         }
     }
 
-    // Notification banner
+    // Notification banner + cinematic card
     if (typeof showAchievement === 'function') {
         showAchievement('🛡️ CARAVAN RESCUED',
             `${name} saved! Full resupply: hull, energy, missiles, warps`);
+    }
+    if (typeof flashEventText === 'function') {
+        flashEventText('CARAVAN RESCUED', '#00ff88', name + ' · full resupply transferred');
     }
 
     // Thank-you transmission from the caravan
@@ -291,6 +489,10 @@ function updateCivilianMapDisplay() {
 }
 
 // Export for use in main game loop
+if (typeof window !== 'undefined') {
+    window.damageCivilianShip = damageCivilianShip;
+    window._civilianPlayerProxy = _playerAttackerProxy;
+}
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
         updateCivilianCombat,

@@ -1413,7 +1413,7 @@ function spawnBossForArea(galaxyId, placementType, areaKey, overridePosition, bo
 
     // PRESERVED: Complete boss userData with all original properties
     boss.userData = {
-        name: `${factionLabel} Overlord (${placementType})`, // ENHANCED: Include area type
+        name: `${factionLabel} Overlord`, // (internal placementType no longer leaked into the display name)
         type: 'enemy',
         health: getEnemyHealthForDifficulty(false, true, false), // PRESERVED: Dynamic boss health
         maxHealth: getEnemyHealthForDifficulty(false, true, false),
@@ -1448,6 +1448,13 @@ function spawnBossForArea(galaxyId, placementType, areaKey, overridePosition, bo
     scene.add(boss);
     enemies.push(boss);
 
+    // Spawn-in beat: materialize the hull + letterbox name card
+    if (typeof materializeShip === 'function') materializeShip(boss, 800);
+    if (typeof playBossIntro === 'function') {
+        const _bfac = (typeof galaxyTypes !== 'undefined' && galaxyTypes[galaxyId] && galaxyTypes[galaxyId].faction) || null;
+        playBossIntro(boss.userData.name, _bfac, boss.userData.galaxyColor);
+    }
+
     // ENHANCED: Update boss system tracking
     bossSystem.areaBosses[areaKey].bossRef = boss;
     bossSystem.activeBosses.push(boss);
@@ -1475,6 +1482,11 @@ function spawnBossForArea(galaxyId, placementType, areaKey, overridePosition, bo
     if (typeof switchToBattleMusic === 'function') {
         switchToBattleMusic();
     }
+
+    // Attract the (demo) player toward the boss the moment it appears — the
+    // autopilot consumes this flag and diverts to bossEngage regardless of
+    // range (its proximity magnet only reaches 25k).
+    if (typeof gameState !== 'undefined') gameState._pendingBossEngage = true;
 
     console.log(`Boss spawned: ${boss.userData.name} in ${galaxyType.name} Galaxy at 3D position:`, bossPosition);
     return boss;
@@ -1569,6 +1581,7 @@ function spawnBossSupport(galaxyId, bossPosition, supportIndex, areaKey = null, 
     
     scene.add(support);
     enemies.push(support);
+    if (typeof materializeShip === 'function') materializeShip(support, 600);
     
     console.log(`Boss support spawned: ${support.userData.name} at 3D position:`, supportPosition);
 }
@@ -5594,6 +5607,21 @@ function updateDistanceCulling() {
     cullArray(typeof planets !== 'undefined' ? planets : null, 30000);
     cullArray(typeof asteroidBelts !== 'undefined' ? asteroidBelts : null, 30000);
     cullArray(typeof interstellarAsteroids !== 'undefined' ? interstellarAsteroids : null, 30000);
+    // Dense-galaxy-field asteroids: hundreds per field, so cull them much
+    // tighter (8,000u) — they only need to render when you're actually IN
+    // that galaxy fighting, not as specks from 25k away. Runs AFTER the 30k
+    // pass above (which would otherwise keep them visible out to 30k).
+    if (typeof interstellarAsteroids !== 'undefined') {
+        const dr2 = 8000 * 8000;
+        for (let i = 0; i < interstellarAsteroids.length; i++) {
+            const a = interstellarAsteroids[i];
+            if (!a || !a.userData || !a.userData.denseField || !a.position) continue;
+            const dx = a.position.x - cx, dy = a.position.y - cy, dz = a.position.z - cz;
+            const far = (dx * dx + dy * dy + dz * dz) > dr2;
+            if (far) { if (a.visible) { a.visible = false; a.userData._distCulled = true; } }
+            else if (a.userData._distCulled) { a.visible = true; a.userData._distCulled = false; }
+        }
+    }
     cullArray(typeof comets !== 'undefined' ? comets : null, 35000);
     // Trading ships read as a single dot well before this range.
     cullArray(typeof tradingShips !== 'undefined' ? tradingShips : null, 18000);
@@ -6598,7 +6626,10 @@ function createTradingShip(nebula, index) {
     let shipCategory;
     
     // Pick appropriate ship type for nebula location
-    const nebulaShipTypes = ['freighter', 'tanker', 'science', 'shuttle', 'passenger'];
+    // 'military' patrol craft now spawn among nebula traffic — they're the
+    // armed escorts: when fired upon (or when a nearby civilian raises a
+    // distress call) they return fire while retreating (civilian-combat.js).
+    const nebulaShipTypes = ['freighter', 'tanker', 'science', 'shuttle', 'passenger', 'military', 'military'];
     shipCategory = nebulaShipTypes[Math.floor(Math.random() * nebulaShipTypes.length)];
     
     // Get distinct colors for this ship type
@@ -7896,6 +7927,10 @@ function hailPlayer(ship, data) {
 }
 
 // Show incoming transmission with game-matching UI style
+// NOTE: This is dead code — game-controls.js defines a later (and active)
+// showIncomingTransmission(title, text, factionColor) that overrides this one
+// (both are global function declarations; the last-loaded wins). Kept as-is;
+// the live comms styling/colour-coding lives in game-controls.js.
 function showIncomingTransmission(sender, message, isDistress = false) {
     // Check if transmission container exists, create if not
     let container = document.getElementById('incomingTransmission');
@@ -7904,47 +7939,47 @@ function showIncomingTransmission(sender, message, isDistress = false) {
         container.id = 'incomingTransmission';
         document.body.appendChild(container);
     }
-    
+
     // Match game UI style - transparent like HUD elements
     // Keep border color matching (cyan for normal, red for distress)
     const borderColor = isDistress ? 'rgba(255, 80, 80, 0.5)' : 'rgba(0, 150, 255, 0.5)';
     const glowColor = isDistress ? 'rgba(255, 50, 50, 0.3)' : 'rgba(0, 150, 255, 0.3)';
     const titleColor = isDistress ? '#ff6666' : '#00ddff';
     const accentColor = isDistress ? 'rgba(255, 80, 80, 0.3)' : 'rgba(0, 150, 255, 0.3)';
-    
+
     // Transmission type label - NO emoji for distress
     const transmissionLabel = isDistress ? 'DISTRESS SIGNAL' : 'INCOMING TRANSMISSION';
-    
+
     container.style.cssText = `
         position: fixed;
-        top: 100px;
+        top: 72px;
         left: 50%;
         transform: translateX(-50%);
         background: linear-gradient(135deg, rgba(15, 23, 42, 0.35) 0%, rgba(30, 41, 59, 0.35) 100%);
         border: 1px solid ${borderColor};
         border-radius: 4px;
-        padding: 16px 24px;
+        padding: 11px 18px;
         z-index: 1000;
-        min-width: 320px;
-        max-width: 480px;
+        min-width: 240px;
+        max-width: 360px;
         font-family: 'Orbitron', 'Courier New', monospace;
         opacity: 0;
         transition: opacity 0.4s ease;
         pointer-events: none;
-        box-shadow: 
+        box-shadow:
             0 12px 40px ${glowColor},
             inset 0 1px 0 ${accentColor},
             inset 0 -1px 0 ${accentColor};
         backdrop-filter: blur(4px);
         -webkit-backdrop-filter: blur(4px);
     `;
-    
+
     container.innerHTML = `
         <div style="
-            color: ${titleColor}; 
-            font-size: 10px; 
-            text-transform: uppercase; 
-            letter-spacing: 3px; 
+            color: ${titleColor};
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 3px;
             margin-bottom: 10px;
             text-shadow: 0 0 8px ${titleColor};
             border-bottom: 1px solid ${borderColor};
@@ -7953,17 +7988,17 @@ function showIncomingTransmission(sender, message, isDistress = false) {
             ${transmissionLabel}
         </div>
         <div style="
-            color: #aaccff; 
-            font-size: 12px; 
-            font-weight: bold; 
+            color: #aaccff;
+            font-size: 12px;
+            font-weight: bold;
             margin-bottom: 8px;
             text-shadow: 0 0 5px rgba(100, 150, 255, 0.5);
         ">
             FROM: ${sender.toUpperCase()}
         </div>
         <div style="
-            color: #88aacc; 
-            font-size: 11px; 
+            color: #88aacc;
+            font-size: 11px;
             line-height: 1.5;
             font-style: italic;
             padding-left: 8px;
@@ -7972,12 +8007,12 @@ function showIncomingTransmission(sender, message, isDistress = false) {
             "${message}"
         </div>
     `;
-    
+
     // Show with fade in
     requestAnimationFrame(() => {
         container.style.opacity = '1';
     });
-    
+
     // Auto-hide after delay. 3x the originals (6s/4.5s -> 18s/13.5s)
     // so message reads aren't snatched off the screen before they
     // can be read.
@@ -11568,6 +11603,10 @@ function createScatteredAsteroidFields() {
         !p.userData.isLocalGateway);
     blackHoles.forEach(bh => {
         const galaxyIndex = bh.userData.galaxyId;
+        // Skip the local Sol system (galaxy 7): it already has its dedicated
+        // asteroid belt; the extra scattered clusters near the Companion Core
+        // are unnecessary clutter right by the player start (and cost draw calls).
+        if (galaxyIndex === 7) return;
         const clusters = 3 + Math.floor(Math.random() * 3);
         for (let k = 0; k < clusters; k++) {
             const ang = Math.random() * Math.PI * 2;
@@ -12433,6 +12472,15 @@ let bossSkybox = null;
 let bossSkyboxOpacity = 0;
 let bossHeartbeatPhase = 0;
 
+// Lightning in the boss sky — occasional storm cells of 1-3 white strokes.
+// Each stroke is an ENVELOPE (fast-but-smooth attack, slower decay), not a
+// hard strobe, so the flash reads as lightning behind the clouds: the dome
+// color lerps crimson → white and opacity lifts with the envelope.
+const _bossLightning = { nextAt: 0, strokes: 0, flash: null };
+const _bossSkyBaseColor = (typeof THREE !== 'undefined') ? new THREE.Color(0xdd2222) : null;
+const _bossSkyWhite = (typeof THREE !== 'undefined') ? new THREE.Color(0xffffff) : null;
+const _bossSkyTmp = (typeof THREE !== 'undefined') ? new THREE.Color() : null;
+
 // Single source of truth: is a real boss / elite-guardian set-piece
 // fight currently live AND in front of the player? Drives the pulsing
 // boss skybox AND the Hubble fade-out.
@@ -12510,6 +12558,13 @@ function _makeBossCloudTexture() {
             }
             // Billowy contrast: hollow out the troughs, keep bright crests
             v = Math.max(0, Math.min(1, (v - 0.35) * 1.8));
+            // POLE FADE: the sphere's UV rows converge at the poles, which
+            // pinched the pattern into a swirl. The texture's vertical
+            // edges land exactly on the poles (mirrored repeat.y = 2), so
+            // fading cloud alpha to zero over the outer 12% of rows clears
+            // the polar caps smoothly — no clouds to pinch.
+            const edge = Math.min(y, SIZE - 1 - y) / (SIZE * 0.12);
+            if (edge < 1) v *= edge * edge * (3 - 2 * edge); // smoothstep
             const i = (y * SIZE + x) * 4;
             img.data[i] = 255; img.data[i + 1] = 255; img.data[i + 2] = 255;
             img.data[i + 3] = Math.floor(v * 255);
@@ -12611,8 +12666,50 @@ function updateBossSkyboxHeartbeat() {
         if (bossSkyboxOpacity < 0.01) bossSkyboxOpacity = 0;
     }
 
-    // Apply opacity
-    bossSkybox.material.opacity = bossSkyboxOpacity;
+    // LIGHTNING: storm cells fire every 4-13s while a boss is up; each
+    // cell is 1-3 strokes ~0.1-0.5s apart with smooth rise/fade envelopes.
+    let _lEnv = 0;
+    const _now = Date.now();
+    if (hasBoss) {
+        if (!_bossLightning.nextAt) _bossLightning.nextAt = _now + 1200 + Math.random() * 2500;
+        if (!_bossLightning.flash && _now >= _bossLightning.nextAt) {
+            if (_bossLightning.strokes <= 0) _bossLightning.strokes = 1 + Math.floor(Math.random() * 3);
+            _bossLightning.flash = {
+                t0: _now,
+                attack: 80 + Math.random() * 140,   // gradual rise (ms)
+                decay: 260 + Math.random() * 380,   // slower fade (ms)
+                peak: 0.45 + Math.random() * 0.55   // stroke intensity varies
+            };
+        }
+        if (_bossLightning.flash) {
+            const f = _bossLightning.flash;
+            const dt = _now - f.t0;
+            _lEnv = (dt < f.attack
+                ? dt / f.attack
+                : Math.max(0, 1 - (dt - f.attack) / f.decay)) * f.peak;
+            if (dt > f.attack + f.decay) {
+                _bossLightning.flash = null;
+                _bossLightning.strokes--;
+                _bossLightning.nextAt = _bossLightning.strokes > 0
+                    ? _now + 100 + Math.random() * 400    // next stroke in this cell
+                    : _now + 2200 + Math.random() * 4500; // next storm cell (2.2-6.7s)
+            }
+        }
+    } else {
+        _bossLightning.flash = null;
+        _bossLightning.strokes = 0;
+        _bossLightning.nextAt = 0;
+    }
+
+    // Apply: the flash whitens the cloud tint and lifts opacity on top of
+    // the heartbeat, then hands the sky back to the red pulse.
+    if (_bossSkyTmp && _bossSkyBaseColor && _bossSkyWhite) {
+        _bossSkyTmp.copy(_bossSkyBaseColor).lerp(_bossSkyWhite, Math.min(1, _lEnv * 1.4));
+        bossSkybox.material.color.copy(_bossSkyTmp);
+    }
+    // Opacity lift trimmed (0.35 → 0.16, cap 0.85 → 0.58): the flash should
+    // read in the COLOR shift to white more than in raw opacity.
+    bossSkybox.material.opacity = Math.min(0.58, bossSkyboxOpacity + _lEnv * 0.16);
 }
 
 // =============================================================================
@@ -12627,6 +12724,10 @@ function updateBossSkyboxHeartbeat() {
 let galaxyAtmosphereDome = null;
 let _gaCores = null;
 const _gaTargetColor = (typeof THREE !== 'undefined') ? new THREE.Color() : null;
+// Deep-space haze: in open space the cloud layer occasionally breathes up
+// in plain WHITE at whisper opacity, then fades back out — ambient texture
+// for the long empty stretches, distinct from the colored regional tints.
+const _gaHaze = { nextAt: 0, until: 0, peak: 0 };
 
 function updateGalaxyAtmosphere() {
     if (typeof THREE === 'undefined' || typeof scene === 'undefined' ||
@@ -12684,8 +12785,44 @@ function updateGalaxyAtmosphere() {
             const hex = (typeof galaxyTypes !== 'undefined' && galaxyTypes[gid] && galaxyTypes[gid].color)
                 ? galaxyTypes[gid].color : 0x8888ff;
             if (_gaTargetColor) {
+                // COMPLEMENTARY tint: rotate the faction hue 180° so the
+                // regional sky CONTRASTS with that galaxy's ships, lines,
+                // and orbit colors instead of drowning in the same hue.
+                // Saturation/lightness clamped so every faction's
+                // complement reads as a usable sky color.
                 _gaTargetColor.setHex(hex);
+                const _hsl = { h: 0, s: 0, l: 0 };
+                _gaTargetColor.getHSL(_hsl);
+                _gaTargetColor.setHSL(
+                    (_hsl.h + 0.5) % 1,
+                    Math.min(0.9, Math.max(0.45, _hsl.s)),
+                    Math.min(0.62, Math.max(0.42, _hsl.l))
+                );
                 galaxyAtmosphereDome.material.color.lerp(_gaTargetColor, 0.02);
+            }
+        }
+    }
+
+    // DEEP-SPACE HAZE: when no galaxy region is tinting the sky, run an
+    // occasional white fade-up episode. The slow opacity lerp below gives
+    // it the gradual swell and fade; color drifts to plain white.
+    if (targetOpacity <= 0) {
+        const _hNow = Date.now();
+        if (!_gaHaze.nextAt) _gaHaze.nextAt = _hNow + 15000 + Math.random() * 30000;
+        if (!_gaHaze.until && _hNow >= _gaHaze.nextAt) {
+            _gaHaze.until = _hNow + 12000 + Math.random() * 12000; // 12-24s episode
+            _gaHaze.peak = 0.05 + Math.random() * 0.05;            // whisper: 0.05-0.10
+        }
+        if (_gaHaze.until) {
+            if (_hNow >= _gaHaze.until) {
+                _gaHaze.until = 0;
+                _gaHaze.nextAt = _hNow + 25000 + Math.random() * 45000; // next episode 25-70s
+            } else {
+                targetOpacity = _gaHaze.peak;
+                if (_gaTargetColor) {
+                    _gaTargetColor.setHex(0xffffff);
+                    galaxyAtmosphereDome.material.color.lerp(_gaTargetColor, 0.02);
+                }
             }
         }
     }

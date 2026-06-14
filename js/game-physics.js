@@ -1687,7 +1687,20 @@ function executeSlingshot() {
             boostVelocity = Math.min(25.0 + slinghotPower, 50.0);
         }
 
-        gameState.velocityVector.copy(slingshotDirection).multiplyScalar(boostVelocity);
+        // ── GRAVITY WHIP ──────────────────────────────────────────────
+        // Boosts now BEAT emergency warp (100) for big bodies — the
+        // slingshot is the renewable interstellar engine, warp the
+        // limited-charge convenience. (The old values were also silently
+        // clamped to slingshot.maxSpeed=20 by the velocity limiter, which
+        // is why slingshots always fizzled — maxSpeed is now set to the
+        // actual boost at launch.)
+        const _budType = nearestPlanet.userData.type;
+        const _isStarB = _budType === 'star' || nearestPlanet.userData.isLocalStar;
+        if (_budType === 'blackhole') boostVelocity = 150;
+        else if (_isStarB) boostVelocity = 115;
+        else boostVelocity = Math.min(80, 55 + (planetMass * planetRadius) / 4);
+        if (realistic) boostVelocity = Math.min(120, Math.max(60, boostVelocity));
+
         if (!quick) {
             gameState.energy = Math.max(5, gameState.energy - 20);
         }
@@ -1696,44 +1709,221 @@ function executeSlingshot() {
             awardReputation(3, '');
         }
 
-        gameState.slingshot.active = true;
-        gameState.slingshot.timeRemaining = gameState.slingshot.duration;
-        gameState.slingshot.fromBlackHole = (nearestPlanet.userData.type === 'blackhole');
-
-        // Activate warp starfield (matching emergency warp behavior)
-        if (typeof toggleWarpSpeedStarfield === 'function') {
-            toggleWarpSpeedStarfield(true);
-        }
-
-        if (nearestPlanet.userData.type === 'blackhole') {
-            if (typeof showAchievement === 'function') {
-                showAchievement('Black Hole Slingshot', `EXTREME VELOCITY: ${(boostVelocity * 1000).toFixed(0)} km/s!`);
-            }
-            for (let i = 0; i < 8; i++) {
-                setTimeout(() => createHyperspaceEffect(), i * 200);
-            }
-        } else if (nearestPlanet.userData.name === 'Jupiter' || planetRadius > 10) {
-            if (typeof showAchievement === 'function') {
-                showAchievement('Giant Planet Slingshot', `${nearestPlanet.userData.name}: ${(boostVelocity * 1000).toFixed(0)} km/s!`);
-            }
-            for (let i = 0; i < 4; i++) {
-                setTimeout(() => createHyperspaceEffect(), i * 150);
-            }
+        // Capture into the on-rails whip arc. The launch itself happens in
+        // updateSlingshotWhip() once the arc's exit tangent lines up with
+        // the aim (nav target if locked, else look direction).
+        const _cp = camera.position;
+        const _bp = nearestPlanet.position;
+        const _entryR = Math.max(_cp.distanceTo(_bp), Math.max(planetRadius * 1.8, 60));
+        const _theta0 = Math.atan2(_cp.z - _bp.z, _cp.x - _bp.x);
+        // Aim: locked nav target wins (the whip reorients the ship anyway —
+        // launching at something behind you is the point), else look.
+        const _aim = new THREE.Vector3();
+        const _navT = gameState.currentTarget;
+        if (_navT && _navT.position && _navT !== nearestPlanet) {
+            _aim.subVectors(_navT.position, _bp).normalize();
         } else {
-            if (typeof showAchievement === 'function') {
-                showAchievement('Gravitational Slingshot', `${nearestPlanet.userData.name}: ${(boostVelocity * 1000).toFixed(0)} km/s!`);
-            }
-            for (let i = 0; i < 2; i++) {
-                setTimeout(() => createHyperspaceEffect(), i * 100);
-            }
+            camera.getWorldDirection(_aim).normalize();
         }
-        
+        // Whip direction: whichever sweep sign starts with its tangent
+        // closer to the aim gets there sooner.
+        const _tCCW = new THREE.Vector3(-Math.sin(_theta0), 0, Math.cos(_theta0));
+        const _sign = (_tCCW.dot(_aim) >= 0) ? 1 : -1;
+
+        gameState.slingshotWhip = {
+            body: nearestPlanet,
+            radius: _entryR,
+            theta0: _theta0,
+            sign: _sign,
+            y0: _cp.y - _bp.y,
+            t0: Date.now(),
+            durMs: 1600,
+            omega: 4.6 / 1.6, // rad/s — up to ~264° of sweep
+            aim: _aim.clone(),
+            boost: boostVelocity,
+            color: _budType === 'blackhole' ? 0x9933ff : (_isStarB ? 0xffcc44 : 0x33ccff),
+            destName: (_navT && _navT.userData && _navT.userData.name) || null
+        };
+
+        gameState.slingshot.active = true;
+        gameState.slingshot.maxSpeed = boostVelocity; // velocity-limiter cap during the ride
+        gameState.slingshot.timeRemaining = gameState.slingshot.duration + 1600;
+        gameState.slingshot.fromBlackHole = (_budType === 'blackhole');
+
+        // Gravity-well rings around the body sell the capture
+        if (typeof _spawnGravityWellRings === 'function') {
+            _spawnGravityWellRings(nearestPlanet, gameState.slingshotWhip.color);
+        }
+
+        // Capture notice — the launch announcement (with destination +
+        // speed) fires from updateSlingshotWhip when the arc releases.
+        if (typeof showAchievement === 'function') {
+            showAchievement('Gravity Capture',
+                `${nearestPlanet.userData.name || 'Body'} has you — riding the whip…`);
+        }
+
         gameState.distance += boostVelocity * 10;
         if (typeof updateUI === 'function') {
             updateUI();
         }
     }
 }
+
+// =============================================================================
+// GRAVITY WHIP — on-rails slingshot arc. While gameState.slingshotWhip is
+// set, the ship is carried around the body on a circular arc (gravity owns
+// the ship); when the exit tangent lines up with the aim — or the sweep
+// completes — the ship is launched along a blend of tangent and aim at the
+// captured boost speed. Visuals: gravity-well rings at capture, an arc
+// trail during the whip, an FOV kick + starfield + hyperspace at launch.
+// =============================================================================
+let _whipTrail = null;
+
+function _spawnGravityWellRings(body, colorHex) {
+    if (typeof scene === 'undefined' || typeof THREE === 'undefined' || !body) return;
+    const radius = body.geometry && body.geometry.parameters ? body.geometry.parameters.radius : 20;
+    const rings = [];
+    for (let i = 0; i < 3; i++) {
+        const r0 = radius * (1.6 + i * 0.9);
+        const geo = new THREE.RingGeometry(r0, r0 * 1.06, 48);
+        const mat = new THREE.MeshBasicMaterial({
+            color: colorHex || 0x33ccff, transparent: true, opacity: 0.55 - i * 0.12,
+            side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false
+        });
+        const ring = new THREE.Mesh(geo, mat);
+        ring.position.copy(body.position);
+        ring.rotation.x = Math.PI / 2 + (Math.random() - 0.5) * 0.5;
+        scene.add(ring);
+        rings.push({ ring, geo, mat });
+    }
+    const t0 = Date.now();
+    const iv = setInterval(() => {
+        const t = (Date.now() - t0) / 2200; // 2.2s life
+        rings.forEach(({ ring, mat }, i) => {
+            ring.scale.setScalar(1 + t * (1.3 + i * 0.4));
+            mat.opacity = Math.max(0, (0.55 - i * 0.12) * (1 - t));
+            if (ring.parent && body.position) ring.position.copy(body.position);
+        });
+        if (t >= 1) {
+            clearInterval(iv);
+            rings.forEach(({ ring, geo, mat }) => { scene.remove(ring); geo.dispose(); mat.dispose(); });
+        }
+    }, 33);
+}
+
+function _whipTrailPush(pos, colorHex) {
+    if (typeof scene === 'undefined' || typeof THREE === 'undefined') return;
+    if (!_whipTrail) {
+        const geo = new THREE.BufferGeometry();
+        const mat = new THREE.LineBasicMaterial({
+            color: colorHex || 0x33ccff, transparent: true, opacity: 0.85,
+            blending: THREE.AdditiveBlending, depthWrite: false
+        });
+        _whipTrail = { points: [], line: new THREE.Line(geo, mat), mat };
+        _whipTrail.line.frustumCulled = false;
+        scene.add(_whipTrail.line);
+    }
+    _whipTrail.points.push(pos.clone());
+    if (_whipTrail.points.length > 70) _whipTrail.points.shift();
+    _whipTrail.line.geometry.setFromPoints(_whipTrail.points);
+}
+
+function _whipTrailFadeOut() {
+    if (!_whipTrail) return;
+    const trail = _whipTrail;
+    _whipTrail = null;
+    const iv = setInterval(() => {
+        trail.mat.opacity -= 0.04;
+        if (trail.mat.opacity <= 0) {
+            clearInterval(iv);
+            scene.remove(trail.line);
+            trail.line.geometry.dispose();
+            trail.mat.dispose();
+        }
+    }, 50);
+}
+
+function _fovKick() {
+    if (typeof camera === 'undefined' || !camera.isPerspectiveCamera) return;
+    const baseFov = 75;
+    camera.fov = 86;
+    camera.updateProjectionMatrix();
+    const iv = setInterval(() => {
+        camera.fov = Math.max(baseFov, camera.fov - 0.6);
+        camera.updateProjectionMatrix();
+        if (camera.fov <= baseFov) clearInterval(iv);
+    }, 33);
+}
+
+const _whipTmpQ = (typeof THREE !== 'undefined') ? new THREE.Quaternion() : null;
+const _whipTmpM = (typeof THREE !== 'undefined') ? new THREE.Matrix4() : null;
+
+function updateSlingshotWhip() {
+    const w = (typeof gameState !== 'undefined') && gameState.slingshotWhip;
+    if (!w) return false;
+    const body = w.body;
+    if (!body || !body.position) { gameState.slingshotWhip = null; return false; }
+
+    const t = (Date.now() - w.t0) / 1000; // seconds
+    const theta = w.theta0 + w.sign * w.omega * t;
+    const bp = body.position;
+    const px = bp.x + Math.cos(theta) * w.radius;
+    const pz = bp.z + Math.sin(theta) * w.radius;
+    const py = bp.y + w.y0;
+    camera.position.set(px, py, pz);
+    // Gravity owns the ship during the whip
+    gameState.velocityVector.set(0, 0, 0);
+
+    // Exit tangent at the current sweep angle
+    const tangent = new THREE.Vector3(
+        -Math.sin(theta) * w.sign, 0, Math.cos(theta) * w.sign).normalize();
+
+    // Face along the arc — slerped so the capture doesn't snap the camera
+    if (_whipTmpQ && _whipTmpM) {
+        _whipTmpM.lookAt(camera.position,
+            new THREE.Vector3(px + tangent.x * 200, py, pz + tangent.z * 200),
+            camera.up);
+        _whipTmpQ.setFromRotationMatrix(_whipTmpM);
+        camera.quaternion.slerp(_whipTmpQ, 0.16);
+    }
+
+    // Arc trail
+    _whipTrailPush(camera.position, w.color);
+
+    // Launch when the exit tangent aligns with the aim (after at least a
+    // third of the arc, so every whip visibly swings) or at full sweep.
+    const aligned = tangent.dot(w.aim) > 0.97;
+    const elapsed = Date.now() - w.t0;
+    if ((aligned && elapsed > 520) || elapsed >= w.durMs) {
+        // Launch: mostly aim, some tangent — physical but predictable
+        const launchDir = w.aim.clone().multiplyScalar(0.65)
+            .addScaledVector(tangent, 0.35).normalize();
+        gameState.velocityVector.copy(launchDir).multiplyScalar(w.boost);
+        gameState.slingshot.timeRemaining = gameState.slingshot.duration;
+        gameState.slingshotWhip = null;
+        _whipTrailFadeOut();
+        // (FOV kick now handled by the camera system's warp framing —
+        // slingshot.active drives the eased zoom+FOV, so no impulse here.)
+        if (typeof toggleWarpSpeedStarfield === 'function') toggleWarpSpeedStarfield(true);
+        for (let i = 0; i < 4; i++) setTimeout(() => createHyperspaceEffect(), i * 140);
+        if (typeof showAchievement === 'function') {
+            showAchievement('GRAVITY WHIP!',
+                (body.userData.name || 'Gravity assist') + ' → ' +
+                (w.destName || 'deep space') + ' @ ' + Math.round(w.boost * 1000) + ' km/s');
+        }
+        // Big arcade praise for a successful slingshot (black-hole whips rate higher)
+        if (typeof window !== 'undefined' && typeof window.flashArcadeText === 'function') {
+            const bh = (body.userData && body.userData.type === 'blackhole');
+            const words = bh ? ['ORBITAL PERFECTION!', 'GRAVITY SURFER!', 'STARSKIMMER!']
+                             : ['PERFECT SLINGSHOT!', 'GRAVITY ASSIST!', 'ORBITAL BOOST!', 'ESCAPE VELOCITY!'];
+            window.flashArcadeText(words[Math.floor(Math.random() * words.length)], bh ? 5 : 3);
+        }
+        if (typeof playSound === 'function') { try { playSound('warp'); } catch (e) {} }
+        return false;
+    }
+    return true; // still whipping
+}
+if (typeof window !== 'undefined') window.updateSlingshotWhip = updateSlingshotWhip;
 
 // =============================================================================
 // MAIN ENHANCED PHYSICS UPDATE FUNCTION - SPECIFICATION COMPLIANT
@@ -1752,6 +1942,12 @@ function updateEnhancedPhysics() {
     if (!gameState.enhancedPropertiesInitialized) {
         initializeEnhancedGameStateProperties();
         gameState.enhancedPropertiesInitialized = true;
+    }
+
+    // Gravity whip: while captured, the arc owns position + orientation
+    // (velocity is zeroed each frame so the rest of physics is inert).
+    if (gameState.slingshotWhip && typeof updateSlingshotWhip === 'function') {
+        updateSlingshotWhip();
     }
 
     // Get keys reference from game-controls.js
@@ -1979,8 +2175,16 @@ if (frameDistance > 0.01) { // Only track significant movement
         keys.wDoubleTap = false;
         
         const capturedForwardDirection = forwardDirection.clone();
-        const capturedBoostSpeed = gameState.emergencyWarp.boostSpeed;
-        
+        // Demo tactical jumps can request a GENTLER boost speed via
+        // gameState._pendingJumpSpeed. The player's emergency boostSpeed
+        // is 100 — at that speed even a short jump coasts ~6,600u, so a
+        // jump aimed to close a 5k gap overshot to 10k+ (the demo
+        // "flying away from the boss"). A modest override keeps tactical
+        // jumps controllable.
+        const capturedBoostSpeed = (typeof gameState._pendingJumpSpeed === 'number' && gameState._pendingJumpSpeed > 0)
+            ? gameState._pendingJumpSpeed : gameState.emergencyWarp.boostSpeed;
+        gameState._pendingJumpSpeed = null;
+
         // Use 25% energy instead of warp charge
         gameState.energy = Math.max(0, gameState.energy - 25);
         gameState.emergencyWarp.transitioning = true;
@@ -2851,8 +3055,12 @@ if (currentVelocity < gameState.minVelocity &&
 // Reset emergency braking flag at the end of the frame
 gameState.emergencyBraking = false;  // <-- ADD THIS LINE AT THE VERY END OF THE FUNCTION
     
-    // Enhanced velocity damping - include emergency warp postWarp
-const dampingFactor = gameState.slingshot.postSlingshot ? 0.9999 : 
+    // Enhanced velocity damping - include emergency warp postWarp.
+    // slingshot.active now also gets near-zero damping: the old 0.998
+    // bled a 24s slingshot ride down to ~6% of its launch speed, which
+    // (with the maxSpeed=20 clamp) is why slingshots always fizzled.
+const dampingFactor = gameState.slingshot.postSlingshot ? 0.9999 :
+                     gameState.slingshot.active ? 0.9999 :
                      gameState.emergencyWarp.active ? 0.9998 :
                      gameState.emergencyWarp.postWarp ? 0.9999 :  // NEW LINE
                      0.998;
@@ -3733,35 +3941,40 @@ function createDiscoveryPath(nebulaPosition, galaxyBlackHole, factionColor, fact
 function createPathGlowParticles(pathPoints, color) {
     if (!THREE) return null;
 
-    // 20 particles per path — enough for a glowing effect without
-    // ballooning Points count when many paths persist.
-    const particleCount = 20;
+    // 16 small particles that FLOW along the path toward the destination
+    // (animated in animateDiscoveryPaths). Replaces the old static, scattered
+    // 30px additive blobs that read as graphical noise. Each particle holds a
+    // progress t in [0,1] along the curve and a small speed; positions are
+    // interpolated through pathPoints every pulse tick.
+    const particleCount = 16;
     const positions = new Float32Array(particleCount * 3);
-    
+    const flowPts = pathPoints.map(p => p.clone());
+    const flowProg = new Float32Array(particleCount);
+    const flowSpd = new Float32Array(particleCount);
     for (let i = 0; i < particleCount; i++) {
-        const pointIndex = Math.floor((i / particleCount) * pathPoints.length);
-        const point = pathPoints[Math.min(pointIndex, pathPoints.length - 1)];
-        
-        positions[i * 3] = point.x + (Math.random() - 0.5) * 50;
-        positions[i * 3 + 1] = point.y + (Math.random() - 0.5) * 50;
-        positions[i * 3 + 2] = point.z + (Math.random() - 0.5) * 50;
+        flowProg[i] = i / particleCount;            // evenly spaced along the line
+        flowSpd[i] = 0.0024 + Math.random() * 0.0012; // slow drift toward dest
+        const p = pathPoints[Math.min(Math.floor(flowProg[i] * pathPoints.length), pathPoints.length - 1)];
+        positions[i * 3] = p.x; positions[i * 3 + 1] = p.y; positions[i * 3 + 2] = p.z;
     }
-    
+
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    
+
     const material = new THREE.PointsMaterial({
         color: color,
-        size: 30,
+        size: 11,                 // SMALLER (was 30)
         transparent: true,
-        opacity: 0.5,
+        opacity: 0.6,
         blending: THREE.AdditiveBlending,
+        depthWrite: false,
         sizeAttenuation: true
     });
-    
+
     const particles = new THREE.Points(geometry, material);
-    particles.userData = { type: 'discovery_path_particles' };
-    
+    particles.frustumCulled = false;
+    particles.userData = { type: 'discovery_path_particles', flowPts, flowProg, flowSpd };
+
     return particles;
 }
 
@@ -4668,8 +4881,27 @@ function animateDiscoveryPaths() {
 
         if (doPulse) {
             mat.opacity = pulse1;
-            if (path.particles && path.particles.material) {
-                path.particles.material.opacity = pulse2;
+            const parts = path.particles;
+            if (parts && parts.material) {
+                parts.material.opacity = pulse2 + 0.25; // keep flow visible
+                // FLOW: advance each particle along the path toward the dest.
+                const u = parts.userData;
+                if (u && u.flowPts && u.flowPts.length > 1) {
+                    const pts = u.flowPts, prog = u.flowProg, spd = u.flowSpd;
+                    const arr = parts.geometry.attributes.position.array;
+                    const seg = pts.length - 1;
+                    for (let k = 0; k < prog.length; k++) {
+                        prog[k] += spd[k] * 4; // *4: animate runs every 4th frame
+                        if (prog[k] >= 1) prog[k] -= 1;
+                        const f = prog[k] * seg;
+                        const i0 = Math.floor(f), i1 = Math.min(i0 + 1, seg), ft = f - i0;
+                        const a = pts[i0], b = pts[i1];
+                        arr[k * 3] = a.x + (b.x - a.x) * ft;
+                        arr[k * 3 + 1] = a.y + (b.y - a.y) * ft;
+                        arr[k * 3 + 2] = a.z + (b.z - a.z) * ft;
+                    }
+                    parts.geometry.attributes.position.needsUpdate = true;
+                }
             }
         }
 

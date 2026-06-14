@@ -284,9 +284,19 @@ if (gameState.playerDying || gameState.gameOver || gameState.gameOverScreenShown
     
     // Enhanced target information display with special status indicators
     if (targetInfo) {
+        // In demo mode the target + warp readout is already duplicated by the
+        // bottom autopilot banner ("Pursuing X — Nu") and the floating
+        // on-screen text, so hide this line. Manual play keeps it (it's the
+        // player's only target readout).
+        const _demoDriving = (typeof window !== 'undefined' && window.demoPilot && window.demoPilot.driving);
+        if (_demoDriving) {
+            targetInfo.style.display = 'none';
+        } else {
+            targetInfo.style.display = '';
+
         let targetInfoText = 'Target: None';
         let targetInfoClass = 'text-gray-400';
-        
+
         if (gameState.currentTarget) {
             const target = gameState.currentTarget;
             const distance = typeof camera !== 'undefined' ? 
@@ -331,8 +341,9 @@ if (gameState.playerDying || gameState.gameOver || gameState.gameOverScreenShown
         // Apply the final text and class
         targetInfo.textContent = targetInfoText;
         targetInfo.className = targetInfoClass + ' curved-element';
+        } // end manual-play branch
     }
-    
+
     // Update auto-navigate button with enhanced state tracking
     updateAutoNavigateButton();
     
@@ -747,6 +758,71 @@ function populateTargets() {
         div.textContent = 'No nearby objects detected...';
         container.appendChild(div);
     }
+
+    // ── DESTINATIONS — far systems for gravity-whip aiming ──────────────
+    // The nearby list caps at 6,000u, so galaxies and nebula clusters
+    // (20k-45k+) could never be locked — which made the slingshot
+    // unaimable at the places it exists to reach. These are listed
+    // ALWAYS, sorted by distance: lock one, fly into any gravity well,
+    // and the whip launches you toward it.
+    try {
+        const destinations = [];
+        if (typeof planets !== 'undefined') {
+            for (let i = 0; i < planets.length; i++) {
+                const p = planets[i];
+                if (p && p.userData && p.userData.type === 'blackhole' &&
+                    p.userData.isGalacticCore && !p.userData.isCompanionCore &&
+                    typeof p.userData.galaxyId === 'number' && p.userData.galaxyId !== 7) {
+                    destinations.push(p);
+                }
+            }
+        }
+        // Nearest twin nebula cluster (stable synthetic target object)
+        if (typeof findNearestTwinNebulaCenter === 'function' && typeof camera !== 'undefined') {
+            const c = findNearestTwinNebulaCenter(camera.position);
+            if (c) {
+                if (!window._navTwinNebulaDest) {
+                    window._navTwinNebulaDest = {
+                        position: new THREE.Vector3(),
+                        userData: { name: 'Twin Nebula Cluster', type: 'nebula_cluster' }
+                    };
+                }
+                window._navTwinNebulaDest.position.copy(c);
+                destinations.push(window._navTwinNebulaDest);
+            }
+        }
+        if (destinations.length) {
+            destinations.sort((a, b) =>
+                camera.position.distanceTo(a.position) - camera.position.distanceTo(b.position));
+            const header = document.createElement('div');
+            header.className = 'text-xs text-purple-300 font-bold mt-2 mb-1 px-1';
+            header.style.letterSpacing = '2px';
+            header.textContent = '— DESTINATIONS · WHIP / WARP —';
+            container.appendChild(header);
+            destinations.slice(0, 9).forEach(obj => {
+                const dist = camera.position.distanceTo(obj.position);
+                const div = document.createElement('div');
+                div.className = 'planet-card rounded-lg p-2 cursor-auto transition-all duration-300';
+                if (gameState.currentTarget === obj) div.classList.add('selected');
+                const label = obj.userData.type === 'nebula_cluster'
+                    ? 'Nebula Cluster' : 'Galaxy Core';
+                div.innerHTML =
+                    '<div class="flex justify-between items-center">' +
+                    '<div><h4 class="font-bold text-purple-300 text-xs">' + (obj.userData.name || 'Destination') + '</h4>' +
+                    '<p class="text-xs text-gray-400">' + label + '</p></div>' +
+                    '<div class="text-xs text-yellow-400">' + (dist / 1000).toFixed(1) + 'k u</div>' +
+                    '</div>';
+                div.addEventListener('click', (e) => {
+                    e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
+                    if (typeof selectTarget === 'function') selectTarget(obj);
+                    else selectTargetUI(obj);
+                    if (typeof updateUI === 'function') updateUI();
+                    setTimeout(populateTargets, 20);
+                });
+                container.appendChild(div);
+            });
+        }
+    } catch (e) {}
 }
 
 // Local target selection for UI (fallback)
@@ -824,6 +900,26 @@ function detectEnemiesInRegion() {
                     detectorTextNode.textContent = 'Martian Pirates: ';
                 } else {
                     detectorTextNode.textContent = 'Active Hostiles: ';
+                }
+
+                // First contact of this encounter -> prominent alert flash
+                // (same style as the discovery / power-up flashes), naming the
+                // faction (or the boss) that was detected.
+                if (wasHidden && typeof flashEventText === 'function') {
+                    let hostileName = 'UNKNOWN HOSTILES';
+                    if (galaxyIds.length === 1 && galaxyIds[0] >= 0 && typeof galaxyTypes !== 'undefined' && galaxyTypes[galaxyIds[0]]) {
+                        hostileName = String(galaxyTypes[galaxyIds[0]].faction || 'HOSTILES').toUpperCase();
+                    } else if (galaxyIds.includes(-1) || galaxyIds.includes(7)) {
+                        hostileName = 'MARTIAN PIRATES';
+                    }
+                    const bossContact = nearbyEnemies.find(e => e.userData && e.userData.isBoss);
+                    const n = nearbyEnemies.length;
+                    flashEventText(
+                        bossContact ? 'BOSS DETECTED' : 'HOSTILES DETECTED',
+                        bossContact ? '#ff3df0' : '#ff5555',
+                        (bossContact && bossContact.userData.name ? String(bossContact.userData.name).toUpperCase() : hostileName)
+                            + ' · ' + n + (n === 1 ? ' CONTACT' : ' CONTACTS')
+                    );
                 }
             }
         }
@@ -2263,7 +2359,7 @@ function _ensureDistressUI() {
             'width:64px','height:64px','margin:-32px 0 0 -32px',
             'pointer-events:none','z-index:60','display:none',
             'transform-origin:center center',
-            'color:#ffaa00',
+            'color:#ffaa00','opacity:0.8',
             'filter:drop-shadow(0 0 8px rgba(255,170,0,0.9))',
             'font-family:monospace','font-size:11px','text-align:center',
             'line-height:1','user-select:none'
@@ -2294,7 +2390,8 @@ function _ensureDistressUI() {
         const style = document.createElement('style');
         style.id = 'distressIndicatorStyle';
         style.textContent =
-            '@keyframes distressPulse { 0%,100% { transform:scale(1); opacity:0.85 } 50% { transform:scale(1.18); opacity:1 } }' +
+            // Pulse peaks at 0.8 — SOS indicators sit at 80% opacity max
+            '@keyframes distressPulse { 0%,100% { transform:scale(1); opacity:0.65 } 50% { transform:scale(1.18); opacity:0.8 } }' +
             '.distress-map-dot { animation: distressPulse 0.8s ease-in-out infinite }';
         document.head.appendChild(style);
     }
@@ -2449,7 +2546,11 @@ function updateWarpButton() {
     if (nearestAssistPlanet && gameState.energy >= 20 && (!gameState.slingshot || !gameState.slingshot.active)) {
         warpBtn.disabled = false;
         warpBtn.classList.add('space-btn', 'pulse');
-        warpBtn.innerHTML = `<i class="fas fa-rocket mr-2"></i>SLINGSHOT READY - Press ENTER (${nearestAssistPlanet.userData.name})`;
+        // Show the launch destination: locked nav target wins, else "your aim"
+        const _whipDest = (gameState.currentTarget && gameState.currentTarget.userData &&
+                           gameState.currentTarget.userData.name)
+            ? gameState.currentTarget.userData.name : 'your aim';
+        warpBtn.innerHTML = `<i class="fas fa-rocket mr-2"></i>GRAVITY WHIP READY - ENTER (${nearestAssistPlanet.userData.name} → ${_whipDest})`;
         
         if (!warpBtn.classList.contains('assist-ready')) {
             warpBtn.classList.add('assist-ready');

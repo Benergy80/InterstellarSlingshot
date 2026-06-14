@@ -565,6 +565,23 @@
       }
     }
 
+    // BOSS APPEARED: spawnBossForArea sets gameState._pendingBossEngage the
+    // moment a boss spawns. Divert to engage immediately, regardless of range
+    // (the proximity magnet below only reaches 25k). Keep the flag through
+    // warp-locked transits (physics owns the velocity then) and consume it
+    // silently if we're already fighting.
+    if (typeof gameState !== 'undefined' && gameState._pendingBossEngage) {
+      if (ap.phase === 'bossEngage' || ap.phase === 'combat' || ap.phase === 'fightBorg') {
+        gameState._pendingBossEngage = false;
+      } else if (ap.phase !== 'init' && ap.phase !== 'blackHoleWarp' &&
+                 ap.phase !== 'warpToNebulaCluster' && ap.phase !== 'coastToNebulaCluster') {
+        gameState._pendingBossEngage = false;
+        setStatus('Boss signature detected — diverting to engage');
+        transmit('TACTICAL', 'Boss-class signature detected!\nDiverting to engage.');
+        goPhase('bossEngage');
+      }
+    }
+
     // BOSS MAGNET: a live boss-tier enemy within 15,000u pulls the demo
     // into the set-piece fight from any explore/travel phase. Excluded:
     // phases that ARE the fight, warp-locked transits (physics owns the
@@ -580,7 +597,9 @@
         const e = enemies[i];
         if (!e || !e.userData || e.userData.health <= 0) continue;
         if (!e.userData.isBoss && !e.userData.isEliteGuardian) continue;
-        if (_cp.distanceTo(e.position) > 15000) continue;
+        // 25k reach (was 15k): a combat overshoot can strand the demo
+        // 16k+ from a wounded boss — the magnet must still pull it back.
+        if (_cp.distanceTo(e.position) > 25000) continue;
         setStatus('Boss signature detected — diverting to engage');
         transmit('TACTICAL', 'Boss-class signature detected!\nDiverting to engage.');
         goPhase('bossEngage');
@@ -621,6 +640,20 @@
         gameState.emergencyWarp.active && !gameState.emergencyWarp.isJump &&
         !(ap._evadeUntil && Date.now() < ap._evadeUntil)) {
       keys().x = false;
+    }
+
+    // NAV SYSTEM REFLECTS THE DEMO'S TARGET: the demo sets
+    // gameState.currentTarget directly, but the Navigation panel only
+    // re-highlights on a populateTargets() call. Refresh it whenever the
+    // demo's target changes (throttled) so the panel visibly tracks what
+    // the autopilot is engaging — the demo "uses" the nav system.
+    if (typeof populateTargets === 'function' && typeof gameState !== 'undefined') {
+      const _ct = gameState.currentTarget;
+      if (_ct !== ap._lastNavTarget && Date.now() - (ap._lastNavRefresh || 0) > 400) {
+        ap._lastNavTarget = _ct;
+        ap._lastNavRefresh = Date.now();
+        populateTargets();
+      }
     }
 
     tickHUD();
@@ -895,12 +928,12 @@
         nextPhaseAfterKill = 'bossEngage';
       }
 
-      // 40% chance to detour to an asteroid showcase before resuming;
-      // otherwise route directly to the next phase. The next-phase
-      // decision is committed via _mineReturnPhase.
-      if (Math.random() < 0.40 && _findNearestAsteroid(900)) {
+      // 70% chance (was 40) to detour to an asteroid showcase before
+      // resuming, with a wider search; otherwise route directly to the
+      // next phase. The next-phase decision is committed via _mineReturnPhase.
+      if (Math.random() < 0.70 && _findNearestAsteroid(1600)) {
         ap._mineReturnPhase = nextPhaseAfterKill;
-        ap._mineShotsLeft = 3;
+        ap._mineShotsLeft = 4;
         setTimeout(() => { if (ap.active) goPhase('mineAsteroids'); }, 1000);
       } else {
         setTimeout(() => { if (ap.active) goPhase(nextPhaseAfterKill); }, 1000);
@@ -908,15 +941,53 @@
       return;
     }
 
+    // PROACTIVE RECOVERY: if the gap to the target keeps GROWING past 1,500u
+    // for more than 3 s, reorient and W-jump back toward it (don't let the
+    // demo slowly drift away). Brakes the outward drift while turning, then
+    // dashes back once the bow is on the target.
+    if (ap._recTgt !== enemy) { ap._recTgt = enemy; ap._recSince = 0; ap._recPrev = dist; ap._recJump = false; }
+    const _recGrowing = dist > (ap._recPrev || dist) + 0.5;
+    ap._recPrev = dist;
+    if (dist > 1500 && _recGrowing) { if (!ap._recSince) ap._recSince = Date.now(); }
+    else { ap._recSince = 0; }
+    const _recWarpBusy = gameState.emergencyWarp &&
+        (gameState.emergencyWarp.active || gameState.emergencyWarp.transitioning);
+    if (ap._recSince && Date.now() - ap._recSince > 3000) { ap._recJump = true; ap._recSince = 0; }
+    if (ap._recJump && !_recWarpBusy) {
+      if (window.orientTowardsTarget) window.orientTowardsTarget({ position: enemy.position });
+      keys().x = true; // kill the outward drift while turning back
+      let _recF = 1;
+      if (_coneVec && camera) {
+        _coneVec.subVectors(enemy.position, camera.position).normalize();
+        camera.getWorldDirection(_coneFwd);
+        _recF = _coneFwd.dot(_coneVec);
+      }
+      if (_recF > 0.9 && gameState.energy > 25) {
+        ap._recJump = false;
+        gameState._pendingJumpSpeed = 45;
+        gameState._pendingJumpMs = Math.min(6000, Math.max(700, (dist * 0.8 - 45 * 65) / 45 * 16.67));
+        if (window.keys) {
+          window.keys.wDoubleTap = true;
+          setTimeout(() => { if (window.keys) window.keys.wDoubleTap = false; }, 120);
+        }
+        setStatus('Reorient + warp back to target (' + (dist | 0) + ' u)');
+      } else {
+        setStatus('Reorienting on target (' + (dist | 0) + ' u)');
+      }
+      return; // hold this frame for the recovery maneuver
+    }
+
     // Use the enemy's own firing range — that's how close we need to be for
     // a proper dog-fight (enemy fires back at us, we fire at them).
-    // BOSS TIER: hold a much bigger standoff — bosses are 2× scale with
-    // missile volleys (long reach) and spinning laser sweeps that punish
-    // anything inside ~1,200u of the hull.
+    // BOSS TIER: hold a standoff — bosses have missile volleys (long
+    // reach) and spinning laser sweeps that punish point-blank camping.
+    // Halved from the original 1,400u floor per playtest: the demo now
+    // fights from ~700u, inside the sweep radius occasionally (drama)
+    // but with the back-off below still preventing hull-scraping.
     const _bossTier = enemy.userData.isBoss || enemy.userData.isEliteGuardian ||
                       enemy.userData.isBlackHoleGuardian;
     const engageRange = _bossTier
-      ? Math.max(enemy.userData.firingRange || 500, (enemy.userData.hitboxSize || 288) * 1.5, 1400)
+      ? Math.max((enemy.userData.firingRange || 500) * 0.67, (enemy.userData.hitboxSize || 288) * 0.5, 470)
       : (enemy.userData.firingRange || 500);
 
     const speed = gameState.velocityVector ? gameState.velocityVector.length() : 0;
@@ -926,6 +997,33 @@
       setStatus('Pursuing ' + (enemy.userData.name || 'hostile') + ' — ' + (dist | 0) + ' u');
       flyToward(enemy, 2.5);
       pursuitFlightStyle('pursuit');
+
+      // Orient toward the target FIRST (so the jump/warp below never fires
+      // along a stale heading at game start). Compute how aligned the bow is.
+      if (window.orientTowardsTarget) window.orientTowardsTarget({ position: enemy.position });
+      let _facingEnemy = 1;
+      if (_coneVec && camera) {
+        _coneVec.subVectors(enemy.position, camera.position).normalize();
+        camera.getWorldDirection(_coneFwd);
+        _facingEnemy = _coneFwd.dot(_coneVec);
+      }
+
+      // MARTIAN PIRATE LONG INTERCEPT: beyond 2,000u, emergency-warp toward
+      // it (once aligned) and DON'T brake until within 500u. Pirate-only.
+      const _isPirateTgt = !!(enemy.userData.isMartianPirate && !enemy.userData.isVulcanPatrol);
+      const _warpBusyNow = gameState.emergencyWarp &&
+          (gameState.emergencyWarp.active || gameState.emergencyWarp.transitioning);
+      if (_isPirateTgt && dist > 2000 && !_warpBusyNow && _facingEnemy > 0.92 &&
+          canEmergencyWarp() && Date.now() - (ap._lastBHWarp || 0) > 20000) {
+        if (triggerOKeyWarp()) {
+          ap._lastBHWarp = Date.now();
+          ap._pirateNoBrake = true;
+          setStatus('Emergency warp → Martian Pirate (' + (dist | 0) + ' u)');
+          return;
+        }
+      }
+      // Clear the no-brake flag once we're close enough to engage.
+      if (dist <= 500) ap._pirateNoBrake = false;
 
       // Tactical jumps (double-tap W) to shift momentum toward a target.
       // Allowed for anything beyond point-blank (>800u) — short dashes
@@ -937,7 +1035,22 @@
       const JUMP_MIN_DIST = 800;
       const _warpBusy = gameState.emergencyWarp &&
           (gameState.emergencyWarp.active || gameState.emergencyWarp.transitioning);
-      if (dist > JUMP_MIN_DIST && speed < 4 && !_warpBusy &&
+      // How aligned our MOMENTUM (not the bow) is with the target.
+      let _closing = 1;
+      if (speed > 0.5 && gameState.velocityVector && _coneVec && camera) {
+        _coneVec.subVectors(enemy.position, camera.position).normalize();
+        _closing = gameState.velocityVector.clone().normalize().dot(_coneVec);
+      }
+      // Tactical W-jump: dash toward the target. Fires from cruise (speed < 12,
+      // which the old "speed < 4" gate never hit since pursuit cruise sits at
+      // ~4u, so the demo just crawled at far targets) OR at ANY speed when our
+      // momentum isn't already pointed at the hostile (_closing < 0.5) — once
+      // the bow is on target a double-tap W slings that momentum straight onto
+      // it, turning on a dime (works best at high speed). The jump owns the
+      // frame (returns), so the overshoot/runaway brakes below only run when a
+      // jump isn't available (cooldown / misaligned / low energy).
+      if (dist > JUMP_MIN_DIST && (speed < 12 || _closing < 0.5) && !_warpBusy &&
+          _facingEnemy > 0.9 &&
           gameState.energy > 25 &&
           !_isMissileInFlightAt(enemy) &&
           Date.now() - (ap._lastJumpTap || 0) > 4000) {
@@ -954,11 +1067,13 @@
           setTimeout(() => { if (window.keys) window.keys.wDoubleTap = false; }, 120);
         }
         setStatus('Tactical jump — closing on hostile');
+        return;
       }
 
       // Brake if the jump overshoots past the target — detect by
-      // checking if we're moving AWAY from the enemy.
-      if (speed > 2 && gameState.velocityVector) {
+      // checking if we're moving AWAY from the enemy. (Suppressed during a
+      // Martian-pirate emergency-warp intercept until within 500u.)
+      if (!ap._pirateNoBrake && speed > 2 && gameState.velocityVector) {
         _coneVec.subVectors(enemy.position, camera.position).normalize();
         camera.getWorldDirection(_coneFwd);
         const closing = gameState.velocityVector.clone().normalize().dot(_coneVec);
@@ -979,20 +1094,17 @@
       }
       const _prevCD = ap._prevCombatDist;
       ap._prevCombatDist = dist;
-      if (dist > 800 && typeof _prevCD === 'number' &&
+      if (!ap._pirateNoBrake && dist > 800 && typeof _prevCD === 'number' &&
           dist > _prevCD + 0.5 && speed > 1) {
         keys().x = true;
         setStatus('Receding from target — braking (' + (dist | 0) + ' u)');
       }
 
-      // O-key emergency warp for very long pursuits > 2000 u
-      if (dist > 2000 &&
-          canEmergencyWarp() &&
-          Date.now() - (ap._lastBHWarp || 0) > 20000) {
-        if (triggerOKeyWarp()) {
-          ap._lastBHWarp = Date.now();
-        }
-      }
+      // NO long warps in combat. The 15s O-warp used to fire for any
+      // pursuit > 2000u — and once warp-integrity stopped mid-boost
+      // braking, that warp sailed tens of thousands of units past the
+      // target (seen live: demo stranded 16k from a 9-HP boss). The
+      // range-scaled W-jump above already covers combat gap-closing.
     } else {
       // ── ENGAGE: inside weapons range ──────────────────────────────
       setStatus('Engaging ' + (enemy.userData.name || 'hostile') + ' — in weapons range');
@@ -1016,6 +1128,29 @@
       // Brake if sprinting at a slow/stationary target
       if (dist < 500 && speed > 2.5) {
         keys().x = true;
+      }
+    }
+
+    // ── Demo charged-blast showcase ───────────────────────────────────────
+    // Occasionally the demo HOLDS the charge (the wing glow builds for
+    // 1.2-2.8s) then releases a power-scaled blast — so viewers see the
+    // charge mechanic. Starts only in weapons range; one at a time.
+    if (typeof gameState !== 'undefined') {
+      if (!ap._demoChargeUntil && dist <= engageRange && speed < 3 &&
+          Date.now() - (ap._lastDemoCharge || 0) > 14000 && Math.random() < 0.02) {
+        const _dur = 1200 + Math.random() * 1600;
+        gameState._laserChargeStart = Date.now(); // drives the wing glow
+        ap._demoChargeUntil = Date.now() + _dur;
+        ap._lastDemoCharge = Date.now();
+        setStatus('Charging blast…');
+      }
+      if (ap._demoChargeUntil) {
+        if (Date.now() >= ap._demoChargeUntil) {
+          const _pw = Math.min(1, (Date.now() - (gameState._laserChargeStart || Date.now())) / 3000);
+          gameState._laserChargeStart = 0;
+          ap._demoChargeUntil = 0;
+          if (typeof window.fireChargedBlast === 'function') window.fireChargedBlast(_pw);
+        }
       }
     }
 
@@ -1118,6 +1253,54 @@
       goPhase('combat');
       return;
     }
+
+    // ORIENT FIRST, every frame. Without this the phase only set thrusters
+    // (flyToward doesn't steer) and fired W-jumps along the ship's CURRENT
+    // heading — which, after any overshoot, points AWAY from the boss. That
+    // was the demo "flying away from the boss it's targeting": each jump
+    // flung it further out. Now the bow tracks the boss before anything.
+    if (window.orientTowardsTarget) window.orientTowardsTarget({ position: boss.position });
+
+    // Are we actually pointed at the boss yet? (don't thrust/jump until so)
+    let facing = 1;
+    if (_coneVec && camera) {
+      _coneVec.subVectors(boss.position, camera.position).normalize();
+      camera.getWorldDirection(_coneFwd);
+      facing = _coneFwd.dot(_coneVec);
+    }
+
+    const _beSpeed = gameState.velocityVector ? gameState.velocityVector.length() : 0;
+    const _beWarpBusy = gameState.emergencyWarp &&
+        (gameState.emergencyWarp.active || gameState.emergencyWarp.transitioning);
+
+    // Drifting AWAY from the boss (residual velocity from a prior overshoot)
+    // → brake and keep turning, don't add thrust along a bad heading.
+    if (_beSpeed > 2 && facing < 0.2) {
+      keys().x = true;
+      setStatus('Reorienting on boss — braking (' + (dist | 0) + ' u)');
+      return;
+    }
+
+    // Tactical W-jump to close big gaps fast — ONLY when pointed at the
+    // boss. Uses a gentle boost speed (45 vs the 100 emergency boost) sized
+    // to land ~80% of the way, so it closes distance without the 10k+
+    // overshoot the full boost produced.
+    if (dist > 3500 && facing > 0.92 && _beSpeed < 4 && !_beWarpBusy &&
+        gameState.energy > 25 &&
+        Date.now() - (ap._lastJumpTap || 0) > 5000) {
+      ap._lastJumpTap = Date.now();
+      const S = 45;                    // matches _pendingJumpSpeed below
+      const coast = S * 65;            // ~auto-brake coast distance
+      gameState._pendingJumpSpeed = S;
+      gameState._pendingJumpMs = Math.min(5000, Math.max(450, (dist * 0.8 - coast) / S * 16.67));
+      if (window.keys) {
+        window.keys.wDoubleTap = true;
+        setTimeout(() => { if (window.keys) window.keys.wDoubleTap = false; }, 120);
+      }
+      setStatus('Tactical jump → boss (' + (dist | 0) + ' u)');
+      return;
+    }
+
     flyToward(boss, 2.5);
     pursuitFlightStyle('pursuit');
   }
@@ -1216,6 +1399,53 @@
 
     const target = ap.currentNebula;
     const targetPos = target.position;
+
+    const targetName = (target.userData && target.userData.isTwinCluster)
+      ? 'twin nebula center'
+      : ((target.userData && target.userData.name) || 'nebula');
+
+    // ── GRAVITY-WHIP FIRST ────────────────────────────────────────────
+    // The slingshot is the renewable interstellar engine (warp charges
+    // are scarce now). If a usable body is within reach, fly into its
+    // gravity well, lock the nebula as the nav target, and whip. O-key
+    // warp is the fallback when no body is near or the approach stalls.
+    if (!ap._slingshotTried && !(gameState.slingshot && gameState.slingshot.active)) {
+      if (!ap.slingshotPlanet) {
+        ap.slingshotPlanet = pickSlingshotPlanet(targetPos) || null;
+        if (!ap.slingshotPlanet) ap._slingshotTried = true;
+      }
+      const sp = ap.slingshotPlanet;
+      if (sp && gameState.energy > 25) {
+        const spDist = camPos().distanceTo(sp.position);
+        const range = (typeof window.getSlingshotRange === 'function')
+          ? window.getSlingshotRange(sp) * 0.8 : 150;
+        if (spDist > 6500 || t > 14000) {
+          // Body drifted away or approach stalled — fall back to warp
+          ap._slingshotTried = true;
+        } else if (spDist > range) {
+          setStatus('Gravity-whip approach → ' + (sp.userData.name || 'body') +
+                    ' (' + (spDist | 0) + ' u)');
+          // Aim target = the nebula, so the whip launches toward it
+          gameState.currentTarget = target;
+          if (window.orientTowardsTarget) window.orientTowardsTarget(sp);
+          flyToward(sp, 2.0);
+          return;
+        } else {
+          gameState.currentTarget = target;
+          if (typeof triggerSlingshot === 'function' && triggerSlingshot()) {
+            setStatus('GRAVITY WHIP → ' + targetName);
+            transmit('NAVIGATION', 'Gravity whip engaged!\nSlinging around ' +
+                     (sp.userData.name || 'the body') + ' → ' + targetName);
+            ap.warpStartedAt = Date.now();
+            ap.warpsUsed++;
+            goPhase('coastToNebulaCluster');
+            return;
+          }
+          ap._slingshotTried = true; // cooldown/energy refused — warp instead
+        }
+      }
+    }
+
     const aimDummy = { position: targetPos };
     if (window.orientTowardsTarget) window.orientTowardsTarget(aimDummy);
 
@@ -1226,9 +1456,6 @@
       warpAligned = _coneFwd.dot(_coneVec) > 0.85;
     }
 
-    const targetName = (target.userData && target.userData.isTwinCluster)
-      ? 'twin nebula center'
-      : ((target.userData && target.userData.name) || 'nebula');
     setStatus(warpAligned
       ? ('EMERGENCY WARP → ' + targetName)
       : ('Aligning for warp → ' + targetName));
@@ -1242,7 +1469,8 @@
     }
 
     // Hard fallback — punch the warp even if alignment never settles
-    if (t > 8000) {
+    // (extended window when a slingshot approach was in progress)
+    if (t > (ap.slingshotPlanet ? 16000 : 8000)) {
       if (canEmergencyWarp()) triggerOKeyWarp();
       ap.warpStartedAt = Date.now();
       goPhase('coastToNebulaCluster');
@@ -1338,7 +1566,9 @@
             setStatus('Re-routing to closer nebula: ' + (nearer.userData.name || 'nebula'));
           }
         }
-        if (window.orientTowardsTarget) {
+        // Don't fight the gravity whip's on-rails camera while it's
+        // carrying the ship around the body.
+        if (window.orientTowardsTarget && !(gameState.slingshotWhip)) {
           window.orientTowardsTarget({ position: ap.currentNebula.position });
         }
       }
@@ -1380,6 +1610,25 @@
 
     const distToNebula = camPos().distanceTo(ap.currentNebula.position);
     setStatus('Coasting to nebula — ' + (distToNebula | 0) + ' units');
+
+    // Long interstellar tail: once the warp coast is over, don't crawl the
+    // rest of the way on thrusters (the demo was seen cruising ~4000 km/s for
+    // many ly). If we're still far out and no warp is active, re-warp — reset
+    // the slingshot/whip trial so warpToNebulaCluster picks a fresh body or
+    // falls back to an O-key emergency warp.
+    const REWARP_RANGE = 10000;
+    const _warpActiveNow =
+      (gameState.emergencyWarp && (gameState.emergencyWarp.active || gameState.emergencyWarp.transitioning)) ||
+      (gameState.slingshot && gameState.slingshot.active);
+    if (!_warpActiveNow && distToNebula > REWARP_RANGE) {
+      ap._slingshotTried = false;
+      ap.slingshotPlanet = null;
+      ap._prevNebDist = undefined;
+      ap.brakingAfterWarp = false;
+      setStatus('Still ' + (distToNebula | 0) + ' u out — re-warping');
+      goPhase('warpToNebulaCluster');
+      return;
+    }
 
     // If distance to the destination is growing (moving away), brake and
     // reorient toward it instead of continuing on the bad heading.
@@ -2446,6 +2695,15 @@
         if (d < bestDist) { best = p; bestDist = d; }
       }
     }
+    // Interstellar / dense-galaxy-field asteroids (the breakable ones).
+    if (typeof interstellarAsteroids !== 'undefined') {
+      for (let i = 0; i < interstellarAsteroids.length; i++) {
+        const a = interstellarAsteroids[i];
+        if (!a || !a.userData || (a.userData.health !== undefined && a.userData.health <= 0)) continue;
+        const d = cp.distanceTo(a.position);
+        if (d < bestDist) { best = a; bestDist = d; }
+      }
+    }
     if (typeof outerInterstellarSystems !== 'undefined') {
       for (let i = 0; i < outerInterstellarSystems.length; i++) {
         const sys = outerInterstellarSystems[i];
@@ -3395,6 +3653,11 @@
     // path — or abandoned if we picked a brand-new warp destination.
     if (name === 'followDiscoveryPath' || name === 'warpToNebulaCluster') {
       ap._originReturnActive = false;
+    }
+    // Fresh interstellar leg → re-evaluate the gravity-whip option
+    if (name === 'warpToNebulaCluster') {
+      ap._slingshotTried = false;
+      ap.slingshotPlanet = null;
     }
   }
 

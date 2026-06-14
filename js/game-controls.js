@@ -128,6 +128,9 @@ const explosionManager = {
 function _ensureShipThrusterCones(ship, color) {
     if (!ship || ship.userData._thrusters) return;
     if (typeof THREE === 'undefined') return;
+    // Don't measure mid-materialization (hull is at 12% scale; cones baked
+    // now would be permanently undersized). Retried every tick.
+    if (ship.userData._materializing) return;
 
     // Cone size & placement are derived from the model's ACTUAL visible
     // world bounding box, NOT from scale buckets — those broke the
@@ -1909,9 +1912,6 @@ function fireEnemyWeapon(enemy, difficultySettings) {
 
     if (nearestDist <= firingRange) {
         const laserColor = enemy.userData.isBoss ? '#ff4444' : (enemy.userData.isBorgCube || enemy.userData.type === 'borg_drone') ? '#00ff00' : '#ff8800';
-        createLaserBeam(enemyPos, targetPos, laserColor, false);
-
-        playEnemyLaserSound(enemy);
 
         // Reduced damage so combat is survivable while still threatening.
         // Local enemies do 2 dmg base, distant 3-6 dmg. With 4 attackers
@@ -1928,7 +1928,32 @@ function fireEnemyWeapon(enemy, difficultySettings) {
             hitChance = Math.max(0.2, hitChance - accuracyPenalty);
         }
 
-        if (Math.random() < hitChance) {
+        const isHit = Math.random() < hitChance;
+
+        // Draw the bolt. A HIT terminates at the target; a MISS is nudged to
+        // the side and extended well past the target so it streaks on by for a
+        // longer distance instead of stopping dead at the player.
+        let beamEnd = targetPos;
+        if (!isHit && typeof THREE !== 'undefined') {
+            const _aim = targetPos.clone().sub(enemyPos);
+            const _distToTarget = _aim.length() || 1;
+            _aim.normalize();
+            let _perp = new THREE.Vector3().crossVectors(_aim, new THREE.Vector3(0, 1, 0));
+            if (_perp.lengthSq() < 1e-4) _perp.set(1, 0, 0);
+            _perp.normalize();
+            const _side = (Math.random() < 0.5 ? -1 : 1) * (90 + Math.random() * 160);
+            const _vert = (Math.random() - 0.5) * 180;
+            const _overshoot = 4000 + Math.random() * 4500;   // continue well past
+            beamEnd = enemyPos.clone()
+                .addScaledVector(_aim, _distToTarget + _overshoot)
+                .addScaledVector(_perp, _side)
+                .addScaledVector(new THREE.Vector3(0, 1, 0), _vert);
+        }
+        createLaserBeam(enemyPos, beamEnd, laserColor, false);
+
+        playEnemyLaserSound(enemy);
+
+        if (isHit) {
             // If firing at a wingman, damage the wingman and exit
             if (targetWingman && targetWingman.userData) {
                 const wasAlive = targetWingman.userData.health > 0;
@@ -1946,6 +1971,10 @@ function fireEnemyWeapon(enemy, difficultySettings) {
                             'Ally ship lost in combat',
                             true
                         );
+                    }
+                    if (typeof flashEventText === 'function') {
+                        flashEventText('WINGMAN DOWN', '#ff5555',
+                            (targetWingman.userData.name || 'Ally ship') + ' lost in combat');
                     }
                     if (typeof playSound === 'function') {
                         playSound('explosion');
@@ -1972,8 +2001,15 @@ function fireEnemyWeapon(enemy, difficultySettings) {
                             true);
                     }
                 }
-                mv.userData.health = Math.max(0, (mv.userData.health || 30) - damage);
                 if (typeof flashEnemyHit === 'function') flashEnemyHit(mv, damage);
+                if (typeof damageCivilianShip === 'function') {
+                    // Shared civilian-combat entry point: shield bubble,
+                    // evasive flee via the mining AI, distress on the map,
+                    // and destruction handling.
+                    damageCivilianShip(mv, damage, enemy);
+                    return;
+                }
+                mv.userData.health = Math.max(0, (mv.userData.health || 30) - damage);
 
                 if (mv.userData.health <= 0) {
                     mv.userData._destroyed = true;
@@ -2013,7 +2049,7 @@ function fireEnemyWeapon(enemy, difficultySettings) {
                 // velocity per hit (doubled from 5% per playtest).
                 if (typeof camera !== 'undefined' && gameState.velocityVector && enemy && enemy.position) {
                     const _kb = camera.position.clone().sub(enemy.position).normalize();
-                    gameState.velocityVector.addScaledVector(_kb, shieldsActive ? 0.20 : 0.44);
+                    gameState.velocityVector.addScaledVector(_kb, shieldsActive ? 0.10 : 0.22);
                 }
             }
 
@@ -2213,7 +2249,120 @@ function completeTutorial() {
     console.log('Tutorial completed - enemies now active');
 }
 
-function showMissionCommandAlert(title, text, isVictoryMessage = false) {
+// Typewriter reveal for comms text (Mission Command + incoming transmissions)
+// — types in with a soft blip and a blinking block cursor. The timer is stored
+// per-element (el._mcTimer) so independent channels can type simultaneously.
+function _mcBlip() {
+    if (typeof audioContext === 'undefined' || !audioContext || audioContext.state !== 'running') return;
+    const o = audioContext.createOscillator(), g = audioContext.createGain();
+    o.type = 'square';
+    o.frequency.value = 1150 + Math.random() * 500;
+    g.gain.value = 0.012;
+    o.connect(g); g.connect(audioContext.destination);
+    const t = audioContext.currentTime;
+    o.start(t);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.04);
+    o.stop(t + 0.05);
+}
+function _typewriterReveal(el, text, onDone) {
+    if (el._mcTimer) { clearInterval(el._mcTimer); el._mcTimer = null; }
+    const full = String(text == null ? '' : text);
+    el.textContent = '';
+    el.scrollTop = 0;
+    // Very long lore: skip the effect so reads aren't slow (onDone gets true =
+    // "shown instantly" so the caller knows to auto-scroll instead of relying
+    // on the typewriter's follow to have revealed it).
+    if (full.length > 600) { el.textContent = full; if (onDone) onDone(true); return; }
+    let i = 0;
+    // Reveal speed: short lore types char-by-char for feel; medium/long step
+    // faster so reads don't drag (and to absorb timer throttling under load).
+    const step = full.length > 240 ? 3 : (full.length > 110 ? 2 : 1);
+    el.classList.add('mc-typing');
+    const flush = () => {
+        if (el._mcTimer) { clearInterval(el._mcTimer); el._mcTimer = null; }
+        el.textContent = full;
+        el.classList.remove('mc-typing');
+        if (onDone) onDone(false);
+    };
+    el._mcFlush = flush;
+    el._mcTimer = setInterval(() => {
+        i += step;
+        el.textContent = full.slice(0, i);
+        el.scrollTop = el.scrollHeight;   // follow the latest line as it types
+        if (i % 6 < step) { try { _mcBlip(); } catch (e) {} }   // soft blip ~every 6 chars
+        if (i >= full.length) flush();
+    }, 16);
+}
+
+// Shared dismiss for the comms panel: hide, restore the gameplay cursor, flush
+// any deferred achievements, and resume the game if it was paused for a message.
+let _mcDismissTimer = null, _mcScrollRAF = null;
+function _dismissMissionAlert() {
+    if (_mcDismissTimer) { clearTimeout(_mcDismissTimer); _mcDismissTimer = null; }
+    if (_mcScrollRAF) { cancelAnimationFrame(_mcScrollRAF); _mcScrollRAF = null; }
+    const alertElement = document.getElementById('missionCommandAlert');
+    if (alertElement) alertElement.classList.add('hidden');
+    document.body.style.cursor = 'none';
+    if (typeof renderer !== 'undefined' && renderer.domElement) renderer.domElement.style.cursor = 'none';
+    if (window._deferredAchievements && window._deferredAchievements.length) {
+        const queue = window._deferredAchievements.slice();
+        window._deferredAchievements = [];
+        queue.forEach((a, i) => setTimeout(() => showAchievement(a.title, a.description, a.playAchievementSound), 400 * i));
+    }
+    if (typeof gameState !== 'undefined' && gameState.paused) {
+        gameState.paused = false;
+        const pauseBtn = document.getElementById('pauseBtn');
+        const pauseIcon = document.getElementById('pauseIcon');
+        if (pauseBtn) pauseBtn.classList.remove('paused');
+        if (pauseIcon) pauseIcon.className = 'fas fa-pause mr-1';
+    }
+}
+
+// Smoothly scroll a comms element from top to its bottom over `ms`.
+function _mcSmoothScroll(el, distance, ms) {
+    if (_mcScrollRAF) { cancelAnimationFrame(_mcScrollRAF); _mcScrollRAF = null; }
+    let start = null;
+    const step = (now) => {
+        if (start === null) start = now;
+        const t = Math.min(1, (now - start) / ms);
+        el.scrollTop = distance * t;
+        if (t < 1) _mcScrollRAF = requestAnimationFrame(step);
+    };
+    _mcScrollRAF = requestAnimationFrame(step);
+}
+
+// After a message finishes revealing: if it overflows the 2-line window, wait
+// ~1s then slowly auto-scroll to the bottom so the whole message displays
+// without the player touching the mouse. NO auto-dismiss — messages persist
+// until SKIP (or, for tutorial, until the next scheduled step replaces them).
+function _scheduleCommsAutoScroll(textEl) {
+    if (_mcScrollRAF) { cancelAnimationFrame(_mcScrollRAF); _mcScrollRAF = null; }
+    const overflow = Math.max(0, textEl.scrollHeight - textEl.clientHeight);
+    if (overflow <= 2) return;
+    textEl.scrollTop = 0;
+    const scrollMs = Math.min(16000, Math.max(2600, overflow * 28));
+    setTimeout(() => _mcSmoothScroll(textEl, overflow, scrollMs), 1000);
+}
+
+// Auto-dismiss a (non-tutorial) message once it's been read: a long message
+// that auto-scrolls is held until the scroll finishes + a beat; a short one
+// gets a read beat scaled to its length. No button — it just disappears.
+function _scheduleCommsAutoDismiss(textEl, overflowed) {
+    if (_mcDismissTimer) { clearTimeout(_mcDismissTimer); _mcDismissTimer = null; }
+    let delay;
+    if (overflowed) {
+        const overflow = Math.max(0, textEl.scrollHeight - textEl.clientHeight);
+        const scrollMs = Math.min(16000, Math.max(2600, overflow * 28));
+        delay = 1000 + scrollMs + 2600;   // 1s pre-scroll pause + scroll + read beat
+    } else {
+        delay = Math.max(5000, (textEl.textContent || '').length * 55);
+    }
+    _mcDismissTimer = setTimeout(_dismissMissionAlert, delay);
+}
+// Expose for other modules (e.g. showIncomingTransmission in game-objects.js).
+if (typeof window !== 'undefined') window.__commsTypewriter = _typewriterReveal;
+
+function showMissionCommandAlert(title, text, isVictoryMessage = false, channelColor = null) {
     const alertElement = document.getElementById('missionCommandAlert');
     const titleElement = alertElement ? alertElement.querySelector('h2') : null;
     const textElement = document.getElementById('missionCommandText');
@@ -2230,16 +2379,49 @@ function showMissionCommandAlert(title, text, isVictoryMessage = false) {
     }
     
     titleElement.textContent = title;
-    textElement.textContent = text;
+    // Channel colour: default is mission-control green (from CSS). A transmission
+    // can pass a colour (cyan lore / yellow distress / orange ship-to-ship) and
+    // we override the title + body inline (caret inherits via currentColor).
+    if (channelColor) {
+        const glow = `0 0 8px ${channelColor}, 0 0 16px ${channelColor}88, 0 2px 5px rgba(0,0,0,0.95)`;
+        titleElement.style.setProperty('color', channelColor, 'important');
+        titleElement.style.setProperty('text-shadow', glow, 'important');
+        textElement.style.setProperty('color', channelColor, 'important');
+        textElement.style.setProperty('text-shadow', glow, 'important');
+    } else {
+        // Reset to the green default so a prior coloured message doesn't linger.
+        titleElement.style.removeProperty('color');
+        titleElement.style.removeProperty('text-shadow');
+        textElement.style.removeProperty('color');
+        textElement.style.removeProperty('text-shadow');
+    }
+    if (_mcScrollRAF) { cancelAnimationFrame(_mcScrollRAF); _mcScrollRAF = null; }
+    if (_mcDismissTimer) { clearTimeout(_mcDismissTimer); _mcDismissTimer = null; }
     alertElement.classList.remove('hidden');
+    // Reveal style by length: a message that fits the 2-line window types in
+    // with the block cursor; a longer one appears at once then, after ~1s,
+    // slowly auto-scrolls so the whole thing displays hands-free. (Measuring is
+    // synchronous here — set full text, read scrollHeight, decide — so there's
+    // no visible flash before the typewriter clears it.)
+    textElement.classList.remove('mc-typing');
+    textElement.textContent = (text == null ? '' : String(text));
+    textElement.scrollTop = 0;
+    const commsOverflow = textElement.scrollHeight > textElement.clientHeight + 2;
+    if (commsOverflow) {
+        _scheduleCommsAutoScroll(textElement);
+    } else {
+        _typewriterReveal(textElement, text);
+    }
     
     // Get or create button container
     const buttonContainer = alertElement.querySelector('.text-center');
     if (!buttonContainer) return;
     
-    // Clear existing buttons
-    const existingButtons = buttonContainer.querySelectorAll('button');
-    existingButtons.forEach(btn => btn.remove());
+    // Clear previous button ROWS entirely — not just the <button>s. The
+    // wrapper divs (each with its own margin-top) were accumulating on every
+    // message, pushing the buttons down and the text up. Remove the rows too.
+    buttonContainer.querySelectorAll('.mc-btnrow').forEach(row => row.remove());
+    buttonContainer.querySelectorAll('button').forEach(btn => btn.remove());
     
     // Determine if this is a tutorial message
     const isTutorialActive = tutorialSystem && tutorialSystem.active && !tutorialSystem.completed;
@@ -2248,212 +2430,47 @@ function showMissionCommandAlert(title, text, isVictoryMessage = false) {
     const isFinalTutorialMessage = title === "Final Orders";
     
     if (isTutorialActive && !isVictoryMessage) {
-    // ⭐ Create button container with flex layout for OK and SKIP buttons
-    const tutorialButtonContainer = document.createElement('div');
-    tutorialButtonContainer.className = 'flex gap-4 mt-4';
-    tutorialButtonContainer.style.cssText = `
-        display: flex;
-        gap: 1rem;
-        margin-top: 1rem;
-        justify-content: center;
-        flex-wrap: wrap;
-    `;
+        // Tutorial: a single SKIP TUTORIAL button (no UNDERSTOOD — the tutorial
+        // auto-advances on its own ~10s schedule; the message just persists
+        // until the next step replaces it).
+        const row = document.createElement('div');
+        row.className = 'mc-btnrow';
+        row.style.cssText = 'display:flex;justify-content:center;margin-top:1rem;width:100%;';
 
-    // ⭐ Create UNDERSTOOD button to immediately advance to next tutorial message
-    const understoodButton = document.createElement('button');
-    understoodButton.id = 'missionCommandUnderstood';
-    understoodButton.className = 'space-btn rounded px-6 py-2';
-    understoodButton.innerHTML = '<i class="fas fa-check mr-2"></i>UNDERSTOOD';
-
-    // Apply mobile button styling only on mobile devices
-    const isMobile = window.innerWidth <= 768 || ('ontouchstart' in window && window.innerWidth <= 1024);
-
-    if (isMobile) {
-        understoodButton.style.cssText = `
-            background: rgba(0, 0, 0, 0.7);
-            border: 1px solid rgba(0, 150, 255, 0.5);
-            border-radius: 4px;
-            color: #00ff88;
-            font-family: 'Orbitron', monospace;
-            font-weight: 600;
-            box-shadow: 0 0 10px rgba(0, 150, 255, 0.3), inset 0 0 10px rgba(0, 150, 255, 0.1);
-            text-shadow: 0 0 8px rgba(0,255,136,0.6), 0 0 16px rgba(0,255,136,0.3);
-            opacity: 0.7;
-            transition: all 0.2s ease;
+        const skipButton = document.createElement('button');
+        skipButton.id = 'missionCommandSkip';
+        skipButton.className = 'space-btn rounded px-6 py-2';
+        skipButton.innerHTML = '<i class="fas fa-forward mr-2"></i>SKIP TUTORIAL';
+        skipButton.style.cssText = `
+            background: linear-gradient(135deg, rgba(255, 150, 0, 0.5), rgba(200, 100, 0, 0.5));
+            border-color: rgba(255, 200, 0, 0.6);
             pointer-events: auto;
             touch-action: manipulation;
-            -webkit-tap-highlight-color: rgba(0, 150, 255, 0.3);
+            -webkit-tap-highlight-color: rgba(255, 150, 0, 0.3);
             cursor: pointer;
-            flex: 1;
-            min-width: 120px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
+            white-space: nowrap;
+            min-width: 140px;
         `;
+        row.appendChild(skipButton);
+
+        const handleSkip = () => {
+            _dismissMissionAlert();
+            if (tutorialSystem.active) {
+                tutorialSystem.active = false;
+                completeTutorial();
+                showAchievement('Tutorial Skipped', 'All hostile forces are now active!');
+            }
+        };
+        skipButton.onclick = handleSkip;
+        skipButton.ontouchend = (e) => { e.preventDefault(); e.stopPropagation(); handleSkip(); };
+
+        buttonContainer.appendChild(row);
     } else {
-        // Desktop: use default space-btn styling from CSS
-        understoodButton.style.cssText = `
-            pointer-events: auto;
-            touch-action: manipulation;
-            cursor: pointer;
-            flex: 1;
-            min-width: 120px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        `;
+        // Lore / transmission / victory: no button — these messages reveal
+        // (typing or slow auto-scroll), then disappear on their own after a
+        // read beat, like a normal transmission.
+        _scheduleCommsAutoDismiss(textElement, commsOverflow);
     }
-    tutorialButtonContainer.appendChild(understoodButton);
-
-    // ⭐ UNDERSTOOD button dismisses current and immediately shows next tutorial message
-    const handleUnderstood = () => {
-        alertElement.classList.add('hidden');
-        // Restore hidden cursor for gameplay
-        document.body.style.cursor = 'none';
-        if (typeof renderer !== 'undefined' && renderer.domElement) {
-            renderer.domElement.style.cursor = 'none';
-        }
-        // Immediately show next tutorial message
-        if (typeof showNextTutorialMessage === 'function') {
-            showNextTutorialMessage();
-        }
-    };
-
-    understoodButton.onclick = handleUnderstood;
-    understoodButton.ontouchend = (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        handleUnderstood();
-    };
-
-    // ⭐ Create orange SKIP TUTORIAL button
-    const skipButton = document.createElement('button');
-    skipButton.id = 'missionCommandSkip';
-    skipButton.className = 'space-btn rounded px-6 py-2';
-    skipButton.innerHTML = '<i class="fas fa-forward mr-2"></i>SKIP TUTORIAL';
-    skipButton.style.cssText = `
-        background: linear-gradient(135deg, rgba(255, 150, 0, 0.5), rgba(200, 100, 0, 0.5));
-        border-color: rgba(255, 200, 0, 0.6);
-        pointer-events: auto;
-        touch-action: manipulation;
-        -webkit-tap-highlight-color: rgba(255, 150, 0, 0.3);
-        cursor: pointer;
-        flex: 1;
-        min-width: 120px;
-    `;
-    tutorialButtonContainer.appendChild(skipButton);
-
-    // SKIP TUTORIAL button immediately completes tutorial
-    const handleSkip = () => {
-        alertElement.classList.add('hidden');
-        // Restore hidden cursor for gameplay
-        document.body.style.cursor = 'none';
-        if (typeof renderer !== 'undefined' && renderer.domElement) {
-            renderer.domElement.style.cursor = 'none';
-        }
-
-        // Skip ALL remaining tutorial messages
-        if (tutorialSystem.active) {
-            tutorialSystem.active = false;
-            completeTutorial();
-            showAchievement('Tutorial Skipped', 'All hostile forces are now active!');
-        }
-    };
-
-    skipButton.onclick = handleSkip;
-    skipButton.ontouchend = (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        handleSkip();
-    };
-
-    // Add the button container to the main container
-    buttonContainer.appendChild(tutorialButtonContainer);
-} else {
-    // Create centered button container for lore/victory messages
-    const loreButtonContainer = document.createElement('div');
-    loreButtonContainer.style.cssText = `
-        display: flex;
-        justify-content: center;
-        margin-top: 1.5rem;
-        width: 100%;
-    `;
-
-    // Create UNDERSTOOD button for victory messages and non-tutorial messages
-    const understoodButton = document.createElement('button');
-    understoodButton.id = 'missionCommandUnderstood';
-    understoodButton.className = 'space-btn rounded px-6 py-2';
-    understoodButton.innerHTML = '<i class="fas fa-check mr-2"></i>UNDERSTOOD';
-
-    // Apply mobile button styling only on mobile devices
-    const isMobile = window.innerWidth <= 768 || ('ontouchstart' in window && window.innerWidth <= 1024);
-
-    if (isMobile) {
-        understoodButton.style.cssText = `
-            background: rgba(0, 0, 0, 0.7);
-            border: 1px solid rgba(0, 255, 255, 0.4);
-            border-radius: 4px;
-            color: #00ffff;
-            font-family: 'Orbitron', monospace;
-            font-weight: 600;
-            box-shadow: 0 0 10px rgba(0, 255, 255, 0.3), inset 0 0 10px rgba(0, 255, 255, 0.1);
-            opacity: 0.7;
-            transition: all 0.2s ease;
-            pointer-events: auto;
-            touch-action: manipulation;
-            -webkit-tap-highlight-color: rgba(0, 255, 255, 0.3);
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        `;
-    } else {
-        // Desktop: use default space-btn styling from CSS
-        understoodButton.style.cssText = `
-            pointer-events: auto;
-            touch-action: manipulation;
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        `;
-    }
-    loreButtonContainer.appendChild(understoodButton);
-    buttonContainer.appendChild(loreButtonContainer);
-    
-    // UNDERSTOOD button dismisses the message and flushes any deferred achievements
-    const handleUnderstood = () => {
-        alertElement.classList.add('hidden');
-        // Restore hidden cursor for gameplay
-        document.body.style.cursor = 'none';
-        if (typeof renderer !== 'undefined' && renderer.domElement) {
-            renderer.domElement.style.cursor = 'none';
-        }
-        // Flush queued achievements (scattered factions, etc.) staggered
-        if (window._deferredAchievements && window._deferredAchievements.length) {
-            const queue = window._deferredAchievements.slice();
-            window._deferredAchievements = [];
-            queue.forEach((a, i) => {
-                setTimeout(() => showAchievement(a.title, a.description, a.playAchievementSound), 400 * i);
-            });
-        }
-        // Resume the game if it was paused for this transmission
-        if (typeof gameState !== 'undefined' && gameState.paused) {
-            gameState.paused = false;
-            const pauseBtn = document.getElementById('pauseBtn');
-            const pauseIcon = document.getElementById('pauseIcon');
-            if (pauseBtn) pauseBtn.classList.remove('paused');
-            if (pauseIcon) pauseIcon.className = 'fas fa-pause mr-1';
-        }
-    };
-
-    understoodButton.onclick = handleUnderstood;
-    understoodButton.ontouchend = (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        handleUnderstood();
-    };
-}
 
     // Only play sound if not suppressed
 if (typeof gameState === 'undefined' || !gameState.suppressAchievements) {
@@ -2462,143 +2479,24 @@ if (typeof gameState === 'undefined' || !gameState.suppressAchievements) {
 }
 
 // =============================================================================
-// INCOMING TRANSMISSION PROMPT - READ / SKIP choice for discovery missions
-// Shows a brief notification; READ pauses the game and displays full lore.
+// INCOMING TRANSMISSION — delivers a discovery/comms message straight to the
+// chrome-less comms panel (no separate READ/SKIP prompt). The discovery path
+// opens on its own when the area is found; here the lore just scrolls in below,
+// colour-coded by channel, and stays up until the player clicks SKIP.
 // =============================================================================
 
 function showIncomingTransmission(title, text, factionColor) {
-    // Remove any existing prompt
-    const existing = document.getElementById('incomingTransmissionPrompt');
-    if (existing) existing.remove();
+    // Classify the comms channel -> colour. distress=yellow, lore=cyan,
+    // ship-to-ship=orange. (Direct command briefings stay mission-control green.)
+    let channel;
+    if (factionColor === true || /distress|mayday|under\s*(attack|fire)/i.test(String(title))) channel = 'distress';
+    else if (/mission control/i.test(String(title))) channel = 'lore';
+    else channel = 'ship';
+    const colorHex = { distress: '#ffd633', lore: '#00e5ff', ship: '#ff9a33' }[channel];
 
-    const colorHex = factionColor
-        ? '#' + new THREE.Color(factionColor).getHexString()
-        : '#00ff88';
-
-    const prompt = document.createElement('div');
-    prompt.id = 'incomingTransmissionPrompt';
-    prompt.style.cssText = `
-        position: fixed;
-        top: 12%;
-        left: 50%;
-        transform: translateX(-50%);
-        z-index: 1000;
-        background: linear-gradient(135deg, rgba(15, 23, 42, 0.85) 0%, rgba(30, 41, 59, 0.85) 100%);
-        border: 1px solid ${colorHex};
-        border-radius: 8px;
-        padding: 16px 28px;
-        text-align: center;
-        box-shadow: 0 0 20px ${colorHex}44, inset 0 0 15px ${colorHex}22;
-        font-family: 'Orbitron', monospace;
-        animation: transmissionPulse 1.5s ease-in-out infinite;
-        pointer-events: auto;
-        max-width: 420px;
-        width: 90%;
-        backdrop-filter: blur(4px);
-        -webkit-backdrop-filter: blur(4px);
-    `;
-
-    prompt.innerHTML = `
-        <div style="color: ${colorHex}; font-size: 0.75rem; letter-spacing: 3px; margin-bottom: 6px; opacity: 0.8;">
-            INCOMING TRANSMISSION
-        </div>
-        <div style="color: #ffffff; font-size: 1rem; font-weight: 700; margin-bottom: 14px; letter-spacing: 1px;
-                     text-shadow: 0 0 8px ${colorHex}88;">
-            ${title}
-        </div>
-        <div style="display: flex; gap: 12px; justify-content: center;">
-            <button id="transmissionRead" style="
-                background: rgba(0, 200, 100, 0.2);
-                border: 1px solid rgba(0, 255, 136, 0.6);
-                border-radius: 4px;
-                color: #00ff88;
-                font-family: 'Orbitron', monospace;
-                font-size: 0.85rem;
-                font-weight: 600;
-                padding: 8px 24px;
-                cursor: pointer;
-                letter-spacing: 2px;
-                text-shadow: 0 0 8px rgba(0,255,136,0.5);
-                transition: all 0.2s ease;
-                pointer-events: auto;
-                touch-action: manipulation;
-            ">READ</button>
-            <button id="transmissionSkip" style="
-                background: rgba(255, 150, 0, 0.15);
-                border: 1px solid rgba(255, 200, 0, 0.4);
-                border-radius: 4px;
-                color: #ffcc44;
-                font-family: 'Orbitron', monospace;
-                font-size: 0.85rem;
-                font-weight: 600;
-                padding: 8px 24px;
-                cursor: pointer;
-                letter-spacing: 2px;
-                text-shadow: 0 0 8px rgba(255,200,0,0.4);
-                transition: all 0.2s ease;
-                pointer-events: auto;
-                touch-action: manipulation;
-            ">SKIP</button>
-        </div>
-    `;
-
-    // Inject keyframe animation if not already present
-    if (!document.getElementById('transmissionPulseStyle')) {
-        const style = document.createElement('style');
-        style.id = 'transmissionPulseStyle';
-        style.textContent = `
-            @keyframes transmissionPulse {
-                0%, 100% { box-shadow: 0 0 20px ${colorHex}44, inset 0 0 15px ${colorHex}22; }
-                50% { box-shadow: 0 0 30px ${colorHex}66, inset 0 0 20px ${colorHex}33; }
-            }
-        `;
-        document.head.appendChild(style);
-    }
-
-    document.body.appendChild(prompt);
-
-    // Play a short comm-link beep
-    if (typeof playSound === 'function') {
-        playSound('achievement');
-    }
-
-    const dismiss = () => {
-        prompt.remove();
-        // Flush deferred achievements unless a Mission Command alert is also open
-        if (!document.getElementById('missionCommandAlert') &&
-            window._deferredAchievements && window._deferredAchievements.length) {
-            const queue = window._deferredAchievements.slice();
-            window._deferredAchievements = [];
-            queue.forEach((a, i) => {
-                setTimeout(() => showAchievement(a.title, a.description, a.playAchievementSound), 400 * i);
-            });
-        }
-    };
-
-    // READ: show full lore — game continues running in background
-    const handleRead = () => {
-        dismiss();
-        showMissionCommandAlert(title, text);
-    };
-
-    // SKIP: dismiss and keep playing
-    const handleSkip = () => {
-        dismiss();
-    };
-
-    const readBtn = prompt.querySelector('#transmissionRead');
-    const skipBtn = prompt.querySelector('#transmissionSkip');
-
-    readBtn.onclick = handleRead;
-    readBtn.ontouchend = (e) => { e.preventDefault(); e.stopPropagation(); handleRead(); };
-    skipBtn.onclick = handleSkip;
-    skipBtn.ontouchend = (e) => { e.preventDefault(); e.stopPropagation(); handleSkip(); };
-
-    // Auto-dismiss after 15 seconds if no action taken
-    const autoTimeout = setTimeout(dismiss, 15000);
-    // Clear timeout on any interaction
-    readBtn.addEventListener('click', () => clearTimeout(autoTimeout));
-    skipBtn.addEventListener('click', () => clearTimeout(autoTimeout));
+    // Short comm-link beep, then deliver straight to the comms panel.
+    if (typeof playSound === 'function') playSound('achievement');
+    showMissionCommandAlert(title, text, false, colorHex);
 }
 
 // =============================================================================
@@ -4547,10 +4445,19 @@ function createThirdPersonLasers(playerShip, targetPosition) {
         // Create muzzle flash at wing tips
         createMuzzleFlash(leftWing.clone());
         createMuzzleFlash(rightWing.clone());
-        
-        // Create full-length static laser beams
-        createThirdPersonBeam(leftWing, targetPosition, '#00ff96');
-        createThirdPersonBeam(rightWing, targetPosition, '#00ff96');
+
+        // Charged blast = YELLOW beams from the wings + bright bolts from the
+        // CHARGE CENTER (between the two wing glows), scaled by charge power.
+        const _charged = (typeof gameState !== 'undefined' && gameState._chargedShot);
+        const _beamCol = _charged ? '#ffdd33' : '#00ff96';
+        createThirdPersonBeam(leftWing, targetPosition, _beamCol);
+        createThirdPersonBeam(rightWing, targetPosition, _beamCol);
+        if (_charged) {
+            const _center = leftWing.clone().add(rightWing).multiplyScalar(0.5);
+            createMuzzleFlash(_center.clone());
+            const _bolts = 1 + Math.round((gameState._chargedPower || 0.5) * 3);
+            for (let _b = 0; _b < _bolts; _b++) createThirdPersonBeam(_center, targetPosition, '#ffee66');
+        }
         
     } catch (error) {
         console.warn('Failed to create third-person lasers:', error);
@@ -4893,6 +4800,13 @@ function _ensureEnemyShield(enemy) {
     if (!enemy || !enemy.userData || enemy.userData._shieldMesh ||
         enemy.userData.shieldBroken || typeof THREE === 'undefined') return;
 
+    // MATERIALIZATION RACE GUARD: spawn-in shrinks the ship to 12% scale
+    // for ~0.8s. A shield created in that window is sized against the tiny
+    // hull and parent scale, then inflates 8x when the ship scales back up
+    // — the "giant shield" bug on discovery-path bosses. Wait it out; this
+    // is retried every behavior tick.
+    if (enemy.userData._materializing) return;
+
     // Size from the VISIBLE hull bounding box in WORLD units (skip the
     // oversized invisible hitbox sphere, glow + cone layers), exactly
     // like _ensureShipThrusterCones — enemy GLB models are scaled ~48×,
@@ -4928,11 +4842,11 @@ function _ensureEnemyShield(enemy) {
         const _ud1 = enemy.userData || {};
         const _bigShield = _ud1.isBoss || _ud1.isBossSupport ||
                            _ud1.isEliteGuardian || _ud1.isBlackHoleGuardian;
-        // Big-shield ceiling raised 320 → 640: bosses are now 2× scale and
-        // the bubble (plus the shard shatter, which reads _shieldRadius)
-        // must scale with the doubled hull instead of clamping below it.
+        // Big-shield ceiling 360 (was briefly 640 for the 2×-boss
+        // experiment; with boss scale reverted, 640 left guardians inside
+        // screen-filling orange spheres whenever the player got close).
         const minR = _bigShield ? 45 : 22;
-        const maxR = _bigShield ? 640 : 140;
+        const maxR = _bigShield ? 360 : 140;
         worldR = Math.max(minR, Math.min(worldR, maxR));
     }
 
@@ -4968,6 +4882,14 @@ function _setEnemyShieldEngaged(enemy, engaged) {
     const sm = ud._shieldMesh;
     if (!sm) return;
     ud.shieldActive = !!engaged;
+    // Camera INSIDE the bubble → hide it. A DoubleSide additive sphere
+    // viewed from within washes the whole screen orange (seen at close
+    // boss standoff); the shield still works, it just doesn't render.
+    if (typeof camera !== 'undefined' &&
+        camera.position.distanceTo(enemy.position) < (ud._shieldRadius || 100) * 1.1) {
+        sm.material.opacity = 0;
+        return;
+    }
     if (flashing) {
         sm.material.color.setHex(0xff2200);
         sm.material.opacity = 0.6;
@@ -5578,10 +5500,16 @@ function initializeControlButtons() {
 }
         if (e.key === 'Alt' || e.altKey) {
             keys.alt = true;
-            // Fire weapon on Alt key press
-            if (!gameState.gameOver && gameState.gameStarted) {
-                resumeAudioContext();
-                fireWeapon();
+            // HOLD-TO-CHARGE: the first press fires one tap shot and starts
+            // the charge timer; key-repeat while held does NOT rapid-fire —
+            // it builds the charge (a glow grows on the wings) released on
+            // keyup as a blast scaled by hold time (max 3s).
+            if (!e.repeat) {
+                gameState._laserChargeStart = Date.now();
+                if (!gameState.gameOver && gameState.gameStarted) {
+                    resumeAudioContext();
+                    fireWeapon();
+                }
             }
         }
         if (e.key === 'Shift') {
@@ -5706,6 +5634,12 @@ if (e.key === 'Tab') {
         }
         if (e.key === 'Alt' || e.altKey) {
             keys.alt = false;
+            // Release → charged blast scaled by hold time (300ms..3s → 0..1).
+            const _held = Date.now() - (gameState._laserChargeStart || Date.now());
+            gameState._laserChargeStart = 0;
+            if (_held >= 300 && typeof fireChargedBlast === 'function') {
+                fireChargedBlast(Math.min(1, _held / 3000));
+            }
         }
         if (key === 'x') keys.x = false;
         if (key === 'b') keys.b = false;
@@ -6047,6 +5981,26 @@ setTimeout(() => {
     
     console.log('âœ… Enhanced event listeners setup complete');
 
+// CHARGED BLAST: hold Alt to charge (glow builds on the wings), release for a
+// blast whose damage/energy/beam scale with the charge `power` (0..1 = up to
+// 3s held). Reuses all of fireWeapon's targeting via the _chargedShot flag.
+function fireChargedBlast(power) {
+    if (typeof gameState === 'undefined' || gameState.gameOver || !gameState.gameStarted) return;
+    power = Math.max(0, Math.min(1, (typeof power === 'number') ? power : 1));
+    const cost = Math.round(12 + power * 28); // 12 (light) .. 40 (max)
+    if (!gameState.weapons || gameState.weapons.energy < cost) return;
+    gameState._chargedShot = true;
+    gameState._chargedPower = power;
+    gameState.weapons.cooldown = 0; // the blast fires even mid-cooldown
+    if (typeof playSound === 'function') { try { playSound('weapon'); } catch (e) {} }
+    if (window.arcade) window.arcade.flash('rgba(255,220,60,' + (0.4 + power * 0.5) + ')', 0.3 + power * 0.5);
+    fireWeapon(); // reads + clears _chargedShot / _chargedPower
+    if (typeof flashArcadeText === 'function') {
+        flashArcadeText(power > 0.8 ? 'MAX CHARGE BLAST!' : 'CHARGED BLAST!', power > 0.8 ? 5 : (power > 0.5 ? 4 : 3));
+    }
+}
+if (typeof window !== 'undefined') window.fireChargedBlast = fireChargedBlast;
+
 function checkWeaponHits(targetPosition) {
     const hitRadius = 300;  // Increased from 150 to 300 for better mouse aiming hit detection (2x larger hitboxes)
 
@@ -6063,10 +6017,20 @@ function checkWeaponHits(targetPosition) {
                 drone.getWorldPosition(droneWorldPos);
                 const distance = droneWorldPos.distanceTo(targetPosition);
                 if (distance < hitRadius) { // Normal hit radius
-                    const damage = 1;
+                    const damage = (typeof gameState !== 'undefined' && gameState._chargedShot) ? Math.round(2 + (gameState._chargedPower || 0.5) * 6) : 1;
                     drone.userData.health -= damage;
 
                     flashEnemyHit(drone, damage);
+                    // Borg fights happen at long range — float a HIT confirm
+                    // (kill-text style) so distant shots visibly land.
+                    if (typeof spawnKillText === 'function' &&
+                        Date.now() - (drone.userData._lastHitTextAt || 0) > 400) {
+                        drone.userData._lastHitTextAt = Date.now();
+                        spawnKillText(droneWorldPos, 'HIT', '#88ff88');
+                    }
+                    if (typeof createHitSparks === 'function') {
+                        createHitSparks(droneWorldPos, 0x88ff88);
+                    }
                     playSound('weapon');
                     const maxHp = drone.userData.maxHealth || 100;
                     showAchievement('BORG Hit!', `${drone.userData.name} damaged (${drone.userData.health}/${maxHp} HP)`);
@@ -6152,7 +6116,7 @@ function checkWeaponHits(targetPosition) {
                     _activateOnDamage(enemy);
                     return; // shield ate the shot
                 }
-                const damage = 1; // Standard damage
+                const damage = (typeof gameState !== 'undefined' && gameState._chargedShot) ? Math.round(2 + (gameState._chargedPower || 0.5) * 6) : 1; // charged blast = 4x
                 enemy.userData.health -= damage;
                 enemy.userData.lastHitTime = Date.now();
                 _activateOnDamage(enemy);
@@ -6163,14 +6127,34 @@ function checkWeaponHits(targetPosition) {
                 // the moved spot), which smooths it into a visible recoil.
                 if (typeof camera !== 'undefined' && enemy.position) {
                     const _kb = enemy.position.clone().sub(camera.position).normalize();
-                    enemy.position.addScaledVector(_kb, 12);
+                    enemy.position.addScaledVector(_kb, 6);
                     if (enemy.userData.velocity && enemy.userData.velocity.addScaledVector) {
-                        enemy.userData.velocity.addScaledVector(_kb, 0.3);
+                        enemy.userData.velocity.addScaledVector(_kb, 0.15);
                     }
                 }
 
                 // ENHANCED: Use improved hit effect with color changes
                 flashEnemyHit(enemy, damage);
+                // Impact sparks at the hit point (pairs with the knockback)
+                if (typeof createHitSparks === 'function') {
+                    createHitSparks(targetPosition || enemy.position, enemy.userData.galaxyColor || 0xffcc66);
+                }
+                // Floating HIT marker on EVERY hit (kill-text style), with a
+                // per-enemy throttle so rapid auto-fire on one target can't
+                // stack text. Was gated to >700u; players liked it, so it now
+                // pops at all ranges. Occasional "CRIT!" for variety/punch.
+                if (typeof spawnKillText === 'function' &&
+                    Date.now() - (enemy.userData._lastHitTextAt || 0) > 300) {
+                    enemy.userData._lastHitTextAt = Date.now();
+                    const crit = Math.random() < 0.18;
+                    // Size scales with proximity — a close hit reads big.
+                    const _hd = camera.position.distanceTo(enemy.position);
+                    const _hs = (typeof killTextSizeForDistance === 'function') ? killTextSizeForDistance(_hd) : 15;
+                    // HIT and CRIT share the size (matches +MISSILE at mid range);
+                    // CRIT is distinguished by its word + orange color, not size.
+                    spawnKillText(enemy.position, crit ? 'CRIT!' : 'HIT',
+                        crit ? '#ff8844' : '#ffee88', _hs);
+                }
                 playSound('weapon');
                 showAchievement('Target Hit!', `Damaged ${enemy.userData.name} (${enemy.userData.health}/${enemy.userData.maxHealth} HP)`);
                 
@@ -6271,6 +6255,23 @@ if (enemy.userData.health <= 0) {
     
     if (wasBoss) {
     showAchievement('BOSS DEFEATED!', `${bossName} destroyed!`);
+    // Flagship kill: full-screen flash + bullet-time slow-mo as it dies.
+    if (window.arcade) {
+        window.arcade.flash('rgba(255,200,80,0.9)', 0.85);
+        window.arcade.slowmo(700);
+    }
+    // Top-tier arcade praise for a flagship kill, naming the faction
+    if (typeof flashArcadeText === 'function') {
+        const _bw = ['TARGET ELIMINATED!', 'THREAT NEUTRALIZED!', 'FLAGSHIP DOWN!', 'REALITY BENT!'];
+        let _bsub = null;
+        try {
+            const _f = (enemy.userData.isVulcanPatrol) ? 'VULCAN HIGH COMMAND'
+                : (enemy.userData.isMartianPirate) ? 'MARTIAN PIRATES'
+                : (typeof galaxyTypes !== 'undefined' && galaxyTypes[enemy.userData.galaxyId] ? String(galaxyTypes[enemy.userData.galaxyId].faction).toUpperCase() : null);
+            if (_f) _bsub = _f + ' FLAGSHIP DESTROYED';
+        } catch (_) {}
+        flashArcadeText(_bw[Math.floor(Math.random() * _bw.length)], 6, _bsub);
+    }
     // Call boss victory check and fireworks
     if (typeof checkBossVictory === 'function') {
         checkBossVictory(enemy);
@@ -6289,6 +6290,27 @@ if (enemy.userData.health <= 0) {
     }, 800); // Wait for celebration music to finish
 } else {
     showAchievement('Enemy Destroyed!', `${enemy.userData.name} eliminated`);
+
+    // Floating kill text at the kill position — loot-colored for pirates
+    // (matches the explosion variant), gold rep text otherwise.
+    if (typeof spawnKillText === 'function') {
+        const _kv = enemy.userData._pirateLootVariant;
+        if (_kv === 'flare') spawnKillText(enemy.position, '+ENERGY', '#ffcc33');
+        else if (_kv === 'plasma') spawnKillText(enemy.position, '+MISSILE', '#33ddff');
+        else if (_kv === 'ember') spawnKillText(enemy.position, '+HULL', '#ff6644');
+        else spawnKillText(enemy.position, '+REP', '#ffcc44');
+    }
+    // Big tiered arcade praise, upper-middle of the screen (streak-aware).
+    // Distance gates the basic words to far kills; the killed enemy's
+    // userData drives the "<FACTION> ELIMINATED" subtitle.
+    if (typeof arcadePraiseKill === 'function') {
+        arcadePraiseKill(false, (typeof camera !== 'undefined') ? camera.position.distanceTo(enemy.position) : 0, enemy.userData);
+    }
+    // Arcade: score + combo + floating number, and a meaty hitstop.
+    if (window.arcade) {
+        window.arcade.addKill(enemy.userData, enemy.position, !!enemy.userData.isBoss);
+        window.arcade.hitstop(enemy.userData.isBoss ? 90 : 45);
+    }
 
     const _lootVariant = enemy.userData._pirateLootVariant;
     if (_lootVariant === 'flare') {
@@ -6521,7 +6543,15 @@ function checkGuardianVictory() {
             
             // NOW increment galaxy clear count
             gameState.galaxiesCleared = (gameState.galaxiesCleared || 0) + 1;
-            
+
+            // Arcade: RANK stamp on sector clear (grade by hull remaining).
+            if (window.arcade) {
+                const _hp = (gameState.maxHull ? (gameState.hull / gameState.maxHull) : 1);
+                const _rank = _hp > 0.85 ? 'S' : _hp > 0.6 ? 'A' : _hp > 0.35 ? 'B' : 'C';
+                window.arcade.grade(_rank, 'SECTOR LIBERATED');
+                window.arcade.flash('rgba(120,255,160,0.7)', 0.6);
+            }
+
             // Play galaxy victory music
             playGalaxyVictoryMusic();
 
@@ -6588,6 +6618,11 @@ let borgAlarmActive = false;
 
 function startBorgAlarm() {
     if (borgAlarmActive || !audioContext || audioContext.state === 'suspended') return;
+
+    // Cinematic arrival card alongside the alarm
+    if (typeof flashEventText === 'function') {
+        flashEventText('⬢ THE BORG ⬢', '#33ff55', 'RESISTANCE IS FUTILE');
+    }
     
     try {
         borgAlarmOscillator = audioContext.createOscillator();
@@ -6874,10 +6909,26 @@ function handleMissileHit(missile, enemy) {
     createMissileExplosion(missile.position);
     playSound('missile_explosion');
 
+    // Arcade praise on a player missile IMPACT (a kill below overrides it
+    // with the bigger kill praise).
+    if (enemy.userData.health > 0 && typeof flashArcadeText === 'function') {
+        flashArcadeText('MISSILE STRIKE!', 2);
+    }
+
     showAchievement('Missile Hit!',
         `Damaged ${enemy.userData.name} (${enemy.userData.health}/${enemy.userData.maxHealth} HP)`);
 
     if (enemy.userData.health <= 0) {
+        // Big tiered kill praise (streak-aware) for missile finishes too.
+        if (typeof arcadePraiseKill === 'function') {
+            arcadePraiseKill(!!enemy.userData.isBoss,
+                (typeof camera !== 'undefined') ? camera.position.distanceTo(enemy.position) : 0,
+                enemy.userData);
+        }
+        if (window.arcade) {
+            window.arcade.addKill(enemy.userData, enemy.position, !!enemy.userData.isBoss);
+            window.arcade.hitstop(enemy.userData.isBoss ? 90 : 45);
+        }
         const wasBoss = enemy.userData.isBoss;
         const bossName = enemy.userData.name;
 
@@ -7128,8 +7179,9 @@ function fireWeapon() {
     // Faster weapon cooldown (RESTORED)
     if (gameState.weapons.cooldown > 0 || gameState.weapons.energy < 10) return;
     
-    gameState.weapons.cooldown = 200; // Even faster: 0.2 seconds
-    gameState.weapons.energy = Math.max(0, gameState.weapons.energy - 10);
+    // OVERDRIVE power-up halves the cooldown for rapid fire.
+    gameState.weapons.cooldown = (window.arcade && window.arcade.hasPowerup && window.arcade.hasPowerup('overdrive')) ? 90 : 200;
+    gameState.weapons.energy = Math.max(0, gameState.weapons.energy - (gameState._chargedShot ? Math.round(12 + (gameState._chargedPower || 0.5) * 28) : 10));
     
     // Enhanced targeting with doubled ranges
     let targetObject = null;
@@ -7176,7 +7228,49 @@ function fireWeapon() {
                 });
             }
 
-            const borgIntersects = raycaster.intersectObjects(borgDrones);
+            // Civilian / military ships are full combat participants:
+            // player lasers hit them (hitscan), they shield up / flee /
+            // call distress (civilians) or return fire (military).
+            if (typeof damageCivilianShip === 'function') {
+                const _civPool = [];
+                if (typeof tradingShips !== 'undefined') {
+                    for (let _ci = 0; _ci < tradingShips.length; _ci++) {
+                        const s = tradingShips[_ci];
+                        if (s && (!s.userData || !s.userData.destroyed)) _civPool.push(s);
+                    }
+                }
+                if (typeof civilianShips !== 'undefined') {
+                    for (let _ci = 0; _ci < civilianShips.length; _ci++) {
+                        const s = civilianShips[_ci];
+                        if (s && (!s.userData || !s.userData._destroyed)) _civPool.push(s);
+                    }
+                }
+                if (_civPool.length) {
+                    const civIntersects = raycaster.intersectObjects(_civPool, true);
+                    if (civIntersects.length > 0) {
+                        targetPosition = civIntersects[0].point;
+                        let _root = civIntersects[0].object;
+                        while (_root.parent && _civPool.indexOf(_root) === -1) _root = _root.parent;
+                        if (_civPool.indexOf(_root) !== -1) {
+                            targetObject = _root;
+                            if (typeof createHitSparks === 'function') {
+                                createHitSparks(civIntersects[0].point, 0x66ddff);
+                            }
+                            damageCivilianShip(_root, 1,
+                                (typeof _civilianPlayerProxy !== 'undefined') ? _civilianPlayerProxy
+                                    : { position: camera.position, isPlayerProxy: true, userData: { health: 1 } });
+                            // Firing on unarmed civilians costs reputation;
+                            // military patrol craft shoot back instead.
+                            if (_root.userData && _root.userData.shipCategory !== 'military' &&
+                                typeof awardReputation === 'function') {
+                                awardReputation(-2, 'Civilian vessel fired upon');
+                            }
+                        }
+                    }
+                }
+            }
+
+            const borgIntersects = (!targetObject) ? raycaster.intersectObjects(borgDrones) : [];
             if (borgIntersects.length > 0) {
                 targetObject = borgIntersects[0].object.parent; // Parent is the drone group
                 // Use the cube's world center as target so the proximity
@@ -7188,8 +7282,9 @@ function fireWeapon() {
                 targetPosition = _borgCenter;
                 // Hit log silenced (per-shot spam)
             } else {
-                // Check for asteroid hits (for manual aiming only)
-                const asteroidTargets = planets.filter(p => p.userData.type === 'asteroid');
+                // Check for asteroid hits (for manual aiming only; skip if
+                // a civilian ship already took this shot)
+                const asteroidTargets = targetObject ? [] : planets.filter(p => p.userData.type === 'asteroid');
                 const asteroidIntersects = raycaster.intersectObjects(asteroidTargets);
                 if (asteroidIntersects.length > 0) {
                     targetPosition = asteroidIntersects[0].point;
@@ -7251,8 +7346,29 @@ function fireWeapon() {
         const leftOffset = new THREE.Vector3(-3, -2, 0).applyQuaternion(camera.quaternion);
         const rightOffset = new THREE.Vector3(3, -2, 0).applyQuaternion(camera.quaternion);
         
-        createLaserBeam(camera.position.clone().add(leftOffset), targetPosition, '#00ff96', true);
-        createLaserBeam(camera.position.clone().add(rightOffset), targetPosition, '#00ff96', true);
+        const _beamCol = gameState._chargedShot ? '#ffdd33' : '#00ff96'; // charged = yellow
+        createLaserBeam(camera.position.clone().add(leftOffset), targetPosition, _beamCol, true);
+        createLaserBeam(camera.position.clone().add(rightOffset), targetPosition, _beamCol, true);
+        // SPREAD SHOT power-up: two extra fanned beams.
+        if (window.arcade && window.arcade.hasPowerup && window.arcade.hasPowerup('spread')) {
+            const _fwd = new THREE.Vector3(); camera.getWorldDirection(_fwd);
+            const _up = new THREE.Vector3(0, 1, 0).applyQuaternion(camera.quaternion);
+            [-0.12, 0.12].forEach(ang => {
+                const _d = _fwd.clone().applyAxisAngle(_up, ang);
+                const _end = camera.position.clone().addScaledVector(_d, 6000);
+                createLaserBeam(camera.position.clone(), _end, '#99ff66', true);
+            });
+        }
+        if (gameState._chargedShot) {
+            // Charged blast: yellow bolts from the CHARGE CENTER (the glow
+            // midpoint), more bolts with higher charge.
+            const _origin = gameState._chargeCenter ? gameState._chargeCenter.clone() : camera.position.clone();
+            const _bolts = 1 + Math.round((gameState._chargedPower || 0.5) * 3); // 1-4
+            for (let _b = 0; _b < _bolts; _b++) {
+                const _j = new THREE.Vector3((Math.random() - 0.5) * 1.5, (Math.random() - 0.5) * 1.5, 0).applyQuaternion(camera.quaternion);
+                createLaserBeam(_origin.clone().add(_j), targetPosition, '#ffee66', true);
+            }
+        }
     }
     
     // Handle weapon hits based on target type
@@ -7286,6 +7402,9 @@ function fireWeapon() {
         checkWeaponHits(targetPosition);
     }
     
+    // Charged blast consumed — clear the flags now that targeting/damage ran.
+    if (typeof gameState !== 'undefined') { gameState._chargedShot = false; gameState._chargedPower = 0; }
+
     // Apply weapon power boost from solar storms
     if (typeof gameState !== 'undefined' && gameState.weaponPowerBoost > 1.0) {
         // Increase damage or effect based on boost
@@ -8639,6 +8758,10 @@ function recruitNebulaWingman(nebulaName, spawnPos) {
             true
         );
     }
+    if (typeof flashEventText === 'function') {
+        flashEventText('WINGMAN ACQUIRED', '#66ffcc',
+            recruit.name + ' · ' + profile.label);
+    }
     if (typeof playSound === 'function') {
         playSound('achievement', 880, 0.4);
     }
@@ -8910,8 +9033,65 @@ function updateAllyShips() {
             _executePatrol(ally, ud, now, distToPlayer < 4000 ? playerPos : null);
         }
 
+        // ── Tactical short-jump (the wingman's double-tap-W) ─────────────
+        // When far from the objective — catching up to the player or
+        // closing on an engaged target — wingmen burst-dash with a glowing
+        // tracer streak, like the player's W×2 jump.
+        {
+            const _objective = (ud.aiState === 'engage' && ud.engageTarget && ud.engageTarget.position)
+                ? ud.engageTarget.position
+                : (distToPlayer > 1200 ? playerPos : null);
+            if (!ud._jumpUntil && _objective &&
+                pos.distanceTo(_objective) > 1200 &&
+                now - (ud._lastJumpAt || 0) > 7000 + ((ally.id || 0) % 4000)) {
+                ud._lastJumpAt = now;
+                ud._jumpUntil = now + 850;
+            }
+            if (ud._jumpUntil) {
+                if (now > ud._jumpUntil || !_objective) {
+                    ud._jumpUntil = 0;
+                } else {
+                    if (!updateAllyShips._jumpVec) updateAllyShips._jumpVec = new THREE.Vector3();
+                    const jv = updateAllyShips._jumpVec.subVectors(_objective, pos);
+                    const jd = jv.length();
+                    const step = Math.min(jd * 0.08, 14); // burst, easing on approach
+                    jv.normalize();
+                    ally.position.addScaledVector(jv, step);
+                    // Face the JUMP direction — otherwise the facing block
+                    // below uses the stale _allyDir from the state-execute
+                    // (e.g. a patrol waypoint behind us), making the wingman
+                    // fly backwards during the dash.
+                    _allyDir.copy(jv);
+                    // (Jump TRACER streaks removed — they read as glitchy
+                    // lines off the wingmen's backs. The dash still happens.)
+                }
+            }
+        }
+
         // ── Shield bubble: visible during combat engagement ──────────────
         _updateAllyShield(ally, ud.aiState === 'engage' && ud.engageTarget);
+
+        // ── Idle asteroid target practice ────────────────────────────────
+        // When not engaging an enemy, wingmen occasionally blast a nearby
+        // asteroid — keeps the squadron looking active. ~5-9s per wingman.
+        // THROTTLE THE SCAN ITSELF (not just the fire): the scan iterates
+        // every planet (~3,500) at ~1ms. The old gate only updated its
+        // timestamp on a successful fire, so in deep space with no asteroid
+        // in range it re-scanned EVERY FRAME × every wingman — ~3ms/frame of
+        // pure waste, the cause of the discovery-path chop. Stamp on every
+        // scan attempt so it runs at most once per 5-9s per wingman.
+        if (ud.aiState !== 'engage' && typeof _wingmanNearestAsteroid === 'function' &&
+            now - (ud._lastAstScan || 0) > 5000 + ((ally.id || 0) % 4000)) {
+            ud._lastAstScan = now;
+            const ast = _wingmanNearestAsteroid(ally.position, 1400);
+            if (ast) {
+                const _ap = new THREE.Vector3();
+                if (ast.getWorldPosition) ast.getWorldPosition(_ap); else _ap.copy(ast.position);
+                const color = ud.name === 'Wingman Alpha' ? '#00ff88' : '#88aaff';
+                _fireWingmanLaser(ally.position.clone(), _ap, color);
+                if (typeof createHitSparks === 'function') createHitSparks(_ap, 0xffcc66);
+            }
+        }
 
         // ── Face movement direction ──────────────────────────────────────
         // lookAt points -Z toward the target; negate so the ship's +Z
@@ -9158,6 +9338,32 @@ function _fireWingmanMissile(ally, target, targetPos, ud) {
 }
 
 // ── Fire a thick bright laser from a wingman (no damage, visual only) ────
+// Nearest asteroid to a position (world-space, handles belt-parented rocks).
+const _wnaTmp = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+function _wingmanNearestAsteroid(pos, range) {
+    if (!_wnaTmp) return null;
+    let best = null, bestD2 = (range || 1400) * (range || 1400); // squared — no sqrt
+    if (typeof planets !== 'undefined') {
+        for (let i = 0; i < planets.length; i++) {
+            const p = planets[i];
+            if (!p || !p.userData || p.userData.type !== 'asteroid') continue;
+            if (p.getWorldPosition) p.getWorldPosition(_wnaTmp); else _wnaTmp.copy(p.position);
+            const d2 = pos.distanceToSquared(_wnaTmp);
+            if (d2 < bestD2) { bestD2 = d2; best = p; }
+        }
+    }
+    // Interstellar / dense-galaxy-field asteroids (breakable rocks)
+    if (typeof interstellarAsteroids !== 'undefined') {
+        for (let i = 0; i < interstellarAsteroids.length; i++) {
+            const a = interstellarAsteroids[i];
+            if (!a || !a.userData || (a.userData.health !== undefined && a.userData.health <= 0)) continue;
+            const d2 = pos.distanceToSquared(a.position);
+            if (d2 < bestD2) { bestD2 = d2; best = a; }
+        }
+    }
+    return best;
+}
+
 function _fireWingmanLaser(startPos, endPos, color) {
     if (typeof THREE === 'undefined' || typeof scene === 'undefined') return;
     try {

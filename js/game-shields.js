@@ -642,7 +642,12 @@ function isShieldActive() {
 }
 
 function getShieldDamageReduction() {
-    return shieldSystem.active ? shieldSystem.damageReduction : 0;
+    let r = shieldSystem.active ? shieldSystem.damageReduction : 0;
+    // SHIELD power-up grants a flat 50% reduction while active.
+    if (typeof window !== 'undefined' && window.arcade && window.arcade.hasPowerup && window.arcade.hasPowerup('shield')) {
+        r = Math.max(r, 0.5);
+    }
+    return r;
 }
 
 // =============================================================================
