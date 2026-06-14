@@ -1598,6 +1598,25 @@
     const distToNebula = camPos().distanceTo(ap.currentNebula.position);
     setStatus('Coasting to nebula — ' + (distToNebula | 0) + ' units');
 
+    // Long interstellar tail: once the warp coast is over, don't crawl the
+    // rest of the way on thrusters (the demo was seen cruising ~4000 km/s for
+    // many ly). If we're still far out and no warp is active, re-warp — reset
+    // the slingshot/whip trial so warpToNebulaCluster picks a fresh body or
+    // falls back to an O-key emergency warp.
+    const REWARP_RANGE = 10000;
+    const _warpActiveNow =
+      (gameState.emergencyWarp && (gameState.emergencyWarp.active || gameState.emergencyWarp.transitioning)) ||
+      (gameState.slingshot && gameState.slingshot.active);
+    if (!_warpActiveNow && distToNebula > REWARP_RANGE) {
+      ap._slingshotTried = false;
+      ap.slingshotPlanet = null;
+      ap._prevNebDist = undefined;
+      ap.brakingAfterWarp = false;
+      setStatus('Still ' + (distToNebula | 0) + ' u out — re-warping');
+      goPhase('warpToNebulaCluster');
+      return;
+    }
+
     // If distance to the destination is growing (moving away), brake and
     // reorient toward it instead of continuing on the bad heading.
     const _prevDist = ap._prevNebDist;
