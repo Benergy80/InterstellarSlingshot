@@ -2554,14 +2554,14 @@ if (surfaceCollision) {
                     if (distance < warningDistance && distance > criticalDistance && !gameState.eventHorizonWarning.active) {
                         gameState.eventHorizonWarning.active = true;
                         gameState.eventHorizonWarning.blackHole = planet;
-                        const eventHorizonEl = window._cachedEventHorizonEl || (window._cachedEventHorizonEl = document.getElementById('eventHorizonWarning'));
-                        if (eventHorizonEl) {
-                            eventHorizonEl.classList.remove('hidden');
-                        }
-                        if (typeof showAchievement === 'function') {
-                            if (!shouldSuppressAchievement('Event Horizon Detected')) {
-                                showAchievement('Event Horizon Detected', `Approaching ${planet.userData.name}`);
-                            }
+                        // Reimagined: a dramatic centered Orbitron flash in amber
+                        // (same style as the boss / discovery announcements)
+                        // instead of the old emoji "EVENT HORIZON APPROACHING"
+                        // panel. The blackHoleWarningHUD + title-flash still give
+                        // the persistent proximity readout.
+                        if (typeof window.flashEventText === 'function') {
+                            window.flashEventText('EVENT HORIZON', '#ffcc33',
+                                'Slingshot around ' + (planet.userData.name || 'the black hole') + ' to warp across the universe');
                         }
                     }
                     

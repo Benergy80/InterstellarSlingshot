@@ -1008,17 +1008,18 @@
         _facingEnemy = _coneFwd.dot(_coneVec);
       }
 
-      // MARTIAN PIRATE LONG INTERCEPT: beyond 2,000u, emergency-warp toward
-      // it (once aligned) and DON'T brake until within 500u. Pirate-only.
-      const _isPirateTgt = !!(enemy.userData.isMartianPirate && !enemy.userData.isVulcanPatrol);
+      // LONG INTERCEPT: beyond 5,000u, close with the O-key EMERGENCY WARP
+      // (not the W-jump). Then let it run its course / thrust forward without
+      // braking until the ~500u braking zone.
       const _warpBusyNow = gameState.emergencyWarp &&
           (gameState.emergencyWarp.active || gameState.emergencyWarp.transitioning);
-      if (_isPirateTgt && dist > 2000 && !_warpBusyNow && _facingEnemy > 0.92 &&
-          canEmergencyWarp() && Date.now() - (ap._lastBHWarp || 0) > 20000) {
+      const _canOWarp = !_warpBusyNow && canEmergencyWarp() &&
+          Date.now() - (ap._lastBHWarp || 0) > 20000;
+      if (dist > 5000 && _canOWarp && _facingEnemy > 0.9) {
         if (triggerOKeyWarp()) {
           ap._lastBHWarp = Date.now();
           ap._pirateNoBrake = true;
-          setStatus('Emergency warp → Martian Pirate (' + (dist | 0) + ' u)');
+          setStatus('Emergency warp → ' + (enemy.userData.name || 'hostile') + ' (' + (dist | 0) + ' u)');
           return;
         }
       }
@@ -1049,7 +1050,11 @@
       // it, turning on a dime (works best at high speed). The jump owns the
       // frame (returns), so the overshoot/runaway brakes below only run when a
       // jump isn't available (cooldown / misaligned / low energy).
-      if (dist > JUMP_MIN_DIST && (speed < 12 || _closing < 0.5) && !_warpBusy &&
+      // Capped at <=5000u: farther than that the O-key warp above handles the
+      // intercept (use W-jumps only inside 5k, or as a fallback when no warp
+      // is available).
+      if (dist > JUMP_MIN_DIST && (dist <= 5000 || !_canOWarp) &&
+          (speed < 12 || _closing < 0.5) && !_warpBusy &&
           _facingEnemy > 0.9 &&
           gameState.energy > 25 &&
           !_isMissileInFlightAt(enemy) &&

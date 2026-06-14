@@ -2617,7 +2617,10 @@ function updateEventHorizonWarnings() {
     if (ehw.active && ehw.blackHole) {
         const blackHole = ehw.blackHole;
 
-        if (eventHorizonWarning) eventHorizonWarning.classList.remove('hidden');
+        // Old centered "EVENT HORIZON APPROACHING" emoji panel is retired — the
+        // amber flashEventText on approach replaces it. Keep it hidden; the HUD
+        // readout + title-flash below remain the persistent proximity cues.
+        if (eventHorizonWarning) eventHorizonWarning.classList.add('hidden');
 
         if (blackHoleWarningHUD && blackHoleDistanceHUD && typeof camera !== 'undefined') {
             blackHoleWarningHUD.classList.remove('hidden');
