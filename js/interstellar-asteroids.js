@@ -99,7 +99,7 @@ function createAsteroidField(centerPosition, fieldIndex) {
 }
 
 // Create a single interstellar asteroid
-function createInterstellarAsteroid(position, size, velocity, fieldIndex, asteroidIndex, generation = 0) {
+function createInterstellarAsteroid(position, size, velocity, fieldIndex, asteroidIndex, generation = 0, cheap = false) {
     // Create irregular asteroid geometry
     // Use simpler geometry for fragments (generation > 0) to improve performance
     const detailLevel = generation > 0 ? 0 : 1;  // 12 vertices for fragments, 42 for originals
@@ -123,16 +123,21 @@ function createInterstellarAsteroid(position, size, velocity, fieldIndex, astero
     geometry.attributes.position.needsUpdate = true;
     geometry.computeVertexNormals();
 
-    // FIXED: Brighter material with enhanced emissive glow for visibility in deep space
+    // Brighter material for visibility in deep space. Dense-field asteroids
+    // (cheap=true) use MeshBasicMaterial — NO per-pixel lighting — because
+    // there are hundreds of them; MeshStandardMaterial at that count tanked
+    // FPS to ~12. Flat color reads fine for the low-poly aesthetic.
     const baseColor = new THREE.Color(0.4 + Math.random() * 0.3, 0.35 + Math.random() * 0.25, 0.3 + Math.random() * 0.2); // Brighter base
-    const material = new THREE.MeshStandardMaterial({
-        color: baseColor,
-        emissive: baseColor,
-        emissiveIntensity: 0.8,  // FIXED: 0.55 → 0.8 for much better visibility in dark space
-        roughness: 0.9,
-        metalness: 0.1,
-        flatShading: true
-    });
+    const material = cheap
+        ? new THREE.MeshBasicMaterial({ color: baseColor })
+        : new THREE.MeshStandardMaterial({
+            color: baseColor,
+            emissive: baseColor,
+            emissiveIntensity: 0.8,
+            roughness: 0.9,
+            metalness: 0.1,
+            flatShading: true
+        });
 
     const asteroid = new THREE.Mesh(geometry, material);
     asteroid.position.set(position.x, position.y, position.z);
@@ -158,7 +163,9 @@ function createInterstellarAsteroid(position, size, velocity, fieldIndex, astero
             (Math.random() - 0.5) * 0.01
         ),
         generation: 0,  // Track how many times it's been broken
+        denseField: cheap,  // dense-galaxy-field asteroid → tighter cull range
     };
+    asteroid.frustumCulled = true; // off-screen ones skip drawing
 
     scene.add(asteroid);
     interstellarAsteroids.push(asteroid);
@@ -188,9 +195,9 @@ function createDenseGalaxyAsteroidFields() {
 }
 
 function createDenseAsteroidField(center, fieldIndex) {
-    const COUNT = 200;          // packed
+    const COUNT = 140;          // packed but perf-aware (cheap material)
     const CORE_CLEAR = 800;     // keep the very center flyable
-    const REACH = 5500;         // field radius
+    const REACH = 5000;         // field radius
     for (let i = 0; i < COUNT; i++) {
         // Bias inward (pow<1) so it's DENSE near the core/combat zone, and
         // flatten vertically into a rough disk so it reads as a belt.
@@ -208,7 +215,7 @@ function createDenseAsteroidField(center, fieldIndex) {
             (Math.random() - 0.5) * 0.10,
             (Math.random() - 0.5) * 0.22
         );
-        createInterstellarAsteroid(pos, size, vel, fieldIndex, i);
+        createInterstellarAsteroid(pos, size, vel, fieldIndex, i, 0, true); // cheap=true
     }
 }
 if (typeof window !== 'undefined') window.createDenseGalaxyAsteroidFields = createDenseGalaxyAsteroidFields;

@@ -5602,6 +5602,21 @@ function updateDistanceCulling() {
     cullArray(typeof planets !== 'undefined' ? planets : null, 30000);
     cullArray(typeof asteroidBelts !== 'undefined' ? asteroidBelts : null, 30000);
     cullArray(typeof interstellarAsteroids !== 'undefined' ? interstellarAsteroids : null, 30000);
+    // Dense-galaxy-field asteroids: hundreds per field, so cull them much
+    // tighter (8,000u) — they only need to render when you're actually IN
+    // that galaxy fighting, not as specks from 25k away. Runs AFTER the 30k
+    // pass above (which would otherwise keep them visible out to 30k).
+    if (typeof interstellarAsteroids !== 'undefined') {
+        const dr2 = 8000 * 8000;
+        for (let i = 0; i < interstellarAsteroids.length; i++) {
+            const a = interstellarAsteroids[i];
+            if (!a || !a.userData || !a.userData.denseField || !a.position) continue;
+            const dx = a.position.x - cx, dy = a.position.y - cy, dz = a.position.z - cz;
+            const far = (dx * dx + dy * dy + dz * dz) > dr2;
+            if (far) { if (a.visible) { a.visible = false; a.userData._distCulled = true; } }
+            else if (a.userData._distCulled) { a.visible = true; a.userData._distCulled = false; }
+        }
+    }
     cullArray(typeof comets !== 'undefined' ? comets : null, 35000);
     // Trading ships read as a single dot well before this range.
     cullArray(typeof tradingShips !== 'undefined' ? tradingShips : null, 18000);
