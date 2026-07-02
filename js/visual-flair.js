@@ -154,18 +154,25 @@ function _updateLaserCharge() {
     const prog = (charging && ship && ship.visible)
         ? Math.max(0, Math.min(1, (Date.now() - gameState._laserChargeStart) / 2000)) : 0;
     if (prog <= 0.01) { _chargeGlow.sprites.forEach(s => { s.material.opacity = 0; s.scale.setScalar(0); }); return; }
-    // Position the glows at the SAME wing tips the lasers fire from
-    // (createThirdPersonLasers: ±size.x*0.35, up -2, fwd -size.z*0.15, in
-    // camera space) so the charge builds right at the beam origins.
-    const box = new THREE.Box3().setFromObject(ship);
-    const size = box.getSize(new THREE.Vector3());
-    const shipPos = ship.getWorldPosition(new THREE.Vector3());
-    const cq = camera.quaternion;
-    const wingSpread = size.x * 0.35, wingForward = -size.z * 0.15, wingUp = -2;
-    const lOff = new THREE.Vector3(-wingSpread, wingUp, wingForward).applyQuaternion(cq);
-    const rOff = new THREE.Vector3(wingSpread, wingUp, wingForward).applyQuaternion(cq);
-    const leftWing = shipPos.clone().add(lOff);
-    const rightWing = shipPos.clone().add(rOff);
+    // Position the glows at the SAME wing guns the lasers fire from —
+    // getPlayerWingGuns() is the shared ship-local anchor transform, so the
+    // charge builds exactly at the beam origins in every view state (warp
+    // framing, cinematic lag, banks, scale).
+    let leftWing, rightWing;
+    const _guns = (typeof window.getPlayerWingGuns === 'function') ? window.getPlayerWingGuns() : null;
+    if (_guns) {
+        leftWing = _guns.left;
+        rightWing = _guns.right;
+    } else {
+        // legacy camera-space fallback (model not hydrated)
+        const box = new THREE.Box3().setFromObject(ship);
+        const size = box.getSize(new THREE.Vector3());
+        const shipPos = ship.getWorldPosition(new THREE.Vector3());
+        const cq = camera.quaternion;
+        const wingSpread = size.x * 0.35, wingForward = -size.z * 0.15, wingUp = -2;
+        leftWing = shipPos.clone().add(new THREE.Vector3(-wingSpread, wingUp, wingForward).applyQuaternion(cq));
+        rightWing = shipPos.clone().add(new THREE.Vector3(wingSpread, wingUp, wingForward).applyQuaternion(cq));
+    }
     // Expose for the blast origin (emit from the charge center).
     gameState._chargeWings = [leftWing, rightWing];
     gameState._chargeCenter = leftWing.clone().add(rightWing).multiplyScalar(0.5);

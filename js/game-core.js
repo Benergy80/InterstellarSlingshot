@@ -3085,9 +3085,16 @@ if (gameState.frameCount % 5 === 0 && typeof checkCosmicFeatureInteractions === 
             window.__renderedShipPos = new THREE.Vector3();
             window.__renderedShipQuat = new THREE.Quaternion();
         }
+        if (!window.__renderedShipAtt) window.__renderedShipAtt = new THREE.Quaternion();
         window.__renderedShipPos.copy(cameraState.playerShipMesh.position);
         window.__renderedShipQuat.copy(
             (_cinOn && window.__cinQuat) ? window.__cinQuat : camera.quaternion);
+        // the ship MODEL's drawn attitude (attitude filter when active) —
+        // ship-local anchor points (wing guns) transform through this
+        window.__renderedShipAtt.copy(
+            (_cinShipMoved && window.__cinShipQuat) ? window.__cinShipQuat
+                : cameraState.playerShipMesh.quaternion);
+        window.__renderedShipScale = cameraState.playerShipMesh.scale.x || 1;
         window.__renderedShipFrame = gameState.frameCount;
     }
 

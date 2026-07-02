@@ -4521,49 +4521,68 @@ function createLaserBeam(startPos, endPos, color = '#00ff96', isPlayer = true) {
 }
 
 // 3RD PERSON LASER: Fire from ship wing tips with full-length beam to target
+// WING GUNS — canonical ship-local weapon anchor points, transformed through
+// the ship's RENDERED transform (position, model attitude, scale). One source
+// of truth for laser origins, muzzle flashes and the charge glow, so they all
+// stay glued to the wings across every view state: cinematic camera lag,
+// fixed-step interpolation, warp framing pull-back (ship drawn smaller), and
+// any model scale. Local offsets are derived ONCE from the model's local
+// bounds; +Z is the model's nose.
+function getPlayerWingGuns() {
+    const ship = window.cameraState && window.cameraState.playerShipMesh;
+    if (!ship || typeof THREE === 'undefined') return null;
+    const ud = ship.userData;
+    if (!ud._wingGunsLocal) {
+        const box = new THREE.Box3().setFromObject(ship);
+        const size = box.getSize(new THREE.Vector3());
+        const s = ship.scale.x || 1;
+        if (!(size.x > 0.001)) return null;   // model not hydrated yet
+        ud._wingGunsLocal = {
+            spread: (size.x * 0.35) / s,      // ± along local X (wingtips)
+            up: -2 / s,                       // slightly under the hull
+            fwd: (size.z * 0.15) / s,         // toward the +Z nose
+        };
+    }
+    // Rendered transform when fresh (≤1 frame old), live mesh otherwise
+    const fresh = typeof window.__renderedShipFrame === 'number' &&
+        (gameState.frameCount - window.__renderedShipFrame) <= 1 && window.__renderedShipPos;
+    const pos = fresh ? window.__renderedShipPos : ship.position;
+    const att = fresh ? window.__renderedShipAtt : ship.quaternion;
+    const s = (fresh && window.__renderedShipScale) ? window.__renderedShipScale : (ship.scale.x || 1);
+    const g = ud._wingGunsLocal;
+    const mk = (side) => new THREE.Vector3(side * g.spread * s, g.up * s, g.fwd * s)
+        .applyQuaternion(att).add(pos);
+    return { left: mk(-1), right: mk(1) };
+}
+if (typeof window !== 'undefined') window.getPlayerWingGuns = getPlayerWingGuns;
+
 function createThirdPersonLasers(playerShip, targetPosition) {
     if (typeof THREE === 'undefined' || typeof scene === 'undefined') return;
     
     try {
-        // Beam origins must match the ship AS RENDERED. The render loop
-        // snapshots the drawn ship transform (post fixed-step interpolation
-        // and cinematic re-anchor) into window.__renderedShipPos/Quat —
-        // computing origins from the raw physics camera instead puts the
-        // beams visibly off the ship whenever the cinematic camera lags a
-        // turn (they appeared to fire from behind/below the ship). Falls
-        // back to the physics-camera math when no fresh snapshot exists.
-        let camQuat, shipPos;
-        const _snapFresh = typeof window !== 'undefined' &&
-            window.__renderedShipPos && window.__renderedShipFrame !== undefined &&
-            (gameState.frameCount - window.__renderedShipFrame) <= 1;
-        if (_snapFresh) {
-            camQuat = window.__renderedShipQuat;
-            shipPos = window.__renderedShipPos.clone();
+        // Beam origins come from the canonical ship-local WING GUNS,
+        // transformed through the ship's RENDERED transform (position,
+        // model attitude, scale) — see getPlayerWingGuns(). This keeps the
+        // beams on the drawn wingtips through cinematic camera lag, the
+        // warp framing pull-back (ship rendered smaller/farther), banks,
+        // and any model scale — instead of view-space constants that only
+        // matched the default chase framing.
+        const guns = getPlayerWingGuns();
+        let leftWing, rightWing;
+        if (guns) {
+            leftWing = guns.left;
+            rightWing = guns.right;
         } else {
-            camQuat = camera.quaternion;
+            // Model not hydrated yet — legacy camera-space fallback
+            const camQuat = camera.quaternion;
             const liveOffset = (typeof cameraState !== 'undefined' &&
                                 cameraState.normalThirdPersonOffset)
                 ? cameraState.normalThirdPersonOffset
                 : new THREE.Vector3(0, -4, -14);
-            const shipOffset = liveOffset.clone().applyQuaternion(camQuat);
-            shipPos = camera.position.clone().add(shipOffset);
+            const shipPos = camera.position.clone().add(liveOffset.clone().applyQuaternion(camQuat));
+            leftWing = shipPos.clone().add(new THREE.Vector3(-5, -2, -2).applyQuaternion(camQuat));
+            rightWing = shipPos.clone().add(new THREE.Vector3(5, -2, -2).applyQuaternion(camQuat));
         }
-        
-        // Get model size for wing spread calculation
-        const box = new THREE.Box3().setFromObject(playerShip);
-        const size = box.getSize(new THREE.Vector3());
-        
-        // Wing positions relative to ship center
-        const wingSpread = size.x * 0.35;
-        const wingForward = -size.z * 0.15;  // Slightly forward
-        const wingUp = -2;
-        
-        // Apply camera quaternion for wing offsets
-        const leftOffset = new THREE.Vector3(-wingSpread, wingUp, wingForward).applyQuaternion(camQuat);
-        const rightOffset = new THREE.Vector3(wingSpread, wingUp, wingForward).applyQuaternion(camQuat);
-        
-        const leftWing = shipPos.clone().add(leftOffset);
-        const rightWing = shipPos.clone().add(rightOffset);
         
         // Create muzzle flash at wing tips
         createMuzzleFlash(leftWing.clone());
