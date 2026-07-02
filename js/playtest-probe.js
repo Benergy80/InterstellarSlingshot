@@ -247,6 +247,51 @@
             }
         } catch (e) {}
 
+        // 9c. ENEMY MOTION GLIDE (class: render-interpolation disabled →
+        // jerky enemies; regressed when the AI interval hit 1). Each run
+        // kicks off a ~20-frame rAF sampler on the nearest live interpolated
+        // enemy: if it moved overall but >40% of frames showed zero movement
+        // (the move-freeze-jump signature), the glide is broken.
+        try {
+            if (!PROBE._glideSampling && typeof enemies !== 'undefined') {
+                let tgt = null, best = Infinity;
+                for (let i = 0; i < enemies.length; i++) {
+                    const e = enemies[i];
+                    if (!e || !e.userData || e.userData.health <= 0 || !e.userData._interp) continue;
+                    const d = camera.position.distanceTo(e.position);
+                    if (d < best) { best = d; tgt = e; }
+                }
+                if (tgt && best < 5000) {
+                    PROBE._glideSampling = true;
+                    const prev = tgt.position.clone();
+                    let frames = 0, zero = 0, total = 0;
+                    const step = () => {
+                        try {
+                            const d = tgt.position.distanceTo(prev);
+                            prev.copy(tgt.position);
+                            if (frames > 0) { total += d; if (d < 0.001) zero++; }
+                            if (++frames < 21 && tgt.userData && tgt.userData.health > 0) {
+                                requestAnimationFrame(step);
+                            } else {
+                                PROBE._glideSampling = false;
+                                if (total > 1) { // enemy actually moved
+                                    const ratio = zero / (frames - 1);
+                                    set('enemyMotionGlide', ratio <= 0.4,
+                                        (ratio * 100 | 0) + '% stalled frames (' +
+                                        (tgt.userData.name || '?') + ')');
+                                } else {
+                                    set('enemyMotionGlide', true, 'enemy stationary — n/a');
+                                }
+                            }
+                        } catch (e) { PROBE._glideSampling = false; }
+                    };
+                    requestAnimationFrame(step);
+                } else {
+                    set('enemyMotionGlide', true, 'no interpolated enemy in range');
+                }
+            }
+        } catch (e) { PROBE._glideSampling = false; }
+
         // 9. WINGMEN FACE FORWARD (class: backwards ships) — warn
         try {
             const arr = (typeof allyShips !== 'undefined') ? allyShips : [];
