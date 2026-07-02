@@ -6807,7 +6807,7 @@ function updateMissiles() {
     if (!window.activeMissiles) return;
 
     window.activeMissiles = window.activeMissiles.filter(missile => {
-        missile.userData.lifetime += 16.67;
+        missile.userData.lifetime += (typeof gameState !== 'undefined' && gameState.dtMs) || 16.67;
 
         if (missile.userData.lifetime > missile.userData.maxLifetime) {
             scene.remove(missile);

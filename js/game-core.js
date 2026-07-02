@@ -1561,6 +1561,20 @@ function animate(rafTime) {
     const currentTime = performance.now();
     const frameTime = currentTime - gameState.lastUpdateTime;
     gameState.lastUpdateTime = currentTime;
+
+    // DELTA TIME: one clamped dt for the whole simulation. dtFrames is dt in
+    // 60fps-frame units, so every hand-tuned per-frame constant keeps its
+    // meaning (dtFrames === 1 at exactly 60fps) while 120Hz displays and
+    // stutter frames integrate the correct amount. Clamped to [4, 50]ms:
+    // the floor guards divide-by-tiny on timer glitches, the cap means a
+    // long hitch (tab switch, world-gen hiccup) advances at most 3 frames
+    // of simulation instead of teleporting the ship.
+    // Arcade slow-mo renders every other frame — each simulated frame then
+    // spans two vsync periods, so halve dt to keep the sim at half speed.
+    let _dtMs = Math.max(4, Math.min(50, frameTime || 16.67));
+    if (gameState._slowmoUntil && _ajNow < gameState._slowmoUntil) _dtMs *= 0.5;
+    gameState.dtMs = _dtMs;
+    gameState.dtFrames = _dtMs / 16.67;
     
     // Track frame time history for performance adjustment
     gameState.frameTimeHistory.push(frameTime);
@@ -1613,7 +1627,7 @@ function animate(rafTime) {
         // CRITICAL: Keep explosion animations running during game over
         // so player can see their ship explode before game over screen
         if (typeof explosionManager !== 'undefined') {
-            explosionManager.update(16.67);
+            explosionManager.update(gameState.dtMs || 16.67);
         }
         
         renderer.render(scene, camera);
@@ -2319,7 +2333,12 @@ if (gameState.frameCount % 5 === 0 && typeof checkCosmicFeatureInteractions === 
     if (typeof perfDebug !== 'undefined') perfDebug.startTimer('enemies');
     if (typeof enemies !== 'undefined' && enemies && enemies.length) {
         const _efc = gameState.frameCount;
-        const _AI_INTERVAL = 2;
+        // AI cadence targets ~30Hz of WALL CLOCK, not "every 2nd frame":
+        // on a 120Hz display every-2nd-frame ran enemy AI (and its per-tick
+        // movement steps) at 60Hz — enemies moved twice as fast. Derive the
+        // frame interval from the measured refresh rate instead.
+        const _measuredFps = (typeof window !== 'undefined' && window.__perf && window.__perf.fps) || 60;
+        const _AI_INTERVAL = Math.max(1, Math.round(_measuredFps / 30)) || 2;
         // (1) Glide the rendered transform START -> END EVERY frame. On an
         //     AI-tick frame this completes the previous interval (a -> 1) BEFORE
         //     the tick below snapshots it, so the next interval begins exactly
@@ -2365,7 +2384,10 @@ if (gameState.frameCount % 5 === 0 && typeof checkCosmicFeatureInteractions === 
     if (typeof perfDebug !== 'undefined') perfDebug.endTimer('enemies');
     
     // Update civilian combat (enemies attacking civilians, distress calls)
-    if (gameState.frameCount % 3 === 0 && typeof updateCivilianCombat === 'function') {
+    // ~20Hz of wall clock: fleets move per tick, so the interval scales with
+    // the measured refresh rate like the enemy/wingman AI above.
+    if (typeof updateCivilianCombat === 'function' &&
+        gameState.frameCount % Math.max(1, Math.round((((typeof window !== 'undefined' && window.__perf && window.__perf.fps) || 60)) / 20)) === 0) {
         updateCivilianCombat();
     }
     
@@ -2381,7 +2403,7 @@ if (gameState.frameCount % 5 === 0 && typeof checkCosmicFeatureInteractions === 
 
     // Update unstable wormholes
     if (typeof updateUnstableWormholes === 'function') {
-        updateUnstableWormholes(16.67);
+        updateUnstableWormholes(gameState.dtMs || 16.67);
     }
 
     // Update ambient space debris
@@ -2389,19 +2411,19 @@ if (gameState.frameCount % 5 === 0 && typeof checkCosmicFeatureInteractions === 
         updateAmbientSpaceDebris();
     }
 
-    // Update missile cooldown
+    // Update missile cooldown (real elapsed ms — fire rate is wall-clock)
     if (gameState.missiles.cooldown > 0) {
-        gameState.missiles.cooldown = Math.max(0, gameState.missiles.cooldown - 16.67);
+        gameState.missiles.cooldown = Math.max(0, gameState.missiles.cooldown - gameState.dtMs);
     }
 
-    // Update weapon cooldown
+    // Update weapon cooldown (real elapsed ms — fire rate is wall-clock)
     if (gameState.weapons && gameState.weapons.cooldown > 0) {
-        gameState.weapons.cooldown = Math.max(0, gameState.weapons.cooldown - 16.67);
+        gameState.weapons.cooldown = Math.max(0, gameState.weapons.cooldown - gameState.dtMs);
     }
 
-    // Update explosion animations (frame-based animation system)
+    // Update explosion animations with real elapsed ms
     if (typeof explosionManager !== 'undefined') {
-        explosionManager.update(16.67); // Pass frame time in ms
+        explosionManager.update(gameState.dtMs);
     }
 
     // Check for hull zero - mission fail
@@ -2434,6 +2456,8 @@ if (gameState.frameCount % 5 === 0 && typeof checkCosmicFeatureInteractions === 
     if (typeof updateAllyShips === 'function' && typeof allyShips !== 'undefined' && allyShips && allyShips.length) {
         const _wfc = gameState.frameCount;
         const _warp = gameState.velocityVector && gameState.velocityVector.length() >= 4.0;
+        // Same wall-clock cadence normalization as the enemy AI above.
+        const _wInterval = Math.max(1, Math.round((((typeof window !== 'undefined' && window.__perf && window.__perf.fps) || 60)) / 30)) || 2;
         // (1) glide every frame (completes the interval before the tick below)
         for (let i = 0; i < allyShips.length; i++) {
             const w = allyShips[i]; if (!w || !w.userData || !w.userData._interp) continue;
@@ -2446,7 +2470,7 @@ if (gameState.frameCount % 5 === 0 && typeof checkCosmicFeatureInteractions === 
             w.rotation.z = u._iFromRot.z + (u._iToRot.z - u._iFromRot.z) * t;
         }
         // (2) AI tick: 30Hz normally, every frame while warping
-        if (_wfc % 2 === 0 || _warp) {
+        if (_wfc % _wInterval === 0 || _warp) {
             for (let i = 0; i < allyShips.length; i++) {
                 const w = allyShips[i]; if (!w || !w.userData || !w.rotation) continue;
                 const u = w.userData;
@@ -2465,7 +2489,7 @@ if (gameState.frameCount % 5 === 0 && typeof checkCosmicFeatureInteractions === 
                 u._iToRot.x = w.rotation.x; u._iToRot.y = w.rotation.y; u._iToRot.z = w.rotation.z;
                 w.position.copy(u._iFrom);
                 w.rotation.x = u._iFromRot.x; w.rotation.y = u._iFromRot.y; w.rotation.z = u._iFromRot.z;
-                u._iTick = _wfc; u._iInterval = _warp ? 1 : 2; u._interp = true;
+                u._iTick = _wfc; u._iInterval = _warp ? 1 : _wInterval; u._interp = true;
             }
         }
     }

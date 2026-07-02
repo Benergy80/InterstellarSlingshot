@@ -258,7 +258,8 @@ function orientTowardsTarget(target) {
     // Use the cumulative rotation so the bank intensity matches actual turn.
     if (typeof rotationalVelocity !== 'undefined') {
         const yawComponent = _ortAxis.y * totalRotation;
-        rotationalVelocity.yaw += (yawComponent - rotationalVelocity.yaw) * 0.15;
+        // dt-corrected exponential approach (0.15/frame at 60fps)
+        rotationalVelocity.yaw += (yawComponent - rotationalVelocity.yaw) * (1 - Math.pow(0.85, _deltaMs / 16.67));
     }
 
     // Update tracking for compatibility
@@ -280,9 +281,17 @@ function orientTowardsTarget(target) {
 
 // NEW: Apply rotational inertia for space-like flight controls
 function applyRotationalInertia(keys, allowManualRotation) {
+    // DELTA TIME: turn accel/decel are tuned per 60fps frame; scale by
+    // elapsed frames so manual turn feel is identical on any refresh rate.
+    // (Angular VELOCITY stays per-frame-at-60 units; its application to the
+    // camera below is scaled by _rdtF, matching the linear velocity system.)
+    const _rdtF = (typeof gameState !== 'undefined' && typeof gameState.dtFrames === 'number' && gameState.dtFrames > 0)
+        ? gameState.dtFrames : 1;
+    const _decel = Math.pow(rotationalInertia.deceleration, _rdtF);
+
     // Choose turning speed based on CAPS LOCK state
     // 🔄 INVERTED: Default = fast turning, CAPS LOCK = slow/precision mode
-    const currentAcceleration = keys.capsLock ? rotationalInertia.acceleration : rotationalInertia.fastAcceleration;
+    const currentAcceleration = (keys.capsLock ? rotationalInertia.acceleration : rotationalInertia.fastAcceleration) * _rdtF;
     const currentMaxSpeed = keys.capsLock ? rotationalInertia.maxSpeed : rotationalInertia.fastMaxSpeed;
     
     // Apply acceleration when keys are pressed
@@ -296,7 +305,7 @@ function applyRotationalInertia(keys, allowManualRotation) {
             lastPitchInputTime = performance.now();
         } else {
             // Apply deceleration when no input
-            rotationalVelocity.pitch *= rotationalInertia.deceleration;
+            rotationalVelocity.pitch *= _decel;
         }
         
         // Yaw controls (left/right arrows for turning)
@@ -308,7 +317,7 @@ function applyRotationalInertia(keys, allowManualRotation) {
             lastRollInputTime = performance.now();
         } else {
             // Apply deceleration when no input
-            rotationalVelocity.yaw *= rotationalInertia.deceleration;
+            rotationalVelocity.yaw *= _decel;
         }
     }
     
@@ -321,7 +330,7 @@ function applyRotationalInertia(keys, allowManualRotation) {
         lastRollInputTime = performance.now();
     } else {
         // Apply deceleration when no input
-        rotationalVelocity.roll *= rotationalInertia.deceleration;
+        rotationalVelocity.roll *= _decel;
     }
     
     // Clamp rotational velocities to max speed (using current max based on CAPS LOCK)
@@ -334,12 +343,12 @@ function applyRotationalInertia(keys, allowManualRotation) {
     
     // Apply pitch (looking up/down) - this is always relative to current orientation
     if (Math.abs(rotationalVelocity.pitch) > 0.00001) {
-        camera.rotateX(rotationalVelocity.pitch);
+        camera.rotateX(rotationalVelocity.pitch * _rdtF);
     }
     
     // Apply yaw (turning left/right) - this is always relative to current orientation
     if (Math.abs(rotationalVelocity.yaw) > 0.00001) {
-        camera.rotateY(rotationalVelocity.yaw);
+        camera.rotateY(rotationalVelocity.yaw * _rdtF);
     }
     
     // 🛩️ STRAFE YAW + BANKING: Turn nose OPPOSITE to strafe direction + bank wings
@@ -375,10 +384,10 @@ function applyRotationalInertia(keys, allowManualRotation) {
         if (strafeYawAmount !== 0) {
             // Apply yaw rotation around the up axis (opposite to strafe direction)
             const rotationAxis = camera.up.clone().normalize();
-            camera.rotateOnWorldAxis(rotationAxis, strafeYawAmount);
-            
+            camera.rotateOnWorldAxis(rotationAxis, strafeYawAmount * _rdtF);
+
             // Apply banking/roll around forward axis (wings dip)
-            camera.rotateZ(strafeBankAmount);
+            camera.rotateZ(strafeBankAmount * _rdtF);
         }
     }
     
@@ -405,7 +414,7 @@ function applyRotationalInertia(keys, allowManualRotation) {
     const totalRoll = rotationalVelocity.roll + bankingFromYaw;
     
     if (Math.abs(totalRoll) > 0.00001) {
-        camera.rotateZ(totalRoll);
+        camera.rotateZ(totalRoll * _rdtF);
     }
     
     // Update tracking for auto-navigation compatibility
@@ -1929,7 +1938,8 @@ function updateSlingshotWhip() {
             new THREE.Vector3(px + tangent.x * 200, py, pz + tangent.z * 200),
             camera.up);
         _whipTmpQ.setFromRotationMatrix(_whipTmpM);
-        camera.quaternion.slerp(_whipTmpQ, 0.16);
+        // 0.16/frame at 60fps, dt-corrected exponential approach
+        camera.quaternion.slerp(_whipTmpQ, 1 - Math.pow(0.84, gameState.dtFrames || 1));
     }
 
     // Arc trail
@@ -1982,6 +1992,14 @@ function updateEnhancedPhysics() {
         }
         return;
     }
+
+    // DELTA TIME (set by animate() in game-core.js): dtF is elapsed time in
+    // 60fps-frame units, dtMsP real clamped milliseconds. All per-frame
+    // constants below keep their hand-tuned 60fps meaning; they are applied
+    // × dtF (additive rates) or ^ dtF (exponential decays) so the sim runs
+    // at the same wall-clock speed on 120Hz displays and through stutter.
+    const dtF = (typeof gameState.dtFrames === 'number' && gameState.dtFrames > 0) ? gameState.dtFrames : 1;
+    const dtMsP = (typeof gameState.dtMs === 'number' && gameState.dtMs > 0) ? gameState.dtMs : 16.67;
     
     // One-time initialization of enhanced properties
     if (!gameState.enhancedPropertiesInitialized) {
@@ -2068,7 +2086,8 @@ if (!isAutoNavigating && !isDuringEmergencyOperation) {
     // FIXED: Auto-level ONLY roll (Z-axis) - this is the "banking" angle
     // This preserves the ship's trajectory direction while leveling the wings
     if ((now - lastRollInputTime) > autoLevelingDelay) {
-        const rollLerpFactor = autoLevelingSpeed;
+        // dt-corrected exponential approach (0.005/frame at 60fps)
+        const rollLerpFactor = 1 - Math.pow(1 - autoLevelingSpeed, dtF);
         let currentRoll = camera.rotation.z;
         
         // CRITICAL FIX: Normalize angle to [-PI, PI] range
@@ -2167,10 +2186,10 @@ if (frameDistance > 0.01) { // Only track significant movement
             // imperceptible against the warp drift).
             const warpMul = _warpAccel ? 12 : 1;
             const wThrustPower = gameState.thrustPower * gameState.wThrustMultiplier * warpMul;
-            gameState.velocityVector.addScaledVector(forwardDirection, wThrustPower);
+            gameState.velocityVector.addScaledVector(forwardDirection, wThrustPower * dtF);
             // Energy cost halved during warp — the warp already burns
             // capacitor charge implicitly, no need to double-tax.
-            _consumeEnergy(_warpAccel ? 0.06 : 0.12);
+            _consumeEnergy((_warpAccel ? 0.06 : 0.12) * dtF);
         }
         // Visual feedback — rate-limited to at most one effect every
         // 500 ms so holding W doesn't spawn 30 DOM star-trails multiple
@@ -2184,27 +2203,27 @@ if (frameDistance > 0.01) { // Only track significant movement
     }
     if (keys.s && gameState.energy > 0) {
         // S Key: Reverse thrust (50% power) - consumes 0.04 energy per frame
-        gameState.velocityVector.addScaledVector(forwardDirection, -gameState.thrustPower * 0.5);
-        _consumeEnergy(0.04);
+        gameState.velocityVector.addScaledVector(forwardDirection, -gameState.thrustPower * 0.5 * dtF);
+        _consumeEnergy(0.04 * dtF);
     }
     if (keys.a && gameState.energy > 0) {
         // A Key: Strafe left (70% power) - consumes 0.06 energy per frame
-        gameState.velocityVector.addScaledVector(rightDirection, -gameState.thrustPower * 0.7);
-        _consumeEnergy(0.06);
+        gameState.velocityVector.addScaledVector(rightDirection, -gameState.thrustPower * 0.7 * dtF);
+        _consumeEnergy(0.06 * dtF);
     }
     if (keys.d && gameState.energy > 0) {
         // D Key: Strafe right (70% power) - consumes 0.06 energy per frame
-        gameState.velocityVector.addScaledVector(rightDirection, gameState.thrustPower * 0.7);
-        _consumeEnergy(0.06);
+        gameState.velocityVector.addScaledVector(rightDirection, gameState.thrustPower * 0.7 * dtF);
+        _consumeEnergy(0.06 * dtF);
     }
 
     // SPECIFICATION: Boost System
     if (keys.b && gameState.energy > 0) {
         // B Key: Space boost (1.8x thrust power, or 2.5x with Shift modifier)
         const boostPower = keys.shift ? gameState.thrustPower * 2.5 : gameState.thrustPower * 1.8;
-        gameState.velocityVector.addScaledVector(forwardDirection, boostPower);
+        gameState.velocityVector.addScaledVector(forwardDirection, boostPower * dtF);
         // B + Shift: Enhanced boost with higher energy consumption (0.15 vs 0.12)
-        _consumeEnergy(keys.shift ? 0.15 : 0.12);
+        _consumeEnergy((keys.shift ? 0.15 : 0.12) * dtF);
 
         if (Math.random() > 0.97) {
             if (!gameState._lastBoostFx || (Date.now() - gameState._lastBoostFx) > 500) {
@@ -2350,7 +2369,7 @@ else if (keys.o && gameState.emergencyWarp.available > 0 && !gameState.emergency
 
         // Enhanced Emergency warp timer with momentum coasting
 if (gameState.emergencyWarp.active) {
-    gameState.emergencyWarp.timeRemaining -= 16.67;
+    gameState.emergencyWarp.timeRemaining -= dtMsP;
     if (gameState.emergencyWarp.timeRemaining <= 0) {
         gameState.emergencyWarp.active = false;
         
@@ -2414,11 +2433,11 @@ if (gameState.emergencyWarp.autoBraking) {
     // the target instead of slamming to a stop the instant the boost
     // ends. Overshoots are corrected by braking (X) — which is now
     // permitted during auto-braking (see the manual-brake block below).
-    const brakingForce = 0.985; // 1.5% reduction per frame
+    const brakingForce = Math.pow(0.985, dtF); // 1.5% reduction per 60fps frame
     gameState.velocityVector.multiplyScalar(brakingForce);
-    
+
     // Also apply rotational braking for smooth camera transitions
-    const rotationalBrakingForce = 0.95;
+    const rotationalBrakingForce = Math.pow(0.95, dtF);
     rotationalVelocity.pitch *= rotationalBrakingForce;
     rotationalVelocity.yaw *= rotationalBrakingForce;
     rotationalVelocity.roll *= rotationalBrakingForce;
@@ -2462,13 +2481,13 @@ if (typeof updateShieldSystem === 'function') {
     // Combined with the 0.985 auto-brake this is ~0.975/frame when both
     // are active, vs the gentle 0.985 coast when X is released.
 if (keys.x) {
-    // Gradual braking: reduce velocity by 1% per frame (smoother deceleration)
+    // Gradual braking: reduce velocity by 1% per 60fps frame (smoother deceleration)
     const _preBrakeSpeed = gameState.velocityVector.length();
-    const brakingForce = 0.99; // 1% reduction per frame (was 0.98 = 2%)
+    const brakingForce = Math.pow(0.99, dtF); // 1% reduction per frame (was 0.98 = 2%)
     gameState.velocityVector.multiplyScalar(brakingForce);
 
     // NEW: Also apply braking to rotational velocity (dampen turning and rolling)
-    const rotationalBrakingForce = 0.95; // 5% reduction per frame for rotation
+    const rotationalBrakingForce = Math.pow(0.95, dtF); // 5% reduction per frame for rotation
     rotationalVelocity.pitch *= rotationalBrakingForce;
     rotationalVelocity.yaw *= rotationalBrakingForce;
     rotationalVelocity.roll *= rotationalBrakingForce;
@@ -2480,7 +2499,7 @@ if (keys.x) {
     // wrong incentive (don't slow down even when you should).
     if (_preBrakeSpeed > 5.0) {
         gameState.energy = Math.min(gameState.maxEnergy || 100,
-            (gameState.energy || 0) + 0.15);
+            (gameState.energy || 0) + 0.15 * dtF);
     }
     
     // Get current speed in km/s
@@ -2666,10 +2685,10 @@ if (surfaceCollision) {
                             Math.cos(now * spiralStrength * 3)
                         ).multiplyScalar(spiralStrength * 0.2);
 
-                        gameState.velocityVector.add(_gravSpiralForce);
-                        
+                        gameState.velocityVector.addScaledVector(_gravSpiralForce, dtF);
+
                         if (distance < 160) {
-                            camera.rotation.z += spiralStrength * 0.02 * Math.sin(now * 5);
+                            camera.rotation.z += spiralStrength * 0.02 * Math.sin(now * 5) * dtF;
 
                             if (!window._cachedDangerOverlay) {
                                 window._cachedDangerOverlay = document.getElementById('dangerOverlay');
@@ -2773,8 +2792,8 @@ if (surfaceCollision) {
         });
     }
 
-    // Apply gravitational force
-    gameState.velocityVector.add(totalGravitationalForce);
+    // Apply gravitational force (a per-frame acceleration — dt-scaled)
+    gameState.velocityVector.addScaledVector(totalGravitationalForce, dtF);
     
     // Enhanced title flashing for gravity well alert
     // TRAJECTORY SOLVER (rep tier 4): auto-fires the slingshot ~1s after
@@ -2873,7 +2892,7 @@ if (surfaceCollision) {
     
     // Slingshot timer management (matching emergency warp behavior)
     if (gameState.slingshot.active) {
-        gameState.slingshot.timeRemaining -= 16.67;
+        gameState.slingshot.timeRemaining -= dtMsP;
 
         if (gameState.slingshot.timeRemaining <= 0) {
             gameState.slingshot.active = false;
@@ -2901,7 +2920,7 @@ if (surfaceCollision) {
         }
 
         if (currentSpeed > gameState.maxVelocity) {
-            gameState.velocityVector.multiplyScalar(gameState.slingshot.inertiaDecay);
+            gameState.velocityVector.multiplyScalar(Math.pow(gameState.slingshot.inertiaDecay, dtF));
 
             if (gameState.velocityVector.length() <= gameState.maxVelocity) {
                 gameState.slingshot.postSlingshot = false;
@@ -3104,11 +3123,12 @@ gameState.emergencyBraking = false;  // <-- ADD THIS LINE AT THE VERY END OF THE
     // slingshot.active now also gets near-zero damping: the old 0.998
     // bled a 24s slingshot ride down to ~6% of its launch speed, which
     // (with the maxSpeed=20 clamp) is why slingshots always fizzled.
-const dampingFactor = gameState.slingshot.postSlingshot ? 0.9999 :
+const dampingFactor = Math.pow(
+                     gameState.slingshot.postSlingshot ? 0.9999 :
                      gameState.slingshot.active ? 0.9999 :
                      gameState.emergencyWarp.active ? 0.9998 :
                      gameState.emergencyWarp.postWarp ? 0.9999 :  // NEW LINE
-                     0.998;
+                     0.998, dtF);
 
 const dampedVelocity = gameState.velocityVector.clone().multiplyScalar(dampingFactor);
 if (dampedVelocity.length() >= gameState.minVelocity || 
@@ -3120,8 +3140,10 @@ if (dampedVelocity.length() >= gameState.minVelocity ||
     gameState.velocityVector.copy(dampedVelocity);
 }
     
-    // Apply velocity to position
-    camera.position.add(gameState.velocityVector);
+    // Apply velocity to position. velocityVector's unit stays "distance per
+    // 60fps frame" (every speed readout/clamp above assumes it) — scaling
+    // the integration by dtF is what makes travel speed wall-clock true.
+    camera.position.addScaledVector(gameState.velocityVector, dtF);
     
     // SPECIFICATION: Auto-Navigation - Automatically disengages when energy drops below 5
     if (gameState.autoNavigating && gameState.currentTarget && gameState.energy > 5) {
@@ -3181,11 +3203,11 @@ if (dampedVelocity.length() >= gameState.minVelocity ||
                 const tangentialDirection = new THREE.Vector3().crossVectors(radialDirection, new THREE.Vector3(0, 1, 0)).normalize();
                 
                 // Blend between current velocity and tangential (smooth transition into orbit)
-                targetDirection = currentVelocity.lerp(tangentialDirection, 0.3);
+                targetDirection = currentVelocity.lerp(tangentialDirection, 1 - Math.pow(0.7, dtF));
             }
-            
-            gameState.velocityVector.addScaledVector(targetDirection, gameState.thrustPower * 0.4);
-            _consumeEnergy(0.03);
+
+            gameState.velocityVector.addScaledVector(targetDirection, gameState.thrustPower * 0.4 * dtF);
+            _consumeEnergy(0.03 * dtF);
             
             // Re-orient ONLY during distant approach (not during orbital insertion)
             // This prevents camera shake when trying to orbit close to target
@@ -3220,7 +3242,7 @@ const _maxE = gameState.maxEnergy || 100;
 if (gameState.energy < _maxE) {
     const _capBoost = (gameState.repTierUnlocks && gameState.repTierUnlocks.capacitor) ? 1.66 : 1.0;
     const _rate = (isThrusting ? 0.025 : 0.10) * _capBoost;
-    gameState.energy = Math.min(_maxE, gameState.energy + _rate);
+    gameState.energy = Math.min(_maxE, gameState.energy + _rate * dtF);
 }
     
     // Update HUD

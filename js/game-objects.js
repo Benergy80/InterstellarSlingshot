@@ -7518,7 +7518,7 @@ function updateTradingShips() {
                 ship.position.z += (Math.random() - 0.5) * 0.8;
                 ship.rotation.z = Math.sin(Date.now() * 0.004) * 0.15;
                 
-                data.miningProgress += 16.67; // ~60fps
+                data.miningProgress += (typeof gameState !== 'undefined' && gameState.dtMs) || 16.67; // real elapsed ms
                 if (data.miningProgress >= (data.miningDuration || 30000)) {
                     // Done mining, head back home
                     data.aiState = 'returning_with_cargo';
