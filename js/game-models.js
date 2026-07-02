@@ -206,6 +206,7 @@ async function loadPlayerModel() {
         modelCache.player = model;
         modelCache.loadingProgress += (1 / 17) * 100; // 17 total models
         console.log('✅ === PLAYER MODEL LOADED AND CACHED ===');
+        if (window.Boot) window.Boot.signal('playerModel');
     } catch (err) {
         console.error('❌ Failed to load Player.glb, player will be camera-only');
         console.error(`   Error:`, err.message);
@@ -261,6 +262,7 @@ async function loadAllModels() {
         modelCache.loaded = true;
         modelCache.loadingProgress = 100;
         console.log('🎉 Model loading process completed!');
+        if (window.Boot) window.Boot.signal('models');
 
         return true;
     } catch (error) {

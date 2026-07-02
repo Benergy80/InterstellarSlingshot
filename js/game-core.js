@@ -1364,17 +1364,23 @@ if (typeof areModelsLoaded === 'function' && areModelsLoaded()) {
     console.log('UI system initialized');
 }
 
-// Initialize shield system (with delay to ensure DOM is ready)
-setTimeout(() => {
+// Initialize shield system once the DOM is actually ready (the old
+// setTimeout(100) raced DOMContentLoaded — the "Shield system not
+// initialized" class of bug). Falls back to the timer without Boot.
+const _initShieldsWhenReady = (fn) => {
+    if (window.Boot) window.Boot.whenReady('dom', fn); else setTimeout(fn, 100);
+};
+_initShieldsWhenReady(() => {
     if (typeof initShieldSystem === 'function') {
         const initialized = initShieldSystem();
+        if (initialized && window.Boot) window.Boot.signal('shields');
         if (initialized) {
             console.log('ðŸ›¡ï¸ Shield system ready');
         } else {
             console.warn('âš ï¸ Shield system initialization failed - will retry on first activation');
         }
     }
-}, 100);
+});
 
 if (typeof initializeCosmicFeatures === 'function') {
     initializeCosmicFeatures();

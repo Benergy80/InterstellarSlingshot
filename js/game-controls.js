@@ -8534,31 +8534,36 @@ const _allyTarget = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
 // Alpha and the rescue-Beta parked near Sagittarius A*.
 function _makeWingman(roleKey, name, primaryColor) {
     const group = new THREE.Group();
-    let shipMesh;
-    let usedRealModel = false;
-    if (typeof getPlayerModel === 'function') {
+
+    // Build the real-model mesh (null if the GLB isn't cached yet).
+    // Factored out so the placeholder fallback below can UPGRADE itself
+    // when the model finishes loading, instead of a cone forever.
+    function _buildRealWingmanMesh() {
+        if (typeof getPlayerModel !== 'function') return null;
         const model = getPlayerModel();
-        if (model) {
-            usedRealModel = true;
-            shipMesh = model.clone();
-            const box = new THREE.Box3().setFromObject(shipMesh);
-            const center = box.getCenter(new THREE.Vector3());
-            shipMesh.traverse(child => {
-                if (child.isMesh) {
-                    child.position.sub(center);
-                    child.material = new THREE.MeshBasicMaterial({
-                        color: primaryColor,
-                        transparent: true,
-                        opacity: 0.85,
-                        side: THREE.FrontSide
-                    });
-                    child.visible = true;
-                    child.frustumCulled = false;
-                }
-            });
-            shipMesh.scale.set(96, 96, 96);
-        }
+        if (!model) return null;
+        const mesh = model.clone();
+        const box = new THREE.Box3().setFromObject(mesh);
+        const center = box.getCenter(new THREE.Vector3());
+        mesh.traverse(child => {
+            if (child.isMesh) {
+                child.position.sub(center);
+                child.material = new THREE.MeshBasicMaterial({
+                    color: primaryColor,
+                    transparent: true,
+                    opacity: 0.85,
+                    side: THREE.FrontSide
+                });
+                child.visible = true;
+                child.frustumCulled = false;
+            }
+        });
+        mesh.scale.set(96, 96, 96);
+        return mesh;
     }
+
+    let shipMesh = _buildRealWingmanMesh();
+    let usedRealModel = !!shipMesh;
     if (!shipMesh) {
         const geo = new THREE.ConeGeometry(6, 16, 6);
         const mat = new THREE.MeshBasicMaterial({ color: primaryColor });
@@ -8573,6 +8578,25 @@ function _makeWingman(roleKey, name, primaryColor) {
     let _wmThrusterGlows = [];
     if (usedRealModel && typeof createThrusterGlowsForModel === 'function') {
         _wmThrusterGlows = createThrusterGlowsForModel(shipMesh);
+    }
+
+    // INIT-RACE FIX: if this wingman was created before Player.glb finished
+    // loading (the "permanent placeholder cone" bug), swap the real model
+    // in as soon as it's cached. Boot.whenReady fires immediately if the
+    // model is already there, later if not — creation order stops mattering.
+    if (!usedRealModel && window.Boot) {
+        window.Boot.whenReady('playerModel', () => {
+            const real = _buildRealWingmanMesh();
+            if (!real || group.userData.health <= 0) return;
+            group.remove(shipMesh);
+            if (shipMesh.geometry) shipMesh.geometry.dispose();
+            if (shipMesh.material) shipMesh.material.dispose();
+            group.add(real);
+            if (typeof createThrusterGlowsForModel === 'function') {
+                group.userData._thrusterGlows = createThrusterGlowsForModel(real);
+            }
+            console.log(`✅ ${name}: placeholder upgraded to real player model`);
+        });
     }
 
     const profile = WINGMAN_ROLES[roleKey];

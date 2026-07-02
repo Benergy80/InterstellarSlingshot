@@ -1175,6 +1175,8 @@
     </div>
 
     <!-- Game Scripts -->
+    <!-- boot.js FIRST: init-order registry every other script signals into -->
+    <script src="js/boot.js?v=20260614aa"></script>
     <!-- Load GLTFLoader before game-models.js -->
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
     <script src="js/game-models.js?v=20260614aa"></script>
