@@ -2549,8 +2549,13 @@ if (gameState.frameCount % 5 === 0 && typeof checkCosmicFeatureInteractions === 
         // on a 120Hz display every-2nd-frame ran enemy AI (and its per-tick
         // movement steps) at 60Hz — enemies moved twice as fast. Derive the
         // frame interval from the measured refresh rate instead.
+        // FLOOR OF 2: the render-interpolation glide below spreads each AI
+        // step across the interval — at interval 1 there is nothing to
+        // interpolate and raw AI steps render directly (visible enemy jerk
+        // on ≤45fps machines). Interval 2 at low fps exactly matches the
+        // pre-adaptive tuned behavior; >75fps machines still scale up.
         const _measuredFps = (typeof window !== 'undefined' && window.__perf && window.__perf.fps) || 60;
-        const _AI_INTERVAL = Math.max(1, Math.round(_measuredFps / 30)) || 2;
+        const _AI_INTERVAL = Math.max(2, Math.round(_measuredFps / 30)) || 2;
         // (1) Glide the rendered transform START -> END EVERY frame. On an
         //     AI-tick frame this completes the previous interval (a -> 1) BEFORE
         //     the tick below snapshots it, so the next interval begins exactly
@@ -2597,9 +2602,11 @@ if (gameState.frameCount % 5 === 0 && typeof checkCosmicFeatureInteractions === 
     
     // Update civilian combat (enemies attacking civilians, distress calls)
     // ~20Hz of wall clock: fleets move per tick, so the interval scales with
-    // the measured refresh rate like the enemy/wingman AI above.
+    // the measured refresh rate like the enemy/wingman AI above. Floor of 2
+    // (civilians have no interpolation glide — finer ticks help, but a
+    // 1-frame interval flip-flopping with measured fps reads as stutter).
     if (typeof updateCivilianCombat === 'function' &&
-        gameState.frameCount % Math.max(1, Math.round((((typeof window !== 'undefined' && window.__perf && window.__perf.fps) || 60)) / 20)) === 0) {
+        gameState.frameCount % Math.max(2, Math.round((((typeof window !== 'undefined' && window.__perf && window.__perf.fps) || 60)) / 20)) === 0) {
         updateCivilianCombat();
     }
     
@@ -2668,8 +2675,9 @@ if (gameState.frameCount % 5 === 0 && typeof checkCosmicFeatureInteractions === 
     if (typeof updateAllyShips === 'function' && typeof allyShips !== 'undefined' && allyShips && allyShips.length) {
         const _wfc = gameState.frameCount;
         const _warp = gameState.velocityVector && gameState.velocityVector.length() >= 4.0;
-        // Same wall-clock cadence normalization as the enemy AI above.
-        const _wInterval = Math.max(1, Math.round((((typeof window !== 'undefined' && window.__perf && window.__perf.fps) || 60)) / 30)) || 2;
+        // Same wall-clock cadence normalization as the enemy AI above —
+        // including the floor of 2 that keeps the interpolation glide alive.
+        const _wInterval = Math.max(2, Math.round((((typeof window !== 'undefined' && window.__perf && window.__perf.fps) || 60)) / 30)) || 2;
         // (1) glide every frame (completes the interval before the tick below)
         for (let i = 0; i < allyShips.length; i++) {
             const w = allyShips[i]; if (!w || !w.userData || !w.userData._interp) continue;
