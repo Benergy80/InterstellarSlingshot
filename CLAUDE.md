@@ -74,10 +74,16 @@ globals are shared across `js/*.js`. The one build artifact is the Tailwind CSS
   units) computed once per animate() frame, clamped [4,50]ms. Physics rates
   are still tuned per-60fps-frame but applied `× dtF` (additive) or `^ dtF`
   (exponential decays). NEW per-frame gameplay code must dt-scale the same way.
-- **Perf meter:** `window.__perf` = { fps, medianMs, p95Ms, scriptMs } —
-  rolling 120-frame stats. Feeds `adjustPerformance()` (re-enabled): a 3-tier
-  quality ladder (pixelRatio × performanceMode) with hysteresis. Pin a tier
-  with `window.__qualityLock = 'normal'|'optimized'|'minimal'`.
+- **Perf meter:** `window.__perf` = { fps, medianMs, p95Ms, scriptMs,
+  p95ScriptMs } — rolling 120-frame stats; scriptMs is GAME LOGIC only
+  (measured up to renderer.render). Feeds `adjustPerformance()`
+  (re-enabled): a 3-tier quality ladder with hysteresis whose levers are
+  pixelRatio, performanceMode, additive point size (×0.85/×0.7), nebula
+  drawRange (×0.8/×0.6) and distance-cull ranges (×0.85/×0.6) — see
+  `_quality.TIERS` + `_applyFillRateTier` in game-core.js. Pin a tier with
+  `window.__qualityLock = 'normal'|'optimized'|'minimal'`.
+- **Perf HUD:** `window.__perfHUD()` in the console (or load with `?perf=1`)
+  — live fps / frame ms / logic ms / quality tier / draw calls overlay.
 - **Floating origin:** camera >30k from local origin → `applyWorldShift()`
   rebases the whole world onto the camera. TRUE coords = current +
   `window.worldOriginOffset`. Cached-position rules: userData keys in
