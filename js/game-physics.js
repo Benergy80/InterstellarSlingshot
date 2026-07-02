@@ -231,8 +231,12 @@ function orientTowardsTarget(target) {
     // takeover, so manual feel is never affected.
     const _demoDriving = (typeof window !== 'undefined' && window.demoPilot &&
                           window.demoPilot.driving);
-    const rotationSpeedPerFrame = _demoDriving ? 0.08 : 0.12;  // approach rate
-    const maxRotationPerFrame   = _demoDriving ? 0.025 : 0.045; // cap: demo ~86°/s, player auto-nav ~155°/s
+    // Demo rates reduced 0.08/0.025 -> 0.055/0.016 (~86°/s -> ~55°/s cap):
+    // combat tracking at ~47°/s mean read as jerky at 25-40fps and kept the
+    // cinematic chase camera pinned against its lag clamp. Slower, more
+    // deliberate turns are also simply nicer to watch.
+    const rotationSpeedPerFrame = _demoDriving ? 0.055 : 0.12;  // approach rate
+    const maxRotationPerFrame   = _demoDriving ? 0.016 : 0.045; // cap: demo ~55°/s, player auto-nav ~155°/s
     const FRAME_MS = 16.67;
     const frames = _deltaMs / FRAME_MS;
 
@@ -421,9 +425,11 @@ function applyRotationalInertia(keys, allowManualRotation) {
     // SKIP banking during mobile touch input to prevent unwanted roll
     let bankingFromYaw = 0;
     if (!window.mobileTouchActive) {
-        // Demo cinematic-roll boost trimmed 2.5 -> 1.8: combined with the
-        // bankingFactor cut, demo banking lands at ~43% of its old intensity.
-        const demoBoost = (window.demoPilot && window.demoPilot.active) ? 1.8 : 1.0;
+        // Demo cinematic-roll boost trimmed again 1.8 -> 1.2: combat banking
+        // was the dominant angular-rate source (~75°/s swings) and read as
+        // jerky at 25-40fps; the cinematic chase camera now supplies the
+        // "flow", so the raw banking can be gentler.
+        const demoBoost = (window.demoPilot && window.demoPilot.active) ? 1.2 : 1.0;
         bankingFromYaw = -rotationalVelocity.yaw * rotationalInertia.bankingFactor * speedFactor * demoBoost;
     }
     

@@ -1762,7 +1762,17 @@ function animate(rafTime) {
     
     // PERFORMANCE: Monitor frame times and adjust quality
     const currentTime = performance.now();
-    const frameTime = currentTime - gameState.lastUpdateTime;
+    // Frame delta from the rAF timestamp when available: it's vsync-aligned,
+    // so consecutive deltas are clean multiples of the display interval.
+    // Mid-frame performance.now() differences carry scheduling noise that
+    // dt-scaled motion then bakes into every step (visible speed shimmer).
+    let frameTime;
+    if (typeof rafTime === 'number' && typeof gameState._lastRafTime === 'number') {
+        frameTime = rafTime - gameState._lastRafTime;
+    } else {
+        frameTime = currentTime - gameState.lastUpdateTime;
+    }
+    if (typeof rafTime === 'number') gameState._lastRafTime = rafTime;
     gameState.lastUpdateTime = currentTime;
 
     // DELTA TIME: one clamped dt for the whole simulation. dtFrames is dt in
@@ -2807,6 +2817,61 @@ if (gameState.frameCount % 5 === 0 && typeof checkCosmicFeatureInteractions === 
     // would swamp the scripting stat with non-logic cost.
     const _logicEndMs = performance.now();
 
+    // CINEMATIC CHASE CAMERA (demo, third-person): render through a smoothed
+    // orientation that CHASES the physics orientation instead of being bolted
+    // to it. The ship still makes every steering correction instantly (the
+    // physics camera is untouched — restored right after render), but the
+    // VIEW banks and settles with a ~140ms time constant, so rolls and rapid
+    // turn adjustments flow instead of stepping — the discrete per-frame
+    // rotation steps are exactly what reads as jerk at 25-40fps. The lag is
+    // clamped to ~18° so the ship never swings out of frame. Demo-only:
+    // manual flight keeps 1:1 aim feel. Kill switch: window.__cinematicCam=false.
+    const _cinOn = (typeof window !== 'undefined' && window.__cinematicCam !== false) &&
+        window.demoPilot && window.demoPilot.driving &&
+        typeof cameraState !== 'undefined' && cameraState.mode === 'third-person';
+    let _cinSavedQuat = null;
+    if (_cinOn) {
+        if (!window.__cinQuat1) {
+            window.__cinQuat1 = camera.quaternion.clone();
+            window.__cinQuat = camera.quaternion.clone(); // stage 2 = rendered view
+        }
+        const _q1 = window.__cinQuat1;
+        const _q2 = window.__cinQuat;
+        // Two cascaded dt-corrected exponential stages (≈0.10/frame each at
+        // 60fps). One stage only filters ANGLE; the cascade also filters
+        // angular ACCELERATION, which is what actually reads as jerk.
+        // Each stage's step is ALSO slew-rate limited: during sustained fast
+        // maneuvers (combat rolls hit ~75°/s) an exponential chase saturates
+        // any fixed lag clamp and passes the jerk straight through — a rate
+        // limit instead makes the view catch up at a CONSTANT angular
+        // velocity, which is perfectly smooth by construction.
+        const _blend = 1 - Math.pow(0.90, gameState.dtFrames || 1);
+        const _maxStep = 1.35 * (gameState.dtMs || 16.67) / 1000; // ~77°/s slew cap
+        const _chase = (from, to) => {
+            const a = from.angleTo(to);
+            if (a < 1e-5) return;
+            const step = Math.min(a * _blend, _maxStep);
+            from.slerp(to, step / a);
+        };
+        _chase(_q1, camera.quaternion);
+        _chase(_q2, _q1);
+        // Safety net only (pathological spins — BH transits, hitstop exits):
+        // beyond ~35° the ship would leave the frame, so hard-catch there.
+        const _MAX_LAG = 0.61;
+        const _lag2 = _q2.angleTo(camera.quaternion);
+        if (_lag2 > _MAX_LAG) {
+            _q2.slerp(camera.quaternion, 1 - _MAX_LAG / _lag2);
+            _q1.copy(_q2);
+        }
+        _cinSavedQuat = camera.quaternion.clone();
+        camera.quaternion.copy(_q2);
+    } else if (typeof window !== 'undefined' && window.__cinQuat1) {
+        // keep the smooth quats parked on the live orientation while inactive
+        // so re-engaging (FPV→TPV, demo restart) never snaps from stale data
+        window.__cinQuat1.copy(camera.quaternion);
+        window.__cinQuat.copy(camera.quaternion);
+    }
+
     // PERFORMANCE DEBUG: Time render call
     if (typeof perfDebug !== 'undefined') perfDebug.startTimer('render');
     renderer.render(scene, camera);
@@ -2814,6 +2879,9 @@ if (gameState.frameCount % 5 === 0 && typeof checkCosmicFeatureInteractions === 
         perfDebug.endTimer('render');
         perfDebug.endTimer('total');
     }
+
+    // restore the physics orientation — the cinematic lag is render-only
+    if (_cinSavedQuat) camera.quaternion.copy(_cinSavedQuat);
 
     // Zoom scope frame capture. The renderer runs with
     // preserveDrawingBuffer:false (mobile FPS), so the WebGL drawing
