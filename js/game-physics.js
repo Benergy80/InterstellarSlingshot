@@ -205,6 +205,10 @@ function orientTowardsTarget(target) {
     // a continuous start/stop stutter. A small threshold keeps the ship
     // tracking almost continuously instead.
     const orientationThreshold = 0.016;
+    // Mark auto-orient as the steering authority this frame (also when
+    // already aligned): applyRotationalInertia skips its own pitch/yaw
+    // application while this is fresh, so the two controllers can't fight.
+    if (typeof gameState !== 'undefined') gameState._lastAutoOrientFrame = gameState.frameCount;
     if (angle < orientationThreshold) {
         return true;
     }
@@ -341,13 +345,25 @@ function applyRotationalInertia(keys, allowManualRotation) {
     rotationalVelocity.roll = Math.max(-currentMaxSpeed, 
                                        Math.min(currentMaxSpeed, rotationalVelocity.roll));
     
+    // STEERING-AUTHORITY GATE: while auto-orient (demo / auto-nav) steered
+    // this frame and the player isn't touching the rotation keys, do NOT
+    // apply residual pitch/yaw here. orientTowardsTarget feeds ~15% of its
+    // yaw into rotationalVelocity for the BANKING visual; applying it as a
+    // second camera rotation made two controllers fight around the aligned
+    // threshold — a limit cycle measured live at ±13°/s wobble. Banking
+    // roll below still reads rotationalVelocity.yaw, so the visual stays.
+    const _autoSteering = (typeof gameState !== 'undefined') &&
+        gameState._lastAutoOrientFrame !== undefined &&
+        (gameState.frameCount - gameState._lastAutoOrientFrame) <= 1 &&
+        !(keys.up || keys.down || keys.left || keys.right);
+
     // Apply pitch (looking up/down) - this is always relative to current orientation
-    if (Math.abs(rotationalVelocity.pitch) > 0.00001) {
+    if (!_autoSteering && Math.abs(rotationalVelocity.pitch) > 0.00001) {
         camera.rotateX(rotationalVelocity.pitch * _rdtF);
     }
-    
+
     // Apply yaw (turning left/right) - this is always relative to current orientation
-    if (Math.abs(rotationalVelocity.yaw) > 0.00001) {
+    if (!_autoSteering && Math.abs(rotationalVelocity.yaw) > 0.00001) {
         camera.rotateY(rotationalVelocity.yaw * _rdtF);
     }
     

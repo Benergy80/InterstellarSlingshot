@@ -222,6 +222,31 @@
             set('effectBudget', total <= 220, 'points+sprites=' + total, total > 220 ? 'warn' : 'pass');
         } catch (e) {}
 
+        // 9b. DISCOVERY-PATH APPROACH GOVERNOR (class: demo overshoots the
+        // stronghold at warp speed). The endpoint has 7+ anchored hostiles;
+        // navigateTo's approach governor must bring speed under ~10,000 km/s
+        // (10 u/frame) inside the engagement zone. Checked at < 2500u so the
+        // 3500u governor has had braking room; warp-locked frames exempt.
+        try {
+            const dp = window.demoPilot;
+            const tgt = gameState.currentTarget;
+            if (dp && dp.driving && dp.phase === 'followDiscoveryPath' &&
+                tgt && tgt.userData && tgt.userData.name === 'Discovery endpoint') {
+                const d = camera.position.distanceTo(tgt.position);
+                const sp = gameState.velocityVector ? gameState.velocityVector.length() : 0;
+                const warpBusy = gameState.emergencyWarp &&
+                    (gameState.emergencyWarp.active || gameState.emergencyWarp.transitioning);
+                if (d < 2500 && !warpBusy) {
+                    set('pathApproachSpeed', sp <= 11,
+                        ((sp * 1000) | 0) + ' km/s @ ' + (d | 0) + 'u from endpoint');
+                } else {
+                    set('pathApproachSpeed', true, 'outside governed band (' + (d | 0) + 'u)');
+                }
+            } else {
+                set('pathApproachSpeed', true, 'not on discovery approach');
+            }
+        } catch (e) {}
+
         // 9. WINGMEN FACE FORWARD (class: backwards ships) — warn
         try {
             const arr = (typeof allyShips !== 'undefined') ? allyShips : [];

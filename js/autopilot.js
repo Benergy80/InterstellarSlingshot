@@ -1881,12 +1881,17 @@
       // one-shot emergency warp is preserved by only granting allowWarp
       // until the first warp fires.
       if (dist > 300) {
+        // approachRange 3500: the mission system anchors 7+ hostiles within
+        // ~3000u of the endpoint — enter that zone below 9,500 km/s so the
+        // demo arrives fighting instead of overshooting the stronghold.
         const st = navigateTo(endPos, {
           arriveRadius: 300,
           arriveSpeed: 1.0,
           boost: true,
           allowJump: true,
           allowWarp: !ap._followPathWarpFired,
+          approachRange: 3500,
+          approachSpeed: 9.5,
         });
         if (st === 'warping') {
           ap._followPathWarpFired = true;
@@ -2346,6 +2351,10 @@
   //     allowJump:    true,  // may fire tactical W-jumps (dist > 1200)
   //     jumpMaxDist:  Infinity, // only jump when closer than this
   //     allowWarp:    false, // may burn an emergency-warp charge (dist > 8000)
+  //     approachRange: 0,    // speed-governed combat-approach zone: inside
+  //     approachSpeed: 9.5,  //   this range no jumps/warps fire and speed is
+  //                          //   braked below approachSpeed (u/frame; ×1000
+  //                          //   = the HUD's km/s) so arrivals don't overshoot
   //   }) -> 'locked' | 'orienting' | 'cruising' | 'jumping' | 'warping'
   //        | 'braking' | 'arrived'
   //
@@ -2362,10 +2371,12 @@
     opts = opts || {};
     const arriveRadius = opts.arriveRadius != null ? opts.arriveRadius : 300;
     const arriveSpeed = opts.arriveSpeed != null ? opts.arriveSpeed : 1.5;
-    const allowJump = opts.allowJump !== false;
+    let allowJump = opts.allowJump !== false;
     const jumpMaxDist = opts.jumpMaxDist != null ? opts.jumpMaxDist : Infinity;
-    const allowWarp = !!opts.allowWarp;
-    const boost = !!opts.boost;
+    let allowWarp = !!opts.allowWarp;
+    let boost = !!opts.boost;
+    const approachRange = opts.approachRange || 0;
+    const approachSpeed = opts.approachSpeed != null ? opts.approachSpeed : 9.5;
 
     // Resolve a target object auto-nav/orient can consume (reuse the dummy)
     let targetObj;
@@ -2414,6 +2425,23 @@
       return 'arrived';
     }
 
+    // 3b) COMBAT-APPROACH GOVERNOR: inside approachRange the destination is
+    // an engagement zone (e.g. the hostiles waiting at a discovery-path
+    // endpoint) — never jump/warp INTO it, kill boost, and brake until
+    // speed is below approachSpeed so the ship arrives fighting, not
+    // overshooting. Braking continues each frame the cap is exceeded.
+    if (approachRange && dist < approachRange) {
+      allowJump = false;
+      allowWarp = false;
+      boost = false;
+      if (speed > approachSpeed) {
+        k.b = false;
+        k.x = true;
+        ap._navStatus = 'braking';
+        return 'braking';
+      }
+    }
+
     // 4) Stopping-distance control: speed*35 is the ~X-brake coast length
     //    (0.975/frame combined brake from speed v needs ≈35·v units), so
     //    braking starts exactly when continuing would overshoot the radius.
@@ -2426,7 +2454,11 @@
     }
 
     // 5) Long haul: burn an emergency-warp charge (shared 20s cooldown).
-    if (allowWarp && dist > 8000 && facing > 0.9 && canEmergencyWarp() &&
+    //    An O-warp covers ~7200u of boost plus a long coast, and the
+    //    controller is hands-off while it's active — with an approach zone
+    //    set, require enough runway that the boost ends well outside it.
+    const _warpMinDist = approachRange ? approachRange + 12000 : 8000;
+    if (allowWarp && dist > _warpMinDist && facing > 0.9 && canEmergencyWarp() &&
         Date.now() - (ap._lastBHWarp || 0) > 20000) {
       if (triggerOKeyWarp()) {
         ap._lastBHWarp = Date.now();
@@ -2436,13 +2468,17 @@
       }
     }
 
-    // 6) Tactical W-jump, sized to land near the target (default boost
-    //    speed 15 → (dist-700) ms puts the coast tail on the doorstep).
-    if (allowJump && dist > 1200 && dist < jumpMaxDist && speed < 4 &&
+    // 6) Tactical W-jump. Without an approach zone it's sized to land near
+    //    the target (default boost speed 15 → (dist-700) ms puts the coast
+    //    tail on the doorstep). WITH an approach zone it's sized to land at
+    //    the zone EDGE — the ship is hands-off during the boost, so a jump
+    //    aimed at the target itself would carry warp speed into the fight.
+    const _jumpGap = approachRange ? (dist - approachRange) : (dist - 700);
+    if (allowJump && dist > 1200 && _jumpGap > 500 && dist < jumpMaxDist && speed < 4 &&
         facing > 0.9 && gameState.energy > 25 &&
         Date.now() - (ap._lastJumpTap || 0) > 5000) {
       ap._lastJumpTap = Date.now();
-      gameState._pendingJumpMs = Math.min(6000, Math.max(700, (dist - 700) * 1.0));
+      gameState._pendingJumpMs = Math.min(6000, Math.max(700, _jumpGap * 1.0));
       if (window.keys) {
         window.keys.wDoubleTap = true;
         setTimeout(() => { if (window.keys) window.keys.wDoubleTap = false; }, 120);

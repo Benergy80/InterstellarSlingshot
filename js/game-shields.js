@@ -733,14 +733,28 @@ function destroy3DShield() {
     }
 }
 
+// Position-only sync, safe to call multiple times per frame. Called again
+// from animate() AFTER physics + the player-ship re-sync: update3DShield
+// runs inside the physics update (pre-integration), so without the late
+// sync the bubble trails the ship by one frame and shakes relative to it.
+function syncShieldPositionToShip() {
+    if (!shieldSystem.mesh3D || !shieldSystem.active) return;
+    const playerPos = typeof getPlayerPosition === 'function'
+        ? getPlayerPosition()
+        : (window.cameraState?.playerShipMesh?.position || camera.position);
+    shieldSystem.mesh3D.position.copy(playerPos);
+    if (shieldSystem.glowMesh3D) shieldSystem.glowMesh3D.position.copy(playerPos);
+}
+if (typeof window !== 'undefined') window.syncShieldPositionToShip = syncShieldPositionToShip;
+
 function update3DShield() {
     if (!shieldSystem.mesh3D || !shieldSystem.active) return;
-    
+
     // Get player ship position
-    const playerPos = typeof getPlayerPosition === 'function' 
-        ? getPlayerPosition() 
+    const playerPos = typeof getPlayerPosition === 'function'
+        ? getPlayerPosition()
         : (window.cameraState?.playerShipMesh?.position || camera.position);
-    
+
     // Position shield around player
     shieldSystem.mesh3D.position.copy(playerPos);
     shieldSystem.glowMesh3D.position.copy(playerPos);

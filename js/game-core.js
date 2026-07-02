@@ -2736,7 +2736,13 @@ if (gameState.frameCount % 5 === 0 && typeof checkCosmicFeatureInteractions === 
     if (typeof updateCameraView === 'function') {
         updateCameraView(camera);
     }
-    
+
+    // Shield bubble rides the ship — re-pin it to the freshly synced ship
+    // position (its own update ran inside physics, pre-integration).
+    if (typeof syncShieldPositionToShip === 'function') {
+        syncShieldPositionToShip();
+    }
+
     // Update UI every few frames
     if (gameState.frameCount % 2 === 0) {
         if (typeof updateUI === 'function') updateUI();
