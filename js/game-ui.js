@@ -2430,6 +2430,10 @@ function updateDistressIndicator() {
 
     // Pick the nearest active distress signal — that's what the on-screen
     // pointer will track. Other distresses still appear on the map.
+    // SOS signals have a MAXIMUM RANGE (shared with the detection toast in
+    // civilian-combat.js): a ship under attack across the universe must not
+    // drive a permanent DISTRESS arrow.
+    const _sosRange = (typeof window !== 'undefined' && window.DISTRESS_DETECTION_RANGE) || 5000;
     let nearest = null;
     let nearestDist = Infinity;
     const camPos = camera.position;
@@ -2438,6 +2442,7 @@ function updateDistressIndicator() {
         if (!s || !s.userData || s.userData.destroyed) continue;
         if (!s.userData.distressActive) continue;
         const d = camPos.distanceTo(s.position);
+        if (d > _sosRange) continue;
         if (d < nearestDist) { nearestDist = d; nearest = s; }
     }
     if (!nearest) {

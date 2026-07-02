@@ -4,6 +4,9 @@
 // Track active distress calls
 const activeDistressCalls = [];
 const DISTRESS_DETECTION_RANGE = 5000; // Distance player can detect distress
+// Shared with the SOS screen indicator in game-ui.js — one source of truth
+// for how far a distress signal carries.
+if (typeof window !== 'undefined') window.DISTRESS_DETECTION_RANGE = DISTRESS_DETECTION_RANGE;
 const CIVILIAN_DESTRUCTION_HITS = 8;
 const MILITARY_DESTRUCTION_HITS = 14;  // patrol craft are tougher
 const CIVILIAN_SHIELD_HP = 5;          // hits the cyan bubble absorbs before hull
