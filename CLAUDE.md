@@ -69,6 +69,38 @@ globals are shared across `js/*.js`. The one build artifact is the Tailwind CSS
 - Panels are HTML in `index.html` (`.ui-panel.{top-left,bottom-left,top-right,bottom-right,title-header}`), styled in `css/styles.css`. Build banner + console-gate + cache-buster are in `index.html` `<head>`.
 - **Tailwind:** loaded as a **precompiled** stylesheet `css/tailwind.css` (NOT the runtime CDN — that emitted a prod console warning). It's a committed, purged build. **After editing any Tailwind utility classes in `index.html` or `js/**`, rebuild it:** `npm install` (once) then `npm run build:css` (`tailwind.config.js` content globs = `index.html` + `js/**/*.js`), and commit `css/tailwind.css`. Dev deps (`package.json`/`package-lock.json`) are committed; `node_modules` is gitignored. **Caveat:** the purged build only includes class strings the scanner finds *literally* — Tailwind classes built dynamically in JS (`'text-' + color`) won't be emitted, so prefer full literal class names.
 
+## Engine infrastructure (added on claude/engine-hardening, 2026-07-02)
+- **Delta time:** `gameState.dtMs` / `gameState.dtFrames` (dt in 60fps-frame
+  units) computed once per animate() frame, clamped [4,50]ms. Physics rates
+  are still tuned per-60fps-frame but applied `× dtF` (additive) or `^ dtF`
+  (exponential decays). NEW per-frame gameplay code must dt-scale the same way.
+- **Perf meter:** `window.__perf` = { fps, medianMs, p95Ms, scriptMs } —
+  rolling 120-frame stats. Feeds `adjustPerformance()` (re-enabled): a 3-tier
+  quality ladder (pixelRatio × performanceMode) with hysteresis. Pin a tier
+  with `window.__qualityLock = 'normal'|'optimized'|'minimal'`.
+- **Floating origin:** camera >30k from local origin → `applyWorldShift()`
+  rebases the whole world onto the camera. TRUE coords = current +
+  `window.worldOriginOffset`. Cached-position rules: userData keys in
+  `_WSHIFT_UD_KEYS` (game-core.js) shift automatically; non-scene caches need
+  a handler pushed to `window.__worldShiftHandlers`; "distance from origin"
+  rules must use `window.trueDistanceFromOrigin(pos)`; NEVER store an
+  absolute Vector3 across frames without one of these. Main renderer uses
+  `logarithmicDepthBuffer` (intro renderers don't).
+- **Boot registry:** `js/boot.js` loads first. Producers `Boot.signal(name)`
+  ('dom', 'playerModel', 'models', 'shields'); consumers
+  `Boot.whenReady(name, cb)` (fires immediately if already ready). Use it
+  instead of setTimeout-and-hope or typeof-checks for init ordering.
+- **Autopilot navigation:** phases should call `navigateTo(pos, opts)`
+  (autopilot.js) — a closed-loop controller owning orient/thrust/jump/warp/
+  brake with stopping-distance braking — instead of poking keys/wDoubleTap.
+  `demoPilot.navStatus` exposes its state.
+- **Tests:** `npm test` = `test:syntax` (node --check all js) +
+  `test:smoke` (scripts/smoke-test.mjs: boots the real game headless via
+  playwright-core + installed Chrome, runs the demo, asserts probe clean +
+  loop advancing + perf sampling + the floating-origin rebase preserves true
+  coords). Run before committing engine changes. `SMOKE_SECONDS=60` to soak
+  longer. Headless is SwiftShader (~1-4 fps) — that's expected, not a bug.
+
 ## Self-improvement loop (see SELF-IMPROVE.md)
 - `js/playtest-probe.js` is an always-on regression sensor exposing `window.__selftest`
   (`.report()`, `.fails()`, `.fps`). Read it via chrome-devtools `evaluate_script` to
