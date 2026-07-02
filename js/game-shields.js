@@ -552,6 +552,22 @@ function createShieldHitEffect(hitPosition) {
     // Flash the 3rd-person shield bubble RED on impact (the 2D ripple
     // above only shows in first-person).
     flashShield3DHit();
+
+    // DEFLECTION SPARKS: a bright burst at the point where the shot meets
+    // the shield SURFACE (on the line from the bubble toward the shooter),
+    // so hits visibly glance off the shield instead of vanishing into it.
+    if (shieldSystem.mesh3D && hitPosition && typeof createHitSparks === 'function') {
+        const center = shieldSystem.mesh3D.position;
+        const geomR = (shieldSystem.mesh3D.geometry.parameters &&
+            shieldSystem.mesh3D.geometry.parameters.radius) || 8;
+        const worldR = geomR * (shieldSystem.mesh3D.scale.x || 1);
+        const impact = hitPosition.clone().sub(center);
+        if (impact.lengthSq() > 0.001) {
+            impact.normalize().multiplyScalar(worldR).add(center);
+            createHitSparks(impact, 0x88eeff);   // shield-cyan scatter
+            createHitSparks(impact, 0xffffff);   // hot white core
+        }
+    }
     
     // Play shield absorption sound (energy deadening the impact)
     console.log('🔊 Attempting to play shield_hit sound...');

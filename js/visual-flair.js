@@ -916,6 +916,11 @@ function updateVisualFlair() {
 // Exports
 if (typeof window !== 'undefined') {
     window.updateVisualFlair = updateVisualFlair;
+    // Called again from animate() AFTER the render transforms (fixed-step
+    // interpolation + cinematic re-anchor) so the charge glow rides the
+    // RENDERED ship — placed only in the update phase it trails the ship
+    // while thrusting (the "charge blast looks wrong under thrust" bug).
+    window.__syncChargeGlow = _updateLaserCharge;
     window.materializeShip = materializeShip;
     window.createHitSparks = createHitSparks;
     window.createDistressFlare = createDistressFlare;

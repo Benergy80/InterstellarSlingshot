@@ -3047,6 +3047,15 @@ if (gameState.frameCount % 5 === 0 && typeof checkCosmicFeatureInteractions === 
         }
     }
 
+    // Ship-attached effects follow the RENDERED ship (the fixed-step
+    // interpolation and cinematic re-anchor above have been applied): the
+    // laser-charge glow was previously placed only during the update phase,
+    // so it trailed the ship whenever thrusting while holding a charge.
+    if ((_simInterpApplied || _cinShipMoved) &&
+        typeof window !== 'undefined' && typeof window.__syncChargeGlow === 'function') {
+        try { window.__syncChargeGlow(); } catch (e) {}
+    }
+
     // PERFORMANCE DEBUG: Time render call
     if (typeof perfDebug !== 'undefined') perfDebug.startTimer('render');
     renderer.render(scene, camera);
