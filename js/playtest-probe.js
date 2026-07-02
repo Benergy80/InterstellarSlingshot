@@ -76,9 +76,16 @@
         } catch (e) {}
 
         // 2. FINITE POSITIONS (class: NaN position — crystals, mining ships)
+        // Also guards ORIENTATIONS: a NaN quaternion (e.g. a degenerate
+        // swing-twist in the cinematic camera) renders whole frames
+        // stretched/distorted without throwing any error.
         try {
             let bad = 0, badName = '';
             if (!posOK(camera)) { bad++; badName = 'camera'; }
+            const quatOK = (q) => q && isFinite(q.x + q.y + q.z + q.w);
+            if (!quatOK(camera.quaternion)) { bad++; if (!badName) badName = 'cameraQuat'; }
+            if (window.__cinQuat && !quatOK(window.__cinQuat)) { bad++; if (!badName) badName = 'cinCamQuat'; }
+            if (window.__cinShipQuat && !quatOK(window.__cinShipQuat)) { bad++; if (!badName) badName = 'cinShipQuat'; }
             const pools = [
                 ['enemies', typeof enemies !== 'undefined' ? enemies : null],
                 ['allyShips', typeof allyShips !== 'undefined' ? allyShips : null],

@@ -504,7 +504,17 @@ function _quatSpring(q, w, qGoal, halflife, dtSec) {
 const _stTmp = (typeof THREE !== 'undefined') ? new THREE.Quaternion() : null;
 function _swingTwist(q, axis, outSwing, outTwist) {
     const d = q.x * axis.x + q.y * axis.y + q.z * axis.z;
-    outTwist.set(axis.x * d, axis.y * d, axis.z * d, q.w).normalize();
+    outTwist.set(axis.x * d, axis.y * d, axis.z * d, q.w);
+    // DEGENERATE GUARD: a ~180° rotation with no component about `axis`
+    // gives a zero twist quaternion — normalize() would divide by zero and
+    // poison everything downstream with NaN (rendered as a stretched/
+    // distorted frame). Treat it as pure swing.
+    if (outTwist.lengthSq() < 1e-9) {
+        outTwist.set(0, 0, 0, 1);
+        outSwing.copy(q);
+        return;
+    }
+    outTwist.normalize();
     outSwing.copy(q).multiply(_stTmp.copy(outTwist).invert());
 }
 
@@ -2993,6 +3003,14 @@ if (gameState.frameCount % 5 === 0 && typeof checkCosmicFeatureInteractions === 
             .slerp(window.__cinTwist, ROLL_FOLLOW);
         window.__cinGoal.copy(_q2).multiply(window.__cinSwing).multiply(window.__cinTwistScaled);
         _quatSpring(_q2, window.__cinAngVel, window.__cinGoal, HALFLIFE, _dtSec);
+        _q2.normalize();
+        // NaN RECOVERY: if the spring state was ever poisoned (degenerate
+        // input, extreme dt), a NaN quaternion renders the whole frame
+        // stretched/distorted. Reset hard onto the physics orientation.
+        if (!isFinite(_q2.x + _q2.y + _q2.z + _q2.w)) {
+            _q2.copy(camera.quaternion);
+            window.__cinAngVel.set(0, 0, 0);
+        }
         // Safety net only (pathological spins — BH transits, hitstop exits):
         // beyond ~35° the ship would leave the frame, so hard-catch there.
         const _MAX_LAG = 0.61;
