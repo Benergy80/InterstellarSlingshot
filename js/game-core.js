@@ -383,9 +383,11 @@ const __perfMeter = {
     _i: 0,
     out: { fps: 0, medianMs: 16.67, p95Ms: 16.67, scriptMs: 0, samples: 0 },
     sample(frameMs, scriptMs) {
-        // A tab switch / debugger pause shows up as one huge frame — not a
-        // real performance signal, so drop it rather than poison the stats.
-        if (!(frameMs > 0) || frameMs > 500) return;
+        // A tab switch / debugger pause shows up as one multi-second frame —
+        // not a real performance signal, so drop it rather than poison the
+        // stats. Sustained sub-2s frames ARE signal (a machine that slow is
+        // exactly when the quality controller must still see data).
+        if (!(frameMs > 0) || frameMs > 2000) return;
         this._frame[this._i] = frameMs;
         this._script[this._i] = scriptMs;
         this._i = (this._i + 1) % 120;
