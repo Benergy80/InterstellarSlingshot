@@ -2724,6 +2724,18 @@ if (gameState.frameCount % 5 === 0 && typeof checkCosmicFeatureInteractions === 
         updateEnhancedPhysics();
     }
     if (typeof perfDebug !== 'undefined') perfDebug.endTimer('physics');
+
+    // PLAYER-SHIP RE-SYNC: physics just moved/rotated the camera, but the
+    // updateCameraView call at the top of the frame used the PRE-physics
+    // camera — leaving the ship mesh one frame behind (velocity × dt). At a
+    // fixed 60fps that lag was constant and read as camera framing; with
+    // variable dt it changes every frame and reads as ship jitter. The
+    // transition animation inside is wall-clock-based, so this second call
+    // is idempotent. (The early call stays: intro/game-over paths return
+    // before reaching here and still need the ship placed.)
+    if (typeof updateCameraView === 'function') {
+        updateCameraView(camera);
+    }
     
     // Update UI every few frames
     if (gameState.frameCount % 2 === 0) {
