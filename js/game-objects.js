@@ -5591,8 +5591,15 @@ function updateDistanceCulling() {
 
     const cx = camera.position.x, cy = camera.position.y, cz = camera.position.z;
 
+    // ADAPTIVE QUALITY: the quality controller shrinks cull ranges at lower
+    // tiers (distance-LOD) — dense galaxy cores are draw-call bound and the
+    // farthest objects are the cheapest look-loss to shed.
+    const _cullScale = (typeof window !== 'undefined' && window.__quality)
+        ? (window.__quality.TIERS[window.__quality.tier].cullScale || 1) : 1;
+
     const cullArray = (arr, range) => {
         if (typeof arr === 'undefined' || !arr || !arr.length) return;
+        range *= _cullScale;
         const r2 = range * range;
         for (let i = 0; i < arr.length; i++) {
             const o = arr[i];
@@ -5617,7 +5624,7 @@ function updateDistanceCulling() {
     // that galaxy fighting, not as specks from 25k away. Runs AFTER the 30k
     // pass above (which would otherwise keep them visible out to 30k).
     if (typeof interstellarAsteroids !== 'undefined') {
-        const dr2 = 8000 * 8000;
+        const dr2 = (8000 * _cullScale) * (8000 * _cullScale);
         for (let i = 0; i < interstellarAsteroids.length; i++) {
             const a = interstellarAsteroids[i];
             if (!a || !a.userData || !a.userData.denseField || !a.position) continue;

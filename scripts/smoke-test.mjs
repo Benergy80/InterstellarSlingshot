@@ -82,24 +82,45 @@ try {
 
     const fcBefore = await page.evaluate(() => gameState.frameCount);
     await page.waitForTimeout(SOAK_MS);
-    const state = await page.evaluate(() => ({
-        frameCount: gameState.frameCount,
-        gameOver: gameState.gameOver,
-        demoDriving: !!(window.demoPilot && window.demoPilot.driving),
-        perf: window.__perf || null,
-        quality: window.__quality ? {
-            tier: window.__quality.TIERS[window.__quality.tier].name,
-            pixelRatio: window.__quality.basePixelRatio,
-        } : null,
-        selftest: window.__selftest ? window.__selftest.report() : '(no probe)',
-        selftestFails: window.__selftest
-            ? window.__selftest.fails().filter((f) => f.level !== 'warn')
-            : [],
-    }));
+    const state = await page.evaluate(() => {
+        // Fill-rate lever verification: when the quality controller has
+        // stepped below 'normal', additive point materials must actually be
+        // running below their base size.
+        let leversApplied = null;
+        if (window.__quality && window.__quality.tier > 0 && typeof scene !== 'undefined') {
+            leversApplied = false;
+            scene.traverse((o) => {
+                if (leversApplied || !o.isPoints || !o.material) return;
+                const m = o.material;
+                if (m.userData && m.userData._baseSize !== undefined && m.size < m.userData._baseSize) {
+                    leversApplied = true;
+                }
+            });
+        }
+        return {
+            frameCount: gameState.frameCount,
+            gameOver: gameState.gameOver,
+            demoDriving: !!(window.demoPilot && window.demoPilot.driving),
+            demoPhase: (window.demoPilot && window.demoPilot.phase) || null,
+            navStatus: (window.demoPilot && window.demoPilot.navStatus) || null,
+            leversApplied,
+            perf: window.__perf || null,
+            quality: window.__quality ? {
+                tier: window.__quality.TIERS[window.__quality.tier].name,
+                pixelRatio: window.__quality.basePixelRatio,
+            } : null,
+            selftest: window.__selftest ? window.__selftest.report() : '(no probe)',
+            selftestFails: window.__selftest
+                ? window.__selftest.fails().filter((f) => f.level !== 'warn')
+                : [],
+        };
+    });
 
     console.log('\n--- probe report ---\n' + state.selftest + '\n--------------------');
     console.log('perf:', JSON.stringify(state.perf));
-    console.log('quality:', JSON.stringify(state.quality));
+    console.log('quality:', JSON.stringify(state.quality),
+        'leversApplied:', state.leversApplied,
+        'demoPhase:', state.demoPhase, '/', state.navStatus);
 
     const framesAdvanced = state.frameCount - fcBefore;
     if (framesAdvanced < SOAK_MS / 1000) {
@@ -111,6 +132,23 @@ try {
         fail('probe FAILs: ' + JSON.stringify(state.selftestFails));
     }
     if (!state.perf || !state.perf.samples) fail('perf meter produced no samples');
+    // Main-thread game-logic budget (scriptMs excludes renderer.render, so
+    // it's pure logic cost and meaningful even under software rendering).
+    // Headless logic p95 typically lands well under 100ms; 200ms means a
+    // CPU regression in the update path.
+    if (state.perf && state.perf.p95ScriptMs > 200) {
+        fail(`logic budget blown: p95 scriptMs ${state.perf.p95ScriptMs.toFixed(0)}ms > 200ms`);
+    }
+    // Demo loop progress: after the soak the autopilot must be past its
+    // init phase and reporting a live phase name.
+    if (!state.demoPhase || state.demoPhase === 'init') {
+        fail(`demo stuck in phase '${state.demoPhase}' after soak`);
+    }
+    // If the quality controller stepped down, the fill-rate levers (additive
+    // point size / nebula drawRange) must actually be applied in the scene.
+    if (state.leversApplied === false) {
+        fail('quality tier below normal but fill-rate levers not applied to any additive Points');
+    }
 
     // ── FLOATING-ORIGIN REGRESSION ────────────────────────────────────────
     // Teleport the camera past the rebase threshold and verify: the world

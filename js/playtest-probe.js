@@ -167,7 +167,14 @@
                 (tgt.userData.type === 'enemy' || tgt.userData.isBoss || tgt.userData.isEliteGuardian);
             const warping = (gameState.emergencyWarp && (gameState.emergencyWarp.active || gameState.emergencyWarp.postWarp)) ||
                 (gameState.slingshot && gameState.slingshot.active);
-            if (isEnemyTgt && !warping) {
+            // Below ~10 fps the dt clamp runs the sim in deliberate slow
+            // motion — our 14s wall-clock window is then only ~2s of game
+            // time, and evasive enemies can legitimately out-drift the
+            // pursuit. The check is only meaningful at playable frame rates.
+            if (PROBE.fps > 0 && PROBE.fps < 10) {
+                PROBE._hist.recede = { tgt: null, samples: [] };
+                set('notRecedingFromTarget', true, 'n/a below 10fps (slow-mo)');
+            } else if (isEnemyTgt && !warping) {
                 const d = camera.position.distanceTo(tgt.position);
                 const h = PROBE._hist.recede || (PROBE._hist.recede = { tgt: null, samples: [] });
                 if (h.tgt !== tgt) { h.tgt = tgt; h.samples = []; }

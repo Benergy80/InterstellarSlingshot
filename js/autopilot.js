@@ -59,7 +59,8 @@
     get active() { return ap.active; },
     get driving() { return ap.active && !ap.paused; },
     get paused() { return ap.paused; },
-    get navStatus() { return ap._navStatus || null; }
+    get navStatus() { return ap._navStatus || null; },
+    get phase() { return ap.phase; }
   };
 
   // Per-frame enemy buffs + swarm — previously only applied while demo

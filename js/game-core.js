@@ -381,7 +381,7 @@ const __perfMeter = {
     _script: new Float32Array(120),
     _n: 0,
     _i: 0,
-    out: { fps: 0, medianMs: 16.67, p95Ms: 16.67, scriptMs: 0, samples: 0 },
+    out: { fps: 0, medianMs: 16.67, p95Ms: 16.67, scriptMs: 0, p95ScriptMs: 0, samples: 0 },
     sample(frameMs, scriptMs) {
         // A tab switch / debugger pause shows up as one multi-second frame —
         // not a real performance signal, so drop it rather than poison the
@@ -401,6 +401,7 @@ const __perfMeter = {
         this.out.medianMs = med;
         this.out.p95Ms = f[Math.min(f.length - 1, Math.floor(f.length * 0.95))];
         this.out.scriptMs = s[s.length >> 1];
+        this.out.p95ScriptMs = s[Math.min(s.length - 1, Math.floor(s.length * 0.95))];
         this.out.fps = med > 0 ? Math.round(1000 / med) : 0;
         this.out.samples = this._n;
     }
@@ -522,9 +523,17 @@ function applyWorldShift() {
 // to pin quality manually. Observability: window.__quality.
 const _quality = {
     TIERS: [
-        { name: 'normal',    prScale: 1.0  },
-        { name: 'optimized', prScale: 0.85 },
-        { name: 'minimal',   prScale: 0.7  },
+        // prScale: render-resolution factor (fill-rate lever #1)
+        // ptScale: additive point-size factor — fragments/point ~ ptScale²,
+        //          so 0.85/0.7 ≈ 72%/49% of baseline additive fill
+        // drawScale: fraction of each nebula point cloud actually drawn
+        //          (thins the deep overdraw stack INSIDE nebulas, where the
+        //          game is fill-rate bound at its worst)
+        // cullScale: distance-culling range factor — distance-LOD for the
+        //          dense-core draw-call load (planets/asteroids/comets)
+        { name: 'normal',    prScale: 1.0,  ptScale: 1.0,  drawScale: 1.0, cullScale: 1.0  },
+        { name: 'optimized', prScale: 0.85, ptScale: 0.85, drawScale: 0.8, cullScale: 0.85 },
+        { name: 'minimal',   prScale: 0.7,  ptScale: 0.7,  drawScale: 0.6, cullScale: 0.6  },
     ],
     tier: 0,
     slowStreak: 0,
@@ -533,6 +542,35 @@ const _quality = {
     basePixelRatio: 0,
 };
 if (typeof window !== 'undefined') window.__quality = _quality;
+
+// Fill-rate levers applied across the scene. Runs only on tier change (a
+// one-off traverse), stores every material's base value in material.userData
+// so any tier — including back up to full quality — is exactly reversible.
+// Content created after a tier change spawns at base quality until the next
+// change; the controller re-evaluates every 5s so that self-corrects.
+function _applyFillRateTier(t) {
+    if (!scene || typeof THREE === 'undefined') return;
+    scene.traverse((o) => {
+        if (!o.isPoints || !o.material) return;
+        const m = o.material;
+        if (m.blending !== THREE.AdditiveBlending) return;
+        if (m.userData._baseSize === undefined) m.userData._baseSize = m.size;
+        m.size = m.userData._baseSize * t.ptScale;
+        // Nebula clouds additionally thin their drawn point count — the
+        // spatial distribution is random, so a drawRange cut reads as a
+        // slightly sparser cloud, not a hole.
+        const pu = o.parent && o.parent.userData;
+        if (pu && typeof pu.type === 'string' && pu.type.indexOf('nebula') !== -1 && o.geometry) {
+            if (o.userData._fullPointCount === undefined) {
+                const pa = o.geometry.getAttribute('position');
+                o.userData._fullPointCount = pa ? pa.count : 0;
+            }
+            if (o.userData._fullPointCount) {
+                o.geometry.setDrawRange(0, Math.floor(o.userData._fullPointCount * t.drawScale));
+            }
+        }
+    });
+}
 
 function _applyQualityTier(idx, why) {
     const t = _quality.TIERS[idx];
@@ -548,7 +586,54 @@ function _applyQualityTier(idx, why) {
         }
         renderer.setPixelRatio(_quality.basePixelRatio * t.prScale);
     }
-    console.log(`Quality: ${t.name} (pixelRatio ×${t.prScale}) — ${why}`);
+    _applyFillRateTier(t);
+    console.log(`Quality: ${t.name} (pixelRatio ×${t.prScale}, points ×${t.ptScale}, ` +
+        `nebula draw ×${t.drawScale}, cull ×${t.cullScale}) — ${why}`);
+}
+
+// PERF HUD — in-engine measurement overlay. Toggle from the console with
+// window.__perfHUD() (or __perfHUD(false) to hide), or load the page with
+// ?perf=1. Shows the live __perf stats, quality tier, and renderer.info
+// draw-call/triangle/point counts at 1Hz. Read-only; zero cost when hidden.
+function _perfHUDToggle(show) {
+    let el = document.getElementById('perfHud');
+    if (show === undefined) show = !el || el.style.display === 'none';
+    if (!show) {
+        if (el) el.style.display = 'none';
+        if (_perfHUDToggle._timer) { clearInterval(_perfHUDToggle._timer); _perfHUDToggle._timer = null; }
+        return false;
+    }
+    if (!el) {
+        el = document.createElement('div');
+        el.id = 'perfHud';
+        el.style.cssText = 'position:fixed;top:8px;right:8px;z-index:99999;' +
+            'background:rgba(0,10,20,0.8);color:#7fdcff;border:1px solid rgba(0,180,255,0.5);' +
+            'border-radius:6px;padding:6px 10px;font:11px/1.5 monospace;white-space:pre;' +
+            'pointer-events:none;text-align:left;';
+        document.body.appendChild(el);
+    }
+    el.style.display = 'block';
+    if (!_perfHUDToggle._timer) {
+        _perfHUDToggle._timer = setInterval(() => {
+            const p = window.__perf || {};
+            const q = window.__quality;
+            const ri = (renderer && renderer.info) ? renderer.info.render : null;
+            el.textContent =
+                `fps     ${p.fps || 0}\n` +
+                `frame   ${(p.medianMs || 0).toFixed(1)}ms (p95 ${(p.p95Ms || 0).toFixed(1)})\n` +
+                `script  ${(p.scriptMs || 0).toFixed(1)}ms\n` +
+                `quality ${q ? q.TIERS[q.tier].name : '?'}\n` +
+                (ri ? `draws   ${ri.calls}\ntris    ${(ri.triangles / 1000).toFixed(0)}k\npoints  ${(ri.points / 1000).toFixed(0)}k` : '');
+        }, 1000);
+    }
+    return true;
+}
+if (typeof window !== 'undefined') {
+    window.__perfHUD = _perfHUDToggle;
+    if (window.location && /[?&]perf=1/.test(window.location.search)) {
+        if (window.Boot) window.Boot.whenReady('dom', () => _perfHUDToggle(true));
+        else setTimeout(() => _perfHUDToggle(true), 1000);
+    }
 }
 
 function adjustPerformance() {
@@ -2691,6 +2776,11 @@ if (gameState.frameCount % 5 === 0 && typeof checkCosmicFeatureInteractions === 
 
     // Depth of field disabled for performance (was causing expensive scene traversals)
 
+    // PERF METER: game-logic time ends here — renderer.render() is GPU
+    // submission (or full CPU rasterization under software rendering), which
+    // would swamp the scripting stat with non-logic cost.
+    const _logicEndMs = performance.now();
+
     // PERFORMANCE DEBUG: Time render call
     if (typeof perfDebug !== 'undefined') perfDebug.startTimer('render');
     renderer.render(scene, camera);
@@ -2723,10 +2813,11 @@ if (gameState.frameCount % 5 === 0 && typeof checkCosmicFeatureInteractions === 
         }
     }
 
-    // PERF METER: record this frame (frame-to-frame time + scripting time).
+    // PERF METER: record this frame (frame-to-frame time + game-logic time,
+    // measured up to the render call so render cost never pollutes it).
     // Early-return frames (paused, hitstop, game over) are deliberately not
     // sampled — only full gameplay frames feed the quality controller.
-    __perfMeter.sample(frameTime, performance.now() - currentTime);
+    __perfMeter.sample(frameTime, _logicEndMs - currentTime);
 }
 
 // FIXED: Enhanced orbital mechanics that work for ALL galaxies - ADJUSTED SPEEDS (75% slower)
