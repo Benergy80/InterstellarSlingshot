@@ -3074,6 +3074,23 @@ if (gameState.frameCount % 5 === 0 && typeof checkCosmicFeatureInteractions === 
         try { window.__syncChargeGlow(); } catch (e) {}
     }
 
+    // RENDERED-SHIP SNAPSHOT: capture the ship transform AS DRAWN (post
+    // interpolation + cinematic re-anchor) plus the rendered view quaternion.
+    // Weapon-fire code uses this for beam/muzzle origins — computing them
+    // from the raw physics camera puts lasers visibly off the rendered ship
+    // whenever the cinematic camera is lagging a turn.
+    if (typeof cameraState !== 'undefined' && cameraState.playerShipMesh &&
+        typeof window !== 'undefined') {
+        if (!window.__renderedShipPos) {
+            window.__renderedShipPos = new THREE.Vector3();
+            window.__renderedShipQuat = new THREE.Quaternion();
+        }
+        window.__renderedShipPos.copy(cameraState.playerShipMesh.position);
+        window.__renderedShipQuat.copy(
+            (_cinOn && window.__cinQuat) ? window.__cinQuat : camera.quaternion);
+        window.__renderedShipFrame = gameState.frameCount;
+    }
+
     // PERFORMANCE DEBUG: Time render call
     if (typeof perfDebug !== 'undefined') perfDebug.startTimer('render');
     renderer.render(scene, camera);

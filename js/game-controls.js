@@ -1823,17 +1823,127 @@ function _updateBossSpecials(boss, playerPos, distance) {
 }
 
 // Support ship behavior
+// BOSS-SUPPORT SWARM: each escort is assigned one of four attack patterns on
+// first update (round-robin, so a wing always mixes roles), giving the boss
+// fight diverse, coordinated-looking pressure instead of a static ring:
+//   orbiter — circles the player on its own radius/direction/phase
+//   flanker — holds a pulsing position off the player's flank
+//   diver   — repeated attack runs: dive to point-blank, break away, re-run
+//   screen  — bodyguard: keeps itself between the boss and the player, weaving
+// A light separation impulse keeps the swarm from stacking into one blob.
+let _supportRoleCounter = 0;
+const _supTmpA = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+const _supTmpB = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+const _supUp = (typeof THREE !== 'undefined') ? new THREE.Vector3(0, 1, 0) : null;
+
 function updateSupportBehavior(enemy, playerPos, speed) {
-    // Support ships try to stay at medium range
+    const ud = enemy.userData;
+    if (!ud._supportRole) {
+        const roles = ['orbiter', 'diver', 'flanker', 'screen'];
+        ud._supportRole = roles[_supportRoleCounter++ % roles.length];
+        ud._orbitDir = Math.random() < 0.5 ? 1 : -1;
+        ud._orbitRadius = 150 + Math.random() * 130;
+        ud._phase = Math.random() * Math.PI * 2;
+        ud._diveState = 'approach';
+    }
+    const now = performance.now() * 0.001;
     const distance = enemy.position.distanceTo(playerPos);
-    const optimalDistance = 180;
-    
-    if (distance > optimalDistance + 30) {
-        const direction = new THREE.Vector3().subVectors(playerPos, enemy.position).normalize();
-        enemy.position.add(direction.multiplyScalar(speed * 0.8));
-    } else if (distance < optimalDistance - 30) {
-        const direction = new THREE.Vector3().subVectors(enemy.position, playerPos).normalize();
-        enemy.position.add(direction.multiplyScalar(speed * 0.6));
+
+    switch (ud._supportRole) {
+        case 'orbiter': {
+            // Tangential strafe around the player + radial correction onto
+            // this ship's own ring, with a gentle vertical bob.
+            _supTmpA.subVectors(enemy.position, playerPos);
+            const d = _supTmpA.length() || 1;
+            _supTmpA.divideScalar(d);
+            _supTmpB.crossVectors(_supTmpA, _supUp).normalize().multiplyScalar(ud._orbitDir);
+            enemy.position.addScaledVector(_supTmpB, speed);
+            const radialErr = d - ud._orbitRadius;
+            if (Math.abs(radialErr) > 20) {
+                enemy.position.addScaledVector(_supTmpA, (radialErr > 0 ? -1 : 1) * speed * 0.5);
+            }
+            enemy.position.y += Math.sin(now * 1.7 + ud._phase) * speed * 0.25;
+            break;
+        }
+        case 'flanker': {
+            // Hold a pulsing standoff point off the player's flank (side
+            // chosen by orbit direction), sliding in and out for pressure.
+            const flankDist = 200 + Math.sin(now * 0.9 + ud._phase) * 90;
+            _supTmpA.set(0, 0, -1);
+            if (typeof camera !== 'undefined') _supTmpA.applyQuaternion(camera.quaternion);
+            _supTmpB.crossVectors(_supTmpA, _supUp).normalize()
+                .multiplyScalar(ud._orbitDir * flankDist);
+            _supTmpB.add(playerPos).sub(enemy.position);
+            const gap = _supTmpB.length();
+            if (gap > 15) enemy.position.addScaledVector(_supTmpB.divideScalar(gap), Math.min(speed, gap));
+            break;
+        }
+        case 'diver': {
+            // Attack runs: dive straight at the player, break off at close
+            // range along a lateral escape vector, re-engage from distance.
+            if (ud._diveState === 'approach') {
+                _supTmpA.subVectors(playerPos, enemy.position).normalize();
+                enemy.position.addScaledVector(_supTmpA, speed * 1.35);
+                if (distance < 110) {
+                    ud._diveState = 'break';
+                    _supTmpB.crossVectors(_supTmpA, _supUp).normalize()
+                        .multiplyScalar(ud._orbitDir)
+                        .addScaledVector(_supUp, (Math.random() - 0.5) * 0.8)
+                        .normalize();
+                    ud._breakDir = { x: _supTmpB.x, y: _supTmpB.y, z: _supTmpB.z };
+                }
+            } else {
+                _supTmpA.set(ud._breakDir.x, ud._breakDir.y, ud._breakDir.z);
+                enemy.position.addScaledVector(_supTmpA, speed * 1.1);
+                if (distance > 420) ud._diveState = 'approach';
+            }
+            break;
+        }
+        case 'screen':
+        default: {
+            // Bodyguard: park on the boss→player line (closer to the boss)
+            // and weave laterally so it isn't a stationary target.
+            let boss = null, bossDist = Infinity;
+            if (typeof enemies !== 'undefined') {
+                for (let i = 0; i < enemies.length; i++) {
+                    const e = enemies[i];
+                    if (!e || !e.userData || !e.userData.isBoss || e.userData.health <= 0) continue;
+                    const bd = e.position.distanceTo(enemy.position);
+                    if (bd < bossDist && bd < 3000) { bossDist = bd; boss = e; }
+                }
+            }
+            if (boss) {
+                _supTmpA.subVectors(playerPos, boss.position);
+                const toPlayer = _supTmpA.length() || 1;
+                _supTmpA.divideScalar(toPlayer);
+                _supTmpB.crossVectors(_supTmpA, _supUp).normalize()
+                    .multiplyScalar(Math.sin(now * 1.3 + ud._phase) * 90);
+                _supTmpB.add(boss.position)
+                    .addScaledVector(_supTmpA, Math.min(toPlayer * 0.35, 350))
+                    .sub(enemy.position);
+                const gap2 = _supTmpB.length();
+                if (gap2 > 10) enemy.position.addScaledVector(_supTmpB.divideScalar(gap2), Math.min(speed, gap2));
+            } else {
+                // Boss down — fall back to orbiting pressure
+                ud._supportRole = 'orbiter';
+            }
+            break;
+        }
+    }
+
+    // SWARM SEPARATION: gently repel from other nearby supports so patterns
+    // interleave instead of collapsing into a single blob.
+    if (typeof enemies !== 'undefined') {
+        for (let i = 0; i < enemies.length; i++) {
+            const other = enemies[i];
+            if (!other || other === enemy || !other.userData ||
+                !other.userData.isBossSupport || other.userData.health <= 0) continue;
+            _supTmpA.subVectors(enemy.position, other.position);
+            const sd = _supTmpA.length();
+            if (sd > 0.01 && sd < 45) {
+                enemy.position.addScaledVector(_supTmpA.divideScalar(sd), speed * 0.5);
+            }
+        }
     }
 }
 
@@ -4415,19 +4525,29 @@ function createThirdPersonLasers(playerShip, targetPosition) {
     if (typeof THREE === 'undefined' || typeof scene === 'undefined') return;
     
     try {
-        // Calculate ship position the SAME WAY as camera-system.js does:
-        // ship = camera.position + thirdPersonOffset applied with camera.quaternion
-        // This ensures lasers match the visual ship position exactly.
-        // IMPORTANT: read the LIVE offset from cameraState so mobile (which
-        // pulls the camera back to (0, -6, -22)) still gets laser origins at
-        // the actual ship wing positions instead of the desktop offset.
-        const camQuat = camera.quaternion;
-        const liveOffset = (typeof cameraState !== 'undefined' &&
-                            cameraState.normalThirdPersonOffset)
-            ? cameraState.normalThirdPersonOffset
-            : new THREE.Vector3(0, -4, -14);
-        const shipOffset = liveOffset.clone().applyQuaternion(camQuat);
-        const shipPos = camera.position.clone().add(shipOffset);
+        // Beam origins must match the ship AS RENDERED. The render loop
+        // snapshots the drawn ship transform (post fixed-step interpolation
+        // and cinematic re-anchor) into window.__renderedShipPos/Quat —
+        // computing origins from the raw physics camera instead puts the
+        // beams visibly off the ship whenever the cinematic camera lags a
+        // turn (they appeared to fire from behind/below the ship). Falls
+        // back to the physics-camera math when no fresh snapshot exists.
+        let camQuat, shipPos;
+        const _snapFresh = typeof window !== 'undefined' &&
+            window.__renderedShipPos && window.__renderedShipFrame !== undefined &&
+            (gameState.frameCount - window.__renderedShipFrame) <= 1;
+        if (_snapFresh) {
+            camQuat = window.__renderedShipQuat;
+            shipPos = window.__renderedShipPos.clone();
+        } else {
+            camQuat = camera.quaternion;
+            const liveOffset = (typeof cameraState !== 'undefined' &&
+                                cameraState.normalThirdPersonOffset)
+                ? cameraState.normalThirdPersonOffset
+                : new THREE.Vector3(0, -4, -14);
+            const shipOffset = liveOffset.clone().applyQuaternion(camQuat);
+            shipPos = camera.position.clone().add(shipOffset);
+        }
         
         // Get model size for wing spread calculation
         const box = new THREE.Box3().setFromObject(playerShip);
