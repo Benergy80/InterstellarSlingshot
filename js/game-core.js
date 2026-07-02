@@ -371,6 +371,40 @@ let lastOrbitUpdate = 0;
 // PERFORMANCE MONITORING AND OPTIMIZATION
 // =============================================================================
 
+// PERF METER: rolling frame-time stats for the adaptive quality controller
+// and external tooling. Samples every full gameplay frame from animate();
+// exposes window.__perf = { fps, medianMs, p95Ms, scriptMs, samples }.
+// scriptMs is main-thread time inside animate() (update + render submit) —
+// the gap between scriptMs and medianMs is GPU/compositor/vsync wait.
+const __perfMeter = {
+    _frame: new Float32Array(120),
+    _script: new Float32Array(120),
+    _n: 0,
+    _i: 0,
+    out: { fps: 0, medianMs: 16.67, p95Ms: 16.67, scriptMs: 0, samples: 0 },
+    sample(frameMs, scriptMs) {
+        // A tab switch / debugger pause shows up as one huge frame — not a
+        // real performance signal, so drop it rather than poison the stats.
+        if (!(frameMs > 0) || frameMs > 500) return;
+        this._frame[this._i] = frameMs;
+        this._script[this._i] = scriptMs;
+        this._i = (this._i + 1) % 120;
+        if (this._n < 120) this._n++;
+        if (this._i % 30 === 0 && this._n >= 30) this._refresh();
+    },
+    _refresh() {
+        const f = Array.prototype.slice.call(this._frame, 0, this._n).sort((a, b) => a - b);
+        const s = Array.prototype.slice.call(this._script, 0, this._n).sort((a, b) => a - b);
+        const med = f[f.length >> 1];
+        this.out.medianMs = med;
+        this.out.p95Ms = f[Math.min(f.length - 1, Math.floor(f.length * 0.95))];
+        this.out.scriptMs = s[s.length >> 1];
+        this.out.fps = med > 0 ? Math.round(1000 / med) : 0;
+        this.out.samples = this._n;
+    }
+};
+if (typeof window !== 'undefined') window.__perf = __perfMeter.out;
+
 // PERFORMANCE: Auto-adjust performance based on frame times
 function adjustPerformance() {
     return; // DISABLED - causing performance issues
@@ -2495,6 +2529,11 @@ if (gameState.frameCount % 5 === 0 && typeof checkCosmicFeatureInteractions === 
             try { zctx.drawImage(rc, 0, 0); } catch (e) {}
         }
     }
+
+    // PERF METER: record this frame (frame-to-frame time + scripting time).
+    // Early-return frames (paused, hitstop, game over) are deliberately not
+    // sampled — only full gameplay frames feed the quality controller.
+    __perfMeter.sample(frameTime, performance.now() - currentTime);
 }
 
 // FIXED: Enhanced orbital mechanics that work for ALL galaxies - ADJUSTED SPEEDS (75% slower)
