@@ -15,6 +15,8 @@ const _uiElCache = Object.create(null);
 // Reusable vector for event-horizon world-position queries (avoids
 // per-frame allocation in updateEventHorizonWarnings).
 const _ehwTmpVec = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+// Scratch vector for the galaxy-map wingman heading markers (20Hz × 3 allies)
+const _allyMarkerFwd = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
 function _uiEl(id) {
     const cached = _uiElCache[id];
     if (cached && cached.isConnected) return cached;
@@ -1533,7 +1535,8 @@ if (typeof outerInterstellarSystems !== 'undefined') {
                         type: 'ally',
                         name: ally.userData.name,
                         colorStr: ally.userData.colorStr,
-                        distance: distance
+                        distance: distance,
+                        ship: ally
                     });
                 }
             });
@@ -1646,7 +1649,16 @@ if (obj.type === 'ally') {
     // Use the wingman's stored color (Greek-named recruits have distinct hues)
     dotColor = (obj.colorStr) || (obj.name === 'Wingman Alpha' ? '#00ff88' : (obj.name === 'Wingman Beta' ? '#88aaff' : '#ffaa44'));
     dot.textContent = '▲';
-    dot.style.cssText = 'position:absolute;font-size:10px;font-weight:bold;color:' + dotColor + ';transform:translate(-50%,-50%);pointer-events:none;z-index:3;filter:drop-shadow(0 0 3px ' + dotColor + ');';
+    // Point the ▲ along the wingman's NOSE (they're clones of the
+    // +Z-forward player model) — same screen convention as the player
+    // marker: angle = atan2(fwd.x, -fwd.z). Untransformed, the glyph
+    // always pointed "north" regardless of heading (read as backwards).
+    let _allyAng = 0;
+    if (obj.ship && obj.ship.quaternion && _allyMarkerFwd) {
+        _allyMarkerFwd.set(0, 0, 1).applyQuaternion(obj.ship.quaternion);
+        _allyAng = Math.atan2(_allyMarkerFwd.x, -_allyMarkerFwd.z);
+    }
+    dot.style.cssText = 'position:absolute;font-size:10px;font-weight:bold;color:' + dotColor + ';transform:translate(-50%,-50%) rotate(' + _allyAng + 'rad);pointer-events:none;z-index:3;filter:drop-shadow(0 0 3px ' + dotColor + ');';
     dot.style.left = screenX + '%';
     dot.style.top = screenZ + '%';
     dot.style.display = 'block';
@@ -2100,6 +2112,14 @@ mapDotPool.releaseAll();
                 const amy = 50 + ((ally.position.z + _woo.z) / universeRadius) * 50;
                 marker.style.left = Math.max(5, Math.min(95, amx)) + '%';
                 marker.style.top = Math.max(5, Math.min(95, amy)) + '%';
+                // Point the ▲ along the wingman's NOSE (they're clones of
+                // the +Z-forward player model) — same screen convention as
+                // the player marker: angle = atan2(fwd.x, -fwd.z).
+                if (ally.quaternion) {
+                    _allyMarkerFwd.set(0, 0, 1).applyQuaternion(ally.quaternion);
+                    const aAng = Math.atan2(_allyMarkerFwd.x, -_allyMarkerFwd.z);
+                    marker.style.transform = `translate(-50%, -50%) rotate(${aAng}rad)`;
+                }
                 marker.style.display = 'block';
             });
         }

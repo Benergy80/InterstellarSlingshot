@@ -1037,14 +1037,30 @@
       // Clear the no-brake flag once we're close enough to engage.
       if (dist <= 500) ap._pirateNoBrake = false;
 
+      // EMERGENCY-WARP BRAKE-IN: the long intercept must not carry the ship
+      // past the target. Within 500u, CUT the boost (the physics ends it on
+      // timeRemaining <= 0 and hands velocity back) and brake — the global
+      // warp-integrity guard suppresses X only while the boost is active,
+      // so without the cut the ship sails through the engagement at ~15u/f.
+      if (dist <= 500 && gameState.emergencyWarp && gameState.emergencyWarp.active &&
+          !gameState.emergencyWarp.isJump) {
+        gameState.emergencyWarp.timeRemaining = 0;
+        keys().x = true;
+        setStatus('On target — cutting warp, braking');
+      }
+      // Arriving hot from a warp/jump coast: kill speed inside 500u.
+      if (dist <= 500 && speed > 8) {
+        keys().x = true;
+      }
+
       // Tactical jumps (double-tap W) to shift momentum toward a target.
-      // Allowed for anything beyond point-blank (>800u) — short dashes
-      // are a great way to change direction faster than coasting. The
-      // post-jump deceleration is now gentle (physics auto-brake 0.985)
-      // so a dash carries momentum, and the overshoot brake below stops
-      // it if it sails past. 4s cooldown, 25+ energy, not while a warp
-      // is in flight, not when a missile is in flight at the target.
-      const JUMP_MIN_DIST = 800;
+      // Fires for intercepts beyond 1,000u — short dashes are a great way
+      // to change direction faster than coasting. The post-jump
+      // deceleration is gentle (physics auto-brake 0.985) so a dash
+      // carries momentum, and the overshoot brake below stops it if it
+      // sails past. 4s cooldown, 25+ energy, not while a warp is in
+      // flight, not when a missile is in flight at the target.
+      const JUMP_MIN_DIST = 1000;
       const _warpBusy = gameState.emergencyWarp &&
           (gameState.emergencyWarp.active || gameState.emergencyWarp.transitioning);
       // How aligned our MOMENTUM (not the bow) is with the target.
@@ -1113,7 +1129,16 @@
       if (!ap._pirateNoBrake && dist > 800 && typeof _prevCD === 'number' &&
           dist > _prevCD + 0.5 && speed > 1) {
         keys().x = true;
-        setStatus('Receding from target — braking (' + (dist | 0) + ' u)');
+        // RE-ORIENT & RESUME: the bow is already re-aimed every frame (the
+        // orient call at the top of pursuit) — also clear the jump cooldown
+        // once per runaway episode so the corrective dash fires the moment
+        // the heading is back on the enemy (facing > 0.9), instead of
+        // coasting away for up to 4 more seconds.
+        if (Date.now() - (ap._lastRunawayReset || 0) > 4000) {
+          ap._lastRunawayReset = Date.now();
+          ap._lastJumpTap = 0;
+        }
+        setStatus('Receding — braking, re-orienting to resume pursuit (' + (dist | 0) + ' u)');
       }
 
       // NO long warps in combat. The 15s O-warp used to fire for any

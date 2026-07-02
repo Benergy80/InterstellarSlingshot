@@ -2830,6 +2830,7 @@ if (gameState.frameCount % 5 === 0 && typeof checkCosmicFeatureInteractions === 
         window.demoPilot && window.demoPilot.driving &&
         typeof cameraState !== 'undefined' && cameraState.mode === 'third-person';
     let _cinSavedQuat = null;
+    let _cinShipMoved = false;
     if (_cinOn) {
         if (!window.__cinQuat1) {
             window.__cinQuat1 = camera.quaternion.clone();
@@ -2864,6 +2865,26 @@ if (gameState.frameCount % 5 === 0 && typeof checkCosmicFeatureInteractions === 
             _q1.copy(_q2);
         }
         _cinSavedQuat = camera.quaternion.clone();
+        // Re-anchor the SHIP MESH (and shield) into the smoothed render
+        // frame: with the view lagging, a ship glued to the raw physics
+        // frame inherits every physics rotation step as on-screen hopping —
+        // the world got smooth and the ship got the jitter. Rotating its
+        // camera-relative offset into the render frame keeps it steady in
+        // shot; its MODEL attitude still shows every real maneuver.
+        const _cinShip = cameraState.playerShipMesh;
+        if (_cinShip) {
+            if (!window.__cinShipSavedPos) window.__cinShipSavedPos = new THREE.Vector3();
+            if (!window.__cinTmpRel) window.__cinTmpRel = new THREE.Vector3();
+            if (!window.__cinTmpInv) window.__cinTmpInv = new THREE.Quaternion();
+            window.__cinShipSavedPos.copy(_cinShip.position);
+            window.__cinTmpInv.copy(camera.quaternion).invert();
+            window.__cinTmpRel.copy(_cinShip.position).sub(camera.position)
+                .applyQuaternion(window.__cinTmpInv)   // world → camera-local
+                .applyQuaternion(_q2);                 // camera-local → render frame
+            _cinShip.position.copy(camera.position).add(window.__cinTmpRel);
+            _cinShipMoved = true;
+            if (typeof syncShieldPositionToShip === 'function') syncShieldPositionToShip();
+        }
         camera.quaternion.copy(_q2);
     } else if (typeof window !== 'undefined' && window.__cinQuat1) {
         // keep the smooth quats parked on the live orientation while inactive
@@ -2880,8 +2901,11 @@ if (gameState.frameCount % 5 === 0 && typeof checkCosmicFeatureInteractions === 
         perfDebug.endTimer('total');
     }
 
-    // restore the physics orientation — the cinematic lag is render-only
+    // restore the physics state — the cinematic lag is render-only
     if (_cinSavedQuat) camera.quaternion.copy(_cinSavedQuat);
+    if (_cinShipMoved && cameraState.playerShipMesh) {
+        cameraState.playerShipMesh.position.copy(window.__cinShipSavedPos);
+    }
 
     // Zoom scope frame capture. The renderer runs with
     // preserveDrawingBuffer:false (mobile FPS), so the WebGL drawing
