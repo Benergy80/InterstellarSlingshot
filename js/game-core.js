@@ -2883,6 +2883,20 @@ if (gameState.frameCount % 5 === 0 && typeof checkCosmicFeatureInteractions === 
                 .applyQuaternion(_q2);                 // camera-local → render frame
             _cinShip.position.copy(camera.position).add(window.__cinTmpRel);
             _cinShipMoved = true;
+            // SHIP ATTITUDE FILTER: the model's orientation is raw physics —
+            // frame-capture analysis showed the hull attitude snapping
+            // several degrees per frame (steering/banking micro-steps),
+            // which is where the perceived jitter moved once position and
+            // view were smoothed. Chase the physics attitude with a faster
+            // filter (~0.20/frame at 60fps) clamped to 12° of lag: real
+            // banks and turns still read clearly, per-frame snaps don't.
+            if (!window.__cinShipQuat) window.__cinShipQuat = _cinShip.quaternion.clone();
+            if (!window.__cinShipSavedQuat) window.__cinShipSavedQuat = new THREE.Quaternion();
+            window.__cinShipSavedQuat.copy(_cinShip.quaternion);
+            window.__cinShipQuat.slerp(_cinShip.quaternion, 1 - Math.pow(0.80, gameState.dtFrames || 1));
+            const _shipLag = window.__cinShipQuat.angleTo(_cinShip.quaternion);
+            if (_shipLag > 0.21) window.__cinShipQuat.slerp(_cinShip.quaternion, 1 - 0.21 / _shipLag);
+            _cinShip.quaternion.copy(window.__cinShipQuat);
             if (typeof syncShieldPositionToShip === 'function') syncShieldPositionToShip();
         }
         camera.quaternion.copy(_q2);
@@ -2891,6 +2905,9 @@ if (gameState.frameCount % 5 === 0 && typeof checkCosmicFeatureInteractions === 
         // so re-engaging (FPV→TPV, demo restart) never snaps from stale data
         window.__cinQuat1.copy(camera.quaternion);
         window.__cinQuat.copy(camera.quaternion);
+        if (window.__cinShipQuat && typeof cameraState !== 'undefined' && cameraState.playerShipMesh) {
+            window.__cinShipQuat.copy(cameraState.playerShipMesh.quaternion);
+        }
     }
 
     // PERFORMANCE DEBUG: Time render call
@@ -2905,6 +2922,7 @@ if (gameState.frameCount % 5 === 0 && typeof checkCosmicFeatureInteractions === 
     if (_cinSavedQuat) camera.quaternion.copy(_cinSavedQuat);
     if (_cinShipMoved && cameraState.playerShipMesh) {
         cameraState.playerShipMesh.position.copy(window.__cinShipSavedPos);
+        cameraState.playerShipMesh.quaternion.copy(window.__cinShipSavedQuat);
     }
 
     // Zoom scope frame capture. The renderer runs with
