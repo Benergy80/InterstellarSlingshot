@@ -1008,17 +1008,18 @@
         _facingEnemy = _coneFwd.dot(_coneVec);
       }
 
-      // MARTIAN PIRATE LONG INTERCEPT: beyond 2,000u, emergency-warp toward
-      // it (once aligned) and DON'T brake until within 500u. Pirate-only.
-      const _isPirateTgt = !!(enemy.userData.isMartianPirate && !enemy.userData.isVulcanPatrol);
+      // LONG INTERCEPT: beyond 5,000u, close with the O-key EMERGENCY WARP
+      // (not the W-jump). Then let it run its course / thrust forward without
+      // braking until the ~500u braking zone.
       const _warpBusyNow = gameState.emergencyWarp &&
           (gameState.emergencyWarp.active || gameState.emergencyWarp.transitioning);
-      if (_isPirateTgt && dist > 2000 && !_warpBusyNow && _facingEnemy > 0.92 &&
-          canEmergencyWarp() && Date.now() - (ap._lastBHWarp || 0) > 20000) {
+      const _canOWarp = !_warpBusyNow && canEmergencyWarp() &&
+          Date.now() - (ap._lastBHWarp || 0) > 20000;
+      if (dist > 5000 && _canOWarp && _facingEnemy > 0.9) {
         if (triggerOKeyWarp()) {
           ap._lastBHWarp = Date.now();
           ap._pirateNoBrake = true;
-          setStatus('Emergency warp → Martian Pirate (' + (dist | 0) + ' u)');
+          setStatus('Emergency warp → ' + (enemy.userData.name || 'hostile') + ' (' + (dist | 0) + ' u)');
           return;
         }
       }
@@ -1049,7 +1050,11 @@
       // it, turning on a dime (works best at high speed). The jump owns the
       // frame (returns), so the overshoot/runaway brakes below only run when a
       // jump isn't available (cooldown / misaligned / low energy).
-      if (dist > JUMP_MIN_DIST && (speed < 12 || _closing < 0.5) && !_warpBusy &&
+      // Capped at <=5000u: farther than that the O-key warp above handles the
+      // intercept (use W-jumps only inside 5k, or as a fallback when no warp
+      // is available).
+      if (dist > JUMP_MIN_DIST && (dist <= 5000 || !_canOWarp) &&
+          (speed < 12 || _closing < 0.5) && !_warpBusy &&
           _facingEnemy > 0.9 &&
           gameState.energy > 25 &&
           !_isMissileInFlightAt(enemy) &&
@@ -1133,12 +1138,12 @@
 
     // ── Demo charged-blast showcase ───────────────────────────────────────
     // Occasionally the demo HOLDS the charge (the wing glow builds for
-    // 1.2-2.8s) then releases a power-scaled blast — so viewers see the
-    // charge mechanic. Starts only in weapons range; one at a time.
+    // ~1-2s, the new max) then releases a power-scaled blast — so viewers see
+    // the charge mechanic. Starts only in weapons range; one at a time.
     if (typeof gameState !== 'undefined') {
       if (!ap._demoChargeUntil && dist <= engageRange && speed < 3 &&
           Date.now() - (ap._lastDemoCharge || 0) > 14000 && Math.random() < 0.02) {
-        const _dur = 1200 + Math.random() * 1600;
+        const _dur = 1000 + Math.random() * 1000;
         gameState._laserChargeStart = Date.now(); // drives the wing glow
         ap._demoChargeUntil = Date.now() + _dur;
         ap._lastDemoCharge = Date.now();
@@ -1146,7 +1151,7 @@
       }
       if (ap._demoChargeUntil) {
         if (Date.now() >= ap._demoChargeUntil) {
-          const _pw = Math.min(1, (Date.now() - (gameState._laserChargeStart || Date.now())) / 3000);
+          const _pw = Math.min(1, (Date.now() - (gameState._laserChargeStart || Date.now())) / 2000);
           gameState._laserChargeStart = 0;
           ap._demoChargeUntil = 0;
           if (typeof window.fireChargedBlast === 'function') window.fireChargedBlast(_pw);
@@ -1638,6 +1643,26 @@
     if (_drifting) {
       if (window.orientTowardsTarget) {
         window.orientTowardsTarget({ position: ap.currentNebula.position });
+      }
+      // OVERSHOOT → O-KEY EMERGENCY WARP: if we sailed past the destination,
+      // warp to change trajectory back toward it (once the bow is on it)
+      // instead of braking and crawling back. Brake is the fallback when no
+      // warp charge is available or we're not yet aligned.
+      let _ovFacing = 1;
+      if (_coneVec && camera) {
+        _coneVec.subVectors(ap.currentNebula.position, camera.position).normalize();
+        camera.getWorldDirection(_coneFwd);
+        _ovFacing = _coneFwd.dot(_coneVec);
+      }
+      const _ovWarpBusy = gameState.emergencyWarp &&
+        (gameState.emergencyWarp.active || gameState.emergencyWarp.transitioning);
+      if (distToNebula > 2500 && !_ovWarpBusy && _ovFacing > 0.9 &&
+          canEmergencyWarp() && Date.now() - (ap._lastBHWarp || 0) > 8000) {
+        if (triggerOKeyWarp()) {
+          ap._lastBHWarp = Date.now();
+          setStatus('Overshot — emergency warp to re-aim (' + (distToNebula | 0) + ' u)');
+          return;
+        }
       }
       keys().x = true;
       setStatus('Drifting away — braking and reorienting (' + (distToNebula | 0) + ' u)');

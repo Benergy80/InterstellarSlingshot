@@ -1599,11 +1599,56 @@ function findSlingshotTarget() {
 // deflect the result by up to 30°; beyond that we hold the orbital
 // tangent and ignore aim error so a misaligned launch can't dump the
 // ship in a bad direction.
+// Pick a real destination for a slingshot so the whip lands the player AT a
+// galaxy/nebula instead of flinging them into empty space. Priority:
+//   1) the current nav target, if it's a real distance away (the demo sets
+//      this to its target nebula right before whipping)
+//   2) the nearest nebula / galaxy core roughly ahead of the look direction
+function _slingshotDestination(look, body) {
+    if (typeof camera === 'undefined') return null;
+    const cp = camera.position;
+    const ct = (typeof gameState !== 'undefined') ? gameState.currentTarget : null;
+    if (ct && ct.position && ct !== body && ct.position.distanceTo(cp) > 1500) {
+        return ct.position;
+    }
+    let best = null, bestScore = Infinity;
+    const consider = (pos) => {
+        if (!pos) return;
+        const to = pos.clone().sub(cp);
+        const d = to.length();
+        if (d < 2500) return;                 // must be a real journey
+        to.multiplyScalar(1 / d);
+        const align = to.dot(look);
+        if (align < 0.15) return;             // roughly ahead (within ~81°)
+        const score = d * (1.4 - align);      // closer + better-aligned wins
+        if (score < bestScore) { bestScore = score; best = pos; }
+    };
+    if (typeof nebulaClouds !== 'undefined') {
+        for (let i = 0; i < nebulaClouds.length; i++) { const n = nebulaClouds[i]; if (n) consider(n.position); }
+    }
+    if (typeof planets !== 'undefined') {
+        for (let i = 0; i < planets.length; i++) {
+            const p = planets[i];
+            if (p && p.userData && p.userData.type === 'blackhole' && !p.userData.isLocalGateway) consider(p.position);
+        }
+    }
+    return best;
+}
+
 function getSlingshotExitDirection(body) {
     const look = new THREE.Vector3();
     camera.getWorldDirection(look).normalize();
     const arcade = !(typeof gameState !== 'undefined' && gameState.realisticSlingshot);
-    if (arcade) return look;
+    if (arcade) {
+        // Aim the whip at a galaxy/nebula destination; fall back to free-aim
+        // (raw look) only when there's nothing meaningful ahead.
+        const dest = _slingshotDestination(look, body);
+        if (dest) {
+            const dir = dest.clone().sub(camera.position);
+            if (dir.lengthSq() > 1) return dir.normalize();
+        }
+        return look;
+    }
 
     // Realistic: build the tangent to the body's orbit around its system
     // center. If we don't know the orbit, fall back to look.
@@ -2554,14 +2599,14 @@ if (surfaceCollision) {
                     if (distance < warningDistance && distance > criticalDistance && !gameState.eventHorizonWarning.active) {
                         gameState.eventHorizonWarning.active = true;
                         gameState.eventHorizonWarning.blackHole = planet;
-                        const eventHorizonEl = window._cachedEventHorizonEl || (window._cachedEventHorizonEl = document.getElementById('eventHorizonWarning'));
-                        if (eventHorizonEl) {
-                            eventHorizonEl.classList.remove('hidden');
-                        }
-                        if (typeof showAchievement === 'function') {
-                            if (!shouldSuppressAchievement('Event Horizon Detected')) {
-                                showAchievement('Event Horizon Detected', `Approaching ${planet.userData.name}`);
-                            }
+                        // Reimagined: a dramatic centered Orbitron flash in amber
+                        // (same style as the boss / discovery announcements)
+                        // instead of the old emoji "EVENT HORIZON APPROACHING"
+                        // panel. The blackHoleWarningHUD + title-flash still give
+                        // the persistent proximity readout.
+                        if (typeof window.flashEventText === 'function') {
+                            window.flashEventText('EVENT HORIZON', '#ffcc33',
+                                'Slingshot around ' + (planet.userData.name || 'the black hole') + ' to warp across the universe');
                         }
                     }
                     

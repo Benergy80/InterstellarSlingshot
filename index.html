@@ -24,7 +24,7 @@
          This lives only on the feature branch; main will not print it. -->
     <script>
       window.BUILD_ID = 'claude/fix-missiles-undefined-hud';
-      window.BUILD_TAG = '20260614v';
+      window.BUILD_TAG = '20260614aa';
       console.log(
         '%c🚀 BUILD: ' + window.BUILD_ID + '  ·  ' + window.BUILD_TAG,
         'background:#0a7d2c;color:#fff;font-size:14px;font-weight:bold;padding:4px 10px;border-radius:4px;'
@@ -40,6 +40,32 @@
       if (!window.GAME_DEBUG_VERBOSE) {
         console.log = function () {};
       }
+    </script>
+
+    <!-- SCREEN WAKE LOCK — keep the phone awake during play (autopilot demos
+         and long flights have no touches, so mobile screens would sleep). The
+         lock auto-releases when the tab is hidden, so we re-acquire on return
+         and on the next user gesture. No-op on browsers without the API. -->
+    <script>
+    (function () {
+      if (!('wakeLock' in navigator)) return;
+      let _wakeLock = null;
+      async function acquireWakeLock() {
+        try {
+          if (document.visibilityState !== 'visible' || _wakeLock) return;
+          _wakeLock = await navigator.wakeLock.request('screen');
+          _wakeLock.addEventListener('release', function () { _wakeLock = null; });
+        } catch (e) { /* needs a user gesture / unsupported — retry on next interaction */ }
+      }
+      // First (and subsequent) user gestures let us request/refresh the lock.
+      ['pointerdown', 'touchend', 'click', 'keydown'].forEach(function (ev) {
+        window.addEventListener(ev, acquireWakeLock, { passive: true });
+      });
+      // The lock drops whenever the tab is backgrounded — re-acquire on return.
+      document.addEventListener('visibilitychange', function () {
+        if (document.visibilityState === 'visible') acquireWakeLock();
+      });
+    })();
     </script>
 
     <!-- External Dependencies with THREE.js Backup System -->
@@ -1151,25 +1177,25 @@
     <!-- Game Scripts -->
     <!-- Load GLTFLoader before game-models.js -->
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
-    <script src="js/game-models.js?v=20260614v"></script>
-    <script src="js/camera-system.js?v=20260614v"></script>
+    <script src="js/game-models.js?v=20260614aa"></script>
+    <script src="js/camera-system.js?v=20260614aa"></script>
     <script src="js/cosmic-features.js"></script>
-    <script src="js/game-objects.js?v=20260614v"></script>
-    <script src="js/game-controls.js?v=20260614v"></script>
-    <script src="js/civilian-combat.js?v=20260614v"></script>
-    <script src="js/visual-flair.js?v=20260614v"></script>
-    <script src="js/playtest-probe.js?v=20260614v"></script>
-    <script src="js/arcade.js?v=20260614v"></script>
-    <script src="js/outer-systems.js?v=20260614v"></script>
+    <script src="js/game-objects.js?v=20260614aa"></script>
+    <script src="js/game-controls.js?v=20260614aa"></script>
+    <script src="js/civilian-combat.js?v=20260614aa"></script>
+    <script src="js/visual-flair.js?v=20260614aa"></script>
+    <script src="js/playtest-probe.js?v=20260614aa"></script>
+    <script src="js/arcade.js?v=20260614aa"></script>
+    <script src="js/outer-systems.js?v=20260614aa"></script>
     <script src="js/interstellar-asteroids.js"></script>
-    <script src="js/game-physics.js?v=20260614v"></script>
-    <script src="js/game-ui.js?v=20260614v"></script>
+    <script src="js/game-physics.js?v=20260614aa"></script>
+    <script src="js/game-ui.js?v=20260614aa"></script>
     <script src="js/atmospheric-perspective.js"></script>
-    <script src="js/game-intro.js?v=20260614v"></script>
+    <script src="js/game-intro.js?v=20260614aa"></script>
     <script src="js/game-shields.js"></script>
     <script src="js/game-music.js"></script>
-    <script src="js/autopilot.js?v=20260614v"></script>
-    <script src="js/game-core.js?v=20260614v"></script>
+    <script src="js/autopilot.js?v=20260614aa"></script>
+    <script src="js/game-core.js?v=20260614aa"></script>
 
     <!-- Mobile Script -->
     <script src="js/mobile-controls.js"></script>

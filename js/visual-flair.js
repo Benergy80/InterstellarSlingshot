@@ -152,7 +152,7 @@ function _updateLaserCharge() {
         }
     }
     const prog = (charging && ship && ship.visible)
-        ? Math.max(0, Math.min(1, (Date.now() - gameState._laserChargeStart) / 3000)) : 0;
+        ? Math.max(0, Math.min(1, (Date.now() - gameState._laserChargeStart) / 2000)) : 0;
     if (prog <= 0.01) { _chargeGlow.sprites.forEach(s => { s.material.opacity = 0; s.scale.setScalar(0); }); return; }
     // Position the glows at the SAME wing tips the lasers fire from
     // (createThirdPersonLasers: ±size.x*0.35, up -2, fwd -size.z*0.15, in
@@ -719,18 +719,26 @@ function flashArcadeText(text, tier, subtitle) {
             document.head.appendChild(st);
         }
         const old = document.getElementById('arcadeText'); if (old) old.remove();
+        // On mobile the big tier words (up to 72px, nowrap) overflow narrow
+        // screens. Scale the font to the viewport width and allow wrapping so
+        // a long word never runs off the edge.
+        const _isMobile = window.innerWidth <= 768 || ('ontouchstart' in window && window.innerWidth <= 1024);
+        const fontPx = _isMobile ? Math.round(Math.min(ts.size, window.innerWidth * 0.085)) : ts.size;
+        const wrap = _isMobile ? 'normal' : 'nowrap';
+        const ls = _isMobile ? 2 : 3;
+        const maxW = _isMobile ? 'max-width:92vw;' : '';
         const div = document.createElement('div');
         div.id = 'arcadeText';
         div.style.cssText = 'position:fixed;left:50%;top:19%;transform:translateX(-50%);z-index:73;' +
-            'pointer-events:none;text-align:center;white-space:nowrap;font-family:Orbitron,monospace;' +
-            'font-weight:900;font-size:' + ts.size + 'px;letter-spacing:3px;color:' + ts.color + ';' +
+            'pointer-events:none;text-align:center;white-space:' + wrap + ';' + maxW + 'font-family:Orbitron,monospace;' +
+            'font-weight:900;font-size:' + fontPx + 'px;letter-spacing:' + ls + 'px;color:' + ts.color + ';' +
             'text-shadow:0 0 22px ' + ts.color + ',0 0 44px ' + ts.color + ',0 0 12px rgba(0,0,0,0.8);' +
             'will-change:transform,opacity;animation:arcadePop 2s cubic-bezier(.2,.7,.3,1) forwards';
         // Optional subtitle names what was killed ("VULCAN HIGH COMMAND
         // ELIMINATED") under the praise word — smaller, dimmer, same color.
         if (subtitle) {
             div.innerHTML = '<div>' + text + '</div>' +
-                '<div style="font-size:' + Math.round(ts.size * 0.34) + 'px;letter-spacing:4px;' +
+                '<div style="font-size:' + Math.round(fontPx * 0.34) + 'px;letter-spacing:' + ls + 'px;' +
                 'opacity:0.7;margin-top:4px;font-weight:700">' + subtitle + '</div>';
         } else {
             div.textContent = text;
