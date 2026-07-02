@@ -16,7 +16,7 @@ const _fwd = new THREE.Vector3(), _right = new THREE.Vector3(), _wish = new THRE
 const _v = new THREE.Vector3(), _v2 = new THREE.Vector3(), _ndc = new THREE.Vector2();
 const _ray = new THREE.Raycaster();
 
-export function createPlayer({ camera, scene, world, traffic, fx, hud, audio, onPauseToggle }) {
+export function createPlayer({ camera, scene, world, traffic, fx, hud, audio, onPauseToggle, onInkCycle }) {
   const P = C.PLAYER;
 
   const state = {
@@ -130,6 +130,7 @@ export function createPlayer({ camera, scene, world, traffic, fx, hud, audio, on
     if (k === 'm') audio.toggleMute();
     if (k === 'n') { const r = hud.cycleMapZoom(); hud.toast('MAP RANGE', `${r} u across`); audio.sfx('ui'); }
     if (k === 'r') hud.setWeather(fx.toggleRain());
+    if (k === 'i' && onInkCycle) { hud.toast(onInkCycle(), 'Messenger-style ink render — I to cycle'); audio.sfx('ui'); }
   }
   function onKeyUp(e) {
     if (e.getModifierState) state.capsPrecision = e.getModifierState('CapsLock');
