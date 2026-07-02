@@ -241,7 +241,7 @@ const perfDebug = {
         
         // Track distance from origin (twin cores)
         if (camera && camera.position) {
-            this.distanceFromOrigin = camera.position.length();
+            this.distanceFromOrigin = (typeof trueDistanceFromOrigin === 'function') ? trueDistanceFromOrigin(camera.position) : camera.position.length();
             const wasInZone = this.inTwinCoresZone;
             this.inTwinCoresZone = this.distanceFromOrigin < this.twinCoresThreshold;
             
@@ -406,6 +406,108 @@ const __perfMeter = {
     }
 };
 if (typeof window !== 'undefined') window.__perf = __perfMeter.out;
+
+// =============================================================================
+// FLOATING ORIGIN — periodic world rebase
+// =============================================================================
+// Float32 gives ~7 significant digits: at 90,000 units from origin the
+// positional resolution is already ~0.008u BEFORE matrix math compounds it —
+// the root cause of jitter, z-fighting and flaky frustum culling far from
+// Sol. Fix: when the camera drifts past a threshold, shift the ENTIRE world
+// (scene roots + every cached absolute position) by -camera.position so the
+// camera snaps back to the origin, where precision is best. All relative
+// geometry is preserved exactly; only the coordinate labels change.
+//
+// True (absolute) coordinates of anything = current + worldOriginOffset.
+// Systems that cache absolute positions OUTSIDE the scene graph register a
+// handler in window.__worldShiftHandlers(offset, totalAfter) — see
+// game-objects.js (wormhole table, gateway, galaxy centers), autopilot.js
+// (nav dummies, universe leash) and game-ui.js (galaxy map projection).
+const worldOriginOffset = (typeof THREE !== 'undefined') ? new THREE.Vector3(0, 0, 0) : null;
+if (typeof window !== 'undefined') {
+    window.worldOriginOffset = worldOriginOffset;
+    window.__worldShiftHandlers = window.__worldShiftHandlers || [];
+}
+
+const WORLD_REBASE_DISTANCE = 30000;
+
+// TRUE distance from the galactic origin (Sgr A*) regardless of how many
+// rebases have happened. Use this instead of pos.length() for any
+// "distance from origin" gameplay rule (zone themes, locality checks, CMB
+// opacity, the universe leash).
+function trueDistanceFromOrigin(pos) {
+    if (!worldOriginOffset) return pos.length();
+    const x = pos.x + worldOriginOffset.x;
+    const y = pos.y + worldOriginOffset.y;
+    const z = pos.z + worldOriginOffset.z;
+    return Math.sqrt(x * x + y * y + z * z);
+}
+if (typeof window !== 'undefined') window.trueDistanceFromOrigin = trueDistanceFromOrigin;
+
+// userData keys that hold CURRENT-frame world positions (Vector3 or plain
+// {x,y,z}) cached outside object.position — cloned patrol anchors, orbit
+// centers, discovery endpoints, render-interpolation snapshots, caravan
+// routes. Missing one means that system snaps to pre-shift coordinates.
+const _WSHIFT_UD_KEYS = [
+    'patrolCenter', 'position3D', 'nebulaPosition', 'homeNebula',
+    'planetPosition', 'beltPosition', 'targetPosition', 'blackHolePosition',
+    'systemCenter', 'beltCenter', 'startPosition', 'endPosition',
+    '_iFrom', '_iTo', 'currentDestination', 'source', 'destination',
+];
+
+function _wshiftVecLike(v, offset) {
+    if (!v) return;
+    if (v.isVector3) { v.sub(offset); return; }
+    if (typeof v.x === 'number' && typeof v.y === 'number' && typeof v.z === 'number' &&
+        v.isObject3D === undefined) {
+        v.x -= offset.x; v.y -= offset.y; v.z -= offset.z;
+    }
+}
+
+function applyWorldShift() {
+    if (!scene || !camera) return;
+    const offset = camera.position.clone();
+
+    // 1) Scene-graph roots (children move with their parents). The camera-
+    //    pinned helpers (player mesh, warp starfield, skydomes) are re-copied
+    //    to camera.position every frame, so a uniform shift keeps them
+    //    consistent this frame and the per-frame copy takes over after.
+    for (let i = 0; i < scene.children.length; i++) {
+        const c = scene.children[i];
+        if (c === camera) continue;
+        c.position.sub(offset);
+        if (c.matrixAutoUpdate === false) c.updateMatrix();
+    }
+    camera.position.set(0, 0, 0);
+
+    // 2) Cached positions in userData across the whole graph
+    scene.traverse((o) => {
+        const ud = o.userData;
+        if (!ud) return;
+        for (let k = 0; k < _WSHIFT_UD_KEYS.length; k++) {
+            _wshiftVecLike(ud[_WSHIFT_UD_KEYS[k]], offset);
+        }
+        if (Array.isArray(ud.nearbyPlanets)) {
+            for (let p = 0; p < ud.nearbyPlanets.length; p++) _wshiftVecLike(ud.nearbyPlanets[p], offset);
+        }
+    });
+
+    // 3) Core game-state caches
+    if (gameState.lastPosition) gameState.lastPosition.sub(offset);
+
+    // 4) Subsystem handlers (registered by other files)
+    const total = worldOriginOffset.clone().add(offset);
+    const handlers = (typeof window !== 'undefined' && window.__worldShiftHandlers) || [];
+    for (let h = 0; h < handlers.length; h++) {
+        try { handlers[h](offset, total); } catch (e) {
+            console.error('World-shift handler failed:', e);
+        }
+    }
+
+    worldOriginOffset.add(offset);
+    console.log(`🌍 Floating origin rebase: world shifted by ${offset.length().toFixed(0)}u ` +
+        `(total origin offset ${worldOriginOffset.length().toFixed(0)}u)`);
+}
 
 // ADAPTIVE QUALITY: tier ladder driven by the __perfMeter median frame time.
 // Reversible runtime levers only (the old version rebuilt star geometry —
@@ -1000,7 +1102,15 @@ function startGame() {
         renderer = new THREE.WebGLRenderer({
             antialias: !_isMobileGPU,
             preserveDrawingBuffer: false,
-            powerPreference: 'high-performance'
+            powerPreference: 'high-performance',
+            // PRECISION: near 0.1 / far 250,000 is a 2.5M:1 ratio — a
+            // standard depth buffer gives virtually no resolution beyond a
+            // few thousand units (the z-fighting on distant planets/rings).
+            // Logarithmic depth distributes precision by magnitude instead.
+            // The only custom shader in the main scene (CMB skybox) is
+            // depthWrite:false at max radius, so it stays behind everything
+            // without needing the logdepthbuf shader chunks.
+            logarithmicDepthBuffer: true
         });
         renderer.setSize(window.innerWidth, window.innerHeight);
         // Cap desktop at 1.5x (was 2x): on retina the 2x buffer is ~5.4M px and
@@ -1583,6 +1693,15 @@ function animate(rafTime) {
     if (gameState._slowmoUntil && _ajNow < gameState._slowmoUntil) _dtMs *= 0.5;
     gameState.dtMs = _dtMs;
     gameState.dtFrames = _dtMs / 16.67;
+
+    // FLOATING ORIGIN: rebase the world onto the camera once it drifts far
+    // enough for float32 precision to degrade. Runs before any game update
+    // reads positions, so the whole frame sees one consistent coordinate
+    // frame.
+    if (gameState.gameStarted && !gameState.gameOver &&
+        camera && camera.position.lengthSq() > WORLD_REBASE_DISTANCE * WORLD_REBASE_DISTANCE) {
+        applyWorldShift();
+    }
     
     // Track frame time history for performance adjustment
     gameState.frameTimeHistory.push(frameTime);

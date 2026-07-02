@@ -1110,9 +1110,11 @@ function getCurrentGalaxyId() {
         for (let g = 0; g < 8; g++) {
             const mapPos = galaxyMapPositions[g];
             if (mapPos) {
-                const galaxyX = (mapPos.x - 0.5) * universeRadius * 2;
-                const galaxyZ = (mapPos.y - 0.5) * universeRadius * 2;
-                const galaxyY = 0;
+                // TRUE coords from the map table → current rebased frame
+                const _wooG = (typeof window !== 'undefined' && window.worldOriginOffset) || { x: 0, y: 0, z: 0 };
+                const galaxyX = (mapPos.x - 0.5) * universeRadius * 2 - _wooG.x;
+                const galaxyZ = (mapPos.y - 0.5) * universeRadius * 2 - _wooG.z;
+                const galaxyY = 0 - _wooG.y;
                 const galaxyCenter = new THREE.Vector3(galaxyX, galaxyY, galaxyZ);
                 
                 const distance = camera.position.distanceTo(galaxyCenter);
@@ -2005,9 +2007,13 @@ mapDotPool.releaseAll();
     // Y axis = depth (shown on the depth bar). Much more intuitive than the
     // spherical projection — flying north/south on the X/Z plane moves the
     // marker linearly, and elevation is its own dedicated indicator.
-    const playerX = camera.position.x;
-    const playerY = camera.position.y;
-    const playerZ = camera.position.z;
+    // FLOATING ORIGIN: the map's fixed features (galaxy dots) live in TRUE
+    // coordinates, so every moving marker must be projected in true coords
+    // too (current + worldOriginOffset).
+    const _woo = (typeof window !== 'undefined' && window.worldOriginOffset) || { x: 0, y: 0, z: 0 };
+    const playerX = camera.position.x + _woo.x;
+    const playerY = camera.position.y + _woo.y;
+    const playerZ = camera.position.z + _woo.z;
 
     // Linear projection: ±universeRadius maps to 0..100% of the map area
     const projectXZ = (x, z) => ({
@@ -2090,8 +2096,8 @@ mapDotPool.releaseAll();
                 marker.style.color = color;
                 marker.style.filter = `drop-shadow(0 0 3px ${color})`;
                 // Top-down X/Z projection — same as player marker
-                const amx = 50 + (ally.position.x / universeRadius) * 50;
-                const amy = 50 + (ally.position.z / universeRadius) * 50;
+                const amx = 50 + ((ally.position.x + _woo.x) / universeRadius) * 50;
+                const amy = 50 + ((ally.position.z + _woo.z) / universeRadius) * 50;
                 marker.style.left = Math.max(5, Math.min(95, amx)) + '%';
                 marker.style.top = Math.max(5, Math.min(95, amy)) + '%';
                 marker.style.display = 'block';
@@ -2112,8 +2118,8 @@ mapDotPool.releaseAll();
             // player's actual knowledge of charted regions.
             const discovered = nebula.userData && nebula.userData.deepDiscovered;
             if (!discovered) return;
-            const nx = 50 + (nebula.position.x / universeRadius) * 50;
-            const nz = 50 + (nebula.position.z / universeRadius) * 50;
+            const nx = 50 + ((nebula.position.x + _woo.x) / universeRadius) * 50;
+            const nz = 50 + ((nebula.position.z + _woo.z) / universeRadius) * 50;
             if (nx < 2 || nx > 98 || nz < 2 || nz > 98) return;
             const dot = document.createElement('div');
             dot.className = 'universe-nebula-dot';
@@ -2138,10 +2144,10 @@ mapDotPool.releaseAll();
             const start = path.line.userData.startPosition;
             const end = path.line.userData.endPosition;
             if (!start || !end) return;
-            const x1 = 50 + (start.x / universeRadius) * 50;
-            const y1 = 50 + (start.z / universeRadius) * 50;
-            const x2 = 50 + (end.x / universeRadius) * 50;
-            const y2 = 50 + (end.z / universeRadius) * 50;
+            const x1 = 50 + ((start.x + _woo.x) / universeRadius) * 50;
+            const y1 = 50 + ((start.z + _woo.z) / universeRadius) * 50;
+            const x2 = 50 + ((end.x + _woo.x) / universeRadius) * 50;
+            const y2 = 50 + ((end.z + _woo.z) / universeRadius) * 50;
             const dx = x2 - x1, dy = y2 - y1;
             const len = Math.sqrt(dx * dx + dy * dy);
             const angle = Math.atan2(dy, dx) * 180 / Math.PI;

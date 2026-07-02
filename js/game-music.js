@@ -436,7 +436,7 @@
         ? window.localSystemOffset : { x: 8000, y: 0, z: 4800 };
       const dSol = camera.position.distanceTo(
         new THREE.Vector3(lso.x, lso.y, lso.z));
-      const dSgrA = camera.position.length(); // origin = Sagittarius A*
+      const dSgrA = (window.trueDistanceFromOrigin) ? window.trueDistanceFromOrigin(camera.position) : camera.position.length(); // origin = Sagittarius A*
       if (dSol < SOL_AREA_RADIUS) {
         play('galaxy7'); // Sol / local system theme
         return;

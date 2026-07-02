@@ -2090,7 +2090,7 @@ function isEnemyInLocalGalaxy(enemy) {
     }
     
     // Fallback: check position relative to origin (local galaxy center)
-    const distanceFromOrigin = enemy.position.length();
+    const distanceFromOrigin = (window.trueDistanceFromOrigin) ? window.trueDistanceFromOrigin(enemy.position) : enemy.position.length();
     return distanceFromOrigin < 5000; // Local galaxy radius
 }
 

@@ -510,17 +510,26 @@
     // back inside the boundary.
     if (ap.phase !== 'init') {
       const _cp = camPos();
-      const _distFromOrigin = _cp.length();
+      // FLOATING ORIGIN: "distance from the galactic origin" must use TRUE
+      // coordinates — after a world rebase the origin is no longer at (0,0,0)
+      // in the current frame. true = current + worldOriginOffset.
+      const _woo = window.worldOriginOffset;
+      const _tx = _cp.x + (_woo ? _woo.x : 0);
+      const _ty = _cp.y + (_woo ? _woo.y : 0);
+      const _tz = _cp.z + (_woo ? _woo.z : 0);
+      const _distFromOrigin = Math.sqrt(_tx * _tx + _ty * _ty + _tz * _tz);
       if (_distFromOrigin > 140000) {
         if (!ap._originDummy) ap._originDummy = { position: new THREE.Vector3(0, 0, 0), userData: { name: 'Galactic Center' } };
+        // The galactic center's CURRENT-frame position is -worldOriginOffset.
+        ap._originDummy.position.set(_woo ? -_woo.x : 0, _woo ? -_woo.y : 0, _woo ? -_woo.z : 0);
         if (window.orientTowardsTarget) window.orientTowardsTarget(ap._originDummy);
         // If velocity still has an outward component, brake. Otherwise
         // thrust inward toward the origin.
         const vv = gameState.velocityVector;
         let outward = false;
         if (vv && vv.lengthSq() > 0.01) {
-          // outward = velocity · (position normalized) > 0
-          outward = (vv.x * _cp.x + vv.y * _cp.y + vv.z * _cp.z) > 0;
+          // outward = velocity · (true position from origin) > 0
+          outward = (vv.x * _tx + vv.y * _ty + vv.z * _tz) > 0;
         }
         if (outward) {
           keys().x = true;
@@ -2178,12 +2187,18 @@
       transmit('LONG RANGE SENSORS', 'Massive unknown vessel detected at extreme range.\nWARNING: Borg Collective signature confirmed.\nAll hands to battle stations.');
     }
 
-    const distFromOrigin = camPos().length();
+    // FLOATING ORIGIN: origin-relative math in TRUE coordinates
+    const _wooB = window.worldOriginOffset;
+    const _trueCp = camPos().clone();
+    if (_wooB) _trueCp.add(_wooB);
+    const distFromOrigin = _trueCp.length();
 
     if (distFromOrigin < 70000) {
       if (canEmergencyWarp() && t > 3000) {
-        // Face away from origin and punch it
-        const outward = camPos().clone().multiplyScalar(2);
+        // Face away from origin and punch it (outward in TRUE coords,
+        // expressed back in the current frame)
+        const outward = _trueCp.clone().multiplyScalar(2);
+        if (_wooB) outward.sub(_wooB);
         const dummy = { position: outward };
         if (window.orientTowardsTarget) window.orientTowardsTarget(dummy);
         if (triggerEmergencyWarp()) {
@@ -2192,7 +2207,11 @@
       } else {
         // Closed-loop cruise outward (the old flyToward never set thrust,
         // so with no warp charges this phase crawled at min velocity).
-        navigateTo({ x: 80000, y: 0, z: 0 }, { arriveRadius: 0, boost: true, allowJump: false });
+        navigateTo({
+          x: 80000 - (_wooB ? _wooB.x : 0),
+          y: 0 - (_wooB ? _wooB.y : 0),
+          z: 0 - (_wooB ? _wooB.z : 0),
+        }, { arriveRadius: 0, boost: true, allowJump: false });
       }
     } else {
       if (!gameState.borg.spawned && window.spawnBorgCube) {

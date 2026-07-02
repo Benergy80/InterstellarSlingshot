@@ -111,6 +111,54 @@ try {
         fail('probe FAILs: ' + JSON.stringify(state.selftestFails));
     }
     if (!state.perf || !state.perf.samples) fail('perf meter produced no samples');
+
+    // ── FLOATING-ORIGIN REGRESSION ────────────────────────────────────────
+    // Teleport the camera past the rebase threshold and verify: the world
+    // rebases (camera snaps back near origin), and a static object's TRUE
+    // position (current + worldOriginOffset) is preserved across the shift.
+    console.log('smoke: floating-origin check — teleporting +60k units…');
+    const foBefore = await page.evaluate(() => {
+        const S = (typeof wormholes !== 'undefined' && wormholes[0]) || null;
+        if (!S || !window.worldOriginOffset) return null;
+        const woo = window.worldOriginOffset;
+        const r = {
+            trueX: S.position.x + woo.x, trueY: S.position.y + woo.y, trueZ: S.position.z + woo.z,
+            offsetLen: woo.length(),
+        };
+        camera.position.x += 60000; // past WORLD_REBASE_DISTANCE
+        return r;
+    });
+    if (!foBefore) {
+        fail('floating-origin check could not run (no wormholes / worldOriginOffset)');
+    } else {
+        await page.waitForTimeout(5000); // several frames even at headless fps
+        const foAfter = await page.evaluate(() => {
+            const S = (typeof wormholes !== 'undefined' && wormholes[0]) || null;
+            const woo = window.worldOriginOffset;
+            return {
+                trueX: S.position.x + woo.x, trueY: S.position.y + woo.y, trueZ: S.position.z + woo.z,
+                offsetLen: woo.length(),
+                camLen: camera.position.length(),
+                fails: window.__selftest ? window.__selftest.fails().filter(f => f.level !== 'warn') : [],
+            };
+        });
+        const drift = Math.max(
+            Math.abs(foAfter.trueX - foBefore.trueX),
+            Math.abs(foAfter.trueY - foBefore.trueY),
+            Math.abs(foAfter.trueZ - foBefore.trueZ));
+        if (foAfter.offsetLen <= foBefore.offsetLen) {
+            fail(`floating origin did not rebase after 60k teleport (offset ${foAfter.offsetLen})`);
+        } else if (foAfter.camLen > 30000) {
+            fail(`camera still ${foAfter.camLen.toFixed(0)}u from origin after rebase`);
+        } else if (drift > 1) {
+            fail(`world rebase corrupted true coordinates (drift ${drift.toFixed(2)}u)`);
+        } else if (foAfter.fails.length) {
+            fail('probe FAILs after rebase: ' + JSON.stringify(foAfter.fails));
+        } else {
+            console.log(`smoke: floating-origin OK — rebased (offset ${foAfter.offsetLen.toFixed(0)}u), true-coord drift ${drift.toFixed(3)}u`);
+        }
+    }
+
     if (pageErrors.length) fail(`uncaught page errors:\n  ${pageErrors.join('\n  ')}`);
 
     if (process.exitCode !== 1) {

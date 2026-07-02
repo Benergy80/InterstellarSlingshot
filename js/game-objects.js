@@ -262,7 +262,12 @@ function getGalaxy3DPosition(galaxyId) {
     const x = distance * Math.sin(theta) * Math.cos(phi);
     const y = distance * Math.cos(theta);
     const z = distance * Math.sin(theta) * Math.sin(phi);
-    
+
+    // FLOATING ORIGIN: the table stores TRUE (absolute) coordinates; convert
+    // to the current rebased frame so every consumer's distance math stays
+    // consistent with the shifted scene.
+    const _woo = (typeof window !== 'undefined' && window.worldOriginOffset) || null;
+    if (_woo) return new THREE.Vector3(x - _woo.x, y - _woo.y, z - _woo.z);
     return new THREE.Vector3(x, y, z);
 }
 
@@ -1081,7 +1086,7 @@ function isEnemyInLocalGalaxy(enemy) {
     }
     
     // Fallback: check position relative to origin (local galaxy center)
-    const distanceFromOrigin = enemy.position.length();
+    const distanceFromOrigin = (window.trueDistanceFromOrigin) ? window.trueDistanceFromOrigin(enemy.position) : enemy.position.length();
     return distanceFromOrigin < 5000; // Local galaxy radius
 }
 
@@ -12315,7 +12320,7 @@ function updateCMBOpacity() {
     }
     
     // PART 1: Calculate base opacity based on distance from Sagittarius A* (at origin 0,0,0)
-    const distanceFromSgrA = camera.position.length();
+    const distanceFromSgrA = (window.trueDistanceFromOrigin) ? window.trueDistanceFromOrigin(camera.position) : camera.position.length();
     
     // Linear interpolation: 0.01 at origin, 0.09 at 4000+ units
     const maxDistance = 110000;
@@ -12946,3 +12951,37 @@ window.removeNebulaDebugBeacons = removeNebulaDebugBeacons;
 window.toggleNebulaDebugBeacons = toggleNebulaDebugBeacons;
 window.nebulaDebugBeacons = nebulaDebugBeacons;
 
+
+// =============================================================================
+// FLOATING ORIGIN — shift this module's cached absolute coordinates when the
+// world is rebased (see applyWorldShift in game-core.js). Everything here
+// stores CURRENT-frame coords, so a uniform subtract keeps them correct.
+// =============================================================================
+if (typeof window !== 'undefined') {
+    window.__worldShiftHandlers = window.__worldShiftHandlers || [];
+    window.__worldShiftHandlers.push(function (offset) {
+        const sh = (o) => {
+            if (!o) return;
+            if (o.isVector3) { o.sub(offset); return; }
+            if (typeof o.x === 'number' && typeof o.y === 'number' && typeof o.z === 'number') {
+                o.x -= offset.x; o.y -= offset.y; o.z -= offset.z;
+            }
+        };
+        // Wormhole mouth table (source of truth for re-reads)
+        if (typeof WORMHOLE_NETWORK !== 'undefined') {
+            WORMHOLE_NETWORK.forEach((w) => { sh(w.a); sh(w.b); });
+        }
+        // Sol / Dune gateway anchors
+        sh(window.localGatewayPosition);
+        sh(window.localSystemOffset);
+        // Elite-guardian respawn anchors (per-faction last kill sites)
+        if (typeof lastKillPositions !== 'undefined') {
+            Object.keys(lastKillPositions).forEach((k) => sh(lastKillPositions[k]));
+        }
+        // Freighter caravan routes (plain objects, not scene children —
+        // their ships are positioned each tick from source/destination)
+        if (typeof freighterCaravans !== 'undefined') {
+            freighterCaravans.forEach((cv) => { sh(cv.source); sh(cv.destination); });
+        }
+    });
+}
