@@ -87,6 +87,10 @@ try {
         gameOver: gameState.gameOver,
         demoDriving: !!(window.demoPilot && window.demoPilot.driving),
         perf: window.__perf || null,
+        quality: window.__quality ? {
+            tier: window.__quality.TIERS[window.__quality.tier].name,
+            pixelRatio: window.__quality.basePixelRatio,
+        } : null,
         selftest: window.__selftest ? window.__selftest.report() : '(no probe)',
         selftestFails: window.__selftest
             ? window.__selftest.fails().filter((f) => f.level !== 'warn')
@@ -95,6 +99,7 @@ try {
 
     console.log('\n--- probe report ---\n' + state.selftest + '\n--------------------');
     console.log('perf:', JSON.stringify(state.perf));
+    console.log('quality:', JSON.stringify(state.quality));
 
     const framesAdvanced = state.frameCount - fcBefore;
     if (framesAdvanced < SOAK_MS / 1000) {

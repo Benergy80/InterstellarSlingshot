@@ -405,36 +405,78 @@ const __perfMeter = {
 };
 if (typeof window !== 'undefined') window.__perf = __perfMeter.out;
 
-// PERFORMANCE: Auto-adjust performance based on frame times
-function adjustPerformance() {
-    return; // DISABLED - causing performance issues
-    
-    const targetFrameTime = 16.67; // 60 FPS
-    const slowFrameTime = 33.33;   // 30 FPS
-    const verySlowFrameTime = 50;  // 20 FPS
-    
-    if (gameState.averageFrameTime > verySlowFrameTime && gameState.performanceMode !== 'minimal') {
-        gameState.performanceMode = 'minimal';
-        console.log('Performance: Switching to minimal mode (avg frame time:', gameState.averageFrameTime.toFixed(1), 'ms)');
-        
-        // Reduce star count
-        if (stars && stars.geometry) {
-            const positions = stars.geometry.attributes.position.array;
-            const reducedPositions = new Float32Array(positions.length * 0.5); // 50% reduction
-            for (let i = 0; i < reducedPositions.length; i++) {
-                reducedPositions[i] = positions[i];
-            }
-            stars.geometry.setAttribute('position', new THREE.Float32BufferAttribute(reducedPositions, 3));
+// ADAPTIVE QUALITY: tier ladder driven by the __perfMeter median frame time.
+// Reversible runtime levers only (the old version rebuilt star geometry —
+// destructive and itself janky, which is why it was disabled):
+//   - renderer pixel ratio (dominant fill-rate lever; the game is fill-rate
+//     bound inside nebulas from stacked additive transparency)
+//   - gameState.performanceMode ('normal'/'optimized'/'minimal'), already
+//     consumed by enemy caps, active-planet ranges, orbit/tendril cadence.
+// Hysteresis: 2 consecutive slow checks to step down, 6 consecutive fast
+// checks to step up, and a settle period after each change so the meter
+// refills with post-change frames. Set window.__qualityLock to a tier name
+// to pin quality manually. Observability: window.__quality.
+const _quality = {
+    TIERS: [
+        { name: 'normal',    prScale: 1.0  },
+        { name: 'optimized', prScale: 0.85 },
+        { name: 'minimal',   prScale: 0.7  },
+    ],
+    tier: 0,
+    slowStreak: 0,
+    fastStreak: 0,
+    lastChange: 0,
+    basePixelRatio: 0,
+};
+if (typeof window !== 'undefined') window.__quality = _quality;
+
+function _applyQualityTier(idx, why) {
+    const t = _quality.TIERS[idx];
+    _quality.tier = idx;
+    _quality.slowStreak = 0;
+    _quality.fastStreak = 0;
+    _quality.lastChange = performance.now();
+    gameState.performanceMode = t.name;
+    if (renderer) {
+        if (!_quality.basePixelRatio) {
+            _quality.basePixelRatio = Math.min(window.devicePixelRatio || 1,
+                window.__isMobileGPU ? 1 : 1.5);
         }
-        
-    } else if (gameState.averageFrameTime > slowFrameTime && gameState.performanceMode === 'normal') {
-        gameState.performanceMode = 'optimized';
-        console.log('Performance: Switching to optimized mode (avg frame time:', gameState.averageFrameTime.toFixed(1), 'ms)');
-        
-    } else if (gameState.averageFrameTime < targetFrameTime * 1.2 && gameState.performanceMode !== 'normal') {
-        // Only switch back to normal if performance is good for a while
-        gameState.performanceMode = 'normal';
-        console.log('Performance: Switching to normal mode (avg frame time:', gameState.averageFrameTime.toFixed(1), 'ms)');
+        renderer.setPixelRatio(_quality.basePixelRatio * t.prScale);
+    }
+    console.log(`Quality: ${t.name} (pixelRatio ×${t.prScale}) — ${why}`);
+}
+
+function adjustPerformance() {
+    const perf = (typeof window !== 'undefined' && window.__perf) || null;
+    if (!perf || perf.samples < 60) return;   // need ~2s of real frames
+
+    // Manual pin: window.__qualityLock = 'normal'|'optimized'|'minimal'
+    if (typeof window !== 'undefined' && window.__qualityLock) {
+        const want = _quality.TIERS.findIndex(t => t.name === window.__qualityLock);
+        if (want >= 0 && want !== _quality.tier) _applyQualityTier(want, 'manual lock');
+        return;
+    }
+
+    // Let the meter refill with post-change frames before judging again
+    if (performance.now() - _quality.lastChange < 10000) return;
+
+    const med = perf.medianMs;
+    if (med > 30) {          // sustained below ~33 fps
+        _quality.slowStreak++;
+        _quality.fastStreak = 0;
+        if (_quality.slowStreak >= 2 && _quality.tier < _quality.TIERS.length - 1) {
+            _applyQualityTier(_quality.tier + 1, `median ${med.toFixed(1)}ms`);
+        }
+    } else if (med < 15) {   // sustained ~60fps+ headroom
+        _quality.fastStreak++;
+        _quality.slowStreak = 0;
+        if (_quality.fastStreak >= 6 && _quality.tier > 0) {
+            _applyQualityTier(_quality.tier - 1, `median ${med.toFixed(1)}ms, headroom`);
+        }
+    } else {
+        _quality.slowStreak = 0;
+        _quality.fastStreak = 0;
     }
 }
 
