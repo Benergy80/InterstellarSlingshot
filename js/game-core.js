@@ -432,6 +432,82 @@ if (typeof window !== 'undefined') {
 
 const WORLD_REBASE_DISTANCE = 30000;
 
+// =============================================================================
+// FIXED-TIMESTEP PLAYER SIMULATION (Gaffer's "Fix Your Timestep!")
+// =============================================================================
+// The player-ship physics (updateEnhancedPhysics) now always steps at exactly
+// 16.67ms: an accumulator collects real frame time and the sim runs 0..N whole
+// steps per rendered frame. Every hand-tuned per-frame constant is EXACT again
+// (dtFrames === 1 inside every step), flight behavior is identical at 24, 60
+// and 120fps, and a dt spike becomes several exact sub-steps instead of one
+// big scaled step. Rendering interpolates the camera between the previous and
+// current sim states by the leftover fraction (render-only; restored after),
+// so motion is positioned at the correct wall-clock instant every frame.
+const _fixedSim = {
+    STEP_MS: 16.67,
+    MAX_STEPS: 6,          // spiral-of-death guard: beyond this, drop the debt
+    acc: 0,
+    inited: false,
+    prevPos: (typeof THREE !== 'undefined') ? new THREE.Vector3() : null,
+    prevQuat: (typeof THREE !== 'undefined') ? new THREE.Quaternion() : null,
+    _tmpPos: (typeof THREE !== 'undefined') ? new THREE.Vector3() : null,
+    _tmpQuat: (typeof THREE !== 'undefined') ? new THREE.Quaternion() : null,
+};
+
+// =============================================================================
+// QUATERNION SPRING (critically damped, exact form — Daniel Holden,
+// "Spring-It-On") — the cinematic camera's rotation filter. Carries an
+// angular-velocity state so motion is C1: when the autopilot retargets, the
+// view EASES INTO the new turn instead of kinking. Runs in scaled-angle-axis
+// space of the delta rotation; frame-rate independent by construction.
+// =============================================================================
+const _qsTmpInv = (typeof THREE !== 'undefined') ? new THREE.Quaternion() : null;
+const _qsTmpDelta = (typeof THREE !== 'undefined') ? new THREE.Quaternion() : null;
+const _qsJ0 = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+const _qsJ1 = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+
+function _quatToSAA(q, out) {   // quaternion → axis*angle (Vector3)
+    let w = q.w, x = q.x, y = q.y, z = q.z;
+    if (w < 0) { w = -w; x = -x; y = -y; z = -z; }  // shortest path
+    const vlen = Math.sqrt(x * x + y * y + z * z);
+    if (vlen < 1e-8) return out.set(0, 0, 0);
+    const angle = 2 * Math.atan2(vlen, w);
+    return out.set(x / vlen * angle, y / vlen * angle, z / vlen * angle);
+}
+
+function _quatFromSAA(v, out) { // axis*angle → quaternion
+    const angle = v.length();
+    if (angle < 1e-8) return out.set(0, 0, 0, 1);
+    const s = Math.sin(angle / 2) / angle;
+    return out.set(v.x * s, v.y * s, v.z * s, Math.cos(angle / 2));
+}
+
+// Mutates q (orientation state) and w (angular velocity, rad/s) toward qGoal.
+// halflife: seconds to close half the remaining rotation.
+function _quatSpring(q, w, qGoal, halflife, dtSec) {
+    const y = (2 * 0.69314718) / (halflife + 1e-5);   // (4·ln2 / halflife) / 2
+    _qsTmpInv.copy(qGoal).invert();
+    _qsTmpDelta.copy(q).multiply(_qsTmpInv);
+    _quatToSAA(_qsTmpDelta, _qsJ0);
+    _qsJ1.copy(w).addScaledVector(_qsJ0, y);
+    const eydt = Math.exp(-y * dtSec);
+    _qsJ0.addScaledVector(_qsJ1, dtSec).multiplyScalar(eydt);   // new delta SAA
+    _quatFromSAA(_qsJ0, _qsTmpDelta);
+    q.copy(_qsTmpDelta).multiply(qGoal);
+    w.addScaledVector(_qsJ1, -y * dtSec).multiplyScalar(eydt);  // new ang vel
+}
+
+// Swing–twist decomposition: q = swing ∘ twist, twist about `axis` (unit).
+// Used to decouple ROLL (twist about camera forward) from yaw/pitch (swing)
+// so the camera follows turns briskly but rolls lazily — the ship banks
+// WITHIN the frame, the signature flight-game chase-cam trait.
+const _stTmp = (typeof THREE !== 'undefined') ? new THREE.Quaternion() : null;
+function _swingTwist(q, axis, outSwing, outTwist) {
+    const d = q.x * axis.x + q.y * axis.y + q.z * axis.z;
+    outTwist.set(axis.x * d, axis.y * d, axis.z * d, q.w).normalize();
+    outSwing.copy(q).multiply(_stTmp.copy(outTwist).invert());
+}
+
 // TRUE distance from the galactic origin (Sgr A*) regardless of how many
 // rebases have happened. Use this instead of pos.length() for any
 // "distance from origin" gameplay rule (zone themes, locality checks, CMB
@@ -495,6 +571,8 @@ function applyWorldShift() {
 
     // 3) Core game-state caches
     if (gameState.lastPosition) gameState.lastPosition.sub(offset);
+    // Fixed-timestep interpolation history rides the same frame shift
+    if (_fixedSim.inited && _fixedSim.prevPos) _fixedSim.prevPos.sub(offset);
 
     // 4) Subsystem handlers (registered by other files)
     const total = worldOriginOffset.clone().add(offset);
@@ -2736,10 +2814,38 @@ if (gameState.frameCount % 5 === 0 && typeof checkCosmicFeatureInteractions === 
         window.applyEnemyBuffs();
     }
 
-    // Enhanced physics and controls for doubled world
+    // Enhanced physics and controls — FIXED TIMESTEP (see _fixedSim above).
+    // Key state written by the player/autopilot this frame simply persists
+    // across the whole-frame's steps (equivalent to holding the key);
+    // one-shot flags (wDoubleTap, keys.o) are consumed by the first step.
     if (typeof perfDebug !== 'undefined') perfDebug.startTimer('physics');
-    if (typeof updateEnhancedPhysics === 'function') {
-        updateEnhancedPhysics();
+    if (typeof updateEnhancedPhysics === 'function' && camera) {
+        if (!_fixedSim.inited && _fixedSim.prevPos) {
+            _fixedSim.prevPos.copy(camera.position);
+            _fixedSim.prevQuat.copy(camera.quaternion);
+            _fixedSim.inited = true;
+        }
+        _fixedSim.acc += gameState.dtMs;   // dtMs is already slow-mo scaled
+        const _saveDtMs = gameState.dtMs, _saveDtF = gameState.dtFrames;
+        gameState.dtMs = _fixedSim.STEP_MS;
+        gameState.dtFrames = 1;
+        let _steps = 0;
+        while (_fixedSim.acc >= _fixedSim.STEP_MS && _steps < _fixedSim.MAX_STEPS) {
+            _fixedSim.prevPos.copy(camera.position);
+            _fixedSim.prevQuat.copy(camera.quaternion);
+            updateEnhancedPhysics();
+            _fixedSim.acc -= _fixedSim.STEP_MS;
+            _steps++;
+        }
+        if (_steps === _fixedSim.MAX_STEPS) _fixedSim.acc = 0; // drop the debt
+        gameState.dtMs = _saveDtMs;
+        gameState.dtFrames = _saveDtF;
+        // Teleports (black-hole transits, warp exits) must not be swept
+        // across the screen by interpolation — snap the history instead.
+        if (_fixedSim.prevPos.distanceTo(camera.position) > 500) {
+            _fixedSim.prevPos.copy(camera.position);
+            _fixedSim.prevQuat.copy(camera.quaternion);
+        }
     }
     if (typeof perfDebug !== 'undefined') perfDebug.endTimer('physics');
 
@@ -2826,43 +2932,74 @@ if (gameState.frameCount % 5 === 0 && typeof checkCosmicFeatureInteractions === 
     // rotation steps are exactly what reads as jerk at 25-40fps. The lag is
     // clamped to ~18° so the ship never swings out of frame. Demo-only:
     // manual flight keeps 1:1 aim feel. Kill switch: window.__cinematicCam=false.
+    // RENDER INTERPOLATION (fixed timestep): draw the camera at the exact
+    // wall-clock instant between the previous and current sim states.
+    // Render-only — restored after render alongside the cinematic state.
+    let _simInterpApplied = false;
+    if (_fixedSim.inited && camera && gameState.gameStarted && !gameState.gameOver) {
+        const _alpha = Math.max(0, Math.min(1, _fixedSim.acc / _fixedSim.STEP_MS));
+        if (_alpha < 1) {
+            _fixedSim._tmpPos.copy(camera.position);
+            _fixedSim._tmpQuat.copy(camera.quaternion);
+            camera.position.copy(_fixedSim.prevPos).lerp(_fixedSim._tmpPos, _alpha);
+            camera.quaternion.copy(_fixedSim.prevQuat).slerp(_fixedSim._tmpQuat, _alpha);
+            _simInterpApplied = true;
+            // The ship mesh (+shield) was anchored to the CURRENT sim state
+            // by the post-physics re-sync — carry it along with the render
+            // camera so it can't lag by the interpolation delta. (The
+            // cinematic block below re-anchors it fully when active.)
+            if (typeof cameraState !== 'undefined' && cameraState.playerShipMesh) {
+                if (!window.__simShipSavedPos) window.__simShipSavedPos = new THREE.Vector3();
+                window.__simShipSavedPos.copy(cameraState.playerShipMesh.position);
+                cameraState.playerShipMesh.position.add(camera.position).sub(_fixedSim._tmpPos);
+                if (typeof syncShieldPositionToShip === 'function') syncShieldPositionToShip();
+            }
+        }
+    }
+
     const _cinOn = (typeof window !== 'undefined' && window.__cinematicCam !== false) &&
         window.demoPilot && window.demoPilot.driving &&
         typeof cameraState !== 'undefined' && cameraState.mode === 'third-person';
     let _cinSavedQuat = null;
     let _cinShipMoved = false;
     if (_cinOn) {
-        if (!window.__cinQuat1) {
-            window.__cinQuat1 = camera.quaternion.clone();
-            window.__cinQuat = camera.quaternion.clone(); // stage 2 = rendered view
+        if (!window.__cinQuat) {
+            window.__cinQuat = camera.quaternion.clone();  // rendered view state
+            window.__cinAngVel = new THREE.Vector3();      // spring angular velocity
+            window.__cinGoal = new THREE.Quaternion();
+            window.__cinSwing = new THREE.Quaternion();
+            window.__cinTwist = new THREE.Quaternion();
+            window.__cinDelta = new THREE.Quaternion();
+            window.__cinTwistScaled = new THREE.Quaternion();
+            window.__cinFwdAxis = new THREE.Vector3();
+            window.__cinIdent = new THREE.Quaternion();
         }
-        const _q1 = window.__cinQuat1;
         const _q2 = window.__cinQuat;
-        // Two cascaded dt-corrected exponential stages (≈0.10/frame each at
-        // 60fps). One stage only filters ANGLE; the cascade also filters
-        // angular ACCELERATION, which is what actually reads as jerk.
-        // Each stage's step is ALSO slew-rate limited: during sustained fast
-        // maneuvers (combat rolls hit ~75°/s) an exponential chase saturates
-        // any fixed lag clamp and passes the jerk straight through — a rate
-        // limit instead makes the view catch up at a CONSTANT angular
-        // velocity, which is perfectly smooth by construction.
-        const _blend = 1 - Math.pow(0.90, gameState.dtFrames || 1);
-        const _maxStep = 1.35 * (gameState.dtMs || 16.67) / 1000; // ~77°/s slew cap
-        const _chase = (from, to) => {
-            const a = from.angleTo(to);
-            if (a < 1e-5) return;
-            const step = Math.min(a * _blend, _maxStep);
-            from.slerp(to, step / a);
-        };
-        _chase(_q1, camera.quaternion);
-        _chase(_q2, _q1);
+        // CRITICALLY DAMPED QUATERNION SPRING with ROLL DECOUPLING.
+        // The spring carries angular velocity, so retargets EASE in (C1
+        // motion, no kinks — the failure mode of pure slerp-chase). The
+        // goal is built by swing–twist splitting the remaining rotation
+        // about the view's forward axis: yaw/pitch (swing) is followed in
+        // full at a brisk halflife, roll (twist) at partial follow — the
+        // ship visibly banks within the frame and the horizon rolls lazily
+        // after it, chase-plane style.
+        const HALFLIFE = 0.16;     // s to close half the remaining swing
+        const ROLL_FOLLOW = 0.45;  // fraction of remaining roll per goal
+        const _dtSec = (gameState.dtMs || 16.67) / 1000;
+        window.__cinFwdAxis.set(0, 0, -1);   // camera-local forward
+        window.__cinDelta.copy(_q2).invert().multiply(camera.quaternion);
+        _swingTwist(window.__cinDelta, window.__cinFwdAxis, window.__cinSwing, window.__cinTwist);
+        window.__cinTwistScaled.copy(window.__cinIdent.set(0, 0, 0, 1))
+            .slerp(window.__cinTwist, ROLL_FOLLOW);
+        window.__cinGoal.copy(_q2).multiply(window.__cinSwing).multiply(window.__cinTwistScaled);
+        _quatSpring(_q2, window.__cinAngVel, window.__cinGoal, HALFLIFE, _dtSec);
         // Safety net only (pathological spins — BH transits, hitstop exits):
         // beyond ~35° the ship would leave the frame, so hard-catch there.
         const _MAX_LAG = 0.61;
         const _lag2 = _q2.angleTo(camera.quaternion);
         if (_lag2 > _MAX_LAG) {
             _q2.slerp(camera.quaternion, 1 - _MAX_LAG / _lag2);
-            _q1.copy(_q2);
+            window.__cinAngVel.multiplyScalar(0.5);
         }
         _cinSavedQuat = camera.quaternion.clone();
         // Re-anchor the SHIP MESH (and shield) into the smoothed render
@@ -2900,11 +3037,11 @@ if (gameState.frameCount % 5 === 0 && typeof checkCosmicFeatureInteractions === 
             if (typeof syncShieldPositionToShip === 'function') syncShieldPositionToShip();
         }
         camera.quaternion.copy(_q2);
-    } else if (typeof window !== 'undefined' && window.__cinQuat1) {
-        // keep the smooth quats parked on the live orientation while inactive
+    } else if (typeof window !== 'undefined' && window.__cinQuat) {
+        // keep the spring state parked on the live orientation while inactive
         // so re-engaging (FPV→TPV, demo restart) never snaps from stale data
-        window.__cinQuat1.copy(camera.quaternion);
         window.__cinQuat.copy(camera.quaternion);
+        if (window.__cinAngVel) window.__cinAngVel.set(0, 0, 0);
         if (window.__cinShipQuat && typeof cameraState !== 'undefined' && cameraState.playerShipMesh) {
             window.__cinShipQuat.copy(cameraState.playerShipMesh.quaternion);
         }
@@ -2923,6 +3060,18 @@ if (gameState.frameCount % 5 === 0 && typeof checkCosmicFeatureInteractions === 
     if (_cinShipMoved && cameraState.playerShipMesh) {
         cameraState.playerShipMesh.position.copy(window.__cinShipSavedPos);
         cameraState.playerShipMesh.quaternion.copy(window.__cinShipSavedQuat);
+    }
+    // restore the fixed-timestep interpolation — sim state is the truth.
+    // Ship restore runs LAST unconditionally: __simShipSavedPos holds the
+    // true pre-interpolation position even when the cinematic block also
+    // moved the ship (its own restore used a post-interp snapshot).
+    if (_simInterpApplied) {
+        camera.position.copy(_fixedSim._tmpPos);
+        camera.quaternion.copy(_fixedSim._tmpQuat);
+        if (typeof cameraState !== 'undefined' && cameraState.playerShipMesh &&
+            window.__simShipSavedPos) {
+            cameraState.playerShipMesh.position.copy(window.__simShipSavedPos);
+        }
     }
 
     // Zoom scope frame capture. The renderer runs with
