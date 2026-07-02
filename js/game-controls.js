@@ -2054,7 +2054,10 @@ function fireEnemyWeapon(enemy, difficultySettings) {
             }
 
             if (shieldsActive && typeof createShieldHitEffect === 'function') {
-                createShieldHitEffect(enemy.position);
+                // Pass the beam's actual line (origin → aim point) and color
+                // so the deflection sparks land where the laser visually
+                // strikes the bubble, tinted like the laser that caused them.
+                createShieldHitEffect(enemyPos || enemy.position, laserColor, targetPos);
             }
 
             if (!isInvulnerable) {
