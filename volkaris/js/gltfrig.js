@@ -115,6 +115,39 @@ export const SENTINEL_MAP = {
   hit: { name: 'Walking', once: true, timeScale: 3 },
 };
 
+// Meshy AI "Captain 2" (Ben's hero model) — one GLB per animation, all
+// sharing the rig; clips are renamed after their source file at load.
+export const CAPTAIN2_MAP = {
+  idle: { name: 'Walking', timeScale: 0.14 },
+  walk: { name: 'Walking' },
+  run: { name: 'Running' },
+  sprint: { name: 'Running', timeScale: 1.25 },
+  jump: { name: 'Run_and_Jump', once: true },
+  fall: { name: 'Run_and_Jump', timeScale: 0.12 },
+  tuck: { name: 'Run_Jump_and_Roll', once: true, timeScale: 1.5 },
+  wallrunL: { name: 'diagonal_wall_run', timeScale: 1.1 },
+  wallrunR: { name: 'diagonal_wall_run', timeScale: 1.1 },
+  hover: { name: 'Run_and_Jump', timeScale: 0.1 },
+  die: { name: 'slide_light', once: true, clamp: true },
+  sit: { name: 'Walking', timeScale: 0.1 },
+  wave: { name: 'Walking', timeScale: 0.5 },
+  lean: { name: 'Walking', timeScale: 0.1 },
+  stomp: { name: 'Walking', timeScale: 0.6 },
+  fly: { name: 'Run_and_Jump', timeScale: 0.1 },
+  throne: { name: 'Walking', once: true, next: 'idle' },
+  shoot: { name: 'Walk_Forward_While_Shooting', timeScale: 0.6 },
+  runshoot: { name: 'Run_and_Shoot' },
+  aimidle: { name: 'Walk_Forward_While_Shooting', timeScale: 0.4 },
+  strafeL: { name: 'Walk_Left_with_Gun', timeScale: 1.15 },
+  strafeR: { name: 'ForwardRight_Run_Fight' },
+  runback: { name: 'BackRight_Run' },
+  punchL: { name: 'Punch_Combo', once: true, timeScale: 1.3 },
+  punchR: { name: 'Punch_Combo_1', once: true, timeScale: 1.3 },
+  kickL: { name: 'Roundhouse_Kick', once: true, timeScale: 1.15 },
+  kickR: { name: 'Roundhouse_Kick', once: true, timeScale: 1.15 },
+  hit: { name: 'Roll_Dodge_1', once: true, timeScale: 1.8 },
+};
+
 export function makeGLTFRig(gltf, { tint = null, tints = null, scale = 0.75, blasterHex = NEON.cyan, withBlaster = false, clipMap = CLIP_MAP, faceFlip = false, extraAnims = null } = {}) {
   const root = skeletonClone(gltf.scene);
   const group = new THREE.Group();

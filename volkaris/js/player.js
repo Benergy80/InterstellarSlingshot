@@ -17,7 +17,7 @@
 import * as THREE from 'three';
 import { C, NEON, clamp, lerp } from './config.js';
 import { makeCaptain } from './rig.js';
-import { makeGLTFRig, ASTRO_MAP, SENTINEL_MAP } from './gltfrig.js';
+import { makeGLTFRig, ASTRO_MAP, SENTINEL_MAP, CAPTAIN2_MAP } from './gltfrig.js';
 
 const P = C.PLAYER;
 const _up = new THREE.Vector3(), _fwd = new THREE.Vector3(), _right = new THREE.Vector3();
@@ -31,7 +31,21 @@ export function createPlayer({ scene, camera, planet, hud, audio, fx, transit, m
   // Silver Sentinel stays wired via SENTINEL_MAP, flip USE_SENTINEL
   // to bring him back), else the procedural rig
   const USE_SENTINEL = false;
-  const rig = USE_SENTINEL && models?.kay?.Sentinel
+  // THE CAPTAIN: Ben's Meshy "Captain 2" with its 20-clip animation
+  // suite when the GLBs are present; else the gold Astronaut; else the
+  // procedural rig. Captain 2 is size-normalized to 1.8u at load.
+  let cap2Scale = 1;
+  if (models?.captain2) {
+    const bb = new THREE.Box3().setFromObject(models.captain2.base.scene);
+    const h = bb.max.y - bb.min.y;
+    if (h > 0.01) cap2Scale = 1.8 / h;
+  }
+  const rig = models?.captain2
+    ? makeGLTFRig(models.captain2.base, {
+        scale: cap2Scale, withBlaster: true, clipMap: CAPTAIN2_MAP,
+        extraAnims: models.captain2.anims,
+      })
+    : USE_SENTINEL && models?.kay?.Sentinel
     ? makeGLTFRig(models.kay.Sentinel, {
         scale: 1.12, withBlaster: true, clipMap: SENTINEL_MAP,
       })
@@ -47,10 +61,12 @@ export function createPlayer({ scene, camera, planet, hud, audio, fx, transit, m
         },
       })
     : makeCaptain();
-  // blaster barrel alignment: the Astronaut wrist bone's +Z points out the
-  // side of the fist — this offset (measured in the raised shooting pose)
-  // lays the barrel along the arm's line of fire
-  if (rig.setGunRot) rig.setGunRot(-1.623, 0.166, 1.751);
+  // blaster barrel alignment: per-rig hand-local offset measured in the
+  // raised shooting pose (each rig's wrist axes differ)
+  if (rig.setGunRot) {
+    if (models?.captain2) rig.setGunRot(0, 0, 0);         // calibrated post-load
+    else rig.setGunRot(-1.623, 0.166, 1.751);             // Astronaut wrist
+  }
   scene.add(rig.group);
   // suit lamp — keeps the Captain readable through the deep night
   const suitLamp = new THREE.PointLight(0x66d9ff, 0.6, 10, 1.6);

@@ -70,9 +70,20 @@ const hud = createHUD();
 const audio = createAudio();
 let planet, sky, fx, npcs, player, transit, details, demo;
 
+// Meshy Captain 2 — one GLB per animation. Each file's clips are renamed
+// after the file (Meshy per-animation exports reuse one generic clip name,
+// which would collide in the mixer's action table).
+const CAPTAIN2_ANIMS = [
+  'Running', 'Walking', 'Run_and_Jump', 'Run_and_Shoot', 'Run_Jump_and_Roll',
+  'diagonal_wall_run', 'Roll_Dodge_1', 'Roundhouse_Kick', 'Punch_Combo', 'Punch_Combo_1',
+  'slide_light', 'Walk_Forward_While_Shooting', 'Walk_Backward_While_Shooting',
+  'Walk_Left_with_Gun', 'ForwardRight_Run_Fight', 'ForwardLeft_Run_Fight',
+  'BackLeft_run', 'BackRight_Run', 'Run_Turn_Left', 'Run_Turn_Right',
+];
+
 async function loadModels() {
   const loader = new GLTFLoader();
-  const out = { kay: {} };
+  const out = { kay: {}, captain2: null };
   const shipJobs = ['Player', 'Freighter'].map(n => new Promise((res) => {
     loader.load(`../models/${n}.glb`, (g) => { out[n] = g.scene; res(); }, undefined, () => res());
   }));
@@ -80,10 +91,21 @@ async function loadModels() {
   const kayJobs = ['Sentinel', 'Astronaut', 'Rogue_Hooded', 'Rogue', 'Mage', 'Barbarian'].map(n => new Promise((res) => {
     loader.load(`assets/${n}.glb`, (g) => { out.kay[n] = g; res(); }, undefined, () => res());
   }));
+  // Captain 2 (optional — falls back to the Astronaut when absent)
+  const cap = { base: null, anims: [] };
+  const capJobs = CAPTAIN2_ANIMS.map((n, i) => new Promise((res) => {
+    loader.load(`assets/captain2/${n}.glb`, (g) => {
+      for (const c of g.animations) c.name = n;   // filename IS the clip name
+      if (i === 0) cap.base = g;
+      else cap.anims.push(g);
+      res();
+    }, undefined, () => res());
+  }));
   await Promise.race([
-    Promise.all([...shipJobs, ...kayJobs]),
-    new Promise(res => setTimeout(res, 12000)),
+    Promise.all([...shipJobs, ...kayJobs, ...capJobs]),
+    new Promise(res => setTimeout(res, 15000)),
   ]);
+  if (cap.base) out.captain2 = cap;
   return out;
 }
 const frame = () => new Promise(r => requestAnimationFrame(r));
