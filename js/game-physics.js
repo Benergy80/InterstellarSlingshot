@@ -5185,6 +5185,72 @@ function animateDiscoveryPaths() {
             }
         }
     }
+
+    // ── FACTION CAMPAIGN ARC ─────────────────────────────────────────────
+    // The two paths of a twin pair both lead to the SAME faction. When BOTH
+    // missions are complete, a THIRD path opens from the pair to that
+    // faction's BLACK-HOLE GALAXY — and 3 black-hole guardians of that
+    // faction deploy at its core. Clearing the remaining faction forces AND
+    // all 3 guardians is what clears the galaxy.
+    checkTwinPairCampaign();
+}
+
+function checkTwinPairCampaign() {
+    if (typeof gameState === 'undefined') return;
+    if (!gameState._bhPathSpawned) gameState._bhPathSpawned = {};
+    const doneByGalaxy = {};
+    for (let i = 0; i < discoveryPaths.length; i++) {
+        const p = discoveryPaths[i];
+        const ud = p && p.line && p.line.userData;
+        if (!ud || !ud.missionComplete) continue;
+        if (ud.pathType === 'blackhole') continue;   // the arc path itself
+        const g = (p.galaxyId !== undefined) ? p.galaxyId
+            : (ud.galaxyId !== undefined ? ud.galaxyId : -1);
+        if (g < 0) continue;
+        if (!doneByGalaxy[g]) doneByGalaxy[g] = { count: 0, start: null };
+        doneByGalaxy[g].count++;
+        if (!doneByGalaxy[g].start && ud.startPosition) doneByGalaxy[g].start = ud.startPosition;
+    }
+    Object.keys(doneByGalaxy).forEach(gs => {
+        const g = +gs;
+        if (gameState._bhPathSpawned[g]) return;
+        const d = doneByGalaxy[g];
+        if (d.count < 2 || !d.start) return;   // both twin missions required
+        const core = (typeof findGalaxyCoreById === 'function') ? findGalaxyCoreById(g) : null;
+        if (!core) return;
+        gameState._bhPathSpawned[g] = true;
+
+        const galaxyType = (typeof galaxyTypes !== 'undefined') ? galaxyTypes[g] : null;
+        const factionName = galaxyType ? galaxyType.faction : 'Enemy';
+        const loreData = FACTION_LORE[factionName] || { color: 0xffffff };
+
+        // Third path: twin pair → the faction's black-hole galaxy core
+        createDiscoveryPathToPosition(
+            d.start.clone(), core.position.clone(),
+            loreData.color, factionName, 'blackhole', g);
+
+        // The stronghold garrison: exactly 3 black-hole guardians of this
+        // faction deploy at the core the moment the path appears.
+        if (typeof loadGuardiansForGalaxy === 'function') {
+            loadGuardiansForGalaxy(g, { count: 3, ignoreBossGate: true });
+        }
+
+        playDeepDiscoverySound();
+        const gName = galaxyType ? galaxyType.name : ('Galaxy ' + g);
+        if (typeof showIncomingTransmission === 'function') {
+            showIncomingTransmission('Mission Control - Stronghold Located',
+                `Outstanding work, Captain — both ${factionName} staging areas are destroyed.\n\n` +
+                `Long-range scans show their remaining forces retreating to the ${gName} Galaxy's black hole, ` +
+                `where three guardians now shield the core.\n\n` +
+                `Follow the new line. Break the guardians, clear the stragglers, and the ${gName} Galaxy is free.`,
+                loreData.color);
+        }
+        if (typeof showAchievement === 'function') {
+            showAchievement('Black-Hole Stronghold Located!',
+                `${factionName} remnants are dug in at the ${gName} core — 3 guardians deployed. Path marked.`, true);
+        }
+        console.log(`🕳️ Campaign arc: both twin missions for galaxy ${g} complete → black-hole path + 3 guardians`);
+    });
 }
 
 // Export deep discovery functions

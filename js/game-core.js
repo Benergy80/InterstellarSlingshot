@@ -3065,20 +3065,14 @@ if (gameState.frameCount % 5 === 0 && typeof checkCosmicFeatureInteractions === 
         }
     }
 
-    // Ship-attached effects follow the RENDERED ship (the fixed-step
-    // interpolation and cinematic re-anchor above have been applied): the
-    // laser-charge glow was previously placed only during the update phase,
-    // so it trailed the ship whenever thrusting while holding a charge.
-    if ((_simInterpApplied || _cinShipMoved) &&
-        typeof window !== 'undefined' && typeof window.__syncChargeGlow === 'function') {
-        try { window.__syncChargeGlow(); } catch (e) {}
-    }
-
     // RENDERED-SHIP SNAPSHOT: capture the ship transform AS DRAWN (post
     // interpolation + cinematic re-anchor) plus the rendered view quaternion.
     // Weapon-fire code uses this for beam/muzzle origins — computing them
     // from the raw physics camera puts lasers visibly off the rendered ship
     // whenever the cinematic camera is lagging a turn.
+    // MUST run BEFORE the charge-glow sync below: the sync reads this
+    // snapshot, and taking it afterwards left the glow riding the PREVIOUS
+    // frame's ship — a visible mismatch that grew with speed.
     if (typeof cameraState !== 'undefined' && cameraState.playerShipMesh &&
         typeof window !== 'undefined') {
         if (!window.__renderedShipPos) {
@@ -3096,6 +3090,16 @@ if (gameState.frameCount % 5 === 0 && typeof checkCosmicFeatureInteractions === 
                 : cameraState.playerShipMesh.quaternion);
         window.__renderedShipScale = cameraState.playerShipMesh.scale.x || 1;
         window.__renderedShipFrame = gameState.frameCount;
+    }
+
+    // Ship-attached effects follow the RENDERED ship (the fixed-step
+    // interpolation and cinematic re-anchor above have been applied, and
+    // the snapshot above is fresh): the laser-charge glow was previously
+    // placed only during the update phase, so it trailed the ship whenever
+    // thrusting while holding a charge.
+    if ((_simInterpApplied || _cinShipMoved) &&
+        typeof window !== 'undefined' && typeof window.__syncChargeGlow === 'function') {
+        try { window.__syncChargeGlow(); } catch (e) {}
     }
 
     // PERFORMANCE DEBUG: Time render call

@@ -10395,7 +10395,8 @@ function spawnBlackHoleGuardians() {
 // LOAD GUARDIANS WHEN PLAYER ENTERS GALAXY
 // =============================================================================
 
-function loadGuardiansForGalaxy(galaxyId) {
+function loadGuardiansForGalaxy(galaxyId, opts) {
+    opts = opts || {};
     console.log(`🛡️ Loading guardians for galaxy ${galaxyId}...`);
     
     // Safety checks
@@ -10411,8 +10412,11 @@ function loadGuardiansForGalaxy(galaxyId) {
         return;
     }
     
-    // ⭐ CRITICAL: Only spawn guardians AFTER boss is defeated
-    if (typeof bossSystem !== 'undefined' && bossSystem.galaxyBossDefeated && !bossSystem.galaxyBossDefeated[galaxyId]) {
+    // ⭐ CRITICAL: Only spawn guardians AFTER boss is defeated — unless the
+    // twin-pair campaign is spawning them (both discovery missions done →
+    // the black-hole path opens WITH its guardians, per design).
+    if (!opts.ignoreBossGate &&
+        typeof bossSystem !== 'undefined' && bossSystem.galaxyBossDefeated && !bossSystem.galaxyBossDefeated[galaxyId]) {
         console.log(`Galaxy ${galaxyId} boss not yet defeated - guardians will spawn after boss victory`);
         return;
     }
@@ -10457,9 +10461,11 @@ function loadGuardiansForGalaxy(galaxyId) {
     const galaxyType = galaxyTypes[galaxyId];
     const blackHolePosition = blackHole.position.clone();
     
-    // Determine number of guardians based on galaxy type
-    const guardianCount = galaxyType.name === 'Quasar' ? 8 : 
-                         galaxyType.name === 'Dwarf' ? 3 : 5;
+    // Determine number of guardians based on galaxy type. The twin-pair
+    // campaign spawns exactly 3 (opts.count) with its black-hole path.
+    const guardianCount = opts.count ? opts.count :
+                         (galaxyType.name === 'Quasar' ? 8 :
+                         galaxyType.name === 'Dwarf' ? 3 : 5);
     
     // Guardian ring distance from black hole
     const guardianOrbitRadius = blackHole.userData.warpThreshold + 100;

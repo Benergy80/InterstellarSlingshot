@@ -139,6 +139,14 @@ function _updatePlayerTrail() {
 const _chargeGlow = { sprites: null };
 function _updateLaserCharge() {
     const ship = window.cameraState && window.cameraState.playerShipMesh;
+    // CHARGE SPEED GATE: a charge in progress FIZZLES if the ship
+    // accelerates past ~10,000 km/s (jump/warp mid-hold) — charging needs
+    // a stable firing platform, and the glow can't credibly ride the wings
+    // at warp speeds.
+    if (typeof gameState !== 'undefined' && gameState._laserChargeStart > 0 &&
+        gameState.velocityVector && gameState.velocityVector.length() > 10) {
+        gameState._laserChargeStart = 0;
+    }
     const charging = (typeof gameState !== 'undefined' && gameState._laserChargeStart > 0);
     if (!_chargeGlow.sprites) {
         if (!charging) return;

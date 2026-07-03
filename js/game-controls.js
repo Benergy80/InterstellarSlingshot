@@ -5647,7 +5647,12 @@ function initializeControlButtons() {
             // it builds the charge (a glow grows on the wings) released on
             // keyup as a blast scaled by hold time (max 3s).
             if (!e.repeat) {
-                gameState._laserChargeStart = Date.now();
+                // CHARGE SPEED GATE: charging needs a stable firing platform —
+                // above ~8,000 km/s the charge won't start (the tap shot still
+                // fires). Keeps the wing glow readable and avoids the charge
+                // visuals fighting warp-speed motion.
+                const _chSpeed = gameState.velocityVector ? gameState.velocityVector.length() : 0;
+                gameState._laserChargeStart = _chSpeed <= 8 ? Date.now() : 0;
                 if (!gameState.gameOver && gameState.gameStarted) {
                     resumeAudioContext();
                     fireWeapon();
@@ -6574,12 +6579,15 @@ function checkGalaxyClear() {
     for (let g = 0; g < 8; g++) {
         // Count only regular enemies (not guardians, not bosses, not boss support)
         const regularEnemies = enemies.filter(enemy => 
-            enemy.userData && 
-            enemy.userData.health > 0 && 
+            enemy.userData &&
+            enemy.userData.health > 0 &&
             enemy.userData.galaxyId === g &&
             !enemy.userData.isBoss &&
-            !enemy.userData.isBossSupport &&
-            !enemy.userData.isBlackHoleGuardian  // ⭐ EXCLUDE GUARDIANS
+            !enemy.userData.isBossSupport
+            // Black-hole guardians COUNT toward the clear (campaign design:
+            // the galaxy is liberated only when its faction's forces AND
+            // all 3 core guardians are down). They spawn with the third
+            // discovery path, so they exist before any clear can happen.
         );
         
         // Check if boss has been defeated for this galaxy
