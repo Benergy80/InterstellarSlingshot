@@ -99,28 +99,28 @@ export function buildNPCs(scene, planet, fx, audio, hud) {
   }
   for (let i = 0; i < 5; i++) {
     addNPC('civ', makeCivilian(rnd), sphDir(D.market.lat + (rnd() - 0.5) * 8, D.market.lon + (rnd() - 0.5) * 10),
-      { loop: makeLoop(D.market.lat, D.market.lon, 12), speed: 1.8 + rnd(), name: 'civ' });
+      { loop: makeLoop(D.market.lat, D.market.lon, 9), speed: 1.8 + rnd(), name: 'civ' });
   }
   addNPC('robot', makeRobot(rnd), sphDir(D.market.lat + 3, D.market.lon + 4),
-    { loop: makeLoop(D.market.lat, D.market.lon, 16), speed: 2.6, name: 'robot' });
+    { loop: makeLoop(D.market.lat, D.market.lon, 12), speed: 2.6, name: 'robot' });
 
   // the circuit: night crowd + robots
   for (let i = 0; i < 4; i++) {
     addNPC('civ', makeCivilian(rnd), sphDir(D.circuit.lat + (rnd() - 0.5) * 8, D.circuit.lon + (rnd() - 0.5) * 10),
-      { loop: makeLoop(D.circuit.lat, D.circuit.lon, 11), speed: 1.6 + rnd() * 0.8 });
+      { loop: makeLoop(D.circuit.lat, D.circuit.lon, 8), speed: 1.6 + rnd() * 0.8 });
   }
   for (let i = 0; i < 2; i++) {
     addNPC('robot', makeRobot(rnd), sphDir(D.circuit.lat - 3 + i * 5, D.circuit.lon + 6),
-      { loop: makeLoop(D.circuit.lat, D.circuit.lon, 14), speed: 2.9 });
+      { loop: makeLoop(D.circuit.lat, D.circuit.lon, 11), speed: 2.9 });
   }
 
   // downtown: commuters
   for (let i = 0; i < 4; i++) {
     addNPC('civ', makeCivilian(rnd), sphDir(D.downtown.lat + (rnd() - 0.5) * 10, D.downtown.lon + (rnd() - 0.5) * 12),
-      { loop: makeLoop(D.downtown.lat, D.downtown.lon, 15), speed: 2.4 + rnd() });
+      { loop: makeLoop(D.downtown.lat, D.downtown.lon, 10), speed: 2.4 + rnd() });
   }
   addNPC('robot', makeRobot(rnd), sphDir(D.downtown.lat - 4, D.downtown.lon + 2),
-    { loop: makeLoop(D.downtown.lat, D.downtown.lon, 18), speed: 3.1 });
+    { loop: makeLoop(D.downtown.lat, D.downtown.lon, 13), speed: 3.1 });
 
   // dunes: the saloon keeper
   addNPC('merchant', makeMerchant(rnd), sphDir(D.dunes.lat + 2, D.dunes.lon + 3.4),
@@ -130,7 +130,7 @@ export function buildNPCs(scene, planet, fx, audio, hud) {
   for (let i = 0; i < 4; i++) {
     addNPC('trooper', makeTrooper(), sphDir(D.pyramid.lat + 6 + (rnd() - 0.5) * 10, D.pyramid.lon + (rnd() - 0.5) * 14),
       {
-        loop: makeLoop(D.pyramid.lat + 5, D.pyramid.lon, 18, 4),
+        loop: makeLoop(D.pyramid.lat + 5, D.pyramid.lon, 13, 4),
         speed: 2.8, hp: 70, aggro: true, name: 'trooper',
       });
   }
@@ -140,7 +140,7 @@ export function buildNPCs(scene, planet, fx, audio, hud) {
 
   const brakkus = addNPC('brakkus', makeBrakkus(), sphDir(D.pyramid.lat - 18 + 34, D.pyramid.lon - 22),
     {
-      loop: makeLoop(-34, 310, 22, 4),
+      loop: makeLoop(-34, 310, 13, 4),
       speed: 1.6, hp: 320, aggro: true, radius: 1.6, clip: 'stomp',
       name: 'BRAKKUS — GROUND GENERAL',
       onDead: () => hud.toast('BRAKKUS DOWN', 'The processional is clear'),
@@ -164,7 +164,7 @@ export function buildNPCs(scene, planet, fx, audio, hud) {
   // VULTYR — the flying general, circling the fortress
   const vultyr = addNPC('vultyr', makeVultyr(), sphDir(D.pyramid.lat + 10, D.pyramid.lon), {
     hp: 260, radius: 1.2, clip: 'fly', name: 'VULTYR — SKY GENERAL',
-    fly: { angle: 0, height: 16, radius: 34, diveT: 0 },
+    fly: { angle: 0, height: 9, radius: 18, diveT: 0 },
     onDead: () => hud.toast('VULTYR SHOT DOWN', 'The sky is clear'),
   });
 
@@ -240,7 +240,7 @@ export function buildNPCs(scene, planet, fx, audio, hud) {
         const f = npc.fly;
         const anchor = planet.districts.find(d => d.key === 'pyramid').dir;
         f.angle += dt * 0.25;
-        const seek = dist < 46 && !player.state.dead;
+        const seek = dist < 30 && !player.state.dead;
         if (seek) f.diveT += dt; else f.diveT = Math.max(0, f.diveT - dt * 2);
         const dive = clamp(f.diveT * 0.5, 0, 0.72);
         // orbit point around the pyramid, dips toward the player when diving

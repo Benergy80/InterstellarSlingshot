@@ -140,7 +140,7 @@ export function buildSky(scene, renderer) {
   sun.shadow.mapSize.set(2048, 2048);
   sun.shadow.camera.near = 40;
   sun.shadow.camera.far = 420;
-  const S = 70;
+  const S = 46;
   sun.shadow.camera.left = -S; sun.shadow.camera.right = S;
   sun.shadow.camera.top = S; sun.shadow.camera.bottom = -S;
   sun.shadow.bias = -0.0006;

@@ -36,14 +36,14 @@ const R = C.R;
 // ── District table ──────────────────────────────────────────────
 // lat/lon in degrees; pad = flattened radius (u); ring = crater rim
 export const DISTRICTS = [
-  { key: 'crash',    name: 'CRASH SITE',          lat:   2, lon:   0, pad: 18 },
-  { key: 'market',   name: 'SCRAP MARKET',        lat:   8, lon:  52, pad: 34 },
-  { key: 'circuit',  name: 'THE CIRCUIT',         lat:  -6, lon: 108, pad: 30 },
-  { key: 'downtown', name: 'NEON ACROPOLIS',      lat:  38, lon: 162, pad: 40 },
-  { key: 'ruins',    name: 'FOUNDRY RUINS',       lat:  -4, lon: 212, pad: 38 },
-  { key: 'dunes',    name: 'THE PINK DUNES',      lat: -20, lon: 252, pad: 26 },
-  { key: 'pyramid',  name: 'THE OBSIDIAN PYRAMID',lat: -40, lon: 288, pad: 46 },
-  { key: 'port',     name: 'PORT MERIDIAN',       lat:  30, lon: 318, pad: 30, ring: 14 },
+  { key: 'crash',    name: 'CRASH SITE',          lat:   2, lon:   0, pad: 11 },
+  { key: 'market',   name: 'SCRAP MARKET',        lat:   8, lon:  52, pad: 19 },
+  { key: 'circuit',  name: 'THE CIRCUIT',         lat:  -6, lon: 108, pad: 17 },
+  { key: 'downtown', name: 'NEON ACROPOLIS',      lat:  38, lon: 162, pad: 21 },
+  { key: 'ruins',    name: 'FOUNDRY RUINS',       lat:  -4, lon: 212, pad: 19 },
+  { key: 'dunes',    name: 'THE PINK DUNES',      lat: -20, lon: 252, pad: 13 },
+  { key: 'pyramid',  name: 'THE OBSIDIAN PYRAMID',lat: -40, lon: 288, pad: 25 },
+  { key: 'port',     name: 'PORT MERIDIAN',       lat:  30, lon: 318, pad: 16, ring: 9 },
 ];
 
 // Path net: winding waypoint chains (lat, lon) between districts.
@@ -86,6 +86,8 @@ for (const chain of PATHS) {
   }
 }
 
+const LAKE_DIR = sphDir(20, 133);   // between the Circuit and downtown
+
 export function terrainHeight(dir) {
   // base mountains — bright violet badlands
   let amp = C.TERRAIN_AMP;
@@ -97,12 +99,12 @@ export function terrainHeight(dir) {
   let damp = 1;
   for (const d of districtDirs) {
     const angDist = dir.angleTo(d.dir) * R;         // arc distance in u
-    const t = clamp((angDist - d.pad) / 16, 0, 1);  // 0 inside → 1 outside
+    const t = clamp((angDist - d.pad) / 8, 0, 1);   // 0 inside → 1 outside
     damp = Math.min(damp, smooth(t));
     // crater rim around the spaceport — a mountain ring that hides it
     if (d.ring) {
-      const rimDist = Math.abs(angDist - (d.pad + 8));
-      h += Math.exp(-(rimDist * rimDist) / 90) * d.ring * smooth(clamp((angDist - 4) / 10, 0, 1));
+      const rimDist = Math.abs(angDist - (d.pad + 5));
+      h += Math.exp(-(rimDist * rimDist) / 40) * d.ring * smooth(clamp((angDist - 3) / 7, 0, 1));
     }
   }
   // flatten along path corridors
@@ -112,9 +114,13 @@ export function terrainHeight(dir) {
     if (dd < pd) pd = dd;
   }
   const pathDist = Math.sqrt(pd) * R;               // ≈ arc distance
-  damp = Math.min(damp, smooth(clamp((pathDist - 3.4) / 9, 0, 1)));
+  damp = Math.min(damp, smooth(clamp((pathDist - 2.6) / 6, 0, 1)));
 
-  return R + h * damp;
+  // Lake Voltaine — a glowing basin like Messenger's bay
+  const lakeDist = dir.angleTo(LAKE_DIR) * R;
+  const bowl = Math.exp(-(lakeDist * lakeDist) / 130) * 5.5;
+
+  return R + h * damp - bowl;
 }
 
 export function surfacePoint(dir, out = new THREE.Vector3()) {
@@ -409,7 +415,7 @@ export function buildPlanet(scene, models = {}) {
     const anchor = DISTRICTS[1];
     const roofTops = [];
     for (let i = 0; i < 26; i++) {
-      const a = rnd() * Math.PI * 2, dist = 6 + rnd() * 24;
+      const a = rnd() * Math.PI * 2, dist = 4 + rnd() * 13;
       const lat = anchor.lat + Math.cos(a) * dist / R * 57.3;
       const lon = anchor.lon + Math.sin(a) * dist / R * 57.3 / Math.cos(anchor.lat * 0.0174);
       const f = frameAt(lat, lon, rnd() * 360);
@@ -421,11 +427,11 @@ export function buildPlanet(scene, models = {}) {
     }
     // catwalks between random rooftop pairs (the upper maze layer)
     for (let i = 0; i + 1 < roofTops.length; i += 2) {
-      if (roofTops[i].distanceTo(roofTops[i + 1]) < 26) plank(roofTops[i], roofTops[i + 1]);
+      if (roofTops[i].distanceTo(roofTops[i + 1]) < 17) plank(roofTops[i], roofTops[i + 1]);
     }
     // market stalls with awnings down the central lane
     for (let i = 0; i < 10; i++) {
-      const f = frameAt(anchor.lat - 3 + rnd() * 6, anchor.lon - 12 + i * 2.6, (rnd() * 40 - 20));
+      const f = frameAt(anchor.lat - 3 + rnd() * 6, anchor.lon - 14 + i * 3.4, (rnd() * 40 - 20));
       addSolid(T(box(2.4, 1.0, 1.4), 0, 0.5, 0), f.clone(), pick(rnd, [0x5c2a8a, 0x2a5c8a, 0x8a2a62]), { jitter: 0.1 });
       addSolid(T(box(2.8, 0.12, 1.9), 0, 2.05, 0.15, 0, -0.16), f.clone(), pick(rnd, [0xff7a1a, 0xff2fd6, 0x00f6ff]) , { collide: false });
       addSolid(T(box(0.1, 2.0, 0.1), -1.28, 1.0, 0.8), f.clone(), 0x222244, { collide: false });
@@ -440,7 +446,7 @@ export function buildPlanet(scene, models = {}) {
     addSolid(T(box(0.5, 4.6, 0.5), 3.6, 2.3, 0), gf.clone(), 0x38286a);
     // secret passage: behind the last stall, a hatch tunnel dives toward the ruins
     const tf = frameAt(anchor.lat + 9, anchor.lon + 10, 262, 0.2);
-    tunnel(tf, 2.4, 2.6, 30, NEON.lime);
+    tunnel(tf, 2.4, 2.6, 20, NEON.lime);
     const hint = textSign('EAR TO THE GROUND: THE FOUNDRY HIDES A DOOR', { w: 6, h: 1, fg: hexCss(NEON.lime), size: 44 });
     placeSign(hint, anchor.lat + 9, anchor.lon + 8.4, 82, 0, 2.2, 0);
   }
@@ -450,7 +456,7 @@ export function buildPlanet(scene, models = {}) {
     const a = DISTRICTS[2];
     // boulevard of glowing arches
     for (let i = 0; i < 7; i++) {
-      const f = frameAt(a.lat + (i - 3) * 1.6, a.lon - 8 + i * 2.6, 96 + i * 4);
+      const f = frameAt(a.lat + (i - 3) * 2.2, a.lon - 14 + i * 5.2, 96 + i * 4);
       const arch = new THREE.TorusGeometry(4.2, 0.16, 8, 20, Math.PI);
       T(arch, 0, 0.2, 0);
       addGlow(arch, f.clone(), i % 2 ? NEON.magenta : NEON.pink, 1.25);
@@ -460,7 +466,7 @@ export function buildPlanet(scene, models = {}) {
     // clubs: black boxes drenched in signage
     const names = ['NEON EDEN', 'CHROME KITTY', 'ZERO-G', 'PINK CIRCUIT', 'HOLO HOLO', 'THE JACK-IN'];
     for (let i = 0; i < 6; i++) {
-      const lat = a.lat + (rnd() - 0.5) * 14, lon = a.lon + (rnd() - 0.5) * 16;
+      const lat = a.lat + (rnd() - 0.5) * 20, lon = a.lon + (rnd() - 0.5) * 24;
       const f = frameAt(lat, lon, rnd() * 360);
       const w = 5 + rnd() * 4, h = 4.5 + rnd() * 5, d = 5 + rnd() * 3;
       tower(f, w, h, d, 0x180f36, pick(rnd, [NEON.magenta, NEON.pink, NEON.red]), { strips: false });
@@ -498,13 +504,13 @@ export function buildPlanet(scene, models = {}) {
     const a = DISTRICTS[3];
     const towerTops = [];
     for (let i = 0; i < 14; i++) {
-      const ang = rnd() * Math.PI * 2, dist = 5 + rnd() * 30;
+      const ang = rnd() * Math.PI * 2, dist = 4 + rnd() * 15;
       const lat = a.lat + Math.cos(ang) * dist / R * 57.3;
       const lon = a.lon + Math.sin(ang) * dist / R * 57.3 / Math.cos(a.lat * 0.0174);
       const f = frameAt(lat, lon, rnd() * 360);
-      const w = 6 + rnd() * 6, h = 14 + rnd() * 26, d = 6 + rnd() * 6;
+      const w = 5 + rnd() * 5, h = 9 + rnd() * 14, d = 5 + rnd() * 5;
       tower(f, w, h, d, pick(rnd, [0x201646, 0x1a1240, 0x261a52]), pick(rnd, NEON_LIST));
-      if (h > 18 && rnd() < 0.8) {
+      if (h > 12 && rnd() < 0.85) {
         towerTops.push({
           pos: new THREE.Vector3().setFromMatrixPosition(f).addScaledVector(new THREE.Vector3().setFromMatrixColumn(f, 1), h + 0.1),
           h,
@@ -517,12 +523,12 @@ export function buildPlanet(scene, models = {}) {
     towerTops.sort((p, q) => p.h - q.h);
     for (let i = 0; i + 1 < towerTops.length; i += 2) {
       const A = towerTops[i], B = towerTops[i + 1];
-      if (A.pos.distanceTo(B.pos) < 34) plank(A.pos, B.pos, 1.6);
+      if (A.pos.distanceTo(B.pos) < 22) plank(A.pos, B.pos, 1.6);
     }
     // plaza obelisk — a beacon you can see over the horizon glow
     const f = frameAt(a.lat, a.lon, 0);
-    addSolid(T(new THREE.CylinderGeometry(0.8, 1.6, 22, 6), 0, 11, 0), f.clone(), 0x120c2e);
-    addGlow(T(new THREE.CylinderGeometry(0.28, 0.28, 21, 6), 0, 11, 0), f.clone(), NEON.cyan, 0.85);
+    addSolid(T(new THREE.CylinderGeometry(0.8, 1.6, 15, 6), 0, 7.5, 0), f.clone(), 0x120c2e);
+    addGlow(T(new THREE.CylinderGeometry(0.26, 0.26, 14.4, 6), 0, 7.5, 0), f.clone(), NEON.cyan, 0.85);
     const gate = textSign('NEON ACROPOLIS', { fg: hexCss(NEON.cyan) });
     placeSign(gate, a.lat - 5, a.lon - 12, 150, 0, 5.4, 0);
     const gf3 = frameAt(a.lat - 5, a.lon - 12, 150);
@@ -534,7 +540,7 @@ export function buildPlanet(scene, models = {}) {
   {
     const a = DISTRICTS[4];
     for (let i = 0; i < 8; i++) {
-      const lat = a.lat + (rnd() - 0.5) * 16, lon = a.lon + (rnd() - 0.5) * 18;
+      const lat = a.lat + (rnd() - 0.5) * 26, lon = a.lon + (rnd() - 0.5) * 30;
       const f = frameAt(lat, lon, rnd() * 360);
       // broken frame: columns + partial beams, walkable upper slab
       const w = 7 + rnd() * 5, d = 6 + rnd() * 4, h = 6 + rnd() * 7;
@@ -565,7 +571,7 @@ export function buildPlanet(scene, models = {}) {
     }
     // the market secret tunnel surfaces here, behind a chimney
     const tf = frameAt(a.lat - 2, a.lon - 14, 40, 0.2);
-    tunnel(tf, 2.4, 2.6, 26, NEON.lime);
+    tunnel(tf, 2.4, 2.6, 18, NEON.lime);
     const gate = textSign('FOUNDRY RUINS', { fg: hexCss(NEON.orange) });
     placeSign(gate, a.lat + 5, a.lon - 12, 208, 0, 4.8, 0);
   }
@@ -574,7 +580,7 @@ export function buildPlanet(scene, models = {}) {
   {
     const a = DISTRICTS[5];
     for (let i = 0; i < 9; i++) {
-      const f = frameAt(a.lat + (rnd() - 0.5) * 14, a.lon + (rnd() - 0.5) * 16, rnd() * 360);
+      const f = frameAt(a.lat + (rnd() - 0.5) * 22, a.lon + (rnd() - 0.5) * 26, rnd() * 360);
       const hh = 2 + rnd() * 6;
       addSolid(T(new THREE.CylinderGeometry(0.7 + rnd() * 0.8, 1.4 + rnd() * 1.2, hh, 7), 0, hh / 2, 0),
         f.clone(), pick(rnd, [0xb0538e, 0x9a4bd6, 0xd66a9e]), { jitter: 0.14 });
@@ -591,7 +597,7 @@ export function buildPlanet(scene, models = {}) {
   {
     const a = DISTRICTS[6];
     const f = frameAt(a.lat, a.lon, 320, 0.6);
-    const B = 46, H = 34;   // base half-width, height
+    const B = 22, H = 18;   // base half-width, height
     // 4 triangular faces built as custom geometry, front face has a gate slot
     function face(rotY, gate = false) {
       const g = new THREE.BufferGeometry();
@@ -601,7 +607,7 @@ export function buildPlanet(scene, models = {}) {
         verts.push(...A, ...Bv, ...apex);
       } else {
         // leave a 6-wide × 9-tall doorway in the middle of the face
-        const gw = 4.4, gh = 9;
+        const gw = 3.4, gh = 7;
         verts.push(
           -B, 0, B, -gw, 0, B, -gw * 0.65, gh, B * (1 - gh / H),
           -B, 0, B, -gw * 0.65, gh, B * (1 - gh / H), 0, H, 0,
@@ -634,7 +640,7 @@ export function buildPlanet(scene, models = {}) {
     }
     addGlow(T(new THREE.SphereGeometry(1.6, 10, 8), 0, H + 1.2, 0), f.clone(), NEON.red, 1.35);
     // interior: throne hall floor, columns, throne dais + secret door
-    addSolid(T(box(30, 0.5, 30), 0, 0.25, 8), f.clone(), 0x141026);
+    addSolid(T(box(20, 0.5, 20), 0, 0.25, 4), f.clone(), 0x141026);
     for (const sx of [-1, 1]) for (let k = 0; k < 3; k++) {
       addSolid(T(new THREE.CylinderGeometry(0.8, 0.9, 10, 8), sx * 6, 5, 16 - k * 8), f.clone(), 0x1c1632);
       addGlow(T(box(0.2, 8.6, 0.2), sx * 6.9, 5, 16 - k * 8), f.clone(), NEON.red, 0.9);
@@ -652,7 +658,7 @@ export function buildPlanet(scene, models = {}) {
     // ★ THE SECRET PASSAGE ★ — behind the throne, a red-lit bore
     // tunnel runs toward Port Meridian (surfaces at the pilgrim steps' end)
     const tf = frameAt(a.lat + 1.5, a.lon + 2.8, 148, 0.4);
-    tunnel(tf, 2.6, 2.8, 46, NEON.red);
+    tunnel(tf, 2.4, 2.7, 26, NEON.red);
     const s = textSign('AUTHORIZED: VEX ONLY', { w: 3.6, h: 0.8, fg: hexCss(NEON.red), size: 44 });
     placeSign(s, a.lat + 1.5, a.lon + 2.8, 148, 0, 3.1, 1);
 
@@ -669,7 +675,7 @@ export function buildPlanet(scene, models = {}) {
     // perimeter watch pylons
     for (let i = 0; i < 6; i++) {
       const ang = i / 6 * 360;
-      const lat2 = a.lat + Math.cos(ang * 0.0174) * 20, lon2 = a.lon + Math.sin(ang * 0.0174) * 24;
+      const lat2 = a.lat + Math.cos(ang * 0.0174) * 26 / 1.05, lon2 = a.lon + Math.sin(ang * 0.0174) * 30 / Math.max(0.3, Math.cos(a.lat * 0.0174));
       const pf = frameAt(lat2, lon2, ang + 90);
       addSolid(T(box(0.8, 7, 0.8), 0, 3.5, 0), pf.clone(), 0x140f28);
       addGlow(T(box(1.0, 0.5, 1.0), 0, 7.3, 0), pf.clone(), NEON.red, 1.2);
@@ -707,6 +713,124 @@ export function buildPlanet(scene, models = {}) {
     portInfo.padCenter = new THREE.Vector3(0, 1.0, 0).applyMatrix4(f.clone());
     portInfo.shipFrame = f.clone();
     portInfo.dir = sphDir(a.lat, a.lon);
+  }
+
+  // ════════════ WILDERNESS FILL — the WHOLE planet is built ════════════
+  // Fibonacci-scatter structures over every part of the sphere that isn't
+  // a street or a district pad, so the paths read as canyons through one
+  // continuous built object (the Messenger lesson: the planet IS the maze).
+  const fillTops = [];
+  {
+    const N = 560;
+    const ga = Math.PI * (3 - Math.sqrt(5));
+    for (let i = 0; i < N; i++) {
+      const y = 1 - 2 * (i + 0.5) / N;
+      const rr = Math.sqrt(Math.max(0, 1 - y * y));
+      const th = ga * i;
+      const dir = new THREE.Vector3(rr * Math.cos(th), y, rr * Math.sin(th));
+      // zone = nearest district (styles the structure)
+      let zone = districtDirs[0], minA = 1e9;
+      for (const d of districtDirs) {
+        const a = dir.angleTo(d.dir) * R;
+        if (a < minA) { minA = a; zone = d; }
+      }
+      if (minA < zone.pad * 0.95) continue;          // districts fill themselves
+      // keep the streets open — clearance scales with the footprint
+      let pd = 1e9;
+      for (const p of pathSamples) { const dd = dir.distanceToSquared(p); if (dd < pd) pd = dd; }
+      const streetDist = Math.sqrt(pd) * R;
+      const w = 3.5 + rnd() * 3.5, d2 = 3.5 + rnd() * 3.5;
+      if (streetDist < 2.0 + Math.max(w, d2) / 2) continue;
+      // keep the lake open
+      if (dir.angleTo(LAKE_DIR) * R < 13) continue;
+      const jd = dir.clone();   // slight jitter off the lattice
+      jd.applyAxisAngle(new THREE.Vector3(0, 1, 0), (rnd() - 0.5) * 0.03).normalize();
+      const f = frameAtDir(jd, rnd() * 360, 0.6);
+      const nearStreet = streetDist < 6.5;
+      let hgt = 0;
+      switch (zone.key) {
+        case 'market': case 'crash':
+          hgt = shanty(f, 2.4 + rnd() * 1.4, 2 + (rnd() * 2 | 0));
+          break;
+        case 'circuit': {
+          hgt = 3.5 + rnd() * 4;
+          addSolid(T(box(w, hgt, d2), 0, hgt / 2, 0), f.clone(), pick(rnd, [0x180f36, 0x22103e, 0x2a0f30]), { jitter: 0.1 });
+          if (rnd() < 0.85) addGlow(T(box(w * 0.8, 0.2, 0.1), 0, hgt * (0.4 + rnd() * 0.5), d2 / 2 + 0.08), f.clone(), pick(rnd, [NEON.magenta, NEON.pink, NEON.red, NEON.purple]), 1.15);
+          if (rnd() < 0.4) addGlow(T(box(0.18, hgt * 0.7, 0.1), w / 2 + 0.1, hgt * 0.5, 0), f.clone(), pick(rnd, NEON_LIST), 1.1);
+          break;
+        }
+        case 'downtown': {
+          hgt = 6 + rnd() * 9;
+          tower(f, w, hgt, d2, pick(rnd, [0x201646, 0x1a1240, 0x261a52]), pick(rnd, NEON_LIST), { cap: rnd() < 0.4 });
+          break;
+        }
+        case 'ruins': {
+          hgt = 4 + rnd() * 5;
+          if (rnd() < 0.5) {
+            for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+              addSolid(T(box(0.5, hgt, 0.5), sx * w / 2, hgt / 2, sz * d2 / 2), f.clone(), 0x241c3e, { jitter: 0.1 });
+            }
+            if (rnd() < 0.7) addSolid(T(box(w + 0.5, 0.35, d2 + 0.5), 0, hgt, 0), f.clone(), 0x2c2444);
+          } else {
+            addSolid(T(box(w, hgt * 0.6, d2), 0, hgt * 0.3, 0, rnd() * 0.3, 0, (rnd() - 0.5) * 0.12), f.clone(), 0x2a2248, { jitter: 0.12 });
+          }
+          break;
+        }
+        case 'dunes': {
+          hgt = 2.5 + rnd() * 4.5;
+          addSolid(T(new THREE.CylinderGeometry(0.6 + rnd() * 0.8, 1.3 + rnd() * 1.2, hgt, 7), 0, hgt / 2, 0),
+            f.clone(), pick(rnd, [0xb0538e, 0x9a4bd6, 0xd66a9e]), { jitter: 0.14 });
+          break;
+        }
+        case 'pyramid': {
+          hgt = 3 + rnd() * 6;
+          addSolid(T(box(w * 0.8, hgt, d2 * 0.8), 0, hgt / 2, 0, rnd() * 0.4), f.clone(), pick(rnd, [0x0f0d20, 0x161226, 0x1a1030]), { jitter: 0.06 });
+          if (rnd() < 0.3) addGlow(T(box(0.3, 0.3, 0.3), 0, hgt + 0.2, 0), f.clone(), NEON.red, 1.1);
+          break;
+        }
+        case 'port': {
+          hgt = 2 + rnd() * 3;
+          addSolid(T(box(1 + rnd() * 1.6, hgt, 1 + rnd() * 1.6), 0, hgt / 2, 0, rnd()), f.clone(),
+            pick(rnd, [0x30265c, 0x2a3a6e, 0x3a2c5e]), { jitter: 0.1 });
+          break;
+        }
+      }
+      // remember street-adjacent rooftops for over-street bridges
+      if (nearStreet && hgt > 3 && rnd() < 0.4) {
+        fillTops.push(new THREE.Vector3().setFromMatrixPosition(f).addScaledVector(
+          new THREE.Vector3().setFromMatrixColumn(f, 1), hgt + 0.1));
+      }
+    }
+    // bridge rooftops ACROSS streets — the upper layer of the maze
+    let bridges = 0;
+    for (let i = 0; i < fillTops.length && bridges < 26; i++) {
+      for (let j = i + 1; j < fillTops.length; j++) {
+        const dd = fillTops[i].distanceTo(fillTops[j]);
+        if (dd > 6 && dd < 15) { plank(fillTops[i], fillTops[j], 1.2); bridges++; break; }
+      }
+    }
+  }
+
+  // ════════════ LAKE VOLTAINE — glowing teal water ════════════
+  {
+    const water = new THREE.Mesh(
+      new THREE.SphereGeometry(R - 1.5, 96, 48),
+      new THREE.MeshBasicMaterial({
+        color: new THREE.Color(0x18e0d0).multiplyScalar(0.55),
+        transparent: true, opacity: 0.82, toneMapped: false,
+      })
+    );
+    water.renderOrder = 1;
+    signs.push(water);   // rendered, not merged, not collidable
+    dynamic.push({ update(dt, t) { water.material.opacity = 0.76 + Math.sin(t * 0.8) * 0.05; } });
+    // shore glow ring
+    const shore = new THREE.Mesh(
+      new THREE.TorusGeometry(11.4, 0.12, 6, 48),
+      new THREE.MeshBasicMaterial({ color: new THREE.Color(NEON.cyan).multiplyScalar(1.1), toneMapped: false })
+    );
+    shore.position.copy(LAKE_DIR).multiplyScalar(R - 1.45);
+    shore.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), LAKE_DIR);
+    signs.push(shore);
   }
 
   // ════════════ STREET FURNITURE (everywhere) ════════════
@@ -797,7 +921,7 @@ export function buildPlanet(scene, models = {}) {
       const a = d.angleTo(k.dir) * R;
       if (a < bd) { bd = a; best = k; }
     }
-    return bd < best.pad + 22 ? best : null;
+    return bd < best.pad + 10 ? best : null;
   }
 
   return {

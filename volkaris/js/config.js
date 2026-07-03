@@ -15,16 +15,16 @@ export const C = {
   SEED: 8709,
 
   // ── Planet ──
-  R: 150,               // planet radius (u) — small enough that the
-                        // horizon hides everything a block ahead
-  TERRAIN_AMP: 7.5,     // mountain/canyon displacement amplitude
+  R: 60,                // planet radius (u) — Messenger-small: the
+                        // horizon is ~14u away, a street corner ahead
+  TERRAIN_AMP: 6,       // mountain/canyon displacement amplitude
   TERRAIN_DETAIL: 96,   // sphere segments (96×96 lat-lon grid)
 
   // ── Atmosphere / camera ──
   CAM_FAR: 4000,
   FOG_DAY: 0xff9e6a,    // sunset haze (fog is re-tinted live by sky.js)
   FOG_NIGHT: 0x180a30,
-  FOG_DENSITY: 0.0075,  // dense enough that the horizon melts away
+  FOG_DENSITY: 0.011,   // dense enough that the horizon melts away
 
   // ── Day / night ──
   SUN_PERIOD: 240,      // seconds per full orbit of the sun
@@ -39,13 +39,13 @@ export const C = {
     radius: 0.5,
     height: 1.8,
     gravity: 30,         // u/s² toward planet center
-    walk: 7.5,
-    sprint: 14.0,
+    walk: 6.2,
+    sprint: 11.5,
     accel: 46,
     airAccel: 14,
     damping: 11,
-    jumpVel: 11.5,
-    flipVel: 12.5,       // double-jump front-flip
+    jumpVel: 10.5,
+    flipVel: 11.5,       // double-jump front-flip
     rollBoost: 5.5,      // burst of speed when rolling
     wallRunSpeed: 12.5,  // min speed maintained during a wall run
     wallRunGrav: 6,      // reduced gravity while wall-running
