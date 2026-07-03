@@ -112,6 +112,7 @@ async function boot() {
   npcs = buildNPCs(scene, planet, fx, audio, hud, models);
 
   player = createPlayer({ scene, camera, planet, hud, audio, fx, transit, models });
+  player.bindTargets(npcs);
   fx.bindCombat(npcs, player);
 
   hud.setProgress(0.95, 'DROP POD AWAY');

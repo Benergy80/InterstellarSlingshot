@@ -102,6 +102,33 @@ for (const chain of PATHS) {
 
 const LAKE_DIR = sphDir(20, 133);   // between the Circuit and downtown
 
+// ── Cave bores (module level: the terrain function carves their
+// mouth trenches, buildPlanet sweeps their interiors) ──
+const CAVE_DEFS = [
+  [[16, 20], [27, 32]],      // under Mt. Kessler (crash → market shortcut)
+  [[-22, 70], [-32, 82]],    // through The Fang
+  [[4, 238], [12, 252]],     // under Vexhorn (ruins → dunes)
+  [[-6, 324], [-12, 338]],   // under The Sentinel (processional)
+  [[48, 116], [58, 128]],    // Northwatch, exits above the lake
+];
+const CAVE_DATA = CAVE_DEFS.map(([[laA, loA], [laB, loB]]) => ({
+  a: sphDir(laA, loA), b: sphDir(laB, loB), rA: 0, rB: 0,
+}));
+let CARVE = false;   // flipped on after mouth heights are sampled
+const _cv1 = new THREE.Vector3(), _cv2 = new THREE.Vector3();
+
+// Named mountains — Skyrim drama on a 60u ball. Kept OFF the street
+// net so they wall the maze instead of blocking it. [lat, lon, height, spread²]
+const PEAKS = [
+  [22, 25, 17, 55],     // Mt. Kessler — between crash site and market
+  [-28, 75, 20, 70],    // The Fang — south of the market/circuit road
+  [55, 120, 16, 60],    // Northwatch — above the lake
+  [8, 245, 19, 75],     // Vexhorn — between dunes and ruins
+  [-8, 330, 15, 55],    // The Sentinel — over the processional
+  [60, 300, 14, 50],    // Port Ridge north
+];
+const PEAK_DIRS = PEAKS.map(([la, lo, h, sp]) => ({ dir: sphDir(la, lo), h, sp }));
+
 export function terrainHeight(dir) {
   // base mountains — bright violet badlands
   let amp = C.TERRAIN_AMP;
@@ -130,12 +157,47 @@ export function terrainHeight(dir) {
   const pathDist = Math.sqrt(pd) * R;               // ≈ arc distance
   damp = Math.min(damp, smooth(clamp((pathDist - 2.6) / 9, 0, 1)));
 
+  // named PEAKS rise above everything (damped by streets/pads too,
+  // so a road passing a mountain's foot cuts a pass, not a wall)
+  let peaks = 0;
+  for (const p of PEAK_DIRS) {
+    const d2 = dir.angleTo(p.dir) * R;
+    peaks += Math.exp(-(d2 * d2) / p.sp) * p.h;
+  }
+
   // Lake Voltaine — a glowing basin like Messenger's bay
   const lakeDist = dir.angleTo(LAKE_DIR) * R;
   const bowl = Math.exp(-(lakeDist * lakeDist) / 130) * 5.5;
 
-  return R + h * damp - bowl;
+  let result = R + (h + peaks) * damp - bowl;
+
+  // cave-mouth trenches: cut the terrain skin open at both ends of
+  // each bore so you can walk in under the mountain
+  if (CARVE) {
+    for (const c of CAVE_DATA) {
+      _cv1.subVectors(c.b, c.a);
+      const t = clamp(_cv2.subVectors(dir, c.a).dot(_cv1) / _cv1.lengthSq(), 0, 1);
+      _cv2.copy(c.a).addScaledVector(_cv1, t).normalize();
+      const lat2 = dir.angleTo(_cv2) * R;
+      if (lat2 > 3.6) continue;
+      const floorR = c.rA + (c.rB - c.rA) * t - Math.sin(t * Math.PI) * 1.4;
+      const mouthness = Math.max(
+        smooth(clamp((0.34 - t) / 0.34, 0, 1)),
+        smooth(clamp((t - 0.66) / 0.34, 0, 1)));
+      const lateral = smooth(clamp((3.6 - lat2) / 1.8, 0, 1));
+      const cut = lateral * mouthness;
+      const target = floorR + 0.15;
+      if (cut > 0 && result > target) result += (target - result) * cut;
+    }
+  }
+  return result;
 }
+// sample mouth heights on the UNCARVED terrain, then enable carving
+for (const c of CAVE_DATA) {
+  c.rA = terrainHeight(c.a) - 0.2;
+  c.rB = terrainHeight(c.b) - 0.2;
+}
+CARVE = true;
 
 export function surfacePoint(dir, out = new THREE.Vector3()) {
   return out.copy(dir).normalize().multiplyScalar(terrainHeight(dir));
@@ -217,6 +279,9 @@ export function buildPlanet(scene, models = {}) {
       const dust = clamp(1 - Math.abs(rel) * 2.2, 0, 1);      // flats → dusty pink
       _c.copy(GROUND.rockLo).lerp(GROUND.rockHi, clamp(rel * 0.5 + 0.55, 0, 1));
       _c.lerp(GROUND.sand, dust * 0.42);
+      // snow-glow caps on the high peaks
+      const cap = smooth(clamp((h - (R + 9)) / 5, 0, 1));
+      if (cap > 0) _c.lerp(new THREE.Color(0xf6e7ff), cap * 0.85);
       col[i * 3] = _c.r; col[i * 3 + 1] = _c.g; col[i * 3 + 2] = _c.b;
     }
     geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
@@ -299,6 +364,9 @@ export function buildPlanet(scene, models = {}) {
 
   // fingerposts at junctions — the maze needs whispers, not a map
   const POSTS = [
+    ['ORBITAL LOOP ↑ STAIRS', 10, 50, 40, NEON.cyan],
+    ['ORBITAL LOOP ↑', -8, 106, 130, NEON.cyan],
+    ['ORBITAL LOOP ↑', -2, 210, 60, NEON.cyan],
     ['MARKET →', 4, 14, 100, NEON.amber],
     ['← CRASH SITE · THE CIRCUIT →', 6, 60, 118, NEON.cyan],
     ['ACROPOLIS ↑', -8, 100, 30, NEON.magenta],
@@ -893,6 +961,66 @@ export function buildPlanet(scene, models = {}) {
     }
   }
 
+  // ════════════ CAVES — tunnels bored THROUGH the hills ════════════
+  // Each cave runs beneath the terrain between two mouths, dipping to
+  // depth then rising out the far side. Glow veins light the way.
+  // They are shortcuts under the mountains — find them.
+
+  // sweep a smooth U-channel along the bore line — continuous strips,
+  // no ring seams to snag on
+  function sweepStrip(pts, frames, x0, x1, y0, y1, hex, glow = false) {
+    const verts = [], idx = [];
+    for (let i = 0; i < pts.length; i++) {
+      const { side, up } = frames[i];
+      const a2 = pts[i].clone().addScaledVector(side, x0).addScaledVector(up, y0);
+      const b2 = pts[i].clone().addScaledVector(side, x1).addScaledVector(up, y1);
+      verts.push(a2.x, a2.y, a2.z, b2.x, b2.y, b2.z);
+      if (i) { const k = i * 2; idx.push(k - 2, k - 1, k, k - 1, k + 1, k); }
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(verts), 3));
+    g.setIndex(idx);
+    const ng = g.toNonIndexed();
+    ng.computeVertexNormals();
+    if (glow) addGlowRaw(ng, hex, 1.0);
+    else { colorize(ng, hex); solidParts.push(ng); collParts.push(ng.clone()); }
+  }
+  for (const cave of CAVE_DATA) {
+    const { a, b, rA, rB } = cave;
+    const N2 = 30;
+    const pts = [], frames = [];
+    for (let i = 0; i <= N2; i++) {
+      const t = i / N2;
+      const d = new THREE.Vector3().copy(a).lerp(b, t).normalize();
+      const r0 = rA + (rB - rA) * t - Math.sin(t * Math.PI) * 1.4;
+      pts.push(d.clone().multiplyScalar(r0));
+      const up = d.clone();
+      const fwd = new THREE.Vector3().copy(b).sub(a).normalize();
+      const side = new THREE.Vector3().crossVectors(d, fwd).normalize();
+      frames.push({ side, up });
+      // glow veins
+      if (i % 3 === 1) {
+        const m = new THREE.Matrix4().makeBasis(side, up, new THREE.Vector3().crossVectors(side, d).normalize())
+          .setPosition(d.clone().multiplyScalar(r0));
+        addGlow(T(box(0.12, 1.6, 0.3), (i % 6 === 1 ? -2.15 : 2.15), 1.5, 0), m.clone(),
+          pick(rnd, [NEON.cyan, NEON.purple, NEON.lime]), 1.0);
+      }
+    }
+    // floor / walls / roof as smooth ribbons (roof stops short of mouths)
+    sweepStrip(pts, frames, -2.3, 2.3, 0, 0, 0x1b1338);                       // floor
+    sweepStrip(pts, frames, -2.3, -2.3, 0, 3.5, 0x241a44);                    // left wall
+    sweepStrip(pts, frames, 2.3, 2.3, 3.5, 0, 0x241a44);                      // right wall
+    sweepStrip(pts.slice(3, N2 - 2), frames.slice(3, N2 - 2), -2.7, 2.7, 3.5, 3.5, 0x17102e); // roof
+    // mouth markers: rock portal + a breadcrumb glow at both ends
+    for (const dd of [a, b]) {
+      const mf = frameAtDir(dd, 0, 0.3);
+      addSolid(T(box(0.9, 4.4, 0.9), -2.2, 2.2, 0), mf.clone(), 0x2a2150, { jitter: 0.1 });
+      addSolid(T(box(0.9, 4.4, 0.9), 2.2, 2.2, 0), mf.clone(), 0x2a2150, { jitter: 0.1 });
+      addSolid(T(box(5.2, 0.9, 0.9), 0, 4.6, 0), mf.clone(), 0x2a2150, { jitter: 0.1 });
+      addGlow(T(box(4.4, 0.14, 0.2), 0, 4.1, 0), mf.clone(), NEON.purple, 1.15);
+    }
+  }
+
   // ════════════ WILDERNESS FILL — the WHOLE planet is built ════════════
   // Fibonacci-scatter structures over every part of the sphere that isn't
   // a street or a district pad, so the paths read as canyons through one
@@ -1115,9 +1243,18 @@ export function buildPlanet(scene, models = {}) {
     _origin.copy(pos).addScaledVector(up, castUp);
     ray.set(_origin, up.clone().negate());
     ray.far = castUp + maxDown;
-    const hit = ray.intersectObjects(collMeshes, false)[0];
-    if (!hit) return null;
-    return { point: hit.point, normal: hit.face.normal.clone(), dist: hit.distance - castUp };
+    // take the first WALKABLE hit — skip ceilings/roof undersides so a
+    // ray cast from inside a cave roof slab doesn't snap you onto it
+    ray.firstHitOnly = false;
+    const hits = ray.intersectObjects(collMeshes, false);
+    ray.firstHitOnly = true;
+    const posH = pos.dot(up);
+    for (const hit of hits) {
+      if (hit.face.normal.dot(up) < 0.25) continue;          // ceilings
+      if (hit.point.dot(up) > posH + 0.55) continue;         // surfaces ABOVE us
+      return { point: hit.point, normal: hit.face.normal.clone(), dist: hit.distance - castUp };
+    }
+    return null;
   }
   // generic directional probe (walls, ceilings, camera)
   function probe(pos, dir, far) {

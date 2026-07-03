@@ -101,6 +101,8 @@ export function createPlayer({ scene, camera, planet, hud, audio, fx, transit, m
   }
 
   const keys = {};
+  let npcsRef = null;          // wired by main via bindTargets()
+  let lockTarget = null;       // soft-lock: the enemy we're confronting
   const rotVel = { yaw: 0, pitch: 0 };   // the ship's rotational inertia
   const mouse = { x: innerWidth / 2, y: innerHeight / 2 };
   let lastWTap = 0, wantJump = false;
@@ -132,7 +134,7 @@ export function createPlayer({ scene, camera, planet, hud, audio, fx, transit, m
     if (k === 'c' && !e.repeat) tryRoll();
     if (k === 'v') { state.camDist = state.camDist > 6.5 ? 5.2 : 8.5; hud.toast('CAMERA', state.camDist > 6.5 ? 'Wide' : 'Close'); }
     if (k === 'e' || e.key === 'Enter') { e.preventDefault(); interact(); }
-    if (e.key === ' ') { e.preventDefault(); state.fireHeld = true; audio.resume(); }
+    if (e.key === ' ') { e.preventDefault(); if (!e.repeat) { wantJump = true; audio.resume(); } }
     if (e.key === 'ArrowUp') { keys.up = true; e.preventDefault(); }
     if (e.key === 'ArrowDown') { keys.down = true; e.preventDefault(); }
     if (e.key === 'ArrowLeft') { keys.left = true; e.preventDefault(); }
@@ -148,7 +150,6 @@ export function createPlayer({ scene, camera, planet, hud, audio, fx, transit, m
     if (k === 'b') keys.b = false;
     if (k === 'x') keys.x = false;
     if (k === 'q') keys.q = false;
-    if (e.key === ' ') state.fireHeld = false;
     if (e.key === 'ArrowUp') keys.up = false;
     if (e.key === 'ArrowDown') keys.down = false;
     if (e.key === 'ArrowLeft') keys.left = false;
@@ -568,8 +569,10 @@ export function createPlayer({ scene, camera, planet, hud, audio, fx, transit, m
     } else {
       state.grounded = false;
     }
+    // void failsafe — but ONLY when the BVH found nothing below us:
+    // caves legitimately run beneath the terrain surface
     const minR = planet.terrainHeight(_v2.copy(state.pos).normalize());
-    if (state.pos.length() < minR - 1.5) {
+    if (!gh && state.pos.length() < minR - 1.5) {
       state.pos.setLength(minR + 0.1);
       state.vel.multiplyScalar(0.2);
       state.grounded = true;
@@ -617,6 +620,38 @@ export function createPlayer({ scene, camera, planet, hud, audio, fx, transit, m
       rig.group.quaternion.slerp(_q, 1 - Math.pow(0.00001, dt));
     }
 
+    // ── soft target lock: frame the fight ──
+    lockTarget = null;
+    if (npcsRef) {
+      let bd = 24 * 24;
+      const eye = _v3.copy(state.pos).addScaledVector(_up, 1.5);
+      for (const n of npcsRef.list) {
+        if (n.state === 'dead') continue;
+        const hostile = n.aggro || n.kind === 'vex' || n.kind === 'vultyr' || n.kind === 'brakkus';
+        if (!hostile) continue;
+        if (!(n.state === 'combat' || n.kind === 'vultyr' || n.pos.distanceToSquared(state.pos) < 18 * 18)) continue;
+        const d2 = n.pos.distanceToSquared(state.pos);
+        if (d2 >= bd) continue;
+        const to = _v.copy(n.pos).addScaledVector(_v2.copy(n.pos).normalize(), 1.0).sub(eye);
+        const dist = to.length();
+        const blocked = planet.probe(eye, to.normalize(), dist - 1.2);
+        if (blocked) continue;
+        bd = d2;
+        lockTarget = n;
+      }
+      // gentle aim assist: yaw toward the locked enemy unless steering
+      if (lockTarget && !keys.left && !keys.right) {
+        _v.copy(lockTarget.pos).sub(state.pos);
+        _v.addScaledVector(_up, -_v.dot(_up)).normalize();
+        const cross = _v2.crossVectors(state.heading, _v).dot(_up);
+        const dot = clamp(state.heading.dot(_v), -1, 1);
+        const ang = Math.atan2(cross, dot);
+        const step = clamp(ang, -1, 1) * 2.2 * dt;
+        state.heading.applyQuaternion(_q.setFromAxisAngle(_up, step)).normalize();
+      }
+    }
+    hud.setLock(!!lockTarget, lockTarget ? lockTarget.name : null);
+
     updateFire(dt, t);
     rig.update(dt);
     updateCamera(dt, false);
@@ -637,27 +672,45 @@ export function createPlayer({ scene, camera, planet, hud, audio, fx, transit, m
     const toCam = _v2.copy(want).sub(eye);
     const len = toCam.length();
     toCam.normalize();
-    const hit = planet.probe(eye, toCam, len + 0.3);
-    if (hit && hit.distance < len) {
+    // fight framing: when locked, boom out along player←enemy axis so
+    // both stay in frame
+    if (lockTarget && !deadCam) {
+      _v2.copy(state.pos).sub(lockTarget.pos);
+      _v2.addScaledVector(_up, -_v2.dot(_up));
+      if (_v2.lengthSq() > 0.5) {
+        _v2.normalize();
+        want.copy(state.pos)
+          .addScaledVector(_v2, dist * 0.85)
+          .addScaledVector(_up, 2.4 + state.camPitch * -1.0);
+      }
+    }
+    const hit = planet.probe(eye, toCam.copy(want).sub(eye).normalize(), want.distanceTo(eye) + 0.3);
+    const len2 = want.distanceTo(eye);
+    if (hit && hit.distance < len2) {
       const pulled = Math.max(1.3, hit.distance - 0.3);
       want.copy(eye).addScaledVector(toCam, pulled);
       // blocked hard → rise above the obstruction for an over-shoulder view
-      const blocked = 1 - pulled / len;
+      const blocked = 1 - pulled / len2;
       want.addScaledVector(_up, blocked * 3.2);
-      const hit2 = planet.probe(eye, _v2.copy(want).sub(eye).normalize(), len + 0.5);
+      const hit2 = planet.probe(eye, _v2.copy(want).sub(eye).normalize(), len2 + 0.5);
       if (hit2 && hit2.distance < want.distanceTo(eye)) {
         want.copy(eye).addScaledVector(_v2, Math.max(1.1, hit2.distance - 0.25));
       }
     }
     if (!camInit) { camPos.copy(want); camInit = true; }
-    camPos.lerp(want, 1 - Math.pow(0.0001, dt));
+    // FIXED relationship: near-rigid follow (no floaty lag)
+    camPos.lerp(want, 1 - Math.pow(0.0000001, dt));
     camera.position.copy(camPos);
     camera.up.copy(_up);
-    camera.lookAt(_v.copy(state.pos).addScaledVector(_up, 1.55).addScaledVector(state.heading, 1.2));
+    // look at the player — biased toward the locked enemy mid-fight
+    _v.copy(state.pos).addScaledVector(_up, 1.55).addScaledVector(state.heading, 1.2);
+    if (lockTarget && !deadCam) _v.lerp(lockTarget.pos, 0.30);
+    camera.lookAt(_v);
   }
 
   return {
     state, rig, update, damage, suitLamp,
+    bindTargets(n) { npcsRef = n; },
     start() {
       state.started = true;
       rig.play('idle');

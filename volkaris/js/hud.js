@@ -52,6 +52,11 @@ export function createHUD() {
       el.crosshair.style.left = x + 'px';
       el.crosshair.style.top = y + 'px';
     },
+    setLock(on, name) {
+      el.crosshair.classList.toggle('lock', !!on);
+      el.crosshair.textContent = on ? '◎' : '◈';
+      el.sector.dataset.lock = on && name ? name : '';
+    },
     setPrompt(text) {
       el.prompt.textContent = text ?? '';
       el.prompt.classList.toggle('hidden', !text);
