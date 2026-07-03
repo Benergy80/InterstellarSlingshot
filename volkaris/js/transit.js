@@ -97,70 +97,119 @@ export function buildTransit(scene, planet, audio) {
   }).sort((p, q) => p.angle - q.angle);
 
   const platGroup = new THREE.Group();
+  const platMat = new THREE.MeshStandardMaterial({ color: 0x241e4e, roughness: 0.6, metalness: 0.4 });
   for (const st of stations) {
-    const { up, east, north } = tangentFrame(st.dir);
-    // platform beside the rail
-    const f = new THREE.Matrix4().makeBasis(east, up, north)
-      .setPosition(up.clone().multiplyScalar(RAIL_R - 1.2));
-    // orient platform so its long axis follows the rail tangent
+    const up = st.dir.clone();
+    // rail tangent + a RIGHT-handed frame (X=tang, Y=up, Z=tang×up) —
+    // a left-handed basis here mirrors everything placed with it
     const tang = _v.copy(circleAt(st.angle + 0.02)).sub(circleAt(st.angle - 0.02)).normalize();
-    const side = new THREE.Vector3().crossVectors(up, tang).normalize();
+    const side = new THREE.Vector3().crossVectors(tang, up).normalize();
+    const platH = RAIL_R - 1.2;
     const fm = new THREE.Matrix4().makeBasis(tang, up.clone(), side)
-      .setPosition(up.clone().multiplyScalar(RAIL_R - 1.2).addScaledVector(side, 2.2));
-    const plat = new THREE.Mesh(new THREE.BoxGeometry(10, 0.5, 3.2),
-      new THREE.MeshStandardMaterial({ color: 0x241e4e, roughness: 0.6, metalness: 0.4 }));
+      .setPosition(up.clone().multiplyScalar(platH).addScaledVector(side, 2.2));
+    const plat = new THREE.Mesh(new THREE.BoxGeometry(12, 0.5, 3.6), platMat);
     plat.applyMatrix4(fm);
     plat.castShadow = plat.receiveShadow = true;
     platGroup.add(plat);
-    const strip = new THREE.Mesh(new THREE.BoxGeometry(10, 0.08, 0.16),
+    const strip = new THREE.Mesh(new THREE.BoxGeometry(12, 0.08, 0.16),
       new THREE.MeshBasicMaterial({ color: new THREE.Color(NEON.amber).multiplyScalar(1.2), toneMapped: false }));
-    strip.applyMatrix4(new THREE.Matrix4().makeTranslation(0, 0.34, -1.5).premultiply(fm));
+    strip.applyMatrix4(new THREE.Matrix4().makeTranslation(0, 0.34, -1.6).premultiply(fm));
     platGroup.add(strip);
     st.platformPos = new THREE.Vector3().setFromMatrixPosition(fm).addScaledVector(up, 0.6);
     st.boardPos = st.platformPos.clone();
 
-    // switchback stair tower from ground to platform
+    // canopy on posts — the stop should read as a STATION from a distance
+    const canopy = new THREE.Mesh(new THREE.BoxGeometry(9, 0.25, 3.4), platMat);
+    canopy.applyMatrix4(new THREE.Matrix4().makeTranslation(0, 3.6, 0).premultiply(fm));
+    platGroup.add(canopy);
+    for (const px of [-4, 4]) {
+      const post = new THREE.Mesh(new THREE.BoxGeometry(0.22, 3.6, 0.22), platMat);
+      post.applyMatrix4(new THREE.Matrix4().makeTranslation(px, 1.9, 1.3).premultiply(fm));
+      platGroup.add(post);
+    }
+    // glowing name bar under the canopy edge + a tall beacon mast
+    const nameBar = new THREE.Mesh(new THREE.BoxGeometry(8.6, 0.5, 0.14),
+      new THREE.MeshBasicMaterial({ color: new THREE.Color(NEON.cyan).multiplyScalar(1.15), toneMapped: false }));
+    nameBar.applyMatrix4(new THREE.Matrix4().makeTranslation(0, 3.1, 1.7).premultiply(fm));
+    platGroup.add(nameBar);
+    const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.12, 6, 5), platMat);
+    mast.applyMatrix4(new THREE.Matrix4().makeTranslation(5.6, 3, 1.4).premultiply(fm));
+    platGroup.add(mast);
+    const beacon = new THREE.Mesh(new THREE.SphereGeometry(0.42, 8, 6),
+      new THREE.MeshBasicMaterial({ color: new THREE.Color(NEON.magenta).multiplyScalar(1.3), toneMapped: false }));
+    beacon.applyMatrix4(new THREE.Matrix4().makeTranslation(5.6, 6.2, 1.4).premultiply(fm));
+    platGroup.add(beacon);
+
+    // ── access ramp: segmented so it follows the sphere down to the
+    // street (solid slopes — stairs read as walls to the controller) ──
     const groundH = planet.terrainHeight(st.dir);
-    const rise = (RAIL_R - 1.2) - groundH;
-    const flights = Math.max(2, Math.round(rise / 4.5));
-    for (let fl = 0; fl < flights; fl++) {
-      const y0 = groundH + fl * rise / flights;
-      const dirF = fl % 2 ? 1 : -1;
-      for (let s = 0; s < 8; s++) {
-        const step = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.5, 0.8),
-          plat.material);
-        const local = new THREE.Matrix4().makeBasis(tang, up.clone(), side)
-          .setPosition(up.clone().multiplyScalar(y0 + (s + 0.5) * rise / flights / 8)
-            .addScaledVector(side, 4.4)
-            .addScaledVector(tang, dirF * (s * 0.55 - 2.2)));
-        step.applyMatrix4(local);
-        platGroup.add(step);
+    const rise = platH - groundH;
+    if (rise > 1.5) {
+      const grade = 0.42;                       // rise per horizontal unit
+      const run = rise / grade;                 // total horizontal run
+      const segs = Math.max(3, Math.ceil(run / 4));
+      const segRun = run / segs, segRise = rise / segs;
+      const segLen = Math.hypot(segRun, segRise) + 0.6;   // overlap seals seams
+      const pitch = Math.atan2(segRise, segRun);
+      // one extra segment past the bottom buries the ramp foot in the street
+      for (let i = 0; i <= segs; i++) {
+        // arc-length along the rail from the platform end, at descending height
+        const aOff = (6 + (i + 0.5) * segRun) / RAIL_R;
+        const d = circleAt(st.angle + aOff);
+        const su = d.clone();
+        const stang = _v2.copy(circleAt(st.angle + aOff + 0.01)).sub(circleAt(st.angle + aOff - 0.01)).normalize();
+        const sside = _v3.crossVectors(stang, su).normalize();
+        const h = platH - (i + 0.5) * segRise;
+        const seg = new THREE.Mesh(new THREE.BoxGeometry(segLen, 0.5, 2.6), platMat);
+        seg.receiveShadow = true;
+        const sm = new THREE.Matrix4().makeBasis(stang, su.clone(), sside)
+          .setPosition(su.clone().multiplyScalar(h).addScaledVector(sside, 2.2));
+        seg.applyMatrix4(new THREE.Matrix4().makeRotationZ(-pitch).premultiply(sm));
+        platGroup.add(seg);
+        // guard rail glow so the way up is legible at night
+        const rail2 = new THREE.Mesh(new THREE.BoxGeometry(segLen, 0.07, 0.07),
+          new THREE.MeshBasicMaterial({ color: new THREE.Color(NEON.amber).multiplyScalar(1.1), toneMapped: false }));
+        rail2.applyMatrix4(new THREE.Matrix4().makeTranslation(0, 1.0, 1.25).premultiply(
+          new THREE.Matrix4().makeRotationZ(-pitch).premultiply(sm)));
+        platGroup.add(rail2);
       }
-      // landing
-      const land = new THREE.Mesh(new THREE.BoxGeometry(2.0, 0.4, 1.6), plat.material);
-      land.applyMatrix4(new THREE.Matrix4().makeBasis(tang, up.clone(), side)
-        .setPosition(up.clone().multiplyScalar(y0 + rise / flights)
-          .addScaledVector(side, 4.4).addScaledVector(tang, dirF * 2.6)));
-      platGroup.add(land);
     }
   }
   scene.add(platGroup);
-  // stairs + platforms must be walkable → fold into the collision BVH
+  // ramps + platforms must be walkable → fold into the collision BVH
   planet.addColliders(platGroup);
 
-  // ── the train: 3 cars chasing an angle around the loop ──
+  // ── the train: 3 cars chasing an angle around the loop.
+  // Cars are authored nose-forward along +Z (the travel direction). ──
   const CAR_GAP = 0.055;   // radians between cars
   const cars = [];
   for (let i = 0; i < 3; i++) {
     const car = new THREE.Group();
-    const body = new THREE.Mesh(new THREE.BoxGeometry(1.8, 1.7, 5.6),
-      new THREE.MeshStandardMaterial({ color: 0x35306a, roughness: 0.3, metalness: 0.75 }));
+    const bodyMat = new THREE.MeshStandardMaterial({ color: 0x35306a, roughness: 0.3, metalness: 0.75 });
+    const body = new THREE.Mesh(new THREE.BoxGeometry(1.8, 1.7, 5.0), bodyMat);
+    body.position.z = -0.3;
     body.castShadow = true;
     car.add(body);
-    const glass = new THREE.Mesh(new THREE.BoxGeometry(1.9, 0.5, 5.0),
+    // tapered nose — the train visibly LEADS with the front car
+    const nose = new THREE.Mesh(new THREE.CylinderGeometry(0.01, 0.95, 1.3, 4, 1), bodyMat);
+    nose.rotation.x = Math.PI / 2;
+    nose.rotation.y = Math.PI / 4;
+    nose.position.set(0, 0, 2.8);
+    nose.castShadow = true;
+    car.add(nose);
+    const glass = new THREE.Mesh(new THREE.BoxGeometry(1.9, 0.5, 4.4),
       new THREE.MeshBasicMaterial({ color: new THREE.Color(NEON.cyan).multiplyScalar(1.05), toneMapped: false }));
-    glass.position.y = 0.35;
+    glass.position.set(0, 0.35, -0.3);
     car.add(glass);
+    // headlight (front, warm) + tail lamp (rear, red)
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.18, 8, 6),
+      new THREE.MeshBasicMaterial({ color: new THREE.Color(NEON.amber).multiplyScalar(1.4), toneMapped: false }));
+    head.position.set(0, -0.15, 3.3);
+    car.add(head);
+    const tail = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.2, 0.1),
+      new THREE.MeshBasicMaterial({ color: new THREE.Color(0xff2e4d).multiplyScalar(1.2), toneMapped: false }));
+    tail.position.set(0, 0, -2.85);
+    car.add(tail);
     const skid = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.5, 5.2),
       new THREE.MeshBasicMaterial({ color: new THREE.Color(i === 0 ? NEON.magenta : NEON.purple).multiplyScalar(1.15), toneMapped: false }));
     skid.position.y = -1.05;
@@ -180,12 +229,13 @@ export function buildTransit(scene, planet, audio) {
     const d = circleAt(a);
     const up = d.clone();
     const tang = _v.copy(circleAt(a + 0.01)).sub(circleAt(a - 0.01)).normalize();
+    // RIGHT-handed basis with +Z along travel: X=up×tang, Y=up, Z=tang
+    // (X×Y = (up×tang)×up = tang = Z). The old left-handed basis mirrored
+    // the car and pointed it the wrong way down the rail.
     const side = _v2.crossVectors(up, tang).normalize();
-    _m.makeBasis(tang, up, side).setPosition(up.clone().multiplyScalar(RAIL_R + 1.15));
+    _m.makeBasis(side, up, tang).setPosition(up.clone().multiplyScalar(RAIL_R + 1.15));
     car.position.setFromMatrixPosition(_m);
     car.quaternion.setFromRotationMatrix(_m);
-    // cars face along +x of that basis; rotate body so length runs along tangent
-    car.rotateY(Math.PI / 2);
   }
 
   // ── ambient air traffic: tilted orbit lanes ──
@@ -263,7 +313,9 @@ export function buildTransit(scene, planet, audio) {
     boardableStation(pos) {
       if (train.state !== 'dwell') return null;
       const st = stations[(train.nextIdx + stations.length - 1) % stations.length];
-      return pos.distanceTo(st.boardPos) < 5 ? st : null;
+      if (pos.distanceTo(st.boardPos) < 7) return st;
+      for (const c of cars) if (pos.distanceTo(c.position) < 4.5) return st;
+      return null;
     },
     dwelling() { return train.state === 'dwell'; },
     carAnchor(out) {
