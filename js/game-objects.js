@@ -5947,10 +5947,35 @@ const distressBeaconSystem = {
     triggerDistressBeacon: function(galaxyId) {
         if (this.triggeredSpecies.has(galaxyId)) return;
         if (typeof galaxyTypes === 'undefined') return;
-        
+
         const galaxy = galaxyTypes[galaxyId];
         if (!galaxy) return;
-        
+
+        // FIRST-JOURNEY GATE (same rule as the core formation nebulas): the
+        // HOME galaxy's Elite Guardian dies right at the Sgr A* liberation
+        // set-piece, and this beacon draws ANOTHER faction-colored dotted
+        // line across the local sky (galaxy center → outer system) before
+        // the player has even started the white-path journey to the twins —
+        // it reads as a competing "path of discovery". Defer it until the
+        // first twin (clustered) nebula is charted; updateBeacons retries.
+        if (typeof nebulaClouds !== 'undefined') {
+            let twinCharted = false;
+            for (let i = 0; i < nebulaClouds.length; i++) {
+                const ud = nebulaClouds[i] && nebulaClouds[i].userData;
+                if (ud && ud.deepDiscovered && !ud.shape && !ud.isDistant && !ud.isExoticCore) {
+                    twinCharted = true; break;
+                }
+            }
+            if (!twinCharted) {
+                if (!this.pendingBeacons) this.pendingBeacons = [];
+                if (this.pendingBeacons.indexOf(galaxyId) < 0) {
+                    this.pendingBeacons.push(galaxyId);
+                    console.log(`📡 Distress beacon for galaxy ${galaxyId} deferred until the first twin nebula is charted`);
+                }
+                return;
+            }
+        }
+
         this.triggeredSpecies.add(galaxyId);
         
         // Select an outer system for the boss
@@ -6257,7 +6282,27 @@ const distressBeaconSystem = {
     // Update beacon visuals (called each frame)
     updateBeacons: function() {
         const time = Date.now() * 0.003;
-        
+
+        // Fire any beacon deferred by the first-journey gate once the first
+        // twin nebula has been charted (cheap check, throttled to ~1Hz).
+        if (this.pendingBeacons && this.pendingBeacons.length &&
+            typeof nebulaClouds !== 'undefined' &&
+            (!this._pendingCheckAt || Date.now() > this._pendingCheckAt)) {
+            this._pendingCheckAt = Date.now() + 1000;
+            let twinCharted = false;
+            for (let i = 0; i < nebulaClouds.length; i++) {
+                const ud = nebulaClouds[i] && nebulaClouds[i].userData;
+                if (ud && ud.deepDiscovered && !ud.shape && !ud.isDistant && !ud.isExoticCore) {
+                    twinCharted = true; break;
+                }
+            }
+            if (twinCharted) {
+                const queued = this.pendingBeacons.slice();
+                this.pendingBeacons = [];
+                queued.forEach(gid => this.triggerDistressBeacon(gid));
+            }
+        }
+
         this.activeBeacons.forEach(beacon => {
             if (!beacon || !beacon.userData) return;
             
