@@ -167,13 +167,11 @@ export function createPlayer({ scene, camera, planet, hud, audio, fx, transit, m
     if (e.key === 'p' || e.key === 'P') { e.preventDefault(); state.paused = !state.paused; hud.showPause(state.paused); return; }
     if (state.paused || state.dead || state.boarding) return;
     const k = e.key.toLowerCase();
-    // Q = jetpack master switch: tap on, tap off (lifts you off the
-    // deck when armed; Space still hold-thrusts in the air)
-    if (k === 'q' && !e.repeat) {
-      state.jetArmed = !state.jetArmed;
-      hud.toast(state.jetArmed ? 'JETPACK — ON' : 'JETPACK — OFF',
-        state.jetArmed ? 'Burn while it lasts — Q to cut it' : '');
-      if (state.jetArmed) audio.resume();
+    // Q = jetpack, hold-to-burn: button down fires it (even off the
+    // deck), button up cuts it. Space still hold-thrusts in the air.
+    if (k === 'q') {
+      if (!e.repeat && !state.jetArmed) audio.resume();
+      state.jetArmed = true;
     }
     if (k === 'w') {
       if (!e.repeat) {
@@ -232,6 +230,7 @@ export function createPlayer({ scene, camera, planet, hud, audio, fx, transit, m
   function onKeyUp(e) {
     const k = e.key.toLowerCase();
     if (k === 'w') keys.w = false;
+    if (k === 'q') state.jetArmed = false;
     if (e.key === ' ') spaceHeld = false;
     if (k === 'a') keys.a = false;
     if (k === 's') keys.s = false;
@@ -245,7 +244,7 @@ export function createPlayer({ scene, camera, planet, hud, audio, fx, transit, m
   }
   document.addEventListener('keydown', onKeyDown);
   document.addEventListener('keyup', onKeyUp);
-  addEventListener('blur', () => { for (const k in keys) keys[k] = false; state.fireHeld = false; spaceHeld = false; });
+  addEventListener('blur', () => { for (const k in keys) keys[k] = false; state.fireHeld = false; spaceHeld = false; state.jetArmed = false; });
 
   // mouse = free crosshair, click = fire (no pointer lock)
   document.addEventListener('mousemove', (e) => {
