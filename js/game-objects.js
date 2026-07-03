@@ -5962,7 +5962,7 @@ const distressBeaconSystem = {
             let twinCharted = false;
             for (let i = 0; i < nebulaClouds.length; i++) {
                 const ud = nebulaClouds[i] && nebulaClouds[i].userData;
-                if (ud && ud.deepDiscovered && !ud.shape && !ud.isDistant && !ud.isExoticCore) {
+                if (ud && ud.deepDiscovered && !ud.isDistant && !ud.isExoticCore) {   // twins = non-distant, non-exotic (every nebula has a shape)
                     twinCharted = true; break;
                 }
             }
@@ -6292,7 +6292,7 @@ const distressBeaconSystem = {
             let twinCharted = false;
             for (let i = 0; i < nebulaClouds.length; i++) {
                 const ud = nebulaClouds[i] && nebulaClouds[i].userData;
-                if (ud && ud.deepDiscovered && !ud.shape && !ud.isDistant && !ud.isExoticCore) {
+                if (ud && ud.deepDiscovered && !ud.isDistant && !ud.isExoticCore) {   // twins = non-distant, non-exotic (every nebula has a shape)
                     twinCharted = true; break;
                 }
             }

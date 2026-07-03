@@ -4566,7 +4566,15 @@ function classifyNebula(nebula) {
     const ud = nebula.userData;
     if (ud.isDistant) return 'distant';
     if (ud.isExoticCore) return 'exotic';
-    if (ud.shape) return 'galaxy_formation';
+    // NOTE: `shape` is NOT a discriminator — EVERY nebula carries one (the
+    // twin clusters are shaped like their paired galaxy: spiral, ring, …).
+    // The old `if (ud.shape) return 'galaxy_formation'` therefore swallowed
+    // the twins too, making 'clustered' unreachable: the twins ran with the
+    // whole-nebula trigger radius and the galaxy_formation path branch
+    // instead of their tuned 500u trigger and paired core/patrol paths —
+    // and it silently broke the first-journey gates, which wait for a
+    // CLUSTERED discovery that could then never happen. The twins are
+    // exactly the non-distant, non-exotic nebulas.
     return 'clustered';
 }
 
