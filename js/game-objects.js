@@ -10144,16 +10144,26 @@ function createEnemies3D() {
     const _corridorLen = _solV.length();   // ~9.4k units Sol → core
     let pirateIndex = 0;
     for (let g = 0; g < patrolGroupCount; g++) {
-        // Stage depth: first group ~2,800u out from Sol (a few seconds to
-        // get oriented before any patrol is in range), last group ~75% of
-        // the way to Sgr A* — close enough to hand the fight over to the
-        // Vulcan patrol ring without overlapping it.
+        // Stage depth along the corridor. The FIRST TWO groups are opening-
+        // beat skirmishers close to the Sol spawn (~1,200u / ~1,900u, still
+        // on the Sgr A* side): the player's very first move is turn +
+        // double-tap-W to intercept, and early combat stays on the corridor
+        // instead of scattering behind Sol. The remaining six stage from
+        // ~3,000u out to ~75% of the way to Sgr A* — close enough to hand
+        // the fight over to the Vulcan patrol ring without overlapping it.
+        let depth, side, lift;
         const t = (g + 0.5) / patrolGroupCount;               // 0..1 along corridor
-        const depth = 2800 + t * (_corridorLen * 0.75 - 2800);
-        // Alternating lateral scatter keeps the trail readable but not a
-        // literal straight line; scatter widens slightly with depth.
-        const side = (g % 2 === 0 ? 1 : -1) * (500 + Math.random() * 700) * (0.7 + t * 0.6);
-        const lift = (Math.random() - 0.5) * (600 + t * 600);
+        if (g < 2) {
+            depth = (g === 0 ? 1200 : 1900) + Math.random() * 300;
+            side = (g % 2 === 0 ? 1 : -1) * (250 + Math.random() * 250);  // tight — clearly "ahead"
+            lift = (Math.random() - 0.5) * 300;
+        } else {
+            depth = 3000 + ((g - 2 + 0.5) / (patrolGroupCount - 2)) * (_corridorLen * 0.75 - 3000);
+            // Alternating lateral scatter keeps the trail readable but not a
+            // literal straight line; scatter widens slightly with depth.
+            side = (g % 2 === 0 ? 1 : -1) * (500 + Math.random() * 700) * (0.7 + t * 0.6);
+            lift = (Math.random() - 0.5) * (600 + t * 600);
+        }
         const groupCenter = _solV.clone()
             .addScaledVector(_corridorDir, depth)
             .addScaledVector(_corridorSide, side)
