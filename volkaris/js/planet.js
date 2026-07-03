@@ -1300,7 +1300,7 @@ export function buildPlanet(scene, models = {}) {
     group, uTime, collMesh, groundHit, probe, addColliders,
     districts: districtDirs, districtAt,
     pyramidInfo, portInfo,
-    pathSamples, towerSpots,
+    pathSamples, pathChains, towerSpots,
     terrainHeight, surfacePoint,
     dynamic,
     update(dt, t) { for (const d of dynamic) d.update(dt, t); },

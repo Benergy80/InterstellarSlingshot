@@ -12,7 +12,7 @@
 //     deck). ENTER/E to board, slow down low to land and exit.
 // ════════════════════════════════════════════════════════════════
 import * as THREE from 'three';
-import { C, NEON, NEON_LIST, mulberry32, pick, clamp, lerp, sphDir, tangentFrame } from './config.js';
+import { C, NEON, NEON_LIST, mulberry32, pick, clamp, lerp, sphDir, tangentFrame, makeCanvas, canvasTexture } from './config.js';
 
 const R = C.R;
 const _v = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3();
@@ -139,6 +139,15 @@ export function buildTransit(scene, planet, audio) {
       new THREE.MeshBasicMaterial({ color: new THREE.Color(NEON.magenta).multiplyScalar(1.3), toneMapped: false }));
     beacon.applyMatrix4(new THREE.Matrix4().makeTranslation(5.6, 6.2, 1.4).premultiply(fm));
     platGroup.add(beacon);
+
+    // live ETA holo board — NEXT m:ss / BOARDING :ss (NC station signs)
+    const [cv, ctx] = makeCanvas(512, 128);
+    const tex = canvasTexture(cv);
+    const board = new THREE.Mesh(new THREE.PlaneGeometry(4.6, 1.15),
+      new THREE.MeshBasicMaterial({ map: tex, transparent: true, toneMapped: false, side: THREE.DoubleSide }));
+    board.applyMatrix4(new THREE.Matrix4().makeTranslation(0, 2.5, 1.78).premultiply(fm));
+    platGroup.add(board);
+    st.eta = { cv, ctx, tex };
 
     // ── access ramp: segmented so it follows the sphere down to the
     // street (solid slopes — stairs read as walls to the controller) ──
@@ -305,6 +314,97 @@ export function buildTransit(scene, planet, audio) {
   parkVehicle('av', 'ruins', 4, -5, NEON.magenta);     // fly free
   parkVehicle('speeder', 'dunes', 1.5, 5.5, NEON.amber); // hugs the ground
 
+  // ── ground traffic: speeders running the actual street chains ──
+  const groundCars = [];
+  let carBodies = null, carGlows = null;
+  {
+    const chains = [...planet.pathChains].sort((a, b) => b.length - a.length).slice(0, 5);
+    const N = 14;
+    carBodies = new THREE.InstancedMesh(
+      new THREE.BoxGeometry(1.05, 0.42, 2.2),
+      new THREE.MeshStandardMaterial({ color: 0x322a5e, roughness: 0.35, metalness: 0.8 }), N);
+    carBodies.castShadow = true;
+    carGlows = new THREE.InstancedMesh(
+      new THREE.BoxGeometry(0.8, 0.1, 1.9),
+      new THREE.MeshBasicMaterial({ toneMapped: false }), N);
+    for (let i = 0; i < N; i++) {
+      const chain = chains[i % chains.length];
+      groundCars.push({
+        chain,
+        s: rnd() * (chain.length - 2),
+        dirF: rnd() < 0.5 ? 1 : -1,
+        speed: 2.2 + rnd() * 1.6,           // samples/sec along the chain
+      });
+      carGlows.setColorAt(i, new THREE.Color(pick(rnd, NEON_LIST)).multiplyScalar(1.2));
+    }
+    if (carGlows.instanceColor) carGlows.instanceColor.needsUpdate = true;
+    scene.add(carBodies);
+    scene.add(carGlows);
+  }
+  function placeGroundCar(i, car) {
+    const n2 = car.chain.length;
+    const i0 = clamp(Math.floor(car.s), 0, n2 - 2);
+    const f = car.s - i0;
+    _v.lerpVectors(car.chain[i0], car.chain[i0 + 1], f).normalize();
+    const ahead = car.chain[clamp(i0 + (car.dirF > 0 ? 1 : -1), 0, n2 - 1)];
+    const up = _v3.copy(_v);
+    const tang = _v2.copy(ahead).sub(_v);
+    tang.addScaledVector(up, -tang.dot(up));
+    if (tang.lengthSq() < 1e-8) tang.copy(up).cross(car.chain[0]);
+    tang.normalize();
+    const side = _gv.crossVectors(up, tang).normalize();   // X = up×tang → right-handed with Z=tang
+    const h = planet.terrainHeight(_v) + 0.5;
+    _m.makeBasis(side, up, tang).setPosition(up.x * h, up.y * h, up.z * h);
+    carBodies.setMatrixAt(i, _m);
+    carGlows.setMatrixAt(i, _m2.makeTranslation(0, -0.28, 0).premultiply(_m));
+  }
+  const _gv = new THREE.Vector3(), _m2 = new THREE.Matrix4();
+
+  // ── station ETA boards ──
+  let etaClock = 0;
+  function drawETA() {
+    const atIdx = (train.nextIdx + stations.length - 1) % stations.length;
+    for (let i = 0; i < stations.length; i++) {
+      const st = stations[i];
+      if (!st.eta) continue;
+      const { cv, ctx, tex } = st.eta;
+      ctx.clearRect(0, 0, cv.width, cv.height);
+      ctx.fillStyle = 'rgba(8,4,26,0.88)';
+      ctx.fillRect(0, 0, cv.width, cv.height);
+      ctx.strokeStyle = 'rgba(0,246,255,0.7)';
+      ctx.lineWidth = 4;
+      ctx.strokeRect(4, 4, cv.width - 8, cv.height - 8);
+      ctx.font = '700 44px "Share Tech Mono", monospace';
+      ctx.textBaseline = 'middle';
+      let msg, hue;
+      if (train.state === 'dwell' && i === atIdx) {
+        msg = `▶ BOARDING  :0${Math.max(0, Math.ceil(train.dwellT))}`.slice(0, 24);
+        hue = '#5dffb2';
+      } else {
+        let raw = st.angle - (train.angle % (Math.PI * 2));
+        while (raw < 0) raw += Math.PI * 2;
+        while (raw >= Math.PI * 2) raw -= Math.PI * 2;
+        let stops = 0;
+        for (const s2 of stations) {
+          if (s2 === st) continue;
+          let d2 = s2.angle - (train.angle % (Math.PI * 2));
+          while (d2 < 0) d2 += Math.PI * 2;
+          while (d2 >= Math.PI * 2) d2 -= Math.PI * 2;
+          if (d2 < raw) stops++;
+        }
+        const eta = raw / train.cruise + stops * 8 + (train.state === 'dwell' ? train.dwellT : 0);
+        const mm = Math.floor(eta / 60), ss = Math.floor(eta % 60);
+        msg = `NEXT LOOP  ${mm}:${ss < 10 ? '0' : ''}${ss}`;
+        hue = '#00f6ff';
+      }
+      ctx.fillStyle = hue;
+      ctx.shadowColor = hue; ctx.shadowBlur = 14;
+      ctx.fillText(msg, 26, cv.height / 2);
+      ctx.shadowBlur = 0;
+      tex.needsUpdate = true;
+    }
+  }
+
   // ── API ──
   return {
     stations, train, cars, vehicles,
@@ -376,6 +476,21 @@ export function buildTransit(scene, planet, audio) {
       for (const v of vehicles) {
         if (!v.occupied) v.grp.userData.engine.material.opacity = 0.7 + Math.sin(t * 4 + v.home.x) * 0.2;
       }
+
+      // ── ground traffic along the street chains ──
+      for (let i = 0; i < groundCars.length; i++) {
+        const car = groundCars[i];
+        car.s += car.speed * car.dirF * dt;
+        if (car.s >= car.chain.length - 1.01) { car.s = car.chain.length - 1.01; car.dirF = -1; }
+        if (car.s <= 0.01) { car.s = 0.01; car.dirF = 1; }
+        placeGroundCar(i, car);
+      }
+      carBodies.instanceMatrix.needsUpdate = true;
+      carGlows.instanceMatrix.needsUpdate = true;
+
+      // ── ETA boards at ~3 Hz ──
+      etaClock -= dt;
+      if (etaClock <= 0) { etaClock = 0.34; drawETA(); }
     },
   };
 }
