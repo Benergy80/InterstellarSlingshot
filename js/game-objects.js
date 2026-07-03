@@ -9165,6 +9165,11 @@ function updateUFOMovement() {
                   gameState.gameStarted && !gameState.gameOver);
     const playerPos = live ? camera.position : null;
 
+    // Game-time step (slow-mo aware, vsync-aligned) — replaces the private
+    // performance.now() clock, so saucers obey hitstop/slow-mo like every
+    // other agent and stop drifting against the fixed-step world.
+    const dtMs = (typeof gameState !== 'undefined' && gameState.dtMs) ? gameState.dtMs : (_f * 16.67);
+
     ufoEnemies.forEach(ufo => {
         if (!ufo || !ufo.userData || ufo.userData.health <= 0) return;
         const data = ufo.userData;
@@ -9177,52 +9182,98 @@ function updateUFOMovement() {
         data.isActive = !!hunting;
         data.attackMode = hunting ? 'hunting' : 'erratic';
 
-        if (hunting) {
-            // Desired point: a strafing standoff ~85% of firing range from
-            // the player, drifting tangentially so the UFO circles rather
-            // than charging straight in.
-            data.circlePhase = (data.circlePhase || 0) + 0.012 * _f;
-            data.verticalBob = (data.verticalBob || 0) + 0.02 * _f;
-            const standoff = Math.max(260, (data.firingRange || 700) * 0.85);
+        // ── SAUCER STATE MACHINE: hover ⇄ dart ──────────────────────────
+        // The old exponential-lerp toward a drifting point read as mushy.
+        // Real saucer character is the CONTRAST: a menacing, near-stationary
+        // hover (where the beam fires — it reads as deliberate), then an
+        // explosive eased dash to a new vantage with a hard bank into the
+        // motion. The dash is parametric (from→to, easeOutCubic on the
+        // game-time clock), so it is perfectly smooth at any frame rate.
+        data._ufoClock = (data._ufoClock || 0) + dtMs;
+        const tNow = data._ufoClock;
+        if (!data._moveState) {
+            data._moveState = 'hover';
+            data._stateUntil = tNow + 400 + Math.random() * 600;
+        }
 
-            const toU = _ufoV1.subVectors(ufo.position, playerPos);
-            const horiz = Math.hypot(toU.x, toU.z) || 1;
-            const tang = _ufoV2.set(-toU.z / horiz, 0, toU.x / horiz); // tangential unit
-            const radial = _ufoV3.copy(toU).normalize();
+        if (data._moveState === 'hover') {
+            // Near-stationary micro-wobble + upright scanning posture
+            data.verticalBob = (data.verticalBob || 0) + 0.0035 * dtMs;
+            ufo.position.y += Math.sin(data.verticalBob) * 0.08 * _f;
+            ufo.rotation.x += (0.06 - ufo.rotation.x) * Math.min(1, 0.12 * _f);
+            ufo.rotation.z += (0 - ufo.rotation.z) * Math.min(1, 0.12 * _f);
 
-            const desX = playerPos.x + radial.x * standoff + tang.x * Math.sin(data.circlePhase) * 140;
-            const desY = playerPos.y + radial.y * standoff + Math.sin(data.verticalBob) * 90;
-            const desZ = playerPos.z + radial.z * standoff + tang.z * Math.sin(data.circlePhase) * 140;
-
-            const lerp = 1 - Math.pow(0.96, _f); // ~0.04/frame, dt-scaled
-            ufo.position.x += (desX - ufo.position.x) * lerp;
-            ufo.position.y += (desY - ufo.position.y) * lerp;
-            ufo.position.z += (desZ - ufo.position.z) * lerp;
-            ufo.rotation.x = 0.12;   // slight aggressive tilt
-            ufo.rotation.z = 0;
-
-            // Fire a ray beam when roughly in range and off cooldown.
-            if (dist < (data.firingRange || 700) * 1.3 &&
+            // Beam fire lands during the pause
+            if (hunting && dist < (data.firingRange || 700) * 1.3 &&
                 now - (data.lastAttack || 0) > (data.beamCooldownMs || 1500)) {
                 data.lastAttack = now;
                 _fireUFORayBeam(ufo.position.clone(), playerPos.clone());
                 _ufoDamagePlayer(ufo, data.beamDamage || 5);
             }
+
+            if (tNow >= data._stateUntil) {
+                // Pick the next dash destination.
+                let tx, ty, tz;
+                if (hunting) {
+                    const standoff = Math.max(260, (data.firingRange || 700) * 0.85);
+                    if (dist > standoff * 1.7) {
+                        // Far out — dash INWARD in bursts (approach by dashes,
+                        // never a straight cruise).
+                        const k = 1 - (standoff * 1.2) / dist;
+                        tx = ufo.position.x + (playerPos.x - ufo.position.x) * Math.min(0.6, k);
+                        ty = ufo.position.y + (playerPos.y - ufo.position.y) * Math.min(0.6, k)
+                            + (Math.random() - 0.5) * 160;
+                        tz = ufo.position.z + (playerPos.z - ufo.position.z) * Math.min(0.6, k);
+                    } else {
+                        // On station — zig-zag to a new point on the standoff
+                        // ring: rotate the radial by a random ±35–100° and add
+                        // a vertical pop. Sudden repositioning = saucer.
+                        _ufoV1.subVectors(ufo.position, playerPos);
+                        const ang = (Math.random() < 0.5 ? -1 : 1) * (0.6 + Math.random() * 1.15);
+                        const ca = Math.cos(ang), sa = Math.sin(ang);
+                        const rx = _ufoV1.x * ca - _ufoV1.z * sa;
+                        const rz = _ufoV1.x * sa + _ufoV1.z * ca;
+                        _ufoV2.set(rx, _ufoV1.y, rz).normalize().multiplyScalar(standoff);
+                        tx = playerPos.x + _ufoV2.x;
+                        ty = playerPos.y + _ufoV2.y + (Math.random() - 0.5) * 260;  // vertical pop
+                        tz = playerPos.z + _ufoV2.z;
+                    }
+                } else {
+                    // Patrol: dash to a fresh point inside the patrol bubble
+                    const R = data.wobbleAmplitude || 300;
+                    tx = data.patrolCenter.x + (Math.random() - 0.5) * 2 * R;
+                    ty = data.patrolCenter.y + (Math.random() - 0.5) * 320;
+                    tz = data.patrolCenter.z + (Math.random() - 0.5) * 2 * R;
+                }
+                data._dartFrom = { x: ufo.position.x, y: ufo.position.y, z: ufo.position.z };
+                data._dartTo = { x: tx, y: ty, z: tz };
+                data._dartStart = tNow;
+                const dashLen = Math.hypot(tx - ufo.position.x, ty - ufo.position.y, tz - ufo.position.z);
+                data._dartDur = Math.max(280, Math.min(750, dashLen * 1.4));  // farther = a bit longer
+                data._moveState = 'dart';
+            }
         } else {
-            // Erratic patrol around the system (original behaviour).
-            data.erraticPhase += data.erraticSpeed * _f;
-            data.spiralPhase += 0.01 * _f;
-            data.verticalBob += 0.03 * _f;
-            const spiralRadius = data.wobbleAmplitude * (0.5 + 0.5 * Math.sin(data.spiralPhase * 0.3));
-            const targetX = data.patrolCenter.x + Math.cos(data.erraticPhase) * spiralRadius;
-            const targetY = data.patrolCenter.y + Math.sin(data.verticalBob) * 150;
-            const targetZ = data.patrolCenter.z + Math.sin(data.erraticPhase * 1.3) * spiralRadius;
-            const _pl = 1 - Math.pow(0.98, _f); // ~0.02/frame, dt-scaled
-            ufo.position.x += (targetX - ufo.position.x) * _pl;
-            ufo.position.y += (targetY - ufo.position.y) * _pl;
-            ufo.position.z += (targetZ - ufo.position.z) * _pl;
-            ufo.rotation.x = (targetZ - ufo.position.z) * 0.01;
-            ufo.rotation.z = -(targetX - ufo.position.x) * 0.01;
+            // DART: explosive ease-out dash from→to on the game-time clock
+            const pRaw = (tNow - data._dartStart) / (data._dartDur || 400);
+            const p = Math.min(1, pRaw);
+            const e = 1 - Math.pow(1 - p, 3);   // easeOutCubic — violent start, soft stop
+            const f0 = data._dartFrom, t0 = data._dartTo;
+            ufo.position.set(
+                f0.x + (t0.x - f0.x) * e,
+                f0.y + (t0.y - f0.y) * e,
+                f0.z + (t0.z - f0.z) * e);
+            // Bank HARD into the motion (decays as the dash lands)
+            const punch = (1 - p);
+            const bankZ = Math.max(-0.75, Math.min(0.75, -(t0.x - f0.x) * 0.004)) * punch;
+            const bankX = Math.max(-0.55, Math.min(0.55, (t0.z - f0.z) * 0.004)) * punch + 0.06;
+            ufo.rotation.z += (bankZ - ufo.rotation.z) * Math.min(1, 0.3 * _f);
+            ufo.rotation.x += (bankX - ufo.rotation.x) * Math.min(1, 0.3 * _f);
+            if (p >= 1) {
+                data._moveState = 'hover';
+                // Hunting saucers pause briefly (pressure); patrols linger.
+                data._stateUntil = tNow + (hunting ? 260 + Math.random() * 520
+                                                   : 550 + Math.random() * 950);
+            }
         }
 
         // UFOs also stay out of black-hole event-horizon warp zones.

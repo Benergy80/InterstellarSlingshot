@@ -540,6 +540,7 @@ const _WSHIFT_UD_KEYS = [
     'planetPosition', 'beltPosition', 'targetPosition', 'blackHolePosition',
     'systemCenter', 'beltCenter', 'startPosition', 'endPosition',
     '_iFrom', '_iTo', 'currentDestination', 'source', 'destination',
+    '_dartFrom', '_dartTo',   // UFO dash endpoints (plain {x,y,z})
 ];
 
 function _wshiftVecLike(v, offset) {
