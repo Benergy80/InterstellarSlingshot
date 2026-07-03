@@ -14,6 +14,7 @@ import { C } from './config.js';
 import { buildPlanet } from './planet.js';
 import { buildSky } from './sky.js';
 import { createFX } from './fx.js';
+import { buildTransit } from './transit.js';
 import { buildNPCs } from './npcs.js';
 import { createPlayer } from './player.js';
 import { createHUD } from './hud.js';
@@ -65,7 +66,7 @@ addEventListener('resize', () => {
 // ── boot ──
 const hud = createHUD();
 const audio = createAudio();
-let planet, sky, fx, npcs, player;
+let planet, sky, fx, npcs, player, transit;
 
 async function loadModels() {
   const loader = new GLTFLoader();
@@ -98,11 +99,15 @@ async function boot() {
   await frame();
   fx = createFX(scene, camera, planet, audio, models);
 
-  hud.setProgress(0.82, 'WAKING THE LOCALS');
+  hud.setProgress(0.78, 'SPINNING UP THE ORBITAL LOOP');
+  await frame();
+  transit = buildTransit(scene, planet, audio);
+
+  hud.setProgress(0.85, 'WAKING THE LOCALS');
   await frame();
   npcs = buildNPCs(scene, planet, fx, audio, hud);
 
-  player = createPlayer({ scene, camera, planet, hud, audio, fx });
+  player = createPlayer({ scene, camera, planet, hud, audio, fx, transit });
   fx.bindCombat(npcs, player);
 
   hud.setProgress(0.95, 'DROP POD AWAY');
@@ -110,7 +115,7 @@ async function boot() {
 
   hud.ready(() => { audio.resume(); player.start(); });
 
-  window.VK = { planet, sky, fx, npcs, player, scene, camera, renderer, bloom };
+  window.VK = { planet, sky, fx, npcs, player, transit, scene, camera, renderer, bloom };
 }
 
 // ── main loop ──
@@ -131,11 +136,20 @@ function animate() {
     const dayF = sky.update(elapsed, player.state.pos, bloom, planet.group.children[1]?.material);
     player.suitLamp.intensity = 0.35 + sky.night * 1.5;
     player.update(dt, elapsed);
+    transit.update(dt, elapsed, player.state.pos);
     npcs.update(dt, elapsed, player);
     fx.update(dt, elapsed);
     if (player.state.started) {
       hud.update(player, planet, dayF, elapsed);
-      hud.setPrompt(fx.canBoard(player.state.pos) && !player.state.boarding ? 'PRESS E — BOARD YOUR SHIP' : null);
+      let prompt = null;
+      if (!player.state.boarding) {
+        if (player.state.mode === 'ride') prompt = transit.dwelling() ? 'PRESS E — DISEMBARK' : null;
+        else if (player.state.mode === 'pilot') prompt = 'PRESS E — LAND / PARK';
+        else if (fx.canBoard(player.state.pos)) prompt = 'PRESS E — BOARD YOUR SHIP';
+        else if (transit.vehicleNear(player.state.pos)) prompt = 'PRESS E — TAKE THE VEHICLE';
+        else if (transit.boardableStation(player.state.pos)) prompt = 'PRESS E — BOARD THE LOOP';
+      }
+      hud.setPrompt(prompt);
     }
   }
 

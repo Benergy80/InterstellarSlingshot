@@ -25,7 +25,7 @@ const _q = new THREE.Quaternion(), _m = new THREE.Matrix4();
 const _ndc = new THREE.Vector2();
 const _ray = new THREE.Raycaster();
 
-export function createPlayer({ scene, camera, planet, hud, audio, fx }) {
+export function createPlayer({ scene, camera, planet, hud, audio, fx, transit }) {
   const rig = makeCaptain();
   scene.add(rig.group);
   // suit lamp — keeps the Captain readable through the deep night
@@ -60,6 +60,8 @@ export function createPlayer({ scene, camera, planet, hud, audio, fx }) {
     aimW: 0,
     capsPrecision: false,
     strafeDir: 0,
+    mode: 'walk',        // walk | ride (monorail) | pilot (vehicle)
+    vehicle: null,
   };
   {
     const up = state.pos.clone().normalize();
@@ -170,11 +172,140 @@ export function createPlayer({ scene, camera, planet, hud, audio, fx }) {
     audio.sfx('landSoft');
   }
   function interact() {
+    if (state.mode === 'ride') {
+      if (transit && transit.dwelling()) exitRide();
+      else hud.toast('IN TRANSIT', 'Disembark at the next station stop');
+      return;
+    }
+    if (state.mode === 'pilot') {
+      tryLandVehicle();
+      return;
+    }
     if (fx.canBoard(state.pos)) {
       state.boarding = true;
       state.fireHeld = false;
       fx.startLaunch(rig, state, camera);
+      return;
     }
+    if (transit) {
+      const v = transit.vehicleNear(state.pos);
+      if (v) { enterVehicle(v); return; }
+      const st = transit.boardableStation(state.pos);
+      if (st) {
+        state.mode = 'ride';
+        rig.play('idle', { fade: 0.2 });
+        hud.toast('BOARDED — ORBITAL LOOP', 'E to disembark at a station stop');
+        audio.sfx('doors');
+        return;
+      }
+    }
+  }
+
+  // ── monorail riding ──
+  function exitRide() {
+    state.mode = 'walk';
+    const st = transit.stations[(transit.train.nextIdx + transit.stations.length - 1) % transit.stations.length];
+    state.pos.copy(st.boardPos);
+    state.vel.set(0, 0, 0);
+    hud.toast('ARRIVED — ' + st.name, 'Mind the drop');
+    audio.sfx('chime');
+  }
+  function updateRide(dt) {
+    transit.carAnchor(state.pos);
+    _up.copy(state.pos).normalize();
+    transit.carForward(_fwd);
+    _fwd.addScaledVector(_up, -_fwd.dot(_up)).normalize();
+    state.heading.lerp(_fwd, 1 - Math.pow(0.001, dt)).normalize();
+    _right.crossVectors(state.heading, _up).negate().normalize();
+    _m.makeBasis(_right, _up, state.heading);
+    rig.group.position.copy(state.pos);
+    rig.group.quaternion.slerp(_q.setFromRotationMatrix(_m), 1 - Math.pow(0.001, dt));
+    rig.play('idle');
+  }
+
+  // ── pilotable vehicles (the NC AV rules: thrust where you look) ──
+  function enterVehicle(v) {
+    state.mode = 'pilot';
+    state.vehicle = v;
+    v.occupied = true;
+    rig.group.visible = false;
+    state.vel.set(0, 0, 0);
+    hud.toast(v.kind === 'av' ? 'AV ONLINE' : 'SPEEDER ONLINE',
+      v.kind === 'av' ? 'W thrust where you look, no gravity. E to land.' : 'W throttle — hugs the deck. E to park.');
+    audio.sfx('shieldUp');
+  }
+  function tryLandVehicle() {
+    const v = state.vehicle;
+    _up.copy(state.pos).normalize();
+    const gh = planet.groundHit(state.pos, 2.5, 12);
+    const height = gh ? state.pos.dot(_up) - gh.point.dot(_up) : 99;
+    if (state.vel.length() > 6 || height > 4) {
+      hud.toast('TOO FAST / TOO HIGH', 'Slow down near the deck to land');
+      return;
+    }
+    v.grp.position.copy(gh ? gh.point.clone().addScaledVector(_up, 0.7) : state.pos);
+    v.occupied = false;
+    state.mode = 'walk';
+    state.vehicle = null;
+    state.pos.copy(v.grp.position).addScaledVector(_up, 0.4).addScaledVector(_right, 2.0);
+    state.vel.set(0, 0, 0);
+    rig.group.visible = true;
+    hud.toast('PARKED', 'On foot');
+    audio.sfx('shieldDown');
+  }
+  function updatePilot(dt) {
+    const v = state.vehicle;
+    _up.copy(state.pos).normalize();
+    state.heading.addScaledVector(_up, -state.heading.dot(_up)).normalize();
+    _right.crossVectors(state.heading, _up).negate().normalize();
+    // look direction (heading pitched for AVs)
+    const flying = v.kind === 'av';
+    _fwd.copy(state.heading);
+    // NB: boom pitch and view pitch have opposite signs — negate so
+    // "camera looks up" means "thrust up" (this pinned AVs to the deck)
+    if (flying) _fwd.applyQuaternion(_q.setFromAxisAngle(_right, -state.camPitch)).normalize();
+    const thrust = keys.b ? 42 : 24;
+    if (keys.w) state.vel.addScaledVector(_fwd, thrust * dt);
+    if (keys.s) state.vel.addScaledVector(_fwd, -thrust * 0.6 * dt);
+    if (keys.a) state.vel.addScaledVector(_right, -thrust * 0.5 * dt);
+    if (keys.d) state.vel.addScaledVector(_right, thrust * 0.5 * dt);
+    state.vel.multiplyScalar(Math.max(0, 1 - (keys.x ? 3.2 : 0.9) * dt));
+    if (!flying) {
+      // speeder: glued near the deck
+      state.vel.addScaledVector(_up, -26 * dt);
+    }
+    // collision: probe along motion
+    const sp = state.vel.length();
+    if (sp > 0.5) {
+      _v2.copy(state.vel).normalize();
+      const hit = planet.probe(state.pos, _v2, sp * dt + 1.6);
+      if (hit && hit.distance < sp * dt + 1.4) {
+        const into = state.vel.dot(hit.face.normal);
+        if (into < 0) state.vel.addScaledVector(hit.face.normal, -into);
+      }
+    }
+    state.pos.addScaledVector(state.vel, dt);
+    // altitude clamp
+    const gh = planet.groundHit(state.pos, 3, 30);
+    if (gh) {
+      const h = state.pos.dot(_up) - gh.point.dot(_up);
+      const minH = flying ? 1.2 : 1.0;
+      if (h < minH) {
+        state.pos.copy(gh.point).addScaledVector(_up, minH);
+        const rv = state.vel.dot(_up);
+        if (rv < 0) state.vel.addScaledVector(_up, -rv);
+      }
+      if (!flying && h > 2.4) {   // speeder can't climb walls of air
+        state.pos.copy(gh.point).addScaledVector(_up, 2.4);
+      }
+    }
+    // vehicle mesh = the avatar
+    _m.makeBasis(_right, _up, state.heading);
+    v.grp.position.copy(state.pos);
+    const bank = clamp((keys.a ? 0.3 : 0) - (keys.d ? 0.3 : 0) + rotVel.yaw * 12, -0.5, 0.5);
+    _q.setFromRotationMatrix(_m).multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), bank));
+    v.grp.quaternion.slerp(_q, 1 - Math.pow(0.0001, dt));
+    v.grp.userData.engine.material.opacity = 0.6 + Math.min(0.4, sp * 0.02);
   }
 
   function damage(amount) {
@@ -267,6 +398,21 @@ export function createPlayer({ scene, camera, planet, hud, audio, fx }) {
       _right.crossVectors(state.heading, _up).negate().normalize();
     }
     state.camPitch = clamp(state.camPitch + rotVel.pitch * f60, -1.15, 1.25);
+
+    // ── transit modes take over movement entirely ──
+    if (state.mode === 'ride') {
+      wantJump = false;
+      updateRide(dt);
+      rig.update(dt);
+      updateCamera(dt, false);
+      return;
+    }
+    if (state.mode === 'pilot') {
+      wantJump = false;
+      updatePilot(dt);
+      updateCamera(dt, false);
+      return;
+    }
 
     // W-W jump request from the input handler
     if (wantJump) { wantJump = false; tryJump(); }

@@ -721,6 +721,36 @@ export function buildPlanet(scene, models = {}) {
     portInfo.dir = sphDir(a.lat, a.lon);
   }
 
+  // ════════════ ENTERABLE BUILDINGS — exteriors AND interiors ════════
+  // A hollow shell with a real doorway: floor, three walls, a split
+  // front wall with a lintel, roof — and furniture inside. The merged
+  // BVH makes the interior walkable for free.
+  function enterable(f, zoneKey) {
+    const w = 5.5 + rnd() * 2.5, d = 5.5 + rnd() * 2.5, h = 3.6 + rnd() * 1.6;
+    const th = 0.35, doorW = 1.7, doorH = 2.7;
+    const hues = {
+      market: [0x3b2a6e, 0x274b8a, 0x6e2a5c], circuit: [0x22103e, 0x2a0f30],
+      downtown: [0x201646, 0x261a52], ruins: [0x2a2248, 0x241c3e],
+    }[zoneKey] ?? [0x3b2a6e];
+    const hue = pick(rnd, hues);
+    addSolid(T(box(w, 0.3, d), 0, 0.15, 0), f.clone(), 0x1a1436);                       // floor
+    addSolid(T(box(w, h, th), 0, h / 2, -d / 2 + th / 2), f.clone(), hue, { jitter: 0.1 }); // back
+    addSolid(T(box(th, h, d), -w / 2 + th / 2, h / 2, 0), f.clone(), hue, { jitter: 0.1 }); // left
+    addSolid(T(box(th, h, d), w / 2 - th / 2, h / 2, 0), f.clone(), hue, { jitter: 0.1 });  // right
+    const seg = (w - doorW) / 2;
+    addSolid(T(box(seg, h, th), -(doorW + seg) / 2, h / 2, d / 2 - th / 2), f.clone(), hue, { jitter: 0.1 });
+    addSolid(T(box(seg, h, th), (doorW + seg) / 2, h / 2, d / 2 - th / 2), f.clone(), hue, { jitter: 0.1 });
+    addSolid(T(box(doorW + 0.2, h - doorH, th), 0, doorH + (h - doorH) / 2, d / 2 - th / 2), f.clone(), hue); // lintel
+    addSolid(T(box(w + 0.3, 0.3, d + 0.3), 0, h + 0.15, 0), f.clone(), hue, { jitter: 0.08 }); // roof
+    // door glow + interior dressing
+    addGlow(T(box(doorW + 0.3, 0.1, 0.12), 0, doorH + 0.1, d / 2 + 0.02), f.clone(), pick(rnd, NEON_LIST), 1.2);
+    addGlow(T(box(w * 0.5, 0.08, 0.4), 0, h - 0.12, 0), f.clone(), pick(rnd, [NEON.cyan, NEON.amber, NEON.pink]), 0.9); // ceiling strip
+    addSolid(T(box(w * 0.5, 0.9, 0.8), 0, 0.75, -d / 2 + 1.0), f.clone(), 0x241a4e);     // counter
+    addSolid(T(box(0.8, 0.7, 0.8), -w / 2 + 1.0, 0.65, 0.4, rnd()), f.clone(), 0x30265c); // crate
+    addSolid(T(box(0.6, 0.5, 0.6), w / 2 - 1.1, 0.55, -0.6, rnd()), f.clone(), 0x2a3a6e); // crate
+    return h;
+  }
+
   // ════════════ VENICE WARRENS — enclosed winding district streets ════
   // A recursive-backtracker maze per district: the WALLS are buildings,
   // so every district is a warren of narrow enclosed alleys that guide
@@ -896,6 +926,18 @@ export function buildPlanet(scene, models = {}) {
       const f = frameAtDir(jd, rnd() * 360, 0.6);
       const nearStreet = streetDist < 6.5;
       let hgt = 0;
+      // some street-adjacent buildings are ENTERABLE (door + interior),
+      // door turned to face the street so you can actually find it
+      if (nearStreet && rnd() < 0.12 && ['market', 'circuit', 'downtown', 'ruins'].includes(zone.key)) {
+        let nearest = pathSamples[0], nd = 1e9;
+        for (const ps of pathSamples) { const dd = jd.distanceToSquared(ps); if (dd < nd) { nd = dd; nearest = ps; } }
+        const { up: eu, east: ee, north: en } = tangentFrame(jd);
+        const toward = surfacePoint(nearest, new THREE.Vector3()).sub(surfacePoint(jd, new THREE.Vector3()));
+        toward.addScaledVector(eu, -toward.dot(eu)).normalize();
+        const yawDeg = Math.atan2(toward.dot(ee), toward.dot(en)) * 57.29578;
+        enterable(frameAtDir(jd, yawDeg, 0.6), zone.key);
+        continue;
+      }
       switch (zone.key) {
         case 'market': case 'crash':
           hgt = shanty(f, 2.4 + rnd() * 1.4, 2 + (rnd() * 2 | 0));
@@ -1039,6 +1081,28 @@ export function buildPlanet(scene, models = {}) {
   const collMesh = new THREE.Mesh(collGeo, new THREE.MeshBasicMaterial({ visible: false }));
   collMesh.raycast = acceleratedRaycast;
   scene.add(collMesh);
+  const collMeshes = [collMesh];
+
+  // late structures (monorail stations etc.) get their own BVH mesh
+  function addColliders(group) {
+    group.updateMatrixWorld(true);
+    const geos = [];
+    group.traverse(o => {
+      if (!o.isMesh) return;
+      const g = (o.geometry.index ? o.geometry.toNonIndexed() : o.geometry.clone());
+      g.applyMatrix4(o.matrixWorld);
+      const out = new THREE.BufferGeometry();
+      out.setAttribute('position', g.attributes.position);
+      geos.push(out);
+    });
+    if (!geos.length) return;
+    const merged = BufferGeometryUtils.mergeGeometries(geos, false);
+    merged.boundsTree = new MeshBVH(merged);
+    const m = new THREE.Mesh(merged, new THREE.MeshBasicMaterial({ visible: false }));
+    m.raycast = acceleratedRaycast;
+    scene.add(m);
+    collMeshes.push(m);
+  }
 
   const ray = new THREE.Raycaster();
   ray.firstHitOnly = true;
@@ -1051,7 +1115,7 @@ export function buildPlanet(scene, models = {}) {
     _origin.copy(pos).addScaledVector(up, castUp);
     ray.set(_origin, up.clone().negate());
     ray.far = castUp + maxDown;
-    const hit = ray.intersectObject(collMesh, false)[0];
+    const hit = ray.intersectObjects(collMeshes, false)[0];
     if (!hit) return null;
     return { point: hit.point, normal: hit.face.normal.clone(), dist: hit.distance - castUp };
   }
@@ -1059,7 +1123,7 @@ export function buildPlanet(scene, models = {}) {
   function probe(pos, dir, far) {
     ray.set(pos, dir);
     ray.far = far;
-    return ray.intersectObject(collMesh, false)[0] || null;
+    return ray.intersectObjects(collMeshes, false)[0] || null;
   }
 
   function districtAt(pos) {
@@ -1073,7 +1137,7 @@ export function buildPlanet(scene, models = {}) {
   }
 
   return {
-    group, uTime, collMesh, groundHit, probe,
+    group, uTime, collMesh, groundHit, probe, addColliders,
     districts: districtDirs, districtAt,
     pyramidInfo, portInfo,
     pathSamples,
