@@ -498,6 +498,8 @@ export function buildPlanet(scene, models = {}) {
       T(g, 0, h + 0.3, 0);
       addGlow(g, frame.clone(), glowHex, 1.25);
     }
+    // towers get the future-deco treatment too (bands, fins, halos)
+    if (typeof futureDeco === 'function') futureDeco(frame, w, h, d, { rich: 0.55 });
     // rooftop clutter (NC landmarks: water towers + AC units) — makes
     // rooftop runs and AV overflights pay off
     if (h > 6 && rnd() < 0.35) {   // water tower
@@ -1126,6 +1128,71 @@ export function buildPlanet(scene, models = {}) {
   // so every district is a warren of narrow enclosed alleys that guide
   // you like Venice — with sottoporteghi (passages UNDER buildings) and
   // a small campo (plaza) at the heart.
+  // ════════════ FUTURE DECO ════════════
+  // Afrofuturist dressing for plain block buildings: window matrices,
+  // gold trim bands, vertical fin ribs, chevron sigils, halo rings and
+  // crown fins. Everything merges into the existing solid/glow streams
+  // (deco never colliders — the box beneath already blocks).
+  function futureDeco(f, w, h, d, { rich = 1 } = {}) {
+    if (h < 2.4) return;
+    const DECO_GOLD = 0xc9a227, DECO_BRONZE = 0x7a5c1e;   // in-function: tower() calls before the outer consts would initialize
+    // art goes on the broad face; its normal axis depends on the box
+    const onX = d > w;                       // warren walls are thin in x
+    const fw = onX ? d : w;                  // width along the face
+    const off = (onX ? w : d) / 2 + 0.05;    // proud of the wall
+    const P = (u, y, s = 1) => onX ? [off * s, y, u] : [u, y, off * s];
+    // 1) window matrix — future panes, some dark
+    if (rnd() < 0.5 * rich) {
+      const rows = Math.min(4, Math.max(2, Math.floor(h / 2.1)));
+      const cols = Math.min(4, Math.max(2, Math.floor(fw / 1.5)));
+      const winHex = pick(rnd, [0xfff2cc, 0x9adfff, 0x00f6ff, 0xffd27a]);
+      const side = rnd() < 0.5 ? 1 : -1;
+      for (let r2 = 0; r2 < rows; r2++) for (let c2 = 0; c2 < cols; c2++) {
+        if (rnd() < 0.32) continue;
+        const u = (c2 + 0.5) / cols * (fw - 0.6) - (fw - 0.6) / 2;
+        const y = 1.1 + (r2 + 0.5) * (h - 1.8) / rows;
+        const g = onX ? box(0.07, 0.52, 0.36) : box(0.36, 0.52, 0.07);
+        addGlow(T(g, ...P(u, y, side)), f.clone(), winHex, 0.8);
+      }
+    }
+    // 2) gold trim band wrapping the crown line
+    if (rnd() < 0.42 * rich) {
+      addSolid(T(box(w + 0.14, 0.2, d + 0.14), 0, h * (0.68 + rnd() * 0.2), 0),
+        f.clone(), rnd() < 0.7 ? DECO_GOLD : DECO_BRONZE, { collide: false });
+    }
+    // 3) vertical fin ribs
+    if (rnd() < 0.34 * rich) {
+      const nR = 2 + (rnd() * 2 | 0);
+      const side = rnd() < 0.5 ? 1 : -1;
+      for (let k = 0; k < nR; k++) {
+        const u = (k + 1) / (nR + 1) * fw - fw / 2;
+        const g = onX ? box(0.16, h * 0.78, 0.14) : box(0.14, h * 0.78, 0.16);
+        addSolid(T(g, ...P(u, h * 0.42, side)), f.clone(),
+          rnd() < 0.6 ? DECO_GOLD : 0x2c2452, { collide: false });
+      }
+    }
+    // 4) chevron sigil — the triangular motif
+    if (rnd() < 0.24 * rich) {
+      const y = h * (0.45 + rnd() * 0.3);
+      const hex = pick(rnd, [DECO_GOLD, 0xff7a1a, 0x00f6ff, 0xff2fd6]);
+      const side = rnd() < 0.5 ? 1 : -1;
+      addGlow(T(onX ? box(0.08, 0.7, 0.14) : box(0.14, 0.7, 0.08), ...P(-0.28, y, side), 0, 0, 0.55), f.clone(), hex, 0.95);
+      addGlow(T(onX ? box(0.08, 0.7, 0.14) : box(0.14, 0.7, 0.08), ...P(0.28, y, side), 0, 0, -0.55), f.clone(), hex, 0.95);
+      addGlow(T(onX ? box(0.08, 0.3, 0.3) : box(0.3, 0.3, 0.08), ...P(0, y + 0.75, side)), f.clone(), hex, 1.05);
+    }
+    // 5) rooftop feature: halo ring on a mast, or a crown fin
+    if (rnd() < 0.3 * rich) {
+      if (rnd() < 0.55) {
+        addSolid(T(box(0.12, 1.1, 0.12), 0, h + 0.55, 0), f.clone(), 0x241e46, { collide: false });
+        const halo = new THREE.TorusGeometry(Math.min(w, d) * 0.32 + 0.3, 0.07, 5, 14);
+        addSolid(T(halo, 0, h + 1.35, 0, 0, Math.PI / 2), f.clone(), DECO_GOLD, { collide: false });
+      } else {
+        addSolid(T(box(Math.min(w, 1.6), 1.6, 0.16), 0, h + 0.7, 0, 0, 0, 0.18), f.clone(),
+          rnd() < 0.5 ? DECO_GOLD : 0x2c2452, { collide: false });
+      }
+    }
+  }
+
   function warren(anchor, cellsN, cellSize, style) {
     const { east, north } = tangentFrame(anchor.dir);
     const base = anchor.dir.clone().multiplyScalar(R);
@@ -1186,6 +1253,7 @@ export function buildPlanet(scene, models = {}) {
         if (rnd() < 0.25) {   // rooftop shack — the upper layer
           addSolid(T(box(st.th * 0.8, 1.8, len * 0.4), 0, h + 0.9, (rnd() - 0.5) * len * 0.4), f.clone(), pick(rnd, st.hues), { jitter: 0.14 });
         }
+        futureDeco(f, st.th, h, len, { rich: 0.8 });
       }
     }
     for (let x = 0; x <= cN; x++) for (let y = 0; y < cN; y++) {
@@ -1379,6 +1447,7 @@ export function buildPlanet(scene, models = {}) {
           addSolid(T(box(w, hgt, d2), 0, hgt / 2, 0), f.clone(), pick(rnd, [0x180f36, 0x22103e, 0x2a0f30]), { jitter: 0.1 });
           if (rnd() < 0.85) addGlow(T(box(w * 0.8, 0.2, 0.1), 0, hgt * (0.4 + rnd() * 0.5), d2 / 2 + 0.08), f.clone(), pick(rnd, [NEON.magenta, NEON.pink, NEON.red, NEON.purple]), 1.15);
           if (rnd() < 0.4) addGlow(T(box(0.18, hgt * 0.7, 0.1), w / 2 + 0.1, hgt * 0.5, 0), f.clone(), pick(rnd, NEON_LIST), 1.1);
+          futureDeco(f, w, hgt, d2);
           break;
         }
         case 'downtown': {
@@ -1408,12 +1477,14 @@ export function buildPlanet(scene, models = {}) {
           hgt = 3 + rnd() * 6;
           addSolid(T(box(w * 0.8, hgt, d2 * 0.8), 0, hgt / 2, 0, rnd() * 0.4), f.clone(), pick(rnd, [0x0f0d20, 0x161226, 0x1a1030]), { jitter: 0.06 });
           if (rnd() < 0.3) addGlow(T(box(0.3, 0.3, 0.3), 0, hgt + 0.2, 0), f.clone(), NEON.red, 1.1);
+          futureDeco(f, w * 0.8, hgt, d2 * 0.8, { rich: 0.7 });
           break;
         }
         case 'port': {
           hgt = 2 + rnd() * 3;
           addSolid(T(box(1 + rnd() * 1.6, hgt, 1 + rnd() * 1.6), 0, hgt / 2, 0, rnd()), f.clone(),
             pick(rnd, [0x30265c, 0x2a3a6e, 0x3a2c5e]), { jitter: 0.1 });
+          if (rnd() < 0.5) futureDeco(f, 1.8, hgt, 1.8, { rich: 0.6 });
           break;
         }
       }
