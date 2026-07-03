@@ -68,8 +68,11 @@ const PATHS = [
 const _v = new THREE.Vector3();
 const districtDirs = DISTRICTS.map(d => ({ ...d, dir: sphDir(d.lat, d.lon) }));
 
-// path corridor samples for terrain flattening
+// Path chains with SERPENTINE wobble — streets wind like Venice
+// alleys, wrapping around terrain features instead of ruling lines.
+// Both terrain flattening and ribbon rendering share these chains.
 const pathSamples = [];
+const pathChains = [];
 function latLonOf(entry) {
   if (Array.isArray(entry)) return entry;
   const d = DISTRICTS.find(x => x.key === entry);
@@ -77,13 +80,24 @@ function latLonOf(entry) {
 }
 for (const chain of PATHS) {
   const pts = chain.filter(Boolean).map(latLonOf);
+  const dirs = [];
   for (let i = 0; i < pts.length - 1; i++) {
     const a = sphDir(pts[i][0], pts[i][1]), b = sphDir(pts[i + 1][0], pts[i + 1][1]);
-    const n = 14;
-    for (let k = 0; k <= n; k++) {
-      pathSamples.push(new THREE.Vector3().lerpVectors(a, b, k / n).normalize());
+    const axis = new THREE.Vector3().crossVectors(a, b).normalize();
+    const n = 22;
+    for (let k = 0; k < n; k++) {
+      const t = k / n;
+      const p = new THREE.Vector3().lerpVectors(a, b, t).normalize();
+      const perp = new THREE.Vector3().crossVectors(p, axis).normalize();
+      // two bends per leg, ±~2.5u — enough to hide what's next
+      const wob = Math.sin(t * Math.PI * 2 + i * 1.7) * 0.042;
+      p.addScaledVector(perp, wob).normalize();
+      dirs.push(p);
     }
   }
+  dirs.push(sphDir(pts[pts.length - 1][0], pts[pts.length - 1][1]));
+  pathChains.push(dirs);
+  for (const p of dirs) pathSamples.push(p);
 }
 
 const LAKE_DIR = sphDir(20, 133);   // between the Circuit and downtown
@@ -93,7 +107,7 @@ export function terrainHeight(dir) {
   let amp = C.TERRAIN_AMP;
   const n = fbm3(_v.copy(dir).multiplyScalar(2.35), 4) * 2 - 1;
   const ridge = Math.pow(Math.abs(fbm3(_v.copy(dir).multiplyScalar(1.2), 3) * 2 - 1), 1.4) * 1.6;
-  let h = (n * 0.7 + ridge * 0.55) * amp;
+  let h = (n * 0.55 + ridge * 0.9) * amp;
 
   // flatten inside districts (smooth falloff from pad edge)
   let damp = 1;
@@ -256,16 +270,8 @@ export function buildPlanet(scene, models = {}) {
   }
 
   const pathEdgeColors = [NEON.cyan, NEON.magenta, NEON.amber, NEON.lime, NEON.pink, NEON.purple, NEON.orange, NEON.blue, NEON.cyan, NEON.magenta, NEON.amber];
-  PATHS.forEach((chain, ci) => {
-    const pts = chain.filter(Boolean).map(latLonOf);
-    const dirs = [];
-    for (let i = 0; i < pts.length - 1; i++) {
-      const a = sphDir(pts[i][0], pts[i][1]), b = sphDir(pts[i + 1][0], pts[i + 1][1]);
-      const n = 16;
-      for (let k = 0; k < n; k++) dirs.push(new THREE.Vector3().lerpVectors(a, b, k / n).normalize());
-    }
-    dirs.push(sphDir(pts[pts.length - 1][0], pts[pts.length - 1][1]));
-    ribbon(dirs, 3.4, pathEdgeColors[ci % pathEdgeColors.length]);
+  pathChains.forEach((dirs, ci) => {
+    ribbon(dirs, 3.2, pathEdgeColors[ci % pathEdgeColors.length]);
   });
 
   // ════════════ SIGNAGE ════════════
@@ -414,7 +420,7 @@ export function buildPlanet(scene, models = {}) {
   {
     const anchor = DISTRICTS[1];
     const roofTops = [];
-    for (let i = 0; i < 26; i++) {
+    for (let i = 0; i < 12; i++) {
       const a = rnd() * Math.PI * 2, dist = 4 + rnd() * 13;
       const lat = anchor.lat + Math.cos(a) * dist / R * 57.3;
       const lon = anchor.lon + Math.sin(a) * dist / R * 57.3 / Math.cos(anchor.lat * 0.0174);
@@ -713,6 +719,148 @@ export function buildPlanet(scene, models = {}) {
     portInfo.padCenter = new THREE.Vector3(0, 1.0, 0).applyMatrix4(f.clone());
     portInfo.shipFrame = f.clone();
     portInfo.dir = sphDir(a.lat, a.lon);
+  }
+
+  // ════════════ VENICE WARRENS — enclosed winding district streets ════
+  // A recursive-backtracker maze per district: the WALLS are buildings,
+  // so every district is a warren of narrow enclosed alleys that guide
+  // you like Venice — with sottoporteghi (passages UNDER buildings) and
+  // a small campo (plaza) at the heart.
+  function warren(anchor, cellsN, cellSize, style) {
+    const { east, north } = tangentFrame(anchor.dir);
+    const base = anchor.dir.clone().multiplyScalar(R);
+    const dirAt = (lx, lz) => _v.copy(base).addScaledVector(east, lx).addScaledVector(north, lz).clone().normalize();
+    const cN = cellsN;
+    const visited = Array.from({ length: cN }, () => Array(cN).fill(false));
+    const wallsV = Array.from({ length: cN + 1 }, () => Array(cN).fill(true));
+    const wallsH = Array.from({ length: cN }, () => Array(cN + 1).fill(true));
+    const c0 = cN >> 1;
+    const stack = [[c0, c0]];
+    visited[c0][c0] = true;
+    while (stack.length) {
+      const [cx, cy] = stack[stack.length - 1];
+      const nbrs = [];
+      if (cx > 0 && !visited[cx - 1][cy]) nbrs.push([cx - 1, cy, 'V', cx, cy]);
+      if (cx < cN - 1 && !visited[cx + 1][cy]) nbrs.push([cx + 1, cy, 'V', cx + 1, cy]);
+      if (cy > 0 && !visited[cx][cy - 1]) nbrs.push([cx, cy - 1, 'H', cx, cy]);
+      if (cy < cN - 1 && !visited[cx][cy + 1]) nbrs.push([cx, cy + 1, 'H', cx, cy + 1]);
+      if (!nbrs.length) { stack.pop(); continue; }
+      const [nx, ny, o, wx, wy] = nbrs[(rnd() * nbrs.length) | 0];
+      if (o === 'V') wallsV[wx][wy] = false; else wallsH[wx][wy] = false;
+      visited[nx][ny] = true;
+      stack.push([nx, ny]);
+    }
+    // extra openings → loops, not a strict tree (mazes need mercy)
+    for (let x = 1; x < cN; x++) for (let y = 0; y < cN; y++) if (rnd() < 0.14) wallsV[x][y] = false;
+    for (let x = 0; x < cN; x++) for (let y = 1; y < cN; y++) if (rnd() < 0.14) wallsH[x][y] = false;
+    // campo: clear the centre cell's walls
+    wallsV[c0][c0] = wallsV[c0 + 1][c0] = false;
+    wallsH[c0][c0] = wallsH[c0][c0 + 1] = false;
+
+    const half = cN * cellSize / 2;
+    const styles = {
+      market: { hues: [0x3b2a6e, 0x274b8a, 0x6e2a5c, 0x2a6e62], hMin: 3.2, hMax: 6.4, th: 2.0, glowP: 0.75 },
+      circuit: { hues: [0x180f36, 0x22103e, 0x2a0f30], hMin: 4.2, hMax: 8.0, th: 2.2, glowP: 0.95 },
+      downtown: { hues: [0x201646, 0x1a1240, 0x261a52], hMin: 6.0, hMax: 12.0, th: 2.4, glowP: 0.8 },
+    };
+    const st = styles[style] ?? styles.market;
+    function wallBuilding(lx, lz, alongNorth) {
+      const r2 = Math.hypot(lx, lz);
+      if (r2 > anchor.pad - 1.5) return;                 // stay on the pad
+      const dirW = dirAt(lx, lz);
+      const f = surfaceMatrix(dirW, terrainHeight(dirW) - 0.4, alongNorth ? 0 : 90);
+      const h = st.hMin + rnd() * (st.hMax - st.hMin);
+      const len = cellSize + 0.5;
+      if (rnd() < 0.16) {
+        // sottoportego — the alley passes UNDER this building
+        addSolid(T(box(st.th, 2.7, 1.1), 0, 1.35, -len / 2 + 0.6), f.clone(), pick(rnd, st.hues), { jitter: 0.1 });
+        addSolid(T(box(st.th, 2.7, 1.1), 0, 1.35, len / 2 - 0.6), f.clone(), pick(rnd, st.hues), { jitter: 0.1 });
+        addSolid(T(box(st.th, h - 2.7, len), 0, 2.7 + (h - 2.7) / 2, 0), f.clone(), pick(rnd, st.hues), { jitter: 0.1 });
+        addGlow(T(box(st.th * 0.5, 0.1, len * 0.8), 0, 2.6, 0), f.clone(), pick(rnd, NEON_LIST), 1.1);
+      } else {
+        addSolid(T(box(st.th, h, len), 0, h / 2, 0), f.clone(), pick(rnd, st.hues), { jitter: 0.12 });
+        if (rnd() < st.glowP) {
+          addGlow(T(box(st.th + 0.08, 0.28, len * (0.4 + rnd() * 0.5)), 0, 1.6 + rnd() * (h - 2.4), 0),
+            f.clone(), pick(rnd, NEON_LIST), 1.1);
+        }
+        if (rnd() < 0.25) {   // rooftop shack — the upper layer
+          addSolid(T(box(st.th * 0.8, 1.8, len * 0.4), 0, h + 0.9, (rnd() - 0.5) * len * 0.4), f.clone(), pick(rnd, st.hues), { jitter: 0.14 });
+        }
+      }
+    }
+    for (let x = 0; x <= cN; x++) for (let y = 0; y < cN; y++) {
+      if (!wallsV[x][y]) continue;
+      wallBuilding((x - cN / 2) * cellSize, (y + 0.5 - cN / 2) * cellSize, true);
+    }
+    for (let x = 0; x < cN; x++) for (let y = 0; y <= cN; y++) {
+      if (!wallsH[x][y]) continue;
+      wallBuilding((x + 0.5 - cN / 2) * cellSize, (y - cN / 2) * cellSize, false);
+    }
+  }
+  warren(districtDirs[1], 5, 6.0, 'market');
+  warren(districtDirs[2], 5, 5.6, 'circuit');
+  warren(districtDirs[3], 5, 6.6, 'downtown');
+
+  // ════════════ ARCHED BRIDGES — climb up, over and around ════════════
+  function archBridge(dirs, idx) {
+    const p = dirs[idx];
+    const prev = dirs[Math.max(0, idx - 1)], next = dirs[Math.min(dirs.length - 1, idx + 1)];
+    const up = p.clone().normalize();
+    const tang = surfacePoint(next, new THREE.Vector3()).sub(surfacePoint(prev, new THREE.Vector3())).normalize();
+    const perp = new THREE.Vector3().crossVectors(up, tang).normalize();
+    const realTang = new THREE.Vector3().crossVectors(perp, up).normalize();
+    const deckH = 3.4;
+    const m = new THREE.Matrix4().makeBasis(perp, up, realTang)
+      .setPosition(surfacePoint(p, new THREE.Vector3()).addScaledVector(up, deckH));
+    // deck spanning the street + glow rails
+    addSolid(T(box(8.2, 0.35, 2.0), 0, 0, 0), m.clone(), 0x2c2152, { jitter: 0.06 });
+    addGlowViaMatrix(T(box(8.2, 0.08, 0.08), 0, 0.42, 0.95), m.clone(), NEON.cyan, 1.0);
+    addGlowViaMatrix(T(box(8.2, 0.08, 0.08), 0, 0.42, -0.95), m.clone(), NEON.magenta, 1.0);
+    // ramps down both ends
+    for (const sx of [-1, 1]) {
+      const ramp = box(4.9, 0.3, 2.0);
+      T(ramp, sx * (4.1 + 2.05), -deckH / 2 + 0.75, 0, 0, 0, sx * -0.62);
+      addSolid(ramp, m.clone(), 0x2c2152, { jitter: 0.06 });
+    }
+  }
+  pathChains.forEach((dirs, ci) => {
+    for (let k = 28; k < dirs.length - 10; k += 34) {
+      // skip bridges inside district pads (the warrens own those streets)
+      let inPad = false;
+      for (const d of districtDirs) if (dirs[k].angleTo(d.dir) * R < d.pad) { inPad = true; break; }
+      if (!inPad) archBridge(dirs, k + ((ci * 7) % 9));
+    }
+  });
+
+  // ════════════ SWITCHBACK CLIMBS onto tall features ════════════
+  {
+    let built = 0;
+    for (let k = 15; k < pathSamples.length && built < 10; k += 23) {
+      const p = pathSamples[k];
+      const up = p.clone().normalize();
+      const { east, north } = tangentFrame(p);
+      for (const side of [east, north, east.clone().negate(), north.clone().negate()]) {
+        const off = p.clone().multiplyScalar(R).addScaledVector(side, 7).normalize();
+        const rise = terrainHeight(off) - terrainHeight(p);
+        if (rise > 5 && rise < 14) {
+          // stairs from the street shoulder up the flank + a viewing ledge
+          const m = new THREE.Matrix4().makeBasis(
+            new THREE.Vector3().crossVectors(up, side).normalize(), up.clone(), side.clone())
+            .setPosition(surfacePoint(p, new THREE.Vector3()).addScaledVector(side, 2.2));
+          for (let s2 = 0; s2 < 12; s2++) {
+            const g = box(2.4, 0.5, 0.9);
+            T(g, 0, (s2 + 0.5) * rise * 0.8 / 12, 2 + s2 * 0.45);
+            addSolid(g, m.clone(), 0x342a5e, { jitter: 0.06 });
+          }
+          const ledge = box(3.4, 0.4, 3.0);
+          T(ledge, 0, rise * 0.8 + 0.1, 2 + 12 * 0.45 + 1.2);
+          addSolid(ledge, m.clone(), 0x342a5e);
+          addGlowViaMatrix(T(box(3.4, 0.08, 0.08), 0, rise * 0.8 + 0.55, 2 + 12 * 0.45 + 2.6), m.clone(), NEON.amber, 1.1);
+          built++;
+          break;
+        }
+      }
+    }
   }
 
   // ════════════ WILDERNESS FILL — the WHOLE planet is built ════════════

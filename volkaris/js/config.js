@@ -17,7 +17,7 @@ export const C = {
   // ── Planet ──
   R: 60,                // planet radius (u) — Messenger-small: the
                         // horizon is ~14u away, a street corner ahead
-  TERRAIN_AMP: 6,       // mountain/canyon displacement amplitude
+  TERRAIN_AMP: 11,      // TALL features — streets thread canyons between them
   TERRAIN_DETAIL: 96,   // sphere segments (96×96 lat-lon grid)
 
   // ── Atmosphere / camera ──
@@ -40,7 +40,19 @@ export const C = {
     height: 1.8,
     gravity: 30,         // u/s² toward planet center
     walk: 6.2,
-    sprint: 11.5,
+    boost: 12.5,         // B sprint (NC scheme)
+    boostDrain: 14,      // energy/s while boosting
+    brakeDamping: 26.0,  // X hard brake
+    doubleTapMs: 300,    // W-W jump window (game-controls.js)
+    strafeBank: 0.10,    // A/D lean, echoes the ship's banking
+    // Arrow-key look — EXACT values from game-physics.js rotationalInertia
+    rot: {
+      accel: 0.0030,
+      maxSpeed: 0.022,
+      precAccel: 0.0020,     // CapsLock precision
+      precMaxSpeed: 0.015,
+      decel: 0.93,           // per-frame decay (60 fps reference)
+    },
     accel: 46,
     airAccel: 14,
     damping: 11,

@@ -150,9 +150,9 @@ export function createFX(scene, camera, planet, audio, models = {}) {
       if (Math.random() < 0.5) burst(_v.copy(shipGroup.position).addScaledVector(up, -2), 3, 3);
 
       // camera: ground-side hero shot, tracking the ascent
-      const camBase = _v.copy(planet.portInfo.padCenter).addScaledVector(up, 2.2);
+      const camBase = _v.copy(planet.portInfo.padCenter).addScaledVector(up, 9.0);
       _v2.copy(shipGroup.position).sub(camBase).normalize();
-      camera.position.lerp(_v.copy(camBase).addScaledVector(_v2, -6).addScaledVector(up, 3), 1 - Math.pow(0.001, dt));
+      camera.position.lerp(_v.copy(camBase).addScaledVector(_v2, -13).addScaledVector(up, 7), 1 - Math.pow(0.001, dt));
       camera.up.copy(up);
       camera.lookAt(shipGroup.position);
 
@@ -169,7 +169,7 @@ export function createFX(scene, camera, planet, audio, models = {}) {
       camera.position.copy(shipHome)
         .addScaledVector(east, Math.cos(a) * 10)
         .addScaledVector(north, Math.sin(a) * 10)
-        .addScaledVector(up, 2.6);
+        .addScaledVector(up, 5.5);
       camera.up.copy(up);
       camera.lookAt(shipHome);
     }

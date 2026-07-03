@@ -48,6 +48,10 @@ export function createHUD() {
       el.win.classList.remove('hidden');
       el.hud.classList.add('hidden');
     },
+    setCrosshair(x, y) {
+      el.crosshair.style.left = x + 'px';
+      el.crosshair.style.top = y + 'px';
+    },
     setPrompt(text) {
       el.prompt.textContent = text ?? '';
       el.prompt.classList.toggle('hidden', !text);
