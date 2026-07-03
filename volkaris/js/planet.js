@@ -383,9 +383,13 @@ export function buildPlanet(scene, models = {}) {
   }
 
   // ════════════ BUILDING KIT ════════════
+  // Every tower is recorded so the detail layer (billboards, strobes,
+  // searchlights, megaboards) can dress the skyline after the fact.
+  const towerSpots = [];
   // A window-striped tower block: solid body + glow strips
   function tower(frame, w, h, d, bodyHex, glowHex, { strips = true, cap = true } = {}) {
     addSolid(T(box(w, h, d), 0, h / 2, 0), frame.clone(), bodyHex, { jitter: 0.06 });
+    towerSpots.push({ frame: frame.clone(), w, h, d });
     if (strips) {
       const rows = Math.max(2, Math.floor(h / 3.2));
       for (let r = 0; r < rows; r++) {
@@ -400,6 +404,25 @@ export function buildPlanet(scene, models = {}) {
       const g = box(w * 0.5, 0.6, d * 0.5);
       T(g, 0, h + 0.3, 0);
       addGlow(g, frame.clone(), glowHex, 1.25);
+    }
+    // rooftop clutter (NC landmarks: water towers + AC units) — makes
+    // rooftop runs and AV overflights pay off
+    if (h > 6 && rnd() < 0.35) {   // water tower
+      const ox = (rnd() - 0.5) * w * 0.4, oz = (rnd() - 0.5) * d * 0.4;
+      const tank = new THREE.CylinderGeometry(0.7, 0.7, 1.3, 7);
+      addSolid(T(tank, ox, h + 1.55, oz), frame.clone(), 0x3a3060, { collide: false });
+      const cone2 = new THREE.ConeGeometry(0.75, 0.5, 7);
+      addSolid(T(cone2, ox, h + 2.45, oz), frame.clone(), 0x2a2450, { collide: false });
+      for (let l = 0; l < 3; l++) {
+        const a2 = l / 3 * Math.PI * 2;
+        addSolid(T(box(0.09, 0.95, 0.09), ox + Math.cos(a2) * 0.5, h + 0.48, oz + Math.sin(a2) * 0.5),
+          frame.clone(), 0x241e46, { collide: false });
+      }
+    } else if (h > 4 && rnd() < 0.4) {   // AC unit + fan ring
+      const ox = (rnd() - 0.5) * w * 0.45, oz = (rnd() - 0.5) * d * 0.45;
+      addSolid(T(box(1.1, 0.7, 0.9), ox, h + 0.35, oz), frame.clone(), 0x39325e, { collide: false });
+      const fan = new THREE.CylinderGeometry(0.32, 0.32, 0.12, 8);
+      addSolid(T(fan, ox, h + 0.76, oz), frame.clone(), 0x1c1838, { collide: false });
     }
   }
 
@@ -1277,7 +1300,7 @@ export function buildPlanet(scene, models = {}) {
     group, uTime, collMesh, groundHit, probe, addColliders,
     districts: districtDirs, districtAt,
     pyramidInfo, portInfo,
-    pathSamples,
+    pathSamples, towerSpots,
     terrainHeight, surfacePoint,
     dynamic,
     update(dt, t) { for (const d of dynamic) d.update(dt, t); },
