@@ -87,6 +87,7 @@ export function createPlayer({ scene, camera, planet, hud, audio, fx, transit, m
     camDist: 4.2,
     fireHeld: false,
     aimW: 0,
+    melee: { kind: null, t: 0, hitDone: false, side: 0, cool: 0 },
     capsPrecision: false,
     strafeDir: 0,
     mode: 'walk',        // walk | ride (monorail) | pilot (vehicle)
@@ -139,6 +140,8 @@ export function createPlayer({ scene, camera, planet, hud, audio, fx, transit, m
     if (k === 'v') { state.camDist = state.camDist > 6.5 ? 4.2 : 8.5; hud.toast('CAMERA', state.camDist > 6.5 ? 'Wide' : 'Close'); }
     if (k === 'e' || e.key === 'Enter') { e.preventDefault(); interact(); }
     if (e.key === ' ') { e.preventDefault(); if (!e.repeat) { wantJump = true; audio.resume(); } }
+    // LEFT Shift = punch, RIGHT Shift = kick (e.location: 1=left, 2=right)
+    if (e.key === 'Shift' && !e.repeat) { e.preventDefault(); tryMelee(e.location === 2 ? 'kick' : 'punch'); }
     if (e.key === 'ArrowUp') { keys.up = true; e.preventDefault(); }
     if (e.key === 'ArrowDown') { keys.down = true; e.preventDefault(); }
     if (e.key === 'ArrowLeft') { keys.left = true; e.preventDefault(); }
@@ -199,6 +202,41 @@ export function createPlayer({ scene, camera, planet, hud, audio, fx, transit, m
       rig.play('tuck', { fade: 0.08, restart: true });
       audio.sfx('jump');
     }
+  }
+  function tryMelee(kind) {
+    if (!state.started || state.paused || state.dead || state.boarding || state.mode !== 'walk') return;
+    const m = state.melee;
+    if (m.cool > 0 || state.roll > 0) return;
+    m.kind = kind;
+    m.t = 0;
+    m.hitDone = false;
+    m.side = 1 - m.side;   // alternate fists/feet for combos
+    m.cool = kind === 'kick' ? 0.55 : 0.38;
+    m.dur = kind === 'kick' ? 0.5 : 0.36;
+    rig.play(kind === 'kick' ? (m.side ? 'kickR' : 'kickL') : (m.side ? 'punchR' : 'punchL'),
+      { fade: 0.06, restart: true });
+    audio.sfx('jump');   // swing whoosh
+    // a short lunge toward the target sells the impact
+    state.vel.addScaledVector(state.heading, kind === 'kick' ? 2.2 : 1.4);
+  }
+  function meleeStrike() {
+    const m = state.melee;
+    const range = m.kind === 'kick' ? 3.0 : 2.4;
+    const dmg = m.kind === 'kick' ? 42 : 28;
+    if (!npcsRef) return;
+    let connected = false;
+    for (const n of npcsRef.list) {
+      if (n.state === 'dead') continue;
+      _v.copy(n.pos).sub(state.pos);
+      const d = _v.length();
+      if (d > range + (n.radius ?? 0.5)) continue;
+      _v.addScaledVector(_up, -_v.dot(_up));
+      if (_v.lengthSq() > 1e-6 && _v.normalize().dot(state.heading) < 0.3) continue;
+      npcsRef.applyHit(n, dmg, n.pos);
+      if (n.rig && n.rig.play) n.rig.play('hit', { fade: 0.05, restart: true });
+      connected = true;
+    }
+    if (connected) audio.sfx('land');   // meaty impact thud
   }
   function tryRoll() {
     if (!state.grounded || state.roll > 0 || state.paused || state.dead || state.boarding) return;
@@ -602,12 +640,28 @@ export function createPlayer({ scene, camera, planet, hud, audio, fx, transit, m
 
     state.energy = Math.min(P.energyMax, state.energy + P.energyRegen * dt);
 
+    // ── melee timing: strike lands mid-swing, clip owns the rig until done ──
+    {
+      const m = state.melee;
+      m.cool = Math.max(0, m.cool - dt);
+      if (m.kind) {
+        m.t += dt;
+        const impactAt = m.kind === 'kick' ? 0.22 : 0.14;
+        if (!m.hitDone && m.t >= impactAt) { m.hitDone = true; meleeStrike(); }
+        if (m.t >= m.dur) m.kind = null;
+      }
+    }
+
     // ── locomotion clip ──
-    if (state.flip === 0 && state.roll === 0 && !state.wall) {
+    if (state.flip === 0 && state.roll === 0 && !state.wall && !state.melee.kind) {
       if (state.grounded) {
         const sp = tangentVel.length();
+        const backing = keys.s && !keys.w;
+        const strafing = state.strafeDir !== 0 && !keys.w && !keys.s;
         if (sp < 0.6) rig.play('idle', { fade: 0.22 });
         else if ((boosting || sprinting) && sp > P.walk + 1) rig.play('sprint');
+        else if (backing) rig.play('runback');
+        else if (strafing) rig.play(state.strafeDir < 0 ? 'strafeL' : 'strafeR');
         else if (sp > P.walk * 0.55) rig.play('run');
         else rig.play('walk');
       } else if (rig.current() !== 'hover' || !keys.q) {

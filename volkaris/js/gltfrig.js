@@ -39,6 +39,14 @@ const CLIP_MAP = {
   throne: { name: 'Sit_Chair_StandUp', once: true, next: 'idle' },
   shoot: { name: '1H_Ranged_Shooting' },
   aimidle: { name: '1H_Ranged_Aiming' },
+  strafeL: { name: 'Running_Strafe_Left' },
+  strafeR: { name: 'Running_Strafe_Right' },
+  runback: { name: 'Walking_Backwards', timeScale: 1.25 },
+  punchL: { name: 'Unarmed_Melee_Attack_Punch_A', once: true },
+  punchR: { name: 'Unarmed_Melee_Attack_Punch_B', once: true },
+  kickL: { name: 'Unarmed_Melee_Attack_Kick', once: true },
+  kickR: { name: 'Unarmed_Melee_Attack_Kick', once: true },
+  hit: { name: 'Hit_A', once: true },
 };
 
 // Quaternius Astronaut (CC0) clip vocabulary — includes Run_Shoot
@@ -64,6 +72,14 @@ export const ASTRO_MAP = {
   shoot: { name: 'Idle_Gun_Shoot' },
   runshoot: { name: 'Run_Shoot' },
   aimidle: { name: 'Idle_Gun_Pointing' },
+  strafeL: { name: 'Run_Left' },
+  strafeR: { name: 'Run_Right' },
+  runback: { name: 'Run_Back' },
+  punchL: { name: 'Punch_Left', once: true },
+  punchR: { name: 'Punch_Right', once: true },
+  kickL: { name: 'Kick_Left', once: true },
+  kickR: { name: 'Kick_Right', once: true },
+  hit: { name: 'HitRecieve', once: true },
 };
 
 // Meshy AI "Silver Sentinel" (Ben's custom character) clip vocabulary —
@@ -89,9 +105,17 @@ export const SENTINEL_MAP = {
   shoot: { name: 'Run_and_Shoot', timeScale: 0.8 },
   runshoot: { name: 'Run_and_Shoot' },
   aimidle: { name: 'Gun_Hold_Left_Turn', timeScale: 0.4 },
+  strafeL: { name: 'diagonal_wall_run' },
+  strafeR: { name: 'diagonal_wall_run' },
+  runback: { name: 'Walking' },
+  punchL: { name: 'Ground_Flip_and_Sweep_Up', once: true, timeScale: 2.2 },
+  punchR: { name: 'Ground_Flip_and_Sweep_Up', once: true, timeScale: 2.2 },
+  kickL: { name: 'Ground_Flip_and_Sweep_Up', once: true, timeScale: 1.8 },
+  kickR: { name: 'Ground_Flip_and_Sweep_Up', once: true, timeScale: 1.8 },
+  hit: { name: 'Walking', once: true, timeScale: 3 },
 };
 
-export function makeGLTFRig(gltf, { tint = null, tints = null, scale = 0.75, blasterHex = NEON.cyan, withBlaster = false, clipMap = CLIP_MAP, faceFlip = false } = {}) {
+export function makeGLTFRig(gltf, { tint = null, tints = null, scale = 0.75, blasterHex = NEON.cyan, withBlaster = false, clipMap = CLIP_MAP, faceFlip = false, extraAnims = null } = {}) {
   const root = skeletonClone(gltf.scene);
   const group = new THREE.Group();
   group.add(root);
@@ -141,9 +165,14 @@ export function makeGLTFRig(gltf, { tint = null, tints = null, scale = 0.75, bla
 
   const mixer = new THREE.AnimationMixer(root);
   const actions = {};
-  for (const clip of gltf.animations) {
+  // base clips + any shared animation-library GLBs (KayKit Character
+  // Animations Rig_Medium files share the Adventurers' deform skeleton,
+  // so their clips bind to this rig directly)
+  const allClips = [...gltf.animations];
+  if (extraAnims) for (const g of extraAnims) if (g?.animations) allClips.push(...g.animations);
+  for (const clip of allClips) {
     const key = clip.name.includes('|') ? clip.name.split('|').pop() : clip.name;
-    actions[key] = mixer.clipAction(clip);
+    if (!actions[key]) actions[key] = mixer.clipAction(clip);
   }
 
   let currentKey = 'idle';

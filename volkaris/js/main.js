@@ -12,6 +12,7 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 
 import { C } from './config.js';
 import { buildPlanet } from './planet.js';
+import { buildDetails } from './details.js';
 import { buildSky } from './sky.js';
 import { createFX } from './fx.js';
 import { buildTransit } from './transit.js';
@@ -20,7 +21,7 @@ import { createPlayer } from './player.js';
 import { createHUD } from './hud.js';
 import { createAudio } from './audio.js';
 
-const VK_BUILD = 'VOLKARIS build 2026-07-03g · closer chase camera';
+const VK_BUILD = 'VOLKARIS build 2026-07-03h · melee, strafe clips, transit life';
 console.log('%c' + VK_BUILD, 'color:#ff2fd6;font-weight:bold;font-size:14px');
 
 // ── renderer ──
@@ -66,7 +67,7 @@ addEventListener('resize', () => {
 // ── boot ──
 const hud = createHUD();
 const audio = createAudio();
-let planet, sky, fx, npcs, player, transit;
+let planet, sky, fx, npcs, player, transit, details;
 
 async function loadModels() {
   const loader = new GLTFLoader();
@@ -95,6 +96,10 @@ async function boot() {
   await frame();
   planet = buildPlanet(scene, models);
 
+  hud.setProgress(0.5, 'LIGHTING THE STREETS');
+  await frame();
+  details = buildDetails(scene, planet, audio, hud);
+
   hud.setProgress(0.55, 'IGNITING THE SUN');
   await frame();
   sky = buildSky(scene, renderer);
@@ -120,7 +125,7 @@ async function boot() {
 
   hud.ready(() => { audio.resume(); player.start(); });
 
-  window.VK = { planet, sky, fx, npcs, player, transit, scene, camera, renderer, bloom };
+  window.VK = { planet, sky, fx, npcs, player, transit, details, scene, camera, renderer, bloom };
 }
 
 // ── main loop ──
@@ -144,6 +149,9 @@ function animate() {
     transit.update(dt, elapsed, player.state.pos);
     npcs.update(dt, elapsed, player);
     fx.update(dt, elapsed);
+    details.update(dt, elapsed, player.state.pos, camera);
+    // lightning kicks the bloom for a beat (sky.update rewrites the base each frame)
+    if (details.flash.value > 0.02) bloom.strength += details.flash.value * 1.6;
     if (player.state.started) {
       hud.update(player, planet, dayF, elapsed);
       let prompt = null;
