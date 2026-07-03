@@ -280,6 +280,83 @@ export function buildPlanet(scene, models = {}) {
     return surfaceMatrix(dir, terrainHeight(dir) - sink, yaw);
   }
 
+  // ── RIDEABLE ELEVATORS — glass paternoster platforms ──
+  // Platform meshes are render-only (NOT in the static BVH); instead
+  // they CARRY the player: main calls planet.carryRiders(playerState, dt)
+  // each frame BEFORE player physics. Public contract:
+  //   elevators = [{ pos: Vector3 (platform centre, live), r: 1.7 }]
+  // (entries also expose .up and .delta, used by carryRiders).
+  const elevators = [];
+  const elevRigs = [];
+  const ELEV_SPEED = 3.5, ELEV_PAUSE = 2;   // u/s travel, seconds dwell
+  // terrain height at frame-local (lx, lz), expressed as a frame-local y —
+  // tangent-plane offsets float above the curving surface (≈d²/2R), so
+  // anything meant to touch ground away from a frame's origin needs this
+  function localGroundY(frame, lx, lz) {
+    const wp = new THREE.Vector3(lx, 0, lz).applyMatrix4(frame);
+    const dir2 = wp.normalize();
+    const gp = dir2.clone().multiplyScalar(terrainHeight(dir2));
+    return gp.sub(new THREE.Vector3().setFromMatrixPosition(frame))
+      .dot(new THREE.Vector3().setFromMatrixColumn(frame, 1));
+  }
+  function makeElevator(frame, lx, lz, y0, y1, phase, hex) {
+    // twin glow tracks + boarding pad (static, merged; seated at y0)
+    const railH = (y1 - y0) + 2.4;
+    for (const sz of [-1, 1]) {
+      addGlow(T(box(0.12, railH, 0.12), lx, y0 + railH / 2 - 0.9, lz + sz * 1.9), frame.clone(), hex, 0.95);
+      addSolid(T(box(0.26, 0.9, 0.26), lx, y0 - 0.35, lz + sz * 1.9), frame.clone(), 0x241e4e);
+    }
+    addSolid(T(new THREE.CylinderGeometry(2.0, 2.2, 0.34, 12), lx, y0 - 0.28, lz), frame.clone(), 0x201a44);
+    addGlowRaw(T(new THREE.TorusGeometry(1.8, 0.07, 5, 20), lx, y0 - 0.08, lz, 0, Math.PI / 2)
+      .applyMatrix4(frame.clone()), hex, 1.1);
+    // the platform itself — glass disc + neon rim (rendered live)
+    const plat = new THREE.Group();
+    plat.add(new THREE.Mesh(new THREE.CylinderGeometry(1.6, 1.6, 0.22, 16),
+      new THREE.MeshBasicMaterial({ color: new THREE.Color(hex).multiplyScalar(0.45), transparent: true, opacity: 0.48, toneMapped: false, depthWrite: false })));
+    const rim = new THREE.Mesh(new THREE.TorusGeometry(1.6, 0.08, 5, 22),
+      new THREE.MeshBasicMaterial({ color: new THREE.Color(hex).multiplyScalar(1.2), toneMapped: false }));
+    rim.rotation.x = Math.PI / 2;
+    plat.add(rim);
+    plat.quaternion.setFromRotationMatrix(frame);
+    signs.push(plat);
+    const base = new THREE.Vector3(lx, 0, lz).applyMatrix4(frame.clone());
+    const up = new THREE.Vector3().setFromMatrixColumn(frame, 1).normalize();
+    const el = { pos: base.clone().addScaledVector(up, y0), r: 1.7, up, delta: new THREE.Vector3() };
+    plat.position.copy(el.pos);
+    elevators.push(el);
+    elevRigs.push({ el, plat, base, up, y0, y1, phase, prev: el.pos.clone() });
+    return el;
+  }
+  dynamic.push({ update(dt, t) {
+    for (const rig of elevRigs) {
+      const travel = rig.y1 - rig.y0, T2 = travel / ELEV_SPEED, cyc = 2 * (T2 + ELEV_PAUSE);
+      let ph = (t + rig.phase) % cyc;
+      if (ph < 0) ph += cyc;
+      let y;
+      if (ph < T2) y = rig.y0 + travel * (ph / T2);
+      else if (ph < T2 + ELEV_PAUSE) y = rig.y1;
+      else if (ph < 2 * T2 + ELEV_PAUSE) y = rig.y1 - travel * ((ph - T2 - ELEV_PAUSE) / T2);
+      else y = rig.y0;
+      rig.plat.position.copy(rig.base).addScaledVector(rig.up, y);
+      rig.el.pos.copy(rig.plat.position);
+      rig.el.delta.subVectors(rig.el.pos, rig.prev);
+      rig.prev.copy(rig.el.pos);
+    }
+  } });
+  const _crRel = new THREE.Vector3();
+  function carryRiders(playerState, dt) {
+    for (const el of elevators) {
+      _crRel.subVectors(playerState.pos, el.pos);
+      const v = _crRel.dot(el.up);
+      const h2 = _crRel.lengthSq() - v * v;
+      if (h2 > el.r * el.r) continue;
+      const rise = v - 0.11;                       // height above the platform surface
+      if (rise < -0.5 || rise > 1.4) continue;
+      playerState.pos.add(el.delta);               // ride the platform
+      playerState.vel.addScaledVector(el.up, -playerState.vel.dot(el.up));  // gravity doesn't fight the lift
+    }
+  }
+
   // ════════════ TERRAIN SPHERE ════════════
   {
     const geo = new THREE.SphereGeometry(1, C.TERRAIN_DETAIL, C.TERRAIN_DETAIL / 2);
@@ -821,6 +898,173 @@ export function buildPlanet(scene, models = {}) {
       addSolid(T(new THREE.CylinderGeometry(2.2, 2.2, 6, 10), sx, 3, sz), f.clone(), 0x30265c);
       addGlow(T(new THREE.TorusGeometry(2.24, 0.1, 6, 16), sx, 5.2, sz, 0, Math.PI / 2), f.clone(), NEON.amber, 1.1);
     }
+
+    // ── the full spaceport treatment ──
+    // control tower crown: angled glass cap, warm-lit, + walkable
+    // catwalk ring where the freight lifts dock
+    addSolid(T(new THREE.CylinderGeometry(4.4, 3.9, 0.35, 14), 16, 16.45, -6), f.clone(), 0x241e4e);
+    addSolid(T(new THREE.CylinderGeometry(3.5, 2.5, 1.8, 8), 16, 17.25, -6), f.clone(), 0x2c2458);
+    addGlow(T(new THREE.CylinderGeometry(3.42, 2.9, 0.6, 8), 16, 17.45, -6), f.clone(), 0xffd9a0, 1.15);
+    addSolid(T(new THREE.CylinderGeometry(3.7, 3.7, 0.3, 8), 16, 18.25, -6), f.clone(), 0x1c1640);
+    for (const a0 of [0.35, Math.PI + 0.35]) {   // railing arcs, gaps at the lift docks
+      const railA = new THREE.TorusGeometry(4.25, 0.06, 5, 18, Math.PI - 0.7);
+      railA.rotateZ(a0);
+      railA.rotateX(Math.PI / 2);
+      railA.translate(16, 17.4, -6);
+      addGlow(railA, f.clone(), NEON.amber, 1.0);
+    }
+    // rotating radar bar on the crown
+    {
+      const radar = new THREE.Group();
+      radar.applyMatrix4(f.clone().multiply(new THREE.Matrix4().makeTranslation(16, 18.4, -6)));
+      const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.14, 0.9, 6),
+        new THREE.MeshBasicMaterial({ color: 0x241e4e }));
+      mast.position.y = 0.45;
+      radar.add(mast);
+      const bar = new THREE.Mesh(new THREE.BoxGeometry(2.6, 0.12, 0.3),
+        new THREE.MeshBasicMaterial({ color: new THREE.Color(NEON.lime).multiplyScalar(1.15), toneMapped: false }));
+      bar.position.y = 0.95;
+      radar.add(bar);
+      signs.push(radar);
+      dynamic.push({ update(dt, t) { bar.rotation.y = t * 1.5; } });
+    }
+    // tower lifts: pad level ↔ crown catwalk (paternoster pair);
+    // dock pads seated on the real terrain, not the tangent plane
+    {
+      const yW = localGroundY(f, 16 - 5.7, -6) + 0.45;
+      const yE = localGroundY(f, 16 + 5.7, -6) + 0.45;
+      makeElevator(f.clone(), 16 - 5.7, -6, yW, 16.5, 0, NEON.amber);
+      makeElevator(f.clone(), 16 + 5.7, -6, yE, 16.5, (16.5 - yE) / ELEV_SPEED + ELEV_PAUSE, NEON.amber);
+    }
+
+    // own surface frame at f-local (cx, cz), yawed so local +z faces the pad
+    function apronFrame(cx, cz) {
+      const wp = new THREE.Vector3(cx, 0, cz).applyMatrix4(f.clone());
+      const dir2 = wp.normalize();
+      const { up: au, east: ae, north: an } = tangentFrame(dir2);
+      const toward = new THREE.Vector3().setFromMatrixPosition(f.clone())
+        .sub(surfacePoint(dir2, new THREE.Vector3()));
+      toward.addScaledVector(au, -toward.dot(au)).normalize();
+      return frameAtDir(dir2, Math.atan2(toward.dot(ae), toward.dot(an)) * 57.29578, 0.3);
+    }
+
+    // two open hangars flanking the north beacon, doors facing the pad
+    function hangar(cx, cz, withShuttle) {
+      const hf = apronFrame(cx, cz);
+      const hw = 8.4, hd = 5.6, hh = 4.6, wt = 0.35;
+      addSolid(T(box(hw, 0.25, hd), 0, 0.12, 0), hf.clone(), 0x181233);                          // slab
+      addSolid(T(box(hw, hh, wt), 0, hh / 2, -hd / 2 + wt / 2), hf.clone(), 0x2a2154, { jitter: 0.06 });
+      addSolid(T(box(wt, hh, hd), -hw / 2 + wt / 2, hh / 2, 0), hf.clone(), 0x2a2154, { jitter: 0.06 });
+      addSolid(T(box(wt, hh, hd), hw / 2 - wt / 2, hh / 2, 0), hf.clone(), 0x2a2154, { jitter: 0.06 });
+      addSolid(T(box(hw + 0.5, 0.35, hd + 0.5), 0, hh + 0.17, 0), hf.clone(), 0x241a4e);         // roof
+      addGlow(T(box(hw * 0.7, 0.1, 0.3), 0, hh - 0.18, -0.6), hf.clone(), NEON.cyan, 1.1);       // ceiling strip
+      addGlow(T(box(0.08, hh * 0.7, 0.08), -hw / 2 + 0.3, hh * 0.4, hd / 2 - 0.15), hf.clone(), NEON.lime, 1.15);
+      addGlow(T(box(0.08, hh * 0.7, 0.08), hw / 2 - 0.3, hh * 0.4, hd / 2 - 0.15), hf.clone(), NEON.lime, 1.15);
+      addGlow(T(box(hw * 0.9, 0.12, 0.12), 0, hh + 0.4, hd / 2 + 0.1), hf.clone(), NEON.orange, 1.2); // lintel
+      if (withShuttle) {   // parked procedural shuttle, nose toward the door
+        addSolid(T(new THREE.CylinderGeometry(0.65, 0.8, 3.4, 10), 0, 1.05, -0.4, 0, Math.PI / 2), hf.clone(), 0x8a93b0);
+        addSolid(T(new THREE.ConeGeometry(0.62, 1.1, 10), 0, 1.05, 1.85, 0, Math.PI / 2), hf.clone(), 0x9aa2bc);
+        addSolid(T(box(3.6, 0.1, 1.1), 0, 0.85, -0.7), hf.clone(), 0x6a7390);                    // wings
+        addSolid(T(box(0.1, 1.0, 0.9), 0, 1.95, -1.75), hf.clone(), 0x6a7390);                   // tail fin
+        for (const sk of [-1, 1]) addSolid(T(box(0.16, 0.42, 2.2), sk * 0.7, 0.24, -0.3), hf.clone(), 0x4a5470);
+        addGlow(T(box(0.5, 0.5, 0.1), 0, 1.05, -2.2), hf.clone(), NEON.cyan, 1.2);               // idle engine
+        addGlow(T(box(0.5, 0.16, 0.1), 0, 1.3, 1.2), hf.clone(), NEON.amber, 1.1);               // canopy strip
+      }
+    }
+    hangar(6.12, 14.78, true);
+    hangar(-6.12, 14.78, false);
+
+    // pad edge lights — studs ringing the landing pad, seated on terrain
+    for (let i = 0; i < 20; i++) {
+      const ang2 = i / 20 * Math.PI * 2;
+      const lx2 = Math.cos(ang2) * 12.4, lz2 = Math.sin(ang2) * 12.4;
+      addGlow(T(box(0.3, 0.22, 0.3), lx2, localGroundY(f, lx2, lz2) + 0.12, lz2), f.clone(),
+        i % 2 ? NEON.lime : NEON.magenta, 1.3);
+    }
+
+    // DEPARTURES board on a stand
+    {
+      const [bcv, bctx] = makeCanvas(512, 320);
+      bctx.fillStyle = 'rgba(4,2,16,0.94)'; bctx.fillRect(0, 0, 512, 320);
+      bctx.strokeStyle = hexCss(NEON.cyan); bctx.lineWidth = 6; bctx.strokeRect(5, 5, 502, 310);
+      bctx.font = '900 44px Orbitron, sans-serif'; bctx.textBaseline = 'alphabetic';
+      bctx.fillStyle = hexCss(NEON.cyan); bctx.textAlign = 'center';
+      bctx.shadowColor = hexCss(NEON.cyan); bctx.shadowBlur = 16;
+      bctx.fillText('DEPARTURES', 256, 62);
+      bctx.font = '700 30px Orbitron, sans-serif'; bctx.shadowBlur = 8;
+      const rows = [
+        ['NEON CITY', 'BOARDING', '#5dffb2'], ['KEPLER GATE', 'DELAYED', '#ffc400'],
+        ['VEGA SPRAWL', 'ON TIME', '#00f6ff'], ['SOL RELAY', 'CANCELLED', '#ff2e4d'],
+      ];
+      rows.forEach(([dst, st, cc], i) => {
+        const ry2 = 128 + i * 48;
+        bctx.textAlign = 'left'; bctx.fillStyle = '#e8e2ff'; bctx.shadowColor = '#e8e2ff';
+        bctx.fillText(dst, 34, ry2);
+        bctx.textAlign = 'right'; bctx.fillStyle = cc; bctx.shadowColor = cc;
+        bctx.fillText(st, 478, ry2);
+      });
+      const bf = apronFrame(12.5, 3);
+      addSolid(T(box(0.16, 2.4, 0.16), -1.9, 1.2, 0), bf.clone(), 0x241e4e);
+      addSolid(T(box(0.16, 2.4, 0.16), 1.9, 1.2, 0), bf.clone(), 0x241e4e);
+      const board = new THREE.Mesh(new THREE.PlaneGeometry(4.6, 2.9),
+        new THREE.MeshBasicMaterial({ map: canvasTexture(bcv), transparent: true, toneMapped: false, side: THREE.DoubleSide }));
+      board.applyMatrix4(new THREE.Matrix4().makeTranslation(0, 3.8, 0).premultiply(bf));
+      signs.push(board);
+      addGlow(T(box(4.8, 0.1, 0.1), 0, 5.35, 0), bf.clone(), NEON.cyan, 1.2);
+    }
+
+    // extra fuel silos + a transfer pipe beside the control tower
+    // (the SE apron — the pilgrim steps enter the crater further west)
+    {
+      const siloBases = [];
+      for (const [sx2, sz2] of [[10.8, -12.4], [14.2, -9.6]]) {
+        const sf2 = apronFrame(sx2, sz2);
+        addSolid(T(new THREE.CylinderGeometry(1.9, 1.9, 5.2, 10), 0, 2.5, 0), sf2.clone(), 0x30265c);
+        addGlow(T(new THREE.TorusGeometry(1.94, 0.09, 5, 14), 0, 4.3, 0, 0, Math.PI / 2), sf2.clone(), NEON.amber, 1.1);
+        siloBases.push(new THREE.Vector3(0, 0.9, 0).applyMatrix4(sf2));
+      }
+      const midP = siloBases[0].clone().add(siloBases[1]).multiplyScalar(0.5);
+      const fwdP = siloBases[1].clone().sub(siloBases[0]);
+      const lenP = fwdP.length(); fwdP.normalize();
+      const upP = midP.clone().normalize();
+      const rtP = new THREE.Vector3().crossVectors(upP, fwdP).normalize();
+      const ruP = new THREE.Vector3().crossVectors(fwdP, rtP).normalize();
+      addSolid(T(box(0.24, 0.24, lenP), 0, 0, 0),
+        new THREE.Matrix4().makeBasis(rtP, ruP, fwdP).setPosition(midP), 0x2a3a6e, { collide: false });
+    }
+
+    // perimeter fence — posts + thin glow lines, gated where streets cross
+    {
+      const pDir = sphDir(a.lat, a.lon);
+      const { east: fE, north: fN } = tangentFrame(pDir);
+      const posts = [];
+      const NP = 22, FR = 19.5;
+      for (let i = 0; i < NP; i++) {
+        const ang2 = i / NP * Math.PI * 2;
+        const d2 = pDir.clone().multiplyScalar(R)
+          .addScaledVector(fE, Math.cos(ang2) * FR).addScaledVector(fN, Math.sin(ang2) * FR).normalize();
+        let pd2 = 1e9;
+        for (const ps of pathSamples) { const dd = d2.distanceToSquared(ps); if (dd < pd2) pd2 = dd; }
+        if (Math.sqrt(pd2) * R < 3.4) { posts.push(null); continue; }   // street gate
+        const pf2 = frameAtDir(d2, 0, 0.2);
+        addSolid(T(box(0.18, 1.9, 0.18), 0, 0.95, 0), pf2.clone(), 0x241e4e);
+        addGlow(T(box(0.26, 0.14, 0.26), 0, 1.95, 0), pf2.clone(), NEON.lime, 1.1);
+        posts.push(surfacePoint(d2, new THREE.Vector3()).addScaledVector(d2, 1.5));
+      }
+      for (let i = 0; i < NP; i++) {
+        const A2 = posts[i], B2 = posts[(i + 1) % NP];
+        if (!A2 || !B2) continue;
+        const mid = A2.clone().add(B2).multiplyScalar(0.5);
+        const fwd = B2.clone().sub(A2);
+        const len = fwd.length(); fwd.normalize();
+        const upv = mid.clone().normalize();
+        const rt = new THREE.Vector3().crossVectors(upv, fwd).normalize();
+        const ru = new THREE.Vector3().crossVectors(fwd, rt).normalize();
+        const m2 = new THREE.Matrix4().makeBasis(rt, ru, fwd).setPosition(mid);
+        addGlowViaMatrix(box(0.06, 0.06, len), m2, NEON.lime, 0.85);
+      }
+    }
+
     const s = textSign('PORT MERIDIAN — DEPARTURES', { w: 9, h: 1.4, fg: hexCss(NEON.lime), size: 56 });
     placeSign(s, a.lat - 3.4, a.lon - 4, 132, 0, 4.8, 0);
     portInfo.padCenter = new THREE.Vector3(0, 1.0, 0).applyMatrix4(f.clone());
@@ -852,9 +1096,28 @@ export function buildPlanet(scene, models = {}) {
     // door glow + interior dressing
     addGlow(T(box(doorW + 0.3, 0.1, 0.12), 0, doorH + 0.1, d / 2 + 0.02), f.clone(), pick(rnd, NEON_LIST), 1.2);
     addGlow(T(box(w * 0.5, 0.08, 0.4), 0, h - 0.12, 0), f.clone(), pick(rnd, [NEON.cyan, NEON.amber, NEON.pink]), 0.9); // ceiling strip
-    addSolid(T(box(w * 0.5, 0.9, 0.8), 0, 0.75, -d / 2 + 1.0), f.clone(), 0x241a4e);     // counter
-    addSolid(T(box(0.8, 0.7, 0.8), -w / 2 + 1.0, 0.65, 0.4, rnd()), f.clone(), 0x30265c); // crate
-    addSolid(T(box(0.6, 0.5, 0.6), w / 2 - 1.1, 0.55, -0.6, rnd()), f.clone(), 0x2a3a6e); // crate
+    // furnishing layout, chosen by seed
+    const layout = (rnd() * 3) | 0;
+    if (layout === 0) {           // shopfront: counter + crates
+      addSolid(T(box(w * 0.5, 0.9, 0.8), 0, 0.75, -d / 2 + 1.0), f.clone(), 0x241a4e);     // counter
+      addSolid(T(box(0.8, 0.7, 0.8), -w / 2 + 1.0, 0.65, 0.4, rnd()), f.clone(), 0x30265c); // crate
+      addSolid(T(box(0.6, 0.5, 0.6), w / 2 - 1.1, 0.55, -0.6, rnd()), f.clone(), 0x2a3a6e); // crate
+    } else if (layout === 1) {    // dive bar: side counter, stools, lit shelf
+      addSolid(T(box(0.8, 1.0, d * 0.6), -w / 2 + 1.2, 0.65, -0.4), f.clone(), 0x241a4e);   // bar counter
+      for (let st2 = 0; st2 < 3; st2++) {
+        addSolid(T(new THREE.CylinderGeometry(0.26, 0.3, 0.62, 8), -w / 2 + 2.2, 0.46, -d * 0.28 + st2 * d * 0.24),
+          f.clone(), 0x30265c);
+      }
+      addSolid(T(box(0.3, 1.5, d * 0.5), -w / 2 + th + 0.16, h - 1.35, -0.4), f.clone(), 0x1c1444); // back shelf
+      addGlow(T(box(0.1, 0.08, d * 0.45), -w / 2 + th + 0.34, h - 0.7, -0.4), f.clone(),
+        pick(rnd, [NEON.magenta, NEON.amber, NEON.pink]), 1.1);                             // bottle glow
+    } else {                      // workshop: bench, lit tool wall, crate stack
+      addSolid(T(box(w * 0.55, 0.85, 0.9), 0, 0.6, -d / 2 + 0.95), f.clone(), 0x2c2452);    // bench
+      addSolid(T(box(w * 0.4, 1.1, 0.1), 0, 1.9, -d / 2 + th + 0.07), f.clone(), 0x1c1840); // tool board
+      addGlow(T(box(w * 0.36, 0.06, 0.06), 0, 2.5, -d / 2 + th + 0.12), f.clone(), NEON.lime, 1.0);
+      addSolid(T(box(0.7, 0.6, 0.7), w / 2 - 1.0, 0.5, 0.5, rnd()), f.clone(), 0x30265c);   // crates
+      addSolid(T(box(0.55, 0.5, 0.55), w / 2 - 1.05, 1.05, 0.55, rnd()), f.clone(), 0x2a3a6e);
+    }
     return h;
   }
 
@@ -1097,7 +1360,7 @@ export function buildPlanet(scene, models = {}) {
       let hgt = 0;
       // some street-adjacent buildings are ENTERABLE (door + interior),
       // door turned to face the street so you can actually find it
-      if (nearStreet && rnd() < 0.12 && ['market', 'circuit', 'downtown', 'ruins'].includes(zone.key)) {
+      if (nearStreet && rnd() < 0.2 && ['market', 'circuit', 'downtown', 'ruins'].includes(zone.key)) {
         let nearest = pathSamples[0], nd = 1e9;
         for (const ps of pathSamples) { const dd = jd.distanceToSquared(ps); if (dd < nd) { nd = dd; nearest = ps; } }
         const { up: eu, east: ee, north: en } = tangentFrame(jd);
@@ -1556,6 +1819,101 @@ export function buildPlanet(scene, models = {}) {
     ivoryInfo.topRadius = R + 34;
   }
 
+  // — THE SPIRE — the planet's tallest building, on the Acropolis'
+  // north-west shoulder at (44°, 152°): ~10u off the plaza so the
+  // MAGENTA SKYLINE monorail (which passes downtown at r≈77–78) clears
+  // the tower axis by 12.1u and the lift columns by 13.0u (verified
+  // against the sampled curve; yaw 110 turns the lifts away from it).
+  // Strobe tops out at r≈90.8 — under the R+92 ceiling, well below the
+  // Ivory Spire palace (r94) and clear of every rail path.
+  const spireInfo = {};
+  {
+    const sDir = sphDir(44, 152);
+    const fs = frameAtDir(sDir, 110, 0.5);
+    const srnd = mulberry32(4407);
+    const TIERS = [[7.4, 8], [6.0, 7], [4.8, 6], [3.4, 5.5]];   // [width, height] — setbacks
+    let sy = 0;
+    for (const [tw, thH] of TIERS) {
+      addSolid(T(box(tw, thH, tw), 0, sy + thH / 2, 0), fs.clone(), 0x1a1148, { jitter: 0.04 });
+      const rows2 = Math.max(2, Math.floor(thH / 2.6));
+      for (let r2 = 0; r2 < rows2; r2++) {           // window bands
+        if (srnd() < 0.2) continue;
+        addGlow(T(box(tw + 0.08, 0.34, tw + 0.08), 0, sy + 1.3 + r2 * (thH - 1.8) / rows2, 0),
+          fs.clone(), r2 % 2 ? NEON.cyan : NEON.magenta, 1.05);
+      }
+      for (const [ex, ez] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {   // corner glow edges
+        addGlow(T(box(0.09, thH * 0.92, 0.09), ex * (tw / 2 + 0.06), sy + thH / 2, ez * (tw / 2 + 0.06)),
+          fs.clone(), NEON.purple, 0.9);
+      }
+      sy += thH;
+    }
+    // observation deck — walkable ring at 21u, railed, lift docks on ±x
+    addSolid(T(new THREE.CylinderGeometry(5.2, 4.4, 0.5, 18), 0, 21.25, 0), fs.clone(), 0x241e4e);
+    addGlowRaw(T(new THREE.TorusGeometry(5.05, 0.09, 5, 30), 0, 21.55, 0, 0, Math.PI / 2)
+      .applyMatrix4(fs.clone()), NEON.cyan, 1.15);
+    for (const a0 of [0.5, Math.PI + 0.5]) {          // railing arcs, gaps at the docks
+      const railA = new THREE.TorusGeometry(4.95, 0.06, 5, 22, Math.PI - 1.0);
+      railA.rotateZ(a0);
+      railA.rotateX(Math.PI / 2);
+      railA.translate(0, 22.55, 0);
+      addGlow(railA, fs.clone(), NEON.cyan, 1.0);
+    }
+    for (let i = 0; i < 12; i++) {                    // railing posts
+      const ang3 = i / 12 * Math.PI * 2;
+      if (Math.abs(Math.sin(ang3)) < 0.4) continue;   // skip the dock gaps
+      addSolid(T(box(0.08, 1.0, 0.08), Math.cos(ang3) * 4.92, 22.05, Math.sin(ang3) * 4.92),
+        fs.clone(), 0x241e4e, { collide: false });
+    }
+    addGlowRaw(T(new THREE.TorusGeometry(4.7, 0.12, 5, 26), 0, 20.9, 0, 0, Math.PI / 2)
+      .applyMatrix4(fs.clone()), NEON.magenta, 1.1);  // under-deck ring
+    // rooftop landing pad (AVs / jetpacks)
+    addSolid(T(new THREE.CylinderGeometry(2.8, 2.8, 0.3, 14), 0, 26.65, 0), fs.clone(), 0x181233);
+    addGlowRaw(T(new THREE.TorusGeometry(2.3, 0.08, 5, 22), 0, 26.85, 0, 0, Math.PI / 2)
+      .applyMatrix4(fs.clone()), NEON.lime, 1.25);
+    addGlow(T(box(1.3, 0.06, 0.2), 0, 26.83, 0), fs.clone(), NEON.lime, 1.25);
+    // beacon mast + red strobe
+    addSolid(T(new THREE.CylinderGeometry(0.09, 0.22, 3.8, 6), 0, 28.7, 0), fs.clone(), 0x241e4e, { collide: false });
+    const strobeMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(NEON.red), toneMapped: false });
+    const strobe = new THREE.Mesh(new THREE.OctahedronGeometry(0.34, 0), strobeMat);
+    strobe.position.copy(new THREE.Vector3(0, 30.8, 0).applyMatrix4(fs.clone()));
+    signs.push(strobe);
+    const strA = new THREE.Color(NEON.red).multiplyScalar(0.22);
+    const strB = new THREE.Color(NEON.red).multiplyScalar(1.38);
+    dynamic.push({ update(dt, t) {
+      strobeMat.color.copy(strA).lerp(strB, Math.pow(Math.max(0, Math.sin(t * 2.6)), 10));
+    } });
+    // scrolling LED band near the top (self-contained canvas ticker)
+    const [lcv, lctx] = makeCanvas(1024, 64);
+    lctx.fillStyle = '#07031a'; lctx.fillRect(0, 0, 1024, 64);
+    lctx.font = '900 40px Orbitron, sans-serif';
+    lctx.textBaseline = 'middle';
+    lctx.fillStyle = hexCss(NEON.cyan); lctx.shadowColor = hexCss(NEON.cyan); lctx.shadowBlur = 14;
+    lctx.fillText('◆ THE SPIRE ◆ NEON ACROPOLIS', 10, 34);
+    lctx.fillStyle = hexCss(NEON.magenta); lctx.shadowColor = hexCss(NEON.magenta);
+    lctx.fillText('◆ PORT CURFEW IN EFFECT', 640, 34);
+    const ledTex = canvasTexture(lcv, { repeat: [3, 1] });
+    const led = new THREE.Mesh(
+      new THREE.CylinderGeometry(3.55, 3.55, 1.0, 20, 1, true),
+      new THREE.MeshBasicMaterial({ map: ledTex, toneMapped: false, side: THREE.DoubleSide })
+    );
+    led.applyMatrix4(new THREE.Matrix4().makeTranslation(0, 24.9, 0).premultiply(fs.clone()));
+    signs.push(led);
+    dynamic.push({ update(dt, t) { ledTex.offset.x = (t * 0.06) % 1; } });
+    // entrance glow at the base
+    addGlow(T(box(2.2, 2.8, 0.14), 0, 1.4, TIERS[0][0] / 2 + 0.06), fs.clone(), NEON.cyan, 1.15);
+    // glass lifts: street ↔ observation deck, opposite faces, alternating
+    {
+      const yA = localGroundY(fs, 6.85, 0) + 0.45;
+      const yB = localGroundY(fs, -6.85, 0) + 0.45;
+      makeElevator(fs.clone(), 6.85, 0, yA, 21.4, 0, NEON.cyan);
+      makeElevator(fs.clone(), -6.85, 0, yB, 21.4, (21.4 - yB) / ELEV_SPEED + ELEV_PAUSE, NEON.magenta);
+    }
+    spireInfo.dir = sDir;
+    spireInfo.base = surfacePoint(sDir, new THREE.Vector3());
+    spireInfo.deckY = 21.5;                            // local height of the deck surface
+    spireInfo.top = sDir.clone().multiplyScalar(terrainHeight(sDir) + 30.8);
+  }
+
   // ════════════ MERGE + MATERIALS ════════════
   const group = new THREE.Group();
 
@@ -1666,9 +2024,10 @@ export function buildPlanet(scene, models = {}) {
   return {
     group, uTime, collMesh, groundHit, probe, addColliders,
     districts: districtDirs, districtAt,
-    pyramidInfo, portInfo, ivoryInfo,
+    pyramidInfo, portInfo, ivoryInfo, spireInfo,
     pathSamples, pathChains, towerSpots,
     terrainHeight, surfacePoint,
+    elevators, carryRiders,
     dynamic,
     update(dt, t) { for (const d of dynamic) d.update(dt, t); },
   };

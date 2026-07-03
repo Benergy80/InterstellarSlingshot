@@ -22,7 +22,7 @@ import { createDemo } from './demo.js';
 import { createHUD } from './hud.js';
 import { createAudio } from './audio.js';
 
-const VK_BUILD = 'VOLKARIS build 2026-07-03m · rail network, volcano, ivory palace';
+const VK_BUILD = 'VOLKARIS build 2026-07-03n · THE SPIRE, elevators, spaceport, Z-lock';
 console.log('%c' + VK_BUILD, 'color:#ff2fd6;font-weight:bold;font-size:14px');
 
 // ── renderer ──
@@ -151,6 +151,7 @@ function animate() {
     planet.uTime.value = elapsed;
     planet.update(dt, elapsed);
     if (player.state.started) demo.update(dt, elapsed, fpsEMA);   // pilot steers before physics
+    planet.carryRiders(player.state, dt);   // elevators lift whoever stands on them
     const dayF = sky.update(elapsed, player.state.pos, bloom, planet.group.children[1]?.material);
     player.suitLamp.intensity = 0.15 + sky.night * 1.2;
     player.update(dt, elapsed);
