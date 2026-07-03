@@ -2828,6 +2828,11 @@ if (gameState.frameCount % 5 === 0 && typeof checkCosmicFeatureInteractions === 
         window.replaySystem.update();
     }
 
+    // Slingshot Assist: gravity-coil guidance toward a far nav target
+    if (typeof window !== 'undefined' && window.slingshotAssist && window.slingshotAssist.enabled) {
+        try { window.slingshotAssist.update(gameState.frameCount); } catch (e) {}
+    }
+
     // DEMO AUTOPILOT — runs before physics so key inputs are applied this frame
     if (typeof window !== 'undefined' && window.demoPilot && window.demoPilot.active) {
         window.demoPilot.update();
