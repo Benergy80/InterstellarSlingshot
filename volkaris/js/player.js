@@ -27,9 +27,11 @@ const _ndc = new THREE.Vector2();
 const _ray = new THREE.Raycaster();
 
 export function createPlayer({ scene, camera, planet, hud, audio, fx, transit, models }) {
-  // THE CAPTAIN: Ben's Meshy "Silver Sentinel" if present, else the
-  // Quaternius Astronaut (CC0), else the procedural rig
-  const rig = models?.kay?.Sentinel
+  // THE CAPTAIN: the gold Astronaut (Ben's pick for now — the Meshy
+  // Silver Sentinel stays wired via SENTINEL_MAP, flip USE_SENTINEL
+  // to bring him back), else the procedural rig
+  const USE_SENTINEL = false;
+  const rig = USE_SENTINEL && models?.kay?.Sentinel
     ? makeGLTFRig(models.kay.Sentinel, {
         scale: 1.12, withBlaster: true, clipMap: SENTINEL_MAP,
       })
