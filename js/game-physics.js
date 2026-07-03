@@ -1245,10 +1245,11 @@ function transitionToRandomLocation(sourceBlackHole, transitType) {
             ) : [];
 
         // PROGRESSION GATE: until the Sol / Sagittarius A* system is
-        // liberated (Martian Pirate boss + Vulcan boss both defeated),
-        // black-hole warps only shuttle the player between the two LOCAL
-        // galactic cores — Sgr A* and the Companion Core. Liberation
-        // unlocks galaxy-wide warping (full black-hole list).
+        // liberated — the VULCAN boss defeated (isSolSystemLiberated();
+        // the Martian Pirate boss is NOT required) — black-hole warps only
+        // shuttle the player between the two LOCAL galactic cores: Sgr A*
+        // and the Companion Core. Liberation unlocks galaxy-wide warping
+        // (full black-hole list). Read live on every transit.
         const _liberated = (typeof isSolSystemLiberated === 'function')
             ? isSolSystemLiberated()
             : (typeof window !== 'undefined' && typeof window.isSolSystemLiberated === 'function'
