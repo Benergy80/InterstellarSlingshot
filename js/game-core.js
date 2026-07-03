@@ -1836,6 +1836,16 @@ function animate(rafTime) {
         return; // Skip all other game updates when paused
     }
 
+    // VICTORY REPLAY owns the frame while active: it flies the recorded
+    // ship track and parks the camera at a spectator vantage. Render-only —
+    // all game updates are skipped, like the pause branch above.
+    if (typeof window !== 'undefined' && window.replaySystem && window.replaySystem.active) {
+        if (window.replaySystem.tick()) {
+            renderer.render(scene, camera);
+            return;
+        }
+    }
+
     // ARCADE JUICE — hitstop (brief freeze on big impacts) and slow-mo
     // (bullet-time on a flagship kill): render only, skip the game update.
     const _ajNow = performance.now();
@@ -2812,6 +2822,11 @@ if (gameState.frameCount % 5 === 0 && typeof checkCosmicFeatureInteractions === 
         }
     }
 
+    // Highlight recorder: rolling ship-state buffer for the victory replay
+    if (typeof window !== 'undefined' && window.replaySystem) {
+        window.replaySystem.update();
+    }
+
     // DEMO AUTOPILOT — runs before physics so key inputs are applied this frame
     if (typeof window !== 'undefined' && window.demoPilot && window.demoPilot.active) {
         window.demoPilot.update();
@@ -2893,10 +2908,10 @@ if (gameState.frameCount % 5 === 0 && typeof checkCosmicFeatureInteractions === 
         updateDistressIndicator();
     }
 
-    // Update crosshair less frequently to avoid interfering with UI clicks
-    if (gameState.frameCount % 3 === 0 && typeof updateCrosshairTargeting === 'function') {
-        updateCrosshairTargeting();
-    }
+    // Crosshair targeting moved to the render section (post camera
+    // transforms): projecting through the PHYSICS camera while the frame
+    // renders through the smoothed/interpolated one put the yellow
+    // crosshair visibly off enemies, and the old %3 throttle added lag.
     
     // DIAGNOSTIC: Disabled to reduce console spam
     // Uncomment below to debug performance issues
@@ -3100,6 +3115,14 @@ if (gameState.frameCount % 5 === 0 && typeof checkCosmicFeatureInteractions === 
     if ((_simInterpApplied || _cinShipMoved) &&
         typeof window !== 'undefined' && typeof window.__syncChargeGlow === 'function') {
         try { window.__syncChargeGlow(); } catch (e) {}
+    }
+
+    // CROSSHAIR TARGETING projects world→screen, so it must use the SAME
+    // camera state the frame renders with (interpolated + cinematic
+    // transforms are applied at this point). Runs every frame — the old
+    // %3 throttle read as the yellow crosshair lagging off enemies.
+    if (typeof updateCrosshairTargeting === 'function') {
+        try { updateCrosshairTargeting(); } catch (e) {}
     }
 
     // PERFORMANCE DEBUG: Time render call

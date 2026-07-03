@@ -1717,6 +1717,10 @@ if (typeof window !== 'undefined') {
 }
 
 function executeSlingshot() {
+    // Victory-replay highlight: gravity slingshots are signature flying
+    if (typeof window !== 'undefined' && window.replaySystem) {
+        window.replaySystem.record('Gravity slingshot', 1);
+    }
     if (typeof gameState === 'undefined') return;
     // 5-second cooldown after a slingshot fires (Quick-Charge tier
     // replaces the energy cost with this CD; arcade mode also honors it
@@ -5071,6 +5075,9 @@ function animateDiscoveryPaths() {
         // endpoint).  30-second grace period so new paths don't flip
         // white before the player has a chance to follow them.
         if (doMissionCheck) {
+            // Deep-space expedition lines are invitations, not tracked
+            // missions — no boss phase, no completion recolor.
+            if (path.line.userData.pathType === 'deepspace') continue;
             const createdAt = path.line.userData.createdAt || 0;
             if (Date.now() - createdAt < 30000) continue;   // grace period
 

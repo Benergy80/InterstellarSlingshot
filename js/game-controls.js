@@ -3049,8 +3049,24 @@ function playSound(type, frequency = 440, duration = 0.2) {
     const gain = audioContext.createGain();
 
     oscillator.connect(gain);
-    gain.connect(effectsGain);
-    
+    // Battle SFX trim (player feedback): weapons, hits, damage and
+    // explosions ride 20% quieter; ambient/UI sounds are unchanged. The
+    // trim is a separate node so each case's scheduled gain ramps stay
+    // exactly as tuned.
+    const _COMBAT_SFX = {
+        weapon: 1, shield_hit: 1, damage: 1, explosion: 1, enemy_fire: 1,
+        missile_explosion: 1, missile_launch: 1, death_boom: 1,
+        death_rumble: 1, ship_vaporize: 1
+    };
+    if (_COMBAT_SFX[type]) {
+        const _trim = audioContext.createGain();
+        _trim.gain.value = 0.8;
+        gain.connect(_trim);
+        _trim.connect(effectsGain);
+    } else {
+        gain.connect(effectsGain);
+    }
+
     switch (type) {
         case 'weapon':
             // Per-shot pitch jitter so rapid fire doesn't feel
@@ -3284,7 +3300,8 @@ function _fireLaserOsc(p, jitter) {
     osc.type = p.type;
     osc.frequency.setValueAtTime(p.f0 * jitter, t);
     osc.frequency.exponentialRampToValueAtTime(Math.max(20, p.f1 * jitter), t + p.dur);
-    g.gain.setValueAtTime(p.gain, t);
+    // Battle SFX trim: lasers ride 20% quieter (player feedback)
+    g.gain.setValueAtTime(p.gain * 0.8, t);
     g.gain.exponentialRampToValueAtTime(0.001, t + p.dur);
     osc.start(t);
     osc.stop(t + p.dur);
@@ -6712,6 +6729,34 @@ function checkGuardianVictory() {
 
             // Show FINAL liberation achievement
             showAchievement(`Galaxy Liberation Complete - ${galaxyType.name}`, `${galaxyType.name} Galaxy (${galaxyType.faction}) completely liberated!`);
+
+            // Victory-replay highlight: liberations anchor the montage
+            if (typeof window !== 'undefined' && window.replaySystem) {
+                window.replaySystem.record('Liberated the ' + galaxyType.name + ' Galaxy', 4);
+            }
+
+            // OPTIONAL DEEP-SPACE EXPEDITION: a path opens from this freed
+            // core out toward UFO/Borg territory. Explicitly optional — the
+            // directive below steers the player to the next nebula instead.
+            if (typeof createDiscoveryPathToPosition === 'function' &&
+                typeof findGalaxyCoreById === 'function') {
+                const _core = findGalaxyCoreById(g);
+                if (_core) {
+                    const _woo = (typeof window !== 'undefined' && window.worldOriginOffset) || { x: 0, y: 0, z: 0 };
+                    const _deep = new THREE.Vector3(78000 - _woo.x, 2000 - _woo.y, 8000 - _woo.z);
+                    // galaxyId -1: no mission-enemy snapshot/relocation — this
+                    // line is an invitation, not a tracked mission.
+                    createDiscoveryPathToPosition(_core.position.clone(), _deep, 0x00ff66, 'Deep Space', 'deepspace', -1);
+                    setTimeout(() => {
+                        if (typeof showIncomingTransmission === 'function') {
+                            showIncomingTransmission('Mission Control - Optional Expedition',
+                                'With this sector free, long-range sensors reach the deep field: UFO anomalies and BORG signatures beyond the rim.\n\n' +
+                                'The green line marks an OPTIONAL expedition — dangerous, no reinforcements.\n\n' +
+                                'Priority remains the campaign: make for the next twin nebula and keep liberating, Captain.', 0x00ff66);
+                        }
+                    }, 6000);
+                }
+            }
             
             // Mission Control message
             const remainingGalaxies = 8 - gameState.galaxiesCleared;
@@ -6734,10 +6779,14 @@ function checkGuardianVictory() {
                 setupGalaxyMap();
             }
             
-            // Check for total victory
+            // Check for total victory — the campaign win: fireworks land,
+            // then the BEST-MOMENTS SPECTATOR REPLAY rolls (victory-replay.js).
             if (gameState.galaxiesCleared >= 8) {
                 showAchievement('Victory!', 'All galaxies liberated! Universe saved!');
                 playVictoryMusic();
+                if (typeof window !== 'undefined' && window.replaySystem) {
+                    setTimeout(() => { try { window.replaySystem.start(); } catch (e) {} }, 4000);
+                }
             }
             
             break; // Only process one galaxy per check

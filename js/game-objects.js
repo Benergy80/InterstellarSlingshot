@@ -1726,6 +1726,10 @@ function checkBossVictory(defeatedEnemy) {
         // ELITE GUARDIAN DEFEATED
         console.log(`🏆 Elite Guardian defeated: ${defeatedEnemy.userData.name} (${faction})`);
 
+        if (typeof window !== 'undefined' && window.replaySystem) {
+            window.replaySystem.record('Felled the ' + faction + ' Elite Guardian', 2);
+        }
+
         // Mark elite guardian as defeated
         if (bossSystem.eliteGuardians[faction]) {
             bossSystem.eliteGuardians[faction].defeated = true;
@@ -1758,6 +1762,11 @@ function checkBossVictory(defeatedEnemy) {
     } else if (defeatedEnemy.userData.isBoss) {
         // AREA BOSS DEFEATED
         console.log(`🎯 Area Boss defeated: ${defeatedEnemy.userData.name} (${areaKey})`);
+
+        // Victory-replay highlight: boss kills are prime montage material
+        if (typeof window !== 'undefined' && window.replaySystem) {
+            window.replaySystem.record('Destroyed ' + (defeatedEnemy.userData.name || 'a flagship'), 3);
+        }
 
         // Mark area boss as defeated
         if (areaKey && bossSystem.areaBosses[areaKey]) {
