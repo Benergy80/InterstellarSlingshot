@@ -134,7 +134,7 @@ export function createPlayer({ scene, camera, planet, hud, audio, fx, transit, m
     fireHeld: false,
     aimW: 0,
     melee: { kind: null, t: 0, hitDone: false, side: 0, cool: 0 },
-    jetArmed: false,     // CapsLock master switch
+    jetArmed: false,     // Q master switch
     capsPrecision: false,
     strafeDir: 0,
     mode: 'walk',        // walk | ride (monorail) | pilot (vehicle)
@@ -166,20 +166,15 @@ export function createPlayer({ scene, camera, planet, hud, audio, fx, transit, m
     if (!state.started) return;
     if (e.key === 'p' || e.key === 'P') { e.preventDefault(); state.paused = !state.paused; hud.showPause(state.paused); return; }
     if (state.paused || state.dead || state.boarding) return;
-    // CAPSLOCK = jetpack master switch: ON is on, OFF is off.
-    // (macOS fires keydown only when engaging and keyup only when
-    // releasing, so both handlers read the modifier state.)
-    if (e.getModifierState) {
-      const armed = e.getModifierState('CapsLock');
-      if (armed !== state.jetArmed) {
-        state.jetArmed = armed;
-        hud.toast(armed ? 'JETPACK — ON' : 'JETPACK — OFF',
-          armed ? 'CapsLock engaged — burn while it lasts' : 'CapsLock released');
-        if (armed) audio.resume();
-      }
-    }
-
     const k = e.key.toLowerCase();
+    // Q = jetpack master switch: tap on, tap off (lifts you off the
+    // deck when armed; Space still hold-thrusts in the air)
+    if (k === 'q' && !e.repeat) {
+      state.jetArmed = !state.jetArmed;
+      hud.toast(state.jetArmed ? 'JETPACK — ON' : 'JETPACK — OFF',
+        state.jetArmed ? 'Burn while it lasts — Q to cut it' : '');
+      if (state.jetArmed) audio.resume();
+    }
     if (k === 'w') {
       if (!e.repeat) {
         const now = performance.now();
@@ -193,7 +188,6 @@ export function createPlayer({ scene, camera, planet, hud, audio, fx, transit, m
     if (k === 'd') keys.d = true;
     if (k === 'b') keys.b = true;
     if (k === 'x') keys.x = true;
-    if (k === 'q') keys.q = true;
     if (k === 'c' && !e.repeat) tryRoll();
     // Z-TARGETING: toggle a sticky lock on the best hostile in view
     if (k === 'z' && !e.repeat) {
@@ -236,14 +230,6 @@ export function createPlayer({ scene, camera, planet, hud, audio, fx, transit, m
     if (e.key === 'ArrowRight') { keys.right = true; e.preventDefault(); }
   }
   function onKeyUp(e) {
-    if (e.getModifierState) {
-      const armed = e.getModifierState('CapsLock');
-      if (armed !== state.jetArmed) {
-        state.jetArmed = armed;
-        hud.toast(armed ? 'JETPACK — ON' : 'JETPACK — OFF',
-          armed ? 'CapsLock engaged — burn while it lasts' : 'CapsLock released');
-      }
-    }
     const k = e.key.toLowerCase();
     if (k === 'w') keys.w = false;
     if (e.key === ' ') spaceHeld = false;
@@ -252,7 +238,6 @@ export function createPlayer({ scene, camera, planet, hud, audio, fx, transit, m
     if (k === 'd') keys.d = false;
     if (k === 'b') keys.b = false;
     if (k === 'x') keys.x = false;
-    if (k === 'q') keys.q = false;
     if (e.key === 'ArrowUp') keys.up = false;
     if (e.key === 'ArrowDown') keys.down = false;
     if (e.key === 'ArrowLeft') keys.left = false;
@@ -701,7 +686,7 @@ export function createPlayer({ scene, camera, planet, hud, audio, fx, transit, m
     if (state.wall) g = P.wallRunGrav;
     // CapsLock (jetArmed) burns even from a standstill — it lifts you
     // off the deck; Space/Q are hold-to-thrust and only work airborne
-    const wantJet = (state.jetArmed || ((spaceHeld || keys.q) && !state.grounded))
+    const wantJet = (state.jetArmed || (spaceHeld && !state.grounded))
       && state.hoverFuel > 0 && state.flip === 0;
     const spoolWas = state.jetSpool ?? 0;
     state.jetSpool = clamp(spoolWas + (wantJet ? dt / P.jetSpool : -dt / 0.15), 0, 1);
@@ -849,7 +834,7 @@ export function createPlayer({ scene, camera, planet, hud, audio, fx, transit, m
         else if (strafing) rig.play(state.strafeDir < 0 ? 'strafeL' : 'strafeR');
         else if (sp > P.walk * 0.55) rig.play('run');
         else rig.play('walk');
-      } else if (rig.current() !== 'hover' || !keys.q) {
+      } else if (rig.current() !== 'hover' || !state.jetArmed) {
         if (state.vel.dot(_up) < -3) rig.play('fall', { fade: 0.2 });
       }
     }
