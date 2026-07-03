@@ -39,9 +39,11 @@ export const C = {
     radius: 0.5,
     height: 1.8,
     gravity: 30,         // u/s² toward planet center
-    walk: 6.2,
-    sprint: 9.6,         // W-W double-tap sprint (no energy cost)
+    walk: 6.2,           // run pace (Space toggles down to walkSlow)
+    walkSlow: 3.4,       // walk pace
+    sprint: 9.6,         // (kept for tuning)
     boost: 12.5,         // B sprint (NC scheme)
+    jetThrust: 46,       // jetpack: net up = jetThrust - gravity
     boostDrain: 14,      // energy/s while boosting
     brakeDamping: 26.0,  // X hard brake
     doubleTapMs: 300,    // W-W sprint window
@@ -66,7 +68,7 @@ export const C = {
     wallRunMax: 1.6,     // seconds a wall run can last
     wallJumpKick: 9,     // push-off velocity leaving a wall
     hoverThrust: 22,     // Q jets — brief hover
-    hoverMax: 1.1,       // seconds of hover fuel
+    hoverMax: 3.2,       // seconds of jetpack fuel (JETS bar)
     energyMax: 100,
     boltCost: 2.0,
     energyRegen: 16,

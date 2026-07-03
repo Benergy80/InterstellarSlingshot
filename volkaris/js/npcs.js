@@ -253,6 +253,26 @@ export function buildNPCs(scene, planet, fx, audio, hud, models = {}) {
     }
     return null;
   }
+  // ── power drops: downed hostiles leave a healing energy core ──
+  const drops = [];
+  const dropGeo = new THREE.IcosahedronGeometry(0.26, 0);
+  const dropMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(0x5dffb2).multiplyScalar(1.25), toneMapped: false });
+  const dropRing = new THREE.RingGeometry(0.34, 0.46, 12);
+  const dropRingMat = new THREE.MeshBasicMaterial({
+    color: 0x5dffb2, transparent: true, opacity: 0.4, side: THREE.DoubleSide,
+    blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false,
+  });
+  function spawnDrop(pos) {
+    const up = pos.clone().normalize();
+    const core = new THREE.Mesh(dropGeo, dropMat);
+    const ring = new THREE.Mesh(dropRing, dropRingMat.clone());
+    ring.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), up);
+    core.position.copy(pos).addScaledVector(up, 0.6);
+    ring.position.copy(pos).addScaledVector(up, 0.15);
+    scene.add(core); scene.add(ring);
+    drops.push({ core, ring, base: core.position.clone(), up, ttl: 60, ph: Math.random() * 6 });
+  }
+
   function applyHit(npc, dmg, at) {
     if (npc.state === 'dead') return;
     npc.hp -= dmg;
@@ -269,6 +289,19 @@ export function buildNPCs(scene, planet, fx, audio, hud, models = {}) {
       npc.respawnT = npc.kind === 'trooper' ? 24 : -1;   // generals stay down
       npc.rig.play('die', { fade: 0.08, restart: true });
       audio.sfx('boom');
+      // hostiles drop power cores (bosses drop a cluster)
+      if (['trooper', 'vultyr', 'brakkus', 'vex'].includes(npc.kind)) {
+        const n = npc.kind === 'trooper' ? 1 : 3;
+        for (let i = 0; i < n; i++) {
+          _v.copy(npc.pos);
+          if (i > 0) {
+            _up.copy(npc.pos).normalize();
+            _v2.set(1, 0, 0).cross(_up).normalize().applyAxisAngle(_up, i * 2.1);
+            _v.addScaledVector(_v2, 1.1);
+          }
+          spawnDrop(_v);
+        }
+      }
       if (npc.onDead) npc.onDead();
     }
   }
@@ -286,6 +319,24 @@ export function buildNPCs(scene, planet, fx, audio, hud, models = {}) {
   function update(dt, t, player) {
     playerAPI = player;
     const pPos = player.state.pos;
+
+    // ── power drops: bob, spin, expire, and heal on pickup ──
+    for (let i = drops.length - 1; i >= 0; i--) {
+      const d = drops[i];
+      d.ttl -= dt;
+      const take = pPos.distanceTo(d.base) < 1.9;
+      if (take && player.heal) player.heal(30);
+      if (take || d.ttl <= 0) {
+        scene.remove(d.core); scene.remove(d.ring);
+        drops.splice(i, 1);
+        if (take) { fx.burst(d.base, 12, 4); hud.toast('POWER CORE', '+30 suit integrity'); }
+        continue;
+      }
+      d.core.position.copy(d.base).addScaledVector(d.up, 0.35 + Math.sin(t * 2.4 + d.ph) * 0.16);
+      d.core.rotation.y = t * 1.8 + d.ph;
+      d.ring.material.opacity = 0.25 + Math.sin(t * 3 + d.ph) * 0.15;
+    }
+
     for (const npc of list) {
       const dist = npc.pos.distanceTo(pPos);
       // sleep far NPCs — the horizon hides them anyway
@@ -363,7 +414,16 @@ export function buildNPCs(scene, planet, fx, audio, hud, models = {}) {
       // ── grounded units ──
       npc.stateT -= dt;
       const isHostile = npc.aggro;
-      const seesPlayer = isHostile && dist < 26 && !player.state.dead;
+      // sight requires LINE of sight — walls, towers and terrain all
+      // break contact (they were sniping through buildings before)
+      let seesPlayer = isHostile && dist < 26 && !player.state.dead;
+      if (seesPlayer && dist > 3) {
+        _v2.copy(npc.pos).addScaledVector(_up, 1.4);
+        _v.copy(pPos).addScaledVector(_up, 1.1).sub(_v2);
+        const d2 = _v.length();
+        const block = planet.probe(_v2, _v.normalize(), d2);
+        if (block && block.distance < d2 - 0.8) seesPlayer = false;
+      }
 
       if (seesPlayer) npc.state = 'combat';
       else if (npc.state === 'combat') npc.state = 'roam';

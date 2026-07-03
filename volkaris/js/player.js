@@ -57,6 +57,35 @@ export function createPlayer({ scene, camera, planet, hud, audio, fx, transit, m
   suitLamp.position.set(0, 0.2, 0.5);
   rig.bones.chest.add(suitLamp);
 
+  // jetpack — worn on the back (rig faces +Z), fixed to the group so
+  // armature scale tracks can't distort it (the giant-blaster lesson)
+  const jetpack = new THREE.Group();
+  {
+    const packMat = new THREE.MeshStandardMaterial({ color: 0x1c2244, metalness: 0.7, roughness: 0.35 });
+    const goldMat = new THREE.MeshStandardMaterial({ color: 0xd8a72c, metalness: 0.8, roughness: 0.3 });
+    const shell = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.6, 0.24), packMat);
+    jetpack.add(shell);
+    const spine = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.66, 0.1),
+      new THREE.MeshBasicMaterial({ color: new THREE.Color(0x00c8ee).multiplyScalar(1.1), toneMapped: false }));
+    spine.position.z = -0.1;
+    jetpack.add(spine);
+    jetpack.userData.flames = [];
+    for (const s of [-1, 1]) {
+      const noz = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.105, 0.28, 6), goldMat);
+      noz.position.set(s * 0.17, -0.42, 0);
+      jetpack.add(noz);
+      const fl = new THREE.Mesh(new THREE.ConeGeometry(0.09, 0.55, 6),
+        new THREE.MeshBasicMaterial({ color: new THREE.Color(0x66e6ff).multiplyScalar(1.3), transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false }));
+      fl.rotation.x = Math.PI;
+      fl.position.set(s * 0.17, -0.82, 0);
+      fl.visible = false;
+      jetpack.add(fl);
+      jetpack.userData.flames.push(fl);
+    }
+    jetpack.position.set(0, 1.32, -0.34);
+    rig.group.add(jetpack);
+  }
+
   // spawn: crash-site pad edge, looking down the road to the market
   // (offset so the camera boom never starts inside the wreck)
   const spawnDir = planet.districts[0].dir.clone();
@@ -110,7 +139,7 @@ export function createPlayer({ scene, camera, planet, hud, audio, fx, transit, m
   let lockTarget = null;       // soft-lock: the enemy we're confronting
   const rotVel = { yaw: 0, pitch: 0 };   // the ship's rotational inertia
   const mouse = { x: innerWidth / 2, y: innerHeight / 2 };
-  let lastWTap = 0, wantJump = false, sprintHeld = false;
+  let lastWTap = 0, wantJump = false, spaceHeld = false, runMode = true;
   let lastFire = 0;
 
   // ── input (NEON CITY scheme) ──
@@ -125,7 +154,7 @@ export function createPlayer({ scene, camera, planet, hud, audio, fx, transit, m
     if (k === 'w') {
       if (!e.repeat) {
         const now = performance.now();
-        if (now - lastWTap < P.doubleTapMs) sprintHeld = true;   // W-W = sprint while W stays down
+        if (now - lastWTap < P.doubleTapMs) wantJump = true;   // W-W hop / air flip
         lastWTap = now;
       }
       keys.w = true;
@@ -139,7 +168,19 @@ export function createPlayer({ scene, camera, planet, hud, audio, fx, transit, m
     if (k === 'c' && !e.repeat) tryRoll();
     if (k === 'v') { state.camDist = state.camDist > 6.5 ? 4.2 : 8.5; hud.toast('CAMERA', state.camDist > 6.5 ? 'Wide' : 'Close'); }
     if (k === 'e' || e.key === 'Enter') { e.preventDefault(); interact(); }
-    if (e.key === ' ') { e.preventDefault(); if (!e.repeat) { wantJump = true; audio.resume(); } }
+    // SPACE: tap on the ground toggles run/walk pace; held in the air
+    // it fires the jetpack
+    if (e.key === ' ') {
+      e.preventDefault();
+      if (!e.repeat) {
+        audio.resume();
+        spaceHeld = true;
+        if (state.grounded && state.mode === 'walk' && !state.dead && !state.boarding) {
+          runMode = !runMode;
+          hud.toast(runMode ? 'PACE — RUN' : 'PACE — WALK', runMode ? 'Double-tap W to jump' : 'Taking it slow');
+        }
+      }
+    }
     // LEFT Shift = punch, RIGHT Shift = kick (e.location: 1=left, 2=right)
     if (e.key === 'Shift' && !e.repeat) { e.preventDefault(); tryMelee(e.location === 2 ? 'kick' : 'punch'); }
     if (e.key === 'ArrowUp') { keys.up = true; e.preventDefault(); }
@@ -150,7 +191,8 @@ export function createPlayer({ scene, camera, planet, hud, audio, fx, transit, m
   function onKeyUp(e) {
     if (e.getModifierState) state.capsPrecision = e.getModifierState('CapsLock');
     const k = e.key.toLowerCase();
-    if (k === 'w') { keys.w = false; sprintHeld = false; }
+    if (k === 'w') keys.w = false;
+    if (e.key === ' ') spaceHeld = false;
     if (k === 'a') keys.a = false;
     if (k === 's') keys.s = false;
     if (k === 'd') keys.d = false;
@@ -164,7 +206,7 @@ export function createPlayer({ scene, camera, planet, hud, audio, fx, transit, m
   }
   document.addEventListener('keydown', onKeyDown);
   document.addEventListener('keyup', onKeyUp);
-  addEventListener('blur', () => { for (const k in keys) keys[k] = false; state.fireHeld = false; sprintHeld = false; });
+  addEventListener('blur', () => { for (const k in keys) keys[k] = false; state.fireHeld = false; spaceHeld = false; });
 
   // mouse = free crosshair, click = fire (no pointer lock)
   document.addEventListener('mousemove', (e) => {
@@ -513,14 +555,14 @@ export function createPlayer({ scene, camera, planet, hud, audio, fx, transit, m
     const hasInput = _wish.lengthSq() > 0;
     if (hasInput) _wish.normalize();
 
-    // B boost drains the cell; W-W sprint is free; X brake stops hard
+    // B boost drains the cell; SPACE toggles run/walk pace; X brake stops hard
     const boosting = keys.b && state.energy > 1 && hasInput;
     if (boosting) state.energy = Math.max(0, state.energy - P.boostDrain * dt);
-    const sprinting = sprintHeld && keys.w;
+    const sprinting = boosting;
     const maxSpeed = state.roll > 0 ? P.boost + P.rollBoost
       : boosting ? P.boost
-      : sprinting ? P.sprint
-      : P.walk;
+      : runMode ? P.walk
+      : P.walkSlow;
 
     // ── flip / roll timers ──
     if (state.flip > 0) {
@@ -546,13 +588,19 @@ export function createPlayer({ scene, camera, planet, hud, audio, fx, transit, m
     const radial = state.vel.dot(_up);
     state.vel.copy(tangentVel).addScaledVector(_up, radial);
 
-    // ── gravity / hover / wall-run ──
+    // ── gravity / jetpack / wall-run ──
     let g = P.gravity;
     if (state.wall) g = P.wallRunGrav;
-    if (keys.q && !state.grounded && state.hoverFuel > 0) {
-      g -= P.hoverThrust;
-      state.hoverFuel -= dt;
+    const jetting = (spaceHeld || keys.q) && !state.grounded && state.hoverFuel > 0 && state.flip === 0;
+    if (jetting) {
+      g -= P.jetThrust;
+      state.hoverFuel -= dt * 1.1;
       if (rig.current() !== 'hover' && state.flip === 0) rig.play('hover', { fade: 0.15 });
+    }
+    // jetpack flames flicker while thrusting
+    for (const fl of jetpack.userData.flames) {
+      fl.visible = jetting;
+      if (jetting) fl.scale.set(1, 0.8 + Math.random() * 0.5, 1);
     }
     if (state.grounded) state.hoverFuel = Math.min(P.hoverMax, state.hoverFuel + dt * 0.8);
     state.vel.addScaledVector(_up, -g * dt);
@@ -585,16 +633,25 @@ export function createPlayer({ scene, camera, planet, hud, audio, fx, transit, m
       state.wallTime = 0;
     }
 
-    // ── wall slide ──
+    // ── wall slide / anti-clip ──
+    // Fan of probes (2 heights × 3 bearings) so corners, thin props and
+    // diagonal approaches can't be tunnelled through the way a single
+    // chest-height ray allowed.
     if (tSpeed > 0.5) {
-      const eye = _v3.copy(state.pos).addScaledVector(_up, 0.9);
       _v2.copy(tangentVel).normalize();
-      const hit = planet.probe(eye, _v2, P.radius + tSpeed * dt + 0.15);
-      if (hit && hit.distance < P.radius + 0.2) {
-        const n = hit.face.normal;
-        const into = state.vel.dot(n);
-        if (into < 0) state.vel.addScaledVector(n, -into);
-        state.pos.addScaledVector(n, (P.radius + 0.2 - hit.distance) * 0.5);
+      const reach = P.radius + tSpeed * dt + 0.15;
+      for (const hgt of [0.45, 1.25]) {
+        for (const ang of [0, 0.55, -0.55]) {
+          _v3.copy(_v2).applyAxisAngle(_up, ang);
+          const eye = _v.copy(state.pos).addScaledVector(_up, hgt);
+          const hit = planet.probe(eye, _v3, reach);
+          if (hit && hit.distance < P.radius + 0.2) {
+            const n = hit.face.normal;
+            const into = state.vel.dot(n);
+            if (into < 0) state.vel.addScaledVector(n, -into);
+            state.pos.addScaledVector(n, (P.radius + 0.2 - hit.distance) * 0.6);
+          }
+        }
       }
     }
 
@@ -785,6 +842,10 @@ export function createPlayer({ scene, camera, planet, hud, audio, fx, transit, m
 
   return {
     state, rig, update, damage, suitLamp,
+    heal(amount) {
+      state.hp = Math.min(P.hpMax, state.hp + amount);
+      audio.sfx('shieldUp');
+    },
     bindTargets(n) { npcsRef = n; },
     start() {
       state.started = true;
