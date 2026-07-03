@@ -19,22 +19,62 @@
 import * as THREE from 'three';
 import { C, NEON, mulberry32, pick, clamp, lerp, sphDir } from './config.js';
 import { makeCivilian, makeMerchant, makeRobot, makeTrooper, makeVultyr, makeBrakkus, makeVex } from './rig.js';
-import { makeGLTFRig } from './gltfrig.js';
+import { makeGLTFRig, ASTRO_MAP, SENTINEL_MAP } from './gltfrig.js';
 
 const _v = new THREE.Vector3(), _v2 = new THREE.Vector3(), _up = new THREE.Vector3();
 const _fwd = new THREE.Vector3(), _right = new THREE.Vector3();
 const _q = new THREE.Quaternion(), _m = new THREE.Matrix4();
 
+// unarmed civilian variant of the Astronaut clip map — hands off the gun
+const ASTRO_CIV_MAP = {
+  ...ASTRO_MAP,
+  idle: { name: 'Idle_Neutral' },
+  lean: { name: 'Idle_Neutral', timeScale: 0.55 },
+  sit: { name: 'Idle_Neutral', timeScale: 0.4 },
+};
+
 export function buildNPCs(scene, planet, fx, audio, hud, models = {}) {
   const kay = models.kay ?? {};
-  const civTints = [0xff7ad0, 0x7ad0ff, 0xffd07a, 0x9dff9a, 0xc09aff, 0xffa08a];
+  // Everyone on Volkaris wears the same make of suit as the Captain —
+  // the Astronaut rig — in their own colors. Unique identities live in
+  // the tints, visor glows, scales and props.
+  const civSuits = [
+    { main: 0x4a7a8c, dark: 0x24303e, accent: 0x35d0c0, visor: 0x9adfd2 },   // teal scavenger
+    { main: 0x8c5a3a, dark: 0x3a2620, accent: 0xff9a4a, visor: 0xffc890 },   // rust hauler
+    { main: 0x6a5a8c, dark: 0x2a2440, accent: 0xc09aff, visor: 0xd0baff },   // mauve drifter
+    { main: 0x5a8c4a, dark: 0x24361e, accent: 0x9dff9a, visor: 0xc0ffb8 },   // olive tinker
+    { main: 0x8c4a6a, dark: 0x3a2030, accent: 0xff7ad0, visor: 0xffb8e6 },   // magenta rounder
+  ];
+  const astroTints = (s, glow = 0.22) => ({
+    SciFi_Main: { color: s.main, metalness: 0.55, roughness: 0.5 },
+    SciFi_MainDark: { color: s.dark, metalness: 0.5, roughness: 0.55 },
+    SciFi_Light: { color: 0x9aa4b8, metalness: 0.45, roughness: 0.5 },
+    SciFi_Light_Accent: { color: s.accent, emissive: s.accent, emissiveIntensity: glow },
+    Grey: { color: 0x0c141e, emissive: s.visor, emissiveIntensity: glow + 0.1 },
+  });
   const makeCiv = (rnd2) => {
-    const src = pick(rnd2, [kay.Rogue_Hooded, kay.Rogue, kay.Barbarian].filter(Boolean));
-    return src ? makeGLTFRig(src, { tint: pick(rnd2, civTints), scale: 0.7 + rnd2() * 0.08 }) : makeCivilian(rnd2);
+    if (!kay.Astronaut) return makeCivilian(rnd2);
+    const s = pick(rnd2, civSuits);
+    return makeGLTFRig(kay.Astronaut, {
+      scale: 0.84 + rnd2() * 0.08, clipMap: ASTRO_CIV_MAP, tints: astroTints(s),
+    });
   };
-  const makeMerch = (rnd2) => kay.Mage
-    ? makeGLTFRig(kay.Mage, { tint: 0xffc890, scale: 0.74 })
+  const makeMerch = (rnd2) => kay.Astronaut
+    ? makeGLTFRig(kay.Astronaut, {
+        scale: 0.9, clipMap: ASTRO_CIV_MAP,
+        tints: astroTints({ main: 0xb8862c, dark: 0x3a2c14, accent: 0xffc400, visor: 0xffe6a0 }, 0.3),
+      })
     : makeMerchant(rnd2);
+  // Vex's soldiers: gunmetal suits, red visors, red sidearms
+  const makeTrooperRig = () => {
+    if (!kay.Astronaut) return makeTrooper();
+    const r = makeGLTFRig(kay.Astronaut, {
+      scale: 1.02, clipMap: ASTRO_MAP, withBlaster: true, blasterHex: 0xff2e4d,
+      tints: astroTints({ main: 0x3a4254, dark: 0x181c28, accent: 0xff2e4d, visor: 0xff4a5e }, 0.34),
+    });
+    if (r.setGunRot) r.setGunRot(-1.623, 0.166, 1.751);
+    return r;
+  };
   const rnd = mulberry32(C.SEED + 77);
   const list = [];
 
@@ -138,17 +178,28 @@ export function buildNPCs(scene, planet, fx, audio, hud, models = {}) {
 
   // pyramid: trooper patrols + BRAKKUS on the processional
   for (let i = 0; i < 4; i++) {
-    addNPC('trooper', makeTrooper(), sphDir(D.pyramid.lat + 6 + (rnd() - 0.5) * 10, D.pyramid.lon + (rnd() - 0.5) * 14),
+    addNPC('trooper', makeTrooperRig(), sphDir(D.pyramid.lat + 6 + (rnd() - 0.5) * 10, D.pyramid.lon + (rnd() - 0.5) * 14),
       {
         loop: makeLoop(D.pyramid.lat + 5, D.pyramid.lon, 13, 4),
         speed: 2.8, hp: 70, aggro: true, name: 'trooper',
       });
   }
   // two more troopers guarding the long canyon road to the port
-  addNPC('trooper', makeTrooper(), sphDir(0, 306), { loop: makeLoop(0, 306, 10, 4), speed: 2.8, hp: 70, aggro: true });
-  addNPC('trooper', makeTrooper(), sphDir(48, 182), { loop: makeLoop(48, 182, 10, 4), speed: 2.8, hp: 70, aggro: true });
+  addNPC('trooper', makeTrooperRig(), sphDir(0, 306), { loop: makeLoop(0, 306, 10, 4), speed: 2.8, hp: 70, aggro: true });
+  addNPC('trooper', makeTrooperRig(), sphDir(48, 182), { loop: makeLoop(48, 182, 10, 4), speed: 2.8, hp: 70, aggro: true });
 
-  const brakkus = addNPC('brakkus', makeBrakkus(), sphDir(D.pyramid.lat - 18 + 34, D.pyramid.lon - 22),
+  // BRAKKUS — 2.7m of jade gunmetal; same suit line as the Captain,
+  // forged heavier, with an arm cannon burning red
+  const makeBrakkusRig = () => {
+    if (!kay.Astronaut) return makeBrakkus();
+    const r = makeGLTFRig(kay.Astronaut, {
+      scale: 1.45, clipMap: ASTRO_MAP, withBlaster: true, blasterHex: NEON.orange,
+      tints: astroTints({ main: 0x2c6a52, dark: 0x122018, accent: 0xff7a1a, visor: 0xffa04a }, 0.4),
+    });
+    if (r.setGunRot) r.setGunRot(-1.623, 0.166, 1.751);
+    return r;
+  };
+  const brakkus = addNPC('brakkus', makeBrakkusRig(), sphDir(D.pyramid.lat - 18 + 34, D.pyramid.lon - 22),
     {
       loop: makeLoop(-34, 310, 13, 4),
       speed: 1.6, hp: 320, aggro: true, radius: 1.6, clip: 'stomp',
@@ -157,8 +208,16 @@ export function buildNPCs(scene, planet, fx, audio, hud, models = {}) {
     });
   brakkus.shootEvery = 2.2;
 
-  // OVERLORD VEX — on the throne inside the pyramid
-  const vex = addNPC('vex', makeVex(), D.pyramid.dir.clone(), {
+  // OVERLORD VEX — on the throne inside the pyramid. Obsidian plate,
+  // magenta furnace-glow seams, half a head taller than anyone alive.
+  const makeVexRig = () => {
+    if (!kay.Astronaut) return makeVex();
+    return makeGLTFRig(kay.Astronaut, {
+      scale: 1.55, clipMap: ASTRO_CIV_MAP,
+      tints: astroTints({ main: 0x16101e, dark: 0x0a0610, accent: 0xff2fd6, visor: 0xff2fd6 }, 0.3),
+    });
+  };
+  const vex = addNPC('vex', makeVexRig(), D.pyramid.dir.clone(), {
     fixed: true, clip: 'sit', hp: 500, radius: 1.1,
     name: 'OVERLORD VEX',
     onDead: () => hud.toast('THE OVERLORD FALLS', 'Volkaris is free. The port is yours.'),
@@ -171,8 +230,13 @@ export function buildNPCs(scene, planet, fx, audio, hud, models = {}) {
   }
   vex.risen = false;
 
-  // VULTYR — the flying general, circling the fortress
-  const vultyr = addNPC('vultyr', makeVultyr(), sphDir(D.pyramid.lat + 10, D.pyramid.lon), {
+  // VULTYR — the flying general. Ben's Silver Sentinel model takes the
+  // role: chrome biped circling the fortress (procedural wings rig as
+  // fallback when the GLB is missing)
+  const makeVultyrRig = () => kay.Sentinel
+    ? makeGLTFRig(kay.Sentinel, { scale: 1.18, clipMap: SENTINEL_MAP })
+    : makeVultyr();
+  const vultyr = addNPC('vultyr', makeVultyrRig(), sphDir(D.pyramid.lat + 10, D.pyramid.lon), {
     hp: 260, radius: 1.2, clip: 'fly', name: 'VULTYR — SKY GENERAL',
     fly: { angle: 0, height: 9, radius: 18, diveT: 0 },
     onDead: () => hud.toast('VULTYR SHOT DOWN', 'The sky is clear'),
