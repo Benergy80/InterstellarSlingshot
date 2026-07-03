@@ -26,7 +26,7 @@ import * as BufferGeometryUtils from 'three/addons/utils/BufferGeometryUtils.js'
 import { MeshBVH, acceleratedRaycast } from 'three-mesh-bvh';
 import {
   C, NEON, NEON_LIST, GROUND, mulberry32, pick, lerp, clamp, smooth,
-  sphDir, tangentFrame, surfaceMatrix, fbm3, makeCanvas, canvasTexture, hexCss,
+  sphDir, tangentFrame, surfaceMatrix, fbm3, noise3, makeCanvas, canvasTexture, hexCss,
 } from './config.js';
 
 THREE.Mesh.prototype.raycast = acceleratedRaycast;
@@ -101,6 +101,9 @@ for (const chain of PATHS) {
 }
 
 const LAKE_DIR = sphDir(20, 133);   // between the Circuit and downtown
+const ISLE_DIR = sphDir(20, 134.5); // shrine islet inside the lake bowl
+const VOLCANO_DIR = sphDir(-54, 168); // Mount Cindral — deep southern wilds,
+                                      // far from every district and road
 
 // ── Cave bores (module level: the terrain function carves their
 // mouth trenches, buildPlanet sweeps their interiors) ──
@@ -165,11 +168,24 @@ export function terrainHeight(dir) {
     peaks += Math.exp(-(d2 * d2) / p.sp) * p.h;
   }
 
+  // Mount Cindral — a volcano: a tall gaussian cone with a crater bowl
+  // bitten out of its summit, so the rim rings a sunken molten throat
+  const volDist = dir.angleTo(VOLCANO_DIR) * R;
+  if (volDist < 42) {
+    peaks += Math.exp(-(volDist * volDist) / 55) * 21
+           - Math.exp(-(volDist * volDist) / 9) * 7;
+  }
+
   // Lake Voltaine — a glowing basin like Messenger's bay
   const lakeDist = dir.angleTo(LAKE_DIR) * R;
   const bowl = Math.exp(-(lakeDist * lakeDist) / 130) * 5.5;
 
-  let result = R + (h + peaks) * damp - bowl;
+  // shrine islet — added OUTSIDE the street damp (a path waypoint
+  // crosses the lake here, so a damped bump would never surface)
+  const isleDist = dir.angleTo(ISLE_DIR) * R;
+  const isle = isleDist < 10 ? Math.exp(-(isleDist * isleDist) / 7) * 6.4 : 0;
+
+  let result = R + (h + peaks) * damp - bowl + isle;
 
   // cave-mouth trenches: cut the terrain skin open at both ends of
   // each bore so you can walk in under the mountain
@@ -1072,6 +1088,8 @@ export function buildPlanet(scene, models = {}) {
       if (streetDist < 2.0 + Math.max(w, d2) / 2) continue;
       // keep the lake open
       if (dir.angleTo(LAKE_DIR) * R < 13) continue;
+      // keep Mount Cindral's cone bare — volcanic rock, not real estate
+      if (dir.angleTo(VOLCANO_DIR) * R < 15) continue;
       const jd = dir.clone();   // slight jitter off the lattice
       jd.applyAxisAngle(new THREE.Vector3(0, 1, 0), (rnd() - 0.5) * 0.03).normalize();
       const f = frameAtDir(jd, rnd() * 360, 0.6);
@@ -1189,6 +1207,355 @@ export function buildPlanet(scene, models = {}) {
     }
   }
 
+  // ════════════ LANDMARKS ════════════
+
+  // — MOUNT CINDRAL — the volcano at (-54°, 168°). The cone + crater
+  // live in terrainHeight; this block dresses the summit: a pulsing
+  // lava throat, glowing flank cracks, embers and a smoke column.
+  {
+    const vrnd = mulberry32(7301);
+    const vUp = VOLCANO_DIR.clone();
+    const { east: vE, north: vN } = tangentFrame(VOLCANO_DIR);
+    const craterR = terrainHeight(VOLCANO_DIR);
+
+    // molten pool seated at the crater floor (edges tuck under the rim)
+    const lavaMat = new THREE.MeshBasicMaterial({
+      color: new THREE.Color(0xff5a1a).multiplyScalar(1.3), toneMapped: false,
+    });
+    const lavaGeo = new THREE.CircleGeometry(3.75, 28);
+    lavaGeo.rotateX(-Math.PI / 2);
+    const lava = new THREE.Mesh(lavaGeo, lavaMat);
+    lava.applyMatrix4(surfaceMatrix(VOLCANO_DIR, craterR + 0.3));
+    signs.push(lava);
+    const lavaA = new THREE.Color(0xff5a1a).multiplyScalar(1.1);
+    const lavaB = new THREE.Color(0xffa63a).multiplyScalar(1.38);
+    dynamic.push({ update(dt, t) {
+      lavaMat.color.copy(lavaA).lerp(lavaB, 0.5 + 0.5 * Math.sin(t * 1.6));
+    } });
+
+    // lava-crack ribbons running down the outer flank
+    const _cp = new THREE.Vector3();
+    for (const az of [0.4, 2.5, 4.6]) {
+      const tang = vE.clone().multiplyScalar(Math.cos(az)).addScaledVector(vN, Math.sin(az));
+      let prev = null;
+      for (let d = 3.6; d < 13.6; d += 1.4) {
+        const pd = _cp.copy(VOLCANO_DIR).multiplyScalar(R).addScaledVector(tang, d).clone().normalize();
+        const p = pd.multiplyScalar(terrainHeight(pd) + 0.12);
+        if (prev) {
+          const midDir = prev.clone().add(p).normalize();
+          const mid = midDir.multiplyScalar(terrainHeight(midDir) + 0.14);
+          const upv = mid.clone().normalize();
+          const fwd = p.clone().sub(prev).normalize();
+          const right = new THREE.Vector3().crossVectors(upv, fwd).normalize();
+          const m = new THREE.Matrix4().makeBasis(right, upv, fwd).setPosition(mid);
+          addGlowViaMatrix(box(0.42 + vrnd() * 0.25, 0.2, prev.distanceTo(p) + 0.25), m,
+            d < 8 ? 0xff5a1a : 0xc23a12, 1.28 - d * 0.05);
+        }
+        prev = p;
+      }
+    }
+
+    // embers — one Points cloud drifting up out of the throat
+    const EMBERS = 36;
+    const ePos = new Float32Array(EMBERS * 3);
+    const eOff = new Float32Array(EMBERS * 2);
+    const eSpd = new Float32Array(EMBERS), ePh = new Float32Array(EMBERS);
+    for (let i = 0; i < EMBERS; i++) {
+      const a = vrnd() * Math.PI * 2, r2 = vrnd() * 2.2;
+      eOff[i * 2] = Math.cos(a) * r2; eOff[i * 2 + 1] = Math.sin(a) * r2;
+      eSpd[i] = 1.1 + vrnd() * 1.5; ePh[i] = vrnd() * 8;
+    }
+    const eGeo = new THREE.BufferGeometry();
+    eGeo.setAttribute('position', new THREE.BufferAttribute(ePos, 3));
+    const embers = new THREE.Points(eGeo, new THREE.PointsMaterial({
+      color: new THREE.Color(0xff8a3a).multiplyScalar(1.3), size: 0.34,
+      transparent: true, opacity: 0.9, toneMapped: false, depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    }));
+    embers.frustumCulled = false;
+    signs.push(embers);
+    const eBase = vUp.clone().multiplyScalar(craterR + 0.4);
+    dynamic.push({ update(dt, t) {
+      for (let i = 0; i < EMBERS; i++) {
+        const hgt = (ePh[i] + t * eSpd[i]) % 8;
+        const sw = eOff[i * 2] + Math.sin(t * 1.7 + i) * 0.25, sn = eOff[i * 2 + 1];
+        ePos[i * 3]     = eBase.x + vUp.x * hgt + vE.x * sw + vN.x * sn;
+        ePos[i * 3 + 1] = eBase.y + vUp.y * hgt + vE.y * sw + vN.y * sn;
+        ePos[i * 3 + 2] = eBase.z + vUp.z * hgt + vE.z * sw + vN.z * sn;
+      }
+      eGeo.attributes.position.needsUpdate = true;
+    } });
+
+    // smoke column — translucent grey sprites looping upward
+    const [scv, sctx] = makeCanvas(64, 64);
+    const grad = sctx.createRadialGradient(32, 32, 4, 32, 32, 30);
+    grad.addColorStop(0, 'rgba(205,198,220,0.85)');
+    grad.addColorStop(1, 'rgba(205,198,220,0)');
+    sctx.fillStyle = grad; sctx.fillRect(0, 0, 64, 64);
+    const smokeTex = canvasTexture(scv);
+    const smokes = [];
+    for (let i = 0; i < 4; i++) {
+      const sm = new THREE.Sprite(new THREE.SpriteMaterial({
+        map: smokeTex, color: 0x8a8598, transparent: true, opacity: 0.16, depthWrite: false,
+      }));
+      signs.push(sm); smokes.push(sm);
+    }
+    dynamic.push({ update(dt, t) {
+      for (let i = 0; i < 4; i++) {
+        const hgt = (t * 1.2 + i * 3.6) % 14;
+        const sm = smokes[i];
+        sm.position.copy(eBase).addScaledVector(vUp, 1.4 + hgt);
+        const sc = 2.4 + hgt * 0.55;
+        sm.scale.set(sc, sc, 1);
+        sm.material.opacity = 0.17 * (1 - hgt / 14);
+      }
+    } });
+  }
+
+  // — SHRINE ISLET — a tiny ancient ruin rising out of Lake Voltaine
+  // (the bump itself lives in terrainHeight at ISLE_DIR)
+  {
+    const irnd = mulberry32(5501);
+    const f0 = frameAtDir(ISLE_DIR, 25, 0.35);
+    // stone plinth + four weathered pillars
+    addSolid(T(new THREE.CylinderGeometry(2.1, 2.5, 0.5, 12), 0, 0.12, 0), f0.clone(), 0x7d719e, { jitter: 0.06 });
+    for (const [px, pz] of [[-1.15, -1.15], [1.15, -1.15], [-1.15, 1.15], [1.15, 1.15]]) {
+      addSolid(T(new THREE.CylinderGeometry(0.17, 0.22, 2.0, 6), px, 1.35, pz), f0.clone(), 0x9a8fb8, { jitter: 0.08 });
+    }
+    // broken lintel ring + cracked dome over the pillars
+    addSolid(T(new THREE.TorusGeometry(1.62, 0.14, 6, 14, Math.PI * 1.55), 0, 2.42, 0, 0.7, Math.PI / 2), f0.clone(), 0x8f84ae);
+    addSolid(T(new THREE.SphereGeometry(1.55, 10, 6, 0, Math.PI * 1.5, 0, Math.PI / 2), 0, 2.46, 0, 2.3), f0.clone(), 0x877cab, { collide: false });
+    // the sigil — a glowing ring set into the plinth
+    addGlow(T(new THREE.TorusGeometry(0.6, 0.07, 6, 18), 0, 0.44, 0, 0, Math.PI / 2), f0.clone(), NEON.purple, 1.15);
+    addGlow(T(box(0.52, 0.05, 0.1), 0, 0.44, 0), f0.clone(), NEON.purple, 1.15);
+    // scrap-palms around the waterline
+    for (const [pla, plo] of [[20.9, 135.6], [19.3, 134.9], [20.3, 133.4]]) {
+      const pf = frameAt(pla, plo, irnd() * 360, 0.25);
+      addSolid(T(new THREE.CylinderGeometry(0.08, 0.14, 1.9, 5), 0.12, 0.95, 0, 0, 0, 0.16), pf.clone(), 0x6e5a48, { collide: false });
+      for (let b = 0; b < 5; b++) {
+        const blade = box(0.16, 0.05, 1.25);
+        blade.translate(0, 0, 0.58);                       // pivot at the inner end
+        blade.rotateX(0.3 + irnd() * 0.35);                // droop
+        blade.rotateY(b * Math.PI * 2 / 5 + irnd() * 0.4); // fan
+        blade.translate(0.24, 1.92, 0);
+        addSolid(blade, pf.clone(), pick(irnd, [0x3a7a5e, 0x2e6e52, 0x4a8a5a]), { collide: false });
+      }
+    }
+    // floating dock plank toward the nearest (eastern) shore
+    let shoreDir = null;
+    for (let lo = 136; lo < 147; lo += 0.35) {
+      const d = sphDir(20, lo);
+      if (terrainHeight(d) > 58.85) { shoreDir = d; break; }
+    }
+    if (shoreDir) {
+      plank(sphDir(20, 135.3).multiplyScalar(58.78),
+        surfacePoint(shoreDir, new THREE.Vector3()).multiplyScalar(1.002), 0.9);
+    }
+  }
+
+  // — SPACESHIP WRECKAGE — four more downed hulls scattered planet-wide
+  function wreckSite(frame, seed, scale = 1) {
+    const wr = mulberry32(seed);
+    const s = scale;
+    // scorch ring under everything
+    const scorch = new THREE.CircleGeometry(4.4 * s, 20);
+    scorch.rotateX(-Math.PI / 2);
+    addSolid(T(scorch, 0, 0.09, 0), frame.clone(), 0x0b0816, { collide: false });
+    // half-buried hull section, listing hard
+    addSolid(T(new THREE.CylinderGeometry(1.5 * s, 1.9 * s, 7 * s, 10),
+      0, 0.7 * s, 0, wr() * Math.PI, 0.28, 1.25 + wr() * 0.2), frame.clone(), 0x59627f, { jitter: 0.08 });
+    // broken ribs jutting out of the ground
+    for (let i = 0; i < 3; i++) {
+      const rib = new THREE.TorusGeometry((1.6 + wr() * 0.7) * s, 0.11 * s, 6, 10, Math.PI * (0.6 + wr() * 0.35));
+      T(rib, (wr() - 0.5) * 5 * s, 0.15, (wr() - 0.5) * 6 * s, wr() * Math.PI * 2, -0.35 + wr() * 0.7, wr() * 0.6);
+      addSolid(rib, frame.clone(), 0x4a5470, { jitter: 0.1 });
+    }
+    // scattered plate debris
+    for (let i = 0; i < 7; i++) {
+      const a = wr() * Math.PI * 2, d = (1.6 + wr() * 4.2) * s;
+      addSolid(T(box((0.5 + wr() * 0.9) * s, 0.1, (0.4 + wr() * 0.8) * s),
+        Math.cos(a) * d, 0.1, Math.sin(a) * d, wr() * Math.PI, 0, (wr() - 0.5) * 0.3),
+        frame.clone(), pick(wr, [0x4a5470, 0x59627f, 0x3c4560]), { jitter: 0.1, collide: false });
+    }
+    // sparking bits
+    addGlow(T(box(0.3 * s, 0.3 * s, 0.3 * s), 1.1 * s, 0.9 * s, 0.6 * s),
+      frame.clone(), pick(wr, [NEON.amber, NEON.orange, NEON.cyan]), 1.3);
+    if (wr() < 0.8) addGlow(T(box(0.2 * s, 0.5 * s, 0.12 * s), -1.6 * s, 0.4 * s, -1.2 * s),
+      frame.clone(), pick(wr, [NEON.cyan, NEON.red, NEON.lime]), 1.2);
+  }
+  wreckSite(frameAt(-30, 234, 70, 0.5), 3101, 1.0);    // dunes approach (nudged off the ruins→dunes road)
+  wreckSite(frameAt(-16, 213, 205, 0.5), 3102, 1.15);  // foundry ruins southern outskirts
+  wreckSite(frameAt(-48, 160, 320, 0.7), 3103, 0.9);   // Mount Cindral's flank
+  wreckSite(frameAt(52, 60, 140, 0.5), 3104, 1.25);    // northern wilderness
+  // the northern site took down a whole freighter — half-buried, listing ~25°
+  if (models.Freighter) {
+    const ship = models.Freighter.clone();
+    ship.traverse(o => { if (o.isMesh) { o.castShadow = true; } });
+    const f = frameAt(52.5, 62.5, 95, -0.2);
+    ship.applyMatrix4(new THREE.Matrix4().makeRotationZ(0.44)
+      .premultiply(new THREE.Matrix4().makeRotationY(2.2))
+      .premultiply(new THREE.Matrix4().makeTranslation(0, 1.2, 0))
+      .premultiply(f));
+    ship.scale.multiplyScalar(2.4);
+    signs.push(ship);
+    // collision hull under it, matching the list
+    addSolid(T(box(8.5, 3.0, 20), 0, 1.0, 0, 2.2, 0, 0.44), f.clone(), 0x3a3550, { jitter: 0 });
+  }
+
+  // — THE IVORY SPIRE — a floating rock island above the lake carrying
+  // a white futurist palace. STATIC (so the BVH stays valid, and every
+  // top surface is landable); only the shard ring animates.
+  const ivoryInfo = {};
+  {
+    const frnd = mulberry32(9107);
+    const iDir = sphDir(26, 140);
+    const M = surfaceMatrix(iDir, R + 34);
+    const isle = new THREE.Group();
+    isle.applyMatrix4(M);
+
+    const rockParts = [], palParts = [], glowP = [];
+    const col = (geo, hex) => colorize(geo, hex, 0);
+    const glowCol = (geo, hex, boost = 1.15) => {
+      _c.set(hex).multiplyScalar(boost);
+      const n = geo.attributes.position.count;
+      const cc = new Float32Array(n * 3);
+      for (let i = 0; i < n; i++) { cc[i * 3] = _c.r; cc[i * 3 + 1] = _c.g; cc[i * 3 + 2] = _c.b; }
+      geo.setAttribute('color', new THREE.BufferAttribute(cc, 3));
+      return geo;
+    };
+
+    // jagged rock — a cone pointing DOWN, vertices kinked by noise
+    const rock = new THREE.ConeGeometry(7.8, 11, 14, 5, true);
+    rock.rotateX(Math.PI);                 // apex down
+    rock.translate(0, -6.2, 0);            // base ring at y = -0.7
+    {
+      const pos = rock.attributes.position;
+      const vv = new THREE.Vector3();
+      for (let i = 0; i < pos.count; i++) {
+        vv.fromBufferAttribute(pos, i);
+        const depth = clamp((-0.7 - vv.y) / 3, 0, 1);   // keep the top ring clean
+        const kink = 1 + (noise3(_v.set(vv.x * 0.55, vv.y * 0.55, vv.z * 0.55)) - 0.5) * 0.55 * depth;
+        pos.setXYZ(i, vv.x * kink,
+          vv.y + (noise3(_v.set(vv.z * 0.7, vv.x * 0.7, vv.y * 0.7)) - 0.5) * 1.2 * depth,
+          vv.z * kink);
+      }
+      rock.computeVertexNormals();
+    }
+    rockParts.push(col(rock, 0x453264));
+    // flat top slab ~14u across + thin pale-grass surface
+    rockParts.push(col(T(new THREE.CylinderGeometry(7.1, 7.9, 1.3, 22), 0, -0.65, 0), 0x50406f));
+    rockParts.push(col(T(new THREE.CylinderGeometry(7.0, 7.0, 0.14, 22), 0, 0.05, 0), 0xb9d4a4));
+
+    // the palace — ivory towers, golden dome, slender bridges
+    const IVORY = 0xf2ead8, PALE = 0xe8dfc9, GOLD = 0xd8a72c;
+    const TWRS = [                          // [x, z, radius, height]
+      [0, 0, 1.35, 12],
+      [2.7, 1.4, 0.9, 7.5],
+      [-2.5, 2.0, 0.8, 6.2],
+      [1.8, -2.7, 1.0, 8.6],
+      [-2.4, -2.1, 0.72, 5.0],
+      [3.6, -1.2, 0.62, 4.2],
+      [-3.9, -0.1, 0.85, 9.4],
+    ];
+    for (let i = 0; i < TWRS.length; i++) {
+      const [tx, tz, tr, th] = TWRS[i];
+      palParts.push(col(T(new THREE.CylinderGeometry(tr, tr * 1.18, th, 12), tx, th / 2, tz), IVORY));
+      // walkable parapet disc at each top
+      palParts.push(col(T(new THREE.CylinderGeometry(tr * 1.25, tr * 1.05, 0.3, 12), tx, th + 0.15, tz), IVORY));
+      if (i > 0) palParts.push(col(T(new THREE.SphereGeometry(tr * 0.85, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2), tx, th + 0.3, tz), PALE));
+      // vertical glowing window slits — cyan + warm white
+      const slits = 2 + (i % 3);
+      for (let k = 0; k < slits; k++) {
+        const g = box(0.14, th * (0.35 + frnd() * 0.4), 0.07);
+        g.translate(0, 0, tr + 0.05);
+        g.rotateY(frnd() * Math.PI * 2);
+        g.translate(tx, th * 0.45, tz);
+        glowP.push(glowCol(g, k % 2 ? 0xfff1cf : NEON.cyan, 1.12));
+      }
+    }
+    // golden dome + beacon spire on the central tower
+    palParts.push(col(T(new THREE.SphereGeometry(1.7, 14, 10, 0, Math.PI * 2, 0, Math.PI / 2), 0, 12.3, 0), GOLD));
+    palParts.push(col(T(new THREE.CylinderGeometry(0.07, 0.16, 3.2, 6), 0, 14.9, 0), PALE));
+    const beaconMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(0xfff2c8).multiplyScalar(1.35), toneMapped: false });
+    const beacon = new THREE.Mesh(new THREE.OctahedronGeometry(0.5, 0), beaconMat);
+    beacon.position.set(0, 16.7, 0);
+    isle.add(beacon);
+    const bcA = new THREE.Color(0xfff2c8).multiplyScalar(0.85), bcB = new THREE.Color(0xfff2c8).multiplyScalar(1.4);
+    dynamic.push({ update(dt, t) {
+      beaconMat.color.copy(bcA).lerp(bcB, 0.5 + 0.5 * Math.sin(t * 2.4));
+      beacon.rotation.y = t * 0.8;
+    } });
+    // grand door glow at the central tower's base
+    glowP.push(glowCol(T(box(0.8, 1.8, 0.1), 0, 0.95, 1.42), 0xfff1cf, 1.2));
+    // slender bridges between the central tower and three satellites
+    for (const [ai, bi] of [[0, 1], [0, 3], [0, 6]]) {
+      const A = TWRS[ai], B = TWRS[bi];
+      const hB = Math.min(A[3], B[3]) - 0.4;
+      const dx = B[0] - A[0], dz = B[1] - A[1];
+      const len = Math.hypot(dx, dz), yaw = Math.atan2(dx, dz);
+      const deck = box(0.9, 0.16, len);
+      deck.rotateY(yaw);
+      deck.translate((A[0] + B[0]) / 2, hB, (A[1] + B[1]) / 2);
+      palParts.push(col(deck, IVORY));
+      const strip = box(0.12, 0.06, len * 0.92);
+      strip.rotateY(yaw);
+      strip.translate((A[0] + B[0]) / 2, hB - 0.14, (A[1] + B[1]) / 2);
+      glowP.push(glowCol(strip, NEON.cyan, 1.0));
+    }
+
+    const rockGeo = BufferGeometryUtils.mergeGeometries(rockParts, false);
+    const rockMesh = new THREE.Mesh(rockGeo, new THREE.MeshLambertMaterial({ vertexColors: true }));
+    rockMesh.castShadow = rockMesh.receiveShadow = true;
+    isle.add(rockMesh);
+    const palGeo = BufferGeometryUtils.mergeGeometries(palParts, false);
+    const palMesh = new THREE.Mesh(palGeo, new THREE.MeshStandardMaterial({
+      vertexColors: true, roughness: 0.55, metalness: 0.3,
+    }));
+    palMesh.castShadow = palMesh.receiveShadow = true;
+    isle.add(palMesh);
+    isle.add(new THREE.Mesh(BufferGeometryUtils.mergeGeometries(glowP, false),
+      new THREE.MeshBasicMaterial({ vertexColors: true, toneMapped: false })));
+
+    // LANDABLE: bake the island's solid geometry (with its world matrix
+    // composed in) into the standard collision merge — static, so the
+    // one shared BVH stays valid
+    for (const g of [rockGeo, palGeo]) {
+      const cg = g.clone();
+      cg.applyMatrix4(M);
+      collParts.push(cg);
+    }
+
+    // ring of rock shards slowly orbiting the island (render-only)
+    const shardPivot = new THREE.Group();
+    const shardParts = [];
+    for (let i = 0; i < 5; i++) {
+      const a = i / 5 * Math.PI * 2 + frnd();
+      const g = new THREE.IcosahedronGeometry(0.55 + frnd() * 0.6, 0);
+      g.translate(Math.cos(a) * (10.5 + frnd() * 2.5), -3 + frnd() * 6, Math.sin(a) * (10.5 + frnd() * 2.5));
+      shardParts.push(col(g, 0x51406f));
+    }
+    shardPivot.add(new THREE.Mesh(BufferGeometryUtils.mergeGeometries(shardParts, false),
+      new THREE.MeshLambertMaterial({ vertexColors: true })));
+    isle.add(shardPivot);
+    dynamic.push({ update(dt, t) { shardPivot.rotation.y = t * 0.1; } });
+
+    // faint volumetric beam from the underside down toward the lake
+    const beam = new THREE.Mesh(
+      new THREE.ConeGeometry(6, 26, 18, 1, true),
+      new THREE.MeshBasicMaterial({
+        color: 0x9fe8ff, transparent: true, opacity: 0.04, toneMapped: false,
+        blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+      })
+    );
+    beam.position.set(0, -24, 0);   // apex tucked into the rock tip
+    isle.add(beam);
+
+    signs.push(isle);   // joins the planet group with the other live objects
+    ivoryInfo.dir = iDir;
+    ivoryInfo.center = new THREE.Vector3().setFromMatrixPosition(M);
+    ivoryInfo.topRadius = R + 34;
+  }
+
   // ════════════ MERGE + MATERIALS ════════════
   const group = new THREE.Group();
 
@@ -1299,7 +1666,7 @@ export function buildPlanet(scene, models = {}) {
   return {
     group, uTime, collMesh, groundHit, probe, addColliders,
     districts: districtDirs, districtAt,
-    pyramidInfo, portInfo,
+    pyramidInfo, portInfo, ivoryInfo,
     pathSamples, pathChains, towerSpots,
     terrainHeight, surfacePoint,
     dynamic,

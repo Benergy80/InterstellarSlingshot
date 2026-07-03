@@ -532,8 +532,8 @@ export function buildTransit(scene, planet, audio) {
   const groundCars = [];
   let carBodies = null, carGlows = null;
   {
-    const chains = [...planet.pathChains].sort((a, b) => b.length - a.length).slice(0, 5);
-    const N = 14;
+    const chains = [...planet.pathChains].sort((a, b) => b.length - a.length).slice(0, 6);
+    const N = 20;
     carBodies = new THREE.InstancedMesh(
       new THREE.BoxGeometry(1.05, 0.42, 2.2),
       new THREE.MeshStandardMaterial({ color: 0x322a5e, roughness: 0.35, metalness: 0.8 }), N);

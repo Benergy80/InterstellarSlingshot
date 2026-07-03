@@ -78,6 +78,25 @@ export function buildNPCs(scene, planet, fx, audio, hud, models = {}) {
   const rnd = mulberry32(C.SEED + 77);
   const list = [];
 
+  // walls and props block the locals too — probe at chest height and
+  // slide along whatever is hit instead of clipping through it
+  const _mv = new THREE.Vector3(), _mv2 = new THREE.Vector3();
+  function moveNPC(npc, moveDir, dist) {
+    _mv2.copy(npc.pos).normalize();
+    _mv.copy(npc.pos).addScaledVector(_mv2, 1.0);
+    const hit = planet.probe(_mv, moveDir, dist + 0.7);
+    if (hit) {
+      const n = hit.face.normal;
+      _mv.copy(moveDir).addScaledVector(n, -moveDir.dot(n));
+      if (_mv.lengthSq() < 0.02) return false;   // dead-on into a wall
+      _mv.normalize();
+      npc.pos.addScaledVector(_mv, dist * 0.6);
+      return true;
+    }
+    npc.pos.addScaledVector(moveDir, dist);
+    return true;
+  }
+
   function groundPose(dirUnit, npc) {
     const gh = planet.groundHit(_v.copy(dirUnit).multiplyScalar(planet.terrainHeight(dirUnit) + 3), 2, 30);
     const p = gh ? gh.point : planet.surfacePoint(dirUnit);
@@ -147,7 +166,7 @@ export function buildNPCs(scene, planet, fx, audio, hud, models = {}) {
       { fixed: true, clip: i === 1 ? 'wave' : 'lean', name: 'merchant' });
     m.rig.group.rotateY(rnd() * 6.28);
   }
-  for (let i = 0; i < 5; i++) {
+  for (let i = 0; i < 8; i++) {
     addNPC('civ', makeCiv(rnd), sphDir(D.market.lat + (rnd() - 0.5) * 8, D.market.lon + (rnd() - 0.5) * 10),
       { loop: makeLoop(D.market.lat, D.market.lon, 9), speed: 1.8 + rnd(), name: 'civ' });
   }
@@ -155,7 +174,7 @@ export function buildNPCs(scene, planet, fx, audio, hud, models = {}) {
     { loop: makeLoop(D.market.lat, D.market.lon, 12), speed: 2.6, name: 'robot' });
 
   // the circuit: night crowd + robots
-  for (let i = 0; i < 4; i++) {
+  for (let i = 0; i < 6; i++) {
     addNPC('civ', makeCiv(rnd), sphDir(D.circuit.lat + (rnd() - 0.5) * 8, D.circuit.lon + (rnd() - 0.5) * 10),
       { loop: makeLoop(D.circuit.lat, D.circuit.lon, 8), speed: 1.6 + rnd() * 0.8 });
   }
@@ -165,16 +184,35 @@ export function buildNPCs(scene, planet, fx, audio, hud, models = {}) {
   }
 
   // downtown: commuters
-  for (let i = 0; i < 4; i++) {
+  for (let i = 0; i < 6; i++) {
     addNPC('civ', makeCiv(rnd), sphDir(D.downtown.lat + (rnd() - 0.5) * 10, D.downtown.lon + (rnd() - 0.5) * 12),
       { loop: makeLoop(D.downtown.lat, D.downtown.lon, 10), speed: 2.4 + rnd() });
   }
   addNPC('robot', makeRobot(rnd), sphDir(D.downtown.lat - 4, D.downtown.lon + 2),
     { loop: makeLoop(D.downtown.lat, D.downtown.lon, 13), speed: 3.1 });
 
-  // dunes: the saloon keeper
+  // dunes: the saloon keeper + regulars
   addNPC('merchant', makeMerch(rnd), sphDir(D.dunes.lat + 2, D.dunes.lon + 3.4),
     { fixed: true, clip: 'lean', name: 'saloon keeper' });
+  for (let i = 0; i < 2; i++) {
+    addNPC('civ', makeCiv(rnd), sphDir(D.dunes.lat + (rnd() - 0.5) * 6, D.dunes.lon + (rnd() - 0.5) * 8),
+      { loop: makeLoop(D.dunes.lat, D.dunes.lon, 7), speed: 1.5 + rnd() * 0.8 });
+  }
+
+  // crash site scavengers, foundry drifters, port dockhands — people
+  // everywhere, not just the marquee districts
+  for (let i = 0; i < 2; i++) {
+    addNPC('civ', makeCiv(rnd), sphDir(D.crash.lat + (rnd() - 0.5) * 7, D.crash.lon + (rnd() - 0.5) * 8),
+      { loop: makeLoop(D.crash.lat, D.crash.lon, 8), speed: 1.7 + rnd() * 0.8 });
+  }
+  for (let i = 0; i < 3; i++) {
+    addNPC('civ', makeCiv(rnd), sphDir(D.ruins.lat + (rnd() - 0.5) * 8, D.ruins.lon + (rnd() - 0.5) * 9),
+      { loop: makeLoop(D.ruins.lat, D.ruins.lon, 9), speed: 1.6 + rnd() });
+  }
+  for (let i = 0; i < 3; i++) {
+    addNPC('civ', makeCiv(rnd), sphDir(D.port.lat + (rnd() - 0.5) * 7, D.port.lon + (rnd() - 0.5) * 8),
+      { loop: makeLoop(D.port.lat, D.port.lon, 8), speed: 2.0 + rnd() });
+  }
 
   // pyramid: trooper patrols + BRAKKUS on the processional
   for (let i = 0; i < 4; i++) {
@@ -398,7 +436,7 @@ export function buildNPCs(scene, planet, fx, audio, hud, models = {}) {
           _fwd.addScaledVector(_up, -_fwd.dot(_up));
           if (_fwd.lengthSq() > 0.1) {
             _fwd.normalize();
-            npc.pos.addScaledVector(_fwd, dt * 1.1);
+            moveNPC(npc, _fwd, dt * 1.1);
             groundPose(npc.pos.clone().normalize(), npc);
             npc.rig.group.position.copy(npc.pos);
             faceAlong(npc, _fwd, dt);
@@ -434,7 +472,7 @@ export function buildNPCs(scene, planet, fx, audio, hud, models = {}) {
         _fwd.addScaledVector(_up, -_fwd.dot(_up)).normalize();
         faceAlong(npc, _fwd, dt);
         if (npc.kind === 'brakkus' && dist > 9) {
-          npc.pos.addScaledVector(_fwd, npc.speed * dt);
+          moveNPC(npc, _fwd, npc.speed * dt);
           groundPose(npc.pos.clone().normalize(), npc);
           npc.rig.group.position.copy(npc.pos);
           npc.rig.play('stomp');
@@ -461,7 +499,7 @@ export function buildNPCs(scene, planet, fx, audio, hud, models = {}) {
         npc.rig.setAim(0, 0);
         _fwd.copy(npc.pos).sub(pPos);
         _fwd.addScaledVector(_up, -_fwd.dot(_up)).normalize();
-        npc.pos.addScaledVector(_fwd, npc.speed * 2.1 * dt);
+        moveNPC(npc, _fwd, npc.speed * 2.1 * dt);
         groundPose(npc.pos.clone().normalize(), npc);
         npc.rig.group.position.copy(npc.pos);
         faceAlong(npc, _fwd, dt);
@@ -488,7 +526,10 @@ export function buildNPCs(scene, planet, fx, audio, hud, models = {}) {
           if (Math.random() < 0.25) { npc.state = 'idle'; npc.stateT = 2 + Math.random() * 3; npc.rig.play('idle'); }
         } else {
           _fwd.divideScalar(d2);
-          npc.pos.addScaledVector(_fwd, npc.speed * dt);
+          if (!moveNPC(npc, _fwd, npc.speed * dt)) {
+            // boxed in — give up on this waypoint rather than grind a wall
+            npc.wpIdx = (npc.wpIdx + 1) % npc.loop.length;
+          }
           groundPose(npc.pos.clone().normalize(), npc);
           npc.rig.group.position.copy(npc.pos);
           faceAlong(npc, _fwd, dt);
