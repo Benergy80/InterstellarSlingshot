@@ -176,12 +176,18 @@ function _updateLaserCharge() {
     // Expose for the blast origin (emit from the charge center).
     gameState._chargeWings = [leftWing, rightWing];
     gameState._chargeCenter = leftWing.clone().add(rightWing).multiplyScalar(0.5);
+    // Glow size derives from the actual wing span (guns sit at ±0.35 of the
+    // hull width, so span/0.7 ≈ ship width) — branch-independent. The old
+    // `size.x` only existed in the fallback branch: with the wing-gun
+    // helper active it threw a ReferenceError that the caller's try/catch
+    // swallowed, silently killing the charge glow every frame.
+    const _glowBase = Math.max(leftWing.distanceTo(rightWing) / 0.7, 8);
     const t = Date.now();
     const wings = [leftWing, rightWing];
     _chargeGlow.sprites.forEach((sp, i) => {
         sp.position.copy(wings[i]);
         const flick = 0.82 + 0.18 * Math.sin(t * 0.03 + i * 2);
-        sp.scale.setScalar(Math.max(size.x, 8) * (0.08 + prog * 0.34) * flick);
+        sp.scale.setScalar(_glowBase * (0.08 + prog * 0.34) * flick);
         sp.material.opacity = prog * 0.95;
         // YELLOW build (matches the yellow blast): gold → bright yellow-white
         sp.material.color.setHSL(0.13, 1, 0.5 + prog * 0.45);

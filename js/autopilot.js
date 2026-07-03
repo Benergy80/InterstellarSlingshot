@@ -1179,12 +1179,14 @@
     }
 
     // ── Demo charged-blast showcase ───────────────────────────────────────
-    // Occasionally the demo HOLDS the charge (the wing glow builds for
-    // ~1-2s, the new max) then releases a power-scaled blast — so viewers see
-    // the charge mechanic. Starts only in weapons range; one at a time.
+    // The demo regularly HOLDS the charge (the wing glow builds for ~1-2s)
+    // then releases a power-scaled blast — a signature move, not a rarity:
+    // ~every 6-10s of sustained engagement (was 2% roll + 14s cooldown,
+    // which viewers could miss entirely). One at a time; also allowed on
+    // the approach edge of weapons range so charges land as it closes.
     if (typeof gameState !== 'undefined') {
-      if (!ap._demoChargeUntil && dist <= engageRange && speed < 3 &&
-          Date.now() - (ap._lastDemoCharge || 0) > 14000 && Math.random() < 0.02) {
+      if (!ap._demoChargeUntil && dist <= engageRange * 1.25 && speed < 4 &&
+          Date.now() - (ap._lastDemoCharge || 0) > 6000 && Math.random() < 0.08) {
         const _dur = 1000 + Math.random() * 1000;
         gameState._laserChargeStart = Date.now(); // drives the wing glow
         ap._demoChargeUntil = Date.now() + _dur;

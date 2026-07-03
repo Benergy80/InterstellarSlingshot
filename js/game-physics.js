@@ -4290,7 +4290,29 @@ function findPatrolEnemiesNearCosmicFeatures(galaxyId) {
             cosmicFeatureType: null
         };
     }
-    
+
+    // LAST-RESORT FALLBACK — the dotted line must NEVER silently fail to
+    // appear after the lore has played (play-reported: 'the story played
+    // but no path opened'). In an untouched galaxy every enemy can sit
+    // inside the black hole's 2,000u exclusion, leaving zero candidates
+    // above. Stage the mission at a cosmic feature away from the core —
+    // createDiscoveryPathToPosition guarantees 7+ hostiles are relocated
+    // or spawned at the endpoint — or, with no features either, at a
+    // fixed standoff site in the galaxy.
+    if (cosmicFeats.length > 0) {
+        const f = cosmicFeats[Math.floor(Math.random() * cosmicFeats.length)];
+        console.log(`Fallback: staging mission at ${f.name} (endpoint guarantee will populate it)`);
+        return { position: f.position.clone(), count: 7, cosmicFeature: f.name, cosmicFeatureType: f.type };
+    }
+    if (galaxyCore) {
+        const ang = Math.random() * Math.PI * 2;
+        console.log('Fallback: staging mission at a standoff site in the galaxy');
+        return {
+            position: galaxyCore.position.clone().add(new THREE.Vector3(
+                Math.cos(ang) * 5000, (Math.random() - 0.5) * 1200, Math.sin(ang) * 5000)),
+            count: 7, cosmicFeature: null, cosmicFeatureType: null
+        };
+    }
     return null;
 }
 
@@ -4613,6 +4635,25 @@ function checkForNebulaDeepDiscovery() {
     nebulaClouds.forEach((nebula, index) => {
         if (!nebula || !nebula.userData) return;
 
+        // NEBULA CORE RESUPPLY: within 500u of any nebula core the ship
+        // re-arms — hull and missiles refill. Runs BEFORE the discovery
+        // skip so it works on every visit, not just the first; the toast
+        // is cooldown-limited per nebula.
+        const _resupplyDist = camera.position.distanceTo(nebula.position);
+        if (_resupplyDist < 500 && typeof gameState.hull === 'number') {
+            const _needed = gameState.hull < (gameState.maxHull || 100) ||
+                (gameState.missiles && gameState.missiles.current < gameState.missiles.capacity);
+            gameState.hull = gameState.maxHull || 100;
+            if (gameState.missiles) gameState.missiles.current = gameState.missiles.capacity;
+            const _nowMs = Date.now();
+            if (_needed && (!nebula.userData._resupplyToastAt || _nowMs - nebula.userData._resupplyToastAt > 30000)) {
+                nebula.userData._resupplyToastAt = _nowMs;
+                if (typeof showAchievement === 'function') {
+                    showAchievement('Resupplied', 'Hull repaired and missiles restocked at the nebula core.', false);
+                }
+            }
+        }
+
         // Skip if already deep-discovered
         if (nebula.userData.deepDiscovered) return;
 
@@ -4643,10 +4684,11 @@ function checkForNebulaDeepDiscovery() {
         // Discovery range depends on nebula category
         let deepDiscoveryRange;
         if (nebulaType === 'clustered') {
-            // 500 matches the demo autopilot's 500u orbit radius around the
-            // twin-pair CENTER — at 100u the demo could lap forever without
-            // ever triggering discovery, then warp away on its 25s timeout.
-            deepDiscoveryRange = 500;
+            // 1,000u (was 500): playtest showed a human pilot brushing past
+            // a nebula core without crossing the tight radius. Still well
+            // inside the cloud, and comfortably covers the demo's 500u
+            // orbit around the twin-pair center.
+            deepDiscoveryRange = 1000;
         } else {
             // Galaxy-formation, distant, and exotic all use nebula size as range.
             // Galaxy-formation triggers while the player is fighting near the black hole
