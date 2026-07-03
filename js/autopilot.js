@@ -1284,7 +1284,27 @@
     setStatus('BOSS ENGAGEMENT — ' + (boss.userData.name || 'enemy') + ' · ' + (dist | 0) + ' u');
     gameState.currentTarget = boss;
     if (dist < 5000) {
-      ap.combatTarget = boss;
+      // ESCORTS FIRST: strip the boss's support wing before the flagship.
+      // The wing's swarm patterns (orbiters/flankers/divers/screen) ARE the
+      // interesting part of the fight — diving straight at the boss skipped
+      // them and read flat. Each combat loop returns here, so the demo
+      // works through the wing nearest-first and finishes on the boss.
+      let engageTarget = boss;
+      if (typeof enemies !== 'undefined') {
+        let bestD = Infinity;
+        for (let i = 0; i < enemies.length; i++) {
+          const e = enemies[i];
+          if (!e || !e.userData || e.userData.health <= 0 || !e.userData.isBossSupport) continue;
+          if (e.position.distanceTo(boss.position) > 6000) continue;   // this boss's wing
+          const d = camPos().distanceTo(e.position);
+          if (d < bestD) { bestD = d; engageTarget = e; }
+        }
+      }
+      if (engageTarget !== boss) {
+        setStatus('Clearing boss escort — ' + (engageTarget.userData.name || 'escort'));
+        gameState.currentTarget = engageTarget;
+      }
+      ap.combatTarget = engageTarget;
       ap.combatMissileFired = false;
       // Returning to bossEngage keeps the demo looping until the boss
       // (and any escort that spawned alongside) is gone, then we fall

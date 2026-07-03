@@ -4611,6 +4611,26 @@ function checkForNebulaDeepDiscovery() {
         const nebulaType = classifyNebula(nebula);
         const nebulaSize = nebula.userData.size || 2000;
 
+        // FIRST-JOURNEY GATE: galaxy-formation nebulas wrap the galactic
+        // cores, and their trigger radius is the whole nebula — the player
+        // fights the Sgr A* liberation set-piece INSIDE the local one, so
+        // it was opening a SECOND discovery path at the core before the
+        // player ever left for the twin nebulas (and the demo would chase
+        // that path instead of the white liberation route). Core nebulas
+        // stay quiet until the first twin (clustered) nebula has been
+        // charted — the intended first journey. Later galaxies are
+        // unaffected: by the time a player black-hole-transits into another
+        // core, a twin has long been discovered.
+        if (nebulaType === 'galaxy_formation') {
+            let anyClusteredCharted = false;
+            for (let ci = 0; ci < nebulaClouds.length; ci++) {
+                const cn = nebulaClouds[ci];
+                if (cn && cn.userData && cn.userData.deepDiscovered &&
+                    classifyNebula(cn) === 'clustered') { anyClusteredCharted = true; break; }
+            }
+            if (!anyClusteredCharted) return;
+        }
+
         // Discovery range depends on nebula category
         let deepDiscoveryRange;
         if (nebulaType === 'clustered') {

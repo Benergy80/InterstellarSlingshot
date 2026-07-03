@@ -10062,38 +10062,46 @@ function createEnemies3D() {
     }
     
     // Create local galaxy enemies (Martian Pirates) — patrol in groups of 3.
-    // Distributed spherically around the inner Sol system using a Fibonacci
-    // lattice so groups occupy all three axes rather than a single plane.
+    // BREADCRUMB CORRIDOR: the groups are staged along the Sol → Sagittarius
+    // A* line at increasing depth, so clearing pirates naturally walks the
+    // player from the Sol spawn toward the galactic core (where the Vulcans
+    // and the liberation set-piece wait). The old full Fibonacci sphere
+    // scattered them in every direction — combat wandered instead of led.
     const patrolGroupCount = 8;
     const piratesPerGroup = 3;
-    const pirateGoldenAngle = Math.PI * (3 - Math.sqrt(5));
-    // Martian Pirates patrol the Sol system, so their lattice is centred
-    // on the Sol-system offset (not the origin, which is Sgr A* — that's
-    // Vulcan turf below).
+    // Martian Pirates patrol the Sol system, so the corridor starts at the
+    // Sol-system offset (the origin is Sgr A* — Vulcan turf below).
     const solCenter = (typeof window !== 'undefined' && window.localSystemOffset)
         ? window.localSystemOffset : { x: 8000, y: 0, z: 4800 };
+    const _solV = new THREE.Vector3(solCenter.x, solCenter.y, solCenter.z);
+    // Direction Sol → Sgr A* (origin) + two perpendicular axes for scatter
+    const _corridorDir = _solV.clone().negate().normalize();
+    const _corridorSide = new THREE.Vector3().crossVectors(_corridorDir, new THREE.Vector3(0, 1, 0)).normalize();
+    const _corridorUp = new THREE.Vector3().crossVectors(_corridorSide, _corridorDir).normalize();
+    const _corridorLen = _solV.length();   // ~9.4k units Sol → core
     let pirateIndex = 0;
     for (let g = 0; g < patrolGroupCount; g++) {
-        // Keep patrol groups well clear of the Sol-system core where the
-        // player spawns (near Earth). The old 800-unit floor put pirates
-        // on top of the player immediately; a ~2800-unit minimum gives a
-        // few seconds to get oriented before any patrol is in range.
-        const groupDistance = 2800 + Math.random() * 1600;
-        const cosPolar = 1 - 2 * (g + 0.5) / patrolGroupCount;
-        const sinPolar = Math.sqrt(Math.max(0, 1 - cosPolar * cosPolar));
-        const azimuth = pirateGoldenAngle * g + Math.random() * 0.3;
-        const groupCenter = new THREE.Vector3(
-            solCenter.x + Math.cos(azimuth) * sinPolar * groupDistance,
-            solCenter.y + cosPolar * groupDistance,
-            solCenter.z + Math.sin(azimuth) * sinPolar * groupDistance
-        );
+        // Stage depth: first group ~2,800u out from Sol (a few seconds to
+        // get oriented before any patrol is in range), last group ~75% of
+        // the way to Sgr A* — close enough to hand the fight over to the
+        // Vulcan patrol ring without overlapping it.
+        const t = (g + 0.5) / patrolGroupCount;               // 0..1 along corridor
+        const depth = 2800 + t * (_corridorLen * 0.75 - 2800);
+        // Alternating lateral scatter keeps the trail readable but not a
+        // literal straight line; scatter widens slightly with depth.
+        const side = (g % 2 === 0 ? 1 : -1) * (500 + Math.random() * 700) * (0.7 + t * 0.6);
+        const lift = (Math.random() - 0.5) * (600 + t * 600);
+        const groupCenter = _solV.clone()
+            .addScaledVector(_corridorDir, depth)
+            .addScaledVector(_corridorSide, side)
+            .addScaledVector(_corridorUp, lift);
 
         for (let p = 0; p < piratesPerGroup; p++) {
             pirateIndex++;
             const enemyGeometry = createEnemyGeometry(0);
 
             const localShapeData = { color: 0xff4444 };
-            const materials = createEnemyMaterial(localShapeData, 'local', groupDistance);
+            const materials = createEnemyMaterial(localShapeData, 'local', depth);
 
             let enemy;
             let isGLBModel = false;
@@ -10146,7 +10154,10 @@ function createEnemies3D() {
                 speed: 1.2 + Math.random() * 0.8,
                 aggression: 0.95 + Math.random() * 0.05,
                 patrolCenter: groupCenter.clone(),
-                patrolRadius: groupDistance,
+                // Tight patrol radius: each group holds its corridor station
+                // (the old value was the distance-from-Sol, ~3-4k, which let
+                // groups wander right off the breadcrumb trail).
+                patrolRadius: 700,
                 lastAttack: 0,
                 isActive: false,
                 visible: true,
