@@ -2660,6 +2660,10 @@ function initAudio() {
 }
 
 function resumeAudioContext() {
+    // While the GAME is paused, the context is suspended on purpose — a
+    // stray keypress must not bring the audio back mid-pause. togglePause
+    // resumes it explicitly.
+    if (typeof gameState !== 'undefined' && gameState.paused) return;
     if (audioContext && audioContext.state === 'suspended') {
         audioContext.resume().then(() => {
             console.log('AudioContext resumed after user interaction');
@@ -2981,6 +2985,34 @@ function switchToAmbientMusic() {
             musicGain.gain.exponentialRampToValueAtTime(0.4, audioContext.currentTime + 1);
         }, 500);
     }
+}
+
+// SFX MUTE: silences every synthesized effect (weapons, hits, explosions,
+// enemy lasers — everything routed through effectsGain) without touching
+// the music. Wired to the SFX button next to Music.
+function toggleSfx() {
+    window._sfxMuted = !window._sfxMuted;
+    if (typeof effectsGain !== 'undefined' && effectsGain && audioContext) {
+        const v = window._sfxMuted ? 0 : 1;
+        effectsGain.gain.value = v;   // immediate
+        effectsGain.gain.setValueAtTime(v, audioContext.currentTime);  // cancel-proof
+    }
+    const icon = document.getElementById('sfxIcon');
+    const btn = document.getElementById('sfxBtn');
+    if (icon) icon.className = window._sfxMuted
+        ? 'fas fa-volume-mute text-red-400 mr-1'
+        : 'fas fa-bullhorn text-cyan-400 mr-1';
+    if (btn) btn.classList.toggle('muted', !!window._sfxMuted);
+    console.log('🔊 SFX ' + (window._sfxMuted ? 'muted' : 'unmuted'));
+}
+if (typeof window !== 'undefined') {
+    window.toggleSfx = toggleSfx;
+    const _wireSfxBtn = () => {
+        const btn = document.getElementById('sfxBtn');
+        if (btn && !btn._wired) { btn._wired = true; btn.addEventListener('click', toggleSfx); }
+    };
+    if (window.Boot) window.Boot.whenReady('dom', _wireSfxBtn);
+    else setTimeout(_wireSfxBtn, 1000);
 }
 
 function toggleMusic() {
@@ -7652,7 +7684,28 @@ function togglePause() {
     }
     
     gameState.paused = !gameState.paused;
-    
+
+    // AUDIO FOLLOWS PAUSE: suspend the WebAudio graph (synth music + SFX
+    // freeze in place) and pause the MP3 soundtrack (keeps its position);
+    // both resume exactly where they left off on unpause.
+    try {
+        if (gameState.paused) {
+            if (typeof audioContext !== 'undefined' && audioContext && audioContext.state === 'running') {
+                audioContext.suspend();
+            }
+            if (typeof window !== 'undefined' && window.soundtrack && window.soundtrack.pauseAll) {
+                window.soundtrack.pauseAll();
+            }
+        } else {
+            if (typeof audioContext !== 'undefined' && audioContext && audioContext.state === 'suspended') {
+                audioContext.resume();
+            }
+            if (typeof window !== 'undefined' && window.soundtrack && window.soundtrack.resumeAll) {
+                window.soundtrack.resumeAll();
+            }
+        }
+    } catch (e) {}
+
     // Create pause overlay if it doesn't exist
     let pauseOverlay = document.getElementById('pauseOverlay');
     if (!pauseOverlay) {

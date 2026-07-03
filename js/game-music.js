@@ -592,7 +592,26 @@
   }
 
   // ─── Public API ───────────────────────────────────────────────────────────
+  // GAME-PAUSE HOOKS: pause keeps the track position (unlike mute/stop),
+  // resume picks up exactly where the score left off.
+  let _pausedByGame = false;
+  function pauseAll() {
+    if (st.currentEl && !st.currentEl.paused) {
+      _pausedByGame = true;
+      st.currentEl.pause();
+    }
+  }
+  function resumeAll() {
+    if (_pausedByGame && st.currentEl) {
+      const p = st.currentEl.play();
+      if (p && p.catch) p.catch(() => {});
+    }
+    _pausedByGame = false;
+  }
+
   window.soundtrack = {
+    pauseAll:          pauseAll,
+    resumeAll:         resumeAll,
     preload:           preload,
     update:            updateMusicContext,
     forceTrack:        forceTrack,
