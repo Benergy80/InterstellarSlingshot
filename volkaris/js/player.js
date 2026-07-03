@@ -331,8 +331,12 @@ export function createPlayer({ scene, camera, planet, hud, audio, fx, transit, m
       const st = transit.boardableStation(state.pos);
       if (st) {
         state.mode = 'ride';
+        transit.setRider(st);
+        transit.carForward(state.heading);   // start facing down the line
+        _up.copy(state.pos).normalize();
+        state.heading.addScaledVector(_up, -state.heading.dot(_up)).normalize();
         rig.play('idle', { fade: 0.2 });
-        hud.toast('BOARDED — ORBITAL LOOP', 'E to disembark at a station stop');
+        hud.toast('BOARDED — ' + st.line.key, 'Arrows look around · E to disembark at a stop');
         audio.sfx('doors');
         return;
       }
@@ -342,20 +346,26 @@ export function createPlayer({ scene, camera, planet, hud, audio, fx, transit, m
   // ── monorail riding ──
   function exitRide() {
     state.mode = 'walk';
-    const st = transit.stations[(transit.train.nextIdx + transit.stations.length - 1) % transit.stations.length];
-    state.pos.copy(st.boardPos);
+    const st = transit.riderStation();
+    transit.setRider(null);
+    if (st) {
+      state.pos.copy(st.boardPos);
+      hud.toast('ARRIVED — ' + st.name, 'Mind the drop');
+    }
     state.vel.set(0, 0, 0);
-    hud.toast('ARRIVED — ' + st.name, 'Mind the drop');
     audio.sfx('chime');
   }
   function updateRide(dt) {
+    // stand INSIDE the car; heading stays free — the arrow keys (already
+    // processed above) let you turn and look all around while riding
     transit.carAnchor(state.pos);
     _up.copy(state.pos).normalize();
+    state.heading.addScaledVector(_up, -state.heading.dot(_up)).normalize();
+    // the rig faces down the line regardless of where you look
     transit.carForward(_fwd);
     _fwd.addScaledVector(_up, -_fwd.dot(_up)).normalize();
-    state.heading.lerp(_fwd, 1 - Math.pow(0.001, dt)).normalize();
-    _right.crossVectors(state.heading, _up).negate().normalize();
-    _m.makeBasis(_right, _up, state.heading);
+    _right.crossVectors(_fwd, _up).negate().normalize();
+    _m.makeBasis(_right, _up, _fwd);
     rig.group.position.copy(state.pos);
     rig.group.quaternion.slerp(_q.setFromRotationMatrix(_m), 1 - Math.pow(0.001, dt));
     rig.play('idle');
@@ -833,7 +843,7 @@ export function createPlayer({ scene, camera, planet, hud, audio, fx, transit, m
     _up.copy(state.pos).normalize();
     _right.crossVectors(state.heading, _up).negate().normalize();
     _fwd.copy(state.heading).applyQuaternion(_q.setFromAxisAngle(_right, state.camPitch * 0.85)).normalize();
-    const dist = deadCam ? 7.5 : state.camDist;
+    const dist = deadCam ? 7.5 : state.mode === 'ride' ? 2.6 : state.camDist;
     const want = _v.copy(state.pos)
       .addScaledVector(_up, 1.85 + state.camPitch * -1.2)
       .addScaledVector(_fwd, -dist);

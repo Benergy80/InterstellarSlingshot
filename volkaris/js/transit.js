@@ -1,15 +1,22 @@
 // ════════════════════════════════════════════════════════════════
-// VOLKARIS — transit: the ORBITAL LOOP monorail + vehicles
+// VOLKARIS — transit: the ORBITAL LOOP monorail network + vehicles
 // (the NEON CITY monorail & AV concepts, bent around a sphere)
 //
-//   · An elevated monorail rides a great circle around the whole
-//     planet, threading the equator districts. Three stations with
-//     switchback stair towers; the train dwells, you board with E,
-//     and the ride shows you the world curving away below.
-//   · Ambient air traffic streams along tilted orbit lanes.
-//   · Pilotable vehicles: two AVs (fly free — thrust where you
-//     look, no gravity) and a ground speeder (drives — hugs the
-//     deck). ENTER/E to board, slow down low to land and exit.
+//   · THREE monorail lines weave curved paths around the whole
+//     planet at different altitude bands — layered city, crossing
+//     over and under each other without ever colliding:
+//       AZURE LOOP        cyan    equator corridor, alt +11..+19
+//       MAGENTA SKYLINE   magenta southern high line, alt +14..+25
+//       AMBER UNDERGROUND amber   low weave, alt +8..+13 — bores
+//                         THROUGH Mt. Kessler, threads gateway
+//                         buildings, and skims the lake shore
+//     Wherever a line dips below the terrain it runs in a TUNNEL
+//     (dark bore, glow rings, portal hoops at the mouths).
+//   · Riders stand INSIDE the hollow glass cars — board with E at
+//     a station (or beside any dwelling car) and look around
+//     freely while the world curves past.
+//   · Ambient air traffic streams along tilted orbit lanes; ground
+//     speeders run the street chains; pilotable AVs + a speeder.
 // ════════════════════════════════════════════════════════════════
 import * as THREE from 'three';
 import { C, NEON, NEON_LIST, mulberry32, pick, clamp, lerp, sphDir, tangentFrame, makeCanvas, canvasTexture } from './config.js';
@@ -18,243 +25,443 @@ const R = C.R;
 const _v = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3();
 const _q = new THREE.Quaternion(), _m = new THREE.Matrix4();
 
+// [lat, lon, altitude] control knots — closed weaving curves.
+// Altitude bands are disjoint enough at every crossing that the
+// lines layer instead of colliding (audited at build).
+const LINE_DEFS = [
+  {
+    key: 'AZURE LOOP', hex: NEON.cyan,
+    ctrl: [
+      [8, 52, 12], [0, 78, 16], [-6, 108, 11], [6, 128, 18], [16, 150, 12],
+      [8, 180, 15], [-4, 212, 11], [10, 246, 15], [6, 274, 19], [16, 304, 13],
+      [20, 334, 12], [14, 6, 12], [12, 30, 15],
+    ],
+    stops: ['market', 'circuit', 'ruins'],
+  },
+  {
+    key: 'MAGENTA SKYLINE', hex: NEON.magenta,
+    ctrl: [
+      [38, 162, 18], [22, 186, 23], [0, 202, 25], [-22, 218, 17], [-40, 252, 21],
+      [-42, 288, 15], [-28, 312, 20], [-6, 330, 24], [12, 344, 21], [30, 318, 20],
+      [44, 288, 22], [54, 248, 25], [50, 206, 20],
+    ],
+    stops: ['downtown', 'pyramid', 'port'],
+  },
+  {
+    key: 'AMBER UNDERGROUND', hex: NEON.amber,
+    ctrl: [
+      [2, 0, 9], [12, 12, 8], [22, 25, 9], [28, 42, 8], [20, 64, 12],
+      [24, 90, 6.5], [20, 116, 11], [20, 138, 8], [30, 152, 12], [40, 176, 9],
+      [28, 202, 13], [2, 224, 8], [-12, 252, 12], [-20, 272, 9], [-12, 300, 11],
+      [-2, 328, 9], [0, 352, 11],
+    ],
+    stops: ['crash', 'dunes'],
+  },
+];
+
 export function buildTransit(scene, planet, audio) {
   const rnd = mulberry32(C.SEED + 311);
-  const RAIL_R = R + 13;
-
-  // ── the loop: a great circle through market & ruins ──
-  const dirA = planet.districts.find(d => d.key === 'market').dir;
-  const dirB = planet.districts.find(d => d.key === 'ruins').dir;
-  const n = new THREE.Vector3().crossVectors(dirA, dirB).normalize();   // circle normal
-  const u = dirA.clone().normalize();
-  const w = new THREE.Vector3().crossVectors(n, u).normalize();
-  const circleAt = (a, out = new THREE.Vector3()) =>
-    out.copy(u).multiplyScalar(Math.cos(a)).addScaledVector(w, Math.sin(a)).normalize();
-
-  // ── rail tube + glow strip (merged ring) ──
-  {
-    const pts = [];
-    for (let i = 0; i <= 200; i++) pts.push(circleAt(i / 200 * Math.PI * 2).multiplyScalar(RAIL_R));
-    const curve = new THREE.CatmullRomCurve3(pts, true);
-    const rail = new THREE.Mesh(
-      new THREE.TubeGeometry(curve, 220, 0.22, 6, true),
-      new THREE.MeshStandardMaterial({ color: 0x2a2452, roughness: 0.4, metalness: 0.7 })
-    );
-    scene.add(rail);
-    const glow = new THREE.Mesh(
-      new THREE.TubeGeometry(curve, 220, 0.07, 4, true),
-      new THREE.MeshBasicMaterial({ color: new THREE.Color(NEON.cyan).multiplyScalar(1.1), toneMapped: false })
-    );
-    glow.scale.setScalar(1.002);
-    scene.add(glow);
-    // support pylons down to terrain every ~15°
-    const pylons = [];
-    for (let i = 0; i < 24; i++) {
-      const d = circleAt(i / 24 * Math.PI * 2);
-      const ground = planet.terrainHeight(d);
-      const len = RAIL_R - ground;
-      if (len < 2) continue;
-      const g = new THREE.CylinderGeometry(0.24, 0.4, len, 6);
-      g.translate(0, len / 2, 0);
-      const f = new THREE.Matrix4();
-      const { up, east, north } = tangentFrame(d);
-      f.makeBasis(east, up, north).setPosition(up.clone().multiplyScalar(ground - 0.3));
-      g.applyMatrix4(f);
-      pylons.push(g);
-    }
-    if (pylons.length) {
-      const merged = new THREE.BufferGeometry();
-      // quick merge (positions+normals only)
-      let vtx = 0;
-      for (const g of pylons) { const c = g.toNonIndexed(); g.userData._c = c; vtx += c.attributes.position.count; }
-      const pos = new Float32Array(vtx * 3), nor = new Float32Array(vtx * 3);
-      let o = 0;
-      for (const g of pylons) {
-        const c = g.userData._c;
-        pos.set(c.attributes.position.array, o * 3);
-        nor.set(c.attributes.normal.array, o * 3);
-        o += c.attributes.position.count;
-      }
-      merged.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-      merged.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
-      const mesh = new THREE.Mesh(merged, new THREE.MeshStandardMaterial({ color: 0x241e46, roughness: 0.5, metalness: 0.5 }));
-      mesh.castShadow = true;
-      scene.add(mesh);
-    }
-  }
-
-  // ── stations: nearest circle point to three districts ──
-  function stationAngleFor(dir) {
-    // project onto circle plane, find angle in (u, w) basis
-    const p = dir.clone().addScaledVector(n, -dir.dot(n)).normalize();
-    return Math.atan2(p.dot(w), p.dot(u));
-  }
-  const stations = ['market', 'circuit', 'ruins'].map(key => {
-    const d = planet.districts.find(x => x.key === key);
-    const a = stationAngleFor(d.dir);
-    const dir = circleAt(a);
-    return { key, name: d.name + ' LOOP', angle: a, dir: dir.clone() };
-  }).sort((p, q) => p.angle - q.angle);
-
+  const stations = [];        // flat, across lines (demo + HUD friendly)
+  const lines = [];
+  const gatewayGroup = new THREE.Group();
   const platGroup = new THREE.Group();
   const platMat = new THREE.MeshStandardMaterial({ color: 0x241e4e, roughness: 0.6, metalness: 0.4 });
-  for (const st of stations) {
-    const up = st.dir.clone();
-    // rail tangent + a RIGHT-handed frame (X=tang, Y=up, Z=tang×up) —
-    // a left-handed basis here mirrors everything placed with it
-    const tang = _v.copy(circleAt(st.angle + 0.02)).sub(circleAt(st.angle - 0.02)).normalize();
-    const side = new THREE.Vector3().crossVectors(tang, up).normalize();
-    const platH = RAIL_R - 1.2;
-    const fm = new THREE.Matrix4().makeBasis(tang, up.clone(), side)
-      .setPosition(up.clone().multiplyScalar(platH).addScaledVector(side, 2.2));
-    const plat = new THREE.Mesh(new THREE.BoxGeometry(12, 0.5, 3.6), platMat);
-    plat.applyMatrix4(fm);
-    plat.castShadow = plat.receiveShadow = true;
-    platGroup.add(plat);
-    const strip = new THREE.Mesh(new THREE.BoxGeometry(12, 0.08, 0.16),
-      new THREE.MeshBasicMaterial({ color: new THREE.Color(NEON.amber).multiplyScalar(1.2), toneMapped: false }));
-    strip.applyMatrix4(new THREE.Matrix4().makeTranslation(0, 0.34, -1.6).premultiply(fm));
-    platGroup.add(strip);
-    st.platformPos = new THREE.Vector3().setFromMatrixPosition(fm).addScaledVector(up, 0.6);
-    st.boardPos = st.platformPos.clone();
 
-    // canopy on posts — the stop should read as a STATION from a distance
-    const canopy = new THREE.Mesh(new THREE.BoxGeometry(9, 0.25, 3.4), platMat);
-    canopy.applyMatrix4(new THREE.Matrix4().makeTranslation(0, 3.6, 0).premultiply(fm));
-    platGroup.add(canopy);
-    for (const px of [-4, 4]) {
-      const post = new THREE.Mesh(new THREE.BoxGeometry(0.22, 3.6, 0.22), platMat);
-      post.applyMatrix4(new THREE.Matrix4().makeTranslation(px, 1.9, 1.3).premultiply(fm));
-      platGroup.add(post);
+  // ════════════ LINES: curve, rail, tunnels, pylons ════════════
+  for (const def of LINE_DEFS) {
+    const pts = def.ctrl.map(([la, lo, al]) => sphDir(la, lo).multiplyScalar(R + al));
+    const curve = new THREE.CatmullRomCurve3(pts, true, 'centripetal', 0.6);
+    const length = curve.getLength();
+    const line = { ...def, curve, length, cars: [], stations: [] };
+
+    // sample once for tunnels/pylons
+    const NS = 480;
+    const samples = [];
+    for (let i = 0; i < NS; i++) {
+      const p = curve.getPointAt(i / NS);
+      const d = p.clone().normalize();
+      const ter = planet.terrainHeight(d);
+      samples.push({ t: i / NS, p, d, under: p.length() < ter + 0.9, clear: p.length() - ter });
     }
-    // glowing name bar under the canopy edge + a tall beacon mast
-    const nameBar = new THREE.Mesh(new THREE.BoxGeometry(8.6, 0.5, 0.14),
-      new THREE.MeshBasicMaterial({ color: new THREE.Color(NEON.cyan).multiplyScalar(1.15), toneMapped: false }));
-    nameBar.applyMatrix4(new THREE.Matrix4().makeTranslation(0, 3.1, 1.7).premultiply(fm));
-    platGroup.add(nameBar);
-    const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.12, 6, 5), platMat);
-    mast.applyMatrix4(new THREE.Matrix4().makeTranslation(5.6, 3, 1.4).premultiply(fm));
-    platGroup.add(mast);
-    const beacon = new THREE.Mesh(new THREE.SphereGeometry(0.42, 8, 6),
-      new THREE.MeshBasicMaterial({ color: new THREE.Color(NEON.magenta).multiplyScalar(1.3), toneMapped: false }));
-    beacon.applyMatrix4(new THREE.Matrix4().makeTranslation(5.6, 6.2, 1.4).premultiply(fm));
-    platGroup.add(beacon);
 
-    // live ETA holo board — NEXT m:ss / BOARDING :ss (NC station signs)
-    const [cv, ctx] = makeCanvas(512, 128);
-    const tex = canvasTexture(cv);
-    const board = new THREE.Mesh(new THREE.PlaneGeometry(4.6, 1.15),
-      new THREE.MeshBasicMaterial({ map: tex, transparent: true, toneMapped: false, side: THREE.DoubleSide }));
-    board.applyMatrix4(new THREE.Matrix4().makeTranslation(0, 2.5, 1.78).premultiply(fm));
-    platGroup.add(board);
-    st.eta = { cv, ctx, tex };
+    // rail tube + glow
+    const railGeo = new THREE.TubeGeometry(curve, 360, 0.22, 6, true);
+    const rail = new THREE.Mesh(railGeo,
+      new THREE.MeshStandardMaterial({ color: 0x2a2452, roughness: 0.4, metalness: 0.7 }));
+    scene.add(rail);
+    const glow = new THREE.Mesh(new THREE.TubeGeometry(curve, 360, 0.07, 4, true),
+      new THREE.MeshBasicMaterial({ color: new THREE.Color(def.hex).multiplyScalar(1.1), toneMapped: false }));
+    glow.scale.setScalar(1.001);
+    scene.add(glow);
 
-    // ── access ramp: segmented so it follows the sphere down to the
-    // street (solid slopes — stairs read as walls to the controller) ──
-    const groundH = planet.terrainHeight(st.dir);
-    const rise = platH - groundH;
-    if (rise > 1.5) {
-      const grade = 0.42;                       // rise per horizontal unit
-      const run = rise / grade;                 // total horizontal run
-      const segs = Math.max(3, Math.ceil(run / 4));
-      const segRun = run / segs, segRise = rise / segs;
-      const segLen = Math.hypot(segRun, segRise) + 0.6;   // overlap seals seams
-      const pitch = Math.atan2(segRise, segRun);
-      // ramp endpoints for wayfinding (the demo pilot walks foot → top)
-      {
-        const aFoot = (6 + run) / RAIL_R;
-        const dF = circleAt(st.angle + aFoot);
-        const sF = _v3.crossVectors(_v2.copy(circleAt(st.angle + aFoot + 0.01)).sub(circleAt(st.angle + aFoot - 0.01)).normalize(), dF).normalize();
-        st.rampFoot = dF.clone().multiplyScalar(groundH + 0.4).addScaledVector(sF, 2.2);
+    // ── tunnels: contiguous under-terrain spans get a bored tube ──
+    {
+      const spans = [];
+      let s0 = -1;
+      for (let i = 0; i <= NS; i++) {
+        const under = i < NS ? samples[i].under : false;
+        if (under && s0 < 0) s0 = i;
+        if (!under && s0 >= 0) { spans.push([Math.max(0, s0 - 2), Math.min(NS - 1, i + 1)]); s0 = -1; }
+      }
+      const ringGeos = [];
+      for (const [a, b] of spans) {
+        if (b - a < 2) continue;
+        const sub = [];
+        for (let i = a; i <= b; i++) sub.push(samples[i].p);
+        const subCurve = new THREE.CatmullRomCurve3(sub, false, 'centripetal');
+        const bore = new THREE.Mesh(
+          new THREE.TubeGeometry(subCurve, Math.max(8, (b - a)), 2.1, 10, false),
+          new THREE.MeshStandardMaterial({ color: 0x161031, roughness: 0.9, metalness: 0.1, side: THREE.BackSide }));
+        scene.add(bore);
+        // glow rings pulse down the bore + portal hoops at the mouths
+        const subLen = subCurve.getLength();
+        const nRings = Math.max(2, Math.floor(subLen / 7));
+        for (let r2 = 0; r2 <= nRings; r2++) {
+          const tt = r2 / nRings;
+          const p = subCurve.getPointAt(tt);
+          const tang = subCurve.getTangentAt(tt);
+          const g = new THREE.TorusGeometry(r2 === 0 || r2 === nRings ? 2.3 : 2.0,
+            r2 === 0 || r2 === nRings ? 0.16 : 0.06, 5, 18);
+          const m4 = new THREE.Matrix4().lookAt(new THREE.Vector3(), tang, p.clone().normalize());
+          m4.setPosition(p);
+          g.applyMatrix4(m4);
+          ringGeos.push(g);
+        }
+      }
+      if (ringGeos.length) {
+        let vtx = 0;
+        const parts = ringGeos.map(g => g.toNonIndexed());
+        for (const g of parts) vtx += g.attributes.position.count;
+        const pos = new Float32Array(vtx * 3);
+        let o = 0;
+        for (const g of parts) { pos.set(g.attributes.position.array, o * 3); o += g.attributes.position.count; }
+        const merged = new THREE.BufferGeometry();
+        merged.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+        const rings = new THREE.Mesh(merged,
+          new THREE.MeshBasicMaterial({ color: new THREE.Color(def.hex).multiplyScalar(0.9), toneMapped: false, wireframe: false }));
+        scene.add(rings);
+      }
+    }
+
+    // ── support pylons where the rail flies clear of the deck ──
+    {
+      const pylons = [];
+      for (let i = 0; i < NS; i += 16) {
+        const s = samples[i];
+        if (s.under || s.clear < 2.5 || s.clear > 26) continue;
+        const len = s.clear;
+        const g = new THREE.CylinderGeometry(0.22, 0.38, len, 6);
+        g.translate(0, len / 2, 0);
+        const { up, east, north } = tangentFrame(s.d);
+        const f = new THREE.Matrix4().makeBasis(east, up, north)
+          .setPosition(up.clone().multiplyScalar(s.p.length() - len - 0.2 + len));
+        // base sits on terrain: position pylon base at terrain height
+        f.setPosition(up.clone().multiplyScalar(planet.terrainHeight(s.d) - 0.3));
+        g.applyMatrix4(f);
+        pylons.push(g);
+      }
+      if (pylons.length) {
+        let vtx = 0;
+        const parts = pylons.map(g => g.toNonIndexed());
+        for (const g of parts) vtx += g.attributes.position.count;
+        const pos = new Float32Array(vtx * 3), nor = new Float32Array(vtx * 3);
+        let o = 0;
+        for (const g of parts) {
+          pos.set(g.attributes.position.array, o * 3);
+          nor.set(g.attributes.normal.array, o * 3);
+          o += g.attributes.position.count;
+        }
+        const merged = new THREE.BufferGeometry();
+        merged.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+        merged.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+        const mesh = new THREE.Mesh(merged,
+          new THREE.MeshStandardMaterial({ color: 0x241e46, roughness: 0.5, metalness: 0.5 }));
+        mesh.castShadow = true;
+        scene.add(mesh);
+      }
+    }
+
+    line.samples = samples;
+    lines.push(line);
+  }
+
+  // ── build-time audit: the lines must layer, never collide ──
+  {
+    for (let a = 0; a < lines.length; a++) {
+      for (let b = a + 1; b < lines.length; b++) {
+        let minD = 1e9;
+        for (let i = 0; i < 160; i++) {
+          const pa = lines[a].curve.getPointAt(i / 160);
+          for (let j2 = 0; j2 < 160; j2++) {
+            const d = pa.distanceToSquared(lines[b].curve.getPointAt(j2 / 160));
+            if (d < minD) minD = d;
+          }
+        }
+        if (Math.sqrt(minD) < 3.4) {
+          console.warn(`[TRANSIT] lines ${lines[a].key} and ${lines[b].key} pass within ${Math.sqrt(minD).toFixed(1)}u`);
+        }
+      }
+    }
+  }
+
+  // ── gateway buildings: the AMBER line passes straight THROUGH ──
+  {
+    const amber = lines[2];
+    const cands = amber.samples.filter(s => !s.under && s.clear > 2.6 && s.clear < 7.5);
+    const picksN = Math.min(3, cands.length);
+    for (let k = 0; k < picksN; k++) {
+      const s = cands[Math.floor((k + 0.35) * cands.length / picksN)];
+      const tang = amber.curve.getTangentAt(s.t);
+      const up = s.d.clone();
+      const side = new THREE.Vector3().crossVectors(tang, up).normalize();
+      const ter = planet.terrainHeight(s.d);
+      const railH = s.p.length();
+      const towerH = railH - ter + 6.5;
+      const gwMat = new THREE.MeshStandardMaterial({ color: pick(rnd, [0x2c2152, 0x1f2a4e, 0x3a2148]), roughness: 0.55, metalness: 0.5 });
+      for (const sd of [-1, 1]) {
+        const tower = new THREE.Mesh(new THREE.BoxGeometry(4.4, towerH, 5.2), gwMat);
+        const fm = new THREE.Matrix4().makeBasis(tang, up.clone(), side)
+          .setPosition(up.clone().multiplyScalar(ter + towerH / 2 - 0.3).addScaledVector(side, sd * 4.4));
+        tower.applyMatrix4(fm);
+        tower.castShadow = tower.receiveShadow = true;
+        gatewayGroup.add(tower);
+        // window strips
+        const strip = new THREE.Mesh(new THREE.BoxGeometry(4.5, 0.4, 0.14),
+          new THREE.MeshBasicMaterial({ color: new THREE.Color(pick(rnd, NEON_LIST)).multiplyScalar(1.1), toneMapped: false }));
+        strip.applyMatrix4(new THREE.Matrix4().makeTranslation(0, towerH * 0.22, 2.66).premultiply(fm));
+        gatewayGroup.add(strip);
+      }
+      // lintel bridging over the track
+      const lintel = new THREE.Mesh(new THREE.BoxGeometry(4.4, 4.2, 13.2), gwMat);
+      const lm = new THREE.Matrix4().makeBasis(tang, up.clone(), side)
+        .setPosition(up.clone().multiplyScalar(railH + 4.6));
+      lintel.applyMatrix4(lm);
+      lintel.castShadow = true;
+      gatewayGroup.add(lintel);
+      const glowBar = new THREE.Mesh(new THREE.BoxGeometry(4.5, 0.18, 0.18),
+        new THREE.MeshBasicMaterial({ color: new THREE.Color(NEON.amber).multiplyScalar(1.25), toneMapped: false }));
+      glowBar.applyMatrix4(new THREE.Matrix4().makeTranslation(0, -2.2, 3.4).premultiply(lm));
+      gatewayGroup.add(glowBar);
+    }
+    scene.add(gatewayGroup);
+    planet.addColliders(gatewayGroup);
+  }
+
+  // ════════════ STATIONS (per line, on the curve) ════════════
+  function nearestT(curve, dir) {
+    let bt = 0, bd = 1e9;
+    for (let i = 0; i < 400; i++) {
+      const t = i / 400;
+      const d = curve.getPointAt(t).normalize().distanceToSquared(dir);
+      if (d < bd) { bd = d; bt = t; }
+    }
+    return bt;
+  }
+
+  for (const line of lines) {
+    for (const stopKey of line.stops) {
+      const d = planet.districts.find(x => x.key === stopKey);
+      if (!d) continue;
+      const t = nearestT(line.curve, d.dir);
+      const pt = line.curve.getPointAt(t);
+      const tang = line.curve.getTangentAt(t);
+      const stDir = pt.clone().normalize();
+      const up = stDir.clone();
+      const side = new THREE.Vector3().crossVectors(tang, up).normalize();
+      const platH = pt.length() - 1.2;
+      const st = { key: stopKey, name: `${d.name} · ${line.key}`, line, t, dir: stDir };
+
+      const fm = new THREE.Matrix4().makeBasis(tang, up.clone(), side)
+        .setPosition(up.clone().multiplyScalar(platH).addScaledVector(side, 2.2));
+      const plat = new THREE.Mesh(new THREE.BoxGeometry(12, 0.5, 3.6), platMat);
+      plat.applyMatrix4(fm);
+      plat.castShadow = plat.receiveShadow = true;
+      platGroup.add(plat);
+      const strip = new THREE.Mesh(new THREE.BoxGeometry(12, 0.08, 0.16),
+        new THREE.MeshBasicMaterial({ color: new THREE.Color(NEON.amber).multiplyScalar(1.2), toneMapped: false }));
+      strip.applyMatrix4(new THREE.Matrix4().makeTranslation(0, 0.34, -1.6).premultiply(fm));
+      platGroup.add(strip);
+      st.platformPos = new THREE.Vector3().setFromMatrixPosition(fm).addScaledVector(up, 0.6);
+      st.boardPos = st.platformPos.clone();
+
+      // canopy + name bar + beacon in the line's color
+      const canopy = new THREE.Mesh(new THREE.BoxGeometry(9, 0.25, 3.4), platMat);
+      canopy.applyMatrix4(new THREE.Matrix4().makeTranslation(0, 3.6, 0).premultiply(fm));
+      platGroup.add(canopy);
+      for (const px of [-4, 4]) {
+        const post = new THREE.Mesh(new THREE.BoxGeometry(0.22, 3.6, 0.22), platMat);
+        post.applyMatrix4(new THREE.Matrix4().makeTranslation(px, 1.9, 1.3).premultiply(fm));
+        platGroup.add(post);
+      }
+      const nameBar = new THREE.Mesh(new THREE.BoxGeometry(8.6, 0.5, 0.14),
+        new THREE.MeshBasicMaterial({ color: new THREE.Color(line.hex).multiplyScalar(1.15), toneMapped: false }));
+      nameBar.applyMatrix4(new THREE.Matrix4().makeTranslation(0, 3.1, 1.7).premultiply(fm));
+      platGroup.add(nameBar);
+      const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.12, 6, 5), platMat);
+      mast.applyMatrix4(new THREE.Matrix4().makeTranslation(5.6, 3, 1.4).premultiply(fm));
+      platGroup.add(mast);
+      const beacon = new THREE.Mesh(new THREE.SphereGeometry(0.42, 8, 6),
+        new THREE.MeshBasicMaterial({ color: new THREE.Color(line.hex).multiplyScalar(1.3), toneMapped: false }));
+      beacon.applyMatrix4(new THREE.Matrix4().makeTranslation(5.6, 6.2, 1.4).premultiply(fm));
+      platGroup.add(beacon);
+
+      // live ETA holo board
+      const [cv, ctx] = makeCanvas(512, 128);
+      const tex = canvasTexture(cv);
+      const board = new THREE.Mesh(new THREE.PlaneGeometry(4.6, 1.15),
+        new THREE.MeshBasicMaterial({ map: tex, transparent: true, toneMapped: false, side: THREE.DoubleSide }));
+      board.applyMatrix4(new THREE.Matrix4().makeTranslation(0, 2.5, 1.78).premultiply(fm));
+      platGroup.add(board);
+      st.eta = { cv, ctx, tex };
+
+      // ── access ramp: segmented, following the line's own curve ──
+      const groundH = planet.terrainHeight(stDir);
+      const rise = platH - groundH;
+      if (rise > 1.5) {
+        const grade = 0.42;
+        const run = rise / grade;
+        const segs = Math.max(3, Math.ceil(run / 4));
+        const segRun = run / segs, segRise = rise / segs;
+        const segLen = Math.hypot(segRun, segRise) + 0.6;
+        const pitch = Math.atan2(segRise, segRun);
+        for (let i = 0; i <= segs; i++) {
+          const tOff = (6 + (i + 0.5) * segRun) / line.length;
+          const p2 = line.curve.getPointAt((t + tOff) % 1);
+          const su = p2.clone().normalize();
+          const stang = line.curve.getTangentAt((t + tOff) % 1);
+          const sside = new THREE.Vector3().crossVectors(stang, su).normalize();
+          const h = platH - (i + 0.5) * segRise;
+          const seg = new THREE.Mesh(new THREE.BoxGeometry(segLen, 0.5, 2.6), platMat);
+          seg.receiveShadow = true;
+          const sm = new THREE.Matrix4().makeBasis(stang, su.clone(), sside)
+            .setPosition(su.clone().multiplyScalar(h).addScaledVector(sside, 2.2));
+          seg.applyMatrix4(new THREE.Matrix4().makeRotationZ(-pitch).premultiply(sm));
+          platGroup.add(seg);
+          const rail2 = new THREE.Mesh(new THREE.BoxGeometry(segLen, 0.07, 0.07),
+            new THREE.MeshBasicMaterial({ color: new THREE.Color(NEON.amber).multiplyScalar(1.1), toneMapped: false }));
+          rail2.applyMatrix4(new THREE.Matrix4().makeTranslation(0, 1.0, 1.25).premultiply(
+            new THREE.Matrix4().makeRotationZ(-pitch).premultiply(sm)));
+          platGroup.add(rail2);
+        }
+        // ramp endpoints for wayfinding (demo pilot walks foot → top)
+        const aFoot = (6 + run) / line.length;
+        const dF = line.curve.getPointAt((t + aFoot) % 1).normalize();
+        const tangF = line.curve.getTangentAt((t + aFoot) % 1);
+        const sF = new THREE.Vector3().crossVectors(tangF, dF).normalize();
+        st.rampFoot = dF.clone().multiplyScalar(planet.terrainHeight(dF) + 0.4).addScaledVector(sF, 2.2);
         st.rampTop = st.boardPos.clone();
       }
-      for (let i = 0; i <= segs; i++) {
-        // arc-length along the rail from the platform end, at descending height
-        const aOff = (6 + (i + 0.5) * segRun) / RAIL_R;
-        const d = circleAt(st.angle + aOff);
-        const su = d.clone();
-        const stang = _v2.copy(circleAt(st.angle + aOff + 0.01)).sub(circleAt(st.angle + aOff - 0.01)).normalize();
-        const sside = _v3.crossVectors(stang, su).normalize();
-        const h = platH - (i + 0.5) * segRise;
-        const seg = new THREE.Mesh(new THREE.BoxGeometry(segLen, 0.5, 2.6), platMat);
-        seg.receiveShadow = true;
-        const sm = new THREE.Matrix4().makeBasis(stang, su.clone(), sside)
-          .setPosition(su.clone().multiplyScalar(h).addScaledVector(sside, 2.2));
-        seg.applyMatrix4(new THREE.Matrix4().makeRotationZ(-pitch).premultiply(sm));
-        platGroup.add(seg);
-        // guard rail glow so the way up is legible at night
-        const rail2 = new THREE.Mesh(new THREE.BoxGeometry(segLen, 0.07, 0.07),
-          new THREE.MeshBasicMaterial({ color: new THREE.Color(NEON.amber).multiplyScalar(1.1), toneMapped: false }));
-        rail2.applyMatrix4(new THREE.Matrix4().makeTranslation(0, 1.0, 1.25).premultiply(
-          new THREE.Matrix4().makeRotationZ(-pitch).premultiply(sm)));
-        platGroup.add(rail2);
-      }
+
+      line.stations.push(st);
+      stations.push(st);
     }
+    line.stations.sort((a, b) => a.t - b.t);
   }
   scene.add(platGroup);
-  // ramps + platforms must be walkable → fold into the collision BVH
   planet.addColliders(platGroup);
 
-  // ── the train: 3 cars chasing an angle around the loop.
-  // Cars are authored nose-forward along +Z (the travel direction). ──
-  const CAR_GAP = 0.055;   // radians between cars
-  const cars = [];
-  for (let i = 0; i < 3; i++) {
+  // ════════════ TRAINS: one per line, hollow glass cars ════════════
+  function buildCar(hex, lead) {
     const car = new THREE.Group();
     const bodyMat = new THREE.MeshStandardMaterial({ color: 0x35306a, roughness: 0.3, metalness: 0.75 });
-    const body = new THREE.Mesh(new THREE.BoxGeometry(1.8, 1.7, 5.0), bodyMat);
-    body.position.z = -0.3;
-    body.castShadow = true;
-    car.add(body);
-    // tapered nose — the train visibly LEADS with the front car
-    const nose = new THREE.Mesh(new THREE.CylinderGeometry(0.01, 0.95, 1.3, 4, 1), bodyMat);
-    nose.rotation.x = Math.PI / 2;
-    nose.rotation.y = Math.PI / 4;
-    nose.position.set(0, 0, 2.8);
-    nose.castShadow = true;
-    car.add(nose);
-    const glass = new THREE.Mesh(new THREE.BoxGeometry(1.9, 0.5, 4.4),
-      new THREE.MeshBasicMaterial({ color: new THREE.Color(NEON.cyan).multiplyScalar(1.05), toneMapped: false }));
-    glass.position.set(0, 0.35, -0.3);
-    car.add(glass);
-    // headlight (front, warm) + tail lamp (rear, red)
-    const head = new THREE.Mesh(new THREE.SphereGeometry(0.18, 8, 6),
-      new THREE.MeshBasicMaterial({ color: new THREE.Color(NEON.amber).multiplyScalar(1.4), toneMapped: false }));
-    head.position.set(0, -0.15, 3.3);
-    car.add(head);
-    const tail = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.2, 0.1),
+    // hollow shell: floor, roof, low walls, glass band — you RIDE INSIDE
+    const floor = new THREE.Mesh(new THREE.BoxGeometry(2.5, 0.24, 5.8), bodyMat);
+    floor.position.y = -1.05;
+    floor.castShadow = true;
+    car.add(floor);
+    const roof = new THREE.Mesh(new THREE.BoxGeometry(2.5, 0.2, 5.8), bodyMat);
+    roof.position.y = 1.45;
+    car.add(roof);
+    for (const s of [-1, 1]) {
+      const wall = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.85, 5.8), bodyMat);
+      wall.position.set(s * 1.2, -0.5, 0);
+      car.add(wall);
+      const glass = new THREE.Mesh(new THREE.BoxGeometry(0.05, 1.35, 5.6),
+        new THREE.MeshBasicMaterial({
+          color: new THREE.Color(NEON.cyan).multiplyScalar(0.5), transparent: true, opacity: 0.16,
+          depthWrite: false, toneMapped: false,
+        }));
+      glass.position.set(s * 1.21, 0.65, 0);
+      car.add(glass);
+      // pillars
+      for (const pz of [-2.8, 0, 2.8]) {
+        const pil = new THREE.Mesh(new THREE.BoxGeometry(0.14, 2.5, 0.14), bodyMat);
+        pil.position.set(s * 1.2, 0.2, pz);
+        car.add(pil);
+      }
+    }
+    // end caps (glass front/back so the ride view is open)
+    for (const zz of [-1, 1]) {
+      const cap = new THREE.Mesh(new THREE.BoxGeometry(2.5, 2.6, 0.06),
+        new THREE.MeshBasicMaterial({
+          color: new THREE.Color(hex).multiplyScalar(0.5), transparent: true, opacity: 0.14,
+          depthWrite: false, toneMapped: false,
+        }));
+      cap.position.set(0, 0.2, zz * 2.9);
+      car.add(cap);
+    }
+    // benches
+    for (const s of [-1, 1]) {
+      const bench = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.16, 4.6), bodyMat);
+      bench.position.set(s * 0.85, -0.62, 0);
+      car.add(bench);
+    }
+    if (lead) {
+      const nose = new THREE.Mesh(new THREE.CylinderGeometry(0.01, 1.05, 1.4, 4, 1), bodyMat);
+      nose.rotation.x = Math.PI / 2;
+      nose.rotation.y = Math.PI / 4;
+      nose.position.set(0, 0.2, 3.6);
+      nose.castShadow = true;
+      car.add(nose);
+      const head = new THREE.Mesh(new THREE.SphereGeometry(0.18, 8, 6),
+        new THREE.MeshBasicMaterial({ color: new THREE.Color(NEON.amber).multiplyScalar(1.4), toneMapped: false }));
+      head.position.set(0, -0.15, 4.1);
+      car.add(head);
+    }
+    const tail = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.2, 0.1),
       new THREE.MeshBasicMaterial({ color: new THREE.Color(0xff2e4d).multiplyScalar(1.2), toneMapped: false }));
-    tail.position.set(0, 0, -2.85);
+    tail.position.set(0, 0.2, -2.95);
     car.add(tail);
-    const skid = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.5, 5.2),
-      new THREE.MeshBasicMaterial({ color: new THREE.Color(i === 0 ? NEON.magenta : NEON.purple).multiplyScalar(1.15), toneMapped: false }));
-    skid.position.y = -1.05;
+    const skid = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.5, 5.4),
+      new THREE.MeshBasicMaterial({ color: new THREE.Color(hex).multiplyScalar(1.15), toneMapped: false }));
+    skid.position.y = -1.4;
     car.add(skid);
-    scene.add(car);
-    cars.push(car);
+    return car;
   }
-  const train = {
-    angle: stations[0].angle,
-    speed: 0,
-    cruise: 0.062,          // rad/s ≈ 26 u/s at RAIL_R
-    state: 'dwell',         // dwell | run
-    dwellT: 6,
-    nextIdx: 1,
-  };
-  function placeCar(car, a) {
-    const d = circleAt(a);
-    const up = d.clone();
-    const tang = _v.copy(circleAt(a + 0.01)).sub(circleAt(a - 0.01)).normalize();
-    // RIGHT-handed basis with +Z along travel: X=up×tang, Y=up, Z=tang
-    // (X×Y = (up×tang)×up = tang = Z). The old left-handed basis mirrored
-    // the car and pointed it the wrong way down the rail.
+
+  for (const line of lines) {
+    for (let i = 0; i < 3; i++) {
+      const car = buildCar(line.hex, i === 0);
+      scene.add(car);
+      line.cars.push(car);
+    }
+    line.train = {
+      t: line.stations[0]?.t ?? 0,
+      speed: 0,
+      cruise: 24 / line.length,     // u/s → curve-parameter/s
+      state: 'dwell',
+      dwellT: 5 + rnd() * 6,
+      nextIdx: 1 % Math.max(1, line.stations.length),
+    };
+  }
+
+  const CAR_GAP_U = 6.6;   // meters between car centers
+  function placeCar(line, car, t) {
+    const tt = ((t % 1) + 1) % 1;
+    const p = line.curve.getPointAt(tt);
+    const tang = line.curve.getTangentAt(tt);
+    const up = _v.copy(p).normalize();
+    // RIGHT-handed: X = up×tang, Y = up, Z = tang (nose leads)
     const side = _v2.crossVectors(up, tang).normalize();
-    _m.makeBasis(side, up, tang).setPosition(up.clone().multiplyScalar(RAIL_R + 1.15));
-    car.position.setFromMatrixPosition(_m);
+    _m.makeBasis(side, up, tang).setPosition(p.x, p.y, p.z);
+    car.position.copy(p);
     car.quaternion.setFromRotationMatrix(_m);
   }
 
-  // ── ambient air traffic: tilted orbit lanes ──
+  // ── rider wiring (which line the player boarded) ──
+  let riderLine = null;
+
+  // ════════════ AMBIENT AIR TRAFFIC ════════════
   const airCraft = [];
   {
     const geoBody = new THREE.BoxGeometry(0.7, 0.35, 2.0);
@@ -274,13 +481,13 @@ export function buildTransit(scene, planet, audio) {
       if (uu.lengthSq() < 0.1) uu.set(0, 0, 1);
       airCraft.push({
         grp, nrm, u: uu, w: new THREE.Vector3().crossVectors(nrm, uu).normalize(),
-        r: R + 15 + rnd() * 9, a: rnd() * Math.PI * 2,
+        r: R + 26 + rnd() * 9, a: rnd() * Math.PI * 2,
         sp: (0.05 + rnd() * 0.05) * (rnd() < 0.5 ? 1 : -1),
       });
     }
   }
 
-  // ── pilotable vehicles ──
+  // ════════════ PILOTABLE VEHICLES ════════════
   function makeAV(hex) {
     const grp = new THREE.Group();
     const body = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.7, 3.4),
@@ -317,11 +524,11 @@ export function buildTransit(scene, planet, audio) {
     scene.add(grp);
     vehicles.push({ kind, grp, home: grp.position.clone(), occupied: false });
   }
-  parkVehicle('av', 'market', -3, 6, NEON.cyan);       // fly free
-  parkVehicle('av', 'ruins', 4, -5, NEON.magenta);     // fly free
-  parkVehicle('speeder', 'dunes', 1.5, 5.5, NEON.amber); // hugs the ground
+  parkVehicle('av', 'market', -3, 6, NEON.cyan);
+  parkVehicle('av', 'ruins', 4, -5, NEON.magenta);
+  parkVehicle('speeder', 'dunes', 1.5, 5.5, NEON.amber);
 
-  // ── ground traffic: speeders running the actual street chains ──
+  // ════════════ GROUND TRAFFIC (street chains) ════════════
   const groundCars = [];
   let carBodies = null, carGlows = null;
   {
@@ -340,7 +547,7 @@ export function buildTransit(scene, planet, audio) {
         chain,
         s: rnd() * (chain.length - 2),
         dirF: rnd() < 0.5 ? 1 : -1,
-        speed: 2.2 + rnd() * 1.6,           // samples/sec along the chain
+        speed: 2.2 + rnd() * 1.6,
       });
       carGlows.setColorAt(i, new THREE.Color(pick(rnd, NEON_LIST)).multiplyScalar(1.2));
     }
@@ -348,6 +555,7 @@ export function buildTransit(scene, planet, audio) {
     scene.add(carBodies);
     scene.add(carGlows);
   }
+  const _gv = new THREE.Vector3(), _m2 = new THREE.Matrix4();
   function placeGroundCar(i, car) {
     const n2 = car.chain.length;
     const i0 = clamp(Math.floor(car.s), 0, n2 - 2);
@@ -359,21 +567,19 @@ export function buildTransit(scene, planet, audio) {
     tang.addScaledVector(up, -tang.dot(up));
     if (tang.lengthSq() < 1e-8) tang.copy(up).cross(car.chain[0]);
     tang.normalize();
-    const side = _gv.crossVectors(up, tang).normalize();   // X = up×tang → right-handed with Z=tang
+    const side = _gv.crossVectors(up, tang).normalize();
     const h = planet.terrainHeight(_v) + 0.5;
     _m.makeBasis(side, up, tang).setPosition(up.x * h, up.y * h, up.z * h);
     carBodies.setMatrixAt(i, _m);
     carGlows.setMatrixAt(i, _m2.makeTranslation(0, -0.28, 0).premultiply(_m));
   }
-  const _gv = new THREE.Vector3(), _m2 = new THREE.Matrix4();
 
-  // ── station ETA boards ──
+  // ════════════ ETA BOARDS ════════════
   let etaClock = 0;
   function drawETA() {
-    const atIdx = (train.nextIdx + stations.length - 1) % stations.length;
-    for (let i = 0; i < stations.length; i++) {
-      const st = stations[i];
+    for (const st of stations) {
       if (!st.eta) continue;
+      const train = st.line.train;
       const { cv, ctx, tex } = st.eta;
       ctx.clearRect(0, 0, cv.width, cv.height);
       ctx.fillStyle = 'rgba(8,4,26,0.88)';
@@ -384,19 +590,18 @@ export function buildTransit(scene, planet, audio) {
       ctx.font = '700 44px "Share Tech Mono", monospace';
       ctx.textBaseline = 'middle';
       let msg, hue;
-      if (train.state === 'dwell' && i === atIdx) {
+      const atSt = st.line.stations[(train.nextIdx + st.line.stations.length - 1) % st.line.stations.length];
+      if (train.state === 'dwell' && atSt === st) {
         msg = `▶ BOARDING  :0${Math.max(0, Math.ceil(train.dwellT))}`.slice(0, 24);
         hue = '#5dffb2';
       } else {
-        let raw = st.angle - (train.angle % (Math.PI * 2));
-        while (raw < 0) raw += Math.PI * 2;
-        while (raw >= Math.PI * 2) raw -= Math.PI * 2;
+        let raw = st.t - (train.t % 1);
+        while (raw < 0) raw += 1;
         let stops = 0;
-        for (const s2 of stations) {
+        for (const s2 of st.line.stations) {
           if (s2 === st) continue;
-          let d2 = s2.angle - (train.angle % (Math.PI * 2));
-          while (d2 < 0) d2 += Math.PI * 2;
-          while (d2 >= Math.PI * 2) d2 -= Math.PI * 2;
+          let d2 = s2.t - (train.t % 1);
+          while (d2 < 0) d2 += 1;
           if (d2 < raw) stops++;
         }
         const eta = raw / train.cruise + stops * 8 + (train.state === 'dwell' ? train.dwellT : 0);
@@ -412,27 +617,37 @@ export function buildTransit(scene, planet, audio) {
     }
   }
 
-  // ── API ──
+  // ════════════ API ════════════
   return {
-    stations, train, cars, vehicles,
+    stations, lines, vehicles,
 
-    // a train is boardable if it's dwelling and you're on the platform
     boardableStation(pos) {
-      if (train.state !== 'dwell') return null;
-      const st = stations[(train.nextIdx + stations.length - 1) % stations.length];
-      if (pos.distanceTo(st.boardPos) < 7) return st;
-      for (const c of cars) if (pos.distanceTo(c.position) < 4.5) return st;
+      for (const line of lines) {
+        if (line.train.state !== 'dwell' || !line.stations.length) continue;
+        const st = line.stations[(line.train.nextIdx + line.stations.length - 1) % line.stations.length];
+        if (pos.distanceTo(st.boardPos) < 7) return st;
+        for (const c of line.cars) if (pos.distanceTo(c.position) < 4.5) return st;
+      }
       return null;
     },
-    dwelling() { return train.state === 'dwell'; },
+    setRider(st) { riderLine = st ? st.line : null; },
+    dwelling() { return riderLine ? riderLine.train.state === 'dwell' : false; },
+    riderStation() {
+      if (!riderLine) return null;
+      return riderLine.stations[(riderLine.train.nextIdx + riderLine.stations.length - 1) % riderLine.stations.length];
+    },
     carAnchor(out) {
-      // riders stand on the middle car
-      out.copy(cars[1].position).addScaledVector(_v.copy(cars[1].position).normalize(), 1.7);
+      const line = riderLine ?? lines[0];
+      const c = line.cars[1];
+      // INSIDE the car: feet on the floor, not floating on the roof
+      _v.copy(c.position).normalize();
+      out.copy(c.position).addScaledVector(_v, -0.9);
       return out;
     },
     carForward(out) {
-      const a = train.angle - CAR_GAP;
-      out.copy(circleAt(a + 0.01)).sub(circleAt(a - 0.01)).normalize();
+      const line = riderLine ?? lines[0];
+      const tt = (((line.train.t - CAR_GAP_U / line.length) % 1) + 1) % 1;
+      out.copy(line.curve.getTangentAt(tt));
       return out;
     },
     vehicleNear(pos) {
@@ -443,33 +658,37 @@ export function buildTransit(scene, planet, audio) {
     },
 
     update(dt, t, playerPos) {
-      // ── train state machine ──
-      if (train.state === 'dwell') {
-        train.dwellT -= dt;
-        train.speed = 0;
-        if (train.dwellT <= 0) {
-          train.state = 'run';
-          audio.sfx('doors');
+      // ── per-line train state machines ──
+      for (const line of lines) {
+        const train = line.train;
+        if (!line.stations.length) continue;
+        if (train.state === 'dwell') {
+          train.dwellT -= dt;
+          train.speed = 0;
+          if (train.dwellT <= 0) {
+            train.state = 'run';
+            if (playerPos && line.cars[1].position.distanceTo(playerPos) < 40) audio.sfx('doors');
+          }
+        } else {
+          const target = line.stations[train.nextIdx].t;
+          let delta = target - (train.t % 1);
+          while (delta < 0) delta += 1;
+          const easedMax = clamp(delta * 0.8 * (line.length / 24), 0.2, 1) * train.cruise;
+          train.speed = lerp(train.speed, easedMax, dt * 1.4);
+          train.t += train.speed * dt;
+          if (delta < 0.004) {
+            train.state = 'dwell';
+            train.dwellT = 8;
+            train.nextIdx = (train.nextIdx + 1) % line.stations.length;
+            if (playerPos && line.cars[1].position.distanceTo(playerPos) < 40) audio.sfx('chime');
+          }
         }
-      } else {
-        const target = stations[train.nextIdx].angle;
-        let delta = target - train.angle;
-        while (delta < 0) delta += Math.PI * 2;
-        while (delta > Math.PI * 2) delta -= Math.PI * 2;
-        // ease in/out near stations
-        const easedMax = clamp(delta * 0.8, 0.012, train.cruise);
-        train.speed = lerp(train.speed, easedMax, dt * 1.4);
-        train.angle += train.speed * dt;
-        if (delta < 0.006) {
-          train.state = 'dwell';
-          train.dwellT = 8;
-          train.nextIdx = (train.nextIdx + 1) % stations.length;
-          audio.sfx('chime');
+        for (let i = 0; i < line.cars.length; i++) {
+          placeCar(line, line.cars[i], train.t - i * CAR_GAP_U / line.length);
         }
       }
-      for (let i = 0; i < cars.length; i++) placeCar(cars[i], train.angle - i * CAR_GAP);
 
-      // ── ambient traffic ──
+      // ── ambient air traffic ──
       for (const a of airCraft) {
         a.a += a.sp * dt;
         const p = _v.copy(a.u).multiplyScalar(Math.cos(a.a)).addScaledVector(a.w, Math.sin(a.a)).normalize();
@@ -484,7 +703,7 @@ export function buildTransit(scene, planet, audio) {
         if (!v.occupied) v.grp.userData.engine.material.opacity = 0.7 + Math.sin(t * 4 + v.home.x) * 0.2;
       }
 
-      // ── ground traffic along the street chains ──
+      // ── ground traffic ──
       for (let i = 0; i < groundCars.length; i++) {
         const car = groundCars[i];
         car.s += car.speed * car.dirF * dt;
