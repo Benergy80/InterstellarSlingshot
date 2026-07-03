@@ -506,14 +506,31 @@ export function createDemo({ player, planet, transit, npcs, fx, hud, camera }) {
             taskData.r0 = st.pos.length();
           }
         } else {
-          // stand under the lift column — the platform scoops us up
+          // stand under the lift column — the platform scoops us up.
+          // Keep micro-correcting onto the disc's exact footprint.
           taskData.waited += dt;
+          const el = taskData.el;
+          _up.copy(st.pos).normalize();
+          _v.copy(el.pos).sub(st.pos);
+          _v.addScaledVector(_up, -_v.dot(_up));
+          const horiz = _v.length();
+          if (horiz > 0.7 && st.grounded) { steerToward(el.pos, dt); key('w', true); }
+          else key('w', false);
           const gain = st.pos.length() - taskData.r0;
           if (gain > 15) {
+            stopWalking();
             hud.toast?.('DEMO PILOT', 'Rode the Spire lift to the deck');
             return true;
           }
-          if (taskData.waited > 100) { trouble('elevator-never-carried', { gain: +gain.toFixed(1) }); return true; }
+          if (taskData.waited > 45) {
+            // carry never engaged — log it, then jetpack to the deck so
+            // the loop still verifies the deck is reachable
+            trouble('elevator-carry-missed', { gain: +gain.toFixed(1), horiz: +horiz.toFixed(2) });
+            stopWalking();
+            jetBurst(2800);
+            taskData.waited = -900;   // wait out the jet, then done
+          }
+          if (taskData.waited < -880 && (st.grounded || st.hoverFuel <= 0.1)) return true;
         }
         return false;
       },
@@ -547,12 +564,21 @@ export function createDemo({ player, planet, transit, npcs, fx, hud, camera }) {
           taskData.flyT += dt;
           key('w', true);
           key('b', taskData.flyT > 2 && taskData.flyT < 5);
-          if (taskData.flyT > 9) { stopWalking(); tapKey('e'); taskData.ph = 3; taskData.waited = 0; }
+          // level off, then DESCEND before trying to land — landing
+          // needs ground within reach, not open sky
+          st.camPitch = taskData.flyT > 6 ? -0.85 : 0.05;
+          if (taskData.flyT > 9) {
+            const gh = planet.groundHit(st.pos, 2, 14);
+            if (gh || taskData.flyT > 20) { stopWalking(); tapKey('e'); taskData.ph = 3; taskData.waited = 0; }
+          }
         } else {
           taskData.waited += dt;
           if (st.mode === 'walk') return true;
-          tapKey('e');
-          if (taskData.waited > 12) { trouble('vehicle-land-failed', null); return true; }
+          // still airborne: keep diving and retrying the landing
+          st.camPitch = -0.9;
+          key('w', true);
+          if ((taskData.waited * 10 | 0) % 8 === 0) tapKey('e');
+          if (taskData.waited > 20) { trouble('vehicle-land-failed', null); return true; }
         }
         return false;
       },
@@ -560,6 +586,13 @@ export function createDemo({ player, planet, transit, npcs, fx, hud, camera }) {
     {
       name: 'palace-flight', timeout: 160,
       start() {
+        // already flying (previous task couldn't land)? Use THIS craft.
+        if (st.mode === 'pilot') {
+          taskData.v = st.vehicle ?? true;
+          taskData.ph = 2;
+          taskData.flyT = 0;
+          return;
+        }
         let best = null, bd = 1e9;
         for (const v of transit.vehicles) {
           if (v.occupied) continue;
