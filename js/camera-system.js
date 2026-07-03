@@ -158,7 +158,14 @@ function initCameraSystem(camera, scene) {
             cameraState.initialized = true;
         } else {
             console.warn('⚠️ getPlayerModel returned null/undefined - no player model available');
-            console.warn('   Models may not be loaded yet. Try calling initCameraSystem again after models load.');
+            // INIT-RACE FIX: re-run automatically once the model is cached
+            // (previously this just hoped someone would call again — the
+            // player ship silently never appeared if nobody did).
+            if (window.Boot) {
+                window.Boot.whenReady('playerModel', () => {
+                    if (!cameraState.initialized) initCameraSystem(camera, scene);
+                });
+            }
         }
     } else {
         console.error('❌ getPlayerModel function not found');

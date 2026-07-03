@@ -15,6 +15,8 @@ const _uiElCache = Object.create(null);
 // Reusable vector for event-horizon world-position queries (avoids
 // per-frame allocation in updateEventHorizonWarnings).
 const _ehwTmpVec = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+// Scratch vector for the galaxy-map wingman heading markers (20Hz × 3 allies)
+const _allyMarkerFwd = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
 function _uiEl(id) {
     const cached = _uiElCache[id];
     if (cached && cached.isConnected) return cached;
@@ -1110,9 +1112,11 @@ function getCurrentGalaxyId() {
         for (let g = 0; g < 8; g++) {
             const mapPos = galaxyMapPositions[g];
             if (mapPos) {
-                const galaxyX = (mapPos.x - 0.5) * universeRadius * 2;
-                const galaxyZ = (mapPos.y - 0.5) * universeRadius * 2;
-                const galaxyY = 0;
+                // TRUE coords from the map table → current rebased frame
+                const _wooG = (typeof window !== 'undefined' && window.worldOriginOffset) || { x: 0, y: 0, z: 0 };
+                const galaxyX = (mapPos.x - 0.5) * universeRadius * 2 - _wooG.x;
+                const galaxyZ = (mapPos.y - 0.5) * universeRadius * 2 - _wooG.z;
+                const galaxyY = 0 - _wooG.y;
                 const galaxyCenter = new THREE.Vector3(galaxyX, galaxyY, galaxyZ);
                 
                 const distance = camera.position.distanceTo(galaxyCenter);
@@ -1531,7 +1535,8 @@ if (typeof outerInterstellarSystems !== 'undefined') {
                         type: 'ally',
                         name: ally.userData.name,
                         colorStr: ally.userData.colorStr,
-                        distance: distance
+                        distance: distance,
+                        ship: ally
                     });
                 }
             });
@@ -1644,7 +1649,16 @@ if (obj.type === 'ally') {
     // Use the wingman's stored color (Greek-named recruits have distinct hues)
     dotColor = (obj.colorStr) || (obj.name === 'Wingman Alpha' ? '#00ff88' : (obj.name === 'Wingman Beta' ? '#88aaff' : '#ffaa44'));
     dot.textContent = '▲';
-    dot.style.cssText = 'position:absolute;font-size:10px;font-weight:bold;color:' + dotColor + ';transform:translate(-50%,-50%);pointer-events:none;z-index:3;filter:drop-shadow(0 0 3px ' + dotColor + ');';
+    // Point the ▲ along the wingman's NOSE (they're clones of the
+    // +Z-forward player model) — same screen convention as the player
+    // marker: angle = atan2(fwd.x, -fwd.z). Untransformed, the glyph
+    // always pointed "north" regardless of heading (read as backwards).
+    let _allyAng = 0;
+    if (obj.ship && obj.ship.quaternion && _allyMarkerFwd) {
+        _allyMarkerFwd.set(0, 0, 1).applyQuaternion(obj.ship.quaternion);
+        _allyAng = Math.atan2(_allyMarkerFwd.x, -_allyMarkerFwd.z);
+    }
+    dot.style.cssText = 'position:absolute;font-size:10px;font-weight:bold;color:' + dotColor + ';transform:translate(-50%,-50%) rotate(' + _allyAng + 'rad);pointer-events:none;z-index:3;filter:drop-shadow(0 0 3px ' + dotColor + ');';
     dot.style.left = screenX + '%';
     dot.style.top = screenZ + '%';
     dot.style.display = 'block';
@@ -2005,9 +2019,13 @@ mapDotPool.releaseAll();
     // Y axis = depth (shown on the depth bar). Much more intuitive than the
     // spherical projection — flying north/south on the X/Z plane moves the
     // marker linearly, and elevation is its own dedicated indicator.
-    const playerX = camera.position.x;
-    const playerY = camera.position.y;
-    const playerZ = camera.position.z;
+    // FLOATING ORIGIN: the map's fixed features (galaxy dots) live in TRUE
+    // coordinates, so every moving marker must be projected in true coords
+    // too (current + worldOriginOffset).
+    const _woo = (typeof window !== 'undefined' && window.worldOriginOffset) || { x: 0, y: 0, z: 0 };
+    const playerX = camera.position.x + _woo.x;
+    const playerY = camera.position.y + _woo.y;
+    const playerZ = camera.position.z + _woo.z;
 
     // Linear projection: ±universeRadius maps to 0..100% of the map area
     const projectXZ = (x, z) => ({
@@ -2090,10 +2108,18 @@ mapDotPool.releaseAll();
                 marker.style.color = color;
                 marker.style.filter = `drop-shadow(0 0 3px ${color})`;
                 // Top-down X/Z projection — same as player marker
-                const amx = 50 + (ally.position.x / universeRadius) * 50;
-                const amy = 50 + (ally.position.z / universeRadius) * 50;
+                const amx = 50 + ((ally.position.x + _woo.x) / universeRadius) * 50;
+                const amy = 50 + ((ally.position.z + _woo.z) / universeRadius) * 50;
                 marker.style.left = Math.max(5, Math.min(95, amx)) + '%';
                 marker.style.top = Math.max(5, Math.min(95, amy)) + '%';
+                // Point the ▲ along the wingman's NOSE (they're clones of
+                // the +Z-forward player model) — same screen convention as
+                // the player marker: angle = atan2(fwd.x, -fwd.z).
+                if (ally.quaternion) {
+                    _allyMarkerFwd.set(0, 0, 1).applyQuaternion(ally.quaternion);
+                    const aAng = Math.atan2(_allyMarkerFwd.x, -_allyMarkerFwd.z);
+                    marker.style.transform = `translate(-50%, -50%) rotate(${aAng}rad)`;
+                }
                 marker.style.display = 'block';
             });
         }
@@ -2112,8 +2138,8 @@ mapDotPool.releaseAll();
             // player's actual knowledge of charted regions.
             const discovered = nebula.userData && nebula.userData.deepDiscovered;
             if (!discovered) return;
-            const nx = 50 + (nebula.position.x / universeRadius) * 50;
-            const nz = 50 + (nebula.position.z / universeRadius) * 50;
+            const nx = 50 + ((nebula.position.x + _woo.x) / universeRadius) * 50;
+            const nz = 50 + ((nebula.position.z + _woo.z) / universeRadius) * 50;
             if (nx < 2 || nx > 98 || nz < 2 || nz > 98) return;
             const dot = document.createElement('div');
             dot.className = 'universe-nebula-dot';
@@ -2138,10 +2164,10 @@ mapDotPool.releaseAll();
             const start = path.line.userData.startPosition;
             const end = path.line.userData.endPosition;
             if (!start || !end) return;
-            const x1 = 50 + (start.x / universeRadius) * 50;
-            const y1 = 50 + (start.z / universeRadius) * 50;
-            const x2 = 50 + (end.x / universeRadius) * 50;
-            const y2 = 50 + (end.z / universeRadius) * 50;
+            const x1 = 50 + ((start.x + _woo.x) / universeRadius) * 50;
+            const y1 = 50 + ((start.z + _woo.z) / universeRadius) * 50;
+            const x2 = 50 + ((end.x + _woo.x) / universeRadius) * 50;
+            const y2 = 50 + ((end.z + _woo.z) / universeRadius) * 50;
             const dx = x2 - x1, dy = y2 - y1;
             const len = Math.sqrt(dx * dx + dy * dy);
             const angle = Math.atan2(dy, dx) * 180 / Math.PI;
@@ -2404,6 +2430,10 @@ function updateDistressIndicator() {
 
     // Pick the nearest active distress signal — that's what the on-screen
     // pointer will track. Other distresses still appear on the map.
+    // SOS signals have a MAXIMUM RANGE (shared with the detection toast in
+    // civilian-combat.js): a ship under attack across the universe must not
+    // drive a permanent DISTRESS arrow.
+    const _sosRange = (typeof window !== 'undefined' && window.DISTRESS_DETECTION_RANGE) || 5000;
     let nearest = null;
     let nearestDist = Infinity;
     const camPos = camera.position;
@@ -2412,6 +2442,7 @@ function updateDistressIndicator() {
         if (!s || !s.userData || s.userData.destroyed) continue;
         if (!s.userData.distressActive) continue;
         const d = camPos.distanceTo(s.position);
+        if (d > _sosRange) continue;
         if (d < nearestDist) { nearestDist = d; nearest = s; }
     }
     if (!nearest) {

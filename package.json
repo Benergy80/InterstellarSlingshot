@@ -5,9 +5,13 @@
   "description": "A gravitational space explorer built with Three.js.",
   "scripts": {
     "build:css": "tailwindcss -i ./src/tailwind.css -o ./css/tailwind.css --minify",
-    "watch:css": "tailwindcss -i ./src/tailwind.css -o ./css/tailwind.css --watch"
+    "watch:css": "tailwindcss -i ./src/tailwind.css -o ./css/tailwind.css --watch",
+    "test:syntax": "sh -c 'for f in js/*.js; do node --check \"$f\" || exit 1; done && echo \"syntax OK\"'",
+    "test:smoke": "node scripts/smoke-test.mjs",
+    "test": "npm run test:syntax && npm run test:smoke"
   },
   "devDependencies": {
+    "playwright-core": "^1.49.0",
     "tailwindcss": "^3.4.13"
   }
 }

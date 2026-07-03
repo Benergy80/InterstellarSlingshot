@@ -58,7 +58,9 @@
     toggleTakeover: toggleTakeover,
     get active() { return ap.active; },
     get driving() { return ap.active && !ap.paused; },
-    get paused() { return ap.paused; }
+    get paused() { return ap.paused; },
+    get navStatus() { return ap._navStatus || null; },
+    get phase() { return ap.phase; }
   };
 
   // Per-frame enemy buffs + swarm — previously only applied while demo
@@ -450,9 +452,15 @@
     releaseMovementKeys();
 
     // ── Planet collision avoidance ──────────────────────────────────────
-    // Runs at 10 Hz (every 6 frames). The 800ms evasion hold makes this
-    // safe to throttle — once triggered the keys stay held across frames.
-    if (fc % 6 === 0) avoidPlanetCollisions();
+    // Runs at 10 Hz (every 6 frames) at cruise; every other frame above
+    // 8u/frame — at post-warp coast speed the ship covers ~90u between
+    // 10 Hz checks, which is most of a small planet's danger zone. The
+    // evasion hold makes the throttle safe — once triggered the keys stay
+    // held across frames.
+    {
+      const _acSpeed = gameState.velocityVector ? gameState.velocityVector.length() : 0;
+      if (fc % (_acSpeed > 8 ? 2 : 6) === 0) avoidPlanetCollisions();
+    }
 
     // ── Crosshair auto-fire ─────────────────────────────────────────────
     // Whenever the game's targeting system has locked onto a live enemy
@@ -509,17 +517,26 @@
     // back inside the boundary.
     if (ap.phase !== 'init') {
       const _cp = camPos();
-      const _distFromOrigin = _cp.length();
+      // FLOATING ORIGIN: "distance from the galactic origin" must use TRUE
+      // coordinates — after a world rebase the origin is no longer at (0,0,0)
+      // in the current frame. true = current + worldOriginOffset.
+      const _woo = window.worldOriginOffset;
+      const _tx = _cp.x + (_woo ? _woo.x : 0);
+      const _ty = _cp.y + (_woo ? _woo.y : 0);
+      const _tz = _cp.z + (_woo ? _woo.z : 0);
+      const _distFromOrigin = Math.sqrt(_tx * _tx + _ty * _ty + _tz * _tz);
       if (_distFromOrigin > 140000) {
         if (!ap._originDummy) ap._originDummy = { position: new THREE.Vector3(0, 0, 0), userData: { name: 'Galactic Center' } };
+        // The galactic center's CURRENT-frame position is -worldOriginOffset.
+        ap._originDummy.position.set(_woo ? -_woo.x : 0, _woo ? -_woo.y : 0, _woo ? -_woo.z : 0);
         if (window.orientTowardsTarget) window.orientTowardsTarget(ap._originDummy);
         // If velocity still has an outward component, brake. Otherwise
         // thrust inward toward the origin.
         const vv = gameState.velocityVector;
         let outward = false;
         if (vv && vv.lengthSq() > 0.01) {
-          // outward = velocity · (position normalized) > 0
-          outward = (vv.x * _cp.x + vv.y * _cp.y + vv.z * _cp.z) > 0;
+          // outward = velocity · (true position from origin) > 0
+          outward = (vv.x * _tx + vv.y * _ty + vv.z * _tz) > 0;
         }
         if (outward) {
           keys().x = true;
@@ -1026,14 +1043,30 @@
       // Clear the no-brake flag once we're close enough to engage.
       if (dist <= 500) ap._pirateNoBrake = false;
 
+      // EMERGENCY-WARP BRAKE-IN: the long intercept must not carry the ship
+      // past the target. Within 500u, CUT the boost (the physics ends it on
+      // timeRemaining <= 0 and hands velocity back) and brake — the global
+      // warp-integrity guard suppresses X only while the boost is active,
+      // so without the cut the ship sails through the engagement at ~15u/f.
+      if (dist <= 500 && gameState.emergencyWarp && gameState.emergencyWarp.active &&
+          !gameState.emergencyWarp.isJump) {
+        gameState.emergencyWarp.timeRemaining = 0;
+        keys().x = true;
+        setStatus('On target — cutting warp, braking');
+      }
+      // Arriving hot from a warp/jump coast: kill speed inside 500u.
+      if (dist <= 500 && speed > 8) {
+        keys().x = true;
+      }
+
       // Tactical jumps (double-tap W) to shift momentum toward a target.
-      // Allowed for anything beyond point-blank (>800u) — short dashes
-      // are a great way to change direction faster than coasting. The
-      // post-jump deceleration is now gentle (physics auto-brake 0.985)
-      // so a dash carries momentum, and the overshoot brake below stops
-      // it if it sails past. 4s cooldown, 25+ energy, not while a warp
-      // is in flight, not when a missile is in flight at the target.
-      const JUMP_MIN_DIST = 800;
+      // Fires for intercepts beyond 1,000u — short dashes are a great way
+      // to change direction faster than coasting. The post-jump
+      // deceleration is gentle (physics auto-brake 0.985) so a dash
+      // carries momentum, and the overshoot brake below stops it if it
+      // sails past. 4s cooldown, 25+ energy, not while a warp is in
+      // flight, not when a missile is in flight at the target.
+      const JUMP_MIN_DIST = 1000;
       const _warpBusy = gameState.emergencyWarp &&
           (gameState.emergencyWarp.active || gameState.emergencyWarp.transitioning);
       // How aligned our MOMENTUM (not the bow) is with the target.
@@ -1102,7 +1135,16 @@
       if (!ap._pirateNoBrake && dist > 800 && typeof _prevCD === 'number' &&
           dist > _prevCD + 0.5 && speed > 1) {
         keys().x = true;
-        setStatus('Receding from target — braking (' + (dist | 0) + ' u)');
+        // RE-ORIENT & RESUME: the bow is already re-aimed every frame (the
+        // orient call at the top of pursuit) — also clear the jump cooldown
+        // once per runaway episode so the corrective dash fires the moment
+        // the heading is back on the enemy (facing > 0.9), instead of
+        // coasting away for up to 4 more seconds.
+        if (Date.now() - (ap._lastRunawayReset || 0) > 4000) {
+          ap._lastRunawayReset = Date.now();
+          ap._lastJumpTap = 0;
+        }
+        setStatus('Receding — braking, re-orienting to resume pursuit (' + (dist | 0) + ' u)');
       }
 
       // NO long warps in combat. The 15s O-warp used to fire for any
@@ -1137,12 +1179,14 @@
     }
 
     // ── Demo charged-blast showcase ───────────────────────────────────────
-    // Occasionally the demo HOLDS the charge (the wing glow builds for
-    // ~1-2s, the new max) then releases a power-scaled blast — so viewers see
-    // the charge mechanic. Starts only in weapons range; one at a time.
+    // The demo regularly HOLDS the charge (the wing glow builds for ~1-2s)
+    // then releases a power-scaled blast — a signature move, not a rarity:
+    // ~every 6-10s of sustained engagement (was 2% roll + 14s cooldown,
+    // which viewers could miss entirely). One at a time; also allowed on
+    // the approach edge of weapons range so charges land as it closes.
     if (typeof gameState !== 'undefined') {
-      if (!ap._demoChargeUntil && dist <= engageRange && speed < 3 &&
-          Date.now() - (ap._lastDemoCharge || 0) > 14000 && Math.random() < 0.02) {
+      if (!ap._demoChargeUntil && dist <= engageRange * 1.25 && speed < 4 &&
+          Date.now() - (ap._lastDemoCharge || 0) > 6000 && Math.random() < 0.08) {
         const _dur = 1000 + Math.random() * 1000;
         gameState._laserChargeStart = Date.now(); // drives the wing glow
         ap._demoChargeUntil = Date.now() + _dur;
@@ -1248,7 +1292,27 @@
     setStatus('BOSS ENGAGEMENT — ' + (boss.userData.name || 'enemy') + ' · ' + (dist | 0) + ' u');
     gameState.currentTarget = boss;
     if (dist < 5000) {
-      ap.combatTarget = boss;
+      // ESCORTS FIRST: strip the boss's support wing before the flagship.
+      // The wing's swarm patterns (orbiters/flankers/divers/screen) ARE the
+      // interesting part of the fight — diving straight at the boss skipped
+      // them and read flat. Each combat loop returns here, so the demo
+      // works through the wing nearest-first and finishes on the boss.
+      let engageTarget = boss;
+      if (typeof enemies !== 'undefined') {
+        let bestD = Infinity;
+        for (let i = 0; i < enemies.length; i++) {
+          const e = enemies[i];
+          if (!e || !e.userData || e.userData.health <= 0 || !e.userData.isBossSupport) continue;
+          if (e.position.distanceTo(boss.position) > 6000) continue;   // this boss's wing
+          const d = camPos().distanceTo(e.position);
+          if (d < bestD) { bestD = d; engageTarget = e; }
+        }
+      }
+      if (engageTarget !== boss) {
+        setStatus('Clearing boss escort — ' + (engageTarget.userData.name || 'escort'));
+        gameState.currentTarget = engageTarget;
+      }
+      ap.combatTarget = engageTarget;
       ap.combatMissileFired = false;
       // Returning to bossEngage keeps the demo looping until the boss
       // (and any escort that spawned alongside) is gone, then we fall
@@ -1668,6 +1732,19 @@
       setStatus('Drifting away — braking and reorienting (' + (distToNebula | 0) + ' u)');
     }
 
+    // NEBULA APPROACH GOVERNOR: never enter the cloud hot. Within 4,500u
+    // of the center, brake until under ~9,500 km/s (same cap as the
+    // discovery-path approach) — a post-warp coast arrives at ~15u/frame
+    // and the old 2,000u brake band alone couldn't shed that before the
+    // ship plowed through the cluster (and its planets).
+    const NEBULA_APPROACH_RANGE = 4500;
+    const NEBULA_APPROACH_SPEED = 9.5;
+    if (distToNebula < NEBULA_APPROACH_RANGE && speed > NEBULA_APPROACH_SPEED) {
+      keys().b = false;
+      keys().x = true;
+      setStatus('Nebula approach — slowing (' + (distToNebula | 0) + ' u)');
+    }
+
     // Brake within 2000 u of the nebula center, orient toward it
     const NEBULA_BRAKE_RANGE = 2000;
     if (distToNebula < NEBULA_BRAKE_RANGE) {
@@ -1837,13 +1914,13 @@
       return;
     }
 
-    // From the moment a path is acquired, the ship's bow tracks the
-    // path's DESTINATION end (where the revealed hostiles are hiding),
-    // not the nebula end we just came from.
-    if (endPos && window.orientTowardsTarget) {
+    // From the moment a path is acquired, the nav target is the path's
+    // DESTINATION end (where the revealed hostiles are hiding), not the
+    // nebula end we just came from. Steering toward it is owned by
+    // navigateTo() below — orienting here too would double the turn rate.
+    if (endPos) {
       if (!ap._followPathAimDummy) ap._followPathAimDummy = { position: new THREE.Vector3(), userData: { name: 'Discovery endpoint' } };
       ap._followPathAimDummy.position.copy(endPos);
-      window.orientTowardsTarget(ap._followPathAimDummy);
       gameState.currentTarget = ap._followPathAimDummy;
     }
 
@@ -1863,57 +1940,35 @@
 
     if (endPos) {
       const dist = camPos().distanceTo(endPos);
-      const speed = gameState.velocityVector ? gameState.velocityVector.length() : 0;
-      const _warpBusy = (gameState.emergencyWarp && (gameState.emergencyWarp.active || gameState.emergencyWarp.transitioning));
 
-      // VERY long initial approach (>8k): fire ONE emergency warp on
-      // entry to cover the big gap fast. Single-shot, gated by warp
-      // charge availability and our 20s O-key cooldown.
-      if (!ap._followPathWarpFired && dist > 8000 && !_warpBusy &&
-          canEmergencyWarp() &&
-          Date.now() - (ap._lastBHWarp || 0) > 20000) {
-        if (triggerOKeyWarp()) {
-          ap._lastBHWarp = Date.now();
-          ap._followPathWarpFired = true;
-          ap.warpStartedAt = Date.now();
-          setStatus('Emergency warp → revealed hostile sector');
-          return;
-        }
-      }
-
-      // Brake band: within engagement range of the endpoint, kill speed
-      // so the demo arrives ready to fight rather than rocketing past.
-      const BRAKE_RANGE = 2500;
-      if (dist < BRAKE_RANGE && speed > 1.0) {
-        setStatus('Approaching revealed hostiles — braking (' + (dist | 0) + ' u)');
-        keys().x = true;
-        return;
-      }
-
-      // Outside the brake band but past the immediate target: repeated
-      // W-jumps every ~5s to make real progress toward the endpoint,
-      // adjusting heading between each dash. Each jump is sized to land
-      // near the endpoint; the orient-toward-endpoint call above
-      // re-aims the bow before every jump. Gated on dist > 1200 so the
-      // final approach is a smooth cruise+brake, not a final jump.
-      if (dist > 1200 && speed < 4 && !_warpBusy &&
-          gameState.energy > 25 &&
-          Date.now() - (ap._lastJumpTap || 0) > 5000) {
-        ap._lastJumpTap = Date.now();
-        if (window.keys) {
-          if (typeof gameState !== 'undefined') {
-            gameState._pendingJumpMs = Math.min(6000, Math.max(700, (dist - 700) * 1.0));
-          }
-          window.keys.wDoubleTap = true;
-          setTimeout(() => { if (window.keys) window.keys.wDoubleTap = false; }, 120);
-        }
-        setStatus('Tactical jump → discovery endpoint (' + (dist | 0) + ' u)');
-        return;
-      }
-
+      // CLOSED-LOOP TRANSIT: navigateTo owns orient/warp/jump/brake for the
+      // whole approach (this block used to be four hand-tuned key-poking
+      // branches — the recurring overshoot/returnPhase bug source). The
+      // one-shot emergency warp is preserved by only granting allowWarp
+      // until the first warp fires.
       if (dist > 300) {
-        setStatus('Following discovery path → ' + (dist | 0) + ' units');
-        flyToward(endPos, dist > BRAKE_RANGE ? 2.0 : 1.0);
+        // approachRange 3500: the mission system anchors 7+ hostiles within
+        // ~3000u of the endpoint — enter that zone below 9,500 km/s so the
+        // demo arrives fighting instead of overshooting the stronghold.
+        const st = navigateTo(endPos, {
+          arriveRadius: 300,
+          arriveSpeed: 1.0,
+          boost: true,
+          allowJump: true,
+          allowWarp: !ap._followPathWarpFired,
+          approachRange: 3500,
+          approachSpeed: 9.5,
+        });
+        if (st === 'warping') {
+          ap._followPathWarpFired = true;
+          setStatus('Emergency warp → revealed hostile sector');
+        } else if (st === 'jumping') {
+          setStatus('Tactical jump → discovery endpoint (' + (dist | 0) + ' u)');
+        } else if (st === 'braking') {
+          setStatus('Approaching revealed hostiles — braking (' + (dist | 0) + ' u)');
+        } else {
+          setStatus('Following discovery path → ' + (dist | 0) + ' units');
+        }
       } else {
         // At end of path — look for enemies
         const near = nearestAliveEnemy(5000);
@@ -1980,20 +2035,16 @@
       return;
     }
 
-    // Orient and thrust directly toward the black hole
-    if (window.orientTowardsTarget) window.orientTowardsTarget(ap.currentBH);
-    keys().w = true;
-    if (distToBH > 1500) keys().b = true;
-
-    // W double-tap jump to close the gap faster (800-2000u, 10s cooldown)
-    if (distToBH > 800 && distToBH < 2000 && gameState.energy > 25 &&
-        Date.now() - (ap._lastJumpTap || 0) > 10000) {
-      ap._lastJumpTap = Date.now();
-      if (window.keys) {
-        window.keys.wDoubleTap = true;
-        setTimeout(() => { if (window.keys) window.keys.wDoubleTap = false; }, 120);
-      }
-    }
+    // Closed-loop approach. arriveRadius 0: we WANT to cross the event
+    // horizon — the 500u check above hands off to blackHoleWarp first.
+    // jumpMaxDist 2500 keeps jumps to the final gap-closing (the old
+    // 800-2000u window); long approaches boost-cruise as before.
+    navigateTo(ap.currentBH, {
+      arriveRadius: 0,
+      boost: true,
+      allowJump: true,
+      jumpMaxDist: 2500,
+    });
   }
 
   // ─── 6) Black hole warp → coast → fight more enemies ─────────────────────
@@ -2208,19 +2259,31 @@
       transmit('LONG RANGE SENSORS', 'Massive unknown vessel detected at extreme range.\nWARNING: Borg Collective signature confirmed.\nAll hands to battle stations.');
     }
 
-    const distFromOrigin = camPos().length();
+    // FLOATING ORIGIN: origin-relative math in TRUE coordinates
+    const _wooB = window.worldOriginOffset;
+    const _trueCp = camPos().clone();
+    if (_wooB) _trueCp.add(_wooB);
+    const distFromOrigin = _trueCp.length();
 
     if (distFromOrigin < 70000) {
       if (canEmergencyWarp() && t > 3000) {
-        // Face away from origin and punch it
-        const outward = camPos().clone().multiplyScalar(2);
+        // Face away from origin and punch it (outward in TRUE coords,
+        // expressed back in the current frame)
+        const outward = _trueCp.clone().multiplyScalar(2);
+        if (_wooB) outward.sub(_wooB);
         const dummy = { position: outward };
         if (window.orientTowardsTarget) window.orientTowardsTarget(dummy);
         if (triggerEmergencyWarp()) {
           ap.warpStartedAt = Date.now();
         }
       } else {
-        flyToward({ x: 80000, y: 0, z: 0 }, 3.0);
+        // Closed-loop cruise outward (the old flyToward never set thrust,
+        // so with no warp charges this phase crawled at min velocity).
+        navigateTo({
+          x: 80000 - (_wooB ? _wooB.x : 0),
+          y: 0 - (_wooB ? _wooB.y : 0),
+          z: 0 - (_wooB ? _wooB.z : 0),
+        }, { arriveRadius: 0, boost: true, allowJump: false });
       }
     } else {
       if (!gameState.borg.spawned && window.spawnBorgCube) {
@@ -2339,6 +2402,168 @@
     }
   }
 
+  // ─── navigateTo: closed-loop travel controller ─────────────────────────────
+  // The autopilot used to puppet raw key presses from each phase (orient here,
+  // wDoubleTap there, brake band somewhere else), fighting physics state it
+  // couldn't see — every jump-tuning fix broke a different phase. This owns
+  // the whole loop: call it EVERY FRAME with a destination and it observes
+  // dist/speed/facing/warp-locks and decides orient/thrust/jump/warp/brake
+  // internally. Phases express intent ("go there, arrive slow"), not inputs.
+  //
+  //   navigateTo(pos, {
+  //     arriveRadius: 300,   // "arrived" inside this distance
+  //     arriveSpeed:  1.5,   // ...and below this speed
+  //     boost:        false, // hold B on long straights
+  //     allowJump:    true,  // may fire tactical W-jumps (dist > 1200)
+  //     jumpMaxDist:  Infinity, // only jump when closer than this
+  //     allowWarp:    false, // may burn an emergency-warp charge (dist > 8000)
+  //     approachRange: 0,    // speed-governed combat-approach zone: inside
+  //     approachSpeed: 9.5,  //   this range no jumps/warps fire and speed is
+  //                          //   braked below approachSpeed (u/frame; ×1000
+  //                          //   = the HUD's km/s) so arrivals don't overshoot
+  //   }) -> 'locked' | 'orienting' | 'cruising' | 'jumping' | 'warping'
+  //        | 'braking' | 'arrived'
+  //
+  // Invariants it enforces (each was a hand-fixed demo bug at least once):
+  //   - orient BEFORE thrust; never jump on a stale heading (facing > 0.9)
+  //   - hands off while the plant owns velocity (warp/slingshot/BH transit)
+  //   - never brake during an active warp boost
+  //   - stopping-distance braking (speed*35 ≈ X-brake coast length) instead
+  //     of fixed brake bands, so it neither overshoots nor crawls.
+  const _navDir = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+  const _navFwd = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+  function navigateTo(pos, opts) {
+    if (typeof gameState === 'undefined' || !_navDir) return 'locked';
+    opts = opts || {};
+    const arriveRadius = opts.arriveRadius != null ? opts.arriveRadius : 300;
+    const arriveSpeed = opts.arriveSpeed != null ? opts.arriveSpeed : 1.5;
+    let allowJump = opts.allowJump !== false;
+    const jumpMaxDist = opts.jumpMaxDist != null ? opts.jumpMaxDist : Infinity;
+    let allowWarp = !!opts.allowWarp;
+    let boost = !!opts.boost;
+    const approachRange = opts.approachRange || 0;
+    const approachSpeed = opts.approachSpeed != null ? opts.approachSpeed : 9.5;
+
+    // Resolve a target object auto-nav/orient can consume (reuse the dummy)
+    let targetObj;
+    if (pos && pos.userData && pos.position) {
+      targetObj = pos;
+    } else {
+      if (!ap._navDummy) ap._navDummy = { position: new THREE.Vector3(), userData: {} };
+      if (pos && pos.position) ap._navDummy.position.copy(pos.position);
+      else if (pos && pos.isVector3) ap._navDummy.position.copy(pos);
+      else ap._navDummy.position.set(pos.x || 0, pos.y || 0, pos.z || 0);
+      targetObj = ap._navDummy;
+    }
+    gameState.currentTarget = targetObj;
+
+    const cp = camPos();
+    const dist = cp.distanceTo(targetObj.position);
+    const speed = gameState.velocityVector ? gameState.velocityVector.length() : 0;
+    const w = gameState.emergencyWarp || {};
+    const slinging = !!(gameState.slingshot && gameState.slingshot.active);
+
+    // 1) Plant owns the velocity — hands off (still steer during a straight
+    //    warp boost so the post-warp heading is right; never during a
+    //    slingshot whip, where gravity owns the camera too).
+    if (w.active || w.transitioning || slinging || gameState.isBlackHoleWarping) {
+      if (!slinging && window.orientTowardsTarget) window.orientTowardsTarget(targetObj);
+      ap._navStatus = 'locked';
+      return 'locked';
+    }
+
+    // 2) Steer first, and measure how aligned we actually are — thrust and
+    //    jumps only fire along a verified heading.
+    let facing = 1;
+    if (window.orientTowardsTarget && typeof camera !== 'undefined') {
+      window.orientTowardsTarget(targetObj);
+      camera.getWorldDirection(_navFwd);
+      _navDir.subVectors(targetObj.position, cp).normalize();
+      facing = _navFwd.dot(_navDir);
+    }
+
+    const k = keys();
+
+    // 3) Arrival: inside the radius, kill residual speed then hold.
+    if (dist < arriveRadius) {
+      if (speed > arriveSpeed) { k.b = false; k.x = true; ap._navStatus = 'braking'; return 'braking'; }
+      ap._navStatus = 'arrived';
+      return 'arrived';
+    }
+
+    // 3b) COMBAT-APPROACH GOVERNOR: inside approachRange the destination is
+    // an engagement zone (e.g. the hostiles waiting at a discovery-path
+    // endpoint) — never jump/warp INTO it, kill boost, and brake until
+    // speed is below approachSpeed so the ship arrives fighting, not
+    // overshooting. Braking continues each frame the cap is exceeded.
+    if (approachRange && dist < approachRange) {
+      allowJump = false;
+      allowWarp = false;
+      boost = false;
+      if (speed > approachSpeed) {
+        k.b = false;
+        k.x = true;
+        ap._navStatus = 'braking';
+        return 'braking';
+      }
+    }
+
+    // 4) Stopping-distance control: speed*35 is the ~X-brake coast length
+    //    (0.975/frame combined brake from speed v needs ≈35·v units), so
+    //    braking starts exactly when continuing would overshoot the radius.
+    const stopDist = arriveRadius + speed * 35;
+    if (dist < stopDist && speed > Math.max(0.3, arriveSpeed)) {
+      k.b = false;
+      k.x = true;
+      ap._navStatus = 'braking';
+      return 'braking';
+    }
+
+    // 5) Long haul: burn an emergency-warp charge (shared 20s cooldown).
+    //    An O-warp covers ~7200u of boost plus a long coast, and the
+    //    controller is hands-off while it's active — with an approach zone
+    //    set, require enough runway that the boost ends well outside it.
+    const _warpMinDist = approachRange ? approachRange + 12000 : 8000;
+    if (allowWarp && dist > _warpMinDist && facing > 0.9 && canEmergencyWarp() &&
+        Date.now() - (ap._lastBHWarp || 0) > 20000) {
+      if (triggerOKeyWarp()) {
+        ap._lastBHWarp = Date.now();
+        ap.warpStartedAt = Date.now();
+        ap._navStatus = 'warping';
+        return 'warping';
+      }
+    }
+
+    // 6) Tactical W-jump. Without an approach zone it's sized to land near
+    //    the target (default boost speed 15 → (dist-700) ms puts the coast
+    //    tail on the doorstep). WITH an approach zone it's sized to land at
+    //    the zone EDGE — the ship is hands-off during the boost, so a jump
+    //    aimed at the target itself would carry warp speed into the fight.
+    const _jumpGap = approachRange ? (dist - approachRange) : (dist - 700);
+    if (allowJump && dist > 1200 && _jumpGap > 500 && dist < jumpMaxDist && speed < 4 &&
+        facing > 0.9 && gameState.energy > 25 &&
+        Date.now() - (ap._lastJumpTap || 0) > 5000) {
+      ap._lastJumpTap = Date.now();
+      gameState._pendingJumpMs = Math.min(6000, Math.max(700, _jumpGap * 1.0));
+      if (window.keys) {
+        window.keys.wDoubleTap = true;
+        setTimeout(() => { if (window.keys) window.keys.wDoubleTap = false; }, 120);
+      }
+      ap._navStatus = 'jumping';
+      return 'jumping';
+    }
+
+    // 7) Cruise — thrust only once the bow is roughly on target.
+    if (facing > 0.5) {
+      k.w = true;
+      if (boost && dist > stopDist * 2) k.b = true;
+      ap._navStatus = 'cruising';
+      return 'cruising';
+    }
+    ap._navStatus = 'orienting';
+    return 'orienting';
+  }
+
   function orbitAround(centerObj) {
     if (!centerObj || typeof camera === 'undefined') return;
     const cp = camPos();
@@ -2413,8 +2638,17 @@
       } else {
         dangerR = Math.max(sz * 2, 80);
       }
-      // At high speed, extend the danger zone proportionally
-      const effectiveR = dangerR + speed * 15;
+      // Extra care while working a nebula cluster: the twin nebulas are
+      // dense with planets and the demo weaves between them hunting the
+      // center — widen every non-BH margin by 50% there.
+      if (!isBlackHole && (ap.phase === 'coastToNebulaCluster' ||
+          ap.phase === 'orbitNebulaPlanet' || ap.phase === 'warpToNebulaCluster')) {
+        dangerR *= 1.5;
+      }
+      // At high speed, extend the danger zone proportionally. speed*35
+      // matches the X-brake stopping distance (was speed*15 ≈ a quarter
+      // second of warning at post-warp coast speed — far too late).
+      const effectiveR = dangerR + speed * 35;
       const dist = cp.distanceTo(p.position);
       if (dist < effectiveR) {
         // Only evade if we're actually heading toward the body

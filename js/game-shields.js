@@ -514,7 +514,58 @@ function createShieldActivationRipple() {
     animateRipple();
 }
 
-function createShieldHitEffect(hitPosition) {
+// Fine deflection sparks at the impact point, in the attacking laser's
+// color: many small, fast, short-lived points with an outward + tangential
+// bias so the shot reads as glancing off the bubble surface.
+function _shieldSparkBurst(impact, colorHex) {
+    if (typeof explosionManager === 'undefined' || typeof scene === 'undefined') return;
+    const center = shieldSystem.mesh3D ? shieldSystem.mesh3D.position : impact;
+    const normal = impact.clone().sub(center);
+    if (normal.lengthSq() < 0.001) normal.set(0, 1, 0); else normal.normalize();
+    const count = 14;
+    const geo = new THREE.BufferGeometry();
+    const pos = new Float32Array(count * 3);
+    const vels = [];
+    for (let i = 0; i < count; i++) {
+        pos[i * 3] = 0; pos[i * 3 + 1] = 0; pos[i * 3 + 2] = 0;
+        // random direction folded into the outward hemisphere + strong
+        // tangential component = deflection spray, not a radial puff
+        const v = new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).normalize();
+        const outward = normal.dot(v);
+        if (outward < 0) v.addScaledVector(normal, -2 * outward);   // reflect inward → outward
+        v.addScaledVector(normal, 0.35);                            // slight surface push
+        v.normalize().multiplyScalar(0.35 + Math.random() * 0.75);  // finer, tighter spray
+        vels.push(v);
+    }
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    const mat = new THREE.PointsMaterial({
+        color: colorHex || 0x88eeff, size: 1.1, transparent: true,
+        opacity: 1, blending: THREE.AdditiveBlending, depthWrite: false,
+        sizeAttenuation: true
+    });
+    const pts = new THREE.Points(geo, mat);
+    pts.position.copy(impact);
+    scene.add(pts);
+    let life = 1;
+    explosionManager.addExplosion({
+        update(dt) {
+            const f = dt / 16.67;
+            life -= 0.1 * f;
+            const arr = geo.attributes.position.array;
+            for (let i = 0; i < count; i++) {
+                arr[i * 3] += vels[i].x * f;
+                arr[i * 3 + 1] += vels[i].y * f;
+                arr[i * 3 + 2] += vels[i].z * f;
+            }
+            geo.attributes.position.needsUpdate = true;
+            mat.opacity = Math.max(0, life);
+            return life > 0;
+        },
+        cleanup() { scene.remove(pts); geo.dispose(); mat.dispose(); }
+    });
+}
+
+function createShieldHitEffect(hitPosition, laserColor, shotTarget) {
     console.log('🛡️ createShieldHitEffect called', {
         active: shieldSystem.active,
         hitPosition: hitPosition
@@ -552,6 +603,40 @@ function createShieldHitEffect(hitPosition) {
     // Flash the 3rd-person shield bubble RED on impact (the 2D ripple
     // above only shows in first-person).
     flashShield3DHit();
+
+    // DEFLECTION SPARKS: a fine burst at the exact point where the SHOT LINE
+    // meets the shield surface (ray–sphere intersection of the laser's path,
+    // origin → target), tinted the SAME COLOR as the laser that caused it —
+    // hits visibly glance off the bubble instead of vanishing into it.
+    if (shieldSystem.mesh3D && hitPosition) {
+        const center = shieldSystem.mesh3D.position;
+        const geomR = (shieldSystem.mesh3D.geometry.parameters &&
+            shieldSystem.mesh3D.geometry.parameters.radius) || 8;
+        const worldR = geomR * (shieldSystem.mesh3D.scale.x || 1);
+        let impact = null;
+        const target = shotTarget || (typeof camera !== 'undefined' ? camera.position : null);
+        if (target) {
+            // Intersect the beam (hitPosition → target) with the bubble
+            const rd = target.clone().sub(hitPosition);
+            if (rd.lengthSq() > 0.001) {
+                rd.normalize();
+                const oc = hitPosition.clone().sub(center);
+                const b = oc.dot(rd);
+                const c = oc.lengthSq() - worldR * worldR;
+                const disc = b * b - c;
+                if (disc >= 0) {
+                    const t = -b - Math.sqrt(disc);   // near-side intersection
+                    if (t > 0) impact = hitPosition.clone().addScaledVector(rd, t);
+                }
+            }
+        }
+        if (!impact) {
+            // Fallback: project the shooter direction onto the surface
+            const dir = hitPosition.clone().sub(center);
+            if (dir.lengthSq() > 0.001) impact = dir.normalize().multiplyScalar(worldR).add(center);
+        }
+        if (impact) _shieldSparkBurst(impact, laserColor || 0x88eeff);
+    }
     
     // Play shield absorption sound (energy deadening the impact)
     console.log('🔊 Attempting to play shield_hit sound...');
@@ -733,14 +818,28 @@ function destroy3DShield() {
     }
 }
 
+// Position-only sync, safe to call multiple times per frame. Called again
+// from animate() AFTER physics + the player-ship re-sync: update3DShield
+// runs inside the physics update (pre-integration), so without the late
+// sync the bubble trails the ship by one frame and shakes relative to it.
+function syncShieldPositionToShip() {
+    if (!shieldSystem.mesh3D || !shieldSystem.active) return;
+    const playerPos = typeof getPlayerPosition === 'function'
+        ? getPlayerPosition()
+        : (window.cameraState?.playerShipMesh?.position || camera.position);
+    shieldSystem.mesh3D.position.copy(playerPos);
+    if (shieldSystem.glowMesh3D) shieldSystem.glowMesh3D.position.copy(playerPos);
+}
+if (typeof window !== 'undefined') window.syncShieldPositionToShip = syncShieldPositionToShip;
+
 function update3DShield() {
     if (!shieldSystem.mesh3D || !shieldSystem.active) return;
-    
+
     // Get player ship position
-    const playerPos = typeof getPlayerPosition === 'function' 
-        ? getPlayerPosition() 
+    const playerPos = typeof getPlayerPosition === 'function'
+        ? getPlayerPosition()
         : (window.cameraState?.playerShipMesh?.position || camera.position);
-    
+
     // Position shield around player
     shieldSystem.mesh3D.position.copy(playerPos);
     shieldSystem.glowMesh3D.position.copy(playerPos);

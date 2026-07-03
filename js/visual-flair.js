@@ -139,6 +139,14 @@ function _updatePlayerTrail() {
 const _chargeGlow = { sprites: null };
 function _updateLaserCharge() {
     const ship = window.cameraState && window.cameraState.playerShipMesh;
+    // CHARGE SPEED GATE: a charge in progress FIZZLES if the ship
+    // accelerates past ~10,000 km/s (jump/warp mid-hold) — charging needs
+    // a stable firing platform, and the glow can't credibly ride the wings
+    // at warp speeds.
+    if (typeof gameState !== 'undefined' && gameState._laserChargeStart > 0 &&
+        gameState.velocityVector && gameState.velocityVector.length() > 10) {
+        gameState._laserChargeStart = 0;
+    }
     const charging = (typeof gameState !== 'undefined' && gameState._laserChargeStart > 0);
     if (!_chargeGlow.sprites) {
         if (!charging) return;
@@ -154,27 +162,40 @@ function _updateLaserCharge() {
     const prog = (charging && ship && ship.visible)
         ? Math.max(0, Math.min(1, (Date.now() - gameState._laserChargeStart) / 2000)) : 0;
     if (prog <= 0.01) { _chargeGlow.sprites.forEach(s => { s.material.opacity = 0; s.scale.setScalar(0); }); return; }
-    // Position the glows at the SAME wing tips the lasers fire from
-    // (createThirdPersonLasers: ±size.x*0.35, up -2, fwd -size.z*0.15, in
-    // camera space) so the charge builds right at the beam origins.
-    const box = new THREE.Box3().setFromObject(ship);
-    const size = box.getSize(new THREE.Vector3());
-    const shipPos = ship.getWorldPosition(new THREE.Vector3());
-    const cq = camera.quaternion;
-    const wingSpread = size.x * 0.35, wingForward = -size.z * 0.15, wingUp = -2;
-    const lOff = new THREE.Vector3(-wingSpread, wingUp, wingForward).applyQuaternion(cq);
-    const rOff = new THREE.Vector3(wingSpread, wingUp, wingForward).applyQuaternion(cq);
-    const leftWing = shipPos.clone().add(lOff);
-    const rightWing = shipPos.clone().add(rOff);
+    // Position the glows at the SAME wing guns the lasers fire from —
+    // getPlayerWingGuns() is the shared ship-local anchor transform, so the
+    // charge builds exactly at the beam origins in every view state (warp
+    // framing, cinematic lag, banks, scale).
+    let leftWing, rightWing;
+    const _guns = (typeof window.getPlayerWingGuns === 'function') ? window.getPlayerWingGuns() : null;
+    if (_guns) {
+        leftWing = _guns.left;
+        rightWing = _guns.right;
+    } else {
+        // legacy camera-space fallback (model not hydrated)
+        const box = new THREE.Box3().setFromObject(ship);
+        const size = box.getSize(new THREE.Vector3());
+        const shipPos = ship.getWorldPosition(new THREE.Vector3());
+        const cq = camera.quaternion;
+        const wingSpread = size.x * 0.35, wingForward = -size.z * 0.15, wingUp = -2;
+        leftWing = shipPos.clone().add(new THREE.Vector3(-wingSpread, wingUp, wingForward).applyQuaternion(cq));
+        rightWing = shipPos.clone().add(new THREE.Vector3(wingSpread, wingUp, wingForward).applyQuaternion(cq));
+    }
     // Expose for the blast origin (emit from the charge center).
     gameState._chargeWings = [leftWing, rightWing];
     gameState._chargeCenter = leftWing.clone().add(rightWing).multiplyScalar(0.5);
+    // Glow size derives from the actual wing span (guns sit at ±0.35 of the
+    // hull width, so span/0.7 ≈ ship width) — branch-independent. The old
+    // `size.x` only existed in the fallback branch: with the wing-gun
+    // helper active it threw a ReferenceError that the caller's try/catch
+    // swallowed, silently killing the charge glow every frame.
+    const _glowBase = Math.max(leftWing.distanceTo(rightWing) / 0.7, 8);
     const t = Date.now();
     const wings = [leftWing, rightWing];
     _chargeGlow.sprites.forEach((sp, i) => {
         sp.position.copy(wings[i]);
         const flick = 0.82 + 0.18 * Math.sin(t * 0.03 + i * 2);
-        sp.scale.setScalar(Math.max(size.x, 8) * (0.08 + prog * 0.34) * flick);
+        sp.scale.setScalar(_glowBase * (0.08 + prog * 0.34) * flick);
         sp.material.opacity = prog * 0.95;
         // YELLOW build (matches the yellow blast): gold → bright yellow-white
         sp.material.color.setHSL(0.13, 1, 0.5 + prog * 0.45);
@@ -916,6 +937,11 @@ function updateVisualFlair() {
 // Exports
 if (typeof window !== 'undefined') {
     window.updateVisualFlair = updateVisualFlair;
+    // Called again from animate() AFTER the render transforms (fixed-step
+    // interpolation + cinematic re-anchor) so the charge glow rides the
+    // RENDERED ship — placed only in the update phase it trails the ship
+    // while thrusting (the "charge blast looks wrong under thrust" bug).
+    window.__syncChargeGlow = _updateLaserCharge;
     window.materializeShip = materializeShip;
     window.createHitSparks = createHitSparks;
     window.createDistressFlare = createDistressFlare;

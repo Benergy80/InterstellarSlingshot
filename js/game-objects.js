@@ -262,7 +262,12 @@ function getGalaxy3DPosition(galaxyId) {
     const x = distance * Math.sin(theta) * Math.cos(phi);
     const y = distance * Math.cos(theta);
     const z = distance * Math.sin(theta) * Math.sin(phi);
-    
+
+    // FLOATING ORIGIN: the table stores TRUE (absolute) coordinates; convert
+    // to the current rebased frame so every consumer's distance math stays
+    // consistent with the shifted scene.
+    const _woo = (typeof window !== 'undefined' && window.worldOriginOffset) || null;
+    if (_woo) return new THREE.Vector3(x - _woo.x, y - _woo.y, z - _woo.z);
     return new THREE.Vector3(x, y, z);
 }
 
@@ -1081,7 +1086,7 @@ function isEnemyInLocalGalaxy(enemy) {
     }
     
     // Fallback: check position relative to origin (local galaxy center)
-    const distanceFromOrigin = enemy.position.length();
+    const distanceFromOrigin = (window.trueDistanceFromOrigin) ? window.trueDistanceFromOrigin(enemy.position) : enemy.position.length();
     return distanceFromOrigin < 5000; // Local galaxy radius
 }
 
@@ -1177,8 +1182,17 @@ function checkSpeciesBossSpawn() {
             withGuardians: false,
             // A pirate is isMartianPirate=true AND NOT a Vulcan Patrol
             isMember: (ud) => ud.isMartianPirate && !ud.isVulcanPatrol,
-            // Spawn near the Sol system's local sun (origin)
-            spawnPos: () => new THREE.Vector3(0, 0, 0)
+            // Spawn near the SOL SYSTEM (localSystemOffset) — NOT the world
+            // origin. The origin is Sagittarius A*: spawning there put the
+            // pirate boss 9.4k away at the galactic core, where wingmen
+            // Beta/Gamma (fighting Vulcans at Sgr A* since game start)
+            // could kill it OFF-SCREEN — the decapitation rout then wiped
+            // every remaining pirate "at once" with no visible boss fight.
+            spawnPos: () => {
+                const sol = (typeof window !== 'undefined' && window.localSystemOffset)
+                    ? window.localSystemOffset : { x: 8000, y: 0, z: 4800 };
+                return new THREE.Vector3(sol.x, sol.y, sol.z);
+            }
         },
         {
             key: 'vulcanPatrol',
@@ -1712,6 +1726,10 @@ function checkBossVictory(defeatedEnemy) {
         // ELITE GUARDIAN DEFEATED
         console.log(`🏆 Elite Guardian defeated: ${defeatedEnemy.userData.name} (${faction})`);
 
+        if (typeof window !== 'undefined' && window.replaySystem) {
+            window.replaySystem.record('Felled the ' + faction + ' Elite Guardian', 2);
+        }
+
         // Mark elite guardian as defeated
         if (bossSystem.eliteGuardians[faction]) {
             bossSystem.eliteGuardians[faction].defeated = true;
@@ -1744,6 +1762,11 @@ function checkBossVictory(defeatedEnemy) {
     } else if (defeatedEnemy.userData.isBoss) {
         // AREA BOSS DEFEATED
         console.log(`🎯 Area Boss defeated: ${defeatedEnemy.userData.name} (${areaKey})`);
+
+        // Victory-replay highlight: boss kills are prime montage material
+        if (typeof window !== 'undefined' && window.replaySystem) {
+            window.replaySystem.record('Destroyed ' + (defeatedEnemy.userData.name || 'a flagship'), 3);
+        }
 
         // Mark area boss as defeated
         if (areaKey && bossSystem.areaBosses[areaKey]) {
@@ -5586,8 +5609,15 @@ function updateDistanceCulling() {
 
     const cx = camera.position.x, cy = camera.position.y, cz = camera.position.z;
 
+    // ADAPTIVE QUALITY: the quality controller shrinks cull ranges at lower
+    // tiers (distance-LOD) — dense galaxy cores are draw-call bound and the
+    // farthest objects are the cheapest look-loss to shed.
+    const _cullScale = (typeof window !== 'undefined' && window.__quality)
+        ? (window.__quality.TIERS[window.__quality.tier].cullScale || 1) : 1;
+
     const cullArray = (arr, range) => {
         if (typeof arr === 'undefined' || !arr || !arr.length) return;
+        range *= _cullScale;
         const r2 = range * range;
         for (let i = 0; i < arr.length; i++) {
             const o = arr[i];
@@ -5612,7 +5642,7 @@ function updateDistanceCulling() {
     // that galaxy fighting, not as specks from 25k away. Runs AFTER the 30k
     // pass above (which would otherwise keep them visible out to 30k).
     if (typeof interstellarAsteroids !== 'undefined') {
-        const dr2 = 8000 * 8000;
+        const dr2 = (8000 * _cullScale) * (8000 * _cullScale);
         for (let i = 0; i < interstellarAsteroids.length; i++) {
             const a = interstellarAsteroids[i];
             if (!a || !a.userData || !a.userData.denseField || !a.position) continue;
@@ -5926,10 +5956,35 @@ const distressBeaconSystem = {
     triggerDistressBeacon: function(galaxyId) {
         if (this.triggeredSpecies.has(galaxyId)) return;
         if (typeof galaxyTypes === 'undefined') return;
-        
+
         const galaxy = galaxyTypes[galaxyId];
         if (!galaxy) return;
-        
+
+        // FIRST-JOURNEY GATE (same rule as the core formation nebulas): the
+        // HOME galaxy's Elite Guardian dies right at the Sgr A* liberation
+        // set-piece, and this beacon draws ANOTHER faction-colored dotted
+        // line across the local sky (galaxy center → outer system) before
+        // the player has even started the white-path journey to the twins —
+        // it reads as a competing "path of discovery". Defer it until the
+        // first twin (clustered) nebula is charted; updateBeacons retries.
+        if (typeof nebulaClouds !== 'undefined') {
+            let twinCharted = false;
+            for (let i = 0; i < nebulaClouds.length; i++) {
+                const ud = nebulaClouds[i] && nebulaClouds[i].userData;
+                if (ud && ud.deepDiscovered && !ud.isDistant && !ud.isExoticCore) {   // twins = non-distant, non-exotic (every nebula has a shape)
+                    twinCharted = true; break;
+                }
+            }
+            if (!twinCharted) {
+                if (!this.pendingBeacons) this.pendingBeacons = [];
+                if (this.pendingBeacons.indexOf(galaxyId) < 0) {
+                    this.pendingBeacons.push(galaxyId);
+                    console.log(`📡 Distress beacon for galaxy ${galaxyId} deferred until the first twin nebula is charted`);
+                }
+                return;
+            }
+        }
+
         this.triggeredSpecies.add(galaxyId);
         
         // Select an outer system for the boss
@@ -6236,7 +6291,27 @@ const distressBeaconSystem = {
     // Update beacon visuals (called each frame)
     updateBeacons: function() {
         const time = Date.now() * 0.003;
-        
+
+        // Fire any beacon deferred by the first-journey gate once the first
+        // twin nebula has been charted (cheap check, throttled to ~1Hz).
+        if (this.pendingBeacons && this.pendingBeacons.length &&
+            typeof nebulaClouds !== 'undefined' &&
+            (!this._pendingCheckAt || Date.now() > this._pendingCheckAt)) {
+            this._pendingCheckAt = Date.now() + 1000;
+            let twinCharted = false;
+            for (let i = 0; i < nebulaClouds.length; i++) {
+                const ud = nebulaClouds[i] && nebulaClouds[i].userData;
+                if (ud && ud.deepDiscovered && !ud.isDistant && !ud.isExoticCore) {   // twins = non-distant, non-exotic (every nebula has a shape)
+                    twinCharted = true; break;
+                }
+            }
+            if (twinCharted) {
+                const queued = this.pendingBeacons.slice();
+                this.pendingBeacons = [];
+                queued.forEach(gid => this.triggerDistressBeacon(gid));
+            }
+        }
+
         this.activeBeacons.forEach(beacon => {
             if (!beacon || !beacon.userData) return;
             
@@ -7518,7 +7593,7 @@ function updateTradingShips() {
                 ship.position.z += (Math.random() - 0.5) * 0.8;
                 ship.rotation.z = Math.sin(Date.now() * 0.004) * 0.15;
                 
-                data.miningProgress += 16.67; // ~60fps
+                data.miningProgress += (typeof gameState !== 'undefined' && gameState.dtMs) || 16.67; // real elapsed ms
                 if (data.miningProgress >= (data.miningDuration || 30000)) {
                     // Done mining, head back home
                     data.aiState = 'returning_with_cargo';
@@ -10050,38 +10125,56 @@ function createEnemies3D() {
     }
     
     // Create local galaxy enemies (Martian Pirates) — patrol in groups of 3.
-    // Distributed spherically around the inner Sol system using a Fibonacci
-    // lattice so groups occupy all three axes rather than a single plane.
+    // BREADCRUMB CORRIDOR: the groups are staged along the Sol → Sagittarius
+    // A* line at increasing depth, so clearing pirates naturally walks the
+    // player from the Sol spawn toward the galactic core (where the Vulcans
+    // and the liberation set-piece wait). The old full Fibonacci sphere
+    // scattered them in every direction — combat wandered instead of led.
     const patrolGroupCount = 8;
     const piratesPerGroup = 3;
-    const pirateGoldenAngle = Math.PI * (3 - Math.sqrt(5));
-    // Martian Pirates patrol the Sol system, so their lattice is centred
-    // on the Sol-system offset (not the origin, which is Sgr A* — that's
-    // Vulcan turf below).
+    // Martian Pirates patrol the Sol system, so the corridor starts at the
+    // Sol-system offset (the origin is Sgr A* — Vulcan turf below).
     const solCenter = (typeof window !== 'undefined' && window.localSystemOffset)
         ? window.localSystemOffset : { x: 8000, y: 0, z: 4800 };
+    const _solV = new THREE.Vector3(solCenter.x, solCenter.y, solCenter.z);
+    // Direction Sol → Sgr A* (origin) + two perpendicular axes for scatter
+    const _corridorDir = _solV.clone().negate().normalize();
+    const _corridorSide = new THREE.Vector3().crossVectors(_corridorDir, new THREE.Vector3(0, 1, 0)).normalize();
+    const _corridorUp = new THREE.Vector3().crossVectors(_corridorSide, _corridorDir).normalize();
+    const _corridorLen = _solV.length();   // ~9.4k units Sol → core
     let pirateIndex = 0;
     for (let g = 0; g < patrolGroupCount; g++) {
-        // Keep patrol groups well clear of the Sol-system core where the
-        // player spawns (near Earth). The old 800-unit floor put pirates
-        // on top of the player immediately; a ~2800-unit minimum gives a
-        // few seconds to get oriented before any patrol is in range.
-        const groupDistance = 2800 + Math.random() * 1600;
-        const cosPolar = 1 - 2 * (g + 0.5) / patrolGroupCount;
-        const sinPolar = Math.sqrt(Math.max(0, 1 - cosPolar * cosPolar));
-        const azimuth = pirateGoldenAngle * g + Math.random() * 0.3;
-        const groupCenter = new THREE.Vector3(
-            solCenter.x + Math.cos(azimuth) * sinPolar * groupDistance,
-            solCenter.y + cosPolar * groupDistance,
-            solCenter.z + Math.sin(azimuth) * sinPolar * groupDistance
-        );
+        // Stage depth along the corridor. The FIRST TWO groups are opening-
+        // beat skirmishers close to the Sol spawn (~1,200u / ~1,900u, still
+        // on the Sgr A* side): the player's very first move is turn +
+        // double-tap-W to intercept, and early combat stays on the corridor
+        // instead of scattering behind Sol. The remaining six stage from
+        // ~3,000u out to ~75% of the way to Sgr A* — close enough to hand
+        // the fight over to the Vulcan patrol ring without overlapping it.
+        let depth, side, lift;
+        const t = (g + 0.5) / patrolGroupCount;               // 0..1 along corridor
+        if (g < 2) {
+            depth = (g === 0 ? 1200 : 1900) + Math.random() * 300;
+            side = (g % 2 === 0 ? 1 : -1) * (250 + Math.random() * 250);  // tight — clearly "ahead"
+            lift = (Math.random() - 0.5) * 300;
+        } else {
+            depth = 3000 + ((g - 2 + 0.5) / (patrolGroupCount - 2)) * (_corridorLen * 0.75 - 3000);
+            // Alternating lateral scatter keeps the trail readable but not a
+            // literal straight line; scatter widens slightly with depth.
+            side = (g % 2 === 0 ? 1 : -1) * (500 + Math.random() * 700) * (0.7 + t * 0.6);
+            lift = (Math.random() - 0.5) * (600 + t * 600);
+        }
+        const groupCenter = _solV.clone()
+            .addScaledVector(_corridorDir, depth)
+            .addScaledVector(_corridorSide, side)
+            .addScaledVector(_corridorUp, lift);
 
         for (let p = 0; p < piratesPerGroup; p++) {
             pirateIndex++;
             const enemyGeometry = createEnemyGeometry(0);
 
             const localShapeData = { color: 0xff4444 };
-            const materials = createEnemyMaterial(localShapeData, 'local', groupDistance);
+            const materials = createEnemyMaterial(localShapeData, 'local', depth);
 
             let enemy;
             let isGLBModel = false;
@@ -10134,7 +10227,10 @@ function createEnemies3D() {
                 speed: 1.2 + Math.random() * 0.8,
                 aggression: 0.95 + Math.random() * 0.05,
                 patrolCenter: groupCenter.clone(),
-                patrolRadius: groupDistance,
+                // Tight patrol radius: each group holds its corridor station
+                // (the old value was the distance-from-Sol, ~3-4k, which let
+                // groups wander right off the breadcrumb trail).
+                patrolRadius: 700,
                 lastAttack: 0,
                 isActive: false,
                 visible: true,
@@ -10318,7 +10414,8 @@ function spawnBlackHoleGuardians() {
 // LOAD GUARDIANS WHEN PLAYER ENTERS GALAXY
 // =============================================================================
 
-function loadGuardiansForGalaxy(galaxyId) {
+function loadGuardiansForGalaxy(galaxyId, opts) {
+    opts = opts || {};
     console.log(`🛡️ Loading guardians for galaxy ${galaxyId}...`);
     
     // Safety checks
@@ -10334,8 +10431,11 @@ function loadGuardiansForGalaxy(galaxyId) {
         return;
     }
     
-    // ⭐ CRITICAL: Only spawn guardians AFTER boss is defeated
-    if (typeof bossSystem !== 'undefined' && bossSystem.galaxyBossDefeated && !bossSystem.galaxyBossDefeated[galaxyId]) {
+    // ⭐ CRITICAL: Only spawn guardians AFTER boss is defeated — unless the
+    // twin-pair campaign is spawning them (both discovery missions done →
+    // the black-hole path opens WITH its guardians, per design).
+    if (!opts.ignoreBossGate &&
+        typeof bossSystem !== 'undefined' && bossSystem.galaxyBossDefeated && !bossSystem.galaxyBossDefeated[galaxyId]) {
         console.log(`Galaxy ${galaxyId} boss not yet defeated - guardians will spawn after boss victory`);
         return;
     }
@@ -10380,9 +10480,11 @@ function loadGuardiansForGalaxy(galaxyId) {
     const galaxyType = galaxyTypes[galaxyId];
     const blackHolePosition = blackHole.position.clone();
     
-    // Determine number of guardians based on galaxy type
-    const guardianCount = galaxyType.name === 'Quasar' ? 8 : 
-                         galaxyType.name === 'Dwarf' ? 3 : 5;
+    // Determine number of guardians based on galaxy type. The twin-pair
+    // campaign spawns exactly 3 (opts.count) with its black-hole path.
+    const guardianCount = opts.count ? opts.count :
+                         (galaxyType.name === 'Quasar' ? 8 :
+                         galaxyType.name === 'Dwarf' ? 3 : 5);
     
     // Guardian ring distance from black hole
     const guardianOrbitRadius = blackHole.userData.warpThreshold + 100;
@@ -12315,7 +12417,7 @@ function updateCMBOpacity() {
     }
     
     // PART 1: Calculate base opacity based on distance from Sagittarius A* (at origin 0,0,0)
-    const distanceFromSgrA = camera.position.length();
+    const distanceFromSgrA = (window.trueDistanceFromOrigin) ? window.trueDistanceFromOrigin(camera.position) : camera.position.length();
     
     // Linear interpolation: 0.01 at origin, 0.09 at 4000+ units
     const maxDistance = 110000;
@@ -12946,3 +13048,37 @@ window.removeNebulaDebugBeacons = removeNebulaDebugBeacons;
 window.toggleNebulaDebugBeacons = toggleNebulaDebugBeacons;
 window.nebulaDebugBeacons = nebulaDebugBeacons;
 
+
+// =============================================================================
+// FLOATING ORIGIN — shift this module's cached absolute coordinates when the
+// world is rebased (see applyWorldShift in game-core.js). Everything here
+// stores CURRENT-frame coords, so a uniform subtract keeps them correct.
+// =============================================================================
+if (typeof window !== 'undefined') {
+    window.__worldShiftHandlers = window.__worldShiftHandlers || [];
+    window.__worldShiftHandlers.push(function (offset) {
+        const sh = (o) => {
+            if (!o) return;
+            if (o.isVector3) { o.sub(offset); return; }
+            if (typeof o.x === 'number' && typeof o.y === 'number' && typeof o.z === 'number') {
+                o.x -= offset.x; o.y -= offset.y; o.z -= offset.z;
+            }
+        };
+        // Wormhole mouth table (source of truth for re-reads)
+        if (typeof WORMHOLE_NETWORK !== 'undefined') {
+            WORMHOLE_NETWORK.forEach((w) => { sh(w.a); sh(w.b); });
+        }
+        // Sol / Dune gateway anchors
+        sh(window.localGatewayPosition);
+        sh(window.localSystemOffset);
+        // Elite-guardian respawn anchors (per-faction last kill sites)
+        if (typeof lastKillPositions !== 'undefined') {
+            Object.keys(lastKillPositions).forEach((k) => sh(lastKillPositions[k]));
+        }
+        // Freighter caravan routes (plain objects, not scene children —
+        // their ships are positioned each tick from source/destination)
+        if (typeof freighterCaravans !== 'undefined') {
+            freighterCaravans.forEach((cv) => { sh(cv.source); sh(cv.destination); });
+        }
+    });
+}

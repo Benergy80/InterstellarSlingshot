@@ -205,6 +205,10 @@ function orientTowardsTarget(target) {
     // a continuous start/stop stutter. A small threshold keeps the ship
     // tracking almost continuously instead.
     const orientationThreshold = 0.016;
+    // Mark auto-orient as the steering authority this frame (also when
+    // already aligned): applyRotationalInertia skips its own pitch/yaw
+    // application while this is fresh, so the two controllers can't fight.
+    if (typeof gameState !== 'undefined') gameState._lastAutoOrientFrame = gameState.frameCount;
     if (angle < orientationThreshold) {
         return true;
     }
@@ -227,8 +231,12 @@ function orientTowardsTarget(target) {
     // takeover, so manual feel is never affected.
     const _demoDriving = (typeof window !== 'undefined' && window.demoPilot &&
                           window.demoPilot.driving);
-    const rotationSpeedPerFrame = _demoDriving ? 0.08 : 0.12;  // approach rate
-    const maxRotationPerFrame   = _demoDriving ? 0.025 : 0.045; // cap: demo ~86°/s, player auto-nav ~155°/s
+    // Demo rates reduced 0.08/0.025 -> 0.055/0.016 (~86°/s -> ~55°/s cap):
+    // combat tracking at ~47°/s mean read as jerky at 25-40fps and kept the
+    // cinematic chase camera pinned against its lag clamp. Slower, more
+    // deliberate turns are also simply nicer to watch.
+    const rotationSpeedPerFrame = _demoDriving ? 0.055 : 0.12;  // approach rate
+    const maxRotationPerFrame   = _demoDriving ? 0.016 : 0.045; // cap: demo ~55°/s, player auto-nav ~155°/s
     const FRAME_MS = 16.67;
     const frames = _deltaMs / FRAME_MS;
 
@@ -258,7 +266,8 @@ function orientTowardsTarget(target) {
     // Use the cumulative rotation so the bank intensity matches actual turn.
     if (typeof rotationalVelocity !== 'undefined') {
         const yawComponent = _ortAxis.y * totalRotation;
-        rotationalVelocity.yaw += (yawComponent - rotationalVelocity.yaw) * 0.15;
+        // dt-corrected exponential approach (0.15/frame at 60fps)
+        rotationalVelocity.yaw += (yawComponent - rotationalVelocity.yaw) * (1 - Math.pow(0.85, _deltaMs / 16.67));
     }
 
     // Update tracking for compatibility
@@ -280,9 +289,17 @@ function orientTowardsTarget(target) {
 
 // NEW: Apply rotational inertia for space-like flight controls
 function applyRotationalInertia(keys, allowManualRotation) {
+    // DELTA TIME: turn accel/decel are tuned per 60fps frame; scale by
+    // elapsed frames so manual turn feel is identical on any refresh rate.
+    // (Angular VELOCITY stays per-frame-at-60 units; its application to the
+    // camera below is scaled by _rdtF, matching the linear velocity system.)
+    const _rdtF = (typeof gameState !== 'undefined' && typeof gameState.dtFrames === 'number' && gameState.dtFrames > 0)
+        ? gameState.dtFrames : 1;
+    const _decel = Math.pow(rotationalInertia.deceleration, _rdtF);
+
     // Choose turning speed based on CAPS LOCK state
     // 🔄 INVERTED: Default = fast turning, CAPS LOCK = slow/precision mode
-    const currentAcceleration = keys.capsLock ? rotationalInertia.acceleration : rotationalInertia.fastAcceleration;
+    const currentAcceleration = (keys.capsLock ? rotationalInertia.acceleration : rotationalInertia.fastAcceleration) * _rdtF;
     const currentMaxSpeed = keys.capsLock ? rotationalInertia.maxSpeed : rotationalInertia.fastMaxSpeed;
     
     // Apply acceleration when keys are pressed
@@ -296,7 +313,7 @@ function applyRotationalInertia(keys, allowManualRotation) {
             lastPitchInputTime = performance.now();
         } else {
             // Apply deceleration when no input
-            rotationalVelocity.pitch *= rotationalInertia.deceleration;
+            rotationalVelocity.pitch *= _decel;
         }
         
         // Yaw controls (left/right arrows for turning)
@@ -308,7 +325,7 @@ function applyRotationalInertia(keys, allowManualRotation) {
             lastRollInputTime = performance.now();
         } else {
             // Apply deceleration when no input
-            rotationalVelocity.yaw *= rotationalInertia.deceleration;
+            rotationalVelocity.yaw *= _decel;
         }
     }
     
@@ -321,7 +338,7 @@ function applyRotationalInertia(keys, allowManualRotation) {
         lastRollInputTime = performance.now();
     } else {
         // Apply deceleration when no input
-        rotationalVelocity.roll *= rotationalInertia.deceleration;
+        rotationalVelocity.roll *= _decel;
     }
     
     // Clamp rotational velocities to max speed (using current max based on CAPS LOCK)
@@ -332,14 +349,26 @@ function applyRotationalInertia(keys, allowManualRotation) {
     rotationalVelocity.roll = Math.max(-currentMaxSpeed, 
                                        Math.min(currentMaxSpeed, rotationalVelocity.roll));
     
+    // STEERING-AUTHORITY GATE: while auto-orient (demo / auto-nav) steered
+    // this frame and the player isn't touching the rotation keys, do NOT
+    // apply residual pitch/yaw here. orientTowardsTarget feeds ~15% of its
+    // yaw into rotationalVelocity for the BANKING visual; applying it as a
+    // second camera rotation made two controllers fight around the aligned
+    // threshold — a limit cycle measured live at ±13°/s wobble. Banking
+    // roll below still reads rotationalVelocity.yaw, so the visual stays.
+    const _autoSteering = (typeof gameState !== 'undefined') &&
+        gameState._lastAutoOrientFrame !== undefined &&
+        (gameState.frameCount - gameState._lastAutoOrientFrame) <= 1 &&
+        !(keys.up || keys.down || keys.left || keys.right);
+
     // Apply pitch (looking up/down) - this is always relative to current orientation
-    if (Math.abs(rotationalVelocity.pitch) > 0.00001) {
-        camera.rotateX(rotationalVelocity.pitch);
+    if (!_autoSteering && Math.abs(rotationalVelocity.pitch) > 0.00001) {
+        camera.rotateX(rotationalVelocity.pitch * _rdtF);
     }
-    
+
     // Apply yaw (turning left/right) - this is always relative to current orientation
-    if (Math.abs(rotationalVelocity.yaw) > 0.00001) {
-        camera.rotateY(rotationalVelocity.yaw);
+    if (!_autoSteering && Math.abs(rotationalVelocity.yaw) > 0.00001) {
+        camera.rotateY(rotationalVelocity.yaw * _rdtF);
     }
     
     // 🛩️ STRAFE YAW + BANKING: Turn nose OPPOSITE to strafe direction + bank wings
@@ -375,10 +404,10 @@ function applyRotationalInertia(keys, allowManualRotation) {
         if (strafeYawAmount !== 0) {
             // Apply yaw rotation around the up axis (opposite to strafe direction)
             const rotationAxis = camera.up.clone().normalize();
-            camera.rotateOnWorldAxis(rotationAxis, strafeYawAmount);
-            
+            camera.rotateOnWorldAxis(rotationAxis, strafeYawAmount * _rdtF);
+
             // Apply banking/roll around forward axis (wings dip)
-            camera.rotateZ(strafeBankAmount);
+            camera.rotateZ(strafeBankAmount * _rdtF);
         }
     }
     
@@ -396,16 +425,18 @@ function applyRotationalInertia(keys, allowManualRotation) {
     // SKIP banking during mobile touch input to prevent unwanted roll
     let bankingFromYaw = 0;
     if (!window.mobileTouchActive) {
-        // Demo cinematic-roll boost trimmed 2.5 -> 1.8: combined with the
-        // bankingFactor cut, demo banking lands at ~43% of its old intensity.
-        const demoBoost = (window.demoPilot && window.demoPilot.active) ? 1.8 : 1.0;
+        // Demo cinematic-roll boost trimmed again 1.8 -> 1.2: combat banking
+        // was the dominant angular-rate source (~75°/s swings) and read as
+        // jerky at 25-40fps; the cinematic chase camera now supplies the
+        // "flow", so the raw banking can be gentler.
+        const demoBoost = (window.demoPilot && window.demoPilot.active) ? 1.2 : 1.0;
         bankingFromYaw = -rotationalVelocity.yaw * rotationalInertia.bankingFactor * speedFactor * demoBoost;
     }
     
     const totalRoll = rotationalVelocity.roll + bankingFromYaw;
     
     if (Math.abs(totalRoll) > 0.00001) {
-        camera.rotateZ(totalRoll);
+        camera.rotateZ(totalRoll * _rdtF);
     }
     
     // Update tracking for auto-navigation compatibility
@@ -1214,10 +1245,11 @@ function transitionToRandomLocation(sourceBlackHole, transitType) {
             ) : [];
 
         // PROGRESSION GATE: until the Sol / Sagittarius A* system is
-        // liberated (Martian Pirate boss + Vulcan boss both defeated),
-        // black-hole warps only shuttle the player between the two LOCAL
-        // galactic cores — Sgr A* and the Companion Core. Liberation
-        // unlocks galaxy-wide warping (full black-hole list).
+        // liberated — the VULCAN boss defeated (isSolSystemLiberated();
+        // the Martian Pirate boss is NOT required) — black-hole warps only
+        // shuttle the player between the two LOCAL galactic cores: Sgr A*
+        // and the Companion Core. Liberation unlocks galaxy-wide warping
+        // (full black-hole list). Read live on every transit.
         const _liberated = (typeof isSolSystemLiberated === 'function')
             ? isSolSystemLiberated()
             : (typeof window !== 'undefined' && typeof window.isSolSystemLiberated === 'function'
@@ -1685,6 +1717,10 @@ if (typeof window !== 'undefined') {
 }
 
 function executeSlingshot() {
+    // Victory-replay highlight: gravity slingshots are signature flying
+    if (typeof window !== 'undefined' && window.replaySystem) {
+        window.replaySystem.record('Gravity slingshot', 1);
+    }
     if (typeof gameState === 'undefined') return;
     // 5-second cooldown after a slingshot fires (Quick-Charge tier
     // replaces the energy cost with this CD; arcade mode also honors it
@@ -1929,7 +1965,8 @@ function updateSlingshotWhip() {
             new THREE.Vector3(px + tangent.x * 200, py, pz + tangent.z * 200),
             camera.up);
         _whipTmpQ.setFromRotationMatrix(_whipTmpM);
-        camera.quaternion.slerp(_whipTmpQ, 0.16);
+        // 0.16/frame at 60fps, dt-corrected exponential approach
+        camera.quaternion.slerp(_whipTmpQ, 1 - Math.pow(0.84, gameState.dtFrames || 1));
     }
 
     // Arc trail
@@ -1982,6 +2019,14 @@ function updateEnhancedPhysics() {
         }
         return;
     }
+
+    // DELTA TIME (set by animate() in game-core.js): dtF is elapsed time in
+    // 60fps-frame units, dtMsP real clamped milliseconds. All per-frame
+    // constants below keep their hand-tuned 60fps meaning; they are applied
+    // × dtF (additive rates) or ^ dtF (exponential decays) so the sim runs
+    // at the same wall-clock speed on 120Hz displays and through stutter.
+    const dtF = (typeof gameState.dtFrames === 'number' && gameState.dtFrames > 0) ? gameState.dtFrames : 1;
+    const dtMsP = (typeof gameState.dtMs === 'number' && gameState.dtMs > 0) ? gameState.dtMs : 16.67;
     
     // One-time initialization of enhanced properties
     if (!gameState.enhancedPropertiesInitialized) {
@@ -2068,7 +2113,8 @@ if (!isAutoNavigating && !isDuringEmergencyOperation) {
     // FIXED: Auto-level ONLY roll (Z-axis) - this is the "banking" angle
     // This preserves the ship's trajectory direction while leveling the wings
     if ((now - lastRollInputTime) > autoLevelingDelay) {
-        const rollLerpFactor = autoLevelingSpeed;
+        // dt-corrected exponential approach (0.005/frame at 60fps)
+        const rollLerpFactor = 1 - Math.pow(1 - autoLevelingSpeed, dtF);
         let currentRoll = camera.rotation.z;
         
         // CRITICAL FIX: Normalize angle to [-PI, PI] range
@@ -2167,10 +2213,10 @@ if (frameDistance > 0.01) { // Only track significant movement
             // imperceptible against the warp drift).
             const warpMul = _warpAccel ? 12 : 1;
             const wThrustPower = gameState.thrustPower * gameState.wThrustMultiplier * warpMul;
-            gameState.velocityVector.addScaledVector(forwardDirection, wThrustPower);
+            gameState.velocityVector.addScaledVector(forwardDirection, wThrustPower * dtF);
             // Energy cost halved during warp — the warp already burns
             // capacitor charge implicitly, no need to double-tax.
-            _consumeEnergy(_warpAccel ? 0.06 : 0.12);
+            _consumeEnergy((_warpAccel ? 0.06 : 0.12) * dtF);
         }
         // Visual feedback — rate-limited to at most one effect every
         // 500 ms so holding W doesn't spawn 30 DOM star-trails multiple
@@ -2184,27 +2230,27 @@ if (frameDistance > 0.01) { // Only track significant movement
     }
     if (keys.s && gameState.energy > 0) {
         // S Key: Reverse thrust (50% power) - consumes 0.04 energy per frame
-        gameState.velocityVector.addScaledVector(forwardDirection, -gameState.thrustPower * 0.5);
-        _consumeEnergy(0.04);
+        gameState.velocityVector.addScaledVector(forwardDirection, -gameState.thrustPower * 0.5 * dtF);
+        _consumeEnergy(0.04 * dtF);
     }
     if (keys.a && gameState.energy > 0) {
         // A Key: Strafe left (70% power) - consumes 0.06 energy per frame
-        gameState.velocityVector.addScaledVector(rightDirection, -gameState.thrustPower * 0.7);
-        _consumeEnergy(0.06);
+        gameState.velocityVector.addScaledVector(rightDirection, -gameState.thrustPower * 0.7 * dtF);
+        _consumeEnergy(0.06 * dtF);
     }
     if (keys.d && gameState.energy > 0) {
         // D Key: Strafe right (70% power) - consumes 0.06 energy per frame
-        gameState.velocityVector.addScaledVector(rightDirection, gameState.thrustPower * 0.7);
-        _consumeEnergy(0.06);
+        gameState.velocityVector.addScaledVector(rightDirection, gameState.thrustPower * 0.7 * dtF);
+        _consumeEnergy(0.06 * dtF);
     }
 
     // SPECIFICATION: Boost System
     if (keys.b && gameState.energy > 0) {
         // B Key: Space boost (1.8x thrust power, or 2.5x with Shift modifier)
         const boostPower = keys.shift ? gameState.thrustPower * 2.5 : gameState.thrustPower * 1.8;
-        gameState.velocityVector.addScaledVector(forwardDirection, boostPower);
+        gameState.velocityVector.addScaledVector(forwardDirection, boostPower * dtF);
         // B + Shift: Enhanced boost with higher energy consumption (0.15 vs 0.12)
-        _consumeEnergy(keys.shift ? 0.15 : 0.12);
+        _consumeEnergy((keys.shift ? 0.15 : 0.12) * dtF);
 
         if (Math.random() > 0.97) {
             if (!gameState._lastBoostFx || (Date.now() - gameState._lastBoostFx) > 500) {
@@ -2350,7 +2396,7 @@ else if (keys.o && gameState.emergencyWarp.available > 0 && !gameState.emergency
 
         // Enhanced Emergency warp timer with momentum coasting
 if (gameState.emergencyWarp.active) {
-    gameState.emergencyWarp.timeRemaining -= 16.67;
+    gameState.emergencyWarp.timeRemaining -= dtMsP;
     if (gameState.emergencyWarp.timeRemaining <= 0) {
         gameState.emergencyWarp.active = false;
         
@@ -2414,11 +2460,11 @@ if (gameState.emergencyWarp.autoBraking) {
     // the target instead of slamming to a stop the instant the boost
     // ends. Overshoots are corrected by braking (X) — which is now
     // permitted during auto-braking (see the manual-brake block below).
-    const brakingForce = 0.985; // 1.5% reduction per frame
+    const brakingForce = Math.pow(0.985, dtF); // 1.5% reduction per 60fps frame
     gameState.velocityVector.multiplyScalar(brakingForce);
-    
+
     // Also apply rotational braking for smooth camera transitions
-    const rotationalBrakingForce = 0.95;
+    const rotationalBrakingForce = Math.pow(0.95, dtF);
     rotationalVelocity.pitch *= rotationalBrakingForce;
     rotationalVelocity.yaw *= rotationalBrakingForce;
     rotationalVelocity.roll *= rotationalBrakingForce;
@@ -2462,13 +2508,13 @@ if (typeof updateShieldSystem === 'function') {
     // Combined with the 0.985 auto-brake this is ~0.975/frame when both
     // are active, vs the gentle 0.985 coast when X is released.
 if (keys.x) {
-    // Gradual braking: reduce velocity by 1% per frame (smoother deceleration)
+    // Gradual braking: reduce velocity by 1% per 60fps frame (smoother deceleration)
     const _preBrakeSpeed = gameState.velocityVector.length();
-    const brakingForce = 0.99; // 1% reduction per frame (was 0.98 = 2%)
+    const brakingForce = Math.pow(0.99, dtF); // 1% reduction per frame (was 0.98 = 2%)
     gameState.velocityVector.multiplyScalar(brakingForce);
 
     // NEW: Also apply braking to rotational velocity (dampen turning and rolling)
-    const rotationalBrakingForce = 0.95; // 5% reduction per frame for rotation
+    const rotationalBrakingForce = Math.pow(0.95, dtF); // 5% reduction per frame for rotation
     rotationalVelocity.pitch *= rotationalBrakingForce;
     rotationalVelocity.yaw *= rotationalBrakingForce;
     rotationalVelocity.roll *= rotationalBrakingForce;
@@ -2480,7 +2526,7 @@ if (keys.x) {
     // wrong incentive (don't slow down even when you should).
     if (_preBrakeSpeed > 5.0) {
         gameState.energy = Math.min(gameState.maxEnergy || 100,
-            (gameState.energy || 0) + 0.15);
+            (gameState.energy || 0) + 0.15 * dtF);
     }
     
     // Get current speed in km/s
@@ -2666,10 +2712,10 @@ if (surfaceCollision) {
                             Math.cos(now * spiralStrength * 3)
                         ).multiplyScalar(spiralStrength * 0.2);
 
-                        gameState.velocityVector.add(_gravSpiralForce);
-                        
+                        gameState.velocityVector.addScaledVector(_gravSpiralForce, dtF);
+
                         if (distance < 160) {
-                            camera.rotation.z += spiralStrength * 0.02 * Math.sin(now * 5);
+                            camera.rotation.z += spiralStrength * 0.02 * Math.sin(now * 5) * dtF;
 
                             if (!window._cachedDangerOverlay) {
                                 window._cachedDangerOverlay = document.getElementById('dangerOverlay');
@@ -2773,8 +2819,8 @@ if (surfaceCollision) {
         });
     }
 
-    // Apply gravitational force
-    gameState.velocityVector.add(totalGravitationalForce);
+    // Apply gravitational force (a per-frame acceleration — dt-scaled)
+    gameState.velocityVector.addScaledVector(totalGravitationalForce, dtF);
     
     // Enhanced title flashing for gravity well alert
     // TRAJECTORY SOLVER (rep tier 4): auto-fires the slingshot ~1s after
@@ -2873,7 +2919,7 @@ if (surfaceCollision) {
     
     // Slingshot timer management (matching emergency warp behavior)
     if (gameState.slingshot.active) {
-        gameState.slingshot.timeRemaining -= 16.67;
+        gameState.slingshot.timeRemaining -= dtMsP;
 
         if (gameState.slingshot.timeRemaining <= 0) {
             gameState.slingshot.active = false;
@@ -2901,7 +2947,7 @@ if (surfaceCollision) {
         }
 
         if (currentSpeed > gameState.maxVelocity) {
-            gameState.velocityVector.multiplyScalar(gameState.slingshot.inertiaDecay);
+            gameState.velocityVector.multiplyScalar(Math.pow(gameState.slingshot.inertiaDecay, dtF));
 
             if (gameState.velocityVector.length() <= gameState.maxVelocity) {
                 gameState.slingshot.postSlingshot = false;
@@ -3104,11 +3150,12 @@ gameState.emergencyBraking = false;  // <-- ADD THIS LINE AT THE VERY END OF THE
     // slingshot.active now also gets near-zero damping: the old 0.998
     // bled a 24s slingshot ride down to ~6% of its launch speed, which
     // (with the maxSpeed=20 clamp) is why slingshots always fizzled.
-const dampingFactor = gameState.slingshot.postSlingshot ? 0.9999 :
+const dampingFactor = Math.pow(
+                     gameState.slingshot.postSlingshot ? 0.9999 :
                      gameState.slingshot.active ? 0.9999 :
                      gameState.emergencyWarp.active ? 0.9998 :
                      gameState.emergencyWarp.postWarp ? 0.9999 :  // NEW LINE
-                     0.998;
+                     0.998, dtF);
 
 const dampedVelocity = gameState.velocityVector.clone().multiplyScalar(dampingFactor);
 if (dampedVelocity.length() >= gameState.minVelocity || 
@@ -3120,8 +3167,10 @@ if (dampedVelocity.length() >= gameState.minVelocity ||
     gameState.velocityVector.copy(dampedVelocity);
 }
     
-    // Apply velocity to position
-    camera.position.add(gameState.velocityVector);
+    // Apply velocity to position. velocityVector's unit stays "distance per
+    // 60fps frame" (every speed readout/clamp above assumes it) — scaling
+    // the integration by dtF is what makes travel speed wall-clock true.
+    camera.position.addScaledVector(gameState.velocityVector, dtF);
     
     // SPECIFICATION: Auto-Navigation - Automatically disengages when energy drops below 5
     if (gameState.autoNavigating && gameState.currentTarget && gameState.energy > 5) {
@@ -3181,11 +3230,11 @@ if (dampedVelocity.length() >= gameState.minVelocity ||
                 const tangentialDirection = new THREE.Vector3().crossVectors(radialDirection, new THREE.Vector3(0, 1, 0)).normalize();
                 
                 // Blend between current velocity and tangential (smooth transition into orbit)
-                targetDirection = currentVelocity.lerp(tangentialDirection, 0.3);
+                targetDirection = currentVelocity.lerp(tangentialDirection, 1 - Math.pow(0.7, dtF));
             }
-            
-            gameState.velocityVector.addScaledVector(targetDirection, gameState.thrustPower * 0.4);
-            _consumeEnergy(0.03);
+
+            gameState.velocityVector.addScaledVector(targetDirection, gameState.thrustPower * 0.4 * dtF);
+            _consumeEnergy(0.03 * dtF);
             
             // Re-orient ONLY during distant approach (not during orbital insertion)
             // This prevents camera shake when trying to orbit close to target
@@ -3220,7 +3269,7 @@ const _maxE = gameState.maxEnergy || 100;
 if (gameState.energy < _maxE) {
     const _capBoost = (gameState.repTierUnlocks && gameState.repTierUnlocks.capacitor) ? 1.66 : 1.0;
     const _rate = (isThrusting ? 0.025 : 0.10) * _capBoost;
-    gameState.energy = Math.min(_maxE, gameState.energy + _rate);
+    gameState.energy = Math.min(_maxE, gameState.energy + _rate * dtF);
 }
     
     // Update HUD
@@ -4245,7 +4294,29 @@ function findPatrolEnemiesNearCosmicFeatures(galaxyId) {
             cosmicFeatureType: null
         };
     }
-    
+
+    // LAST-RESORT FALLBACK — the dotted line must NEVER silently fail to
+    // appear after the lore has played (play-reported: 'the story played
+    // but no path opened'). In an untouched galaxy every enemy can sit
+    // inside the black hole's 2,000u exclusion, leaving zero candidates
+    // above. Stage the mission at a cosmic feature away from the core —
+    // createDiscoveryPathToPosition guarantees 7+ hostiles are relocated
+    // or spawned at the endpoint — or, with no features either, at a
+    // fixed standoff site in the galaxy.
+    if (cosmicFeats.length > 0) {
+        const f = cosmicFeats[Math.floor(Math.random() * cosmicFeats.length)];
+        console.log(`Fallback: staging mission at ${f.name} (endpoint guarantee will populate it)`);
+        return { position: f.position.clone(), count: 7, cosmicFeature: f.name, cosmicFeatureType: f.type };
+    }
+    if (galaxyCore) {
+        const ang = Math.random() * Math.PI * 2;
+        console.log('Fallback: staging mission at a standoff site in the galaxy');
+        return {
+            position: galaxyCore.position.clone().add(new THREE.Vector3(
+                Math.cos(ang) * 5000, (Math.random() - 0.5) * 1200, Math.sin(ang) * 5000)),
+            count: 7, cosmicFeature: null, cosmicFeatureType: null
+        };
+    }
     return null;
 }
 
@@ -4521,7 +4592,15 @@ function classifyNebula(nebula) {
     const ud = nebula.userData;
     if (ud.isDistant) return 'distant';
     if (ud.isExoticCore) return 'exotic';
-    if (ud.shape) return 'galaxy_formation';
+    // NOTE: `shape` is NOT a discriminator — EVERY nebula carries one (the
+    // twin clusters are shaped like their paired galaxy: spiral, ring, …).
+    // The old `if (ud.shape) return 'galaxy_formation'` therefore swallowed
+    // the twins too, making 'clustered' unreachable: the twins ran with the
+    // whole-nebula trigger radius and the galaxy_formation path branch
+    // instead of their tuned 500u trigger and paired core/patrol paths —
+    // and it silently broke the first-journey gates, which wait for a
+    // CLUSTERED discovery that could then never happen. The twins are
+    // exactly the non-distant, non-exotic nebulas.
     return 'clustered';
 }
 
@@ -4560,6 +4639,25 @@ function checkForNebulaDeepDiscovery() {
     nebulaClouds.forEach((nebula, index) => {
         if (!nebula || !nebula.userData) return;
 
+        // NEBULA CORE RESUPPLY: within 500u of any nebula core the ship
+        // re-arms — hull and missiles refill. Runs BEFORE the discovery
+        // skip so it works on every visit, not just the first; the toast
+        // is cooldown-limited per nebula.
+        const _resupplyDist = camera.position.distanceTo(nebula.position);
+        if (_resupplyDist < 500 && typeof gameState.hull === 'number') {
+            const _needed = gameState.hull < (gameState.maxHull || 100) ||
+                (gameState.missiles && gameState.missiles.current < gameState.missiles.capacity);
+            gameState.hull = gameState.maxHull || 100;
+            if (gameState.missiles) gameState.missiles.current = gameState.missiles.capacity;
+            const _nowMs = Date.now();
+            if (_needed && (!nebula.userData._resupplyToastAt || _nowMs - nebula.userData._resupplyToastAt > 30000)) {
+                nebula.userData._resupplyToastAt = _nowMs;
+                if (typeof showAchievement === 'function') {
+                    showAchievement('Resupplied', 'Hull repaired and missiles restocked at the nebula core.', false);
+                }
+            }
+        }
+
         // Skip if already deep-discovered
         if (nebula.userData.deepDiscovered) return;
 
@@ -4567,13 +4665,34 @@ function checkForNebulaDeepDiscovery() {
         const nebulaType = classifyNebula(nebula);
         const nebulaSize = nebula.userData.size || 2000;
 
+        // FIRST-JOURNEY GATE: galaxy-formation nebulas wrap the galactic
+        // cores, and their trigger radius is the whole nebula — the player
+        // fights the Sgr A* liberation set-piece INSIDE the local one, so
+        // it was opening a SECOND discovery path at the core before the
+        // player ever left for the twin nebulas (and the demo would chase
+        // that path instead of the white liberation route). Core nebulas
+        // stay quiet until the first twin (clustered) nebula has been
+        // charted — the intended first journey. Later galaxies are
+        // unaffected: by the time a player black-hole-transits into another
+        // core, a twin has long been discovered.
+        if (nebulaType === 'galaxy_formation') {
+            let anyClusteredCharted = false;
+            for (let ci = 0; ci < nebulaClouds.length; ci++) {
+                const cn = nebulaClouds[ci];
+                if (cn && cn.userData && cn.userData.deepDiscovered &&
+                    classifyNebula(cn) === 'clustered') { anyClusteredCharted = true; break; }
+            }
+            if (!anyClusteredCharted) return;
+        }
+
         // Discovery range depends on nebula category
         let deepDiscoveryRange;
         if (nebulaType === 'clustered') {
-            // 500 matches the demo autopilot's 500u orbit radius around the
-            // twin-pair CENTER — at 100u the demo could lap forever without
-            // ever triggering discovery, then warp away on its 25s timeout.
-            deepDiscoveryRange = 500;
+            // 1,000u (was 500): playtest showed a human pilot brushing past
+            // a nebula core without crossing the tight radius. Still well
+            // inside the cloud, and comfortably covers the demo's 500u
+            // orbit around the twin-pair center.
+            deepDiscoveryRange = 1000;
         } else {
             // Galaxy-formation, distant, and exotic all use nebula size as range.
             // Galaxy-formation triggers while the player is fighting near the black hole
@@ -4956,6 +5075,9 @@ function animateDiscoveryPaths() {
         // endpoint).  30-second grace period so new paths don't flip
         // white before the player has a chance to follow them.
         if (doMissionCheck) {
+            // Deep-space expedition lines are invitations, not tracked
+            // missions — no boss phase, no completion recolor.
+            if (path.line.userData.pathType === 'deepspace') continue;
             const createdAt = path.line.userData.createdAt || 0;
             if (Date.now() - createdAt < 30000) continue;   // grace period
 
@@ -5070,6 +5192,72 @@ function animateDiscoveryPaths() {
             }
         }
     }
+
+    // ── FACTION CAMPAIGN ARC ─────────────────────────────────────────────
+    // The two paths of a twin pair both lead to the SAME faction. When BOTH
+    // missions are complete, a THIRD path opens from the pair to that
+    // faction's BLACK-HOLE GALAXY — and 3 black-hole guardians of that
+    // faction deploy at its core. Clearing the remaining faction forces AND
+    // all 3 guardians is what clears the galaxy.
+    checkTwinPairCampaign();
+}
+
+function checkTwinPairCampaign() {
+    if (typeof gameState === 'undefined') return;
+    if (!gameState._bhPathSpawned) gameState._bhPathSpawned = {};
+    const doneByGalaxy = {};
+    for (let i = 0; i < discoveryPaths.length; i++) {
+        const p = discoveryPaths[i];
+        const ud = p && p.line && p.line.userData;
+        if (!ud || !ud.missionComplete) continue;
+        if (ud.pathType === 'blackhole') continue;   // the arc path itself
+        const g = (p.galaxyId !== undefined) ? p.galaxyId
+            : (ud.galaxyId !== undefined ? ud.galaxyId : -1);
+        if (g < 0) continue;
+        if (!doneByGalaxy[g]) doneByGalaxy[g] = { count: 0, start: null };
+        doneByGalaxy[g].count++;
+        if (!doneByGalaxy[g].start && ud.startPosition) doneByGalaxy[g].start = ud.startPosition;
+    }
+    Object.keys(doneByGalaxy).forEach(gs => {
+        const g = +gs;
+        if (gameState._bhPathSpawned[g]) return;
+        const d = doneByGalaxy[g];
+        if (d.count < 2 || !d.start) return;   // both twin missions required
+        const core = (typeof findGalaxyCoreById === 'function') ? findGalaxyCoreById(g) : null;
+        if (!core) return;
+        gameState._bhPathSpawned[g] = true;
+
+        const galaxyType = (typeof galaxyTypes !== 'undefined') ? galaxyTypes[g] : null;
+        const factionName = galaxyType ? galaxyType.faction : 'Enemy';
+        const loreData = FACTION_LORE[factionName] || { color: 0xffffff };
+
+        // Third path: twin pair → the faction's black-hole galaxy core
+        createDiscoveryPathToPosition(
+            d.start.clone(), core.position.clone(),
+            loreData.color, factionName, 'blackhole', g);
+
+        // The stronghold garrison: exactly 3 black-hole guardians of this
+        // faction deploy at the core the moment the path appears.
+        if (typeof loadGuardiansForGalaxy === 'function') {
+            loadGuardiansForGalaxy(g, { count: 3, ignoreBossGate: true });
+        }
+
+        playDeepDiscoverySound();
+        const gName = galaxyType ? galaxyType.name : ('Galaxy ' + g);
+        if (typeof showIncomingTransmission === 'function') {
+            showIncomingTransmission('Mission Control - Stronghold Located',
+                `Outstanding work, Captain — both ${factionName} staging areas are destroyed.\n\n` +
+                `Long-range scans show their remaining forces retreating to the ${gName} Galaxy's black hole, ` +
+                `where three guardians now shield the core.\n\n` +
+                `Follow the new line. Break the guardians, clear the stragglers, and the ${gName} Galaxy is free.`,
+                loreData.color);
+        }
+        if (typeof showAchievement === 'function') {
+            showAchievement('Black-Hole Stronghold Located!',
+                `${factionName} remnants are dug in at the ${gName} core — 3 guardians deployed. Path marked.`, true);
+        }
+        console.log(`🕳️ Campaign arc: both twin missions for galaxy ${g} complete → black-hole path + 3 guardians`);
+    });
 }
 
 // Export deep discovery functions

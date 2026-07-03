@@ -76,9 +76,16 @@
         } catch (e) {}
 
         // 2. FINITE POSITIONS (class: NaN position — crystals, mining ships)
+        // Also guards ORIENTATIONS: a NaN quaternion (e.g. a degenerate
+        // swing-twist in the cinematic camera) renders whole frames
+        // stretched/distorted without throwing any error.
         try {
             let bad = 0, badName = '';
             if (!posOK(camera)) { bad++; badName = 'camera'; }
+            const quatOK = (q) => q && isFinite(q.x + q.y + q.z + q.w);
+            if (!quatOK(camera.quaternion)) { bad++; if (!badName) badName = 'cameraQuat'; }
+            if (window.__cinQuat && !quatOK(window.__cinQuat)) { bad++; if (!badName) badName = 'cinCamQuat'; }
+            if (window.__cinShipQuat && !quatOK(window.__cinShipQuat)) { bad++; if (!badName) badName = 'cinShipQuat'; }
             const pools = [
                 ['enemies', typeof enemies !== 'undefined' ? enemies : null],
                 ['allyShips', typeof allyShips !== 'undefined' ? allyShips : null],
@@ -167,7 +174,14 @@
                 (tgt.userData.type === 'enemy' || tgt.userData.isBoss || tgt.userData.isEliteGuardian);
             const warping = (gameState.emergencyWarp && (gameState.emergencyWarp.active || gameState.emergencyWarp.postWarp)) ||
                 (gameState.slingshot && gameState.slingshot.active);
-            if (isEnemyTgt && !warping) {
+            // Below ~10 fps the dt clamp runs the sim in deliberate slow
+            // motion — our 14s wall-clock window is then only ~2s of game
+            // time, and evasive enemies can legitimately out-drift the
+            // pursuit. The check is only meaningful at playable frame rates.
+            if (PROBE.fps > 0 && PROBE.fps < 10) {
+                PROBE._hist.recede = { tgt: null, samples: [] };
+                set('notRecedingFromTarget', true, 'n/a below 10fps (slow-mo)');
+            } else if (isEnemyTgt && !warping) {
                 const d = camera.position.distanceTo(tgt.position);
                 const h = PROBE._hist.recede || (PROBE._hist.recede = { tgt: null, samples: [] });
                 if (h.tgt !== tgt) { h.tgt = tgt; h.samples = []; }
@@ -214,6 +228,76 @@
             const total = pts + sprites;
             set('effectBudget', total <= 220, 'points+sprites=' + total, total > 220 ? 'warn' : 'pass');
         } catch (e) {}
+
+        // 9b. DISCOVERY-PATH APPROACH GOVERNOR (class: demo overshoots the
+        // stronghold at warp speed). The endpoint has 7+ anchored hostiles;
+        // navigateTo's approach governor must bring speed under ~10,000 km/s
+        // (10 u/frame) inside the engagement zone. Checked at < 2500u so the
+        // 3500u governor has had braking room; warp-locked frames exempt.
+        try {
+            const dp = window.demoPilot;
+            const tgt = gameState.currentTarget;
+            if (dp && dp.driving && dp.phase === 'followDiscoveryPath' &&
+                tgt && tgt.userData && tgt.userData.name === 'Discovery endpoint') {
+                const d = camera.position.distanceTo(tgt.position);
+                const sp = gameState.velocityVector ? gameState.velocityVector.length() : 0;
+                const warpBusy = gameState.emergencyWarp &&
+                    (gameState.emergencyWarp.active || gameState.emergencyWarp.transitioning);
+                if (d < 2500 && !warpBusy) {
+                    set('pathApproachSpeed', sp <= 11,
+                        ((sp * 1000) | 0) + ' km/s @ ' + (d | 0) + 'u from endpoint');
+                } else {
+                    set('pathApproachSpeed', true, 'outside governed band (' + (d | 0) + 'u)');
+                }
+            } else {
+                set('pathApproachSpeed', true, 'not on discovery approach');
+            }
+        } catch (e) {}
+
+        // 9c. ENEMY MOTION GLIDE (class: render-interpolation disabled →
+        // jerky enemies; regressed when the AI interval hit 1). Each run
+        // kicks off a ~20-frame rAF sampler on the nearest live interpolated
+        // enemy: if it moved overall but >40% of frames showed zero movement
+        // (the move-freeze-jump signature), the glide is broken.
+        try {
+            if (!PROBE._glideSampling && typeof enemies !== 'undefined') {
+                let tgt = null, best = Infinity;
+                for (let i = 0; i < enemies.length; i++) {
+                    const e = enemies[i];
+                    if (!e || !e.userData || e.userData.health <= 0 || !e.userData._interp) continue;
+                    const d = camera.position.distanceTo(e.position);
+                    if (d < best) { best = d; tgt = e; }
+                }
+                if (tgt && best < 5000) {
+                    PROBE._glideSampling = true;
+                    const prev = tgt.position.clone();
+                    let frames = 0, zero = 0, total = 0;
+                    const step = () => {
+                        try {
+                            const d = tgt.position.distanceTo(prev);
+                            prev.copy(tgt.position);
+                            if (frames > 0) { total += d; if (d < 0.001) zero++; }
+                            if (++frames < 21 && tgt.userData && tgt.userData.health > 0) {
+                                requestAnimationFrame(step);
+                            } else {
+                                PROBE._glideSampling = false;
+                                if (total > 1) { // enemy actually moved
+                                    const ratio = zero / (frames - 1);
+                                    set('enemyMotionGlide', ratio <= 0.4,
+                                        (ratio * 100 | 0) + '% stalled frames (' +
+                                        (tgt.userData.name || '?') + ')');
+                                } else {
+                                    set('enemyMotionGlide', true, 'enemy stationary — n/a');
+                                }
+                            }
+                        } catch (e) { PROBE._glideSampling = false; }
+                    };
+                    requestAnimationFrame(step);
+                } else {
+                    set('enemyMotionGlide', true, 'no interpolated enemy in range');
+                }
+            }
+        } catch (e) { PROBE._glideSampling = false; }
 
         // 9. WINGMEN FACE FORWARD (class: backwards ships) — warn
         try {

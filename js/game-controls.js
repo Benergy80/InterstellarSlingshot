@@ -1823,17 +1823,127 @@ function _updateBossSpecials(boss, playerPos, distance) {
 }
 
 // Support ship behavior
+// BOSS-SUPPORT SWARM: each escort is assigned one of four attack patterns on
+// first update (round-robin, so a wing always mixes roles), giving the boss
+// fight diverse, coordinated-looking pressure instead of a static ring:
+//   orbiter — circles the player on its own radius/direction/phase
+//   flanker — holds a pulsing position off the player's flank
+//   diver   — repeated attack runs: dive to point-blank, break away, re-run
+//   screen  — bodyguard: keeps itself between the boss and the player, weaving
+// A light separation impulse keeps the swarm from stacking into one blob.
+let _supportRoleCounter = 0;
+const _supTmpA = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+const _supTmpB = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+const _supUp = (typeof THREE !== 'undefined') ? new THREE.Vector3(0, 1, 0) : null;
+
 function updateSupportBehavior(enemy, playerPos, speed) {
-    // Support ships try to stay at medium range
+    const ud = enemy.userData;
+    if (!ud._supportRole) {
+        const roles = ['orbiter', 'diver', 'flanker', 'screen'];
+        ud._supportRole = roles[_supportRoleCounter++ % roles.length];
+        ud._orbitDir = Math.random() < 0.5 ? 1 : -1;
+        ud._orbitRadius = 150 + Math.random() * 130;
+        ud._phase = Math.random() * Math.PI * 2;
+        ud._diveState = 'approach';
+    }
+    const now = performance.now() * 0.001;
     const distance = enemy.position.distanceTo(playerPos);
-    const optimalDistance = 180;
-    
-    if (distance > optimalDistance + 30) {
-        const direction = new THREE.Vector3().subVectors(playerPos, enemy.position).normalize();
-        enemy.position.add(direction.multiplyScalar(speed * 0.8));
-    } else if (distance < optimalDistance - 30) {
-        const direction = new THREE.Vector3().subVectors(enemy.position, playerPos).normalize();
-        enemy.position.add(direction.multiplyScalar(speed * 0.6));
+
+    switch (ud._supportRole) {
+        case 'orbiter': {
+            // Tangential strafe around the player + radial correction onto
+            // this ship's own ring, with a gentle vertical bob.
+            _supTmpA.subVectors(enemy.position, playerPos);
+            const d = _supTmpA.length() || 1;
+            _supTmpA.divideScalar(d);
+            _supTmpB.crossVectors(_supTmpA, _supUp).normalize().multiplyScalar(ud._orbitDir);
+            enemy.position.addScaledVector(_supTmpB, speed);
+            const radialErr = d - ud._orbitRadius;
+            if (Math.abs(radialErr) > 20) {
+                enemy.position.addScaledVector(_supTmpA, (radialErr > 0 ? -1 : 1) * speed * 0.5);
+            }
+            enemy.position.y += Math.sin(now * 1.7 + ud._phase) * speed * 0.25;
+            break;
+        }
+        case 'flanker': {
+            // Hold a pulsing standoff point off the player's flank (side
+            // chosen by orbit direction), sliding in and out for pressure.
+            const flankDist = 200 + Math.sin(now * 0.9 + ud._phase) * 90;
+            _supTmpA.set(0, 0, -1);
+            if (typeof camera !== 'undefined') _supTmpA.applyQuaternion(camera.quaternion);
+            _supTmpB.crossVectors(_supTmpA, _supUp).normalize()
+                .multiplyScalar(ud._orbitDir * flankDist);
+            _supTmpB.add(playerPos).sub(enemy.position);
+            const gap = _supTmpB.length();
+            if (gap > 15) enemy.position.addScaledVector(_supTmpB.divideScalar(gap), Math.min(speed, gap));
+            break;
+        }
+        case 'diver': {
+            // Attack runs: dive straight at the player, break off at close
+            // range along a lateral escape vector, re-engage from distance.
+            if (ud._diveState === 'approach') {
+                _supTmpA.subVectors(playerPos, enemy.position).normalize();
+                enemy.position.addScaledVector(_supTmpA, speed * 1.35);
+                if (distance < 110) {
+                    ud._diveState = 'break';
+                    _supTmpB.crossVectors(_supTmpA, _supUp).normalize()
+                        .multiplyScalar(ud._orbitDir)
+                        .addScaledVector(_supUp, (Math.random() - 0.5) * 0.8)
+                        .normalize();
+                    ud._breakDir = { x: _supTmpB.x, y: _supTmpB.y, z: _supTmpB.z };
+                }
+            } else {
+                _supTmpA.set(ud._breakDir.x, ud._breakDir.y, ud._breakDir.z);
+                enemy.position.addScaledVector(_supTmpA, speed * 1.1);
+                if (distance > 420) ud._diveState = 'approach';
+            }
+            break;
+        }
+        case 'screen':
+        default: {
+            // Bodyguard: park on the boss→player line (closer to the boss)
+            // and weave laterally so it isn't a stationary target.
+            let boss = null, bossDist = Infinity;
+            if (typeof enemies !== 'undefined') {
+                for (let i = 0; i < enemies.length; i++) {
+                    const e = enemies[i];
+                    if (!e || !e.userData || !e.userData.isBoss || e.userData.health <= 0) continue;
+                    const bd = e.position.distanceTo(enemy.position);
+                    if (bd < bossDist && bd < 3000) { bossDist = bd; boss = e; }
+                }
+            }
+            if (boss) {
+                _supTmpA.subVectors(playerPos, boss.position);
+                const toPlayer = _supTmpA.length() || 1;
+                _supTmpA.divideScalar(toPlayer);
+                _supTmpB.crossVectors(_supTmpA, _supUp).normalize()
+                    .multiplyScalar(Math.sin(now * 1.3 + ud._phase) * 90);
+                _supTmpB.add(boss.position)
+                    .addScaledVector(_supTmpA, Math.min(toPlayer * 0.35, 350))
+                    .sub(enemy.position);
+                const gap2 = _supTmpB.length();
+                if (gap2 > 10) enemy.position.addScaledVector(_supTmpB.divideScalar(gap2), Math.min(speed, gap2));
+            } else {
+                // Boss down — fall back to orbiting pressure
+                ud._supportRole = 'orbiter';
+            }
+            break;
+        }
+    }
+
+    // SWARM SEPARATION: gently repel from other nearby supports so patterns
+    // interleave instead of collapsing into a single blob.
+    if (typeof enemies !== 'undefined') {
+        for (let i = 0; i < enemies.length; i++) {
+            const other = enemies[i];
+            if (!other || other === enemy || !other.userData ||
+                !other.userData.isBossSupport || other.userData.health <= 0) continue;
+            _supTmpA.subVectors(enemy.position, other.position);
+            const sd = _supTmpA.length();
+            if (sd > 0.01 && sd < 45) {
+                enemy.position.addScaledVector(_supTmpA.divideScalar(sd), speed * 0.5);
+            }
+        }
     }
 }
 
@@ -2054,7 +2164,10 @@ function fireEnemyWeapon(enemy, difficultySettings) {
             }
 
             if (shieldsActive && typeof createShieldHitEffect === 'function') {
-                createShieldHitEffect(enemy.position);
+                // Pass the beam's actual line (origin → aim point) and color
+                // so the deflection sparks land where the laser visually
+                // strikes the bubble, tinted like the laser that caused them.
+                createShieldHitEffect(enemyPos || enemy.position, laserColor, targetPos);
             }
 
             if (!isInvulnerable) {
@@ -2090,7 +2203,7 @@ function isEnemyInLocalGalaxy(enemy) {
     }
     
     // Fallback: check position relative to origin (local galaxy center)
-    const distanceFromOrigin = enemy.position.length();
+    const distanceFromOrigin = (window.trueDistanceFromOrigin) ? window.trueDistanceFromOrigin(enemy.position) : enemy.position.length();
     return distanceFromOrigin < 5000; // Local galaxy radius
 }
 
@@ -2547,6 +2660,10 @@ function initAudio() {
 }
 
 function resumeAudioContext() {
+    // While the GAME is paused, the context is suspended on purpose — a
+    // stray keypress must not bring the audio back mid-pause. togglePause
+    // resumes it explicitly.
+    if (typeof gameState !== 'undefined' && gameState.paused) return;
     if (audioContext && audioContext.state === 'suspended') {
         audioContext.resume().then(() => {
             console.log('AudioContext resumed after user interaction');
@@ -2870,6 +2987,34 @@ function switchToAmbientMusic() {
     }
 }
 
+// SFX MUTE: silences every synthesized effect (weapons, hits, explosions,
+// enemy lasers — everything routed through effectsGain) without touching
+// the music. Wired to the SFX button next to Music.
+function toggleSfx() {
+    window._sfxMuted = !window._sfxMuted;
+    if (typeof effectsGain !== 'undefined' && effectsGain && audioContext) {
+        const v = window._sfxMuted ? 0 : 1;
+        effectsGain.gain.value = v;   // immediate
+        effectsGain.gain.setValueAtTime(v, audioContext.currentTime);  // cancel-proof
+    }
+    const icon = document.getElementById('sfxIcon');
+    const btn = document.getElementById('sfxBtn');
+    if (icon) icon.className = window._sfxMuted
+        ? 'fas fa-volume-mute text-red-400 mr-1'
+        : 'fas fa-bullhorn text-cyan-400 mr-1';
+    if (btn) btn.classList.toggle('muted', !!window._sfxMuted);
+    console.log('🔊 SFX ' + (window._sfxMuted ? 'muted' : 'unmuted'));
+}
+if (typeof window !== 'undefined') {
+    window.toggleSfx = toggleSfx;
+    const _wireSfxBtn = () => {
+        const btn = document.getElementById('sfxBtn');
+        if (btn && !btn._wired) { btn._wired = true; btn.addEventListener('click', toggleSfx); }
+    };
+    if (window.Boot) window.Boot.whenReady('dom', _wireSfxBtn);
+    else setTimeout(_wireSfxBtn, 1000);
+}
+
 function toggleMusic() {
     musicSystem.enabled = !musicSystem.enabled;
     const muteIcon = document.getElementById('muteIcon');
@@ -2936,8 +3081,24 @@ function playSound(type, frequency = 440, duration = 0.2) {
     const gain = audioContext.createGain();
 
     oscillator.connect(gain);
-    gain.connect(effectsGain);
-    
+    // Battle SFX trim (player feedback): weapons, hits, damage and
+    // explosions ride 20% quieter; ambient/UI sounds are unchanged. The
+    // trim is a separate node so each case's scheduled gain ramps stay
+    // exactly as tuned.
+    const _COMBAT_SFX = {
+        weapon: 1, shield_hit: 1, damage: 1, explosion: 1, enemy_fire: 1,
+        missile_explosion: 1, missile_launch: 1, death_boom: 1,
+        death_rumble: 1, ship_vaporize: 1
+    };
+    if (_COMBAT_SFX[type]) {
+        const _trim = audioContext.createGain();
+        _trim.gain.value = 0.8;
+        gain.connect(_trim);
+        _trim.connect(effectsGain);
+    } else {
+        gain.connect(effectsGain);
+    }
+
     switch (type) {
         case 'weapon':
             // Per-shot pitch jitter so rapid fire doesn't feel
@@ -3171,7 +3332,8 @@ function _fireLaserOsc(p, jitter) {
     osc.type = p.type;
     osc.frequency.setValueAtTime(p.f0 * jitter, t);
     osc.frequency.exponentialRampToValueAtTime(Math.max(20, p.f1 * jitter), t + p.dur);
-    g.gain.setValueAtTime(p.gain, t);
+    // Battle SFX trim: lasers ride 20% quieter (player feedback)
+    g.gain.setValueAtTime(p.gain * 0.8, t);
     g.gain.exponentialRampToValueAtTime(0.001, t + p.dur);
     osc.start(t);
     osc.stop(t + p.dur);
@@ -4408,39 +4570,68 @@ function createLaserBeam(startPos, endPos, color = '#00ff96', isPlayer = true) {
 }
 
 // 3RD PERSON LASER: Fire from ship wing tips with full-length beam to target
+// WING GUNS — canonical ship-local weapon anchor points, transformed through
+// the ship's RENDERED transform (position, model attitude, scale). One source
+// of truth for laser origins, muzzle flashes and the charge glow, so they all
+// stay glued to the wings across every view state: cinematic camera lag,
+// fixed-step interpolation, warp framing pull-back (ship drawn smaller), and
+// any model scale. Local offsets are derived ONCE from the model's local
+// bounds; +Z is the model's nose.
+function getPlayerWingGuns() {
+    const ship = window.cameraState && window.cameraState.playerShipMesh;
+    if (!ship || typeof THREE === 'undefined') return null;
+    const ud = ship.userData;
+    if (!ud._wingGunsLocal) {
+        const box = new THREE.Box3().setFromObject(ship);
+        const size = box.getSize(new THREE.Vector3());
+        const s = ship.scale.x || 1;
+        if (!(size.x > 0.001)) return null;   // model not hydrated yet
+        ud._wingGunsLocal = {
+            spread: (size.x * 0.35) / s,      // ± along local X (wingtips)
+            up: -2 / s,                       // slightly under the hull
+            fwd: (size.z * 0.15) / s,         // toward the +Z nose
+        };
+    }
+    // Rendered transform when fresh (≤1 frame old), live mesh otherwise
+    const fresh = typeof window.__renderedShipFrame === 'number' &&
+        (gameState.frameCount - window.__renderedShipFrame) <= 1 && window.__renderedShipPos;
+    const pos = fresh ? window.__renderedShipPos : ship.position;
+    const att = fresh ? window.__renderedShipAtt : ship.quaternion;
+    const s = (fresh && window.__renderedShipScale) ? window.__renderedShipScale : (ship.scale.x || 1);
+    const g = ud._wingGunsLocal;
+    const mk = (side) => new THREE.Vector3(side * g.spread * s, g.up * s, g.fwd * s)
+        .applyQuaternion(att).add(pos);
+    return { left: mk(-1), right: mk(1) };
+}
+if (typeof window !== 'undefined') window.getPlayerWingGuns = getPlayerWingGuns;
+
 function createThirdPersonLasers(playerShip, targetPosition) {
     if (typeof THREE === 'undefined' || typeof scene === 'undefined') return;
     
     try {
-        // Calculate ship position the SAME WAY as camera-system.js does:
-        // ship = camera.position + thirdPersonOffset applied with camera.quaternion
-        // This ensures lasers match the visual ship position exactly.
-        // IMPORTANT: read the LIVE offset from cameraState so mobile (which
-        // pulls the camera back to (0, -6, -22)) still gets laser origins at
-        // the actual ship wing positions instead of the desktop offset.
-        const camQuat = camera.quaternion;
-        const liveOffset = (typeof cameraState !== 'undefined' &&
-                            cameraState.normalThirdPersonOffset)
-            ? cameraState.normalThirdPersonOffset
-            : new THREE.Vector3(0, -4, -14);
-        const shipOffset = liveOffset.clone().applyQuaternion(camQuat);
-        const shipPos = camera.position.clone().add(shipOffset);
-        
-        // Get model size for wing spread calculation
-        const box = new THREE.Box3().setFromObject(playerShip);
-        const size = box.getSize(new THREE.Vector3());
-        
-        // Wing positions relative to ship center
-        const wingSpread = size.x * 0.35;
-        const wingForward = -size.z * 0.15;  // Slightly forward
-        const wingUp = -2;
-        
-        // Apply camera quaternion for wing offsets
-        const leftOffset = new THREE.Vector3(-wingSpread, wingUp, wingForward).applyQuaternion(camQuat);
-        const rightOffset = new THREE.Vector3(wingSpread, wingUp, wingForward).applyQuaternion(camQuat);
-        
-        const leftWing = shipPos.clone().add(leftOffset);
-        const rightWing = shipPos.clone().add(rightOffset);
+        // Beam origins come from the canonical ship-local WING GUNS,
+        // transformed through the ship's RENDERED transform (position,
+        // model attitude, scale) — see getPlayerWingGuns(). This keeps the
+        // beams on the drawn wingtips through cinematic camera lag, the
+        // warp framing pull-back (ship rendered smaller/farther), banks,
+        // and any model scale — instead of view-space constants that only
+        // matched the default chase framing.
+        const guns = getPlayerWingGuns();
+        let leftWing, rightWing;
+        if (guns) {
+            leftWing = guns.left;
+            rightWing = guns.right;
+        } else {
+            // Model not hydrated yet — legacy camera-space fallback
+            const camQuat = camera.quaternion;
+            const liveOffset = (typeof cameraState !== 'undefined' &&
+                                cameraState.normalThirdPersonOffset)
+                ? cameraState.normalThirdPersonOffset
+                : new THREE.Vector3(0, -4, -14);
+            const shipPos = camera.position.clone().add(liveOffset.clone().applyQuaternion(camQuat));
+            leftWing = shipPos.clone().add(new THREE.Vector3(-5, -2, -2).applyQuaternion(camQuat));
+            rightWing = shipPos.clone().add(new THREE.Vector3(5, -2, -2).applyQuaternion(camQuat));
+        }
         
         // Create muzzle flash at wing tips
         createMuzzleFlash(leftWing.clone());
@@ -5505,7 +5696,12 @@ function initializeControlButtons() {
             // it builds the charge (a glow grows on the wings) released on
             // keyup as a blast scaled by hold time (max 3s).
             if (!e.repeat) {
-                gameState._laserChargeStart = Date.now();
+                // CHARGE SPEED GATE: charging needs a stable firing platform —
+                // above ~8,000 km/s the charge won't start (the tap shot still
+                // fires). Keeps the wing glow readable and avoids the charge
+                // visuals fighting warp-speed motion.
+                const _chSpeed = gameState.velocityVector ? gameState.velocityVector.length() : 0;
+                gameState._laserChargeStart = _chSpeed <= 8 ? Date.now() : 0;
                 if (!gameState.gameOver && gameState.gameStarted) {
                     resumeAudioContext();
                     fireWeapon();
@@ -6432,12 +6628,15 @@ function checkGalaxyClear() {
     for (let g = 0; g < 8; g++) {
         // Count only regular enemies (not guardians, not bosses, not boss support)
         const regularEnemies = enemies.filter(enemy => 
-            enemy.userData && 
-            enemy.userData.health > 0 && 
+            enemy.userData &&
+            enemy.userData.health > 0 &&
             enemy.userData.galaxyId === g &&
             !enemy.userData.isBoss &&
-            !enemy.userData.isBossSupport &&
-            !enemy.userData.isBlackHoleGuardian  // ⭐ EXCLUDE GUARDIANS
+            !enemy.userData.isBossSupport
+            // Black-hole guardians COUNT toward the clear (campaign design:
+            // the galaxy is liberated only when its faction's forces AND
+            // all 3 core guardians are down). They spawn with the third
+            // discovery path, so they exist before any clear can happen.
         );
         
         // Check if boss has been defeated for this galaxy
@@ -6562,6 +6761,34 @@ function checkGuardianVictory() {
 
             // Show FINAL liberation achievement
             showAchievement(`Galaxy Liberation Complete - ${galaxyType.name}`, `${galaxyType.name} Galaxy (${galaxyType.faction}) completely liberated!`);
+
+            // Victory-replay highlight: liberations anchor the montage
+            if (typeof window !== 'undefined' && window.replaySystem) {
+                window.replaySystem.record('Liberated the ' + galaxyType.name + ' Galaxy', 4);
+            }
+
+            // OPTIONAL DEEP-SPACE EXPEDITION: a path opens from this freed
+            // core out toward UFO/Borg territory. Explicitly optional — the
+            // directive below steers the player to the next nebula instead.
+            if (typeof createDiscoveryPathToPosition === 'function' &&
+                typeof findGalaxyCoreById === 'function') {
+                const _core = findGalaxyCoreById(g);
+                if (_core) {
+                    const _woo = (typeof window !== 'undefined' && window.worldOriginOffset) || { x: 0, y: 0, z: 0 };
+                    const _deep = new THREE.Vector3(78000 - _woo.x, 2000 - _woo.y, 8000 - _woo.z);
+                    // galaxyId -1: no mission-enemy snapshot/relocation — this
+                    // line is an invitation, not a tracked mission.
+                    createDiscoveryPathToPosition(_core.position.clone(), _deep, 0x00ff66, 'Deep Space', 'deepspace', -1);
+                    setTimeout(() => {
+                        if (typeof showIncomingTransmission === 'function') {
+                            showIncomingTransmission('Mission Control - Optional Expedition',
+                                'With this sector free, long-range sensors reach the deep field: UFO anomalies and BORG signatures beyond the rim.\n\n' +
+                                'The green line marks an OPTIONAL expedition — dangerous, no reinforcements.\n\n' +
+                                'Priority remains the campaign: make for the next twin nebula and keep liberating, Captain.', 0x00ff66);
+                        }
+                    }, 6000);
+                }
+            }
             
             // Mission Control message
             const remainingGalaxies = 8 - gameState.galaxiesCleared;
@@ -6584,10 +6811,14 @@ function checkGuardianVictory() {
                 setupGalaxyMap();
             }
             
-            // Check for total victory
+            // Check for total victory — the campaign win: fireworks land,
+            // then the BEST-MOMENTS SPECTATOR REPLAY rolls (victory-replay.js).
             if (gameState.galaxiesCleared >= 8) {
                 showAchievement('Victory!', 'All galaxies liberated! Universe saved!');
                 playVictoryMusic();
+                if (typeof window !== 'undefined' && window.replaySystem) {
+                    setTimeout(() => { try { window.replaySystem.start(); } catch (e) {} }, 4000);
+                }
             }
             
             break; // Only process one galaxy per check
@@ -6807,7 +7038,7 @@ function updateMissiles() {
     if (!window.activeMissiles) return;
 
     window.activeMissiles = window.activeMissiles.filter(missile => {
-        missile.userData.lifetime += 16.67;
+        missile.userData.lifetime += (typeof gameState !== 'undefined' && gameState.dtMs) || 16.67;
 
         if (missile.userData.lifetime > missile.userData.maxLifetime) {
             scene.remove(missile);
@@ -7453,7 +7684,28 @@ function togglePause() {
     }
     
     gameState.paused = !gameState.paused;
-    
+
+    // AUDIO FOLLOWS PAUSE: suspend the WebAudio graph (synth music + SFX
+    // freeze in place) and pause the MP3 soundtrack (keeps its position);
+    // both resume exactly where they left off on unpause.
+    try {
+        if (gameState.paused) {
+            if (typeof audioContext !== 'undefined' && audioContext && audioContext.state === 'running') {
+                audioContext.suspend();
+            }
+            if (typeof window !== 'undefined' && window.soundtrack && window.soundtrack.pauseAll) {
+                window.soundtrack.pauseAll();
+            }
+        } else {
+            if (typeof audioContext !== 'undefined' && audioContext && audioContext.state === 'suspended') {
+                audioContext.resume();
+            }
+            if (typeof window !== 'undefined' && window.soundtrack && window.soundtrack.resumeAll) {
+                window.soundtrack.resumeAll();
+            }
+        }
+    } catch (e) {}
+
     // Create pause overlay if it doesn't exist
     let pauseOverlay = document.getElementById('pauseOverlay');
     if (!pauseOverlay) {
@@ -8534,31 +8786,36 @@ const _allyTarget = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
 // Alpha and the rescue-Beta parked near Sagittarius A*.
 function _makeWingman(roleKey, name, primaryColor) {
     const group = new THREE.Group();
-    let shipMesh;
-    let usedRealModel = false;
-    if (typeof getPlayerModel === 'function') {
+
+    // Build the real-model mesh (null if the GLB isn't cached yet).
+    // Factored out so the placeholder fallback below can UPGRADE itself
+    // when the model finishes loading, instead of a cone forever.
+    function _buildRealWingmanMesh() {
+        if (typeof getPlayerModel !== 'function') return null;
         const model = getPlayerModel();
-        if (model) {
-            usedRealModel = true;
-            shipMesh = model.clone();
-            const box = new THREE.Box3().setFromObject(shipMesh);
-            const center = box.getCenter(new THREE.Vector3());
-            shipMesh.traverse(child => {
-                if (child.isMesh) {
-                    child.position.sub(center);
-                    child.material = new THREE.MeshBasicMaterial({
-                        color: primaryColor,
-                        transparent: true,
-                        opacity: 0.85,
-                        side: THREE.FrontSide
-                    });
-                    child.visible = true;
-                    child.frustumCulled = false;
-                }
-            });
-            shipMesh.scale.set(96, 96, 96);
-        }
+        if (!model) return null;
+        const mesh = model.clone();
+        const box = new THREE.Box3().setFromObject(mesh);
+        const center = box.getCenter(new THREE.Vector3());
+        mesh.traverse(child => {
+            if (child.isMesh) {
+                child.position.sub(center);
+                child.material = new THREE.MeshBasicMaterial({
+                    color: primaryColor,
+                    transparent: true,
+                    opacity: 0.85,
+                    side: THREE.FrontSide
+                });
+                child.visible = true;
+                child.frustumCulled = false;
+            }
+        });
+        mesh.scale.set(96, 96, 96);
+        return mesh;
     }
+
+    let shipMesh = _buildRealWingmanMesh();
+    let usedRealModel = !!shipMesh;
     if (!shipMesh) {
         const geo = new THREE.ConeGeometry(6, 16, 6);
         const mat = new THREE.MeshBasicMaterial({ color: primaryColor });
@@ -8573,6 +8830,25 @@ function _makeWingman(roleKey, name, primaryColor) {
     let _wmThrusterGlows = [];
     if (usedRealModel && typeof createThrusterGlowsForModel === 'function') {
         _wmThrusterGlows = createThrusterGlowsForModel(shipMesh);
+    }
+
+    // INIT-RACE FIX: if this wingman was created before Player.glb finished
+    // loading (the "permanent placeholder cone" bug), swap the real model
+    // in as soon as it's cached. Boot.whenReady fires immediately if the
+    // model is already there, later if not — creation order stops mattering.
+    if (!usedRealModel && window.Boot) {
+        window.Boot.whenReady('playerModel', () => {
+            const real = _buildRealWingmanMesh();
+            if (!real || group.userData.health <= 0) return;
+            group.remove(shipMesh);
+            if (shipMesh.geometry) shipMesh.geometry.dispose();
+            if (shipMesh.material) shipMesh.material.dispose();
+            group.add(real);
+            if (typeof createThrusterGlowsForModel === 'function') {
+                group.userData._thrusterGlows = createThrusterGlowsForModel(real);
+            }
+            console.log(`✅ ${name}: placeholder upgraded to real player model`);
+        });
     }
 
     const profile = WINGMAN_ROLES[roleKey];

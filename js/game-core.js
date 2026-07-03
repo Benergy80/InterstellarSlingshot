@@ -241,7 +241,7 @@ const perfDebug = {
         
         // Track distance from origin (twin cores)
         if (camera && camera.position) {
-            this.distanceFromOrigin = camera.position.length();
+            this.distanceFromOrigin = (typeof trueDistanceFromOrigin === 'function') ? trueDistanceFromOrigin(camera.position) : camera.position.length();
             const wasInZone = this.inTwinCoresZone;
             this.inTwinCoresZone = this.distanceFromOrigin < this.twinCoresThreshold;
             
@@ -371,36 +371,389 @@ let lastOrbitUpdate = 0;
 // PERFORMANCE MONITORING AND OPTIMIZATION
 // =============================================================================
 
-// PERFORMANCE: Auto-adjust performance based on frame times
-function adjustPerformance() {
-    return; // DISABLED - causing performance issues
-    
-    const targetFrameTime = 16.67; // 60 FPS
-    const slowFrameTime = 33.33;   // 30 FPS
-    const verySlowFrameTime = 50;  // 20 FPS
-    
-    if (gameState.averageFrameTime > verySlowFrameTime && gameState.performanceMode !== 'minimal') {
-        gameState.performanceMode = 'minimal';
-        console.log('Performance: Switching to minimal mode (avg frame time:', gameState.averageFrameTime.toFixed(1), 'ms)');
-        
-        // Reduce star count
-        if (stars && stars.geometry) {
-            const positions = stars.geometry.attributes.position.array;
-            const reducedPositions = new Float32Array(positions.length * 0.5); // 50% reduction
-            for (let i = 0; i < reducedPositions.length; i++) {
-                reducedPositions[i] = positions[i];
-            }
-            stars.geometry.setAttribute('position', new THREE.Float32BufferAttribute(reducedPositions, 3));
+// PERF METER: rolling frame-time stats for the adaptive quality controller
+// and external tooling. Samples every full gameplay frame from animate();
+// exposes window.__perf = { fps, medianMs, p95Ms, scriptMs, samples }.
+// scriptMs is main-thread time inside animate() (update + render submit) —
+// the gap between scriptMs and medianMs is GPU/compositor/vsync wait.
+const __perfMeter = {
+    _frame: new Float32Array(120),
+    _script: new Float32Array(120),
+    _n: 0,
+    _i: 0,
+    out: { fps: 0, medianMs: 16.67, p95Ms: 16.67, scriptMs: 0, p95ScriptMs: 0, samples: 0 },
+    sample(frameMs, scriptMs) {
+        // A tab switch / debugger pause shows up as one multi-second frame —
+        // not a real performance signal, so drop it rather than poison the
+        // stats. Sustained sub-2s frames ARE signal (a machine that slow is
+        // exactly when the quality controller must still see data).
+        if (!(frameMs > 0) || frameMs > 2000) return;
+        this._frame[this._i] = frameMs;
+        this._script[this._i] = scriptMs;
+        this._i = (this._i + 1) % 120;
+        if (this._n < 120) this._n++;
+        if (this._i % 30 === 0 && this._n >= 30) this._refresh();
+    },
+    _refresh() {
+        const f = Array.prototype.slice.call(this._frame, 0, this._n).sort((a, b) => a - b);
+        const s = Array.prototype.slice.call(this._script, 0, this._n).sort((a, b) => a - b);
+        const med = f[f.length >> 1];
+        this.out.medianMs = med;
+        this.out.p95Ms = f[Math.min(f.length - 1, Math.floor(f.length * 0.95))];
+        this.out.scriptMs = s[s.length >> 1];
+        this.out.p95ScriptMs = s[Math.min(s.length - 1, Math.floor(s.length * 0.95))];
+        this.out.fps = med > 0 ? Math.round(1000 / med) : 0;
+        this.out.samples = this._n;
+    }
+};
+if (typeof window !== 'undefined') window.__perf = __perfMeter.out;
+
+// =============================================================================
+// FLOATING ORIGIN — periodic world rebase
+// =============================================================================
+// Float32 gives ~7 significant digits: at 90,000 units from origin the
+// positional resolution is already ~0.008u BEFORE matrix math compounds it —
+// the root cause of jitter, z-fighting and flaky frustum culling far from
+// Sol. Fix: when the camera drifts past a threshold, shift the ENTIRE world
+// (scene roots + every cached absolute position) by -camera.position so the
+// camera snaps back to the origin, where precision is best. All relative
+// geometry is preserved exactly; only the coordinate labels change.
+//
+// True (absolute) coordinates of anything = current + worldOriginOffset.
+// Systems that cache absolute positions OUTSIDE the scene graph register a
+// handler in window.__worldShiftHandlers(offset, totalAfter) — see
+// game-objects.js (wormhole table, gateway, galaxy centers), autopilot.js
+// (nav dummies, universe leash) and game-ui.js (galaxy map projection).
+const worldOriginOffset = (typeof THREE !== 'undefined') ? new THREE.Vector3(0, 0, 0) : null;
+if (typeof window !== 'undefined') {
+    window.worldOriginOffset = worldOriginOffset;
+    window.__worldShiftHandlers = window.__worldShiftHandlers || [];
+}
+
+const WORLD_REBASE_DISTANCE = 30000;
+
+// =============================================================================
+// FIXED-TIMESTEP PLAYER SIMULATION (Gaffer's "Fix Your Timestep!")
+// =============================================================================
+// The player-ship physics (updateEnhancedPhysics) now always steps at exactly
+// 16.67ms: an accumulator collects real frame time and the sim runs 0..N whole
+// steps per rendered frame. Every hand-tuned per-frame constant is EXACT again
+// (dtFrames === 1 inside every step), flight behavior is identical at 24, 60
+// and 120fps, and a dt spike becomes several exact sub-steps instead of one
+// big scaled step. Rendering interpolates the camera between the previous and
+// current sim states by the leftover fraction (render-only; restored after),
+// so motion is positioned at the correct wall-clock instant every frame.
+const _fixedSim = {
+    STEP_MS: 16.67,
+    MAX_STEPS: 6,          // spiral-of-death guard: beyond this, drop the debt
+    acc: 0,
+    inited: false,
+    prevPos: (typeof THREE !== 'undefined') ? new THREE.Vector3() : null,
+    prevQuat: (typeof THREE !== 'undefined') ? new THREE.Quaternion() : null,
+    _tmpPos: (typeof THREE !== 'undefined') ? new THREE.Vector3() : null,
+    _tmpQuat: (typeof THREE !== 'undefined') ? new THREE.Quaternion() : null,
+};
+
+// =============================================================================
+// QUATERNION SPRING (critically damped, exact form — Daniel Holden,
+// "Spring-It-On") — the cinematic camera's rotation filter. Carries an
+// angular-velocity state so motion is C1: when the autopilot retargets, the
+// view EASES INTO the new turn instead of kinking. Runs in scaled-angle-axis
+// space of the delta rotation; frame-rate independent by construction.
+// =============================================================================
+const _qsTmpInv = (typeof THREE !== 'undefined') ? new THREE.Quaternion() : null;
+const _qsTmpDelta = (typeof THREE !== 'undefined') ? new THREE.Quaternion() : null;
+const _qsJ0 = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+const _qsJ1 = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+
+function _quatToSAA(q, out) {   // quaternion → axis*angle (Vector3)
+    let w = q.w, x = q.x, y = q.y, z = q.z;
+    if (w < 0) { w = -w; x = -x; y = -y; z = -z; }  // shortest path
+    const vlen = Math.sqrt(x * x + y * y + z * z);
+    if (vlen < 1e-8) return out.set(0, 0, 0);
+    const angle = 2 * Math.atan2(vlen, w);
+    return out.set(x / vlen * angle, y / vlen * angle, z / vlen * angle);
+}
+
+function _quatFromSAA(v, out) { // axis*angle → quaternion
+    const angle = v.length();
+    if (angle < 1e-8) return out.set(0, 0, 0, 1);
+    const s = Math.sin(angle / 2) / angle;
+    return out.set(v.x * s, v.y * s, v.z * s, Math.cos(angle / 2));
+}
+
+// Mutates q (orientation state) and w (angular velocity, rad/s) toward qGoal.
+// halflife: seconds to close half the remaining rotation.
+function _quatSpring(q, w, qGoal, halflife, dtSec) {
+    const y = (2 * 0.69314718) / (halflife + 1e-5);   // (4·ln2 / halflife) / 2
+    _qsTmpInv.copy(qGoal).invert();
+    _qsTmpDelta.copy(q).multiply(_qsTmpInv);
+    _quatToSAA(_qsTmpDelta, _qsJ0);
+    _qsJ1.copy(w).addScaledVector(_qsJ0, y);
+    const eydt = Math.exp(-y * dtSec);
+    _qsJ0.addScaledVector(_qsJ1, dtSec).multiplyScalar(eydt);   // new delta SAA
+    _quatFromSAA(_qsJ0, _qsTmpDelta);
+    q.copy(_qsTmpDelta).multiply(qGoal);
+    w.addScaledVector(_qsJ1, -y * dtSec).multiplyScalar(eydt);  // new ang vel
+}
+
+// Swing–twist decomposition: q = swing ∘ twist, twist about `axis` (unit).
+// Used to decouple ROLL (twist about camera forward) from yaw/pitch (swing)
+// so the camera follows turns briskly but rolls lazily — the ship banks
+// WITHIN the frame, the signature flight-game chase-cam trait.
+const _stTmp = (typeof THREE !== 'undefined') ? new THREE.Quaternion() : null;
+function _swingTwist(q, axis, outSwing, outTwist) {
+    const d = q.x * axis.x + q.y * axis.y + q.z * axis.z;
+    outTwist.set(axis.x * d, axis.y * d, axis.z * d, q.w);
+    // DEGENERATE GUARD: a ~180° rotation with no component about `axis`
+    // gives a zero twist quaternion — normalize() would divide by zero and
+    // poison everything downstream with NaN (rendered as a stretched/
+    // distorted frame). Treat it as pure swing.
+    if (outTwist.lengthSq() < 1e-9) {
+        outTwist.set(0, 0, 0, 1);
+        outSwing.copy(q);
+        return;
+    }
+    outTwist.normalize();
+    outSwing.copy(q).multiply(_stTmp.copy(outTwist).invert());
+}
+
+// TRUE distance from the galactic origin (Sgr A*) regardless of how many
+// rebases have happened. Use this instead of pos.length() for any
+// "distance from origin" gameplay rule (zone themes, locality checks, CMB
+// opacity, the universe leash).
+function trueDistanceFromOrigin(pos) {
+    if (!worldOriginOffset) return pos.length();
+    const x = pos.x + worldOriginOffset.x;
+    const y = pos.y + worldOriginOffset.y;
+    const z = pos.z + worldOriginOffset.z;
+    return Math.sqrt(x * x + y * y + z * z);
+}
+if (typeof window !== 'undefined') window.trueDistanceFromOrigin = trueDistanceFromOrigin;
+
+// userData keys that hold CURRENT-frame world positions (Vector3 or plain
+// {x,y,z}) cached outside object.position — cloned patrol anchors, orbit
+// centers, discovery endpoints, render-interpolation snapshots, caravan
+// routes. Missing one means that system snaps to pre-shift coordinates.
+const _WSHIFT_UD_KEYS = [
+    'patrolCenter', 'position3D', 'nebulaPosition', 'homeNebula',
+    'planetPosition', 'beltPosition', 'targetPosition', 'blackHolePosition',
+    'systemCenter', 'beltCenter', 'startPosition', 'endPosition',
+    '_iFrom', '_iTo', 'currentDestination', 'source', 'destination',
+];
+
+function _wshiftVecLike(v, offset) {
+    if (!v) return;
+    if (v.isVector3) { v.sub(offset); return; }
+    if (typeof v.x === 'number' && typeof v.y === 'number' && typeof v.z === 'number' &&
+        v.isObject3D === undefined) {
+        v.x -= offset.x; v.y -= offset.y; v.z -= offset.z;
+    }
+}
+
+function applyWorldShift() {
+    if (!scene || !camera) return;
+    const offset = camera.position.clone();
+
+    // 1) Scene-graph roots (children move with their parents). The camera-
+    //    pinned helpers (player mesh, warp starfield, skydomes) are re-copied
+    //    to camera.position every frame, so a uniform shift keeps them
+    //    consistent this frame and the per-frame copy takes over after.
+    for (let i = 0; i < scene.children.length; i++) {
+        const c = scene.children[i];
+        if (c === camera) continue;
+        c.position.sub(offset);
+        if (c.matrixAutoUpdate === false) c.updateMatrix();
+    }
+    camera.position.set(0, 0, 0);
+
+    // 2) Cached positions in userData across the whole graph
+    scene.traverse((o) => {
+        const ud = o.userData;
+        if (!ud) return;
+        for (let k = 0; k < _WSHIFT_UD_KEYS.length; k++) {
+            _wshiftVecLike(ud[_WSHIFT_UD_KEYS[k]], offset);
         }
-        
-    } else if (gameState.averageFrameTime > slowFrameTime && gameState.performanceMode === 'normal') {
-        gameState.performanceMode = 'optimized';
-        console.log('Performance: Switching to optimized mode (avg frame time:', gameState.averageFrameTime.toFixed(1), 'ms)');
-        
-    } else if (gameState.averageFrameTime < targetFrameTime * 1.2 && gameState.performanceMode !== 'normal') {
-        // Only switch back to normal if performance is good for a while
-        gameState.performanceMode = 'normal';
-        console.log('Performance: Switching to normal mode (avg frame time:', gameState.averageFrameTime.toFixed(1), 'ms)');
+        if (Array.isArray(ud.nearbyPlanets)) {
+            for (let p = 0; p < ud.nearbyPlanets.length; p++) _wshiftVecLike(ud.nearbyPlanets[p], offset);
+        }
+    });
+
+    // 3) Core game-state caches
+    if (gameState.lastPosition) gameState.lastPosition.sub(offset);
+    // Fixed-timestep interpolation history rides the same frame shift
+    if (_fixedSim.inited && _fixedSim.prevPos) _fixedSim.prevPos.sub(offset);
+
+    // 4) Subsystem handlers (registered by other files)
+    const total = worldOriginOffset.clone().add(offset);
+    const handlers = (typeof window !== 'undefined' && window.__worldShiftHandlers) || [];
+    for (let h = 0; h < handlers.length; h++) {
+        try { handlers[h](offset, total); } catch (e) {
+            console.error('World-shift handler failed:', e);
+        }
+    }
+
+    worldOriginOffset.add(offset);
+    console.log(`🌍 Floating origin rebase: world shifted by ${offset.length().toFixed(0)}u ` +
+        `(total origin offset ${worldOriginOffset.length().toFixed(0)}u)`);
+}
+
+// ADAPTIVE QUALITY: tier ladder driven by the __perfMeter median frame time.
+// Reversible runtime levers only (the old version rebuilt star geometry —
+// destructive and itself janky, which is why it was disabled):
+//   - renderer pixel ratio (dominant fill-rate lever; the game is fill-rate
+//     bound inside nebulas from stacked additive transparency)
+//   - gameState.performanceMode ('normal'/'optimized'/'minimal'), already
+//     consumed by enemy caps, active-planet ranges, orbit/tendril cadence.
+// Hysteresis: 2 consecutive slow checks to step down, 6 consecutive fast
+// checks to step up, and a settle period after each change so the meter
+// refills with post-change frames. Set window.__qualityLock to a tier name
+// to pin quality manually. Observability: window.__quality.
+const _quality = {
+    TIERS: [
+        // prScale: render-resolution factor (fill-rate lever #1)
+        // ptScale: additive point-size factor — fragments/point ~ ptScale²,
+        //          so 0.85/0.7 ≈ 72%/49% of baseline additive fill
+        // drawScale: fraction of each nebula point cloud actually drawn
+        //          (thins the deep overdraw stack INSIDE nebulas, where the
+        //          game is fill-rate bound at its worst)
+        // cullScale: distance-culling range factor — distance-LOD for the
+        //          dense-core draw-call load (planets/asteroids/comets)
+        { name: 'normal',    prScale: 1.0,  ptScale: 1.0,  drawScale: 1.0, cullScale: 1.0  },
+        { name: 'optimized', prScale: 0.85, ptScale: 0.85, drawScale: 0.8, cullScale: 0.85 },
+        { name: 'minimal',   prScale: 0.7,  ptScale: 0.7,  drawScale: 0.6, cullScale: 0.6  },
+    ],
+    tier: 0,
+    slowStreak: 0,
+    fastStreak: 0,
+    lastChange: 0,
+    basePixelRatio: 0,
+};
+if (typeof window !== 'undefined') window.__quality = _quality;
+
+// Fill-rate levers applied across the scene. Runs only on tier change (a
+// one-off traverse), stores every material's base value in material.userData
+// so any tier — including back up to full quality — is exactly reversible.
+// Content created after a tier change spawns at base quality until the next
+// change; the controller re-evaluates every 5s so that self-corrects.
+function _applyFillRateTier(t) {
+    if (!scene || typeof THREE === 'undefined') return;
+    scene.traverse((o) => {
+        if (!o.isPoints || !o.material) return;
+        const m = o.material;
+        if (m.blending !== THREE.AdditiveBlending) return;
+        if (m.userData._baseSize === undefined) m.userData._baseSize = m.size;
+        m.size = m.userData._baseSize * t.ptScale;
+        // Nebula clouds additionally thin their drawn point count — the
+        // spatial distribution is random, so a drawRange cut reads as a
+        // slightly sparser cloud, not a hole.
+        const pu = o.parent && o.parent.userData;
+        if (pu && typeof pu.type === 'string' && pu.type.indexOf('nebula') !== -1 && o.geometry) {
+            if (o.userData._fullPointCount === undefined) {
+                const pa = o.geometry.getAttribute('position');
+                o.userData._fullPointCount = pa ? pa.count : 0;
+            }
+            if (o.userData._fullPointCount) {
+                o.geometry.setDrawRange(0, Math.floor(o.userData._fullPointCount * t.drawScale));
+            }
+        }
+    });
+}
+
+function _applyQualityTier(idx, why) {
+    const t = _quality.TIERS[idx];
+    _quality.tier = idx;
+    _quality.slowStreak = 0;
+    _quality.fastStreak = 0;
+    _quality.lastChange = performance.now();
+    gameState.performanceMode = t.name;
+    if (renderer) {
+        if (!_quality.basePixelRatio) {
+            _quality.basePixelRatio = Math.min(window.devicePixelRatio || 1,
+                window.__isMobileGPU ? 1 : 1.5);
+        }
+        renderer.setPixelRatio(_quality.basePixelRatio * t.prScale);
+    }
+    _applyFillRateTier(t);
+    console.log(`Quality: ${t.name} (pixelRatio ×${t.prScale}, points ×${t.ptScale}, ` +
+        `nebula draw ×${t.drawScale}, cull ×${t.cullScale}) — ${why}`);
+}
+
+// PERF HUD — in-engine measurement overlay. Toggle from the console with
+// window.__perfHUD() (or __perfHUD(false) to hide), or load the page with
+// ?perf=1. Shows the live __perf stats, quality tier, and renderer.info
+// draw-call/triangle/point counts at 1Hz. Read-only; zero cost when hidden.
+function _perfHUDToggle(show) {
+    let el = document.getElementById('perfHud');
+    if (show === undefined) show = !el || el.style.display === 'none';
+    if (!show) {
+        if (el) el.style.display = 'none';
+        if (_perfHUDToggle._timer) { clearInterval(_perfHUDToggle._timer); _perfHUDToggle._timer = null; }
+        return false;
+    }
+    if (!el) {
+        el = document.createElement('div');
+        el.id = 'perfHud';
+        el.style.cssText = 'position:fixed;top:8px;right:8px;z-index:99999;' +
+            'background:rgba(0,10,20,0.8);color:#7fdcff;border:1px solid rgba(0,180,255,0.5);' +
+            'border-radius:6px;padding:6px 10px;font:11px/1.5 monospace;white-space:pre;' +
+            'pointer-events:none;text-align:left;';
+        document.body.appendChild(el);
+    }
+    el.style.display = 'block';
+    if (!_perfHUDToggle._timer) {
+        _perfHUDToggle._timer = setInterval(() => {
+            const p = window.__perf || {};
+            const q = window.__quality;
+            const ri = (renderer && renderer.info) ? renderer.info.render : null;
+            el.textContent =
+                `fps     ${p.fps || 0}\n` +
+                `frame   ${(p.medianMs || 0).toFixed(1)}ms (p95 ${(p.p95Ms || 0).toFixed(1)})\n` +
+                `script  ${(p.scriptMs || 0).toFixed(1)}ms\n` +
+                `quality ${q ? q.TIERS[q.tier].name : '?'}\n` +
+                (ri ? `draws   ${ri.calls}\ntris    ${(ri.triangles / 1000).toFixed(0)}k\npoints  ${(ri.points / 1000).toFixed(0)}k` : '');
+        }, 1000);
+    }
+    return true;
+}
+if (typeof window !== 'undefined') {
+    window.__perfHUD = _perfHUDToggle;
+    if (window.location && /[?&]perf=1/.test(window.location.search)) {
+        if (window.Boot) window.Boot.whenReady('dom', () => _perfHUDToggle(true));
+        else setTimeout(() => _perfHUDToggle(true), 1000);
+    }
+}
+
+function adjustPerformance() {
+    const perf = (typeof window !== 'undefined' && window.__perf) || null;
+    if (!perf || perf.samples < 60) return;   // need ~2s of real frames
+
+    // Manual pin: window.__qualityLock = 'normal'|'optimized'|'minimal'
+    if (typeof window !== 'undefined' && window.__qualityLock) {
+        const want = _quality.TIERS.findIndex(t => t.name === window.__qualityLock);
+        if (want >= 0 && want !== _quality.tier) _applyQualityTier(want, 'manual lock');
+        return;
+    }
+
+    // Let the meter refill with post-change frames before judging again
+    if (performance.now() - _quality.lastChange < 10000) return;
+
+    const med = perf.medianMs;
+    if (med > 30) {          // sustained below ~33 fps
+        _quality.slowStreak++;
+        _quality.fastStreak = 0;
+        if (_quality.slowStreak >= 2 && _quality.tier < _quality.TIERS.length - 1) {
+            _applyQualityTier(_quality.tier + 1, `median ${med.toFixed(1)}ms`);
+        }
+    } else if (med < 15) {   // sustained ~60fps+ headroom
+        _quality.fastStreak++;
+        _quality.slowStreak = 0;
+        if (_quality.fastStreak >= 6 && _quality.tier > 0) {
+            _applyQualityTier(_quality.tier - 1, `median ${med.toFixed(1)}ms, headroom`);
+        }
+    } else {
+        _quality.slowStreak = 0;
+        _quality.fastStreak = 0;
     }
 }
 
@@ -922,7 +1275,15 @@ function startGame() {
         renderer = new THREE.WebGLRenderer({
             antialias: !_isMobileGPU,
             preserveDrawingBuffer: false,
-            powerPreference: 'high-performance'
+            powerPreference: 'high-performance',
+            // PRECISION: near 0.1 / far 250,000 is a 2.5M:1 ratio — a
+            // standard depth buffer gives virtually no resolution beyond a
+            // few thousand units (the z-fighting on distant planets/rings).
+            // Logarithmic depth distributes precision by magnitude instead.
+            // The only custom shader in the main scene (CMB skybox) is
+            // depthWrite:false at max radius, so it stays behind everything
+            // without needing the logdepthbuf shader chunks.
+            logarithmicDepthBuffer: true
         });
         renderer.setSize(window.innerWidth, window.innerHeight);
         // Cap desktop at 1.5x (was 2x): on retina the 2x buffer is ~5.4M px and
@@ -1286,17 +1647,23 @@ if (typeof areModelsLoaded === 'function' && areModelsLoaded()) {
     console.log('UI system initialized');
 }
 
-// Initialize shield system (with delay to ensure DOM is ready)
-setTimeout(() => {
+// Initialize shield system once the DOM is actually ready (the old
+// setTimeout(100) raced DOMContentLoaded — the "Shield system not
+// initialized" class of bug). Falls back to the timer without Boot.
+const _initShieldsWhenReady = (fn) => {
+    if (window.Boot) window.Boot.whenReady('dom', fn); else setTimeout(fn, 100);
+};
+_initShieldsWhenReady(() => {
     if (typeof initShieldSystem === 'function') {
         const initialized = initShieldSystem();
+        if (initialized && window.Boot) window.Boot.signal('shields');
         if (initialized) {
             console.log('ðŸ›¡ï¸ Shield system ready');
         } else {
             console.warn('âš ï¸ Shield system initialization failed - will retry on first activation');
         }
     }
-}, 100);
+});
 
 if (typeof initializeCosmicFeatures === 'function') {
     initializeCosmicFeatures();
@@ -1469,6 +1836,16 @@ function animate(rafTime) {
         return; // Skip all other game updates when paused
     }
 
+    // VICTORY REPLAY owns the frame while active: it flies the recorded
+    // ship track and parks the camera at a spectator vantage. Render-only —
+    // all game updates are skipped, like the pause branch above.
+    if (typeof window !== 'undefined' && window.replaySystem && window.replaySystem.active) {
+        if (window.replaySystem.tick()) {
+            renderer.render(scene, camera);
+            return;
+        }
+    }
+
     // ARCADE JUICE — hitstop (brief freeze on big impacts) and slow-mo
     // (bullet-time on a flagship kill): render only, skip the game update.
     const _ajNow = performance.now();
@@ -1483,8 +1860,41 @@ function animate(rafTime) {
     
     // PERFORMANCE: Monitor frame times and adjust quality
     const currentTime = performance.now();
-    const frameTime = currentTime - gameState.lastUpdateTime;
+    // Frame delta from the rAF timestamp when available: it's vsync-aligned,
+    // so consecutive deltas are clean multiples of the display interval.
+    // Mid-frame performance.now() differences carry scheduling noise that
+    // dt-scaled motion then bakes into every step (visible speed shimmer).
+    let frameTime;
+    if (typeof rafTime === 'number' && typeof gameState._lastRafTime === 'number') {
+        frameTime = rafTime - gameState._lastRafTime;
+    } else {
+        frameTime = currentTime - gameState.lastUpdateTime;
+    }
+    if (typeof rafTime === 'number') gameState._lastRafTime = rafTime;
     gameState.lastUpdateTime = currentTime;
+
+    // DELTA TIME: one clamped dt for the whole simulation. dtFrames is dt in
+    // 60fps-frame units, so every hand-tuned per-frame constant keeps its
+    // meaning (dtFrames === 1 at exactly 60fps) while 120Hz displays and
+    // stutter frames integrate the correct amount. Clamped to [4, 50]ms:
+    // the floor guards divide-by-tiny on timer glitches, the cap means a
+    // long hitch (tab switch, world-gen hiccup) advances at most 3 frames
+    // of simulation instead of teleporting the ship.
+    // Arcade slow-mo renders every other frame — each simulated frame then
+    // spans two vsync periods, so halve dt to keep the sim at half speed.
+    let _dtMs = Math.max(4, Math.min(50, frameTime || 16.67));
+    if (gameState._slowmoUntil && _ajNow < gameState._slowmoUntil) _dtMs *= 0.5;
+    gameState.dtMs = _dtMs;
+    gameState.dtFrames = _dtMs / 16.67;
+
+    // FLOATING ORIGIN: rebase the world onto the camera once it drifts far
+    // enough for float32 precision to degrade. Runs before any game update
+    // reads positions, so the whole frame sees one consistent coordinate
+    // frame.
+    if (gameState.gameStarted && !gameState.gameOver &&
+        camera && camera.position.lengthSq() > WORLD_REBASE_DISTANCE * WORLD_REBASE_DISTANCE) {
+        applyWorldShift();
+    }
     
     // Track frame time history for performance adjustment
     gameState.frameTimeHistory.push(frameTime);
@@ -1537,7 +1947,7 @@ function animate(rafTime) {
         // CRITICAL: Keep explosion animations running during game over
         // so player can see their ship explode before game over screen
         if (typeof explosionManager !== 'undefined') {
-            explosionManager.update(16.67);
+            explosionManager.update(gameState.dtMs || 16.67);
         }
         
         renderer.render(scene, camera);
@@ -2243,7 +2653,17 @@ if (gameState.frameCount % 5 === 0 && typeof checkCosmicFeatureInteractions === 
     if (typeof perfDebug !== 'undefined') perfDebug.startTimer('enemies');
     if (typeof enemies !== 'undefined' && enemies && enemies.length) {
         const _efc = gameState.frameCount;
-        const _AI_INTERVAL = 2;
+        // AI cadence targets ~30Hz of WALL CLOCK, not "every 2nd frame":
+        // on a 120Hz display every-2nd-frame ran enemy AI (and its per-tick
+        // movement steps) at 60Hz — enemies moved twice as fast. Derive the
+        // frame interval from the measured refresh rate instead.
+        // FLOOR OF 2: the render-interpolation glide below spreads each AI
+        // step across the interval — at interval 1 there is nothing to
+        // interpolate and raw AI steps render directly (visible enemy jerk
+        // on ≤45fps machines). Interval 2 at low fps exactly matches the
+        // pre-adaptive tuned behavior; >75fps machines still scale up.
+        const _measuredFps = (typeof window !== 'undefined' && window.__perf && window.__perf.fps) || 60;
+        const _AI_INTERVAL = Math.max(2, Math.round(_measuredFps / 30)) || 2;
         // (1) Glide the rendered transform START -> END EVERY frame. On an
         //     AI-tick frame this completes the previous interval (a -> 1) BEFORE
         //     the tick below snapshots it, so the next interval begins exactly
@@ -2289,7 +2709,12 @@ if (gameState.frameCount % 5 === 0 && typeof checkCosmicFeatureInteractions === 
     if (typeof perfDebug !== 'undefined') perfDebug.endTimer('enemies');
     
     // Update civilian combat (enemies attacking civilians, distress calls)
-    if (gameState.frameCount % 3 === 0 && typeof updateCivilianCombat === 'function') {
+    // ~20Hz of wall clock: fleets move per tick, so the interval scales with
+    // the measured refresh rate like the enemy/wingman AI above. Floor of 2
+    // (civilians have no interpolation glide — finer ticks help, but a
+    // 1-frame interval flip-flopping with measured fps reads as stutter).
+    if (typeof updateCivilianCombat === 'function' &&
+        gameState.frameCount % Math.max(2, Math.round((((typeof window !== 'undefined' && window.__perf && window.__perf.fps) || 60)) / 20)) === 0) {
         updateCivilianCombat();
     }
     
@@ -2305,7 +2730,7 @@ if (gameState.frameCount % 5 === 0 && typeof checkCosmicFeatureInteractions === 
 
     // Update unstable wormholes
     if (typeof updateUnstableWormholes === 'function') {
-        updateUnstableWormholes(16.67);
+        updateUnstableWormholes(gameState.dtMs || 16.67);
     }
 
     // Update ambient space debris
@@ -2313,19 +2738,19 @@ if (gameState.frameCount % 5 === 0 && typeof checkCosmicFeatureInteractions === 
         updateAmbientSpaceDebris();
     }
 
-    // Update missile cooldown
+    // Update missile cooldown (real elapsed ms — fire rate is wall-clock)
     if (gameState.missiles.cooldown > 0) {
-        gameState.missiles.cooldown = Math.max(0, gameState.missiles.cooldown - 16.67);
+        gameState.missiles.cooldown = Math.max(0, gameState.missiles.cooldown - gameState.dtMs);
     }
 
-    // Update weapon cooldown
+    // Update weapon cooldown (real elapsed ms — fire rate is wall-clock)
     if (gameState.weapons && gameState.weapons.cooldown > 0) {
-        gameState.weapons.cooldown = Math.max(0, gameState.weapons.cooldown - 16.67);
+        gameState.weapons.cooldown = Math.max(0, gameState.weapons.cooldown - gameState.dtMs);
     }
 
-    // Update explosion animations (frame-based animation system)
+    // Update explosion animations with real elapsed ms
     if (typeof explosionManager !== 'undefined') {
-        explosionManager.update(16.67); // Pass frame time in ms
+        explosionManager.update(gameState.dtMs);
     }
 
     // Check for hull zero - mission fail
@@ -2358,6 +2783,9 @@ if (gameState.frameCount % 5 === 0 && typeof checkCosmicFeatureInteractions === 
     if (typeof updateAllyShips === 'function' && typeof allyShips !== 'undefined' && allyShips && allyShips.length) {
         const _wfc = gameState.frameCount;
         const _warp = gameState.velocityVector && gameState.velocityVector.length() >= 4.0;
+        // Same wall-clock cadence normalization as the enemy AI above —
+        // including the floor of 2 that keeps the interpolation glide alive.
+        const _wInterval = Math.max(2, Math.round((((typeof window !== 'undefined' && window.__perf && window.__perf.fps) || 60)) / 30)) || 2;
         // (1) glide every frame (completes the interval before the tick below)
         for (let i = 0; i < allyShips.length; i++) {
             const w = allyShips[i]; if (!w || !w.userData || !w.userData._interp) continue;
@@ -2370,7 +2798,7 @@ if (gameState.frameCount % 5 === 0 && typeof checkCosmicFeatureInteractions === 
             w.rotation.z = u._iFromRot.z + (u._iToRot.z - u._iFromRot.z) * t;
         }
         // (2) AI tick: 30Hz normally, every frame while warping
-        if (_wfc % 2 === 0 || _warp) {
+        if (_wfc % _wInterval === 0 || _warp) {
             for (let i = 0; i < allyShips.length; i++) {
                 const w = allyShips[i]; if (!w || !w.userData || !w.rotation) continue;
                 const u = w.userData;
@@ -2389,9 +2817,14 @@ if (gameState.frameCount % 5 === 0 && typeof checkCosmicFeatureInteractions === 
                 u._iToRot.x = w.rotation.x; u._iToRot.y = w.rotation.y; u._iToRot.z = w.rotation.z;
                 w.position.copy(u._iFrom);
                 w.rotation.x = u._iFromRot.x; w.rotation.y = u._iFromRot.y; w.rotation.z = u._iFromRot.z;
-                u._iTick = _wfc; u._iInterval = _warp ? 1 : 2; u._interp = true;
+                u._iTick = _wfc; u._iInterval = _warp ? 1 : _wInterval; u._interp = true;
             }
         }
+    }
+
+    // Highlight recorder: rolling ship-state buffer for the victory replay
+    if (typeof window !== 'undefined' && window.replaySystem) {
+        window.replaySystem.update();
     }
 
     // DEMO AUTOPILOT — runs before physics so key inputs are applied this frame
@@ -2406,13 +2839,59 @@ if (gameState.frameCount % 5 === 0 && typeof checkCosmicFeatureInteractions === 
         window.applyEnemyBuffs();
     }
 
-    // Enhanced physics and controls for doubled world
+    // Enhanced physics and controls — FIXED TIMESTEP (see _fixedSim above).
+    // Key state written by the player/autopilot this frame simply persists
+    // across the whole-frame's steps (equivalent to holding the key);
+    // one-shot flags (wDoubleTap, keys.o) are consumed by the first step.
     if (typeof perfDebug !== 'undefined') perfDebug.startTimer('physics');
-    if (typeof updateEnhancedPhysics === 'function') {
-        updateEnhancedPhysics();
+    if (typeof updateEnhancedPhysics === 'function' && camera) {
+        if (!_fixedSim.inited && _fixedSim.prevPos) {
+            _fixedSim.prevPos.copy(camera.position);
+            _fixedSim.prevQuat.copy(camera.quaternion);
+            _fixedSim.inited = true;
+        }
+        _fixedSim.acc += gameState.dtMs;   // dtMs is already slow-mo scaled
+        const _saveDtMs = gameState.dtMs, _saveDtF = gameState.dtFrames;
+        gameState.dtMs = _fixedSim.STEP_MS;
+        gameState.dtFrames = 1;
+        let _steps = 0;
+        while (_fixedSim.acc >= _fixedSim.STEP_MS && _steps < _fixedSim.MAX_STEPS) {
+            _fixedSim.prevPos.copy(camera.position);
+            _fixedSim.prevQuat.copy(camera.quaternion);
+            updateEnhancedPhysics();
+            _fixedSim.acc -= _fixedSim.STEP_MS;
+            _steps++;
+        }
+        if (_steps === _fixedSim.MAX_STEPS) _fixedSim.acc = 0; // drop the debt
+        gameState.dtMs = _saveDtMs;
+        gameState.dtFrames = _saveDtF;
+        // Teleports (black-hole transits, warp exits) must not be swept
+        // across the screen by interpolation — snap the history instead.
+        if (_fixedSim.prevPos.distanceTo(camera.position) > 500) {
+            _fixedSim.prevPos.copy(camera.position);
+            _fixedSim.prevQuat.copy(camera.quaternion);
+        }
     }
     if (typeof perfDebug !== 'undefined') perfDebug.endTimer('physics');
-    
+
+    // PLAYER-SHIP RE-SYNC: physics just moved/rotated the camera, but the
+    // updateCameraView call at the top of the frame used the PRE-physics
+    // camera — leaving the ship mesh one frame behind (velocity × dt). At a
+    // fixed 60fps that lag was constant and read as camera framing; with
+    // variable dt it changes every frame and reads as ship jitter. The
+    // transition animation inside is wall-clock-based, so this second call
+    // is idempotent. (The early call stays: intro/game-over paths return
+    // before reaching here and still need the ship placed.)
+    if (typeof updateCameraView === 'function') {
+        updateCameraView(camera);
+    }
+
+    // Shield bubble rides the ship — re-pin it to the freshly synced ship
+    // position (its own update ran inside physics, pre-integration).
+    if (typeof syncShieldPositionToShip === 'function') {
+        syncShieldPositionToShip();
+    }
+
     // Update UI every few frames
     if (gameState.frameCount % 2 === 0) {
         if (typeof updateUI === 'function') updateUI();
@@ -2429,10 +2908,10 @@ if (gameState.frameCount % 5 === 0 && typeof checkCosmicFeatureInteractions === 
         updateDistressIndicator();
     }
 
-    // Update crosshair less frequently to avoid interfering with UI clicks
-    if (gameState.frameCount % 3 === 0 && typeof updateCrosshairTargeting === 'function') {
-        updateCrosshairTargeting();
-    }
+    // Crosshair targeting moved to the render section (post camera
+    // transforms): projecting through the PHYSICS camera while the frame
+    // renders through the smoothed/interpolated one put the yellow
+    // crosshair visibly off enemies, and the old %3 throttle added lag.
     
     // DIAGNOSTIC: Disabled to reduce console spam
     // Uncomment below to debug performance issues
@@ -2464,12 +2943,213 @@ if (gameState.frameCount % 5 === 0 && typeof checkCosmicFeatureInteractions === 
 
     // Depth of field disabled for performance (was causing expensive scene traversals)
 
+    // PERF METER: game-logic time ends here — renderer.render() is GPU
+    // submission (or full CPU rasterization under software rendering), which
+    // would swamp the scripting stat with non-logic cost.
+    const _logicEndMs = performance.now();
+
+    // CINEMATIC CHASE CAMERA (demo, third-person): render through a smoothed
+    // orientation that CHASES the physics orientation instead of being bolted
+    // to it. The ship still makes every steering correction instantly (the
+    // physics camera is untouched — restored right after render), but the
+    // VIEW banks and settles with a ~140ms time constant, so rolls and rapid
+    // turn adjustments flow instead of stepping — the discrete per-frame
+    // rotation steps are exactly what reads as jerk at 25-40fps. The lag is
+    // clamped to ~18° so the ship never swings out of frame. Demo-only:
+    // manual flight keeps 1:1 aim feel. Kill switch: window.__cinematicCam=false.
+    // RENDER INTERPOLATION (fixed timestep): draw the camera at the exact
+    // wall-clock instant between the previous and current sim states.
+    // Render-only — restored after render alongside the cinematic state.
+    let _simInterpApplied = false;
+    if (_fixedSim.inited && camera && gameState.gameStarted && !gameState.gameOver) {
+        const _alpha = Math.max(0, Math.min(1, _fixedSim.acc / _fixedSim.STEP_MS));
+        if (_alpha < 1) {
+            _fixedSim._tmpPos.copy(camera.position);
+            _fixedSim._tmpQuat.copy(camera.quaternion);
+            camera.position.copy(_fixedSim.prevPos).lerp(_fixedSim._tmpPos, _alpha);
+            camera.quaternion.copy(_fixedSim.prevQuat).slerp(_fixedSim._tmpQuat, _alpha);
+            _simInterpApplied = true;
+            // The ship mesh (+shield) was anchored to the CURRENT sim state
+            // by the post-physics re-sync — carry it along with the render
+            // camera so it can't lag by the interpolation delta. (The
+            // cinematic block below re-anchors it fully when active.)
+            if (typeof cameraState !== 'undefined' && cameraState.playerShipMesh) {
+                if (!window.__simShipSavedPos) window.__simShipSavedPos = new THREE.Vector3();
+                window.__simShipSavedPos.copy(cameraState.playerShipMesh.position);
+                cameraState.playerShipMesh.position.add(camera.position).sub(_fixedSim._tmpPos);
+                if (typeof syncShieldPositionToShip === 'function') syncShieldPositionToShip();
+            }
+        }
+    }
+
+    const _cinOn = (typeof window !== 'undefined' && window.__cinematicCam !== false) &&
+        window.demoPilot && window.demoPilot.driving &&
+        typeof cameraState !== 'undefined' && cameraState.mode === 'third-person';
+    let _cinSavedQuat = null;
+    let _cinShipMoved = false;
+    if (_cinOn) {
+        if (!window.__cinQuat) {
+            window.__cinQuat = camera.quaternion.clone();  // rendered view state
+            window.__cinAngVel = new THREE.Vector3();      // spring angular velocity
+            window.__cinGoal = new THREE.Quaternion();
+            window.__cinSwing = new THREE.Quaternion();
+            window.__cinTwist = new THREE.Quaternion();
+            window.__cinDelta = new THREE.Quaternion();
+            window.__cinTwistScaled = new THREE.Quaternion();
+            window.__cinFwdAxis = new THREE.Vector3();
+            window.__cinIdent = new THREE.Quaternion();
+        }
+        const _q2 = window.__cinQuat;
+        // CRITICALLY DAMPED QUATERNION SPRING with ROLL DECOUPLING.
+        // The spring carries angular velocity, so retargets EASE in (C1
+        // motion, no kinks — the failure mode of pure slerp-chase). The
+        // goal is built by swing–twist splitting the remaining rotation
+        // about the view's forward axis: yaw/pitch (swing) is followed in
+        // full at a brisk halflife, roll (twist) at partial follow — the
+        // ship visibly banks within the frame and the horizon rolls lazily
+        // after it, chase-plane style.
+        const HALFLIFE = 0.16;     // s to close half the remaining swing
+        const ROLL_FOLLOW = 0.45;  // fraction of remaining roll per goal
+        const _dtSec = (gameState.dtMs || 16.67) / 1000;
+        window.__cinFwdAxis.set(0, 0, -1);   // camera-local forward
+        window.__cinDelta.copy(_q2).invert().multiply(camera.quaternion);
+        _swingTwist(window.__cinDelta, window.__cinFwdAxis, window.__cinSwing, window.__cinTwist);
+        window.__cinTwistScaled.copy(window.__cinIdent.set(0, 0, 0, 1))
+            .slerp(window.__cinTwist, ROLL_FOLLOW);
+        window.__cinGoal.copy(_q2).multiply(window.__cinSwing).multiply(window.__cinTwistScaled);
+        _quatSpring(_q2, window.__cinAngVel, window.__cinGoal, HALFLIFE, _dtSec);
+        _q2.normalize();
+        // NaN RECOVERY: if the spring state was ever poisoned (degenerate
+        // input, extreme dt), a NaN quaternion renders the whole frame
+        // stretched/distorted. Reset hard onto the physics orientation.
+        if (!isFinite(_q2.x + _q2.y + _q2.z + _q2.w)) {
+            _q2.copy(camera.quaternion);
+            window.__cinAngVel.set(0, 0, 0);
+        }
+        // Safety net only (pathological spins — BH transits, hitstop exits):
+        // beyond ~35° the ship would leave the frame, so hard-catch there.
+        const _MAX_LAG = 0.61;
+        const _lag2 = _q2.angleTo(camera.quaternion);
+        if (_lag2 > _MAX_LAG) {
+            _q2.slerp(camera.quaternion, 1 - _MAX_LAG / _lag2);
+            window.__cinAngVel.multiplyScalar(0.5);
+        }
+        _cinSavedQuat = camera.quaternion.clone();
+        // Re-anchor the SHIP MESH (and shield) into the smoothed render
+        // frame: with the view lagging, a ship glued to the raw physics
+        // frame inherits every physics rotation step as on-screen hopping —
+        // the world got smooth and the ship got the jitter. Rotating its
+        // camera-relative offset into the render frame keeps it steady in
+        // shot; its MODEL attitude still shows every real maneuver.
+        const _cinShip = cameraState.playerShipMesh;
+        if (_cinShip) {
+            if (!window.__cinShipSavedPos) window.__cinShipSavedPos = new THREE.Vector3();
+            if (!window.__cinTmpRel) window.__cinTmpRel = new THREE.Vector3();
+            if (!window.__cinTmpInv) window.__cinTmpInv = new THREE.Quaternion();
+            window.__cinShipSavedPos.copy(_cinShip.position);
+            window.__cinTmpInv.copy(camera.quaternion).invert();
+            window.__cinTmpRel.copy(_cinShip.position).sub(camera.position)
+                .applyQuaternion(window.__cinTmpInv)   // world → camera-local
+                .applyQuaternion(_q2);                 // camera-local → render frame
+            _cinShip.position.copy(camera.position).add(window.__cinTmpRel);
+            _cinShipMoved = true;
+            // SHIP ATTITUDE FILTER: the model's orientation is raw physics —
+            // frame-capture analysis showed the hull attitude snapping
+            // several degrees per frame (steering/banking micro-steps),
+            // which is where the perceived jitter moved once position and
+            // view were smoothed. Chase the physics attitude with a faster
+            // filter (~0.20/frame at 60fps) clamped to 12° of lag: real
+            // banks and turns still read clearly, per-frame snaps don't.
+            if (!window.__cinShipQuat) window.__cinShipQuat = _cinShip.quaternion.clone();
+            if (!window.__cinShipSavedQuat) window.__cinShipSavedQuat = new THREE.Quaternion();
+            window.__cinShipSavedQuat.copy(_cinShip.quaternion);
+            window.__cinShipQuat.slerp(_cinShip.quaternion, 1 - Math.pow(0.80, gameState.dtFrames || 1));
+            const _shipLag = window.__cinShipQuat.angleTo(_cinShip.quaternion);
+            if (_shipLag > 0.21) window.__cinShipQuat.slerp(_cinShip.quaternion, 1 - 0.21 / _shipLag);
+            _cinShip.quaternion.copy(window.__cinShipQuat);
+            if (typeof syncShieldPositionToShip === 'function') syncShieldPositionToShip();
+        }
+        camera.quaternion.copy(_q2);
+    } else if (typeof window !== 'undefined' && window.__cinQuat) {
+        // keep the spring state parked on the live orientation while inactive
+        // so re-engaging (FPV→TPV, demo restart) never snaps from stale data
+        window.__cinQuat.copy(camera.quaternion);
+        if (window.__cinAngVel) window.__cinAngVel.set(0, 0, 0);
+        if (window.__cinShipQuat && typeof cameraState !== 'undefined' && cameraState.playerShipMesh) {
+            window.__cinShipQuat.copy(cameraState.playerShipMesh.quaternion);
+        }
+    }
+
+    // RENDERED-SHIP SNAPSHOT: capture the ship transform AS DRAWN (post
+    // interpolation + cinematic re-anchor) plus the rendered view quaternion.
+    // Weapon-fire code uses this for beam/muzzle origins — computing them
+    // from the raw physics camera puts lasers visibly off the rendered ship
+    // whenever the cinematic camera is lagging a turn.
+    // MUST run BEFORE the charge-glow sync below: the sync reads this
+    // snapshot, and taking it afterwards left the glow riding the PREVIOUS
+    // frame's ship — a visible mismatch that grew with speed.
+    if (typeof cameraState !== 'undefined' && cameraState.playerShipMesh &&
+        typeof window !== 'undefined') {
+        if (!window.__renderedShipPos) {
+            window.__renderedShipPos = new THREE.Vector3();
+            window.__renderedShipQuat = new THREE.Quaternion();
+        }
+        if (!window.__renderedShipAtt) window.__renderedShipAtt = new THREE.Quaternion();
+        window.__renderedShipPos.copy(cameraState.playerShipMesh.position);
+        window.__renderedShipQuat.copy(
+            (_cinOn && window.__cinQuat) ? window.__cinQuat : camera.quaternion);
+        // the ship MODEL's drawn attitude (attitude filter when active) —
+        // ship-local anchor points (wing guns) transform through this
+        window.__renderedShipAtt.copy(
+            (_cinShipMoved && window.__cinShipQuat) ? window.__cinShipQuat
+                : cameraState.playerShipMesh.quaternion);
+        window.__renderedShipScale = cameraState.playerShipMesh.scale.x || 1;
+        window.__renderedShipFrame = gameState.frameCount;
+    }
+
+    // Ship-attached effects follow the RENDERED ship (the fixed-step
+    // interpolation and cinematic re-anchor above have been applied, and
+    // the snapshot above is fresh): the laser-charge glow was previously
+    // placed only during the update phase, so it trailed the ship whenever
+    // thrusting while holding a charge.
+    if ((_simInterpApplied || _cinShipMoved) &&
+        typeof window !== 'undefined' && typeof window.__syncChargeGlow === 'function') {
+        try { window.__syncChargeGlow(); } catch (e) {}
+    }
+
+    // CROSSHAIR TARGETING projects world→screen, so it must use the SAME
+    // camera state the frame renders with (interpolated + cinematic
+    // transforms are applied at this point). Runs every frame — the old
+    // %3 throttle read as the yellow crosshair lagging off enemies.
+    if (typeof updateCrosshairTargeting === 'function') {
+        try { updateCrosshairTargeting(); } catch (e) {}
+    }
+
     // PERFORMANCE DEBUG: Time render call
     if (typeof perfDebug !== 'undefined') perfDebug.startTimer('render');
     renderer.render(scene, camera);
     if (typeof perfDebug !== 'undefined') {
         perfDebug.endTimer('render');
         perfDebug.endTimer('total');
+    }
+
+    // restore the physics state — the cinematic lag is render-only
+    if (_cinSavedQuat) camera.quaternion.copy(_cinSavedQuat);
+    if (_cinShipMoved && cameraState.playerShipMesh) {
+        cameraState.playerShipMesh.position.copy(window.__cinShipSavedPos);
+        cameraState.playerShipMesh.quaternion.copy(window.__cinShipSavedQuat);
+    }
+    // restore the fixed-timestep interpolation — sim state is the truth.
+    // Ship restore runs LAST unconditionally: __simShipSavedPos holds the
+    // true pre-interpolation position even when the cinematic block also
+    // moved the ship (its own restore used a post-interp snapshot).
+    if (_simInterpApplied) {
+        camera.position.copy(_fixedSim._tmpPos);
+        camera.quaternion.copy(_fixedSim._tmpQuat);
+        if (typeof cameraState !== 'undefined' && cameraState.playerShipMesh &&
+            window.__simShipSavedPos) {
+            cameraState.playerShipMesh.position.copy(window.__simShipSavedPos);
+        }
     }
 
     // Zoom scope frame capture. The renderer runs with
@@ -2495,6 +3175,12 @@ if (gameState.frameCount % 5 === 0 && typeof checkCosmicFeatureInteractions === 
             try { zctx.drawImage(rc, 0, 0); } catch (e) {}
         }
     }
+
+    // PERF METER: record this frame (frame-to-frame time + game-logic time,
+    // measured up to the render call so render cost never pollutes it).
+    // Early-return frames (paused, hitstop, game over) are deliberately not
+    // sampled — only full gameplay frames feed the quality controller.
+    __perfMeter.sample(frameTime, _logicEndMs - currentTime);
 }
 
 // FIXED: Enhanced orbital mechanics that work for ALL galaxies - ADJUSTED SPEEDS (75% slower)
