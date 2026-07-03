@@ -84,7 +84,7 @@ export function createPlayer({ scene, camera, planet, hud, audio, fx, transit, m
     paused: false,
     boarding: false,
     lastGroundDistrict: planet.districts[0],
-    camDist: 5.2,
+    camDist: 4.2,
     fireHeld: false,
     aimW: 0,
     capsPrecision: false,
@@ -136,7 +136,7 @@ export function createPlayer({ scene, camera, planet, hud, audio, fx, transit, m
     if (k === 'x') keys.x = true;
     if (k === 'q') keys.q = true;
     if (k === 'c' && !e.repeat) tryRoll();
-    if (k === 'v') { state.camDist = state.camDist > 6.5 ? 5.2 : 8.5; hud.toast('CAMERA', state.camDist > 6.5 ? 'Wide' : 'Close'); }
+    if (k === 'v') { state.camDist = state.camDist > 6.5 ? 4.2 : 8.5; hud.toast('CAMERA', state.camDist > 6.5 ? 'Wide' : 'Close'); }
     if (k === 'e' || e.key === 'Enter') { e.preventDefault(); interact(); }
     if (e.key === ' ') { e.preventDefault(); if (!e.repeat) { wantJump = true; audio.resume(); } }
     if (e.key === 'ArrowUp') { keys.up = true; e.preventDefault(); }
@@ -681,7 +681,7 @@ export function createPlayer({ scene, camera, planet, hud, audio, fx, transit, m
     _fwd.copy(state.heading).applyQuaternion(_q.setFromAxisAngle(_right, state.camPitch * 0.85)).normalize();
     const dist = deadCam ? 7.5 : state.camDist;
     const want = _v.copy(state.pos)
-      .addScaledVector(_up, 2.0 + state.camPitch * -1.2)
+      .addScaledVector(_up, 1.85 + state.camPitch * -1.2)
       .addScaledVector(_fwd, -dist);
     const eye = _v3.copy(state.pos).addScaledVector(_up, 1.55);
     const toCam = _v2.copy(want).sub(eye);

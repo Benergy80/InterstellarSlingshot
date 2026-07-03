@@ -20,7 +20,7 @@ import { createPlayer } from './player.js';
 import { createHUD } from './hud.js';
 import { createAudio } from './audio.js';
 
-const VK_BUILD = 'VOLKARIS build 2026-07-03f · W-W sprint, camera spring-back';
+const VK_BUILD = 'VOLKARIS build 2026-07-03g · closer chase camera';
 console.log('%c' + VK_BUILD, 'color:#ff2fd6;font-weight:bold;font-size:14px');
 
 // ── renderer ──
