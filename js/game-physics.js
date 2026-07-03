@@ -5043,6 +5043,41 @@ function animateDiscoveryPaths() {
         const mat = path.line.material;
         if (!mat) continue;
 
+        // PATH LIGHTHOUSE (play-reported: 'the map sees paths but I don't')
+        // — a 1px dashed line is optically invisible from 15-20k away while
+        // the universe map draws the same path prominently. Each active
+        // path gets a pulsing faction-colored beacon sprite at its START
+        // that holds a constant apparent size at any distance, so missions
+        // are findable from across the system. Dimmed once complete.
+        if (doPulse) {
+            const ud0 = path.line.userData;
+            if (!path.beacon && ud0 && ud0.startPosition && typeof THREE !== 'undefined') {
+                const bm = new THREE.SpriteMaterial({
+                    map: (typeof _vfGlowTexture === 'function') ? _vfGlowTexture() : null,
+                    color: mat.color.getHex(), transparent: true, opacity: 0.85,
+                    blending: THREE.AdditiveBlending, depthWrite: false
+                });
+                path.beacon = new THREE.Sprite(bm);
+                path.beacon.renderOrder = 52;
+                scene.add(path.beacon);
+            }
+            if (path.beacon && ud0 && ud0.startPosition) {
+                path.beacon.position.copy(ud0.startPosition);
+                const bDist = camera.position.distanceTo(ud0.startPosition);
+                // constant ~14px apparent size, clamped so it never swallows
+                // the nebula up close or vanishes at range
+                path.beacon.scale.setScalar(Math.max(24, Math.min(900, bDist * 0.016)));
+                const done = !!ud0.missionComplete;
+                path.beacon.material.color.copy(mat.color);
+                path.beacon.material.opacity = done
+                    ? 0.18
+                    : 0.45 + 0.4 * (0.5 + Math.sin(time * 2.6 + i) * 0.5);
+                // hide when the player is basically at the nebula — the
+                // line itself is clearly visible there
+                path.beacon.visible = bDist > 2500;
+            }
+        }
+
         if (doPulse) {
             mat.opacity = pulse1;
             const parts = path.particles;
