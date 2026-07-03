@@ -75,7 +75,7 @@ async function loadModels() {
     loader.load(`../models/${n}.glb`, (g) => { out[n] = g.scene; res(); }, undefined, () => res());
   }));
   // KayKit Adventurers (CC0) — pro rigs + 75 animation clips each
-  const kayJobs = ['Astronaut', 'Rogue_Hooded', 'Rogue', 'Mage', 'Barbarian'].map(n => new Promise((res) => {
+  const kayJobs = ['Sentinel', 'Astronaut', 'Rogue_Hooded', 'Rogue', 'Mage', 'Barbarian'].map(n => new Promise((res) => {
     loader.load(`assets/${n}.glb`, (g) => { out.kay[n] = g; res(); }, undefined, () => res());
   }));
   await Promise.race([
@@ -138,7 +138,7 @@ function animate() {
     planet.uTime.value = elapsed;
     planet.update(dt, elapsed);
     const dayF = sky.update(elapsed, player.state.pos, bloom, planet.group.children[1]?.material);
-    player.suitLamp.intensity = 0.35 + sky.night * 2.4;
+    player.suitLamp.intensity = 0.15 + sky.night * 1.2;
     player.update(dt, elapsed);
     transit.update(dt, elapsed, player.state.pos);
     npcs.update(dt, elapsed, player);

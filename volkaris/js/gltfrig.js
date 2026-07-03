@@ -66,6 +66,31 @@ export const ASTRO_MAP = {
   aimidle: { name: 'Idle_Gun_Pointing' },
 };
 
+// Meshy AI "Silver Sentinel" (Ben's custom character) clip vocabulary —
+// it even ships a dedicated diagonal_wall_run and Run_and_Shoot
+export const SENTINEL_MAP = {
+  idle: { name: 'Walking', timeScale: 0.16 },
+  walk: { name: 'Walking' },
+  run: { name: 'Running' },
+  sprint: { name: 'RunFast' },
+  jump: { name: 'Regular_Jump', once: true, next: 'fall' },
+  fall: { name: 'Regular_Jump', timeScale: 0.12 },
+  tuck: { name: 'Run_Jump_and_Roll', once: true, timeScale: 4.2 },
+  wallrunL: { name: 'diagonal_wall_run', timeScale: 1.15 },
+  wallrunR: { name: 'diagonal_wall_run', timeScale: 1.15 },
+  hover: { name: 'Regular_Jump', timeScale: 0.1 },
+  die: { name: 'Ground_Flip_and_Sweep_Up', once: true, clamp: true, timeScale: 1.6 },
+  sit: { name: 'Walking', timeScale: 0.1 },
+  wave: { name: 'Agree_Gesture', timeScale: 1.6 },
+  lean: { name: 'Walking', timeScale: 0.1 },
+  stomp: { name: 'Walking', timeScale: 0.6 },
+  fly: { name: 'Regular_Jump', timeScale: 0.1 },
+  throne: { name: 'Ground_Flip_and_Sweep_Up', once: true, next: 'idle' },
+  shoot: { name: 'Run_and_Shoot', timeScale: 0.8 },
+  runshoot: { name: 'Run_and_Shoot' },
+  aimidle: { name: 'Gun_Hold_Left_Turn', timeScale: 0.4 },
+};
+
 export function makeGLTFRig(gltf, { tint = null, tints = null, scale = 0.75, blasterHex = NEON.cyan, withBlaster = false, clipMap = CLIP_MAP, faceFlip = false } = {}) {
   const root = skeletonClone(gltf.scene);
   const group = new THREE.Group();
@@ -93,6 +118,11 @@ export function makeGLTFRig(gltf, { tint = null, tints = null, scale = 0.75, bla
           if (tint) o.material.color = new THREE.Color(tint);
           o.material.roughness = 0.6;
           o.material.metalness = 0.25;
+          // Meshy exports often bake hot emissives — calm them or the
+          // whole character blooms into a white silhouette
+          if (o.material.emissive && (o.material.emissiveMap || o.material.emissive.getHex() !== 0)) {
+            o.material.emissiveIntensity = Math.min(o.material.emissiveIntensity ?? 1, 0.22);
+          }
         }
       }
     }
@@ -105,8 +135,8 @@ export function makeGLTFRig(gltf, { tint = null, tints = null, scale = 0.75, bla
     hips: boneByName.hips,
     chest: boneByName.chest ?? boneByName.spine ?? boneByName.torso ?? boneByName.hips,
     head: boneByName.head,
-    handR: boneByName.handslotr ?? boneByName.wristr ?? boneByName.handr,
-    handL: boneByName.handslotl ?? boneByName.wristl ?? boneByName.handl,
+    handR: boneByName.handslotr ?? boneByName.wristr ?? boneByName.handr ?? boneByName.righthand,
+    handL: boneByName.handslotl ?? boneByName.wristl ?? boneByName.handl ?? boneByName.lefthand,
   };
 
   const mixer = new THREE.AnimationMixer(root);

@@ -17,7 +17,7 @@
 import * as THREE from 'three';
 import { C, NEON, clamp, lerp } from './config.js';
 import { makeCaptain } from './rig.js';
-import { makeGLTFRig, ASTRO_MAP } from './gltfrig.js';
+import { makeGLTFRig, ASTRO_MAP, SENTINEL_MAP } from './gltfrig.js';
 
 const P = C.PLAYER;
 const _up = new THREE.Vector3(), _fwd = new THREE.Vector3(), _right = new THREE.Vector3();
@@ -27,9 +27,13 @@ const _ndc = new THREE.Vector2();
 const _ray = new THREE.Raycaster();
 
 export function createPlayer({ scene, camera, planet, hud, audio, fx, transit, models }) {
-  // Quaternius Astronaut in a GOLD power suit = the Captain (CC0);
-  // procedural rig as offline fallback
-  const rig = models?.kay?.Astronaut
+  // THE CAPTAIN: Ben's Meshy "Silver Sentinel" if present, else the
+  // Quaternius Astronaut (CC0), else the procedural rig
+  const rig = models?.kay?.Sentinel
+    ? makeGLTFRig(models.kay.Sentinel, {
+        scale: 1.12, withBlaster: true, clipMap: SENTINEL_MAP,
+      })
+    : models?.kay?.Astronaut
     ? makeGLTFRig(models.kay.Astronaut, {
         scale: 1.0, withBlaster: true, clipMap: ASTRO_MAP, faceFlip: true,
         tints: {
@@ -366,7 +370,8 @@ export function createPlayer({ scene, camera, planet, hud, audio, fx, transit, m
     // aim at whatever the crosshair ray meets (or far along it)
     const hit = planet.probe(_ray.ray.origin, _ray.ray.direction, 300);
     const target = hit ? hit.point : _v3.copy(_ray.ray.origin).addScaledVector(_ray.ray.direction, 120);
-    rig.blaster.userData.muzzle.getWorldPosition(_muzzleWorld);
+    if (rig.blaster) rig.blaster.userData.muzzle.getWorldPosition(_muzzleWorld);
+    else _muzzleWorld.copy(state.pos).addScaledVector(_up, 1.3);
     aimDir.copy(target).sub(_muzzleWorld).normalize();
   }
   function updateFire(dt, t) {
