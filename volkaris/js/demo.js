@@ -196,6 +196,18 @@ export function createDemo({ player, planet, transit, npcs, fx, hud, camera }) {
           taskData.step = navTaskTo(ds[taskData.idx].dir, 5);
           hud.toast?.('DEMO PILOT', `Touring ${ds[taskData.idx].name}`);
         }
+        // survival: a district center inside the garrison isn't worth
+        // dying for — log the hot zone and move on (only while under
+        // actual fire; hp doesn't regen, so a bare hp check would
+        // cascade-skip the rest of the tour)
+        if (st.hp < 45) {
+          const foe = nearestHostile();
+          if (foe && distTo(foe.pos) < 22) {
+            trouble('tour-hot-zone-skip', { district: ds[taskData.idx]?.key, hp: Math.round(st.hp) });
+            taskData.idx++; taskData.step = null; stopWalking();
+            return false;
+          }
+        }
         if (taskData.step(dt)) { taskData.idx++; taskData.step = null; stopWalking(); }
         return false;
       },
@@ -204,6 +216,13 @@ export function createDemo({ player, planet, transit, npcs, fx, hud, camera }) {
       name: 'acrobatics', timeout: 30,
       start() { taskData.seq = 0; taskData.wait = 0; },
       run(dt) {
+        // don't do gymnastics in a firefight — the tour may have ended
+        // inside the garrison
+        const foe = nearestHostile();
+        if (foe && distTo(foe.pos) < 18) {
+          trouble('acrobatics-deferred', { hp: Math.round(st.hp) });
+          return true;
+        }
         taskData.wait -= dt;
         if (taskData.wait > 0) { checkStuck(dt, false); return false; }
         const s = taskData.seq++;
@@ -224,6 +243,7 @@ export function createDemo({ player, planet, transit, npcs, fx, hud, camera }) {
         if (taskData.ph === 0) {
           _up.copy(st.pos).normalize();
           taskData.h0 = st.pos.length();
+          taskData.tries = (taskData.tries ?? 0) + 1;
           jetBurst(2600);
           taskData.ph = 1;
           taskData.launched = 0;
@@ -231,6 +251,12 @@ export function createDemo({ player, planet, transit, npcs, fx, hud, camera }) {
           taskData.launched += dt;
           if (taskData.launched < 0.5) return false;
           const gain = st.pos.length() - taskData.h0;
+          // launch didn't take (still on the deck, no altitude) → retry
+          if (taskData.launched > 2.2 && st.grounded && gain < 1) {
+            if (taskData.tries >= 3) { trouble('jetpack-launch-failed', { tries: taskData.tries }); return true; }
+            taskData.ph = 0;
+            return false;
+          }
           if (gain > 6 || st.hoverFuel <= 0.1) {
             key(' ', false);
             if (gain < 2.5) trouble('jetpack-weak', { gained: +gain.toFixed(1) });
@@ -456,6 +482,7 @@ export function createDemo({ player, planet, transit, npcs, fx, hud, camera }) {
     let best = null, bs = 1e9;
     for (const n of npcs.list) {
       if (n.state === 'dead' || !n.aggro || n.fly) continue;
+      if (n.kind !== 'trooper') continue;   // bosses are not a playtest loop
       let buddies = 0;
       for (const m of npcs.list) {
         if (m === n || m.state === 'dead' || !m.aggro || m.fly) continue;
@@ -464,7 +491,7 @@ export function createDemo({ player, planet, transit, npcs, fx, hud, camera }) {
       const score = distTo(n.pos) + buddies * 45;
       if (score < bs) { bs = score; best = n; }
     }
-    return best;
+    return best ?? nearestHostile();
   }
   function nearestCore() {
     // power cores are tracked inside npcs — find via scene glow meshes is
