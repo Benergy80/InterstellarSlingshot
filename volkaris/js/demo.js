@@ -160,7 +160,7 @@ export function createDemo({ player, planet, transit, npcs, fx, hud, camera }) {
     const dot = clamp(st.heading.dot(bearing), -1, 1);
     const ang = Math.acos(dot);
     if (ang > 0.001) {
-      const maxTurn = 3.2 * dt;
+      const maxTurn = 2.0 * dt;   // unhurried — watchable, human-paced turns
       const k = Math.min(1, maxTurn / ang);
       st.heading.lerp(bearing, k).addScaledVector(_up, -st.heading.dot(_up)).normalize();
     }
@@ -198,7 +198,8 @@ export function createDemo({ player, planet, transit, npcs, fx, hud, camera }) {
     } else hopActive = false;
     steerToward(target, dt);
     key('w', true);
-    if (run) key('b', dDirect > 18 && st.energy > 30);
+    // boost only for genuine cross-country legs — strolling reads better
+    if (run) key('b', dDirect > 34 && st.energy > 40);
     else key('b', false);
     // parkour flair: the Captain MOVES like the Captain — periodic W-W
     // jumps, double-jump flips and rolls mid-transit. Jumping at speed
