@@ -1182,8 +1182,17 @@ function checkSpeciesBossSpawn() {
             withGuardians: false,
             // A pirate is isMartianPirate=true AND NOT a Vulcan Patrol
             isMember: (ud) => ud.isMartianPirate && !ud.isVulcanPatrol,
-            // Spawn near the Sol system's local sun (origin)
-            spawnPos: () => new THREE.Vector3(0, 0, 0)
+            // Spawn near the SOL SYSTEM (localSystemOffset) — NOT the world
+            // origin. The origin is Sagittarius A*: spawning there put the
+            // pirate boss 9.4k away at the galactic core, where wingmen
+            // Beta/Gamma (fighting Vulcans at Sgr A* since game start)
+            // could kill it OFF-SCREEN — the decapitation rout then wiped
+            // every remaining pirate "at once" with no visible boss fight.
+            spawnPos: () => {
+                const sol = (typeof window !== 'undefined' && window.localSystemOffset)
+                    ? window.localSystemOffset : { x: 8000, y: 0, z: 4800 };
+                return new THREE.Vector3(sol.x, sol.y, sol.z);
+            }
         },
         {
             key: 'vulcanPatrol',

@@ -452,9 +452,15 @@
     releaseMovementKeys();
 
     // ── Planet collision avoidance ──────────────────────────────────────
-    // Runs at 10 Hz (every 6 frames). The 800ms evasion hold makes this
-    // safe to throttle — once triggered the keys stay held across frames.
-    if (fc % 6 === 0) avoidPlanetCollisions();
+    // Runs at 10 Hz (every 6 frames) at cruise; every other frame above
+    // 8u/frame — at post-warp coast speed the ship covers ~90u between
+    // 10 Hz checks, which is most of a small planet's danger zone. The
+    // evasion hold makes the throttle safe — once triggered the keys stay
+    // held across frames.
+    {
+      const _acSpeed = gameState.velocityVector ? gameState.velocityVector.length() : 0;
+      if (fc % (_acSpeed > 8 ? 2 : 6) === 0) avoidPlanetCollisions();
+    }
 
     // ── Crosshair auto-fire ─────────────────────────────────────────────
     // Whenever the game's targeting system has locked onto a live enemy
@@ -1724,6 +1730,19 @@
       setStatus('Drifting away — braking and reorienting (' + (distToNebula | 0) + ' u)');
     }
 
+    // NEBULA APPROACH GOVERNOR: never enter the cloud hot. Within 4,500u
+    // of the center, brake until under ~9,500 km/s (same cap as the
+    // discovery-path approach) — a post-warp coast arrives at ~15u/frame
+    // and the old 2,000u brake band alone couldn't shed that before the
+    // ship plowed through the cluster (and its planets).
+    const NEBULA_APPROACH_RANGE = 4500;
+    const NEBULA_APPROACH_SPEED = 9.5;
+    if (distToNebula < NEBULA_APPROACH_RANGE && speed > NEBULA_APPROACH_SPEED) {
+      keys().b = false;
+      keys().x = true;
+      setStatus('Nebula approach — slowing (' + (distToNebula | 0) + ' u)');
+    }
+
     // Brake within 2000 u of the nebula center, orient toward it
     const NEBULA_BRAKE_RANGE = 2000;
     if (distToNebula < NEBULA_BRAKE_RANGE) {
@@ -2617,8 +2636,17 @@
       } else {
         dangerR = Math.max(sz * 2, 80);
       }
-      // At high speed, extend the danger zone proportionally
-      const effectiveR = dangerR + speed * 15;
+      // Extra care while working a nebula cluster: the twin nebulas are
+      // dense with planets and the demo weaves between them hunting the
+      // center — widen every non-BH margin by 50% there.
+      if (!isBlackHole && (ap.phase === 'coastToNebulaCluster' ||
+          ap.phase === 'orbitNebulaPlanet' || ap.phase === 'warpToNebulaCluster')) {
+        dangerR *= 1.5;
+      }
+      // At high speed, extend the danger zone proportionally. speed*35
+      // matches the X-brake stopping distance (was speed*15 ≈ a quarter
+      // second of warning at post-warp coast speed — far too late).
+      const effectiveR = dangerR + speed * 35;
       const dist = cp.distanceTo(p.position);
       if (dist < effectiveR) {
         // Only evade if we're actually heading toward the body
