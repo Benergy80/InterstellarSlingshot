@@ -123,6 +123,7 @@ export function createPlayer({ scene, camera, planet, hud, audio, fx, transit, m
     strafeDir: 0,
     mode: 'walk',        // walk | ride (monorail) | pilot (vehicle)
     vehicle: null,
+    zTarget: null,       // Z-targeting: sticky manual lock
   };
   {
     const up = state.pos.clone().normalize();
@@ -178,6 +179,24 @@ export function createPlayer({ scene, camera, planet, hud, audio, fx, transit, m
     if (k === 'x') keys.x = true;
     if (k === 'q') keys.q = true;
     if (k === 'c' && !e.repeat) tryRoll();
+    // Z-TARGETING: toggle a sticky lock on the best hostile in view
+    if (k === 'z' && !e.repeat) {
+      if (state.zTarget) {
+        state.zTarget = null;
+        hud.toast('TARGET RELEASED', '');
+        audio.sfx('ui');
+      } else {
+        const t2 = acquireZTarget();
+        if (t2) {
+          state.zTarget = t2;
+          hud.toast('TARGET LOCKED', t2.name ?? t2.kind);
+          audio.sfx('shieldUp');
+        } else {
+          hud.toast('NO TARGET', 'Nothing hostile in range');
+          audio.sfx('ui');
+        }
+      }
+    }
     if (k === 'v') { state.camDist = state.camDist > 6.5 ? 4.2 : 8.5; hud.toast('CAMERA', state.camDist > 6.5 ? 'Wide' : 'Close'); }
     if (k === 'e' || e.key === 'Enter') { e.preventDefault(); interact(); }
     // SPACE: tap on the ground toggles run/walk pace; held in the air
@@ -264,6 +283,31 @@ export function createPlayer({ scene, camera, planet, hud, audio, fx, transit, m
       audio.sfx('jump');
     }
   }
+  // Z-targeting acquisition: nearest-to-crosshair hostile with LOS,
+  // range 32u — facing direction weighs harder than raw distance
+  function acquireZTarget() {
+    if (!npcsRef) return null;
+    _up.copy(state.pos).normalize();
+    const eye = _v3.copy(state.pos).addScaledVector(_up, 1.5);
+    let best = null, bs = Infinity;
+    for (const n of npcsRef.list) {
+      if (n.state === 'dead') continue;
+      const hostile = n.aggro || n.kind === 'vex' || n.kind === 'vultyr' || n.kind === 'brakkus';
+      if (!hostile) continue;
+      const d = n.pos.distanceTo(state.pos);
+      if (d > 32) continue;
+      _v.copy(n.pos).sub(state.pos);
+      _v.addScaledVector(_up, -_v.dot(_up)).normalize();
+      const facing = state.heading.dot(_v);        // 1 = dead ahead
+      const to = _v2.copy(n.pos).addScaledVector(_v.copy(n.pos).normalize(), 1.0).sub(eye);
+      const dist = to.length();
+      if (planet.probe(eye, to.normalize(), dist - 1.2)) continue;
+      const score = d * (1.6 - facing);            // ahead beats near-behind
+      if (score < bs) { bs = score; best = n; }
+    }
+    return best;
+  }
+
   function tryMelee(kind) {
     if (!state.started || state.paused || state.dead || state.boarding || state.mode !== 'walk') return;
     const m = state.melee;
@@ -799,9 +843,19 @@ export function createPlayer({ scene, camera, planet, hud, audio, fx, transit, m
       rig.group.quaternion.slerp(_q, 1 - Math.pow(0.00001, dt));
     }
 
-    // ── soft target lock: frame the fight ──
+    // ── target lock: Z-lock is sticky and absolute; otherwise a soft
+    // auto-lock frames whatever fight is nearest ──
     lockTarget = null;
-    if (npcsRef) {
+    if (state.zTarget) {
+      const zt = state.zTarget;
+      if (zt.state === 'dead' || zt.pos.distanceToSquared(state.pos) > 38 * 38) {
+        state.zTarget = null;
+        hud.toast(zt.state === 'dead' ? 'TARGET DOWN' : 'TARGET LOST', '');
+      } else {
+        lockTarget = zt;
+      }
+    }
+    if (!lockTarget && npcsRef) {
       let bd = 24 * 24;
       const eye = _v3.copy(state.pos).addScaledVector(_up, 1.5);
       for (const n of npcsRef.list) {
@@ -818,18 +872,24 @@ export function createPlayer({ scene, camera, planet, hud, audio, fx, transit, m
         bd = d2;
         lockTarget = n;
       }
-      // gentle aim assist: yaw toward the locked enemy unless steering
-      if (lockTarget && !keys.left && !keys.right) {
+    }
+    if (lockTarget) {
+      // Z-lock: heading ALWAYS tracks the target (A/D orbit it, Zelda
+      // style). Soft lock: gentle assist that yields to arrow steering.
+      const zLocked = lockTarget === state.zTarget;
+      if (zLocked || (!keys.left && !keys.right)) {
         _v.copy(lockTarget.pos).sub(state.pos);
         _v.addScaledVector(_up, -_v.dot(_up)).normalize();
         const cross = _v2.crossVectors(state.heading, _v).dot(_up);
         const dot = clamp(state.heading.dot(_v), -1, 1);
         const ang = Math.atan2(cross, dot);
-        const step = clamp(ang, -1, 1) * 2.2 * dt;
+        const step = clamp(ang, -1, 1) * (zLocked ? 5.0 : 2.2) * dt;
         state.heading.applyQuaternion(_q.setFromAxisAngle(_up, step)).normalize();
       }
     }
-    hud.setLock(!!lockTarget, lockTarget ? lockTarget.name : null);
+    hud.setLock(!!lockTarget, lockTarget
+      ? (lockTarget === state.zTarget ? '⟦Z⟧ ' : '') + (lockTarget.name ?? lockTarget.kind)
+      : null);
 
     updateFire(dt, t);
     rig.update(dt);
