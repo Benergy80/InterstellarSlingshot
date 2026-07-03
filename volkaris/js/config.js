@@ -17,7 +17,7 @@ export const C = {
   // ── Planet ──
   R: 60,                // planet radius (u) — Messenger-small: the
                         // horizon is ~14u away, a street corner ahead
-  TERRAIN_AMP: 11,      // TALL features — streets thread canyons between them
+  TERRAIN_AMP: 9,       // tall features — streets thread canyons between them
   TERRAIN_DETAIL: 96,   // sphere segments (96×96 lat-lon grid)
 
   // ── Atmosphere / camera ──

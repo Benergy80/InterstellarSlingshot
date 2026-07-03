@@ -113,7 +113,7 @@ export function terrainHeight(dir) {
   let damp = 1;
   for (const d of districtDirs) {
     const angDist = dir.angleTo(d.dir) * R;         // arc distance in u
-    const t = clamp((angDist - d.pad) / 8, 0, 1);   // 0 inside → 1 outside
+    const t = clamp((angDist - d.pad) / 14, 0, 1);  // gentle apron, not a cliff wall
     damp = Math.min(damp, smooth(t));
     // crater rim around the spaceport — a mountain ring that hides it
     if (d.ring) {
@@ -128,7 +128,7 @@ export function terrainHeight(dir) {
     if (dd < pd) pd = dd;
   }
   const pathDist = Math.sqrt(pd) * R;               // ≈ arc distance
-  damp = Math.min(damp, smooth(clamp((pathDist - 2.6) / 6, 0, 1)));
+  damp = Math.min(damp, smooth(clamp((pathDist - 2.6) / 9, 0, 1)));
 
   // Lake Voltaine — a glowing basin like Messenger's bay
   const lakeDist = dir.angleTo(LAKE_DIR) * R;

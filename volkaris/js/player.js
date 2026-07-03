@@ -17,6 +17,7 @@
 import * as THREE from 'three';
 import { C, NEON, clamp, lerp } from './config.js';
 import { makeCaptain } from './rig.js';
+import { makeGLTFRig, ASTRO_MAP } from './gltfrig.js';
 
 const P = C.PLAYER;
 const _up = new THREE.Vector3(), _fwd = new THREE.Vector3(), _right = new THREE.Vector3();
@@ -25,16 +26,34 @@ const _q = new THREE.Quaternion(), _m = new THREE.Matrix4();
 const _ndc = new THREE.Vector2();
 const _ray = new THREE.Raycaster();
 
-export function createPlayer({ scene, camera, planet, hud, audio, fx, transit }) {
-  const rig = makeCaptain();
+export function createPlayer({ scene, camera, planet, hud, audio, fx, transit, models }) {
+  // Quaternius Astronaut in a GOLD power suit = the Captain (CC0);
+  // procedural rig as offline fallback
+  const rig = models?.kay?.Astronaut
+    ? makeGLTFRig(models.kay.Astronaut, {
+        scale: 1.0, withBlaster: true, clipMap: ASTRO_MAP, faceFlip: true,
+        tints: {
+          SciFi_Main: { color: 0xd8a72c, metalness: 0.75, roughness: 0.3 },   // gold plates
+          SciFi_MainDark: { color: 0x1c2244, metalness: 0.6, roughness: 0.45 }, // navy undersuit
+          SciFi_Light: { color: 0xbfb391, metalness: 0.55, roughness: 0.4 },  // warm bone, no bloom
+          SciFi_Light_Accent: { color: 0x1a9ec0, emissive: 0x00c8ee, emissiveIntensity: 0.3 },
+          Grey: { color: 0x0a1a2a, emissive: 0x00e0ff, emissiveIntensity: 0.4 }, // visor glow
+        },
+      })
+    : makeCaptain();
   scene.add(rig.group);
   // suit lamp — keeps the Captain readable through the deep night
   const suitLamp = new THREE.PointLight(0x66d9ff, 0.6, 10, 1.6);
   suitLamp.position.set(0, 0.2, 0.5);
   rig.bones.chest.add(suitLamp);
 
-  // spawn: crash site
+  // spawn: crash-site pad edge, looking down the road to the market
+  // (offset so the camera boom never starts inside the wreck)
   const spawnDir = planet.districts[0].dir.clone();
+  {
+    const sd = spawnDir.clone().multiplyScalar(0.995).addScaledVector(new THREE.Vector3(0, 1, 0), 0.06).normalize();
+    spawnDir.copy(sd);
+  }
   const state = {
     pos: planet.surfacePoint(spawnDir).addScaledVector(spawnDir, 0.2),
     vel: new THREE.Vector3(),
@@ -65,7 +84,13 @@ export function createPlayer({ scene, camera, planet, hud, audio, fx, transit })
   };
   {
     const up = state.pos.clone().normalize();
-    state.heading.crossVectors(up, new THREE.Vector3(1, 0, 0)).normalize();
+    // face the first street (toward the market road waypoint)
+    const target = planet.surfacePoint(new THREE.Vector3(
+      Math.cos(10 * 0.01745) * Math.cos(14 * 0.01745),
+      Math.sin(10 * 0.01745),
+      Math.cos(10 * 0.01745) * Math.sin(14 * 0.01745)));
+    state.heading.copy(target).sub(state.pos);
+    state.heading.addScaledVector(up, -state.heading.dot(up)).normalize();
     if (!state.heading.lengthSq()) state.heading.set(0, 0, 1);
   }
 
@@ -267,8 +292,8 @@ export function createPlayer({ scene, camera, planet, hud, audio, fx, transit })
     const thrust = keys.b ? 42 : 24;
     if (keys.w) state.vel.addScaledVector(_fwd, thrust * dt);
     if (keys.s) state.vel.addScaledVector(_fwd, -thrust * 0.6 * dt);
-    if (keys.a) state.vel.addScaledVector(_right, -thrust * 0.5 * dt);
-    if (keys.d) state.vel.addScaledVector(_right, thrust * 0.5 * dt);
+    if (keys.a) state.vel.addScaledVector(_right, thrust * 0.5 * dt);
+    if (keys.d) state.vel.addScaledVector(_right, -thrust * 0.5 * dt);
     state.vel.multiplyScalar(Math.max(0, 1 - (keys.x ? 3.2 : 0.9) * dt));
     if (!flying) {
       // speeder: glued near the deck
@@ -422,8 +447,9 @@ export function createPlayer({ scene, camera, planet, hud, audio, fx, transit })
     state.strafeDir = 0;
     if (keys.w) _wish.add(state.heading);
     if (keys.s) _wish.addScaledVector(state.heading, -1);
-    if (keys.a) { _wish.addScaledVector(_right, -1); state.strafeDir = -1; }
-    if (keys.d) { _wish.add(_right); state.strafeDir = 1; }
+    // NB: _right is the RIG's +x (screen-left); strafe signs account for it
+    if (keys.a) { _wish.add(_right); state.strafeDir = -1; }
+    if (keys.d) { _wish.addScaledVector(_right, -1); state.strafeDir = 1; }
     const hasInput = _wish.lengthSq() > 0;
     if (hasInput) _wish.normalize();
 
@@ -485,7 +511,7 @@ export function createPlayer({ scene, camera, planet, hud, audio, fx, transit })
             state.vel.addScaledVector(_v2, 0.6 * dt * 10);
             const cur = state.vel.dot(state.heading);
             if (cur < P.wallRunSpeed) state.vel.addScaledVector(state.heading, (P.wallRunSpeed - cur) * 0.5);
-            if (state.flip === 0 && state.roll === 0) rig.play(side < 0 ? 'wallrunL' : 'wallrunR', { fade: 0.12 });
+            if (state.flip === 0 && state.roll === 0) rig.play(side < 0 ? 'wallrunR' : 'wallrunL', { fade: 0.12 });
           }
           break;
         }
@@ -605,7 +631,17 @@ export function createPlayer({ scene, camera, planet, hud, audio, fx, transit })
     const len = toCam.length();
     toCam.normalize();
     const hit = planet.probe(eye, toCam, len + 0.3);
-    if (hit && hit.distance < len) want.copy(eye).addScaledVector(toCam, Math.max(0.6, hit.distance - 0.3));
+    if (hit && hit.distance < len) {
+      const pulled = Math.max(1.3, hit.distance - 0.3);
+      want.copy(eye).addScaledVector(toCam, pulled);
+      // blocked hard → rise above the obstruction for an over-shoulder view
+      const blocked = 1 - pulled / len;
+      want.addScaledVector(_up, blocked * 3.2);
+      const hit2 = planet.probe(eye, _v2.copy(want).sub(eye).normalize(), len + 0.5);
+      if (hit2 && hit2.distance < want.distanceTo(eye)) {
+        want.copy(eye).addScaledVector(_v2, Math.max(1.1, hit2.distance - 0.25));
+      }
+    }
     if (!camInit) { camPos.copy(want); camInit = true; }
     camPos.lerp(want, 1 - Math.pow(0.0001, dt));
     camera.position.copy(camPos);

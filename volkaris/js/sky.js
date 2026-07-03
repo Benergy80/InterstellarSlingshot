@@ -177,8 +177,8 @@ export function buildSky(scene, renderer) {
       sun.intensity = lerp(0.12, 2.6, day);
       sun.color.setHSL(lerp(0.78, 0.09, day), lerp(0.6, 0.55, day), lerp(0.6, 0.62, day));
 
-      hemi.intensity = lerp(0.55, 0.6, day);
-      amb.intensity = lerp(0.95, 0.42, day);
+      hemi.intensity = lerp(0.75, 0.6, day);
+      amb.intensity = lerp(1.35, 0.42, day);
 
       scene.fog.color.copy(fogNight).lerp(fogDay, day);
       atmoUniforms.uDay.value = day;

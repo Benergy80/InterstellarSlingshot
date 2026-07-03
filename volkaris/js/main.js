@@ -70,13 +70,17 @@ let planet, sky, fx, npcs, player, transit;
 
 async function loadModels() {
   const loader = new GLTFLoader();
-  const names = ['Player', 'Freighter'];
-  const out = {};
+  const out = { kay: {} };
+  const shipJobs = ['Player', 'Freighter'].map(n => new Promise((res) => {
+    loader.load(`../models/${n}.glb`, (g) => { out[n] = g.scene; res(); }, undefined, () => res());
+  }));
+  // KayKit Adventurers (CC0) — pro rigs + 75 animation clips each
+  const kayJobs = ['Astronaut', 'Rogue_Hooded', 'Rogue', 'Mage', 'Barbarian'].map(n => new Promise((res) => {
+    loader.load(`assets/${n}.glb`, (g) => { out.kay[n] = g; res(); }, undefined, () => res());
+  }));
   await Promise.race([
-    Promise.all(names.map(n => new Promise((res) => {
-      loader.load(`../models/${n}.glb`, (g) => { out[n] = g.scene; res(); }, undefined, () => res());
-    }))),
-    new Promise(res => setTimeout(res, 6000)),
+    Promise.all([...shipJobs, ...kayJobs]),
+    new Promise(res => setTimeout(res, 12000)),
   ]);
   return out;
 }
@@ -105,9 +109,9 @@ async function boot() {
 
   hud.setProgress(0.85, 'WAKING THE LOCALS');
   await frame();
-  npcs = buildNPCs(scene, planet, fx, audio, hud);
+  npcs = buildNPCs(scene, planet, fx, audio, hud, models);
 
-  player = createPlayer({ scene, camera, planet, hud, audio, fx, transit });
+  player = createPlayer({ scene, camera, planet, hud, audio, fx, transit, models });
   fx.bindCombat(npcs, player);
 
   hud.setProgress(0.95, 'DROP POD AWAY');
@@ -130,11 +134,11 @@ function animate() {
   fpsEMA += (1 / Math.max(rawDt, 1e-4) - fpsEMA) * 0.04;
 
   if (planet && player && !player.state.paused) {
-    elapsed += dt;
+    if (player.state.started) elapsed += dt;   // dawn holds until you deploy
     planet.uTime.value = elapsed;
     planet.update(dt, elapsed);
     const dayF = sky.update(elapsed, player.state.pos, bloom, planet.group.children[1]?.material);
-    player.suitLamp.intensity = 0.35 + sky.night * 1.5;
+    player.suitLamp.intensity = 0.35 + sky.night * 2.4;
     player.update(dt, elapsed);
     transit.update(dt, elapsed, player.state.pos);
     npcs.update(dt, elapsed, player);

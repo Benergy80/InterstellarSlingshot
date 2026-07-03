@@ -19,12 +19,22 @@
 import * as THREE from 'three';
 import { C, NEON, mulberry32, pick, clamp, lerp, sphDir } from './config.js';
 import { makeCivilian, makeMerchant, makeRobot, makeTrooper, makeVultyr, makeBrakkus, makeVex } from './rig.js';
+import { makeGLTFRig } from './gltfrig.js';
 
 const _v = new THREE.Vector3(), _v2 = new THREE.Vector3(), _up = new THREE.Vector3();
 const _fwd = new THREE.Vector3(), _right = new THREE.Vector3();
 const _q = new THREE.Quaternion(), _m = new THREE.Matrix4();
 
-export function buildNPCs(scene, planet, fx, audio, hud) {
+export function buildNPCs(scene, planet, fx, audio, hud, models = {}) {
+  const kay = models.kay ?? {};
+  const civTints = [0xff7ad0, 0x7ad0ff, 0xffd07a, 0x9dff9a, 0xc09aff, 0xffa08a];
+  const makeCiv = (rnd2) => {
+    const src = pick(rnd2, [kay.Rogue_Hooded, kay.Rogue, kay.Barbarian].filter(Boolean));
+    return src ? makeGLTFRig(src, { tint: pick(rnd2, civTints), scale: 0.7 + rnd2() * 0.08 }) : makeCivilian(rnd2);
+  };
+  const makeMerch = (rnd2) => kay.Mage
+    ? makeGLTFRig(kay.Mage, { tint: 0xffc890, scale: 0.74 })
+    : makeMerchant(rnd2);
   const rnd = mulberry32(C.SEED + 77);
   const list = [];
 
@@ -93,12 +103,12 @@ export function buildNPCs(scene, planet, fx, audio, hud) {
 
   // market: merchants at stalls + strolling civilians + a robot porter
   for (let i = 0; i < 3; i++) {
-    const m = addNPC('merchant', makeMerchant(rnd), sphDir(D.market.lat - 2 + i * 2.2, D.market.lon - 10 + i * 3.2),
+    const m = addNPC('merchant', makeMerch(rnd), sphDir(D.market.lat - 2 + i * 2.2, D.market.lon - 10 + i * 3.2),
       { fixed: true, clip: i === 1 ? 'wave' : 'lean', name: 'merchant' });
     m.rig.group.rotateY(rnd() * 6.28);
   }
   for (let i = 0; i < 5; i++) {
-    addNPC('civ', makeCivilian(rnd), sphDir(D.market.lat + (rnd() - 0.5) * 8, D.market.lon + (rnd() - 0.5) * 10),
+    addNPC('civ', makeCiv(rnd), sphDir(D.market.lat + (rnd() - 0.5) * 8, D.market.lon + (rnd() - 0.5) * 10),
       { loop: makeLoop(D.market.lat, D.market.lon, 9), speed: 1.8 + rnd(), name: 'civ' });
   }
   addNPC('robot', makeRobot(rnd), sphDir(D.market.lat + 3, D.market.lon + 4),
@@ -106,7 +116,7 @@ export function buildNPCs(scene, planet, fx, audio, hud) {
 
   // the circuit: night crowd + robots
   for (let i = 0; i < 4; i++) {
-    addNPC('civ', makeCivilian(rnd), sphDir(D.circuit.lat + (rnd() - 0.5) * 8, D.circuit.lon + (rnd() - 0.5) * 10),
+    addNPC('civ', makeCiv(rnd), sphDir(D.circuit.lat + (rnd() - 0.5) * 8, D.circuit.lon + (rnd() - 0.5) * 10),
       { loop: makeLoop(D.circuit.lat, D.circuit.lon, 8), speed: 1.6 + rnd() * 0.8 });
   }
   for (let i = 0; i < 2; i++) {
@@ -116,14 +126,14 @@ export function buildNPCs(scene, planet, fx, audio, hud) {
 
   // downtown: commuters
   for (let i = 0; i < 4; i++) {
-    addNPC('civ', makeCivilian(rnd), sphDir(D.downtown.lat + (rnd() - 0.5) * 10, D.downtown.lon + (rnd() - 0.5) * 12),
+    addNPC('civ', makeCiv(rnd), sphDir(D.downtown.lat + (rnd() - 0.5) * 10, D.downtown.lon + (rnd() - 0.5) * 12),
       { loop: makeLoop(D.downtown.lat, D.downtown.lon, 10), speed: 2.4 + rnd() });
   }
   addNPC('robot', makeRobot(rnd), sphDir(D.downtown.lat - 4, D.downtown.lon + 2),
     { loop: makeLoop(D.downtown.lat, D.downtown.lon, 13), speed: 3.1 });
 
   // dunes: the saloon keeper
-  addNPC('merchant', makeMerchant(rnd), sphDir(D.dunes.lat + 2, D.dunes.lon + 3.4),
+  addNPC('merchant', makeMerch(rnd), sphDir(D.dunes.lat + 2, D.dunes.lon + 3.4),
     { fixed: true, clip: 'lean', name: 'saloon keeper' });
 
   // pyramid: trooper patrols + BRAKKUS on the processional
