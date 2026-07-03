@@ -96,7 +96,7 @@ export function makeGLTFRig(gltf, { tint = null, tints = null, scale = 0.75, bla
   const group = new THREE.Group();
   group.add(root);
   root.scale.setScalar(scale);
-  if (faceFlip) root.rotation.y = Math.PI;   // Quaternius rigs face -Z; ours face +Z
+  if (faceFlip) root.rotation.y = Math.PI;   // for rigs authored facing -Z (Quaternius Astronaut faces +Z — no flip)
 
   // clone + tint materials (KayKit uses one gradient atlas)
   root.traverse(o => {

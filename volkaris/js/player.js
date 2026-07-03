@@ -37,7 +37,7 @@ export function createPlayer({ scene, camera, planet, hud, audio, fx, transit, m
       })
     : models?.kay?.Astronaut
     ? makeGLTFRig(models.kay.Astronaut, {
-        scale: 1.0, withBlaster: true, clipMap: ASTRO_MAP, faceFlip: true,
+        scale: 1.0, withBlaster: true, clipMap: ASTRO_MAP,
         tints: {
           SciFi_Main: { color: 0xd8a72c, metalness: 0.75, roughness: 0.3 },   // gold plates
           SciFi_MainDark: { color: 0x1c2244, metalness: 0.6, roughness: 0.45 }, // navy undersuit
@@ -47,6 +47,10 @@ export function createPlayer({ scene, camera, planet, hud, audio, fx, transit, m
         },
       })
     : makeCaptain();
+  // blaster barrel alignment: the Astronaut wrist bone's +Z points out the
+  // side of the fist — this offset (measured in the raised shooting pose)
+  // lays the barrel along the arm's line of fire
+  if (rig.setGunRot) rig.setGunRot(-1.623, 0.166, 1.751);
   scene.add(rig.group);
   // suit lamp — keeps the Captain readable through the deep night
   const suitLamp = new THREE.PointLight(0x66d9ff, 0.6, 10, 1.6);

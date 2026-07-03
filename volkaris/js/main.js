@@ -20,7 +20,7 @@ import { createPlayer } from './player.js';
 import { createHUD } from './hud.js';
 import { createAudio } from './audio.js';
 
-const VK_BUILD = 'VOLKARIS build 2026-07-03d · peaks, caves, lock-on, Space=jump';
+const VK_BUILD = 'VOLKARIS build 2026-07-03e · facing + blaster grip fixed';
 console.log('%c' + VK_BUILD, 'color:#ff2fd6;font-weight:bold;font-size:14px');
 
 // ── renderer ──
