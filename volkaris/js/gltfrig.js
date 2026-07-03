@@ -195,18 +195,26 @@ export function makeGLTFRig(gltf, { tint = null, tints = null, scale = 0.75, bla
     }
   });
 
-  // optional sidearm in the weapon slot.
-  // NB: some rigs (Quaternius) bake big unit scales into the armature —
-  // measure the hand bone's WORLD scale and cancel it exactly, or the
-  // gun becomes a building-sized slab wrapping the camera.
+  // optional sidearm. NOT parented to the hand bone: armatures bake odd
+  // unit scales AND animation clips can carry bone-scale tracks, which
+  // turn a parented prop into a glowing surfboard. Instead the gun is a
+  // sibling of the rig that COPIES the hand's world position/rotation
+  // every frame at a locked scale of 1.
   let blaster = null;
+  const _bm = new THREE.Matrix4(), _bp = new THREE.Vector3(), _bq = new THREE.Quaternion(), _bs = new THREE.Vector3();
+  const gunRot = new THREE.Quaternion();
   if (withBlaster && bones.handR) {
     blaster = makeBlaster(blasterHex);
-    group.updateMatrixWorld(true);
-    const ws = new THREE.Vector3();
-    bones.handR.getWorldScale(ws);
-    blaster.scale.setScalar(1 / Math.max(ws.x, 1e-4));
-    bones.handR.add(blaster);
+    group.add(blaster);
+  }
+  function syncBlaster() {
+    if (!blaster) return;
+    bones.handR.updateWorldMatrix(true, false);
+    _bm.copy(group.matrixWorld).invert().multiply(bones.handR.matrixWorld);
+    _bm.decompose(_bp, _bq, _bs);
+    blaster.position.copy(_bp);
+    blaster.quaternion.copy(_bq).multiply(gunRot);
+    blaster.scale.setScalar(1);
   }
 
   return {
@@ -223,14 +231,16 @@ export function makeGLTFRig(gltf, { tint = null, tints = null, scale = 0.75, bla
       }
     },
     kickRecoil() { state.recoil = 1; },
+    setGunRot(x, y, z) { gunRot.setFromEuler(new THREE.Euler(x, y, z)); },
     update(dt) {
       mixer.update(dt);
-      // aim overlay: lean the spine/head toward the crosshair pitch
+      // aim overlay FIRST (the gun must sync to the post-lean pose)
       if (state.aimW > 0.01 && bones.chest) {
         const lean = state.aimPitch * 0.5 * state.aimW;
         bones.chest.rotation.x += -lean;
         if (bones.head) bones.head.rotation.x += -state.aimPitch * 0.3 * state.aimW;
       }
+      syncBlaster();
       state.recoil = Math.max(0, state.recoil - dt * 6);
     },
     state,
