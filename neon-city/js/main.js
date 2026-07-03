@@ -22,7 +22,6 @@ import { createPlayer } from './player.js';
 import { createFX } from './fx.js';
 import { createHUD } from './hud.js';
 import { createAudio } from './audio.js';
-import { InkPass, makeToonClouds } from './ink.js';
 
 // ── build stamp (so we can confirm which code is actually loaded) ──
 const NC_BUILD = 'NC-2287 build 2026-06-13u · monorail chase-cam (see the car move)';
@@ -44,33 +43,15 @@ scene.fog = new THREE.FogExp2(C.FOG_COLOR, C.FOG_DENSITY);
 const camera = new THREE.PerspectiveCamera(72, innerWidth / innerHeight, 0.1, C.CAM_FAR);
 camera.position.set(6, 1.85, 42);
 
-// ── composer: Render/Ink → UnrealBloom → Output (must be last) ──
-// Ink pass is the Messenger-style outline+cel pass (see js/ink.js).
-// It stands in for the RenderPass, so ink lines feed into bloom too.
+// ── composer: Render → UnrealBloom → Output (must be last) ──
 const composer = new EffectComposer(renderer);
-const renderPass = new RenderPass(scene, camera);
-const inkPass = new InkPass(scene, camera);
-inkPass.needsSwap = true;
-composer.addPass(renderPass);
+composer.addPass(new RenderPass(scene, camera));
 const bloom = new UnrealBloomPass(
   new THREE.Vector2(innerWidth, innerHeight),
   C.BLOOM.strength, C.BLOOM.radius, C.BLOOM.threshold
 );
 composer.addPass(bloom);
 composer.addPass(new OutputPass());
-
-// INK+CEL (2) → INK (1) → OFF (0). Starts full manga.
-let inkMode = 2;
-function applyInkMode() {
-  composer.passes[0] = inkMode > 0 ? inkPass : renderPass;
-  inkPass.uniforms.uCel.value = inkMode === 2 ? 0.30 : 0.0;
-}
-function cycleInk() {
-  inkMode = (inkMode + 2) % 3;
-  applyInkMode();
-  return ['INK OFF', 'INK LINES', 'INK + CEL'][inkMode];
-}
-applyInkMode();
 
 addEventListener('resize', () => {
   camera.aspect = innerWidth / innerHeight;
@@ -121,7 +102,6 @@ async function boot() {
   hud.setProgress(0.2, 'RAISING THE CITY GRID');
   await frame();
   world = buildWorld(scene, renderer);
-  makeToonClouds(scene, world.uTime);   // posterized drifting clouds (Messenger sky trick)
 
   hud.setProgress(0.45, 'REQUESTING SHIPS FROM ORBIT');
   const models = await loadModels();
@@ -153,7 +133,7 @@ async function boot() {
   fx = createFX(scene, camera, world, audio);
   fx._traffic = traffic;
 
-  player = createPlayer({ camera, scene, world, traffic, fx, hud, audio, onPauseToggle, onInkCycle: cycleInk });
+  player = createPlayer({ camera, scene, world, traffic, fx, hud, audio, onPauseToggle });
   fx._player = player;
   fx._hud = hud;
 
@@ -166,7 +146,7 @@ async function boot() {
   );
 
   // dev/debug handle (also handy for the mothergame's console-driven tinkering)
-  window.NC = { player, world, traffic, fx, scene, camera, renderer, bloom, ink: inkPass, cycleInk };
+  window.NC = { player, world, traffic, fx, scene, camera, renderer, bloom };
 
   // initial nav target → the Spire deck (also seeds the marker UI)
   player.state.targetIdx = world.pois.findIndex(p => p.name.includes('SPIRE'));
