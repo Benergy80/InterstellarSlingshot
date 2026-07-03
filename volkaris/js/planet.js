@@ -503,9 +503,9 @@ export function buildPlanet(scene, models = {}) {
     if (h > 6 && rnd() < 0.35) {   // water tower
       const ox = (rnd() - 0.5) * w * 0.4, oz = (rnd() - 0.5) * d * 0.4;
       const tank = new THREE.CylinderGeometry(0.7, 0.7, 1.3, 7);
-      addSolid(T(tank, ox, h + 1.55, oz), frame.clone(), 0x3a3060, { collide: false });
+      addSolid(T(tank, ox, h + 1.55, oz), frame.clone(), 0x3a3060);
       const cone2 = new THREE.ConeGeometry(0.75, 0.5, 7);
-      addSolid(T(cone2, ox, h + 2.45, oz), frame.clone(), 0x2a2450, { collide: false });
+      addSolid(T(cone2, ox, h + 2.45, oz), frame.clone(), 0x2a2450);
       for (let l = 0; l < 3; l++) {
         const a2 = l / 3 * Math.PI * 2;
         addSolid(T(box(0.09, 0.95, 0.09), ox + Math.cos(a2) * 0.5, h + 0.48, oz + Math.sin(a2) * 0.5),
@@ -513,7 +513,7 @@ export function buildPlanet(scene, models = {}) {
       }
     } else if (h > 4 && rnd() < 0.4) {   // AC unit + fan ring
       const ox = (rnd() - 0.5) * w * 0.45, oz = (rnd() - 0.5) * d * 0.45;
-      addSolid(T(box(1.1, 0.7, 0.9), ox, h + 0.35, oz), frame.clone(), 0x39325e, { collide: false });
+      addSolid(T(box(1.1, 0.7, 0.9), ox, h + 0.35, oz), frame.clone(), 0x39325e);
       const fan = new THREE.CylinderGeometry(0.32, 0.32, 0.12, 8);
       addSolid(T(fan, ox, h + 0.76, oz), frame.clone(), 0x1c1838, { collide: false });
     }
@@ -555,8 +555,8 @@ export function buildPlanet(scene, models = {}) {
     if (rail) {
       addGlowViaMatrix(T(box(0.06, 0.06, len), width / 2, 0.55, 0), m.clone(), NEON.cyan, 0.9);
       addGlowViaMatrix(T(box(0.06, 0.06, len), -width / 2, 0.55, 0), m.clone(), NEON.magenta, 0.9);
-      addSolid(T(box(0.05, 0.55, 0.05), width / 2, 0.27, len / 2 - 0.1), m.clone(), 0x222244, { collide: false });
-      addSolid(T(box(0.05, 0.55, 0.05), -width / 2, 0.27, -len / 2 + 0.1), m.clone(), 0x222244, { collide: false });
+      addSolid(T(box(0.05, 0.55, 0.05), width / 2, 0.27, len / 2 - 0.1), m.clone(), 0x222244);
+      addSolid(T(box(0.05, 0.55, 0.05), -width / 2, 0.27, -len / 2 + 0.1), m.clone(), 0x222244);
     }
   }
   function addGlowViaMatrix(geo, m, hex, boost) {
@@ -623,9 +623,9 @@ export function buildPlanet(scene, models = {}) {
     for (let i = 0; i < 10; i++) {
       const f = frameAt(anchor.lat - 3 + rnd() * 6, anchor.lon - 14 + i * 3.4, (rnd() * 40 - 20));
       addSolid(T(box(2.4, 1.0, 1.4), 0, 0.5, 0), f.clone(), pick(rnd, [0x5c2a8a, 0x2a5c8a, 0x8a2a62]), { jitter: 0.1 });
-      addSolid(T(box(2.8, 0.12, 1.9), 0, 2.05, 0.15, 0, -0.16), f.clone(), pick(rnd, [0xff7a1a, 0xff2fd6, 0x00f6ff]) , { collide: false });
-      addSolid(T(box(0.1, 2.0, 0.1), -1.28, 1.0, 0.8), f.clone(), 0x222244, { collide: false });
-      addSolid(T(box(0.1, 2.0, 0.1), 1.28, 1.0, 0.8), f.clone(), 0x222244, { collide: false });
+      addSolid(T(box(2.8, 0.12, 1.9), 0, 2.05, 0.15, 0, -0.16), f.clone(), pick(rnd, [0xff7a1a, 0xff2fd6, 0x00f6ff]));
+      addSolid(T(box(0.1, 2.0, 0.1), -1.28, 1.0, 0.8), f.clone(), 0x222244);
+      addSolid(T(box(0.1, 2.0, 0.1), 1.28, 1.0, 0.8), f.clone(), 0x222244);
       if (rnd() < 0.7) addGlow(T(box(1.6, 0.3, 0.08), 0, 1.75, 0.9), f.clone(), pick(rnd, NEON_LIST), 1.2);
     }
     const gate = textSign('SCRAP MARKET', { fg: hexCss(NEON.amber) });
@@ -1462,7 +1462,7 @@ export function buildPlanet(scene, models = {}) {
     const off = (rnd() - 0.5) * 3;
     const f = frameAt(lat + off * 0.2, lon + (rnd() - 0.5) * 0.8, rnd() * 360);
     if (rnd() < 0.6) {   // neon lamp post
-      addSolid(T(box(0.14, 3.4, 0.14), 2.2, 1.7, 0), f.clone(), 0x222244, { collide: false });
+      addSolid(T(box(0.14, 3.4, 0.14), 2.2, 1.7, 0), f.clone(), 0x222244);
       addGlow(T(box(0.5, 0.16, 0.16), 2.2, 3.4, 0), f.clone(), pick(rnd, NEON_LIST), 1.3);
     } else {             // scrap pile / crate
       addSolid(T(box(0.8 + rnd(), 0.6 + rnd() * 0.6, 0.8 + rnd()), 2.6, 0.4, 0, rnd()), f.clone(),
@@ -1587,14 +1587,14 @@ export function buildPlanet(scene, models = {}) {
     }
     // broken lintel ring + cracked dome over the pillars
     addSolid(T(new THREE.TorusGeometry(1.62, 0.14, 6, 14, Math.PI * 1.55), 0, 2.42, 0, 0.7, Math.PI / 2), f0.clone(), 0x8f84ae);
-    addSolid(T(new THREE.SphereGeometry(1.55, 10, 6, 0, Math.PI * 1.5, 0, Math.PI / 2), 0, 2.46, 0, 2.3), f0.clone(), 0x877cab, { collide: false });
+    addSolid(T(new THREE.SphereGeometry(1.55, 10, 6, 0, Math.PI * 1.5, 0, Math.PI / 2), 0, 2.46, 0, 2.3), f0.clone(), 0x877cab);
     // the sigil — a glowing ring set into the plinth
     addGlow(T(new THREE.TorusGeometry(0.6, 0.07, 6, 18), 0, 0.44, 0, 0, Math.PI / 2), f0.clone(), NEON.purple, 1.15);
     addGlow(T(box(0.52, 0.05, 0.1), 0, 0.44, 0), f0.clone(), NEON.purple, 1.15);
     // scrap-palms around the waterline
     for (const [pla, plo] of [[20.9, 135.6], [19.3, 134.9], [20.3, 133.4]]) {
       const pf = frameAt(pla, plo, irnd() * 360, 0.25);
-      addSolid(T(new THREE.CylinderGeometry(0.08, 0.14, 1.9, 5), 0.12, 0.95, 0, 0, 0, 0.16), pf.clone(), 0x6e5a48, { collide: false });
+      addSolid(T(new THREE.CylinderGeometry(0.08, 0.14, 1.9, 5), 0.12, 0.95, 0, 0, 0, 0.16), pf.clone(), 0x6e5a48);
       for (let b = 0; b < 5; b++) {
         const blade = box(0.16, 0.05, 1.25);
         blade.translate(0, 0, 0.58);                       // pivot at the inner end
@@ -1638,7 +1638,7 @@ export function buildPlanet(scene, models = {}) {
       const a = wr() * Math.PI * 2, d = (1.6 + wr() * 4.2) * s;
       addSolid(T(box((0.5 + wr() * 0.9) * s, 0.1, (0.4 + wr() * 0.8) * s),
         Math.cos(a) * d, 0.1, Math.sin(a) * d, wr() * Math.PI, 0, (wr() - 0.5) * 0.3),
-        frame.clone(), pick(wr, [0x4a5470, 0x59627f, 0x3c4560]), { jitter: 0.1, collide: false });
+        frame.clone(), pick(wr, [0x4a5470, 0x59627f, 0x3c4560]), { jitter: 0.1 });
     }
     // sparking bits
     addGlow(T(box(0.3 * s, 0.3 * s, 0.3 * s), 1.1 * s, 0.9 * s, 0.6 * s),

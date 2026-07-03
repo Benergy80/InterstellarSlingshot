@@ -55,6 +55,18 @@ export function buildDetails(scene, planet, audio, hud) {
   const rnd = mulberry32(C.SEED + 777);
   const { towerSpots, pathSamples, districts, terrainHeight, portInfo } = planet;
   const updates = [];   // fns(dt, t, playerPos, camera)
+  // instanced street props (dumpsters, vending machines) never bake into
+  // the collision BVH by traversal — invisible per-instance proxies here
+  // get registered via planet.addColliders so players, NPCs and BOLTS
+  // all treat them as solid
+  const propColliders = new THREE.Group();
+  function addPropCollider(geo, matrix) {
+    const m = new THREE.Mesh(geo);
+    m.matrixAutoUpdate = false;
+    m.matrix.copy(matrix);
+    m.visible = false;
+    propColliders.add(m);
+  }
 
   const byHeight = [...towerSpots].sort((a, b) => b.h - a.h);
   const distOf = key => districts.find(d => d.key === key);
@@ -499,6 +511,7 @@ export function buildDetails(scene, planet, audio, hud) {
       dummy.applyMatrix4(m);
       dummy.updateMatrix();
       dumps.setMatrixAt(i, dummy.matrix);
+      addPropCollider(dumpGeo, dummy.matrix);
       _v1.set(1.7, 1.15, 0.2).applyMatrix4(m);        // fire over the barrel
       pos[i * 6] = _v1.x; pos[i * 6 + 1] = _v1.y; pos[i * 6 + 2] = _v1.z;
       _v1.set(-2.6, 2.2, 1.4).applyMatrix4(m);        // red doorway glow
@@ -585,6 +598,7 @@ export function buildDetails(scene, planet, audio, hud) {
       dummy.applyMatrix4(m);
       dummy.updateMatrix();
       boxes.setMatrixAt(i, dummy.matrix);
+      addPropCollider(geo, dummy.matrix);
       dummy.translateY(1.05); dummy.translateZ(0.42);
       dummy.updateMatrix();
       panels.setMatrixAt(i, dummy.matrix);
@@ -1184,5 +1198,6 @@ export function buildDetails(scene, planet, audio, hud) {
     flash,                       // {value: 0..1} lightning flash level
     raining: () => rainOn,
     shake,                       // shake(amount 0..1) — melee hits, explosions
+    colliders: propColliders,    // register via planet.addColliders
   };
 }

@@ -230,6 +230,7 @@ export function makeGLTFRig(gltf, { tint = null, tints = null, scale = 0.75, bla
   // sibling of the rig that COPIES the hand's world position/rotation
   // every frame at a locked scale of 1.
   let blaster = null;
+  let blasterScale = 1;   // Brakkus carries an ARM CANNON, not a pistol
   const _bm = new THREE.Matrix4(), _bp = new THREE.Vector3(), _bq = new THREE.Quaternion(), _bs = new THREE.Vector3();
   const gunRot = new THREE.Quaternion();
   if (withBlaster && bones.handR) {
@@ -243,7 +244,7 @@ export function makeGLTFRig(gltf, { tint = null, tints = null, scale = 0.75, bla
     _bm.decompose(_bp, _bq, _bs);
     blaster.position.copy(_bp);
     blaster.quaternion.copy(_bq).multiply(gunRot);
-    blaster.scale.setScalar(1);
+    blaster.scale.setScalar(blasterScale);
   }
 
   return {
@@ -261,6 +262,7 @@ export function makeGLTFRig(gltf, { tint = null, tints = null, scale = 0.75, bla
     },
     kickRecoil() { state.recoil = 1; },
     setGunRot(x, y, z) { gunRot.setFromEuler(new THREE.Euler(x, y, z)); },
+    setBlasterScale(s) { blasterScale = s; },
     update(dt) {
       mixer.update(dt);
       // aim overlay FIRST (the gun must sync to the post-lean pose)

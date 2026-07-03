@@ -75,6 +75,68 @@ export function buildNPCs(scene, planet, fx, audio, hud, models = {}) {
     if (r.setGunRot) r.setGunRot(-1.623, 0.166, 1.751);
     return r;
   };
+  // signature props — fixed to the rig GROUP, never bone-parented
+  // (armature scale tracks turn parented props into building-sized
+  // slabs; the group tracks position+facing, which is all these need)
+  function addWings(rig, span = 2.6, hex = 0xd8e6f2) {
+    const wings = new THREE.Group();
+    const mat = new THREE.MeshStandardMaterial({ color: hex, metalness: 0.85, roughness: 0.25, side: THREE.DoubleSide });
+    for (const s of [-1, 1]) {
+      const wing = new THREE.Group();
+      for (let f = 0; f < 3; f++) {
+        const feather = new THREE.Mesh(new THREE.BoxGeometry(span * (0.55 - f * 0.12), 0.05, 0.5 - f * 0.1), mat);
+        feather.position.set(s * span * (0.28 + f * 0.2), f * 0.24, -f * 0.1);
+        feather.rotation.z = s * (0.28 + f * 0.16);
+        wing.add(feather);
+      }
+      const glow = new THREE.Mesh(new THREE.BoxGeometry(span * 0.5, 0.03, 0.06),
+        new THREE.MeshBasicMaterial({ color: new THREE.Color(NEON.magenta).multiplyScalar(1.2), toneMapped: false }));
+      glow.position.set(s * span * 0.35, 0.1, 0.26);
+      glow.rotation.z = s * 0.3;
+      wing.add(glow);
+      wings.add(wing);
+    }
+    wings.position.set(0, 1.55, -0.35);
+    rig.group.add(wings);
+    rig.group.userData.wings = wings;
+  }
+  function addArmCannon(rig, scale = 1.45) {
+    // pauldrons sell the bulk; the oversized blaster IS the cannon.
+    // Props attach to the unscaled GROUP — offsets must account for
+    // the rig's own scale or they pile up around the neck.
+    const mat = new THREE.MeshStandardMaterial({ color: 0x1d3a2e, metalness: 0.7, roughness: 0.35 });
+    for (const s of [-1, 1]) {
+      const pauldron = new THREE.Mesh(new THREE.SphereGeometry(0.36, 8, 6, 0, Math.PI * 2, 0, Math.PI / 2), mat);
+      pauldron.position.set(s * 0.5 * scale, 1.28 * scale, 0);
+      rig.group.add(pauldron);
+      const spike = new THREE.Mesh(new THREE.ConeGeometry(0.09, 0.5, 5), mat);
+      spike.position.set(s * 0.64 * scale, 1.42 * scale, 0);
+      spike.rotation.z = s * -0.7;
+      rig.group.add(spike);
+    }
+    if (rig.setBlasterScale) rig.setBlasterScale(2.1);
+  }
+  function addCrown(rig, scale = 1.55) {
+    const crown = new THREE.Group();
+    const mat = new THREE.MeshStandardMaterial({ color: 0x0c0812, metalness: 0.9, roughness: 0.2 });
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.34, 0.05, 5, 12), mat);
+    ring.rotation.x = Math.PI / 2;
+    crown.add(ring);
+    for (let i = 0; i < 5; i++) {
+      const a = i / 5 * Math.PI * 2;
+      const spike = new THREE.Mesh(new THREE.ConeGeometry(0.05, 0.34, 4), mat);
+      spike.position.set(Math.cos(a) * 0.34, 0.18, Math.sin(a) * 0.34);
+      crown.add(spike);
+    }
+    const gem = new THREE.Mesh(new THREE.OctahedronGeometry(0.11),
+      new THREE.MeshBasicMaterial({ color: new THREE.Color(NEON.magenta).multiplyScalar(1.4), toneMapped: false }));
+    gem.position.y = 0.34;
+    crown.add(gem);
+    crown.position.set(0, 2.02 * scale, 0);
+    rig.group.add(crown);
+    rig.group.userData.crown = crown;
+  }
+
   const rnd = mulberry32(C.SEED + 77);
   const list = [];
 
@@ -235,6 +297,7 @@ export function buildNPCs(scene, planet, fx, audio, hud, models = {}) {
       tints: astroTints({ main: 0x2c6a52, dark: 0x122018, accent: 0xff7a1a, visor: 0xffa04a }, 0.4),
     });
     if (r.setGunRot) r.setGunRot(-1.623, 0.166, 1.751);
+    addArmCannon(r);   // his signature: spiked pauldrons + the oversized cannon
     return r;
   };
   const brakkus = addNPC('brakkus', makeBrakkusRig(), sphDir(D.pyramid.lat - 18 + 34, D.pyramid.lon - 22),
@@ -250,10 +313,12 @@ export function buildNPCs(scene, planet, fx, audio, hud, models = {}) {
   // magenta furnace-glow seams, half a head taller than anyone alive.
   const makeVexRig = () => {
     if (!kay.Astronaut) return makeVex();
-    return makeGLTFRig(kay.Astronaut, {
+    const r = makeGLTFRig(kay.Astronaut, {
       scale: 1.55, clipMap: ASTRO_CIV_MAP,
       tints: astroTints({ main: 0x16101e, dark: 0x0a0610, accent: 0xff2fd6, visor: 0xff2fd6 }, 0.3),
     });
+    addCrown(r, 1.55);   // the Overlord's obsidian crown
+    return r;
   };
   const vex = addNPC('vex', makeVexRig(), D.pyramid.dir.clone(), {
     fixed: true, clip: 'sit', hp: 500, radius: 1.1,
@@ -271,9 +336,12 @@ export function buildNPCs(scene, planet, fx, audio, hud, models = {}) {
   // VULTYR — the flying general. Ben's Silver Sentinel model takes the
   // role: chrome biped circling the fortress (procedural wings rig as
   // fallback when the GLB is missing)
-  const makeVultyrRig = () => kay.Sentinel
-    ? makeGLTFRig(kay.Sentinel, { scale: 1.18, clipMap: SENTINEL_MAP })
-    : makeVultyr();
+  const makeVultyrRig = () => {
+    if (!kay.Sentinel) return makeVultyr();
+    const r = makeGLTFRig(kay.Sentinel, { scale: 1.18, clipMap: SENTINEL_MAP });
+    addWings(r, 3.2);   // the sky general gets his silver wings back
+    return r;
+  };
   const vultyr = addNPC('vultyr', makeVultyrRig(), sphDir(D.pyramid.lat + 10, D.pyramid.lon), {
     hp: 260, radius: 1.2, clip: 'fly', name: 'VULTYR — SKY GENERAL',
     fly: { angle: 0, height: 9, radius: 18, diveT: 0 },

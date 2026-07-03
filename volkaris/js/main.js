@@ -22,7 +22,7 @@ import { createDemo } from './demo.js';
 import { createHUD } from './hud.js';
 import { createAudio } from './audio.js';
 
-const VK_BUILD = 'VOLKARIS build 2026-07-03n · THE SPIRE, elevators, spaceport, Z-lock';
+const VK_BUILD = 'VOLKARIS build 2026-07-03p · learning pilot, solid props, wings back';
 console.log('%c' + VK_BUILD, 'color:#ff2fd6;font-weight:bold;font-size:14px');
 
 // ── renderer ──
@@ -100,6 +100,7 @@ async function boot() {
   hud.setProgress(0.5, 'LIGHTING THE STREETS');
   await frame();
   details = buildDetails(scene, planet, audio, hud);
+  if (details.colliders) planet.addColliders(details.colliders);   // street props are SOLID
 
   hud.setProgress(0.55, 'IGNITING THE SUN');
   await frame();
