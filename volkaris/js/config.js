@@ -40,10 +40,12 @@ export const C = {
     height: 1.8,
     gravity: 30,         // u/s² toward planet center
     walk: 6.2,
+    sprint: 9.6,         // W-W double-tap sprint (no energy cost)
     boost: 12.5,         // B sprint (NC scheme)
     boostDrain: 14,      // energy/s while boosting
     brakeDamping: 26.0,  // X hard brake
-    doubleTapMs: 300,    // W-W jump window (game-controls.js)
+    doubleTapMs: 300,    // W-W sprint window
+    camPitchHome: -0.08, // pitch the camera springs back to when the arrows let go
     strafeBank: 0.10,    // A/D lean, echoes the ship's banking
     // Arrow-key look — EXACT values from game-physics.js rotationalInertia
     rot: {

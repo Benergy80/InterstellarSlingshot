@@ -109,7 +109,7 @@ export function createPlayer({ scene, camera, planet, hud, audio, fx, transit, m
   let lockTarget = null;       // soft-lock: the enemy we're confronting
   const rotVel = { yaw: 0, pitch: 0 };   // the ship's rotational inertia
   const mouse = { x: innerWidth / 2, y: innerHeight / 2 };
-  let lastWTap = 0, wantJump = false;
+  let lastWTap = 0, wantJump = false, sprintHeld = false;
   let lastFire = 0;
 
   // ── input (NEON CITY scheme) ──
@@ -124,7 +124,7 @@ export function createPlayer({ scene, camera, planet, hud, audio, fx, transit, m
     if (k === 'w') {
       if (!e.repeat) {
         const now = performance.now();
-        if (now - lastWTap < P.doubleTapMs) wantJump = true;   // W-W hop / air flip
+        if (now - lastWTap < P.doubleTapMs) sprintHeld = true;   // W-W = sprint while W stays down
         lastWTap = now;
       }
       keys.w = true;
@@ -147,7 +147,7 @@ export function createPlayer({ scene, camera, planet, hud, audio, fx, transit, m
   function onKeyUp(e) {
     if (e.getModifierState) state.capsPrecision = e.getModifierState('CapsLock');
     const k = e.key.toLowerCase();
-    if (k === 'w') keys.w = false;
+    if (k === 'w') { keys.w = false; sprintHeld = false; }
     if (k === 'a') keys.a = false;
     if (k === 's') keys.s = false;
     if (k === 'd') keys.d = false;
@@ -161,7 +161,7 @@ export function createPlayer({ scene, camera, planet, hud, audio, fx, transit, m
   }
   document.addEventListener('keydown', onKeyDown);
   document.addEventListener('keyup', onKeyUp);
-  addEventListener('blur', () => { for (const k in keys) keys[k] = false; state.fireHeld = false; });
+  addEventListener('blur', () => { for (const k in keys) keys[k] = false; state.fireHeld = false; sprintHeld = false; });
 
   // mouse = free crosshair, click = fire (no pointer lock)
   document.addEventListener('mousemove', (e) => {
@@ -435,6 +435,13 @@ export function createPlayer({ scene, camera, planet, hud, audio, fx, transit, m
       _right.crossVectors(state.heading, _up).negate().normalize();
     }
     state.camPitch = clamp(state.camPitch + rotVel.pitch * f60, -1.15, 1.25);
+    // Fortnite-style: up/down arrows tilt the camera while held, then it
+    // springs smoothly back to the standard over-shoulder framing. Pilot
+    // mode keeps manual pitch — there it IS the flight control.
+    if (state.mode === 'walk' && !keys.up && !keys.down) {
+      rotVel.pitch *= Math.pow(0.02, dt);   // shed look-inertia fast once released
+      state.camPitch = lerp(state.camPitch, P.camPitchHome, 1 - Math.pow(0.08, dt));
+    }
 
     // ── transit modes take over movement entirely ──
     if (state.mode === 'ride') {
@@ -465,10 +472,14 @@ export function createPlayer({ scene, camera, planet, hud, audio, fx, transit, m
     const hasInput = _wish.lengthSq() > 0;
     if (hasInput) _wish.normalize();
 
-    // B boost drains the cell; X brake stops hard
+    // B boost drains the cell; W-W sprint is free; X brake stops hard
     const boosting = keys.b && state.energy > 1 && hasInput;
     if (boosting) state.energy = Math.max(0, state.energy - P.boostDrain * dt);
-    const maxSpeed = state.roll > 0 ? P.boost + P.rollBoost : (boosting ? P.boost : P.walk);
+    const sprinting = sprintHeld && keys.w;
+    const maxSpeed = state.roll > 0 ? P.boost + P.rollBoost
+      : boosting ? P.boost
+      : sprinting ? P.sprint
+      : P.walk;
 
     // ── flip / roll timers ──
     if (state.flip > 0) {
@@ -596,7 +607,7 @@ export function createPlayer({ scene, camera, planet, hud, audio, fx, transit, m
       if (state.grounded) {
         const sp = tangentVel.length();
         if (sp < 0.6) rig.play('idle', { fade: 0.22 });
-        else if (boosting && sp > P.walk + 1) rig.play('sprint');
+        else if ((boosting || sprinting) && sp > P.walk + 1) rig.play('sprint');
         else if (sp > P.walk * 0.55) rig.play('run');
         else rig.play('walk');
       } else if (rig.current() !== 'hover' || !keys.q) {
