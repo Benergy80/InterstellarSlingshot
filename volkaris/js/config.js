@@ -43,7 +43,10 @@ export const C = {
     walkSlow: 3.4,       // walk pace
     sprint: 9.6,         // (kept for tuning)
     boost: 12.5,         // B sprint (NC scheme)
-    jetThrust: 46,       // jetpack: net up = jetThrust - gravity
+    jetThrust: 52,       // jetpack: peak thrust (net up = thrust - gravity)
+    jetSpool: 0.3,       // seconds to full thrust (ignition ramp)
+    jetMaxRise: 13,      // terminal climb speed — no rocketing to orbit
+    jetVector: 0.5,      // fraction of thrust tiltable into WASD input
     boostDrain: 14,      // energy/s while boosting
     brakeDamping: 26.0,  // X hard brake
     doubleTapMs: 300,    // W-W sprint window

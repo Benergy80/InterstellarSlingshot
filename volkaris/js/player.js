@@ -82,7 +82,8 @@ export function createPlayer({ scene, camera, planet, hud, audio, fx, transit, m
       jetpack.add(fl);
       jetpack.userData.flames.push(fl);
     }
-    jetpack.position.set(0, 1.32, -0.34);
+    jetpack.scale.setScalar(0.4);            // sized to the suit, not the room
+    jetpack.position.set(0, 1.28, -0.22);
     rig.group.add(jetpack);
   }
 
@@ -117,6 +118,7 @@ export function createPlayer({ scene, camera, planet, hud, audio, fx, transit, m
     fireHeld: false,
     aimW: 0,
     melee: { kind: null, t: 0, hitDone: false, side: 0, cool: 0 },
+    jetArmed: false,     // CapsLock master switch
     capsPrecision: false,
     strafeDir: 0,
     mode: 'walk',        // walk | ride (monorail) | pilot (vehicle)
@@ -147,8 +149,18 @@ export function createPlayer({ scene, camera, planet, hud, audio, fx, transit, m
     if (!state.started) return;
     if (e.key === 'p' || e.key === 'P') { e.preventDefault(); state.paused = !state.paused; hud.showPause(state.paused); return; }
     if (state.paused || state.dead || state.boarding) return;
-    if (e.key === 'CapsLock') e.preventDefault();
-    if (e.getModifierState) state.capsPrecision = e.getModifierState('CapsLock');
+    // CAPSLOCK = jetpack master switch: ON is on, OFF is off.
+    // (macOS fires keydown only when engaging and keyup only when
+    // releasing, so both handlers read the modifier state.)
+    if (e.getModifierState) {
+      const armed = e.getModifierState('CapsLock');
+      if (armed !== state.jetArmed) {
+        state.jetArmed = armed;
+        hud.toast(armed ? 'JETPACK — ON' : 'JETPACK — OFF',
+          armed ? 'CapsLock engaged — burn while it lasts' : 'CapsLock released');
+        if (armed) audio.resume();
+      }
+    }
 
     const k = e.key.toLowerCase();
     if (k === 'w') {
@@ -189,7 +201,14 @@ export function createPlayer({ scene, camera, planet, hud, audio, fx, transit, m
     if (e.key === 'ArrowRight') { keys.right = true; e.preventDefault(); }
   }
   function onKeyUp(e) {
-    if (e.getModifierState) state.capsPrecision = e.getModifierState('CapsLock');
+    if (e.getModifierState) {
+      const armed = e.getModifierState('CapsLock');
+      if (armed !== state.jetArmed) {
+        state.jetArmed = armed;
+        hud.toast(armed ? 'JETPACK — ON' : 'JETPACK — OFF',
+          armed ? 'CapsLock engaged — burn while it lasts' : 'CapsLock released');
+      }
+    }
     const k = e.key.toLowerCase();
     if (k === 'w') keys.w = false;
     if (e.key === ' ') spaceHeld = false;
@@ -589,18 +608,36 @@ export function createPlayer({ scene, camera, planet, hud, audio, fx, transit, m
     state.vel.copy(tangentVel).addScaledVector(_up, radial);
 
     // ── gravity / jetpack / wall-run ──
+    // Jetpack physics: thrust is a FORCE with an ignition spool, not an
+    // anti-gravity switch. Momentum carries through release (ballistic
+    // arcs), part of the thrust vectors into your WASD input for real
+    // flight control, and climb speed terminates at jetMaxRise.
     let g = P.gravity;
     if (state.wall) g = P.wallRunGrav;
-    const jetting = (spaceHeld || keys.q) && !state.grounded && state.hoverFuel > 0 && state.flip === 0;
-    if (jetting) {
-      g -= P.jetThrust;
-      state.hoverFuel -= dt * 1.1;
-      if (rig.current() !== 'hover' && state.flip === 0) rig.play('hover', { fade: 0.15 });
+    // CapsLock (jetArmed) burns even from a standstill — it lifts you
+    // off the deck; Space/Q are hold-to-thrust and only work airborne
+    const wantJet = (state.jetArmed || ((spaceHeld || keys.q) && !state.grounded))
+      && state.hoverFuel > 0 && state.flip === 0;
+    const spoolWas = state.jetSpool ?? 0;
+    state.jetSpool = clamp(spoolWas + (wantJet ? dt / P.jetSpool : -dt / 0.15), 0, 1);
+    if (wantJet && spoolWas <= 0.01) {   // ignition
+      audio.sfx('jump');
+      state.vel.addScaledVector(_up, 1.4);
     }
-    // jetpack flames flicker while thrusting
+    if (state.jetSpool > 0.01 && state.hoverFuel > 0) {
+      const thrust = P.jetThrust * state.jetSpool;
+      // radial lift, cut once at terminal climb speed
+      if (state.vel.dot(_up) < P.jetMaxRise) g -= thrust;
+      else g = 0;
+      // thrust vectoring: lean the burn into the stick
+      if (hasInput) state.vel.addScaledVector(_wish, thrust * P.jetVector * dt);
+      state.hoverFuel -= dt * (0.45 + 0.65 * state.jetSpool);
+      if (wantJet && rig.current() !== 'hover' && state.flip === 0) rig.play('hover', { fade: 0.15 });
+    }
+    // flames scale with spool + flicker
     for (const fl of jetpack.userData.flames) {
-      fl.visible = jetting;
-      if (jetting) fl.scale.set(1, 0.8 + Math.random() * 0.5, 1);
+      fl.visible = state.jetSpool > 0.03;
+      if (fl.visible) fl.scale.set(1, state.jetSpool * (0.7 + Math.random() * 0.5), 1);
     }
     if (state.grounded) state.hoverFuel = Math.min(P.hoverMax, state.hoverFuel + dt * 0.8);
     state.vel.addScaledVector(_up, -g * dt);

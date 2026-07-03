@@ -451,7 +451,9 @@ export function buildNPCs(scene, planet, fx, audio, hud, models = {}) {
             friendly: false,
             color: npc.kind === 'brakkus' ? NEON.orange : NEON.red,
             speed: npc.kind === 'brakkus' ? 46 : 55,
-            damage: npc.kind === 'brakkus' ? 22 : 9,
+            // trimmed after demo-pilot playtests: 9/22 made the pyramid
+            // approach a meat grinder (3-5 deaths per run)
+            damage: npc.kind === 'brakkus' ? 18 : 7,
           });
           audio.sfx('laser');
         }
@@ -498,5 +500,5 @@ export function buildNPCs(scene, planet, fx, audio, hud, models = {}) {
     }
   }
 
-  return { list, update, hitTest, applyHit, vex, vultyr, brakkus };
+  return { list, drops, update, hitTest, applyHit, vex, vultyr, brakkus };
 }

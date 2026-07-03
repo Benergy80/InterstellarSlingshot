@@ -160,7 +160,14 @@ export function buildTransit(scene, planet, audio) {
       const segRun = run / segs, segRise = rise / segs;
       const segLen = Math.hypot(segRun, segRise) + 0.6;   // overlap seals seams
       const pitch = Math.atan2(segRise, segRun);
-      // one extra segment past the bottom buries the ramp foot in the street
+      // ramp endpoints for wayfinding (the demo pilot walks foot → top)
+      {
+        const aFoot = (6 + run) / RAIL_R;
+        const dF = circleAt(st.angle + aFoot);
+        const sF = _v3.crossVectors(_v2.copy(circleAt(st.angle + aFoot + 0.01)).sub(circleAt(st.angle + aFoot - 0.01)).normalize(), dF).normalize();
+        st.rampFoot = dF.clone().multiplyScalar(groundH + 0.4).addScaledVector(sF, 2.2);
+        st.rampTop = st.boardPos.clone();
+      }
       for (let i = 0; i <= segs; i++) {
         // arc-length along the rail from the platform end, at descending height
         const aOff = (6 + (i + 0.5) * segRun) / RAIL_R;

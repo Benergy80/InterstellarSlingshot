@@ -18,10 +18,11 @@ import { createFX } from './fx.js';
 import { buildTransit } from './transit.js';
 import { buildNPCs } from './npcs.js';
 import { createPlayer } from './player.js';
+import { createDemo } from './demo.js';
 import { createHUD } from './hud.js';
 import { createAudio } from './audio.js';
 
-const VK_BUILD = 'VOLKARIS build 2026-07-03i · jetpack, power drops, solid world';
+const VK_BUILD = 'VOLKARIS build 2026-07-03k · demo pilot, CapsLock jetpack, jet physics';
 console.log('%c' + VK_BUILD, 'color:#ff2fd6;font-weight:bold;font-size:14px');
 
 // ── renderer ──
@@ -67,7 +68,7 @@ addEventListener('resize', () => {
 // ── boot ──
 const hud = createHUD();
 const audio = createAudio();
-let planet, sky, fx, npcs, player, transit, details;
+let planet, sky, fx, npcs, player, transit, details, demo;
 
 async function loadModels() {
   const loader = new GLTFLoader();
@@ -119,13 +120,19 @@ async function boot() {
   player = createPlayer({ scene, camera, planet, hud, audio, fx, transit, models });
   player.bindTargets(npcs);
   fx.bindCombat(npcs, player);
+  demo = createDemo({ player, planet, transit, npcs, fx, hud, camera });
 
   hud.setProgress(0.95, 'DROP POD AWAY');
   await frame();
 
-  hud.ready(() => { audio.resume(); player.start(); });
+  hud.ready(() => {
+    audio.resume();
+    player.start();
+    // ?demo=1 boots straight into the demo pilot (playtest harness)
+    if (new URLSearchParams(location.search).get('demo')) setTimeout(() => demo.start(), 800);
+  });
 
-  window.VK = { planet, sky, fx, npcs, player, transit, details, scene, camera, renderer, bloom };
+  window.VK = { planet, sky, fx, npcs, player, transit, details, demo, scene, camera, renderer, bloom };
 }
 
 // ── main loop ──
@@ -143,6 +150,7 @@ function animate() {
     if (player.state.started) elapsed += dt;   // dawn holds until you deploy
     planet.uTime.value = elapsed;
     planet.update(dt, elapsed);
+    if (player.state.started) demo.update(dt, elapsed, fpsEMA);   // pilot steers before physics
     const dayF = sky.update(elapsed, player.state.pos, bloom, planet.group.children[1]?.material);
     player.suitLamp.intensity = 0.15 + sky.night * 1.2;
     player.update(dt, elapsed);
