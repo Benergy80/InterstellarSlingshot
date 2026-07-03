@@ -236,7 +236,10 @@ export function createPlayer({ scene, camera, planet, hud, audio, fx, transit, m
       if (n.rig && n.rig.play) n.rig.play('hit', { fade: 0.05, restart: true });
       connected = true;
     }
-    if (connected) audio.sfx('land');   // meaty impact thud
+    if (connected) {
+      audio.sfx('land');   // meaty impact thud
+      window.VK?.details?.shake?.(0.35);
+    }
   }
   function tryRoll() {
     if (!state.grounded || state.roll > 0 || state.paused || state.dead || state.boarding) return;
@@ -658,7 +661,10 @@ export function createPlayer({ scene, camera, planet, hud, audio, fx, transit, m
         const sp = tangentVel.length();
         const backing = keys.s && !keys.w;
         const strafing = state.strafeDir !== 0 && !keys.w && !keys.s;
-        if (sp < 0.6) rig.play('idle', { fade: 0.22 });
+        // no turn-in-place clip exists on this rig — a slow walk shuffle
+        // sells pivoting when yawing hard while stationary
+        if (sp < 0.6 && Math.abs(rotVel.yaw) > 0.006) rig.play('walk', { fade: 0.18, timeScale: 0.55 });
+        else if (sp < 0.6) rig.play('idle', { fade: 0.22 });
         else if ((boosting || sprinting) && sp > P.walk + 1) rig.play('sprint');
         else if (backing) rig.play('runback');
         else if (strafing) rig.play(state.strafeDir < 0 ? 'strafeL' : 'strafeR');

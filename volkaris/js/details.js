@@ -25,6 +25,9 @@ const _Y = new THREE.Vector3(0, 1, 0);
 const _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3();
 const _v4 = new THREE.Vector3();
 const _c1 = new THREE.Color();
+const _q1 = new THREE.Quaternion(), _q2 = new THREE.Quaternion();
+const _m4 = new THREE.Matrix4();
+const _AXZ = new THREE.Vector3(0, 0, 1);
 
 // ── tiny texture helpers (NC fx.js glow/streak) ──
 function glowTex(size, rgba) {
@@ -226,9 +229,10 @@ export function buildDetails(scene, planet, audio, hud) {
   }
 
   // ════════════ 3 · LED TICKER — one shared canvas, 20 boards + circuit megascreen ════════════
+  let ledTex;   // shared with the zeppelin marquee (§16)
   {
     const [lc, lctx] = makeCanvas(512, 128);
-    const ledTex = canvasTexture(lc);
+    ledTex = canvasTexture(lc);
     const msgs = [
       'ORBITAL LOOP ON TIME', 'VULTYR PATROL ADVISORY — SECTOR 4',
       'SPACEPORT LOCKDOWN LIFTED — PERMITS REQUIRED', 'CURFEW 22:00 BY ORDER OF VEX',
@@ -622,7 +626,387 @@ export function buildDetails(scene, planet, audio, hud) {
     }
   }
 
-  // ════════════ 12 · WEATHER — rain, lightning, storm cycle ════════════
+  // ════════════ 12 · HERO TOWER WINDOWS — GPU hashed panes on shell boxes ════════════
+  // NC makeTowerWindowMat, sphere-adapted: panes hash the tower's LOCAL
+  // coordinates (baked as attributes BEFORE the frame transform), so the
+  // grid stays axis-aligned to each building no matter how it sits on the
+  // ball. All 7 shells merge into ONE mesh / ONE material.
+  {
+    const shellGeos = [];
+    byHeight.slice(0, 7).forEach((s, k) => {
+      const g = new THREE.BoxGeometry(s.w + 0.3, s.h, s.d + 0.3);
+      g.translate(0, s.h / 2, 0);
+      // bake local-space position/normal + per-tower seed, then transform
+      g.setAttribute('aLocal', g.attributes.position.clone());
+      g.setAttribute('aLNorm', g.attributes.normal.clone());
+      const n = g.attributes.position.count, seed = new Float32Array(n).fill(k * 1.618 + 0.7);
+      g.setAttribute('aSeed', new THREE.BufferAttribute(seed, 1));
+      g.applyMatrix4(s.frame);
+      shellGeos.push(g);
+    });
+    const mat = new THREE.MeshStandardMaterial({ color: 0x1c2030, roughness: 0.45, metalness: 0.45 });
+    mat.onBeforeCompile = (shader) => {
+      shader.uniforms.uTime = planet.uTime;
+      shader.vertexShader = `
+        attribute vec3 aLocal; attribute vec3 aLNorm; attribute float aSeed;
+        varying vec3 vLPos; varying vec3 vLNorm; varying float vSeed;
+      ` + shader.vertexShader
+        .replace('#include <begin_vertex>', `
+          #include <begin_vertex>
+          vLPos = aLocal; vLNorm = aLNorm; vSeed = aSeed;
+        `);
+      shader.fragmentShader = `
+        uniform float uTime;
+        varying vec3 vLPos; varying vec3 vLNorm; varying float vSeed;
+        float nh2(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123); }
+      ` + shader.fragmentShader
+        .replace('#include <color_fragment>', `
+          #include <color_fragment>
+          diffuseColor.rgb *= (0.42 + 0.58 * smoothstep(0.0, 6.0, vLPos.y));
+        `)
+        .replace('#include <emissivemap_fragment>', `
+          #include <emissivemap_fragment>
+          {
+            float side = 1.0 - step(0.6, abs(vLNorm.y));
+            float fc = abs(vLNorm.x) > abs(vLNorm.z) ? vLPos.z : vLPos.x;
+            vec2 cuv = vec2(fc, vLPos.y) / vec2(1.5, 1.8);
+            vec2 id = floor(cuv); vec2 f = fract(cuv);
+            float inWin = step(0.2, f.x) * step(f.x, 0.8) * step(0.28, f.y) * step(f.y, 0.76);
+            float lit = step(0.45, nh2(id + vSeed * 13.7));
+            float hc = nh2(id * 1.7 + vSeed * 7.3);
+            vec3 wcol = hc < 0.32 ? vec3(1.0, 0.72, 0.38) : (hc < 0.85 ? vec3(0.45, 0.83, 1.0) : vec3(1.0, 0.35, 0.75));
+            float vary = 0.35 + 0.65 * nh2(id * 2.3 + vSeed * 3.1);
+            float fl = nh2(id + floor(uTime * 1.7) + vSeed);
+            float flicker = mix(1.0, step(0.22, fl), step(0.958, nh2(id * 3.1 + vSeed)));
+            float ground = step(1.6, vLPos.y);
+            totalEmissiveRadiance += inWin * lit * vary * flicker * wcol * 0.95 * side * ground;
+          }
+        `);
+    };
+    if (shellGeos.length) {
+      const shells = new THREE.Mesh(BufferGeometryUtils.mergeGeometries(shellGeos), mat);
+      shells.frustumCulled = false;
+      scene.add(shells);
+    }
+  }
+
+  // ════════════ 13 · PORT OPERATIONS — two ships cycling the pad ════════════
+  // parked → spool → ascend (local up) → cruise (dir rotates around a
+  // tangent axis, over the horizon) → await → descend back to the pad.
+  {
+    const engineTex = glowTex(96, 'rgba(140,210,255,1)');
+    function shipGeo() {
+      const hull = new THREE.CapsuleGeometry(0.6, 2.6, 4, 10);
+      hull.rotateX(Math.PI / 2);                       // nose +Z
+      const parts = [vcolor(hull, 0x3a4468, 1)];
+      for (const e of [-1, 1]) {
+        parts.push(vcolor(new THREE.BoxGeometry(1.9, 0.14, 1.0).translate(e * 1.1, 0, -1.15), 0x2a3252, 1));
+      }
+      parts.push(vcolor(new THREE.SphereGeometry(0.4, 10, 8).translate(0, 0.34, 1.15), 0x73e8ff, 1.3));
+      return BufferGeometryUtils.mergeGeometries(parts);
+    }
+    const shipMat = new THREE.MeshLambertMaterial({ vertexColors: true });
+    const ships = [];
+    [[6.5, 4], [-6, -5]].forEach(([ox, oz], i) => {
+      const padDir = offsetDir(portInfo.dir, ox, oz);
+      const baseR = terrainHeight(padDir) + 1.15;      // pad deck + skids
+      const qBase = new THREE.Quaternion().setFromRotationMatrix(surfaceMatrix(padDir, baseR, rnd() * 360));
+      const grp = new THREE.Group();
+      grp.add(new THREE.Mesh(shipGeo(), shipMat));
+      const eng = new THREE.Sprite(new THREE.SpriteMaterial({
+        map: engineTex, color: 0x8fd4ff, transparent: true, opacity: 0,
+        depthWrite: false, blending: THREE.AdditiveBlending,
+      }));
+      eng.scale.set(2.6, 1.3, 1);
+      eng.position.y = -0.55;
+      grp.add(eng);
+      grp.position.copy(padDir).multiplyScalar(baseR);
+      grp.quaternion.copy(qBase);
+      scene.add(grp);
+      ships.push({
+        grp, eng, padDir, baseR, qBase,
+        d: padDir.clone(), ax: new THREE.Vector3(), ang: 0, av: 0,
+        state: 'parked', t: 8 + rnd() * 16, yaw: 0, ph: rnd() * 9,
+      });
+    });
+    updates.push((dt, t) => {
+      for (const sh of ships) {
+        switch (sh.state) {
+          case 'parked':
+            sh.t -= dt;
+            if (sh.t <= 0) { sh.state = 'spool'; sh.t = 3.2; }
+            break;
+          case 'spool': {
+            sh.t -= dt;
+            const k = 1 - sh.t / 3.2;
+            sh.eng.material.opacity = k * 0.85;
+            sh.grp.position.copy(sh.padDir).multiplyScalar(sh.baseR + Math.sin(t * 30) * 0.04 * k);
+            if (sh.t <= 0) { sh.state = 'ascend'; sh.t = 0; }
+            break;
+          }
+          case 'ascend': {
+            sh.t += dt;
+            const k = Math.min(1, sh.t / 8), e = k * k * (3 - 2 * k);
+            sh.grp.position.copy(sh.padDir).multiplyScalar(sh.baseR + e * 26);
+            sh.yaw += dt * 0.15;
+            _q1.setFromAxisAngle(_Y, sh.yaw);
+            sh.grp.quaternion.copy(sh.qBase).multiply(_q1);
+            sh.eng.material.opacity = 0.85;
+            if (k >= 1) {
+              sh.state = 'cruise';
+              // random tangent axis: the ship arcs off over the horizon
+              const th = sh.ph;
+              _v1.set(-sh.padDir.z, 0, sh.padDir.x).normalize();        // east
+              _v2.crossVectors(_v1, sh.padDir).normalize();              // north
+              sh.ax.copy(_v1).multiplyScalar(Math.cos(th)).addScaledVector(_v2, Math.sin(th)).normalize();
+              sh.d.copy(sh.padDir);
+              sh.ang = 0; sh.av = 0;
+            }
+            break;
+          }
+          case 'cruise': {
+            sh.av = Math.min(0.14, sh.av + dt * 0.045);
+            sh.d.applyAxisAngle(sh.ax, sh.av * dt).normalize();
+            sh.ang += sh.av * dt;
+            sh.grp.position.copy(sh.d).multiplyScalar(sh.baseR + 26);
+            _v1.crossVectors(sh.ax, sh.d).normalize();                   // travel dir
+            _v2.crossVectors(sh.d, _v1);                                 // right = up × fwd
+            _m4.makeBasis(_v2, sh.d, _v1);
+            sh.grp.quaternion.setFromRotationMatrix(_m4);
+            sh.grp.quaternion.multiply(_q1.setFromAxisAngle(_AXZ, -0.18)); // bank
+            sh.eng.material.opacity = Math.max(0.3, sh.eng.material.opacity - dt * 0.4);
+            if (sh.ang > 2.1) { sh.state = 'await'; sh.t = 8 + rnd() * 14; sh.eng.material.opacity = 0; sh.grp.visible = false; }
+            break;
+          }
+          case 'await':
+            sh.t -= dt;
+            if (sh.t <= 0) {
+              sh.state = 'descend'; sh.t = 0;
+              sh.d.copy(offsetDir(sh.padDir, 10, -8));   // arrival vector (event-scale alloc)
+              sh.grp.visible = true;
+            }
+            break;
+          case 'descend': {
+            sh.t += dt;
+            const k = Math.min(1, sh.t / 10), e = 1 - (1 - k) * (1 - k);
+            sh.d.lerp(sh.padDir, e * 0.12).normalize();
+            sh.grp.position.copy(sh.d).multiplyScalar(sh.baseR + (1 - e) * 24);
+            sh.grp.quaternion.slerp(sh.qBase, Math.min(1, dt * 1.4));
+            sh.eng.material.opacity = 0.3 + 0.55 * e;
+            if (k >= 1) {
+              sh.state = 'parked'; sh.t = 12 + rnd() * 20;
+              sh.yaw = 0;
+              sh.d.copy(sh.padDir);
+              sh.grp.position.copy(sh.padDir).multiplyScalar(sh.baseR);
+              sh.grp.quaternion.copy(sh.qBase);
+              sh.eng.material.opacity = 0;
+            }
+            break;
+          }
+        }
+      }
+    });
+  }
+
+  // ════════════ 14 · GRAFFITI — gang tags near market + ruins walls ════════════
+  {
+    const [cv, ctx] = makeCanvas(160, 96);
+    const r2 = mulberry32(C.SEED + 31);
+    ctx.lineWidth = 5; ctx.lineCap = 'round'; ctx.strokeStyle = '#ffffff';
+    for (let k = 0; k < 7; k++) {
+      ctx.beginPath();
+      ctx.moveTo(10 + r2() * 140, 12 + r2() * 70);
+      ctx.bezierCurveTo(10 + r2() * 140, 12 + r2() * 70, 10 + r2() * 140, 12 + r2() * 70, 10 + r2() * 140, 12 + r2() * 70);
+      ctx.stroke();
+    }
+    ctx.font = 'bold 30px Rajdhani, sans-serif';
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText('VEX LIES', 18 + r2() * 30, 56);
+    const marketSpots = samplesIn('market', 6), ruinSpots = samplesIn('ruins', 6);
+    const N = 10;
+    const tags = new THREE.InstancedMesh(
+      new THREE.PlaneGeometry(1.9, 1.2),
+      new THREE.MeshBasicMaterial({ map: canvasTexture(cv), transparent: true, opacity: 0.85, side: THREE.DoubleSide }),
+      N);
+    const gang = { market: [NEON.amber, NEON.pink], ruins: [NEON.orange, NEON.red] };
+    const dummy = new THREE.Object3D(), local = new THREE.Matrix4();
+    for (let i = 0; i < N; i++) {
+      const fromMarket = i % 2 === 0 && marketSpots.length;
+      const spots = fromMarket ? marketSpots : ruinSpots;
+      if (!spots.length) continue;
+      const p = spots[(rnd() * spots.length) | 0];
+      const dir = offsetDir(p, (rnd() - 0.5) * 6, (rnd() - 0.5) * 6);
+      dummy.position.set(0, 1.1 + rnd() * 0.7, 0);
+      dummy.rotation.set(0, 0, (rnd() - 0.5) * 0.14);
+      dummy.scale.setScalar(0.8 + rnd() * 0.8);
+      dummy.updateMatrix();
+      local.multiplyMatrices(surfaceMatrix(dir, terrainHeight(dir), rnd() * 360), dummy.matrix);
+      tags.setMatrixAt(i, local);
+      tags.setColorAt(i, _c1.setHex(pick(rnd, gang[fromMarket ? 'market' : 'ruins'])).multiplyScalar(0.9));
+    }
+    if (tags.instanceColor) tags.instanceColor.needsUpdate = true;
+    tags.frustumCulled = false;
+    scene.add(tags);
+  }
+
+  // ════════════ 15 · CROSS-ALLEY CABLES — sagging spans over the streets ════════════
+  {
+    const spots = [...samplesIn('market', 6), ...samplesIn('circuit', 6), ...samplesIn('downtown', 6)];
+    const geos = [];
+    const seg = (a, b) => {
+      _v3.subVectors(b, a);
+      const len = _v3.length();
+      const g = new THREE.CylinderGeometry(0.035, 0.035, len, 4, 1, true);
+      g.translate(0, len / 2, 0);
+      _q1.setFromUnitVectors(_Y, _v3.divideScalar(len));
+      g.applyMatrix4(_m4.makeRotationFromQuaternion(_q1).setPosition(a));
+      geos.push(g);
+    };
+    const A = new THREE.Vector3(), B = new THREE.Vector3(), M = new THREE.Vector3();
+    for (let i = 0; i < 40 && spots.length; i++) {
+      const p = spots[(rnd() * spots.length) | 0];
+      const az = rnd() * Math.PI * 2, reach = 2.6 + rnd() * 1.8;
+      const dA = offsetDir(p, Math.cos(az) * reach, Math.sin(az) * reach);
+      const dB = offsetDir(p, -Math.cos(az) * reach, -Math.sin(az) * reach);
+      A.copy(dA).multiplyScalar(terrainHeight(dA) + 3.4 + rnd() * 2.4);
+      B.copy(dB).multiplyScalar(terrainHeight(dB) + 3.4 + rnd() * 2.4);
+      M.addVectors(A, B).multiplyScalar(0.5).addScaledVector(p, -0.45);   // sag toward the planet
+      seg(A, M); seg(M, B);
+    }
+    if (geos.length) {
+      const cables = new THREE.Mesh(BufferGeometryUtils.mergeGeometries(geos),
+        new THREE.MeshBasicMaterial({ color: 0x0a0c16 }));
+      cables.frustumCulled = false;
+      scene.add(cables);
+    }
+  }
+
+  // ════════════ 16 · ZEPPELIN — LED marquee airship on a slow orbit ════════════
+  {
+    const grp = new THREE.Group();
+    // hull + gondola + fins, nose along +Z, one vertex-colored mesh
+    const hull = new THREE.SphereGeometry(1.6, 16, 10);
+    hull.scale(1, 1, 2.6);
+    const bodyParts = [vcolor(hull, 0x2a3148, 1)];
+    bodyParts.push(vcolor(new THREE.BoxGeometry(1.0, 0.6, 2.4).translate(0, -1.75, 0.2), 0x1a2030, 1));
+    for (const e of [-1, 1]) {
+      bodyParts.push(vcolor(new THREE.BoxGeometry(0.24, 1.9, 1.6).rotateX(e * 0.5).translate(0, e * 0.8, -3.8), 0x232c44, 1));
+    }
+    grp.add(new THREE.Mesh(BufferGeometryUtils.mergeGeometries(bodyParts),
+      new THREE.MeshLambertMaterial({ vertexColors: true })));
+    // flank marquees share the LED ticker canvas — merged, one draw
+    const mqGeos = [];
+    for (const e of [-1, 1]) {
+      const mq = new THREE.PlaneGeometry(4.4, 1.1);
+      mq.rotateY(e * Math.PI / 2);
+      mq.translate(e * 1.72, 0.15, 0);
+      mqGeos.push(mq);
+    }
+    grp.add(new THREE.Mesh(BufferGeometryUtils.mergeGeometries(mqGeos),
+      new THREE.MeshBasicMaterial({ map: ledTex, toneMapped: false })));
+    // downward searchlight
+    const beamGeo = new THREE.ConeGeometry(2.6, 24, 12, 1, true);
+    beamGeo.translate(0, -12, 0);
+    const beam = new THREE.Mesh(beamGeo, new THREE.MeshBasicMaterial({
+      color: 0xcfe6ff, transparent: true, opacity: 0.06,
+      blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, toneMapped: false,
+    }));
+    const pivot = new THREE.Group();
+    pivot.position.y = -1.8;
+    pivot.add(beam);
+    grp.add(pivot);
+    scene.add(grp);
+    // orbit: tilted great circle at R+20
+    const zAxis = offsetDir(distOf('downtown').dir, 30, -44);
+    const zDir0 = new THREE.Vector3().crossVectors(zAxis, distOf('market').dir).normalize();
+    updates.push((dt, t) => {
+      const a = t * 0.014;
+      _q1.setFromAxisAngle(zAxis, a);
+      _v1.copy(zDir0).applyQuaternion(_q1);                    // radial dir
+      grp.position.copy(_v1).multiplyScalar(R + 20 + Math.sin(t * 0.3) * 1.2);
+      _v2.crossVectors(zAxis, _v1).normalize();                // travel dir
+      _v3.crossVectors(_v1, _v2);                              // right = up × fwd
+      _m4.makeBasis(_v3, _v1, _v2);
+      grp.quaternion.setFromRotationMatrix(_m4);
+      pivot.rotation.x = Math.sin(t * 0.3) * 0.3;
+      pivot.rotation.z = Math.cos(t * 0.23) * 0.3;
+    });
+  }
+
+  // ════════════ 17 · FIREWORKS over Lake Voltaine — pooled Points sim ════════════
+  {
+    const lakeDir = new THREE.Vector3(
+      Math.cos(20 * Math.PI / 180) * Math.cos(133 * Math.PI / 180),
+      Math.sin(20 * Math.PI / 180),
+      Math.cos(20 * Math.PI / 180) * Math.sin(133 * Math.PI / 180));   // sphDir(20,133) = LAKE_DIR
+    const { east: lkE, north: lkN } = tangentFrame(lakeDir);
+    const FW = 220;
+    const pos = new Float32Array(FW * 3).fill(-9999), col = new Float32Array(FW * 3);
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    const pts = new THREE.Points(geo, new THREE.PointsMaterial({
+      size: 1.3, map: glowTex(32, 'rgba(255,255,255,1)'), vertexColors: true,
+      transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, sizeAttenuation: true,
+    }));
+    pts.frustumCulled = false;
+    scene.add(pts);
+    // preallocated particle pool — zero allocation at runtime
+    const parts = [];
+    for (let i = 0; i < FW; i++) parts.push({ pos: new THREE.Vector3(), vel: new THREE.Vector3(), life: 0, shell: false, r: 0, g: 0, b: 0 });
+    const free = () => { for (let i = 0; i < FW; i++) if (parts[i].life <= 0) return parts[i]; return null; };
+    let timer = 5;
+    updates.push((dt, t) => {
+      timer -= dt;
+      if (timer <= 0) {   // launch a shell off the lake
+        timer = 6 + rnd() * 3;
+        const p = free();
+        if (p) {
+          p.pos.copy(lakeDir).multiplyScalar(R - 0.5)
+            .addScaledVector(lkE, (rnd() - 0.5) * 8).addScaledVector(lkN, (rnd() - 0.5) * 8);
+          p.vel.copy(lakeDir).multiplyScalar(17 + rnd() * 6)
+            .addScaledVector(lkE, (rnd() - 0.5) * 3).addScaledVector(lkN, (rnd() - 0.5) * 3);
+          p.life = 1.6; p.shell = true;
+          _c1.set(pick(rnd, NEON_LIST));
+          p.r = _c1.r; p.g = _c1.g; p.b = _c1.b;
+        }
+      }
+      for (let i = 0; i < FW; i++) {
+        const p = parts[i];
+        if (p.life <= 0) continue;
+        p.life -= dt;
+        p.vel.addScaledVector(lakeDir, -15 * dt);   // gravity along local -up
+        p.pos.addScaledVector(p.vel, dt);
+        if (p.shell && (p.vel.dot(lakeDir) < 2 || p.life < 0.2)) {   // burst
+          p.shell = false; p.life = 0;
+          for (let k = 0; k < 36; k++) {
+            const q = free();
+            if (!q) break;
+            const a = rnd() * Math.PI * 2, e2 = Math.acos(2 * rnd() - 1), sp2 = 4.5 + rnd() * 5;
+            q.pos.copy(p.pos);
+            q.vel.set(Math.sin(e2) * Math.cos(a) * sp2, Math.cos(e2) * sp2, Math.sin(e2) * Math.sin(a) * sp2);
+            q.life = 1.1 + rnd() * 0.6; q.shell = false;
+            q.r = p.r; q.g = p.g; q.b = p.b;
+          }
+        }
+      }
+      for (let i = 0; i < FW; i++) {
+        const p = parts[i];
+        if (p.life <= 0) { pos[i * 3 + 1] = -9999; continue; }
+        const f = clamp(p.life, 0, 1);
+        pos[i * 3] = p.pos.x; pos[i * 3 + 1] = p.pos.y; pos[i * 3 + 2] = p.pos.z;
+        col[i * 3] = p.r * f; col[i * 3 + 1] = p.g * f; col[i * 3 + 2] = p.b * f;
+      }
+      geo.attributes.position.needsUpdate = true;
+      geo.attributes.color.needsUpdate = true;
+    });
+  }
+
+  // ════════════ 18 · SCREEN SHAKE — trauma² camera jitter ════════════
+  let trauma = 0;
+  const shake = (amt) => { trauma = Math.min(1, trauma + amt); };
+
+  // ════════════ 19 · WEATHER — rain, lightning, storm cycle ════════════
   const flash = { value: 0 };
   let rainOn = false;
 
@@ -755,6 +1139,7 @@ export function buildDetails(scene, planet, audio, hud) {
           flashT = 0.34;
           next = (rnd() < 0.4 ? 0.14 : 3) + rnd() * 7;   // occasional double-strikes
           setTimeout(() => audio.sfx('thunder'), 500 + Math.random() * 1600);
+          shake(0.3);
         }
       }
     });
@@ -776,6 +1161,21 @@ export function buildDetails(scene, planet, audio, hud) {
     });
   }
 
+  // — shake applier: LAST in the update list, and details.update runs
+  // after player.update in main, so the camera pose is already set for
+  // this frame; jitter along the camera's own right/up axes decays out —
+  updates.push((dt, t, playerPos, camera) => {
+    trauma = Math.max(0, trauma - dt * 1.6);
+    if (trauma <= 0.001 || !camera) return;
+    const s = trauma * trauma;
+    _v1.set(1, 0, 0).applyQuaternion(camera.quaternion);
+    _v2.set(0, 1, 0).applyQuaternion(camera.quaternion);
+    camera.position.addScaledVector(_v1, (Math.random() - 0.5) * s * 0.3)
+                   .addScaledVector(_v2, (Math.random() - 0.5) * s * 0.24);
+    _q1.setFromAxisAngle(_AXZ, (Math.random() - 0.5) * s * 0.02);
+    camera.quaternion.multiply(_q1);
+  });
+
   // ════════════ API ════════════
   return {
     update(dt, t, playerPos, camera) {
@@ -783,5 +1183,6 @@ export function buildDetails(scene, planet, audio, hud) {
     },
     flash,                       // {value: 0..1} lightning flash level
     raining: () => rainOn,
+    shake,                       // shake(amount 0..1) — melee hits, explosions
   };
 }
