@@ -64,8 +64,8 @@ export function createPlayer({ scene, camera, planet, hud, audio, fx, transit, m
   // blaster barrel alignment: per-rig hand-local offset measured in the
   // raised shooting pose (each rig's wrist axes differ)
   if (rig.setGunRot) {
-    if (models?.captain2) rig.setGunRot(0, 0, 0);         // calibrated post-load
-    else rig.setGunRot(-1.623, 0.166, 1.751);             // Astronaut wrist
+    if (models?.captain2) rig.setGunRot(-1.302, 0.314, 0.205);   // Captain 2 wrist (frozen-pose measured)
+    else rig.setGunRot(-1.623, 0.166, 1.751);                    // Astronaut wrist
   }
   scene.add(rig.group);
   // suit lamp — keeps the Captain readable through the deep night
