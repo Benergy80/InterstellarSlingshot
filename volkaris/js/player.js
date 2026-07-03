@@ -466,6 +466,21 @@ export function createPlayer({ scene, camera, planet, hud, audio, fx, transit, m
       // speeder: glued near the deck
       state.vel.addScaledVector(_up, -26 * dt);
     }
+    // ATMOSPHERIC CEILING — found by the demo pilot at radius 2,425:
+    // without a governor an AV can thrust away into deep space and be
+    // lost forever. Above the ceiling, thrust chokes and the thin air
+    // shoves the craft back down.
+    const alt = state.pos.length() - C.R;
+    if (alt > 45) {
+      state.vel.multiplyScalar(Math.max(0, 1 - 1.6 * dt));
+      state.vel.addScaledVector(_up, -(alt - 45) * 2.4 * dt);
+      if (!state.ceilingWarned) {
+        state.ceilingWarned = true;
+        hud.toast('ATMOSPHERIC CEILING', 'The AV chokes in thin air — level off');
+      }
+    } else if (alt < 40) {
+      state.ceilingWarned = false;
+    }
     // collision: probe along motion
     const sp = state.vel.length();
     if (sp > 0.5) {

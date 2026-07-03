@@ -785,7 +785,7 @@ export function createDemo({ player, planet, transit, npcs, fx, hud, camera }) {
     if (e.key === 'Escape' && active) stop();
   });
 
-  let deadLogged = false, wallWas = false;
+  let deadLogged = false, wallWas = false, landCd = 0;
   return {
     get active() { return active; },
     start, stop, log, stats,
@@ -813,6 +813,17 @@ export function createDemo({ player, planet, transit, npcs, fx, hud, camera }) {
       deadLogged = false;
       if (st.paused || st.boarding || !st.started) return;
       const task = TASKS[taskIdx];
+
+      // stranded in a cockpit outside a flight task (a landing failed
+      // somewhere) → dive and land it before doing anything else
+      if (st.mode === 'pilot' && task.name !== 'fly-av' && task.name !== 'palace-flight') {
+        st.camPitch = -0.9;
+        key('w', true);
+        landCd -= dt;
+        if (landCd <= 0) { landCd = 1.1; tapKey('e'); }
+        return;
+      }
+
       taskT += dt;
       if (taskT > task.timeout) {
         trouble('task-timeout', { after: task.timeout });
