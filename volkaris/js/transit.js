@@ -25,6 +25,8 @@ const R = C.R;
 const _v = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3();
 const _q = new THREE.Quaternion(), _m = new THREE.Matrix4();
 const _YUP = new THREE.Vector3(0, 1, 0);
+const _pdX = new THREE.Vector3(1, 0, 0), _pdnX = new THREE.Vector3(-1, 0, 0);
+const _pdZ = new THREE.Vector3(0, 0, 1), _pdnZ = new THREE.Vector3(0, 0, -1);
 
 // [lat, lon, altitude] control knots — closed weaving curves.
 // Altitude bands are disjoint enough at every crossing that the
@@ -420,12 +422,24 @@ export function buildTransit(scene, planet, audio) {
       // ── access LIFT (scenic alternative): a glowing platform that
       // rises from the street to the deck. Step on and it carries you. ──
       {
-        // lift column just off the platform's outer edge; step from the
-        // lift disc straight onto the deck
-        const liftDir = up.clone().multiplyScalar(platH).addScaledVector(side, 5.2).normalize();
+        // lift column just off the platform edge — but not INSIDE a
+        // building/pyramid. Try both sides; pick the clear one, else skip.
+        const colClear = (dir) => {
+          const mid = dir.clone().multiplyScalar((planet.terrainHeight(dir) + platH) / 2);
+          let hits = 0;
+          for (const dd of [_pdX, _pdnX, _pdZ, _pdnZ]) if (planet.probe(mid, dd, 3.0)) hits++;
+          return hits < 3;
+        };
+        let liftDir = up.clone().multiplyScalar(platH).addScaledVector(side, 5.2).normalize();
+        let skipLift = false;
+        if (!colClear(liftDir)) {
+          const other = up.clone().multiplyScalar(platH).addScaledVector(side, -5.2).normalize();
+          if (colClear(other)) liftDir = other;
+          else skipLift = true;    // both sides blocked (deep in a structure) → ramp only
+        }
         const groundR = planet.terrainHeight(liftDir);
         const deckR = platH + 0.15;
-        if (deckR - groundR > 1.5) {
+        if (!skipLift && deckR - groundR > 1.5) {
           // twin glowing guide rails (full travel height)
           for (const gs of [-1, 1]) {
             const railLen = deckR - groundR + 0.5;
@@ -868,19 +882,15 @@ export function buildTransit(scene, planet, audio) {
         _v2.copy(playerState.pos).sub(L.disc.position);
         const along = _v2.dot(L.up);
         const horiz = _v3.copy(_v2).addScaledVector(L.up, -along).length();
-        // generous catch (2.4 pad); only ENGAGE the ride once the disc is
-        // actually moving, so at the bottom you stand on it normally and
-        // it scoops you up rather than fighting your footing
+        // generous catch (2.4 pad). Snap the player's feet ONTO the deck
+        // surface so they stand on it (no floating), and ride its motion.
         if (horiz < 2.5 && along > -0.6 && along < 1.9) {
-          const moving = L.dwell <= 0;
-          if (moving) {
-            const vlift = L.dirn * L.speed;
-            playerState.pos.addScaledVector(L.up, vlift * dt);
-            const rv = playerState.vel.dot(L.up);
-            playerState.vel.addScaledVector(L.up, vlift - rv);
-            playerState.grounded = false;
-            playerState.onLift = 0.3;                          // suppress ground-snap
-          }
+          playerState.pos.addScaledVector(L.up, 0.18 - along);   // stand on the deck top
+          const vlift = L.dwell <= 0 ? L.dirn * L.speed : 0;
+          const rv = playerState.vel.dot(L.up);
+          playerState.vel.addScaledVector(L.up, vlift - rv);
+          playerState.grounded = true;                           // it's solid footing
+          playerState.onLift = 0.3;                              // suppress terrain snap
         }
       }
     },

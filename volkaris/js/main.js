@@ -22,7 +22,7 @@ import { createDemo } from './demo.js';
 import { createHUD } from './hud.js';
 import { createAudio } from './audio.js';
 
-const VK_BUILD = 'VOLKARIS build 2026-07-04g · pill cars, center-car stops, walk-on lift, bigger tunnels, metallic suit';
+const VK_BUILD = 'VOLKARIS build 2026-07-04h · lift-stand, ceiling collision, pyramid-lift unblocked';
 console.log('%c' + VK_BUILD, 'color:#ff2fd6;font-weight:bold;font-size:14px');
 
 // ── renderer ──

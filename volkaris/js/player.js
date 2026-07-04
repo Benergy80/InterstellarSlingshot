@@ -802,6 +802,18 @@ export function createPlayer({ scene, camera, planet, hud, audio, fx, transit, m
       }
     }
 
+    // ── ceiling: don't let a jump or jetpack punch through a roof ──
+    if (state.onLift <= 0) {
+      _up.copy(state.pos).normalize();
+      const head = _v3.copy(state.pos).addScaledVector(_up, 1.7);
+      const ch = planet.probe(head, _up, 0.55);
+      if (ch && ch.distance < 0.55) {
+        const upVel = state.vel.dot(_up);
+        if (upVel > 0) state.vel.addScaledVector(_up, -upVel);        // stop rising
+        state.pos.addScaledVector(_up, -(0.55 - ch.distance));        // push clear of the roof
+      }
+    }
+
     // ── ground snap ──
     // while a lift is carrying us, terrain snap is suppressed so the disc
     // can pull us up off the street without the ground yanking us back
