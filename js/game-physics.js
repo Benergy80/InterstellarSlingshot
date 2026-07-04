@@ -5034,6 +5034,26 @@ function animateDiscoveryPaths() {
     if (!doPulse && !doMissionCheck) return;
 
     const time = Date.now() * 0.001;
+
+    // WHITE LIBERATION-PATH LIGHTHOUSE: the Sgr A*→twin-nebula white line is
+    // a separate object from discoveryPaths, so it needs its own beacon. A
+    // big pulsing marker rides the line's live endpoint (read from geometry
+    // so it's floating-origin safe) — hidden once the player is basically
+    // there, sized to hold a constant apparent size at any range.
+    if (typeof window !== 'undefined' && window.liberationNebulaPath &&
+        window.liberationNebulaPath.userData._libBeacon) {
+        const lib = window.liberationNebulaPath;
+        const beacon = lib.userData._libBeacon;
+        const pos = lib.geometry.attributes.position;
+        const end = new THREE.Vector3().fromBufferAttribute(pos, pos.count - 1);
+        lib.localToWorld(end);
+        beacon.position.copy(end);
+        const bd = camera.position.distanceTo(end);
+        beacon.visible = bd > 1800;   // the nebula itself takes over up close
+        beacon.scale.setScalar(Math.max(60, Math.min(1600, bd * 0.02)));
+        beacon.material.opacity = 0.5 + 0.4 * (0.5 + 0.5 * Math.sin(time * 2.4));
+    }
+
     const pulse1 = 0.5 + Math.sin(time * 2) * 0.2;
     const pulse2 = 0.3 + Math.sin(time * 3) * 0.2;
 

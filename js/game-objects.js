@@ -1690,6 +1690,27 @@ function showLiberationPathToTwinNebula() {
     line.renderOrder = 60;
     line.name = 'LiberationTwinNebulaPath';
     scene.add(line);
+
+    // LIGHTHOUSE beacon at the twin-nebula END. A 1px white dashed line
+    // 20k long is optically invisible against the starfield (play-reported:
+    // 'did not see the white dotted line'); the discovery-path lighthouse
+    // fix never covered this separate object. A big pulsing marker at the
+    // destination makes 'follow the white path' actionable — the beacon is
+    // animated in animateDiscoveryPaths() and tracks the line's live
+    // endpoint so it stays correct across floating-origin rebases.
+    if (typeof _vfGlowTexture === 'function') {
+        const bm = new THREE.SpriteMaterial({
+            map: _vfGlowTexture(), color: 0xffffff, transparent: true,
+            opacity: 0.9, blending: THREE.AdditiveBlending,
+            depthWrite: false, depthTest: false
+        });
+        const beacon = new THREE.Sprite(bm);
+        beacon.renderOrder = 61;
+        beacon.frustumCulled = false;
+        scene.add(beacon);
+        line.userData._libBeacon = beacon;
+    }
+
     if (typeof window !== 'undefined') window.liberationNebulaPath = line;
     console.log('🌌 Liberation path to nearest twin nebula drawn');
 }
