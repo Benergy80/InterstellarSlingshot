@@ -861,7 +861,93 @@ export function buildPlanet(scene, models = {}) {
       addSolid(T(new THREE.CylinderGeometry(0.7, 0.9, 0.5, 10), 0, 0.25, 0), pl.clone(), 0x2c2152);
       addGlow(T(new THREE.CylinderGeometry(0.72, 0.72, 0.1, 10), 0, 0.55, 0), pl.clone(), NEON.pink, 1.2);
     }
-    const gate = textSign('THE CIRCUIT', { fg: hexCss(NEON.magenta) });
+    // ══ THE CIRCUIT reimagined as a LIVING CIRCUIT BOARD ══
+    const cAt = (dlat, dlon, yaw = 0, sink = 0.04) => frameAt(a.lat + dlat, a.lon + dlon, yaw, sink);
+    const CGLOW = [NEON.cyan, NEON.lime, NEON.blue, NEON.amber];
+    // PCB traces etched across the district floor, each ending in a pad
+    for (let i = 0; i < 16; i++) {
+      const hex = pick(rnd, CGLOW);
+      const seg = cAt(-11 + rnd() * 22, -11 + rnd() * 22, rnd() < 0.5 ? 0 : 90);
+      const len = 3 + rnd() * 7;
+      addGlow(T(box(len, 0.04, 0.13), 0, 0.06, 0), seg.clone(), hex, 1.1);
+      addGlow(T(new THREE.CylinderGeometry(0.26, 0.26, 0.05, 12), len / 2, 0.07, 0), seg.clone(), hex, 1.2);
+    }
+    // chip packages: dark squares, glowing core, pin rows
+    for (let i = 0; i < 6; i++) {
+      const cf = cAt(-8 + rnd() * 16, -8 + rnd() * 16, rnd() * 90, 0.02);
+      addSolid(T(box(1.6, 0.3, 1.6), 0, 0.15, 0), cf.clone(), 0x0e1424, { collide: false });
+      addGlow(T(box(0.5, 0.06, 0.5), 0, 0.32, 0), cf.clone(), pick(rnd, [NEON.cyan, NEON.lime]), 1.15);
+      for (let k = -2; k <= 2; k++) for (const sz of [0.85, -0.85])
+        addGlow(T(box(0.06, 0.04, 0.14), k * 0.34, 0.16, sz), cf.clone(), NEON.amber, 0.9);
+    }
+    // synchronized "data pulse" nodes (the board feels alive)
+    for (let i = 0; i < 7; i++) {
+      const nf = cAt(-9 + rnd() * 18, -9 + rnd() * 18, 0, 0.02);
+      const node = new THREE.Mesh(new THREE.SphereGeometry(0.22, 8, 6),
+        new THREE.MeshBasicMaterial({ color: NEON.cyan, toneMapped: false, transparent: true }));
+      node.applyMatrix4(new THREE.Matrix4().makeTranslation(0, 0.25, 0).premultiply(nf));
+      signs.push(node);
+      dynamic.push({ mesh: node, phase: (i / 7) * 6.28, update(dt, t) {   // synchronized wave
+        const p = 0.5 + 0.5 * Math.sin(t * 2.4 - this.phase);
+        node.material.opacity = 0.35 + 0.65 * p; node.scale.setScalar(0.7 + p * 0.8);
+      } });
+    }
+    // DATA TOWERS: server slabs, LED-grid facades, rising edge traces
+    const cTowers = [];
+    for (let i = 0; i < 5; i++) {
+      const lat = a.lat + (rnd() - 0.5) * 22, lon = a.lon + (rnd() - 0.5) * 24;
+      const f = frameAt(lat, lon, rnd() * 360);
+      const w = 3.5 + rnd() * 2.2, h = 9 + rnd() * 8, d = 3.5 + rnd() * 2.2;
+      addSolid(T(box(w, h, d), 0, h / 2, 0), f.clone(), 0x0c1226, { jitter: 0.04 });
+      const cols = Math.max(2, Math.floor(w / 0.7)), rows = Math.max(4, Math.floor(h / 1.0));
+      for (let cx = 0; cx < cols; cx++) for (let cy = 0; cy < rows; cy++)
+        if (rnd() < 0.5) addGlow(T(box(0.24, 0.34, 0.05), -w / 2 + 0.45 + cx * 0.7, 0.7 + cy * 1.0, d / 2 + 0.04), f.clone(), pick(rnd, [NEON.cyan, NEON.lime, NEON.blue]), 1.0);
+      for (const sx of [-w / 2 - 0.05, w / 2 + 0.05]) addGlow(T(box(0.06, h * 0.92, 0.06), sx, h * 0.5, d / 2 - 0.3), f.clone(), NEON.cyan, 1.1);
+      addSolid(T(box(w * 0.34, 1.3, d * 0.34), 0, h + 0.65, 0), f.clone(), 0x22304a);   // roof unit
+      cTowers.push(new THREE.Vector3(0, h + 0.4, 0).applyMatrix4(f));
+    }
+    // FIBER-OPTIC arcs strung between tower tops
+    for (let i = 0; i + 1 < cTowers.length; i++) {
+      const A2 = cTowers[i], B2 = cTowers[i + 1];
+      if (A2.distanceTo(B2) > 28) continue;
+      const up = A2.clone().normalize(), hex = pick(rnd, [NEON.cyan, NEON.lime, NEON.magenta]);
+      const NN = 9;
+      for (let k = 0; k < NN; k++) {
+        const p0 = A2.clone().lerp(B2, k / NN).addScaledVector(up, Math.sin(k / NN * Math.PI) * 2.6);
+        const p1 = A2.clone().lerp(B2, (k + 1) / NN).addScaledVector(up, Math.sin((k + 1) / NN * Math.PI) * 2.6);
+        const g = box(0.07, 0.07, p0.distanceTo(p1));
+        g.applyMatrix4(new THREE.Matrix4().lookAt(p0, p1, up).setPosition(p0.clone().lerp(p1, 0.5)));
+        addGlowRaw(g, hex, 1.05);
+      }
+    }
+    // COOLING towers with heat-sink fins + vapor rim
+    for (let i = 0; i < 3; i++) {
+      const cf = cAt(-6 + rnd() * 12, -6 + rnd() * 12, 0);
+      addSolid(T(new THREE.CylinderGeometry(1.3, 1.7, 5, 12), 0, 2.5, 0), cf.clone(), 0x1a2236, { jitter: 0.04 });
+      addGlow(T(new THREE.CylinderGeometry(1.15, 1.15, 0.3, 12), 0, 5.1, 0), cf.clone(), NEON.cyan, 1.0);
+      for (let k = 0; k < 6; k++) addSolid(T(box(0.1, 4.4, 1.5), 0, 2.4, 0, k * 0.52), cf.clone(), 0x2a3450, { collide: false });
+    }
+    // TRANSPARENT LAB: glass cube over glowing server racks
+    {
+      const f = frameAt(a.lat + 5, a.lon + 7, 30);
+      const glass = new THREE.Mesh(box(5.4, 5, 5.4),
+        new THREE.MeshBasicMaterial({ color: new THREE.Color(NEON.cyan).multiplyScalar(0.4), transparent: true, opacity: 0.13, depthWrite: false, toneMapped: false }));
+      glass.applyMatrix4(new THREE.Matrix4().makeTranslation(0, 2.5, 0).premultiply(f));
+      signs.push(glass);
+      for (const sx of [-2.6, 2.6]) for (const sz of [-2.6, 2.6]) addSolid(T(box(0.14, 5, 0.14), sx, 2.5, sz), f.clone(), 0x1a2440);
+      for (let k = -1; k <= 1; k++) {
+        addSolid(T(box(0.6, 3.6, 3.6), k * 1.5, 1.9, 0), f.clone(), 0x0e1424);
+        for (let r = 0; r < 5; r++) addGlow(T(box(0.62, 0.16, 0.55), k * 1.5, 0.8 + r * 0.65, 1.3), f.clone(), pick(rnd, [NEON.lime, NEON.cyan]), 1.0);
+      }
+    }
+    // low DRONES weaving over the board
+    for (let i = 0; i < 4; i++) {
+      const df = cAt(-8 + rnd() * 16, -8 + rnd() * 16, rnd() * 360);
+      addSolid(T(box(0.5, 0.22, 0.5), 0, 3.5 + rnd() * 2, 0), df.clone(), 0x22304a, { collide: false });
+      addGlow(T(box(0.16, 0.08, 0.16), 0, 3.4 + rnd() * 2, 0.28), df.clone(), NEON.cyan, 1.3);
+    }
+
+    const gate = textSign('THE CIRCUIT', { fg: hexCss(NEON.cyan) });
     placeSign(gate, a.lat + 3, a.lon - 10, 100, 0, 5.2, 0);
     const gf2 = frameAt(a.lat + 3, a.lon - 10, 100);
     addSolid(T(box(0.5, 5.2, 0.5), -3.6, 2.6, 0), gf2.clone(), 0x38286a);
