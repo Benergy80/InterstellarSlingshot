@@ -4605,6 +4605,51 @@ function classifyNebula(nebula) {
 }
 
 // Resolve a nebula to its paired galaxy ID
+// Pair the clustered "twin" nebulas by SPATIAL PROXIMITY and give each
+// pair one shared galaxy/faction. The old code paired by ARRAY INDEX
+// (Math.floor(index/2)), but world-gen lays the true visual twins out at
+// index i and i+4 — so index-pairing married two nebulas ~20k apart while
+// the two that actually sit side by side got DIFFERENT factions (and thus
+// different-colored discovery lines). That broke the "both centers of a
+// twin lead to the same faction" design and made the lore ("follow the
+// blue line from this nebula") not match what the player saw.
+//
+// Greedy nearest-neighbour pairing over the clustered set assigns each
+// pair a galaxy (pairId % 8) and marks one member the stronghold (core
+// path) and the other the staging area (patrol path). Memoized onto
+// userData; recomputes only when a clustered nebula lacks an assignment
+// (i.e. a freshly generated world).
+function _assignClusteredNebulaPairs() {
+    if (typeof nebulaClouds === 'undefined' || typeof classifyNebula !== 'function') return;
+    const cl = [];
+    nebulaClouds.forEach(n => {
+        if (n && n.userData && classifyNebula(n) === 'clustered') cl.push(n);
+    });
+    if (cl.length === 0) return;
+    const used = new Set();
+    let pairId = 0;
+    for (let i = 0; i < cl.length; i++) {
+        if (used.has(i)) continue;
+        let best = -1, bd = Infinity;
+        for (let j = 0; j < cl.length; j++) {
+            if (j === i || used.has(j)) continue;
+            const d = cl[i].position.distanceTo(cl[j].position);
+            if (d < bd) { bd = d; best = j; }
+        }
+        used.add(i);
+        const galaxy = pairId % 8;
+        cl[i].userData._clusterGalaxyId = galaxy;
+        cl[i].userData._clusterIsCore = true;      // stronghold
+        if (best >= 0) {
+            used.add(best);
+            cl[best].userData._clusterGalaxyId = galaxy;
+            cl[best].userData._clusterIsCore = false;  // staging area
+        }
+        pairId++;
+    }
+    console.log(`🌌 Twin nebulas paired spatially into ${pairId} pair(s)`);
+}
+
 function resolveNebulaGalaxyId(nebula, nebulaType, index) {
     const name = nebula.userData.name || '';
     switch (nebulaType) {
@@ -4616,9 +4661,10 @@ function resolveNebulaGalaxyId(nebula, nebulaType, index) {
             return GALAXY_FORMATION_NEBULA_MAP[name] !== undefined ? GALAXY_FORMATION_NEBULA_MAP[name] : index % 8;
         case 'clustered':
         default: {
-            // First 8 clustered nebulas use the original paired logic
-            const pairIndex = Math.floor(index / 2);
-            return pairIndex % 8;
+            // Spatially-paired twins share a galaxy (see above).
+            if (nebula.userData._clusterGalaxyId === undefined) _assignClusteredNebulaPairs();
+            if (nebula.userData._clusterGalaxyId !== undefined) return nebula.userData._clusterGalaxyId;
+            return Math.floor(index / 2) % 8; // fallback if pairing unavailable
         }
     }
 }
@@ -4798,10 +4844,14 @@ function checkForNebulaDeepDiscovery() {
         console.log(`🌌 ${nebulaType} nebula "${nebulaName}" → Galaxy ${galaxyId} (${factionName})`);
 
         if (nebulaType === 'clustered') {
-            // ALL paths lead to enemy clusters near cosmic features.
-            // Even index = "stronghold" (larger cluster), odd = "patrol"
-            // (smaller cluster at a different feature).
-            const isCorePath = (index % 2 === 0);
+            // ALL paths lead to enemy clusters near cosmic features. Within
+            // a spatially-paired twin, one member is the stronghold (core
+            // path) and the other the staging area (patrol path) — assigned
+            // in _assignClusteredNebulaPairs so both members of a visual
+            // twin share a faction but give complementary objectives.
+            const isCorePath = (nebula.userData._clusterIsCore !== undefined)
+                ? nebula.userData._clusterIsCore
+                : (index % 2 === 0);
             const patrolData = findPatrolEnemiesNearCosmicFeatures(galaxyId);
 
             if (patrolData) {
