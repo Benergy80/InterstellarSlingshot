@@ -351,10 +351,32 @@ export function buildTransit(scene, planet, audio) {
       st.platformPos = new THREE.Vector3().setFromMatrixPosition(fm).addScaledVector(up, 0.6);
       st.boardPos = st.platformPos.clone();
 
-      // canopy + name bar + beacon in the line's color
-      const canopy = new THREE.Mesh(new THREE.BoxGeometry(9, 0.25, 3.4), platMat);
-      canopy.applyMatrix4(new THREE.Matrix4().makeTranslation(0, 3.6, 0).premultiply(fm));
+      // GLASS CEILING — a translucent, line-tinted vaulted roof with slim
+      // glazing bars, so every station is capped in glass (Ben's note)
+      const glassMat = new THREE.MeshBasicMaterial({
+        color: new THREE.Color(line.hex).multiplyScalar(0.5), transparent: true,
+        opacity: 0.16, depthWrite: false, toneMapped: false, side: THREE.DoubleSide,
+      });
+      const canopy = new THREE.Mesh(new THREE.BoxGeometry(9, 0.12, 3.4), glassMat);
+      canopy.applyMatrix4(new THREE.Matrix4().makeTranslation(0, 3.62, 0).premultiply(fm));
       platGroup.add(canopy);
+      // ridge beam + transverse glazing bars (the frame that holds the glass)
+      const barMat = new THREE.MeshStandardMaterial({ color: 0x3a3568, roughness: 0.5, metalness: 0.6 });
+      const ridge = new THREE.Mesh(new THREE.BoxGeometry(9, 0.16, 0.16), barMat);
+      ridge.applyMatrix4(new THREE.Matrix4().makeTranslation(0, 3.72, 0).premultiply(fm));
+      platGroup.add(ridge);
+      for (let gb = -4; gb <= 4; gb += 1) {
+        const bar = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.1, 3.5), barMat);
+        bar.applyMatrix4(new THREE.Matrix4().makeTranslation(gb, 3.66, 0).premultiply(fm));
+        platGroup.add(bar);
+      }
+      // eave glow strips in the line colour trace the glass edges
+      for (const ez of [-1.7, 1.7]) {
+        const eave = new THREE.Mesh(new THREE.BoxGeometry(9, 0.06, 0.06),
+          new THREE.MeshBasicMaterial({ color: new THREE.Color(line.hex).multiplyScalar(1.15), toneMapped: false }));
+        eave.applyMatrix4(new THREE.Matrix4().makeTranslation(0, 3.58, ez).premultiply(fm));
+        platGroup.add(eave);
+      }
       for (const px of [-4, 4]) {
         const post = new THREE.Mesh(new THREE.BoxGeometry(0.22, 3.6, 0.22), platMat);
         post.applyMatrix4(new THREE.Matrix4().makeTranslation(px, 1.9, 1.3).premultiply(fm));

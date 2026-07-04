@@ -22,7 +22,7 @@ import { createDemo } from './demo.js';
 import { createHUD } from './hud.js';
 import { createAudio } from './audio.js';
 
-const VK_BUILD = 'VOLKARIS build 2026-07-04m · visual loop pass 3: THE CIRCUIT living circuit board';
+const VK_BUILD = 'VOLKARIS build 2026-07-04n · glass station roofs, closer/higher cam, dimmer neon, narrower run';
 console.log('%c' + VK_BUILD, 'color:#ff2fd6;font-weight:bold;font-size:14px');
 
 // ── renderer ──

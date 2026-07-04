@@ -116,6 +116,16 @@ export function createPlayer({ scene, camera, planet, hud, audio, fx, transit, m
     jetpack.position.set(0, 1.28, -0.22);
     rig.group.add(jetpack);
   }
+  // ── narrower run stance: the Captain 2 clips splay the legs wide, so
+  // after each pose we roll the thigh bones inward a few degrees ──
+  let legL = null, legR = null;
+  rig.group.traverse(o => { if (o.name === 'LeftUpLeg') legL = o; else if (o.name === 'RightUpLeg') legR = o; });
+  const LEG_ADDUCT = 0.16;   // radians of inward roll per thigh
+  function narrowLegs() {
+    if (legL) legL.rotateZ(-LEG_ADDUCT);
+    if (legR) legR.rotateZ(LEG_ADDUCT);
+  }
+
   // the pack rides the spine bone so it bobs, leans and twists WITH the
   // run/jump/roll animation instead of floating rigidly off the hips
   const _jm = new THREE.Matrix4(), _jp = new THREE.Vector3(), _jq = new THREE.Quaternion();
@@ -166,7 +176,7 @@ export function createPlayer({ scene, camera, planet, hud, audio, fx, transit, m
     paused: false,
     boarding: false,
     lastGroundDistrict: planet.districts[0],
-    camDist: 4.2,
+    camDist: 3.4,
     fireHeld: false,
     aimW: 0,
     melee: { kind: null, t: 0, hitDone: false, side: 0, cool: 0 },
@@ -242,7 +252,7 @@ export function createPlayer({ scene, camera, planet, hud, audio, fx, transit, m
         }
       }
     }
-    if (k === 'v') { state.camDist = state.camDist > 6.5 ? 4.2 : 8.5; hud.toast('CAMERA', state.camDist > 6.5 ? 'Wide' : 'Close'); }
+    if (k === 'v') { state.camDist = state.camDist > 6.5 ? 3.4 : 8.5; hud.toast('CAMERA', state.camDist > 6.5 ? 'Wide' : 'Close'); }
     if (k === 'e' || e.key === 'Enter') { e.preventDefault(); interact(); }
     // SPACE: tap on the ground toggles run/walk pace; held in the air
     // it fires the jetpack
@@ -660,6 +670,8 @@ export function createPlayer({ scene, camera, planet, hud, audio, fx, transit, m
       updateRide(dt);
       rig.update(dt);
       syncJetpack();
+    narrowLegs();
+      narrowLegs();
       updateCamera(dt, false);
       return;
     }
@@ -1004,7 +1016,7 @@ export function createPlayer({ scene, camera, planet, hud, audio, fx, transit, m
 
     const dist = deadCam ? 7.5 : state.camDist;
     const want = _v.copy(state.pos)
-      .addScaledVector(_up, 1.85 + state.camPitch * -1.2)
+      .addScaledVector(_up, 2.25 + state.camPitch * -1.2)
       .addScaledVector(_fwd, -dist);
     const eye = _v3.copy(state.pos).addScaledVector(_up, 1.55);
     const toCam = _v2.copy(want).sub(eye);

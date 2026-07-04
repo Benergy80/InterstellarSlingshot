@@ -30,8 +30,8 @@ export const C = {
   SUN_PERIOD: 240,      // seconds per full orbit of the sun
   SUN_TILT: 0.42,       // orbital tilt (rad) so shadows sweep, not strobe
 
-  // ── Bloom ──
-  BLOOM: { strength: 0.85, radius: 0.5, threshold: 0.52 },
+  // ── Bloom ── (dialled down: neon reads without blowing out to white)
+  BLOOM: { strength: 0.55, radius: 0.5, threshold: 0.62 },
 
   // ── Captain (acrobatic power-suit movement) ──
   PLAYER: {
