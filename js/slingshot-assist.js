@@ -27,9 +27,10 @@
         enabled: false,
         candidate: null,
         alignment: 0,
-        _coil: null,
-        _ribbon: null,
-        _pulse: null,
+        _arc: null,        // directional whip arc around the body
+        _arcHead: null,    // arrowhead at the arc's leading (exit) end
+        _tube: null,       // thick warp tube of light along the launch corridor
+        _tubeGeomFrame: 0,
     };
 
     // ── candidate scoring ────────────────────────────────────────────────────
@@ -74,124 +75,144 @@
     }
 
     // ── visuals ──────────────────────────────────────────────────────────────
+    // Alignment colour: amber (poor) → CYAN (great). Deliberately not green —
+    // green swirls read as orbit rings. Lerped straight amber→cyan in RGB.
+    const _amber = new THREE.Color(1.0, 0.62, 0.12);
+    const _cyan = new THREE.Color(0.2, 0.9, 1.0);
     function _qualityColor(align) {
-        // amber (poor) → green (great)
-        const c = new THREE.Color();
-        c.setHSL(0.09 + 0.24 * Math.max(0, Math.min(1, (align - 0.5) * 2)), 1.0, 0.55);
-        return c;
+        const t = Math.max(0, Math.min(1, (align - 0.5) * 2));
+        return _amber.clone().lerp(_cyan, t);
     }
 
-    function _ensureCoil() {
-        if (sys._coil) return sys._coil;
-        const COUNT = 96;
-        const geo = new THREE.BufferGeometry();
-        geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(COUNT * 3), 3));
-        const mat = new THREE.PointsMaterial({
-            color: 0xffcc44, size: 3.2, transparent: true, opacity: 0.85,
-            blending: THREE.AdditiveBlending, depthWrite: false, sizeAttenuation: true
-        });
-        sys._coil = new THREE.Points(geo, mat);
-        sys._coil.frustumCulled = false;
-        sys._coil.renderOrder = 55;
-        scene.add(sys._coil);
-        return sys._coil;
+    // Flowing-light texture for the warp tube — bright bands scrolled along
+    // the tube each frame to read as light rushing toward the destination.
+    function _tubeTexture() {
+        if (_tubeTexture._t) return _tubeTexture._t;
+        const c = document.createElement('canvas');
+        c.width = 128; c.height = 4;
+        const ctx = c.getContext('2d');
+        for (let x = 0; x < 128; x++) {
+            const s = 0.5 + 0.5 * Math.sin((x / 128) * Math.PI * 4);
+            const a = 0.12 + 0.88 * Math.pow(s, 4);   // sharp bright bands
+            ctx.fillStyle = 'rgba(255,255,255,' + a.toFixed(3) + ')';
+            ctx.fillRect(x, 0, 1, 4);
+        }
+        const tex = new THREE.CanvasTexture(c);
+        tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+        tex.repeat.set(6, 1);
+        _tubeTexture._t = tex;
+        return tex;
     }
 
-    function _ensureRibbon() {
-        if (sys._ribbon) return sys._ribbon;
-        const mat = new THREE.LineDashedMaterial({
-            color: 0xffcc44, transparent: true, opacity: 0.5,
-            dashSize: 34, gapSize: 26, depthWrite: false
+    function _ensureArc() {
+        if (sys._arc) return;
+        // The whip arc is a glowing tube (radius ~45) wrapping the body; geometry
+        // is rebuilt each update from the current sweep.
+        const mat = new THREE.MeshBasicMaterial({
+            color: 0x44ddff, transparent: true, opacity: 0.85,
+            blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide
         });
-        sys._ribbon = new THREE.Line(new THREE.BufferGeometry(), mat);
-        sys._ribbon.frustumCulled = false;
-        sys._ribbon.renderOrder = 54;
-        scene.add(sys._ribbon);
-        // traveling pulse dot — motion IS the "it flings you this way" cue
-        const pm = new THREE.SpriteMaterial({
-            map: (typeof _vfGlowTexture === 'function') ? _vfGlowTexture() : null,
-            color: 0xffffff, transparent: true, opacity: 0.95,
-            blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false
+        sys._arc = new THREE.Mesh(new THREE.BufferGeometry(), mat);
+        sys._arc.frustumCulled = false;
+        sys._arc.renderOrder = 56;
+        scene.add(sys._arc);
+        // arrowhead cone at the leading (exit) end, points along the sweep
+        const headMat = new THREE.MeshBasicMaterial({
+            color: 0x44ddff, transparent: true, opacity: 0.95,
+            blending: THREE.AdditiveBlending, depthWrite: false
         });
-        sys._pulse = new THREE.Sprite(pm);
-        sys._pulse.scale.setScalar(14);
-        sys._pulse.renderOrder = 56;
-        scene.add(sys._pulse);
-        return sys._ribbon;
+        sys._arcHead = new THREE.Mesh(new THREE.ConeGeometry(120, 320, 12), headMat);
+        sys._arcHead.frustumCulled = false;
+        sys._arcHead.renderOrder = 57;
+        scene.add(sys._arcHead);
+    }
+
+    function _ensureTube() {
+        if (sys._tube) return;
+        const mat = new THREE.MeshBasicMaterial({
+            map: _tubeTexture(), color: 0x44ddff, transparent: true, opacity: 0.6,
+            blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide
+        });
+        sys._tube = new THREE.Mesh(new THREE.BufferGeometry(), mat);
+        sys._tube.frustumCulled = false;
+        sys._tube.renderOrder = 55;
+        scene.add(sys._tube);
     }
 
     function _hideVisuals() {
-        if (sys._coil) sys._coil.visible = false;
-        if (sys._ribbon) sys._ribbon.visible = false;
-        if (sys._pulse) sys._pulse.visible = false;
+        if (sys._arc) sys._arc.visible = false;
+        if (sys._arcHead) sys._arcHead.visible = false;
+        if (sys._tube) sys._tube.visible = false;
     }
 
-    let _ribbonPts = [];
+    const TUBE_RADIUS = 100;   // 200-unit diameter (per design)
+    const TUBE_LEN = 5200;     // exit corridor length toward the destination
 
     function _updateVisuals(body, target) {
+        _ensureArc();
+        _ensureTube();
         const bp = body.position, cp = camera.position;
         const range = (typeof getSlingshotRange === 'function')
-            ? Math.max(getSlingshotRange(body) * 0.8, 80) : 150;
+            ? Math.max(getSlingshotRange(body) * 0.85, 120) : 180;
         const col = _qualityColor(sys.alignment);
         const t = performance.now() * 0.001;
 
-        // GRAVITY COIL: 3-loop spiral at the whip radius, spinning in the
-        // whip direction, gently breathing.
-        const coil = _ensureCoil();
-        coil.visible = true;
-        coil.material.color.copy(col);
-        const arr = coil.geometry.attributes.position.array;
-        const N = arr.length / 3;
-        // whip direction: sign of the tangent that agrees with body→target
+        // Whip direction: the tangent sign whose sweep agrees with body→target.
         _v1.subVectors(target.position, bp).setY(0).normalize();
         _v2.subVectors(cp, bp).setY(0).normalize();
         const sign = (_v2.x * _v1.z - _v2.z * _v1.x) >= 0 ? 1 : -1;
-        for (let i = 0; i < N; i++) {
-            const f = i / (N - 1);
-            const ang = sign * (f * Math.PI * 6 + t * 1.6);   // 3 loops, spinning
-            const r = range * (1 + 0.06 * Math.sin(t * 2 + f * 12));
-            arr[i * 3] = bp.x + Math.cos(ang) * r;
-            arr[i * 3 + 1] = bp.y + (f - 0.5) * range * 0.7;   // rises through the body
-            arr[i * 3 + 2] = bp.z + Math.sin(ang) * r;
-        }
-        coil.geometry.attributes.position.needsUpdate = true;
+        const theta0 = Math.atan2(cp.z - bp.z, cp.x - bp.x);   // start facing the player
+        const y = cp.y;
 
-        // TRAJECTORY RIBBON: entry leg → capture arc → launch ray
-        const ribbon = _ensureRibbon();
-        ribbon.visible = true;
-        ribbon.material.color.copy(col);
-        const theta0 = Math.atan2(cp.z - bp.z, cp.x - bp.x);
-        const pts = [];
-        // entry: player → arc start (the point on the whip circle nearest us)
-        pts.push(cp.clone().addScaledVector(_v3.subVectors(bp, cp).normalize(), 40));
-        const arcStart = new THREE.Vector3(
-            bp.x + Math.cos(theta0) * range, cp.y, bp.z + Math.sin(theta0) * range);
-        pts.push(arcStart);
-        const ARC = 2.2;   // ~125° of capture arc
-        for (let i = 1; i <= 18; i++) {
-            const a = theta0 + sign * (i / 18) * ARC;
-            pts.push(new THREE.Vector3(bp.x + Math.cos(a) * range, cp.y, bp.z + Math.sin(a) * range));
+        // ── DIRECTIONAL WHIP ARC around the body (~240°) ───────────────────
+        const ARC = 4.2;                       // ~240° of sweep
+        const arcPts = [];
+        const AN = 24;
+        for (let i = 0; i <= AN; i++) {
+            const a = theta0 + sign * (i / AN) * ARC;
+            arcPts.push(new THREE.Vector3(bp.x + Math.cos(a) * range, y, bp.z + Math.sin(a) * range));
         }
-        // launch ray: exit tangent blended toward the destination bearing
+        const arcCurve = new THREE.CatmullRomCurve3(arcPts);
+        const arcGeo = new THREE.TubeGeometry(arcCurve, 32, 45, 8, false);
+        sys._arc.geometry.dispose();
+        sys._arc.geometry = arcGeo;
+        sys._arc.material.color.copy(col);
+        sys._arc.material.opacity = 0.6 + 0.25 * (0.5 + 0.5 * Math.sin(t * 3));
+        sys._arc.visible = true;
+
+        // arrowhead at the arc's leading end, pointing along the exit tangent
         const exitA = theta0 + sign * ARC;
-        _v1.set(-Math.sin(exitA) * sign, 0, Math.cos(exitA) * sign);          // exit tangent
-        _v2.subVectors(target.position, bp).normalize();                       // to destination
-        const launch = _v2.multiplyScalar(0.7).addScaledVector(_v1, 0.3).normalize();
-        const end = pts[pts.length - 1];
-        pts.push(end.clone().addScaledVector(launch, 3200));
-        ribbon.geometry.setFromPoints(pts);
-        ribbon.computeLineDistances();
-        _ribbonPts = pts;
+        const exitPos = new THREE.Vector3(bp.x + Math.cos(exitA) * range, y, bp.z + Math.sin(exitA) * range);
+        const exitTan = new THREE.Vector3(-Math.sin(exitA) * sign, 0, Math.cos(exitA) * sign).normalize();
+        sys._arcHead.position.copy(exitPos);
+        sys._arcHead.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), exitTan);
+        sys._arcHead.material.color.copy(col);
+        sys._arcHead.visible = true;
 
-        // PULSE DOT: flows along the whole path every ~2.4s
-        if (sys._pulse) {
-            sys._pulse.visible = true;
-            sys._pulse.material.color.copy(col);
-            const f = (t % 2.4) / 2.4;
-            const idx = f * (pts.length - 1);
-            const i0 = Math.floor(idx), i1 = Math.min(pts.length - 1, i0 + 1);
-            sys._pulse.position.copy(pts[i0]).lerp(pts[i1], idx - i0);
+        // ── WARP TUBE OF LIGHT down the launch corridor ────────────────────
+        // From the arc's exit, blend the exit tangent toward the destination
+        // bearing and run a heavy glowing tube along it.
+        _v2.subVectors(target.position, bp).normalize();
+        const launch = _v2.multiplyScalar(0.72).addScaledVector(exitTan, 0.28).normalize();
+        // Rebuild the tube geometry at ~12 Hz (cheap enough, avoids per-frame
+        // churn); scroll its texture every frame for the flow.
+        const frame = (typeof gameState !== 'undefined' && gameState.frameCount) || 0;
+        if (frame - sys._tubeGeomFrame >= 5 || sys._tube.geometry.attributes.position === undefined) {
+            sys._tubeGeomFrame = frame;
+            const tubePts = [
+                exitPos.clone(),
+                exitPos.clone().addScaledVector(launch, TUBE_LEN * 0.5),
+                exitPos.clone().addScaledVector(launch, TUBE_LEN)
+            ];
+            const tubeCurve = new THREE.CatmullRomCurve3(tubePts);
+            const tubeGeo = new THREE.TubeGeometry(tubeCurve, 24, TUBE_RADIUS, 12, false);
+            sys._tube.geometry.dispose();
+            sys._tube.geometry = tubeGeo;
         }
+        sys._tube.material.color.copy(col);
+        sys._tube.material.map.offset.x = -(t * 0.9) % 1;   // flow toward destination
+        sys._tube.material.opacity = 0.45 + 0.2 * (0.5 + 0.5 * Math.sin(t * 2.2));
+        sys._tube.visible = true;
     }
 
     // ── toggle + button readout ──────────────────────────────────────────────

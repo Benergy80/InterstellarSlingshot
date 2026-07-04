@@ -89,7 +89,8 @@ const gameState = {
         active: false,
         timeRemaining: 0,
         maxSpeed: 20.0, // Doubled for doubled world
-        duration: 24000, // 3x emergency warp duration (8000ms * 3)
+        duration: 6000, // punchy fling (was 24000 — felt like a long cruise);
+                        // total ride ≈ 1.6s whip arc + this boost
         accelerationPhase: 10000,
         maintainPhase: 10000,
         postSlingshot: false,
