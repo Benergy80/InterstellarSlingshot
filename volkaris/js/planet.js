@@ -1156,6 +1156,49 @@ export function buildPlanet(scene, models = {}) {
       addSolid(T(new THREE.CylinderGeometry(0.7 + rnd() * 0.8, 1.4 + rnd() * 1.2, hh, 7), 0, hh / 2, 0),
         f.clone(), pick(rnd, [0xb0538e, 0x9a4bd6, 0xd66a9e]), { jitter: 0.14 });
     }
+    // ══ LUXURY under crystalline nano-sand — domed resorts + crystals ══
+    const dAt = (dlat, dlon, yaw = 0, sink = 0.25) => frameAt(a.lat + dlat, a.lon + dlon, yaw, sink);
+    const IVORY = 0xe6d6c0, ROSE = 0xd89ab0, STEEL2 = 0x4a4658;
+    // HALF-BURIED DOMED HOTELS — sleek shells with a reflective glass band
+    const domeHotel = (fr, R2) => {
+      addSolid(T(new THREE.SphereGeometry(R2, 24, 14, 0, Math.PI * 2, 0, Math.PI * 0.6), 0, -R2 * 0.12, 0), fr.clone(), IVORY, { jitter: 0.02 });
+      addGlow(T(new THREE.TorusGeometry(R2 * 0.97, 0.12, 6, 30), 0, R2 * 0.42, 0, 0, Math.PI / 2), fr.clone(), 0xff9ac8, 0.9);
+      for (let i = 0; i < 14; i++) { const ca = i / 14 * Math.PI * 2; addGlow(T(box(0.4, 0.9, 0.1), Math.cos(ca) * R2 * 0.88, R2 * 0.3, Math.sin(ca) * R2 * 0.88, ca), fr.clone(), pick(rnd, [0xff9ac8, 0x9ac8ff, 0xffd0a0]), 0.85); }
+      addSolid(T(new THREE.TorusGeometry(1.2, 0.2, 6, 14, Math.PI), 0, 0.2, R2 * 0.92), fr.clone(), ROSE);
+      addGlow(T(box(1.7, 0.1, 0.1), 0, 1.35, R2 * 0.94), fr.clone(), NEON.amber, 1.0);
+      const fin = new THREE.Mesh(new THREE.OctahedronGeometry(0.6),
+        new THREE.MeshStandardMaterial({ color: 0xff9ac8, transparent: true, opacity: 0.6, metalness: 0.4, roughness: 0.1, emissive: new THREE.Color(0xff5a9a).multiplyScalar(0.3) }));
+      fin.applyMatrix4(new THREE.Matrix4().makeTranslation(0, R2 * 0.88, 0).premultiply(fr));
+      signs.push(fin);
+    };
+    domeHotel(dAt(-4, 3, 0, 0.5), 4.6); domeHotel(dAt(6, -5, 40, 0.4), 3.3); domeHotel(dAt(-8, -4, 0, 0.4), 2.7);
+    // CRYSTAL FORMATIONS — tall translucent glowing shards in clusters
+    for (const [dl, dn] of [[-2, 7], [8, 3], [-7, -6], [4, -9], [1, -2]]) {
+      const cf = dAt(dl, dn, rnd() * 90, 0.1);
+      const n = 2 + (rnd() * 3 | 0);
+      for (let k = 0; k < n; k++) {
+        const h = 2.5 + rnd() * 5.5, hex = pick(rnd, [0xff8ac0, 0xc88aff, 0xff5a9a, 0x8ac0ff]);
+        const shard = new THREE.Mesh(new THREE.ConeGeometry(0.4 + rnd() * 0.5, h, 5),
+          new THREE.MeshStandardMaterial({ color: hex, transparent: true, opacity: 0.55, metalness: 0.4, roughness: 0.08, emissive: new THREE.Color(hex).multiplyScalar(0.28) }));
+        const tilt = (rnd() - 0.5) * 0.4;
+        shard.applyMatrix4(new THREE.Matrix4().makeRotationZ(tilt)
+          .premultiply(new THREE.Matrix4().makeTranslation((rnd() - 0.5) * 2.4, h / 2, (rnd() - 0.5) * 2.4)).premultiply(cf));
+        signs.push(shard);
+      }
+      addSolid(T(new THREE.CylinderGeometry(0.9, 1.4, 2.6, 6), 0, 1.3, 0), cf.clone(), 0x6a3a6a, { jitter: 0.12 });   // rooted base (collides)
+    }
+    // OBSERVATORY — a domed drum with a glowing telescope slit
+    {
+      const of = dAt(9, 7, 0, 0.3);
+      addSolid(T(new THREE.CylinderGeometry(2.4, 2.8, 3, 16), 0, 1.5, 0), of.clone(), IVORY, { jitter: 0.02 });
+      addSolid(T(new THREE.SphereGeometry(2.4, 18, 10, 0, Math.PI * 2, 0, Math.PI / 2), 0, 3, 0), of.clone(), IVORY);
+      addGlow(T(box(0.6, 1.9, 0.15), 0, 4.1, 2.3, 0, 0, -0.5), of.clone(), NEON.cyan, 1.0);
+      addSolid(T(new THREE.CylinderGeometry(0.24, 0.24, 2.6, 8), 0, 4.3, 1.3, 0, -0.5, 0), of.clone(), STEEL2, { collide: false });
+    }
+    // SUSPENDED WALKWAYS arcing between two resort domes
+    plank(new THREE.Vector3().setFromMatrixPosition(dAt(-4, 3)).addScaledVector(sphDir(a.lat - 4, a.lon + 3), 5.2),
+          new THREE.Vector3().setFromMatrixPosition(dAt(6, -5)).addScaledVector(sphDir(a.lat + 6, a.lon - 5), 4.0), 1.2, 0xd89ab0);
+
     const f = frameAt(a.lat + 2, a.lon + 4, 250);
     addSolid(T(box(5, 3.4, 4), 0, 1.7, 0), f.clone(), 0x24104a);
     addGlow(T(box(4.2, 0.3, 0.12), 0, 3.0, 2.06), f.clone(), NEON.amber, 1.3);

@@ -22,7 +22,7 @@ import { createDemo } from './demo.js';
 import { createHUD } from './hud.js';
 import { createAudio } from './audio.js';
 
-const VK_BUILD = 'VOLKARIS build 2026-07-04q · visual loop pass 5: FOUNDRY RUINS industrial empire';
+const VK_BUILD = 'VOLKARIS build 2026-07-04r · visual loop pass 6: THE PINK DUNES crystalline luxury';
 console.log('%c' + VK_BUILD, 'color:#ff2fd6;font-weight:bold;font-size:14px');
 
 // ── renderer ──
