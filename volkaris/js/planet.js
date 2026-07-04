@@ -517,25 +517,44 @@ export function buildPlanet(scene, models = {}) {
   const towerSpots = [];
   // A window-striped tower block: solid body + glow strips
   function tower(frame, w, h, d, bodyHex, glowHex, { strips = true, cap = true } = {}) {
-    addSolid(T(box(w, h, d), 0, h / 2, 0), frame.clone(), bodyHex, { jitter: 0.06 });
     towerSpots.push({ frame: frame.clone(), w, h, d });
-    if (strips) {
-      const rows = Math.max(2, Math.floor(h / 3.2));
-      for (let r = 0; r < rows; r++) {
-        const y = 2.0 + r * (h - 3) / rows;
-        if (rnd() < 0.24) continue;   // dark floors
-        const g = box(w + 0.08, 0.5, d + 0.08);
-        T(g, 0, y, 0);
-        addGlow(g, frame.clone(), rnd() < 0.5 ? glowHex : pick(rnd, NEON_LIST), 1.05);
+    // SILHOUETTE VARIETY: ~38% of tall towers step back in tiers; the rest
+    // are a single mass that occasionally has a bitten-out damage notch.
+    const setback = rnd() < 0.38 && h > 7;
+    if (setback) {
+      let y = 0, cw = w, cd = d, rem = h, tiers = 2 + (rnd() < 0.45 ? 1 : 0);
+      for (let ti = 0; ti < tiers; ti++) {
+        const th = ti === tiers - 1 ? rem : rem * (0.42 + rnd() * 0.16);
+        addSolid(T(box(cw, th, cd), 0, y + th / 2, 0), frame.clone(), bodyHex, { jitter: 0.05 });
+        if (ti > 0) addGlow(T(box(cw + 0.12, 0.14, cd + 0.12), 0, y + 0.07, 0), frame.clone(), glowHex, 0.9);   // setback ledge
+        if (strips && th > 2) addGlow(T(box(cw + 0.08, 0.45, cd + 0.08), 0, y + th * 0.55, 0), frame.clone(), rnd() < 0.5 ? glowHex : pick(rnd, NEON_LIST), 1.0);
+        y += th; rem -= th; cw *= 0.72; cd *= 0.72;
+      }
+    } else {
+      addSolid(T(box(w, h, d), 0, h / 2, 0), frame.clone(), bodyHex, { jitter: 0.06 });
+      if (rnd() < 0.13 && h > 6)   // facade damage: a dark bitten-out chunk
+        addSolid(T(box(w * 0.42, h * 0.28, 0.5), (rnd() < 0.5 ? -1 : 1) * w * 0.28, h * (0.42 + rnd() * 0.28), d / 2), frame.clone(), 0x0a0818, { collide: false });
+      if (strips) {
+        const rows = Math.max(2, Math.floor(h / 3.2));
+        for (let r = 0; r < rows; r++) {
+          const y = 2.0 + r * (h - 3) / rows;
+          if (rnd() < 0.24) continue;   // dark floors
+          addGlow(T(box(w + 0.08, 0.5, d + 0.08), 0, y, 0), frame.clone(), rnd() < 0.5 ? glowHex : pick(rnd, NEON_LIST), 1.05);
+        }
       }
     }
+    // VARIED CAP — lit box / spire / antenna mast / angled wedge
     if (cap) {
-      const g = box(w * 0.5, 0.6, d * 0.5);
-      T(g, 0, h + 0.3, 0);
-      addGlow(g, frame.clone(), glowHex, 1.25);
+      const kind = rnd();
+      if (kind < 0.4) addGlow(T(box(w * 0.5, 0.6, d * 0.5), 0, h + 0.3, 0), frame.clone(), glowHex, 1.25);
+      else if (kind < 0.66) { addSolid(T(new THREE.ConeGeometry(Math.min(w, d) * 0.28, 2.4 + rnd() * 2, 6), 0, h + 1.2, 0), frame.clone(), bodyHex, { collide: false }); addGlow(T(new THREE.SphereGeometry(0.22, 6, 5), 0, h + 2.6, 0), frame.clone(), NEON.red, 1.1); }
+      else if (kind < 0.85) { addSolid(T(box(0.12, 3 + rnd() * 2.5, 0.12), 0, h + 1.6, 0), frame.clone(), 0x241e46, { collide: false }); addGlow(T(new THREE.SphereGeometry(0.18, 6, 5), 0, h + 3.4, 0), frame.clone(), NEON.red, 1.15); }
+      else addSolid(T(box(w * 0.7, 1.2, d * 0.7), 0, h + 0.5, 0, 0, 0, 0.22), frame.clone(), bodyHex, { collide: false });
     }
-    // towers get the future-deco treatment too (bands, fins, halos)
-    if (typeof futureDeco === 'function') futureDeco(frame, w, h, d, { rich: 0.55 });
+    // towers get the future-deco treatment (single-mass towers only —
+    // stepped ones already read; deco on a stepped box would float)
+    if (!setback && typeof futureDeco === 'function') futureDeco(frame, w, h, d, { rich: 0.55 });
+    if (setback) return;   // stepped towers skip the box-fit rooftop clutter
     // rooftop clutter (NC landmarks: water towers + AC units) — makes
     // rooftop runs and AV overflights pay off
     if (h > 6 && rnd() < 0.35) {   // water tower

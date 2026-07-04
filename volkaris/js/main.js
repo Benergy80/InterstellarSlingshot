@@ -22,7 +22,7 @@ import { createDemo } from './demo.js';
 import { createHUD } from './hud.js';
 import { createAudio } from './audio.js';
 
-const VK_BUILD = 'VOLKARIS build 2026-07-04v · visual loop pass 8: PORT MERIDIAN spaceport scale — roster complete';
+const VK_BUILD = 'VOLKARIS build 2026-07-04w · refinement pass 9: tower silhouette variety';
 console.log('%c' + VK_BUILD, 'color:#ff2fd6;font-weight:bold;font-size:14px');
 
 // ── renderer ──
