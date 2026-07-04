@@ -1309,6 +1309,50 @@ export function buildPlanet(scene, models = {}) {
       signs.push(gate);
     }
 
+    // ══ MONUMENTAL DRESSING — bronze portal, glyphs, monoliths, pools ══
+    const BRONZE = 0x9a6a3a, GLYPH = 0x3a7ac0, GLYPH_HX = 0x4a9ae0;
+    // BRONZE PORTAL frame around the gate (the +Z face doorway)
+    {
+      const gz = B + 0.2;
+      for (const sx of [-2.3, 2.3]) addSolid(T(box(0.5, 7.6, 0.7), sx, 3.8, gz), f.clone(), BRONZE, { jitter: 0.02 });
+      addSolid(T(box(5.1, 0.6, 0.7), 0, 7.4, gz), f.clone(), BRONZE);
+      for (const sx of [-2.0, 2.0]) addGlow(T(box(0.09, 7.0, 0.09), sx, 3.7, gz + 0.36), f.clone(), 0xd8a860, 1.05);
+      addGlow(T(box(4.1, 0.09, 0.09), 0, 7.05, gz + 0.36), f.clone(), 0xd8a860, 1.05);
+    }
+    // MONUMENTAL APPROACH STAIRS out from the gate
+    for (let s2 = 0; s2 < 5; s2++)
+      addSolid(T(box(10 - s2 * 0.8, 0.4, 1.4), 0, 0.2, B + 1.2 + s2 * 1.4), f.clone(), 0x14121f, { jitter: 0.01 });
+    // ILLUMINATED GLYPHS climbing each obsidian face (restrained cold lines)
+    for (let i = 0; i < 4; i++) {
+      const base = f.clone().multiply(new THREE.Matrix4().makeRotationY(i * Math.PI / 2));
+      for (let k = 0; k < 5; k++) {
+        const y = 3 + k * 2.6, w2 = B * (1 - y / H);
+        addGlow(T(box(0.5 + rnd() * 1.4, 0.12, 0.06), (rnd() - 0.5) * w2 * 0.9, y, w2 - 0.12), base.clone(), GLYPH, 0.8);
+      }
+    }
+    // FLOATING MONOLITHS orbiting the fortress, slowly turning
+    for (let i = 0; i < 6; i++) {
+      const ang = i / 6 * Math.PI * 2, rr = B + 6 + (i % 2) * 3;
+      const mono = new THREE.Mesh(new THREE.BoxGeometry(1.2, 4.6, 0.7),
+        new THREE.MeshStandardMaterial({ color: 0x0b0a18, metalness: 0.55, roughness: 0.14 }));
+      const gl = new THREE.Mesh(new THREE.BoxGeometry(0.16, 3.4, 0.09),
+        new THREE.MeshBasicMaterial({ color: new THREE.Color(GLYPH_HX).multiplyScalar(1.1), toneMapped: false }));
+      gl.position.z = 0.37; mono.add(gl);
+      mono.applyMatrix4(new THREE.Matrix4().makeTranslation(Math.cos(ang) * rr, 8 + (i % 3) * 3.5, Math.sin(ang) * rr).premultiply(f.clone()));
+      signs.push(mono);
+      dynamic.push({ mesh: mono, spd: 0.12 + rnd() * 0.08, update(dt) { mono.rotateY(dt * this.spd); } });
+    }
+    // MIRROR POOLS — still obsidian water at the base
+    for (const [cx, cz] of [[-14, 15], [14, 15], [0, -19]]) {
+      const pool = new THREE.Mesh(new THREE.CircleGeometry(3.1, 26),
+        new THREE.MeshStandardMaterial({ color: 0x060810, metalness: 0.95, roughness: 0.05, envMapIntensity: 1.1 }));
+      pool.applyMatrix4(f.clone().multiply(new THREE.Matrix4().makeTranslation(cx, 0.06, cz)).multiply(new THREE.Matrix4().makeRotationX(-Math.PI / 2)));
+      signs.push(pool);
+      addGlow(T(new THREE.TorusGeometry(3.1, 0.06, 5, 28), cx, 0.08, cz, 0, Math.PI / 2), f.clone(), GLYPH, 0.55);
+    }
+    // restrained cold uplights around the base (order, not neon riot)
+    for (let i = 0; i < 6; i++) { const ca = i / 6 * Math.PI * 2; addGlow(T(box(0.4, 0.1, 0.4), Math.cos(ca) * B * 0.82, 0.12, Math.sin(ca) * B * 0.82), f.clone(), GLYPH, 0.7); }
+
     // perimeter watch pylons
     for (let i = 0; i < 6; i++) {
       const ang = i / 6 * 360;
