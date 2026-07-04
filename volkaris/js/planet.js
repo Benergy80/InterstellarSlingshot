@@ -826,6 +826,26 @@ export function buildPlanet(scene, models = {}) {
     };
     cableRun(-2, -13, 9, 5.5); cableRun(2, -13, 9, 6.2); cableRun(-5, -8, 6, 5.0);
 
+    // ── GRAND BAZAAR SPIRE — the market's HERO LANDMARK (tiered souk
+    // tower that dominates the low shanty skyline) ──
+    {
+      const bf = frameAt(anchor.lat + 5, anchor.lon + 2, 0);
+      const TIERS = 6; let y = 0, rad = 3.4;
+      for (let t2 = 0; t2 < TIERS; t2++) {
+        const th = 3.6 - t2 * 0.22;
+        addSolid(T(new THREE.CylinderGeometry(rad * 0.86, rad, th, 8), 0, y + th / 2, 0), bf.clone(), pick(rnd, [0x5c2a8a, 0x3b2a6e, 0x8a2a62]), { jitter: 0.06 });
+        addSolid(T(new THREE.CylinderGeometry(rad + 0.7, rad + 0.7, 0.2, 8), 0, y + th, 0), bf.clone(), pick(rnd, [0xff7a1a, 0xff2fd6]), { collide: false });   // awning eave
+        addGlow(T(new THREE.CylinderGeometry(rad * 0.87, rad * 0.87, 0.42, 8), 0, y + th * 0.5, 0), bf.clone(), pick(rnd, [NEON.amber, NEON.magenta]), 1.0);
+        for (let k = 0; k < 6; k++) { const a2 = k / 6 * Math.PI * 2; addGlow(T(new THREE.SphereGeometry(0.14, 6, 5), Math.cos(a2) * (rad + 0.6), y + th - 0.35, Math.sin(a2) * (rad + 0.6)), bf.clone(), pick(rnd, [NEON.amber, NEON.pink]), 1.1); }   // lanterns
+        y += th; rad *= 0.85;
+      }
+      addSolid(T(box(0.16, 3, 0.16), 0, y + 1.5, 0), bf.clone(), 0x241e46, { collide: false });   // mast
+      addGlow(T(new THREE.SphereGeometry(0.7, 10, 8), 0, y + 3.2, 0), bf.clone(), NEON.amber, 1.25);   // beacon
+      addGlow(T(new THREE.TorusGeometry(1.1, 0.08, 6, 18), 0, y + 3.2, 0, 0, Math.PI / 2), bf.clone(), NEON.magenta, 1.0);
+      const souk = textSign('THE GRAND SOUK', { w: 5, h: 1.1, fg: hexCss(NEON.amber), size: 60 });
+      placeSign(souk, anchor.lat + 5, anchor.lon + 2, 90, 0, y - 1.2, rad + 3.2);
+    }
+
     const gate = textSign('SCRAP MARKET', { fg: hexCss(NEON.amber) });
     placeSign(gate, anchor.lat + 4, anchor.lon - 13, 118, 0, 4.6, 0);
     // arch legs
