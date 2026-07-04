@@ -44,6 +44,9 @@ export function buildNPCs(scene, planet, fx, audio, hud, models = {}) {
     { main: 0x6a5a8c, dark: 0x2a2440, accent: 0xc09aff, visor: 0xd0baff },   // mauve drifter
     { main: 0x5a8c4a, dark: 0x24361e, accent: 0x9dff9a, visor: 0xc0ffb8 },   // olive tinker
     { main: 0x8c4a6a, dark: 0x3a2030, accent: 0xff7ad0, visor: 0xffb8e6 },   // magenta rounder
+    { main: 0x3a6a8a, dark: 0x1a2836, accent: 0x4ac0ff, visor: 0xa0e0ff },   // cobalt courier
+    { main: 0x8a7a3a, dark: 0x38301a, accent: 0xffe04a, visor: 0xfff0a0 },   // ochre trader
+    { main: 0x5c4a8a, dark: 0x241c3a, accent: 0xb87aff, visor: 0xd8b8ff },   // indigo pilgrim
   ];
   const astroTints = (s, glow = 0.22) => ({
     SciFi_Main: { color: s.main, metalness: 0.55, roughness: 0.5 },

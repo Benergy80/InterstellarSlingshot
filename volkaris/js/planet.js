@@ -2563,6 +2563,37 @@ export function buildPlanet(scene, models = {}) {
     spireInfo.top = sDir.clone().multiplyScalar(terrainHeight(sDir) + 30.8);
   }
 
+  // ════════════ STREET CROWDS — cheap static figures for density ═══════
+  // Merged into the solid mesh (no extra draw calls, no AI/mixers), placed
+  // on the plazas of the busy districts and rejected inside buildings.
+  {
+    const CIV = [0x4a7a8c, 0x8c5a3a, 0x6a5a8c, 0x5a8c4a, 0x8c4a6a, 0x3a6a8a, 0x8a7a3a, 0x5c4a8a, 0xb85a6a, 0x4a8a7a, 0x7a6a5a, 0x9a5a7a];
+    const dense = { market: 22, circuit: 18, downtown: 18 };
+    const figure = (dir, yaw, hex) => {
+      const f = surfaceMatrix(dir, terrainHeight(dir) - 0.05, yaw);
+      addSolid(T(new THREE.CylinderGeometry(0.15, 0.26, 1.15, 6), 0, 0.6, 0), f.clone(), hex, { jitter: 0.08, collide: false });
+      addSolid(T(new THREE.SphereGeometry(0.17, 6, 5), 0, 1.32, 0), f.clone(), 0x9aa4b8, { collide: false });
+    };
+    for (const dd of districtDirs) {
+      const n = dense[dd.key]; if (!n) continue;
+      // place on the STREETS (pathSamples are carved clear of buildings)
+      const cosR = Math.cos((dd.pad + 5) / R);
+      const near = pathSamples.filter(ps => ps.dot(dd.dir) > cosR);
+      if (!near.length) continue;
+      for (let i = 0; i < n; i++) {
+        const ps = pick(rnd, near), { east, north } = tangentFrame(ps);
+        const off = (rnd() < 0.5 ? -1 : 1) * (1.5 + rnd() * 1.3), a = rnd() * Math.PI * 2;   // to the kerb
+        const wdir = ps.clone().multiplyScalar(R).addScaledVector(east, Math.cos(a) * off).addScaledVector(north, Math.sin(a) * off).normalize();
+        figure(wdir, rnd() * 6.28, pick(rnd, CIV));
+      }
+      // two gathered groups (a haggle / a chat circle) on the street
+      for (let grp = 0; grp < 2; grp++) {
+        const gc = pick(rnd, near), { east: ge, north: gn } = tangentFrame(gc);
+        for (let k = 0; k < 5; k++) { const ka = k / 5 * Math.PI * 2; const fd = gc.clone().multiplyScalar(R).addScaledVector(ge, Math.cos(ka) * 1.1).addScaledVector(gn, Math.sin(ka) * 1.1).normalize(); figure(fd, ka + Math.PI, pick(rnd, CIV)); }
+      }
+    }
+  }
+
   // ════════════ MERGE + MATERIALS ════════════
   const group = new THREE.Group();
 
