@@ -28,7 +28,6 @@
         candidate: null,
         alignment: 0,
         _arc: null,        // directional whip arc around the body
-        _arcHead: null,    // arrowhead at the arc's leading (exit) end
         _tube: null,       // thick warp tube of light along the launch corridor
         _tubeGeomFrame: 0,
     };
@@ -116,21 +115,13 @@
         sys._arc.frustumCulled = false;
         sys._arc.renderOrder = 56;
         scene.add(sys._arc);
-        // arrowhead cone at the leading (exit) end, points along the sweep
-        const headMat = new THREE.MeshBasicMaterial({
-            color: 0x44ddff, transparent: true, opacity: 0.95,
-            blending: THREE.AdditiveBlending, depthWrite: false
-        });
-        sys._arcHead = new THREE.Mesh(new THREE.ConeGeometry(120, 320, 12), headMat);
-        sys._arcHead.frustumCulled = false;
-        sys._arcHead.renderOrder = 57;
-        scene.add(sys._arcHead);
     }
 
     function _ensureTube() {
         if (sys._tube) return;
         const mat = new THREE.MeshBasicMaterial({
             map: _tubeTexture(), color: 0x44ddff, transparent: true, opacity: 0.6,
+            vertexColors: true,   // per-vertex NEAR-FADE so the tube never walls
             blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide
         });
         sys._tube = new THREE.Mesh(new THREE.BufferGeometry(), mat);
@@ -141,11 +132,10 @@
 
     function _hideVisuals() {
         if (sys._arc) sys._arc.visible = false;
-        if (sys._arcHead) sys._arcHead.visible = false;
         if (sys._tube) sys._tube.visible = false;
     }
 
-    const TUBE_RADIUS = 100;   // 200-unit diameter (per design)
+    const TUBE_RADIUS = 35;    // 70-unit diameter (dialed down from 200 → 100 → 70)
     const TUBE_LEN = 5200;     // exit corridor length toward the destination
 
     function _updateVisuals(body, target) {
@@ -180,14 +170,10 @@
         sys._arc.material.opacity = 0.6 + 0.25 * (0.5 + 0.5 * Math.sin(t * 3));
         sys._arc.visible = true;
 
-        // arrowhead at the arc's leading end, pointing along the exit tangent
+        // Exit point + tangent (where the whip releases) — the tube starts here.
         const exitA = theta0 + sign * ARC;
         const exitPos = new THREE.Vector3(bp.x + Math.cos(exitA) * range, y, bp.z + Math.sin(exitA) * range);
         const exitTan = new THREE.Vector3(-Math.sin(exitA) * sign, 0, Math.cos(exitA) * sign).normalize();
-        sys._arcHead.position.copy(exitPos);
-        sys._arcHead.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), exitTan);
-        sys._arcHead.material.color.copy(col);
-        sys._arcHead.visible = true;
 
         // ── WARP TUBE OF LIGHT down the launch corridor ────────────────────
         // From the arc's exit, blend the exit tangent toward the destination
@@ -213,6 +199,28 @@
         sys._tube.material.map.offset.x = -(t * 0.9) % 1;   // flow toward destination
         sys._tube.material.opacity = 0.45 + 0.2 * (0.5 + 0.5 * Math.sin(t * 2.2));
         sys._tube.visible = true;
+
+        // NEAR-FADE: ramp the tube to nothing within ~700u of the camera so a
+        // 200-diameter tube of light never walls off the view when you're right
+        // on the body. Per-vertex greyscale under additive blending (black =
+        // invisible); recomputed every frame from the live camera position.
+        const posAttr = sys._tube.geometry.attributes.position;
+        if (posAttr) {
+            let colAttr = sys._tube.geometry.attributes.color;
+            if (!colAttr || colAttr.count !== posAttr.count) {
+                colAttr = new THREE.BufferAttribute(new Float32Array(posAttr.count * 3), 3);
+                sys._tube.geometry.setAttribute('color', colAttr);
+            }
+            const NEAR_HIDE = 700, NEAR_FULL = 2600;
+            for (let i = 0; i < posAttr.count; i++) {
+                _v3.fromBufferAttribute(posAttr, i);
+                let f = (_v3.distanceTo(cp) - NEAR_HIDE) / (NEAR_FULL - NEAR_HIDE);
+                f = f < 0 ? 0 : f > 1 ? 1 : f;
+                f = f * f * (3 - 2 * f);   // smoothstep
+                colAttr.setXYZ(i, f, f, f);
+            }
+            colAttr.needsUpdate = true;
+        }
     }
 
     // ── toggle + button readout ──────────────────────────────────────────────
