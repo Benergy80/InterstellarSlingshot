@@ -1076,6 +1076,70 @@ export function buildPlanet(scene, models = {}) {
       addSolid(T(box(8, 3.2, 20), 0, 1.6, 0, 0.25, 0, 0.1), f.clone(), 0x4a4468);
       addGlow(T(box(1.2, 1.2, 0.3), 0, 2.2, 10.2), f.clone(), NEON.orange, 1.2);
     }
+    // ══ THE DECAYING FOUNDRY — furnaces, cooling towers, cranes, slag ══
+    const rAt = (dlat, dlon, yaw = 0, sink = 0.25) => frameAt(a.lat + dlat, a.lon + dlon, yaw, sink);
+    const RUST = [0x6a4a36, 0x5a3e2e, 0x71503a], IRON = 0x2a2632, STEEL = 0x4a4658, SLAG = 0xff5a1a;
+    // BLAST FURNACE — a bulging tower tapping molten metal, hooped in rust
+    const furnace = (fr, sc = 1) => {
+      const H = 12 * sc;
+      addSolid(T(new THREE.CylinderGeometry(2.4 * sc, 3.2 * sc, H * 0.4, 12), 0, H * 0.2, 0), fr.clone(), pick(rnd, RUST), { jitter: 0.06 });
+      addSolid(T(new THREE.CylinderGeometry(3.0 * sc, 2.4 * sc, H * 0.3, 12), 0, H * 0.55, 0), fr.clone(), pick(rnd, RUST), { jitter: 0.06 });
+      addSolid(T(new THREE.CylinderGeometry(1.5 * sc, 3.0 * sc, H * 0.35, 12), 0, H * 0.82, 0), fr.clone(), IRON);
+      for (let k = 1; k <= 4; k++) addSolid(T(new THREE.TorusGeometry(3.05 * sc, 0.14, 5, 14), 0, H * 0.32 + k * 0.85 * sc, 0, 0, Math.PI / 2), fr.clone(), STEEL, { collide: false });
+      addGlow(T(box(0.9 * sc, 0.6 * sc, 0.2), 0, H * 0.18, 3.05 * sc), fr.clone(), SLAG, 1.3);   // tap hole
+      addGlow(T(new THREE.CylinderGeometry(0.4, 0.4, 0.3, 8), 0, H * 1.02, 0), fr.clone(), SLAG, 1.05);   // stack flame
+      addSolid(T(box(0.5, H * 0.9, 0.5), 3.4 * sc, H * 0.45, 0, 0, 0, -0.18), fr.clone(), IRON);   // charging skip rail
+    };
+    furnace(rAt(-6, 3, 20), 1.15); furnace(rAt(5, -7, 60), 0.9);
+    // COOLING TOWERS — hyperbolic shells (two flared cones)
+    const coolTower = (fr, sc = 1) => {
+      const H = 14 * sc;
+      addSolid(T(new THREE.CylinderGeometry(2.9 * sc, 4.4 * sc, H * 0.6, 18, 1, true), 0, H * 0.3, 0), fr.clone(), pick(rnd, RUST), { jitter: 0.03 });
+      addSolid(T(new THREE.CylinderGeometry(3.7 * sc, 2.9 * sc, H * 0.4, 18, 1, true), 0, H * 0.8, 0), fr.clone(), pick(rnd, RUST), { jitter: 0.03 });
+      addGlow(T(new THREE.TorusGeometry(3.6 * sc, 0.1, 5, 18), 0, H, 0, 0, Math.PI / 2), fr.clone(), 0x9a5028, 0.7);
+    };
+    coolTower(rAt(8, 7, 0), 1.0); coolTower(rAt(-9, -5, 30), 0.85);
+    // GANTRY CRANE lifting a molten ladle
+    {
+      const c = rAt(1, 9, 0);
+      for (const sx of [-5, 5]) { addSolid(T(box(0.6, 12, 0.6), sx, 6, 0), c.clone(), STEEL); addSolid(T(box(0.6, 0.6, 4), sx, 11.6, 0), c.clone(), STEEL); }
+      addSolid(T(box(11.4, 0.7, 0.8), 0, 11.8, 0), c.clone(), STEEL);
+      addSolid(T(box(0.16, 3, 0.16), 2, 9.8, 0), c.clone(), IRON);
+      addSolid(T(new THREE.CylinderGeometry(1.4, 1.2, 1.3, 10), 2, 7.9, 0), c.clone(), pick(rnd, RUST), { jitter: 0.06 });   // ladle
+      addGlow(T(new THREE.CylinderGeometry(1.2, 1.2, 0.2, 10), 2, 8.5, 0), c.clone(), SLAG, 1.3);
+    }
+    // MOLTEN SLAG CHANNELS glowing across the ground
+    for (let i = 0; i < 4; i++) {
+      const sf = rAt(-6 + rnd() * 12, -6 + rnd() * 12, rnd() * 90, 0.05);
+      const len = 6 + rnd() * 4;
+      addSolid(T(box(len, 0.32, 0.95), 0, 0.16, 0), sf.clone(), IRON, { collide: false });
+      addGlow(T(box(len - 0.4, 0.06, 0.5), 0, 0.34, 0), sf.clone(), SLAG, 1.25);
+    }
+    // PIPE NETWORKS — big rusted runs, elbows, valve gauges
+    for (let i = 0; i < 6; i++) {
+      const pf = rAt(-9 + rnd() * 18, -9 + rnd() * 18, rnd() * 180, 0.1);
+      addSolid(T(new THREE.CylinderGeometry(0.38, 0.38, 6 + rnd() * 4, 10), 0, 1.4 + rnd() * 1.5, 0, 0, 0, Math.PI / 2), pf.clone(), pick(rnd, RUST), { jitter: 0.05 });
+      addSolid(T(new THREE.TorusGeometry(0.55, 0.38, 6, 10, Math.PI / 2), 3, 1.4, 0), pf.clone(), pick(rnd, RUST), { collide: false });
+      if (rnd() < 0.5) addGlow(T(new THREE.CylinderGeometry(0.13, 0.13, 0.3, 8), -2, 1.4, 0, 0, 0, Math.PI / 2), pf.clone(), pick(rnd, [NEON.orange, SLAG]), 0.9);
+    }
+    // CASTING SHED — a long saw-tooth hall glowing with the pour
+    {
+      const sf = rAt(7, -4, 90);
+      addSolid(T(box(12, 5, 6), 0, 2.5, 0), sf.clone(), IRON, { jitter: 0.05 });
+      addSolid(T(box(12.6, 0.5, 7), 0, 5.2, 0), sf.clone(), STEEL);
+      for (let k = -2; k <= 2; k++) addSolid(T(box(1.5, 1.3, 7), k * 2.3, 5.7, 0, 0, 0, 0.4), sf.clone(), STEEL, { collide: false });   // saw-tooth vents
+      addGlow(T(box(3.2, 2, 0.12), 0, 2, 3.05), sf.clone(), SLAG, 1.2);   // door pour-glow
+      addGlow(T(box(11, 0.3, 5.4), 0, 0.35, 0), sf.clone(), SLAG, 0.9);
+    }
+    // DORMANT MACHINERY — press hulks + a great flywheel
+    for (let i = 0; i < 3; i++) {
+      const mf = rAt(-5 + i * 5, 6, rnd() * 90, 0.1);
+      addSolid(T(box(2.2, 3.0, 1.8), 0, 1.5, 0), mf.clone(), IRON, { jitter: 0.06 });
+      addSolid(T(box(1.6, 0.5, 1.4), 0, 3.2, 0), mf.clone(), STEEL);
+      addSolid(T(new THREE.CylinderGeometry(0.3, 0.3, 1.4, 8), 0, 2.4, 0.9), mf.clone(), STEEL, { collide: false });   // piston
+    }
+    addSolid(T(new THREE.CylinderGeometry(2.6, 2.6, 0.6, 20), 0, 2.6, 0, 0, 0, Math.PI / 2), rAt(-2, -8, 0).clone(), STEEL, { jitter: 0.04 });   // flywheel
+
     // the market secret tunnel surfaces here, behind a chimney
     const tf = frameAt(a.lat - 2, a.lon - 14, 40, 0.2);
     tunnel(tf, 2.4, 2.6, 18, NEON.lime);
