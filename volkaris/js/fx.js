@@ -217,7 +217,9 @@ export function createFX(scene, camera, planet, audio, models = {}) {
           continue;
         }
       }
-      if (!b.friendly && playerAPI) {
+      if (!b.friendly && playerAPI && playerAPI.state.mode !== 'ride') {
+        // riding the elevated monorail = out of the firing line; the car
+        // floor and the height keep ground troops from tagging you
         const p = playerAPI.state.pos;
         _up.copy(p).normalize();
         _v2.copy(p).addScaledVector(_up, 1.0);

@@ -522,7 +522,8 @@ export function buildNPCs(scene, planet, fx, audio, hud, models = {}) {
       const isHostile = npc.aggro;
       // sight requires LINE of sight — walls, towers and terrain all
       // break contact (they were sniping through buildings before)
-      let seesPlayer = isHostile && dist < 26 && !player.state.dead;
+      // a rider on the elevated loop is out of the fight — don't engage
+      let seesPlayer = isHostile && dist < 26 && !player.state.dead && player.state.mode !== 'ride';
       if (seesPlayer && dist > 3) {
         _v2.copy(npc.pos).addScaledVector(_up, 1.4);
         _v.copy(pPos).addScaledVector(_up, 1.1).sub(_v2);

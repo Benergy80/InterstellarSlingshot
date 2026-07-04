@@ -140,6 +140,7 @@ export function createPlayer({ scene, camera, planet, hud, audio, fx, transit, m
     mode: 'walk',        // walk | ride (monorail) | pilot (vehicle)
     vehicle: null,
     zTarget: null,       // Z-targeting: sticky manual lock
+    onLift: 0,           // >0 = a station lift is carrying us (skip ground snap)
   };
   {
     const up = state.pos.clone().normalize();
@@ -762,7 +763,10 @@ export function createPlayer({ scene, camera, planet, hud, audio, fx, transit, m
     }
 
     // ── ground snap ──
-    const gh = planet.groundHit(state.pos, 2.4, 8);
+    // while a lift is carrying us, terrain snap is suppressed so the disc
+    // can pull us up off the street without the ground yanking us back
+    if (state.onLift > 0) state.onLift -= dt;
+    const gh = state.onLift > 0 ? null : planet.groundHit(state.pos, 2.4, 8);
     const wasGrounded = state.grounded;
     if (gh) {
       const height = state.pos.dot(_up) - gh.point.dot(_up);
@@ -920,7 +924,24 @@ export function createPlayer({ scene, camera, planet, hud, audio, fx, transit, m
     _up.copy(state.pos).normalize();
     _right.crossVectors(state.heading, _up).negate().normalize();
     _fwd.copy(state.heading).applyQuaternion(_q.setFromAxisAngle(_right, state.camPitch * 0.85)).normalize();
-    const dist = deadCam ? 7.5 : state.mode === 'ride' ? 2.6 : state.camDist;
+
+    // ── monorail: a smooth, floaty sightseeing cam ──
+    // No terrain-collision pull-in (it clips the train and jerks), a soft
+    // lerp so the ride glides, and a slightly higher/further boom so you
+    // can freely look around the moving world.
+    if (state.mode === 'ride') {
+      const want2 = _v.copy(state.pos)
+        .addScaledVector(_up, 2.6 + state.camPitch * -1.4)
+        .addScaledVector(_fwd, -4.4);
+      if (!camInit) { camPos.copy(want2); camInit = true; }
+      camPos.lerp(want2, 1 - Math.pow(0.035, dt));
+      camera.position.copy(camPos);
+      camera.up.copy(_up);
+      camera.lookAt(_v.copy(state.pos).addScaledVector(_up, 1.6).addScaledVector(state.heading, 1.4));
+      return;
+    }
+
+    const dist = deadCam ? 7.5 : state.camDist;
     const want = _v.copy(state.pos)
       .addScaledVector(_up, 1.85 + state.camPitch * -1.2)
       .addScaledVector(_fwd, -dist);

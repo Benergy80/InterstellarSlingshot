@@ -22,7 +22,7 @@ import { createDemo } from './demo.js';
 import { createHUD } from './hud.js';
 import { createAudio } from './audio.js';
 
-const VK_BUILD = 'VOLKARIS build 2026-07-03t · no special clips on A/D or arrow turns';
+const VK_BUILD = 'VOLKARIS build 2026-07-04a · monorail pass 1: lift, straddle car, smooth cam, map';
 console.log('%c' + VK_BUILD, 'color:#ff2fd6;font-weight:bold;font-size:14px');
 
 // ── renderer ──
@@ -135,6 +135,7 @@ async function boot() {
   hud.setProgress(0.78, 'SPINNING UP THE ORBITAL LOOP');
   await frame();
   transit = buildTransit(scene, planet, audio);
+  hud.bindTransit(transit);   // feed the monorail map
 
   hud.setProgress(0.85, 'WAKING THE LOCALS');
   await frame();
@@ -175,6 +176,7 @@ function animate() {
     planet.update(dt, elapsed);
     if (player.state.started) demo.update(dt, elapsed, fpsEMA);   // pilot steers before physics
     planet.carryRiders(player.state, dt);   // elevators lift whoever stands on them
+    transit.carryRiders(player.state, dt);  // station lifts carry riders up to the deck
     const dayF = sky.update(elapsed, player.state.pos, bloom, planet.group.children[1]?.material);
     player.suitLamp.intensity = 0.15 + sky.night * 1.2;
     player.update(dt, elapsed);

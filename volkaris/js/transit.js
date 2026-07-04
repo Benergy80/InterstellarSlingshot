@@ -24,6 +24,7 @@ import { C, NEON, NEON_LIST, mulberry32, pick, clamp, lerp, sphDir, tangentFrame
 const R = C.R;
 const _v = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3();
 const _q = new THREE.Quaternion(), _m = new THREE.Matrix4();
+const _YUP = new THREE.Vector3(0, 1, 0);
 
 // [lat, lon, altitude] control knots — closed weaving curves.
 // Altitude bands are disjoint enough at every crossing that the
@@ -63,6 +64,7 @@ export function buildTransit(scene, planet, audio) {
   const rnd = mulberry32(C.SEED + 311);
   const stations = [];        // flat, across lines (demo + HUD friendly)
   const lines = [];
+  const lifts = [];           // station access lifts (carry the player up)
   const gatewayGroup = new THREE.Group();
   const platGroup = new THREE.Group();
   const platMat = new THREE.MeshStandardMaterial({ color: 0x241e4e, roughness: 0.6, metalness: 0.4 });
@@ -314,42 +316,52 @@ export function buildTransit(scene, planet, audio) {
       platGroup.add(board);
       st.eta = { cv, ctx, tex };
 
-      // ── access ramp: segmented, following the line's own curve ──
-      const groundH = planet.terrainHeight(stDir);
-      const rise = platH - groundH;
-      if (rise > 1.5) {
-        const grade = 0.42;
-        const run = rise / grade;
-        const segs = Math.max(3, Math.ceil(run / 4));
-        const segRun = run / segs, segRise = rise / segs;
-        const segLen = Math.hypot(segRun, segRise) + 0.6;
-        const pitch = Math.atan2(segRise, segRun);
-        for (let i = 0; i <= segs; i++) {
-          const tOff = (6 + (i + 0.5) * segRun) / line.length;
-          const p2 = line.curve.getPointAt((t + tOff) % 1);
-          const su = p2.clone().normalize();
-          const stang = line.curve.getTangentAt((t + tOff) % 1);
-          const sside = new THREE.Vector3().crossVectors(stang, su).normalize();
-          const h = platH - (i + 0.5) * segRise;
-          const seg = new THREE.Mesh(new THREE.BoxGeometry(segLen, 0.5, 2.6), platMat);
-          seg.receiveShadow = true;
-          const sm = new THREE.Matrix4().makeBasis(stang, su.clone(), sside)
-            .setPosition(su.clone().multiplyScalar(h).addScaledVector(sside, 2.2));
-          seg.applyMatrix4(new THREE.Matrix4().makeRotationZ(-pitch).premultiply(sm));
-          platGroup.add(seg);
-          const rail2 = new THREE.Mesh(new THREE.BoxGeometry(segLen, 0.07, 0.07),
-            new THREE.MeshBasicMaterial({ color: new THREE.Color(NEON.amber).multiplyScalar(1.1), toneMapped: false }));
-          rail2.applyMatrix4(new THREE.Matrix4().makeTranslation(0, 1.0, 1.25).premultiply(
-            new THREE.Matrix4().makeRotationZ(-pitch).premultiply(sm)));
-          platGroup.add(rail2);
+      // ── access LIFT: a glowing platform that rises from the street to
+      // the boarding deck. No ramp to walk off, no terrain-intersection
+      // problem — step on, it carries you up. (The straddle stations sit
+      // 10-20u over uneven, curving ground; a lift is the clean answer.)
+      {
+        // lift column just off the platform's outer edge; step from the
+        // lift disc straight onto the deck
+        const liftDir = up.clone().multiplyScalar(platH).addScaledVector(side, 5.2).normalize();
+        const groundR = planet.terrainHeight(liftDir);
+        const deckR = platH + 0.15;
+        if (deckR - groundR > 1.5) {
+          // twin glowing guide rails (full travel height)
+          for (const gs of [-1, 1]) {
+            const railLen = deckR - groundR + 0.5;
+            const rg = new THREE.CylinderGeometry(0.1, 0.1, railLen, 6);
+            rg.translate(0, 0, 0);
+            const { up: lu, east: le, north: ln } = tangentFrame(liftDir);
+            const rm = new THREE.Matrix4().makeBasis(le, lu, ln)
+              .setPosition(liftDir.clone().multiplyScalar((groundR + deckR) / 2).addScaledVector(le, gs * 1.7));
+            const rail = new THREE.Mesh(rg, new THREE.MeshBasicMaterial({
+              color: new THREE.Color(line.hex).multiplyScalar(1.05), toneMapped: false }));
+            rail.applyMatrix4(rm);
+            platGroup.add(rail);   // rails are static — safe to bake
+          }
+          // the moving disc (NOT baked into the BVH — it carries you)
+          const disc = new THREE.Group();
+          const deck = new THREE.Mesh(new THREE.CylinderGeometry(1.9, 1.9, 0.28, 16),
+            new THREE.MeshStandardMaterial({ color: 0x2a2452, roughness: 0.5, metalness: 0.6 }));
+          disc.add(deck);
+          const ring = new THREE.Mesh(new THREE.TorusGeometry(1.95, 0.09, 6, 20),
+            new THREE.MeshBasicMaterial({ color: new THREE.Color(line.hex).multiplyScalar(1.2), toneMapped: false }));
+          ring.rotation.x = Math.PI / 2; ring.position.y = 0.18;
+          disc.add(ring);
+          scene.add(disc);
+          const { up: lu } = tangentFrame(liftDir);
+          lifts.push({
+            disc, dir: liftDir, up: lu.clone(),
+            lo: groundR + 0.2, hi: deckR,
+            r: groundR + 0.2, dirn: 1, speed: 3.6, dwell: 0,
+            prev: new THREE.Vector3(),
+          });
+          // wayfinding: demo pilot walks to the lift base, waits to rise
+          st.rampFoot = liftDir.clone().multiplyScalar(groundR + 0.4);
+          st.rampTop = st.boardPos.clone();
+          st.liftBase = liftDir.clone().multiplyScalar(groundR + 0.4);
         }
-        // ramp endpoints for wayfinding (demo pilot walks foot → top)
-        const aFoot = (6 + run) / line.length;
-        const dF = line.curve.getPointAt((t + aFoot) % 1).normalize();
-        const tangF = line.curve.getTangentAt((t + aFoot) % 1);
-        const sF = new THREE.Vector3().crossVectors(tangF, dF).normalize();
-        st.rampFoot = dF.clone().multiplyScalar(planet.terrainHeight(dF) + 0.4).addScaledVector(sF, 2.2);
-        st.rampTop = st.boardPos.clone();
       }
 
       line.stations.push(st);
@@ -361,6 +373,10 @@ export function buildTransit(scene, planet, audio) {
   planet.addColliders(platGroup);
 
   // ════════════ TRAINS: one per line, hollow glass cars ════════════
+  // The car rides ABOVE the beam (straddle-monorail): the whole body is
+  // lifted by CAR_LIFT so the glowing rail runs UNDER the floor instead
+  // of through the standing rider's chest. Struts + skid drop to the rail.
+  const CAR_LIFT = 1.5;
   function buildCar(hex, lead) {
     const car = new THREE.Group();
     const bodyMat = new THREE.MeshStandardMaterial({ color: 0x35306a, roughness: 0.3, metalness: 0.75 });
@@ -369,6 +385,12 @@ export function buildTransit(scene, planet, audio) {
     floor.position.y = -1.05;
     floor.castShadow = true;
     car.add(floor);
+    // bogie struts down to the rail beam (CAR_LIFT below the floor)
+    for (const bz of [-2.0, 2.0]) {
+      const strut = new THREE.Mesh(new THREE.BoxGeometry(0.5, CAR_LIFT + 0.4, 0.5), bodyMat);
+      strut.position.set(0, -1.17 - (CAR_LIFT + 0.4) / 2 + 0.1, bz);
+      car.add(strut);
+    }
     const roof = new THREE.Mesh(new THREE.BoxGeometry(2.5, 0.2, 5.8), bodyMat);
     roof.position.y = 1.45;
     car.add(roof);
@@ -422,9 +444,10 @@ export function buildTransit(scene, planet, audio) {
       new THREE.MeshBasicMaterial({ color: new THREE.Color(0xff2e4d).multiplyScalar(1.2), toneMapped: false }));
     tail.position.set(0, 0.2, -2.95);
     car.add(tail);
-    const skid = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.5, 5.4),
+    // glowing skid straddling the rail beam, at CAR_LIFT below center
+    const skid = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.5, 5.4),
       new THREE.MeshBasicMaterial({ color: new THREE.Color(hex).multiplyScalar(1.15), toneMapped: false }));
-    skid.position.y = -1.4;
+    skid.position.y = -CAR_LIFT;
     car.add(skid);
     return car;
   }
@@ -453,8 +476,9 @@ export function buildTransit(scene, planet, audio) {
     const up = _v.copy(p).normalize();
     // RIGHT-handed: X = up×tang, Y = up, Z = tang (nose leads)
     const side = _v2.crossVectors(up, tang).normalize();
-    _m.makeBasis(side, up, tang).setPosition(p.x, p.y, p.z);
-    car.position.copy(p);
+    _m.makeBasis(side, up, tang);
+    // ride above the beam so the rail runs under the floor, not through the rider
+    car.position.copy(p).addScaledVector(up, CAR_LIFT);
     car.quaternion.setFromRotationMatrix(_m);
   }
 
@@ -714,9 +738,41 @@ export function buildTransit(scene, planet, audio) {
       carBodies.instanceMatrix.needsUpdate = true;
       carGlows.instanceMatrix.needsUpdate = true;
 
+      // ── station lifts: paternoster travel, disc position each frame ──
+      for (const L of lifts) {
+        L.prev.copy(L.disc.position);
+        if (L.dwell > 0) { L.dwell -= dt; }
+        else {
+          L.r += L.dirn * L.speed * dt;
+          if (L.r >= L.hi) { L.r = L.hi; L.dirn = -1; L.dwell = 2.5; }
+          if (L.r <= L.lo) { L.r = L.lo; L.dirn = 1; L.dwell = 2.5; }
+        }
+        L.disc.position.copy(L.dir).multiplyScalar(L.r);
+        L.disc.quaternion.setFromUnitVectors(_YUP, L.up);
+      }
+
       // ── ETA boards at ~3 Hz ──
       etaClock -= dt;
       if (etaClock <= 0) { etaClock = 0.34; drawETA(); }
+    },
+
+    lifts,
+    // called from main each frame BEFORE player physics: if the player is
+    // standing on a rising lift disc, carry them up with it
+    carryRiders(playerState, dt) {
+      for (const L of lifts) {
+        _v2.copy(playerState.pos).sub(L.disc.position);
+        const along = _v2.dot(L.up);
+        const horiz = _v3.copy(_v2).addScaledVector(L.up, -along).length();
+        if (horiz < 1.9 && along > -0.5 && along < 1.7) {
+          const vlift = L.dwell > 0 ? 0 : L.dirn * L.speed;   // 0 while parked
+          playerState.pos.addScaledVector(L.up, vlift * dt);
+          const rv = playerState.vel.dot(L.up);
+          playerState.vel.addScaledVector(L.up, vlift - rv);   // ride the disc's velocity exactly
+          playerState.grounded = false;
+          playerState.onLift = 0.25;                           // suppress ground-snap briefly
+        }
+      }
     },
   };
 }
