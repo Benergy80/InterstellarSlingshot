@@ -22,7 +22,7 @@ import { createDemo } from './demo.js';
 import { createHUD } from './hud.js';
 import { createAudio } from './audio.js';
 
-const VK_BUILD = 'VOLKARIS build 2026-07-04x · refinement pass 10: weathering decals';
+const VK_BUILD = 'VOLKARIS build 2026-07-04y · refinement pass 11: floating district holograms + wayfinding';
 console.log('%c' + VK_BUILD, 'color:#ff2fd6;font-weight:bold;font-size:14px');
 
 // ── renderer ──

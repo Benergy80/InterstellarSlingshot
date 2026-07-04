@@ -2650,6 +2650,53 @@ export function buildPlanet(scene, models = {}) {
     return bd < best.pad + 10 ? best : null;
   }
 
+  // ════════════ FLOATING DISTRICT HOLOGRAMS — wayfinding beacons ═══════
+  // A big glowing name banner hovers over every district, slowly turning
+  // on a projector beam — visible from across the planet, themed per zone.
+  {
+    const holoThemes = {
+      crash: NEON.lime, market: NEON.amber, circuit: NEON.cyan, downtown: NEON.cyan,
+      ruins: NEON.orange, dunes: NEON.pink, pyramid: NEON.red, port: NEON.lime,
+    };
+    const holoBanner = (text, hex, w = 11, h = 2.6) => {
+      const [cv, ctx] = makeCanvas(768, Math.round(768 * h / w));
+      ctx.clearRect(0, 0, cv.width, cv.height);
+      const css = hexCss(hex);
+      ctx.font = `900 ${Math.round(cv.height * 0.52)}px Orbitron, sans-serif`;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.shadowColor = css; ctx.shadowBlur = 32; ctx.fillStyle = css;
+      ctx.fillText(text, cv.width / 2, cv.height / 2);
+      ctx.fillText(text, cv.width / 2, cv.height / 2);
+      ctx.globalAlpha = 0.12;
+      for (let y = 0; y < cv.height; y += 6) ctx.fillRect(0, y, cv.width, 1);   // faint scanlines
+      ctx.globalAlpha = 1;
+      // NORMAL blending so the glowing text reads solid against a bright
+      // sky (additive vanished at dawn)
+      return new THREE.Mesh(new THREE.PlaneGeometry(w, h),
+        new THREE.MeshBasicMaterial({ map: canvasTexture(cv), transparent: true, toneMapped: false, side: THREE.FrontSide, depthWrite: false, opacity: 0.95 }));
+    };
+    for (const dd of districtDirs) {
+      const hex = holoThemes[dd.key] ?? NEON.cyan;
+      const g0 = terrainHeight(dd.dir), h0 = g0 + 15;
+      const { up, east, north } = tangentFrame(dd.dir);
+      const pos = dd.dir.clone().multiplyScalar(h0);
+      // FOUR outward-facing banners (N/E/S/W) so a readable face always
+      // points at the viewer — no mirrored back, no edge-on spin gaps
+      const mats = [];
+      for (const dir4 of [north, east, north.clone().negate(), east.clone().negate()]) {
+        const right = new THREE.Vector3().crossVectors(up, dir4).normalize();
+        const b = holoBanner(dd.name, hex);
+        b.applyMatrix4(new THREE.Matrix4().makeBasis(right, up, dir4).setPosition(pos.x, pos.y, pos.z));
+        group.add(b); mats.push(b.material);
+      }
+      dynamic.push({ ph: rnd() * 6, update(dt, t) { const o = 0.82 + 0.14 * Math.sin(t * 7 + this.ph); for (const m of mats) m.opacity = o; } });
+      const beam = new THREE.Mesh(new THREE.CylinderGeometry(1.6, 0.5, h0 - g0, 12, 1, true),
+        new THREE.MeshBasicMaterial({ color: new THREE.Color(hex).multiplyScalar(0.5), transparent: true, opacity: 0.09, side: THREE.DoubleSide, depthWrite: false, blending: THREE.AdditiveBlending, toneMapped: false }));
+      beam.applyMatrix4(new THREE.Matrix4().makeBasis(east, up, north).setPosition(...dd.dir.clone().multiplyScalar((g0 + h0) / 2)));
+      group.add(beam);
+    }
+  }
+
   return {
     group, uTime, collMesh, groundHit, probe, addColliders,
     districts: districtDirs, districtAt,
