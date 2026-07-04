@@ -67,14 +67,16 @@ export function createPlayer({ scene, camera, planet, hud, audio, fx, transit, m
     if (models?.captain2) rig.setGunRot(-1.302, 0.314, 0.205);   // Captain 2 wrist (frozen-pose measured)
     else rig.setGunRot(-1.623, 0.166, 1.751);                    // Astronaut wrist
   }
-  // the Captain 2 suit shipped very glossy/reflective — matte it down so
-  // it reads as armour, not chrome (Ben's note)
+  // Captain 2 armour: KEEP it reflective/metallic (as intended) but the
+  // near-white albedo was blowing out to a bright glow — darken the base
+  // colour and ease the env reflections so it reads as burnished metal
   if (models?.captain2) {
     rig.group.traverse(o => {
       if (o.isMesh && o.material && o.material.isMeshStandardMaterial) {
-        o.material.metalness = 0.08;
-        o.material.roughness = 0.82;
-        o.material.envMapIntensity = 0.25;
+        o.material.metalness = 0.7;          // reflective metallic
+        o.material.roughness = 0.42;         // brushed sheen, not a mirror
+        o.material.envMapIntensity = 0.45;   // reflections present, not blinding
+        o.material.color.multiplyScalar(0.55);   // knock down the blown-out white
         o.material.needsUpdate = true;
       }
     });

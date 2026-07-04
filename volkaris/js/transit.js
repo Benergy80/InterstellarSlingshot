@@ -135,11 +135,15 @@ export function buildTransit(scene, planet, audio) {
       const mouthDark = [];
       for (const [a, b] of spans) {
         if (b - a < 2) continue;
+        // the straddle car rides ABOVE the rail (roof ≈ rail+2.9), so the
+        // bore is offset OUTWARD to centre on the car body and given a
+        // wide radius — the car never clips the tunnel on any line
+        const boreR = 3.6, boreLift = 1.3;
         const sub = [];
-        for (let i = a; i <= b; i++) sub.push(samples[i].p);
+        for (let i = a; i <= b; i++) sub.push(samples[i].p.clone().addScaledVector(samples[i].d, boreLift));
         const subCurve = new THREE.CatmullRomCurve3(sub, false, 'centripetal');
         const bore = new THREE.Mesh(
-          new THREE.TubeGeometry(subCurve, Math.max(8, (b - a)), 2.4, 12, false),
+          new THREE.TubeGeometry(subCurve, Math.max(8, (b - a)), boreR, 14, false),
           new THREE.MeshStandardMaterial({ color: 0x120c26, roughness: 0.95, metalness: 0.05, side: THREE.BackSide }));
         scene.add(bore);
         const subLen = subCurve.getLength();
@@ -149,18 +153,18 @@ export function buildTransit(scene, planet, audio) {
           const p = subCurve.getPointAt(tt);
           const tang = subCurve.getTangentAt(tt);
           const mouth = r2 === 0 || r2 === nRings;
-          const g = new THREE.TorusGeometry(mouth ? 2.9 : 2.0, mouth ? 0.24 : 0.06, 6, 22);
+          const g = new THREE.TorusGeometry(mouth ? boreR + 0.5 : boreR - 0.4, mouth ? 0.3 : 0.08, 6, 24);
           const m4 = new THREE.Matrix4().lookAt(new THREE.Vector3(), tang, p.clone().normalize());
           m4.setPosition(p);
           g.applyMatrix4(m4);
           ringGeos.push(g);
-          // a recessed dark CAVE-MOUTH disc set into the mountainside so
-          // the entrance reads as a real opening, not the rail vanishing
+          // a recessed dark CAVE-MOUTH set into the mountainside so the
+          // entrance reads as a real, generous opening
           if (mouth) {
-            const md = new THREE.CylinderGeometry(2.7, 2.7, 3.2, 16, 1, true);
+            const md = new THREE.CylinderGeometry(boreR + 0.3, boreR + 0.3, 3.6, 18, 1, true);
             md.rotateX(Math.PI / 2);
             const mm = new THREE.Matrix4().lookAt(new THREE.Vector3(), tang, p.clone().normalize());
-            mm.setPosition(p.clone().addScaledVector(tang, r2 === 0 ? 1.4 : -1.4));
+            mm.setPosition(p.clone().addScaledVector(tang, r2 === 0 ? 1.6 : -1.6));
             md.applyMatrix4(mm);
             mouthDark.push(md);
           }
@@ -435,21 +439,23 @@ export function buildTransit(scene, planet, audio) {
             rail.applyMatrix4(rm);
             platGroup.add(rail);   // rails are static — safe to bake
           }
-          // the moving disc (NOT baked into the BVH — it carries you)
+          // the moving disc (NOT baked into the BVH — it carries you).
+          // Bigger pad + it dips FLUSH to the street so you just walk on.
           const disc = new THREE.Group();
-          const deck = new THREE.Mesh(new THREE.CylinderGeometry(1.9, 1.9, 0.28, 16),
+          const deck = new THREE.Mesh(new THREE.CylinderGeometry(2.4, 2.4, 0.3, 18),
             new THREE.MeshStandardMaterial({ color: 0x2a2452, roughness: 0.5, metalness: 0.6 }));
           disc.add(deck);
-          const ring = new THREE.Mesh(new THREE.TorusGeometry(1.95, 0.09, 6, 20),
+          const ring = new THREE.Mesh(new THREE.TorusGeometry(2.45, 0.1, 6, 22),
             new THREE.MeshBasicMaterial({ color: new THREE.Color(line.hex).multiplyScalar(1.2), toneMapped: false }));
-          ring.rotation.x = Math.PI / 2; ring.position.y = 0.18;
+          ring.rotation.x = Math.PI / 2; ring.position.y = 0.2;
           disc.add(ring);
           scene.add(disc);
           const { up: lu } = tangentFrame(liftDir);
           lifts.push({
             disc, dir: liftDir, up: lu.clone(),
-            lo: groundR + 0.2, hi: deckR,
-            r: groundR + 0.2, dirn: 1, speed: 3.6, dwell: 0,
+            lo: groundR - 0.15, hi: deckR + 0.1,   // dips flush to the ground
+            r: groundR - 0.15, dirn: 1, speed: 3.0, dwell: 0,
+            botDwell: 4.5,                          // long wait at the bottom to step on
             prev: new THREE.Vector3(),
           });
           // lift base (the demo keeps using the ramp's rampFoot)
@@ -473,75 +479,65 @@ export function buildTransit(scene, planet, audio) {
   // lifted by CAR_LIFT so the glowing rail runs UNDER the floor instead
   // of through the standing rider's chest. Struts + skid drop to the rail.
   const CAR_LIFT = 1.5;
+  // SPACE-AGE PILL: a sleek capsule hull (rounded nose & tail) in tinted
+  // glass so you see the rider inside and out, on an opaque floor, riding
+  // the beam on bogie struts.
   function buildCar(hex, lead) {
     const car = new THREE.Group();
     const bodyMat = new THREE.MeshStandardMaterial({ color: 0x35306a, roughness: 0.3, metalness: 0.75 });
-    // hollow shell: floor, roof, low walls, glass band — you RIDE INSIDE
-    const floor = new THREE.Mesh(new THREE.BoxGeometry(2.5, 0.24, 5.8), bodyMat);
-    floor.position.y = -1.05;
-    floor.castShadow = true;
-    car.add(floor);
-    // bogie struts down to the rail beam (CAR_LIFT below the floor)
-    for (const bz of [-2.0, 2.0]) {
-      const strut = new THREE.Mesh(new THREE.BoxGeometry(0.5, CAR_LIFT + 0.4, 0.5), bodyMat);
-      strut.position.set(0, -1.17 - (CAR_LIFT + 0.4) / 2 + 0.1, bz);
-      car.add(strut);
-    }
-    const roof = new THREE.Mesh(new THREE.BoxGeometry(2.5, 0.2, 5.8), bodyMat);
-    roof.position.y = 1.45;
-    car.add(roof);
-    for (const s of [-1, 1]) {
-      const wall = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.85, 5.8), bodyMat);
-      wall.position.set(s * 1.2, -0.5, 0);
-      car.add(wall);
-      const glass = new THREE.Mesh(new THREE.BoxGeometry(0.05, 1.35, 5.6),
-        new THREE.MeshBasicMaterial({
-          color: new THREE.Color(NEON.cyan).multiplyScalar(0.5), transparent: true, opacity: 0.16,
-          depthWrite: false, toneMapped: false,
-        }));
-      glass.position.set(s * 1.21, 0.65, 0);
-      car.add(glass);
-      // pillars
-      for (const pz of [-2.8, 0, 2.8]) {
-        const pil = new THREE.Mesh(new THREE.BoxGeometry(0.14, 2.5, 0.14), bodyMat);
-        pil.position.set(s * 1.2, 0.2, pz);
-        car.add(pil);
-      }
-    }
-    // end caps (glass front/back so the ride view is open)
+    // the pill hull — a capsule laid along the travel axis (Z)
+    const hull = new THREE.Mesh(
+      new THREE.CapsuleGeometry(1.35, 3.2, 8, 24),
+      new THREE.MeshStandardMaterial({
+        color: new THREE.Color(hex).multiplyScalar(0.55), metalness: 0.55, roughness: 0.22,
+        transparent: true, opacity: 0.34, side: THREE.DoubleSide, depthWrite: false,
+      }));
+    hull.rotation.x = Math.PI / 2;
+    hull.castShadow = true;
+    car.add(hull);
+    // bright chrome nose & tail caps for the sleek look
     for (const zz of [-1, 1]) {
-      const cap = new THREE.Mesh(new THREE.BoxGeometry(2.5, 2.6, 0.06),
-        new THREE.MeshBasicMaterial({
-          color: new THREE.Color(hex).multiplyScalar(0.5), transparent: true, opacity: 0.14,
-          depthWrite: false, toneMapped: false,
-        }));
-      cap.position.set(0, 0.2, zz * 2.9);
+      const cap = new THREE.Mesh(new THREE.SphereGeometry(1.34, 18, 12, 0, Math.PI * 2, 0, Math.PI / 2),
+        new THREE.MeshStandardMaterial({ color: 0x9fb4dd, metalness: 0.85, roughness: 0.18 }));
+      cap.rotation.x = zz > 0 ? -Math.PI / 2 : Math.PI / 2;
+      cap.position.z = zz * 2.55;
       car.add(cap);
     }
-    // benches
+    // glowing accent lines running the length of the pill
+    for (const sy of [-0.9, 0.9]) {
+      const stripe = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.08, 4.4),
+        new THREE.MeshBasicMaterial({ color: new THREE.Color(hex).multiplyScalar(1.25), toneMapped: false }));
+      stripe.position.set(sy, 0.0, 0);
+      car.add(stripe);
+    }
+    // opaque floor + benches you stand/sit on
+    const floor = new THREE.Mesh(new THREE.BoxGeometry(2.0, 0.2, 4.8),
+      new THREE.MeshStandardMaterial({ color: 0x241e46, roughness: 0.6, metalness: 0.4 }));
+    floor.position.y = -1.02;
+    floor.castShadow = true;
+    car.add(floor);
     for (const s of [-1, 1]) {
-      const bench = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.16, 4.6), bodyMat);
-      bench.position.set(s * 0.85, -0.62, 0);
+      const bench = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.16, 4.0), bodyMat);
+      bench.position.set(s * 0.82, -0.66, 0);
       car.add(bench);
     }
-    if (lead) {
-      const nose = new THREE.Mesh(new THREE.CylinderGeometry(0.01, 1.05, 1.4, 4, 1), bodyMat);
-      nose.rotation.x = Math.PI / 2;
-      nose.rotation.y = Math.PI / 4;
-      nose.position.set(0, 0.2, 3.6);
-      nose.castShadow = true;
-      car.add(nose);
-      const head = new THREE.Mesh(new THREE.SphereGeometry(0.18, 8, 6),
-        new THREE.MeshBasicMaterial({ color: new THREE.Color(NEON.amber).multiplyScalar(1.4), toneMapped: false }));
-      head.position.set(0, -0.15, 4.1);
-      car.add(head);
+    // bogie struts down to the rail beam
+    for (const bz of [-1.8, 1.8]) {
+      const strut = new THREE.Mesh(new THREE.BoxGeometry(0.45, CAR_LIFT + 0.4, 0.45), bodyMat);
+      strut.position.set(0, -1.12 - (CAR_LIFT + 0.4) / 2 + 0.1, bz);
+      car.add(strut);
     }
-    const tail = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.2, 0.1),
+    // head / tail lamps
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.2, 8, 6),
+      new THREE.MeshBasicMaterial({ color: new THREE.Color(lead ? NEON.amber : hex).multiplyScalar(1.4), toneMapped: false }));
+    head.position.set(0, 0.1, 3.7);
+    car.add(head);
+    const tail = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.16, 0.1),
       new THREE.MeshBasicMaterial({ color: new THREE.Color(0xff2e4d).multiplyScalar(1.2), toneMapped: false }));
-    tail.position.set(0, 0.2, -2.95);
+    tail.position.set(0, 0.1, -3.5);
     car.add(tail);
-    // glowing skid straddling the rail beam, at CAR_LIFT below center
-    const skid = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.5, 5.4),
+    // glowing skid straddling the rail beam
+    const skid = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.5, 5.0),
       new THREE.MeshBasicMaterial({ color: new THREE.Color(hex).multiplyScalar(1.15), toneMapped: false }));
     skid.position.y = -CAR_LIFT;
     car.add(skid);
@@ -798,7 +794,10 @@ export function buildTransit(scene, planet, audio) {
             if (playerPos && line.cars[1].position.distanceTo(playerPos) < 40) audio.sfx('doors');
           }
         } else {
-          const target = line.stations[train.nextIdx].t;
+          // stop so the CENTRE car (cars[1], where the rider stands) lands
+          // at the station, not the lead car — train.t leads by one gap
+          const gap = CAR_GAP_U / line.length;
+          const target = (line.stations[train.nextIdx].t + gap) % 1;
           let delta = target - (train.t % 1);
           while (delta < 0) delta += 1;
           const easedMax = clamp(delta * 0.8 * (line.length / 24), 0.2, 1) * train.cruise;
@@ -849,7 +848,7 @@ export function buildTransit(scene, planet, audio) {
         else {
           L.r += L.dirn * L.speed * dt;
           if (L.r >= L.hi) { L.r = L.hi; L.dirn = -1; L.dwell = 2.5; }
-          if (L.r <= L.lo) { L.r = L.lo; L.dirn = 1; L.dwell = 2.5; }
+          if (L.r <= L.lo) { L.r = L.lo; L.dirn = 1; L.dwell = L.botDwell ?? 3.5; }
         }
         L.disc.position.copy(L.dir).multiplyScalar(L.r);
         L.disc.quaternion.setFromUnitVectors(_YUP, L.up);
@@ -869,13 +868,19 @@ export function buildTransit(scene, planet, audio) {
         _v2.copy(playerState.pos).sub(L.disc.position);
         const along = _v2.dot(L.up);
         const horiz = _v3.copy(_v2).addScaledVector(L.up, -along).length();
-        if (horiz < 1.9 && along > -0.5 && along < 1.7) {
-          const vlift = L.dwell > 0 ? 0 : L.dirn * L.speed;   // 0 while parked
-          playerState.pos.addScaledVector(L.up, vlift * dt);
-          const rv = playerState.vel.dot(L.up);
-          playerState.vel.addScaledVector(L.up, vlift - rv);   // ride the disc's velocity exactly
-          playerState.grounded = false;
-          playerState.onLift = 0.25;                           // suppress ground-snap briefly
+        // generous catch (2.4 pad); only ENGAGE the ride once the disc is
+        // actually moving, so at the bottom you stand on it normally and
+        // it scoops you up rather than fighting your footing
+        if (horiz < 2.5 && along > -0.6 && along < 1.9) {
+          const moving = L.dwell <= 0;
+          if (moving) {
+            const vlift = L.dirn * L.speed;
+            playerState.pos.addScaledVector(L.up, vlift * dt);
+            const rv = playerState.vel.dot(L.up);
+            playerState.vel.addScaledVector(L.up, vlift - rv);
+            playerState.grounded = false;
+            playerState.onLift = 0.3;                          // suppress ground-snap
+          }
         }
       }
     },
