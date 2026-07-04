@@ -1556,6 +1556,55 @@ export function buildPlanet(scene, models = {}) {
       }
     }
 
+    // ══ MASSIVE SPACEPORT SCALE (all beyond r20 — pad column stays clear) ══
+    // ORBITAL ELEVATOR — a colossal tether tower climbing out of the crater
+    {
+      const ef = apronFrame(0, -34);
+      addSolid(T(new THREE.CylinderGeometry(4, 5.2, 4, 14), 0, 2, 0), ef.clone(), 0x241a4e, { jitter: 0.03 });   // base station
+      addSolid(T(new THREE.CylinderGeometry(0.8, 2.6, 46, 10), 0, 25, 0), ef.clone(), 0x2c2458);                  // tapered tower
+      for (let k = 1; k <= 9; k++) addGlow(T(new THREE.TorusGeometry(Math.max(0.5, 1.7 - k * 0.12), 0.08, 5, 14), 0, 6 + k * 4.4, 0, 0, Math.PI / 2), ef.clone(), NEON.cyan, 0.9);
+      addGlow(T(box(0.16, 70, 0.16), 0, 82, 0), ef.clone(), NEON.cyan, 0.75);   // tether continuing to orbit
+      const climber = new THREE.Mesh(box(3.0, 2.2, 3.0), new THREE.MeshStandardMaterial({ color: 0x3a3568, metalness: 0.6, roughness: 0.3 }));
+      const efO = new THREE.Vector3().setFromMatrixPosition(ef), efU = new THREE.Vector3().setFromMatrixColumn(ef, 1);
+      climber.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), efU);   // fixed upright orientation
+      signs.push(climber);
+      dynamic.push({ update(dt, t) { climber.position.copy(efO).addScaledVector(efU, 6 + 34 * (0.5 + 0.5 * Math.sin(t * 0.12))); } });
+    }
+    // GIANT TERMINAL HALLS — long glazed concourses
+    for (const [cx, cz] of [[27, 13], [-27, 11]]) {
+      const tf = apronFrame(cx, cz);
+      addSolid(T(box(18, 6.5, 8), 0, 3.25, 0), tf.clone(), 0x1c2038, { jitter: 0.03 });
+      addSolid(T(new THREE.CylinderGeometry(4.2, 4.2, 18, 14, 1, false, 0, Math.PI), 0, 6.5, 0, 0, Math.PI / 2, 0), tf.clone(), 0x242a48, { collide: false });   // barrel roof
+      for (let k = 0; k < 3; k++) addGlow(T(box(17, 0.45, 0.12), 0, 1.8 + k * 1.7, 4.05), tf.clone(), pick(rnd, [NEON.cyan, 0x9ac8ff]), 0.85);
+      addGlow(T(box(6, 1.0, 0.14), 0, 5.2, 4.05), tf.clone(), NEON.lime, 1.0);   // marquee
+    }
+    // CARGO CRANES + CONTAINER YARDS
+    for (const [cx, cz] of [[-24, -18], [26, -16]]) {
+      const gf = apronFrame(cx, cz);
+      for (const sx of [-5, 5]) addSolid(T(box(0.6, 14, 0.6), sx, 7, 0), gf.clone(), 0x3a4058);
+      addSolid(T(box(11.4, 0.8, 1), 0, 13.7, 0), gf.clone(), 0x3a4058);
+      addSolid(T(box(0.2, 4, 0.2), 2, 11.2, 0), gf.clone(), 0x1a1a22);
+      addSolid(T(box(2.4, 1.4, 2.4), 2, 8.7, 0), gf.clone(), pick(rnd, [0x8a3a3a, 0x3a6a8a]));
+      const hs = [0x8a3a3a, 0x3a6a8a, 0x8a7a3a, 0x4a8a5a, 0x6a3a8a];
+      for (let s2 = 0; s2 < 7; s2++) addSolid(T(box(2.4, 1.3, 1.4), -5 + (s2 % 4) * 2.6, 0.7 + (s2 > 3 ? 1.34 : 0), 4 + (s2 % 2) * 0.4), gf.clone(), pick(rnd, hs), { jitter: 0.04 });
+    }
+    // DRY DOCK — a ship in a scaffolding cradle, under repair
+    {
+      const df = apronFrame(26, -4);
+      for (const sx of [-4, 4]) for (const sz of [-3, 3]) addSolid(T(box(0.5, 8, 0.5), sx, 4, sz), df.clone(), 0x3a4058);
+      addSolid(T(box(9, 0.4, 7), 0, 8, 0), df.clone(), 0x2c3350);
+      addSolid(T(new THREE.CylinderGeometry(1.6, 2.2, 9, 10), 0, 4.2, 0, 0, 0, Math.PI / 2), df.clone(), 0x556080, { jitter: 0.04 });
+      addGlow(T(box(0.4, 0.3, 0.1), 4.6, 4.2, 0), df.clone(), NEON.orange, 1.1);   // welding arc
+    }
+    // SECONDARY LIT PADS with parked craft
+    for (const [cx, cz] of [[-26, -4], [22, 22]]) {
+      const pf = apronFrame(cx, cz);
+      addSolid(T(new THREE.CylinderGeometry(4, 4.3, 0.4, 20), 0, 0.2, 0), pf.clone(), 0x181233);
+      addGlowRaw(T(new THREE.TorusGeometry(3.7, 0.12, 6, 28), 0, 0.44, 0, 0, Math.PI / 2).applyMatrix4(pf.clone()), NEON.cyan, 1.1);
+      addSolid(T(new THREE.ConeGeometry(1.2, 5.2, 8), 0, 2.6, 0, 0, 0, Math.PI / 2), pf.clone(), 0x8a97b8, { jitter: 0.03 });
+      for (const wsx of [-1, 1]) addSolid(T(box(2.4, 0.14, 1.2), wsx * 1.4, 2.2, 1.0), pf.clone(), 0x6a4a8c, { collide: false });   // wings
+    }
+
     const s = textSign('PORT MERIDIAN — DEPARTURES', { w: 9, h: 1.4, fg: hexCss(NEON.lime), size: 56 });
     placeSign(s, a.lat - 3.4, a.lon - 4, 132, 0, 4.8, 0);
     portInfo.padCenter = new THREE.Vector3(0, 1.0, 0).applyMatrix4(f.clone());
