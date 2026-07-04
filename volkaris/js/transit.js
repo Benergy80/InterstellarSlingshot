@@ -444,18 +444,24 @@ export function buildTransit(scene, planet, audio) {
       // ── access LIFT (scenic alternative): a glowing platform that
       // rises from the street to the deck. Step on and it carries you. ──
       {
-        // lift column just off the platform edge — but not INSIDE a
-        // building/pyramid. Try both sides; pick the clear one, else skip.
+        // lift column hugs the platform edge (LIFT_OFF) so its disc
+        // overlaps the deck — step straight across, no fall-through gap.
+        // Probe the WHOLE column height so a sloped pyramid face is caught.
+        const LIFT_OFF = 3.7;
+        const groundRAt = (dir) => planet.terrainHeight(dir);
         const colClear = (dir) => {
-          const mid = dir.clone().multiplyScalar((planet.terrainHeight(dir) + platH) / 2);
-          let hits = 0;
-          for (const dd of [_pdX, _pdnX, _pdZ, _pdnZ]) if (planet.probe(mid, dd, 3.0)) hits++;
-          return hits < 3;
+          const g = groundRAt(dir);
+          let hits = 0, shots = 0;
+          for (let hh = 0.15; hh <= 0.95; hh += 0.2) {
+            const at = dir.clone().multiplyScalar(g + (platH - g) * hh);
+            for (const dd of [_pdX, _pdnX, _pdZ, _pdnZ]) { shots++; if (planet.probe(at, dd, 3.0)) hits++; }
+          }
+          return hits < shots * 0.35;   // mostly open along the whole rise
         };
-        let liftDir = up.clone().multiplyScalar(platH).addScaledVector(side, 5.2).normalize();
+        let liftDir = up.clone().multiplyScalar(platH).addScaledVector(side, LIFT_OFF).normalize();
         let skipLift = false;
         if (!colClear(liftDir)) {
-          const other = up.clone().multiplyScalar(platH).addScaledVector(side, -5.2).normalize();
+          const other = up.clone().multiplyScalar(platH).addScaledVector(side, -LIFT_OFF).normalize();
           if (colClear(other)) liftDir = other;
           else skipLift = true;    // both sides blocked (deep in a structure) → ramp only
         }
@@ -489,9 +495,10 @@ export function buildTransit(scene, planet, audio) {
           const { up: lu } = tangentFrame(liftDir);
           lifts.push({
             disc, dir: liftDir, up: lu.clone(),
-            lo: groundR - 0.15, hi: deckR + 0.1,   // dips flush to the ground
+            lo: groundR - 0.15, hi: deckR + 0.4,   // dips flush; tops out ABOVE the deck
             r: groundR - 0.15, dirn: 1, speed: 3.0, dwell: 0,
-            botDwell: 4.5,                          // long wait at the bottom to step on
+            botDwell: 4.5, topDwell: 4.0,           // long waits to step on / off
+            deck: st.boardPos.clone(),              // where to set the rider down
             prev: new THREE.Vector3(),
           });
           // lift base (the demo keeps using the ramp's rampFoot)
@@ -883,7 +890,7 @@ export function buildTransit(scene, planet, audio) {
         if (L.dwell > 0) { L.dwell -= dt; }
         else {
           L.r += L.dirn * L.speed * dt;
-          if (L.r >= L.hi) { L.r = L.hi; L.dirn = -1; L.dwell = 2.5; }
+          if (L.r >= L.hi) { L.r = L.hi; L.dirn = -1; L.dwell = L.topDwell ?? 2.5; }
           if (L.r <= L.lo) { L.r = L.lo; L.dirn = 1; L.dwell = L.botDwell ?? 3.5; }
         }
         L.disc.position.copy(L.dir).multiplyScalar(L.r);
@@ -907,6 +914,15 @@ export function buildTransit(scene, planet, audio) {
         // generous catch (2.4 pad). Snap the player's feet ONTO the deck
         // surface so they stand on it (no floating), and ride its motion.
         if (horiz < 2.5 && along > -0.6 && along < 1.9) {
+          // arrived at the top → deliver the rider ONTO the platform's
+          // board spot so they never ride back down or fall off the edge
+          if (L.deck && L.r >= L.hi - 0.25) {
+            playerState.pos.lerp(L.deck, 0.3);
+            playerState.vel.multiplyScalar(0.6);
+            playerState.grounded = true;
+            playerState.onLift = 0;    // release — the platform holds them now
+            continue;
+          }
           playerState.pos.addScaledVector(L.up, 0.18 - along);   // stand on the deck top
           const vlift = L.dwell <= 0 ? L.dirn * L.speed : 0;
           const rv = playerState.vel.dot(L.up);

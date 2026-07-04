@@ -1131,6 +1131,29 @@ export function buildPlanet(scene, models = {}) {
     for (let i = 0; i < 4; i++) {
       addSolid(face(i * Math.PI / 2, i === 0), f.clone(), 0x0b0a18, { jitter: 0 });
     }
+    // ── SEAL the shell for shots: the visible faces are single thin
+    // triangles that leak at the corners + apex, so enemies could fire
+    // through the walls. Add collision-ONLY slabs behind each face
+    // (gate face keeps its doorway open). ──
+    {
+      const L = Math.hypot(H, B);
+      const rightV = new THREE.Vector3(1, 0, 0);
+      const upS = new THREE.Vector3(0, H / L, -B / L);
+      const norm = new THREE.Vector3(0, B / L, H / L);
+      const panel = (wx, cx, base) => {
+        const g = new THREE.BoxGeometry(wx, L + 2, 0.7);
+        g.applyMatrix4(base.clone().multiply(
+          new THREE.Matrix4().makeBasis(rightV, upS, norm).setPosition(cx, H / 2, B / 2)));
+        collParts.push(g);   // collision-only (never rendered)
+      };
+      for (let i = 0; i < 4; i++) {
+        const base = f.clone().multiply(new THREE.Matrix4().makeRotationY(i * Math.PI / 2));
+        if (i === 0) {                          // gate face — leave the doorway (±2.4) open
+          panel(B - 2.4, -(B + 2.4) / 2, base);
+          panel(B - 2.4, (B + 2.4) / 2, base);
+        } else panel(2 * B + 1, 0, base);       // solid side
+      }
+    }
     // neon edge rails: corner → apex, built as oriented cylinders
     function glowSegment(a, b, radius, hex, frame, boost = 0.95) {
       const av = new THREE.Vector3(...a), bv = new THREE.Vector3(...b);

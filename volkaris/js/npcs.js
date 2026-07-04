@@ -382,8 +382,10 @@ export function buildNPCs(scene, planet, fx, audio, hud, models = {}) {
   function applyHit(npc, dmg, at) {
     if (npc.state === 'dead') return;
     npc.hp -= dmg;
+    const civilian = npc.kind === 'civ' || npc.kind === 'merchant' || npc.kind === 'robot';
+    if (!civilian) npc.hp = 0;   // TEMP (Ben): hostiles drop in one hit
     // civvies scatter, troopers retaliate
-    if (npc.kind === 'civ' || npc.kind === 'merchant' || npc.kind === 'robot') {
+    if (civilian) {
       npc.state = 'flee';
       npc.stateT = 3 + Math.random() * 2;
     } else {
