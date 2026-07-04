@@ -104,11 +104,15 @@ export function buildTransit(scene, planet, audio) {
       const under = p.length() < ter + 0.9;
       // BUILDING clip: the rail point sits inside/grazing a solid box
       // (not terrain) → it needs a cave bored through the building
+      // BUILDING clip: the CAR straddles ~2.9 above and ±1.4 to the sides
+      // of the rail, so bore a cave wherever a structure is within that
+      // silhouette (not just where the centreline is buried).
       let blocked = false;
-      if (!under && clear > 0.5 && clear < 17) {
+      if (!under && clear > 0.5 && clear < 20) {
         let hits = 0;
-        for (const dd of _pd) if (planet.probe(p, dd, 1.7)) hits++;
-        blocked = hits >= 4;
+        for (const dd of _pd) if (planet.probe(p, dd, 2.2)) hits++;
+        const roof = planet.probe(p, d, 3.0);          // something overhead
+        blocked = hits >= 2 || !!roof;
       }
       samples.push({ t: i / NS, p, d, under, blocked, clear });
     }
