@@ -234,30 +234,44 @@ export function buildTransit(scene, planet, audio) {
       const railH = s.p.length();
       const towerH = railH - ter + 6.5;
       const gwMat = new THREE.MeshStandardMaterial({ color: pick(rnd, [0x2c2152, 0x1f2a4e, 0x3a2148]), roughness: 0.55, metalness: 0.5 });
+      // WIDE opening: pillars pushed out so the straddle car clears with
+      // room; the passage reads as a tunnel through the building
+      const SIDE = 5.6;                       // pillar centre offset
       for (const sd of [-1, 1]) {
-        const tower = new THREE.Mesh(new THREE.BoxGeometry(4.4, towerH, 5.2), gwMat);
+        const tower = new THREE.Mesh(new THREE.BoxGeometry(4.6, towerH, 5.2), gwMat);
         const fm = new THREE.Matrix4().makeBasis(tang, up.clone(), side)
-          .setPosition(up.clone().multiplyScalar(ter + towerH / 2 - 0.3).addScaledVector(side, sd * 4.4));
+          .setPosition(up.clone().multiplyScalar(ter + towerH / 2 - 0.3).addScaledVector(side, sd * SIDE));
         tower.applyMatrix4(fm);
         tower.castShadow = tower.receiveShadow = true;
         gatewayGroup.add(tower);
-        // window strips
-        const strip = new THREE.Mesh(new THREE.BoxGeometry(4.5, 0.4, 0.14),
+        const strip = new THREE.Mesh(new THREE.BoxGeometry(4.7, 0.4, 0.14),
           new THREE.MeshBasicMaterial({ color: new THREE.Color(pick(rnd, NEON_LIST)).multiplyScalar(1.1), toneMapped: false }));
         strip.applyMatrix4(new THREE.Matrix4().makeTranslation(0, towerH * 0.22, 2.66).premultiply(fm));
         gatewayGroup.add(strip);
       }
-      // lintel bridging over the track
-      const lintel = new THREE.Mesh(new THREE.BoxGeometry(4.4, 4.2, 13.2), gwMat);
+      // lintel raised so it clears the lifted straddle car (roof ≈ rail+3)
+      const lintel = new THREE.Mesh(new THREE.BoxGeometry(4.6, 3.6, 2 * SIDE + 4.6), gwMat);
       const lm = new THREE.Matrix4().makeBasis(tang, up.clone(), side)
-        .setPosition(up.clone().multiplyScalar(railH + 4.6));
+        .setPosition(up.clone().multiplyScalar(railH + 6.6));
       lintel.applyMatrix4(lm);
       lintel.castShadow = true;
       gatewayGroup.add(lintel);
-      const glowBar = new THREE.Mesh(new THREE.BoxGeometry(4.5, 0.18, 0.18),
-        new THREE.MeshBasicMaterial({ color: new THREE.Color(NEON.amber).multiplyScalar(1.25), toneMapped: false }));
-      glowBar.applyMatrix4(new THREE.Matrix4().makeTranslation(0, -2.2, 3.4).premultiply(lm));
-      gatewayGroup.add(glowBar);
+      // glowing PORTAL FRAMES front & back — the tunnel mouths
+      for (const fz of [-2.6, 2.6]) {
+        const pf = new THREE.Matrix4().makeBasis(tang, up.clone(), side)
+          .setPosition(up.clone().multiplyScalar(railH + 1.6).addScaledVector(tang, fz));
+        // top bar
+        const top = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.28, 2 * SIDE),
+          new THREE.MeshBasicMaterial({ color: new THREE.Color(NEON.amber).multiplyScalar(1.25), toneMapped: false }));
+        top.applyMatrix4(new THREE.Matrix4().makeTranslation(0, 3.1, 0).premultiply(pf));
+        gatewayGroup.add(top);
+        for (const gs of [-1, 1]) {
+          const post = new THREE.Mesh(new THREE.BoxGeometry(0.18, 5.6, 0.28),
+            new THREE.MeshBasicMaterial({ color: new THREE.Color(NEON.amber).multiplyScalar(1.1), toneMapped: false }));
+          post.applyMatrix4(new THREE.Matrix4().makeTranslation(0, 0.3, gs * (SIDE - 2.0)).premultiply(pf));
+          gatewayGroup.add(post);
+        }
+      }
     }
     scene.add(gatewayGroup);
     planet.addColliders(gatewayGroup);
@@ -813,6 +827,7 @@ export function buildTransit(scene, planet, audio) {
     // called from main each frame BEFORE player physics: if the player is
     // standing on a rising lift disc, carry them up with it
     carryRiders(playerState, dt) {
+      if (playerState.mode !== 'walk') return;   // never tug a rider/pilot
       for (const L of lifts) {
         _v2.copy(playerState.pos).sub(L.disc.position);
         const along = _v2.dot(L.up);

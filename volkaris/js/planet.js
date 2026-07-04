@@ -345,6 +345,7 @@ export function buildPlanet(scene, models = {}) {
   } });
   const _crRel = new THREE.Vector3();
   function carryRiders(playerState, dt) {
+    if (playerState.mode !== 'walk') return;   // never tug a monorail rider / pilot
     for (const el of elevators) {
       _crRel.subVectors(playerState.pos, el.pos);
       const v = _crRel.dot(el.up);
