@@ -749,6 +749,64 @@ export function buildPlanet(scene, models = {}) {
       addSolid(T(box(0.1, 2.0, 0.1), 1.28, 1.0, 0.8), f.clone(), 0x222244);
       if (rnd() < 0.7) addGlow(T(box(1.6, 0.3, 0.08), 0, 1.75, 0.9), f.clone(), pick(rnd, NEON_LIST), 1.2);
     }
+    // ── the market MACHINERY: workshops, conveyors, cables, holo prices ──
+    const mAt = (dlat, dlon, yaw = 0) => frameAt(anchor.lat + dlat, anchor.lon + dlon, yaw);
+    // robotic repair arms bent over workbenches
+    const robotArm = (fr, x, z, ry) => {
+      addSolid(T(new THREE.CylinderGeometry(0.5, 0.6, 0.5, 10), x, 0.25, z), fr.clone(), 0x2c3350);   // base
+      addSolid(T(box(0.34, 1.6, 0.34), x, 1.1, z, 0, 0, 0.2), fr.clone(), 0x455073);                  // lower arm
+      addSolid(T(box(0.28, 1.4, 0.28), x + 0.5, 1.9, z, 0, 0, -0.9), fr.clone(), 0x556080);           // upper arm
+      addGlow(T(box(0.14, 0.14, 0.14), x + 1.35, 1.55, z), fr.clone(), NEON.orange, 1.4);             // weld tip
+      addSolid(T(box(1.8, 0.7, 1.1), x + 1.4, 0.35, z), fr.clone(), 0x1f2740, { jitter: 0.1 });       // workbench + part
+    };
+    robotArm(mAt(-4, -2), 0, 0, 0); robotArm(mAt(5, 6, 40), 0, 0, 0); robotArm(mAt(-6, 8, -30), 0, 0, 0);
+    // conveyor belts carrying crates
+    const conveyor = (fr, len) => {
+      addSolid(T(box(len, 0.3, 0.9), 0, 0.7, 0), fr.clone(), 0x22283e);
+      for (const sx of [-len / 2 + 0.3, len / 2 - 0.3]) addSolid(T(box(0.3, 0.7, 0.9), sx, 0.35, 0), fr.clone(), 0x333a55);
+      addGlow(T(box(len - 0.4, 0.05, 0.08), 0, 0.86, 0.42), fr.clone(), NEON.cyan, 1.1);
+      for (let k = 0; k < len / 1.6; k++) addSolid(T(box(0.7, 0.6, 0.7), -len / 2 + 1 + k * 1.6, 1.2, 0), fr.clone(), pick(rnd, [0x6a4a2a, 0x2a4a6a, 0x4a2a6a]), { jitter: 0.06, collide: false });
+    };
+    conveyor(mAt(3, -6, 70), 6); conveyor(mAt(-5, 4, 20), 5);
+    // dismantling yard — a half-stripped speeder + scattered parts
+    {
+      const y = mAt(6, -4, 15);
+      addSolid(T(box(2.6, 0.8, 1.3), 0, 0.5, 0), y.clone(), 0x3a2f5c, { jitter: 0.08 });   // chassis
+      addSolid(T(box(1.0, 0.6, 1.2), -1.4, 0.7, 0), y.clone(), 0x556080);                   // exposed engine
+      for (let k = 0; k < 8; k++) addSolid(T(box(0.4 + rnd() * 0.4, 0.3, 0.4 + rnd() * 0.4), (rnd() - 0.5) * 5, 0.2, (rnd() - 0.5) * 4), y.clone(), pick(rnd, [0x455073, 0x6a5236, 0x2c3350]), { jitter: 0.15, collide: false });
+      addGlow(T(box(0.9, 0.4, 0.06), 0, 1.3, 0.7), y.clone(), NEON.lime, 1.2);              // "PARTS" tag
+    }
+    // holographic price tags floating over the stalls
+    for (let i = 0; i < 8; i++) {
+      const hf = mAt(-3 + rnd() * 6, -12 + i * 3.2, rnd() * 60);
+      addGlow(T(box(0.9, 0.5, 0.04), 0, 3.4 + rnd() * 0.8, 0), hf.clone(), pick(rnd, [NEON.cyan, NEON.magenta, NEON.lime]), 1.2);
+      addGlow(T(box(0.04, 0.5, 0.04), 0, 3.0, 0), hf.clone(), NEON.cyan, 0.9);   // holo stem
+    }
+    // barrels + crate clutter tucked against the lane
+    for (let i = 0; i < 14; i++) {
+      const cf = mAt(-8 + rnd() * 16, -12 + rnd() * 24, rnd() * 90);
+      if (rnd() < 0.5) addSolid(T(new THREE.CylinderGeometry(0.4, 0.4, 1.0, 8), 0, 0.5, 0), cf.clone(), pick(rnd, [0x6a4a2a, 0x2a5c4a, 0x4a2a5c]), { jitter: 0.08 });
+      else addSolid(T(box(0.8, 0.8, 0.8), 0, 0.4, 0), cf.clone(), pick(rnd, [0x3b2a6e, 0x274b8a, 0x584a8c]), { jitter: 0.1 });
+    }
+    // hanging power cables draped over the lane (catenary of segments)
+    const cableRun = (dlat, dlon0, dlon1, height) => {
+      const a = new THREE.Vector3().setFromMatrixPosition(mAt(dlat, dlon0));
+      const b = new THREE.Vector3().setFromMatrixPosition(mAt(dlat, dlon1));
+      const up = a.clone().normalize();
+      const N = 8;
+      for (let k = 0; k < N; k++) {
+        const t0 = k / N, t1 = (k + 1) / N;
+        const sag = (s) => height - Math.sin(s * Math.PI) * 1.4;
+        const p0 = a.clone().lerp(b, t0).addScaledVector(up, sag(t0));
+        const p1 = a.clone().lerp(b, t1).addScaledVector(up, sag(t1));
+        const seg = box(0.06, 0.06, p0.distanceTo(p1));
+        const m = new THREE.Matrix4().lookAt(p0, p1, up).setPosition(p0.clone().lerp(p1, 0.5));
+        seg.applyMatrix4(m);
+        colorize(seg, 0x11141f); solidParts.push(seg);
+      }
+    };
+    cableRun(-2, -13, 9, 5.5); cableRun(2, -13, 9, 6.2); cableRun(-5, -8, 6, 5.0);
+
     const gate = textSign('SCRAP MARKET', { fg: hexCss(NEON.amber) });
     placeSign(gate, anchor.lat + 4, anchor.lon - 13, 118, 0, 4.6, 0);
     // arch legs
