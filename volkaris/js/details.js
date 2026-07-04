@@ -1016,6 +1016,65 @@ export function buildDetails(scene, planet, audio, hud) {
     });
   }
 
+  // ════════════ 18b · WEATHERING — rust/grime streaks + graffiti ════════
+  // Decal quads on building faces, keyed to each district's identity:
+  // rust in the Foundry, grime + tags in the street districts, and the
+  // Dunes / Pyramid / Port kept pristine.
+  {
+    const streakTexC = (r, g, b) => {
+      const [c, ctx] = makeCanvas(8, 48);
+      const grd = ctx.createLinearGradient(0, 0, 0, 48);
+      grd.addColorStop(0, `rgba(${r},${g},${b},0)`);
+      grd.addColorStop(0.14, `rgba(${r},${g},${b},0.5)`);
+      grd.addColorStop(1, `rgba(${r},${g},${b},0)`);
+      ctx.fillStyle = grd; ctx.fillRect(0, 0, 8, 48);
+      for (let i = 0; i < 3; i++) { ctx.fillStyle = `rgba(${(r * 0.55) | 0},${(g * 0.55) | 0},${(b * 0.55) | 0},0.4)`; ctx.fillRect(1 + i * 2.4, 5, 1, 40); }
+      return canvasTexture(c);
+    };
+    const rustMat = new THREE.MeshBasicMaterial({ map: streakTexC(160, 88, 40), transparent: true, depthWrite: false, side: THREE.DoubleSide, opacity: 0.85 });
+    // pale mineral / water stains — read as light drips down the dark facades
+    const grimeMat = new THREE.MeshBasicMaterial({ map: streakTexC(148, 138, 152), transparent: true, depthWrite: false, side: THREE.DoubleSide, opacity: 0.5 });
+    const [tc, tctx] = makeCanvas(64, 32);
+    const cols = ['#ff2fd6', '#00f6ff', '#7dff5d', '#ff7a1a'];
+    tctx.lineWidth = 3; tctx.lineCap = 'round';
+    for (let s = 0; s < 4; s++) { tctx.strokeStyle = cols[(rnd() * cols.length) | 0]; tctx.beginPath(); let x = 5 + rnd() * 10, y = 5 + rnd() * 22; tctx.moveTo(x, y); for (let k = 0; k < 4; k++) { x += 8 + rnd() * 8; y = 5 + rnd() * 22; tctx.lineTo(x, y); } tctx.stroke(); }
+    const tagMat = new THREE.MeshBasicMaterial({ map: canvasTexture(tc), transparent: true, depthWrite: false, side: THREE.DoubleSide, opacity: 0.92, toneMapped: false });
+
+    const rustGeos = [], grimeGeos = [], tagGeos = [];
+    const addDecal = (geos, sw, sh, bframe, w, d, cy, face, span) => {
+      const g = new THREE.PlaneGeometry(sw, sh);
+      const off = 0.07, m = new THREE.Matrix4();
+      if (face === 0) m.makeTranslation((rnd() - 0.5) * w * span, cy, d / 2 + off);
+      else if (face === 1) { m.makeRotationY(Math.PI); m.setPosition((rnd() - 0.5) * w * span, cy, -d / 2 - off); }
+      else if (face === 2) { m.makeRotationY(Math.PI / 2); m.setPosition(w / 2 + off, cy, (rnd() - 0.5) * d * span); }
+      else { m.makeRotationY(-Math.PI / 2); m.setPosition(-w / 2 - off, cy, (rnd() - 0.5) * d * span); }
+      g.applyMatrix4(bframe.clone().multiply(m));
+      geos.push(g);
+    };
+    for (const sp of towerSpots) {
+      if (sp.h < 4) continue;
+      _v1.setFromMatrixPosition(sp.frame).normalize();
+      let best = null, bd = -2;
+      for (const dd of districts) { const dot = _v1.dot(dd.dir); if (dot > bd) { bd = dot; best = dd; } }
+      const key = best && best.key;
+      if (key === 'dunes' || key === 'pyramid' || key === 'port') continue;   // pristine
+      const rust = key === 'ruins';
+      const geos = rust ? rustGeos : grimeGeos;
+      const nStreaks = rust ? 3 + ((rnd() * 3) | 0) : 1 + ((rnd() * 2) | 0);
+      for (let i = 0; i < nStreaks; i++) {
+        const sh = 1.4 + rnd() * Math.min(4, sp.h * 0.4);
+        const top = 1.5 + rnd() * (sp.h - 1.5);
+        addDecal(geos, 0.3 + rnd() * 0.5, sh, sp.frame, sp.w, sp.d, top - sh / 2, (rnd() * 4) | 0, 0.8);
+      }
+      if ((key === 'market' || key === 'circuit' || key === 'crash') && rnd() < 0.5)
+        addDecal(tagGeos, 0.9 + rnd() * 0.7, 0.5 + rnd() * 0.4, sp.frame, sp.w, sp.d, 1.0 + rnd() * 1.4, (rnd() * 4) | 0, 0.7);
+    }
+    const ni = (g) => (g.index ? g.toNonIndexed() : g);
+    if (rustGeos.length) scene.add(new THREE.Mesh(BufferGeometryUtils.mergeGeometries(rustGeos.map(ni)), rustMat));
+    if (grimeGeos.length) scene.add(new THREE.Mesh(BufferGeometryUtils.mergeGeometries(grimeGeos.map(ni)), grimeMat));
+    if (tagGeos.length) scene.add(new THREE.Mesh(BufferGeometryUtils.mergeGeometries(tagGeos.map(ni)), tagMat));
+  }
+
   // ════════════ 18 · SCREEN SHAKE — trauma² camera jitter ════════════
   let trauma = 0;
   const shake = (amt) => { trauma = Math.min(1, trauma + amt); };
