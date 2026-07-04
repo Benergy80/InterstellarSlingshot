@@ -962,6 +962,11 @@ window.triggerPlayerDeath = triggerPlayerDeath;
 
 // RESTORED: Asteroid destruction functions
 function destroyAsteroid(asteroid) {
+    // Instanced asteroid: free its InstancedMesh slot (swap-remove). The
+    // scene.remove / beltGroup.remove below are harmless no-ops on the proxy.
+    if (asteroid && asteroid._instRef && typeof window !== 'undefined' && window.asteroidInstancer) {
+        window.asteroidInstancer.free(asteroid._instRef);
+    }
     scene.remove(asteroid);
 
     // Small reward for destruction so phase-5 strafing pays out.

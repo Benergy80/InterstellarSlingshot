@@ -1458,12 +1458,17 @@
     ensureShieldsFor('travel');
     ensureThirdPerson();
 
-    // Lock in the destination on first entry — prefer a twin (clustered)
-    // pair; fall back to nearest nebula if no twin cluster exists.
+    // Lock in the destination on first entry. Right after Sol/Sag A is
+    // liberated, follow the WHITE path to the game's designated FIRST twin
+    // set (firstTwinNebulaTarget); otherwise prefer the nearest twin
+    // (clustered) pair, falling back to the nearest single nebula.
     if (!ap.currentNebula) {
-      const twin = nearestTwinNebula();
+      const twin = firstTwinNebulaTarget() || nearestTwinNebula();
       ap.currentNebula = twin || nearestNebula();
       if (!ap.currentNebula) { setStatus('No nebula in range — waiting'); return; }
+      if (ap.currentNebula.userData && ap.currentNebula.userData._whitePathTarget) {
+        transmit('NAVIGATION', 'Following the white path to the first twin nebula set.');
+      }
     }
 
     const target = ap.currentNebula;
@@ -3025,8 +3030,17 @@
     if (!shootNearbyAsteroids._origin) shootNearbyAsteroids._origin = new THREE.Vector2(0, 0);
     const ray = shootNearbyAsteroids._ray;
     ray.setFromCamera(shootNearbyAsteroids._origin, camera);
-    const hits = ray.intersectObjects([target], true);
-    if (!hits.length) return;
+    // Belt asteroids are instanced — the proxy isn't a raycastable mesh, so
+    // confirm the crosshair is on an asteroid via the instancer raycast
+    // (fire on any belt asteroid under the crosshair; fireWeapon re-resolves
+    // the exact one). Fall back to a mesh raycast for non-instanced ones.
+    let onTarget;
+    if (target.isAsteroidProxy && typeof window !== 'undefined' && window.asteroidInstancer) {
+      onTarget = !!window.asteroidInstancer.raycast(ray);
+    } else {
+      onTarget = ray.intersectObjects([target], true).length > 0;
+    }
+    if (!onTarget) return;
 
     gameState.crosshairX = window.innerWidth / 2;
     gameState.crosshairY = window.innerHeight / 2;
@@ -3390,6 +3404,49 @@
   // Each cluster index holds two nebulas; pick the cluster center
   // (average of the pair) as the warp destination so the boost
   // delivers the player into the middle of a twin formation.
+  // After Sol/Sag A liberation the game draws a WHITE path from Sag A to the
+  // nearest twin-nebula pair (findNearestTwinNebulaCenter measured from the
+  // origin). The demo should FOLLOW that white path to that specific first
+  // set — not wander to whichever twin is closest to its own position.
+  // Returns a synthetic twin-cluster target at the white path's destination
+  // while that pair is still uncharted; null once it's discovered or before
+  // liberation, so the demo then picks up the nearest twin normally.
+  function firstTwinNebulaTarget() {
+    if (typeof window === 'undefined' || !window.liberationNebulaPath) return null; // Sag A not clear yet
+    if (typeof nebulaClouds === 'undefined' || !nebulaClouds.length) return null;
+    const origin = new THREE.Vector3(0, 0, 0); // Sagittarius A*
+    const clusters = {};
+    for (let i = 0; i < nebulaClouds.length; i++) {
+      const n = nebulaClouds[i];
+      if (!n || !n.userData) continue;
+      if (n.userData.isDistant || n.userData.isExoticCore) continue;
+      const ci = n.userData.cluster;
+      if (ci === undefined || ci === null) continue;
+      (clusters[ci] = clusters[ci] || []).push(n);
+    }
+    let bestPair = null, bestCenter = null, bestDist = Infinity;
+    for (const ci in clusters) {
+      const pair = clusters[ci];
+      if (pair.length < 2) continue;
+      const center = new THREE.Vector3();
+      pair.forEach(n => center.add(n.position));
+      center.divideScalar(pair.length);
+      const d = origin.distanceTo(center);
+      if (d < bestDist) { bestDist = d; bestCenter = center; bestPair = pair; }
+    }
+    if (!bestPair) return null;
+    // First set fully charted → stop overriding; move on to the next twin.
+    if (bestPair.every(n => n.userData.deepDiscovered)) return null;
+    return {
+      position: bestCenter,
+      userData: {
+        name: 'First Twin Nebula (' + (bestPair[0].userData.name || '?') + ' / ' +
+              (bestPair[1].userData.name || '?') + ')',
+        isTwinCluster: true, pair: bestPair, _whitePathTarget: true
+      }
+    };
+  }
+
   function nearestTwinNebula() {
     if (typeof nebulaClouds === 'undefined' || !nebulaClouds.length) return null;
     const cp = camPos();

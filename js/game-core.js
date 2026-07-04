@@ -2104,6 +2104,13 @@ if (typeof asteroidBelts !== 'undefined' && asteroidBelts.length > 0) {
     }
 }
 
+// Instanced belt asteroids: orbit/spin their instance matrices (the loop
+// above only touches fallback real-mesh asteroids; the belts are now
+// InstancedMeshes and belt.children is empty for them).
+if (typeof window !== 'undefined' && window.asteroidInstancer) {
+    window.asteroidInstancer.update();
+}
+
     // Update interstellar asteroid fields
     if (typeof updateInterstellarAsteroids === 'function') {
         updateInterstellarAsteroids();
