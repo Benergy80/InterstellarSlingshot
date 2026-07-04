@@ -792,11 +792,13 @@ export function createPlayer({ scene, camera, planet, hud, audio, fx, transit, m
           _v3.copy(_v2).applyAxisAngle(_up, ang);
           const eye = _v.copy(state.pos).addScaledVector(_up, hgt);
           const hit = planet.probe(eye, _v3, reach);
-          if (hit && hit.distance < P.radius + 0.2) {
+          // hug walls tighter (0.08 skin, not 0.2) so the Captain rounds
+          // corners and fits through tight alleys instead of being pinned
+          if (hit && hit.distance < P.radius + 0.08) {
             const n = hit.face.normal;
             const into = state.vel.dot(n);
             if (into < 0) state.vel.addScaledVector(n, -into);
-            state.pos.addScaledVector(n, (P.radius + 0.2 - hit.distance) * 0.6);
+            state.pos.addScaledVector(n, (P.radius + 0.08 - hit.distance) * 0.6);
           }
         }
       }

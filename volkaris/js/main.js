@@ -22,7 +22,7 @@ import { createDemo } from './demo.js';
 import { createHUD } from './hud.js';
 import { createAudio } from './audio.js';
 
-const VK_BUILD = 'VOLKARIS build 2026-07-04k · visual loop pass 2: SCRAP MARKET machinery';
+const VK_BUILD = 'VOLKARIS build 2026-07-04l · pyramid clip fixed, wider alleys, mountain caves verified';
 console.log('%c' + VK_BUILD, 'color:#ff2fd6;font-weight:bold;font-size:14px');
 
 // ── renderer ──

@@ -1403,9 +1403,9 @@ export function buildPlanet(scene, models = {}) {
 
     const half = cN * cellSize / 2;
     const styles = {
-      market: { hues: [0x3b2a6e, 0x274b8a, 0x6e2a5c, 0x2a6e62], hMin: 3.2, hMax: 6.4, th: 2.0, glowP: 0.75 },
-      circuit: { hues: [0x180f36, 0x22103e, 0x2a0f30], hMin: 4.2, hMax: 8.0, th: 2.2, glowP: 0.95 },
-      downtown: { hues: [0x201646, 0x1a1240, 0x261a52], hMin: 6.0, hMax: 12.0, th: 2.4, glowP: 0.8 },
+      market: { hues: [0x3b2a6e, 0x274b8a, 0x6e2a5c, 0x2a6e62], hMin: 3.2, hMax: 6.4, th: 1.5, glowP: 0.75 },
+      circuit: { hues: [0x180f36, 0x22103e, 0x2a0f30], hMin: 4.2, hMax: 8.0, th: 1.6, glowP: 0.95 },
+      downtown: { hues: [0x201646, 0x1a1240, 0x261a52], hMin: 6.0, hMax: 12.0, th: 1.8, glowP: 0.8 },
     };
     const st = styles[style] ?? styles.market;
     function wallBuilding(lx, lz, alongNorth) {
@@ -1442,9 +1442,10 @@ export function buildPlanet(scene, models = {}) {
       wallBuilding((x + 0.5 - cN / 2) * cellSize, (y - cN / 2) * cellSize, false);
     }
   }
-  warren(districtDirs[1], 5, 6.0, 'market');
-  warren(districtDirs[2], 5, 5.6, 'circuit');
-  warren(districtDirs[3], 5, 6.6, 'downtown');
+  // wider cells + thinner walls → alleys the Captain always fits through
+  warren(districtDirs[1], 5, 6.8, 'market');
+  warren(districtDirs[2], 5, 6.4, 'circuit');
+  warren(districtDirs[3], 5, 7.2, 'downtown');
 
   // ════════════ ARCHED BRIDGES — climb up, over and around ════════════
   function archBridge(dirs, idx) {
