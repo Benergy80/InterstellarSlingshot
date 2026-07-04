@@ -79,11 +79,24 @@ export function buildTransit(scene, planet, audio) {
     // sample once for tunnels/pylons
     const NS = 480;
     const samples = [];
+    const _pd = [new THREE.Vector3(1, 0, 0), new THREE.Vector3(-1, 0, 0),
+                 new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, 0, -1),
+                 new THREE.Vector3(0.7, 0, 0.7), new THREE.Vector3(-0.7, 0, -0.7)];
     for (let i = 0; i < NS; i++) {
       const p = curve.getPointAt(i / NS);
       const d = p.clone().normalize();
       const ter = planet.terrainHeight(d);
-      samples.push({ t: i / NS, p, d, under: p.length() < ter + 0.9, clear: p.length() - ter });
+      const clear = p.length() - ter;
+      const under = p.length() < ter + 0.9;
+      // BUILDING clip: the rail point sits inside/grazing a solid box
+      // (not terrain) → it needs a cave bored through the building
+      let blocked = false;
+      if (!under && clear > 0.5 && clear < 17) {
+        let hits = 0;
+        for (const dd of _pd) if (planet.probe(p, dd, 1.7)) hits++;
+        blocked = hits >= 4;
+      }
+      samples.push({ t: i / NS, p, d, under, blocked, clear });
     }
 
     // rail tube + glow
@@ -101,7 +114,8 @@ export function buildTransit(scene, planet, audio) {
       const spans = [];
       let s0 = -1;
       for (let i = 0; i <= NS; i++) {
-        const under = i < NS ? samples[i].under : false;
+        // bore a tunnel through terrain OR through a clipped building
+        const under = i < NS ? (samples[i].under || samples[i].blocked) : false;
         if (under && s0 < 0) s0 = i;
         if (!under && s0 >= 0) { spans.push([Math.max(0, s0 - 2), Math.min(NS - 1, i + 1)]); s0 = -1; }
       }
@@ -150,7 +164,7 @@ export function buildTransit(scene, planet, audio) {
       const pylons = [];
       for (let i = 0; i < NS; i += 16) {
         const s = samples[i];
-        if (s.under || s.clear < 2.5 || s.clear > 26) continue;
+        if (s.under || s.blocked || s.clear < 2.5 || s.clear > 26) continue;
         const len = s.clear;
         const g = new THREE.CylinderGeometry(0.22, 0.38, len, 6);
         g.translate(0, len / 2, 0);
