@@ -10541,6 +10541,15 @@ function loadGuardiansForGalaxy(galaxyId, opts) {
     const guardianOrbitRadius = blackHole.userData.warpThreshold + 100;
     
     console.log(`🛡️ Spawning ${guardianCount} guardians for galaxy ${galaxyId} (${galaxyType.name})`);
+
+    // Record that this galaxy HAS a guardian garrison — the deep-space
+    // expedition path only spawns for liberations that fought through one
+    // (the local galaxy's boss-only liberation at game start must not
+    // open endgame content).
+    if (typeof bossSystem !== 'undefined') {
+        if (!bossSystem.guardiansEverSpawned) bossSystem.guardiansEverSpawned = {};
+        bossSystem.guardiansEverSpawned[galaxyId] = true;
+    }
     
     // ⭐ CRITICAL: Add guardians to the enemy count for this galaxy
     if (typeof gameState !== 'undefined' && gameState.currentGalaxyEnemies) {

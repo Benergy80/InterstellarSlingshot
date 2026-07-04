@@ -6770,7 +6770,14 @@ function checkGuardianVictory() {
             // OPTIONAL DEEP-SPACE EXPEDITION: a path opens from this freed
             // core out toward UFO/Borg territory. Explicitly optional — the
             // directive below steers the player to the next nebula instead.
-            if (typeof createDiscoveryPathToPosition === 'function' &&
+            // ONLY for liberations that fought through a black-hole guardian
+            // garrison (play-reported: the local galaxy 'liberates' at the
+            // first boss kill with zero guardians, which spawned this
+            // endgame line minutes into a fresh game).
+            const _hadGarrison = typeof bossSystem !== 'undefined' &&
+                bossSystem.guardiansEverSpawned && bossSystem.guardiansEverSpawned[g];
+            if (_hadGarrison &&
+                typeof createDiscoveryPathToPosition === 'function' &&
                 typeof findGalaxyCoreById === 'function') {
                 const _core = findGalaxyCoreById(g);
                 if (_core) {
