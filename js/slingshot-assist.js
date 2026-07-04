@@ -27,13 +27,15 @@
         enabled: false,
         candidate: null,
         alignment: 0,
-        _arc: null,        // directional whip arc around the body
+        _halo: null,       // gravity-capture glow shell around the body
         _tube: null,       // thick warp tube of light along the launch corridor
         _tubeGeomFrame: 0,
     };
 
     // ── candidate scoring ────────────────────────────────────────────────────
     const _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3();
+    const _tA = new THREE.Vector3(), _tB = new THREE.Vector3(), _tC = new THREE.Vector3(),
+          _tD = new THREE.Vector3(), _tE = new THREE.Vector3();
 
     function _slingable(p) {
         const t = p.userData && p.userData.type;
@@ -103,18 +105,19 @@
         return tex;
     }
 
-    function _ensureArc() {
-        if (sys._arc) return;
-        // The whip arc is a glowing tube (radius ~45) wrapping the body; geometry
-        // is rebuilt each update from the current sweep.
+    function _ensureHalo() {
+        if (sys._halo) return;
+        // A glowing shell around the body marking the gravity-capture zone.
+        // BackSide additive gives a soft volumetric rim-glow (atmosphere look);
+        // it's a VOLUME, so it never reads as an orbit line or the tube.
         const mat = new THREE.MeshBasicMaterial({
-            color: 0x44ddff, transparent: true, opacity: 0.85,
-            blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide
+            color: 0x44ddff, transparent: true, opacity: 0.3,
+            blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.BackSide
         });
-        sys._arc = new THREE.Mesh(new THREE.BufferGeometry(), mat);
-        sys._arc.frustumCulled = false;
-        sys._arc.renderOrder = 56;
-        scene.add(sys._arc);
+        sys._halo = new THREE.Mesh(new THREE.SphereGeometry(1, 24, 16), mat);
+        sys._halo.frustumCulled = false;
+        sys._halo.renderOrder = 56;
+        scene.add(sys._halo);
     }
 
     function _ensureTube() {
@@ -131,7 +134,7 @@
     }
 
     function _hideVisuals() {
-        if (sys._arc) sys._arc.visible = false;
+        if (sys._halo) sys._halo.visible = false;
         if (sys._tube) sys._tube.visible = false;
     }
 
@@ -139,47 +142,41 @@
     const TUBE_LEN = 5200;     // exit corridor length toward the destination
 
     function _updateVisuals(body, target) {
-        _ensureArc();
+        _ensureHalo();
         _ensureTube();
         const bp = body.position, cp = camera.position;
+        const bodyR = (body.geometry && body.geometry.parameters && body.geometry.parameters.radius)
+            ? body.geometry.parameters.radius * ((body.scale && body.scale.x) || 1) : 40;
         const range = (typeof getSlingshotRange === 'function')
             ? Math.max(getSlingshotRange(body) * 0.85, 120) : 180;
         const col = _qualityColor(sys.alignment);
         const t = performance.now() * 0.001;
 
-        // Whip direction: the tangent sign whose sweep agrees with body→target.
-        _v1.subVectors(target.position, bp).setY(0).normalize();
-        _v2.subVectors(cp, bp).setY(0).normalize();
-        const sign = (_v2.x * _v1.z - _v2.z * _v1.x) >= 0 ? 1 : -1;
-        const theta0 = Math.atan2(cp.z - bp.z, cp.x - bp.x);   // start facing the player
-        const y = cp.y;
+        // ── HALO GLOW SHELL: the gravity-capture zone; brightens + saturates
+        // toward cyan as exit alignment improves, breathes gently, and hides
+        // once the camera is inside it (avoids additive wash + you're already
+        // whipping at that point).
+        // Hug the BODY (2.4× its visual radius), not the whip range — for a
+        // star the whip range is radius×8 and would swallow the whole system.
+        const haloR = Math.max(bodyR * 2.4, 140);
+        const camDist = cp.distanceTo(bp);
+        sys._halo.position.copy(bp);
+        sys._halo.scale.setScalar(haloR * (1 + 0.05 * Math.sin(t * 2)));
+        sys._halo.material.color.copy(col);
+        sys._halo.material.opacity = (0.14 + 0.26 * sys.alignment) * (0.7 + 0.3 * Math.sin(t * 2.5));
+        sys._halo.visible = camDist > haloR * 1.12;
 
-        // ── DIRECTIONAL WHIP ARC around the body (~240°) ───────────────────
-        const ARC = 4.2;                       // ~240° of sweep
-        const arcPts = [];
-        const AN = 24;
-        for (let i = 0; i <= AN; i++) {
-            const a = theta0 + sign * (i / AN) * ARC;
-            arcPts.push(new THREE.Vector3(bp.x + Math.cos(a) * range, y, bp.z + Math.sin(a) * range));
-        }
-        const arcCurve = new THREE.CatmullRomCurve3(arcPts);
-        const arcGeo = new THREE.TubeGeometry(arcCurve, 32, 45, 8, false);
-        sys._arc.geometry.dispose();
-        sys._arc.geometry = arcGeo;
-        sys._arc.material.color.copy(col);
-        sys._arc.material.opacity = 0.6 + 0.25 * (0.5 + 0.5 * Math.sin(t * 3));
-        sys._arc.visible = true;
-
-        // Exit point + tangent (where the whip releases) — the tube starts here.
-        const exitA = theta0 + sign * ARC;
-        const exitPos = new THREE.Vector3(bp.x + Math.cos(exitA) * range, y, bp.z + Math.sin(exitA) * range);
-        const exitTan = new THREE.Vector3(-Math.sin(exitA) * sign, 0, Math.cos(exitA) * sign).normalize();
+        // ── Launch direction (whip release toward the destination) ─────────
+        // Blend the destination bearing with the whip tangent for a slight arc.
+        const toDestF = _tA.subVectors(target.position, bp).setY(0).normalize();
+        const radial = _tB.subVectors(cp, bp).setY(0).normalize();
+        const sign = (radial.x * toDestF.z - radial.z * toDestF.x) >= 0 ? 1 : -1;
+        const tangent = _tC.set(-radial.z * sign, 0, radial.x * sign);
+        const toDest = _tD.subVectors(target.position, bp).normalize();
+        const launch = toDest.multiplyScalar(0.72).addScaledVector(tangent, 0.28).normalize();
+        const exitPos = _tE.copy(bp).addScaledVector(launch, haloR * 1.2);   // tube emerges from the shell edge
 
         // ── WARP TUBE OF LIGHT down the launch corridor ────────────────────
-        // From the arc's exit, blend the exit tangent toward the destination
-        // bearing and run a heavy glowing tube along it.
-        _v2.subVectors(target.position, bp).normalize();
-        const launch = _v2.multiplyScalar(0.72).addScaledVector(exitTan, 0.28).normalize();
         // Rebuild the tube geometry at ~12 Hz (cheap enough, avoids per-frame
         // churn); scroll its texture every frame for the flow.
         const frame = (typeof gameState !== 'undefined' && gameState.frameCount) || 0;
