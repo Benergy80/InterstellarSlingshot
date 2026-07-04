@@ -824,15 +824,25 @@ export function createPlayer({ scene, camera, planet, hud, audio, fx, transit, m
         const sp = tangentVel.length();
         const backing = keys.s && !keys.w;
         const strafing = state.strafeDir !== 0 && !keys.w && !keys.s;
-        // no turn-in-place clip exists on this rig — a slow walk shuffle
-        // sells pivoting when yawing hard while stationary
-        if (sp < 0.6 && Math.abs(rotVel.yaw) > 0.006) rig.play('walk', { fade: 0.18, timeScale: 0.55 });
+        // playback rate tracks ground speed so the feet don't slide
+        const runTs = clamp(sp / 6.0, 0.75, 1.5);
+        const walkTs = clamp(sp / 2.8, 0.7, 1.4);
+        if (sp < 0.6 && Math.abs(rotVel.yaw) > 0.006) {
+          // pivot in place — real turn clips on Captain 2; walk shuffle
+          // stays the fallback for rigs without them
+          rig.play(rotVel.yaw > 0 ? 'turnL' : 'turnR', { fade: 0.15 });
+          if (rig.current() === 'idle') rig.play('walk', { fade: 0.18, timeScale: 0.55 });
+        }
         else if (sp < 0.6) rig.play('idle', { fade: 0.22 });
-        else if ((boosting || sprinting) && sp > P.walk + 1) rig.play('sprint');
-        else if (backing) rig.play('runback');
-        else if (strafing) rig.play(state.strafeDir < 0 ? 'strafeL' : 'strafeR');
-        else if (sp > P.walk * 0.55) rig.play('run');
-        else rig.play('walk');
+        else if ((boosting || sprinting) && sp > P.walk + 1) rig.play('sprint', { timeScale: runTs });
+        else if (backing) rig.play(keys.a ? 'backL' : keys.d ? 'backR' : 'runback', { timeScale: walkTs });
+        else if (keys.w && state.strafeDir !== 0 && sp > 1.2) {
+          // eight-way movement: diagonal fight-runs for W+A / W+D
+          rig.play(state.strafeDir < 0 ? 'strafeFL' : 'strafeFR', { timeScale: runTs });
+        }
+        else if (strafing) rig.play(state.strafeDir < 0 ? 'strafeL' : 'strafeR', { timeScale: walkTs });
+        else if (sp > P.walk * 0.55) rig.play('run', { timeScale: runTs });
+        else rig.play('walk', { timeScale: walkTs });
       } else if (rig.current() !== 'hover' || !state.jetArmed) {
         if (state.vel.dot(_up) < -3) rig.play('fall', { fade: 0.2 });
       }

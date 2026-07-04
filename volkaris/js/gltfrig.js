@@ -74,7 +74,11 @@ export const ASTRO_MAP = {
   aimidle: { name: 'Idle_Gun_Pointing' },
   strafeL: { name: 'Run_Left' },
   strafeR: { name: 'Run_Right' },
+  strafeFL: { name: 'Run_Left' },
+  strafeFR: { name: 'Run_Right' },
   runback: { name: 'Run_Back' },
+  backL: { name: 'Run_Back' },
+  backR: { name: 'Run_Back' },
   punchL: { name: 'Punch_Left', once: true },
   punchR: { name: 'Punch_Right', once: true },
   kickL: { name: 'Kick_Left', once: true },
@@ -118,29 +122,36 @@ export const SENTINEL_MAP = {
 // Meshy AI "Captain 2" (Ben's hero model) — one GLB per animation, all
 // sharing the rig; clips are renamed after their source file at load.
 export const CAPTAIN2_MAP = {
-  idle: { name: 'Walking', timeScale: 0.14 },
+  idle: { name: 'Walking', timeScale: 0.055 },   // near-still — breathing sway, not a treadmill
   walk: { name: 'Walking' },
   run: { name: 'Running' },
   sprint: { name: 'Running', timeScale: 1.25 },
-  jump: { name: 'Run_and_Jump', once: true },
-  fall: { name: 'Run_and_Jump', timeScale: 0.12 },
+  jump: { name: 'Run_and_Jump', once: true, timeScale: 1.15, next: 'fall' },   // chain: no T-pose gap
+  fall: { name: 'Run_and_Jump', timeScale: 0.07 },
   tuck: { name: 'Run_Jump_and_Roll', once: true, timeScale: 1.5 },
   wallrunL: { name: 'diagonal_wall_run', timeScale: 1.1 },
   wallrunR: { name: 'diagonal_wall_run', timeScale: 1.1 },
   hover: { name: 'Run_and_Jump', timeScale: 0.1 },
   die: { name: 'slide_light', once: true, clamp: true },
-  sit: { name: 'Walking', timeScale: 0.1 },
+  sit: { name: 'Walking', timeScale: 0.05 },
   wave: { name: 'Walking', timeScale: 0.5 },
-  lean: { name: 'Walking', timeScale: 0.1 },
+  lean: { name: 'Walking', timeScale: 0.05 },
   stomp: { name: 'Walking', timeScale: 0.6 },
   fly: { name: 'Run_and_Jump', timeScale: 0.1 },
   throne: { name: 'Walking', once: true, next: 'idle' },
   shoot: { name: 'Walk_Forward_While_Shooting', timeScale: 0.6 },
   runshoot: { name: 'Run_and_Shoot' },
+  backshoot: { name: 'Walk_Backward_While_Shooting' },   // firing while backpedaling
   aimidle: { name: 'Walk_Forward_While_Shooting', timeScale: 0.4 },
   strafeL: { name: 'Walk_Left_with_Gun', timeScale: 1.15 },
   strafeR: { name: 'ForwardRight_Run_Fight' },
+  strafeFL: { name: 'ForwardLeft_Run_Fight' },    // W+A diagonal
+  strafeFR: { name: 'ForwardRight_Run_Fight' },   // W+D diagonal
+  backL: { name: 'BackLeft_run' },                // S+A diagonal retreat
+  backR: { name: 'BackRight_Run' },               // S+D diagonal retreat
   runback: { name: 'BackRight_Run' },
+  turnL: { name: 'Run_Turn_Left', timeScale: 0.65 },     // pivot in place
+  turnR: { name: 'Run_Turn_Right', timeScale: 0.65 },
   punchL: { name: 'Punch_Combo', once: true, timeScale: 1.3 },
   punchR: { name: 'Punch_Combo_1', once: true, timeScale: 1.3 },
   kickL: { name: 'Roundhouse_Kick', once: true, timeScale: 1.15 },
@@ -234,10 +245,15 @@ export function makeGLTFRig(gltf, { tint = null, tints = null, scale = 0.75, bla
     if (state.aimW > 0.5) {
       if (name === 'idle' || name === 'walk') name = 'shoot';
       else if ((name === 'run' || name === 'sprint') && clipMap.runshoot) name = 'runshoot';
+      else if ((name === 'runback' || name === 'backL' || name === 'backR') && clipMap.backshoot) name = 'backshoot';
     }
     const def = clipMap[name];
     if (!def) return;
-    if (currentKey === name && !restart && !def.once) return;
+    if (currentKey === name && !restart && !def.once) {
+      // same clip, new rate — foot-speed matching updates every frame
+      if (timeScale !== undefined && currentAction) currentAction.timeScale = timeScale;
+      return;
+    }
     currentKey = name;
     queuedNext = def.next ?? null;
     playRaw(def.name, {
