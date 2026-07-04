@@ -416,8 +416,43 @@ export function buildPlanet(scene, models = {}) {
     colorize(bed, 0x140b2e);
     solidParts.push(bed);
     collParts.push(bed.clone());
-    addGlowRaw(mk(-width / 2 - 0.22, -width / 2 + 0.08, 0.09), edgeHex, 1.15);
-    addGlowRaw(mk(width / 2 - 0.08, width / 2 + 0.22, 0.09), edgeHex, 1.15);
+    // ── raised CURBS along both edges: a pale cap + a vertical face, so
+    // the street has real kerbs the traffic runs between ──
+    const CURB_H = 0.26, CURB_W = 0.34;
+    for (const sgn of [-1, 1]) {
+      const inner = sgn * (width / 2);
+      const outer = sgn * (width / 2 + CURB_W);
+      // cap (top of the curb) — visual only; low enough to step over so
+      // NPCs and the player never snag on it
+      const cap = mk(inner, outer, CURB_H);
+      colorize(cap, 0x3b3560);
+      solidParts.push(cap);
+      // vertical face toward the road (two rings of verts at 0.05 and CURB_H)
+      const faceLo = mk(inner, inner, 0.05);
+      const faceHi = mk(inner, inner, CURB_H);
+      const face = stitchWall(faceLo, faceHi);
+      colorize(face, 0x2a2450);
+      solidParts.push(face);
+    }
+    // neon trim sits ON the curb cap
+    addGlowRaw(mk(-width / 2 - CURB_W + 0.02, -width / 2 + 0.02, CURB_H + 0.04), edgeHex, 1.2);
+    addGlowRaw(mk(width / 2 - 0.02, width / 2 + CURB_W - 0.02, CURB_H + 0.04), edgeHex, 1.2);
+  }
+  // build a vertical wall quad-strip between two same-length edge strips
+  function stitchWall(gLo, gHi) {
+    const lo = gLo.attributes.position.array, hi = gHi.attributes.position.array;
+    const nPairs = lo.length / 6;   // each row = 2 verts (a,b); we use the 'a' col
+    const verts = [], idx = [];
+    for (let i = 0; i < nPairs; i++) {
+      verts.push(lo[i * 6], lo[i * 6 + 1], lo[i * 6 + 2]);   // low
+      verts.push(hi[i * 6], hi[i * 6 + 1], hi[i * 6 + 2]);   // high
+      if (i) { const k = i * 2; idx.push(k - 2, k - 1, k, k - 1, k + 1, k); }
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(verts), 3));
+    g.setIndex(idx);
+    g.computeVertexNormals();
+    return g;
   }
   function addGlowRaw(geo, hex, boost = 1.2) {
     _c.set(hex).multiplyScalar(boost);

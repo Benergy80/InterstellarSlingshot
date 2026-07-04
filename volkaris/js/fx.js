@@ -57,7 +57,21 @@ export function createFX(scene, camera, planet, audio, models = {}) {
     const f = planet.portInfo.shipFrame;
     if (models.Player) {
       const s = models.Player.clone();
-      s.traverse(o => { if (o.isMesh) o.castShadow = true; });
+      // Player.glb ships with a black/broken material — give it a proper
+      // hero SKIN: brushed steel hull with a warm underglow, neon trim
+      let idx = 0;
+      s.traverse(o => {
+        if (o.isMesh) {
+          o.castShadow = true;
+          const big = idx++ === 0 || o.geometry.boundingSphere?.radius > 0.05;
+          o.material = new THREE.MeshStandardMaterial({
+            color: big ? 0x8a97b8 : 0x5a3f7a,       // steel hull / violet panels
+            metalness: 0.8, roughness: 0.38,
+            emissive: new THREE.Color(NEON.cyan).multiplyScalar(0.04),
+            envMapIntensity: 0.9,
+          });
+        }
+      });
       // Player.glb is authored miniature (~0.2u) — normalize to hero size
       const sz = new THREE.Box3().setFromObject(s).getSize(new THREE.Vector3());
       s.scale.setScalar(7.5 / Math.max(sz.x, sz.y, sz.z, 1e-3));
@@ -114,6 +128,10 @@ export function createFX(scene, camera, planet, audio, models = {}) {
 
   function updateLaunch(dt) {
     if (!launch.active) return;
+    // once the win screen is up, FREEZE the shot — otherwise the ship
+    // keeps accelerating past the far clip plane and the background
+    // flickers behind the overlay
+    if (launch.done) return;
     launch.t += dt;
     const t = launch.t;
     const up = planet.portInfo.dir;

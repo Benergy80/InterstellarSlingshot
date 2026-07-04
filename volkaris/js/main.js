@@ -22,7 +22,7 @@ import { createDemo } from './demo.js';
 import { createHUD } from './hud.js';
 import { createAudio } from './audio.js';
 
-const VK_BUILD = 'VOLKARIS build 2026-07-04h · lift-stand, ceiling collision, pyramid-lift unblocked';
+const VK_BUILD = 'VOLKARIS build 2026-07-04i · ship skin, launch-freeze, street curbs + more traffic';
 console.log('%c' + VK_BUILD, 'color:#ff2fd6;font-weight:bold;font-size:14px');
 
 // ── renderer ──
