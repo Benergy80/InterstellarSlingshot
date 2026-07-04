@@ -1602,16 +1602,19 @@ function isPositionTooClose(position, minDistance) {
 // PRESERVED: Slingshot execution function
 // Helper: compute the slingshot activation radius for a body. Used both
 // by the "SLINGSHOT READY" UI prompt and by executeSlingshot itself so the
-// two never disagree. Bumped from the original (radius*6 / radius*2.5+30)
-// to give players more reaction time at warp speed.
+// two never disagree — and the Slingshot-Assist halo mirrors it.
+// TIGHTENED (per playtest) so the capture zone HUGS the body: the READY
+// prompt now fires on a close pass instead of from far out. A 120u floor
+// keeps small bodies reachable and preserves a little reaction time; black
+// holes still stay safely OUTSIDE the event-horizon warp threshold.
 function getSlingshotRange(body) {
     const radius = body && body.geometry ? body.geometry.parameters.radius : 5;
     const isStarBody = body && body.userData &&
         (body.userData.type === 'star' || body.userData.isLocalStar);
     const isBH = body && body.userData && body.userData.type === 'blackhole';
-    if (isBH) return Math.max(120, radius * 5 + (body.userData.warpThreshold || 0));
-    if (isStarBody) return Math.max(120, radius * 8);
-    return Math.max(120, radius * 4 + 60);
+    if (isBH) return Math.max(140, (body.userData.warpThreshold || 0) + radius * 2);
+    if (isStarBody) return Math.max(120, radius * 3);
+    return Math.max(120, radius * 2.2 + 30);
 }
 
 // Helper: find best slingshot target near the camera.

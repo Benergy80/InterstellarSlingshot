@@ -156,15 +156,19 @@
         // toward cyan as exit alignment improves, breathes gently, and hides
         // once the camera is inside it (avoids additive wash + you're already
         // whipping at that point).
-        // Hug the BODY (2.4× its visual radius), not the whip range — for a
-        // star the whip range is radius×8 and would swallow the whole system.
-        const haloR = Math.max(bodyR * 2.4, 140);
+        // The shell IS the slingshot zone: haloR = getSlingshotRange (the
+        // radius where "SLINGSHOT READY" fires), so the glow literally marks
+        // where you can whip — cross into it and the shell vanishes as the
+        // READY prompt takes over. (Bigger for stars, tight for planets —
+        // that's the real gravity-well reach.)
+        const haloR = (typeof getSlingshotRange === 'function')
+            ? getSlingshotRange(body) : Math.max(bodyR * 2.4, 140);
         const camDist = cp.distanceTo(bp);
         sys._halo.position.copy(bp);
-        sys._halo.scale.setScalar(haloR * (1 + 0.05 * Math.sin(t * 2)));
+        sys._halo.scale.setScalar(haloR * (1 + 0.03 * Math.sin(t * 2)));
         sys._halo.material.color.copy(col);
         sys._halo.material.opacity = (0.14 + 0.26 * sys.alignment) * (0.7 + 0.3 * Math.sin(t * 2.5));
-        sys._halo.visible = camDist > haloR * 1.12;
+        sys._halo.visible = camDist > haloR;   // hide once inside the zone (avoids wash + READY takes over)
 
         // ── Launch direction (whip release toward the destination) ─────────
         // Blend the destination bearing with the whip tangent for a slight arc.
@@ -174,7 +178,7 @@
         const tangent = _tC.set(-radial.z * sign, 0, radial.x * sign);
         const toDest = _tD.subVectors(target.position, bp).normalize();
         const launch = toDest.multiplyScalar(0.72).addScaledVector(tangent, 0.28).normalize();
-        const exitPos = _tE.copy(bp).addScaledVector(launch, haloR * 1.2);   // tube emerges from the shell edge
+        const exitPos = _tE.copy(bp).addScaledVector(launch, haloR * 1.02);   // tube emerges from the zone edge
 
         // ── WARP TUBE OF LIGHT down the launch corridor ────────────────────
         // Rebuild the tube geometry at ~12 Hz (cheap enough, avoids per-frame
