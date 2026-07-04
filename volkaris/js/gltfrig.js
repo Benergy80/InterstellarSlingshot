@@ -143,10 +143,12 @@ export const CAPTAIN2_MAP = {
   runshoot: { name: 'Run_and_Shoot' },
   backshoot: { name: 'Walk_Backward_While_Shooting' },   // firing while backpedaling
   aimidle: { name: 'Walk_Forward_While_Shooting', timeScale: 0.4 },
-  strafeL: { name: 'Walk_Left_with_Gun', timeScale: 1.15 },
-  strafeR: { name: 'ForwardRight_Run_Fight' },
-  strafeFL: { name: 'ForwardLeft_Run_Fight' },    // W+A diagonal
-  strafeFR: { name: 'ForwardRight_Run_Fight' },   // W+D diagonal
+  // strafe/diagonal clips looked wrong in play (Ben) — standard
+  // walk/run reads better for A/D and W+A/W+D
+  strafeL: { name: 'Walking' },
+  strafeR: { name: 'Walking' },
+  strafeFL: { name: 'Running' },                  // W+A diagonal
+  strafeFR: { name: 'Running' },                  // W+D diagonal
   backL: { name: 'BackLeft_run' },                // S+A diagonal retreat
   backR: { name: 'BackRight_Run' },               // S+D diagonal retreat
   runback: { name: 'BackRight_Run' },
