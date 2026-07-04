@@ -60,8 +60,14 @@ export function createHUD() {
     mctx.strokeStyle = 'rgba(0,246,255,0.35)'; mctx.lineWidth = 2;
     mctx.beginPath(); mctx.arc(MAP_R, MAP_R, MAP_R - 3, 0, Math.PI * 2); mctx.stroke();
     // lines
+    const ridingKey = transitRef.ridingLineKey ? transitRef.ridingLineKey() : null;
     for (const line of transitRef.lines) {
-      mctx.strokeStyle = cssHex(line.hex); mctx.lineWidth = riding ? 3 : 2; mctx.globalAlpha = 0.9;
+      const isRiding = line.key === ridingKey;
+      mctx.strokeStyle = cssHex(line.hex);
+      mctx.lineWidth = isRiding ? 5 : (riding ? 3 : 2);
+      mctx.globalAlpha = isRiding ? 1 : (ridingKey ? 0.4 : 0.9);   // dim the others while aboard
+      if (isRiding) { mctx.shadowColor = cssHex(line.hex); mctx.shadowBlur = 8; }
+      else mctx.shadowBlur = 0;
       mctx.beginPath();
       let started = false;
       const N = 120;
@@ -94,6 +100,7 @@ export function createHUD() {
       }
     }
     mctx.globalAlpha = 1;
+    mctx.shadowBlur = 0;
     // player at centre, arrow pointing up (map-north = heading)
     mctx.fillStyle = '#5dffb2';
     mctx.beginPath();

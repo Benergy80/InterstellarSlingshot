@@ -67,6 +67,18 @@ export function createPlayer({ scene, camera, planet, hud, audio, fx, transit, m
     if (models?.captain2) rig.setGunRot(-1.302, 0.314, 0.205);   // Captain 2 wrist (frozen-pose measured)
     else rig.setGunRot(-1.623, 0.166, 1.751);                    // Astronaut wrist
   }
+  // the Captain 2 suit shipped very glossy/reflective — matte it down so
+  // it reads as armour, not chrome (Ben's note)
+  if (models?.captain2) {
+    rig.group.traverse(o => {
+      if (o.isMesh && o.material && o.material.isMeshStandardMaterial) {
+        o.material.metalness = 0.08;
+        o.material.roughness = 0.82;
+        o.material.envMapIntensity = 0.25;
+        o.material.needsUpdate = true;
+      }
+    });
+  }
   scene.add(rig.group);
   // suit lamp — keeps the Captain readable through the deep night
   const suitLamp = new THREE.PointLight(0x66d9ff, 0.6, 10, 1.6);

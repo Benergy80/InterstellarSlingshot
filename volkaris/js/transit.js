@@ -65,6 +65,18 @@ export function buildTransit(scene, planet, audio) {
   const stations = [];        // flat, across lines (demo + HUD friendly)
   const lines = [];
   const lifts = [];           // station access lifts (carry the player up)
+  // merge an array of geometries into one positions-only BufferGeometry
+  function mergePos(geos) {
+    let vtx = 0;
+    const parts = geos.map(g => (g.index ? g.toNonIndexed() : g));
+    for (const g of parts) vtx += g.attributes.position.count;
+    const pos = new Float32Array(vtx * 3);
+    let o = 0;
+    for (const g of parts) { pos.set(g.attributes.position.array, o * 3); o += g.attributes.position.count; }
+    const merged = new THREE.BufferGeometry();
+    merged.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    return merged;
+  }
   const gatewayGroup = new THREE.Group();
   const platGroup = new THREE.Group();
   const platMat = new THREE.MeshStandardMaterial({ color: 0x241e4e, roughness: 0.6, metalness: 0.4 });
@@ -120,29 +132,45 @@ export function buildTransit(scene, planet, audio) {
         if (!under && s0 >= 0) { spans.push([Math.max(0, s0 - 2), Math.min(NS - 1, i + 1)]); s0 = -1; }
       }
       const ringGeos = [];
+      const mouthDark = [];
       for (const [a, b] of spans) {
         if (b - a < 2) continue;
         const sub = [];
         for (let i = a; i <= b; i++) sub.push(samples[i].p);
         const subCurve = new THREE.CatmullRomCurve3(sub, false, 'centripetal');
         const bore = new THREE.Mesh(
-          new THREE.TubeGeometry(subCurve, Math.max(8, (b - a)), 2.1, 10, false),
-          new THREE.MeshStandardMaterial({ color: 0x161031, roughness: 0.9, metalness: 0.1, side: THREE.BackSide }));
+          new THREE.TubeGeometry(subCurve, Math.max(8, (b - a)), 2.4, 12, false),
+          new THREE.MeshStandardMaterial({ color: 0x120c26, roughness: 0.95, metalness: 0.05, side: THREE.BackSide }));
         scene.add(bore);
-        // glow rings pulse down the bore + portal hoops at the mouths
         const subLen = subCurve.getLength();
         const nRings = Math.max(2, Math.floor(subLen / 7));
         for (let r2 = 0; r2 <= nRings; r2++) {
           const tt = r2 / nRings;
           const p = subCurve.getPointAt(tt);
           const tang = subCurve.getTangentAt(tt);
-          const g = new THREE.TorusGeometry(r2 === 0 || r2 === nRings ? 2.3 : 2.0,
-            r2 === 0 || r2 === nRings ? 0.16 : 0.06, 5, 18);
+          const mouth = r2 === 0 || r2 === nRings;
+          const g = new THREE.TorusGeometry(mouth ? 2.9 : 2.0, mouth ? 0.24 : 0.06, 6, 22);
           const m4 = new THREE.Matrix4().lookAt(new THREE.Vector3(), tang, p.clone().normalize());
           m4.setPosition(p);
           g.applyMatrix4(m4);
           ringGeos.push(g);
+          // a recessed dark CAVE-MOUTH disc set into the mountainside so
+          // the entrance reads as a real opening, not the rail vanishing
+          if (mouth) {
+            const md = new THREE.CylinderGeometry(2.7, 2.7, 3.2, 16, 1, true);
+            md.rotateX(Math.PI / 2);
+            const mm = new THREE.Matrix4().lookAt(new THREE.Vector3(), tang, p.clone().normalize());
+            mm.setPosition(p.clone().addScaledVector(tang, r2 === 0 ? 1.4 : -1.4));
+            md.applyMatrix4(mm);
+            mouthDark.push(md);
+          }
         }
+      }
+      if (mouthDark.length) {
+        const merged = mergePos(mouthDark);
+        const m = new THREE.Mesh(merged, new THREE.MeshStandardMaterial({
+          color: 0x0a0618, roughness: 1, metalness: 0, side: THREE.DoubleSide }));
+        scene.add(m);
       }
       if (ringGeos.length) {
         let vtx = 0;
@@ -298,7 +326,10 @@ export function buildTransit(scene, planet, audio) {
       const stDir = pt.clone().normalize();
       const up = stDir.clone();
       const side = new THREE.Vector3().crossVectors(tang, up).normalize();
-      const platH = pt.length() - 1.2;
+      // platform sits level with the straddle car's floor (rail + CAR_LIFT
+      // - ~1), so you step straight across instead of popping up, and the
+      // canopy rides higher above the raised car
+      const platH = pt.length() + 0.35;
       const st = { key: stopKey, name: `${d.name} · ${line.key}`, line, t, dir: stDir };
 
       const fm = new THREE.Matrix4().makeBasis(tang, up.clone(), side)
@@ -722,6 +753,7 @@ export function buildTransit(scene, planet, audio) {
       return null;
     },
     setRider(st) { riderLine = st ? st.line : null; },
+    ridingLineKey() { return riderLine ? riderLine.key : null; },
     dwelling() { return riderLine ? riderLine.train.state === 'dwell' : false; },
     riderStation() {
       if (!riderLine) return null;
