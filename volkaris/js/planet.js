@@ -984,6 +984,58 @@ export function buildPlanet(scene, models = {}) {
     const f = frameAt(a.lat, a.lon, 0);
     addSolid(T(new THREE.CylinderGeometry(0.8, 1.6, 15, 6), 0, 7.5, 0), f.clone(), 0x120c2e);
     addGlow(T(new THREE.CylinderGeometry(0.26, 0.26, 14.4, 6), 0, 7.5, 0), f.clone(), NEON.cyan, 0.85);
+    // ══ MONUMENTAL CIVIC CENTER: domed grand hall, fountains, holo art ══
+    const aAt = (dlat, dlon, yaw = 0, sink = 0.25) => frameAt(a.lat + dlat, a.lon + dlon, yaw, sink);
+    const MARBLE = 0x9096b8, MARBLE2 = 0x6d74a0;
+    // THE GRAND HALL — a domed museum on monumental stairs, ringed by a colonnade
+    {
+      const gf = aAt(-7, 5, 30);
+      for (let s = 0; s < 4; s++)   // monumental stepped base
+        addSolid(T(new THREE.CylinderGeometry(9 - s * 0.9, 9 - s * 0.9, 0.5, 28), 0, 0.25 + s * 0.5, 0), gf.clone(), s % 2 ? MARBLE : MARBLE2, { jitter: 0.02 });
+      const cols = 16, cr = 6.3;
+      for (let i = 0; i < cols; i++) {   // colonnade
+        const ca = i / cols * Math.PI * 2, cx = Math.cos(ca) * cr, cz = Math.sin(ca) * cr;
+        addSolid(T(new THREE.CylinderGeometry(0.38, 0.42, 5.4, 10), cx, 4.6, cz), gf.clone(), MARBLE);
+        addSolid(T(box(1.0, 0.3, 1.0), cx, 7.45, cz), gf.clone(), MARBLE2, { collide: false });   // capital
+      }
+      addSolid(T(new THREE.CylinderGeometry(cr + 0.7, cr + 0.7, 0.9, 28), 0, 8.0, 0), gf.clone(), MARBLE2, { collide: false });  // entablature
+      addSolid(T(new THREE.SphereGeometry(cr - 0.1, 22, 12, 0, Math.PI * 2, 0, Math.PI / 2), 0, 8.4, 0), gf.clone(), MARBLE, { collide: false });  // DOME
+      addGlow(T(new THREE.TorusGeometry(cr - 0.1, 0.1, 6, 26), 0, 8.4, 0, 0, Math.PI / 2), gf.clone(), NEON.cyan, 1.0);   // dome ring light
+      for (let r = 1; r <= 3; r++) addGlow(T(new THREE.TorusGeometry((cr - 0.1) * Math.cos(r * 0.4), 0.05, 5, 22), 0, 8.4 + Math.sin(r * 0.4) * (cr - 0.1), 0, 0, Math.PI / 2), gf.clone(), NEON.cyan, 0.8);  // dome meridians
+      addGlow(T(new THREE.SphereGeometry(0.42, 8, 6), 0, 14.7, 0), gf.clone(), NEON.amber, 1.2);   // golden finial
+      for (let i = 0; i < 10; i++) { const ca = i / 10 * Math.PI * 2; addGlow(T(box(0.3, 0.1, 0.3), Math.cos(ca) * 8.3, 0.55, Math.sin(ca) * 8.3), gf.clone(), pick(rnd, [NEON.cyan, NEON.magenta, NEON.amber]), 1.1); }   // ceremonial uplights
+    }
+    // FOUNTAINS with animated jets
+    for (const [dl, dn] of [[4, -4], [6, 7]]) {
+      const ff = aAt(dl, dn, 0);
+      addSolid(T(new THREE.CylinderGeometry(2.2, 2.5, 0.6, 18), 0, 0.3, 0), ff.clone(), MARBLE2);
+      addGlow(T(new THREE.CylinderGeometry(1.9, 1.9, 0.08, 18), 0, 0.56, 0), ff.clone(), NEON.cyan, 0.85);
+      addSolid(T(new THREE.CylinderGeometry(0.3, 0.42, 1.5, 8), 0, 0.85, 0), ff.clone(), MARBLE, { collide: false });
+      const jet = new THREE.Mesh(new THREE.ConeGeometry(0.32, 2.2, 8),
+        new THREE.MeshBasicMaterial({ color: new THREE.Color(NEON.cyan).multiplyScalar(0.9), transparent: true, opacity: 0.4, toneMapped: false, blending: THREE.AdditiveBlending, depthWrite: false }));
+      jet.applyMatrix4(new THREE.Matrix4().makeTranslation(0, 2.3, 0).premultiply(ff));
+      signs.push(jet);
+      dynamic.push({ mesh: jet, phase: (dl + dn) * 1.3, update(dt, t) { jet.scale.y = 1 + 0.18 * Math.sin(t * 4 + this.phase); jet.material.opacity = 0.28 + 0.16 * Math.sin(t * 5 + this.phase); } });
+    }
+    // HOLOGRAPHIC SCULPTURES on plinths — rotating additive forms
+    for (let i = 0; i < 4; i++) {
+      const sf = aAt(-9 + i * 5.5, -9 + (i % 2) * 12, 0);
+      addSolid(T(box(1.3, 1.2, 1.3), 0, 0.6, 0), sf.clone(), MARBLE2);
+      const wire = i % 2 === 0;
+      const holo = new THREE.Mesh(
+        wire ? new THREE.IcosahedronGeometry(1.05, 0) : new THREE.TorusKnotGeometry(0.62, 0.22, 60, 7),
+        new THREE.MeshBasicMaterial({ color: pick(rnd, [NEON.cyan, NEON.magenta, NEON.lime]), transparent: true, opacity: 0.45, toneMapped: false, blending: THREE.AdditiveBlending, depthWrite: false, wireframe: wire }));
+      holo.applyMatrix4(new THREE.Matrix4().makeTranslation(0, 2.7, 0).premultiply(sf));
+      signs.push(holo);
+      dynamic.push({ mesh: holo, phase: i * 1.7, update(dt, t) { holo.rotateY(dt * 0.6); holo.material.opacity = 0.32 + 0.2 * Math.sin(t * 2 + this.phase); } });
+    }
+    // GARDEN TERRACES with glowing foliage
+    for (let i = 0; i < 3; i++) {
+      const tf = aAt(7 - i * 4, 9 + i * 2, rnd() * 90);
+      addSolid(T(box(4, 0.4, 2), 0, 1.5, 0), tf.clone(), MARBLE2);
+      for (let k = 0; k < 5; k++) addGlow(T(new THREE.SphereGeometry(0.4 + rnd() * 0.3, 6, 5), -1.5 + k * 0.75, 2.05, (rnd() - 0.5) * 0.8), tf.clone(), pick(rnd, [NEON.lime, 0x2a8a5a, 0x3aa06a]), 0.9);
+    }
+
     const gate = textSign('NEON ACROPOLIS', { fg: hexCss(NEON.cyan) });
     placeSign(gate, a.lat - 5, a.lon - 12, 150, 0, 5.4, 0);
     const gf3 = frameAt(a.lat - 5, a.lon - 12, 150);
