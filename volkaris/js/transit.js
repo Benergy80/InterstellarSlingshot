@@ -754,6 +754,11 @@ export function buildTransit(scene, planet, audio) {
     },
     setRider(st) { riderLine = st ? st.line : null; },
     ridingLineKey() { return riderLine ? riderLine.key : null; },
+    riderNextStop() {
+      if (!riderLine || !riderLine.stations.length) return null;
+      const st = riderLine.stations[riderLine.train.nextIdx % riderLine.stations.length];
+      return st ? st.name.split(' · ')[0] : null;
+    },
     dwelling() { return riderLine ? riderLine.train.state === 'dwell' : false; },
     riderStation() {
       if (!riderLine) return null;

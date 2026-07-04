@@ -22,7 +22,7 @@ import { createDemo } from './demo.js';
 import { createHUD } from './hud.js';
 import { createAudio } from './audio.js';
 
-const VK_BUILD = 'VOLKARIS build 2026-07-04e · monorail pass 5: cave mouths, higher platforms, matte suit, map highlight';
+const VK_BUILD = 'VOLKARIS build 2026-07-04f · monorail pass 6: verified raised platform, next-stop readout';
 console.log('%c' + VK_BUILD, 'color:#ff2fd6;font-weight:bold;font-size:14px');
 
 // ── renderer ──

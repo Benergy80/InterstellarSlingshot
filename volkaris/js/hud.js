@@ -101,6 +101,19 @@ export function createHUD() {
     }
     mctx.globalAlpha = 1;
     mctx.shadowBlur = 0;
+    // NEXT STOP readout while riding — a little sightseeing info
+    if (riding && transitRef.riderNextStop) {
+      const next = transitRef.riderNextStop();
+      if (next) {
+        mctx.font = '700 15px "Share Tech Mono", monospace';
+        mctx.textAlign = 'center';
+        mctx.fillStyle = 'rgba(8,4,26,0.7)';
+        mctx.fillRect(6, MAP_R * 2 - 30, MAP_R * 2 - 12, 22);
+        mctx.fillStyle = '#5dffb2';
+        mctx.fillText('▶ ' + next, MAP_R, MAP_R * 2 - 14);
+        mctx.textAlign = 'left';
+      }
+    }
     // player at centre, arrow pointing up (map-north = heading)
     mctx.fillStyle = '#5dffb2';
     mctx.beginPath();
