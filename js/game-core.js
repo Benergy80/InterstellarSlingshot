@@ -89,7 +89,8 @@ const gameState = {
         active: false,
         timeRemaining: 0,
         maxSpeed: 20.0, // Doubled for doubled world
-        duration: 24000, // 3x emergency warp duration (8000ms * 3)
+        duration: 6000, // punchy fling (was 24000 — felt like a long cruise);
+                        // total ride ≈ 1.6s whip arc + this boost
         accelerationPhase: 10000,
         maintainPhase: 10000,
         postSlingshot: false,
@@ -2104,6 +2105,13 @@ if (typeof asteroidBelts !== 'undefined' && asteroidBelts.length > 0) {
     }
 }
 
+// Instanced belt asteroids: orbit/spin their instance matrices (the loop
+// above only touches fallback real-mesh asteroids; the belts are now
+// InstancedMeshes and belt.children is empty for them).
+if (typeof window !== 'undefined' && window.asteroidInstancer) {
+    window.asteroidInstancer.update();
+}
+
     // Update interstellar asteroid fields
     if (typeof updateInterstellarAsteroids === 'function') {
         updateInterstellarAsteroids();
@@ -2826,6 +2834,11 @@ if (gameState.frameCount % 5 === 0 && typeof checkCosmicFeatureInteractions === 
     // Highlight recorder: rolling ship-state buffer for the victory replay
     if (typeof window !== 'undefined' && window.replaySystem) {
         window.replaySystem.update();
+    }
+
+    // Slingshot Assist: gravity-coil guidance toward a far nav target
+    if (typeof window !== 'undefined' && window.slingshotAssist && window.slingshotAssist.enabled) {
+        try { window.slingshotAssist.update(gameState.frameCount); } catch (e) {}
     }
 
     // DEMO AUTOPILOT — runs before physics so key inputs are applied this frame

@@ -962,6 +962,11 @@ window.triggerPlayerDeath = triggerPlayerDeath;
 
 // RESTORED: Asteroid destruction functions
 function destroyAsteroid(asteroid) {
+    // Instanced asteroid: free its InstancedMesh slot (swap-remove). The
+    // scene.remove / beltGroup.remove below are harmless no-ops on the proxy.
+    if (asteroid && asteroid._instRef && typeof window !== 'undefined' && window.asteroidInstancer) {
+        window.asteroidInstancer.free(asteroid._instRef);
+    }
     scene.remove(asteroid);
 
     // Small reward for destruction so phase-5 strafing pays out.
@@ -1597,16 +1602,19 @@ function isPositionTooClose(position, minDistance) {
 // PRESERVED: Slingshot execution function
 // Helper: compute the slingshot activation radius for a body. Used both
 // by the "SLINGSHOT READY" UI prompt and by executeSlingshot itself so the
-// two never disagree. Bumped from the original (radius*6 / radius*2.5+30)
-// to give players more reaction time at warp speed.
+// two never disagree — and the Slingshot-Assist halo mirrors it.
+// TIGHTENED (per playtest) so the capture zone HUGS the body: the READY
+// prompt now fires on a close pass instead of from far out. A 120u floor
+// keeps small bodies reachable and preserves a little reaction time; black
+// holes still stay safely OUTSIDE the event-horizon warp threshold.
 function getSlingshotRange(body) {
     const radius = body && body.geometry ? body.geometry.parameters.radius : 5;
     const isStarBody = body && body.userData &&
         (body.userData.type === 'star' || body.userData.isLocalStar);
     const isBH = body && body.userData && body.userData.type === 'blackhole';
-    if (isBH) return Math.max(120, radius * 5 + (body.userData.warpThreshold || 0));
-    if (isStarBody) return Math.max(120, radius * 8);
-    return Math.max(120, radius * 4 + 60);
+    if (isBH) return Math.max(140, (body.userData.warpThreshold || 0) + radius * 2);
+    if (isStarBody) return Math.max(120, radius * 3);
+    return Math.max(120, radius * 2.2 + 30);
 }
 
 // Helper: find best slingshot target near the camera.
@@ -4605,6 +4613,51 @@ function classifyNebula(nebula) {
 }
 
 // Resolve a nebula to its paired galaxy ID
+// Pair the clustered "twin" nebulas by SPATIAL PROXIMITY and give each
+// pair one shared galaxy/faction. The old code paired by ARRAY INDEX
+// (Math.floor(index/2)), but world-gen lays the true visual twins out at
+// index i and i+4 — so index-pairing married two nebulas ~20k apart while
+// the two that actually sit side by side got DIFFERENT factions (and thus
+// different-colored discovery lines). That broke the "both centers of a
+// twin lead to the same faction" design and made the lore ("follow the
+// blue line from this nebula") not match what the player saw.
+//
+// Greedy nearest-neighbour pairing over the clustered set assigns each
+// pair a galaxy (pairId % 8) and marks one member the stronghold (core
+// path) and the other the staging area (patrol path). Memoized onto
+// userData; recomputes only when a clustered nebula lacks an assignment
+// (i.e. a freshly generated world).
+function _assignClusteredNebulaPairs() {
+    if (typeof nebulaClouds === 'undefined' || typeof classifyNebula !== 'function') return;
+    const cl = [];
+    nebulaClouds.forEach(n => {
+        if (n && n.userData && classifyNebula(n) === 'clustered') cl.push(n);
+    });
+    if (cl.length === 0) return;
+    const used = new Set();
+    let pairId = 0;
+    for (let i = 0; i < cl.length; i++) {
+        if (used.has(i)) continue;
+        let best = -1, bd = Infinity;
+        for (let j = 0; j < cl.length; j++) {
+            if (j === i || used.has(j)) continue;
+            const d = cl[i].position.distanceTo(cl[j].position);
+            if (d < bd) { bd = d; best = j; }
+        }
+        used.add(i);
+        const galaxy = pairId % 8;
+        cl[i].userData._clusterGalaxyId = galaxy;
+        cl[i].userData._clusterIsCore = true;      // stronghold
+        if (best >= 0) {
+            used.add(best);
+            cl[best].userData._clusterGalaxyId = galaxy;
+            cl[best].userData._clusterIsCore = false;  // staging area
+        }
+        pairId++;
+    }
+    console.log(`🌌 Twin nebulas paired spatially into ${pairId} pair(s)`);
+}
+
 function resolveNebulaGalaxyId(nebula, nebulaType, index) {
     const name = nebula.userData.name || '';
     switch (nebulaType) {
@@ -4616,9 +4669,10 @@ function resolveNebulaGalaxyId(nebula, nebulaType, index) {
             return GALAXY_FORMATION_NEBULA_MAP[name] !== undefined ? GALAXY_FORMATION_NEBULA_MAP[name] : index % 8;
         case 'clustered':
         default: {
-            // First 8 clustered nebulas use the original paired logic
-            const pairIndex = Math.floor(index / 2);
-            return pairIndex % 8;
+            // Spatially-paired twins share a galaxy (see above).
+            if (nebula.userData._clusterGalaxyId === undefined) _assignClusteredNebulaPairs();
+            if (nebula.userData._clusterGalaxyId !== undefined) return nebula.userData._clusterGalaxyId;
+            return Math.floor(index / 2) % 8; // fallback if pairing unavailable
         }
     }
 }
@@ -4798,10 +4852,14 @@ function checkForNebulaDeepDiscovery() {
         console.log(`🌌 ${nebulaType} nebula "${nebulaName}" → Galaxy ${galaxyId} (${factionName})`);
 
         if (nebulaType === 'clustered') {
-            // ALL paths lead to enemy clusters near cosmic features.
-            // Even index = "stronghold" (larger cluster), odd = "patrol"
-            // (smaller cluster at a different feature).
-            const isCorePath = (index % 2 === 0);
+            // ALL paths lead to enemy clusters near cosmic features. Within
+            // a spatially-paired twin, one member is the stronghold (core
+            // path) and the other the staging area (patrol path) — assigned
+            // in _assignClusteredNebulaPairs so both members of a visual
+            // twin share a faction but give complementary objectives.
+            const isCorePath = (nebula.userData._clusterIsCore !== undefined)
+                ? nebula.userData._clusterIsCore
+                : (index % 2 === 0);
             const patrolData = findPatrolEnemiesNearCosmicFeatures(galaxyId);
 
             if (patrolData) {
@@ -5034,6 +5092,26 @@ function animateDiscoveryPaths() {
     if (!doPulse && !doMissionCheck) return;
 
     const time = Date.now() * 0.001;
+
+    // WHITE LIBERATION-PATH LIGHTHOUSE: the Sgr A*→twin-nebula white line is
+    // a separate object from discoveryPaths, so it needs its own beacon. A
+    // big pulsing marker rides the line's live endpoint (read from geometry
+    // so it's floating-origin safe) — hidden once the player is basically
+    // there, sized to hold a constant apparent size at any range.
+    if (typeof window !== 'undefined' && window.liberationNebulaPath &&
+        window.liberationNebulaPath.userData._libBeacon) {
+        const lib = window.liberationNebulaPath;
+        const beacon = lib.userData._libBeacon;
+        const pos = lib.geometry.attributes.position;
+        const end = new THREE.Vector3().fromBufferAttribute(pos, pos.count - 1);
+        lib.localToWorld(end);
+        beacon.position.copy(end);
+        const bd = camera.position.distanceTo(end);
+        beacon.visible = bd > 1800;   // the nebula itself takes over up close
+        beacon.scale.setScalar(Math.max(60, Math.min(1600, bd * 0.02)));
+        beacon.material.opacity = 0.5 + 0.4 * (0.5 + 0.5 * Math.sin(time * 2.4));
+    }
+
     const pulse1 = 0.5 + Math.sin(time * 2) * 0.2;
     const pulse2 = 0.3 + Math.sin(time * 3) * 0.2;
 
@@ -5042,6 +5120,41 @@ function animateDiscoveryPaths() {
         if (!path.line) continue;
         const mat = path.line.material;
         if (!mat) continue;
+
+        // PATH LIGHTHOUSE (play-reported: 'the map sees paths but I don't')
+        // — a 1px dashed line is optically invisible from 15-20k away while
+        // the universe map draws the same path prominently. Each active
+        // path gets a pulsing faction-colored beacon sprite at its START
+        // that holds a constant apparent size at any distance, so missions
+        // are findable from across the system. Dimmed once complete.
+        if (doPulse) {
+            const ud0 = path.line.userData;
+            if (!path.beacon && ud0 && ud0.startPosition && typeof THREE !== 'undefined') {
+                const bm = new THREE.SpriteMaterial({
+                    map: (typeof _vfGlowTexture === 'function') ? _vfGlowTexture() : null,
+                    color: mat.color.getHex(), transparent: true, opacity: 0.85,
+                    blending: THREE.AdditiveBlending, depthWrite: false
+                });
+                path.beacon = new THREE.Sprite(bm);
+                path.beacon.renderOrder = 52;
+                scene.add(path.beacon);
+            }
+            if (path.beacon && ud0 && ud0.startPosition) {
+                path.beacon.position.copy(ud0.startPosition);
+                const bDist = camera.position.distanceTo(ud0.startPosition);
+                // constant ~14px apparent size, clamped so it never swallows
+                // the nebula up close or vanishes at range
+                path.beacon.scale.setScalar(Math.max(24, Math.min(900, bDist * 0.016)));
+                const done = !!ud0.missionComplete;
+                path.beacon.material.color.copy(mat.color);
+                path.beacon.material.opacity = done
+                    ? 0.18
+                    : 0.45 + 0.4 * (0.5 + Math.sin(time * 2.6 + i) * 0.5);
+                // hide when the player is basically at the nebula — the
+                // line itself is clearly visible there
+                path.beacon.visible = bDist > 2500;
+            }
+        }
 
         if (doPulse) {
             mat.opacity = pulse1;

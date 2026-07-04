@@ -24,7 +24,7 @@
          This lives only on the feature branch; main will not print it. -->
     <script>
       window.BUILD_ID = 'claude/fix-missiles-undefined-hud';
-      window.BUILD_TAG = '20260703r';
+      window.BUILD_TAG = '20260704s';
       console.log(
         '%c🚀 BUILD: ' + window.BUILD_ID + '  ·  ' + window.BUILD_TAG,
         'background:#0a7d2c;color:#fff;font-size:14px;font-weight:bold;padding:4px 10px;border-radius:4px;'
@@ -137,6 +137,13 @@
             -moz-user-select: none;
             -ms-user-select: none;
             user-select: none;
+        }
+
+        /* Slingshot Assist active state */
+        #slingshotAssistBtn.assist-on {
+            border-color: #66ffcc;
+            color: #aaffdd;
+            box-shadow: 0 0 12px rgba(80, 255, 190, 0.35), inset 0 0 8px rgba(80, 255, 190, 0.12);
         }
 
         /* Title flashing effect for gravity well alert */
@@ -816,6 +823,10 @@
             <button id="warpBtn" class="w-full mt-2 space-btn rounded px-4 py-2 disabled:opacity-50 disabled:cursor-not-allowed">
                 <i class="fas fa-rocket mr-2"></i>Slingshot Status
             </button>
+            <button id="slingshotAssistBtn" class="w-full mt-2 space-btn rounded px-4 py-2"
+                    title="Visual slingshot guidance: with a far-off nav target set, highlights the best gravity-coil body and its whip trajectory toward your destination">
+                <i class="fas fa-hurricane mr-2"></i>Slingshot Assist: OFF
+            </button>
         </div>
 
         <!-- Round Galaxy Map -->
@@ -1179,29 +1190,31 @@
 
     <!-- Game Scripts -->
     <!-- boot.js FIRST: init-order registry every other script signals into -->
-    <script src="js/boot.js?v=20260703r"></script>
+    <script src="js/boot.js?v=20260704s"></script>
+    <script src="js/asteroid-instancer.js?v=20260704s"></script>
     <!-- Load GLTFLoader before game-models.js -->
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
-    <script src="js/game-models.js?v=20260703r"></script>
-    <script src="js/camera-system.js?v=20260703r"></script>
+    <script src="js/game-models.js?v=20260704s"></script>
+    <script src="js/camera-system.js?v=20260704s"></script>
     <script src="js/cosmic-features.js"></script>
-    <script src="js/game-objects.js?v=20260703r"></script>
-    <script src="js/game-controls.js?v=20260703r"></script>
-    <script src="js/civilian-combat.js?v=20260703r"></script>
-    <script src="js/visual-flair.js?v=20260703r"></script>
-    <script src="js/playtest-probe.js?v=20260703r"></script>
-    <script src="js/arcade.js?v=20260703r"></script>
-    <script src="js/outer-systems.js?v=20260703r"></script>
+    <script src="js/game-objects.js?v=20260704s"></script>
+    <script src="js/game-controls.js?v=20260704s"></script>
+    <script src="js/civilian-combat.js?v=20260704s"></script>
+    <script src="js/visual-flair.js?v=20260704s"></script>
+    <script src="js/playtest-probe.js?v=20260704s"></script>
+    <script src="js/arcade.js?v=20260704s"></script>
+    <script src="js/outer-systems.js?v=20260704s"></script>
     <script src="js/interstellar-asteroids.js"></script>
-    <script src="js/game-physics.js?v=20260703r"></script>
-    <script src="js/game-ui.js?v=20260703r"></script>
+    <script src="js/game-physics.js?v=20260704s"></script>
+    <script src="js/game-ui.js?v=20260704s"></script>
     <script src="js/atmospheric-perspective.js"></script>
-    <script src="js/game-intro.js?v=20260703r"></script>
+    <script src="js/game-intro.js?v=20260704s"></script>
     <script src="js/game-shields.js"></script>
     <script src="js/game-music.js"></script>
-    <script src="js/victory-replay.js?v=20260703r"></script>
-    <script src="js/autopilot.js?v=20260703r"></script>
-    <script src="js/game-core.js?v=20260703r"></script>
+    <script src="js/victory-replay.js?v=20260704s"></script>
+    <script src="js/slingshot-assist.js?v=20260704s"></script>
+    <script src="js/autopilot.js?v=20260704s"></script>
+    <script src="js/game-core.js?v=20260704s"></script>
 
     <!-- Mobile Script -->
     <script src="js/mobile-controls.js"></script>

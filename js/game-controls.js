@@ -6770,7 +6770,14 @@ function checkGuardianVictory() {
             // OPTIONAL DEEP-SPACE EXPEDITION: a path opens from this freed
             // core out toward UFO/Borg territory. Explicitly optional — the
             // directive below steers the player to the next nebula instead.
-            if (typeof createDiscoveryPathToPosition === 'function' &&
+            // ONLY for liberations that fought through a black-hole guardian
+            // garrison (play-reported: the local galaxy 'liberates' at the
+            // first boss kill with zero guardians, which spawned this
+            // endgame line minutes into a fresh game).
+            const _hadGarrison = typeof bossSystem !== 'undefined' &&
+                bossSystem.guardiansEverSpawned && bossSystem.guardiansEverSpawned[g];
+            if (_hadGarrison &&
+                typeof createDiscoveryPathToPosition === 'function' &&
                 typeof findGalaxyCoreById === 'function') {
                 const _core = findGalaxyCoreById(g);
                 if (_core) {
@@ -7514,12 +7521,24 @@ function fireWeapon() {
                 // Hit log silenced (per-shot spam)
             } else {
                 // Check for asteroid hits (for manual aiming only; skip if
-                // a civilian ship already took this shot)
-                const asteroidTargets = targetObject ? [] : planets.filter(p => p.userData.type === 'asteroid');
-                const asteroidIntersects = raycaster.intersectObjects(asteroidTargets);
-                if (asteroidIntersects.length > 0) {
-                    targetPosition = asteroidIntersects[0].point;
-                    targetObject = asteroidIntersects[0].object;
+                // a civilian ship already took this shot). Belt asteroids are
+                // instanced now — raycast the InstancedMeshes and map the hit
+                // back to its proxy. Any fallback real-mesh asteroids (if the
+                // instancer failed to load) are still handled below.
+                if (!targetObject && typeof window !== 'undefined' && window.asteroidInstancer) {
+                    const instHit = window.asteroidInstancer.raycast(raycaster);
+                    if (instHit) { targetObject = instHit.proxy; targetPosition = instHit.point; }
+                }
+                if (!targetObject) {
+                    const asteroidTargets = planets.filter(p => p.userData.type === 'asteroid' && !p.isAsteroidProxy && p.geometry);
+                    const asteroidIntersects = asteroidTargets.length ? raycaster.intersectObjects(asteroidTargets) : [];
+                    if (asteroidIntersects.length > 0) {
+                        targetPosition = asteroidIntersects[0].point;
+                        targetObject = asteroidIntersects[0].object;
+                    }
+                }
+                if (targetObject && targetObject.userData.type === 'asteroid') {
+                    // resolved an asteroid target
                 } else {
                     // Check for interstellar asteroid hits
                     if (typeof interstellarAsteroids !== 'undefined' && interstellarAsteroids.length > 0) {

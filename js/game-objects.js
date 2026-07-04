@@ -1690,6 +1690,27 @@ function showLiberationPathToTwinNebula() {
     line.renderOrder = 60;
     line.name = 'LiberationTwinNebulaPath';
     scene.add(line);
+
+    // LIGHTHOUSE beacon at the twin-nebula END. A 1px white dashed line
+    // 20k long is optically invisible against the starfield (play-reported:
+    // 'did not see the white dotted line'); the discovery-path lighthouse
+    // fix never covered this separate object. A big pulsing marker at the
+    // destination makes 'follow the white path' actionable — the beacon is
+    // animated in animateDiscoveryPaths() and tracks the line's live
+    // endpoint so it stays correct across floating-origin rebases.
+    if (typeof _vfGlowTexture === 'function') {
+        const bm = new THREE.SpriteMaterial({
+            map: _vfGlowTexture(), color: 0xffffff, transparent: true,
+            opacity: 0.9, blending: THREE.AdditiveBlending,
+            depthWrite: false, depthTest: false
+        });
+        const beacon = new THREE.Sprite(bm);
+        beacon.renderOrder = 61;
+        beacon.frustumCulled = false;
+        scene.add(beacon);
+        line.userData._libBeacon = beacon;
+    }
+
     if (typeof window !== 'undefined') window.liberationNebulaPath = line;
     console.log('🌌 Liberation path to nearest twin nebula drawn');
 }
@@ -10541,6 +10562,15 @@ function loadGuardiansForGalaxy(galaxyId, opts) {
     const guardianOrbitRadius = blackHole.userData.warpThreshold + 100;
     
     console.log(`🛡️ Spawning ${guardianCount} guardians for galaxy ${galaxyId} (${galaxyType.name})`);
+
+    // Record that this galaxy HAS a guardian garrison — the deep-space
+    // expedition path only spawns for liberations that fought through one
+    // (the local galaxy's boss-only liberation at game start must not
+    // open endgame content).
+    if (typeof bossSystem !== 'undefined') {
+        if (!bossSystem.guardiansEverSpawned) bossSystem.guardiansEverSpawned = {};
+        bossSystem.guardiansEverSpawned[galaxyId] = true;
+    }
     
     // ⭐ CRITICAL: Add guardians to the enemy count for this galaxy
     if (typeof gameState !== 'undefined' && gameState.currentGalaxyEnemies) {
@@ -11501,6 +11531,35 @@ function initializeAsteroidResources() {
     console.log('✅ Asteroid resources initialized with self-lit materials');
 }
 
+// Spawn one belt asteroid. Uses the InstancedMesh instancer when available
+// (returns a lightweight proxy pushed into `planets`); falls back to a real
+// child Mesh of the beltGroup if the instancer module didn't load, so the
+// game still works (just without the draw-call win). The retained belt
+// animation loop in game-core.js animates the fallback meshes; the instancer
+// animates the instanced ones.
+function _spawnAsteroidInstance(o) {
+    const rot = { x: Math.random() * Math.PI * 2, y: Math.random() * Math.PI * 2, z: Math.random() * Math.PI * 2 };
+    if (typeof window !== 'undefined' && window.asteroidInstancer && window.asteroidInstancer.isEnabled()) {
+        return window.asteroidInstancer.add({
+            geomIdx: o.geomIdx, matIdx: o.matIdx, beltGroup: o.beltGroup,
+            orbitRadius: o.orbitRadius, orbitPhase: o.orbitPhase, ringHeight: o.ringHeight,
+            orbitSpeed: o.orbitSpeed, rotSpeed: o.rotSpeed, rot: rot,
+            scale: o.scale, userData: o.userData
+        });
+    }
+    // Fallback — real mesh (parity with the pre-instancer behaviour)
+    const geometry = asteroidResources.geometries[o.geomIdx];
+    const material = asteroidResources.materials[o.matIdx];
+    const asteroid = new THREE.Mesh(geometry, material);
+    asteroid.scale.setScalar(o.scale);
+    asteroid.frustumCulled = false;
+    asteroid.position.set(Math.cos(o.orbitPhase) * o.orbitRadius, o.ringHeight, Math.sin(o.orbitPhase) * o.orbitRadius);
+    asteroid.rotation.set(rot.x, rot.y, rot.z);
+    asteroid.userData = o.userData;
+    if (o.beltGroup) o.beltGroup.add(asteroid);
+    return asteroid;
+}
+
 function createAsteroidBelts() {
     console.log('Creating OPTIMIZED asteroid belts for nearby galaxies...');
     
@@ -11575,45 +11634,26 @@ function createAsteroidBelts() {
             }
             
             for (let j = 0; j < asteroidCount; j++) {
-    // Use shared resources
+    // INSTANCED: shared geometry/material picked by index; the actual mesh
+    // is one of the instancer's ≤9 InstancedMeshes, and a lightweight proxy
+    // goes into `planets` for targeting/collision/mining.
     const geomIndex = Math.floor(Math.random() * 3);
-    const geometry = asteroidResources.geometries[geomIndex];
-    
     const matIndex = Math.floor(Math.random() * asteroidResources.materials.length);
-    const material = asteroidResources.materials[matIndex];
-    
-    const asteroid = new THREE.Mesh(geometry, material);
-    
-    // INCREASED: Make asteroids 2-3x larger for visibility
     const scale = 3 + Math.random() * 6; // Was 1-5, now 3-9
-    asteroid.scale.setScalar(scale);
-    
-    // CRITICAL: Disable frustum culling so distant asteroids stay visible
-    asteroid.frustumCulled = false;
-    
+
     const ringAngle = (j / asteroidCount) * Math.PI * 2 + (Math.random() - 0.5) * 0.3;
     const ringDistance = beltRadius + (Math.random() - 0.5) * beltWidth;
     const ringHeight = (Math.random() - 0.5) * 200;
-    
-    asteroid.position.set(
-        Math.cos(ringAngle) * ringDistance,
-        ringHeight,
-        Math.sin(ringAngle) * ringDistance
-    );
-    
-    asteroid.rotation.set(
-        Math.random() * Math.PI * 2,
-        Math.random() * Math.PI * 2,
-        Math.random() * Math.PI * 2
-    );
-    
-    asteroid.userData = {
+
+    const orbitSpeed = 0.0005 + Math.random() * 0.001;
+    const rotationSpeed = (Math.random() - 0.5) * 0.015;
+    const userData = {
         name: `${galaxyType.name} Asteroid ${j + 1}`,
         type: 'asteroid',
         health: 2,
         maxHealth: 2,
-        orbitSpeed: 0.0005 + Math.random() * 0.001,
-        rotationSpeed: (Math.random() - 0.5) * 0.015,
+        orbitSpeed: orbitSpeed,
+        rotationSpeed: rotationSpeed,
         beltCenter: galaxyCenter,
         orbitRadius: ringDistance,
         orbitPhase: ringAngle,
@@ -11622,9 +11662,13 @@ function createAsteroidBelts() {
         isDestructible: true,
         beltGroup: beltGroup
     };
-    
-    beltGroup.add(asteroid);
-    planets.push(asteroid);
+
+    const proxy = _spawnAsteroidInstance({
+        geomIdx: geomIndex, matIdx: matIndex, beltGroup: beltGroup,
+        orbitRadius: ringDistance, orbitPhase: ringAngle, ringHeight: ringHeight,
+        orbitSpeed: orbitSpeed, rotSpeed: rotationSpeed, scale: scale, userData: userData
+    });
+    if (proxy) planets.push(proxy);
 }
 
 // After the loop, ensure belt group is visible
@@ -11695,29 +11739,23 @@ function createScatteredAsteroidFields() {
             ? galaxyTypes[galaxyIndex] : { name: 'Deep Space' };
 
         for (let j = 0; j < count; j++) {
-            const geom = asteroidResources.geometries[Math.floor(Math.random() * asteroidResources.geometries.length)];
-            const mat  = asteroidResources.materials[Math.floor(Math.random() * asteroidResources.materials.length)];
-            const a = new THREE.Mesh(geom, mat);
-            a.scale.setScalar(minScale + Math.random() * scaleRange);
-            a.frustumCulled = false;
+            const geomIdx = Math.floor(Math.random() * asteroidResources.geometries.length);
+            const matIdx  = Math.floor(Math.random() * asteroidResources.materials.length);
+            const scale = minScale + Math.random() * scaleRange;
             // Random within a flattened sphere so it reads as a clumpy
             // field rather than a tight ring.
             const phi = Math.random() * Math.PI * 2;
             const r   = Math.random() * spread;
             const h   = (Math.random() - 0.5) * spread * 0.4;
-            a.position.set(Math.cos(phi) * r, h, Math.sin(phi) * r);
-            a.rotation.set(
-                Math.random() * Math.PI * 2,
-                Math.random() * Math.PI * 2,
-                Math.random() * Math.PI * 2
-            );
-            a.userData = {
+            const orbitSpeed = 0.0003 + Math.random() * 0.0008;
+            const rotationSpeed = (Math.random() - 0.5) * 0.012;
+            const userData = {
                 name: `${galaxyType.name} Scatter ${j + 1}`,
                 type: 'asteroid',
                 health: 2,
                 maxHealth: 2,
-                orbitSpeed: 0.0003 + Math.random() * 0.0008,
-                rotationSpeed: (Math.random() - 0.5) * 0.012,
+                orbitSpeed: orbitSpeed,
+                rotationSpeed: rotationSpeed,
                 beltCenter: center.clone(),
                 orbitRadius: r,
                 orbitPhase: phi,
@@ -11726,8 +11764,12 @@ function createScatteredAsteroidFields() {
                 isDestructible: true,
                 beltGroup: cluster
             };
-            cluster.add(a);
-            planets.push(a);
+            const proxy = _spawnAsteroidInstance({
+                geomIdx: geomIdx, matIdx: matIdx, beltGroup: cluster,
+                orbitRadius: r, orbitPhase: phi, ringHeight: h,
+                orbitSpeed: orbitSpeed, rotSpeed: rotationSpeed, scale: scale, userData: userData
+            });
+            if (proxy) planets.push(proxy);
         }
 
         cluster.position.copy(center);
@@ -11866,39 +11908,22 @@ function loadAsteroidsForGalaxy(galaxyId) {
         
         for (let j = 0; j < asteroidCount; j++) {
             const geomIndex = Math.floor(Math.random() * 3);
-            const geometry = asteroidResources.geometries[geomIndex];
-            
             const matIndex = Math.floor(Math.random() * asteroidResources.materials.length);
-            const material = asteroidResources.materials[matIndex];
-            
-            const asteroid = new THREE.Mesh(geometry, material);
             const scale = 3 + Math.random() * 6;
-            asteroid.scale.setScalar(scale);
-            asteroid.frustumCulled = false;
-            
+
             const ringAngle = (j / asteroidCount) * Math.PI * 2 + (Math.random() - 0.5) * 0.3;
             const ringDistance = beltRadius + (Math.random() - 0.5) * beltWidth;
             const ringHeight = (Math.random() - 0.5) * 200;
-            
-            asteroid.position.set(
-                Math.cos(ringAngle) * ringDistance,
-                ringHeight,
-                Math.sin(ringAngle) * ringDistance
-            );
-            
-            asteroid.rotation.set(
-                Math.random() * Math.PI * 2,
-                Math.random() * Math.PI * 2,
-                Math.random() * Math.PI * 2
-            );
-            
-            asteroid.userData = {
+
+            const orbitSpeed = 0.0005 + Math.random() * 0.001;
+            const rotationSpeed = (Math.random() - 0.5) * 0.015;
+            const userData = {
                 name: `${galaxyType.name} Asteroid ${j + 1}`,
                 type: 'asteroid',
                 health: 2,
                 maxHealth: 2,
-                orbitSpeed: 0.0005 + Math.random() * 0.001,
-                rotationSpeed: (Math.random() - 0.5) * 0.015,
+                orbitSpeed: orbitSpeed,
+                rotationSpeed: rotationSpeed,
                 beltCenter: galaxyCenter,
                 orbitRadius: ringDistance,
                 orbitPhase: ringAngle,
@@ -11907,9 +11932,13 @@ function loadAsteroidsForGalaxy(galaxyId) {
                 isDestructible: true,
                 beltGroup: beltGroup
             };
-            
-            beltGroup.add(asteroid);
-            planets.push(asteroid);
+
+            const proxy = _spawnAsteroidInstance({
+                geomIdx: geomIndex, matIdx: matIndex, beltGroup: beltGroup,
+                orbitRadius: ringDistance, orbitPhase: ringAngle, ringHeight: ringHeight,
+                orbitSpeed: orbitSpeed, rotSpeed: rotationSpeed, scale: scale, userData: userData
+            });
+            if (proxy) planets.push(proxy);
         }
         
         if (galaxyId === 7) {
