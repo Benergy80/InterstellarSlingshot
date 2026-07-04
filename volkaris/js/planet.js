@@ -623,17 +623,100 @@ export function buildPlanet(scene, models = {}) {
 
   // ════════════ DISTRICTS ════════════
 
-  // — CRASH SITE — your smoking escape pod
+  // — CRASH SITE — a salvage settlement built INTO a crashed starship:
+  //   fractured hull, exposed ribs, welded patches, container stacks, a
+  //   gantry crane, fab shops, repair drones, a pad of recovered plating.
   {
     const f = frameAt(2, 0, 20);
-    const pod = new THREE.SphereGeometry(1.7, 10, 8);
-    pod.scale(1, 0.78, 1.35);
+    const MET = [0x6b7290, 0x565d78, 0x767ea0], RUST = 0x7a5236, DARK = 0x24283c, RIB = 0x3a4058;
+    // escape pod (keep — it's the story anchor)
+    const pod = new THREE.SphereGeometry(1.7, 10, 8); pod.scale(1, 0.78, 1.35);
     addSolid(T(pod, 2.5, 0.9, -3), f.clone(), 0x8a93b0);
     addSolid(T(box(0.5, 0.2, 2.2), 3.6, 0.15, -1.2, 0.5), f.clone(), 0x6a7390);
     addGlow(T(box(0.9, 0.35, 0.12), 2.5, 1.1, -1.72), f.clone(), NEON.amber, 1.3);
-    // scorch ring
     addGlowRaw(T(new THREE.RingGeometry(2.6, 3.0, 24), 0, 0, 0, 0, -Math.PI / 2).applyMatrix4(
       new THREE.Matrix4().makeTranslation(0, 0, 0).multiply(frameAt(2, 0, 0, 0.1)).multiply(new THREE.Matrix4().makeTranslation(2.5, 0.12, -3))), NEON.orange, 0.8);
+
+    // ── local builders ──
+    const container = (fr, x, y, z, ry, hex) => {
+      addSolid(T(box(2.4, 1.3, 1.4), x, y, z, ry), fr.clone(), hex, { jitter: 0.05 });
+      addSolid(T(box(2.44, 1.34, 0.08), x, y, z, ry), fr.clone(), DARK);          // end ribs read
+      addGlow(T(box(0.5, 0.14, 0.06), x + Math.cos(ry) * 1.1, y, z - Math.sin(ry) * 1.1, ry), fr.clone(), pick(rnd, NEON_LIST), 1.1);
+    };
+    const stack = (fr, x, z, ry) => {
+      const hs = [0x8a3a3a, 0x3a6a8a, 0x8a7a3a, 0x4a8a5a, 0x6a3a8a];
+      const n = 1 + (rnd() * 3 | 0);
+      for (let k = 0; k < n; k++) container(fr, x + (k ? (rnd() - 0.5) * 0.3 : 0), 0.7 + k * 1.34, z, ry + (rnd() - 0.5) * 0.1, pick(rnd, hs));
+    };
+    const drone = (fr, x, y, z) => {
+      addSolid(T(box(0.5, 0.28, 0.5), x, y, z), fr.clone(), 0x3a4058, { collide: false });
+      addGlow(T(box(0.18, 0.1, 0.06), x, y, z + 0.26), fr.clone(), NEON.cyan, 1.3);
+      addSolid(T(box(0.9, 0.05, 0.05), x, y + 0.16, z), fr.clone(), 0x556, { collide: false });   // rotor bar
+    };
+
+    // ── THE GREAT WRECK: a fractured fuselage, torn open, ribs exposed ──
+    {
+      const w = frameAt(-2, 353, 62);
+      addSolid(T(new THREE.CylinderGeometry(2.7, 2.9, 12, 16, 1, true), 0, 2.4, 0, 0, 0, Math.PI / 2), w.clone(), MET[0], { jitter: 0.05 });
+      addSolid(T(new THREE.CylinderGeometry(0.4, 2.7, 3.4, 16), 0, 2.4, 6.4, 0, 0, Math.PI / 2), w.clone(), MET[1]);   // nose
+      // exposed structural ribs at the torn (−z) mouth
+      for (let i = 0; i < 6; i++) {
+        const rr = 2.62 - i * 0.05;
+        addSolid(T(new THREE.TorusGeometry(rr, 0.13, 6, 18, Math.PI * 1.4), 0, 2.4, -5.4 - i * 0.5, 0.25, 0, 0), w.clone(), RIB);
+      }
+      // riveted hull plates along the spine + welded patch plates on the flank
+      for (let i = 0; i < 6; i++) addSolid(T(box(1.7, 0.16, 2.1), (i % 2 ? 1.0 : -1.0), 4.5, -4 + i * 1.7, 0, 0, (i % 2 ? 0.12 : -0.12)), w.clone(), MET[2], { jitter: 0.08 });
+      for (let i = 0; i < 4; i++) addSolid(T(box(1.5, 1.3, 0.12), 2.7, 2.1 + (i % 2), -3 + i * 2), w.clone(), RUST, { jitter: 0.1 });
+      addGlow(T(box(0.12, 0.12, 9), 2.62, 3.4, -1), w.clone(), NEON.amber, 1.2);
+      // a fab-shop lean-to welded against the hull, forge glowing inside
+      addSolid(T(box(3.2, 2.4, 3.0), -4.4, 1.2, 3), w.clone(), DARK);
+      addSolid(T(box(3.6, 0.14, 3.4), -4.4, 2.5, 3, 0, 0.32), w.clone(), MET[1]);
+      addGlow(T(box(0.9, 0.7, 0.1), -4.4, 1.0, 4.55), w.clone(), NEON.orange, 1.35);         // forge mouth
+      for (let i = 0; i < 3; i++) addGlow(T(box(0.06, 0.06, 0.06), -3 + i * 0.4, 1.4, 4.6), w.clone(), NEON.amber, 1.4);  // sparks
+    }
+
+    // ── GANTRY CRANE lifting a hull slab over the yard ──
+    {
+      const c = frameAt(6, 355, 0);
+      for (const sx of [-3.2, 3.2]) {
+        addSolid(T(box(0.4, 8, 0.4), sx, 4, 0), c.clone(), 0x40465e);
+        addSolid(T(box(0.4, 0.4, 3.0), sx, 7.6, 0), c.clone(), 0x40465e);   // foot brace
+      }
+      addSolid(T(box(7.4, 0.5, 0.6), 0, 7.9, 0), c.clone(), 0x4a5170);       // top beam
+      addSolid(T(box(0.14, 2.6, 0.14), 1.2, 6.4, 0), c.clone(), 0x222);      // cable
+      addSolid(T(box(2.2, 0.7, 2.6), 1.2, 4.9, 0), c.clone(), MET[1], { jitter: 0.06 });   // slung hull slab
+      addGlow(T(box(0.5, 0.12, 0.12), 0, 8.2, 0), c.clone(), NEON.red, 1.2); // warning beacon
+    }
+
+    // ── container yards, cable spools, pipe bundles, scrap ──
+    stack(f, -7, 5, 0.3); stack(f, -9.5, 2.5, 1.1); stack(f, 7.5, 6, -0.4);
+    stack(f, 9, 3.5, 0.7); stack(f, -6, -6, 0.2); stack(f, 6.5, -6.5, 1.3);
+    for (const [x, z] of [[-4, 7], [8, 0], [-2, -8], [4, 8]]) {   // cable spools
+      addSolid(T(new THREE.CylinderGeometry(0.9, 0.9, 0.7, 12), x, 0.45, z, 0, 0, Math.PI / 2), f.clone(), RUST, { jitter: 0.06 });
+      addSolid(T(new THREE.CylinderGeometry(0.5, 0.5, 0.75, 12), x, 0.45, z, 0, 0, Math.PI / 2), f.clone(), DARK);
+    }
+    for (const [x, z] of [[-8, 8], [10, -2]]) {   // pipe bundles
+      for (let i = 0; i < 4; i++) addSolid(T(new THREE.CylinderGeometry(0.22, 0.22, 3.4, 8), x + (i % 2) * 0.5, 0.3 + (i > 1 ? 0.42 : 0), z, 0, 0, Math.PI / 2), f.clone(), 0x556070);
+    }
+    // repair drones hovering over the yard
+    drone(f, -5, 4.2, 3); drone(f, 5.5, 4.6, -2); drone(f, 1, 5.0, 6);
+
+    // ── LANDING PAD assembled from recovered hull plating ──
+    {
+      const p = frameAt(2, 2, 0, 0.05);
+      for (let i = 0; i < 6; i++) {   // deck plates in a ring
+        const a = i / 6 * Math.PI * 2;
+        addSolid(T(box(3.0, 0.18, 3.0), Math.cos(a) * 3.4, 0.09, Math.sin(a) * 3.4, a), p.clone(), pick(rnd, [MET[0], MET[1]]), { jitter: 0.04 });
+      }
+      addSolid(T(new THREE.CylinderGeometry(2.6, 2.6, 0.2, 8), 0, 0.1, 0), p.clone(), DARK);
+      addGlowRaw(T(new THREE.RingGeometry(3.0, 3.3, 32), 0, 0, 0, 0, -Math.PI / 2).applyMatrix4(
+        new THREE.Matrix4().makeTranslation(0, 0.2, 0).premultiply(p.clone())), NEON.lime, 1.1);
+      for (let i = 0; i < 4; i++) {   // warning chevrons
+        const a = i / 4 * Math.PI * 2;
+        addGlow(T(box(0.8, 0.05, 0.22), Math.cos(a) * 2.2, 0.2, Math.sin(a) * 2.2, a), p.clone(), NEON.amber, 1.2);
+      }
+    }
+
     const gate = textSign('FIND THE SPACEPORT — ESCAPE VOLKARIS', { w: 8.4, h: 1.3, fg: hexCss(NEON.lime), size: 56 });
     placeSign(gate, 4.5, 3, 105, 0, 3.4, 0);
   }
