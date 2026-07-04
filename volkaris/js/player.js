@@ -102,6 +102,28 @@ export function createPlayer({ scene, camera, planet, hud, audio, fx, transit, m
     jetpack.position.set(0, 1.28, -0.22);
     rig.group.add(jetpack);
   }
+  // the pack rides the spine bone so it bobs, leans and twists WITH the
+  // run/jump/roll animation instead of floating rigidly off the hips
+  const _jm = new THREE.Matrix4(), _jp = new THREE.Vector3(), _jq = new THREE.Quaternion();
+  const _js2 = new THREE.Vector3(), _jbob = new THREE.Vector3();
+  const _jbase = new THREE.Vector3(0, 1.28, -0.22);   // the known-good back seat
+  let chestRestInv = null, chestRestPos = null;
+  function syncJetpack() {
+    const chest = rig.bones && rig.bones.chest;
+    if (!chest) return;
+    chest.updateWorldMatrix(true, false);
+    _jm.copy(rig.group.matrixWorld).invert().multiply(chest.matrixWorld);
+    _jm.decompose(_jp, _jq, _js2);
+    if (!chestRestInv) { chestRestInv = _jq.clone().invert(); chestRestPos = _jp.clone(); }
+    // keep the pack at its good seat, but add the spine's ANIMATED
+    // deviation: lean/twist as rotation, bob/sway as translation — so it
+    // moves with the run/jump/roll instead of floating rigidly
+    _jq.multiply(chestRestInv);                       // lean/twist since rest
+    _jbob.subVectors(_jp, chestRestPos);              // bob/sway since rest
+    jetpack.quaternion.copy(_jq);
+    jetpack.position.copy(_jbase).add(_jbob);
+    jetpack.scale.setScalar(0.4);
+  }
 
   // spawn: crash-site pad edge, looking down the road to the market
   // (offset so the camera boom never starts inside the wreck)
@@ -377,9 +399,12 @@ export function createPlayer({ scene, camera, planet, hud, audio, fx, transit, m
       if (st) {
         state.mode = 'ride';
         transit.setRider(st);
-        transit.carForward(state.heading);   // start facing down the line
+        transit.carAnchor(state.pos);         // snap into the car immediately
+        transit.carForward(state.heading);    // start facing down the line
         _up.copy(state.pos).normalize();
         state.heading.addScaledVector(_up, -state.heading.dot(_up)).normalize();
+        state.vel.set(0, 0, 0);
+        snapCam();                             // camera jumps to the car, no cross-map lerp
         rig.play('idle', { fade: 0.2 });
         hud.toast('BOARDED — ' + st.line.key, 'Arrows look around · E to disembark at a stop');
         audio.sfx('doors');
@@ -620,6 +645,7 @@ export function createPlayer({ scene, camera, planet, hud, audio, fx, transit, m
       wantJump = false;
       updateRide(dt);
       rig.update(dt);
+      syncJetpack();
       updateCamera(dt, false);
       return;
     }
@@ -914,12 +940,15 @@ export function createPlayer({ scene, camera, planet, hud, audio, fx, transit, m
 
     updateFire(dt, t);
     rig.update(dt);
+    syncJetpack();
     updateCamera(dt, false);
   }
 
   // ── chase camera ──
   const camPos = new THREE.Vector3();
-  let camInit = false;
+  const camLook = new THREE.Vector3();   // smoothed look target (ride mode)
+  let camInit = false, camLookInit = false;
+  function snapCam() { camInit = false; camLookInit = false; }
   function updateCamera(dt, deadCam) {
     _up.copy(state.pos).normalize();
     _right.crossVectors(state.heading, _up).negate().normalize();
@@ -934,10 +963,14 @@ export function createPlayer({ scene, camera, planet, hud, audio, fx, transit, m
         .addScaledVector(_up, 2.6 + state.camPitch * -1.4)
         .addScaledVector(_fwd, -4.4);
       if (!camInit) { camPos.copy(want2); camInit = true; }
-      camPos.lerp(want2, 1 - Math.pow(0.035, dt));
+      // floaty position AND look-target smoothing so curves glide
+      camPos.lerp(want2, 1 - Math.pow(0.06, dt));
+      const lookWant = _v.copy(state.pos).addScaledVector(_up, 1.6).addScaledVector(state.heading, 1.4);
+      if (!camLookInit) { camLook.copy(lookWant); camLookInit = true; }
+      camLook.lerp(lookWant, 1 - Math.pow(0.05, dt));
       camera.position.copy(camPos);
       camera.up.copy(_up);
-      camera.lookAt(_v.copy(state.pos).addScaledVector(_up, 1.6).addScaledVector(state.heading, 1.4));
+      camera.lookAt(camLook);
       return;
     }
 

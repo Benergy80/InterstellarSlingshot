@@ -43,7 +43,7 @@ const LINE_DEFS = [
     key: 'MAGENTA SKYLINE', hex: NEON.magenta,
     ctrl: [
       [38, 162, 18], [22, 186, 23], [0, 202, 25], [-22, 218, 17], [-40, 252, 21],
-      [-42, 288, 15], [-28, 312, 20], [-6, 330, 24], [12, 344, 21], [30, 318, 20],
+      [-42, 288, 15], [-28, 312, 20], [-6, 330, 24], [14, 340, 21], [37, 330, 21],
       [44, 288, 22], [54, 248, 25], [50, 206, 20],
     ],
     stops: ['downtown', 'pyramid', 'port'],
@@ -316,10 +316,46 @@ export function buildTransit(scene, planet, audio) {
       platGroup.add(board);
       st.eta = { cv, ctx, tex };
 
-      // ── access LIFT: a glowing platform that rises from the street to
-      // the boarding deck. No ramp to walk off, no terrain-intersection
-      // problem — step on, it carries you up. (The straddle stations sit
-      // 10-20u over uneven, curving ground; a lift is the clean answer.)
+      // ── access RAMP (reliable backup) — the original segmented ramp,
+      // always walkable up to the deck ──
+      const groundH = planet.terrainHeight(stDir);
+      const rise = platH - groundH;
+      if (rise > 1.5) {
+        const grade = 0.42;
+        const run = rise / grade;
+        const segs = Math.max(3, Math.ceil(run / 4));
+        const segRun = run / segs, segRise = rise / segs;
+        const segLen = Math.hypot(segRun, segRise) + 0.6;
+        const pitch = Math.atan2(segRise, segRun);
+        for (let i = 0; i <= segs; i++) {
+          const tOff = (6 + (i + 0.5) * segRun) / line.length;
+          const p2 = line.curve.getPointAt((t + tOff) % 1);
+          const su = p2.clone().normalize();
+          const stang = line.curve.getTangentAt((t + tOff) % 1);
+          const sside = new THREE.Vector3().crossVectors(stang, su).normalize();
+          const h = platH - (i + 0.5) * segRise;
+          const seg = new THREE.Mesh(new THREE.BoxGeometry(segLen, 0.5, 2.6), platMat);
+          seg.receiveShadow = true;
+          const sm = new THREE.Matrix4().makeBasis(stang, su.clone(), sside)
+            .setPosition(su.clone().multiplyScalar(h).addScaledVector(sside, 2.2));
+          seg.applyMatrix4(new THREE.Matrix4().makeRotationZ(-pitch).premultiply(sm));
+          platGroup.add(seg);
+          const rail2 = new THREE.Mesh(new THREE.BoxGeometry(segLen, 0.07, 0.07),
+            new THREE.MeshBasicMaterial({ color: new THREE.Color(NEON.amber).multiplyScalar(1.1), toneMapped: false }));
+          rail2.applyMatrix4(new THREE.Matrix4().makeTranslation(0, 1.0, 1.25).premultiply(
+            new THREE.Matrix4().makeRotationZ(-pitch).premultiply(sm)));
+          platGroup.add(rail2);
+        }
+        const aFoot = (6 + run) / line.length;
+        const dF = line.curve.getPointAt((t + aFoot) % 1).normalize();
+        const tangF = line.curve.getTangentAt((t + aFoot) % 1);
+        const sF = new THREE.Vector3().crossVectors(tangF, dF).normalize();
+        st.rampFoot = dF.clone().multiplyScalar(planet.terrainHeight(dF) + 0.4).addScaledVector(sF, 2.2);
+        st.rampTop = st.boardPos.clone();
+      }
+
+      // ── access LIFT (scenic alternative): a glowing platform that
+      // rises from the street to the deck. Step on and it carries you. ──
       {
         // lift column just off the platform's outer edge; step from the
         // lift disc straight onto the deck
@@ -357,12 +393,13 @@ export function buildTransit(scene, planet, audio) {
             r: groundR + 0.2, dirn: 1, speed: 3.6, dwell: 0,
             prev: new THREE.Vector3(),
           });
-          // wayfinding: demo pilot walks to the lift base, waits to rise
-          st.rampFoot = liftDir.clone().multiplyScalar(groundR + 0.4);
-          st.rampTop = st.boardPos.clone();
+          // lift base (the demo keeps using the ramp's rampFoot)
           st.liftBase = liftDir.clone().multiplyScalar(groundR + 0.4);
         }
       }
+      // a guaranteed GROUND boarding point at the foot of the ramp: press
+      // E anywhere near here while the train dwells and you're aboard
+      st.groundBoard = (st.rampFoot ?? st.liftBase ?? st.boardPos).clone();
 
       line.stations.push(st);
       stations.push(st);
@@ -651,6 +688,8 @@ export function buildTransit(scene, planet, audio) {
         const st = line.stations[(line.train.nextIdx + line.stations.length - 1) % line.stations.length];
         if (pos.distanceTo(st.boardPos) < 7) return st;
         for (const c of line.cars) if (pos.distanceTo(c.position) < 4.5) return st;
+        // guaranteed: press E anywhere near the station's GROUND base
+        if (st.groundBoard && pos.distanceTo(st.groundBoard) < 9) return st;
       }
       return null;
     },

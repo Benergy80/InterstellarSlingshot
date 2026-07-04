@@ -22,7 +22,7 @@ import { createDemo } from './demo.js';
 import { createHUD } from './hud.js';
 import { createAudio } from './audio.js';
 
-const VK_BUILD = 'VOLKARIS build 2026-07-04a · monorail pass 1: lift, straddle car, smooth cam, map';
+const VK_BUILD = 'VOLKARIS build 2026-07-04b · monorail pass 2: ramps back, ground-board, clear ship, jetpack rides spine';
 console.log('%c' + VK_BUILD, 'color:#ff2fd6;font-weight:bold;font-size:14px');
 
 // ── renderer ──
@@ -175,12 +175,14 @@ function animate() {
     planet.uTime.value = elapsed;
     planet.update(dt, elapsed);
     if (player.state.started) demo.update(dt, elapsed, fpsEMA);   // pilot steers before physics
+    // move the trains/lift discs BEFORE the player reads them — a
+    // one-frame car/player desync was the source of the ride jitter
+    transit.update(dt, elapsed, player.state.pos);
     planet.carryRiders(player.state, dt);   // elevators lift whoever stands on them
     transit.carryRiders(player.state, dt);  // station lifts carry riders up to the deck
     const dayF = sky.update(elapsed, player.state.pos, bloom, planet.group.children[1]?.material);
     player.suitLamp.intensity = 0.15 + sky.night * 1.2;
-    player.update(dt, elapsed);
-    transit.update(dt, elapsed, player.state.pos);
+    player.update(dt, elapsed);             // ride/camera read the fresh car positions
     npcs.update(dt, elapsed, player);
     fx.update(dt, elapsed);
     details.update(dt, elapsed, player.state.pos, camera);
