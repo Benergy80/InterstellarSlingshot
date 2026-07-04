@@ -2730,7 +2730,7 @@
     if (!_isOnScreen(target.position)) return;
 
     const now = Date.now();
-    if (now - ap.lastFire > 1000 && gameState.weapons.cooldown <= 0 && gameState.weapons.energy >= 10) {
+    if (now - ap.lastFire > _demoFireCooldownMs(1000) && gameState.weapons.cooldown <= 0 && gameState.weapons.energy >= 10) {
       ap.lastFire = now;
       gameState.crosshairX = window.innerWidth / 2;
       gameState.crosshairY = window.innerHeight / 2;
@@ -2871,6 +2871,17 @@
            v.y >= -0.95 && v.y <= 0.95;
   }
 
+  // Demo rate-of-fire ramps up with campaign progress: each galaxy the
+  // player liberates shaves the laser cooldown a little, so after all 8
+  // the demo fires much more rapidly than at game start — but not insanely.
+  // 0 cleared → 1.00× cooldown (base); 8 cleared → 0.9^8 ≈ 0.43× (≈2.3×
+  // the starting fire rate), in eight small ~10% steps.
+  function _demoFireCooldownMs(baseMs) {
+    const cleared = Math.max(0, Math.min(8,
+      (typeof gameState !== 'undefined' && gameState.galaxiesCleared) || 0));
+    return baseMs * Math.pow(0.9, cleared);
+  }
+
   function autoFireOnTargetLock() {
     if (ap.phase !== 'combat' && ap.phase !== 'fightBorg') return;
     if (!gameState || !gameState.targetLock || !gameState.targetLock.active) return;
@@ -2897,7 +2908,7 @@
     if (!_isOnScreen(tgt.position)) return;
 
     const now = Date.now();
-    if (now - (ap.lastFire || 0) < 1000) return;
+    if (now - (ap.lastFire || 0) < _demoFireCooldownMs(1000)) return;
     if (gameState.weapons.cooldown > 0 || gameState.weapons.energy < 10) return;
 
     if (window.orientTowardsTarget) {
@@ -3673,7 +3684,7 @@
       gameState.weapons.cooldown <= 0 &&
       gameState.weapons.energy >= 10 &&
       _isOnScreen(target.position) &&          // never fire at off-screen attackers
-      now - (ap._lastAmbushFire || 0) > 500;   // ~2 shots per second
+      now - (ap._lastAmbushFire || 0) > _demoFireCooldownMs(500);   // ~2 shots/s, faster per liberation
     if (canFireLaser && window.fireWeapon) {
       ap._lastAmbushFire = now;
       ap.lastFire = now;                        // sync with autoFireOnTargetLock cooldown
