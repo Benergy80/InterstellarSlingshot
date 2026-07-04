@@ -1078,6 +1078,36 @@ export function buildDetails(scene, planet, audio, hud) {
     });
   }
 
+  // — STORM CLOUDS that roll in WITH the rain (the NEON CITY ceiling) —
+  {
+    const cloudGrp = new THREE.Group();
+    scene.add(cloudGrp);
+    const cloudMat = new THREE.MeshBasicMaterial({ color: 0x2a3352, transparent: true, opacity: 0, depthWrite: false, toneMapped: false });
+    const cloudMat2 = new THREE.MeshBasicMaterial({ color: 0x3a2f52, transparent: true, opacity: 0, depthWrite: false, toneMapped: false });
+    const puff = new THREE.SphereGeometry(1, 8, 6);
+    for (let i = 0; i < 26; i++) {
+      const a = rnd() * Math.PI * 2, r = 5 + rnd() * 24;
+      const m = new THREE.Mesh(puff, rnd() < 0.5 ? cloudMat : cloudMat2);
+      const s = 4 + rnd() * 8;
+      m.scale.set(s, s * 0.38, s);
+      m.position.set(Math.cos(a) * r, 19 + rnd() * 8, Math.sin(a) * r);
+      m.frustumCulled = false;
+      cloudGrp.add(m);
+    }
+    let cloudOp = 0;
+    updates.push((dt, t, playerPos) => {
+      _v1.copy(playerPos).normalize();
+      cloudGrp.quaternion.setFromUnitVectors(_Y, _v1);
+      cloudGrp.position.copy(playerPos);
+      const target = rainOn ? 0.6 : 0;                        // fade in with the storm
+      cloudOp += (target - cloudOp) * (1 - Math.pow(0.2, dt));
+      cloudMat.opacity = cloudOp;
+      cloudMat2.opacity = cloudOp * 0.85;
+      // lightning underlights the cloud deck
+      if (flash.value > 0.01) { cloudMat.opacity = Math.min(1, cloudOp + flash.value * 0.5); }
+    });
+  }
+
   // — forked lightning above the player's tangent plane —
   {
     const boltMat = new THREE.MeshBasicMaterial({
@@ -1197,6 +1227,7 @@ export function buildDetails(scene, planet, audio, hud) {
     },
     flash,                       // {value: 0..1} lightning flash level
     raining: () => rainOn,
+    setRain: (v) => { rainOn = !!v; rain.visible = rainOn; if (audio.setRain) audio.setRain(rainOn); },
     shake,                       // shake(amount 0..1) — melee hits, explosions
     colliders: propColliders,    // register via planet.addColliders
   };
