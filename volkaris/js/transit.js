@@ -816,6 +816,24 @@ export function buildTransit(scene, planet, audio) {
     _m.makeBasis(side, up, tang).setPosition(up.x * h, up.y * h, up.z * h);
     carBodies.setMatrixAt(i, _m);
     carGlows.setMatrixAt(i, _m2.makeTranslation(0, -0.28, 0).premultiply(_m));
+    (car.wpos || (car.wpos = new THREE.Vector3())).set(up.x * h, up.y * h, up.z * h);
+  }
+  // dynamic collision: push a ground entity OUT of any car it's standing in
+  // (cars move, so they're not in the static BVH). Projected to the tangent
+  // plane + height-gated so decks/flyers overhead are unaffected.
+  const _cp = new THREE.Vector3(), _cu = new THREE.Vector3();
+  function pushOutOfCars(pos, rad = 0.5) {
+    const R2 = 1.7 + rad;
+    for (const car of groundCars) {
+      if (!car.wpos) continue;
+      if (Math.abs(pos.length() - car.wpos.length()) > 1.7) continue;   // not on the same level
+      _cu.copy(car.wpos).normalize();
+      _cp.copy(pos).sub(car.wpos);
+      _cp.addScaledVector(_cu, -_cp.dot(_cu));                          // tangent-plane offset
+      const d = _cp.length();
+      if (d < R2 && d > 1e-4) { pos.addScaledVector(_cp.divideScalar(d), R2 - d); return true; }
+    }
+    return false;
   }
 
   // ════════════ ETA BOARDS ════════════
@@ -864,6 +882,7 @@ export function buildTransit(scene, planet, audio) {
   // ════════════ API ════════════
   return {
     stations, lines, vehicles,
+    pushOutOfCars,
 
     boardableStation(pos) {
       for (const line of lines) {

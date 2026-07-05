@@ -22,7 +22,7 @@ import { createDemo } from './demo.js';
 import { createHUD } from './hud.js';
 import { createAudio } from './audio.js';
 
-const VK_BUILD = 'VOLKARIS build 2026-07-06e · grounded walkable stairs to the Wastes decks';
+const VK_BUILD = 'VOLKARIS build 2026-07-06f · players + NPCs collide with moving cars';
 console.log('%c' + VK_BUILD, 'color:#ff2fd6;font-weight:bold;font-size:14px');
 
 // ── renderer ──
@@ -184,6 +184,15 @@ function animate() {
     player.suitLamp.intensity = 0.15 + sky.night * 1.2;
     player.update(dt, elapsed);             // ride/camera read the fresh car positions
     npcs.update(dt, elapsed, player);
+    // dynamic car collision — players + NPCs BUMP the moving cars instead of
+    // clipping through them (cars aren't in the static BVH). Skipped while
+    // riding/boarding so the monorail hand-off isn't disturbed.
+    if (transit.pushOutOfCars && !(player.state.mode === 'ride' || player.state.boarding)) {
+      transit.pushOutOfCars(player.state.pos, C.PLAYER.radius);
+      for (const n of npcs.list) {
+        if (n.state !== 'dead' && n.pos && transit.pushOutOfCars(n.pos, n.radius || 0.7)) n.rig.group.position.copy(n.pos);
+      }
+    }
     fx.update(dt, elapsed);
     details.update(dt, elapsed, player.state.pos, camera);
     // lightning kicks the bloom for a beat (sky.update rewrites the base each frame)
