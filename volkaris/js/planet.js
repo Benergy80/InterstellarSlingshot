@@ -2043,6 +2043,7 @@ export function buildPlanet(scene, models = {}) {
   // continuous built object (the Messenger lesson: the planet IS the maze).
   const fillTops = [];
   const deckTops = [];   // mid-level wastes decks — bridged into a walkable layer
+  const placedFill = []; let fillBuried = 0;   // overlap audit: drop buildings buried in others
   // per-zone body palettes + scratch colours for boundary material blending
   const _cA = new THREE.Color(), _cB = new THREE.Color();
   const ZONE_PAL = {
@@ -2084,6 +2085,16 @@ export function buildPlanet(scene, models = {}) {
       // ducks under any line overhead (skip entirely if the line is too low)
       const railH = railCap(jd);
       if (railH < 2.5) continue;
+      // OVERLAP AUDIT: skip a building that would sit DEEP inside one already
+      // placed (redundant mesh / z-fighting) — still allows dense packing
+      const myRad = Math.max(w, d2) * 0.5;
+      let buried = false;
+      for (const pb of placedFill) {
+        const lim = (myRad + pb.rad) * 0.5 / R;
+        if (jd.distanceToSquared(pb.dir) < lim * lim) { buried = true; break; }
+      }
+      if (buried) { fillBuried++; continue; }
+      placedFill.push({ dir: jd.clone(), rad: myRad });
       let hgt = 0;
       // some street-adjacent buildings are ENTERABLE (door + interior),
       // door turned to face the street so you can actually find it
