@@ -281,10 +281,35 @@ export function buildPlanet(scene, models = {}) {
     return geo;
   }
 
+  // ── SPHERICAL WARP: bend each placed part to the planet's curve, so the
+  // architecture conforms to the little world — bases hug the sphere and
+  // curve away at their edges, columns stay radial. Reprojects every vertex
+  // to (its own ground direction) × (baseRadius + heightAboveBase). Runs at
+  // build time; collision shares the same warped geometry, so they match.
+  const _wv = new THREE.Vector3(), _wc = new THREE.Vector3(), _wu = new THREE.Vector3(), _wd = new THREE.Vector3(), _wr = new THREE.Vector3();
+  function sphericalWarp(geo, frame) {
+    _wc.setFromMatrixPosition(frame);
+    _wu.setFromMatrixColumn(frame, 1).normalize();
+    const baseR = _wc.length();
+    const pos = geo.attributes.position;
+    for (let i = 0; i < pos.count; i++) {
+      _wv.fromBufferAttribute(pos, i);
+      _wr.copy(_wv).sub(_wc);
+      const ly = _wr.dot(_wu);                 // radial height above the base
+      _wr.addScaledVector(_wu, -ly);           // horizontal offset (tangent)
+      _wd.copy(_wc).add(_wr).normalize();      // ground direction under this vertex
+      _wv.copy(_wd).multiplyScalar(baseR + ly);
+      pos.setXYZ(i, _wv.x, _wv.y, _wv.z);
+    }
+    pos.needsUpdate = true;
+    geo.computeVertexNormals();
+  }
+
   // add a geometry in a local surface frame.
   // frame: Matrix4 from surfaceMatrix(); local: pre-transform within it
   function addSolid(geo, frame, hex, { jitter = 0, collide = true } = {}) {
     geo.applyMatrix4(frame);
+    sphericalWarp(geo, frame);
     colorize(geo, hex, jitter);
     solidParts.push(geo);
     if (collide) collParts.push(geo);
@@ -292,6 +317,7 @@ export function buildPlanet(scene, models = {}) {
   }
   function addGlow(geo, frame, hex, boost = 1.35) {
     geo.applyMatrix4(frame);
+    sphericalWarp(geo, frame);
     _c.set(hex).multiplyScalar(boost);   // ≤1.4 or bloom clips white (NC lesson)
     const n = geo.attributes.position.count;
     const col = new Float32Array(n * 3);
@@ -300,7 +326,12 @@ export function buildPlanet(scene, models = {}) {
     glowParts.push(geo);
     return geo;
   }
-  const box = (w, h, d) => new THREE.BoxGeometry(w, h, d);
+  // horizontal subdivision scales with footprint so the sphere curve is
+  // visible on wide/long structures (small props stay 1-segment for perf)
+  const box = (w, h, d) => {
+    const s = (x) => Math.max(1, Math.min(5, Math.round(x / 4)));
+    return new THREE.BoxGeometry(w, h, d, s(w), 1, s(d));
+  };
   const T = (geo, x, y, z, ry = 0, rx = 0, rz = 0) => {
     if (rx || ry || rz) geo.rotateX(rx), geo.rotateY(ry), geo.rotateZ(rz);
     geo.translate(x, y, z);
