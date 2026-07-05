@@ -831,7 +831,16 @@ export function buildTransit(scene, planet, audio) {
       _cp.copy(pos).sub(car.wpos);
       _cp.addScaledVector(_cu, -_cp.dot(_cu));                          // tangent-plane offset
       const d = _cp.length();
-      if (d < R2 && d > 1e-4) { pos.addScaledVector(_cp.divideScalar(d), R2 - d); return true; }
+      if (d < R2 && d > 1e-4) {
+        const dir = _cp.divideScalar(d);
+        let push = R2 - d;
+        // never shove the entity INTO a building — clamp the push to any
+        // wall in its path (lesser evil: it stays put, not embedded)
+        const hit = planet.probe(pos, dir, push + rad);
+        if (hit) push = Math.max(0, hit.distance - rad - 0.05);
+        if (push > 0) pos.addScaledVector(dir, push);
+        return true;
+      }
     }
     return false;
   }
