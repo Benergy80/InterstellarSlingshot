@@ -744,7 +744,7 @@ export function buildPlanet(scene, models = {}) {
   {
     const anchor = DISTRICTS[1];
     const roofTops = [];
-    for (let i = 0; i < 12; i++) {
+    for (let i = 0; i < 8; i++) {
       const a = rnd() * Math.PI * 2, dist = 4 + rnd() * 13;
       const lat = anchor.lat + Math.cos(a) * dist / R * 57.3;
       const lon = anchor.lon + Math.sin(a) * dist / R * 57.3 / Math.cos(anchor.lat * 0.0174);
@@ -760,8 +760,8 @@ export function buildPlanet(scene, models = {}) {
       if (roofTops[i].distanceTo(roofTops[i + 1]) < 17) plank(roofTops[i], roofTops[i + 1]);
     }
     // market stalls with awnings down the central lane
-    for (let i = 0; i < 10; i++) {
-      const f = frameAt(anchor.lat - 3 + rnd() * 6, anchor.lon - 14 + i * 3.4, (rnd() * 40 - 20));
+    for (let i = 0; i < 6; i++) {
+      const f = frameAt(anchor.lat - 3 + rnd() * 6, anchor.lon - 12 + i * 4.6, (rnd() * 40 - 20));
       addSolid(T(box(2.4, 1.0, 1.4), 0, 0.5, 0), f.clone(), pick(rnd, [0x5c2a8a, 0x2a5c8a, 0x8a2a62]), { jitter: 0.1 });
       addSolid(T(box(2.8, 0.12, 1.9), 0, 2.05, 0.15, 0, -0.16), f.clone(), pick(rnd, [0xff7a1a, 0xff2fd6, 0x00f6ff]));
       addSolid(T(box(0.1, 2.0, 0.1), -1.28, 1.0, 0.8), f.clone(), 0x222244);
@@ -778,7 +778,7 @@ export function buildPlanet(scene, models = {}) {
       addGlow(T(box(0.14, 0.14, 0.14), x + 1.35, 1.55, z), fr.clone(), NEON.orange, 1.4);             // weld tip
       addSolid(T(box(1.8, 0.7, 1.1), x + 1.4, 0.35, z), fr.clone(), 0x1f2740, { jitter: 0.1 });       // workbench + part
     };
-    robotArm(mAt(-4, -2), 0, 0, 0); robotArm(mAt(5, 6, 40), 0, 0, 0); robotArm(mAt(-6, 8, -30), 0, 0, 0);
+    robotArm(mAt(-4, -2), 0, 0, 0);   // one workshop, not three (declutter)
     // conveyor belts carrying crates
     const conveyor = (fr, len) => {
       addSolid(T(box(len, 0.3, 0.9), 0, 0.7, 0), fr.clone(), 0x22283e);
@@ -786,7 +786,7 @@ export function buildPlanet(scene, models = {}) {
       addGlow(T(box(len - 0.4, 0.05, 0.08), 0, 0.86, 0.42), fr.clone(), NEON.cyan, 1.1);
       for (let k = 0; k < len / 1.6; k++) addSolid(T(box(0.7, 0.6, 0.7), -len / 2 + 1 + k * 1.6, 1.2, 0), fr.clone(), pick(rnd, [0x6a4a2a, 0x2a4a6a, 0x4a2a6a]), { jitter: 0.06, collide: false });
     };
-    conveyor(mAt(3, -6, 70), 6); conveyor(mAt(-5, 4, 20), 5);
+    conveyor(mAt(3, -6, 70), 6);
     // dismantling yard — a half-stripped speeder + scattered parts
     {
       const y = mAt(6, -4, 15);
@@ -802,7 +802,7 @@ export function buildPlanet(scene, models = {}) {
       addGlow(T(box(0.04, 0.5, 0.04), 0, 3.0, 0), hf.clone(), NEON.cyan, 0.9);   // holo stem
     }
     // barrels + crate clutter tucked against the lane
-    for (let i = 0; i < 14; i++) {
+    for (let i = 0; i < 7; i++) {
       const cf = mAt(-8 + rnd() * 16, -12 + rnd() * 24, rnd() * 90);
       if (rnd() < 0.5) addSolid(T(new THREE.CylinderGeometry(0.4, 0.4, 1.0, 8), 0, 0.5, 0), cf.clone(), pick(rnd, [0x6a4a2a, 0x2a5c4a, 0x4a2a5c]), { jitter: 0.08 });
       else addSolid(T(box(0.8, 0.8, 0.8), 0, 0.4, 0), cf.clone(), pick(rnd, [0x3b2a6e, 0x274b8a, 0x584a8c]), { jitter: 0.1 });
@@ -824,7 +824,7 @@ export function buildPlanet(scene, models = {}) {
         colorize(seg, 0x11141f); solidParts.push(seg);
       }
     };
-    cableRun(-2, -13, 9, 5.5); cableRun(2, -13, 9, 6.2); cableRun(-5, -8, 6, 5.0);
+    cableRun(-2, -13, 9, 5.5); cableRun(2, -13, 9, 6.2);
 
     // ── GRAND BAZAAR SPIRE — the market's HERO LANDMARK (tiered souk
     // tower that dominates the low shanty skyline) ──

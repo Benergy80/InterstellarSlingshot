@@ -191,6 +191,30 @@ export function buildNPCs(scene, planet, fx, audio, hud, models = {}) {
     return pts;
   }
 
+  // A COMMUTE rides a contiguous slice of a real STREET chain — the paths
+  // are carved clear of buildings, so a local walking one never cuts
+  // through a wall (the circular makeLoop routes did, in the dense bazaar).
+  const streetChains = (planet.pathChains || []).filter(c => c.length >= 4);
+  function makeStreetRoute() {
+    if (!streetChains.length) return null;
+    const c = streetChains[(rnd() * streetChains.length) | 0];
+    const len = Math.min(c.length, 4 + (rnd() * 7 | 0));
+    const start = (rnd() * (c.length - len + 1)) | 0;
+    return c.slice(start, start + len).map(v => v.clone());
+  }
+  // advance a waypoint index; street routes PING-PONG (reverse at the ends)
+  // so they retrace the road instead of cutting straight back across it
+  function advanceWp(npc) {
+    if (npc.pingpong && npc.loop.length > 1) {
+      let ni = npc.wpIdx + (npc.wpDir || 1);
+      if (ni >= npc.loop.length) { ni = npc.loop.length - 2; npc.wpDir = -1; }
+      else if (ni < 0) { ni = 1; npc.wpDir = 1; }
+      npc.wpIdx = Math.max(0, Math.min(npc.loop.length - 1, ni));
+    } else {
+      npc.wpIdx = (npc.wpIdx + 1) % npc.loop.length;
+    }
+  }
+
   function addNPC(kind, rig, dirUnit, opts = {}) {
     const npc = {
       kind, rig,
@@ -199,7 +223,9 @@ export function buildNPCs(scene, planet, fx, audio, hud, models = {}) {
       maxHp: opts.hp ?? 60,
       speed: opts.speed ?? 2.2,
       loop: opts.loop ?? null,
+      pingpong: opts.pingpong ?? false,
       wpIdx: 0,
+      wpDir: 1,
       state: 'roam',       // roam | idle | combat | dead
       stateT: rnd() * 4,
       shootT: 0,
@@ -225,59 +251,30 @@ export function buildNPCs(scene, planet, fx, audio, hud, models = {}) {
   // ── populate districts ──
   const D = Object.fromEntries(planet.districts.map(d => [d.key, d]));
 
-  // market: merchants at stalls + strolling civilians + a robot porter
+  // Merchants hold their stalls; the SALOON KEEPER holds the dunes bar —
+  // these are the only rooted locals. Everyone else COMMUTES the streets.
   for (let i = 0; i < 3; i++) {
     const m = addNPC('merchant', makeMerch(rnd), sphDir(D.market.lat - 2 + i * 2.2, D.market.lon - 10 + i * 3.2),
       { fixed: true, clip: i === 1 ? 'wave' : 'lean', name: 'merchant' });
     m.rig.group.rotateY(rnd() * 6.28);
   }
-  for (let i = 0; i < 8; i++) {
-    addNPC('civ', makeCiv(rnd), sphDir(D.market.lat + (rnd() - 0.5) * 8, D.market.lon + (rnd() - 0.5) * 10),
-      { loop: makeLoop(D.market.lat, D.market.lon, 9), speed: 1.8 + rnd(), name: 'civ' });
-  }
-  addNPC('robot', makeRobot(rnd), sphDir(D.market.lat + 3, D.market.lon + 4),
-    { loop: makeLoop(D.market.lat, D.market.lon, 12), speed: 2.6, name: 'robot' });
-
-  // the circuit: night crowd + robots
-  for (let i = 0; i < 6; i++) {
-    addNPC('civ', makeCiv(rnd), sphDir(D.circuit.lat + (rnd() - 0.5) * 8, D.circuit.lon + (rnd() - 0.5) * 10),
-      { loop: makeLoop(D.circuit.lat, D.circuit.lon, 8), speed: 1.6 + rnd() * 0.8 });
-  }
-  for (let i = 0; i < 2; i++) {
-    addNPC('robot', makeRobot(rnd), sphDir(D.circuit.lat - 3 + i * 5, D.circuit.lon + 6),
-      { loop: makeLoop(D.circuit.lat, D.circuit.lon, 11), speed: 2.9 });
-  }
-
-  // downtown: commuters
-  for (let i = 0; i < 6; i++) {
-    addNPC('civ', makeCiv(rnd), sphDir(D.downtown.lat + (rnd() - 0.5) * 10, D.downtown.lon + (rnd() - 0.5) * 12),
-      { loop: makeLoop(D.downtown.lat, D.downtown.lon, 10), speed: 2.4 + rnd() });
-  }
-  addNPC('robot', makeRobot(rnd), sphDir(D.downtown.lat - 4, D.downtown.lon + 2),
-    { loop: makeLoop(D.downtown.lat, D.downtown.lon, 13), speed: 3.1 });
-
-  // dunes: the saloon keeper + regulars
   addNPC('merchant', makeMerch(rnd), sphDir(D.dunes.lat + 2, D.dunes.lon + 3.4),
     { fixed: true, clip: 'lean', name: 'saloon keeper' });
-  for (let i = 0; i < 2; i++) {
-    addNPC('civ', makeCiv(rnd), sphDir(D.dunes.lat + (rnd() - 0.5) * 6, D.dunes.lon + (rnd() - 0.5) * 8),
-      { loop: makeLoop(D.dunes.lat, D.dunes.lon, 7), speed: 1.5 + rnd() * 0.8 });
-  }
 
-  // crash site scavengers, foundry drifters, port dockhands — people
-  // everywhere, not just the marquee districts
-  for (let i = 0; i < 2; i++) {
-    addNPC('civ', makeCiv(rnd), sphDir(D.crash.lat + (rnd() - 0.5) * 7, D.crash.lon + (rnd() - 0.5) * 8),
-      { loop: makeLoop(D.crash.lat, D.crash.lon, 8), speed: 1.7 + rnd() * 0.8 });
+  // ── DAILY COMMUTERS: locals walking the whole planet's STREET network,
+  // going about their routines. Routes ride real path chains, spawn at a
+  // random point along the route facing either way, and ping-pong the road
+  // — so people are everywhere AND never walk through walls. ──
+  function addCommuter(kind, rig, speed, name) {
+    const route = makeStreetRoute();
+    if (!route || route.length < 2) return null;
+    const si = (rnd() * route.length) | 0;
+    const npc = addNPC(kind, rig, route[si], { loop: route, pingpong: true, speed, name });
+    npc.wpIdx = si; npc.wpDir = rnd() < 0.5 ? 1 : -1;
+    return npc;
   }
-  for (let i = 0; i < 3; i++) {
-    addNPC('civ', makeCiv(rnd), sphDir(D.ruins.lat + (rnd() - 0.5) * 8, D.ruins.lon + (rnd() - 0.5) * 9),
-      { loop: makeLoop(D.ruins.lat, D.ruins.lon, 9), speed: 1.6 + rnd() });
-  }
-  for (let i = 0; i < 3; i++) {
-    addNPC('civ', makeCiv(rnd), sphDir(D.port.lat + (rnd() - 0.5) * 7, D.port.lon + (rnd() - 0.5) * 8),
-      { loop: makeLoop(D.port.lat, D.port.lon, 8), speed: 2.0 + rnd() });
-  }
+  for (let i = 0; i < 40; i++) addCommuter('civ', makeCiv(rnd), 1.5 + rnd() * 1.4, 'commuter');
+  for (let i = 0; i < 5; i++) addCommuter('robot', makeRobot(rnd), 2.4 + rnd() * 0.6, 'porter');
 
   // pyramid: trooper patrols + BRAKKUS on the processional
   for (let i = 0; i < 4; i++) {
@@ -596,13 +593,13 @@ export function buildNPCs(scene, planet, fx, audio, hud, models = {}) {
         _fwd.addScaledVector(_up, -_fwd.dot(_up));
         const d2 = _fwd.length();
         if (d2 < 1.4) {
-          npc.wpIdx = (npc.wpIdx + 1) % npc.loop.length;
+          advanceWp(npc);
           if (Math.random() < 0.25) { npc.state = 'idle'; npc.stateT = 2 + Math.random() * 3; npc.rig.play('idle'); }
         } else {
           _fwd.divideScalar(d2);
           if (!moveNPC(npc, _fwd, npc.speed * dt)) {
             // boxed in — give up on this waypoint rather than grind a wall
-            npc.wpIdx = (npc.wpIdx + 1) % npc.loop.length;
+            advanceWp(npc);
           }
           groundPose(npc.pos.clone().normalize(), npc);
           npc.rig.group.position.copy(npc.pos);
