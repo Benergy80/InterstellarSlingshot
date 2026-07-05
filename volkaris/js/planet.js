@@ -1983,7 +1983,7 @@ export function buildPlanet(scene, models = {}) {
     pyramid: [0x0f0d20, 0x161226, 0x1a1030], port: [0x30265c, 0x2a3a6e, 0x3a2c5e],
   };
   {
-    const N = 560;
+    const N = 760;   // THE WASTES: denser fabric (was 560)
     const ga = Math.PI * (3 - Math.sqrt(5));
     for (let i = 0; i < N; i++) {
       const y = 1 - 2 * (i + 0.5) / N;
@@ -2081,8 +2081,35 @@ export function buildPlanet(scene, models = {}) {
           break;
         }
       }
+      // ── THE WASTES as a DENSE, TALL, LAYERED LABYRINTH ──
+      // In the wastes proper (off the district pads) stack the massing
+      // vertically, cantilever mid-level decks, and lace them with
+      // walkable external stairs — many levels, many ways up and down.
+      if (hgt > 3.4 && minA > zone.pad + 1.5) {
+        const met = pick(rnd, [0x241c3e, 0x2a2248, 0x1a1240, 0x261a52, 0x22103e, 0x2c2444]);
+        // stacked upper tier(s) — reach for the sky, offset for silhouette
+        let topY = hgt;
+        if (rnd() < 0.6) {
+          const uh = 3 + rnd() * 7;
+          addSolid(T(box(w * 0.72, uh, d2 * 0.72), (rnd() - 0.5) * w * 0.3, topY + uh / 2, (rnd() - 0.5) * d2 * 0.3), f.clone(), met, { jitter: 0.08 });
+          if (rnd() < 0.6) addGlow(T(box(w * 0.55, 0.22, 0.08), 0, topY + uh * 0.55, d2 * 0.36 + 0.05), f.clone(), pick(rnd, NEON_LIST), 1.0);
+          topY += uh;
+        }
+        // cantilevered mid-level DECK (a walkable layer) reached by an
+        // external staircase from the street
+        if (rnd() < 0.55) {
+          const dy = 1.6 + rnd() * (hgt - 1.4);
+          const side = rnd() < 0.5 ? 1 : -1, dx = side * (w * 0.5 + 1.0);
+          addSolid(T(box(w * 0.95, 0.3, 2.6), dx, dy, 0), f.clone(), met);
+          addGlow(T(box(w * 0.95, 0.05, 0.05), dx, dy + 0.36, 1.25), f.clone(), NEON.cyan, 0.85);
+          const steps = Math.min(16, Math.max(5, Math.ceil(dy / 0.24)));
+          const dh = dy / steps, dr = 0.4;
+          for (let s = 0; s <= steps; s++) addSolid(T(box(1.2, 0.16, dr + 0.22), dx, s * dh, -1.1 - s * dr), f.clone(), met, { jitter: 0.02 });
+          addGlow(T(box(0.05, 0.05, steps * dr), dx + 0.6, dy * 0.5 + 0.3, -1.1 - steps * dr * 0.5), f.clone(), NEON.magenta, 0.75);
+        }
+      }
       // remember street-adjacent rooftops for over-street bridges
-      if (nearStreet && hgt > 3 && rnd() < 0.4) {
+      if (nearStreet && (hgt > 3 || minA > 24) && rnd() < 0.5) {
         fillTops.push(new THREE.Vector3().setFromMatrixPosition(f).addScaledVector(
           new THREE.Vector3().setFromMatrixColumn(f, 1), hgt + 0.1));
       }
