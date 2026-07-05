@@ -22,7 +22,7 @@ import { createDemo } from './demo.js';
 import { createHUD } from './hud.js';
 import { createAudio } from './audio.js';
 
-const VK_BUILD = 'VOLKARIS build 2026-07-05b · refinement pass 14: weather-reactive atmospheric fog';
+const VK_BUILD = 'VOLKARIS build 2026-07-05c · cohesion: citywide skybridge network + survey';
 console.log('%c' + VK_BUILD, 'color:#ff2fd6;font-weight:bold;font-size:14px');
 
 // ── renderer ──

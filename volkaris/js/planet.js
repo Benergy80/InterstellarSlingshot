@@ -2563,6 +2563,31 @@ export function buildPlanet(scene, models = {}) {
     spireInfo.top = sDir.clone().multiplyScalar(terrainHeight(sDir) + 30.8);
   }
 
+  // ════════════ CITYWIDE SKYBRIDGES — aerial rooftop labyrinth ═════════
+  // Short walkable spans between NEIGHBOURING rooftops of similar height —
+  // vertical circulation + alternate routes (the interconnected-organism
+  // read), believable because every span is short and roughly level.
+  {
+    const _uc = new THREE.Vector3();
+    const tops = towerSpots.filter(s => s.h > 8).map(s => ({
+      pos: new THREE.Vector3().setFromMatrixPosition(s.frame).addScaledVector(_uc.setFromMatrixColumn(s.frame, 1), s.h + 0.15).clone(),
+      used: 0,
+    }));
+    let made = 0;
+    for (let i = 0; i < tops.length && made < 26; i++) {
+      if (tops[i].used >= 2) continue;
+      let best = -1, bd = 1e9;
+      for (let j = i + 1; j < tops.length; j++) {
+        if (tops[j].used >= 2) continue;
+        const d = tops[i].pos.distanceTo(tops[j].pos);
+        if (d > 9 && d < 17 && Math.abs(tops[i].pos.length() - tops[j].pos.length()) < 6 && d < bd) { bd = d; best = j; }
+      }
+      if (best < 0) continue;
+      plank(tops[i].pos, tops[best].pos, 1.3);
+      tops[i].used++; tops[best].used++; made++;
+    }
+  }
+
   // ════════════ STREET CROWDS — cheap static figures for density ═══════
   // Merged into the solid mesh (no extra draw calls, no AI/mixers), placed
   // on the plazas of the busy districts and rejected inside buildings.
