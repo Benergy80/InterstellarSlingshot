@@ -22,7 +22,7 @@ import { createDemo } from './demo.js';
 import { createHUD } from './hud.js';
 import { createAudio } from './audio.js';
 
-const VK_BUILD = 'VOLKARIS build 2026-07-05c · cohesion: citywide skybridge network + survey';
+const VK_BUILD = 'VOLKARIS build 2026-07-05d · monorail: ride cam frames player car + chrome caps un-reversed';
 console.log('%c' + VK_BUILD, 'color:#ff2fd6;font-weight:bold;font-size:14px');
 
 // ── renderer ──

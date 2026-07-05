@@ -999,9 +999,11 @@ export function createPlayer({ scene, camera, planet, hud, audio, fx, transit, m
     // lerp so the ride glides, and a slightly higher/further boom so you
     // can freely look around the moving world.
     if (state.mode === 'ride') {
+      // closer + higher so the camera frames the PLAYER's car — at the
+      // old -4.4 back it sat over the trailing car (Ben: "wrong car")
       const want2 = _v.copy(state.pos)
-        .addScaledVector(_up, 2.6 + state.camPitch * -1.4)
-        .addScaledVector(_fwd, -4.4);
+        .addScaledVector(_up, 3.4 + state.camPitch * -1.4)
+        .addScaledVector(_fwd, -2.8);
       if (!camInit) { camPos.copy(want2); camInit = true; }
       // floaty position AND look-target smoothing so curves glide
       camPos.lerp(want2, 1 - Math.pow(0.06, dt));

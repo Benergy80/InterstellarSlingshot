@@ -546,7 +546,7 @@ export function buildTransit(scene, planet, audio) {
     for (const zz of [-1, 1]) {
       const cap = new THREE.Mesh(new THREE.SphereGeometry(1.34, 18, 12, 0, Math.PI * 2, 0, Math.PI / 2),
         new THREE.MeshStandardMaterial({ color: 0x9fb4dd, metalness: 0.85, roughness: 0.18 }));
-      cap.rotation.x = zz > 0 ? -Math.PI / 2 : Math.PI / 2;
+      cap.rotation.x = zz > 0 ? Math.PI / 2 : -Math.PI / 2;   // domes point OUTWARD (were reversed/concave)
       cap.position.z = zz * 2.55;
       car.add(cap);
     }
