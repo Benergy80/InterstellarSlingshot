@@ -1141,15 +1141,17 @@ export function buildDetails(scene, planet, audio, hud) {
   {
     const cloudGrp = new THREE.Group();
     scene.add(cloudGrp);
-    const cloudMat = new THREE.MeshBasicMaterial({ color: 0x2a3352, transparent: true, opacity: 0, depthWrite: false, toneMapped: false });
-    const cloudMat2 = new THREE.MeshBasicMaterial({ color: 0x3a2f52, transparent: true, opacity: 0, depthWrite: false, toneMapped: false });
-    const puff = new THREE.SphereGeometry(1, 8, 6);
-    for (let i = 0; i < 26; i++) {
-      const a = rnd() * Math.PI * 2, r = 5 + rnd() * 24;
+    // lighter storm-grey so the deck reads against sky AND at night (Ben:
+    // "I don't see clouds when it rains") — bigger, denser, lower ceiling
+    const cloudMat = new THREE.MeshBasicMaterial({ color: 0x59627f, transparent: true, opacity: 0, depthWrite: false, toneMapped: false });
+    const cloudMat2 = new THREE.MeshBasicMaterial({ color: 0x6a5f82, transparent: true, opacity: 0, depthWrite: false, toneMapped: false });
+    const puff = new THREE.SphereGeometry(1, 10, 7);
+    for (let i = 0; i < 46; i++) {
+      const a = rnd() * Math.PI * 2, r = 3 + rnd() * 34;
       const m = new THREE.Mesh(puff, rnd() < 0.5 ? cloudMat : cloudMat2);
-      const s = 4 + rnd() * 8;
-      m.scale.set(s, s * 0.38, s);
-      m.position.set(Math.cos(a) * r, 19 + rnd() * 8, Math.sin(a) * r);
+      const s = 7 + rnd() * 11;
+      m.scale.set(s, s * 0.4, s);
+      m.position.set(Math.cos(a) * r, 15 + rnd() * 7, Math.sin(a) * r);
       m.frustumCulled = false;
       cloudGrp.add(m);
     }
@@ -1158,10 +1160,10 @@ export function buildDetails(scene, planet, audio, hud) {
       _v1.copy(playerPos).normalize();
       cloudGrp.quaternion.setFromUnitVectors(_Y, _v1);
       cloudGrp.position.copy(playerPos);
-      const target = rainOn ? 0.6 : 0;                        // fade in with the storm
+      const target = rainOn ? 0.92 : 0;                       // fade in with the storm
       cloudOp += (target - cloudOp) * (1 - Math.pow(0.2, dt));
       cloudMat.opacity = cloudOp;
-      cloudMat2.opacity = cloudOp * 0.85;
+      cloudMat2.opacity = cloudOp * 0.9;
       // lightning underlights the cloud deck
       if (flash.value > 0.01) { cloudMat.opacity = Math.min(1, cloudOp + flash.value * 0.5); }
     });

@@ -22,7 +22,7 @@ import { createDemo } from './demo.js';
 import { createHUD } from './hud.js';
 import { createAudio } from './audio.js';
 
-const VK_BUILD = 'VOLKARIS build 2026-07-06a · Wastes multi-level network: deck + rooftop bridges';
+const VK_BUILD = 'VOLKARIS build 2026-07-06b · bigger cars + visible flyers + storm clouds';
 console.log('%c' + VK_BUILD, 'color:#ff2fd6;font-weight:bold;font-size:14px');
 
 // ── renderer ──

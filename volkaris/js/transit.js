@@ -627,24 +627,29 @@ export function buildTransit(scene, planet, audio) {
   // ════════════ AMBIENT AIR TRAFFIC ════════════
   const airCraft = [];
   {
-    const geoBody = new THREE.BoxGeometry(0.7, 0.35, 2.0);
-    for (let i = 0; i < 10; i++) {
+    const geoBody = new THREE.BoxGeometry(1.4, 0.68, 3.4);   // larger, visible flyers (Ben)
+    for (let i = 0; i < 20; i++) {
       const grp = new THREE.Group();
       const b = new THREE.Mesh(geoBody, new THREE.MeshStandardMaterial({
         color: pick(rnd, [0x3a3560, 0x4a3050, 0x2a4060]), roughness: 0.4, metalness: 0.7,
       }));
       grp.add(b);
-      const tail = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.12, 0.3),
+      const tail = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.2, 0.5),
         new THREE.MeshBasicMaterial({ color: new THREE.Color(pick(rnd, NEON_LIST)).multiplyScalar(1.25), toneMapped: false }));
-      tail.position.z = -1.1;
+      tail.position.z = -1.9;
       grp.add(tail);
+      // hover under-glow so the flyers read against the city below
+      const glow = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.08, 2.6),
+        new THREE.MeshBasicMaterial({ color: new THREE.Color(pick(rnd, NEON_LIST)).multiplyScalar(1.1), toneMapped: false }));
+      glow.position.y = -0.42;
+      grp.add(glow);
       scene.add(grp);
       const nrm = sphDir(rnd() * 120 - 60, rnd() * 360);
       const uu = new THREE.Vector3(1, 0, 0).cross(nrm).normalize();
       if (uu.lengthSq() < 0.1) uu.set(0, 0, 1);
       airCraft.push({
         grp, nrm, u: uu, w: new THREE.Vector3().crossVectors(nrm, uu).normalize(),
-        r: R + 26 + rnd() * 9, a: rnd() * Math.PI * 2,
+        r: R + 18 + rnd() * 16, a: rnd() * Math.PI * 2,      // over the skyline (clears tall towers), not distant orbit
         sp: (0.05 + rnd() * 0.05) * (rnd() < 0.5 ? 1 : -1),
       });
     }
@@ -698,11 +703,11 @@ export function buildTransit(scene, planet, audio) {
     const chains = [...planet.pathChains].sort((a, b) => b.length - a.length).slice(0, 9);
     const N = 44;
     carBodies = new THREE.InstancedMesh(
-      new THREE.BoxGeometry(1.05, 0.42, 2.2),
+      new THREE.BoxGeometry(1.9, 0.95, 4.0),                 // larger vehicles (Ben)
       new THREE.MeshStandardMaterial({ color: 0x322a5e, roughness: 0.35, metalness: 0.8 }), N);
     carBodies.castShadow = true;
     carGlows = new THREE.InstancedMesh(
-      new THREE.BoxGeometry(0.8, 0.1, 1.9),
+      new THREE.BoxGeometry(1.55, 0.12, 3.4),
       new THREE.MeshBasicMaterial({ toneMapped: false }), N);
     for (let i = 0; i < N; i++) {
       const chain = chains[i % chains.length];
