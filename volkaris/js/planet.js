@@ -1974,6 +1974,7 @@ export function buildPlanet(scene, models = {}) {
   // a street or a district pad, so the paths read as canyons through one
   // continuous built object (the Messenger lesson: the planet IS the maze).
   const fillTops = [];
+  const deckTops = [];   // mid-level wastes decks — bridged into a walkable layer
   // per-zone body palettes + scratch colours for boundary material blending
   const _cA = new THREE.Color(), _cB = new THREE.Color();
   const ZONE_PAL = {
@@ -2106,6 +2107,9 @@ export function buildPlanet(scene, models = {}) {
           const dh = dy / steps, dr = 0.4;
           for (let s = 0; s <= steps; s++) addSolid(T(box(1.2, 0.16, dr + 0.22), dx, s * dh, -1.1 - s * dr), f.clone(), met, { jitter: 0.02 });
           addGlow(T(box(0.05, 0.05, steps * dr), dx + 0.6, dy * 0.5 + 0.3, -1.1 - steps * dr * 0.5), f.clone(), NEON.magenta, 0.75);
+          deckTops.push(new THREE.Vector3().setFromMatrixPosition(f)
+            .addScaledVector(new THREE.Vector3().setFromMatrixColumn(f, 0), dx)
+            .addScaledVector(new THREE.Vector3().setFromMatrixColumn(f, 1), dy + 0.16));
         }
       }
       // remember street-adjacent rooftops for over-street bridges
@@ -2114,12 +2118,30 @@ export function buildPlanet(scene, models = {}) {
           new THREE.Vector3().setFromMatrixColumn(f, 1), hgt + 0.1));
       }
     }
-    // bridge rooftops ACROSS streets — the upper layer of the maze
+    // bridge rooftops ACROSS streets — the UPPER layer of the maze (allow
+    // up to 2 spans per roof so it reads as a network, not a single chain)
     let bridges = 0;
-    for (let i = 0; i < fillTops.length && bridges < 26; i++) {
-      for (let j = i + 1; j < fillTops.length; j++) {
+    const rUsed = new Array(fillTops.length).fill(0);
+    for (let i = 0; i < fillTops.length && bridges < 44; i++) {
+      if (rUsed[i] >= 2) continue;
+      for (let j = i + 1; j < fillTops.length && rUsed[i] < 2; j++) {
+        if (rUsed[j] >= 2) continue;
         const dd = fillTops[i].distanceTo(fillTops[j]);
-        if (dd > 6 && dd < 15) { plank(fillTops[i], fillTops[j], 1.2); bridges++; break; }
+        if (dd > 6 && dd < 15) { plank(fillTops[i], fillTops[j], 1.2); bridges++; rUsed[i]++; rUsed[j]++; }
+      }
+    }
+    // bridge the MID-LEVEL decks to each other — a second, lower walkable
+    // layer. Short + height-matched spans so they cross over cleanly and
+    // don't punch through the buildings between them.
+    let dBridges = 0;
+    const dUsed = new Array(deckTops.length).fill(0);
+    for (let i = 0; i < deckTops.length && dBridges < 34; i++) {
+      if (dUsed[i] >= 2) continue;
+      for (let j = i + 1; j < deckTops.length && dUsed[i] < 2; j++) {
+        if (dUsed[j] >= 2) continue;
+        const dd = deckTops[i].distanceTo(deckTops[j]);
+        const dh = Math.abs(deckTops[i].length() - deckTops[j].length());
+        if (dd > 4 && dd < 11 && dh < 2.2) { plank(deckTops[i], deckTops[j], 1.1); dBridges++; dUsed[i]++; dUsed[j]++; }
       }
     }
   }
