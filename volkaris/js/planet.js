@@ -2097,16 +2097,25 @@ export function buildPlanet(scene, models = {}) {
           topY += uh;
         }
         // cantilevered mid-level DECK (a walkable layer flush to the
-        // building wall that supports it) — reached via the deck-to-deck
-        // bridges + wall-run/jetpack; NO free-floating external stairs
-        if (rnd() < 0.55) {
-          const dy = 1.6 + rnd() * (hgt - 1.4);
+        // building wall that supports it), reached by a GROUNDED, walkable
+        // staircase from the street — real support, connects at both ends.
+        if (rnd() < 0.6) {
+          const dy = 1.6 + rnd() * 2.4;                          // stair-reachable height
           const side = rnd() < 0.5 ? 1 : -1, dx = side * (w * 0.5 + 1.0);
-          addSolid(T(box(w * 0.95, 0.3, 2.6), dx, dy, 0), f.clone(), met);
+          addSolid(T(box(w * 0.95, 0.3, 2.6), dx, dy, 0), f.clone(), met);      // the deck
           addGlow(T(box(w * 0.95, 0.05, 0.05), dx, dy + 0.36, 1.25), f.clone(), NEON.cyan, 0.85);
+          // staircase: climbs +y over +z from street level (y=0) up to the
+          // deck's near edge (top step lands at z=-1.3, y=dy). Steps sized so
+          // each rise <= 0.2u (the Captain can walk up it).
+          const run = dy * 1.25, steps = Math.max(6, Math.ceil(dy / 0.2));
+          const sframe = f.clone().multiply(new THREE.Matrix4().makeTranslation(dx, 0, -1.3 - run));
+          stairs(sframe, 1.5, dy, run, steps);
+          // side stringers so it reads as a solid, supported flight
+          for (const sx of [-0.78, 0.78]) addSolid(T(box(0.14, 0.5, run), dx + sx, dy * 0.5 + 0.2, -1.3 - run * 0.5, 0, Math.atan2(dy, run)), f.clone(), 0x201838);
+          const landUp = new THREE.Vector3().setFromMatrixColumn(f, 1);
           deckTops.push(new THREE.Vector3().setFromMatrixPosition(f)
             .addScaledVector(new THREE.Vector3().setFromMatrixColumn(f, 0), dx)
-            .addScaledVector(new THREE.Vector3().setFromMatrixColumn(f, 1), dy + 0.16));
+            .addScaledVector(landUp, dy + 0.16));
         }
       }
       // remember street-adjacent rooftops for over-street bridges

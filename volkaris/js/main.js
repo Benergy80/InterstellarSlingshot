@@ -22,7 +22,7 @@ import { createDemo } from './demo.js';
 import { createHUD } from './hud.js';
 import { createAudio } from './audio.js';
 
-const VK_BUILD = 'VOLKARIS build 2026-07-06d · no pyramid respawn + nebula ship fleet overhead';
+const VK_BUILD = 'VOLKARIS build 2026-07-06e · grounded walkable stairs to the Wastes decks';
 console.log('%c' + VK_BUILD, 'color:#ff2fd6;font-weight:bold;font-size:14px');
 
 // ── renderer ──
