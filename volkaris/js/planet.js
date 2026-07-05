@@ -2096,17 +2096,14 @@ export function buildPlanet(scene, models = {}) {
           if (rnd() < 0.6) addGlow(T(box(w * 0.55, 0.22, 0.08), 0, topY + uh * 0.55, d2 * 0.36 + 0.05), f.clone(), pick(rnd, NEON_LIST), 1.0);
           topY += uh;
         }
-        // cantilevered mid-level DECK (a walkable layer) reached by an
-        // external staircase from the street
+        // cantilevered mid-level DECK (a walkable layer flush to the
+        // building wall that supports it) — reached via the deck-to-deck
+        // bridges + wall-run/jetpack; NO free-floating external stairs
         if (rnd() < 0.55) {
           const dy = 1.6 + rnd() * (hgt - 1.4);
           const side = rnd() < 0.5 ? 1 : -1, dx = side * (w * 0.5 + 1.0);
           addSolid(T(box(w * 0.95, 0.3, 2.6), dx, dy, 0), f.clone(), met);
           addGlow(T(box(w * 0.95, 0.05, 0.05), dx, dy + 0.36, 1.25), f.clone(), NEON.cyan, 0.85);
-          const steps = Math.min(16, Math.max(5, Math.ceil(dy / 0.24)));
-          const dh = dy / steps, dr = 0.4;
-          for (let s = 0; s <= steps; s++) addSolid(T(box(1.2, 0.16, dr + 0.22), dx, s * dh, -1.1 - s * dr), f.clone(), met, { jitter: 0.02 });
-          addGlow(T(box(0.05, 0.05, steps * dr), dx + 0.6, dy * 0.5 + 0.3, -1.1 - steps * dr * 0.5), f.clone(), NEON.magenta, 0.75);
           deckTops.push(new THREE.Vector3().setFromMatrixPosition(f)
             .addScaledVector(new THREE.Vector3().setFromMatrixColumn(f, 0), dx)
             .addScaledVector(new THREE.Vector3().setFromMatrixColumn(f, 1), dy + 0.16));
