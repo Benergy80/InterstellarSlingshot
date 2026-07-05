@@ -22,7 +22,7 @@ import { createDemo } from './demo.js';
 import { createHUD } from './hud.js';
 import { createAudio } from './audio.js';
 
-const VK_BUILD = 'VOLKARIS build 2026-07-05a · refinement pass 13: street crowds + NPC variety';
+const VK_BUILD = 'VOLKARIS build 2026-07-05b · refinement pass 14: weather-reactive atmospheric fog';
 console.log('%c' + VK_BUILD, 'color:#ff2fd6;font-weight:bold;font-size:14px');
 
 // ── renderer ──
@@ -188,6 +188,13 @@ function animate() {
     details.update(dt, elapsed, player.state.pos, camera);
     // lightning kicks the bloom for a beat (sky.update rewrites the base each frame)
     if (details.flash.value > 0.02) bloom.strength += details.flash.value * 1.6;
+    // storm fronts THICKEN the atmosphere — the NEON CITY-style haze
+    // responds to weather (sky.update only retints fog.color; we ease the
+    // density up during rain for a moody, deeper aerial perspective)
+    if (scene.fog) {
+      const fogTarget = details.raining() ? 0.019 : C.FOG_DENSITY;
+      scene.fog.density += (fogTarget - scene.fog.density) * (1 - Math.pow(0.2, dt));
+    }
     if (player.state.started) {
       hud.update(player, planet, dayF, elapsed);
       let prompt = null;
