@@ -28,6 +28,7 @@ import {
   C, NEON, NEON_LIST, GROUND, mulberry32, pick, lerp, clamp, smooth,
   sphDir, tangentFrame, surfaceMatrix, fbm3, noise3, makeCanvas, canvasTexture, hexCss,
 } from './config.js';
+import { LINE_DEFS } from './transit.js';   // monorail routes → keep buildings out of the corridors
 
 THREE.Mesh.prototype.raycast = acceleratedRaycast;
 
@@ -217,6 +218,42 @@ CARVE = true;
 
 export function surfacePoint(dir, out = new THREE.Vector3()) {
   return out.copy(dir).normalize().multiplyScalar(terrainHeight(dir));
+}
+
+// ════════════ MONORAIL CLEARANCE ════════════
+// Sample every line's curve so buildings + bridges can leave a real empty
+// tube around the cars (the cars ride the same routes transit.js builds).
+const RAIL_PTS = [];
+for (const def of LINE_DEFS) {
+  const pts = def.ctrl.map(([la, lo, al]) => sphDir(la, lo).multiplyScalar(R + al));
+  const curve = new THREE.CatmullRomCurve3(pts, true, 'centripetal', 0.6);
+  const n = Math.max(48, Math.ceil(curve.getLength() / 1.6));
+  for (let i = 0; i < n; i++) { const p = curve.getPointAt(i / n); RAIL_PTS.push({ p, len: p.length() }); }
+}
+const RAIL_CLEAR_H = 4.4, RAIL_CLEAR_V = 2.8, RAIL_COS_H = Math.cos(RAIL_CLEAR_H / R);
+// tallest a building at ground `dir` may be before it would hit a line
+// (Infinity = no line overhead). Cars ride ~rail+2.9, so leave a gap below.
+function railCap(dir) {
+  let cap = Infinity;
+  const surfR = terrainHeight(dir);
+  for (const rp of RAIL_PTS) {
+    if (dir.dot(rp.p) < rp.len * RAIL_COS_H) continue;    // corridor point not overhead
+    const h = rp.len - surfR - RAIL_CLEAR_V;
+    if (h < cap) cap = h;
+  }
+  return cap;
+}
+// is a world point inside the clearance tube of any line? (for bridges/props)
+function railBlocked(worldPos, rad = RAIL_CLEAR_H) {
+  const r2 = rad * rad;
+  for (const rp of RAIL_PTS) if (worldPos.distanceToSquared(rp.p) < r2) return true;
+  return false;
+}
+// would a walkway a→b cross a line? (sampled along the span)
+const _rbScratch = new THREE.Vector3();
+function bridgeClearsRail(a, b) {
+  for (let t = 0; t <= 1.001; t += 0.2) { _rbScratch.lerpVectors(a, b, t); if (railBlocked(_rbScratch, RAIL_CLEAR_H + 0.5)) return false; }
+  return true;
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -2012,6 +2049,10 @@ export function buildPlanet(scene, models = {}) {
       jd.applyAxisAngle(new THREE.Vector3(0, 1, 0), (rnd() - 0.5) * 0.03).normalize();
       const f = frameAtDir(jd, rnd() * 360, 0.6);
       const nearStreet = streetDist < 6.5;
+      // keep the MONORAIL corridors clear: cap this building's height so it
+      // ducks under any line overhead (skip entirely if the line is too low)
+      const railH = railCap(jd);
+      if (railH < 2.5) continue;
       let hgt = 0;
       // some street-adjacent buildings are ENTERABLE (door + interior),
       // door turned to face the street so you can actually find it
@@ -2037,7 +2078,7 @@ export function buildPlanet(scene, models = {}) {
           hgt = shanty(f, 2.4 + rnd() * 1.4, 2 + (rnd() * 2 | 0));
           break;
         case 'circuit': {
-          hgt = 3.5 + rnd() * 4;
+          hgt = Math.min(3.5 + rnd() * 4, railH);
           addSolid(T(box(w, hgt, d2), 0, hgt / 2, 0), f.clone(), bcol(), { jitter: 0.1 });
           if (rnd() < 0.85) addGlow(T(box(w * 0.8, 0.2, 0.1), 0, hgt * (0.4 + rnd() * 0.5), d2 / 2 + 0.08), f.clone(), pick(rnd, [NEON.magenta, NEON.pink, NEON.red, NEON.purple]), 1.15);
           if (rnd() < 0.4) addGlow(T(box(0.18, hgt * 0.7, 0.1), w / 2 + 0.1, hgt * 0.5, 0), f.clone(), pick(rnd, NEON_LIST), 1.1);
@@ -2045,12 +2086,12 @@ export function buildPlanet(scene, models = {}) {
           break;
         }
         case 'downtown': {
-          hgt = 6 + rnd() * 9;
+          hgt = Math.min(6 + rnd() * 9, railH);
           tower(f, w, hgt, d2, bcol(), pick(rnd, NEON_LIST), { cap: rnd() < 0.4 });
           break;
         }
         case 'ruins': {
-          hgt = 4 + rnd() * 5;
+          hgt = Math.min(4 + rnd() * 5, railH);
           if (rnd() < 0.5) {
             for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
               addSolid(T(box(0.5, hgt, 0.5), sx * w / 2, hgt / 2, sz * d2 / 2), f.clone(), 0x241c3e, { jitter: 0.1 });
@@ -2062,20 +2103,20 @@ export function buildPlanet(scene, models = {}) {
           break;
         }
         case 'dunes': {
-          hgt = 2.5 + rnd() * 4.5;
+          hgt = Math.min(2.5 + rnd() * 4.5, railH);
           addSolid(T(new THREE.CylinderGeometry(0.6 + rnd() * 0.8, 1.3 + rnd() * 1.2, hgt, 7), 0, hgt / 2, 0),
             f.clone(), bcol(), { jitter: 0.14 });
           break;
         }
         case 'pyramid': {
-          hgt = 3 + rnd() * 6;
+          hgt = Math.min(3 + rnd() * 6, railH);
           addSolid(T(box(w * 0.8, hgt, d2 * 0.8), 0, hgt / 2, 0, rnd() * 0.4), f.clone(), bcol(), { jitter: 0.06 });
           if (rnd() < 0.3) addGlow(T(box(0.3, 0.3, 0.3), 0, hgt + 0.2, 0), f.clone(), NEON.red, 1.1);
           futureDeco(f, w * 0.8, hgt, d2 * 0.8, { rich: 0.7 });
           break;
         }
         case 'port': {
-          hgt = 2 + rnd() * 3;
+          hgt = Math.min(2 + rnd() * 3, railH);
           addSolid(T(box(1 + rnd() * 1.6, hgt, 1 + rnd() * 1.6), 0, hgt / 2, 0, rnd()), f.clone(),
             bcol(), { jitter: 0.1 });
           if (rnd() < 0.5) futureDeco(f, 1.8, hgt, 1.8, { rich: 0.6 });
@@ -2088,13 +2129,15 @@ export function buildPlanet(scene, models = {}) {
       // walkable external stairs — many levels, many ways up and down.
       if (hgt > 3.4 && minA > zone.pad + 1.5) {
         const met = pick(rnd, [0x241c3e, 0x2a2248, 0x1a1240, 0x261a52, 0x22103e, 0x2c2444]);
-        // stacked upper tier(s) — reach for the sky, offset for silhouette
+        // stacked upper tier(s) — reach for the sky, but stay UNDER any line
         let topY = hgt;
         if (rnd() < 0.6) {
-          const uh = 3 + rnd() * 7;
-          addSolid(T(box(w * 0.72, uh, d2 * 0.72), (rnd() - 0.5) * w * 0.3, topY + uh / 2, (rnd() - 0.5) * d2 * 0.3), f.clone(), met, { jitter: 0.08 });
-          if (rnd() < 0.6) addGlow(T(box(w * 0.55, 0.22, 0.08), 0, topY + uh * 0.55, d2 * 0.36 + 0.05), f.clone(), pick(rnd, NEON_LIST), 1.0);
-          topY += uh;
+          const uh = Math.min(3 + rnd() * 7, railH - topY - 0.3);
+          if (uh > 1.2) {
+            addSolid(T(box(w * 0.72, uh, d2 * 0.72), (rnd() - 0.5) * w * 0.3, topY + uh / 2, (rnd() - 0.5) * d2 * 0.3), f.clone(), met, { jitter: 0.08 });
+            if (rnd() < 0.6) addGlow(T(box(w * 0.55, 0.22, 0.08), 0, topY + uh * 0.55, d2 * 0.36 + 0.05), f.clone(), pick(rnd, NEON_LIST), 1.0);
+            topY += uh;
+          }
         }
         // cantilevered mid-level DECK (a walkable layer flush to the
         // building wall that supports it), reached by a GROUNDED, walkable
@@ -2133,7 +2176,7 @@ export function buildPlanet(scene, models = {}) {
       for (let j = i + 1; j < fillTops.length && rUsed[i] < 2; j++) {
         if (rUsed[j] >= 2) continue;
         const dd = fillTops[i].distanceTo(fillTops[j]);
-        if (dd > 6 && dd < 15) { plank(fillTops[i], fillTops[j], 1.2); bridges++; rUsed[i]++; rUsed[j]++; }
+        if (dd > 6 && dd < 15 && bridgeClearsRail(fillTops[i], fillTops[j])) { plank(fillTops[i], fillTops[j], 1.2); bridges++; rUsed[i]++; rUsed[j]++; }
       }
     }
     // bridge the MID-LEVEL decks to each other — a second, lower walkable
@@ -2147,7 +2190,7 @@ export function buildPlanet(scene, models = {}) {
         if (dUsed[j] >= 2) continue;
         const dd = deckTops[i].distanceTo(deckTops[j]);
         const dh = Math.abs(deckTops[i].length() - deckTops[j].length());
-        if (dd > 4 && dd < 11 && dh < 2.2) { plank(deckTops[i], deckTops[j], 1.1); dBridges++; dUsed[i]++; dUsed[j]++; }
+        if (dd > 4 && dd < 11 && dh < 2.2 && bridgeClearsRail(deckTops[i], deckTops[j])) { plank(deckTops[i], deckTops[j], 1.1); dBridges++; dUsed[i]++; dUsed[j]++; }
       }
     }
   }
@@ -2653,6 +2696,7 @@ export function buildPlanet(scene, models = {}) {
         if (d > 9 && d < 17 && Math.abs(tops[i].pos.length() - tops[j].pos.length()) < 6 && d < bd) { bd = d; best = j; }
       }
       if (best < 0) continue;
+      if (!bridgeClearsRail(tops[i].pos, tops[best].pos)) continue;   // keep the monorail corridor clear
       plank(tops[i].pos, tops[best].pos, 1.3);
       tops[i].used++; tops[best].used++; made++;
     }

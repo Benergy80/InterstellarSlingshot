@@ -31,7 +31,7 @@ const _pdZ = new THREE.Vector3(0, 0, 1), _pdnZ = new THREE.Vector3(0, 0, -1);
 // [lat, lon, altitude] control knots — closed weaving curves.
 // Altitude bands are disjoint enough at every crossing that the
 // lines layer instead of colliding (audited at build).
-const LINE_DEFS = [
+export const LINE_DEFS = [
   {
     key: 'AZURE LOOP', hex: NEON.cyan,
     ctrl: [
