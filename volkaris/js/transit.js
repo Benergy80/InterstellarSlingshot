@@ -655,6 +655,82 @@ export function buildTransit(scene, planet, audio) {
     }
   }
 
+  // ════════════ UPPER-ATMOSPHERE NEBULA SHIPS ════════════
+  // The exotic-nebula ship classes from Interstellar Slingshot, orbiting
+  // high overhead — well above the city and the low air traffic (Ben).
+  const nebulaShips = [];
+  {
+    const stdMat = (hex) => new THREE.MeshStandardMaterial({ color: hex, roughness: 0.5, metalness: 0.6 });
+    const litMat = (hex) => new THREE.MeshBasicMaterial({ color: new THREE.Color(hex).multiplyScalar(1.35), toneMapped: false });
+    function makeNebulaShip(type, col) {
+      const g = new THREE.Group();
+      const M = stdMat(col.main), T2 = stdMat(0x2a3044), G = litMat(col.glow);
+      const bx = (w, h, d, x, y, z, m) => { const e = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m || M); e.position.set(x, y, z); g.add(e); return e; };
+      const cy = (r1, r2, h, s, x, y, z, m) => { const e = new THREE.Mesh(new THREE.CylinderGeometry(r1, r2, h, s), m || M); e.position.set(x, y, z); e.rotation.x = Math.PI / 2; g.add(e); return e; };
+      switch (type) {
+        case 'freighter':                                   // long cargo hull + container stacks (orange)
+          bx(2.4, 1.7, 8, 0, 0, 0);
+          for (let i = 0; i < 3; i++) bx(2.0, 1.3, 1.7, 0, 1.5, -2.4 + i * 2.2, T2);
+          bx(1.6, 1.1, 1.0, 0, 0, 4.4, G); break;
+        case 'tanker':                                      // fat cylindrical tanks (yellow)
+          cy(1.5, 1.5, 7, 12, 0, 0, 0);
+          cy(0.8, 0.8, 7.4, 8, 0, 1.5, 0, T2);
+          bx(1.2, 0.7, 1.0, 0, 0, 4.0, G); break;
+        case 'science':                                     // sleek hull + sensor dish (blue)
+          bx(1.4, 0.9, 6.5, 0, 0, 0);
+          cy(1.9, 1.9, 0.3, 16, 0, 1.3, 1.5, T2);
+          bx(0.9, 0.6, 0.8, 0, 0, 3.7, G); break;
+        case 'shuttle':                                     // small winged hopper (green)
+          bx(1.2, 1.0, 4.0, 0, 0, 0);
+          bx(5.0, 0.2, 1.2, 0, 0, -0.4, T2);
+          bx(0.7, 0.5, 0.7, 0, 0, 2.4, G); break;
+        case 'passenger':                                   // long liner + window strip (pink)
+          bx(1.8, 1.5, 9, 0, 0, 0);
+          bx(1.82, 0.3, 7.5, 0, 0.4, 0, G);
+          bx(1.3, 0.9, 1.0, 0, 0, 5.0, G); break;
+        case 'mining':                                      // chunky rig + drill spike (gold)
+          bx(2.6, 2.0, 5.5, 0, 0, 0);
+          cy(0.1, 0.9, 3.0, 8, 0, 0, -4.0, T2);
+          bx(1.5, 1.0, 1.0, 0, 0, 3.4, G); break;
+        case 'rescue':                                      // compact + beacon cross (red)
+          bx(1.6, 1.3, 5, 0, 0, 0);
+          bx(0.4, 1.6, 0.4, 0, 1.4, 0, G);
+          bx(1.6, 0.4, 0.4, 0, 1.4, 0, G);
+          bx(1.0, 0.7, 0.9, 0, 0, 3.0, G); break;
+        case 'military':                                    // angular gunship + fins (teal)
+          bx(1.5, 1.1, 7, 0, 0, 0);
+          bx(0.3, 2.2, 1.6, 1.0, 0, -1.5, T2);
+          bx(0.3, 2.2, 1.6, -1.0, 0, -1.5, T2);
+          bx(0.5, 0.5, 2.4, 0, 0.7, 1.5, T2);
+          bx(1.0, 0.7, 0.9, 0, 0, 4.0, G); break;
+      }
+      bx(0.3, 0.3, 0.3, 0, 0, -4.0, G);                     // aft strobe
+      g.scale.setScalar(1.35);
+      return g;
+    }
+    const TYPES = [
+      ['freighter', { main: 0xff8844, glow: 0xffaa66 }], ['tanker', { main: 0xffdd44, glow: 0xffee66 }],
+      ['science', { main: 0x44aaff, glow: 0x66ccff }], ['shuttle', { main: 0xaaffaa, glow: 0xccffcc }],
+      ['passenger', { main: 0xff88ff, glow: 0xffaaff }], ['mining', { main: 0xddcc44, glow: 0xffee44 }],
+      ['rescue', { main: 0xff4444, glow: 0xff6666 }], ['military', { main: 0x44ff88, glow: 0x66ffaa }],
+    ];
+    for (const [type, col] of TYPES) {
+      const count = 2 + (rnd() < 0.5 ? 1 : 0);
+      for (let k = 0; k < count; k++) {
+        const grp = makeNebulaShip(type, col);
+        scene.add(grp);
+        const nrm = sphDir(rnd() * 150 - 75, rnd() * 360);
+        const uu = new THREE.Vector3(1, 0, 0).cross(nrm).normalize();
+        if (uu.lengthSq() < 0.1) uu.set(0, 0, 1);
+        nebulaShips.push({
+          grp, nrm, u: uu, w: new THREE.Vector3().crossVectors(nrm, uu).normalize(),
+          r: R + 48 + rnd() * 30, a: rnd() * Math.PI * 2,
+          sp: (0.02 + rnd() * 0.028) * (rnd() < 0.5 ? 1 : -1),
+        });
+      }
+    }
+  }
+
   // ════════════ PILOTABLE VEHICLES ════════════
   function makeAV(hex) {
     const grp = new THREE.Group();
@@ -876,6 +952,16 @@ export function buildTransit(scene, planet, audio) {
         a.grp.position.copy(p).multiplyScalar(a.r);
         _m.lookAt(a.grp.position, _v3.copy(nxt).multiplyScalar(a.r), p);
         a.grp.quaternion.setFromRotationMatrix(_m);
+      }
+      // ── high nebula-ship traffic (upper atmosphere) ──
+      for (const s of nebulaShips) {
+        s.a += s.sp * dt;
+        const p = _v.copy(s.u).multiplyScalar(Math.cos(s.a)).addScaledVector(s.w, Math.sin(s.a)).normalize();
+        const nxt = _v2.copy(s.u).multiplyScalar(Math.cos(s.a + 0.02 * Math.sign(s.sp)))
+          .addScaledVector(s.w, Math.sin(s.a + 0.02 * Math.sign(s.sp))).normalize();
+        s.grp.position.copy(p).multiplyScalar(s.r);
+        _m.lookAt(s.grp.position, _v3.copy(nxt).multiplyScalar(s.r), p);
+        s.grp.quaternion.setFromRotationMatrix(_m);
       }
       // engine shimmer on parked vehicles
       for (const v of vehicles) {

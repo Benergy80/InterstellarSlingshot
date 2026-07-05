@@ -22,7 +22,7 @@ import { createDemo } from './demo.js';
 import { createHUD } from './hud.js';
 import { createAudio } from './audio.js';
 
-const VK_BUILD = 'VOLKARIS build 2026-07-06c · map-wide street commuters + decluttered bazaar';
+const VK_BUILD = 'VOLKARIS build 2026-07-06d · no pyramid respawn + nebula ship fleet overhead';
 console.log('%c' + VK_BUILD, 'color:#ff2fd6;font-weight:bold;font-size:14px');
 
 // ── renderer ──

@@ -579,7 +579,8 @@ export function createPlayer({ scene, camera, planet, hud, audio, fx, transit, m
   }
 
   function respawn() {
-    const d = state.lastGroundDistrict ?? planet.districts[0];
+    let d = state.lastGroundDistrict ?? planet.districts[0];
+    if (d.key === 'pyramid') d = planet.districts[0];   // safety: never in the nest
     state.pos.copy(planet.surfacePoint(d.dir)).addScaledVector(d.dir, 0.4);
     state.vel.set(0, 0, 0);
     state.hp = P.hpMax;
@@ -850,8 +851,11 @@ export function createPlayer({ scene, camera, planet, hud, audio, fx, transit, m
           else if (impact > 16) { tryRollOnLand(impact); }
           else audio.sfx(impact > 8 ? 'land' : 'landSoft');
         }
+        // never record the PYRAMID as a respawn point — it's the enemy
+        // nest (Vex + troopers + Brakkus); dying there must not drop you
+        // back into it. Keep the last SAFE district instead.
         const d = planet.districtAt(state.pos);
-        if (d) state.lastGroundDistrict = d;
+        if (d && d.key !== 'pyramid') state.lastGroundDistrict = d;
       } else if (height > 0.34) {
         state.grounded = false;
       }
