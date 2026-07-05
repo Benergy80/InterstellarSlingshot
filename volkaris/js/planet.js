@@ -1974,6 +1974,14 @@ export function buildPlanet(scene, models = {}) {
   // a street or a district pad, so the paths read as canyons through one
   // continuous built object (the Messenger lesson: the planet IS the maze).
   const fillTops = [];
+  // per-zone body palettes + scratch colours for boundary material blending
+  const _cA = new THREE.Color(), _cB = new THREE.Color();
+  const ZONE_PAL = {
+    market: [0x3b2a6e, 0x274b8a, 0x6e2a5c], crash: [0x3b2a6e, 0x274b8a, 0x2a6e62],
+    circuit: [0x180f36, 0x22103e, 0x2a0f30], downtown: [0x201646, 0x1a1240, 0x261a52],
+    ruins: [0x241c3e, 0x2a2248, 0x2c2444], dunes: [0xb0538e, 0x9a4bd6, 0xd66a9e],
+    pyramid: [0x0f0d20, 0x161226, 0x1a1030], port: [0x30265c, 0x2a3a6e, 0x3a2c5e],
+  };
   {
     const N = 560;
     const ga = Math.PI * (3 - Math.sqrt(5));
@@ -2016,13 +2024,20 @@ export function buildPlanet(scene, models = {}) {
         enterable(frameAtDir(jd, yawDeg, 0.6), zone.key);
         continue;
       }
+      // BOUNDARY MATERIAL BLEND: near the seam with the nearest OTHER
+      // district, bleed the body colour toward that neighbour's palette so
+      // districts fade into one another instead of hard-cutting
+      let neigh2 = null, minB2 = 1e9;
+      for (const d of districtDirs) { if (d === zone) continue; const a = dir.angleTo(d.dir) * R; if (a < minB2) { minB2 = a; neigh2 = d; } }
+      const bBlend = clamp(1 - (minB2 - minA) / (zone.pad * 0.7), 0, 0.45);
+      const bcol = () => { _cA.set(pick(rnd, ZONE_PAL[zone.key] || [0x241c3e])); if (neigh2 && bBlend > 0.02) _cA.lerp(_cB.set(pick(rnd, ZONE_PAL[neigh2.key] || [0x241c3e])), bBlend); return _cA.getHex(); };
       switch (zone.key) {
         case 'market': case 'crash':
           hgt = shanty(f, 2.4 + rnd() * 1.4, 2 + (rnd() * 2 | 0));
           break;
         case 'circuit': {
           hgt = 3.5 + rnd() * 4;
-          addSolid(T(box(w, hgt, d2), 0, hgt / 2, 0), f.clone(), pick(rnd, [0x180f36, 0x22103e, 0x2a0f30]), { jitter: 0.1 });
+          addSolid(T(box(w, hgt, d2), 0, hgt / 2, 0), f.clone(), bcol(), { jitter: 0.1 });
           if (rnd() < 0.85) addGlow(T(box(w * 0.8, 0.2, 0.1), 0, hgt * (0.4 + rnd() * 0.5), d2 / 2 + 0.08), f.clone(), pick(rnd, [NEON.magenta, NEON.pink, NEON.red, NEON.purple]), 1.15);
           if (rnd() < 0.4) addGlow(T(box(0.18, hgt * 0.7, 0.1), w / 2 + 0.1, hgt * 0.5, 0), f.clone(), pick(rnd, NEON_LIST), 1.1);
           futureDeco(f, w, hgt, d2);
@@ -2030,7 +2045,7 @@ export function buildPlanet(scene, models = {}) {
         }
         case 'downtown': {
           hgt = 6 + rnd() * 9;
-          tower(f, w, hgt, d2, pick(rnd, [0x201646, 0x1a1240, 0x261a52]), pick(rnd, NEON_LIST), { cap: rnd() < 0.4 });
+          tower(f, w, hgt, d2, bcol(), pick(rnd, NEON_LIST), { cap: rnd() < 0.4 });
           break;
         }
         case 'ruins': {
@@ -2048,12 +2063,12 @@ export function buildPlanet(scene, models = {}) {
         case 'dunes': {
           hgt = 2.5 + rnd() * 4.5;
           addSolid(T(new THREE.CylinderGeometry(0.6 + rnd() * 0.8, 1.3 + rnd() * 1.2, hgt, 7), 0, hgt / 2, 0),
-            f.clone(), pick(rnd, [0xb0538e, 0x9a4bd6, 0xd66a9e]), { jitter: 0.14 });
+            f.clone(), bcol(), { jitter: 0.14 });
           break;
         }
         case 'pyramid': {
           hgt = 3 + rnd() * 6;
-          addSolid(T(box(w * 0.8, hgt, d2 * 0.8), 0, hgt / 2, 0, rnd() * 0.4), f.clone(), pick(rnd, [0x0f0d20, 0x161226, 0x1a1030]), { jitter: 0.06 });
+          addSolid(T(box(w * 0.8, hgt, d2 * 0.8), 0, hgt / 2, 0, rnd() * 0.4), f.clone(), bcol(), { jitter: 0.06 });
           if (rnd() < 0.3) addGlow(T(box(0.3, 0.3, 0.3), 0, hgt + 0.2, 0), f.clone(), NEON.red, 1.1);
           futureDeco(f, w * 0.8, hgt, d2 * 0.8, { rich: 0.7 });
           break;
@@ -2061,7 +2076,7 @@ export function buildPlanet(scene, models = {}) {
         case 'port': {
           hgt = 2 + rnd() * 3;
           addSolid(T(box(1 + rnd() * 1.6, hgt, 1 + rnd() * 1.6), 0, hgt / 2, 0, rnd()), f.clone(),
-            pick(rnd, [0x30265c, 0x2a3a6e, 0x3a2c5e]), { jitter: 0.1 });
+            bcol(), { jitter: 0.1 });
           if (rnd() < 0.5) futureDeco(f, 1.8, hgt, 1.8, { rich: 0.6 });
           break;
         }
