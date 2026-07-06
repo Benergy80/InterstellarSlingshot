@@ -120,6 +120,10 @@ const CAVE_DATA = CAVE_DEFS.map(([[laA, loA], [laB, loB]]) => ({
 }));
 let CARVE = false;   // flipped on after mouth heights are sampled
 const _cv1 = new THREE.Vector3(), _cv2 = new THREE.Vector3();
+// monorail trenches: where a low line runs into a mountain, cut the
+// LANDSCAPE open so the cars pass through (populated after the routes load)
+const RAIL_CARVE = [];
+let RAIL_CARVE_ON = false;
 
 // Named mountains — Skyrim drama on a 60u ball. Kept OFF the street
 // net so they wall the maze instead of blocking it. [lat, lon, height, spread²]
@@ -207,6 +211,20 @@ export function terrainHeight(dir) {
       if (cut > 0 && result > target) result += (target - result) * cut;
     }
   }
+  // MONORAIL TRENCHES — cut a continuous channel through any mountain a low
+  // line passes into, so the traincars run in a clear cutting (not rock).
+  if (RAIL_CARVE_ON) {
+    for (const c of RAIL_CARVE) {
+      _cv1.subVectors(c.b, c.a);
+      const t = clamp(_cv2.subVectors(dir, c.a).dot(_cv1) / _cv1.lengthSq(), 0, 1);
+      _cv2.copy(c.a).addScaledVector(_cv1, t).normalize();
+      const lat = dir.angleTo(_cv2) * R;
+      if (lat > c.w) continue;
+      const floorR = c.floorA + (c.floorB - c.floorA) * t;
+      const lateral = smooth(clamp((c.w - lat) / (c.w * 0.55), 0, 1));
+      if (result > floorR) result += (floorR - result) * lateral;
+    }
+  }
   return result;
 }
 // sample mouth heights on the UNCARVED terrain, then enable carving
@@ -230,6 +248,30 @@ for (const def of LINE_DEFS) {
   const n = Math.max(48, Math.ceil(curve.getLength() / 1.6));
   for (let i = 0; i < n; i++) { const p = curve.getPointAt(i / n); RAIL_PTS.push({ p, len: p.length() }); }
 }
+// build the MONORAIL TRENCHES: walk each curve, and where the terrain rises
+// into the car's path (within 2.6u below the rail) start a carve span whose
+// floor sits 2.6u under the rail, so the mountain opens into a clean cutting.
+for (const def of LINE_DEFS) {
+  const pts = def.ctrl.map(([la, lo, al]) => sphDir(la, lo).multiplyScalar(R + al));
+  const curve = new THREE.CatmullRomCurve3(pts, true, 'centripetal', 0.6);
+  const n = Math.max(60, Math.ceil(curve.getLength() / 2));
+  let span = null;
+  const flush = () => { if (span) { RAIL_CARVE.push(span); span = null; } };
+  for (let i = 0; i <= n; i++) {
+    if (i < n) {
+      const p = curve.getPointAt(i / n);
+      const d = p.clone().normalize();
+      const floor = p.length() - 2.6;
+      if (terrainHeight(d) > floor) {
+        if (!span) span = { a: d.clone(), b: d.clone(), floorA: floor, floorB: floor, w: 4.0 };
+        else { span.b.copy(d); span.floorB = floor; }
+        continue;
+      }
+    }
+    flush();
+  }
+}
+RAIL_CARVE_ON = true;
 const RAIL_CLEAR_H = 4.4, RAIL_CLEAR_V = 2.8, RAIL_COS_H = Math.cos(RAIL_CLEAR_H / R);
 // tallest a building at ground `dir` may be before it would hit a line
 // (Infinity = no line overhead). Cars ride ~rail+2.9, so leave a gap below.
