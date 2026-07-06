@@ -499,7 +499,7 @@ export function buildTransit(scene, planet, audio) {
           const { up: lu } = tangentFrame(liftDir);
           lifts.push({
             disc, dir: liftDir, up: lu.clone(),
-            lo: groundR - 0.15, hi: deckR + 0.4,   // dips flush; tops out ABOVE the deck
+            lo: groundR - 0.15, hi: deckR + 0.05,  // dips flush; tops out AT the deck (no poke-through)
             r: groundR - 0.15, dirn: 1, speed: 3.0, dwell: 0,
             botDwell: 4.5, topDwell: 4.0,           // long waits to step on / off
             deck: st.boardPos.clone(),              // where to set the rider down
@@ -1037,13 +1037,16 @@ export function buildTransit(scene, planet, audio) {
         // generous catch (2.4 pad). Snap the player's feet ONTO the deck
         // surface so they stand on it (no floating), and ride its motion.
         if (horiz < 2.5 && along > -0.6 && along < 1.9) {
-          // arrived at the top → deliver the rider ONTO the platform's
-          // board spot so they never ride back down or fall off the edge
-          if (L.deck && L.r >= L.hi - 0.25) {
-            playerState.pos.lerp(L.deck, 0.3);
-            playerState.vel.multiplyScalar(0.6);
+          // arrived at the top → SNAP the rider straight onto the platform's
+          // board spot in one frame. (A slow lerp moved them ~3u toward the
+          // deck, which pushed them off the disc so carryRiders stopped
+          // catching them and they fell all the way back down — Ben's
+          // 'elevator never gets high enough to let the player off'.)
+          if (L.deck && L.r >= L.hi - 0.2) {
+            playerState.pos.copy(L.deck);
+            playerState.vel.multiplyScalar(0.15);
             playerState.grounded = true;
-            playerState.onLift = 0;    // release — the platform holds them now
+            playerState.onLift = 0;    // release — the collidable platform holds them now
             continue;
           }
           playerState.pos.addScaledVector(L.up, 0.18 - along);   // stand on the deck top
