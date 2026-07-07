@@ -22,7 +22,7 @@ import { createDemo } from './demo.js';
 import { createHUD } from './hud.js';
 import { createAudio } from './audio.js';
 
-const VK_BUILD = 'VOLKARIS build 2026-07-07a · warp reverted (boot fix) + wider rail clearance for towers';
+const VK_BUILD = 'VOLKARIS build 2026-07-07b · rail clearance caps district-core towers too';
 console.log('%c' + VK_BUILD, 'color:#ff2fd6;font-weight:bold;font-size:14px');
 
 // ── renderer ──

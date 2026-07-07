@@ -627,8 +627,14 @@ export function buildPlanet(scene, models = {}) {
   // Every tower is recorded so the detail layer (billboards, strobes,
   // searchlights, megaboards) can dress the skyline after the fact.
   const towerSpots = [];
+  const _towerDir = new THREE.Vector3();   // scratch for rail-clearance in tower()
   // A window-striped tower block: solid body + glow strips
   function tower(frame, w, h, d, bodyHex, glowHex, { strips = true, cap = true } = {}) {
+    // duck under any monorail line overhead — district-CORE towers included
+    // (railCap is cheap now: it only touches terrainHeight if a line is above)
+    const rc = railCap(_towerDir.setFromMatrixPosition(frame).normalize(), Math.max(w, d) * 0.5);
+    if (rc < h) h = rc;
+    if (h < 2) return;   // a line runs too low here — no tower
     towerSpots.push({ frame: frame.clone(), w, h, d });
     // SILHOUETTE VARIETY: ~38% of tall towers step back in tiers; the rest
     // are a single mass that occasionally has a bitten-out damage notch.
