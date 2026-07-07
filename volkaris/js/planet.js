@@ -33,6 +33,7 @@ import { LINE_DEFS } from './transit.js';   // monorail routes → keep building
 THREE.Mesh.prototype.raycast = acceleratedRaycast;
 
 const R = C.R;
+const WARP_DISABLED = true;   // perf diagnostic
 
 // ── District table ──────────────────────────────────────────────
 // lat/lon in degrees; pad = flattened radius (u); ring = crater rim
@@ -272,18 +273,20 @@ for (const def of LINE_DEFS) {
   }
 }
 RAIL_CARVE_ON = true;
-const RAIL_CLEAR_H = 4.4, RAIL_CLEAR_V = 2.8, RAIL_COS_H = Math.cos(RAIL_CLEAR_H / R);
+const RAIL_CLEAR_H = 4.4, RAIL_CLEAR_V = 2.8;
 // tallest a building at ground `dir` may be before it would hit a line
 // (Infinity = no line overhead). Cars ride ~rail+2.9, so leave a gap below.
-function railCap(dir) {
-  let cap = Infinity;
-  const surfR = terrainHeight(dir);
+// `rad` = the building's half-footprint, so WIDE buildings whose EDGES reach
+// the corridor are caught too, not just ones centred under it.
+function railCap(dir, rad = 0) {
+  const cosH = Math.cos((RAIL_CLEAR_H + rad) / R);
+  let minLen = Infinity;
   for (const rp of RAIL_PTS) {
-    if (dir.dot(rp.p) < rp.len * RAIL_COS_H) continue;    // corridor point not overhead
-    const h = rp.len - surfR - RAIL_CLEAR_V;
-    if (h < cap) cap = h;
+    if (dir.dot(rp.p) < rp.len * cosH) continue;          // corridor point not overhead
+    if (rp.len < minLen) minLen = rp.len;
   }
-  return cap;
+  if (minLen === Infinity) return Infinity;               // no line overhead — skip terrainHeight
+  return minLen - terrainHeight(dir) - RAIL_CLEAR_V;      // gap under the lowest line here
 }
 // is a world point inside the clearance tube of any line? (for bridges/props)
 function railBlocked(worldPos, rad = RAIL_CLEAR_H) {
@@ -330,6 +333,7 @@ export function buildPlanet(scene, models = {}) {
   // build time; collision shares the same warped geometry, so they match.
   const _wv = new THREE.Vector3(), _wc = new THREE.Vector3(), _wu = new THREE.Vector3(), _wd = new THREE.Vector3(), _wr = new THREE.Vector3();
   function sphericalWarp(geo, frame) {
+    if (WARP_DISABLED) return;   // perf diagnostic
     _wc.setFromMatrixPosition(frame);
     _wu.setFromMatrixColumn(frame, 1).normalize();
     const baseR = _wc.length();
@@ -344,7 +348,8 @@ export function buildPlanet(scene, models = {}) {
       pos.setXYZ(i, _wv.x, _wv.y, _wv.z);
     }
     pos.needsUpdate = true;
-    geo.computeVertexNormals();
+    // normals are recomputed ONCE on the merged mesh (not per part) — per-part
+    // computeVertexNormals across thousands of parts made boot crawl
   }
 
   // add a geometry in a local surface frame.
@@ -370,10 +375,7 @@ export function buildPlanet(scene, models = {}) {
   }
   // horizontal subdivision scales with footprint so the sphere curve is
   // visible on wide/long structures (small props stay 1-segment for perf)
-  const box = (w, h, d) => {
-    const s = (x) => Math.max(1, Math.min(5, Math.round(x / 4)));
-    return new THREE.BoxGeometry(w, h, d, s(w), 1, s(d));
-  };
+  const box = (w, h, d) => new THREE.BoxGeometry(w, h, d);
   const T = (geo, x, y, z, ry = 0, rx = 0, rz = 0) => {
     if (rx || ry || rz) geo.rotateX(rx), geo.rotateY(ry), geo.rotateZ(rz);
     geo.translate(x, y, z);
@@ -2125,7 +2127,7 @@ export function buildPlanet(scene, models = {}) {
       const nearStreet = streetDist < 6.5;
       // keep the MONORAIL corridors clear: cap this building's height so it
       // ducks under any line overhead (skip entirely if the line is too low)
-      const railH = railCap(jd);
+      const railH = railCap(jd, Math.max(w, d2) * 0.5);
       if (railH < 2.5) continue;
       // OVERLAP AUDIT: skip a building that would sit DEEP inside one already
       // placed (redundant mesh / z-fighting) — still allows dense packing
@@ -2829,6 +2831,7 @@ export function buildPlanet(scene, models = {}) {
     if (!c.attributes.normal) out.computeVertexNormals();
     return out;
   }), false);
+  solidGeo.computeVertexNormals();   // ONE recompute for the sphere-warped positions (not per part)
   const solidMat = new THREE.MeshLambertMaterial({ vertexColors: true });
   const solidMesh = new THREE.Mesh(solidGeo, solidMat);
   solidMesh.receiveShadow = true;
