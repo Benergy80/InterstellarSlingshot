@@ -411,21 +411,37 @@ export function buildPlanet(scene, models = {}) {
     return gp.sub(new THREE.Vector3().setFromMatrixPosition(frame))
       .dot(new THREE.Vector3().setFromMatrixColumn(frame, 1));
   }
+  // Rebuilt from scratch (Ben): a straight vertical lift with SOLID,
+  // collidable landings at BOTH ends. The rider is carried on the moving
+  // platform, then simply walks OFF onto the top landing (a solid ring
+  // with a platform-sized hole) at the same level — no fragile "delivery".
   function makeElevator(frame, lx, lz, y0, y1, phase, hex) {
-    // twin glow tracks + boarding pad (static, merged; seated at y0)
+    const PLAT_R = 1.6, HOLE = PLAT_R + 0.55, ARM = 1.8;   // platform, landing hole, landing arm
+    // glow guide tracks running the full shaft
     const railH = (y1 - y0) + 2.4;
     for (const sz of [-1, 1]) {
-      addGlow(T(box(0.12, railH, 0.12), lx, y0 + railH / 2 - 0.9, lz + sz * 1.9), frame.clone(), hex, 0.95);
-      addSolid(T(box(0.26, 0.9, 0.26), lx, y0 - 0.35, lz + sz * 1.9), frame.clone(), 0x241e4e);
+      addGlow(T(box(0.12, railH, 0.12), lx, y0 + railH / 2 - 0.9, lz + sz * (HOLE + ARM - 0.3)), frame.clone(), hex, 0.95);
     }
-    addSolid(T(new THREE.CylinderGeometry(2.0, 2.2, 0.34, 12), lx, y0 - 0.28, lz), frame.clone(), 0x201a44);
-    addGlowRaw(T(new THREE.TorusGeometry(1.8, 0.07, 5, 20), lx, y0 - 0.08, lz, 0, Math.PI / 2)
-      .applyMatrix4(frame.clone()), hex, 1.1);
-    // the platform itself — glass disc + neon rim (rendered live)
+    // helper: a solid landing DECK (square ring w/ a central hole for the
+    // platform) at local height y — collidable, so you stand + walk on it
+    const landing = (y, withHole) => {
+      if (withHole) {
+        addSolid(T(box(2 * (HOLE + ARM), 0.3, ARM), lx, y, lz + HOLE + ARM / 2), frame.clone(), 0x2a2452);   // far
+        addSolid(T(box(2 * (HOLE + ARM), 0.3, ARM), lx, y, lz - HOLE - ARM / 2), frame.clone(), 0x2a2452);   // near
+        addSolid(T(box(ARM, 0.3, 2 * HOLE), lx + HOLE + ARM / 2, y, lz), frame.clone(), 0x2a2452);           // right
+        addSolid(T(box(ARM, 0.3, 2 * HOLE), lx - HOLE - ARM / 2, y, lz), frame.clone(), 0x2a2452);           // left
+      } else {
+        addSolid(T(new THREE.CylinderGeometry(HOLE + ARM, HOLE + ARM + 0.2, 0.34, 16), lx, y, lz), frame.clone(), 0x201a44);
+      }
+      addGlowRaw(T(new THREE.TorusGeometry(HOLE + 0.05, 0.07, 5, 22), lx, y + 0.17, lz, 0, Math.PI / 2).applyMatrix4(frame.clone()), hex, 1.0);
+    };
+    landing(y0 - 0.17, false);   // bottom boarding pad (solid disc)
+    landing(y1 - 0.15, true);    // TOP landing (ring w/ hole) — walk off here
+    // the moving platform — glass disc + neon rim (rendered live, carries you)
     const plat = new THREE.Group();
-    plat.add(new THREE.Mesh(new THREE.CylinderGeometry(1.6, 1.6, 0.22, 16),
-      new THREE.MeshBasicMaterial({ color: new THREE.Color(hex).multiplyScalar(0.45), transparent: true, opacity: 0.48, toneMapped: false, depthWrite: false })));
-    const rim = new THREE.Mesh(new THREE.TorusGeometry(1.6, 0.08, 5, 22),
+    plat.add(new THREE.Mesh(new THREE.CylinderGeometry(PLAT_R, PLAT_R, 0.22, 16),
+      new THREE.MeshBasicMaterial({ color: new THREE.Color(hex).multiplyScalar(0.45), transparent: true, opacity: 0.5, toneMapped: false, depthWrite: false })));
+    const rim = new THREE.Mesh(new THREE.TorusGeometry(PLAT_R, 0.08, 5, 22),
       new THREE.MeshBasicMaterial({ color: new THREE.Color(hex).multiplyScalar(1.2), toneMapped: false }));
     rim.rotation.x = Math.PI / 2;
     plat.add(rim);
@@ -433,7 +449,7 @@ export function buildPlanet(scene, models = {}) {
     signs.push(plat);
     const base = new THREE.Vector3(lx, 0, lz).applyMatrix4(frame.clone());
     const up = new THREE.Vector3().setFromMatrixColumn(frame, 1).normalize();
-    const el = { pos: base.clone().addScaledVector(up, y0), r: 1.7, up, delta: new THREE.Vector3() };
+    const el = { pos: base.clone().addScaledVector(up, y0), r: PLAT_R + 0.15, up, delta: new THREE.Vector3() };
     plat.position.copy(el.pos);
     elevators.push(el);
     elevRigs.push({ el, plat, base, up, y0, y1, phase, prev: el.pos.clone() });
@@ -462,11 +478,13 @@ export function buildPlanet(scene, models = {}) {
       _crRel.subVectors(playerState.pos, el.pos);
       const v = _crRel.dot(el.up);
       const h2 = _crRel.lengthSq() - v * v;
-      if (h2 > el.r * el.r) continue;
-      const rise = v - 0.11;                       // height above the platform surface
-      if (rise < -0.5 || rise > 1.4) continue;
-      playerState.pos.add(el.delta);               // ride the platform
-      playerState.vel.addScaledVector(el.up, -playerState.vel.dot(el.up));  // gravity doesn't fight the lift
+      if (h2 > el.r * el.r) continue;              // not standing on this platform
+      if (v < -0.5 || v > 1.6) continue;           // must be on / just above the deck
+      playerState.pos.addScaledVector(el.up, 0.12 - v);   // SNAP onto the deck surface
+      playerState.pos.add(el.delta);                       // ride its motion
+      playerState.vel.addScaledVector(el.up, -playerState.vel.dot(el.up));  // kill radial vel (no gravity fight)
+      playerState.grounded = true;                 // solid footing → idle, not 'fall'
+      playerState.onLift = 0.3;                    // suppress terrain snap for a beat
     }
   }
 

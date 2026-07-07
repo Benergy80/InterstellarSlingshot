@@ -22,7 +22,7 @@ import { createDemo } from './demo.js';
 import { createHUD } from './hud.js';
 import { createAudio } from './audio.js';
 
-const VK_BUILD = 'VOLKARIS build 2026-07-07c · rail clearance also caps enterable buildings + wider margin';
+const VK_BUILD = 'VOLKARIS build 2026-07-07d · elevators rebuilt: solid landings at both ends + robust carry';
 console.log('%c' + VK_BUILD, 'color:#ff2fd6;font-weight:bold;font-size:14px');
 
 // ── renderer ──
