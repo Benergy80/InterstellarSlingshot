@@ -273,7 +273,7 @@ for (const def of LINE_DEFS) {
   }
 }
 RAIL_CARVE_ON = true;
-const RAIL_CLEAR_H = 4.4, RAIL_CLEAR_V = 2.8;
+const RAIL_CLEAR_H = 5.2, RAIL_CLEAR_V = 2.8;
 // tallest a building at ground `dir` may be before it would hit a line
 // (Infinity = no line overhead). Cars ride ~rail+2.9, so leave a gap below.
 // `rad` = the building's half-footprint, so WIDE buildings whose EDGES reach
@@ -2148,7 +2148,10 @@ export function buildPlanet(scene, models = {}) {
       let hgt = 0;
       // some street-adjacent buildings are ENTERABLE (door + interior),
       // door turned to face the street so you can actually find it
-      if (nearStreet && rnd() < 0.2 && ['market', 'circuit', 'downtown', 'ruins'].includes(zone.key)) {
+      // enterable = ~6u tall and NOT height-capped, so only place one where a
+      // monorail line isn't ducking low overhead (else fall through to the
+      // normal, rail-capped building below)
+      if (nearStreet && rnd() < 0.2 && railH >= 6.5 && ['market', 'circuit', 'downtown', 'ruins'].includes(zone.key)) {
         let nearest = pathSamples[0], nd = 1e9;
         for (const ps of pathSamples) { const dd = jd.distanceToSquared(ps); if (dd < nd) { nd = dd; nearest = ps; } }
         const { up: eu, east: ee, north: en } = tangentFrame(jd);
