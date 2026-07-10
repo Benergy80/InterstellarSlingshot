@@ -161,6 +161,49 @@ export const CAPTAIN2_MAP = {
   hit: { name: 'Roll_Dodge_1', once: true, timeScale: 1.8 },
 };
 
+// NEW self-contained "Silver Sentinel" (Ben's SilverSentinel.glb) — one GLB
+// with mesh, skeleton, textures + 15 named clips baked in:
+//   idle, walk, run, strafe_left, strafe_right, jump, double_jump, fall,
+//   land, roll, slide, wall_run, crouch_idle, crouch_walk, fire
+export const SILVER_MAP = {
+  idle: { name: 'idle' },
+  walk: { name: 'walk' },
+  run: { name: 'run' },
+  sprint: { name: 'run', timeScale: 1.25 },        // no dedicated sprint clip
+  jump: { name: 'jump', once: true, next: 'fall' },
+  airjump: { name: 'double_jump', once: true, next: 'fall' },
+  fall: { name: 'fall' },
+  land: { name: 'land', once: true, next: 'idle' },
+  tuck: { name: 'roll', once: true },              // combat roll / air flip
+  wallrunL: { name: 'wall_run' },
+  wallrunR: { name: 'wall_run' },
+  hover: { name: 'fall', timeScale: 0.3 },         // jetpack hover → held fall pose
+  die: { name: 'fall', once: true, clamp: true },  // no death clip
+  sit: { name: 'crouch_idle' },
+  wave: { name: 'idle', timeScale: 0.8 },
+  lean: { name: 'crouch_idle' },
+  stomp: { name: 'walk', timeScale: 0.6 },
+  fly: { name: 'fall', timeScale: 0.2 },
+  throne: { name: 'crouch_idle', once: true, next: 'idle' },
+  shoot: { name: 'fire' },
+  runshoot: { name: 'fire' },
+  aimidle: { name: 'fire', timeScale: 0.3 },
+  strafeL: { name: 'strafe_left' },
+  strafeR: { name: 'strafe_right' },
+  strafeFL: { name: 'strafe_left' },
+  strafeFR: { name: 'strafe_right' },
+  runback: { name: 'walk' },
+  backL: { name: 'strafe_left' },
+  backR: { name: 'strafe_right' },
+  punchL: { name: 'fire', once: true },            // no melee clip → fire jab
+  punchR: { name: 'fire', once: true },
+  kickL: { name: 'slide', once: true },
+  kickR: { name: 'slide', once: true },
+  hit: { name: 'land', once: true, timeScale: 1.5 },
+  crouch: { name: 'crouch_idle' },
+  crouchwalk: { name: 'crouch_walk' },
+};
+
 export function makeGLTFRig(gltf, { tint = null, tints = null, scale = 0.75, blasterHex = NEON.cyan, withBlaster = false, clipMap = CLIP_MAP, faceFlip = false, extraAnims = null } = {}) {
   const root = skeletonClone(gltf.scene);
   const group = new THREE.Group();

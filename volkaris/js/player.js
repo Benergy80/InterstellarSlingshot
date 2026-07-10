@@ -17,7 +17,7 @@
 import * as THREE from 'three';
 import { C, NEON, clamp, lerp } from './config.js';
 import { makeCaptain } from './rig.js';
-import { makeGLTFRig, ASTRO_MAP, SENTINEL_MAP, CAPTAIN2_MAP } from './gltfrig.js';
+import { makeGLTFRig, ASTRO_MAP, SENTINEL_MAP, CAPTAIN2_MAP, SILVER_MAP } from './gltfrig.js';
 
 const P = C.PLAYER;
 const _up = new THREE.Vector3(), _fwd = new THREE.Vector3(), _right = new THREE.Vector3();
@@ -40,7 +40,19 @@ export function createPlayer({ scene, camera, planet, hud, audio, fx, transit, m
     const h = bb.max.y - bb.min.y;
     if (h > 0.01) cap2Scale = 1.8 / h;
   }
-  const rig = models?.captain2
+  // NEW: self-contained SilverSentinel.glb takes top priority (Ben). Height
+  // auto-normalized to 1.8u; its 15 baked clips drive the rig via SILVER_MAP.
+  let silverScale = 1;
+  if (models?.silverSentinel) {
+    const bb = new THREE.Box3().setFromObject(models.silverSentinel.scene);
+    const h = bb.max.y - bb.min.y;
+    if (h > 0.01) silverScale = 1.8 / h;
+  }
+  const rig = models?.silverSentinel
+    ? makeGLTFRig(models.silverSentinel, {
+        scale: silverScale, withBlaster: false, clipMap: SILVER_MAP,
+      })
+    : models?.captain2
     ? makeGLTFRig(models.captain2.base, {
         scale: cap2Scale, withBlaster: true, clipMap: CAPTAIN2_MAP,
         extraAnims: models.captain2.anims,

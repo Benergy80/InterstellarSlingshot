@@ -22,7 +22,7 @@ import { createDemo } from './demo.js';
 import { createHUD } from './hud.js';
 import { createAudio } from './audio.js';
 
-const VK_BUILD = 'VOLKARIS build 2026-07-07d · elevators rebuilt: solid landings at both ends + robust carry';
+const VK_BUILD = 'VOLKARIS build 2026-07-10a · player = SilverSentinel.glb (drops in when asset present)';
 console.log('%c' + VK_BUILD, 'color:#ff2fd6;font-weight:bold;font-size:14px');
 
 // ── renderer ──
@@ -83,10 +83,15 @@ const CAPTAIN2_ANIMS = [
 
 async function loadModels() {
   const loader = new GLTFLoader();
-  const out = { kay: {}, captain2: null };
+  const out = { kay: {}, captain2: null, silverSentinel: null };
   const shipJobs = ['Player', 'Freighter'].map(n => new Promise((res) => {
     loader.load(`../models/${n}.glb`, (g) => { out[n] = g.scene; res(); }, undefined, () => res());
   }));
+  // NEW self-contained player: SilverSentinel.glb (mesh + skeleton + textures
+  // + 15 clips). Optional — falls back to Captain 2 if the file isn't present.
+  const silverJob = new Promise((res) => {
+    loader.load('assets/SilverSentinel.glb', (g) => { out.silverSentinel = g; res(); }, undefined, () => res());
+  });
   // KayKit Adventurers (CC0) — pro rigs + 75 animation clips each
   const kayJobs = ['Sentinel', 'Astronaut', 'Rogue_Hooded', 'Rogue', 'Mage', 'Barbarian'].map(n => new Promise((res) => {
     loader.load(`assets/${n}.glb`, (g) => { out.kay[n] = g; res(); }, undefined, () => res());
@@ -102,7 +107,7 @@ async function loadModels() {
     }, undefined, () => res());
   }));
   await Promise.race([
-    Promise.all([...shipJobs, ...kayJobs, ...capJobs]),
+    Promise.all([...shipJobs, ...kayJobs, ...capJobs, silverJob]),
     new Promise(res => setTimeout(res, 15000)),
   ]);
   if (cap.base) out.captain2 = cap;
