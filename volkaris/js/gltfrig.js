@@ -244,12 +244,18 @@ export function makeGLTFRig(gltf, { tint = null, tints = null, scale = 0.75, bla
   // bone lookup (KayKit names: hips, spine, head, handr, handslotr…)
   const boneByName = {};
   root.traverse(o => { if (o.isBone) boneByName[o.name.toLowerCase()] = o; });
+  // Rigify DEF- skeletons (SilverSentinel): spine=pelvis, spine.003=chest,
+  // spine.006=head, DEF-hand.L/R. GLTFLoader sanitizes node names (dots
+  // stripped), so "DEF-spine.003" arrives as "DEF-spine003".
   const bones = {
-    hips: boneByName.hips,
-    chest: boneByName.chest ?? boneByName.spine ?? boneByName.torso ?? boneByName.hips,
-    head: boneByName.head,
-    handR: boneByName.handslotr ?? boneByName.wristr ?? boneByName.handr ?? boneByName.righthand,
-    handL: boneByName.handslotl ?? boneByName.wristl ?? boneByName.handl ?? boneByName.lefthand,
+    hips: boneByName.hips ?? boneByName['def-spine'],
+    chest: boneByName.chest ?? boneByName.spine ?? boneByName.torso
+      ?? boneByName['def-spine003'] ?? boneByName['def-spine'] ?? boneByName.hips,
+    head: boneByName.head ?? boneByName['def-spine006'],
+    handR: boneByName.handslotr ?? boneByName.wristr ?? boneByName.handr
+      ?? boneByName.righthand ?? boneByName['def-handr'],
+    handL: boneByName.handslotl ?? boneByName.wristl ?? boneByName.handl
+      ?? boneByName.lefthand ?? boneByName['def-handl'],
   };
 
   const mixer = new THREE.AnimationMixer(root);
