@@ -6,4 +6,4 @@ class NoCache(http.server.SimpleHTTPRequestHandler):
         self.send_header('Cache-Control', 'no-store, must-revalidate')
         self.send_header('Expires', '0')
         super().end_headers()
-http.server.test(HandlerClass=functools.partial(NoCache, directory='/private/tmp/volkaris-worktree'), port=8700)
+http.server.test(HandlerClass=functools.partial(NoCache, directory='/Users/benstagl/volkaris-worktree'), port=8700)

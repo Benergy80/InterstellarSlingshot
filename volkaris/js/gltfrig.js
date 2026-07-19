@@ -162,9 +162,10 @@ export const CAPTAIN2_MAP = {
 };
 
 // NEW self-contained "Silver Sentinel" (Ben's SilverSentinel.glb) — one GLB
-// with mesh, skeleton, textures + 15 named clips baked in:
+// with mesh, skeleton, textures + 19 named clips baked in:
 //   idle, walk, run, strafe_left, strafe_right, jump, double_jump, fall,
-//   land, roll, slide, wall_run, crouch_idle, crouch_walk, fire
+//   land, roll, slide, wall_run, crouch_idle, crouch_walk, fire,
+//   run_shoot, strafe_shoot, hard_land, die_land (Mixamo retargets, Jul 19)
 export const SILVER_MAP = {
   idle: { name: 'idle' },
   walk: { name: 'walk' },
@@ -178,31 +179,84 @@ export const SILVER_MAP = {
   wallrunL: { name: 'wall_run' },
   wallrunR: { name: 'wall_run' },
   hover: { name: 'fall', timeScale: 0.3 },         // jetpack hover → held fall pose
-  die: { name: 'fall', once: true, clamp: true },  // no death clip
+  die: { name: 'die_land', once: true, clamp: true, timeScale: 0.6 },  // collapse w/ real body drop
   sit: { name: 'crouch_idle' },
   wave: { name: 'idle', timeScale: 0.8 },
   lean: { name: 'crouch_idle' },
   stomp: { name: 'walk', timeScale: 0.6 },
   fly: { name: 'fall', timeScale: 0.2 },
   throne: { name: 'crouch_idle', once: true, next: 'idle' },
-  shoot: { name: 'fire' },
-  runshoot: { name: 'fire' },
-  aimidle: { name: 'fire', timeScale: 0.3 },
+  shoot: { name: 'fire_stand' },                   // two-handed aim: Pistol Strafe arms + Idle legs
+  runshoot: { name: 'run_shoot' },                 // real Pistol Run retarget
+  backshoot: { name: 'run_shoot', reverse: true, timeScale: 0.85 },  // armed backpedal
+  aimidle: { name: 'fire_stand', timeScale: 0.35 },
   strafeL: { name: 'strafe_left' },
   strafeR: { name: 'strafe_right' },
   strafeFL: { name: 'strafe_left' },
   strafeFR: { name: 'strafe_right' },
-  runback: { name: 'walk' },
+  // armed strafes: Pistol Strafe mocap travels RIGHT (foot-lead analysis);
+  // the left version is the same cycle time-reversed
+  strafeshootR: { name: 'strafe_shoot' },
+  strafeshootL: { name: 'strafe_shoot', reverse: true },
+  runback: { name: 'walk' },            // Ben A/B verdict Jul 19: old wiring wins
   backL: { name: 'strafe_left' },
   backR: { name: 'strafe_right' },
   punchL: { name: 'fire', once: true },            // no melee clip → fire jab
   punchR: { name: 'fire', once: true },
   kickL: { name: 'slide', once: true },
   kickR: { name: 'slide', once: true },
-  hit: { name: 'land', once: true, timeScale: 1.5 },
+  hit: { name: 'hard_land', once: true, timeScale: 2.4 },  // impact stagger
   crouch: { name: 'crouch_idle' },
   crouchwalk: { name: 'crouch_walk' },
 };
+
+// ── A/B harness for the Jul 19 rewiring ─────────────────────────────────
+// F9 flips ALL of these between old/new mid-game; per-state from the console:
+//   SILVER_AB.set('die', 'old')   SILVER_AB.set('runback', 'new')   SILVER_AB.status()
+// ?oldanims=1 boots with the legacy wiring. Delete this block once decided.
+const SILVER_AB_OLD = {
+  runshoot: { name: 'fire' },                                // legs freeze while firing on the move
+  backshoot: null,                                           // didn't exist (falls through to runback)
+  shoot: { name: 'fire' },                                   // the "tray-carry" raise Ben flagged
+  aimidle: { name: 'fire', timeScale: 0.3 },
+  die: { name: 'fall', once: true, clamp: true },
+  hit: { name: 'land', once: true, timeScale: 1.5 },
+  // runback/backL/backR settled Jul 19: old wiring won, hard-wired in SILVER_MAP
+};
+const SILVER_AB_NEW = Object.fromEntries(
+  Object.keys(SILVER_AB_OLD).map(k => [k, SILVER_MAP[k] ?? null]));
+const SILVER_AB_STATE = Object.fromEntries(Object.keys(SILVER_AB_OLD).map(k => [k, 'new']));
+
+function silverABApply(k, ver) {
+  const d = (ver === 'old' ? SILVER_AB_OLD : SILVER_AB_NEW)[k];
+  if (d) SILVER_MAP[k] = d; else delete SILVER_MAP[k];
+  SILVER_AB_STATE[k] = ver;
+  const r = window.VK?.player?.rig;
+  if (r?.current?.() === k) r.play(k, { restart: true });    // retrigger if mid-state
+}
+
+window.SILVER_AB = {
+  set(k, ver) {
+    if (!(k in SILVER_AB_OLD)) { console.warn('[anims] not an A/B state:', k, '— options:', Object.keys(SILVER_AB_OLD)); return; }
+    silverABApply(k, ver);
+    console.log(`[anims] ${k} → ${ver}`);
+  },
+  all(ver) {
+    for (const k of Object.keys(SILVER_AB_OLD)) silverABApply(k, ver);
+    const msg = ver === 'old' ? 'LEGACY (pre-Jul-19) wiring' : 'NEW retargeted clips';
+    window.VK?.hud?.toast?.('ANIMATIONS: ' + ver.toUpperCase(), msg);
+    console.log('[anims] all →', ver);
+  },
+  status() { console.table(SILVER_AB_STATE); return { ...SILVER_AB_STATE }; },
+};
+
+window.addEventListener('keydown', (e) => {
+  if (e.code === 'F9') {
+    const vals = Object.values(SILVER_AB_STATE);
+    window.SILVER_AB.all(vals.every(v => v === 'new') ? 'old' : 'new');
+  }
+});
+if (new URLSearchParams(window.location.search).has('oldanims')) window.SILVER_AB.all('old');
 
 export function makeGLTFRig(gltf, { tint = null, tints = null, scale = 0.75, blasterHex = NEON.cyan, withBlaster = false, clipMap = CLIP_MAP, faceFlip = false, extraAnims = null } = {}) {
   const root = skeletonClone(gltf.scene);
@@ -297,19 +351,24 @@ export function makeGLTFRig(gltf, { tint = null, tints = null, scale = 0.75, bla
       if (name === 'idle' || name === 'walk') name = 'shoot';
       else if ((name === 'run' || name === 'sprint') && clipMap.runshoot) name = 'runshoot';
       else if ((name === 'runback' || name === 'backL' || name === 'backR') && clipMap.backshoot) name = 'backshoot';
+      else if ((name === 'strafeL' || name === 'strafeFL') && clipMap.strafeshootL) name = 'strafeshootL';
+      else if ((name === 'strafeR' || name === 'strafeFR') && clipMap.strafeshootR) name = 'strafeshootR';
     }
     const def = clipMap[name];
     if (!def) return;
+    // def.reverse plays the clip backwards (e.g. run → backpedal); callers
+    // always pass positive rates, so the sign is owned by the map entry
+    const signed = (ts) => (def.reverse ? -Math.abs(ts) : ts);
     if (currentKey === name && !restart && !def.once) {
       // same clip, new rate — foot-speed matching updates every frame
-      if (timeScale !== undefined && currentAction) currentAction.timeScale = timeScale;
+      if (timeScale !== undefined && currentAction) currentAction.timeScale = signed(timeScale);
       return;
     }
     currentKey = name;
     queuedNext = def.next ?? null;
     playRaw(def.name, {
       fade,
-      timeScale: timeScale ?? def.timeScale ?? 1,
+      timeScale: signed(timeScale ?? def.timeScale ?? 1),
       once: !!def.once,
       clamp: !!def.clamp,
       restart,

@@ -913,12 +913,13 @@ export function createPlayer({ scene, camera, planet, hud, audio, fx, transit, m
         // playback rate tracks ground speed so the feet don't slide
         const runTs = clamp(sp / 6.0, 0.75, 1.5);
         const walkTs = clamp(sp / 2.8, 0.7, 1.4);
-        // A/D and arrow-turning use NO special clips (Ben's call) —
-        // sideways and turning movement just reads as standard walk/run
+        // arrow-turning uses no special clip; A/D strafes share the same
+        // clips as the S+A/S+D retreats (Ben's call, Jul 19)
         if (sp < 0.6 && Math.abs(rotVel.yaw) > 0.006) rig.play('walk', { fade: 0.18, timeScale: 0.55 });
         else if (sp < 0.6) rig.play('idle', { fade: 0.22 });
         else if ((boosting || sprinting) && sp > P.walk + 1) rig.play('sprint', { timeScale: runTs });
         else if (backing) rig.play(keys.a ? 'backL' : keys.d ? 'backR' : 'runback', { timeScale: walkTs });
+        else if (strafing) rig.play(state.strafeDir < 0 ? 'strafeL' : 'strafeR', { timeScale: walkTs });
         else if (sp > P.walk * 0.55) rig.play('run', { timeScale: runTs });
         else rig.play('walk', { timeScale: walkTs });
       } else if (rig.current() !== 'hover' || !state.jetArmed) {

@@ -22,7 +22,7 @@ import { createDemo } from './demo.js';
 import { createHUD } from './hud.js';
 import { createAudio } from './audio.js';
 
-const VK_BUILD = 'VOLKARIS build 2026-07-10a · player = SilverSentinel.glb (drops in when asset present)';
+const VK_BUILD = 'VOLKARIS build 2026-07-19a · SilverSentinel 19 clips · F9 = A/B old/new animations';
 console.log('%c' + VK_BUILD, 'color:#ff2fd6;font-weight:bold;font-size:14px');
 
 // ── renderer ──
