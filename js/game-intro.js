@@ -1374,7 +1374,7 @@ function animateIntroSequence() {
     }
 
     // Render the scene
-    renderer.render(scene, camera);
+    gameRender(scene, camera);
 
     // Continue animation loop
     requestAnimationFrame(animateIntroSequence);

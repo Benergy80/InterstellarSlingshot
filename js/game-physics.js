@@ -2015,7 +2015,7 @@ function updateEnhancedPhysics() {
     // Pause-aware physics
     if (typeof gamePaused !== 'undefined' && gamePaused) {
         if (typeof renderer !== 'undefined' && renderer) {
-            renderer.render(scene, camera);
+            gameRender(scene, camera);
         }
         return;
     }

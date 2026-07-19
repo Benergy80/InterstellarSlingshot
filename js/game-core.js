@@ -1307,7 +1307,9 @@ function startGame() {
         cameraRotation = { x: 0, y: 0, z: 0 };
         
         console.log('Three.js initialized successfully with doubled world scale');
-        
+
+        if (typeof anaglyphMode !== 'undefined') anaglyphMode.init();
+
         // Start animation first (most critical)
         animate();
         console.log('Animation started');
@@ -1833,7 +1835,7 @@ function animate(rafTime) {
             stars.rotation.x += 0.0001;
             stars.rotation.y += 0.0002;
         }
-        renderer.render(scene, camera);
+        gameRender(scene, camera);
         return; // Skip all other game updates when paused
     }
 
@@ -1842,7 +1844,7 @@ function animate(rafTime) {
     // all game updates are skipped, like the pause branch above.
     if (typeof window !== 'undefined' && window.replaySystem && window.replaySystem.active) {
         if (window.replaySystem.tick()) {
-            renderer.render(scene, camera);
+            gameRender(scene, camera);
             return;
         }
     }
@@ -1851,12 +1853,12 @@ function animate(rafTime) {
     // (bullet-time on a flagship kill): render only, skip the game update.
     const _ajNow = performance.now();
     if (gameState._hitstopUntil && _ajNow < gameState._hitstopUntil) {
-        renderer.render(scene, camera);
+        gameRender(scene, camera);
         return;
     }
     if (gameState._slowmoUntil && _ajNow < gameState._slowmoUntil) {
         gameState._slowmoSkip = !gameState._slowmoSkip;
-        if (gameState._slowmoSkip) { renderer.render(scene, camera); return; } // ~half speed
+        if (gameState._slowmoSkip) { gameRender(scene, camera); return; } // ~half speed
     }
     
     // PERFORMANCE: Monitor frame times and adjust quality
@@ -1951,7 +1953,7 @@ function animate(rafTime) {
             explosionManager.update(gameState.dtMs || 16.67);
         }
         
-        renderer.render(scene, camera);
+        gameRender(scene, camera);
         return; // Stop all other game updates when game over
     }
 
@@ -3128,7 +3130,7 @@ if (gameState.frameCount % 5 === 0 && typeof checkCosmicFeatureInteractions === 
 
     // PERFORMANCE DEBUG: Time render call
     if (typeof perfDebug !== 'undefined') perfDebug.startTimer('render');
-    renderer.render(scene, camera);
+    gameRender(scene, camera);
     if (typeof perfDebug !== 'undefined') {
         perfDebug.endTimer('render');
         perfDebug.endTimer('total');

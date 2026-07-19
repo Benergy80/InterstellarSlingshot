@@ -6170,7 +6170,10 @@ setTimeout(() => {
         if (typeof renderer !== 'undefined') {
             renderer.setSize(window.innerWidth, window.innerHeight);
         }
-        
+        if (typeof anaglyphMode !== 'undefined') {
+            anaglyphMode.resize(window.innerWidth, window.innerHeight);
+        }
+
         gameState.crosshairX = window.innerWidth / 2;
         gameState.crosshairY = window.innerHeight / 2;
     });
