@@ -1,0 +1,112 @@
+/* ═══════════════ VOLKARIS // ESCAPE VELOCITY ═══════════════ */
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { width: 100%; height: 100%; overflow: hidden; background: #06030f; }
+body { font-family: 'Rajdhani', sans-serif; color: #eaf6ff; }
+canvas#scene { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+.hidden { display: none !important; }
+
+/* ── launch screen ── */
+#launch {
+  position: fixed; inset: 0; z-index: 30;
+  display: flex; align-items: center; justify-content: center;
+  background:
+    radial-gradient(ellipse at 50% 120%, rgba(255,47,214,0.22), transparent 55%),
+    radial-gradient(ellipse at 50% -20%, rgba(0,246,255,0.16), transparent 55%),
+    linear-gradient(#0a0420, #06030f);
+}
+.launch-inner { max-width: 720px; text-align: center; padding: 24px; }
+.launch-kicker { font-family: 'Share Tech Mono', monospace; color: #00f6ff; letter-spacing: 0.35em; font-size: 12px; }
+.launch-title {
+  font-family: 'Orbitron', sans-serif; font-weight: 900; font-size: 76px; letter-spacing: 0.12em;
+  background: linear-gradient(180deg, #ffc400 0%, #ff7a1a 35%, #ff2fd6 70%, #a74bff 100%);
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+  text-shadow: 0 0 42px rgba(255,47,214,0.35);
+  margin: 6px 0 2px;
+}
+.launch-sub { font-family: 'Share Tech Mono', monospace; color: #ff6ec7; letter-spacing: 0.28em; font-size: 13px; margin-bottom: 14px; }
+.launch-brief { color: #b9c8e8; font-size: 16px; line-height: 1.45; margin: 0 auto 16px; max-width: 560px; }
+.launch-status { font-family: 'Share Tech Mono', monospace; color: #5dffb2; font-size: 13px; letter-spacing: 0.18em; margin-bottom: 14px; }
+.dots::after { content: '…'; animation: dots 1.4s infinite; }
+@keyframes dots { 0% { content: ''; } 33% { content: '·'; } 66% { content: '··'; } 100% { content: '···'; } }
+.launch-buttons { display: flex; gap: 14px; justify-content: center; margin-bottom: 18px; }
+.launch-btn {
+  font-family: 'Orbitron', sans-serif; font-weight: 700; font-size: 15px; letter-spacing: 0.14em;
+  color: #06030f; background: linear-gradient(90deg, #00f6ff, #5dffb2);
+  border: 0; padding: 14px 30px; cursor: pointer; text-decoration: none; display: inline-block;
+  clip-path: polygon(10px 0, 100% 0, calc(100% - 10px) 100%, 0 100%);
+  transition: filter 0.15s, transform 0.15s;
+}
+.launch-btn:hover:not(:disabled) { filter: brightness(1.2); transform: translateY(-1px); }
+.launch-btn:disabled { filter: grayscale(0.8) brightness(0.5); cursor: wait; }
+.launch-btn.alt { background: linear-gradient(90deg, #ff2fd6, #a74bff); color: #fff; }
+.launch-controls table { margin: 0 auto; border-collapse: collapse; font-size: 14px; color: #9fb4dd; }
+.launch-controls td { padding: 3px 14px; text-align: left; }
+.launch-controls td:nth-child(odd) { font-family: 'Share Tech Mono', monospace; color: #ffc400; font-size: 12px; }
+.launch-foot { margin-top: 16px; font-family: 'Share Tech Mono', monospace; font-size: 11px; color: #5a6a94; letter-spacing: 0.22em; }
+
+/* ── HUD ── */
+#hud { position: fixed; inset: 0; z-index: 10; pointer-events: none; }
+.hud-top {
+  position: absolute; top: 0; left: 0; right: 0;
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 14px 22px; font-family: 'Orbitron', sans-serif;
+  background: linear-gradient(rgba(6,3,15,0.65), transparent);
+}
+.hud-brand { font-weight: 900; font-size: 16px; letter-spacing: 0.2em; color: #ff2fd6; }
+.hud-brand span { color: #00f6ff; font-weight: 400; font-size: 11px; }
+.hud-objective { font-family: 'Share Tech Mono', monospace; font-size: 12px; letter-spacing: 0.2em; color: #5dffb2; }
+.hud-clock { font-family: 'Share Tech Mono', monospace; font-size: 14px; color: #ffc400; }
+.hud-sector {
+  position: absolute; left: 22px; bottom: 92px;
+  font-family: 'Orbitron', sans-serif; font-weight: 700; font-size: 22px;
+  letter-spacing: 0.24em; color: #eaf6ff; text-shadow: 0 0 18px rgba(0,246,255,0.6);
+}
+.hud-bars { position: absolute; left: 22px; bottom: 22px; display: flex; flex-direction: column; gap: 7px; }
+.bar { display: flex; align-items: center; gap: 10px; }
+.bar label { font-family: 'Share Tech Mono', monospace; font-size: 10px; color: #9fb4dd; width: 36px; letter-spacing: 0.2em; }
+.bar .track { width: 210px; height: 8px; background: rgba(255,255,255,0.08); clip-path: polygon(4px 0, 100% 0, calc(100% - 4px) 100%, 0 100%); }
+.bar .fill { height: 100%; width: 100%; transition: width 0.18s; }
+.bar .fill.hp { background: linear-gradient(90deg, #ff2e4d, #ff7a1a); }
+.bar .fill.energy { background: linear-gradient(90deg, #00f6ff, #5dffb2); }
+.bar .fill.hover { background: linear-gradient(90deg, #a74bff, #ff2fd6); }
+#crosshair {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  color: #00f6ff; font-size: 18px; text-shadow: 0 0 8px rgba(0,246,255,0.9);
+  opacity: 0.85; transition: color 0.12s;
+}
+#crosshair.lock { color: #ff2e4d; text-shadow: 0 0 12px rgba(255,46,77,1); font-size: 22px; }
+#prompt {
+  position: absolute; left: 50%; bottom: 18%; transform: translateX(-50%);
+  font-family: 'Orbitron', sans-serif; font-weight: 700; letter-spacing: 0.2em; font-size: 16px;
+  color: #5dffb2; text-shadow: 0 0 16px rgba(93,255,178,0.8);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+@keyframes pulse { 50% { opacity: 0.55; } }
+
+/* ── toast ── */
+#toast {
+  position: fixed; top: 76px; left: 50%; transform: translateX(-50%) translateY(-12px);
+  z-index: 20; text-align: center; opacity: 0; transition: all 0.35s; pointer-events: none;
+  background: rgba(10,4,32,0.85); border: 1px solid rgba(0,246,255,0.35);
+  padding: 10px 26px; clip-path: polygon(12px 0, 100% 0, calc(100% - 12px) 100%, 0 100%);
+}
+#toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+#toast-title { font-family: 'Orbitron', sans-serif; font-weight: 700; letter-spacing: 0.18em; font-size: 15px; color: #00f6ff; }
+#toast-sub { font-family: 'Share Tech Mono', monospace; font-size: 12px; color: #9fb4dd; margin-top: 2px; }
+
+/* ── vignette / overlays ── */
+#vignette { position: fixed; inset: 0; z-index: 15; pointer-events: none; transition: box-shadow 0.15s; }
+#vignette.hit { box-shadow: inset 0 0 140px rgba(255,46,77,0.75); }
+.overlay {
+  position: fixed; inset: 0; z-index: 25; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 10px;
+  background: rgba(6,3,15,0.82); backdrop-filter: blur(4px); text-align: center;
+}
+.overlay-kicker { font-family: 'Share Tech Mono', monospace; color: #5dffb2; letter-spacing: 0.3em; font-size: 13px; }
+.overlay-title {
+  font-family: 'Orbitron', sans-serif; font-weight: 900; font-size: 40px; letter-spacing: 0.1em; max-width: 800px;
+  background: linear-gradient(180deg, #ffc400, #ff2fd6);
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+.overlay-sub { font-family: 'Share Tech Mono', monospace; color: #9fb4dd; letter-spacing: 0.2em; }
+.overlay-buttons { display: flex; gap: 14px; margin-top: 18px; }
