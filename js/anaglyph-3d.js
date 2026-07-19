@@ -1,5 +1,6 @@
 // Anaglyph 3D effect for red/cyan glasses.
-// Toggle: ` (backtick) | Depth: - (less) / = (more) | URL: ?3d=1
+// Toggle: ` (backtick) | Scene depth: - / = | Crosshair depth: [ / ] | URL: ?3d=1
+// All depth adjustments step by 0.05.
 (function () {
 
   // ---------- AnaglyphEffect (adapted from Three.js r128 examples) ----------
@@ -127,11 +128,15 @@
 
   var _effect = null;
   var _enabled = false;
-  var _eyeSep = 1.5; // tuned for space-game scale (units are game units)
+  var _eyeSep = 1.5;    // tuned for space-game scale (units are game units)
+  var _hudDepth = 0.2;  // crosshair stereo depth; + = into the scene, - = pops out
+  var DEPTH_STEP = 0.05;
+  var HUD_PX_PER_UNIT = 30; // hudDepth 0.2 → 6px per-eye horizontal shift
 
   var anaglyphMode = {
     get enabled() { return _enabled; },
     get eyeSep() { return _eyeSep; },
+    get hudDepth() { return _hudDepth; },
 
     init: function () {
       if (_effect || typeof renderer === 'undefined') return;
@@ -148,11 +153,13 @@
       if (!_effect) this.init();
       _enabled = true;
       _showBadge(true);
+      _hudOn();
     },
 
     disable: function () {
       _enabled = false;
       _showBadge(false);
+      _hudOff();
     },
 
     toggle: function () {
@@ -160,13 +167,22 @@
     },
 
     setEyeSep: function (val) {
-      _eyeSep = Math.max(0.1, Math.min(20, val));
+      _eyeSep = Math.round(Math.max(0.05, Math.min(20, val)) * 100) / 100;
       if (_effect) _effect.stereo.eyeSep = _eyeSep;
       _flashDepth();
     },
 
     adjustEyeSep: function (delta) {
       this.setEyeSep(_eyeSep + delta);
+    },
+
+    setHudDepth: function (val) {
+      _hudDepth = Math.round(Math.max(-1, Math.min(1, val)) * 100) / 100;
+      _flashDepth();
+    },
+
+    adjustHudDepth: function (delta) {
+      this.setHudDepth(_hudDepth + delta);
     },
 
     resize: function (w, h) {
@@ -190,6 +206,100 @@
     }
   };
 
+  // ---------- Crosshair stereo depth ----------
+  // The #crosshair div is a DOM overlay the anaglyph shader never sees, so in
+  // 3D it sits flat at the screen plane (and its green is invisible to the red
+  // eye). While 3D is on we hide the original and track it with two live
+  // clones — one filtered to the red channel (left eye), one to cyan (right
+  // eye) — offset horizontally by hudDepth. Positive depth = uncrossed
+  // disparity (red left, cyan right) = crosshair sits INTO the scene.
+
+  var _hudClones = null; // [redClone, cyanClone]
+  var _hudSource = null;
+  var _hudRAF = 0;
+
+  function _ensureEyeFilters() {
+    if (document.getElementById('anaglyph-eye-filters')) return;
+    var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.id = 'anaglyph-eye-filters';
+    svg.setAttribute('width', '0');
+    svg.setAttribute('height', '0');
+    svg.style.position = 'absolute';
+    // Luminance → single channel, so the green crosshair reads at equal
+    // brightness through both lenses instead of vanishing for the red eye.
+    svg.innerHTML =
+      '<filter id="anaglyph-left-eye" color-interpolation-filters="sRGB">' +
+      '<feColorMatrix type="matrix" values="' +
+      '0.299 0.587 0.114 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 1 0"/></filter>' +
+      '<filter id="anaglyph-right-eye" color-interpolation-filters="sRGB">' +
+      '<feColorMatrix type="matrix" values="' +
+      '0 0 0 0 0  0.299 0.587 0.114 0 0  0.299 0.587 0.114 0 0  0 0 0 1 0"/></filter>';
+    document.body.appendChild(svg);
+  }
+
+  function _makeHudClone(src, eye) {
+    var c = src.cloneNode(false);
+    c.removeAttribute('id');
+    c.setAttribute('aria-hidden', 'true');
+    c.style.position = 'fixed';
+    c.style.pointerEvents = 'none';
+    c.style.filter = 'url(#anaglyph-' + eye + '-eye)';
+    c.style.visibility = 'visible';
+    document.body.appendChild(c);
+    return c;
+  }
+
+  function _hudOn() {
+    _hudOff();
+    _ensureEyeFilters();
+    _hudRAF = requestAnimationFrame(_hudSync);
+  }
+
+  function _hudOff() {
+    if (_hudRAF) { cancelAnimationFrame(_hudRAF); _hudRAF = 0; }
+    if (_hudClones) {
+      _hudClones[0].remove();
+      _hudClones[1].remove();
+      _hudClones = null;
+    }
+    if (_hudSource) { _hudSource.style.visibility = ''; _hudSource = null; }
+  }
+
+  function _hudSync() {
+    if (!_enabled) return;
+    _hudRAF = requestAnimationFrame(_hudSync);
+
+    if (!_hudSource) {
+      _hudSource = document.getElementById('crosshair');
+      if (!_hudSource) return; // not in the DOM yet — keep polling
+    }
+    if (!_hudClones) {
+      _hudClones = [
+        _makeHudClone(_hudSource, 'left'),
+        _makeHudClone(_hudSource, 'right')
+      ];
+      _hudSource.style.visibility = 'hidden';
+    }
+
+    // Rect center of the (hidden but laid-out) original, incl. its CSS
+    // transform; the clones re-apply the same class transform around it.
+    var rect = _hudSource.getBoundingClientRect();
+    var cx = rect.left + rect.width / 2;
+    var cy = rect.top + rect.height / 2;
+    var shift = _hudDepth * HUD_PX_PER_UNIT;
+    var display = _hudSource.style.display;
+
+    for (var i = 0; i < 2; i++) {
+      var clone = _hudClones[i];
+      if (clone.className !== _hudSource.className) {
+        clone.className = _hudSource.className;
+      }
+      clone.style.display = display;
+      clone.style.left = (i === 0 ? cx - shift : cx + shift) + 'px';
+      clone.style.top = cy + 'px';
+    }
+  }
+
   // ---------- HUD badge ----------
 
   var _badge = null;
@@ -206,7 +316,8 @@
         'transition:opacity 0.3s;text-shadow:0 0 6px #0ff;';
       document.body.appendChild(_badge);
     }
-    _badge.textContent = '3D  depth:' + _eyeSep.toFixed(1);
+    _badge.textContent =
+      '3D  depth:' + _eyeSep.toFixed(2) + '  hud:' + _hudDepth.toFixed(2);
     _badge.style.opacity = show ? '1' : '0';
   }
 
@@ -229,8 +340,10 @@
       return;
     }
     if (_enabled) {
-      if (e.key === '-') { e.preventDefault(); anaglyphMode.adjustEyeSep(-0.2); }
-      if (e.key === '=') { e.preventDefault(); anaglyphMode.adjustEyeSep(0.2); }
+      if (e.key === '-') { e.preventDefault(); anaglyphMode.adjustEyeSep(-DEPTH_STEP); }
+      if (e.key === '=') { e.preventDefault(); anaglyphMode.adjustEyeSep(DEPTH_STEP); }
+      if (e.key === '[') { e.preventDefault(); anaglyphMode.adjustHudDepth(-DEPTH_STEP); }
+      if (e.key === ']') { e.preventDefault(); anaglyphMode.adjustHudDepth(DEPTH_STEP); }
     }
   });
 
