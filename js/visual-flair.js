@@ -633,16 +633,29 @@ function spawnKillText(worldPos, text, cssColor, sizePx) {
         const v = worldPos.clone().project(camera);
         if (v.z > 1 || v.x < -1 || v.x > 1 || v.y < -1 || v.y > 1) return; // off-screen
         const fs = Math.round(sizePx || 15);
-        const div = document.createElement('div');
-        div.style.cssText = 'position:fixed;z-index:55;pointer-events:none;font-family:Orbitron,monospace;' +
-            'font-weight:bold;font-size:' + fs + 'px;text-shadow:0 0 8px rgba(0,0,0,0.9);' +
-            'animation:killTextFloat 1.4s ease-out forwards;' +
-            'left:' + ((v.x + 1) / 2 * window.innerWidth).toFixed(0) + 'px;' +
-            'top:' + ((1 - v.y) / 2 * window.innerHeight).toFixed(0) + 'px;' +
-            'color:' + (cssColor || '#ffcc44');
-        div.textContent = text;
-        document.body.appendChild(div);
-        setTimeout(() => div.remove(), 1500);
+        const topPx = ((1 - v.y) / 2 * window.innerHeight).toFixed(0);
+        const mk = (leftPx, eyeFilter) => {
+            const div = document.createElement('div');
+            div.style.cssText = 'position:fixed;z-index:55;pointer-events:none;font-family:Orbitron,monospace;' +
+                'font-weight:bold;font-size:' + fs + 'px;text-shadow:0 0 8px rgba(0,0,0,0.9);' +
+                'animation:killTextFloat 1.4s ease-out forwards;' +
+                'left:' + leftPx.toFixed(0) + 'px;top:' + topPx + 'px;' +
+                'color:' + (cssColor || '#ffcc44') +
+                (eyeFilter ? ';filter:url(#anaglyph-' + eyeFilter + '-eye)' : '');
+            div.textContent = text;
+            document.body.appendChild(div);
+            setTimeout(() => div.remove(), 1500);
+        };
+        // In anaglyph 3D, place a red/cyan copy at each stereo eye's
+        // projection so the text sits at the TARGET's scene depth instead
+        // of flat at the screen plane.
+        const eyes = (typeof anaglyphMode !== 'undefined') ? anaglyphMode.eyeProjectPx(worldPos) : null;
+        if (eyes) {
+            mk(eyes.leftX, 'left');
+            mk(eyes.rightX, 'right');
+        } else {
+            mk((v.x + 1) / 2 * window.innerWidth, null);
+        }
     } catch (e) {}
 }
 

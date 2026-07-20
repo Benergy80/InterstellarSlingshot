@@ -128,10 +128,11 @@
 
   var _effect = null;
   var _enabled = false;
-  var _eyeSep = 1.5;    // tuned for space-game scale (units are game units)
+  var _eyeSep = 0.2;    // scene eye separation (game units)
   var _hudDepth = 0.2;  // crosshair stereo depth; + = into the scene, - = pops out
   var DEPTH_STEP = 0.05;
-  var HUD_PX_PER_UNIT = 30; // hudDepth 0.2 → 6px per-eye horizontal shift
+  var HUD_PX_PER_UNIT = 30;   // hudDepth 0.2 → 6px per-eye horizontal shift
+  var PRAISE_FLOAT_PX = 24;   // praise text per-eye shift at full float-out
 
   var anaglyphMode = {
     get enabled() { return _enabled; },
@@ -154,6 +155,7 @@
       _enabled = true;
       _showBadge(true);
       _hudOn();
+      _wrapPraise();
     },
 
     disable: function () {
@@ -189,6 +191,31 @@
       if (_effect) _effect.setSize(w, h);
     },
 
+    // Project a world position through both stereo eye cameras → per-eye
+    // screen X in px. Placing a red-filtered copy at leftX and a cyan copy
+    // at rightX puts a DOM element at EXACTLY that point's scene depth.
+    // Returns null when 3D is off (caller falls back to mono placement).
+    eyeProjectPx: function (worldPos) {
+      if (!_enabled || !_effect) return null;
+      _ensureEyeFilters();
+      if (!_invM) _invM = new THREE.Matrix4();
+      // Refresh the stereo rig from the live camera — callers may project
+      // before this frame's render pass has updated it.
+      if (typeof camera !== 'undefined' && camera && camera.isCamera) {
+        _effect.stereo.update(camera);
+      }
+      var cams = [_effect.stereo.cameraL, _effect.stereo.cameraR];
+      var xs = [];
+      for (var i = 0; i < 2; i++) {
+        var v = worldPos.clone();
+        _invM.copy(cams[i].matrixWorld).invert();
+        v.applyMatrix4(_invM).applyMatrix4(cams[i].projectionMatrix);
+        if (v.z > 1) return null; // behind the camera
+        xs.push((v.x + 1) / 2 * window.innerWidth);
+      }
+      return { leftX: xs[0], rightX: xs[1] };
+    },
+
     dispose: function () {
       if (_effect) { _effect.dispose(); _effect = null; }
       _enabled = false;
@@ -217,6 +244,7 @@
   var _hudClones = null; // [redClone, cyanClone]
   var _hudSource = null;
   var _hudRAF = 0;
+  var _invM = null; // scratch Matrix4 for eyeProjectPx (lazy: THREE loads later)
 
   function _ensureEyeFilters() {
     if (document.getElementById('anaglyph-eye-filters')) return;
@@ -263,6 +291,10 @@
       _hudClones = null;
     }
     if (_hudSource) { _hudSource.style.visibility = ''; _hudSource = null; }
+    var stale = document.querySelectorAll('.anaglyph-praise');
+    for (var i = 0; i < stale.length; i++) stale[i].remove();
+    var praise = document.getElementById('arcadeText');
+    if (praise) praise.style.visibility = '';
   }
 
   function _hudSync() {
@@ -298,6 +330,63 @@
       clone.style.left = (i === 0 ? cx - shift : cx + shift) + 'px';
       clone.style.top = cy + 'px';
     }
+  }
+
+  // ---------- Arcade praise float-out ----------
+  // The praise word already grows and fades (arcadePop). In 3D we replace it
+  // with red/cyan eye copies whose horizontal separation ANIMATES during the
+  // grow/fade phase — crossed disparity (red right, cyan left) increasing
+  // over time reads as the word floating off the screen toward the viewer.
+  // The pulse phase (0-38%) stays at screen depth; the float ramps with the
+  // grow. flashArcadeText is wrapped lazily on first enable() because
+  // visual-flair.js loads after this file.
+
+  var _praiseWrapped = false;
+
+  function _ensurePraiseKeyframes() {
+    if (document.getElementById('anaglyph-praise-style')) return;
+    var st = document.createElement('style');
+    st.id = 'anaglyph-praise-style';
+    st.textContent =
+      '@keyframes anaglyphPraiseL{0%,38%{margin-left:0}100%{margin-left:' +
+      PRAISE_FLOAT_PX + 'px}}' +
+      '@keyframes anaglyphPraiseR{0%,38%{margin-left:0}100%{margin-left:-' +
+      PRAISE_FLOAT_PX + 'px}}';
+    document.head.appendChild(st);
+  }
+
+  function _wrapPraise() {
+    if (_praiseWrapped) return;
+    if (typeof window.flashArcadeText !== 'function') return; // retry next enable
+    var orig = window.flashArcadeText;
+    window.flashArcadeText = function (text, tier, subtitle) {
+      orig(text, tier, subtitle);
+      if (!_enabled) return;
+      var el = document.getElementById('arcadeText');
+      if (!el) return; // praise was skipped (e.g. boss intro card is up)
+      _ensureEyeFilters();
+      _ensurePraiseKeyframes();
+      // A new praise replaces the previous one — drop its eye copies too.
+      var stale = document.querySelectorAll('.anaglyph-praise');
+      for (var i = 0; i < stale.length; i++) stale[i].remove();
+      // Keep the original (hidden) as the game's #arcadeText dedupe handle.
+      el.style.visibility = 'hidden';
+      var eyes = ['left', 'right'];
+      for (var j = 0; j < 2; j++) {
+        var c = el.cloneNode(true);
+        c.removeAttribute('id');
+        c.setAttribute('aria-hidden', 'true');
+        c.className = 'anaglyph-praise';
+        c.style.visibility = 'visible';
+        c.style.filter = 'url(#anaglyph-' + eyes[j] + '-eye)';
+        c.style.animation =
+          'arcadePop 2s cubic-bezier(.2,.7,.3,1) forwards, ' +
+          (j === 0 ? 'anaglyphPraiseL' : 'anaglyphPraiseR') + ' 2s linear forwards';
+        document.body.appendChild(c);
+        setTimeout(function (node) { node.remove(); }.bind(null, c), 2050);
+      }
+    };
+    _praiseWrapped = true;
   }
 
   // ---------- HUD badge ----------
