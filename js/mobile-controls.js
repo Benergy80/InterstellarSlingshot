@@ -1026,9 +1026,10 @@ window.tiltSteering = (function () {
         const pitchRate = rate(pitchDeg - T.base.pitch);
         if (!yawRate && !pitchRate) return;
 
-        // Same local-space steering as the touch-drag look: tilt right =
-        // turn right, tilt the top of the phone toward you = pull up.
-        camera.rotateY(-yawRate);
+        // Tilt the top of the phone toward you = pull up. Yaw sign
+        // verified on-device by Ben: positive gamma (right edge down)
+        // needs positive rotateY here or left/right come out reversed.
+        camera.rotateY(yawRate);
         camera.rotateX(pitchRate);
 
         // Same bookkeeping as touch look: kill rotational drift and feed
