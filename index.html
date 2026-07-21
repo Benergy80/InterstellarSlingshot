@@ -24,7 +24,7 @@
          This lives only on the feature branch; main will not print it. -->
     <script>
       window.BUILD_ID = 'claude/anaglyph-3d';
-      window.BUILD_TAG = '20260721g';
+      window.BUILD_TAG = '20260721h';
       console.log(
         '%c🚀 BUILD: ' + window.BUILD_ID + '  ·  ' + window.BUILD_TAG,
         'background:#0a7d2c;color:#fff;font-size:14px;font-weight:bold;padding:4px 10px;border-radius:4px;'
@@ -120,7 +120,7 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     
     <!-- Game Styles -->
-    <link rel="stylesheet" href="css/styles.css?v=20260721e">
+    <link rel="stylesheet" href="css/styles.css?v=20260721h">
     <style>
         /* Mobile browser UI hiding */
         html, body {
@@ -434,13 +434,8 @@
         display: flex !important;
     }
 
-    /* Show mobile top row separately */
+    /* Show the flank button columns */
     .mobile-controls-top {
-        display: flex !important;
-    }
-
-    /* Show the top-left Flight Controls + Pause cluster */
-    .mobile-top-left {
         display: flex !important;
     }
 
@@ -471,7 +466,7 @@
     /* Hide during intro */
     body.intro-active #achievementPopup,
     body.intro-active .mobile-controls-container,
-    body.intro-active .mobile-top-left,
+    body.intro-active .mobile-controls-top,
     body.intro-active .nav-panel-mobile {
         display: none !important;
     }
@@ -529,7 +524,7 @@
             /* Hide during intro */
             body.intro-active #achievementPopup,
             body.intro-active .mobile-controls-container,
-            body.intro-active .mobile-top-left,
+            body.intro-active .mobile-controls-top,
             body.intro-active .nav-panel-mobile {
                 display: none !important;
             }
@@ -558,33 +553,15 @@
             pointer-events: auto;
         }
 
-        /* Top-left screen cluster: Flight Controls + Pause, mirroring the
-           NAV swipe indicator on the right. Fixed child of the container so
-           it inherits the container's mobile-only / intro-hidden visibility. */
-        .mobile-top-left {
-            position: fixed;
-            top: 12px;
-            left: 8px;
-            display: none;
-            gap: 8px;
-            z-index: 9000;
-            pointer-events: none;
-        }
-
-        .mobile-top-left .mobile-btn {
-            pointer-events: auto;
-            width: 38px;
-            height: 38px;
-            font-size: 14px;
-        }
-
-        /* Top row: 3D mode and Emergency warp - flanking the indicators */
+        /* Flank columns above the action buttons, hugging the true screen
+           edges (lives at body level — viewport-relative fixed positioning).
+           Hidden by default; the mobile media query shows it. */
         .mobile-controls-top {
             position: fixed;
             bottom: 100px;
-            left: -5px;
-            right: -5px;
-            display: flex;
+            left: 8px;
+            right: 8px;
+            display: none;
             justify-content: space-between;
             padding: 0;
             z-index: 25;
@@ -998,28 +975,6 @@
 
 <!-- MOBILE CONTROLS -->
 <div class="mobile-controls-container">
-    <!-- Flanking columns above the action buttons.
-         Left: Flight Controls over 3D Mode. Right: Pause over Emergency Warp. -->
-    <div class="mobile-controls-top">
-        <div class="mobile-btn-col">
-            <button class="mobile-btn" onclick="showMobilePanel('controls')" title="Flight Controls">
-                <i class="fas fa-gamepad"></i>
-            </button>
-            <button id="mobileAnaglyphBtn" class="mobile-btn" type="button" title="Red/Cyan 3D Mode">
-                <i class="fas fa-glasses"></i>
-            </button>
-        </div>
-        <div class="mobile-btn-col">
-            <button id="mobilePauseBtn" class="mobile-btn" type="button" title="Pause / Audio">
-                <i class="fas fa-pause" id="mobilePauseIcon"></i>
-            </button>
-            <button class="mobile-btn warp" onclick="mobileEmergencyWarp()" title="Emergency Warp">
-                <i class="fas fa-meteor"></i>
-                <span class="warp-count-badge" id="mobileWarpCountBadge">5</span>
-            </button>
-        </div>
-    </div>
-
     <!-- Bottom row: Main action buttons -->
     <div class="mobile-controls">
         <button class="mobile-btn missile"
@@ -1056,13 +1011,28 @@
     </div>
 </div>
 
-<!-- Top-left corner: tilt-steering toggle. MUST live outside
-     .mobile-controls-container — that container has a translateX transform,
-     which would hijack this fixed positioning and drag it to the bottom. -->
-<div class="mobile-top-left">
-    <button id="mobileTiltBtn" class="mobile-btn" type="button" title="Tilt Steering On/Off">
-        <i class="fas fa-mobile-alt"></i>
-    </button>
+<!-- Flanking columns hugging the screen edges above the action buttons.
+     Left: Flight Controls over 3D Mode. Right: Pause over Emergency Warp.
+     MUST live outside .mobile-controls-container — that container has a
+     translateX transform, which would hijack this fixed positioning. -->
+<div class="mobile-controls-top">
+    <div class="mobile-btn-col">
+        <button class="mobile-btn" onclick="showMobilePanel('controls')" title="Flight Controls">
+            <i class="fas fa-gamepad"></i>
+        </button>
+        <button id="mobileAnaglyphBtn" class="mobile-btn" type="button" title="Red/Cyan 3D Mode">
+            <i class="fas fa-glasses"></i>
+        </button>
+    </div>
+    <div class="mobile-btn-col">
+        <button id="mobilePauseBtn" class="mobile-btn" type="button" title="Pause / Audio">
+            <i class="fas fa-pause" id="mobilePauseIcon"></i>
+        </button>
+        <button class="mobile-btn warp" onclick="mobileEmergencyWarp()" title="Emergency Warp">
+            <i class="fas fa-forward-fast"></i>
+            <span class="warp-count-badge" id="mobileWarpCountBadge">5</span>
+        </button>
+    </div>
 </div>
 
     <!-- Mobile Navigation Panel -->
@@ -1247,7 +1217,7 @@
     <script src="js/camera-system.js?v=20260703r"></script>
     <script src="js/cosmic-features.js"></script>
     <script src="js/game-objects.js?v=20260703r"></script>
-    <script src="js/game-controls.js?v=20260721d"></script>
+    <script src="js/game-controls.js?v=20260721h"></script>
     <script src="js/civilian-combat.js?v=20260703r"></script>
     <script src="js/visual-flair.js?v=20260719b"></script>
     <script src="js/playtest-probe.js?v=20260703r"></script>

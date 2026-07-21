@@ -7686,6 +7686,15 @@ function togglePause() {
         console.error('gameState not defined, cannot toggle pause');
         return;
     }
+
+    // Reflect the live tilt-steering state on the pause-menu toggle
+    function _updTiltState() {
+        const st = document.getElementById('pauseTiltState');
+        if (!st) return;
+        const on = !!(window.tiltSteering && tiltSteering.enabled);
+        st.textContent = on ? 'ON' : 'OFF';
+        st.style.color = on ? '#0ff' : '#f87171';
+    }
     
     gameState.paused = !gameState.paused;
 
@@ -7740,6 +7749,12 @@ function togglePause() {
                     <input id="pauseMusicVol" type="range" min="0" max="1" step="0.05" style="width:100%;accent-color:#22d3ee;">
                     <div class="text-sm text-gray-300 mb-1 mt-3" style="text-align:left;">SFX Volume</div>
                     <input id="pauseSfxVol" type="range" min="0" max="1" step="0.05" style="width:100%;accent-color:#22d3ee;">
+                </div>
+                <div style="border-top:1px solid rgba(0,150,255,0.4);margin-top:14px;padding-top:14px;">
+                    <h3 class="text-cyan-400 font-bold mb-3" style="letter-spacing:2px;">CONTROLS</h3>
+                    <button id="pauseTiltBtn" class="space-btn rounded px-4 py-2" type="button" title="Steer by tilting the phone">
+                        <i class="fas fa-mobile-alt mr-2"></i>Tilt Steering: <span id="pauseTiltState" style="font-weight:700;">OFF</span>
+                    </button>
                 </div>` : '';
         pauseOverlay.innerHTML = `
             <div class="text-center ui-panel rounded-lg p-8" style="max-width:92vw;max-height:86vh;overflow-y:auto;">
@@ -7796,6 +7811,16 @@ function togglePause() {
                 _updSfxIcon();
             });
         }
+        const tiltBtn = document.getElementById('pauseTiltBtn');
+        if (tiltBtn) {
+            tiltBtn.addEventListener('click', async (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                if (!window.tiltSteering) return;
+                await tiltSteering.toggle();
+                _updTiltState();
+            });
+        }
     }
 
     // Sync the audio controls to live state every time the menu opens
@@ -7812,6 +7837,7 @@ function togglePause() {
         if (sfxIc) sfxIc.className = window._sfxMuted
             ? 'fas fa-volume-mute text-red-400 mr-2'
             : 'fas fa-bullhorn text-cyan-400 mr-2';
+        _updTiltState();
     }
 
     pauseOverlay.style.display = gameState.paused ? 'flex' : 'none';
