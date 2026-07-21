@@ -337,8 +337,10 @@
   // with red/cyan eye copies whose horizontal separation ANIMATES during the
   // grow/fade phase — crossed disparity (red right, cyan left) increasing
   // over time reads as the word floating off the screen toward the viewer.
-  // The pulse phase (0-38%) stays at screen depth; the float ramps with the
-  // grow. flashArcadeText is wrapped lazily on first enable() because
+  // The pop-in (0-11%) lands at screen depth; disparity then ramps to full
+  // by 70% and HOLDS, so peak pop-out happens while the word is still
+  // clearly visible (the old 38%→100% ramp peaked at opacity 0).
+  // flashArcadeText is wrapped lazily on first enable() because
   // visual-flair.js loads after this file.
 
   var _praiseWrapped = false;
@@ -348,9 +350,9 @@
     var st = document.createElement('style');
     st.id = 'anaglyph-praise-style';
     st.textContent =
-      '@keyframes anaglyphPraiseL{0%,38%{margin-left:0}100%{margin-left:' +
+      '@keyframes anaglyphPraiseL{0%,11%{margin-left:0}70%,100%{margin-left:' +
       PRAISE_FLOAT_PX + 'px}}' +
-      '@keyframes anaglyphPraiseR{0%,38%{margin-left:0}100%{margin-left:-' +
+      '@keyframes anaglyphPraiseR{0%,11%{margin-left:0}70%,100%{margin-left:-' +
       PRAISE_FLOAT_PX + 'px}}';
     document.head.appendChild(st);
   }
