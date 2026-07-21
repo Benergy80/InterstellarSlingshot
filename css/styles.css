@@ -1166,7 +1166,11 @@ body.intro-active .nav-panel-mobile {
 /* Swipe indicators for navigation panel - Cyberpunk theme */
 .swipe-indicator {
     position: fixed;
-    top: 20px;
+    /* In line with the top-left Flight Controls / Pause cluster (top:12px,
+       38px tall) so the whole top edge reads as one row. */
+    top: 12px;
+    height: 38px;
+    box-sizing: border-box;
     display: flex;
     align-items: center;
     gap: 4px;
@@ -1187,7 +1191,8 @@ body.intro-active .nav-panel-mobile {
 
 /* Close indicator: left side, hidden by default */
 .swipe-indicator-close {
-    left: 8px;
+    /* Clear of the top-left Flight Controls / Pause cluster (ends ~92px) */
+    left: 100px;
     display: none;
 }
 

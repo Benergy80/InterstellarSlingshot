@@ -4008,10 +4008,11 @@
     // Mobile: position at the TOP just below the NAV button.
     // Desktop: keep at the bottom (above the achievement popup bottom-80).
     const isMobile = isMobileViewport();
-    // Mobile: center top, on the same line as the NAV swipe indicators
-    // (top:20px) and compact enough to fit between them, so it no longer
-    // covers the praise text / notifications band below. Desktop: bottom.
-    const topOrBottom = isMobile ? 'top:14px' : 'bottom:10px';
+    // Mobile: center top, matching the 38px-tall top-left cluster and NAV
+    // indicator row (top:12px) so the whole top edge reads as one line,
+    // and clear of the praise text / notifications band below. Desktop:
+    // bottom.
+    const topOrBottom = isMobile ? 'top:12px' : 'bottom:10px';
     // Mobile: the panel becomes a tap target to toggle takeover, so
     // enable pointer-events.  Desktop: non-interactive overlay.
     const pe = isMobile ? 'pointer-events:auto' : 'pointer-events:none';
@@ -4037,6 +4038,11 @@
       isMobile ? 'letter-spacing:1px' : 'letter-spacing:2px',
       isMobile ? 'min-width:0' : 'min-width:260px',
       isMobile ? 'max-width:56vw' : 'max-width:90vw',
+      isMobile ? 'height:38px' : '',
+      isMobile ? 'box-sizing:border-box' : '',
+      isMobile ? 'display:flex' : '',
+      isMobile ? 'align-items:center' : '',
+      isMobile ? 'justify-content:center' : '',
       '-webkit-tap-highlight-color:transparent',
       'touch-action:manipulation',
     ].join(';');

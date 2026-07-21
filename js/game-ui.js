@@ -3220,7 +3220,7 @@ function createMobileFloatingStatus() {
             <i class="fas fa-shield-alt" style="margin-right: 6px;"></i>
             <span id="mobileFloatingHull">100%</span>
         </div>
-        <button onclick="if(typeof showMobilePanel==='function')showMobilePanel('status')" style="pointer-events:auto; width:36px; height:36px; border-radius:6px; background:rgba(0,0,0,0.6); border:1px solid rgba(0,150,255,0.5); color:#60a5fa; font-size:14px; display:flex; align-items:center; justify-content:center; cursor:pointer; box-shadow:0 0 8px rgba(0,150,255,0.3); -webkit-tap-highlight-color:transparent; touch-action:manipulation;">
+        <button onclick="if(typeof showMobilePanel==='function')showMobilePanel('status')" style="pointer-events:auto; width:36px; height:36px; border-radius:6px; background:rgba(0,0,0,0.6); border:1px solid rgba(0,150,255,0.5); color:#60a5fa; font-size:14px; display:flex; align-items:center; justify-content:center; cursor:pointer; box-shadow:0 0 8px rgba(0,150,255,0.3); opacity:0.7; -webkit-tap-highlight-color:transparent; touch-action:manipulation;">
             <i class="fas fa-info-circle"></i>
         </button>
         <div class="mobile-stat-pill" style="background: rgba(0, 0, 0, 0.7); border: 1px solid rgba(96, 165, 250, 0.6); border-radius: 4px; padding: 4px 14px; font-size: 13px; font-weight: 600; color: #60a5fa; text-shadow: 0 0 8px rgba(96, 165, 250, 0.8); box-shadow: 0 0 10px rgba(96, 165, 250, 0.3), inset 0 0 10px rgba(96, 165, 250, 0.1); opacity: 0.7;">
