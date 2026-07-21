@@ -24,7 +24,7 @@
          This lives only on the feature branch; main will not print it. -->
     <script>
       window.BUILD_ID = 'claude/anaglyph-3d';
-      window.BUILD_TAG = '20260721e';
+      window.BUILD_TAG = '20260721f';
       console.log(
         '%c🚀 BUILD: ' + window.BUILD_ID + '  ·  ' + window.BUILD_TAG,
         'background:#0a7d2c;color:#fff;font-size:14px;font-weight:bold;padding:4px 10px;border-radius:4px;'
@@ -595,6 +595,14 @@
             pointer-events: auto;
         }
 
+        /* Stacked flank columns inside the top row */
+        .mobile-btn-col {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            pointer-events: none;
+        }
+
         /* Bottom row: Main action buttons */
         .mobile-controls {
             display: flex;
@@ -990,15 +998,26 @@
 
 <!-- MOBILE CONTROLS -->
 <div class="mobile-controls-container">
-    <!-- Top row above the action buttons: 3D Mode, Emergency Warp -->
+    <!-- Flanking columns above the action buttons.
+         Left: Flight Controls over 3D Mode. Right: Pause over Emergency Warp. -->
     <div class="mobile-controls-top">
-        <button id="mobileAnaglyphBtn" class="mobile-btn" type="button" title="Red/Cyan 3D Mode">
-            <i class="fas fa-glasses"></i>
-        </button>
-        <button class="mobile-btn warp" onclick="mobileEmergencyWarp()" title="Emergency Warp">
-            <i class="fas fa-meteor"></i>
-            <span class="warp-count-badge" id="mobileWarpCountBadge">5</span>
-        </button>
+        <div class="mobile-btn-col">
+            <button class="mobile-btn" onclick="showMobilePanel('controls')" title="Flight Controls">
+                <i class="fas fa-gamepad"></i>
+            </button>
+            <button id="mobileAnaglyphBtn" class="mobile-btn" type="button" title="Red/Cyan 3D Mode">
+                <i class="fas fa-glasses"></i>
+            </button>
+        </div>
+        <div class="mobile-btn-col">
+            <button id="mobilePauseBtn" class="mobile-btn" type="button" title="Pause / Audio">
+                <i class="fas fa-pause" id="mobilePauseIcon"></i>
+            </button>
+            <button class="mobile-btn warp" onclick="mobileEmergencyWarp()" title="Emergency Warp">
+                <i class="fas fa-meteor"></i>
+                <span class="warp-count-badge" id="mobileWarpCountBadge">5</span>
+            </button>
+        </div>
     </div>
 
     <!-- Bottom row: Main action buttons -->
@@ -1037,16 +1056,12 @@
     </div>
 </div>
 
-<!-- Top-left screen cluster: Flight Controls + Pause (audio lives in the
-     pause menu). MUST live outside .mobile-controls-container — that
-     container has a translateX transform, which would hijack this fixed
-     positioning and drag the cluster to the bottom of the screen. -->
+<!-- Top-left corner: tilt-steering toggle. MUST live outside
+     .mobile-controls-container — that container has a translateX transform,
+     which would hijack this fixed positioning and drag it to the bottom. -->
 <div class="mobile-top-left">
-    <button class="mobile-btn" onclick="showMobilePanel('controls')" title="Flight Controls">
-        <i class="fas fa-gamepad"></i>
-    </button>
-    <button id="mobilePauseBtn" class="mobile-btn" type="button" title="Pause / Audio">
-        <i class="fas fa-pause" id="mobilePauseIcon"></i>
+    <button id="mobileTiltBtn" class="mobile-btn" type="button" title="Tilt Steering On/Off">
+        <i class="fas fa-mobile-alt"></i>
     </button>
 </div>
 
@@ -1246,11 +1261,11 @@
     <script src="js/game-shields.js"></script>
     <script src="js/game-music.js?v=20260721d"></script>
     <script src="js/victory-replay.js?v=20260703r"></script>
-    <script src="js/autopilot.js?v=20260721e"></script>
+    <script src="js/autopilot.js?v=20260721f"></script>
     <script src="js/game-core.js?v=20260703r"></script>
 
     <!-- Mobile Script -->
-    <script src="js/mobile-controls.js"></script>
+    <script src="js/mobile-controls.js?v=20260721f"></script>
 
     <!-- Initialization Script -->
     <script>

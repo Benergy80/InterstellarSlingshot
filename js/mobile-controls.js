@@ -972,4 +972,159 @@ window.addEventListener('beforeunload', () => {
     }
 });
 
+// =============================================================================
+// TILT (ACCELEROMETER) STEERING — toggled by #mobileTiltBtn
+// Steers with the same local-space camera rotations as touch-drag look.
+// Neutral attitude is captured from however the phone is held at enable
+// time; tilting past a small deadzone turns at a rate proportional to
+// the tilt angle. iOS 13+ requires a user-gesture permission grant.
+// =============================================================================
+
+window.tiltSteering = (function () {
+    const T = {
+        enabled: false,
+        base: null,        // neutral {pitch, yaw} in degrees, captured on enable
+        deadzone: 3,       // degrees of slop around neutral
+        maxTilt: 22,       // degrees past deadzone for full-rate turn
+        maxRate: 0.028,    // rad per orientation event (~60Hz) at full tilt
+        _listening: false
+    };
+
+    function screenAngle() {
+        if (screen.orientation && typeof screen.orientation.angle === 'number') {
+            return screen.orientation.angle;
+        }
+        return (typeof window.orientation === 'number') ? window.orientation : 0;
+    }
+
+    function onOrient(e) {
+        if (!T.enabled) return;
+        if (e.beta === null || e.gamma === null) return;
+        if (typeof gameState === 'undefined' || !gameState.gameStarted ||
+            gameState.paused || gameState.gameOver) return;
+        if (window.demoPilot && demoPilot.active && demoPilot.driving) return; // don't fight the autopilot
+        if (typeof camera === 'undefined') return;
+
+        // Map device axes to pitch/yaw for the current screen orientation.
+        // Portrait: beta = front-back tilt, gamma = left-right tilt.
+        const ang = screenAngle();
+        let pitchDeg, yawDeg;
+        if (ang === 90) { pitchDeg = -e.gamma; yawDeg = e.beta; }
+        else if (ang === -90 || ang === 270) { pitchDeg = e.gamma; yawDeg = -e.beta; }
+        else { pitchDeg = e.beta; yawDeg = e.gamma; }
+
+        if (!T.base) { T.base = { pitch: pitchDeg, yaw: yawDeg }; return; }
+
+        const rate = (d) => {
+            if (Math.abs(d) < T.deadzone) return 0;
+            let v = d - Math.sign(d) * T.deadzone;
+            v = Math.max(-T.maxTilt, Math.min(T.maxTilt, v));
+            return (v / T.maxTilt) * T.maxRate;
+        };
+
+        const yawRate = rate(yawDeg - T.base.yaw);
+        const pitchRate = rate(pitchDeg - T.base.pitch);
+        if (!yawRate && !pitchRate) return;
+
+        // Same local-space steering as the touch-drag look: tilt right =
+        // turn right, tilt the top of the phone toward you = pull up.
+        camera.rotateY(-yawRate);
+        camera.rotateX(pitchRate);
+
+        // Same bookkeeping as touch look: kill rotational drift and feed
+        // the auto-leveling timer so it doesn't fight the input.
+        if (typeof rotationalVelocity !== 'undefined' && rotationalVelocity) {
+            rotationalVelocity.pitch = 0; rotationalVelocity.yaw = 0; rotationalVelocity.roll = 0;
+        }
+        if (window.rotationalVelocity) {
+            window.rotationalVelocity.pitch = 0; window.rotationalVelocity.yaw = 0; window.rotationalVelocity.roll = 0;
+        }
+        if (typeof window.lastRollInputTime !== 'undefined') {
+            window.lastRollInputTime = performance.now();
+        }
+    }
+
+    function syncTiltBtn() {
+        const b = document.getElementById('mobileTiltBtn');
+        if (!b) return;
+        if (T.enabled) {
+            b.style.borderColor = '#0ff';
+            b.style.color = '#0ff';
+            b.style.boxShadow = '0 0 12px rgba(0,255,255,0.6), inset 0 0 8px rgba(0,255,255,0.2)';
+            b.style.opacity = '1';
+        } else {
+            b.style.borderColor = '';
+            b.style.color = '';
+            b.style.boxShadow = '';
+            b.style.opacity = '';
+        }
+    }
+
+    async function enable() {
+        try {
+            if (typeof DeviceOrientationEvent !== 'undefined' &&
+                typeof DeviceOrientationEvent.requestPermission === 'function') {
+                const r = await DeviceOrientationEvent.requestPermission();
+                if (r !== 'granted') {
+                    if (typeof showAchievement === 'function') {
+                        showAchievement('Tilt Steering', 'Motion access denied by the browser');
+                    }
+                    return;
+                }
+            }
+        } catch (err) {
+            return;
+        }
+        if (!T._listening) {
+            window.addEventListener('deviceorientation', onOrient);
+            T._listening = true;
+        }
+        T.base = null; // recapture neutral from the current hold angle
+        T.enabled = true;
+        if (typeof showAchievement === 'function') {
+            showAchievement('Tilt Steering ON', 'Current hold angle is neutral — tilt to steer');
+        }
+    }
+
+    T.toggle = async function () {
+        if (T.enabled) {
+            T.enabled = false;
+            if (typeof showAchievement === 'function') {
+                showAchievement('Tilt Steering OFF', 'Drag to look around');
+            }
+        } else {
+            await enable();
+        }
+        syncTiltBtn();
+        return T.enabled;
+    };
+
+    T.recalibrate = function () { T.base = null; };
+
+    document.addEventListener('click', (e) => {
+        const t = e.target && e.target.closest && e.target.closest('#mobileTiltBtn');
+        if (!t) return;
+        e.preventDefault();
+        T.toggle();
+    });
+
+    return T;
+})();
+
+// =============================================================================
+// AUTO-TARGETING KEEP-ALIVE (mobile)
+// Desktop arms the auto-targeting crosshair by HOLDING Space, and it drops
+// on release or when the locked enemy dies. Mobile has no Space key, so
+// keep targetLock permanently armed — updateTargetLock() then snaps the
+// crosshair to the nearest enemy in view every frame and shots aim there.
+// =============================================================================
+
+setInterval(() => {
+    if (!(window.innerWidth <= 768 || 'ontouchstart' in window)) return;
+    if (typeof gameState === 'undefined' || !gameState.gameStarted || gameState.gameOver) return;
+    if (gameState.targetLock && !gameState.targetLock.active) {
+        gameState.targetLock.active = true;
+    }
+}, 1500);
+
 console.log('📱 Mobile controls system loaded successfully');
