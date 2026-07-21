@@ -7713,18 +7713,41 @@ function togglePause() {
     // Create pause overlay if it doesn't exist
     let pauseOverlay = document.getElementById('pauseOverlay');
     if (!pauseOverlay) {
+        // Mobile gets an AUDIO section in the pause menu — the on-screen
+        // audio buttons were consolidated here (desktop keeps its Flight
+        // Controls panel buttons, so no section there).
+        const _mobPause = ('ontouchstart' in window) || window.innerWidth <= 768;
         pauseOverlay = document.createElement('div');
         pauseOverlay.id = 'pauseOverlay';
         pauseOverlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;' +
             'background:rgba(0,0,0,0.75);display:none;align-items:center;' +
             'justify-content:center;z-index:9999;';
+        const audioSection = _mobPause ? `
+                <div style="border-top:1px solid rgba(0,150,255,0.4);margin-top:18px;padding-top:14px;">
+                    <h3 class="text-cyan-400 font-bold mb-3" style="letter-spacing:2px;">AUDIO</h3>
+                    <div class="flex gap-2 mb-4 justify-center flex-wrap">
+                        <button id="mobileMusicBtn" class="space-btn rounded px-4 py-2" type="button" title="Music On/Off">
+                            <i class="fas fa-volume-up mr-2" id="mobileMusicIcon"></i>Music
+                        </button>
+                        <button id="mobileSkipTrackBtn" class="space-btn rounded px-4 py-2" type="button" title="Skip Track">
+                            <i class="fas fa-forward mr-2"></i>Skip
+                        </button>
+                        <button id="pauseSfxBtn" class="space-btn rounded px-4 py-2" type="button" title="Sound effects on/off">
+                            <i class="fas fa-bullhorn mr-2" id="pauseSfxIcon"></i>SFX
+                        </button>
+                    </div>
+                    <div class="text-sm text-gray-300 mb-1" style="text-align:left;">Music Volume</div>
+                    <input id="pauseMusicVol" type="range" min="0" max="1" step="0.05" style="width:100%;accent-color:#22d3ee;">
+                    <div class="text-sm text-gray-300 mb-1 mt-3" style="text-align:left;">SFX Volume</div>
+                    <input id="pauseSfxVol" type="range" min="0" max="1" step="0.05" style="width:100%;accent-color:#22d3ee;">
+                </div>` : '';
         pauseOverlay.innerHTML = `
-            <div class="text-center ui-panel rounded-lg p-8">
+            <div class="text-center ui-panel rounded-lg p-8" style="max-width:92vw;max-height:86vh;overflow-y:auto;">
                 <h2 class="text-3xl font-bold text-cyan-400 mb-4">GAME PAUSED</h2>
-                <p class="text-gray-300 mb-6">Press P or click Resume to continue</p>
+                <p class="text-gray-300 mb-6">${_mobPause ? 'Tap Resume to continue' : 'Press P or click Resume to continue'}</p>
                 <button id="pauseResumeBtn" class="space-btn rounded px-6 py-3">
                     <i class="fas fa-play mr-2"></i>Resume Game
-                </button>
+                </button>${audioSection}
             </div>
         `;
         document.body.appendChild(pauseOverlay);
@@ -7737,11 +7760,63 @@ function togglePause() {
                 togglePause();
             });
         }
+        // Audio section wiring. Music/Skip buttons reuse the ids game-music.js
+        // already delegates on (#mobileMusicBtn / #mobileSkipTrackBtn) — no
+        // extra handlers needed. SFX toggle and the two volume sliders:
+        const _updSfxIcon = () => {
+            const ic = document.getElementById('pauseSfxIcon');
+            if (ic) ic.className = window._sfxMuted
+                ? 'fas fa-volume-mute text-red-400 mr-2'
+                : 'fas fa-bullhorn text-cyan-400 mr-2';
+        };
+        const sfxToggle = document.getElementById('pauseSfxBtn');
+        if (sfxToggle) {
+            sfxToggle.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                toggleSfx();
+                _updSfxIcon();
+            });
+        }
+        const musicVol = document.getElementById('pauseMusicVol');
+        if (musicVol) {
+            musicVol.addEventListener('input', () => {
+                if (window.soundtrack && soundtrack.setVolume) soundtrack.setVolume(parseFloat(musicVol.value));
+            });
+        }
+        const sfxVol = document.getElementById('pauseSfxVol');
+        if (sfxVol) {
+            sfxVol.addEventListener('input', () => {
+                const v = parseFloat(sfxVol.value);
+                if (typeof effectsGain !== 'undefined' && effectsGain && audioContext) {
+                    effectsGain.gain.value = v;
+                    effectsGain.gain.setValueAtTime(v, audioContext.currentTime);
+                }
+                window._sfxMuted = v === 0;
+                _updSfxIcon();
+            });
+        }
+    }
+
+    // Sync the audio controls to live state every time the menu opens
+    if (gameState.paused) {
+        const musicVol = document.getElementById('pauseMusicVol');
+        if (musicVol && window.soundtrack && typeof soundtrack.volume === 'number') {
+            musicVol.value = soundtrack.volume;
+        }
+        const sfxVol = document.getElementById('pauseSfxVol');
+        if (sfxVol && typeof effectsGain !== 'undefined' && effectsGain) {
+            sfxVol.value = effectsGain.gain.value;
+        }
+        const sfxIc = document.getElementById('pauseSfxIcon');
+        if (sfxIc) sfxIc.className = window._sfxMuted
+            ? 'fas fa-volume-mute text-red-400 mr-2'
+            : 'fas fa-bullhorn text-cyan-400 mr-2';
     }
 
     pauseOverlay.style.display = gameState.paused ? 'flex' : 'none';
     
-    // Update pause button
+    // Update pause buttons (desktop panel + mobile top-left)
     const pauseBtn = document.getElementById('pauseBtn');
     const pauseIcon = document.getElementById('pauseIcon');
     if (pauseBtn) {
@@ -7752,6 +7827,10 @@ function togglePause() {
             pauseBtn.classList.remove('paused');
             if (pauseIcon) pauseIcon.className = 'fas fa-pause mr-1';
         }
+    }
+    const mobilePauseIcon = document.getElementById('mobilePauseIcon');
+    if (mobilePauseIcon) {
+        mobilePauseIcon.className = gameState.paused ? 'fas fa-play' : 'fas fa-pause';
     }
     
     console.log(gameState.paused ? 'Game paused' : 'Game resumed');

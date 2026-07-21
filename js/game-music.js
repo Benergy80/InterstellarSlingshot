@@ -623,6 +623,7 @@
     fadeOutCurrent:    fadeOutCurrent,
     startLaunchScreen: startLaunchScreen,
     get current()      { return st.current; },
+    get volume()       { return st.volume; },
     get enabled()      { return st.enabled; },
     set enabled(v)     { st.enabled = !!v; if (!v) stopAll(); },
     get muted()        { return st.muted; },
@@ -663,7 +664,7 @@
       return;
     }
 
-    const pauseBtn = t.closest('#pauseBtn');
+    const pauseBtn = t.closest('#pauseBtn, #mobilePauseBtn');
     if (pauseBtn) {
       e.preventDefault();
       e.stopPropagation();

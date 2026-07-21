@@ -1144,12 +1144,14 @@ body.mobile-mode .mobile-ui {
 
 /* Hide mobile controls during intro and loading */
 body.intro-active .mobile-controls-container,
+body.intro-active .mobile-top-left,
 body.intro-active .mobile-floating-status,
 body.intro-active .nav-panel-mobile {
     display: none !important;
 }
 
 #loadingScreen:not([style*="display: none"]) ~ * .mobile-controls-container,
+#loadingScreen:not([style*="display: none"]) ~ .mobile-top-left,
 #loadingScreen:not([style*="display: none"]) ~ * .mobile-floating-status {
     display: none !important;
 }

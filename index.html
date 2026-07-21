@@ -24,7 +24,7 @@
          This lives only on the feature branch; main will not print it. -->
     <script>
       window.BUILD_ID = 'claude/anaglyph-3d';
-      window.BUILD_TAG = '20260721c';
+      window.BUILD_TAG = '20260721d';
       console.log(
         '%c🚀 BUILD: ' + window.BUILD_ID + '  ·  ' + window.BUILD_TAG,
         'background:#0a7d2c;color:#fff;font-size:14px;font-weight:bold;padding:4px 10px;border-radius:4px;'
@@ -120,7 +120,7 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     
     <!-- Game Styles -->
-    <link rel="stylesheet" href="css/styles.css">
+    <link rel="stylesheet" href="css/styles.css?v=20260721d">
     <style>
         /* Mobile browser UI hiding */
         html, body {
@@ -422,6 +422,13 @@
         display: block !important;
     }
 
+    /* EXCEPTION: Keep the pause menu visible on mobile — its panel carries
+       .ui-panel, which the rule above would hide, leaving a dead black
+       overlay with no way to resume. */
+    #pauseOverlay .ui-panel {
+        display: block !important;
+    }
+
     /* Show mobile controls */
     .mobile-controls-container {
         display: flex !important;
@@ -429,6 +436,11 @@
 
     /* Show mobile top row separately */
     .mobile-controls-top {
+        display: flex !important;
+    }
+
+    /* Show the top-left Flight Controls + Pause cluster */
+    .mobile-top-left {
         display: flex !important;
     }
 
@@ -459,6 +471,7 @@
     /* Hide during intro */
     body.intro-active #achievementPopup,
     body.intro-active .mobile-controls-container,
+    body.intro-active .mobile-top-left,
     body.intro-active .nav-panel-mobile {
         display: none !important;
     }
@@ -516,6 +529,7 @@
             /* Hide during intro */
             body.intro-active #achievementPopup,
             body.intro-active .mobile-controls-container,
+            body.intro-active .mobile-top-left,
             body.intro-active .nav-panel-mobile {
                 display: none !important;
             }
@@ -544,7 +558,27 @@
             pointer-events: auto;
         }
 
-        /* Top row: Flight controls and Emergency warp - flanking the indicators */
+        /* Top-left screen cluster: Flight Controls + Pause, mirroring the
+           NAV swipe indicator on the right. Fixed child of the container so
+           it inherits the container's mobile-only / intro-hidden visibility. */
+        .mobile-top-left {
+            position: fixed;
+            top: 12px;
+            left: 8px;
+            display: none;
+            gap: 8px;
+            z-index: 9000;
+            pointer-events: none;
+        }
+
+        .mobile-top-left .mobile-btn {
+            pointer-events: auto;
+            width: 38px;
+            height: 38px;
+            font-size: 14px;
+        }
+
+        /* Top row: 3D mode and Emergency warp - flanking the indicators */
         .mobile-controls-top {
             position: fixed;
             bottom: 100px;
@@ -956,14 +990,8 @@
 
 <!-- MOBILE CONTROLS -->
 <div class="mobile-controls-container">
-    <!-- Top row: Flight Controls, Music, Skip, Emergency Warp -->
+    <!-- Top row above the action buttons: 3D Mode, Emergency Warp -->
     <div class="mobile-controls-top">
-        <button class="mobile-btn" onclick="showMobilePanel('controls')" title="Flight Controls">
-            <i class="fas fa-gamepad"></i>
-        </button>
-        <button id="mobileAudioBtn" class="mobile-btn" onclick="showMobilePanel('audio')" title="Audio Menu">
-            <i class="fas fa-volume-up"></i>
-        </button>
         <button id="mobileAnaglyphBtn" class="mobile-btn" type="button" title="Red/Cyan 3D Mode">
             <i class="fas fa-glasses"></i>
         </button>
@@ -1007,6 +1035,19 @@
             <i class="fas fa-shield-alt"></i>
         </button>
     </div>
+</div>
+
+<!-- Top-left screen cluster: Flight Controls + Pause (audio lives in the
+     pause menu). MUST live outside .mobile-controls-container — that
+     container has a translateX transform, which would hijack this fixed
+     positioning and drag the cluster to the bottom of the screen. -->
+<div class="mobile-top-left">
+    <button class="mobile-btn" onclick="showMobilePanel('controls')" title="Flight Controls">
+        <i class="fas fa-gamepad"></i>
+    </button>
+    <button id="mobilePauseBtn" class="mobile-btn" type="button" title="Pause / Audio">
+        <i class="fas fa-pause" id="mobilePauseIcon"></i>
+    </button>
 </div>
 
     <!-- Mobile Navigation Panel -->
@@ -1077,19 +1118,6 @@
                 1/3/0: POV | V: Toggle 1st/3rd<br>
                 P: Pause
             </div>
-        </div>
-    </div>
-
-    <div class="mobile-popup" id="audioPopup">
-        <div class="mobile-popup-content">
-            <button class="mobile-popup-close" onclick="hideMobilePanel('audio')">&times;</button>
-            <h3>AUDIO</h3>
-            <button id="mobileMusicBtn" class="w-full space-btn rounded px-4 py-2 mb-2" type="button" title="Music On/Off">
-                <i class="fas fa-volume-up mr-2" id="mobileMusicIcon"></i>Music On/Off
-            </button>
-            <button id="mobileSkipTrackBtn" class="w-full space-btn rounded px-4 py-2" type="button" title="Skip to next soundtrack">
-                <i class="fas fa-forward mr-2"></i>Skip Track
-            </button>
         </div>
     </div>
 
@@ -1204,7 +1232,7 @@
     <script src="js/camera-system.js?v=20260703r"></script>
     <script src="js/cosmic-features.js"></script>
     <script src="js/game-objects.js?v=20260703r"></script>
-    <script src="js/game-controls.js?v=20260721c"></script>
+    <script src="js/game-controls.js?v=20260721d"></script>
     <script src="js/civilian-combat.js?v=20260703r"></script>
     <script src="js/visual-flair.js?v=20260719b"></script>
     <script src="js/playtest-probe.js?v=20260703r"></script>
@@ -1216,7 +1244,7 @@
     <script src="js/atmospheric-perspective.js"></script>
     <script src="js/game-intro.js?v=20260703r"></script>
     <script src="js/game-shields.js"></script>
-    <script src="js/game-music.js"></script>
+    <script src="js/game-music.js?v=20260721d"></script>
     <script src="js/victory-replay.js?v=20260703r"></script>
     <script src="js/autopilot.js?v=20260721c"></script>
     <script src="js/game-core.js?v=20260703r"></script>
