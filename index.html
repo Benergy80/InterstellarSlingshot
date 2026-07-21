@@ -24,7 +24,7 @@
          This lives only on the feature branch; main will not print it. -->
     <script>
       window.BUILD_ID = 'claude/anaglyph-3d';
-      window.BUILD_TAG = '20260721b';
+      window.BUILD_TAG = '20260721c';
       console.log(
         '%c🚀 BUILD: ' + window.BUILD_ID + '  ·  ' + window.BUILD_TAG,
         'background:#0a7d2c;color:#fff;font-size:14px;font-weight:bold;padding:4px 10px;border-radius:4px;'
@@ -764,6 +764,9 @@
                 <button id="skipTrackBtn" class="small-control-btn" type="button" title="Skip to next soundtrack">
                     <i class="fas fa-forward mr-1"></i>Skip
                 </button>
+                <button id="anaglyphBtn" class="small-control-btn" type="button" title="Red/cyan anaglyph 3D (backtick key)">
+                    <i class="fas fa-glasses mr-1"></i>3D
+                </button>
                 <button id="pauseBtn" class="small-control-btn" type="button">
                     <i class="fas fa-pause mr-1" id="pauseIcon"></i>Pause
                 </button>
@@ -958,14 +961,14 @@
         <button class="mobile-btn" onclick="showMobilePanel('controls')" title="Flight Controls">
             <i class="fas fa-gamepad"></i>
         </button>
-        <button id="mobileMusicBtn" class="mobile-btn" type="button" title="Music On/Off">
-            <i class="fas fa-volume-up" id="mobileMusicIcon"></i>
+        <button id="mobileAudioBtn" class="mobile-btn" onclick="showMobilePanel('audio')" title="Audio Menu">
+            <i class="fas fa-volume-up"></i>
         </button>
-        <button id="mobileSkipTrackBtn" class="mobile-btn" type="button" title="Skip Track">
-            <i class="fas fa-forward"></i>
+        <button id="mobileAnaglyphBtn" class="mobile-btn" type="button" title="Red/Cyan 3D Mode">
+            <i class="fas fa-glasses"></i>
         </button>
         <button class="mobile-btn warp" onclick="mobileEmergencyWarp()" title="Emergency Warp">
-            <i class="fa-solid fa-triangle-exclamation"></i>
+            <i class="fas fa-meteor"></i>
             <span class="warp-count-badge" id="mobileWarpCountBadge">5</span>
         </button>
     </div>
@@ -1077,6 +1080,19 @@
         </div>
     </div>
 
+    <div class="mobile-popup" id="audioPopup">
+        <div class="mobile-popup-content">
+            <button class="mobile-popup-close" onclick="hideMobilePanel('audio')">&times;</button>
+            <h3>AUDIO</h3>
+            <button id="mobileMusicBtn" class="w-full space-btn rounded px-4 py-2 mb-2" type="button" title="Music On/Off">
+                <i class="fas fa-volume-up mr-2" id="mobileMusicIcon"></i>Music On/Off
+            </button>
+            <button id="mobileSkipTrackBtn" class="w-full space-btn rounded px-4 py-2" type="button" title="Skip to next soundtrack">
+                <i class="fas fa-forward mr-2"></i>Skip Track
+            </button>
+        </div>
+    </div>
+
     <div class="mobile-popup" id="statusPopup">
         <div class="mobile-popup-content">
             <button class="mobile-popup-close" onclick="hideMobilePanel('status')">&times;</button>
@@ -1181,14 +1197,14 @@
     <!-- boot.js FIRST: init-order registry every other script signals into -->
     <script src="js/boot.js?v=20260703r"></script>
     <!-- Anaglyph 3D effect (red/cyan glasses) — before game scripts so gameRender() is available -->
-    <script src="js/anaglyph-3d.js?v=20260721b"></script>
+    <script src="js/anaglyph-3d.js?v=20260721c"></script>
     <!-- Load GLTFLoader before game-models.js -->
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
     <script src="js/game-models.js?v=20260703r"></script>
     <script src="js/camera-system.js?v=20260703r"></script>
     <script src="js/cosmic-features.js"></script>
     <script src="js/game-objects.js?v=20260703r"></script>
-    <script src="js/game-controls.js?v=20260703r"></script>
+    <script src="js/game-controls.js?v=20260721c"></script>
     <script src="js/civilian-combat.js?v=20260703r"></script>
     <script src="js/visual-flair.js?v=20260719b"></script>
     <script src="js/playtest-probe.js?v=20260703r"></script>
@@ -1196,13 +1212,13 @@
     <script src="js/outer-systems.js?v=20260703r"></script>
     <script src="js/interstellar-asteroids.js"></script>
     <script src="js/game-physics.js?v=20260703r"></script>
-    <script src="js/game-ui.js?v=20260703r"></script>
+    <script src="js/game-ui.js?v=20260721c"></script>
     <script src="js/atmospheric-perspective.js"></script>
     <script src="js/game-intro.js?v=20260703r"></script>
     <script src="js/game-shields.js"></script>
     <script src="js/game-music.js"></script>
     <script src="js/victory-replay.js?v=20260703r"></script>
-    <script src="js/autopilot.js?v=20260703r"></script>
+    <script src="js/autopilot.js?v=20260721c"></script>
     <script src="js/game-core.js?v=20260703r"></script>
 
     <!-- Mobile Script -->

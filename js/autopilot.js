@@ -4008,7 +4008,10 @@
     // Mobile: position at the TOP just below the NAV button.
     // Desktop: keep at the bottom (above the achievement popup bottom-80).
     const isMobile = isMobileViewport();
-    const topOrBottom = isMobile ? 'top:110px' : 'bottom:10px';
+    // Mobile: center top, on the same line as the NAV swipe indicators
+    // (top:20px) and compact enough to fit between them, so it no longer
+    // covers the praise text / notifications band below. Desktop: bottom.
+    const topOrBottom = isMobile ? 'top:14px' : 'bottom:10px';
     // Mobile: the panel becomes a tap target to toggle takeover, so
     // enable pointer-events.  Desktop: non-interactive overlay.
     const pe = isMobile ? 'pointer-events:auto' : 'pointer-events:none';
@@ -4022,18 +4025,18 @@
       'background:rgba(0,0,0,0.6)',
       'border:1px solid rgba(0,255,136,0.5)',
       'border-radius:8px',
-      'padding:6px 18px',
+      isMobile ? 'padding:5px 10px' : 'padding:6px 18px',
       'font-family:Orbitron,monospace',
-      'font-size:11px',
+      isMobile ? 'font-size:9px' : 'font-size:11px',
       'color:#00ff88',
       'text-align:center',
       pe,
       cursor,
       'text-shadow:0 0 8px rgba(0,255,136,0.8)',
       'box-shadow:0 0 20px rgba(0,255,136,0.3)',
-      'letter-spacing:2px',
-      'min-width:260px',
-      'max-width:90vw',
+      isMobile ? 'letter-spacing:1px' : 'letter-spacing:2px',
+      isMobile ? 'min-width:0' : 'min-width:260px',
+      isMobile ? 'max-width:56vw' : 'max-width:90vw',
       '-webkit-tap-highlight-color:transparent',
       'touch-action:manipulation',
     ].join(';');
@@ -4041,7 +4044,7 @@
     // Mobile: label-only panel, no target information.
     // Desktop: label + running status line (Pursuing X — 300 u, etc.).
     if (isMobile) {
-      el.innerHTML = '<div id="demoPilotLabel" style="font-size:11px">🤖 DEMO AUTOPILOT · tap to take over</div>';
+      el.innerHTML = '<div id="demoPilotLabel" style="font-size:9px">🤖 DEMO · tap to take over</div>';
     } else {
       el.innerHTML = '<div id="demoPilotLabel" style="opacity:0.7;font-size:10px;margin-bottom:2px">🤖 DEMO AUTOPILOT · press T to take over</div><div id="demoPilotStatus">Initializing…</div>';
     }
@@ -4087,13 +4090,13 @@
       el.style.color = '#ffcc33';
       el.style.textShadow = '0 0 8px rgba(255,200,0,0.8)';
       el.style.boxShadow = '0 0 20px rgba(255,200,0,0.35)';
-      if (label) label.textContent = '🕹️ PLAYER CONTROL · ' + resumeText;
+      if (label) label.textContent = (mobile ? '🕹️ PLAYER · ' : '🕹️ PLAYER CONTROL · ') + resumeText;
     } else {
       el.style.borderColor = 'rgba(0,255,136,0.5)';
       el.style.color = '#00ff88';
       el.style.textShadow = '0 0 8px rgba(0,255,136,0.8)';
       el.style.boxShadow = '0 0 20px rgba(0,255,136,0.3)';
-      if (label) label.textContent = '🤖 DEMO AUTOPILOT · ' + takeText;
+      if (label) label.textContent = (mobile ? '🤖 DEMO · ' : '🤖 DEMO AUTOPILOT · ') + takeText;
     }
   }
 

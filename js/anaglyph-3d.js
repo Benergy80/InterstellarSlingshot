@@ -155,6 +155,7 @@
       if (!_effect) this.init();
       _enabled = true;
       _showBadge(true);
+      _syncButtons();
       _hudOn();
       _wrapPraise();
     },
@@ -162,6 +163,7 @@
     disable: function () {
       _enabled = false;
       _showBadge(false);
+      _syncButtons();
       _hudOff();
     },
 
@@ -392,9 +394,35 @@
     _praiseWrapped = true;
   }
 
-  // ---------- HUD badge ----------
+  // ---------- HUD badge / depth control panel ----------
+  // Desktop: a small top-right panel with live sliders for the two depths.
+  // Mobile (coarse pointer): readout only — slider thumbs are too fiddly
+  // at phone size, and the keyboard shortcuts don't exist there anyway.
 
   var _badge = null;
+
+  function _isCoarse() {
+    return (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) ||
+      window.innerWidth <= 768;
+  }
+
+  function _sliderRow(name, min, max) {
+    return '<div style="display:flex;align-items:center;gap:6px;margin-top:4px">' +
+      '<span style="width:40px;letter-spacing:1px">' + name + '</span>' +
+      '<input id="anaglyph-slider-' + name + '" type="range" min="' + min +
+      '" max="' + max + '" step="0.05" style="width:110px;accent-color:#0ff;cursor:pointer">' +
+      '<span id="anaglyph-val-' + name + '" style="width:36px;text-align:right"></span></div>';
+  }
+
+  function _syncSliders() {
+    var s = _badge && _badge.querySelector('#anaglyph-slider-scene');
+    if (!s) return;
+    var h = _badge.querySelector('#anaglyph-slider-hud');
+    s.value = _eyeSep;
+    h.value = _hudDepth;
+    _badge.querySelector('#anaglyph-val-scene').textContent = _eyeSep.toFixed(2);
+    _badge.querySelector('#anaglyph-val-hud').textContent = _hudDepth.toFixed(2);
+  }
 
   function _showBadge(show) {
     if (!_badge) {
@@ -402,16 +430,63 @@
       _badge.id = 'anaglyph-badge';
       _badge.style.cssText =
         'position:fixed;top:12px;right:12px;z-index:9999;' +
-        'font:bold 14px/1 monospace;color:#0ff;' +
-        'background:rgba(0,0,0,0.7);border:1px solid #0ff;' +
+        'font:bold 12px/1.4 monospace;color:#0ff;' +
+        'background:rgba(0,0,0,0.75);border:1px solid #0ff;' +
         'padding:6px 10px;border-radius:4px;pointer-events:none;' +
         'transition:opacity 0.3s;text-shadow:0 0 6px #0ff;';
+      if (!_isCoarse()) {
+        _badge.innerHTML =
+          '<div style="letter-spacing:2px">3D DEPTH</div>' +
+          _sliderRow('scene', 0.05, 1.5) +
+          _sliderRow('hud', -1, 1);
+        _badge.querySelector('#anaglyph-slider-scene').addEventListener('input', function () {
+          anaglyphMode.setEyeSep(parseFloat(this.value));
+        });
+        _badge.querySelector('#anaglyph-slider-hud').addEventListener('input', function () {
+          anaglyphMode.setHudDepth(parseFloat(this.value));
+        });
+      }
       document.body.appendChild(_badge);
     }
-    _badge.textContent =
-      '3D  depth:' + _eyeSep.toFixed(2) + '  hud:' + _hudDepth.toFixed(2);
+    if (_badge.querySelector('input')) {
+      _syncSliders();
+    } else {
+      _badge.textContent =
+        '3D  depth:' + _eyeSep.toFixed(2) + '  hud:' + _hudDepth.toFixed(2);
+    }
     _badge.style.opacity = show ? '1' : '0';
+    _badge.style.pointerEvents = (show && _badge.querySelector('input')) ? 'auto' : 'none';
   }
+
+  // ---------- On-screen toggle buttons ----------
+  // #anaglyphBtn (desktop Flight Controls row) and #mobileAnaglyphBtn
+  // (mobile top row) toggle the mode; their lit state tracks it.
+
+  function _syncButtons() {
+    var ids = ['anaglyphBtn', 'mobileAnaglyphBtn'];
+    for (var i = 0; i < ids.length; i++) {
+      var b = document.getElementById(ids[i]);
+      if (!b) continue;
+      if (_enabled) {
+        b.style.borderColor = '#0ff';
+        b.style.color = '#0ff';
+        b.style.boxShadow = '0 0 12px rgba(0,255,255,0.6), inset 0 0 8px rgba(0,255,255,0.2)';
+        b.style.opacity = '1';
+      } else {
+        b.style.borderColor = '';
+        b.style.color = '';
+        b.style.boxShadow = '';
+        b.style.opacity = '';
+      }
+    }
+  }
+
+  document.addEventListener('click', function (e) {
+    var t = e.target && e.target.closest && e.target.closest('#anaglyphBtn, #mobileAnaglyphBtn');
+    if (!t) return;
+    e.preventDefault();
+    anaglyphMode.toggle();
+  });
 
   var _depthFlashTimer = 0;
   function _flashDepth() {
@@ -440,5 +515,18 @@
   });
 
   window.anaglyphMode = anaglyphMode;
+
+  // ?3d=1 boot flag: the normal boot goes through the INTRO renderer path
+  // (game-intro.js initializeThreeJSForIntro), which never calls
+  // anaglyphMode.init() — that call lives only in game-core's initThreeJS,
+  // a path the intro boot skips. Poll until the renderer exists, then enable.
+  if (/[?&]3d=1/.test(location.search)) {
+    var _bootPoll = setInterval(function () {
+      if (typeof renderer !== 'undefined' && renderer) {
+        clearInterval(_bootPoll);
+        if (!_enabled) anaglyphMode.enable();
+      }
+    }, 500);
+  }
 
 })();

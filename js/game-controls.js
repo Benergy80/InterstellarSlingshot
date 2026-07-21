@@ -5483,11 +5483,12 @@ function createDamageDirectionIndicator(direction) {
     // Position and text based on direction (REMOVED EMOJIS).
     // On desktop the top center is occupied by the title panel and the
     // bottom center by the DEMO AUTOPILOT pill, so we push the top and
-    // bottom indicators clear of those. Mobile keeps the tight 20px
-    // offsets — the title is smaller and the demo HUD is at the top.
+    // bottom indicators clear of those. Mobile: the top center now stacks
+    // the demo pill (14px) and the floating status pills (56px), so the
+    // top indicator starts below both.
     const _isMobileViewport = (typeof window !== 'undefined') &&
         (('ontouchstart' in window) || window.innerWidth < 768);
-    const _topOffset    = _isMobileViewport ? 20 : 110;  // below title panel
+    const _topOffset    = _isMobileViewport ? 96 : 110;  // below title panel / mobile top stack
     const _bottomOffset = _isMobileViewport ? 20 : 80;   // above demo pill
     let text = '';
     let positionStyle = '';
