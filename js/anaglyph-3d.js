@@ -132,7 +132,8 @@
   var _hudDepth = 0.2;  // crosshair stereo depth; + = into the scene, - = pops out
   var DEPTH_STEP = 0.05;
   var HUD_PX_PER_UNIT = 30;   // hudDepth 0.2 → 6px per-eye horizontal shift
-  var PRAISE_FLOAT_PX = 24;   // praise text per-eye shift at full float-out
+  var PRAISE_DEPTH = 0.25;    // praise float-out in hudDepth units (pop-out)
+  var PRAISE_FLOAT_PX = PRAISE_DEPTH * HUD_PX_PER_UNIT; // 7.5px per eye
 
   var anaglyphMode = {
     get enabled() { return _enabled; },
