@@ -686,11 +686,27 @@ function killTextSizeForDistance(dist) {
 // ── 14. EVENT TEXT — cinematic center-screen announcements ─────────────────
 // Bigger moment-marker than achievements: scales in, holds, fades. Used for
 // Borg arrival, wingman deaths/recruits, caravan rescues, etc.
+// Event alert cards all render at the same top:26% slot, so they must play
+// ONE AT A TIME. Same-title re-fires are dropped (the Borg alarm used to
+// fire per frame — dozens of stacked cards smeared into an illegible glow
+// blob); different titles triggered together (HOSTILES DETECTED + BOSS
+// DETECTED) queue and play back-to-back.
+const _eventTextQueue = [];
+
 function flashEventText(title, cssColor, subtext) {
     try {
-        // Event alerts (HOSTILES DETECTED, BOSS DETECTED, discoveries…)
-        // render at top:26% — inside the praise word's swell zone. Fade any
-        // live praise immediately so the alert is legible.
+        const live = document.querySelector('.event-text-flash');
+        if (live) {
+            if (live.dataset.title === title) return;               // already showing
+            if (_eventTextQueue.some(q => q.title === title)) return; // already queued
+            if (_eventTextQueue.length < 3) {
+                _eventTextQueue.push({ title, cssColor, subtext });
+            }
+            return;
+        }
+        // The alert owns the praise band (top:26% is inside the praise
+        // swell zone): fade live praise now, and flashArcadeText blocks
+        // new praise while any .event-text-flash card is up.
         clearArcadePraise();
         if (!document.getElementById('eventTextStyle')) {
             const st = document.createElement('style');
@@ -701,15 +717,21 @@ function flashEventText(title, cssColor, subtext) {
             document.head.appendChild(st);
         }
         const div = document.createElement('div');
+        div.className = 'event-text-flash';
+        div.dataset.title = title;
         div.style.cssText = 'position:fixed;left:50%;top:26%;transform:translateX(-50%);z-index:72;' +
             'pointer-events:none;text-align:center;font-family:Orbitron,monospace;font-weight:bold;' +
             'max-width:80vw;animation:eventTextIn 2s ease forwards;color:' + (cssColor || '#ffcc44') + ';' +
-            'text-shadow:0 0 16px currentColor';
+            'text-shadow:0 0 6px currentColor';
         div.innerHTML = '<div style="font-size:24px;letter-spacing:8px">' + title + '</div>' +
             (subtext ? '<div style="font-size:13px;letter-spacing:3px;opacity:0.85;margin-top:4px">' +
                 subtext + '</div>' : '');
         document.body.appendChild(div);
-        setTimeout(() => div.remove(), 2100);
+        setTimeout(() => {
+            div.remove();
+            const next = _eventTextQueue.shift();
+            if (next) flashEventText(next.title, next.cssColor, next.subtext);
+        }, 2100);
     } catch (e) {}
 }
 
@@ -754,6 +776,9 @@ function flashArcadeText(text, tier, subtitle) {
         // band of the screen. Skip arcade praise while the boss intro card
         // is up (it's only on screen ~2.6s).
         if (document.getElementById('bossIntroCard')) return;
+        // Same for event alert cards (HOSTILES DETECTED, THE BORG, …):
+        // no new praise for the alert's ~2s lifetime.
+        if (document.querySelector('.event-text-flash')) return;
         // Mobile: mission-control / comms messages own the screen — no
         // praise until they're gone (small screen, everything overlaps).
         const _mobPraise = ('ontouchstart' in window) || window.innerWidth <= 768;

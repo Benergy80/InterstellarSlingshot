@@ -6858,8 +6858,12 @@ let borgAlarmActive = false;
 function startBorgAlarm() {
     if (borgAlarmActive || !audioContext || audioContext.state === 'suspended') return;
 
-    // Cinematic arrival card alongside the alarm
-    if (typeof flashEventText === 'function') {
+    // Cinematic arrival card alongside the alarm. Cooldown: the alarm can
+    // churn on/off at the range boundary (and this fn is called per frame),
+    // so without it the card re-fires endlessly and stacks into a smear.
+    if (typeof flashEventText === 'function' &&
+        Date.now() - (window._lastBorgCardAt || 0) > 25000) {
+        window._lastBorgCardAt = Date.now();
         flashEventText('⬢ THE BORG ⬢', '#33ff55', 'RESISTANCE IS FUTILE');
     }
     
