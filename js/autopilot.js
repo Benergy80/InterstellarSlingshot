@@ -4049,9 +4049,9 @@
     // Mobile: label-only panel, no target information.
     // Desktop: label + running status line (Pursuing X — 300 u, etc.).
     if (isMobile) {
-      el.innerHTML = '<div id="demoPilotLabel" style="font-size:9px">🤖 DEMO · tap to take over</div>';
+      el.innerHTML = '<div id="demoPilotLabel" style="font-size:9px">DEMO · tap to take over</div>';
     } else {
-      el.innerHTML = '<div id="demoPilotLabel" style="opacity:0.7;font-size:10px;margin-bottom:2px">🤖 DEMO AUTOPILOT · press T to take over</div><div id="demoPilotStatus">Initializing…</div>';
+      el.innerHTML = '<div id="demoPilotLabel" style="opacity:0.7;font-size:10px;margin-bottom:2px">DEMO AUTOPILOT · press T to take over</div><div id="demoPilotStatus">Initializing…</div>';
     }
     document.body.appendChild(el);
     ap.hudEl = el;
@@ -4095,13 +4095,13 @@
       el.style.color = '#ffcc33';
       el.style.textShadow = '0 0 8px rgba(255,200,0,0.8)';
       el.style.boxShadow = '0 0 20px rgba(255,200,0,0.35)';
-      if (label) label.textContent = (mobile ? '🕹️ PLAYER · ' : '🕹️ PLAYER CONTROL · ') + resumeText;
+      if (label) label.textContent = (mobile ? 'PLAYER · ' : 'PLAYER CONTROL · ') + resumeText;
     } else {
       el.style.borderColor = 'rgba(0,255,136,0.5)';
       el.style.color = '#00ff88';
       el.style.textShadow = '0 0 8px rgba(0,255,136,0.8)';
       el.style.boxShadow = '0 0 20px rgba(0,255,136,0.3)';
-      if (label) label.textContent = (mobile ? '🤖 DEMO · ' : '🤖 DEMO AUTOPILOT · ') + takeText;
+      if (label) label.textContent = (mobile ? 'DEMO · ' : 'DEMO AUTOPILOT · ') + takeText;
     }
   }
 

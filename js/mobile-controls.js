@@ -1053,10 +1053,11 @@ window.tiltSteering = (function () {
         const pitchRate = rate(pitchDeg - T.base.pitch);
         if (!yawRate && !pitchRate) return;
 
-        // Tilt right (yawDeg+) = turn right (rotateY negative); tilt the
-        // top of the phone toward you = pull up (unchanged — Ben verified
-        // the pitch feel on-device).
-        camera.rotateY(-yawRate);
+        // Yaw sign verified ON-DEVICE by Ben (Jul 21): tilting left must
+        // look left, like dragging left — that needs +yawRate here with
+        // this gravity mapping. Pitch (tilt top toward you = pull up) was
+        // verified good; don't touch.
+        camera.rotateY(yawRate);
         camera.rotateX(pitchRate);
 
         // Same bookkeeping as touch look: kill rotational drift and feed
