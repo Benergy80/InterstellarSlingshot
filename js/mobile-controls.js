@@ -155,9 +155,17 @@ window.showMobilePanel = function(panelName) {
     if (popup) {
         if (panelName === 'status') {
             window.updateMobileStatus();
+            // SOFT PAUSE: freeze gameplay while the Ship Status panel is
+            // read, but WITHOUT togglePause's audio suspension — music
+            // keeps playing. Only flip (and later restore) if the game
+            // wasn't already paused by the pause menu.
+            if (typeof gameState !== 'undefined' && gameState.gameStarted && !gameState.paused) {
+                gameState.paused = true;
+                window._statusSoftPause = true;
+            }
         }
         popup.classList.add('active');
-        
+
         if (typeof playSound === 'function') {
             playSound('ui_click', 800, 0.1);
         }
@@ -168,6 +176,10 @@ window.hideMobilePanel = function(panelName) {
     const popup = document.getElementById(panelName + 'Popup');
     if (popup) {
         popup.classList.remove('active');
+    }
+    if (panelName === 'status' && window._statusSoftPause) {
+        window._statusSoftPause = false;
+        if (typeof gameState !== 'undefined') gameState.paused = false;
     }
 };
 
