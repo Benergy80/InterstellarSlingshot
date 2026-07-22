@@ -5483,24 +5483,28 @@ function createDamageDirectionIndicator(direction) {
     // Position and text based on direction (REMOVED EMOJIS).
     // On desktop the top center is occupied by the title panel and the
     // bottom center by the DEMO AUTOPILOT pill, so we push the top and
-    // bottom indicators clear of those. Mobile: the top center now stacks
-    // the demo pill (14px) and the floating status pills (56px), so the
-    // top indicator starts below both.
+    // bottom indicators clear of those. Mobile: top sits just below the
+    // floating status pills (top:56px + ~49px tall); bottom sits above
+    // the DEMO pill (bottom:92px + 38px tall).
     const _isMobileViewport = (typeof window !== 'undefined') &&
         (('ontouchstart' in window) || window.innerWidth < 768);
-    const _topOffset    = _isMobileViewport ? 96 : 110;  // below title panel / mobile top stack
-    const _bottomOffset = _isMobileViewport ? 20 : 80;   // above demo pill
+    const _topOffset    = _isMobileViewport ? 112 : 110;  // below title panel / mobile top stack
+    const _bottomOffset = _isMobileViewport ? 138 : 80;   // above demo pill
     let text = '';
     let positionStyle = '';
 
+    // Mobile: left and right sit on DIFFERENT lines (the two texts are wide
+    // enough to collide in the middle of a phone screen when both fire).
+    const _leftTop  = _isMobileViewport ? '44%' : '50%';
+    const _rightTop = _isMobileViewport ? '56%' : '50%';
     switch (direction) {
         case 'left':
             text = '< UNDER ATTACK';
-            positionStyle = 'left: 20px; top: 50%; transform: translateY(-50%);';
+            positionStyle = 'left: 20px; top: ' + _leftTop + '; transform: translateY(-50%);';
             break;
         case 'right':
             text = 'UNDER ATTACK >';
-            positionStyle = 'right: 20px; top: 50%; transform: translateY(-50%);';
+            positionStyle = 'right: 20px; top: ' + _rightTop + '; transform: translateY(-50%);';
             break;
         case 'top':
             text = '^ UNDER ATTACK';
@@ -7687,14 +7691,6 @@ function togglePause() {
         return;
     }
 
-    // Reflect the live tilt-steering state on the pause-menu toggle
-    function _updTiltState() {
-        const st = document.getElementById('pauseTiltState');
-        if (!st) return;
-        const on = !!(window.tiltSteering && tiltSteering.enabled);
-        st.textContent = on ? 'ON' : 'OFF';
-        st.style.color = on ? '#0ff' : '#f87171';
-    }
     
     gameState.paused = !gameState.paused;
 
@@ -7752,8 +7748,8 @@ function togglePause() {
                 </div>
                 <div style="border-top:1px solid rgba(0,150,255,0.4);margin-top:14px;padding-top:14px;">
                     <h3 class="text-cyan-400 font-bold mb-3" style="letter-spacing:2px;">CONTROLS</h3>
-                    <button id="pauseTiltBtn" class="space-btn rounded px-4 py-2" type="button" title="Steer by tilting the phone">
-                        <i class="fas fa-mobile-alt mr-2"></i>Tilt Steering: <span id="pauseTiltState" style="font-weight:700;">OFF</span>
+                    <button id="pauseFlightBtn" class="space-btn rounded px-4 py-2" type="button" title="Show the flight controls reference">
+                        <i class="fas fa-gamepad mr-2"></i>Flight Controls
                     </button>
                 </div>` : '';
         pauseOverlay.innerHTML = `
@@ -7811,14 +7807,17 @@ function togglePause() {
                 _updSfxIcon();
             });
         }
-        const tiltBtn = document.getElementById('pauseTiltBtn');
-        if (tiltBtn) {
-            tiltBtn.addEventListener('click', async (e) => {
+        const flightBtn = document.getElementById('pauseFlightBtn');
+        if (flightBtn) {
+            flightBtn.addEventListener('click', (e) => {
                 e.preventDefault();
                 e.stopPropagation();
-                if (!window.tiltSteering) return;
-                await tiltSteering.toggle();
-                _updTiltState();
+                if (typeof showMobilePanel === 'function') {
+                    showMobilePanel('controls');
+                    // The pause overlay sits at z 9999 — lift the popup above it
+                    const pop = document.getElementById('controlsPopup');
+                    if (pop) pop.style.zIndex = '10001';
+                }
             });
         }
     }
@@ -7837,7 +7836,6 @@ function togglePause() {
         if (sfxIc) sfxIc.className = window._sfxMuted
             ? 'fas fa-volume-mute text-red-400 mr-2'
             : 'fas fa-bullhorn text-cyan-400 mr-2';
-        _updTiltState();
     }
 
     pauseOverlay.style.display = gameState.paused ? 'flex' : 'none';
@@ -7925,15 +7923,17 @@ function showAchievement(title, description, playAchievementSound = true) {
         popup.style.zIndex = '999'; // Maximum priority
         popup.style.position = 'fixed'; // Ensure it's always fixed
 
-        // ⭐ BORG STYLING: Apply green ORBITRON font for BORG messages
+        // ⭐ BORG STYLING: green ORBITRON for BORG messages. Glow dampened
+        // ~85% from the original (0.8/0.6 alpha, 10px blur) — the full
+        // bloom washed the letters out to an unreadable green smear.
         if (title.includes('BORG')) {
             popup.classList.add('borg-message');
             titleElement.style.fontFamily = "'Orbitron', monospace";
-            titleElement.style.color = '#00ff00';
-            titleElement.style.textShadow = '0 0 10px rgba(0, 255, 0, 0.8)';
+            titleElement.style.color = '#66ff66';
+            titleElement.style.textShadow = '0 0 2px rgba(0, 255, 0, 0.12)';
             achievementText.style.fontFamily = "'Orbitron', monospace";
-            achievementText.style.color = '#00ff00';
-            achievementText.style.textShadow = '0 0 8px rgba(0, 255, 0, 0.6)';
+            achievementText.style.color = '#66ff66';
+            achievementText.style.textShadow = '0 0 2px rgba(0, 255, 0, 0.09)';
         } else {
             popup.classList.remove('borg-message');
             titleElement.style.fontFamily = '';

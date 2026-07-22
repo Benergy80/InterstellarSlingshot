@@ -733,6 +733,19 @@ function flashArcadeText(text, tier, subtitle) {
         // band of the screen. Skip arcade praise while the boss intro card
         // is up (it's only on screen ~2.6s).
         if (document.getElementById('bossIntroCard')) return;
+        // Mobile: mission-control / comms messages own the screen — no
+        // praise until they're gone (small screen, everything overlaps).
+        const _mobPraise = ('ontouchstart' in window) || window.innerWidth <= 768;
+        if (_mobPraise) {
+            const _shown = (id) => {
+                const el = document.getElementById(id);
+                return el && !el.classList.contains('hidden') &&
+                    getComputedStyle(el).display !== 'none';
+            };
+            if (_shown('missionCommandAlert') ||
+                _shown('incomingTransmissionPrompt') ||
+                _shown('incomingTransmission')) return;
+        }
         const ts = _TIER_STYLE[tier] || _TIER_STYLE[1];
         if (!document.getElementById('arcadeTextStyle')) {
             const st = document.createElement('style');

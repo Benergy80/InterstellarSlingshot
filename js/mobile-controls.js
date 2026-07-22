@@ -978,6 +978,15 @@ window.addEventListener('beforeunload', () => {
 // Neutral attitude is captured from however the phone is held at enable
 // time; tilting past a small deadzone turns at a rate proportional to
 // the tilt angle. iOS 13+ requires a user-gesture permission grant.
+//
+// WHY devicemotion, not deviceorientation: the euler angles from
+// deviceorientation degenerate at play-typical hold angles — with the
+// phone near vertical (beta≈90°), a steering-wheel roll registers in
+// ALPHA (compass) instead of gamma, and gamma flips sign past vertical,
+// so left/right came out wrong or reversed depending on hold angle.
+// The raw gravity vector from accelerationIncludingGravity has no such
+// discontinuities: we measure how far world-up leans along the screen
+// axes, which is exactly the felt "tilt" at ANY hold angle.
 // =============================================================================
 
 window.tiltSteering = (function () {
@@ -986,9 +995,14 @@ window.tiltSteering = (function () {
         base: null,        // neutral {pitch, yaw} in degrees, captured on enable
         deadzone: 3,       // degrees of slop around neutral
         maxTilt: 22,       // degrees past deadzone for full-rate turn
-        maxRate: 0.028,    // rad per orientation event (~60Hz) at full tilt
+        maxRate: 0.028,    // rad per motion event (~60Hz) at full tilt
         _listening: false
     };
+
+    // iOS reports accelerationIncludingGravity with the opposite sign of
+    // the spec (Android/Chrome): flat screen-up reads z≈-9.8 instead of
+    // +9.8. Normalize so the vector always points WORLD-UP in device axes.
+    const GRAV_SIGN = /iPhone|iPad|iPod/.test(navigator.userAgent || '') ? -1 : 1;
 
     function screenAngle() {
         if (screen.orientation && typeof screen.orientation.angle === 'number') {
@@ -997,21 +1011,32 @@ window.tiltSteering = (function () {
         return (typeof window.orientation === 'number') ? window.orientation : 0;
     }
 
-    function onOrient(e) {
+    function onMotion(e) {
         if (!T.enabled) return;
-        if (e.beta === null || e.gamma === null) return;
+        const g = e.accelerationIncludingGravity;
+        if (!g || g.x === null || g.y === null || g.z === null) return;
         if (typeof gameState === 'undefined' || !gameState.gameStarted ||
             gameState.paused || gameState.gameOver) return;
         if (window.demoPilot && demoPilot.active && demoPilot.driving) return; // don't fight the autopilot
         if (typeof camera === 'undefined') return;
 
-        // Map device axes to pitch/yaw for the current screen orientation.
-        // Portrait: beta = front-back tilt, gamma = left-right tilt.
-        const ang = screenAngle();
-        let pitchDeg, yawDeg;
-        if (ang === 90) { pitchDeg = -e.gamma; yawDeg = e.beta; }
-        else if (ang === -90 || ang === 270) { pitchDeg = e.gamma; yawDeg = -e.beta; }
-        else { pitchDeg = e.beta; yawDeg = e.gamma; }
+        // World-up vector in device axes (x right, y top, z out of screen)
+        const ux = g.x * GRAV_SIGN, uy = g.y * GRAV_SIGN, uz = g.z * GRAV_SIGN;
+        const mag = Math.sqrt(ux * ux + uy * uy + uz * uz);
+        if (mag < 2) return; // free-fall / garbage sample
+
+        // Rotate device x/y into SCREEN x/y for the current orientation
+        const a = screenAngle() * Math.PI / 180;
+        const sx = ux * Math.cos(a) + uy * Math.sin(a);
+        const sy = -ux * Math.sin(a) + uy * Math.cos(a);
+
+        // How far world-up leans along each screen axis, in degrees.
+        // Right edge down → up leans toward screen-LEFT → sx < 0, so
+        // negate for "positive = tilted right". sy ≈ the pitch angle
+        // (upright ≈ 90°, flat ≈ 0°) — same feel as the old beta mapping.
+        const clamp1 = (v) => Math.max(-1, Math.min(1, v));
+        const yawDeg = -Math.asin(clamp1(sx / mag)) * 180 / Math.PI;
+        const pitchDeg = Math.asin(clamp1(sy / mag)) * 180 / Math.PI;
 
         if (!T.base) { T.base = { pitch: pitchDeg, yaw: yawDeg }; return; }
 
@@ -1026,10 +1051,10 @@ window.tiltSteering = (function () {
         const pitchRate = rate(pitchDeg - T.base.pitch);
         if (!yawRate && !pitchRate) return;
 
-        // Tilt the top of the phone toward you = pull up. Yaw sign
-        // verified on-device by Ben: positive gamma (right edge down)
-        // needs positive rotateY here or left/right come out reversed.
-        camera.rotateY(yawRate);
+        // Tilt right (yawDeg+) = turn right (rotateY negative); tilt the
+        // top of the phone toward you = pull up (unchanged — Ben verified
+        // the pitch feel on-device).
+        camera.rotateY(-yawRate);
         camera.rotateX(pitchRate);
 
         // Same bookkeeping as touch look: kill rotational drift and feed
@@ -1063,9 +1088,9 @@ window.tiltSteering = (function () {
 
     async function enable() {
         try {
-            if (typeof DeviceOrientationEvent !== 'undefined' &&
-                typeof DeviceOrientationEvent.requestPermission === 'function') {
-                const r = await DeviceOrientationEvent.requestPermission();
+            if (typeof DeviceMotionEvent !== 'undefined' &&
+                typeof DeviceMotionEvent.requestPermission === 'function') {
+                const r = await DeviceMotionEvent.requestPermission();
                 if (r !== 'granted') {
                     if (typeof showAchievement === 'function') {
                         showAchievement('Tilt Steering', 'Motion access denied by the browser');
@@ -1077,7 +1102,7 @@ window.tiltSteering = (function () {
             return;
         }
         if (!T._listening) {
-            window.addEventListener('deviceorientation', onOrient);
+            window.addEventListener('devicemotion', onMotion);
             T._listening = true;
         }
         T.base = null; // recapture neutral from the current hold angle

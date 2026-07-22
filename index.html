@@ -24,7 +24,7 @@
          This lives only on the feature branch; main will not print it. -->
     <script>
       window.BUILD_ID = 'claude/anaglyph-3d';
-      window.BUILD_TAG = '20260721h';
+      window.BUILD_TAG = '20260721i';
       console.log(
         '%c🚀 BUILD: ' + window.BUILD_ID + '  ·  ' + window.BUILD_TAG,
         'background:#0a7d2c;color:#fff;font-size:14px;font-weight:bold;padding:4px 10px;border-radius:4px;'
@@ -1017,8 +1017,8 @@
      translateX transform, which would hijack this fixed positioning. -->
 <div class="mobile-controls-top">
     <div class="mobile-btn-col">
-        <button class="mobile-btn" onclick="showMobilePanel('controls')" title="Flight Controls">
-            <i class="fas fa-gamepad"></i>
+        <button id="mobileTiltBtn" class="mobile-btn" type="button" title="Tilt Steering On/Off">
+            <i class="fas fa-mobile-alt"></i>
         </button>
         <button id="mobileAnaglyphBtn" class="mobile-btn" type="button" title="Red/Cyan 3D Mode">
             <i class="fas fa-glasses"></i>
@@ -1217,9 +1217,9 @@
     <script src="js/camera-system.js?v=20260703r"></script>
     <script src="js/cosmic-features.js"></script>
     <script src="js/game-objects.js?v=20260703r"></script>
-    <script src="js/game-controls.js?v=20260721h"></script>
+    <script src="js/game-controls.js?v=20260721i"></script>
     <script src="js/civilian-combat.js?v=20260703r"></script>
-    <script src="js/visual-flair.js?v=20260719b"></script>
+    <script src="js/visual-flair.js?v=20260721i"></script>
     <script src="js/playtest-probe.js?v=20260703r"></script>
     <script src="js/arcade.js?v=20260703r"></script>
     <script src="js/outer-systems.js?v=20260703r"></script>
@@ -1235,7 +1235,7 @@
     <script src="js/game-core.js?v=20260703r"></script>
 
     <!-- Mobile Script -->
-    <script src="js/mobile-controls.js?v=20260721g"></script>
+    <script src="js/mobile-controls.js?v=20260721i"></script>
 
     <!-- Initialization Script -->
     <script>
