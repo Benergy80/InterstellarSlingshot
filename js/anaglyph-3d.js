@@ -154,16 +154,16 @@
     enable: function () {
       if (!_effect) this.init();
       _enabled = true;
-      _showBadge(true);
       _syncButtons();
+      _syncDepthUI();
       _hudOn();
       _wrapPraise();
     },
 
     disable: function () {
       _enabled = false;
-      _showBadge(false);
       _syncButtons();
+      _syncDepthUI();
       _hudOff();
     },
 
@@ -171,23 +171,18 @@
       if (_enabled) this.disable(); else this.enable();
     },
 
+    // Single depth control (0.05–0.35). HUD depth is DERIVED: 0.2 across
+    // the range, easing up to 0.25 as scene depth approaches its max —
+    // no separate HUD control anywhere.
     setEyeSep: function (val) {
-      _eyeSep = Math.round(Math.max(0.05, Math.min(20, val)) * 100) / 100;
+      _eyeSep = Math.round(Math.max(0.05, Math.min(0.35, val)) * 100) / 100;
       if (_effect) _effect.stereo.eyeSep = _eyeSep;
-      _flashDepth();
+      _hudDepth = _eyeSep >= 0.34 ? 0.25 : 0.2;
+      _syncDepthUI();
     },
 
     adjustEyeSep: function (delta) {
       this.setEyeSep(_eyeSep + delta);
-    },
-
-    setHudDepth: function (val) {
-      _hudDepth = Math.round(Math.max(-1, Math.min(1, val)) * 100) / 100;
-      _flashDepth();
-    },
-
-    adjustHudDepth: function (delta) {
-      this.setHudDepth(_hudDepth + delta);
     },
 
     resize: function (w, h) {
@@ -394,68 +389,46 @@
     _praiseWrapped = true;
   }
 
-  // ---------- HUD badge / depth control panel ----------
-  // Desktop: a small top-right panel with live sliders for the two depths.
-  // Mobile (coarse pointer): readout only — slider thumbs are too fiddly
-  // at phone size, and the keyboard shortcuts don't exist there anyway.
-
-  var _badge = null;
+  // ---------- Depth slider UI ----------
+  // ONE control: scene depth 0.05–0.35, no numeric readout.
+  // Desktop: #anaglyphDepthRow inside the Flight Controls panel (under the
+  // button row). Mobile: #mobileDepthWrap, a vertical slider on the left
+  // edge above the tilt toggle. Both appear only while 3D is on; both are
+  // static index.html markup wired here.
 
   function _isCoarse() {
     return (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) ||
       window.innerWidth <= 768;
   }
 
-  function _sliderRow(name, min, max) {
-    return '<div style="display:flex;align-items:center;gap:6px;margin-top:4px">' +
-      '<span style="width:40px;letter-spacing:1px">' + name + '</span>' +
-      '<input id="anaglyph-slider-' + name + '" type="range" min="' + min +
-      '" max="' + max + '" step="0.05" style="width:110px;accent-color:#0ff;cursor:pointer">' +
-      '<span id="anaglyph-val-' + name + '" style="width:36px;text-align:right"></span></div>';
+  var _depthWired = false;
+
+  function _wireDepthSliders() {
+    if (_depthWired) return;
+    var ids = ['anaglyphDepthDesktop', 'anaglyphDepthMobile'];
+    var found = false;
+    ids.forEach(function (id) {
+      var s = document.getElementById(id);
+      if (!s) return;
+      found = true;
+      s.addEventListener('input', function () {
+        anaglyphMode.setEyeSep(parseFloat(this.value));
+      });
+    });
+    _depthWired = found;
   }
 
-  function _syncSliders() {
-    var s = _badge && _badge.querySelector('#anaglyph-slider-scene');
-    if (!s) return;
-    var h = _badge.querySelector('#anaglyph-slider-hud');
-    s.value = _eyeSep;
-    h.value = _hudDepth;
-    _badge.querySelector('#anaglyph-val-scene').textContent = _eyeSep.toFixed(2);
-    _badge.querySelector('#anaglyph-val-hud').textContent = _hudDepth.toFixed(2);
-  }
-
-  function _showBadge(show) {
-    if (!_badge) {
-      _badge = document.createElement('div');
-      _badge.id = 'anaglyph-badge';
-      _badge.style.cssText =
-        'position:fixed;top:12px;right:12px;z-index:9999;' +
-        'font:bold 12px/1.4 monospace;color:#0ff;' +
-        'background:rgba(0,0,0,0.75);border:1px solid #0ff;' +
-        'padding:6px 10px;border-radius:4px;pointer-events:none;' +
-        'transition:opacity 0.3s;text-shadow:0 0 6px #0ff;';
-      if (!_isCoarse()) {
-        _badge.innerHTML =
-          '<div style="letter-spacing:2px">3D DEPTH</div>' +
-          _sliderRow('scene', 0.05, 1.5) +
-          _sliderRow('hud', -1, 1);
-        _badge.querySelector('#anaglyph-slider-scene').addEventListener('input', function () {
-          anaglyphMode.setEyeSep(parseFloat(this.value));
-        });
-        _badge.querySelector('#anaglyph-slider-hud').addEventListener('input', function () {
-          anaglyphMode.setHudDepth(parseFloat(this.value));
-        });
-      }
-      document.body.appendChild(_badge);
-    }
-    if (_badge.querySelector('input')) {
-      _syncSliders();
-    } else {
-      _badge.textContent =
-        '3D  depth:' + _eyeSep.toFixed(2) + '  hud:' + _hudDepth.toFixed(2);
-    }
-    _badge.style.opacity = show ? '1' : '0';
-    _badge.style.pointerEvents = (show && _badge.querySelector('input')) ? 'auto' : 'none';
+  function _syncDepthUI() {
+    _wireDepthSliders();
+    var desk = document.getElementById('anaglyphDepthRow');
+    var mob = document.getElementById('mobileDepthWrap');
+    var coarse = _isCoarse();
+    if (desk) desk.style.display = (_enabled && !coarse) ? 'block' : 'none';
+    if (mob) mob.style.display = (_enabled && coarse) ? 'block' : 'none';
+    var d = document.getElementById('anaglyphDepthDesktop');
+    var m = document.getElementById('anaglyphDepthMobile');
+    if (d) d.value = _eyeSep;
+    if (m) m.value = _eyeSep;
   }
 
   // ---------- On-screen toggle buttons ----------
@@ -488,17 +461,9 @@
     anaglyphMode.toggle();
   });
 
-  var _depthFlashTimer = 0;
-  function _flashDepth() {
-    if (!_enabled) return;
-    _showBadge(true);
-    clearTimeout(_depthFlashTimer);
-    _depthFlashTimer = setTimeout(function () {
-      _showBadge(_enabled);
-    }, 1200);
-  }
-
   // ---------- Keyboard shortcuts ----------
+  // Backtick toggles; -/= nudge the one depth control (HUD depth is
+  // derived from it, so no [/] keys anymore).
 
   window.addEventListener('keydown', function (e) {
     if (e.key === '`') {
@@ -509,8 +474,6 @@
     if (_enabled) {
       if (e.key === '-') { e.preventDefault(); anaglyphMode.adjustEyeSep(-DEPTH_STEP); }
       if (e.key === '=') { e.preventDefault(); anaglyphMode.adjustEyeSep(DEPTH_STEP); }
-      if (e.key === '[') { e.preventDefault(); anaglyphMode.adjustHudDepth(-DEPTH_STEP); }
-      if (e.key === ']') { e.preventDefault(); anaglyphMode.adjustHudDepth(DEPTH_STEP); }
     }
   });
 

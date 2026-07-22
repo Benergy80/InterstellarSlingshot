@@ -567,6 +567,7 @@ document.addEventListener('touchstart', (e) => {
         e.target.closest('#demoPilotHUD') ||
         e.target.closest('.mobile-floating-status') ||
         e.target.closest('.mobile-stat-pill') ||
+        e.target.closest('#mobileDepthWrap') ||
         e.target.closest('.mobile-controls-top')) {
         return; // Let button handlers work
     }
@@ -602,10 +603,11 @@ document.addEventListener('touchmove', (e) => {
         e.target.closest('.mobile-controls-container') ||
         e.target.closest('.mobile-controls') ||
         e.target.closest('.mobile-popup') ||
+        e.target.closest('#mobileDepthWrap') ||
         e.target.closest('.nav-panel-mobile')) {
         return;
     }
-    
+
     if (typeof camera !== 'undefined') {
         if (e.touches.length === 1 && isTouching) {
             // Single finger - pitch and yaw controls (LOCAL SPACE - PLAYER POV)
