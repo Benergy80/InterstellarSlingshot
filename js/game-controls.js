@@ -2647,7 +2647,10 @@ function initAudio() {
         // sets the overall level. The old 0.2 × 0.2 = 0.04 chain made
         // weapon peaks inaudible at 0.012 once the duplicate-AudioContext
         // bug was fixed.
-        effectsGain.gain.setValueAtTime(1.0, 0);
+        // Default SFX level 50% (was unity — too loud as a default). The
+        // pause-menu SFX slider and toggleSfx both respect window._sfxLevel.
+        window._sfxLevel = window._sfxLevel ?? 0.5;
+        effectsGain.gain.setValueAtTime(window._sfxLevel, 0);
         
         console.log('Enhanced audio system initialized (waiting for user interaction)');
         // Preload MP3 soundtrack alongside synth audio
@@ -2993,7 +2996,8 @@ function switchToAmbientMusic() {
 function toggleSfx() {
     window._sfxMuted = !window._sfxMuted;
     if (typeof effectsGain !== 'undefined' && effectsGain && audioContext) {
-        const v = window._sfxMuted ? 0 : 1;
+        // Unmute restores the user's chosen level, not full blast
+        const v = window._sfxMuted ? 0 : (window._sfxLevel ?? 0.5);
         effectsGain.gain.value = v;   // immediate
         effectsGain.gain.setValueAtTime(v, audioContext.currentTime);  // cancel-proof
     }
@@ -7807,6 +7811,7 @@ function togglePause() {
                     effectsGain.gain.value = v;
                     effectsGain.gain.setValueAtTime(v, audioContext.currentTime);
                 }
+                if (v > 0) window._sfxLevel = v; // remembered by toggleSfx unmute
                 window._sfxMuted = v === 0;
                 _updSfxIcon();
             });
