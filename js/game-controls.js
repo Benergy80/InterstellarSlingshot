@@ -7726,16 +7726,16 @@ function togglePause() {
     // Create pause overlay if it doesn't exist
     let pauseOverlay = document.getElementById('pauseOverlay');
     if (!pauseOverlay) {
-        // Mobile gets an AUDIO section in the pause menu — the on-screen
-        // audio buttons were consolidated here (desktop keeps its Flight
-        // Controls panel buttons, so no section there).
+        // AUDIO + CONTROLS sections live in the pause menu on BOTH
+        // platforms (desktop got the same upgrades per Ben, Jul 21).
+        // _mobPause only picks the resume-instruction wording now.
         const _mobPause = ('ontouchstart' in window) || window.innerWidth <= 768;
         pauseOverlay = document.createElement('div');
         pauseOverlay.id = 'pauseOverlay';
         pauseOverlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;' +
             'background:rgba(0,0,0,0.75);display:none;align-items:center;' +
             'justify-content:center;z-index:9999;';
-        const audioSection = _mobPause ? `
+        const audioSection = `
                 <div style="border-top:1px solid rgba(0,150,255,0.4);margin-top:18px;padding-top:14px;">
                     <h3 class="text-cyan-400 font-bold mb-3" style="letter-spacing:2px;">AUDIO</h3>
                     <div class="flex gap-2 mb-4 justify-center flex-wrap">
@@ -7759,7 +7759,7 @@ function togglePause() {
                     <button id="pauseFlightBtn" class="space-btn rounded px-4 py-2" type="button" title="Show the flight controls reference">
                         <i class="fas fa-gamepad mr-2"></i>Flight Controls
                     </button>
-                </div>` : '';
+                </div>`;
         pauseOverlay.innerHTML = `
             <div class="text-center ui-panel rounded-lg p-8" style="max-width:92vw;max-height:86vh;overflow-y:auto;">
                 <h2 class="text-3xl font-bold text-cyan-400 mb-4">GAME PAUSED</h2>
