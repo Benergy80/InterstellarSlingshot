@@ -996,10 +996,11 @@ window.tiltSteering = (function () {
         enabled: false,
         base: null,        // neutral {pitch, yaw} in degrees, captured on enable
         deadzone: 2,       // degrees of slop around neutral
-        maxTilt: 18,       // degrees past deadzone for full-rate turn
-        maxRate: 0.1,      // rad per motion event (~60Hz) at full tilt (~3.5x the
-                           // original 0.028 — Ben: turning needed physically
-                           // rotating the whole body; small tilts now steer hard)
+        maxTilt: 40,       // degrees past deadzone for full-rate turn — long
+                           // ramp for a smooth, controllable middle zone
+                           // (Ben: 18 ramped up too fast)
+        maxRate: 0.07,     // rad per motion event (~60Hz) at full tilt
+                           // (~4.2 rad/s; was 0.1 — "reduce some")
         _listening: false
     };
 
