@@ -993,9 +993,11 @@ window.tiltSteering = (function () {
     const T = {
         enabled: false,
         base: null,        // neutral {pitch, yaw} in degrees, captured on enable
-        deadzone: 3,       // degrees of slop around neutral
-        maxTilt: 22,       // degrees past deadzone for full-rate turn
-        maxRate: 0.028,    // rad per motion event (~60Hz) at full tilt
+        deadzone: 2,       // degrees of slop around neutral
+        maxTilt: 18,       // degrees past deadzone for full-rate turn
+        maxRate: 0.1,      // rad per motion event (~60Hz) at full tilt (~3.5x the
+                           // original 0.028 — Ben: turning needed physically
+                           // rotating the whole body; small tilts now steer hard)
         _listening: false
     };
 

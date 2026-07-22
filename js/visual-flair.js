@@ -431,10 +431,27 @@ function _updateLensFlares(fc) {
     }
 }
 
+// Immediately fade any live praise word (and its red/cyan anaglyph eye
+// copies) so a spawn warning owns the screen. Exposed for boss/guardian
+// spawn sites in other files.
+function clearArcadePraise() {
+    const els = [document.getElementById('arcadeText'),
+                 ...document.querySelectorAll('.anaglyph-praise')];
+    els.forEach(el => {
+        if (!el) return;
+        el.style.animation = 'none';
+        el.style.transition = 'opacity 0.18s linear';
+        el.style.opacity = '0';
+        setTimeout(() => el.remove(), 200);
+    });
+}
+if (typeof window !== 'undefined') window.clearArcadePraise = clearArcadePraise;
+
 // ── 10. BOSS INTRO BEAT ─────────────────────────────────────────────────────
 // Letterbox bars + name card for ~2.4s when a boss spawns.
 function playBossIntro(bossName, faction, colorHex) {
     try {
+        clearArcadePraise(); // the warning must be readable — kill praise now
         if (document.getElementById('bossIntroCard')) return; // one at a time
         // Strip any trailing internal "(placementType)" parenthetical so no
         // boss ever shows e.g. "Overlord (vulcanPatrol_boss)" — same for all.
