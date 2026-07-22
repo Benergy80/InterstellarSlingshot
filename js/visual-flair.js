@@ -688,6 +688,10 @@ function killTextSizeForDistance(dist) {
 // Borg arrival, wingman deaths/recruits, caravan rescues, etc.
 function flashEventText(title, cssColor, subtext) {
     try {
+        // Event alerts (HOSTILES DETECTED, BOSS DETECTED, discoveries…)
+        // render at top:26% — inside the praise word's swell zone. Fade any
+        // live praise immediately so the alert is legible.
+        clearArcadePraise();
         if (!document.getElementById('eventTextStyle')) {
             const st = document.createElement('style');
             st.id = 'eventTextStyle';
