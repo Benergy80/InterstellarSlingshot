@@ -221,29 +221,44 @@
       return;
     }
 
-    // Crossfade: fade out old + fade in new simultaneously
-    const steps = 30;
-    const interval = (FADE_DURATION * 1000) / steps;
-    let step = 0;
-    const startVol = prev.volume;
-    const targetVol = trackVolume(key);
-
+    // WAIT-FOR-AUDIO crossfade: don't start killing the old track until
+    // the incoming one is actually producing sound. Tracks are preloaded
+    // as metadata only, so the full MP3 (Boss Fight.mp3 is 6.4 MB) is
+    // fetched the first time it plays — on mobile (worse in 3D mode,
+    // whose doubled render load competes with the fetch) the old timed
+    // fade used to complete while the new track was still buffering,
+    // leaving SILENCE. Now the old track keeps playing until 'playing'
+    // fires on the new one; if the new track never starts, the old one
+    // simply keeps going.
     st.fadingOut = prev;
+    let _xfStarted = false;
+    const _beginCrossfade = () => {
+      if (_xfStarted) return;
+      if (st.currentEl !== next) return; // superseded by a later play()
+      _xfStarted = true;
+      const steps = 30;
+      const interval = (FADE_DURATION * 1000) / steps;
+      let step = 0;
+      const startVol = prev.volume;
+      const targetVol = trackVolume(key);
 
-    st.fadeTimer = setInterval(() => {
-      step++;
-      const t = step / steps;
-      prev.volume = Math.max(0, startVol * (1 - t));
-      next.volume = Math.min(targetVol, targetVol * t);
+      st.fadeTimer = setInterval(() => {
+        step++;
+        const t = step / steps;
+        prev.volume = Math.max(0, startVol * (1 - t));
+        next.volume = Math.min(targetVol, targetVol * t);
 
-      if (step >= steps) {
-        clearInterval(st.fadeTimer);
-        st.fadeTimer = null;
-        prev.pause();
-        prev.volume = 0;
-        st.fadingOut = null;
-      }
-    }, interval);
+        if (step >= steps) {
+          clearInterval(st.fadeTimer);
+          st.fadeTimer = null;
+          prev.pause();
+          prev.volume = 0;
+          st.fadingOut = null;
+        }
+      }, interval);
+    };
+    next.addEventListener('playing', _beginCrossfade, { once: true });
+    if (next.readyState >= 3 && !next.paused) _beginCrossfade();
   }
 
   function fadeIn(el, key) {
@@ -309,6 +324,22 @@
     if (typeof gameState === 'undefined' || !gameState.gameStarted) {
       play('launchScreen');
       return;
+    }
+
+    // One-shot: warm the combat tracks in the background once the game is
+    // running (they're metadata-only preloads) so the boss/borg music
+    // switch doesn't fetch ~6 MB at the moment the fight starts.
+    if (!st._combatWarmed) {
+      st._combatWarmed = true;
+      setTimeout(() => {
+        ['bossFight', 'eliteGuardians', 'borg'].forEach(k => {
+          const a = st.loaded[k];
+          if (a && a !== st.currentEl && !st.loadErrors.has(k)) {
+            a.preload = 'auto';
+            try { a.load(); } catch (e) {}
+          }
+        });
+      }, 12000);
     }
 
     // 2) Intro sequence — Intro.mp3 is deliberately NOT played during the
