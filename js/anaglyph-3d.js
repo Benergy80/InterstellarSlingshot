@@ -128,7 +128,7 @@
 
   var _effect = null;
   var _enabled = false;
-  var _eyeSep = 0.02;   // scene eye separation (game units) — subtle default
+  var _eyeSep = 0.2;    // scene eye separation (game units)
   var _hudDepth = 0.2;  // crosshair stereo depth; + = into the scene, - = pops out
   var DEPTH_STEP = 0.05;
   var HUD_PX_PER_UNIT = 30;   // hudDepth 0.2 → 6px per-eye horizontal shift
@@ -171,11 +171,11 @@
       if (_enabled) this.disable(); else this.enable();
     },
 
-    // Single depth control (0.02–0.35, default 0.02). HUD depth is
+    // Single depth control (0.05–0.35, default 0.2). HUD depth is
     // DERIVED: 0.2 across the range, easing up to 0.25 as scene depth
     // approaches its max — no separate HUD control anywhere.
     setEyeSep: function (val) {
-      _eyeSep = Math.round(Math.max(0.02, Math.min(0.35, val)) * 100) / 100;
+      _eyeSep = Math.round(Math.max(0.05, Math.min(0.35, val)) * 100) / 100;
       if (_effect) _effect.stereo.eyeSep = _eyeSep;
       _hudDepth = _eyeSep >= 0.34 ? 0.25 : 0.2;
       _syncDepthUI();

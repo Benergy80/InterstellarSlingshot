@@ -24,7 +24,7 @@
          This lives only on the feature branch; main will not print it. -->
     <script>
       window.BUILD_ID = 'claude/anaglyph-3d';
-      window.BUILD_TAG = '20260721s';
+      window.BUILD_TAG = '20260721t';
       console.log(
         '%c🚀 BUILD: ' + window.BUILD_ID + '  ·  ' + window.BUILD_TAG,
         'background:#0a7d2c;color:#fff;font-size:14px;font-weight:bold;padding:4px 10px;border-radius:4px;'
@@ -793,7 +793,7 @@
             <!-- Shown only while 3D mode is on (anaglyph-3d.js) -->
             <div id="anaglyphDepthRow" class="mt-2" style="display:none;">
                 <div class="text-xs text-gray-300 mb-1">3D Depth</div>
-                <input id="anaglyphDepthDesktop" type="range" min="0.02" max="0.35" step="0.01"
+                <input id="anaglyphDepthDesktop" type="range" min="0.05" max="0.35" step="0.01"
                        style="width:100%;accent-color:#0ff;cursor:pointer;">
             </div>
         </div>
@@ -1044,7 +1044,7 @@
 <!-- Vertical 3D depth slider — left edge, above the tilt toggle. Shown only
      while 3D mode is on (anaglyph-3d.js). Body-level fixed positioning. -->
 <div id="mobileDepthWrap" style="display:none; position:fixed; left:12px; bottom:224px; z-index:26; pointer-events:none;">
-    <input id="anaglyphDepthMobile" type="range" min="0.02" max="0.35" step="0.01"
+    <input id="anaglyphDepthMobile" type="range" min="0.05" max="0.35" step="0.01"
            style="pointer-events:auto; -webkit-appearance:slider-vertical; writing-mode:vertical-lr; direction:rtl;
                   width:30px; height:140px; accent-color:#0ff; touch-action:none;">
 </div>
@@ -1224,7 +1224,7 @@
     <!-- boot.js FIRST: init-order registry every other script signals into -->
     <script src="js/boot.js?v=20260703r"></script>
     <!-- Anaglyph 3D effect (red/cyan glasses) — before game scripts so gameRender() is available -->
-    <script src="js/anaglyph-3d.js?v=20260721p"></script>
+    <script src="js/anaglyph-3d.js?v=20260721t"></script>
     <!-- Load GLTFLoader before game-models.js -->
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
     <script src="js/game-models.js?v=20260703r"></script>
