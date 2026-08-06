@@ -976,9 +976,12 @@ function _updateScreenFX() {
     // had them at ~0.30 opacity with chroma fringing on top. The explicit
     // warp / dilation / tunnel overrides below are unaffected: they ARE the
     // warp moments, and they raise the level right back up.
-    const _cruiseCap = _SPECTACLE_CRUISE_CEIL + (1 - _SPECTACLE_CRUISE_CEIL) * _warpMomentLevel();
+    const _cruiseCap = _SPECTACLE_CRUISE_CEIL +
+        (1 - _SPECTACLE_CRUISE_CEIL) * _warpMomentLevel() * _warpSpeedRamp();
     let target = Math.max(0, (Math.min(speedWhipLevel(), _cruiseCap) - 0.10) / 0.90);
-    if (warping) target = Math.max(target, 0.85);
+    // Speed-proportional warp floor (was a flat 0.85 whenever warping —
+    // slammed full tunnel-vision regardless of actual velocity).
+    if (warping) target = Math.max(target, 0.25 + 0.65 * _warpSpeedRamp());
     // TIME DILATION (gravity whip periapsis): the whip publishes a 0..1
     // dilation weight as it slows through closest approach. Borrow the speed
     // layers to sell it — the rim chroma stresses and the spokes stretch
@@ -990,7 +993,8 @@ function _updateScreenFX() {
     // than plain speed ever does without also cranking the spokes and chroma
     // — tunnel vision is the point, a strobing edge is not.
     const tun = (typeof window !== 'undefined' && window.__warpTunnelLevel) || 0;
-    if (tun > 0.01) target = Math.max(target, 0.6 + tun * 0.4);
+    // Tunnel depth also rides the speed ramp — deep shaft only at real speed.
+    if (tun > 0.01) target = Math.max(target, (0.6 + tun * 0.4) * (0.45 + 0.55 * _warpSpeedRamp()));
     // Faster attack while dilating so the effect lands inside the ~0.3s window.
     _sfx.level += (target - _sfx.level) * (dil > 0.05 ? 0.14 : 0.05);
     if (_sfx.level < 0.012) {
@@ -1444,6 +1448,18 @@ function _warpMomentLevel() {
     return _warpMoment.level;
 }
 
+// Spectacle intensity ∝ ACTUAL speed (user feedback: the warp gate alone was
+// binary, so a modest warp slammed the same full-blast light show as a
+// 100,000 km/s whip). Smoothstep from ~6,000 km/s (barely reads) to
+// ~45,000 km/s (full spectacle) — entry ramps in with acceleration, the
+// post-warp decay eases the show down with the speed instead of holding it.
+function _warpSpeedRamp() {
+    const v = (typeof gameState !== 'undefined' && gameState.velocityVector)
+        ? gameState.velocityVector.length() : 0;
+    const t = Math.max(0, Math.min(1, (v - 6) / 39));
+    return t * t * (3 - 2 * t);
+}
+
 // ── 19. WARP STREAK FIELD — the thing that makes 79,000 km/s LOOK like it ────
 // The whip's release used to be a number change: velocity snapped from ~24 to
 // ~4800 u/s while the background stars stayed discrete stationary dots and the
@@ -1761,7 +1777,10 @@ function _updateWarpStreaks() {
     // emergency warp still opens the field all the way up. (The kick below is
     // applied AFTER the cap so a release burst always punches at full force.)
     const moment = _warpMomentLevel();
-    target = Math.min(target, _SPECTACLE_CRUISE_CEIL + (1 - _SPECTACLE_CRUISE_CEIL) * moment);
+    // The gate opens WITH the speed ramp, not instead of it — a warp moment
+    // at modest velocity gets a modest field; full blast needs real speed.
+    target = Math.min(target, _SPECTACLE_CRUISE_CEIL +
+        (1 - _SPECTACLE_CRUISE_CEIL) * moment * _warpSpeedRamp());
     if (_wsf.kickAmp > 0) {
         const kt = (now - _wsf.kickT0) / _wsf.kickMs;
         if (kt >= 1) _wsf.kickAmp = 0;
