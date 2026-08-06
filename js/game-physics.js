@@ -4440,9 +4440,13 @@ function createDiscoveryPathToPosition(nebulaPosition, targetPosition, factionCo
     // per-vertex ramp so it multiplies with material.color: the existing
     // mission-complete / reset recolor logic (which writes material.color)
     // keeps working and the gradient survives the recolor.
+    // Floor 0.45 (was 0.15), matching the white liberation path: on a
+    // path tens of thousands of units long, a 15%-bright origin was
+    // invisible at the nebula — the line seemed to "appear" out at its
+    // bright far end, reading as if it originated from a different nebula.
     const gradColors = new Float32Array((segments + 1) * 3);
     for (let i = 0; i <= segments; i++) {
-        const b = 0.15 + 0.85 * (i / segments);
+        const b = 0.45 + 0.55 * (i / segments);
         gradColors[i * 3] = b;
         gradColors[i * 3 + 1] = b;
         gradColors[i * 3 + 2] = b;
@@ -4623,7 +4627,15 @@ function resolveNebulaGalaxyId(nebula, nebulaType, index) {
             return GALAXY_FORMATION_NEBULA_MAP[name] !== undefined ? GALAXY_FORMATION_NEBULA_MAP[name] : index % 8;
         case 'clustered':
         default: {
-            // First 8 clustered nebulas use the original paired logic
+            // The named twin nebulas resolve through their LORE map
+            // (Olympus→0 … Chronos→7), the same mapping the intel system's
+            // assignFactionsToNebulas uses. The old floor(index/2) pairing
+            // contradicted both: discovering Elysium (lore: Galactic
+            // Empire) drew a path to Rebel Alliance enemies, and galaxies
+            // 4–7 never received twin missions at all.
+            if (GALAXY_FORMATION_NEBULA_MAP[name] !== undefined) {
+                return GALAXY_FORMATION_NEBULA_MAP[name];
+            }
             const pairIndex = Math.floor(index / 2);
             return pairIndex % 8;
         }
@@ -5221,18 +5233,32 @@ function checkTwinPairCampaign() {
         const g = (p.galaxyId !== undefined) ? p.galaxyId
             : (ud.galaxyId !== undefined ? ud.galaxyId : -1);
         if (g < 0) continue;
-        if (!doneByGalaxy[g]) doneByGalaxy[g] = { count: 0, start: null };
+        if (!doneByGalaxy[g]) doneByGalaxy[g] = { count: 0, starts: [] };
         doneByGalaxy[g].count++;
-        if (!doneByGalaxy[g].start && ud.startPosition) doneByGalaxy[g].start = ud.startPosition;
+        if (ud.startPosition) doneByGalaxy[g].starts.push(ud.startPosition);
     }
     Object.keys(doneByGalaxy).forEach(gs => {
         const g = +gs;
         if (gameState._bhPathSpawned[g]) return;
         const d = doneByGalaxy[g];
-        if (d.count < 2 || !d.start) return;   // both twin missions required
+        if (d.count < 2 || !d.starts.length) return;   // both twin missions required
         const core = (typeof findGalaxyCoreById === 'function') ? findGalaxyCoreById(g) : null;
         if (!core) return;
         gameState._bhPathSpawned[g] = true;
+
+        // Anchor the arc path at the completed mission's nebula NEAREST the
+        // player — the one they just finished. The old first-array-hit pick
+        // could anchor at the pair's OTHER nebula, spawning the "follow the
+        // new line" path from a nebula ~45,000u away on the far side of the
+        // universe.
+        let start = d.starts[0];
+        if (typeof camera !== 'undefined') {
+            let bestDist = Infinity;
+            for (let s = 0; s < d.starts.length; s++) {
+                const dist = d.starts[s].distanceTo(camera.position);
+                if (dist < bestDist) { bestDist = dist; start = d.starts[s]; }
+            }
+        }
 
         const galaxyType = (typeof galaxyTypes !== 'undefined') ? galaxyTypes[g] : null;
         const factionName = galaxyType ? galaxyType.faction : 'Enemy';
@@ -5240,7 +5266,7 @@ function checkTwinPairCampaign() {
 
         // Third path: twin pair → the faction's black-hole galaxy core
         createDiscoveryPathToPosition(
-            d.start.clone(), core.position.clone(),
+            start.clone(), core.position.clone(),
             loreData.color, factionName, 'blackhole', g);
 
         // The stronghold garrison: exactly 3 black-hole guardians of this
