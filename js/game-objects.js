@@ -5359,6 +5359,7 @@ try {
             uniform float uTime;
             uniform float uSizeScale;
             uniform float uDpr;
+            uniform float uMaxPx;
             void main() {
                 vColor = color;
                 vHDR = aHDR;
@@ -5367,7 +5368,14 @@ try {
                 // Magnitude-driven screen size, plus the legacy perspective
                 // term so a star you actually approach still swells.
                 float near = min(aSize * (uSizeScale / max(1.0, -mvPosition.z)), 6.0);
-                gl_PointSize = (aPx + near) * uDpr;
+                // HARD SCREEN-SIZE CEILING. Point size here is magnitude-driven
+                // and therefore distance-INDEPENDENT: without a cap, a bright
+                // star holds the same screen radius whether it is 12,000u or
+                // 600,000u away, so a generous aPx stops reading as "a brilliant
+                // star" and starts reading as a foreground bokeh orb pasted over
+                // the frame. The ceiling is what keeps every one of these a
+                // STAR — brightness may exceed 1.0 (see aHDR), radius may not.
+                gl_PointSize = min(aPx + near, uMaxPx) * uDpr;
                 gl_Position = projectionMatrix * mvPosition;
             }
         `;
@@ -5410,12 +5418,18 @@ try {
             void main() {
                 vec2 uv = gl_PointCoord - 0.5;
                 float d = length(uv);
-                float core = pow(smoothstep(0.34, 0.0, d), 1.05);
-                float crossX = smoothstep(0.035, 0.0, abs(uv.y)) * (1.0 - smoothstep(0.02, 0.5, abs(uv.x)));
-                float crossY = smoothstep(0.035, 0.0, abs(uv.x)) * (1.0 - smoothstep(0.02, 0.5, abs(uv.y)));
-                float flare = max(crossX, crossY) * 1.15;
+                // Core radius tightened 0.34 -> 0.20. At 0.34 the saturated
+                // disc covered ~68% of the sprite's width, so with an HDR core
+                // clipping to white the whole quad read as a filled white ball
+                // and the cross-flare was just a fringe on it. At 0.20 the disc
+                // is a star's overexposed point and the SPIKES carry the
+                // "hero" read — which is the effect this was always for.
+                float core = pow(smoothstep(0.20, 0.0, d), 1.25);
+                float crossX = smoothstep(0.030, 0.0, abs(uv.y)) * (1.0 - smoothstep(0.02, 0.5, abs(uv.x)));
+                float crossY = smoothstep(0.030, 0.0, abs(uv.x)) * (1.0 - smoothstep(0.02, 0.5, abs(uv.y)));
+                float flare = max(crossX, crossY) * 0.85;
                 float I = (core * vHDR + flare) * (0.6 + 0.4 * vTwinkle);
-                if (I < 0.012) discard;
+                if (I < 0.02) discard;
                 vec3 c = mix(vColor, vec3(1.0), clamp(I - 1.0, 0.0, 1.0));
                 gl_FragColor = vec4(c, clamp(I, 0.0, 1.0));
             }
@@ -5581,8 +5595,19 @@ if (scene && scene.add) {
         fieldStarsGeometry.setAttribute('aPx', new THREE.Float32BufferAttribute(fieldPx, 1));
         fieldStarsGeometry.setAttribute('aHDR', new THREE.Float32BufferAttribute(fieldHDR, 1));
 
+        // Screen-radius ceilings, in CSS px. The field shells already cap
+        // themselves through pxMax (14 at the very top of Shell C), so
+        // FIELD_MAX_PX is a safety net, not a re-grade. HERO_MAX_PX is the
+        // load-bearing one: it is what guarantees a hero star can never grow
+        // into a foreground orb no matter what the magnitude roll gives it.
+        const _FIELD_MAX_PX = 16.0;
+        const _HERO_MAX_PX = 9.0;
+
         const fieldStarsMaterial = new THREE.ShaderMaterial({
-            uniforms: { uTime: { value: 0 }, uSizeScale: { value: _starSizeScale }, uDpr: { value: _starDpr } },
+            uniforms: {
+                uTime: { value: 0 }, uSizeScale: { value: _starSizeScale },
+                uDpr: { value: _starDpr }, uMaxPx: { value: _FIELD_MAX_PX }
+            },
             vertexShader: _starVertexShader,
             fragmentShader: _starFragmentShader,
             transparent: true,
@@ -5610,7 +5635,14 @@ if (scene && scene.add) {
         // most views had no landmark at all. 90 puts 3-6 in an average frame
         // while staying a rounding error on the draw budget (one small
         // additive Points call, cores only a handful of pixels wide).
-        const heroCount = 280;
+        //
+        // 280 was tried and reverted: measured in an ordinary cruise frame it
+        // put 89 of these on screen at once, 75 of them wider than 20 CSS px,
+        // and since a hero star's size does not fall off with distance the
+        // result was a field of large soft white discs floating over the whole
+        // sky — "bright white spheres everywhere" — rather than landmarks in
+        // it. Landmarks only work while they are RARE.
+        const heroCount = 90;
         const heroPositions = [];
         const heroColors = [];
         const heroSizes = [];
@@ -5634,8 +5666,16 @@ if (scene && scene.add) {
             // Top of the magnitude curve: these are the sky's brightest
             // objects, so their cores blow past 1.0 and clip to pure white
             // with the cross-flare hanging off them.
-            heroPx.push(16 + Math.random() * 24);
-            heroHDR.push(5.0 + Math.random() * 5.0);
+            //
+            // The brightness (aHDR) is what buys "brilliant"; the RADIUS
+            // (aPx) must stay in the same league as the field stars or these
+            // stop reading as sky at all. The field's brightest tail tops out
+            // near 14 px and sits around 2-4 px typically (see _addFieldStar),
+            // so 3.2-7.6 px keeps a hero star clearly the biggest thing in the
+            // starfield while still being a star. Was 16-40 px, i.e. up to 3x
+            // the brightest field star and ~10x the typical one — orbs.
+            heroPx.push(3.2 + Math.random() * 4.4);
+            heroHDR.push(2.6 + Math.random() * 2.4);
         }
 
         const heroStarsGeometry = new THREE.BufferGeometry();
@@ -5648,7 +5688,10 @@ if (scene && scene.add) {
         heroStarsGeometry.setAttribute('aHDR', new THREE.Float32BufferAttribute(heroHDR, 1));
 
         const heroStarsMaterial = new THREE.ShaderMaterial({
-            uniforms: { uTime: { value: 0 }, uSizeScale: { value: _starSizeScale }, uDpr: { value: _starDpr } },
+            uniforms: {
+                uTime: { value: 0 }, uSizeScale: { value: _starSizeScale },
+                uDpr: { value: _starDpr }, uMaxPx: { value: _HERO_MAX_PX }
+            },
             vertexShader: _starVertexShader,
             fragmentShader: _heroFragmentShader,
             transparent: true,

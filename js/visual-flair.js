@@ -970,7 +970,14 @@ function _updateScreenFX() {
     // floor. The vignette/spokes/chroma stack now ramps on the whip curve, so
     // the frame physically closes in AS you accelerate: tunnel vision arrives
     // with the speed instead of only ever appearing during warp.
-    let target = Math.max(0, (speedWhipLevel() - 0.10) / 0.90);
+    // Speed-driven part is capped outside a warp moment for the same reason as
+    // the 3D streak field — the anamorphic spokes in this stack are the DOM
+    // half of the same effect, and at a plain cruise the uncapped whip curve
+    // had them at ~0.30 opacity with chroma fringing on top. The explicit
+    // warp / dilation / tunnel overrides below are unaffected: they ARE the
+    // warp moments, and they raise the level right back up.
+    const _cruiseCap = _SPECTACLE_CRUISE_CEIL + (1 - _SPECTACLE_CRUISE_CEIL) * _warpMomentLevel();
+    let target = Math.max(0, (Math.min(speedWhipLevel(), _cruiseCap) - 0.10) / 0.90);
     if (warping) target = Math.max(target, 0.85);
     // TIME DILATION (gravity whip periapsis): the whip publishes a 0..1
     // dilation weight as it slows through closest approach. Borrow the speed
@@ -1389,6 +1396,54 @@ function speedWhipLevel() {
     return _WHIP_SUB + (1 - _WHIP_SUB) * Math.pow(t, 0.7);
 }
 
+// ── 18b. WARP-MOMENT GATE — what separates spectacle from scenery ───────────
+// speedWhipLevel() is a SPEED curve, and it spends 74% of itself by the time
+// you hit the ship's own top thruster speed. Every spectacle layer that hung
+// straight off it therefore ran at near-full strength during ordinary flight:
+// measured at a plain 4,000 km/s cruise with slingshot.active === false and
+// emergencyWarp.active === false, the streak field was at 0.74 envelope and
+// the world-space debris field — including its 28 huge soft haze sprites, the
+// "bokeh orbs" — was fully on. Post-slingshot inertial coasting at 10,000 km/s
+// was worse: whip 0.90, i.e. the full warp light show, while simply drifting.
+//
+// So speed alone is not the trigger. A warp MOMENT is: the slingshot boost
+// itself, an emergency-warp burn, or the ~1.5s tail of a release burst. This
+// returns 1 during those and 0 otherwise, smoothed so the field breathes out
+// instead of snapping off.
+//
+// Layers use it differently, and deliberately:
+//   • streaks — speed-driven as designed (they fade up from 800 km/s), but
+//     CAPPED outside a warp moment so cruise reads as motion lines, not as a
+//     light show. This is the "speed threshold matching the original design".
+//   • debris/bokeh — gated outright. This layer is a boost event.
+const _SPECTACLE_CRUISE_CEIL = 0.22;   // most of the streak curve that plain flight may reach
+const _warpMoment = { level: 0, last: 0 };
+
+function _isWarpMomentNow() {
+    if (typeof gameState === 'undefined') return false;
+    const s = gameState.slingshot;
+    if (s && s.active) return true;
+    const w = gameState.emergencyWarp;
+    if (w && (w.active || w.transitioning)) return true;
+    return false;
+}
+
+// 0..1, eased. Rises fast (the punch must land on the frame it is asked for)
+// and falls over ~0.6s so the field drains rather than pops.
+// Safe to call several times per frame: dt is measured off the last call, so
+// the first caller in a frame advances the ease and the rest read the same
+// value with dt ≈ 0. Every consumer therefore sees one consistent level.
+function _warpMomentLevel() {
+    const now = (typeof performance !== 'undefined') ? performance.now() : Date.now();
+    const dt = Math.max(0, Math.min(0.05, (now - (_warpMoment.last || now)) / 1000));
+    _warpMoment.last = now;
+    const target = _isWarpMomentNow() ? 1 : 0;
+    const tau = (target > _warpMoment.level) ? 0.05 : 0.6;
+    _warpMoment.level += (target - _warpMoment.level) * (1 - Math.exp(-dt / tau));
+    if (_warpMoment.level < 0.002) _warpMoment.level = 0;
+    return _warpMoment.level;
+}
+
 // ── 19. WARP STREAK FIELD — the thing that makes 79,000 km/s LOOK like it ────
 // The whip's release used to be a number change: velocity snapped from ~24 to
 // ~4800 u/s while the background stars stayed discrete stationary dots and the
@@ -1633,6 +1688,14 @@ function _updateWarpStreaks() {
     // below warp. It now rides the continuous whip curve, so the streaks come
     // up smoothly from 800 km/s and keep growing all the way to the cap.
     let target = speedWhipLevel();
+    // …but capped outside a genuine warp moment. Unclamped, the whip curve
+    // handed ordinary cruise a 0.74-0.90 envelope — 0.8 opacity, 360u
+    // filaments — so the screen was a warp light show while merely flying.
+    // Under the cap, cruise gets short thin motion lines and the slingshot /
+    // emergency warp still opens the field all the way up. (The kick below is
+    // applied AFTER the cap so a release burst always punches at full force.)
+    const moment = _warpMomentLevel();
+    target = Math.min(target, _SPECTACLE_CRUISE_CEIL + (1 - _SPECTACLE_CRUISE_CEIL) * moment);
     if (_wsf.kickAmp > 0) {
         const kt = (now - _wsf.kickT0) / _wsf.kickMs;
         if (kt >= 1) _wsf.kickAmp = 0;
@@ -2024,7 +2087,15 @@ function _updateWarpDebris() {
     // rather than wearing speed lines — builds across the top half of the
     // boost and is full just past the ship's own top speed. (Was (spd-500)
     // /2600, which needed 8,300 km/s: unreachable without warp.)
-    let target = Math.max(0, Math.min(1, (speedWhipLevel() - 0.16) / 0.62));
+    //
+    // GATED, not merely ramped. The ramp above saturates at whip 0.78 — barely
+    // past the ship's own top speed — so in practice this field, INCLUDING its
+    // 28 huge soft haze sprites (the "bokeh orbs"), was fully lit during plain
+    // cruising and during post-slingshot coasting. Multiplying by the
+    // warp-moment gate makes it what its own header says it is: a boost event.
+    // Zero draw calls while cruising, full field the instant a slingshot or an
+    // emergency warp fires.
+    let target = Math.max(0, Math.min(1, (speedWhipLevel() - 0.16) / 0.62)) * _warpMomentLevel();
     if (_wdf.kickAmp > 0) {
         const kt = (now - _wdf.kickT0) / _wdf.kickMs;
         if (kt >= 1) _wdf.kickAmp = 0;

@@ -521,6 +521,18 @@ uniform float uTime;`;
 // MeshStandardMaterial's real lighting response (shipLight + ambient +
 // system stars already light these ships) and adds a constant ambient
 // rim so leading edges read against the starfield in a dogfight.
+//
+// THE PRESENCE FLOOR. Almost all of this game's space is unlit: the global
+// ambient is AmbientLight(0x333333, 0.06) and the only reliable lamp is
+// shipLight, a PointLight(distance 800, decay 2) parented to the camera. A
+// hull's LIT response is therefore effectively zero past a few hundred units,
+// and at 800/1500/3000u a purely lit material renders black — measured, tagged
+// enemies sat inside their HUD brackets with no visible silhouette at all.
+// Emissive is the fix because it is the one term MeshStandardMaterial adds
+// independent of every light in the scene, so it gives each hull a guaranteed
+// faction-colored floor at any range. The rim/panel/coreDarken work still
+// shapes the close-up (coreDarken multiplies diffuseColor only — see
+// _addFresnelRim — so it cannot eat this floor).
 function createFactionHullMaterial(colorHex, opts) {
     opts = opts || {};
     const base = new THREE.Color(colorHex !== undefined ? colorHex : 0xff0000);
@@ -529,8 +541,8 @@ function createFactionHullMaterial(colorHex, opts) {
 
     const material = new THREE.MeshStandardMaterial({
         color: dim,
-        emissive: base.clone().multiplyScalar(opts.emissiveMultiplier !== undefined ? opts.emissiveMultiplier : 0.4),
-        emissiveIntensity: opts.emissiveIntensity !== undefined ? opts.emissiveIntensity : 0.85,
+        emissive: base.clone().multiplyScalar(opts.emissiveMultiplier !== undefined ? opts.emissiveMultiplier : 0.8),
+        emissiveIntensity: opts.emissiveIntensity !== undefined ? opts.emissiveIntensity : 1.3,
         roughness: opts.roughness !== undefined ? opts.roughness : 0.5,
         metalness: opts.metalness !== undefined ? opts.metalness : 0.7,
         side: THREE.DoubleSide,
@@ -638,10 +650,17 @@ function createEnemyMeshWithModel(regionId, fallbackGeometry, material, scaleOve
                 // ship." This keeps the hull dark/silhouette-toned but gives
                 // it an always-on floor so it reads AGAINST its own glow
                 // instead of being swallowed by it.
+                // emissive 0.55/1.0 -> 0.85/1.4: the old pair still leaned on
+                // scene lighting that mostly is not there (see the presence-floor
+                // note on createFactionHullMaterial), so a tagged enemy at
+                // 800-3000u rendered as a near-black hole in the starfield with
+                // only its additive engine blobs visible. This is the hull's own
+                // faction color, so each ship reads as a colored silhouette at
+                // combat range without restoring the old 6:1 additive glow shell.
                 child.material = createFactionHullMaterial(material.color || 0xff0000, {
                     baseMultiplier: 0.55,
-                    emissiveMultiplier: 0.55,
-                    emissiveIntensity: 1.0,
+                    emissiveMultiplier: 0.85,
+                    emissiveIntensity: 1.4,
                     roughness: 0.5,
                     metalness: 0.7,
                     rimIntensity: 0.6
@@ -732,8 +751,13 @@ function createEnemyMeshWithModel(regionId, fallbackGeometry, material, scaleOve
         const baseColor = new THREE.Color(material.color || 0xff0000);
         baseColor.multiplyScalar(0.5);
 
+        // Same presence floor as the GLB path — this branch had NO emissive at
+        // all, so on the fallback geometry a ship in open space was lit by
+        // nothing and rendered black.
         const baseMaterial = new THREE.MeshStandardMaterial({
             color: baseColor,
+            emissive: new THREE.Color(material.color || 0xff0000).multiplyScalar(0.85),
+            emissiveIntensity: 1.4,
             transparent: false,
             opacity: 1.0,
             roughness: 0.6,
@@ -797,10 +821,15 @@ function createBossMeshWithModel(regionId, fallbackGeometry, material) {
                 // the model silhouette pops against starfield. Now rim-lit
                 // (createFactionHullMaterial) so leading edges catch a
                 // brighter faction-color fresnel highlight too.
+                // A boss carried the DIMMEST emissive of any ship in the game
+                // (0.35 x 0.9 = 0.315 effective, against 0.55 for a common
+                // fighter), so the set-piece encounter was the hardest thing
+                // in the scene to see. It now sits above the fighters, which
+                // is the read a boss is supposed to have.
                 child.material = createFactionHullMaterial(material.color || 0xff0000, {
                     baseMultiplier: 0.7,
-                    emissiveMultiplier: 0.35,
-                    emissiveIntensity: 0.9,
+                    emissiveMultiplier: 0.95,
+                    emissiveIntensity: 1.5,
                     roughness: 0.4,
                     metalness: 0.7,
                     rimIntensity: 0.65
@@ -910,10 +939,19 @@ const PLAYER_BOOST_REFERENCE_SPEED = 6.8;
 const PLAYER_HULL_PANEL_CELL = 0.045;
 
 function createPlayerHullMaterial() {
+    // Presence floor, in the ship's own accent cyan. 0.18 x 0.7 = 0.126
+    // effective was tuned against the shipLight sitting 50u in front of the
+    // camera, but coreDarken (0.62) knocks the diffuse back down again and the
+    // rest of space contributes essentially nothing — so in third person the
+    // hull read as a near-black cut-out at exactly the moment the background
+    // got brighter. Emissive is added after coreDarken and independent of every
+    // light in the scene, so this is the term that guarantees the ship is
+    // always a legible cyan silhouette; the rim/panel work still owns the
+    // close-up shading and the boost color shift.
     const material = new THREE.MeshStandardMaterial({
         color: new THREE.Color(PLAYER_HULL_BASE_COLOR),
-        emissive: new THREE.Color(PLAYER_HULL_BASE_COLOR).multiplyScalar(0.18),
-        emissiveIntensity: 0.7,
+        emissive: new THREE.Color(PLAYER_HULL_BASE_COLOR).multiplyScalar(0.42),
+        emissiveIntensity: 1.15,
         metalness: 0.65,
         roughness: 0.32,
         side: THREE.FrontSide,
