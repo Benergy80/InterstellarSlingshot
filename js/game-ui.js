@@ -31,6 +31,59 @@ window._invalidateUiElCache = function(id) {
     else for (const k in _uiElCache) delete _uiElCache[k];
 };
 
+// --- Cheap number tweening for HUD text readouts -----------------------
+// CSS can't transition a textContent number, so velocity/distance (the
+// two numbers a pilot's eye is on constantly) get a lightweight
+// framerate-independent smoothing pass here instead of snapping every
+// tick — reads like a cockpit odometer rolling rather than a digital
+// counter jumping. Cheap: one Map lookup + one exp-smoothing lerp per
+// tracked value per frame, no allocation, no extra RAF loop (rides the
+// existing updateUI call).
+const _uiTweens = Object.create(null);
+// Hull hit/repair flash bookkeeping (module scope so it persists across
+// updateUI() calls without polluting gameState).
+let _updateUI_lastHullPct = null;
+let _lastHullFxTime = 0;
+function _tweenTowards(key, target, rate) {
+    const now = (typeof performance !== 'undefined') ? performance.now() : Date.now();
+    let t = _uiTweens[key];
+    if (!t) {
+        t = _uiTweens[key] = { value: target, last: now };
+        return target;
+    }
+    const dt = Math.min(0.1, Math.max(0, (now - t.last) / 1000));
+    t.last = now;
+    const alpha = 1 - Math.exp(-(rate || 10) * dt);
+    t.value += (target - t.value) * alpha;
+    // Snap once close enough so the display settles instead of creeping
+    // toward the target forever with diminishing fractions.
+    if (Math.abs(target - t.value) < Math.max(0.01, Math.abs(target) * 0.001)) {
+        t.value = target;
+    }
+    return t.value;
+}
+
+// Briefly flashes a HUD stat well (the bordered bar container around
+// #energyBar / #hullBar) red on damage or green on a repair/resupply
+// jump, restarting the CSS animation even if it's already mid-flash.
+function _flashStatWell(el, kind) {
+    if (!el) return;
+    el.classList.add('stat-well');
+    el.classList.remove('stat-hit', 'stat-boost');
+    void el.offsetWidth; // force reflow so re-adding the class restarts the animation
+    el.classList.add(kind === 'hit' ? 'stat-hit' : 'stat-boost');
+}
+
+// Briefly pulses a text readout (e.g. the emergency warp counter) when
+// its displayed value changes, so a resupply/use registers as feedback
+// beyond the number itself changing.
+function _tickValue(el) {
+    if (!el) return;
+    el.classList.remove('value-tick');
+    void el.offsetWidth;
+    el.classList.add('value-tick');
+}
+
 // Mirror reputation + shield state into the SHIP STATUS panel. Replaces
 // the standalone REP HUD widget and the standalone .shield-indicator
 // pill — both of which floated over the existing UI panels.
@@ -97,10 +150,15 @@ function updateUI() {
     const galaxiesClearedEl = _uiEl('galaxiesCleared');
     const targetLockStatusEl = _uiEl('targetLockStatus');
     
-    // Basic stats updates — only touch the DOM when the displayed value changes
-    const _velText = (gameState.velocity * 1000).toFixed(0) + ' km/s';
+    // Basic stats updates — only touch the DOM when the displayed value changes.
+    // Values are smoothed through _tweenTowards first (cockpit-odometer
+    // roll instead of a digital snap); the underlying gameState numbers
+    // driving flight/physics are untouched, this only affects the readout.
+    const _velSmoothed = _tweenTowards('velocity', gameState.velocity * 1000, 12);
+    const _velText = _velSmoothed.toFixed(0) + ' km/s';
     if (velocityEl && velocityEl.textContent !== _velText) velocityEl.textContent = _velText;
-    const _distText = gameState.distance.toFixed(1) + ' ly';
+    const _distSmoothed = _tweenTowards('distance', gameState.distance, 12);
+    const _distText = _distSmoothed.toFixed(1) + ' ly';
     if (distanceEl && distanceEl.textContent !== _distText) distanceEl.textContent = _distText;
 
     // Location text: the DOM element was being looked up but never
@@ -114,7 +172,10 @@ function updateUI() {
     // Emergency Warp count update
     if (emergencyWarpEl && gameState.emergencyWarp) {
         const _warpText = '' + gameState.emergencyWarp.available;
-        if (emergencyWarpEl.textContent !== _warpText) emergencyWarpEl.textContent = _warpText;
+        if (emergencyWarpEl.textContent !== _warpText) {
+            emergencyWarpEl.textContent = _warpText;
+            _tickValue(emergencyWarpEl); // pulse feedback on use/resupply
+        }
     }
 
     // Galaxies Cleared (Ship Status panel). Element was fetched at
@@ -186,7 +247,7 @@ if (gameState.solarStormBoostActive || gameState.plasmaStormBoostActive) {
     if (hullBarEl) {
         const hullPercent = (gameState.hull / gameState.maxHull * 100);
         hullBarEl.style.width = hullPercent + '%';
-        
+
         // Enhanced color coding for hull
         if (gameState.hull < 25) {
             hullBarEl.style.background = 'linear-gradient(90deg, #ff0066 0%, #ff3366 100%)';
@@ -195,6 +256,23 @@ if (gameState.solarStormBoostActive || gameState.plasmaStormBoostActive) {
         } else {
             hullBarEl.style.background = 'linear-gradient(90deg, #ff0066 0%, #ff6600 50%, #00ff66 100%)';
         }
+
+        // Instrument-level hit/repair feedback: flash the bar's well red
+        // on a sudden drop, green on a sudden jump (resupply/pickup).
+        // Thresholded + rate-limited so it doesn't retrigger on every
+        // tiny passive-regen tick (those happen in ~0.5-1 pt steps).
+        if (typeof _updateUI_lastHullPct === 'number') {
+            const _hullDelta = hullPercent - _updateUI_lastHullPct;
+            const _now = Date.now();
+            if (_hullDelta <= -3 && _now - _lastHullFxTime > 300) {
+                _flashStatWell(hullBarEl.parentElement, 'hit');
+                _lastHullFxTime = _now;
+            } else if (_hullDelta >= 5 && _now - _lastHullFxTime > 300) {
+                _flashStatWell(hullBarEl.parentElement, 'boost');
+                _lastHullFxTime = _now;
+            }
+        }
+        _updateUI_lastHullPct = hullPercent;
     }
     
     // ADDED: Cracked screen effect at 10% hull.
@@ -1211,18 +1289,31 @@ function setupGalaxyMap() {
         }
 
         // Build the galaxy indicator
+        // Slightly larger footprint (w-4 vs the old w-3) plus the CSS
+        // ::after hit-area pad in styles.css — bigger mouse/touch target
+        // without the dot itself looking oversized on the round map.
         const galaxyEl = document.createElement('div');
-        galaxyEl.className = 'galaxy-indicator absolute w-3 h-3 rounded-full opacity-80 flex items-center justify-center text-xs text-white font-bold';
-        galaxyEl.style.backgroundColor = `#${galaxy.color.toString(16).padStart(6, '0')}`;
+        galaxyEl.className = 'galaxy-indicator absolute w-4 h-4 rounded-full opacity-80 flex items-center justify-center text-xs text-white font-bold';
+        const galaxyHex = `#${galaxy.color.toString(16).padStart(6, '0')}`;
+        galaxyEl.style.backgroundColor = galaxyHex;
+        // Drives the CSS glow (box-shadow: var(--dot-color)) so each
+        // faction's minimap dot reads clearly in its own neon color,
+        // including on :hover, without hardcoding colors in CSS.
+        galaxyEl.style.setProperty('--dot-color', galaxyHex);
         galaxyEl.style.left = `${mapPos.x * 100}%`;
         galaxyEl.style.top = `${mapPos.y * 100}%`;
-        galaxyEl.style.transform = 'translate(-50%, -50%)';
+        // NOTE: no inline transform here — .galaxy-indicator owns the
+        // translate(-50%,-50%) centering in CSS so :hover can layer a
+        // scale() on top of it. Setting it inline here used to fight the
+        // :hover rule (inline style always wins ties over a stylesheet
+        // selector), silently killing the hover scale-up.
         galaxyEl.textContent = (index + 1).toString();
         galaxyEl.title = `${galaxy.name} Galaxy (${galaxy.faction})`;
-        
+
         // Mark cleared galaxies with green dot
 		if (bossDefeated || (typeof gameState !== 'undefined' && gameState.currentGalaxyEnemies && gameState.currentGalaxyEnemies[index] === 0)) {
 		galaxyEl.style.backgroundColor = '#22c55e'; // Green for cleared
+		galaxyEl.style.setProperty('--dot-color', '#22c55e');
     	galaxyEl.style.border = '2px solid #86efac';
     	galaxyEl.textContent = '';
     	galaxyEl.title = `${galaxy.name} Galaxy (${galaxy.faction}) - LIBERATED`;

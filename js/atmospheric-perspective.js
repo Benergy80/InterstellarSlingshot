@@ -1,22 +1,45 @@
 // =============================================================================
 // ATMOSPHERIC PERSPECTIVE SYSTEM
-// Adds depth perception through distance-based opacity, color shift, and atmospheric scattering
+// Synthwave depth cueing: distant objects blend toward a neon horizon-glow
+// color the farther they sit from the camera, so the eye reads depth even in
+// the featureless black of deep space.
+//
+// Implementation note: an earlier version of this system walked the scene
+// graph every 15 frames, caching "far" objects and mutating each material's
+// opacity/color by hand — a CPU traversal + per-object write on top of
+// everything else animate() does, and it was disabled outright for tanking
+// frame time. This version uses THREE.Fog instead. Fog is compiled straight
+// into the standard material shaders (MeshBasicMaterial, MeshLambertMaterial,
+// MeshStandardMaterial, PointsMaterial all pick it up automatically via each
+// material's default `fog: true`), so the distance blend is a few extra ALU
+// ops the GPU was already going to spend during the normal draw — zero CPU
+// traversal, zero extra draw calls, zero per-object bookkeeping.
 // =============================================================================
 
-// Atmospheric perspective configuration
 const atmosphericConfig = {
-    // General opacity fade
-    fadeStart: 70000,          // Objects start fading at this distance
-    fadeEnd: 100000,           // Objects fully transparent at this distance
-    minOpacity: 0.1,           // Minimum opacity (don't make completely invisible)
+    // Linear fog range. Local-system content (a few thousand units) sits
+    // well inside `fogNear` and reads perfectly clear. Distant nebulas and
+    // galaxy cores (45,000-75,000u, see createDistantNebulas/
+    // createExoticCoreNebulas/generateSphericalGalaxyPositions in
+    // game-objects.js) fall inside the ramp and pick up a light haze without
+    // losing their identity; only content beyond `fogFar` fully disappears
+    // into the horizon color.
+    fogNear: 55000,
+    fogFar: 130000,
 
-    // Color desaturation and atmospheric scattering
-    colorShiftStart: 50000,    // Start shifting colors toward atmospheric color
-    colorShiftEnd: 100000,     // Full atmospheric color at this distance
-    atmosphericColor: new THREE.Color(0x0a0a1a), // Deep space blue-black
-    scatteringIntensity: 0.4,  // How much to blend with atmospheric color (0-1)
+    // The horizon drifts slowly between these two synthwave hazes — deep
+    // violet and a cooler neon blue — so the backdrop never reads as a flat,
+    // static color. Custom-shader starfields/nebula point clouds opt out of
+    // fog entirely (their `fog` material flag is left at the ShaderMaterial
+    // default of unset/false, or explicitly set false), so this only tints
+    // stock-material gameplay objects: planets, ships, asteroids, distant
+    // galaxy cores.
+    colorA: 0x2a0e4a,
+    colorB: 0x0c1c4a,
+    cycleMs: 70000,
 
-    // Object categories to apply effects to
+    // Kept for compatibility with any external inspection code that reads
+    // this config; unused by the fog-based implementation below.
     enabledCategories: {
         planets: true,
         stars: true,
@@ -28,248 +51,69 @@ const atmosphericConfig = {
     }
 };
 
-// Store original material properties for restoration
-const originalMaterialProps = new WeakMap();
+let _fogInitialized = false;
+let _fogColorA = null;
+let _fogColorB = null;
+let _fogMixColor = null;
 
-// =============================================================================
-// OPACITY-BASED DISTANCE FADE (#3)
-// =============================================================================
+// Lazily create scene.fog the first time we're called with a live scene —
+// atmospheric-perspective.js loads before game-core.js creates `scene`, so
+// this can't happen at parse time.
+function _ensureAtmosphericFog() {
+    if (_fogInitialized) return;
+    if (typeof scene === 'undefined' || !scene || typeof THREE === 'undefined') return;
 
-function applyDistanceBasedOpacity(object, distance) {
-    // DISABLED FOR FPS TESTING
-    return;
+    _fogColorA = new THREE.Color(atmosphericConfig.colorA);
+    _fogColorB = new THREE.Color(atmosphericConfig.colorB);
+    _fogMixColor = new THREE.Color();
 
-    if (!object || !object.material) return;
-
-    const { fadeStart, fadeEnd, minOpacity } = atmosphericConfig;
-
-    // No fade if within fade start distance
-    if (distance < fadeStart) {
-        if (object.material.transparent && object.userData.atmosphericFaded) {
-            // Restore original opacity
-            const originalProps = originalMaterialProps.get(object.material);
-            if (originalProps) {
-                object.material.opacity = originalProps.opacity;
-            }
-            object.userData.atmosphericFaded = false;
-        }
-        return;
+    if (!scene.fog) {
+        scene.fog = new THREE.Fog(atmosphericConfig.colorA, atmosphericConfig.fogNear, atmosphericConfig.fogFar);
     }
-
-    // Calculate fade amount
-    const fadeRange = fadeEnd - fadeStart;
-    const fadeProgress = Math.min((distance - fadeStart) / fadeRange, 1.0);
-    const targetOpacity = Math.max(1.0 - fadeProgress, minOpacity);
-
-    // Store original opacity if not already stored
-    if (!originalMaterialProps.has(object.material)) {
-        originalMaterialProps.set(object.material, {
-            opacity: object.material.opacity || 1.0,
-            transparent: object.material.transparent || false,
-            color: object.material.color ? object.material.color.clone() : null
-        });
-    }
-
-    // Apply opacity fade
-    const originalProps = originalMaterialProps.get(object.material);
-    const baseOpacity = originalProps.opacity;
-
-    object.material.transparent = true;
-    object.material.opacity = baseOpacity * targetOpacity;
-    object.userData.atmosphericFaded = true;
+    _fogInitialized = true;
+    console.log('🌌 Synthwave atmospheric fog engaged:', atmosphericConfig.fogNear, '→', atmosphericConfig.fogFar, 'units');
 }
 
 // =============================================================================
-// SHADER-BASED ATMOSPHERIC SCATTERING (#6)
+// PER-FRAME UPDATE (throttled to every 15 frames by the caller in
+// game-core.js — plenty for a 70-second color drift)
 // =============================================================================
-
-function applyAtmosphericScattering(object, distance) {
-    // DISABLED FOR FPS TESTING
-    return;
-
-    if (!object || !object.material || !object.material.color) return;
-
-    const { colorShiftStart, colorShiftEnd, atmosphericColor, scatteringIntensity } = atmosphericConfig;
-
-    // No scattering if within start distance
-    if (distance < colorShiftStart) {
-        if (object.userData.atmosphericScattered) {
-            // Restore original color
-            const originalProps = originalMaterialProps.get(object.material);
-            if (originalProps && originalProps.color) {
-                object.material.color.copy(originalProps.color);
-            }
-            object.userData.atmosphericScattered = false;
-        }
-        return;
-    }
-
-    // Store original color if not already stored
-    if (!originalMaterialProps.has(object.material)) {
-        originalMaterialProps.set(object.material, {
-            opacity: object.material.opacity || 1.0,
-            transparent: object.material.transparent || false,
-            color: object.material.color.clone()
-        });
-    }
-
-    // Calculate scattering amount
-    const scatterRange = colorShiftEnd - colorShiftStart;
-    const scatterProgress = Math.min((distance - colorShiftStart) / scatterRange, 1.0);
-    const scatterAmount = scatterProgress * scatteringIntensity;
-
-    // Apply atmospheric color blending
-    const originalProps = originalMaterialProps.get(object.material);
-    if (originalProps.color) {
-        const blendedColor = originalProps.color.clone();
-        blendedColor.lerp(atmosphericColor, scatterAmount);
-        object.material.color.copy(blendedColor);
-        object.userData.atmosphericScattered = true;
-    }
-}
-
-// =============================================================================
-// APPLY ATMOSPHERIC EFFECTS TO SCENE OBJECTS - OPTIMIZED
-// =============================================================================
-
-// Cache for performance - only update when player moves significantly
-let cachedPlayerPosition = new THREE.Vector3();
-let cachedObjects = [];
-let cacheUpdateDistance = 10000; // Re-cache when player moves this far
-
 function updateAtmosphericPerspective(camera) {
-    // DISABLED FOR FPS TESTING
-    return;
+    if (!camera || !camera.position || typeof scene === 'undefined' || !scene) return;
 
-    if (!camera || !camera.position || !scene) return;
+    _ensureAtmosphericFog();
+    if (!scene.fog) return;
 
-    const playerPos = camera.position;
+    const now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+    const cyclePos = (now % atmosphericConfig.cycleMs) / atmosphericConfig.cycleMs;
+    const mix = 0.5 + 0.5 * Math.sin(cyclePos * Math.PI * 2);
 
-    // Only rebuild cache if player has moved significantly
-    if (cachedPlayerPosition.distanceTo(playerPos) > cacheUpdateDistance || cachedObjects.length === 0) {
-        cachedObjects = [];
-        cachedPlayerPosition.copy(playerPos);
-
-        // Build cache of relevant objects only
-        scene.traverse((object) => {
-            if (!object.visible || !object.position || !object.material) return;
-
-            const distance = playerPos.distanceTo(object.position);
-
-            // Skip objects too close or too far to need effects
-            if (distance < 45000 || distance > 110000) return;
-
-            if (object.userData) {
-                const type = object.userData.type;
-
-                // Check if object needs atmospheric effects
-                if ((atmosphericConfig.enabledCategories.planets && (type === 'planet' || type === 'moon')) ||
-                    (atmosphericConfig.enabledCategories.stars && (type === 'star' || type === 'pulsar' || type === 'supernova' || type === 'brown_dwarf')) ||
-                    (atmosphericConfig.enabledCategories.nebulas && type === 'nebula') ||
-                    (atmosphericConfig.enabledCategories.cosmicFeatures && (type === 'dyson_sphere' || type === 'space_whale' || type === 'crystal_formation' || type === 'plasma_storm' || type === 'dark_matter_node' || type === 'ringworld')) ||
-                    (atmosphericConfig.enabledCategories.galaxies && type === 'galaxy') ||
-                    (atmosphericConfig.enabledCategories.outerSystems && (object.userData.systemType === 'exotic_core' || object.userData.systemType === 'borg_patrol'))) {
-                    cachedObjects.push(object);
-                }
-            }
-        });
-    }
-
-    // Apply effects only to cached objects
-    cachedObjects.forEach(object => {
-        const distance = playerPos.distanceTo(object.position);
-        applyDistanceBasedOpacity(object, distance);
-        applyAtmosphericScattering(object, distance);
-    });
-
-    // Special handling for nebula particles - but only those in range
-    if (typeof nebulaClouds !== 'undefined' && nebulaClouds.length > 0) {
-        nebulaClouds.forEach(nebula => {
-            if (!nebula || !nebula.position) return;
-            const distance = playerPos.distanceTo(nebula.position);
-
-            // Skip nebulas that are too far or too close
-            if (distance < 45000 || distance > 110000) return;
-
-            // Apply to nebula particles
-            nebula.children.forEach(child => {
-                if (child.type === 'Points' || child.type === 'Sprite') {
-                    applyDistanceBasedOpacity(child, distance);
-                }
-            });
-        });
-    }
+    _fogMixColor.copy(_fogColorA).lerp(_fogColorB, mix);
+    scene.fog.color.copy(_fogMixColor);
 }
 
 // =============================================================================
-// POST-PROCESSING DEPTH OF FIELD (#5)
-// Simulated without EffectComposer for compatibility
+// DEPTH OF FIELD — left disabled (full-scene traversal was too expensive for
+// the gain); stubs kept so any external `typeof enableDepthOfField ===
+// 'function'` checks keep working.
 // =============================================================================
-
 let depthOfFieldEnabled = false;
 
 function enableDepthOfField() {
     depthOfFieldEnabled = true;
-    console.log('✨ Depth of field simulation enabled');
 }
 
 function disableDepthOfField() {
     depthOfFieldEnabled = false;
-    console.log('❌ Depth of field simulation disabled');
 }
 
-function updateDepthOfFieldEffect(camera) {
-    // DISABLED FOR FPS TESTING
-    return;
-
-    if (!depthOfFieldEnabled || !camera || !camera.position || !scene) return;
-
-    const playerPos = camera.position;
-    const focusDistance = 5000;  // Objects at this distance are in perfect focus
-    const blurStart = 15000;     // Start blurring beyond this distance
-    const maxBlur = 50000;       // Maximum blur at this distance
-
-    scene.traverse((object) => {
-        if (!object.visible || !object.position || !object.material) return;
-
-        const distance = playerPos.distanceTo(object.position);
-
-        // Calculate blur amount based on distance from focus
-        const distanceFromFocus = Math.abs(distance - focusDistance);
-
-        if (distanceFromFocus > blurStart) {
-            const blurRange = maxBlur - blurStart;
-            const blurProgress = Math.min((distanceFromFocus - blurStart) / blurRange, 1.0);
-
-            // Simulate blur by slightly reducing material detail
-            // This is a simplified approach - full DoF would require post-processing
-            if (object.material.metalness !== undefined) {
-                object.material.roughness = Math.min(1.0, 0.5 + blurProgress * 0.5);
-            }
-
-            // Mark as blurred for tracking
-            object.userData.depthBlurred = true;
-        } else {
-            // Restore original roughness if needed
-            if (object.userData.depthBlurred && object.material.roughness !== undefined) {
-                object.material.roughness = 0.5; // Default value
-                object.userData.depthBlurred = false;
-            }
-        }
-    });
+function updateDepthOfFieldEffect() {
+    // Intentionally inert — see comment above.
 }
 
 // =============================================================================
-// INITIALIZATION AND EXPORTS
+// EXPORTS
 // =============================================================================
-
-// Depth of field disabled by default for performance
-// It causes another full scene traversal which is too expensive
-// setTimeout(() => {
-//     enableDepthOfField();
-// }, 1000);
-
-// Export functions to global scope
 if (typeof window !== 'undefined') {
     window.updateAtmosphericPerspective = updateAtmosphericPerspective;
     window.updateDepthOfFieldEffect = updateDepthOfFieldEffect;
@@ -277,8 +121,5 @@ if (typeof window !== 'undefined') {
     window.disableDepthOfField = disableDepthOfField;
     window.atmosphericConfig = atmosphericConfig;
 
-    console.log('🌌 Atmospheric Perspective System loaded');
-    console.log('  - Distance-based opacity fade: 70,000-100,000 units');
-    console.log('  - Atmospheric color scattering: 50,000-100,000 units');
-    console.log('  - Simulated depth of field enabled');
+    console.log('🌌 Atmospheric Perspective System loaded (fog-based synthwave horizon haze)');
 }

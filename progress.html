@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="refresh" content="15">
+<title>Star Explorer — Live Progress</title>
+<style>
+  :root { color-scheme: dark; }
+  body { background: #05060f; color: #cfd8ff; font: 14px/1.5 -apple-system, "SF Mono", Menlo, monospace; margin: 0; padding: 32px; }
+  h1 { color: #fff; font-size: 20px; letter-spacing: .12em; text-transform: uppercase; }
+  h1 span { color: #6ea8ff; }
+  .sub { color: #7f8ab8; margin-bottom: 24px; }
+  table { border-collapse: collapse; width: 100%; margin: 16px 0 28px; }
+  th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid #1a2140; vertical-align: top; }
+  th { color: #8fa2d8; font-weight: 600; text-transform: uppercase; font-size: 11px; letter-spacing: .08em; }
+  .s-wait { color: #5a6485; } .s-build { color: #ffd166; } .s-critic { color: #9b7bff; }
+  .s-pass { color: #4ade80; } .s-fail { color: #ff6b6b; } .s-hold { color: #38bdf8; }
+  .log { border-left: 2px solid #1a2140; padding-left: 16px; }
+  .log p { margin: 6px 0; color: #9aa6cf; }
+  .log b { color: #cfd8ff; }
+  .stamp { color: #4a5578; font-size: 12px; margin-top: 32px; }
+</style>
+</head>
+<body>
+<h1>Interstellar Slingshot → <span>Star Explorer</span></h1>
+<div class="sub">Branch <b>claude/star-explorer</b> · game at <a href="http://localhost:8878" style="color:#6ea8ff">localhost:8878</a> · page auto-refreshes every 15s</div>
+
+<table>
+<tr><th>#</th><th>Piece</th><th>Wave</th><th>Status</th><th>Critic score /10</th><th>Biggest gap (critic)</th></tr>
+<tr><td>1</td><td>Slingshot feel — whip arc, camera kick, trail, impact</td><td>1</td><td class="s-critic">BUILT → awaiting critic</td><td>—</td><td>—</td></tr>
+<tr><td>2</td><td>Deep-space beauty — starfield, skybox, distant galaxies</td><td>1</td><td class="s-critic">BUILT → awaiting critic</td><td>—</td><td>—</td></tr>
+<tr><td>3</td><td>Procedural galaxy generation — endless seeded systems</td><td>1</td><td class="s-critic">BUILT (~840-line proc-galaxies.js) → awaiting critic</td><td>—</td><td>—</td></tr>
+<tr><td>4</td><td>HUD & UI — diegetic, cinematic chrome</td><td>1</td><td class="s-critic">BUILT → awaiting critic</td><td>—</td><td>—</td></tr>
+<tr><td>5</td><td>Black holes & stars — accretion, lensing, coronas</td><td>2</td><td class="s-wait">QUEUED</td><td>—</td><td>—</td></tr>
+<tr><td>6</td><td>Warp / hyperspace effect</td><td>2</td><td class="s-wait">QUEUED</td><td>—</td><td>—</td></tr>
+<tr><td>7</td><td>Planets — surfaces, atmospheres, rings, clouds</td><td>2</td><td class="s-wait">QUEUED</td><td>—</td><td>—</td></tr>
+<tr><td>8</td><td>Audio — adaptive layers, spatial SFX</td><td>3</td><td class="s-wait">QUEUED</td><td>—</td><td>—</td></tr>
+<tr><td>9</td><td>Combat feel — enemy motion, impacts, weapons</td><td>3</td><td class="s-wait">QUEUED</td><td>—</td><td>—</td></tr>
+<tr><td>10</td><td>Performance — stable frametimes at spectacle</td><td>3</td><td class="s-wait">QUEUED</td><td>—</td><td>—</td></tr>
+<tr><td>11</td><td>Cohesion — one agent plays everything, smooths seams</td><td>each</td><td class="s-wait">BETWEEN WAVES</td><td>—</td><td>—</td></tr>
+</table>
+
+<h1 style="font-size:15px">Wave log</h1>
+<div class="log">
+<p><b>Wave 1 launched</b> — 4 builders fanned out (slingshot feel, deep-space beauty, procedural galaxies, HUD), file-disjoint ownership. Integrator seals the build, then fresh-context critics inspect the RUNNING game headless — blind side-by-side vs Star Citizen / No Man's Sky, harsh by default. Failed pieces go back to their builder with the named gap.</p>
+</div>
+
+<div class="stamp">Session: background · loop active · no fixed number of rounds</div>
+</body>
+</html>

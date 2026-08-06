@@ -45,11 +45,32 @@ body.ui-mode {
     font-family: 'Share Tech Mono', monospace;
 }
 
+/* =============================================================================
+   AAA COCKPIT CHROME — shared neon accent tokens
+   Single source of truth for the mobiGlas-style HUD palette so panel chrome,
+   corner ticks, scanlines and feedback flashes all pull from the same
+   values instead of re-declaring rgba() everywhere.
+   ============================================================================= */
+:root {
+    --hud-cyan: 0, 210, 255;
+    --hud-green: 0, 255, 150;
+    --hud-red: 255, 60, 60;
+    --hud-amber: 255, 190, 0;
+    --hud-purple: 190, 120, 255;
+}
+
+/* Numeric readouts: fixed-width digits so values don't jitter the layout
+   as they tick over (velocity, distance, warp count, rep, missiles). */
+.font-mono,
+.mono-text {
+    font-variant-numeric: tabular-nums;
+}
+
 /* Enhanced UI panels */
 .ui-panel {
     background: linear-gradient(135deg, rgba(15, 23, 42, 0.3) 0%, rgba(30, 41, 59, 0.3) 100%);
     border: 1px solid rgba(0,150,255,0.5);
-    box-shadow: 
+    box-shadow:
         0 12px 40px rgba(0, 150, 255, 0.3),
         inset 0 1px 0 rgba(0,150,255,0.4),
         inset 0 -1px 0 rgba(0,150,255,0.2);
@@ -57,11 +78,63 @@ body.ui-mode {
     perspective: 1200px; */
     cursor: auto !important;
     pointer-events: auto !important;
+    position: relative;
+    isolation: isolate;
+}
+
+/* mobiGlas corner ticks — a single pseudo-element painting all 4 corner
+   brackets via layered gradients (cheap: no extra DOM, no extra layout).
+   Sits above the scanline/vignette layer, below real panel content. */
+.ui-panel::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    pointer-events: none;
+    border-radius: inherit;
+    background-repeat: no-repeat;
+    background-image:
+        linear-gradient(to right, rgba(var(--hud-cyan), 0.85) 2px, transparent 2px),
+        linear-gradient(to bottom, rgba(var(--hud-cyan), 0.85) 2px, transparent 2px),
+        linear-gradient(to left, rgba(var(--hud-cyan), 0.85) 2px, transparent 2px),
+        linear-gradient(to bottom, rgba(var(--hud-cyan), 0.85) 2px, transparent 2px),
+        linear-gradient(to right, rgba(var(--hud-cyan), 0.85) 2px, transparent 2px),
+        linear-gradient(to top, rgba(var(--hud-cyan), 0.85) 2px, transparent 2px),
+        linear-gradient(to left, rgba(var(--hud-cyan), 0.85) 2px, transparent 2px),
+        linear-gradient(to top, rgba(var(--hud-cyan), 0.85) 2px, transparent 2px);
+    background-size: 14px 14px;
+    background-position:
+        top left, top left,
+        top right, top right,
+        bottom left, bottom left,
+        bottom right, bottom right;
+    opacity: 0.85;
+}
+
+/* Faint scanline + edge vignette texture — reads as active display glass
+   without fighting text contrast (very low alpha, painted under content
+   since it has no z-index of its own / default stacking after ::before). */
+.ui-panel::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    border-radius: inherit;
+    background:
+        repeating-linear-gradient(
+            0deg,
+            rgba(var(--hud-cyan), 0.05) 0px,
+            rgba(var(--hud-cyan), 0.05) 1px,
+            transparent 1px,
+            transparent 3px
+        ),
+        radial-gradient(ellipse at center, transparent 55%, rgba(0,0,0,0.3) 100%);
 }
 
 .ui-panel.title-header {
     position: fixed !important;
-    backdrop-filter: blur(2px);
+    backdrop-filter: blur(6px) saturate(140%);
     left: 50% !important;
     top: 1rem !important;
     transform-origin: center center;
@@ -78,7 +151,7 @@ body.ui-mode {
 
 .ui-panel.top-left {
     transform: perspective(1000px) rotateY(8deg) rotateX(-4deg) translateZ(10px);
-    backdrop-filter: blur(2px);  /* ADD THIS LINE */
+    backdrop-filter: blur(6px) saturate(140%);  /* mobiGlas-style HUD glass */
     border-radius: 0 20px 20px 0;
     box-shadow: 
         0 15px 50px rgba(0, 150, 255, 0.4),
@@ -88,7 +161,7 @@ body.ui-mode {
 
 .ui-panel.bottom-left {
     transform: perspective(1000px) rotateY(6deg) rotateX(2deg) translateZ(8px);
-    backdrop-filter: blur(2px);  /* ADD THIS LINE */
+    backdrop-filter: blur(6px) saturate(140%);  /* mobiGlas-style HUD glass */
     border-radius: 0 20px 20px 0;
     box-shadow: 
         0 12px 40px rgba(0, 150, 255, 0.35),
@@ -97,7 +170,7 @@ body.ui-mode {
 
 .ui-panel.top-right {
     transform: perspective(1000px) rotateY(-8deg) rotateX(-4deg) translateZ(10px);
-        backdrop-filter: blur(2px);  /* ADD THIS LINE */
+        backdrop-filter: blur(6px) saturate(140%);  /* mobiGlas-style HUD glass */
     border-radius: 20px 0 0 20px;
     box-shadow: 
         0 15px 50px rgba(0, 150, 255, 0.4),
@@ -107,7 +180,7 @@ body.ui-mode {
 
 .ui-panel.bottom-right {
     transform: perspective(1000px) rotateY(-6deg) rotateX(3deg) translateZ(5px);
-            backdrop-filter: blur(2px);  /* ADD THIS LINE */
+            backdrop-filter: blur(6px) saturate(140%);  /* mobiGlas-style HUD glass */
     border-radius: 20px 0 0 20px;
     box-shadow: 
         0 10px 30px rgba(0, 150, 255, 0.3),
@@ -117,6 +190,19 @@ body.ui-mode {
 .curved-element {
     transform: perspective(800px) rotateX(-2deg);
     text-shadow: 0 0 8px rgba(0,150,255,0.6);
+}
+
+/* SHIP STATUS readout rhythm — hairline separators between stat rows so
+   the panel reads as a scannable instrument list rather than a paragraph
+   of stacked lines. Deliberately structure-agnostic (border, not flex),
+   since rows carry a mix of one/two/three inline children. */
+.ui-panel.bottom-left .space-y-2 > .curved-element {
+    padding: 2px 0;
+    border-bottom: 1px solid rgba(var(--hud-cyan), 0.08);
+}
+
+.ui-panel.bottom-left .space-y-2 > .curved-element:last-child {
+    border-bottom: none;
 }
 
 .glow-text {
@@ -245,6 +331,11 @@ body.ui-mode {
     background-size: 200% 100%;
     animation: shimmer 2s infinite;
     transform: perspective(400px) rotateX(-1deg);
+    /* Cheap "smooth number tween" for the energy/loading readout: the width
+       is still set instantly from JS every frame, but animating the width
+       property itself turns that into a fluid fill/drain instead of an
+       instant snap — no JS tweening loop needed. */
+    transition: width 0.25s ease-out, box-shadow 0.3s ease;
 }
 
 .hull-bar {
@@ -252,6 +343,45 @@ body.ui-mode {
     background-size: 200% 100%;
     animation: shimmer 2s infinite;
     transform: perspective(400px) rotateX(-1deg);
+    transition: width 0.25s ease-out, background 0.3s ease;
+}
+
+/* Ship Status bar wells (Energy / Hull) — brief pulse feedback wrapper.
+   Toggled from game-ui.js when hull takes a hit or gets repaired, so the
+   instrument itself flashes instead of only the full-screen damage vignette. */
+.stat-well {
+    transition: box-shadow 0.25s ease, border-color 0.25s ease;
+}
+
+.stat-well.stat-hit {
+    animation: statHitFlash 0.5s ease-out;
+}
+
+.stat-well.stat-boost {
+    animation: statBoostFlash 0.6s ease-out;
+}
+
+@keyframes statHitFlash {
+    0%   { box-shadow: 0 0 0 2px rgba(var(--hud-red), 0.9), 0 0 16px rgba(var(--hud-red), 0.8); border-color: rgba(var(--hud-red), 0.9); }
+    100% { box-shadow: none; }
+}
+
+@keyframes statBoostFlash {
+    0%   { box-shadow: 0 0 0 2px rgba(var(--hud-green), 0.9), 0 0 16px rgba(var(--hud-green), 0.8); border-color: rgba(var(--hud-green), 0.9); }
+    100% { box-shadow: none; }
+}
+
+/* One-shot pulse for a text readout that just changed value (emergency
+   warp count, reputation tier-up, etc.) — distinct from the infinite
+   `.pulse` class already used for ongoing states like target-lock. */
+.value-tick {
+    display: inline-block;
+    animation: valueTick 0.4s ease-out;
+}
+
+@keyframes valueTick {
+    0%   { transform: scale(1.5); text-shadow: 0 0 12px currentColor, 0 0 24px currentColor; }
+    100% { transform: scale(1); }
 }
 
 @keyframes shimmer {
@@ -737,11 +867,28 @@ body.ui-mode {
 .galaxy-indicator {
     position: relative;
     cursor: auto;
-    transition: all 0.3s ease;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+    /* Base centering transform lives here (not inline from JS) so :hover
+       below can layer scale() on top of it instead of being clobbered by
+       an inline style of the same property. */
+    transform: translate(-50%, -50%);
+    border: 1px solid rgba(255,255,255,0.35);
+    box-shadow: 0 0 8px var(--dot-color, rgba(0,150,255,0.6));
+}
+
+/* Invisible hit-area pad — grows the clickable/hoverable region ~6px past
+   the visible dot on every side without making the dot itself look
+   oversized on the round map. */
+.galaxy-indicator::after {
+    content: '';
+    position: absolute;
+    inset: -6px;
 }
 
 .galaxy-indicator:hover {
-    transform: translate(-50%, -50%) scale(1.2);
+    transform: translate(-50%, -50%) scale(1.35);
+    box-shadow: 0 0 16px var(--dot-color, rgba(0,150,255,0.9)), 0 0 3px rgba(255,255,255,0.6) inset;
+    border-color: rgba(255,255,255,0.7);
     z-index: 10;
 }
 
@@ -910,11 +1057,16 @@ body.ui-mode {
     z-index: 9999 !important;
 }
 
-// =====================================================================
-// 3. ADD TO styles.css - Mobile Styles
-// =====================================================================
+/* =============================================================================
+   MOBILE STYLES
+   (NOTE: this block used to be wrapped in a stray `const mobileStyles = \`...\`;`
+   JS-template-literal fence left over from a copy/paste. That leading text had
+   no matching "{" of its own, so the CSS parser folded it together with the
+   next real rule below and silently dropped the whole `body.mobile-mode`
+   rule — the cursor didn't switch to visible/auto when forced mobile mode
+   was toggled on desktop. Plain CSS below; no functional changes otherwise.)
+   ============================================================================= */
 
-const mobileStyles = `
 /* Mobile Mode Override */
 body.mobile-mode {
     cursor: auto !important;

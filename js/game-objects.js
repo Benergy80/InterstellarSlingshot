@@ -4203,25 +4203,99 @@ try {
     console.log('Creating comprehensive 3D starfield...');
     
     try {
-        const starsGeometry = new THREE.BufferGeometry();
-        const starsMaterial = new THREE.PointsMaterial({
-            color: 0xffffff,
-            size: 1.0,
-            transparent: true,
-            opacity: 1.0,
-            sizeAttenuation: true
-        });
-        
-        const starsVertices = [];
-        
-        // Background stars
-        for (let i = 0; i < 2500; i++) {
-            const distanceFactor = 10 + Math.random() * 30;
+        // Shared vertex/fragment plumbing for both field stars and hero
+        // stars: size and twinkle are per-vertex attributes so a single
+        // draw call can hold thousands of differently-sized,
+        // differently-timed points. Twinkle time is driven every frame
+        // from updateDeepSpaceSparkle() (see below), called out of
+        // updateNebulaBreathing() so it stays smooth even though that
+        // hook runs unthrottled.
+        const _starVertexShader = `
+            attribute float aSize;
+            attribute float aPhase;
+            attribute float aSpeed;
+            varying vec3 vColor;
+            varying float vTwinkle;
+            uniform float uTime;
+            uniform float uSizeScale;
+            void main() {
+                vColor = color;
+                vTwinkle = 0.7 + 0.3 * sin(uTime * aSpeed + aPhase);
+                vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+                gl_PointSize = aSize * (uSizeScale / -mvPosition.z);
+                gl_Position = projectionMatrix * mvPosition;
+            }
+        `;
+        const _starFragmentShader = `
+            varying vec3 vColor;
+            varying float vTwinkle;
+            void main() {
+                vec2 uv = gl_PointCoord - 0.5;
+                float d = length(uv);
+                float alpha = smoothstep(0.5, 0.0, d) * vTwinkle;
+                if (alpha < 0.02) discard;
+                gl_FragColor = vec4(vColor, alpha);
+            }
+        `;
+        const _heroFragmentShader = `
+            varying vec3 vColor;
+            varying float vTwinkle;
+            void main() {
+                vec2 uv = gl_PointCoord - 0.5;
+                float d = length(uv);
+                float core = pow(smoothstep(0.24, 0.0, d), 1.4);
+                float crossX = smoothstep(0.035, 0.0, abs(uv.y)) * (1.0 - smoothstep(0.02, 0.5, abs(uv.x)));
+                float crossY = smoothstep(0.035, 0.0, abs(uv.x)) * (1.0 - smoothstep(0.02, 0.5, abs(uv.y)));
+                float flare = max(crossX, crossY) * 0.8;
+                float alpha = clamp(core + flare, 0.0, 1.0) * (0.55 + 0.45 * vTwinkle);
+                if (alpha < 0.02) discard;
+                gl_FragColor = vec4(vColor, alpha);
+            }
+        `;
+
+        const _starSizeScale = (typeof window !== 'undefined' ? window.innerHeight : 900) * 0.5;
+
+        // Synthwave star palette: mostly blue-white (real-sky-accurate),
+        // with warm amber and magenta/violet accents for identity.
+        function _pickStarColor() {
+            const r = Math.random();
+            let h, s, l;
+            if (r < 0.5) { h = 0.56 + Math.random() * 0.08; s = 0.20 + Math.random() * 0.35; l = 0.72 + Math.random() * 0.22; }
+            else if (r < 0.72) { h = 0.09 + Math.random() * 0.05; s = 0.45 + Math.random() * 0.35; l = 0.62 + Math.random() * 0.22; }
+            else if (r < 0.9) { h = Math.random(); s = 0.02 + Math.random() * 0.06; l = 0.85 + Math.random() * 0.13; }
+            else { h = 0.82 + Math.random() * 0.08; s = 0.35 + Math.random() * 0.4; l = 0.68 + Math.random() * 0.2; }
+            return new THREE.Color().setHSL(h, s, l);
+        }
+
+        // Combined "field stars" buffer — near + mid + far shells all live
+        // in ONE geometry/ONE draw call (same draw-call budget as the old
+        // single-shell starfield, which already merged its two tiers into
+        // one buffer). Per-vertex size/color/twinkle replace the old flat
+        // white PointsMaterial.
+        const fieldPositions = [];
+        const fieldColors = [];
+        const fieldSizes = [];
+        const fieldPhases = [];
+        const fieldSpeeds = [];
+
+        function _addFieldStar(distanceFactor, sizeMin, sizeMax) {
             const x = (Math.random() - 0.5) * 4000 * distanceFactor;
             const y = (Math.random() - 0.5) * 1600 * distanceFactor;
             const z = (Math.random() - 0.5) * 4000 * distanceFactor;
-            starsVertices.push(x, y, z);
+            fieldPositions.push(x, y, z);
+            const c = _pickStarColor();
+            fieldColors.push(c.r, c.g, c.b);
+            fieldSizes.push(sizeMin + Math.random() * (sizeMax - sizeMin));
+            fieldPhases.push(Math.random() * Math.PI * 2);
+            fieldSpeeds.push(0.3 + Math.random() * 0.7);
         }
+
+        // Shell A — near background (was "Background stars")
+        for (let i = 0; i < 2200; i++) _addFieldStar(10 + Math.random() * 30, 0.9, 1.7);
+
+        // Shell B — mid depth (NEW: fills the gap between near and far so
+        // the field reads as layered depth instead of two flat clusters)
+        for (let i = 0; i < 1800; i++) _addFieldStar(40 + Math.random() * 55, 0.6, 1.2);
         
 // =============================================================================
 // LOCAL GALAXY STARS - SEPARATE ROTATING OBJECT
@@ -4229,14 +4303,15 @@ try {
 
 const localGalaxyStarsGeometry = new THREE.BufferGeometry();
 const localGalaxyStarsMaterial = new THREE.PointsMaterial({
-    color: 0xffffff,
     size: 1.0,
+    vertexColors: true,
     transparent: true,
     opacity: _isMobileRenderTier() ? 0.5 : 1.0,
     sizeAttenuation: true
 });
 
 const localStarsVertices = [];
+const localStarsColors = [];
 
 // Local galaxy stars in spiral pattern around Sagittarius A*. 4×
 // spatial scale to match the 4×-enlarged Sgr A* + Gargantua disk so
@@ -4247,9 +4322,9 @@ for (let i = 0; i < _sgrAStarCount; i++) {
     const armAngle = Math.random() * Math.PI * 2;
     const armDistance = Math.pow(Math.random(), 1.8) * 16000;
     const armWidth = 0.25;
-    
+
     if (Math.random() < 0.3) {
-        // Dense center bulge
+        // Dense center bulge — older population, warm gold/amber core
         const bulgeRadius = Math.pow(Math.random(), 3) * 2800;
         const bulgeAngle = Math.random() * Math.PI * 2;
         const bulgeHeight = (Math.random() - 0.5) * 1200;
@@ -4257,17 +4332,24 @@ for (let i = 0; i < _sgrAStarCount; i++) {
         const z = Math.sin(bulgeAngle) * bulgeRadius;
         const y = bulgeHeight;
         localStarsVertices.push(x, y, z);
+        const _bc = new THREE.Color().setHSL(0.10 + Math.random() * 0.05, 0.55 + Math.random() * 0.25, 0.6 + Math.random() * 0.2);
+        localStarsColors.push(_bc.r, _bc.g, _bc.b);
     } else {
-        // Spiral arms
+        // Spiral arms — young population, cyan/blue-white with a magenta sprinkle
         const angle = armAngle + (armDistance / 360) * Math.PI;
         const x = Math.cos(angle) * armDistance + (Math.random() - 0.5) * armWidth * armDistance;
         const z = Math.sin(angle) * armDistance + (Math.random() - 0.5) * armWidth * armDistance;
         const y = (Math.random() - 0.5) * 480;
         localStarsVertices.push(x, y, z);
+        const _ac = Math.random() < 0.12
+            ? new THREE.Color().setHSL(0.85 + Math.random() * 0.08, 0.6, 0.7)
+            : new THREE.Color().setHSL(0.54 + Math.random() * 0.1, 0.35 + Math.random() * 0.3, 0.7 + Math.random() * 0.2);
+        localStarsColors.push(_ac.r, _ac.g, _ac.b);
     }
 }
 
 localGalaxyStarsGeometry.setAttribute('position', new THREE.Float32BufferAttribute(localStarsVertices, 3));
+localGalaxyStarsGeometry.setAttribute('color', new THREE.Float32BufferAttribute(localStarsColors, 3));
 const localGalaxyStars = new THREE.Points(localGalaxyStarsGeometry, localGalaxyStarsMaterial);
 localGalaxyStars.visible = true;
 localGalaxyStars.frustumCulled = true; // PERF: Enable culling
@@ -4280,15 +4362,216 @@ if (scene && scene.add) {
     console.log('✅ Local galaxy stars created (rotating):', localStarsVertices.length / 3, 'stars');
 }
         
-        // Distant bright stars
-        for (let i = 0; i < 100; i++) {
-            const distanceFactor = 100 + Math.random() * 100;
-            const x = (Math.random() - 0.5) * 4000 * distanceFactor;
-            const y = (Math.random() - 0.5) * 1600 * distanceFactor;
-            const z = (Math.random() - 0.5) * 4000 * distanceFactor;
-            starsVertices.push(x, y, z);
+        // Shell C — distant bright (was "Distant bright stars")
+        for (let i = 0; i < 140; i++) _addFieldStar(100 + Math.random() * 130, 1.6, 2.8);
+
+        const fieldStarsGeometry = new THREE.BufferGeometry();
+        fieldStarsGeometry.setAttribute('position', new THREE.Float32BufferAttribute(fieldPositions, 3));
+        fieldStarsGeometry.setAttribute('color', new THREE.Float32BufferAttribute(fieldColors, 3));
+        fieldStarsGeometry.setAttribute('aSize', new THREE.Float32BufferAttribute(fieldSizes, 1));
+        fieldStarsGeometry.setAttribute('aPhase', new THREE.Float32BufferAttribute(fieldPhases, 1));
+        fieldStarsGeometry.setAttribute('aSpeed', new THREE.Float32BufferAttribute(fieldSpeeds, 1));
+
+        const fieldStarsMaterial = new THREE.ShaderMaterial({
+            uniforms: { uTime: { value: 0 }, uSizeScale: { value: _starSizeScale } },
+            vertexShader: _starVertexShader,
+            fragmentShader: _starFragmentShader,
+            transparent: true,
+            depthWrite: false,
+            vertexColors: true
+        });
+
+        const fieldStars = new THREE.Points(fieldStarsGeometry, fieldStarsMaterial);
+        fieldStars.visible = true;
+        fieldStars.frustumCulled = false;
+        if (scene && scene.add) {
+            scene.add(fieldStars);
+            console.log('✅ Starfield added to scene with', fieldPositions.length / 3, 'stars across 3 depth shells');
         }
-        
+        window.fieldStars = fieldStars;
+        window.fieldStarsMaterial = fieldStarsMaterial;
+        window.stars = fieldStars; // legacy alias for any external `window.stars` checks
+
+        // HERO STARS — a few dozen bright cross-flare landmarks scattered
+        // across the same depth range. Own tiny draw call, additive
+        // blending so the flare actually glows; the count is small enough
+        // that additive overdraw here is negligible (per PIECE brief:
+        // shader work over particle-count inflation).
+        const heroCount = 38;
+        const heroPositions = [];
+        const heroColors = [];
+        const heroSizes = [];
+        const heroPhases = [];
+        const heroSpeeds = [];
+        for (let i = 0; i < heroCount; i++) {
+            const distanceFactor = 12 + Math.random() * 160;
+            heroPositions.push(
+                (Math.random() - 0.5) * 4000 * distanceFactor,
+                (Math.random() - 0.5) * 1600 * distanceFactor,
+                (Math.random() - 0.5) * 4000 * distanceFactor
+            );
+            const c = _pickStarColor();
+            c.offsetHSL(0, 0, 0.1); // hero stars read hotter/brighter — overexposed core
+            heroColors.push(c.r, c.g, c.b);
+            heroSizes.push(7 + Math.random() * 11);
+            heroPhases.push(Math.random() * Math.PI * 2);
+            heroSpeeds.push(0.15 + Math.random() * 0.35);
+        }
+
+        const heroStarsGeometry = new THREE.BufferGeometry();
+        heroStarsGeometry.setAttribute('position', new THREE.Float32BufferAttribute(heroPositions, 3));
+        heroStarsGeometry.setAttribute('color', new THREE.Float32BufferAttribute(heroColors, 3));
+        heroStarsGeometry.setAttribute('aSize', new THREE.Float32BufferAttribute(heroSizes, 1));
+        heroStarsGeometry.setAttribute('aPhase', new THREE.Float32BufferAttribute(heroPhases, 1));
+        heroStarsGeometry.setAttribute('aSpeed', new THREE.Float32BufferAttribute(heroSpeeds, 1));
+
+        const heroStarsMaterial = new THREE.ShaderMaterial({
+            uniforms: { uTime: { value: 0 }, uSizeScale: { value: _starSizeScale } },
+            vertexShader: _starVertexShader,
+            fragmentShader: _heroFragmentShader,
+            transparent: true,
+            depthWrite: false,
+            blending: THREE.AdditiveBlending,
+            vertexColors: true
+        });
+
+        const heroStars = new THREE.Points(heroStarsGeometry, heroStarsMaterial);
+        heroStars.visible = true;
+        heroStars.frustumCulled = false;
+        if (scene && scene.add) {
+            scene.add(heroStars);
+            console.log('✅ Hero stars added:', heroCount, 'cross-flare landmarks');
+        }
+        window.heroStars = heroStars;
+        window.heroStarsMaterial = heroStarsMaterial;
+
+        // Keep the point-size formula in sync with the actual canvas size.
+        if (typeof window !== 'undefined') {
+            window.addEventListener('resize', () => {
+                const s = window.innerHeight * 0.5;
+                if (fieldStarsMaterial && fieldStarsMaterial.uniforms) fieldStarsMaterial.uniforms.uSizeScale.value = s;
+                if (heroStarsMaterial && heroStarsMaterial.uniforms) heroStarsMaterial.uniforms.uSizeScale.value = s;
+            });
+        }
+
+        // =============================================================================
+        // DISTANT GALAXY IMPOSTERS — a handful of faint spiral/elliptical
+        // smudges on the far sphere so deep space has landmarks besides
+        // pinprick stars. Two canvas-generated textures (spiral,
+        // elliptical) reused across several tinted/rotated sprite
+        // instances: 2 texture generations, ~5 draw calls, no geometry.
+        // =============================================================================
+        try {
+            function _galaxyImposterTexture(kind) {
+                const size = 256;
+                const cv = document.createElement('canvas');
+                cv.width = cv.height = size;
+                const ctx = cv.getContext('2d');
+                const cx = size / 2;
+                ctx.translate(cx, cx);
+                if (kind === 'spiral') {
+                    ctx.save();
+                    ctx.scale(1, 0.42); // inclined disk
+                    const grad = ctx.createRadialGradient(0, 0, 0, 0, 0, cx);
+                    grad.addColorStop(0.00, 'rgba(255,255,255,0.95)');
+                    grad.addColorStop(0.12, 'rgba(255,255,255,0.55)');
+                    grad.addColorStop(0.35, 'rgba(255,255,255,0.22)');
+                    grad.addColorStop(1.00, 'rgba(255,255,255,0)');
+                    ctx.fillStyle = grad;
+                    ctx.beginPath();
+                    ctx.arc(0, 0, cx, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.restore();
+                    // Faint spiral arms
+                    ctx.globalCompositeOperation = 'lighter';
+                    for (let arm = 0; arm < 2; arm++) {
+                        ctx.save();
+                        ctx.rotate(arm * Math.PI + Math.random() * 0.4);
+                        ctx.scale(1, 0.42);
+                        ctx.beginPath();
+                        for (let a = 0; a < Math.PI * 1.6; a += 0.08) {
+                            const rr = (a / (Math.PI * 1.6)) * cx * 0.92;
+                            const px = Math.cos(a * 2.2) * rr;
+                            const py = Math.sin(a * 2.2) * rr;
+                            if (a === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+                        }
+                        ctx.strokeStyle = 'rgba(255,255,255,0.18)';
+                        ctx.lineWidth = size * 0.05;
+                        ctx.lineCap = 'round';
+                        ctx.stroke();
+                        ctx.restore();
+                    }
+                } else {
+                    ctx.save();
+                    ctx.scale(1, 0.62);
+                    const grad = ctx.createRadialGradient(0, 0, 0, 0, 0, cx);
+                    grad.addColorStop(0.00, 'rgba(255,255,255,0.95)');
+                    grad.addColorStop(0.25, 'rgba(255,255,255,0.5)');
+                    grad.addColorStop(0.60, 'rgba(255,255,255,0.16)');
+                    grad.addColorStop(1.00, 'rgba(255,255,255,0)');
+                    ctx.fillStyle = grad;
+                    ctx.beginPath();
+                    ctx.arc(0, 0, cx, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.restore();
+                }
+                const tex = new THREE.CanvasTexture(cv);
+                tex.needsUpdate = true;
+                return tex;
+            }
+
+            const _spiralImposterTex = _galaxyImposterTexture('spiral');
+            const _ellipticalImposterTex = _galaxyImposterTexture('elliptical');
+            const _imposterPalette = [0x66e0ff, 0xff66e0, 0xffb366, 0xb366ff, 0xccdcff];
+            const imposterCount = 5;
+            const galaxyImposters = [];
+
+            for (let i = 0; i < imposterCount; i++) {
+                const isSpiral = i % 2 === 0;
+                const tex = isSpiral ? _spiralImposterTex : _ellipticalImposterTex;
+                const mat = new THREE.SpriteMaterial({
+                    map: tex,
+                    color: _imposterPalette[i % _imposterPalette.length],
+                    transparent: true,
+                    opacity: 0.3 + Math.random() * 0.22,
+                    blending: THREE.AdditiveBlending,
+                    depthWrite: false,
+                    depthTest: true,
+                    fog: false
+                });
+                if (mat.rotation !== undefined) mat.rotation = Math.random() * Math.PI * 2;
+
+                const sprite = new THREE.Sprite(mat);
+                // Scatter across the far sphere, well beyond gameplay content
+                // (galaxies/nebulas top out around 75,000u) but inside the
+                // ~250,000u camera far plane.
+                const dirTheta = Math.random() * Math.PI * 2;
+                const dirPhi = Math.acos(1 - 2 * Math.random());
+                const dist = 95000 + Math.random() * 35000;
+                sprite.position.set(
+                    dist * Math.sin(dirPhi) * Math.cos(dirTheta),
+                    dist * Math.cos(dirPhi) * 0.6,
+                    dist * Math.sin(dirPhi) * Math.sin(dirTheta)
+                );
+                const scale = 14000 + Math.random() * 14000;
+                sprite.scale.set(scale, scale, 1);
+                sprite.frustumCulled = false;
+                sprite.renderOrder = -2; // behind stars/nebulas, in front of Hubble/CMB skyboxes
+
+                sprite.userData._baseOpacity = mat.opacity;
+                sprite.userData._shimmerPhase = Math.random() * Math.PI * 2;
+                sprite.userData._shimmerSpeed = 0.03 + Math.random() * 0.04;
+
+                if (scene && scene.add) scene.add(sprite);
+                galaxyImposters.push(sprite);
+            }
+
+            window.galaxyImposters = galaxyImposters;
+            console.log('✅ Distant galaxy imposters added:', imposterCount);
+        } catch (imposterError) {
+            console.error('❌ Error creating distant galaxy imposters:', imposterError);
+        }
+
         // =============================================================================
         // DISTANT GALAXIES WITH ENHANCED PLANETS
         // =============================================================================
@@ -4831,19 +5114,10 @@ if (Math.random() < moonProbability) {
                 }
             });
         
-        // Finalize starfield
-        console.log('Finalizing starfield with', starsVertices.length / 3, 'stars...');
-        
-        starsGeometry.setAttribute('position', new THREE.Float32BufferAttribute(starsVertices, 3));
-        const stars = new THREE.Points(starsGeometry, starsMaterial);
-        stars.visible = true;
-        stars.frustumCulled = false;
-        
-        if (scene && scene.add) {
-            scene.add(stars);
-            console.log('✅ Starfield added to scene with', starsVertices.length / 3, 'stars');
-        }
-        
+        // Starfield/hero-stars/galaxy-imposters were already built and
+        // added to the scene above, before the distant-galaxies loop.
+        console.log('✅ Deep-space backdrop complete (starfield, hero stars, galaxy imposters, distant galaxies)');
+
     } catch (starError) {
         console.error('❌ Error creating starfield:', starError);
     }
@@ -4950,34 +5224,43 @@ function createClusteredNebulas() {
         
         const nebulaColor = new THREE.Color().setHSL(baseHue, 0.7 + Math.random() * 0.3, 0.5 + Math.random() * 0.3);
         const nebulaSize = 2000 + Math.random() * 3000;
-        
+
+        // Two-tone core->rim HSL gradient: a hotter, brighter core cools
+        // into a deeper-hued rim as particles sit farther from center, so
+        // the cloud reads as a volumetric body instead of a flat color
+        // splat with per-particle noise.
+        const nebulaCoreColor = nebulaColor.clone().offsetHSL(0.04, 0.1, 0.22);
+        const nebulaRimColor = nebulaColor.clone().offsetHSL(-0.07, 0.05, -0.18);
+
         for (let j = 0; j < particleCount; j++) {
             const radius = Math.pow(Math.random(), 0.3) * nebulaSize;
             const theta = Math.random() * Math.PI * 2;
             const phi = (Math.random() - 0.5) * Math.PI * 0.6;
-            
+
             positions[j * 3] = radius * Math.sin(phi) * Math.cos(theta);
             positions[j * 3 + 1] = radius * Math.cos(phi) * (Math.random() - 0.5) * 0.4;
             positions[j * 3 + 2] = radius * Math.sin(phi) * Math.sin(theta);
-            
-            const colorVariation = nebulaColor.clone();
-            colorVariation.offsetHSL((Math.random() - 0.5) * 0.15, 0, (Math.random() - 0.5) * 0.2);
-            
+
+            const rNorm = Math.min(1, radius / nebulaSize);
+            const colorVariation = nebulaCoreColor.clone().lerp(nebulaRimColor, rNorm);
+            colorVariation.offsetHSL((Math.random() - 0.5) * 0.06, 0, (Math.random() - 0.5) * 0.12);
+
             colors[j * 3] = colorVariation.r;
             colors[j * 3 + 1] = colorVariation.g;
             colors[j * 3 + 2] = colorVariation.b;
         }
-        
+
         particleGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
         particleGeometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-        
+
         const nebulaMaterial = new THREE.PointsMaterial({
             size: 2.5,
             vertexColors: true,
             transparent: true,
             opacity: 0.65,
             blending: THREE.AdditiveBlending,
-            sizeAttenuation: true
+            sizeAttenuation: true,
+            fog: false // preserve the cloud's own core->rim gradient; scene fog would flatten it
         });
         
         const nebulaPoints = new THREE.Points(particleGeometry, nebulaMaterial);
@@ -5180,6 +5463,9 @@ function createDistantNebulas() {
         const nebulaSize = 1500 + Math.random() * 1000; // Matched to galaxy-formation scale
         const shape = nebulaShapes[i % nebulaShapes.length];
         const arms = shape === 'spiral' ? 3 : (shape === 'ring' ? 1 : 2);
+        // Two-tone core->rim gradient (see createClusteredNebulas for rationale)
+        const nebulaCoreColor = nebulaColor.clone().offsetHSL(0.04, 0.1, 0.22);
+        const nebulaRimColor = nebulaColor.clone().offsetHSL(-0.07, 0.05, -0.18);
 
         // MATCHED TO GALAXY-FORMATION: Galaxy-like distribution
         for (let p = 0; p < particleCount; p++) {
@@ -5242,8 +5528,9 @@ function createDistantNebulas() {
             positions[i3 + 1] = y;
             positions[i3 + 2] = z;
 
-            const colorVariation = nebulaColor.clone();
-            colorVariation.offsetHSL((Math.random() - 0.5) * 0.15, 0, (Math.random() - 0.5) * 0.2);
+            const rNorm = Math.min(1, Math.sqrt(x * x + z * z) / nebulaSize);
+            const colorVariation = nebulaCoreColor.clone().lerp(nebulaRimColor, rNorm);
+            colorVariation.offsetHSL((Math.random() - 0.5) * 0.06, 0, (Math.random() - 0.5) * 0.12);
             colors[i3] = colorVariation.r;
             colors[i3 + 1] = colorVariation.g;
             colors[i3 + 2] = colorVariation.b;
@@ -5259,7 +5546,8 @@ function createDistantNebulas() {
             transparent: true,
             opacity: 0.65,
             blending: THREE.AdditiveBlending,
-            sizeAttenuation: true
+            sizeAttenuation: true,
+            fog: false // preserve the cloud's own core->rim gradient; scene fog would flatten it
         });
 
         const nebulaPoints = new THREE.Points(nebulaGeometry, nebulaMaterial);
@@ -5346,6 +5634,9 @@ function createExoticCoreNebulas() {
         const nebulaSize = 1500 + Math.random() * 1000; // Matched to galaxy-formation scale
         const shape = nebulaShapes[i % nebulaShapes.length];
         const arms = shape === 'spiral' ? 3 : (shape === 'ring' ? 1 : 2);
+        // Two-tone core->rim gradient (see createClusteredNebulas for rationale)
+        const nebulaCoreColor = nebulaColor.clone().offsetHSL(0.04, 0.1, 0.22);
+        const nebulaRimColor = nebulaColor.clone().offsetHSL(-0.07, 0.05, -0.18);
 
         // MATCHED TO GALAXY-FORMATION: Galaxy-like distribution
         for (let p = 0; p < particleCount; p++) {
@@ -5423,8 +5714,9 @@ function createExoticCoreNebulas() {
             positions[i3 + 1] = y;
             positions[i3 + 2] = z;
 
-            const colorVariation = nebulaColor.clone();
-            colorVariation.offsetHSL((Math.random() - 0.5) * 0.15, 0, (Math.random() - 0.5) * 0.2);
+            const rNorm = Math.min(1, Math.sqrt(x * x + z * z) / nebulaSize);
+            const colorVariation = nebulaCoreColor.clone().lerp(nebulaRimColor, rNorm);
+            colorVariation.offsetHSL((Math.random() - 0.5) * 0.06, 0, (Math.random() - 0.5) * 0.12);
             colors[i3] = colorVariation.r;
             colors[i3 + 1] = colorVariation.g;
             colors[i3 + 2] = colorVariation.b;
@@ -5440,7 +5732,8 @@ function createExoticCoreNebulas() {
             transparent: true,
             opacity: 0.65,
             blending: THREE.AdditiveBlending,
-            sizeAttenuation: true
+            sizeAttenuation: true,
+            fog: false // preserve the cloud's own core->rim gradient; scene fog would flatten it
         });
 
         const nebulaPoints = new THREE.Points(nebulaGeometry, nebulaMaterial);
@@ -5559,6 +5852,38 @@ function updateNebulaVisibility() {
 window.updateNebulaVisibility = updateNebulaVisibility;
 
 // =============================================================================
+// DEEP-SPACE SPARKLE — per-frame driver for the starfield/hero-star twinkle
+// shaders and the galaxy-imposter shimmer, all created in
+// createOptimizedPlanets3D(). Called (unthrottled, every frame) from
+// updateNebulaBreathing() below, which is itself already wired into the
+// main game loop — piggybacking here avoids adding a second per-frame call
+// site. Cost is a handful of uniform/opacity writes; no scene traversal.
+// =============================================================================
+function updateDeepSpaceSparkle() {
+    const t = (typeof performance !== 'undefined' ? performance.now() : Date.now()) * 0.001;
+
+    if (window.fieldStarsMaterial && window.fieldStarsMaterial.uniforms) {
+        window.fieldStarsMaterial.uniforms.uTime.value = t;
+    }
+    if (window.heroStarsMaterial && window.heroStarsMaterial.uniforms) {
+        window.heroStarsMaterial.uniforms.uTime.value = t;
+    }
+
+    const imposters = window.galaxyImposters;
+    if (imposters && imposters.length) {
+        for (let i = 0; i < imposters.length; i++) {
+            const spr = imposters[i];
+            if (!spr || !spr.userData || !spr.material) continue;
+            const base = spr.userData._baseOpacity || spr.material.opacity;
+            const speed = spr.userData._shimmerSpeed || 0.04;
+            const phase = spr.userData._shimmerPhase || 0;
+            spr.material.opacity = base * (0.82 + 0.18 * Math.sin(t * speed + phase));
+        }
+    }
+}
+window.updateDeepSpaceSparkle = updateDeepSpaceSparkle;
+
+// =============================================================================
 // NEBULA IDLE BREATHING (PewPew-inspired) — modulate each nebula cloud's
 // alpha ±8% on a slow (~13 s) cycle so the backdrop never reads as a static
 // image. Multiplies AROUND the base opacity the visibility system computed
@@ -5569,6 +5894,10 @@ window.updateNebulaVisibility = updateNebulaVisibility;
 // =============================================================================
 let _nebBreathPhase = 0;
 function updateNebulaBreathing() {
+    // Runs every frame regardless of nebula state — also drives starfield
+    // twinkle/hero-star flare/galaxy-imposter shimmer (see function below).
+    updateDeepSpaceSparkle();
+
     if (typeof nebulaClouds === 'undefined' || !nebulaClouds.length) return;
     _nebBreathPhase += 0.008; // full cycle ~13 s at 60 fps
     for (let i = 0; i < nebulaClouds.length; i++) {
@@ -5585,6 +5914,13 @@ function updateNebulaBreathing() {
         }
         const breath = 0.92 + 0.08 * Math.sin(_nebBreathPhase + i * 0.7);
         mat.opacity = base * breath;
+
+        // GENTLE PARALLAX SCALE: a slow, tiny breathe on the whole cloud's
+        // scale (not just alpha) reads as volumetric gas roiling in 3D
+        // rather than a flat sprite pulsing brightness. Cheap — one
+        // Vector3.setScalar per visible nebula per frame, no geometry work.
+        const scaleBreath = 1 + 0.035 * Math.sin(_nebBreathPhase * 0.55 + i * 1.3);
+        n.scale.setScalar(scaleBreath);
     }
 }
 window.updateNebulaBreathing = updateNebulaBreathing;
@@ -11267,6 +11603,9 @@ function createNebulas() {
         const nebulaSize = 1200 + Math.random() * 800;
         const hue = Math.random();
         const nebulaColor = new THREE.Color().setHSL(hue, 0.7, 0.6);
+        // Two-tone core->rim gradient (see createClusteredNebulas for rationale)
+        const nebulaCoreColor = nebulaColor.clone().offsetHSL(0.04, 0.1, 0.22);
+        const nebulaRimColor = nebulaColor.clone().offsetHSL(-0.07, 0.05, -0.18);
         
         for (let p = 0; p < particleCount; p++) {
             const i3 = p * 3;
@@ -11399,15 +11738,17 @@ function createNebulas() {
             positions[i3] = x;
             positions[i3 + 1] = y;
             positions[i3 + 2] = z;
-            
-            // Color variation for realism
-            let colorVar = nebulaColor.clone();
-            
-            // Quasar jets get blue tint
+
+            // Color variation: two-tone core->rim gradient (see
+            // createClusteredNebulas for rationale), except quasar jets
+            // which keep their distinct blue-white tint.
+            let colorVar;
             if (nebulaType.shape === 'quasar' && Math.abs(y) > nebulaSize * 0.5) {
                 colorVar = new THREE.Color(0xaaddff);
             } else {
-                colorVar.offsetHSL((Math.random() - 0.5) * 0.2, 0, (Math.random() - 0.5) * 0.3);
+                const rNorm = Math.min(1, Math.sqrt(x * x + z * z) / nebulaSize);
+                colorVar = nebulaCoreColor.clone().lerp(nebulaRimColor, rNorm);
+                colorVar.offsetHSL((Math.random() - 0.5) * 0.08, 0, (Math.random() - 0.5) * 0.15);
             }
             
             colors[i3] = colorVar.r;
@@ -11424,7 +11765,8 @@ function createNebulas() {
             transparent: true,
             opacity: 0.65,
             blending: THREE.AdditiveBlending,
-            sizeAttenuation: true
+            sizeAttenuation: true,
+            fog: false // preserve the cloud's own core->rim gradient; scene fog would flatten it
         });
         
         const nebulaPoints = new THREE.Points(nebulaGeometry, nebulaMaterial);

@@ -1687,6 +1687,14 @@ if (typeof createOuterInterstellarSystems === 'function') {
     if (typeof loadUFOModel === 'function') { try { loadUFOModel(); } catch (e) {} }
 }
 
+// PROCEDURAL GALAXIES — seeded far-shell systems (80k-140k), generated after
+// the authored outer systems so it can register into `planets` safely.
+// js/proc-galaxies.js drives its own tick; it stands down automatically if
+// window.updateProcGalaxies() is ever wired into the animate loop instead.
+if (typeof initProcGalaxies === 'function') {
+    try { initProcGalaxies(); } catch (e) { console.warn('Procedural galaxies init failed:', e); }
+}
+
 // ADD THIS RIGHT HERE:
 if (typeof createWarpSpeedStarfield === 'function') {
     createWarpSpeedStarfield();

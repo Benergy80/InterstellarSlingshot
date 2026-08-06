@@ -1811,6 +1811,22 @@ function executeSlingshot() {
         const _tCCW = new THREE.Vector3(-Math.sin(_theta0), 0, Math.cos(_theta0));
         const _sign = (_tCCW.dot(_aim) >= 0) ? 1 : -1;
 
+        // EASE-IN CAPTURE: start the arc at the speed the player actually
+        // arrived with instead of snapping to full orbital rate (the old
+        // "velocity pop"). velocityVector is in 60fps-frame units, so ×60 is
+        // units/sec; the arc's full-rate linear speed is omega × radius.
+        const _omega = 4.6 / 1.6;
+        const _entrySpd = (gameState.velocityVector ? gameState.velocityVector.length() : 0) * 60;
+        const _arcSpd = Math.max(1, _omega * _entryR);
+        const _k0 = Math.max(0.30, Math.min(1, _entrySpd / _arcSpd));
+        // RADIAL SCOOP depth — how far the arc dips toward the body at
+        // closest approach, clamped so it can never clip the surface.
+        // Floor also clears any black-hole warpThreshold with margin, so a
+        // scooped periapsis can never trip the event-horizon warp mid-arc.
+        const _minR = Math.max(planetRadius * 1.7, 50,
+            (nearestPlanet.userData.warpThreshold || 0) * 1.25);
+        const _dip = Math.max(0, Math.min(_entryR * 0.30, _entryR - _minR));
+
         gameState.slingshotWhip = {
             body: nearestPlanet,
             radius: _entryR,
@@ -1819,7 +1835,12 @@ function executeSlingshot() {
             y0: _cp.y - _bp.y,
             t0: Date.now(),
             durMs: 1600,
-            omega: 4.6 / 1.6, // rad/s — up to ~264° of sweep
+            omega: _omega, // rad/s — up to ~264° of sweep
+            sweep: _omega * 1.6,
+            rate: _whipRateTable(_k0),
+            dip: _dip,
+            bodyR: planetRadius,
+            bh: (_budType === 'blackhole'),
             aim: _aim.clone(),
             boost: boostVelocity,
             color: _budType === 'blackhole' ? 0x9933ff : (_isStarB ? 0xffcc44 : 0x33ccff),
@@ -1834,6 +1855,11 @@ function executeSlingshot() {
         // Gravity-well rings around the body sell the capture
         if (typeof _spawnGravityWellRings === 'function') {
             _spawnGravityWellRings(nearestPlanet, gameState.slingshotWhip.color);
+        }
+        // A soft grab — deliberately much weaker than the release kick, so
+        // the maneuver builds instead of front-loading its punch.
+        if (typeof window !== 'undefined' && typeof window.whipScreenShake === 'function') {
+            window.whipScreenShake(2.6, 380);
         }
 
         // Capture notice — the launch announcement (with destination +
@@ -1858,7 +1884,6 @@ function executeSlingshot() {
 // captured boost speed. Visuals: gravity-well rings at capture, an arc
 // trail during the whip, an FOV kick + starfield + hyperspace at launch.
 // =============================================================================
-let _whipTrail = null;
 
 function _spawnGravityWellRings(body, colorHex) {
     if (typeof scene === 'undefined' || typeof THREE === 'undefined' || !body) return;
@@ -1892,36 +1917,149 @@ function _spawnGravityWellRings(body, colorHex) {
     }, 33);
 }
 
-function _whipTrailPush(pos, colorHex) {
-    if (typeof scene === 'undefined' || typeof THREE === 'undefined') return;
-    if (!_whipTrail) {
+// ── ARC TRAIL ────────────────────────────────────────────────────────────────
+// Upgraded from a flat single-color THREE.Line to a two-layer camera-facing
+// RIBBON: a white-hot core plus a wide dim halo, both vertex-colored. Under
+// additive blending dark IS transparent, so the neon gradient (body color at
+// the tail → hot white at the head) and the per-point age decay give a true
+// fading afterimage without a second pass or any alpha sorting. Ribbon width
+// tracks the arc's instantaneous speed, so the trail visibly THICKENS as the
+// whip accelerates out of periapsis.
+const _WT_MAX = 88;
+let _whipTrail = null;
+
+const _wtDir = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+const _wtView = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+const _wtSide = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+const _wtCol = (typeof THREE !== 'undefined') ? new THREE.Color() : null;
+const _wtHot = (typeof THREE !== 'undefined') ? new THREE.Color(0xffffff) : null;
+
+function _whipTrailEnsure(colorHex) {
+    if (_whipTrail) return _whipTrail;
+    const mk = (opacity) => {
+        const pos = new Float32Array(_WT_MAX * 2 * 3);
+        const col = new Float32Array(_WT_MAX * 2 * 3);
         const geo = new THREE.BufferGeometry();
-        const mat = new THREE.LineBasicMaterial({
-            color: colorHex || 0x33ccff, transparent: true, opacity: 0.85,
-            blending: THREE.AdditiveBlending, depthWrite: false
+        geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+        geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+        const idx = [];
+        for (let i = 0; i < _WT_MAX - 1; i++) {
+            const a = i * 2, b = a + 1, c = a + 2, d = a + 3;
+            idx.push(a, b, c, b, d, c);
+        }
+        geo.setIndex(idx);
+        const mat = new THREE.MeshBasicMaterial({
+            vertexColors: true, transparent: true, opacity: opacity,
+            blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide
         });
-        _whipTrail = { points: [], line: new THREE.Line(geo, mat), mat };
-        _whipTrail.line.frustumCulled = false;
-        scene.add(_whipTrail.line);
-    }
-    _whipTrail.points.push(pos.clone());
-    if (_whipTrail.points.length > 70) _whipTrail.points.shift();
-    _whipTrail.line.geometry.setFromPoints(_whipTrail.points);
+        const mesh = new THREE.Mesh(geo, mat);
+        mesh.frustumCulled = false;
+        mesh.renderOrder = 58;
+        scene.add(mesh);
+        return { geo: geo, mat: mat, mesh: mesh, pos: pos, col: col };
+    };
+    _whipTrail = {
+        points: [],                       // { p:Vector3, t:ms, s:speedFactor }
+        core: mk(0.95),
+        halo: mk(0.42),
+        base: new THREE.Color(colorHex || 0x33ccff),
+        fade: 1
+    };
+    return _whipTrail;
 }
 
-function _whipTrailFadeOut() {
+// Rebuild both ribbons from the point list. `fade` is a global multiplier the
+// whip-out uses to dissolve the trail after release.
+function _whipTrailRebuild(tr) {
+    if (!tr) return;
+    const pts = tr.points;
+    const N = Math.min(pts.length, _WT_MAX);
+    if (N < 3) { tr.core.mesh.visible = false; tr.halo.mesh.visible = false; return; }
+    tr.core.mesh.visible = true;
+    tr.halo.mesh.visible = true;
+    const now = Date.now();
+    const off = pts.length - N;
+    for (let i = 0; i < N; i++) {
+        const e = pts[off + i];
+        const p = e.p;
+        _wtDir.subVectors(pts[off + Math.min(i + 1, N - 1)].p, pts[off + Math.max(i - 1, 0)].p);
+        if (_wtDir.lengthSq() < 1e-8) _wtDir.set(0, 1, 0);
+        _wtDir.normalize();
+        _wtView.subVectors(p, camera.position).normalize();
+        _wtSide.crossVectors(_wtDir, _wtView);
+        if (_wtSide.lengthSq() < 1e-8) _wtSide.set(0, 1, 0);
+        _wtSide.normalize();
+        const f = i / (N - 1);                                  // 0 tail → 1 head
+        // Age decay = the afterimage. 1.5s of memory, eased.
+        const age = Math.max(0, 1 - (now - e.t) / 1500);
+        const w = (0.9 + 5.2 * e.s) * (0.12 + 0.88 * Math.pow(f, 0.85));
+        const o = i * 6;
+        const wide = w * 3.4;
+        tr.core.pos[o]     = p.x + _wtSide.x * w;
+        tr.core.pos[o + 1] = p.y + _wtSide.y * w;
+        tr.core.pos[o + 2] = p.z + _wtSide.z * w;
+        tr.core.pos[o + 3] = p.x - _wtSide.x * w;
+        tr.core.pos[o + 4] = p.y - _wtSide.y * w;
+        tr.core.pos[o + 5] = p.z - _wtSide.z * w;
+        tr.halo.pos[o]     = p.x + _wtSide.x * wide;
+        tr.halo.pos[o + 1] = p.y + _wtSide.y * wide;
+        tr.halo.pos[o + 2] = p.z + _wtSide.z * wide;
+        tr.halo.pos[o + 3] = p.x - _wtSide.x * wide;
+        tr.halo.pos[o + 4] = p.y - _wtSide.y * wide;
+        tr.halo.pos[o + 5] = p.z - _wtSide.z * wide;
+        // Neon gradient: saturated body color at the tail, white-hot at the
+        // head, with a fast shimmer so the ribbon never reads as a decal.
+        const shimmer = 0.88 + 0.12 * Math.sin(now * 0.011 + i * 1.9);
+        const bright = (0.10 + 0.9 * Math.pow(f, 1.5)) * age * age * shimmer * tr.fade;
+        _wtCol.copy(tr.base).lerp(_wtHot, 0.25 + 0.65 * f).multiplyScalar(Math.min(1, bright));
+        tr.core.col[o] = _wtCol.r; tr.core.col[o + 1] = _wtCol.g; tr.core.col[o + 2] = _wtCol.b;
+        tr.core.col[o + 3] = _wtCol.r; tr.core.col[o + 4] = _wtCol.g; tr.core.col[o + 5] = _wtCol.b;
+        _wtCol.copy(tr.base).multiplyScalar(Math.min(1, bright * 0.42));
+        tr.halo.col[o] = _wtCol.r; tr.halo.col[o + 1] = _wtCol.g; tr.halo.col[o + 2] = _wtCol.b;
+        tr.halo.col[o + 3] = _wtCol.r; tr.halo.col[o + 4] = _wtCol.g; tr.halo.col[o + 5] = _wtCol.b;
+    }
+    [tr.core, tr.halo].forEach((layer) => {
+        layer.geo.attributes.position.needsUpdate = true;
+        layer.geo.attributes.color.needsUpdate = true;
+        layer.geo.setDrawRange(0, (N - 1) * 6);
+    });
+}
+
+// speedF: 0..1 arc speed, drives ribbon thickness.
+function _whipTrailPush(pos, colorHex, speedF) {
+    if (typeof scene === 'undefined' || typeof THREE === 'undefined') return;
+    const tr = _whipTrailEnsure(colorHex);
+    tr.points.push({ p: pos.clone(), t: Date.now(), s: Math.max(0, Math.min(1, speedF || 0.5)) });
+    if (tr.points.length > _WT_MAX) tr.points.shift();
+    _whipTrailRebuild(tr);
+}
+
+// Release: the ribbon doesn't just fade in place — its head is dragged along
+// the launch vector so the trail WHIPS outward with the ship, then dissolves.
+function _whipTrailFadeOut(launchDir, boost) {
     if (!_whipTrail) return;
-    const trail = _whipTrail;
+    const tr = _whipTrail;
     _whipTrail = null;
+    const dir = (launchDir && launchDir.clone) ? launchDir.clone().normalize() : null;
+    const step = Math.max(4, (boost || 20) * 0.55);
     const iv = setInterval(() => {
-        trail.mat.opacity -= 0.04;
-        if (trail.mat.opacity <= 0) {
-            clearInterval(iv);
-            scene.remove(trail.line);
-            trail.line.geometry.dispose();
-            trail.mat.dispose();
+        tr.fade -= 0.075;
+        if (tr.fade > 0 && dir && tr.points.length > 2) {
+            // Extend the head outward and eat the tail: the whole ribbon
+            // stretches away from the body along the launch vector.
+            const head = tr.points[tr.points.length - 1];
+            tr.points.push({ p: head.p.clone().addScaledVector(dir, step), t: head.t, s: head.s });
+            tr.points.shift(); tr.points.shift();
+            if (tr.points.length > _WT_MAX) tr.points.shift();
+            try { _whipTrailRebuild(tr); } catch (e) {}
         }
-    }, 50);
+        if (tr.fade <= 0) {
+            clearInterval(iv);
+            [tr.core, tr.halo].forEach((layer) => {
+                scene.remove(layer.mesh); layer.geo.dispose(); layer.mat.dispose();
+            });
+        }
+    }, 33);
 }
 
 function _fovKick() {
@@ -1938,44 +2076,150 @@ function _fovKick() {
 
 const _whipTmpQ = (typeof THREE !== 'undefined') ? new THREE.Quaternion() : null;
 const _whipTmpM = (typeof THREE !== 'undefined') ? new THREE.Matrix4() : null;
+const _whipUpVec = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+const _whipLocal = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+
+// ── WHIP TIMING CURVE ────────────────────────────────────────────────────────
+// The arc used to sweep at a constant omega, which meant the capture SNAPPED
+// the ship from its own velocity to full orbital speed (the "velocity pop")
+// and the release was no more energetic than the entry. Instead the sweep now
+// follows a hand-shaped rate profile, integrated once at capture into a
+// normalized cumulative table:
+//   capture — starts at the player's ACTUAL entry speed (k0) and eases up, so
+//             gravity takes hold instead of yanking
+//   dilate  — a sharp dip through closest approach: brief, cheap slow-mo that
+//             costs nothing (it reshapes the arc's own clock, never the game's
+//             dt, so physics/ai/animation stay perfectly dt-safe)
+//   release — a hard acceleration through the last third: the whip CRACKS
+// Total sweep and total duration are unchanged, so every downstream timing
+// (alignment test, durMs timeout, slingshot.timeRemaining) still holds.
+function _whipRateTable(k0) {
+    const N = 48;
+    const tbl = new Float32Array(N + 1);
+    const smooth = (a, b, x) => {
+        const s = Math.max(0, Math.min(1, (x - a) / (b - a)));
+        return s * s * (3 - 2 * s);
+    };
+    const rate = (u) => {
+        const capture = k0 + (1 - k0) * smooth(0, 0.26, u);
+        const dilate = 1 - 0.44 * Math.exp(-Math.pow((u - 0.5) / 0.11, 2));
+        const rel = smooth(0.58, 1, u);
+        return capture * dilate * (1 + 0.95 * rel * rel);
+    };
+    let acc = 0;
+    for (let i = 0; i < N; i++) {
+        tbl[i] = acc;
+        acc += (rate(i / N) + 4 * rate((i + 0.5) / N) + rate((i + 1) / N)) / 6;
+    }
+    tbl[N] = acc;
+    if (acc > 0) for (let i = 0; i <= N; i++) tbl[i] /= acc;
+    return tbl;
+}
+
+// Fraction of the total sweep completed at normalized time u.
+function _whipProgress(w, u) {
+    const tbl = w.rate;
+    if (!tbl) return u;
+    if (u <= 0) return 0;
+    if (u >= 1) return 1;
+    const n = tbl.length - 1;
+    const x = u * n;
+    const i = Math.min(n - 1, Math.floor(x));
+    return tbl[i] + (tbl[i + 1] - tbl[i]) * (x - i);
+}
+
+// Bell centered on closest approach — drives the radial scoop, the bank, the
+// glow swell and the dilation weight from one shared shape.
+function _whipBell(u, width) {
+    return Math.exp(-Math.pow((u - 0.5) / (width || 0.2), 2));
+}
 
 function updateSlingshotWhip() {
     const w = (typeof gameState !== 'undefined') && gameState.slingshotWhip;
     if (!w) return false;
     const body = w.body;
-    if (!body || !body.position) { gameState.slingshotWhip = null; return false; }
+    if (!body || !body.position) {
+        gameState.slingshotWhip = null;
+        if (typeof window !== 'undefined') window.__whipDilation = 0;
+        return false;
+    }
 
-    const t = (Date.now() - w.t0) / 1000; // seconds
-    const theta = w.theta0 + w.sign * w.omega * t;
+    const elapsedMs = Date.now() - w.t0;
+    const u = Math.max(0, Math.min(1, elapsedMs / w.durMs));
+    const sweep = (w.sweep || w.omega * (w.durMs / 1000));
+    const theta = w.theta0 + w.sign * sweep * _whipProgress(w, u);
     const bp = body.position;
-    const px = bp.x + Math.cos(theta) * w.radius;
-    const pz = bp.z + Math.sin(theta) * w.radius;
-    const py = bp.y + w.y0;
+
+    // RADIAL SCOOP: the arc dips toward the body through the middle of the
+    // sweep, so there is a real periapsis to feel instead of a flat circle.
+    const scoop = _whipBell(u, 0.20);
+    const rNow = w.radius - (w.dip || 0) * scoop;
+    const px = bp.x + Math.cos(theta) * rNow;
+    const pz = bp.z + Math.sin(theta) * rNow;
+    const py = bp.y + w.y0 * (1 - 0.18 * scoop);
     camera.position.set(px, py, pz);
     // Gravity owns the ship during the whip
     gameState.velocityVector.set(0, 0, 0);
 
-    // Exit tangent at the current sweep angle
+    // TRUE direction of travel: finite-difference in the BODY's frame (so a
+    // moving planet's own drift never leaks into the heading), which folds the
+    // scoop's radial component into the tangent automatically. Falls back to
+    // the analytic circular tangent on the very first frame.
     const tangent = new THREE.Vector3(
         -Math.sin(theta) * w.sign, 0, Math.cos(theta) * w.sign).normalize();
+    if (_whipLocal) {
+        _whipLocal.set(px - bp.x, py - bp.y, pz - bp.z);
+        if (w._lp) {
+            const dx = _whipLocal.x - w._lp.x, dy = _whipLocal.y - w._lp.y, dz = _whipLocal.z - w._lp.z;
+            if (dx * dx + dy * dy + dz * dz > 1e-6) tangent.set(dx, dy, dz).normalize();
+        }
+        w._lp = { x: _whipLocal.x, y: _whipLocal.y, z: _whipLocal.z };
+    }
+
+    // Arc speed 0..1 — the ribbon thickens and the pitch of the ride reads off
+    // this. Sampled off the progress curve, so it dips at periapsis and spikes
+    // on the way out.
+    const dU = 0.03;
+    const arcSpeed = Math.max(0, Math.min(1,
+        (_whipProgress(w, Math.min(1, u + dU)) - _whipProgress(w, Math.max(0, u - dU))) / (2 * dU) * 0.62));
+    w._speed = arcSpeed;
+
+    // BANK INTO THE TURN: the horizon rolls as gravity hauls the ship around,
+    // easing back to level before release so the launch snap stays clean.
+    const bank = -w.sign * 0.62 * Math.sin(Math.PI * Math.min(1, u / 0.92));
+    if (_whipUpVec) {
+        _whipUpVec.set(0, 1, 0).applyAxisAngle(tangent, bank);
+        if (_whipUpVec.lengthSq() < 1e-6) _whipUpVec.set(0, 1, 0);
+    }
 
     // Face along the arc — slerped so the capture doesn't snap the camera
     if (_whipTmpQ && _whipTmpM) {
         _whipTmpM.lookAt(camera.position,
-            new THREE.Vector3(px + tangent.x * 200, py, pz + tangent.z * 200),
-            camera.up);
+            new THREE.Vector3(px + tangent.x * 200, py + tangent.y * 200, pz + tangent.z * 200),
+            _whipUpVec || camera.up);
         _whipTmpQ.setFromRotationMatrix(_whipTmpM);
         // 0.16/frame at 60fps, dt-corrected exponential approach
         camera.quaternion.slerp(_whipTmpQ, 1 - Math.pow(0.84, gameState.dtFrames || 1));
     }
 
-    // Arc trail
-    _whipTrailPush(camera.position, w.color);
+    // Arc trail — speed-scaled ribbon
+    _whipTrailPush(camera.position, w.color, arcSpeed);
+
+    // TIME-DILATION FLAVOR + PERIAPSIS RUMBLE. The dilation weight is read by
+    // the screen-FX layer (rim chroma + stretched spokes); the rumble is a
+    // single ~0.9s radial envelope that covers the whole slow-mo window.
+    const dilation = _whipBell(u, 0.13);
+    if (typeof window !== 'undefined') window.__whipDilation = dilation > 0.02 ? dilation : 0;
+    if (!w._peakShook && u > 0.30 && typeof window !== 'undefined' &&
+        typeof window.whipScreenShake === 'function') {
+        w._peakShook = true;
+        window.whipScreenShake(w.bh ? 7 : 5, 900);
+    }
 
     // Launch when the exit tangent aligns with the aim (after at least a
     // third of the arc, so every whip visibly swings) or at full sweep.
     const aligned = tangent.dot(w.aim) > 0.97;
-    const elapsed = Date.now() - w.t0;
+    const elapsed = elapsedMs;
     if ((aligned && elapsed > 520) || elapsed >= w.durMs) {
         // Launch: mostly aim, some tangent — physical but predictable
         const launchDir = w.aim.clone().multiplyScalar(0.65)
@@ -1997,7 +2241,28 @@ function updateSlingshotWhip() {
         }
         gameState.slingshot.timeRemaining = gameState.slingshot.duration;
         gameState.slingshotWhip = null;
-        _whipTrailFadeOut();
+        if (typeof window !== 'undefined') window.__whipDilation = 0;
+        // The ribbon doesn't die in place — its head is dragged along the
+        // launch vector so the trail whips outward with the ship.
+        _whipTrailFadeOut(launchDir, w.boost);
+        // ── RELEASE PUNCH ────────────────────────────────────────────────
+        // Shockwave at the body that kicked you (billboard flash ring + an
+        // in-plane shock + core flare), a chromatic screen pulse, and the
+        // hardest shake of the whole maneuver — all sized off the boost so a
+        // black hole hits meaningfully harder than a gas giant.
+        if (typeof window !== 'undefined') {
+            const _pw = Math.max(0.55, Math.min(1.5, w.boost / 100));
+            if (typeof window.whipShockwave === 'function') {
+                window.whipShockwave(body.position, w.color,
+                    Math.max(24, (w.bodyR || 20) * 1.9), _pw);
+            }
+            if (typeof window.whipScreenPulse === 'function') {
+                window.whipScreenPulse(w.color, _pw);
+            }
+            if (typeof window.whipScreenShake === 'function') {
+                window.whipScreenShake(9 + 7 * _pw, 620);
+            }
+        }
         // (FOV kick now handled by the camera system's warp framing —
         // slingshot.active drives the eased zoom+FOV, so no impulse here.)
         if (typeof toggleWarpSpeedStarfield === 'function') toggleWarpSpeedStarfield(true);

@@ -2072,7 +2072,16 @@ function setupNormalGameContent() {
         }
         if (typeof loadUFOModel === 'function') { try { loadUFOModel(); } catch (e) {} }
     }
-    
+
+    // PROCEDURAL GALAXIES — seeded far-shell systems (80k-140k), generated
+    // after the authored outer systems so it can register into `planets`
+    // safely. The twin hook in game-core.js startGame() only covers the
+    // legacy fallback path; this intro path is what a normal/demo launch
+    // actually runs, so without this the feature never initialized.
+    if (typeof initProcGalaxies === 'function') {
+        try { initProcGalaxies(); } catch (e) { console.warn('Procedural galaxies init failed:', e); }
+    }
+
     // Create nebulas (all 3 types)
     if (typeof createNebulas === 'function') {
         createNebulas();

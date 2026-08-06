@@ -968,7 +968,14 @@ function _updateScreenFX() {
         (gameState.slingshot && gameState.slingshot.active && !gameState.slingshotWhip));
     let target = Math.max(0, Math.min(1, (speed - 5) / 25));
     if (warping) target = Math.max(target, 0.85);
-    _sfx.level += (target - _sfx.level) * 0.05;
+    // TIME DILATION (gravity whip periapsis): the whip publishes a 0..1
+    // dilation weight as it slows through closest approach. Borrow the speed
+    // layers to sell it — the rim chroma stresses and the spokes stretch
+    // while "time" drags, then snap back as the arc accelerates out.
+    const dil = (typeof window !== 'undefined' && window.__whipDilation) || 0;
+    if (dil > 0.01) target = Math.max(target, 0.55 + dil * 0.45);
+    // Faster attack while dilating so the effect lands inside the ~0.3s window.
+    _sfx.level += (target - _sfx.level) * (dil > 0.05 ? 0.14 : 0.05);
     if (_sfx.level < 0.012) {
         if (_sfx.wrap) _sfx.wrap.style.display = 'none';
         return;
@@ -987,6 +994,334 @@ function _updateScreenFX() {
     _sfx.chroma.style.opacity = (Math.max(0, L - 0.45) * 0.9).toFixed(3);
 }
 
+// ── 18. SLINGSHOT FEEL — charge, periapsis shake, launch punch ──────────────
+// The gravity whip is the signature move of the game, so it gets its own
+// feedback stack. Everything here is driven by wall-clock or the game's dt,
+// pooled, and self-disposing:
+//   a) whipScreenShake()  radial screen shake — a composited transform on
+//      #gameCanvas ONLY, so the HUD never wobbles. Amplitude-accumulating:
+//      overlapping calls fold into one envelope instead of cutting each
+//      other short.
+//   b) whipScreenPulse()  chromatic launch punch — neon bloom from center
+//      plus an RGB-split iris that rips outward.
+//   c) whipShockwave()    expanding rings + core flare at the body that
+//      kicked you (one billboarded, one in the whip plane).
+//   d) _updateWhipCharge() anticipation glow ON the body: a faint breathing
+//      rim whenever a slingshot is READY, ramping to a hot halo + spinning
+//      capture ring while the whip runs, then bursting outward at release.
+// Overdraw budget: at most 3 additive surfaces on one body + 2 short-lived
+// rings, i.e. cheaper than a single extra particle burst.
+
+// Small driver so these effects ride the game's dt loop when available and
+// still work (at 30Hz) if explosionManager hasn't loaded yet.
+function _vfDrive(updateFn, cleanupFn) {
+    if (typeof explosionManager !== 'undefined' && explosionManager && explosionManager.addExplosion) {
+        explosionManager.addExplosion({ update: updateFn, cleanup: cleanupFn });
+        return;
+    }
+    const iv = setInterval(() => {
+        let alive = false;
+        try { alive = updateFn(33); } catch (e) { alive = false; }
+        if (!alive) { clearInterval(iv); try { cleanupFn(); } catch (e) {} }
+    }, 33);
+}
+
+// ── 18a. RADIAL SCREEN SHAKE ────────────────────────────────────────────────
+const _whipShake = { amp: 0, t0: 0, dur: 1, el: null, applied: false };
+
+function whipScreenShake(amp, durMs) {
+    const now = Date.now();
+    const a = Math.max(0.5, amp || 4);
+    const d = Math.max(80, durMs || 400);
+    const left = Math.max(0, (_whipShake.t0 + _whipShake.dur) - now);
+    // Fold the live envelope's REMAINING amplitude in, then take the max —
+    // a periapsis rumble already fading can never clip the launch kick.
+    const liveAmp = _whipShake.amp * (left / Math.max(1, _whipShake.dur));
+    _whipShake.amp = Math.max(liveAmp, a);
+    _whipShake.dur = Math.max(left, d);
+    _whipShake.t0 = now;
+}
+
+function _updateWhipShakeFx() {
+    const st = _whipShake;
+    if (!st.el || !st.el.isConnected) st.el = document.getElementById('gameCanvas');
+    const el = st.el;
+    if (!el) return;
+    const k = (st.amp > 0) ? 1 - (Date.now() - st.t0) / Math.max(1, st.dur) : 0;
+    if (k <= 0) {
+        if (st.applied) { el.style.transform = ''; el.style.willChange = ''; st.applied = false; }
+        st.amp = 0;
+        return;
+    }
+    if (!st.applied) el.style.willChange = 'transform';
+    const now = Date.now();
+    const a = st.amp * k * k;                       // ease-out quadratic
+    const ang = now * 0.055;                        // fast-rotating radial kick
+    const jx = Math.cos(ang) * a + (Math.random() - 0.5) * a * 0.55;
+    const jy = Math.sin(ang * 1.27) * a + (Math.random() - 0.5) * a * 0.55;
+    // The scale pump is what makes it read RADIAL rather than a flat rattle.
+    el.style.transform = 'translate3d(' + jx.toFixed(2) + 'px,' + jy.toFixed(2) + 'px,0) ' +
+        'scale(' + (1 + a * 0.0019).toFixed(4) + ')';
+    st.applied = true;
+}
+
+// ── 18b. CHROMATIC LAUNCH PULSE ─────────────────────────────────────────────
+function whipScreenPulse(colorHex, strength) {
+    try {
+        if (document.getElementById('whipPulseFx')) return;   // one at a time
+        const s = Math.max(0.25, Math.min(1.6, strength || 1));
+        let rgb = '90,205,255';
+        try {
+            if (typeof THREE !== 'undefined') {
+                const c = new THREE.Color(typeof colorHex === 'number' ? colorHex : 0x33ccff);
+                rgb = Math.round(c.r * 255) + ',' + Math.round(c.g * 255) + ',' + Math.round(c.b * 255);
+            }
+        } catch (e) {}
+        if (!document.getElementById('whipPulseStyle')) {
+            const st = document.createElement('style');
+            st.id = 'whipPulseStyle';
+            st.textContent =
+                '@keyframes whipBloom{0%{opacity:0;transform:scale(.55)}7%{opacity:1;transform:scale(1)}' +
+                '100%{opacity:0;transform:scale(2.15)}}' +
+                '@keyframes whipIris{0%{opacity:0;transform:scale(.15)}9%{opacity:1}' +
+                '100%{opacity:0;transform:scale(2.6)}}' +
+                '@keyframes whipChroma{0%{opacity:0}8%{opacity:1}100%{opacity:0}}';
+            document.head.appendChild(st);
+        }
+        const wrap = document.createElement('div');
+        wrap.id = 'whipPulseFx';
+        wrap.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:44;' +
+            'mix-blend-mode:screen;overflow:hidden';
+        // Neon bloom out of the vanishing point
+        const bloom = document.createElement('div');
+        bloom.style.cssText = 'position:absolute;inset:-25%;will-change:transform,opacity;' +
+            'animation:whipBloom ' + (620 * s).toFixed(0) + 'ms cubic-bezier(.1,.75,.25,1) forwards;' +
+            'background:radial-gradient(circle at 50% 50%,' +
+            'rgba(255,255,255,' + (0.85 * s).toFixed(2) + ') 0%,' +
+            'rgba(' + rgb + ',' + (0.62 * s).toFixed(2) + ') 13%,' +
+            'rgba(' + rgb + ',0.18) 34%,rgba(' + rgb + ',0) 62%)';
+        // Expanding hot iris ring — the "shell" of the launch
+        const iris = document.createElement('div');
+        iris.style.cssText = 'position:absolute;inset:-25%;will-change:transform,opacity;' +
+            'animation:whipIris ' + (700 * s).toFixed(0) + 'ms cubic-bezier(.08,.8,.2,1) forwards;' +
+            'background:radial-gradient(circle at 50% 50%,rgba(' + rgb + ',0) 26%,' +
+            'rgba(255,255,255,' + (0.5 * s).toFixed(2) + ') 33%,rgba(' + rgb + ',' + (0.42 * s).toFixed(2) + ') 37%,' +
+            'rgba(' + rgb + ',0) 47%)';
+        // Lens stress: red/blue split at the rim
+        const chroma = document.createElement('div');
+        chroma.style.cssText = 'position:absolute;inset:0;will-change:opacity;' +
+            'animation:whipChroma ' + (560 * s).toFixed(0) + 'ms ease-out forwards;' +
+            'background:radial-gradient(ellipse at 48.6% 50%,transparent 46%,rgba(255,0,80,' + (0.4 * s).toFixed(2) + ') 82%,transparent 100%),' +
+            'radial-gradient(ellipse at 51.4% 50%,transparent 46%,rgba(0,140,255,' + (0.4 * s).toFixed(2) + ') 82%,transparent 100%)';
+        wrap.appendChild(chroma); wrap.appendChild(bloom); wrap.appendChild(iris);
+        document.body.appendChild(wrap);
+        setTimeout(() => { if (wrap.parentNode) wrap.remove(); }, Math.round(760 * s));
+    } catch (e) {}
+}
+
+// ── 18c. SHOCKWAVE RINGS AT THE BODY ────────────────────────────────────────
+function whipShockwave(position, colorHex, baseRadius, strength) {
+    if (!position || typeof scene === 'undefined' || typeof THREE === 'undefined') return;
+    try {
+        const R = Math.max(14, baseRadius || 40);
+        const S = Math.max(0.4, Math.min(2.2, strength || 1));
+        const base = new THREE.Color(typeof colorHex === 'number' ? colorHex : 0x33ccff);
+        const hot = base.clone().lerp(new THREE.Color(0xffffff), 0.6);
+        const parts = [];
+        const mk = (inner, outer, color, opacity, billboard) => {
+            const geo = new THREE.RingGeometry(inner, outer, 64);
+            const mat = new THREE.MeshBasicMaterial({
+                color: color, transparent: true, opacity: opacity, side: THREE.DoubleSide,
+                blending: THREE.AdditiveBlending, depthWrite: false
+            });
+            const m = new THREE.Mesh(geo, mat);
+            m.position.copy(position);
+            m.renderOrder = 60;
+            m.frustumCulled = false;
+            if (!billboard) m.rotation.x = Math.PI / 2;   // the whip plane
+            scene.add(m);
+            parts.push({ m: m, geo: geo, mat: mat, o: opacity, bb: billboard });
+        };
+        mk(R * 0.92, R * 1.0, hot, 0.95, true);    // face-on flash ring
+        mk(R * 0.86, R * 0.95, base, 0.8, false);  // in-plane shock
+        const sm = new THREE.SpriteMaterial({
+            map: _vfGlowTexture(), color: hot, transparent: true, opacity: 0.9,
+            blending: THREE.AdditiveBlending, depthWrite: false
+        });
+        const flare = new THREE.Sprite(sm);
+        flare.position.copy(position);
+        flare.scale.setScalar(R * 1.4);
+        scene.add(flare);
+        let t = 0;
+        _vfDrive((dt) => {
+            t += (dt || 16.67) / 640;
+            const e = 1 - Math.pow(1 - Math.min(1, t), 3);
+            for (let i = 0; i < parts.length; i++) {
+                const p = parts[i];
+                p.m.scale.setScalar(1 + e * (2.5 + i * 1.2) * S);
+                p.mat.opacity = Math.max(0, p.o * (1 - t) * (1 - t));
+                if (p.bb && typeof camera !== 'undefined') p.m.lookAt(camera.position);
+            }
+            flare.scale.setScalar(R * (1.4 + e * 2.4 * S));
+            sm.opacity = Math.max(0, 0.9 * (1 - t * 1.7));
+            return t < 1;
+        }, () => {
+            for (let i = 0; i < parts.length; i++) {
+                scene.remove(parts[i].m); parts[i].geo.dispose(); parts[i].mat.dispose();
+            }
+            scene.remove(flare); sm.dispose();
+        });
+    } catch (e) {}
+}
+
+// ── 18d. ANTICIPATION CHARGE GLOW ON THE WHIPPED BODY ───────────────────────
+const _whipCharge = {
+    body: null, shell: null, shellMat: null, halo: null, haloMat: null,
+    ring: null, ringMat: null, radius: 20,
+    level: 0, want: 0, color: 0x33ccff, burst: 0, wasWhipping: false, scanAt: 0
+};
+
+function _whipChargeBuild(body, colorHex) {
+    _whipChargeDispose();
+    const r = (body.geometry && body.geometry.parameters && body.geometry.parameters.radius) || 20;
+    const col = new THREE.Color(colorHex);
+    _whipCharge.shellMat = new THREE.MeshBasicMaterial({
+        color: col.clone().lerp(new THREE.Color(0xffffff), 0.25), transparent: true,
+        opacity: 0, side: THREE.BackSide, blending: THREE.AdditiveBlending, depthWrite: false
+    });
+    _whipCharge.shell = new THREE.Mesh(new THREE.SphereGeometry(r * 1.26, 24, 16), _whipCharge.shellMat);
+    _whipCharge.shell.frustumCulled = false;
+    scene.add(_whipCharge.shell);
+
+    _whipCharge.haloMat = new THREE.SpriteMaterial({
+        map: _vfGlowTexture(), color: col.clone(), transparent: true, opacity: 0,
+        blending: THREE.AdditiveBlending, depthWrite: false
+    });
+    _whipCharge.halo = new THREE.Sprite(_whipCharge.haloMat);
+    scene.add(_whipCharge.halo);
+
+    _whipCharge.ringMat = new THREE.MeshBasicMaterial({
+        color: col.clone().lerp(new THREE.Color(0xffffff), 0.4), transparent: true,
+        opacity: 0, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false
+    });
+    _whipCharge.ring = new THREE.Mesh(new THREE.RingGeometry(r * 1.55, r * 1.63, 64), _whipCharge.ringMat);
+    _whipCharge.ring.rotation.x = Math.PI / 2;
+    _whipCharge.ring.frustumCulled = false;
+    scene.add(_whipCharge.ring);
+
+    _whipCharge.body = body;
+    _whipCharge.radius = r;
+    _whipCharge.color = colorHex;
+}
+
+function _whipChargeDispose() {
+    ['shell', 'ring'].forEach((k) => {
+        const m = _whipCharge[k];
+        if (m) { scene.remove(m); if (m.geometry) m.geometry.dispose(); }
+        _whipCharge[k] = null;
+    });
+    if (_whipCharge.halo) { scene.remove(_whipCharge.halo); _whipCharge.halo = null; }
+    ['shellMat', 'ringMat', 'haloMat'].forEach((k) => {
+        if (_whipCharge[k]) { _whipCharge[k].dispose(); _whipCharge[k] = null; }
+    });
+    _whipCharge.body = null;
+    _whipCharge.level = 0;
+}
+
+function _whipBodyColor(body) {
+    const ud = body && body.userData;
+    if (!ud) return 0x33ccff;
+    if (ud.type === 'blackhole') return 0x9933ff;
+    if (ud.type === 'star' || ud.isLocalStar) return 0xffcc44;
+    return 0x33ccff;
+}
+
+function _updateWhipCharge(fc) {
+    const gs = (typeof gameState !== 'undefined') ? gameState : null;
+    if (!gs) return;
+    const whip = gs.slingshotWhip;
+    const now = Date.now();
+    let target = null, want = 0, color = _whipCharge.color;
+
+    if (whip && whip.body && whip.body.position) {
+        // CAPTURED: the glow swells with the sweep and peaks at periapsis.
+        target = whip.body;
+        color = (typeof whip.color === 'number') ? whip.color : _whipBodyColor(target);
+        const u = Math.max(0, Math.min(1, (now - whip.t0) / (whip.durMs || 1600)));
+        want = 0.55 + 0.45 * Math.sin(Math.PI * Math.min(1, u * 1.08));
+        _whipCharge.wasWhipping = true;
+    } else {
+        if (_whipCharge.wasWhipping) {
+            // RELEASE: the charge blows outward instead of just fading.
+            _whipCharge.wasWhipping = false;
+            _whipCharge.burst = 1;
+        }
+        // READY: a faint breathing rim, gated exactly like the SLINGSHOT
+        // READY prompt so it never lights a body you can't actually whip.
+        if (now - _whipCharge.scanAt > 260) {
+            _whipCharge.scanAt = now;
+            _whipCharge._ready = null;
+            if (typeof findSlingshotTarget === 'function' &&
+                !(gs.slingshot && gs.slingshot.active) &&
+                now >= (gs.slingshotCooldownUntil || 0)) {
+                const quick = !!(gs.repTierUnlocks && gs.repTierUnlocks.quickSlingshot);
+                if (quick || gs.energy >= 20) {
+                    try { _whipCharge._ready = findSlingshotTarget(); } catch (e) {}
+                }
+            }
+        }
+        if (_whipCharge._ready && _whipCharge._ready.position) {
+            target = _whipCharge._ready;
+            color = _whipBodyColor(target);
+            want = 0.15 + 0.05 * Math.sin(now * 0.004);   // slow breath, deliberately faint
+        }
+    }
+
+    if (_whipCharge.burst > 0) _whipCharge.burst = Math.max(0, _whipCharge.burst - 0.055);
+
+    if (!target) {
+        if (_whipCharge.body && _whipCharge.level < 0.02 && _whipCharge.burst <= 0) {
+            _whipChargeDispose();
+            return;
+        }
+        if (!_whipCharge.body) return;
+        target = _whipCharge.body;                       // let the glow fade out in place
+    } else if (target !== _whipCharge.body || color !== _whipCharge.color) {
+        const keepLevel = (target === _whipCharge.body) ? _whipCharge.level : 0;
+        _whipChargeBuild(target, color);
+        _whipCharge.level = keepLevel;
+    }
+    if (!_whipCharge.shell) return;
+
+    // Ease toward the target level (fast up, slower down)
+    const rate = (want > _whipCharge.level) ? 0.16 : 0.06;
+    _whipCharge.level += (want - _whipCharge.level) * rate;
+    const L = _whipCharge.level;
+    const B = _whipCharge.burst;
+    const r = _whipCharge.radius;
+    const p = target.position;
+
+    _whipCharge.shell.position.copy(p);
+    _whipCharge.shell.scale.setScalar(1 + B * 0.85 + L * 0.06);
+    _whipCharge.shellMat.opacity = Math.min(0.6, L * 0.34 + B * 0.5);
+
+    _whipCharge.halo.position.copy(p);
+    _whipCharge.halo.scale.setScalar(r * (3.2 + L * 2.6 + B * 3.4));
+    _whipCharge.haloMat.opacity = Math.min(0.75, L * 0.42 + B * 0.45);
+
+    _whipCharge.ring.position.copy(p);
+    _whipCharge.ring.rotation.z += 0.012 + L * 0.05;
+    _whipCharge.ring.scale.setScalar(1 + B * 1.5 + Math.sin(now * 0.006) * 0.02 * L);
+    _whipCharge.ringMat.opacity = Math.min(0.7, L * 0.5 + B * 0.4);
+}
+
+// Exposed so the physics whip can drive the punchy beats at exact frames.
+if (typeof window !== 'undefined') {
+    window.whipScreenShake = whipScreenShake;
+    window.whipScreenPulse = whipScreenPulse;
+    window.whipShockwave = whipShockwave;
+}
+
 // ── Per-frame entry point ───────────────────────────────────────────────────
 function updateVisualFlair() {
     if (typeof gameState === 'undefined' || !gameState.gameStarted ||
@@ -1001,6 +1336,8 @@ function updateVisualFlair() {
     try { if (window.arcade) window.arcade.update(); } catch (e) {}
     try { _updateScreenFX(); } catch (e) {}
     try { _updateWhipPreview(fc); } catch (e) {}
+    try { _updateWhipShakeFx(); } catch (e) {}
+    try { _updateWhipCharge(fc); } catch (e) {}
     try { _updateLensFlares(fc); } catch (e) {}
     try { _updateAccretionSpiral(fc); } catch (e) {}
     try { _updateRimGlow(fc); } catch (e) {}
