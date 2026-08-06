@@ -4009,7 +4009,169 @@ try {
     } catch (localBHError) {
         console.error('❌ Error creating local black hole:', localBHError);
     }
-    
+
+    // =============================================================================
+    // NEBULA SKYBOX BACKDROP — the actual fix for "no background sky": until
+    // now scene.background was never set, and the only backdrop layers (CMB
+    // shader sphere + Hubble deep-field sphere, both below) render at low
+    // opacity (0.2 / 0.10), so most of the celestial sphere still read as
+    // literal black between them — confirmed by pointing the camera away from
+    // the local cluster and getting an empty frame with a couple dozen
+    // sub-pixel dots. This bakes ONE full equirectangular nebula texture
+    // (dust lanes, a milky-way band, warm/cool color zones, 3 distant galaxy
+    // features, and a fine pinprick starfield) once at load time onto a
+    // canvas, then wraps it on a giant BackSide sphere — same technique
+    // hubbleSkybox2 already uses below (a static texture on a sphere costs
+    // one texture sample per pixel per frame, not a re-evaluated shader), so
+    // there is no ongoing per-frame cost. It sits outside every other
+    // backdrop layer (largest radius, most-negative renderOrder) so the
+    // CMB/Hubble/imposter layers still composite their extra detail on top of
+    // it exactly as before.
+    // =============================================================================
+    console.log('Creating procedural nebula skybox backdrop...');
+    try {
+        const _nebW = _isMobileRenderTier() ? 1024 : 2048;
+        const _nebH = _nebW / 2;
+        const _nebCanvas = document.createElement('canvas');
+        _nebCanvas.width = _nebW;
+        _nebCanvas.height = _nebH;
+        const _nctx = _nebCanvas.getContext('2d');
+
+        // 1) Base gradient — near-black poles, a faint violet/navy haze
+        //    toward the equator so the sphere never reads as a flat color.
+        const _baseGrad = _nctx.createLinearGradient(0, 0, 0, _nebH);
+        _baseGrad.addColorStop(0.00, '#050208');
+        _baseGrad.addColorStop(0.35, '#0a0a1c');
+        _baseGrad.addColorStop(0.50, '#120e2a');
+        _baseGrad.addColorStop(0.65, '#0a0a1c');
+        _baseGrad.addColorStop(1.00, '#05020a');
+        _nctx.fillStyle = _baseGrad;
+        _nctx.fillRect(0, 0, _nebW, _nebH);
+
+        // Helper: soft radial-gradient blob, drawn three times (x-W, x, x+W)
+        // so anything overlapping the horizontal seam tiles seamlessly.
+        function _nebBlob(cx, cy, r, stops, blur, composite) {
+            _nctx.save();
+            _nctx.filter = blur ? `blur(${blur}px)` : 'none';
+            _nctx.globalCompositeOperation = composite || 'lighter';
+            [cx - _nebW, cx, cx + _nebW].forEach((x) => {
+                const grad = _nctx.createRadialGradient(x, cy, 0, x, cy, r);
+                stops.forEach(([offset, color]) => grad.addColorStop(offset, color));
+                _nctx.fillStyle = grad;
+                _nctx.beginPath();
+                _nctx.arc(x, cy, r, 0, Math.PI * 2);
+                _nctx.fill();
+            });
+            _nctx.restore();
+        }
+
+        // 2) Milky-way band — a broad, gently curved strip of denser dust
+        //    running the width of the sphere, brighter/warmer than the base.
+        const _bandY = _nebH * (0.42 + Math.random() * 0.16);
+        for (let i = 0; i < 26; i++) {
+            const x = (i / 26) * _nebW * 1.4 - _nebW * 0.2;
+            const y = _bandY + Math.sin(i * 0.7) * _nebH * 0.05;
+            _nebBlob(x, y, _nebH * (0.16 + Math.random() * 0.08),
+                [[0, 'rgba(200,190,255,0.16)'], [0.5, 'rgba(140,120,220,0.08)'], [1, 'rgba(0,0,0,0)']],
+                50, 'lighter');
+        }
+
+        // 3) Dust-lane / warm-cool nebula blobs in synthwave palette
+        const _nebPalette = [
+            ['rgba(255,45,190,0.30)', 'rgba(255,45,190,0)'],   // magenta dust
+            ['rgba(0,220,255,0.26)', 'rgba(0,220,255,0)'],     // cyan dust
+            ['rgba(140,60,255,0.28)', 'rgba(140,60,255,0)'],   // violet dust
+            ['rgba(255,160,60,0.20)', 'rgba(255,160,60,0)'],   // amber — warm zone
+            ['rgba(40,220,190,0.18)', 'rgba(40,220,190,0)']    // teal — cool zone
+        ];
+        for (let i = 0; i < 16; i++) {
+            const p = _nebPalette[i % _nebPalette.length];
+            const cx = Math.random() * _nebW;
+            const cy = _nebH * 0.12 + Math.random() * _nebH * 0.76;
+            const r = _nebH * (0.14 + Math.random() * 0.22);
+            _nebBlob(cx, cy, r, [[0, p[0]], [1, p[1]]], 55, 'lighter');
+        }
+
+        // 4) Distant galaxy features — 3 large, bright landmarks with a
+        //    tight core, soft halo, and faint spiral-arm streaks.
+        const _nebGalaxies = [
+            { x: _nebW * 0.18, y: _nebH * 0.30, r: _nebH * 0.10, hue: 'rgba(255,235,210,' },
+            { x: _nebW * 0.62, y: _nebH * 0.68, r: _nebH * 0.085, hue: 'rgba(200,220,255,' },
+            { x: _nebW * 0.85, y: _nebH * 0.22, r: _nebH * 0.075, hue: 'rgba(255,205,240,' }
+        ];
+        _nebGalaxies.forEach((g) => {
+            _nebBlob(g.x, g.y, g.r * 3.2, [[0, g.hue + '0.10)'], [1, g.hue + '0)']], 60, 'lighter');
+            _nebBlob(g.x, g.y, g.r, [[0, g.hue + '0.9)'], [0.3, g.hue + '0.4)'], [1, g.hue + '0)']], 6, 'lighter');
+            _nctx.save();
+            _nctx.translate(g.x, g.y);
+            _nctx.rotate(Math.random() * Math.PI);
+            _nctx.scale(1, 0.35);
+            _nctx.filter = 'blur(3px)';
+            _nctx.strokeStyle = g.hue + '0.22)';
+            _nctx.lineWidth = g.r * 0.12;
+            _nctx.lineCap = 'round';
+            for (let a = 0; a < 2; a++) {
+                _nctx.beginPath();
+                _nctx.arc(0, 0, g.r * (1.6 + a * 0.6), a * Math.PI, a * Math.PI + Math.PI * 1.3);
+                _nctx.stroke();
+            }
+            _nctx.restore();
+        });
+
+        // 5) Fine pinprick starfield baked straight into the backdrop — fills
+        //    the gaps between the live Points starfield so a distant frame
+        //    never reads as bare black between sparse dots, denser near the
+        //    milky-way band like a real sky.
+        _nctx.globalCompositeOperation = 'lighter';
+        const _nebStarCount = _isMobileRenderTier() ? 3500 : 7000;
+        for (let i = 0; i < _nebStarCount; i++) {
+            const x = Math.random() * _nebW;
+            const y = Math.random() * _nebH;
+            const nearBand = Math.max(0, 1 - Math.abs(y - _bandY) / (_nebH * 0.3));
+            if (Math.random() > 0.35 + nearBand * 0.5) continue;
+            const size = Math.random() < 0.92 ? Math.random() * 0.9 + 0.2 : Math.random() * 1.6 + 1.0;
+            const warm = Math.random() < 0.28;
+            const alpha = 0.35 + Math.random() * 0.5;
+            _nctx.fillStyle = warm
+                ? `rgba(255,${200 + Math.floor(Math.random() * 40)},${150 + Math.floor(Math.random() * 60)},${alpha})`
+                : `rgba(${200 + Math.floor(Math.random() * 40)},${225 + Math.floor(Math.random() * 30)},255,${alpha})`;
+            _nctx.beginPath();
+            _nctx.arc(x, y, size, 0, Math.PI * 2);
+            _nctx.fill();
+        }
+        _nctx.globalCompositeOperation = 'source-over';
+
+        const nebulaSkyboxTexture = new THREE.CanvasTexture(_nebCanvas);
+        nebulaSkyboxTexture.wrapS = THREE.RepeatWrapping;
+        nebulaSkyboxTexture.wrapT = THREE.ClampToEdgeWrapping;
+        nebulaSkyboxTexture.needsUpdate = true;
+
+        const nebulaSkyboxGeometry = new THREE.SphereGeometry(195000, 48, 32);
+        const nebulaSkyboxMaterial = new THREE.MeshBasicMaterial({
+            map: nebulaSkyboxTexture,
+            side: THREE.BackSide,
+            fog: false,
+            depthWrite: false,
+            toneMapped: false
+        });
+        const nebulaSkybox = new THREE.Mesh(nebulaSkyboxGeometry, nebulaSkyboxMaterial);
+        nebulaSkybox.renderOrder = -5; // furthest-back layer — everything else composites on top
+        nebulaSkybox.frustumCulled = false;
+        scene.add(nebulaSkybox);
+        window.nebulaSkybox = nebulaSkybox;
+        window.nebulaSkyboxTexture = nebulaSkyboxTexture;
+
+        // scene.background was null before this fix — a deep-space Color as
+        // the clear color means even a theoretical camera/FOV combination
+        // that grazes past the backdrop sphere clears to a matching tone
+        // instead of RGB(0,0,0).
+        scene.background = new THREE.Color(0x05030d);
+
+        console.log(`✅ Nebula skybox backdrop created (${_nebW}x${_nebH}, radius 195000) and assigned to scene.background`);
+    } catch (nebulaSkyboxError) {
+        console.error('❌ Error creating nebula skybox backdrop:', nebulaSkyboxError);
+    }
+
     // =============================================================================
     // COSMIC MICROWAVE BACKGROUND (CMB) SKYBOX
     // =============================================================================
@@ -4290,12 +4452,22 @@ try {
             fieldSpeeds.push(0.3 + Math.random() * 0.7);
         }
 
-        // Shell A — near background (was "Background stars")
-        for (let i = 0; i < 2200; i++) _addFieldStar(10 + Math.random() * 30, 0.9, 1.7);
+        // Point count raised from the original ~4,140 to 50k+ (desktop) so the
+        // sky reads as a dense field instead of ~30 visible dots when the
+        // camera looks away from the local cluster — a single Points draw
+        // call scales trivially to this count (no texture sampling, no
+        // additive overdraw: NormalBlending, see fieldStarsMaterial below),
+        // so this is a vertex-count bump, not a new fill-rate cost. Halved
+        // per-shell on mobile via _fieldStarMul, consistent with the
+        // existing mobile-tier scaling elsewhere in this function.
+        const _fieldStarMul = _isMobileRenderTier() ? 0.5 : 1;
 
-        // Shell B — mid depth (NEW: fills the gap between near and far so
-        // the field reads as layered depth instead of two flat clusters)
-        for (let i = 0; i < 1800; i++) _addFieldStar(40 + Math.random() * 55, 0.6, 1.2);
+        // Shell A — near background (was "Background stars")
+        for (let i = 0; i < 9000 * _fieldStarMul; i++) _addFieldStar(10 + Math.random() * 30, 0.9, 1.7);
+
+        // Shell B — mid depth (fills the gap between near and far so the
+        // field reads as layered depth instead of two flat clusters)
+        for (let i = 0; i < 14000 * _fieldStarMul; i++) _addFieldStar(40 + Math.random() * 55, 0.6, 1.2);
         
 // =============================================================================
 // LOCAL GALAXY STARS - SEPARATE ROTATING OBJECT
@@ -4363,7 +4535,13 @@ if (scene && scene.add) {
 }
         
         // Shell C — distant bright (was "Distant bright stars")
-        for (let i = 0; i < 140; i++) _addFieldStar(100 + Math.random() * 130, 1.6, 2.8);
+        for (let i = 0; i < 600 * _fieldStarMul; i++) _addFieldStar(100 + Math.random() * 130, 1.6, 2.8);
+
+        // Shell D — far/faint fill layer (NEW): the specific gap the critic
+        // caught — at 30000,4000,30000 looking outward, past Shell C's
+        // distance but still well inside the far plane, there was nothing.
+        // Small + dim so it reads as texture, not a fourth confetti layer.
+        for (let i = 0; i < 28000 * _fieldStarMul; i++) _addFieldStar(120 + Math.random() * 100, 0.35, 0.75);
 
         const fieldStarsGeometry = new THREE.BufferGeometry();
         fieldStarsGeometry.setAttribute('position', new THREE.Float32BufferAttribute(fieldPositions, 3));

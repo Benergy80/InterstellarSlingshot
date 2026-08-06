@@ -45,6 +45,34 @@
 // authored galaxyId/faction metadata we have no business faking.
 //
 // -----------------------------------------------------------------------------
+// FLOATING ORIGIN — the rule that makes this shell reachable at all
+// -----------------------------------------------------------------------------
+// game-core's applyWorldShift() re-centres the universe on the camera every
+// time it drifts past 30,000u: it subtracts camera.position from every scene
+// ROOT, snaps the camera to (0,0,0) and accumulates the delta into
+// worldOriginOffset. Since this shell lives at 80k-140k, the player CANNOT
+// reach it without triggering several rebases on the way.
+//
+// Every mesh we make is a direct child of `scene` (stars, planets, rings,
+// beacons, the per-system Group), so the rebase moves all of them for free.
+// The one thing it cannot see is `s.center` — a plain Vector3 held in this
+// closure, outside the scene graph. And s.center is what the tick re-derives
+// star/planet/ring positions from every frame. Leave it un-shifted and the
+// tick drags the whole system back to pre-shift coordinates the instant it
+// runs: the shell recedes from the player at exactly the speed they approach
+// it, and standing "inside" a system shows empty space.
+//
+// So: ONE absolute cache (`s.center`), ONE handler in __worldShiftHandlers
+// that subtracts the offset from it, and ONE resync that re-derives every
+// mesh from it. Rules for anyone extending this file:
+//   * Anything new that caches a WORLD position outside the scene graph must
+//     be rebased in the handler, or derived from s.center in resyncSystem().
+//   * localOffset / pgU / pgV / pgOrbitRadius are RELATIVE — never shift them.
+//   * Never reuse the userData keys in game-core's _WSHIFT_UD_KEYS list
+//     (systemCenter, targetPosition, ...) for relative data: the rebase
+//     traverses the scene and subtracts from all of them.
+//
+// -----------------------------------------------------------------------------
 // PERF
 // -----------------------------------------------------------------------------
 // * No PointLights. Each one costs a shader permutation + per-fragment work on
@@ -373,8 +401,29 @@
     var lastTickMs = 0;
     var lastExternalCall = 0;
     var rafHandle = 0;
+    var forceCoarse = false;     // run the visibility/discovery pass next tick
+    var shiftBound = false;      // __worldShiftHandlers registration guard
 
     var _v3 = null;              // scratch, allocated after THREE is known
+
+    // -------------------------------------------------------------------------
+    // COORDINATE FRAME HELPERS
+    // -------------------------------------------------------------------------
+    // s.center — like everything else in the scene — is a CURRENT-frame
+    // coordinate. The TRUE (galactic-absolute) position is current +
+    // worldOriginOffset. Use trueLength() for anything that must stay stable
+    // across rebases: shell-radius logs, the debug listing, distance-from-Sgr-A*
+    // rules. Never print s.center.length() — after two rebases it is fiction.
+    function worldOffset() {
+        return (typeof window !== 'undefined' && window.worldOriginOffset) || null;
+    }
+
+    function trueLength(v) {
+        var woo = worldOffset();
+        if (!woo) return v.length();
+        var x = v.x + woo.x, y = v.y + woo.y, z = v.z + woo.z;
+        return Math.sqrt(x * x + y * y + z * z);
+    }
 
     function planetsArray() {
         if (typeof planets !== 'undefined' && planets) return planets;
@@ -788,6 +837,28 @@
         activeScene().add(beacons);
     }
 
+    // Re-derive the beacon vertex buffer from s.center after a world rebase.
+    //
+    // The rebase already moved this Points object as a scene root, which LOOKS
+    // right — but it leaves the object at position -worldOriginOffset with
+    // vertices still holding pre-shift coordinates. Two frames of that and the
+    // beacons no longer agree with s.center, so anything that later rebuilds
+    // them (or reads a vertex) is silently a full origin-offset out. Rewriting
+    // the 10-14 vertices and zeroing the parent keeps s.center the only truth.
+    function syncBeaconPositions() {
+        if (!beacons) return;
+        var attr = beacons.geometry.attributes.position;
+        var arr = attr.array;
+        for (var i = 0; i < systems.length; i++) {
+            var c = systems[i].center;
+            arr[i * 3] = c.x;
+            arr[i * 3 + 1] = c.y;
+            arr[i * 3 + 2] = c.z;
+        }
+        attr.needsUpdate = true;
+        beacons.position.set(0, 0, 0);
+    }
+
     function setBeaconLevel(index, level) {
         if (!beacons || !beaconColors) return;
         var s = systems[index];
@@ -822,7 +893,7 @@
             awardReputation(PG.DISCOVERY_REP, '');
         }
         console.log('PROC-GALAXY discovered: ' + sys.name +
-                    ' (' + sys.palette.key + ') at ' + sys.center.length().toFixed(0) + 'u');
+                    ' (' + sys.palette.key + ') at ' + trueLength(sys.center).toFixed(0) + 'u');
     }
 
     // -------------------------------------------------------------------------
@@ -848,7 +919,9 @@
 
         var rand = mulberry32(seed);
         buildShared();
+        bindWorldShift();
         _v3 = new THREE.Vector3();
+        var _woo = worldOffset();
 
         var count = PG.MIN_SYSTEMS + Math.floor(rand() * (PG.MAX_SYSTEMS - PG.MIN_SYSTEMS + 1));
         var used = {};
@@ -881,6 +954,13 @@
             );
             if (center.lengthSq() < 1e-6) center.set(1, 0, 0);
             center.normalize().multiplyScalar(radius);
+            // `radius` is a distance from the TRUE galactic origin (Sgr A*),
+            // which is where the authored content is measured from. If init
+            // runs after the world has already been rebased — a restart, or a
+            // late init — the current frame is offset from that origin, so
+            // convert before storing. Zero offset at a cold start, so a normal
+            // run is unchanged.
+            if (_woo) center.sub(_woo);
             var name = generateName(rand, used);
             var palette = makePalette(rand, famOrder[i % 4]);
             systems.push(buildSystem(rand, i, center, name, palette));
@@ -901,6 +981,68 @@
     }
 
     // -------------------------------------------------------------------------
+    // PLACEMENT — every mesh position in a system derives from s.center
+    // -------------------------------------------------------------------------
+    // Shared by the per-frame tick and by the world-shift resync, so the two
+    // can never disagree about where a body is.
+    function placeStar(s, st) {
+        st.mesh.position.copy(s.center).add(st.localOffset);
+    }
+
+    function placePlanet(s, pl) {
+        var ud = pl.userData;
+        var ca = Math.cos(ud.pgOrbitAngle) * ud.pgOrbitRadius;
+        var sa = Math.sin(ud.pgOrbitAngle) * ud.pgOrbitRadius;
+        pl.position.set(
+            s.center.x + ud.pgU.x * ca + ud.pgV.x * sa,
+            s.center.y + ud.pgU.y * ca + ud.pgV.y * sa,
+            s.center.z + ud.pgU.z * ca + ud.pgV.z * sa
+        );
+    }
+
+    // Rebuild every world position in a system from s.center, without advancing
+    // any simulation state (orbit angles, binary phase and star time are left
+    // exactly as they are). Idempotent: calling it twice changes nothing.
+    function resyncSystem(s) {
+        s.group.position.copy(s.center);
+        for (var k = 0; k < s.stars.length; k++) placeStar(s, s.stars[k]);
+        for (var p = 0; p < s.planets.length; p++) placePlanet(s, s.planets[p]);
+        for (var r = 0; r < s.rings.length; r++) {
+            s.rings[r].ring.position.copy(s.rings[r].planet.position);
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // FLOATING ORIGIN — rebase this module's one absolute cache
+    // -------------------------------------------------------------------------
+    // Registered at load, not at init, so the handler is in place even if a
+    // rebase somehow lands between script evaluation and initProcGalaxies().
+    // The systems array is empty until then, which makes it a no-op.
+    //
+    // Only s.center is subtracted. The meshes were already moved by the rebase
+    // itself (they are scene roots); resyncSystem re-derives them from the
+    // corrected centre, which both removes the accumulated float drift of
+    // repeated subtractions and guarantees the tick's next write agrees.
+    function bindWorldShift() {
+        if (shiftBound || typeof window === 'undefined') return;
+        shiftBound = true;
+        window.__worldShiftHandlers = window.__worldShiftHandlers || [];
+        window.__worldShiftHandlers.push(function (offset) {
+            if (!systems.length) return;
+            for (var i = 0; i < systems.length; i++) {
+                var s = systems[i];
+                s.center.sub(offset);
+                resyncSystem(s);
+            }
+            syncBeaconPositions();
+            // Distances just changed by up to 30,000u — re-evaluate activation
+            // and discovery on the very next tick instead of waiting out the
+            // 12-frame coarse cadence.
+            forceCoarse = true;
+        });
+    }
+
+    // -------------------------------------------------------------------------
     // UPDATE
     // -------------------------------------------------------------------------
     function updateProcGalaxies(external) {
@@ -917,7 +1059,8 @@
         frame++;
 
         var cx = cam.position.x, cy = cam.position.y, cz = cam.position.z;
-        var coarse = (frame % PG.COARSE_EVERY) === 0;
+        var coarse = forceCoarse || (frame % PG.COARSE_EVERY) === 0;
+        forceCoarse = false;
         var visR2 = PG.VISIBLE_RANGE * PG.VISIBLE_RANGE;
         var detR2 = PG.DETAIL_RANGE * PG.DETAIL_RANGE;
         var discR2 = PG.DISCOVER_RANGE * PG.DISCOVER_RANGE;
@@ -964,8 +1107,10 @@
                 for (var b = 0; b < 2; b++) {
                     var sgn = b === 0 ? 1 : -1;
                     var st = s.stars[b];
+                    // localOffset is RELATIVE to s.center — a world rebase must
+                    // never touch it, only the centre it is added to.
                     st.localOffset.set(ca * half * sgn, 0, sa * half * sgn);
-                    st.mesh.position.copy(s.center).add(st.localOffset);
+                    placeStar(s, st);
                     for (var c = 0; c < st.coronas.length; c++) {
                         st.coronas[c].position.copy(st.localOffset);
                     }
@@ -989,15 +1134,8 @@
             var primary = s.stars[0].mesh.position;
             for (var p = 0; p < s.planets.length; p++) {
                 var pl = s.planets[p];
-                var ud = pl.userData;
-                ud.pgOrbitAngle += ud.pgOrbitSpeed * dt;
-                var ang = ud.pgOrbitAngle;
-                var rr2 = ud.pgOrbitRadius;
-                pl.position.set(
-                    s.center.x + ud.pgU.x * Math.cos(ang) * rr2 + ud.pgV.x * Math.sin(ang) * rr2,
-                    s.center.y + ud.pgU.y * Math.cos(ang) * rr2 + ud.pgV.y * Math.sin(ang) * rr2,
-                    s.center.z + ud.pgU.z * Math.cos(ang) * rr2 + ud.pgV.z * Math.sin(ang) * rr2
-                );
+                pl.userData.pgOrbitAngle += pl.userData.pgOrbitSpeed * dt;
+                placePlanet(s, pl);
                 _v3.subVectors(primary, pl.position).normalize();
                 pl.material.uniforms.uSunDir.value.copy(_v3);
             }
@@ -1047,6 +1185,9 @@
     // -------------------------------------------------------------------------
     // EXPORTS
     // -------------------------------------------------------------------------
+    // Register with the floating origin at load, before anything can shift.
+    bindWorldShift();
+
     if (typeof window !== 'undefined') {
         window.initProcGalaxies = initProcGalaxies;
         window.updateProcGalaxies = function () { updateProcGalaxies(true); };
@@ -1058,7 +1199,14 @@
                     return {
                         name: s.name,
                         palette: s.palette.key,
-                        dist: Math.round(s.center.length()),
+                        // TRUE distance from Sgr A*, stable across rebases —
+                        // always inside SHELL_INNER..SHELL_OUTER.
+                        dist: Math.round(trueLength(s.center)),
+                        // ...and how far the player is from it right now.
+                        range: (function () {
+                            var cam = activeCamera();
+                            return cam ? Math.round(s.center.distanceTo(cam.position)) : null;
+                        })(),
                         planets: s.planets.length,
                         binary: s.binary,
                         discovered: s.discovered,
@@ -1074,7 +1222,20 @@
                 if (!s || !cam) return false;
                 cam.position.set(s.center.x + s.extent * 1.1, s.center.y + s.extent * 0.3, s.center.z);
                 cam.lookAt(s.center);
-                return s.name;
+                // The camera is now ~100k from the origin, so animate() will
+                // rebase the world on the next frame anyway. Do it here so the
+                // state a QA session reads back immediately is already the
+                // post-shift state, instead of a frame of pre-shift numbers
+                // that look like the warp missed.
+                if (typeof window.applyWorldShift === 'function') {
+                    try { window.applyWorldShift(); } catch (e) {
+                        console.warn('PROC-GALAXY warpTo: rebase failed', e);
+                    }
+                }
+                // Skip the 12-frame coarse cadence: activate/discover NOW.
+                forceCoarse = true;
+                updateProcGalaxies(false);
+                return s.name + ' @ ' + Math.round(s.center.distanceTo(cam.position)) + 'u';
             },
             config: PG
         };

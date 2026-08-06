@@ -1861,6 +1861,9 @@ function executeSlingshot() {
         if (typeof window !== 'undefined' && typeof window.whipScreenShake === 'function') {
             window.whipScreenShake(2.6, 380);
         }
+        // Anticipation pinch — the frame tightens as gravity takes hold, which
+        // is what gives the release something to blow open FROM.
+        _fovPinch();
 
         // Capture notice — the launch announcement (with destination +
         // speed) fires from updateSlingshotWhip when the arc releases.
@@ -2062,16 +2065,46 @@ function _whipTrailFadeOut(launchDir, boost) {
     }, 33);
 }
 
-function _fovKick() {
+// ── FOV IMPULSE ──────────────────────────────────────────────────────────────
+// camera-system.js OWNS camera.fov every single frame — it derives it from
+// cameraState._warpZoom (fov = 75 + (_warpZoom - 1) * 20) and rewrites it after
+// physics has run. So writing camera.fov here was a no-op: the measured FOV
+// crept 75 → 85 over 1.2s, i.e. a slow zoom-OUT, the exact inverse of a kick.
+// The impulse therefore has to be applied to _warpZoom itself; the camera
+// system's own 4%/frame ease then decays the spike back to its live target
+// (1.55 while boosting, 1.0 at rest) — punch first, settle after.
+//   strength ~1 = planet whip, ~1.5 = black hole.
+// Also spikes the chase offset (the same _warpZoom scales it), so the release
+// dollies the camera back as the ship tears away.
+function _fovKick(strength) {
+    const s = Math.max(0.25, Math.min(1.6, strength || 1));
+    const cs = (typeof window !== 'undefined') ? window.cameraState : null;
+    if (cs && typeof gameState !== 'undefined' && gameState.gameStarted &&
+        typeof camera !== 'undefined' && camera.isPerspectiveCamera) {
+        const spike = 1 + 0.45 + 0.45 * s;              // 1.90 planet → 2.13 BH
+        cs._warpZoom = Math.max(cs._warpZoom || 1, spike);
+        camera.fov = 75 + (cs._warpZoom - 1) * 20;      // land it THIS frame
+        camera.updateProjectionMatrix();
+        return;
+    }
+    // Fallback for the pre-camera-system path (menus / intro cameras).
     if (typeof camera === 'undefined' || !camera.isPerspectiveCamera) return;
     const baseFov = 75;
-    camera.fov = 86;
+    camera.fov = 75 + 20 * s;
     camera.updateProjectionMatrix();
     const iv = setInterval(() => {
         camera.fov = Math.max(baseFov, camera.fov - 0.6);
         camera.updateProjectionMatrix();
         if (camera.fov <= baseFov) clearInterval(iv);
     }, 33);
+}
+
+// Anticipation: gravity CATCHING you tightens the frame (FOV narrows, camera
+// tucks in) before the release blows it back open. Same single control.
+function _fovPinch() {
+    const cs = (typeof window !== 'undefined') ? window.cameraState : null;
+    if (!cs) return;
+    cs._warpZoom = Math.min(cs._warpZoom === undefined ? 1 : cs._warpZoom, 0.92);
 }
 
 const _whipTmpQ = (typeof THREE !== 'undefined') ? new THREE.Quaternion() : null;
@@ -2263,8 +2296,21 @@ function updateSlingshotWhip() {
                 window.whipScreenShake(9 + 7 * _pw, 620);
             }
         }
-        // (FOV kick now handled by the camera system's warp framing —
-        // slingshot.active drives the eased zoom+FOV, so no impulse here.)
+        // ── THE RELEASE HAS TO BE SEEN, NOT JUST MEASURED ────────────────
+        // FOV impulse, driven through cameraState._warpZoom (see _fovKick):
+        // the frame BLOWS open on the launch frame and eases back, instead of
+        // the camera system's slow 1.2s widening that read as a zoom-out.
+        _fovKick(Math.max(0.55, Math.min(1.5, w.boost / 100)));
+        // …and the radial speed-streak field, locked to the VELOCITY vector so
+        // it radiates out of the on-screen vanishing point of travel. Without
+        // this the background stars stayed discrete stationary dots while the
+        // HUD claimed 79,617 km/s.
+        if (typeof window !== 'undefined' && typeof window.warpStreakBurst === 'function') {
+            const _sA = w.bh ? 0xb26bff : (w.color === 0xffcc44 ? 0xffd166 : 0x6be6ff);
+            const _sB = w.bh ? 0x35e6ff : (w.color === 0xffcc44 ? 0xff5ccd : 0xff5ccd);
+            window.warpStreakBurst(launchDir, w.boost * 60, _sA, _sB,
+                Math.max(0.6, Math.min(1.35, w.boost / 95)));
+        }
         if (typeof toggleWarpSpeedStarfield === 'function') toggleWarpSpeedStarfield(true);
         for (let i = 0; i < 4; i++) setTimeout(() => createHyperspaceEffect(), i * 140);
         if (typeof showAchievement === 'function') {

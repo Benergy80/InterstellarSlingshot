@@ -988,7 +988,11 @@ function _updateScreenFX() {
     _sfx.streaks.style.opacity = (Math.max(0, L - 0.25) * 0.65).toFixed(3);
     // Slow sweep + breathing scale so the spokes feel like rushing light,
     // not a static stencil
+    // Recentre the spokes on where the ship is actually GOING, so they agree
+    // with the 3D streak field instead of always radiating from dead-centre.
+    if (typeof _wsfVanishingShift === 'function') _wsfVanishingShift(_wsfShift);
     _sfx.streaks.style.transform =
+        'translate(' + _wsfShift[0].toFixed(1) + '%,' + _wsfShift[1].toFixed(1) + '%) ' +
         'rotate(' + ((t * (0.004 + L * 0.006)) % 360).toFixed(1) + 'deg) ' +
         'scale(' + (1 + L * 0.04 + Math.sin(t * 0.003) * 0.012).toFixed(3) + ')';
     _sfx.chroma.style.opacity = (Math.max(0, L - 0.45) * 0.9).toFixed(3);
@@ -1322,6 +1326,310 @@ if (typeof window !== 'undefined') {
     window.whipShockwave = whipShockwave;
 }
 
+// ── 19. WARP STREAK FIELD — the thing that makes 79,000 km/s LOOK like it ────
+// The whip's release used to be a number change: velocity snapped from ~24 to
+// ~4800 u/s while the background stars stayed discrete stationary dots and the
+// ship sat dead-centre. Two frames half a second apart differed by ~1.7%. This
+// is the fix: a camera-anchored field of stretched star-streaks locked to the
+// VELOCITY VECTOR (not the look vector), so every streak radiates out of the
+// on-screen vanishing point of travel — turn the ship mid-boost and the whole
+// field keeps pointing where you are actually going.
+//
+// Implementation notes that matter:
+//   • ONE draw call. 1400 stars as camera-facing quads (2 tris each) with the
+//     stretch done in the vertex shader — no per-frame geometry rebuilds, no
+//     particle-count inflation. Streak WIDTH is computed in screen pixels so a
+//     streak is a crisp 2-4px neon filament at any distance instead of an
+//     aliased 1px GL line.
+//   • Overdraw is the known killer here, so the quads are thin and the field
+//     brightness is one uniform: at rest the mesh is invisible and skipped
+//     entirely (zero cost when not boosting).
+//   • The mesh's world matrix is written inside onBeforeRender from the RENDER
+//     camera's matrix, which is the only place the interpolated/cinematic
+//     camera transform is guaranteed final. Anchoring it in the update phase
+//     lagged a frame — at 4800 u/s one frame is 80 world units of swim.
+const _WSF_N = 1400;          // streaks — density target from the design brief
+const _WSF_SPREAD = 430;      // field radius around the travel axis
+const _WSF_RMIN = 16;         // hole at the vanishing point (nothing dead-centre)
+const _WSF_DEPTH = 2900;      // how far ahead stars are seeded
+
+const _wsf = {
+    mesh: null, geo: null, mat: null, pos: null, posAttr: null,
+    sx: null, sy: null, sz: null, sv: null,
+    env: 0, kickT0: 0, kickMs: 1, kickAmp: 0, last: 0, roll: 0,
+    frame: null, q: null, qRoll: null, m: null, dir: null,
+    colA: null, colB: null
+};
+
+function _wsfSeed(i, spanZ) {
+    const ang = Math.random() * Math.PI * 2;
+    // sqrt() keeps the disc evenly covered instead of clumping at the axis
+    const r = _WSF_RMIN + (_WSF_SPREAD - _WSF_RMIN) * Math.sqrt(Math.random());
+    _wsf.sx[i] = Math.cos(ang) * r;
+    _wsf.sy[i] = Math.sin(ang) * r;
+    _wsf.sz[i] = spanZ ? -Math.random() * _WSF_DEPTH : -_WSF_DEPTH - Math.random() * 260;
+    _wsf.sv[i] = 0.78 + Math.random() * 0.55;   // per-star flow rate
+}
+
+function _wsfBuild() {
+    if (_wsf.mesh || typeof THREE === 'undefined' || typeof scene === 'undefined') return;
+    const N = _WSF_N;
+    const pos = new Float32Array(N * 4 * 3);
+    const aTail = new Float32Array(N * 4);
+    const aSide = new Float32Array(N * 4);
+    const aHue = new Float32Array(N * 4);
+    const aLenJ = new Float32Array(N * 4);
+    const aWid = new Float32Array(N * 4);
+    const idx = new Uint16Array(N * 6);          // 5600 verts — Uint16 is safe
+
+    _wsf.sx = new Float32Array(N); _wsf.sy = new Float32Array(N);
+    _wsf.sz = new Float32Array(N); _wsf.sv = new Float32Array(N);
+
+    for (let i = 0; i < N; i++) {
+        _wsfSeed(i, true);
+        const hue = Math.random();
+        const lj = 0.55 + Math.random() * 0.95;
+        const wj = 0.68 + Math.random() * 1.05;
+        const v = i * 4;
+        // 0,1 = head (tail=0) ; 2,3 = tail (tail=1) ; sides -1/+1
+        aTail[v] = 0; aTail[v + 1] = 0; aTail[v + 2] = 1; aTail[v + 3] = 1;
+        aSide[v] = -1; aSide[v + 1] = 1; aSide[v + 2] = 1; aSide[v + 3] = -1;
+        for (let k = 0; k < 4; k++) { aHue[v + k] = hue; aLenJ[v + k] = lj; aWid[v + k] = wj; }
+        const o = i * 6;
+        idx[o] = v; idx[o + 1] = v + 1; idx[o + 2] = v + 2;
+        idx[o + 3] = v; idx[o + 4] = v + 2; idx[o + 5] = v + 3;
+    }
+
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    geo.setAttribute('aTail', new THREE.BufferAttribute(aTail, 1));
+    geo.setAttribute('aSide', new THREE.BufferAttribute(aSide, 1));
+    geo.setAttribute('aHue', new THREE.BufferAttribute(aHue, 1));
+    geo.setAttribute('aLenJ', new THREE.BufferAttribute(aLenJ, 1));
+    geo.setAttribute('aWid', new THREE.BufferAttribute(aWid, 1));
+    geo.setIndex(new THREE.BufferAttribute(idx, 1));
+    geo.attributes.position.setUsage(THREE.DynamicDrawUsage);
+    // No bounding sphere maths — the mesh is never frustum culled.
+    geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e9);
+
+    const mat = new THREE.ShaderMaterial({
+        uniforms: {
+            uLen: { value: 0 },
+            uWidth: { value: 2.4 },
+            uRes: { value: new THREE.Vector2(1280, 720) },
+            uOpacity: { value: 0 },
+            uColA: { value: new THREE.Color(0x6be6ff) },
+            uColB: { value: new THREE.Color(0xff5ccd) }
+        },
+        vertexShader: [
+            'attribute float aTail;',
+            'attribute float aSide;',
+            'attribute float aHue;',
+            'attribute float aLenJ;',
+            'attribute float aWid;',
+            'uniform float uLen;',
+            'uniform float uWidth;',
+            'uniform vec2 uRes;',
+            'varying float vTail;',
+            'varying float vSide;',
+            'varying float vHue;',
+            'varying float vFade;',
+            'void main() {',
+            '  vTail = aTail; vSide = aSide; vHue = aHue;',
+            '  float L = uLen * aLenJ;',
+            // Head = the star. Tail trails back toward -Z, which IS the travel
+            // direction, so every streak points at the vanishing point.
+            '  vec4 hC = projectionMatrix * modelViewMatrix * vec4(position, 1.0);',
+            '  vec4 tC = projectionMatrix * modelViewMatrix * vec4(position - vec3(0.0, 0.0, L), 1.0);',
+            '  if (hC.w <= 0.02) { gl_Position = vec4(0.0, 0.0, 2.0, 1.0); return; }',
+            '  vec4 clip = mix(hC, tC, aTail);',
+            // Perpendicular in SCREEN pixels → constant apparent thickness.
+            '  vec2 hs = (hC.xy / hC.w) * 0.5 * uRes;',
+            '  vec2 ts = (tC.xy / max(0.02, tC.w)) * 0.5 * uRes;',
+            '  vec2 d = hs - ts;',
+            '  float dl = length(d);',
+            '  vec2 nrm = (dl > 0.001) ? vec2(-d.y, d.x) / dl : vec2(1.0, 0.0);',
+            // Streaks right ON the vanishing point barely move, so drawing them
+            // at full strength piles a white blob over the crosshair. Fade by
+            // the streak's own SCREEN length — the eye only reads speed from
+            // the ones that actually travel.
+            '  vFade = smoothstep(3.0, 34.0, dl);',
+            '  clip.xy += (nrm * aSide * uWidth * aWid / uRes) * 2.0 * clip.w;',
+            '  gl_Position = clip;',
+            '}'
+        ].join('\n'),
+        fragmentShader: [
+            'uniform vec3 uColA;',
+            'uniform vec3 uColB;',
+            'uniform float uOpacity;',
+            'varying float vTail;',
+            'varying float vSide;',
+            'varying float vHue;',
+            'varying float vFade;',
+            'void main() {',
+            '  float edge = 1.0 - abs(vSide);',
+            '  edge = edge * edge * (3.0 - 2.0 * edge);',      // soft filament edges
+            '  float head = pow(max(0.0, 1.0 - vTail), 1.7);', // hot head, dying tail
+            '  vec3 c = mix(uColA, uColB, vHue);',
+            '  c = mix(c, vec3(1.0), pow(max(0.0, 1.0 - vTail), 7.0) * 0.8);',
+            '  float a = edge * head * vFade * uOpacity;',
+            '  if (a < 0.004) discard;',
+            '  gl_FragColor = vec4(c, a);',
+            '}'
+        ].join('\n'),
+        transparent: true,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        depthTest: false,
+        side: THREE.DoubleSide
+    });
+
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.frustumCulled = false;
+    mesh.matrixAutoUpdate = false;
+    mesh.renderOrder = 998;
+    mesh.visible = false;
+    // Never a target and never a raycast cost: any scene-wide picking pass
+    // would otherwise walk 2800 throwaway triangles (and could "hit" them).
+    mesh.raycast = function () {};
+    mesh.userData.isWarpStreakFx = true;
+    // Lock to the RENDER camera's final position, one instruction before draw.
+    mesh.onBeforeRender = function (renderer, sc, cam) {
+        if (!_wsf.frame) return;
+        const e = _wsf.frame.elements, ce = cam.matrixWorld.elements;
+        e[12] = ce[12]; e[13] = ce[13]; e[14] = ce[14];
+        this.matrixWorld.copy(_wsf.frame);
+        this.matrixWorldNeedsUpdate = false;
+        try {
+            const el = renderer.domElement;
+            const w = el.clientWidth || el.width || 1280;
+            const h = el.clientHeight || el.height || 720;
+            mat.uniforms.uRes.value.set(w, h);
+        } catch (err) {}
+    };
+
+    _wsf.pos = pos; _wsf.posAttr = geo.attributes.position;
+    _wsf.geo = geo; _wsf.mat = mat; _wsf.mesh = mesh;
+    _wsf.frame = new THREE.Matrix4();
+    _wsf.q = new THREE.Quaternion();
+    _wsf.qRoll = new THREE.Quaternion();
+    _wsf.m = new THREE.Matrix4();
+    _wsf.dir = new THREE.Vector3(0, 0, -1);
+    scene.add(mesh);
+}
+
+// Public: fire the field. Called on whip release (and safe to call on any
+// other boost). dir seeds the axis for frame 0; speed is units/SECOND.
+function warpStreakBurst(dir, speed, colA, colB, strength) {
+    try {
+        _wsfBuild();
+        if (!_wsf.mesh) return;
+        _wsf.kickT0 = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+        _wsf.kickMs = 1500;
+        _wsf.kickAmp = Math.max(0.4, Math.min(1.35, strength || 1));
+        if (colA !== undefined && colA !== null) _wsf.mat.uniforms.uColA.value.setHex(colA);
+        if (colB !== undefined && colB !== null) _wsf.mat.uniforms.uColB.value.setHex(colB);
+        if (dir && dir.lengthSq && dir.lengthSq() > 1e-6) _wsf.dir.copy(dir).normalize();
+        // Re-seed across the whole depth so the field is FULL on frame one —
+        // a field that fills in from the far plane reads as a fade, not a punch.
+        for (let i = 0; i < _WSF_N; i++) _wsfSeed(i, true);
+    } catch (e) {}
+}
+
+const _wsfUp = (typeof THREE !== 'undefined') ? new THREE.Vector3(0, 1, 0) : null;
+const _wsfZero = (typeof THREE !== 'undefined') ? new THREE.Vector3(0, 0, 0) : null;
+const _wsfAxisZ = (typeof THREE !== 'undefined') ? new THREE.Vector3(0, 0, 1) : null;
+const _wsfTmpDir = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+
+function _updateWarpStreaks() {
+    const now = (typeof performance !== 'undefined') ? performance.now() : Date.now();
+    const dt = Math.max(0, Math.min(0.05, (now - (_wsf.last || now)) / 1000));
+    _wsf.last = now;
+
+    // Live speed in units/sec (velocityVector is per-60fps-frame).
+    const spd = (gameState.velocityVector ? gameState.velocityVector.length() : 0) * 60;
+    // Speed drives the field on its own, so emergency warp gets it too; the
+    // release "kick" just guarantees the punch lands on the very first frame.
+    let target = Math.max(0, Math.min(1, (spd - 260) / 2400));
+    if (_wsf.kickAmp > 0) {
+        const kt = (now - _wsf.kickT0) / _wsf.kickMs;
+        if (kt >= 1) _wsf.kickAmp = 0;
+        else target = Math.max(target, _wsf.kickAmp * Math.pow(1 - kt, 0.55));
+    }
+    if (target <= 0.001 && _wsf.env <= 0.004) {
+        if (_wsf.mesh && _wsf.mesh.visible) _wsf.mesh.visible = false;
+        _wsf.env = 0;
+        return;
+    }
+    _wsfBuild();
+    if (!_wsf.mesh) return;
+
+    // Ramp in over ~250ms, decay with the boost over ~0.7s.
+    const tau = (target > _wsf.env) ? 0.085 : 0.42;
+    _wsf.env += (target - _wsf.env) * (1 - Math.exp(-dt / tau));
+    const env = _wsf.env;
+    if (env <= 0.004) { _wsf.mesh.visible = false; return; }
+    _wsf.mesh.visible = true;
+
+    // ── AXIS: the VELOCITY vector, not the look vector ──────────────────
+    if (_wsfTmpDir) {
+        if (spd > 1) _wsfTmpDir.copy(gameState.velocityVector).normalize();
+        else camera.getWorldDirection(_wsfTmpDir);
+        // Eased so a mid-boost turn sweeps the vanishing point instead of
+        // snapping it.
+        _wsf.dir.lerp(_wsfTmpDir, 1 - Math.exp(-dt / 0.06));
+        if (_wsf.dir.lengthSq() < 1e-6) _wsf.dir.copy(_wsfTmpDir);
+        _wsf.dir.normalize();
+    }
+    _wsf.roll += dt * 0.16;
+    _wsf.m.lookAt(_wsfZero, _wsf.dir, _wsfUp);
+    _wsf.q.setFromRotationMatrix(_wsf.m);
+    _wsf.qRoll.setFromAxisAngle(_wsfAxisZ, _wsf.roll);
+    _wsf.q.multiply(_wsf.qRoll);
+    _wsf.frame.makeRotationFromQuaternion(_wsf.q);
+
+    // ── FLOW + STRETCH ──────────────────────────────────────────────────
+    const flow = Math.min(9500, Math.max(700, spd)) * (0.35 + 0.65 * env) * dt;
+    const p = _wsf.pos, sx = _wsf.sx, sy = _wsf.sy, sz = _wsf.sz, sv = _wsf.sv;
+    for (let i = 0; i < _WSF_N; i++) {
+        let z = sz[i] + flow * sv[i];
+        if (z > 90) { _wsfSeed(i, false); z = sz[i]; }
+        else sz[i] = z;
+        const x = sx[i], y = sy[i];
+        const b = i * 12;
+        p[b] = x; p[b + 1] = y; p[b + 2] = z;
+        p[b + 3] = x; p[b + 4] = y; p[b + 5] = z;
+        p[b + 6] = x; p[b + 7] = y; p[b + 8] = z;
+        p[b + 9] = x; p[b + 10] = y; p[b + 11] = z;
+    }
+    _wsf.posAttr.needsUpdate = true;
+
+    const u = _wsf.mat.uniforms;
+    u.uLen.value = Math.max(28, Math.min(760, spd * 0.055)) * (0.45 + 0.55 * env);
+    u.uWidth.value = 1.5 + 1.9 * env;
+    u.uOpacity.value = 0.95 * env;
+}
+
+// Screen-space speed spokes are anchored on the VANISHING POINT of travel,
+// not the middle of the screen — cheap (one composited transform) and it is
+// what makes the DOM layer agree with the 3D streaks when the ship is not
+// pointed exactly along its velocity.
+function _wsfVanishingShift(outArr) {
+    outArr[0] = 0; outArr[1] = 0;
+    try {
+        if (!_wsfTmpDir || !gameState.velocityVector) return;
+        const spd = gameState.velocityVector.length();
+        if (spd < 0.05) return;
+        _wsfTmpDir.copy(gameState.velocityVector).multiplyScalar(1200 / spd)
+            .add(camera.position).project(camera);
+        if (_wsfTmpDir.z > 1) return;                       // behind the camera
+        const fx = _wsfTmpDir.x * 0.5 + 0.5, fy = 0.5 - _wsfTmpDir.y * 0.5;
+        outArr[0] = Math.max(-30, Math.min(30, (fx - 0.5) / 1.24 * 100));
+        outArr[1] = Math.max(-30, Math.min(30, (fy - 0.5) / 1.24 * 100));
+    } catch (e) {}
+}
+const _wsfShift = [0, 0];
+
 // ── Per-frame entry point ───────────────────────────────────────────────────
 function updateVisualFlair() {
     if (typeof gameState === 'undefined' || !gameState.gameStarted ||
@@ -1334,6 +1642,7 @@ function updateVisualFlair() {
     // try { _updatePlayerTrail(); } catch (e) {}
     try { _updateLaserCharge(); } catch (e) {}
     try { if (window.arcade) window.arcade.update(); } catch (e) {}
+    try { _updateWarpStreaks(); } catch (e) {}
     try { _updateScreenFX(); } catch (e) {}
     try { _updateWhipPreview(fc); } catch (e) {}
     try { _updateWhipShakeFx(); } catch (e) {}
@@ -1362,4 +1671,5 @@ if (typeof window !== 'undefined') {
     window.flashEventText = flashEventText;
     window.wingmanTracerPush = wingmanTracerPush;
     window.wingmanTracerFade = wingmanTracerFade;
+    window.warpStreakBurst = warpStreakBurst;
 }

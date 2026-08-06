@@ -78,7 +78,7 @@ body.ui-mode {
     perspective: 1200px; */
     cursor: auto !important;
     pointer-events: auto !important;
-    position: relative;
+    position: absolute;
     isolation: isolate;
 }
 
