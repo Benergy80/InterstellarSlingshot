@@ -1981,6 +1981,20 @@ function updateSlingshotWhip() {
         const launchDir = w.aim.clone().multiplyScalar(0.65)
             .addScaledVector(tangent, 0.35).normalize();
         gameState.velocityVector.copy(launchDir).multiplyScalar(w.boost);
+        // Face the launch direction NOW. On a full-sweep timeout release
+        // the aim was never reached, so launchDir can be up to 180° from
+        // the arc tangent the camera was tracking — without this snap the
+        // whole glide flew "backwards". (The glide keeps the view eased
+        // onto the velocity vector each frame; see the slingshot timer.)
+        if (_whipTmpQ && _whipTmpM) {
+            _whipTmpM.lookAt(camera.position,
+                new THREE.Vector3(
+                    camera.position.x + launchDir.x * 200,
+                    camera.position.y + launchDir.y * 200,
+                    camera.position.z + launchDir.z * 200),
+                camera.up);
+            camera.quaternion.setFromRotationMatrix(_whipTmpM);
+        }
         gameState.slingshot.timeRemaining = gameState.slingshot.duration;
         gameState.slingshotWhip = null;
         _whipTrailFadeOut();
@@ -2927,6 +2941,24 @@ if (surfaceCollision) {
     // Slingshot timer management (matching emergency warp behavior)
     if (gameState.slingshot.active) {
         gameState.slingshot.timeRemaining -= dtMsP;
+
+        // Keep the view on the direction of travel for the whole glide —
+        // an eased assist (not a lock): deliberate mouse-look still wins
+        // frame to frame, but left alone the camera settles onto the
+        // velocity vector instead of staying wherever the whip released it.
+        if (_whipTmpQ && _whipTmpM && typeof camera !== 'undefined' &&
+            gameState.velocityVector && gameState.velocityVector.lengthSq() > 1) {
+            const _sv = gameState.velocityVector;
+            const _svl = _sv.length();
+            _whipTmpM.lookAt(camera.position,
+                new THREE.Vector3(
+                    camera.position.x + (_sv.x / _svl) * 200,
+                    camera.position.y + (_sv.y / _svl) * 200,
+                    camera.position.z + (_sv.z / _svl) * 200),
+                camera.up);
+            _whipTmpQ.setFromRotationMatrix(_whipTmpM);
+            camera.quaternion.slerp(_whipTmpQ, 1 - Math.pow(0.88, dtF));
+        }
 
         if (gameState.slingshot.timeRemaining <= 0) {
             gameState.slingshot.active = false;
