@@ -6788,6 +6788,19 @@ function checkGuardianVictory() {
                 if (_core) {
                     const _woo = (typeof window !== 'undefined' && window.worldOriginOffset) || { x: 0, y: 0, z: 0 };
                     const _deep = new THREE.Vector3(78000 - _woo.x, 2000 - _woo.y, 8000 - _woo.z);
+                    // AT MOST ONE deepspace line: each liberation used to add
+                    // another green line (up to 8 by campaign's end). Retire
+                    // the previous one — the invitation simply moves to the
+                    // freshest freed core.
+                    if (typeof discoveryPaths !== 'undefined' && typeof _disposeDiscoveryPath === 'function') {
+                        for (let _di = discoveryPaths.length - 1; _di >= 0; _di--) {
+                            const _dud = discoveryPaths[_di] && discoveryPaths[_di].line && discoveryPaths[_di].line.userData;
+                            if (_dud && _dud.pathType === 'deepspace') {
+                                _disposeDiscoveryPath(discoveryPaths[_di]);
+                                discoveryPaths.splice(_di, 1);
+                            }
+                        }
+                    }
                     // galaxyId -1: no mission-enemy snapshot/relocation — this
                     // line is an invitation, not a tracked mission.
                     createDiscoveryPathToPosition(_core.position.clone(), _deep, 0x00ff66, 'Deep Space', 'deepspace', -1);
@@ -9277,6 +9290,17 @@ function updateAllyShips() {
     const playerWarping = _isPlayerWarping();
     const celebrating = now < _wingmanCelebrateUntil;
 
+    // Player displacement since the previous AI tick — the carrier frame
+    // the warp-follow rides (see _executeFollow). A jump > 2000u in one
+    // tick is a teleport (black-hole warp) or a world-origin rebase, not
+    // motion: zero it so wingmen aren't double-shifted; the FTL anchor
+    // reunites the squad afterward.
+    if (!updateAllyShips._prevPP) updateAllyShips._prevPP = playerPos.clone();
+    if (!updateAllyShips._disp) updateAllyShips._disp = new THREE.Vector3();
+    updateAllyShips._disp.subVectors(playerPos, updateAllyShips._prevPP);
+    if (updateAllyShips._disp.lengthSq() > 4000000) updateAllyShips._disp.set(0, 0, 0);
+    updateAllyShips._prevPP.copy(playerPos);
+
     allyShips.forEach(ally => {
         if (!ally || ally.userData.health <= 0) return;
 
@@ -10215,8 +10239,11 @@ function _executeFollow(ally, ud, playerPos) {
     // Per-wingman Y-height variation so they're not on the same plane.
     // Small consistent offset per index + a gentle sine wobble keyed to
     // time and index, so the formation breathes a little but never jitters.
+    // The wobble is suspended at warp speeds: with the carrier-frame follow
+    // holding wingmen quasi-static on screen, the breathing was the last
+    // visible relative motion — warp formation is now perfectly rigid.
     const baseY = ((idx % 3) - 1) * 35; // -35, 0, +35 cycling
-    const wobbleY = Math.sin(Date.now() * 0.0006 + idx * 1.8) * 12;
+    const wobbleY = playerSpeed > 4 ? 0 : Math.sin(Date.now() * 0.0006 + idx * 1.8) * 12;
     const heightOffset = baseY + wobbleY;
 
     const target = playerPos.clone()
@@ -10224,16 +10251,43 @@ function _executeFollow(ally, ud, playerPos) {
         .addScaledVector(right, side)
         .addScaledVector(up, heightOffset);
 
+    // ── WARP REGIME: carrier-frame follow ────────────────────────────
+    // At warp the formation point moves ~15-150u per TICK. Chasing it
+    // through absolute space with the velocity controller below is a
+    // high-gain P-loop around a fast-moving target — once a wingman
+    // reached formation the steering direction flipped every tick at
+    // full warp magnitude, which is exactly the jitter seen on screen.
+    // Instead: ride the player's own displacement (the carrier frame),
+    // then ease the small formation error closed with a gentle,
+    // speed-independent gain. Relative to the camera the wingman is now
+    // quasi-static — rock steady at any warp speed. The displacement is
+    // computed once per tick in updateAllyShips; teleports/world-origin
+    // rebases zero it there and the FTL anchor handles reunification.
+    if (playerSpeed > 4 && updateAllyShips._disp) {
+        ally.position.add(updateAllyShips._disp);
+        _allyDir.subVectors(target, ally.position);
+        const err = _allyDir.length();
+        ally.position.addScaledVector(_allyDir, 0.10);
+        // ud.velocity mirrors the applied step so thruster glows and the
+        // follow→patrol handoff stay continuous.
+        ud.velocity.copy(updateAllyShips._disp).addScaledVector(_allyDir, 0.10);
+        // Face the travel direction (formation error direction flips when
+        // tiny — steering the nose by it made them spin); only face the
+        // error while genuinely out of formation.
+        if (err > 400) { _allyDir.normalize(); } else { _allyDir.copy(aheadDir); }
+        return;
+    }
+
     // Match the player's speed (or +20% so we keep the lead). No upper cap —
     // wingmen need to track up to 15+ units/frame (15000 km/s) when the
-    // player is sustained-cruising or warping, well past the patrol cap.
+    // player is sustained-cruising, well past the patrol cap.
     const targetSpeed = Math.max(playerSpeed * 1.2, ud.cruiseSpeed);
     _allyDir.subVectors(target, ally.position);
     const dist = _allyDir.length();
     if (dist > 1) {
         _allyDir.normalize();
         // Stronger lerp factor so they accelerate hard when far behind —
-        // the 0.18 was too slow to close gaps at warp speeds.
+        // the 0.18 was too slow to close gaps at cruise speeds.
         const lerpRate = playerSpeed > 6 ? 0.32 : 0.18;
         ud.velocity.lerp(_allyDir.clone().multiplyScalar(targetSpeed), lerpRate);
     }

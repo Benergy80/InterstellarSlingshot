@@ -2432,6 +2432,7 @@
   //     of fixed brake bands, so it neither overshoots nor crawls.
   const _navDir = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
   const _navFwd = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+  const _navVel = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
   function navigateTo(pos, opts) {
     if (typeof gameState === 'undefined' || !_navDir) return 'locked';
     opts = opts || {};
@@ -2484,6 +2485,23 @@
 
     const k = keys();
 
+    // 2b) RECEDING GUARD — the overshoot killer. If the velocity points
+    //    AWAY from the target while we're still moving, braking beats
+    //    turning: without this, an overshot ship coasted away at full
+    //    speed in 'orienting' (no brake) until the jump/warp logic fired
+    //    again from twice the distance. Brake first, then turn.
+    if (_navVel && gameState.velocityVector && speed > Math.max(1, arriveSpeed) &&
+        dist > arriveRadius) {
+      _navVel.copy(gameState.velocityVector).normalize();
+      _navDir.subVectors(targetObj.position, cp).normalize();
+      if (_navVel.dot(_navDir) < -0.1) {
+        k.b = false;
+        k.x = true;
+        ap._navStatus = 'braking';
+        return 'braking';
+      }
+    }
+
     // 3) Arrival: inside the radius, kill residual speed then hold.
     if (dist < arriveRadius) {
       if (speed > arriveSpeed) { k.b = false; k.x = true; ap._navStatus = 'braking'; return 'braking'; }
@@ -2508,10 +2526,11 @@
       }
     }
 
-    // 4) Stopping-distance control: speed*35 is the ~X-brake coast length
-    //    (0.975/frame combined brake from speed v needs ≈35·v units), so
-    //    braking starts exactly when continuing would overshoot the radius.
-    const stopDist = arriveRadius + speed * 35;
+    // 4) Stopping-distance control: the X-brake coast (0.975/frame) needs
+    //    ≈40·v units to fully decay; 45·v adds reaction-latency margin so
+    //    braking starts BEFORE continuing would overshoot the radius
+    //    (35·v consistently started a few frames late at warp speeds).
+    const stopDist = arriveRadius + speed * 45;
     if (dist < stopDist && speed > Math.max(0.3, arriveSpeed)) {
       k.b = false;
       k.x = true;
@@ -2523,7 +2542,10 @@
     //    An O-warp covers ~7200u of boost plus a long coast, and the
     //    controller is hands-off while it's active — with an approach zone
     //    set, require enough runway that the boost ends well outside it.
-    const _warpMinDist = approachRange ? approachRange + 12000 : 8000;
+    // 15000 floor (was 8000): an O-warp is ~7200u of hands-off boost plus
+    // a long high-speed coast — from 8000u out, boost+coast routinely
+    // carried past the target before the controller regained authority.
+    const _warpMinDist = Math.max(15000, approachRange ? approachRange + 12000 : 0);
     if (allowWarp && dist > _warpMinDist && facing > 0.9 && canEmergencyWarp() &&
         Date.now() - (ap._lastBHWarp || 0) > 20000) {
       if (triggerOKeyWarp()) {
@@ -2544,7 +2566,11 @@
         facing > 0.9 && gameState.energy > 25 &&
         Date.now() - (ap._lastJumpTap || 0) > 5000) {
       ap._lastJumpTap = Date.now();
-      gameState._pendingJumpMs = Math.min(6000, Math.max(700, _jumpGap * 1.0));
+      // Jump distance ≈ 0.9u/ms of boost PLUS a ~500u auto-brake tail, so
+      // size the boost for (gap - tail). gap·1.0 overshot short hops by
+      // ~30% (gap 1000 → ~1310u traveled) and pushed warp speed into the
+      // approach zone.
+      gameState._pendingJumpMs = Math.min(6000, Math.max(700, _jumpGap - 500));
       if (window.keys) {
         window.keys.wDoubleTap = true;
         setTimeout(() => { if (window.keys) window.keys.wDoubleTap = false; }, 120);

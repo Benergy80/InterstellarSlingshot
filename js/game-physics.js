@@ -1981,6 +1981,20 @@ function updateSlingshotWhip() {
         const launchDir = w.aim.clone().multiplyScalar(0.65)
             .addScaledVector(tangent, 0.35).normalize();
         gameState.velocityVector.copy(launchDir).multiplyScalar(w.boost);
+        // Face the launch direction NOW. On a full-sweep timeout release
+        // the aim was never reached, so launchDir can be up to 180° from
+        // the arc tangent the camera was tracking — without this snap the
+        // whole glide flew "backwards". (The glide keeps the view eased
+        // onto the velocity vector each frame; see the slingshot timer.)
+        if (_whipTmpQ && _whipTmpM) {
+            _whipTmpM.lookAt(camera.position,
+                new THREE.Vector3(
+                    camera.position.x + launchDir.x * 200,
+                    camera.position.y + launchDir.y * 200,
+                    camera.position.z + launchDir.z * 200),
+                camera.up);
+            camera.quaternion.setFromRotationMatrix(_whipTmpM);
+        }
         gameState.slingshot.timeRemaining = gameState.slingshot.duration;
         gameState.slingshotWhip = null;
         _whipTrailFadeOut();
@@ -2927,6 +2941,24 @@ if (surfaceCollision) {
     // Slingshot timer management (matching emergency warp behavior)
     if (gameState.slingshot.active) {
         gameState.slingshot.timeRemaining -= dtMsP;
+
+        // Keep the view on the direction of travel for the whole glide —
+        // an eased assist (not a lock): deliberate mouse-look still wins
+        // frame to frame, but left alone the camera settles onto the
+        // velocity vector instead of staying wherever the whip released it.
+        if (_whipTmpQ && _whipTmpM && typeof camera !== 'undefined' &&
+            gameState.velocityVector && gameState.velocityVector.lengthSq() > 1) {
+            const _sv = gameState.velocityVector;
+            const _svl = _sv.length();
+            _whipTmpM.lookAt(camera.position,
+                new THREE.Vector3(
+                    camera.position.x + (_sv.x / _svl) * 200,
+                    camera.position.y + (_sv.y / _svl) * 200,
+                    camera.position.z + (_sv.z / _svl) * 200),
+                camera.up);
+            _whipTmpQ.setFromRotationMatrix(_whipTmpM);
+            camera.quaternion.slerp(_whipTmpQ, 1 - Math.pow(0.88, dtF));
+        }
 
         if (gameState.slingshot.timeRemaining <= 0) {
             gameState.slingshot.active = false;
@@ -4440,9 +4472,13 @@ function createDiscoveryPathToPosition(nebulaPosition, targetPosition, factionCo
     // per-vertex ramp so it multiplies with material.color: the existing
     // mission-complete / reset recolor logic (which writes material.color)
     // keeps working and the gradient survives the recolor.
+    // Floor 0.45 (was 0.15), matching the white liberation path: on a
+    // path tens of thousands of units long, a 15%-bright origin was
+    // invisible at the nebula — the line seemed to "appear" out at its
+    // bright far end, reading as if it originated from a different nebula.
     const gradColors = new Float32Array((segments + 1) * 3);
     for (let i = 0; i <= segments; i++) {
-        const b = 0.15 + 0.85 * (i / segments);
+        const b = 0.45 + 0.55 * (i / segments);
         gradColors[i * 3] = b;
         gradColors[i * 3 + 1] = b;
         gradColors[i * 3 + 2] = b;
@@ -4623,7 +4659,15 @@ function resolveNebulaGalaxyId(nebula, nebulaType, index) {
             return GALAXY_FORMATION_NEBULA_MAP[name] !== undefined ? GALAXY_FORMATION_NEBULA_MAP[name] : index % 8;
         case 'clustered':
         default: {
-            // First 8 clustered nebulas use the original paired logic
+            // The named twin nebulas resolve through their LORE map
+            // (Olympus→0 … Chronos→7), the same mapping the intel system's
+            // assignFactionsToNebulas uses. The old floor(index/2) pairing
+            // contradicted both: discovering Elysium (lore: Galactic
+            // Empire) drew a path to Rebel Alliance enemies, and galaxies
+            // 4–7 never received twin missions at all.
+            if (GALAXY_FORMATION_NEBULA_MAP[name] !== undefined) {
+                return GALAXY_FORMATION_NEBULA_MAP[name];
+            }
             const pairIndex = Math.floor(index / 2);
             return pairIndex % 8;
         }
@@ -4642,6 +4686,44 @@ function checkForNebulaDeepDiscovery() {
 
     // Track first-8 clustered nebula count for paired index logic
     let clusteredCount = 0;
+
+    // ONE DISCOVERY PER APPROACH: cluster-mate nebulas can spawn inside
+    // each other's trigger radius, and a demo warp sweeps the camera
+    // through several radii in seconds — without a gate, one pass popped
+    // a burst of paths at once and the player couldn't tell which line
+    // belonged to the nebula being charted. Only the NEAREST undiscovered
+    // nebula may deep-discover, and no sooner than 8s after the previous
+    // discovery.
+    let _nearestUndiscovered = -1, _nearestDist = Infinity;
+    for (let ni = 0; ni < nebulaClouds.length; ni++) {
+        const nb = nebulaClouds[ni];
+        if (!nb || !nb.userData || nb.userData.deepDiscovered) continue;
+        const d = camera.position.distanceTo(nb.position);
+        if (d < _nearestDist) { _nearestDist = d; _nearestUndiscovered = ni; }
+    }
+    const _discoveryCooldownActive = gameState._lastDeepDiscoveryAt &&
+        (Date.now() - gameState._lastDeepDiscoveryAt) < 8000;
+
+    // ONE ACTIVE MISSION AT A TIME: while any discovery mission is still
+    // in progress (path not yet turned white), no new nebula may open a
+    // path. The journey is: follow the line, defeat the enemies it leads
+    // to, watch it turn white — THEN chart the next nebula. Guide and
+    // optional lines (galaxyId < 0: 'final' onward paths, the green
+    // 'deepspace' expedition) carry no mission and never block — the
+    // deepspace line in particular never completes, so keying on pathType
+    // alone would deadlock discovery for the rest of the game.
+    let _missionActive = false;
+    if (typeof discoveryPaths !== 'undefined') {
+        for (let pi = 0; pi < discoveryPaths.length; pi++) {
+            const pud = discoveryPaths[pi] && discoveryPaths[pi].line &&
+                discoveryPaths[pi].line.userData;
+            if (pud && !pud.missionComplete &&
+                pud.galaxyId !== undefined && pud.galaxyId >= 0) {
+                _missionActive = true;
+                break;
+            }
+        }
+    }
 
     nebulaClouds.forEach((nebula, index) => {
         if (!nebula || !nebula.userData) return;
@@ -4716,6 +4798,13 @@ function checkForNebulaDeepDiscovery() {
 
         if (distance >= deepDiscoveryRange) return;
 
+        // The one-discovery-per-approach gate (computed above): only the
+        // nebula whose core the player is nearest may trigger, never
+        // within 8s of the previous discovery, and never while another
+        // mission path is still active (not yet white). A blocked nebula
+        // simply triggers later, when the player returns to it.
+        if (index !== _nearestUndiscovered || _discoveryCooldownActive || _missionActive) return;
+
         // Resolve which galaxy/faction this nebula maps to
         const galaxyId = resolveNebulaGalaxyId(nebula, nebulaType, index);
         if (galaxyId === undefined) return;
@@ -4762,6 +4851,7 @@ function checkForNebulaDeepDiscovery() {
         // Mark as deep discovered
         console.log(`✨ DEEP DISCOVERY TRIGGERED for ${nebulaType} nebula "${nebulaName}" at distance ${distance.toFixed(0)}`);
         nebula.userData.deepDiscovered = true;
+        gameState._lastDeepDiscoveryAt = Date.now();
 
         // Reward: ship upgrade (energy efficiency + top speed). Fires once
         // per nebula. Delay slightly so the upgrade achievement appears
@@ -5200,70 +5290,95 @@ function animateDiscoveryPaths() {
         }
     }
 
-    // ── FACTION CAMPAIGN ARC ─────────────────────────────────────────────
-    // The two paths of a twin pair both lead to the SAME faction. When BOTH
-    // missions are complete, a THIRD path opens from the pair to that
-    // faction's BLACK-HOLE GALAXY — and 3 black-hole guardians of that
-    // faction deploy at its core. Clearing the remaining faction forces AND
-    // all 3 guardians is what clears the galaxy.
+    // ── TWIN-CLUSTER CAMPAIGN ────────────────────────────────────────────
+    // Each twin cluster holds TWO nebulas, each with its own discovery
+    // mission. When BOTH cluster-mates' missions are complete (their paths
+    // turned white), a FINAL white guide path opens from the pair onward
+    // to the nearest uncharted OUTER system — the next tier of the journey.
     checkTwinPairCampaign();
 }
 
 function checkTwinPairCampaign() {
     if (typeof gameState === 'undefined') return;
-    if (!gameState._bhPathSpawned) gameState._bhPathSpawned = {};
-    const doneByGalaxy = {};
-    for (let i = 0; i < discoveryPaths.length; i++) {
-        const p = discoveryPaths[i];
-        const ud = p && p.line && p.line.userData;
-        if (!ud || !ud.missionComplete) continue;
-        if (ud.pathType === 'blackhole') continue;   // the arc path itself
-        const g = (p.galaxyId !== undefined) ? p.galaxyId
-            : (ud.galaxyId !== undefined ? ud.galaxyId : -1);
-        if (g < 0) continue;
-        if (!doneByGalaxy[g]) doneByGalaxy[g] = { count: 0, start: null };
-        doneByGalaxy[g].count++;
-        if (!doneByGalaxy[g].start && ud.startPosition) doneByGalaxy[g].start = ud.startPosition;
+    if (typeof nebulaClouds === 'undefined') return;
+    if (!gameState._finalPathSpawned) gameState._finalPathSpawned = {};
+
+    // Group the twin nebulas by their SPATIAL cluster (userData.cluster).
+    // The old arc grouped by galaxyId, which under the lore mapping paired
+    // nebulas on opposite sides of the universe and let ANY two completed
+    // missions of one faction — twin or outer — pop an arc path far from
+    // the player.
+    const clusters = {};
+    for (let i = 0; i < nebulaClouds.length; i++) {
+        const n = nebulaClouds[i];
+        if (!n || !n.userData || n.userData.isDistant || n.userData.isExoticCore) continue;
+        const ci = n.userData.cluster;
+        if (ci === undefined || ci === null) continue;
+        (clusters[ci] = clusters[ci] || []).push(n);
     }
-    Object.keys(doneByGalaxy).forEach(gs => {
-        const g = +gs;
-        if (gameState._bhPathSpawned[g]) return;
-        const d = doneByGalaxy[g];
-        if (d.count < 2 || !d.start) return;   // both twin missions required
-        const core = (typeof findGalaxyCoreById === 'function') ? findGalaxyCoreById(g) : null;
-        if (!core) return;
-        gameState._bhPathSpawned[g] = true;
 
-        const galaxyType = (typeof galaxyTypes !== 'undefined') ? galaxyTypes[g] : null;
-        const factionName = galaxyType ? galaxyType.faction : 'Enemy';
-        const loreData = FACTION_LORE[factionName] || { color: 0xffffff };
+    Object.keys(clusters).forEach(cs => {
+        if (gameState._finalPathSpawned[cs]) return;
+        const pair = clusters[cs];
+        if (pair.length < 2) return;   // only true twins
 
-        // Third path: twin pair → the faction's black-hole galaxy core
-        createDiscoveryPathToPosition(
-            d.start.clone(), core.position.clone(),
-            loreData.color, factionName, 'blackhole', g);
+        // Every nebula of the pair must have a COMPLETED mission path
+        // that starts at it.
+        const bothLiberated = pair.every(n => discoveryPaths.some(p => {
+            const ud = p && p.line && p.line.userData;
+            return ud && ud.missionComplete && ud.pathType !== 'final' &&
+                ud.startPosition && ud.startPosition.distanceTo(n.position) < 1;
+        }));
+        if (!bothLiberated) return;
 
-        // The stronghold garrison: exactly 3 black-hole guardians of this
-        // faction deploy at the core the moment the path appears.
-        if (typeof loadGuardiansForGalaxy === 'function') {
-            loadGuardiansForGalaxy(g, { count: 3, ignoreBossGate: true });
+        // Anchor at the pair nebula nearest the player (the one whose
+        // mission they just finished).
+        let start = pair[0].position;
+        if (typeof camera !== 'undefined') {
+            let bestDist = Infinity;
+            for (let s = 0; s < pair.length; s++) {
+                const dist = pair[s].position.distanceTo(camera.position);
+                if (dist < bestDist) { bestDist = dist; start = pair[s].position; }
+            }
         }
+
+        // Target: the nearest uncharted outer nebula (exotic or distant).
+        // Reaching it triggers ITS discovery, continuing the journey loop.
+        let target = null, bestD = Infinity;
+        for (let i = 0; i < nebulaClouds.length; i++) {
+            const n = nebulaClouds[i];
+            if (!n || !n.userData) continue;
+            if (!n.userData.isDistant && !n.userData.isExoticCore) continue;
+            if (n.userData.deepDiscovered) continue;
+            const d = n.position.distanceTo(start);
+            if (d < bestD) { bestD = d; target = n; }
+        }
+        if (!target) return;   // every outer system already charted
+
+        gameState._finalPathSpawned[cs] = true;
+
+        // Final path: white guide line (galaxyId -1 → no mission enemies;
+        // it reads as a travel route, same visual language as the
+        // liberation path and completed missions).
+        createDiscoveryPathToPosition(
+            start.clone(), target.position.clone(),
+            0xffffff, 'Outer Systems', 'final', -1);
 
         playDeepDiscoverySound();
-        const gName = galaxyType ? galaxyType.name : ('Galaxy ' + g);
+        const targetName = target.userData.name || 'an outer system';
         if (typeof showIncomingTransmission === 'function') {
-            showIncomingTransmission('Mission Control - Stronghold Located',
-                `Outstanding work, Captain — both ${factionName} staging areas are destroyed.\n\n` +
-                `Long-range scans show their remaining forces retreating to the ${gName} Galaxy's black hole, ` +
-                `where three guardians now shield the core.\n\n` +
-                `Follow the new line. Break the guardians, clear the stragglers, and the ${gName} Galaxy is free.`,
-                loreData.color);
+            showIncomingTransmission('Mission Control - Sector Liberated',
+                `Outstanding work, Captain — both nebulas of this twin cluster are liberated.\n\n` +
+                `Long-range scans show hostile activity in the outer systems. ` +
+                `Nearest contact: the ${targetName}.\n\n` +
+                `Follow the white line onward. Chart it, and we'll light the way from there.`,
+                0xffffff);
         }
         if (typeof showAchievement === 'function') {
-            showAchievement('Black-Hole Stronghold Located!',
-                `${factionName} remnants are dug in at the ${gName} core — 3 guardians deployed. Path marked.`, true);
+            showAchievement('Twin Cluster Liberated!',
+                `Both nebulas secured. A white path now leads onward to the ${targetName}.`, true);
         }
-        console.log(`🕳️ Campaign arc: both twin missions for galaxy ${g} complete → black-hole path + 3 guardians`);
+        console.log(`🌌 Twin cluster ${cs} liberated → final path to ${targetName}`);
     });
 }
 
