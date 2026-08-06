@@ -308,9 +308,18 @@
         el.style.overflowWrap = 'normal';
         el.style.lineHeight = '1.05';
 
-        // Recentre on the corridor, not the viewport — keep translateX(-50%)
-        // because the arcadePop keyframes animate transform.
-        el.style.left = Math.round(band.center) + 'px';
+        // Prefer TRUE viewport centre — off-centre praise reads as a bug.
+        // The corridor centre sits left of screen centre because the
+        // right-hand NAVIGATION stack is wider than FLIGHT CONTROLS, so
+        // corridor-centring visibly shifted every call-out. Only fall back
+        // to the corridor centre when the fitted text physically cannot sit
+        // symmetric around the viewport centre without running under a
+        // panel. (Keep translateX(-50%) — arcadePop animates transform.)
+        const cvw = window.innerWidth;
+        const ccx = cvw / 2;
+        const fittedW = Math.min(el.scrollWidth, band.width) * SWELL;
+        const symmetricRoom = Math.min(band.right - ccx, ccx - band.left) * 2;
+        el.style.left = Math.round(fittedW + 8 <= symmetricRoom ? ccx : band.center) + 'px';
     }
 
     function _wrapArcadeText() {
