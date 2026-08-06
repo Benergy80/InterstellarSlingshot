@@ -640,41 +640,98 @@ if (typeof window !== 'undefined') window.__quality = _quality;
 // median-driven _quality would never see) rather than the median.
 //   - starts at min(devicePixelRatio, 1.5), same cap the renderer boots with
 //   - steps DOWN one rung after p95 > ~20ms held for 3+ seconds
-//   - steps UP one rung after p95 stays comfortably < ~14ms for 10+ seconds
+//   - steps UP one rung after p95 stays comfortably under the display's
+//     vsync floor for 10+ seconds (refresh-aware — see refreshMs below)
 //   - a 15s cooldown after ANY step (up or down) blocks the next step, so a
 //     borderline machine can't ping-pong between two rungs every few seconds
+// STEPS is a nominal ladder in dpr units; on any given screen it gets
+// clamped to dprCap and deduped (_effectiveSteps) so every rung the
+// controller actually walks is a real, distinct change — otherwise a
+// dpr=1 desktop (dprCap=1) sees STEPS 1.5/1.25/1.0 all clamp to the same
+// 1.0 backing resolution and burns 2 no-op steps (and 2 cooldowns) before
+// anything visibly changes.
 // Set window.__resolutionLock to a pixelRatio number to pin it manually.
 // Observability: window.__resolution.
 const _resolution = {
     STEPS: [1.5, 1.25, 1.0, 0.85, 0.7],
-    step: 0,            // index into STEPS; 0 = highest resolution
+    effectiveSteps: null, // lazily built, deduped-against-dprCap version of STEPS
+    step: 0,            // index into effectiveSteps; 0 = highest resolution
     dprCap: 0,           // min(devicePixelRatio, mobile?1:1.5) — set on first apply
     badSince: 0,         // performance.now() p95 first crossed the slow threshold, 0 = not currently bad
     goodSince: 0,        // performance.now() p95 first dropped under the fast threshold, 0 = not currently good
     lastStepAt: 0,        // performance.now() of the last step (15s cooldown gate)
     SLOW_MS: 20,
+    // FAST_MS is a fallback only, used until refreshMs is measured (see
+    // _probeRefreshInterval below). A static 14ms up-threshold is
+    // mathematically unreachable on any vsync'd 60Hz display, where the
+    // best achievable p95 is ~16.7ms — the up-path would just never fire.
     FAST_MS: 14,
+    refreshMs: 0,        // measured display refresh interval, 0 = not measured yet
     SLOW_HOLD_MS: 3000,
     FAST_HOLD_MS: 10000,
     COOLDOWN_MS: 15000,
 };
 if (typeof window !== 'undefined') window.__resolution = _resolution;
 
+// Builds (once) the actual ladder of distinct pixelRatios reachable on this
+// screen: each nominal STEPS rung clamped to dprCap, with consecutive
+// duplicates collapsed. See the dedupe note above.
+function _resolveEffectiveSteps() {
+    if (_resolution.effectiveSteps) return _resolution.effectiveSteps;
+    if (!_resolution.dprCap) {
+        _resolution.dprCap = Math.min(window.devicePixelRatio || 1,
+            window.__isMobileGPU ? 1 : 1.5);
+    }
+    const out = [];
+    for (const s of _resolution.STEPS) {
+        const v = Math.min(_resolution.dprCap, s);
+        if (out.length === 0 || out[out.length - 1] !== v) out.push(v);
+    }
+    _resolution.effectiveSteps = out;
+    return out;
+}
+
+// Measures the display's vsync interval by taking the minimum delta between
+// consecutive requestAnimationFrame timestamps over the first ~90 frames.
+// Frame time can never be BELOW the refresh interval under vsync (only
+// above it, when a frame is dropped/janky), so the running minimum
+// converges on the true interval regardless of load during the probe.
+// Used to make the resolution controller's step-UP threshold refresh-aware
+// instead of a static 14ms that's unreachable on a 60Hz screen (floor
+// ~16.7ms) or unnecessarily loose on a 120/144Hz one.
+function _probeRefreshInterval(samples, minDelta, lastT) {
+    return function tick(t) {
+        if (lastT) {
+            const d = t - lastT;
+            if (d > 0 && d < minDelta) minDelta = d;
+            samples++;
+        }
+        lastT = t;
+        if (samples < 90) {
+            requestAnimationFrame(_probeRefreshInterval(samples, minDelta, lastT));
+        } else {
+            _resolution.refreshMs = minDelta;
+            console.log(`Resolution: display refresh interval measured ~${minDelta.toFixed(2)}ms`);
+        }
+    };
+}
+if (typeof window !== 'undefined' && typeof requestAnimationFrame === 'function') {
+    requestAnimationFrame(_probeRefreshInterval(0, Infinity, 0));
+}
+
 function _applyResolutionStep(idx, why) {
+    const steps = _resolveEffectiveSteps();
+    idx = Math.max(0, Math.min(idx, steps.length - 1));
     _resolution.step = idx;
     _resolution.lastStepAt = performance.now();
     _resolution.badSince = 0;
     _resolution.goodSince = 0;
     if (renderer) {
-        if (!_resolution.dprCap) {
-            _resolution.dprCap = Math.min(window.devicePixelRatio || 1,
-                window.__isMobileGPU ? 1 : 1.5);
-        }
-        const pr = Math.min(_resolution.dprCap, _resolution.STEPS[idx]);
+        const pr = steps[idx];
         renderer.setPixelRatio(pr);
         const size = new THREE.Vector2();
         renderer.getSize(size);
-        console.log(`Resolution: pixelRatio ${pr.toFixed(2)} (step ${idx + 1}/${_resolution.STEPS.length}, ` +
+        console.log(`Resolution: pixelRatio ${pr.toFixed(2)} (step ${idx + 1}/${steps.length}, ` +
             `backing ${Math.round(size.x * pr)}x${Math.round(size.y * pr)}) — ${why}`);
     }
 }
@@ -686,19 +743,32 @@ function adjustResolution() {
     const perf = (typeof window !== 'undefined' && window.__perf) || null;
     if (!perf || perf.samples < 60) return;   // need real frame-time data
 
+    const steps = _resolveEffectiveSteps();
+
     if (typeof window !== 'undefined' && typeof window.__resolutionLock === 'number') {
-        const want = _resolution.STEPS.indexOf(window.__resolutionLock);
-        if (want >= 0 && want !== _resolution.step) _applyResolutionStep(want, 'manual lock');
+        // Nearest-match instead of exact indexOf: the requested pixelRatio
+        // may not survive dedupe against dprCap on this screen.
+        let want = 0, bestDiff = Infinity;
+        for (let i = 0; i < steps.length; i++) {
+            const diff = Math.abs(steps[i] - window.__resolutionLock);
+            if (diff < bestDiff) { bestDiff = diff; want = i; }
+        }
+        if (want !== _resolution.step) _applyResolutionStep(want, 'manual lock');
         return;
     }
 
     const now = performance.now();
     const p95 = perf.p95Ms;
+    // Refresh-aware up-threshold: a static 14ms is below the ~16.7ms floor
+    // any 60Hz vsync'd display can ever report, which makes the step-UP
+    // path mathematically unreachable there. Once the real refresh
+    // interval is measured, require p95 within ~2ms of that floor instead.
+    const fastMs = _resolution.refreshMs ? (_resolution.refreshMs + 2) : _resolution.FAST_MS;
 
     if (p95 > _resolution.SLOW_MS) {
         if (!_resolution.badSince) _resolution.badSince = now;
         _resolution.goodSince = 0;
-    } else if (p95 < _resolution.FAST_MS) {
+    } else if (p95 < fastMs) {
         if (!_resolution.goodSince) _resolution.goodSince = now;
         _resolution.badSince = 0;
     } else {
@@ -713,7 +783,7 @@ function adjustResolution() {
     if (now - _resolution.lastStepAt < _resolution.COOLDOWN_MS) return;
 
     if (_resolution.badSince && (now - _resolution.badSince) >= _resolution.SLOW_HOLD_MS &&
-        _resolution.step < _resolution.STEPS.length - 1) {
+        _resolution.step < steps.length - 1) {
         _applyResolutionStep(_resolution.step + 1, `p95 ${p95.toFixed(1)}ms sustained`);
     } else if (_resolution.goodSince && (now - _resolution.goodSince) >= _resolution.FAST_HOLD_MS &&
         _resolution.step > 0) {
@@ -796,7 +866,7 @@ function _perfHUDToggle(show) {
                 `frame   ${(p.medianMs || 0).toFixed(1)}ms (p95 ${(p.p95Ms || 0).toFixed(1)})\n` +
                 `script  ${(p.scriptMs || 0).toFixed(1)}ms\n` +
                 `quality ${q ? q.TIERS[q.tier].name : '?'}\n` +
-                `pxratio ${pr.toFixed(2)} (step ${r ? r.step + 1 : '?'}/${r ? r.STEPS.length : '?'})\n` +
+                `pxratio ${pr.toFixed(2)} (step ${r ? r.step + 1 : '?'}/${r ? _resolveEffectiveSteps().length : '?'})\n` +
                 (ri ? `draws   ${ri.calls}\ntris    ${(ri.triangles / 1000).toFixed(0)}k\npoints  ${(ri.points / 1000).toFixed(0)}k` : '');
         }, 1000);
     }
@@ -825,7 +895,14 @@ function adjustPerformance() {
     if (performance.now() - _quality.lastChange < 10000) return;
 
     const med = perf.medianMs;
-    if (med > 30) {          // sustained below ~33 fps
+    // Trigger at median > 20ms (was 30): the cheap, near-invisible
+    // fill-rate ladder (nebula point size / draw range) should absorb
+    // sustained load BEFORE the expensive, highly-visible whole-frame
+    // resolution controller spends its (much more noticeable) lever. The
+    // old 30ms trigger left a 15-30ms dead band that swallowed this game's
+    // actual steady-state median (21-27ms) for its entire session, so the
+    // fill-rate ladder never fired at all.
+    if (med > 20) {          // sustained below ~50 fps
         _quality.slowStreak++;
         _quality.fastStreak = 0;
         if (_quality.slowStreak >= 2 && _quality.tier < _quality.TIERS.length - 1) {

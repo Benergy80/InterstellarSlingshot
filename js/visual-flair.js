@@ -1710,7 +1710,19 @@ function warpStreakBurst(dir, speed, colA, colB, strength) {
 // strobe — whipScreenPulse already refuses to stack), and an explicit
 // streak-field drain so the filaments visibly SHRINK INTO POINTS instead
 // of fading transparent while still full length.
-function warpExitBeat(blackHole) {
+//
+// refSpeed (gameState.velocityVector-length units, same as the physics
+// exitRamp's toSpeed): the speed the ship actually had BEFORE this warp/
+// glide started. The 1s drain below is a flat timer, but game-physics'
+// exit ramp and this drain are two independently-timed easings converging
+// on the same target — a hitch (frame drop, a graze mid-ramp) can leave
+// actual velocity still elevated when the drain timer expires. Without a
+// speed check the field would hand back to the speed-driven envelope right
+// then and re-inflate off that still-high speed — the "one-second flourish
+// then silently still at warp" bug this whole beat exists to kill. So the
+// drain HOLDS (stays collapsed) past its 1s timer for as long as real speed
+// is still > 1.5x refSpeed, and only lets go once speed is actually back.
+function warpExitBeat(blackHole, refSpeed) {
     try {
         if (typeof window !== 'undefined' && typeof window.warpFovPulse === 'function') {
             window.warpFovPulse(-11, 700);
@@ -1726,6 +1738,7 @@ function warpExitBeat(blackHole) {
         _wsf.drainMs = 1000;
         _wsf.drainLen0 = (_wsf.mat) ? _wsf.mat.uniforms.uLen.value : 0;
         _wsf.drainOp0 = (_wsf.mat) ? _wsf.mat.uniforms.uOpacity.value : 0;
+        _wsf.drainRefSpeed = refSpeed || 0;
     } catch (e) {}
 }
 
@@ -1744,9 +1757,19 @@ function _updateWarpStreaks() {
     // speed-driven envelope below for ~1s so the streaks visibly SHRINK
     // INTO POINTS — length collapses faster than opacity, so the eye reads
     // "contracting to a dot" rather than "fading out while still a scratch".
+    //
+    // The 1s timer alone isn't the release condition: it's a floor. If real
+    // speed (gameState.velocityVector) is still more than 1.5x the ramp's
+    // captured entry speed (_wsf.drainRefSpeed) once the timer expires, the
+    // drain HOLDS at its fully-collapsed state instead of handing back to
+    // the speed-driven envelope below — which would otherwise re-inflate the
+    // field off whatever still-elevated speed the physics ramp hasn't
+    // finished catching up to yet.
     if (_wsf.draining) {
         const t = Math.min(1, (now - _wsf.drainT0) / _wsf.drainMs);
-        if (!_wsf.mesh || t >= 1) {
+        const _spdNow = gameState.velocityVector ? gameState.velocityVector.length() : 0;
+        const _overspeed = (_wsf.drainRefSpeed || 0) > 0 && _spdNow > _wsf.drainRefSpeed * 1.5;
+        if (!_wsf.mesh || (t >= 1 && !_overspeed)) {
             _wsf.draining = false;
             _wsf.env = 0;
             if (_wsf.mesh) _wsf.mesh.visible = false;

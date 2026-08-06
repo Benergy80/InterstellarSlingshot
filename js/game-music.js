@@ -66,26 +66,33 @@
   // largest transient (silence → hit).  `at` is the measured onset in
   // seconds; starting even 200 ms late makes a stinger read as sloppy, so
   // these are tuned to the transient, not to a round number.
+  // `hold` = how long the beat stays musically valid if the hit cannot fire
+  // the instant it is asked for (slice still buffering, spacing gate closed).
+  // A discovery bell still reads right a beat late; a warp-exit swell does
+  // not, because the thing it is scoring is already over.
   const STINGER_LEVEL = 0.80;           // stingers relative to the music slider
   const STINGERS = {
     // 41 dB jump out of near-silence — the biggest fanfare in the library.
-    liberation:      { file: 'Galaxy8.mp3',          at: 10.12, dur: 3.10, gain: 1.00, atk: 0.02, rel: 0.85, cool: 8000 },
+    liberation:      { file: 'Galaxy8.mp3',          at: 10.12, dur: 3.10, gain: 1.00, atk: 0.02, rel: 0.85, cool: 8000,  hold: 3000 },
     // Bright bell that rings out and decays to nothing — pure "you found it".
-    discovery:       { file: 'Galaxy 1.mp3',         at: 0.08,  dur: 2.20, gain: 0.78, atk: 0.02, rel: 0.65, cool: 6000 },
+    discovery:       { file: 'Galaxy 1.mp3',         at: 0.08,  dur: 2.20, gain: 0.78, atk: 0.02, rel: 0.65, cool: 6000,  hold: 3500 },
     // Heroic sustained lift — reads as resolution, not as a new threat.
-    missionComplete: { file: 'Elite Guardians.mp3',  at: 8.32,  dur: 2.60, gain: 0.90, atk: 0.02, rel: 0.70, cool: 6000 },
+    missionComplete: { file: 'Elite Guardians.mp3',  at: 8.32,  dur: 2.60, gain: 0.90, atk: 0.02, rel: 0.70, cool: 6000,  hold: 2500 },
     // 24 dB stab out of silence, menacing pulse — deliberately NOT cut from
     // Boss Fight.mp3 so it doesn't smear into the boss track crossfading in.
-    bossSpawn:       { file: 'Beware the Borg2.mp3', at: 7.22,  dur: 2.55, gain: 0.95, atk: 0.02, rel: 0.60, cool: 9000 },
+    bossSpawn:       { file: 'Beware the Borg2.mp3', at: 7.22,  dur: 2.55, gain: 0.95, atk: 0.02, rel: 0.60, cool: 9000,  hold: 1800 },
     // Low driving hit for heavyweight contact (Borg / elite arrival).
-    threat:          { file: 'Boss Fight.mp3',       at: 9.02,  dur: 2.00, gain: 0.82, atk: 0.03, rel: 0.55, cool: 15000 },
+    threat:          { file: 'Boss Fight.mp3',       at: 9.02,  dur: 2.00, gain: 0.82, atk: 0.03, rel: 0.55, cool: 15000, hold: 1000 },
     // Slow swell out of silence — the arrival breath on the far side of a
     // warp.  noDuck: this one IS the bloom, so it must not fight the bed it
     // is lifting; ducking here would flatten the exact moment of arrival.
-    warpExit:        { file: 'nebula5.mp3',          at: 4.05,  dur: 2.40, gain: 0.58, atk: 0.05, rel: 0.80, cool: 6000, noDuck: true },
+    warpExit:        { file: 'nebula5.mp3',          at: 4.05,  dur: 2.40, gain: 0.58, atk: 0.05, rel: 0.80, cool: 6000,  hold: 900, noDuck: true },
   };
   const STINGER_SPACING = 900;          // ms minimum gap between ANY two hits
   const STINGER_DUCK    = 0.30;         // sidechain: bed drops 30% under a hit
+  // How long a discovery keeps re-offering its bell to the mix if the hit
+  // could not be delivered.  Past this the moment has gone and we stop.
+  const DISCOVERY_HIT_WINDOW = 10000;
 
   // ─── 3. Warp riser / filter automation ────────────────────────────────────
   const FILTER_OPEN_HZ  = 20000;        // "no filter" resting position
@@ -189,6 +196,16 @@
     stingerBroken: {},    // { key: true } — file failed to load
     stingerGateUntil: 0,  // global spacing gate
     stingerTimers: {},    // { key: intervalId }
+    stingerLastFired: {}, // { key: ms of the last hit that actually sounded }
+    // Hits that could not fire the instant they were asked for (element
+    // still buffering, 900 ms spacing gate, a pause) wait here instead of
+    // being thrown away.  Retried every frame until they land or their
+    // musical window closes.  See deferStinger()/flushStingers().
+    stingerPending: [],   // [{ key, pos, deadline }]
+    stingerWarmed: false, // true once the bank has been asked to buffer
+    _warmTries: {},       // { key: nudge count } — drives the straggler escalation
+    _warmSweeps: 0,
+    _warmSweepTimer: null,
 
     // Event-edge trackers (poll-based, so no other file needs editing).
     seenBosses: null,     // Set of boss uuids already stingered
@@ -334,6 +351,11 @@
       st.loaded[key] = audio;
     });
     console.log('🎵 Soundtrack: registered ' + keys.length + ' tracks (metadata only)');
+
+    // The stinger bank comes up WITH the tracks, not 18 s into the session.
+    // Short delay so the track metadata requests get first crack at the
+    // connection; the seeks themselves are then staggered inside the bank.
+    setTimeout(() => warmStingerBank('preload'), 400);
   }
 
   // ─── Play / Crossfade ─────────────────────────────────────────────────────
@@ -573,22 +595,111 @@
     // Park the playhead on the transient as soon as duration is known: the
     // seek is what makes the browser buffer THAT part of the file, so the
     // hit is ready to fire instantly instead of streaming from byte zero.
+    // NOT once-only: an escalated warm calls load(), which resets the
+    // playhead to 0 and fires loadedmetadata again — we have to re-park.
     a.addEventListener('loadedmetadata', () => {
+      if (!a.paused) return;                    // never yank a hit mid-flight
       try { a.currentTime = spec.at; } catch (e) { /* ignore */ }
-    }, { once: true });
+    });
+    // The moment this hit actually has data, drain anything waiting on it.
+    // This is what makes a cold-start discovery land instead of vanishing.
+    a.addEventListener('canplaythrough', () => { flushStingers(Date.now()); });
     a.addEventListener('error', () => { st.stingerBroken[key] = true; }, { once: true });
     st.stingerEls[key] = a;
     return a;
   }
 
+  // Is the TRANSIENT itself buffered?  readyState alone lies here: a file
+  // parked at byte 0 reports HAVE_ENOUGH_DATA while the slice we actually
+  // fire — nine seconds in, for some of these — is not resident at all, and
+  // the seek at fire time then stalls and the hit lands late.
+  function bufferedAt(el, t) {
+    try {
+      const b = el.buffered;
+      for (let i = 0; i < b.length; i++) {
+        if (t >= b.start(i) - 0.01 && t + 0.35 < b.end(i)) return true;
+      }
+    } catch (e) { /* ignore */ }
+    return false;
+  }
+
+  function stingerArmed(key) {
+    const el = st.stingerEls[key];
+    const spec = STINGERS[key];
+    if (!el || !spec || st.stingerBroken[key]) return false;
+    if (el.readyState < 3) return false;
+    return bufferedAt(el, spec.at);
+  }
+
+  // Ask a hit to buffer.  Cheap and idempotent — safe to call on a timer.
   function warmStinger(key) {
     const spec = STINGERS[key];
     const el = stingerEl(key);
     if (!el || !spec || st.stingerBroken[key]) return;
+    if (stingerArmed(key)) return;               // already loaded and aimed
+    if (!el.paused) return;                      // mid-hit — do not disturb it
     try {
-      if (el.readyState >= 1) { el.currentTime = spec.at; }
-      else { el.load(); }
-    } catch (e) { /* ignore */ }
+      if (el.readyState >= 1) {
+        // Parking the playhead ON the transient is what nudges the media
+        // engine into fetching that region; harmless if already there.
+        if (Math.abs(el.currentTime - spec.at) > 0.02) el.currentTime = spec.at;
+        // Escalation for stragglers only: a hit that is still short of
+        // HAVE_FUTURE_DATA after a few polite nudges is allowed to fetch
+        // ahead.  We never do this for the whole bank up front — 6 × ~5 MB
+        // of eager decode is the documented cause of the cursor stutter
+        // that metadata-only preloading fixed.  And it is preload ONLY:
+        // load() here would throw away the buffer we just built.
+        if (el.readyState < 3) {
+          st._warmTries[key] = (st._warmTries[key] || 0) + 1;
+          if (st._warmTries[key] >= 4) el.preload = 'auto';
+        }
+      } else {
+        // readyState 0 = nothing loaded at all, so there is no buffer for
+        // load() to destroy.  This is the only place we may call it.
+        st._warmTries[key] = (st._warmTries[key] || 0) + 1;
+        el.load();
+      }
+    } catch (e) { /* ignore — a seek can throw while one is already in flight */ }
+  }
+
+  // Bring the whole bank up.  Called at preload() and again on the first
+  // user gesture, so the six hits are buffered long before the first
+  // discovery instead of 18 s into the session (which is what used to
+  // swallow the single most emotive beat of a playthrough).
+  function warmStingerBank(reason) {
+    if (st.stingerWarmed) return;
+    st.stingerWarmed = true;
+    const keys = Object.keys(STINGERS);
+    keys.forEach((k, i) => {
+      stingerEl(k);                                   // metadata starts flowing now
+      setTimeout(() => warmStinger(k), 150 + i * 200); // staggered seeks
+    });
+    if (!st._warmLogged) {
+      st._warmLogged = true;
+      console.log('🎵 Stingers: warming ' + keys.length + ' hits at ' + reason);
+    }
+    stingerWarmSweep();
+  }
+
+  // Keep after any hit that has not reached HAVE_FUTURE_DATA yet.  Stops
+  // as soon as the bank is hot (or after ~100 s, so a missing file cannot
+  // leave a timer running for the session).
+  function stingerWarmSweep() {
+    if (st._warmSweepTimer) return;   // a chain is already running
+    st._warmSweeps = 0;               // fresh chain, fresh budget
+    const tick = () => {
+      st._warmSweepTimer = null;
+      let cold = 0;
+      Object.keys(STINGERS).forEach(k => {
+        if (st.stingerBroken[k]) return;
+        if (!stingerArmed(k)) { cold++; warmStinger(k); }
+      });
+      st._warmSweeps++;
+      if (cold > 0 && st._warmSweeps < 40) {
+        st._warmSweepTimer = setTimeout(tick, 2500);
+      }
+    };
+    st._warmSweepTimer = setTimeout(tick, 2500);
   }
 
   function stopStinger(key) {
@@ -607,30 +718,106 @@
 
   function stopAllStingers() {
     Object.keys(STINGERS).forEach(stopStinger);
+    st.stingerPending.length = 0;   // a queued hit must not survive a pause
     st.fx.duckUntil = 0;
+  }
+
+  // ─── Deferred hits ────────────────────────────────────────────────────────
+  // A beat that cannot sound THIS instant (the slice is still buffering, the
+  // 900 ms spacing gate is closed, the game is paused for a frame) used to be
+  // dropped on the floor — and for discoveries the caller had already latched
+  // its "seen" flag, so that nebula never got its bell again all session.
+  // Now the request is parked and retried every frame until it lands or its
+  // musical window closes.  `hold` is per-spec: a discovery bell is still
+  // right a beat late, a warp-exit swell is not.
+  const STINGER_HOLD_DEFAULT = 1500;
+  const STINGER_MAX_PENDING  = 4;
+
+  function deferStinger(key, pos, now) {
+    const spec = STINGERS[key];
+    if (!spec) return false;
+    // One pending hit per key — the newest request wins.
+    for (let i = st.stingerPending.length - 1; i >= 0; i--) {
+      if (st.stingerPending[i].key === key) st.stingerPending.splice(i, 1);
+    }
+    if (st.stingerPending.length >= STINGER_MAX_PENDING) st.stingerPending.shift();
+    st.stingerPending.push({
+      key: key,
+      // Snapshot the position — the cloud/ship we were handed can move (or
+      // be disposed) before the hit actually fires.
+      pos: pos ? { x: pos.x, y: pos.y, z: pos.z } : null,
+      deadline: now + (spec.hold || STINGER_HOLD_DEFAULT),
+    });
+    warmStinger(key);
+    stingerWarmSweep();   // something is waiting on this bank — keep after it
+    return false;
+  }
+
+  function flushStingers(now) {
+    const q = st.stingerPending;
+    if (!q.length) return;
+    if (!st.enabled || st.muted) { q.length = 0; return; }
+    if (typeof gameState !== 'undefined' && gameState && gameState.paused) return;
+    for (let i = 0; i < q.length; i++) {
+      const p = q[i];
+      if (now > p.deadline || playStinger(p.key, p.pos, true)) {
+        q.splice(i, 1);
+        i--;
+      }
+    }
+  }
+
+  // Fire a beat, or put it on the books.  Returns true when the hit is
+  // either sounding now or guaranteed a retry — which is exactly the
+  // condition a caller needs before it latches a once-per-session flag.
+  function requestStinger(key, pos) {
+    if (playStinger(key, pos)) return true;
+    for (let i = 0; i < st.stingerPending.length; i++) {
+      if (st.stingerPending[i].key === key) return true;
+    }
+    return false;
   }
 
   // Fire a stinger.  `pos` is optional — pass a world position and the hit
   // is attenuated and panned toward it.
-  function playStinger(key, pos) {
+  // `_retry` is set when the call comes from the pending queue — those must
+  // never re-park themselves (the queue entry is already holding the beat).
+  function playStinger(key, pos, _retry) {
     const spec = STINGERS[key];
     if (!spec) return false;
+    // Hard no's: nothing is ever going to make these sound, so don't park.
     if (!st.enabled || st.muted) return false;
     if (st.stingerBroken[key]) return false;
-    if (typeof gameState !== 'undefined' && gameState && gameState.paused) return false;
 
     const now = Date.now();
-    if (now < st.stingerGateUntil) return false;              // global spacing
-    if (now < (st.stingerNext[key] || 0)) return false;       // per-type cooldown
+    // Per-type cooldown is measured in whole seconds — far longer than any
+    // hold window — so this really is "not this one", not "not yet".
+    if (now < (st.stingerNext[key] || 0)) return false;
+
+    // Soft no's: true right now, likely false a few frames from here.
+    const paused = (typeof gameState !== 'undefined' && gameState && gameState.paused);
+    if (paused) return _retry ? false : deferStinger(key, pos, now);
+    if (now < st.stingerGateUntil) {                          // global spacing
+      return _retry ? false : deferStinger(key, pos, now);
+    }
 
     const el = stingerEl(key);
     if (!el) return false;
-    // HAVE_FUTURE_DATA or better, otherwise the hit would land late — which
-    // reads worse than not playing it at all.  Warm it for next time.
-    if (el.readyState < 3) { warmStinger(key); return false; }
+    // The transient must be buffered, otherwise the hit lands late — which
+    // reads worse than not playing it at all.  Warm it and hold the beat:
+    // canplaythrough drains the queue the instant the slice is playable.
+    if (!stingerArmed(key)) {
+      warmStinger(key);
+      return _retry ? false : deferStinger(key, pos, now);
+    }
 
     st.stingerGateUntil = now + STINGER_SPACING;
     st.stingerNext[key] = now + (spec.cool || 6000);
+    // Timestamp of the last hit that ACTUALLY sounded.  Callers with a
+    // once-per-session flag compare against this instead of trusting a
+    // return value, so a beat is latched when it was heard — never when it
+    // was merely attempted, and never twice.
+    st.stingerLastFired[key] = now;
 
     const sg = spatialGain(pos);
     const peak = Math.max(0, Math.min(1, st.volume * STINGER_LEVEL * spec.gain * sg));
@@ -1016,6 +1203,9 @@
 
       const paused = (typeof gameState !== 'undefined' && gameState && gameState.paused);
       if (!paused && !st.muted) {
+        // Held beats get their shot every frame — a hit that was waiting on
+        // a buffering slice lands the moment the data arrives, not 18 s in.
+        flushStingers(now);
         updateWarpFx(now, dt);
         _slowAccum += dt;
         if (_slowAccum >= 0.15) {
@@ -1033,18 +1223,17 @@
   }
   requestAnimationFrame(adaptiveTick);
 
-  // Warm the stinger slices once the player is actually in the game — each
-  // one seeks to its transient, which is what makes the browser buffer that
-  // region.  Staggered so they never compete with the combat-track warm.
-  function warmStingersWhenPlaying() {
-    if (typeof gameState === 'undefined' || !gameState || !gameState.gameStarted) {
-      setTimeout(warmStingersWhenPlaying, 4000);
-      return;
-    }
-    const keys = Object.keys(STINGERS);
-    keys.forEach((k, i) => setTimeout(() => warmStinger(k), 18000 + i * 2500));
+  // The bank is warmed at preload() and again on the first user gesture, so
+  // by the time anyone can trigger a beat the slices are already buffered.
+  // A gesture is also the point where a browser that was withholding media
+  // data will hand it over, so re-nudge anything still cold there.
+  function firstGestureWarm() {
+    warmStingerBank('first gesture');
+    Object.keys(STINGERS).forEach(warmStinger);
   }
-  setTimeout(warmStingersWhenPlaying, 6000);
+  ['pointerdown', 'keydown', 'touchstart'].forEach(evt => {
+    window.addEventListener(evt, firstGestureWarm, { once: true, passive: true });
+  });
 
   // ─── Context detection ────────────────────────────────────────────────────
   // Called every ~500ms from the game loop to pick the right track based on
@@ -1144,15 +1333,30 @@
       play(nebulaKey);
       st.lastNebulaIdx = nebulaIdx;
       // DISCOVERY FLASH — first time this nebula's music area is entered.
-      if (typeof window !== 'undefined' && typeof window.flashEventText === 'function') {
-        if (!st._discoveredNebulas) st._discoveredNebulas = {};
-        if (!st._discoveredNebulas[nebulaIdx]) {
-          st._discoveredNebulas[nebulaIdx] = true;
+      // The banner and the bell latch SEPARATELY: showing the banner twice
+      // is a bug, but a bell that could not sound must stay on the books
+      // and be re-offered on the next tick.  Latching them together is what
+      // used to lose the first discovery of a run permanently.
+      if (!st._discoveredNebulas) st._discoveredNebulas = {};
+      if (!st._stungNebulas) st._stungNebulas = {};
+      if (!st._discoveredNebulas[nebulaIdx]) {
+        st._discoveredNebulas[nebulaIdx] = Date.now();
+        if (typeof window !== 'undefined' && typeof window.flashEventText === 'function') {
           const _n = (typeof nebulaClouds !== 'undefined' && nebulaClouds[nebulaIdx] && nebulaClouds[nebulaIdx].userData) ? nebulaClouds[nebulaIdx].userData : null;
           const _nm = _n ? (_n.mythicalName || _n.name || 'Unknown Nebula') : 'Unknown Nebula';
           window.flashEventText('NEBULA DISCOVERED', '#88ddff', String(_nm).toUpperCase());
-          // Musical hit on the same frame as the banner, panned toward the cloud.
-          playStinger('discovery',
+        }
+      }
+      if (!st._stungNebulas[nebulaIdx]) {
+        const _seen = st._discoveredNebulas[nebulaIdx] || 0;
+        if ((st.stingerLastFired.discovery || 0) >= _seen) {
+          st._stungNebulas[nebulaIdx] = true;      // heard — this beat is done
+        } else if (Date.now() - _seen > DISCOVERY_HIT_WINDOW) {
+          st._stungNebulas[nebulaIdx] = true;      // the moment has passed
+        } else {
+          // Musical hit on the same frame as the banner, panned toward the
+          // cloud.  Re-offered every tick until it is actually heard.
+          requestStinger('discovery',
             (typeof nebulaClouds !== 'undefined' && nebulaClouds[nebulaIdx])
               ? nebulaClouds[nebulaIdx].position : null);
         }
@@ -1167,14 +1371,26 @@
       st.lastGalaxyId = gId;
       // DISCOVERY FLASH — first entry of a DISTANT galaxy's music area
       // (gId 7 is the home Sgr A*/Sol region — never "discovered").
-      if (gId !== 7 && typeof window !== 'undefined' && typeof window.flashEventText === 'function') {
+      if (gId !== 7) {
         if (!st._discoveredGalaxies) st._discoveredGalaxies = {};
+        if (!st._stungGalaxies) st._stungGalaxies = {};
         if (!st._discoveredGalaxies[gId]) {
-          st._discoveredGalaxies[gId] = true;
-          const _gt = (typeof galaxyTypes !== 'undefined') ? galaxyTypes[gId] : null;
-          const _gm = _gt ? ((_gt.name || 'Unknown') + ' GALAXY · ' + (_gt.faction || '')) : ('GALAXY ' + gId);
-          window.flashEventText('GALAXY DISCOVERED', '#ffcc66', String(_gm).toUpperCase());
-          playStinger('discovery', null);
+          st._discoveredGalaxies[gId] = Date.now();
+          if (typeof window !== 'undefined' && typeof window.flashEventText === 'function') {
+            const _gt = (typeof galaxyTypes !== 'undefined') ? galaxyTypes[gId] : null;
+            const _gm = _gt ? ((_gt.name || 'Unknown') + ' GALAXY · ' + (_gt.faction || '')) : ('GALAXY ' + gId);
+            window.flashEventText('GALAXY DISCOVERED', '#ffcc66', String(_gm).toUpperCase());
+          }
+        }
+        // Same split latch as the nebula path — the bell keeps its own books.
+        if (!st._stungGalaxies[gId]) {
+          const _seen = st._discoveredGalaxies[gId] || 0;
+          if ((st.stingerLastFired.discovery || 0) >= _seen ||
+              Date.now() - _seen > DISCOVERY_HIT_WINDOW) {
+            st._stungGalaxies[gId] = true;
+          } else {
+            requestStinger('discovery', null);
+          }
         }
       }
       return;
@@ -1459,9 +1675,15 @@
       Object.keys(STINGERS).forEach(k => {
         const el = st.stingerEls[k];
         sting[k] = el
-          ? { ready: el.readyState, t: +el.currentTime.toFixed(2), vol: +el.volume.toFixed(3), playing: !el.paused }
+          ? { ready: el.readyState, t: +el.currentTime.toFixed(2), vol: +el.volume.toFixed(3),
+              playing: !el.paused,
+              // armed = the transient itself is buffered, which is the only
+              // thing that decides whether the hit fires on time.
+              armed: bufferedAt(el, STINGERS[k].at), pre: el.preload,
+              tries: st._warmTries[k] || 0 }
           : 'cold';
       });
+      sting._pending = st.stingerPending.map(p => p.key);
       if (!wa.ok) {
         return { bus: null, stingers: sting,
                  element: st.currentEl ? st.currentEl.volume : 0,

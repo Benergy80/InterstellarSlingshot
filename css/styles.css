@@ -254,6 +254,10 @@ body.ui-mode {
    of the way: each panel slides toward the screen edge it already hugs and
    scales to ~0.92 over the 250ms `transition: transform` declared on
    `.ui-panel` above, SHIP STATUS collapses to its three one-line vitals,
+   The slide distance (<=14px) is deliberately kept BELOW the panels' 16px
+   Tailwind anchor margin (top-4/left-4/right-4/bottom-4) so every glyph
+   stays inboard of the viewport edge — a half-retracted panel that clips
+   its own surviving text reads as broken chrome, not a cinematic yield.
    and the Flight Controls / Navigation / Map panels drop their bulk
    content down to a bare header. Opacity is pinned back to 1 here — the
    "yield" is 100% positional/content, so remaining text is always fully
@@ -265,23 +269,23 @@ body.ui-mode {
 
 :root.hud-geo-yield .ui-panel.title-header {
     transform: translateX(-50%) perspective(1000px) rotateX(2deg) translateZ(8px)
-               translateY(-46px) scale(0.92);
+               translateY(-14px) scale(0.92);
 }
 :root.hud-geo-yield .ui-panel.top-left {
     transform: perspective(1000px) rotateY(8deg) rotateX(-4deg) translateZ(10px)
-               translate3d(-46px, -34px, 0) scale(0.92);
+               translate3d(-14px, -14px, 0) scale(0.92);
 }
 :root.hud-geo-yield .ui-panel.bottom-left {
     transform: perspective(1000px) rotateY(6deg) rotateX(2deg) translateZ(8px)
-               translate3d(-46px, 34px, 0) scale(0.92);
+               translate3d(-14px, 14px, 0) scale(0.92);
 }
 :root.hud-geo-yield .ui-panel.top-right {
     transform: perspective(1000px) rotateY(-8deg) rotateX(-4deg) translateZ(10px)
-               translate3d(46px, -34px, 0) scale(0.92);
+               translate3d(14px, -14px, 0) scale(0.92);
 }
 :root.hud-geo-yield .ui-panel.bottom-right {
     transform: perspective(1000px) rotateY(-6deg) rotateX(3deg) translateZ(5px)
-               translate3d(46px, 34px, 0) scale(0.92);
+               translate3d(14px, 14px, 0) scale(0.92);
 }
 
 /* SHIP STATUS collapses to its three one-line vitals — velocity, energy,

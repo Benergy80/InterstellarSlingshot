@@ -277,6 +277,21 @@ function _updateShipThrusterCones(ship, thrusting) {
 function applyEnemyRotation(enemy, direction, speed) {    if (!enemy || !direction) return;
 
     try {
+        // FLIGHT-EULER ORDER. This function speaks heading/pitch/bank —
+        // it wants rotation.y to BE the compass heading. Under Three.js's
+        // default 'XYZ' order it is not: setFromQuaternion returns
+        // y = asin(-forward.x), permanently clamped to ±90°, with the
+        // heading's back half smuggled into x and z. Lerping that y toward
+        // a full-range atan2 heading is therefore nonsense whenever the
+        // ship faces sideways, and the x/z pair flips by ~π as it crosses
+        // the fold — the single-frame ~180° "snap" that made every
+        // maneuver illegible. 'YXZ' is the aviation order: y is the true
+        // heading over ±180°, x the pitch, z the bank. See
+        // _enemyOrientBegin, which installs it once per hull.
+        if (enemy.rotation && enemy.rotation.order !== 'YXZ' &&
+            typeof _enemyOrientBegin === 'function') {
+            _enemyOrientBegin(enemy);
+        }
         // Skip if not moving enough
         const movementMagnitude = Math.sqrt(direction.x * direction.x + direction.y * direction.y + direction.z * direction.z);
         if (movementMagnitude < 0.01) return;  // Increased threshold to reduce twitching
@@ -292,12 +307,19 @@ function applyEnemyRotation(enemy, direction, speed) {    if (!enemy || !directi
         // Calculate target rotation to face movement direction (trajectory)
         const lateralSpeed = Math.sqrt(direction.x * direction.x + direction.z * direction.z);
 
-        if (lateralSpeed > 0.01) {  // Only update yaw if moving laterally
-            // Yaw: Face the direction of horizontal movement
-            const targetYaw = Math.atan2(direction.x, direction.z);
+        if (lateralSpeed > 0.01) {
+            // Yaw: point the NOSE down the flight path. Every ship model in
+            // the game flies -Z forward (that is why the thruster cones mount
+            // at +Z, and why _applyEnemyFlightRoll rolls about local Z). The
+            // old atan2(x, z) aimed the ship's TAIL along its velocity — an
+            // exact 180° disagreement with _smoothEnemyLookAt, which runs a
+            // few lines later in the same tick and aims the nose. The two
+            // authorities then tugged the hull back and forth across a half
+            // turn every AI tick: that is the 178.9°-in-one-frame flip.
+            const targetYaw = Math.atan2(-direction.x, -direction.z);
 
             // Store previous target for smoothing
-            if (!enemy.userData.prevTargetYaw) {
+            if (enemy.userData.prevTargetYaw === undefined) {
                 enemy.userData.prevTargetYaw = targetYaw;
             }
 
@@ -306,14 +328,21 @@ function applyEnemyRotation(enemy, direction, speed) {    if (!enemy || !directi
             // enemies used to feel like they were flying through syrup —
             // the dwell timer already handles mode twitch, so this can be
             // much livelier without the jitter coming back.
-            enemy.userData.prevTargetYaw = THREE.MathUtils.lerp(enemy.userData.prevTargetYaw, targetYaw, 0.35);
+            // SHORTEST-PATH: a plain lerp between +179° and -179° travels
+            // 358° the wrong way round, so the smoothed aim itself used to
+            // manufacture half-turn snaps near due-south.
+            let _yawErr = targetYaw - enemy.userData.prevTargetYaw;
+            _yawErr = Math.atan2(Math.sin(_yawErr), Math.cos(_yawErr));
+            enemy.userData.prevTargetYaw += _yawErr * 0.35;
             enemy.userData.targetRotation.y = enemy.userData.prevTargetYaw;
         }
 
         // ENHANCED: Pitch based on vertical movement AND turns (more dynamic)
         if (lateralSpeed > 0.01) {
-            // Base pitch from vertical movement
-            const verticalPitch = -Math.atan2(direction.y, lateralSpeed) * 0.3;  // Increased from 0.15 to 0.3
+            // Base pitch from vertical movement. In 'YXZ' the nose is
+            // forward = (-sin y cos x, sin x, -cos y cos x), so climbing
+            // (+y) is POSITIVE pitch — the sign flips with the nose fix.
+            const verticalPitch = Math.atan2(direction.y, lateralSpeed) * 0.3;  // Increased from 0.15 to 0.3
 
             // Additional pitch during turns for more dynamic movement
             const currentYaw = enemy.rotation.y || 0;
@@ -361,7 +390,13 @@ function applyEnemyRotation(enemy, direction, speed) {    if (!enemy || !directi
         if (!enemy.rotation) enemy.rotation = new THREE.Euler();
 
         enemy.rotation.x = THREE.MathUtils.lerp(enemy.rotation.x || 0, enemy.userData.targetRotation.x, lerpFactor);
-        enemy.rotation.y = THREE.MathUtils.lerp(enemy.rotation.y || 0, enemy.userData.targetRotation.y, lerpFactor);
+        // Heading is an ANGLE, not a scalar: targetRotation.y accumulates
+        // freely (prevTargetYaw integrates a shortest-path error and can
+        // wander past ±π after a few full circuits) while rotation.y comes
+        // back from the quaternion inside ±π. Lerping the raw difference
+        // therefore commanded up to a full extra turn per tick. Step along
+        // the normalized error instead — same responsiveness, no wrap snap.
+        enemy.rotation.y = (enemy.rotation.y || 0) + normalizedYawDelta * lerpFactor;
         // ROLL AUTHORITY: while an evasive maneuver is flying, the maneuver
         // owns the roll axis. This lerp drags rotation.z back toward the
         // small trajectory bank every tick — at a 170° roll that is ~0.45
@@ -1114,17 +1149,28 @@ const _cfUpW = (typeof THREE !== 'undefined') ? new THREE.Vector3(0, 1, 0) : nul
 // Maneuver catalogue. `dur` is wall-clock ms — these are real flight
 // moves, not frame-counted animations, so they read identically on a
 // 45 Hz laptop and a 144 Hz desktop.
+// DURATIONS ARE A LEGIBILITY BUDGET, not a taste knob. The orientation
+// governor caps an evading hull at _GOV_RATE_EVADE (400°/s) and any roll it
+// has to clip is rotation the maneuver loses FOREVER — the roll is fed in as
+// per-tick deltas that are consumed whether or not they land, which is why
+// the old 780 ms barrel roll (peak ~700°/s through the ease) could never
+// finish and always looked like a stall. Each profile below is timed so its
+// PEAK roll rate sits just under the cap, so it completes exactly as written
+// and every degree of it is on screen.
 const _EVASIVE = {
     // Full 360° roll about the flight axis with a helical side-slip:
     // the classic "do a barrel roll" dodge. Net displacement returns to
     // the original flight path, so it dodges the shot without wrecking
-    // the enemy's approach.
-    barrel:    { dur: 780,  rollTurns: 1.0, lat: 1.00, vert: 0.55 },
+    // the enemy's approach. 360° / 1.3 s ≈ 277°/s mean, ~374°/s peak —
+    // a full second and a half of continuous, trackable rotation
+    // (~336°/s peak through the ease — inside the 360°/s envelope).
+    barrel:    { dur: 1450, rollTurns: 1.0, lat: 1.00, vert: 0.55 },
     // Half-roll inverted then pull through: a hard break that leaves the
     // enemy pointing somewhere else entirely. Used when actually hit.
-    splitS:    { dur: 980,  rollTurns: 0.5, lat: 1.35, vert: -1.15 },
+    // Each half-roll gets ~0.7 s → ~350°/s peak.
+    splitS:    { dur: 1650, rollTurns: 0.5, lat: 1.35, vert: -1.15 },
     // Two fast alternating jinks — the "I know you're tracking me" wiggle.
-    corkscrew: { dur: 1040, rollTurns: 0.0, lat: 0.85, vert: 0.60 }
+    corkscrew: { dur: 1800, rollTurns: 0.0, lat: 0.85, vert: 0.60 }
 };
 
 // Per-faction attack rhythm. `burst`/`gap` group the shots into a
@@ -1260,6 +1306,12 @@ if (typeof window !== 'undefined') {
 
 // Smooth 0..1 ease so the slide starts and finishes without a jerk.
 function _cfSmooth(p) { return p * p * (3 - 2 * p); }
+// Gentler ease for the ROLL specifically. Smoothstep peaks at 1.5x its mean
+// slope; blending in a linear term drops that to 1.35x, which is the
+// difference between a roll that fits inside the governor's envelope and one
+// that gets clipped at its fastest moment (and so never completes). Still
+// eases in and out — the ship still "rolls into" the move.
+function _cfRollEase(p) { return 0.30 * p + 0.70 * (p * p * (3 - 2 * p)); }
 
 // Advance the active maneuver. Returns the ROLL (radians about the ship's
 // own forward axis) that the maneuver wants this tick; the positional
@@ -1288,7 +1340,7 @@ function _stepEvasive(enemy) {
             // hull completes one full revolution.
             lat  = Math.sin(p * TAU) * m.lat;
             vert = (1 - Math.cos(p * TAU)) * m.vert;
-            roll = m.dir * m.rollTurns * TAU * _cfSmooth(p);
+            roll = m.dir * m.rollTurns * TAU * _cfRollEase(p);
             break;
         }
         case 'splitS': {
@@ -1297,9 +1349,12 @@ function _stepEvasive(enemy) {
             // The roll MUST land on a whole turn: it is applied as a
             // per-tick delta, so ending anywhere else would snap the hull
             // back through that angle in a single tick.
-            if (p < 0.40)      roll = m.dir * Math.PI * _cfSmooth(p / 0.40);
-            else if (p < 0.68) roll = m.dir * Math.PI;
-            else               roll = m.dir * (Math.PI + Math.PI * _cfSmooth((p - 0.68) / 0.32));
+            // Phase split widened (was 0.40 / 0.68) so each half-roll gets
+            // ~0.63 s of the longer 1.5 s move — ~385°/s peak, inside the
+            // governor's evade envelope, so both halves actually land.
+            if (p < 0.42)      roll = m.dir * Math.PI * _cfRollEase(p / 0.42);
+            else if (p < 0.55) roll = m.dir * Math.PI;
+            else               roll = m.dir * (Math.PI + Math.PI * _cfRollEase((p - 0.55) / 0.45));
             const pull = _cfSmooth(Math.max(0, (p - 0.18) / 0.82));
             lat  = pull * m.lat * m.dir;
             vert = pull * m.vert;
@@ -1310,7 +1365,12 @@ function _stepEvasive(enemy) {
             const env = Math.sin(Math.PI * p);        // fade in/out
             lat  = Math.sin(w) * m.lat * env;
             vert = Math.sin(w + Math.PI / 2) * m.vert * env;
-            roll = m.dir * Math.sin(w) * 1.45 * env;
+            // Amplitude 1.45 -> 0.85 over the longer 1.7 s: a sinusoidal
+            // roll's peak rate is amp*4π/dur, and 1.45 rad in 1.04 s was
+            // ~1000°/s — 2.5x the envelope, so the wag was being sheared
+            // flat every single time. 0.80 rad in 1.8 s peaks ~320°/s and
+            // reads as an actual wing-waggle.
+            roll = m.dir * Math.sin(w) * 0.80 * env;
             break;
         }
     }
@@ -1394,12 +1454,204 @@ function _applyEnemyFlightRoll(enemy, maneuverRoll) {
     }
 }
 
+// =============================================================================
+// ORIENTATION RATE GOVERNOR — "no maneuver is ever SEEN" is fixed here
+// -----------------------------------------------------------------------------
+// Nine behavior modes drive an enemy's orientation, and up to four separate
+// authorities write it inside a single AI tick (applyEnemyRotation's
+// heading/pitch/bank euler, _smoothEnemyLookAt's quaternion slerp,
+// _applyEnemyFlightRoll's rotateZ, plus the maneuver's own basis). None of
+// them owned a RATE. Whatever orientation came out the far end of the tick
+// was handed straight to the render glide as a target, so a decision could
+// resolve as a half-turn inside one 33 ms frame — a state change the player's
+// eye reads as a teleport, not a turn.
+//
+// This is the one governor between the AI's *intent* and the hull's *visual*
+// transform. It runs last, once per enemy per tick:
+//
+//   1. Reconstruct where the hull actually WAS when the tick began
+//      (userData._iFromRot — the render glide's start, i.e. the last thing
+//      the player saw).
+//   2. Measure the true geodesic angle to where the AI wants it.
+//   3. Convert that to deg/sec against the WALL CLOCK, clamp it to a flight
+//      envelope, and ramp the angular RATE (not the angle) so turns ease in
+//      and out. A break turn now has a beginning, a middle and an end.
+//   4. Slerp the hull that far and no further, then write back an euler in a
+//      representation continuous with the start value, so game-core's
+//      component-wise glide walks the short arc instead of a bogus one.
+//
+// Everything downstream is unchanged: still enemy.rotation, still the same
+// glide, no new meshes, no new draw calls, no per-frame hook.
+// =============================================================================
+
+// deg/sec ceilings. 240°/s ≈ 8°/frame at the 30 fps this build runs at —
+// fast enough for an arcade interceptor, slow enough that the eye tracks the
+// nose all the way round. A ship flying an evasive maneuver is ALLOWED to be
+// more violent; that is the whole point of the maneuver, and the profiles
+// below are tuned to sit just under this number so the roll never gets
+// clipped (a clipped roll loses that rotation permanently — the deltas are
+// consumed whether or not they are applied — which is exactly why the old
+// barrel roll stalled short of inverted).
+const _GOV_RATE_CRUISE = 240;
+const _GOV_RATE_EVADE  = 360;
+// Longest tick the governor will bill for. The render glide splits one
+// tick's rotation evenly across the interval's frames, so per-frame motion is
+// rate x frametime — already framerate-independent. The exception is a HITCH:
+// a 130 ms tick would hand the glide 1.6x the usual arc and the catch-up
+// lands as one outsized frame (measured: a 24.7 deg spike mid-barrel-roll).
+// Billing a hitch as 100 ms means a stuttering machine turns very slightly
+// slower rather than jumping.
+const _GOV_DT_MAX = 0.10;
+// deg/sec² . 900 takes ~0.27 s to wind up to full rate: the visible "load up"
+// at the start of a break turn. Maneuvers snap in much harder.
+const _GOV_ACCEL_CRUISE = 900;
+const _GOV_ACCEL_EVADE  = 2600;
+const _GOV_TAU  = Math.PI * 2;
+const _GOV_D2R  = Math.PI / 180;
+const _GOV_R2D  = 180 / Math.PI;
+
+const _govQA = (typeof THREE !== 'undefined') ? new THREE.Quaternion() : null;
+const _govQB = (typeof THREE !== 'undefined') ? new THREE.Quaternion() : null;
+const _govEu = (typeof THREE !== 'undefined') ? new THREE.Euler(0, 0, 0, 'YXZ') : null;
+
+// Shift `v` by whole turns until it sits closest to `ref`. Euler components
+// are periodic, so this changes the NUMBER without changing the rotation.
+function _govNearTurn(v, ref) {
+    return v + _GOV_TAU * Math.round((ref - v) / _GOV_TAU);
+}
+
+// Install the aviation euler order on a hull, once. Must run BEFORE the
+// tick's orientation writes; re-expresses the CURRENT orientation in the new
+// order (identical rotation) and re-bases the in-flight glide start with it
+// so the changeover is invisible.
+function _enemyOrientBegin(enemy) {
+    if (!enemy || !enemy.rotation || !enemy.quaternion) return;
+    if (enemy.rotation.order === 'YXZ') return;
+    enemy.rotation.setFromQuaternion(enemy.quaternion, 'YXZ');
+    const ud = enemy.userData;
+    if (ud && ud._iFromRot) {
+        ud._iFromRot.x = enemy.rotation.x;
+        ud._iFromRot.y = enemy.rotation.y;
+        ud._iFromRot.z = enemy.rotation.z;
+    }
+    if (ud && ud._iToRot) {
+        ud._iToRot.x = enemy.rotation.x;
+        ud._iToRot.y = enemy.rotation.y;
+        ud._iToRot.z = enemy.rotation.z;
+    }
+}
+
+function _enemyOrientGovern(enemy) {
+    if (!enemy || !_govQA || !enemy.userData) return;
+    const ud = enemy.userData;
+    const from = ud._iFromRot;
+    // No glide state = this hull drives its own transform (UFOs, BORG) or
+    // has not been ticked yet. Nothing to govern against.
+    if (!from) return;
+
+    // --- where the player last SAW it, and where the AI wants it ---------
+    _govEu.set(from.x, from.y, from.z, 'YXZ');
+    _govQA.setFromEuler(_govEu);          // start (rendered) orientation
+    _govQB.copy(enemy.quaternion);        // AI intent, after every authority
+
+    let dot = _govQA.dot(_govQB);
+    if (dot < 0) dot = -dot;              // q and -q are the same rotation
+    if (dot > 1) dot = 1;
+    const angRad = 2 * Math.acos(dot);
+    if (!(angRad > 1e-5)) { ud._govRate = 0; ud._govT = Date.now(); return; }
+
+    // --- wall-clock rate limiting ---------------------------------------
+    // Tick cadence is derived from the display refresh, so a frame budget
+    // would mean different physics on a 45 Hz laptop and a 144 Hz desktop.
+    // Seconds are the only honest unit here.
+    const now = Date.now();
+    let dt = (now - (ud._govT || 0)) / 1000;
+    if (!(dt > 0.004 && dt < 0.5)) dt = 0.066;   // first tick / tab-restore
+    if (dt > _GOV_DT_MAX) dt = _GOV_DT_MAX;      // absorb hitches, don't catch up
+    ud._govT = now;
+
+    const evading = !!ud._evade;
+    const capDeg   = evading ? _GOV_RATE_EVADE  : _GOV_RATE_CRUISE;
+    const accelDeg = evading ? _GOV_ACCEL_EVADE : _GOV_ACCEL_CRUISE;
+
+    const angDeg = angRad * _GOV_R2D;
+    const demanded = angDeg / dt;                       // deg/s to close it now
+    const wanted = demanded < capDeg ? demanded : capDeg;
+
+    // Ramp the RATE, not the angle. Spin-up is limited (the load-up at the
+    // start of a break); spin-down is 3x freer so a ship that has arrived
+    // stops rather than wallowing past.
+    let rate = ud._govRate || 0;
+    const rise = accelDeg * dt;
+    if (wanted > rate) rate = Math.min(wanted, rate + rise);
+    else               rate = Math.max(wanted, rate - rise * 3);
+    ud._govRate = rate;
+
+    let stepDeg = rate * dt;
+    if (stepDeg > angDeg) stepDeg = angDeg;
+    const t = stepDeg / angDeg;
+
+    if (t < 0.9999) {
+        _govQA.slerp(_govQB, t);
+        enemy.quaternion.copy(_govQA);   // syncs enemy.rotation via onChange
+    }
+
+    // --- euler continuity for the render glide ---------------------------
+    // game-core lerps rotation.x/.y/.z component-wise. That is only the
+    // short arc if the two endpoints are written in the same branch of the
+    // euler's double cover. Pick the branch that is genuinely nearest.
+    _govEu.setFromQuaternion(enemy.quaternion, 'YXZ');
+    const ax = _govNearTurn(_govEu.x, from.x);
+    const ay = _govNearTurn(_govEu.y, from.y);
+    const az = _govNearTurn(_govEu.z, from.z);
+    // The other YXZ solution for the SAME rotation (middle axis is X):
+    // (x, y, z) ≡ (π − x, y + π, z + π).
+    const bx = _govNearTurn(Math.PI - _govEu.x, from.x);
+    const by = _govNearTurn(_govEu.y + Math.PI, from.y);
+    const bz = _govNearTurn(_govEu.z + Math.PI, from.z);
+    const costA = Math.max(Math.abs(ax - from.x), Math.abs(ay - from.y), Math.abs(az - from.z));
+    const costB = Math.max(Math.abs(bx - from.x), Math.abs(by - from.y), Math.abs(bz - from.z));
+    const useB = costB < costA;
+    let rx = useB ? bx : ax, ry = useB ? by : ay, rz = useB ? bz : az;
+    const cost = useB ? costB : costA;
+
+    // Keep the roll counter from marching off to ±1e6 over a long session of
+    // rolls: rebase BOTH ends by the same whole turns, which is a no-op on
+    // the rendered arc.
+    if (rz > 12.6 || rz < -12.6) {
+        const k = Math.round(rz / _GOV_TAU) * _GOV_TAU;
+        rz -= k; from.z -= k;
+    }
+
+    enemy.rotation.set(rx, ry, rz, 'YXZ');
+
+    // Degenerate glide guard. Near nose-straight-up the euler is
+    // ill-conditioned: components can swing far wider than the real
+    // rotation, and the component-wise lerp would fly the hull through an
+    // orientation neither endpoint asked for. When the euler path is more
+    // than ~2.5x the true arc, skip the glide for this interval and hold the
+    // governed orientation — a bounded step of at most one tick's budget
+    // instead of an unbounded excursion.
+    const stepRad = stepDeg * _GOV_D2R;
+    if (cost > Math.max(0.5, stepRad * 2.5)) {
+        from.x = rx; from.y = ry; from.z = rz;
+    }
+}
+if (typeof window !== 'undefined') {
+    window._enemyOrientGovern = _enemyOrientGovern;
+    window._enemyOrientBegin  = _enemyOrientBegin;
+}
+
 // The render glide in game-core.js lerps enemy.rotation.x/.z component-wise
 // with NO shortest-path handling (only .y gets that). A roll that crosses
 // ±π therefore glides the LONG way round — a 6-radian counter-spin inside
 // one 33 ms interval, which reads as a hitch. Euler z and z±2π are the same
 // rotation, so nudging the glide's START value by a full turn removes the
 // discontinuity without changing a single orientation.
+// SUPERSEDED by _enemyOrientGovern's branch selection, which does this for
+// all three components and picks between both euler solutions. Kept because
+// it is exported/called defensively, but it is now a no-op when the governor
+// has run.
 function _unwrapEnemyInterpRoll(enemy) {
     const ud = enemy.userData;
     const from = ud._iFromRot;
@@ -1579,7 +1831,8 @@ function _updateEnemyCombatFeel(enemy) {
     }
     const roll = ud._evade ? _stepEvasive(enemy) : 0;
     _applyEnemyFlightRoll(enemy, roll);
-    _unwrapEnemyInterpRoll(enemy);
+    // (euler unwrap now handled by _enemyOrientGovern, which runs after
+    // every orientation authority for this hull — including this one.)
 }
 if (typeof window !== 'undefined') window._updateEnemyCombatFeel = _updateEnemyCombatFeel;
 
@@ -1680,6 +1933,11 @@ function updateEnemyBehavior() {
 
     enemies.forEach(enemy => {
         if (enemy.userData.health <= 0) return;
+
+        // Put this hull on the aviation euler order BEFORE anything writes
+        // its orientation this tick. One-time per enemy; see
+        // _enemyOrientBegin.
+        if (typeof _enemyOrientBegin === 'function') _enemyOrientBegin(enemy);
 
         const playerPos = camera.position.clone();
         const distanceToPlayer = playerPos.distanceTo(enemy.position);
@@ -1847,7 +2105,14 @@ function updateEnemyBehavior() {
             const patrolSpeed = Math.min(1.0, Math.max(0.2, baseSpeed * 0.8));  // Patrol at 80% speed, clamped to 0.2-1.0 (200-1000 km/s)
             updatePatrolBehavior(enemy, playerPos, patrolSpeed, Date.now() * 0.001);
         }
-        
+
+        // LAST WORD ON ORIENTATION. Everything above wrote where the AI
+        // *wants* the hull pointed; this converts that intent into a turn
+        // the eye can follow. Must stay the final orientation write in the
+        // tick — game-core snapshots enemy.rotation as the glide target the
+        // instant updateEnemyBehavior returns.
+        if (typeof _enemyOrientGovern === 'function') _enemyOrientGovern(enemy);
+
     });
     
     // Update combat status for UI
