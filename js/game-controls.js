@@ -6788,6 +6788,19 @@ function checkGuardianVictory() {
                 if (_core) {
                     const _woo = (typeof window !== 'undefined' && window.worldOriginOffset) || { x: 0, y: 0, z: 0 };
                     const _deep = new THREE.Vector3(78000 - _woo.x, 2000 - _woo.y, 8000 - _woo.z);
+                    // AT MOST ONE deepspace line: each liberation used to add
+                    // another green line (up to 8 by campaign's end). Retire
+                    // the previous one — the invitation simply moves to the
+                    // freshest freed core.
+                    if (typeof discoveryPaths !== 'undefined' && typeof _disposeDiscoveryPath === 'function') {
+                        for (let _di = discoveryPaths.length - 1; _di >= 0; _di--) {
+                            const _dud = discoveryPaths[_di] && discoveryPaths[_di].line && discoveryPaths[_di].line.userData;
+                            if (_dud && _dud.pathType === 'deepspace') {
+                                _disposeDiscoveryPath(discoveryPaths[_di]);
+                                discoveryPaths.splice(_di, 1);
+                            }
+                        }
+                    }
                     // galaxyId -1: no mission-enemy snapshot/relocation — this
                     // line is an invitation, not a tracked mission.
                     createDiscoveryPathToPosition(_core.position.clone(), _deep, 0x00ff66, 'Deep Space', 'deepspace', -1);

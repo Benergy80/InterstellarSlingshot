@@ -5,6 +5,48 @@ The game features a structured 8-galaxy liberation campaign with clear phases an
 
 ---
 
+## 🧭 The Ideal Player Journey (canonical — demo follows this)
+
+The journey is a single thread of lines. **Line language:** colored dashed =
+the one active mission; white = travel guidance or a completed mission;
+green = the single optional deep-space expedition.
+
+1. **Liberate Sagittarius A\*** — fight the opening set-piece at the local
+   core. On liberation, the **white liberation path** appears: Sgr A\* → the
+   nearest twin nebula cluster. (A single green optional deep-space line may
+   also appear at the freed core; at most one exists at any time.)
+2. **Follow the white line** to the twin cluster — two nebulas a few
+   thousand units apart (`userData.cluster` pairs them).
+3. **Chart the first nebula** — fly within 1,000u of its core. Its
+   **path of discovery** opens: a faction-colored dashed line FROM that
+   nebula, brightening toward its destination, with a lore transmission
+   whose faction, backstory, and enemies all belong to that nebula
+   (`GALAXY_FORMATION_NEBULA_MAP`: Olympus→Federation … Chronos→Vulcan).
+4. **Follow the colored line to the enemies from the lore** — 7+ hostiles
+   of that faction are anchored at the endpoint. Clear them, defeat the
+   boss that surfaces, and **the path turns white** (`MISSION_COMPLETE_COLOR`).
+5. **Chart the twin** — the second nebula's path was locked while the first
+   mission was active; approach its core now and repeat steps 3–4.
+6. **Twin cluster liberated** — the moment both cluster-mates' paths are
+   white, the **final white path** opens from the pair (anchored at the
+   nebula nearest the player) onward to the nearest uncharted **outer
+   system** nebula (exotic/distant).
+7. **Follow it outward** — charting that outer nebula opens ITS mission
+   path, and the loop continues through the outer systems while the
+   per-galaxy liberation phases (clear → boss → guardians) tick toward the
+   8-galaxy victory.
+
+**Discovery gates** (all in `checkForNebulaDeepDiscovery`, `js/game-physics.js`):
+- Only the **nearest** undiscovered nebula may trigger — cluster-mates
+  inside each other's radius can't co-fire.
+- Minimum **8 seconds** between discoveries — warp flybys can't burst-open
+  paths.
+- **One active mission at a time** — no new discovery while any mission
+  path is still colored. Guide/optional lines (`galaxyId: -1` — 'final',
+  'deepspace') never block.
+
+---
+
 ## 🌌 Galaxy Structure
 
 **8 Galaxies (Twin-Core System)**
