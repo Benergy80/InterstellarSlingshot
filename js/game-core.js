@@ -623,9 +623,20 @@ const _quality = {
         //          game is fill-rate bound at its worst)
         // cullScale: distance-culling range factor — distance-LOD for the
         //          dense-core draw-call load (planets/asteroids/comets)
-        { name: 'normal',    ptScale: 1.0,  drawScale: 1.0, cullScale: 1.0  },
-        { name: 'optimized', ptScale: 0.85, drawScale: 0.8, cullScale: 0.85 },
-        { name: 'minimal',   ptScale: 0.7,  drawScale: 0.6, cullScale: 0.6  },
+        // drawCallBudget: max GL draw calls/frame this tier tolerates before
+        // the DRAW-CALL BUDGET culler (below _resolution) starts suppressing
+        // the farthest sub-CULL_TRI_MAX-triangle decorative draws. This is
+        // the THIRD, orthogonal lever ptScale/drawScale/cullScale above are
+        // NOT: those attack fill rate (fragments/pixels), which a
+        // scene-drift-controlled A/B showed moves this game's frame time
+        // ~10% even at a 51% backing-store cut. The game is draw-CALL bound
+        // (2255 calls/frame for 335k tris in 11-hostile combat, 811 of them
+        // ≤100 tris, 329 ≤12 — nameplates/reticles/wireframe shield
+        // shells/debris chatter/glow quads), so this tier axis targets
+        // SUBMISSION COUNT directly instead.
+        { name: 'normal',    ptScale: 1.0,  drawScale: 1.0, cullScale: 1.0,  drawCallBudget: 900 },
+        { name: 'optimized', ptScale: 0.85, drawScale: 0.8, cullScale: 0.85, drawCallBudget: 600 },
+        { name: 'minimal',   ptScale: 0.7,  drawScale: 0.6, cullScale: 0.6,  drawCallBudget: 400 },
     ],
     tier: 0,
     slowStreak: 0,
@@ -832,6 +843,252 @@ function _applyQualityTier(idx, why) {
         `nebula draw ×${t.drawScale}, cull ×${t.cullScale}) — ${why}`);
 }
 
+// =============================================================================
+// DRAW-CALL BUDGET — small-object culler
+// =============================================================================
+// Root-cause fix for the gap the fill-rate/resolution ladders above cannot
+// touch: this game is draw-CALL bound, not fill-rate bound. A scene-drift-
+// controlled interleaved A/B (24 alternations, 1112 frames) found cutting
+// the backing store 51% moved mean frame time only 10.8% and p95 only 1.2%
+// — GPU/driver time is dominated by ~69,000 draw SUBMISSIONS/sec through
+// ANGLE-on-Metal, not pixels shaded. In 11-hostile combat: 2255 draw
+// calls/frame for 335k triangles (~148 tris/call), of which 811 calls carry
+// ≤100 triangles and 329 carry ≤12 — nameplates, reticles, wireframe shield
+// shells, asteroid/debris chatter, per-object glow quads, all created by
+// other systems this file doesn't own and so can't merge/instance at the
+// source. Rides the SAME _quality.tier index above (drawCallBudget per
+// tier) rather than adding a 4th independent hysteresis loop that could
+// fight the other two.
+//
+// Mechanism: every SCAN_INTERVAL_MS, walk the live scene and rank every
+// Mesh/Sprite with ≤CULL_TRI_MAX triangles AND an exclusively-own (non-
+// shared) material by distance from the camera. When live
+// renderer.info.render.calls exceeds the current tier's budget, suppress
+// the FARTHEST such draws first via material.visible = false — a flag
+// grepped clean of any other use in this codebase, so it can never fight
+// another file's object.visible-driven game logic, raycasting/hit-testing,
+// or targeting: position, object.visible, userData, everything else stays
+// untouched, only the GL submission for that one mesh is skipped. Anything
+// within PROTECT_DIST (which exceeds gameState.targetLock.range) is never a
+// candidate at all, so the player's current target is always fully intact.
+// Restored nearest-hidden-first the instant the tier stops needing them.
+// Observability: window.__drawBudget. Disable with window.__drawBudgetLock
+// = false; pin an explicit budget with window.__drawBudgetLock = <number>.
+const _drawBudget = {
+    enabled: true,
+    CULL_TRI_MAX: 150,       // only the sub-100-ish-tri decorative long tail
+                              // the audit measured — never a gameplay mesh
+    PROTECT_DIST: 450,       // > targetLock.range (400): current target safe
+    SCAN_INTERVAL_MS: 260,
+    MAX_STEP_PER_SCAN: 60,   // rate-limited per SCAN, not per frame (see the
+                              // scan-cadence gate around the mutation step
+                              // below) — this caps the pace at ~230
+                              // objects/sec, not 60×60fps
+    STALL_LIMIT: 3,          // consecutive scans with no meaningful
+                              // improvement before giving up on THIS cycle
+                              // of over-budget — see stallStreak below
+    lastScanAt: 0,
+    candidates: [],          // [{obj, mat, dist}], nearest-first, rebuilt per scan
+    hidden: new Set(),       // objects currently draw-suppressed by this system
+    budget: 900,
+    lastCalls: 0,
+    stallStreak: 0,
+    overAtLastScan: 0,
+    // Diagnostics from the last scan: how big the raw sub-CULL_TRI_MAX,
+    // on-screen population is BEFORE the shared-material safety filter, and
+    // how many were excluded because their material is shared with another
+    // object (unsuppressible without corrupting that other object's
+    // visibility — see the comment at the filter site). A large gap here
+    // means most of the remaining small-draw load is architecturally
+    // unreachable from this lever and needs the source-file fix (merge/
+    // instance at creation) the audit also called for.
+    onScreenSmallTriTotal: 0,
+    sharedMaterialSkipped: 0,
+};
+if (typeof window !== 'undefined') window.__drawBudget = _drawBudget;
+let _dbTmpVec = null;
+let _dbFrustum = null;
+let _dbProjScreenMatrix = null;
+
+function _restoreDrawBudgetObject(o) {
+    if (o.material) o.material.visible = true;
+    _drawBudget.hidden.delete(o);
+}
+
+// Rebuilds the candidate list AND reconciles previously-hidden objects that
+// drifted inside PROTECT_DIST (player flew toward one), were removed from
+// the scene, or were hidden by other game logic in the meantime — without
+// this reconciliation pass, an object that ages out of the fresh candidate
+// list while still flagged hidden would stay invisible forever.
+//
+// Candidates are additionally required to intersect the CURRENT camera
+// frustum. Without this, the scan matches every sub-CULL_TRI_MAX object
+// anywhere in the loaded universe (thousands, across systems the player
+// isn't even near) — none of those off-screen ones are contributing a draw
+// call in the first place (three.js frustum-culls them before
+// renderer.info.render.calls), so hiding them buys nothing, yet the control
+// loop below would keep "trying" more of them every scan since the call
+// count never budges — the exact runaway that first-pass testing caught
+// (5472/5579 candidates hidden chasing an overage the pool couldn't fix).
+// Frustum-gating keeps the candidate pool to what's actually on screen, so
+// every hide has a real, measurable effect and the loop converges.
+function _scanDrawBudgetCandidates() {
+    if (!scene || !camera || typeof THREE === 'undefined') return;
+    if (!_dbTmpVec) _dbTmpVec = new THREE.Vector3();
+    if (!_dbFrustum) _dbFrustum = new THREE.Frustum();
+    if (!_dbProjScreenMatrix) _dbProjScreenMatrix = new THREE.Matrix4();
+    const camPos = camera.position;
+
+    camera.updateMatrixWorld();
+    _dbProjScreenMatrix.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+    _dbFrustum.setFromProjectionMatrix(_dbProjScreenMatrix);
+
+    _drawBudget.hidden.forEach((o) => {
+        if (!o.parent) { _drawBudget.hidden.delete(o); return; }
+        if (!o.visible) { _restoreDrawBudgetObject(o); return; }
+        const d = o.getWorldPosition(_dbTmpVec).distanceTo(camPos);
+        if (d < _drawBudget.PROTECT_DIST) { _restoreDrawBudgetObject(o); return; }
+        // Left the frustum since it was hidden (e.g. the ship turned away)
+        // — restore it now rather than let it sit hidden-and-untracked; the
+        // scan below won't re-offer it as a candidate while it's off-screen.
+        let onScreen = true;
+        try { onScreen = _dbFrustum.intersectsObject(o); } catch (e) { onScreen = true; }
+        if (!onScreen) _restoreDrawBudgetObject(o);
+    });
+
+    const matUseCount = new Map();
+    const raw = [];
+    scene.traverse((o) => {
+        if (!o.visible || o === camera) return;
+        if (!(o.isMesh || o.isSprite)) return;
+        const mat = o.material;
+        if (!mat || Array.isArray(mat)) return; // multi-material: skip, too risky to manage
+        matUseCount.set(mat.uuid, (matUseCount.get(mat.uuid) || 0) + 1);
+
+        let tris = o.userData.__dbTris;
+        if (tris === undefined) {
+            if (o.isSprite) {
+                tris = 2; // fixed billboard quad
+            } else {
+                const geo = o.geometry;
+                if (!geo) tris = Infinity;
+                else if (geo.index) tris = geo.index.count / 3;
+                else if (geo.attributes && geo.attributes.position) tris = geo.attributes.position.count / 3;
+                else tris = Infinity;
+            }
+            o.userData.__dbTris = tris;
+        }
+        if (tris > _drawBudget.CULL_TRI_MAX) return;
+        raw.push(o);
+    });
+
+    const out = [];
+    let onScreenSmallTriTotal = 0;
+    let sharedMaterialSkipped = 0;
+    for (let i = 0; i < raw.length; i++) {
+        const o = raw[i];
+        const mat = o.material;
+        const d = o.getWorldPosition(_dbTmpVec).distanceTo(camPos);
+        if (d < _drawBudget.PROTECT_DIST) continue;
+        let onScreen = true;
+        try { onScreen = _dbFrustum.intersectsObject(o); } catch (e) { onScreen = true; }
+        if (!onScreen) continue; // off-screen: not contributing a draw call right now
+        onScreenSmallTriTotal++;
+        // A material shared across multiple objects can't be solo-suppressed
+        // — flipping .visible on it would hide every object using it, not
+        // just this one candidate. Skip; only exclusively-owned materials
+        // (the common case for per-object glow/nameplate/shell instances,
+        // which already carry per-instance opacity/color state) qualify.
+        if (matUseCount.get(mat.uuid) !== 1) { sharedMaterialSkipped++; continue; }
+        out.push({ obj: o, mat, dist: d });
+    }
+    out.sort((a, b) => a.dist - b.dist); // nearest first
+    _drawBudget.candidates = out;
+    _drawBudget.onScreenSmallTriTotal = onScreenSmallTriTotal;
+    _drawBudget.sharedMaterialSkipped = sharedMaterialSkipped;
+}
+
+// Called once per rendered frame, AFTER gameRender() so renderer.info
+// reflects the draw calls that frame actually submitted, but the actual
+// hide/restore MUTATION only happens on the same SCAN_INTERVAL_MS cadence
+// as the candidate rescan (not every frame) — mutating every frame at 60fps
+// gave the loop no time to observe each step's effect before piling on the
+// next one, which was the other half of the runaway first-pass testing
+// caught. Reads take effect on the NEXT render, same reactive-next-frame
+// pattern as adjustResolution()/adjustPerformance() above.
+function _enforceDrawBudget() {
+    if (typeof window === 'undefined' || !renderer || !renderer.info || !scene || !camera) return;
+    if (!gameState.gameStarted) return;
+
+    // Kept live even when locked/disabled below, so the HUD and any A/B
+    // measurement against this system read a real, current number instead
+    // of a stale one frozen at the moment it was switched off.
+    _drawBudget.lastCalls = renderer.info.render.calls;
+
+    if (window.__drawBudgetLock === false) {
+        if (_drawBudget.hidden.size) {
+            _drawBudget.hidden.forEach((o) => { if (o.material) o.material.visible = true; });
+            _drawBudget.hidden.clear();
+        }
+        return;
+    }
+    if (!_drawBudget.enabled) return;
+
+    _drawBudget.budget = (typeof window.__drawBudgetLock === 'number')
+        ? window.__drawBudgetLock
+        : ((_quality.TIERS[_quality.tier] && _quality.TIERS[_quality.tier].drawCallBudget) || 900);
+
+    const now = performance.now();
+    if (now - _drawBudget.lastScanAt < _drawBudget.SCAN_INTERVAL_MS) return;
+    _drawBudget.lastScanAt = now;
+    _scanDrawBudgetCandidates();
+
+    const cands = _drawBudget.candidates;
+    const over = _drawBudget.lastCalls - _drawBudget.budget;
+
+    if (over > 0) {
+        // Stall breaker: if consecutive scans aren't meaningfully reducing
+        // the overage (the remaining gap is coming from non-candidate,
+        // un-suppressible draws — big ships, planets, protected near
+        // objects, shared-material batches), stop escalating instead of
+        // marching through the entire on-screen candidate pool for no
+        // return. Resets the moment the overage actually improves.
+        if (over >= _drawBudget.overAtLastScan - 5) {
+            _drawBudget.stallStreak++;
+        } else {
+            _drawBudget.stallStreak = 0;
+        }
+        _drawBudget.overAtLastScan = over;
+        if (_drawBudget.stallStreak >= _drawBudget.STALL_LIMIT) return;
+
+        if (!cands.length) return;
+        // Hide farthest-first: the objects contributing fewest screen pixels
+        // per draw call go first.
+        let need = Math.min(over, _drawBudget.MAX_STEP_PER_SCAN);
+        for (let i = cands.length - 1; i >= 0 && need > 0; i--) {
+            const c = cands[i];
+            if (_drawBudget.hidden.has(c.obj) || !c.mat.visible) continue;
+            c.mat.visible = false;
+            _drawBudget.hidden.add(c.obj);
+            need--;
+        }
+    } else {
+        _drawBudget.stallStreak = 0;
+        _drawBudget.overAtLastScan = 0;
+        if (over < -20 && _drawBudget.hidden.size && cands.length) {
+            // Comfortable headroom: restore nearest-hidden first.
+            let restore = Math.min(-over, _drawBudget.MAX_STEP_PER_SCAN);
+            for (let i = 0; i < cands.length && restore > 0; i++) {
+                const c = cands[i];
+                if (!_drawBudget.hidden.has(c.obj)) continue;
+                c.mat.visible = true;
+                _drawBudget.hidden.delete(c.obj);
+                restore--;
+            }
+        }
+    }
+}
+
 // PERF HUD — in-engine measurement overlay. Toggle from the console with
 // window.__perfHUD() (or __perfHUD(false) to hide), or load the page with
 // ?perf=1. Shows the live __perf stats, quality tier, and renderer.info
@@ -861,13 +1118,15 @@ function _perfHUDToggle(show) {
             const r = window.__resolution;
             const pr = renderer ? renderer.getPixelRatio() : 0;
             const ri = (renderer && renderer.info) ? renderer.info.render : null;
+            const db = window.__drawBudget;
             el.textContent =
                 `fps     ${p.fps || 0}\n` +
                 `frame   ${(p.medianMs || 0).toFixed(1)}ms (p95 ${(p.p95Ms || 0).toFixed(1)})\n` +
                 `script  ${(p.scriptMs || 0).toFixed(1)}ms\n` +
                 `quality ${q ? q.TIERS[q.tier].name : '?'}\n` +
                 `pxratio ${pr.toFixed(2)} (step ${r ? r.step + 1 : '?'}/${r ? _resolveEffectiveSteps().length : '?'})\n` +
-                (ri ? `draws   ${ri.calls}\ntris    ${(ri.triangles / 1000).toFixed(0)}k\npoints  ${(ri.points / 1000).toFixed(0)}k` : '');
+                (ri ? `draws   ${ri.calls} (budget ${db ? db.budget : '?'}, cut ${db ? db.hidden.size : 0})\n` +
+                      `tris    ${(ri.triangles / 1000).toFixed(0)}k\npoints  ${(ri.points / 1000).toFixed(0)}k` : '');
         }, 1000);
     }
     return true;
@@ -3360,6 +3619,13 @@ if (gameState.frameCount % 5 === 0 && typeof checkCosmicFeatureInteractions === 
             try { zctx.drawImage(rc, 0, 0); } catch (e) {}
         }
     }
+
+    // DRAW-CALL BUDGET: read this frame's ACTUAL renderer.info.render.calls
+    // (gameRender() above already submitted it) and adjust which decorative
+    // small-triangle draws are suppressed for the next frame. Must run after
+    // the camera-interpolation/cinematic restores above so distance checks
+    // use the stable physics camera, not a render-only offset.
+    _enforceDrawBudget();
 
     // PERF METER: record this frame (frame-to-frame time + game-logic time,
     // measured up to the render call so render cost never pollutes it).

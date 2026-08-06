@@ -2741,10 +2741,164 @@ function _starCoronaTexture(color) {
 const starCoronas = [];
 if (typeof window !== 'undefined') window.starCoronas = starCoronas;
 
+// -----------------------------------------------------------------------------
+// PHOTOSPHERE — the star's own disc, as a sphere instead of a coin.
+// -----------------------------------------------------------------------------
+// Every star in these systems carried a MeshBasicMaterial, which is by
+// definition ONE COLOUR over the whole silhouette: no shading, no view
+// dependence, no surface. At the distances the slingshot parks you at — you
+// whip a star at a few radii, that is the entire mechanic — the biggest
+// object on screen was a flat filled circle with additive sprites stacked in
+// front of it. All the volume was in the dressing and none in the body.
+//
+// This replaces the fill with a real photosphere, and it is FREE: same mesh,
+// same opaque draw call, no extra pass, and nothing added to the additive
+// budget (which is the thing that actually costs frames here).
+//
+//   • LIMB DARKENING, the Eddington curve I(mu)/I(1) = 0.34 + 0.66*mu^0.82.
+//     This is the single reason a photograph of the Sun reads as a ball and
+//     a flat disc reads as a sticker. It is not a vignette — it is view
+//     dependent, so it slides across the disc as you orbit.
+//   • GRANULATION that churns: three octaves of nested sine turbulence in
+//     OBJECT space, so it spins with the star instead of swimming.
+//   • STARSPOTS. A star built only from bright churn reads as a light bulb.
+//     Sparse dark islands are what make it read as a surface with weather.
+//   • A CHROMOSPHERE hairline in the last few percent of the disc, so the
+//     silhouette hands off into the corona shells instead of ending on a cut.
+//
+// The material exposes `.color` as the live uCore uniform object, so every
+// existing `star.material.color.lerp(...)` / `.copy(...)` in this file and in
+// visual-flair's lens-flare tint keeps working — and now actually drives the
+// shader instead of a dead fill.
+const _PHOTOSPHERE_VERT = `
+    varying vec3 vN;
+    varying vec3 vWP;
+    varying vec3 vOP;
+    void main() {
+        vOP = normalize(position);
+        vec4 wp = modelMatrix * vec4(position, 1.0);
+        vWP = wp.xyz;
+        vN = normalize(mat3(modelMatrix) * normal);
+        gl_Position = projectionMatrix * viewMatrix * wp;
+    }
+`;
+
+const _PHOTOSPHERE_FRAG = `
+    uniform vec3 uCore;
+    uniform vec3 uEdge;
+    uniform float uTime;
+    uniform float uSeed;
+    varying vec3 vN;
+    varying vec3 vWP;
+    varying vec3 vOP;
+
+    void main() {
+        vec3 N = normalize(vN);
+        vec3 V = normalize(cameraPosition - vWP);
+        float mu = clamp(dot(N, V), 0.0, 1.0);
+
+        // Nested sines, not fbm: no texture fetches, no loop, and the inner
+        // sine phase-modulating the outer one is what stops it looking like
+        // a plaid of standing waves.
+        vec3 p = vOP * 4.6 + uSeed;
+        float t = uTime * 0.30;
+        float n  = sin(p.x * 1.1 + sin(p.y * 1.6 + t)) * 0.50;
+        n += sin(p.y * 2.4 + sin(p.z * 2.0 - t * 0.73)) * 0.30;
+        n += sin(p.z * 4.9 + sin(p.x * 3.3 + t * 1.21)) * 0.20;
+        n = clamp(n * 0.5 + 0.5, 0.0, 1.0);
+
+        vec3 col = mix(uEdge, uCore, smoothstep(0.16, 0.88, n));
+        // The bright net between granule cells.
+        col += uCore * smoothstep(0.66, 0.97, n) * 0.30;
+
+        // STARSPOTS — slow, sparse, and DARK. Gated on the granulation so a
+        // spot has a ragged edge instead of being a painted ellipse.
+        float sp = sin(p.x * 0.62 - uSeed) * 0.34
+                 + sin(p.z * 0.81 + uSeed * 1.7) * 0.34
+                 + n * 0.46;
+        col *= 1.0 - smoothstep(0.72, 0.95, sp) * 0.48;
+
+        // LIMB DARKENING, lifted 1.12x so the star keeps its presence — this
+        // is here to add shape, not to dim the brightest object in frame.
+        col *= 1.12 * (0.40 + 0.60 * pow(mu, 0.78));
+        // CHROMOSPHERE hairline. Measured on the procedural primaries: at
+        // pow 9 this reads as a bright hoop around a darker interior — a
+        // glass marble, which is a different flat cue, not a fix. A real
+        // chromosphere is a fraction of a percent of the radius, and the
+        // outer glow is the corona sprites' job.
+        col += uEdge * pow(1.0 - mu, 14.0) * 0.60;
+
+        gl_FragColor = vec4(col, 1.0);
+    }
+`;
+
+const _starPhotospheres = [];
+let _photosphereTime = 0;
+
+function makeStarPhotosphere(star, tint) {
+    if (!star || typeof THREE === 'undefined') return null;
+    if (typeof window !== 'undefined' && window.STAR_PHOTOSPHERE === false) return null;
+    const old = star.material;
+    // Only ever upgrade a plain fill. Anything richer already belongs to
+    // somebody else (proc-galaxies' own star program, the Sun's textured
+    // material) and must be left alone.
+    if (!old || old.type !== 'MeshBasicMaterial' || !old.color) return null;
+    if (star.userData && star.userData._photosphere) return null;
+
+    const core = new THREE.Color(tint === undefined ? 0xffaa44 : tint);
+    // The limb colour is the star's own hue driven cooler and deeper, so a
+    // blue star limbs to steel and an amber one limbs to ember. Uniform grey
+    // shading would flatten every star in the game to the same ball.
+    const hsl = { h: 0, s: 0, l: 0 };
+    core.getHSL(hsl);
+    const edge = new THREE.Color().setHSL(
+        hsl.h,
+        Math.min(1, hsl.s * 0.85 + 0.22),
+        Math.max(0.16, hsl.l * 0.48)
+    );
+
+    const mat = new THREE.ShaderMaterial({
+        uniforms: {
+            uCore: { value: core },
+            uEdge: { value: edge },
+            uTime: { value: 0 },
+            uSeed: { value: Math.random() * 30 }
+        },
+        vertexShader: _PHOTOSPHERE_VERT,
+        fragmentShader: _PHOTOSPHERE_FRAG,
+        transparent: false,
+        depthWrite: true,
+        fog: false
+    });
+    // Back-compatibility surface: `.color` IS the uCore uniform's Color, so
+    // in-place mutation by existing callers reaches the shader.
+    mat.color = core;
+
+    if (old.dispose) old.dispose();
+    star.material = mat;
+    if (!star.userData) star.userData = {};
+    star.userData._photosphere = mat;
+    _starPhotospheres.push(mat);
+    return mat;
+}
+if (typeof window !== 'undefined') window.makeStarPhotosphere = makeStarPhotosphere;
+
+function updateStarPhotospheres(dt) {
+    _photosphereTime += (typeof dt === 'number' && dt > 0 && dt < 0.5) ? dt : 0.016;
+    for (let i = 0; i < _starPhotospheres.length; i++) {
+        _starPhotospheres[i].uniforms.uTime.value = _photosphereTime;
+    }
+}
+if (typeof window !== 'undefined') window.updateStarPhotospheres = updateStarPhotospheres;
+
 function addStarCorona(star, radius, baseColor) {
     if (!star || typeof THREE === 'undefined') return;
     if (star.userData && star.userData._hasCorona) return;
     const tint = (baseColor === undefined || baseColor === null) ? 0xffaa44 : baseColor;
+
+    // Swap the flat fill for a photosphere BEFORE the hot-lerp below, so that
+    // lerp lands on the shader's core colour and still does its job.
+    makeStarPhotosphere(star, tint);
 
     // Lift the disc itself toward a hot white-yellow so the core reads
     // as overexposed rather than a flat colour. Lerp 40% so individual
@@ -3668,6 +3822,166 @@ function addNightSideShell(planet, radius, opts) {
 }
 if (typeof window !== 'undefined') window.addNightSideShell = addNightSideShell;
 
+// =============================================================================
+// PRESENCE-BODY TESSELLATION LOD
+// =============================================================================
+// The 567 nebula-cluster worlds pick their segment count ONCE, from their world
+// radius: 56x40 above r=90, 36x28 above r=20, 16x16 below. Radius is the wrong
+// axis. What decides whether a limb reads as a polygon is how many PIXELS the
+// silhouette spans, and that is r/distance — a 30-unit moon you are flying past
+// at three radii fills more frame, and shows its facets harder, than a
+// 140-unit giant seen from across its system. Every one of these bodies is a
+// flyby target (they carry the mining routes and the civilian traffic), so
+// "small" here does not mean "never close".
+//
+// So: keep the shipped count as the FLOOR and add two tiers above it, chosen
+// per frame from angular size. Structure is deliberately the same shape as the
+// one js/proc-galaxies.js uses for its own bodies — a per-body [t0, t1, t2]
+// cache, tiers built lazily, hysteresis on the way down — because divergent
+// LOD implementations in one scene drift into visibly different pop distances.
+//
+// Budget. Only bodies inside ~11 radii ever build the hero tier, which is a
+// handful at a time, and the tier is released the moment a body drops back
+// past the mid boundary, so live hero geometry is bounded by what is actually
+// near the camera rather than by everywhere you have ever been. The sweep is
+// amortised: 150 bodies every 6th frame, i.e. the full set every ~0.4s, at a
+// cost of one squared distance each.
+const PB_LOD = {
+    enabled: true,
+    hero: [72, 48],          // inside ~11 radii
+    mid: [44, 30],           // inside ~45 radii
+    heroAng: 0.090,          // r/d
+    midAng: 0.022,
+    heroDrop: 0.076,         // hysteresis: fall this far before demoting
+    midDrop: 0.018,
+    perPass: 150,
+    everyNFrames: 6,
+    built: 0,
+    swaps: 0
+};
+
+const _pbList = [];
+let _pbScanned = false;
+let _pbSeenCount = -1;
+let _pbCursor = 0;
+let _pbFrame = 0;
+const _pbTmp = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+
+// A body qualifies if it wears the planet-presence program and a sphere we can
+// re-tessellate. Nothing else in `planets` is touched.
+function _pbScan() {
+    const arr = (typeof planets !== 'undefined' && planets) ? planets
+              : ((typeof window !== 'undefined' && window.planets) ? window.planets : null);
+    if (!arr || !arr.length) return false;
+    _pbList.length = 0;
+    for (let i = 0; i < arr.length; i++) {
+        const b = arr[i];
+        if (!b || !b.material || !b.material.uniforms) continue;
+        if (b.material.uniforms.uCity === undefined) continue;
+        // Already registered by an earlier sweep — re-list it, but do NOT
+        // rebuild its bookkeeping: that would orphan a mounted hero tier and
+        // lie about which tier the mesh is actually wearing.
+        if (b.userData._pbGeo) { _pbList.push(b); continue; }
+        const g = b.geometry;
+        const p = g && g.parameters;
+        if (!p || !(p.radius > 0) || !(p.widthSegments > 0)) continue;
+        b.userData._pbGeo = [g, null, null];
+        b.userData._pbTier = 0;
+        b.userData._pbR = p.radius;
+        // Floor the added tiers at what the body already had, so this can only
+        // ever add silhouette, never take it away from a 56x40 giant.
+        b.userData._pbSegs = [
+            [p.widthSegments, p.heightSegments],
+            [Math.max(PB_LOD.mid[0], p.widthSegments), Math.max(PB_LOD.mid[1], p.heightSegments)],
+            [Math.max(PB_LOD.hero[0], p.widthSegments), Math.max(PB_LOD.hero[1], p.heightSegments)]
+        ];
+        _pbList.push(b);
+    }
+    return true;
+}
+
+function _pbSetTier(b, tier) {
+    const ud = b.userData;
+    if (ud._pbTier === tier) return;
+    const cache = ud._pbGeo;
+    if (!cache[tier]) {
+        const s = ud._pbSegs[tier];
+        cache[tier] = new THREE.SphereGeometry(ud._pbR, s[0], s[1]);
+        PB_LOD.built++;
+    }
+    b.geometry = cache[tier];
+    ud._pbTier = tier;
+    PB_LOD.swaps++;
+    // Release the hero tier once the body is no longer anywhere near hero
+    // framing. Tier 0 is never released — it is the shipped geometry and the
+    // one every distant body is sitting on.
+    if (tier === 0 && cache[2]) {
+        cache[2].dispose();
+        cache[2] = null;
+    }
+}
+
+function updatePresenceBodyLod(camera) {
+    if (!PB_LOD.enabled || typeof THREE === 'undefined' || !_pbTmp) return;
+    if ((_pbFrame++ % PB_LOD.everyNFrames) !== 0) return;
+    const cam = camera || (typeof window !== 'undefined' ? window.camera : null);
+    if (!cam || !cam.position) return;
+    // The nebula clusters are built in stages, so a single scan at first tick
+    // would miss every world created after it. Re-scan whenever the global
+    // body count has moved; already-registered bodies keep their tier because
+    // the bookkeeping lives on userData, not in the list.
+    const _all = (typeof planets !== 'undefined' && planets) ? planets
+               : ((typeof window !== 'undefined' && window.planets) ? window.planets : null);
+    const _len = _all ? _all.length : 0;
+    if (!_pbScanned || _len !== _pbSeenCount) {
+        if (!_pbScan()) return;
+        _pbScanned = true;
+        _pbSeenCount = _len;
+    }
+    if (!_pbList.length) return;
+
+    const cp = cam.position;
+    const n = Math.min(PB_LOD.perPass, _pbList.length);
+    for (let k = 0; k < n; k++) {
+        if (_pbCursor >= _pbList.length) _pbCursor = 0;
+        const b = _pbList[_pbCursor++];
+        if (!b || !b.parent) continue;
+        const ud = b.userData;
+        // Moons here are parented to their planet, so object.position is a
+        // LOCAL offset — scoring on it would make every moon look like it was
+        // filling the screen and take a hero tier it never earns.
+        const e = b.matrixWorld.elements;
+        _pbTmp.set(e[12] - cp.x, e[13] - cp.y, e[14] - cp.z);
+        const d = _pbTmp.length();
+        if (d < 1e-3) continue;
+        const ang = ud._pbR / d;
+        const cur = ud._pbTier;
+        let tier;
+        if (ang >= PB_LOD.heroAng) tier = 2;
+        else if (ang >= PB_LOD.midAng) tier = 1;
+        else tier = 0;
+        // Hysteresis on the way DOWN only, so drifting on a boundary cannot
+        // strobe the geometry.
+        if (tier < cur) {
+            if (cur === 2 && ang > PB_LOD.heroDrop) tier = 2;
+            else if (tier === 0 && ang > PB_LOD.midDrop) tier = 1;
+        }
+        if (tier !== cur) _pbSetTier(b, tier);
+    }
+}
+if (typeof window !== 'undefined') {
+    window.updatePresenceBodyLod = updatePresenceBodyLod;
+    window.PB_LOD = PB_LOD;
+    window.presenceLodDebug = function () {
+        const t = [0, 0, 0];
+        for (let i = 0; i < _pbList.length; i++) t[_pbList[i].userData._pbTier]++;
+        return {
+            bodies: _pbList.length, base: t[0], mid: t[1], hero: t[2],
+            geometriesBuilt: PB_LOD.built, swaps: PB_LOD.swaps
+        };
+    };
+}
+
 // Slow independent cloud drift so weather parallaxes against the surface.
 function updateEarthClouds() {
     for (let i = 0; i < _earthClouds.length; i++) {
@@ -3679,6 +3993,8 @@ function updateEarthClouds() {
     // per-frame "planet shells" pass. See updatePlanetRingTilts for why leant
     // ring planes have to cancel their parent's spin.
     updatePlanetRingTilts();
+    updateStarPhotospheres();
+    updatePresenceBodyLod(typeof camera !== 'undefined' ? camera : null);
 }
 if (typeof window !== 'undefined') window.updateEarthClouds = updateEarthClouds;
 

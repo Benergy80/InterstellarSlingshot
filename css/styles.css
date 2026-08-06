@@ -288,22 +288,79 @@ body.ui-mode {
                translate3d(14px, 14px, 0) scale(0.92);
 }
 
+/* =============================================================================
+   CONTENT-COLLAPSE CHOREOGRAPHY — max-height/opacity, not display:none
+   `display:none` is not animatable, so a class toggle used to make these
+   blocks vanish/reappear in a single 25-44ms frame while the panel's own
+   250ms `transform` transition eased quietly around them — a 24-point
+   coverage swing landing in one frame reads as a layout glitch, not a
+   cinematic yield. Every block below instead transitions max-height +
+   opacity (+ padding/border/margin where those contribute real height) on
+   the SAME 250ms curve as `.ui-panel`'s transform, with `overflow:hidden`
+   so the shrinking box actually clips its own content instead of just
+   losing its box while text renders outside it.
+   Entry and exit are deliberately asymmetric:
+     - ENTER yield (`:root.hud-geo-yield` rules below): 0ms delay — content
+       collapses in lockstep with the panel starting to slide/scale, so the
+       two motions read as one gesture.
+     - EXIT yield (plain rules below, i.e. the resting state a removed
+       class transitions back to): 250ms delay on the box metrics, then a
+       further-delayed opacity fade — content stays fully collapsed for the
+       panel's whole 250ms slide-back and only starts unfurling once the
+       chrome has finished moving, so the HUD settles into place and THEN
+       reveals detail, instead of punching content back before the panel
+       has stopped drifting. */
+
 /* SHIP STATUS collapses to its three one-line vitals — velocity, energy,
    hull. Selected with :has() (not a JS-injected class) because every row
    in this stack is a raw sibling `.curved-element` and several of them
    (#targetInfo, #galaxyProgress) have their className fully overwritten
    every frame by updateUI()'s own template-string writes elsewhere in this
    file — a class stamped on those specific rows would just get clobbered
-   on the next tick. Hiding everything and re-showing only the rows that
-   contain a vitals element sidesteps that entirely and needs no per-frame
-   upkeep. */
-:root.hud-geo-yield .ui-panel.bottom-left .space-y-2 > .curved-element {
-    display: none;
+   on the next tick. Collapsing everything and re-expanding only the rows
+   that contain a vitals element sidesteps that entirely and needs no
+   per-frame upkeep.
+   `space-y-2 > :not([hidden]) ~ :not([hidden])` (Tailwind) stamps
+   margin-top on every row after the first regardless of this file's own
+   display/height rules — it only cares about the `hidden` ATTRIBUTE, which
+   nothing here ever sets — so the 11 collapsing rows must also zero their
+   own margin-top or ~90px of un-animated gap (11 × 0.5rem) would survive
+   the collapse untouched. Velocity is the space-y-2 stack's first child
+   and never had a margin-top to begin with, so its :has() override below
+   deliberately leaves margin-top alone rather than forcing it to 0.5rem. */
+.ui-panel.bottom-left .space-y-2 > .curved-element {
+    max-height: 48px;
+    overflow: hidden;
+    transition: max-height 250ms ease 250ms, opacity 200ms ease 300ms,
+                padding 250ms ease 250ms, border-color 200ms ease 300ms,
+                margin-top 250ms ease 250ms;
 }
-:root.hud-geo-yield .ui-panel.bottom-left .space-y-2 > .curved-element:has(#velocity),
+:root.hud-geo-yield .ui-panel.bottom-left .space-y-2 > .curved-element {
+    max-height: 0;
+    opacity: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+    margin-top: 0;
+    border-bottom-color: transparent;
+    transition: max-height 250ms ease, opacity 180ms ease,
+                padding 250ms ease, border-color 180ms ease,
+                margin-top 250ms ease;
+}
+:root.hud-geo-yield .ui-panel.bottom-left .space-y-2 > .curved-element:has(#velocity) {
+    max-height: 48px;
+    opacity: 1;
+    padding-top: 2px;
+    padding-bottom: 2px;
+    border-bottom-color: rgba(var(--hud-cyan), 0.08);
+}
 :root.hud-geo-yield .ui-panel.bottom-left .space-y-2 > .curved-element:has(#energyBar),
 :root.hud-geo-yield .ui-panel.bottom-left .space-y-2 > .curved-element:has(#hullBar) {
-    display: block;
+    max-height: 48px;
+    opacity: 1;
+    padding-top: 2px;
+    padding-bottom: 2px;
+    margin-top: 0.5rem;
+    border-bottom-color: rgba(var(--hud-cyan), 0.08);
 }
 
 /* Flight Controls — force the same collapsed-to-hint state the auto-
@@ -311,29 +368,91 @@ body.ui-mode {
    uses, regardless of whether the player pinned it open early. Pure CSS
    override: the underlying controls-collapsed class/manual-pin state is
    untouched, so whatever the player had chosen returns the instant the
-   spectacle ends. */
+   spectacle ends. Shares the same animated max-height/opacity primitive as
+   the rest of this section, so the existing 8s auto-collapse and manual
+   click-toggle now ease too instead of only the yield path. */
+.ui-panel.top-left > h3.cyber-title,
+.ui-panel.top-left > div.text-xs.text-gray-300.opacity-80 {
+    max-height: 40px;
+    overflow: hidden;
+    transition: max-height 250ms ease 250ms, opacity 200ms ease 300ms,
+                margin 250ms ease 250ms;
+}
+.ui-panel.top-left > div.text-xs.text-gray-300.opacity-80 {
+    max-height: 340px;
+}
+.ui-panel.top-left.controls-collapsed > h3.cyber-title,
+.ui-panel.top-left.controls-collapsed > div.text-xs.text-gray-300.opacity-80,
 :root.hud-geo-yield .ui-panel.top-left > h3.cyber-title,
 :root.hud-geo-yield .ui-panel.top-left > div.text-xs.text-gray-300.opacity-80 {
-    display: none;
+    max-height: 0;
+    opacity: 0;
+    margin-top: 0;
+    margin-bottom: 0;
+    transition: max-height 250ms ease, opacity 180ms ease, margin 250ms ease;
 }
 :root.hud-geo-yield .ui-panel.top-left .hud-controls-hint {
     display: block;
 }
 
-/* Navigation panel — target list, black-hole warning and nav buttons are
-   exploration chrome, not spectacle-relevant; drop to the header row. */
-:root.hud-geo-yield .ui-panel.top-right #blackHoleWarningHUD,
-:root.hud-geo-yield .ui-panel.top-right #availableTargets,
+/* Navigation panel — target list and black-hole warning are exploration
+   chrome, not spectacle-relevant; collapse to the header row. The two nav
+   buttons keep the older instant `display:none` on purpose: `.space-btn`
+   carries an always-on glow `box-shadow` that bleeds past its own border
+   box, and clipping that with the `overflow:hidden` this technique needs
+   would dull the button chrome's rest-state glow for a spectacle that only
+   fires for a few seconds at a time — not worth trading permanent AAA
+   polish for animating two ~40px rows that aren't part of the measured
+   pop (the list + warning banner are). */
+.ui-panel.top-right #blackHoleWarningHUD {
+    max-height: 90px;
+    overflow: hidden;
+    transition: max-height 250ms ease 250ms, opacity 200ms ease 300ms,
+                margin 250ms ease 250ms, padding 250ms ease 250ms;
+}
+:root.hud-geo-yield .ui-panel.top-right #blackHoleWarningHUD {
+    max-height: 0;
+    opacity: 0;
+    margin-bottom: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+    transition: max-height 250ms ease, opacity 180ms ease,
+                margin 250ms ease, padding 250ms ease;
+}
+:root.hud-geo-yield .ui-panel.top-right #availableTargets {
+    max-height: 0;
+    opacity: 0;
+    transition: max-height 250ms ease, opacity 180ms ease;
+}
 :root.hud-geo-yield .ui-panel.top-right #autoNavigateBtn,
 :root.hud-geo-yield .ui-panel.top-right #warpBtn {
     display: none;
 }
 
 /* Galaxy Map — the round map + legend is the single bulkiest chrome block
-   on screen; drop to its header row during spectacle. */
-:root.hud-geo-yield .ui-panel.bottom-right #galaxyMap,
+   on screen; collapse to its header row during spectacle. `.round-map`
+   already carries `overflow:hidden` for its own circular mask, so the
+   200ms-delayed max-height here just rides that existing clip. */
+#galaxyMap {
+    max-height: 220px;
+    transition: max-height 250ms ease 250ms, opacity 200ms ease 300ms;
+}
+.ui-panel.bottom-right > .text-xs.text-gray-300.mt-2.opacity-80 {
+    max-height: 90px;
+    overflow: hidden;
+    transition: max-height 250ms ease 250ms, opacity 200ms ease 300ms,
+                margin 250ms ease 250ms;
+}
+:root.hud-geo-yield .ui-panel.bottom-right #galaxyMap {
+    max-height: 0;
+    opacity: 0;
+    transition: max-height 250ms ease, opacity 180ms ease;
+}
 :root.hud-geo-yield .ui-panel.bottom-right > .text-xs.text-gray-300.mt-2.opacity-80 {
-    display: none;
+    max-height: 0;
+    opacity: 0;
+    margin-top: 0;
+    transition: max-height 250ms ease, opacity 180ms ease, margin 250ms ease;
 }
 
 /* Navigation target list — Tailwind's max-h-40 (160px) left row three
@@ -351,6 +470,10 @@ body.ui-mode {
     mask-image: linear-gradient(to bottom, #000 calc(100% - 22px), transparent 100%);
     scrollbar-width: thin;
     scrollbar-color: rgba(0, 220, 255, 0.5) rgba(0, 20, 40, 0.3);
+    /* HUD geometric yield (see the block above) collapses this to 0 on
+       spectacle entry and restores it 250ms-delayed on exit — same
+       max-height/opacity primitive as the rest of that section. */
+    transition: max-height 250ms ease 250ms, opacity 200ms ease 300ms;
 }
 #availableTargets::-webkit-scrollbar {
     width: 6px;

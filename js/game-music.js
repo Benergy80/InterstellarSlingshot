@@ -150,7 +150,10 @@
     current: null,        // key of currently playing/fading-in track
     currentEl: null,      // HTMLAudioElement currently playing
     fadingOut: null,      // HTMLAudioElement fading out (crossfade)
-    fadeTimer: null,
+    fadingOutKey: null,   // its track key — so the duck can trim it while a
+                          // switch is still waiting on the incoming track
+    fadeTimer: null,      // the ONE interval allowed to write element volume
+    fadePending: null,    // true = a switch is committed but not ramping yet
     context: 'none',      // logical context: 'launchScreen', 'intro', 'galaxy', etc.
     lastGalaxyId: -1,
     lastNebulaIdx: -1,
@@ -368,8 +371,73 @@
     return Math.max(0.55, Math.min(1.05, st.fx.gain));
   }
 
+  // Everything that is NOT per-track: slider × duck × (fallback FX gain).
+  // Split out so a crossfade can follow the duck live instead of freezing
+  // the mix at whatever it happened to be when the fade started.
+  function mixGain() {
+    return st.volume * st.volumeScale * fxElementGain();
+  }
+
   function trackVolume(key) {
-    return st.volume * (TRACK_VOLUME[key] || 1.0) * st.volumeScale * fxElementGain();
+    return mixGain() * (TRACK_VOLUME[key] || 1.0);
+  }
+
+  function clamp01(v) {
+    return v < 0 ? 0 : (v > 1 ? 1 : v);
+  }
+
+  // ─── Fade ownership: element .volume has exactly ONE writer ───────────────
+  // Three passive writers keep the playing track in trim — the duck ramp,
+  // the no-WebAudio FX fallback, and the volume slider.  A fade (crossfade,
+  // fade-in, fade-out) must own the volume for its WHOLE life, and that life
+  // starts the moment play() commits to a switch — NOT when the crossfade
+  // interval finally gets installed.  The gap between those two moments is
+  // asynchronous (we wait for 'playing' on the incoming track so a slow MP3
+  // fetch can't fade the old track into silence), and a duck tick landing in
+  // that gap used to write full volume onto a track that is supposed to be
+  // silent — the incoming half of the fade then started from the wrong
+  // place, which is the non-monotonic 0.050 → 0.007 → 0.043 glitch.
+  //
+  // fadePending closes that gap: it is raised synchronously inside play()
+  // and lowered only when the crossfade interval takes over.
+  function beginFade(timer) {
+    if (st.fadeTimer) clearInterval(st.fadeTimer);
+    st.fadeTimer = timer;
+  }
+
+  function clearFadePending() {
+    st.fadePending = false;
+  }
+
+  function endFade() {
+    if (st.fadeTimer) { clearInterval(st.fadeTimer); st.fadeTimer = null; }
+    clearFadePending();
+  }
+
+  // True when a switch is still waiting on its incoming track and the track
+  // the player actually hears is the one parked in fadingOut.
+  function hasAudibleOutgoing() {
+    return !!(st.fadePending && st.fadingOut && st.fadingOut !== st.currentEl &&
+              !st.fadingOut.paused && st.fadingOut.volume > 0.001);
+  }
+
+  // The ONE place a passive writer is allowed to touch element volume.
+  // While a fade owns the ramp it does nothing.  While a switch is pending,
+  // the element the player actually hears is the OUTGOING one, so the duck
+  // follows it there and leaves the incoming track parked at silence.
+  function applyLiveVolume() {
+    if (st.fadeTimer) return;                       // a ramp owns the volume
+    if (st.fadePending) {
+      const out = st.fadingOut;
+      if (out && st.fadingOutKey) {
+        const pv = trackVolume(st.fadingOutKey);
+        if (Math.abs(out.volume - pv) > 0.004) out.volume = clamp01(pv);
+      }
+      return;
+    }
+    if (!st.currentEl) return;
+    const v = st.current ? trackVolume(st.current) : st.volume;
+    if (Math.abs(st.currentEl.volume - v) > 0.004) st.currentEl.volume = clamp01(v);
   }
 
   // Ramp the global volumeScale toward a target.  Applied continuously
@@ -387,11 +455,9 @@
       step++;
       const t = step / steps;
       st.volumeScale = start + (target - start) * t;
-      // Apply to the currently playing track only — crossfades manage
-      // their own ramps, and we don't want to override those.
-      if (st.currentEl && !st.fadeTimer && st.current) {
-        st.currentEl.volume = trackVolume(st.current);
-      }
+      // Single writer — see applyLiveVolume().  Fades own their own ramp
+      // (and pick the new scale up live), so we never fight them.
+      applyLiveVolume();
       if (step >= steps) {
         clearInterval(st.volumeScaleTimer);
         st.volumeScaleTimer = null;
@@ -412,25 +478,41 @@
 
   function play(key) {
     if (!st.enabled || st.muted) return;
+    // Already on this track: the context tick calls play() with the same key
+    // every few seconds, so this must stay a cheap no-op.
     if (key === st.current) {
-      if (st.currentEl && st.currentEl.paused) {
-        const p = st.currentEl.play();
-        if (p) p.catch(() => {});
+      if (!st.currentEl || !st.currentEl.paused) return;
+      const p = st.currentEl.play();
+      if (p) p.catch(() => {});
+      // Unless a stalled switch left the PREVIOUS track still audible — a
+      // bare fade-in would then stack two tracks at full volume.  Drop
+      // through to the crossfade path so the old one is ramped out.
+      if (!hasAudibleOutgoing()) {
         fadeIn(st.currentEl, key);
+        return;
       }
-      return;
+      st.current = null;   // force the full crossfade path below
     }
     if (st.loadErrors.has(key)) return;
 
     const next = st.loaded[key];
     if (!next) return;
 
+    // Pick what we are crossfading FROM before tearing anything down.
+    // Normally that's the current element — but if a previous switch is
+    // still waiting on its incoming track to make sound, the element the
+    // player actually hears is the one parked in fadingOut.  Fading from
+    // the silent placeholder instead would hard-cut real audio.
+    const stalled = hasAudibleOutgoing();
+    const audible = stalled ? st.fadingOut : st.currentEl;
+    const prevKey = stalled ? st.fadingOutKey : st.current;
+    const prev = audible && audible !== next ? audible : null;
+
     // Stop any in-progress fade and silence EVERY other loaded track.
     // This is defensive: if play() was called mid-crossfade before, the
     // previously-fading-out track could still be audible, and multiple
     // rapid play() calls could layer 3+ tracks.
-    if (st.fadeTimer) { clearInterval(st.fadeTimer); st.fadeTimer = null; }
-    const prev = st.currentEl && st.currentEl !== next ? st.currentEl : null;
+    endFade();
     Object.keys(st.loaded).forEach(k => {
       if (k === key) return;
       const a = st.loaded[k];
@@ -442,6 +524,7 @@
       }
     });
     st.fadingOut = null;
+    st.fadingOutKey = null;
 
     st.current = key;
     st.currentEl = next;
@@ -476,69 +559,106 @@
     // fires on the new one; if the new track never starts, the old one
     // simply keeps going.
     st.fadingOut = prev;
+    st.fadingOutKey = prevKey;
+    // Take ownership of element volume RIGHT NOW, synchronously, even though
+    // the ramp itself starts later.  Nothing else may write volume from here
+    // until endFade() — that is what keeps the duck timer off the incoming
+    // track while it is still silent.
+    st.fadePending = true;
+
     let _xfStarted = false;
     const _beginCrossfade = () => {
       if (_xfStarted) return;
       if (st.currentEl !== next) return; // superseded by a later play()
       _xfStarted = true;
-      const steps = 30;
+      const steps = 40;                            // 50 ms per step over 2 s
       const interval = (FADE_DURATION * 1000) / steps;
       let step = 0;
-      const startVol = prev.volume;
-      const targetVol = trackVolume(key);
+      const startVol = prev.volume;                // wherever the duck left it
+      const startMix = mixGain();
 
-      st.fadeTimer = setInterval(() => {
+      // Hand ownership from "pending" to the live ramp in one move, so
+      // there is never an instant where neither holds it.
+      beginFade(setInterval(() => {
         step++;
-        const t = step / steps;
-        prev.volume = Math.max(0, startVol * (1 - t));
-        next.volume = Math.min(targetVol, targetVol * t);
+        const t = Math.min(1, step / steps);
+        // EQUAL-POWER crossfade.  Two different pieces of music are
+        // uncorrelated, so they sum in POWER, not amplitude: a linear pair
+        // sits at √(0.5²+0.5²) = 0.707 through the middle — a guaranteed
+        // -3 dB hole punched into the score on EVERY transition.  cos/sin
+        // hold cos²+sin² = 1, so the level walks across dead flat.
+        const ratio = startMix > 0.0001 ? mixGain() / startMix : 1;
+        prev.volume = clamp01(startVol * ratio * Math.cos(t * Math.PI / 2));
+        next.volume = clamp01(trackVolume(key) * Math.sin(t * Math.PI / 2));
 
         if (step >= steps) {
-          clearInterval(st.fadeTimer);
-          st.fadeTimer = null;
+          endFade();
           prev.pause();
           prev.volume = 0;
           st.fadingOut = null;
+          st.fadingOutKey = null;
+          next.volume = clamp01(trackVolume(key));  // land exactly on target
         }
-      }, interval);
+      }, interval));
+      clearFadePending();
     };
     next.addEventListener('playing', _beginCrossfade, { once: true });
     if (next.readyState >= 3 && !next.paused) _beginCrossfade();
   }
 
+  // Fade in from wherever the element currently sits.  The handle goes into
+  // st.fadeTimer like every other ramp — leaving it un-owned (as it used to
+  // be) let the duck timer overwrite the ramp mid-flight, which is exactly
+  // the "visibly non-monotonic fade-in" the mix meter caught.
   function fadeIn(el, key) {
-    const steps = 20;
+    const k = key || st.current;
+    const steps = 24;
     const interval = (FADE_DURATION * 1000) / steps;
     let step = 0;
-    const target = trackVolume(key || st.current);
-    const timer = setInterval(() => {
+    const startVol = el.volume || 0;
+    beginFade(setInterval(() => {
       step++;
-      el.volume = Math.min(target, target * (step / steps));
-      if (step >= steps) clearInterval(timer);
-    }, interval);
+      const t = Math.min(1, step / steps);
+      // Same equal-power law as the incoming half of a crossfade, so a cold
+      // start and a transition sound like the same gesture.  trackVolume is
+      // re-read every tick, so a duck landing mid-fade bends the curve
+      // instead of stamping over it.
+      const target = trackVolume(k);
+      el.volume = clamp01(startVol * (1 - t) + target * Math.sin(t * Math.PI / 2));
+      if (step >= steps) {
+        endFade();
+        el.volume = clamp01(target);
+      }
+    }, interval));
+    clearFadePending();
   }
 
   function fadeOutCurrent() {
     const el = st.currentEl;
     if (!el) return;
-    const steps = 20;
+    const steps = 24;
     const interval = (FADE_DURATION * 1000) / steps;
     let step = 0;
     const startVol = el.volume;
     st.current = null;
     st.currentEl = null;
-    const timer = setInterval(() => {
+    beginFade(setInterval(() => {
       step++;
-      el.volume = Math.max(0, startVol * (1 - step / steps));
+      const t = Math.min(1, step / steps);
+      // cos matches the outgoing half of a crossfade: constant-power decay,
+      // no early cliff into the last half-second.
+      el.volume = clamp01(startVol * Math.cos(t * Math.PI / 2));
       if (step >= steps) {
-        clearInterval(timer);
+        endFade();
         el.pause();
+        el.volume = 0;
       }
-    }, interval);
+    }, interval));
+    clearFadePending();
   }
 
   function stopAll() {
-    if (st.fadeTimer) { clearInterval(st.fadeTimer); st.fadeTimer = null; }
+    endFade();
     Object.values(st.loaded).forEach(a => {
       a.pause();
       a.volume = 0;
@@ -547,6 +667,7 @@
     st.current = null;
     st.currentEl = null;
     st.fadingOut = null;
+    st.fadingOutKey = null;
     stopAllStingers();
   }
 
@@ -1115,12 +1236,9 @@
       }
       return;
     }
-    // Fallback: fold the gain into element volume, but never while a
-    // crossfade owns it (same rule setVolumeScale plays by).
-    if (st.currentEl && !st.fadeTimer && st.current) {
-      const v = trackVolume(st.current);
-      if (Math.abs(st.currentEl.volume - v) > 0.004) st.currentEl.volume = v;
-    }
+    // Fallback: fold the gain into element volume, but never while a fade
+    // owns it (same single-writer rule everything else plays by).
+    applyLiveVolume();
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -1534,11 +1652,8 @@
     st.volume = Math.max(0, Math.min(1, v));
     // Respect the adaptive scaling instead of stomping it — the slider sets
     // the ceiling, ducking and the riser still shape what sits under it.
-    if (st.currentEl && !st.fadeTimer && st.current) {
-      st.currentEl.volume = trackVolume(st.current);
-    } else if (st.currentEl) {
-      st.currentEl.volume = st.volume;
-    }
+    // A live fade picks the new ceiling up on its very next tick.
+    applyLiveVolume();
   }
 
   // Force a specific context (e.g. autopilot forcing boss music)
@@ -1684,8 +1799,19 @@
           : 'cold';
       });
       sting._pending = st.stingerPending.map(p => p.key);
+      // Who owns element volume right now, and what the outgoing half of a
+      // transition is doing — poll this across a play() to see that the
+      // combined level never sags.
+      const fade = {
+        owner: st.fadeTimer ? 'ramp' : (st.fadePending ? 'pending' : 'none'),
+        out: st.fadingOutKey,
+        outVol: st.fadingOut ? +st.fadingOut.volume.toFixed(4) : 0,
+        inVol: st.currentEl ? +st.currentEl.volume.toFixed(4) : 0,
+      };
+      // Equal-power check: this stays flat across the whole crossfade.
+      fade.power = +Math.sqrt(fade.outVol * fade.outVol + fade.inVol * fade.inVol).toFixed(4);
       if (!wa.ok) {
-        return { bus: null, stingers: sting,
+        return { bus: null, stingers: sting, fade: fade,
                  element: st.currentEl ? st.currentEl.volume : 0,
                  paused: st.currentEl ? st.currentEl.paused : true };
       }
@@ -1709,6 +1835,7 @@
         track: st.current,
         busGain: st.fx.gain,
         lowpass: st.fx.lp,
+        fade: fade,
         stingers: sting,
       };
     },

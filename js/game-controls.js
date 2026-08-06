@@ -1805,6 +1805,59 @@ function _patternAttackMode(enemy, dist, faction) {
     return 'engage';
 }
 
+// ── Engagement closure governor ──────────────────────────────────────────
+// An enemy's top speed is adjustedSpeed * 4.6 per behavior tick, and every
+// faction's preferredRange is 80-250 u — but NOTHING ever checked that the
+// hull could physically reach that range against a MOVING player. It can't:
+// measured live, the player cruises 433 u/s while active attackers manage
+// 304-421 u/s, so a pursuing fighter closes until it matches the player's
+// speed and then just trails forever. Placing six enemies at 1400 u and
+// watching for 25 s, they closed to ~1000 u and plateaued there — never
+// reaching the 260 u break-into-orbit turn, never reaching preferredRange.
+// That standoff is the real reason the ship reads as a speck: at the
+// measured p50 of 1963 u an 18 u hull subtends ~4 px, and even the NEAREST
+// attacker at 561 u only manages 15.5 px, which is how the enemy ended up
+// dimmer and smaller than the HUD bracket pointing at it.
+//
+// So: while a hull is outside the engagement band, grant it just enough
+// extra speed to actually GAIN on its target, and taper that back to its
+// natural speed as it arrives. Closing becomes possible; the fight still
+// happens at the enemy's own tuned speed once it is in the band, so this
+// buys presence without turning every fighter into an unshakable rocket.
+const _CLOSURE_BAND_FAR = 900;   // outer edge of the readable engage band
+const _CLOSURE_RAMP     = 500;   // assist fades in across FAR..FAR+RAMP
+const _CLOSURE_MAX      = 4.0;   // hard ceiling on the speed multiplier
+let _closurePrevPlayerPos = null;
+let _closurePlayerStep = 0;      // player displacement PER BEHAVIOR TICK
+
+// Sampled once per updateEnemyBehavior pass so it shares a clock with the
+// enemy velocity integrator — that keeps the comparison in the same units
+// without having to assume a tick rate.
+function _updateClosureClock() {
+    if (typeof camera === 'undefined' || typeof THREE === 'undefined') return;
+    const p = camera.position;
+    if (!_closurePrevPlayerPos) { _closurePrevPlayerPos = p.clone(); return; }
+    const step = p.distanceTo(_closurePrevPlayerPos);
+    _closurePrevPlayerPos.copy(p);
+    // A warp/teleport shows up as a huge single-tick jump. Chasing that
+    // number would hand every enemy the 4x ceiling for no reason.
+    if (!isFinite(step) || step > 400) { _closurePlayerStep = 0; return; }
+    _closurePlayerStep += (step - _closurePlayerStep) * 0.15;   // smoothed
+}
+
+function _closureSpeedScale(dist, adjustedSpeed) {
+    // Never chase a warping player — that fight isn't meant to be winnable
+    // and the assist would just drag the whole squadron along behind them.
+    if (typeof gameState !== 'undefined' && gameState && gameState.warping) return 1;
+    if (!(dist > _CLOSURE_BAND_FAR)) return 1;
+    const ramp = Math.min(1, (dist - _CLOSURE_BAND_FAR) / _CLOSURE_RAMP);
+    // Per-tick top speed needed to actually gain ground: match the target,
+    // then add a real closing margin on top.
+    const need = (_closurePlayerStep * 1.25 + 1.2) / 4.6;
+    const k = Math.max(1, Math.min(_CLOSURE_MAX, need / Math.max(0.0001, adjustedSpeed)));
+    return 1 + (k - 1) * ramp;
+}
+
 // While rolling out of a gunsight an enemy should NOT stay perfectly
 // nose-on — the whole point is that it looks away and commits.
 function _enemyLookRate(enemy) {
@@ -1896,6 +1949,9 @@ function updateEnemyBehavior() {
     // Up-to-3-attackers-per-target assignment runs once before per-enemy
     // behavior so each enemy can read enemy.userData.engagedTarget below.
     _assignEngagementTargets();
+
+    // Player displacement per behavior tick — feeds the closure governor.
+    if (typeof _updateClosureClock === 'function') _updateClosureClock();
 
     // Boss homing missiles fly every behavior pass (30 Hz)
     if (typeof _updateBossMissiles === 'function') _updateBossMissiles();
@@ -1990,16 +2046,22 @@ function updateEnemyBehavior() {
             const baseSpeed = enemy.userData.speed || 0.5;
             const speedMultiplier = isLocal ? difficultySettings.localSpeedMultiplier : difficultySettings.distantSpeedMultiplier;
             const adjustedSpeed = Math.min(2.0, Math.max(0.2, baseSpeed * speedMultiplier));  // Clamp to 0.2-2.0 (200-2000 km/s)
+            // Closure assist applies OUTSIDE the engage band only, so the
+            // dogfight itself still runs at the speed each faction is tuned
+            // for. Deliberately applied after the 0.2-2.0 clamp: that clamp
+            // is the per-faction speed identity, this is permission to
+            // actually arrive at the fight.
+            const engageSpeed = adjustedSpeed * _closureSpeedScale(distanceToPlayer, adjustedSpeed);
 
             if (isLocal) {
-                updateLocalEnemyBehavior(enemy, distanceToPlayer, adjustedSpeed, difficultySettings);
+                updateLocalEnemyBehavior(enemy, distanceToPlayer, engageSpeed, difficultySettings);
             } else {
                 if (enemy.userData.isBoss) {
-                    updateBossBehavior(enemy, playerPos, adjustedSpeed);
+                    updateBossBehavior(enemy, playerPos, engageSpeed);
                 } else if (enemy.userData.isBossSupport) {
-                    updateSupportBehavior(enemy, playerPos, adjustedSpeed);
+                    updateSupportBehavior(enemy, playerPos, engageSpeed);
                 } else {
-                    updateEnhancedEnemyBehavior(enemy, distanceToPlayer, adjustedSpeed, difficultySettings);
+                    updateEnhancedEnemyBehavior(enemy, distanceToPlayer, engageSpeed, difficultySettings);
                 }
             }
 
@@ -5882,6 +5944,7 @@ function _ensureEnemyShield(enemy) {
     // so the raw hitboxSize is hugely inflated. Then convert that world
     // radius into the enemy's LOCAL frame (the shield is a child).
     let worldR = 90;
+    let hullSpan = 0;   // measured hull max dimension; 0 = measurement failed
     try {
         enemy.updateWorldMatrix(true, true);
         const box = new THREE.Box3(); box.makeEmpty();
@@ -5904,7 +5967,8 @@ function _ensureEnemyShield(enemy) {
                            _ud0.isEliteGuardian || _ud0.isBlackHoleGuardian;
         if (any && isFinite(box.min.x) && box.max.x > box.min.x) {
             const sz = box.getSize(new THREE.Vector3());
-            worldR = Math.max(sz.x, sz.y, sz.z) * (_bigShield ? 0.62 : 0.31);
+            hullSpan = Math.max(sz.x, sz.y, sz.z);
+            worldR = hullSpan * (_bigShield ? 0.62 : 0.31);
         }
     } catch (e) {}
     {
@@ -5914,9 +5978,28 @@ function _ensureEnemyShield(enemy) {
         // Big-shield ceiling 360 (was briefly 640 for the 2×-boss
         // experiment; with boss scale reverted, 640 left guardians inside
         // screen-filling orange spheres whenever the player got close).
-        const minR = _bigShield ? 45 : 22;
         const maxR = _bigShield ? 360 : 140;
-        worldR = Math.max(minR, Math.min(worldR, maxR));
+
+        // The bubble must HUG the hull, and the ABSOLUTE floor (minR 22) was
+        // the sole reason it didn't. A fighter hull measures ~18 u across, so
+        // the intended 0.31 factor asks for a 5.7 u radius — and 22 overrode
+        // it into a 44 u sphere wrapped around an 18 u ship: 2.4x the hull,
+        // measured live on every Martian Pirate (shieldR 22, hull 18.5 u).
+        // That transparent additive ball, not the hull, was what a bracketed
+        // target read as at combat range, and _setEnemyTelegraph deliberately
+        // skips glow layers — so the whole 464 ms windup ramp was firing
+        // BEHIND it. Floors are now hull-RELATIVE whenever the hull could be
+        // measured, which keeps the sphere at 0.62x the hull span across every
+        // rank instead of inflating small ones; the absolute floor survives
+        // only for the un-measurable case it was actually written for.
+        if (hullSpan > 0) {
+            const relMin = hullSpan * 0.22;
+            const relMax = hullSpan * (_bigShield ? 0.75 : 0.40);
+            worldR = Math.max(relMin, Math.min(worldR, Math.min(relMax, maxR)));
+        } else {
+            const minR = _bigShield ? 45 : 22;
+            worldR = Math.max(minR, Math.min(worldR, maxR));
+        }
     }
 
     const ws = new THREE.Vector3();

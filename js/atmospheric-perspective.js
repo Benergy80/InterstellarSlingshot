@@ -282,12 +282,37 @@ const _AP_INJECT_FRES = [
 ].join('\n');
 
 const _AP_INJECT_OUT = [
+    '  // AP-AIR: AIRMASS CONTRAST WASH — the hero-scale fix.',
+    '  //',
+    '  // Round 1 darkened the limb, and measured, the darkening is real. It',
+    '  // still photographed as a printed disc at hero framing, and the reason',
+    '  // is not brightness, it is CONTRAST: every band, crater rim and',
+    '  // coastline ran crisp all the way to the silhouette and then stopped',
+    '  // at a hard edge. Nothing in the real world does that. A view ray',
+    '  // grazing the limb crosses ~38x the air column of one aimed at the',
+    '  // sub-observer point, and that column scatters the surface detail out',
+    '  // long before it takes the brightness — which is why a photographed',
+    '  // planet goes SOFT at the edge and a decal goes sharp.',
+    '  //',
+    '  // So: hold the luminance the limb term already computed, and collapse',
+    '  // only the chroma/detail excursion around it, toward the hue the air',
+    '  // itself scatters. Detail dissolving into haze at the edge is the cue',
+    '  // that separates a ball from a sticker, and it costs a dot and a mix.',
+    '  float apAir = pow(1.0 - ndv, 2.4) * (0.35 + 0.65 * uAtmo);',
+    '  float apLum = dot(col, vec3(0.2126, 0.7152, 0.0722));',
+    '  col = mix(col, mix(vec3(apLum), uRim * apLum * 1.7, 0.45), apAir * 0.62);',
     '  // AP-LIMB: Rayleigh in-scatter. Deliberately NOT multiplied by `day`,',
     '  // so the air keeps glowing a quarter of the way past the terminator',
     '  // and hands off continuously to the scatter shell outside the disc.',
-    '  float apScat = pow(1.0 - ndv, 2.2);',
+    '  //',
+    '  // Narrowed from pow(...,2.2)x0.28 to pow(...,3.6)x0.20. The old profile',
+    '  // was still 61% of peak at 80% of the disc radius, i.e. a wide bright',
+    '  // band of saturated rim colour painted INSIDE the silhouette — a',
+    '  // constant-looking hoop, which is exactly the neon-outline read. That',
+    '  // energy has moved outward into the scatter shell, where air belongs.',
+    '  float apScat = pow(1.0 - ndv, 3.6);',
     '  float apWrap = smoothstep(-0.80, 0.22, lam);',
-    '  col += mix(uRim, vec3(0.34, 0.56, 1.0), 0.45) * apScat * 0.28 *',
+    '  col += mix(uRim, vec3(0.34, 0.56, 1.0), 0.45) * apScat * 0.20 *',
     '         (0.16 + 0.52 * apWrap) * (0.30 + 0.70 * uAtmo);',
     '  gl_FragColor = vec4(col, 1.0);'
 ].join('\n');
@@ -337,6 +362,80 @@ function _apPatchBodyMaterial(mat) {
     return true;
 }
 
+// ---------------------------------------------------------------- star limb
+// The single largest object in the game is a procedural primary — up to r=649,
+// bigger than any planet — and its shader ended on:
+//
+//     col = mix(col, uEdge * 1.6, limb * 0.8);   // limb = pow(1 - N·V, 1.8)
+//
+// which drives the silhouette 1.6x BRIGHTER than the disc. That is backwards.
+// A real photosphere limb-darkens, because at grazing angles you see less
+// deeply into it and therefore into cooler gas — it is why a photograph of the
+// Sun reads as a ball. Driving the edge brighter than the centre flattens the
+// sphere into a filled circle with a hot rim, which is the exact look of a
+// sticker, and it was happening on the biggest thing on screen.
+//
+// Measured on a hero-framed r=288 primary, the two stars in frame read as flat
+// blue discs with no volume at all. Same treatment as the body patch: anchored
+// to one exact source line, skipped if the line is not there, one shared
+// patched string across every star so the program count does not move.
+const _AP_STAR_ANCHOR = '  col = mix(col, uEdge * 1.6, limb * 0.8);';
+
+const _AP_STAR_INJECT = [
+    '  // AP-STARLIMB: limb darkening, I(mu)/I(1) = 0.40 + 0.60*mu^0.75, with the',
+    '  // disc lifted 1.14x so the star keeps the same presence it had before —',
+    '  // this is meant to add shape, not to dim the brightest thing on screen.',
+    '  // View dependent, so it slides across the disc as you orbit, which is',
+    '  // what tells the eye it is shading and not a painted vignette.',
+    '  float apMu = max(dot(normalize(vN), V), 0.0);',
+    '  col *= 1.14 * (0.40 + 0.60 * pow(apMu, 0.75));',
+    '  // The hot edge is not deleted, it is put where a star actually keeps it.',
+    '  // pow 9 x 1.55 was tried first and it read as a GLASS MARBLE: a bright',
+    '  // hoop around a darker interior, which is the hollow-shell failure and',
+    '  // no better than the flat coin it replaced. A real chromosphere is a',
+    '  // fraction of a percent of the radius, so: pow 14, and quiet. The outer',
+    "  // glow is the corona sprites' job and they already do it.",
+    '  col += uEdge * pow(1.0 - apMu, 14.0) * 0.55;'
+].join('\n');
+
+let _apStarSrcIn = null;
+let _apStarSrcOut = null;
+let _apStarWarned = false;
+let _apStarPatched = 0;
+
+function _apPatchStarMaterial(mat) {
+    if (!mat || !mat.uniforms) return false;
+    const u = mat.uniforms;
+    // Star signature: the procedural plasma program. Planets (uDay/uAtmo),
+    // rings, wisps and every stock material fail this and are left alone.
+    if (!u.uCore || !u.uEdge || !u.uTime || !u.uSeed) return false;
+    if (u.uDay || u.uAtmo) return false;
+    if (!mat.userData) mat.userData = {};
+    if (mat.userData.apStarLimb) return false;
+    mat.userData.apStarLimb = true;          // pass or fail, never retry
+
+    const src = mat.fragmentShader;
+    if (typeof src !== 'string') return false;
+    if (src.indexOf('AP-STARLIMB') >= 0) return false;
+
+    if (src !== _apStarSrcIn) {
+        if (src.indexOf(_AP_STAR_ANCHOR) < 0) {
+            if (!_apStarWarned) {
+                _apStarWarned = true;
+                console.warn('☀️ star limb patch stood down: anchor not found (builder changed?)');
+            }
+            return false;
+        }
+        _apStarSrcIn = src;
+        _apStarSrcOut = src.replace(_AP_STAR_ANCHOR, _AP_STAR_INJECT);
+    }
+
+    mat.fragmentShader = _apStarSrcOut;
+    mat.needsUpdate = true;
+    _apStarPatched++;
+    return true;
+}
+
 // ---------------------------------------------------------------- the shell
 // The centre and the world radius are read straight off modelMatrix, so the
 // shell needs no per-frame uniform writes at all: parent it to the body once
@@ -379,13 +478,38 @@ const _AP_SHELL_FRAG = [
     '  float d2 = dot(OC, OC);',
     '  float rS = max(vR, 1e-4);',
     '  float b = sqrt(max(0.0, d2 - tca * tca)) / rS;',
-    // Ring profile. `outer` dies at the shell silhouette, `inner` dies toward
-    // the disc centre — the second one is depth-test insurance: the body
-    // already occludes that region, and if depth precision ever fails to
-    // resolve it at 100,000u the shell still has nothing to paint there.
-    '  float outer = 1.0 - smoothstep(uInner, 1.0, b);',
-    '  float inner = smoothstep(uInner * 0.55, uInner * 0.99, b);',
-    '  float g = pow(outer, 1.3) * inner;',
+    // AIRMASS, not a gradient. How bright the air is at screen radius `b` is
+    // just how much of it the view ray crosses. For a shell of unit radius
+    // that chord is sqrt(1 - b^2), and it is CUT SHORT by the opaque body at
+    // `uInner`, so the visible column is
+    //
+    //     sqrt(1 - b^2) - sqrt(uInner^2 - b^2)
+    //
+    // which is zero at the shell's own silhouette, rises to its maximum
+    // exactly ON the body's limb, and collapses again inside the disc where
+    // the body blocks the far half.
+    //
+    // The point of deriving it instead of tuning it: the previous
+    // smoothstep+pow(1.3) held ~0.7 of peak across a wide annulus, so the
+    // halo had a near-constant width and a near-constant brightness — a hoop.
+    // A hoop of saturated colour around a disc is the definition of a sticker
+    // outline, and it was the single loudest flat-reading cue at hero framing.
+    // A chord has no width to read: it spikes on the limb and falls away.
+    '  float bb = b * b;',
+    '  float ui2 = uInner * uInner;',
+    '  float chord = sqrt(max(0.0, 1.0 - bb)) - sqrt(max(0.0, ui2 - bb));',
+    '  float norm = sqrt(max(1e-4, 1.0 - ui2));',
+    '  float g = clamp(chord / norm, 0.0, 1.0);',
+    // Slight tail pull-down so the outer half of the shell reads as sky
+    // rather than as a second, fainter hoop.
+    '  g = pow(g, 1.30);',
+    // DEPTH INSURANCE, kept from the previous profile and worth its two ops.
+    // The chord already falls to ~0.16 of peak inside the disc, but "small"
+    // is not "zero": these bodies sit 100,000+ units from the origin, and the
+    // one frame the depth test fails to resolve a back face against the body
+    // in front of it, that 0.16 becomes a milky veil over the whole planet —
+    // measured, and it is the single ugliest failure mode this shell has.
+    '  g *= smoothstep(uInner * 0.55, uInner * 0.995, b);',
     // Sun weighting around the ring: bright on the day limb, still present on
     // the night limb, which is what "wraps past the terminator" means.
     '  vec3 rn = normalize(vWP - vC);',
@@ -397,6 +521,84 @@ const _AP_SHELL_FRAG = [
     '  gl_FragColor = vec4(uTint * amt, 1.0);',
     '}'
 ].join('\n');
+
+// =============================================================================
+// HERO-TIER TESSELLATION PROMOTION
+// =============================================================================
+// The bodies that dominate the frame were the ones carrying the LEAST geometry.
+// Measured over the live world: the ~14 procedural primaries (r 208–597,
+// including the biggest object in the game) started on SphereGeometry(24,16) =
+// 425 verts, and the ~90 procedural planets and moons (r up to 405) started on
+// SphereGeometry(16,12) = 221 verts, while the small nebula-cluster worlds
+// (r 90–143) shipped 56x40 = 2,337. Quality was inverted against screen size.
+//
+// js/proc-galaxies.js does run a distance LOD over these and it does reach
+// 64x40 / 80x52 once you are inside ~11 radii — verified live, a hero-framed
+// r=405 giant really is mounted at 64x40. The gap is the APPROACH: the tier
+// boundaries are 11 and 46 radii, so a body sits on the 221-vert base tier
+// until it is already 2° across and on the middle tier for the whole of the
+// long run-in, which is most of the time you actually spend looking at one.
+//
+// That file belongs to another owner, so this does not touch it. It uses the
+// per-body override the builder itself provides — `userData.pgLodSegs`, which
+// its lodGeometry() reads in preference to the shared table — and rewrites it
+// for the big bodies only. Everything downstream (the tier picker, the
+// hysteresis, geometry.parameters.radius that game-physics reads for collision
+// and slingshot thresholds) is untouched and still correct.
+//
+// The cost is bounded by construction: only bodies at or above HERO_R qualify,
+// which is ~106 objects out of 3,464, and only tier 0 is built eagerly. The
+// two upper tiers stay lazy exactly as before, so a body you never fly to
+// never allocates them. Base-tier total: ~106 x 925 verts ≈ 98k, against the
+// 2,000-instance asteroid field already in the scene.
+const AP_HERO = {
+    enabled: true,
+    // Radius above which a procedural body earns the hero tables. 60 units is
+    // where a body starts filling meaningful frame at the distances the
+    // autopilot and the slingshot actually park you.
+    minRadius: 60,
+    // was [[16, 12], [32, 22], [64, 40]]
+    planet: [[36, 24], [56, 38], [96, 64]],
+    // was [[24, 16], [44, 30], [80, 52]]
+    star: [[44, 30], [64, 44], [112, 72]],
+    promoted: 0
+};
+
+// Swap a procedural body onto the hero LOD table. Idempotent, one-shot per
+// body, and safe to call on anything — a body without proc-galaxies' LOD
+// bookkeeping is left exactly as it is.
+function _apPromoteHeroLod(b) {
+    if (!AP_HERO.enabled) return false;
+    const ud = b.userData;
+    if (!ud || ud._apHeroLod) return false;
+    // Signature of a proc-galaxies LOD body. Anything else (stock materials,
+    // the Sol system, the nebula clusters) has no tier cache to rewrite.
+    if (!ud.pgLodGeo || !ud.pgLodGeo.length || !(ud.radius > 0)) return false;
+    ud._apHeroLod = true;                       // never retry, pass or fail
+    if (ud.radius < AP_HERO.minRadius) return false;
+
+    const table = (ud.type === 'star') ? AP_HERO.star : AP_HERO.planet;
+    const oldCache = ud.pgLodGeo;
+    const seg = table[0];
+    const base = new THREE.SphereGeometry(ud.radius, seg[0], seg[1]);
+
+    ud.pgLodSegs = table;
+    ud.pgLodGeo = [base, null, null];
+    // Drop back to tier 0 and let the builder's own updateBodyLod() re-promote
+    // on its next pass. Re-deriving the tier here would duplicate its
+    // hysteresis rules, and duplicated thresholds drift apart.
+    ud.pgLodTier = 0;
+    b.geometry = base;
+
+    // The old tiers are unreachable now — release them rather than leaving
+    // three orphaned buffers per body on the GPU.
+    for (let i = 0; i < oldCache.length; i++) {
+        const g = oldCache[i];
+        if (g && g.dispose && g !== base) g.dispose();
+    }
+    AP_HERO.promoted++;
+    return true;
+}
 
 let _apShellGeo = null;
 const _apShells = [];
@@ -548,10 +750,17 @@ function _updatePlanetaryAtmospheres(camera) {
         const b = arr[i];
         if (!b || !b.material || !b.geometry || !b.userData) continue;
         const ud = b.userData;
-        if (ud.type !== 'planet' && ud.type !== 'moon') continue;
+        const isBody = (ud.type === 'planet' || ud.type === 'moon');
+        // Stars get the tessellation promotion but never a scatter shell — a
+        // photosphere has no atmosphere to hang outside it, and the corona
+        // sprites already own that band.
+        if (!isBody && ud.type !== 'star') continue;
 
-        // The limb half is free and applies to every body in the galaxy,
-        // visible or not — one O(1) flag check per body per 15 frames.
+        // Both of these are one O(1) flag check per body per 15 frames, and
+        // both are one-shot: they apply to every body in the galaxy whether it
+        // is on screen or not, so nothing pops the first time you look at it.
+        _apPromoteHeroLod(b);
+        if (!isBody) { _apPatchStarMaterial(b.material); continue; }
         _apPatchBodyMaterial(b.material);
 
         if (!b.visible || ud._distCulled) continue;
@@ -594,6 +803,8 @@ function atmosphereDebug() {
     return {
         limbPatchedMaterials: _apPatched,
         limbPatchActive: !!_apSrcOut,
+        starLimbPatched: _apStarPatched,
+        heroLodPromoted: AP_HERO.promoted,
         shellsAllocated: _apShells.length,
         shellsLive: live.length,
         shellScale: AP_ATMO.shellScale,
@@ -637,6 +848,10 @@ if (typeof window !== 'undefined') {
     // strength / shellScale / maxShells can be nudged from the console and the
     // next pass picks them up, `enabled = false` stops handing out new shells.
     window.AP_ATMO = AP_ATMO;
+    // Hero tessellation promotion. Live: `AP_HERO.enabled = false` before the
+    // world builds stops it handing out the big tables; `minRadius` moves the
+    // cut. `promoted` is the count that actually took.
+    window.AP_HERO = AP_HERO;
     window.atmosphereDebug = atmosphereDebug;
 
     console.log('🌌 Atmospheric Perspective System loaded (fog + planetary limb/scatter shells)');

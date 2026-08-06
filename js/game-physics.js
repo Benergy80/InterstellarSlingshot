@@ -3185,14 +3185,30 @@ if (gameState.emergencyWarp.active) {
             // at warp after the flourish and the speed climbed back up as the
             // old near-flat 0.9999/frame damping barely touched it.
             gameState.emergencyWarp.postWarp = true;
-            const _exitToSpeed = (gameState.emergencyWarp.entrySpeed > 0)
-                ? gameState.emergencyWarp.entrySpeed
-                : (gameState.minVelocity || 2.0);
+            // entrySpeed (captured unclamped at the O-key trigger, :3085) is
+            // NOT trustworthy on its own: if the ship was already coasting at
+            // a bogus elevated speed (e.g. a prior postWarp coast that never
+            // got re-clamped — see the currentMaxVelocity fix below) or the
+            // key was pressed mid-slingshot, entrySpeed can itself be a
+            // warp-tier number. Clamp the ramp's TARGET into the actual
+            // cruise band so the exit can only ever land somewhere sane —
+            // this is what stops the drop-out from becoming a random
+            // accelerate-or-park coin flip.
+            const _minV = gameState.minVelocity || 0.4;
+            const _maxV = gameState.maxVelocity || 4.0;
+            const _rawEntry = gameState.emergencyWarp.entrySpeed;
+            const _exitToSpeed = Math.min(Math.max(_rawEntry > 0 ? _rawEntry : _minV, _minV * 2), _maxV);
+            const _exitFromSpeed = gameState.velocityVector.length();
+            // An "exit" ramp must never be a speed-up. If the clamped target
+            // isn't actually below current speed (current speed already at
+            // or under the cruise ceiling), skip the ramp — there's nothing
+            // to drop out of, and the postWarp velocity clamp below takes
+            // over for the rest of the coast.
             gameState.emergencyWarp.exitRamp = {
-                active: true,
+                active: _exitToSpeed < _exitFromSpeed,
                 t0: Date.now(),
                 dur: 1000,
-                fromSpeed: gameState.velocityVector.length(),
+                fromSpeed: _exitFromSpeed,
                 toSpeed: _exitToSpeed
             };
             _fireWarpExitBeat(false, _exitToSpeed);
@@ -3916,19 +3932,34 @@ if (surfaceCollision) {
         });
     }
 
-    // Enhanced velocity limits
+    // Enhanced velocity limits.
+    // FEEDER FIX: postWarp used to exempt the clamp for its ENTIRE coast
+    // (until the player manually X-braked below minVelocity*1.5), not just
+    // for the ~1s exit ramp. That let ordinary W thrust push velocity to
+    // arbitrary warp-tier numbers post-exit (measured 0.4 -> 71.55 u/frame
+    // over 5s of thrust, 17.9x maxVelocity) — and because entrySpeed for the
+    // NEXT warp is captured from whatever velocityVector reads at trigger
+    // time (:3085), that bogus speed fed straight into the following exit
+    // ramp's target, reproducing the accelerate-instead-of-decelerate bug
+    // through a different door. The exemption now tracks the ramp's OWN
+    // active flag: true only while _applyWarpExitRamp is still easing the
+    // ship down from boostSpeed. Once the ramp finishes (or was skipped
+    // outright — see the toSpeed<fromSpeed guard above), postWarp coasting
+    // is clamped to ordinary gameState.maxVelocity like any other flight, so
+    // entrySpeed can never again latch a warp-tier number for the next warp.
+    const _ewRampActive = !!(gameState.emergencyWarp.exitRamp && gameState.emergencyWarp.exitRamp.active);
     const currentMaxVelocity = gameState.emergencyWarp.active ? gameState.emergencyWarp.boostSpeed :
                          gameState.emergencyWarp.autoBraking ? gameState.emergencyWarp.boostSpeed :  // NEW: Allow high speed during Jump brake
-                         gameState.emergencyWarp.postWarp ? gameState.emergencyWarp.boostSpeed :
-                         (gameState.slingshot.active || gameState.slingshot.postSlingshot) ? 
+                         _ewRampActive ? gameState.emergencyWarp.boostSpeed :
+                         (gameState.slingshot.active || gameState.slingshot.postSlingshot) ?
                          gameState.slingshot.maxSpeed : gameState.maxVelocity;
     const currentVelocity = gameState.velocityVector.length();
-    
-    if (currentVelocity > currentMaxVelocity && 
-    !gameState.slingshot.postSlingshot && 
-    !gameState.emergencyWarp.active && 
+
+    if (currentVelocity > currentMaxVelocity &&
+    !gameState.slingshot.postSlingshot &&
+    !gameState.emergencyWarp.active &&
     !gameState.emergencyWarp.autoBraking &&  // NEW: Don't cap velocity during Jump brake
-    !gameState.emergencyWarp.postWarp) {
+    !_ewRampActive) {
     gameState.velocityVector.normalize().multiplyScalar(currentMaxVelocity);
 }
     
