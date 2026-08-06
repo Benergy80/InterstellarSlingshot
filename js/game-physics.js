@@ -4655,6 +4655,23 @@ function checkForNebulaDeepDiscovery() {
     // Track first-8 clustered nebula count for paired index logic
     let clusteredCount = 0;
 
+    // ONE DISCOVERY PER APPROACH: cluster-mate nebulas can spawn inside
+    // each other's trigger radius, and a demo warp sweeps the camera
+    // through several radii in seconds — without a gate, one pass popped
+    // a burst of paths at once and the player couldn't tell which line
+    // belonged to the nebula being charted. Only the NEAREST undiscovered
+    // nebula may deep-discover, and no sooner than 8s after the previous
+    // discovery.
+    let _nearestUndiscovered = -1, _nearestDist = Infinity;
+    for (let ni = 0; ni < nebulaClouds.length; ni++) {
+        const nb = nebulaClouds[ni];
+        if (!nb || !nb.userData || nb.userData.deepDiscovered) continue;
+        const d = camera.position.distanceTo(nb.position);
+        if (d < _nearestDist) { _nearestDist = d; _nearestUndiscovered = ni; }
+    }
+    const _discoveryCooldownActive = gameState._lastDeepDiscoveryAt &&
+        (Date.now() - gameState._lastDeepDiscoveryAt) < 8000;
+
     nebulaClouds.forEach((nebula, index) => {
         if (!nebula || !nebula.userData) return;
 
@@ -4728,6 +4745,12 @@ function checkForNebulaDeepDiscovery() {
 
         if (distance >= deepDiscoveryRange) return;
 
+        // The one-discovery-per-approach gate (computed above): only the
+        // nebula whose core the player is nearest may trigger, and never
+        // within 8s of the previous discovery. A blocked neighbor simply
+        // triggers later, when the player actually flies to it.
+        if (index !== _nearestUndiscovered || _discoveryCooldownActive) return;
+
         // Resolve which galaxy/faction this nebula maps to
         const galaxyId = resolveNebulaGalaxyId(nebula, nebulaType, index);
         if (galaxyId === undefined) return;
@@ -4774,6 +4797,7 @@ function checkForNebulaDeepDiscovery() {
         // Mark as deep discovered
         console.log(`✨ DEEP DISCOVERY TRIGGERED for ${nebulaType} nebula "${nebulaName}" at distance ${distance.toFixed(0)}`);
         nebula.userData.deepDiscovered = true;
+        gameState._lastDeepDiscoveryAt = Date.now();
 
         // Reward: ship upgrade (energy efficiency + top speed). Fires once
         // per nebula. Delay slightly so the upgrade achievement appears
