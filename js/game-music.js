@@ -31,6 +31,73 @@
   const CALM_VOLUME_SCALE = 0.85;    // 85% of base when no combat (was 0.6)
   const DUCK_FADE_DURATION = 1.5;    // seconds
 
+  // ═══════════════════════════════════════════════════════════════════════════
+  // ADAPTIVE MIX — the layer that turns "a playlist" into "a score"
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Four systems ride on top of the location-based track picker:
+  //   1. COMBAT STATE MACHINE — proximity-driven crossfade into a battle
+  //      track, with entry/exit hysteresis + a minimum hold so it can never
+  //      thrash between ambient and battle while you strafe past a picket.
+  //   2. STINGERS — short musical hits (discovery, boss spawn, mission
+  //      complete, galaxy liberation) cut from the strongest onsets in the
+  //      existing tracks, played on their own <audio> elements with real
+  //      attack/hold/release envelopes and a sidechain duck on the bed.
+  //   3. WARP RISER — a continuous gain+filter automation driven by the
+  //      published whip/tunnel curves: bloom into the slingshot, pinch at
+  //      periapsis slow-mo, muffle inside the tunnel, release on the exit.
+  //   4. SPATIALIZATION — distance attenuation + stereo pan for every
+  //      one-shot this module owns, plus helpers other systems can borrow.
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  // ─── 1. Combat state machine ──────────────────────────────────────────────
+  const COMBAT_ENGAGE_RADIUS  = 2500;   // hostiles this close = "engaged"
+  const COMBAT_RELEASE_RADIUS = 3400;   // must ALL be beyond this to disengage
+  const COMBAT_ENTER_DELAY    = 1100;   // ms of sustained contact before switching
+  const COMBAT_EXIT_DELAY     = 5000;   // ms of clear space before falling back
+  const COMBAT_MIN_HOLD       = 18000;  // ms minimum time on the battle track
+  const COMBAT_REARM          = 4000;   // ms after leaving before combat re-arms
+  const DAMAGE_ENGAGE_WINDOW  = 5000;   // ms — taking hull damage counts as combat
+  const FIRING_ENGAGE_WINDOW  = 6000;   // ms since an enemy last pulled a trigger
+  const COMBAT_LAUNCH_GRACE   = 12000;  // ms — the launch beat belongs to home
+
+  // ─── 2. Stingers ──────────────────────────────────────────────────────────
+  // Every stinger is a slice of a track we already ship, chosen by measuring
+  // short-window RMS across the first 14 s of every MP3 and locking onto the
+  // largest transient (silence → hit).  `at` is the measured onset in
+  // seconds; starting even 200 ms late makes a stinger read as sloppy, so
+  // these are tuned to the transient, not to a round number.
+  const STINGER_LEVEL = 0.80;           // stingers relative to the music slider
+  const STINGERS = {
+    // 41 dB jump out of near-silence — the biggest fanfare in the library.
+    liberation:      { file: 'Galaxy8.mp3',          at: 10.12, dur: 3.10, gain: 1.00, atk: 0.02, rel: 0.85, cool: 8000 },
+    // Bright bell that rings out and decays to nothing — pure "you found it".
+    discovery:       { file: 'Galaxy 1.mp3',         at: 0.08,  dur: 2.20, gain: 0.78, atk: 0.02, rel: 0.65, cool: 6000 },
+    // Heroic sustained lift — reads as resolution, not as a new threat.
+    missionComplete: { file: 'Elite Guardians.mp3',  at: 8.32,  dur: 2.60, gain: 0.90, atk: 0.02, rel: 0.70, cool: 6000 },
+    // 24 dB stab out of silence, menacing pulse — deliberately NOT cut from
+    // Boss Fight.mp3 so it doesn't smear into the boss track crossfading in.
+    bossSpawn:       { file: 'Beware the Borg2.mp3', at: 7.22,  dur: 2.55, gain: 0.95, atk: 0.02, rel: 0.60, cool: 9000 },
+    // Low driving hit for heavyweight contact (Borg / elite arrival).
+    threat:          { file: 'Boss Fight.mp3',       at: 9.02,  dur: 2.00, gain: 0.82, atk: 0.03, rel: 0.55, cool: 15000 },
+    // Slow swell out of silence — the arrival breath on the far side of a
+    // warp.  noDuck: this one IS the bloom, so it must not fight the bed it
+    // is lifting; ducking here would flatten the exact moment of arrival.
+    warpExit:        { file: 'nebula5.mp3',          at: 4.05,  dur: 2.40, gain: 0.58, atk: 0.05, rel: 0.80, cool: 6000, noDuck: true },
+  };
+  const STINGER_SPACING = 900;          // ms minimum gap between ANY two hits
+  const STINGER_DUCK    = 0.30;         // sidechain: bed drops 30% under a hit
+
+  // ─── 3. Warp riser / filter automation ────────────────────────────────────
+  const FILTER_OPEN_HZ  = 20000;        // "no filter" resting position
+  const FX_TAU_UP       = 0.10;         // s — fast to grab (ducks bite instantly)
+  const FX_TAU_DOWN     = 0.32;         // s — slow to release (blooms breathe)
+
+  // ─── 4. Spatialization ────────────────────────────────────────────────────
+  const SPATIAL_NEAR = 600;             // full volume inside this radius
+  const SPATIAL_REF  = 1800;            // half-ish volume around here
+  const SPATIAL_MIN  = 0.10;            // never fully silent — it's still music
+  const SPATIAL_PAN  = 0.80;            // max stereo offset (keep it musical)
+
   // Per-track volume multipliers (relative to st.volume).
   // Tracks not listed here default to 1.0.
   const TRACK_VOLUME = {
@@ -86,7 +153,155 @@
     volumeScaleTimer: null,
     skipLockUntil: 0,     // while > Date.now(), skip-selected track is preserved
     _preloaded: false,    // guard for one-time preload
+
+    // ── adaptive-mix state ──────────────────────────────────────────────────
+    // Combat state machine (see updateCombatState).
+    combat: {
+      active: false,      // true = battle track owns the context
+      key: null,          // which battle track
+      rank: 0,            // 1 grunt · 2 guardian · 3 borg · 4 boss
+      contactSince: 0,    // ms timestamp of first sustained contact
+      clearSince: 0,      // ms timestamp of "nothing in range"
+      enteredAt: 0,
+      leftAt: 0,
+    },
+    // Live threat readout, refreshed by scanThreats().
+    threat: { near: 0, nearest: Infinity, engagedNearest: Infinity, rank: 0, lead: null },
+    lastHull: null,
+    lastDamageAt: 0,
+    startedAt: 0,
+
+    // FX automation (warp riser + tunnel duck + stinger sidechain).
+    fx: {
+      gain: 1, gainT: 1,        // current / target bus gain multiplier
+      lp: FILTER_OPEN_HZ,       // current lowpass cutoff
+      lpT: FILTER_OPEN_HZ,      // target lowpass cutoff
+      bloomUntil: 0,            // ms — warp-exit bloom window
+      tunnelPeak: 0,            // highest tunnel level seen this transit
+      duckUntil: 0,             // ms — stinger sidechain window
+      lastPushedGain: -1,
+      lastPushedLp: -1,
+    },
+
+    // Stinger bank.
+    stingerEls: {},       // { key: HTMLAudioElement }
+    stingerNext: {},      // { key: nextAllowedTimestamp }
+    stingerBroken: {},    // { key: true } — file failed to load
+    stingerGateUntil: 0,  // global spacing gate
+    stingerTimers: {},    // { key: intervalId }
+
+    // Event-edge trackers (poll-based, so no other file needs editing).
+    seenBosses: null,     // Set of boss uuids already stingered
+    lastMissionsDone: -1,
+    lastGalaxiesCleared: -1,
+
+    lastTick: 0,
   };
+
+  // ─── Web Audio bus ────────────────────────────────────────────────────────
+  // The MP3 elements are routed through a shared lowpass + gain so the warp
+  // riser can do REAL filter automation instead of just yanking volume.
+  // This is strictly an upgrade path: if the shared AudioContext never comes
+  // up (no gesture yet, or a browser that refuses createMediaElementSource)
+  // the mix falls back to element-volume automation and nothing is lost.
+  const wa = {
+    ok: false,
+    failed: false,
+    ctx: null,
+    bus: null,
+    filter: null,
+    sources: new WeakMap(),   // music elements
+    stingerNodes: new WeakMap(),
+  };
+
+  function waEnsure() {
+    if (wa.ok) return true;
+    if (wa.failed) return false;
+    // Piggyback on game-controls' AudioContext — one context, one clock.
+    const ctx = (typeof audioContext !== 'undefined' && audioContext) ? audioContext : null;
+    if (!ctx) return false;                 // not created yet — retry next tick
+    if (ctx.state !== 'running') return false;
+    // file:// makes media-element sources opaque; the graph would output
+    // silence.  Better to stay on plain <audio> playback.
+    if (typeof location !== 'undefined' && location.protocol === 'file:') {
+      wa.failed = true;
+      return false;
+    }
+    try {
+      wa.filter = ctx.createBiquadFilter();
+      wa.filter.type = 'lowpass';
+      wa.filter.frequency.setValueAtTime(FILTER_OPEN_HZ, ctx.currentTime);
+      wa.filter.Q.setValueAtTime(0.5, ctx.currentTime);
+      wa.bus = ctx.createGain();
+      wa.bus.gain.setValueAtTime(1, ctx.currentTime);
+      wa.filter.connect(wa.bus);
+      // Straight to the destination, NOT through masterGain/musicGain — the
+      // MP3 score has always been mixed independently of the synth layer and
+      // routing it into the synth bus would silently halve its level.
+      wa.bus.connect(ctx.destination);
+      wa.ctx = ctx;
+      wa.ok = true;
+      Object.keys(st.loaded).forEach(k => waRoute(st.loaded[k]));
+      console.log('🎛️ Soundtrack: adaptive bus online (filter + riser automation)');
+      return true;
+    } catch (e) {
+      wa.failed = true;
+      wa.ok = false;
+      return false;
+    }
+  }
+
+  function waRoute(el) {
+    if (!wa.ok || !el) return null;
+    let node = wa.sources.get(el);
+    if (node) return node;
+    try {
+      node = wa.ctx.createMediaElementSource(el);
+      node.connect(wa.filter);
+      wa.sources.set(el, node);
+    } catch (e) {
+      node = null;
+    }
+    return node;
+  }
+
+  // Stingers get their own chain (gain + stereo pan) so a spatialized hit
+  // can arrive from the side without dragging the music bed with it.
+  function waRouteStinger(el) {
+    if (!wa.ok || !el) return null;
+    let chain = wa.stingerNodes.get(el);
+    if (chain) return chain;
+    try {
+      const src = wa.ctx.createMediaElementSource(el);
+      const gain = wa.ctx.createGain();
+      gain.gain.setValueAtTime(1, wa.ctx.currentTime);
+      let pan = null;
+      if (typeof wa.ctx.createStereoPanner === 'function') {
+        pan = wa.ctx.createStereoPanner();
+        src.connect(pan); pan.connect(gain);
+      } else {
+        src.connect(gain);
+      }
+      gain.connect(wa.ctx.destination);
+      chain = { src: src, gain: gain, pan: pan };
+      wa.stingerNodes.set(el, chain);
+    } catch (e) {
+      chain = null;
+    }
+    return chain;
+  }
+
+  // GAME-OVER / SUSPEND WATCHDOG.  Once the elements are routed through the
+  // AudioContext their sound dies with it — and showGameOver() suspends the
+  // context immediately after asking us to play the game-over track.  If the
+  // score is supposed to be audible and the game is not paused, wake it.
+  function waWatchdog() {
+    if (!wa.ok || !wa.ctx) return;
+    if (wa.ctx.state !== 'suspended') return;
+    if (typeof gameState !== 'undefined' && gameState && gameState.paused) return;
+    if (!st.currentEl || st.currentEl.paused) return;
+    try { wa.ctx.resume(); } catch (e) { /* ignore */ }
+  }
 
   // ─── Preload ──────────────────────────────────────────────────────────────
   // Tracks that should play once, not loop.  When they finish naturally,
@@ -122,8 +337,17 @@
   }
 
   // ─── Play / Crossfade ─────────────────────────────────────────────────────
+  // When the adaptive bus is live the riser/duck lives on the bus gain, so
+  // element volume stays exactly as the crossfade logic wrote it.  Without
+  // the bus we fold the FX gain into element volume instead (clamped to a
+  // gentler range, since crossfade targets are sampled once at fade start).
+  function fxElementGain() {
+    if (wa.ok) return 1;
+    return Math.max(0.55, Math.min(1.05, st.fx.gain));
+  }
+
   function trackVolume(key) {
-    return st.volume * (TRACK_VOLUME[key] || 1.0) * st.volumeScale;
+    return st.volume * (TRACK_VOLUME[key] || 1.0) * st.volumeScale * fxElementGain();
   }
 
   // Ramp the global volumeScale toward a target.  Applied continuously
@@ -156,17 +380,11 @@
 
   function updateDuckingForCombat() {
     // Any live enemy within COMBAT_VOLUME_RADIUS of the camera counts as
-    // active engagement.  Also count the targeted enemy if it's within
-    // weapons range, so the swell lines up with actual combat moments.
-    let engaged = false;
-    if (typeof enemies !== 'undefined' && typeof camera !== 'undefined') {
-      const cp = camera.position;
-      for (let i = 0; i < enemies.length; i++) {
-        const e = enemies[i];
-        if (!e || !e.userData || e.userData.health <= 0) continue;
-        if (cp.distanceTo(e.position) < COMBAT_VOLUME_RADIUS) { engaged = true; break; }
-      }
-    }
+    // active engagement.  The threat readout is refreshed by the adaptive
+    // tick, so this is now a pure read — no second O(enemies) sweep.
+    const engaged = st.threat.nearest < COMBAT_VOLUME_RADIUS ||
+                    st.combat.active ||
+                    (Date.now() - st.lastDamageAt) < DAMAGE_ENGAGE_WINDOW;
     setVolumeScale(engaged ? 1.0 : CALM_VOLUME_SCALE);
   }
 
@@ -205,6 +423,11 @@
 
     st.current = key;
     st.currentEl = next;
+
+    // Route the incoming track through the adaptive bus (no-op if the bus
+    // isn't up yet — waEnsure() retro-routes everything when it comes online).
+    waEnsure();
+    waRoute(next);
 
     // Resume where the track left off for looping context tracks (galaxy,
     // nebula, main theme).  Only reset to the beginning for one-shot
@@ -302,7 +525,526 @@
     st.current = null;
     st.currentEl = null;
     st.fadingOut = null;
+    stopAllStingers();
   }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // ADAPTIVE MIX — spatialization helpers
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Distance attenuation + stereo pan for anything this module plays.  Kept
+  // allocation-free (no THREE.Vector3 churn) because it runs on one-shots
+  // fired from the combat loop.
+  function spatialGain(pos) {
+    if (!pos || typeof camera === 'undefined' || !camera) return 1;
+    const cp = camera.position;
+    const dx = pos.x - cp.x, dy = pos.y - cp.y, dz = pos.z - cp.z;
+    const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    if (d <= SPATIAL_NEAR) return 1;
+    // Gentle inverse falloff — a boss 4 km out should still register as a
+    // musical event, just clearly further away.
+    const g = 1 / (1 + Math.pow((d - SPATIAL_NEAR) / SPATIAL_REF, 1.6));
+    return Math.max(SPATIAL_MIN, Math.min(1, g));
+  }
+
+  function spatialPan(pos) {
+    if (!pos || typeof camera === 'undefined' || !camera || !camera.matrixWorld) return 0;
+    const cp = camera.position;
+    const dx = pos.x - cp.x, dy = pos.y - cp.y, dz = pos.z - cp.z;
+    const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    if (d < 0.0001) return 0;
+    // Camera-right basis vector straight out of the world matrix.
+    const e = camera.matrixWorld.elements;
+    const dot = (dx * e[0] + dy * e[1] + dz * e[2]) / d;
+    return Math.max(-1, Math.min(1, dot)) * SPATIAL_PAN;
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // ADAPTIVE MIX — stingers
+  // ═══════════════════════════════════════════════════════════════════════════
+  function stingerEl(key) {
+    const spec = STINGERS[key];
+    if (!spec) return null;
+    if (st.stingerEls[key]) return st.stingerEls[key];
+    const a = new Audio();
+    a.preload = 'metadata';
+    a.loop = false;
+    a.volume = 0;
+    a.src = BASE_PATH + encodeURIComponent(spec.file);
+    // Park the playhead on the transient as soon as duration is known: the
+    // seek is what makes the browser buffer THAT part of the file, so the
+    // hit is ready to fire instantly instead of streaming from byte zero.
+    a.addEventListener('loadedmetadata', () => {
+      try { a.currentTime = spec.at; } catch (e) { /* ignore */ }
+    }, { once: true });
+    a.addEventListener('error', () => { st.stingerBroken[key] = true; }, { once: true });
+    st.stingerEls[key] = a;
+    return a;
+  }
+
+  function warmStinger(key) {
+    const spec = STINGERS[key];
+    const el = stingerEl(key);
+    if (!el || !spec || st.stingerBroken[key]) return;
+    try {
+      if (el.readyState >= 1) { el.currentTime = spec.at; }
+      else { el.load(); }
+    } catch (e) { /* ignore */ }
+  }
+
+  function stopStinger(key) {
+    if (st.stingerTimers[key]) {
+      clearInterval(st.stingerTimers[key]);
+      st.stingerTimers[key] = null;
+    }
+    const el = st.stingerEls[key];
+    const spec = STINGERS[key];
+    if (el) {
+      el.pause();
+      el.volume = 0;
+      if (spec) { try { el.currentTime = spec.at; } catch (e) { /* ignore */ } }
+    }
+  }
+
+  function stopAllStingers() {
+    Object.keys(STINGERS).forEach(stopStinger);
+    st.fx.duckUntil = 0;
+  }
+
+  // Fire a stinger.  `pos` is optional — pass a world position and the hit
+  // is attenuated and panned toward it.
+  function playStinger(key, pos) {
+    const spec = STINGERS[key];
+    if (!spec) return false;
+    if (!st.enabled || st.muted) return false;
+    if (st.stingerBroken[key]) return false;
+    if (typeof gameState !== 'undefined' && gameState && gameState.paused) return false;
+
+    const now = Date.now();
+    if (now < st.stingerGateUntil) return false;              // global spacing
+    if (now < (st.stingerNext[key] || 0)) return false;       // per-type cooldown
+
+    const el = stingerEl(key);
+    if (!el) return false;
+    // HAVE_FUTURE_DATA or better, otherwise the hit would land late — which
+    // reads worse than not playing it at all.  Warm it for next time.
+    if (el.readyState < 3) { warmStinger(key); return false; }
+
+    st.stingerGateUntil = now + STINGER_SPACING;
+    st.stingerNext[key] = now + (spec.cool || 6000);
+
+    const sg = spatialGain(pos);
+    const peak = Math.max(0, Math.min(1, st.volume * STINGER_LEVEL * spec.gain * sg));
+
+    // Stereo placement (Web Audio only — element volume still carries level).
+    waEnsure();
+    const chain = waRouteStinger(el);
+    if (chain && chain.pan) {
+      try { chain.pan.pan.setTargetAtTime(spatialPan(pos), wa.ctx.currentTime, 0.01); } catch (e) { /* ignore */ }
+    }
+
+    stopStinger(key);
+    try { el.currentTime = spec.at; } catch (e) { /* ignore */ }
+    el.volume = 0;
+    const p = el.play();
+    if (p && p.catch) p.catch(() => {});
+
+    // Sidechain: the bed steps back under the hit and swells back after.
+    if (!spec.noDuck) st.fx.duckUntil = now + spec.dur * 1000;
+
+    // Attack → hold → release envelope, 40 ms resolution.
+    const STEP = 40;
+    const atkMs = Math.max(STEP, spec.atk * 1000);
+    const relMs = Math.max(STEP, spec.rel * 1000);
+    const totalMs = spec.dur * 1000;
+    const t0 = now;
+    st.stingerTimers[key] = setInterval(() => {
+      const t = Date.now() - t0;
+      let v;
+      if (t < atkMs) v = peak * (t / atkMs);
+      else if (t > totalMs - relMs) v = peak * Math.max(0, (totalMs - t) / relMs);
+      else v = peak;
+      // Follow the music slider live, and vanish instantly on mute.
+      el.volume = (st.muted || !st.enabled) ? 0 : Math.max(0, Math.min(1, v));
+      if (t >= totalMs) stopStinger(key);
+    }, STEP);
+    return true;
+  }
+
+  // Semantic entry point — what the GAME calls, rather than a file name.
+  function notifyEvent(event, pos) {
+    switch (event) {
+      case 'discovery':
+      case 'nebulaDiscovered':
+      case 'galaxyDiscovered':   return playStinger('discovery', pos);
+      case 'bossSpawn':
+      case 'bossIncoming':       return playStinger('bossSpawn', pos);
+      case 'missionComplete':    return playStinger('missionComplete', pos);
+      case 'liberation':
+      case 'galaxyLiberated':    return playStinger('liberation', pos);
+      case 'warpExit':           return playStinger('warpExit', pos);
+      case 'threat':             return playStinger('threat', pos);
+      default:                   return false;
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // ADAPTIVE MIX — combat proximity state machine
+  // ═══════════════════════════════════════════════════════════════════════════
+  function threatRank(ud) {
+    if (!ud) return 1;
+    if (ud.isBoss) return 4;
+    if (ud.isBorgCube || ud.isBorg) return 3;
+    if (ud.isEliteGuardian || ud.isBlackHoleGuardian) return 2;
+    return 1;
+  }
+
+  const RANK_TRACK = { 4: 'bossFight', 3: 'borg', 2: 'eliteGuardians', 1: 'eliteGuardians' };
+
+  // "Engaging" is not the same as "nearby".  Sol's Martian pirates sit
+  // inside 2,500 u of the launch point on a lazy patrol — scoring that as a
+  // firefight would slam battle music over the opening beat of the game.
+  // An enemy counts as engaging when it has actually pulled a trigger
+  // recently, when its own AI has gone active, when it's close enough that
+  // its next shot is imminent, or when it is a heavyweight whose mere
+  // presence IS the encounter (boss / Borg / guardian).
+  function isEngaging(ud, d, now) {
+    if (!ud) return false;
+    if (ud.isBoss || ud.isBorgCube || ud.isBorg ||
+        ud.isEliteGuardian || ud.isBlackHoleGuardian) return true;
+    if (ud.lastAttack && (now - ud.lastAttack) < FIRING_ENGAGE_WINDOW) return true;
+    if (ud.isActive === true) return true;
+    if (d < (ud.firingRange || 400) * 1.6) return true;
+    return false;
+  }
+
+  function scanThreats() {
+    const t = st.threat;
+    t.near = 0; t.nearest = Infinity; t.engagedNearest = Infinity;
+    t.rank = 0; t.lead = null;
+    if (typeof enemies === 'undefined' || !enemies ||
+        typeof camera === 'undefined' || !camera) return t;
+    const cp = camera.position;
+    const now = Date.now();
+    let best = -Infinity;
+    for (let i = 0; i < enemies.length; i++) {
+      const e = enemies[i];
+      if (!e || !e.userData || !e.position) continue;
+      if (typeof e.userData.health === 'number' && e.userData.health <= 0) continue;
+      const d = cp.distanceTo(e.position);
+      if (d > COMBAT_RELEASE_RADIUS) continue;
+      if (d < t.nearest) t.nearest = d;
+      if (!isEngaging(e.userData, d, now)) continue;
+      if (d < COMBAT_ENGAGE_RADIUS) t.near++;
+      if (d < t.engagedNearest) t.engagedNearest = d;
+      // Rank dominates distance: a boss at 3 km outranks a fighter at 300 m.
+      const r = threatRank(e.userData);
+      const score = r * 100000 - d;
+      if (score > best) { best = score; t.rank = r; t.lead = e; }
+    }
+    return t;
+  }
+
+  function updateCombatState(now) {
+    const c = st.combat;
+    const t = scanThreats();
+
+    // Hull loss counts as engagement even if the shooter drifted out of
+    // range — you are unambiguously in a fight when you're taking hits.
+    if (typeof gameState !== 'undefined' && gameState && typeof gameState.hull === 'number') {
+      if (st.lastHull !== null && gameState.hull < st.lastHull - 0.01) st.lastDamageAt = now;
+      st.lastHull = gameState.hull;
+    }
+    const hurtRecently = (now - st.lastDamageAt) < DAMAGE_ENGAGE_WINDOW;
+
+    // The legacy boss path (switchToBattleMusic) is authoritative: when the
+    // synth layer says "boss", the score commits to the boss track and the
+    // proximity machine holds it rather than fighting over it.
+    const bossForced = (typeof musicSystem !== 'undefined' && musicSystem && musicSystem.inBattle);
+
+    // Launch grace — the first seconds after "go" belong to the home theme,
+    // not to whichever pirate happens to be loitering near the shipyard.
+    if (typeof gameState !== 'undefined' && gameState && gameState.gameStarted && !st.startedAt) {
+      st.startedAt = now;
+    }
+    const inGrace = st.startedAt && (now - st.startedAt) < COMBAT_LAUNCH_GRACE;
+
+    if (!c.active) {
+      const contact = !inGrace && (bossForced || t.near > 0 || hurtRecently);
+      if (contact) { if (!c.contactSince) c.contactSince = now; }
+      else c.contactSince = 0;
+
+      const held = c.contactSince && (now - c.contactSince) >= (bossForced ? 0 : COMBAT_ENTER_DELAY);
+      const rearmed = (now - c.leftAt) >= (bossForced ? 0 : COMBAT_REARM);
+      if (held && rearmed) {
+        c.active = true;
+        c.enteredAt = now;
+        c.clearSince = 0;
+        c.rank = bossForced ? 4 : (t.rank || 1);
+        c.key = RANK_TRACK[c.rank] || 'eliteGuardians';
+        // Heavyweight contact gets a stab before the track lands.
+        if (c.rank >= 3 && !bossForced) {
+          playStinger('threat', t.lead ? t.lead.position : null);
+        }
+      }
+    } else {
+      // Escalate only — a boss arriving mid-skirmish upgrades the track; a
+      // grunt surviving a boss never downgrades it.
+      const r = bossForced ? 4 : t.rank;
+      if (r > c.rank) {
+        c.rank = r;
+        c.key = RANK_TRACK[r] || c.key;
+      }
+      // Hysteresis: entry at 2500 u, release only past 3400 u.
+      const stillEngaged = bossForced || t.engagedNearest < COMBAT_RELEASE_RADIUS || hurtRecently;
+      if (stillEngaged) c.clearSince = 0;
+      else if (!c.clearSince) c.clearSince = now;
+
+      if (c.clearSince &&
+          (now - c.clearSince) >= COMBAT_EXIT_DELAY &&
+          (now - c.enteredAt) >= COMBAT_MIN_HOLD) {
+        c.active = false;
+        c.key = null;
+        c.rank = 0;
+        c.contactSince = 0;
+        c.leftAt = now;
+        // Hand the context detector the wheel again immediately so the
+        // ambient crossfade starts on the same beat the fight ends.
+        updateMusicContext();
+      }
+    }
+    return c;
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // ADAPTIVE MIX — warp riser / tunnel duck / exit bloom
+  // ═══════════════════════════════════════════════════════════════════════════
+  function smoothstep(a, b, x) {
+    if (b === a) return x >= b ? 1 : 0;
+    const t = Math.max(0, Math.min(1, (x - a) / (b - a)));
+    return t * t * (3 - 2 * t);
+  }
+
+  function updateWarpFx(now, dt) {
+    const fx = st.fx;
+    let gain = 1.0;
+    let lp = FILTER_OPEN_HZ;
+
+    const W = (typeof window !== 'undefined') ? window : null;
+    const wf = W ? W.__whipFrame : null;
+    const dil = (W && typeof W.__whipDilation === 'number') ? W.__whipDilation : 0;
+    const tun = (W && typeof W.__warpTunnelLevel === 'number') ? W.__warpTunnelLevel : 0;
+    const gs = (typeof gameState !== 'undefined') ? gameState : null;
+    const sling = gs && gs.slingshot ? gs.slingshot : null;
+    const ewarp = gs && gs.emergencyWarp ? gs.emergencyWarp : null;
+
+    // ── RISER: the gravity whip's own arc parameter drives the swell.
+    // u runs 0 → 1 across the arc, so the music tightens on the approach
+    // and blooms through periapsis exactly with the physics.
+    if (wf && wf.active && typeof wf.u === 'number') {
+      const u = Math.max(0, Math.min(1, wf.u));
+      // Two bells, not a ramp.  A riser is a CONTRAST: pull the floor out
+      // from under the mix on the approach (quieter AND darker), then bloom
+      // through periapsis.  Both curves return to zero, so the mix is back
+      // at unity by the time the arc releases — no lingering dip.
+      const dip  = Math.exp(-Math.pow((u - 0.15) / 0.12, 2));
+      const lift = Math.exp(-Math.pow((u - 0.48) / 0.22, 2));
+      gain *= (1 - 0.14 * dip + 0.26 * lift);
+      lp = Math.min(lp, FILTER_OPEN_HZ - (FILTER_OPEN_HZ - 4200) * dip);
+    }
+
+    // ── PERIAPSIS PINCH: __whipDilation is a bell centred on the slow-mo
+    // moment.  Squeezing the band there gives the time-dilation beat an
+    // audible counterpart instead of leaving it a purely visual trick.
+    if (dil > 0.02) {
+      const p = Math.max(0, Math.min(1, dil));
+      gain *= (1 - 0.28 * p);
+      lp = Math.min(lp, 900 + (FILTER_OPEN_HZ - 900) * (1 - p));
+    }
+
+    // ── TUNNEL: inside the warp tunnel the score goes distant and muffled.
+    if (tun > 0.01) {
+      const k = Math.max(0, Math.min(1, tun));
+      gain *= (1 - 0.70 * k);
+      lp = Math.min(lp, 520 + (FILTER_OPEN_HZ - 520) * (1 - k));
+      if (k > fx.tunnelPeak) fx.tunnelPeak = k;
+    } else if (fx.tunnelPeak > 0.45) {
+      // ── EXIT BEAT: the tunnel just collapsed after a real transit.
+      // Bloom the bed back with a little overshoot, breathe an arrival
+      // swell over it, and re-pick the track for wherever we came out.
+      fx.tunnelPeak = 0;
+      fx.bloomUntil = now + 1100;
+      playStinger('warpExit', null);
+      updateMusicContext();
+    } else {
+      fx.tunnelPeak = 0;
+    }
+
+    // ── EMERGENCY WARP: same idea, gentler — it has no tunnel of its own.
+    if (ewarp && ewarp.active) {
+      gain *= 0.82;
+      lp = Math.min(lp, 3600);
+    }
+
+    // ── POST-SLINGSHOT COAST: hold a touch of lift while you're still
+    // screaming away from the well, then settle.
+    if (sling && sling.postSlingshot && !(wf && wf.active)) {
+      gain *= 1.06;
+    }
+
+    // ── BLOOM window (exit overshoot, decaying).
+    if (now < fx.bloomUntil) {
+      const b = (fx.bloomUntil - now) / 1100;
+      gain *= (1 + 0.16 * b);
+      lp = FILTER_OPEN_HZ;
+    }
+
+    // ── STINGER SIDECHAIN.
+    if (now < fx.duckUntil) gain *= (1 - STINGER_DUCK);
+
+    fx.gainT = Math.max(0.05, Math.min(1.5, gain));
+    fx.lpT = Math.max(200, Math.min(FILTER_OPEN_HZ, lp));
+
+    // Asymmetric smoothing: grabs fast, releases slow.
+    const kg = 1 - Math.exp(-dt / (fx.gainT < fx.gain ? FX_TAU_UP : FX_TAU_DOWN));
+    fx.gain += (fx.gainT - fx.gain) * kg;
+    const kl = 1 - Math.exp(-dt / (fx.lpT < fx.lp ? FX_TAU_UP : FX_TAU_DOWN));
+    fx.lp += (fx.lpT - fx.lp) * kl;
+
+    applyFx();
+  }
+
+  function applyFx() {
+    const fx = st.fx;
+    if (wa.ok && wa.bus && wa.filter && wa.ctx) {
+      // Only touch the audio param when it actually moved — scheduling a
+      // ramp every frame for a static value is pure overhead.
+      if (Math.abs(fx.gain - fx.lastPushedGain) > 0.004) {
+        fx.lastPushedGain = fx.gain;
+        try { wa.bus.gain.setTargetAtTime(fx.gain, wa.ctx.currentTime, 0.03); } catch (e) { /* ignore */ }
+      }
+      if (Math.abs(fx.lp - fx.lastPushedLp) > 25) {
+        fx.lastPushedLp = fx.lp;
+        try { wa.filter.frequency.setTargetAtTime(fx.lp, wa.ctx.currentTime, 0.03); } catch (e) { /* ignore */ }
+      }
+      return;
+    }
+    // Fallback: fold the gain into element volume, but never while a
+    // crossfade owns it (same rule setVolumeScale plays by).
+    if (st.currentEl && !st.fadeTimer && st.current) {
+      const v = trackVolume(st.current);
+      if (Math.abs(st.currentEl.volume - v) > 0.004) st.currentEl.volume = v;
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // ADAPTIVE MIX — event polling (edge detection on shared game state)
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Everything here is read-only observation of globals other files already
+  // maintain, so the stingers land without a single call site being added
+  // elsewhere.  If those files later call soundtrack.notify() directly, the
+  // per-type cooldown keeps the hit from doubling.
+  function pollEvents(now) {
+    if (typeof gameState === 'undefined' || !gameState || !gameState.gameStarted) return;
+
+    // BOSS SPAWN — a live boss we've never seen before.
+    if (typeof enemies !== 'undefined' && enemies) {
+      // First pass only records what already exists: a stinger announces an
+      // ARRIVAL, so nothing that predates our first look counts as news.
+      const baseline = !st.seenBosses;
+      if (!st.seenBosses) st.seenBosses = new Set();
+      for (let i = 0; i < enemies.length; i++) {
+        const e = enemies[i];
+        if (!e || !e.userData || !e.userData.isBoss) continue;
+        if (typeof e.userData.health === 'number' && e.userData.health <= 0) continue;
+        const id = e.uuid || (e.userData.name + '_' + i);
+        if (st.seenBosses.has(id)) continue;
+        st.seenBosses.add(id);
+        if (baseline) continue;
+        // Only announce a boss that's actually in the player's world —
+        // far-field housekeeping spawns shouldn't fire a stinger.
+        if (typeof camera !== 'undefined' && camera &&
+            camera.position.distanceTo(e.position) < 9000) {
+          playStinger('bossSpawn', e.position);
+        }
+      }
+    }
+
+    // MISSION COMPLETE — dotted-line objectives flipping to complete.
+    if (typeof discoveryPaths !== 'undefined' && discoveryPaths) {
+      let done = 0, lastPos = null;
+      for (let i = 0; i < discoveryPaths.length; i++) {
+        const p = discoveryPaths[i];
+        const ud = p && p.line && p.line.userData;
+        if (ud && ud.missionComplete) { done++; lastPos = ud.endPosition || lastPos; }
+      }
+      if (st.lastMissionsDone >= 0 && done > st.lastMissionsDone) {
+        playStinger('missionComplete', lastPos);
+      }
+      st.lastMissionsDone = done;
+    }
+
+    // GALAXY LIBERATION — the campaign's biggest beat gets the biggest hit.
+    const cleared = gameState.galaxiesCleared || 0;
+    if (st.lastGalaxiesCleared >= 0 && cleared > st.lastGalaxiesCleared) {
+      // Non-spatial on purpose: liberation is a statement, not a location.
+      st.stingerGateUntil = 0;
+      playStinger('liberation', null);
+    }
+    st.lastGalaxiesCleared = cleared;
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // ADAPTIVE MIX — the tick
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Own rAF loop: the FX automation has to run at frame rate to feel like
+  // automation, while the game only calls soundtrack.update() twice a second.
+  // The expensive parts (enemy sweep, event polling) are throttled inside.
+  let _slowAccum = 0;
+  function adaptiveTick() {
+    requestAnimationFrame(adaptiveTick);
+    const now = Date.now();
+    const dt = st.lastTick ? Math.min(0.1, (now - st.lastTick) / 1000) : 0.016;
+    st.lastTick = now;
+
+    if (!st.enabled) return;
+
+    // Defensive: this loop reads globals owned by half a dozen other files.
+    // A soundtrack must never be the thing that kills the frame.
+    try {
+      waEnsure();
+      waWatchdog();
+
+      const paused = (typeof gameState !== 'undefined' && gameState && gameState.paused);
+      if (!paused && !st.muted) {
+        updateWarpFx(now, dt);
+        _slowAccum += dt;
+        if (_slowAccum >= 0.15) {
+          _slowAccum = 0;
+          updateCombatState(now);
+          pollEvents(now);
+        }
+      }
+    } catch (e) {
+      if (!st._tickWarned) {
+        st._tickWarned = true;
+        console.warn('🎵 adaptive mix tick error (music continues):', e);
+      }
+    }
+  }
+  requestAnimationFrame(adaptiveTick);
+
+  // Warm the stinger slices once the player is actually in the game — each
+  // one seeks to its transient, which is what makes the browser buffer that
+  // region.  Staggered so they never compete with the combat-track warm.
+  function warmStingersWhenPlaying() {
+    if (typeof gameState === 'undefined' || !gameState || !gameState.gameStarted) {
+      setTimeout(warmStingersWhenPlaying, 4000);
+      return;
+    }
+    const keys = Object.keys(STINGERS);
+    keys.forEach((k, i) => setTimeout(() => warmStinger(k), 18000 + i * 2500));
+  }
+  setTimeout(warmStingersWhenPlaying, 6000);
 
   // ─── Context detection ────────────────────────────────────────────────────
   // Called every ~500ms from the game loop to pick the right track based on
@@ -357,6 +1099,15 @@
       }
     }
 
+    // 2c) COMBAT OVERRIDE — the proximity state machine owns the context
+    // while a fight is live.  It has already applied its own entry delay,
+    // exit delay and minimum hold, so by the time we get here the answer
+    // is stable; play() just crossfades over FADE_DURATION as usual.
+    if (st.combat.active && st.combat.key) {
+      play(st.combat.key);
+      return;
+    }
+
     // 3) Borg encounter
     if (typeof gameState !== 'undefined' && gameState.currentTarget) {
       const tgt = gameState.currentTarget;
@@ -400,6 +1151,10 @@
           const _n = (typeof nebulaClouds !== 'undefined' && nebulaClouds[nebulaIdx] && nebulaClouds[nebulaIdx].userData) ? nebulaClouds[nebulaIdx].userData : null;
           const _nm = _n ? (_n.mythicalName || _n.name || 'Unknown Nebula') : 'Unknown Nebula';
           window.flashEventText('NEBULA DISCOVERED', '#88ddff', String(_nm).toUpperCase());
+          // Musical hit on the same frame as the banner, panned toward the cloud.
+          playStinger('discovery',
+            (typeof nebulaClouds !== 'undefined' && nebulaClouds[nebulaIdx])
+              ? nebulaClouds[nebulaIdx].position : null);
         }
       }
       return;
@@ -419,6 +1174,7 @@
           const _gt = (typeof galaxyTypes !== 'undefined') ? galaxyTypes[gId] : null;
           const _gm = _gt ? ((_gt.name || 'Unknown') + ' GALAXY · ' + (_gt.faction || '')) : ('GALAXY ' + gId);
           window.flashEventText('GALAXY DISCOVERED', '#ffcc66', String(_gm).toUpperCase());
+          playStinger('discovery', null);
         }
       }
       return;
@@ -560,12 +1316,34 @@
 
   function setVolume(v) {
     st.volume = Math.max(0, Math.min(1, v));
-    if (st.currentEl) st.currentEl.volume = st.volume;
+    // Respect the adaptive scaling instead of stomping it — the slider sets
+    // the ceiling, ducking and the riser still shape what sits under it.
+    if (st.currentEl && !st.fadeTimer && st.current) {
+      st.currentEl.volume = trackVolume(st.current);
+    } else if (st.currentEl) {
+      st.currentEl.volume = st.volume;
+    }
   }
 
   // Force a specific context (e.g. autopilot forcing boss music)
   function forceTrack(key) {
-    if (TRACKS[key]) play(key);
+    if (!TRACKS[key]) return;
+    // A forced battle track registers with the combat machine so the
+    // proximity logic holds it instead of racing to replace it on the next
+    // context tick — this is what smooths switchToBattleMusic()'s hand-off.
+    if (key === 'bossFight' || key === 'borg' || key === 'eliteGuardians') {
+      const c = st.combat;
+      const rank = key === 'bossFight' ? 4 : (key === 'borg' ? 3 : 2);
+      if (!c.active || rank >= c.rank) {
+        c.active = true;
+        c.key = key;
+        c.rank = rank;
+        c.enteredAt = Date.now();
+        c.clearSince = 0;
+        c.contactSince = Date.now();
+      }
+    }
+    play(key);
   }
 
   // Ordered rotation for the Skip button.  Intentionally excludes
@@ -627,6 +1405,9 @@
   // resume picks up exactly where the score left off.
   let _pausedByGame = false;
   function pauseAll() {
+    // Stingers are one-to-three seconds long — carrying one across a pause
+    // screen would be noise, so they end rather than freeze.
+    stopAllStingers();
     if (st.currentEl && !st.currentEl.paused) {
       _pausedByGame = true;
       st.currentEl.pause();
@@ -653,6 +1434,63 @@
     stopAll:           stopAll,
     fadeOutCurrent:    fadeOutCurrent,
     startLaunchScreen: startLaunchScreen,
+
+    // ── Adaptive mix API ────────────────────────────────────────────────────
+    // notify(event[, worldPosition]) — fire the musical hit for a game beat.
+    // Events: discovery · bossSpawn · missionComplete · liberation ·
+    //         warpExit · threat.  Position is optional; pass a THREE.Vector3
+    //         (or any {x,y,z}) and the hit is distance-attenuated and panned.
+    notify:            notifyEvent,
+    stinger:           playStinger,
+    // playSpatial(key, position) — same thing, named for SFX call sites.
+    playSpatial:       function (key, pos) { return playStinger(key, pos); },
+    // Reusable falloff/pan math for any system that wants to place a sound.
+    spatialGain:       spatialGain,
+    spatialPan:        spatialPan,
+    // Read-only mix telemetry (handy for HUD debug / tuning).
+    get combat()       { return { active: st.combat.active, track: st.combat.key, rank: st.combat.rank }; },
+    get intensity()    { return st.threat.nearest === Infinity ? 0 : Math.max(0, 1 - st.threat.nearest / COMBAT_RELEASE_RADIUS); },
+    get mix()          { return { gain: st.fx.gain, lowpass: st.fx.lp, webAudio: wa.ok }; },
+    // debugLevel() — RMS of what the score is ACTUALLY putting out right now.
+    // Lazily taps an analyser off the adaptive bus (costs nothing until the
+    // first call); the honest answer to "is the music audible?".
+    debugLevel:        function () {
+      const sting = {};
+      Object.keys(STINGERS).forEach(k => {
+        const el = st.stingerEls[k];
+        sting[k] = el
+          ? { ready: el.readyState, t: +el.currentTime.toFixed(2), vol: +el.volume.toFixed(3), playing: !el.paused }
+          : 'cold';
+      });
+      if (!wa.ok) {
+        return { bus: null, stingers: sting,
+                 element: st.currentEl ? st.currentEl.volume : 0,
+                 paused: st.currentEl ? st.currentEl.paused : true };
+      }
+      if (!wa.analyser) {
+        try {
+          wa.analyser = wa.ctx.createAnalyser();
+          wa.analyser.fftSize = 1024;
+          wa.bus.connect(wa.analyser);   // tap only — not routed to output
+          wa.analyserBuf = new Float32Array(wa.analyser.fftSize);
+        } catch (e) { return null; }
+      }
+      wa.analyser.getFloatTimeDomainData(wa.analyserBuf);
+      let sum = 0;
+      for (let i = 0; i < wa.analyserBuf.length; i++) sum += wa.analyserBuf[i] * wa.analyserBuf[i];
+      const rms = Math.sqrt(sum / wa.analyserBuf.length);
+      return {
+        rms: rms,
+        db: 20 * Math.log10(rms + 1e-9),
+        element: st.currentEl ? st.currentEl.volume : 0,
+        paused: st.currentEl ? st.currentEl.paused : true,
+        track: st.current,
+        busGain: st.fx.gain,
+        lowpass: st.fx.lp,
+        stingers: sting,
+      };
+    },
+
     get current()      { return st.current; },
     get volume()       { return st.volume; },
     get enabled()      { return st.enabled; },

@@ -50,8 +50,16 @@ function _updateCivilianFleeing() {
         // retreating ships juke instead of flying a straight, easy line.
         _fleeDir.subVectors(ship.position, attacker.position).normalize();
         const weave = Math.sin(now * 0.004 + (ship.id || 0)) * 0.55;
+        // Rotate the XZ heading by the weave angle: perpendicular of (x,z)
+        // is (-z, x), so BOTH components must be built from the ORIGINAL x.
+        // Reading the already-updated .x back on the second line folded a
+        // -z*weave^2 term into z, which made the juke's deflection depend on
+        // which way the ship happened to be running (28.8 deg fleeing along
+        // +x vs 38.3 deg along +z at peak weave) instead of the uniform
+        // +/-28.8 deg swing the effect is supposed to have.
+        const fleeX0 = _fleeDir.x;
         _fleeDir.x += -_fleeDir.z * weave;
-        _fleeDir.z += _fleeDir.x * weave;
+        _fleeDir.z += fleeX0 * weave;
         _fleeDir.y += Math.sin(now * 0.0027 + (ship.id || 0) * 1.7) * 0.25;
         _fleeDir.normalize();
         const fleeSpeed = (ship.userData.speed || 0.4) * 1.5;

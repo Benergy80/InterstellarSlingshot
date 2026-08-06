@@ -301,8 +301,12 @@ function applyEnemyRotation(enemy, direction, speed) {    if (!enemy || !directi
                 enemy.userData.prevTargetYaw = targetYaw;
             }
 
-            // Smooth the target yaw to reduce twitching
-            enemy.userData.prevTargetYaw = THREE.MathUtils.lerp(enemy.userData.prevTargetYaw, targetYaw, 0.1);
+            // Smooth the target yaw to reduce twitching. 0.1 at a 30 Hz
+            // tick is a ~0.3 s lag on the AIM ITSELF, which is most of why
+            // enemies used to feel like they were flying through syrup —
+            // the dwell timer already handles mode twitch, so this can be
+            // much livelier without the jitter coming back.
+            enemy.userData.prevTargetYaw = THREE.MathUtils.lerp(enemy.userData.prevTargetYaw, targetYaw, 0.35);
             enemy.userData.targetRotation.y = enemy.userData.prevTargetYaw;
         }
 
@@ -339,9 +343,14 @@ function applyEnemyRotation(enemy, direction, speed) {    if (!enemy || !directi
         enemy.userData.previousYaw = currentYaw;
         enemy.userData.turnRate = turnRate;
 
-        // Cap maximum turn rate (0.15 radians/frame ≈ 8.6 degrees/frame ≈ 516 degrees/second at 60fps)
-        const maxTurnRate = 0.15;  // Radians per frame
-        let lerpFactor = 0.03;  // Base lerp speed
+        // Cap maximum turn rate. These run on the 30 Hz AI tick, so 0.28
+        // rad/tick ≈ 480°/s — arcade-fast without the snap that made the
+        // old barrel-roll experiment look like a glitch.
+        const maxTurnRate = 0.28;  // Radians per AI tick
+        // Base lerp was 0.03 — a ~1.1 s time constant at 30 Hz, i.e. the
+        // ship needed over a second to finish committing to a turn. That
+        // single number is the biggest source of the "floaty" feel.
+        let lerpFactor = 0.16;
 
         // If turning too fast, reduce lerp to cap turn rate
         if (Math.abs(normalizedYawDelta) > maxTurnRate) {
@@ -353,7 +362,15 @@ function applyEnemyRotation(enemy, direction, speed) {    if (!enemy || !directi
 
         enemy.rotation.x = THREE.MathUtils.lerp(enemy.rotation.x || 0, enemy.userData.targetRotation.x, lerpFactor);
         enemy.rotation.y = THREE.MathUtils.lerp(enemy.rotation.y || 0, enemy.userData.targetRotation.y, lerpFactor);
-        enemy.rotation.z = THREE.MathUtils.lerp(enemy.rotation.z || 0, enemy.userData.targetRotation.z, lerpFactor);
+        // ROLL AUTHORITY: while an evasive maneuver is flying, the maneuver
+        // owns the roll axis. This lerp drags rotation.z back toward the
+        // small trajectory bank every tick — at a 170° roll that is ~0.45
+        // rad/tick of counter-torque, almost exactly cancelling the
+        // maneuver's own input, which is why a "barrel roll" would stall
+        // just short of inverted and slide back.
+        if (!enemy.userData._evade) {
+            enemy.rotation.z = THREE.MathUtils.lerp(enemy.rotation.z || 0, enemy.userData.targetRotation.z, lerpFactor);
+        }
     } catch (e) {
         // Ignore rotation errors
     }
@@ -378,9 +395,12 @@ function updatePursuitBehavior(enemy, playerPos, speed, distance) {
         // ships used to plod; now they reach top speed quickly and turn
         // crisply so dogfights have real motion. Barrel rolls (when they
         // happen) layer on top of this without replacing forward thrust.
-        const maxSpeed = speed * 4.0;       // was 3.0
-        const acceleration = speed * 0.20;  // was 0.14
-        const turnRate = 0.05;
+        // Snappier again for arcade dogfights: an interceptor should reach
+        // its top speed inside about half a second and be able to haul its
+        // nose around, otherwise every merge turns into a slow drift-past.
+        const maxSpeed = speed * 4.6;       // was 4.0
+        const acceleration = speed * 0.28;  // was 0.20
+        const turnRate = 0.085;             // was 0.05
         const drag = 0.99;                  // lighter drag — bumps land
         
         _ebV1.subVectors(playerPos, enemy.position).normalize();
@@ -432,7 +452,10 @@ function updatePursuitBehavior(enemy, playerPos, speed, distance) {
         // Rotate enemy to face direction of travel (not instant)
         applyEnemyRotation(enemy, enemy.userData.facing, speed);
 
-        if (distance < 150) {
+        // Break into the orbit EARLY (was 150 u — by then the enemy had
+        // already blown through the merge). 260 u means the pursuit turns
+        // into a turning fight instead of a fly-by.
+        if (distance < 260) {
             const orbitAngle = Date.now() * 0.0015 + (enemy.userData.circlePhase || 0);
             _ebV1.set(
                 Math.cos(orbitAngle) * 100,
@@ -465,9 +488,9 @@ function updateSwarmBehavior(enemy, playerPos, speed, time) {
             enemy.userData.facing = new THREE.Vector3(0, 0, 1);
         }
         
-        const maxSpeed = speed * 3.5;        // was 2.6
-        const acceleration = speed * 0.18;   // was 0.12
-        const turnRate = 0.06;
+        const maxSpeed = speed * 4.0;        // was 3.5
+        const acceleration = speed * 0.26;   // was 0.18
+        const turnRate = 0.10;               // was 0.06 — tighter spirals
         const drag = 0.985;                  // was 0.98
 
         // Spiraling approach from multiple angles
@@ -605,18 +628,23 @@ function updateFlankingBehavior(enemy, playerPos, speed, time) {
     }
 
     try {
-        // Try to get behind or to the side of the player
-        const flankAngle = (enemy.userData.circlePhase || 0) + Math.PI;
-        const flankRadius = 150;
+        // Try to get behind or to the side of the player. The flank point
+        // now SWEEPS (time-varying angle) instead of sitting on a fixed
+        // bearing, so a strafe-faction ship reads as extending and coming
+        // back around for another pass rather than parking off your wing.
+        const flankAngle = (enemy.userData.circlePhase || 0) + Math.PI + time * 0.55;
+        const flankRadius = 170 + Math.sin(time * 0.4 + (enemy.userData.circlePhase || 0)) * 45;
 
         const targetX = playerPos.x + Math.cos(flankAngle) * flankRadius;
         const targetZ = playerPos.z + Math.sin(flankAngle) * flankRadius;
-        const targetY = playerPos.y;
+        const targetY = playerPos.y + Math.sin(time * 0.6) * 40;
 
         _ebV1.set(targetX, targetY, targetZ);
         _ebV2.subVectors(_ebV1, enemy.position).normalize();
-        enemy.position.add(_ebV2.multiplyScalar(speed * 0.7));
-        applyEnemyRotation(enemy, _ebV2, speed * 0.7);  // Add rotation
+        // Was speed * 0.7 — a repositioning move that is SLOWER than the
+        // pursuit it interrupts reads as hesitation, not tactics.
+        enemy.position.add(_ebV2.multiplyScalar(speed * 2.8));
+        applyEnemyRotation(enemy, _ebV2, speed * 2.8);
     } catch (e) {
         // Ignore movement errors
     }
@@ -635,22 +663,41 @@ function updateEngagementBehavior(enemy, playerPos, speed, time) {
         // precision-style factions (Vulcans) appeared to crawl. Bumped
         // approach/back-off/orbit speeds 3-4x so they actually keep up
         // with the player while holding the engagement bracket.
-        const optimalDistance = 100;
+        // Bracket range comes from the faction now, so a Federation
+        // cruiser genuinely holds a wider ring than an Imperial swarmer.
+        const faction = (typeof getFactionBehavior === 'function') ? getFactionBehavior(enemy) : null;
+        const optimalDistance = (faction && faction.preferredRange) ? faction.preferredRange : 140;
+        const band = optimalDistance * 0.22;
         const currentDistance = enemy.position.distanceTo(playerPos);
 
-        if (currentDistance > optimalDistance + 20) {
+        if (currentDistance > optimalDistance + band) {
             _ebV1.subVectors(playerPos, enemy.position).normalize();
             enemy.position.add(_ebV1.multiplyScalar(speed * 4.0));
             applyEnemyRotation(enemy, _ebV1, speed * 4.0);
-        } else if (currentDistance < optimalDistance - 20) {
+        } else if (currentDistance < optimalDistance - band) {
             _ebV1.subVectors(enemy.position, playerPos).normalize();
-            enemy.position.add(_ebV1.multiplyScalar(speed * 2.0));
-            applyEnemyRotation(enemy, _ebV1, speed * 2.0);
+            enemy.position.add(_ebV1.multiplyScalar(speed * 2.4));
+            applyEnemyRotation(enemy, _ebV1, speed * 2.4);
         } else {
-            const angle = time * 0.5;
-            _ebV1.set(Math.cos(angle) * 10, 0, Math.sin(angle) * 10);
-            enemy.position.add(_ebV1.multiplyScalar(speed * 1.2));
-            applyEnemyRotation(enemy, _ebV1, speed * 1.2);
+            // TRUE circling: fly the tangent around the TARGET. The old
+            // version added a vector that orbited the world axes, so the
+            // enemy drew a little circle wherever it happened to be
+            // standing instead of circling the player — which is why the
+            // "circle" factions never read as circling anything.
+            _ebV1.subVectors(enemy.position, playerPos);
+            _ebV1.y *= 0.35;                                   // flattish ring
+            _ebV2.crossVectors(_ebV1, _cfUpW || new THREE.Vector3(0, 1, 0));
+            if (_ebV2.lengthSq() < 1e-6) _ebV2.set(1, 0, 0);
+            _ebV2.normalize();
+            // circlePhase gives each ship a fixed direction so a wing
+            // doesn't shear through itself at the crossover.
+            const dir = ((enemy.userData.circlePhase || 0) % 2 < 1) ? 1 : -1;
+            _ebV2.multiplyScalar(dir);
+            // Small inward bias keeps the ring from slowly unwinding.
+            _ebV2.addScaledVector(_ebV1.normalize(), -0.18).normalize();
+            _ebV2.y += Math.sin(time * 0.7 + (enemy.userData.circlePhase || 0)) * 0.25;
+            enemy.position.add(_ebV2.multiplyScalar(speed * 3.2));
+            applyEnemyRotation(enemy, _ebV2, speed * 3.2);
         }
     } catch (e) {
         // Ignore movement errors
@@ -679,7 +726,12 @@ function updatePatrolBehavior(enemy, playerPos, speed, time) {
         _ebV2.subVectors(_ebV1, enemy.position).normalize();
 
         enemy.position.add(_ebV2.multiplyScalar(speed * 0.6));
-        applyEnemyRotation(enemy, direction, speed * 0.6);  // Add rotation
+        // BUG: this passed `direction`, which does not exist in this
+        // scope — every patrol tick threw a ReferenceError that the
+        // catch below swallowed, so patrolling ships moved but never
+        // turned to face where they were going (and paid for a thrown
+        // exception per enemy per tick). _ebV2 is the step vector.
+        applyEnemyRotation(enemy, _ebV2, speed * 0.6);
     } catch (e) {
         // Ignore movement errors
     }
@@ -1038,6 +1090,499 @@ function _enemyFlightHygiene(enemy, shipPos, camPos, playerPos, isLocal) {
     ud._prevPos.copy(pos);
 }
 
+// =============================================================================
+// COMBAT FEEL — EVASIVE MANEUVERS, FLIGHT ROLL, ATTACK TELEGRAPHS
+// -----------------------------------------------------------------------------
+// Star Fox 64 arcade-combat DNA: enemies that visibly REACT to your guns
+// (barrel rolls, split-S breaks, corkscrew jinks), that BANK into their
+// turns instead of tracking you like turrets, and that TELL you they're
+// about to shoot before the bolt leaves the muzzle.
+//
+// Everything here runs on the 30 Hz AI tick inside updateEnemyBehavior and
+// writes only enemy.position / enemy.rotation (+ userData), so the existing
+// render-interpolation glide in game-core.js carries it at full framerate.
+// The one subtlety is the euler-roll wrap — see _unwrapEnemyInterpRoll.
+// No new meshes, no new materials, no additive overdraw.
+// =============================================================================
+
+const _cfA = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+const _cfB = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+const _cfC = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+const _cfFwd = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+const _cfUpW = (typeof THREE !== 'undefined') ? new THREE.Vector3(0, 1, 0) : null;
+
+// Maneuver catalogue. `dur` is wall-clock ms — these are real flight
+// moves, not frame-counted animations, so they read identically on a
+// 45 Hz laptop and a 144 Hz desktop.
+const _EVASIVE = {
+    // Full 360° roll about the flight axis with a helical side-slip:
+    // the classic "do a barrel roll" dodge. Net displacement returns to
+    // the original flight path, so it dodges the shot without wrecking
+    // the enemy's approach.
+    barrel:    { dur: 780,  rollTurns: 1.0, lat: 1.00, vert: 0.55 },
+    // Half-roll inverted then pull through: a hard break that leaves the
+    // enemy pointing somewhere else entirely. Used when actually hit.
+    splitS:    { dur: 980,  rollTurns: 0.5, lat: 1.35, vert: -1.15 },
+    // Two fast alternating jinks — the "I know you're tracking me" wiggle.
+    corkscrew: { dur: 1040, rollTurns: 0.0, lat: 0.85, vert: 0.60 }
+};
+
+// Per-faction attack rhythm. `burst`/`gap` group the shots into a
+// recognisable cadence, `rest` scales the gap BETWEEN bursts so that
+// average shots-per-second stays where it was (cycle = cooldown * burst *
+// rest) — this is a readability change, not a difficulty change.
+// `pattern` drives the approach: strafe runs vs circling vs lance dives.
+const _FACTION_ATTACK = {
+    0: { pattern: 'circle', burst: 2, gap: 175, telegraph: 420, rest: 1.00 }, // Federation — measured pairs
+    1: { pattern: 'lance',  burst: 3, gap: 115, telegraph: 250, rest: 0.90 }, // Klingon — screaming triple
+    2: { pattern: 'strafe', burst: 2, gap: 135, telegraph: 300, rest: 0.95 }, // Rebel — hit & run doubles
+    3: { pattern: 'lance',  burst: 1, gap: 0,   telegraph: 620, rest: 1.00 }, // Romulan — one long-aimed shot
+    4: { pattern: 'circle', burst: 4, gap: 105, telegraph: 230, rest: 1.00 }, // Imperial — suppressing quad
+    5: { pattern: 'circle', burst: 3, gap: 155, telegraph: 360, rest: 1.00 }, // Cardassian — encircling triple
+    6: { pattern: 'lance',  burst: 3, gap: 100, telegraph: 215, rest: 0.90 }, // Sith — relentless
+    7: { pattern: 'strafe', burst: 2, gap: 205, telegraph: 500, rest: 1.00 }  // Vulcan — precise pair
+};
+const _ATTACK_DEFAULT = _FACTION_ATTACK[0];
+
+function _factionAttackProfile(enemy) {
+    const g = enemy && enemy.userData ? enemy.userData.galaxyId : undefined;
+    return (g !== undefined && _FACTION_ATTACK[g]) ? _FACTION_ATTACK[g] : _ATTACK_DEFAULT;
+}
+if (typeof window !== 'undefined') window._factionAttackProfile = _factionAttackProfile;
+
+// ── Threat detection ─────────────────────────────────────────────────────
+// "Under fire" means one of two things, both of which we can see from
+// inside this file: the player's shot LANDED (checkWeaponHits ->
+// _activateOnDamage) or the player's shot went CLOSE BY (fireWeapon ->
+// _markEnemiesUnderFire). The near-miss case is the important one — it is
+// what makes an enemy dodge while you're still lining the shot up, which
+// is what a Star Fox dogfight actually feels like.
+function _markEnemiesUnderFire(aimEnd) {
+    if (typeof enemies === 'undefined' || !_cfA || typeof camera === 'undefined' || !aimEnd) return;
+    _cfFwd.subVectors(aimEnd, camera.position);
+    const rayLen = _cfFwd.length();
+    if (rayLen < 1) return;
+    _cfFwd.divideScalar(rayLen);
+    const now = Date.now();
+    for (let i = 0; i < enemies.length; i++) {
+        const e = enemies[i];
+        if (!e || !e.userData || e.userData.health <= 0) continue;
+        if (e.userData.isBorgCube || e.userData.type === 'borg_drone') continue;
+        _cfA.subVectors(e.position, camera.position);
+        const t = _cfA.dot(_cfFwd);
+        if (t < 40 || t > 5000) continue;                 // behind us / out of reach
+        // Perpendicular distance from the shot line.
+        const perpSq = _cfA.lengthSq() - t * t;
+        // Graze radius grows a little with range so a shot that reads as
+        // "close" on screen also reads as close to the AI.
+        const graze = 130 + t * 0.06;
+        if (perpSq > graze * graze) continue;
+        e.userData._underFireUntil = now + 1500;
+        _tryStartEvasive(e, 'graze');
+    }
+}
+if (typeof window !== 'undefined') window._markEnemiesUnderFire = _markEnemiesUnderFire;
+
+// Kick off an evasive maneuver if the enemy isn't already flying one and
+// its per-ship cooldown has expired. `cause` biases which move it picks:
+// a hit provokes a hard break, a near miss provokes a roll or a jink.
+function _tryStartEvasive(enemy, cause) {
+    if (!enemy || !enemy.userData || typeof THREE === 'undefined') return false;
+    const ud = enemy.userData;
+    if (ud.health <= 0) return false;
+    // Capital ships don't dance — bosses, guardians and BORG hulls keep
+    // their own set-piece choreography.
+    if (ud.isBoss || ud.isBorgCube || ud.type === 'borg_drone' ||
+        ud.isEliteGuardian || ud.isBlackHoleGuardian) return false;
+    const now = Date.now();
+    if (ud._evade && now < ud._evade.end) return false;          // already rolling
+    if (now < (ud._evadeCooldownUntil || 0)) return false;
+
+    let type;
+    if (cause === 'hit') {
+        type = Math.random() < 0.62 ? 'splitS' : 'barrel';
+    } else if (cause === 'missile') {
+        type = 'splitS';
+    } else {
+        const r = Math.random();
+        type = r < 0.50 ? 'barrel' : (r < 0.85 ? 'corkscrew' : 'splitS');
+    }
+    return _startEvasive(enemy, type);
+}
+
+function _startEvasive(enemy, type) {
+    if (!enemy || !enemy.userData || !_cfA) return false;
+    const spec = _EVASIVE[type] || _EVASIVE.barrel;
+    const ud = enemy.userData;
+    const now = Date.now();
+
+    // Build a FIXED maneuver basis at kick-off. Deriving right/up from the
+    // ship's live orientation every tick would make the offset chase its
+    // own rotation and the path would corkscrew unpredictably; freezing
+    // the basis is what makes the displacement readable.
+    _cfFwd.set(0, 0, 0);
+    if (ud.velocity && ud.velocity.lengthSq() > 1e-6) _cfFwd.copy(ud.velocity).normalize();
+    else if (ud.facing && ud.facing.lengthSq && ud.facing.lengthSq() > 1e-6) _cfFwd.copy(ud.facing).normalize();
+    else enemy.getWorldDirection(_cfFwd).negate();
+    if (_cfFwd.lengthSq() < 1e-6) _cfFwd.set(0, 0, 1);
+
+    const right = new THREE.Vector3().crossVectors(_cfFwd, _cfUpW);
+    if (right.lengthSq() < 1e-6) right.set(1, 0, 0);
+    right.normalize();
+    const up = new THREE.Vector3().crossVectors(right, _cfFwd).normalize();
+
+    // Amplitude scales with how fast the ship is actually travelling so a
+    // fast interceptor throws a big, obvious slide and a slow patrol boat
+    // doesn't teleport sideways.
+    const spd = ud.velocity ? ud.velocity.length() : 0.5;
+    const amp = 46 + Math.min(2.4, spd) * 34;
+
+    ud._evade = {
+        type: type,
+        t0: now,
+        end: now + spec.dur,
+        dur: spec.dur,
+        dir: Math.random() < 0.5 ? -1 : 1,
+        rollTurns: spec.rollTurns,
+        lat: spec.lat * amp,
+        vert: spec.vert * amp,
+        right: right,
+        up: up,
+        applied: new THREE.Vector3()
+    };
+    ud._evadeCooldownUntil = now + spec.dur + 500 + Math.random() * 900;
+    return true;
+}
+if (typeof window !== 'undefined') {
+    window._startEnemyEvasive = _startEvasive;
+    window._tryStartEnemyEvasive = _tryStartEvasive;
+}
+
+// Smooth 0..1 ease so the slide starts and finishes without a jerk.
+function _cfSmooth(p) { return p * p * (3 - 2 * p); }
+
+// Advance the active maneuver. Returns the ROLL (radians about the ship's
+// own forward axis) that the maneuver wants this tick; the positional
+// side-slip is applied here directly as a delta on top of whatever the
+// steering behavior already did.
+function _stepEvasive(enemy) {
+    const ud = enemy.userData;
+    const m = ud._evade;
+    if (!m) return 0;
+    const now = Date.now();
+    let p = (now - m.t0) / m.dur;
+    if (p >= 1) {
+        // Finish clean: the maneuver's displacement is KEPT (that's the
+        // dodge), we just stop tracking it so the next one starts fresh.
+        ud._evade = null;
+        ud._evadeEndedAt = now;
+        return 0;
+    }
+    if (p < 0) p = 0;
+
+    let lat = 0, vert = 0, roll = 0;
+    const TAU = Math.PI * 2;
+    switch (m.type) {
+        case 'barrel': {
+            // Helix: slide out and back around the flight path while the
+            // hull completes one full revolution.
+            lat  = Math.sin(p * TAU) * m.lat;
+            vert = (1 - Math.cos(p * TAU)) * m.vert;
+            roll = m.dir * m.rollTurns * TAU * _cfSmooth(p);
+            break;
+        }
+        case 'splitS': {
+            // Roll inverted (half turn) fast, hold inverted while pulling
+            // hard through the vertical, then complete the turn upright.
+            // The roll MUST land on a whole turn: it is applied as a
+            // per-tick delta, so ending anywhere else would snap the hull
+            // back through that angle in a single tick.
+            if (p < 0.40)      roll = m.dir * Math.PI * _cfSmooth(p / 0.40);
+            else if (p < 0.68) roll = m.dir * Math.PI;
+            else               roll = m.dir * (Math.PI + Math.PI * _cfSmooth((p - 0.68) / 0.32));
+            const pull = _cfSmooth(Math.max(0, (p - 0.18) / 0.82));
+            lat  = pull * m.lat * m.dir;
+            vert = pull * m.vert;
+            break;
+        }
+        default: { // corkscrew
+            const w = p * TAU * 2;                    // two full jinks
+            const env = Math.sin(Math.PI * p);        // fade in/out
+            lat  = Math.sin(w) * m.lat * env;
+            vert = Math.sin(w + Math.PI / 2) * m.vert * env;
+            roll = m.dir * Math.sin(w) * 1.45 * env;
+            break;
+        }
+    }
+
+    // Apply only the CHANGE since last tick so we ride on top of the
+    // steering behavior instead of fighting it.
+    _cfA.set(0, 0, 0)
+        .addScaledVector(m.right, lat)
+        .addScaledVector(m.up, vert);
+    _cfB.subVectors(_cfA, m.applied);
+    enemy.position.add(_cfB);
+    m.applied.copy(_cfA);
+
+    // A split-S genuinely changes where the ship is going, so bleed the
+    // heading over too — otherwise it slides sideways while still nosing
+    // at you, which looks like a bug rather than a break turn.
+    if (m.type === 'splitS' && ud.velocity && ud.velocity.lengthSq() > 1e-6) {
+        ud.velocity.addScaledVector(m.right, m.dir * 0.05);
+        if (ud.facing) ud.facing.addScaledVector(m.right, m.dir * 0.04).normalize();
+    }
+
+    return roll;
+}
+
+// ── Flight roll: banking + maneuver roll, composed after the look-at ─────
+// The engagement behaviors finish with _smoothEnemyLookAt, which builds a
+// world-up-aligned orientation — zero roll, ever. That is precisely why
+// enemies used to read as turrets that happen to drift. Here we compose a
+// roll about the ship's OWN forward axis on top: banking proportional to
+// how hard it's turning, plus whatever the active maneuver wants.
+function _applyEnemyFlightRoll(enemy, maneuverRoll) {
+    const ud = enemy.userData;
+    if (!_cfA) return;
+
+    // Heading change since the last AI tick -> bank angle.
+    let bank = 0;
+    if (!ud._rollPrevHeading) ud._rollPrevHeading = new THREE.Vector3();
+    _cfA.set(0, 0, 0);
+    if (ud.velocity && ud.velocity.lengthSq() > 1e-6) _cfA.copy(ud.velocity).normalize();
+    else if (ud._prevPos) _cfA.subVectors(enemy.position, ud._prevPos);
+    if (_cfA.lengthSq() > 1e-6) {
+        _cfA.normalize();
+        if (ud._rollPrevHeading.lengthSq() > 1e-6) {
+            // Signed turn: cross(prev, cur) projected on world up tells us
+            // which way the nose swung.
+            _cfB.crossVectors(ud._rollPrevHeading, _cfA);
+            const turn = _cfB.dot(_cfUpW);
+            // 30 Hz tick, so a hard turn is ~0.1 rad/tick. Scale to a bank
+            // that tops out just under 70° — arcade, not simulation.
+            bank = THREE.MathUtils.clamp(-turn * 9.0, -1.2, 1.2);
+        }
+        ud._rollPrevHeading.copy(_cfA);
+    }
+
+    // A ship that is lining up a shot levels its wings — that stillness is
+    // half of what makes the telegraph readable.
+    if (ud._telegraphing) bank *= 0.25;
+
+    // Smooth the bank so it swings in like a real aileron input, then add
+    // the maneuver roll RAW (a barrel roll should snap, not ooze).
+    const prevBank = ud._bankAngle || 0;
+    const bankNow = prevBank + (bank - prevBank) * 0.22;
+    ud._bankAngle = bankNow;
+
+    // Applied as a per-tick DELTA, never as an absolute. _smoothEnemyLookAt
+    // slerps toward a zero-roll orientation every tick, so it is already
+    // bleeding whatever roll exists — an absolute set would fight it and
+    // stall the roll partway. Feeding it the increment lets the two
+    // compose: the maneuver drives the hull over, the look-at gently
+    // recovers it, which is exactly the damped feel a real roll has.
+    // Every maneuver profile lands on a whole number of turns so the final
+    // delta back to level is a multiple of 2π (a no-op rotation), never a
+    // visible snap.
+    const targetRoll = bankNow + (maneuverRoll || 0);
+    const delta = targetRoll - (ud._rollTargetPrev || 0);
+    ud._rollTargetPrev = targetRoll;
+    if (Math.abs(delta) > 1e-5 && Math.abs(delta) < Math.PI * 2.5) {
+        // Local +Z is the ship's tail (models fly -Z forward), so rotateZ
+        // is exactly the barrel-roll axis.
+        enemy.rotateZ(delta);
+    }
+}
+
+// The render glide in game-core.js lerps enemy.rotation.x/.z component-wise
+// with NO shortest-path handling (only .y gets that). A roll that crosses
+// ±π therefore glides the LONG way round — a 6-radian counter-spin inside
+// one 33 ms interval, which reads as a hitch. Euler z and z±2π are the same
+// rotation, so nudging the glide's START value by a full turn removes the
+// discontinuity without changing a single orientation.
+function _unwrapEnemyInterpRoll(enemy) {
+    const ud = enemy.userData;
+    const from = ud._iFromRot;
+    if (!from) return;
+    const TAU = Math.PI * 2;
+    let dz = enemy.rotation.z - from.z;
+    if (dz > Math.PI && Math.abs(from.z + TAU) < 40)      from.z += TAU;
+    else if (dz < -Math.PI && Math.abs(from.z - TAU) < 40) from.z -= TAU;
+    let dx = enemy.rotation.x - from.x;
+    if (dx > Math.PI && Math.abs(from.x + TAU) < 40)      from.x += TAU;
+    else if (dx < -Math.PI && Math.abs(from.x - TAU) < 40) from.x -= TAU;
+}
+
+// ── Attack telegraph ─────────────────────────────────────────────────────
+// game-core.js drives every enemy hull's emissiveIntensity each frame from
+// child.userData.baseEmissive. That makes baseEmissive a ready-made hook:
+// raise it and the enemy visibly charges up, restore it and the charge
+// drops — no new material, no new mesh, nothing for the pulse loop to
+// fight over.
+function _setEnemyTelegraph(enemy, charge) {
+    const ud = enemy.userData;
+    if (!ud._telegraphMeshes) {
+        const list = [];
+        enemy.traverse(n => {
+            if (!n.isMesh || !n.material) return;
+            const u = n.userData || {};
+            if (u.isGlowLayer || u.isHitbox || u._isThrusterCone || u.isEnemyShield) return;
+            if (n.material.emissiveIntensity === undefined) return;
+            if (u._telegraphBase === undefined) {
+                u._telegraphBase = (u.baseEmissive !== undefined)
+                    ? u.baseEmissive : n.material.emissiveIntensity;
+            }
+            list.push(n);
+        });
+        ud._telegraphMeshes = list;
+    }
+    const meshes = ud._telegraphMeshes;
+    if (!meshes.length) return;
+    // Charge 0 -> 1 maps to a 1x -> 3.4x emissive ramp. The pulse loop
+    // multiplies whatever we leave in baseEmissive, so the ship keeps
+    // breathing while it winds up.
+    const k = 1 + charge * charge * 2.4;
+    for (let i = 0; i < meshes.length; i++) {
+        const u = meshes[i].userData;
+        u.baseEmissive = u._telegraphBase * k;
+    }
+}
+
+// ── Fire-cycle scheduler ─────────────────────────────────────────────────
+// Replaces "one bolt per cooldown" with "a faction-shaped burst per
+// cycle". Returns how many shots to fire on this tick (0 or 1) and keeps
+// the telegraph charge up to date. Average rate is preserved because the
+// between-burst rest is multiplied by the burst size.
+function _updateEnemyFireCycle(enemy, cooldown, inRange) {
+    const ud = enemy.userData;
+    const ap = _factionAttackProfile(enemy);
+    const now = Date.now();
+
+    if (ud._burstLeft === undefined) ud._burstLeft = ap.burst;
+    if (!ud.nextFire) ud.nextFire = now + Math.random() * 800;
+
+    // Out of range: hold the cycle, drop any charge we'd built up. If the
+    // schedule went stale while out of range, re-arm it far enough ahead
+    // that coming back into range still plays a full telegraph instead of
+    // spitting an unannounced bolt on the first frame.
+    if (!inRange) {
+        if (ud._telegraphing) { ud._telegraphing = false; _setEnemyTelegraph(enemy, 0); }
+        ud._telegraphPhase = 0;
+        if (now > ud.nextFire) ud.nextFire = now + ap.telegraph + 120;
+        return 0;
+    }
+
+    // Telegraph only ahead of the FIRST bolt of a burst — follow-up shots
+    // in the burst arrive on the rhythm the telegraph already announced.
+    const firstOfBurst = (ud._burstLeft >= ap.burst);
+    const lead = firstOfBurst ? ap.telegraph : 0;
+    const untilFire = ud.nextFire - now;
+    if (lead > 0 && untilFire > 0 && untilFire <= lead) {
+        ud._telegraphing = true;
+        ud._telegraphPhase = 1 - (untilFire / lead);
+        _setEnemyTelegraph(enemy, ud._telegraphPhase);
+    } else if (ud._telegraphing && untilFire > lead) {
+        ud._telegraphing = false;
+        ud._telegraphPhase = 0;
+        _setEnemyTelegraph(enemy, 0);
+    }
+
+    if (now < ud.nextFire) return 0;
+
+    // Bolt away — discharge the glow.
+    if (ud._telegraphing) {
+        ud._telegraphing = false;
+        ud._telegraphPhase = 0;
+        _setEnemyTelegraph(enemy, 0);
+    }
+
+    ud._burstLeft -= 1;
+    if (ud._burstLeft > 0) {
+        ud.nextFire = now + ap.gap;                 // stay inside the burst
+    } else {
+        ud._burstLeft = ap.burst;
+        // cooldown * burst keeps shots-per-second identical to the old
+        // one-shot-per-cooldown schedule; the jitter is the pre-existing
+        // 1.0-1.5x desync so a squadron never volleys in lockstep.
+        ud.nextFire = now + cooldown * ap.burst * ap.rest * (1.0 + Math.random() * 0.5);
+        ud._burstEndedAt = now;
+    }
+    ud._lastBurstShotAt = now;
+    return 1;
+}
+
+// Which phase of its attack run is this enemy in? Drives the movement
+// pattern below so the player can read "he's diving on me" vs "he's
+// setting up a strafing pass" from the ship's flight path alone.
+function _attackPhase(enemy) {
+    const ud = enemy.userData;
+    const ap = _factionAttackProfile(enemy);
+    const now = Date.now();
+    if (ud._telegraphing) return 'aim';
+    if (ud._burstLeft !== undefined && ud._burstLeft < ap.burst) return 'burst';
+    if (now - (ud._burstEndedAt || 0) < 900) return 'break';
+    return 'setup';
+}
+
+// Faction attack pattern -> attackMode override. Deterministic (driven by
+// the fire clock), so it doesn't reintroduce the frame-to-frame mode
+// flip-flop the dwell timer exists to prevent.
+function _patternAttackMode(enemy, dist, faction) {
+    const ap = _factionAttackProfile(enemy);
+    const phase = _attackPhase(enemy);
+    if (ap.pattern === 'lance') {
+        // Commit to a straight dive through the shot, then break away.
+        if (phase === 'aim' || phase === 'burst') return 'pursue';
+        if (phase === 'break') return 'evade';
+        return dist > faction.preferredRange * 2.4 ? 'pursue' : null;
+    }
+    if (ap.pattern === 'strafe') {
+        // Run in, shoot on the pass, extend, come back around.
+        if (phase === 'aim' || phase === 'burst') return 'pursue';
+        if (phase === 'break') return 'evade';
+        // Out past the bracket there is nothing to strafe yet — close the
+        // distance. Without this an enemy that is out of firing range never
+        // reaches the 'aim' phase, so it would hold 'flank' forever and
+        // loiter at arm's length instead of pressing the attack.
+        if (dist > faction.preferredRange * 2.2) return 'pursue';
+        return 'flank';
+    }
+    // circle: hold the bracket and shoot across it; only close when far.
+    if (dist > faction.preferredRange * 2.2) return 'pursue';
+    if (phase === 'break') return 'swarm';
+    return 'engage';
+}
+
+// While rolling out of a gunsight an enemy should NOT stay perfectly
+// nose-on — the whole point is that it looks away and commits.
+function _enemyLookRate(enemy) {
+    const ud = enemy.userData;
+    // Nearly released mid-maneuver. The look-at builds a ZERO-ROLL
+    // orientation, so any rate at all is a counter-torque on the roll —
+    // 0.03 is just enough to keep the nose in the fight without eating
+    // the maneuver.
+    if (ud._evade) return 0.03;
+    if (ud._telegraphing) return 0.40;          // locks on hard while aiming
+    return 0.26;
+}
+
+// One call per active enemy per AI tick, after the steering behavior has
+// run. Order matters: the maneuver slides the hull, then the roll is
+// composed on top of the look-at orientation, then the interpolation
+// start value is unwrapped so the glide takes the short way round.
+function _updateEnemyCombatFeel(enemy) {
+    if (!enemy || !enemy.userData || !_cfA) return;
+    const ud = enemy.userData;
+    // Panic-dodge: still being shot at and the last move has settled.
+    if (ud._underFireUntil && Date.now() < ud._underFireUntil) {
+        _tryStartEvasive(enemy, 'graze');
+    }
+    const roll = ud._evade ? _stepEvasive(enemy) : 0;
+    _applyEnemyFlightRoll(enemy, roll);
+    _unwrapEnemyInterpRoll(enemy);
+}
+if (typeof window !== 'undefined') window._updateEnemyCombatFeel = _updateEnemyCombatFeel;
+
 function updateEnemyBehavior() {
     // Safety checks
     if (typeof enemies === 'undefined' || typeof gameState === 'undefined' || typeof camera === 'undefined') {
@@ -1199,6 +1744,13 @@ function updateEnemyBehavior() {
                     updateEnhancedEnemyBehavior(enemy, distanceToPlayer, adjustedSpeed, difficultySettings);
                 }
             }
+
+            // Combat feel: evasive maneuver step + banking/roll overlay.
+            // Runs AFTER the steering behavior (which ends in a zero-roll
+            // look-at) so the roll composes on top instead of being wiped.
+            if (typeof _updateEnemyCombatFeel === 'function') {
+                _updateEnemyCombatFeel(enemy);
+            }
         } else if (isLocal && (enemy.userData.isMartianPirate || enemy.userData.isVulcanPatrol)) {
             // Idle Pirates / Vulcans should ALWAYS be moving, not loitering.
             // Run a formation-flight patrol that slowly drifts the whole
@@ -1261,22 +1813,32 @@ function updateEnemyBehavior() {
             }
             // Standard firing — only `maxAttackers` are active so the rate
             // is naturally capped at the original 2-day-ago levels.
-            if (nearestTargetDist < firingRange) {
+            //
+            // The schedule now runs through _updateEnemyFireCycle, which
+            // groups the same number of shots into a faction-shaped BURST
+            // and lights a brief emissive telegraph before the first bolt.
+            // Average shots-per-second is unchanged (the between-burst rest
+            // is multiplied by the burst size) — this buys readability, not
+            // difficulty. Bosses keep the plain one-shot cadence so their
+            // scripted specials stay on their own clock.
+            {
                 const now = Date.now();
                 const attackCooldown = isLocal ?
                     (difficultySettings.localAttackCooldown || 2000) :
                     (enemy.userData.isBoss ? 600 : difficultySettings.distantAttackCooldown || 1200);
+                const inRange = nearestTargetDist < firingRange;
 
-                // Per-enemy JITTERED schedule rather than a shared fixed
-                // cooldown. Jitter only ever ADDS delay (1.0-1.7x), so no
-                // enemy ever fires faster than the original fixed rate —
-                // this keeps the demo player from being baited into
-                // constant return fire — while the random per-ship period
-                // still breaks the synchronized distant-galaxy volley.
-                if (now >= (enemy.userData.nextFire || 0)) {
-                    fireEnemyWeapon(enemy, difficultySettings);
-                    enemy.userData.lastAttack = now;
-                    enemy.userData.nextFire = now + attackCooldown * (1.0 + Math.random() * 0.7);
+                if (enemy.userData.isBoss) {
+                    if (inRange && now >= (enemy.userData.nextFire || 0)) {
+                        fireEnemyWeapon(enemy, difficultySettings);
+                        enemy.userData.lastAttack = now;
+                        enemy.userData.nextFire = now + attackCooldown * (1.0 + Math.random() * 0.7);
+                    }
+                } else if (typeof _updateEnemyFireCycle === 'function') {
+                    if (_updateEnemyFireCycle(enemy, attackCooldown, inRange)) {
+                        fireEnemyWeapon(enemy, difficultySettings);
+                        enemy.userData.lastAttack = now;
+                    }
                 }
             }
         } else {
@@ -1400,6 +1962,11 @@ const factionBehaviors = {
 // their patrolCenter looking broken.
 function _activateOnDamage(enemy) {
     if (!enemy || !enemy.userData) return;
+    // Taking a hit ALWAYS provokes a break turn — even for an enemy that
+    // was already engaged. This is the most direct "he reacted to my shot"
+    // feedback the player gets.
+    enemy.userData._underFireUntil = Date.now() + 1800;
+    if (typeof _tryStartEvasive === 'function') _tryStartEvasive(enemy, 'hit');
     if (enemy.userData.isActive) return; // already active
     enemy.userData.isActive = true;
     enemy.userData.detectedPlayer = true;
@@ -1508,6 +2075,20 @@ function updateLocalEnemyBehavior(enemy, distanceToPlayer, adjustedSpeed, diffic
         enemy.userData.attackMode = 'pursue';
     }
 
+    // ── Faction attack RHYTHM drives the flight path ────────────────────
+    // Lance factions (Klingon/Sith/Romulan) dive straight through the
+    // shot then break; strafe factions (Rebel/Vulcan) run a pass and
+    // extend; circle factions (Federation/Imperial/Cardassian) hold the
+    // bracket and shoot across it. Driven by the fire clock, so it is
+    // deterministic and doesn't reintroduce per-frame mode flip-flop.
+    if (typeof _patternAttackMode === 'function') {
+        const _pm = _patternAttackMode(enemy, targetDist, faction);
+        if (_pm && _pm !== enemy.userData.attackMode) {
+            enemy.userData.attackMode = _pm;
+            enemy.userData._lastModeChange = _now;
+        }
+    }
+
     // Override playerPos with the nearest target so all behaviors steer toward
     // either the player OR a wingman, whichever is closer.
     playerPos.copy(targetPos);
@@ -1537,9 +2118,12 @@ function updateLocalEnemyBehavior(enemy, distanceToPlayer, adjustedSpeed, diffic
     // turning motion fluid like wingmen instead of snapping the
     // orientation each frame when the target moves.
     // Snappier slerp than wingmen so "enemy turns to face you" reads
-    // as deliberate combat orientation. Still smooth enough to avoid
-    // the rigid lookAt snap.
-    _smoothEnemyLookAt(enemy, playerPos, 0.20);
+    // as deliberate combat orientation. Rate is now situational: hard
+    // lock-on while telegraphing a shot, and almost released while
+    // flying an evasive maneuver so the ship visibly commits to the
+    // roll instead of tracking you through it like a turret.
+    _smoothEnemyLookAt(enemy, playerPos,
+        (typeof _enemyLookRate === 'function') ? _enemyLookRate(enemy) : 0.20);
 }
 
 // Smoothly rotate an enemy to face `targetPos` over multiple frames.
@@ -1586,7 +2170,24 @@ function updateEnhancedEnemyBehavior(enemy, distanceToPlayer, adjustedSpeed, dif
     }
     
     enemy.userData.behaviorTimer += 0.016; // Roughly 60fps
-    
+
+    // Faction attack rhythm overrides the state machine once the enemy is
+    // actually inside its engagement bracket, so distant hostiles read the
+    // same way local ones do: lance factions dive and break, strafe
+    // factions make passes, circle factions hold the ring.
+    if (typeof _patternAttackMode === 'function' &&
+        enemy.userData.behaviorState !== 'patrol') {
+        const _fb = getFactionBehavior(enemy);
+        const _pm = _patternAttackMode(enemy, distanceToPlayer, _fb);
+        const _mapped = _pm === 'evade' ? 'retreat'
+                      : _pm === 'swarm' || _pm === 'flank' ? 'strafe'
+                      : _pm === 'pursue' || _pm === 'engage' ? 'pursue' : null;
+        if (_mapped && _mapped !== enemy.userData.behaviorState) {
+            enemy.userData.behaviorState = _mapped;
+            enemy.userData.behaviorTimer = 0;
+        }
+    }
+
     switch (enemy.userData.behaviorState) {
         case 'patrol':
             if (distanceToPlayer < difficultySettings.distantDetectionRange * 0.7) {
@@ -1623,11 +2224,11 @@ function updateEnhancedEnemyBehavior(enemy, distanceToPlayer, adjustedSpeed, dif
             break;
     }
     
-    // Smooth quaternion slerp instead of instant lookAt
-    // Snappier slerp than wingmen so "enemy turns to face you" reads
-    // as deliberate combat orientation. Still smooth enough to avoid
-    // the rigid lookAt snap.
-    _smoothEnemyLookAt(enemy, playerPos, 0.20);
+    // Smooth quaternion slerp instead of instant lookAt. Same situational
+    // rate as the local behavior — hard lock while telegraphing, released
+    // while flying an evasive maneuver.
+    _smoothEnemyLookAt(enemy, playerPos,
+        (typeof _enemyLookRate === 'function') ? _enemyLookRate(enemy) : 0.20);
 }
 
 // Boss behavior
@@ -2032,11 +2633,19 @@ function fireEnemyWeapon(enemy, difficultySettings) {
         damage = Math.min(damage, 10);
 
         let hitChance = 0.6;
+        // Coefficients rescaled for the faster turn rates: the old 3.33 /
+        // 0.5 pair was tuned against a 0.03 lerp where turnRate never rose
+        // above ~0.01. Left as-is it would have quietly cut every moving
+        // enemy to the 0.2 floor — a stealth difficulty drop. The SHAPE is
+        // preserved: a ship hauling its nose around shoots worse, a ship
+        // committed to a straight lance dive shoots its best.
         const turnRate = enemy.userData.turnRate || 0;
         if (turnRate > 0.01) {
-            const accuracyPenalty = Math.min(turnRate * 3.33, 0.5);
-            hitChance = Math.max(0.2, hitChance - accuracyPenalty);
+            const accuracyPenalty = Math.min(turnRate * 1.1, 0.3);
+            hitChance = Math.max(0.3, hitChance - accuracyPenalty);
         }
+        // Mid-maneuver an enemy is flying, not aiming.
+        if (enemy.userData._evade) hitChance *= 0.55;
 
         const isHit = Math.random() < hitChance;
 
@@ -7046,6 +7655,13 @@ function fireMissile() {
 }
 
 function createMissile(startPos, targetPos, targetObject) {
+    // A missile in the air is the loudest threat there is — the target
+    // breaks immediately (split-S), which is what sells the chase.
+    if (targetObject && targetObject.userData && targetObject.userData.type === 'enemy' &&
+        typeof _tryStartEvasive === 'function') {
+        targetObject.userData._underFireUntil = Date.now() + 2200;
+        _tryStartEvasive(targetObject, 'missile');
+    }
     const missileGeometry = new THREE.CylinderGeometry(0.3, 0.5, 2, 8);
     const missileMaterial = new THREE.MeshBasicMaterial({ color: 0xff3300 });
     const missile = new THREE.Mesh(missileGeometry, missileMaterial);
@@ -7626,6 +8242,14 @@ function fireWeapon() {
         }
     }
     
+    // COMBAT FEEL: anything the shot passes CLOSE to starts jinking, not
+    // just what it hits. Dodging while the player is still walking rounds
+    // onto the target is what makes a dogfight feel alive rather than
+    // turn-based.
+    if (typeof _markEnemiesUnderFire === 'function') {
+        _markEnemiesUnderFire(targetPosition);
+    }
+
     // Create weapon effect - different approach for 1st vs 3rd person
     const mode = window.cameraState?.mode || 'first-person';
     const playerShip = window.cameraState?.playerShipMesh;
@@ -8685,7 +9309,16 @@ if (typeof window !== 'undefined') {
     window.updateBossBehavior = updateBossBehavior;
     window.updateSupportBehavior = updateSupportBehavior;
     window.fireEnemyWeapon = fireEnemyWeapon;
-    
+
+    // COMBAT FEEL — evasive maneuvers / attack rhythm. Exposed so other
+    // systems (wingman AI, set-piece scripts, the playtest probe) can
+    // provoke or inspect a dodge without duplicating the logic.
+    window.EVASIVE_MANEUVERS = _EVASIVE;
+    window.FACTION_ATTACK_PATTERNS = _FACTION_ATTACK;
+    window._updateEnemyFireCycle = _updateEnemyFireCycle;
+    window._enemyAttackPhase = _attackPhase;
+
+
     // Make keys available globally for game-physics.js
     window.keys = keys;
     

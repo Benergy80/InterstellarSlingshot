@@ -1559,6 +1559,11 @@ function updateTargetLayer() {
         _targetLayerLastLockedObj = lockedObj;
     }
 
+    // Tag plates dim slightly during a full slingshot/emergency-warp
+    // spectacle — reused from the same binary check driving the HUD panel
+    // geometric yield, kept well clear of the "no sub-0.6" legibility floor.
+    const _tlSpectacleTagAlpha = _hudSpectacleActive() ? 0.7 : 1;
+
     const hostiles = _tlGatherHostiles(camPos);
     const tracked = hostiles.slice();
     // Union in the active nav target (if any) so the pilot's selected
@@ -1692,7 +1697,18 @@ function updateTargetLayer() {
                 if (_tlBoxesOverlap(tagBox, placedTagBoxes[j], TAG_DECLUTTER_PAD)) { overlapsPlacedTag = true; break; }
             }
             if (!overlapsPlacedTag) {
-                _tlDrawTag(ctx, obj, tagX, tagY, bracketRadius, distance, scheme, isHostile);
+                // World-anchored layer stays otherwise untouched during the
+                // slingshot/warp spectacle — only the name/HP tag plates
+                // ease back a little (brackets, chevrons and lead pips are
+                // left at full strength), per the HUD yield redesign.
+                if (_tlSpectacleTagAlpha < 1) {
+                    ctx.save();
+                    ctx.globalAlpha = _tlSpectacleTagAlpha;
+                    _tlDrawTag(ctx, obj, tagX, tagY, bracketRadius, distance, scheme, isHostile);
+                    ctx.restore();
+                } else {
+                    _tlDrawTag(ctx, obj, tagX, tagY, bracketRadius, distance, scheme, isHostile);
+                }
                 placedTagBoxes.push(tagBox);
             } else {
                 _tlDrawDeclutterDot(ctx, proj.x, proj.y, bracketRadius, scheme);
@@ -3577,6 +3593,24 @@ function _hudSpectacleGetPanels() {
 // continuous fade instead of never moving at all.
 let _hudYield = 0;
 let _hudYieldLastT = null;
+// Last-committed state of the binary geometric-yield class (below) so the
+// per-frame loop only ever touches classList on an actual transition, not
+// every single frame.
+let _hudGeoYieldLast = false;
+
+// Binary "is this exact frame a full slingshot/emergency-warp spectacle"
+// check — the single source of truth shared by the geometric panel yield
+// below (css/styles.css `:root.hud-geo-yield`) and by the world-anchored
+// target-layer tag dimming (updateTargetLayer), so the two effects can
+// never drift out of sync with two separate copies of this condition.
+function _hudSpectacleActive() {
+    if (typeof gameState === 'undefined') return false;
+    return !!((gameState.slingshot && gameState.slingshot.active) ||
+               (gameState.emergencyWarp && gameState.emergencyWarp.active));
+}
+if (typeof window !== 'undefined') {
+    window._hudSpectacleActive = _hudSpectacleActive;
+}
 
 // Slingshot charge/release and emergency warp are full-spectacle set pieces
 // — pin straight to 1 the instant they're active. Boost is continuous:
@@ -3587,12 +3621,7 @@ let _hudYieldLastT = null;
 // while thrust is still ramping up.
 function _hudComputeSpectacleTarget() {
     if (typeof gameState === 'undefined') return 0;
-    let target = 0;
-
-    if ((gameState.slingshot && gameState.slingshot.active) ||
-        (gameState.emergencyWarp && gameState.emergencyWarp.active)) {
-        target = 1;
-    }
+    let target = _hudSpectacleActive() ? 1 : 0;
 
     const v = gameState.velocityVector ? gameState.velocityVector.length() :
               (gameState.velocity || 0);
@@ -3634,6 +3663,21 @@ function updateHudSpectacleDim() {
 
     if (document.documentElement) {
         document.documentElement.style.setProperty('--hud-yield', _hudYield.toFixed(3));
+    }
+
+    // Geometric yield — binary, not eased in JS. The slingshot/emergency-
+    // warp spectacle itself is a hard on/off event (gameState.slingshot
+    // .active, gameState.emergencyWarp.active), so the class toggle IS the
+    // trigger; the slide/scale/collapse easing lives entirely in CSS via
+    // `.ui-panel`'s own 250ms `transition: transform` (css/styles.css
+    // `:root.hud-geo-yield`), which is what actually produces the "panels
+    // slide toward their screen edge" motion on both entry and restore.
+    const _geoYieldOn = _hudSpectacleActive();
+    if (_geoYieldOn !== _hudGeoYieldLast) {
+        _hudGeoYieldLast = _geoYieldOn;
+        if (document.documentElement) {
+            document.documentElement.classList.toggle('hud-geo-yield', _geoYieldOn);
+        }
     }
 
     _updateFlightControlsCollapse();

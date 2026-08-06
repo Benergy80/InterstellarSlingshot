@@ -602,17 +602,20 @@ function applyWorldShift() {
 // ADAPTIVE QUALITY: tier ladder driven by the __perfMeter median frame time.
 // Reversible runtime levers only (the old version rebuilt star geometry —
 // destructive and itself janky, which is why it was disabled):
-//   - renderer pixel ratio (dominant fill-rate lever; the game is fill-rate
-//     bound inside nebulas from stacked additive transparency)
 //   - gameState.performanceMode ('normal'/'optimized'/'minimal'), already
 //     consumed by enemy caps, active-planet ranges, orbit/tendril cadence.
+//   - additive point-size / nebula draw-range / cull-distance scales below.
+// Renderer PIXEL RATIO is no longer driven from here — see the dedicated
+// ADAPTIVE RESOLUTION controller (_resolution) just below, which owns
+// renderer.setPixelRatio exclusively and reacts to p95 frame time on its
+// own hysteresis/cooldown. Splitting the two avoids two controllers
+// fighting over the same lever on different clocks.
 // Hysteresis: 2 consecutive slow checks to step down, 6 consecutive fast
 // checks to step up, and a settle period after each change so the meter
 // refills with post-change frames. Set window.__qualityLock to a tier name
 // to pin quality manually. Observability: window.__quality.
 const _quality = {
     TIERS: [
-        // prScale: render-resolution factor (fill-rate lever #1)
         // ptScale: additive point-size factor — fragments/point ~ ptScale²,
         //          so 0.85/0.7 ≈ 72%/49% of baseline additive fill
         // drawScale: fraction of each nebula point cloud actually drawn
@@ -620,17 +623,103 @@ const _quality = {
         //          game is fill-rate bound at its worst)
         // cullScale: distance-culling range factor — distance-LOD for the
         //          dense-core draw-call load (planets/asteroids/comets)
-        { name: 'normal',    prScale: 1.0,  ptScale: 1.0,  drawScale: 1.0, cullScale: 1.0  },
-        { name: 'optimized', prScale: 0.85, ptScale: 0.85, drawScale: 0.8, cullScale: 0.85 },
-        { name: 'minimal',   prScale: 0.7,  ptScale: 0.7,  drawScale: 0.6, cullScale: 0.6  },
+        { name: 'normal',    ptScale: 1.0,  drawScale: 1.0, cullScale: 1.0  },
+        { name: 'optimized', ptScale: 0.85, drawScale: 0.8, cullScale: 0.85 },
+        { name: 'minimal',   ptScale: 0.7,  drawScale: 0.6, cullScale: 0.6  },
     ],
     tier: 0,
     slowStreak: 0,
     fastStreak: 0,
     lastChange: 0,
-    basePixelRatio: 0,
 };
 if (typeof window !== 'undefined') window.__quality = _quality;
+
+// ADAPTIVE RESOLUTION: dedicated renderer.setPixelRatio ladder, independent
+// of the fill-rate tiers above. Reacts to p95 frame time (the WORST frames
+// a player actually feels — a good median can hide spiky p95 stutter that
+// median-driven _quality would never see) rather than the median.
+//   - starts at min(devicePixelRatio, 1.5), same cap the renderer boots with
+//   - steps DOWN one rung after p95 > ~20ms held for 3+ seconds
+//   - steps UP one rung after p95 stays comfortably < ~14ms for 10+ seconds
+//   - a 15s cooldown after ANY step (up or down) blocks the next step, so a
+//     borderline machine can't ping-pong between two rungs every few seconds
+// Set window.__resolutionLock to a pixelRatio number to pin it manually.
+// Observability: window.__resolution.
+const _resolution = {
+    STEPS: [1.5, 1.25, 1.0, 0.85, 0.7],
+    step: 0,            // index into STEPS; 0 = highest resolution
+    dprCap: 0,           // min(devicePixelRatio, mobile?1:1.5) — set on first apply
+    badSince: 0,         // performance.now() p95 first crossed the slow threshold, 0 = not currently bad
+    goodSince: 0,        // performance.now() p95 first dropped under the fast threshold, 0 = not currently good
+    lastStepAt: 0,        // performance.now() of the last step (15s cooldown gate)
+    SLOW_MS: 20,
+    FAST_MS: 14,
+    SLOW_HOLD_MS: 3000,
+    FAST_HOLD_MS: 10000,
+    COOLDOWN_MS: 15000,
+};
+if (typeof window !== 'undefined') window.__resolution = _resolution;
+
+function _applyResolutionStep(idx, why) {
+    _resolution.step = idx;
+    _resolution.lastStepAt = performance.now();
+    _resolution.badSince = 0;
+    _resolution.goodSince = 0;
+    if (renderer) {
+        if (!_resolution.dprCap) {
+            _resolution.dprCap = Math.min(window.devicePixelRatio || 1,
+                window.__isMobileGPU ? 1 : 1.5);
+        }
+        const pr = Math.min(_resolution.dprCap, _resolution.STEPS[idx]);
+        renderer.setPixelRatio(pr);
+        const size = new THREE.Vector2();
+        renderer.getSize(size);
+        console.log(`Resolution: pixelRatio ${pr.toFixed(2)} (step ${idx + 1}/${_resolution.STEPS.length}, ` +
+            `backing ${Math.round(size.x * pr)}x${Math.round(size.y * pr)}) — ${why}`);
+    }
+}
+
+// Evaluated every frame (cheap: a handful of comparisons, no allocation
+// unless a step is actually due) so the 3s/10s hold windows are timed
+// against real wall-clock, not throttled to some coarser check cadence.
+function adjustResolution() {
+    const perf = (typeof window !== 'undefined' && window.__perf) || null;
+    if (!perf || perf.samples < 60) return;   // need real frame-time data
+
+    if (typeof window !== 'undefined' && typeof window.__resolutionLock === 'number') {
+        const want = _resolution.STEPS.indexOf(window.__resolutionLock);
+        if (want >= 0 && want !== _resolution.step) _applyResolutionStep(want, 'manual lock');
+        return;
+    }
+
+    const now = performance.now();
+    const p95 = perf.p95Ms;
+
+    if (p95 > _resolution.SLOW_MS) {
+        if (!_resolution.badSince) _resolution.badSince = now;
+        _resolution.goodSince = 0;
+    } else if (p95 < _resolution.FAST_MS) {
+        if (!_resolution.goodSince) _resolution.goodSince = now;
+        _resolution.badSince = 0;
+    } else {
+        _resolution.badSince = 0;
+        _resolution.goodSince = 0;
+    }
+
+    // Cooldown gates APPLYING a step, but the hold timers above keep
+    // accumulating through it — a machine that's been bad for the whole
+    // cooldown steps down again the instant the cooldown clears, instead of
+    // waiting another 3s on top.
+    if (now - _resolution.lastStepAt < _resolution.COOLDOWN_MS) return;
+
+    if (_resolution.badSince && (now - _resolution.badSince) >= _resolution.SLOW_HOLD_MS &&
+        _resolution.step < _resolution.STEPS.length - 1) {
+        _applyResolutionStep(_resolution.step + 1, `p95 ${p95.toFixed(1)}ms sustained`);
+    } else if (_resolution.goodSince && (now - _resolution.goodSince) >= _resolution.FAST_HOLD_MS &&
+        _resolution.step > 0) {
+        _applyResolutionStep(_resolution.step - 1, `p95 ${p95.toFixed(1)}ms, headroom`);
+    }
+}
 
 // Fill-rate levers applied across the scene. Runs only on tier change (a
 // one-off traverse), stores every material's base value in material.userData
@@ -668,15 +757,8 @@ function _applyQualityTier(idx, why) {
     _quality.fastStreak = 0;
     _quality.lastChange = performance.now();
     gameState.performanceMode = t.name;
-    if (renderer) {
-        if (!_quality.basePixelRatio) {
-            _quality.basePixelRatio = Math.min(window.devicePixelRatio || 1,
-                window.__isMobileGPU ? 1 : 1.5);
-        }
-        renderer.setPixelRatio(_quality.basePixelRatio * t.prScale);
-    }
     _applyFillRateTier(t);
-    console.log(`Quality: ${t.name} (pixelRatio ×${t.prScale}, points ×${t.ptScale}, ` +
+    console.log(`Quality: ${t.name} (points ×${t.ptScale}, ` +
         `nebula draw ×${t.drawScale}, cull ×${t.cullScale}) — ${why}`);
 }
 
@@ -706,12 +788,15 @@ function _perfHUDToggle(show) {
         _perfHUDToggle._timer = setInterval(() => {
             const p = window.__perf || {};
             const q = window.__quality;
+            const r = window.__resolution;
+            const pr = renderer ? renderer.getPixelRatio() : 0;
             const ri = (renderer && renderer.info) ? renderer.info.render : null;
             el.textContent =
                 `fps     ${p.fps || 0}\n` +
                 `frame   ${(p.medianMs || 0).toFixed(1)}ms (p95 ${(p.p95Ms || 0).toFixed(1)})\n` +
                 `script  ${(p.scriptMs || 0).toFixed(1)}ms\n` +
                 `quality ${q ? q.TIERS[q.tier].name : '?'}\n` +
+                `pxratio ${pr.toFixed(2)} (step ${r ? r.step + 1 : '?'}/${r ? r.STEPS.length : '?'})\n` +
                 (ri ? `draws   ${ri.calls}\ntris    ${(ri.triangles / 1000).toFixed(0)}k\npoints  ${(ri.points / 1000).toFixed(0)}k` : '');
         }, 1000);
     }
@@ -1290,6 +1375,9 @@ function startGame() {
         // Cap desktop at 1.5x (was 2x): on retina the 2x buffer is ~5.4M px and
         // the dense Sol scene is fragment/fill-rate bound — 2.0->1.5 measured
         // +37% FPS (24->34) with only minor sharpness loss. Mobile stays at 1.
+        // This is step 0 of the ADAPTIVE RESOLUTION ladder (_resolution,
+        // defined above) — it takes over from here, stepping this value
+        // down/up at runtime off measured p95 frame time.
         renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, _isMobileGPU ? 1 : 1.5));
         renderer.setClearColor(0x000003);
 
@@ -1907,22 +1995,25 @@ function animate(rafTime) {
         applyWorldShift();
     }
     
-    // Track frame time history for performance adjustment
-    gameState.frameTimeHistory.push(frameTime);
-    if (gameState.frameTimeHistory.length > 60) { // Keep last 60 frames
-        gameState.frameTimeHistory.shift();
+    // ALLOCATION HOTSPOT (fixed): this used to push(frameTime)/shift() a
+    // 60-entry array and .reduce() it EVERY frame — unconditional array
+    // churn (memmove on the shift, a fresh closure + full-array walk on the
+    // reduce) purely to compute a rolling average that __perfMeter already
+    // tracks more precisely via a preallocated Float32Array. An EMA gets the
+    // same signal in O(1) with zero allocation.
+    if (frameTime > 0 && frameTime < 2000) {   // skip tab-switch pauses, don't let one huge frame yank the average
+        gameState.averageFrameTime += (frameTime - gameState.averageFrameTime) * 0.1;
     }
-    
-    // Calculate average frame time
-    if (gameState.frameTimeHistory.length >= 10) {
-        gameState.averageFrameTime = gameState.frameTimeHistory.reduce((a, b) => a + b) / gameState.frameTimeHistory.length;
-    }
-    
+
     // Auto-adjust performance every 5 seconds
     if (currentTime - gameState.lastPerformanceCheck > 5000) {
         adjustPerformance();
         gameState.lastPerformanceCheck = currentTime;
     }
+    // ADAPTIVE RESOLUTION: evaluated every frame (cheap — a few comparisons,
+    // no allocation unless a step is actually due) so its 3s/10s hold
+    // windows are timed against real wall-clock rather than a coarser cadence.
+    adjustResolution();
 
     // PERFORMANCE DEBUG: Update tracker
     if (typeof perfDebug !== 'undefined' && perfDebug.enabled) {
@@ -2156,22 +2247,28 @@ if (gameState.frameCount % 60 === 0 && typeof outerInterstellarSystems !== 'unde
 // Pulse enemy glow for visibility
 // UPDATED: Handle both simple meshes and GLB model Groups
 // FIXED: Never go completely dark - maintain minimum visibility
+// ALLOCATION HOTSPOT (fixed): this was enemies.filter() (full pass, throwaway
+// array) followed by .forEach() (second pass) every other frame — cost scales
+// with enemy count, worst exactly where the game is already fill-rate heavy
+// (dense encounters near the galactic core). Single for-loop below does the
+// same work with no intermediate array, and glowOpacity — identical for every
+// enemy this tick — is hoisted out of the per-enemy/per-child body instead of
+// being recomputed on each one.
 if (typeof enemies !== 'undefined' && enemies.length > 0 && gameState.frameCount % 2 === 0) {
     const pulseTime = Date.now() * 0.003; // Slightly faster pulse
     const pulseFactor = 0.5 + Math.sin(pulseTime) * 0.5; // 0.0 to 1.0
-    
+
     // FIXED: Minimum values so enemies never disappear
     const minGlowOpacity = 0.35;  // Never go below 35% opacity
     const maxGlowOpacity = 0.85;  // Max 85% opacity
     const glowRange = maxGlowOpacity - minGlowOpacity;
+    const glowOpacity = minGlowOpacity + (pulseFactor * glowRange);
 
-    // Only pulse enemies within visual range (3000 units)
-    const nearbyEnemies = enemies.filter(e =>
-        e.userData.health > 0 &&
-        camera.position.distanceTo(e.position) < 3000
-    );
+    for (let _ei = 0; _ei < enemies.length; _ei++) {
+        const enemy = enemies[_ei];
+        if (!(enemy.userData.health > 0)) continue;
+        if (camera.position.distanceTo(enemy.position) >= 3000) continue;
 
-    nearbyEnemies.forEach(enemy => {
         // Handle both simple Mesh and GLB model Group structures
         // Check if this is a GLB model first (has children that are meshes)
         const isGLBModel = enemy.type === 'Group' || (enemy.children && enemy.children.length > 0 && enemy.children.some(c => c.isMesh));
@@ -2190,7 +2287,7 @@ if (typeof enemies !== 'undefined' && enemies.length > 0 && gameState.frameCount
                                 child.userData.baseOpacity = child.material.opacity;
                             }
                             // FIXED: Pulse from minGlowOpacity to maxGlowOpacity (never invisible)
-                            child.material.opacity = minGlowOpacity + (pulseFactor * glowRange);
+                            child.material.opacity = glowOpacity;
                         }
                     } else {
                         // BASE MATERIAL - keep solid, no opacity pulsing
@@ -2212,13 +2309,13 @@ if (typeof enemies !== 'undefined' && enemies.length > 0 && gameState.frameCount
             enemy.traverse((child) => {
                 if (child.userData.isGlowLayer && child.material && child.material.opacity !== undefined) {
                     // FIXED: Pulse from minGlowOpacity to maxGlowOpacity (never invisible)
-                    child.material.opacity = minGlowOpacity + (pulseFactor * glowRange);
+                    child.material.opacity = glowOpacity;
                 }
             });
         }
-    });
+    }
 }
-    
+
     // Update target lock system
     updateTargetLock();
     

@@ -2643,6 +2643,70 @@ function updateWarpStarfieldFade() {
     sf.lines.visible = k > 0.01;
 }
 
+// ── WARP/SLINGSHOT EXIT BEAT ─────────────────────────────────────────────
+// THE BUG: emergency warp (and the slingshot glide) had an entry — FOV
+// snap, tunnel, streak burst — but no EXIT. Once the boost timer ran out,
+// postWarp/postSlingshot handed velocity to a near-flat damping factor
+// (0.9999/frame, ~115s half-life) with the max-velocity clamp explicitly
+// exempted while that flag is set. Net effect: the ship coasted at
+// essentially full warp speed for up to two minutes unless the player
+// manually rode the brake the whole time — measured overshoot: 56 ly past
+// the intended target, with only an FOV drop as a cue that anything had
+// changed. The streak field made it worse: outside a "warp moment" its
+// envelope is capped at a fixed cruise ceiling, so at sustained high
+// postWarp speed it didn't fade at all — it PLATEAUED at a static length/
+// width/opacity for as long as the coast lasted, which read as scratches
+// on the lens rather than motion.
+//
+// THE FIX: an explicit, unmissable drop-out beat fired the instant the
+// boost/glide ends (see the two call sites below). Velocity is force-
+// ramped from whatever warp/glide speed it was at down to a firm ~2x
+// max-velocity over ~1s (eased, so it reads as a punch, not a snap) —
+// that alone kills the 56 ly overshoot. warpExitBeat() (visual-flair.js)
+// pairs it with a single chromatic blink, an FOV settle, and an explicit
+// streak-field drain (length collapses into a point rather than fading
+// as a static-length scratch). After the ~1s ramp, control hands off to
+// the existing postWarp/postSlingshot coast — X-brake keeps working
+// exactly as before, and the whip-release launch punch is untouched (this
+// only fires at the END of a boost/glide, never at its start).
+function _fireWarpExitBeat(blackHole) {
+    try {
+        if (typeof window !== 'undefined' && typeof window.warpExitBeat === 'function') {
+            window.warpExitBeat(!!blackHole);
+        }
+        if (typeof playSound === 'function') { try { playSound('warp'); } catch (e) {} }
+    } catch (e) {}
+}
+
+// Drives one exit-ramp record (see the `exitRamp` objects set on
+// gameState.emergencyWarp / gameState.slingshot below) toward its target
+// speed over its window, overriding whatever thrust/braking/damping did to
+// velocityVector this frame. Call once per frame, per owner, right before
+// position integration. Returns true while a ramp is actively driving.
+function _applyWarpExitRamp(owner) {
+    const r = owner && owner.exitRamp;
+    if (!r || !r.active) return false;
+    if (typeof gameState === 'undefined' || !gameState.velocityVector) return false;
+    const now = Date.now();
+    const t = Math.max(0, Math.min(1, (now - r.t0) / Math.max(1, r.dur)));
+    const eased = 1 - Math.pow(1 - t, 3); // ease-out cubic: fast drop, gentle settle
+    const mag = r.fromSpeed + (r.toSpeed - r.fromSpeed) * eased;
+    const v = gameState.velocityVector;
+    if (v.lengthSq() > 1e-8) {
+        v.normalize().multiplyScalar(mag);
+    } else if (typeof camera !== 'undefined' && typeof THREE !== 'undefined') {
+        // Degenerate case only (velocity already ~0 when a ramp armed) — fall
+        // back to the camera's own facing rather than a function-local
+        // `forwardDirection`, which is scoped inside updateEnhancedPhysics
+        // and not visible from this top-level helper.
+        if (!_applyWarpExitRamp._tmp) _applyWarpExitRamp._tmp = new THREE.Vector3();
+        camera.getWorldDirection(_applyWarpExitRamp._tmp);
+        v.copy(_applyWarpExitRamp._tmp).multiplyScalar(mag);
+    }
+    if (t >= 1) r.active = false;
+    return true;
+}
+
 function updateEnhancedPhysics() {
     // Pause-aware physics
     if (typeof gamePaused !== 'undefined' && gamePaused) {
@@ -3093,8 +3157,20 @@ if (gameState.emergencyWarp.active) {
             // No notification for Jump end (silent)
             
         } else {
-            // EMERGENCY WARP: Coast on momentum
+            // EMERGENCY WARP: explicit drop-out beat, THEN coast on momentum.
+            // See _applyWarpExitRamp above — this punches velocity down to a
+            // firm ~2x max over ~1s instead of leaving it to the old near-flat
+            // 0.9999/frame damping that let the ship coast at warp speed for
+            // up to two minutes.
             gameState.emergencyWarp.postWarp = true;
+            gameState.emergencyWarp.exitRamp = {
+                active: true,
+                t0: Date.now(),
+                dur: 1000,
+                fromSpeed: gameState.velocityVector.length(),
+                toSpeed: Math.max((gameState.maxVelocity || 4.0) * 2, gameState.minVelocity || 2.0)
+            };
+            _fireWarpExitBeat(false);
             // Starfield visibility is no longer switched here — it rides the
             // continuous fade in updateWarpStarfieldFade(), so the coast out
             // of warp dissolves the streaks instead of cutting them.
@@ -3616,6 +3692,18 @@ if (surfaceCollision) {
             gameState.slingshot.postSlingshot = true;
             gameState.slingshot.timeRemaining = 0;
 
+            // Explicit drop-out beat — same fix as emergency warp above,
+            // same reason: the glide used to hand off to a near-flat damping
+            // factor with no ramp, no flash, no settle.
+            gameState.slingshot.exitRamp = {
+                active: true,
+                t0: Date.now(),
+                dur: 1000,
+                fromSpeed: gameState.velocityVector.length(),
+                toSpeed: Math.max((gameState.maxVelocity || 4.0) * 2, gameState.minVelocity || 2.0)
+            };
+            _fireWarpExitBeat(gameState.slingshot.fromBlackHole);
+
             // Starfield handled by the continuous fade (matching emergency warp)
 
             if (typeof showAchievement === 'function') {
@@ -3850,7 +3938,16 @@ if (dampedVelocity.length() >= gameState.minVelocity ||
     gameState.emergencyWarp.postWarp) {
     gameState.velocityVector.copy(dampedVelocity);
 }
-    
+
+    // WARP/SLINGSHOT EXIT RAMP — overrides whatever thrust/braking/damping
+    // did to velocityVector this frame with the eased drop-out curve, for
+    // the ~1s window right after a boost/glide ends. See _applyWarpExitRamp
+    // and the two call sites that arm exitRamp above. This is what actually
+    // fixes the overshoot: after this window the ship is at a firm ~2x max
+    // velocity instead of still-basically-warp-speed.
+    _applyWarpExitRamp(gameState.emergencyWarp);
+    _applyWarpExitRamp(gameState.slingshot);
+
     // Apply velocity to position. velocityVector's unit stays "distance per
     // 60fps frame" (every speed readout/clamp above assumes it) — scaling
     // the integration by dtF is what makes travel speed wall-clock true.

@@ -1476,7 +1476,12 @@ const _wsf = {
     sx: null, sy: null, sz: null, sv: null,
     env: 0, kickT0: 0, kickMs: 1, kickAmp: 0, last: 0, roll: 0,
     frame: null, q: null, qRoll: null, m: null, dir: null,
-    colA: null, colB: null
+    colA: null, colB: null,
+    // Explicit warp/slingshot EXIT drain (see warpExitBeat below) — overrides
+    // the speed-driven envelope for a short window so streaks visibly
+    // SHRINK INTO POINTS instead of plateauing at the cruise-cap length
+    // while postWarp/postSlingshot coasts at elevated speed.
+    draining: false, drainT0: 0, drainMs: 1000, drainLen0: 0, drainOp0: 0
 };
 
 function _wsfSeed(i, spanZ) {
@@ -1657,6 +1662,9 @@ function warpStreakBurst(dir, speed, colA, colB, strength) {
     try {
         _wsfBuild();
         if (!_wsf.mesh) return;
+        // A fresh release always wins over a still-draining exit — e.g. an
+        // immediate re-slingshot mid drop-out beat.
+        _wsf.draining = false;
         _wsf.kickT0 = (typeof performance !== 'undefined' ? performance.now() : Date.now());
         _wsf.kickMs = 1500;
         _wsf.kickAmp = Math.max(0.4, Math.min(1.35, strength || 1));
@@ -1669,6 +1677,42 @@ function warpStreakBurst(dir, speed, colA, colB, strength) {
     } catch (e) {}
 }
 
+// ── WARP/SLINGSHOT EXIT BEAT ─────────────────────────────────────────────
+// The drop-out cue. Emergency warp and slingshot both used to end with
+// nothing but a number: velocity barely damped (0.9999/frame, ~115s
+// half-life) and the streak field's speed-driven envelope settled onto a
+// static plateau (capped outside a "warp moment" at 0.22 — a fixed length,
+// fixed width, fixed opacity that then just SAT there for as long as the
+// elevated postWarp/postSlingshot speed lasted). A field that stops
+// changing reads as scratches on the lens, not motion.
+//
+// Called once, on the frame the boost/glide actually ends (see
+// game-physics.js's _fireWarpExitBeat), for every warp source: O-key
+// emergency warp AND a slingshot glide running out. It does not touch
+// velocity — that ramp lives in game-physics.js — this is purely the
+// sensory side: a relieving FOV settle, a single chromatic blink (not a
+// strobe — whipScreenPulse already refuses to stack), and an explicit
+// streak-field drain so the filaments visibly SHRINK INTO POINTS instead
+// of fading transparent while still full length.
+function warpExitBeat(blackHole) {
+    try {
+        if (typeof window !== 'undefined' && typeof window.warpFovPulse === 'function') {
+            window.warpFovPulse(-11, 700);
+        }
+        if (typeof whipScreenPulse === 'function') {
+            whipScreenPulse(blackHole ? 0xb26bff : 0x6be6ff, 0.55);
+        }
+        if (typeof whipScreenShake === 'function') {
+            whipScreenShake(4, 320);
+        }
+        _wsf.draining = true;
+        _wsf.drainT0 = (typeof performance !== 'undefined') ? performance.now() : Date.now();
+        _wsf.drainMs = 1000;
+        _wsf.drainLen0 = (_wsf.mat) ? _wsf.mat.uniforms.uLen.value : 0;
+        _wsf.drainOp0 = (_wsf.mat) ? _wsf.mat.uniforms.uOpacity.value : 0;
+    } catch (e) {}
+}
+
 const _wsfUp = (typeof THREE !== 'undefined') ? new THREE.Vector3(0, 1, 0) : null;
 const _wsfZero = (typeof THREE !== 'undefined') ? new THREE.Vector3(0, 0, 0) : null;
 const _wsfAxisZ = (typeof THREE !== 'undefined') ? new THREE.Vector3(0, 0, 1) : null;
@@ -1678,6 +1722,28 @@ function _updateWarpStreaks() {
     const now = (typeof performance !== 'undefined') ? performance.now() : Date.now();
     const dt = Math.max(0, Math.min(0.05, (now - (_wsf.last || now)) / 1000));
     _wsf.last = now;
+
+    // ── EXPLICIT EXIT DRAIN ──────────────────────────────────────────────
+    // Fired by warpExitBeat() on a warp/slingshot drop-out. Overrides the
+    // speed-driven envelope below for ~1s so the streaks visibly SHRINK
+    // INTO POINTS — length collapses faster than opacity, so the eye reads
+    // "contracting to a dot" rather than "fading out while still a scratch".
+    if (_wsf.draining) {
+        const t = Math.min(1, (now - _wsf.drainT0) / _wsf.drainMs);
+        if (!_wsf.mesh || t >= 1) {
+            _wsf.draining = false;
+            _wsf.env = 0;
+            if (_wsf.mesh) _wsf.mesh.visible = false;
+        } else {
+            _wsf.mesh.visible = true;
+            const shrink = 1 - t;
+            const u = _wsf.mat.uniforms;
+            u.uLen.value = Math.max(1.5, _wsf.drainLen0 * shrink * shrink);
+            u.uOpacity.value = _wsf.drainOp0 * (1 - t * t * t);
+            _wsf.env = Math.min(_wsf.env, 0.22 * shrink);
+        }
+        return;
+    }
 
     // Live speed in units/sec (velocityVector is per-60fps-frame).
     const spd = (gameState.velocityVector ? gameState.velocityVector.length() : 0) * 60;
@@ -2872,4 +2938,5 @@ if (typeof window !== 'undefined') {
     window.warpStreakBurst = warpStreakBurst;
     window.warpDebrisBurst = warpDebrisBurst;
     window.warpTunnelBurst = warpTunnelBurst;
+    window.warpExitBeat = warpExitBeat;
 }

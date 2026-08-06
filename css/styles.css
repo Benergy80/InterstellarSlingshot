@@ -60,7 +60,11 @@ body.ui-mode {
     /* 0..1 "how much is the spectacle asking the chrome to get out of the
        way right now" — written every frame by js/game-ui.js's
        updateHudSpectacleDim from a velocity/boost/slingshot/warp blend.
-       Defaults to 0 (full chrome) before that loop ever runs. */
+       Defaults to 0 (full chrome) before that loop ever runs. Drives a
+       gentle opacity fade only (see .ui-panel below); the full slingshot/
+       emergency-warp spectacle is instead handled by the separate binary
+       `hud-geo-yield` class (further down this file) that slides/scales/
+       collapses the chrome geometrically instead of dimming it. */
     --hud-yield: 0;
 }
 
@@ -98,8 +102,8 @@ body.ui-mode {
        stamps a plain (non-important) inline `opacity:1` on every .ui-panel
        once the intro finishes, and a normal-specificity rule can never
        beat an inline style — only an !important author rule outranks it. */
-    opacity: calc(1 - 0.6 * var(--hud-yield, 0)) !important;
-    transition: opacity 0.35s ease !important;
+    opacity: calc(1 - 0.35 * var(--hud-yield, 0)) !important;
+    transition: opacity 0.35s ease, transform 0.25s ease !important;
 }
 
 /* mobiGlas corner ticks — a single pseudo-element painting all 4 corner
@@ -234,6 +238,98 @@ body.ui-mode {
     box-shadow:
         0 10px 30px rgba(0, 150, 255, 0.3),
         inset -2px 0 8px rgba(0,150,255,0.15);
+}
+
+/* =============================================================================
+   HUD GEOMETRIC YIELD — slingshot / emergency-warp spectacle
+   The opacity fade above (--hud-yield) is a continuous "how fast does this
+   feel" blend that also covers ordinary boost-speed cruising; it never
+   touches this class. This block is the separate, BINARY reaction to a full
+   spectacle set piece — gameState.slingshot.active or
+   gameState.emergencyWarp.active — toggled every frame by
+   js/game-ui.js's updateHudSpectacleDim via a single `hud-geo-yield` class
+   on <html>. Instead of fading (which was hitting text down to 40% opacity
+   while the panels' actual footprint never shrank — chrome stayed ~36.6%
+   of the frame at every yield level), the chrome now gets physically out
+   of the way: each panel slides toward the screen edge it already hugs and
+   scales to ~0.92 over the 250ms `transition: transform` declared on
+   `.ui-panel` above, SHIP STATUS collapses to its three one-line vitals,
+   and the Flight Controls / Navigation / Map panels drop their bulk
+   content down to a bare header. Opacity is pinned back to 1 here — the
+   "yield" is 100% positional/content, so remaining text is always fully
+   legible, never dimmed, during the exact moments this matters most.
+   ============================================================================= */
+:root.hud-geo-yield .ui-panel {
+    opacity: 1 !important;
+}
+
+:root.hud-geo-yield .ui-panel.title-header {
+    transform: translateX(-50%) perspective(1000px) rotateX(2deg) translateZ(8px)
+               translateY(-46px) scale(0.92);
+}
+:root.hud-geo-yield .ui-panel.top-left {
+    transform: perspective(1000px) rotateY(8deg) rotateX(-4deg) translateZ(10px)
+               translate3d(-46px, -34px, 0) scale(0.92);
+}
+:root.hud-geo-yield .ui-panel.bottom-left {
+    transform: perspective(1000px) rotateY(6deg) rotateX(2deg) translateZ(8px)
+               translate3d(-46px, 34px, 0) scale(0.92);
+}
+:root.hud-geo-yield .ui-panel.top-right {
+    transform: perspective(1000px) rotateY(-8deg) rotateX(-4deg) translateZ(10px)
+               translate3d(46px, -34px, 0) scale(0.92);
+}
+:root.hud-geo-yield .ui-panel.bottom-right {
+    transform: perspective(1000px) rotateY(-6deg) rotateX(3deg) translateZ(5px)
+               translate3d(46px, 34px, 0) scale(0.92);
+}
+
+/* SHIP STATUS collapses to its three one-line vitals — velocity, energy,
+   hull. Selected with :has() (not a JS-injected class) because every row
+   in this stack is a raw sibling `.curved-element` and several of them
+   (#targetInfo, #galaxyProgress) have their className fully overwritten
+   every frame by updateUI()'s own template-string writes elsewhere in this
+   file — a class stamped on those specific rows would just get clobbered
+   on the next tick. Hiding everything and re-showing only the rows that
+   contain a vitals element sidesteps that entirely and needs no per-frame
+   upkeep. */
+:root.hud-geo-yield .ui-panel.bottom-left .space-y-2 > .curved-element {
+    display: none;
+}
+:root.hud-geo-yield .ui-panel.bottom-left .space-y-2 > .curved-element:has(#velocity),
+:root.hud-geo-yield .ui-panel.bottom-left .space-y-2 > .curved-element:has(#energyBar),
+:root.hud-geo-yield .ui-panel.bottom-left .space-y-2 > .curved-element:has(#hullBar) {
+    display: block;
+}
+
+/* Flight Controls — force the same collapsed-to-hint state the auto-
+   collapse timer (js/game-ui.js _updateFlightControlsCollapse) already
+   uses, regardless of whether the player pinned it open early. Pure CSS
+   override: the underlying controls-collapsed class/manual-pin state is
+   untouched, so whatever the player had chosen returns the instant the
+   spectacle ends. */
+:root.hud-geo-yield .ui-panel.top-left > h3.cyber-title,
+:root.hud-geo-yield .ui-panel.top-left > div.text-xs.text-gray-300.opacity-80 {
+    display: none;
+}
+:root.hud-geo-yield .ui-panel.top-left .hud-controls-hint {
+    display: block;
+}
+
+/* Navigation panel — target list, black-hole warning and nav buttons are
+   exploration chrome, not spectacle-relevant; drop to the header row. */
+:root.hud-geo-yield .ui-panel.top-right #blackHoleWarningHUD,
+:root.hud-geo-yield .ui-panel.top-right #availableTargets,
+:root.hud-geo-yield .ui-panel.top-right #autoNavigateBtn,
+:root.hud-geo-yield .ui-panel.top-right #warpBtn {
+    display: none;
+}
+
+/* Galaxy Map — the round map + legend is the single bulkiest chrome block
+   on screen; drop to its header row during spectacle. */
+:root.hud-geo-yield .ui-panel.bottom-right #galaxyMap,
+:root.hud-geo-yield .ui-panel.bottom-right > .text-xs.text-gray-300.mt-2.opacity-80 {
+    display: none;
 }
 
 /* Navigation target list — Tailwind's max-h-40 (160px) left row three

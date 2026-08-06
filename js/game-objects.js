@@ -2166,29 +2166,34 @@ function _gargantuaGlowTexture(color) {
     // that is occluded by the sphere's own depth, so the photon ring has to
     // sit just OUTSIDE it or it gets eaten.
     grad.addColorStop(0.00, 'rgba(0,0,0,0)');
-    grad.addColorStop(0.310, 'rgba(0,0,0,0)');
-    // PHOTON RING — a razor-thin, blown-out white band at ~1.05x the
-    // shadow radius. Tighter and hotter than before (the old one peaked at
-    // 0.95 alpha over a 0.03-wide band and read as a soft halo, not a ring).
-    grad.addColorStop(0.325, 'rgba(255,255,255,0.00)');
-    grad.addColorStop(0.338, 'rgba(255,255,255,1.00)');
-    grad.addColorStop(0.348, 'rgba(255,252,244,0.86)');
-    grad.addColorStop(0.362, `rgba(${Math.min(255,r+120)},${Math.min(255,g+95)},${Math.min(255,b+55)},0.42)`);
-    grad.addColorStop(0.385, `rgba(${r},${Math.min(255,g+30)},${b},0.20)`);
+    grad.addColorStop(0.314, 'rgba(0,0,0,0)');
+    // PHOTON RING — a razor-thin, blown-out white band at ~1.05x the shadow
+    // radius. Measured in-game, the previous profile still read as a fat grey
+    // halo: it held 0.42 alpha out to 0.362 and then carried a warm tail at
+    // 0.17 → 0.012 ALL THE WAY to the sprite rim (texture radius 1.0 == 3.1
+    // black-hole radii), so ~85% of the sprite's area was painting a low-alpha
+    // wash. Additive, over-range, and stacked over the jets, that wash is what
+    // dominated: the ring itself was a thin bright line lost inside a grey disc
+    // three times the width of the hole.
+    //
+    // Now: a 0.012-wide spike that clips to white, a short warm shoulder, one
+    // faint second-order arc, and a tail that is GONE by 0.60 (1.9 radii).
+    grad.addColorStop(0.3225, 'rgba(255,255,255,0.00)');
+    grad.addColorStop(0.3345, 'rgba(255,255,255,1.00)');
+    grad.addColorStop(0.3420, 'rgba(255,250,238,0.62)');
+    grad.addColorStop(0.3520, `rgba(${Math.min(255,r+110)},${Math.min(255,g+80)},${Math.min(255,b+40)},0.22)`);
+    grad.addColorStop(0.3700, `rgba(${r},${Math.min(255,g+24)},${b},0.075)`);
     // Second-order lensed arc — light that looped the hole one extra time.
     // Faint, but it is the detail that sells "this is bent spacetime".
-    grad.addColorStop(0.405, `rgba(${Math.min(255,r+60)},${Math.min(255,g+60)},${Math.min(255,b+30)},0.16)`);
-    grad.addColorStop(0.420, 'rgba(255,246,230,0.30)');
-    grad.addColorStop(0.436, `rgba(${r},${Math.round(g*0.8)},${b},0.13)`);
-    // Warm lensed glow band fading out into a soft halo. The tail is the
-    // photon ring's BLEED — without it the ring steps from full brightness
-    // to background in a handful of pixels and reads as painted-on plastic
-    // rather than as the hottest matter in the universe. Carried all the way
-    // to the sprite edge at a low but non-zero alpha.
-    grad.addColorStop(0.55, `rgba(${r},${Math.round(g*0.72)},${Math.round(b*0.62)},0.17)`);
-    grad.addColorStop(0.70, `rgba(${r},${Math.round(g*0.58)},${Math.round(b*0.46)},0.090)`);
-    grad.addColorStop(0.85, `rgba(${r},${Math.round(g*0.48)},${Math.round(b*0.38)},0.038)`);
-    grad.addColorStop(0.95, `rgba(${r},${Math.round(g*0.44)},${Math.round(b*0.34)},0.012)`);
+    grad.addColorStop(0.3960, `rgba(${r},${Math.round(g*0.85)},${b},0.030)`);
+    grad.addColorStop(0.4075, 'rgba(255,244,226,0.155)');
+    grad.addColorStop(0.4190, `rgba(${r},${Math.round(g*0.8)},${b},0.028)`);
+    // Short warm bleed so the ring doesn't step from full brightness to
+    // background in a handful of pixels — but it dies inside two radii
+    // instead of glazing the whole sprite.
+    grad.addColorStop(0.470, `rgba(${r},${Math.round(g*0.66)},${Math.round(b*0.55)},0.042)`);
+    grad.addColorStop(0.540, `rgba(${r},${Math.round(g*0.55)},${Math.round(b*0.44)},0.014)`);
+    grad.addColorStop(0.620, `rgba(${r},${Math.round(g*0.48)},${Math.round(b*0.38)},0.0)`);
     grad.addColorStop(1.00, 'rgba(0,0,0,0)');
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, size, size);
@@ -2286,8 +2291,19 @@ function _gargantuaDiskTexture(color) {
             // Alpha saturates; the overexposure above 1 is spent on
             // whitening, which is what "clips to white at the photon ring"
             // actually looks like on a tone-mapped display.
+            //
+            // THRESHOLD MATTERS MORE THAN THE CURVE. The previous knee sat at
+            // over=0.62 with a 1.05 span, i.e. anything past over≈1.7 came out
+            // pure white — and the beamed limb runs 2.8x the base profile, so
+            // most of the approaching HALF of the disk was above that. The
+            // texture was then multiplied by an over-range 2.6 tint and
+            // additively blended, which took "mostly white" to "flat grey-white
+            // slab" on screen: measured in-game, the disk read as a featureless
+            // grey wash with no hue at all. The knee now sits at 2.4 with a 2.6
+            // span, so the disk BODY keeps its ember→orange ramp and only the
+            // genuinely overexposed inner lip clips out.
             const alpha = over > 1 ? 1 : over;
-            let w = (over - 0.62) / 1.05;
+            let w = (over - 2.4) / 2.6;
             w = w < 0 ? 0 : (w > 1 ? 1 : w);
 
             // TEMPERATURE = radial falloff × Doppler blueshift. This is the
@@ -2307,7 +2323,12 @@ function _gargantuaDiskTexture(color) {
                 G = miG + (hoG - miG) * u;
                 B = miB + (hoB - miB) * u;
             }
-            const wh = Math.max(w, Math.min(1, lip * 1.25));
+            // The ISCO lip's own whitening is likewise gated: `lip` is a
+            // gaussian that is still ~0.5 a third of the way out, so
+            // `lip * 1.25` bleached a broad inner band. Only the core of the
+            // gaussian (lip > 0.45, i.e. the innermost ~8% of the disk width)
+            // is allowed to go white — that is the THIN hot lip.
+            const wh = Math.max(w, Math.min(1, Math.max(0, lip - 0.45) * 2.0));
             R = R + (255 - R) * wh;
             G = G + (250 - G) * wh;
             B = B + (242 - B) * wh;
@@ -2326,6 +2347,139 @@ function _gargantuaDiskTexture(color) {
     cv.width = cv.height = size;
     const ctx = cv.getContext('2d');
     ctx.filter = `blur(${Math.max(1, size / 260)}px)`;
+    ctx.drawImage(src, 0, 0);
+
+    const tex = new THREE.CanvasTexture(cv);
+    tex.needsUpdate = true;
+    _gargantuaTexCache[key] = tex;
+    return tex;
+}
+
+// =============================================================================
+// LENSED WRAP ARCS — the read the disk physically cannot give us.
+// =============================================================================
+// The accretion disk is a flat RingGeometry sharing an origin with an OPAQUE,
+// depth-writing horizon sphere. That is correct occlusion and completely wrong
+// physics: in a real gravitational field the disk's far half is bent up over
+// the top of the shadow and down under the bottom, so you see the WHOLE disk
+// wrapped into a halo around a black disc. With z-occlusion you instead see
+// the near half only, terminating on a hard horizontal line across the
+// sphere's equator — which is exactly what the wave-2 critic measured, and
+// what a screenshot of Sgr A* showed: a flat slab cut off at the middle.
+//
+// A true raymarch is out of budget. This is the geometric cheat: a camera-
+// facing quad carrying TWO arcs of accretion-disk material, drawn IN FRONT of
+// the horizon at 1.05-1.40x the shadow radius, rolled so they cap the top and
+// bottom of the shadow, and faded in as the disk approaches edge-on (which is
+// precisely when the far half disappears behind the sphere and the wrap is
+// needed). The arcs carry the same ember→orange→white temperature ramp and the
+// same Doppler asymmetry as the disk, so they read as the SAME material
+// continuing around the hole rather than as a decal.
+//
+// Texture radius 1.0 == radius * _GARG_WRAP_K, so the shadow silhouette lands
+// at 1/_GARG_WRAP_K and the arc band spans _GARG_WRAP_IN.._GARG_WRAP_OUT
+// shadow radii.
+const _GARG_WRAP_K = 2.2;
+const _GARG_WRAP_IN = 1.05;
+const _GARG_WRAP_OUT = 1.40;
+
+function _gargantuaWrapTexture(color) {
+    const key = 'w' + color;
+    if (_gargantuaTexCache[key]) return _gargantuaTexCache[key];
+    const c = new THREE.Color(color);
+    const br = c.r * 255, bg = c.g * 255, bb = c.b * 255;
+    const size = _isMobileRenderTier() ? 256 : 384;
+
+    // Same three-stop temperature ramp as the disk, so the arcs and the disk
+    // are unmistakably the same plasma.
+    const emR = br * 0.62, emG = bg * 0.17, emB = bb * 0.11;
+    const miR = Math.min(255, br * 1.02 + 14), miG = Math.min(255, bg * 0.82 + 24), miB = Math.min(255, bb * 0.62 + 10);
+    const hoR = 255, hoG = 250, hoB = 240;
+
+    const r0 = _GARG_WRAP_IN / _GARG_WRAP_K;    // 0.477
+    const r1 = _GARG_WRAP_OUT / _GARG_WRAP_K;   // 0.636
+
+    const src = document.createElement('canvas');
+    src.width = src.height = size;
+    const sctx = src.getContext('2d');
+    const img = sctx.createImageData(size, size);
+    const data = img.data;
+
+    for (let y = 0; y < size; y++) {
+        const dy = (y + 0.5) / size - 0.5;
+        for (let x = 0; x < size; x++) {
+            const dx = (x + 0.5) / size - 0.5;
+            const rr = 2 * Math.sqrt(dx * dx + dy * dy);
+            const i = (y * size + x) * 4;
+            if (rr < r0 * 0.94 || rr > r1 * 1.10) { data[i + 3] = 0; continue; }
+
+            const ang = Math.atan2(dy, dx);
+
+            // ANGULAR MASK. The arcs live at the top and bottom (|sin| → 1)
+            // and dissolve toward the horizontal (|sin| → 0), where the real
+            // disk geometry already occupies the frame. Without this they
+            // would double up on the disk's own limbs and read as a hoop.
+            const s = Math.abs(Math.sin(ang));
+            const cap = _gsmooth(0.18, 0.78, s);
+            if (cap <= 0.002) { data[i + 3] = 0; continue; }
+
+            // RADIAL PROFILE. A hot lip just outside the shadow (this is the
+            // lensed inner edge of the disk, the brightest part of the image)
+            // rolling off outward, feathered to zero at both ends so the band
+            // never shows a geometric edge.
+            const u = (rr - r0) / (r1 - r0);
+            const lipT = (u - 0.08) / 0.17;
+            const lip = Math.exp(-lipT * lipT);
+            let prof = lip * 1.35 + Math.pow(1 - Math.min(1, Math.max(0, u)), 2.2) * 0.55;
+            prof *= _gsmooth(-0.06, 0.05, u) * (1 - _gsmooth(0.62, 1.02, u));
+
+            // DOPPLER. Same beaming law as the disk, keyed off the horizontal
+            // axis, so each arc is bright where it leaves the approaching limb
+            // and fades toward the receding one. That gradient ALONG the arc
+            // is what makes it read as bent light rather than as a painted
+            // halo.
+            const dop = 0.5 + 0.5 * Math.cos(ang);
+            const beam = 0.14 + 2.05 * Math.pow(dop, 2.4);
+
+            const over = prof * cap * beam;
+            if (over <= 0.004) { data[i + 3] = 0; continue; }
+
+            const alpha = over > 1 ? 1 : over;
+            let w = (over - 1.5) / 1.9;
+            w = w < 0 ? 0 : (w > 1 ? 1 : w);
+
+            let h = (0.34 + 0.74 * Math.pow(dop, 1.15)) * (1 - u * 0.55);
+            h = h < 0 ? 0 : (h > 1 ? 1 : h);
+
+            let R, G, B;
+            if (h < 0.55) {
+                const t2 = h / 0.55;
+                R = emR + (miR - emR) * t2;
+                G = emG + (miG - emG) * t2;
+                B = emB + (miB - emB) * t2;
+            } else {
+                const t2 = (h - 0.55) / 0.45;
+                R = miR + (hoR - miR) * t2;
+                G = miG + (hoG - miG) * t2;
+                B = miB + (hoB - miB) * t2;
+            }
+            const wh = Math.max(w, Math.min(1, Math.max(0, lip - 0.62) * 2.4));
+            R = R + (255 - R) * wh;
+            G = G + (250 - G) * wh;
+            B = B + (242 - B) * wh;
+
+            data[i] = R > 255 ? 255 : R;
+            data[i + 1] = G > 255 ? 255 : G;
+            data[i + 2] = B > 255 ? 255 : B;
+            data[i + 3] = alpha * 255;
+        }
+    }
+    sctx.putImageData(img, 0, 0);
+
+    const cv = document.createElement('canvas');
+    cv.width = cv.height = size;
+    const ctx = cv.getContext('2d');
+    ctx.filter = `blur(${Math.max(1, size / 200)}px)`;
     ctx.drawImage(src, 0, 0);
 
     const tex = new THREE.CanvasTexture(cv);
@@ -2400,8 +2554,12 @@ function _gargantuaJetTexture(color) {
     cv.width = w; cv.height = h;
     const ctx = cv.getContext('2d');
 
-    // Uniform plasma body — the cone's base glow, flat along v.
-    ctx.fillStyle = `rgba(${Math.min(255, r + 40)},${Math.min(255, g + 40)},${Math.min(255, b + 20)},0.34)`;
+    // Uniform plasma body — the cone's base glow, flat along v. Kept LOW and
+    // colour-forward: at 0.34 with a near-white tint the two double-sided
+    // cones stacked up to a pair of solid grey searchlights that out-read the
+    // photon ring itself. The filaments below carry the plume; this is only
+    // the medium they sit in.
+    ctx.fillStyle = `rgba(${Math.min(255, r + 18)},${Math.min(255, g + 24)},${Math.min(255, b + 14)},0.20)`;
     ctx.fillRect(0, 0, w, h);
 
     ctx.globalCompositeOperation = 'lighter';
@@ -2877,11 +3035,14 @@ function enhanceEarth(earth, radius) {
     //    cloud canvas. Independent rotation via updateEarthClouds()
     //    gives subtle parallax against the surface.
     const clouds = new THREE.Mesh(
-        new THREE.SphereGeometry(radius * 1.02, 40, 40),
+        new THREE.SphereGeometry(radius * 1.02, 56, 40),
         new THREE.MeshLambertMaterial({
             map: _earthCloudTexture(),
             transparent: true,
-            opacity: 0.9,
+            // 0.9 buried the continents under a white haze at the new hero
+            // scale — the planet read as an ice ball. At 0.72 the weather is
+            // still a distinct shell but you can see the land through it.
+            opacity: 0.72,
             depthWrite: false
         })
     );
@@ -2890,8 +3051,23 @@ function enhanceEarth(earth, radius) {
     earth.userData._cloudLayer = clouds;
     _earthClouds.push(clouds);
 
-    // (Atmosphere fresnel rim glow removed — Earth keeps its surface +
-    // cloud shell only.)
+    // 3. NIGHT SIDE. The player spawns in Earth orbit and the opening frame is
+    //    frequently the dark hemisphere — measured in-game, that frame was a
+    //    featureless black ball with a thin lit crescent and nothing else, the
+    //    exact opposite of the reference plates where the night side is the
+    //    most characterful part of the planet (coastlines picked out in city
+    //    light). This shell adds those lamps plus the atmosphere limb, keyed
+    //    off Sol's real position so it tracks the terminator as Earth orbits.
+    const sol = (typeof window !== 'undefined' && window.localSystemOffset)
+        ? window.localSystemOffset : { x: 8000, y: 0, z: 4800 };
+    addNightSideShell(earth, radius, {
+        sun: new THREE.Vector3(sol.x, sol.y, sol.z),
+        nightColor: 0xffc169,
+        rimColor: 0x54a8ff,
+        rim: 0.75,
+        city: 1.0,
+        seed: 3.7
+    });
 }
 if (typeof window !== 'undefined') window.enhanceEarth = enhanceEarth;
 
@@ -3111,12 +3287,398 @@ function enhancePlanet(planet, name, radius) {
 if (typeof window !== 'undefined') window.enhancePlanet = enhancePlanet;
 
 
+// =============================================================================
+// PLANETARY PRESENCE KIT — rings, night-side city lights, limb darkening.
+// =============================================================================
+// Reference bar (user-supplied Homeworld-style plates): planets are LANDMARKS.
+// They are huge in frame, they carry a ring plane you can read the system's
+// ecliptic from, their night side is speckled with city light, and their limb
+// falls off into a soft terminator rather than ending on a hard circle. What
+// this game had instead: nebula-cluster planets were flat unlit
+// MeshBasicMaterial discs at 0.85 opacity (no terminator, no limb, no
+// silhouette — literally a coloured circle), and their "rings" were 2-5
+// concentric flat hoops of solid colour.
+//
+// Three shared pieces below fix that, all procedural (no texture downloads),
+// all cached by colour so a hundred planets share a handful of GPU objects.
+// =============================================================================
+const _ringTexCache = {};
+
+// Banded ring texture. RingGeometry's UVs are a SQUARE projection — uv =
+// (vertex.xy / outerRadius + 1) / 2 — so texture radius 0.5 is the OUTER rim
+// and 0.5 * (inner/outer) is the inner lip. _PLANET_RING_IN is that ratio,
+// baked in so every caller builds its geometry to match.
+const _PLANET_RING_IN = 0.56;
+
+function _planetRingTexture(color) {
+    // CACHE KEY BY HUE BUCKET, NOT BY THE ARGUMENT. Callers pass either a hex
+    // number (Sol) or a THREE.Color (procedural systems), and 'pr' + aColor
+    // stringifies to 'pr[object Object]' — so every procedurally-tinted ring
+    // in the game silently shared ONE texture, whichever was built first.
+    // Bucketing the hue also bounds memory: hundreds of ringed worlds collapse
+    // onto at most ~5 dozen 512² plates instead of one each.
+    const src = new THREE.Color(color);
+    const shl = { h: 0, s: 0, l: 0 };
+    src.getHSL(shl);
+    const hb = Math.round(shl.h * 23) / 23;
+    const sb = Math.round(shl.s * 3) / 3;
+    const key = 'pr' + hb.toFixed(3) + '_' + sb.toFixed(2);
+    if (_ringTexCache[key]) return _ringTexCache[key];
+    const c = new THREE.Color().setHSL(hb, sb, 0.58);
+    const size = _isMobileRenderTier() ? 256 : 512;
+
+    // 1D radial density: broad ringlet structure from three detuned harmonics,
+    // three carved gaps (a Cassini-scale one plus two narrow ones), and a
+    // feather at both edges so the ring plane dissolves instead of ending on a
+    // geometric circle — the "hard cut edge" failure the sky critic flagged
+    // elsewhere applies just as much here.
+    const N = 1024;
+    const dens = new Float32Array(N);
+    for (let i = 0; i < N; i++) {
+        const t = i / (N - 1);
+        let v = 0.58
+            + 0.20 * Math.sin(t * Math.PI * 2 * 9 + 1.7)
+            + 0.13 * Math.sin(t * Math.PI * 2 * 23 + 0.4)
+            + 0.08 * Math.sin(t * Math.PI * 2 * 47 + 2.9);
+        const gap = (centre, width, depth) => {
+            const q = (t - centre) / width;
+            v *= 1 - depth * Math.exp(-q * q);
+        };
+        gap(0.42, 0.024, 0.93);
+        gap(0.67, 0.014, 0.72);
+        gap(0.17, 0.012, 0.55);
+        v *= _gsmooth(0.0, 0.07, t) * (1 - _gsmooth(0.84, 1.0, t));
+        dens[i] = v < 0 ? 0 : v;
+    }
+
+    const cv = document.createElement('canvas');
+    cv.width = cv.height = size;
+    const ctx = cv.getContext('2d');
+    const img = ctx.createImageData(size, size);
+    const data = img.data;
+    // Ice-bright and dusty-dark tints derived from the planet's own hue, so a
+    // violet world gets violet-grey ice rather than the same beige for all.
+    const hsl = { h: 0, s: 0, l: 0 };
+    c.getHSL(hsl);
+    const bright = new THREE.Color().setHSL(hsl.h, Math.min(0.55, hsl.s * 0.6 + 0.10), 0.82);
+    const dark = new THREE.Color().setHSL(hsl.h, Math.min(0.65, hsl.s * 0.8 + 0.05), 0.34);
+
+    for (let y = 0; y < size; y++) {
+        const dy = (y + 0.5) / size - 0.5;
+        for (let x = 0; x < size; x++) {
+            const dx = (x + 0.5) / size - 0.5;
+            const rr = 2 * Math.sqrt(dx * dx + dy * dy);
+            const i = (y * size + x) * 4;
+            if (rr > 1.0 || rr < _PLANET_RING_IN) { data[i + 3] = 0; continue; }
+            const t = (rr - _PLANET_RING_IN) / (1 - _PLANET_RING_IN);
+            const d = dens[Math.min(N - 1, Math.round(t * (N - 1)))];
+            if (d <= 0.004) { data[i + 3] = 0; continue; }
+            // Denser lanes read icier, thin lanes read as dust.
+            const k = Math.min(1, d * 1.15);
+            data[i] = (dark.r + (bright.r - dark.r) * k) * 255;
+            data[i + 1] = (dark.g + (bright.g - dark.g) * k) * 255;
+            data[i + 2] = (dark.b + (bright.b - dark.b) * k) * 255;
+            data[i + 3] = Math.min(1, d * 0.92) * 255;
+        }
+    }
+    ctx.putImageData(img, 0, 0);
+    const tex = new THREE.CanvasTexture(cv);
+    tex.needsUpdate = true;
+    _ringTexCache[key] = tex;
+    return tex;
+}
+
+// Attach a banded ring plane sized to the planet. `tilt` is the extra lean off
+// the ecliptic in radians (Uranus gets a near-polar one). Returns the mesh.
+function addPlanetRings(planet, radius, color, opts) {
+    if (!planet || typeof THREE === 'undefined') return null;
+    const o = opts || {};
+    const outer = radius * (o.outerK || 2.35);
+    const inner = outer * _PLANET_RING_IN;
+    const geo = new THREE.RingGeometry(inner, outer, o.segments || 96);
+    const mat = new THREE.MeshBasicMaterial({
+        map: _planetRingTexture(color),
+        transparent: true,
+        opacity: o.opacity === undefined ? 0.85 : o.opacity,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+        fog: false
+    });
+    const ring = new THREE.Mesh(geo, mat);
+    ring.rotation.x = Math.PI / 2 + (o.tilt || 0);
+    ring.rotation.z = o.roll || 0;
+    ring.frustumCulled = false;
+    ring.renderOrder = 4;
+    ring.userData.isPlanetRing = true;
+    planet.add(ring);
+
+    // SPIN DECOUPLING. game-core's updatePlanetOrbits() adds ~0.02 rad of
+    // rotation.y to EVERY planet every frame, and a child inherits that. An
+    // equatorial ring (tilt 0) doesn't care — it is symmetric about the spin
+    // axis — but any LEANT ring plane gets swung around the axis at ~70°/s,
+    // which reads as the ring tumbling like a flipped coin. Uranus's polar
+    // ring is the extreme case. So leant rings cache their intended
+    // orientation and cancel the parent's yaw each frame instead.
+    if (Math.abs(o.tilt || 0) > 0.02 || Math.abs(o.roll || 0) > 0.02) {
+        ring.userData._ringFixed = new THREE.Quaternion().copy(ring.quaternion);
+        _tiltedPlanetRings.push(ring);
+    }
+    return ring;
+}
+if (typeof window !== 'undefined') window.addPlanetRings = addPlanetRings;
+
+const _tiltedPlanetRings = [];
+const _ringYawQ = (typeof THREE !== 'undefined') ? new THREE.Quaternion() : null;
+const _ringAxisY = (typeof THREE !== 'undefined') ? new THREE.Vector3(0, 1, 0) : null;
+function updatePlanetRingTilts() {
+    if (!_ringYawQ) return;
+    for (let i = 0; i < _tiltedPlanetRings.length; i++) {
+        const ring = _tiltedPlanetRings[i];
+        const p = ring.parent;
+        if (!p) continue;
+        _ringYawQ.setFromAxisAngle(_ringAxisY, -p.rotation.y);
+        ring.quaternion.copy(_ringYawQ).multiply(ring.userData._ringFixed);
+    }
+}
+if (typeof window !== 'undefined') window.updatePlanetRingTilts = updatePlanetRingTilts;
+
+// -----------------------------------------------------------------------------
+// PLANET PRESENCE MATERIAL — one program, per-planet uniforms.
+// -----------------------------------------------------------------------------
+// Everything the reference plates read as "a world" and a flat disc does not:
+//
+//   • TERMINATOR from a real light position (the system's own star), so the
+//     planet has a lit side and a dark side and therefore a direction.
+//   • LIMB DARKENING (mu^0.42) — the single cheapest cue that turns a circle
+//     into a sphere.
+//   • NIGHT-SIDE CITY LIGHTS — hashed speckle gated to "continents" and to the
+//     dark hemisphere, brightest near the terminator, dying at the limb.
+//   • CLOUD SHELL — an fbm weather layer blended over the surface, so worlds
+//     have banding and highlights instead of one flat albedo.
+//   • ATMOSPHERE RIM — a fresnel edge that lights up on the lit crescent, which
+//     is what separates the silhouette from the black behind it.
+//
+// It is opaque (no transparent-queue sorting against the nebula sprites, which
+// is what made the old 0.85-opacity discs flicker in front of/behind gas) and
+// costs one extra material per planet, not one extra draw call.
+const _PLANET_PRESENCE_FRAG = `
+    uniform vec3 uColor;
+    uniform vec3 uNight;
+    uniform vec3 uRim;
+    uniform vec3 uSun;
+    uniform float uCity;
+    uniform float uCloud;
+    uniform float uSeed;
+    varying vec3 vN;
+    varying vec3 vW;
+
+    float h21(vec2 p) {
+        p = fract(p * vec2(127.31, 311.7));
+        p += dot(p, p.yx + 41.17);
+        return fract(p.x * p.y * 95.43);
+    }
+    float vnoise(vec2 p) {
+        vec2 i = floor(p), f = fract(p);
+        f = f * f * (3.0 - 2.0 * f);
+        float a = h21(i), b = h21(i + vec2(1.0, 0.0));
+        float c = h21(i + vec2(0.0, 1.0)), d = h21(i + vec2(1.0, 1.0));
+        return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+    }
+    float fbm(vec2 p) {
+        float s = 0.0, a = 0.5;
+        for (int i = 0; i < 4; i++) { s += a * vnoise(p); p *= 2.07; a *= 0.5; }
+        return s;
+    }
+
+    void main() {
+        vec3 N = normalize(vN);
+        vec3 L = normalize(uSun - vW);
+        vec3 V = normalize(cameraPosition - vW);
+        float ndl = dot(N, L);
+        float day = smoothstep(-0.11, 0.30, ndl);
+        float mu = clamp(dot(N, V), 0.0, 1.0);
+        float limb = pow(mu, 0.42);
+
+        // Surface parameterisation from the normal (lon, lat).
+        vec2 sp = vec2(atan(N.z, N.x) * 1.4, asin(clamp(N.y, -1.0, 1.0)) * 2.2) + uSeed;
+
+        float land = smoothstep(0.44, 0.62, fbm(sp * 2.4));
+        float cl = smoothstep(0.46, 0.80, fbm(sp * vec2(3.4, 5.2) + 7.0)) * uCloud;
+
+        vec3 albedo = uColor * (0.82 + 0.30 * land);
+        vec3 base = albedo * (0.045 + 0.955 * day) * (0.42 + 0.58 * limb);
+        vec3 cloudLit = vec3(0.93, 0.95, 1.0) * (0.08 + 0.92 * day) * (0.5 + 0.5 * limb);
+        base = mix(base, cloudLit, cl * 0.78);
+
+        // NIGHT LIGHTS. Gated to land, to the dark hemisphere, and away from
+        // the limb (city glow you see edge-on is atmosphere, not lamps).
+        float night = smoothstep(0.12, -0.24, ndl);
+        // See the note in the night-shell shader: coarse hash cells read as
+        // tiles, not lamps. Fine grain plus a sparse bright octave.
+        float grid = h21(floor(sp * vec2(240.0, 162.0)));
+        float spark = smoothstep(0.880, 0.998, grid);
+        float big = smoothstep(0.972, 0.999, h21(floor(sp * vec2(66.0, 46.0)) + 9.1));
+        vec3 lights = uNight * (spark + big * 0.85) * land * night * uCity
+                      * (0.20 + 0.80 * limb) * (1.0 - cl * 0.75);
+
+        // ATMOSPHERE RIM.
+        float fres = pow(1.0 - mu, 3.2);
+        vec3 rim = uRim * fres * (0.18 + 0.95 * smoothstep(-0.40, 0.35, ndl));
+
+        gl_FragColor = vec4(base + lights * 2.4 + rim, 1.0);
+    }
+`;
+
+const _PLANET_PRESENCE_VERT = `
+    varying vec3 vN;
+    varying vec3 vW;
+    void main() {
+        vec4 wp = modelMatrix * vec4(position, 1.0);
+        vW = wp.xyz;
+        vN = normalize(mat3(modelMatrix) * normal);
+        gl_Position = projectionMatrix * viewMatrix * wp;
+    }
+`;
+
+function createPlanetPresenceMaterial(opts) {
+    const o = opts || {};
+    const col = new THREE.Color(o.color === undefined ? 0x88aacc : o.color);
+    const hsl = { h: 0, s: 0, l: 0 };
+    col.getHSL(hsl);
+    return new THREE.ShaderMaterial({
+        uniforms: {
+            uColor: { value: col },
+            // City light is warm sodium-amber by default; exotic worlds can
+            // pass their own so a crystal world glows in its own hue.
+            uNight: { value: new THREE.Color(o.nightColor === undefined ? 0xffbe5c : o.nightColor) },
+            // Rim inherits the planet's hue but pushed bright and cool, which
+            // is what reads as "atmosphere" rather than "outline".
+            uRim: { value: o.rimColor !== undefined
+                ? new THREE.Color(o.rimColor)
+                : new THREE.Color().setHSL(hsl.h, Math.min(1, hsl.s * 0.7 + 0.25), 0.62).multiplyScalar(o.rim === undefined ? 0.55 : o.rim) },
+            uSun: { value: (o.sun && o.sun.clone) ? o.sun.clone() : new THREE.Vector3(0, 0, 0) },
+            uCity: { value: o.city === undefined ? 0.0 : o.city },
+            uCloud: { value: o.cloud === undefined ? 0.0 : o.cloud },
+            uSeed: { value: o.seed === undefined ? Math.random() * 40 : o.seed }
+        },
+        vertexShader: _PLANET_PRESENCE_VERT,
+        fragmentShader: _PLANET_PRESENCE_FRAG,
+        transparent: false,
+        depthWrite: true,
+        fog: false
+    });
+}
+if (typeof window !== 'undefined') window.createPlanetPresenceMaterial = createPlanetPresenceMaterial;
+
+// -----------------------------------------------------------------------------
+// NIGHT-SIDE SHELL — city lights + atmosphere rim for planets that keep their
+// stock lit material (the Sol system runs on a real PointLight and a Phong
+// Earth, and swapping that out would throw away the sunlight the whole system
+// is graded around). This adds the two things stock materials cannot do:
+// emissive lamps that only appear where the sun does not reach, and a fresnel
+// limb. Additive, depth-tested against the planet it hugs.
+// -----------------------------------------------------------------------------
+const _NIGHT_SHELL_FRAG = `
+    uniform vec3 uNight;
+    uniform vec3 uRim;
+    uniform vec3 uSun;
+    uniform float uCity;
+    uniform float uSeed;
+    varying vec3 vN;
+    varying vec3 vW;
+
+    float h21(vec2 p) {
+        p = fract(p * vec2(127.31, 311.7));
+        p += dot(p, p.yx + 41.17);
+        return fract(p.x * p.y * 95.43);
+    }
+    float vnoise(vec2 p) {
+        vec2 i = floor(p), f = fract(p);
+        f = f * f * (3.0 - 2.0 * f);
+        float a = h21(i), b = h21(i + vec2(1.0, 0.0));
+        float c = h21(i + vec2(0.0, 1.0)), d = h21(i + vec2(1.0, 1.0));
+        return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+    }
+    float fbm(vec2 p) {
+        float s = 0.0, a = 0.5;
+        for (int i = 0; i < 4; i++) { s += a * vnoise(p); p *= 2.07; a *= 0.5; }
+        return s;
+    }
+
+    void main() {
+        vec3 N = normalize(vN);
+        vec3 L = normalize(uSun - vW);
+        vec3 V = normalize(cameraPosition - vW);
+        float ndl = dot(N, L);
+        float mu = clamp(dot(N, V), 0.0, 1.0);
+
+        vec2 sp = vec2(atan(N.z, N.x) * 1.4, asin(clamp(N.y, -1.0, 1.0)) * 2.2) + uSeed;
+        // Bigger, better-separated land masses: cities that ignore the
+        // coastlines read as glitter sprinkled over a ball. Two octaves of
+        // gating (continent, then habitable band) leave real dark oceans.
+        float land = smoothstep(0.47, 0.61, fbm(sp * 1.7))
+                   * (0.35 + 0.65 * smoothstep(0.40, 0.70, fbm(sp * 4.3 + 21.0)));
+        float night = smoothstep(0.14, -0.26, ndl);
+        // GRAIN MATTERS. At vec2(64,44) each hash cell covered ~2 degrees of
+        // arc, which on a planet that fills half the frame is a 20-pixel
+        // square — the night side read as a mosaic of yellow tiles, not as
+        // cities. At this frequency a cell is a few pixels even at hero scale.
+        float grid = h21(floor(sp * vec2(268.0, 178.0)));
+        float spark = smoothstep(0.926, 0.999, grid);
+        // Sparse second octave: a few bright metropolises among the towns.
+        float big = smoothstep(0.972, 0.999, h21(floor(sp * vec2(74.0, 50.0)) + 9.1));
+        // A faint sodium haze under the sparks so cities read as basins of
+        // light, not as loose confetti.
+        float haze = smoothstep(0.58, 0.90, fbm(sp * 15.0)) * 0.22;
+        vec3 lamps = uNight * (spark + big * 0.9 + haze) * land * night * uCity * (0.18 + 0.82 * mu);
+
+        float fres = pow(1.0 - mu, 3.0);
+        vec3 rim = uRim * fres * (0.20 + 1.05 * smoothstep(-0.45, 0.30, ndl));
+
+        gl_FragColor = vec4(lamps * 2.6 + rim, 1.0);
+    }
+`;
+
+function addNightSideShell(planet, radius, opts) {
+    if (!planet || typeof THREE === 'undefined') return null;
+    const o = opts || {};
+    const mat = new THREE.ShaderMaterial({
+        uniforms: {
+            uNight: { value: new THREE.Color(o.nightColor === undefined ? 0xffc169 : o.nightColor) },
+            uRim: { value: new THREE.Color(o.rimColor === undefined ? 0x4d9fff : o.rimColor)
+                .multiplyScalar(o.rim === undefined ? 0.60 : o.rim) },
+            uSun: { value: (o.sun && o.sun.clone) ? o.sun.clone() : new THREE.Vector3(0, 0, 0) },
+            uCity: { value: o.city === undefined ? 1.0 : o.city },
+            uSeed: { value: o.seed === undefined ? Math.random() * 40 : o.seed }
+        },
+        vertexShader: _PLANET_PRESENCE_VERT,
+        fragmentShader: _NIGHT_SHELL_FRAG,
+        transparent: true,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        side: THREE.FrontSide,
+        fog: false
+    });
+    const shell = new THREE.Mesh(new THREE.SphereGeometry(radius * 1.035, 56, 40), mat);
+    shell.frustumCulled = false;
+    shell.renderOrder = 3;
+    shell.userData.isNightShell = true;
+    planet.add(shell);
+    return shell;
+}
+if (typeof window !== 'undefined') window.addNightSideShell = addNightSideShell;
+
 // Slow independent cloud drift so weather parallaxes against the surface.
 function updateEarthClouds() {
     for (let i = 0; i < _earthClouds.length; i++) {
         const c = _earthClouds[i];
         if (c) c.rotation.y += 0.0002;
     }
+    // Piggybacked here rather than added to animate()'s call list because
+    // game-core.js / index.html are sealed this wave, and this is already the
+    // per-frame "planet shells" pass. See updatePlanetRingTilts for why leant
+    // ring planes have to cancel their parent's spin.
+    updatePlanetRingTilts();
 }
 if (typeof window !== 'undefined') window.updateEarthClouds = updateEarthClouds;
 
@@ -3192,11 +3754,18 @@ function _gargantuaLensMaterial(color, shadowFrac) {
             float mag = clamp(0.32 / (abs(s) + 0.11), 0.0, 3.2);
 
             float shade = smoothstep(uShadow * 0.98, uShadow * 1.10, r);
-            float rd = (r - uEinstein) / (uEinstein * 0.11);
+            // THIN. The Einstein arc used to be an 11%-wide gaussian carrying
+            // a 0.28 amplitude — wide enough and dim enough to read as one
+            // more layer of the grey halo rather than as a ring. Halved in
+            // width and lifted in amplitude: less area, more punch.
+            float rd = (r - uEinstein) / (uEinstein * 0.055);
             float ring = exp(-rd * rd);
 
-            float a = (stars * mag * 1.35 + ring * 0.28) * shade * body * uOpacity;
-            vec3 col = mix(vec3(0.74, 0.86, 1.0), uWarm, ring * 0.65);
+            // The procedural star field is SUPPORT, not the subject. At 1.35
+            // it laid a speckled wash over a quad several black-hole radii
+            // wide, which is most of what "grey halo" was made of.
+            float a = (stars * mag * 0.72 + ring * 0.62) * shade * body * uOpacity;
+            vec3 col = mix(vec3(0.74, 0.86, 1.0), uWarm, ring * 0.80);
             gl_FragColor = vec4(col * a, 1.0);
         }
     `;
@@ -3254,9 +3823,9 @@ function addPolarJets(blackHole, radius, color, lengthK) {
     // the expensive half — a near-screen-filling additive cone — and it is
     // pure volume, no silhouette, so mobile drops it and keeps the plume.
     const shells = _isMobileRenderTier()
-        ? [[radius * 1.15, radius * 0.10, 0.95, 67]]
-        : [[radius * 1.15, radius * 0.10, 0.95, 67],
-           [radius * 2.30, radius * 0.22, 0.30, 66]];
+        ? [[radius * 1.15, radius * 0.10, 0.70, 67]]
+        : [[radius * 1.15, radius * 0.10, 0.70, 67],
+           [radius * 2.30, radius * 0.22, 0.15, 66]];
 
     for (let s = 0; s < shells.length; s++) {
         const sh = shells[s];
@@ -3397,9 +3966,45 @@ function addGargantuaVisuals(blackHole, radius, color, nearK, farK) {
 
     if (!blackHole.userData) blackHole.userData = {};
 
+    // 2b. LENSED WRAP ARCS — see _gargantuaWrapTexture. A single quad,
+    //     billboarded + rolled + pushed toward the camera every frame by
+    //     updateGargantuaProximityFade so it always draws in FRONT of the
+    //     horizon sphere. depthTest stays on: the push guarantees the quad
+    //     wins against the shadow while still being occluded by anything
+    //     genuinely between the player and the hole.
+    const wrapMat = new THREE.MeshBasicMaterial({
+        map: _gargantuaWrapTexture(col),
+        color: _hdrTint(2.2),
+        transparent: true,
+        opacity: 0.0,               // driven by the edge-on ramp per frame
+        side: THREE.DoubleSide,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        fog: false
+    });
+    const wrapGeo = new THREE.PlaneGeometry(1, 1);
+    const wrap = new THREE.Mesh(wrapGeo, wrapMat);
+    wrap.frustumCulled = false;
+    wrap.renderOrder = 71;          // over the shadow, over the disk
+    wrap.visible = false;
+    wrap.userData.isGargantuaWrap = true;
+    blackHole.add(wrap);
+    blackHole.userData._gargWrap = wrap;
+    blackHole.userData._gargWrapMat = wrapMat;
+    blackHole.userData._gargWrapSize = radius * _GARG_WRAP_K * 2;
+    blackHole.userData._gargWrapPush = radius * 1.0;
+    // The doppler hot lobe is BAKED into the disk texture at local +X. Cached
+    // here so the per-frame lock can steer it (see _gargLockDopplerLobe).
+    blackHole.userData._gargDisk = disk;
+
     // 3. Lensing plane. Half-width == radius * LENS_K, so the shadow
     //    silhouette lands at 1/LENS_K in the shader's normalised space.
-    const LENS_K = 7.0;
+    //    7.0 made this a 14-radius-wide per-pixel additive quad — by far the
+    //    largest overdraw in the whole black-hole stack, spent mostly on a
+    //    faint star wash. At 5.0 its Einstein arc lands at 1.45 shadow radii,
+    //    i.e. exactly on the outer edge of the wrap arcs, so the two agree
+    //    instead of smearing each other.
+    const LENS_K = 5.0;
     const lensMat = _gargantuaLensMaterial(col, 1.0 / LENS_K);
     const lens = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), lensMat);
     lens.scale.set(radius * LENS_K * 2, radius * LENS_K * 2, 1);
@@ -3448,6 +4053,51 @@ if (typeof window !== 'undefined') window.addGargantuaVisuals = addGargantuaVisu
 //    grows/shrinks on two detuned sines so it reads as alive/unstable.
 const _gargTmp = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
 const _gargQ = (typeof THREE !== 'undefined') ? new THREE.Quaternion() : null;
+// Scratch for the doppler lock + wrap arcs. Module-level so the per-frame
+// path allocates nothing (this runs for every gargantua hole, every frame).
+const _gargQ2 = (typeof THREE !== 'undefined') ? new THREE.Quaternion() : null;
+const _gargQ3 = (typeof THREE !== 'undefined') ? new THREE.Quaternion() : null;
+const _gargV1 = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+const _gargV2 = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+const _gargAxisZ = (typeof THREE !== 'undefined') ? new THREE.Vector3(0, 0, 1) : null;
+
+// DOPPLER LOBE LOCK.
+//
+// The disk's beaming asymmetry — the ~33:1 brightness split between the limb
+// coming toward you and the one going away — is BAKED into the texture at the
+// disk's local +X. Baked asymmetry on a child of a rotating (or arbitrarily
+// tilted) parent is asymmetry pointing in a meaningless direction: galaxy
+// cores inherit their galaxy's tilt, several holes spin their child groups,
+// and the result was a hot lobe parked wherever the parent happened to face,
+// often on the receding side or straight away from the camera.
+//
+// Relativistic beaming is a VIEW-DEPENDENT effect. The bright limb is the one
+// whose orbital velocity points at the observer: with spin axis ŷ, a parcel at
+// p has velocity ŷ × p, and (ŷ × p)·V is maximised when p ∥ (V × ŷ). So the
+// lobe direction is fixed by the camera, not by the parent's transform — which
+// unparents it from the spin for free and is more correct than either.
+//
+// Everything is computed in the hole's LOCAL frame (the disk's parent) so the
+// result survives any tilt the hole is carrying.
+function _gargLockDopplerLobe(blackHole, camera, worldPos) {
+    const disk = blackHole.userData._gargDisk;
+    if (!disk || !_gargQ2) return;
+    // View direction, hole → camera, in the hole's local frame.
+    _gargV1.copy(camera.position).sub(worldPos);
+    if (_gargV1.lengthSq() < 1e-6) return;
+    blackHole.getWorldQuaternion(_gargQ2);
+    _gargQ2.conjugate();
+    _gargV1.applyQuaternion(_gargQ2).normalize();
+    // d = V × ŷ, projected into the disk plane (local XZ).
+    // (Vx,Vy,Vz) × (0,1,0) = (Vz*1 - Vy*0, 0 - 0, 0 - Vx*1) = (Vz, 0, -Vx).
+    const dx = _gargV1.z, dz = -_gargV1.x;
+    if (dx * dx + dz * dz < 1e-8) return;   // dead pole-on; leave as-is
+    // The disk's euler is (x: PI/2, y: 0, z: phi) and three applies it as
+    // Rx·Ry·Rz, so local +X lands at (cos phi, 0, sin phi) after the flat-lay
+    // rotation. Solve for phi directly.
+    disk.rotation.z = Math.atan2(dz, dx);
+}
+
 function updateGargantuaProximityFade(blackHole, camera) {
     if (!blackHole || !blackHole.userData || !camera || !_gargTmp) return;
     const fade = blackHole.userData._gargFade;
@@ -3489,6 +4139,63 @@ function updateGargantuaProximityFade(blackHole, camera) {
                 lm.uniforms.uOpacity.value = (p - 0.12) / 0.88;
             }
         }
+    }
+
+    // Keep the baked doppler hot lobe on the limb that is actually coming
+    // toward the camera, whatever the parent is doing.
+    _gargLockDopplerLobe(blackHole, camera, _gargTmp);
+
+    // LENSED WRAP ARCS. Three things happen here every frame:
+    //
+    //   1. BILLBOARD + ROLL. World orientation := the camera's, then rolled
+    //      about the view axis so the arcs' local +Y lines up with the disk
+    //      normal's on-screen direction. Without the roll the arcs would cap
+    //      screen-top/bottom while the disk ran diagonally, and the illusion
+    //      that this is the same disk bent over the shadow dies instantly.
+    //   2. PUSH. The quad is slid one radius toward the camera (with a
+    //      matching scale-down so its apparent size is unchanged) so it is
+    //      geometrically in FRONT of the opaque horizon and passes depth test
+    //      — that is the whole point: these arcs must overlay the shadow.
+    //   3. EDGE-ON RAMP. The far half of the disk only disappears when you
+    //      approach the disk plane, so the arcs fade in exactly as the disk
+    //      goes edge-on and are off entirely when you look down on it (where
+    //      the real disk is fully visible and needs no help).
+    const wrap = blackHole.userData._gargWrap;
+    if (wrap && _gargQ2 && p > 0.02) {
+        blackHole.getWorldQuaternion(_gargQ2);
+        // Disk normal (hole-local +Y) in world space.
+        _gargV2.set(0, 1, 0).applyQuaternion(_gargQ2);
+        // View direction, hole → camera.
+        _gargV1.copy(camera.position).sub(_gargTmp);
+        const dist = _gargV1.length();
+        if (dist > 1e-4) {
+            _gargV1.multiplyScalar(1 / dist);
+            const edge = 1 - Math.abs(_gargV1.dot(_gargV2));   // 1 == edge-on
+            let arc = (edge - 0.14) / 0.55;
+            arc = arc < 0 ? 0 : (arc > 1 ? 1 : arc);
+            const op = arc * (0.30 + 0.70 * p);
+            wrap.visible = op > 0.004;
+            if (wrap.visible) {
+                // Roll: project the disk normal into camera space and aim the
+                // texture's +Y at it.
+                _gargV2.applyQuaternion(_gargQ3.copy(camera.quaternion).conjugate());
+                const roll = Math.atan2(_gargV2.y, _gargV2.x) - Math.PI / 2;
+                _gargQ3.setFromAxisAngle(_gargAxisZ, roll);
+                _gargQ2.conjugate();                       // hole-local frame
+                wrap.quaternion.copy(_gargQ2).multiply(camera.quaternion).multiply(_gargQ3);
+                // Push toward the camera, expressed in the hole's local frame.
+                const push = Math.min(blackHole.userData._gargWrapPush || 0, dist * 0.45);
+                _gargV1.multiplyScalar(push).applyQuaternion(_gargQ2);
+                wrap.position.copy(_gargV1);
+                const s = (blackHole.userData._gargWrapSize || 1) * ((dist - push) / dist);
+                wrap.scale.set(s, s, 1);
+                if (blackHole.userData._gargWrapMat) {
+                    blackHole.userData._gargWrapMat.opacity = op;
+                }
+            }
+        }
+    } else if (wrap) {
+        wrap.visible = false;
     }
 
     // Jet plasma streams outward from both throats. One shared texture per
@@ -3730,13 +4437,25 @@ function createOptimizedPlanets3D() {
     //   Earth   1.00 → 640    Uranus 19.20 → 12288
     //   Mars    1.52 → 973    Neptune 30.06→ 19238
     // Sizes are not to scale (matches the reference image's caption).
+    //
+    // HERO SCALE. The player spawns ~163 units from Earth's centre. At the old
+    // radius of 40 that is an 28°-wide ball in a 75° frame — a prop, not a
+    // landmark, and nothing like the reference plates where the home world
+    // fills half the screen. At 64 it subtends 43°, i.e. ~57% of frame height,
+    // and still leaves the spawn point at 2.5 radii — well clear of the
+    // `distance < radius * 1.05` surface-collision test in game-physics.js and
+    // of getSlingshotRange()'s radius*4+60. Both of those read
+    // geometry.parameters.radius, so growing the geometry moves collision and
+    // slingshot ranges WITH the visual instead of desyncing them; nothing here
+    // touches mass or gravity, so the slingshot physics are unchanged.
+    // Luna moves out to keep the same visual gap from the bigger Earth.
     const localPlanets = [
-        { name: 'Mercury', distance: 250,   size: 15, color: 0xa89080, moons: [] },
-        { name: 'Venus',   distance: 461,   size: 38, color: 0xffc649, moons: [] },
-        { name: 'Earth',   distance: 640,   size: 40, color: 0x2233ff, moons: [{ name: 'Luna', distance: 120, size: 12, color: 0xdddddd }] },
-        { name: 'Mars',    distance: 973,   size: 24, color: 0xff4422, moons: [
-            { name: 'Phobos', distance: 64, size: 6, color: 0x8b4513 },
-            { name: 'Deimos', distance: 96, size: 5, color: 0x696969 }
+        { name: 'Mercury', distance: 250,   size: 20, color: 0xa89080, moons: [] },
+        { name: 'Venus',   distance: 461,   size: 52, color: 0xffc649, moons: [] },
+        { name: 'Earth',   distance: 640,   size: 64, color: 0x2233ff, moons: [{ name: 'Luna', distance: 300, size: 20, color: 0xdddddd }] },
+        { name: 'Mars',    distance: 973,   size: 34, color: 0xff4422, moons: [
+            { name: 'Phobos', distance: 96,  size: 7, color: 0x8b4513 },
+            { name: 'Deimos', distance: 140, size: 6, color: 0x696969 }
         ]},
         { name: 'Jupiter', distance: 3328,  size: 120, color: 0xd9a06b, moons: [
             { name: 'Io', distance: 200, size: 14, color: 0xffff99 },
@@ -3748,7 +4467,10 @@ function createOptimizedPlanets3D() {
             { name: 'Titan', distance: 520, size: 20, color: 0xff9933 },
             { name: 'Enceladus', distance: 360, size: 8, color: 0xffffff }
         ]},
-        { name: 'Uranus',  distance: 12288, size: 64, color: 0xafdbe5, moons: [
+        // Uranus really does have rings, and they are near-POLAR — the planet
+        // is tipped on its side. A vertical ring plane in a system where every
+        // other ring lies flat is free character, and it costs one number.
+        { name: 'Uranus',  distance: 12288, size: 64, color: 0xafdbe5, rings: true, ringTilt: 1.42, ringOpacity: 0.40, moons: [
             { name: 'Titania', distance: 336, size: 11, color: 0x888888 }
         ]},
         { name: 'Neptune', distance: 19238, size: 56, color: 0x3457c4, moons: [
@@ -4022,7 +4744,13 @@ try {
     
     localPlanets.forEach((planetData, index) => {
         try {
-            const planetGeometry = new THREE.SphereGeometry(planetData.size, 20, 20);
+            // Tessellation has to follow scale. At 20x20 a sphere's limb is a
+            // visible 20-gon: invisible on a 15-unit marble, glaring on a
+            // 64-unit hero planet that fills half the frame — and it was
+            // already mismatched against Earth's 40-segment cloud shell, so
+            // the surface poked through the clouds along the facets.
+            const _seg = planetData.size >= 56 ? 56 : (planetData.size >= 30 ? 36 : 24);
+            const planetGeometry = new THREE.SphereGeometry(planetData.size, _seg, Math.round(_seg * 0.75));
             const planetMaterial = new THREE.MeshLambertMaterial({ 
                 color: planetData.color,
                 emissive: new THREE.Color(planetData.color).multiplyScalar(0.05)
@@ -4070,27 +4798,18 @@ try {
                 enhancePlanet(planet, planetData.name, planetData.size);
             }
 
-            // Add rings for Saturn
+            // RING PLANE. Was three concentric 4-unit hoops of solid 0xdddddd
+            // at 0.5/0.4/0.3 opacity — from any distance that is three grey
+            // circles, and edge-on it is three grey lines. One banded plane
+            // with carved gaps and a feathered outer edge reads as a ring
+            // SYSTEM: a structure with lanes you can see the planet through.
             if (planetData.rings) {
-                for (let r = 0; r < 3; r++) {
-                    const ringInner = planetData.size + 6 + r * 6;
-                    const ringOuter = ringInner + 4;
-                    const ringGeometry = new THREE.RingGeometry(ringInner, ringOuter, 32);
-                    const ringMaterial = new THREE.MeshBasicMaterial({ 
-                        color: 0xdddddd,
-                        transparent: true,
-                        opacity: 0.5 - r * 0.1,
-                        side: THREE.DoubleSide
-                    });
-                    const ring = new THREE.Mesh(ringGeometry, ringMaterial);
-                    ring.rotation.x = Math.PI / 2;
-                    ring.visible = true;
-                    ring.frustumCulled = true;  // OPTIMIZATION: Enable frustum culling
-                    
-                    if (planet && planet.add) {
-                        planet.add(ring);
-                    }
-                }
+                addPlanetRings(planet, planetData.size, planetData.color, {
+                    outerK: 2.45,
+                    tilt: planetData.ringTilt || 0.06,
+                    opacity: planetData.ringOpacity === undefined ? 0.9 : planetData.ringOpacity,
+                    segments: 128
+                });
             }
             
             // Add moons
@@ -5738,6 +6457,20 @@ if (scene && scene.add) {
         // instances: 2 texture generations, ~5 draw calls, no geometry.
         // =============================================================================
         try {
+            // Both imposter plates were pure WHITE gradients relying on the
+            // sprite tint for colour, which through additive blending averages
+            // out to a grey smudge; and the spiral's arms were constant-alpha
+            // 0.18 strokes with round caps that simply STOPPED at 0.92 of the
+            // radius. That stop is the "hard cut edge" the sky critic
+            // measured: a soft glow with two hard-ended bars laid across it.
+            //
+            // This version (a) gives the core a warm→cool temperature ramp so
+            // the smudge has hue of its own, (b) fades every arm stroke out
+            // along its length AND across its width by drawing it as many
+            // short, thinning segments, (c) stipples HII knots along the arms
+            // so there is structure at close range, and (d) finishes with a
+            // destination-in radial mask, which guarantees alpha reaches zero
+            // before the canvas edge — no square boundary can ever clip it.
             function _galaxyImposterTexture(kind) {
                 const size = 256;
                 const cv = document.createElement('canvas');
@@ -5745,52 +6478,104 @@ if (scene && scene.add) {
                 const ctx = cv.getContext('2d');
                 const cx = size / 2;
                 ctx.translate(cx, cx);
+                const squash = (kind === 'spiral') ? 0.42 : 0.62;
+
+                ctx.save();
+                ctx.scale(1, squash);
+                const grad = ctx.createRadialGradient(0, 0, 0, 0, 0, cx);
                 if (kind === 'spiral') {
-                    ctx.save();
-                    ctx.scale(1, 0.42); // inclined disk
-                    const grad = ctx.createRadialGradient(0, 0, 0, 0, 0, cx);
-                    grad.addColorStop(0.00, 'rgba(255,255,255,0.95)');
-                    grad.addColorStop(0.12, 'rgba(255,255,255,0.55)');
-                    grad.addColorStop(0.35, 'rgba(255,255,255,0.22)');
-                    grad.addColorStop(1.00, 'rgba(255,255,255,0)');
-                    ctx.fillStyle = grad;
-                    ctx.beginPath();
-                    ctx.arc(0, 0, cx, 0, Math.PI * 2);
-                    ctx.fill();
-                    ctx.restore();
-                    // Faint spiral arms
+                    // Warm old-star bulge → cool blue disc, the way a real
+                    // spiral photographs.
+                    grad.addColorStop(0.00, 'rgba(255,244,220,0.95)');
+                    grad.addColorStop(0.09, 'rgba(255,226,180,0.60)');
+                    grad.addColorStop(0.30, 'rgba(206,222,255,0.22)');
+                    grad.addColorStop(0.62, 'rgba(178,206,255,0.075)');
+                    grad.addColorStop(1.00, 'rgba(160,190,255,0)');
+                } else {
+                    grad.addColorStop(0.00, 'rgba(255,242,214,0.92)');
+                    grad.addColorStop(0.22, 'rgba(255,226,186,0.46)');
+                    grad.addColorStop(0.55, 'rgba(238,214,196,0.14)');
+                    grad.addColorStop(1.00, 'rgba(220,206,200,0)');
+                }
+                ctx.fillStyle = grad;
+                ctx.beginPath();
+                ctx.arc(0, 0, cx, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+
+                if (kind === 'spiral') {
                     ctx.globalCompositeOperation = 'lighter';
                     for (let arm = 0; arm < 2; arm++) {
                         ctx.save();
                         ctx.rotate(arm * Math.PI + Math.random() * 0.4);
-                        ctx.scale(1, 0.42);
-                        ctx.beginPath();
-                        for (let a = 0; a < Math.PI * 1.6; a += 0.08) {
-                            const rr = (a / (Math.PI * 1.6)) * cx * 0.92;
+                        ctx.scale(1, squash);
+                        const A_MAX = Math.PI * 1.75;
+                        let prevX = 0, prevY = 0;
+                        for (let a = 0; a < A_MAX; a += 0.045) {
+                            const f = a / A_MAX;                 // 0 core → 1 tip
+                            const rr = f * cx * 0.94;
                             const px = Math.cos(a * 2.2) * rr;
                             const py = Math.sin(a * 2.2) * rr;
-                            if (a === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+                            if (a > 0) {
+                                // Alpha rises out of the bulge and dies well
+                                // before the tip; width tapers with it.
+                                const al = 0.30 * Math.min(1, f / 0.18) * Math.pow(1 - f, 1.5);
+                                if (al > 0.002) {
+                                    ctx.strokeStyle = 'rgba(196,220,255,' + al.toFixed(4) + ')';
+                                    ctx.lineWidth = size * (0.055 * (1 - f * 0.55));
+                                    ctx.lineCap = 'round';
+                                    ctx.beginPath();
+                                    ctx.moveTo(prevX, prevY);
+                                    ctx.lineTo(px, py);
+                                    ctx.stroke();
+                                    // HII knots — young blue-white clusters
+                                    // strung along the arm.
+                                    if (Math.random() < 0.16) {
+                                        const kr = size * (0.010 + Math.random() * 0.016);
+                                        const kg = ctx.createRadialGradient(px, py, 0, px, py, kr);
+                                        const ka = al * (0.9 + Math.random() * 0.9);
+                                        kg.addColorStop(0, 'rgba(228,240,255,' + Math.min(0.6, ka).toFixed(4) + ')');
+                                        kg.addColorStop(1, 'rgba(228,240,255,0)');
+                                        ctx.fillStyle = kg;
+                                        ctx.beginPath();
+                                        ctx.arc(px, py, kr, 0, Math.PI * 2);
+                                        ctx.fill();
+                                    }
+                                }
+                            }
+                            prevX = px; prevY = py;
                         }
-                        ctx.strokeStyle = 'rgba(255,255,255,0.18)';
-                        ctx.lineWidth = size * 0.05;
-                        ctx.lineCap = 'round';
-                        ctx.stroke();
                         ctx.restore();
                     }
-                } else {
+                    // A dust lane cutting the disc — subtractive detail is what
+                    // stops a spiral reading as a glow blob.
+                    ctx.globalCompositeOperation = 'destination-out';
                     ctx.save();
-                    ctx.scale(1, 0.62);
-                    const grad = ctx.createRadialGradient(0, 0, 0, 0, 0, cx);
-                    grad.addColorStop(0.00, 'rgba(255,255,255,0.95)');
-                    grad.addColorStop(0.25, 'rgba(255,255,255,0.5)');
-                    grad.addColorStop(0.60, 'rgba(255,255,255,0.16)');
-                    grad.addColorStop(1.00, 'rgba(255,255,255,0)');
-                    ctx.fillStyle = grad;
+                    ctx.scale(1, squash);
+                    ctx.rotate(Math.random() * Math.PI);
+                    const dl = ctx.createLinearGradient(0, -cx * 0.10, 0, cx * 0.10);
+                    dl.addColorStop(0.00, 'rgba(0,0,0,0)');
+                    dl.addColorStop(0.50, 'rgba(0,0,0,0.30)');
+                    dl.addColorStop(1.00, 'rgba(0,0,0,0)');
+                    ctx.fillStyle = dl;
                     ctx.beginPath();
-                    ctx.arc(0, 0, cx, 0, Math.PI * 2);
+                    ctx.ellipse(0, 0, cx * 0.86, cx * 0.11, 0, 0, Math.PI * 2);
                     ctx.fill();
                     ctx.restore();
                 }
+
+                // Hard-edge insurance: multiply the whole plate by a radial
+                // alpha ramp that is exactly zero at the canvas edge.
+                ctx.globalCompositeOperation = 'destination-in';
+                const mask = ctx.createRadialGradient(0, 0, 0, 0, 0, cx);
+                mask.addColorStop(0.00, 'rgba(0,0,0,1)');
+                mask.addColorStop(0.62, 'rgba(0,0,0,1)');
+                mask.addColorStop(0.86, 'rgba(0,0,0,0.35)');
+                mask.addColorStop(1.00, 'rgba(0,0,0,0)');
+                ctx.fillStyle = mask;
+                ctx.fillRect(-cx, -cx, size, size);
+                ctx.globalCompositeOperation = 'source-over';
+
                 const tex = new THREE.CanvasTexture(cv);
                 tex.needsUpdate = true;
                 return tex;
@@ -5798,7 +6583,11 @@ if (scene && scene.add) {
 
             const _spiralImposterTex = _galaxyImposterTexture('spiral');
             const _ellipticalImposterTex = _galaxyImposterTexture('elliptical');
-            const _imposterPalette = [0x66e0ff, 0xff66e0, 0xffb366, 0xb366ff, 0xccdcff];
+            // Softened toward white: the plate now carries its own warm-core /
+            // cool-disc ramp, so a saturated tint on top would flatten it back
+            // into one hue. These read as a faint synthwave cast over a galaxy,
+            // not as a coloured blob.
+            const _imposterPalette = [0xa8e4ff, 0xffb0ea, 0xffd2a8, 0xd0b4ff, 0xdde8ff];
             const imposterCount = 5;
             const galaxyImposters = [];
 
@@ -7327,33 +8116,81 @@ function updateOrbitLineVisibility() {
     
     // Update orbit visibility
     const shouldShowOrbits = nearNebula || nearBlackHole;
-    
+
+    // The player's Orbits toggle is the authority on whether these draw at
+    // all; everything below only grades HOW they draw. `orbitLinesVisible` is
+    // a game-core `let`, so read it directly and fall back to shown.
+    const toggleOn = (typeof orbitLinesVisible !== 'undefined') ? orbitLinesVisible : true;
+
     orbitLines.forEach(line => {
-        if (line && line.userData) {
-            // Only auto-show/hide orbits that belong to systems near player
-            if (line.userData.systemCenter) {
-                const systemDistance = camera.position.distanceTo(line.userData.systemCenter);
-                const isNearbySystem = systemDistance < 5000;
-                
-                if (isNearbySystem && shouldShowOrbits) {
-                    line.visible = true;
-                    // Fade opacity based on distance
-                    if (line.material) {
-                        const fadeStart = 3000;
-                        const fadeEnd = 5000;
-                        if (systemDistance > fadeStart) {
-                            const fadeProgress = (systemDistance - fadeStart) / (fadeEnd - fadeStart);
-                            line.material.opacity = 0.4 * (1 - fadeProgress * 0.7);
-                        } else {
-                            line.material.opacity = 0.4;
-                        }
-                    }
-                } else if (!window.orbitLinesVisible) {
-                    // Only hide if player hasn't manually toggled orbits on
-                    line.visible = false;
-                }
-            }
+        if (!line || !line.material) return;
+        if (!line.userData) line.userData = {};
+
+        // THE PLAYER'S TOGGLE WINS, ALWAYS. There are two independent orbit
+        // switches: game-core's `orbitLinesVisible` (keyboard) and the HUD
+        // "Orbits" button, which keeps its OWN local flag and writes
+        // line.visible directly. Grading visibility here without watching for
+        // that would silently switch the HUD button back on within 30 frames.
+        // So: any visibility change we did not make is taken as the player's
+        // word and latched.
+        if (line.userData._orbitLastVis !== undefined && line.visible !== line.userData._orbitLastVis) {
+            line.userData._orbitManualOff = !line.visible;
         }
+        if (!toggleOn || line.userData._orbitManualOff) {
+            line.visible = false;
+            line.userData._orbitLastVis = false;
+            return;
+        }
+
+        // ONE-TIME POLISH. These are RingGeometry ribbons 4 units wide with a
+        // flat 0.3-opacity MeshBasicMaterial in the transparent queue. Seen
+        // near edge-on — which is most of the time, since they all lie in the
+        // ecliptic the player flies along — a 4-unit ribbon lands on well
+        // under one pixel and turns into the crawling, sparkling 1px line the
+        // sky critic measured. Additive blending makes a sub-pixel sliver
+        // dim rather than a hard-edged bar (partial coverage now REDUCES the
+        // contribution instead of drawing a saturated fragment), depthWrite
+        // was already off, and fog:false stops distant orbits picking up the
+        // horizon violet and turning into grey wire.
+        if (!line.userData._orbitPolished) {
+            line.userData._orbitPolished = true;
+            line.userData._orbitBaseOpacity = line.material.opacity || 0.3;
+            line.material.blending = THREE.AdditiveBlending;
+            line.material.depthWrite = false;
+            line.material.fog = false;
+            line.material.needsUpdate = true;
+            line.renderOrder = 2;
+        }
+
+        // createOrbitLines() puts the ring AT the system centre and never
+        // writes userData.systemCenter — so the old body of this function,
+        // which gated everything on `line.userData.systemCenter`, matched
+        // nothing and no orbit line has ever faded. Use the ring's own
+        // position, which IS the system centre.
+        const systemDistance = camera.position.distanceTo(line.position);
+        const r = line.userData.orbitRadius || 1;
+
+        // 1. DISTANCE. Fade an orbit out once the camera is far enough that
+        //    the whole ring is a small feature — beyond that it is a bright
+        //    hairline scribble over the starfield and nothing else.
+        let op = 1 - _gsmooth(r * 5.0, r * 11.0, systemDistance);
+
+        // 2. VIEW ANGLE. The ring's plane normal is world +Y (its geometry is
+        //    laid flat by rotation.x = PI/2). When the camera sits IN that
+        //    plane the ribbon is edge-on and aliases worst, so that is exactly
+        //    where it should be faintest.
+        const dy = camera.position.y - line.position.y;
+        const cosTilt = Math.abs(dy) / Math.max(1e-3, systemDistance);
+        op *= 0.22 + 0.78 * _gsmooth(0.015, 0.30, cosTilt);
+
+        // 3. PROXIMITY CONTEXT — the original intent of this function: orbits
+        //    read as navigation aid near a system, clutter far from one.
+        if (!shouldShowOrbits && systemDistance > r * 4.0) op *= 0.45;
+
+        const base = line.userData._orbitBaseOpacity || 0.3;
+        line.material.opacity = base * (op < 0 ? 0 : (op > 1 ? 1 : op));
+        line.visible = line.material.opacity > 0.004;
+        line.userData._orbitLastVis = line.visible;
     });
 }
 
@@ -11302,17 +12139,25 @@ function createEnhancedPlanetClustersInNebulas() {
                 
                 // 4x from original, 2x from previous — planets should
                 // now clearly dwarf the player ship.
+                // 1.45x on top of the previous pass. Combined with the wider
+                // orbit spacing below, a nebula system now has bodies that
+                // fill the frame when you fly past one instead of sliding by
+                // as marbles. Collision + slingshot ranges are derived from
+                // geometry.parameters.radius, so they scale with this.
                 if (distanceFactor < 0.2) {
-                    planetSize = 12 + Math.random() * 20;   // 12-32
+                    planetSize = 18 + Math.random() * 28;    // 18-46
                 } else if (distanceFactor < 0.5) {
-                    planetSize = 20 + Math.random() * 32;   // 20-52
+                    planetSize = 30 + Math.random() * 46;    // 30-76
                 } else if (distanceFactor < 0.8) {
-                    planetSize = 40 + Math.random() * 60;   // 40-100
+                    planetSize = 58 + Math.random() * 86;    // 58-144
                 } else {
-                    planetSize = 28 + Math.random() * 40;   // 28-68
+                    planetSize = 40 + Math.random() * 58;    // 40-98
                 }
                 
-                const planetGeometry = new THREE.SphereGeometry(planetSize, 32, 32);
+                // Segment count follows the (now larger) radius so the limb
+                // never reads as a polygon when you fly past one.
+                const planetGeometry = new THREE.SphereGeometry(
+                    planetSize, planetSize >= 90 ? 56 : 36, planetSize >= 90 ? 40 : 28);
                 
                 // Diverse planet colors and types
                 let planetHue, planetSaturation, planetLightness;
@@ -11357,14 +12202,36 @@ function createEnhancedPlanetClustersInNebulas() {
                     planetLightness = 0.4 + Math.random() * 0.3;
                 }
                 
-                const planetMaterial = new THREE.MeshBasicMaterial({ 
-                    color: new THREE.Color().setHSL(planetHue, planetSaturation, planetLightness),
-                    transparent: true,
-                    opacity: 0.85
+                // PRESENCE, not a coloured circle. These used to be unlit
+                // MeshBasicMaterial spheres at 0.85 opacity: no terminator, no
+                // limb falloff, and — being in the transparent queue — sorted
+                // against the nebula gas sprites they sit inside, so they
+                // flickered in front of and behind the cloud. The presence
+                // material is opaque and does terminator + limb darkening +
+                // night-side city lights + cloud shell + atmosphere rim, lit
+                // from the cluster's own star (uSun), so every world in a
+                // nebula points at its sun and reads as a globe.
+                const _pColor = new THREE.Color().setHSL(planetHue, planetSaturation, planetLightness);
+                // Habitable-looking worlds (water / forest bands) get cities;
+                // gas giants and ice balls get weather instead.
+                const _isLiving = (planetTypeRoll >= 0.15 && planetTypeRoll < 0.45);
+                const _isGas = (planetTypeRoll >= 0.60 && planetTypeRoll < 0.75);
+                const planetMaterial = createPlanetPresenceMaterial({
+                    color: _pColor,
+                    sun: clusterCenter,
+                    city: _isLiving ? (0.55 + Math.random() * 0.45) : (Math.random() < 0.25 ? 0.25 : 0.0),
+                    cloud: _isGas ? (0.75 + Math.random() * 0.25) : (0.20 + Math.random() * 0.45),
+                    // Exotic / crystal worlds glow in their own hue at night —
+                    // the synthwave read, not sodium-lamp Earth.
+                    nightColor: planetTypeRoll >= 0.85
+                        ? new THREE.Color().setHSL(planetHue + 0.12, 0.95, 0.62)
+                        : 0xffbe5c,
+                    rim: 0.55 + Math.random() * 0.35,
+                    seed: Math.random() * 40
                 });
                 const planet = new THREE.Mesh(planetGeometry, planetMaterial);
                 
-                const orbitRadius = 480 + p * 440; // 4x spacing for 4x-size planets
+                const orbitRadius = 700 + p * 560; // widened to match the bigger bodies
                 const orbitSpeed = 0.002 + Math.random() * 0.008;
                 const orbitPhase = Math.random() * Math.PI * 2;
                 const orbitTilt = (Math.random() - 0.5) * 0.4;
@@ -11399,30 +12266,31 @@ function createEnhancedPlanetClustersInNebulas() {
                 const ringChance = distanceFactor > 0.5 ? 0.60 : 0.35;
                 
                 if (Math.random() < ringChance) {
-                    const ringCount = 2 + Math.floor(Math.random() * 4);
-                    
-                    for (let r = 0; r < ringCount; r++) {
-                        const ringInner = planetSize + 32 + r * 32; // 4x offsets for 4x planets
-                        const ringOuter = ringInner + 16 + Math.random() * 24;
-                        const ringGeometry = new THREE.RingGeometry(ringInner, ringOuter, 64);
-                        const ringColor = new THREE.Color().setHSL(
-                            planetHue + 0.08 + r * 0.04, 
-                            Math.max(0.2, planetSaturation - 0.2 - r * 0.1), 
-                            0.55 + r * 0.06
-                        );
-                        const ringMaterial = new THREE.MeshBasicMaterial({ 
-                            color: ringColor,
-                            transparent: true,
-                            opacity: 0.5 - r * 0.08,
-                            side: THREE.DoubleSide
+                    // One banded plane instead of 2-5 flat coloured hoops.
+                    // Ring planes are how the reference plates give a system a
+                    // readable ecliptic; a stack of concentric outlines just
+                    // reads as UI. A second wide, faint plane at a slight lean
+                    // gives the dusty outer halo real systems have.
+                    addPlanetRings(planet, planetSize, new THREE.Color().setHSL(
+                        planetHue + 0.06, Math.max(0.18, planetSaturation - 0.15), 0.58
+                    ), {
+                        outerK: 2.2 + Math.random() * 0.6,
+                        tilt: (Math.random() - 0.5) * 0.30,
+                        roll: (Math.random() - 0.5) * 0.20,
+                        opacity: 0.72 + Math.random() * 0.22,
+                        segments: 96
+                    });
+                    if (Math.random() < 0.5) {
+                        addPlanetRings(planet, planetSize, new THREE.Color().setHSL(
+                            planetHue + 0.14, Math.max(0.15, planetSaturation - 0.3), 0.66
+                        ), {
+                            outerK: 3.3 + Math.random() * 0.9,
+                            tilt: (Math.random() - 0.5) * 0.34,
+                            roll: (Math.random() - 0.5) * 0.24,
+                            opacity: 0.22 + Math.random() * 0.14,
+                            segments: 72
                         });
-                        const ring = new THREE.Mesh(ringGeometry, ringMaterial);
-                        ring.rotation.x = Math.PI / 2 + (Math.random() - 0.5) * 0.3;
-                        ring.rotation.z = (Math.random() - 0.5) * 0.2;
-                        planet.add(ring);
                     }
-
-                    // console.log(`      💍 Added ${ringCount} rings to ${planet.userData.name}`);
                 }
                 
                 // Add MOON SYSTEMS - LARGER MOONS
@@ -11432,18 +12300,26 @@ function createEnhancedPlanetClustersInNebulas() {
                     const moonCount = 1 + Math.floor(Math.random() * 4);
                     
                     for (let m = 0; m < moonCount; m++) {
-                        const moonSize = 1 + Math.random() * 3; // LARGER moons (was 0.4-2.2, now 1-4)
+                        // Moons were a flat 1-4 units next to planets of
+                        // 12-100 — at any distance where the planet reads as a
+                        // world, its moons were sub-pixel. Sized as a FRACTION
+                        // of their primary they stay in proportion, which is
+                        // what makes a system read as a system.
+                        const moonSize = Math.max(3, planetSize * (0.10 + Math.random() * 0.17));
                         const moonGeometry = new THREE.SphereGeometry(moonSize, 16, 16);
-                        
+
                         const moonHue = planetHue + (Math.random() - 0.5) * 0.2;
-                        const moonMaterial = new THREE.MeshBasicMaterial({ 
-                            color: new THREE.Color().setHSL(moonHue, 0.3 + Math.random() * 0.3, 0.6 + Math.random() * 0.2),
-                            transparent: true,
-                            opacity: 0.8
+                        const moonMaterial = createPlanetPresenceMaterial({
+                            color: new THREE.Color().setHSL(moonHue, 0.28 + Math.random() * 0.3, 0.55 + Math.random() * 0.2),
+                            sun: clusterCenter,
+                            city: 0.0,
+                            cloud: Math.random() < 0.3 ? 0.25 : 0.0,
+                            rim: 0.22,
+                            seed: Math.random() * 40
                         });
                         const moon = new THREE.Mesh(moonGeometry, moonMaterial);
-                        
-                        const moonOrbitRadius = planetSize + 60 + m * 48; // 4x base + spacing for 4x planets
+
+                        const moonOrbitRadius = planetSize * 1.9 + 40 + m * 60;
                         const moonOrbitSpeed = 0.012 + Math.random() * 0.028;
                         const moonOrbitPhase = Math.random() * Math.PI * 2;
                         
