@@ -4704,26 +4704,12 @@ function checkForNebulaDeepDiscovery() {
     const _discoveryCooldownActive = gameState._lastDeepDiscoveryAt &&
         (Date.now() - gameState._lastDeepDiscoveryAt) < 8000;
 
-    // ONE ACTIVE MISSION AT A TIME: while any discovery mission is still
-    // in progress (path not yet turned white), no new nebula may open a
-    // path. The journey is: follow the line, defeat the enemies it leads
-    // to, watch it turn white — THEN chart the next nebula. Guide and
-    // optional lines (galaxyId < 0: 'final' onward paths, the green
-    // 'deepspace' expedition) carry no mission and never block — the
-    // deepspace line in particular never completes, so keying on pathType
-    // alone would deadlock discovery for the rest of the game.
-    let _missionActive = false;
-    if (typeof discoveryPaths !== 'undefined') {
-        for (let pi = 0; pi < discoveryPaths.length; pi++) {
-            const pud = discoveryPaths[pi] && discoveryPaths[pi].line &&
-                discoveryPaths[pi].line.userData;
-            if (pud && !pud.missionComplete &&
-                pud.galaxyId !== undefined && pud.galaxyId >= 0) {
-                _missionActive = true;
-                break;
-            }
-        }
-    }
+    // NO MISSION LOCK: an unfinished mission never blocks discovering
+    // other nebulas — the player is free to leave a colored path behind
+    // and chart elsewhere; abandoned missions stay open and can be
+    // finished anytime. The anti-burst gates above (nearest nebula only,
+    // 8s cooldown) are what keep paths opening ONE at a time — each new
+    // path is still a deliberate close approach to a specific core.
 
     nebulaClouds.forEach((nebula, index) => {
         if (!nebula || !nebula.userData) return;
@@ -4800,10 +4786,9 @@ function checkForNebulaDeepDiscovery() {
 
         // The one-discovery-per-approach gate (computed above): only the
         // nebula whose core the player is nearest may trigger, never
-        // within 8s of the previous discovery, and never while another
-        // mission path is still active (not yet white). A blocked nebula
-        // simply triggers later, when the player returns to it.
-        if (index !== _nearestUndiscovered || _discoveryCooldownActive || _missionActive) return;
+        // within 8s of the previous discovery. A blocked nebula simply
+        // triggers later, when the player returns to it.
+        if (index !== _nearestUndiscovered || _discoveryCooldownActive) return;
 
         // Resolve which galaxy/faction this nebula maps to
         const galaxyId = resolveNebulaGalaxyId(nebula, nebulaType, index);
