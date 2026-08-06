@@ -466,6 +466,30 @@ function updateCameraView(camera) {
             currentOffset.y -= 1.4 * _la;
         }
 
+        // ── LAUNCH CRACK: THE RIG STRAINS AS THE SHIP TEARS AWAY ────────
+        // The release used to be a single frame — velocity stepped from the
+        // arc's speed to full boost in one tick — so the only thing the rig
+        // could do about it was the instant _warpZoom impulse physics fires,
+        // which reads as a lens pop rather than as acceleration. The whip now
+        // RAMPS over ~260ms (game-physics updateSlingshotLaunchRamp) and
+        // publishes its eased 0→1 curve as window.__whipLaunch.e, so the
+        // chase rig can fall behind the ship on the exact curve the ship is
+        // accelerating on: the camera loses ground, the nose lifts, and the
+        // lens widens *with* the burn instead of ahead of it.
+        // Attack tracks the ramp almost 1:1; release unwinds over ~0.3s so
+        // the frame settles into the glide instead of snapping back.
+        if (cameraState._whipCrack === undefined) cameraState._whipCrack = 0;
+        const _wl = (typeof window !== 'undefined') ? window.__whipLaunch : null;
+        const _crackT = (_wl && cameraState.mode === 'third-person')
+            ? Math.max(0, Math.min(1, _wl.e || 0)) : 0;
+        cameraState._whipCrack += (_crackT - cameraState._whipCrack) *
+            (_crackT > cameraState._whipCrack ? 0.45 : 0.06);
+        if (cameraState._whipCrack > 0.004) {
+            const _ck = cameraState._whipCrack;
+            currentOffset.z *= 1 + 0.42 * _ck;   // camera drops back
+            currentOffset.y += 0.9 * _ck;        // …and rises into a hero angle
+        }
+
         // FOV follows the zoom: 75 at rest → ~86 fully warped, eased both
         // ways. EXTENDED (not replaced) with two additive terms so the warp
         // tunnel and the whip can breathe the lens without ever fighting the
@@ -474,7 +498,8 @@ function updateCameraView(camera) {
         //     entry/exit snaps
         //   • the sustained tunnel level published by visual-flair
         if (camera.isPerspectiveCamera) {
-            let _fovT = 75 + _zAmt * 20 + Math.abs(cameraState._whipLean) * 5;
+            let _fovT = 75 + _zAmt * 20 + Math.abs(cameraState._whipLean) * 5 +
+                (cameraState._whipCrack || 0) * 6;
             if (cameraState._fovPulseAmp) {
                 const _pk = (performance.now() - cameraState._fovPulseT0) /
                     Math.max(1, cameraState._fovPulseMs);

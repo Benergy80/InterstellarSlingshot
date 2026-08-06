@@ -67,6 +67,19 @@
 //      `parentPlanet` + `orbitRadius`: that pair is the core's moon
 //      integrator, and it would fight placeMoon() for the position.
 //
+// THE ACHIEVEMENT SLOT IS SHARED, AND WE TAKE A LOCK ON IT.
+// #achievementPopup is a single line of text written by ~30 call sites across
+// eight files, and several of them re-fire on a timer forever (game-physics
+// re-posts "Slingshot Ready" every 5.0s for as long as you sit in a gravity
+// well). Measured: the once-per-system "SYSTEM CHARTED" banner was overwritten
+// ~230ms after it appeared and never came back, so the player collected +50 rep
+// with no idea why. installToastGate() below wraps window.showAchievement with
+// a four-tier priority gate — nags are dropped while a discovery holds the
+// slot, ordinary messages queue behind it, genuine emergencies still cut
+// through. The wrapper is transparent when no lock is held, and it re-arms
+// itself if another file swaps showAchievement out from under it (autopilot
+// does exactly that on every engage/disengage).
+//
 // nebulaClouds is deliberately NOT touched: that array drives faction lore,
 // deep-discovery rewards and biome music selection, all of which expect
 // authored galaxyId/faction metadata we have no business faking.
@@ -146,9 +159,23 @@
         SHELL_OUTER: 140000,
         VISIBLE_RANGE: 60000,   // system group renders inside this
         DETAIL_RANGE: 26000,    // station / dust detail inside this
-        DISCOVER_RANGE: 6000,   // first entry fires the discovery moment
+        DISCOVER_RANGE: 6000,   // FLOOR only — see DISCOVER_MARGIN below
+        // Discovery must fire when you ENTER the system, not after you have
+        // toured it. The trigger sphere is sized from the system's own
+        // envelope (outermost world + its radius + its moons' orbits, and the
+        // station ring at 1.1x the outer orbit), then pushed out one margin so
+        // the "SYSTEM CHARTED" moment lands on approach with the whole system
+        // ahead of you. The old `extent * 0.8` put the trigger INSIDE the
+        // outermost orbit: in most systems you could fly to the outer world,
+        // orbit it, and the game still called the system uncharted.
+        DISCOVER_MARGIN: 1.18,  // trigger sphere / system envelope
+        DISCOVER_PAD: 1500,     // flat approach pad on top of the margin
         COARSE_EVERY: 12,       // frames between visibility/discovery passes
-        DISCOVERY_REP: 50
+        DISCOVERY_REP: 50,
+        // The discovery toast shares ONE DOM slot (#achievementPopup) with a
+        // dozen writers, several of which re-fire on a timer forever. This is
+        // how long a discovery OWNS that slot — see the TOAST PRIORITY block.
+        TOAST_HOLD_MS: 7000
     };
 
     // -------------------------------------------------------------------------
@@ -1464,6 +1491,12 @@
                     rand() * 900;
         var maxOrbit = orbit;
         var prevRadius = 0;
+        // The furthest point any SOLID body reaches from the system centre —
+        // outer orbit + that world's own radius + its widest moon's orbit.
+        // A player parked on the outermost moon of the outermost gas giant is
+        // unambiguously "in" the system, and the discovery sphere below is
+        // sized from this, never from the bare orbit number.
+        var envelope = 0;
         for (var i = 0; i < planetCount; i++) {
             // Zone drives the archetype odds — see ARCH_WEIGHTS. Two-planet
             // systems still get an inner and an outer, never two "mids".
@@ -1474,6 +1507,14 @@
             for (var mi = 0; mi < built.moons.length; mi++) sys.moons.push(built.moons[mi]);
             if (built.ring) sys.rings.push({ ring: built.ring, planet: built.mesh });
             maxOrbit = orbit;
+            var moonReach = 0;
+            for (var mr = 0; mr < built.moons.length; mr++) {
+                var mud = built.moons[mr].userData;
+                var reachM = (mud.pgMoonRadius || 0) + (mud.radius || 0);
+                if (reachM > moonReach) moonReach = reachM;
+            }
+            var bodyReach = orbit + built.radius + moonReach;
+            if (bodyReach > envelope) envelope = bodyReach;
             // Spacing scales with the bodies it has to separate: a pair of
             // 470u gas giants on a flat 900u minimum gap would have intersected
             // each other on every conjunction. The base term is the layout's,
@@ -1485,11 +1526,21 @@
             prevRadius = built.radius;
         }
         sys.extent = maxOrbit;
-        // Discovery radius scales with the system. Orbit spacing now grows
-        // with body radius, so a giant-heavy system's outermost world can sit
-        // 17,000u out — on a flat 6,000u trigger the player would fly past
-        // three planets before the game admitted they had found anything.
-        var discR = Math.max(PG.DISCOVER_RANGE, maxOrbit * 0.8);
+        // The station is thrown out to as much as 1.1x the outer orbit, so it
+        // sets the envelope on its own in a system whose outer world is small.
+        sys.envelope = Math.max(envelope, maxOrbit * 1.12, sys.primaryRadius * 4);
+        // Discovery radius scales with the system, and it must STRICTLY
+        // CONTAIN it. The previous rule was `max(6000, extent * 0.8)`, i.e. a
+        // sphere 20% INSIDE the outermost orbit — measured across a 14-system
+        // seed, 10 of 14 systems had their outer world orbiting outside their
+        // own discovery radius (worst case: extent 12,251 vs radius 9,801).
+        // You could fly out, match orbit with that world, fly home, and the
+        // system was still logged as uncharted. Now the sphere clears the
+        // whole envelope by a margin, so the banner fires on the way IN,
+        // while the system is still spread out ahead of you.
+        var discR = Math.max(PG.DISCOVER_RANGE,
+                             sys.envelope * PG.DISCOVER_MARGIN + PG.DISCOVER_PAD);
+        sys.discoverR = discR;
         sys.discoverR2 = discR * discR;
 
         // --- ambience ---
@@ -1589,6 +1640,306 @@
     }
 
     // -------------------------------------------------------------------------
+    // TOAST PRIORITY — one DOM slot, thirty writers, no referee
+    // -------------------------------------------------------------------------
+    // #achievementPopup shows exactly one message. Every writer in the game
+    // calls showAchievement() and blindly overwrites whatever is on screen, and
+    // three of them are on repeating timers. The once-per-system discovery
+    // banner therefore lost the slot within a few hundred milliseconds, every
+    // single time, to a hint the player had already read forty times.
+    //
+    // The gate below is a transparent wrapper with four tiers:
+    //
+    //   3 CRITICAL  boss volleys, deaths, distress calls, victories.
+    //               Always through, and it RELEASES the lock — nothing we do
+    //               may ever sit on top of "HULL CRITICAL".
+    //   2 STORY     the discovery banner itself. Takes the lock.
+    //   1 INFO      everything unrecognised. Queued behind the lock, then
+    //               released in order, staggered, so nothing is lost.
+    //   0 NAG       the repeating hints (Slingshot Ready, target chatter,
+    //               wingman comms). DROPPED while the lock is held — they
+    //               re-fire on their own timers seconds later anyway, and
+    //               their callers advance their own cooldowns before calling
+    //               us, so dropping one costs the player nothing.
+    //
+    // With no lock held the gate is a straight pass-through: identical game.
+    var toastGateState = {
+        base: null,      // what we forward to (may be another file's wrapper)
+        root: null,      // deepest real showAchievement we ever saw
+        depth: 0,        // re-entrancy guard, see below
+        lockUntil: 0,
+        lockTitle: '',
+        lockBody: '',
+        lockSeen: false,
+        lockRetries: 0,
+        watchTimer: null,
+        flushTimer: null,
+        queue: [],
+        dropped: 0,
+        queued: 0,
+        rescued: 0,
+        preempted: 0,
+        // Rolling decision log. The bug this file is fixing was invisible
+        // without one: "the banner disappeared" is not a diagnosis, "tier-0
+        // 'Target Hit!' overwrote it at +135ms" is.
+        log: []
+    };
+    var TOAST_QUEUE_MAX = 3;
+    var TOAST_STAGGER_MS = 450;
+
+    // Repeating / low-value titles, normalised (lowercased, punctuation and
+    // emoji stripped) so '⚡ Boost Ending Soon' and 'Boost ending soon!' hash
+    // to the same key.
+    // Two families here, and the second one matters more than it looks:
+    // routine COMBAT FEEDBACK ("Target Hit!", "Enemy Destroyed!", shield
+    // toggles) fires many times a minute and is pure confirmation of something
+    // the player just did and already saw explode. Losing seven seconds of it
+    // costs nothing — and it is deliberately DROPPED rather than queued,
+    // because "Shields Activated" replayed seven seconds after the fact is
+    // worse than silence. Losing the one banner that names the system you just
+    // found costs the whole feature. Progression messages (UNLOCK, mission,
+    // rep) are still queued and always land.
+    var TOAST_NAGS = {
+        'slingshot ready': 1,
+        'gravitational slingshot': 1,
+        'target acquired': 1,
+        'target cycled': 1,
+        'target hit': 1,
+        'target destroyed': 1,
+        'enemy hit': 1,
+        'enemy destroyed': 1,
+        'asteroid hit': 1,
+        'asteroid destroyed': 1,
+        'missile hit': 1,
+        'missile recovered': 1,
+        'missile lost': 1,
+        'target eliminated': 1,
+        'gravity capture': 1,
+        'gravity whip': 1,
+        'shields activated': 1,
+        'shields offline': 1,
+        'shield system error': 1,
+        'insufficient energy': 1,
+        'boost ending soon': 1,
+        'solar storm boost ended': 1,
+        'plasma storm boost ended': 1,
+        'solar storm approaching': 1,
+        'plasma storm detected': 1,
+        'pulsar detected': 1
+    };
+    // Anything the player must see THIS SECOND, even mid-discovery. Kept
+    // deliberately narrow: it is about SURVIVAL and about end-of-run beats,
+    // not about score. A boss volley you cannot see is a death.
+    var TOAST_CRITICAL = /⚠|boss|civilian destroyed|distress|critical|hull breach|game over|victory|liberated|galaxy cleared|defeated|rescued|training complete/i;
+    var TOAST_STORY = /system charted/i;
+
+    function normTitle(t) {
+        return String(t == null ? '' : t)
+            .toLowerCase()
+            .replace(/[^a-z0-9 ]+/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+    }
+
+    function toastTier(title) {
+        var raw = String(title == null ? '' : title);
+        if (TOAST_STORY.test(raw)) return 2;
+        if (TOAST_CRITICAL.test(raw)) return 3;
+        if (/\(comms\)/i.test(raw)) return 0;
+        if (TOAST_NAGS[normTitle(raw)]) return 0;
+        return 1;
+    }
+
+    // Forward to the real popup. `depth` is held across the call so that if we
+    // are ever re-entered through somebody else's wrapper (autopilot wraps and
+    // unwraps showAchievement on every engage), we short-circuit to the root
+    // implementation instead of looping through the chain forever.
+    function emitToast(title, description, playSound) {
+        var st = toastGateState;
+        var fn = st.base || st.root;
+        if (typeof fn !== 'function') return;
+        st.depth++;
+        try {
+            if (playSound === undefined) fn(title, description);
+            else fn(title, description, playSound);
+        } catch (e) {
+            console.warn('PROC-GALAXY toast gate: emit failed', e);
+        } finally {
+            st.depth--;
+        }
+    }
+
+    function logToast(title, tier, act) {
+        var st = toastGateState;
+        st.log.push({
+            t: Date.now(),
+            title: String(title == null ? '' : title).slice(0, 40),
+            tier: tier,
+            act: act,
+            heldMsLeft: Math.max(0, st.lockUntil - Date.now())
+        });
+        if (st.log.length > 40) st.log.shift();
+    }
+
+    function toastGate(title, description, playSound) {
+        var st = toastGateState;
+        if (st.depth > 0) {
+            // Re-entered from inside our own emit — a foreign wrapper is
+            // sitting between us and the real function. Go straight to the
+            // root and do NOT re-run the priority logic.
+            var root = st.root;
+            if (typeof root === 'function') {
+                if (playSound === undefined) root(title, description);
+                else root(title, description, playSound);
+            }
+            return;
+        }
+        try {
+            var now = Date.now();
+            var tier = toastTier(title);
+            var held = now < st.lockUntil;
+            if (tier >= 3) {
+                // Emergencies take the screen — but they do NOT cancel the
+                // hold. Yield the banner (stop the watcher re-posting it over
+                // an incoming volley) and keep the repeating hints muted for
+                // the rest of the window, so the player goes
+                // discovery -> emergency -> back to flying, never
+                // discovery -> "Slingshot Ready".
+                if (held) { st.lockSeen = true; st.preempted++; }
+                logToast(title, tier, 'emit:critical');
+                emitToast(title, description, playSound);
+                return;
+            }
+            if (tier === 2) {
+                logToast(title, tier, 'lock');
+                holdToastSlot(title, description, PG.TOAST_HOLD_MS, playSound);
+                return;
+            }
+            if (!held) {
+                logToast(title, tier, 'emit');
+                emitToast(title, description, playSound);
+                return;
+            }
+            if (tier === 0) {                          // hard-suppressed
+                st.dropped++;
+                logToast(title, tier, 'drop');
+                return;
+            }
+            // INFO: hold it until the slot frees up rather than losing it.
+            for (var i = 0; i < st.queue.length; i++) {
+                if (st.queue[i].title === title) return;   // dedupe
+            }
+            st.queue.push({ title: title, description: description, playSound: playSound });
+            while (st.queue.length > TOAST_QUEUE_MAX) st.queue.shift();
+            st.queued++;
+            logToast(title, tier, 'queue');
+            scheduleToastFlush();
+        } catch (e) {
+            // The gate must never be able to swallow a message.
+            console.warn('PROC-GALAXY toast gate: falling through', e);
+            emitToast(title, description, playSound);
+        }
+    }
+    toastGate.__pgToastGate = true;
+
+    function scheduleToastFlush() {
+        var st = toastGateState;
+        if (st.flushTimer || typeof setTimeout !== 'function') return;
+        var wait = Math.max(60, st.lockUntil - Date.now() + 80);
+        st.flushTimer = setTimeout(function () {
+            st.flushTimer = null;
+            if (Date.now() < st.lockUntil) { scheduleToastFlush(); return; }  // lock extended
+            var pending = st.queue.slice();
+            st.queue.length = 0;
+            for (var i = 0; i < pending.length; i++) {
+                (function (msg, idx) {
+                    setTimeout(function () {
+                        emitToast(msg.title, msg.description, msg.playSound);
+                    }, TOAST_STAGGER_MS * idx);
+                })(pending[i], i);
+            }
+        }, wait);
+    }
+
+    // Keep the locked message ON SCREEN for the whole hold. Two things can
+    // steal it even with the gate installed: a toast fired BEFORE the lock
+    // whose own 12s auto-hide timer lands mid-discovery (it adds .hidden to
+    // the shared popup regardless of what is written in it now), and
+    // showAchievement's own "incoming transmission" deferral, which silently
+    // queues our banner instead of drawing it. Both are cheap to detect from
+    // the DOM and cheap to repair: un-hide if the text is still ours, re-emit
+    // if somebody overwrote it.
+    function watchToast() {
+        var st = toastGateState;
+        if (st.watchTimer || typeof setInterval !== 'function' ||
+            typeof document === 'undefined') return;
+        st.watchTimer = setInterval(function () {
+            if (Date.now() >= st.lockUntil) {
+                clearInterval(st.watchTimer);
+                st.watchTimer = null;
+                return;
+            }
+            var popup = document.getElementById('achievementPopup');
+            if (!popup) return;
+            var h4 = popup.querySelector('h4');
+            var mine = h4 && h4.textContent === st.lockTitle;
+            var hidden = popup.classList.contains('hidden');
+            if (mine && hidden) {
+                popup.classList.remove('hidden');       // stale auto-hide fired
+                st.rescued++;
+                st.lockSeen = true;
+            } else if (mine) {
+                st.lockSeen = true;
+            } else if (!st.lockSeen && st.lockRetries < 6) {
+                // Never made it to the screen at all (deferral / overwrite in
+                // the same frame). Try again — silently, the sound already
+                // played on the first attempt. Capped: if an incoming
+                // transmission is holding the screen for the whole window, the
+                // engine's own deferral queue will replay it and we stop
+                // pushing.
+                st.lockRetries++;
+                emitToast(st.lockTitle, st.lockBody, false);
+            }
+            // 120ms, not 250: a stale auto-hide landing mid-banner is visible
+            // as a blink, and the blink is as long as this interval. Measured
+            // at 250ms it read as a flicker; at 120ms it reads as nothing.
+            // Two DOM reads a frame-and-a-half, only while a banner is held.
+        }, 120);
+    }
+
+    // PUBLIC: show a message that OWNS the popup for `holdMs`. Exported as
+    // window.pgHoldToast so anything else with a once-in-the-game moment can
+    // use the same referee instead of racing for the slot.
+    function holdToastSlot(title, description, holdMs, playSound) {
+        var st = toastGateState;
+        installToastGate();
+        st.lockUntil = Date.now() + (holdMs > 0 ? holdMs : PG.TOAST_HOLD_MS);
+        st.lockTitle = String(title == null ? '' : title);
+        st.lockBody = description;
+        st.lockSeen = false;
+        st.lockRetries = 0;
+        emitToast(title, description, playSound);
+        watchToast();
+        return true;
+    }
+
+    // Install (or re-install) the gate. Called at init and re-checked on the
+    // coarse pass, because autopilot.js swaps showAchievement out and restores
+    // the pre-autopilot function on disengage, which would drop us silently.
+    function installToastGate() {
+        if (typeof window === 'undefined') return false;
+        var cur = window.showAchievement;
+        if (typeof cur !== 'function') return false;
+        if (cur === toastGate) return true;
+        if (!cur.__pgToastGate) {
+            toastGateState.base = cur;
+            if (!toastGateState.root) toastGateState.root = cur;
+        }
+        window.showAchievement = toastGate;
+        return true;
+    }
+
+    // -------------------------------------------------------------------------
     // DISCOVERY
     // -------------------------------------------------------------------------
     function fireDiscovery(sys) {
@@ -1612,8 +1963,14 @@
                     headline + ', ' + sys.palette.flavour +
                     (sys.station ? (sys.station.userData.derelict ? ', derelict contact' : ', station contact') : '');
 
-        if (typeof showAchievement === 'function') {
-            showAchievement('SYSTEM CHARTED', blurb, true);
+        // Take the slot rather than shout into it. holdToastSlot() forwards to
+        // the real showAchievement (so the sound, styling and layout fixes in
+        // game-controls all still apply) and then defends the banner for its
+        // full read — this is a once-per-system, +50 rep moment and it used to
+        // survive ~230ms before a repeating hint overwrote it.
+        if (typeof showAchievement === 'function' || toastGateState.root) {
+            installToastGate();
+            holdToastSlot('SYSTEM CHARTED', blurb, PG.TOAST_HOLD_MS, true);
         }
         if (typeof window !== 'undefined' && typeof window.flashEventText === 'function') {
             window.flashEventText(sys.name.toUpperCase(),
@@ -1737,6 +2094,9 @@
         }
 
         buildBeacons();
+        // Referee the shared toast slot from now on. Transparent until a
+        // discovery actually takes the lock.
+        installToastGate();
         initialized = true;
         lastTickMs = (typeof performance !== 'undefined') ? performance.now() : Date.now();
 
@@ -1850,6 +2210,14 @@
         // a limb un-facet itself after you have already arrived.
         var lodPass = coarse || (frame % 4) === 0;
         forceCoarse = false;
+        // One identity compare every 12 frames. autopilot.js replaces
+        // showAchievement on engage and restores the ORIGINAL on disengage,
+        // which silently unhooks the priority gate; this re-arms it. Also
+        // covers the case where game-controls.js loaded after us.
+        if (coarse && typeof window !== 'undefined' &&
+            window.showAchievement !== toastGate) {
+            installToastGate();
+        }
         var visR2 = PG.VISIBLE_RANGE * PG.VISIBLE_RANGE;
         var detR2 = PG.DETAIL_RANGE * PG.DETAIL_RANGE;
         var discR2 = PG.DISCOVER_RANGE * PG.DISCOVER_RANGE;
@@ -2004,6 +2372,13 @@
         window.initProcGalaxies = initProcGalaxies;
         window.updateProcGalaxies = function () { updateProcGalaxies(true); };
         window.procGalaxySystems = systems;
+        // The shared-slot referee, exposed so any other once-in-the-game
+        // moment can claim the popup instead of racing for it:
+        //   pgHoldToast('TITLE', 'body', 7000)  -> owns #achievementPopup,
+        //   drops repeating hints for the duration, queues everything else.
+        window.pgHoldToast = holdToastSlot;
+        window.pgToastTier = toastTier;
+        window.pgInstallToastGate = installToastGate;
         // Console helpers for tuning/QA.
         window.procGalaxyDebug = {
             list: function () {
@@ -2032,11 +2407,62 @@
                         archetypes: s.planets.map(function (p) { return p.userData.archetype; }),
                         radii: s.planets.map(function (p) { return Math.round(p.userData.radius); }),
                         binary: s.binary,
+                        // The invariant this build restores: discoverR must be
+                        // GREATER than envelope for every row, or the outermost
+                        // world of that system orbits outside its own discovery
+                        // sphere. See charted() for the one-line check.
+                        extent: Math.round(s.extent),
+                        envelope: Math.round(s.envelope),
+                        discoverR: Math.round(s.discoverR),
                         discovered: s.discovered,
                         active: s.active
                     };
                 });
             },
+            // QA one-liner for the discovery bug: every row must show
+            // clearance > 0, and `outside` must be 0.
+            charted: function () {
+                var rows = systems.map(function (s) {
+                    return {
+                        name: s.name,
+                        extent: Math.round(s.extent),
+                        envelope: Math.round(s.envelope),
+                        discoverR: Math.round(s.discoverR),
+                        clearance: Math.round(s.discoverR - s.envelope),
+                        discovered: s.discovered
+                    };
+                });
+                return {
+                    outside: rows.filter(function (r) { return r.clearance <= 0; }).length,
+                    minClearance: Math.round(Math.min.apply(null, rows.map(function (r) {
+                        return r.clearance;
+                    }))),
+                    systems: rows
+                };
+            },
+            // Live state of the shared-popup referee.
+            toast: function () {
+                var st = toastGateState;
+                return {
+                    installed: (typeof window !== 'undefined' &&
+                                window.showAchievement === toastGate),
+                    holding: Date.now() < st.lockUntil,
+                    holdTitle: st.lockTitle,
+                    holdMsLeft: Math.max(0, st.lockUntil - Date.now()),
+                    onScreen: st.lockSeen,
+                    nagsDropped: st.dropped,
+                    messagesQueued: st.queued,
+                    bannerRescues: st.rescued,
+                    preemptedByCritical: st.preempted,
+                    pending: st.queue.map(function (q) { return q.title; }),
+                    // Newest last, timestamps relative to now (ms ago).
+                    log: st.log.map(function (e) {
+                        return (Date.now() - e.t) + 'ms ago  t' + e.tier + ' ' +
+                               e.act + '  "' + e.title + '"';
+                    })
+                };
+            },
+            tierOf: toastTier,
             // Distribution check for QA: archetype histogram + radius span
             // across the whole shell, in one line.
             census: function () {

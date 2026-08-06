@@ -2329,6 +2329,297 @@ function _updateWarpTunnel() {
     _wtu.inner.mat.uniforms.uOpacity.value = 0.80 * L * L;
 }
 
+// ── 21. ENGINE NOZZLE BLOOM — the orange box, and what replaces it ──────────
+// THE BUG, precisely: game-models.js `_createEngineBloomSprite()` builds a
+// THREE.SpriteMaterial with a color, additive blending and NO `map`. A sprite
+// material with no map is not "invisible until textured" — three.js samples
+// nothing and shades the entire quad at the flat material color, so what got
+// drawn was a hard-edged 8.6-unit orange RECTANGLE (0.18 local × the ship's
+// 48x scale) welded to the hull, dead centre of frame, in every high-speed
+// frame of the signature move. The whip's whole payoff is the ship visibly
+// charging as gravity winds it up; instead the hull was behind a box.
+//
+// The fix is one property — `map` — but it has to be the right texture, and
+// the file that builds the sprite is not ours. Both sprites are tagged
+// `userData.isVelocityBloom`, so we adopt them from here: give them a real
+// radial alpha falloff and let game-models keep driving their colour and
+// scale (it already lerps 0x552200 → 0xffaa33 on speed, which is exactly
+// right once there is an alpha ramp for it to live in). No ownership fight,
+// no rAF ordering race — we set `map` once, it drives intensity forever.
+//
+// Then we add what the box was standing in for, on sprites game-models does
+// NOT touch (untagged, so its once-only traverse skips them):
+//   • a wide CORONA per nozzle that keeps building past the point where
+//     game-models' 6.8-unit reference speed saturates, so a 115-unit whip
+//     boost visibly out-burns a 7-unit cruise instead of looking identical
+//   • a screen-horizontal ANAMORPHIC STREAK that only lights at real speed —
+//     the synthwave lens signature, free (2 quads) because it is a texture
+//     and not a particle system
+// Both ride the SAME published curves the physics is flying: __whipFrame.carve
+// while the arc bites, __whipLaunch.e through the 260ms crack. The glow and
+// the acceleration are one event, not two effects that overlap.
+
+// Tight hot core — steep falloff so the adopted sprite reads as a nozzle,
+// not a fog bank, at its full 8.6-unit scale.
+function _vfNozzleTexture() {
+    if (_vfNozzleTexture._tex) return _vfNozzleTexture._tex;
+    const c = document.createElement('canvas');
+    c.width = c.height = 128;
+    const ctx = c.getContext('2d');
+    const g = ctx.createRadialGradient(64, 64, 0, 64, 64, 64);
+    g.addColorStop(0.00, 'rgba(255,255,255,1)');
+    g.addColorStop(0.12, 'rgba(255,255,255,0.95)');
+    g.addColorStop(0.30, 'rgba(255,255,255,0.42)');
+    g.addColorStop(0.58, 'rgba(255,255,255,0.11)');
+    g.addColorStop(1.00, 'rgba(255,255,255,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, 128, 128);
+    const t = new THREE.CanvasTexture(c);
+    t.needsUpdate = true;
+    _vfNozzleTexture._tex = t;
+    return t;
+}
+
+// Wide soft corona — the volume around the nozzle.
+function _vfCoronaTexture() {
+    if (_vfCoronaTexture._tex) return _vfCoronaTexture._tex;
+    const c = document.createElement('canvas');
+    c.width = c.height = 128;
+    const ctx = c.getContext('2d');
+    const g = ctx.createRadialGradient(64, 64, 0, 64, 64, 64);
+    g.addColorStop(0.00, 'rgba(255,255,255,0.62)');
+    g.addColorStop(0.35, 'rgba(255,255,255,0.26)');
+    g.addColorStop(0.70, 'rgba(255,255,255,0.07)');
+    g.addColorStop(1.00, 'rgba(255,255,255,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, 128, 128);
+    const t = new THREE.CanvasTexture(c);
+    t.needsUpdate = true;
+    _vfCoronaTexture._tex = t;
+    return t;
+}
+
+// Anamorphic streak — bright thin horizontal bar, soft at both ends. Drawn
+// into a wide canvas so the sprite can be stretched hard on X without the
+// mip filtering smearing the core out.
+function _vfStreakTexture() {
+    if (_vfStreakTexture._tex) return _vfStreakTexture._tex;
+    const c = document.createElement('canvas');
+    c.width = 256; c.height = 32;
+    const ctx = c.getContext('2d');
+    // Horizontal falloff
+    const gx = ctx.createLinearGradient(0, 0, 256, 0);
+    gx.addColorStop(0.00, 'rgba(255,255,255,0)');
+    gx.addColorStop(0.30, 'rgba(255,255,255,0.42)');
+    gx.addColorStop(0.50, 'rgba(255,255,255,1)');
+    gx.addColorStop(0.70, 'rgba(255,255,255,0.42)');
+    gx.addColorStop(1.00, 'rgba(255,255,255,0)');
+    ctx.fillStyle = gx;
+    ctx.fillRect(0, 0, 256, 32);
+    // …multiplied by a vertical falloff so the bar has soft edges, not a cut.
+    ctx.globalCompositeOperation = 'destination-in';
+    const gy = ctx.createLinearGradient(0, 0, 0, 32);
+    gy.addColorStop(0.00, 'rgba(255,255,255,0)');
+    gy.addColorStop(0.50, 'rgba(255,255,255,1)');
+    gy.addColorStop(1.00, 'rgba(255,255,255,0)');
+    ctx.fillStyle = gy;
+    ctx.fillRect(0, 0, 256, 32);
+    ctx.globalCompositeOperation = 'source-over';
+    const t = new THREE.CanvasTexture(c);
+    t.needsUpdate = true;
+    _vfStreakTexture._tex = t;
+    return t;
+}
+
+const _ebState = { mesh: null, adopted: [], nozzles: [], corona: [], streak: [], anchored: false };
+const _ebWorld = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+const _ebColA = (typeof THREE !== 'undefined') ? new THREE.Color(0x2ad4ff) : null; // cool idle cyan
+const _ebColB = (typeof THREE !== 'undefined') ? new THREE.Color(0xffc24a) : null; // engine gold
+const _ebColC = (typeof THREE !== 'undefined') ? new THREE.Color(0xff3ad4) : null; // whip magenta
+const _ebMix = (typeof THREE !== 'undefined') ? new THREE.Color() : null;
+const _vfStreakHot = (typeof THREE !== 'undefined') ? new THREE.Color() : null;
+const _vfWhite = (typeof THREE !== 'undefined') ? new THREE.Color(0xffffff) : null;
+
+// Default nozzle positions, used only if the tagged sprites haven't been
+// built yet (game-models attaches them from its own rAF loop, so on the first
+// frames after the ship appears we may get here first).
+const _EB_NOZZLES = [[-0.024, 0, -0.14], [0.024, 0, -0.14]];
+
+function _ebMakeSprite(map, renderOrder) {
+    const mat = new THREE.SpriteMaterial({
+        map: map,
+        color: 0xffffff,
+        transparent: true,
+        opacity: 0,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        depthTest: true
+    });
+    const s = new THREE.Sprite(mat);
+    s.renderOrder = renderOrder;
+    s.frustumCulled = false;
+    return s;
+}
+
+// Removes only the sprites WE created. Adopted sprites belong to
+// game-models.js — we never remove or dispose those, we only fixed their map.
+function _ebTeardownOwn() {
+    [_ebState.corona, _ebState.streak].forEach((arr) => {
+        arr.forEach((s) => {
+            if (s.parent) s.parent.remove(s);
+            if (s.material) s.material.dispose();
+        });
+        arr.length = 0;
+    });
+}
+
+// ADOPT + REPAIR. Any sprite on the player mesh with no map draws as a solid
+// quad, so we repair by capability, not just by tag — a second untextured
+// sprite added later gets fixed the same way. Records the tagged nozzle
+// sprites (whether or not they needed repair) so the corona layer can anchor
+// onto their real positions.
+function _ebScan(mesh) {
+    const nozzles = [];
+    let repaired = 0;
+    mesh.traverse((child) => {
+        if (!child.isSprite || !child.material) return;
+        if (_ebState.corona.indexOf(child) !== -1) return;   // ours
+        if (_ebState.streak.indexOf(child) !== -1) return;   // ours
+        if (child.userData.isVelocityBloom) nozzles.push(child);
+        // DEFENSIVE REPAIR — a SpriteMaterial with no `map` shades its whole
+        // quad at the flat material colour, i.e. draws a solid rectangle. If
+        // the sprite already carries a map (game-models.js may ship its own
+        // radial falloff) we leave it completely alone: this only ever fills
+        // in a missing texture, it never overrides an existing one.
+        if (!child.material.map) {
+            child.material.map = _vfNozzleTexture();
+            child.material.transparent = true;
+            child.material.depthWrite = false;
+            child.material.needsUpdate = true;   // rebuild the shader WITH the map
+            child.frustumCulled = false;
+            _ebState.adopted.push(child);
+            repaired++;
+        }
+    });
+    _ebState.nozzles = nozzles;
+    return repaired;
+}
+
+function _ebBuild(mesh) {
+    _ebTeardownOwn();
+    // Nozzle anchors: the real bloom sprites if they exist, else the known
+    // exhaust points (we can arrive before game-models has attached them).
+    const anchors = _ebState.nozzles.length
+        ? _ebState.nozzles.map((s) => [s.position.x, s.position.y, s.position.z])
+        : _EB_NOZZLES;
+
+    anchors.forEach((p) => {
+        const corona = _ebMakeSprite(_vfCoronaTexture(), 99); // under the hot core
+        corona.position.set(p[0], p[1], p[2] - 0.012);
+        mesh.add(corona);
+        _ebState.corona.push(corona);
+
+        const streak = _ebMakeSprite(_vfStreakTexture(), 102); // over everything
+        streak.position.set(p[0], p[1], p[2] - 0.004);
+        mesh.add(streak);
+        _ebState.streak.push(streak);
+    });
+
+    _ebState.anchored = _ebState.nozzles.length > 0;
+    console.log('🔥 Engine bloom: ' + _ebState.nozzles.length + ' nozzle sprite(s), ' +
+        _ebState.adopted.length + ' needed a radial alpha map; ' +
+        _ebState.corona.length + ' corona + ' + _ebState.streak.length +
+        ' anamorphic streak attached');
+}
+
+function _updateEngineBloom() {
+    const cs = (typeof window !== 'undefined') ? window.cameraState : null;
+    const mesh = cs && cs.playerShipMesh;
+    if (!mesh) { _ebState.mesh = null; return; }
+
+    // The ship mesh is rebuilt on respawn — rescan when identity changes.
+    if (_ebState.mesh !== mesh) {
+        _ebState.mesh = mesh;
+        _ebState.adopted.length = 0;
+        _ebState.anchored = false;
+        _ebScan(mesh);
+        _ebBuild(mesh);
+    } else if (!_ebState.anchored && ((gameState.frameCount || 0) % 30 === 0)) {
+        // game-models attaches its bloom sprites from its OWN rAF loop, so on
+        // the first frames after the ship appears they may not exist yet and
+        // we anchored on the fallback nozzle points. Keep looking, cheaply,
+        // and re-anchor onto the real positions the moment they show up. Once
+        // anchored this stops entirely — no permanent per-frame traversal.
+        _ebScan(mesh);
+        if (_ebState.nozzles.length) _ebBuild(mesh);
+    }
+    if (!_ebState.corona.length) return;
+
+    const gs = gameState;
+    const spd = (gs.velocityVector && gs.velocityVector.length) ? gs.velocityVector.length() : 0;
+    const now = performance.now();
+
+    // TWO heat channels. `heat` matches the hull rim's 6.8-unit reference so
+    // the nozzles and the fresnel charge agree at cruise; `burn` is log-scaled
+    // to the full 120-unit whip boost, so the glow keeps climbing in exactly
+    // the range where the linear channel has already pinned at 1 — which is
+    // the whole speed band the signature move lives in.
+    const heat = Math.max(0, Math.min(1, spd / 6.8));
+    const burn = Math.max(0, Math.min(1, Math.log(1 + spd / 6.8) / Math.log(1 + 120 / 6.8)));
+
+    // Arc bite while captured, and the release crack, straight off physics.
+    const wf = window.__whipFrame;
+    const carve = (wf && wf.active && typeof wf.carve === 'number') ? wf.carve : 0;
+    const wl = window.__whipLaunch;
+    const crack = wl ? Math.max(0, Math.min(1, wl.e)) : 0;
+    // A brief overbrightness at the very start of the crack — the flash of
+    // the whip letting go, before the speed itself has arrived.
+    const snap = wl ? Math.max(0, 1 - wl.p / 0.30) : 0;
+
+    // Flicker: two unsynced sines so the engines never read as a static decal.
+    const flick = 0.90 + 0.10 * Math.sin(now * 0.021) * Math.sin(now * 0.0073);
+
+    // Colour: cool cyan at rest → gold under thrust → magenta as the whip
+    // bites and cracks. Neon the whole way, never a muted ember.
+    _ebMix.copy(_ebColA).lerp(_ebColB, Math.min(1, heat * 0.85 + burn * 0.5));
+    _ebMix.lerp(_ebColC, Math.min(0.8, carve * 0.55 + crack * 0.7));
+
+    const level = Math.min(1.15, 0.10 + 0.42 * heat + 0.46 * burn +
+        0.30 * carve + 0.55 * crack + 0.45 * snap);
+
+    for (let i = 0; i < _ebState.corona.length; i++) {
+        const corona = _ebState.corona[i];
+        const streak = _ebState.streak[i];
+
+        // NEAR-CAMERA GUARD. In cockpit / zero-offset views the nozzles sit
+        // essentially on the lens, where an additive quad becomes a full-frame
+        // white-out. Fade them out over the last 16 units instead.
+        corona.getWorldPosition(_ebWorld);
+        const dCam = _ebWorld.distanceTo(camera.position);
+        const prox = Math.max(0, Math.min(1, (dCam - 4) / 16));
+        const vis = level * prox * flick;
+
+        corona.material.color.copy(_ebMix);
+        corona.material.opacity = Math.min(0.85, vis * 0.72);
+        const cs2 = 0.030 + 0.052 * heat + 0.070 * burn + 0.055 * carve + 0.110 * crack;
+        // Slight vertical squash: an exhaust bloom is wider than it is tall.
+        corona.scale.set(cs2 * 1.30, cs2 * 0.92, 1);
+
+        // The streak is a HIGH-SPEED signature only — off at cruise, so it
+        // reads as an event rather than as permanent ship decoration.
+        const sLevel = Math.max(0, (burn - 0.34) / 0.66);
+        streak.visible = sLevel > 0.01;
+        if (streak.visible) {
+            _vfStreakHot.copy(_ebMix).lerp(_vfWhite, 0.45);
+            streak.material.color.copy(_vfStreakHot);
+            streak.material.opacity = Math.min(0.80,
+                (sLevel * 0.55 + crack * 0.45 + snap * 0.35) * prox * flick);
+            const w = 0.10 + 0.30 * sLevel + 0.34 * crack;
+            streak.scale.set(w, w * 0.075, 1);
+        }
+    }
+}
+
 // ── Per-frame entry point ───────────────────────────────────────────────────
 function updateVisualFlair() {
     if (typeof gameState === 'undefined' || !gameState.gameStarted ||
@@ -2349,6 +2640,7 @@ function updateVisualFlair() {
     try { _updateWhipPreview(fc); } catch (e) {}
     try { _updateWhipShakeFx(); } catch (e) {}
     try { _updateWhipCharge(fc); } catch (e) {}
+    try { _updateEngineBloom(); } catch (e) {}
     try { _updateLensFlares(fc); } catch (e) {}
     try { _updateAccretionSpiral(fc); } catch (e) {}
     try { _updateRimGlow(fc); } catch (e) {}

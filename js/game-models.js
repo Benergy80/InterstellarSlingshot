@@ -376,8 +376,22 @@ const _sharedRimTime = { value: 0.0 };
 // rim's strength — callers either hold boostT fixed (ambient faction
 // glow on enemies/bosses) or drive it live per-frame (player boost).
 // Returns the uniforms object so callers can mutate boostT later.
+// opts.coreDarken (0-1): dims camera-facing (non-grazing) surfaces by an
+// inverse-fresnel factor BEFORE lighting, so the additive rim term below
+// reads brighter than the core instead of being outweighed by direct-light
+// specular/diffuse response on facing panels (measured rim/core luminance
+// ratio was 0.64 — silhouette DARKER than interior — with coreDarken=0).
+//
+// opts.panelDetail (bool): also multiplies the pre-lit albedo by a
+// triplanar procedural panel-seam + greeble-speckle mask (object-space, so
+// it's stable under the object's own transform and needs no UVs — the
+// player GLB ships zero UV attributes at all). Breaks up the single flat
+// fill into panel plates with dark seams and per-plate shade/speck
+// variance, which is what actually moves per-pixel luminance std instead
+// of just tinting the whole hull.
 function _addFresnelRim(material, opts) {
     opts = opts || {};
+    const panelDetail = !!opts.panelDetail;
     const uniforms = {
         rimColorIdle: { value: new THREE.Color(opts.idle !== undefined ? opts.idle : 0x2ad4ff) },
         rimColorBoostA: { value: new THREE.Color(opts.boostA !== undefined ? opts.boostA : 0xffcc33) },
@@ -386,27 +400,102 @@ function _addFresnelRim(material, opts) {
         rimPower: { value: opts.power !== undefined ? opts.power : 2.2 },
         rimBaseStrength: { value: opts.baseStrength !== undefined ? opts.baseStrength : 1.0 },
         rimBoostStrength: { value: opts.boostStrength !== undefined ? opts.boostStrength : 1.0 },
+        rimCoreDarken: { value: opts.coreDarken !== undefined ? opts.coreDarken : 0.0 },
         uTime: _sharedRimTime
     };
+    if (panelDetail) {
+        uniforms.uRimPanelCell = { value: opts.panelCellSize !== undefined ? opts.panelCellSize : 0.05 };
+    }
 
     material.onBeforeCompile = function (shader) {
         Object.assign(shader.uniforms, uniforms);
 
+        const vertVaryings = panelDetail
+            ? '#include <common>\nvarying vec3 vRimNormalW;\nvarying vec3 vRimViewW;\nvarying vec3 vRimNormalObj;\nvarying vec3 vRimPosObj;'
+            : '#include <common>\nvarying vec3 vRimNormalW;\nvarying vec3 vRimViewW;';
+        const vertAssign = panelDetail
+            ? '#include <begin_vertex>\nvRimNormalW = normalize( normalMatrix * normal );\nvRimViewW = normalize( -( modelViewMatrix * vec4( transformed, 1.0 ) ).xyz );\nvRimNormalObj = normal;\nvRimPosObj = transformed;'
+            : '#include <begin_vertex>\nvRimNormalW = normalize( normalMatrix * normal );\nvRimViewW = normalize( -( modelViewMatrix * vec4( transformed, 1.0 ) ).xyz );';
+
         shader.vertexShader = shader.vertexShader
-            .replace(
-                '#include <common>',
-                '#include <common>\nvarying vec3 vRimNormalW;\nvarying vec3 vRimViewW;'
-            )
-            .replace(
-                '#include <begin_vertex>',
-                '#include <begin_vertex>\nvRimNormalW = normalize( normalMatrix * normal );\nvRimViewW = normalize( -( modelViewMatrix * vec4( transformed, 1.0 ) ).xyz );'
-            );
+            .replace('#include <common>', vertVaryings)
+            .replace('#include <begin_vertex>', vertAssign);
+
+        const fragCommon = panelDetail
+            ? `#include <common>
+varying vec3 vRimNormalW;
+varying vec3 vRimViewW;
+varying vec3 vRimNormalObj;
+varying vec3 vRimPosObj;
+uniform vec3 rimColorIdle;
+uniform vec3 rimColorBoostA;
+uniform vec3 rimColorBoostB;
+uniform float boostT;
+uniform float rimPower;
+uniform float rimBaseStrength;
+uniform float rimBoostStrength;
+uniform float rimCoreDarken;
+uniform float uRimPanelCell;
+uniform float uTime;
+
+float _rimHash21( vec2 p ) {
+    vec3 p3 = fract( vec3( p.xyx ) * 0.1031 );
+    p3 += dot( p3, p3.yzx + 19.19 );
+    return fract( ( p3.x + p3.y ) * p3.z );
+}
+
+float _rimPanelMask( vec2 uv, float cell ) {
+    vec2 cUv = uv / cell;
+    vec2 cId = floor( cUv );
+    vec2 cF = fract( cUv );
+    float lineW = 0.045;
+    float seam = smoothstep( 0.0, lineW, cF.x ) * smoothstep( 0.0, lineW, 1.0 - cF.x )
+               * smoothstep( 0.0, lineW, cF.y ) * smoothstep( 0.0, lineW, 1.0 - cF.y );
+    float panelShade = 0.8 + 0.36 * _rimHash21( cId );
+    float mask = mix( 0.3, 1.0, seam ) * panelShade;
+
+    vec2 gUv = uv / ( cell * 0.24 );
+    float speck = _rimHash21( floor( gUv ) + 11.0 );
+    mask *= 1.0 + step( 0.94, speck ) * 0.4 - step( speck, 0.05 ) * 0.4;
+    return mask;
+}
+
+float _rimPanelDetail( vec3 posObj, vec3 normalObj, float cell ) {
+    vec3 blend = pow( abs( normalize( normalObj ) ), vec3( 4.0 ) );
+    blend /= max( blend.x + blend.y + blend.z, 0.0001 );
+    float mXY = _rimPanelMask( posObj.xy, cell );
+    float mYZ = _rimPanelMask( posObj.yz, cell );
+    float mXZ = _rimPanelMask( posObj.xz, cell );
+    return mXY * blend.z + mYZ * blend.x + mXZ * blend.y;
+}`
+            : `#include <common>
+varying vec3 vRimNormalW;
+varying vec3 vRimViewW;
+uniform vec3 rimColorIdle;
+uniform vec3 rimColorBoostA;
+uniform vec3 rimColorBoostB;
+uniform float boostT;
+uniform float rimPower;
+uniform float rimBaseStrength;
+uniform float rimBoostStrength;
+uniform float rimCoreDarken;
+uniform float uTime;`;
+
+        shader.fragmentShader = shader.fragmentShader.replace('#include <common>', fragCommon);
+
+        const colorInject = panelDetail
+            ? `#include <color_fragment>
+    float _rimFresEarly = pow( 1.0 - clamp( dot( normalize( vRimNormalW ), normalize( vRimViewW ) ), 0.0, 1.0 ), rimPower );
+    diffuseColor.rgb *= mix( 1.0 - rimCoreDarken, 1.0, _rimFresEarly );
+    diffuseColor.rgb *= _rimPanelDetail( vRimPosObj, vRimNormalObj, uRimPanelCell );
+`
+            : `#include <color_fragment>
+    float _rimFresEarly = pow( 1.0 - clamp( dot( normalize( vRimNormalW ), normalize( vRimViewW ) ), 0.0, 1.0 ), rimPower );
+    diffuseColor.rgb *= mix( 1.0 - rimCoreDarken, 1.0, _rimFresEarly );
+`;
 
         shader.fragmentShader = shader.fragmentShader
-            .replace(
-                '#include <common>',
-                '#include <common>\nvarying vec3 vRimNormalW;\nvarying vec3 vRimViewW;\nuniform vec3 rimColorIdle;\nuniform vec3 rimColorBoostA;\nuniform vec3 rimColorBoostB;\nuniform float boostT;\nuniform float rimPower;\nuniform float rimBaseStrength;\nuniform float rimBoostStrength;\nuniform float uTime;'
-            )
+            .replace('#include <color_fragment>', colorInject)
             .replace(
                 '#include <output_fragment>',
                 `
@@ -777,6 +866,16 @@ const PLAYER_HULL_BASE_COLOR = 0x00e8ed;
 // speedKmS), so 6800 "u/s" in the brief == 6.8 raw units — full boost.
 const PLAYER_BOOST_REFERENCE_SPEED = 6.8;
 
+// Player hull is ONE mesh authored with zero UVs (verified against the
+// GLB: POSITION + NORMAL only, no TEXCOORD) so a conventional map/normalMap
+// is out — the panel/greeble detail below is projected triplanar in the
+// mesh's own OBJECT space (see _addFresnelRim's panelDetail path) instead,
+// which needs no UVs and stays fixed to the hull under rotation. cell
+// ~0.045 gives roughly 6 plates across the ~0.28-unit hull length (the
+// existing engine-bloom sprites are hand-placed at local Z=-0.14, i.e.
+// half-length 0.14, in this same object-space frame).
+const PLAYER_HULL_PANEL_CELL = 0.045;
+
 function createPlayerHullMaterial() {
     const material = new THREE.MeshStandardMaterial({
         color: new THREE.Color(PLAYER_HULL_BASE_COLOR),
@@ -796,15 +895,46 @@ function createPlayerHullMaterial() {
         boostB: 0xff2ad4,    // magenta
         boostT: 0.0,
         power: 2.6,
-        baseStrength: 1.3,
-        boostStrength: 2.8
+        baseStrength: 2.4,   // was 1.3 — too weak to beat direct-light response on facing panels (measured rim/core ratio 0.64, i.e. rim READ DARKER than core)
+        boostStrength: 4.2,  // was 2.8
+        coreDarken: 0.55,    // dim facing panels so the rim reads brighter than the core instead of losing to it
+        panelDetail: true,
+        panelCellSize: PLAYER_HULL_PANEL_CELL
     });
 
     return { material: material, uniforms: uniforms };
 }
 
+// Small canvas-baked radial gradient (opaque white core fading to fully
+// transparent at the edge) shared by every engine-bloom sprite. Previously
+// SpriteMaterial had NO map, so three.js drew it as a flat, hard-edged,
+// fully-opaque unit quad — with additive blending and opacity/scale ramping
+// up under boost that read as two screen-filling orange/yellow BOXES
+// stamped over the hull instead of a soft nozzle halo.
+let _engineBloomTexture = null;
+function _getEngineBloomTexture() {
+    if (_engineBloomTexture) return _engineBloomTexture;
+    const size = 128;
+    const canvas = document.createElement('canvas');
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext('2d');
+    const cx = size / 2, cy = size / 2;
+    const gradient = ctx.createRadialGradient(cx, cy, 0, cx, cy, size / 2);
+    gradient.addColorStop(0.0, 'rgba(255,255,255,1.0)');
+    gradient.addColorStop(0.25, 'rgba(255,255,255,0.85)');
+    gradient.addColorStop(0.55, 'rgba(255,255,255,0.32)');
+    gradient.addColorStop(1.0, 'rgba(255,255,255,0.0)');
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, size, size);
+    _engineBloomTexture = new THREE.CanvasTexture(canvas);
+    _engineBloomTexture.needsUpdate = true;
+    return _engineBloomTexture;
+}
+
 function _createEngineBloomSprite() {
     const spriteMaterial = new THREE.SpriteMaterial({
+        map: _getEngineBloomTexture(),  // soft alpha falloff to 0 at the edge — no more hard-edged quad
         color: new THREE.Color(0x552200),
         transparent: true,
         opacity: 0,
@@ -813,7 +943,12 @@ function _createEngineBloomSprite() {
         depthTest: true
     });
     const sprite = new THREE.Sprite(spriteMaterial);
-    sprite.renderOrder = 101; // hull is renderOrder 100 (set by camera-system.js) — bloom draws just after
+    // The hull material is opaque (transparent:false) so it always renders
+    // in three.js's opaque pass BEFORE this additive/transparent sprite
+    // regardless of renderOrder — renderOrder here only orders this sprite
+    // against other transparent draws. Keep it below the hull's 100 so it
+    // never wins a tie against another transparent effect drawn over the ship.
+    sprite.renderOrder = 99;
     sprite.userData.isVelocityBloom = true;
     return sprite;
 }
@@ -877,8 +1012,12 @@ function _runPlayerHullUpgradeLoop() {
     _bloomLerpColor.copy(_bloomIdleColor).lerp(_bloomBoostColor, t);
     mesh.userData._bloomSprites.forEach((sprite) => {
         sprite.material.color.copy(_bloomLerpColor);
-        sprite.material.opacity = t * 0.9;
-        const s = 0.03 + t * 0.15;
+        sprite.material.opacity = t * 0.75;
+        // Clamped well below the hull's own half-length (~0.14, see the
+        // sprite placement above) so full boost halos the nozzle instead
+        // of ballooning into a screen-filling blob (was 0.03->0.18, i.e.
+        // bigger than half the ship itself, at full boost).
+        const s = 0.012 + t * 0.045;
         sprite.scale.set(s, s, 1);
     });
 }

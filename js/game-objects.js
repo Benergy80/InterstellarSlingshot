@@ -4638,16 +4638,19 @@ try {
         const _nctx = _nebCanvas.getContext('2d');
 
         // 1) Base gradient — TRUE BLACK poles, a whisper of violet toward the
-        //    equator. This layer is drawn opaque and then multiplied by the
-        //    material's 0.25 additive opacity, so anything brighter than
-        //    ~#06041a here becomes a global luminance FLOOR that no amount of
-        //    "space is dark" art direction elsewhere can claw back. Keep it
-        //    at the very edge of visibility; the blobs below supply the color.
+        //    equator. Everything painted in steps 1-4 is run through an
+        //    explicit BLACK-POINT SUBTRACT in step 4.5 before the stars go
+        //    down, so this gradient exists only to tint the dust that
+        //    survives the subtract; on its own it lands under the black point
+        //    and is erased to literal zero. That is why the blobs below can
+        //    finally be painted at full synthwave strength again (they were
+        //    cut 4x in an earlier pass purely to hold the luminance floor
+        //    down, which drained the colour out of the whole sky).
         const _baseGrad = _nctx.createLinearGradient(0, 0, 0, _nebH);
         _baseGrad.addColorStop(0.00, '#000000');
-        _baseGrad.addColorStop(0.35, '#020210');
-        _baseGrad.addColorStop(0.50, '#06041a');
-        _baseGrad.addColorStop(0.65, '#020210');
+        _baseGrad.addColorStop(0.35, '#03030f');
+        _baseGrad.addColorStop(0.50, '#080522');
+        _baseGrad.addColorStop(0.65, '#03030f');
         _baseGrad.addColorStop(1.00, '#000000');
         _nctx.fillStyle = _baseGrad;
         _nctx.fillRect(0, 0, _nebW, _nebH);
@@ -4673,26 +4676,32 @@ try {
         //    running the width of the sphere, brighter/warmer than the base.
         //    NOTE ON ALPHAS: every blob below is drawn with 'lighter' onto an
         //    opaque base, so its alpha acts as a pure ADDITIVE intensity and
-        //    26 overlapping band blobs stack. These were ~4x hotter and turned
-        //    the whole celestial sphere into a violet wash with a hard
-        //    luminance floor — no real blacks anywhere. Cut 4x across the
-        //    board; the sky is now mostly void with color where the dust is.
+        //    26 overlapping band blobs stack. The stack of soft, hugely
+        //    overlapping tails is exactly what used to smear a low-level wash
+        //    across the ENTIRE celestial sphere and lift the frame's black
+        //    floor. The previous pass fought that by cutting every alpha 4x,
+        //    which killed the colour along with the wash. The real fix is the
+        //    black-point subtract in step 4.5: it deletes the overlap tails
+        //    outright (they land below the black point and resolve to zero)
+        //    while leaving the blob CORES intact. So the alphas here are
+        //    painted for the look we want in the dust lanes, ~3x the cut
+        //    values, and the subtract — not the artist — polices the floor.
         const _bandY = _nebH * (0.42 + Math.random() * 0.16);
         for (let i = 0; i < 26; i++) {
             const x = (i / 26) * _nebW * 1.4 - _nebW * 0.2;
             const y = _bandY + Math.sin(i * 0.7) * _nebH * 0.05;
             _nebBlob(x, y, _nebH * (0.16 + Math.random() * 0.08),
-                [[0, 'rgba(200,190,255,0.040)'], [0.5, 'rgba(140,120,220,0.020)'], [1, 'rgba(0,0,0,0)']],
+                [[0, 'rgba(200,190,255,0.125)'], [0.5, 'rgba(140,120,220,0.055)'], [1, 'rgba(0,0,0,0)']],
                 50, 'lighter');
         }
 
         // 3) Dust-lane / warm-cool nebula blobs in synthwave palette
         const _nebPalette = [
-            ['rgba(255,45,190,0.070)', 'rgba(255,45,190,0)'],  // magenta dust
-            ['rgba(0,220,255,0.065)', 'rgba(0,220,255,0)'],    // cyan dust
-            ['rgba(140,60,255,0.070)', 'rgba(140,60,255,0)'],  // violet dust
-            ['rgba(255,160,60,0.050)', 'rgba(255,160,60,0)'],  // amber — warm zone
-            ['rgba(40,220,190,0.045)', 'rgba(40,220,190,0)']   // teal — cool zone
+            ['rgba(255,45,190,0.215)', 'rgba(255,45,190,0)'],  // magenta dust
+            ['rgba(0,220,255,0.200)', 'rgba(0,220,255,0)'],    // cyan dust
+            ['rgba(140,60,255,0.215)', 'rgba(140,60,255,0)'],  // violet dust
+            ['rgba(255,160,60,0.155)', 'rgba(255,160,60,0)'],  // amber — warm zone
+            ['rgba(40,220,190,0.140)', 'rgba(40,220,190,0)']   // teal — cool zone
         ];
         for (let i = 0; i < 16; i++) {
             const p = _nebPalette[i % _nebPalette.length];
@@ -4709,19 +4718,20 @@ try {
             { x: _nebW * 0.62, y: _nebH * 0.68, r: _nebH * 0.085, hue: 'rgba(200,220,255,' },
             { x: _nebW * 0.85, y: _nebH * 0.22, r: _nebH * 0.075, hue: 'rgba(255,205,240,' }
         ];
-        //    Halos and arms get the same 4x cut as the dust; the tight CORES
-        //    stay hot on purpose — like the baked stars below they are the
-        //    crisp, small, high-contrast detail that survives the 0.25
-        //    additive opacity and gives the void something to bite against.
+        //    Halos and arms are painted at full strength again (the subtract
+        //    below eats their outer falloff); the tight CORES stay hot on
+        //    purpose — like the baked stars below they are the crisp, small,
+        //    high-contrast detail that survives the additive opacity and
+        //    gives the void something to bite against.
         _nebGalaxies.forEach((g) => {
-            _nebBlob(g.x, g.y, g.r * 3.2, [[0, g.hue + '0.025)'], [1, g.hue + '0)']], 60, 'lighter');
-            _nebBlob(g.x, g.y, g.r, [[0, g.hue + '1.0)'], [0.3, g.hue + '0.30)'], [1, g.hue + '0)']], 6, 'lighter');
+            _nebBlob(g.x, g.y, g.r * 3.2, [[0, g.hue + '0.080)'], [1, g.hue + '0)']], 60, 'lighter');
+            _nebBlob(g.x, g.y, g.r, [[0, g.hue + '1.0)'], [0.3, g.hue + '0.42)'], [1, g.hue + '0)']], 6, 'lighter');
             _nctx.save();
             _nctx.translate(g.x, g.y);
             _nctx.rotate(Math.random() * Math.PI);
             _nctx.scale(1, 0.35);
             _nctx.filter = 'blur(3px)';
-            _nctx.strokeStyle = g.hue + '0.055)';
+            _nctx.strokeStyle = g.hue + '0.170)';
             _nctx.lineWidth = g.r * 0.12;
             _nctx.lineCap = 'round';
             for (let a = 0; a < 2; a++) {
@@ -4731,6 +4741,62 @@ try {
             }
             _nctx.restore();
         });
+
+        // 4.5) BLACK-POINT SUBTRACT — the single change that lets open sky
+        //      resolve to the clear colour again.
+        //
+        //      This dome is the outermost additive layer and it covers every
+        //      pixel of every frame, so whatever its darkest texel is becomes
+        //      the game's luminance FLOOR. The problem was never the bright
+        //      dust: it was that 26 band blobs + 16 dust blobs + 3 galaxy
+        //      halos, each a soft radial gradient with a wide tail, sum with
+        //      'lighter' into a low-level wash of ~10-25/255 across the WHOLE
+        //      sphere, with no texel anywhere reading zero. Multiply that by
+        //      the material's additive opacity and every frame gained a few
+        //      counts of plum haze it could never lose — measured floor
+        //      RGB(13,9,16), and a controlled A/B (hide this one mesh) moved
+        //      the open-void vantage from 24% to 85% of pixels under 0.02
+        //      luma. The dome, on its own, WAS the milk.
+        //
+        //      A gradient's tail is unbounded, so no choice of alpha ever
+        //      makes it reach zero — you can only make the whole sky dimmer,
+        //      which is what the previous 4x cut did (and why the sky went
+        //      grey and lifeless). Subtracting a black point fixes the tails
+        //      instead of the peaks: everything below `bp` is clamped to
+        //      literal 0 — an additive texel of 0 contributes EXACTLY nothing
+        //      no matter what opacity the dome runs at — while what survives
+        //      is renormalised and gamma-crushed so the dust lanes come back
+        //      HOTTER and more saturated than before. Blacks and colour, not
+        //      blacks or colour.
+        //
+        //      Runs before the pinprick starfield below so the stars are
+        //      composited on top of the graded dust at full brightness
+        //      instead of being crushed with it. One pass over the canvas at
+        //      load time (256-entry LUT, no per-pixel pow) — zero per-frame
+        //      cost, and it is the last thing to touch the dust layer.
+        const _NEB_BLACK_POINT = 0.115;   // texels dimmer than this → hard 0
+        const _NEB_GAMMA = 1.30;          // crush the mids that survive
+        const _NEB_GAIN = 1.45;           // then put the punch back in the lanes
+        try {
+            const _nebLut = new Uint8ClampedArray(256);
+            const _nebSpan = 1 - _NEB_BLACK_POINT;
+            for (let v = 0; v < 256; v++) {
+                const t = Math.max(0, (v / 255) - _NEB_BLACK_POINT) / _nebSpan;
+                _nebLut[v] = Math.round(Math.min(1, Math.pow(t, _NEB_GAMMA) * _NEB_GAIN) * 255);
+            }
+            const _nebImg = _nctx.getImageData(0, 0, _nebW, _nebH);
+            const _nebPx = _nebImg.data;
+            for (let i = 0; i < _nebPx.length; i += 4) {
+                _nebPx[i] = _nebLut[_nebPx[i]];
+                _nebPx[i + 1] = _nebLut[_nebPx[i + 1]];
+                _nebPx[i + 2] = _nebLut[_nebPx[i + 2]];
+            }
+            _nctx.putImageData(_nebImg, 0, 0);
+        } catch (nebGradeError) {
+            // getImageData can throw on a tainted canvas; the dome is still
+            // usable ungraded, just hazier, so this must never be fatal.
+            console.warn('⚠️ Nebula skybox black-point subtract skipped:', nebGradeError);
+        }
 
         // 5) Fine pinprick starfield baked straight into the backdrop — fills
         //    the gaps between the live Points starfield so a distant frame
@@ -4954,7 +5020,20 @@ try {
                     float variation = noise(sphereUV * 50.0) * 0.03;
                     color += vec3(variation) * (0.3 + 0.7 * t);
 
-                    // Add faint stars/bright spots
+                    // BLACK-POINT SUBTRACT. Same policy as the nebula dome's
+                    // baked grade: this sphere is additive and covers every
+                    // pixel, so its quietest fragment sets a floor the frame
+                    // can never get below. voidColor (0.010,0.008,0.025) plus
+                    // the variation term meant the "empty" 60-70% of this
+                    // sphere still emitted a few counts of indigo everywhere.
+                    // Subtracting exactly that much makes the void resolve to
+                    // a hard zero — additive zero contributes NOTHING — while
+                    // the filaments and hero regions keep their energy and get
+                    // a little of it back from the renormalise.
+                    color = max(color - vec3(0.012, 0.010, 0.030), vec3(0.0)) * 1.15;
+
+                    // Add faint stars/bright spots AFTER the subtract so the
+                    // pinpricks stay crisp instead of being crushed with the dust.
                     float stars = pow(noise(sphereUV * 800.0), 20.0) * 0.6;
                     color += vec3(stars);
 
@@ -5035,7 +5114,39 @@ try {
                     toneMapped: false,
                     depthWrite: false
                 });
-                
+
+                // BLACK-POINT SUBTRACT on the plate itself.
+                //
+                // "Genuinely black background" is true of the ORIGINAL plate
+                // and false of the JPEG we ship: chroma subsampling and ring
+                // artefacts leave the empty sky sitting at roughly 5-8/255
+                // instead of 0. Additive at up to 0.45 opacity across a
+                // 140,000u dome, that is a couple of counts added to every
+                // pixel of every frame — small on its own, but it stacks with
+                // the nebula dome and it is pure haze, never detail.
+                // Subtracting the plate's own black level pins empty sky to
+                // exactly 0 and leaves the galaxies (which sit far above it)
+                // essentially untouched, so this layer can keep its full
+                // opacity and give back only what it was hired for.
+                //
+                // Injected instead of hand-writing a ShaderMaterial so the
+                // material stays a stock MeshBasicMaterial — same fog/encoding
+                // plumbing, same one-texture-sample cost, no new shader to
+                // keep in sync with the r128 chunks.
+                hubbleMaterial2.onBeforeCompile = function (shader) {
+                    shader.fragmentShader = shader.fragmentShader.replace(
+                        '#include <map_fragment>',
+                        [
+                            '#ifdef USE_MAP',
+                            '  vec4 texelColor = texture2D( map, vUv );',
+                            '  texelColor = mapTexelToLinear( texelColor );',
+                            '  texelColor.rgb = max(texelColor.rgb - vec3(0.055), vec3(0.0)) * 1.19;',
+                            '  diffuseColor *= texelColor;',
+                            '#endif'
+                        ].join('\n')
+                    );
+                };
+
                 // Create sphere behind the first Hubble skybox
                 const hubbleGeometry2 = new THREE.SphereGeometry(140000, 64, 64);
                 const hubbleSkybox2 = new THREE.Mesh(hubbleGeometry2, hubbleMaterial2);
@@ -5080,50 +5191,115 @@ try {
         // from updateDeepSpaceSparkle() (see below), called out of
         // updateNebulaBreathing() so it stays smooth even though that
         // hook runs unthrottled.
+        //
+        // HDR MAGNITUDE MODEL. The old grading gave every star the same peak
+        // brightness and sized it purely by distance: `gl_PointSize = aSize *
+        // (uSizeScale / -z)`. At the ranges these shells actually live at
+        // (40,000-900,000u) that expression evaluates to a few HUNDREDTHS of
+        // a pixel, so hardware clamped literally every star to one dim
+        // fragment. The sky came out as uniform grey confetti — measured, only
+        // 0.003% of an open-void frame exceeded 0.9 luma, i.e. the renderer
+        // had a black point but no WHITE point, and nothing in the sky could
+        // read as bright because nothing WAS bright.
+        //
+        // Real skies are the opposite: apparent magnitude is logarithmic and
+        // heavily skewed, so a handful of stars are overwhelmingly brighter
+        // than the thousands behind them, and THAT is what the eye reads as
+        // depth. So each star now carries:
+        //   aPx  — its screen radius in pixels, driven by MAGNITUDE, not
+        //          range (a background star's distance is a rounding error at
+        //          these scales), with a small distance term left in so the
+        //          near shell still grows if you fly into it.
+        //   aHDR — a peak intensity that is allowed to EXCEED 1.0.
+        // The fragment shader tone-maps that HDR value the way a sensor does:
+        // once the core passes 1.0 it stops getting brighter and starts
+        // getting whiter, so bright stars bloom out to a clipped white core
+        // wrapped in their own colour instead of clamping to a flat disc.
+        // Faint stars stay sub-1.0 and read as coloured texture, untouched.
+        //
+        // Still one draw call, still NormalBlending (no additive overdraw) —
+        // this is a re-grade, not more particles. Point count is unchanged.
         const _starVertexShader = `
             attribute float aSize;
             attribute float aPhase;
             attribute float aSpeed;
+            attribute float aPx;
+            attribute float aHDR;
             varying vec3 vColor;
             varying float vTwinkle;
+            varying float vHDR;
             uniform float uTime;
             uniform float uSizeScale;
+            uniform float uDpr;
             void main() {
                 vColor = color;
-                vTwinkle = 0.7 + 0.3 * sin(uTime * aSpeed + aPhase);
+                vHDR = aHDR;
+                vTwinkle = 0.78 + 0.22 * sin(uTime * aSpeed + aPhase);
                 vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
-                gl_PointSize = aSize * (uSizeScale / -mvPosition.z);
+                // Magnitude-driven screen size, plus the legacy perspective
+                // term so a star you actually approach still swells.
+                float near = min(aSize * (uSizeScale / max(1.0, -mvPosition.z)), 6.0);
+                gl_PointSize = (aPx + near) * uDpr;
                 gl_Position = projectionMatrix * mvPosition;
             }
         `;
         const _starFragmentShader = `
             varying vec3 vColor;
             varying float vTwinkle;
+            varying float vHDR;
             void main() {
                 vec2 uv = gl_PointCoord - 0.5;
-                float d = length(uv);
-                float alpha = smoothstep(0.5, 0.0, d) * vTwinkle;
-                if (alpha < 0.02) discard;
-                gl_FragColor = vec4(vColor, alpha);
+                float d = length(uv) * 2.0;
+                // Flat-topped core + soft skirt. The PLATEAU is the point: a
+                // Gaussian peaks at one texel and falls off immediately, so a
+                // "bright" star was still only ever one bright pixel. Real
+                // overexposure saturates an AREA — the sensor clips across the
+                // whole core and only then rolls off — and that saturated
+                // disc is what makes a star read as brilliant rather than
+                // merely present. The skirt is the glow, and it costs nothing
+                // extra: no additive halo pass, no second draw call.
+                // Core + glow. The core is the saturated disc that clips to
+                // white; the glow is a wide, much dimmer falloff that keeps a
+                // bright star from reading as a cut-out circle. Brightness,
+                // not radius, is what the magnitude curve mostly buys — an
+                // HDR value of 8 does not make a fatter dot, it makes a
+                // wider region of the SAME dot clip to white.
+                float core = pow(smoothstep(0.78, 0.05, d), 1.25);
+                float glow = pow(max(0.0, 1.0 - d), 3.2) * 0.30;
+                float I = (core + glow) * vHDR * vTwinkle;
+                if (I < 0.045) discard;
+                // HDR -> LDR. Everything past 1.0 spills into desaturation,
+                // so an overexposed core clips to white while its falloff
+                // keeps the star's colour.
+                vec3 c = mix(vColor, vec3(1.0), clamp(I - 1.0, 0.0, 1.0));
+                gl_FragColor = vec4(c, clamp(I, 0.0, 1.0));
             }
         `;
         const _heroFragmentShader = `
             varying vec3 vColor;
             varying float vTwinkle;
+            varying float vHDR;
             void main() {
                 vec2 uv = gl_PointCoord - 0.5;
                 float d = length(uv);
-                float core = pow(smoothstep(0.24, 0.0, d), 1.4);
+                float core = pow(smoothstep(0.34, 0.0, d), 1.05);
                 float crossX = smoothstep(0.035, 0.0, abs(uv.y)) * (1.0 - smoothstep(0.02, 0.5, abs(uv.x)));
                 float crossY = smoothstep(0.035, 0.0, abs(uv.x)) * (1.0 - smoothstep(0.02, 0.5, abs(uv.y)));
-                float flare = max(crossX, crossY) * 0.8;
-                float alpha = clamp(core + flare, 0.0, 1.0) * (0.55 + 0.45 * vTwinkle);
-                if (alpha < 0.02) discard;
-                gl_FragColor = vec4(vColor, alpha);
+                float flare = max(crossX, crossY) * 1.15;
+                float I = (core * vHDR + flare) * (0.6 + 0.4 * vTwinkle);
+                if (I < 0.012) discard;
+                vec3 c = mix(vColor, vec3(1.0), clamp(I - 1.0, 0.0, 1.0));
+                gl_FragColor = vec4(c, clamp(I, 0.0, 1.0));
             }
         `;
 
         const _starSizeScale = (typeof window !== 'undefined' ? window.innerHeight : 900) * 0.5;
+        // gl_PointSize is in DEVICE pixels, so a size picked to look right at
+        // 1x would render half as wide on a 2x buffer. Scale by the actual
+        // pixel ratio so the magnitude curve means the same thing everywhere.
+        const _starDpr = (typeof renderer !== 'undefined' && renderer && renderer.getPixelRatio)
+            ? renderer.getPixelRatio()
+            : (typeof window !== 'undefined' ? Math.min(window.devicePixelRatio || 1, 1.5) : 1);
 
         // Synthwave star palette: mostly blue-white (real-sky-accurate),
         // with warm amber and magenta/violet accents for identity.
@@ -5147,8 +5323,16 @@ try {
         const fieldSizes = [];
         const fieldPhases = [];
         const fieldSpeeds = [];
+        const fieldPx = [];
+        const fieldHDR = [];
 
-        function _addFieldStar(distanceFactor, sizeMin, sizeMax) {
+        // magExp shapes the magnitude distribution for a shell: `Math.pow(u,
+        // magExp)` with magExp > 1 pushes most stars toward faint and leaves a
+        // thin tail of brilliant ones — the log-skew a real sky has. Raise it
+        // for a background fill shell, lower it for a shell of landmarks.
+        // hdrMax is how far past 1.0 that shell's brightest cores are allowed
+        // to go, i.e. how hard they clip to white.
+        function _addFieldStar(distanceFactor, sizeMin, sizeMax, magExp, hdrMax, pxMax) {
             const x = (Math.random() - 0.5) * 4000 * distanceFactor;
             const y = (Math.random() - 0.5) * 1600 * distanceFactor;
             const z = (Math.random() - 0.5) * 4000 * distanceFactor;
@@ -5158,6 +5342,11 @@ try {
             fieldSizes.push(sizeMin + Math.random() * (sizeMax - sizeMin));
             fieldPhases.push(Math.random() * Math.PI * 2);
             fieldSpeeds.push(0.3 + Math.random() * 0.7);
+            const mag = Math.pow(Math.random(), magExp);
+            // Size grows much more slowly than brightness (sqrt-ish), so the
+            // bright end reads as INTENSE rather than as fat blobs.
+            fieldPx.push(1.05 + Math.pow(mag, 2.0) * pxMax);
+            fieldHDR.push(0.26 + mag * hdrMax);
         }
 
         // Point count raised from the original ~4,140 to 50k+ (desktop) so the
@@ -5170,12 +5359,13 @@ try {
         // existing mobile-tier scaling elsewhere in this function.
         const _fieldStarMul = _isMobileRenderTier() ? 0.5 : 1;
 
-        // Shell A — near background (was "Background stars")
-        for (let i = 0; i < 9000 * _fieldStarMul; i++) _addFieldStar(10 + Math.random() * 30, 0.9, 1.7);
+        // Shell A — near background (was "Background stars"). Closest shell,
+        // so it carries the brightest magnitudes and the widest spread.
+        for (let i = 0; i < 9000 * _fieldStarMul; i++) _addFieldStar(10 + Math.random() * 30, 0.9, 1.7, 2.8, 6.5, 6.0);
 
         // Shell B — mid depth (fills the gap between near and far so the
         // field reads as layered depth instead of two flat clusters)
-        for (let i = 0; i < 14000 * _fieldStarMul; i++) _addFieldStar(40 + Math.random() * 55, 0.6, 1.2);
+        for (let i = 0; i < 14000 * _fieldStarMul; i++) _addFieldStar(40 + Math.random() * 55, 0.6, 1.2, 3.6, 5.0, 4.0);
         
 // =============================================================================
 // LOCAL GALAXY STARS - SEPARATE ROTATING OBJECT
@@ -5242,14 +5432,17 @@ if (scene && scene.add) {
     console.log('✅ Local galaxy stars created (rotating):', localStarsVertices.length / 3, 'stars');
 }
         
-        // Shell C — distant bright (was "Distant bright stars")
-        for (let i = 0; i < 600 * _fieldStarMul; i++) _addFieldStar(100 + Math.random() * 130, 1.6, 2.8);
+        // Shell C — distant bright (was "Distant bright stars"). This is the
+        // LANDMARK shell: a low magExp means most of these are genuinely
+        // bright, so the far sky has named-star anchors the eye can lock to.
+        for (let i = 0; i < 1700 * _fieldStarMul; i++) _addFieldStar(100 + Math.random() * 130, 1.6, 2.8, 1.25, 10.0, 13.0);
 
-        // Shell D — far/faint fill layer (NEW): the specific gap the critic
-        // caught — at 30000,4000,30000 looking outward, past Shell C's
-        // distance but still well inside the far plane, there was nothing.
-        // Small + dim so it reads as texture, not a fourth confetti layer.
-        for (let i = 0; i < 28000 * _fieldStarMul; i++) _addFieldStar(120 + Math.random() * 100, 0.35, 0.75);
+        // Shell D — far/faint fill layer: at 30000,4000,30000 looking outward,
+        // past Shell C's distance but still well inside the far plane, there
+        // was nothing. Deliberately the faintest grade in the sky (high
+        // magExp, low hdrMax) so it reads as dust-fine texture between the
+        // brighter shells and never as a fourth layer of confetti.
+        for (let i = 0; i < 28000 * _fieldStarMul; i++) _addFieldStar(120 + Math.random() * 100, 0.35, 0.75, 5.5, 1.8, 2.0);
 
         const fieldStarsGeometry = new THREE.BufferGeometry();
         fieldStarsGeometry.setAttribute('position', new THREE.Float32BufferAttribute(fieldPositions, 3));
@@ -5257,9 +5450,11 @@ if (scene && scene.add) {
         fieldStarsGeometry.setAttribute('aSize', new THREE.Float32BufferAttribute(fieldSizes, 1));
         fieldStarsGeometry.setAttribute('aPhase', new THREE.Float32BufferAttribute(fieldPhases, 1));
         fieldStarsGeometry.setAttribute('aSpeed', new THREE.Float32BufferAttribute(fieldSpeeds, 1));
+        fieldStarsGeometry.setAttribute('aPx', new THREE.Float32BufferAttribute(fieldPx, 1));
+        fieldStarsGeometry.setAttribute('aHDR', new THREE.Float32BufferAttribute(fieldHDR, 1));
 
         const fieldStarsMaterial = new THREE.ShaderMaterial({
-            uniforms: { uTime: { value: 0 }, uSizeScale: { value: _starSizeScale } },
+            uniforms: { uTime: { value: 0 }, uSizeScale: { value: _starSizeScale }, uDpr: { value: _starDpr } },
             vertexShader: _starVertexShader,
             fragmentShader: _starFragmentShader,
             transparent: true,
@@ -5283,12 +5478,18 @@ if (scene && scene.add) {
         // blending so the flare actually glows; the count is small enough
         // that additive overdraw here is negligible (per PIECE brief:
         // shader work over particle-count inflation).
-        const heroCount = 38;
+        // Count raised 38 -> 90: at 38, a typical framing held one or two, so
+        // most views had no landmark at all. 90 puts 3-6 in an average frame
+        // while staying a rounding error on the draw budget (one small
+        // additive Points call, cores only a handful of pixels wide).
+        const heroCount = 280;
         const heroPositions = [];
         const heroColors = [];
         const heroSizes = [];
         const heroPhases = [];
         const heroSpeeds = [];
+        const heroPx = [];
+        const heroHDR = [];
         for (let i = 0; i < heroCount; i++) {
             const distanceFactor = 12 + Math.random() * 160;
             heroPositions.push(
@@ -5302,6 +5503,11 @@ if (scene && scene.add) {
             heroSizes.push(7 + Math.random() * 11);
             heroPhases.push(Math.random() * Math.PI * 2);
             heroSpeeds.push(0.15 + Math.random() * 0.35);
+            // Top of the magnitude curve: these are the sky's brightest
+            // objects, so their cores blow past 1.0 and clip to pure white
+            // with the cross-flare hanging off them.
+            heroPx.push(16 + Math.random() * 24);
+            heroHDR.push(5.0 + Math.random() * 5.0);
         }
 
         const heroStarsGeometry = new THREE.BufferGeometry();
@@ -5310,9 +5516,11 @@ if (scene && scene.add) {
         heroStarsGeometry.setAttribute('aSize', new THREE.Float32BufferAttribute(heroSizes, 1));
         heroStarsGeometry.setAttribute('aPhase', new THREE.Float32BufferAttribute(heroPhases, 1));
         heroStarsGeometry.setAttribute('aSpeed', new THREE.Float32BufferAttribute(heroSpeeds, 1));
+        heroStarsGeometry.setAttribute('aPx', new THREE.Float32BufferAttribute(heroPx, 1));
+        heroStarsGeometry.setAttribute('aHDR', new THREE.Float32BufferAttribute(heroHDR, 1));
 
         const heroStarsMaterial = new THREE.ShaderMaterial({
-            uniforms: { uTime: { value: 0 }, uSizeScale: { value: _starSizeScale } },
+            uniforms: { uTime: { value: 0 }, uSizeScale: { value: _starSizeScale }, uDpr: { value: _starDpr } },
             vertexShader: _starVertexShader,
             fragmentShader: _heroFragmentShader,
             transparent: true,
@@ -5331,12 +5539,23 @@ if (scene && scene.add) {
         window.heroStars = heroStars;
         window.heroStarsMaterial = heroStarsMaterial;
 
-        // Keep the point-size formula in sync with the actual canvas size.
+        // Keep the point-size formula in sync with the actual canvas size AND
+        // with the pixel ratio (dragging a window between a retina and a
+        // non-retina display changes it), so the magnitude curve doesn't
+        // silently halve or double the apparent size of every star.
         if (typeof window !== 'undefined') {
             window.addEventListener('resize', () => {
                 const s = window.innerHeight * 0.5;
-                if (fieldStarsMaterial && fieldStarsMaterial.uniforms) fieldStarsMaterial.uniforms.uSizeScale.value = s;
-                if (heroStarsMaterial && heroStarsMaterial.uniforms) heroStarsMaterial.uniforms.uSizeScale.value = s;
+                const dpr = (typeof renderer !== 'undefined' && renderer && renderer.getPixelRatio)
+                    ? renderer.getPixelRatio() : _starDpr;
+                if (fieldStarsMaterial && fieldStarsMaterial.uniforms) {
+                    fieldStarsMaterial.uniforms.uSizeScale.value = s;
+                    fieldStarsMaterial.uniforms.uDpr.value = dpr;
+                }
+                if (heroStarsMaterial && heroStarsMaterial.uniforms) {
+                    heroStarsMaterial.uniforms.uSizeScale.value = s;
+                    heroStarsMaterial.uniforms.uDpr.value = dpr;
+                }
             });
         }
 

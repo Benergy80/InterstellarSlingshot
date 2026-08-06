@@ -1314,7 +1314,22 @@ function _tlDrawBracket(ctx, x, y, r, scheme, alpha) {
     ctx.restore();
 }
 
-function _tlDrawTag(ctx, obj, x, y, r, distance, scheme, isHostile) {
+// Angular beveled-corner plate path (chamfered, not rounded — matches the
+// HUD's cut-corner chrome elsewhere) used as the tag's backing plate.
+function _tlChamferRectPath(ctx, x, y, w, h, c) {
+    ctx.beginPath();
+    ctx.moveTo(x + c, y);
+    ctx.lineTo(x + w - c, y);
+    ctx.lineTo(x + w, y + c);
+    ctx.lineTo(x + w, y + h - c);
+    ctx.lineTo(x + w - c, y + h);
+    ctx.lineTo(x + c, y + h);
+    ctx.lineTo(x, y + h - c);
+    ctx.lineTo(x, y + c);
+    ctx.closePath();
+}
+
+function _tlDrawTag(ctx, obj, x, tagY, r, distance, scheme, isHostile) {
     const ud = obj.userData || {};
     const name = ud.name || (isHostile ? 'Hostile Contact' : 'Unknown Contact');
     let line2;
@@ -1325,8 +1340,31 @@ function _tlDrawTag(ctx, obj, x, y, r, distance, scheme, isHostile) {
     } else {
         line2 = `${Math.round(distance)}u`;
     }
-    const tagY = y + r + 14;
     ctx.save();
+
+    // Backing plate behind the two text lines — canvas text with only a
+    // drop shadow disappears over a bright explosion or a saturated nebula
+    // cloud; a translucent plate keeps the readout legible over anything
+    // the scene throws behind it, diegetic Star-Citizen-contact-tag style.
+    ctx.font = 'bold 11px "Courier New", monospace';
+    const nameW = ctx.measureText(_tlTruncate(name, 26)).width;
+    ctx.font = '10px "Courier New", monospace';
+    const line2W = ctx.measureText(line2).width;
+    const plateW = Math.max(nameW, line2W) + 14;
+    const plateH = 30;
+    const plateX = x - plateW / 2;
+    const plateY = tagY - 13;
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = 'rgba(6,10,20,0.72)';
+    _tlChamferRectPath(ctx, plateX, plateY, plateW, plateH, 4);
+    ctx.fill();
+    ctx.strokeStyle = `rgba(${scheme.line},0.8)`;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(plateX + 4, plateY + plateH - 0.5);
+    ctx.lineTo(plateX + plateW - 4, plateY + plateH - 0.5);
+    ctx.stroke();
+
     ctx.textAlign = 'center';
     ctx.shadowColor = 'rgba(0,0,0,0.9)';
     ctx.shadowBlur = 3;
@@ -1353,14 +1391,16 @@ function _tlDrawTag(ctx, obj, x, y, r, distance, scheme, isHostile) {
 }
 
 // Compute the actual screen-space bounding box _tlDrawTag is about to paint
-// (name line + distance/HP line + HP bar, all centred under the bracket at
-// tagY = y + r + 14) so the declutter pass can test real label footprints
-// against each other instead of a fixed-radius guess anchored on the
-// bracket centre. Two ships can sit shoulder-to-shoulder on screen with
-// wildly different apparent radii (near/small vs far/huge-boss) — comparing
-// bracket centres either lets their tags collide anyway or declutters pairs
-// that were never going to overlap.
-function _tlMeasureTagBox(ctx, obj, x, y, r, distance, isHostile) {
+// (backing plate + name line + distance/HP line + HP bar, anchored at the
+// caller-supplied tagY) so the declutter pass can test real label
+// footprints against each other — and against the HUD panels/viewport
+// margins seeded into placedTagBoxes before the loop runs — instead of a
+// fixed-radius guess anchored on the bracket centre. Two ships can sit
+// shoulder-to-shoulder on screen with wildly different apparent radii
+// (near/small vs far/huge-boss) — comparing bracket centres either lets
+// their tags collide anyway or declutters pairs that were never going to
+// overlap.
+function _tlMeasureTagBox(ctx, obj, x, tagY, r, distance, isHostile) {
     const ud = obj.userData || {};
     const name = ud.name || (isHostile ? 'Hostile Contact' : 'Unknown Contact');
     let line2;
@@ -1371,16 +1411,42 @@ function _tlMeasureTagBox(ctx, obj, x, y, r, distance, isHostile) {
     } else {
         line2 = `${Math.round(distance)}u`;
     }
-    const tagY = y + r + 14;
     ctx.font = 'bold 11px "Courier New", monospace';
     const nameW = ctx.measureText(_tlTruncate(name, 26)).width;
     ctx.font = '10px "Courier New", monospace';
     const line2W = ctx.measureText(line2).width;
     const barW = isHostile ? Math.max(30, r * 1.15) : 0;
-    const halfW = Math.max(nameW, line2W, barW) / 2 + 3; // +3px breathing room per glyph edge
-    const top = tagY - 12; // ~ascent of the bold 11px name line
-    const bottom = isHostile ? (tagY + 18 + 4) : (tagY + 13 + 4); // HP bar (if any) + its shadow blur
+    const plateW = Math.max(nameW, line2W) + 14; // matches _tlDrawTag's plate sizing
+    const halfW = Math.max(plateW / 2, barW / 2 + 3);
+    const top = tagY - 13; // plate top
+    const bottom = isHostile ? (tagY + 18 + 4) : (tagY + 17); // HP bar (if any) + its shadow blur, else plate bottom
     return { left: x - halfW, right: x + halfW, top, bottom };
+}
+
+// Screen-space AABBs for the always-on HUD panel chrome, refreshed each
+// frame (layout can change on resize) but cheap — five elements, one
+// getBoundingClientRect() each. Hidden panels (mobile's `display:none`)
+// report a zero-size rect and are skipped rather than seeded as a
+// zero-area "always overlapping" box.
+function _tlGetPanelBoxes() {
+    const panels = _hudSpectacleGetPanels();
+    const boxes = [];
+    for (let i = 0; i < panels.length; i++) {
+        const rect = panels[i].getBoundingClientRect();
+        if (rect.width <= 0 || rect.height <= 0) continue;
+        boxes.push({ left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom });
+    }
+    return boxes;
+}
+
+// Nudge a tag box fully inside the canvas (minus pad) on one axis, so a
+// bracket sitting right at the viewport edge doesn't paint a tag that runs
+// off-canvas top/right (or bottom/left). Returns the offset to apply, not a
+// new box — callers shift both the box and the draw anchor by it.
+function _tlClampAxis(minVal, maxVal, boundMin, boundMax) {
+    if (minVal < boundMin) return boundMin - minVal;
+    if (maxVal > boundMax) return boundMax - maxVal;
+    return 0;
 }
 
 function _tlBoxesOverlap(a, b, pad) {
@@ -1547,11 +1613,26 @@ function updateTargetLayer() {
         return a.distance - b.distance;
     });
 
-    const placedTagBoxes = []; // real screen-space AABBs of tags already drawn this frame
-    const TAG_DECLUTTER_PAD = 6; // px gap required between neighboring tag boxes
+    const TAG_DECLUTTER_PAD = 6;     // px gap required between neighboring tag boxes
+    const TAG_VIEWPORT_PAD = 8;      // px kept clear between a tag plate and the canvas edge
+    const BRACKET_DECLUTTER_PAD = 2; // px gap required between neighboring bracket boxes
+
+    // Seed the tag-declutter pass with everything a tag must not be painted
+    // on top of, before a single contact is drawn: the five always-on HUD
+    // panels (so the nearest-contact tag doesn't render underneath the
+    // top-left/bottom-right chrome, illegible) and a pair of off-viewport
+    // sentinel strips along the left/right margins (a catch-all for a tag
+    // whose plate is wider than the per-axis clamp below can fully absorb —
+    // it falls back to a declutter pip instead of a plate hanging half off
+    // the canvas). Brackets get their own, separate seed/pass: bracket
+    // clutter is a bracket-vs-bracket problem, not a bracket-vs-panel one.
+    const placedTagBoxes = _tlGetPanelBoxes();
+    placedTagBoxes.push({ left: -100000, right: TAG_VIEWPORT_PAD, top: -100000, bottom: h + 100000 });
+    placedTagBoxes.push({ left: w - TAG_VIEWPORT_PAD, right: 100000, top: -100000, bottom: h + 100000 });
+    const placedBracketBoxes = []; // real screen-space AABBs of brackets already drawn this frame
 
     for (let i = 0; i < records.length; i++) {
-        const { obj, wp, distance, isHostile, isLocked } = records[i];
+        const { obj, wp, distance, isHostile, isLocked, isCurrentTarget } = records[i];
         const scheme = isLocked ? TARGET_LAYER_COLORS.locked : (isHostile ? TARGET_LAYER_COLORS.hostile : TARGET_LAYER_COLORS.neutral);
 
         const proj = _tlProjectToScreen(wp, camera, w, h);
@@ -1574,18 +1655,47 @@ function updateTargetLayer() {
         // bracket (so it doesn't pop as it crosses the exact edge), further
         // out gets the clamped chevron instead.
         if (proj.x > -160 && proj.x < w + 160 && proj.y > -160 && proj.y < h + 160 && !proj.behind) {
-            _tlDrawBracket(ctx, proj.x, proj.y, drawRadius, scheme, alpha);
+            // Bracket declutter: records are walked in locked -> current
+            // target -> nearest priority order, so anything already in
+            // placedBracketBoxes outranks this contact. A lower-priority
+            // bracket that would stack its corner ticks on top of one
+            // already placed draws shrunk instead — still a distinct,
+            // readable reticle, not a merged blob of overlapping ticks.
+            let bracketRadius = drawRadius;
+            let bracketAlpha = alpha;
+            if (!isLocked && !isCurrentTarget) {
+                const fullBox = { left: proj.x - drawRadius, right: proj.x + drawRadius, top: proj.y - drawRadius, bottom: proj.y + drawRadius };
+                for (let j = 0; j < placedBracketBoxes.length; j++) {
+                    if (_tlBoxesOverlap(fullBox, placedBracketBoxes[j], BRACKET_DECLUTTER_PAD)) {
+                        bracketRadius = Math.max(9, drawRadius * 0.55);
+                        bracketAlpha = alpha * 0.7;
+                        break;
+                    }
+                }
+            }
+            _tlDrawBracket(ctx, proj.x, proj.y, bracketRadius, scheme, bracketAlpha);
+            placedBracketBoxes.push({ left: proj.x - bracketRadius, right: proj.x + bracketRadius, top: proj.y - bracketRadius, bottom: proj.y + bracketRadius });
 
-            const tagBox = _tlMeasureTagBox(ctx, obj, proj.x, proj.y, drawRadius, distance, isHostile);
+            // Tag placement: measure at the bracket's actual on-screen size
+            // (shrunk or not) so the tag still hangs directly under what's
+            // drawn, then clamp the whole box fully onto the canvas before
+            // testing it against panels/sentinels/other tags.
+            const tagY0 = proj.y + bracketRadius + 14;
+            const unclamped = _tlMeasureTagBox(ctx, obj, proj.x, tagY0, bracketRadius, distance, isHostile);
+            const dx = _tlClampAxis(unclamped.left, unclamped.right, TAG_VIEWPORT_PAD, w - TAG_VIEWPORT_PAD);
+            const dy = _tlClampAxis(unclamped.top, unclamped.bottom, TAG_VIEWPORT_PAD, h - TAG_VIEWPORT_PAD);
+            const tagX = proj.x + dx, tagY = tagY0 + dy;
+            const tagBox = { left: unclamped.left + dx, right: unclamped.right + dx, top: unclamped.top + dy, bottom: unclamped.bottom + dy };
+
             let overlapsPlacedTag = false;
             for (let j = 0; j < placedTagBoxes.length; j++) {
                 if (_tlBoxesOverlap(tagBox, placedTagBoxes[j], TAG_DECLUTTER_PAD)) { overlapsPlacedTag = true; break; }
             }
             if (!overlapsPlacedTag) {
-                _tlDrawTag(ctx, obj, proj.x, proj.y, drawRadius, distance, scheme, isHostile);
+                _tlDrawTag(ctx, obj, tagX, tagY, bracketRadius, distance, scheme, isHostile);
                 placedTagBoxes.push(tagBox);
             } else {
-                _tlDrawDeclutterDot(ctx, proj.x, proj.y, drawRadius, scheme);
+                _tlDrawDeclutterDot(ctx, proj.x, proj.y, bracketRadius, scheme);
             }
             if (weaponsArmed && (isHostile || isLocked)) {
                 _tlDrawLeadPip(ctx, obj, wp, distance, proj, camera, w, h, scheme);

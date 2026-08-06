@@ -880,6 +880,16 @@ function triggerPlayerDeath(title, message, delayMs) {
     if (gameState.velocityVector && gameState.velocityVector.set) {
         gameState.velocityVector.set(0, 0, 0);
     }
+    // Dying mid-whip: drop the arc and any in-flight launch ramp, or the rail
+    // keeps driving camera.position (and re-asserting it after integration)
+    // straight through the death sequence.
+    gameState.slingshotWhip = null;
+    gameState.slingshotLaunchRamp = null;
+    if (typeof window !== 'undefined') {
+        window.__whipLaunch = null;
+        window.__whipDilation = 0;
+        if (window.__whipFrame) window.__whipFrame.active = false;
+    }
 
     // Hide the third-person player ship mesh so its silhouette doesn't
     // sit untouched inside the explosion fireball.
@@ -1868,6 +1878,10 @@ function executeSlingshot() {
             destName: (_navT && _navT.userData && _navT.userData.name) || null
         };
 
+        // A previous release's crack ramp can never still be running here
+        // (capture is gated on !slingshot.active) — cleared defensively so a
+        // stale ramp can't fight the new arc's rail velocity.
+        gameState.slingshotLaunchRamp = null;
         gameState.slingshot.active = true;
         gameState.slingshot.maxSpeed = boostVelocity; // velocity-limiter cap during the ride
         gameState.slingshot.timeRemaining = gameState.slingshot.duration + 1600;
@@ -2172,6 +2186,7 @@ const _whipLocal = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
 const _whipRollQ = (typeof THREE !== 'undefined') ? new THREE.Quaternion() : null;
 const _whipAxisZ = (typeof THREE !== 'undefined') ? new THREE.Vector3(0, 0, 1) : null;
 const _whipLook = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+const _whipRailV = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
 const _whipToBody = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
 const _whipTgt = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
 
@@ -2256,9 +2271,61 @@ function updateSlingshotWhip() {
     const px = bp.x + Math.cos(theta) * rNow;
     const pz = bp.z + Math.sin(theta) * rNow;
     const py = bp.y + w.y0 * (1 - 0.18 * scoop);
+    // ── RAIL VELOCITY: THE WHIP HAS TO *REPORT* THE SPEED IT IS FLYING ───
+    // This line used to be `velocityVector.set(0,0,0)`. Gravity owning the
+    // ship is true — but zeroing the velocity vector told every downstream
+    // system the ship was STOPPED for the entire 1.6s arc. The min-velocity
+    // floor then refilled it to exactly gameState.minVelocity, which is why
+    // a capture measured as "0.4 held flat for 1,515 ms, then a single-frame
+    // step to 146.9": a dead stall on the signature move, followed by a
+    // discontinuity. Nothing was wrong with the ARC — the arc was sweeping
+    // the ship around the star at ~570 u/s the whole time. It was the
+    // REPORTED speed that flatlined, and the HUD, the engine bloom, the hull
+    // rim charge, the warp tunnel and the streak field all read that number.
+    //
+    // So publish the truth: the exact per-frame displacement the rail just
+    // moved the ship through, in the same "distance per 60fps frame" unit
+    // every other speed in this file uses. The rate table's shape (ease-in
+    // capture → dilation dip at periapsis → hard release ramp) becomes a
+    // curve you can SEE on the ship instead of a number nobody sampled.
+    // Position stays 100% rail-authoritative — the integrator re-asserts
+    // _railPos after it runs, so this velocity never moves the ship twice.
+    // dt for the rail is measured on the whip's OWN clock — the same Date.now()
+    // that produced `theta` above — never gameState.dtFrames. The two are
+    // sampled at different points in the frame and dtFrames is clamped, so
+    // dividing a Date.now()-derived displacement by it mismatches numerator
+    // and denominator and shreds the ramp into frame-to-frame noise (measured:
+    // the arc reading 5.3 / 2.9 / 5.3 / 4.9 on consecutive samples). Same
+    // clock top and bottom = the exact speed the rail actually travelled.
+    const _railDt = w._prevT
+        ? Math.max(0.15, Math.min(8, (Date.now() - w._prevT) / (1000 / 60)))
+        : 1;
+    w._prevT = Date.now();
+    if (_whipRailV) {
+        if (w._prev) {
+            _whipRailV.set(px - w._prev.x, py - w._prev.y, pz - w._prev.z)
+                .divideScalar(_railDt);
+        } else {
+            // First frame of the capture: carry the velocity the player
+            // actually ARRIVED with, so entering the whip is continuous too.
+            _whipRailV.copy(gameState.velocityVector);
+            w._railVel = _whipRailV.clone();
+        }
+        // Light dt-corrected smoothing so display-rate jitter doesn't chop
+        // the ramp into stairs; the underlying curve is untouched.
+        if (!w._railVel) w._railVel = _whipRailV.clone();
+        else w._railVel.lerp(_whipRailV, 1 - Math.pow(0.55, _railDt));
+        gameState.velocityVector.copy(w._railVel);
+    } else {
+        gameState.velocityVector.set(0, 0, 0);
+    }
+    if (!w._prev) w._prev = { x: px, y: py, z: pz };
+    else { w._prev.x = px; w._prev.y = py; w._prev.z = pz; }
+    // Handed to the integrator so the rail — not the physics chain — has the
+    // final word on where the ship is at the end of the frame.
+    if (!w._railPos) w._railPos = new THREE.Vector3();
+    w._railPos.set(px, py, pz);
     camera.position.set(px, py, pz);
-    // Gravity owns the ship during the whip
-    gameState.velocityVector.set(0, 0, 0);
 
     // TRUE direction of travel: finite-difference in the BODY's frame (so a
     // moving planet's own drift never leaks into the heading), which folds the
@@ -2365,7 +2432,30 @@ function updateSlingshotWhip() {
         // Launch: mostly aim, some tangent — physical but predictable
         const launchDir = w.aim.clone().multiplyScalar(0.65)
             .addScaledVector(tangent, 0.35).normalize();
-        gameState.velocityVector.copy(launchDir).multiplyScalar(w.boost);
+        // ── THE CRACK IS A RAMP, NOT A TELEPORT ──────────────────────────
+        // This was `velocityVector.copy(launchDir).multiplyScalar(w.boost)` —
+        // one frame, rail speed → full boost, a step function. A step has no
+        // shape: there is no instant at which the player watches the ship
+        // GO, and every speed-driven visual (engine bloom, hull rim charge,
+        // warp tunnel, streak field) snapped on fully-formed in a single
+        // 16ms tick, which reads as a cut, not an acceleration.
+        // Instead the release hands off at exactly the speed the arc was
+        // already carrying — zero discontinuity — and then accelerates to
+        // the full boost over ~260ms on a convex curve. Convex is the whole
+        // point: like a real whip the tip does most of its accelerating at
+        // the very end, so the ship leans out, then TEARS away. Same final
+        // speed, same maxSpeed clamp, same everything downstream.
+        const _exitSpd = w._railVel ? w._railVel.length() : 0;
+        const _rampFrom = Math.min(w.boost,
+            Math.max(gameState.minVelocity || 0.4, _exitSpd));
+        gameState.velocityVector.copy(launchDir).multiplyScalar(_rampFrom);
+        gameState.slingshotLaunchRamp = {
+            dir: launchDir.clone(),
+            from: _rampFrom,
+            to: w.boost,
+            t0: Date.now(),
+            durMs: 260
+        };
         // Face the launch direction NOW. On a full-sweep timeout release
         // the aim was never reached, so launchDir can be up to 180° from
         // the arc tangent the camera was tracking — without this snap the
@@ -2480,6 +2570,43 @@ function updateSlingshotWhip() {
 }
 if (typeof window !== 'undefined') window.updateSlingshotWhip = updateSlingshotWhip;
 
+// ── LAUNCH RAMP — the ~260ms in which the whip actually cracks ──────────────
+// Runs immediately after updateSlingshotWhip() at the top of the physics
+// frame, so the ramped velocity is what integrates THIS tick. It sets the
+// velocity outright (the release already snapped the camera onto launchDir —
+// this window is on-rails by design) and the rest of the physics chain still
+// layers thrust and gravity on top afterwards; the existing limiter caps the
+// result at slingshot.maxSpeed, which is the boost, so nothing overshoots.
+//
+// Publishes window.__whipLaunch = { p, e, from, to, speed } for the framing
+// and FX layers: p is linear 0→1 through the window, e the eased 0→1 the
+// speed actually follows. visual-flair reads it to swell the engine bloom on
+// the same curve the ship is accelerating on, so the glow and the motion are
+// the same event instead of two effects that happen to overlap.
+function updateSlingshotLaunchRamp() {
+    if (typeof gameState === 'undefined') return 0;
+    const r = gameState.slingshotLaunchRamp;
+    if (!r || !r.dir || !gameState.velocityVector) {
+        if (typeof window !== 'undefined') window.__whipLaunch = null;
+        return 0;
+    }
+    const p = Math.max(0, Math.min(1, (Date.now() - r.t0) / (r.durMs || 260)));
+    // Convex attack: a gentle lean-out for the first third, then the tail
+    // snaps. (Blended with a little smoothstep so frame one isn't a stall.)
+    const e = 0.30 * (p * p * (3 - 2 * p)) + 0.70 * Math.pow(p, 2.7);
+    const speed = r.from + (r.to - r.from) * e;
+    gameState.velocityVector.copy(r.dir).multiplyScalar(speed);
+    if (typeof window !== 'undefined') {
+        window.__whipLaunch = { p: p, e: e, from: r.from, to: r.to, speed: speed };
+    }
+    if (p >= 1) {
+        gameState.slingshotLaunchRamp = null;
+        if (typeof window !== 'undefined') window.__whipLaunch = null;
+    }
+    return e;
+}
+if (typeof window !== 'undefined') window.updateSlingshotLaunchRamp = updateSlingshotLaunchRamp;
+
 // =============================================================================
 // MAIN ENHANCED PHYSICS UPDATE FUNCTION - SPECIFICATION COMPLIANT
 // =============================================================================
@@ -2507,10 +2634,18 @@ function updateEnhancedPhysics() {
         gameState.enhancedPropertiesInitialized = true;
     }
 
-    // Gravity whip: while captured, the arc owns position + orientation
-    // (velocity is zeroed each frame so the rest of physics is inert).
+    // Gravity whip: while captured, the arc owns position + orientation.
+    // Velocity is no longer zeroed — it now carries the arc's REAL rail
+    // speed (see updateSlingshotWhip) so every speed-driven readout and
+    // visual rides the sweep. Position is still rail-authoritative: the
+    // integrator re-asserts _railPos after the physics chain has run.
     if (gameState.slingshotWhip && typeof updateSlingshotWhip === 'function') {
         updateSlingshotWhip();
+    }
+    // …and the ~260ms crack after the release, which hands off from the arc's
+    // exit speed to the full boost instead of stepping there in one frame.
+    if (gameState.slingshotLaunchRamp) {
+        updateSlingshotLaunchRamp();
     }
 
     // Get keys reference from game-controls.js
@@ -3706,7 +3841,22 @@ if (dampedVelocity.length() >= gameState.minVelocity ||
     // 60fps frame" (every speed readout/clamp above assumes it) — scaling
     // the integration by dtF is what makes travel speed wall-clock true.
     camera.position.addScaledVector(gameState.velocityVector, dtF);
-    
+
+    // GRAVITY-WHIP RAIL RE-ASSERT. The arc is the sole authority on where the
+    // ship is while captured — it always was, it just used to enforce that by
+    // zeroing the velocity, which cost the whole maneuver its speed readout.
+    // Now the whip publishes a real rail velocity and a rail position, and
+    // this puts the ship back on the rail after the physics chain (thrust,
+    // gravity, damping, collision push-out) has had its say. Net position is
+    // bit-identical to the old behaviour; the difference is that
+    // velocityVector spends the arc telling the truth.
+    if (gameState.slingshotWhip && gameState.slingshotWhip._railPos) {
+        camera.position.copy(gameState.slingshotWhip._railPos);
+        if (gameState.slingshotWhip._railVel) {
+            gameState.velocityVector.copy(gameState.slingshotWhip._railVel);
+        }
+    }
+
     // SPECIFICATION: Auto-Navigation - Automatically disengages when energy drops below 5
     if (gameState.autoNavigating && gameState.currentTarget && gameState.energy > 5) {
         if (gameState.autoNavOrienting) {
