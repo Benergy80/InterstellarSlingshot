@@ -2075,7 +2075,10 @@ function spawnEliteGuardian(galaxyId, faction, spawnPosition = null) {
     bossSystem.eliteGuardians[faction].guardianRef = guardian;
     bossSystem.activeBosses.push(guardian);
 
-    // Show warning
+    // Show warning — and fade any praise text so it's readable
+    if (typeof window.clearArcadePraise === 'function') {
+        window.clearArcadePraise();
+    }
     if (typeof showBossWarning === 'function') {
         showBossWarning(`⚠️ ${guardian.userData.name} ⚠️`);
     }

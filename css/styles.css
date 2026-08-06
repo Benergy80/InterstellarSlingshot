@@ -1144,12 +1144,14 @@ body.mobile-mode .mobile-ui {
 
 /* Hide mobile controls during intro and loading */
 body.intro-active .mobile-controls-container,
+body.intro-active .mobile-controls-top,
 body.intro-active .mobile-floating-status,
 body.intro-active .nav-panel-mobile {
     display: none !important;
 }
 
 #loadingScreen:not([style*="display: none"]) ~ * .mobile-controls-container,
+#loadingScreen:not([style*="display: none"]) ~ .mobile-controls-top,
 #loadingScreen:not([style*="display: none"]) ~ * .mobile-floating-status {
     display: none !important;
 }
@@ -1164,7 +1166,11 @@ body.intro-active .nav-panel-mobile {
 /* Swipe indicators for navigation panel - Cyberpunk theme */
 .swipe-indicator {
     position: fixed;
-    top: 20px;
+    /* In line with the top-left Flight Controls / Pause cluster (top:12px,
+       38px tall) so the whole top edge reads as one row. */
+    top: 12px;
+    height: 38px;
+    box-sizing: border-box;
     display: flex;
     align-items: center;
     gap: 4px;

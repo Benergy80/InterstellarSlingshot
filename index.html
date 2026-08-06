@@ -23,8 +23,8 @@
     <!-- BUILD MARKER — identifies which branch/build is loaded in the console.
          This lives only on the feature branch; main will not print it. -->
     <script>
-      window.BUILD_ID = 'claude/fix-missiles-undefined-hud';
-      window.BUILD_TAG = '20260703r';
+      window.BUILD_ID = 'claude/anaglyph-3d';
+      window.BUILD_TAG = '20260721u';
       console.log(
         '%c🚀 BUILD: ' + window.BUILD_ID + '  ·  ' + window.BUILD_TAG,
         'background:#0a7d2c;color:#fff;font-size:14px;font-weight:bold;padding:4px 10px;border-radius:4px;'
@@ -120,7 +120,7 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     
     <!-- Game Styles -->
-    <link rel="stylesheet" href="css/styles.css">
+    <link rel="stylesheet" href="css/styles.css?v=20260721h">
     <style>
         /* Mobile browser UI hiding */
         html, body {
@@ -422,12 +422,19 @@
         display: block !important;
     }
 
+    /* EXCEPTION: Keep the pause menu visible on mobile — its panel carries
+       .ui-panel, which the rule above would hide, leaving a dead black
+       overlay with no way to resume. */
+    #pauseOverlay .ui-panel {
+        display: block !important;
+    }
+
     /* Show mobile controls */
     .mobile-controls-container {
         display: flex !important;
     }
 
-    /* Show mobile top row separately */
+    /* Show the flank button columns */
     .mobile-controls-top {
         display: flex !important;
     }
@@ -459,6 +466,7 @@
     /* Hide during intro */
     body.intro-active #achievementPopup,
     body.intro-active .mobile-controls-container,
+    body.intro-active .mobile-controls-top,
     body.intro-active .nav-panel-mobile {
         display: none !important;
     }
@@ -516,6 +524,7 @@
             /* Hide during intro */
             body.intro-active #achievementPopup,
             body.intro-active .mobile-controls-container,
+            body.intro-active .mobile-controls-top,
             body.intro-active .nav-panel-mobile {
                 display: none !important;
             }
@@ -544,13 +553,15 @@
             pointer-events: auto;
         }
 
-        /* Top row: Flight controls and Emergency warp - flanking the indicators */
+        /* Flank columns above the action buttons, hugging the true screen
+           edges (lives at body level — viewport-relative fixed positioning).
+           Hidden by default; the mobile media query shows it. */
         .mobile-controls-top {
             position: fixed;
             bottom: 100px;
-            left: -5px;
-            right: -5px;
-            display: flex;
+            left: 8px;
+            right: 8px;
+            display: none;
             justify-content: space-between;
             padding: 0;
             z-index: 25;
@@ -559,6 +570,14 @@
 
         .mobile-controls-top .mobile-btn {
             pointer-events: auto;
+        }
+
+        /* Stacked flank columns inside the top row */
+        .mobile-btn-col {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            pointer-events: none;
         }
 
         /* Bottom row: Main action buttons */
@@ -764,9 +783,18 @@
                 <button id="skipTrackBtn" class="small-control-btn" type="button" title="Skip to next soundtrack">
                     <i class="fas fa-forward mr-1"></i>Skip
                 </button>
+                <button id="anaglyphBtn" class="small-control-btn" type="button" title="Red/cyan anaglyph 3D (backtick key)">
+                    <i class="fas fa-glasses mr-1"></i>3D
+                </button>
                 <button id="pauseBtn" class="small-control-btn" type="button">
                     <i class="fas fa-pause mr-1" id="pauseIcon"></i>Pause
                 </button>
+            </div>
+            <!-- Shown only while 3D mode is on (anaglyph-3d.js) -->
+            <div id="anaglyphDepthRow" class="mt-2" style="display:none;">
+                <div class="text-xs text-gray-300 mb-1">3D Depth</div>
+                <input id="anaglyphDepthDesktop" type="range" min="0.05" max="0.35" step="0.01"
+                       style="width:100%;accent-color:#0ff;cursor:pointer;">
             </div>
         </div>
 
@@ -953,23 +981,6 @@
 
 <!-- MOBILE CONTROLS -->
 <div class="mobile-controls-container">
-    <!-- Top row: Flight Controls, Music, Skip, Emergency Warp -->
-    <div class="mobile-controls-top">
-        <button class="mobile-btn" onclick="showMobilePanel('controls')" title="Flight Controls">
-            <i class="fas fa-gamepad"></i>
-        </button>
-        <button id="mobileMusicBtn" class="mobile-btn" type="button" title="Music On/Off">
-            <i class="fas fa-volume-up" id="mobileMusicIcon"></i>
-        </button>
-        <button id="mobileSkipTrackBtn" class="mobile-btn" type="button" title="Skip Track">
-            <i class="fas fa-forward"></i>
-        </button>
-        <button class="mobile-btn warp" onclick="mobileEmergencyWarp()" title="Emergency Warp">
-            <i class="fa-solid fa-triangle-exclamation"></i>
-            <span class="warp-count-badge" id="mobileWarpCountBadge">5</span>
-        </button>
-    </div>
-
     <!-- Bottom row: Main action buttons -->
     <div class="mobile-controls">
         <button class="mobile-btn missile"
@@ -1004,6 +1015,38 @@
             <i class="fas fa-shield-alt"></i>
         </button>
     </div>
+</div>
+
+<!-- Flanking columns hugging the screen edges above the action buttons.
+     Left: Flight Controls over 3D Mode. Right: Pause over Emergency Warp.
+     MUST live outside .mobile-controls-container — that container has a
+     translateX transform, which would hijack this fixed positioning. -->
+<div class="mobile-controls-top">
+    <div class="mobile-btn-col">
+        <button id="mobileTiltBtn" class="mobile-btn" type="button" title="Tilt Steering On/Off">
+            <i class="fas fa-mobile-alt"></i>
+        </button>
+        <button id="mobileAnaglyphBtn" class="mobile-btn" type="button" title="Red/Cyan 3D Mode">
+            <i class="fas fa-glasses"></i>
+        </button>
+    </div>
+    <div class="mobile-btn-col">
+        <button id="mobilePauseBtn" class="mobile-btn" type="button" title="Pause / Audio">
+            <i class="fas fa-pause" id="mobilePauseIcon"></i>
+        </button>
+        <button class="mobile-btn warp" onclick="mobileEmergencyWarp()" title="Emergency Warp">
+            <i class="fas fa-forward-fast"></i>
+            <span class="warp-count-badge" id="mobileWarpCountBadge">5</span>
+        </button>
+    </div>
+</div>
+
+<!-- Vertical 3D depth slider — left edge, above the tilt toggle. Shown only
+     while 3D mode is on (anaglyph-3d.js). Body-level fixed positioning. -->
+<div id="mobileDepthWrap" style="display:none; position:fixed; left:12px; bottom:224px; z-index:26; pointer-events:none;">
+    <input id="anaglyphDepthMobile" type="range" min="0.05" max="0.35" step="0.01"
+           style="pointer-events:auto; -webkit-appearance:slider-vertical; writing-mode:vertical-lr; direction:rtl;
+                  width:30px; height:140px; accent-color:#0ff; touch-action:none;">
 </div>
 
     <!-- Mobile Navigation Panel -->
@@ -1180,31 +1223,33 @@
     <!-- Game Scripts -->
     <!-- boot.js FIRST: init-order registry every other script signals into -->
     <script src="js/boot.js?v=20260703r"></script>
+    <!-- Anaglyph 3D effect (red/cyan glasses) — before game scripts so gameRender() is available -->
+    <script src="js/anaglyph-3d.js?v=20260721t"></script>
     <!-- Load GLTFLoader before game-models.js -->
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
     <script src="js/game-models.js?v=20260703r"></script>
     <script src="js/camera-system.js?v=20260703r"></script>
     <script src="js/cosmic-features.js"></script>
-    <script src="js/game-objects.js?v=20260703r"></script>
-    <script src="js/game-controls.js?v=20260703r"></script>
+    <script src="js/game-objects.js?v=20260721j"></script>
+    <script src="js/game-controls.js?v=20260721u"></script>
     <script src="js/civilian-combat.js?v=20260703r"></script>
-    <script src="js/visual-flair.js?v=20260703r"></script>
+    <script src="js/visual-flair.js?v=20260721l"></script>
     <script src="js/playtest-probe.js?v=20260703r"></script>
     <script src="js/arcade.js?v=20260703r"></script>
     <script src="js/outer-systems.js?v=20260703r"></script>
     <script src="js/interstellar-asteroids.js"></script>
-    <script src="js/game-physics.js?v=20260703r"></script>
-    <script src="js/game-ui.js?v=20260703r"></script>
+    <script src="js/game-physics.js?v=20260721j"></script>
+    <script src="js/game-ui.js?v=20260721e"></script>
     <script src="js/atmospheric-perspective.js"></script>
     <script src="js/game-intro.js?v=20260703r"></script>
     <script src="js/game-shields.js"></script>
-    <script src="js/game-music.js"></script>
+    <script src="js/game-music.js?v=20260721s"></script>
     <script src="js/victory-replay.js?v=20260703r"></script>
-    <script src="js/autopilot.js?v=20260703r"></script>
+    <script src="js/autopilot.js?v=20260721n"></script>
     <script src="js/game-core.js?v=20260703r"></script>
 
     <!-- Mobile Script -->
-    <script src="js/mobile-controls.js"></script>
+    <script src="js/mobile-controls.js?v=20260721s"></script>
 
     <!-- Initialization Script -->
     <script>

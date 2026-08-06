@@ -2647,7 +2647,10 @@ function initAudio() {
         // sets the overall level. The old 0.2 × 0.2 = 0.04 chain made
         // weapon peaks inaudible at 0.012 once the duplicate-AudioContext
         // bug was fixed.
-        effectsGain.gain.setValueAtTime(1.0, 0);
+        // Default SFX level 50% (was unity — too loud as a default). The
+        // pause-menu SFX slider and toggleSfx both respect window._sfxLevel.
+        window._sfxLevel = window._sfxLevel ?? 0.5;
+        effectsGain.gain.setValueAtTime(window._sfxLevel, 0);
         
         console.log('Enhanced audio system initialized (waiting for user interaction)');
         // Preload MP3 soundtrack alongside synth audio
@@ -2993,7 +2996,8 @@ function switchToAmbientMusic() {
 function toggleSfx() {
     window._sfxMuted = !window._sfxMuted;
     if (typeof effectsGain !== 'undefined' && effectsGain && audioContext) {
-        const v = window._sfxMuted ? 0 : 1;
+        // Unmute restores the user's chosen level, not full blast
+        const v = window._sfxMuted ? 0 : (window._sfxLevel ?? 0.5);
         effectsGain.gain.value = v;   // immediate
         effectsGain.gain.setValueAtTime(v, audioContext.currentTime);  // cancel-proof
     }
@@ -5483,23 +5487,28 @@ function createDamageDirectionIndicator(direction) {
     // Position and text based on direction (REMOVED EMOJIS).
     // On desktop the top center is occupied by the title panel and the
     // bottom center by the DEMO AUTOPILOT pill, so we push the top and
-    // bottom indicators clear of those. Mobile keeps the tight 20px
-    // offsets — the title is smaller and the demo HUD is at the top.
+    // bottom indicators clear of those. Mobile: top sits just below the
+    // floating status pills (top:56px + ~49px tall); bottom sits above
+    // the DEMO pill (bottom:92px + 38px tall).
     const _isMobileViewport = (typeof window !== 'undefined') &&
         (('ontouchstart' in window) || window.innerWidth < 768);
-    const _topOffset    = _isMobileViewport ? 20 : 110;  // below title panel
-    const _bottomOffset = _isMobileViewport ? 20 : 80;   // above demo pill
+    const _topOffset    = _isMobileViewport ? 112 : 110;  // below title panel / mobile top stack
+    const _bottomOffset = _isMobileViewport ? 138 : 80;   // above demo pill
     let text = '';
     let positionStyle = '';
 
+    // Mobile: left and right sit on DIFFERENT lines (the two texts are wide
+    // enough to collide in the middle of a phone screen when both fire).
+    const _leftTop  = _isMobileViewport ? '44%' : '50%';
+    const _rightTop = _isMobileViewport ? '56%' : '50%';
     switch (direction) {
         case 'left':
             text = '< UNDER ATTACK';
-            positionStyle = 'left: 20px; top: 50%; transform: translateY(-50%);';
+            positionStyle = 'left: 20px; top: ' + _leftTop + '; transform: translateY(-50%);';
             break;
         case 'right':
             text = 'UNDER ATTACK >';
-            positionStyle = 'right: 20px; top: 50%; transform: translateY(-50%);';
+            positionStyle = 'right: 20px; top: ' + _rightTop + '; transform: translateY(-50%);';
             break;
         case 'top':
             text = '^ UNDER ATTACK';
@@ -6170,7 +6179,10 @@ setTimeout(() => {
         if (typeof renderer !== 'undefined') {
             renderer.setSize(window.innerWidth, window.innerHeight);
         }
-        
+        if (typeof anaglyphMode !== 'undefined') {
+            anaglyphMode.resize(window.innerWidth, window.innerHeight);
+        }
+
         gameState.crosshairX = window.innerWidth / 2;
         gameState.crosshairY = window.innerHeight / 2;
     });
@@ -6850,8 +6862,12 @@ let borgAlarmActive = false;
 function startBorgAlarm() {
     if (borgAlarmActive || !audioContext || audioContext.state === 'suspended') return;
 
-    // Cinematic arrival card alongside the alarm
-    if (typeof flashEventText === 'function') {
+    // Cinematic arrival card alongside the alarm. Cooldown: the alarm can
+    // churn on/off at the range boundary (and this fn is called per frame),
+    // so without it the card re-fires endlessly and stacks into a smear.
+    if (typeof flashEventText === 'function' &&
+        Date.now() - (window._lastBorgCardAt || 0) > 25000) {
+        window._lastBorgCardAt = Date.now();
         flashEventText('⬢ THE BORG ⬢', '#33ff55', 'RESISTANCE IS FUTILE');
     }
     
@@ -7682,6 +7698,7 @@ function togglePause() {
         console.error('gameState not defined, cannot toggle pause');
         return;
     }
+
     
     gameState.paused = !gameState.paused;
 
@@ -7709,18 +7726,47 @@ function togglePause() {
     // Create pause overlay if it doesn't exist
     let pauseOverlay = document.getElementById('pauseOverlay');
     if (!pauseOverlay) {
+        // AUDIO + CONTROLS sections live in the pause menu on BOTH
+        // platforms (desktop got the same upgrades per Ben, Jul 21).
+        // _mobPause only picks the resume-instruction wording now.
+        const _mobPause = ('ontouchstart' in window) || window.innerWidth <= 768;
         pauseOverlay = document.createElement('div');
         pauseOverlay.id = 'pauseOverlay';
         pauseOverlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;' +
             'background:rgba(0,0,0,0.75);display:none;align-items:center;' +
             'justify-content:center;z-index:9999;';
+        const audioSection = `
+                <div style="border-top:1px solid rgba(0,150,255,0.4);margin-top:18px;padding-top:14px;">
+                    <h3 class="text-cyan-400 font-bold mb-3" style="letter-spacing:2px;">AUDIO</h3>
+                    <div class="flex gap-2 mb-4 justify-center flex-wrap">
+                        <button id="mobileMusicBtn" class="space-btn rounded px-4 py-2" type="button" title="Music On/Off">
+                            <i class="fas fa-volume-up mr-2" id="mobileMusicIcon"></i>Music
+                        </button>
+                        <button id="mobileSkipTrackBtn" class="space-btn rounded px-4 py-2" type="button" title="Skip Track">
+                            <i class="fas fa-forward mr-2"></i>Skip
+                        </button>
+                        <button id="pauseSfxBtn" class="space-btn rounded px-4 py-2" type="button" title="Sound effects on/off">
+                            <i class="fas fa-bullhorn mr-2" id="pauseSfxIcon"></i>SFX
+                        </button>
+                    </div>
+                    <div class="text-sm text-gray-300 mb-1" style="text-align:left;">Music Volume</div>
+                    <input id="pauseMusicVol" type="range" min="0" max="1" step="0.05" style="width:100%;accent-color:#22d3ee;">
+                    <div class="text-sm text-gray-300 mb-1 mt-3" style="text-align:left;">SFX Volume</div>
+                    <input id="pauseSfxVol" type="range" min="0" max="1" step="0.05" style="width:100%;accent-color:#22d3ee;">
+                </div>
+                <div style="border-top:1px solid rgba(0,150,255,0.4);margin-top:14px;padding-top:14px;">
+                    <h3 class="text-cyan-400 font-bold mb-3" style="letter-spacing:2px;">CONTROLS</h3>
+                    <button id="pauseFlightBtn" class="space-btn rounded px-4 py-2" type="button" title="Show the flight controls reference">
+                        <i class="fas fa-gamepad mr-2"></i>Flight Controls
+                    </button>
+                </div>`;
         pauseOverlay.innerHTML = `
-            <div class="text-center ui-panel rounded-lg p-8">
+            <div class="text-center ui-panel rounded-lg p-8" style="max-width:92vw;max-height:86vh;overflow-y:auto;">
                 <h2 class="text-3xl font-bold text-cyan-400 mb-4">GAME PAUSED</h2>
-                <p class="text-gray-300 mb-6">Press P or click Resume to continue</p>
+                <p class="text-gray-300 mb-6">${_mobPause ? 'Tap Resume to continue' : 'Press P or click Resume to continue'}</p>
                 <button id="pauseResumeBtn" class="space-btn rounded px-6 py-3">
                     <i class="fas fa-play mr-2"></i>Resume Game
-                </button>
+                </button>${audioSection}
             </div>
         `;
         document.body.appendChild(pauseOverlay);
@@ -7733,11 +7779,77 @@ function togglePause() {
                 togglePause();
             });
         }
+        // Audio section wiring. Music/Skip buttons reuse the ids game-music.js
+        // already delegates on (#mobileMusicBtn / #mobileSkipTrackBtn) — no
+        // extra handlers needed. SFX toggle and the two volume sliders:
+        const _updSfxIcon = () => {
+            const ic = document.getElementById('pauseSfxIcon');
+            if (ic) ic.className = window._sfxMuted
+                ? 'fas fa-volume-mute text-red-400 mr-2'
+                : 'fas fa-bullhorn text-cyan-400 mr-2';
+        };
+        const sfxToggle = document.getElementById('pauseSfxBtn');
+        if (sfxToggle) {
+            sfxToggle.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                toggleSfx();
+                _updSfxIcon();
+            });
+        }
+        const musicVol = document.getElementById('pauseMusicVol');
+        if (musicVol) {
+            musicVol.addEventListener('input', () => {
+                if (window.soundtrack && soundtrack.setVolume) soundtrack.setVolume(parseFloat(musicVol.value));
+            });
+        }
+        const sfxVol = document.getElementById('pauseSfxVol');
+        if (sfxVol) {
+            sfxVol.addEventListener('input', () => {
+                const v = parseFloat(sfxVol.value);
+                if (typeof effectsGain !== 'undefined' && effectsGain && audioContext) {
+                    effectsGain.gain.value = v;
+                    effectsGain.gain.setValueAtTime(v, audioContext.currentTime);
+                }
+                if (v > 0) window._sfxLevel = v; // remembered by toggleSfx unmute
+                window._sfxMuted = v === 0;
+                _updSfxIcon();
+            });
+        }
+        const flightBtn = document.getElementById('pauseFlightBtn');
+        if (flightBtn) {
+            flightBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                if (typeof showMobilePanel === 'function') {
+                    showMobilePanel('controls');
+                    // The pause overlay sits at z 9999 — lift the popup above it
+                    const pop = document.getElementById('controlsPopup');
+                    if (pop) pop.style.zIndex = '10001';
+                }
+            });
+        }
+    }
+
+    // Sync the audio controls to live state every time the menu opens
+    if (gameState.paused) {
+        const musicVol = document.getElementById('pauseMusicVol');
+        if (musicVol && window.soundtrack && typeof soundtrack.volume === 'number') {
+            musicVol.value = soundtrack.volume;
+        }
+        const sfxVol = document.getElementById('pauseSfxVol');
+        if (sfxVol && typeof effectsGain !== 'undefined' && effectsGain) {
+            sfxVol.value = effectsGain.gain.value;
+        }
+        const sfxIc = document.getElementById('pauseSfxIcon');
+        if (sfxIc) sfxIc.className = window._sfxMuted
+            ? 'fas fa-volume-mute text-red-400 mr-2'
+            : 'fas fa-bullhorn text-cyan-400 mr-2';
     }
 
     pauseOverlay.style.display = gameState.paused ? 'flex' : 'none';
     
-    // Update pause button
+    // Update pause buttons (desktop panel + mobile top-left)
     const pauseBtn = document.getElementById('pauseBtn');
     const pauseIcon = document.getElementById('pauseIcon');
     if (pauseBtn) {
@@ -7748,6 +7860,10 @@ function togglePause() {
             pauseBtn.classList.remove('paused');
             if (pauseIcon) pauseIcon.className = 'fas fa-pause mr-1';
         }
+    }
+    const mobilePauseIcon = document.getElementById('mobilePauseIcon');
+    if (mobilePauseIcon) {
+        mobilePauseIcon.className = gameState.paused ? 'fas fa-play' : 'fas fa-pause';
     }
     
     console.log(gameState.paused ? 'Game paused' : 'Game resumed');
@@ -7816,15 +7932,17 @@ function showAchievement(title, description, playAchievementSound = true) {
         popup.style.zIndex = '999'; // Maximum priority
         popup.style.position = 'fixed'; // Ensure it's always fixed
 
-        // ⭐ BORG STYLING: Apply green ORBITRON font for BORG messages
+        // ⭐ BORG STYLING: green ORBITRON for BORG messages. Glow dampened
+        // ~85% from the original (0.8/0.6 alpha, 10px blur) — the full
+        // bloom washed the letters out to an unreadable green smear.
         if (title.includes('BORG')) {
             popup.classList.add('borg-message');
             titleElement.style.fontFamily = "'Orbitron', monospace";
-            titleElement.style.color = '#00ff00';
-            titleElement.style.textShadow = '0 0 10px rgba(0, 255, 0, 0.8)';
+            titleElement.style.color = '#66ff66';
+            titleElement.style.textShadow = '0 0 2px rgba(0, 255, 0, 0.12)';
             achievementText.style.fontFamily = "'Orbitron', monospace";
-            achievementText.style.color = '#00ff00';
-            achievementText.style.textShadow = '0 0 8px rgba(0, 255, 0, 0.6)';
+            achievementText.style.color = '#66ff66';
+            achievementText.style.textShadow = '0 0 2px rgba(0, 255, 0, 0.09)';
         } else {
             popup.classList.remove('borg-message');
             titleElement.style.fontFamily = '';
