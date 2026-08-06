@@ -182,9 +182,40 @@ body.ui-mode {
     transform: perspective(1000px) rotateY(-6deg) rotateX(3deg) translateZ(5px);
             backdrop-filter: blur(6px) saturate(140%);  /* mobiGlas-style HUD glass */
     border-radius: 20px 0 0 20px;
-    box-shadow: 
+    box-shadow:
         0 10px 30px rgba(0, 150, 255, 0.3),
         inset -2px 0 8px rgba(0,150,255,0.15);
+}
+
+/* Navigation target list — Tailwind's max-h-40 (160px) left row three
+   guillotined mid-glyph with zero visual cue that content continued below.
+   The ID selector already outranks the .max-h-40 utility class, so this
+   wins without !important. A modest height bump means fewer rows need
+   scrolling at all, and the bottom fade turns whatever row IS half-visible
+   into a soft cue instead of a hard cut — hostiles have also moved to the
+   world-anchored tactical overlay (game-ui.js updateTargetLayer), so this
+   list is shorter and slower-moving than it used to be. */
+#availableTargets {
+    max-height: 200px;
+    padding-bottom: 4px;
+    -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 22px), transparent 100%);
+    mask-image: linear-gradient(to bottom, #000 calc(100% - 22px), transparent 100%);
+    scrollbar-width: thin;
+    scrollbar-color: rgba(0, 220, 255, 0.5) rgba(0, 20, 40, 0.3);
+}
+#availableTargets::-webkit-scrollbar {
+    width: 6px;
+}
+#availableTargets::-webkit-scrollbar-track {
+    background: rgba(0, 20, 40, 0.3);
+    border-radius: 3px;
+}
+#availableTargets::-webkit-scrollbar-thumb {
+    background: rgba(0, 220, 255, 0.5);
+    border-radius: 3px;
+}
+#availableTargets::-webkit-scrollbar-thumb:hover {
+    background: rgba(0, 220, 255, 0.8);
 }
 
 .curved-element {

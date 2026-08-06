@@ -27,9 +27,9 @@
 
 <table>
 <tr><th>#</th><th>Piece</th><th>Wave</th><th>Status</th><th>Critic score /10</th><th>Biggest gap (critic)</th></tr>
-<tr><td>1</td><td>Slingshot feel — whip arc, camera kick, trail, impact</td><td>1</td><td class="s-fail">2.5/10 → REBUILDING</td><td>2.5</td><td>Zero on-screen velocity at release — no speed-streak/motion-stretch field locked to the velocity vector; stars stay static dots at 79,617 km/s</td></tr>
-<tr><td>2</td><td>Deep-space beauty — starfield, skybox, distant galaxies</td><td>1</td><td class="s-fail">3/10 → REBUILDING</td><td>3</td><td>No background sky — scene.background null, ~60% of the celestial sphere renders literal black</td></tr>
-<tr><td>3</td><td>Procedural galaxy generation — endless seeded systems</td><td>1</td><td class="s-fail">3/10 → REBUILDING (critic caught a real bug)</td><td>3</td><td>Missing __worldShiftHandlers registration — after a world-origin rebase the proc shell is in the wrong coordinate frame, physically unreachable</td></tr>
+<tr><td>1</td><td>Slingshot feel — whip arc, camera kick, trail, impact</td><td>1</td><td class="s-fail">4.5/10 after r1 → round 2</td><td>2.5 → 4.5</td><td>Streaks move but the world is frozen — background layers show zero parallax across a 3,400u boost</td></tr>
+<tr><td>2</td><td>Deep-space beauty — starfield, skybox, distant galaxies</td><td>1</td><td class="s-fail">5/10 after r1 → round 2</td><td>3 → 5</td><td>Skybox shader shipped with a debug-brightened palette floor — sky can never render dark; no blacks, no dust structure</td></tr>
+<tr><td>3</td><td>Procedural galaxy generation — endless seeded systems</td><td>1</td><td class="s-fail">5/10 after r1 → round 2 (rebase bug fixed)</td><td>3 → 5</td><td>One body archetype — every system a recolor of the last; zero moons galaxy-wide</td></tr>
 <tr><td>4</td><td>HUD & UI — diegetic, cinematic chrome</td><td>1</td><td class="s-fail">2/10 → REBUILDING (builder regression caught)</td><td>2</td><td>.ui-panel position:relative overrides Tailwind absolute — cockpit panels fell into document flow</td></tr>
 <tr><td>5</td><td>Black holes & stars — accretion, lensing, coronas</td><td>2</td><td class="s-wait">QUEUED</td><td>—</td><td>—</td></tr>
 <tr><td>6</td><td>Warp / hyperspace effect</td><td>2</td><td class="s-wait">QUEUED</td><td>—</td><td>—</td></tr>
@@ -42,6 +42,7 @@
 
 <h1 style="font-size:15px">Wave log</h1>
 <div class="log">
+<p><b>Rebuild round 1 sealed</b> — all four gap-fixes landed (commit 10794e5, BUILD 20260806b, clean boot). Fresh critics are re-judging one piece at a time.</p>
 <p><b>Wave 1 round 0 judged</b> — all four pieces FAILED the blind test (scores 2–3/10), exactly as a harsh first round should. Critics caught two genuine bugs the builders shipped: proc-gen missing the world-rebase handler (systems unreachable) and a HUD CSS specificity regression (panels fell out of position). All four rebuilders are in with one named gap each.</p>
 <p><b>Wave 1 launched</b> — 4 builders fanned out (slingshot feel, deep-space beauty, procedural galaxies, HUD), file-disjoint ownership. Integrator sealed + committed (83307e4, BUILD 20260806a, clean boot, selftest green). Fresh-context critics inspect the RUNNING game headless — blind side-by-side vs Star Citizen / No Man's Sky.</p>
 </div>

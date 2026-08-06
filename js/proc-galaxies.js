@@ -5,15 +5,25 @@
 // beyond every piece of hand-authored content (the exotic cores top out at
 // 75k, the BORG patrols at 90k). Each system gets:
 //
-//   * a seeded, unique synthwave palette (magenta / cyan / violet / amber
-//     families with per-system hue jitter — no two systems read the same)
+//   * a seeded palette sampled anywhere on a continuous synthwave hue wheel,
+//     walked by a golden-ratio recurrence so neighbours never rhyme and
+//     nothing repeats on any period (see the PALETTES section)
 //   * a generated name ("Vex-Karr Expanse", "Neon Maru Drift", ...)
 //   * a central star, or a binary pair orbiting a barycentre, with a
 //     churning plasma-surface shader + additive corona sprites
-//   * 2-5 planets on slow tilted orbits, custom lit by a shader that fakes
-//     the local star (ZERO extra scene lights — see PERF below)
-//   * ring chance, derelict/station chance, a dust/nebula wisp
+//   * 3-5 planets on slow tilted orbits, each rolled from SIX archetypes —
+//     gas giant / ice / molten / barren rock / ocean / banded terrestrial —
+//     with archetype odds weighted by orbital zone, so a system reads as a
+//     system (scorched rock inside, giants and ice past the frost line)
+//   * 0-3 moons on the larger bodies, on their own tilted orbits
+//   * distance LOD on every sphere (16 -> 32 -> 64 segments), built lazily
+//   * ring chance (near-certain on gas giants), derelict/station chance,
+//     a dust/nebula wisp
 //   * a first-entry discovery moment (achievement toast + 50 rep)
+//
+// The size ladder is deliberate and is most of the "scale drama":
+//   star 380-600u > gas giant 255-470u > ocean/ice 72-164u > rock 34-96u
+//   > moonlet 12-74u — roughly 50x end to end.
 //
 // -----------------------------------------------------------------------------
 // HOW THIS PLUGS INTO THE EXISTING WORLD (read before changing)
@@ -39,6 +49,13 @@
 //      build 5km RingGeometries out here) and its updatePlanetOrbits() orbit
 //      integrator. Our orbit state uses the `pgOrbit*` prefix instead, so the
 //      core loop only ever applies the cheap `rotation.y` spin to us.
+//   3. Moons carry `userData.type = 'planet'` with `bodyClass = 'moon'`, NOT
+//      type 'moon'. game-core's updateActivePlanets() force-sets
+//      `visible = true` on every type-'moon' entry of the planets array on
+//      every frame, which would strand our moonlets drawn from 100,000u with
+//      no parent world rendered anywhere near them. Same reason we avoid
+//      `parentPlanet` + `orbitRadius`: that pair is the core's moon
+//      integrator, and it would fight placeMoon() for the position.
 //
 // nebulaClouds is deliberately NOT touched: that array drives faction lore,
 // deep-discovery rewards and biome music selection, all of which expect
@@ -67,7 +84,9 @@
 // mesh from it. Rules for anyone extending this file:
 //   * Anything new that caches a WORLD position outside the scene graph must
 //     be rebased in the handler, or derived from s.center in resyncSystem().
-//   * localOffset / pgU / pgV / pgOrbitRadius are RELATIVE — never shift them.
+//   * localOffset / pgU / pgV / pgOrbitRadius / pgMoonRadius are RELATIVE —
+//     never shift them. Moons are relative to their PARENT, so resyncSystem
+//     must always place them after the planets, never before.
 //   * Never reuse the userData keys in game-core's _WSHIFT_UD_KEYS list
 //     (systemCenter, targetPosition, ...) for relative data: the rebase
 //     traverses the scene and subtracts from all of them.
@@ -85,6 +104,14 @@
 //   point cloud + optional ring. Nothing scales with particle count.
 // * Distance gate at 60,000u: an inactive system costs one squared-distance
 //   compare every 12 frames and nothing else.
+// * Six archetypes, ONE shader program. uType is a uniform, so the branch in
+//   PLANET_FRAG is coherent across the whole draw and only one arm executes;
+//   six #define'd materials would have linked six programs and stalled on
+//   first sight of each new world. The noise hash is fract-based, not
+//   sin-based, because a single fbm3() takes 24 lattice corners.
+// * LOD geometries are built ON DEMAND. A body you never fly to never
+//   allocates past its 16-segment tier, so the galaxy-wide vertex cost is
+//   unchanged from before until you actually go somewhere.
 // * The whole far shell is advertised from anywhere by ONE THREE.Points
 //   object (`beacons`) — 12ish pixels, 1 draw call, so the player can see
 //   there is more out there long before it renders.
@@ -155,19 +182,66 @@
     }
 
     // -------------------------------------------------------------------------
-    // PALETTES — synthwave families with per-system hue jitter, so every
-    // system is unique but none of them can drift out of the identity.
+    // PALETTES — one continuous synthwave hue wheel, sampled per system.
     // -------------------------------------------------------------------------
-    // `accents` are hand-picked contrast partners, NOT computed complements.
-    // The mathematical complement of magenta is lime green, which is exactly
-    // the colour this game must never produce — every accent here is drawn
-    // from the same four-colour synthwave set as the families themselves.
-    var FAMILIES = [
-        { key: 'magenta', hue: 0.905, accents: [0.505, 0.545, 0.760], flavour: 'magenta-shift emissions' },
-        { key: 'cyan',    hue: 0.515, accents: [0.900, 0.940, 0.075], flavour: 'cyan hydrogen bloom' },
-        { key: 'violet',  hue: 0.755, accents: [0.520, 0.930, 0.070], flavour: 'violet ion haze' },
-        { key: 'amber',   hue: 0.085, accents: [0.905, 0.770, 0.530], flavour: 'amber plasma tide' }
+    // This used to be four fixed families walked on `i % 4`, which meant
+    // systems 0/4/8 were literally the same colour family and a player could
+    // read the loop off the fourth system they visited. There is no family
+    // table any more: `t` is a free parameter in 0..1 and maps onto ONE
+    // continuous arc of the hue circle —
+    //
+    //   t=0.00  cyan .. azure .. sapphire .. indigo .. violet .. orchid ..
+    //   ..magenta .. rose .. red .. ember .. amber  t=1.00
+    //
+    // — which is 69% of the wheel. The 31% left out (hue 0.145 -> 0.455) is
+    // yellow / lime / green / olive: the exact band that turns this identity
+    // into mud, and the reason the old table refused to compute complements.
+    // Excising it ONCE, here, means every hue calculation downstream (accents,
+    // per-planet jitter, moon tints) is free to roam the whole parameter range
+    // and still cannot produce a colour this game must never show.
+    // Measured, not guessed: hue 0.455 at s=0.7 renders as spring green, and a
+    // planet's mid-band landed on jade in a live capture. 0.478 is the first
+    // hue that is unambiguously cyan, and the span is trimmed to match so the
+    // far end stops at amber (0.14) instead of running into yellow.
+    var HUE_START = 0.478;   // cyan
+    var HUE_SPAN  = 0.662;   // ...all the way round to amber at 1.140 == 0.140
+
+    // t (any real) -> hue on the safe arc. Wraps cyan<->amber at the ends.
+    function arcHue(t) {
+        t = t - Math.floor(t);
+        return (HUE_START + t * HUE_SPAN) % 1;
+    }
+
+    // Small in-family moves REFLECT off the ends of the arc instead of
+    // wrapping. Wrapping would give an amber star a cyan core (a hue jump of
+    // half the wheel from a "+0.05 warmer" request); reflecting walks it back
+    // toward rose, which is what "slightly different, same family" means.
+    function hueNudge(t, d) {
+        var n = t + d;
+        if (n > 1) n = 2 - n;
+        if (n < 0) n = -n;
+        return arcHue(n);
+    }
+
+    // Readable name for the arc position — feeds the discovery blurb and the
+    // debug listing, so QA can see at a glance that neighbours differ.
+    var HUE_NAMES = [
+        [0.05, 'cyan'], [0.14, 'azure'], [0.26, 'sapphire'], [0.38, 'indigo'],
+        [0.50, 'violet'], [0.61, 'orchid'], [0.72, 'magenta'], [0.81, 'rose'],
+        [0.90, 'ember'], [1.01, 'amber']
     ];
+
+    function hueName(t) {
+        t = t - Math.floor(t);
+        for (var i = 0; i < HUE_NAMES.length; i++) {
+            if (t < HUE_NAMES[i][0]) return HUE_NAMES[i][1];
+        }
+        return 'amber';
+    }
+
+    var FLAVOUR_NOUN = ['plasma tide', 'hydrogen bloom', 'ion haze', 'shift emissions',
+                        'aurora drift', 'photon surf', 'ember wash', 'spectral bloom',
+                        'coronal veil', 'particle rain'];
 
     function hsl(h, s, l) {
         var c = new THREE.Color();
@@ -175,24 +249,31 @@
         return c;
     }
 
-    function makePalette(rand, familyIndex) {
-        var fam = FAMILIES[familyIndex % FAMILIES.length];
-        var h = fam.hue + (rand() - 0.5) * 0.07;
-        var accentH = fam.accents[Math.floor(rand() * fam.accents.length) % fam.accents.length]
-                      + (rand() - 0.5) * 0.03;
+    // `t` is the system's position on the safe arc, handed down from init so
+    // the whole shell can be stratified. Nothing here is family-indexed.
+    function makePalette(rand, t) {
+        t = t - Math.floor(t);
+        // Accent sits a third to a half of the arc away: far enough to read as
+        // a genuinely second colour at any exposure, still inside the identity.
+        var at = t + (0.30 + rand() * 0.22) * (rand() < 0.5 ? -1 : 1);
+        at = at - Math.floor(at);
+        var key = hueName(t);
         return {
-            key: fam.key,
-            flavour: fam.flavour,
-            hue: h,
-            star:      hsl(h, 0.95, 0.62),
-            starCore:  hsl(h + 0.04, 1.0, 0.80),
-            corona:    hsl(h - 0.02, 1.0, 0.58),
-            accent:    hsl(accentH, 1.0, 0.60),
-            day:       hsl(h + 0.03, 0.72, 0.52),
-            night:     hsl(accentH, 1.0, 0.42),
-            rim:       hsl(accentH - 0.06, 0.95, 0.68),
-            dust:      hsl(h + 0.06, 0.90, 0.50),
-            wisp:      hsl(accentH + 0.03, 0.95, 0.45)
+            key: key,
+            t: t,
+            accentT: at,
+            flavour: key + ' ' + pick(rand, FLAVOUR_NOUN),
+            hue: arcHue(t),
+            accentHue: arcHue(at),
+            star:      hsl(arcHue(t), 0.95, 0.62),
+            starCore:  hsl(hueNudge(t, 0.055), 1.00, 0.80),
+            corona:    hsl(hueNudge(t, -0.030), 1.00, 0.58),
+            accent:    hsl(arcHue(at), 1.00, 0.60),
+            day:       hsl(hueNudge(t, 0.045), 0.72, 0.52),
+            night:     hsl(arcHue(at), 1.00, 0.42),
+            rim:       hsl(hueNudge(at, -0.085), 0.95, 0.68),
+            dust:      hsl(hueNudge(t, 0.085), 0.90, 0.50),
+            wisp:      hsl(hueNudge(at, 0.045), 0.95, 0.45)
         };
     }
 
@@ -259,6 +340,19 @@
         '}'
     ].join('\n');
 
+    // ONE program, six worlds. uType is a uniform, so the branch below is
+    // perfectly coherent across every fragment of a given draw — the GPU only
+    // ever walks one arm. Six separate ShaderMaterials with #defines would
+    // have compiled six programs and thrashed the shader cache on approach;
+    // this way Three.js's program cache sees identical source for every body
+    // in the galaxy and links exactly once.
+    //
+    //   0 GAS GIANT — turbulence-warped bands + a storm oval
+    //   1 ICE       — pale sheets, glowing fracture cracks, polar caps
+    //   2 MOLTEN    — near-black crust with lava veins that burn on the dark side
+    //   3 BARREN    — cratered regolith, almost no night glow (scale drama)
+    //   4 OCEAN     — sea with a real specular sun glint, continents, city lights
+    //   5 TERRA     — the original banded world, kept intact
     var PLANET_FRAG = [
         'uniform vec3 uDay;',
         'uniform vec3 uNight;',
@@ -268,41 +362,183 @@
         'uniform float uBands;',
         'uniform float uSeed;',
         'uniform float uNightGlow;',
+        'uniform float uType;',
+        'uniform float uAtmo;',
         'varying vec3 vN;',
         'varying vec3 vWP;',
         'varying vec3 vObjN;',
+        // IQ-style integer-ish hash: three fracts and two multiplies. A
+        // sin()-based hash costs a transcendental per lattice corner and this
+        // shader takes up to eight corners per noise lookup.
+        'float h31(vec3 p) {',
+        '  p = fract(p * 0.3183099 + vec3(0.11, 0.17, 0.13));',
+        '  p *= 17.0;',
+        '  return fract(p.x * p.y * p.z * (p.x + p.y + p.z));',
+        '}',
+        // Value noise on the OBJECT-space normal, never on lat/lon: a lon/lat
+        // parameterisation seams down the anti-meridian and pinches at both
+        // poles, which is exactly where a planet's silhouette is.
+        'float vnoise(vec3 x) {',
+        '  vec3 i = floor(x); vec3 f = fract(x);',
+        '  f = f * f * (3.0 - 2.0 * f);',
+        '  return mix(mix(mix(h31(i), h31(i + vec3(1.0,0.0,0.0)), f.x),',
+        '                 mix(h31(i + vec3(0.0,1.0,0.0)), h31(i + vec3(1.0,1.0,0.0)), f.x), f.y),',
+        '             mix(mix(h31(i + vec3(0.0,0.0,1.0)), h31(i + vec3(1.0,0.0,1.0)), f.x),',
+        '                 mix(h31(i + vec3(0.0,1.0,1.0)), h31(i + vec3(1.0,1.0,1.0)), f.x), f.y), f.z);',
+        '}',
+        'float fbm2(vec3 p) { return vnoise(p) * 0.63 + vnoise(p * 2.17 + 9.1) * 0.37; }',
+        'float fbm3(vec3 p) { return vnoise(p) * 0.52 + vnoise(p * 2.17 + 9.1) * 0.31 + vnoise(p * 4.41 + 23.7) * 0.17; }',
+        // Ridged noise — the |2n-1| fold turns smooth blobs into creases, which
+        // is what cracks, lava channels and mountain chains all are.
+        'float ridge(vec3 p) { float n = fbm2(p); n = 1.0 - abs(n * 2.0 - 1.0); return n * n; }',
         'void main() {',
         '  vec3 n = normalize(vN);',
+        '  vec3 o = normalize(vObjN);',
+        '  vec3 V = normalize(cameraPosition - vWP);',
         '  float lam = dot(n, uSunDir);',
         '  float day = smoothstep(-0.16, 0.38, lam);',
-        // Latitude banding, warped along longitude so the stripes curve and
-        // break instead of reading as a barcode. Three octaves: broad climate
-        // zones carry most of the weight, fine bands ride on top.
-        '  float lon = atan(vObjN.z, vObjN.x);',
-        '  float warp = sin(lon * 3.0 + uSeed) * 0.13 + sin(lon * 7.0 - uSeed * 2.0) * 0.055;',
-        '  float y = vObjN.y + warp;',
-        '  float b1 = sin(y * uBands + uSeed) * 0.5 + 0.5;',
-        '  float b2 = sin(y * uBands * 2.31 + uSeed * 3.1) * 0.5 + 0.5;',
-        '  float b3 = sin(y * uBands * 0.37 - uSeed * 1.7) * 0.5 + 0.5;',
-        '  float band = b3 * 0.55 + mix(b1, b2, 0.42) * 0.45;',
-        '  band = smoothstep(0.16, 0.86, band);',
-        // Bright bands drift toward the rim hue — a second colour in the
-        // surface keeps it from reading as one tinted ball.
-        '  vec3 surf = mix(uDay * 0.55, mix(uDay * 1.18, uRim * 0.92, 0.28), band);',
-        // Night side: neon strips, the synthwave signature. Added on top of
-        // the mix as well so the dark limb genuinely glows.
+        '  float lat = o.y;',
+        '  vec3 sp = o + vec3(uSeed);',
+        '  vec3 surf = uDay;',
+        '  vec3 emissive = vec3(0.0);',   // self-lit: survives the night side
+        '  float glossy = 0.0;',
+        '  float stripAmt = 1.0;',
+        '  float t = uType;',
+
+        // ---------------------------------------------------------------- GAS
+        '  if (t < 0.5) {',
+        // TWO warp octaves, not one. A single warp makes every band bend the
+        // same way and the planet still reads as a barcode wrapped on a
+        // sphere; the fine second octave shears the band edges so they pinch,
+        // fork and drift the way real jet streams do.
+        '    float w1 = (fbm3(vec3(o.x, o.y * 0.28, o.z) * 2.6 + uSeed) - 0.5) * 0.30;',
+        '    float w2 = (fbm2(vec3(o.x, o.y * 0.35, o.z) * 7.5 - uSeed) - 0.5) * 0.09;',
+        '    float y = lat + w1 + w2;',
+        '    float b1 = sin(y * uBands + uSeed) * 0.5 + 0.5;',
+        '    float b2 = sin(y * uBands * 2.63 - uSeed * 1.7) * 0.5 + 0.5;',
+        '    float b3 = sin(y * uBands * 0.41 + uSeed * 0.7) * 0.5 + 0.5;',   // broad climate zones
+        '    float band = smoothstep(0.05, 0.95, b3 * 0.42 + (b1 * 0.62 + b2 * 0.38) * 0.58);',
+        // Dark end lifted off black: bands that bottom out at 0.38 of the day
+        // colour read as painted-on stripes, not as depth in an atmosphere.
+        '    surf = mix(uDay * 0.52, mix(uDay * 1.32, uRim * 1.08, 0.36), band);',
+        // One great spot, latitude-squashed into an oval, in the accent hue.
+        '    vec3 sc = normalize(vec3(cos(uSeed * 2.1), 0.34 * sin(uSeed * 1.7), sin(uSeed * 2.1)));',
+        '    float sd = distance(o * vec3(1.0, 2.6, 1.0), sc * vec3(1.0, 2.6, 1.0));',
+        '    float storm = 1.0 - smoothstep(0.07, 0.31, sd);',
+        '    surf = mix(surf, uAccent * 1.35, storm * 0.92);',
+        '    emissive += uAccent * storm * 0.16;',
+        // Polar hoods — the bands running straight off the top of the sphere
+        // is the giveaway that this is a cylinder map.
+        '    surf *= mix(1.0, 0.68, smoothstep(0.68, 1.0, abs(lat)));',
+        '    stripAmt = 0.55;',
+
+        // ---------------------------------------------------------------- ICE
+        '  } else if (t < 1.5) {',
+        '    float sheet = fbm2(sp * 3.1);',
+        '    vec3 base = mix(uDay, vec3(0.84, 0.93, 1.0), 0.58);',
+        '    surf = base * (0.74 + 0.46 * sheet);',
+        // Thin, high-threshold cracks. ridge() peaks often, so a 0.55 floor
+        // covered half the globe and the world read as a brain, not as ice.
+        '    float crack = smoothstep(0.66, 0.97, ridge(sp * 6.8));',
+        '    surf = mix(surf, uRim * 1.45, crack * 0.48);',
+        '    emissive += uRim * crack * 0.26 * uNightGlow;',
+        '    float cap = smoothstep(0.58, 0.86, abs(lat));',
+        '    surf = mix(surf, vec3(0.94, 0.98, 1.0), cap * 0.80);',
+        '    glossy = 0.55;',
+        '    stripAmt = 0.25;',
+
+        // ------------------------------------------------------------- MOLTEN
+        '  } else if (t < 2.5) {',
+        '    float veins = ridge(sp * 4.0);',
+        '    float flow = fbm2(sp * 9.0);',
+        // Threshold high and narrow. A low threshold floods 60% of the surface
+        // with emissive and the body clips to a white ball — the archetype has
+        // to be mostly CRUST for the fire to read as cracks in something.
+        '    float lava = smoothstep(0.60, 0.93, veins * 0.80 + flow * 0.28);',
+        '    vec3 crust = mix(uDay * 0.07, uDay * 0.26, fbm2(sp * 12.0));',
+        '    vec3 hot = mix(uAccent, uRim, 0.22);',
+        '    surf = mix(crust, hot * 1.10, lava * 0.50);',
+        // The reason this archetype exists: a near-black world laced with fire
+        // that does NOT go dark when it turns away from its sun.
+        '    emissive += hot * pow(lava, 1.4) * 1.55;',
+        '    stripAmt = 0.0;',
+
+        // ------------------------------------------------------------- BARREN
+        '  } else if (t < 3.5) {',
+        '    float cn1 = vnoise(sp * 6.5);',
+        '    float cn2 = vnoise(sp * 15.0 + 4.0);',
+        // Thin shells around an iso-surface of the noise read as crater rims —
+        // three smoothsteps, no cellular/Worley loop.
+        '    float rim1 = smoothstep(0.42, 0.50, cn1) * (1.0 - smoothstep(0.50, 0.60, cn1));',
+        '    float rim2 = smoothstep(0.44, 0.50, cn2) * (1.0 - smoothstep(0.50, 0.58, cn2));',
+        '    float pit = 1.0 - smoothstep(0.28, 0.50, cn1);',
+        '    vec3 base = mix(uDay * 0.34, uDay * 0.82, fbm2(sp * 3.4));',
+        '    surf = base * (1.0 - pit * 0.38) + uRim * (rim1 * 0.60 + rim2 * 0.32) * 0.55;',
+        '    stripAmt = 0.0;',
+
+        // -------------------------------------------------------------- OCEAN
+        '  } else if (t < 4.5) {',
+        '    float land = fbm3(sp * 2.3);',
+        '    float landMask = smoothstep(0.50, 0.60, land);',
+        '    vec3 sea = uDay * mix(0.30, 0.95, fbm2(sp * 6.0));',
+        '    vec3 landCol = mix(uRim * 0.50, uAccent * 0.46, land);',
+        '    surf = mix(sea, landCol, landMask);',
+        '    glossy = 1.0 - landMask;',
+        '    float cloud = smoothstep(0.54, 0.80, fbm2(vec3(o.x, o.y * 0.6, o.z) * 3.6 + uSeed * 2.0));',
+        '    surf = mix(surf, vec3(0.92, 0.96, 1.0), cloud * 0.52);',
+        // City lights on the continents only — the synthwave payoff shot.
+        '    emissive += uNight * landMask * smoothstep(0.55, 0.85, fbm2(sp * 14.0)) * uNightGlow * 1.3;',
+        // Low: an ocean world's dark side should be city lights on continents,
+        // not generic bands over the sea.
+        '    stripAmt = 0.16;',
+
+        // -------------------------------------------------------------- TERRA
+        '  } else {',
+        '    float lon = atan(o.z, o.x);',
+        '    float warp = sin(lon * 3.0 + uSeed) * 0.13 + sin(lon * 7.0 - uSeed * 2.0) * 0.055;',
+        '    float y = lat + warp;',
+        '    float b1 = sin(y * uBands + uSeed) * 0.5 + 0.5;',
+        '    float b2 = sin(y * uBands * 2.31 + uSeed * 3.1) * 0.5 + 0.5;',
+        '    float b3 = sin(y * uBands * 0.37 - uSeed * 1.7) * 0.5 + 0.5;',
+        '    float band = smoothstep(0.16, 0.86, b3 * 0.55 + mix(b1, b2, 0.42) * 0.45);',
+        '    surf = mix(uDay * 0.55, mix(uDay * 1.18, uRim * 0.92, 0.28), band);',
+        '  }',
+
+        // ------------------------------------------------------- COMMON LIGHT
+        // Night side: neon strips, the synthwave signature. stripAmt lets a
+        // barren rock stay genuinely black while a gas giant still glows, and
+        // the branch is uniform-coherent so an airless rock never pays for it.
+        //
+        // The strips are WARPED by the same noise field the surface uses. A
+        // raw fract(lat * 9.0) sawtooth is a perfect stack of parallel rings,
+        // which on a sphere reads as venetian blinds rather than as light on a
+        // world; a ±0.24 latitude warp makes them wander and break.
         '  float nightMask = pow(max(0.0, -lam), 1.3);',
-        '  float strip = smoothstep(0.52, 0.96, fract(y * 9.0 + uSeed * 2.0));',
-        '  vec3 nightCol = uNight * (0.12 + 1.35 * strip) * uNightGlow;',
+        '  float strip = 0.0;',
+        '  if (stripAmt > 0.001) {',
+        '    float sw = (fbm2(vec3(o.x, o.y * 0.4, o.z) * 2.2 + uSeed) - 0.5) * 0.24;',
+        '    strip = smoothstep(0.50, 0.97, fract((lat + sw) * 9.0 + uSeed * 2.0)) * stripAmt;',
+        '  }',
+        // The `surf * 0.055` term keeps a sliver of the world's own albedo on
+        // the dark side, so an ocean world and a gas giant do not turn into
+        // the same anonymous strip of neon the moment they rotate away.
+        '  vec3 nightCol = uNight * (0.10 + 1.30 * strip) * uNightGlow + surf * 0.055;',
         '  vec3 col = mix(nightCol * nightMask, surf, day);',
         '  col += uNight * strip * nightMask * uNightGlow * 0.7;',
-        // Fresnel atmosphere.
-        '  vec3 V = normalize(cameraPosition - vWP);',
+        '  col += emissive * (1.0 + 0.85 * nightMask);',
+        // Specular glint — ice and open water only, and only where the sun is.
+        '  if (glossy > 0.001) {',
+        '    vec3 H = normalize(uSunDir + V);',
+        '    float spec = pow(max(dot(n, H), 0.0), 84.0);',
+        '    col += mix(vec3(1.0), uRim, 0.45) * spec * glossy * 2.4 * day;',
+        '  }',
+        // Fresnel atmosphere, scaled per archetype: thick on a gas giant,
+        // hairline on an airless rock.
         '  float fres = pow(1.0 - max(dot(n, V), 0.0), 2.6);',
-        '  col += uRim * fres * (0.30 + 0.70 * day);',
+        '  col += uRim * fres * (0.30 + 0.70 * day) * uAtmo;',
         // Terminator bloom.
         '  float term = 1.0 - abs(lam);',
-        '  col += uAccent * pow(term, 6.0) * 0.75;',
+        '  col += uAccent * pow(term, 6.0) * 0.75 * uAtmo;',
         '  gl_FragColor = vec4(col, 1.0);',
         '}'
     ].join('\n');
@@ -458,7 +694,7 @@
     // -------------------------------------------------------------------------
     function buildStar(sys, rand, radius, localOffset) {
         var pal = sys.palette;
-        var geo = new THREE.SphereGeometry(radius, 24, 16);
+        var geo = new THREE.SphereGeometry(radius, STAR_LOD_SEGS[0][0], STAR_LOD_SEGS[0][1]);
         var mat = new THREE.ShaderMaterial({
             uniforms: {
                 uCore: { value: pal.starCore.clone() },
@@ -482,7 +718,10 @@
             slingshotMultiplier: 4.0,
             rotationSpeed: 0.0015,
             isProcedural: true,
-            procSystem: sys.id
+            procSystem: sys.id,
+            pgLodSegs: STAR_LOD_SEGS,
+            pgLodGeo: [geo, null, null],
+            pgLodTier: 0
         };
         star.position.copy(sys.center).add(localOffset);
         activeScene().add(star);
@@ -515,42 +754,141 @@
         return { mesh: star, coronas: coronaGroup, localOffset: localOffset.clone() };
     }
 
-    function buildPlanet(sys, rand, index, orbitRadius) {
+    // -------------------------------------------------------------------------
+    // ARCHETYPES
+    // -------------------------------------------------------------------------
+    // `id` MUST match the uType branch order in PLANET_FRAG. Every numeric
+    // field is [min, range] and is rolled per body, so two gas giants in the
+    // same system are still not the same gas giant.
+    //
+    // The radius column is the point of the whole table: 34 → 470 is a 13.8x
+    // span, so a moonlet next to a gas giant reads as two different KINDS of
+    // object rather than two sizes of the same ball. Keep the top end under
+    // ~480: the innermost orbit sits at 1400u and stars run to 340u.
+    var ARCHETYPES = [
+        // atmo caps at 1.32: the fresnel term is additive, and a gas giant at
+        // 1.7 blew its own limb out to white in a live capture.
+        { id: 0, key: 'gas giant', radius: [255, 215], bands: [6, 9],   nightGlow: [0.30, 0.30], atmo: [1.00, 0.32],
+          ringChance: 0.88, ringSpan: [1.30, 1.15], ringOpacity: 0.62, moons: [1, 3], moonChance: 0.95,
+          mass: [3.2, 2.4], sling: 3.4, spin: [0.0022, 0.004], sat: [0.68, 0.24], lum: [0.40, 0.16] },
+        { id: 1, key: 'ice world', radius: [72, 82],   bands: [4, 8],   nightGlow: [0.45, 0.55], atmo: [0.75, 0.45],
+          ringChance: 0.18, ringSpan: [1.45, 0.6],  ringOpacity: 0.42, moons: [0, 2], moonChance: 0.35,
+          mass: [0.7, 0.9], sling: 1.9, spin: [0.0015, 0.004], sat: [0.55, 0.28], lum: [0.52, 0.18] },
+        { id: 2, key: 'molten world', radius: [55, 62], bands: [8, 14], nightGlow: [0.0, 0.0],  atmo: [0.85, 0.55],
+          ringChance: 0.08, ringSpan: [1.5, 0.5],   ringOpacity: 0.40, moons: [0, 1], moonChance: 0.15,
+          mass: [0.8, 1.0], sling: 2.1, spin: [0.0035, 0.008], sat: [0.85, 0.15], lum: [0.44, 0.14] },
+        { id: 3, key: 'barren rock', radius: [34, 62], bands: [4, 8],  nightGlow: [0.0, 0.10], atmo: [0.32, 0.26],
+          ringChance: 0.06, ringSpan: [1.6, 0.5],   ringOpacity: 0.35, moons: [0, 1], moonChance: 0.20,
+          mass: [0.5, 0.7], sling: 1.7, spin: [0.0012, 0.005], sat: [0.62, 0.26], lum: [0.44, 0.16] },
+        { id: 4, key: 'ocean world', radius: [86, 78], bands: [5, 9],  nightGlow: [0.60, 0.70], atmo: [1.05, 0.40],
+          ringChance: 0.14, ringSpan: [1.5, 0.5],   ringOpacity: 0.45, moons: [0, 2], moonChance: 0.55,
+          mass: [0.9, 1.1], sling: 2.3, spin: [0.0020, 0.005], sat: [0.78, 0.20], lum: [0.34, 0.14] },
+        { id: 5, key: 'banded terrestrial', radius: [58, 78], bands: [8, 20], nightGlow: [0.35, 0.85], atmo: [0.95, 0.45],
+          ringChance: 0.22, ringSpan: [1.4, 0.55],  ringOpacity: 0.55, moons: [0, 2], moonChance: 0.45,
+          mass: [0.8, 1.0], sling: 2.2, spin: [0.0025, 0.006], sat: [0.72, 0.26], lum: [0.38, 0.24] }
+    ];
+
+    // Archetype odds by orbital zone. A system should READ as a system —
+    // scorched rock close in, gas giants and ice past the frost line — rather
+    // than a shuffled bag, and it means the same archetype in two systems
+    // still lands in a different place in the flyby.
+    //                     gas   ice  molten barren ocean terra
+    var ARCH_WEIGHTS = [
+        /* inner */ [0.02, 0.02, 0.34, 0.28, 0.10, 0.24],
+        /* mid   */ [0.14, 0.10, 0.08, 0.18, 0.24, 0.26],
+        /* outer */ [0.34, 0.28, 0.02, 0.20, 0.04, 0.12]
+    ];
+
+    function rollArchetype(rand, zone) {
+        var w = ARCH_WEIGHTS[zone];
+        var total = 0, i;
+        for (i = 0; i < w.length; i++) total += w[i];
+        var r = rand() * total;
+        for (i = 0; i < w.length; i++) {
+            r -= w[i];
+            if (r <= 0) return ARCHETYPES[i];
+        }
+        return ARCHETYPES[ARCHETYPES.length - 1];
+    }
+
+    function span(rand, pair) { return pair[0] + rand() * pair[1]; }
+
+    // -------------------------------------------------------------------------
+    // DISTANCE LOD
+    // -------------------------------------------------------------------------
+    // A 16-segment sphere facets its own limb into a visible polygon by the
+    // time you are three radii out, which is exactly where a player parks to
+    // look at a world. Three tiers, built LAZILY: a body you never approach
+    // never allocates anything past tier 0, so the galaxy-wide cost of this is
+    // unchanged until you actually fly somewhere.
+    //
+    // Every tier is a SphereGeometry at the body's TRUE radius, so
+    // geometry.parameters.radius — which game-physics reads for collision and
+    // slingshot thresholds — is identical whichever tier is mounted.
+    var LOD_SEGS = [[16, 12], [32, 22], [64, 40]];
+    // Stars are up to 600u and are looked at from close range far more often
+    // than a rock is, so they start where planets end.
+    var STAR_LOD_SEGS = [[24, 16], [44, 30], [80, 52]];
+
+    function lodGeometry(mesh, tier) {
+        var ud = mesh.userData;
+        var cache = ud.pgLodGeo;
+        if (!cache[tier]) {
+            var seg = (ud.pgLodSegs || LOD_SEGS)[tier];
+            cache[tier] = new THREE.SphereGeometry(ud.radius, seg[0], seg[1]);
+        }
+        return cache[tier];
+    }
+
+    function updateBodyLod(mesh, d2) {
+        var ud = mesh.userData;
+        if (!ud.pgLodGeo) return;
+        var r = ud.radius;
+        var d = Math.sqrt(d2);
+        var tier = (d < r * 11) ? 2 : (d < r * 46) ? 1 : 0;
+        // Hysteresis: only DROP a tier once you are 20% past the boundary, so
+        // hovering on a threshold cannot strobe the geometry.
+        var cur = ud.pgLodTier;
+        if (tier < cur) {
+            if (cur === 2 && d < r * 13.2) tier = 2;
+            else if (cur >= 1 && tier === 0 && d < r * 55.0) tier = 1;
+        }
+        if (tier === cur) return;
+        ud.pgLodTier = tier;
+        mesh.geometry = lodGeometry(mesh, tier);
+    }
+
+    // -------------------------------------------------------------------------
+    // BODY MATERIAL — one shared program, per-body uniforms
+    // -------------------------------------------------------------------------
+    function makeBodyMaterial(sys, rand, arch, tShift) {
         var pal = sys.palette;
-        var radius = 42 + rand() * 88;
-        // Per-planet geometry at true radius: game-physics reads
-        // geometry.parameters.radius for collision + slingshot thresholds, so
-        // a shared unit sphere with a scale would silently break both.
-        var geo = new THREE.SphereGeometry(radius, 16, 12);
-
-        // Wide enough per-planet hue spread that no two worlds in a system
-        // read as the same ball, narrow enough to stay inside the family.
-        var hueShift = (rand() - 0.5) * 0.12;
-        // Saturation floor of 0.72: below that an amber world desaturates to
-        // olive/khaki, which is the one way this palette can go muddy.
-        var day = hsl(pal.hue + 0.03 + hueShift, 0.72 + rand() * 0.26, 0.38 + rand() * 0.24);
-
-        var mat = new THREE.ShaderMaterial({
+        // Hue jitter happens in ARC space (see the palette header), so even a
+        // ±0.08 swing on an amber world walks toward rose instead of stepping
+        // off the end of the wheel into olive. Saturation floors live in the
+        // archetype table for the same reason: a desaturated amber is khaki.
+        var dayHue = hueNudge(pal.t, tShift + (rand() - 0.5) * 0.16);
+        return new THREE.ShaderMaterial({
             uniforms: {
-                uDay: { value: day },
+                uDay: { value: hsl(dayHue, span(rand, arch.sat), span(rand, arch.lum)) },
                 uNight: { value: pal.night.clone() },
                 uRim: { value: pal.rim.clone() },
                 uAccent: { value: pal.accent.clone() },
                 uSunDir: { value: new THREE.Vector3(1, 0, 0) },
-                uBands: { value: 6.0 + rand() * 22.0 },
+                uBands: { value: span(rand, arch.bands) },
                 uSeed: { value: rand() * 10.0 },
-                uNightGlow: { value: 0.35 + rand() * 0.85 }
+                uNightGlow: { value: span(rand, arch.nightGlow) },
+                uType: { value: arch.id },
+                uAtmo: { value: span(rand, arch.atmo) }
             },
             vertexShader: PLANET_VERT,
             fragmentShader: PLANET_FRAG
         });
+    }
 
-        var mesh = new THREE.Mesh(geo, mat);
-        mesh.frustumCulled = true;
-
-        // Orbit basis: two orthonormal vectors spanning the (tilted) plane.
-        var tilt = sys.tilt;
-        var incl = (rand() - 0.5) * 0.30;
+    // Two orthonormal vectors spanning a (tilted) orbital plane.
+    function orbitBasis(rand, tilt, spread) {
+        var incl = (rand() - 0.5) * spread;
         var u = new THREE.Vector3(1, 0, 0).applyAxisAngle(new THREE.Vector3(0, 1, 0), rand() * 6.28);
         var normal = new THREE.Vector3(0, 1, 0)
             .applyAxisAngle(new THREE.Vector3(1, 0, 0), tilt.x + incl)
@@ -559,17 +897,121 @@
         u.projectOnPlane(normal).normalize();
         if (!isFinite(u.x) || u.lengthSq() < 0.5) u.set(1, 0, 0).projectOnPlane(normal).normalize();
         var v = new THREE.Vector3().crossVectors(normal, u).normalize();
+        return { u: u, v: v };
+    }
+
+    function buildRing(sys, rand, radius, arch) {
+        var pal = sys.palette;
+        var rmat = new THREE.ShaderMaterial({
+            uniforms: {
+                uColorA: { value: pal.accent.clone() },
+                uColorB: { value: pal.rim.clone() },
+                uSeed: { value: rand() * 10 },
+                uOpacity: { value: arch.ringOpacity }
+            },
+            vertexShader: RING_VERT,
+            fragmentShader: RING_FRAG,
+            transparent: true,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false,
+            side: THREE.DoubleSide
+        });
+        var ring = new THREE.Mesh(SHARED.ringGeo, rmat);
+        var rs = radius * span(rand, arch.ringSpan);
+        ring.scale.set(rs, rs, rs);
+        // Ring lives in world space alongside the planet rather than as a
+        // child, because game-core's updatePlanetOrbits() spins every
+        // registered planet on Y — a parented ring would wobble with it.
+        ring.rotation.set(Math.PI / 2 + (rand() - 0.5) * 0.5, 0, (rand() - 0.5) * 0.5);
+        ring.visible = false;
+        ring.frustumCulled = true;
+        activeScene().add(ring);
+        return ring;
+    }
+
+    // Moons are ICE or BARREN only — a moon that reads as a gas giant reads as
+    // a bug — and they are always a small fraction of the parent, which is
+    // what actually sells the parent's size.
+    var MOON_LETTERS = ['a', 'b', 'c'];
+
+    function buildMoon(sys, rand, parent, index) {
+        var arch = ARCHETYPES[rand() < 0.42 ? 1 : 3];
+        var pr = parent.userData.radius;
+        var radius = Math.max(12, Math.min(74, pr * (0.09 + rand() * 0.15)));
+        var mat = makeBodyMaterial(sys, rand, arch, (rand() - 0.5) * 0.12);
+        var geo = new THREE.SphereGeometry(radius, LOD_SEGS[0][0], LOD_SEGS[0][1]);
+        var mesh = new THREE.Mesh(geo, mat);
+        mesh.frustumCulled = true;
+
+        var basis = orbitBasis(rand, sys.tilt, 0.9);
+        var orbit = pr * (2.4 + rand() * 3.0) + radius * 2.0;
+
+        mesh.userData = {
+            // Deliberately 'planet', NOT 'moon': game-core's
+            // updateActivePlanets() force-sets `visible = true` on every
+            // userData.type === 'moon' in the planets array every frame, which
+            // would strand these dots visible from 100,000u with no parent
+            // drawn. `bodyClass` carries the truth for anything that cares.
+            type: 'planet',
+            bodyClass: 'moon',
+            archetype: arch.key,
+            name: parent.userData.name + ' ' + MOON_LETTERS[index % 3],
+            systemName: sys.name,
+            location: sys.name,
+            size: radius,
+            radius: radius,
+            mass: 0.20 + (radius / 74) * 0.35,
+            slingshotMultiplier: 1.5,
+            rotationSpeed: 0.001 + rand() * 0.004,
+            isProcedural: true,
+            procSystem: sys.id,
+            // pgMoon* — see the header. `parentPlanet` + `orbitRadius` would
+            // hand this body straight to game-core's moon integrator.
+            pgParent: parent,
+            pgMoonRadius: orbit,
+            pgMoonSpeed: (0.55 + rand() * 0.9) / Math.sqrt(orbit / 300),
+            pgMoonAngle: rand() * 6.28,
+            pgU: basis.u,
+            pgV: basis.v,
+            pgLodGeo: [geo, null, null],
+            pgLodTier: 0
+        };
+
+        activeScene().add(mesh);
+        registerBody(mesh);
+        return mesh;
+    }
+
+    function buildPlanet(sys, rand, index, orbitRadius, zone) {
+        var arch = rollArchetype(rand, zone);
+        var radius = span(rand, arch.radius);
+        // A gas giant must never out-size the sun it orbits.
+        if (arch.id === 0 && sys.primaryRadius) {
+            radius = Math.min(radius, sys.primaryRadius * 0.86);
+        }
+        // Per-planet geometry at true radius: game-physics reads
+        // geometry.parameters.radius for collision + slingshot thresholds, so
+        // a shared unit sphere with a scale would silently break both.
+        var geo = new THREE.SphereGeometry(radius, LOD_SEGS[0][0], LOD_SEGS[0][1]);
+        var mat = makeBodyMaterial(sys, rand, arch, 0.045);
+
+        var mesh = new THREE.Mesh(geo, mat);
+        mesh.frustumCulled = true;
+
+        var basis = orbitBasis(rand, sys.tilt, 0.30);
 
         mesh.userData = {
             type: 'planet',
+            bodyClass: arch.key,
+            archetype: arch.key,
             name: sys.name + ' ' + ['I', 'II', 'III', 'IV', 'V'][index % 5],
             systemName: sys.name,
             location: sys.name,
             size: radius,
             radius: radius,
-            mass: 0.8 + (radius / 130) * 1.6,
-            slingshotMultiplier: 2.2,
-            rotationSpeed: 0.0025 + rand() * 0.006,
+            mass: span(rand, arch.mass),
+            slingshotMultiplier: arch.sling,
+            rotationSpeed: span(rand, arch.spin),
             isProcedural: true,
             procSystem: sys.id,
             // NOTE the pg* prefix — see the header. Using orbitRadius /
@@ -578,42 +1020,26 @@
             pgOrbitRadius: orbitRadius,
             pgOrbitSpeed: (0.11 + rand() * 0.16) / Math.sqrt(orbitRadius / 1200),
             pgOrbitAngle: rand() * 6.28,
-            pgU: u,
-            pgV: v
+            pgU: basis.u,
+            pgV: basis.v,
+            pgLodGeo: [geo, null, null],
+            pgLodTier: 0
         };
 
         activeScene().add(mesh);
         registerBody(mesh);
 
-        var ring = null;
-        if (rand() < 0.34) {
-            var rmat = new THREE.ShaderMaterial({
-                uniforms: {
-                    uColorA: { value: pal.accent.clone() },
-                    uColorB: { value: pal.rim.clone() },
-                    uSeed: { value: rand() * 10 },
-                    uOpacity: { value: 0.55 }
-                },
-                vertexShader: RING_VERT,
-                fragmentShader: RING_FRAG,
-                transparent: true,
-                blending: THREE.AdditiveBlending,
-                depthWrite: false,
-                side: THREE.DoubleSide
-            });
-            ring = new THREE.Mesh(SHARED.ringGeo, rmat);
-            var rs = radius * 1.45;
-            ring.scale.set(rs, rs, rs);
-            // Ring lives in world space alongside the planet rather than as a
-            // child, because game-core's updatePlanetOrbits() spins every
-            // registered planet on Y — a parented ring would wobble with it.
-            ring.rotation.set(Math.PI / 2 + (rand() - 0.5) * 0.5, 0, (rand() - 0.5) * 0.5);
-            ring.visible = false;
-            ring.frustumCulled = true;
-            activeScene().add(ring);
+        var ring = (rand() < arch.ringChance) ? buildRing(sys, rand, radius, arch) : null;
+
+        // Moons: rolled from the archetype, and only ever on a body big enough
+        // for the size contrast to land.
+        var moons = [];
+        if (radius > 78 && rand() < arch.moonChance) {
+            var mn = arch.moons[0] + Math.floor(rand() * (arch.moons[1] - arch.moons[0] + 1));
+            for (var m = 0; m < mn; m++) moons.push(buildMoon(sys, rand, mesh, m));
         }
 
-        return { mesh: mesh, ring: ring };
+        return { mesh: mesh, ring: ring, moons: moons, radius: radius, archetype: arch };
     }
 
     function buildWisp(sys, rand, extent) {
@@ -749,6 +1175,11 @@
             group: new THREE.Group(),
             stars: [],
             planets: [],
+            // Moons live in their OWN list, not in sys.planets: every QA probe
+            // and the world-shift verifier assume every entry of sys.planets
+            // sits at exactly pgOrbitRadius from sys.center, and a moon is
+            // anchored to its parent instead.
+            moons: [],
             rings: [],
             station: null,
             wisp: null,
@@ -767,30 +1198,55 @@
         activeScene().add(sys.group);
 
         // --- star(s) ---
+        // Stars grew with the archetype table. The old 210-340u primary was
+        // SMALLER than the new gas giants, which would have read as a planet
+        // orbiting a marble; the size ladder now runs
+        // star 380-600 > gas giant 255-470 > ocean 86-164 > rock 34-96 > moon 12-74,
+        // a ~50x span the player can actually feel from the cockpit.
         if (sys.binary) {
-            var sep = 900 + rand() * 700;
+            var sep = 1100 + rand() * 800;
             sys.binarySeparation = sep;
             sys.binaryAngle = rand() * 6.28;
             sys.binarySpeed = 0.05 + rand() * 0.05;
-            sys.stars.push(buildStar(sys, rand, 150 + rand() * 90, new THREE.Vector3(sep * 0.5, 0, 0)));
-            sys.stars.push(buildStar(sys, rand, 120 + rand() * 70, new THREE.Vector3(-sep * 0.5, 0, 0)));
+            sys.primaryRadius = 280 + rand() * 140;
+            sys.stars.push(buildStar(sys, rand, sys.primaryRadius, new THREE.Vector3(sep * 0.5, 0, 0)));
+            sys.stars.push(buildStar(sys, rand, 220 + rand() * 120, new THREE.Vector3(-sep * 0.5, 0, 0)));
             sys.stars[1].mesh.userData.name = name + ' Secondary';
         } else {
-            sys.stars.push(buildStar(sys, rand, 210 + rand() * 130, new THREE.Vector3(0, 0, 0)));
+            sys.primaryRadius = 380 + rand() * 220;
+            sys.stars.push(buildStar(sys, rand, sys.primaryRadius, new THREE.Vector3(0, 0, 0)));
         }
 
         // --- planets ---
-        var planetCount = 2 + Math.floor(rand() * 4);   // 2-5
-        var orbit = 1400 + rand() * 900;
+        var planetCount = 3 + Math.floor(rand() * 3);   // 3-5
+        // Innermost orbit clears the (now much larger) primary by 3x its
+        // radius, so a molten world hugging a 600u sun still has sky under it.
+        var orbit = Math.max(1400, sys.primaryRadius * 3.2) + rand() * 900;
         var maxOrbit = orbit;
+        var prevRadius = 0;
         for (var i = 0; i < planetCount; i++) {
-            var built = buildPlanet(sys, rand, i, orbit);
+            // Zone drives the archetype odds — see ARCH_WEIGHTS. Two-planet
+            // systems still get an inner and an outer, never two "mids".
+            var f = planetCount > 1 ? (i / (planetCount - 1)) : 0.5;
+            var zone = f < 0.34 ? 0 : (f < 0.72 ? 1 : 2);
+            var built = buildPlanet(sys, rand, i, orbit, zone);
             sys.planets.push(built.mesh);
+            for (var mi = 0; mi < built.moons.length; mi++) sys.moons.push(built.moons[mi]);
             if (built.ring) sys.rings.push({ ring: built.ring, planet: built.mesh });
             maxOrbit = orbit;
-            orbit += 900 + rand() * 1300;
+            // Spacing now scales with the bodies it has to separate: a pair of
+            // 470u gas giants on the old flat 900u minimum gap would have
+            // intersected each other on every conjunction.
+            orbit += 900 + rand() * 1300 + (prevRadius + built.radius) * 1.6;
+            prevRadius = built.radius;
         }
         sys.extent = maxOrbit;
+        // Discovery radius scales with the system. Orbit spacing now grows
+        // with body radius, so a giant-heavy system's outermost world can sit
+        // 17,000u out — on a flat 6,000u trigger the player would fly past
+        // three planets before the game admitted they had found anything.
+        var discR = Math.max(PG.DISCOVER_RANGE, maxOrbit * 0.8);
+        sys.discoverR2 = discR * discR;
 
         // --- ambience ---
         sys.wisp = buildWisp(sys, rand, maxOrbit * (1.5 + rand() * 0.9));
@@ -874,9 +1330,20 @@
     // -------------------------------------------------------------------------
     function fireDiscovery(sys) {
         sys.discovered = true;
-        var bodies = sys.planets.length + sys.stars.length;
+        var bodies = sys.planets.length + sys.stars.length + sys.moons.length;
+        // Headline the rarest thing in the system rather than a body count —
+        // "1 gas giant" is a reason to fly there, "4 worlds" never was.
+        var headline = '';
+        for (var hi = 0; hi < sys.planets.length; hi++) {
+            var ak = sys.planets[hi].userData.archetype;
+            if (ak === 'gas giant') { headline = ', gas giant'; break; }
+            if (ak === 'ocean world' && !headline) headline = ', ocean world';
+            else if (ak === 'molten world' && !headline) headline = ', molten world';
+        }
         var blurb = sys.name + ' — ' + sys.stars.length + (sys.binary ? ' suns' : ' sun') +
-                    ', ' + sys.planets.length + ' worlds, ' + sys.palette.flavour +
+                    ', ' + sys.planets.length + ' worlds' +
+                    (sys.moons.length ? ' / ' + sys.moons.length + ' moons' : '') +
+                    headline + ', ' + sys.palette.flavour +
                     (sys.station ? (sys.station.userData.derelict ? ', derelict contact' : ', station contact') : '');
 
         if (typeof showAchievement === 'function') {
@@ -926,14 +1393,25 @@
         var count = PG.MIN_SYSTEMS + Math.floor(rand() * (PG.MAX_SYSTEMS - PG.MIN_SYSTEMS + 1));
         var used = {};
 
-        // Walk the four families in a shuffled cycle rather than picking at
-        // random — a random draw over 12 systems reliably produces 6 magentas
-        // and zero violets, which throws away half the palette space.
-        var famOrder = [0, 1, 2, 3];
-        for (var f = famOrder.length - 1; f > 0; f--) {
-            var j = Math.floor(rand() * (f + 1));
-            var tmp = famOrder[f]; famOrder[f] = famOrder[j]; famOrder[j] = tmp;
-        }
+        // COLOUR ASSIGNMENT — additive golden-ratio recurrence.
+        //
+        //     t_{i+1} = frac(t_i + 0.6180339887)
+        //
+        // This is the classic low-discrepancy sequence. Three properties, all
+        // of which the old `i % 4` family rotation failed:
+        //   * consecutive systems land ~62% of the arc apart, so no two
+        //     neighbours can read as the same colour;
+        //   * for ANY prefix length the points are near-optimally spread, so
+        //     a 10-system seed covers the wheel as evenly as a 14-system one
+        //     (a plain random draw clumps: six near-magentas and no cyan);
+        //   * the step is irrational, so the series has no period at all.
+        //
+        // A slot-stride scheme (slot = i * k mod count) looks equivalent and
+        // is not — measured live at count=13, k=5, every +5 in index moved
+        // exactly one slot, putting systems 0/5/10 in adjacent hues. That is
+        // the original "I can read the loop" complaint with a longer period.
+        var PHI_STEP = 0.6180339887498949;
+        var hueT = rand();             // whole sequence rotates per seed
 
         // Fibonacci-sphere placement with jitter: even coverage of the shell,
         // so no matter which way the player leaves the core they find one.
@@ -962,7 +1440,8 @@
             // run is unchanged.
             if (_woo) center.sub(_woo);
             var name = generateName(rand, used);
-            var palette = makePalette(rand, famOrder[i % 4]);
+            var palette = makePalette(rand, hueT + (rand() - 0.5) * 0.04);
+            hueT += PHI_STEP;
             systems.push(buildSystem(rand, i, center, name, palette));
         }
 
@@ -1000,6 +1479,20 @@
         );
     }
 
+    // Moons are anchored to their PARENT's current position, not to s.center,
+    // so this must always run after placePlanet for the same frame.
+    function placeMoon(m) {
+        var ud = m.userData;
+        var p = ud.pgParent.position;
+        var ca = Math.cos(ud.pgMoonAngle) * ud.pgMoonRadius;
+        var sa = Math.sin(ud.pgMoonAngle) * ud.pgMoonRadius;
+        m.position.set(
+            p.x + ud.pgU.x * ca + ud.pgV.x * sa,
+            p.y + ud.pgU.y * ca + ud.pgV.y * sa,
+            p.z + ud.pgU.z * ca + ud.pgV.z * sa
+        );
+    }
+
     // Rebuild every world position in a system from s.center, without advancing
     // any simulation state (orbit angles, binary phase and star time are left
     // exactly as they are). Idempotent: calling it twice changes nothing.
@@ -1007,6 +1500,7 @@
         s.group.position.copy(s.center);
         for (var k = 0; k < s.stars.length; k++) placeStar(s, s.stars[k]);
         for (var p = 0; p < s.planets.length; p++) placePlanet(s, s.planets[p]);
+        for (var m = 0; m < s.moons.length; m++) placeMoon(s.moons[m]);
         for (var r = 0; r < s.rings.length; r++) {
             s.rings[r].ring.position.copy(s.rings[r].planet.position);
         }
@@ -1060,6 +1554,10 @@
 
         var cx = cam.position.x, cy = cam.position.y, cz = cam.position.z;
         var coarse = forceCoarse || (frame % PG.COARSE_EVERY) === 0;
+        // LOD runs 3x more often than the visibility pass: at cruise speed the
+        // 12-frame coarse cadence is a fifth of a second, long enough to watch
+        // a limb un-facet itself after you have already arrived.
+        var lodPass = coarse || (frame % 4) === 0;
         forceCoarse = false;
         var visR2 = PG.VISIBLE_RANGE * PG.VISIBLE_RANGE;
         var detR2 = PG.DETAIL_RANGE * PG.DETAIL_RANGE;
@@ -1092,7 +1590,7 @@
                     if (rr.ring.visible !== rr.planet.visible) rr.ring.visible = rr.planet.visible;
                 }
 
-                if (!s.discovered && d2 < discR2) fireDiscovery(s);
+                if (!s.discovered && d2 < (s.discoverR2 || discR2)) fireDiscovery(s);
             }
 
             if (!s.active) continue;
@@ -1121,6 +1619,12 @@
             for (var k = 0; k < s.stars.length; k++) {
                 var star = s.stars[k];
                 star.mesh.material.uniforms.uTime.value = s.time;
+                if (lodPass && star.mesh.visible) {
+                    var sdx = star.mesh.position.x - cx,
+                        sdy = star.mesh.position.y - cy,
+                        sdz = star.mesh.position.z - cz;
+                    updateBodyLod(star.mesh, sdx * sdx + sdy * sdy + sdz * sdz);
+                }
                 for (var ci = 0; ci < star.coronas.length; ci++) {
                     var sp = star.coronas[ci];
                     var puls = 1 + Math.sin(s.time * sp.userData.pulse + sp.userData.phase) * 0.07;
@@ -1138,6 +1642,23 @@
                 placePlanet(s, pl);
                 _v3.subVectors(primary, pl.position).normalize();
                 pl.material.uniforms.uSunDir.value.copy(_v3);
+                if (lodPass && pl.visible) {
+                    var pdx = pl.position.x - cx, pdy = pl.position.y - cy, pdz = pl.position.z - cz;
+                    updateBodyLod(pl, pdx * pdx + pdy * pdy + pdz * pdz);
+                }
+            }
+
+            // --- moons (anchored to the parent, so strictly after the above) ---
+            for (var mo = 0; mo < s.moons.length; mo++) {
+                var mn = s.moons[mo];
+                mn.userData.pgMoonAngle += mn.userData.pgMoonSpeed * dt;
+                placeMoon(mn);
+                _v3.subVectors(primary, mn.position).normalize();
+                mn.material.uniforms.uSunDir.value.copy(_v3);
+                if (lodPass && mn.visible) {
+                    var mdx = mn.position.x - cx, mdy = mn.position.y - cy, mdz = mn.position.z - cz;
+                    updateBodyLod(mn, mdx * mdx + mdy * mdy + mdz * mdz);
+                }
             }
 
             // --- rings ride along ---
@@ -1207,12 +1728,41 @@
                             var cam = activeCamera();
                             return cam ? Math.round(s.center.distanceTo(cam.position)) : null;
                         })(),
+                        // Arc position 0..1 — neighbouring rows should differ
+                        // by roughly a third of the wheel, never repeat on a
+                        // fixed period.
+                        hueT: Math.round(s.palette.t * 1000) / 1000,
                         planets: s.planets.length,
+                        moons: s.moons.length,
+                        archetypes: s.planets.map(function (p) { return p.userData.archetype; }),
+                        radii: s.planets.map(function (p) { return Math.round(p.userData.radius); }),
                         binary: s.binary,
                         discovered: s.discovered,
                         active: s.active
                     };
                 });
+            },
+            // Distribution check for QA: archetype histogram + radius span
+            // across the whole shell, in one line.
+            census: function () {
+                var byArch = {}, min = Infinity, max = 0, n = 0, moons = 0;
+                for (var i = 0; i < systems.length; i++) {
+                    moons += systems[i].moons.length;
+                    for (var p = 0; p < systems[i].planets.length; p++) {
+                        var ud = systems[i].planets[p].userData;
+                        byArch[ud.archetype] = (byArch[ud.archetype] || 0) + 1;
+                        if (ud.radius < min) min = ud.radius;
+                        if (ud.radius > max) max = ud.radius;
+                        n++;
+                    }
+                }
+                return {
+                    systems: systems.length, planets: n, moons: moons,
+                    archetypes: byArch,
+                    radius: { min: Math.round(min), max: Math.round(max),
+                              spread: Math.round(max / Math.max(1, min) * 10) / 10 },
+                    hues: systems.map(function (s) { return s.palette.key; })
+                };
             },
             warpTo: function (nameOrIndex) {
                 var s = (typeof nameOrIndex === 'number')

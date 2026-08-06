@@ -4228,50 +4228,105 @@ try {
                     }
                     return value;
                 }
-                
+
+                // Ridged multifractal: folds value-noise around its midpoint so
+                // troughs collapse toward 0 and octaves that agree reinforce each
+                // other into thin bright seams instead of smooth blobs. This is
+                // what turns the noise into filamentary dust lanes.
+                float ridgedFbm(vec2 st) {
+                    float value = 0.0;
+                    float amplitude = 0.5;
+                    float frequency = 1.0;
+                    float weight = 1.0;
+                    for (int i = 0; i < 6; i++) {
+                        float n = noise(st * frequency);
+                        n = 1.0 - abs(n * 2.0 - 1.0);
+                        n = n * n;
+                        n *= weight;
+                        weight = clamp(n * 2.0, 0.0, 1.0);
+                        value += n * amplitude;
+                        frequency *= 2.05; // slight lacunarity drift avoids grid alignment
+                        amplitude *= 0.5;
+                    }
+                    return value;
+                }
+
+                // Cheap 2-tap domain warp so the ridged filaments curl and drift
+                // like real dust lanes instead of tracing straight noise cells.
+                vec2 domainWarp(vec2 st) {
+                    float wx = noise(st * 1.3 + 4.2) * 0.6 + noise(st * 2.7 + 8.5) * 0.4;
+                    float wy = noise(st * 1.3 + 9.1) * 0.6 + noise(st * 2.7 + 1.7) * 0.4;
+                    return (vec2(wx, wy) - 0.5) * 1.2;
+                }
+
                 void main() {
                     // Create spherical coordinates for seamless wrapping
                     vec3 direction = normalize(vPosition);
                     float theta = atan(direction.z, direction.x);
                     float phi = acos(direction.y);
                     vec2 sphereUV = vec2(theta / (2.0 * 3.14159), phi / 3.14159);
-                    
-                    // Multi-scale noise for CMB-like structure
-                    vec2 uv1 = sphereUV * 3.0;
-                    vec2 uv2 = sphereUV * 8.0;
-                    vec2 uv3 = sphereUV * 20.0;
-                    
-                    float pattern1 = fbm(uv1);
-                    float pattern2 = fbm(uv2);
-                    float pattern3 = fbm(uv3);
-                    
+
+                    vec2 warpedUV = sphereUV + domainWarp(sphereUV * 4.0) * 0.6;
+
+                    // Multi-scale ridged noise for filamentary dust structure
+                    vec2 uv1 = warpedUV * 3.0;
+                    vec2 uv2 = warpedUV * 8.0;
+                    vec2 uv3 = warpedUV * 20.0;
+
+                    float pattern1 = ridgedFbm(uv1);
+                    float pattern2 = ridgedFbm(uv2);
+                    float pattern3 = ridgedFbm(uv3);
+
                     // Combine patterns for complex structure
                     float combinedPattern = pattern1 * 0.5 + pattern2 * 0.3 + pattern3 * 0.2;
-                    
-                    // CMB color palette - BRIGHTENED for visibility test
-                    vec3 coldColor = vec3(0.5, 0.2, 0.7);      // Bright purple
-                    vec3 coolColor = vec3(0.3, 0.5, 1.0);      // Bright blue
-                    vec3 warmColor = vec3(1.0, 0.5, 0.7);      // Bright pink
-                    vec3 hotColor = vec3(1.0, 0.7, 0.3);       // Bright orange
-                    
-                    // Map noise to color gradient
-                    vec3 color;
-                    if (combinedPattern < 0.3) {
-                        color = mix(coldColor, coolColor, combinedPattern / 0.3);
-                    } else if (combinedPattern < 0.6) {
-                        color = mix(coolColor, warmColor, (combinedPattern - 0.3) / 0.3);
-                    } else {
-                        color = mix(warmColor, hotColor, (combinedPattern - 0.6) / 0.4);
-                    }
-                    
-                    // Add subtle variation
-                    float variation = noise(sphereUV * 50.0) * 0.2;
-                    color += vec3(variation);
-                    
+
+                    // Bias the structure into one soft "milky way" band that wraps
+                    // the sphere along a fixed tilted plane; away from it the
+                    // filaments are suppressed so most of the sky stays quiet.
+                    vec3 galacticPlaneNormal = normalize(vec3(0.35, 0.92, -0.18));
+                    float distFromPlane = abs(dot(direction, galacticPlaneNormal));
+                    float bandBoost = 1.0 - smoothstep(0.0, 0.4, distFromPlane);
+                    combinedPattern *= mix(0.2, 1.0, bandBoost);
+
+                    // Contrast/power curve: crushes the mid-tones toward black so
+                    // bright emission is rare and localized instead of a global wash.
+                    float t = pow(clamp(combinedPattern, 0.0, 1.0), 2.5);
+
+                    // Rare, low-frequency mask selecting 2-3 small hero regions
+                    // across the whole sphere where saturated color is allowed.
+                    float heroNoise = fbm(sphereUV * 1.2 + vec2(41.0, 17.0));
+                    float heroMask = smoothstep(0.72, 0.9, heroNoise);
+
+                    // Base palette: near-black void deepening into indigo/blue
+                    // neon dust as filament brightness rises. This alone covers
+                    // ~60-70% of the sphere's area at the void end.
+                    vec3 voidColor = vec3(0.010, 0.008, 0.025);
+                    vec3 indigoColor = vec3(0.05, 0.03, 0.12);
+                    vec3 dustColor = vec3(0.12, 0.20, 0.50);
+                    vec3 filamentColor = vec3(0.35, 0.45, 0.85);
+
+                    vec3 baseColor = voidColor;
+                    baseColor = mix(baseColor, indigoColor, smoothstep(0.05, 0.30, t));
+                    baseColor = mix(baseColor, dustColor, smoothstep(0.30, 0.65, t));
+                    baseColor = mix(baseColor, filamentColor, smoothstep(0.65, 0.95, t));
+
+                    // Hero overlay: saturated synthwave pink/orange, gated to the
+                    // few heroMask regions AND only at their brightest ridge tips.
+                    vec3 warmColor = vec3(0.9, 0.25, 0.55);
+                    vec3 hotColor = vec3(1.0, 0.55, 0.15);
+                    float heroStrength = heroMask * smoothstep(0.55, 0.9, t);
+                    vec3 heroColor = mix(warmColor, hotColor, smoothstep(0.6, 1.0, t));
+
+                    vec3 color = mix(baseColor, heroColor, heroStrength);
+
+                    // Add subtle variation (kept faint so it can't wash out the void)
+                    float variation = noise(sphereUV * 50.0) * 0.03;
+                    color += vec3(variation) * (0.3 + 0.7 * t);
+
                     // Add faint stars/bright spots
-                    float stars = pow(noise(sphereUV * 800.0), 20.0) * 0.5;
+                    float stars = pow(noise(sphereUV * 800.0), 20.0) * 0.6;
                     color += vec3(stars);
-                    
+
                     gl_FragColor = vec4(color, opacity);  // Use opacity uniform
                 }
             `,

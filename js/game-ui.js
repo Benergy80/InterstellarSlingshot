@@ -600,20 +600,37 @@ function populateTargets() {
         });
     }
 
+    // Hostiles used to be spread into this text list too, but they now get
+    // a world-anchored bracket/tag/HP-pip drawn directly on their ship by
+    // updateTargetLayer() (see TARGET LAYER section below) — leaving them
+    // here just duplicated combat info as a scrolling row the pilot had to
+    // read instead of a marker on the actual ship. Compute the count for a
+    // one-line banner and keep them OUT of the card list below.
+    const nearbyHostiles = (typeof enemies !== 'undefined') ? enemies.filter(e => {
+        if (!e.userData || e.userData.health <= 0) return false;
+        const distance = camera.position.distanceTo(e.position);
+        // ⭐ CRITICAL: Guardians have extended detection range
+        const maxRange = e.userData.isBlackHoleGuardian ? 10000 : 3000;
+        return distance < maxRange;
+    }) : [];
+
     const allTargetableObjects = [
         ...(typeof planets !== 'undefined' ? planets.filter(p => p.userData && p.userData.type !== 'asteroid') : []),
         ...detectedWormholes,
         ...(typeof comets !== 'undefined' ? comets.filter(c => camera.position.distanceTo(c.position) < 4000) : []), // Doubled range
-        ...(typeof enemies !== 'undefined' ? enemies.filter(e => {
-            if (!e.userData || e.userData.health <= 0) return false;
-            const distance = camera.position.distanceTo(e.position);
-            // ⭐ CRITICAL: Guardians have extended detection range
-            const maxRange = e.userData.isBlackHoleGuardian ? 10000 : 3000;
-            return distance < maxRange;
-        }) : []),
         ...cosmicTargets, // ADD COSMIC FEATURES HERE!
         ...outerSystemTargets // ADD OUTER SYSTEM OBJECTS HERE!
     ];
+
+    if (nearbyHostiles.length > 0) {
+        const banner = document.createElement('div');
+        banner.className = 'text-xs text-red-400 font-mono mb-2 flex items-center justify-between';
+        banner.style.cssText = 'letter-spacing:0.03em;';
+        const bossCount = nearbyHostiles.filter(e => e.userData.isBoss).length;
+        banner.innerHTML =
+            `<span>&#9650; ${nearbyHostiles.length} HOSTILE${nearbyHostiles.length === 1 ? '' : 'S'} — tracked on tactical overlay${bossCount > 0 ? ' <span class="text-red-600 font-bold">(BOSS)</span>' : ''}</span>`;
+        container.appendChild(banner);
+    }
 
     // Helper to get distance for any object (handles nested outer system objects)
     const getObjectDistance = (obj) => {
@@ -1124,6 +1141,398 @@ function updateCrosshairTargeting() {
             document.body.style.cursor = 'none';
         }
     }
+
+    // WORLD-ANCHORED TARGET LAYER — runs off this same per-frame camera
+    // state (see comment at the game-core.js call site for why crosshair
+    // targeting was moved off a throttle: interpolated + cinematic camera
+    // transforms are already applied here). Piggybacking here keeps the
+    // bracket/tag/lead-pip projection perfectly in sync with what's
+    // actually rendered, with no separate frame hook needed.
+    if (typeof updateTargetLayer === 'function') {
+        try { updateTargetLayer(); } catch (e) {}
+    }
+}
+
+// =============================================================================
+// WORLD-ANCHORED TARGET LAYER
+// =============================================================================
+// The crosshair is a single static reticle — it says nothing about WHAT is
+// in frame. This layer projects every nearby hostile (plus the active nav
+// target) through the camera each frame and draws directly on the ship:
+//   • a corner-tick bracket that scales with apparent radius
+//   • a two-line tag (name / distance + HP)
+//   • colour-coded state: hostile red, neutral amber, locked cyan (with a
+//     brief "closing" animation the instant a lock is acquired)
+//   • a predictive lead pip when weapons are armed and the target is moving
+//   • a clamped edge chevron, rotated to point at anything off-screen
+// A single 2D canvas (not N DOM nodes) keeps this cheap even with a dozen
+// contacts tracked at once — see HARD CONSTRAINTS on additive-blend/DOM
+// overdraw.
+
+const TARGET_LAYER_MAX_TRACKED = 10;      // cap drawn brackets — clarity over completeness
+const TARGET_LAYER_HOSTILE_RANGE = 4500;
+const TARGET_LAYER_GUARDIAN_RANGE = 11000; // guardians/bosses read from further out
+const TARGET_LAYER_EDGE_MARGIN = 30;       // px inset for clamped edge chevrons
+const TARGET_LAYER_LOCK_ANIM_MS = 380;
+const TARGET_LAYER_COLORS = {
+    hostile: { line: '255,64,80',  glow: 'rgba(255,64,80,0.85)' },
+    neutral: { line: '255,178,60', glow: 'rgba(255,178,60,0.85)' },
+    locked:  { line: '0,232,255',  glow: 'rgba(0,232,255,0.9)' }
+};
+
+let _targetLayerCanvas = null;
+let _targetLayerCtx = null;
+let _targetLayerResizeBound = false;
+let _targetLayerLastLockedObj = null;
+const _targetLayerWorldPos = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+const _targetLayerProjVec = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+const _targetLayerLeadVec = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+const _targetLayerVelocityCache = new Map(); // world object -> {px,py,pz,t,vx,vy,vz}
+const _targetLayerLockCache = new Map();     // world object -> lock-acquired timestamp
+
+function _ensureTargetLayer() {
+    let canvas = _targetLayerCanvas;
+    if (!canvas || !canvas.isConnected) {
+        canvas = document.getElementById('targetLayerCanvas');
+        if (!canvas) {
+            canvas = document.createElement('canvas');
+            canvas.id = 'targetLayerCanvas';
+            canvas.style.cssText = [
+                'position:fixed', 'left:0', 'top:0', 'width:100%', 'height:100%',
+                'pointer-events:none',
+                'z-index:40' // above the 3D canvas, below UI panels (z:10/20) only where they overlap
+            ].join(';');
+            document.body.appendChild(canvas);
+        }
+        _targetLayerCanvas = canvas;
+        _targetLayerCtx = canvas.getContext('2d');
+    }
+    if (!_targetLayerResizeBound) {
+        _targetLayerResizeBound = true;
+        const resize = () => {
+            const dpr = Math.min(window.devicePixelRatio || 1, 2);
+            const w = window.innerWidth, h = window.innerHeight;
+            _targetLayerCanvas.width = Math.round(w * dpr);
+            _targetLayerCanvas.height = Math.round(h * dpr);
+            _targetLayerCanvas.style.width = w + 'px';
+            _targetLayerCanvas.style.height = h + 'px';
+            _targetLayerCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        };
+        window.addEventListener('resize', resize);
+        resize();
+    }
+}
+
+function _tlTruncate(s, n) {
+    s = String(s == null ? '' : s);
+    return s.length > n ? s.slice(0, n - 1) + '…' : s;
+}
+
+// Screen-project a world position, correctly flipping into the "points the
+// right way" direction when the target sits behind the camera (standard
+// off-screen-indicator trick: project, and if z>1 negate x/y BEFORE
+// converting to pixels so the vector from screen-centre still points
+// toward the target rather than its mirror image).
+function _tlProjectToScreen(worldPos, camera, w, h) {
+    _targetLayerProjVec.copy(worldPos).project(camera);
+    const behind = _targetLayerProjVec.z > 1;
+    const nx = behind ? -_targetLayerProjVec.x : _targetLayerProjVec.x;
+    const ny = behind ? -_targetLayerProjVec.y : _targetLayerProjVec.y;
+    const x = (nx * 0.5 + 0.5) * w;
+    const y = (1 - (ny * 0.5 + 0.5)) * h;
+    return { x, y, behind, onScreen: !behind && x >= 0 && x <= w && y >= 0 && y <= h };
+}
+
+function _tlWorldRadius(obj) {
+    const ud = obj && obj.userData;
+    if (!ud) return 10;
+    if (ud.isBoss || ud.isBlackHoleGuardian) return 26;
+    if (ud.isBossSupport || ud.isEliteGuardian) return 16;
+    if (ud.type === 'enemy') return 7;
+    return 12;
+}
+
+function _tlGatherHostiles(camPos) {
+    if (typeof enemies === 'undefined') return [];
+    const candidates = [];
+    for (let i = 0; i < enemies.length; i++) {
+        const e = enemies[i];
+        if (!e || !e.userData || !(e.userData.health > 0)) continue;
+        const range = e.userData.isBlackHoleGuardian ? TARGET_LAYER_GUARDIAN_RANGE : TARGET_LAYER_HOSTILE_RANGE;
+        const dx = e.position.x - camPos.x, dy = e.position.y - camPos.y, dz = e.position.z - camPos.z;
+        const distSq = dx * dx + dy * dy + dz * dz;
+        if (distSq > range * range) continue;
+        candidates.push({ obj: e, distSq });
+    }
+    candidates.sort((a, b) => a.distSq - b.distSq);
+    if (candidates.length > TARGET_LAYER_MAX_TRACKED) candidates.length = TARGET_LAYER_MAX_TRACKED;
+    return candidates.map(c => c.obj);
+}
+
+// Finite-difference world velocity, lightly smoothed — enemies don't expose
+// a velocity vector, so this is reconstructed frame-to-frame purely for the
+// lead-pip affordance (not used for anything gameplay-affecting).
+function _tlGetVelocity(obj, wp, now) {
+    let c = _targetLayerVelocityCache.get(obj);
+    if (!c) {
+        c = { px: wp.x, py: wp.y, pz: wp.z, t: now, vx: 0, vy: 0, vz: 0 };
+        _targetLayerVelocityCache.set(obj, c);
+        return c;
+    }
+    const dt = (now - c.t) / 1000;
+    if (dt > 0.02) {
+        const nvx = (wp.x - c.px) / dt, nvy = (wp.y - c.py) / dt, nvz = (wp.z - c.pz) / dt;
+        c.vx += (nvx - c.vx) * 0.35;
+        c.vy += (nvy - c.vy) * 0.35;
+        c.vz += (nvz - c.vz) * 0.35;
+        c.px = wp.x; c.py = wp.y; c.pz = wp.z; c.t = now;
+    }
+    return c;
+}
+
+function _tlDrawBracket(ctx, x, y, r, scheme, alpha) {
+    const tick = Math.max(6, r * 0.34);
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.strokeStyle = `rgba(${scheme.line},0.95)`;
+    ctx.shadowColor = scheme.glow;
+    ctx.shadowBlur = 8;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    // top-left, top-right, bottom-left, bottom-right corner ticks
+    ctx.moveTo(x - r, y - r + tick); ctx.lineTo(x - r, y - r); ctx.lineTo(x - r + tick, y - r);
+    ctx.moveTo(x + r - tick, y - r); ctx.lineTo(x + r, y - r); ctx.lineTo(x + r, y - r + tick);
+    ctx.moveTo(x - r, y + r - tick); ctx.lineTo(x - r, y + r); ctx.lineTo(x - r + tick, y + r);
+    ctx.moveTo(x + r - tick, y + r); ctx.lineTo(x + r, y + r); ctx.lineTo(x + r, y + r - tick);
+    ctx.stroke();
+    ctx.restore();
+}
+
+function _tlDrawTag(ctx, obj, x, y, r, distance, scheme, isHostile) {
+    const ud = obj.userData || {};
+    const name = ud.name || (isHostile ? 'Hostile Contact' : 'Unknown Contact');
+    let line2;
+    if (isHostile) {
+        const hp = Math.max(0, Math.round(ud.health || 0));
+        const maxHp = Math.max(1, Math.round(ud.maxHealth || hp || 1));
+        line2 = `${Math.round(distance)}u · HP ${hp}/${maxHp}`;
+    } else {
+        line2 = `${Math.round(distance)}u`;
+    }
+    const tagY = y + r + 14;
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.shadowColor = 'rgba(0,0,0,0.9)';
+    ctx.shadowBlur = 3;
+    ctx.font = 'bold 11px "Courier New", monospace';
+    ctx.fillStyle = `rgba(${scheme.line},1)`;
+    ctx.fillText(_tlTruncate(name, 26), x, tagY);
+    ctx.font = '10px "Courier New", monospace';
+    ctx.fillStyle = 'rgba(220,235,255,0.9)';
+    ctx.fillText(line2, x, tagY + 13);
+
+    if (isHostile) {
+        const hp = Math.max(0, ud.health || 0);
+        const maxHp = Math.max(1, ud.maxHealth || hp || 1);
+        const pct = Math.max(0, Math.min(1, hp / maxHp));
+        const barW = Math.max(30, r * 1.15), barH = 3;
+        const barX = x - barW / 2, barY = tagY + 18;
+        ctx.shadowBlur = 0;
+        ctx.fillStyle = 'rgba(0,0,0,0.55)';
+        ctx.fillRect(barX, barY, barW, barH);
+        ctx.fillStyle = pct > 0.5 ? 'rgba(80,255,140,0.9)' : (pct > 0.2 ? 'rgba(255,200,60,0.9)' : 'rgba(255,60,70,0.95)');
+        ctx.fillRect(barX, barY, barW * pct, barH);
+    }
+    ctx.restore();
+}
+
+function _tlDrawLeadPip(ctx, obj, wp, distance, proj, camera, w, h, scheme) {
+    const now = (typeof performance !== 'undefined') ? performance.now() : Date.now();
+    const vel = _tlGetVelocity(obj, wp, now);
+    const speedSq = vel.vx * vel.vx + vel.vy * vel.vy + vel.vz * vel.vz;
+    if (speedSq < 4) return; // effectively stationary — a pip on top of the bracket is just noise
+
+    // Reference "how fast does our fire reach it" off the missile system
+    // (the one weapon with real travel time) so the pip reads as "aim
+    // here, not where it is" rather than an arbitrary offset.
+    const boltSpeed = ((typeof gameState !== 'undefined' && gameState.missiles && gameState.missiles.speed) || 7.5) * 60;
+    const leadTime = Math.min(2.5, distance / Math.max(1, boltSpeed));
+    _targetLayerLeadVec.set(wp.x + vel.vx * leadTime, wp.y + vel.vy * leadTime, wp.z + vel.vz * leadTime);
+    const leadProj = _tlProjectToScreen(_targetLayerLeadVec, camera, w, h);
+    if (leadProj.behind) return;
+    const dpx = leadProj.x - proj.x, dpy = leadProj.y - proj.y;
+    if (dpx * dpx + dpy * dpy < 25) return; // coincident with the bracket — nothing to show
+
+    ctx.save();
+    ctx.strokeStyle = `rgba(${scheme.line},0.9)`;
+    ctx.shadowColor = scheme.glow;
+    ctx.shadowBlur = 6;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(leadProj.x, leadProj.y, 5, 0, Math.PI * 2);
+    ctx.moveTo(leadProj.x - 8, leadProj.y); ctx.lineTo(leadProj.x - 3, leadProj.y);
+    ctx.moveTo(leadProj.x + 3, leadProj.y); ctx.lineTo(leadProj.x + 8, leadProj.y);
+    ctx.moveTo(leadProj.x, leadProj.y - 8); ctx.lineTo(leadProj.x, leadProj.y - 3);
+    ctx.moveTo(leadProj.x, leadProj.y + 3); ctx.lineTo(leadProj.x, leadProj.y + 8);
+    ctx.stroke();
+    ctx.restore();
+}
+
+function _tlDrawEdgeChevron(ctx, proj, w, h, scheme, distance) {
+    const cx = w / 2, cy = h / 2;
+    let ddx = proj.x - cx, ddy = proj.y - cy;
+    if (ddx === 0 && ddy === 0) ddx = 0.0001;
+    const maxX = w / 2 - TARGET_LAYER_EDGE_MARGIN;
+    const maxY = h / 2 - TARGET_LAYER_EDGE_MARGIN;
+    const scale = Math.min(Math.abs(maxX / ddx), Math.abs(maxY / ddy));
+    const ex = cx + ddx * scale, ey = cy + ddy * scale;
+    const angle = Math.atan2(ddy, ddx);
+
+    ctx.save();
+    ctx.translate(ex, ey);
+    ctx.rotate(angle + Math.PI / 2);
+    ctx.fillStyle = `rgba(${scheme.line},0.9)`;
+    ctx.shadowColor = scheme.glow;
+    ctx.shadowBlur = 8;
+    ctx.beginPath();
+    ctx.moveTo(0, -9);
+    ctx.lineTo(7, 7);
+    ctx.lineTo(0, 3);
+    ctx.lineTo(-7, 7);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+
+    ctx.save();
+    ctx.font = '10px "Courier New", monospace';
+    ctx.textAlign = 'center';
+    ctx.fillStyle = `rgba(${scheme.line},0.95)`;
+    ctx.shadowColor = 'rgba(0,0,0,0.9)';
+    ctx.shadowBlur = 3;
+    ctx.fillText(`${Math.round(distance)}u`, cx + ddx * scale * 0.88, cy + ddy * scale * 0.88 + 16);
+    ctx.restore();
+}
+
+function updateTargetLayer() {
+    if (typeof camera === 'undefined' || typeof gameState === 'undefined' || typeof THREE === 'undefined') return;
+    _ensureTargetLayer();
+    const ctx = _targetLayerCtx;
+    if (!ctx) return;
+    const w = window.innerWidth, h = window.innerHeight;
+    ctx.clearRect(0, 0, w, h);
+
+    // No combat layer while paused/over/pre-launch — nothing to target and
+    // it would draw over menu/game-over overlays.
+    if (gameState.paused || gameState.gameOver || !gameState.gameStarted) return;
+
+    const camPos = camera.position;
+    const now = (typeof performance !== 'undefined') ? performance.now() : Date.now();
+    const lockActive = !!(gameState.targetLock && gameState.targetLock.active);
+    const lockedObj = lockActive ? gameState.targetLock.target : null;
+    const weaponsArmed = !!(gameState.weapons && gameState.weapons.armed);
+
+    if (lockedObj !== _targetLayerLastLockedObj) {
+        if (lockedObj) _targetLayerLockCache.set(lockedObj, now);
+        _targetLayerLastLockedObj = lockedObj;
+    }
+
+    const hostiles = _tlGatherHostiles(camPos);
+    const tracked = hostiles.slice();
+    // Union in the active nav target (if any) so the pilot's selected
+    // destination — hostile or not — also gets a marker/chevron.
+    if (gameState.currentTarget && tracked.indexOf(gameState.currentTarget) === -1) {
+        tracked.push(gameState.currentTarget);
+    }
+    // A combat lock always gets its bracket, even on a contact the normal
+    // hostile-range gather missed (e.g. a boss/guardian locked from just
+    // outside TARGET_LAYER_HOSTILE_RANGE) — an active lock with no visible
+    // cyan marker anywhere is the exact "unmarked geometry" gap this layer
+    // exists to close.
+    if (lockedObj && tracked.indexOf(lockedObj) === -1) {
+        tracked.push(lockedObj);
+    }
+    if (tracked.length === 0) return;
+
+    const vFovTan = Math.max(0.0001, Math.tan(camera.fov * Math.PI / 360));
+
+    // Resolve world position + distance once per target, then draw in
+    // priority order (locked first, then nearest) so that when a tight
+    // formation puts several ships within a tag's-width of each other on
+    // screen, the ones that matter most keep their full name/HP tag and
+    // the rest fall back to bracket-only instead of stacking illegible text.
+    const records = [];
+    for (let i = 0; i < tracked.length; i++) {
+        const obj = tracked[i];
+        if (!obj || !obj.position) continue;
+
+        let wp = obj.position;
+        if (obj.userData && obj.userData.isOuterSystem && obj.parent && typeof obj.getWorldPosition === 'function') {
+            obj.getWorldPosition(_targetLayerWorldPos);
+            wp = _targetLayerWorldPos.clone();
+        }
+
+        const dx = wp.x - camPos.x, dy = wp.y - camPos.y, dz = wp.z - camPos.z;
+        const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
+        if (distance < 1) continue;
+
+        const isHostile = !!(obj.userData && obj.userData.type === 'enemy');
+        const isLocked = lockActive && obj === lockedObj;
+        records.push({ obj, wp, distance, isHostile, isLocked });
+    }
+    records.sort((a, b) => {
+        if (a.isLocked !== b.isLocked) return a.isLocked ? -1 : 1;
+        return a.distance - b.distance;
+    });
+
+    const placedTags = []; // screen-space anchors of tags already drawn this frame
+    const TAG_MIN_SPACING_SQ = 44 * 44;
+
+    for (let i = 0; i < records.length; i++) {
+        const { obj, wp, distance, isHostile, isLocked } = records[i];
+        const scheme = isLocked ? TARGET_LAYER_COLORS.locked : (isHostile ? TARGET_LAYER_COLORS.hostile : TARGET_LAYER_COLORS.neutral);
+
+        const proj = _tlProjectToScreen(wp, camera, w, h);
+
+        const worldRadius = _tlWorldRadius(obj);
+        const pxPerUnit = (h / (2 * vFovTan)) / Math.max(1, distance);
+        const apparentRadius = Math.min(70, Math.max(14, worldRadius * pxPerUnit));
+
+        let drawRadius = apparentRadius;
+        let alpha = 1;
+        if (isLocked) {
+            const lockStart = _targetLayerLockCache.get(obj) || now;
+            const t = Math.min(1, (now - lockStart) / TARGET_LAYER_LOCK_ANIM_MS);
+            const ease = 1 - Math.pow(1 - t, 3); // ease-out cubic — brackets snap IN onto the lock
+            drawRadius = apparentRadius + (1 - ease) * apparentRadius * 1.8;
+            alpha = 0.45 + 0.55 * ease;
+        }
+
+        // Draw on-screen; anything within a generous margin still gets its
+        // bracket (so it doesn't pop as it crosses the exact edge), further
+        // out gets the clamped chevron instead.
+        if (proj.x > -160 && proj.x < w + 160 && proj.y > -160 && proj.y < h + 160 && !proj.behind) {
+            _tlDrawBracket(ctx, proj.x, proj.y, drawRadius, scheme, alpha);
+
+            let tooClose = false;
+            for (let j = 0; j < placedTags.length; j++) {
+                const px = placedTags[j].x - proj.x, py = placedTags[j].y - proj.y;
+                if (px * px + py * py < TAG_MIN_SPACING_SQ) { tooClose = true; break; }
+            }
+            if (!tooClose) {
+                _tlDrawTag(ctx, obj, proj.x, proj.y, drawRadius, distance, scheme, isHostile);
+                placedTags.push({ x: proj.x, y: proj.y });
+            }
+            if (weaponsArmed && (isHostile || isLocked)) {
+                _tlDrawLeadPip(ctx, obj, wp, distance, proj, camera, w, h, scheme);
+            }
+        } else {
+            _tlDrawEdgeChevron(ctx, proj, w, h, scheme, distance);
+        }
+    }
+}
+
+if (typeof window !== 'undefined') {
+    window.updateTargetLayer = updateTargetLayer;
 }
 
 // =============================================================================

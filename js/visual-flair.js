@@ -1610,6 +1610,457 @@ function _updateWarpStreaks() {
     u.uOpacity.value = 0.95 * env;
 }
 
+// ── 14. WARP DEBRIS FIELD — the world you actually fly THROUGH ──────────────
+// The streak field above is CAMERA-ANCHORED: it rides with you, so it sells
+// "fast" but never sells "moving". Playtest verdict on the boost was brutal
+// and correct — over 3,400 world units of travel the backdrop was pixel-
+// identical frame to frame, so the fastest moment in the game generated LESS
+// on-screen motion than sitting still. Streaks stapled over a photograph.
+//
+// This is the other half: a field of real objects at real WORLD coordinates
+// that the camera genuinely flies through. Every mote is nailed to a fixed
+// point in space the instant it spawns and never moves again — all apparent
+// motion is the camera closing on it. That buys the three things a decal can
+// never fake:
+//   • true perspective growth (a chunk doubles in size as you halve the range)
+//   • true streaming — motes sweep OUT past the frame edges, they don't fade
+//   • true depth ordering: a planet in front of a mote occludes it (depthTest)
+//
+// THREE DEPTH LAYERS, ONE DRAW CALL. The layering is the whole point: without
+// a slow far layer to measure the fast near layer against, parallax has no
+// reference and the field reads as noise.
+//   L0  150–2,500u    ice chips / dust motes — whip past in a fifth of a second
+//   L1  2,500–13,000u  tumbling debris chunks — grow visibly across a whip
+//   L2  5,500–22,000u  drifting neon dust banks — the parallax yardstick
+//
+// Per-mote motion blur is computed in the vertex shader by re-projecting the
+// mote one blur-step back along the camera's own velocity, so each streak
+// points radially away from the true vanishing point of TRAVEL for free — no
+// axis uniform, no special case when you look sideways out of the turn.
+//
+// Cost control (additive overdraw is the killer here):
+//   • zero draw calls below ~500 u/s — the mesh is invisible and skipped
+//   • geometry is only re-uploaded on frames where a mote actually recycled
+//   • long streaks dim in proportion to their length (same energy, more pixels)
+//   • the 28 big haze sprites carry ~0.24 alpha; they are backdrop, not bloom
+//   • ~1.5k triangles total, index buffer stays Uint16, no per-frame allocation
+const _WDF_LAYERS = [
+    // z0/z1 = seed depth ahead of the camera. spread = lateral cone slope
+    // (< tan(halfFov) so a mote seeds INSIDE the frame and sweeps outward).
+    { n: 520, z0: 150,  z1: 2500,  s0: 3.0,  s1: 13.0, spread: 0.62, blur: 1.0, alpha: 1.00, soft: 0.0 },
+    { n: 200, z0: 2500, z1: 13000, s0: 30,   s1: 170,  spread: 0.55, blur: 0.5, alpha: 0.95, soft: 0.35 },
+    { n: 28,  z0: 5500, z1: 22000, s0: 900,  s1: 3400, spread: 0.50, blur: 0.0, alpha: 0.24, soft: 1.0 }
+];
+const _WDF_N = _WDF_LAYERS.reduce((a, l) => a + l.n, 0);
+
+const _wdf = {
+    mesh: null, geo: null, mat: null, pos: null, posAttr: null,
+    layer: null, p: null, dirty: false,
+    env: 0, last: 0, kickT0: 0, kickMs: 1, kickAmp: 0, seeded: false,
+    ax: null, bu: null, bv: null, camL: null, tmp: null,
+    blurWorld: null, invQ: null
+};
+
+function _wdfBasis() {
+    const a = _wdf.ax, u = _wdf.bu, v = _wdf.bv;
+    if (Math.abs(a.y) < 0.9) u.set(0, 1, 0); else u.set(1, 0, 0);
+    v.crossVectors(a, u).normalize();
+    u.crossVectors(v, a).normalize();
+}
+
+// Place mote i at a fresh WORLD point ahead of the camera. spanAll seeds it
+// anywhere in its layer's depth band (used to fill the field on frame one);
+// otherwise it lands near the far edge, which is where recycled motes belong.
+function _wdfSeed(i, spanAll) {
+    const L = _WDF_LAYERS[_wdf.layer[i]];
+    const z = spanAll
+        ? (L.z0 + Math.random() * (L.z1 - L.z0))
+        : (L.z1 - Math.random() * (L.z1 - L.z0) * 0.30);
+    const ang = Math.random() * Math.PI * 2;
+    // Minimum lateral offset keeps anything from passing through the lens.
+    const r = (L.z0 * 0.35 + 55) + Math.sqrt(Math.random()) * (z * L.spread);
+    const cs = Math.cos(ang) * r, sn = Math.sin(ang) * r;
+    const c = _wdf.camL, a = _wdf.ax, u = _wdf.bu, v = _wdf.bv;
+    const x = c.x + a.x * z + u.x * cs + v.x * sn;
+    const y = c.y + a.y * z + u.y * cs + v.y * sn;
+    const zz = c.z + a.z * z + u.z * cs + v.z * sn;
+    const b = i * 3;
+    _wdf.p[b] = x; _wdf.p[b + 1] = y; _wdf.p[b + 2] = zz;
+    const q = i * 12;
+    const P = _wdf.pos;
+    P[q] = x;     P[q + 1] = y;  P[q + 2] = zz;
+    P[q + 3] = x; P[q + 4] = y;  P[q + 5] = zz;
+    P[q + 6] = x; P[q + 7] = y;  P[q + 8] = zz;
+    P[q + 9] = x; P[q + 10] = y; P[q + 11] = zz;
+    _wdf.dirty = true;
+}
+
+function _wdfBuild() {
+    if (_wdf.mesh || typeof THREE === 'undefined' || typeof scene === 'undefined') return;
+    const N = _WDF_N;
+    const pos = new Float32Array(N * 4 * 3);
+    const aCorner = new Float32Array(N * 4 * 2);
+    const aSize = new Float32Array(N * 4);
+    const aHue = new Float32Array(N * 4);
+    const aAlpha = new Float32Array(N * 4);
+    const aBlur = new Float32Array(N * 4);
+    const aSoft = new Float32Array(N * 4);
+    const idx = new Uint16Array(N * 6);           // 2144 verts — Uint16 safe
+
+    _wdf.p = new Float32Array(N * 3);
+    _wdf.layer = new Uint8Array(N);
+    _wdf.pos = pos;
+
+    const CX = [-1, 1, 1, -1], CY = [-1, -1, 1, 1];
+    let i = 0;
+    for (let li = 0; li < _WDF_LAYERS.length; li++) {
+        const L = _WDF_LAYERS[li];
+        for (let k = 0; k < L.n; k++, i++) {
+            _wdf.layer[i] = li;
+            const sz = L.s0 + Math.random() * (L.s1 - L.s0);
+            const hue = Math.random();
+            const v = i * 4;
+            for (let c = 0; c < 4; c++) {
+                aCorner[(v + c) * 2] = CX[c];
+                aCorner[(v + c) * 2 + 1] = CY[c];
+                aSize[v + c] = sz;
+                aHue[v + c] = hue;
+                aAlpha[v + c] = L.alpha;
+                aBlur[v + c] = L.blur;
+                aSoft[v + c] = L.soft;
+            }
+            const o = i * 6;
+            idx[o] = v; idx[o + 1] = v + 1; idx[o + 2] = v + 2;
+            idx[o + 3] = v; idx[o + 4] = v + 2; idx[o + 5] = v + 3;
+        }
+    }
+
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    geo.setAttribute('aCorner', new THREE.BufferAttribute(aCorner, 2));
+    geo.setAttribute('aSize', new THREE.BufferAttribute(aSize, 1));
+    geo.setAttribute('aHue', new THREE.BufferAttribute(aHue, 1));
+    geo.setAttribute('aAlpha', new THREE.BufferAttribute(aAlpha, 1));
+    geo.setAttribute('aBlur', new THREE.BufferAttribute(aBlur, 1));
+    geo.setAttribute('aSoft', new THREE.BufferAttribute(aSoft, 1));
+    geo.setIndex(new THREE.BufferAttribute(idx, 1));
+    geo.attributes.position.setUsage(THREE.DynamicDrawUsage);
+    geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e9);
+
+    const mat = new THREE.ShaderMaterial({
+        uniforms: {
+            uRes: { value: new THREE.Vector2(1280, 720) },
+            uVelView: { value: new THREE.Vector3() },
+            uMinPx: { value: 1.6 },
+            uStretchMax: { value: 6.0 },
+            uOpacity: { value: 0 },
+            uColA: { value: new THREE.Color(0x8ff0ff) },
+            uColB: { value: new THREE.Color(0xff77d9) },
+            uColHaze: { value: new THREE.Color(0xd15cff) }
+        },
+        vertexShader: [
+            'attribute vec2 aCorner;',
+            'attribute float aSize;',
+            'attribute float aHue;',
+            'attribute float aAlpha;',
+            'attribute float aBlur;',
+            'attribute float aSoft;',
+            'uniform vec2 uRes;',
+            'uniform vec3 uVelView;',
+            'uniform float uMinPx;',
+            'uniform float uStretchMax;',
+            'varying vec2 vC;',
+            'varying float vHue;',
+            'varying float vA;',
+            'varying float vSoft;',
+            'varying float vE;',
+            'void main() {',
+            '  vC = aCorner; vHue = aHue; vSoft = aSoft;',
+            '  vec4 mv = modelViewMatrix * vec4(position, 1.0);',
+            '  vec4 clip = projectionMatrix * mv;',
+            '  if (clip.w <= 0.05) { vA = 0.0; vE = 1.0; gl_Position = vec4(0.0, 0.0, 2.0, 1.0); return; }',
+            '  float dist = max(1.0, -mv.z);',
+            // Radius in PIXELS: real perspective growth, with a floor so the
+            // far end of a layer stays a faint speck instead of aliasing away.
+            '  float pxPerWorld = 0.5 * uRes.y * projectionMatrix[1][1] / dist;',
+            '  float rpx = max(aSize * pxPerWorld, uMinPx);',
+            // Re-project one blur-step back along the CAMERA's velocity. The
+            // screen delta is this mote's true motion vector, which already
+            // points away from the vanishing point of travel.
+            '  vec4 clip2 = projectionMatrix * vec4(mv.xyz - uVelView * aBlur, 1.0);',
+            '  vec2 s0 = (clip.xy / clip.w) * 0.5 * uRes;',
+            '  vec2 s1 = (clip2.xy / max(0.05, clip2.w)) * 0.5 * uRes;',
+            '  vec2 mvec = s1 - s0;',
+            '  float ml = length(mvec);',
+            '  vec2 along = (ml > 0.001) ? mvec / ml : vec2(1.0, 0.0);',
+            '  vec2 across = vec2(-along.y, along.x);',
+            '  float hlen = rpx + min(ml * 0.5, rpx * uStretchMax);',
+            '  vE = hlen / max(0.0001, rpx);',
+            // Near fade: a chip passing through the lens must not detonate the
+            // frame. Soft layers (dust banks) opt out — they are never close.
+            '  vA = aAlpha * smoothstep(55.0, 300.0, dist * (1.0 + aSoft * 400.0));',
+            // A long streak spreads the same light over more pixels.
+            '  vA *= mix(1.0, 0.72, clamp((vE - 1.0) / 8.0, 0.0, 1.0));',
+            // Motes sitting ON the vanishing point barely move, so at full
+            // brightness they pile into a white blob over the crosshair. Dim
+            // by screen travel — the eye reads speed off the ones that MOVE.
+            '  vA *= mix(mix(0.32, 1.0, smoothstep(1.0, 20.0, ml)), 1.0, aSoft);',
+            '  clip.xy += ((along * (aCorner.x * hlen) + across * (aCorner.y * rpx)) / uRes) * 2.0 * clip.w;',
+            '  gl_Position = clip;',
+            '}'
+        ].join('\n'),
+        fragmentShader: [
+            'uniform vec3 uColA;',
+            'uniform vec3 uColB;',
+            'uniform vec3 uColHaze;',
+            'uniform float uOpacity;',
+            'varying vec2 vC;',
+            'varying float vHue;',
+            'varying float vA;',
+            'varying float vSoft;',
+            'varying float vE;',
+            'void main() {',
+            // Capsule: a disc of radius 1 swept along the stretch axis.
+            '  float L = max(0.0, vE - 1.0);',
+            '  vec2 p = vec2(abs(vC.x) * vE, vC.y);',
+            '  p.x = max(0.0, p.x - L);',
+            '  float d = length(p);',
+            '  if (d > 1.0) discard;',
+            '  float core = pow(max(0.0, 1.0 - d), 5.0);',
+            '  float body = 1.0 - smoothstep(0.18, 1.0, d);',
+            '  float cloud = pow(max(0.0, 1.0 - d), 2.3);',
+            '  float shape = mix(body + core * 0.9, cloud, vSoft);',
+            '  vec3 c = mix(uColA, uColB, vHue);',
+            '  c = mix(c, uColHaze, vSoft * 0.75);',
+            '  c = mix(c, vec3(1.0), core * (1.0 - vSoft) * 0.9);',
+            '  float a = shape * vA * uOpacity;',
+            '  if (a < 0.004) discard;',
+            '  gl_FragColor = vec4(c, a);',
+            '}'
+        ].join('\n'),
+        transparent: true,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        depthTest: true,          // a planet in front of a mote HIDES it
+        side: THREE.DoubleSide
+    });
+
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.frustumCulled = false;
+    mesh.renderOrder = 6;         // over the skyboxes, under the ship/HUD
+    mesh.visible = false;
+    mesh.raycast = function () {};
+    mesh.userData.isWarpDebrisFx = true;
+    // Resolution + the blur vector have to come off the RENDER camera: the
+    // fixed-step interpolation means the update-phase transform is a frame
+    // stale, and at 6,000 u/s a stale frame is 100 units of smear error.
+    mesh.onBeforeRender = function (renderer, sc, cam) {
+        try {
+            const el = renderer.domElement;
+            mat.uniforms.uRes.value.set(el.clientWidth || el.width || 1280,
+                                        el.clientHeight || el.height || 720);
+            _wdf.invQ.copy(cam.quaternion).conjugate();
+            mat.uniforms.uVelView.value.copy(_wdf.blurWorld).applyQuaternion(_wdf.invQ);
+        } catch (err) {}
+    };
+
+    _wdf.posAttr = geo.attributes.position;
+    _wdf.geo = geo; _wdf.mat = mat; _wdf.mesh = mesh;
+    _wdf.ax = new THREE.Vector3(0, 0, -1);
+    _wdf.bu = new THREE.Vector3(0, 1, 0);
+    _wdf.bv = new THREE.Vector3(1, 0, 0);
+    _wdf.camL = new THREE.Vector3();
+    _wdf.tmp = new THREE.Vector3();
+    _wdf.blurWorld = new THREE.Vector3();
+    _wdf.invQ = new THREE.Quaternion();
+    scene.add(mesh);
+}
+
+// Fill the whole field ahead of the camera in one go.
+function _wdfReseedAll() {
+    if (!_wdf.mesh) return;
+    // camL is the camera expressed in the mesh's frame. The mesh is a scene
+    // ROOT, so the floating-origin rebase slides mesh.position for us and the
+    // baked world coordinates stay valid — we just have to subtract it here.
+    _wdf.camL.copy(camera.position).sub(_wdf.mesh.position);
+    _wdfBasis();
+    for (let i = 0; i < _WDF_N; i++) _wdfSeed(i, true);
+    _wdf.seeded = true;
+}
+
+// Public: fire the field. dir = travel direction, speed = units/SECOND.
+function warpDebrisBurst(dir, speed, colA, colB, strength) {
+    try {
+        _wdfBuild();
+        if (!_wdf.mesh) return;
+        _wdf.kickT0 = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+        _wdf.kickMs = 1800;
+        _wdf.kickAmp = Math.max(0.4, Math.min(1.3, strength || 1));
+        if (colA !== undefined && colA !== null) _wdf.mat.uniforms.uColA.value.setHex(colA);
+        if (colB !== undefined && colB !== null) _wdf.mat.uniforms.uColB.value.setHex(colB);
+        if (dir && dir.lengthSq && dir.lengthSq() > 1e-6) _wdf.ax.copy(dir).normalize();
+        _wdfReseedAll();
+        // The backdrop parallax rides the same trigger — see below.
+        _wbpArm(_wdf.ax);
+    } catch (e) {}
+}
+
+function _updateWarpDebris() {
+    const now = (typeof performance !== 'undefined') ? performance.now() : Date.now();
+    const dt = Math.max(0, Math.min(0.05, (now - (_wdf.last || now)) / 1000));
+    _wdf.last = now;
+
+    const spd = (gameState.velocityVector ? gameState.velocityVector.length() : 0) * 60;
+    // Slightly higher gate than the streak field: debris is a BOOST event, not
+    // a thrust event, and it must cost exactly nothing while you are cruising.
+    let target = Math.max(0, Math.min(1, (spd - 500) / 2600));
+    if (_wdf.kickAmp > 0) {
+        const kt = (now - _wdf.kickT0) / _wdf.kickMs;
+        if (kt >= 1) _wdf.kickAmp = 0;
+        else target = Math.max(target, _wdf.kickAmp * Math.pow(1 - kt, 0.6));
+    }
+    if (target <= 0.001 && _wdf.env <= 0.004) {
+        if (_wdf.mesh && _wdf.mesh.visible) _wdf.mesh.visible = false;
+        _wdf.env = 0;
+        _wdf.seeded = false;
+        return;
+    }
+    _wdfBuild();
+    if (!_wdf.mesh) return;
+
+    const tau = (target > _wdf.env) ? 0.07 : 0.5;
+    _wdf.env += (target - _wdf.env) * (1 - Math.exp(-dt / tau));
+    if (_wdf.env <= 0.004) { _wdf.mesh.visible = false; _wdf.seeded = false; return; }
+    _wdf.mesh.visible = true;
+
+    // Travel axis, eased so a mid-boost turn sweeps the seeding cone rather
+    // than teleporting it.
+    if (spd > 1) {
+        _wdf.tmp.copy(gameState.velocityVector).normalize();
+    } else {
+        camera.getWorldDirection(_wdf.tmp);
+    }
+    _wdf.ax.lerp(_wdf.tmp, 1 - Math.exp(-dt / 0.09));
+    if (_wdf.ax.lengthSq() < 1e-6) _wdf.ax.copy(_wdf.tmp);
+    _wdf.ax.normalize();
+    _wdfBasis();
+
+    _wdf.camL.copy(camera.position).sub(_wdf.mesh.position);
+    if (!_wdf.seeded) { _wdfReseedAll(); }
+
+    // Per-mote motion-blur reference: ~0.8 of a 60fps step of camera travel.
+    _wdf.blurWorld.copy(gameState.velocityVector || _wdf.tmp).multiplyScalar(0.8);
+
+    // ── RECYCLE ────────────────────────────────────────────────────────────
+    // Motes never move. The only per-frame work is asking which ones the
+    // camera has already passed (or turned away from) and re-nailing those to
+    // a fresh point ahead. Geometry uploads only on frames that recycled.
+    _wdf.dirty = false;
+    const p = _wdf.p, cx = _wdf.camL.x, cy = _wdf.camL.y, cz = _wdf.camL.z;
+    const ax = _wdf.ax.x, ay = _wdf.ax.y, az = _wdf.ax.z;
+    for (let i = 0; i < _WDF_N; i++) {
+        const L = _WDF_LAYERS[_wdf.layer[i]];
+        const b = i * 3;
+        const dx = p[b] - cx, dy = p[b + 1] - cy, dz = p[b + 2] - cz;
+        const axial = dx * ax + dy * ay + dz * az;
+        if (axial < -260) { _wdfSeed(i, false); continue; }          // passed it
+        if (axial > L.z1 * 1.8) { _wdfSeed(i, false); continue; }    // rebase / warp jump
+        // Turned hard mid-boost: anything now far outside the travel cone is
+        // dead weight, so recycle it into the new heading instead of waiting
+        // for it to drift behind.
+        const latSq = (dx * dx + dy * dy + dz * dz) - axial * axial;
+        const lim = axial * 2.8 + 900;
+        if (latSq > lim * lim) _wdfSeed(i, false);
+    }
+    if (_wdf.dirty) _wdf.posAttr.needsUpdate = true;
+
+    const u = _wdf.mat.uniforms;
+    u.uOpacity.value = 1.0 * _wdf.env;
+    u.uStretchMax.value = 3.0 + 5.0 * _wdf.env;
+}
+
+// ── 15. BACKDROP PARALLAX UNLOCK ────────────────────────────────────────────
+// The skydomes sit at radius 150k–195k. Honest geometry says 4,000 units of
+// whip rotates them by about one degree, which is why the pink nebula bloom
+// was pixel-identical across the entire boost. So during a boost — and ONLY
+// during a boost — the domes are pushed backwards along the travel vector by
+// a multiple of the distance actually covered. It is a cheat, but it is the
+// cheat that makes a whip feel like it crossed something.
+//
+// Rebase-safe: we never cache an absolute base position (applyWorldShift would
+// invalidate it). We remember only the offset WE applied and undo exactly that
+// before applying the next one.
+const _wbp = {
+    objs: null, off: 0, target: 0, dir: null, cum: 0, active: false, last: 0
+};
+
+function _wbpArm(dir) {
+    if (!_wbp.dir) _wbp.dir = new THREE.Vector3();
+    if (dir) _wbp.dir.copy(dir).normalize();
+    _wbp.cum = 0;
+    _wbp.active = true;
+}
+
+function _wbpCollect() {
+    // Not cached until at least one dome exists — the skydomes are built
+    // asynchronously, and caching an empty list would disable this forever.
+    if (_wbp.objs && _wbp.objs.length) return _wbp.objs;
+    const out = [];
+    const push = (o, k) => {
+        if (!o || !o.isObject3D || !o.geometry) return;
+        const r = (o.geometry.parameters && o.geometry.parameters.radius) || 150000;
+        out.push({ o: o, r: r, k: k, applied: 0 });
+    };
+    push(window.nebulaSkybox, 1.0);
+    push(window.cosmicSkybox, 0.72);
+    push(window.hubbleSkybox2, 0.85);
+    if (out.length) _wbp.objs = out;
+    return out;
+}
+
+function _updateBackdropParallax() {
+    if (typeof window === 'undefined' || typeof camera === 'undefined') return;
+    const now = (typeof performance !== 'undefined') ? performance.now() : Date.now();
+    const dt = Math.max(0, Math.min(0.05, (now - (_wbp.last || now)) / 1000));
+    _wbp.last = now;
+    const objs = _wbpCollect();
+    if (!objs.length) return;
+
+    if (!_wbp.dir) _wbp.dir = new THREE.Vector3(0, 0, -1);
+    const spd = (gameState.velocityVector ? gameState.velocityVector.length() : 0) * 60;
+    if (_wbp.active && spd < 420) _wbp.active = false;
+    if (_wbp.active) {
+        if (spd > 1 && _wbp.dir.lengthSq() < 1e-6) {
+            _wbp.dir.copy(gameState.velocityVector).normalize();
+        }
+        _wbp.cum += spd * dt;
+        // 7x amplification: the 3,400u the critic measured becomes ~24,000u of
+        // dome travel — roughly 7 degrees of sweep, unmissable but not a spin.
+        _wbp.target = Math.min(_wbp.cum * 7, 34000);
+    } else {
+        _wbp.target = 0;
+    }
+    // Snappy on the way out, slow and sub-perceptual on the way back.
+    const tau = _wbp.active ? 0.14 : 3.2;
+    _wbp.off += (_wbp.target - _wbp.off) * (1 - Math.exp(-dt / tau));
+    if (_wbp.off < 1 && _wbp.target === 0) _wbp.off = 0;
+    if (_wbp.dir.lengthSq() < 1e-6) return;
+
+    for (let i = 0; i < objs.length; i++) {
+        const e = objs[i];
+        // Never push a dome so far that the camera can end up outside it. Room
+        // is measured from the dome's UNOFFSET centre so the clamp can't chase
+        // its own tail.
+        _wbpTmp.copy(e.o.position).addScaledVector(_wbp.dir, -e.applied);
+        const room = Math.max(0, e.r * 0.9 - camera.position.distanceTo(_wbpTmp));
+        const want = -Math.min(_wbp.off * e.k, room * 0.5);
+        if (want === e.applied) continue;
+        e.o.position.addScaledVector(_wbp.dir, want - e.applied);
+        e.applied = want;
+    }
+}
+const _wbpTmp = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+
 // Screen-space speed spokes are anchored on the VANISHING POINT of travel,
 // not the middle of the screen — cheap (one composited transform) and it is
 // what makes the DOM layer agree with the 3D streaks when the ship is not
@@ -1643,6 +2094,8 @@ function updateVisualFlair() {
     try { _updateLaserCharge(); } catch (e) {}
     try { if (window.arcade) window.arcade.update(); } catch (e) {}
     try { _updateWarpStreaks(); } catch (e) {}
+    try { _updateWarpDebris(); } catch (e) {}
+    try { _updateBackdropParallax(); } catch (e) {}
     try { _updateScreenFX(); } catch (e) {}
     try { _updateWhipPreview(fc); } catch (e) {}
     try { _updateWhipShakeFx(); } catch (e) {}
@@ -1672,4 +2125,5 @@ if (typeof window !== 'undefined') {
     window.wingmanTracerPush = wingmanTracerPush;
     window.wingmanTracerFade = wingmanTracerFade;
     window.warpStreakBurst = warpStreakBurst;
+    window.warpDebrisBurst = warpDebrisBurst;
 }

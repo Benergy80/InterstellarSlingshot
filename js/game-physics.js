@@ -2311,6 +2311,20 @@ function updateSlingshotWhip() {
             window.warpStreakBurst(launchDir, w.boost * 60, _sA, _sB,
                 Math.max(0.6, Math.min(1.35, w.boost / 95)));
         }
+        // …and the WORLD-SPACE half of the same illusion. Streaks alone are a
+        // decal: they ride the camera, so the boost read as a still photograph
+        // with speed lines drawn on it (measured: less on-screen motion at
+        // 6,899 u/s than parked at 24 u/s). warpDebrisBurst nails ~750 chips,
+        // chunks and dust banks to fixed WORLD points across 150–22,000u ahead
+        // of the launch vector, so the camera physically flies through them —
+        // real perspective growth, real streaming past the frame edges — and
+        // arms the backdrop parallax that finally unpins the skydomes.
+        if (typeof window !== 'undefined' && typeof window.warpDebrisBurst === 'function') {
+            const _dA = w.bh ? 0xc9a4ff : (w.color === 0xffcc44 ? 0xffe6a8 : 0x9ff2ff);
+            const _dB = w.bh ? 0x6ef0ff : 0xff8ade;
+            window.warpDebrisBurst(launchDir, w.boost * 60, _dA, _dB,
+                Math.max(0.6, Math.min(1.3, w.boost / 95)));
+        }
         if (typeof toggleWarpSpeedStarfield === 'function') toggleWarpSpeedStarfield(true);
         for (let i = 0; i < 4; i++) setTimeout(() => createHyperspaceEffect(), i * 140);
         if (typeof showAchievement === 'function') {
