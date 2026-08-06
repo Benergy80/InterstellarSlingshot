@@ -974,6 +974,12 @@ function _updateScreenFX() {
     // while "time" drags, then snap back as the arc accelerates out.
     const dil = (typeof window !== 'undefined' && window.__whipDilation) || 0;
     if (dil > 0.01) target = Math.max(target, 0.55 + dil * 0.45);
+    // SUSTAINED WARP TUNNEL (§20): while you are inside the shaft the frame
+    // closes in. Held separately from `level` so the vignette can go deeper
+    // than plain speed ever does without also cranking the spokes and chroma
+    // — tunnel vision is the point, a strobing edge is not.
+    const tun = (typeof window !== 'undefined' && window.__warpTunnelLevel) || 0;
+    if (tun > 0.01) target = Math.max(target, 0.6 + tun * 0.4);
     // Faster attack while dilating so the effect lands inside the ~0.3s window.
     _sfx.level += (target - _sfx.level) * (dil > 0.05 ? 0.14 : 0.05);
     if (_sfx.level < 0.012) {
@@ -984,7 +990,7 @@ function _updateScreenFX() {
     _sfx.wrap.style.display = 'block';
     const L = _sfx.level;
     const t = Date.now();
-    _sfx.vig.style.opacity = Math.min(1, L * 0.8).toFixed(3);
+    _sfx.vig.style.opacity = Math.min(1, L * 0.8 + tun * tun * 0.34).toFixed(3);
     _sfx.streaks.style.opacity = (Math.max(0, L - 0.25) * 0.65).toFixed(3);
     // Slow sweep + breathing scale so the spokes feel like rushing light,
     // not a static stencil
@@ -1252,7 +1258,16 @@ function _updateWhipCharge(fc) {
         target = whip.body;
         color = (typeof whip.color === 'number') ? whip.color : _whipBodyColor(target);
         const u = Math.max(0, Math.min(1, (now - whip.t0) / (whip.durMs || 1600)));
-        want = 0.55 + 0.45 * Math.sin(Math.PI * Math.min(1, u * 1.08));
+        // Ride the SAME 0→1→0 carve envelope the arc banks on (published by
+        // the physics whip), so the body's charge peaks exactly when the turn
+        // bites hardest instead of drifting against it. Now that the camera
+        // leads into the corner, this glow is on screen for the whole arc —
+        // it has to be a real build, not a faint rim.
+        const wfc = (typeof window !== 'undefined' && window.__whipFrame &&
+            window.__whipFrame.active && typeof window.__whipFrame.carve === 'number')
+            ? window.__whipFrame.carve
+            : Math.sin(Math.PI * Math.min(1, u * 1.08));
+        want = 0.62 + 0.78 * wfc;
         _whipCharge.wasWhipping = true;
     } else {
         if (_whipCharge.wasWhipping) {
@@ -1306,17 +1321,21 @@ function _updateWhipCharge(fc) {
     const p = target.position;
 
     _whipCharge.shell.position.copy(p);
-    _whipCharge.shell.scale.setScalar(1 + B * 0.85 + L * 0.06);
-    _whipCharge.shellMat.opacity = Math.min(0.6, L * 0.34 + B * 0.5);
+    _whipCharge.shell.scale.setScalar(1 + B * 0.85 + L * 0.08);
+    _whipCharge.shellMat.opacity = Math.min(0.72, L * 0.38 + B * 0.5);
 
     _whipCharge.halo.position.copy(p);
-    _whipCharge.halo.scale.setScalar(r * (3.2 + L * 2.6 + B * 3.4));
-    _whipCharge.haloMat.opacity = Math.min(0.75, L * 0.42 + B * 0.45);
+    _whipCharge.halo.scale.setScalar(r * (3.0 + L * 3.8 + B * 3.4));
+    _whipCharge.haloMat.opacity = Math.min(0.92, L * 0.5 + B * 0.45);
 
+    // The capture ring winds UP as the charge builds — a visible spin-up on
+    // the body that is about to throw you, so the release has something the
+    // eye has been watching load.
     _whipCharge.ring.position.copy(p);
-    _whipCharge.ring.rotation.z += 0.012 + L * 0.05;
-    _whipCharge.ring.scale.setScalar(1 + B * 1.5 + Math.sin(now * 0.006) * 0.02 * L);
-    _whipCharge.ringMat.opacity = Math.min(0.7, L * 0.5 + B * 0.4);
+    _whipCharge.ring.rotation.z += 0.012 + L * 0.09;
+    _whipCharge.ring.scale.setScalar(1 + B * 1.5 + 0.16 * Math.max(0, L - 0.6) +
+        Math.sin(now * 0.006) * 0.02 * L);
+    _whipCharge.ringMat.opacity = Math.min(0.88, L * 0.58 + B * 0.4);
 }
 
 // Exposed so the physics whip can drive the punchy beats at exact frames.
@@ -2081,6 +2100,235 @@ function _wsfVanishingShift(outArr) {
 }
 const _wsfShift = [0, 0];
 
+// ── 20. WARP TUNNEL — the moment emergency warp never had ───────────────────
+// O-warp and black-hole transit both moved the player at 6,000+ u/s while the
+// screen showed… a white DOM fade. No tunnel, no threshold, no sense of having
+// gone THROUGH anything. This is the missing beat, and it deliberately does
+// NOT replace the slingshot streak field — the streaks (§19) and debris (§14)
+// still run underneath and are what sell raw velocity. The tunnel is the thing
+// they were missing: a WALL, an enclosure, something you are inside of.
+//
+// Two nested open cylinders anchored to the render camera and aimed down the
+// travel axis:
+//   outer — wide, sparse, slow: the far wall of the shaft
+//   inner — tight, dense, fast: filaments ripping past your canopy
+// Both are one draw call each, procedurally striped in the fragment shader
+// (no textures, no particles), rendered BackSide so only the far wall of each
+// tube is filled — one layer of overdraw per cylinder, not two — and
+// depth-tested so the ship stays crisply INSIDE the tunnel instead of being
+// painted over by it. Total cost: 2 draw calls, ~150 triangles.
+//
+// Entry and exit are detected here from live warp state, so every warp source
+// (O-key, jump, black-hole transit) gets the full beat — FOV snap through
+// camera-system's warpFovPulse, chromatic rim pulse, deepened vignette —
+// without any caller having to remember to ask for it.
+const _WTU_LEN = 3600;
+const _wtu = {
+    inner: null, outer: null, level: 0, was: false, roll: 0, last: 0,
+    forceUntil: 0, forceAmp: 0, frame: null, q: null, qRoll: null,
+    m: null, dir: null, tmp: null, bh: false
+};
+
+function _wtuMakeShell(radius, streaks, scroll, seg, colA, colB) {
+    const geo = new THREE.CylinderGeometry(radius, radius, _WTU_LEN, seg, 1, true);
+    geo.rotateX(Math.PI / 2);                 // axis along -Z = travel
+    geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e9);
+    const mat = new THREE.ShaderMaterial({
+        uniforms: {
+            uTime: { value: 0 },
+            uOpacity: { value: 0 },
+            uStreaks: { value: streaks },
+            uScroll: { value: scroll },
+            uColA: { value: new THREE.Color(colA) },
+            uColB: { value: new THREE.Color(colB) }
+        },
+        vertexShader: [
+            'varying vec2 vUv;',
+            'void main() {',
+            '  vUv = uv;',
+            '  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);',
+            '}'
+        ].join('\n'),
+        fragmentShader: [
+            'uniform float uTime;',
+            'uniform float uOpacity;',
+            'uniform float uStreaks;',
+            'uniform float uScroll;',
+            'uniform vec3 uColA;',
+            'uniform vec3 uColB;',
+            'varying vec2 vUv;',
+            'float h(float n) { return fract(sin(n * 12.9898) * 43758.5453); }',
+            'void main() {',
+            // Lanes AROUND the tube — each one an independent filament with
+            // its own width, colour mix and flow rate.
+            '  float x = vUv.x * uStreaks;',
+            '  float id = floor(x);',
+            '  float f = fract(x) - 0.5;',
+            '  float r = h(id);',
+            '  float r2 = h(id + 31.7);',
+            '  float w = 0.07 + 0.26 * r;',
+            '  float across = smoothstep(w, 0.0, abs(f));',
+            '  if (across < 0.01) discard;',
+            // …and a bright pulse travelling ALONG it. This is the motion the
+            // eye actually reads as "I am moving through a shaft".
+            '  float y = vUv.y * (2.0 + 5.0 * r2) - uTime * uScroll * (0.7 + 1.1 * r);',
+            '  float along = pow(fract(y), 4.0) * 0.85 + 0.15;',
+            // Fade both mouths of the tube so it never shows a hard rim, and
+            // hot-white the far end into a vanishing point.
+            '  float e = abs(vUv.y - 0.5) * 2.0;',
+            '  float ends = 1.0 - smoothstep(0.30, 1.0, e);',
+            '  vec3 c = mix(uColA, uColB, r2);',
+            '  c = mix(c, vec3(1.0), smoothstep(0.45, 0.95, e) * 0.65);',
+            '  float a = across * along * ends * uOpacity;',
+            '  if (a < 0.004) discard;',
+            '  gl_FragColor = vec4(c, a);',
+            '}'
+        ].join('\n'),
+        transparent: true,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        side: THREE.BackSide
+    });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.frustumCulled = false;
+    mesh.matrixAutoUpdate = false;
+    mesh.renderOrder = 990;
+    mesh.visible = false;
+    mesh.raycast = function () {};
+    mesh.userData.isWarpTunnelFx = true;
+    // Same lock as the streak field: the RENDER camera's final transform is
+    // only guaranteed here, and at 6,000 u/s a one-frame lag is 100 units of
+    // visible swim in the tunnel walls.
+    mesh.onBeforeRender = function (renderer, sc, cam) {
+        if (!_wtu.frame) return;
+        const e = _wtu.frame.elements, ce = cam.matrixWorld.elements;
+        e[12] = ce[12]; e[13] = ce[13]; e[14] = ce[14];
+        this.matrixWorld.copy(_wtu.frame);
+        this.matrixWorldNeedsUpdate = false;
+    };
+    scene.add(mesh);
+    return { mesh: mesh, geo: geo, mat: mat };
+}
+
+function _wtuBuild() {
+    if (_wtu.inner || typeof THREE === 'undefined' || typeof scene === 'undefined') return;
+    _wtu.outer = _wtuMakeShell(340, 26, 0.55, 40, 0x2a6bff, 0xff3fb0);
+    _wtu.inner = _wtuMakeShell(140, 54, 1.35, 32, 0x6be6ff, 0xff5ccd);
+    _wtu.frame = new THREE.Matrix4();
+    _wtu.q = new THREE.Quaternion();
+    _wtu.qRoll = new THREE.Quaternion();
+    _wtu.m = new THREE.Matrix4();
+    _wtu.dir = new THREE.Vector3(0, 0, -1);
+    _wtu.tmp = new THREE.Vector3();
+}
+
+function _wtuPalette(bh) {
+    if (!_wtu.inner) return;
+    // Black-hole transit goes violet/cyan; ordinary warp keeps the game's
+    // cyan/magenta synthwave pair.
+    _wtu.outer.mat.uniforms.uColA.value.setHex(bh ? 0x7b2bff : 0x2a6bff);
+    _wtu.outer.mat.uniforms.uColB.value.setHex(bh ? 0x35e6ff : 0xff3fb0);
+    _wtu.inner.mat.uniforms.uColA.value.setHex(bh ? 0xc9a4ff : 0x6be6ff);
+    _wtu.inner.mat.uniforms.uColB.value.setHex(bh ? 0x35e6ff : 0xff5ccd);
+}
+
+// Public: force the tunnel on for a window, e.g. the instant a warp fires,
+// before velocity has actually ramped. strength 0..1.
+function warpTunnelBurst(strength, durMs, blackHole) {
+    try {
+        _wtu.forceAmp = Math.max(0.2, Math.min(1, strength === undefined ? 1 : strength));
+        _wtu.forceUntil = Date.now() + Math.max(200, durMs || 1200);
+        if (blackHole !== undefined) _wtu.bh = !!blackHole;
+    } catch (e) {}
+}
+
+function _wtuThreshold(entering, bh) {
+    // The tunnel's own punctuation: lens snap + chromatic rim rip. Entry
+    // tightens then blows open; exit is a single relieving flare.
+    try {
+        if (typeof window.warpFovPulse === 'function') {
+            window.warpFovPulse(entering ? 15 : -11, entering ? 950 : 700);
+        }
+        if (typeof whipScreenPulse === 'function') {
+            whipScreenPulse(bh ? 0xb26bff : 0x6be6ff, entering ? 0.85 : 0.6);
+        }
+        if (typeof whipScreenShake === 'function') {
+            whipScreenShake(entering ? 8 : 5, entering ? 520 : 380);
+        }
+    } catch (e) {}
+}
+
+function _updateWarpTunnel() {
+    const gs = (typeof gameState !== 'undefined') ? gameState : null;
+    if (!gs) return;
+    const now = Date.now();
+    const dt = Math.max(0, Math.min(0.05, (now - (_wtu.last || now)) / 1000));
+    _wtu.last = now;
+
+    // ── WHO WANTS A TUNNEL ───────────────────────────────────────────────
+    let target = 0, bh = false;
+    const ew = gs.emergencyWarp;
+    if (ew && ew.active) target = ew.isJump ? 0.5 : 1;
+    if (gs.isBlackHoleWarping || gs.warping) { target = 1; bh = true; }
+    if (_wtu.forceUntil > now) {
+        target = Math.max(target, _wtu.forceAmp);
+        bh = bh || _wtu.bh;
+    }
+
+    // Threshold beats on the way in and on the way out.
+    const on = target > 0.35;
+    if (on !== _wtu.was) {
+        _wtu.was = on;
+        _wtu.bh = bh;
+        _wtuThreshold(on, bh);
+    }
+
+    // Ease: fast in (~0.18s) so entry is a THRESHOLD, slower out (~0.55s) so
+    // exit is a release rather than a cut.
+    const tau = (target > _wtu.level) ? 0.18 : 0.55;
+    _wtu.level += (target - _wtu.level) * (1 - Math.exp(-dt / tau));
+    if (typeof window !== 'undefined') {
+        window.__warpTunnelLevel = _wtu.level > 0.01 ? _wtu.level : 0;
+    }
+    if (_wtu.level <= 0.012) {
+        if (_wtu.inner) { _wtu.inner.mesh.visible = false; _wtu.outer.mesh.visible = false; }
+        _wtu.level = 0;
+        return;
+    }
+    _wtuBuild();
+    if (!_wtu.inner) return;
+    if (!_wtu.inner.mesh.visible) _wtuPalette(_wtu.bh);
+    _wtu.inner.mesh.visible = true;
+    _wtu.outer.mesh.visible = true;
+
+    // ── AXIS: travel direction, eased, exactly like the streak field ─────
+    if (_wtu.tmp) {
+        const spd = gs.velocityVector ? gs.velocityVector.length() : 0;
+        if (spd > 0.02) _wtu.tmp.copy(gs.velocityVector).normalize();
+        else camera.getWorldDirection(_wtu.tmp);
+        _wtu.dir.lerp(_wtu.tmp, 1 - Math.exp(-dt / 0.09));
+        if (_wtu.dir.lengthSq() < 1e-6) _wtu.dir.copy(_wtu.tmp);
+        _wtu.dir.normalize();
+    }
+    _wtu.roll += dt * (0.22 + 0.5 * _wtu.level);
+    _wtu.m.lookAt(_wsfZero, _wtu.dir, _wsfUp);
+    _wtu.q.setFromRotationMatrix(_wtu.m);
+    _wtu.qRoll.setFromAxisAngle(_wsfAxisZ, _wtu.roll);
+    _wtu.q.multiply(_wtu.qRoll);
+    _wtu.frame.makeRotationFromQuaternion(_wtu.q);
+
+    const t = now * 0.001;
+    const L = _wtu.level;
+    _wtu.outer.mat.uniforms.uTime.value = t;
+    _wtu.inner.mat.uniforms.uTime.value = t;
+    // Outer wall stays subtle (it is the biggest area on screen — that is
+    // where overdraw brightness turns into mud); the inner shell carries the
+    // punch. Both ramp super-linearly so a half-strength jump reads clearly
+    // weaker than a full warp.
+    _wtu.outer.mat.uniforms.uOpacity.value = 0.34 * L * L;
+    _wtu.inner.mat.uniforms.uOpacity.value = 0.80 * L * L;
+}
+
 // ── Per-frame entry point ───────────────────────────────────────────────────
 function updateVisualFlair() {
     if (typeof gameState === 'undefined' || !gameState.gameStarted ||
@@ -2094,6 +2342,7 @@ function updateVisualFlair() {
     try { _updateLaserCharge(); } catch (e) {}
     try { if (window.arcade) window.arcade.update(); } catch (e) {}
     try { _updateWarpStreaks(); } catch (e) {}
+    try { _updateWarpTunnel(); } catch (e) {}
     try { _updateWarpDebris(); } catch (e) {}
     try { _updateBackdropParallax(); } catch (e) {}
     try { _updateScreenFX(); } catch (e) {}
@@ -2126,4 +2375,5 @@ if (typeof window !== 'undefined') {
     window.wingmanTracerFade = wingmanTracerFade;
     window.warpStreakBurst = warpStreakBurst;
     window.warpDebrisBurst = warpDebrisBurst;
+    window.warpTunnelBurst = warpTunnelBurst;
 }

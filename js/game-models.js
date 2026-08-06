@@ -354,6 +354,148 @@ function _applyNoseFlip(model, regionId) {
     model.add(inner);
 }
 
+// =============================================================================
+// MATERIAL RESPONSE — fresnel rim light + engine bloom
+// =============================================================================
+// Every hull (player, enemy, boss) was reading as a dead-flat color fill
+// with no lighting response. These helpers add a cheap fresnel rim term
+// on top of a real lit material (MeshStandardMaterial, which already
+// picks up the scene's shipLight/ambient/star lights) via onBeforeCompile
+// — leading edges pick up rim color, trailing faces stay dark from the
+// base lighting falloff — plus small additive engine-glow attachments.
+
+// One shared uniform object reused by EVERY rim-lit material so the
+// per-frame update is O(1) regardless of how many enemies are alive,
+// instead of an ever-growing registry of per-material uniforms leaking
+// across a long play session.
+const _sharedRimTime = { value: 0.0 };
+
+// Inject a fresnel rim term into a MeshStandardMaterial's compiled
+// shader. idle/boostA/boostB are hex colors; boostT (0-1) blends from
+// the idle rim color to a shimmering boostA<->boostB mix and boosts the
+// rim's strength — callers either hold boostT fixed (ambient faction
+// glow on enemies/bosses) or drive it live per-frame (player boost).
+// Returns the uniforms object so callers can mutate boostT later.
+function _addFresnelRim(material, opts) {
+    opts = opts || {};
+    const uniforms = {
+        rimColorIdle: { value: new THREE.Color(opts.idle !== undefined ? opts.idle : 0x2ad4ff) },
+        rimColorBoostA: { value: new THREE.Color(opts.boostA !== undefined ? opts.boostA : 0xffcc33) },
+        rimColorBoostB: { value: new THREE.Color(opts.boostB !== undefined ? opts.boostB : 0xff2ad4) },
+        boostT: { value: opts.boostT !== undefined ? opts.boostT : 0.0 },
+        rimPower: { value: opts.power !== undefined ? opts.power : 2.2 },
+        rimBaseStrength: { value: opts.baseStrength !== undefined ? opts.baseStrength : 1.0 },
+        rimBoostStrength: { value: opts.boostStrength !== undefined ? opts.boostStrength : 1.0 },
+        uTime: _sharedRimTime
+    };
+
+    material.onBeforeCompile = function (shader) {
+        Object.assign(shader.uniforms, uniforms);
+
+        shader.vertexShader = shader.vertexShader
+            .replace(
+                '#include <common>',
+                '#include <common>\nvarying vec3 vRimNormalW;\nvarying vec3 vRimViewW;'
+            )
+            .replace(
+                '#include <begin_vertex>',
+                '#include <begin_vertex>\nvRimNormalW = normalize( normalMatrix * normal );\nvRimViewW = normalize( -( modelViewMatrix * vec4( transformed, 1.0 ) ).xyz );'
+            );
+
+        shader.fragmentShader = shader.fragmentShader
+            .replace(
+                '#include <common>',
+                '#include <common>\nvarying vec3 vRimNormalW;\nvarying vec3 vRimViewW;\nuniform vec3 rimColorIdle;\nuniform vec3 rimColorBoostA;\nuniform vec3 rimColorBoostB;\nuniform float boostT;\nuniform float rimPower;\nuniform float rimBaseStrength;\nuniform float rimBoostStrength;\nuniform float uTime;'
+            )
+            .replace(
+                '#include <output_fragment>',
+                `
+    float _rimFres = pow( 1.0 - clamp( dot( normalize( vRimNormalW ), normalize( vRimViewW ) ), 0.0, 1.0 ), rimPower );
+    vec3 _rimBoostShimmer = mix( rimColorBoostA, rimColorBoostB, 0.5 + 0.5 * sin( uTime * 2.6 ) );
+    vec3 _rimColor = mix( rimColorIdle, _rimBoostShimmer, boostT );
+    float _rimStrengthMix = mix( rimBaseStrength, rimBoostStrength, boostT );
+    outgoingLight += _rimColor * _rimFres * _rimStrengthMix;
+    #include <output_fragment>
+`
+            );
+    };
+
+    material.userData._rimUniforms = uniforms;
+    return uniforms;
+}
+
+// Faction-tinted, rim-lit hull material for enemy/boss GLB meshes. Keeps
+// MeshStandardMaterial's real lighting response (shipLight + ambient +
+// system stars already light these ships) and adds a constant ambient
+// rim so leading edges read against the starfield in a dogfight.
+function createFactionHullMaterial(colorHex, opts) {
+    opts = opts || {};
+    const base = new THREE.Color(colorHex !== undefined ? colorHex : 0xff0000);
+    const dim = base.clone().multiplyScalar(opts.baseMultiplier !== undefined ? opts.baseMultiplier : 0.45);
+    const bright = base.clone().lerp(new THREE.Color(0xffffff), 0.55);
+
+    const material = new THREE.MeshStandardMaterial({
+        color: dim,
+        emissive: base.clone().multiplyScalar(opts.emissiveMultiplier !== undefined ? opts.emissiveMultiplier : 0.4),
+        emissiveIntensity: opts.emissiveIntensity !== undefined ? opts.emissiveIntensity : 0.85,
+        roughness: opts.roughness !== undefined ? opts.roughness : 0.5,
+        metalness: opts.metalness !== undefined ? opts.metalness : 0.7,
+        side: THREE.DoubleSide,
+        transparent: false,
+        opacity: 1.0,
+        depthWrite: true,
+        depthTest: true
+    });
+
+    _addFresnelRim(material, {
+        idle: dim.getHex(),
+        boostA: base.getHex(),
+        boostB: bright.getHex(),
+        boostT: opts.rimIntensity !== undefined ? opts.rimIntensity : 0.5,
+        power: 2.0,
+        baseStrength: 0.5,
+        boostStrength: 1.3
+    });
+
+    return material;
+}
+
+// Attach small additive engine-glow spheres at the rear of a GLB hull
+// (local -Z is forward per the game's flight convention, so +Z is the
+// engine end). Called BEFORE _applyNoseFlip so nose-flipped models
+// (region 1/8) carry their glow into the same rotated inner group as
+// the rest of the hull and end up on the correct (rear) end either way.
+// Tagged isGlowLayer so the existing enemy-glow pulse in game-core.js
+// (updateOuterSystemDiscovery's neighbor pass) animates them for free.
+function _attachEngineGlow(model, colorHex, box, sizeScale) {
+    sizeScale = sizeScale || 1.0;
+    const size = box.getSize(new THREE.Vector3());
+    if (!isFinite(size.x) || !isFinite(size.z) || (size.x === 0 && size.z === 0)) return;
+
+    const glowColor = new THREE.Color(colorHex !== undefined ? colorHex : 0xffaa33);
+    const radius = Math.max(0.5, Math.min(size.x, size.y || size.x) * 0.1) * sizeScale;
+    const glowGeo = new THREE.SphereGeometry(radius, 8, 8);
+    const rearZ = box.max.z - radius * 0.4;
+    const lateral = size.x * 0.22;
+
+    [-lateral, lateral].forEach((x) => {
+        const glowMat = new THREE.MeshBasicMaterial({
+            color: glowColor,
+            transparent: true,
+            opacity: 0.55,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false,
+            depthTest: true
+        });
+        const glow = new THREE.Mesh(glowGeo, glowMat);
+        glow.position.set(x, 0, rearZ);
+        glow.userData.isGlowLayer = true;
+        glow.renderOrder = 60;
+        glow.frustumCulled = false;
+        model.add(glow);
+    });
+}
+
 // Create enemy mesh using GLB model or fallback geometry
 function createEnemyMeshWithModel(regionId, fallbackGeometry, material, scaleOverride) {
     const model = getEnemyModel(regionId);
@@ -386,19 +528,16 @@ function createEnemyMeshWithModel(regionId, fallbackGeometry, material, scaleOve
                 child.visible = true;
                 child.frustumCulled = false;
 
-                // Apply base material
-                const baseColor = new THREE.Color(material.color || 0xff0000);
-                baseColor.multiplyScalar(0.4);
-
-                child.material = new THREE.MeshStandardMaterial({
-                    color: baseColor,
-                    transparent: false,
-                    opacity: 1.0,
-                    roughness: 0.6,
+                // Apply base material — rim-lit MeshStandardMaterial so
+                // leading edges pick up faction color against real scene
+                // lighting instead of a dead-flat fill.
+                child.material = createFactionHullMaterial(material.color || 0xff0000, {
+                    baseMultiplier: 0.45,
+                    emissiveMultiplier: 0.4,
+                    emissiveIntensity: 0.85,
+                    roughness: 0.5,
                     metalness: 0.7,
-                    side: THREE.DoubleSide,
-                    depthWrite: true,
-                    depthTest: true
+                    rimIntensity: 0.5
                 });
 
                 child.castShadow = false;
@@ -417,6 +556,12 @@ function createEnemyMeshWithModel(regionId, fallbackGeometry, material, scaleOve
                 child.position.sub(center);
             }
         });
+
+        // Small engine glows at the hull's rear — must run before
+        // _applyNoseFlip (below) so nose-flipped ships carry the glow
+        // into the rotated inner group along with everything else.
+        const centeredEnemyBox = new THREE.Box3().setFromObject(model);
+        _attachEngineGlow(model, material.color || 0xffaa33, centeredEnemyBox, 1.0);
 
         // STEP 3: NOW add glow layers (after centering)
         baseMeshes.forEach((child) => {
@@ -527,22 +672,16 @@ function createBossMeshWithModel(regionId, fallbackGeometry, material) {
                 // Faction-tinted but bright enough to read clearly. The
                 // previous 0.3x multiplier was so dim that bosses appeared
                 // muddy/geometric — bumped to 0.7x and added emissive so
-                // the model silhouette pops against starfield.
-                const baseColor = new THREE.Color(material.color || 0xff0000);
-                const tintColor = baseColor.clone().multiplyScalar(0.7);
-
-                child.material = new THREE.MeshStandardMaterial({
-                    color: tintColor,
-                    emissive: baseColor.clone().multiplyScalar(0.35),
+                // the model silhouette pops against starfield. Now rim-lit
+                // (createFactionHullMaterial) so leading edges catch a
+                // brighter faction-color fresnel highlight too.
+                child.material = createFactionHullMaterial(material.color || 0xff0000, {
+                    baseMultiplier: 0.7,
+                    emissiveMultiplier: 0.35,
                     emissiveIntensity: 0.9,
                     roughness: 0.4,
                     metalness: 0.7,
-                    transparent: false,
-                    opacity: 1.0,
-                    side: THREE.DoubleSide,
-                    depthWrite: true,
-                    depthTest: true,
-                    wireframe: false
+                    rimIntensity: 0.65
                 });
 
                 child.castShadow = false;
@@ -560,6 +699,12 @@ function createBossMeshWithModel(regionId, fallbackGeometry, material) {
                 child.position.sub(center);
             }
         });
+
+        // Small engine glows at the hull's rear — must run before
+        // _applyNoseFlip (below) so nose-flipped bosses (1/8) carry the
+        // glow into the rotated inner group with everything else.
+        const centeredBossBox = new THREE.Box3().setFromObject(model);
+        _attachEngineGlow(model, material.color || 0xffaa33, centeredBossBox, 1.4);
 
         // Bosses are larger than enemies. BOSS_SCALE_FACTOR=0.5 halves
         // every boss to match the enemy ship halving (144 -> 72 base).
@@ -612,6 +757,137 @@ function attachPlayerModelToCamera(camera) {
 }
 
 // =============================================================================
+// PLAYER HULL MATERIAL RESPONSE + ENGINE BLOOM
+// =============================================================================
+// camera-system.js builds the live player mesh from getPlayerModel() and
+// immediately paints every mesh with a flat unlit MeshBasicMaterial
+// (0x00ffff, opacity 0.85) — the hull reads as one dead-flat fill with
+// no lighting response (#00E8ED, pixel std ~11/255). That material swap
+// happens in a file this piece doesn't own, so instead of racing it,
+// this watches the shared cameraState.playerShipMesh global and — once
+// camera-system.js has finished building it — upgrades the hull to a
+// rim-lit MeshStandardMaterial (real response to the scene's shipLight)
+// plus additive engine-bloom sprites at the nozzles that scale with
+// gameState.velocityVector. Runs its own rAF loop so the upgrade lands
+// without editing camera-system.js.
+
+const PLAYER_HULL_BASE_COLOR = 0x00e8ed;
+// gameState.velocityVector is in raw sim units; the HUD displays
+// velocityVector.length() * 1000 as "km/s" (see game-physics.js
+// speedKmS), so 6800 "u/s" in the brief == 6.8 raw units — full boost.
+const PLAYER_BOOST_REFERENCE_SPEED = 6.8;
+
+function createPlayerHullMaterial() {
+    const material = new THREE.MeshStandardMaterial({
+        color: new THREE.Color(PLAYER_HULL_BASE_COLOR),
+        emissive: new THREE.Color(PLAYER_HULL_BASE_COLOR).multiplyScalar(0.18),
+        emissiveIntensity: 0.7,
+        metalness: 0.65,
+        roughness: 0.32,
+        side: THREE.FrontSide,
+        transparent: false,
+        depthWrite: true,
+        depthTest: true
+    });
+
+    const uniforms = _addFresnelRim(material, {
+        idle: 0x2ad4ff,      // cool cyan-blue at rest — reads as ambient environment light
+        boostA: 0xffcc33,    // gold
+        boostB: 0xff2ad4,    // magenta
+        boostT: 0.0,
+        power: 2.6,
+        baseStrength: 1.3,
+        boostStrength: 2.8
+    });
+
+    return { material: material, uniforms: uniforms };
+}
+
+function _createEngineBloomSprite() {
+    const spriteMaterial = new THREE.SpriteMaterial({
+        color: new THREE.Color(0x552200),
+        transparent: true,
+        opacity: 0,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        depthTest: true
+    });
+    const sprite = new THREE.Sprite(spriteMaterial);
+    sprite.renderOrder = 101; // hull is renderOrder 100 (set by camera-system.js) — bloom draws just after
+    sprite.userData.isVelocityBloom = true;
+    return sprite;
+}
+
+const _bloomIdleColor = new THREE.Color(0x552200);
+const _bloomBoostColor = new THREE.Color(0xffaa33);
+const _bloomLerpColor = new THREE.Color();
+
+// Self-driving loop: waits for camera-system.js to populate
+// cameraState.playerShipMesh, upgrades its hull materials + attaches
+// engine-bloom sprites exactly once, then every frame drives the boost
+// blend (rim color + bloom intensity) from gameState.velocityVector.
+function _runPlayerHullUpgradeLoop() {
+    requestAnimationFrame(_runPlayerHullUpgradeLoop);
+
+    _sharedRimTime.value = performance.now() * 0.001;
+
+    const mesh = window.cameraState && window.cameraState.playerShipMesh;
+    if (!mesh || typeof THREE === 'undefined') return;
+
+    if (!mesh.userData._hullUpgraded) {
+        const hullUniforms = [];
+        const bloomSprites = [];
+
+        mesh.traverse((child) => {
+            if (child.isMesh && child.material && child.material.blending !== THREE.AdditiveBlending) {
+                if (child.material.dispose) child.material.dispose();
+                const built = createPlayerHullMaterial();
+                child.material = built.material;
+                if (!child.renderOrder) child.renderOrder = 100;
+                hullUniforms.push(built.uniforms);
+            }
+        });
+
+        if (hullUniforms.length > 0) {
+            [
+                new THREE.Vector3(-0.024, 0, -0.14),
+                new THREE.Vector3(0.024, 0, -0.14)
+            ].forEach((pos) => {
+                const sprite = _createEngineBloomSprite();
+                sprite.position.copy(pos);
+                mesh.add(sprite);
+                bloomSprites.push(sprite);
+            });
+
+            mesh.userData._hullUpgraded = true;
+            mesh.userData._hullMaterials = hullUniforms;
+            mesh.userData._bloomSprites = bloomSprites;
+            console.log(`✅ Player hull upgraded: ${hullUniforms.length} rim-lit material(s), ${bloomSprites.length} engine-bloom sprite(s)`);
+        }
+    }
+
+    if (!mesh.userData._hullUpgraded) return;
+
+    const speed = (window.gameState && window.gameState.velocityVector)
+        ? window.gameState.velocityVector.length() : 0;
+    const t = Math.max(0, Math.min(1, speed / PLAYER_BOOST_REFERENCE_SPEED));
+
+    mesh.userData._hullMaterials.forEach((u) => { u.boostT.value = t; });
+
+    _bloomLerpColor.copy(_bloomIdleColor).lerp(_bloomBoostColor, t);
+    mesh.userData._bloomSprites.forEach((sprite) => {
+        sprite.material.color.copy(_bloomLerpColor);
+        sprite.material.opacity = t * 0.9;
+        const s = 0.03 + t * 0.15;
+        sprite.scale.set(s, s, 1);
+    });
+}
+
+if (typeof window !== 'undefined' && typeof requestAnimationFrame === 'function') {
+    requestAnimationFrame(_runPlayerHullUpgradeLoop);
+}
+
+// =============================================================================
 // EXPORTS
 // =============================================================================
 
@@ -628,6 +904,8 @@ if (typeof window !== 'undefined') {
     window.createEnemyMeshWithModel = createEnemyMeshWithModel;
     window.createBossMeshWithModel = createBossMeshWithModel;
     window.attachPlayerModelToCamera = attachPlayerModelToCamera;
+    window.createPlayerHullMaterial = createPlayerHullMaterial;
+    window.createFactionHullMaterial = createFactionHullMaterial;
     console.log('✅ Model functions exported successfully');
 }
 

@@ -5332,20 +5332,88 @@ function flashEnemyHit(enemy, damage = 1) {
 // ENHANCED DIRECTIONAL DAMAGE EFFECTS FROM ADVANCED VERSION
 // =============================================================================
 
+// ── DAMAGE VIGNETTE ─────────────────────────────────────────────────────────
+// Incoming fire used to spawn a NEW full-viewport div per hit: the no-attacker
+// path painted `bg-red-500` to opacity 1.0 (a literally solid red frame) and
+// the "front" case dropped a 0.6-alpha red blob dead-centre, right over the
+// crosshair. Each lived 800 ms and they STACKED, so a firefight buried the
+// ship, the reticles and the whole HUD under opaque red.
+//
+// Replaced with ONE reusable neon rim: additive (`screen`) so it adds light
+// instead of painting over the frame, transparent through the middle ~55% so
+// the reticle and target callouts stay perfectly readable, and hottest on the
+// edge the shot came from so it still tells you where to turn.
+const _DMG_RIM = 'rgba(255,26,90,';        // hot magenta-red — synthwave, not mud
+const _DMG_HOT = 'rgba(255,120,170,';      // bright inner hairline
+let _dmgVignetteEl = null, _dmgFadeTimer = null;
+function _getDamageVignette() {
+    if (!_dmgVignetteEl || !_dmgVignetteEl.isConnected) {
+        // .combat-damage-fx so game-physics' warp cleanup still sweeps it;
+        // recreated on demand if that sweep removed it.
+        _dmgVignetteEl = document.createElement('div');
+        _dmgVignetteEl.id = 'combatDamageVignette';
+        _dmgVignetteEl.className = 'fixed pointer-events-none combat-damage-fx';
+        _dmgVignetteEl.style.cssText =
+            'top:0;left:0;right:0;bottom:0;z-index:2000;opacity:0;' +
+            'mix-blend-mode:screen;will-change:opacity;';
+        document.body.appendChild(_dmgVignetteEl);
+    }
+    return _dmgVignetteEl;
+}
+
+// Paint the rim and pulse it. `edge` is one of left/right/top/bottom/all/none.
+function _pulseDamageVignette(edge, intensity) {
+    const el = _getDamageVignette();
+    const k = Math.max(0.35, Math.min(1, intensity || 1));
+
+    // Always-present ring: dead transparent through the centre, ramping in
+    // only across the outer third of the frame.
+    const layers = ['radial-gradient(ellipse 82% 82% at 50% 50%,' +
+        'transparent 0%,transparent 54%,' + _DMG_RIM + (0.10 * k) + ') 72%,' +
+        _DMG_RIM + (0.44 * k) + ') 100%)'];
+
+    // Directional band — confined to the outer ~20% of the incoming side so it
+    // reads as "hit from the left", never as a screen-wide wash.
+    const dirs = {
+        left:   'to right', right: 'to left',
+        top:    'to bottom', bottom: 'to top'
+    };
+    if (dirs[edge]) {
+        layers.unshift('linear-gradient(' + dirs[edge] + ',' +
+            _DMG_HOT + (0.60 * k) + ') 0%,' +
+            _DMG_RIM + (0.34 * k) + ') 7%,' +
+            _DMG_RIM + (0.10 * k) + ') 15%,transparent 24%)');
+    } else if (edge === 'all') {
+        // Hit from behind — light the whole rim harder, no direction to give.
+        layers[0] = 'radial-gradient(ellipse 78% 78% at 50% 50%,' +
+            'transparent 0%,transparent 48%,' + _DMG_RIM + (0.20 * k) + ') 68%,' +
+            _DMG_HOT + (0.58 * k) + ') 100%)';
+    }
+
+    el.style.background = layers.join(',');
+    el.style.boxShadow = 'inset 0 0 0 2px ' + _DMG_HOT + (0.55 * k) + '),' +
+                         'inset 0 0 46px ' + _DMG_RIM + (0.40 * k) + ')';
+
+    // Snap on, decay off. ~0.38 s total instead of 0.8 s, so consecutive hits
+    // read as separate punches rather than compounding into a solid field.
+    if (_dmgFadeTimer) { clearTimeout(_dmgFadeTimer); _dmgFadeTimer = null; }
+    el.style.transition = 'opacity 0.05s linear';
+    el.style.opacity = String(0.55 + 0.45 * k);
+    _dmgFadeTimer = setTimeout(() => {
+        el.style.transition = 'opacity 0.30s cubic-bezier(.3,0,.7,1)';
+        el.style.opacity = '0';
+        _dmgFadeTimer = null;
+    }, 80);
+}
+
 // ENHANCED: Directional damage effect system with attacker position
 function createScreenDamageEffect(attackerPosition = null) {
     if (!attackerPosition) {
-        // Fallback to old full-screen effect if no attacker position provided
-        const damageOverlay = document.createElement('div');
-        damageOverlay.className = 'absolute inset-0 bg-red-500 pointer-events-none z-30 combat-damage-fx';
-        damageOverlay.style.opacity = '0';
-        damageOverlay.style.animation = 'damageFlash 0.5s ease-out forwards';
-        document.body.appendChild(damageOverlay);
-        
-        setTimeout(() => damageOverlay.remove(), 500);
+        // No attacker known — omnidirectional rim pulse (was: solid red frame).
+        _pulseDamageVignette('all', 0.85);
         return;
     }
-    
+
     // NEW: Directional damage effect based on attacker position
     const attackDirection = getAttackDirection(attackerPosition);
     createDirectionalDamageEffect(attackDirection);
@@ -5414,55 +5482,19 @@ function getAttackDirection(attackerPosition) {
 
 function createDirectionalDamageEffect(attackDirection) {
     const direction = attackDirection.primary;
-    let overlayStyle = '';
-    let extraStyle = '';
 
-    // Each direction just uses a full-viewport gradient; the gradient
-    // itself fades to transparent so the colored band only shows on the
-    // correct side.  We deliberately do NOT restrict the element to a
-    // partial area — combining `top:0;bottom:0` from the base with
-    // `height:40%` was over-constrained and browsers resolved it by
-    // placing the "bottom" flash at the top of the screen (and "right"
-    // on the left).
-    switch (direction) {
-        case 'left':
-            overlayStyle = 'background: linear-gradient(to right, rgba(255,0,0,0.8) 0%, rgba(255,0,0,0.3) 30%, transparent 60%);';
-            break;
-        case 'right':
-            overlayStyle = 'background: linear-gradient(to left, rgba(255,0,0,0.8) 0%, rgba(255,0,0,0.3) 30%, transparent 60%);';
-            break;
-        case 'top':
-            overlayStyle = 'background: linear-gradient(to bottom, rgba(255,0,0,0.8) 0%, rgba(255,0,0,0.3) 30%, transparent 60%);';
-            break;
-        case 'bottom':
-            overlayStyle = 'background: linear-gradient(to top, rgba(255,0,0,0.8) 0%, rgba(255,0,0,0.3) 30%, transparent 60%);';
-            break;
-        case 'behind':
-            overlayStyle = 'background: radial-gradient(circle at center, transparent 0%, rgba(255,0,0,0.4) 40%, rgba(255,0,0,0.8) 100%);';
-            extraStyle = 'box-shadow: inset 0 0 0 8px rgba(255,0,0,0.6);';
-            break;
-        case 'front':
-        default:
-            overlayStyle = 'background: radial-gradient(circle at center, rgba(255,0,0,0.6) 0%, rgba(255,0,0,0.3) 50%, transparent 80%);';
-            break;
-    }
-
-    // Z-index sits ABOVE the mission command alert (z-50) and incoming-
-    // transmission prompt (1000) so the player always sees incoming-fire
-    // warnings even during a transmission.
-    const damageOverlay = document.createElement('div');
-    damageOverlay.className = 'fixed pointer-events-none combat-damage-fx';
-    damageOverlay.style.cssText =
-        'top:0;left:0;right:0;bottom:0;' +   // full viewport, always
-        overlayStyle + extraStyle +
-        'opacity: 0; transition: opacity 0.15s ease-out; z-index: 2000;';
-    document.body.appendChild(damageOverlay);
-
-    // Extended visibility so the flash actually registers during fast
-    // combat — appears in 15 ms, holds for 500 ms, fades out over 250 ms.
-    setTimeout(() => { damageOverlay.style.opacity = '1'; }, 15);
-    setTimeout(() => { damageOverlay.style.opacity = '0'; }, 500);
-    setTimeout(() => { damageOverlay.remove(); }, 800);
+    // Map the incoming direction onto which EDGE of the frame lights up.
+    // 'front' deliberately gets the plain ring and no hot band: the threat is
+    // already in view, and the old centre blob covered the very reticle the
+    // player needs to keep on it.
+    const EDGE = {
+        left: 'left', right: 'right', top: 'top', bottom: 'bottom',
+        behind: 'all', front: 'none', center: 'none'
+    };
+    // Rim sits at z-index 2000 — above the mission command alert (z-50) and the
+    // incoming-transmission prompt (1000) — so incoming-fire warnings always
+    // read, even mid-transmission.
+    _pulseDamageVignette(EDGE[direction] || 'none', direction === 'behind' ? 1 : 0.9);
 
     // Add directional damage indicator text for every non-center
     // direction (including FRONT — previously suppressed, but the
@@ -7885,17 +7917,68 @@ function togglePause() {
 // ACHIEVEMENT SYSTEM
 // =============================================================================
 
+// Is a comms/alert overlay ACTUALLY on screen right now?
+//
+// This used to be a bare `document.getElementById(id)` truthiness test, which
+// was silently fatal: #missionCommandAlert is a STATIC element in index.html
+// that merely carries the `hidden` class when idle, so the lookup was ALWAYS
+// truthy. Every achievement in the game — including every proc-gen discovery
+// toast ("SYSTEM CHARTED", "Galaxy Discovery!") — was pushed onto the deferred
+// queue and never rendered, and the queue's only drain re-entered this same
+// check and re-deferred it. Test real visibility, not mere existence.
+function _achievementBlockerVisible(id) {
+    const el = document.getElementById(id);
+    if (!el || !el.isConnected) return false;
+    if (el.classList.contains('hidden')) return false;
+    const cs = getComputedStyle(el);
+    if (cs.display === 'none' || cs.visibility === 'hidden') return false;
+    if (parseFloat(cs.opacity) < 0.05) return false;
+    // Zero-area elements can't overlap anything.
+    const r = el.getBoundingClientRect();
+    return r.width > 1 && r.height > 1;
+}
+function _achievementsBlocked() {
+    return _achievementBlockerVisible('incomingTransmissionPrompt') ||
+           _achievementBlockerVisible('missionCommandAlert');
+}
+
+// Self-healing drain for the deferred queue. _dismissMissionAlert() flushes it
+// too, but that only runs when a comms panel is explicitly dismissed — if a
+// panel is hidden by any other path the queue would sit there forever. Poll
+// until the screen is clear, then release the backlog one beat apart.
+let _achievementDrainTimer = null;
+function _scheduleAchievementDrain() {
+    if (_achievementDrainTimer) return;
+    _achievementDrainTimer = setInterval(() => {
+        const q = window._deferredAchievements;
+        if (!q || !q.length) {
+            clearInterval(_achievementDrainTimer);
+            _achievementDrainTimer = null;
+            return;
+        }
+        if (_achievementsBlocked()) return;
+        clearInterval(_achievementDrainTimer);
+        _achievementDrainTimer = null;
+        const queue = q.slice();
+        window._deferredAchievements = [];
+        queue.forEach((a, i) => setTimeout(
+            () => showAchievement(a.title, a.description, a.playAchievementSound), 400 * i));
+    }, 500);
+}
+
 function showAchievement(title, description, playAchievementSound = true) {
     // Defer achievements while an incoming transmission popup is on screen
     // so they don't visually overlap. Re-fires when the transmission closes.
-    if (document.getElementById('incomingTransmissionPrompt') ||
-        document.getElementById('missionCommandAlert')) {
+    if (_achievementsBlocked()) {
         if (!window._deferredAchievements) window._deferredAchievements = [];
         // Avoid queueing duplicates
         const dup = window._deferredAchievements.some(a => a.title === title && a.description === description);
         if (!dup) {
             window._deferredAchievements.push({ title, description, playAchievementSound });
         }
+        // Cap the backlog so a long comms sequence can't dump 30 toasts at once.
+        if (window._deferredAchievements.length > 6) window._deferredAchievements.shift();
+        _scheduleAchievementDrain();
         return;
     }
 
@@ -7944,6 +8027,22 @@ function showAchievement(title, description, playAchievementSound = true) {
         popup.style.opacity = '';   // Clear inline opacity style
         popup.style.zIndex = '999'; // Maximum priority
         popup.style.position = 'fixed'; // Ensure it's always fixed
+        // The markup centres via `left-1/2 -translate-x-1/2`, but #achievementPopup
+        // resolves to width:0 (its .ui-panel child doesn't contribute an intrinsic
+        // width), so translateX(-50%) shifts by nothing and the 300 px panel hung
+        // 300 px RIGHT of centre, under the nav column. Nobody ever saw it because
+        // the deferral bug above meant the toast never rendered at all.
+        // Keep the declarative centring AND correct the child by real measurement,
+        // which also works under the mobile `transform: ... !important` rules.
+        popup.style.left = '50%';
+        popup.style.transform = 'translateX(-50%)';
+        requestAnimationFrame(() => {
+            const inner = popup.firstElementChild;
+            if (!inner) return;
+            const ow = popup.getBoundingClientRect().width;
+            const iw = inner.getBoundingClientRect().width;
+            inner.style.marginLeft = (iw > ow + 2) ? (-Math.round(iw / 2) + 'px') : '';
+        });
 
         // ⭐ BORG STYLING: green ORBITRON for BORG messages. Glow dampened
         // ~85% from the original (0.8/0.6 alpha, 10px blur) — the full

@@ -1155,6 +1155,27 @@ function transitionToRandomLocation(sourceBlackHole, transitType) {
         playSound(_isWormhole ? 'wormhole_warp' : 'blackhole_warp');
     }
 
+    // ── THE TRANSIT NEEDS A TUNNEL, NOT JUST A WHITE-OUT ──────────────────
+    // A black-hole transit used to be a DOM fade to white: no shaft, no
+    // threshold, nothing you travelled THROUGH. The tunnel (visual-flair §20)
+    // sustains itself off gameState.isBlackHoleWarping for the whole transit;
+    // this burst just guarantees the entry beat — lens snap, chromatic rim
+    // rip — lands on the frame the horizon takes you, while the white-out is
+    // still ramping in and the shaft is visible through it. The exit beat
+    // fires by itself as the flags clear and the white recedes off the tube.
+    if (typeof window !== 'undefined') {
+        if (typeof window.warpTunnelBurst === 'function') {
+            window.warpTunnelBurst(1, 3200, true);
+        }
+        // Reuse the slingshot streak field rather than growing a second one.
+        if (typeof window.warpStreakBurst === 'function' && typeof camera !== 'undefined') {
+            const _td = new THREE.Vector3();
+            camera.getWorldDirection(_td);
+            window.warpStreakBurst(_td, 7200,
+                _isWormhole ? 0xc9a4ff : 0xb26bff, 0x35e6ff, 1.25);
+        }
+    }
+
     const fadeOverlay = document.createElement('div');
 
     if (_isWormhole) {
@@ -1993,9 +2014,22 @@ function _whipTrailRebuild(tr) {
         if (_wtSide.lengthSq() < 1e-8) _wtSide.set(0, 1, 0);
         _wtSide.normalize();
         const f = i / (N - 1);                                  // 0 tail → 1 head
-        // Age decay = the afterimage. 1.5s of memory, eased.
-        const age = Math.max(0, 1 - (now - e.t) / 1500);
-        const w = (0.9 + 5.2 * e.s) * (0.12 + 0.88 * Math.pow(f, 0.85));
+        // Age decay = the afterimage. The whip runs 1.6s, so a 1.5s memory
+        // killed the tail before the arc finished drawing it — 2.1s keeps the
+        // WHOLE swept arc on screen at release, which is the shape the player
+        // is supposed to read.
+        const age = Math.max(0, 1 - (now - e.t) / 2100);
+        // SCREEN-CONSTANT MINIMUM WIDTH. The arc radius is whatever range the
+        // player captured at — routinely 500–3000u — so a fixed ~6-unit ribbon
+        // was a sub-pixel hair you could not see. Widening with range holds the
+        // ribbon at a readable slice of the frame at any arc size.
+        const dCam = Math.max(1, p.distanceTo(camera.position));
+        const taper = 0.12 + 0.88 * Math.pow(f, 0.85);
+        const w = Math.max(0.9 + 5.2 * e.s, dCam * 0.013 * (0.55 + 0.45 * e.s)) * taper;
+        // …and fade the few points that sweep right past the lens, or the
+        // ribbon dumps an additive white wall over the whole frame as the arc
+        // carries the camera through its own recent path.
+        const near = Math.max(0, Math.min(1, (dCam - 3) / 18));
         const o = i * 6;
         const wide = w * 3.4;
         tr.core.pos[o]     = p.x + _wtSide.x * w;
@@ -2013,11 +2047,12 @@ function _whipTrailRebuild(tr) {
         // Neon gradient: saturated body color at the tail, white-hot at the
         // head, with a fast shimmer so the ribbon never reads as a decal.
         const shimmer = 0.88 + 0.12 * Math.sin(now * 0.011 + i * 1.9);
-        const bright = (0.10 + 0.9 * Math.pow(f, 1.5)) * age * age * shimmer * tr.fade;
+        const bright = (0.30 + 0.85 * Math.pow(f, 1.3)) * Math.pow(age, 1.4) *
+            shimmer * near * tr.fade;
         _wtCol.copy(tr.base).lerp(_wtHot, 0.25 + 0.65 * f).multiplyScalar(Math.min(1, bright));
         tr.core.col[o] = _wtCol.r; tr.core.col[o + 1] = _wtCol.g; tr.core.col[o + 2] = _wtCol.b;
         tr.core.col[o + 3] = _wtCol.r; tr.core.col[o + 4] = _wtCol.g; tr.core.col[o + 5] = _wtCol.b;
-        _wtCol.copy(tr.base).multiplyScalar(Math.min(1, bright * 0.42));
+        _wtCol.copy(tr.base).multiplyScalar(Math.min(1, bright * 0.5));
         tr.halo.col[o] = _wtCol.r; tr.halo.col[o + 1] = _wtCol.g; tr.halo.col[o + 2] = _wtCol.b;
         tr.halo.col[o + 3] = _wtCol.r; tr.halo.col[o + 4] = _wtCol.g; tr.halo.col[o + 5] = _wtCol.b;
     }
@@ -2026,6 +2061,29 @@ function _whipTrailRebuild(tr) {
         layer.geo.attributes.color.needsUpdate = true;
         layer.geo.setDrawRange(0, (N - 1) * 6);
     });
+}
+
+// ── WHERE THE RIBBON IS ACTUALLY EMITTED ─────────────────────────────────────
+// THE reason the 1.6s whip read as empty: trail points were pushed at
+// camera.position. camera.position is the player's *gameplay* point — the
+// visible hull sits at camera.position + (chase offset · camera quaternion),
+// up to 22u AHEAD of the lens in third person. So every ribbon vertex was laid
+// down exactly on the near plane, directly behind the ship: geometrically
+// present every frame, never once on screen. The ribbon has to come off the
+// SHIP so it streams back past the camera and reads as an arc.
+const _wtAnchor = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+function _whipShipAnchor() {
+    if (!_wtAnchor || typeof camera === 'undefined') return null;
+    const cs = (typeof window !== 'undefined') ? window.cameraState : null;
+    const off = cs && ((cs.mode === 'first-person') ? cs.normalFirstPersonOffset
+        : (cs.mode === 'third-person') ? cs.normalThirdPersonOffset : null);
+    if (off) _wtAnchor.copy(off).multiplyScalar(cs._warpZoom || 1);
+    else _wtAnchor.set(0, 0, 0);
+    // Cockpit view has the hull essentially AT the lens, so give the ribbon a
+    // real emitter anyway — a few units out along the engines — instead of a
+    // degenerate quad pinned to the near plane.
+    if (_wtAnchor.lengthSq() < 36) _wtAnchor.set(0, -1.4, -7);
+    return _wtAnchor.applyQuaternion(camera.quaternion).add(camera.position);
 }
 
 // speedF: 0..1 arc speed, drives ribbon thickness.
@@ -2111,6 +2169,11 @@ const _whipTmpQ = (typeof THREE !== 'undefined') ? new THREE.Quaternion() : null
 const _whipTmpM = (typeof THREE !== 'undefined') ? new THREE.Matrix4() : null;
 const _whipUpVec = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
 const _whipLocal = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+const _whipRollQ = (typeof THREE !== 'undefined') ? new THREE.Quaternion() : null;
+const _whipAxisZ = (typeof THREE !== 'undefined') ? new THREE.Vector3(0, 0, 1) : null;
+const _whipLook = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+const _whipToBody = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+const _whipTgt = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
 
 // ── WHIP TIMING CURVE ────────────────────────────────────────────────────────
 // The arc used to sweep at a constant omega, which meant the capture SNAPPED
@@ -2173,7 +2236,10 @@ function updateSlingshotWhip() {
     const body = w.body;
     if (!body || !body.position) {
         gameState.slingshotWhip = null;
-        if (typeof window !== 'undefined') window.__whipDilation = 0;
+        if (typeof window !== 'undefined') {
+            window.__whipDilation = 0;
+            if (window.__whipFrame) window.__whipFrame.active = false;
+        }
         return false;
     }
 
@@ -2217,26 +2283,68 @@ function updateSlingshotWhip() {
         (_whipProgress(w, Math.min(1, u + dU)) - _whipProgress(w, Math.max(0, u - dU))) / (2 * dU) * 0.62));
     w._speed = arcSpeed;
 
-    // BANK INTO THE TURN: the horizon rolls as gravity hauls the ship around,
-    // easing back to level before release so the launch snap stays clean.
-    const bank = -w.sign * 0.62 * Math.sin(Math.PI * Math.min(1, u / 0.92));
+    // ── HOW HARD THE ARC IS BITING ───────────────────────────────────────
+    // One shared 0→1→0 envelope: zero at capture, peak just past periapsis,
+    // back to zero by u=0.92 so the launch snap starts from a clean, level,
+    // forward-facing frame. Bank, look-lead and the camera-system's framing
+    // roll all ride this, so they can never disagree.
+    const carve = Math.pow(Math.sin(Math.PI * Math.min(1, u / 0.92)), 0.85);
+
+    // BANK INTO THE TURN: the horizon rolls as gravity hauls the ship around.
+    const bank = -w.sign * (w.bh ? 0.82 : 0.68) * carve;
     if (_whipUpVec) {
         _whipUpVec.set(0, 1, 0).applyAxisAngle(tangent, bank);
         if (_whipUpVec.lengthSq() < 1e-6) _whipUpVec.set(0, 1, 0);
     }
 
-    // Face along the arc — slerped so the capture doesn't snap the camera
-    if (_whipTmpQ && _whipTmpM) {
-        _whipTmpM.lookAt(camera.position,
-            new THREE.Vector3(px + tangent.x * 200, py + tangent.y * 200, pz + tangent.z * 200),
-            _whipUpVec || camera.up);
-        _whipTmpQ.setFromRotationMatrix(_whipTmpM);
-        // 0.16/frame at 60fps, dt-corrected exponential approach
-        camera.quaternion.slerp(_whipTmpQ, 1 - Math.pow(0.84, gameState.dtFrames || 1));
+    // LOOK INTO THE CORNER. Facing dead along the tangent put the body that
+    // is bending your path exactly 90° off-camera for the entire 1.6s — you
+    // rode a slingshot with the slingshot off-frame, which is why the whip
+    // read as "nothing is happening". Leading the view ~25° toward the body
+    // swings the charged, ringed planet into the frame edge and drags the
+    // trail's own curve into shot, and it decays to zero before release so
+    // the launch heading is untouched.
+    const look = _whipLook ? _whipLook.copy(tangent) : tangent;
+    if (_whipLook && _whipToBody) {
+        _whipToBody.set(bp.x - px, bp.y - py, bp.z - pz);
+        if (_whipToBody.lengthSq() > 1e-6) {
+            _whipToBody.normalize().addScaledVector(tangent, -_whipToBody.dot(tangent));
+            if (_whipToBody.lengthSq() > 1e-6) {
+                // Saturating lead: ~24° in by a third of the way round,
+                // ~32° at the bite. Ramping it as pow(carve, 0.55) rather
+                // than linearly matters — the arc's fastest angular sweep is
+                // EARLY, so a linear lead is still winding on while the body
+                // has already swung past the frame edge.
+                look.addScaledVector(_whipToBody.normalize(),
+                    0.62 * Math.pow(carve, 0.55)).normalize();
+            }
+        }
     }
 
-    // Arc trail — speed-scaled ribbon
-    _whipTrailPush(camera.position, w.color, arcSpeed);
+    // Face along the arc — slerped so the capture doesn't snap the camera
+    if (_whipTmpQ && _whipTmpM && _whipTgt) {
+        _whipTgt.set(px + look.x * 200, py + look.y * 200, pz + look.z * 200);
+        _whipTmpM.lookAt(camera.position, _whipTgt, _whipUpVec || camera.up);
+        _whipTmpQ.setFromRotationMatrix(_whipTmpM);
+        // 0.18/frame at 60fps, dt-corrected exponential approach. Was 0.16 —
+        // measurably too slow against the arc's own sweep rate, so the camera
+        // trailed the frame it was aiming for by ~15° through the fast early
+        // third and the lead never landed where it was computed.
+        camera.quaternion.slerp(_whipTmpQ, 1 - Math.pow(0.82, gameState.dtFrames || 1));
+    }
+
+    // Publish the live arc state for the framing layers (camera-system reads
+    // it for the chase-cam roll/dolly, visual-flair for the charge swell).
+    if (typeof window !== 'undefined') {
+        const wf = window.__whipFrame || (window.__whipFrame = {});
+        wf.active = true; wf.u = u; wf.carve = carve; wf.bank = bank;
+        wf.sign = w.sign; wf.speed = arcSpeed; wf.bh = !!w.bh; wf.t = Date.now();
+    }
+
+    // Arc trail — speed-scaled ribbon, emitted at the HULL (see
+    // _whipShipAnchor) so it ribbons out behind the ship instead of being
+    // buried on the near plane.
+    _whipTrailPush(_whipShipAnchor() || camera.position, w.color, arcSpeed);
 
     // TIME-DILATION FLAVOR + PERIAPSIS RUMBLE. The dilation weight is read by
     // the screen-FX layer (rim chroma + stretched spokes); the rumble is a
@@ -2270,11 +2378,30 @@ function updateSlingshotWhip() {
                     camera.position.y + launchDir.y * 200,
                     camera.position.z + launchDir.z * 200),
                 camera.up);
-            camera.quaternion.setFromRotationMatrix(_whipTmpM);
+            _whipTmpQ.setFromRotationMatrix(_whipTmpM);
+            // CARRY THE BANK THROUGH THE LAUNCH. Snapping to a level frame on
+            // the release frame threw away the whole turn in one tick — the
+            // horizon was at 40° and then it wasn't. Keeping most of the bank
+            // hands it to the glide assist above, which rolls it out over
+            // ~0.3s: the ship comes OFF the arc still leaning and levels as it
+            // straightens, which is the shape the maneuver actually has.
+            if (_whipRollQ && _whipAxisZ) {
+                _whipRollQ.setFromAxisAngle(_whipAxisZ, bank * 0.85);
+                _whipTmpQ.multiply(_whipRollQ);
+            }
+            camera.quaternion.copy(_whipTmpQ);
         }
         gameState.slingshot.timeRemaining = gameState.slingshot.duration;
         gameState.slingshotWhip = null;
-        if (typeof window !== 'undefined') window.__whipDilation = 0;
+        if (typeof window !== 'undefined') {
+            window.__whipDilation = 0;
+            // Hand the framing layers a RECOVERY window rather than a hard
+            // cut: camera-system eases its whip roll/dolly out over ~0.5s from
+            // here, so the release unwinds instead of snapping level.
+            const wf = window.__whipFrame || (window.__whipFrame = {});
+            wf.active = false; wf.releasedAt = Date.now();
+            wf.releaseBank = wf.bank || 0;
+        }
         // The ribbon doesn't die in place — its head is dragged along the
         // launch vector so the trail whips outward with the ship.
         _whipTrailFadeOut(launchDir, w.boost);
@@ -2648,6 +2775,19 @@ if (frameDistance > 0.01) { // Only track significant movement
             gameState.emergencyWarp.timeRemaining = _jumpMs;
             gameState.velocityVector.copy(capturedForwardDirection).multiplyScalar(capturedBoostSpeed);
 
+            // Tactical jump gets a HALF tunnel — enough shaft to feel the
+            // dash, deliberately weaker than a real warp so the two never
+            // read as the same move.
+            if (typeof window !== 'undefined') {
+                if (typeof window.warpTunnelBurst === 'function') {
+                    window.warpTunnelBurst(0.5, 700, false);
+                }
+                if (typeof window.warpStreakBurst === 'function') {
+                    window.warpStreakBurst(capturedForwardDirection, capturedBoostSpeed * 60,
+                        0x6be6ff, 0xff5ccd, 0.75);
+                }
+            }
+
             for (let i = 0; i < 2; i++) {
                 setTimeout(() => createHyperspaceEffect(), i * 200);
             }
@@ -2713,6 +2853,27 @@ else if (keys.o && gameState.emergencyWarp.available > 0 && !gameState.emergency
         gameState.emergencyWarp.transitioning = false;
         gameState.emergencyWarp.timeRemaining = gameState.emergencyWarp.boostDuration;
         gameState.velocityVector.copy(capturedForwardDirection).multiplyScalar(capturedBoostSpeed);
+
+        // ── EMERGENCY WARP GETS A TUNNEL ─────────────────────────────────
+        // O-warp used to be indistinguishable from "the speed number went
+        // up": streaks over a still frame. The tunnel gives it an enclosure
+        // and a threshold — layered streak cylinder, FOV snap and chromatic
+        // rim pulse on entry, the same again in reverse on exit — and it
+        // sustains itself off emergencyWarp.active for the whole burn. The
+        // streak field is REUSED, not duplicated.
+        if (typeof window !== 'undefined') {
+            if (typeof window.warpTunnelBurst === 'function') {
+                window.warpTunnelBurst(1, 1500, false);
+            }
+            if (typeof window.warpStreakBurst === 'function') {
+                window.warpStreakBurst(capturedForwardDirection, capturedBoostSpeed * 60,
+                    0x6be6ff, 0xff5ccd, 1.2);
+            }
+            if (typeof window.warpDebrisBurst === 'function') {
+                window.warpDebrisBurst(capturedForwardDirection, capturedBoostSpeed * 60,
+                    0x9ff2ff, 0xff8ade, 1.1);
+            }
+        }
 
         // Activate visual effects
         for (let i = 0; i < 3; i++) {
@@ -3271,7 +3432,17 @@ if (surfaceCollision) {
         // an eased assist (not a lock): deliberate mouse-look still wins
         // frame to frame, but left alone the camera settles onto the
         // velocity vector instead of staying wherever the whip released it.
+        // …but NOT while the arc is still running. slingshot.active goes true
+        // at CAPTURE, so this glide assist was also firing through all 1.6s of
+        // the whip — slerping the camera 12%/frame toward a LEVEL, velocity-
+        // facing frame while the whip slerped 16%/frame toward its banked arc
+        // frame. The two fought to a draw every frame, which is exactly why
+        // the ship "stayed level" through a maneuver that banks 40°. (The
+        // whip zeroes velocityVector, but the min-velocity floor below refills
+        // it with a level forward vector, so the guard could not be the speed
+        // test.) Release behaviour below is untouched.
         if (_whipTmpQ && _whipTmpM && typeof camera !== 'undefined' &&
+            !gameState.slingshotWhip &&
             gameState.velocityVector && gameState.velocityVector.lengthSq() > 1) {
             const _sv = gameState.velocityVector;
             const _svl = _sv.length();

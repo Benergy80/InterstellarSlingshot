@@ -80,6 +80,29 @@ body.ui-mode {
     pointer-events: auto !important;
     position: absolute;
     isolation: isolate;
+    opacity: 1;
+    transition: opacity 0.35s ease;
+}
+
+/* Spectacle dim — during slingshot charge/release and emergency warp the
+   ship, not the chrome, is the show. Panels ease down instead of sitting
+   fully opaque over ~1/6 of the frame; the instant gameState flips the
+   state off (js/game-ui.js updateHudSpectacleDim) this class comes off and
+   the same transition eases them straight back to full readability.
+   !important is required here: js/game-intro.js's panel fly-in reveal
+   stamps a plain (non-important) inline `opacity:1` on every .ui-panel
+   once the intro finishes, and a normal-specificity class rule can never
+   beat an inline style — only an !important author rule outranks it. */
+.ui-panel.hud-spectacle-dim {
+    opacity: 0.35 !important;
+    /* js/game-intro.js's fly-in reveal also stamps a plain inline
+       `transition: opacity 1s ease-in-out` once, post-intro — normal-
+       specificity author rules lose that fight too, so pin the dim-in
+       speed explicitly rather than inherit whatever the intro left behind.
+       (The restore-to-full-opacity leg, on class removal, is still eased —
+       just by that 1s inline transition, since this rule no longer
+       applies once the class is gone.) */
+    transition: opacity 0.35s ease !important;
 }
 
 /* mobiGlas corner ticks — a single pseudo-element painting all 4 corner

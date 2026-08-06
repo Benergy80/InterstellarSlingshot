@@ -27,13 +27,13 @@
 
 <table>
 <tr><th>#</th><th>Piece</th><th>Wave</th><th>Status</th><th>Critic score /10</th><th>Biggest gap (critic)</th></tr>
-<tr><td>1</td><td>Slingshot feel — whip arc, camera kick, trail, impact</td><td>1</td><td class="s-fail">4.5/10 after r1 → round 2</td><td>2.5 → 4.5</td><td>Streaks move but the world is frozen — background layers show zero parallax across a 3,400u boost</td></tr>
-<tr><td>2</td><td>Deep-space beauty — starfield, skybox, distant galaxies</td><td>1</td><td class="s-fail">5/10 after r1 → round 2</td><td>3 → 5</td><td>Skybox shader shipped with a debug-brightened palette floor — sky can never render dark; no blacks, no dust structure</td></tr>
-<tr><td>3</td><td>Procedural galaxy generation — endless seeded systems</td><td>1</td><td class="s-fail">5/10 after r1 → round 2 (rebase bug fixed)</td><td>3 → 5</td><td>One body archetype — every system a recolor of the last; zero moons galaxy-wide</td></tr>
-<tr><td>4</td><td>HUD & UI — diegetic, cinematic chrome</td><td>1</td><td class="s-fail">2/10 → REBUILDING (builder regression caught)</td><td>2</td><td>.ui-panel position:relative overrides Tailwind absolute — cockpit panels fell into document flow</td></tr>
-<tr><td>5</td><td>Black holes & stars — accretion, lensing, coronas</td><td>2</td><td class="s-wait">QUEUED</td><td>—</td><td>—</td></tr>
-<tr><td>6</td><td>Warp / hyperspace effect</td><td>2</td><td class="s-wait">QUEUED</td><td>—</td><td>—</td></tr>
-<tr><td>7</td><td>Planets — surfaces, atmospheres, rings, clouds</td><td>2</td><td class="s-wait">QUEUED</td><td>—</td><td>—</td></tr>
+<tr><td>1</td><td>Slingshot feel — whip arc, camera kick, trail, impact</td><td>1</td><td class="s-hold">6.5/10 — carried to Wave 2</td><td>2.5 → 4.5 → 6.5</td><td>Player ship is an unlit flat-fill silhouette — needs hull light response, engine bloom, streak depth-write (→ ship-models builder)</td></tr>
+<tr><td>2</td><td>Deep-space beauty — starfield, skybox, distant galaxies</td><td>1</td><td class="s-hold">6/10 — carried to Wave 2</td><td>3 → 5 → 6</td><td>Opaque nebulaSkybox violet wash sets a luminance floor and buries the new shader — fade/blend fix prescribed (→ sky builder)</td></tr>
+<tr><td>3</td><td>Procedural galaxy generation — endless seeded systems</td><td>1</td><td class="s-hold">6.5/10 — carried to Wave 2</td><td>3 → 5 → 6.5</td><td>Discovery toast renders NOTHING (dead DOM gate at game-controls.js:7891) + body archetype variety (→ cohesion + procgen builders)</td></tr>
+<tr><td>4</td><td>HUD & UI — diegetic, cinematic chrome</td><td>1</td><td class="s-hold">6/10 — carried to Wave 2</td><td>2 → 4.5 → 6</td><td>Tag declutter compares the wrong projected point — swarms collapse into overlapping text (→ hud builder)</td></tr>
+<tr><td>5</td><td>Black holes & stars — accretion, lensing, coronas + sky luminance fix</td><td>2</td><td class="s-build">BUILDING</td><td>—</td><td>—</td></tr>
+<tr><td>6</td><td>Warp / hyperspace + whip-phase presence</td><td>2</td><td class="s-build">BUILDING</td><td>—</td><td>—</td></tr>
+<tr><td>7</td><td>Ship & enemy models — hull light response, engine bloom (planet surfaces → Wave 3)</td><td>2</td><td class="s-build">BUILDING</td><td>—</td><td>—</td></tr>
 <tr><td>8</td><td>Audio — adaptive layers, spatial SFX</td><td>3</td><td class="s-wait">QUEUED</td><td>—</td><td>—</td></tr>
 <tr><td>9</td><td>Combat feel — dogfights &amp; evasives benchmarked vs <b>Star Fox (2026, Switch 2)</b>: barrel-roll-class evasion, readable attack patterns, arcade responsiveness</td><td>3</td><td class="s-wait">QUEUED</td><td>—</td><td>—</td></tr>
 <tr><td>10</td><td>Performance — stable frametimes at spectacle</td><td>3</td><td class="s-wait">QUEUED</td><td>—</td><td>—</td></tr>
@@ -42,6 +42,7 @@
 
 <h1 style="font-size:15px">Wave log</h1>
 <div class="log">
+<p><b>WAVE 1 COMPLETE</b> — 27 agents, 3 judged rounds, scores 2.5/3/3/2 → 6.5/6/6.5/6. Four real bugs caught by critics. Branch pushed. <b>Wave 2 launched</b>: cohesion agent plays the whole game first (fixing cross-piece seams: dead discovery-toast gate, full-frame damage flash, arcade text clipping), then 5 builders — sky+black holes, warp+whip, ship models, HUD finisher, proc-gen variety — same harsh-critic loop.</p>
 <p><b>Rebuild round 1 sealed</b> — all four gap-fixes landed (commit 10794e5, BUILD 20260806b, clean boot). Fresh critics are re-judging one piece at a time.</p>
 <p><b>Wave 1 round 0 judged</b> — all four pieces FAILED the blind test (scores 2–3/10), exactly as a harsh first round should. Critics caught two genuine bugs the builders shipped: proc-gen missing the world-rebase handler (systems unreachable) and a HUD CSS specificity regression (panels fell out of position). All four rebuilders are in with one named gap each.</p>
 <p><b>Wave 1 launched</b> — 4 builders fanned out (slingshot feel, deep-space beauty, procedural galaxies, HUD), file-disjoint ownership. Integrator sealed + committed (83307e4, BUILD 20260806a, clean boot, selftest green). Fresh-context critics inspect the RUNNING game headless — blind side-by-side vs Star Citizen / No Man's Sky.</p>

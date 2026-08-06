@@ -9,13 +9,23 @@
 //     walked by a golden-ratio recurrence so neighbours never rhyme and
 //     nothing repeats on any period (see the PALETTES section)
 //   * a generated name ("Vex-Karr Expanse", "Neon Maru Drift", ...)
+//   * one of SEVEN layout personalities (tight binary / sparse frontier /
+//     shepherd rings / giant court / ember forge / garden chain / crowded
+//     shoal), dealt from shuffled bags so no two systems in a row share a
+//     shape. The layout sets sun count and separation, planet count, orbital
+//     spacing, inclination spread, ring/moon/station odds and the archetype
+//     bias — it is what a player reads on approach, before any surface
+//     shader resolves. See the SYSTEM LAYOUTS section.
 //   * a central star, or a binary pair orbiting a barycentre, with a
 //     churning plasma-surface shader + additive corona sprites
-//   * 3-5 planets on slow tilted orbits, each rolled from SIX archetypes —
+//   * 2-6 planets on slow tilted orbits, each rolled from SIX archetypes —
 //     gas giant / ice / molten / barren rock / ocean / banded terrestrial —
-//     with archetype odds weighted by orbital zone, so a system reads as a
-//     system (scorched rock inside, giants and ice past the frost line)
-//   * 0-3 moons on the larger bodies, on their own tilted orbits
+//     with archetype odds weighted by orbital zone AND by the layout, plus a
+//     per-system signature/absent pair, so a system reads as a system
+//     (scorched rock inside, giants and ice past the frost line) and two
+//     systems never read as the same bag
+//   * 0-3 moons on the larger bodies, on their own tilted orbits, and on a
+//     shepherd-ring system a pair of moonlets riding each ring's own plane
 //   * distance LOD on every sphere (16 -> 32 -> 64 segments), built lazily
 //   * ring chance (near-certain on gas giants), derelict/station chance,
 //     a dust/nebula wisp
@@ -72,6 +82,12 @@
 //
 // Every mesh we make is a direct child of `scene` (stars, planets, rings,
 // beacons, the per-system Group), so the rebase moves all of them for free.
+// Corollary, and the reason buildSystem() ends with a resyncSystem() call:
+// a body must be PLACED the moment it is built, never on first activation.
+// It is registered into the global `planets` array immediately, and
+// updateActivePlanets() filters that array on raw distance with no visibility
+// test — so a body left at its default (0,0,0) is a mass sitting exactly on
+// the player's spawn point until its system happens to come into range.
 // The one thing it cannot see is `s.center` — a plain Vector3 held in this
 // closure, outside the scene graph. And s.center is what the tick re-derives
 // star/planet/ring positions from every frame. Leave it un-shifted and the
@@ -792,20 +808,144 @@
     // scorched rock close in, gas giants and ice past the frost line — rather
     // than a shuffled bag, and it means the same archetype in two systems
     // still lands in a different place in the flyby.
+    //
+    // Barren is deliberately the SMALLEST slice it can be while still reading
+    // as common. It is the one archetype with no emissive, no rings worth
+    // speaking of and no night side, so it is the cheapest to render and the
+    // least worth flying to — measured over five seeds at its old weights it
+    // was taking 35-40% of every planet in the shell, which is the "every
+    // system is a bag of grey rocks" failure wearing a different hat. Gas
+    // giants get the slack past the frost line: they are the marquee body and a
+    // player must not be able to cross three systems without meeting one.
     //                     gas   ice  molten barren ocean terra
     var ARCH_WEIGHTS = [
-        /* inner */ [0.02, 0.02, 0.34, 0.28, 0.10, 0.24],
-        /* mid   */ [0.14, 0.10, 0.08, 0.18, 0.24, 0.26],
-        /* outer */ [0.34, 0.28, 0.02, 0.20, 0.04, 0.12]
+        /* inner */ [0.02, 0.02, 0.36, 0.18, 0.12, 0.30],
+        /* mid   */ [0.18, 0.12, 0.08, 0.12, 0.26, 0.28],
+        /* outer */ [0.42, 0.30, 0.02, 0.12, 0.04, 0.14]
     ];
 
-    function rollArchetype(rand, zone) {
+    // -------------------------------------------------------------------------
+    // SYSTEM LAYOUTS — the personality pass
+    // -------------------------------------------------------------------------
+    // ARCHETYPES make a BODY different. This table makes a SYSTEM different,
+    // which is the thing a player actually reads on approach: they see the
+    // SHAPE of a system (how many worlds, how far apart, how tilted, one sun or
+    // two, ringed or bare) from thousands of units out, long before any surface
+    // shader resolves. Without this pass every system was the same 3-5 worlds on
+    // the same ladder of orbits in a different colour — a recolor.
+    //
+    // Every field is a MULTIPLIER or a range over the base behaviour, never an
+    // absolute, so the archetype table stays the single source of truth for what
+    // a gas giant is; a layout only changes how MANY and how FAR APART.
+    //
+    //   arch[]  per-archetype weight multiplier applied on top of ARCH_WEIGHTS,
+    //           i.e. it biases the mix without ever overriding the zone logic
+    //           (a molten world still cannot appear past the frost line).
+    //   gap     [base, range] orbital spacing, PLUS gapBody * (r_prev + r_this).
+    //           gapBody must stay >= 1.6 or two adjacent giants intersect.
+    //   tilt    inclination spread handed to orbitBasis — a high value is a
+    //           system whose orbits visibly disagree with each other.
+    var LAYOUTS = [
+        {
+            key: 'tight binary', note: 'twin suns locked close',
+            binary: 1.0, sep: [520, 360], starScale: 0.86,
+            planets: [3, 2], gap: [700, 900], gapBody: 2.2, tilt: 0.62,
+            //     gas   ice   mol   bar   oce   ter
+            arch: [0.70, 0.90, 2.40, 1.30, 0.45, 1.00],
+            ringMul: 0.85, moonMul: 1.0, moonGate: 78, shepherds: false,
+            station: 0.50, derelict: 0.55, wispMul: 1.00, dustMul: 1.15
+        },
+        {
+            key: 'sparse frontier', note: 'long cold orbits, nothing between',
+            binary: 0.05, sep: [1400, 700], starScale: 0.80,
+            planets: [2, 1], gap: [3000, 2800], gapBody: 1.8, tilt: 0.22,
+            arch: [1.00, 2.60, 0.30, 1.40, 0.35, 0.70],
+            ringMul: 0.70, moonMul: 0.65, moonGate: 92, shepherds: false,
+            station: 0.30, derelict: 0.85, wispMul: 1.45, dustMul: 0.70
+        },
+        {
+            key: 'shepherd rings', note: 'ringed worlds with shepherd moonlets',
+            binary: 0.10, sep: [1200, 700], starScale: 1.00,
+            planets: [3, 2], gap: [1100, 1200], gapBody: 2.0, tilt: 0.18,
+            arch: [2.20, 1.60, 0.35, 0.90, 0.60, 0.90],
+            ringMul: 2.80, moonMul: 1.20, moonGate: 72, shepherds: true,
+            station: 0.40, derelict: 0.50, wispMul: 1.10, dustMul: 1.30
+        },
+        {
+            key: 'giant court', note: 'a giant and its retinue of moons',
+            binary: 0.15, sep: [1300, 800], starScale: 1.12,
+            planets: [3, 2], gap: [1000, 1200], gapBody: 2.4, tilt: 0.26,
+            arch: [3.00, 1.20, 0.30, 0.70, 0.55, 0.80],
+            ringMul: 1.20, moonMul: 1.70, moonGate: 60, shepherds: false,
+            station: 0.50, derelict: 0.40, wispMul: 1.00, dustMul: 1.00
+        },
+        {
+            key: 'ember forge', note: 'scorched inner worlds, salvage everywhere',
+            binary: 0.20, sep: [900, 600], starScale: 1.18,
+            planets: [4, 2], gap: [750, 850], gapBody: 1.8, tilt: 0.34,
+            arch: [0.50, 0.30, 3.40, 1.40, 0.20, 0.90],
+            ringMul: 0.50, moonMul: 0.70, moonGate: 88, shepherds: false,
+            station: 0.75, derelict: 0.90, wispMul: 0.85, dustMul: 1.40
+        },
+        {
+            key: 'garden chain', note: 'a chain of living worlds',
+            binary: 0.12, sep: [1300, 700], starScale: 0.96,
+            planets: [4, 2], gap: [950, 1000], gapBody: 1.9, tilt: 0.14,
+            arch: [0.80, 1.10, 0.25, 0.60, 2.80, 1.90],
+            ringMul: 1.00, moonMul: 1.40, moonGate: 70, shepherds: false,
+            station: 0.80, derelict: 0.15, wispMul: 1.05, dustMul: 0.95
+        },
+        {
+            key: 'crowded shoal', note: 'worlds packed shoulder to shoulder',
+            binary: 0.18, sep: [1100, 700], starScale: 0.90,
+            planets: [5, 1], gap: [520, 620], gapBody: 1.7, tilt: 0.48,
+            arch: [0.60, 1.20, 1.50, 1.30, 0.95, 1.40],
+            ringMul: 0.90, moonMul: 0.85, moonGate: 84, shepherds: false,
+            station: 0.55, derelict: 0.60, wispMul: 0.95, dustMul: 1.35
+        }
+    ];
+
+    // Deal layout personalities so CONSECUTIVE systems can never share one.
+    //
+    // A plain per-system roll was the whole bug in miniature: with 7 layouts and
+    // 12 systems an independent draw gives a ~1-in-7 chance per pair of showing
+    // the player the same shape twice in a row, and a >80% chance of at least
+    // one such pair somewhere in the shell — which is exactly the moment the
+    // generator stops feeling generative. Shuffled bags instead: every
+    // personality appears once before ANY repeats, and the seam between two
+    // bags is patched so a cycle boundary cannot repeat either.
+    function makeLayoutDeck(rand, count) {
+        var deck = [], last = -1, i, j, k, tmp;
+        while (deck.length < count) {
+            var bag = [];
+            for (i = 0; i < LAYOUTS.length; i++) bag.push(i);
+            for (j = bag.length - 1; j > 0; j--) {
+                k = Math.floor(rand() * (j + 1));
+                tmp = bag[j]; bag[j] = bag[k]; bag[k] = tmp;
+            }
+            if (bag[0] === last && bag.length > 1) { bag[0] = bag[1]; bag[1] = last; }
+            for (var b = 0; b < bag.length && deck.length < count; b++) deck.push(bag[b]);
+            last = deck[deck.length - 1];
+        }
+        return deck;
+    }
+
+    // `mul` is the system's own bias vector (layout bias x its signature/absent
+    // pair) — see buildSystem. Multiplying instead of replacing keeps the zone
+    // logic intact: an ember-forge system is molten-heavy INSIDE and still
+    // cannot grow a lava world past the frost line.
+    function rollArchetype(rand, zone, mul) {
         var w = ARCH_WEIGHTS[zone];
-        var total = 0, i;
-        for (i = 0; i < w.length; i++) total += w[i];
-        var r = rand() * total;
+        var wi = [], total = 0, i, v;
         for (i = 0; i < w.length; i++) {
-            r -= w[i];
+            v = w[i] * (mul ? mul[i] : 1);
+            wi.push(v);
+            total += v;
+        }
+        if (!(total > 0)) return ARCHETYPES[3];
+        var r = rand() * total;
+        for (i = 0; i < wi.length; i++) {
+            r -= wi[i];
             if (r <= 0) return ARCHETYPES[i];
         }
         return ARCHETYPES[ARCHETYPES.length - 1];
@@ -925,26 +1065,48 @@
         ring.rotation.set(Math.PI / 2 + (rand() - 0.5) * 0.5, 0, (rand() - 0.5) * 0.5);
         ring.visible = false;
         ring.frustumCulled = true;
+        // The unit ring runs 1 -> 2, so the scaled annulus spans rs -> 2*rs.
+        // Shepherd moonlets need both edges AND the plane the disc actually
+        // sits in — a moonlet on the system's own orbital basis would cut
+        // straight through the ring instead of herding it.
+        ring.userData.pgRingInner = rs;
+        ring.userData.pgRingOuter = rs * 2;
         activeScene().add(ring);
         return ring;
+    }
+
+    // Orthonormal basis of a ring's own plane. RingGeometry lies in XY with
+    // +Z normal, so the ring's Euler rotation IS the plane's rotation.
+    function ringBasis(ring) {
+        var n = new THREE.Vector3(0, 0, 1).applyEuler(ring.rotation).normalize();
+        var u = new THREE.Vector3(1, 0, 0).projectOnPlane(n);
+        if (u.lengthSq() < 0.25) u.set(0, 1, 0).projectOnPlane(n);
+        u.normalize();
+        return { u: u, v: new THREE.Vector3().crossVectors(n, u).normalize() };
     }
 
     // Moons are ICE or BARREN only — a moon that reads as a gas giant reads as
     // a bug — and they are always a small fraction of the parent, which is
     // what actually sells the parent's size.
-    var MOON_LETTERS = ['a', 'b', 'c'];
+    var MOON_LETTERS = ['a', 'b', 'c', 'd', 'e'];
 
-    function buildMoon(sys, rand, parent, index) {
+    // `opts` (optional) forces size / orbit / plane — used by the shepherd pass
+    // so a moonlet can be planted in a ring's own plane at its own edge.
+    function buildMoon(sys, rand, parent, index, opts) {
+        opts = opts || {};
         var arch = ARCHETYPES[rand() < 0.42 ? 1 : 3];
         var pr = parent.userData.radius;
-        var radius = Math.max(12, Math.min(74, pr * (0.09 + rand() * 0.15)));
-        var mat = makeBodyMaterial(sys, rand, arch, (rand() - 0.5) * 0.12);
+        // Moon tints wander further than a planet's (±0.14 of the arc) and are
+        // rolled independently per moon, so a three-moon retinue reads as three
+        // captured rocks rather than three copies of one.
+        var radius = opts.radius || Math.max(12, Math.min(74, pr * (0.09 + rand() * 0.15)));
+        var mat = makeBodyMaterial(sys, rand, arch, (rand() - 0.5) * 0.28);
         var geo = new THREE.SphereGeometry(radius, LOD_SEGS[0][0], LOD_SEGS[0][1]);
         var mesh = new THREE.Mesh(geo, mat);
         mesh.frustumCulled = true;
 
-        var basis = orbitBasis(rand, sys.tilt, 0.9);
-        var orbit = pr * (2.4 + rand() * 3.0) + radius * 2.0;
+        var basis = opts.basis || orbitBasis(rand, sys.tilt, 0.9);
+        var orbit = opts.orbit || (pr * (2.4 + rand() * 3.0) + radius * 2.0);
 
         mesh.userData = {
             // Deliberately 'planet', NOT 'moon': game-core's
@@ -955,7 +1117,8 @@
             type: 'planet',
             bodyClass: 'moon',
             archetype: arch.key,
-            name: parent.userData.name + ' ' + MOON_LETTERS[index % 3],
+            name: parent.userData.name + ' ' + MOON_LETTERS[index % MOON_LETTERS.length] +
+                  (opts.shepherd ? ' (shepherd)' : ''),
             systemName: sys.name,
             location: sys.name,
             size: radius,
@@ -983,7 +1146,7 @@
     }
 
     function buildPlanet(sys, rand, index, orbitRadius, zone) {
-        var arch = rollArchetype(rand, zone);
+        var arch = rollArchetype(rand, zone, sys.archMul);
         var radius = span(rand, arch.radius);
         // A gas giant must never out-size the sun it orbits.
         if (arch.id === 0 && sys.primaryRadius) {
@@ -998,7 +1161,7 @@
         var mesh = new THREE.Mesh(geo, mat);
         mesh.frustumCulled = true;
 
-        var basis = orbitBasis(rand, sys.tilt, 0.30);
+        var basis = orbitBasis(rand, sys.tilt, sys.tiltSpread);
 
         mesh.userData = {
             type: 'planet',
@@ -1029,14 +1192,37 @@
         activeScene().add(mesh);
         registerBody(mesh);
 
-        var ring = (rand() < arch.ringChance) ? buildRing(sys, rand, radius, arch) : null;
+        // Ring / moon odds are the archetype's, bent by the system's layout —
+        // a shepherd-ring system rings nearly everything it can, an ember forge
+        // almost nothing. Clamped below 1 so no layout makes a feature certain.
+        var ringOdds = Math.min(0.96, arch.ringChance * sys.ringMul);
+        var ring = (rand() < ringOdds) ? buildRing(sys, rand, radius, arch) : null;
 
         // Moons: rolled from the archetype, and only ever on a body big enough
-        // for the size contrast to land.
+        // for the size contrast to land. The gate is per-layout — a giant court
+        // hangs moons on mid-size worlds too, a frontier only on the biggest.
         var moons = [];
-        if (radius > 78 && rand() < arch.moonChance) {
+        if (radius > sys.moonGate && rand() < Math.min(0.98, arch.moonChance * sys.moonMul)) {
             var mn = arch.moons[0] + Math.floor(rand() * (arch.moons[1] - arch.moons[0] + 1));
             for (var m = 0; m < mn; m++) moons.push(buildMoon(sys, rand, mesh, m));
+        }
+
+        // Shepherds: two moonlets riding the ring's OWN plane, one just inside
+        // the inner edge and one just outside the outer, which is the read that
+        // makes a ring look swept rather than painted on. They are tiny by
+        // construction (8-22u against a 255u+ giant) so they sell the giant's
+        // scale at the same time.
+        if (ring && sys.shepherds && radius > 90) {
+            var rb = ringBasis(ring);
+            var edges = [ring.userData.pgRingInner * 0.94, ring.userData.pgRingOuter * 1.07];
+            for (var sh = 0; sh < 2; sh++) {
+                moons.push(buildMoon(sys, rand, mesh, moons.length, {
+                    radius: 8 + rand() * 14,
+                    orbit: edges[sh],
+                    basis: rb,
+                    shepherd: true
+                }));
+            }
         }
 
         return { mesh: mesh, ring: ring, moons: moons, radius: radius, archetype: arch };
@@ -1115,7 +1301,9 @@
         var pal = sys.palette;
         var g = new THREE.Group();
         var scale = 40 + rand() * 60;
-        var derelict = rand() < 0.5;
+        // Layout decides the mood: a garden chain is a lit, crewed station, an
+        // ember forge is nearly always somebody's wreck.
+        var derelict = rand() < (sys.derelictChance != null ? sys.derelictChance : 0.5);
 
         var neon = new THREE.MeshBasicMaterial({ color: pal.accent.clone() });
         // Cool steel, deliberately NOT a desaturated system hue: desaturating
@@ -1148,6 +1336,21 @@
             g.rotation.set(rand() * 3.14, rand() * 3.14, rand() * 3.14);
             spine.rotation.z = 0.6;
             pod.rotation.set(0.5, 0.4, 0.3);
+            // Shed hull plating: three shards on the SHARED box geometry, just
+            // scaled flat and thrown clear. No new geometry, no new material,
+            // and it is the difference between "a station rotated oddly" and
+            // "something died here".
+            for (var d = 0; d < 3; d++) {
+                var shard = new THREE.Mesh(SHARED.podGeo, chrome);
+                shard.scale.set(scale * (0.3 + rand() * 0.7),
+                                scale * (0.06 + rand() * 0.10),
+                                scale * (0.3 + rand() * 0.6));
+                shard.position.set((rand() - 0.5) * scale * 5.0,
+                                   (rand() - 0.5) * scale * 3.4,
+                                   (rand() - 0.5) * scale * 5.0);
+                shard.rotation.set(rand() * 3.14, rand() * 3.14, rand() * 3.14);
+                g.add(shard);
+            }
         }
 
         var ang = rand() * 6.28;
@@ -1166,7 +1369,22 @@
     // -------------------------------------------------------------------------
     // SYSTEM ASSEMBLY
     // -------------------------------------------------------------------------
-    function buildSystem(rand, id, center, name, palette) {
+    function buildSystem(rand, id, center, name, palette, layout, mixPhase) {
+        // The system's own archetype bias: the layout's vector, then ONE
+        // archetype promoted to this system's signature and ONE conspicuously
+        // suppressed. The indices walk with a stride of 5 over 6 archetypes
+        // (5 and 6 are coprime, so the walk visits all six before repeating and
+        // consecutive systems ALWAYS promote a different world type) — the same
+        // low-discrepancy trick the hue wheel uses, for the same reason: a fair
+        // random pick clumps, and a clump here is the "every system is the same
+        // bag of rocks" complaint.
+        var nA = ARCHETYPES.length;
+        var abundant = ((id * 5) + mixPhase) % nA;
+        var absent = (abundant + 3) % nA;
+        var mul = layout.arch.slice();
+        mul[abundant] *= 2.1;
+        mul[absent] *= 0.22;
+
         var sys = {
             id: id,
             name: name,
@@ -1187,7 +1405,18 @@
             active: false,
             detail: false,
             discovered: false,
-            binary: rand() < 0.28,
+            layout: layout,
+            signature: ARCHETYPES[abundant].key,
+            archMul: mul,
+            // Layout knobs are copied onto the system so the builders read one
+            // flat object and a future layout field cannot silently no-op.
+            tiltSpread: layout.tilt,
+            ringMul: layout.ringMul,
+            moonMul: layout.moonMul,
+            moonGate: layout.moonGate,
+            shepherds: layout.shepherds,
+            derelictChance: layout.derelict,
+            binary: rand() < layout.binary,
             tilt: { x: (rand() - 0.5) * 0.7, z: (rand() - 0.5) * 0.7 },
             time: rand() * 100
         };
@@ -1203,25 +1432,36 @@
         // orbiting a marble; the size ladder now runs
         // star 380-600 > gas giant 255-470 > ocean 86-164 > rock 34-96 > moon 12-74,
         // a ~50x span the player can actually feel from the cockpit.
+        var starScale = layout.starScale;
         if (sys.binary) {
-            var sep = 1100 + rand() * 800;
+            sys.primaryRadius = (280 + rand() * 140) * starScale;
+            var secondary = (220 + rand() * 120) * starScale;
+            // Radii FIRST, separation second. The tight-binary layout asks for
+            // suns 520u apart and two 340u suns at 520u separation are welded
+            // together; the floor keeps a full star's width of sky between the
+            // limbs no matter how tight the layout wants them.
+            var sep = Math.max(layout.sep[0] + rand() * layout.sep[1],
+                               (sys.primaryRadius + secondary) * 1.6);
             sys.binarySeparation = sep;
             sys.binaryAngle = rand() * 6.28;
             sys.binarySpeed = 0.05 + rand() * 0.05;
-            sys.primaryRadius = 280 + rand() * 140;
             sys.stars.push(buildStar(sys, rand, sys.primaryRadius, new THREE.Vector3(sep * 0.5, 0, 0)));
-            sys.stars.push(buildStar(sys, rand, 220 + rand() * 120, new THREE.Vector3(-sep * 0.5, 0, 0)));
+            sys.stars.push(buildStar(sys, rand, secondary, new THREE.Vector3(-sep * 0.5, 0, 0)));
             sys.stars[1].mesh.userData.name = name + ' Secondary';
         } else {
-            sys.primaryRadius = 380 + rand() * 220;
+            sys.binarySeparation = 0;
+            sys.primaryRadius = (380 + rand() * 220) * starScale;
             sys.stars.push(buildStar(sys, rand, sys.primaryRadius, new THREE.Vector3(0, 0, 0)));
         }
 
         // --- planets ---
-        var planetCount = 3 + Math.floor(rand() * 3);   // 3-5
-        // Innermost orbit clears the (now much larger) primary by 3x its
-        // radius, so a molten world hugging a 600u sun still has sky under it.
-        var orbit = Math.max(1400, sys.primaryRadius * 3.2) + rand() * 900;
+        var planetCount = layout.planets[0] + Math.floor(rand() * (layout.planets[1] + 1));
+        // Innermost orbit clears the primary by 3x its radius, so a molten
+        // world hugging a 600u sun still has sky under it — AND clears the
+        // binary pair's own swept circle, or the first planet flies through
+        // the space the two suns are orbiting each other in.
+        var orbit = Math.max(1400, sys.primaryRadius * 3.2, sys.binarySeparation * 1.15) +
+                    rand() * 900;
         var maxOrbit = orbit;
         var prevRadius = 0;
         for (var i = 0; i < planetCount; i++) {
@@ -1234,10 +1474,14 @@
             for (var mi = 0; mi < built.moons.length; mi++) sys.moons.push(built.moons[mi]);
             if (built.ring) sys.rings.push({ ring: built.ring, planet: built.mesh });
             maxOrbit = orbit;
-            // Spacing now scales with the bodies it has to separate: a pair of
-            // 470u gas giants on the old flat 900u minimum gap would have
-            // intersected each other on every conjunction.
-            orbit += 900 + rand() * 1300 + (prevRadius + built.radius) * 1.6;
+            // Spacing scales with the bodies it has to separate: a pair of
+            // 470u gas giants on a flat 900u minimum gap would have intersected
+            // each other on every conjunction. The base term is the layout's,
+            // and it is most of what "crowded shoal" vs "sparse frontier"
+            // actually MEANS from the cockpit — 520u of empty between worlds
+            // you can see at once, or 3,000u of nothing.
+            orbit += layout.gap[0] + rand() * layout.gap[1] +
+                     (prevRadius + built.radius) * layout.gapBody;
             prevRadius = built.radius;
         }
         sys.extent = maxOrbit;
@@ -1249,9 +1493,28 @@
         sys.discoverR2 = discR * discR;
 
         // --- ambience ---
-        sys.wisp = buildWisp(sys, rand, maxOrbit * (1.5 + rand() * 0.9));
-        sys.dust = buildDust(sys, rand, maxOrbit * 1.35);
-        if (rand() < 0.55) sys.station = buildStation(sys, rand, maxOrbit);
+        sys.wisp = buildWisp(sys, rand, maxOrbit * (1.5 + rand() * 0.9) * layout.wispMul);
+        sys.dust = buildDust(sys, rand, maxOrbit * 1.35 * layout.dustMul);
+        if (rand() < layout.station) sys.station = buildStation(sys, rand, maxOrbit);
+
+        // PLACE EVERYTHING NOW — do not wait for the first tick.
+        //
+        // buildPlanet/buildMoon add their meshes to the scene at the default
+        // position (0,0,0) and let the tick derive the real one from s.center.
+        // But the tick early-outs on `if (!s.active) continue`, and a system
+        // 100,000u away is inactive for the entire opening of the game — so
+        // every body in this shell sat at the WORLD ORIGIN, which is exactly
+        // where the player spawns (game-core: camera.position.set(0,0,0)).
+        // They are registered in the global `planets` array, and
+        // updateActivePlanets() filters that array on raw distance with no
+        // visibility test, so ~100 invisible worlds and 400u stars — carrying
+        // mass and slingshotMultiplier — were being handed to the gravity and
+        // collision loops at range zero on frame one.
+        //
+        // One resync at build time costs nothing and restores the file's own
+        // invariant: s.center is the only truth, and every mesh derives from it
+        // from the moment it exists rather than from the moment it activates.
+        resyncSystem(sys);
 
         return sys;
     }
@@ -1340,7 +1603,10 @@
             if (ak === 'ocean world' && !headline) headline = ', ocean world';
             else if (ak === 'molten world' && !headline) headline = ', molten world';
         }
-        var blurb = sys.name + ' — ' + sys.stars.length + (sys.binary ? ' suns' : ' sun') +
+        // Lead with the LAYOUT, not the census: "worlds packed shoulder to
+        // shoulder" is a reason to slow down and look, "4 worlds" never was.
+        var blurb = sys.name + ' — ' + sys.layout.note + '. ' +
+                    sys.stars.length + (sys.binary ? ' suns' : ' sun') +
                     ', ' + sys.planets.length + ' worlds' +
                     (sys.moons.length ? ' / ' + sys.moons.length + ' moons' : '') +
                     headline + ', ' + sys.palette.flavour +
@@ -1360,7 +1626,8 @@
             awardReputation(PG.DISCOVERY_REP, '');
         }
         console.log('PROC-GALAXY discovered: ' + sys.name +
-                    ' (' + sys.palette.key + ') at ' + trueLength(sys.center).toFixed(0) + 'u');
+                    ' (' + sys.palette.key + ' / ' + sys.layout.key + ') at ' +
+                    trueLength(sys.center).toFixed(0) + 'u');
     }
 
     // -------------------------------------------------------------------------
@@ -1392,6 +1659,11 @@
 
         var count = PG.MIN_SYSTEMS + Math.floor(rand() * (PG.MAX_SYSTEMS - PG.MIN_SYSTEMS + 1));
         var used = {};
+        // Layout personality is dealt from shuffled bags (see makeLayoutDeck),
+        // so no two systems in a row share a SHAPE — the structural twin of the
+        // golden-ratio hue walk below, which stops them sharing a COLOUR.
+        var layoutDeck = makeLayoutDeck(rand, count);
+        var mixPhase = Math.floor(rand() * ARCHETYPES.length);
 
         // COLOUR ASSIGNMENT — additive golden-ratio recurrence.
         //
@@ -1442,7 +1714,26 @@
             var name = generateName(rand, used);
             var palette = makePalette(rand, hueT + (rand() - 0.5) * 0.04);
             hueT += PHI_STEP;
-            systems.push(buildSystem(rand, i, center, name, palette));
+            var built = buildSystem(rand, i, center, name, palette,
+                                    LAYOUTS[layoutDeck[i]], mixPhase);
+            // SHELL_INNER is a promise about the SYSTEM, not about its centre.
+            // Layout personality made orbits much wider than the old flat
+            // ladder — a sparse frontier reaches ~15,000u — so a system centred
+            // at 80,000u now hangs its innermost world down at ~65,000u, into
+            // the authored exotic cores (which top out at 75,000u). Push the
+            // centre out until the whole system clears; everything derives from
+            // s.center, so one resync moves the system as a rigid body.
+            var reach = trueLength(built.center) - built.extent;
+            if (reach < PG.SHELL_INNER) {
+                var dir = built.center.clone();
+                if (_woo) dir.add(_woo);                    // true-space direction
+                if (dir.lengthSq() > 1e-6) {
+                    dir.normalize().multiplyScalar(PG.SHELL_INNER - reach);
+                    built.center.add(dir);
+                    resyncSystem(built);
+                }
+            }
+            systems.push(built);
         }
 
         buildBeacons();
@@ -1720,6 +2011,10 @@
                     return {
                         name: s.name,
                         palette: s.palette.key,
+                        // Two adjacent rows must never share BOTH of these —
+                        // and must never share `layout` at all.
+                        layout: s.layout.key,
+                        signature: s.signature,
                         // TRUE distance from Sgr A*, stable across rebases —
                         // always inside SHELL_INNER..SHELL_OUTER.
                         dist: Math.round(trueLength(s.center)),
@@ -1746,7 +2041,16 @@
             // across the whole shell, in one line.
             census: function () {
                 var byArch = {}, min = Infinity, max = 0, n = 0, moons = 0;
+                var byLayout = {}, rings = 0, stations = 0, repeats = 0;
                 for (var i = 0; i < systems.length; i++) {
+                    var lk = systems[i].layout.key;
+                    byLayout[lk] = (byLayout[lk] || 0) + 1;
+                    // Must stay 0. If it ever isn't, the layout deck is broken
+                    // and the player is being shown the same system shape twice
+                    // in a row — the exact failure this pass exists to prevent.
+                    if (i && systems[i - 1].layout.key === lk) repeats++;
+                    rings += systems[i].rings.length;
+                    if (systems[i].station) stations++;
                     moons += systems[i].moons.length;
                     for (var p = 0; p < systems[i].planets.length; p++) {
                         var ud = systems[i].planets[p].userData;
@@ -1758,10 +2062,14 @@
                 }
                 return {
                     systems: systems.length, planets: n, moons: moons,
+                    rings: rings, stations: stations,
                     archetypes: byArch,
+                    layouts: byLayout,
+                    adjacentLayoutRepeats: repeats,
                     radius: { min: Math.round(min), max: Math.round(max),
                               spread: Math.round(max / Math.max(1, min) * 10) / 10 },
-                    hues: systems.map(function (s) { return s.palette.key; })
+                    hues: systems.map(function (s) { return s.palette.key; }),
+                    shapes: systems.map(function (s) { return s.layout.key; })
                 };
             },
             warpTo: function (nameOrIndex) {

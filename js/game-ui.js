@@ -138,6 +138,12 @@ function updateUI() {
     if (typeof gameState === 'undefined' || !gameState) return;
     updateRepHud();
 
+    // Ease HUD chrome opacity down during slingshot/emergency-warp spectacle,
+    // back up the instant it ends. Hooked here (not just updateAllUISystems)
+    // because this is the function the real per-frame loop in game-core.js
+    // actually calls.
+    if (typeof updateHudSpectacleDim === 'function') updateHudSpectacleDim();
+
     // FIXED: Properly define all UI elements at the start
     const velocityEl = _uiEl('velocity');
     const distanceEl = _uiEl('distance');
@@ -1346,6 +1352,57 @@ function _tlDrawTag(ctx, obj, x, y, r, distance, scheme, isHostile) {
     ctx.restore();
 }
 
+// Compute the actual screen-space bounding box _tlDrawTag is about to paint
+// (name line + distance/HP line + HP bar, all centred under the bracket at
+// tagY = y + r + 14) so the declutter pass can test real label footprints
+// against each other instead of a fixed-radius guess anchored on the
+// bracket centre. Two ships can sit shoulder-to-shoulder on screen with
+// wildly different apparent radii (near/small vs far/huge-boss) — comparing
+// bracket centres either lets their tags collide anyway or declutters pairs
+// that were never going to overlap.
+function _tlMeasureTagBox(ctx, obj, x, y, r, distance, isHostile) {
+    const ud = obj.userData || {};
+    const name = ud.name || (isHostile ? 'Hostile Contact' : 'Unknown Contact');
+    let line2;
+    if (isHostile) {
+        const hp = Math.max(0, Math.round(ud.health || 0));
+        const maxHp = Math.max(1, Math.round(ud.maxHealth || hp || 1));
+        line2 = `${Math.round(distance)}u · HP ${hp}/${maxHp}`;
+    } else {
+        line2 = `${Math.round(distance)}u`;
+    }
+    const tagY = y + r + 14;
+    ctx.font = 'bold 11px "Courier New", monospace';
+    const nameW = ctx.measureText(_tlTruncate(name, 26)).width;
+    ctx.font = '10px "Courier New", monospace';
+    const line2W = ctx.measureText(line2).width;
+    const barW = isHostile ? Math.max(30, r * 1.15) : 0;
+    const halfW = Math.max(nameW, line2W, barW) / 2 + 3; // +3px breathing room per glyph edge
+    const top = tagY - 12; // ~ascent of the bold 11px name line
+    const bottom = isHostile ? (tagY + 18 + 4) : (tagY + 13 + 4); // HP bar (if any) + its shadow blur
+    return { left: x - halfW, right: x + halfW, top, bottom };
+}
+
+function _tlBoxesOverlap(a, b, pad) {
+    return a.left - pad < b.right && a.right + pad > b.left &&
+           a.top - pad < b.bottom && a.bottom + pad > b.top;
+}
+
+// Deprioritized contacts still get this instead of silently vanishing —
+// a small pip at the tag's anchor point says "tracked, tag suppressed for
+// room" without adding another readable line to a screen already packed
+// with them.
+function _tlDrawDeclutterDot(ctx, x, y, r, scheme) {
+    ctx.save();
+    ctx.fillStyle = `rgba(${scheme.line},0.85)`;
+    ctx.shadowColor = scheme.glow;
+    ctx.shadowBlur = 4;
+    ctx.beginPath();
+    ctx.arc(x, y + r + 12, 2.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+}
+
 function _tlDrawLeadPip(ctx, obj, wp, distance, proj, camera, w, h, scheme) {
     const now = (typeof performance !== 'undefined') ? performance.now() : Date.now();
     const vel = _tlGetVelocity(obj, wp, now);
@@ -1477,15 +1534,21 @@ function updateTargetLayer() {
 
         const isHostile = !!(obj.userData && obj.userData.type === 'enemy');
         const isLocked = lockActive && obj === lockedObj;
-        records.push({ obj, wp, distance, isHostile, isLocked });
+        const isCurrentTarget = obj === gameState.currentTarget;
+        records.push({ obj, wp, distance, isHostile, isLocked, isCurrentTarget });
     }
+    // Locked-on contact first, then the pilot's selected nav target, then
+    // nearest-out — this is the priority order the declutter pass below
+    // walks in, so when tags collide it's always the least-relevant one
+    // that loses its text.
     records.sort((a, b) => {
         if (a.isLocked !== b.isLocked) return a.isLocked ? -1 : 1;
+        if (a.isCurrentTarget !== b.isCurrentTarget) return a.isCurrentTarget ? -1 : 1;
         return a.distance - b.distance;
     });
 
-    const placedTags = []; // screen-space anchors of tags already drawn this frame
-    const TAG_MIN_SPACING_SQ = 44 * 44;
+    const placedTagBoxes = []; // real screen-space AABBs of tags already drawn this frame
+    const TAG_DECLUTTER_PAD = 6; // px gap required between neighboring tag boxes
 
     for (let i = 0; i < records.length; i++) {
         const { obj, wp, distance, isHostile, isLocked } = records[i];
@@ -1513,14 +1576,16 @@ function updateTargetLayer() {
         if (proj.x > -160 && proj.x < w + 160 && proj.y > -160 && proj.y < h + 160 && !proj.behind) {
             _tlDrawBracket(ctx, proj.x, proj.y, drawRadius, scheme, alpha);
 
-            let tooClose = false;
-            for (let j = 0; j < placedTags.length; j++) {
-                const px = placedTags[j].x - proj.x, py = placedTags[j].y - proj.y;
-                if (px * px + py * py < TAG_MIN_SPACING_SQ) { tooClose = true; break; }
+            const tagBox = _tlMeasureTagBox(ctx, obj, proj.x, proj.y, drawRadius, distance, isHostile);
+            let overlapsPlacedTag = false;
+            for (let j = 0; j < placedTagBoxes.length; j++) {
+                if (_tlBoxesOverlap(tagBox, placedTagBoxes[j], TAG_DECLUTTER_PAD)) { overlapsPlacedTag = true; break; }
             }
-            if (!tooClose) {
+            if (!overlapsPlacedTag) {
                 _tlDrawTag(ctx, obj, proj.x, proj.y, drawRadius, distance, scheme, isHostile);
-                placedTags.push({ x: proj.x, y: proj.y });
+                placedTagBoxes.push(tagBox);
+            } else {
+                _tlDrawDeclutterDot(ctx, proj.x, proj.y, drawRadius, scheme);
             }
             if (weaponsArmed && (isHostile || isLocked)) {
                 _tlDrawLeadPip(ctx, obj, wp, distance, proj, camera, w, h, scheme);
@@ -3380,6 +3445,39 @@ function showGameOverScreen(title, message) {
     console.log('✅ Game over screen displayed - all systems stopped');
 }
 
+// The four corner panels + title header — the always-on desktop HUD chrome
+// that would otherwise sit fully opaque over the slingshot/emergency-warp
+// spectacle. Queried once and cached; mobile hides these via CSS entirely
+// (`.ui-panel { display:none }` under the mobile media query) so toggling
+// a class on them there is a harmless no-op.
+let _hudSpectaclePanels = null;
+function _hudSpectacleGetPanels() {
+    if (!_hudSpectaclePanels) {
+        _hudSpectaclePanels = Array.prototype.slice.call(document.querySelectorAll(
+            '.ui-panel.title-header, .ui-panel.top-left, .ui-panel.bottom-left, .ui-panel.top-right, .ui-panel.bottom-right'
+        ));
+    }
+    return _hudSpectaclePanels;
+}
+
+// Ease the HUD panel chrome down to css/styles.css's .hud-spectacle-dim
+// opacity while the slingshot or emergency-warp spectacle is on screen, and
+// straight back to fully readable the instant it ends. The eased ramp is a
+// plain CSS transition (opacity 0.35s ease on .ui-panel) — this just flips
+// the class each frame, which is a no-op once the state settles.
+function updateHudSpectacleDim() {
+    if (typeof gameState === 'undefined') return;
+    const dim = !!((gameState.slingshot && gameState.slingshot.active) ||
+                    (gameState.emergencyWarp && gameState.emergencyWarp.active));
+    const panels = _hudSpectacleGetPanels();
+    for (let i = 0; i < panels.length; i++) {
+        panels[i].classList.toggle('hud-spectacle-dim', dim);
+    }
+}
+if (typeof window !== 'undefined') {
+    window.updateHudSpectacleDim = updateHudSpectacleDim;
+}
+
 // =============================================================================
 // INTEGRATED UPDATE LOOP FOR UI SYSTEMS
 // =============================================================================
@@ -3387,26 +3485,29 @@ function showGameOverScreen(title, message) {
 function updateAllUISystems() {
     // Core UI updates
     updateUI();
-    
+
     // Navigation and targeting systems
     populateTargets();
     updateCrosshairTargeting();
     detectEnemiesInRegion();
-    
+
     // Map and navigation systems
     updateCompass();
     updateGalaxyMap();
-    
+
     // Control button states
     updateOrbitLinesButton();
     updateWarpButton();
-    
+
     // Warning systems
     updateEventHorizonWarnings();
-    
+
+    // Ease HUD chrome opacity down during slingshot/emergency-warp spectacle
+    updateHudSpectacleDim();
+
     // Victory condition check
     checkVictoryCondition();
-    
+
     // Mobile UI updates
     if (typeof updateMobileFloatingStatus === 'function') {
         updateMobileFloatingStatus();

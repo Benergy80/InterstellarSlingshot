@@ -2136,26 +2136,53 @@ function generatePlanetName(galaxyId) {
 // Canvas textures are cached per color so 10+ black holes share a few.
 const _gargantuaTexCache = {};
 
+// The accretion disk is a RingGeometry(radius*DISK_IN_K, radius*DISK_OUT_K).
+// r128's RingGeometry UVs are a SQUARE projection — uv = (vertex.xy /
+// outerRadius + 1) / 2 — so texture radius 0.5 is the ring's OUTER rim and
+// texture radius 0.5 * (inner/outer) is its INNER lip. Both texture builders
+// below depend on that ratio, so it lives here as the single source of truth.
+const _GARG_DISK_IN_K = 1.05;
+const _GARG_DISK_OUT_K = 4.0;
+const _GARG_DISK_RATIO = _GARG_DISK_IN_K / _GARG_DISK_OUT_K;   // 0.2625
+
+function _gsmooth(a, b, x) {
+    let t = (x - a) / (b - a);
+    t = t < 0 ? 0 : (t > 1 ? 1 : t);
+    return t * t * (3 - 2 * t);
+}
+
 function _gargantuaGlowTexture(color) {
     const key = 'g' + color;
     if (_gargantuaTexCache[key]) return _gargantuaTexCache[key];
     const c = new THREE.Color(color);
     const r = Math.round(c.r * 255), g = Math.round(c.g * 255), b = Math.round(c.b * 255);
-    const size = 256, cv = document.createElement('canvas');
+    const size = 512, cv = document.createElement('canvas');
     cv.width = cv.height = size;
     const ctx = cv.getContext('2d');
     const cx = size / 2;
     const grad = ctx.createRadialGradient(cx, cx, 0, cx, cx, cx);
-    // Transparent core — the black event-horizon sphere shows through here.
+    // The sprite is sized so texture-radius 1.0 == radius * 3.1, i.e. the
+    // black sphere's silhouette lands at 1/3.1 = 0.3226. Everything inside
+    // that is occluded by the sphere's own depth, so the photon ring has to
+    // sit just OUTSIDE it or it gets eaten.
     grad.addColorStop(0.00, 'rgba(0,0,0,0)');
-    grad.addColorStop(0.30, 'rgba(0,0,0,0)');
-    // Photon ring: a tight near-white band hugging the shadow edge.
-    grad.addColorStop(0.34, `rgba(255,255,255,0)`);
-    grad.addColorStop(0.37, `rgba(255,250,240,0.95)`);
-    grad.addColorStop(0.40, `rgba(${Math.min(255,r+120)},${Math.min(255,g+90)},${Math.min(255,b+40)},0.85)`);
+    grad.addColorStop(0.310, 'rgba(0,0,0,0)');
+    // PHOTON RING — a razor-thin, blown-out white band at ~1.05x the
+    // shadow radius. Tighter and hotter than before (the old one peaked at
+    // 0.95 alpha over a 0.03-wide band and read as a soft halo, not a ring).
+    grad.addColorStop(0.325, 'rgba(255,255,255,0.00)');
+    grad.addColorStop(0.338, 'rgba(255,255,255,1.00)');
+    grad.addColorStop(0.348, 'rgba(255,252,244,0.86)');
+    grad.addColorStop(0.362, `rgba(${Math.min(255,r+120)},${Math.min(255,g+95)},${Math.min(255,b+55)},0.42)`);
+    grad.addColorStop(0.385, `rgba(${r},${Math.min(255,g+30)},${b},0.20)`);
+    // Second-order lensed arc — light that looped the hole one extra time.
+    // Faint, but it is the detail that sells "this is bent spacetime".
+    grad.addColorStop(0.405, `rgba(${Math.min(255,r+60)},${Math.min(255,g+60)},${Math.min(255,b+30)},0.16)`);
+    grad.addColorStop(0.420, 'rgba(255,246,230,0.30)');
+    grad.addColorStop(0.436, `rgba(${r},${Math.round(g*0.8)},${b},0.13)`);
     // Warm lensed glow band fading out into a soft halo.
-    grad.addColorStop(0.52, `rgba(${r},${g},${b},0.35)`);
-    grad.addColorStop(0.74, `rgba(${r},${Math.round(g*0.6)},${Math.round(b*0.5)},0.10)`);
+    grad.addColorStop(0.55, `rgba(${r},${Math.round(g*0.7)},${Math.round(b*0.6)},0.14)`);
+    grad.addColorStop(0.76, `rgba(${r},${Math.round(g*0.5)},${Math.round(b*0.4)},0.05)`);
     grad.addColorStop(1.00, 'rgba(0,0,0,0)');
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, size, size);
@@ -2165,27 +2192,148 @@ function _gargantuaGlowTexture(color) {
     return tex;
 }
 
+// DOPPLER-BEAMED ACCRETION DISK.
+//
+// The old gradient version put its white-hot lip at texture offset 0.50 —
+// which, per the UV note above, is the disk's OUTER rim, with everything
+// from 0.00 to 0.46 fully transparent. The result was a thin bright hoop at
+// the far edge and a hollow middle: the exact inverse of an accretion disk.
+// This builds the profile per-pixel in the correct space and adds the thing
+// that actually makes an accretion disk read as one on screen — relativistic
+// beaming, so the limb rotating TOWARD you is several times brighter and
+// blue-shifted toward white, and the receding limb sinks to a dull ember.
 function _gargantuaDiskTexture(color) {
     const key = 'd' + color;
     if (_gargantuaTexCache[key]) return _gargantuaTexCache[key];
     const c = new THREE.Color(color);
-    const r = Math.round(c.r * 255), g = Math.round(c.g * 255), b = Math.round(c.b * 255);
-    const size = 256, cv = document.createElement('canvas');
+    const br = c.r * 255, bg = c.g * 255, bb = c.b * 255;
+    const size = _isMobileRenderTier() ? 256 : 384;
+
+    const src = document.createElement('canvas');
+    src.width = src.height = size;
+    const sctx = src.getContext('2d');
+    const img = sctx.createImageData(size, size);
+    const data = img.data;
+    const RIN = _GARG_DISK_RATIO;
+
+    for (let y = 0; y < size; y++) {
+        const dy = (y + 0.5) / size - 0.5;
+        for (let x = 0; x < size; x++) {
+            const dx = (x + 0.5) / size - 0.5;
+            const rr = 2 * Math.sqrt(dx * dx + dy * dy);   // 1.0 == outer rim
+            const i = (y * size + x) * 4;
+            if (rr > 1.0 || rr < RIN) { data[i + 3] = 0; continue; }
+
+            const t = (rr - RIN) / (1 - RIN);              // 0 inner lip → 1 rim
+            const ang = Math.atan2(dy, dx);
+
+            // Radial profile: a blown-out ISCO lip riding a T^-3/4-ish
+            // falloff, feathered out before the geometric rim so the disk
+            // dissolves into the dark instead of ending on a hard circle.
+            const lipT = t / 0.055;
+            const lip = Math.exp(-lipT * lipT);
+            let prof = Math.pow(1 - t, 1.6) * 1.00 + lip * 1.15;
+            prof *= 1 - _gsmooth(0.74, 1.0, t);
+
+            // RELATIVISTIC BEAMING. dop == 1 on the approaching limb, 0 on
+            // the receding one; the ^2.3 gives ~13:1 between the limbs, in
+            // the neighbourhood of a real Doppler factor D^3.
+            const dop = 0.5 + 0.5 * Math.cos(ang);
+            const beam = 0.16 + 2.0 * Math.pow(dop, 2.3);
+
+            // Orbiting filaments — fine angular striations, strongest near
+            // the hot inner edge where the shear is worst.
+            const fil = 0.80 + 0.20 * Math.sin(ang * 9 + t * 26) * (1 - t * 0.7);
+
+            let inten = prof * beam * fil;
+            if (inten <= 0.002) { data[i + 3] = 0; continue; }
+
+            // Blueshift the approaching side toward white, let the receding
+            // side fall back to a deep ember of the hole's own colour.
+            const m = Math.pow(dop, 1.4);
+            let R = br * 0.85 * (1 - m) + 255 * m;
+            let G = bg * 0.35 * (1 - m) + 246 * m;
+            let B = bb * 0.28 * (1 - m) + 228 * m;
+            const w = Math.min(1, lip * 1.2);
+            R = R * (1 - w) + 255 * w;
+            G = G * (1 - w) + 250 * w;
+            B = B * (1 - w) + 240 * w;
+
+            data[i] = R > 255 ? 255 : R;
+            data[i + 1] = G > 255 ? 255 : G;
+            data[i + 2] = B > 255 ? 255 : B;
+            data[i + 3] = Math.min(255, inten * 255);
+        }
+    }
+    sctx.putImageData(img, 0, 0);
+
+    // One soft pass so the filaments and the ISCO lip read as plasma rather
+    // than as aliased pixels when the disk fills the screen.
+    const cv = document.createElement('canvas');
     cv.width = cv.height = size;
     const ctx = cv.getContext('2d');
-    const cx = size / 2;
-    const grad = ctx.createRadialGradient(cx, cx, 0, cx, cx, cx);
-    // White-hot inner edge → warm body → dark outer rim (RingGeometry UVs
-    // map this square radially across the annulus).
-    grad.addColorStop(0.00, `rgba(255,250,235,0.0)`);
-    grad.addColorStop(0.46, `rgba(255,250,235,0.0)`);
-    grad.addColorStop(0.50, `rgba(255,248,230,0.95)`);
-    grad.addColorStop(0.58, `rgba(${Math.min(255,r+90)},${Math.min(255,g+50)},${b},0.7)`);
-    grad.addColorStop(0.78, `rgba(${r},${Math.round(g*0.55)},${Math.round(b*0.4)},0.35)`);
-    grad.addColorStop(1.00, `rgba(0,0,0,0)`);
-    ctx.fillStyle = grad;
-    ctx.fillRect(0, 0, size, size);
+    ctx.filter = `blur(${Math.max(1, size / 260)}px)`;
+    ctx.drawImage(src, 0, 0);
+
     const tex = new THREE.CanvasTexture(cv);
+    tex.needsUpdate = true;
+    _gargantuaTexCache[key] = tex;
+    return tex;
+}
+
+// Polar-jet plume texture: helical filaments only, SEAMLESS in both axes.
+//
+// The length falloff deliberately lives in the geometry's vertex colours,
+// not here. A first pass baked "blinding at the throat → gone at the tip"
+// into the texture's v axis and then scrolled v to make the plasma stream —
+// which, with RepeatWrapping, marched the blinding throat band up the jet
+// once per cycle and read as a hard white ring sliding outward. Detail
+// scrolls; shape does not. Every filament here uses an INTEGER number of
+// wavelengths over the canvas height so v=0 and v=1 line up exactly and the
+// scroll has no seam at all.
+function _gargantuaJetTexture(color) {
+    const key = 'j' + color;
+    if (_gargantuaTexCache[key]) return _gargantuaTexCache[key];
+    const c = new THREE.Color(color);
+    const r = Math.round(c.r * 255), g = Math.round(c.g * 255), b = Math.round(c.b * 255);
+    const w = 128, h = 256;
+    const cv = document.createElement('canvas');
+    cv.width = w; cv.height = h;
+    const ctx = cv.getContext('2d');
+
+    // Uniform plasma body — the cone's base glow, flat along v.
+    ctx.fillStyle = `rgba(${Math.min(255, r + 40)},${Math.min(255, g + 40)},${Math.min(255, b + 20)},0.34)`;
+    ctx.fillRect(0, 0, w, h);
+
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.filter = 'blur(2px)';
+    for (let i = 0; i < 26; i++) {
+        const x0 = Math.random() * w;
+        const amp = 4 + Math.random() * 13;
+        const cycles = 1 + Math.floor(Math.random() * 4);      // integer → seamless
+        const freq = (cycles * Math.PI * 2) / h;
+        const ph = Math.random() * Math.PI * 2;
+        ctx.beginPath();
+        for (let y = 0; y <= h; y += 4) {
+            const xx = x0 + Math.sin(y * freq + ph) * amp;
+            if (y === 0) ctx.moveTo(xx, y); else ctx.lineTo(xx, y);
+        }
+        // Draw each strand three times (x-w, x, x+w) so strands crossing the
+        // wrap seam are continuous around the cone too.
+        ctx.strokeStyle = `rgba(255,${230 + Math.floor(Math.random() * 25)},255,${0.06 + Math.random() * 0.12})`;
+        ctx.lineWidth = 1 + Math.random() * 3;
+        ctx.stroke();
+        ctx.save();
+        ctx.translate(-w, 0); ctx.stroke();
+        ctx.translate(2 * w, 0); ctx.stroke();
+        ctx.restore();
+    }
+    ctx.filter = 'none';
+    ctx.globalCompositeOperation = 'source-over';
+
+    const tex = new THREE.CanvasTexture(cv);
+    tex.wrapS = THREE.RepeatWrapping;
+    tex.wrapT = THREE.RepeatWrapping;
     tex.needsUpdate = true;
     _gargantuaTexCache[key] = tex;
     return tex;
@@ -2224,6 +2372,91 @@ if (typeof window !== 'undefined') window._isMobileRenderTier = _isMobileRenderT
 // a wide additive halo sprite that pulses irregularly over ~10–25 s.
 // =============================================================================
 const _starCoronaTexCache = {};
+
+// Colour-temperature proxy. Real stellar temperature is a blackbody curve;
+// what matters on screen is only "does this star lean red or blue", which the
+// palette colour already encodes. Returns -1 (deep red giant) .. +1 (blue
+// supergiant), and the chromosphere / flare tints derived from it.
+function _starTempTint(color) {
+    const c = new THREE.Color(color);
+    let t = (c.b - c.r) * 1.6 + (c.g - c.r) * 0.4;
+    t = t < -1 ? -1 : (t > 1 ? 1 : t);
+    const k = (t + 1) * 0.5;                       // 0 = coolest, 1 = hottest
+    // Chromosphere: H-alpha crimson on cool stars, hard blue-white on hot
+    // ones, then pulled 30% back toward the star's own colour so a green or
+    // magenta arcade sun still reads as itself.
+    const chromo = new THREE.Color(0xff3311).lerp(new THREE.Color(0x9ecfff), k).lerp(c, 0.30);
+    // Flare spikes stay hotter than the body — that is what makes them read
+    // as bloom rather than as geometry.
+    const flare = new THREE.Color(0xffcc66).lerp(new THREE.Color(0xd8ecff), k);
+    return { t: t, k: k, chromo: chromo, flare: flare };
+}
+
+// Anamorphic / diffraction flare: a hot core bloom with a tapered 4-point
+// spike cross plus two shorter diagonals. Rotated slowly per-frame via
+// SpriteMaterial.rotation, which costs nothing and reads as the lens
+// breathing rather than as a decal glued to the star.
+function _starFlareTexture(color) {
+    const key = 'F' + color;
+    if (_starCoronaTexCache[key]) return _starCoronaTexCache[key];
+    const c = new THREE.Color(color);
+    const r = Math.round(c.r * 255), g = Math.round(c.g * 255), b = Math.round(c.b * 255);
+    const size = 256, cv = document.createElement('canvas');
+    cv.width = cv.height = size;
+    const ctx = cv.getContext('2d');
+    const cx = size / 2;
+
+    ctx.globalCompositeOperation = 'lighter';
+
+    // Tight overexposed core.
+    const core = ctx.createRadialGradient(cx, cx, 0, cx, cx, cx * 0.26);
+    core.addColorStop(0.00, 'rgba(255,255,255,0.95)');
+    core.addColorStop(0.35, `rgba(${Math.min(255,r+70)},${Math.min(255,g+60)},${Math.min(255,b+40)},0.45)`);
+    core.addColorStop(1.00, 'rgba(0,0,0,0)');
+    ctx.fillStyle = core;
+    ctx.fillRect(0, 0, size, size);
+
+    // [angle, length fraction, half-thickness fraction]
+    const spikes = [
+        [0, 0.98, 0.030],
+        [Math.PI / 2, 0.80, 0.026],
+        [Math.PI / 4, 0.44, 0.015],
+        [-Math.PI / 4, 0.44, 0.015]
+    ];
+    for (let i = 0; i < spikes.length; i++) {
+        const ang = spikes[i][0], L = cx * spikes[i][1], w = cx * spikes[i][2];
+        ctx.save();
+        ctx.translate(cx, cx);
+        ctx.rotate(ang);
+        ctx.filter = 'blur(2px)';
+        const lg = ctx.createLinearGradient(-L, 0, L, 0);
+        lg.addColorStop(0.00, 'rgba(0,0,0,0)');
+        lg.addColorStop(0.34, `rgba(${r},${g},${b},0.22)`);
+        lg.addColorStop(0.46, `rgba(${Math.min(255,r+50)},${Math.min(255,g+40)},${Math.min(255,b+30)},0.70)`);
+        lg.addColorStop(0.50, 'rgba(255,255,255,1.00)');
+        lg.addColorStop(0.54, `rgba(${Math.min(255,r+50)},${Math.min(255,g+40)},${Math.min(255,b+30)},0.70)`);
+        lg.addColorStop(0.66, `rgba(${r},${g},${b},0.22)`);
+        lg.addColorStop(1.00, 'rgba(0,0,0,0)');
+        ctx.fillStyle = lg;
+        // Lens (rhombus) rather than a bar, so each spike tapers to a point
+        // instead of ending on a visible rectangle edge.
+        ctx.beginPath();
+        ctx.moveTo(-L, 0);
+        ctx.lineTo(0, -w);
+        ctx.lineTo(L, 0);
+        ctx.lineTo(0, w);
+        ctx.closePath();
+        ctx.fill();
+        ctx.restore();
+    }
+    ctx.globalCompositeOperation = 'source-over';
+
+    const tex = new THREE.CanvasTexture(cv);
+    tex.needsUpdate = true;
+    _starCoronaTexCache[key] = tex;
+    return tex;
+}
+
 function _starCoronaTexture(color) {
     const key = 's' + color;
     if (_starCoronaTexCache[key]) return _starCoronaTexCache[key];
@@ -2295,11 +2528,75 @@ function addStarCorona(star, radius, baseColor) {
     rim.frustumCulled = false;
     star.add(rim);
 
+    // CHROMOSPHERE — a second, wider backside shell carrying the star's
+    // colour TEMPERATURE rather than its palette colour: crimson H-alpha on
+    // cool suns, hard blue-white on hot ones. Backside additive shells are
+    // brightest at the limb (longest path through the shell) and near-nil
+    // face-on, so this reads as a real atmosphere hugging the disc instead
+    // of a flat tint over it — and it is what separates two stars that
+    // happen to share a body colour.
+    const temp = _starTempTint(tint);
+    const chromoMat = new THREE.MeshBasicMaterial({
+        color: temp.chromo,
+        transparent: true,
+        opacity: 0.30,
+        side: THREE.BackSide,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false
+    });
+    const chromo = new THREE.Mesh(new THREE.SphereGeometry(radius * 1.16, 24, 24), chromoMat);
+    chromo.frustumCulled = false;
+    star.add(chromo);
+
+    // LAYERED FLARE. Two more sprites on top of the wide halo:
+    //   • a tight, blown-out bloom right on the disc, which is what makes
+    //     the core look overexposed rather than merely bright;
+    //   • the diffraction spike cross, slowly counter-rotating.
+    // Both are camera-facing and additive; the spike texture is >90%
+    // transparent, so the extra overdraw is a fraction of the halo's.
+    const bloomMat = new THREE.SpriteMaterial({
+        map: _starCoronaTexture(tint),
+        color: 0xffffff,
+        transparent: true,
+        opacity: 0.75,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        depthTest: true
+    });
+    const bloom = new THREE.Sprite(bloomMat);
+    const bloomSize = radius * 1.5;
+    bloom.scale.set(bloomSize * 2, bloomSize * 2, 1);
+    bloom.frustumCulled = false;
+    bloom.renderOrder = 66;
+    star.add(bloom);
+
+    const spikeMat = new THREE.SpriteMaterial({
+        map: _starFlareTexture(temp.flare.getHex()),
+        color: 0xffffff,
+        transparent: true,
+        opacity: _isMobileRenderTier() ? 0.30 : 0.45,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        depthTest: true
+    });
+    const spikes = new THREE.Sprite(spikeMat);
+    const spikeSize = radius * (_isMobileRenderTier() ? 5.0 : 7.0);
+    spikes.scale.set(spikeSize * 2, spikeSize * 2, 1);
+    spikes.frustumCulled = false;
+    spikes.renderOrder = 67;
+    star.add(spikes);
+
     star.userData._hasCorona = true;
     star.userData._coronaSprite = corona;
     star.userData._coronaBaseScale = coronaSize * 2;
     star.userData._coronaRim = rim;
+    star.userData._coronaChromo = chromoMat;
+    star.userData._coronaBloom = bloom;
+    star.userData._coronaBloomScale = bloomSize * 2;
+    star.userData._coronaSpikes = spikes;
+    star.userData._coronaSpikeScale = spikeSize * 2;
     star.userData._coronaPulsePhase = Math.random() * Math.PI * 2;
+    star.userData._coronaSpin = (Math.random() < 0.5 ? -1 : 1) * (0.02 + Math.random() * 0.03);
     if (starCoronas.indexOf(star) === -1) starCoronas.push(star);
 }
 if (typeof window !== 'undefined') window.addStarCorona = addStarCorona;
@@ -2326,6 +2623,39 @@ function updateStarCoronas() {
         if (rim && rim.material) {
             let ro = 0.32 + wob * 0.12;
             rim.material.opacity = ro < 0 ? 0 : (ro > 0.55 ? 0.55 : ro);
+        }
+
+        // The chromosphere breathes on a THIRD, much slower beat than the
+        // halo. Locking every layer to one sine is what makes procedural
+        // pulses look mechanical; letting them drift apart makes the star
+        // look like it has weather.
+        const chromo = s.userData._coronaChromo;
+        if (chromo) {
+            const cw = Math.sin(t * 0.13 + ph * 2.3);
+            let co = 0.28 + cw * 0.10;
+            chromo.opacity = co < 0.05 ? 0.05 : co;
+        }
+
+        // Tight core bloom flares HARDER than the halo (^1.6 on the same
+        // wobble) so peaks read as the star surging, not just glowing.
+        const bloom = s.userData._coronaBloom;
+        if (bloom && bloom.material) {
+            const sharp = wob >= 0 ? Math.pow(wob, 1.6) : -Math.pow(-wob, 1.6);
+            const bg = (s.userData._coronaBloomScale || 1) * (1 + sharp * 0.12);
+            bloom.scale.set(bg, bg, 1);
+            let bo = 0.72 + sharp * 0.30;
+            bloom.material.opacity = bo < 0 ? 0 : (bo > 1.1 ? 1.1 : bo);
+        }
+
+        // Diffraction spikes: slow rotation + a counter-phase length pump,
+        // so the cross stretches while the halo contracts.
+        const spikes = s.userData._coronaSpikes;
+        if (spikes && spikes.material) {
+            spikes.material.rotation = t * (s.userData._coronaSpin || 0.03);
+            const sg = (s.userData._coronaSpikeScale || 1) * (1 - wob * 0.10);
+            spikes.scale.set(sg, sg, 1);
+            let so = 0.40 - wob * 0.14;
+            spikes.material.opacity = so < 0.05 ? 0.05 : (so > 0.62 ? 0.62 : so);
         }
     }
 }
@@ -2691,6 +3021,213 @@ function updateEarthClouds() {
 }
 if (typeof window !== 'undefined') window.updateEarthClouds = updateEarthClouds;
 
+// =============================================================================
+// GRAVITATIONAL-LENSING ILLUSION
+// =============================================================================
+// A true lens needs the scene rendered to a texture and re-sampled per pixel.
+// This gets ~90% of the read for one billboarded quad and no render target:
+// the shader generates its OWN starfield procedurally from the world-space
+// view ray, then bends that ray before sampling it.
+//
+//   • rs = r - θE²/r  is the thin-lens deflection. Far from the hole rs ≈ r
+//     (the sky is untouched); approaching θE the sampled radius collapses to
+//     zero, so the star field visibly COMPRESSES and smears into a ring.
+//   • rs goes NEGATIVE inside θE, which is not a bug — that is the secondary
+//     image, the mirrored copy of the sky behind the hole, and it renders on
+//     the far side automatically.
+//   • Magnification (1/|s|) brightens the compressed annulus, producing an
+//     Einstein ring that lines up with the sprite's photon ring.
+//
+// Because the ray is reconstructed in WORLD space from `cameraPosition`, the
+// lensed stars stay pinned to the sky as you orbit — they don't slide around
+// with the billboard the way a plane-space pattern would.
+function _gargantuaLensMaterial(color, shadowFrac) {
+    const lite = _isMobileRenderTier();
+    const frag = `
+        uniform vec3 uCenter;
+        uniform float uShadow;
+        uniform float uEinstein;
+        uniform float uOpacity;
+        uniform vec3 uWarm;
+        uniform float uSeed;
+        varying vec2 vUv;
+        varying vec3 vWorld;
+
+        float h31(vec3 p) {
+            p = fract(p * 0.1031);
+            p += dot(p, p.yzx + 33.33);
+            return fract((p.x + p.y) * p.z);
+        }
+
+        float starLayer(vec3 d, float sc, float thr, float sd) {
+            vec3 g = d * sc + sd;
+            vec3 id = floor(g);
+            vec3 f = fract(g);
+            float hh = h31(id);
+            if (hh < thr) return 0.0;
+            vec3 cpt = vec3(h31(id + 11.3), h31(id + 27.7), h31(id + 41.1)) * 0.5 + 0.25;
+            float dd = length(f - cpt);
+            float b = (hh - thr) / (1.0 - thr);
+            return smoothstep(0.21, 0.0, dd) * (0.25 + 0.75 * b);
+        }
+
+        void main() {
+            vec2 p = (vUv - 0.5) * 2.0;
+            float r = length(p);
+            float body = 1.0 - smoothstep(0.70, 1.0, r);
+            if (body <= 0.0 || uOpacity <= 0.001) {
+                gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+                return;
+            }
+
+            vec3 rel = vWorld - uCenter;
+            float th2 = uEinstein * uEinstein;
+            float rs = r - th2 / max(r, 0.015);
+            float s = rs / max(r, 0.0001);
+
+            vec3 dir = normalize((uCenter + rel * s) - cameraPosition);
+
+            float stars = starLayer(dir, 120.0, 0.968, uSeed);
+            ${lite ? '' : 'stars += starLayer(dir, 265.0, 0.984, uSeed + 17.0) * 0.75;'}
+
+            float mag = clamp(0.32 / (abs(s) + 0.11), 0.0, 3.2);
+
+            float shade = smoothstep(uShadow * 0.98, uShadow * 1.10, r);
+            float rd = (r - uEinstein) / (uEinstein * 0.11);
+            float ring = exp(-rd * rd);
+
+            float a = (stars * mag * 1.35 + ring * 0.28) * shade * body * uOpacity;
+            vec3 col = mix(vec3(0.74, 0.86, 1.0), uWarm, ring * 0.65);
+            gl_FragColor = vec4(col * a, 1.0);
+        }
+    `;
+    return new THREE.ShaderMaterial({
+        uniforms: {
+            uCenter: { value: new THREE.Vector3() },
+            uShadow: { value: shadowFrac },
+            uEinstein: { value: shadowFrac * 1.45 },
+            uOpacity: { value: 0.0 },
+            uWarm: { value: new THREE.Color(color) },
+            uSeed: { value: Math.random() * 90.0 }
+        },
+        vertexShader: `
+            varying vec2 vUv;
+            varying vec3 vWorld;
+            void main() {
+                vUv = uv;
+                vec4 wp = modelMatrix * vec4(position, 1.0);
+                vWorld = wp.xyz;
+                gl_Position = projectionMatrix * viewMatrix * wp;
+            }
+        `,
+        fragmentShader: frag,
+        transparent: true,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        depthTest: true,
+        side: THREE.DoubleSide,
+        fog: false
+    });
+}
+
+// =============================================================================
+// POLAR JETS — twin relativistic plumes along the hole's spin axis.
+// Two tapered open cylinders per pole (a bright core plume + a wide dim
+// sheath), additive, with the texture scrolled outward every frame. The
+// equatorial disk lies in XZ (its rotation.x = PI/2), so ±Y is the spin axis.
+// Reserved for the gargantua PAIR — Sgr A* and the Companion Core — so the
+// two supermassive landmarks read as different in kind from the ordinary
+// galaxy-core holes, not just bigger.
+// =============================================================================
+function addPolarJets(blackHole, radius, color, lengthK) {
+    if (!blackHole || typeof THREE === 'undefined') return;
+    if (!blackHole.userData) blackHole.userData = {};
+    if (blackHole.userData._gargJets) return;
+    // Normally called right after addGargantuaVisuals, which owns this list;
+    // stand one up anyway so jets can never silently skip the distance fade.
+    if (!blackHole.userData._gargFade) blackHole.userData._gargFade = [];
+
+    const tex = _gargantuaJetTexture(color === undefined ? 0x66ddff : color);
+    const len = radius * (lengthK || 11);
+    const jets = [];
+
+    // [tip radius, throat radius, opacity, renderOrder]. The wide sheath is
+    // the expensive half — a near-screen-filling additive cone — and it is
+    // pure volume, no silhouette, so mobile drops it and keeps the plume.
+    const shells = _isMobileRenderTier()
+        ? [[radius * 1.15, radius * 0.10, 0.95, 67]]
+        : [[radius * 1.15, radius * 0.10, 0.95, 67],
+           [radius * 2.30, radius * 0.22, 0.30, 66]];
+
+    for (let s = 0; s < shells.length; s++) {
+        const sh = shells[s];
+        const geo = new THREE.CylinderGeometry(sh[0], sh[1], len, 18, 20, true);
+        // Cylinders are built centred on the origin; slide up so the narrow
+        // end starts at the event horizon and the plume opens outward.
+        geo.translate(0, len / 2, 0);
+
+        // Break the cone's silhouette. A mathematically perfect cone reads as
+        // a searchlight beam, not as plasma; bending the radius with two
+        // integer-harmonic waves (integer so they stay continuous across the
+        // wrap seam) gives the plume an irregular, twisted edge for free at
+        // build time and zero cost per frame.
+        const pos = geo.attributes.position;
+        const seed = Math.random() * 6.28;
+        for (let v = 0; v < pos.count; v++) {
+            const x = pos.getX(v), z = pos.getZ(v);
+            const rr = Math.sqrt(x * x + z * z);
+            if (rr < 1e-4) continue;
+            const th = Math.atan2(z, x);
+            const yn = pos.getY(v) / len;
+            const wob = 1 +
+                0.17 * Math.sin(th * 3 + yn * 9.0 + seed) +
+                0.10 * Math.sin(th * 5 - yn * 14.0 + seed * 1.7);
+            pos.setX(v, Math.cos(th) * rr * wob);
+            pos.setZ(v, Math.sin(th) * rr * wob);
+        }
+
+        // Length falloff as VERTEX COLOUR, so the cone dissolves into the
+        // dark instead of ending on the geometry's open rim, and so the
+        // scrolling texture can't drag the shape around with it. The dip at
+        // the very throat (y→0) keeps the narrow end from reading as a
+        // flat-capped white wedge glued to the sphere.
+        const col = new Float32Array(pos.count * 3);
+        for (let v = 0; v < pos.count; v++) {
+            const y = pos.getY(v) / len;                    // 0 throat → 1 tip
+            const ignite = Math.min(1, 0.18 + y / 0.05);    // soft ignition
+            const decay = Math.pow(1 - y, 2.0);             // long plume fade
+            const a = ignite * decay;
+            col[v * 3] = col[v * 3 + 1] = col[v * 3 + 2] = a;
+        }
+        geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+
+        const mat = new THREE.MeshBasicMaterial({
+            map: tex,
+            vertexColors: true,
+            transparent: true,
+            opacity: sh[2],
+            side: THREE.DoubleSide,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false,
+            fog: false
+        });
+        for (let pole = 0; pole < 2; pole++) {
+            const m = new THREE.Mesh(geo, mat);
+            if (pole === 1) m.rotation.x = Math.PI;   // mirror to the south pole
+            m.frustumCulled = false;
+            m.renderOrder = sh[3];
+            m.userData.isGargantuaJet = true;
+            blackHole.add(m);
+            jets.push(m);
+        }
+        blackHole.userData._gargFade.push({ m: mat, base: sh[2] });
+    }
+
+    blackHole.userData._gargJets = jets;
+    blackHole.userData._gargJetTex = tex;
+}
+if (typeof window !== 'undefined') window.addPolarJets = addPolarJets;
+
 // Attach the photon-ring glow Sprite + a wide gradient accretion disk to
 // an existing black-hole sphere. `radius` is the sphere radius; `color`
 // the warm disk/glow tint (defaults to a fiery orange).
@@ -2718,16 +3255,19 @@ function addGargantuaVisuals(blackHole, radius, color, nearK, farK) {
     glow.userData.isGargantuaGlow = true;
     blackHole.add(glow);
 
-    // 2. Wide flat gradient accretion disk. RingGeometry so the existing
-    //    animate() blackhole loop keeps it flat in the equatorial plane.
-    const diskGeo = new THREE.RingGeometry(radius * 1.05, radius * 4.0, 64);
+    // 2. Wide doppler-beamed accretion disk. RingGeometry so the existing
+    //    animate() blackhole loop keeps it flat in the equatorial plane
+    //    (that loop skips anything flagged isGargantuaDisk, so the flag
+    //    below must stay).
+    const diskGeo = new THREE.RingGeometry(radius * _GARG_DISK_IN_K, radius * _GARG_DISK_OUT_K, 96);
     const diskMat = new THREE.MeshBasicMaterial({
         map: _gargantuaDiskTexture(col),
         transparent: true,
         opacity: 0.9,
         side: THREE.DoubleSide,
         blending: THREE.AdditiveBlending,
-        depthWrite: false
+        depthWrite: false,
+        fog: false
     });
     const disk = new THREE.Mesh(diskGeo, diskMat);
     disk.rotation.x = Math.PI / 2;
@@ -2738,16 +3278,30 @@ function addGargantuaVisuals(blackHole, radius, color, nearK, farK) {
 
     if (!blackHole.userData) blackHole.userData = {};
 
+    // 3. Lensing plane. Half-width == radius * LENS_K, so the shadow
+    //    silhouette lands at 1/LENS_K in the shader's normalised space.
+    const LENS_K = 7.0;
+    const lensMat = _gargantuaLensMaterial(col, 1.0 / LENS_K);
+    const lens = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), lensMat);
+    lens.scale.set(radius * LENS_K * 2, radius * LENS_K * 2, 1);
+    lens.renderOrder = 69;             // over the disk, under the photon ring
+    lens.frustumCulled = true;         // one quad each; let the GPU skip them
+    lens.visible = false;              // switched on by the proximity fade
+    lens.userData.isGargantuaLens = true;
+    blackHole.add(lens);
+
     // Proximity fade. ONLY the fake-Gargantua additions (the camera-
-    // facing glow sprite + the wide accretion disk) fade with distance.
-    // The original black-hole sphere material and any legacy accretion
-    // rings are intentionally left untouched — they keep their normal
-    // opacity regardless of how close the camera is.
+    // facing glow sprite, the accretion disk, the lens quad and any polar
+    // jets) fade with distance. The original black-hole sphere material
+    // and any legacy accretion rings are intentionally left untouched —
+    // they keep their normal opacity regardless of how close the camera is.
     const fade = [
         { m: glowMat, base: 1.0 },
         { m: diskMat, base: 0.9 }
     ];
     blackHole.userData._gargFade = fade;
+    blackHole.userData._gargLens = lens;
+    blackHole.userData._gargLensMat = lensMat;
     // Refs for the slow "alive / unstable" corona pulse. Random phase so
     // every hole breathes out of sync with the others.
     blackHole.userData._gargGlow = glow;
@@ -2774,6 +3328,7 @@ if (typeof window !== 'undefined') window.addGargantuaVisuals = addGargantuaVisu
 //  • Corona pulse: the halo glow slowly breathes brighter/dimmer and
 //    grows/shrinks on two detuned sines so it reads as alive/unstable.
 const _gargTmp = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+const _gargQ = (typeof THREE !== 'undefined') ? new THREE.Quaternion() : null;
 function updateGargantuaProximityFade(blackHole, camera) {
     if (!blackHole || !blackHole.userData || !camera || !_gargTmp) return;
     const fade = blackHole.userData._gargFade;
@@ -2787,6 +3342,45 @@ function updateGargantuaProximityFade(blackHole, camera) {
     const vis = 0.05 + 0.90 * p;        // 5% .. 95% of each design opacity
     for (let k = 0; k < fade.length; k++) {
         fade[k].m.opacity = fade[k].base * vis;
+    }
+
+    // Lensing quad. Billboarded by hand (a Sprite can't carry a custom
+    // ShaderMaterial): world orientation := camera orientation, expressed
+    // in the hole's local frame so galaxy cores that carry their galaxy's
+    // tilt don't skew it. Kept OFF until the hole is genuinely close —
+    // it is the only per-pixel work in this whole system, and a lensed
+    // speck 40 radii away buys nothing.
+    const lens = blackHole.userData._gargLens;
+    if (lens) {
+        const on = p > 0.12;
+        lens.visible = on;
+        if (on && _gargQ) {
+            blackHole.getWorldQuaternion(_gargQ);
+            _gargQ.conjugate();
+            lens.quaternion.copy(_gargQ).multiply(camera.quaternion);
+            const lm = blackHole.userData._gargLensMat;
+            if (lm && lm.uniforms) {
+                lm.uniforms.uCenter.value.copy(_gargTmp);
+                // Ramps in over the top half of the approach so the sky
+                // "starts to bend" as you commit to the hole.
+                lm.uniforms.uOpacity.value = (p - 0.12) / 0.88;
+            }
+        }
+    }
+
+    // Jet plasma streams outward from both throats. One shared texture per
+    // hole, so this is a single offset write regardless of shell count.
+    const jets = blackHole.userData._gargJets;
+    if (jets) {
+        // Opacity alone is not enough of a cull: a jet cone at 5% still
+        // rasterises a near-screen-filling additive quad's worth of
+        // fragments for nothing. Below the fade band, stop drawing them.
+        const jvis = p > 0.05;
+        for (let j = 0; j < jets.length; j++) jets[j].visible = jvis;
+        if (jvis) {
+            const jtex = blackHole.userData._gargJetTex;
+            if (jtex) jtex.offset.y = (jtex.offset.y - 0.0035) % 1;
+        }
     }
 
     // Slow, irregular corona pulse layered on top of the proximity
@@ -3480,6 +4074,9 @@ try {
             centralBlackHole.add(centralRing);
         }
         addGargantuaVisuals(centralBlackHole, 280, 0xff4500, 2, 34); // 4x; ~5% at Sol start (~9.5k) → ~95% close
+        // Ice-blue jets against the orange disk — the supermassive pair are
+        // the only holes in the game that get them.
+        addPolarJets(centralBlackHole, 280, 0x55ccff, 7);
 
         console.log('✅ Sagittarius A* created at galactic center');
         
@@ -3545,6 +4142,9 @@ const core8Distance = (1600 + Math.random() * 880) * (Math.random() < 0.5 ? 1 : 
         core8BlackHole.add(core8Ring);
     }
     addGargantuaVisuals(core8BlackHole, 180, 0xff6a1a, 3, 55); // 4x; ~5% at Sol start (~9.7k) → ~95% close
+    // Magenta-violet jets so the Companion reads as a different animal from
+    // Sgr A* at a glance, even before the name plate resolves.
+    addPolarJets(core8BlackHole, 180, 0xcc55ff, 5);
     // ADD SPIRAL GALAXY STARFIELD around 8th core (same as local galaxy)
 const core8GalaxyStarsGeometry = new THREE.BufferGeometry();
 const core8GalaxyStarsMaterial = new THREE.PointsMaterial({
@@ -4037,14 +4637,18 @@ try {
         _nebCanvas.height = _nebH;
         const _nctx = _nebCanvas.getContext('2d');
 
-        // 1) Base gradient — near-black poles, a faint violet/navy haze
-        //    toward the equator so the sphere never reads as a flat color.
+        // 1) Base gradient — TRUE BLACK poles, a whisper of violet toward the
+        //    equator. This layer is drawn opaque and then multiplied by the
+        //    material's 0.25 additive opacity, so anything brighter than
+        //    ~#06041a here becomes a global luminance FLOOR that no amount of
+        //    "space is dark" art direction elsewhere can claw back. Keep it
+        //    at the very edge of visibility; the blobs below supply the color.
         const _baseGrad = _nctx.createLinearGradient(0, 0, 0, _nebH);
-        _baseGrad.addColorStop(0.00, '#050208');
-        _baseGrad.addColorStop(0.35, '#0a0a1c');
-        _baseGrad.addColorStop(0.50, '#120e2a');
-        _baseGrad.addColorStop(0.65, '#0a0a1c');
-        _baseGrad.addColorStop(1.00, '#05020a');
+        _baseGrad.addColorStop(0.00, '#000000');
+        _baseGrad.addColorStop(0.35, '#020210');
+        _baseGrad.addColorStop(0.50, '#06041a');
+        _baseGrad.addColorStop(0.65, '#020210');
+        _baseGrad.addColorStop(1.00, '#000000');
         _nctx.fillStyle = _baseGrad;
         _nctx.fillRect(0, 0, _nebW, _nebH);
 
@@ -4067,22 +4671,28 @@ try {
 
         // 2) Milky-way band — a broad, gently curved strip of denser dust
         //    running the width of the sphere, brighter/warmer than the base.
+        //    NOTE ON ALPHAS: every blob below is drawn with 'lighter' onto an
+        //    opaque base, so its alpha acts as a pure ADDITIVE intensity and
+        //    26 overlapping band blobs stack. These were ~4x hotter and turned
+        //    the whole celestial sphere into a violet wash with a hard
+        //    luminance floor — no real blacks anywhere. Cut 4x across the
+        //    board; the sky is now mostly void with color where the dust is.
         const _bandY = _nebH * (0.42 + Math.random() * 0.16);
         for (let i = 0; i < 26; i++) {
             const x = (i / 26) * _nebW * 1.4 - _nebW * 0.2;
             const y = _bandY + Math.sin(i * 0.7) * _nebH * 0.05;
             _nebBlob(x, y, _nebH * (0.16 + Math.random() * 0.08),
-                [[0, 'rgba(200,190,255,0.16)'], [0.5, 'rgba(140,120,220,0.08)'], [1, 'rgba(0,0,0,0)']],
+                [[0, 'rgba(200,190,255,0.040)'], [0.5, 'rgba(140,120,220,0.020)'], [1, 'rgba(0,0,0,0)']],
                 50, 'lighter');
         }
 
         // 3) Dust-lane / warm-cool nebula blobs in synthwave palette
         const _nebPalette = [
-            ['rgba(255,45,190,0.30)', 'rgba(255,45,190,0)'],   // magenta dust
-            ['rgba(0,220,255,0.26)', 'rgba(0,220,255,0)'],     // cyan dust
-            ['rgba(140,60,255,0.28)', 'rgba(140,60,255,0)'],   // violet dust
-            ['rgba(255,160,60,0.20)', 'rgba(255,160,60,0)'],   // amber — warm zone
-            ['rgba(40,220,190,0.18)', 'rgba(40,220,190,0)']    // teal — cool zone
+            ['rgba(255,45,190,0.070)', 'rgba(255,45,190,0)'],  // magenta dust
+            ['rgba(0,220,255,0.065)', 'rgba(0,220,255,0)'],    // cyan dust
+            ['rgba(140,60,255,0.070)', 'rgba(140,60,255,0)'],  // violet dust
+            ['rgba(255,160,60,0.050)', 'rgba(255,160,60,0)'],  // amber — warm zone
+            ['rgba(40,220,190,0.045)', 'rgba(40,220,190,0)']   // teal — cool zone
         ];
         for (let i = 0; i < 16; i++) {
             const p = _nebPalette[i % _nebPalette.length];
@@ -4099,15 +4709,19 @@ try {
             { x: _nebW * 0.62, y: _nebH * 0.68, r: _nebH * 0.085, hue: 'rgba(200,220,255,' },
             { x: _nebW * 0.85, y: _nebH * 0.22, r: _nebH * 0.075, hue: 'rgba(255,205,240,' }
         ];
+        //    Halos and arms get the same 4x cut as the dust; the tight CORES
+        //    stay hot on purpose — like the baked stars below they are the
+        //    crisp, small, high-contrast detail that survives the 0.25
+        //    additive opacity and gives the void something to bite against.
         _nebGalaxies.forEach((g) => {
-            _nebBlob(g.x, g.y, g.r * 3.2, [[0, g.hue + '0.10)'], [1, g.hue + '0)']], 60, 'lighter');
-            _nebBlob(g.x, g.y, g.r, [[0, g.hue + '0.9)'], [0.3, g.hue + '0.4)'], [1, g.hue + '0)']], 6, 'lighter');
+            _nebBlob(g.x, g.y, g.r * 3.2, [[0, g.hue + '0.025)'], [1, g.hue + '0)']], 60, 'lighter');
+            _nebBlob(g.x, g.y, g.r, [[0, g.hue + '1.0)'], [0.3, g.hue + '0.30)'], [1, g.hue + '0)']], 6, 'lighter');
             _nctx.save();
             _nctx.translate(g.x, g.y);
             _nctx.rotate(Math.random() * Math.PI);
             _nctx.scale(1, 0.35);
             _nctx.filter = 'blur(3px)';
-            _nctx.strokeStyle = g.hue + '0.22)';
+            _nctx.strokeStyle = g.hue + '0.055)';
             _nctx.lineWidth = g.r * 0.12;
             _nctx.lineCap = 'round';
             for (let a = 0; a < 2; a++) {
@@ -4131,7 +4745,11 @@ try {
             if (Math.random() > 0.35 + nearBand * 0.5) continue;
             const size = Math.random() < 0.92 ? Math.random() * 0.9 + 0.2 : Math.random() * 1.6 + 1.0;
             const warm = Math.random() < 0.28;
-            const alpha = 0.35 + Math.random() * 0.5;
+            // Pushed toward full brightness (was 0.35..0.85). The dust around
+            // them got 4x darker and the whole layer now composites at 0.25
+            // additive, so stars need the headroom to stay CRISP pinpricks
+            // against real black instead of dissolving into the wash.
+            const alpha = 0.62 + Math.random() * 0.38;
             _nctx.fillStyle = warm
                 ? `rgba(255,${200 + Math.floor(Math.random() * 40)},${150 + Math.floor(Math.random() * 60)},${alpha})`
                 : `rgba(${200 + Math.floor(Math.random() * 40)},${225 + Math.floor(Math.random() * 30)},255,${alpha})`;
@@ -4147,10 +4765,21 @@ try {
         nebulaSkyboxTexture.needsUpdate = true;
 
         const nebulaSkyboxGeometry = new THREE.SphereGeometry(195000, 48, 32);
+        // ADDITIVE, not opaque. Previously this drew as a solid MeshBasic
+        // wash: because it is the outermost layer with the most-negative
+        // renderOrder, every one of its texels became the literal minimum
+        // luminance of that direction of sky, and the darkest texel was a
+        // violet ~#120e2a — so NOTHING in the game could ever be blacker
+        // than that. Additive at 0.25 means this layer can only ADD light
+        // on top of the near-black clear colour: void stays void, dust
+        // lanes and baked stars still bloom.
         const nebulaSkyboxMaterial = new THREE.MeshBasicMaterial({
             map: nebulaSkyboxTexture,
             side: THREE.BackSide,
             fog: false,
+            transparent: true,
+            opacity: 0.25,
+            blending: THREE.AdditiveBlending,
             depthWrite: false,
             toneMapped: false
         });
@@ -4160,14 +4789,16 @@ try {
         scene.add(nebulaSkybox);
         window.nebulaSkybox = nebulaSkybox;
         window.nebulaSkyboxTexture = nebulaSkyboxTexture;
+        // Design opacity the distance fade below modulates around.
+        nebulaSkybox.userData._nebBaseOpacity = 0.25;
 
-        // scene.background was null before this fix — a deep-space Color as
-        // the clear color means even a theoretical camera/FOV combination
-        // that grazes past the backdrop sphere clears to a matching tone
-        // instead of RGB(0,0,0).
-        scene.background = new THREE.Color(0x05030d);
+        // scene.background is the true floor of the frame now that the
+        // backdrop is additive. Near-black with a trace of blue so it reads
+        // as deep space rather than a dead monitor, but low enough that
+        // large parts of an open-void frame sit under 0.02 luminance.
+        scene.background = new THREE.Color(0x010109);
 
-        console.log(`✅ Nebula skybox backdrop created (${_nebW}x${_nebH}, radius 195000) and assigned to scene.background`);
+        console.log(`✅ Nebula skybox backdrop created (${_nebW}x${_nebH}, radius 195000, additive @0.25)`);
     } catch (nebulaSkyboxError) {
         console.error('❌ Error creating nebula skybox backdrop:', nebulaSkyboxError);
     }
@@ -4374,12 +5005,34 @@ try {
         textureLoader2.load(
             hubbleImageURL2,
             function(texture) {
-                // Create material with the Hubble texture
+                // fog: false is LOAD-BEARING, not tidiness.
+                //
+                // MeshBasicMaterial defaults to fog: true, and this sphere has
+                // a radius of 140,000 while scene.fog (atmospheric-perspective
+                // .js) runs 55,000 → 130,000. Every single fragment of this
+                // dome is therefore PAST fogFar, i.e. 100% fog colour — so
+                // this layer has never once shown the Hubble Ultra Deep Field.
+                // It has been rendering as a flat sheet of the synthwave
+                // horizon violet at up to 0.50 opacity: the single largest
+                // luminance floor in the game, painted over the entire
+                // celestial sphere, and the reason the sky read as uniform
+                // dark teal no matter which way the player looked. Unfogged,
+                // the plate is what it was always meant to be — near-perfect
+                // black with thousands of pinprick galaxies.
+                //
+                // ADDITIVE for the same reason: the plate's own background is
+                // genuinely black (median luminance 0.000, p90 0.0045), so
+                // adding it contributes galaxies and nothing else, where
+                // normal blending would multiply down the nebula dome behind
+                // it for no gain.
                 const hubbleMaterial2 = new THREE.MeshBasicMaterial({
                     map: texture,
                     side: THREE.BackSide,
                     transparent: true,
                     opacity: 0.10,  // Visible immediately so the background isn't pure black at start
+                    fog: false,
+                    blending: THREE.AdditiveBlending,
+                    toneMapped: false,
                     depthWrite: false
                 });
                 
@@ -13142,13 +13795,72 @@ function updateCMBOpacity() {
 }
 
 // =============================================================================
+// NEBULA SKYBOX OPACITY CONTROL — distance-driven, same family as
+// updateCMBOpacity / updateHubbleSkybox2Opacity.
+//
+// The layer is ADDITIVE now, so its opacity is literally "how much extra
+// light the sky emits". Anchored on Sol (the player's start) rather than the
+// world origin for the same reason the Hubble layer is: post-relocation the
+// player spawns ~9.3k units out, and an origin-anchored ramp would open the
+// game already half-lit.
+//
+//   • Open void near Sol → 0.15: dust is a rumour, blacks are real black.
+//   • Deep travel / galactic core → 0.32: the sky opens up and the dust
+//     lanes and baked galaxy cores bloom, so distance READS as spectacle.
+//   • Boss battle → ~0, so only the pulsing blood-red boss dome shows
+//     (identical policy to hubbleSkybox2).
+// =============================================================================
+function updateNebulaSkyboxOpacity() {
+    const sky = (typeof window !== 'undefined') ? window.nebulaSkybox : null;
+    if (!sky || !sky.material) return;
+    if (typeof camera === 'undefined' || !camera || !camera.position) return;
+
+    const _solB = (typeof window !== 'undefined' && window.localSystemOffset)
+        ? window.localSystemOffset : { x: 8000, y: 0, z: 4800 };
+    const _ndx = camera.position.x - _solB.x;
+    const _ndy = camera.position.y - _solB.y;
+    const _ndz = camera.position.z - _solB.z;
+    const distanceFromStart = Math.sqrt(_ndx * _ndx + _ndy * _ndy + _ndz * _ndz);
+
+    const fadeStart = 1500;
+    const fadeEnd = 70000;
+    const minOp = 0.12;
+    const maxOp = 0.20;
+
+    let targetOpacity;
+    if (distanceFromStart < fadeStart) {
+        targetOpacity = minOp;
+    } else if (distanceFromStart > fadeEnd) {
+        targetOpacity = maxOp;
+    } else {
+        const progress = (distanceFromStart - fadeStart) / (fadeEnd - fadeStart);
+        targetOpacity = minOp + progress * (maxOp - minOp);
+    }
+
+    if (typeof isBossBattleActive === 'function' && isBossBattleActive()) {
+        targetOpacity = 0.02;
+    }
+
+    const cur = sky.material.opacity;
+    sky.material.opacity = cur + (targetOpacity - cur) * 0.02;
+}
+if (typeof window !== 'undefined') window.updateNebulaSkyboxOpacity = updateNebulaSkyboxOpacity;
+
+// =============================================================================
 // HUBBLE SKYBOX 2 OPACITY CONTROL - FADES IN AS PLAYER TRAVELS DEEPER
 // =============================================================================
 function updateHubbleSkybox2Opacity() {
+    // Piggybacked here rather than added to animate()'s call list because
+    // index.html / game-core.js are sealed by the integrator this wave, and
+    // this is the per-frame backdrop-opacity pass — exactly where the nebula
+    // dome's own distance fade belongs. Runs BEFORE the early-outs below so
+    // it still ticks if the Hubble texture never loaded.
+    updateNebulaSkyboxOpacity();
+
     if (!window.hubbleSkybox2 || !window.hubbleSkybox2.material) {
         return;
     }
-    
+
     if (typeof camera === 'undefined' || typeof gameState === 'undefined') {
         return;
     }
@@ -13170,15 +13882,22 @@ function updateHubbleSkybox2Opacity() {
     const fadeStartDistance = 1000;        // Start fading at 1,000 units from Sol
     const fadeEndDistance = 75000;         // Reach max opacity at 75,000 units
     
-    // Calculate opacity based on distance (0.25 floor to 0.50 max)
+    // Calculate opacity based on distance (0.32 floor to 0.45 max).
+    //
+    // Raised, not lowered, on purpose. These numbers used to be a budget for
+    // "how much flat violet fog can we tolerate", because that is all this
+    // layer ever drew (see the fog:false note at its creation). Now that it
+    // renders the actual plate — black with pinprick galaxies — additively,
+    // opacity buys deep-field DETAIL rather than a wash, so it can afford to
+    // be much stronger while the sky gets darker overall.
     let targetOpacity;
     if (distanceFromStart < fadeStartDistance) {
-        targetOpacity = 0.25; // Visible from the start without washing out the early sky
+        targetOpacity = 0.32; // Visible from the start without washing out the early sky
     } else if (distanceFromStart > fadeEndDistance) {
-        targetOpacity = 0.50;
+        targetOpacity = 0.45;
     } else {
         const progress = (distanceFromStart - fadeStartDistance) / (fadeEndDistance - fadeStartDistance);
-        targetOpacity = 0.25 + (progress * 0.25); // 0.25 → 0.50
+        targetOpacity = 0.32 + (progress * 0.13); // 0.32 → 0.45
     }
     
     // Boss / elite-guardian battle: hide this deeper Hubble layer too so

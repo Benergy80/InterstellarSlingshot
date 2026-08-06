@@ -190,6 +190,149 @@
         try { updatePickups(); } catch (e) {}
     }
 
+    // ── CALL-OUT SAFE AREA ───────────────────────────────────────────────────
+    // flashArcadeText (visual-flair) drops its word at left:50% with
+    // `white-space:nowrap` and a fixed tier font size. The band it lands in
+    // (top 19%) is exactly the band the FLIGHT CONTROLS and NAVIGATION panels
+    // occupy, so anything wider than the gap between them ran underneath and
+    // clipped mid-word — at 1280x800 the free corridor is 540 px but
+    // "ESCAPE VELOCITY!" measures 570 px and "GRAVITATIONAL SLINGSHOT
+    // ENGAGED" measures 1135 px.
+    //
+    // We can't edit visual-flair, so wrap the global and re-fit the element it
+    // just appended: measure the real corridor between the visible HUD panels,
+    // shrink the type to fit, wrap onto a second line if it still won't, and
+    // recentre on the corridor rather than the viewport. Runs before
+    // anaglyph-3d clones #arcadeText, so its eye copies inherit the fit.
+
+    const SAFE_PAD = 16;      // breathing room either side of a HUD panel
+    const MIN_SCALE = 0.62;   // don't shrink a call-out into illegibility
+    const WRAP_SCALE = 0.80;  // below this, wrap to 2 lines instead of shrinking
+    const SWELL = 1.12;       // the readable peak of the arcadePop keyframes
+    // Everything that can sit in the call-out band and must not be covered.
+    const BLOCKERS = '.ui-panel, #achievementPopup, #missionCommandAlert, ' +
+                     '#incomingTransmissionPrompt, #incomingTransmission';
+
+    // Rects of HUD chrome that is genuinely on screen right now.
+    function _liveHudRects() {
+        const out = [];
+        const nodes = document.querySelectorAll(BLOCKERS);
+        for (let i = 0; i < nodes.length; i++) {
+            const el = nodes[i];
+            if (el.classList.contains('hidden')) continue;
+            if (el.closest('#arcadeText')) continue;
+            const cs = getComputedStyle(el);
+            if (cs.display === 'none' || cs.visibility === 'hidden' ||
+                parseFloat(cs.opacity) < 0.06) continue;
+            const r = el.getBoundingClientRect();
+            if (r.width < 60 || r.height < 30) continue;
+            out.push(r);
+        }
+        return out;
+    }
+
+    // Widest uninterrupted horizontal span across the given vertical band,
+    // plus how far down we'd have to move to clear anything sitting in the
+    // MIDDLE of that band (which no amount of sideways nudging can dodge).
+    function _corridor(bandTop, bandBottom) {
+        const vw = window.innerWidth;
+        const cx = vw / 2;
+        let left = SAFE_PAD, right = vw - SAFE_PAD, clearBelow = 0;
+        const rects = _liveHudRects();
+        for (let i = 0; i < rects.length; i++) {
+            const r = rects[i];
+            if (r.bottom <= bandTop || r.top >= bandBottom) continue;  // misses the band
+            const rcx = (r.left + r.right) / 2;
+            // Straddles the middle: can't be dodged sideways, so remember how
+            // far down the band would have to drop to clear it.
+            if (Math.abs(rcx - cx) < vw * 0.22) { clearBelow = Math.max(clearBelow, r.bottom); continue; }
+            if (rcx < cx) left = Math.max(left, r.right + SAFE_PAD);
+            else right = Math.min(right, r.left - SAFE_PAD);
+        }
+        if (right - left < vw * 0.28) { left = SAFE_PAD; right = vw - SAFE_PAD; }
+        return { left, right, width: right - left, center: (left + right) / 2, clearBelow };
+    }
+
+    function _fitArcadeText(el) {
+        const basePx = parseFloat(getComputedStyle(el).fontSize) || 40;
+        const vh = window.innerHeight;
+        let top = el.offsetTop || Math.round(vh * 0.19);
+        // Budget for up to two lines so the corridor accounts for a wrap.
+        let band = _corridor(top, top + basePx * 2.7);
+
+        // A centred toast (achievement / comms) is sitting in the band — slide
+        // the call-out down under it rather than stacking on top. Capped so the
+        // word never drifts onto the crosshair.
+        if (band.clearBelow > top) {
+            const moved = Math.min(Math.round(vh * 0.34), Math.round(band.clearBelow + 14));
+            if (moved > top) {
+                top = moved;
+                el.style.top = top + 'px';
+                band = _corridor(top, top + basePx * 2.7);
+            }
+        }
+
+        // Intrinsic single-line width, measured transform-free.
+        el.style.whiteSpace = 'nowrap';
+        el.style.maxWidth = 'none';
+        const natural = el.scrollWidth;
+        const budget = band.width * 0.90;   // leave room for the SWELL peak
+
+        let scale = 1, wrap = false;
+        if (natural * SWELL > budget) {
+            scale = budget / (natural * SWELL);
+            if (scale < WRAP_SCALE) {
+                // Two lines at a bold size beats one line of tiny type: a
+                // wrapped line needs roughly half the width, so recover most
+                // of the size and let it break.
+                wrap = true;
+                scale = Math.max(MIN_SCALE, Math.min(1, scale * 1.9));
+            }
+        }
+        if (scale < 1) {
+            const px = Math.max(20, Math.round(basePx * scale));
+            el.style.fontSize = px + 'px';
+            el.style.letterSpacing = Math.max(1, Math.round(px * 0.045)) + 'px';
+            // The subtitle line carries its own inline px size — scale it too.
+            const kids = el.children;
+            for (let i = 0; i < kids.length; i++) {
+                const fs = parseFloat(kids[i].style.fontSize);
+                if (fs) kids[i].style.fontSize = Math.max(11, Math.round(fs * scale)) + 'px';
+            }
+        }
+
+        // Hard-clamp the box to the corridor so a long string breaks inside it
+        // instead of running off under the panels and clipping mid-word.
+        el.style.maxWidth = Math.round(band.width) + 'px';
+        el.style.whiteSpace = (wrap || el.scrollWidth > band.width) ? 'normal' : 'nowrap';
+        el.style.overflowWrap = 'normal';
+        el.style.lineHeight = '1.05';
+
+        // Recentre on the corridor, not the viewport — keep translateX(-50%)
+        // because the arcadePop keyframes animate transform.
+        el.style.left = Math.round(band.center) + 'px';
+    }
+
+    function _wrapArcadeText() {
+        if (typeof window === 'undefined') return false;
+        if (typeof window.flashArcadeText !== 'function') return false;
+        if (window.__arcadeTextFitted) return true;
+        const orig = window.flashArcadeText;
+        window.flashArcadeText = function (text, tier, subtitle) {
+            orig(text, tier, subtitle);
+            const el = document.getElementById('arcadeText');
+            if (!el) return;   // praise was skipped (boss card / event alert up)
+            try { _fitArcadeText(el); } catch (e) {}
+        };
+        window.__arcadeTextFitted = true;
+        return true;
+    }
+    // visual-flair.js loads before this file, so this normally binds at once;
+    // retry on DOM ready in case load order ever changes.
+    if (!_wrapArcadeText()) {
+        document.addEventListener('DOMContentLoaded', _wrapArcadeText, { once: true });
+    }
+
     // Exports
     if (typeof window !== 'undefined') {
         window.arcade = {

@@ -435,9 +435,57 @@ function updateCameraView(camera) {
             currentOffset.x += (Math.random() - 0.5) * _sAmp;
             currentOffset.y += (Math.random() - 0.5) * _sAmp;
         }
-        // FOV follows the zoom: 75 at rest → ~86 fully warped, eased both ways
+        // ── WHIP FRAMING: BANK THE CHASE CAM INTO THE ARC ───────────────
+        // The gravity whip already rolls the CAMERA (physics owns the arc
+        // quaternion). What was missing is the chase rig reacting to it: the
+        // ship sat dead-centre and perfectly rigid through a 40° banked turn.
+        // Here the rig itself leans — the offset rolls around the view axis,
+        // slides to the OUTSIDE of the turn (so the ship carves across frame
+        // and the arc ribbon has somewhere to be), and dollies back as the
+        // arc bites. Everything rides the signed 0→1→0 carve envelope the
+        // physics whip publishes, and eases back to zero after release, so
+        // this can never leave the camera stuck off-axis.
+        const _wf = (typeof window !== 'undefined') ? window.__whipFrame : null;
+        if (cameraState._whipLean === undefined) cameraState._whipLean = 0;
+        const _leanT = (_wf && _wf.active) ? (_wf.sign || 1) * (_wf.carve || 0) : 0;
+        // Faster in than out: gravity grabs, the release unwinds (~0.5s).
+        cameraState._whipLean += (_leanT - cameraState._whipLean) *
+            (Math.abs(_leanT) > Math.abs(cameraState._whipLean) ? 0.14 : 0.07);
+        const _lean = cameraState._whipLean;
+        if (Math.abs(_lean) > 0.004) {
+            const _la = Math.abs(_lean);
+            // Roll the rig about the view axis — the horizon swings, the ship
+            // banks with it, and the whole frame reads as "in the turn".
+            const _c = Math.cos(-_lean * 0.42), _s = Math.sin(-_lean * 0.42);
+            const _ox = currentOffset.x, _oy = currentOffset.y;
+            currentOffset.x = _ox * _c - _oy * _s;
+            currentOffset.y = _ox * _s + _oy * _c;
+            // …then throw the ship to the outside of the arc and dolly back.
+            currentOffset.x += _lean * 4.2;
+            currentOffset.z *= 1 + 0.24 * _la;
+            currentOffset.y -= 1.4 * _la;
+        }
+
+        // FOV follows the zoom: 75 at rest → ~86 fully warped, eased both
+        // ways. EXTENDED (not replaced) with two additive terms so the warp
+        // tunnel and the whip can breathe the lens without ever fighting the
+        // zoom ease for ownership of camera.fov:
+        //   • a decaying one-shot impulse — warpFovPulse(), used for tunnel
+        //     entry/exit snaps
+        //   • the sustained tunnel level published by visual-flair
         if (camera.isPerspectiveCamera) {
-            const _fovT = 75 + _zAmt * 20;
+            let _fovT = 75 + _zAmt * 20 + Math.abs(cameraState._whipLean) * 5;
+            if (cameraState._fovPulseAmp) {
+                const _pk = (performance.now() - cameraState._fovPulseT0) /
+                    Math.max(1, cameraState._fovPulseMs);
+                if (_pk >= 1) cameraState._fovPulseAmp = 0;
+                // Fast attack, long tail — a lens SNAP that settles.
+                else _fovT += cameraState._fovPulseAmp *
+                    Math.sin(Math.PI * Math.pow(_pk, 0.32));
+            }
+            const _tl = (typeof window !== 'undefined' && window.__warpTunnelLevel) || 0;
+            if (_tl > 0.01) _fovT += _tl * 8;
+            _fovT = Math.max(55, Math.min(118, _fovT));
             if (Math.abs(camera.fov - _fovT) > 0.05) {
                 camera.fov = _fovT;
                 camera.updateProjectionMatrix();
@@ -804,8 +852,32 @@ if (typeof window !== 'undefined') {
     window.updateThrusterGlow = updateThrusterGlow;
     window.createThrusterGlowsForModel = createThrusterGlowsForModel;
     window.updateThrusterGlowArray = updateThrusterGlowArray;
+    window.warpFovPulse = warpFovPulse;
 
     console.log('✅ Camera system loaded (with thruster glow system)');
+}
+
+/**
+ * One-shot additive FOV impulse, in degrees, layered ON TOP of the camera
+ * system's own zoom ease (see updateCameraView). This is the supported way
+ * for warp/tunnel effects to breathe the lens: camera-system still owns
+ * camera.fov every frame, so anything that writes camera.fov directly is
+ * overwritten the same frame — that is the bug this exists to prevent.
+ *   warpFovPulse(14, 900)  → snap 14° wider, settle back over 900ms
+ *   warpFovPulse(-9, 600)  → tighten (entry anticipation)
+ * Overlapping calls take the LARGER remaining impulse so an exit snap can
+ * never be swallowed by a decaying entry one.
+ */
+function warpFovPulse(deg, durMs) {
+    const d = Math.max(-25, Math.min(25, deg || 0));
+    const ms = Math.max(120, durMs || 700);
+    const now = (typeof performance !== 'undefined') ? performance.now() : Date.now();
+    const live = cameraState._fovPulseAmp || 0;
+    const k = live ? (now - cameraState._fovPulseT0) / Math.max(1, cameraState._fovPulseMs) : 1;
+    const remaining = (k >= 1) ? 0 : live * (1 - k);
+    cameraState._fovPulseAmp = (Math.abs(d) >= Math.abs(remaining)) ? d : remaining;
+    cameraState._fovPulseT0 = now;
+    cameraState._fovPulseMs = ms;
 }
 
 // =============================================================================

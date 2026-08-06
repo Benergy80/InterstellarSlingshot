@@ -34,6 +34,19 @@ const atmosphericConfig = {
     // default of unset/false, or explicitly set false), so this only tints
     // stock-material gameplay objects: planets, ships, asteroids, distant
     // galaxy cores.
+    //
+    // ⚠️ BACKDROP DOMES MUST SET `fog: false` ON THEIR MATERIAL.
+    // Every skybox sphere in this game (nebula 195k, CMB 150k, Hubble 140k,
+    // galaxy atmosphere 140k) has a radius PAST fogFar, and MeshBasicMaterial
+    // defaults to fog: true. A fogged dome is not "slightly hazy" — it is
+    // 100% fog colour on every fragment, i.e. a flat sheet of this violet
+    // painted over the whole sky at whatever opacity the dome uses, with its
+    // texture erased entirely. That is exactly what happened to
+    // hubbleSkybox2 (see the fog:false note at its creation in
+    // game-objects.js): it spent its whole life as an opaque violet wash
+    // instead of the Hubble deep field, and it was the dominant luminance
+    // floor in the game. Custom ShaderMaterials are immune (they never
+    // include the fog chunk); stock materials are not.
     colorA: 0x2a0e4a,
     colorB: 0x0c1c4a,
     cycleMs: 70000,
