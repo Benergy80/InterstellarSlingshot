@@ -2611,6 +2611,38 @@ if (typeof window !== 'undefined') window.updateSlingshotLaunchRamp = updateSlin
 // MAIN ENHANCED PHYSICS UPDATE FUNCTION - SPECIFICATION COMPLIANT
 // =============================================================================
 
+// ── LEGACY WARP STARFIELD: A CROSS-FADE, NOT A LIGHT SWITCH ─────────────────
+// game-objects' 200-line starfield exposes exactly one control — visible
+// on/off — and five separate places in this file used to flip it off the
+// instant speed fell under 10,000 km/s. That caused two distinct problems:
+//
+//   (a) a hard pop at the warp boundary, both entering and leaving;
+//   (b) far worse, since a sub-warp boost caps at ~4,000 km/s the layer was
+//       OFF for every speed reachable without warping. warpStarfield.lines
+//       .visible was false for the whole whip, which is why accelerating from
+//       0 to 4,000 km/s had no streak cue whatsoever.
+//
+// Visibility is now a continuous 6,000 → 11,000 km/s fade owned here and
+// evaluated every frame, so warp entry/exit dissolves instead of snapping.
+// The sub-warp band it used to (fail to) cover is handled properly by the
+// shader streak field in visual-flair.js, which rides speedWhipLevel() from
+// 800 km/s upward. The two layers overlap through the warp threshold, so the
+// hand-off between them is invisible.
+function updateWarpStarfieldFade() {
+    const sf = (typeof window !== 'undefined') ? window.warpStarfield : null;
+    if (!sf || !sf.lines || !sf.lines.material) return;
+    const v = gameState.velocityVector ? gameState.velocityVector.length() : 0;
+    // Latch used by the brake handler below to fire the "dropped out of warp"
+    // camera return exactly once per warp, now that no boolean marks the edge.
+    if (v >= 10) gameState._wasWarpBand = true;
+    let k = (v - 6.0) / 5.0;
+    k = k < 0 ? 0 : (k > 1 ? 1 : k);
+    k = k * k * (3 - 2 * k);                 // smoothstep — no linear seam
+    gameState._warpStarfieldFade = k;
+    sf.lines.material.opacity = 0.62 * k;
+    sf.lines.visible = k > 0.01;
+}
+
 function updateEnhancedPhysics() {
     // Pause-aware physics
     if (typeof gamePaused !== 'undefined' && gamePaused) {
@@ -2632,6 +2664,15 @@ function updateEnhancedPhysics() {
     if (!gameState.enhancedPropertiesInitialized) {
         initializeEnhancedGameStateProperties();
         gameState.enhancedPropertiesInitialized = true;
+    }
+
+    // Speed feedback, evaluated once per physics frame:
+    //   • the legacy starfield's continuous warp-band fade (see above)
+    //   • the whip curve republished early, so the camera rig reads THIS
+    //     frame's value even though it updates before visual-flair does
+    updateWarpStarfieldFade();
+    if (typeof window !== 'undefined' && typeof window.speedWhipLevel === 'function') {
+        window.__speedWhip = window.speedWhipLevel();
     }
 
     // Gravity whip: while captured, the arc owns position + orientation.
@@ -3054,29 +3095,19 @@ if (gameState.emergencyWarp.active) {
         } else {
             // EMERGENCY WARP: Coast on momentum
             gameState.emergencyWarp.postWarp = true;
-            
-            // Check speed and disable starfield if needed
-            const currentSpeedKmS = gameState.velocityVector.length() * 1000;
-            if (currentSpeedKmS < 10000 && typeof toggleWarpSpeedStarfield === 'function') {
-                toggleWarpSpeedStarfield(false);
-            }
-            
+            // Starfield visibility is no longer switched here — it rides the
+            // continuous fade in updateWarpStarfieldFade(), so the coast out
+            // of warp dissolves the streaks instead of cutting them.
+
             if (typeof showAchievement === 'function') {
                 showAchievement('Emergency Warp Complete', 'Coasting on momentum - use X to brake');
             }
         }
     }
 } else if (gameState.emergencyWarp.postWarp) {
-    // Coast on momentum until brakes are manually used
-    const currentSpeedKmS = gameState.velocityVector.length() * 1000;
-    
-    // Auto-disable starfield when coasting below threshold
-    if (currentSpeedKmS < 10000 && typeof toggleWarpSpeedStarfield === 'function') {
-        if (window.warpStarfield && window.warpStarfield.lines && window.warpStarfield.lines.visible) {
-            toggleWarpSpeedStarfield(false);
-        }
-    }
-    
+    // Coast on momentum until brakes are manually used. (The starfield
+    // auto-disable that used to live here is now the continuous fade.)
+
     // FIXED: Don't immediately end postWarp when braking - let velocity naturally decrease
     // Only end postWarp when velocity drops near minVelocity
     if (keys.x) {
@@ -3117,23 +3148,13 @@ if (gameState.emergencyWarp.autoBraking) {
         gameState.emergencyWarp.autoBraking = false;
         gameState.emergencyWarp.isJump = false;
         console.log('✅ Jump auto-brake complete - natural deceleration finished');
-        
-        // Disable starfield
-        if (typeof toggleWarpSpeedStarfield === 'function') {
-            toggleWarpSpeedStarfield(false);
-        }
-        
+
+        // Starfield needs no action — by this speed the continuous fade has
+        // already carried it to zero.
+
         // Return to third-person camera
         if (typeof setCameraThirdPerson === 'function') {
             setCameraThirdPerson();
-        }
-    }
-    
-    // Disable starfield when speed drops below threshold during auto-brake
-    const currentSpeedKmS = currentSpeed * 1000;
-    if (currentSpeedKmS < 10000 && typeof toggleWarpSpeedStarfield === 'function') {
-        if (window.warpStarfield && window.warpStarfield.lines && window.warpStarfield.lines.visible) {
-            toggleWarpSpeedStarfield(false);
         }
     }
 }
@@ -3173,20 +3194,19 @@ if (keys.x) {
     
     // Get current speed in km/s
     const currentSpeedKmS = gameState.velocityVector.length() * 1000;
-    
-    // Disable warp starfield when speed drops below 10,000 km/s
-    if (currentSpeedKmS < 10000 && typeof toggleWarpSpeedStarfield === 'function') {
-        if (window.warpStarfield && window.warpStarfield.lines && window.warpStarfield.lines.visible) {
-            toggleWarpSpeedStarfield(false);
-            console.log('⚡ Warp starfield disabled - speed below 10,000 km/s');
-            
-            // Return to third-person view when exiting warp speed
-            if (typeof setCameraThirdPerson === 'function') {
-                setCameraThirdPerson();
-            }
+
+    // Braking out of the warp band returns the view to third person. The
+    // starfield itself is no longer switched here (the continuous fade owns
+    // it), so the edge is detected off the _wasWarpBand latch instead of off
+    // the layer's visibility flag — same one-shot behaviour, no hard cut.
+    if (currentSpeedKmS < 10000 && gameState._wasWarpBand) {
+        gameState._wasWarpBand = false;
+        console.log('⚡ Dropped out of warp band - streaks fading out');
+        if (typeof setCameraThirdPerson === 'function') {
+            setCameraThirdPerson();
         }
     }
-    
+
     if (Math.random() > 0.97) {
         if (typeof createHyperspaceEffect === 'function') {
             if (!gameState._lastBrakeFx || (Date.now() - gameState._lastBrakeFx) > 500) {
@@ -3596,11 +3616,7 @@ if (surfaceCollision) {
             gameState.slingshot.postSlingshot = true;
             gameState.slingshot.timeRemaining = 0;
 
-            // Check speed and disable starfield if needed (matching emergency warp)
-            const currentSpeedKmS = gameState.velocityVector.length() * 1000;
-            if (currentSpeedKmS < 10000 && typeof toggleWarpSpeedStarfield === 'function') {
-                toggleWarpSpeedStarfield(false);
-            }
+            // Starfield handled by the continuous fade (matching emergency warp)
 
             if (typeof showAchievement === 'function') {
                 showAchievement('Slingshot Complete', 'Coasting on momentum - use X to brake');
@@ -3609,12 +3625,10 @@ if (surfaceCollision) {
     } else if (gameState.slingshot.postSlingshot) {
         // Coast on momentum (matching emergency warp behavior)
         const currentSpeed = gameState.velocityVector.length();
-        const currentSpeedKmS = currentSpeed * 1000;
 
-        // Disable starfield if speed drops below threshold
-        if (currentSpeedKmS < 10000 && typeof toggleWarpSpeedStarfield === 'function') {
-            toggleWarpSpeedStarfield(false);
-        }
+        // Starfield handled by the continuous fade, so the glide down from a
+        // slingshot dissolves the streaks across 11,000 → 6,000 km/s rather
+        // than cutting them at a single frame.
 
         if (currentSpeed > gameState.maxVelocity) {
             gameState.velocityVector.multiplyScalar(Math.pow(gameState.slingshot.inertiaDecay, dtF));

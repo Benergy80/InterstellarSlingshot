@@ -57,6 +57,11 @@ body.ui-mode {
     --hud-red: 255, 60, 60;
     --hud-amber: 255, 190, 0;
     --hud-purple: 190, 120, 255;
+    /* 0..1 "how much is the spectacle asking the chrome to get out of the
+       way right now" — written every frame by js/game-ui.js's
+       updateHudSpectacleDim from a velocity/boost/slingshot/warp blend.
+       Defaults to 0 (full chrome) before that loop ever runs. */
+    --hud-yield: 0;
 }
 
 /* Numeric readouts: fixed-width digits so values don't jitter the layout
@@ -80,28 +85,20 @@ body.ui-mode {
     pointer-events: auto !important;
     position: absolute;
     isolation: isolate;
-    opacity: 1;
-    transition: opacity 0.35s ease;
-}
-
-/* Spectacle dim — during slingshot charge/release and emergency warp the
-   ship, not the chrome, is the show. Panels ease down instead of sitting
-   fully opaque over ~1/6 of the frame; the instant gameState flips the
-   state off (js/game-ui.js updateHudSpectacleDim) this class comes off and
-   the same transition eases them straight back to full readability.
-   !important is required here: js/game-intro.js's panel fly-in reveal
-   stamps a plain (non-important) inline `opacity:1` on every .ui-panel
-   once the intro finishes, and a normal-specificity class rule can never
-   beat an inline style — only an !important author rule outranks it. */
-.ui-panel.hud-spectacle-dim {
-    opacity: 0.35 !important;
-    /* js/game-intro.js's fly-in reveal also stamps a plain inline
-       `transition: opacity 1s ease-in-out` once, post-intro — normal-
-       specificity author rules lose that fight too, so pin the dim-in
-       speed explicitly rather than inherit whatever the intro left behind.
-       (The restore-to-full-opacity leg, on class removal, is still eased —
-       just by that 1s inline transition, since this rule no longer
-       applies once the class is gone.) */
+    /* Continuous spectacle yield — NOT a binary dim/undim class. Panels
+       fade from fully opaque (--hud-yield:0) down to 40% (--hud-yield:1)
+       in lockstep with how fast/dramatic the moment is: cruising leaves
+       this at 1, boost/velocity ramps it smoothly, slingshot and
+       emergency-warp pin it to full yield the instant they go active.
+       Updated every frame by js/game-ui.js's updateHudSpectacleDim, which
+       does its own JS-side easing — so the value arriving here is already
+       smoothed and this transition just irons out any single-frame dt
+       hitches rather than doing the primary easing work.
+       !important is required: js/game-intro.js's panel fly-in reveal
+       stamps a plain (non-important) inline `opacity:1` on every .ui-panel
+       once the intro finishes, and a normal-specificity rule can never
+       beat an inline style — only an !important author rule outranks it. */
+    opacity: calc(1 - 0.6 * var(--hud-yield, 0)) !important;
     transition: opacity 0.35s ease !important;
 }
 
@@ -180,6 +177,35 @@ body.ui-mode {
         0 15px 50px rgba(0, 150, 255, 0.4),
         inset 2px 0 10px rgba(0,150,255,0.2);
     top: 14px;
+}
+
+/* Flight Controls auto-collapse — js/game-ui.js stamps this class on
+   .top-left ~8s after launch so the 13-line keybind cheat-sheet stops
+   permanently eating a fifth of the viewport during flight. The title and
+   the long key list disappear; a one-line "? for controls" hint (injected
+   once by the same JS) takes their place. The Music/SFX/Pause button row
+   stays put — those are live controls, not reference text. Click either
+   the hint or the title to toggle back. */
+.ui-panel.top-left.controls-collapsed > h3.cyber-title,
+.ui-panel.top-left.controls-collapsed > div.text-xs.text-gray-300.opacity-80 {
+    display: none;
+}
+.hud-controls-hint {
+    display: none;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 0.7rem;
+    letter-spacing: 0.5px;
+    color: rgba(var(--hud-cyan), 0.85);
+    text-shadow: 0 0 8px rgba(var(--hud-cyan), 0.5);
+    cursor: pointer;
+    padding: 1px 0 8px;
+    user-select: none;
+}
+.ui-panel.top-left.controls-collapsed .hud-controls-hint {
+    display: block;
+}
+.ui-panel.top-left:not(.controls-collapsed) > h3.cyber-title {
+    cursor: pointer;
 }
 
 .ui-panel.bottom-left {

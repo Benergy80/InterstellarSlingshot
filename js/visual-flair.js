@@ -963,10 +963,14 @@ function _ensureScreenFX() {
 }
 
 function _updateScreenFX() {
-    const speed = gameState.velocityVector ? gameState.velocityVector.length() : 0;
     const warping = !!((gameState.emergencyWarp && gameState.emergencyWarp.active) ||
         (gameState.slingshot && gameState.slingshot.active && !gameState.slingshotWhip));
-    let target = Math.max(0, Math.min(1, (speed - 5) / 25));
+    // Was (speed - 5) / 25 — zero for every speed a sub-warp boost can reach,
+    // since the boost caps at 4.0 units and this needed 5.0 just to leave the
+    // floor. The vignette/spokes/chroma stack now ramps on the whip curve, so
+    // the frame physically closes in AS you accelerate: tunnel vision arrives
+    // with the speed instead of only ever appearing during warp.
+    let target = Math.max(0, (speedWhipLevel() - 0.10) / 0.90);
     if (warping) target = Math.max(target, 0.85);
     // TIME DILATION (gravity whip periapsis): the whip publishes a 0..1
     // dilation weight as it slows through closest approach. Borrow the speed
@@ -1345,6 +1349,46 @@ if (typeof window !== 'undefined') {
     window.whipShockwave = whipShockwave;
 }
 
+// ── 18e. THE WHIP CURVE — one speed signal that every layer rides ───────────
+// Every speed-driven layer in this file was calibrated against WARP numbers:
+// streaks lit at 260 u/s, debris at 500 u/s, the screen-FX stack at 5.0 units,
+// the skydome parallax at 420 u/s. But a sub-warp boost tops out at
+// gameState.maxVelocity — 4.0 units, i.e. 240 u/s. Measured across the whole
+// reachable range (400 → 3,992 km/s) every one of those four layers evaluates
+// to exactly 0.000. The entire "whip" — the fastest thing a player can do
+// without warping — had literally zero motion cue and read as a number ticking
+// up on the HUD over a still photograph.
+//
+// speedWhipLevel() is the fix, and the point is that it contains no threshold
+// and no boolean: ONE continuous 0→1 curve over the whole reachable range.
+//   0.00          at/below 800 km/s      cruise — every layer stays dark
+//   0.00 → 0.74   800 km/s → top speed   THE WHIP: the part that was missing
+//   0.74 → 1.00   top speed → 16,000 km/s warp / slingshot / black-hole transit
+//
+// The sub-warp band is anchored to gameState.maxVelocity rather than a literal
+// 4.0, so an engine upgrade that raises top speed re-scales the whole feedback
+// stack with it instead of quietly pushing the player into a region where the
+// visuals have already saturated. The two bands are joined at `cap` and both
+// are continuous there, so accelerating from cruise, through the whip, into
+// warp and back out again is one unbroken ramp with no pop at any point.
+const _WHIP_V0 = 0.8;      // 800 km/s — where motion starts to read on screen
+const _WHIP_SUB = 0.74;    // the whip owns this much of the curve…
+const _WHIP_VWARP = 16.0;  // …warp carries the rest, saturating here
+
+function speedWhipLevel() {
+    if (typeof gameState === 'undefined' || !gameState.velocityVector) return 0;
+    const v = gameState.velocityVector.length();
+    if (!(v > _WHIP_V0)) return 0;
+    const cap = Math.max(_WHIP_V0 + 1.2, gameState.maxVelocity || 4.0);
+    if (v <= cap) {
+        // Slightly front-loaded (pow < 1) so the first push off cruise is felt
+        // immediately rather than all arriving in the last third of the boost.
+        return _WHIP_SUB * Math.pow((v - _WHIP_V0) / (cap - _WHIP_V0), 0.85);
+    }
+    const t = Math.min(1, (v - cap) / Math.max(1, _WHIP_VWARP - cap));
+    return _WHIP_SUB + (1 - _WHIP_SUB) * Math.pow(t, 0.7);
+}
+
 // ── 19. WARP STREAK FIELD — the thing that makes 79,000 km/s LOOK like it ────
 // The whip's release used to be a number change: velocity snapped from ~24 to
 // ~4800 u/s while the background stars stayed discrete stationary dots and the
@@ -1391,7 +1435,22 @@ function _wsfSeed(i, spanZ) {
 }
 
 function _wsfBuild() {
-    if (_wsf.mesh || typeof THREE === 'undefined' || typeof scene === 'undefined') return;
+    if (typeof THREE === 'undefined' || typeof scene === 'undefined') return;
+    // SELF-HEAL, don't just cache. The old guard was `if (_wsf.mesh) return;`,
+    // which assumes that once the mesh is in the scene it stays there forever.
+    // It does not: galaxy transitions, the periodic worldCleanup sweep and
+    // scene rebuilds all detach objects they don't recognise. The first time
+    // that happened the field was orphaned PERMANENTLY — _wsf.mesh stayed
+    // truthy so every later build call returned early and never re-added it,
+    // leaving the streaks "enabled" (env ramping, uniforms updating, visible
+    // true) while drawing absolutely nothing. Measured live: the mesh was
+    // present one frame after warpStreakBurst() and gone 250ms later, and no
+    // subsequent burst could bring it back. Re-attaching is one cheap
+    // reference compare per frame and makes the field impossible to lose.
+    if (_wsf.mesh) {
+        if (_wsf.mesh.parent !== scene) scene.add(_wsf.mesh);
+        return;
+    }
     const N = _WSF_N;
     const pos = new Float32Array(N * 4 * 3);
     const aTail = new Float32Array(N * 4);
@@ -1569,7 +1628,11 @@ function _updateWarpStreaks() {
     const spd = (gameState.velocityVector ? gameState.velocityVector.length() : 0) * 60;
     // Speed drives the field on its own, so emergency warp gets it too; the
     // release "kick" just guarantees the punch lands on the very first frame.
-    let target = Math.max(0, Math.min(1, (spd - 260) / 2400));
+    // The old gate here was (spd - 260) / 2400, which a sub-warp boost (240 u/s
+    // flat out) could never clear — the field was mathematically unreachable
+    // below warp. It now rides the continuous whip curve, so the streaks come
+    // up smoothly from 800 km/s and keep growing all the way to the cap.
+    let target = speedWhipLevel();
     if (_wsf.kickAmp > 0) {
         const kt = (now - _wsf.kickT0) / _wsf.kickMs;
         if (kt >= 1) _wsf.kickAmp = 0;
@@ -1608,7 +1671,16 @@ function _updateWarpStreaks() {
     _wsf.frame.makeRotationFromQuaternion(_wsf.q);
 
     // ── FLOW + STRETCH ──────────────────────────────────────────────────
-    const flow = Math.min(9500, Math.max(700, spd)) * (0.35 + 0.65 * env) * dt;
+    // APPARENT flow, not true flow. At 800 km/s the ship covers 48 u/s, so a
+    // star seeded 2,900u out would take a full minute to arrive — the field
+    // would sit frozen at exactly the speeds where it most needs to read as
+    // "starting to move". Worse, the old floor of max(700, spd) pinned the
+    // rate to a constant across the ENTIRE sub-warp range, so even a visible
+    // field would have streamed at one fixed speed from 0 to 4,000 km/s.
+    // Driving the rate off the whip level (with a true-speed term on top for
+    // warp) is what makes the 0 → 4,000 km/s climb read as one long ramp:
+    // ~620 u/s of flow as the streaks appear, ~4,700 at the boost cap.
+    const flow = (620 + 5200 * Math.pow(env, 1.15) + Math.min(3600, spd) * 0.9) * dt;
     const p = _wsf.pos, sx = _wsf.sx, sy = _wsf.sy, sz = _wsf.sz, sv = _wsf.sv;
     for (let i = 0; i < _WSF_N; i++) {
         let z = sz[i] + flow * sv[i];
@@ -1624,9 +1696,18 @@ function _updateWarpStreaks() {
     _wsf.posAttr.needsUpdate = true;
 
     const u = _wsf.mat.uniforms;
-    u.uLen.value = Math.max(28, Math.min(760, spd * 0.055)) * (0.45 + 0.55 * env);
-    u.uWidth.value = 1.5 + 1.9 * env;
-    u.uOpacity.value = 0.95 * env;
+    // STREAK LENGTH IS THE ACCELERATION CUE. The old expression bottomed out
+    // on its own 28-unit floor for every sub-warp speed (spd * 0.055 = 13 at
+    // the boost cap), so length was constant exactly where the player needed
+    // to see it change. Now it stretches continuously: ~20u dashes as the
+    // streaks fade up at 800 km/s, ~120u at half throttle, ~370u filaments at
+    // top speed, ~560u in warp — you can read your speed off the streaks
+    // alone. Opacity uses a softer exponent (0.62) so the first streaks are
+    // genuinely VISIBLE rather than merely mathematically present, while
+    // still leaving headroom for warp to be brighter than the whip.
+    u.uLen.value = Math.min(900, 14 + 560 * Math.pow(env, 1.55));
+    u.uWidth.value = 1.15 + 1.85 * env;
+    u.uOpacity.value = 0.98 * Math.pow(env, 0.62);
 }
 
 // ── 14. WARP DEBRIS FIELD — the world you actually fly THROUGH ──────────────
@@ -1715,7 +1796,13 @@ function _wdfSeed(i, spanAll) {
 }
 
 function _wdfBuild() {
-    if (_wdf.mesh || typeof THREE === 'undefined' || typeof scene === 'undefined') return;
+    if (typeof THREE === 'undefined' || typeof scene === 'undefined') return;
+    // Same self-heal as the streak field: re-attach instead of assuming the
+    // mesh survives every scene rebuild. (See _wsfBuild for the full story.)
+    if (_wdf.mesh) {
+        if (_wdf.mesh.parent !== scene) { scene.add(_wdf.mesh); _wdf.seeded = false; }
+        return;
+    }
     const N = _WDF_N;
     const pos = new Float32Array(N * 4 * 3);
     const aCorner = new Float32Array(N * 4 * 2);
@@ -1930,9 +2017,14 @@ function _updateWarpDebris() {
     _wdf.last = now;
 
     const spd = (gameState.velocityVector ? gameState.velocityVector.length() : 0) * 60;
-    // Slightly higher gate than the streak field: debris is a BOOST event, not
-    // a thrust event, and it must cost exactly nothing while you are cruising.
-    let target = Math.max(0, Math.min(1, (spd - 500) / 2600));
+    // Rides the same whip curve as the streaks, but deliberately joins LATER:
+    // debris is a boost event, not a thrust event, and must cost exactly
+    // nothing while cruising. Streaks start the moment you push off cruise;
+    // the world-space debris — the layer that proves you are genuinely moving
+    // rather than wearing speed lines — builds across the top half of the
+    // boost and is full just past the ship's own top speed. (Was (spd-500)
+    // /2600, which needed 8,300 km/s: unreachable without warp.)
+    let target = Math.max(0, Math.min(1, (speedWhipLevel() - 0.16) / 0.62));
     if (_wdf.kickAmp > 0) {
         const kt = (now - _wdf.kickT0) / _wdf.kickMs;
         if (kt >= 1) _wdf.kickAmp = 0;
@@ -2047,15 +2139,36 @@ function _updateBackdropParallax() {
 
     if (!_wbp.dir) _wbp.dir = new THREE.Vector3(0, 0, -1);
     const spd = (gameState.velocityVector ? gameState.velocityVector.length() : 0) * 60;
-    if (_wbp.active && spd < 420) _wbp.active = false;
+    // The domes used to unpin only for warp-class speed (420 u/s ≈ 7,000 km/s)
+    // and only when a burst explicitly armed them — so the fastest thing the
+    // player can actually DO left the entire backdrop pixel-identical, which
+    // is the single biggest reason the whip read as static. Arming is now
+    // driven by the whip curve, with a wide hysteresis band (arm at 0.30,
+    // release at 0.16) so cruising near the threshold cannot chatter.
+    const whip = speedWhipLevel();
+    if (!_wbp.active && whip > 0.30) _wbpArm(gameState.velocityVector);
+    if (_wbp.active && whip < 0.16 && spd < 420) _wbp.active = false;
+    // The applied-offset bookkeeping below is per-AXIS: each dome remembers
+    // how far it was pushed along _wbp.dir and undoes exactly that. So the
+    // axis must never move while offsets are live. If the player turns well
+    // off the armed heading, stand down instead — the offsets relax out over
+    // ~3s and the next frame past the arm threshold re-arms on the new course.
+    if (_wbp.active && spd > 1 && _wbpTmp2) {
+        _wbpTmp2.copy(gameState.velocityVector).normalize();
+        if (_wbpTmp2.dot(_wbp.dir) < 0.55) _wbp.active = false;
+    }
     if (_wbp.active) {
         if (spd > 1 && _wbp.dir.lengthSq() < 1e-6) {
             _wbp.dir.copy(gameState.velocityVector).normalize();
         }
         _wbp.cum += spd * dt;
-        // 7x amplification: the 3,400u the critic measured becomes ~24,000u of
-        // dome travel — roughly 7 degrees of sweep, unmissable but not a spin.
-        _wbp.target = Math.min(_wbp.cum * 7, 34000);
+        // Amplification scales with the whip so a mid-throttle nudge barely
+        // moves the sky while a full boost sweeps it: ~4.6x as the domes arm,
+        // ~8x at the ship's top speed, ~10x in warp (the old flat 7x was tuned
+        // for warp only). Travel cap scales the same way, so the sweep you get
+        // is always proportional to the speed you actually reached.
+        const amp = 2.2 + 8.0 * whip;
+        _wbp.target = Math.min(_wbp.cum * amp, 2000 + 32000 * whip);
     } else {
         _wbp.target = 0;
     }
@@ -2079,6 +2192,9 @@ function _updateBackdropParallax() {
     }
 }
 const _wbpTmp = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+// Second scratch vector: the heading-divergence check above must not clobber
+// _wbpTmp, which the per-dome clamp loop reuses in the same frame.
+const _wbpTmp2 = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
 
 // Screen-space speed spokes are anchored on the VANISHING POINT of travel,
 // not the middle of the screen — cheap (one composited transform) and it is
@@ -2211,7 +2327,15 @@ function _wtuMakeShell(radius, streaks, scroll, seg, colA, colB) {
 }
 
 function _wtuBuild() {
-    if (_wtu.inner || typeof THREE === 'undefined' || typeof scene === 'undefined') return;
+    if (typeof THREE === 'undefined' || typeof scene === 'undefined') return;
+    // Self-heal both shells for the same reason as the streak/debris fields —
+    // a detached tunnel would leave emergency warp with a level ramping to 1.0
+    // and no shaft on screen.
+    if (_wtu.inner) {
+        if (_wtu.inner.mesh && _wtu.inner.mesh.parent !== scene) scene.add(_wtu.inner.mesh);
+        if (_wtu.outer && _wtu.outer.mesh && _wtu.outer.mesh.parent !== scene) scene.add(_wtu.outer.mesh);
+        return;
+    }
     _wtu.outer = _wtuMakeShell(340, 26, 0.55, 40, 0x2a6bff, 0xff3fb0);
     _wtu.inner = _wtuMakeShell(140, 54, 1.35, 32, 0x6be6ff, 0xff5ccd);
     _wtu.frame = new THREE.Matrix4();
@@ -2626,6 +2750,10 @@ function updateVisualFlair() {
         typeof camera === 'undefined' || typeof scene === 'undefined' ||
         typeof THREE === 'undefined') return;
     const fc = gameState.frameCount || 0;
+    // Publish the frame's whip level once, before any consumer runs, so the
+    // camera rig and anything else outside this file read the same number the
+    // streaks/debris/screen-FX are drawing with this frame.
+    try { window.__speedWhip = speedWhipLevel(); } catch (e) {}
     // Player flame-ribbon streamer DISABLED per playtest (toggled off again).
     // Hide the mesh if it was ever created.
     if (_ptTrail.mesh) _ptTrail.mesh.visible = false;
@@ -2665,6 +2793,11 @@ if (typeof window !== 'undefined') {
     window.flashEventText = flashEventText;
     window.wingmanTracerPush = wingmanTracerPush;
     window.wingmanTracerFade = wingmanTracerFade;
+    // The canonical speed→feedback curve. Anything that wants to react to how
+    // fast the player is going should call this rather than inventing its own
+    // threshold — that is exactly how the four layers above drifted into a
+    // band the ship could never reach.
+    window.speedWhipLevel = speedWhipLevel;
     window.warpStreakBurst = warpStreakBurst;
     window.warpDebrisBurst = warpDebrisBurst;
     window.warpTunnelBurst = warpTunnelBurst;

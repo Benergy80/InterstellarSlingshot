@@ -448,15 +448,19 @@ float _rimPanelMask( vec2 uv, float cell ) {
     vec2 cUv = uv / cell;
     vec2 cId = floor( cUv );
     vec2 cF = fract( cUv );
-    float lineW = 0.045;
+    // lineW/seam-floor/panelShade widened — measured hull-pixel luminance
+    // std during boost was 41.5/255 against a >55/255 target: thin, shallow
+    // seams plus a narrow 0.8-1.16 per-plate shade range weren't moving
+    // per-pixel variance enough once the boost rim brightened everything.
+    float lineW = 0.07;
     float seam = smoothstep( 0.0, lineW, cF.x ) * smoothstep( 0.0, lineW, 1.0 - cF.x )
                * smoothstep( 0.0, lineW, cF.y ) * smoothstep( 0.0, lineW, 1.0 - cF.y );
-    float panelShade = 0.8 + 0.36 * _rimHash21( cId );
-    float mask = mix( 0.3, 1.0, seam ) * panelShade;
+    float panelShade = 0.7 + 0.55 * _rimHash21( cId );
+    float mask = mix( 0.18, 1.0, seam ) * panelShade;
 
     vec2 gUv = uv / ( cell * 0.24 );
     float speck = _rimHash21( floor( gUv ) + 11.0 );
-    mask *= 1.0 + step( 0.94, speck ) * 0.4 - step( speck, 0.05 ) * 0.4;
+    mask *= 1.0 + step( 0.90, speck ) * 0.6 - step( speck, 0.10 ) * 0.6;
     return mask;
 }
 
@@ -556,13 +560,19 @@ function createFactionHullMaterial(colorHex, opts) {
 // the rest of the hull and end up on the correct (rear) end either way.
 // Tagged isGlowLayer so the existing enemy-glow pulse in game-core.js
 // (updateOuterSystemDiscovery's neighbor pass) animates them for free.
-function _attachEngineGlow(model, colorHex, box, sizeScale) {
+// radiusFactor/radiusFloor let callers tighten the blob independently of
+// hull scale — enemies pass a smaller pair (see createEnemyMeshWithModel)
+// so the glow doesn't outdraw the hull at combat range; bosses keep the
+// original defaults so their silhouette (already large) is unaffected.
+function _attachEngineGlow(model, colorHex, box, sizeScale, radiusFactor, radiusFloor) {
     sizeScale = sizeScale || 1.0;
+    radiusFactor = radiusFactor !== undefined ? radiusFactor : 0.1;
+    radiusFloor = radiusFloor !== undefined ? radiusFloor : 0.5;
     const size = box.getSize(new THREE.Vector3());
     if (!isFinite(size.x) || !isFinite(size.z) || (size.x === 0 && size.z === 0)) return;
 
     const glowColor = new THREE.Color(colorHex !== undefined ? colorHex : 0xffaa33);
-    const radius = Math.max(0.5, Math.min(size.x, size.y || size.x) * 0.1) * sizeScale;
+    const radius = Math.max(radiusFloor, Math.min(size.x, size.y || size.x) * radiusFactor) * sizeScale;
     const glowGeo = new THREE.SphereGeometry(radius, 8, 8);
     const rearZ = box.max.z - radius * 0.4;
     const lateral = size.x * 0.22;
@@ -620,13 +630,21 @@ function createEnemyMeshWithModel(regionId, fallbackGeometry, material, scaleOve
                 // Apply base material — rim-lit MeshStandardMaterial so
                 // leading edges pick up faction color against real scene
                 // lighting instead of a dead-flat fill.
+                // baseMultiplier/emissive raised from 0.45/0.4/0.85 — at
+                // combat range the old values left the hull dim enough that
+                // it sank into the black-space background while the additive
+                // glow children (always fully visible regardless of scene
+                // lighting) stayed bright, so only the glow read as "the
+                // ship." This keeps the hull dark/silhouette-toned but gives
+                // it an always-on floor so it reads AGAINST its own glow
+                // instead of being swallowed by it.
                 child.material = createFactionHullMaterial(material.color || 0xff0000, {
-                    baseMultiplier: 0.45,
-                    emissiveMultiplier: 0.4,
-                    emissiveIntensity: 0.85,
+                    baseMultiplier: 0.55,
+                    emissiveMultiplier: 0.55,
+                    emissiveIntensity: 1.0,
                     roughness: 0.5,
                     metalness: 0.7,
-                    rimIntensity: 0.5
+                    rimIntensity: 0.6
                 });
 
                 child.castShadow = false;
@@ -650,39 +668,49 @@ function createEnemyMeshWithModel(regionId, fallbackGeometry, material, scaleOve
         // _applyNoseFlip (below) so nose-flipped ships carry the glow
         // into the rotated inner group along with everything else.
         const centeredEnemyBox = new THREE.Box3().setFromObject(model);
-        _attachEngineGlow(model, material.color || 0xffaa33, centeredEnemyBox, 1.0);
+        // Tighter radiusFactor/radiusFloor than the boss default (0.1/0.5) —
+        // at combat range these engine blobs were part of what let the
+        // additive glow outdraw the actual hull silhouette ~6:1.
+        _attachEngineGlow(model, material.color || 0xffaa33, centeredEnemyBox, 1.0, 0.05, 0.28);
 
         // STEP 3: NOW add glow layers (after centering)
         baseMeshes.forEach((child) => {
             const glowGeometry = child.geometry.clone();
             const glowColor = new THREE.Color(material.color || 0xff0000);
-            glowColor.multiplyScalar(1.2);
+            glowColor.multiplyScalar(0.9);  // was 1.2 — a full-bright duplicate this close to the hull's own tone washed the shaded hull into a flat glow blob instead of a shaded silhouette
 
             const glowMaterial = new THREE.MeshBasicMaterial({
                 color: glowColor,
                 transparent: true,
-                opacity: 0.2,  // Base opacity - will pulse from 0.0 to 0.7
+                opacity: 0.15,  // Base opacity - pulse system (game-core.js) drives the visible 0.35-0.85 range
                 blending: THREE.AdditiveBlending,
-                side: THREE.DoubleSide,
+                side: THREE.FrontSide,  // was DoubleSide — backfaces added nothing but extra additive stacking at silhouette edges, which is exactly where readability is lost
                 depthWrite: false,
                 depthTest: true
             });
 
             const glowMesh = new THREE.Mesh(glowGeometry, glowMaterial);
-            // Don't scale - keep exact same size as base for perfect alignment
-            glowMesh.scale.set(1.0, 1.0, 1.0);
+            // Pulled in slightly from the true hull edge (was 1.0/1.0/1.0) so
+            // the additive bloom sits INSIDE the hull silhouette instead of
+            // haloing past it. At combat range (309-919u) this shell was
+            // what turned readable hulls into featureless glow puffs.
+            glowMesh.scale.set(0.9, 0.9, 0.9);
             glowMesh.position.set(0, 0, 0);
             glowMesh.rotation.set(0, 0, 0);
             glowMesh.userData.isGlowLayer = true;
             child.add(glowMesh);
         });
 
-        // Scale enemy models. ENEMY_SCALE_FACTOR halves every enemy
+        // Scale enemy models. ENEMY_SCALE_FACTOR sizes every enemy
         // (default-96 path AND explicit scaleOverride callers, e.g.
         // galaxy enemies passing 96.0, plus local Pirates/Vulcans) at
-        // a single point so all enemy ships are 50% of their previous
-        // size. Bosses are unaffected (separate createBossMeshWithModel).
-        const ENEMY_SCALE_FACTOR = 0.5;
+        // a single point. Was 0.5 (halved) — at combat range that left
+        // the hull subtending only ~24.6px at 498u / ~10.3px at 919u,
+        // too small to read facing or class even before the glow-vs-hull
+        // ratio fix above. Raised to 0.72 so the hull itself is a bigger,
+        // more identifiable target; bosses are unaffected (separate
+        // createBossMeshWithModel).
+        const ENEMY_SCALE_FACTOR = 0.72;
         const finalScale = (scaleOverride !== undefined ? scaleOverride : 96.0) * ENEMY_SCALE_FACTOR;
         const correction = _enemyModelScaleCorrection[regionId] || 1.0;
         model.scale.multiplyScalar(finalScale * correction);
@@ -698,8 +726,11 @@ function createEnemyMeshWithModel(regionId, fallbackGeometry, material, scaleOve
         console.warn(`⚠️ Enemy${regionId}.glb fallback used. modelCache state: ${cacheState === null ? 'null (load failed)' : cacheState === undefined ? 'undefined (not loaded yet)' : 'unexpected ' + typeof cacheState}`);
 
         // Create base mesh with darker, more defined material
+        // baseMultiplier raised 0.4->0.5 to match the GLB-path silhouette
+        // fix above — dark enough to read as hull, bright enough not to
+        // sink into the black-space background at range.
         const baseColor = new THREE.Color(material.color || 0xff0000);
-        baseColor.multiplyScalar(0.4);  // Darker base for contrast
+        baseColor.multiplyScalar(0.5);
 
         const baseMaterial = new THREE.MeshStandardMaterial({
             color: baseColor,
@@ -712,23 +743,25 @@ function createEnemyMeshWithModel(regionId, fallbackGeometry, material, scaleOve
 
         const baseMesh = new THREE.Mesh(fallbackGeometry, baseMaterial);
 
-        // Add glow layer
+        // Add glow layer — same tightening as the GLB path: FrontSide (no
+        // backface additive stacking at silhouette edges) and pulled in
+        // slightly from the true edge so the additive bloom stays inside
+        // the hull silhouette instead of outdrawing it.
         const glowColor = new THREE.Color(material.color || 0xff0000);
-        glowColor.multiplyScalar(1.2);
+        glowColor.multiplyScalar(0.9);
 
         const glowMaterial = new THREE.MeshBasicMaterial({
             color: glowColor,
             transparent: true,
-            opacity: 0.2,  // Base opacity - will pulse from 0.0 to 0.7
+            opacity: 0.15,  // Base opacity - pulse system (game-core.js) drives the visible 0.35-0.85 range
             blending: THREE.AdditiveBlending,
-            side: THREE.DoubleSide,
+            side: THREE.FrontSide,
             depthWrite: false,
             depthTest: true
         });
 
         const glowMesh = new THREE.Mesh(fallbackGeometry.clone(), glowMaterial);
-        // Don't scale - keep exact same size as base for perfect alignment
-        glowMesh.scale.set(1.0, 1.0, 1.0);
+        glowMesh.scale.set(0.9, 0.9, 0.9);
         glowMesh.position.set(0, 0, 0);  // Position at parent's origin
         glowMesh.rotation.set(0, 0, 0);  // No rotation offset
         glowMesh.userData.isGlowLayer = true;
@@ -897,7 +930,7 @@ function createPlayerHullMaterial() {
         power: 2.6,
         baseStrength: 2.4,   // was 1.3 — too weak to beat direct-light response on facing panels (measured rim/core ratio 0.64, i.e. rim READ DARKER than core)
         boostStrength: 4.2,  // was 2.8
-        coreDarken: 0.55,    // dim facing panels so the rim reads brighter than the core instead of losing to it
+        coreDarken: 0.62,    // was 0.55 — dim facing panels so the rim reads brighter than the core instead of losing to it; raised further to widen core/rim luminance spread (measured hull-pixel std 41.5/255 during boost, target >55/255)
         panelDetail: true,
         panelCellSize: PLAYER_HULL_PANEL_CELL
     });

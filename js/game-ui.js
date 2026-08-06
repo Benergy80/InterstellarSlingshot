@@ -3570,22 +3570,133 @@ function _hudSpectacleGetPanels() {
     return _hudSpectaclePanels;
 }
 
-// Ease the HUD panel chrome down to css/styles.css's .hud-spectacle-dim
-// opacity while the slingshot or emergency-warp spectacle is on screen, and
-// straight back to fully readable the instant it ends. The eased ramp is a
-// plain CSS transition (opacity 0.35s ease on .ui-panel) — this just flips
-// the class each frame, which is a no-op once the state settles.
+// Continuous 0..1 "how hard is the moment asking the chrome to get out of
+// the way" factor, smoothed frame-to-frame. Written to the --hud-yield CSS
+// var (css/styles.css: `.ui-panel { opacity: calc(1 - 0.6*var(--hud-yield)) }`)
+// instead of flipping a binary dim class, so a 45s boost hold reads as a
+// continuous fade instead of never moving at all.
+let _hudYield = 0;
+let _hudYieldLastT = null;
+
+// Slingshot charge/release and emergency warp are full-spectacle set pieces
+// — pin straight to 1 the instant they're active. Boost is continuous:
+// speedRatio climbs toward 1 as gameState.velocityVector approaches
+// maxVelocity over the whole hold, so the chrome yields exactly as fast as
+// the ship actually feels fast, plus a small immediate nudge the moment the
+// B key goes down so the very first frame of a boost isn't visually inert
+// while thrust is still ramping up.
+function _hudComputeSpectacleTarget() {
+    if (typeof gameState === 'undefined') return 0;
+    let target = 0;
+
+    if ((gameState.slingshot && gameState.slingshot.active) ||
+        (gameState.emergencyWarp && gameState.emergencyWarp.active)) {
+        target = 1;
+    }
+
+    const v = gameState.velocityVector ? gameState.velocityVector.length() :
+              (gameState.velocity || 0);
+    const maxV = gameState.maxVelocity || 4.0;
+    if (maxV > 0) {
+        const speedRatio = Math.max(0, Math.min(1, v / maxV));
+        // Only start yielding chrome once the ship is meaningfully fast
+        // (30% of top speed) so ordinary cruising never dims the HUD.
+        const boostSpectacle = Math.max(0, (speedRatio - 0.3) / 0.7);
+        target = Math.max(target, boostSpectacle);
+    }
+
+    if (typeof keys !== 'undefined' && keys.b) {
+        target = Math.max(target, 0.2);
+    }
+
+    return target;
+}
+
+// Ease the HUD panel chrome down toward that target while the slingshot,
+// emergency-warp, or a sustained boost hold makes the ship the show instead
+// of the readouts, and straight back to fully readable the instant every
+// contributor drops to zero. The JS-side critically-damped lerp (not a
+// plain CSS class transition) is what makes this continuous rather than
+// binary — it settles in ~0.3-0.4s but tracks a moving target the whole
+// time, so it keeps easing for as long as velocity keeps climbing.
 function updateHudSpectacleDim() {
     if (typeof gameState === 'undefined') return;
-    const dim = !!((gameState.slingshot && gameState.slingshot.active) ||
-                    (gameState.emergencyWarp && gameState.emergencyWarp.active));
-    const panels = _hudSpectacleGetPanels();
-    for (let i = 0; i < panels.length; i++) {
-        panels[i].classList.toggle('hud-spectacle-dim', dim);
+
+    const now = (typeof performance !== 'undefined') ? performance.now() : Date.now();
+    const dt = (_hudYieldLastT === null) ? 0 : Math.min(0.25, (now - _hudYieldLastT) / 1000);
+    _hudYieldLastT = now;
+
+    const target = _hudComputeSpectacleTarget();
+    const rate = 4.5; // ~0.3-0.4s to settle — responsive, never a hard cut
+    _hudYield += (target - _hudYield) * Math.min(1, dt * rate);
+    if (Math.abs(target - _hudYield) < 0.002) _hudYield = target;
+    _hudYield = Math.max(0, Math.min(1, _hudYield));
+
+    if (document.documentElement) {
+        document.documentElement.style.setProperty('--hud-yield', _hudYield.toFixed(3));
     }
+
+    _updateFlightControlsCollapse();
 }
 if (typeof window !== 'undefined') {
     window.updateHudSpectacleDim = updateHudSpectacleDim;
+}
+
+// Flight Controls (top-left) auto-collapse — the 13-line keybind
+// cheat-sheet is only useful for the first few seconds of a run; left up
+// permanently it eats ~1/5 of the viewport for the rest of the flight,
+// including straight through the boost/slingshot money shots the yield
+// system above is easing everything else for. ~8s after gameState.gameStarted
+// flips true, collapse the title + key list to a one-line "? for controls"
+// hint (css/styles.css .controls-collapsed); the Music/SFX/Pause button row
+// is left alone since those are live controls, not reference text. Either
+// the hint or the title toggles it back, and a manual toggle permanently
+// opts the player out of further auto-collapsing this run.
+let _hudControlsPanel = null;
+let _hudControlsHintEl = null;
+let _hudControlsLaunchT = null;
+let _hudControlsManual = false;
+
+function _updateFlightControlsCollapse() {
+    if (!_hudControlsPanel) {
+        _hudControlsPanel = document.querySelector('.ui-panel.top-left');
+        if (!_hudControlsPanel) return;
+
+        const title = _hudControlsPanel.querySelector('h3.cyber-title');
+        _hudControlsHintEl = document.createElement('div');
+        _hudControlsHintEl.className = 'hud-controls-hint';
+        _hudControlsHintEl.textContent = '? for controls';
+        _hudControlsHintEl.title = 'Click to show flight controls';
+        _hudControlsPanel.insertBefore(_hudControlsHintEl, _hudControlsPanel.firstChild);
+
+        const collapse = () => {
+            _hudControlsManual = true;
+            _hudControlsPanel.classList.add('controls-collapsed');
+        };
+        const expand = () => {
+            _hudControlsManual = true;
+            _hudControlsPanel.classList.remove('controls-collapsed');
+        };
+        _hudControlsHintEl.addEventListener('click', expand);
+        if (title) {
+            title.addEventListener('click', collapse);
+        }
+    }
+
+    if (typeof gameState === 'undefined' || !gameState.gameStarted) {
+        _hudControlsLaunchT = null;
+        return;
+    }
+    if (_hudControlsLaunchT === null) {
+        _hudControlsLaunchT = (typeof performance !== 'undefined') ? performance.now() : Date.now();
+        return;
+    }
+    if (_hudControlsManual) return;
+
+    const now = (typeof performance !== 'undefined') ? performance.now() : Date.now();
+    if (now - _hudControlsLaunchT >= 8000) {
+        _hudControlsPanel.classList.add('controls-collapsed');
+    }
 }
 
 // =============================================================================

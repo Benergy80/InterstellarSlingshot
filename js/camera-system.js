@@ -413,6 +413,21 @@ function updateCameraView(camera) {
     // setTimeout snaps). Only the SHIP-IN-FRAME offset moves; the camera's
     // gameplay position is untouched.
     if (typeof gameState !== 'undefined' && gameState.gameStarted) {
+        // ── SUSTAINED SPEED, EASED ONCE PER FRAME ───────────────────────
+        // _warpZoom below only moves for warp / slingshot, so the entire
+        // reachable sub-warp range — 0 to 4,000 km/s, the whole "whip" — used
+        // to be shot at a dead-constant 75° from a dead-constant chase
+        // distance. The lens never breathed with the thing the player was
+        // actually doing. This eases visual-flair's whip curve (the same 0→1
+        // signal the streaks and debris ride, so the rig and the field can
+        // never disagree) and both the framing and the FOV below hang off it.
+        // Attack is roughly twice the release: speed grabs, settling drifts.
+        if (cameraState._whipFov === undefined) cameraState._whipFov = 0;
+        const _whipV = (typeof window !== 'undefined' && typeof window.speedWhipLevel === 'function')
+            ? window.speedWhipLevel()
+            : ((typeof window !== 'undefined' && window.__speedWhip) || 0);
+        cameraState._whipFov += (_whipV - cameraState._whipFov) *
+            (_whipV > cameraState._whipFov ? 0.10 : 0.05);
         if (cameraState._warpZoom === undefined) { cameraState._warpZoom = 1; cameraState._wasWarping = false; }
         const _warpingNow = !!((gameState.emergencyWarp && gameState.emergencyWarp.active) ||
             (gameState.slingshot && gameState.slingshot.active && !gameState.slingshotWhip));
@@ -490,6 +505,22 @@ function updateCameraView(camera) {
             currentOffset.y += 0.9 * _ck;        // …and rises into a hero angle
         }
 
+        // ── SUSTAINED SPEED FRAMING ─────────────────────────────────────
+        // _whipCrack above is a ~260ms transient on the slingshot release.
+        // This is the steady-state companion: while you HOLD speed the rig
+        // sits further back and the airframe shivers, so cruising and running
+        // flat out are framed differently even when no warp is involved. The
+        // shiver is sub-pixel at cruise and only ~0.05u at top speed — engine
+        // strain, not a rattle, and it never touches the HUD.
+        if (cameraState._whipFov > 0.01 && cameraState.mode === 'third-person') {
+            const _wk = cameraState._whipFov;
+            currentOffset.z *= 1 + 0.17 * _wk;
+            currentOffset.y += 0.30 * _wk;
+            const _jit = 0.065 * _wk * _wk;
+            currentOffset.x += (Math.random() - 0.5) * _jit;
+            currentOffset.y += (Math.random() - 0.5) * _jit;
+        }
+
         // FOV follows the zoom: 75 at rest → ~86 fully warped, eased both
         // ways. EXTENDED (not replaced) with two additive terms so the warp
         // tunnel and the whip can breathe the lens without ever fighting the
@@ -498,8 +529,11 @@ function updateCameraView(camera) {
         //     entry/exit snaps
         //   • the sustained tunnel level published by visual-flair
         if (camera.isPerspectiveCamera) {
+            //   • the sustained sub-warp whip level, so the lens widens
+            //     continuously with speed instead of only ever at warp
             let _fovT = 75 + _zAmt * 20 + Math.abs(cameraState._whipLean) * 5 +
-                (cameraState._whipCrack || 0) * 6;
+                (cameraState._whipCrack || 0) * 6 +
+                (cameraState._whipFov || 0) * 7.5;
             if (cameraState._fovPulseAmp) {
                 const _pk = (performance.now() - cameraState._fovPulseT0) /
                     Math.max(1, cameraState._fovPulseMs);

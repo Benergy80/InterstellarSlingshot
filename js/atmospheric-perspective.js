@@ -64,6 +64,72 @@ const atmosphericConfig = {
     }
 };
 
+// =============================================================================
+// TONE MAPPING — the display transform the whole scene was missing.
+// =============================================================================
+// The renderer shipped with `toneMapping = NoToneMapping`, which means every
+// shader's output was written to the framebuffer raw and hard-clipped at 1.0.
+// In a scene whose whole subject is objects that are literally the brightest
+// things in the universe, that is a real problem, and it showed up worst on
+// the black holes: an accretion disk painted at 8-bit values peaked around
+// 64% screen brightness while background star sprites — drawn at a flat 1.0 —
+// clipped to pure white. The hierarchy was inverted, and no amount of pushing
+// the disk's colours could fix it, because there was nowhere above 1.0 to go.
+//
+// ACESFilmic gives the scene a shoulder. Emissive materials can now carry
+// over-range colours (the Gargantua disk/photon ring in game-objects.js run at
+// 2.6x and 1.85x) and the curve rolls them smoothly into white instead of
+// slamming into a clip, which is what reads on screen as bloom.
+//
+// EXPOSURE 1.2 is chosen, not default. ACES at exposure 1.0 crushes shadows
+// and pulls pure white down to 0.76 — it would have muted the neon this game
+// is built on. At 1.2 the deep-space floor stays essentially where it was
+// (0.05 -> 0.043, still black), mid-tones lift ~1.4x so nebula and neon get
+// RICHER rather than washed, white sits at 0.80 with real headroom above it,
+// and an over-range 2.0 lands at 0.91 / 4.0 at 0.96 — a genuine highlight
+// roll-off rather than a step.
+//
+// This lives here rather than in the renderer setup because that file belongs
+// to another owner; switching it at first update is equivalent as long as we
+// invalidate the materials that were already compiled without the tone-mapping
+// chunk (the program cache key includes toneMapping, so anything built after
+// the switch picks it up automatically).
+const TONE_MAPPING_EXPOSURE = 1.2;
+
+// NOT a one-shot boolean. The game builds THREE renderers more than once —
+// game-intro.js creates its own for the launch sequence and then the main
+// renderer replaces it on the same global — so a latched "already done" flag
+// gets set on the intro's renderer and the real one never receives the tone
+// curve. Instead we check the live renderer's state every call (a cheap
+// integer compare, every 15 frames) and re-apply if it isn't ours.
+function _ensureToneMapping() {
+    if (typeof THREE === 'undefined' || typeof renderer === 'undefined' || !renderer) return;
+    if (typeof THREE.ACESFilmicToneMapping === 'undefined') return;
+    if (renderer.toneMapping === THREE.ACESFilmicToneMapping) {
+        if (renderer.toneMappingExposure !== TONE_MAPPING_EXPOSURE) {
+            renderer.toneMappingExposure = TONE_MAPPING_EXPOSURE;
+        }
+        return;
+    }
+
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = TONE_MAPPING_EXPOSURE;
+
+    // One-time recompile sweep for everything already in the graph.
+    if (typeof scene !== 'undefined' && scene && scene.traverse) {
+        scene.traverse(function (obj) {
+            const mat = obj.material;
+            if (!mat) return;
+            if (Array.isArray(mat)) {
+                for (let i = 0; i < mat.length; i++) if (mat[i]) mat[i].needsUpdate = true;
+            } else {
+                mat.needsUpdate = true;
+            }
+        });
+    }
+    console.log('🎞️ ACESFilmic tone mapping engaged (exposure ' + TONE_MAPPING_EXPOSURE + ') — emissives can bloom past 1.0');
+}
+
 let _fogInitialized = false;
 let _fogColorA = null;
 let _fogColorB = null;
@@ -94,6 +160,7 @@ function _ensureAtmosphericFog() {
 function updateAtmosphericPerspective(camera) {
     if (!camera || !camera.position || typeof scene === 'undefined' || !scene) return;
 
+    _ensureToneMapping();
     _ensureAtmosphericFog();
     if (!scene.fog) return;
 
@@ -133,6 +200,7 @@ if (typeof window !== 'undefined') {
     window.enableDepthOfField = enableDepthOfField;
     window.disableDepthOfField = disableDepthOfField;
     window.atmosphericConfig = atmosphericConfig;
+    window.ensureToneMapping = _ensureToneMapping;
 
     console.log('🌌 Atmospheric Perspective System loaded (fog-based synthwave horizon haze)');
 }

@@ -2180,9 +2180,15 @@ function _gargantuaGlowTexture(color) {
     grad.addColorStop(0.405, `rgba(${Math.min(255,r+60)},${Math.min(255,g+60)},${Math.min(255,b+30)},0.16)`);
     grad.addColorStop(0.420, 'rgba(255,246,230,0.30)');
     grad.addColorStop(0.436, `rgba(${r},${Math.round(g*0.8)},${b},0.13)`);
-    // Warm lensed glow band fading out into a soft halo.
-    grad.addColorStop(0.55, `rgba(${r},${Math.round(g*0.7)},${Math.round(b*0.6)},0.14)`);
-    grad.addColorStop(0.76, `rgba(${r},${Math.round(g*0.5)},${Math.round(b*0.4)},0.05)`);
+    // Warm lensed glow band fading out into a soft halo. The tail is the
+    // photon ring's BLEED — without it the ring steps from full brightness
+    // to background in a handful of pixels and reads as painted-on plastic
+    // rather than as the hottest matter in the universe. Carried all the way
+    // to the sprite edge at a low but non-zero alpha.
+    grad.addColorStop(0.55, `rgba(${r},${Math.round(g*0.72)},${Math.round(b*0.62)},0.17)`);
+    grad.addColorStop(0.70, `rgba(${r},${Math.round(g*0.58)},${Math.round(b*0.46)},0.090)`);
+    grad.addColorStop(0.85, `rgba(${r},${Math.round(g*0.48)},${Math.round(b*0.38)},0.038)`);
+    grad.addColorStop(0.95, `rgba(${r},${Math.round(g*0.44)},${Math.round(b*0.34)},0.012)`);
     grad.addColorStop(1.00, 'rgba(0,0,0,0)');
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, size, size);
@@ -2192,22 +2198,50 @@ function _gargantuaGlowTexture(color) {
     return tex;
 }
 
-// DOPPLER-BEAMED ACCRETION DISK.
+// DOPPLER-BEAMED ACCRETION DISK — HDR EMISSIVE PROFILE.
 //
-// The old gradient version put its white-hot lip at texture offset 0.50 —
+// History: the first version put its white-hot lip at texture offset 0.50 —
 // which, per the UV note above, is the disk's OUTER rim, with everything
-// from 0.00 to 0.46 fully transparent. The result was a thin bright hoop at
-// the far edge and a hollow middle: the exact inverse of an accretion disk.
-// This builds the profile per-pixel in the correct space and adds the thing
-// that actually makes an accretion disk read as one on screen — relativistic
-// beaming, so the limb rotating TOWARD you is several times brighter and
-// blue-shifted toward white, and the receding limb sinks to a dull ember.
+// from 0.00 to 0.46 fully transparent, i.e. a bright hoop at the far edge
+// and a hollow middle: the exact inverse of an accretion disk. The second
+// built the profile in the right space but painted it as an LDR texture on
+// an LDR material, so the hottest matter in the universe topped out around
+// 64% screen brightness and its ~13:1 beaming ratio got squashed into a few
+// levels of 8-bit alpha. Both read as a flat plastic hoop.
+//
+// This version treats the disk as an HDR emitter and lets the tone mapper
+// do the clipping (atmospheric-perspective.js switches the renderer to
+// ACESFilmic, and the material below carries a >1 colour multiplier):
+//
+//   • `over` is the physical emission in units where 1.0 == "just saturating
+//     the framebuffer". It routinely reaches 6 near the beamed ISCO lip.
+//     Alpha saturates there, and the EXCESS is spent whitening the colour —
+//     so the photon-ring edge genuinely clips to white and rolls off into
+//     the ring's own colour, instead of stopping dead at 8-bit alpha.
+//   • The colour is a three-stop temperature ramp (deep ember → the hole's
+//     own hue → white-hot) driven by a T ~ r^-3/4-ish radial term MULTIPLIED
+//     by the Doppler factor, so there is both an inner-hot/outer-cool radial
+//     gradient AND an approaching-vs-receding split, not just a brightness
+//     difference.
+//   • Beaming is ^2.8 for a ~30:1 limb ratio (real Doppler factor D^3-4 for
+//     a disk this deep in the potential), so the two limbs of the ring are
+//     unmistakably different objects on screen.
+//   • The outer feather now starts at t=0.50 instead of 0.74, so the disk
+//     dissolves over half its width — that's the "glow bleed" that keeps the
+//     edge from stepping from background to full ring in under 10 pixels.
 function _gargantuaDiskTexture(color) {
     const key = 'd' + color;
     if (_gargantuaTexCache[key]) return _gargantuaTexCache[key];
     const c = new THREE.Color(color);
     const br = c.r * 255, bg = c.g * 255, bb = c.b * 255;
     const size = _isMobileRenderTier() ? 256 : 384;
+
+    // Temperature ramp stops. Ember = the hole's hue crushed down to a dull
+    // red-shifted coal; mid = its own colour at full chroma; hot = the
+    // slightly warm white a real ISCO lip photographs as.
+    const emR = br * 0.62, emG = bg * 0.17, emB = bb * 0.11;
+    const miR = Math.min(255, br * 1.02 + 14), miG = Math.min(255, bg * 0.82 + 24), miB = Math.min(255, bb * 0.62 + 10);
+    const hoR = 255, hoG = 250, hoB = 240;
 
     const src = document.createElement('canvas');
     src.width = src.height = size;
@@ -2227,42 +2261,61 @@ function _gargantuaDiskTexture(color) {
             const t = (rr - RIN) / (1 - RIN);              // 0 inner lip → 1 rim
             const ang = Math.atan2(dy, dx);
 
-            // Radial profile: a blown-out ISCO lip riding a T^-3/4-ish
-            // falloff, feathered out before the geometric rim so the disk
-            // dissolves into the dark instead of ending on a hard circle.
-            const lipT = t / 0.055;
+            // Radial emission profile: a blown-out ISCO lip riding a
+            // T^-3/4-ish falloff, feathered out well before the geometric
+            // rim so the disk dissolves into the dark rather than ending on
+            // a hard circle.
+            const lipT = t / 0.065;
             const lip = Math.exp(-lipT * lipT);
-            let prof = Math.pow(1 - t, 1.6) * 1.00 + lip * 1.15;
-            prof *= 1 - _gsmooth(0.74, 1.0, t);
+            let prof = Math.pow(1 - t, 2.0) * 0.90 + lip * 1.55;
+            prof *= 1 - _gsmooth(0.50, 1.0, t);
 
             // RELATIVISTIC BEAMING. dop == 1 on the approaching limb, 0 on
-            // the receding one; the ^2.3 gives ~13:1 between the limbs, in
-            // the neighbourhood of a real Doppler factor D^3.
+            // the receding one.
             const dop = 0.5 + 0.5 * Math.cos(ang);
-            const beam = 0.16 + 2.0 * Math.pow(dop, 2.3);
+            const beam = 0.085 + 2.75 * Math.pow(dop, 2.8);   // ~33:1
 
             // Orbiting filaments — fine angular striations, strongest near
             // the hot inner edge where the shear is worst.
-            const fil = 0.80 + 0.20 * Math.sin(ang * 9 + t * 26) * (1 - t * 0.7);
+            const fil = 0.82 + 0.18 * Math.sin(ang * 9 + t * 26) * (1 - t * 0.7);
 
-            let inten = prof * beam * fil;
-            if (inten <= 0.002) { data[i + 3] = 0; continue; }
+            // HDR emission, in "1.0 == saturating" units.
+            const over = prof * beam * fil;
+            if (over <= 0.004) { data[i + 3] = 0; continue; }
 
-            // Blueshift the approaching side toward white, let the receding
-            // side fall back to a deep ember of the hole's own colour.
-            const m = Math.pow(dop, 1.4);
-            let R = br * 0.85 * (1 - m) + 255 * m;
-            let G = bg * 0.35 * (1 - m) + 246 * m;
-            let B = bb * 0.28 * (1 - m) + 228 * m;
-            const w = Math.min(1, lip * 1.2);
-            R = R * (1 - w) + 255 * w;
-            G = G * (1 - w) + 250 * w;
-            B = B * (1 - w) + 240 * w;
+            // Alpha saturates; the overexposure above 1 is spent on
+            // whitening, which is what "clips to white at the photon ring"
+            // actually looks like on a tone-mapped display.
+            const alpha = over > 1 ? 1 : over;
+            let w = (over - 0.62) / 1.05;
+            w = w < 0 ? 0 : (w > 1 ? 1 : w);
+
+            // TEMPERATURE = radial falloff × Doppler blueshift. This is the
+            // term that gives the disk BOTH gradients at once.
+            let h = Math.pow(1 - t, 0.85) * (0.30 + 0.78 * Math.pow(dop, 1.15));
+            h = h < 0 ? 0 : (h > 1 ? 1 : h);
+
+            let R, G, B;
+            if (h < 0.55) {
+                const u = h / 0.55;
+                R = emR + (miR - emR) * u;
+                G = emG + (miG - emG) * u;
+                B = emB + (miB - emB) * u;
+            } else {
+                const u = (h - 0.55) / 0.45;
+                R = miR + (hoR - miR) * u;
+                G = miG + (hoG - miG) * u;
+                B = miB + (hoB - miB) * u;
+            }
+            const wh = Math.max(w, Math.min(1, lip * 1.25));
+            R = R + (255 - R) * wh;
+            G = G + (250 - G) * wh;
+            B = B + (242 - B) * wh;
 
             data[i] = R > 255 ? 255 : R;
             data[i + 1] = G > 255 ? 255 : G;
             data[i + 2] = B > 255 ? 255 : B;
-            data[i + 3] = Math.min(255, inten * 255);
+            data[i + 3] = alpha * 255;
         }
     }
     sctx.putImageData(img, 0, 0);
@@ -2280,6 +2333,52 @@ function _gargantuaDiskTexture(color) {
     _gargantuaTexCache[key] = tex;
     return tex;
 }
+
+// HDR tint for the emissive black-hole layers. THREE.Color stores its
+// components unclamped and WebGLRenderer copies them straight into the
+// `diffuse` uniform, so a value above 1 is a genuine over-range emitter:
+// with ACESFilmic tone mapping engaged (see atmospheric-perspective.js) it
+// rolls smoothly into white instead of hard-clipping, which is the whole
+// difference between "bloom" and "a flat orange band".
+function _hdrTint(k) {
+    const c = new THREE.Color();
+    c.setRGB(k, k, k);
+    return c;
+}
+
+// =============================================================================
+// EVENT HORIZON MATERIAL — the shadow has to actually OCCLUDE.
+// =============================================================================
+// Every black hole in the game used to be `transparent: true, opacity: 0.95`.
+// That is not "almost opaque" in a scene like this one: it is a 5% window onto
+// everything behind the hole, and with a star sprite clipping at 255 behind it
+// the horizon shows a 13/255 dot — measurably non-black pixels inside a region
+// that must be the darkest thing on screen. Worse, `transparent: true` moves
+// the sphere into the transparent queue, where it is depth-sorted against the
+// additive star fields, galaxy point clouds and nebula sprites that share its
+// origin — so the sort order between "star" and "hole" was effectively
+// arbitrary and stars drew straight through the horizon.
+//
+// Opaque + depthWrite puts the sphere in the opaque queue, which renders
+// wholesale BEFORE every transparent object and leaves a depth wall behind it.
+// Everything additive behind the hole is then depth-rejected for free, and the
+// silhouette is a true (0,0,0) hole punched in the sky. `fog: false` matters
+// too: galaxy cores sit past fogNear, and a fogged horizon is a violet ball,
+// not a shadow. renderOrder -1 draws it ahead of the rest of the opaque queue
+// so it also serves as an early-z occluder for the disk fragments behind it.
+const _EVENT_HORIZON_ORDER = -1;
+
+function _eventHorizonMaterial() {
+    return new THREE.MeshBasicMaterial({
+        color: 0x000000,
+        transparent: false,
+        opacity: 1.0,
+        depthWrite: true,
+        depthTest: true,
+        fog: false
+    });
+}
+if (typeof window !== 'undefined') window._eventHorizonMaterial = _eventHorizonMaterial;
 
 // Polar-jet plume texture: helical filaments only, SEAMLESS in both axes.
 //
@@ -3201,6 +3300,17 @@ function addPolarJets(blackHole, radius, color, lengthK) {
         }
         geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
 
+        // Lift the whole plume clear of the horizon — AFTER the vertex
+        // colours are baked, so the 0..1 throat→tip ramp above is unaffected.
+        // The cone used to start at y=0, i.e. the CENTRE of the sphere, which
+        // meant its near wall was drawn across the front hemisphere. That was
+        // invisible enough while the horizon was a 95%-opaque grey-black
+        // smudge; against a genuinely opaque shadow it reads as a hard-edged
+        // grey rectangle sitting inside the hole and wrecks the silhouette.
+        // Starting just outside the photon ring, the jet emerges from behind
+        // the limb the way it should.
+        geo.translate(0, radius * 1.02, 0);
+
         const mat = new THREE.MeshBasicMaterial({
             map: tex,
             vertexColors: true,
@@ -3241,7 +3351,10 @@ function addGargantuaVisuals(blackHole, radius, color, nearK, farK) {
     //    centre — size it so that lands just outside the sphere.
     const glowMat = new THREE.SpriteMaterial({
         map: _gargantuaGlowTexture(col),
-        color: 0xffffff,
+        // Over-range tint: the photon ring is the brightest thing in the
+        // frame and has to survive the tone curve as pure white with a soft
+        // shoulder, not as an 8-bit value the star sprites can out-shine.
+        color: _hdrTint(1.85),
         transparent: true,
         blending: THREE.AdditiveBlending,
         depthWrite: false,
@@ -3262,8 +3375,14 @@ function addGargantuaVisuals(blackHole, radius, color, nearK, farK) {
     const diskGeo = new THREE.RingGeometry(radius * _GARG_DISK_IN_K, radius * _GARG_DISK_OUT_K, 96);
     const diskMat = new THREE.MeshBasicMaterial({
         map: _gargantuaDiskTexture(col),
+        // 2.6x over-range. The texture already carries the beaming ratio and
+        // the radial temperature ramp; this pushes the approaching limb past
+        // the tone curve's shoulder (so it clips to white) while leaving the
+        // receding limb comfortably below it (so it stays a dim ember). That
+        // separation is the entire read of "this thing is spinning".
+        color: _hdrTint(2.6),
         transparent: true,
-        opacity: 0.9,
+        opacity: 0.95,
         side: THREE.DoubleSide,
         blending: THREE.AdditiveBlending,
         depthWrite: false,
@@ -3297,7 +3416,7 @@ function addGargantuaVisuals(blackHole, radius, color, nearK, farK) {
     // they keep their normal opacity regardless of how close the camera is.
     const fade = [
         { m: glowMat, base: 1.0 },
-        { m: diskMat, base: 0.9 }
+        { m: diskMat, base: 0.95 }
     ];
     blackHole.userData._gargFade = fade;
     blackHole.userData._gargLens = lens;
@@ -3339,7 +3458,11 @@ function updateGargantuaProximityFade(blackHole, camera) {
     const far = blackHole.userData._gargFar || (near * 8);
     let p = (far - d) / (far - near);
     p = p < 0 ? 0 : (p > 1 ? 1 : p);   // 0 at/beyond far, 1 within near
-    const vis = 0.05 + 0.90 * p;        // 5% .. 95% of each design opacity
+    // 12% .. 96% of each design opacity. The floor was 5% back when every
+    // hole also wore an always-on flat accretion hoop; those hoops are gone
+    // (they were the "plastic ring"), so the emissive disk is now the ONLY
+    // thing marking a distant hole and has to stay legible from far out.
+    const vis = 0.12 + 0.84 * p;
     for (let k = 0; k < fade.length; k++) {
         fade[k].m.opacity = fade[k].base * vis;
     }
@@ -4022,15 +4145,12 @@ try {
     
     try {
         const centralBlackHoleGeometry = new THREE.SphereGeometry(280, 24, 24); // 4x
-        const centralBlackHoleMaterial = new THREE.MeshBasicMaterial({ 
-            color: 0x000000,
-            transparent: true,
-            opacity: 0.95
-        });
+        const centralBlackHoleMaterial = _eventHorizonMaterial();
         const centralBlackHole = new THREE.Mesh(centralBlackHoleGeometry, centralBlackHoleMaterial);
         centralBlackHole.position.set(0, 0, 0);
         centralBlackHole.visible = true;
         centralBlackHole.frustumCulled = false;
+        centralBlackHole.renderOrder = _EVENT_HORIZON_ORDER;
         
         centralBlackHole.userData = {
             name: 'Sagittarius A* (Galactic Center)',
@@ -4094,15 +4214,12 @@ try {
    // Random distance between 400 and 620, randomly above or below Sagittarius A*
 const core8Distance = (1600 + Math.random() * 880) * (Math.random() < 0.5 ? 1 : -1); // 4x (kept clear of the 4x-bigger Sgr A*)
     const core8Geometry = new THREE.SphereGeometry(180, 24, 24); // 4x; still smaller than Sgr A* (180 vs 280)
-    const core8Material = new THREE.MeshBasicMaterial({ 
-        color: 0x000000,
-        transparent: true,
-        opacity: 0.95
-    });
+    const core8Material = _eventHorizonMaterial();
     const core8BlackHole = new THREE.Mesh(core8Geometry, core8Material);
     core8BlackHole.position.set(0, core8Distance, 0); // Y-axis (vertical)
     core8BlackHole.visible = true;
     core8BlackHole.frustumCulled = false;
+    core8BlackHole.renderOrder = _EVENT_HORIZON_ORDER;
     
     core8BlackHole.userData = {
     name: 'Companion Core', // RENAMED from "Twin Galactic Core"
@@ -4135,7 +4252,11 @@ const core8Distance = (1600 + Math.random() * 880) * (Math.random() < 0.5 ? 1 : 
 });
     const core8Ring = new THREE.Mesh(core8RingGeometry, core8RingMaterial);
     core8Ring.rotation.x = Math.PI / 2;
-    core8Ring.visible = true;
+    // Retired, same as Sgr A*'s: a flat untextured hoop at constant colour
+    // sat right on the limb of the emissive disk and was the brightest thing
+    // there, which is what made the marquee object read as plastic. The
+    // Gargantua disk (1.05–4.0 radii, HDR, Doppler-beamed) replaces it.
+    core8Ring.visible = false;
     core8Ring.frustumCulled = false;
     
     if (core8BlackHole && core8BlackHole.add) {
@@ -4550,12 +4671,9 @@ console.log('✅ 8th galactic core created with spiral galaxy starfield:', core8
 
 try {
     const localBlackHoleGeometry = new THREE.SphereGeometry(44, 20, 20);
-    const localBlackHoleMaterial = new THREE.MeshBasicMaterial({ 
-        color: 0x000000,
-        transparent: true,
-        opacity: 0.95
-    });
+    const localBlackHoleMaterial = _eventHorizonMaterial();
     const blackHole = new THREE.Mesh(localBlackHoleGeometry, localBlackHoleMaterial);
+    blackHole.renderOrder = _EVENT_HORIZON_ORDER;
     
     // Sit exactly at the (now far-below-plane) gateway position so the
     // black hole stays the hub of its system cluster.
@@ -4586,9 +4704,19 @@ try {
             scene.add(blackHole);
         }
         
-        // Add accretion disk
+        // Legacy accretion hoop — RETIRED (kept in the graph so anything
+        // walking the children still finds a RingGeometry where it expects
+        // one). This was the single worst object in the piece: a 16-unit-wide
+        // band of FLAT saddle-brown with `transparent:false` (so its 0.4
+        // opacity never even applied), sitting directly on the limb of the
+        // event horizon at full opacity, identical on both limbs, stepping
+        // from background to full value in under 10 pixels. It was what the
+        // eye actually read as "the accretion disk", and it read as painted
+        // plastic. The Gargantua disk below — HDR, Doppler-beamed, ~33:1
+        // between approaching and receding limbs, feathered over half its
+        // width — is the real one.
         const ringGeometry = new THREE.RingGeometry(40, 56, 32);
-        const ringMaterial = new THREE.MeshBasicMaterial({ 
+        const ringMaterial = new THREE.MeshBasicMaterial({
             color: 0x8b4513,
             transparent: false,
             opacity: 0.4,
@@ -4596,7 +4724,7 @@ try {
         });
         const ring = new THREE.Mesh(ringGeometry, ringMaterial);
         ring.rotation.x = Math.PI / 2;
-        ring.visible = true;
+        ring.visible = false;
         ring.frustumCulled = true;  // OPTIMIZATION: Enable frustum culling
         
         if (blackHole && blackHole.add) {
@@ -5798,12 +5926,9 @@ const galaxyStarsToAdd = galaxyMainStars;
                     // Create galactic core black hole with proper 3D positioning and rotation
             // blackHoleSize already calculated above for disc starfield sizing
             const blackHoleGeometry = new THREE.SphereGeometry(blackHoleSize, 16, 16);
-            const blackHoleMaterial = new THREE.MeshBasicMaterial({ 
-                color: 0x000000,
-                transparent: true,
-                opacity: 0.95
-            });
+            const blackHoleMaterial = _eventHorizonMaterial();
             const galaxyBlackHole = new THREE.Mesh(blackHoleGeometry, blackHoleMaterial);
+            galaxyBlackHole.renderOrder = _EVENT_HORIZON_ORDER;
             
             // Position and rotate the galaxy black hole
             galaxyBlackHole.position.copy(galaxyCenter);
@@ -5857,8 +5982,13 @@ const galaxyStarsToAdd = galaxyMainStars;
             // mismatch); the Gargantua disk has no such offset, so they
             // disagreed. Keep them coplanar.
             ring.rotation.set(Math.PI / 2, 0, 0);
-            
-            ring.visible = true;
+
+            // RETIRED — see the note on the local gateway's hoop. A flat
+            // constant-colour band on the horizon's limb out-read the
+            // emissive disk and flattened every galaxy core into a bead on a
+            // washer. The Gargantua disk carries galaxyType.color too, so the
+            // per-faction identity this ring provided is not lost.
+            ring.visible = false;
             ring.frustumCulled = true;  // OPTIMIZATION: Enable frustum culling
             ring.matrixAutoUpdate = true;
             ring.updateMatrix();

@@ -43,7 +43,10 @@
 // safe — and registering buys real gameplay for free:
 //
 //   game-core   updateActivePlanets()   filters to <2000u  -> gravity/slingshot
-//   game-objects updateDistanceCulling() hides beyond 30k  -> our LOD, free
+//   game-objects updateDistanceCulling() hides beyond 30k  -> WRAPPED, see the
+//                                        CULL GATE section: that rule is
+//                                        per-body and a system is not a body
+
 //   game-physics gravity/collision loop  walks activePlanets only
 //   game-ui      galaxy-map dots         radarRange 3000
 //   autopilot    assist picker           <6000u, per-body proximity
@@ -79,6 +82,16 @@
 // through. The wrapper is transparent when no lock is held, and it re-arms
 // itself if another file swaps showAchievement out from under it (autopilot
 // does exactly that on every engage/disengage).
+//
+// THE DISTANCE CULL IS SHARED TOO, AND WE TAKE THAT ONE AS WELL.
+// game-objects' updateDistanceCulling() hides any registered planet more than
+// 30,000u from the CAMERA (x0.85 / x0.6 on the adaptive quality tiers). That
+// is a per-BODY rule, and out here the object the player is looking at is a
+// SYSTEM up to 26,000u across — so the far half of a system was culled while
+// the near half was still drawn, most visibly at the exact moment the banner
+// said "SYSTEM CHARTED - 5 worlds / 10 moons". installCullGate() wraps it and
+// re-decides our bodies AS A SYSTEM, keyed to that system's own envelope. See
+// the CULL GATE section.
 //
 // nebulaClouds is deliberately NOT touched: that array drives faction lore,
 // deep-discovery rewards and biome music selection, all of which expect
@@ -172,6 +185,13 @@
         DISCOVER_PAD: 1500,     // flat approach pad on top of the margin
         COARSE_EVERY: 12,       // frames between visibility/discovery passes
         DISCOVERY_REP: 50,
+        // BODY VISIBILITY — see the CULL GATE section. These are measured
+        // from the system CENTRE, never from the individual body, because the
+        // thing the player is looking at is a system and a system is up to
+        // 26,000u across.
+        BODY_CULL_RANGE: 30000, // matches game-objects' authored planet range
+        BODY_CULL_FLOOR: 9000,  // floor the adaptive tier may never shrink past
+        BODY_CULL_HYST: 1.06,   // turn-off radius / turn-on radius
         // The discovery toast shares ONE DOM slot (#achievementPopup) with a
         // dozen writers, several of which re-fire on a timer forever. This is
         // how long a discovery OWNS that slot — see the TOAST PRIORITY block.
@@ -723,8 +743,9 @@
     }
 
     // Register a body into the global `planets` array in the "already culled"
-    // state, so game-objects' updateDistanceCulling() owns its visibility from
-    // frame one and flips it on when the player is genuinely close.
+    // state. Visibility from here on belongs to the CULL GATE below, which
+    // flips a system's bodies on as a set the moment the player is close
+    // enough to that SYSTEM — see setSystemBodiesVisible().
     function registerBody(mesh) {
         mesh.visible = false;
         mesh.userData._distCulled = true;
@@ -1431,6 +1452,9 @@
             dust: null,
             active: false,
             detail: false,
+            // Bodies (stars/planets/moons/rings) are all-on or all-off as a
+            // set — see the CULL GATE. Never per-body, never half a system.
+            bodiesVisible: false,
             discovered: false,
             layout: layout,
             signature: ARCHETYPES[abundant].key,
@@ -1944,6 +1968,12 @@
     // -------------------------------------------------------------------------
     function fireDiscovery(sys) {
         sys.discovered = true;
+        // The banner and the bodies are one promise: nothing may name a
+        // system's census on a frame where part of that census is hidden. The
+        // cull pass has already run this tick and its radius strictly contains
+        // the discovery sphere, so this is belt and braces — but it is the
+        // exact failure being fixed, so it is asserted here too.
+        setSystemBodiesVisible(sys, true);
         var bodies = sys.planets.length + sys.stars.length + sys.moons.length;
         // Headline the rarest thing in the system rather than a body count —
         // "1 gas giant" is a reason to fly there, "4 worlds" never was.
@@ -2097,7 +2127,14 @@
         // Referee the shared toast slot from now on. Transparent until a
         // discovery actually takes the lock.
         installToastGate();
+        // ...and the shared distance cull, which is per-body and cannot see
+        // that a system is one object. Transparent to everything but us.
+        installCullGate();
         initialized = true;
+        // Decide body visibility once before the first frame renders, so a
+        // system the player spawns near is whole on frame one rather than
+        // resolving over the first coarse pass.
+        procCullPass();
         lastTickMs = (typeof performance !== 'undefined') ? performance.now() : Date.now();
 
         if (typeof window !== 'undefined') {
@@ -2188,6 +2225,220 @@
     }
 
     // -------------------------------------------------------------------------
+    // CULL GATE — a system is ONE object, and the shared cull cannot know that
+    // -------------------------------------------------------------------------
+    // game-objects' updateDistanceCulling() walks the global `planets` array
+    // and hides anything further than 30,000u FROM THE CAMERA, scaled by the
+    // adaptive quality tier (x1.0 / x0.85 / x0.6 -> 30,000 / 25,500 / 18,000).
+    // That rule is correct for authored content, where "a planet" is a single
+    // body sitting near the thing you flew to. It is wrong for this shell,
+    // because layout personality made systems BIG: a sparse frontier reaches an
+    // envelope of ~13,000u, a 26,336u diameter measured live.
+    //
+    // What the player actually got, measured: the discovery sphere fires at
+    // envelope * 1.18 + 1500 (~16,600u from the centre), so at the exact frame
+    // "SYSTEM CHARTED · 5 worlds / 10 moons" was on screen, bodies on the far
+    // side of that system were 16,600 + up to 13,000 = ~29,700u from the
+    // camera — past the cull on every tier below full quality. Two of the five
+    // worlds and one of the ten moons were `visible = false` while still
+    // projecting inside the viewport. The game named a census the player could
+    // not finish counting, and the missing worlds were the OUTER ones, which
+    // are the gas giants and the ringed worlds the banner brags about.
+    //
+    // The fix is ownership, not a bigger number. Three rules:
+    //
+    //   1. DISTANCE IS MEASURED TO THE SYSTEM CENTRE, not to the body. One
+    //      compare per system decides every star, planet, moon and ring in it,
+    //      so a system is all-there or all-gone. There is no camera position
+    //      anywhere in the shell from which a procedural system can be half
+    //      drawn — that is the whole invariant, and procGalaxyDebug.cull()
+    //      reports it as `partialSystems`, which must always read 0.
+    //   2. THE RADIUS IS KEYED TO THE SYSTEM'S OWN ENVELOPE, so a system that
+    //      is physically bigger gets a proportionally bigger sphere instead of
+    //      being punished by a flat number authored for 200u worlds. The
+    //      adaptive tier still shortens the shell's draw distance (we honour
+    //      cullScale — this is a real fill-rate lever and the far shell is a
+    //      fine place to spend it), but it may never shrink the sphere below
+    //      the system's own discovery radius: the banner and the bodies are
+    //      the same promise, and one may not outrun the other.
+    //   3. IT RUNS IN THE SAME CALL AS THE PASS IT CORRECTS. The wrapper calls
+    //      the real cull first, then re-asserts ours immediately — never on
+    //      our own rAF tick, which can land on the far side of the render and
+    //      would strobe the far half of a system at the base cull's 10-frame
+    //      cadence.
+    //
+    // Cost: one squared distance per system per call (10-14 of them), and mesh
+    // writes only on the frame a system's state actually flips. Everything
+    // else in the game is untouched — the base cull still runs first, still
+    // owns every authored planet, asteroid, comet and trading ship, and this
+    // wrapper is a straight pass-through for all of them.
+    var cullGateState = {
+        base: null,      // what we forward to (may be another file's wrapper)
+        root: null,      // deepest real updateDistanceCulling we ever saw
+        depth: 0,        // re-entrancy guard, same shape as the toast gate
+        passes: 0,
+        flips: 0,        // systems that changed state
+        rescues: 0       // bodies the base cull hid and we put straight back
+    };
+
+    function cullScaleNow() {
+        var q = (typeof window !== 'undefined') ? window.__quality : null;
+        if (!q || !q.TIERS || !q.TIERS[q.tier]) return 1;
+        return q.TIERS[q.tier].cullScale || 1;
+    }
+
+    // Radius around s.center inside which EVERY body of that system is drawn.
+    // The max of three terms, each of which is a promise to the player:
+    //   * envelope + tier range — the authored draw distance, measured from
+    //     the system so the far limb is included, quality tiers still apply.
+    //   * envelope + FLOOR — even on the minimal tier the whole system is up
+    //     well before you cross its outermost orbit.
+    //   * discoverR + FLOOR — the system you were just told about is all
+    //     there. This is the term that closes the reported bug, and it is
+    //     independent of the quality tier on purpose.
+    // Clamped to VISIBLE_RANGE at the top: past that the tick early-outs on
+    // `!s.active` and stops integrating orbits, and drawing a frozen system is
+    // worse than drawing none.
+    function systemCullR(s, scale) {
+        var byRange = s.envelope + Math.max(PG.BODY_CULL_FLOOR, PG.BODY_CULL_RANGE * scale);
+        var byDiscovery = (s.discoverR || 0) + PG.BODY_CULL_FLOOR;
+        var r = byRange > byDiscovery ? byRange : byDiscovery;
+        return r > PG.VISIBLE_RANGE ? PG.VISIBLE_RANGE : r;
+    }
+
+    // Flip one body, and report whether it actually had to change. Two writes
+    // and one compare, so this is cheap enough to run unconditionally.
+    //
+    // `_distCulled` is the shared cull's own state flag and we keep it honest
+    // rather than lying to it: with it cleared, the base pass will not
+    // "restore" a body we deliberately hid; with it set, the base pass showing
+    // a body early is exactly what we would have done anyway.
+    function markBody(mesh, want) {
+        var changed = (mesh.visible !== want);
+        mesh.visible = want;
+        mesh.userData._distCulled = !want;
+        return changed ? 1 : 0;
+    }
+
+    function systemBodies(s) {
+        var out = [];
+        for (var i = 0; i < s.stars.length; i++) out.push(s.stars[i].mesh);
+        for (var p = 0; p < s.planets.length; p++) out.push(s.planets[p]);
+        for (var m = 0; m < s.moons.length; m++) out.push(s.moons[m]);
+        return out;
+    }
+
+    // RE-ASSERTS EVERY PASS — this is not an optimisation oversight, it is the
+    // whole mechanism, and the obvious "only write on state change" version was
+    // written first and measured failing.
+    //
+    // The base cull does not ask once. It re-runs its own decision every 10
+    // frames forever, so a body it disagrees with is re-hidden ~6x a second no
+    // matter what we set. An early-out on `s.bodiesVisible === want` therefore
+    // wins exactly one frame and then loses the argument permanently: measured
+    // at the discovery boundary of a 13,505u-envelope system on the minimal
+    // tier, 4 of that system's 10 bodies were still hidden with the gate
+    // installed. So we simply restate the truth on every pass — 10-17 boolean
+    // compares per system, ~150 across the whole shell, and the compare is
+    // what makes it free: `visible` is only WRITTEN on the frames it is wrong.
+    function setSystemBodiesVisible(s, want) {
+        var flipped = (s.bodiesVisible !== want);
+        s.bodiesVisible = want;
+        var i, fixed = 0;
+        for (i = 0; i < s.stars.length; i++) fixed += markBody(s.stars[i].mesh, want);
+        for (i = 0; i < s.planets.length; i++) fixed += markBody(s.planets[i], want);
+        for (i = 0; i < s.moons.length; i++) fixed += markBody(s.moons[i], want);
+        // Rings are cosmetic siblings rather than registered bodies, so the
+        // base cull never touches them — but an annulus hanging in space with
+        // nothing inside it is the loudest artefact this file can produce, so
+        // they ride the same switch, in the same statement, as their world.
+        for (i = 0; i < s.rings.length; i++) {
+            var rg = s.rings[i].ring;
+            if (rg.visible !== want) { rg.visible = want; fixed++; }
+        }
+        if (flipped) {
+            // The beacon is this system's stand-in until its real bodies are
+            // drawn, so the handoff belongs HERE, not at the group's 60,000u
+            // activation: between the two the player would have been shown a
+            // corona glow with the dot already extinguished and no star yet.
+            setBeaconLevel(s.id, want ? 0 : 1);
+            cullGateState.flips++;
+        } else {
+            // Bodies we had to put back inside the same call that hid them.
+            // procGalaxyDebug.cull().rescues is this counter: it climbs while
+            // you sit in a big system, and every increment is a body the
+            // player would otherwise have watched blink out.
+            cullGateState.rescues += fixed;
+        }
+        return fixed;
+    }
+
+    // Idempotent, called every frame through the gate and every coarse tick.
+    function procCullPass() {
+        if (!systems.length) return;
+        var cam = activeCamera();
+        if (!cam) return;
+        cullGateState.passes++;
+        var scale = cullScaleNow();
+        var cx = cam.position.x, cy = cam.position.y, cz = cam.position.z;
+        for (var i = 0; i < systems.length; i++) {
+            var s = systems[i];
+            var dx = s.center.x - cx, dy = s.center.y - cy, dz = s.center.z - cz;
+            var r = systemCullR(s, scale);
+            // Hysteresis, so a system parked on the threshold cannot buzz on
+            // and off with the quality controller or with cockpit drift.
+            if (s.bodiesVisible) r *= PG.BODY_CULL_HYST;
+            setSystemBodiesVisible(s, (dx * dx + dy * dy + dz * dz) < r * r);
+        }
+    }
+
+    // The wrapper itself. Transparent to every non-procedural object.
+    function cullGate() {
+        var st = cullGateState;
+        if (st.depth > 0) {
+            // Re-entered from inside our own forward — a foreign wrapper sits
+            // between us and the real cull. Go straight to the root and do NOT
+            // re-run our pass.
+            if (typeof st.root === 'function') st.root();
+            return;
+        }
+        st.depth++;
+        try {
+            var fn = st.base || st.root;
+            if (typeof fn === 'function') fn();
+        } catch (e) {
+            console.warn('PROC-GALAXY cull gate: base cull failed', e);
+        } finally {
+            st.depth--;
+        }
+        try {
+            procCullPass();
+        } catch (e) {
+            console.warn('PROC-GALAXY cull gate: pass failed', e);
+        }
+    }
+    cullGate.__pgCullGate = true;
+
+    function installCullGate() {
+        if (typeof window === 'undefined') return false;
+        var cur = window.updateDistanceCulling;
+        if (cur === cullGate) return true;
+        if (typeof cur === 'function') {
+            if (!cur.__pgCullGate) {
+                cullGateState.base = cur;
+                if (!cullGateState.root) cullGateState.root = cur;
+            }
+        } else if (!cullGateState.base) {
+            // game-objects.js has not defined it yet (or ever). Leave the
+            // global alone and retry on the coarse pass; procCullPass() runs
+            // from the tick regardless, so our bodies are correct either way.
+            return false;
+        }
+        window.updateDistanceCulling = cullGate;
+        return true;
+    }
+
+    // -------------------------------------------------------------------------
     // UPDATE
     // -------------------------------------------------------------------------
     function updateProcGalaxies(external) {
@@ -2218,6 +2469,17 @@
             window.showAchievement !== toastGate) {
             installToastGate();
         }
+        // Same treatment for the distance cull: game-objects.js may have
+        // loaded after us, and anything that re-wraps updateDistanceCulling
+        // would otherwise silently hand our bodies back to the per-body rule.
+        if (coarse && typeof window !== 'undefined' &&
+            window.updateDistanceCulling !== cullGate) {
+            installCullGate();
+        }
+        // Body visibility, decided per SYSTEM (see the CULL GATE). Also runs
+        // from the gate on every base-cull call — this one keeps the invariant
+        // even if the gate never installs.
+        if (coarse) procCullPass();
         var visR2 = PG.VISIBLE_RANGE * PG.VISIBLE_RANGE;
         var detR2 = PG.DETAIL_RANGE * PG.DETAIL_RANGE;
         var discR2 = PG.DISCOVER_RANGE * PG.DISCOVER_RANGE;
@@ -2229,12 +2491,14 @@
                 var dx = s.center.x - cx, dy = s.center.y - cy, dz = s.center.z - cz;
                 var d2 = dx * dx + dy * dy + dz * dz;
 
+                // The GROUP is cosmetic-only (corona, wisp, dust, station) and
+                // reaches further than the bodies do: a haze and a star glow
+                // where the beacon is. The beacon itself is extinguished by
+                // the cull pass when the real bodies arrive, not here.
                 var wantActive = d2 < visR2;
                 if (wantActive !== s.active) {
                     s.active = wantActive;
                     s.group.visible = wantActive;
-                    // Beacon hands off to the real system as it fades in.
-                    setBeaconLevel(i, wantActive ? 0 : 1);
                 }
                 var wantDetail = d2 < detR2;
                 if (wantDetail !== s.detail) {
@@ -2242,12 +2506,10 @@
                     if (s.station) s.station.visible = wantDetail;
                     if (s.dust) s.dust.visible = wantDetail;
                 }
-                // Rings follow their planet's culled state (game-objects owns
-                // the planet's .visible, we just mirror it).
-                for (var r = 0; r < s.rings.length; r++) {
-                    var rr = s.rings[r];
-                    if (rr.ring.visible !== rr.planet.visible) rr.ring.visible = rr.planet.visible;
-                }
+                // (Rings are no longer mirrored here — they flip with their
+                // system in setSystemBodiesVisible(), in the same statement as
+                // the planet they belong to, so there is not even one frame in
+                // which a ring can outlive its world.)
 
                 if (!s.discovered && d2 < (s.discoverR2 || discR2)) fireDiscovery(s);
             }
@@ -2379,6 +2641,11 @@
         window.pgHoldToast = holdToastSlot;
         window.pgToastTier = toastTier;
         window.pgInstallToastGate = installToastGate;
+        // The system-coherent visibility rule, exposed so an integrator can
+        // re-arm it after swapping updateDistanceCulling, or force a decision
+        // right after teleporting the camera.
+        window.pgInstallCullGate = installCullGate;
+        window.pgCullPass = procCullPass;
         // Console helpers for tuning/QA.
         window.procGalaxyDebug = {
             list: function () {
@@ -2437,6 +2704,67 @@
                     minClearance: Math.round(Math.min.apply(null, rows.map(function (r) {
                         return r.clearance;
                     }))),
+                    systems: rows
+                };
+            },
+            // QA one-liner for the half-a-system bug: `partialSystems` and
+            // `incompleteInsideDiscovery` must both read 0 from ANY camera
+            // position, on ANY quality tier (pin one with
+            // window.__qualityLock = 'minimal' and re-run).
+            cull: function () {
+                var cam = activeCamera();
+                var scale = cullScaleNow();
+                var sharedR = PG.BODY_CULL_RANGE * scale;   // what the base cull would use
+                var rows = systems.map(function (s) {
+                    var bodies = systemBodies(s);
+                    var hidden = 0, rescued = 0;
+                    for (var i = 0; i < bodies.length; i++) {
+                        var b = bodies[i];
+                        if (!b.visible) { hidden++; continue; }
+                        // Drawn by us, and far enough out that the per-body
+                        // rule alone would have hidden it: the gate's work.
+                        if (cam && b.position.distanceTo(cam.position) > sharedR) rescued++;
+                    }
+                    var range = cam ? Math.round(s.center.distanceTo(cam.position)) : null;
+                    return {
+                        name: s.name,
+                        range: range,
+                        envelope: Math.round(s.envelope),
+                        discoverR: Math.round(s.discoverR),
+                        cullR: Math.round(systemCullR(s, scale)),
+                        bodies: bodies.length,
+                        shown: bodies.length - hidden,
+                        hidden: hidden,
+                        rescuedFromSharedCull: rescued,
+                        insideDiscoverySphere: (range !== null && range < s.discoverR),
+                        rings: s.rings.length,
+                        orphanRings: s.rings.filter(function (r) {
+                            return r.ring.visible !== r.planet.visible;
+                        }).length
+                    };
+                });
+                var partial = rows.filter(function (r) { return r.hidden > 0 && r.shown > 0; });
+                var incomplete = rows.filter(function (r) {
+                    return r.insideDiscoverySphere && r.hidden > 0;
+                });
+                return {
+                    gateInstalled: (typeof window !== 'undefined' &&
+                                    window.updateDistanceCulling === cullGate),
+                    tierCullScale: scale,
+                    sharedCullRange: Math.round(sharedR),
+                    passes: cullGateState.passes,
+                    systemFlips: cullGateState.flips,
+                    // Bodies re-shown inside the base cull's own call. Climbs
+                    // while you sit in a big system — each one is a world that
+                    // used to blink out.
+                    rescues: cullGateState.rescues,
+                    // THE INVARIANT. Both must be 0.
+                    partialSystems: partial.length,
+                    incompleteInsideDiscovery: incomplete.length,
+                    orphanRings: rows.reduce(function (a, r) { return a + r.orphanRings; }, 0),
+                    bodiesRescued: rows.reduce(function (a, r) {
+                        return a + r.rescuedFromSharedCull;
+                    }, 0),
                     systems: rows
                 };
             },
