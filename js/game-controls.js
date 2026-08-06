@@ -10239,8 +10239,11 @@ function _executeFollow(ally, ud, playerPos) {
     // Per-wingman Y-height variation so they're not on the same plane.
     // Small consistent offset per index + a gentle sine wobble keyed to
     // time and index, so the formation breathes a little but never jitters.
+    // The wobble is suspended at warp speeds: with the carrier-frame follow
+    // holding wingmen quasi-static on screen, the breathing was the last
+    // visible relative motion — warp formation is now perfectly rigid.
     const baseY = ((idx % 3) - 1) * 35; // -35, 0, +35 cycling
-    const wobbleY = Math.sin(Date.now() * 0.0006 + idx * 1.8) * 12;
+    const wobbleY = playerSpeed > 4 ? 0 : Math.sin(Date.now() * 0.0006 + idx * 1.8) * 12;
     const heightOffset = baseY + wobbleY;
 
     const target = playerPos.clone()
