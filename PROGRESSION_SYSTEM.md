@@ -25,11 +25,10 @@ green = the single optional deep-space expedition.
 4. **Follow the colored line to the enemies from the lore** — 7+ hostiles
    of that faction are anchored at the endpoint. Clear them, defeat the
    boss that surfaces, and **the path turns white** (`MISSION_COMPLETE_COLOR`).
-5. **Chart the twin — anytime** — both paths of a twin cluster can be
-   unlocked without finishing either: the twin is exempt from the
-   one-active-mission lock, so the player opens both and chooses which
-   mission to fly first. (Nebulas OUTSIDE the active cluster stay locked
-   until its missions are done.)
+5. **Chart the twin — or anything else — anytime.** Missions never lock
+   discovery: both paths of a twin cluster can be open at once, and a
+   player who leaves a mission unfinished can still chart any other
+   nebula. Abandoned colored paths stay open and can be finished later.
 6. **Twin cluster liberated** — the moment both cluster-mates' paths are
    white, the **final white path** opens from the pair (anchored at the
    nebula nearest the player) onward to the nearest uncharted **outer
@@ -44,10 +43,9 @@ green = the single optional deep-space expedition.
   inside each other's radius can't co-fire.
 - Minimum **8 seconds** between discoveries — warp flybys can't burst-open
   paths.
-- **One CLUSTER of missions at a time** — no new discovery while any
-  mission path is still colored, EXCEPT the twin of the active mission's
-  cluster (freedom of choice within the pair). Guide/optional lines
-  (`galaxyId: -1` — 'final', 'deepspace') never block.
+- **No mission lock** — unfinished missions never block discovery; the
+  two gates above are what keep paths opening one at a time (each new
+  path is a deliberate close approach to a specific core).
 
 ---
 

@@ -4704,40 +4704,12 @@ function checkForNebulaDeepDiscovery() {
     const _discoveryCooldownActive = gameState._lastDeepDiscoveryAt &&
         (Date.now() - gameState._lastDeepDiscoveryAt) < 8000;
 
-    // ONE CLUSTER OF MISSIONS AT A TIME: while any discovery mission is
-    // still in progress (path not yet turned white), the only nebula that
-    // may still open a path is the TWIN of an active mission's nebula —
-    // both paths of a twin cluster can be unlocked without finishing
-    // either, and the player chooses which to fly first. Everything
-    // outside that cluster stays locked until the active missions are
-    // done. Guide and optional lines (galaxyId < 0: 'final' onward paths,
-    // the green 'deepspace' expedition) carry no mission and never block —
-    // the deepspace line in particular never completes, so keying on
-    // completion alone would deadlock discovery for the rest of the game.
-    let _missionActive = false;
-    let _activeCluster = null;        // cluster id shared by ALL active missions, else -1
-    if (typeof discoveryPaths !== 'undefined') {
-        for (let pi = 0; pi < discoveryPaths.length; pi++) {
-            const pud = discoveryPaths[pi] && discoveryPaths[pi].line &&
-                discoveryPaths[pi].line.userData;
-            if (!pud || pud.missionComplete ||
-                pud.galaxyId === undefined || pud.galaxyId < 0) continue;
-            _missionActive = true;
-            // Which cluster does this active mission start from?
-            let srcCluster = -1;
-            if (pud.startPosition) {
-                for (let ni = 0; ni < nebulaClouds.length; ni++) {
-                    const sn = nebulaClouds[ni];
-                    if (!sn || !sn.userData || sn.userData.isDistant || sn.userData.isExoticCore) continue;
-                    if (sn.userData.cluster === undefined || sn.userData.cluster === null) continue;
-                    if (sn.position.distanceTo(pud.startPosition) < 1) { srcCluster = sn.userData.cluster; break; }
-                }
-            }
-            if (_activeCluster === null) _activeCluster = srcCluster;
-            else if (_activeCluster !== srcCluster) _activeCluster = -1;
-            if (_activeCluster === -1) break;
-        }
-    }
+    // NO MISSION LOCK: an unfinished mission never blocks discovering
+    // other nebulas — the player is free to leave a colored path behind
+    // and chart elsewhere; abandoned missions stay open and can be
+    // finished anytime. The anti-burst gates above (nearest nebula only,
+    // 8s cooldown) are what keep paths opening ONE at a time — each new
+    // path is still a deliberate close approach to a specific core.
 
     nebulaClouds.forEach((nebula, index) => {
         if (!nebula || !nebula.userData) return;
@@ -4814,17 +4786,9 @@ function checkForNebulaDeepDiscovery() {
 
         // The one-discovery-per-approach gate (computed above): only the
         // nebula whose core the player is nearest may trigger, never
-        // within 8s of the previous discovery, and — unless this nebula is
-        // the twin of the active mission's cluster — never while another
-        // mission path is still active (not yet white). A blocked nebula
-        // simply triggers later, when the player returns to it.
+        // within 8s of the previous discovery. A blocked nebula simply
+        // triggers later, when the player returns to it.
         if (index !== _nearestUndiscovered || _discoveryCooldownActive) return;
-        if (_missionActive) {
-            const _isTwinOfActive = nebulaType === 'clustered' &&
-                _activeCluster !== null && _activeCluster !== -1 &&
-                nebula.userData.cluster === _activeCluster;
-            if (!_isTwinOfActive) return;
-        }
 
         // Resolve which galaxy/faction this nebula maps to
         const galaxyId = resolveNebulaGalaxyId(nebula, nebulaType, index);
