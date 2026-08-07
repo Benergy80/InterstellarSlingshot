@@ -669,7 +669,7 @@ function showStartButton() {
 
         // Trigger fade-in after a brief delay
         setTimeout(() => {
-            introSequence.startButton.style.opacity = '1';
+            if (introSequence.startButton) introSequence.startButton.style.opacity = '1';
         }, 100);
     }
 
@@ -678,7 +678,7 @@ function showStartButton() {
         introSequence.demoButton.style.opacity = '0';
         introSequence.demoButton.style.transition = 'opacity 1s ease-in-out';
         setTimeout(() => {
-            introSequence.demoButton.style.opacity = '1';
+            if (introSequence.demoButton) introSequence.demoButton.style.opacity = '1';
         }, 300);
     }
 
