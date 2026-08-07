@@ -585,6 +585,42 @@ function _ensureShipThrusterCones(ship, color) {
         ship.add(streak.mesh);
         cones.push(streak);
     });
+    // ── ALARM BULB: the telegraph's OWN channel ──────────────────────────
+    //
+    // WHY THIS EXISTS. Before it, "about to shoot" and "burning hard" were
+    // the SAME cue wearing different amounts of itself: winding up just made
+    // the existing plume brighter and fatter. Measured at 1,200u, the mean
+    // colour of the lit region moved from RGB(157,115,125) to (183,133,143)
+    // across the whole 0->1 charge — a +26 brightness lift with the hue
+    // essentially untouched (R-B balance +32 -> +40). Brightness is the axis
+    // the plume ALREADY spends on thrust, so the telegraph was invisible
+    // underneath it.
+    //
+    // Hue is the free axis, and it has to be ADDED, not tinted. Tinting the
+    // existing plume toward alarm is multiplicative: it works for a red
+    // faction and turns a cyan faction BLACK (multiplying near-zero red by
+    // more red is still zero), so the wind-up would dim half the roster.
+    // A dedicated additive sprite adds red where there was none, so the swing
+    // is in the same direction for every faction in the game.
+    //
+    // It is a single Sprite (not one per nozzle), parked between the engines,
+    // and it is `visible = false` whenever charge is ~0 — which is almost
+    // always — so a hostile that is not winding up pays nothing for it.
+    const alarm = new THREE.Sprite(new THREE.SpriteMaterial({
+        color: _PLUME_ALARM, map: _plumeCoreTex(),
+        transparent: true, opacity: 0,
+        blending: THREE.AdditiveBlending, depthWrite: false
+    }));
+    alarm.userData._plumeAlarmRad = coneRad;
+    alarm.position.set(0, 0, localBack + _apex * coneRad * 0.55);
+    alarm.scale.set(coneRad * 2, coneRad * 2, 1);
+    alarm.visible = false;
+    alarm.renderOrder = 82;
+    alarm.userData._isThrusterCone = true;
+    _plumeExemptFromDrawBudget(alarm);
+    ship.add(alarm);
+    ship.userData._plumeAlarmSprite = alarm;
+
     ship.userData._thrusters = cones;
     ship.userData._plumeApex = _apex;
     // Start at the always-on floor rather than 0 so a hostile that spawns
@@ -597,6 +633,31 @@ function _ensureShipThrusterCones(ship, color) {
 // picks between the idle burn and the full burn. A hostile that stops
 // accelerating must not stop existing.
 const _PLUME_IDLE = 0.80;
+
+// PILOT LIGHT -> SPEAR. The thrust envelope, as multipliers on the streak's
+// base length / width / opacity. Idle is a stub at the nozzle; full thrust
+// is ~3x longer, half again as wide and at full opacity.
+//
+// The old envelope was a visual no-op: idle vs full moved the streak scale
+// by +3.1% and opacity from 0.248 to 0.310, because both length and width
+// were tied to `next` (0.80 -> 1.00) with tiny coefficients. Measured at
+// 900u the whole idle->full transition changed 832 framebuffer pixels — you
+// could not see a hostile go to burners.
+const _PLUME_LEN_IDLE = 0.36, _PLUME_LEN_FULL = 1.16;   // 3.2x range
+const _PLUME_WID_IDLE = 0.70, _PLUME_WID_FULL = 1.18;
+const _PLUME_OPA_IDLE = 0.62, _PLUME_OPA_FULL = 1.00;
+
+// Fixed ALARM hue for the attack wind-up (see the alarm bulb in
+// _ensureShipThrusterCones). Deliberately NOT the faction colour: the
+// telegraph has to be one learnable colour across all eight factions, and
+// it has to be hue-separable from a white-hot nozzle, which rules out
+// anything pale. Near-zero green AND near-zero blue is what makes it swing
+// the lit region's red/blue balance rather than just its brightness — the
+// first cut of this was 0xff0a3c (a magenta-leaning alarm) and its 60/255
+// of blue held the measured R-B swing down to +10, because the bulb was
+// contributing almost as much blue to the mean as the white nozzle it was
+// supposed to be distinguishable from.
+const _PLUME_ALARM = 0xff0a14;
 
 function _updateShipThrusterCones(ship, thrusting, dist, charge) {
     if (!ship || !ship.userData || !ship.userData._thrusters) return;
@@ -674,6 +735,31 @@ function _updateShipThrusterCones(ship, thrusting, dist, charge) {
     const streakFade = Math.min(1, Math.pow(axialFade, 0.45) * 1.12);
     const coreBoost = 1 + (1 - axialFade) * 0.55;
 
+    // THRUST ENVELOPE. `next` rides 0.80 (_PLUME_IDLE) -> 1.00; normalise it
+    // so the pilot-light/spear curve above is expressed in plain 0..1.
+    const tN = Math.min(1, Math.max(0, (next - _PLUME_IDLE) / (1 - _PLUME_IDLE)));
+
+    // RANGE OVERRIDE. Collapsing the idle plume to a 36% stub is the whole
+    // point at fighting range, and a liability at survey range: past ~2,000u
+    // the streak is already down to a couple of pixels and a stub of that is
+    // nothing at all. `widen` only lifts off 1.0 once the angular-size floor
+    // engages, so it doubles as a free "am I far away?" signal — use it to
+    // hand the idle plume its length back exactly where thrust state stops
+    // being readable anyway. Presence beats nuance at 15,000u.
+    // ^0.55 rather than linear: `widen` does not leave 1.0 until the plume is
+    // already under 7px (about 3,000u), and hits its 2.2 cap around 6,600u,
+    // so a linear ramp would leave the whole 3,000-5,000u band on the short
+    // idle stub — exactly the band where you are picking hostiles out of the
+    // sky. The power curve hands back half the length by ~3,600u.
+    const farLift = (_PLUME_MAX_WIDEN > 1)
+        ? Math.pow(Math.min(1, Math.max(0, (widen - 1) / (_PLUME_MAX_WIDEN - 1))), 0.55) : 0;
+    const lenIdle = _PLUME_LEN_IDLE + (1 - _PLUME_LEN_IDLE) * farLift;
+    const widIdle = _PLUME_WID_IDLE + (1 - _PLUME_WID_IDLE) * farLift;
+    const opaIdle = _PLUME_OPA_IDLE + (1 - _PLUME_OPA_IDLE) * farLift;
+    const lenK = lenIdle + (_PLUME_LEN_FULL - lenIdle) * tN;
+    const widK = widIdle + (_PLUME_WID_FULL - widIdle) * tN;
+    const opaK = opaIdle + (_PLUME_OPA_FULL - opaIdle) * tN;
+
     const flicker = 0.90 + Math.sin(Date.now() * 0.026 + (ship.id || 0)) * 0.10;
     for (let i = 0; i < cones.length; i++) {
         const c = cones[i];
@@ -683,15 +769,49 @@ function _updateShipThrusterCones(ship, thrusting, dist, charge) {
         // deliberately allowed to clip (that's the white-hot read); the
         // streak is held under 1.0 so it keeps its faction hue instead of
         // washing out to the same white the starfield already owns.
-        const o = bo * next * flicker
+        const o = bo * opaK * flicker
                 * (1 + chgQ * (isCore ? 0.35 : 0.55))
                 * (isCore ? coreBoost : streakFade);
         c.mat.opacity = Math.min(1.0, o);
         const bs = c.mesh.userData._plumeBaseScale;
-        const w = widen * (0.92 + next * 0.08) * (1 + chgQ * 0.30);
-        const l = (0.85 + next * 0.15) * (1 + chgQ * 0.55);
+        const w = widen * widK * (1 + chgQ * 0.30);
+        const l = lenK * (1 + chgQ * 0.55);
         if (isCore) c.mesh.scale.set(bs.x * w * coreBoost, bs.y * w * coreBoost, 1);
-        else c.mesh.scale.set(bs.x * w, bs.y * l, 1);
+        else {
+            c.mesh.scale.set(bs.x * w, bs.y * l, 1);
+            // RE-ANCHOR TO THE NOZZLE. The quad is built centred, so its
+            // resting z (_plumeZ) is half a FULL-length plume aft of the
+            // hull's rear edge. Scaling length about that centre pulls BOTH
+            // ends in — at the 0.36 idle length the stub would float ~0.32
+            // hull-lengths behind the ship, a detached red smear with no
+            // visible source. Slide the centre so the hot end stays welded
+            // to the rear edge and only the tail moves.
+            //   rearEdge = _plumeZ - apex*len/2  ->  z = _plumeZ - apex*len*(1-l)/2
+            const apexS = ship.userData._plumeApex || 1;
+            c.mesh.position.z = c.mesh.userData._plumeZ - apexS * bs.y * 0.5 * (1 - l);
+        }
+    }
+
+    // ── The telegraph's own channel ──────────────────────────────────────
+    // A saturated alarm bloom that SWELLS out of the engine bay as the shot
+    // charges. Off (and not drawn) below 2% charge, which is the state a
+    // hostile is in almost all the time.
+    const alarm = ship.userData._plumeAlarmSprite;
+    if (alarm) {
+        if (chg <= 0.02) {
+            if (alarm.visible) { alarm.visible = false; alarm.material.opacity = 0; }
+        } else {
+            alarm.visible = true;
+            const rad = alarm.userData._plumeAlarmRad || 1;
+            // Grows 1.2x -> 4.4x the nozzle radius across the wind-up, and
+            // rides the same angular-size floor as the plume so it is still
+            // a real cue and not one pixel at 1,200u.
+            const s = rad * 2 * widen * (1.2 + 3.2 * chgQ);
+            alarm.scale.set(s, s, 1);
+            // chg^1.5: nothing at the start of the wind-up, hard by the end,
+            // so the LAST moments before the bolt are the loud ones.
+            alarm.material.opacity = Math.min(1, 0.98 * Math.pow(chg, 1.5));
+        }
     }
 }
 
@@ -4881,6 +5001,248 @@ function _fxLayeredBurst(position, o) {
     }
 }
 
+// ── KILL SPECTACLE: size the detonation off the thing that died ──────────
+//
+// THE BUG THIS FIXES. The generic kill burst was a fixed-size recipe (74u
+// and 128u flash sprites, one 9u ring, 26 sparks) regardless of what blew
+// up. Measured in the framebuffer at 1,200u against a 116u hull whose
+// silhouette covers ~940 px, the whole explosion peaked at 1,053 lit px —
+// 1.1x the ship — and was fully dark by ~630 ms. A kill was literally
+// SMALLER than the ship that died and over before the player's eye got
+// there. Every other beat in the fight (the plume, the telegraph, the
+// bolt) is angular-size aware; the death was the one thing that wasn't.
+//
+// So the burst is now derived from the victim's own measured hull, using
+// the SAME manual world-box measurement _ensureShipThrusterCones uses for
+// the plume (real hull meshes only — skip the 40u collision hitbox, the
+// additive glow layers and the thruster quads, or the box is dominated by
+// the hitbox and every explosion comes out identical again). Everything
+// downstream is expressed in hull-lengths, so a wingman pops and a boss
+// detonates without a single magic pixel number.
+const _fxBox = new THREE.Box3();
+const _fxMB = new THREE.Box3();
+const _fxLM = new THREE.Matrix4();
+const _fxInv = new THREE.Matrix4();
+const _fxSize = new THREE.Vector3();
+const _fxWS = new THREE.Vector3();
+
+// Neutral fall-back hull length, and the clamp that keeps a bad measurement
+// from producing either an invisible pop or a screen-filling nuke.
+const _FX_HULL_DEFAULT = 80;
+const _FX_HULL_MIN = 42;
+const _FX_HULL_MAX = 620;
+
+function _fxMeasureWorldLen(obj) {
+    if (!obj || !obj.isObject3D) return 0;
+    const ud = obj.userData || {};
+    // The plume already measured this hull — reuse it rather than paying
+    // for a second traverse on the frame something dies.
+    if (ud._plumeHullLen > 0) return ud._plumeHullLen;
+    if (ud._fxHullLen > 0) return ud._fxHullLen;
+    let len = 0;
+    try {
+        obj.updateWorldMatrix(true, true);
+        try { obj.getWorldScale(_fxWS); } catch (e) { _fxWS.set(1, 1, 1); }
+        const sx = Math.max(0.001, Math.abs(_fxWS.x || 1));
+        _fxInv.copy(obj.matrixWorld).invert();
+        _fxBox.makeEmpty();
+        let any = false;
+        obj.traverse(n => {
+            if (!n.isMesh || !n.geometry) return;
+            const u = n.userData || {};
+            if (u.isHitbox || u.isGlowLayer || u._isThrusterCone) return;
+            if (!n.geometry.boundingBox) n.geometry.computeBoundingBox();
+            if (!n.geometry.boundingBox) return;
+            _fxLM.multiplyMatrices(_fxInv, n.matrixWorld);
+            _fxMB.copy(n.geometry.boundingBox).applyMatrix4(_fxLM);
+            _fxBox.union(_fxMB);
+            any = true;
+        });
+        if (any && isFinite(_fxBox.min.x) && _fxBox.max.x > _fxBox.min.x) {
+            _fxBox.getSize(_fxSize);
+            len = Math.max(_fxSize.x, _fxSize.y, _fxSize.z) * sx;
+        }
+    } catch (e) {}
+    if (len > 0 && obj.userData) obj.userData._fxHullLen = len;
+    return len;
+}
+
+// Most call sites hand us `enemy.position` — the LIVE Vector3, not a copy —
+// so an identity scan finds the victim exactly. Proximity is the backstop
+// for the handful that pass a clone.
+const _fxLastVictim = { len: 0, at: 0, x: 0, y: 0, z: 0 };
+
+function _fxVictimWorldLen(target, pos) {
+    let len = 0;
+    if (target && target.isObject3D) len = _fxMeasureWorldLen(target);
+    if (!len && pos) {
+        const pool = (typeof enemies !== 'undefined' && enemies) ? enemies
+                   : (typeof window !== 'undefined' ? window.enemies : null);
+        if (pool && pool.length) {
+            let best = null, bestD = Infinity;
+            for (let i = 0; i < pool.length; i++) {
+                const e = pool[i];
+                if (!e || !e.position) continue;
+                if (e.position === pos) { best = e; bestD = 0; break; }
+                const d = e.position.distanceToSquared(pos);
+                if (d < bestD) { bestD = d; best = e; }
+            }
+            // Only trust a proximity hit if it is essentially AT the blast.
+            if (best && bestD <= 220 * 220) len = _fxMeasureWorldLen(best);
+        }
+    }
+    const now = Date.now();
+    // createPirateExplosionVariant fires a delayed secondary pop from a
+    // random offset, by which time the victim is out of `enemies`. Inherit
+    // the size of the kill that just happened next door so the second beat
+    // matches the first instead of collapsing to the default.
+    if (!len && pos && _fxLastVictim.len > 0 && now - _fxLastVictim.at < 1600 &&
+        Math.abs(pos.x - _fxLastVictim.x) < 320 &&
+        Math.abs(pos.y - _fxLastVictim.y) < 320 &&
+        Math.abs(pos.z - _fxLastVictim.z) < 320) {
+        len = _fxLastVictim.len;
+    }
+    if (!len) return _FX_HULL_DEFAULT;
+    len = Math.min(_FX_HULL_MAX, Math.max(_FX_HULL_MIN, len));
+    if (pos) {
+        _fxLastVictim.len = len; _fxLastVictim.at = now;
+        _fxLastVictim.x = pos.x; _fxLastVictim.y = pos.y; _fxLastVictim.z = pos.z;
+    }
+    return len;
+}
+
+// SHOCKWAVE FRONT. One shared unit annulus (inner 0.82 / outer 1.0) scaled
+// per frame, re-aimed at the camera every frame so the front always reads
+// as a circle instead of the ellipse a spawn-time lookAt leaves behind when
+// you are strafing past the kill. Geometry is shared and must NOT be
+// disposed in cleanup.
+let _FX_SHOCK_GEO = null;
+function _fxShockGeo() {
+    // 7% of the radius. A fat annulus (the first pass used 20%) sweeps an
+    // enormous additive band as it expands — measured, it alone put the
+    // burst at 100,000 lit px, a screen-filling wash instead of a front.
+    if (!_FX_SHOCK_GEO) _FX_SHOCK_GEO = new THREE.RingGeometry(0.93, 1.0, 64);
+    return _FX_SHOCK_GEO;
+}
+
+function _fxShockwave(center, r0, r1, color, life, opacity) {
+    if (typeof scene === 'undefined') return;
+    const mat = new THREE.MeshBasicMaterial({
+        color: color, transparent: true, opacity: opacity,
+        side: THREE.DoubleSide, blending: THREE.AdditiveBlending,
+        depthWrite: false
+    });
+    const ring = new THREE.Mesh(_fxShockGeo(), mat);
+    ring.position.copy(center);
+    ring.frustumCulled = false;
+    ring.renderOrder = 71;
+    ring.userData.__dbTris = Infinity;   // never a draw-budget candidate
+    scene.add(ring);
+    const _aim = () => {
+        const c = (typeof camera !== 'undefined' && camera) ? camera : window.camera;
+        if (c) ring.lookAt(c.position);
+    };
+    _aim();
+    let t = 0;
+    explosionManager.addExplosion({
+        update(dt) {
+            t += dt;
+            const k = Math.min(1, t / life);
+            // Fast out of the gate, decelerating — a pressure front, not a
+            // linear circle animation.
+            const r = r0 + (r1 - r0) * (1 - Math.pow(1 - k, 2.2));
+            ring.scale.set(r, r, 1);
+            _aim();
+            mat.opacity = opacity * Math.pow(1 - k, 1.35);
+            return k < 1;
+        },
+        cleanup() { scene.remove(ring); mat.dispose(); }   // shared geo kept
+    });
+}
+
+// EMBER / DEBRIS TAIL. The kill has to OUTLIVE the shot: the flash is over
+// in ~0.5 s but burning wreckage keeps the spot on screen for the ~1.8 s it
+// takes the player to look at what they just did. One Points system (one
+// draw call) of soft additive embers thrown outward with drag, on a slow
+// power-curve fade plus a flicker so it reads as burning debris rather than
+// a dissolve.
+function _fxEmberTail(center, S, color, count, life) {
+    if (typeof scene === 'undefined') return;
+    count = count || 30;
+    life = life || 1850;
+    const geo = new THREE.BufferGeometry();
+    const pos = new Float32Array(count * 3);
+    const vel = new Float32Array(count * 3);
+    const spd = S * 0.055;
+    for (let i = 0; i < count; i++) {
+        pos[i*3] = center.x; pos[i*3+1] = center.y; pos[i*3+2] = center.z;
+        let dx = Math.random() - 0.5, dy = Math.random() - 0.5, dz = Math.random() - 0.5;
+        const m = Math.sqrt(dx*dx + dy*dy + dz*dz) || 1;
+        const s = spd * (0.30 + Math.random() * 1.35);
+        vel[i*3] = dx/m*s; vel[i*3+1] = dy/m*s; vel[i*3+2] = dz/m*s;
+    }
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    const mat = new THREE.PointsMaterial({
+        color: color || 0xffbcdd, size: Math.max(3.0, S * 0.145),
+        map: _fxGetFlashTexture(), transparent: true, opacity: 1,
+        blending: THREE.AdditiveBlending, depthWrite: false, sizeAttenuation: true
+    });
+    const pts = new THREE.Points(geo, mat);
+    pts.frustumCulled = false;
+    pts.renderOrder = 72;
+    pts.userData.__dbTris = Infinity;
+    scene.add(pts);
+    let t = 0;
+    explosionManager.addExplosion({
+        update(dt) {
+            t += dt;
+            const k = Math.min(1, t / life);
+            const f = dt / 50;
+            const drag = Math.pow(0.93, f);
+            const arr = geo.attributes.position.array;
+            for (let i = 0; i < count; i++) {
+                vel[i*3] *= drag; vel[i*3+1] *= drag; vel[i*3+2] *= drag;
+                arr[i*3]   += vel[i*3]   * f;
+                arr[i*3+1] += vel[i*3+1] * f;
+                arr[i*3+2] += vel[i*3+2] * f;
+            }
+            geo.attributes.position.needsUpdate = true;
+            const fl = 0.82 + 0.18 * Math.sin(t * 0.021);
+            mat.opacity = Math.max(0, Math.pow(1 - k, 0.55)) * fl;
+            return k < 1;
+        },
+        cleanup() { scene.remove(pts); geo.dispose(); mat.dispose(); }
+    });
+}
+
+// The generic kill detonation, every dimension in HULL LENGTHS (S).
+// Synthwave discipline: hot white-pink core, hot magenta fireball, and a
+// magenta/cyan double shock front — the same neon pair the HUD and the
+// nebulae already speak. Nothing here is orange any more, because orange
+// over this starfield is what made the old burst read as a tan sticker.
+// ONE knob. Every dimension below is a multiple of the victim's hull
+// length; _FX_KILL_GAIN scales the whole silhouette at once so the
+// "explosion peak lit px vs hull silhouette px" ratio can be tuned against
+// the framebuffer without re-balancing five layers by hand.
+//
+// CALIBRATED, not guessed. Measured by same-frame render-target readback at
+// 1,200u (count of pixels the burst lifts >=8/255 above an otherwise
+// identical frame), the burst's peak area follows peak ~= 10.94 x gain^2 x
+// hull-silhouette. 0.64 lands it at 4.7x the hull for a 116u pirate and
+// 3.9x for a 48u fighter — inside the 3-5x spec for both, because every
+// dimension is in hull-lengths and the ratio is therefore scale-free.
+const _FX_KILL_GAIN = 0.64;
+
+function _fxKillBurst(center, S) {
+    const K = S * _FX_KILL_GAIN;
+    _fxCoreFlash(center, 0xfff0f7, 0.18 * K, 1.15 * K, 190);   // the bang
+    _fxCoreFlash(center, 0xff5aa8, 0.35 * K, 2.05 * K, 470);   // the fireball
+    _fxCoreFlash(center, 0xff2f78, 0.55 * K, 2.70 * K, 980);   // the afterglow
+    _fxShockwave(center, 0.20 * K, 1.90 * K, 0xff3fa8, 620, 1.0);
+    _fxShockwave(center, 0.15 * K, 2.60 * K, 0x53ecff, 900, 0.62);
+    _fxEmberTail(center, K, 0xffbcdd, 30, 1850);
+}
+
 function createExplosionEffect(targetObject) {
     // Support both object with position property and direct position vector
     let position;
@@ -4892,11 +5254,11 @@ function createExplosionEffect(targetObject) {
         console.warn('Invalid target object for explosion');
         return;
     }
+    if (typeof scene === 'undefined' || typeof THREE === 'undefined') return;
 
-    _fxLayeredBurst(position, {
-        core: 0xfff3d0, flash: 0xff7a2a, ring: 0xff5511,
-        spark: 0xffaa44, sparkCount: 26, scale: 1.0
-    });
+    const center = position.clone ? position.clone()
+                 : new THREE.Vector3(position.x, position.y, position.z);
+    _fxKillBurst(center, _fxVictimWorldLen(targetObject, position));
 
     // Play explosion sound
     playSound('explosion');

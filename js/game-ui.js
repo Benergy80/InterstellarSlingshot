@@ -2374,7 +2374,8 @@ const mapDotPool = {
         el.className = cls;
         // Mirrors the CSS defaults so the cache and the element agree.
         el._s = { size: '', bg: '', shadow: '', tf: '', vis: 'hidden',
-                  color: '', title: '', distress: false, glyph: false };
+                  color: '', title: '', distress: false, glyph: false,
+                  z: '', aggregate: false };
         if (this.container) this.container.appendChild(el);
         return el;
     },
@@ -2515,6 +2516,139 @@ let _mapTitleTick = false;
 // it every refresh re-invalidated dozens of already-correct elements.
 let _galacticChromeHidden = false;   // galactic view has hidden universal chrome
 let _universeDecorLive = false;      // nebula dots / path lines are attached
+
+// ── Radar declutter: bucket candidate blips, render individuals or one
+// aggregate per crowded cell ────────────────────────────────────────────
+// Cell size in radar px — matches the ~4-6px grid a dense clump was
+// observed stacking into (a screen-space cell, not a world-space one, so
+// it scales with however zoomed-in the radar currently is).
+const MAP_CLUSTER_CELL_PX = 5;
+// Hard ceiling on DOM nodes this pass may claim. The cell bucketing alone
+// handles the normal "dense clump" case; this is a fallback for a
+// pathological spread (many cells, each lightly occupied) that would
+// otherwise still blow the budget.
+const MAP_CLUSTER_NODE_BUDGET = 250;
+
+function renderClusteredMapDots(candidates) {
+    const must = [];
+    const loose = [];
+    for (let i = 0; i < candidates.length; i++) {
+        (candidates[i].mustIndividual ? must : loose).push(candidates[i]);
+    }
+
+    // Bucket into screen-space cells, widening the cell (fewer, bigger
+    // buckets) only if the first pass would still blow the node budget.
+    let cellPx = MAP_CLUSTER_CELL_PX;
+    let groups;
+    for (let attempt = 0; attempt < 4; attempt++) {
+        groups = new Map(); // cellKey -> array of candidates
+        for (let i = 0; i < loose.length; i++) {
+            const c = loose[i];
+            const ck = Math.floor(c.px / cellPx) + '_' + Math.floor(c.py / cellPx);
+            let g = groups.get(ck);
+            if (!g) { g = []; groups.set(ck, g); }
+            g.push(c);
+        }
+        let total = must.length;
+        groups.forEach(g => { total += g.length <= 2 ? g.length : 1; });
+        if (total <= MAP_CLUSTER_NODE_BUDGET || attempt === 3) break;
+        cellPx *= 1.7;
+    }
+
+    // Must-individual contacts (current target / active lock) always get
+    // their own dot, raised above anything sharing its cell.
+    for (let i = 0; i < must.length; i++) renderIndividualMapDot(must[i], true);
+
+    groups.forEach((g, cellKey) => {
+        if (g.length <= 2) {
+            for (let i = 0; i < g.length; i++) renderIndividualMapDot(g[i], false);
+        } else {
+            renderAggregateMapDot(cellKey, g);
+        }
+    });
+}
+
+// Every write below is compare-and-set against the dot's own cache: a
+// blip that kept its colour/size/position costs nothing.
+function renderIndividualMapDot(c, raised) {
+    const dot = mapDotPool.get(c.key);
+    const s = dot._s;
+    if (s.size !== c.dotSize) { dot.style.width = c.dotSize; dot.style.height = c.dotSize; s.size = c.dotSize; }
+    if (s.bg !== c.dotColor) { dot.style.backgroundColor = c.dotColor; s.bg = c.dotColor; }
+    const shadow = c.distress
+        ? '0 0 8px ' + c.dotColor + ', 0 0 14px rgba(255,170,0,0.6)'
+        : '0 0 4px ' + c.dotColor;
+    if (s.shadow !== shadow) { dot.style.boxShadow = shadow; s.shadow = shadow; }
+    if (s.distress !== c.distress) {
+        if (c.distress) dot.classList.add('distress-map-dot');
+        else dot.classList.remove('distress-map-dot');
+        s.distress = c.distress;
+    }
+    if (s.aggregate) { dot.classList.remove('aggregate-map-dot'); s.aggregate = false; }
+    const tf = 'translate(' + c.px + 'px,' + c.py + 'px) translate(-50%,-50%)';
+    if (s.tf !== tf) { dot.style.transform = tf; s.tf = tf; }
+    if (s.vis !== 'visible') { dot.style.visibility = 'visible'; s.vis = 'visible'; }
+    // Raised dots (current target / active lock) sit above a same-cell
+    // aggregate; everything else shares the CSS class's base z-index.
+    const z = raised ? '5' : '';
+    if (s.z !== z) { dot.style.zIndex = z; s.z = z; }
+    if (_mapTitleTick) {
+        const t = `${c.name} (${c.distance.toFixed(0)} units)`;
+        if (s.title !== t) { dot.title = t; s.title = t; }
+    }
+}
+
+// One dot standing in for every contact bucketed into `cellKey` this
+// refresh. Keyed on the CELL, not the members, so the element a crowded
+// spot on the radar owns stays stable while its membership churns.
+function renderAggregateMapDot(cellKey, group) {
+    const dot = mapDotPool.get('agg:' + cellKey);
+    const s = dot._s;
+
+    // Dominant category wins colour/size (hostiles outrank neutral traffic
+    // outranks scenery); position is the group's centroid.
+    let dominant = group[0], sumPx = 0, sumPy = 0, anyDistress = false;
+    for (let i = 0; i < group.length; i++) {
+        const c = group[i];
+        sumPx += c.px; sumPy += c.py;
+        if (c.dotPriority > dominant.dotPriority) dominant = c;
+        if (c.distress) anyDistress = true;
+    }
+    const n = group.length;
+    const px = Math.round((sumPx / n) * 10) / 10;
+    const py = Math.round((sumPy / n) * 10) / 10;
+
+    // Slightly larger than a lone dot of the dominant type, capped so a
+    // clump of hundreds doesn't paint a blob over half the radar. The cap
+    // only tames the VISUAL scaling curve — the tooltip below still shows
+    // the true member count, it just stops growing the dot past it.
+    const baseSize = parseFloat(dominant.dotSize) || 4;
+    const scaleN = Math.min(n, 99);
+    const size = Math.round(Math.min(baseSize + 6, baseSize + 1 + Math.sqrt(scaleN))) + 'px';
+
+    // Count-weighted brightness, capped well short of the distress pulse
+    // so a big cluster reads as "many", not "on fire".
+    const glowPx = Math.min(10, 4 + Math.floor(scaleN / 4));
+    const shadow = '0 0 ' + glowPx + 'px ' + dominant.dotColor + ', 0 0 ' + (glowPx + 4) + 'px ' + dominant.dotColor;
+
+    if (s.size !== size) { dot.style.width = size; dot.style.height = size; s.size = size; }
+    if (s.bg !== dominant.dotColor) { dot.style.backgroundColor = dominant.dotColor; s.bg = dominant.dotColor; }
+    if (s.shadow !== shadow) { dot.style.boxShadow = shadow; s.shadow = shadow; }
+    if (s.distress !== anyDistress) {
+        if (anyDistress) dot.classList.add('distress-map-dot');
+        else dot.classList.remove('distress-map-dot');
+        s.distress = anyDistress;
+    }
+    if (!s.aggregate) { dot.classList.add('aggregate-map-dot'); s.aggregate = true; }
+    const tf = 'translate(' + px + 'px,' + py + 'px) translate(-50%,-50%)';
+    if (s.tf !== tf) { dot.style.transform = tf; s.tf = tf; }
+    if (s.vis !== 'visible') { dot.style.visibility = 'visible'; s.vis = 'visible'; }
+    if (s.z !== '') { dot.style.zIndex = ''; s.z = ''; }
+    if (_mapTitleTick) {
+        const t = n + ' contacts (' + (dominant.name || 'mixed') + ' + more)';
+        if (s.title !== t) { dot.title = t; s.title = t; }
+    }
+}
 
 function updateGalaxyMap() {
     if (typeof gameState === 'undefined' || typeof camera === 'undefined') return;
@@ -2818,6 +2952,10 @@ if (typeof outerInterstellarSystems !== 'undefined') {
         }
 
         // Display objects as dots on map
+        // Candidates collected here, THEN bucketed/rendered below — see
+        // renderClusteredMapDots(). Allies still claim their arrow directly
+        // inside this loop (they never dot-cluster).
+        const _clusterCandidates = [];
         nearbyObjects.forEach(obj => {
             // The blip's identity. THREE.Object3D.id is unique and stable
             // for the object's whole life, so the same ship keeps the same
@@ -2844,6 +2982,11 @@ if (typeof outerInterstellarSystems !== 'undefined') {
                 // Color based on type
 let dotColor = '#4488ff'; // Default blue for planets
 let dotSize = '4px';
+// Radar-cell aggregation (below): when a crowded cell collapses to one
+// blip, the highest-priority member supplies its colour/size — hostiles
+// outrank neutral traffic outranks scenery, so a firefight buried inside
+// a debris field still reads red, not beige.
+let dotPriority = 20;
 
 if (obj.type === 'ally') {
     // Render allies as arrow markers like the player, not dots
@@ -2878,90 +3021,113 @@ if (obj.type === 'ally') {
 } else if (obj.type === 'enemy') {
     dotColor = obj.isBoss ? '#ff00ff' : '#ff4444';
     dotSize = obj.isBoss ? '8px' : '6px';
+    dotPriority = obj.isBoss ? 110 : 100;
 } else if (obj.type === 'civilian_ship') {
     dotColor = obj.underAttack ? '#ffaa00' : '#00ff88';  // Orange if under attack, green otherwise
     dotSize = '5px';
+    dotPriority = obj.underAttack ? 90 : 60;
 } else if (obj.type === 'blackhole') {
     dotColor = '#000000';
     dotSize = '6px';
+    dotPriority = 45;
 } else if (obj.type === 'star') {
     dotColor = '#ffff44';
     dotSize = '5px';
+    dotPriority = 35;
 } else if (obj.type === 'brown_dwarf') {
     dotColor = '#8b4513';
     dotSize = '5px';
+    dotPriority = 30;
 } else if (obj.type === 'pulsar') {
     dotColor = '#44eeff';
     dotSize = '6px';
+    dotPriority = 40;
 } else if (obj.type === 'supernova') {
     dotColor = '#ff6600';
     dotSize = '7px';
+    dotPriority = 42;
 } else if (obj.type === 'plasma_storm') {
     dotColor = '#aa44ff';
     dotSize = '7px';
+    dotPriority = 42;
 } else if (obj.type === 'solar_storm') {
     dotColor = '#ffff00';
     dotSize = '7px';
+    dotPriority = 42;
 } else if (obj.type === 'dyson_sphere') {
     dotColor = '#00ffaa';
     dotSize = '8px';
+    dotPriority = 50;
 } else if (obj.type === 'crystal_structure') {
     dotColor = '#aa00ff';
     dotSize = '7px';
+    dotPriority = 50;
 } else if (obj.type === 'space_whale') {
     dotColor = '#0088ff';
     dotSize = '9px';
+    dotPriority = 50;
 } else if (obj.type === 'ringworld') {
     dotColor = '#ffaa00';
     dotSize = '8px';
+    dotPriority = 50;
 } else if (obj.type === 'interstellar_asteroid') {
     dotColor = '#998877';
     dotSize = '5px';
+    dotPriority = 15;
 } else if (obj.type === 'asteroid') {
     dotColor = '#887766';
     dotSize = '3px';
+    dotPriority = 10;
 } else if (obj.type === 'outer_asteroid') {
     dotColor = '#887766';
     dotSize = '3px';
+    dotPriority = 10;
 } else if (obj.type === 'outer_planet') {
     dotColor = '#6688ff';
     dotSize = '5px';
+    dotPriority = 22;
 } else if (obj.type === 'borg_drone') {
     dotColor = '#00ff00';
     dotSize = '5px';
+    dotPriority = 95;
 }
 
-                // Every write below is compare-and-set against the dot's own
-                // cache: a blip that kept its colour and size costs nothing.
-                const dot = mapDotPool.get(_key);
-                const s = dot._s;
-                if (s.size !== dotSize) {
-                    dot.style.width = dotSize;
-                    dot.style.height = dotSize;
-                    s.size = dotSize;
-                }
-                if (s.bg !== dotColor) { dot.style.backgroundColor = dotColor; s.bg = dotColor; }
                 // Pulse civilians under attack so the distress signal reads
                 // distinctly from regular civilian traffic on the map.
                 const distress = (obj.type === 'civilian_ship' && obj.underAttack);
-                const shadow = distress
-                    ? '0 0 8px ' + dotColor + ', 0 0 14px rgba(255,170,0,0.6)'
-                    : '0 0 4px ' + dotColor;
-                if (s.shadow !== shadow) { dot.style.boxShadow = shadow; s.shadow = shadow; }
-                if (s.distress !== distress) {
-                    if (distress) dot.classList.add('distress-map-dot');
-                    else dot.classList.remove('distress-map-dot');
-                    s.distress = distress;
-                }
-                const tf = 'translate(' + px + 'px,' + py + 'px) translate(-50%,-50%)';
-                if (s.tf !== tf) { dot.style.transform = tf; s.tf = tf; }
-                if (s.vis !== 'visible') { dot.style.visibility = 'visible'; s.vis = 'visible'; }
-                if (_mapTitleTick) {
-                    const t = `${obj.name} (${obj.distance.toFixed(0)} units)`;
-                    if (s.title !== t) { dot.title = t; s.title = t; }
-                }
+
+                // A contact the player is actively locked onto or has
+                // selected as the current target must never disappear into
+                // an aggregate — it's the one blip combat depends on
+                // reading correctly every single frame.
+                const mustIndividual = !!(_src && (
+                    _src === gameState.currentTarget ||
+                    (gameState.targetLock && gameState.targetLock.active && _src === gameState.targetLock.target)
+                ));
+
+                // Defer claiming a dot: bucket first, then render, so a
+                // crowded radar cell can collapse to one aggregate blip
+                // instead of stacking dozens of nodes on top of each other.
+                _clusterCandidates.push({
+                    key: _key, px, py, dotColor, dotSize, dotPriority, distress,
+                    name: obj.name, distance: obj.distance, mustIndividual
+                });
             }
         });
+
+        // ── Radar-space decluttering ─────────────────────────────────────
+        // A dense clump (asteroid field, debris ring, wreckage after a
+        // fight) can drop hundreds of contacts inside a handful of 4-6px
+        // cells — that many overlapping DOM nodes reads as one fuzzy smear
+        // anyway, and claiming a node per contact was the dominant cost of
+        // this function. Bucket candidates by screen-space cell instead: a
+        // lightly-occupied cell still renders its members individually
+        // (today's look, unchanged); a crowded one collapses to ONE
+        // aggregate blip sized/coloured by its contents. The aggregate's
+        // pool key is the CELL's coordinates, not its membership, so a
+        // contact drifting in or out of an otherwise-stable cell just
+        // restyles the same DOM element — no churn, no flicker.
+        renderClusteredMapDots(_clusterCandidates);
     }
     // Park every blip this refresh didn't claim (visibility only) — also
     // covers the case where the world arrays aren't loaded yet.

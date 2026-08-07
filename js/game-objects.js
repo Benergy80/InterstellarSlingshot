@@ -8251,6 +8251,12 @@ function updateDeepSpaceSparkle() {
     if (window.heroStarsMaterial && window.heroStarsMaterial.uniforms) {
         window.heroStarsMaterial.uniforms.uTime.value = t;
     }
+    // Celestial impostors shimmer on the same clock — the buffer behind them is
+    // only rewritten at the 6Hz cull cadence, so the twinkle has to be driven
+    // here or the far field reads as a frozen screen of dots.
+    if (window.celestialImpostorMaterial && window.celestialImpostorMaterial.uniforms) {
+        window.celestialImpostorMaterial.uniforms.uTime.value = t;
+    }
 
     const imposters = window.galaxyImposters;
     if (imposters && imposters.length) {
@@ -8535,6 +8541,412 @@ function _cullBodyRadius(o) {
     return r;
 }
 
+// =============================================================================
+// THE IMPOSTOR TIER — one draw call for the whole small-but-visible far field
+// =============================================================================
+// The angular cull above is a BINARY SWITCH at the sub-pixel floor: a world is
+// either the full assembly — a 20x20 SphereGeometry (760 tris) plus whatever
+// rings, night shell and atmosphere hang off it — or it is nothing. Measured at
+// a dense vantage: of 457 drawn worlds, 345 (75%) covered under 4 screen pixels
+// and yet accounted for 523 of the 1,083 planet draw submissions (48.3%) and
+// ~479k triangles. Half the submission budget was being spent on things the
+// player cannot resolve as anything but a coloured dot — and the adaptive
+// controller was ALREADY spent (tier 2, pixelRatio 0.7) trying to pay for it.
+//
+// A coloured dot is exactly what a Points cloud draws, for one call and one
+// vertex. So the band between "resolvable" and "sub-pixel" gets its own tier:
+//
+//   >= CULL_IMPOSTOR_PX of screen DIAMETER   full mesh assembly, unchanged
+//   between that and the sub-pixel floor     ONE point in the shared cloud
+//   below the sub-pixel floor                gone, as before
+//
+// WHY DIAMETER IN REAL PIXELS, NOT A TUNED ANGULAR CONSTANT. The existing
+// thresholds are raw angular ratios that happen to mean ~0.6px at the fov and
+// window the game was tuned in. The impostor boundary is the one the player can
+// actually SEE cross (a world you are flying toward pops from dot to sphere), so
+// it is computed from the live camera fov and canvas height every pass — 4px is
+// 4px on a phone, on a 4K panel, and after the adaptive-resolution controller
+// has moved the backing store underneath it.
+//
+// WHY IT CANNOT RECREATE THE WHITE-ORB FLOOD. The hero-star post-mortem above is
+// the cautionary tale: an additive point whose size does not fall off with
+// distance stops reading as sky and starts reading as bokeh pasted over the
+// frame. Two rules keep that from happening here:
+//   * SIZE IS MEASURED, NOT AUTHORED. The quad is sized from the body's real
+//     angular size this frame, so an impostor shrinks as you fly away exactly
+//     like the mesh it replaced. There is no magnitude curve to blow out.
+//   * THE CEILING IS BELOW THE HERO CEILING. IMPOSTOR_MAX_PX (7) < _HERO_MAX_PX
+//     (9), and the disc inside the quad is smaller still, so the very largest
+//     impostor is smaller than the sky's brightest landmark star. It reads as a
+//     world seen from a long way off, which is what it is.
+//
+// WHY THE SWAP IS INVISIBLE. Three things have to line up at the boundary or the
+// tier trades a frame-rate win for a pop the player sees on every approach:
+//   * HYSTERESIS, so a body sitting on the line at the pass's 6Hz cadence cannot
+//     strobe between mesh and dot (same deadzone argument as CULL_SUBPIXEL_BACK).
+//   * THE DISC IS SIZED FROM THE BODY, EVERY PASS. vDisc is a fixed fraction of
+//     the body's real screen radius this frame, so the patch handed over at the
+//     swap is the patch the mesh was covering — not a fixed sprite that happens
+//     to be nearby.
+//   * BRIGHTNESS AND WIDTH ARE MEASURED AGAINST THE MESH, not guessed. See the
+//     calibration block below for the rig and the residuals.
+// And at the BOTTOM edge the impostor fades to nothing across the last stretch
+// before the sub-pixel floor, so a body leaving the far end dissolves instead of
+// being deleted — the one place the old binary switch was visible as a blink.
+//
+// WHAT IT BUYS. Measured at a pinned dense vantage, 1600x900, fov 75, quality
+// tier 'normal', pixelRatio 1.0, no hostiles, three interleaved on/off repeats:
+// 2,590 -> 2,164 draw calls (-426), 1,041k -> 723k triangles (-319k), median
+// frame 57.1ms -> 44.7ms and p95 90.8ms -> 68.8ms (17.1 -> 21.4 fps). 388 worlds
+// in ONE draw call. Census at the same vantage: of the 363 on-screen worlds
+// between the sub-pixel floor and 4px, ZERO still submit a mesh draw, and of the
+// 101 at or above 4px, 99 are still full meshes (the 2 are inside the come-back
+// deadzone, which is what it is for).
+//
+// THE BUFFER IS REBUILT AT THE CULL CADENCE (6Hz), not per frame: it holds WORLD
+// coordinates and the camera is applied by the vertex shader, so camera motion
+// is exact every frame regardless, and a body's own orbital drift over 10 frames
+// is a fraction of a pixel at these distances. The floating-origin rebase is the
+// one thing that cannot wait for the next pass — a shift of tens of thousands of
+// units would smear the entire far field for up to 10 frames — so it subtracts
+// straight into the live buffer through __worldShiftHandlers.
+const CULL_IMPOSTOR_PX = 4.0;       // screen DIAMETER at/below which a world is a dot
+const CULL_IMPOSTOR_BACK_K = 1.22;  // ...and back to a mesh only 22% above it
+const IMPOSTOR_MAX_PX = 7.0;        // quad ceiling, CSS px — under _HERO_MAX_PX (9)
+const IMPOSTOR_MIN_PX = 2.2;        // enough quad for a soft-edged sub-pixel speck
+// HOW WIDE, AND HOW BRIGHT. All three numbers below were MEASURED against the
+// mesh at the swap boundary, not chosen to look plausible. The rig: render the
+// frame with the body as a mesh and again with the body hidden, subtract, and
+// that difference IS the body's own contribution to the screen; do the same for
+// the impostor; the calibration is whatever makes the two contributions match.
+// (Isolating each body against its own absence is what made the numbers usable
+// — measuring the raw patch instead just measures whatever nebula happens to be
+// behind it.)
+//
+// THE DISC IS NARROWER THAN THE SILHOUETTE, for the same reason in both cases.
+// The cull threshold has to use the whole assembly — a star's corona is what
+// you can still see from 200,000u out — but the assembly is mostly halo, shell
+// and ring, and painting a solid disc that wide is a different, much brighter
+// object than the body. Measured across lit worlds and stars alike, 0.56 of the
+// silhouette is where the impostor's energy lands on the mesh's.
+//
+// THE BRIGHTNESS SPLITS, because the two families of body really do differ:
+//   * A LIT WORLD has one side in shadow and no side at full albedo, so it
+//     hands over well under its own colour.
+//   * A SELF-LUMINOUS BODY (star, galaxy core, anything whose own material is
+//     additive) is a hot core that clips to white — above 1.0 here, which is
+//     what makes the impostor's centre saturate the way the star shader's HDR
+//     core does rather than reading as a coloured dot.
+// Residuals at these values, over the bodies measurable at a dense vantage:
+// mean luminance over the body's footprint within ~4/255 for lit worlds and
+// ~15/255 for stars. PEAK pixel is the looser of the two (up to ~60/255 either
+// way) and is left that way deliberately: at 2-4 px the peak is one pixel, set
+// by which pixel centre the disc happens to land on, and it moves that much
+// frame to frame from the body's own drift while it is still a mesh.
+const IMPOSTOR_DISC = 0.56;         // disc radius as a fraction of the silhouette
+const IMPOSTOR_LIT_GAIN = 0.60;
+const IMPOSTOR_LUM_GAIN = 1.12;
+
+let _impPoints = null, _impGeo = null, _impMat = null, _impCap = 0, _impCount = 0;
+let _impPos = null, _impRGB = null, _impPx = null, _impDisc = null, _impBright = null, _impPhase = null;
+
+const _IMPOSTOR_VERT = `
+    attribute float aPx;
+    attribute float aDisc;
+    attribute float aBright;
+    attribute float aPhase;
+    uniform float uDpr;
+    uniform float uTime;
+    varying vec3 vColor;
+    varying float vDisc;
+    varying float vEdge;
+    varying float vI;
+    void main() {
+        vColor = color;
+        vDisc = aDisc;
+        // Limb softness, in quad units, floored at ~0.8 CSS px of transition.
+        // A 3px body needs a soft edge to read as round at all, but the softness
+        // has to be a FIXED PIXEL WIDTH rather than a fraction of the disc:
+        // scaled with the disc it smeared the smallest bodies across their whole
+        // quad and took their peak luminance down with it.
+        vEdge = max(1.6 / max(aPx, 1.0), aDisc * 0.22);
+        // The same slow shimmer the starfield runs on, at a third the depth —
+        // enough that a distant system reads as alive rather than as a screen
+        // of static dots, shallow enough that it never becomes a luminance
+        // step at the mesh swap.
+        vI = aBright * (0.92 + 0.08 * sin(uTime * 1.6 + aPhase));
+        vec4 mv = modelViewMatrix * vec4(position, 1.0);
+        // gl_PointSize is DEVICE pixels; aPx is CSS px, so the impostor keeps
+        // its measured angular size after the adaptive-resolution controller
+        // moves the backing store.
+        gl_PointSize = aPx * uDpr;
+        gl_Position = projectionMatrix * mv;
+    }
+`;
+const _IMPOSTOR_FRAG = `
+    varying vec3 vColor;
+    varying float vDisc;
+    varying float vEdge;
+    varying float vI;
+    void main() {
+        float d = length(gl_PointCoord - 0.5) * 2.0;   // 0 centre, 1 at quad edge
+        // The body's lit face as a soft-limbed disc, plus a narrow skirt out to
+        // the quad edge. The skirt is where the assembly's halo/atmosphere used
+        // to be, and it is also what keeps the disc from reading as a cut-out
+        // circle at 2-3 px, where a hard edge is the whole shape.
+        // 1.0 - smoothstep, NOT smoothstep with the edges swapped: GLSL leaves
+        // smoothstep undefined when edge0 >= edge1, and on this driver the
+        // swapped form silently returned 0 for every body whose disc was
+        // narrower than its limb softness — the impostor was there, in the
+        // buffer, at the right place, contributing nothing.
+        float disc = 1.0 - smoothstep(max(0.0, vDisc - vEdge), vDisc + vEdge, d);
+        float glow = pow(max(0.0, 1.0 - d), 3.0) * 0.20;
+        float I = (disc + glow) * vI;
+        if (I < 0.02) discard;
+        vec3 c = mix(vColor, vec3(1.0), clamp(I - 1.0, 0.0, 1.0));
+        gl_FragColor = vec4(c, clamp(I, 0.0, 1.0));
+    }
+`;
+
+function _impostorEnsure(need) {
+    if (_impPoints && _impCap >= need) return true;
+    if (typeof THREE === 'undefined' || typeof scene === 'undefined' || !scene || !scene.add) return false;
+    const cap = Math.max(512, Math.ceil(need * 1.4));
+    const pos = new Float32Array(cap * 3), rgb = new Float32Array(cap * 3);
+    const px = new Float32Array(cap), disc = new Float32Array(cap);
+    const bri = new Float32Array(cap), pha = new Float32Array(cap);
+    if (_impPos) {   // grow: carry this pass's work over rather than blink
+        pos.set(_impPos.subarray(0, _impCap * 3)); rgb.set(_impRGB.subarray(0, _impCap * 3));
+        px.set(_impPx.subarray(0, _impCap)); disc.set(_impDisc.subarray(0, _impCap));
+        bri.set(_impBright.subarray(0, _impCap)); pha.set(_impPhase.subarray(0, _impCap));
+    }
+    _impPos = pos; _impRGB = rgb; _impPx = px; _impDisc = disc; _impBright = bri; _impPhase = pha;
+
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3).setUsage(THREE.DynamicDrawUsage));
+    geo.setAttribute('color', new THREE.BufferAttribute(rgb, 3).setUsage(THREE.DynamicDrawUsage));
+    geo.setAttribute('aPx', new THREE.BufferAttribute(px, 1).setUsage(THREE.DynamicDrawUsage));
+    geo.setAttribute('aDisc', new THREE.BufferAttribute(disc, 1).setUsage(THREE.DynamicDrawUsage));
+    geo.setAttribute('aBright', new THREE.BufferAttribute(bri, 1).setUsage(THREE.DynamicDrawUsage));
+    geo.setAttribute('aPhase', new THREE.BufferAttribute(pha, 1).setUsage(THREE.DynamicDrawUsage));
+    geo.setDrawRange(0, _impCount);
+
+    if (!_impMat) {
+        _impMat = new THREE.ShaderMaterial({
+            uniforms: { uDpr: { value: 1 }, uTime: { value: 0 } },
+            vertexShader: _IMPOSTOR_VERT,
+            fragmentShader: _IMPOSTOR_FRAG,
+            transparent: true,
+            depthWrite: false,
+            blending: THREE.AdditiveBlending,
+            vertexColors: true,
+            fog: false
+        });
+    }
+    if (_impPoints) { scene.remove(_impPoints); if (_impGeo) _impGeo.dispose(); }
+    _impGeo = geo;
+    _impPoints = new THREE.Points(geo, _impMat);
+    _impPoints.frustumCulled = false;   // positions are rewritten under it every pass
+    _impPoints.renderOrder = 2;
+    _impPoints.name = 'celestialImpostors';
+    scene.add(_impPoints);
+    _impCap = cap;
+    if (typeof window !== 'undefined') {
+        window.celestialImpostors = _impPoints;
+        window.celestialImpostorMaterial = _impMat;
+    }
+    return true;
+}
+
+// THE BODY'S COLOUR IS THE SURFACE UNIFORM, NOT THE BRIGHTEST ONE.
+// The first version of this took whichever colour in the material was
+// brightest, on the theory that the eye reads the brightest thing. It does not:
+// a world's authored palette is mostly LIMB and NIGHT decoration, and those are
+// deliberately the vivid ones. Measured over the 3,619 bodies in a loaded
+// universe, the top-level material comes in exactly five shapes —
+//   color + emissive                     3001   (stock lit materials)
+//   uColor + uNight + uRim                634   (planet-presence shader)
+//   uDay + uNight + uRim + uAccent         64   (day/night world shader)
+//   color + uCore + uEdge                  54   (glow-core shader)
+//   color alone                            32
+// — and in the two shader families the brightest colour is uRim, the pink limb
+// glow. Draadara Cascade I is a blue world (uDay 0.02,0.49,0.74) that its
+// impostor was painting hot pink (uRim 0.98,0.38,0.89): a 161-degree hue error
+// on a body whose whole job at 3 px is to be the right colour.
+// So the surface uniforms are named, in precedence order, and the rim/night/
+// accent/edge names are named too — as the ones that never get to answer.
+const _IMP_SURFACE_UNIFORMS = ['uDay', 'uColor', 'uCore', 'uBase', 'uSurface', 'uTint'];
+const _IMP_DECOR_UNIFORMS = {
+    uRim: 1, uNight: 1, uAccent: 1, uEdge: 1, uGlow: 1, uHalo: 1, uAtmo: 1, uSpec: 1
+};
+
+// The one colour a material offers as its SURFACE, or null if it has none.
+function _impostorNodeColor(m) {
+    if (!m || Array.isArray(m)) return null;
+    if (m.uniforms) {
+        for (let i = 0; i < _IMP_SURFACE_UNIFORMS.length; i++) {
+            const u = m.uniforms[_IMP_SURFACE_UNIFORMS[i]];
+            if (u && u.value && u.value.isColor) return u.value;
+        }
+    }
+    // An emissive that is actually lit outranks the diffuse colour — on a star
+    // or a lava world the diffuse is often near-black and the emissive is the
+    // body. A dark emissive is just "not used" and must not win.
+    if (m.emissive && (0.2126 * m.emissive.r + 0.7152 * m.emissive.g +
+                       0.0722 * m.emissive.b) > 0.05) return m.emissive;
+    if (m.color && (m.color.r + m.color.g + m.color.b) > 0.02) return m.color;
+    if (m.uniforms) {   // authored shader we don't know: anything but decoration
+        for (const k in m.uniforms) {
+            if (_IMP_DECOR_UNIFORMS[k]) continue;
+            const v = m.uniforms[k] && m.uniforms[k].value;
+            if (v && v.isColor) return v;
+        }
+    }
+    return null;
+}
+
+// The colour a world hands to its impostor, and whether it is self-luminous.
+// Cached on userData: this walks materials and is the only expensive thing in
+// the whole tier. It descends into children so a body whose top-level node is a
+// bare Group (every star with a corona shell, every galaxy core) still reports a
+// hue instead of falling back to grey — but the body's OWN node answers first,
+// so a decoration never speaks over the surface it is attached to.
+//
+// Verified live over all 1,513 bodies whose material exposes a surface colour:
+// the impostor's hue matches the body's own to within floating-point noise.
+// The cache is unkeyed on purpose — a body's palette is authored once at
+// creation, unlike its child count (see _cullBodyRadius, which does key on it
+// because assemblies grow).
+function _impostorPaint(o) {
+    const ud = o.userData;
+    if (ud._impPaint) return ud._impPaint;
+    let col = null;
+    let selfLum = false;
+    const scan = (n, depth) => {
+        const m = n.material;
+        if (m && !Array.isArray(m)) {
+            // SELF-LUMINOUS IS THE BODY'S OWN MATERIAL, NOT ITS DECORATION.
+            // Testing the whole subtree classified ordinary asteroids as stars
+            // — almost every body in this game wears an additive glow sprite or
+            // shell somewhere — and a lit rock handed over a star's brightness.
+            // Only the top-level node (depth 3, the body itself) gets a vote.
+            if (depth === 3) {
+                if (m.blending === THREE.AdditiveBlending) selfLum = true;
+                if (m.emissive && (0.2126 * m.emissive.r + 0.7152 * m.emissive.g +
+                                   0.0722 * m.emissive.b) > 0.25) selfLum = true;
+            }
+            if (!col) col = _impostorNodeColor(m);
+        }
+        if (col || depth <= 0) return;
+        const kids = n.children;
+        for (let i = 0; i < kids.length; i++) {
+            // Same cut as the silhouette walk: a registered body of its own is
+            // not part of this one's colour.
+            if (kids[i].userData && kids[i].userData.type) continue;
+            scan(kids[i], depth - 1);
+            if (col) return;
+        }
+    };
+    scan(o, 3);
+    const t = ud.type;
+    if (t === 'star' || t === 'sun' || ud.isStar || ud.tendrilGroup) selfLum = true;
+    const out = col
+        ? { r: col.r, g: col.g, b: col.b,
+            lit: selfLum ? IMPOSTOR_LUM_GAIN : IMPOSTOR_LIT_GAIN, lum: selfLum }
+        : { r: 0.62, g: 0.70, b: 0.88, lit: IMPOSTOR_LIT_GAIN, lum: false };
+    // Normalise hue to full range so a dark authored tint still reads as its own
+    // colour at 3 px instead of as a grey smudge; the LIT factor above, not the
+    // raw albedo, is what carries "how bright should this be".
+    const mx = Math.max(out.r, out.g, out.b);
+    if (mx > 0.001 && mx < 1) { out.r /= mx; out.g /= mx; out.b /= mx; }
+    ud._impPaint = out;
+    return out;
+}
+
+// Write one body into this pass's impostor buffer.
+//   angR  — the silhouette's screen RADIUS in CSS px, measured by the caller
+//   fade  — 0..1 dissolve as the body approaches the sub-pixel floor
+function _impostorWrite(o, wx, wy, wz, angR, fade) {
+    const i = _impCount;
+    if (i >= _impCap && !_impostorEnsure(i + 1)) return;
+    const paint = _impostorPaint(o);
+    // The disc never goes below half a pixel of radius: under that a point is
+    // sampled at most once and the body starts flickering with sub-pixel motion
+    // instead of dimming. The FADE, not the size, is what retires it.
+    const rPx = Math.max(angR, 0.5);
+    const px = Math.min(IMPOSTOR_MAX_PX, Math.max(IMPOSTOR_MIN_PX, rPx * 5.2));
+    _impPos[i * 3] = wx; _impPos[i * 3 + 1] = wy; _impPos[i * 3 + 2] = wz;
+    _impRGB[i * 3] = paint.r; _impRGB[i * 3 + 1] = paint.g; _impRGB[i * 3 + 2] = paint.b;
+    _impPx[i] = px;
+    _impDisc[i] = Math.min(0.92, rPx * IMPOSTOR_DISC / (px * 0.5));
+    _impBright[i] = paint.lit * fade;
+    if (o.userData._impPhase === undefined) o.userData._impPhase = Math.random() * 6.283;
+    _impPhase[i] = o.userData._impPhase;
+    _impCount = i + 1;
+}
+
+// Publish the pass's buffer. One upload, one draw range, no reallocation.
+function _impostorFlush() {
+    if (!_impGeo) {
+        if (_impCount === 0) return;
+        if (!_impostorEnsure(_impCount)) return;
+    }
+    // THE CLOUD LIVES AT THE ORIGIN, ALWAYS. Its buffer holds ABSOLUTE world
+    // coordinates, so any transform on the object itself is added on top of
+    // them — and applyWorldShift() shifts EVERY scene child's position, this
+    // one included. Left alone that is a double subtract: the far field renders
+    // one whole rebase away from where the bodies are, which looks exactly like
+    // "the impostors aren't drawing" because nothing lands where you look for
+    // it. The shift handler below undoes it at the moment it happens; this line
+    // is the standing invariant, so no future system that walks scene.children
+    // can reintroduce the same bug silently.
+    if (_impPoints && (_impPoints.position.x || _impPoints.position.y || _impPoints.position.z)) {
+        _impPoints.position.set(0, 0, 0);
+    }
+    const a = _impGeo.attributes;
+    a.position.needsUpdate = true; a.color.needsUpdate = true;
+    a.aPx.needsUpdate = true; a.aDisc.needsUpdate = true;
+    a.aBright.needsUpdate = true; a.aPhase.needsUpdate = true;
+    _impGeo.setDrawRange(0, _impCount);
+    if (_impMat) {
+        _impMat.uniforms.uDpr.value = (typeof renderer !== 'undefined' && renderer && renderer.getPixelRatio)
+            ? renderer.getPixelRatio() : 1;
+    }
+    if (_impPoints) _impPoints.visible = _impCount > 0;
+}
+
+if (typeof window !== 'undefined') {
+    // Observability + levers, same convention as __qualityLock/__drawBudgetLock:
+    //   window.__impostorLock = false   turn the tier off (bodies go back to
+    //                                   meshes) — the A/B switch this was
+    //                                   measured with, and the kill switch
+    //   window.__impostorPx = <n>       move the boundary, in screen DIAMETER
+    //   window.impostorDebug()          what the last pass decided
+    window.impostorDebug = function () {
+        return {
+            count: _impCount, cap: _impCap,
+            drawn: !!(_impPoints && _impPoints.visible),
+            enabled: window.__impostorLock !== false,
+            px: (typeof window.__impostorPx === 'number') ? window.__impostorPx : CULL_IMPOSTOR_PX
+        };
+    };
+    // FLOATING ORIGIN: the buffer holds absolute world coords and is only
+    // rewritten at the cull cadence, so a rebase between passes would smear the
+    // entire far field for up to 10 frames. Subtract it in place instead — and
+    // undo the shift applyWorldShift() has just applied to the Points object
+    // itself as a scene child, which would otherwise subtract it a second time.
+    window.__worldShiftHandlers = window.__worldShiftHandlers || [];
+    window.__worldShiftHandlers.push(function (offset) {
+        if (!offset) return;
+        if (_impPoints) _impPoints.position.set(0, 0, 0);
+        if (!_impPos || !_impCount) return;
+        for (let i = 0; i < _impCount; i++) {
+            _impPos[i * 3] -= offset.x; _impPos[i * 3 + 1] -= offset.y; _impPos[i * 3 + 2] -= offset.z;
+        }
+        if (_impGeo) _impGeo.attributes.position.needsUpdate = true;
+    });
+}
+
 // Restate this pass's decision for the bodies the caller just force-showed.
 // Only bodies we hid ourselves are touched, and only if something put them back.
 function _cullReassert() {
@@ -8609,6 +9021,27 @@ function updateDistanceCulling() {
     // Same lever, same direction, applied where it costs the least look.
     const _cullAng = _cullScale > 0 ? 1 / _cullScale : 1;
 
+    // IMPOSTOR BAND, in real screen pixels off the live camera. `_pxPerAng`
+    // converts a silhouette's angular ratio (radius / distance) into a CSS-pixel
+    // screen RADIUS, so every threshold below is a number you can go and measure
+    // in a screenshot rather than a constant that only means 4px at one fov and
+    // one window size. See the impostor-tier note above.
+    const _cvH = (typeof renderer !== 'undefined' && renderer && renderer.domElement &&
+                  renderer.domElement.clientHeight)
+        ? renderer.domElement.clientHeight
+        : (typeof window !== 'undefined' ? window.innerHeight : 900);
+    const _fov = (camera.isPerspectiveCamera && camera.fov > 0) ? camera.fov : 75;
+    const _pxPerAng = (_cvH * 0.5) / Math.tan(_fov * Math.PI / 360);
+    const _impOn = (typeof window === 'undefined' || window.__impostorLock !== false);
+    const _impPxLim = (typeof window !== 'undefined' && typeof window.__impostorPx === 'number')
+        ? window.__impostorPx : CULL_IMPOSTOR_PX;
+    // The tier moves this on the SAME lever it moves the sub-pixel floor on, so
+    // a struggling machine sheds resolvable detail from the smallest end inward
+    // instead of amputating the far sky (the lesson of the range-gate rewrite).
+    const _impR = _impPxLim * 0.5 * _cullAng;      // threshold as a screen RADIUS
+    const _impRBack = _impR * CULL_IMPOSTOR_BACK_K;
+    _impCount = 0;
+
     const cullArray = (arr, range, angular) => {
         if (typeof arr === 'undefined' || !arr || !arr.length) return;
         range *= _cullScale;
@@ -8630,12 +9063,32 @@ function updateDistanceCulling() {
                 //     on its own account, with hysteresis so a body drifting on
                 //     the boundary cannot strobe.
                 const near = CULL_NEAR_RADII * br;
+                let wantImp = false;
                 if (d2 <= near * near) {
                     inRange = true;
                 } else {
                     const lim = (o.userData._distCulled ? CULL_SUBPIXEL_BACK : CULL_SUBPIXEL_ANG) * _cullAng;
                     inRange = !(br * br < lim * lim * d2);
+                    // IMPOSTOR TIER — above the floor but under a few pixels
+                    // wide, this body is a coloured dot to the player and an
+                    // 800-triangle mesh plus its rings to the GPU. Hand it to
+                    // the shared point cloud and submit nothing.
+                    if (inRange && _impOn) {
+                        const rPx = br * _pxPerAng / Math.sqrt(d2);
+                        if (rPx < (o.userData._impostorOn ? _impRBack : _impR)) {
+                            // Dissolve across the last stretch before the floor
+                            // so the far end of the band fades out instead of
+                            // blinking out — the one seam the old binary switch
+                            // left on screen.
+                            const f0 = lim * _pxPerAng, f1 = f0 * 3.5;
+                            const fade = rPx >= f1 ? 1 : Math.max(0, (rPx - f0) / (f1 - f0));
+                            _impostorWrite(o, _cullWP.x, _cullWP.y, _cullWP.z, rPx, fade);
+                            wantImp = true;
+                            inRange = false;   // no mesh, no rings, no shells
+                        }
+                    }
                 }
+                o.userData._impostorOn = wantImp;
             } else {
                 // No silhouette to measure at all — with the subtree measure
                 // above this is now only reachable by an entry that draws no
@@ -8684,6 +9137,9 @@ function updateDistanceCulling() {
     cullArray(typeof comets !== 'undefined' ? comets : null, 35000);
     // Trading ships read as a single dot well before this range.
     cullArray(typeof tradingShips !== 'undefined' ? tradingShips : null, 18000);
+
+    // Publish the far field the pass just decided: one upload, one draw call.
+    _impostorFlush();
 }
 window.updateDistanceCulling = updateDistanceCulling;
 

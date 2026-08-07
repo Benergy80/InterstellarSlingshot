@@ -446,7 +446,16 @@ function updateCameraView(camera) {
             : ((typeof window !== 'undefined' && window.__speedWhip) || 0);
         cameraState._whipFov += (_whipV - cameraState._whipFov) *
             (_whipV > cameraState._whipFov ? 0.10 : 0.05);
-        if (_exitT !== null) cameraState._whipFov *= _exitSettle;
+        // WARP-EXIT SYNC: drain toward the LIVE speed-driven target (_whipV),
+        // not toward zero. _whipFov is the SUSTAINED cruise-speed term — the
+        // ship is often still moving fast right after a slingshot exit, so
+        // its rest value is whatever speedWhipLevel() reads THIS frame, not
+        // silence. Draining to 0 (the old `*= _exitSettle`) produced the V:
+        // FOV sagged toward 75 through the ramp, then this var's own lerp
+        // above raced back up to _whipV the instant the ramp stopped
+        // suppressing it — a dip-then-reinflate instead of one smooth
+        // approach to the cruise value.
+        if (_exitT !== null) cameraState._whipFov = _whipV + (cameraState._whipFov - _whipV) * _exitSettle;
         if (cameraState._warpZoom === undefined) { cameraState._warpZoom = 1; cameraState._wasWarping = false; }
         const _warpingNow = !!((gameState.emergencyWarp && gameState.emergencyWarp.active) ||
             (gameState.slingshot && gameState.slingshot.active && !gameState.slingshotWhip));
@@ -486,7 +495,11 @@ function updateCameraView(camera) {
         // Faster in than out: gravity grabs, the release unwinds (~0.5s).
         cameraState._whipLean += (_leanT - cameraState._whipLean) *
             (Math.abs(_leanT) > Math.abs(cameraState._whipLean) ? 0.14 : 0.07);
-        if (_exitT !== null) cameraState._whipLean *= _exitSettle;
+        // WARP-EXIT SYNC: drain toward the LIVE target _leanT (normally 0
+        // once the gravity whip has released, but not forced there — if a
+        // warp exit lands mid-turn this settles into the turn's OWN lean
+        // instead of yanking it flat).
+        if (_exitT !== null) cameraState._whipLean = _leanT + (cameraState._whipLean - _leanT) * _exitSettle;
         const _lean = cameraState._whipLean;
         if (Math.abs(_lean) > 0.004) {
             const _la = Math.abs(_lean);
@@ -520,7 +533,9 @@ function updateCameraView(camera) {
             ? Math.max(0, Math.min(1, _wl.e || 0)) : 0;
         cameraState._whipCrack += (_crackT - cameraState._whipCrack) *
             (_crackT > cameraState._whipCrack ? 0.45 : 0.06);
-        if (_exitT !== null) cameraState._whipCrack *= _exitSettle;
+        // WARP-EXIT SYNC: drain toward the LIVE target _crackT (normally 0
+        // this far past launch) rather than forcing 0 directly.
+        if (_exitT !== null) cameraState._whipCrack = _crackT + (cameraState._whipCrack - _crackT) * _exitSettle;
         if (cameraState._whipCrack > 0.004) {
             const _ck = cameraState._whipCrack;
             currentOffset.z *= 1 + 0.42 * _ck;   // camera drops back
@@ -569,13 +584,23 @@ function updateCameraView(camera) {
             if (_tl > 0.01) _fovT += _tl * 8;
             // WARP-EXIT SYNC: _exitSettle (computed at the top of this block
             // from gameState._warpExitT — the physics exit ramp's own eased
-            // 0..1 progress) already collapsed _warpZoom/_whipFov/_whipLean/
-            // _whipCrack/_fovPulseAmp toward rest above, in place, so this is
-            // now mostly a safety net for the one contributor that ISN'T a
-            // persistent rig-state var here — the tunnel level `_tl`, read
-            // fresh from visual-flair every frame. Composed, not replaced:
-            // outside a ramp _exitSettle is 1 (no-op).
-            _fovT = 75 + (_fovT - 75) * _exitSettle;
+            // 0..1 progress) already drained _warpZoom/_whipFov/_whipLean/
+            // _whipCrack/_fovPulseAmp toward THEIR live per-frame targets
+            // above, in place, so this final composite line only needs to
+            // land on the SAME endpoint those targets imply — the FOV the
+            // rig will actually want next frame at current speed — not the
+            // flat at-rest constant 75. _cruiseFovT below is exactly the
+            // formula above, evaluated at the live targets instead of the
+            // still-settling state vars (_zAmt's live target is always 0
+            // here: _warpingNow is false for this ramp's entire duration,
+            // see _applyWarpExitRamp's call site in game-physics.js). Using
+            // the SAME target for both the inner state drains and this
+            // outer composite means they converge together — no V-dip
+            // toward 75 and no re-inflation bump once the ramp hands off.
+            // Composed, not replaced: outside a ramp _exitSettle is 1
+            // (no-op) and _fovT passes through untouched.
+            const _cruiseFovT = 75 + Math.abs(_leanT) * 5 + _crackT * 6 + _whipV * 7.5;
+            _fovT = _cruiseFovT + (_fovT - _cruiseFovT) * _exitSettle;
             _fovT = Math.max(55, Math.min(118, _fovT));
             if (Math.abs(camera.fov - _fovT) > 0.05) {
                 camera.fov = _fovT;

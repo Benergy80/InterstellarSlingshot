@@ -231,6 +231,11 @@
       // first, capped at 4. See pushGoodKey()/pickFallbackKey() below for
       // why this replaced a single lastGoodKey scalar.
       goodKeys: [],
+      // { key: ms of last confirmed liveness failure }. A track lands here
+      // the moment the watchdog gives up on it (demoteKey()) and is only
+      // cleared again once it demonstrably produces samples (pushGoodKey()).
+      // See LIVENESS_FAILED_COOLDOWN_MS.
+      failed: {},
     },
   };
 
@@ -1363,6 +1368,16 @@
   // LIVENESS_STALL_MS, that's dead air wearing a healthy mix.
   const LIVENESS_SAMPLE_MS = 1000;   // how often we look at currentTime
   const LIVENESS_STALL_MS  = 1500;   // no advance for this long = stalled
+  // How long a track stays demoted after a confirmed liveness failure
+  // before it's eligible to be picked as a fallback again. Without this,
+  // a track that just failed sits in goodKeys forever (it WAS healthy once)
+  // and the very next fallback walk can land right back on it — two dead
+  // tracks then ping-pong the mix between each other indefinitely.
+  const LIVENESS_FAILED_COOLDOWN_MS = 60000;
+  // The always-loaded, never-combat, never-context-specific bed. When every
+  // known-good candidate is itself cold or recently failed, this is the
+  // known-safest layer to drop to rather than keep cycling dead tracks.
+  const LIVENESS_SAFE_BASE_KEY = 'mainTheme';
 
   // "What's actually audible right now" mirrors applyLiveVolume()'s own
   // rule: while a switch is pending 'playing' on the incoming track, the
@@ -1398,15 +1413,44 @@
     if (idx !== -1) liv.goodKeys.splice(idx, 1);
     liv.goodKeys.push({ key: key, at: now });
     if (liv.goodKeys.length > 4) liv.goodKeys.shift();
+    // Advancing IS "demonstrably produces samples again" — re-admit a
+    // previously-demoted track the moment it proves itself, rather than
+    // making it sit out the full cooldown once it's actually recovered.
+    if (liv.failed[key]) delete liv.failed[key];
   }
 
-  // Most-recently-confirmed track that is NOT the one currently stalling
-  // and hasn't since failed to load. Walks newest-first.
-  function pickFallbackKey(key) {
+  // A track that failed liveness within the last LIVENESS_FAILED_COOLDOWN_MS
+  // stays ineligible as a fallback target — it was demoted precisely because
+  // the ring couldn't otherwise tell "proved healthy a while ago" apart from
+  // "just went dead", and picking it again is how two dead tracks ping-pong.
+  function isRecentlyFailed(key, now) {
+    const liv = st.liveness;
+    const at = liv.failed[key];
+    return typeof at === 'number' && (now - at) < LIVENESS_FAILED_COOLDOWN_MS;
+  }
+
+  // Marks a track as just-failed: pulled out of goodKeys (it is no longer
+  // "recently confirmed healthy" — it's the opposite) and stamped in the
+  // failed map so pickFallbackKey() won't hand it right back out while it's
+  // still cold. Cleared again by pushGoodKey() once it actually plays.
+  function demoteKey(key, now) {
+    const liv = st.liveness;
+    const idx = liv.goodKeys.findIndex(e => e.key === key);
+    if (idx !== -1) liv.goodKeys.splice(idx, 1);
+    liv.failed[key] = now;
+  }
+
+  // Most-recently-confirmed track that is NOT the one currently stalling,
+  // hasn't since failed to load, and isn't itself sitting in a post-failure
+  // cooldown. Walks newest-first.
+  function pickFallbackKey(key, now) {
     const liv = st.liveness;
     for (let i = liv.goodKeys.length - 1; i >= 0; i--) {
       const k = liv.goodKeys[i].key;
-      if (k !== key && st.loaded[k] && !st.loadErrors.has(k)) return k;
+      if (k === key) continue;
+      if (!st.loaded[k] || st.loadErrors.has(k)) continue;
+      if (isRecentlyFailed(k, now)) continue;
+      return k;
     }
     return null;
   }
@@ -1472,21 +1516,34 @@
       return;
     }
 
-    // Second failure in a row: the retry didn't take. Do not sit on
-    // indefinite silence — fall back to the last track we KNOW was
-    // actually producing sound.
-    const fallback = pickFallbackKey(key);
+    // Second failure in a row: the retry didn't take. This track is
+    // confirmed dead — demote it BEFORE picking a fallback so a later
+    // fallback walk (possibly triggered by the track we're about to switch
+    // to also failing) can't land right back on it while it's still frozen.
+    demoteKey(key, now);
+
+    // Do not sit on indefinite silence — fall back to the last track we
+    // KNOW was actually producing sound (and hasn't itself just failed).
+    let fallbackTarget = pickFallbackKey(key, now);
+    if (!fallbackTarget && key !== LIVENESS_SAFE_BASE_KEY &&
+        st.loaded[LIVENESS_SAFE_BASE_KEY] && !st.loadErrors.has(LIVENESS_SAFE_BASE_KEY) &&
+        !isRecentlyFailed(LIVENESS_SAFE_BASE_KEY, now)) {
+      // Every proven-healthy candidate is itself cold or in cooldown —
+      // rather than cycle dead tracks, drop to the known-safest base layer.
+      fallbackTarget = LIVENESS_SAFE_BASE_KEY;
+    }
     console.warn('🎵 Soundtrack: liveness recovery failed on "' + key + '" — ' +
-                  (fallback ? 'falling back to "' + fallback + '"'
-                            : 'no known-good track yet, forcing a hard reload'));
+                  (fallbackTarget ? 'falling back to "' + fallbackTarget + '"'
+                          : 'no known-good track yet, forcing a hard reload'));
     liv.stuckSince = 0;
     liv.recovering = false;
     liv.stalled = false;
-    if (fallback) {
-      play(fallback);
+    if (fallbackTarget) {
+      play(fallbackTarget);
     } else {
       // No known-good track yet (this stalled on the very first track of
-      // the session) — hard-reload the element as a last resort.
+      // the session, and the safe base layer is unavailable or itself
+      // frozen) — hard-reload the element as a last resort.
       try {
         el.load();
         el.currentTime = 0;
@@ -2022,7 +2079,9 @@
         // Ring of recently-confirmed-healthy keys (newest last), plus what
         // the second-failure rung would actually pick right now.
         goodKeys: liv.goodKeys.map(e => e.key),
-        fallbackKey: pickFallbackKey(liv.lastKeyWatched),
+        // Keys currently sitting out a post-failure cooldown (demoted).
+        failedKeys: Object.keys(liv.failed).filter(k => isRecentlyFailed(k, Date.now())),
+        fallbackKey: pickFallbackKey(liv.lastKeyWatched, Date.now()),
       };
       if (!wa.ok) {
         return { bus: null, stingers: sting, fade: fade, liveness: liveness,

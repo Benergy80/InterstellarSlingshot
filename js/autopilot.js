@@ -1894,24 +1894,34 @@
     const t = elapsed();
     ensureShieldsFor('travel');
     ensureThirdPerson();
-    // Prefer the path snapshot taken when this transition was triggered.
-    // discoveryPaths is never pruned, so [length-1] can drift to a path
-    // from a different galaxy that was created mid-flight.
-    let path = ap._followingPath || null;
-    if (!path || !path.line || !path.line.userData) {
-      const paths = window.discoveryPaths || [];
-      path = paths.length > 0 ? paths[paths.length - 1] : null;
-    }
-    const endPos = path && path.line && path.line.userData && path.line.userData.endPosition;
-
-    // Guard against runaway chases: if the snapshotted path's endpoint is
-    // unreasonably far (stale path slipped through, or the snapshot got
-    // cleared and we fell back to a foreign [length-1]), abort to a fresh
-    // nebula warp instead of flying to the edge of the universe.
-    if (endPos && camPos().distanceTo(endPos) > 50000) {
+    // Only ever follow the snapshot taken when this transition was
+    // triggered. The old code fell back to discoveryPaths[length-1] — and
+    // since that list is never pruned, the fallback could hand us a path
+    // from a different galaxy created mid-flight. It then leaned on a flat
+    // 50,000 u endpoint cap to catch that, but EVERY real path in the game
+    // is longer than 50,000 u (measured: 62k-142k), so the cap fired on the
+    // vetted paths too and bounced this phase back to warpToNebulaCluster
+    // on its very first frame, every time — which is why the demo never
+    // once followed a dotted line, and never reached the black hole, the
+    // Borg, or the outer systems beyond them.
+    //
+    // The snapshot from eligibleDiscoveryPathsFrom is ours by construction
+    // (it starts at the nebula we just orbited), so drop the fallback and
+    // keep distance only as an absurd-value backstop.
+    const path = ap._followingPath;
+    const ud = path && path.line && path.line.userData;
+    const endPos = ud && ud.endPosition;
+    if (!endPos || camPos().distanceTo(endPos) > MAX_PATH_ENDPOINT) {
       ap._followingPath = null;
       goPhase('warpToNebulaCluster');
       return;
+    }
+
+    // Remember how long the trip is so the safety timeout below can scale
+    // to it: a 78,000 u transit cannot possibly finish inside a flat 60 s.
+    if (endPos && !ap._followPathBudgetMs) {
+      const _d0 = camPos().distanceTo(endPos);
+      ap._followPathBudgetMs = Math.min(240000, Math.max(60000, _d0 * 1.2));
     }
 
     // From the moment a path is acquired, the nav target is the path's
@@ -2010,8 +2020,10 @@
       if (t > 3000) goPhase('warpToNebulaCluster');
     }
 
-    // Safety timeout
-    if (t > 60000) goPhase('warpToNebulaCluster');
+    // Safety timeout — scaled to the length of the trip we committed to
+    // (set on entry above), so a legitimate long-haul discovery transit
+    // isn't guillotined mid-flight and bounced back to a nebula warp.
+    if (t > (ap._followPathBudgetMs || 60000)) goPhase('warpToNebulaCluster');
   }
 
   // ─── 5) Fly directly to the nearest black hole and warp through it ───────
@@ -3350,10 +3362,32 @@
     return best;
   }
 
+  // ── DISCOVERY PATH ELIGIBILITY ────────────────────────────────────────
+  // The old gate rejected any path whose endpoint sat more than 50,000 u
+  // away. Real discovery paths in this world are 62k-142k units long
+  // (measured live: 62,204 / 78,410 / 103,233 / 142,104), so that cap
+  // rejected EVERY path the game has ever drawn — followDiscoveryPath
+  // could never run, and since it is the ONLY route into
+  // gotoBlackHoleGalaxy, the entire second act (black-hole warp, the Borg
+  // set piece, the proc-gen outer systems) was unreachable in the demo.
+  // The demo just looped nebula → orbit → 25 s timeout → warp forever.
+  //
+  // NOTE: do NOT re-gate this on galaxy. A path's userData.galaxyId is the
+  // galaxy of the enemies it LEADS TO (createDiscoveryPathToPosition is
+  // called with the target's galaxyId), not the one the player is standing
+  // in — leading you to another galaxy's remnant forces is the entire point
+  // of the mechanic ("Follow the amber line from Chronos Nebula. Finish
+  // it."). Matching it against getCurrentGalaxyId() would reject every
+  // genuine mission, which is the same dead end by another route.
+  //
+  // The precise guard is the ORIGIN test that's already here: a path is
+  // ours when it starts at the nebula we're orbiting. Distance is kept only
+  // as an absurd-value backstop.
+  const MAX_PATH_ENDPOINT = 250000;
+
   // Discovery paths that ORIGINATE within originRadius of originPos and
   // still need following: not already followed by the demo, mission not
-  // complete, endpoint within sane reach (50k — beyond that the path is
-  // stale or points at a galaxy we should reach by black hole instead).
+  // complete, endpoint not absurd.
   // Sorted by endpoint distance from the player, closest first.
   function eligibleDiscoveryPathsFrom(originPos, originRadius) {
     const out = [];
@@ -3366,7 +3400,7 @@
       if (ud.missionComplete) continue;
       if (ap._followedPathLines.indexOf(p.line) >= 0) continue;
       if (originPos && ud.startPosition.distanceTo(originPos) > originRadius) continue;
-      if (camPos().distanceTo(ud.endPosition) > 50000) continue;
+      if (camPos().distanceTo(ud.endPosition) > MAX_PATH_ENDPOINT) continue;
       out.push(p);
     }
     out.sort((a, b) =>
@@ -3933,6 +3967,8 @@
     if (name === 'followDiscoveryPath') {
       ap._followPathWarpFired = false;
       ap._tacticalMsgShown = false;
+      // Re-measure the trip budget for THIS path (see phaseFollowDiscoveryPath).
+      ap._followPathBudgetMs = 0;
     }
     // The origin-return trip is over once we're following the second
     // path — or abandoned if we picked a brand-new warp destination.
@@ -4102,7 +4138,46 @@
     }
   }
 
+  // Lower-centre overlays that OWN the screen while they're up. The mission
+  // command alert is anchored at top:78% and grows downward with its content,
+  // so a long transmission runs straight over the demo HUD sitting at
+  // bottom:10px (measured: 472x29 px of overlap, and the alert paints on top
+  // at z-index 850 vs 500 — it swallowed "press T to take over" mid-beat).
+  // The demo badge is persistent chrome and the transmission is a story beat,
+  // so the badge yields for the couple of seconds the beat is on screen.
+  const HUD_YIELD_TO = ['missionCommandAlert', 'incomingTransmission',
+                        'incomingTransmissionPrompt'];
+
+  function _hudBlockerVisible() {
+    for (let i = 0; i < HUD_YIELD_TO.length; i++) {
+      const el = document.getElementById(HUD_YIELD_TO[i]);
+      if (!el || el.classList.contains('hidden')) continue;
+      const cs = getComputedStyle(el);
+      if (cs.display === 'none' || cs.visibility === 'hidden') continue;
+      if (parseFloat(cs.opacity) < 0.05) continue;
+      // Only yield if it actually reaches the badge.
+      const hud = ap.hudEl;
+      if (!hud) return true;
+      const a = el.getBoundingClientRect(), b = hud.getBoundingClientRect();
+      if (a.bottom > b.top - 8 && a.top < b.bottom && a.right > b.left && a.left < b.right) return true;
+    }
+    return false;
+  }
+
   function tickHUD() {
+    // Yield the lower-centre lane to comms/mission beats (both layouts).
+    const hud = ap.hudEl || document.getElementById('demoPilotHUD');
+    if (hud) {
+      const yield_ = _hudBlockerVisible();
+      if (yield_ !== ap._hudYielding) {
+        ap._hudYielding = yield_;
+        hud.style.transition = 'opacity .25s ease';
+        hud.style.opacity = yield_ ? '0' : '1';
+        // Keep the mobile tap-to-take-over target from swallowing taps
+        // meant for the transmission's buttons while it's invisible.
+        if (isMobileViewport()) hud.style.pointerEvents = yield_ ? 'none' : 'auto';
+      }
+    }
     // Mobile HUD has no status line — skip target info updates.
     if (isMobileViewport()) return;
     const s = document.getElementById('demoPilotStatus');
@@ -4135,6 +4210,9 @@
     const el = document.getElementById('demoPilotHUD');
     if (el) el.remove();
     ap.hudEl = null;
+    // A rebuilt badge starts fully visible — forget any yield we had
+    // latched against the element we just destroyed.
+    ap._hudYielding = undefined;
   }
 
   // ─── Expose update to game loop ────────────────────────────────────────────

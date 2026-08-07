@@ -792,9 +792,21 @@ function createEnemyMeshWithModel(regionId, fallbackGeometry, material, scaleOve
                 // desaturated, faction identity moved to the rim and the
                 // engine flares, and the emissive floor is LOW (0.62) so the
                 // 1x->3.4x attack telegraph has real headroom above it.
+                // Region 8 (Vulcan Patrol/Boss8) measured borderline on the
+                // shared floor above — median hull luminance sat right at the
+                // 100/255 acceptance line with ~8% of hull pixels still under
+                // the 20/255 dark cutoff, because Vulcans patrol tight to
+                // Sagittarius A* where the local starfield is denser/dimmer
+                // than the open-space backdrop the shared floor was tuned
+                // against. A small dedicated bump (same "VALUE, NOT HUE"
+                // hot-point mechanism, just pushed one notch further) buys
+                // real margin without touching any other class riding this
+                // same shared function.
+                const _isVulcanHull = (regionId === 8);
                 child.material = createFactionHullMaterial(material.color || 0xff0000, {
-                    emissiveIntensity: 0.70,
-                    rimIntensity: 0.62,
+                    emissiveIntensity: _isVulcanHull ? 0.84 : 0.70,
+                    emissiveHeat: _isVulcanHull ? 0.48 : undefined,
+                    rimIntensity: _isVulcanHull ? 0.74 : 0.62,
                     // Nose direction in MESH-LOCAL space: the nose-flipped
                     // regions are authored +Z-forward, everything else -Z.
                     formNoseSign: _enemyModelNoseFlip[regionId] ? 1.0 : -1.0
@@ -892,9 +904,11 @@ function createEnemyMeshWithModel(regionId, fallbackGeometry, material, scaleOve
         // on createFactionHullMaterial). The additive duplicate shell that
         // used to sit on top of this is gone for the same reason it is gone
         // on the GLB path — it flattened the silhouette it was meant to sell.
+        const _isVulcanHullFallback = (regionId === 8);
         const baseMaterial = createFactionHullMaterial(material.color || 0xff0000, {
-            emissiveIntensity: 0.70,
-            rimIntensity: 0.62,
+            emissiveIntensity: _isVulcanHullFallback ? 0.84 : 0.70,
+            emissiveHeat: _isVulcanHullFallback ? 0.48 : undefined,
+            rimIntensity: _isVulcanHullFallback ? 0.74 : 0.62,
             roughness: 0.5,
             formNoseSign: -1.0
         });
@@ -1231,6 +1245,156 @@ if (typeof window !== 'undefined') {
     window.createPlayerHullMaterial = createPlayerHullMaterial;
     window.createFactionHullMaterial = createFactionHullMaterial;
     console.log('✅ Model functions exported successfully');
+}
+
+// =============================================================================
+// UFO ("Unknown Craft") HULL PRESENCE FLOOR
+// =============================================================================
+// createUFOEnemy (game-objects.js) never went through createFactionHullMaterial
+// — it builds its own inline material instead, and both of its branches carry
+// no guaranteed emissive floor:
+//   • the GLB-cached branch just nudges metalness/roughness/envMapIntensity
+//     on whatever the model shipped with, plus a weak 0.5-intensity emissive
+//     that only reads bright when the hull happens to reflect something
+//     bright nearby — nothing guarantees that in open space.
+//   • the createProceduralUFO() fallback saucer is a near-black albedo
+//     (#3a2a2a) with a 0.6-intensity emissive that's itself near-black
+//     (#220808) — the single largest surface on the model carries almost no
+//     floor at all.
+// Measured: 68/295 ships (23% of the roster) at median hull luminance 22.6
+// overall, 4.6 at 900u, 79.4% of hull pixels darker than the empty-space
+// background (13.8).
+//
+// game-models.js loads BEFORE game-objects.js (see index.html), so
+// createUFOEnemy doesn't exist yet when this file's top-level code runs —
+// the fix has to be a post-construction wrap, installed once
+// game-objects.js has actually defined the function. DOMContentLoaded fires
+// only after every synchronous <script> tag (this whole chain) has run, so
+// by the time it fires window.createUFOEnemy is guaranteed to be the real
+// function, not a stub.
+//
+// Only MeshStandardMaterial, fully-opaque children are re-keyed — that
+// targets exactly the two dark hull surfaces above (the GLB hull mesh and
+// the procedural saucer) while leaving every additive MeshBasicMaterial
+// accent (aura shell, abduction-beam ring, rim lights) and the translucent
+// StandardMaterial cockpit dome (already opacity 0.75 + emissiveIntensity
+// 0.8 — plenty bright, and createFactionHullMaterial forces opaque
+// FrontSide, which would flatten its glassy canopy look) untouched.
+//
+// Colour is a cold alien green (0x39ffa0), not another warm red/orange —
+// every other hostile faction in the roster (Martian Pirates, Vulcans,
+// Romulans, Klingons, ...) already sits in that same hot family, so a
+// distinct hue is what keeps "Unknown Craft" reading as its own class once
+// it's actually bright enough to read at all.
+const UFO_HULL_COLOR = 0x39ffa0;
+
+function _applyUFOHullPresenceFloor(ufo) {
+    if (!ufo) return ufo;
+    ufo.traverse((child) => {
+        if (!child.isMesh || !child.material) return;
+        const mat = child.material;
+        if (!mat.isMeshStandardMaterial || mat.transparent === true) return;
+        // models/UFO.glb's hull mesh ships with NO normal attribute at all
+        // (verified live: geometry.attributes.normal is undefined even on
+        // a fresh GLTFLoader parse) — every other enemy/boss GLB in the
+        // roster carries real normals, so nothing else in this file ever
+        // needed to guard for this. Without normals, MeshStandardMaterial
+        // has no surface direction to light against: measured, even the
+        // hull's completely untouched, un-re-keyed, out-of-the-box
+        // material rendered flat black at every sampled pixel — this was
+        // never actually a material-tuning problem for this one class, it
+        // was a missing-attribute one that no floor/rim treatment could
+        // paper over. computeVertexNormals() synthesizes faceted normals
+        // from the triangle winding so the lighting/fresnel/hullForm math
+        // below has something real to read.
+        if (child.geometry && !child.geometry.attributes.normal) {
+            child.geometry.computeVertexNormals();
+        }
+        const oldMap = mat.map || null;
+        const newMat = createFactionHullMaterial(UFO_HULL_COLOR, {
+            emissiveIntensity: 0.74,
+            rimIntensity: 0.64,
+            roughness: 0.4,
+            metalness: 0.35,
+            hullForm: true
+        });
+        if (oldMap) newMat.map = oldMap;
+        child.material = newMat;
+    });
+
+    // SCALE CORRECTION. createUFOEnemy's GLB branch bakes a flat
+    // scale.set(3,3,3) that assumed a much smaller source asset than the
+    // models/UFO.glb actually on disk now — measured raw (unscaled) at
+    // 424x108x424, so x3 lands at ~1273 units across: roughly 7x every
+    // other enemy class's hull. That is big enough that this piece's own
+    // 900u measurement distance puts the camera INSIDE the hull's
+    // bounding sphere (half-diagonal ~908 > 900), so the readback saw the
+    // model's interior/backfaces, not its lit exterior — no material floor
+    // fixes that, because the camera isn't looking at the outside surface
+    // at all. The author's own intended size is recoverable from the
+    // hitbox createUFOEnemy sizes right after this call (95 world-unit
+    // radius, i.e. ~190 across, independent of whatever scale the hull
+    // carries) — rescale the HULL content to match that same target,
+    // leaving the hitbox (already scale-independent by construction)
+    // untouched. Reparenting via Object3D.add() preserves each child's
+    // LOCAL transform while moving it under the new corrective group, so
+    // this is a pure size fix with no position/rotation side effect.
+    const TARGET_MAX_DIM = 190;
+    const hullChildren = ufo.children.filter((c) => !(c.userData && c.userData.isHitbox));
+    if (hullChildren.length) {
+        const hullBox = new THREE.Box3();
+        hullChildren.forEach((c) => hullBox.expandByObject(c));
+        const hullSize = hullBox.getSize(new THREE.Vector3());
+        const maxDim = Math.max(hullSize.x, hullSize.y, hullSize.z);
+        if (maxDim > TARGET_MAX_DIM * 1.15 || maxDim < TARGET_MAX_DIM * 0.4) {
+            const correction = TARGET_MAX_DIM / Math.max(1, maxDim);
+            const hullGroup = new THREE.Group();
+            hullChildren.forEach((c) => hullGroup.add(c));
+            hullGroup.scale.setScalar(correction);
+            ufo.add(hullGroup);
+        }
+    }
+
+    return ufo;
+}
+
+function _installUFOHullPresenceFix() {
+    if (typeof window.createUFOEnemy !== 'function' || window.createUFOEnemy.__hullFloorPatched) {
+        return false;
+    }
+    const _originalCreateUFOEnemy = window.createUFOEnemy;
+    const _patchedCreateUFOEnemy = function () {
+        const ufo = _originalCreateUFOEnemy.apply(this, arguments);
+        return _applyUFOHullPresenceFloor(ufo);
+    };
+    _patchedCreateUFOEnemy.__hullFloorPatched = true;
+    window.createUFOEnemy = _patchedCreateUFOEnemy;
+    console.log('✅ UFO hull presence floor installed (createUFOEnemy patched)');
+    return true;
+}
+
+// Poll rather than hook a single lifecycle event: this game's "restart"
+// flow (observed live — calling startGame() again re-drives the whole
+// boot sequence) does not reliably produce a fresh 'loading' readyState /
+// DOMContentLoaded firing that this file's own top-level execution is
+// still ahead of, so a one-shot readyState check was measured to land in
+// its "already past loading" branch and silently never install the patch
+// (window.createUFOEnemy did not exist yet at that instant either way).
+// Polling for the real function to appear is robust to all of that: it
+// costs nothing once installed (self-clearing) and nothing meaningful
+// while waiting (a few hundred ms of an empty typeof check).
+if (typeof window !== 'undefined') {
+    let _ufoFixAttempts = 0;
+    const _ufoFixPoll = setInterval(() => {
+        _ufoFixAttempts++;
+        if (_installUFOHullPresenceFix() || _ufoFixAttempts > 150) {
+            clearInterval(_ufoFixPoll);
+        }
+    }, 200);
+}
+
+if (typeof window !== 'undefined') {
+    window.applyUFOHullPresenceFloor = _applyUFOHullPresenceFloor;
 }
 
 console.log('✅ Game models system loaded and ready');

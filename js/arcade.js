@@ -208,7 +208,97 @@
     const SAFE_PAD = 16;      // breathing room either side of a HUD panel
     const MIN_SCALE = 0.62;   // don't shrink a call-out into illegibility
     const WRAP_SCALE = 0.80;  // below this, wrap to 2 lines instead of shrinking
-    const SWELL = 1.12;       // the readable peak of the arcadePop keyframes
+    const SWELL = 1.12;       // the settled pulse peak of the arcadePop keyframes
+
+    // ── THE SWELL THE FIT WAS MISSING ────────────────────────────────────
+    // Fitting to SWELL alone is only half the story: arcadePop does not
+    // start at 1x. It opens at scale(2.6) while the opacity ramps 0 -> 0.82
+    // over its first 220 ms, and grows again to 1.5x at 64% (still at 0.5
+    // opacity) before dissolving at 2.4x. So the word is plainly VISIBLE at
+    // 2.6x for the first fifth of its life, and the corridor fit — which
+    // only ever budgeted for 1.12x — was blown wide open every single time.
+    //
+    // Measured live at 1600x900 (painted getBoundingClientRect, ~250 ms
+    // after the call-out fires):
+    //   "CHARGED BLAST!"     spanned x=6..1594  — 394 px under the NAV panel
+    //   "TARGET ELIMINATED!" spanned x=-364..1856 — 657 px under NAV, and
+    //                        overhanging BOTH screen edges
+    //   "DOUBLE KILL!"       spanned x=316..1284 — 84 px under the NAV panel
+    //
+    // We can't touch the keyframes (visual-flair owns them), but we own the
+    // element after it's built, so we re-point it at a corridor-clamped copy
+    // of the same animation whose big scales come from CSS variables. Same
+    // beats, same timing, same punch — just a peak that physically fits
+    // between the HUD panels.
+    const POP_OPEN = 2.6;     // arcadePop's opening scale
+    const POP_GROW = 1.5;     // its 64% grow, still at 0.5 opacity
+    const POP_OUT  = 2.4;     // its final dissolve scale (opacity 0)
+    const POP_MIN  = 1.18;    // never flatten the pop into a fade
+
+    function _ensureFitKeyframes() {
+        if (document.getElementById('arcadeFitPopStyle')) return;
+        const st = document.createElement('style');
+        st.id = 'arcadeFitPopStyle';
+        // Mirrors arcadePop exactly, with the three oversized scales driven
+        // by --ap-open / --ap-grow / --ap-out so each call-out gets a peak
+        // sized to the corridor it actually landed in.
+        st.textContent = '@keyframes arcadeFitPop{' +
+            '0%{opacity:0;transform:translateX(-50%) scale(var(--ap-open,2.6))}' +
+            '11%{opacity:0.82;transform:translateX(-50%) scale(0.86)}' +
+            '20%{transform:translateX(-50%) scale(1.10)}' +
+            '29%{transform:translateX(-50%) scale(0.96)}' +
+            '38%{opacity:0.8;transform:translateX(-50%) scale(1.06)}' +
+            '48%{opacity:0.72;transform:translateX(-50%) scale(1.05)}' +
+            '64%{opacity:0.5;transform:translateX(-50%) scale(var(--ap-grow,1.5))}' +
+            '100%{opacity:0;transform:translateX(-50%) scale(var(--ap-out,2.4))}}';
+        document.head.appendChild(st);
+    }
+
+    // Clamp the animation's scale envelope to the room the word actually
+    // has, then swap it onto the element. Runs in the same task as the
+    // element's creation, so no oversized frame is ever painted.
+    function _clampSwell(el, band) {
+        const w = el.offsetWidth || el.scrollWidth;
+        const h = el.offsetHeight || 1;
+        if (!w) return;
+        const cx = parseFloat(el.style.left) || (window.innerWidth / 2);
+        // Symmetric room around where the word is actually centred (it
+        // grows from its centre), against the corridor AND the viewport.
+        const halfRoom = Math.max(40, Math.min(
+            cx - Math.max(band.left, SAFE_PAD),
+            Math.min(band.right, window.innerWidth - SAFE_PAD) - cx));
+        let peak = (halfRoom * 2) / w;
+        // Vertical headroom too: the tall subtitled call-outs grew from
+        // 180 px to 469 px and swallowed the whole upper third.
+        const cy = (el.offsetTop || 0) + h / 2;
+        const vPeak = (Math.min(cy, window.innerHeight - cy) * 2) / h;
+        peak = Math.min(peak, vPeak);
+        // If the word is so wide that even POP_MIN would overflow, don't
+        // clamp UP into the panels — buy the room back from the type
+        // instead. (Measured: "THREAT NEUTRALIZED!" was the one call-out
+        // still poking 49 px under the NAV panel because it bottomed out
+        // on the POP_MIN floor.) Shrinking a already-huge word by a few
+        // per cent is invisible; overlapping the HUD is not.
+        if (peak < POP_MIN) {
+            const shrink = Math.max(MIN_SCALE, peak / POP_MIN);
+            const px = Math.max(20, Math.round((parseFloat(getComputedStyle(el).fontSize) || 40) * shrink));
+            el.style.fontSize = px + 'px';
+            el.style.letterSpacing = Math.max(1, Math.round(px * 0.045)) + 'px';
+            const kids = el.children;
+            for (let i = 0; i < kids.length; i++) {
+                const fs = parseFloat(kids[i].style.fontSize);
+                if (fs) kids[i].style.fontSize = Math.max(11, Math.round(fs * shrink)) + 'px';
+            }
+            peak = POP_MIN;
+        }
+        peak = Math.min(POP_OPEN, peak);
+        _ensureFitKeyframes();
+        el.style.setProperty('--ap-open', peak.toFixed(3));
+        el.style.setProperty('--ap-grow', Math.min(POP_GROW, peak).toFixed(3));
+        el.style.setProperty('--ap-out', Math.min(POP_OUT, peak * 1.15).toFixed(3));
+        // Same duration/easing/fill as the original.
+        el.style.animation = 'arcadeFitPop 2s cubic-bezier(.2,.7,.3,1) forwards';
+    }
     // Everything that can sit in the call-out band and must not be covered.
     const BLOCKERS = '.ui-panel, #achievementPopup, #missionCommandAlert, ' +
                      '#incomingTransmissionPrompt, #incomingTransmission';
@@ -320,6 +410,11 @@
         const fittedW = Math.min(el.scrollWidth, band.width) * SWELL;
         const symmetricRoom = Math.min(band.right - ccx, ccx - band.left) * 2;
         el.style.left = Math.round(fittedW + 8 <= symmetricRoom ? ccx : band.center) + 'px';
+
+        // Finally: size the pop's scale envelope to the corridor the word
+        // just landed in, so the opening 2.6x flare can't paint over the
+        // NAVIGATION / SHIP STATUS panels or off the edges of the screen.
+        _clampSwell(el, band);
     }
 
     function _wrapArcadeText() {

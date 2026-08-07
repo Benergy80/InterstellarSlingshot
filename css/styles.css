@@ -942,6 +942,15 @@ body.ui-mode {
     animation: distressMapDotPulse 0.8s ease-in-out infinite;
 }
 
+/* A collapsed radar cluster (multiple contacts sharing one crowded cell,
+   declutter path in updateGalaxyMap): same glow language as a normal
+   blip, plus a faint outer ring so a dense clump reads as "many" rather
+   than one big single contact — no extra DOM node, stays on-palette. */
+.galactic-target-dot.aggregate-map-dot {
+    outline: 1px solid rgba(180,220,255,0.4);
+    outline-offset: 2px;
+}
+
 .map-grid {
     position: absolute;
     inset: 0;
