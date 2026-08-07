@@ -3173,9 +3173,102 @@ introStyles.textContent = `
         0%, 100% { opacity: 1; }
         50% { opacity: 0.7; }
     }
+
+    /* =============================================================================
+       TITLE-CARD RETIREMENT — the intro's branding must not outlive the intro.
+       The "INTERSTELLAR SLINGSHOT / A Gravitational Space Explorer by ChiLab"
+       header (index.html .ui-panel.title-header) is a launch-screen title card,
+       but nothing ever took it down: it stayed pinned dead-centre-top through
+       Sol combat, the nebula run, warps and boss fights. Worse, during a
+       slingshot/emergency-warp the geometric HUD yield pins EVERY .ui-panel to
+       opacity: 1 !important (css/styles.css :root.hud-geo-yield) while
+       collapsing their content — so every readout politely shrank out of the
+       money shot and the one panel with nothing to collapse, the title card,
+       became the single brightest thing on screen during the spectacle.
+
+       body.gameplay-live (stamped by the watcher below once the player is
+       actually flying) fades it out for good. Two knock-on wins: an
+       opacity-0 panel is skipped by arcade.js _liveHudRects() call-out
+       fitter, so the top-centre praise corridor opens back up; and the
+       specificity here (0,3,1) beats :root.hud-geo-yield .ui-panel (0,3,0),
+       so the spectacle yield can no longer resurrect it.
+       ============================================================================= */
+    .ui-panel.title-header {
+        transition: opacity 1.6s ease;
+    }
+    body.gameplay-live .ui-panel.title-header {
+        opacity: 0 !important;
+        pointer-events: none !important;
+    }
+
+    /* The collapsed flight-controls stub ("? for controls", injected by
+       game-ui.js _updateFlightControlsCollapse) is reference chrome, not a
+       live readout — once the player is flying it should recede to a ghost
+       and only come back when they actually go looking for it. The top-left
+       panel keeps its Music/SFX/Skip/3D/Pause row, so there is always a
+       hover target in that corner; hovering (or focusing) restores the hint
+       to full strength and it stays clickable throughout, which is the only
+       way back to the key list. */
+    body.gameplay-live .ui-panel.top-left.controls-collapsed .hud-controls-hint {
+        opacity: 0.12;
+        transition: opacity 0.45s ease;
+    }
+    body.gameplay-live .ui-panel.top-left.controls-collapsed:hover .hud-controls-hint,
+    body.gameplay-live .ui-panel.top-left.controls-collapsed:focus-within .hud-controls-hint,
+    body.gameplay-live .ui-panel.top-left.controls-collapsed .hud-controls-hint:hover {
+        opacity: 1;
+    }
 `;
 
 document.head.appendChild(introStyles);
+
+// =============================================================================
+// GAMEPLAY-LIVE WATCHER
+// =============================================================================
+// One job: decide when "the intro is over and the player is flying", and
+// stamp/clear `body.gameplay-live` so the CSS above can retire the intro's
+// leftover chrome. gameStartTime is the honest marker — startNormalGameplay()
+// (above) sets it at the exact moment the cinematic fade ends and the ship
+// becomes controllable, and game-core.js's fallback path sets it the same
+// way. The 5s grace matches the game's own combat-start delay, so the title
+// card gets a last beat over the revealed starfield and is gone by the time
+// the first hostile is live — the branding exits on the cut into combat
+// instead of sitting through it.
+(function _watchGameplayLive() {
+    const RETIRE_DELAY_MS = 5000;
+
+    function tick() {
+        try {
+            if (typeof document === 'undefined' || !document.body) return;
+            const body = document.body;
+
+            // A genuine return to the launch screen is the ONLY thing that
+            // brings the title card back — the intro re-adds `intro-active`
+            // before it re-shows the header, and a restart drops
+            // gameStartTime. Deliberately NOT keyed on gameState.gameStarted:
+            // showGameOverScreen()/showVictoryScreen() (js/game-ui.js:3380,
+            // :3446) clear that flag, and fading the branding back in behind
+            // a MISSION FAILED card just puts the clutter back at the worst
+            // possible moment.
+            if (body.classList.contains('intro-active') ||
+                typeof gameState === 'undefined' || !gameState.gameStartTime) {
+                body.classList.remove('gameplay-live');
+                return;
+            }
+            // Latch on once the player has actually been flying for the
+            // grace period; nothing mid-run un-latches it.
+            if (gameState.gameStarted &&
+                (Date.now() - gameState.gameStartTime) >= RETIRE_DELAY_MS) {
+                body.classList.add('gameplay-live');
+            }
+        } catch (e) { /* never let HUD chrome break the frame */ }
+    }
+
+    if (typeof window !== 'undefined') {
+        window._updateGameplayLiveChrome = tick;
+        setInterval(tick, 400);
+    }
+})();
 
 // =============================================================================
 // WINDOW EXPORTS

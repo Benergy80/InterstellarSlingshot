@@ -413,6 +413,24 @@ function updateCameraView(camera) {
     // setTimeout snaps). Only the SHIP-IN-FRAME offset moves; the camera's
     // gameplay position is untouched.
     if (typeof gameState !== 'undefined' && gameState.gameStarted) {
+        // WARP-EXIT SYNC: gameState._warpExitT (published by game-physics'
+        // _applyWarpExitRamp, 0 at drop-out → 1 fully settled, null when no
+        // ramp is running) is this frame's single source of truth for "how
+        // far through the drop-out are we". _exitSettle is its complement —
+        // 1 with no ramp running, sliding to 0 as the ramp completes — and
+        // is applied directly to the PERSISTENT rig state below (_warpZoom,
+        // _whipFov, _whipLean, _whipCrack, the fov pulse amplitude), not
+        // just to the derived FOV number. Scaling only the derived number
+        // was tried first and produced a pop: those state variables keep
+        // decaying on their own flat per-frame lerps regardless, so the
+        // instant the ~1s ramp ended and stopped suppressing the readout,
+        // whatever those lerps hadn't caught up to erasing yet reappeared
+        // in one frame (measured: FOV snapped 75.0 -> 80.3 the frame the
+        // ramp handed off). Settling the state itself means there is
+        // nothing left to rebound — by exitT=1 the rig is ACTUALLY at rest,
+        // not just reading that way.
+        const _exitT = (typeof gameState._warpExitT === 'number') ? gameState._warpExitT : null;
+        const _exitSettle = (_exitT !== null) ? (1 - _exitT) : 1;
         // ── SUSTAINED SPEED, EASED ONCE PER FRAME ───────────────────────
         // _warpZoom below only moves for warp / slingshot, so the entire
         // reachable sub-warp range — 0 to 4,000 km/s, the whole "whip" — used
@@ -428,6 +446,7 @@ function updateCameraView(camera) {
             : ((typeof window !== 'undefined' && window.__speedWhip) || 0);
         cameraState._whipFov += (_whipV - cameraState._whipFov) *
             (_whipV > cameraState._whipFov ? 0.10 : 0.05);
+        if (_exitT !== null) cameraState._whipFov *= _exitSettle;
         if (cameraState._warpZoom === undefined) { cameraState._warpZoom = 1; cameraState._wasWarping = false; }
         const _warpingNow = !!((gameState.emergencyWarp && gameState.emergencyWarp.active) ||
             (gameState.slingshot && gameState.slingshot.active && !gameState.slingshotWhip));
@@ -437,6 +456,7 @@ function updateCameraView(camera) {
         }
         const _zTarget = (_warpingNow && cameraState.mode === 'third-person') ? 1.55 : 1.0;
         cameraState._warpZoom += (_zTarget - cameraState._warpZoom) * 0.04;
+        if (_exitT !== null) cameraState._warpZoom = 1 + (cameraState._warpZoom - 1) * _exitSettle;
         const _zAmt = cameraState._warpZoom - 1;
         if (Math.abs(_zAmt) > 0.004) {
             currentOffset.multiplyScalar(cameraState._warpZoom);
@@ -466,6 +486,7 @@ function updateCameraView(camera) {
         // Faster in than out: gravity grabs, the release unwinds (~0.5s).
         cameraState._whipLean += (_leanT - cameraState._whipLean) *
             (Math.abs(_leanT) > Math.abs(cameraState._whipLean) ? 0.14 : 0.07);
+        if (_exitT !== null) cameraState._whipLean *= _exitSettle;
         const _lean = cameraState._whipLean;
         if (Math.abs(_lean) > 0.004) {
             const _la = Math.abs(_lean);
@@ -499,6 +520,7 @@ function updateCameraView(camera) {
             ? Math.max(0, Math.min(1, _wl.e || 0)) : 0;
         cameraState._whipCrack += (_crackT - cameraState._whipCrack) *
             (_crackT > cameraState._whipCrack ? 0.45 : 0.06);
+        if (_exitT !== null) cameraState._whipCrack *= _exitSettle;
         if (cameraState._whipCrack > 0.004) {
             const _ck = cameraState._whipCrack;
             currentOffset.z *= 1 + 0.42 * _ck;   // camera drops back
@@ -535,6 +557,7 @@ function updateCameraView(camera) {
                 (cameraState._whipCrack || 0) * 6 +
                 (cameraState._whipFov || 0) * 7.5;
             if (cameraState._fovPulseAmp) {
+                if (_exitT !== null) cameraState._fovPulseAmp *= _exitSettle;
                 const _pk = (performance.now() - cameraState._fovPulseT0) /
                     Math.max(1, cameraState._fovPulseMs);
                 if (_pk >= 1) cameraState._fovPulseAmp = 0;
@@ -544,6 +567,15 @@ function updateCameraView(camera) {
             }
             const _tl = (typeof window !== 'undefined' && window.__warpTunnelLevel) || 0;
             if (_tl > 0.01) _fovT += _tl * 8;
+            // WARP-EXIT SYNC: _exitSettle (computed at the top of this block
+            // from gameState._warpExitT — the physics exit ramp's own eased
+            // 0..1 progress) already collapsed _warpZoom/_whipFov/_whipLean/
+            // _whipCrack/_fovPulseAmp toward rest above, in place, so this is
+            // now mostly a safety net for the one contributor that ISN'T a
+            // persistent rig-state var here — the tunnel level `_tl`, read
+            // fresh from visual-flair every frame. Composed, not replaced:
+            // outside a ramp _exitSettle is 1 (no-op).
+            _fovT = 75 + (_fovT - 75) * _exitSettle;
             _fovT = Math.max(55, Math.min(118, _fovT));
             if (Math.abs(camera.fov - _fovT) > 0.05) {
                 camera.fov = _fovT;

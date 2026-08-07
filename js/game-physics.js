@@ -2714,6 +2714,18 @@ function _applyWarpExitRamp(owner) {
         camera.getWorldDirection(_applyWarpExitRamp._tmp);
         v.copy(_applyWarpExitRamp._tmp).multiplyScalar(mag);
     }
+    // Publish the ramp's own eased progress (0 at drop-out, 1 once fully
+    // settled) so camera-system (FOV settle) and visual-flair (streak/bloom
+    // drain) can fall on this SAME curve instead of running their own
+    // independently-timed easings. Before this, the FOV zoom-out lerped at
+    // a flat 0.04/frame and the streak drain ran a separate 1000ms timer
+    // (started from a different Date.now()/performance.now() call than this
+    // ramp's t0) — two clocks approximating the same ~1s window instead of
+    // being it, so the drop-out never quite landed as one beat. Cleared back
+    // to null (see the reset next to the call sites below) the frame after
+    // the ramp finishes, so consumers can tell "no ramp" (null → full
+    // intensity) from "ramp just completed" (1 → fully settled).
+    gameState._warpExitT = eased;
     if (t >= 1) r.active = false;
     return true;
 }
@@ -4007,6 +4019,12 @@ if (dampedVelocity.length() >= gameState.minVelocity ||
     // and the two call sites that arm exitRamp above. This is what actually
     // fixes the overshoot: after this window the ship is at a firm ~2x max
     // velocity instead of still-basically-warp-speed.
+    // gameState._warpExitT is reset here (not inside the helper) so that
+    // ONE owner being inactive can never stomp the value the OTHER owner
+    // published two lines below — only _applyWarpExitRamp itself sets it,
+    // this just clears any stale value from a ramp that finished (or was
+    // never armed) before either call runs.
+    gameState._warpExitT = null;
     _applyWarpExitRamp(gameState.emergencyWarp);
     _applyWarpExitRamp(gameState.slingshot);
 

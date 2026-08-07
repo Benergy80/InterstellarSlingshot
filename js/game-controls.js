@@ -1697,6 +1697,21 @@ function _setEnemyTelegraph(enemy, charge) {
     for (let i = 0; i < meshes.length; i++) {
         const u = meshes[i].userData;
         u.baseEmissive = u._telegraphBase * k;
+
+        // ALSO drive the hull's fresnel rim. Emissive alone is a weak tell
+        // now: the hull's own floor is deliberately low but tone mapping
+        // compresses the top of the ramp, so 1x -> 3.4x only moved measured
+        // hull luminance ~+20%. Pushing the rim's boost blend to 1 at full
+        // charge swings the silhouette to the bright shimmer colour at the
+        // same time, so the windup reads as the ship LIGHTING UP at its
+        // edges rather than as a slightly warmer fill.
+        const mat = meshes[i].material;
+        const rim = mat && mat.userData && mat.userData._rimUniforms;
+        if (rim && rim.boostT) {
+            if (u._telegraphRimBase === undefined) u._telegraphRimBase = rim.boostT.value;
+            const b = u._telegraphRimBase;
+            rim.boostT.value = b + (1 - b) * charge;
+        }
     }
 }
 
@@ -4313,47 +4328,13 @@ const PIRATE_EXPLOSION_VARIANTS = {
 };
 function createPirateExplosionVariant(position, variant) {
     const cfg = PIRATE_EXPLOSION_VARIANTS[variant] || PIRATE_EXPLOSION_VARIANTS.ember;
-    const explosionGeometry = new THREE.SphereGeometry(2, 8, 8);
-    const explosionMaterial = new THREE.MeshBasicMaterial({ color: cfg.core, transparent: true });
-    const explosion = new THREE.Mesh(explosionGeometry, explosionMaterial);
-    explosion.position.copy(position);
-    scene.add(explosion);
-
-    const particles = new THREE.BufferGeometry();
-    const positions = new Float32Array(cfg.count * 3);
-    for (let i = 0; i < cfg.count; i++) {
-        positions[i * 3] = (Math.random() - 0.5) * 22;
-        positions[i * 3 + 1] = (Math.random() - 0.5) * 22;
-        positions[i * 3 + 2] = (Math.random() - 0.5) * 22;
-    }
-    particles.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    const particleMaterial = new THREE.PointsMaterial({
-        color: cfg.particles, size: 1.1, transparent: true, opacity: 1
-    });
-    const particleSystem = new THREE.Points(particles, particleMaterial);
-    particleSystem.position.copy(position);
-    scene.add(particleSystem);
-
-    // IMPORTANT: scene removal/disposal must live in cleanup(), not inline
-    // in update() — explosionManager.clearAll() drops entries by calling
-    // cleanup(), so an entry without one gets orphaned in the scene,
-    // frozen mid-fade (that was the "explosions not cleaning up" bug).
-    let scale = 1, opacity = 1;
-    explosionManager.addExplosion({
-        update(deltaTime) {
-            scale += 0.5 * (deltaTime / 60);
-            opacity -= 0.05 * (deltaTime / 60);
-            explosion.scale.set(scale, scale, scale);
-            explosionMaterial.opacity = Math.max(0, opacity);
-            particleSystem.scale.set(scale * 1.2, scale * 1.2, scale * 1.2);
-            particleMaterial.opacity = Math.max(0, opacity);
-            return opacity > 0;
-        },
-        cleanup() {
-            scene.remove(explosion); scene.remove(particleSystem);
-            explosionGeometry.dispose(); explosionMaterial.dispose();
-            particles.dispose(); particleMaterial.dispose();
-        }
+    // Layered burst in the variant's loot colors (see _fxLayeredBurst) —
+    // the old version was an OPAQUE growing sphere plus opaque points,
+    // which over this game's dense white starfield read as a flat tan
+    // disc pasted on the sky instead of a detonation.
+    _fxLayeredBurst(position, {
+        core: 0xfff3d0, flash: cfg.core, ring: cfg.secondary,
+        spark: cfg.particles, sparkCount: cfg.count, scale: 1.0
     });
 
     // Delayed secondary pop — small offset burst so each variant reads as
@@ -4365,6 +4346,75 @@ function createPirateExplosionVariant(position, variant) {
     }, variant === 'plasma' ? 200 : 130);
 }
 window.createPirateExplosionVariant = createPirateExplosionVariant;
+
+// ── Layered detonation primitive ──────────────────────────────────────────
+// THE TAN BLOB. Every generic kill used to spawn one OPAQUE
+// MeshBasicMaterial sphere (0xff6600) that grew and faded, plus one opaque
+// PointsMaterial cloud. Opaque orange over this game's dense white
+// starfield averages out to a flat tan disc — it covers the sky instead of
+// adding light to it, so a kill read as a sticker, not an explosion. This
+// replaces it with the three beats an explosion actually needs, all
+// ADDITIVE so they read as emitted light:
+//   1. CORE FLASH  — a camera-facing soft sprite that punches to white in
+//                    ~1 frame and is gone in ~200 ms (the "bang")
+//   2. SHOCK RING  — a thin expanding annulus (the "front")
+//   3. SPARKS      — fast additive points thrown outward (the "debris")
+// Cheap: 1 sprite + 1 ring + 1 Points system, all owned by explosionManager.
+let _fxFlashTexture = null;
+function _fxGetFlashTexture() {
+    if (_fxFlashTexture) return _fxFlashTexture;
+    const size = 128, c = document.createElement('canvas');
+    c.width = c.height = size;
+    const ctx = c.getContext('2d');
+    const g = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+    g.addColorStop(0.0, 'rgba(255,255,255,1.0)');
+    g.addColorStop(0.18, 'rgba(255,255,255,0.9)');
+    g.addColorStop(0.45, 'rgba(255,255,255,0.35)');
+    g.addColorStop(1.0, 'rgba(255,255,255,0.0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, size, size);
+    _fxFlashTexture = new THREE.CanvasTexture(c);
+    _fxFlashTexture.needsUpdate = true;
+    return _fxFlashTexture;
+}
+
+function _fxCoreFlash(center, color, startSize, endSize, life) {
+    const mat = new THREE.SpriteMaterial({
+        map: _fxGetFlashTexture(), color: color, transparent: true, opacity: 1,
+        blending: THREE.AdditiveBlending, depthWrite: false, depthTest: true
+    });
+    const sp = new THREE.Sprite(mat);
+    sp.position.copy(center);
+    sp.scale.setScalar(startSize);
+    sp.frustumCulled = false;
+    sp.renderOrder = 70;
+    scene.add(sp);
+    let t = 0;
+    explosionManager.addExplosion({
+        update(dt) {
+            t += dt;
+            const k = Math.min(1, t / life);
+            sp.scale.setScalar(startSize + (endSize - startSize) * Math.sqrt(k));
+            mat.opacity = Math.max(0, 1 - k * k);
+            return k < 1;
+        },
+        cleanup() { scene.remove(sp); mat.dispose(); }
+    });
+}
+
+function _fxLayeredBurst(position, o) {
+    if (typeof scene === 'undefined' || typeof THREE === 'undefined' || !position) return;
+    o = o || {};
+    const center = position.clone ? position.clone()
+                 : new THREE.Vector3(position.x, position.y, position.z);
+    const S = o.scale || 1;
+    _fxCoreFlash(center, o.core || 0xfff3d0, 8 * S, 74 * S, 210);
+    _fxCoreFlash(center, o.flash || 0xff8a3c, 14 * S, 128 * S, 420);
+    if (typeof _fxRing === 'function') _fxRing(center, 9 * S, o.ring || 0xff6a22, 0.62, 9, 0.85);
+    if (typeof _fxParticles === 'function') {
+        _fxParticles(center, o.sparkCount || 26, o.spark || 0xffb454, 2.1 * S, 3.4 * S, 12, 0);
+    }
+}
 
 function createExplosionEffect(targetObject) {
     // Support both object with position property and direct position vector
@@ -4378,70 +4428,9 @@ function createExplosionEffect(targetObject) {
         return;
     }
 
-    // Create explosion sphere
-    const explosionGeometry = new THREE.SphereGeometry(2, 8, 8);
-    const explosionMaterial = new THREE.MeshBasicMaterial({
-        color: 0xff6600,
-        transparent: true
-    });
-    const explosion = new THREE.Mesh(explosionGeometry, explosionMaterial);
-    explosion.position.copy(position);
-    scene.add(explosion);
-
-    // Create particle burst
-    const particles = new THREE.BufferGeometry();
-    const particleCount = 30;
-    const positions = new Float32Array(particleCount * 3);
-
-    for (let i = 0; i < particleCount; i++) {
-        positions[i * 3] = (Math.random() - 0.5) * 20;
-        positions[i * 3 + 1] = (Math.random() - 0.5) * 20;
-        positions[i * 3 + 2] = (Math.random() - 0.5) * 20;
-    }
-
-    particles.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    const particleMaterial = new THREE.PointsMaterial({
-        color: 0xff8800,
-        size: 1.0,
-        transparent: true,
-        opacity: 1
-    });
-    const particleSystem = new THREE.Points(particles, particleMaterial);
-    particleSystem.position.copy(position);
-    scene.add(particleSystem);
-
-    // Add to explosion manager for frame-based animation
-    let scale = 1;
-    let opacity = 1;
-    let particleLife = 1.0;
-    let elapsed = 0;
-
-    explosionManager.addExplosion({
-        update(deltaTime) {
-            elapsed += deltaTime;
-
-            // Update explosion sphere (slower growth and fade)
-            scale += 0.5 * (deltaTime / 60);  // Normalized to 60fps
-            opacity -= 0.05 * (deltaTime / 60);
-            explosion.scale.set(scale, scale, scale);
-            explosionMaterial.opacity = Math.max(0, opacity);
-
-            // Update particles
-            particleLife -= 0.02 * (deltaTime / 60);
-            particleMaterial.opacity = Math.max(0, particleLife);
-
-            // Return false when animation is complete
-            return opacity > 0 || particleLife > 0;
-        },
-
-        cleanup() {
-            scene.remove(explosion);
-            scene.remove(particleSystem);
-            explosionGeometry.dispose();
-            explosionMaterial.dispose();
-            particles.dispose();
-            particleMaterial.dispose();
-        }
+    _fxLayeredBurst(position, {
+        core: 0xfff3d0, flash: 0xff7a2a, ring: 0xff5511,
+        spark: 0xffaa44, sparkCount: 26, scale: 1.0
     });
 
     // Play explosion sound

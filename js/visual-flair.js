@@ -1766,7 +1766,20 @@ function _updateWarpStreaks() {
     // field off whatever still-elevated speed the physics ramp hasn't
     // finished catching up to yet.
     if (_wsf.draining) {
-        const t = Math.min(1, (now - _wsf.drainT0) / _wsf.drainMs);
+        // WARP-EXIT SYNC: while game-physics' own exit ramp is still driving
+        // the velocity drop-out, gameState._warpExitT carries THAT ramp's
+        // eased progress (0..1 — see _applyWarpExitRamp). Ride it directly
+        // instead of this drain's own independently-timed clock (drainT0 was
+        // stamped from a separate performance.now() call and drainMs is a
+        // flat 1000, so the two easings only approximated the same window —
+        // a hitch between them was exactly why the field used to empty on a
+        // visibly different beat than the speed actually fell on). Once the
+        // physics ramp finishes, _warpExitT clears back to null and this
+        // falls back to the local timer for the overspeed-hold tail below
+        // (there's no ramp curve left to read at that point).
+        const _extT = (typeof gameState !== 'undefined' && typeof gameState._warpExitT === 'number')
+            ? gameState._warpExitT : null;
+        const t = (_extT !== null) ? _extT : Math.min(1, (now - _wsf.drainT0) / _wsf.drainMs);
         const _spdNow = gameState.velocityVector ? gameState.velocityVector.length() : 0;
         const _overspeed = (_wsf.drainRefSpeed || 0) > 0 && _spdNow > _wsf.drainRefSpeed * 1.5;
         if (!_wsf.mesh || (t >= 1 && !_overspeed)) {
@@ -1804,6 +1817,17 @@ function _updateWarpStreaks() {
     // at modest velocity gets a modest field; full blast needs real speed.
     target = Math.min(target, _SPECTACLE_CRUISE_CEIL +
         (1 - _SPECTACLE_CRUISE_CEIL) * moment * _warpSpeedRamp());
+    // WARP-EXIT SYNC: compose (not replace) the existing speed-scaled
+    // envelope with the physics exit ramp's own published progress, so if
+    // this speed-driven path is ever reached while a ramp is still live
+    // (e.g. _wsf.draining already let go but _warpExitT hasn't cleared this
+    // frame) the field keeps draining WITH the deceleration instead of
+    // snapping back to whatever the still-elevated speed alone would call
+    // for. In the common case _wsf.draining owns this window entirely (see
+    // above) and _warpExitT is null down here, so this is a no-op.
+    if (typeof gameState !== 'undefined' && typeof gameState._warpExitT === 'number') {
+        target *= (1 - gameState._warpExitT);
+    }
     if (_wsf.kickAmp > 0) {
         const kt = (now - _wsf.kickT0) / _wsf.kickMs;
         if (kt >= 1) _wsf.kickAmp = 0;
@@ -2590,6 +2614,17 @@ function _updateWarpTunnel() {
     // exit is a release rather than a cut.
     const tau = (target > _wtu.level) ? 0.18 : 0.55;
     _wtu.level += (target - _wtu.level) * (1 - Math.exp(-dt / tau));
+    // WARP-EXIT SYNC: this tunnel's own release (target drops to 0 the same
+    // instant ew.active/slingshot end, then a ~0.55s exponential tau) is yet
+    // another clock independent of the physics exit ramp's ~1s eased curve —
+    // left alone, camera-system's FOV read (_tl * 8) still had a residual
+    // ~16% of the tunnel left over once the ramp's own settle stopped
+    // suppressing the readout, popping the lens back open for a frame right
+    // at the ramp/coast handoff. Force the level itself down along the SAME
+    // published ramp progress so there's nothing left to pop.
+    if (typeof gameState !== 'undefined' && typeof gameState._warpExitT === 'number') {
+        _wtu.level *= (1 - gameState._warpExitT);
+    }
     if (typeof window !== 'undefined') {
         window.__warpTunnelLevel = _wtu.level > 0.01 ? _wtu.level : 0;
     }

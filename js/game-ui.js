@@ -31,6 +31,78 @@ window._invalidateUiElCache = function(id) {
     else for (const k in _uiElCache) delete _uiElCache[k];
 };
 
+// =============================================================================
+// DOM WRITE COALESCING + FRAME BUDGET HELPERS
+// -----------------------------------------------------------------------------
+// Profiled cost of this file's per-frame path (live flight, paired A/B of ten
+// alternating 45-frame windows): the DOM/CSS layer was costing 13.8 ms/frame
+// against the 3D renderer's 12.4 ms/frame — the HUD was more expensive than
+// the entire game world. Most of that is browser-side style/paint work the
+// JS never sees, and the cheapest way to stop paying it is simply to STOP
+// HANDING THE BROWSER WORK: an assignment to `style.width` or `className`
+// with the value it already holds still marks the element dirty and still
+// costs a style recalc + repaint, even though nothing changed on screen.
+//
+// `_setStyle` / `_setText` / `_setClass` below each remember the last value
+// they actually committed per element and drop no-op writes on the floor.
+// Several readouts in this file already hand-rolled this check inline; these
+// helpers cover the ones that didn't (the energy/hull bars alone were
+// re-writing six style properties unconditionally, twice a second-of-frames,
+// forever).
+// =============================================================================
+const _lastWritten = new WeakMap();
+function _writeCache(el) {
+    let c = _lastWritten.get(el);
+    if (!c) { c = Object.create(null); _lastWritten.set(el, c); }
+    return c;
+}
+function _setStyle(el, prop, value) {
+    if (!el) return;
+    const c = _writeCache(el);
+    const k = '$' + prop;
+    if (c[k] === value) return;
+    c[k] = value;
+    el.style[prop] = value;
+}
+function _setText(el, value) {
+    if (!el) return;
+    const c = _writeCache(el);
+    if (c.$text === value) return;
+    c.$text = value;
+    el.textContent = value;
+}
+function _setClass(el, value) {
+    if (!el) return;
+    const c = _writeCache(el);
+    if (c.$class === value) return;
+    c.$class = value;
+    el.className = value;
+}
+function _setHTML(el, value) {
+    if (!el) return;
+    const c = _writeCache(el);
+    if (c.$html === value) return;
+    c.$html = value;
+    el.innerHTML = value;
+}
+
+// Coarse frame-budget gate for HUD blocks that are informational rather than
+// flight-critical. Reputation tiers, black-hole proximity banners, orbit/warp
+// button captions and the region enemy scan do not need to be re-derived 30
+// times a second — a player cannot perceive the difference between a 10Hz and
+// a 30Hz update on a text label, but the browser certainly can. Gating happens
+// at the CALL SITE inside the frame loop only, never inside the functions
+// themselves, so every event-driven caller elsewhere in the codebase (a kill,
+// a warp, a docking) still gets its immediate, un-throttled refresh.
+const _uiThrottleT = Object.create(null);
+function _uiThrottle(key, intervalMs) {
+    const now = (typeof performance !== 'undefined') ? performance.now() : Date.now();
+    const last = _uiThrottleT[key];
+    if (last !== undefined && now - last < intervalMs) return false;
+    _uiThrottleT[key] = now;
+    return true;
+}
+
 // --- Cheap number tweening for HUD text readouts -----------------------
 // CSS can't transition a textContent number, so velocity/distance (the
 // two numbers a pilot's eye is on constantly) get a lightweight
@@ -66,11 +138,28 @@ function _tweenTowards(key, target, rate) {
 // Briefly flashes a HUD stat well (the bordered bar container around
 // #energyBar / #hullBar) red on damage or green on a repair/resupply
 // jump, restarting the CSS animation even if it's already mid-flash.
+// Restart a one-shot CSS animation without the classic `void el.offsetWidth`
+// reflow trick. Reading offsetWidth forces the browser to flush style and lay
+// out the WHOLE document synchronously, mid-frame — an enormous price for
+// what is really just "please rewind this animation". Cancelling the running
+// animations through the Web Animations API achieves the same restart with no
+// layout at all, and degrades to the old behaviour on anything that somehow
+// lacks getAnimations().
+function _restartAnimation(el) {
+    if (!el) return;
+    if (typeof el.getAnimations === 'function') {
+        const running = el.getAnimations();
+        for (let i = 0; i < running.length; i++) running[i].cancel();
+    } else {
+        void el.offsetWidth;
+    }
+}
+
 function _flashStatWell(el, kind) {
     if (!el) return;
     el.classList.add('stat-well');
     el.classList.remove('stat-hit', 'stat-boost');
-    void el.offsetWidth; // force reflow so re-adding the class restarts the animation
+    _restartAnimation(el);
     el.classList.add(kind === 'hit' ? 'stat-hit' : 'stat-boost');
 }
 
@@ -80,7 +169,7 @@ function _flashStatWell(el, kind) {
 function _tickValue(el) {
     if (!el) return;
     el.classList.remove('value-tick');
-    void el.offsetWidth;
+    _restartAnimation(el);
     el.classList.add('value-tick');
 }
 
@@ -136,7 +225,11 @@ function updateRepHud() {
 function updateUI() {
     // Safety check for game state
     if (typeof gameState === 'undefined' || !gameState) return;
-    updateRepHud();
+    // Reputation + shield rows are slow-moving status text, not instruments —
+    // 10Hz is indistinguishable to the eye and saves two thirds of this
+    // block's DOM traffic. Event-driven callers (a rep award, a shield toggle)
+    // still call updateRepHud() directly and get an immediate refresh.
+    if (_uiThrottle('repHud', 100)) updateRepHud();
 
     // Ease HUD chrome opacity down during slingshot/emergency-warp spectacle,
     // back up the instant it ends. Hooked here (not just updateAllUISystems)
@@ -198,69 +291,90 @@ function updateUI() {
         const _mwText = '' + gameState.emergencyWarp.available;
         if (mobileWarpEl.textContent !== _mwText) mobileWarpEl.textContent = _mwText;
     }
+    // ENERGY BAR — every write below goes through _setStyle, which drops it
+    // if the property already holds that exact value. This block used to
+    // assign width + background + box-shadow + opacity unconditionally on
+    // every single call, so a ship sitting still at 100% energy was still
+    // dirtying (and repainting, through a backdrop-filtered panel) four
+    // properties ~30 times a second for a bar that had not moved a pixel.
+    // Width is also quantised to 0.5% — sub-pixel width churn on a 128px bar
+    // is invisible but each distinct value is a fresh layout + paint.
     if (energyBarEl) {
     // First, always update the width to match current energy
     const energyPercent = Math.max(0, Math.min(100, gameState.energy));
-    energyBarEl.style.width = energyPercent + '%';
-    
-    // Then apply visual effects if boosts are active
+    _setStyle(energyBarEl, 'width', (Math.round(energyPercent * 2) / 2) + '%');
+
+    // Then apply visual effects if boosts are active.
+    // Resolve the FINAL background once (boost tint, then the low-energy
+    // colour coding that used to overwrite it a few lines later) and commit
+    // a single value — the old code wrote background twice per call whenever
+    // energy was under 25%, guaranteeing a repaint even when nothing changed.
+    let _eBg, _eShadow, _eOpacity;
     if (gameState.solarStormBoostActive || gameState.plasmaStormBoostActive) {
         if (gameState.plasmaStormBoostActive) {
             // Purple plasma storm boost
-            energyBarEl.style.background = 'linear-gradient(90deg, #8866ff 0%, #6644ff 50%, #aa88ff 100%)';
-            energyBarEl.style.boxShadow = '0 0 20px rgba(136, 102, 255, 0.9)';
+            _eBg = 'linear-gradient(90deg, #8866ff 0%, #6644ff 50%, #aa88ff 100%)';
+            _eShadow = '0 0 20px rgba(136, 102, 255, 0.9)';
         } else {
             // Yellow solar storm boost
-            energyBarEl.style.background = 'linear-gradient(90deg, #ffd700 0%, #ffff00 50%, #ffa500 100%)';
-            energyBarEl.style.boxShadow = '0 0 20px rgba(255, 215, 0, 0.8)';
+            _eBg = 'linear-gradient(90deg, #ffd700 0%, #ffff00 50%, #ffa500 100%)';
+            _eShadow = '0 0 20px rgba(255, 215, 0, 0.8)';
         }
-        
-        // Animate the bar
+
+        // Animate the bar — quantised to 2% steps so the sine sweep commits
+        // ~10 distinct opacity values per cycle instead of a fresh float
+        // (and therefore a fresh composite) on literally every frame.
         const pulseTime = Date.now() * 0.003;
         const pulse = Math.sin(pulseTime) * 0.1 + 0.9;
-        energyBarEl.style.opacity = pulse;
+        _eOpacity = (Math.round(pulse * 50) / 50).toFixed(2);
     } else {
         // Normal energy bar appearance
-        energyBarEl.style.background = 'linear-gradient(90deg, #1e40af 0%, #3b82f6 50%, #60a5fa 100%)';
-        energyBarEl.style.boxShadow = 'none';
-        energyBarEl.style.opacity = '1';
+        _eBg = 'linear-gradient(90deg, #1e40af 0%, #3b82f6 50%, #60a5fa 100%)';
+        _eShadow = 'none';
+        _eOpacity = '1';
     }
-    
+
     // Enhanced color coding based on energy level
     if (energyPercent < 10) {
-        energyBarEl.style.background = 'linear-gradient(90deg, #dc2626 0%, #ef4444 100%)';
+        _eBg = 'linear-gradient(90deg, #dc2626 0%, #ef4444 100%)';
     } else if (energyPercent < 25) {
-        energyBarEl.style.background = 'linear-gradient(90deg, #f59e0b 0%, #fbbf24 100%)';
+        _eBg = 'linear-gradient(90deg, #f59e0b 0%, #fbbf24 100%)';
     }
+    _setStyle(energyBarEl, 'background', _eBg);
+    _setStyle(energyBarEl, 'boxShadow', _eShadow);
+    _setStyle(energyBarEl, 'opacity', _eOpacity);
 }
 
-// Show energy percentage text with boost indicator
+// Show energy percentage text with boost indicator. The innerHTML template
+// below reparses HTML and rebuilds a <span> subtree — by far the most
+// expensive single write in this function — and the countdown inside it only
+// changes once per second, so _setHTML makes 29 of every 30 calls free.
 if (gameState.solarStormBoostActive || gameState.plasmaStormBoostActive) {
     const timeLeft = Math.ceil(
-        (gameState.plasmaStormBoostActive ? gameState.plasmaStormBoostEndTime : gameState.solarStormBoostEndTime) 
+        (gameState.plasmaStormBoostActive ? gameState.plasmaStormBoostEndTime : gameState.solarStormBoostEndTime)
         - Date.now()
     ) / 1000;
     const boostType = gameState.plasmaStormBoostActive ? 'PLASMA' : 'SOLAR';
     const boostColor = gameState.plasmaStormBoostActive ? '#8866ff' : '#ffd700';
-    
+
     const energyDisplay = energyBarEl && energyBarEl.parentElement ? energyBarEl.parentElement.previousElementSibling : null;
     if (energyDisplay) {
-        energyDisplay.innerHTML = `Energy: <span style="color: ${boostColor}; font-weight: bold; text-shadow: 0 0 10px ${boostColor};">${Math.round(gameState.energy)}% ⚡ ${boostType} (${timeLeft}s)</span>`;
+        _setHTML(energyDisplay, `Energy: <span style="color: ${boostColor}; font-weight: bold; text-shadow: 0 0 10px ${boostColor};">${Math.round(gameState.energy)}% ⚡ ${boostType} (${timeLeft}s)</span>`);
     }
 }
-    
+
     // Enhanced hull display with dynamic color coding
     if (hullBarEl) {
         const hullPercent = (gameState.hull / gameState.maxHull * 100);
-        hullBarEl.style.width = hullPercent + '%';
+        _setStyle(hullBarEl, 'width', (Math.round(hullPercent * 2) / 2) + '%');
 
         // Enhanced color coding for hull
         if (gameState.hull < 25) {
-            hullBarEl.style.background = 'linear-gradient(90deg, #ff0066 0%, #ff3366 100%)';
+            _setStyle(hullBarEl, 'background', 'linear-gradient(90deg, #ff0066 0%, #ff3366 100%)');
         } else if (gameState.hull < 50) {
-            hullBarEl.style.background = 'linear-gradient(90deg, #ff6600 0%, #ff9933 100%)';
+            _setStyle(hullBarEl, 'background', 'linear-gradient(90deg, #ff6600 0%, #ff9933 100%)');
         } else {
-            hullBarEl.style.background = 'linear-gradient(90deg, #ff0066 0%, #ff6600 50%, #00ff66 100%)';
+            _setStyle(hullBarEl, 'background', 'linear-gradient(90deg, #ff0066 0%, #ff6600 50%, #00ff66 100%)');
         }
 
         // Instrument-level hit/repair feedback: flash the bar's well red
@@ -341,30 +455,36 @@ if (gameState.playerDying || gameState.gameOver || gameState.gameOverScreenShown
     if (overlay) overlay.remove();
 }
     
-    // Enhanced Target Lock status with tutorial awareness
+    // Enhanced Target Lock status with tutorial awareness.
+    // These two readouts change state a handful of times per FLIGHT, but the
+    // old code re-assigned both textContent and className every call. A
+    // className assignment is the single most expensive routine DOM write
+    // available: it invalidates the element's whole style, its subtree's
+    // inherited style, and — because `.pulse` toggles on and off here — its
+    // compositing decision too.
     if (targetLockStatusEl) {
         if (gameState.targetLock && gameState.targetLock.active) {
             if (gameState.targetLock.target) {
-                targetLockStatusEl.textContent = 'LOCKED ON TARGET';
-                targetLockStatusEl.className = 'text-yellow-400 pulse';
+                _setText(targetLockStatusEl, 'LOCKED ON TARGET');
+                _setClass(targetLockStatusEl, 'text-yellow-400 pulse');
             } else {
-                targetLockStatusEl.textContent = 'SEEKING TARGET';
-                targetLockStatusEl.className = 'text-orange-400 pulse';
+                _setText(targetLockStatusEl, 'SEEKING TARGET');
+                _setClass(targetLockStatusEl, 'text-orange-400 pulse');
             }
         } else {
-            targetLockStatusEl.textContent = 'INACTIVE';
-            targetLockStatusEl.className = 'text-gray-400';
+            _setText(targetLockStatusEl, 'INACTIVE');
+            _setClass(targetLockStatusEl, 'text-gray-400');
         }
     }
-    
+
     // Enhanced weapon status with faster cooldown
     if (weaponStatusEl && gameState.weapons) {
         if (gameState.weapons.cooldownTime > 0) {
-            weaponStatusEl.textContent = `RECHARGING (${(gameState.weapons.cooldownTime / 1000).toFixed(1)}s)`;
-            weaponStatusEl.className = 'text-orange-400';
+            _setText(weaponStatusEl, `RECHARGING (${(gameState.weapons.cooldownTime / 1000).toFixed(1)}s)`);
+            _setClass(weaponStatusEl, 'text-orange-400');
         } else {
-            weaponStatusEl.textContent = 'ARMED';
-            weaponStatusEl.className = 'text-green-400';
+            _setText(weaponStatusEl, 'ARMED');
+            _setClass(weaponStatusEl, 'text-green-400');
         }
     }
     
@@ -376,9 +496,9 @@ if (gameState.playerDying || gameState.gameOver || gameState.gameOverScreenShown
         // player's only target readout).
         const _demoDriving = (typeof window !== 'undefined' && window.demoPilot && window.demoPilot.driving);
         if (_demoDriving) {
-            targetInfo.style.display = 'none';
+            _setStyle(targetInfo, 'display', 'none');
         } else {
-            targetInfo.style.display = '';
+            _setStyle(targetInfo, 'display', '');
 
         let targetInfoText = 'Target: None';
         let targetInfoClass = 'text-gray-400';
@@ -425,30 +545,31 @@ if (gameState.playerDying || gameState.gameOver || gameState.gameOverScreenShown
         }
         
         // Apply the final text and class
-        targetInfo.textContent = targetInfoText;
-        targetInfo.className = targetInfoClass + ' curved-element';
+        _setText(targetInfo, targetInfoText);
+        _setClass(targetInfo, targetInfoClass + ' curved-element');
         } // end manual-play branch
     }
 
-    // Update auto-navigate button with enhanced state tracking
-    updateAutoNavigateButton();
+    // Update auto-navigate button with enhanced state tracking. A button
+    // caption is not an instrument — 10Hz, same reasoning as the rep rows.
+    if (_uiThrottle('autoNavBtn', 100)) updateAutoNavigateButton();
     
     // Enhanced velocity color coding with doubled scale
     if (velocityEl) {
         if (gameState.emergencyWarp && gameState.emergencyWarp.active) {
-            velocityEl.className = 'text-cyan-400 pulse font-mono';
+            _setClass(velocityEl, 'text-cyan-400 pulse font-mono');
         } else if (gameState.slingshot && gameState.slingshot.active) {
-            velocityEl.className = 'text-yellow-400 pulse font-mono';
+            _setClass(velocityEl, 'text-yellow-400 pulse font-mono');
         } else if (gameState.slingshot && gameState.slingshot.postSlingshot) {
-            velocityEl.className = 'text-cyan-400 font-mono';
+            _setClass(velocityEl, 'text-cyan-400 font-mono');
         } else if (gameState.velocity >= 0.9) { // Doubled threshold
-            velocityEl.className = 'text-red-400 font-mono';
+            _setClass(velocityEl, 'text-red-400 font-mono');
         } else if (gameState.velocity >= 0.6) { // Doubled threshold
-            velocityEl.className = 'text-yellow-400 font-mono';
+            _setClass(velocityEl, 'text-yellow-400 font-mono');
         } else if (gameState.velocity >= 0.3) { // Doubled threshold
-            velocityEl.className = 'text-green-400 font-mono';
+            _setClass(velocityEl, 'text-green-400 font-mono');
         } else {
-            velocityEl.className = 'text-blue-400 font-mono';
+            _setClass(velocityEl, 'text-blue-400 font-mono');
         }
     }
 }
@@ -951,7 +1072,17 @@ function selectTargetUI(obj) {
 
 function detectEnemiesInRegion() {
     if (typeof camera === 'undefined' || typeof enemies === 'undefined') return;
-    
+
+    // game-core.js calls this EVERY frame ("high frequency ... for responsive
+    // combat"), but everything it produces is a text banner and three inline
+    // styles on one <div>. A hostile-count caption does not need 60Hz — it
+    // needs to be right within a fraction of a second — while a full
+    // distance-filter over every enemy in the region plus four unconditional
+    // style writes 60 times a second is real, permanent frame cost. 10Hz keeps
+    // the "hostiles detected" flash and its sound feeling instant (they fire on
+    // the wasHidden edge, which is preserved) at a sixth of the price.
+    if (!_uiThrottle('enemyDetect', 100)) return;
+
     const detectionRange = 3000; // Doubled range
     const nearbyEnemies = enemies.filter(enemy => 
         enemy.userData && enemy.userData.health > 0 && 
@@ -973,22 +1104,22 @@ function detectEnemiesInRegion() {
         const wasHidden = enemyDetector.classList.contains('hidden');
         
         enemyDetector.classList.remove('hidden');
-        enemyCount.textContent = nearbyEnemies.length;
+        _setText(enemyCount, String(nearbyEnemies.length));
         
         // Update the detector text based on tutorial status
         const detectorTextNode = enemyDetector.firstChild;
         if (detectorTextNode && detectorTextNode.nodeType === Node.TEXT_NODE) {
             if (tutorialActive) {
-                detectorTextNode.textContent = 'Hostiles Detected (TRAINING MODE): ';
+                _setText(detectorTextNode, 'Hostiles Detected (TRAINING MODE): ');
                 // Change color to indicate they're not active
-                enemyDetector.style.color = 'rgba(255, 255, 0, 0.8)'; // Yellow for training
-                enemyDetector.style.background = 'linear-gradient(45deg, rgba(255,255,0,0.2), rgba(255,200,0,0.2))';
-                enemyDetector.style.border = '2px solid rgba(255,255,0,0.5)';
+                _setStyle(enemyDetector, 'color', 'rgba(255, 255, 0, 0.8)'); // Yellow for training
+                _setStyle(enemyDetector, 'background', 'linear-gradient(45deg, rgba(255,255,0,0.2), rgba(255,200,0,0.2))');
+                _setStyle(enemyDetector, 'border', '2px solid rgba(255,255,0,0.5)');
             } else {
                 // Enemies are now active - show normal hostile indicators
-                enemyDetector.style.color = 'rgba(255, 100, 100, 0.95)'; // Red for active
-                enemyDetector.style.background = ''; // Reset to default
-                enemyDetector.style.border = ''; // Reset to default
+                _setStyle(enemyDetector, 'color', 'rgba(255, 100, 100, 0.95)'); // Red for active
+                _setStyle(enemyDetector, 'background', ''); // Reset to default
+                _setStyle(enemyDetector, 'border', ''); // Reset to default
                 
                 // Play hostile contact sound with cooldown only when enemies become active
                 if (wasHidden && typeof playSound === 'function') {
@@ -998,11 +1129,11 @@ function detectEnemiesInRegion() {
                 // Enhanced faction display (only when enemies are active)
                 if (galaxyIds.length === 1 && galaxyIds[0] >= 0 && typeof galaxyTypes !== 'undefined') {
                     const galaxyType = galaxyTypes[galaxyIds[0]];
-                    detectorTextNode.textContent = `${galaxyType.faction} Hostiles: `;
+                    _setText(detectorTextNode, `${galaxyType.faction} Hostiles: `);
                 } else if (galaxyIds.includes(-1) || galaxyIds.includes(7)) {
-                    detectorTextNode.textContent = 'Martian Pirates: ';
+                    _setText(detectorTextNode, 'Martian Pirates: ');
                 } else {
-                    detectorTextNode.textContent = 'Active Hostiles: ';
+                    _setText(detectorTextNode, 'Active Hostiles: ');
                 }
 
                 // First contact of this encounter -> prominent alert flash
@@ -1031,8 +1162,8 @@ function detectEnemiesInRegion() {
         if (!tutorialActive) {
             const bossPresent = nearbyEnemies.some(e => e.userData.isBoss);
             if (bossPresent) {
-                enemyDetector.style.background = 'linear-gradient(45deg, rgba(255,0,0,0.3), rgba(255,100,0,0.3))';
-                enemyDetector.style.border = '2px solid rgba(255,50,50,0.8)';
+                _setStyle(enemyDetector, 'background', 'linear-gradient(45deg, rgba(255,0,0,0.3), rgba(255,100,0,0.3))');
+                _setStyle(enemyDetector, 'border', '2px solid rgba(255,50,50,0.8)');
             }
         }
     } else {
@@ -1249,9 +1380,83 @@ function _tlProjectToScreen(worldPos, camera, w, h) {
     return { x, y, behind, onScreen: !behind && x >= 0 && x <= w && y >= 0 && y <= h };
 }
 
+// -----------------------------------------------------------------------------
+// HULL SIZE — measured from the actual geometry, not guessed from a table
+//
+// This was the root cause of "bracket labels cover the ships they annotate".
+// The table below claims a rank-and-file enemy is 7 world units across. Its
+// real hull is ~120. Measured live, in flight, on a contact at 241 units:
+//
+//     lookup radius 7   ->    17 px on screen
+//     measured hull     ->   ~271 px on screen   (projected hull AABB)
+//
+// Everything downstream inherited that 13x error. The bracket drew a 17px
+// reticle lost somewhere in the middle of a ship filling a quarter of the
+// viewport, and the tag — anchored "just below the bracket" — was planted
+// squarely on the fuselage. No amount of tag-placement tuning can fix a label
+// that is being told the ship is a seventeenth of its real size, so the size
+// itself is now measured.
+//
+// The measurement is a union of the object's hull-mesh bounding boxes in its
+// OWN local space, cached per object in a WeakMap (geometry never changes, so
+// this runs once per contact ever) and reduced to the mean of the three
+// half-extents. Mean rather than the box diagonal because the diagonal of a
+// wide flat saucer is dominated by a dimension the pilot is not looking at,
+// and mean rather than a live projected AABB because mean is rotation-
+// invariant: it costs one multiply per frame instead of eight projections,
+// and it does not make the tag jitter outward every time the ship banks.
+//
+// Two child classes are excluded deliberately: `isHitbox` proxies (a generous
+// collision sphere, 2-3x the visible hull — it would push labels into the next
+// postcode) and `_isThrusterCone` flames, which are effects, not hull.
+// -----------------------------------------------------------------------------
+const _tlHullRadiusCache = (typeof WeakMap !== 'undefined') ? new WeakMap() : null;
+const _tlHullBox = (typeof THREE !== 'undefined') ? new THREE.Box3() : null;
+const _tlHullChildBox = (typeof THREE !== 'undefined') ? new THREE.Box3() : null;
+const _tlHullSize = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+const _tlHullInv = (typeof THREE !== 'undefined') ? new THREE.Matrix4() : null;
+
+function _tlMeasureHullRadius(obj) {
+    if (!_tlHullBox || !obj || typeof obj.traverse !== 'function') return 0;
+    try {
+        obj.updateWorldMatrix(true, true);
+        _tlHullInv.copy(obj.matrixWorld).invert();
+        _tlHullBox.makeEmpty();
+        obj.traverse(function (c) {
+            if (!c.isMesh || !c.geometry) return;
+            const cud = c.userData;
+            if (cud && (cud.isHitbox || cud._isThrusterCone)) return;
+            if (!c.geometry.boundingBox) c.geometry.computeBoundingBox();
+            if (!c.geometry.boundingBox) return;
+            _tlHullChildBox.copy(c.geometry.boundingBox);
+            _tlHullChildBox.applyMatrix4(c.matrixWorld);   // -> world
+            _tlHullChildBox.applyMatrix4(_tlHullInv);      // -> object-local
+            _tlHullBox.union(_tlHullChildBox);
+        });
+        if (_tlHullBox.isEmpty()) return 0;
+        _tlHullBox.getSize(_tlHullSize);
+        const s = Math.max(Math.abs(obj.scale.x), Math.abs(obj.scale.y), Math.abs(obj.scale.z)) || 1;
+        // Mean of the three half-extents — a rotation-invariant "typical
+        // silhouette half-width" rather than a worst-case diagonal.
+        return ((_tlHullSize.x + _tlHullSize.y + _tlHullSize.z) / 6) * s;
+    } catch (e) {
+        return 0;
+    }
+}
+
 function _tlWorldRadius(obj) {
     const ud = obj && obj.userData;
     if (!ud) return 10;
+    if (_tlHullRadiusCache && obj) {
+        let r = _tlHullRadiusCache.get(obj);
+        if (r === undefined) {
+            r = _tlMeasureHullRadius(obj);
+            _tlHullRadiusCache.set(obj, r);
+        }
+        if (r > 0) return r;
+    }
+    // Fallback for anything with no measurable mesh (procedural sprites,
+    // billboards, objects not yet built) — the original hand-tuned table.
     if (ud.isBoss || ud.isBlackHoleGuardian) return 26;
     if (ud.isBossSupport || ud.isEliteGuardian) return 16;
     if (ud.type === 'enemy') return 7;
@@ -1329,9 +1534,43 @@ function _tlChamferRectPath(ctx, x, y, w, h, c) {
     ctx.closePath();
 }
 
-function _tlDrawTag(ctx, obj, x, tagY, r, distance, scheme, isHostile) {
+// =============================================================================
+// CONTACT TAG LAYOUT — the plate hangs OFF the hull, never across it
+// -----------------------------------------------------------------------------
+// The old layout centred the plate on the bracket's X and hung it one bracket-
+// radius below the bracket's Y. That reads fine at range, and badly up close,
+// for one reason: the drawn bracket radius is clamped to 70px (TARGET_LAYER
+// apparentRadius), while the SHIP behind it keeps growing. Inside ~600 units a
+// gunship's hull is several hundred pixels across, the bracket has shrunk to a
+// small reticle sitting in the middle of it, and "one bracket-radius below the
+// bracket centre" lands the name plate squarely on the fuselage of the ship it
+// is annotating — the label covers its own subject exactly when the pilot most
+// needs to see the subject.
+//
+// This rewrite fixes it three ways:
+//   1. ANCHOR ON THE HULL, NOT THE BRACKET. The caller passes the true
+//      (unclamped) apparent hull radius; the plate is placed clear of that box.
+//   2. OFFSET DOWN AND RIGHT. The plate is left-aligned starting to the right
+//      of the contact and below it, joined back by a short elbow leader, so the
+//      silhouette stays clean and the eye still reads plate-belongs-to-bracket.
+//      Centred labels have nowhere to go but on top of the thing they label.
+//   3. SHRINK AT CLOSE RANGE. A contact that fills the screen does not need an
+//      11px name plate to be findable, and a large plate at that distance is
+//      pure occlusion — the whole tag scales down to 0.7 as the hull grows.
+//
+// Draw and measure share `_tlTagMetrics` so the declutter pass can never test
+// a box that differs from what actually gets painted.
+// =============================================================================
+
+// How much the whole tag shrinks as its contact grows on screen. Full size out
+// at range; eased down to 0.7 once the hull is filling a large part of the view.
+function _tlTagScale(hullR) {
+    return Math.max(0.7, Math.min(1, 1 - (hullR - 55) / 300));
+}
+
+function _tlTagMetrics(ctx, obj, anchorX, anchorY, distance, isHostile, scale) {
     const ud = obj.userData || {};
-    const name = ud.name || (isHostile ? 'Hostile Contact' : 'Unknown Contact');
+    const name = _tlTruncate(ud.name || (isHostile ? 'Hostile Contact' : 'Unknown Contact'), 26);
     let line2;
     if (isHostile) {
         const hp = Math.max(0, Math.round(ud.health || 0));
@@ -1340,47 +1579,81 @@ function _tlDrawTag(ctx, obj, x, tagY, r, distance, scheme, isHostile) {
     } else {
         line2 = `${Math.round(distance)}u`;
     }
+    const nameFont = `bold ${(11 * scale).toFixed(1)}px "Courier New", monospace`;
+    const infoFont = `${(10 * scale).toFixed(1)}px "Courier New", monospace`;
+    ctx.font = nameFont;
+    const nameW = ctx.measureText(name).width;
+    ctx.font = infoFont;
+    const line2W = ctx.measureText(line2).width;
+
+    const padX = 7 * scale;
+    const plateW = Math.max(nameW, line2W) + padX * 2;
+    const plateH = (isHostile ? 34 : 30) * scale; // hostiles carry an HP bar row
+    // Left-aligned plate starting at the anchor: the anchor IS the plate's
+    // top-left, which is what puts it down-and-right of the contact.
+    return {
+        name, line2, nameFont, infoFont, scale, padX,
+        plateX: anchorX, plateY: anchorY, plateW, plateH,
+        box: { left: anchorX - 2, right: anchorX + plateW + 2, top: anchorY - 2, bottom: anchorY + plateH + 2 }
+    };
+}
+
+function _tlDrawTag(ctx, m, scheme, isHostile, obj, leaderFromX, leaderFromY) {
     ctx.save();
+
+    // Elbow leader from the bracket out to the plate's top-left corner —
+    // this is what keeps an offset plate legibly attached to its contact
+    // instead of reading as a free-floating label.
+    if (leaderFromX !== undefined) {
+        ctx.strokeStyle = `rgba(${scheme.line},0.55)`;
+        ctx.lineWidth = 1;
+        ctx.shadowBlur = 0;
+        ctx.beginPath();
+        ctx.moveTo(leaderFromX, leaderFromY);
+        ctx.lineTo(m.plateX, m.plateY + Math.min(10 * m.scale, m.plateH * 0.35));
+        ctx.stroke();
+    }
 
     // Backing plate behind the two text lines — canvas text with only a
     // drop shadow disappears over a bright explosion or a saturated nebula
     // cloud; a translucent plate keeps the readout legible over anything
     // the scene throws behind it, diegetic Star-Citizen-contact-tag style.
-    ctx.font = 'bold 11px "Courier New", monospace';
-    const nameW = ctx.measureText(_tlTruncate(name, 26)).width;
-    ctx.font = '10px "Courier New", monospace';
-    const line2W = ctx.measureText(line2).width;
-    const plateW = Math.max(nameW, line2W) + 14;
-    const plateH = 30;
-    const plateX = x - plateW / 2;
-    const plateY = tagY - 13;
     ctx.shadowBlur = 0;
     ctx.fillStyle = 'rgba(6,10,20,0.72)';
-    _tlChamferRectPath(ctx, plateX, plateY, plateW, plateH, 4);
+    _tlChamferRectPath(ctx, m.plateX, m.plateY, m.plateW, m.plateH, 4 * m.scale);
     ctx.fill();
     ctx.strokeStyle = `rgba(${scheme.line},0.8)`;
     ctx.lineWidth = 1;
+    // Accent rule down the plate's leading edge — reads as the cut-corner
+    // chrome elsewhere in the HUD and marks which side the contact is on.
     ctx.beginPath();
-    ctx.moveTo(plateX + 4, plateY + plateH - 0.5);
-    ctx.lineTo(plateX + plateW - 4, plateY + plateH - 0.5);
+    ctx.moveTo(m.plateX + 0.5, m.plateY + 4 * m.scale);
+    ctx.lineTo(m.plateX + 0.5, m.plateY + m.plateH - 4 * m.scale);
     ctx.stroke();
 
-    ctx.textAlign = 'center';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
     ctx.shadowColor = 'rgba(0,0,0,0.9)';
     ctx.shadowBlur = 3;
-    ctx.font = 'bold 11px "Courier New", monospace';
+    const textX = m.plateX + m.padX;
+    ctx.font = m.nameFont;
     ctx.fillStyle = `rgba(${scheme.line},1)`;
-    ctx.fillText(_tlTruncate(name, 26), x, tagY);
-    ctx.font = '10px "Courier New", monospace';
+    ctx.fillText(m.name, textX, m.plateY + 12 * m.scale);
+    ctx.font = m.infoFont;
     ctx.fillStyle = 'rgba(220,235,255,0.9)';
-    ctx.fillText(line2, x, tagY + 13);
+    ctx.fillText(m.line2, textX, m.plateY + 24 * m.scale);
 
     if (isHostile) {
+        const ud = obj.userData || {};
         const hp = Math.max(0, ud.health || 0);
         const maxHp = Math.max(1, ud.maxHealth || hp || 1);
         const pct = Math.max(0, Math.min(1, hp / maxHp));
-        const barW = Math.max(30, r * 1.15), barH = 3;
-        const barX = x - barW / 2, barY = tagY + 18;
+        // HP bar rides inside the plate's own bottom edge, so it can never
+        // extend the tag's footprint past the box the declutter pass tested.
+        const barH = Math.max(2, 3 * m.scale);
+        const barX = m.plateX + m.padX;
+        const barW = m.plateW - m.padX * 2;
+        const barY = m.plateY + m.plateH - barH - 3 * m.scale;
         ctx.shadowBlur = 0;
         ctx.fillStyle = 'rgba(0,0,0,0.55)';
         ctx.fillRect(barX, barY, barW, barH);
@@ -1390,53 +1663,52 @@ function _tlDrawTag(ctx, obj, x, tagY, r, distance, scheme, isHostile) {
     ctx.restore();
 }
 
-// Compute the actual screen-space bounding box _tlDrawTag is about to paint
-// (backing plate + name line + distance/HP line + HP bar, anchored at the
-// caller-supplied tagY) so the declutter pass can test real label
-// footprints against each other — and against the HUD panels/viewport
-// margins seeded into placedTagBoxes before the loop runs — instead of a
-// fixed-radius guess anchored on the bracket centre. Two ships can sit
-// shoulder-to-shoulder on screen with wildly different apparent radii
-// (near/small vs far/huge-boss) — comparing bracket centres either lets
-// their tags collide anyway or declutters pairs that were never going to
-// overlap.
-function _tlMeasureTagBox(ctx, obj, x, tagY, r, distance, isHostile) {
-    const ud = obj.userData || {};
-    const name = ud.name || (isHostile ? 'Hostile Contact' : 'Unknown Contact');
-    let line2;
-    if (isHostile) {
-        const hp = Math.max(0, Math.round(ud.health || 0));
-        const maxHp = Math.max(1, Math.round(ud.maxHealth || hp || 1));
-        line2 = `${Math.round(distance)}u · HP ${hp}/${maxHp}`;
-    } else {
-        line2 = `${Math.round(distance)}u`;
-    }
-    ctx.font = 'bold 11px "Courier New", monospace';
-    const nameW = ctx.measureText(_tlTruncate(name, 26)).width;
-    ctx.font = '10px "Courier New", monospace';
-    const line2W = ctx.measureText(line2).width;
-    const barW = isHostile ? Math.max(30, r * 1.15) : 0;
-    const plateW = Math.max(nameW, line2W) + 14; // matches _tlDrawTag's plate sizing
-    const halfW = Math.max(plateW / 2, barW / 2 + 3);
-    const top = tagY - 13; // plate top
-    const bottom = isHostile ? (tagY + 18 + 4) : (tagY + 17); // HP bar (if any) + its shadow blur, else plate bottom
-    return { left: x - halfW, right: x + halfW, top, bottom };
+// Screen-space AABBs for the always-on HUD panel chrome.
+//
+// PERF: this used to run five getBoundingClientRect() calls per frame, and it
+// is called from updateTargetLayer(), which runs EVERY frame — measured at
+// 1875 rect reads over 375 frames, i.e. five forced synchronous layouts of the
+// entire document, every frame, forever. getBoundingClientRect() is not a
+// cheap accessor: it makes the browser flush all pending style and layout work
+// before it can answer, which is exactly the read-after-write thrash this pass
+// exists to eliminate.
+//
+// The panels are fixed HUD furniture. Their boxes only move on a viewport
+// resize, on the flight-controls collapse, or when the spectacle yield slides
+// them off screen — so the result is cached and recomputed on those events
+// plus a slow 500ms safety refresh (covers font loading, a target list growing
+// a row, anything else that quietly reflows a panel). Steady-state cost:
+// zero forced layouts per frame instead of five.
+let _tlPanelBoxes = null;
+let _tlPanelBoxesT = 0;
+const TL_PANEL_BOX_TTL_MS = 500;
+
+function _tlInvalidatePanelBoxes() { _tlPanelBoxes = null; }
+if (typeof window !== 'undefined') {
+    window._tlInvalidatePanelBoxes = _tlInvalidatePanelBoxes;
+    window.addEventListener('resize', _tlInvalidatePanelBoxes);
 }
 
-// Screen-space AABBs for the always-on HUD panel chrome, refreshed each
-// frame (layout can change on resize) but cheap — five elements, one
-// getBoundingClientRect() each. Hidden panels (mobile's `display:none`)
-// report a zero-size rect and are skipped rather than seeded as a
-// zero-area "always overlapping" box.
 function _tlGetPanelBoxes() {
+    const now = (typeof performance !== 'undefined') ? performance.now() : Date.now();
+    if (_tlPanelBoxes && (now - _tlPanelBoxesT) < TL_PANEL_BOX_TTL_MS) {
+        // Copy: the caller pushes its own sentinel/tag boxes onto the array.
+        return _tlPanelBoxes.slice();
+    }
     const panels = _hudSpectacleGetPanels();
     const boxes = [];
     for (let i = 0; i < panels.length; i++) {
         const rect = panels[i].getBoundingClientRect();
+        // Hidden panels (mobile's `display:none`) report a zero-size rect and
+        // are skipped rather than seeded as a zero-area "always overlapping"
+        // box. Panels translated off-screen by the spectacle yield report
+        // real-but-offscreen rects, which is correct — tags may use that space.
         if (rect.width <= 0 || rect.height <= 0) continue;
         boxes.push({ left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom });
     }
-    return boxes;
+    _tlPanelBoxes = boxes;
+    _tlPanelBoxesT = now;
+    return boxes.slice();
 }
 
 // Nudge a tag box fully inside the canvas (minus pad) on one axis, so a
@@ -1644,7 +1916,13 @@ function updateTargetLayer() {
 
         const worldRadius = _tlWorldRadius(obj);
         const pxPerUnit = (h / (2 * vFovTan)) / Math.max(1, distance);
+        // TWO radii, deliberately. `apparentRadius` is clamped to 70px so the
+        // bracket stays a readable reticle instead of growing into a giant box
+        // the pilot has to look past. `hullRadiusPx` is the ship's REAL
+        // on-screen half-extent, unclamped — that is what the name plate has to
+        // clear so it never lands on the hull it labels (see _tlTagMetrics).
         const apparentRadius = Math.min(70, Math.max(14, worldRadius * pxPerUnit));
+        const hullRadiusPx = Math.min(Math.max(w, h), Math.max(14, worldRadius * pxPerUnit));
 
         let drawRadius = apparentRadius;
         let alpha = 1;
@@ -1681,22 +1959,63 @@ function updateTargetLayer() {
             _tlDrawBracket(ctx, proj.x, proj.y, bracketRadius, scheme, bracketAlpha);
             placedBracketBoxes.push({ left: proj.x - bracketRadius, right: proj.x + bracketRadius, top: proj.y - bracketRadius, bottom: proj.y + bracketRadius });
 
-            // Tag placement: measure at the bracket's actual on-screen size
-            // (shrunk or not) so the tag still hangs directly under what's
-            // drawn, then clamp the whole box fully onto the canvas before
-            // testing it against panels/sentinels/other tags.
-            const tagY0 = proj.y + bracketRadius + 14;
-            const unclamped = _tlMeasureTagBox(ctx, obj, proj.x, tagY0, bracketRadius, distance, isHostile);
-            const dx = _tlClampAxis(unclamped.left, unclamped.right, TAG_VIEWPORT_PAD, w - TAG_VIEWPORT_PAD);
-            const dy = _tlClampAxis(unclamped.top, unclamped.bottom, TAG_VIEWPORT_PAD, h - TAG_VIEWPORT_PAD);
-            const tagX = proj.x + dx, tagY = tagY0 + dy;
-            const tagBox = { left: unclamped.left + dx, right: unclamped.right + dx, top: unclamped.top + dy, bottom: unclamped.bottom + dy };
+            // TAG PLACEMENT — down-and-right of the contact, outside its hull.
+            //
+            // The clearance radius is whichever is larger of the drawn bracket
+            // and the ship's true on-screen half-extent, so a close-in gunship
+            // that dwarfs its own 70px-clamped bracket still pushes its label
+            // off the fuselage. The plate is then offset right by a fraction of
+            // that radius and dropped below it, and joined back to the bracket
+            // by an elbow leader.
+            // Capped at ~35% of the shorter viewport axis: past that the
+            // contact is filling the screen, there is no "off the hull" left
+            // to aim for, and an uncapped clearance would fling the plate
+            // clean off the canvas and cost the pilot the readout entirely.
+            const clearCap = Math.min(w, h) * 0.35;
+            const clearR = Math.min(clearCap, Math.max(bracketRadius, hullRadiusPx));
+            const tagScale = _tlTagScale(hullRadiusPx);
+            const hullBox = {
+                left: proj.x - clearR, right: proj.x + clearR,
+                top: proj.y - clearR, bottom: proj.y + clearR
+            };
 
-            let overlapsPlacedTag = false;
-            for (let j = 0; j < placedTagBoxes.length; j++) {
-                if (_tlBoxesOverlap(tagBox, placedTagBoxes[j], TAG_DECLUTTER_PAD)) { overlapsPlacedTag = true; break; }
+            // Candidate anchors, best first: below-right of the hull, then
+            // above-right (for a contact hugging the bottom of the screen),
+            // then below-LEFT (for one hugging the right edge). Each is the
+            // plate's top-left corner.
+            const offX = proj.x + clearR * 0.42 + 8;
+            let placed = null;
+            for (let cand = 0; cand < 3 && !placed; cand++) {
+                let ax, ay;
+                const probe = _tlTagMetrics(ctx, obj, 0, 0, distance, isHostile, tagScale);
+                if (cand === 0)      { ax = offX;                     ay = proj.y + clearR + 10; }
+                else if (cand === 1) { ax = offX;                     ay = proj.y - clearR - 10 - probe.plateH; }
+                else                 { ax = proj.x - clearR * 0.42 - 8 - probe.plateW; ay = proj.y + clearR + 10; }
+
+                const m = _tlTagMetrics(ctx, obj, ax, ay, distance, isHostile, tagScale);
+                // Nudge fully onto the canvas, then move the plate with it.
+                const dx = _tlClampAxis(m.box.left, m.box.right, TAG_VIEWPORT_PAD, w - TAG_VIEWPORT_PAD);
+                const dy = _tlClampAxis(m.box.top, m.box.bottom, TAG_VIEWPORT_PAD, h - TAG_VIEWPORT_PAD);
+                m.plateX += dx; m.plateY += dy;
+                m.box = { left: m.box.left + dx, right: m.box.right + dx, top: m.box.top + dy, bottom: m.box.bottom + dy };
+
+                // HARD RULE: a label may never be painted across the hull it
+                // annotates. If the viewport clamp shoved it back onto the
+                // ship, this candidate is rejected outright and the next
+                // placement is tried.
+                if (_tlBoxesOverlap(m.box, hullBox, 0)) continue;
+
+                let blocked = false;
+                for (let j = 0; j < placedTagBoxes.length; j++) {
+                    if (_tlBoxesOverlap(m.box, placedTagBoxes[j], TAG_DECLUTTER_PAD)) { blocked = true; break; }
+                }
+                if (!blocked) placed = m;
             }
-            if (!overlapsPlacedTag) {
+
+            if (placed) {
+                // Leader starts on the bracket edge nearest the plate.
+                const leadX = proj.x + (placed.plateX < proj.x ? -bracketRadius : bracketRadius) * 0.72;
+                const leadY = proj.y + (placed.plateY < proj.y ? -bracketRadius : bracketRadius) * 0.72;
                 // World-anchored layer stays otherwise untouched during the
                 // slingshot/warp spectacle — only the name/HP tag plates
                 // ease back a little (brackets, chevrons and lead pips are
@@ -1704,12 +2023,12 @@ function updateTargetLayer() {
                 if (_tlSpectacleTagAlpha < 1) {
                     ctx.save();
                     ctx.globalAlpha = _tlSpectacleTagAlpha;
-                    _tlDrawTag(ctx, obj, tagX, tagY, bracketRadius, distance, scheme, isHostile);
+                    _tlDrawTag(ctx, placed, scheme, isHostile, obj, leadX, leadY);
                     ctx.restore();
                 } else {
-                    _tlDrawTag(ctx, obj, tagX, tagY, bracketRadius, distance, scheme, isHostile);
+                    _tlDrawTag(ctx, placed, scheme, isHostile, obj, leadX, leadY);
                 }
-                placedTagBoxes.push(tagBox);
+                placedTagBoxes.push(placed.box);
             } else {
                 _tlDrawDeclutterDot(ctx, proj.x, proj.y, bracketRadius, scheme);
             }
@@ -3678,6 +3997,10 @@ function updateHudSpectacleDim() {
         if (document.documentElement) {
             document.documentElement.classList.toggle('hud-geo-yield', _geoYieldOn);
         }
+        // The panels are about to translate off (or back on) screen over
+        // 250ms — the target layer's cached panel AABBs are stale for the
+        // duration, so drop them and let the next frame re-measure once.
+        if (typeof _tlInvalidatePanelBoxes === 'function') _tlInvalidatePanelBoxes();
     }
 
     _updateFlightControlsCollapse();
@@ -3747,25 +4070,33 @@ function _updateFlightControlsCollapse() {
 // INTEGRATED UPDATE LOOP FOR UI SYSTEMS
 // =============================================================================
 
+// Two tiers, by what the pilot's eye is actually tracking.
+//   INSTRUMENTS run every call: velocity/hull/energy, the crosshair, the
+//   world-anchored target layer, the compass, the map — anything that is
+//   spatially coupled to the ship and would visibly stutter if it lagged.
+//   PANELS run at 10Hz: button captions, warning banners, the target list.
+//   These are text that changes a handful of times per flight; refreshing
+//   them 30-60 times a second buys nothing a player can see and costs a
+//   style recalc + repaint of a backdrop-filtered glass panel every time.
 function updateAllUISystems() {
     // Core UI updates
     updateUI();
 
     // Navigation and targeting systems
-    populateTargets();
+    if (_uiThrottle('populateTargets', 100)) populateTargets();
     updateCrosshairTargeting();
-    detectEnemiesInRegion();
+    detectEnemiesInRegion(); // self-throttled to 10Hz internally
 
     // Map and navigation systems
     updateCompass();
     updateGalaxyMap();
 
     // Control button states
-    updateOrbitLinesButton();
-    updateWarpButton();
+    if (_uiThrottle('orbitBtn', 100)) updateOrbitLinesButton();
+    if (_uiThrottle('warpBtn', 100)) updateWarpButton();
 
     // Warning systems
-    updateEventHorizonWarnings();
+    if (_uiThrottle('ehWarn', 100)) updateEventHorizonWarnings();
 
     // Ease HUD chrome opacity down during slingshot/emergency-warp spectacle
     updateHudSpectacleDim();

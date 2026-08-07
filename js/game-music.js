@@ -577,10 +577,15 @@
       const startVol = prev.volume;                // wherever the duck left it
       const startMix = mixGain();
 
-      // Hand ownership from "pending" to the live ramp in one move, so
-      // there is never an instant where neither holds it.
-      beginFade(setInterval(() => {
-        step++;
+      // One tick body, driven both synchronously (step 0, below) and by the
+      // interval (steps 1..steps).  Splitting it out matters: setInterval's
+      // first callback doesn't fire until `interval` ms have elapsed, and in
+      // that window `next.volume` was still sitting at the literal 0 play()
+      // set it to before waiting on 'playing' — a real, measured gap where
+      // prev carries the whole mix alone.  Running step 0 immediately closes
+      // it: next gets its correct starting volume the instant ownership of
+      // the ramp is taken, not 50 ms later.
+      const tick = () => {
         const t = Math.min(1, step / steps);
         // EQUAL-POWER crossfade.  Two different pieces of music are
         // uncorrelated, so they sum in POWER, not amplitude: a linear pair
@@ -588,9 +593,35 @@
         // -3 dB hole punched into the score on EVERY transition.  cos/sin
         // hold cos²+sin² = 1, so the level walks across dead flat.
         const ratio = startMix > 0.0001 ? mixGain() / startMix : 1;
-        prev.volume = clamp01(startVol * ratio * Math.cos(t * Math.PI / 2));
-        next.volume = clamp01(trackVolume(key) * Math.sin(t * Math.PI / 2));
+        const prevRaw = startVol * ratio * Math.cos(t * Math.PI / 2);
+        prev.volume = clamp01(prevRaw);
+        // RE-ENTRANT GUARD: next is the POWER COMPLEMENT of prev, not a bare
+        // sin(t) — sqrt(target² − prevRaw²) instead of target·sin(t·π/2).
+        // When this fade started with prev at full strength (the ordinary
+        // case), prevRaw ≈ target·cos(t·π/2) and the complement collapses
+        // to exactly target·sin(t·π/2) — identical to before. But when THIS
+        // play() call is itself interrupting a fade that hadn't finished —
+        // a mashed Skip, two switches inside one FADE_DURATION — prev is
+        // really the PREVIOUS incoming track caught partway up its own
+        // ramp, so startVol < target.  A bare sin(t) would then start next
+        // at 0 while prev resumes its decay from a partial value, and
+        // cos²+sin² no longer sums to 1: exactly the transient hole two
+        // Skip presses close together used to punch in the mix.  Deriving
+        // next from the complement keeps prevRaw² + next² pinned to target²
+        // — constant combined power — from the very first sample, including
+        // the reset instant itself, for ANY number of chained retriggers.
+        const target = trackVolume(key);
+        const deficit = target * target - prevRaw * prevRaw;
+        next.volume = clamp01(deficit > 0 ? Math.sqrt(deficit) : 0);
+      };
 
+      tick();   // step 0, synchronous — see comment above.
+
+      // Hand ownership from "pending" to the live ramp in one move, so
+      // there is never an instant where neither holds it.
+      beginFade(setInterval(() => {
+        step++;
+        tick();
         if (step >= steps) {
           endFade();
           prev.pause();

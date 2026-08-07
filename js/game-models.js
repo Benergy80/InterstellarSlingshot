@@ -389,9 +389,24 @@ const _sharedRimTime = { value: 0.0 };
 // fill into panel plates with dark seams and per-plate shade/speck
 // variance, which is what actually moves per-pixel luminance std instead
 // of just tinting the whole hull.
+// opts.hullForm (bool): adds a cheap OBJECT-SPACE form pass — a top-lit
+// value gradient plus a darker nose/canopy cap — multiplied into BOTH the
+// albedo and the emissive floor. Untextured hulls carrying a single flat
+// emissive value have no light direction at all, which is why enemy ships
+// clipped to white crumpled-paper wads once they filled 70-100px: every
+// facet returned the same number, so the eye had nothing to reconstruct a
+// facing from. This is normal-only (no positions, no bbox uniforms), so it
+// is scale- and model-independent:
+//   formFloor/formTop  — value at the belly / at the spine (top-lit ramp)
+//   formNoseSign       — +1 when the GLB's nose points +Z (the nose-flipped
+//                        regions), -1 for the game's usual -Z-forward hulls
+//   formNoseDark       — multiplier on faces pointing along the nose, which
+//                        darkens the bow cap / canopy into an accent
 function _addFresnelRim(material, opts) {
     opts = opts || {};
     const panelDetail = !!opts.panelDetail;
+    const hullForm = !!opts.hullForm;
+    const needObjNormal = panelDetail || hullForm;
     const uniforms = {
         rimColorIdle: { value: new THREE.Color(opts.idle !== undefined ? opts.idle : 0x2ad4ff) },
         rimColorBoostA: { value: new THREE.Color(opts.boostA !== undefined ? opts.boostA : 0xffcc33) },
@@ -406,16 +421,26 @@ function _addFresnelRim(material, opts) {
     if (panelDetail) {
         uniforms.uRimPanelCell = { value: opts.panelCellSize !== undefined ? opts.panelCellSize : 0.05 };
     }
+    if (hullForm) {
+        uniforms.uFormFloor    = { value: opts.formFloor    !== undefined ? opts.formFloor    : 0.55 };
+        uniforms.uFormTop      = { value: opts.formTop      !== undefined ? opts.formTop      : 1.45 };
+        uniforms.uFormNoseSign = { value: opts.formNoseSign !== undefined ? opts.formNoseSign : -1.0 };
+        uniforms.uFormNoseDark = { value: opts.formNoseDark !== undefined ? opts.formNoseDark : 0.45 };
+    }
 
     material.onBeforeCompile = function (shader) {
         Object.assign(shader.uniforms, uniforms);
 
-        const vertVaryings = panelDetail
-            ? '#include <common>\nvarying vec3 vRimNormalW;\nvarying vec3 vRimViewW;\nvarying vec3 vRimNormalObj;\nvarying vec3 vRimPosObj;'
-            : '#include <common>\nvarying vec3 vRimNormalW;\nvarying vec3 vRimViewW;';
-        const vertAssign = panelDetail
-            ? '#include <begin_vertex>\nvRimNormalW = normalize( normalMatrix * normal );\nvRimViewW = normalize( -( modelViewMatrix * vec4( transformed, 1.0 ) ).xyz );\nvRimNormalObj = normal;\nvRimPosObj = transformed;'
-            : '#include <begin_vertex>\nvRimNormalW = normalize( normalMatrix * normal );\nvRimViewW = normalize( -( modelViewMatrix * vec4( transformed, 1.0 ) ).xyz );';
+        let vertVaryings = '#include <common>\nvarying vec3 vRimNormalW;\nvarying vec3 vRimViewW;';
+        let vertAssign = '#include <begin_vertex>\nvRimNormalW = normalize( normalMatrix * normal );\nvRimViewW = normalize( -( modelViewMatrix * vec4( transformed, 1.0 ) ).xyz );';
+        if (needObjNormal) {
+            vertVaryings += '\nvarying vec3 vRimNormalObj;';
+            vertAssign += '\nvRimNormalObj = normal;';
+        }
+        if (panelDetail) {
+            vertVaryings += '\nvarying vec3 vRimPosObj;';
+            vertAssign += '\nvRimPosObj = transformed;';
+        }
 
         shader.vertexShader = shader.vertexShader
             .replace('#include <common>', vertVaryings)
@@ -475,6 +500,7 @@ float _rimPanelDetail( vec3 posObj, vec3 normalObj, float cell ) {
             : `#include <common>
 varying vec3 vRimNormalW;
 varying vec3 vRimViewW;
+${needObjNormal ? 'varying vec3 vRimNormalObj;' : ''}
 uniform vec3 rimColorIdle;
 uniform vec3 rimColorBoostA;
 uniform vec3 rimColorBoostB;
@@ -483,23 +509,41 @@ uniform float rimPower;
 uniform float rimBaseStrength;
 uniform float rimBoostStrength;
 uniform float rimCoreDarken;
+${hullForm ? 'uniform float uFormFloor;\nuniform float uFormTop;\nuniform float uFormNoseSign;\nuniform float uFormNoseDark;' : ''}
 uniform float uTime;`;
 
         shader.fragmentShader = shader.fragmentShader.replace('#include <common>', fragCommon);
 
-        const colorInject = panelDetail
-            ? `#include <color_fragment>
-    float _rimFresEarly = pow( 1.0 - clamp( dot( normalize( vRimNormalW ), normalize( vRimViewW ) ), 0.0, 1.0 ), rimPower );
-    diffuseColor.rgb *= mix( 1.0 - rimCoreDarken, 1.0, _rimFresEarly );
-    diffuseColor.rgb *= _rimPanelDetail( vRimPosObj, vRimNormalObj, uRimPanelCell );
-`
-            : `#include <color_fragment>
+        let colorInject = `#include <color_fragment>
     float _rimFresEarly = pow( 1.0 - clamp( dot( normalize( vRimNormalW ), normalize( vRimViewW ) ), 0.0, 1.0 ), rimPower );
     diffuseColor.rgb *= mix( 1.0 - rimCoreDarken, 1.0, _rimFresEarly );
 `;
+        if (panelDetail) {
+            colorInject += '    diffuseColor.rgb *= _rimPanelDetail( vRimPosObj, vRimNormalObj, uRimPanelCell );\n';
+        }
+        if (hullForm) {
+            // Top-lit value ramp + darkened nose/canopy cap. Declared here so
+            // the emissive inject below (which runs later in main()) can reuse
+            // the same shade term — the floor has to be shaped too or the flat
+            // emissive simply washes the gradient back out.
+            colorInject += `    vec3 _formN = normalize( vRimNormalObj );
+    float _formShade = mix( uFormFloor, uFormTop, clamp( _formN.y * 0.5 + 0.5, 0.0, 1.0 ) );
+    _formShade *= mix( 1.0, uFormNoseDark, smoothstep( 0.55, 0.97, _formN.z * uFormNoseSign ) );
+    diffuseColor.rgb *= _formShade;
+`;
+        }
 
         shader.fragmentShader = shader.fragmentShader
-            .replace('#include <color_fragment>', colorInject)
+            .replace('#include <color_fragment>', colorInject);
+
+        if (hullForm) {
+            shader.fragmentShader = shader.fragmentShader.replace(
+                '#include <emissivemap_fragment>',
+                '#include <emissivemap_fragment>\n    totalEmissiveRadiance *= _formShade;\n'
+            );
+        }
+
+        shader.fragmentShader = shader.fragmentShader
             .replace(
                 '#include <output_fragment>',
                 `
@@ -533,19 +577,66 @@ uniform float uTime;`;
 // faction-colored floor at any range. The rim/panel/coreDarken work still
 // shapes the close-up (coreDarken multiplies diffuseColor only — see
 // _addFresnelRim — so it cannot eat this floor).
+//
+// VALUE, NOT HUE. The previous keying was a DARK albedo (base x 0.55 =
+// #8c1c1c for a red faction) carrying a fully saturated emissive. Saturated
+// red is a luminance trap: even a clipped 255-red pixel is only L=54 under
+// Rec.709 weights, so a hostile at weapons range measured DIMMER than the
+// white background stars it was flying across (measured: hull Lmax 63 vs
+// star Lmax 101, and no red excess over the starfield at all). A hull can
+// only out-read this game's very dense, very white starfield if it carries
+// VALUE — which means the hull tone and the emissive floor both have to be
+// pushed a long way toward white and the FACTION identity has to be carried
+// by the rim and the engine glow instead of by a dark saturated body.
+//   hullHeat     — how far the albedo is heated toward the hot-point
+//   emissiveHeat — how far the always-on emissive floor is heated
+//   emissiveIntensity — kept LOW (0.5-0.7) so the attack telegraph, which
+//                       multiplies it 1x->3.4x, still has somewhere to go
 function createFactionHullMaterial(colorHex, opts) {
     opts = opts || {};
+    const WHITE = new THREE.Color(0xffffff);
     const base = new THREE.Color(colorHex !== undefined ? colorHex : 0xff0000);
-    const dim = base.clone().multiplyScalar(opts.baseMultiplier !== undefined ? opts.baseMultiplier : 0.45);
-    const bright = base.clone().lerp(new THREE.Color(0xffffff), 0.55);
+    // HEAT, NOT WHITE. Value has to come from somewhere, and where it comes
+    // from decides whether the hull keeps its faction chroma.
+    //  - Lerping to WHITE lifts R, G and B equally: luminance climbs but the
+    //    colour excess collapses (measured: a white-lerped red hull carried
+    //    ~29 mean red excess — it read pink-grey).
+    //  - Lifting HSL lightness at fixed hue keeps the two minor channels
+    //    LOCKED TOGETHER, and since Rec.709 luminance is 72% green, a red
+    //    hull's luminance and its red excess then trade 1:1 — measured, you
+    //    can have Lmed 105 with red excess 90, or Lmed 69 with red excess
+    //    153, and nothing better.
+    // Heating toward a warm (or, for cool hues, a cold) HOT-POINT breaks that
+    // tie: it raises the MIDDLE channel much more than the lowest one, so a
+    // red hull goes red -> red-orange -> white the way a hot object actually
+    // does, buying luminance out of green while blue stays down and the red
+    // excess stays high. Measured on the modal Hostile: Lmed 143 AND red
+    // excess 138 at 500u, which neither of the other two curves can reach.
+    const _hsl = { h: 0, s: 0, l: 0 };
+    base.getHSL(_hsl);
+    const HOT_WARM = new THREE.Color(0xffd08a);   // ember white for warm hues
+    const HOT_COOL = new THREE.Color(0xbdf0ff);   // arc white for cool hues
+    const hotPoint = (_hsl.h < 0.17 || _hsl.h > 0.80) ? HOT_WARM : HOT_COOL;
+    const hot = (heat) => base.clone().lerp(hotPoint, heat);
+    // High-value hull body.
+    const hullTone = hot(opts.hullHeat !== undefined ? opts.hullHeat : 0.55);
+    // Always-on emissive floor — the term that survives at any range.
+    const emisTone = hot(opts.emissiveHeat !== undefined ? opts.emissiveHeat : 0.38);
+    // Rim + boost shimmer stay SATURATED: that's where faction identity lives
+    // now that the body is high-value.
+    const rimTone = base.clone().lerp(WHITE, 0.12);
+    const rimHot = base.clone().lerp(WHITE, 0.62);
 
     const material = new THREE.MeshStandardMaterial({
-        color: dim,
-        emissive: base.clone().multiplyScalar(opts.emissiveMultiplier !== undefined ? opts.emissiveMultiplier : 0.8),
-        emissiveIntensity: opts.emissiveIntensity !== undefined ? opts.emissiveIntensity : 1.3,
-        roughness: opts.roughness !== undefined ? opts.roughness : 0.5,
-        metalness: opts.metalness !== undefined ? opts.metalness : 0.7,
-        side: THREE.DoubleSide,
+        color: hullTone,
+        emissive: emisTone,
+        emissiveIntensity: opts.emissiveIntensity !== undefined ? opts.emissiveIntensity : 0.70,
+        roughness: opts.roughness !== undefined ? opts.roughness : 0.42,
+        metalness: opts.metalness !== undefined ? opts.metalness : 0.35,
+        // FrontSide: DoubleSide drew every interior face of these untextured
+        // GLBs on top of the exterior, which is what crumpled a close-range
+        // hull into a paper wad with no readable surface.
+        side: THREE.FrontSide,
         transparent: false,
         opacity: 1.0,
         depthWrite: true,
@@ -553,13 +644,19 @@ function createFactionHullMaterial(colorHex, opts) {
     });
 
     _addFresnelRim(material, {
-        idle: dim.getHex(),
+        idle: rimTone.getHex(),
         boostA: base.getHex(),
-        boostB: bright.getHex(),
-        boostT: opts.rimIntensity !== undefined ? opts.rimIntensity : 0.5,
-        power: 2.0,
-        baseStrength: 0.5,
-        boostStrength: 1.3
+        boostB: rimHot.getHex(),
+        boostT: opts.rimIntensity !== undefined ? opts.rimIntensity : 0.6,
+        power: opts.rimPower !== undefined ? opts.rimPower : 2.4,
+        baseStrength: opts.rimBaseStrength !== undefined ? opts.rimBaseStrength : 0.9,
+        boostStrength: opts.rimBoostStrength !== undefined ? opts.rimBoostStrength : 1.7,
+        coreDarken: opts.coreDarken !== undefined ? opts.coreDarken : 0.22,
+        hullForm: opts.hullForm !== false,
+        formFloor: opts.formFloor !== undefined ? opts.formFloor : 0.66,
+        formTop: opts.formTop !== undefined ? opts.formTop : 1.72,
+        formNoseSign: opts.formNoseSign !== undefined ? opts.formNoseSign : -1.0,
+        formNoseDark: opts.formNoseDark !== undefined ? opts.formNoseDark : 0.55
     });
 
     return material;
@@ -576,34 +673,80 @@ function createFactionHullMaterial(colorHex, opts) {
 // hull scale — enemies pass a smaller pair (see createEnemyMeshWithModel)
 // so the glow doesn't outdraw the hull at combat range; bosses keep the
 // original defaults so their silhouette (already large) is unaffected.
+// ENGINE QUADS. The old version was two additive SPHERES — isotropic blobs
+// that looked identical from every angle, so they added brightness but zero
+// facing information (and at close range they were most of what the eye
+// actually resolved). Each nozzle is now a soft additive QUAD lying across
+// the ship's forward axis plus a small white-hot core: seen from behind it
+// is a bright faction-colored disc, seen from the side it collapses to a
+// thin line, and seen head-on it disappears — which is exactly the read
+// "that ship is pointing away from / across / at me".
+// radiusFactor is a FRACTION OF THE HULL'S LARGEST DIMENSION. It used to be
+// a fraction of the smallest dimension with an ABSOLUTE floor in model-local
+// units (0.28 for fighters, 0.5 for bosses) — and on every GLB in the game
+// that floor won by an order of magnitude, so the "small engine glow" was
+// actually a pair of blobs LARGER than the hull they were bolted to. That is
+// why the additive glow kept out-drawing the silhouette no matter how the
+// hull material was tuned. Hull-relative sizing makes the nozzles scale with
+// the ship instead of swamping it.
 function _attachEngineGlow(model, colorHex, box, sizeScale, radiusFactor, radiusFloor) {
     sizeScale = sizeScale || 1.0;
-    radiusFactor = radiusFactor !== undefined ? radiusFactor : 0.1;
-    radiusFloor = radiusFloor !== undefined ? radiusFloor : 0.5;
+    radiusFactor = radiusFactor !== undefined ? radiusFactor : 0.09;
+    radiusFloor = radiusFloor !== undefined ? radiusFloor : 0.0;
     const size = box.getSize(new THREE.Vector3());
     if (!isFinite(size.x) || !isFinite(size.z) || (size.x === 0 && size.z === 0)) return;
 
-    const glowColor = new THREE.Color(colorHex !== undefined ? colorHex : 0xffaa33);
-    const radius = Math.max(radiusFloor, Math.min(size.x, size.y || size.x) * radiusFactor) * sizeScale;
-    const glowGeo = new THREE.SphereGeometry(radius, 8, 8);
+    const base = new THREE.Color(colorHex !== undefined ? colorHex : 0xffaa33);
+    // Multiplied down because the game-core pulse loop overwrites every
+    // isGlowLayer opacity with its own 0.35-0.85 ramp — colour intensity is
+    // the only handle left for keeping the nozzles from out-drawing the hull.
+    const flareColor = base.clone().lerp(new THREE.Color(0xffffff), 0.42).multiplyScalar(0.62);
+    const coreColor = base.clone().lerp(new THREE.Color(0xffffff), 0.78).multiplyScalar(0.78);
+
+    const hullMax = Math.max(size.x, size.y || 0, size.z || 0);
+    const radius = Math.max(radiusFloor, hullMax * radiusFactor) * sizeScale;
+    const flareSize = radius * 3.4;
+    const coreGeo = new THREE.SphereGeometry(radius * 0.62, 6, 6);
+    const flareGeo = new THREE.PlaneGeometry(flareSize, flareSize);
     const rearZ = box.max.z - radius * 0.4;
-    const lateral = size.x * 0.22;
+    const lateral = size.x * 0.26;
 
     [-lateral, lateral].forEach((x) => {
-        const glowMat = new THREE.MeshBasicMaterial({
-            color: glowColor,
+        // Soft nozzle flare — faces along +Z (the engine end), DoubleSide so
+        // it still reads when the hull banks past edge-on.
+        const flareMat = new THREE.MeshBasicMaterial({
+            map: (typeof _getEngineBloomTexture === 'function') ? _getEngineBloomTexture() : null,
+            color: flareColor,
+            transparent: true,
+            opacity: 0.55,
+            side: THREE.DoubleSide,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false,
+            depthTest: true
+        });
+        const flare = new THREE.Mesh(flareGeo, flareMat);
+        flare.position.set(x, 0, rearZ + radius * 0.5);
+        flare.userData.isGlowLayer = true;
+        flare.renderOrder = 60;
+        flare.frustumCulled = false;
+        model.add(flare);
+
+        // Small white-hot nozzle core so the engine still registers from any
+        // angle (and gives the silhouette a couple of high-value pixels).
+        const coreMat = new THREE.MeshBasicMaterial({
+            color: coreColor,
             transparent: true,
             opacity: 0.55,
             blending: THREE.AdditiveBlending,
             depthWrite: false,
             depthTest: true
         });
-        const glow = new THREE.Mesh(glowGeo, glowMat);
-        glow.position.set(x, 0, rearZ);
-        glow.userData.isGlowLayer = true;
-        glow.renderOrder = 60;
-        glow.frustumCulled = false;
-        model.add(glow);
+        const core = new THREE.Mesh(coreGeo, coreMat);
+        core.position.set(x, 0, rearZ);
+        core.userData.isGlowLayer = true;
+        core.renderOrder = 61;
+        core.frustumCulled = false;
+        model.add(core);
     });
 }
 
@@ -639,31 +782,22 @@ function createEnemyMeshWithModel(regionId, fallbackGeometry, material, scaleOve
                 child.visible = true;
                 child.frustumCulled = false;
 
-                // Apply base material — rim-lit MeshStandardMaterial so
-                // leading edges pick up faction color against real scene
-                // lighting instead of a dead-flat fill.
-                // baseMultiplier/emissive raised from 0.45/0.4/0.85 — at
-                // combat range the old values left the hull dim enough that
-                // it sank into the black-space background while the additive
-                // glow children (always fully visible regardless of scene
-                // lighting) stayed bright, so only the glow read as "the
-                // ship." This keeps the hull dark/silhouette-toned but gives
-                // it an always-on floor so it reads AGAINST its own glow
-                // instead of being swallowed by it.
-                // emissive 0.55/1.0 -> 0.85/1.4: the old pair still leaned on
-                // scene lighting that mostly is not there (see the presence-floor
-                // note on createFactionHullMaterial), so a tagged enemy at
-                // 800-3000u rendered as a near-black hole in the starfield with
-                // only its additive engine blobs visible. This is the hull's own
-                // faction color, so each ship reads as a colored silhouette at
-                // combat range without restoring the old 6:1 additive glow shell.
+                // HIGH-VALUE, RIM-LIT, TOP-LIT hull. See the "VALUE, NOT HUE"
+                // note on createFactionHullMaterial: the old dark-albedo +
+                // saturated-emissive keying (#8c1c1c body, emissiveIntensity
+                // 1.4) measured DIMMER than the background starfield at
+                // weapons range, and at close range its flat 1.4 emissive on
+                // a DoubleSide untextured mesh clipped to a white crumpled
+                // wad with no readable facing. The body is now bright and
+                // desaturated, faction identity moved to the rim and the
+                // engine flares, and the emissive floor is LOW (0.62) so the
+                // 1x->3.4x attack telegraph has real headroom above it.
                 child.material = createFactionHullMaterial(material.color || 0xff0000, {
-                    baseMultiplier: 0.55,
-                    emissiveMultiplier: 0.85,
-                    emissiveIntensity: 1.4,
-                    roughness: 0.5,
-                    metalness: 0.7,
-                    rimIntensity: 0.6
+                    emissiveIntensity: 0.70,
+                    rimIntensity: 0.62,
+                    // Nose direction in MESH-LOCAL space: the nose-flipped
+                    // regions are authored +Z-forward, everything else -Z.
+                    formNoseSign: _enemyModelNoseFlip[regionId] ? 1.0 : -1.0
                 });
 
                 child.castShadow = false;
@@ -687,49 +821,42 @@ function createEnemyMeshWithModel(regionId, fallbackGeometry, material, scaleOve
         // _applyNoseFlip (below) so nose-flipped ships carry the glow
         // into the rotated inner group along with everything else.
         const centeredEnemyBox = new THREE.Box3().setFromObject(model);
-        // Tighter radiusFactor/radiusFloor than the boss default (0.1/0.5) —
-        // at combat range these engine blobs were part of what let the
-        // additive glow outdraw the actual hull silhouette ~6:1.
-        _attachEngineGlow(model, material.color || 0xffaa33, centeredEnemyBox, 1.0, 0.05, 0.28);
+        // 0.085 of the hull's largest dimension per nozzle core (the flare
+        // quad is 4.2x that) — nozzles that read as engines on a fighter,
+        // not as a second ship made of light.
+        _attachEngineGlow(model, material.color || 0xffaa33, centeredEnemyBox, 1.0, 0.085, 0.0);
 
-        // STEP 3: NOW add glow layers (after centering)
-        baseMeshes.forEach((child) => {
-            const glowGeometry = child.geometry.clone();
-            const glowColor = new THREE.Color(material.color || 0xff0000);
-            glowColor.multiplyScalar(0.9);  // was 1.2 — a full-bright duplicate this close to the hull's own tone washed the shaded hull into a flat glow blob instead of a shaded silhouette
-
-            const glowMaterial = new THREE.MeshBasicMaterial({
-                color: glowColor,
-                transparent: true,
-                opacity: 0.15,  // Base opacity - pulse system (game-core.js) drives the visible 0.35-0.85 range
-                blending: THREE.AdditiveBlending,
-                side: THREE.FrontSide,  // was DoubleSide — backfaces added nothing but extra additive stacking at silhouette edges, which is exactly where readability is lost
-                depthWrite: false,
-                depthTest: true
-            });
-
-            const glowMesh = new THREE.Mesh(glowGeometry, glowMaterial);
-            // Pulled in slightly from the true hull edge (was 1.0/1.0/1.0) so
-            // the additive bloom sits INSIDE the hull silhouette instead of
-            // haloing past it. At combat range (309-919u) this shell was
-            // what turned readable hulls into featureless glow puffs.
-            glowMesh.scale.set(0.9, 0.9, 0.9);
-            glowMesh.position.set(0, 0, 0);
-            glowMesh.rotation.set(0, 0, 0);
-            glowMesh.userData.isGlowLayer = true;
-            child.add(glowMesh);
-        });
+        // STEP 3 (REMOVED): the full-hull additive DUPLICATE SHELL.
+        // Every hull mesh used to carry a cloned copy of itself in an
+        // additive MeshBasicMaterial whose opacity the game-core pulse loop
+        // drove between 0.35 and 0.85. Stacked on top of an already-emissive
+        // hull that shell is what clipped a close-range ship into a flat
+        // white wad: it added a second, unshaded, full-coverage copy of the
+        // silhouette, so every shading cue underneath it (rim, top-lit ramp,
+        // nose accent) was washed out at exactly the range those cues matter.
+        // The engine flares above are still tagged isGlowLayer, so the pulse
+        // loop keeps a throbbing target — it now throbs on the ENGINES,
+        // which is where a pulsing glow actually belongs.
 
         // Scale enemy models. ENEMY_SCALE_FACTOR sizes every enemy
         // (default-96 path AND explicit scaleOverride callers, e.g.
         // galaxy enemies passing 96.0, plus local Pirates/Vulcans) at
-        // a single point. Was 0.5 (halved) — at combat range that left
-        // the hull subtending only ~24.6px at 498u / ~10.3px at 919u,
-        // too small to read facing or class even before the glow-vs-hull
-        // ratio fix above. Raised to 0.72 so the hull itself is a bigger,
-        // more identifiable target; bosses are unaffected (separate
-        // createBossMeshWithModel).
-        const ENEMY_SCALE_FACTOR = 0.72;
+        // a single point. History: 0.5 (halved) -> 0.72 -> 2.02.
+        // MEASURED: at 0.72 the modal Hostile's projected hull box was
+        // 18.7 x 10.1 px at 500u — a smear, not a ship, and far below the
+        // Overlord/boss footprint (~60 x 29 px at the same range) that the
+        // combat read is tuned around. 2.02 (2.8x) puts the same hull at
+        // ~52 x 28 px at 500u, clearing the >=45 x >=25 px target with
+        // margin at the worst-case nose-on orientation while staying just
+        // under the boss silhouette so rank still reads by size.
+        // Gameplay interplay, re-verified after the change: enemy hitboxSize
+        // is a bbox max-dimension capped at 200 (game-controls.js), so it
+        // rises 46 -> ~130 and stays under the cap — the laser hit sphere
+        // grows WITH the ship instead of decoupling from it. Enemy shields
+        // (_ensureEnemyShield) size from the same hull bbox by ratio, so the
+        // bubble keeps hugging the hull at 0.31x span. AI standoffs floor at
+        // 350/470u, well above anything this changes.
+        const ENEMY_SCALE_FACTOR = 2.02;
         const finalScale = (scaleOverride !== undefined ? scaleOverride : 96.0) * ENEMY_SCALE_FACTOR;
         const correction = _enemyModelScaleCorrection[regionId] || 1.0;
         model.scale.multiplyScalar(finalScale * correction);
@@ -744,53 +871,20 @@ function createEnemyMeshWithModel(regionId, fallbackGeometry, material, scaleOve
         const cacheState = (typeof modelCache !== 'undefined') ? modelCache.enemies[regionId] : 'UNDEFINED';
         console.warn(`⚠️ Enemy${regionId}.glb fallback used. modelCache state: ${cacheState === null ? 'null (load failed)' : cacheState === undefined ? 'undefined (not loaded yet)' : 'unexpected ' + typeof cacheState}`);
 
-        // Create base mesh with darker, more defined material
-        // baseMultiplier raised 0.4->0.5 to match the GLB-path silhouette
-        // fix above — dark enough to read as hull, bright enough not to
-        // sink into the black-space background at range.
-        const baseColor = new THREE.Color(material.color || 0xff0000);
-        baseColor.multiplyScalar(0.5);
-
-        // Same presence floor as the GLB path — this branch had NO emissive at
-        // all, so on the fallback geometry a ship in open space was lit by
-        // nothing and rendered black.
-        const baseMaterial = new THREE.MeshStandardMaterial({
-            color: baseColor,
-            emissive: new THREE.Color(material.color || 0xff0000).multiplyScalar(0.85),
-            emissiveIntensity: 1.4,
-            transparent: false,
-            opacity: 1.0,
-            roughness: 0.6,
-            metalness: 0.7,
-            side: THREE.DoubleSide
+        // Same high-value, rim-lit, top-lit keying as the GLB path so a
+        // fallback ship reads with the same presence and the same facing
+        // cues instead of being a dark saturated blob (see "VALUE, NOT HUE"
+        // on createFactionHullMaterial). The additive duplicate shell that
+        // used to sit on top of this is gone for the same reason it is gone
+        // on the GLB path — it flattened the silhouette it was meant to sell.
+        const baseMaterial = createFactionHullMaterial(material.color || 0xff0000, {
+            emissiveIntensity: 0.70,
+            rimIntensity: 0.62,
+            roughness: 0.5,
+            formNoseSign: -1.0
         });
 
         const baseMesh = new THREE.Mesh(fallbackGeometry, baseMaterial);
-
-        // Add glow layer — same tightening as the GLB path: FrontSide (no
-        // backface additive stacking at silhouette edges) and pulled in
-        // slightly from the true edge so the additive bloom stays inside
-        // the hull silhouette instead of outdrawing it.
-        const glowColor = new THREE.Color(material.color || 0xff0000);
-        glowColor.multiplyScalar(0.9);
-
-        const glowMaterial = new THREE.MeshBasicMaterial({
-            color: glowColor,
-            transparent: true,
-            opacity: 0.15,  // Base opacity - pulse system (game-core.js) drives the visible 0.35-0.85 range
-            blending: THREE.AdditiveBlending,
-            side: THREE.FrontSide,
-            depthWrite: false,
-            depthTest: true
-        });
-
-        const glowMesh = new THREE.Mesh(fallbackGeometry.clone(), glowMaterial);
-        glowMesh.scale.set(0.9, 0.9, 0.9);
-        glowMesh.position.set(0, 0, 0);  // Position at parent's origin
-        glowMesh.rotation.set(0, 0, 0);  // No rotation offset
-        glowMesh.userData.isGlowLayer = true;
-        baseMesh.add(glowMesh);
-
         return baseMesh;
     }
 }
@@ -826,13 +920,18 @@ function createBossMeshWithModel(regionId, fallbackGeometry, material) {
                 // fighter), so the set-piece encounter was the hardest thing
                 // in the scene to see. It now sits above the fighters, which
                 // is the read a boss is supposed to have.
+                // Same high-value re-key as the fighters (see "VALUE, NOT
+                // HUE") but kept one notch hotter on every axis so a boss
+                // still out-reads the fighters it flies with now that they
+                // are bright too.
                 child.material = createFactionHullMaterial(material.color || 0xff0000, {
-                    baseMultiplier: 0.7,
-                    emissiveMultiplier: 0.95,
-                    emissiveIntensity: 1.5,
+                    hullHeat: 0.62,
+                    emissiveHeat: 0.46,
+                    emissiveIntensity: 0.80,
                     roughness: 0.4,
-                    metalness: 0.7,
-                    rimIntensity: 0.65
+                    rimIntensity: 0.7,
+                    rimBaseStrength: 1.1,
+                    formNoseSign: _enemyModelNoseFlip[regionId] ? 1.0 : -1.0
                 });
 
                 child.castShadow = false;
@@ -855,7 +954,7 @@ function createBossMeshWithModel(regionId, fallbackGeometry, material) {
         // _applyNoseFlip (below) so nose-flipped bosses (1/8) carry the
         // glow into the rotated inner group with everything else.
         const centeredBossBox = new THREE.Box3().setFromObject(model);
-        _attachEngineGlow(model, material.color || 0xffaa33, centeredBossBox, 1.4);
+        _attachEngineGlow(model, material.color || 0xffaa33, centeredBossBox, 1.0, 0.075, 0.0);
 
         // Bosses are larger than enemies. BOSS_SCALE_FACTOR=0.5 halves
         // every boss to match the enemy ship halving (144 -> 72 base).

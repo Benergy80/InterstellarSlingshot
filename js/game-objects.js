@@ -8321,13 +8321,152 @@ window.updateNebulaBreathing = updateNebulaBreathing;
 // userData._distCulled) so we never fight other visibility systems such as the
 // distant-nebula opacity fade in updateNebulaVisibility(). Enemies are
 // deliberately NOT culled here because combat logic reads enemy.visible.
+//
+// -----------------------------------------------------------------------------
+// WHY THIS PASS RESOLVES WORLD POSITIONS (the inverted proximity band)
+// -----------------------------------------------------------------------------
+// `planets` is not a flat list. 345 of the nebula-cluster worlds' moons are
+// CHILDREN of their parent planet mesh, so `moon.position` is a LOCAL offset of
+// ~100-300u, not a world coordinate. Subtracting the camera from it does not
+// measure "how far is that moon" — it measures, to within a moon's orbit,
+// HOW FAR THE CAMERA IS FROM THE WORLD ORIGIN. Both halves of the reported
+// regression fall straight out of that one line:
+//
+//   * Sitting near the origin (which the world rebase keeps you at most of the
+//     time) every moon in the universe scores "in range" and is left flagged
+//     visible — measured 313 of 345 moons flagged visible past 30,000u, 286 of
+//     them sub-pixel, from 80,000u away.
+//   * The moment the camera is genuinely far from the origin — a warp jump, a
+//     galactic-view sweep, the frames before a rebase catches up — the same
+//     formula hides EVERY moon in the game, including the one you are close
+//     enough to read the terminator on. Near became the band that gets culled.
+//
+// So distance is now measured to the body's WORLD position (matrixWorld's
+// translation for anything parented; `position` stays the fast path for the
+// root-level majority, and is what the game's own update code wrote this frame).
+//
+// Two further rules the old pass had no way to express:
+//
+//   * NEAR IS A PROMISE. Inside CULL_NEAR_RADII of a body's own radius it is
+//     visible, full stop — no quality tier, no authored range, no throttle may
+//     take away a world that is filling the screen.
+//   * FAR IS ANGULAR. A 4-unit moon 25,000u away is a fifth of a pixel, and it
+//     was being drawn purely because its parent planet was still in range. Below
+//     a sub-pixel silhouette it is culled on its own account (with hysteresis so
+//     a body drifting on the boundary cannot strobe).
+//
+// And two timing rules:
+//
+//   * A CAMERA JUMP FORCES A PASS. The 10-frame throttle is right for flight
+//     (20u/frame max, i.e. 200u of drift between passes against a 30,000u
+//     range) and wrong for teleports: measured after a warp-in, everything
+//     within 40 radii of the camera stayed invisible for the first 3-7 frames.
+//     A jump larger than anything flight can produce re-decides immediately.
+//   * WE RE-ASSERT AFTER THE TWO PASSES THAT FORCE MOONS VISIBLE. game-core's
+//     updateActivePlanets() ("CRITICAL: Always include moons and ensure they're
+//     visible") and updatePlanetOrbits() ("Ensure moon is always visible") both
+//     write `visible = true` on every moon, the latter EVERY FRAME and last in
+//     animate() before the render. Without the guard this cull's decision about
+//     a moon survives for a fraction of one frame and the far field never
+//     actually goes away — measured 313 of 345 moons flagged visible past
+//     30,000u with the cull otherwise fully correct. The guard restores only
+//     bodies THIS pass hid, so it can never fight another visibility system.
+const CULL_NEAR_RADII = 40;      // inside this many body-radii: always visible
+const CULL_SUBPIXEL_ANG = 0.00055; // hide below ~0.6px of silhouette radius
+const CULL_SUBPIXEL_BACK = 0.00080; // ...and only bring it back at ~0.8px
 let _cullFrameCount = 0;
+let _cullLastPassFrame = -999;
+const _cullPrevCam = { x: Infinity, y: Infinity, z: Infinity };
+const _cullJumpDist2 = 1500 * 1500; // beyond any per-frame flight movement
+// Bodies this pass hid that another system force-shows (moons, and only moons —
+// both stompers key on the same thing this does). Rebuilt every pass, walked by
+// the guards, so it stays a few hundred entries and costs a boolean each.
+const _cullStomped = [];
+let _cullGuardsInstalled = 0;
+
+// World-space position of a cull candidate, into a scratch record.
+const _cullWP = { x: 0, y: 0, z: 0 };
+function _cullWorldPos(o) {
+    const p = o.parent;
+    if (!p || p.isScene) {
+        _cullWP.x = o.position.x; _cullWP.y = o.position.y; _cullWP.z = o.position.z;
+    } else {
+        const e = o.matrixWorld.elements;
+        _cullWP.x = e[12]; _cullWP.y = e[13]; _cullWP.z = e[14];
+    }
+}
+
+// Silhouette radius, cached: geometry is the truth (userData.radius is a
+// gameplay mass-radius on some bodies and disagrees with the mesh).
+function _cullBodyRadius(o) {
+    let r = o.userData._cullR;
+    if (r !== undefined) return r;
+    const g = o.geometry, p = g && g.parameters;
+    r = (p && p.radius > 0) ? p.radius
+      : (o.userData.radius > 0 ? o.userData.radius : 0);
+    o.userData._cullR = r;
+    return r;
+}
+
+// Restate this pass's decision for the bodies the caller just force-showed.
+// Only bodies we hid ourselves are touched, and only if something put them back.
+function _cullReassert() {
+    for (let i = 0; i < _cullStomped.length; i++) {
+        const o = _cullStomped[i];
+        if (o.userData._distCulled && o.visible) o.visible = false;
+    }
+}
+
+// Wrap a game-core pass that force-shows moons. Both are top-level function
+// declarations in a classic script, so the global property IS the binding their
+// own caller resolves — assigning here redirects the call inside animate().
+// Idempotent, and it retries until game-core has actually loaded.
+function _wrapMoonStomper(name) {
+    const base = window[name];
+    if (typeof base !== 'function') return false;   // game-core not loaded yet
+    if (base.__cullGuard) return true;
+    const guarded = function () {
+        const out = base.apply(this, arguments);
+        _cullReassert();
+        return out;
+    };
+    guarded.__cullGuard = true;
+    window[name] = guarded;
+    return true;
+}
+
+// updatePlanetOrbits() is the one that matters — it runs every frame and last
+// in animate() before the render, so it gets the final word unless we take it.
+// updateActivePlanets() is wrapped too so the flag is never even transiently
+// wrong for a reader between the two.
+function _installMoonVisibilityGuards() {
+    if (_cullGuardsInstalled === 2 || typeof window === 'undefined') return;
+    let n = 0;
+    if (_wrapMoonStomper('updateActivePlanets')) n++;
+    if (_wrapMoonStomper('updatePlanetOrbits')) n++;
+    _cullGuardsInstalled = n;
+}
+
 function updateDistanceCulling() {
     if (typeof camera === 'undefined' || !camera) return;
     // Throttle: visibility doesn't need per-frame precision. Every 10 frames
-    // is ~6x/sec at 60fps, far faster than anything pops into meaningful view.
+    // is ~6x/sec at 60fps, far faster than anything pops into meaningful view —
+    // EXCEPT when the camera teleports, which no amount of drift budget covers.
     _cullFrameCount++;
-    if (_cullFrameCount % 10 !== 0) return;
+    const jdx = camera.position.x - _cullPrevCam.x,
+          jdy = camera.position.y - _cullPrevCam.y,
+          jdz = camera.position.z - _cullPrevCam.z;
+    const jumped = !(jdx * jdx + jdy * jdy + jdz * jdz < _cullJumpDist2);
+    // A jump may re-decide at once, but never more than every other frame, so a
+    // rebase storm cannot turn this into a per-frame full sweep.
+    const forced = jumped && (_cullFrameCount - _cullLastPassFrame) >= 2;
+    if (!forced && _cullFrameCount % 10 !== 0) return;
+    _cullLastPassFrame = _cullFrameCount;
+    _cullPrevCam.x = camera.position.x;
+    _cullPrevCam.y = camera.position.y;
+    _cullPrevCam.z = camera.position.z;
+    _cullStomped.length = 0;
+    _installMoonVisibilityGuards();
 
     const cx = camera.position.x, cy = camera.position.y, cz = camera.position.z;
 
@@ -8337,17 +8476,37 @@ function updateDistanceCulling() {
     const _cullScale = (typeof window !== 'undefined' && window.__quality)
         ? (window.__quality.TIERS[window.__quality.tier].cullScale || 1) : 1;
 
-    const cullArray = (arr, range) => {
+    const cullArray = (arr, range, angular) => {
         if (typeof arr === 'undefined' || !arr || !arr.length) return;
         range *= _cullScale;
         const r2 = range * range;
         for (let i = 0; i < arr.length; i++) {
             const o = arr[i];
             if (!o || !o.position) continue;
-            const dx = o.position.x - cx, dy = o.position.y - cy, dz = o.position.z - cz;
-            const inRange = (dx * dx + dy * dy + dz * dz) <= r2;
+            _cullWorldPos(o);
+            const dx = _cullWP.x - cx, dy = _cullWP.y - cy, dz = _cullWP.z - cz;
+            const d2 = dx * dx + dy * dy + dz * dz;
+            let inRange = d2 <= r2;
+            const br = angular ? _cullBodyRadius(o) : 0;
+            if (br > 0) {
+                // NEAR PROMISE — a body this close is never hidden, whatever
+                // the tier did to `range`.
+                if (!inRange) {
+                    const near = CULL_NEAR_RADII * br;
+                    if (d2 < near * near) inRange = true;
+                } else if (d2 > 0) {
+                    // FAR, ANGULARLY — sub-pixel bodies riding a parent that is
+                    // still in range. Hysteresis: culled bodies need a bigger
+                    // silhouette to come back than intact ones need to survive.
+                    const lim = o.userData._distCulled ? CULL_SUBPIXEL_BACK : CULL_SUBPIXEL_ANG;
+                    if (br * br < lim * lim * d2) inRange = false;
+                }
+            }
             if (!inRange) {
                 if (o.visible) { o.visible = false; o.userData._distCulled = true; }
+                // Moons are the bodies game-core force-shows every frame.
+                if (o.userData._distCulled &&
+                    (o.userData.type === 'moon' || o.userData.parentPlanet)) _cullStomped.push(o);
             } else if (o.userData._distCulled) {
                 o.visible = true; o.userData._distCulled = false;
             }
@@ -8356,7 +8515,10 @@ function updateDistanceCulling() {
 
     // Cosmetic/static content: range sits just beyond the ~25k nebula-cloud
     // fade so a system's planets never wink out while its cloud is still drawn.
-    cullArray(typeof planets !== 'undefined' ? planets : null, 30000);
+    // Worlds (and only worlds) also get the angular rules — they are the bodies
+    // with a meaningful silhouette, the ones you fly up to, and the ones whose
+    // moons hang off them as children.
+    cullArray(typeof planets !== 'undefined' ? planets : null, 30000, true);
     cullArray(typeof asteroidBelts !== 'undefined' ? asteroidBelts : null, 30000);
     cullArray(typeof interstellarAsteroids !== 'undefined' ? interstellarAsteroids : null, 30000);
     // Dense-galaxy-field asteroids: hundreds per field, so cull them much
@@ -8368,7 +8530,8 @@ function updateDistanceCulling() {
         for (let i = 0; i < interstellarAsteroids.length; i++) {
             const a = interstellarAsteroids[i];
             if (!a || !a.userData || !a.userData.denseField || !a.position) continue;
-            const dx = a.position.x - cx, dy = a.position.y - cy, dz = a.position.z - cz;
+            _cullWorldPos(a);
+            const dx = _cullWP.x - cx, dy = _cullWP.y - cy, dz = _cullWP.z - cz;
             const far = (dx * dx + dy * dy + dz * dz) > dr2;
             if (far) { if (a.visible) { a.visible = false; a.userData._distCulled = true; } }
             else if (a.userData._distCulled) { a.visible = true; a.userData._distCulled = false; }
@@ -8379,6 +8542,53 @@ function updateDistanceCulling() {
     cullArray(typeof tradingShips !== 'undefined' ? tradingShips : null, 18000);
 }
 window.updateDistanceCulling = updateDistanceCulling;
+
+// Shared instrument for the culling invariant. Counts every world that wears a
+// planet-presence program, bucketed by how many of ITS OWN RADII away it is,
+// and reports both the raw `.visible` flag and whether it is actually DRAWN
+// (a child whose parent is culled is not drawn no matter what its flag says —
+// that difference is what made the first census of this bug read backwards).
+//
+// Invariants, all reported: `nearHidden` must be 0 (nothing inside 40 radii is
+// ever culled) and `farDrawn` must be 0 (nothing sub-pixel is ever submitted).
+window.cullDebug = function () {
+    return {
+        frame: _cullFrameCount, lastPass: _cullLastPassFrame,
+        guardsInstalled: _cullGuardsInstalled, stomped: _cullStomped.length
+    };
+};
+window.cullCensus = function (bands) {
+    const arr = (typeof planets !== 'undefined' && planets) ? planets : [];
+    const cp = camera.position;
+    const edges = bands || [5, 20, 40, 100, 1000, Infinity];
+    const out = edges.map(e => ({ band: e, n: 0, flag: 0, drawn: 0 }));
+    let nearHidden = 0, farDrawn = 0, total = 0;
+    for (let i = 0; i < arr.length; i++) {
+        const o = arr[i];
+        if (!o || !o.material || !o.material.uniforms) continue;
+        if (o.material.uniforms.uCity === undefined &&
+            o.material.uniforms.uNightGlow === undefined) continue;
+        const r = _cullBodyRadius(o);
+        if (!(r > 0)) continue;
+        _cullWorldPos(o);
+        const d = Math.sqrt((_cullWP.x - cp.x) * (_cullWP.x - cp.x) +
+                            (_cullWP.y - cp.y) * (_cullWP.y - cp.y) +
+                            (_cullWP.z - cp.z) * (_cullWP.z - cp.z));
+        let drawn = true;
+        for (let p = o; p; p = p.parent) { if (!p.visible) { drawn = false; break; } }
+        const radii = d / r;
+        total++;
+        if (radii < CULL_NEAR_RADII && !drawn) nearHidden++;
+        if (r / d < CULL_SUBPIXEL_ANG && drawn) farDrawn++;
+        for (let b = 0; b < edges.length; b++) {
+            if (radii < edges[b]) {
+                out[b].n++; if (o.visible) out[b].flag++; if (drawn) out[b].drawn++;
+                break;
+            }
+        }
+    }
+    return { total, bands: out, nearHidden, farDrawn };
+};
 
 // =============================================================================
 // ORBIT LINE VISIBILITY - Show orbits when near nebulas or black holes
