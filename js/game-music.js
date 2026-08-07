@@ -227,8 +227,10 @@
       stalled: false,      // true once frozen past LIVENESS_STALL_MS
       recovering: false,   // a same-element play() retry is in flight
       confirmed: false,    // true once lastKeyWatched has advanced at least once
-      lastGoodKey: null,   // last DIFFERENT track key proven to advance
-      lastGoodAt: 0,
+      // Ring of recently-confirmed-healthy tracks: [{key, at}, ...], oldest
+      // first, capped at 4. See pushGoodKey()/pickFallbackKey() below for
+      // why this replaced a single lastGoodKey scalar.
+      goodKeys: [],
     },
   };
 
@@ -1375,20 +1377,42 @@
     return { el: st.currentEl, key: st.current };
   }
 
-  // NOTE on lastGoodKey: it must name the last DIFFERENT track proven
-  // healthy, not the currently-watched one — the track that is stalling
-  // right now was almost always itself "confirmed advancing" a few
-  // samples ago (that's exactly what makes a post-crossfade stall sneaky),
-  // so if lastGoodKey chased the current key it would equal the broken
-  // track at the moment we need a fallback and this would never fire.
-  // It only moves forward on a genuine key CHANGE, and only carries the
-  // key we are LEAVING if that key had actually proven itself first.
+  // NOTE on goodKeys: a single "lastGoodKey" scalar only ever remembers the
+  // ONE track most recently left behind. That breaks the moment playback
+  // cycles back onto that same key later (skip mash through a small pool,
+  // a looped playlist, whatever) — the scalar becomes pinned to whatever
+  // is CURRENTLY being watched, the fallback check (lastGoodKey !== key)
+  // nulls itself out, and the second-failure rung ("switch to a track we
+  // know produces sound") can never fire even though several other tracks
+  // were confirmed healthy earlier in the same session.
+  //
+  // goodKeys is a small ring instead: every track that proves itself
+  // (currentTime actually advancing while watched) gets pushed — see
+  // pushGoodKey() — deduped and capped at 4. Fallback selection then
+  // walks it most-recent-first and skips only the currently-watched key,
+  // so any of the last few proven-healthy tracks remains reachable even
+  // if the most recent one happens to be the one that's now stalling.
+  function pushGoodKey(key, now) {
+    const liv = st.liveness;
+    const idx = liv.goodKeys.findIndex(e => e.key === key);
+    if (idx !== -1) liv.goodKeys.splice(idx, 1);
+    liv.goodKeys.push({ key: key, at: now });
+    if (liv.goodKeys.length > 4) liv.goodKeys.shift();
+  }
+
+  // Most-recently-confirmed track that is NOT the one currently stalling
+  // and hasn't since failed to load. Walks newest-first.
+  function pickFallbackKey(key) {
+    const liv = st.liveness;
+    for (let i = liv.goodKeys.length - 1; i >= 0; i--) {
+      const k = liv.goodKeys[i].key;
+      if (k !== key && st.loaded[k] && !st.loadErrors.has(k)) return k;
+    }
+    return null;
+  }
+
   function livenessRearm(now, key, t) {
     const liv = st.liveness;
-    if (liv.lastKeyWatched && liv.lastKeyWatched !== key && liv.confirmed) {
-      liv.lastGoodKey = liv.lastKeyWatched;
-      liv.lastGoodAt = now;
-    }
     liv.lastKeyWatched = key;
     liv.lastSampleAt = now;
     liv.lastCurrentTime = t;
@@ -1427,6 +1451,7 @@
       liv.stalled = false;
       liv.recovering = false;
       liv.confirmed = true;
+      pushGoodKey(key, now);
       return;
     }
 
@@ -1450,9 +1475,7 @@
     // Second failure in a row: the retry didn't take. Do not sit on
     // indefinite silence — fall back to the last track we KNOW was
     // actually producing sound.
-    const fallback = (liv.lastGoodKey && liv.lastGoodKey !== key &&
-                       st.loaded[liv.lastGoodKey] && !st.loadErrors.has(liv.lastGoodKey))
-      ? liv.lastGoodKey : null;
+    const fallback = pickFallbackKey(key);
     console.warn('🎵 Soundtrack: liveness recovery failed on "' + key + '" — ' +
                   (fallback ? 'falling back to "' + fallback + '"'
                             : 'no known-good track yet, forcing a hard reload'));
@@ -1996,8 +2019,10 @@
         stalled: liv.stalled,
         recovering: liv.recovering,
         stuckMs: liv.stuckSince ? (Date.now() - liv.stuckSince) : 0,
-        lastGoodKey: liv.lastGoodKey,
-        lastGoodAgoMs: liv.lastGoodAt ? (Date.now() - liv.lastGoodAt) : -1,
+        // Ring of recently-confirmed-healthy keys (newest last), plus what
+        // the second-failure rung would actually pick right now.
+        goodKeys: liv.goodKeys.map(e => e.key),
+        fallbackKey: pickFallbackKey(liv.lastKeyWatched),
       };
       if (!wa.ok) {
         return { bus: null, stingers: sting, fade: fade, liveness: liveness,

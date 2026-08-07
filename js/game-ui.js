@@ -2325,27 +2325,49 @@ function updateCompass() {
 //
 // The pool below fixes that shape:
 //   • dots are created ONCE and stay attached to #galaxyMap forever,
-//   • a refresh walks the pool with a cursor instead of allocating,
+//   • a refresh CLAIMS dots by identity instead of allocating,
 //   • look (class, position:absolute, border-radius…) lives in CSS, so
 //     className / cssText / innerHTML are never touched again,
 //   • position is a single compositor-friendly `transform: translate()`
 //     instead of left/top percentages,
 //   • every write is guarded by a per-dot cache (`dot._s`), so a dot that
 //     did not visually change costs ZERO mutations,
-//   • surplus dots are hidden with `visibility`, never removed.
+//   • surplus dots are hidden with `visibility`, then recycled.
 // Arrows (ally ▲ markers) get their own sub-pool so a dot never has to
 // morph between "round blip" and "glyph" shapes.
+//
+// IDENTITY (the reason this pool is keyed and not a cursor):
+// the earlier version handed out slots positionally — dots[cursor++] — so
+// the DOM element a contact owned depended on where it happened to land in
+// the scan order. The instant that order changed (a fighter dies, a rock
+// crosses the 3000u rim) every contact after the gap shifted down one slot
+// and its blip JUMPED across the radar — up to 72% of the map width — or
+// silently repainted in place, turning a red hostile into a beige planet
+// without moving. Roughly once a second in a fight the radar lied about
+// which contact was which.
+// Now each contact owns a dot keyed by its object id: `claimed` holds the
+// slots this refresh took, `prev` the ones last refresh held. A contact
+// that is still there gets the SAME element back, so its blip only ever
+// moves the distance the ship actually moved. Slots left in `prev` at
+// end() are genuinely dead contacts; they go to a `free` LIFO for reuse,
+// which also caps the pool at the peak concurrent contact count instead
+// of letting it creep (it used to reach 636 nodes to show 15 blips).
 const mapDotPool = {
-    dots: [],
-    dotCursor: 0,
+    dots: [],            // every live element, for re-parenting only
+    claimed: new Map(),  // key -> dot, taken during THIS refresh
+    prev: new Map(),     // key -> dot, held by the PREVIOUS refresh
+    free: [],            // released dots, oldest first (LIFO reuse, FIFO retire)
     arrows: [],
-    arrowCursor: 0,
+    arrowsClaimed: new Map(),
+    arrowsPrev: new Map(),
+    arrowsFree: [],
     container: null,
     // Radar box size in px, used to turn 0-100 map coords into translate()
     // pixels. Re-measured at most once a second — never per dot.
     w: 220,
     h: 220,
     _measuredAt: 0,
+    _overSince: 0,       // when the free list first went over budget
 
     _fresh(cls) {
         const el = document.createElement('div');
@@ -2357,10 +2379,13 @@ const mapDotPool = {
         return el;
     },
 
-    // Start a refresh: rewind the cursors and (rarely) re-measure the box.
+    // Start a refresh: last refresh's claims become the lookup table, and
+    // (rarely) re-measure the box.
     begin(container) {
-        this.dotCursor = 0;
-        this.arrowCursor = 0;
+        // Swap, don't allocate: claimed becomes prev, and the old prev map
+        // (already drained by end()) is reused as the new claimed map.
+        let t = this.prev; this.prev = this.claimed; this.claimed = t; t.clear();
+        t = this.arrowsPrev; this.arrowsPrev = this.arrowsClaimed; this.arrowsClaimed = t; t.clear();
         if (container && container !== this.container) {
             this.container = container;
             // Only happens if the map element itself was replaced.
@@ -2378,47 +2403,102 @@ const mapDotPool = {
         }
     },
 
-    get(type) {
-        let dot = this.dots[this.dotCursor];
-        if (!dot) {
-            dot = this._fresh('galactic-target-dot');
-            this.dots[this.dotCursor] = dot;
+    // Claim the dot belonging to `key` (a stable per-world-object id).
+    // Same key next refresh ⇒ same element ⇒ the blip cannot teleport.
+    get(key) {
+        // Two contacts resolving to the same key (only possible on the
+        // name fallback) get suffixed deterministically, so the pairing
+        // still repeats frame to frame.
+        while (this.claimed.has(key)) key = key + '~';
+        let dot = this.prev.get(key);
+        if (dot !== undefined) {
+            this.prev.delete(key);
+        } else {
+            // A retired slot, or a brand-new one. pop() takes the most
+            // recently freed dot; the stale tail ages out via _trim().
+            dot = this.free.pop();
+            if (dot === undefined) {
+                dot = this._fresh('galactic-target-dot');
+                this.dots.push(dot);
+            }
         }
-        this.dotCursor++;
+        this.claimed.set(key, dot);
         return dot;
     },
 
-    getArrow() {
-        let a = this.arrows[this.arrowCursor];
-        if (!a) {
-            a = this._fresh('galactic-ally-marker');
-            a.textContent = '▲';
-            a._s.glyph = true;
-            this.arrows[this.arrowCursor] = a;
+    getArrow(key) {
+        while (this.arrowsClaimed.has(key)) key = key + '~';
+        let a = this.arrowsPrev.get(key);
+        if (a !== undefined) {
+            this.arrowsPrev.delete(key);
+        } else {
+            a = this.arrowsFree.pop();
+            if (a === undefined) {
+                a = this._fresh('galactic-ally-marker');
+                a.textContent = '▲';
+                a._s.glyph = true;
+                this.arrows.push(a);
+            }
         }
-        this.arrowCursor++;
+        this.arrowsClaimed.set(key, a);
         return a;
     },
 
-    // Hide whatever this refresh did not claim. No detaching, and a dot
-    // that was already hidden is not touched at all.
+    // Hide whatever this refresh did not claim and hand those slots back.
+    // No detaching here, and a dot that was already hidden is untouched.
     end() {
-        const d = this.dots;
-        for (let i = this.dotCursor; i < d.length; i++) {
-            const s = d[i]._s;
-            if (s.vis !== 'hidden') { d[i].style.visibility = 'hidden'; s.vis = 'hidden'; }
-        }
-        const a = this.arrows;
-        for (let i = this.arrowCursor; i < a.length; i++) {
-            const s = a[i]._s;
-            if (s.vis !== 'hidden') { a[i].style.visibility = 'hidden'; s.vis = 'hidden'; }
-        }
+        const f = this.free;
+        this.prev.forEach(function (d) {
+            const s = d._s;
+            if (s.vis !== 'hidden') { d.style.visibility = 'hidden'; s.vis = 'hidden'; }
+            f.push(d);
+        });
+        this.prev.clear();
+        const af = this.arrowsFree;
+        this.arrowsPrev.forEach(function (a) {
+            const s = a._s;
+            if (s.vis !== 'hidden') { a.style.visibility = 'hidden'; s.vis = 'hidden'; }
+            af.push(a);
+        });
+        this.arrowsPrev.clear();
+        this._trim();
     },
 
-    // Legacy entry point (universal view): hide every blip.
+    // A hidden node still costs style-recalc time, so a pool that ballooned
+    // during one dense dogfight must not stay ballooned. Keep a cushion of
+    // spares, and only after the surplus has sat unused for 3 s retire the
+    // oldest of them — hysteresis so normal contact churn never detaches
+    // anything (steady state = zero added/removed nodes).
+    _trim() {
+        const keep = Math.max(24, this.claimed.size);
+        if (this.free.length <= keep) { this._overSince = 0; return; }
+        const now = Date.now();
+        if (!this._overSince) { this._overSince = now; return; }
+        if (now - this._overSince < 3000) return;
+        let n = Math.min(48, this.free.length - keep);
+        while (n-- > 0) {
+            const d = this.free.shift();   // front = least recently used
+            if (d.parentNode) d.parentNode.removeChild(d);
+            const i = this.dots.indexOf(d);
+            if (i >= 0) this.dots.splice(i, 1);
+        }
+        if (this.free.length <= keep) this._overSince = 0;
+    },
+
+    // Legacy entry point (universal view): hide every blip and hand the
+    // whole pool back, so a long stay on the galaxy map lets _trim() give
+    // the nodes up entirely. Identities are deliberately NOT preserved
+    // across the excursion: coming back re-pairs contacts to slots once,
+    // on a frame where the player just repainted the entire map anyway.
     releaseAll() {
-        this.dotCursor = 0;
-        this.arrowCursor = 0;
+        this.prev.forEach((d, k) => { this.claimed.set(k, d); });
+        this.prev.clear();
+        this.arrowsPrev.forEach((a, k) => { this.arrowsClaimed.set(k, a); });
+        this.arrowsPrev.clear();
+        // Everything currently claimed is now stale: flip it into prev and
+        // let end() hide + recycle the lot.
+        let t = this.prev; this.prev = this.claimed; this.claimed = t; t.clear();
+        t = this.arrowsPrev; this.arrowsPrev = this.arrowsClaimed; this.arrowsClaimed = t; t.clear();
         this.end();
     }
 };
@@ -2527,7 +2607,8 @@ planets.forEach(planet => {
                 position: worldPos,
                 type: planet.userData.type,
                 name: planet.userData.name,
-                distance: distance
+                distance: distance,
+                src: planet
             });
         }
     } else {
@@ -2538,7 +2619,8 @@ planets.forEach(planet => {
                 position: planet.position,
                 type: planet.userData.type,
                 name: planet.userData.name,
-                distance: distance
+                distance: distance,
+                src: planet
             });
         }
     }
@@ -2566,7 +2648,8 @@ if (typeof outerInterstellarSystems !== 'undefined') {
                         type: orbiter.userData.type,
                         name: orbiter.userData.name,
                         distance: distance,
-                        isOuterSystem: true
+                        isOuterSystem: true,
+                        src: orbiter
                     });
                 }
             });
@@ -2584,7 +2667,8 @@ if (typeof outerInterstellarSystems !== 'undefined') {
                         type: system.userData.centerType,
                         name: system.userData.name + ' Core',
                         distance: centerDist,
-                        isOuterSystem: true
+                        isOuterSystem: true,
+                        src: system.userData.centerObject
                     });
                 }
             }
@@ -2602,7 +2686,8 @@ if (typeof outerInterstellarSystems !== 'undefined') {
                         position: asteroid.position,
                         type: 'interstellar_asteroid',
                         name: asteroid.userData.name,
-                        distance: distance
+                        distance: distance,
+                        src: asteroid
                     });
                 }
             });
@@ -2618,7 +2703,8 @@ if (typeof outerInterstellarSystems !== 'undefined') {
                     type: 'enemy',
                     name: enemy.userData.name,
                     distance: distance,
-                    isBoss: enemy.userData.isBoss
+                    isBoss: enemy.userData.isBoss,
+                    src: enemy
                 });
             }
         });
@@ -2653,7 +2739,8 @@ if (typeof outerInterstellarSystems !== 'undefined') {
                         type: 'civilian_ship',
                         name: ship.userData.name || 'Civilian Vessel',
                         distance: distance,
-                        underAttack: ship.userData.distressActive || false
+                        underAttack: ship.userData.distressActive || false,
+                        src: ship
                     });
                 }
             });
@@ -2671,7 +2758,8 @@ if (typeof outerInterstellarSystems !== 'undefined') {
                             position: sphere.position,
                             type: 'dyson_sphere',
                             name: 'Dyson Sphere',
-                            distance: distance
+                            distance: distance,
+                            src: sphere
                         });
                     }
                 });
@@ -2687,7 +2775,8 @@ if (typeof outerInterstellarSystems !== 'undefined') {
                             position: crystal.position,
                             type: 'crystal_structure',
                             name: 'Crystal Structure',
-                            distance: distance
+                            distance: distance,
+                            src: crystal
                         });
                     }
                 });
@@ -2703,7 +2792,8 @@ if (typeof outerInterstellarSystems !== 'undefined') {
                             position: whale.position,
                             type: 'space_whale',
                             name: 'Space Whale',
-                            distance: distance
+                            distance: distance,
+                            src: whale
                         });
                     }
                 });
@@ -2719,7 +2809,8 @@ if (typeof outerInterstellarSystems !== 'undefined') {
                             position: ringworld.position,
                             type: 'ringworld',
                             name: 'Ringworld',
-                            distance: distance
+                            distance: distance,
+                            src: ringworld
                         });
                     }
                 });
@@ -2728,6 +2819,14 @@ if (typeof outerInterstellarSystems !== 'undefined') {
 
         // Display objects as dots on map
         nearbyObjects.forEach(obj => {
+            // The blip's identity. THREE.Object3D.id is unique and stable
+            // for the object's whole life, so the same ship keeps the same
+            // DOM element every refresh no matter how the scan order shifts
+            // around it. Anything without a mesh falls back to type+name.
+            const _src = obj.src || obj.ship;
+            const _key = (_src && _src.id !== undefined)
+                ? _src.id
+                : (obj.type + '|' + obj.name);
             const relativeX = (obj.position.x - camera.position.x) / radarRange;
             const relativeZ = (obj.position.z - camera.position.z) / radarRange;
             
@@ -2761,7 +2860,7 @@ if (obj.type === 'ally') {
     }
     // Arrows live in their own sub-pool: already attached, glyph already
     // set, look already in CSS. Only colour / transform / visibility move.
-    const arrow = mapDotPool.getArrow();
+    const arrow = mapDotPool.getArrow(_key);
     const as = arrow._s;
     if (as.color !== dotColor) {
         arrow.style.color = dotColor;
@@ -2834,7 +2933,7 @@ if (obj.type === 'ally') {
 
                 // Every write below is compare-and-set against the dot's own
                 // cache: a blip that kept its colour and size costs nothing.
-                const dot = mapDotPool.get('cosmic-feature');
+                const dot = mapDotPool.get(_key);
                 const s = dot._s;
                 if (s.size !== dotSize) {
                     dot.style.width = dotSize;

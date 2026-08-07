@@ -694,6 +694,37 @@ function _updateShipThrusterCones(ship, thrusting, dist, charge) {
         else c.mesh.scale.set(bs.x * w, bs.y * l, 1);
     }
 }
+
+// ONE entry point for "this hostile should be wearing its engine plume".
+// Engine plume: ensure it exists, then drive it. It is ALWAYS burning —
+// `thrusting` only chooses between idle burn and full burn — because the
+// plume is this game's only enemy cue the starfield cannot imitate, and a
+// hostile that goes dark when it coasts is a hostile that disappears into
+// the sky. Distance feeds the angular-size floor; _telegraphPhase feeds
+// the attack wind-up flare (see _updateShipThrusterCones).
+//
+// Each enemy's plume is 4 additive, frustum-culled meshes sharing ONE
+// global geometry. Still fill-rate, and mobile GPUs handle additive
+// overdraw worst, so the whole system stays desktop-only; the player's own
+// thruster glow (separate, single-ship) is untouched.
+//
+// WHY THIS IS A FUNCTION AND NOT INLINE IN THE COMBAT LOOP: the combat loop
+// never runs during the tutorial — updateEnemyBehavior() early-returns
+// while the tutorial is active — and the tutorial is the ONE fight every
+// player is guaranteed to see. When the plume lived inside that loop, the
+// scripted Martian Pirate introduction rendered hostiles as flat untextured
+// blobs, and the cue only switched on whenever the tutorial happened to
+// end. The tutorial patrol branch calls this too, so a hostile wears its
+// engine signature from the first frame it exists.
+function _enemyPlumeTick(enemy, thrusting, dist) {
+    if (window.__isMobileGPU) return;
+    if (!enemy || !enemy.userData) return;
+    if (typeof _ensureShipThrusterCones !== 'function') return;
+    _ensureShipThrusterCones(enemy, enemy.userData.galaxyColor || 0xff5522);
+    _updateShipThrusterCones(enemy, !!thrusting, dist,
+                             enemy.userData._telegraphPhase || 0);
+}
+
 function applyEnemyRotation(enemy, direction, speed) {    if (!enemy || !direction) return;
 
     try {
@@ -2353,23 +2384,38 @@ function updateEnemyBehavior() {
             if (enemy.userData.health <= 0) return;
             enemy.userData.isActive = false;
             enemy.userData.attackMode = 'patrol';
-            
+
+            // Tutorial patrollers still burn. `tutorialSpeed` — not a
+            // velocity vector, which the patrol branch never writes — is
+            // what tells the plume whether this hull is under thrust.
+            // Parked hostiles (no patrolCenter) fall through with
+            // thrusting=false and get the idle burn, which is still a
+            // lit engine and still not a shape the starfield can make.
+            let tutorialThrust = false;
+
             // Optional: Make enemies slowly patrol during tutorial
             if (enemy.userData.patrolCenter) {
                 const time = Date.now() * 0.001;
                 const patrolRadius = (enemy.userData.patrolRadius || 200) * 0.3;
                 const angle = time * 0.1 + (enemy.userData.circlePhase || 0);
-                
+
                 const targetX = enemy.userData.patrolCenter.x + Math.cos(angle) * patrolRadius;
                 const targetZ = enemy.userData.patrolCenter.z + Math.sin(angle) * patrolRadius;
                 const targetY = enemy.userData.patrolCenter.y + Math.sin(angle * 0.5) * 20;
-                
+
                 const targetPos = new THREE.Vector3(targetX, targetY, targetZ);
                 const direction = new THREE.Vector3().subVectors(targetPos, enemy.position).normalize();
                 const tutorialSpeed = Math.max(0.2, (enemy.userData.speed || 0.5) * 0.5);  // Min 200 km/s even in tutorial
                 enemy.position.add(direction.multiplyScalar(tutorialSpeed));
                 applyEnemyRotation(enemy, direction, tutorialSpeed);  // Make ship face movement direction
+                tutorialThrust = tutorialSpeed > 0.08;
             }
+
+            // Plume runs BEFORE the tutorial return, so the scripted
+            // opening encounter — the first hostiles the player ever sees —
+            // carries the same engine signature combat does.
+            _enemyPlumeTick(enemy, tutorialThrust,
+                            camera.position.distanceTo(enemy.position));
         });
         return; // Exit early - don't process combat logic during tutorial
     }
@@ -2543,23 +2589,12 @@ function updateEnemyBehavior() {
             _enemyAvoidBlackHoles(enemy);
         }
 
-        // Engine plume: ensure it exists, then drive it. It is ALWAYS
-        // burning — `_speedNow` only chooses between idle burn and full
-        // burn — because the plume is this game's only enemy cue the
-        // starfield cannot imitate, and a hostile that goes dark when it
-        // coasts is a hostile that disappears into the sky.
-        // Distance feeds the angular-size floor; _telegraphPhase feeds the
-        // attack wind-up flare (see _updateShipThrusterCones).
-        // Each enemy's plume is 4 additive, frustum-culled meshes sharing
-        // ONE global geometry. Still fill-rate, and mobile GPUs handle
-        // additive overdraw worst, so the whole system stays desktop-only;
-        // the player's own thruster glow (separate, single-ship) is untouched.
-        if (!window.__isMobileGPU && typeof _ensureShipThrusterCones === 'function') {
-            _ensureShipThrusterCones(enemy, enemy.userData.galaxyColor || 0xff5522);
+        // Engine plume — see _enemyPlumeTick. Combat hulls carry a real
+        // velocity vector, so speed picks idle vs full burn.
+        {
             const _v = enemy.userData.velocity;
             const _speedNow = _v ? _v.length() : (enemy.userData.isActive ? 0.5 : 0.2);
-            _updateShipThrusterCones(enemy, _speedNow > 0.08, distanceToPlayer,
-                                     enemy.userData._telegraphPhase || 0);
+            _enemyPlumeTick(enemy, _speedNow > 0.08, distanceToPlayer);
         }
 
         if (enemy.userData.isActive) {

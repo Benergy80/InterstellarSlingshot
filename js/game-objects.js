@@ -8393,9 +8393,46 @@ window.updateNebulaBreathing = updateNebulaBreathing;
 // The quality tier still has its lever, moved to where it belongs: cullScale
 // now scales the sub-pixel THRESHOLD instead of the range, so a lower tier
 // sheds the dimmest specks first rather than amputating the far half of the sky.
+//
+// THE SILHOUETTE IS THE WHOLE ASSEMBLY, NOT THE NAKED TOP-LEVEL SPHERE.
+// The angular rule above is only as honest as the radius you feed it, and the
+// radius it was being fed was `geometry.parameters.radius` — the bare
+// SphereGeometry the body was built from, with none of the halo sprites, glow
+// shells, accretion discs or star-field Points that hang off it and are drawn
+// with it. Measured live over 3,480 bodies: 2,554 (73.4%) draw a silhouette
+// more than 2x that number and 1,393 (40.0%) more than 5x. The galaxy cores
+// are the extreme: a Spiral core reports radius 36 while its drawn assembly —
+// 9 nodes, halo Sprite at scale 235, disc Plane at scale 360, an accretion
+// shell and two Points clouds — reaches 2,849u, a 79x error (the Dwarf core is
+// 142x off). At the Sol start that deleted the two nearest galaxy cores while
+// they measured 28.4px and 23.9px of screen RADIUS: the biggest features in the
+// deep sky, removed for being "sub-pixel". So the radius is now the world-space
+// bounding-sphere radius of the object's WHOLE SUBTREE, taken about its own
+// origin, cached on first use.
+//
+// WITH ONE CUT: WE DO NOT SWALLOW BODIES THAT ARE CULLED ON THEIR OWN ACCOUNT.
+// 345 moons are CHILDREN of their parent planet (see the note above), and a
+// moon 30u out on its orbit would inflate a 1.9u planet's silhouette to 31u —
+// a 16x over-report of a mostly-empty sphere, and the same lie in the opposite
+// direction. So the walk stops at any descendant that is itself a registered
+// body. The test is `userData.type`, and it is exact here rather than a
+// heuristic: measured, all 624 body-children carry one and 0 of 694 decoration
+// children do.
+//
+// Cost: 2.7ms once for the whole 3,480-body universe (measured), amortised to
+// nothing by the cache, and childless bodies — 3,105 of the 3,480 — take a
+// fast path that touches no matrices at all.
 const CULL_NEAR_RADII = 40;      // inside this many body-radii: always visible
 const CULL_SUBPIXEL_ANG = 0.00055; // hide below ~0.6px of silhouette radius
-const CULL_SUBPIXEL_BACK = 0.00080; // ...and only bring it back at ~0.8px
+// ...and bring it back at ~0.72px. THE BAND IS DEADZONE, NOT BUDGET: it exists
+// only so a body drifting on the threshold cannot strobe at the pass's 6Hz
+// cadence, and every body inside it is one the player can see and we are
+// hiding anyway. At 0.00080 the band was 45% wide and left the Spiral,
+// Elliptical and Lenticular cores parked hidden at ang 0.00057-0.00062 — above
+// the keep-visible threshold, below the come-back one, stuck. 20% is still
+// several passes' worth of approach at any speed the ship can make good
+// against these distances, and it strands nothing.
+const CULL_SUBPIXEL_BACK = 0.00066;
 let _cullFrameCount = 0;
 let _cullLastPassFrame = -999;
 const _cullPrevCam = { x: Infinity, y: Infinity, z: Infinity };
@@ -8418,15 +8455,83 @@ function _cullWorldPos(o) {
     }
 }
 
-// Silhouette radius, cached: geometry is the truth (userData.radius is a
-// gameplay mass-radius on some bodies and disagrees with the mesh).
+// Bounding-sphere radius of one node in world units, plus how far its centre
+// sits from (ox,oy,oz) — i.e. how far this node REACHES from the body's own
+// origin. Recurses, and stops at any descendant that is a registered body of
+// its own (see the note above). Returns 0 for a node that draws nothing.
+function _cullReach(d, isRoot, ox, oy, oz) {
+    if (!isRoot && d.userData && d.userData.type) return 0;
+    let best = 0;
+    const g = d.geometry;
+    if (g) {
+        let bs = g.boundingSphere;
+        if (!bs) {
+            try { g.computeBoundingSphere(); bs = g.boundingSphere; } catch (e) { bs = null; }
+        }
+        if (bs && bs.radius > 0) {
+            const e = d.matrixWorld.elements, c = bs.center;
+            const cx = e[0] * c.x + e[4] * c.y + e[8]  * c.z + e[12];
+            const cy = e[1] * c.x + e[5] * c.y + e[9]  * c.z + e[13];
+            const cz = e[2] * c.x + e[6] * c.y + e[10] * c.z + e[14];
+            // Max axis scale: conservative for the non-uniform case, exact for
+            // the uniform one, and it is what a Sprite's world size already is.
+            const s = Math.max(
+                Math.sqrt(e[0] * e[0] + e[1] * e[1] + e[2]  * e[2]),
+                Math.sqrt(e[4] * e[4] + e[5] * e[5] + e[6]  * e[6]),
+                Math.sqrt(e[8] * e[8] + e[9] * e[9] + e[10] * e[10]));
+            const dx = cx - ox, dy = cy - oy, dz = cz - oz;
+            best = Math.sqrt(dx * dx + dy * dy + dz * dz) + bs.radius * s;
+        }
+    }
+    const kids = d.children;
+    for (let i = 0; i < kids.length; i++) {
+        const r = _cullReach(kids[i], false, ox, oy, oz);
+        if (r > best) best = r;
+    }
+    return best;
+}
+
+// Silhouette radius, cached: what the body actually DRAWS, over its whole
+// subtree, in world units (see the long note above for why the top-level
+// geometry parameter was not that). userData.radius survives only as the
+// last-resort fallback for an entry that draws no measurable geometry at all —
+// it is a gameplay mass-radius on some bodies and disagrees with the mesh.
+//
+// The cache is keyed on the child count as well, so a body that grows an
+// assembly after its first cull pass (a black hole gaining its disc, a world
+// gaining a moon) is re-measured rather than judged forever on what it used to
+// look like.
 function _cullBodyRadius(o) {
-    let r = o.userData._cullR;
-    if (r !== undefined) return r;
-    const g = o.geometry, p = g && g.parameters;
-    r = (p && p.radius > 0) ? p.radius
-      : (o.userData.radius > 0 ? o.userData.radius : 0);
-    o.userData._cullR = r;
+    const ud = o.userData;
+    let r = ud._cullR;
+    if (r !== undefined && ud._cullRKids === o.children.length) return r;
+    if (o.children.length === 0) {
+        // FAST PATH — no matrices. Measured: 0 of 3,480 bodies has a scaled
+        // ancestor, so the local scale IS the world scale for a leaf, and
+        // |centre| is rotation-invariant. 3,105 of 3,480 bodies land here.
+        const g = o.geometry;
+        let bs = g && g.boundingSphere;
+        if (g && !bs) {
+            try { g.computeBoundingSphere(); bs = g.boundingSphere; } catch (e) { bs = null; }
+        }
+        r = (bs && bs.radius > 0)
+            ? (bs.center.length() + bs.radius) *
+              Math.max(o.scale.x, o.scale.y, o.scale.z)
+            : 0;
+    } else {
+        // matrixWorld may not have been built yet on the pass that first asks
+        // (the cull can run before the renderer's own update), so force it for
+        // this subtree — the renderer would do exactly this work at draw time.
+        o.updateWorldMatrix(true, true);
+        const e = o.matrixWorld.elements;
+        r = _cullReach(o, true, e[12], e[13], e[14]);
+    }
+    if (!(r > 0)) {   // also catches NaN out of a degenerate bounding sphere
+        const p = o.geometry && o.geometry.parameters;
+        r = (p && p.radius > 0) ? p.radius : (ud.radius > 0 ? ud.radius : 0);
+    }
+    ud._cullR = r;
+    ud._cullRKids = o.children.length;
     return r;
 }
 
@@ -8532,8 +8637,11 @@ function updateDistanceCulling() {
                     inRange = !(br * br < lim * lim * d2);
                 }
             } else {
-                // No silhouette to measure (belts, comets, ships, anything
-                // whose geometry has no radius): the authored range still rules.
+                // No silhouette to measure at all — with the subtree measure
+                // above this is now only reachable by an entry that draws no
+                // geometry anywhere in itself (an empty Group placeholder), and
+                // by the non-angular arrays below (belts, comets, ships) that
+                // never ask for a radius. For those the authored range rules.
                 inRange = d2 <= r2;
             }
             if (!inRange) {
@@ -8624,6 +8732,59 @@ window.cullCensus = function (bands) {
         }
     }
     return { total, bands: out, nearHidden, farDrawn };
+};
+
+// THE ACCEPTANCE TEST FOR THIS PASS, IN THE ONLY UNIT THAT SETTLES IT: PIXELS.
+// cullCensus() above only counts bodies wearing a planet-presence shader, which
+// is precisely the set that does NOT include a galaxy core — that blind spot is
+// how a 79x radius error survived a clean census. This one walks every entry in
+// `planets`, converts each body's measured silhouette to a screen radius with
+// the live camera, and reports the invariant that matters:
+//
+//     deleted[] must be empty for anything at or above `minPx`.
+//
+// A body is "deleted" only if this cull hid it (_distCulled) or an ancestor is
+// hidden — a body some other system turned off is not ours to answer for.
+// Returns the offenders, biggest first, so a failure names itself.
+window.cullPixelCensus = function (minPx) {
+    const arr = (typeof planets !== 'undefined' && planets) ? planets : [];
+    const cp = camera.position;
+    const h = (typeof renderer !== 'undefined' && renderer && renderer.domElement)
+        ? renderer.domElement.clientHeight : 900;
+    const k = (h / 2) / Math.tan(camera.fov * Math.PI / 360);  // px per radian-ish
+    const floor = (minPx === undefined) ? 1 : minPx;
+    const deleted = [];
+    let total = 0, drawn = 0, big = 0, bigDrawn = 0, sub = 0, subDrawn = 0;
+    for (let i = 0; i < arr.length; i++) {
+        const o = arr[i];
+        if (!o || !o.position) continue;
+        const r = _cullBodyRadius(o);
+        if (!(r > 0)) continue;
+        _cullWorldPos(o);
+        const d = Math.sqrt((_cullWP.x - cp.x) * (_cullWP.x - cp.x) +
+                            (_cullWP.y - cp.y) * (_cullWP.y - cp.y) +
+                            (_cullWP.z - cp.z) * (_cullWP.z - cp.z)) || 1e-6;
+        let isDrawn = true;
+        for (let p = o; p; p = p.parent) { if (!p.visible) { isDrawn = false; break; } }
+        const px = k * r / d;
+        total++; if (isDrawn) drawn++;
+        if (px >= floor) {
+            big++; if (isDrawn) bigDrawn++;
+            else deleted.push({
+                name: o.userData.name, type: o.userData.type,
+                px: +px.toFixed(1), dist: Math.round(d), r: Math.round(r),
+                mine: !!o.userData._distCulled
+            });
+        } else { sub++; if (isDrawn) subDrawn++; }
+    }
+    deleted.sort((a, b) => b.px - a.px);
+    return {
+        viewport: { h, fov: +camera.fov.toFixed(1), pxPerRad: +k.toFixed(1) },
+        minPx: floor, total, drawn,
+        atOrAbove: big, atOrAboveDrawn: bigDrawn, deletedCount: deleted.length,
+        below: sub, belowDrawn: subDrawn,
+        deleted: deleted.slice(0, 20)
+    };
 };
 
 // =============================================================================

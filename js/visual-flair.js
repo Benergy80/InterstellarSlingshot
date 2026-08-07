@@ -1510,18 +1510,16 @@ const _wsf = {
     env: 0, kickT0: 0, kickMs: 1, kickAmp: 0, last: 0, roll: 0,
     frame: null, q: null, qRoll: null, m: null, dir: null,
     colA: null, colB: null,
-    // Explicit warp/slingshot EXIT drain (see warpExitBeat below) — overrides
+    // Explicit warp/slingshot EXIT drain (see warpExitBeat below): overrides
     // the speed-driven envelope for a short window so streaks visibly
-    // SHRINK INTO POINTS instead of plateauing at the cruise-cap length
-    // while postWarp/postSlingshot coasts at elevated speed.
-    draining: false, drainT0: 0, drainMs: 1000, drainLen0: 0, drainOp0: 0,
-    // RELEASE follow-through: the brief window right after a drain hands
-    // back to the speed-driven envelope. Without this the envelope resumed
-    // under its normal fast-attack tau (built for punchy boost KICKS) and,
-    // run through the opacity/length power curves, that read as an instant
-    // re-inflation — the streak field visibly REVERSING and climbing back up
-    // while speed/FOV were still easing down. See _updateWarpStreaks().
-    releasing: false, releaseT0: 0
+    // CONTRACT toward the live speed-driven target instead of plateauing at
+    // the cruise-cap length while postWarp/postSlingshot coasts at elevated
+    // speed. drainLen0/drainOp0/drainEnv0 are the pre-collapse starting
+    // point; the drain lerps FROM these INTO whatever the speed-driven path
+    // would ask for on the current frame (see _updateWarpStreaks), so the
+    // handoff back to that path at t=1 is a no-op — no separate release
+    // follow-through needed.
+    draining: false, drainT0: 0, drainMs: 1000, drainLen0: 0, drainOp0: 0, drainEnv0: 0
 };
 
 function _wsfSeed(i, spanZ) {
@@ -1703,10 +1701,8 @@ function warpStreakBurst(dir, speed, colA, colB, strength) {
         _wsfBuild();
         if (!_wsf.mesh) return;
         // A fresh release always wins over a still-draining exit — e.g. an
-        // immediate re-slingshot mid drop-out beat. Also cancels any post-
-        // drain release follow-through still in flight, for the same reason.
+        // immediate re-slingshot mid drop-out beat.
         _wsf.draining = false;
-        _wsf.releasing = false;
         _wsf.kickT0 = (typeof performance !== 'undefined' ? performance.now() : Date.now());
         _wsf.kickMs = 1500;
         _wsf.kickAmp = Math.max(0.4, Math.min(1.35, strength || 1));
@@ -1734,8 +1730,10 @@ function warpStreakBurst(dir, speed, colA, colB, strength) {
 // velocity — that ramp lives in game-physics.js — this is purely the
 // sensory side: a relieving FOV settle, a single chromatic blink (not a
 // strobe — whipScreenPulse already refuses to stack), and an explicit
-// streak-field drain so the filaments visibly SHRINK INTO POINTS instead
-// of fading transparent while still full length.
+// streak-field drain so the filaments visibly CONTRACT toward whatever the
+// speed-driven envelope actually calls for post-exit, instead of plateauing
+// at the cruise-cap length while postWarp/postSlingshot coasts at elevated
+// speed.
 //
 // refSpeed (gameState.velocityVector-length units, same as the physics
 // exitRamp's toSpeed): the speed the ship actually had BEFORE this warp/
@@ -1746,8 +1744,9 @@ function warpStreakBurst(dir, speed, colA, colB, strength) {
 // speed check the field would hand back to the speed-driven envelope right
 // then and re-inflate off that still-high speed — the "one-second flourish
 // then silently still at warp" bug this whole beat exists to kill. So the
-// drain HOLDS (stays collapsed) past its 1s timer for as long as real speed
-// is still > 1.5x refSpeed, and only lets go once speed is actually back.
+// drain HOLDS (stays collapsed toward its live target) past its 1s timer
+// for as long as real speed is still > 1.5x refSpeed, and only lets go once
+// speed is actually back.
 function warpExitBeat(blackHole, refSpeed) {
     try {
         if (typeof window !== 'undefined' && typeof window.warpFovPulse === 'function') {
@@ -1764,6 +1763,7 @@ function warpExitBeat(blackHole, refSpeed) {
         _wsf.drainMs = 1000;
         _wsf.drainLen0 = (_wsf.mat) ? _wsf.mat.uniforms.uLen.value : 0;
         _wsf.drainOp0 = (_wsf.mat) ? _wsf.mat.uniforms.uOpacity.value : 0;
+        _wsf.drainEnv0 = _wsf.env;
         _wsf.drainRefSpeed = refSpeed || 0;
     } catch (e) {}
 }
@@ -1780,17 +1780,21 @@ function _updateWarpStreaks() {
 
     // ── EXPLICIT EXIT DRAIN ──────────────────────────────────────────────
     // Fired by warpExitBeat() on a warp/slingshot drop-out. Overrides the
-    // speed-driven envelope below for ~1s so the streaks visibly SHRINK
-    // INTO POINTS — length collapses faster than opacity, so the eye reads
-    // "contracting to a dot" rather than "fading out while still a scratch".
+    // speed-driven envelope below for ~1s, but NOT toward zero — it lerps
+    // FROM the pre-collapse uLen/uOpacity/env INTO whatever the speed-driven
+    // envelope would ask for on THIS frame given the live (decaying) speed.
+    // That live target itself falls every frame as speed bleeds off, so the
+    // net motion the eye sees is one continuous contraction down to the
+    // settled cruise length — never a collapse-to-zero followed by a
+    // separate re-inflation climb back up (that used to read as three beats:
+    // collapse, blackout, re-inflate).
     //
     // The 1s timer alone isn't the release condition: it's a floor. If real
     // speed (gameState.velocityVector) is still more than 1.5x the ramp's
     // captured entry speed (_wsf.drainRefSpeed) once the timer expires, the
-    // drain HOLDS at its fully-collapsed state instead of handing back to
-    // the speed-driven envelope below — which would otherwise re-inflate the
-    // field off whatever still-elevated speed the physics ramp hasn't
-    // finished catching up to yet.
+    // drain HOLDS — keeps lerping toward the live target — instead of
+    // handing control back to the speed-driven path below while the physics
+    // ramp hasn't finished catching up yet.
     if (_wsf.draining) {
         // WARP-EXIT SYNC: while game-physics' own exit ramp is still driving
         // the velocity drop-out, gameState._warpExitT carries THAT ramp's
@@ -1808,25 +1812,29 @@ function _updateWarpStreaks() {
         const t = (_extT !== null) ? _extT : Math.min(1, (now - _wsf.drainT0) / _wsf.drainMs);
         const _spdNow = gameState.velocityVector ? gameState.velocityVector.length() : 0;
         const _overspeed = (_wsf.drainRefSpeed || 0) > 0 && _spdNow > _wsf.drainRefSpeed * 1.5;
-        if (!_wsf.mesh || (t >= 1 && !_overspeed)) {
+        if (!_wsf.mesh) {
             _wsf.draining = false;
-            _wsf.env = 0;
-            // Hand off into a RELEASE follow-through rather than letting the
-            // speed-driven envelope below resume under its normal fast-
-            // attack tau on the very next frame — see the `releasing` field
-            // comment on _wsf and the tau selection in the speed-driven path
-            // further down. now() was already stamped at the top of this
-            // function.
-            _wsf.releasing = true;
-            _wsf.releaseT0 = now;
-            if (_wsf.mesh) _wsf.mesh.visible = false;
-        } else {
-            _wsf.mesh.visible = true;
-            const shrink = 1 - t;
-            const u = _wsf.mat.uniforms;
-            u.uLen.value = Math.max(1.5, _wsf.drainLen0 * shrink * shrink);
-            u.uOpacity.value = _wsf.drainOp0 * (1 - t * t * t);
-            _wsf.env = Math.min(_wsf.env, 0.22 * shrink);
+            return;
+        }
+        // Live speed-driven target for THIS frame — the same cruise-ceil /
+        // uLen / uOpacity mapping the speed-driven path below uses once it
+        // owns the field again. Computing it here every frame (not once at
+        // drain start) is what makes the lerp converge onto wherever speed
+        // ACTUALLY is by the time t reaches 1, instead of a stale guess.
+        const envCruise = _spectacleCruiseCeil(_spdNow * 1000);
+        const lenC = Math.min(900, 14 + 560 * Math.pow(envCruise, 1.55));
+        const opC = 0.98 * Math.pow(envCruise, 0.62);
+        _wsf.mesh.visible = true;
+        const u = _wsf.mat.uniforms;
+        u.uLen.value = _wsf.drainLen0 + (lenC - _wsf.drainLen0) * t;
+        u.uOpacity.value = _wsf.drainOp0 + (opC - _wsf.drainOp0) * t;
+        _wsf.env = _wsf.drainEnv0 + (envCruise - _wsf.drainEnv0) * t;
+        if (t >= 1 && !_overspeed) {
+            // Values above are already converged onto the live speed-driven
+            // target, so the speed-driven path below picks up next frame
+            // from exactly where this left off — no separate release
+            // follow-through needed.
+            _wsf.draining = false;
         }
         return;
     }
@@ -1876,20 +1884,13 @@ function _updateWarpStreaks() {
     _wsfBuild();
     if (!_wsf.mesh) return;
 
-    // RELEASE follow-through: for a short window right after a drain hands
-    // back here (see warpExitBeat's completion above), climb to the cruise
-    // target on a SLOW tau instead of the normal punchy attack. The drain
-    // already collapsed env to ~0, and the opacity/length curves below are
-    // sub-linear in env (infinite slope at 0), so resuming under the fast
-    // 0.085s attack made the field visibly snap back up in ~200ms — a
-    // reversal the eye reads as "warp again" while speed/FOV are still
-    // easing down. 550ms lets it settle UP to cruise monotonically instead.
-    const _WSF_RELEASE_MS = 550;
-    if (_wsf.releasing && (now - _wsf.releaseT0) > _WSF_RELEASE_MS) {
-        _wsf.releasing = false;
-    }
-    // Ramp in over ~250ms, decay with the boost over ~0.7s.
-    const tau = _wsf.releasing ? 0.5 : ((target > _wsf.env) ? 0.085 : 0.42);
+    // Ramp in over ~250ms, decay with the boost over ~0.7s. A drain handoff
+    // needs no special-cased slow tau here any more: the drain above already
+    // lerps env all the way to this frame's live target before it lets go
+    // (see _updateWarpStreaks' EXPLICIT EXIT DRAIN block), so env is already
+    // sitting at (or converging on) `target` by the time control reaches
+    // this path — there's nothing left to snap.
+    const tau = (target > _wsf.env) ? 0.085 : 0.42;
     _wsf.env += (target - _wsf.env) * (1 - Math.exp(-dt / tau));
     const env = _wsf.env;
     if (env <= 0.004) { _wsf.mesh.visible = false; return; }
