@@ -817,14 +817,29 @@ function createEnemyMeshWithModel(regionId, fallbackGeometry, material, scaleOve
             }
         });
 
-        // Small engine glows at the hull's rear — must run before
-        // _applyNoseFlip (below) so nose-flipped ships carry the glow
-        // into the rotated inner group along with everything else.
-        const centeredEnemyBox = new THREE.Box3().setFromObject(model);
-        // 0.085 of the hull's largest dimension per nozzle core (the flare
-        // quad is 4.2x that) — nozzles that read as engines on a fighter,
-        // not as a second ship made of light.
-        _attachEngineGlow(model, material.color || 0xffaa33, centeredEnemyBox, 1.0, 0.085, 0.0);
+        // STEP 2b (REMOVED): the small rear engine flares.
+        //
+        // Every hostile used to get four additive nozzle billboards here —
+        // two soft flare quads facing +Z plus two white-hot cores. Measured
+        // against the framebuffer they bought nothing: the flare quads are
+        // axis-facing planes, so from the front they are invisible and from
+        // any oblique angle they collapse to a line, and the cores are a
+        // couple of pixels at combat range. "Zero engine glow at 100-150u"
+        // was a real reading of a real hull, not a bug in the measurement.
+        //
+        // They are gone because the hostile engine signature is now ONE
+        // thing, not two competing ones: _ensureShipThrusterCones in
+        // game-controls.js attaches a persistent, camera-facing, faction-
+        // coloured plume at exactly this spot on the hull. Leaving these
+        // here would have stacked a second additive source on the same
+        // nozzle, washing the plume's white-hot core into a flat blob —
+        // the same "stack additive layers until the shading is gone"
+        // mistake the duplicate hull shell (STEP 3, below) was deleted for.
+        //
+        // Net cost, measured live: 233 of 302 hostiles carried these, four
+        // draw calls each. Dropping them roughly pays for the plume.
+        // (_attachEngineGlow itself stays — the boss path still uses it,
+        // and bosses are not guaranteed to be plume-bearing.)
 
         // STEP 3 (REMOVED): the full-hull additive DUPLICATE SHELL.
         // Every hull mesh used to carry a cloned copy of itself in an

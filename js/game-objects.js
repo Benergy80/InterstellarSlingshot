@@ -8371,6 +8371,28 @@ window.updateNebulaBreathing = updateNebulaBreathing;
 //     actually goes away — measured 313 of 345 moons flagged visible past
 //     30,000u with the cull otherwise fully correct. The guard restores only
 //     bodies THIS pass hid, so it can never fight another visibility system.
+//
+// THE DISTANCE GATE IS NOT A SECOND OPINION.
+// The two rules above were right and still fired second: `planets` was gated at
+// 30,000u FIRST, and the angular rule only ever got to arbitrate among the
+// survivors. Measured at spawn, 1600x900, fov 76, tier 0: 45 of 71 bodies that
+// were still 2px or wider on screen — including a 595u star at 102,091u (4.7px)
+// and a 524u star at 98,767u (4.3px) — were deleted by the range test before
+// anything looked at their silhouette. Only 40 of 1,185 worlds were drawn. The
+// sky read as empty, and the emptiest part of it was the part with the biggest
+// things in it.
+//
+// A 410u gas giant does not go sub-pixel until ~745,000u. Culling it at 30,000
+// is 25x too early, and no pixel-space argument justifies it — the argument was
+// only ever about draw calls, which is exactly what the angular rule already
+// bounds (it removes every body under ~0.6px, ~75% of them, and it removes them
+// for a reason you can see). So the range test no longer applies to anything
+// with a silhouette; `br*br < lim*lim*d2` is the sole decider, and the authored
+// number survives only as a fallback for entries with no measurable radius.
+//
+// The quality tier still has its lever, moved to where it belongs: cullScale
+// now scales the sub-pixel THRESHOLD instead of the range, so a lower tier
+// sheds the dimmest specks first rather than amputating the far half of the sky.
 const CULL_NEAR_RADII = 40;      // inside this many body-radii: always visible
 const CULL_SUBPIXEL_ANG = 0.00055; // hide below ~0.6px of silhouette radius
 const CULL_SUBPIXEL_BACK = 0.00080; // ...and only bring it back at ~0.8px
@@ -8476,6 +8498,12 @@ function updateDistanceCulling() {
     const _cullScale = (typeof window !== 'undefined' && window.__quality)
         ? (window.__quality.TIERS[window.__quality.tier].cullScale || 1) : 1;
 
+    // The tier's cull budget buys ANGULAR THRESHOLD, not range (see the
+    // "THE DISTANCE GATE IS NOT A SECOND OPINION" note above): at cullScale
+    // 0.85 the sub-pixel floor moves from ~0.6px to ~0.7px, at 0.6 to ~1.0px.
+    // Same lever, same direction, applied where it costs the least look.
+    const _cullAng = _cullScale > 0 ? 1 / _cullScale : 1;
+
     const cullArray = (arr, range, angular) => {
         if (typeof arr === 'undefined' || !arr || !arr.length) return;
         range *= _cullScale;
@@ -8486,21 +8514,27 @@ function updateDistanceCulling() {
             _cullWorldPos(o);
             const dx = _cullWP.x - cx, dy = _cullWP.y - cy, dz = _cullWP.z - cz;
             const d2 = dx * dx + dy * dy + dz * dz;
-            let inRange = d2 <= r2;
             const br = angular ? _cullBodyRadius(o) : 0;
+            let inRange;
             if (br > 0) {
-                // NEAR PROMISE — a body this close is never hidden, whatever
-                // the tier did to `range`.
-                if (!inRange) {
-                    const near = CULL_NEAR_RADII * br;
-                    if (d2 < near * near) inRange = true;
-                } else if (d2 > 0) {
-                    // FAR, ANGULARLY — sub-pixel bodies riding a parent that is
-                    // still in range. Hysteresis: culled bodies need a bigger
-                    // silhouette to come back than intact ones need to survive.
-                    const lim = o.userData._distCulled ? CULL_SUBPIXEL_BACK : CULL_SUBPIXEL_ANG;
-                    if (br * br < lim * lim * d2) inRange = false;
+                // ANGULAR IS THE WHOLE RULE. No authored range gets a vote on a
+                // body that has a silhouette — see the note above for why.
+                //   * NEAR PROMISE — inside CULL_NEAR_RADII it is visible, full
+                //     stop, even if the angular maths would round it away.
+                //   * FAR IS ANGULAR — below a sub-pixel silhouette it is culled
+                //     on its own account, with hysteresis so a body drifting on
+                //     the boundary cannot strobe.
+                const near = CULL_NEAR_RADII * br;
+                if (d2 <= near * near) {
+                    inRange = true;
+                } else {
+                    const lim = (o.userData._distCulled ? CULL_SUBPIXEL_BACK : CULL_SUBPIXEL_ANG) * _cullAng;
+                    inRange = !(br * br < lim * lim * d2);
                 }
+            } else {
+                // No silhouette to measure (belts, comets, ships, anything
+                // whose geometry has no radius): the authored range still rules.
+                inRange = d2 <= r2;
             }
             if (!inRange) {
                 if (o.visible) { o.visible = false; o.userData._distCulled = true; }
@@ -8513,12 +8547,14 @@ function updateDistanceCulling() {
         }
     };
 
-    // Cosmetic/static content: range sits just beyond the ~25k nebula-cloud
-    // fade so a system's planets never wink out while its cloud is still drawn.
-    // Worlds (and only worlds) also get the angular rules — they are the bodies
-    // with a meaningful silhouette, the ones you fly up to, and the ones whose
-    // moons hang off them as children.
+    // Worlds (and only worlds) get the angular rules — they are the bodies with
+    // a meaningful silhouette, the ones you fly up to, and the ones whose moons
+    // hang off them as children. The number below is a FALLBACK, reached only by
+    // entries in `planets` whose geometry reports no radius at all; every real
+    // world is decided by `br*br < lim*lim*d2` and nothing else.
     cullArray(typeof planets !== 'undefined' ? planets : null, 30000, true);
+    // Cosmetic/static content: range sits just beyond the ~25k nebula-cloud
+    // fade so a belt never winks out while its system's cloud is still drawn.
     cullArray(typeof asteroidBelts !== 'undefined' ? asteroidBelts : null, 30000);
     cullArray(typeof interstellarAsteroids !== 'undefined' ? interstellarAsteroids : null, 30000);
     // Dense-galaxy-field asteroids: hundreds per field, so cull them much

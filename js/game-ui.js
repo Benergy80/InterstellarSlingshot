@@ -2161,6 +2161,9 @@ function setupGalaxyMap() {
     // Clear existing galaxy indicators
     const existingGalaxies = galaxyMap.querySelectorAll('.galaxy-indicator');
     existingGalaxies.forEach(el => el.remove());
+    // Fresh indicators default to visible — re-arm the galactic view's
+    // one-shot hide so the radar mode still suppresses them.
+    _galacticChromeHidden = false;
 
     // Create enhanced galaxy indicators with boss system integration
     galaxyTypes.forEach((galaxy, index) => {
@@ -2312,50 +2315,126 @@ function updateCompass() {
     }
 }
 
-// DOM element pool for map dots
+// ── Radar dot pool (persistent, never detached) ──────────────────────
+// PERF CONTRACT — the radar refreshes at 20 Hz with up to ~350 blips in a
+// dense fight. The old pool tore the whole minimap down every refresh:
+// remove() + className='' + style.cssText='' + innerHTML='' on every dot,
+// then 10 individual style writes and an appendChild() back into the LIVE
+// #galaxyMap. That measured ~356 DOM mutations per refresh (~3,000/sec)
+// and was the dominant source of forced style recalculation.
+//
+// The pool below fixes that shape:
+//   • dots are created ONCE and stay attached to #galaxyMap forever,
+//   • a refresh walks the pool with a cursor instead of allocating,
+//   • look (class, position:absolute, border-radius…) lives in CSS, so
+//     className / cssText / innerHTML are never touched again,
+//   • position is a single compositor-friendly `transform: translate()`
+//     instead of left/top percentages,
+//   • every write is guarded by a per-dot cache (`dot._s`), so a dot that
+//     did not visually change costs ZERO mutations,
+//   • surplus dots are hidden with `visibility`, never removed.
+// Arrows (ally ▲ markers) get their own sub-pool so a dot never has to
+// morph between "round blip" and "glyph" shapes.
 const mapDotPool = {
-    available: [],
-    inUse: new Set(),
-    
-    get(type) {
-        let dot = this.available.pop();
-        if (!dot) {
-            dot = document.createElement('div');
+    dots: [],
+    dotCursor: 0,
+    arrows: [],
+    arrowCursor: 0,
+    container: null,
+    // Radar box size in px, used to turn 0-100 map coords into translate()
+    // pixels. Re-measured at most once a second — never per dot.
+    w: 220,
+    h: 220,
+    _measuredAt: 0,
+
+    _fresh(cls) {
+        const el = document.createElement('div');
+        el.className = cls;
+        // Mirrors the CSS defaults so the cache and the element agree.
+        el._s = { size: '', bg: '', shadow: '', tf: '', vis: 'hidden',
+                  color: '', title: '', distress: false, glyph: false };
+        if (this.container) this.container.appendChild(el);
+        return el;
+    },
+
+    // Start a refresh: rewind the cursors and (rarely) re-measure the box.
+    begin(container) {
+        this.dotCursor = 0;
+        this.arrowCursor = 0;
+        if (container && container !== this.container) {
+            this.container = container;
+            // Only happens if the map element itself was replaced.
+            for (let i = 0; i < this.dots.length; i++) container.appendChild(this.dots[i]);
+            for (let i = 0; i < this.arrows.length; i++) container.appendChild(this.arrows[i]);
+            this._measuredAt = 0;
         }
-        this.inUse.add(dot);
+        if (this.container) {
+            const now = Date.now();
+            if (now - this._measuredAt > 1000) {
+                this._measuredAt = now;
+                const w = this.container.clientWidth, h = this.container.clientHeight;
+                if (w > 0 && h > 0) { this.w = w; this.h = h; }
+            }
+        }
+    },
+
+    get(type) {
+        let dot = this.dots[this.dotCursor];
+        if (!dot) {
+            dot = this._fresh('galactic-target-dot');
+            this.dots[this.dotCursor] = dot;
+        }
+        this.dotCursor++;
         return dot;
     },
-    
-    release(dot) {
-        if (this.inUse.has(dot)) {
-            this.inUse.delete(dot);
-            dot.remove();
-            
-            // CLEAR ALL STYLES AND ATTRIBUTES
-            dot.className = '';
-            dot.style.cssText = '';
-            dot.innerHTML = '';
-            dot.title = '';
-            
-            this.available.push(dot);
+
+    getArrow() {
+        let a = this.arrows[this.arrowCursor];
+        if (!a) {
+            a = this._fresh('galactic-ally-marker');
+            a.textContent = '▲';
+            a._s.glyph = true;
+            this.arrows[this.arrowCursor] = a;
+        }
+        this.arrowCursor++;
+        return a;
+    },
+
+    // Hide whatever this refresh did not claim. No detaching, and a dot
+    // that was already hidden is not touched at all.
+    end() {
+        const d = this.dots;
+        for (let i = this.dotCursor; i < d.length; i++) {
+            const s = d[i]._s;
+            if (s.vis !== 'hidden') { d[i].style.visibility = 'hidden'; s.vis = 'hidden'; }
+        }
+        const a = this.arrows;
+        for (let i = this.arrowCursor; i < a.length; i++) {
+            const s = a[i]._s;
+            if (s.vis !== 'hidden') { a[i].style.visibility = 'hidden'; s.vis = 'hidden'; }
         }
     },
-    
+
+    // Legacy entry point (universal view): hide every blip.
     releaseAll() {
-        this.inUse.forEach(dot => {
-            dot.remove();
-            
-            // CLEAR ALL STYLES AND ATTRIBUTES
-            dot.className = '';
-            dot.style.cssText = '';
-            dot.innerHTML = '';
-            dot.title = '';
-            
-            this.available.push(dot);
-        });
-        this.inUse.clear();
+        this.dotCursor = 0;
+        this.arrowCursor = 0;
+        this.end();
     }
 };
+
+// Radar blips only need a fresh tooltip a couple of times a second —
+// rewriting 350 title strings at 20 Hz was pure allocation churn for text
+// nobody can read until the cursor has rested on a dot for ~1s.
+let _mapTitleStamp = 0;
+let _mapTitleTick = false;
+
+// View-switch latches. The galactic and universal radar modes each own a
+// set of DOM chrome (galaxy indicators, ally ▲ markers, nebula dots, path
+// lines). Showing/hiding that chrome is a ONE-SHOT on the switch — doing
+// it every refresh re-invalidated dozens of already-correct elements.
+let _galacticChromeHidden = false;   // galactic view has hidden universal chrome
+let _universeDecorLive = false;      // nebula dots / path lines are attached
 
 function updateGalaxyMap() {
     if (typeof gameState === 'undefined' || typeof camera === 'undefined') return;
@@ -2378,16 +2457,29 @@ function updateGalaxyMap() {
     const _zoneLabel = document.getElementById('mapZoneLabel');
     if (_zoneLabel) _zoneLabel.style.display = 'none';
     const _galaxyMap = document.getElementById('galaxyMap');
-    if (_galaxyMap) {
+    if (_galaxyMap && _universeDecorLive) {
         // NOTE: .galactic-path-dot is intentionally NOT purged here — those
         // dots are POOLED (created once, repositioned/hidden) and refreshed
         // on a throttle, not rebuilt every frame. Destroying them per-frame
         // was ~2-3k DOM create/remove ops per second in demo mode.
+        // The nebula dots / path lines only exist while the UNIVERSAL view
+        // is up, so this purge runs once on the switch back — not 20x/sec.
         _galaxyMap.querySelectorAll('.universe-nebula-dot, .universe-path-line').forEach(d => d.remove());
+        _universeDecorLive = false;
     }
-    for (let _i = 0; _i < 10; _i++) {
-        const m = document.getElementById('allyMapMarker' + _i);
-        if (m) m.style.display = 'none';
+    // The per-ally ▲ markers and galaxy indicators belong to the universal
+    // view. Hiding them is a one-shot on the view switch — re-writing
+    // display:none onto elements that are already hidden, every refresh,
+    // was ~40 pointless style invalidations a second.
+    if (!_galacticChromeHidden) {
+        _galacticChromeHidden = true;
+        for (let _i = 0; _i < 10; _i++) {
+            const m = document.getElementById('allyMapMarker' + _i);
+            if (m) m.style.display = 'none';
+        }
+        document.querySelectorAll('.galaxy-indicator').forEach(el => el.style.display = 'none');
+        const _sgrHide = document.querySelector('[title="Sagittarius A* - Galactic Center"]');
+        if (_sgrHide) _sgrHide.style.display = 'none';
     }
     if (mapDirectionArrow) {
         mapDirectionArrow.style.display = 'block';
@@ -2397,20 +2489,17 @@ function updateGalaxyMap() {
         mapDirectionArrow.style.setProperty('--direction', `${angle}rad`);
     }
     
-    // Hide galaxy indicators and Sagittarius A* in radar view (allies stay visible)
-    const galaxyIndicators = document.querySelectorAll('.galaxy-indicator');
-    galaxyIndicators.forEach(el => el.style.display = 'none');
-
-    const sgrAEl = document.querySelector('[title="Sagittarius A* - Galactic Center"]');
-    if (sgrAEl) sgrAEl.style.display = 'none';
-    
-    // NEW - ADD THIS:
-	mapDotPool.releaseAll();
-    
     // Show nearby objects as dots (enemies, planets, etc.)
     const galaxyMap = document.getElementById('galaxyMap');
     const radarRange = 3000; // Detection range for galactic view (6000u diameter)
-    
+
+    // Rewind the persistent blip pool for this refresh (no teardown).
+    mapDotPool.begin(galaxyMap);
+    // Tooltips refresh at ~3 Hz instead of 20 Hz — see _mapTitleTick.
+    const _nowTitle = Date.now();
+    _mapTitleTick = (_nowTitle - _mapTitleStamp) > 300;
+    if (_mapTitleTick) _mapTitleStamp = _nowTitle;
+
     if (galaxyMap && typeof planets !== 'undefined' && typeof enemies !== 'undefined') {
         // Collect all nearby targetable objects
         const nearbyObjects = [];
@@ -2647,9 +2736,12 @@ if (typeof outerInterstellarSystems !== 'undefined') {
             
             // Only show if within map bounds
             if (screenX >= 5 && screenX <= 95 && screenZ >= 5 && screenZ <= 95) {
-                const dot = mapDotPool.get('cosmic-feature');
-                dot.className = 'galactic-target-dot absolute';
-                
+                // 0-100 map coords → pixels inside the radar disc, snapped to
+                // 0.1px. Position is ONE transform (no left/top layout pass),
+                // and a blip that hasn't visibly moved writes nothing at all.
+                const px = Math.round(screenX * mapDotPool.w / 10) / 10;
+                const py = Math.round(screenZ * mapDotPool.h / 10) / 10;
+
                 // Color based on type
 let dotColor = '#4488ff'; // Default blue for planets
 let dotSize = '4px';
@@ -2658,7 +2750,6 @@ if (obj.type === 'ally') {
     // Render allies as arrow markers like the player, not dots
     // Use the wingman's stored color (Greek-named recruits have distinct hues)
     dotColor = (obj.colorStr) || (obj.name === 'Wingman Alpha' ? '#00ff88' : (obj.name === 'Wingman Beta' ? '#88aaff' : '#ffaa44'));
-    dot.textContent = '▲';
     // Point the ▲ along the wingman's NOSE (they're clones of the
     // +Z-forward player model) — same screen convention as the player
     // marker: angle = atan2(fwd.x, -fwd.z). Untransformed, the glyph
@@ -2666,14 +2757,24 @@ if (obj.type === 'ally') {
     let _allyAng = 0;
     if (obj.ship && obj.ship.quaternion && _allyMarkerFwd) {
         _allyMarkerFwd.set(0, 0, 1).applyQuaternion(obj.ship.quaternion);
-        _allyAng = Math.atan2(_allyMarkerFwd.x, -_allyMarkerFwd.z);
+        _allyAng = Math.round(Math.atan2(_allyMarkerFwd.x, -_allyMarkerFwd.z) * 100) / 100;
     }
-    dot.style.cssText = 'position:absolute;font-size:10px;font-weight:bold;color:' + dotColor + ';transform:translate(-50%,-50%) rotate(' + _allyAng + 'rad);pointer-events:none;z-index:3;filter:drop-shadow(0 0 3px ' + dotColor + ');';
-    dot.style.left = screenX + '%';
-    dot.style.top = screenZ + '%';
-    dot.style.display = 'block';
-    dot.title = (obj.name || 'Wingman') + ' (' + obj.distance.toFixed(0) + 'u)';
-    galaxyMap.appendChild(dot);
+    // Arrows live in their own sub-pool: already attached, glyph already
+    // set, look already in CSS. Only colour / transform / visibility move.
+    const arrow = mapDotPool.getArrow();
+    const as = arrow._s;
+    if (as.color !== dotColor) {
+        arrow.style.color = dotColor;
+        arrow.style.filter = 'drop-shadow(0 0 3px ' + dotColor + ')';
+        as.color = dotColor;
+    }
+    const atf = 'translate(' + px + 'px,' + py + 'px) translate(-50%,-50%) rotate(' + _allyAng + 'rad)';
+    if (as.tf !== atf) { arrow.style.transform = atf; as.tf = atf; }
+    if (as.vis !== 'visible') { arrow.style.visibility = 'visible'; as.vis = 'visible'; }
+    if (_mapTitleTick) {
+        const at = (obj.name || 'Wingman') + ' (' + obj.distance.toFixed(0) + 'u)';
+        if (as.title !== at) { arrow.title = at; as.title = at; }
+    }
     return; // skip normal dot styling below
 } else if (obj.type === 'enemy') {
     dotColor = obj.isBoss ? '#ff00ff' : '#ff4444';
@@ -2731,30 +2832,42 @@ if (obj.type === 'ally') {
     dotSize = '5px';
 }
 
-                dot.style.width = dotSize;
-                dot.style.height = dotSize;
-                dot.style.backgroundColor = dotColor;
-                dot.style.borderRadius = '50%';
-                dot.style.left = `${screenX}%`;
-                dot.style.top = `${screenZ}%`;
-                dot.style.transform = 'translate(-50%, -50%)';
-                dot.style.boxShadow = `0 0 4px ${dotColor}`;
-                dot.style.pointerEvents = 'none';
-                dot.title = `${obj.name} (${obj.distance.toFixed(0)} units)`;
+                // Every write below is compare-and-set against the dot's own
+                // cache: a blip that kept its colour and size costs nothing.
+                const dot = mapDotPool.get('cosmic-feature');
+                const s = dot._s;
+                if (s.size !== dotSize) {
+                    dot.style.width = dotSize;
+                    dot.style.height = dotSize;
+                    s.size = dotSize;
+                }
+                if (s.bg !== dotColor) { dot.style.backgroundColor = dotColor; s.bg = dotColor; }
                 // Pulse civilians under attack so the distress signal reads
                 // distinctly from regular civilian traffic on the map.
-                if (obj.type === 'civilian_ship' && obj.underAttack) {
-                    dot.classList.add('distress-map-dot');
-                    dot.style.boxShadow = '0 0 8px ' + dotColor + ', 0 0 14px rgba(255,170,0,0.6)';
-                } else {
-                    dot.classList.remove('distress-map-dot');
+                const distress = (obj.type === 'civilian_ship' && obj.underAttack);
+                const shadow = distress
+                    ? '0 0 8px ' + dotColor + ', 0 0 14px rgba(255,170,0,0.6)'
+                    : '0 0 4px ' + dotColor;
+                if (s.shadow !== shadow) { dot.style.boxShadow = shadow; s.shadow = shadow; }
+                if (s.distress !== distress) {
+                    if (distress) dot.classList.add('distress-map-dot');
+                    else dot.classList.remove('distress-map-dot');
+                    s.distress = distress;
                 }
-                
-                galaxyMap.appendChild(dot);
+                const tf = 'translate(' + px + 'px,' + py + 'px) translate(-50%,-50%)';
+                if (s.tf !== tf) { dot.style.transform = tf; s.tf = tf; }
+                if (s.vis !== 'visible') { dot.style.visibility = 'visible'; s.vis = 'visible'; }
+                if (_mapTitleTick) {
+                    const t = `${obj.name} (${obj.distance.toFixed(0)} units)`;
+                    if (s.title !== t) { dot.title = t; s.title = t; }
+                }
             }
         });
     }
-    
+    // Park every blip this refresh didn't claim (visibility only) — also
+    // covers the case where the world arrays aren't loaded yet.
+    mapDotPool.end();
+
     // ── Unlocked nebula mission (dotted-line) paths ──────────────────
     // Each discovery path is an UNLOCKED objective and shows on the
     // radar. The in-world line spans tens of thousands of units (far
@@ -2801,28 +2914,35 @@ if (obj.type === 'ally') {
                     let d = pool[used];
                     if (!d) {
                         d = document.createElement('div');
+                        // Shape/position rules live in CSS (.galactic-path-dot)
+                        // so a path dot never needs className or cssText again.
                         d.className = 'galactic-path-dot';
-                        d.style.position = 'absolute';
-                        d.style.borderRadius = '50%';
-                        d.style.transform = 'translate(-50%,-50%)';
-                        d.style.pointerEvents = 'none';
-                        d.style.zIndex = '2';
+                        d._s = { size: '', bg: '', tf: '', op: '', vis: 'hidden' };
                         galaxyMap.appendChild(d);
                         pool[used] = d;
                     }
-                    d.style.width = sizePx + 'px';
-                    d.style.height = sizePx + 'px';
-                    d.style.background = colHex;
-                    d.style.boxShadow = '0 0 3px ' + colHex;
-                    d.style.left = sx + '%';
-                    d.style.top = sz + '%';
-                    d.style.opacity = op;
-                    d.style.display = 'block';
+                    // Same compare-and-set discipline as the blips: one
+                    // transform for position, and nothing at all when a
+                    // sample landed on the pixel it already occupied.
+                    const ps = d._s;
+                    const pw = sizePx + 'px';
+                    if (ps.size !== pw) { d.style.width = pw; d.style.height = pw; ps.size = pw; }
+                    if (ps.bg !== colHex) {
+                        d.style.background = colHex;
+                        d.style.boxShadow = '0 0 3px ' + colHex;
+                        ps.bg = colHex;
+                    }
+                    const ptf = 'translate(' + (Math.round(sx * mapDotPool.w / 10) / 10) + 'px,' +
+                                (Math.round(sz * mapDotPool.h / 10) / 10) + 'px) translate(-50%,-50%)';
+                    if (ps.tf !== ptf) { d.style.transform = ptf; ps.tf = ptf; }
+                    if (ps.op !== op) { d.style.opacity = op; ps.op = op; }
+                    if (ps.vis !== 'visible') { d.style.visibility = 'visible'; ps.vis = 'visible'; }
                     used++;
                 }
             }
             for (let k = used; k < pool.length; k++) {
-                if (pool[k]) pool[k].style.display = 'none';
+                const pd = pool[k];
+                if (pd && pd._s.vis !== 'hidden') { pd.style.visibility = 'hidden'; pd._s.vis = 'hidden'; }
             }
         }
     }
@@ -2848,11 +2968,15 @@ if (obj.type === 'ally') {
     } else {
     // ========== UNIVERSAL VIEW ==========
 
+    // Re-arm the galactic view's one-shot chrome hide for the next switch.
+    _galacticChromeHidden = false;
+
     // Hide the pooled galactic-view mission-path dots so they don't
     // linger on the universal map (they're radar-relative).
     if (updateGalaxyMap._pathDots) {
         for (let k = 0; k < updateGalaxyMap._pathDots.length; k++) {
-            if (updateGalaxyMap._pathDots[k]) updateGalaxyMap._pathDots[k].style.display = 'none';
+            const pd = updateGalaxyMap._pathDots[k];
+            if (pd && pd._s.vis !== 'hidden') { pd.style.visibility = 'hidden'; pd._s.vis = 'hidden'; }
         }
     }
 
@@ -3161,6 +3285,7 @@ mapDotPool.releaseAll();
             dot.style.top = nz + '%';
             dot.title = (nebula.userData && (nebula.userData.mythicalName || nebula.userData.name)) || 'Nebula';
             galaxyMap.appendChild(dot);
+            _universeDecorLive = true;
         });
     }
 
@@ -3189,6 +3314,7 @@ mapDotPool.releaseAll();
             line.style.width = len + '%';
             line.style.transform = 'rotate(' + angle + 'deg)';
             galaxyMap.appendChild(line);
+            _universeDecorLive = true;
         });
     }
 

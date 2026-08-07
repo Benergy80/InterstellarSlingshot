@@ -216,6 +216,20 @@
     lastGalaxiesCleared: -1,
 
     lastTick: 0,
+
+    // Playback liveness (see updateLiveness()) — is the decoder actually
+    // advancing, not just "does the envelope math say it should be"?
+    liveness: {
+      lastSampleAt: 0,
+      lastCurrentTime: -1,
+      lastKeyWatched: null,
+      stuckSince: 0,       // ms timestamp currentTime was first seen frozen
+      stalled: false,      // true once frozen past LIVENESS_STALL_MS
+      recovering: false,   // a same-element play() retry is in flight
+      confirmed: false,    // true once lastKeyWatched has advanced at least once
+      lastGoodKey: null,   // last DIFFERENT track key proven to advance
+      lastGoodAt: 0,
+    },
   };
 
   // ─── Web Audio bus ────────────────────────────────────────────────────────
@@ -1330,6 +1344,136 @@
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
+  // ADAPTIVE MIX — playback liveness watchdog
+  // ═══════════════════════════════════════════════════════════════════════════
+  // The crossfade in play() is armed by a ONE-SHOT 'playing' listener (see
+  // _beginCrossfade above) and is never re-verified after that.  'playing'
+  // only proves the decoder produced a single frame at that instant — it
+  // says nothing about whether the decoder keeps advancing.  If it stalls
+  // right after — exactly what mashing Skip induces, by starting and then
+  // abandoning multiple 4-6 MB MP3 range-fetches — the crossfade has
+  // already hard-killed the outgoing track and parked the incoming one at
+  // full element volume.  Every number this file tracks (element.volume,
+  // fade.power, the duck scale) reads as a perfect mix in that state,
+  // because they are all envelope math — none of them ask whether the
+  // decoder is actually still moving.  This does: sample currentTime, and
+  // if the track that's supposed to be audible right now hasn't moved in
+  // LIVENESS_STALL_MS, that's dead air wearing a healthy mix.
+  const LIVENESS_SAMPLE_MS = 1000;   // how often we look at currentTime
+  const LIVENESS_STALL_MS  = 1500;   // no advance for this long = stalled
+
+  // "What's actually audible right now" mirrors applyLiveVolume()'s own
+  // rule: while a switch is pending 'playing' on the incoming track, the
+  // OUTGOING track is what the player hears, so that's what we watch —
+  // otherwise the legitimate wait-for-buffer window (which can by design
+  // run for many seconds on a slow connection) would read as a false
+  // stall on every single crossfade.
+  function livenessTarget() {
+    if (st.fadePending && st.fadingOut && st.fadingOutKey) {
+      return { el: st.fadingOut, key: st.fadingOutKey };
+    }
+    return { el: st.currentEl, key: st.current };
+  }
+
+  // NOTE on lastGoodKey: it must name the last DIFFERENT track proven
+  // healthy, not the currently-watched one — the track that is stalling
+  // right now was almost always itself "confirmed advancing" a few
+  // samples ago (that's exactly what makes a post-crossfade stall sneaky),
+  // so if lastGoodKey chased the current key it would equal the broken
+  // track at the moment we need a fallback and this would never fire.
+  // It only moves forward on a genuine key CHANGE, and only carries the
+  // key we are LEAVING if that key had actually proven itself first.
+  function livenessRearm(now, key, t) {
+    const liv = st.liveness;
+    if (liv.lastKeyWatched && liv.lastKeyWatched !== key && liv.confirmed) {
+      liv.lastGoodKey = liv.lastKeyWatched;
+      liv.lastGoodAt = now;
+    }
+    liv.lastKeyWatched = key;
+    liv.lastSampleAt = now;
+    liv.lastCurrentTime = t;
+    liv.stuckSince = 0;
+    liv.stalled = false;
+    liv.recovering = false;
+    liv.confirmed = false;
+  }
+
+  function updateLiveness(now) {
+    const liv = st.liveness;
+    const target = livenessTarget();
+    const el = target.el, key = target.key;
+
+    // Nothing to watch, or the mix is legitimately silent — a stall check
+    // is meaningless there, so just re-arm the baseline.
+    const shouldSound = !!(el && key && st.enabled && !st.muted &&
+                            st.volume > 0 && !el.paused);
+    if (!shouldSound) { livenessRearm(now, key, el ? el.currentTime : -1); return; }
+
+    // The watched track (or which half of a fade is audible) changed under
+    // us — the old currentTime baseline means nothing across that switch.
+    if (liv.lastKeyWatched !== key) { livenessRearm(now, key, el.currentTime); return; }
+
+    if (now - liv.lastSampleAt < LIVENESS_SAMPLE_MS) return;
+
+    const t = el.currentTime;
+    // A one-shot/looping track wrapping back toward 0 is real playback,
+    // not a stall — only a genuinely FROZEN reading counts.
+    const advanced = Math.abs(t - liv.lastCurrentTime) > 0.05;
+    liv.lastSampleAt = now;
+    liv.lastCurrentTime = t;
+
+    if (advanced) {
+      liv.stuckSince = 0;
+      liv.stalled = false;
+      liv.recovering = false;
+      liv.confirmed = true;
+      return;
+    }
+
+    if (!liv.stuckSince) liv.stuckSince = now;
+    if (now - liv.stuckSince < LIVENESS_STALL_MS) return;
+
+    liv.stalled = true;
+
+    if (!liv.recovering) {
+      // First failure: nudge the SAME element. Most stalls are a decoder
+      // hiccup on a track that is otherwise correctly armed, not a dead
+      // source — re-issuing play() is the cheapest fix.
+      liv.recovering = true;
+      console.warn('🎵 Soundtrack: liveness stall — "' + key + '" frozen at ' +
+                    t.toFixed(2) + 's, re-issuing play()');
+      try { const p = el.play(); if (p && p.catch) p.catch(() => {}); } catch (e) { /* ignore */ }
+      liv.stuckSince = now;   // give the retry its own window before judging it
+      return;
+    }
+
+    // Second failure in a row: the retry didn't take. Do not sit on
+    // indefinite silence — fall back to the last track we KNOW was
+    // actually producing sound.
+    const fallback = (liv.lastGoodKey && liv.lastGoodKey !== key &&
+                       st.loaded[liv.lastGoodKey] && !st.loadErrors.has(liv.lastGoodKey))
+      ? liv.lastGoodKey : null;
+    console.warn('🎵 Soundtrack: liveness recovery failed on "' + key + '" — ' +
+                  (fallback ? 'falling back to "' + fallback + '"'
+                            : 'no known-good track yet, forcing a hard reload'));
+    liv.stuckSince = 0;
+    liv.recovering = false;
+    liv.stalled = false;
+    if (fallback) {
+      play(fallback);
+    } else {
+      // No known-good track yet (this stalled on the very first track of
+      // the session) — hard-reload the element as a last resort.
+      try {
+        el.load();
+        el.currentTime = 0;
+        const p = el.play();
+        if (p && p.catch) p.catch(() => {});
+      } catch (e) { /* ignore */ }
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
   // ADAPTIVE MIX — the tick
   // ═══════════════════════════════════════════════════════════════════════════
   // Own rAF loop: the FX automation has to run at frame rate to feel like
@@ -1356,6 +1500,7 @@
         // a buffering slice lands the moment the data arrives, not 18 s in.
         flushStingers(now);
         updateWarpFx(now, dt);
+        updateLiveness(now);
         _slowAccum += dt;
         if (_slowAccum >= 0.15) {
           _slowAccum = 0;
@@ -1839,10 +1984,23 @@
         outVol: st.fadingOut ? +st.fadingOut.volume.toFixed(4) : 0,
         inVol: st.currentEl ? +st.currentEl.volume.toFixed(4) : 0,
       };
-      // Equal-power check: this stays flat across the whole crossfade.
+      // Equal-power check: this stays flat across the whole crossfade —
+      // and stays flat EVEN WHEN THE DECODER IS DEAD, since it's built
+      // entirely from .volume, which a stalled track still reports
+      // correctly. It is structurally incapable of catching this class of
+      // failure. `liveness` is the actual answer: is currentTime moving?
       fade.power = +Math.sqrt(fade.outVol * fade.outVol + fade.inVol * fade.inVol).toFixed(4);
+      const liv = st.liveness;
+      const liveness = {
+        watching: liv.lastKeyWatched,
+        stalled: liv.stalled,
+        recovering: liv.recovering,
+        stuckMs: liv.stuckSince ? (Date.now() - liv.stuckSince) : 0,
+        lastGoodKey: liv.lastGoodKey,
+        lastGoodAgoMs: liv.lastGoodAt ? (Date.now() - liv.lastGoodAt) : -1,
+      };
       if (!wa.ok) {
-        return { bus: null, stingers: sting, fade: fade,
+        return { bus: null, stingers: sting, fade: fade, liveness: liveness,
                  element: st.currentEl ? st.currentEl.volume : 0,
                  paused: st.currentEl ? st.currentEl.paused : true };
       }
@@ -1867,6 +2025,7 @@
         busGain: st.fx.gain,
         lowpass: st.fx.lp,
         fade: fade,
+        liveness: liveness,
         stingers: sting,
       };
     },

@@ -890,6 +890,56 @@ body.ui-mode {
         inset 0 0 30px rgba(0,0,0,0.6),
         inset 0 0 5px rgba(0,150,255,0.3);
     transform: perspective(800px) rotateX(-3deg) translateZ(5px);
+    /* The radar holds hundreds of live blips. Containment keeps their
+       layout/paint invalidation inside the 220px disc instead of letting
+       every dot move dirty the whole HUD's style tree. */
+    contain: layout paint style;
+}
+
+/* ── Radar blips ──────────────────────────────────────────────────────
+   These elements are POOLED: created once, then kept attached to
+   #galaxyMap forever. Everything that never varies per-blip lives here so
+   the 20 Hz refresh only ever writes transform / colour / visibility and
+   never touches className, cssText or innerHTML. Blips start hidden; the
+   refresh reveals the ones it uses. */
+.galactic-target-dot,
+.galactic-ally-marker,
+.galactic-path-dot {
+    position: absolute;
+    left: 0;
+    top: 0;
+    pointer-events: none;
+    visibility: hidden;
+    /* Position comes from transform: translate(px, px) translate(-50%,-50%) */
+    transform: translate(-50%, -50%);
+}
+
+.galactic-target-dot {
+    border-radius: 50%;
+    z-index: 1;
+}
+
+.galactic-path-dot {
+    border-radius: 50%;
+    z-index: 2;
+}
+
+.galactic-ally-marker {
+    font-size: 10px;
+    font-weight: bold;
+    line-height: 1;
+    z-index: 3;
+}
+
+/* A blip's position IS its transform, so the SOS pulse can't animate
+   scale() — that would fling the dot to the corner of the radar. Throb the
+   glow instead: same urgent read, and it stays where the contact is. */
+@keyframes distressMapDotPulse {
+    0%, 100% { opacity: 0.65; filter: brightness(1); }
+    50%      { opacity: 1;    filter: brightness(1.6); }
+}
+.galactic-target-dot.distress-map-dot {
+    animation: distressMapDotPulse 0.8s ease-in-out infinite;
 }
 
 .map-grid {

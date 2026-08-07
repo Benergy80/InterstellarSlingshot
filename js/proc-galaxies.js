@@ -189,7 +189,7 @@
         // from the system CENTRE, never from the individual body, because the
         // thing the player is looking at is a system and a system is up to
         // 26,000u across.
-        BODY_CULL_RANGE: 30000, // matches game-objects' authored planet range
+        BODY_CULL_RANGE: 30000, // how far the "whole system, as a set" promise reaches
         BODY_CULL_FLOOR: 9000,  // floor the adaptive tier may never shrink past
         BODY_CULL_HYST: 1.06,   // turn-off radius / turn-on radius
         // The discovery toast shares ONE DOM slot (#achievementPopup) with a
@@ -2228,12 +2228,13 @@
     // CULL GATE — a system is ONE object, and the shared cull cannot know that
     // -------------------------------------------------------------------------
     // game-objects' updateDistanceCulling() walks the global `planets` array
-    // and hides anything further than 30,000u FROM THE CAMERA, scaled by the
-    // adaptive quality tier (x1.0 / x0.85 / x0.6 -> 30,000 / 25,500 / 18,000).
-    // That rule is correct for authored content, where "a planet" is a single
-    // body sitting near the thing you flew to. It is wrong for this shell,
-    // because layout personality made systems BIG: a sparse frontier reaches an
-    // envelope of ~13,000u, a 26,336u diameter measured live.
+    // and decides each body on its ANGULAR size — sub-pixel silhouettes go,
+    // everything else stays, at any distance. That rule is right for a single
+    // body, and it is still blind to one thing: a system is not a body. Layout
+    // personality made these systems BIG — a sparse frontier reaches an
+    // envelope of ~13,000u, a 26,336u diameter measured live — so the body you
+    // are standing next to and the body on the far limb of the same system get
+    // wildly different answers from any per-body rule.
     //
     // What the player actually got, measured: the discovery sphere fires at
     // envelope * 1.18 + 1500 (~16,600u from the centre), so at the exact frame
@@ -2249,10 +2250,19 @@
     //
     //   1. DISTANCE IS MEASURED TO THE SYSTEM CENTRE, not to the body. One
     //      compare per system decides every star, planet, moon and ring in it,
-    //      so a system is all-there or all-gone. There is no camera position
-    //      anywhere in the shell from which a procedural system can be half
-    //      drawn — that is the whole invariant, and procGalaxyDebug.cull()
+    //      so a system you are anywhere near is all-there. There is no camera
+    //      position inside that radius from which a procedural system can be
+    //      half drawn — that is the whole invariant, and procGalaxyDebug.cull()
     //      reports it as `partialSystems`, which must always read 0.
+    //      1b. AND OUTSIDE IT, THE GATE LETS GO. The rule above is a promise
+    //      about systems you are AT; it was also being used as a delete switch
+    //      for systems you are merely looking at, and a system centre 100,000u
+    //      away is still a 595u star 4.7px wide. Measured at spawn: 11 systems,
+    //      84 bodies, every one hidden, none of them for a reason you could see
+    //      on screen. So beyond the radius we write nothing and let the shared
+    //      per-body ANGULAR rule arbitrate — it keeps the star and drops the 3u
+    //      moons, which is the split the player would draw by eye. Such a
+    //      system reports mode 'released' and is partial on purpose.
     //   2. THE RADIUS IS KEYED TO THE SYSTEM'S OWN ENVELOPE, so a system that
     //      is physically bigger gets a proportionally bigger sphere instead of
     //      being punished by a flat number authored for 200u worlds. The
@@ -2341,27 +2351,44 @@
     // installed. So we simply restate the truth on every pass — 10-17 boolean
     // compares per system, ~150 across the whole shell, and the compare is
     // what makes it free: `visible` is only WRITTEN on the frames it is wrong.
+    //
+    // OUTSIDE THE RADIUS WE NOW LET GO, RATHER THAN HIDE.
+    // `want === false` used to mean "hide all 4-13 bodies of this system", and
+    // that was the same mistake the shared cull made one layer down: a system
+    // 102,441u away had all nine of its bodies deleted even though its primary
+    // is a 595u star still 4.7px across. Measured at spawn: all 11 systems,
+    // 84 bodies, 0 shown, every one of them decided by distance-to-CENTRE and
+    // none by what it actually looks like. So `false` no longer writes anything
+    // at all — it hands the bodies back to the shared per-body angular cull,
+    // which keeps the star and drops its 3u moons on their own merits. The
+    // `true` half is untouched: inside the radius, a system is all up, as a set.
     function setSystemBodiesVisible(s, want) {
         var flipped = (s.bodiesVisible !== want);
         s.bodiesVisible = want;
         var i, fixed = 0;
-        for (i = 0; i < s.stars.length; i++) fixed += markBody(s.stars[i].mesh, want);
-        for (i = 0; i < s.planets.length; i++) fixed += markBody(s.planets[i], want);
-        for (i = 0; i < s.moons.length; i++) fixed += markBody(s.moons[i], want);
-        // Rings are cosmetic siblings rather than registered bodies, so the
-        // base cull never touches them — but an annulus hanging in space with
-        // nothing inside it is the loudest artefact this file can produce, so
-        // they ride the same switch, in the same statement, as their world.
-        for (i = 0; i < s.rings.length; i++) {
-            var rg = s.rings[i].ring;
-            if (rg.visible !== want) { rg.visible = want; fixed++; }
+        if (want) {
+            for (i = 0; i < s.stars.length; i++) fixed += markBody(s.stars[i].mesh, true);
+            for (i = 0; i < s.planets.length; i++) fixed += markBody(s.planets[i], true);
+            for (i = 0; i < s.moons.length; i++) fixed += markBody(s.moons[i], true);
         }
+        // Rings are cosmetic siblings rather than registered bodies, so no cull
+        // touches them — and an annulus hanging in space with nothing inside it
+        // is the loudest artefact this file can produce. They ride their own
+        // world's flag, in BOTH modes, on every pass: in released mode that
+        // world's flag is the shared cull's answer rather than ours.
+        for (i = 0; i < s.rings.length; i++) {
+            var rg = s.rings[i], vis = rg.planet.visible;
+            if (rg.ring.visible !== vis) { rg.ring.visible = vis; fixed++; }
+        }
+        // The beacon is this system's stand-in until its real bodies are drawn,
+        // so the handoff belongs HERE, not at the group's 60,000u activation:
+        // between the two the player would have been shown a corona glow with
+        // the dot already extinguished and no star yet. In released mode the
+        // handoff is no longer ours to decide, so ask the primary star whether
+        // it survived rather than asking the mode.
+        var lit = (s.stars.length && s.stars[0].mesh.visible) ? 0 : 1;
+        if (s.beaconLevel !== lit) { s.beaconLevel = lit; setBeaconLevel(s.id, lit); }
         if (flipped) {
-            // The beacon is this system's stand-in until its real bodies are
-            // drawn, so the handoff belongs HERE, not at the group's 60,000u
-            // activation: between the two the player would have been shown a
-            // corona glow with the dot already extinguished and no star yet.
-            setBeaconLevel(s.id, want ? 0 : 1);
             cullGateState.flips++;
         } else {
             // Bodies we had to put back inside the same call that hid them.
@@ -2714,7 +2741,11 @@
             cull: function () {
                 var cam = activeCamera();
                 var scale = cullScaleNow();
-                var sharedR = PG.BODY_CULL_RANGE * scale;   // what the base cull would use
+                // Not the base cull's rule any more (that one is angular) —
+                // just a fixed yardstick for "further out than the old flat
+                // 30,000u gate", so `rescuedFromSharedCull` stays comparable
+                // with the numbers recorded before this fix.
+                var sharedR = PG.BODY_CULL_RANGE * scale;
                 var rows = systems.map(function (s) {
                     var bodies = systemBodies(s);
                     var hidden = 0, rescued = 0;
@@ -2729,6 +2760,9 @@
                     return {
                         name: s.name,
                         range: range,
+                        // 'full'     — we force every body on, as a set.
+                        // 'released' — the shared angular cull owns each body.
+                        mode: s.bodiesVisible ? 'full' : 'released',
                         envelope: Math.round(s.envelope),
                         discoverR: Math.round(s.discoverR),
                         cullR: Math.round(systemCullR(s, scale)),
@@ -2737,13 +2771,19 @@
                         hidden: hidden,
                         rescuedFromSharedCull: rescued,
                         insideDiscoverySphere: (range !== null && range < s.discoverR),
+                        beaconLit: s.beaconLevel === 1,
                         rings: s.rings.length,
                         orphanRings: s.rings.filter(function (r) {
                             return r.ring.visible !== r.planet.visible;
                         }).length
                     };
                 });
-                var partial = rows.filter(function (r) { return r.hidden > 0 && r.shown > 0; });
+                // Only a system we claim to be showing IN FULL can be partial.
+                // A released system is partial on purpose — that is the whole
+                // point of releasing it — so it is not a defect there.
+                var partial = rows.filter(function (r) {
+                    return r.mode === 'full' && r.hidden > 0 && r.shown > 0;
+                });
                 var incomplete = rows.filter(function (r) {
                     return r.insideDiscoverySphere && r.hidden > 0;
                 });

@@ -976,8 +976,9 @@ function _updateScreenFX() {
     // had them at ~0.30 opacity with chroma fringing on top. The explicit
     // warp / dilation / tunnel overrides below are unaffected: they ARE the
     // warp moments, and they raise the level right back up.
-    const _cruiseCap = _SPECTACLE_CRUISE_CEIL +
-        (1 - _SPECTACLE_CRUISE_CEIL) * _warpMomentLevel() * _warpSpeedRamp();
+    const _cruiseCeil = _spectacleCruiseCeil((gameState.velocityVector ? gameState.velocityVector.length() : 0) * 1000);
+    const _cruiseCap = _cruiseCeil +
+        (1 - _cruiseCeil) * _warpMomentLevel() * _warpSpeedRamp();
     let target = Math.max(0, (Math.min(speedWhipLevel(), _cruiseCap) - 0.10) / 0.90);
     // Speed-proportional warp floor (was a flat 0.85 whenever warping —
     // slammed full tunnel-vision regardless of actual velocity).
@@ -1420,7 +1421,23 @@ function speedWhipLevel() {
 //     CAPPED outside a warp moment so cruise reads as motion lines, not as a
 //     light show. This is the "speed threshold matching the original design".
 //   • debris/bokeh — gated outright. This layer is a boost event.
-const _SPECTACLE_CRUISE_CEIL = 0.22;   // most of the streak curve that plain flight may reach
+//
+// This USED to be a flat 0.22 clamp (Math.min(target, 0.22)). Two problems
+// with a flat number: (1) speedWhipLevel() saturates fast — it's within a
+// hair of its own sub-warp ceiling by a few thousand km/s past _WHIP_V0 — so
+// the flat clamp made 2,000 / 4,000 / 6,000 / 8,000 / 12,000 / 20,000 and
+// 40,000 km/s all settle on the exact same bit-identical uniforms even
+// though the underlying whip curve is still climbing steeply under the hood;
+// cruise stopped reading speed entirely above a low floor. (2) it gave the
+// drain-release handoff below nothing to cross-fade INTO — env snapped to a
+// single fixed number instead of a target that tracked current speed.
+// Continuous instead: still a small fraction of what a real warp moment
+// reaches (0.55-1.0), but low-slope and monotonic in actual speed so a
+// player doing 8,000 km/s visibly reads hotter than one doing 2,000.
+function _spectacleCruiseCeil(vKmS) {
+    const v = Math.max(0, (vKmS || 0) - _WHIP_V0 * 1000); // past where streaks start appearing
+    return Math.min(0.32, 0.05 + 0.0016 * Math.sqrt(v));
+}
 const _warpMoment = { level: 0, last: 0 };
 
 function _isWarpMomentNow() {
@@ -1497,7 +1514,14 @@ const _wsf = {
     // the speed-driven envelope for a short window so streaks visibly
     // SHRINK INTO POINTS instead of plateauing at the cruise-cap length
     // while postWarp/postSlingshot coasts at elevated speed.
-    draining: false, drainT0: 0, drainMs: 1000, drainLen0: 0, drainOp0: 0
+    draining: false, drainT0: 0, drainMs: 1000, drainLen0: 0, drainOp0: 0,
+    // RELEASE follow-through: the brief window right after a drain hands
+    // back to the speed-driven envelope. Without this the envelope resumed
+    // under its normal fast-attack tau (built for punchy boost KICKS) and,
+    // run through the opacity/length power curves, that read as an instant
+    // re-inflation — the streak field visibly REVERSING and climbing back up
+    // while speed/FOV were still easing down. See _updateWarpStreaks().
+    releasing: false, releaseT0: 0
 };
 
 function _wsfSeed(i, spanZ) {
@@ -1679,8 +1703,10 @@ function warpStreakBurst(dir, speed, colA, colB, strength) {
         _wsfBuild();
         if (!_wsf.mesh) return;
         // A fresh release always wins over a still-draining exit — e.g. an
-        // immediate re-slingshot mid drop-out beat.
+        // immediate re-slingshot mid drop-out beat. Also cancels any post-
+        // drain release follow-through still in flight, for the same reason.
         _wsf.draining = false;
+        _wsf.releasing = false;
         _wsf.kickT0 = (typeof performance !== 'undefined' ? performance.now() : Date.now());
         _wsf.kickMs = 1500;
         _wsf.kickAmp = Math.max(0.4, Math.min(1.35, strength || 1));
@@ -1785,6 +1811,14 @@ function _updateWarpStreaks() {
         if (!_wsf.mesh || (t >= 1 && !_overspeed)) {
             _wsf.draining = false;
             _wsf.env = 0;
+            // Hand off into a RELEASE follow-through rather than letting the
+            // speed-driven envelope below resume under its normal fast-
+            // attack tau on the very next frame — see the `releasing` field
+            // comment on _wsf and the tau selection in the speed-driven path
+            // further down. now() was already stamped at the top of this
+            // function.
+            _wsf.releasing = true;
+            _wsf.releaseT0 = now;
             if (_wsf.mesh) _wsf.mesh.visible = false;
         } else {
             _wsf.mesh.visible = true;
@@ -1815,8 +1849,9 @@ function _updateWarpStreaks() {
     const moment = _warpMomentLevel();
     // The gate opens WITH the speed ramp, not instead of it — a warp moment
     // at modest velocity gets a modest field; full blast needs real speed.
-    target = Math.min(target, _SPECTACLE_CRUISE_CEIL +
-        (1 - _SPECTACLE_CRUISE_CEIL) * moment * _warpSpeedRamp());
+    const _cruiseCeil = _spectacleCruiseCeil((gameState.velocityVector ? gameState.velocityVector.length() : 0) * 1000);
+    target = Math.min(target, _cruiseCeil +
+        (1 - _cruiseCeil) * moment * _warpSpeedRamp());
     // WARP-EXIT SYNC: compose (not replace) the existing speed-scaled
     // envelope with the physics exit ramp's own published progress, so if
     // this speed-driven path is ever reached while a ramp is still live
@@ -1841,8 +1876,20 @@ function _updateWarpStreaks() {
     _wsfBuild();
     if (!_wsf.mesh) return;
 
+    // RELEASE follow-through: for a short window right after a drain hands
+    // back here (see warpExitBeat's completion above), climb to the cruise
+    // target on a SLOW tau instead of the normal punchy attack. The drain
+    // already collapsed env to ~0, and the opacity/length curves below are
+    // sub-linear in env (infinite slope at 0), so resuming under the fast
+    // 0.085s attack made the field visibly snap back up in ~200ms — a
+    // reversal the eye reads as "warp again" while speed/FOV are still
+    // easing down. 550ms lets it settle UP to cruise monotonically instead.
+    const _WSF_RELEASE_MS = 550;
+    if (_wsf.releasing && (now - _wsf.releaseT0) > _WSF_RELEASE_MS) {
+        _wsf.releasing = false;
+    }
     // Ramp in over ~250ms, decay with the boost over ~0.7s.
-    const tau = (target > _wsf.env) ? 0.085 : 0.42;
+    const tau = _wsf.releasing ? 0.5 : ((target > _wsf.env) ? 0.085 : 0.42);
     _wsf.env += (target - _wsf.env) * (1 - Math.exp(-dt / tau));
     const env = _wsf.env;
     if (env <= 0.004) { _wsf.mesh.visible = false; return; }

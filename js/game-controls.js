@@ -118,13 +118,282 @@ const explosionManager = {
 // the flight path; no Z-spin overlay.)
 
 // =============================================================================
-// SHIP THRUSTER GLOW (enemies + wingmen)
-// Attaches two additive-blended cones to the rear of a ship the first
-// time it thrusts, then fades them in/out per-frame based on whether
-// the ship is currently accelerating. Mirrors the player's exhaust look
-// (orange-yellow inner + deeper orange outer) so combat reads as a
-// proper ballet of thruster trails.
+// HOSTILE ENGINE SIGNATURE — the always-on thruster plume
 // =============================================================================
+// WHY THIS IS A PLUME AND NOT A "THRUSTER CONE" ANY MORE.
+//
+// Measured against the real framebuffer, the single thing an enemy had
+// that the starfield could not also produce was... nothing. The hull is a
+// diffuse-lit blob whose only bright pixels are specular hits, and the
+// play area carries ~1,250 discrete L>=170 star blobs — several of which
+// cover MORE pixels than a 700u enemy's entire bright footprint. A ship
+// competing with that on "roundish bright patch" loses, every time.
+//
+// A point star cannot make an ELONGATED, SATURATED, COLOURED STREAK. That
+// is the whole idea here: give every hostile a persistent engine plume
+// ~1.7x its own hull length, always burning, faction-coloured, with a
+// white-hot core — a form the sky never produces. Four measured failures
+// close on this one change:
+//   1. PRESENCE — the enemy stops losing the bright-pixel contest inside
+//      its own crop box, because it now owns a shape class of its own.
+//   2. FACING   — nose dark, tail incandescent. That is a monotonic
+//      nose-to-tail value ramp, which is what was missing at 100-150u
+//      where the hull read as a flat paper cutout.
+//   3. TELEGRAPH — the hull's emissive ramp was already tone-map clipped
+//      (at 700u a 1x->3.4x ramp moved measured luminance 251.4 -> 251.9,
+//      i.e. nothing). The plume is additive over BLACK SKY, so it has all
+//      the headroom in the world. The windup now flares the engines.
+//   4. RANGE    — a per-frame angular-size floor keeps the plume at least
+//      _PLUME_MIN_PX wide on screen, so it survives to 1200u+ instead of
+//      collapsing into the 8 above-L180 pixels the hull used to manage.
+//
+// Sizing rules of thumb baked in below:
+//   length  ~1.70x hull max dimension  (critic spec: 1.5-2x)
+//   width   ~0.29x hull max dimension
+//   always-on floor 0.80 intensity — never fully extinguishes, because
+//   "the enemy stops existing when it coasts" was half the presence bug.
+//
+// WHY A BILLBOARD QUAD AND NOT A CONE MESH. This was built first as a pair
+// of open-ended additive cones, and at 400u+ it looked right. It failed
+// twice up close, both times because a cone is a HARD SURFACE:
+//   - broadside at ~120u it read as two solid planks, since an additive
+//     hollow cone is BRIGHTEST along its silhouette (you see through more
+//     surface at a grazing angle) — the exact opposite of a plume;
+//   - looked at down the exhaust axis it foreshortened into an enormous
+//     opaque BAND across the whole frame.
+// An axis-aligned billboard — a quad that keeps its long edge welded to the
+// thrust axis but spins about that axis to face the camera — has neither
+// failure mode. Its softness comes from a texture, so it has no silhouette
+// at any range, and looked at end-on it degenerates to a line and vanishes,
+// which is where the nozzle Sprite takes over and gives you the bright disc
+// a real engine shows you when it is pointed at your face.
+// =============================================================================
+
+// Screen-space floor for the outer plume's DIAMETER, in CSS px. Below
+// this the plume is widened in world space so it keeps reading at range.
+const _PLUME_MIN_PX = 7.0;
+// Never widen past this multiple of the plume's natural width — stops a
+// far-away speck from ballooning into a lens flare. 2.2 covers a standard
+// hull out past ~2,200u, which is well beyond any range the read matters
+// at; measured, 4.0 made distant hostiles wear plumes visibly fatter than
+// their own hulls.
+const _PLUME_MAX_WIDEN = 2.2;
+
+// FRAMEBUFFER px per world unit at distance `dist`, from the live
+// camera/canvas. Vertical FOV is the authority (Three's
+// PerspectiveCamera.fov is vertical). Deliberately measured against the
+// DRAWING BUFFER height (1120x630 here), not the CSS height (1600x900) —
+// the buffer is the stricter of the two, so a plume that clears the floor
+// in render pixels clears it in presented pixels too.
+function _plumePxPerUnit(dist) {
+    if (!dist || dist <= 0) return 0;
+    const cam = (typeof camera !== 'undefined' && camera) ? camera
+              : (typeof gameCamera !== 'undefined' ? gameCamera : window.camera);
+    if (!cam || !cam.fov) return 0;
+    let h = 0;
+    const r = (typeof renderer !== 'undefined' && renderer) ? renderer : window.renderer;
+    if (r && r.domElement) h = r.domElement.height || r.domElement.clientHeight || 0;
+    if (!h) {
+        const cv = document.getElementById('gameCanvas');
+        h = (cv && cv.height) || window.innerHeight || 900;
+    }
+    const halfSpan = Math.tan((cam.fov * 0.5) * Math.PI / 180) * dist;
+    if (halfSpan <= 0) return 0;
+    return (h * 0.5) / halfSpan;
+}
+
+// ONE shared unit streak geometry for every hostile in the game: a 1x1 quad
+// in the XY plane whose +Y is the thrust axis (y = -0.5 is the nozzle, +0.5
+// the trailing tip). Per-vertex colour does the ALONG-LENGTH falloff, the
+// texture does the ACROSS-WIDTH falloff. Splitting the two axes that way is
+// deliberate: the vertex ramp is driven off position.y, so it cannot be
+// flipped by a UV-orientation surprise, and the texture is vertically
+// uniform, so it doesn't care which way the UVs run either.
+let _PLUME_UNIT_GEO = null;
+function _plumeUnitGeo() {
+    if (_PLUME_UNIT_GEO) return _PLUME_UNIT_GEO;
+    const g = new THREE.PlaneGeometry(1, 1, 1, 12);
+    const pos = g.attributes.position;
+    const col = new Float32Array(pos.count * 3);
+    for (let i = 0; i < pos.count; i++) {
+        // t: 0 at the nozzle (y = -0.5) -> 1 at the trailing tip.
+        const t = Math.min(1, Math.max(0, pos.getY(i) + 0.5));
+        const b = Math.pow(1.0 - t, 1.05);
+        col[i * 3] = b; col[i * 3 + 1] = b; col[i * 3 + 2] = b;
+    }
+    g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    _PLUME_UNIT_GEO = g;
+    return g;
+}
+
+// Across-width profile for the streak, baked PER FACTION COLOUR.
+//
+// The colour lives in the texture instead of in material.color for a
+// specific measured reason. A material tint multiplies every texel equally,
+// so a saturated faction hue caps the streak's luminance at whatever that
+// hue is worth: a fully saturated red streak peaks at L~94 — DIMMER than
+// the hull it trails, and dimmer than the sky it is supposed to beat. But
+// value and saturation don't have to be the same pixels. Baking the profile
+// gives the streak a WHITE-HOT CENTRE LINE (L>=220, the spec) with
+// SATURATED FACTION FLANKS either side, in one object and one draw call.
+// The cache is keyed by colour and the game ships about ten faction hues,
+// so this is ~10 tiny textures for the whole session.
+const _PLUME_TEX_CACHE = {};
+function _plumeStreakTex(col) {
+    const key = col.getHexString();
+    if (_PLUME_TEX_CACHE[key]) return _PLUME_TEX_CACHE[key];
+    const lit = col.clone().lerp(new THREE.Color(0xffffff), 0.30);
+    const rgb = (c, a) => 'rgba(' + Math.round(c.r * 255) + ',' + Math.round(c.g * 255) +
+                          ',' + Math.round(c.b * 255) + ',' + a + ')';
+    const c = document.createElement('canvas'); c.width = 64; c.height = 4;
+    const g = c.getContext('2d');
+    const grd = g.createLinearGradient(0, 0, 64, 0);
+    grd.addColorStop(0.00, rgb(col, 0));
+    grd.addColorStop(0.15, rgb(col, 0.32));
+    grd.addColorStop(0.30, rgb(col, 0.82));
+    grd.addColorStop(0.41, rgb(lit, 0.95));
+    grd.addColorStop(0.50, 'rgba(255,255,255,1)');
+    grd.addColorStop(0.59, rgb(lit, 0.95));
+    grd.addColorStop(0.70, rgb(col, 0.82));
+    grd.addColorStop(0.85, rgb(col, 0.32));
+    grd.addColorStop(1.00, rgb(col, 0));
+    g.fillStyle = grd; g.fillRect(0, 0, 64, 4);
+    const t = new THREE.CanvasTexture(c);
+    t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
+    _PLUME_TEX_CACHE[key] = t; return t;
+}
+
+// Nozzle bloom. A Sprite always faces the camera, so this is the part of
+// the signature that cannot be foreshortened away: head-on down the exhaust
+// it IS the plume, and at extreme range it is what keeps a hostile from
+// falling under a pixel.
+let _PLUME_CORE_TEX = null;
+function _plumeCoreTex() {
+    if (_PLUME_CORE_TEX) return _PLUME_CORE_TEX;
+    const c = document.createElement('canvas'); c.width = 64; c.height = 64;
+    const g = c.getContext('2d');
+    const grd = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+    grd.addColorStop(0.00, 'rgba(255,255,255,1)');
+    grd.addColorStop(0.22, 'rgba(255,255,255,0.95)');
+    grd.addColorStop(0.45, 'rgba(190,190,190,0.45)');
+    grd.addColorStop(0.75, 'rgba(80,80,80,0.12)');
+    grd.addColorStop(1.00, 'rgba(0,0,0,0)');
+    g.fillStyle = grd; g.fillRect(0, 0, 64, 64);
+    const t = new THREE.CanvasTexture(c);
+    _PLUME_CORE_TEX = t; return t;
+}
+
+// DRAW-BUDGET OPT-OUT. game-core.js runs an adaptive draw-call budget that,
+// when the frame is over budget, suppresses the FARTHEST small-triangle
+// Meshes and Sprites beyond 450u via `material.visible = false`. Its intent
+// is the decorative long tail, and a plume is the exact opposite of
+// decorative — it is the one hostile cue this build is betting the combat
+// read on, and it matters MOST at the ranges that system culls.
+//
+// It caches each object's triangle count in `userData.__dbTris` and skips
+// anything over CULL_TRI_MAX, so pre-seeding that field with Infinity is an
+// explicit, in-contract opt-out: the plume is never even offered as a
+// candidate, so there is no hide/restore tug-of-war and no candidate the
+// control loop can waste a scan on. (The cone this replaced escaped the
+// budget only by ACCIDENT — 224 triangles put it over CULL_TRI_MAX. The
+// 24-triangle billboard did not, and vanished at range until this went in.
+// Worth knowing before anyone simplifies the geometry again.)
+function _plumeExemptFromDrawBudget(obj) {
+    obj.userData.__dbTris = Infinity;
+}
+
+// Scratch objects for the per-frame billboard maths — allocated once, not
+// per enemy per frame (there are 300+ hostiles in a live battle).
+const _pbCam = new THREE.Vector3(), _pbAxis = new THREE.Vector3();
+const _pbNorm = new THREE.Vector3(), _pbSide = new THREE.Vector3();
+const _pbMat = new THREE.Matrix4(), _pbInv = new THREE.Matrix4();
+
+// =============================================================================
+// STARFIELD RE-GRADE — the sky was the real antagonist
+// =============================================================================
+// Measured in the combat framebuffer: ~1,250 discrete L>=170 star blobs in a
+// 650x517 play area — 37 per 10,000px, 2.9% bright coverage — including
+// several blobs covering MORE pixels than a 700u enemy's entire bright
+// footprint. No hull tuning can win that; the sky simply owned the top of
+// the value range and the top of the "bright blob" shape class at once.
+//
+// So the sky gives the top back. Two knobs on the existing field-star
+// buffer (game-objects.js builds it; we only re-grade the attributes here,
+// no new geometry, no new draw call):
+//   aHDR — the shader's brightness multiplier. Peak fragment intensity is
+//          1.3 * aHDR, and over black sky that lands at L ≈ 331 * aHDR.
+//          Capping it at _STAR_HDR_CAP puts every field star at or below
+//          L≈140, which is below the hostile plume's halo and far below
+//          its L>=220 core. Hostiles now own the top of the range outright.
+//   aPx  — screen radius. Capping it kills the fat 50-70px bokeh blobs that
+//          were out-covering enemies.
+// Plus: the faintest ~58% of the fill shells are extinguished outright
+// (aHDR = 0 trips the shader's `if (I < 0.045) discard`, so they cost a
+// vertex and nothing else). Reference frames for this genre win with a soft
+// low-frequency sky and few point stars; this moves that direction without
+// touching the density that gives the sky its depth.
+const _STAR_HDR_CAP = 0.42;   // -> peak L ≈ 140
+const _STAR_PX_CAP  = 5.0;    // screen radius ceiling, in shader px
+const _STAR_DIM_CUT = 0.58;   // fraction of the faint fill extinguished
+
+function _regradeFieldStars() {
+    const fs = window.fieldStars;
+    if (!fs || !fs.geometry || !fs.geometry.attributes) return false;
+    const g = fs.geometry;
+    if (g.userData && g.userData._regraded) return true;
+    const hdr = g.attributes.aHDR;
+    const px  = g.attributes.aPx;
+    if (!hdr || !px) return false;
+
+    // Debug-only A/B hook. Set window.__STAR_REGRADE_AB before the
+    // starfield is built and the ungraded attributes are kept so the grade
+    // can be toggled live (window.__starGradeOff() / __starGradeOn()) for
+    // before/after photometry. Off by default — it costs ~420KB of typed
+    // array that a player has no use for.
+    if (window.__STAR_REGRADE_AB && !g.userData._rawHDR) {
+        g.userData._rawHDR = Float32Array.from(hdr.array);
+        g.userData._rawPx  = Float32Array.from(px.array);
+        window.__starGradeOff = function () {
+            hdr.array.set(g.userData._rawHDR); px.array.set(g.userData._rawPx);
+            hdr.needsUpdate = px.needsUpdate = true; return 'ungraded';
+        };
+        window.__starGradeOn = function () {
+            g.userData._regraded = false; _regradeFieldStars(); return 'graded';
+        };
+    }
+
+    let killed = 0, capped = 0;
+    for (let i = 0; i < hdr.count; i++) {
+        let h = hdr.array[i];
+        // Faint fill shells: extinguish a deterministic 58%. Deterministic
+        // (index-hashed, not Math.random) so a reload grades the same sky
+        // and photometry is reproducible.
+        if (h * 1.3 < 0.30) {
+            const r = ((i * 2654435761) % 1000) / 1000;
+            if (r < _STAR_DIM_CUT) { hdr.array[i] = 0; killed++; continue; }
+        }
+        if (h > _STAR_HDR_CAP) { hdr.array[i] = _STAR_HDR_CAP; capped++; }
+        if (px.array[i] > _STAR_PX_CAP) px.array[i] = _STAR_PX_CAP;
+    }
+    hdr.needsUpdate = true;
+    px.needsUpdate = true;
+    if (!g.userData) g.userData = {};
+    g.userData._regraded = true;
+    console.log('🌌 Starfield re-graded: ' + killed + ' faint stars extinguished, ' +
+                capped + ' capped to L<=140 (of ' + hdr.count + ')');
+    return true;
+}
+
+// The field-star buffer is built lazily inside game-objects.js, so poll for
+// it instead of assuming it exists at script-eval time. Bounded so a build
+// that never creates a starfield doesn't leave a timer running forever.
+(function _scheduleStarRegrade() {
+    let tries = 0;
+    const t = setInterval(() => {
+        if (_regradeFieldStars() || ++tries > 600) clearInterval(t);
+    }, 250);
+})();
+
 function _ensureShipThrusterCones(ship, color) {
     if (!ship || ship.userData._thrusters) return;
     if (typeof THREE === 'undefined') return;
@@ -149,11 +418,22 @@ function _ensureShipThrusterCones(ship, color) {
     const sz = Math.max(0.001, Math.abs(worldScale.z || 1));
 
     let coneLen = null, coneRad = null, localBack = null;
+    let hullWideLocal = null, hullLenWorld = null;
     try {
         ship.updateWorldMatrix(true, true);
+        // Measure in the SHIP'S OWN LOCAL FRAME, not in world space. The old
+        // code took a world-space box and used `_box.max.z - shipZ` as the
+        // local rear offset, which is only true when the ship happens to be
+        // unrotated — i.e. essentially never. With a 22%-long nozzle flame
+        // the resulting misplacement was a few pixels and nobody noticed;
+        // with a plume 1.7 hull-lengths long it would hang the streak off
+        // the wrong corner of the ship. Inverting the ship matrix costs one
+        // matrix invert, once per hostile, ever.
+        _pbInv.copy(ship.matrixWorld).invert();
         const _box = new THREE.Box3();
         _box.makeEmpty();
         const _mb = new THREE.Box3();
+        const _lm = new THREE.Matrix4();
         let any = false;
         ship.traverse(node => {
             if (!node.isMesh || !node.geometry) return;
@@ -161,13 +441,16 @@ function _ensureShipThrusterCones(ship, color) {
             if (ud.isHitbox || ud.isGlowLayer || ud._isThrusterCone) return;
             if (!node.geometry.boundingBox) node.geometry.computeBoundingBox();
             if (!node.geometry.boundingBox) return;
-            _mb.copy(node.geometry.boundingBox).applyMatrix4(node.matrixWorld);
+            _lm.multiplyMatrices(_pbInv, node.matrixWorld);
+            _mb.copy(node.geometry.boundingBox).applyMatrix4(_lm);
             _box.union(_mb);
             any = true;
         });
         if (any && isFinite(_box.min.x) && _box.max.x > _box.min.x) {
+            // _box is in ship-local units; multiply by the ship's world scale
+            // to reason about screen size, divide back out to place children.
             const size = _box.getSize(new THREE.Vector3());
-            const worldLen = Math.max(size.x, size.y, size.z);
+            const worldLen = Math.max(size.x, size.y, size.z) * sx;
             // Guard against the not-yet-loaded case: _makeWingman (and the
             // enemy builders) fall back to a tiny ~16u placeholder mesh when
             // the GLB isn't cached yet. Measuring that bakes permanent
@@ -179,19 +462,23 @@ function _ensureShipThrusterCones(ship, color) {
             // Mesh + glow child — use structure + a lower floor instead.
             const _isGLBStruct = ship.isGroup || (ship.children && ship.children.length > 1);
             if (worldLen > 40 || (_isGLBStruct && worldLen > 8)) {
-                const wpos = ship.getWorldPosition(new THREE.Vector3());
-                // Rear of the hull behind ship centre, WORLD units →
-                // converted to the ship's LOCAL frame (cone is a child).
-                // +Z-nosed models (Enemy1/Enemy8) are now corrected at
-                // model build time (_applyNoseFlip in game-models.js), so
-                // the uniform +Z rear mount is right for every ship again.
+                // +Z-nosed models (Enemy1/Enemy8) are corrected at model
+                // build time (_applyNoseFlip in game-models.js), so the
+                // uniform +Z rear mount is right for every ship.
                 ship.userData._thrusterApexSign = 1;
-                localBack = (_box.max.z - wpos.z) / sz;
-                // Cone ≈ 22% of the visible ship length, base ≈ 6% — with
-                // absolute floors (5u / 1.4u world) so the small 12-16u
-                // hulls still get a readable plume instead of a 3u speck.
-                coneLen = Math.max(worldLen * 0.22, 5) / sx;
-                coneRad = Math.max(worldLen * 0.06, 1.4) / sx;
+                localBack = _box.max.z;
+                // PLUME, not nozzle flame. Was 22% of ship length / 6%
+                // radius — measured, that is a 3-4px smudge at 700u that
+                // the starfield eats alive, and it vanished entirely
+                // whenever the ship coasted. 170% length / 29% width makes
+                // an elongated coloured streak roughly twice the hull's own
+                // footprint: a SHAPE the sky cannot counterfeit. Absolute
+                // floors keep the small 12-16u wingman-class hulls from
+                // getting a sub-pixel wisp.
+                coneLen = Math.max(worldLen * 1.70, 34) / sx;
+                coneRad = Math.max(worldLen * 0.145, 3.0) / sx;
+                hullWideLocal = Math.max(size.x, 0.001);
+                hullLenWorld = worldLen;
             }
         }
     } catch (e) {}
@@ -201,77 +488,210 @@ function _ensureShipThrusterCones(ship, color) {
     if (coneLen === null || localBack === null ||
         !isFinite(localBack) || !isFinite(coneLen)) return;
 
-    const innerCol = color || 0xffaa00;
-    const outerCol = (color === 0x00ff88) ? 0x00aa55
-                  : (color === 0x88aaff) ? 0x4466cc
-                  : 0xff5500;
+    // COLOUR. The core is the faction hue dragged 68% toward white so it
+    // clips high (measured L>=220 on the nozzle rows) — that is the "hot
+    // metal" read. The halo stays FULLY saturated faction colour, because
+    // saturation is the other axis the starfield can't contest: field
+    // stars are white/blue-white/gold, so a saturated red, violet or
+    // green streak is unmistakably a made thing, not sky.
+    const _base = new THREE.Color(color === undefined ? 0xff5522 : color);
+    const coreCol = _base.clone().lerp(new THREE.Color(0xffffff), 0.68);
+    const haloCol = _base.clone();
+    // Saturation floor: a few factions ship a washed-out pastel tint that
+    // would land right on top of a warm field star. Push them back out.
+    const _hsl = { h: 0, s: 0, l: 0 };
+    haloCol.getHSL(_hsl);
+    haloCol.setHSL(_hsl.h, Math.max(_hsl.s, 0.85), Math.min(Math.max(_hsl.l, 0.50), 0.64));
 
-    function _makeCone(rad, len, col, zOff) {
-        const geo = new THREE.ConeGeometry(rad, len, 10);
+    const _apex = ship.userData._thrusterApexSign || 1;
+
+    // STREAK — the axis-aligned billboard quad. Its centre sits half a
+    // plume aft of the hull's rear edge so the hot end stays welded to the
+    // nozzle and the tail trails away behind. Orientation about the thrust
+    // axis is re-solved every frame in _updateShipThrusterCones.
+    function _makeStreak(halfWidth, len, col, zOff, opacity) {
         const mat = new THREE.MeshBasicMaterial({
-            color: col, transparent: true, opacity: 0,
-            blending: THREE.AdditiveBlending, depthWrite: false
+            // White tint — the faction colour is already baked into the
+            // profile texture (see _plumeStreakTex); tinting again here
+            // would drag the white-hot centre line back down to the hue's
+            // own luminance, which is the whole thing that profile exists
+            // to avoid.
+            color: 0xffffff, map: _plumeStreakTex(col),
+            transparent: true, opacity: opacity,
+            blending: THREE.AdditiveBlending, depthWrite: false,
+            side: THREE.DoubleSide, vertexColors: true
         });
-        const cone = new THREE.Mesh(geo, mat);
-        // Cone's default apex is +Y. Rotate so apex points along the
-        // ship's rear axis (+Z for the standard -Z-forward models,
-        // -Z for the flipped Vulcan Enemy8.glb — see _thrusterApexSign).
-        cone.rotation.x = (ship.userData._thrusterApexSign || 1) * Math.PI / 2;
-        cone.position.set(0, 0, zOff);
-        // Frustum-cull cones: when the ship is off-screen the cones are
-        // invisible anyway, so skip the additive overdraw. (Was false —
-        // pure cost for off-screen enemies in big battles.)
-        cone.frustumCulled = true;
-        cone.renderOrder = 80;
-        cone.userData._isThrusterCone = true; // excluded from hull box
-        return { mesh: cone, mat: mat, geo: geo };
+        const m = new THREE.Mesh(_plumeUnitGeo(), mat);
+        // Unit quad is 1x1 in XY with +Y as the thrust axis, so base scale
+        // is (width, length, 1).
+        m.userData._plumeBaseScale = new THREE.Vector3(halfWidth * 2, len, 1);
+        m.userData._plumeBaseOpacity = opacity;
+        m.userData._plumeWorldRad = halfWidth * sx;  // for the on-screen px floor
+        m.userData._plumeZ = zOff;
+        m.scale.copy(m.userData._plumeBaseScale);
+        m.position.set(0, 0, zOff);
+        // Frustum-cull plumes: when the ship is off-screen they are
+        // invisible anyway, so skip the additive overdraw.
+        m.frustumCulled = true;
+        m.renderOrder = 80;
+        m.userData._isThrusterCone = true;  // excluded from hull box
+        m.userData._plumeIsStreak = true;
+        _plumeExemptFromDrawBudget(m);
+        return { mesh: m, mat: mat };
     }
 
-    // Two side-by-side engine plumes. Anchor the cone BASE at the
-    // model's actual rear edge (localBack), then push it forward by
-    // coneLen/2 so the center sits at the base + apex protrudes
-    // behind. The cone is now glued to the ship instead of floating
-    // off the assumed half-length back.
-    const _apex = ship.userData._thrusterApexSign || 1;
+    // CORE — the nozzle bloom. A Sprite, so it is immune to foreshortening:
+    // this is what you see when a hostile is pointing its engines at you,
+    // and what survives when the streak is a sub-pixel sliver at 1,200u.
+    function _makeCore(rad, col, zOff, opacity) {
+        const mat = new THREE.SpriteMaterial({
+            color: col, map: _plumeCoreTex(),
+            transparent: true, opacity: opacity,
+            blending: THREE.AdditiveBlending, depthWrite: false
+        });
+        const s = new THREE.Sprite(mat);
+        s.userData._plumeBaseScale = new THREE.Vector3(rad * 2, rad * 2, 1);
+        s.userData._plumeBaseOpacity = opacity;
+        s.userData._plumeWorldRad = rad * sx;
+        s.scale.copy(s.userData._plumeBaseScale);
+        s.position.set(0, 0, zOff);
+        s.renderOrder = 81;
+        s.userData._isThrusterCone = true;
+        _plumeExemptFromDrawBudget(s);
+        return { mesh: s, mat: mat };
+    }
+
+    // Two side-by-side engine plumes. Nozzle separation is driven by HULL
+    // WIDTH, not by plume width — at 29% of hull length the old
+    // `coneRad * 1.2` splayed the nozzles wider than the ship they belong to.
     const back = localBack + _apex * coneLen * 0.5;
     const cones = [];
-    const sideOff = coneRad * 1.2;
+    const sideOff = Math.min(coneRad * 1.05, (hullWideLocal || coneRad * 2) * 0.20);
     [-sideOff, sideOff].forEach(xOff => {
-        const inner = _makeCone(coneRad * 0.55, coneLen,        innerCol, back);
-        inner.mesh.position.x = xOff;
-        ship.add(inner.mesh);
-        cones.push(inner);
-        const outer = _makeCone(coneRad * 0.85, coneLen * 1.3,  outerCol, back + _apex * coneLen * 0.15);
-        outer.mesh.position.x = xOff;
-        ship.add(outer.mesh);
-        cones.push(outer);
+        // Index parity matters: the update loop treats even = core,
+        // odd = streak, and reads _thrusters[1] for the px floor.
+        // The core sprite deliberately overlaps the first fifth of the
+        // streak: additive, that overlap is what clips the nozzle to
+        // white-hot while the streak keeps its faction hue further aft —
+        // the "hot metal into coloured exhaust" gradient, for free, with no
+        // third layer of geometry to pay for.
+        const core = _makeCore(coneRad * 1.15, coreCol,
+                               localBack + _apex * coneRad * 0.55, 0.95);
+        core.mesh.position.x = xOff;
+        ship.add(core.mesh);
+        cones.push(core);
+        const streak = _makeStreak(coneRad, coneLen, haloCol, back, 1.0);
+        streak.mesh.position.x = xOff;
+        ship.add(streak.mesh);
+        cones.push(streak);
     });
     ship.userData._thrusters = cones;
-    ship.userData._thrusterIntensity = 0;
+    ship.userData._plumeApex = _apex;
+    // Start at the always-on floor rather than 0 so a hostile that spawns
+    // already coasting never gets a dark frame.
+    ship.userData._thrusterIntensity = 0.80;
+    ship.userData._plumeHullLen = hullLenWorld || 0;
 }
 
-function _updateShipThrusterCones(ship, thrusting) {
+// ALWAYS ON. `thrusting` no longer gates the plume to zero — it only
+// picks between the idle burn and the full burn. A hostile that stops
+// accelerating must not stop existing.
+const _PLUME_IDLE = 0.80;
+
+function _updateShipThrusterCones(ship, thrusting, dist, charge) {
     if (!ship || !ship.userData || !ship.userData._thrusters) return;
-    const target = thrusting ? 1.0 : 0.0;
-    const cur = ship.userData._thrusterIntensity || 0;
-    const speed = thrusting ? 0.22 : 0.15;
-    const next = cur + (target - cur) * speed;
+    const target = thrusting ? 1.0 : _PLUME_IDLE;
+    const cur = ship.userData._thrusterIntensity;
+    const prev = (cur === undefined) ? _PLUME_IDLE : cur;
+    const next = prev + (target - prev) * (thrusting ? 0.22 : 0.15);
     ship.userData._thrusterIntensity = next;
-    const flicker = thrusting ? (0.85 + Math.sin(Date.now() * 0.04 + (ship.id || 0)) * 0.15) : 1.0;
+
+    // Attack telegraph rides the PLUME, not the hull. The hull's emissive
+    // ramp is tone-map clipped at combat range (a 1x->3.4x sweep moved
+    // measured luminance by +0.2% at 700u); additive-over-black has the
+    // headroom the hull does not. charge 0->1 flares the engines: longer,
+    // wider, brighter — a wind-up you can see at 1100u.
+    const chg = Math.min(1, Math.max(0, charge || 0));
+    const chgQ = chg * chg;
+
+    // Angular-size floor. Below _PLUME_MIN_PX the plume is widened in
+    // world space so it survives to 1200u+ instead of collapsing under a
+    // pixel. Length is left alone — the streak's LENGTH is what reads as
+    // motion, and stretching it with distance would look like a warp trail.
+    let widen = 1.0;
+    if (dist) {
+        const ppu = _plumePxPerUnit(dist);
+        if (ppu > 0) {
+            const halo = ship.userData._thrusters[1];
+            const rad = halo && halo.mesh.userData._plumeWorldRad;
+            if (rad > 0) {
+                const px = rad * 2 * ppu;
+                if (px < _PLUME_MIN_PX) widen = Math.min(_PLUME_MAX_WIDEN, _PLUME_MIN_PX / px);
+            }
+        }
+    }
+
+    // AXIS-ALIGNED BILLBOARD. The streak keeps its long edge on the thrust
+    // axis and spins about that axis until its face is square to the
+    // camera. Solved once per ship (both nozzles share an axis and are a
+    // few units apart, so one solution serves both) in the ship's LOCAL
+    // frame, which is where the quads live.
+    //   axis  = local +Z * apexSign  (the thrust direction)
+    //   norm  = the camera direction with its axial part removed
+    //   basis = (axis x norm, axis, norm) -> right-handed, +Y on the axis,
+    //           +Z at the viewer.
+    // When the camera sits ON the axis — you are staring down the exhaust —
+    // `norm` degenerates. That is not a special case to paper over: the
+    // streak SHOULD vanish there, and the nozzle Sprite is what you see
+    // instead. The fallback direction below just keeps the maths finite.
     const cones = ship.userData._thrusters;
+    let axialFade = 1.0;
+    const _cam = (typeof camera !== 'undefined' && camera) ? camera : window.camera;
+    if (_cam) {
+        const apex = ship.userData._plumeApex || 1;
+        _pbAxis.set(0, 0, apex);
+        _pbInv.copy(ship.matrixWorld).invert();
+        _pbCam.setFromMatrixPosition(_cam.matrixWorld).applyMatrix4(_pbInv);
+        // Camera relative to the streak's own centre, not the ship origin.
+        _pbCam.z -= (cones[1] && cones[1].mesh.userData._plumeZ) || 0;
+        const axial = _pbCam.dot(_pbAxis);
+        const camLen = Math.max(1e-6, _pbCam.length());
+        // 1 when the camera is broadside to the plume, 0 when it is dead
+        // astern. Used to cross-fade streak -> nozzle bloom.
+        axialFade = 1 - Math.min(1, Math.abs(axial) / camLen);
+        _pbNorm.copy(_pbCam).addScaledVector(_pbAxis, -axial);
+        if (_pbNorm.lengthSq() < 1e-8) _pbNorm.set(1, 0, 0);
+        _pbNorm.normalize();
+        _pbSide.crossVectors(_pbAxis, _pbNorm);
+        _pbMat.makeBasis(_pbSide, _pbAxis, _pbNorm);
+        for (let i = 1; i < cones.length; i += 2) {
+            cones[i].mesh.quaternion.setFromRotationMatrix(_pbMat);
+        }
+    }
+    // Sharpen the cross-fade: the streak holds full strength across most of
+    // the sphere and only gives way in the last ~25 degrees, where it is
+    // geometrically edge-on anyway.
+    const streakFade = Math.min(1, Math.pow(axialFade, 0.45) * 1.12);
+    const coreBoost = 1 + (1 - axialFade) * 0.55;
+
+    const flicker = 0.90 + Math.sin(Date.now() * 0.026 + (ship.id || 0)) * 0.10;
     for (let i = 0; i < cones.length; i++) {
         const c = cones[i];
-        // Inner core (i even) and outer halo (i odd). 0.85 / 0.45 so the
-        // plume clearly reads on the smaller wingmen and far enemies.
-        // Additive blending still keeps formation-stacked cones from
-        // saturating to white — each cone tops out under 1.0 alpha.
-        const base = (i % 2 === 0) ? 0.85 : 0.45;
-        c.mat.opacity = next * base * flicker;
-        // Almost no bloom — keep cones a tight engine flame.
-        const sX = 0.9 + next * 0.15;
-        const sY = 0.8 + next * 0.35;
-        const sZ = 0.9 + next * 0.15;
-        c.mesh.scale.set(sX, sY, sZ);
+        const isCore = (i % 2 === 0);
+        const bo = c.mesh.userData._plumeBaseOpacity;
+        // Additive over black sky: opacity IS luminance here. The core is
+        // deliberately allowed to clip (that's the white-hot read); the
+        // streak is held under 1.0 so it keeps its faction hue instead of
+        // washing out to the same white the starfield already owns.
+        const o = bo * next * flicker
+                * (1 + chgQ * (isCore ? 0.35 : 0.55))
+                * (isCore ? coreBoost : streakFade);
+        c.mat.opacity = Math.min(1.0, o);
+        const bs = c.mesh.userData._plumeBaseScale;
+        const w = widen * (0.92 + next * 0.08) * (1 + chgQ * 0.30);
+        const l = (0.85 + next * 0.15) * (1 + chgQ * 0.55);
+        if (isCore) c.mesh.scale.set(bs.x * w * coreBoost, bs.y * w * coreBoost, 1);
+        else c.mesh.scale.set(bs.x * w, bs.y * l, 1);
     }
 }
 function applyEnemyRotation(enemy, direction, speed) {    if (!enemy || !direction) return;
@@ -1690,10 +2110,17 @@ function _setEnemyTelegraph(enemy, charge) {
     }
     const meshes = ud._telegraphMeshes;
     if (!meshes.length) return;
-    // Charge 0 -> 1 maps to a 1x -> 3.4x emissive ramp. The pulse loop
-    // multiplies whatever we leave in baseEmissive, so the ship keeps
-    // breathing while it winds up.
-    const k = 1 + charge * charge * 2.4;
+    // Charge 0 -> 1 maps to a 1x -> 1.9x emissive ramp. It USED to be
+    // 1x -> 3.4x, and that was measured to be pure cost: tone mapping has
+    // already flattened the hull by combat range, so at 700u the whole
+    // 3.4x sweep moved the hull's p90 luminance from 251.4 to 251.9 — an
+    // invisible +0.2% — while at close range the extra emissive helped
+    // clip the ship into the flat white wad this build spent a round
+    // undoing. The telegraph's real punch now lives on the engine plume
+    // (additive over black sky = actual headroom, see
+    // _updateShipThrusterCones) and on the rim boost below. What is left
+    // here is just enough hull warmth to tie the two together.
+    const k = 1 + charge * charge * 0.9;
     for (let i = 0; i < meshes.length; i++) {
         const u = meshes[i].userData;
         u.baseEmissive = u._telegraphBase * k;
@@ -2116,20 +2543,23 @@ function updateEnemyBehavior() {
             _enemyAvoidBlackHoles(enemy);
         }
 
-        // Thruster cones: ensure they exist, then fade them in/out based
-        // on whether the ship is moving meaningfully this frame. Applies
-        // to every enemy so distant fighters AND local pirates/Vulcans
-        // visibly fire their engines.
-        // Each enemy's cones are 4 additive-blended, frustumCulled=false
-        // meshes that draw every frame even off-screen. With many enemies
-        // that's pure fill-rate overdraw — the kind of cost mobile GPUs
-        // handle worst. Skip the whole enemy-cone system on mobile; the
-        // player's own thruster glow (separate, single-ship) is untouched.
+        // Engine plume: ensure it exists, then drive it. It is ALWAYS
+        // burning — `_speedNow` only chooses between idle burn and full
+        // burn — because the plume is this game's only enemy cue the
+        // starfield cannot imitate, and a hostile that goes dark when it
+        // coasts is a hostile that disappears into the sky.
+        // Distance feeds the angular-size floor; _telegraphPhase feeds the
+        // attack wind-up flare (see _updateShipThrusterCones).
+        // Each enemy's plume is 4 additive, frustum-culled meshes sharing
+        // ONE global geometry. Still fill-rate, and mobile GPUs handle
+        // additive overdraw worst, so the whole system stays desktop-only;
+        // the player's own thruster glow (separate, single-ship) is untouched.
         if (!window.__isMobileGPU && typeof _ensureShipThrusterCones === 'function') {
             _ensureShipThrusterCones(enemy, enemy.userData.galaxyColor || 0xff5522);
             const _v = enemy.userData.velocity;
             const _speedNow = _v ? _v.length() : (enemy.userData.isActive ? 0.5 : 0.2);
-            _updateShipThrusterCones(enemy, _speedNow > 0.08);
+            _updateShipThrusterCones(enemy, _speedNow > 0.08, distanceToPlayer,
+                                     enemy.userData._telegraphPhase || 0);
         }
 
         if (enemy.userData.isActive) {
