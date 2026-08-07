@@ -13571,24 +13571,164 @@ function createEnhancedPlanetClustersInNebulas() {
 }
 // =============================================================================
 // NEBULA GAS CLOUD CREATION - CLUSTERED VERSION
-// Creates 3-4 overlapping gas clouds for a more realistic nebula appearance
+// Creates a cluster of soft volumetric puffs for a realistic nebula appearance
 // =============================================================================
 
+// -----------------------------------------------------------------------------
+// SOFT VOLUMETRIC PUFF MATERIAL
+//
+// MeshBasicMaterial paints a CONSTANT colour across the whole silhouette, so an
+// additive sphere renders as a flat oval with a razor-sharp circular rim. Three
+// or four of those stacked up is a countable pile of primitives, not a nebula —
+// and since nebulae fill most of every wide vista, it was the single largest
+// "untextured primitive" tell in the frame.
+//
+// This material has the exact same cost profile — one draw call per puff, same
+// SphereGeometry, additive, no depth write — but:
+//   (a) fades alpha to zero at the rim via pow(|N·V|, 2.5), so the hard disc
+//       becomes a soft gaussian puff whose edge is invisible; and
+//   (b) modulates by 4 octaves of cheap 3D ridged value noise in OBJECT space,
+//       which breaks the ellipse into filaments. Object space (not world) so
+//       the pattern rides along with the cluster's per-frame rotation, the way
+//       real gas would, instead of swimming through it.
+// Deliberately unfogged, matching the other gas clouds in this file: scene.fog
+// starts at 55k units and would only flatten the puff's own core→rim gradient.
+// -----------------------------------------------------------------------------
+const NEBULA_PUFF_VERT = `
+varying vec3 vPos;
+varying vec3 vNrm;
+varying vec3 vView;
+void main() {
+    vPos = position;
+    vec4 mv = modelViewMatrix * vec4(position, 1.0);
+    vNrm  = normalize(normalMatrix * normal);
+    vView = normalize(-mv.xyz);
+    gl_Position = projectionMatrix * mv;
+}
+`;
+
+const NEBULA_PUFF_FRAG = `
+uniform vec3  uColor;
+uniform float uOpacity;
+uniform float uTime;
+uniform float uFreq;
+uniform vec3  uSeed;
+varying vec3 vPos;
+varying vec3 vNrm;
+varying vec3 vView;
+
+// sin-free hash: stable across drivers, cheaper than the classic fract(sin(..))
+float hash13(vec3 p) {
+    p = fract(p * 0.1031);
+    p += dot(p, p.zyx + 31.32);
+    return fract((p.x + p.y) * p.z);
+}
+
+float vnoise(vec3 p) {
+    vec3 i = floor(p);
+    vec3 f = fract(p);
+    f = f * f * (3.0 - 2.0 * f);
+    float a = mix(hash13(i + vec3(0.0, 0.0, 0.0)), hash13(i + vec3(1.0, 0.0, 0.0)), f.x);
+    float b = mix(hash13(i + vec3(0.0, 1.0, 0.0)), hash13(i + vec3(1.0, 1.0, 0.0)), f.x);
+    float c = mix(hash13(i + vec3(0.0, 0.0, 1.0)), hash13(i + vec3(1.0, 0.0, 1.0)), f.x);
+    float d = mix(hash13(i + vec3(0.0, 1.0, 1.0)), hash13(i + vec3(1.0, 1.0, 1.0)), f.x);
+    return mix(mix(a, b, f.y), mix(c, d, f.y), f.z);
+}
+
+// Ridged noise: folding the band about its midpoint turns smooth blobs into
+// creases, which is what reads as gas filaments rather than mottled haze.
+float ridge(float n) {
+    n = 1.0 - abs(2.0 * n - 1.0);
+    return n * n;
+}
+
+void main() {
+    // Soft rim: 1 at the centre of the silhouette, 0 at the edge. This is the
+    // whole trick — it replaces the hard circular cliff with a gaussian falloff.
+    float rim  = abs(dot(normalize(vNrm), normalize(vView)));
+    float soft = pow(rim, 2.5);
+
+    // 4 octaves of ridged value noise, drifting slowly so the gas churns.
+    vec3 q = vPos * uFreq + uSeed + vec3(0.0, uTime * 0.02, uTime * 0.011);
+    float n = ridge(vnoise(q))                 * 0.50
+            + ridge(vnoise(q * 2.07 + 17.1))   * 0.28
+            + ridge(vnoise(q * 4.13 + 43.7))   * 0.14
+            + ridge(vnoise(q * 8.21 + 91.3))   * 0.08;
+
+    // Squared again, over a dim floor: thin gas everywhere, tight bright veins
+    // where the octaves line up. A linear map here just gives even haze.
+    float fil = clamp(0.30 + 2.60 * n * n, 0.0, 2.4);
+
+    float a = uOpacity * soft * fil;
+    if (a < 0.0035) discard;   // prunes the invisible outer rim band
+    gl_FragColor = vec4(uColor * (0.78 + 0.62 * n), a);
+}
+`;
+
+function createNebulaPuffMaterial(color, baseOpacity, cloudSize) {
+    const mat = new THREE.ShaderMaterial({
+        uniforms: {
+            uColor:   { value: color.clone() },
+            uOpacity: { value: baseOpacity },
+            uTime:    { value: 0 },
+            // ~7 noise cells across the puff's diameter at the first octave
+            // (so ~56 at the fourth), jittered per puff so no two share a
+            // pattern. Puffs of different SIZE therefore also get different
+            // filament scales, which is where the multi-scale look comes from.
+            uFreq:    { value: (3.0 + Math.random() * 1.4) / Math.max(1, cloudSize) },
+            uSeed:    { value: new THREE.Vector3(Math.random() * 90, Math.random() * 90, Math.random() * 90) }
+        },
+        vertexShader: NEBULA_PUFF_VERT,
+        fragmentShader: NEBULA_PUFF_FRAG,
+        transparent: true,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+        side: THREE.BackSide   // keep the far shell so flying inside still shows gas
+    });
+
+    // game-core.js breathes these clouds by writing material.opacity with a
+    // fixed ±0.05 swing that was tuned against the old 0.15 base. At the new
+    // ~0.045 base that same swing would blink the gas out completely, so proxy
+    // the property onto the uniform and damp it back to the ±30% it always was.
+    Object.defineProperty(mat, 'opacity', {
+        configurable: true,
+        get() { return mat.uniforms.uOpacity.value; },
+        set(v) {
+            mat.uniforms.uOpacity.value = Math.max(0, baseOpacity + (v - baseOpacity) * 0.3);
+        }
+    });
+
+    return mat;
+}
+
 function createNebulaGasCloud(centerPos, nebulaId, starColor) {
-    const clusterSize = 3 + Math.floor(Math.random() * 2); // 3-4 clouds per cluster
-    
-    console.log(`    ☁️ Creating cluster of ${clusterSize} gas clouds for Nebula-${nebulaId + 1}`);
-    
+    // Many small soft puffs, not a few big ones: with an invisible rim we can
+    // afford a lot more of them at a much lower opacity each, and it is the
+    // spread of SIZES that produces multi-scale structure. Total covered area
+    // (and therefore overdraw) stays roughly where it was.
+    const clusterSize = 10 + Math.floor(Math.random() * 5); // 10-14 puffs per cluster
+
+    console.log(`    ☁️ Creating cluster of ${clusterSize} gas puffs for Nebula-${nebulaId + 1}`);
+
     // Create a group to hold all clouds in the cluster
     const cloudCluster = new THREE.Group();
-    
+    let coreSize = 0;
+
     for (let i = 0; i < clusterSize; i++) {
-        // Vary cloud sizes - smallest to largest
-        const sizeMultiplier = 0.6 + (i * 0.3); // 0.6x, 0.9x, 1.2x, 1.5x
+        // One dominant core, then a falling tail of smaller puffs. A single
+        // size band is exactly what makes a nebula read as one blob.
+        const t = clusterSize > 1 ? i / (clusterSize - 1) : 0;
+        const sizeMultiplier = 1.15 - 0.85 * Math.pow(t, 0.65); // 1.15x -> 0.30x
         const cloudSize = (120 + Math.random() * 180) * sizeMultiplier;
-        
-        const cloudGeometry = new THREE.SphereGeometry(cloudSize, 16, 16);
-        
+        if (i === 0) coreSize = cloudSize;
+
+        // 12x8 instead of 16x16. The old flat material showed its silhouette as
+        // a hard outline, so it needed the tessellation; the puff material fades
+        // alpha to zero there, so the polygon edge is literally never drawn.
+        // That pays for 4x the puffs at roughly the old triangle budget
+        // (12 x 192 = 2304 tris/cluster vs the old 3-4 x 512 = 1536-2048).
+        const cloudGeometry = new THREE.SphereGeometry(cloudSize, 12, 8);
+
         // Vary colors slightly within the cluster
         const colorVariation = starColor.clone();
         colorVariation.offsetHSL(
@@ -13596,36 +13736,41 @@ function createNebulaGasCloud(centerPos, nebulaId, starColor) {
             (Math.random() - 0.5) * 0.2,  // Saturation variation
             (Math.random() - 0.5) * 0.15  // Lightness variation
         );
-        
-        // Vary opacity - larger clouds are more transparent
-        const baseOpacity = 0.15 - (i * 0.02); // Decreases with each cloud
-        const cloudMaterial = new THREE.MeshBasicMaterial({
-            color: colorVariation,
-            transparent: true,
-            opacity: baseOpacity,
-            blending: THREE.AdditiveBlending
-        });
-        
+
+        // Low per-puff opacity — brightness now comes from many overlapping
+        // soft puffs, not from a few opaque shells. Smaller puffs run slightly
+        // denser so the fine structure still reads.
+        const baseOpacity = 0.044 + 0.030 * (1 - sizeMultiplier / 1.15);
+        const cloudMaterial = createNebulaPuffMaterial(colorVariation, baseOpacity, cloudSize);
+
         const gasCloud = new THREE.Mesh(cloudGeometry, cloudMaterial);
-        
+
         // Position clouds in overlapping cluster pattern
         // First cloud at center, others scattered around
         if (i === 0) {
             // Center cloud - largest
             gasCloud.position.set(0, 0, 0);
         } else {
-            // Offset clouds create overlap
-            const offsetDistance = cloudSize * 0.5; // 50% overlap
-            const offsetAngle = (i / clusterSize) * Math.PI * 2;
-            const offsetElevation = (Math.random() - 0.5) * Math.PI * 0.3;
-            
+            // Golden-angle spiral over a flattened sphere: fills the cluster
+            // volume evenly instead of laying the puffs out on a visible ring.
+            const ga = i * 2.399963;                        // golden angle
+            const cy = 1.0 - 2.0 * ((i + 0.5) / clusterSize);
+            const sr = Math.sqrt(Math.max(0, 1.0 - cy * cy));
+            const spread = coreSize * (0.30 + Math.random() * 0.85);
+
             gasCloud.position.set(
-                Math.cos(offsetAngle) * offsetDistance * Math.cos(offsetElevation),
-                Math.sin(offsetElevation) * offsetDistance * 0.5,
-                Math.sin(offsetAngle) * offsetDistance * Math.cos(offsetElevation)
+                Math.cos(ga) * sr * spread,
+                cy * spread * 0.55,   // flattened — nebulae are not spherical
+                Math.sin(ga) * sr * spread
             );
         }
-        
+
+        // Drive the noise drift. Cheap (one uniform write per DRAWN puff) and
+        // it keeps the gas churning without any per-frame work in game-core.
+        gasCloud.onBeforeRender = function () {
+            cloudMaterial.uniforms.uTime.value = performance.now() * 0.001;
+        };
+
         gasCloud.userData = {
             name: `Nebula-${nebulaId + 1} Gas Cloud ${i + 1}`,
             type: 'gas_cloud',
@@ -13680,7 +13825,7 @@ function createNebulaGasCloud(centerPos, nebulaId, starColor) {
     }
     window.nebulaGasClouds.push(cloudCluster);
     
-    console.log(`      ✓ Added ${clusterSize} overlapping gas clouds (sizes: ${cloudCluster.children.map(c => c.userData.size.toFixed(0)).join(', ')} units)`);
+    console.log(`      ✓ Added ${clusterSize} overlapping soft gas puffs (sizes: ${cloudCluster.children.map(c => c.userData.size.toFixed(0)).join(', ')} units)`);
 }
 // =============================================================================
 // ENHANCED ENEMY CREATION - DISTANCE-BASED SPAWNING

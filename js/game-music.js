@@ -169,6 +169,8 @@
     combat: {
       active: false,      // true = battle track owns the context
       key: null,          // which battle track
+      subKey: null,       // playHealthy()-resolved substitute actually played
+      subKeyFor: null,    // which `key` subKey was resolved against (cache guard)
       rank: 0,            // 1 grunt · 2 guardian · 3 borg · 4 boss
       contactSince: 0,    // ms timestamp of first sustained contact
       clearSince: 0,      // ms timestamp of "nothing in range"
@@ -1553,6 +1555,40 @@
     }
   }
 
+  // updateMusicContext() below picks WHAT the player should be hearing
+  // (combat/borg/boss/nebula/galaxy) purely from world state — it has no
+  // idea a given key is currently cold. Left to call play(key) directly,
+  // it re-asserts the context-appropriate key on every ~500ms tick
+  // regardless of liveness, which drags the mix straight back onto a
+  // track updateLiveness() just demoted (that demotion happens on its own
+  // clock, mid-stall-detection, independent of this tick) — the watchdog
+  // wins the escape for one tick and this tick immediately reopens it.
+  // playHealthy() is the veto every context branch must call play()
+  // through: honor the requested key only while it isn't in its post-
+  // failure cooldown, otherwise walk an explicit same-genre chain for the
+  // first still-healthy alternative, and only if the entire chain is cold
+  // drop to the known-safest base layer. Returns the key actually played
+  // so a caller can cache it (keeps a resolved substitute stable across
+  // ticks instead of re-walking — and thus potentially re-crossfading to
+  // a DIFFERENT alt — every single call).
+  function playHealthy(key, chain) {
+    const now = Date.now();
+    function eligible(k) {
+      return !!k && !!st.loaded[k] && !st.loadErrors.has(k) && !isRecentlyFailed(k, now);
+    }
+    if (eligible(key)) { play(key); return key; }
+    for (let i = 0; i < (chain ? chain.length : 0); i++) {
+      const alt = chain[i];
+      if (eligible(alt)) { play(alt); return alt; }
+    }
+    // Whole chain is cold/failed too — drop to the safe base rather than
+    // keep cycling dead tracks. Play it even if it's ALSO in cooldown
+    // (nothing else is left); play() itself still no-ops safely on a
+    // missing/errored element.
+    play(LIVENESS_SAFE_BASE_KEY);
+    return LIVENESS_SAFE_BASE_KEY;
+  }
+
   // ═══════════════════════════════════════════════════════════════════════════
   // ADAPTIVE MIX — the tick
   // ═══════════════════════════════════════════════════════════════════════════
@@ -1667,7 +1703,22 @@
     // exit delay and minimum hold, so by the time we get here the answer
     // is stable; play() just crossfades over FADE_DURATION as usual.
     if (st.combat.active && st.combat.key) {
-      play(st.combat.key);
+      // Cache the resolved substitute per combat.key so a healthy pick
+      // stays sticky across this 500ms tick instead of re-walking the
+      // chain (and potentially landing on a different, also-healthy alt)
+      // every call — re-resolve only when the requested key changes or
+      // the cached substitute has itself since gone cold.
+      const now = Date.now();
+      if (st.combat.subKeyFor === st.combat.key && st.combat.subKey &&
+          st.loaded[st.combat.subKey] && !st.loadErrors.has(st.combat.subKey) &&
+          !isRecentlyFailed(st.combat.subKey, now)) {
+        play(st.combat.subKey);
+        return;
+      }
+      const resolved = playHealthy(st.combat.key,
+        ['eliteGuardians', 'borg', 'bossFight'].filter(k => k !== st.combat.key));
+      st.combat.subKeyFor = st.combat.key;
+      st.combat.subKey = resolved;
       return;
     }
 
@@ -1678,7 +1729,7 @@
         const d = typeof camera !== 'undefined'
           ? camera.position.distanceTo(tgt.position) : Infinity;
         if (d < 5000) {
-          play('borg');
+          playHealthy('borg', ['bossFight', 'eliteGuardians']);
           return;
         }
       }
@@ -1686,7 +1737,7 @@
 
     // 4) Boss fight
     if (typeof musicSystem !== 'undefined' && musicSystem.inBattle) {
-      play('bossFight');
+      playHealthy('bossFight', ['eliteGuardians', 'borg']);
       return;
     }
 
@@ -1695,7 +1746,7 @@
         gameState.targetLock.active && gameState.targetLock.target) {
       const tgt = gameState.targetLock.target;
       if (tgt.userData && tgt.userData.isBlackHoleGuardian) {
-        play('eliteGuardians');
+        playHealthy('eliteGuardians', ['bossFight', 'borg']);
         return;
       }
     }
@@ -1704,7 +1755,8 @@
     const nebulaIdx = detectNearbyNebula();
     if (nebulaIdx >= 0) {
       const nebulaKey = 'nebula' + (1 + (nebulaIdx % 5));
-      play(nebulaKey);
+      playHealthy(nebulaKey,
+        ['nebula1', 'nebula2', 'nebula3', 'nebula4', 'nebula5'].filter(k => k !== nebulaKey));
       st.lastNebulaIdx = nebulaIdx;
       // DISCOVERY FLASH — first time this nebula's music area is entered.
       // The banner and the bell latch SEPARATELY: showing the banner twice
@@ -2082,6 +2134,11 @@
         // Keys currently sitting out a post-failure cooldown (demoted).
         failedKeys: Object.keys(liv.failed).filter(k => isRecentlyFailed(k, Date.now())),
         fallbackKey: pickFallbackKey(liv.lastKeyWatched, Date.now()),
+        // What the combat-context healthy-key veto is actually playing
+        // right now vs. what it was asked for — divergence here means
+        // playHealthy() substituted a track for a demoted one.
+        combatKey: st.combat.key,
+        combatSubKey: st.combat.subKey,
       };
       if (!wa.ok) {
         return { bus: null, stingers: sting, fade: fade, liveness: liveness,

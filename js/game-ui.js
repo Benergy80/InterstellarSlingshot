@@ -2375,7 +2375,7 @@ const mapDotPool = {
         // Mirrors the CSS defaults so the cache and the element agree.
         el._s = { size: '', bg: '', shadow: '', tf: '', vis: 'hidden',
                   color: '', title: '', distress: false, glyph: false,
-                  z: '', aggregate: false };
+                  z: '', aggregate: false, opacity: '', outline: '' };
         if (this.container) this.container.appendChild(el);
         return el;
     },
@@ -2533,7 +2533,13 @@ function renderClusteredMapDots(candidates) {
     const must = [];
     const loose = [];
     for (let i = 0; i < candidates.length; i++) {
-        (candidates[i].mustIndividual ? must : loose).push(candidates[i]);
+        // A hostile/critical contact (enemy, boss, borg drone, civilian in
+        // distress — dotPriority >= 90) must never be swallowed into an
+        // aggregate blob alongside the scenery cluttering its cell: the
+        // player needs to see it every frame, not just when it happens to
+        // be the current target/lock.
+        const c = candidates[i];
+        (c.mustIndividual || c.dotPriority >= 90 ? must : loose).push(c);
     }
 
     // Bucket into screen-space cells, widening the cell (fewer, bigger
@@ -2563,7 +2569,7 @@ function renderClusteredMapDots(candidates) {
         if (g.length <= 2) {
             for (let i = 0; i < g.length; i++) renderIndividualMapDot(g[i], false);
         } else {
-            renderAggregateMapDot(cellKey, g);
+            renderAggregateMapDot(cellKey, g, cellPx);
         }
     });
 }
@@ -2573,12 +2579,37 @@ function renderClusteredMapDots(candidates) {
 function renderIndividualMapDot(c, raised) {
     const dot = mapDotPool.get(c.key);
     const s = dot._s;
-    if (s.size !== c.dotSize) { dot.style.width = c.dotSize; dot.style.height = c.dotSize; s.size = c.dotSize; }
-    if (s.bg !== c.dotColor) { dot.style.backgroundColor = c.dotColor; s.bg = c.dotColor; }
-    const shadow = c.distress
+
+    // ── Salience tier ───────────────────────────────────────────────────
+    // The per-type size/colour table above was tuned for "does this look
+    // nice alone", not "can you find the enemy in a field of Dyson
+    // spheres". Blind-tested against a reference HUD, scenery (dotPriority
+    // < 60: planets, asteroids, dysons, whales, ringworlds, storms) was
+    // outsizing and outglowing the hostiles the radar exists to show.
+    // Force scenery to recede into quiet background noise, and force
+    // hostiles/critical contacts (dotPriority >= 90: enemy, boss,
+    // borg_drone, distress civilian) to stay unmistakably salient
+    // regardless of what the type table gave them.
+    let dotSize = c.dotSize;
+    let shadow = c.distress
         ? '0 0 8px ' + c.dotColor + ', 0 0 14px rgba(255,170,0,0.6)'
         : '0 0 4px ' + c.dotColor;
+    let opacity = '1';
+    let outline = 'none';
+    if (c.dotPriority < 60) {
+        dotSize = '3px';
+        shadow = 'none';
+        opacity = '0.45';
+    } else if (c.dotPriority >= 90) {
+        dotSize = c.dotPriority >= 110 ? '9px' : '7px';
+        outline = '1px solid rgba(255,255,255,0.9)';
+    }
+
+    if (s.size !== dotSize) { dot.style.width = dotSize; dot.style.height = dotSize; s.size = dotSize; }
+    if (s.bg !== c.dotColor) { dot.style.backgroundColor = c.dotColor; s.bg = c.dotColor; }
     if (s.shadow !== shadow) { dot.style.boxShadow = shadow; s.shadow = shadow; }
+    if (s.opacity !== opacity) { dot.style.opacity = opacity; s.opacity = opacity; }
+    if (s.outline !== outline) { dot.style.outline = outline; s.outline = outline; }
     if (s.distress !== c.distress) {
         if (c.distress) dot.classList.add('distress-map-dot');
         else dot.classList.remove('distress-map-dot');
@@ -2601,7 +2632,7 @@ function renderIndividualMapDot(c, raised) {
 // One dot standing in for every contact bucketed into `cellKey` this
 // refresh. Keyed on the CELL, not the members, so the element a crowded
 // spot on the radar owns stays stable while its membership churns.
-function renderAggregateMapDot(cellKey, group) {
+function renderAggregateMapDot(cellKey, group, cellPx) {
     const dot = mapDotPool.get('agg:' + cellKey);
     const s = dot._s;
 
@@ -2624,7 +2655,11 @@ function renderAggregateMapDot(cellKey, group) {
     // the true member count, it just stops growing the dot past it.
     const baseSize = parseFloat(dominant.dotSize) || 4;
     const scaleN = Math.min(n, 99);
-    const size = Math.round(Math.min(baseSize + 6, baseSize + 1 + Math.sqrt(scaleN))) + 'px';
+    // Clamped to the bucketing cell's own pitch — without this an
+    // aggregate could grow (baseSize+6, up to ~10-14px) well past the
+    // ~5px grid it was bucketed on, so neighbouring cells' aggregates
+    // overlapped into one fused blob instead of tiling edge-to-edge.
+    const size = Math.round(Math.min(cellPx, baseSize + 6, baseSize + 1 + Math.sqrt(scaleN))) + 'px';
 
     // Count-weighted brightness, capped well short of the distress pulse
     // so a big cluster reads as "many", not "on fire".
@@ -2634,6 +2669,16 @@ function renderAggregateMapDot(cellKey, group) {
     if (s.size !== size) { dot.style.width = size; dot.style.height = size; s.size = size; }
     if (s.bg !== dominant.dotColor) { dot.style.backgroundColor = dominant.dotColor; s.bg = dominant.dotColor; }
     if (s.shadow !== shadow) { dot.style.boxShadow = shadow; s.shadow = shadow; }
+    // This element may be a recycled node that was, last refresh, a
+    // dimmed scenery individual (opacity 0.45) or an outlined hostile
+    // (1px white outline) — the salience tier in renderIndividualMapDot.
+    // Reset opacity explicitly so a fused-cell aggregate doesn't inherit
+    // dimming from whatever this node used to represent. Outline is
+    // CLEARED (not forced to 'none') — .aggregate-map-dot already gets
+    // its own faint "many contacts" ring from CSS, and an inline 'none'
+    // would win over that class rule and erase the ring.
+    if (s.opacity !== '1') { dot.style.opacity = '1'; s.opacity = '1'; }
+    if (s.outline !== '') { dot.style.outline = ''; s.outline = ''; }
     if (s.distress !== anyDistress) {
         if (anyDistress) dot.classList.add('distress-map-dot');
         else dot.classList.remove('distress-map-dot');

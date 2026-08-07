@@ -1749,8 +1749,25 @@ function warpStreakBurst(dir, speed, colA, colB, strength) {
 // speed is actually back.
 function warpExitBeat(blackHole, refSpeed) {
     try {
-        if (typeof window !== 'undefined' && typeof window.warpFovPulse === 'function') {
-            window.warpFovPulse(-11, 700);
+        // WARP-EXIT SYNC (lens): a signed warpFovPulse(-11, ...) impulse was
+        // fired here previously. Its envelope — sin(pi*pk^0.32) — is FULL
+        // amplitude near pk~0.1 and decays back to ZERO by pk=1 by
+        // construction. That's correct for a widen-then-settle entry pulse,
+        // but for a NEGATIVE (tighten) amplitude "decay back to zero" IS a
+        // re-expansion: measured, -8.3deg at t=0.26s releasing to 0.00deg at
+        // t=0.70s, i.e. +8.3deg of upward force in 0.44s — a spring, not a
+        // settle. That's the lens "springing back open" mid-drop.
+        // Fix: express the contraction as a TARGET, not an impulse. Stamp
+        // where the lens is RIGHT NOW and a duration; camera-system.js eases
+        // (camera.fov -> live cruise FOV) with a Math.pow(1-p,3) curve that
+        // is strictly decreasing by construction and recomputes the live
+        // cruise target every frame, so it always lands exactly on wherever
+        // cruise actually is by the time the ease finishes — no handoff, no
+        // rebound.
+        if (typeof window !== 'undefined' && window.cameraState) {
+            window.cameraState._exitFovFrom = (typeof camera !== 'undefined' && camera.fov) ? camera.fov : 75;
+            window.cameraState._exitFovT0 = (typeof performance !== 'undefined') ? performance.now() : Date.now();
+            window.cameraState._exitFovMs = 700;
         }
         if (typeof whipScreenPulse === 'function') {
             whipScreenPulse(blackHole ? 0xb26bff : 0x6be6ff, 0.55);
@@ -2620,9 +2637,18 @@ function warpTunnelBurst(strength, durMs, blackHole) {
 function _wtuThreshold(entering, bh) {
     // The tunnel's own punctuation: lens snap + chromatic rim rip. Entry
     // tightens then blows open; exit is a single relieving flare.
+    // WARP-EXIT SYNC: the exit half used to fire warpFovPulse(-11, 700) here
+    // too — a second, independently-timed copy of the same spring-back bug
+    // fixed in warpExitBeat() (see visual-flair.js's warpExitBeat for the
+    // measured +8.3deg rebound this produced). A widen-then-settle impulse
+    // (+15/950, entry) is legitimately monotone-back-to-rest; a
+    // tighten-then-settle one is not, because the envelope always decays
+    // to ZERO regardless of sign. The exit contraction is now driven purely
+    // by warpExitBeat()'s cameraState._exitFov* target-ease in
+    // camera-system.js, so only the entry pulse fires from here.
     try {
-        if (typeof window.warpFovPulse === 'function') {
-            window.warpFovPulse(entering ? 15 : -11, entering ? 950 : 700);
+        if (entering && typeof window.warpFovPulse === 'function') {
+            window.warpFovPulse(15, 950);
         }
         if (typeof whipScreenPulse === 'function') {
             whipScreenPulse(bh ? 0xb26bff : 0x6be6ff, entering ? 0.85 : 0.6);

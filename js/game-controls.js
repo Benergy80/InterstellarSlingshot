@@ -659,6 +659,19 @@ const _PLUME_OPA_IDLE = 0.62, _PLUME_OPA_FULL = 1.00;
 // supposed to be distinguishable from.
 const _PLUME_ALARM = 0xff0a14;
 
+// ASPECT-GATE RELEASE, in framebuffer px of natural (un-widened) plume width.
+// The gate that hides a head-on ship's engines is at full strength while the
+// plume is _HI px or wider, and fully released once it is under _LO. For a
+// standard ~46u hull at 75 degrees FOV in a 1120x630 buffer that is: full gate
+// inside ~1,300u, releasing through ~2,800u, gone by ~3,500u. Chosen against
+// the AI's own numbers rather than by feel — enemy detectionRange is
+// 1,200-1,600u and firingRange 180-240u, so the entire band where aspect is a
+// decision the player makes sits comfortably inside the full-gate region,
+// and everything past it is survey range where the only question is whether
+// there is a ship there at all.
+const _PLUME_ASPECT_PX_HI = 4.0;
+const _PLUME_ASPECT_PX_LO = 1.5;
+
 function _updateShipThrusterCones(ship, thrusting, dist, charge) {
     if (!ship || !ship.userData || !ship.userData._thrusters) return;
     const target = thrusting ? 1.0 : _PLUME_IDLE;
@@ -680,17 +693,30 @@ function _updateShipThrusterCones(ship, thrusting, dist, charge) {
     // pixel. Length is left alone — the streak's LENGTH is what reads as
     // motion, and stretching it with distance would look like a warp trail.
     let widen = 1.0;
+    // The plume's NATURAL on-screen width in framebuffer px, before the floor
+    // widens it. This is the honest "how big is this contact" number and the
+    // aspect gate below keys off it; `widen` itself cannot, because it
+    // saturates at its 2.2 cap by ~1,600u for a standard hull and is flat
+    // (and therefore blind) across the whole survey band beyond that.
+    let plumePx = 0;
     if (dist) {
         const ppu = _plumePxPerUnit(dist);
         if (ppu > 0) {
             const halo = ship.userData._thrusters[1];
             const rad = halo && halo.mesh.userData._plumeWorldRad;
             if (rad > 0) {
-                const px = rad * 2 * ppu;
-                if (px < _PLUME_MIN_PX) widen = Math.min(_PLUME_MAX_WIDEN, _PLUME_MIN_PX / px);
+                plumePx = rad * 2 * ppu;
+                if (plumePx < _PLUME_MIN_PX) widen = Math.min(_PLUME_MAX_WIDEN, _PLUME_MIN_PX / plumePx);
             }
         }
     }
+
+    // "AM I FAR AWAY?", derived from `widen`. Hoisted above the aspect gate
+    // because BOTH the thrust envelope (below) and the gate need it, and it
+    // is a pure function of `widen`. See the long note at the envelope for
+    // why the curve is ^0.55 and not linear.
+    const farLift = (_PLUME_MAX_WIDEN > 1)
+        ? Math.pow(Math.min(1, Math.max(0, (widen - 1) / (_PLUME_MAX_WIDEN - 1))), 0.55) : 0;
 
     // AXIS-ALIGNED BILLBOARD. The streak keeps its long edge on the thrust
     // axis and spins about that axis until its face is square to the
@@ -707,6 +733,13 @@ function _updateShipThrusterCones(ship, thrusting, dist, charge) {
     // instead. The fallback direction below just keeps the maths finite.
     const cones = ship.userData._thrusters;
     let axialFade = 1.0;
+    // SIGNED aspect: -1 = the camera is off the ship's NOSE (it is charging
+    // you), 0 = broadside, +1 = the camera is dead astern of the engine bells
+    // (it is running away). Every hull in the game flies -Z forward and mounts
+    // its plume at +Z (see applyEnemyRotation / _applyNoseFlip), and _pbAxis is
+    // +Z * apexSign, so a positive axial component means "I can see the
+    // exhaust". Default +1 so a missing camera keeps the pre-gate behaviour.
+    let aspect = 1.0;
     const _cam = (typeof camera !== 'undefined' && camera) ? camera : window.camera;
     if (_cam) {
         const apex = ship.userData._plumeApex || 1;
@@ -717,9 +750,13 @@ function _updateShipThrusterCones(ship, thrusting, dist, charge) {
         _pbCam.z -= (cones[1] && cones[1].mesh.userData._plumeZ) || 0;
         const axial = _pbCam.dot(_pbAxis);
         const camLen = Math.max(1e-6, _pbCam.length());
-        // 1 when the camera is broadside to the plume, 0 when it is dead
-        // astern. Used to cross-fade streak -> nozzle bloom.
-        axialFade = 1 - Math.min(1, Math.abs(axial) / camLen);
+        // 1 when the camera is broadside to the plume, 0 when it is on the
+        // axis at EITHER end. Used to cross-fade streak -> nozzle bloom, which
+        // is a genuinely symmetric problem (the quad is edge-on at both
+        // poles), so this one keeps its absolute value. Which pole we are at
+        // is `aspect`, kept separately.
+        aspect = axial / camLen;
+        axialFade = 1 - Math.min(1, Math.abs(aspect));
         _pbNorm.copy(_pbCam).addScaledVector(_pbAxis, -axial);
         if (_pbNorm.lengthSq() < 1e-8) _pbNorm.set(1, 0, 0);
         _pbNorm.normalize();
@@ -729,11 +766,54 @@ function _updateShipThrusterCones(ship, thrusting, dist, charge) {
             cones[i].mesh.quaternion.setFromRotationMatrix(_pbMat);
         }
     }
+    // ── ASPECT GATE: which way is it pointing? ───────────────────────────
+    //
+    // The one thing a dogfight has to tell you before anything else is
+    // whether the contact is COMING or GOING, and this build could not say
+    // it. Measured at 400u with same-frame GPU readback and object toggling:
+    // charging silhouette 505 px, fleeing 636 px, IoU 0.79, mean-luminance
+    // difference 1.4/255. Two identical blobs.
+    //
+    // The cause was that the plume was drawn at full strength from the NOSE.
+    // `axialFade` above is deliberately symmetric — the streak quad really is
+    // edge-on at both poles — but the old code fed that symmetric value
+    // straight into the nozzle-core boost, so the engine bloom got its full
+    // +55% "you are staring into the bell" treatment while looking at the
+    // ship's FRONT, where a real engine bell is behind the entire hull. The
+    // cue was not weak, it was INVERTED: head-on the plume was half the lit
+    // pixels of the contact.
+    //
+    // So gate the plume by the tail hemisphere. 1.0 from broadside through
+    // dead astern — the broadside spear and the aft torch are the two reads
+    // that already work and nothing here touches them — falling to a 0.12
+    // floor over the last ~30 degrees before dead ahead. A floor, not zero:
+    // a hostile bearing down on you must still be findable, it just must not
+    // out-glow the one that is running.
+    //
+    // ...EXCEPT at survey range, where the gate is handed back. Once the
+    // plume is a couple of pixels across, the contact has no readable aspect
+    // to communicate and the plume is the only thing rendering it at all;
+    // presence beats aspect at 15,000u, exactly as it does for the idle-length
+    // override below. The handback is keyed to `plumePx` and not to `farLift`
+    // deliberately — measured, `farLift` is already 0.9 at 1,500u for a
+    // standard hull, which is inside detection range (1,200-1,600u) and the
+    // exact band where a head-on contact is 93% plume and most needs gating.
+    // Keying on raw px holds the gate at full strength through the whole
+    // fighting envelope and only releases it out where the ship is a speck.
+    const presence = (plumePx > 0)
+        ? (1 - THREE.MathUtils.smoothstep(plumePx, _PLUME_ASPECT_PX_LO, _PLUME_ASPECT_PX_HI)) : 1;
+    const nearGate = 0.12 + 0.88 * THREE.MathUtils.smoothstep(aspect, -0.55, -0.05);
+    const tailGate = nearGate + (1 - nearGate) * presence;
+    // Head-on, drop the angular-size floor too. `widen` exists to keep a
+    // distant plume above a pixel; applied to a gated head-on contact it just
+    // inflates the residual bloom back up to 2.2x and undoes the gate.
+    if (tailGate < 0.2) widen = 1.0;
+
     // Sharpen the cross-fade: the streak holds full strength across most of
     // the sphere and only gives way in the last ~25 degrees, where it is
     // geometrically edge-on anyway.
-    const streakFade = Math.min(1, Math.pow(axialFade, 0.45) * 1.12);
-    const coreBoost = 1 + (1 - axialFade) * 0.55;
+    const streakFade = Math.min(1, Math.pow(axialFade, 0.45) * 1.12) * tailGate;
+    const coreBoost = (1 + (1 - axialFade) * 0.55) * tailGate;
 
     // THRUST ENVELOPE. `next` rides 0.80 (_PLUME_IDLE) -> 1.00; normalise it
     // so the pilot-light/spear curve above is expressed in plain 0..1.
@@ -751,8 +831,8 @@ function _updateShipThrusterCones(ship, thrusting, dist, charge) {
     // so a linear ramp would leave the whole 3,000-5,000u band on the short
     // idle stub — exactly the band where you are picking hostiles out of the
     // sky. The power curve hands back half the length by ~3,600u.
-    const farLift = (_PLUME_MAX_WIDEN > 1)
-        ? Math.pow(Math.min(1, Math.max(0, (widen - 1) / (_PLUME_MAX_WIDEN - 1))), 0.55) : 0;
+    // (`farLift` itself is computed up by the angular-size floor, because the
+    // aspect gate needs it before this point.)
     const lenIdle = _PLUME_LEN_IDLE + (1 - _PLUME_LEN_IDLE) * farLift;
     const widIdle = _PLUME_WID_IDLE + (1 - _PLUME_WID_IDLE) * farLift;
     const opaIdle = _PLUME_OPA_IDLE + (1 - _PLUME_OPA_IDLE) * farLift;

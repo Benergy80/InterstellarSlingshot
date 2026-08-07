@@ -601,6 +601,33 @@ function updateCameraView(camera) {
             // (no-op) and _fovT passes through untouched.
             const _cruiseFovT = 75 + Math.abs(_leanT) * 5 + _crackT * 6 + _whipV * 7.5;
             _fovT = _cruiseFovT + (_fovT - _cruiseFovT) * _exitSettle;
+            // WARP-EXIT SYNC (lens contraction, cubic target-ease): the drop-
+            // out used to also carry a SIGNED warpFovPulse(-11, 700) impulse
+            // riding on top of the drain above. That impulse's envelope
+            // (sin(pi*pk^0.32) in warpFovPulse's consumer below) is by
+            // construction full amplitude near pk~0.1 and back to ZERO by
+            // pk=1 — a re-expansion for a negative amplitude, measured as
+            // +8.3deg of upward force released over 0.44s: the lens
+            // "springing back open" mid-drop. warpExitBeat() (visual-flair.js)
+            // no longer fires that pulse; instead it stamps _exitFovFrom (the
+            // FOV at the instant of drop-out) / _exitFovT0 / _exitFovMs here.
+            // While that window is live, this OVERRIDES _fovT with a cubic
+            // ease-out from _exitFovFrom toward _cruiseFovT — recomputed live
+            // above from this frame's actual lean/crack/whip state, so it's
+            // wherever cruise ACTUALLY is by the time the ease finishes, not
+            // a stale guess. Math.pow(1-p,3) is strictly decreasing for a
+            // tighten (from > cruise) by construction — there is no bottom
+            // to spring back from, only a monotone approach to a moving
+            // target — so no dip-then-reinflate is possible.
+            if (cameraState._exitFovT0) {
+                const _fp = (performance.now() - cameraState._exitFovT0) /
+                    Math.max(1, cameraState._exitFovMs || 700);
+                if (_fp < 1) {
+                    _fovT = _cruiseFovT + (cameraState._exitFovFrom - _cruiseFovT) * Math.pow(1 - _fp, 3);
+                } else {
+                    cameraState._exitFovT0 = 0;
+                }
+            }
             _fovT = Math.max(55, Math.min(118, _fovT));
             if (Math.abs(camera.fov - _fovT) > 0.05) {
                 camera.fov = _fovT;

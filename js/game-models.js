@@ -446,6 +446,17 @@ function _addFresnelRim(material, opts) {
             .replace('#include <common>', vertVaryings)
             .replace('#include <begin_vertex>', vertAssign);
 
+        // BUG (fixed): this branch used to omit the hullForm uniform block
+        // entirely, so any caller combining panelDetail:true with
+        // hullForm:true (createFactionHullMaterial does both, by default,
+        // for every enemy/boss hull once panelDetail was turned on below)
+        // got a fragment shader that REFERENCED uFormFloor/uFormTop/
+        // uFormNoseSign/uFormNoseDark in the color_fragment inject further
+        // down without ever declaring them — a hard compile failure
+        // (measured live: "ERROR: 'uFormFloor' : undeclared identifier",
+        // fragment shader not compiled) on every single hull in the scene.
+        // Only createPlayerHullMaterial exercised panelDetail before now,
+        // and it never sets hullForm, so this was dormant until today.
         const fragCommon = panelDetail
             ? `#include <common>
 varying vec3 vRimNormalW;
@@ -461,6 +472,7 @@ uniform float rimBaseStrength;
 uniform float rimBoostStrength;
 uniform float rimCoreDarken;
 uniform float uRimPanelCell;
+${hullForm ? 'uniform float uFormFloor;\nuniform float uFormTop;\nuniform float uFormNoseSign;\nuniform float uFormNoseDark;' : ''}
 uniform float uTime;
 
 float _rimHash21( vec2 p ) {
@@ -561,6 +573,73 @@ uniform float uTime;`;
     return uniforms;
 }
 
+// Per-mesh panel-line cell size for the panelDetail shader path above.
+// Enemy/boss GLBs are NOT authored at one common scale — raw hull
+// geometry spans 2.03x to 900.67x across factions (see the UFO scale-
+// correction note below) — so a single hardcoded cell size would either
+// vanish into noise on the smallest hulls or smear into a handful of
+// giant slabs on the largest. Deriving it from each mesh's own object-
+// space bounding box keeps panel plates a roughly constant FRACTION of
+// the hull (~9 plates across the longest axis) regardless of how the
+// source asset was exported, with no dependency on UVs (these GLBs carry
+// POSITION + NORMAL only, no TEXCOORD — see the player-hull note further
+// down) since _rimPanelDetail samples object-space position, not uv.
+function _hullPanelCellSize(geometry) {
+    if (!geometry) return 12;
+    if (!geometry.boundingBox) geometry.computeBoundingBox();
+    const size = geometry.boundingBox.getSize(new THREE.Vector3());
+    const maxDim = Math.max(size.x, size.y, size.z) || 1;
+    return Math.max(maxDim / 9, 0.0005);
+}
+
+// REAL KEY LIGHT for enemy/boss hulls. Every hull floor below (emissive +
+// panel noise) previously only ever met a camera-parented shipLight
+// PointLight whose falloff (distance 800, decay 2 — see game-core.js) is
+// negligible by the time it reaches a hull at combat range, so a hull was
+// effectively SELF-lit only: uniform emissive with no specular breakup
+// and no true form gradient, exactly the "0 of 7,848 materials carry a
+// normal/roughness map, hulls read as flat/clipped" finding. Restoring a
+// genuine lit response doesn't require a UV-mapped normal map on these
+// low-poly, faceted GLBs — it requires a light that ISN'T parallel to the
+// camera, so adjacent facets pick up different N.L and the eye reads real
+// surface. A warm, camera-parented DirectionalLight placed off-axis from
+// the view direction does exactly that, at zero per-hull cost.
+// Installed lazily: this file loads and runs before game-core.js
+// constructs `camera` (see index.html's script order), so neither the
+// first hull material built nor top-level parse time can assume the
+// camera already exists — this polls for it and installs itself once.
+let _hullKeyLightInstalled = false;
+function _ensureHullKeyLight() {
+    if (_hullKeyLightInstalled) return;
+    if (typeof window === 'undefined' || typeof THREE === 'undefined') return;
+    // game-core.js declares `camera` with `let` at its own script's top
+    // level (not `window.camera = ...`), so it never becomes a property
+    // of window — it's only reachable as the bare identifier, which
+    // classic <script> tags DO share via the realm's global lexical
+    // environment (this is the same fallback chain game-controls.js:710
+    // and game-objects.js:3927 already rely on for the same reason).
+    const cam = (typeof camera !== 'undefined' && camera) ? camera : window.camera;
+    if (!cam || !cam.isCamera) return;
+    const keyLight = new THREE.DirectionalLight(0xfff2d8, 1.6);
+    // Local to the camera, like shipLight's (0,0,-50) — offset up/right
+    // and aimed forward-down-left so N.L response varies across a hull's
+    // top/side/nose instead of lighting every facing facet identically.
+    keyLight.position.set(160, 220, 30);
+    keyLight.target.position.set(-60, -80, -600);
+    cam.add(keyLight);
+    cam.add(keyLight.target);
+    _hullKeyLightInstalled = true;
+}
+
+function _runHullKeyLightInstallLoop() {
+    if (_hullKeyLightInstalled) return;
+    requestAnimationFrame(_runHullKeyLightInstallLoop);
+    _ensureHullKeyLight();
+}
+if (typeof window !== 'undefined' && typeof requestAnimationFrame === 'function') {
+    requestAnimationFrame(_runHullKeyLightInstallLoop);
+}
+
 // Faction-tinted, rim-lit hull material for enemy/boss GLB meshes. Keeps
 // MeshStandardMaterial's real lighting response (shipLight + ambient +
 // system stars already light these ships) and adds a constant ambient
@@ -594,6 +673,7 @@ uniform float uTime;`;
 //                       multiplies it 1x->3.4x, still has somewhere to go
 function createFactionHullMaterial(colorHex, opts) {
     opts = opts || {};
+    _ensureHullKeyLight();
     const WHITE = new THREE.Color(0xffffff);
     const base = new THREE.Color(colorHex !== undefined ? colorHex : 0xff0000);
     // HEAT, NOT WHITE. Value has to come from somewhere, and where it comes
@@ -618,8 +698,12 @@ function createFactionHullMaterial(colorHex, opts) {
     const HOT_COOL = new THREE.Color(0xbdf0ff);   // arc white for cool hues
     const hotPoint = (_hsl.h < 0.17 || _hsl.h > 0.80) ? HOT_WARM : HOT_COOL;
     const hot = (heat) => base.clone().lerp(hotPoint, heat);
-    // High-value hull body.
-    const hullTone = hot(opts.hullHeat !== undefined ? opts.hullHeat : 0.55);
+    // High-value hull body. Was 0.55 — with a real key light now landing
+    // on these hulls (see _ensureHullKeyLight above) that much heat plus
+    // the old 0.70 emissive floor clipped 63-74% of hull pixels to white
+    // (measured: ufo 73.8%, sith 63.2%). 0.35 keeps the body legible
+    // against the starfield without doing all the work alone.
+    const hullTone = hot(opts.hullHeat !== undefined ? opts.hullHeat : 0.35);
     // Always-on emissive floor — the term that survives at any range.
     const emisTone = hot(opts.emissiveHeat !== undefined ? opts.emissiveHeat : 0.38);
     // Rim + boost shimmer stay SATURATED: that's where faction identity lives
@@ -630,7 +714,12 @@ function createFactionHullMaterial(colorHex, opts) {
     const material = new THREE.MeshStandardMaterial({
         color: hullTone,
         emissive: emisTone,
-        emissiveIntensity: opts.emissiveIntensity !== undefined ? opts.emissiveIntensity : 0.70,
+        // Was 0.70 (a permanent, uniform emissive floor doing most of the
+        // work). Dropped to 0.28 now that _ensureHullKeyLight gives every
+        // hull a real, direction-dependent lit response — the floor only
+        // needs to keep the ship visible in genuinely empty space, not
+        // carry the whole presence read and wash out every form cue.
+        emissiveIntensity: opts.emissiveIntensity !== undefined ? opts.emissiveIntensity : 0.28,
         roughness: opts.roughness !== undefined ? opts.roughness : 0.42,
         metalness: opts.metalness !== undefined ? opts.metalness : 0.35,
         // FrontSide: DoubleSide drew every interior face of these untextured
@@ -652,6 +741,17 @@ function createFactionHullMaterial(colorHex, opts) {
         baseStrength: opts.rimBaseStrength !== undefined ? opts.rimBaseStrength : 0.9,
         boostStrength: opts.rimBoostStrength !== undefined ? opts.rimBoostStrength : 1.7,
         coreDarken: opts.coreDarken !== undefined ? opts.coreDarken : 0.22,
+        // PANEL/RIVET SURFACE DETAIL. These GLBs carry no TEXCOORD (see
+        // the player-hull note further down), so a conventional
+        // map/roughnessMap/normalMap is a no-op on them — silently
+        // sampling an undefined vUv. _rimPanelDetail already solves this
+        // for the player hull via object-space triplanar noise (no UVs
+        // needed); it was just never turned on for enemy/boss hulls,
+        // which is why 0 of 7,848 hull materials in the scene ever showed
+        // panel lines, rivets or AO. On by default here for every caller
+        // of createFactionHullMaterial (enemy, boss, fallback, UFO).
+        panelDetail: opts.panelDetail !== false,
+        panelCellSize: opts.panelCellSize !== undefined ? opts.panelCellSize : 12,
         hullForm: opts.hullForm !== false,
         formFloor: opts.formFloor !== undefined ? opts.formFloor : 0.66,
         formTop: opts.formTop !== undefined ? opts.formTop : 1.72,
@@ -804,9 +904,14 @@ function createEnemyMeshWithModel(regionId, fallbackGeometry, material, scaleOve
                 // same shared function.
                 const _isVulcanHull = (regionId === 8);
                 child.material = createFactionHullMaterial(material.color || 0xff0000, {
-                    emissiveIntensity: _isVulcanHull ? 0.84 : 0.70,
+                    // Was 0.84/0.70 — see the emissiveIntensity default
+                    // note on createFactionHullMaterial. Kept proportional
+                    // (0.4x) so Vulcan still carries its small dedicated
+                    // margin over the shared floor.
+                    emissiveIntensity: _isVulcanHull ? 0.34 : 0.28,
                     emissiveHeat: _isVulcanHull ? 0.48 : undefined,
                     rimIntensity: _isVulcanHull ? 0.74 : 0.62,
+                    panelCellSize: _hullPanelCellSize(child.geometry),
                     // Nose direction in MESH-LOCAL space: the nose-flipped
                     // regions are authored +Z-forward, everything else -Z.
                     formNoseSign: _enemyModelNoseFlip[regionId] ? 1.0 : -1.0
@@ -906,10 +1011,11 @@ function createEnemyMeshWithModel(regionId, fallbackGeometry, material, scaleOve
         // on the GLB path — it flattened the silhouette it was meant to sell.
         const _isVulcanHullFallback = (regionId === 8);
         const baseMaterial = createFactionHullMaterial(material.color || 0xff0000, {
-            emissiveIntensity: _isVulcanHullFallback ? 0.84 : 0.70,
+            emissiveIntensity: _isVulcanHullFallback ? 0.34 : 0.28,
             emissiveHeat: _isVulcanHullFallback ? 0.48 : undefined,
             rimIntensity: _isVulcanHullFallback ? 0.74 : 0.62,
             roughness: 0.5,
+            panelCellSize: _hullPanelCellSize(fallbackGeometry),
             formNoseSign: -1.0
         });
 
@@ -954,12 +1060,17 @@ function createBossMeshWithModel(regionId, fallbackGeometry, material) {
                 // still out-reads the fighters it flies with now that they
                 // are bright too.
                 child.material = createFactionHullMaterial(material.color || 0xff0000, {
-                    hullHeat: 0.62,
+                    // hullHeat/emissiveIntensity scaled down in the same
+                    // proportion as the shared defaults (0.55->0.35,
+                    // 0.70->0.28) so a boss keeps its one-notch-hotter
+                    // margin over the fighters it flies with.
+                    hullHeat: 0.40,
                     emissiveHeat: 0.46,
-                    emissiveIntensity: 0.80,
+                    emissiveIntensity: 0.32,
                     roughness: 0.4,
                     rimIntensity: 0.7,
                     rimBaseStrength: 1.1,
+                    panelCellSize: _hullPanelCellSize(child.geometry),
                     formNoseSign: _enemyModelNoseFlip[regionId] ? 1.0 : -1.0
                 });
 
@@ -1312,10 +1423,11 @@ function _applyUFOHullPresenceFloor(ufo) {
         }
         const oldMap = mat.map || null;
         const newMat = createFactionHullMaterial(UFO_HULL_COLOR, {
-            emissiveIntensity: 0.74,
+            emissiveIntensity: 0.30,
             rimIntensity: 0.64,
             roughness: 0.4,
             metalness: 0.35,
+            panelCellSize: _hullPanelCellSize(child.geometry),
             hullForm: true
         });
         if (oldMap) newMat.map = oldMap;
