@@ -34,6 +34,73 @@ function getScaledSize(baseSize, objectType) {
     return baseSize * multiplier;
 }
 
+// =============================================================================
+// SHARED PARTICLE SPRITE — the one texture that stops every nebula, dust lane
+// and accretion cloud rasterizing as a hard axis-aligned SQUARE.
+// =============================================================================
+// A bare THREE.PointsMaterial has no map and no alphaMap, so its fragment stage
+// never looks at gl_PointCoord: WebGL fills the entire gl_PointSize quad with a
+// flat colour. At size 2.5 with 5,000 particles per cloud that reads as a field
+// of grey blocks — the "nebula" beat looked like JPEG macroblocking, and the
+// wide vista looked compressed, because it literally was a grid of squares.
+//
+// The fix is one 64px radial-falloff CanvasTexture, built once and shared by
+// every point cloud in the game: RGB stays pure white so vertexColors and the
+// material colour survive untouched, and the falloff lives entirely in ALPHA.
+// Under AdditiveBlending (SRC_ALPHA, ONE) that makes each particle contribute
+// colour * opacity * falloff — a soft round puff instead of a filled square —
+// and under NormalBlending it is a normal soft sprite.
+//
+// Cost is nil: it is ONE extra texture bind on materials that already draw, and
+// every cloud that shares this texture shares the same GPU object, so the bind
+// is usually already hot. No new draw calls, no new geometry.
+let _POINT_SPRITE_TEX = null;
+function getPointSprite() {
+    if (_POINT_SPRITE_TEX) return _POINT_SPRITE_TEX;
+    if (typeof THREE === 'undefined' || typeof document === 'undefined') return null;
+    const S = 64;
+    const cv = document.createElement('canvas');
+    cv.width = cv.height = S;
+    const ctx = cv.getContext('2d');
+    const img = ctx.createImageData(S, S);
+    const d = img.data;
+    const c = (S - 1) / 2;
+    for (let y = 0; y < S; y++) {
+        for (let x = 0; x < S; x++) {
+            const dx = (x - c) / c, dy = (y - c) / c;
+            const r = Math.sqrt(dx * dx + dy * dy);      // 0 centre, 1 at the inscribed circle
+            // Broad soft puff: a squared window that reaches exactly zero at the
+            // quad edge (so no square corner can ever survive), multiplied by a
+            // gaussian core that keeps the particle's centre bright enough that
+            // the cloud does not just turn into haze.
+            let a = 0;
+            if (r < 1) {
+                const win = (1 - r) * (1 - r);
+                a = win * (0.35 + 0.65 * Math.exp(-2.5 * r * r));
+            }
+            const i = (y * S + x) * 4;
+            d[i] = 255; d[i + 1] = 255; d[i + 2] = 255;   // white: never tints vertexColors
+            d[i + 3] = Math.round(Math.max(0, Math.min(1, a)) * 255);
+        }
+    }
+    ctx.putImageData(img, 0, 0);
+    const tex = new THREE.CanvasTexture(cv);
+    // Clamp so the falloff can never wrap and re-introduce an edge, and skip
+    // mipmaps: these quads are 1-8 px, LinearFilter on the base level is both
+    // cheaper and sharper than a mip chain here.
+    tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
+    tex.minFilter = THREE.LinearFilter;
+    tex.magFilter = THREE.LinearFilter;
+    tex.generateMipmaps = false;
+    tex.needsUpdate = true;
+    _POINT_SPRITE_TEX = tex;
+    return tex;
+}
+// Exposed so the other particle files (cosmic-features, proc-galaxies, flair…)
+// can adopt the SAME texture object rather than each minting their own — one
+// shared GPU texture, one bind.
+if (typeof window !== 'undefined') window.getPointSprite = getPointSprite;
+
 // Enhanced 3D Galaxy definitions with spherical coordinates
 const galaxyTypes = [
     { name: 'Spiral', color: 0x4488ff, size: 1200, arms: 3, faction: 'Federation', species: 'Human', mass: 10000 },
@@ -4634,10 +4701,12 @@ function createGalaxyEnvironmentalEffects(galaxyBlackHole, galaxyType) {
     
     const effectMaterial = new THREE.PointsMaterial({
         size: 1,
+        map: getPointSprite(),          // soft round grain, not a filled square
         transparent: true,
         opacity: 0.3,
         vertexColors: true,
-        blending: THREE.AdditiveBlending
+        blending: THREE.AdditiveBlending,
+        depthWrite: false
     });
     
     const effects = new THREE.Points(effectGeometry, effectMaterial);
@@ -5305,6 +5374,8 @@ const core8Distance = (1600 + Math.random() * 880) * (Math.random() < 0.5 ? 1 : 
 const core8GalaxyStarsGeometry = new THREE.BufferGeometry();
 const core8GalaxyStarsMaterial = new THREE.PointsMaterial({
     size: 2.0,
+    map: getPointSprite(),              // round star, not a square pixel block
+    depthWrite: false,
     transparent: true,
     opacity: _isMobileRenderTier() ? 0.5 : 0.9,
     vertexColors: true,
@@ -6551,6 +6622,8 @@ try {
 const localGalaxyStarsGeometry = new THREE.BufferGeometry();
 const localGalaxyStarsMaterial = new THREE.PointsMaterial({
     size: 1.0,
+    map: getPointSprite(),              // round star, not a square pixel block
+    depthWrite: false,
     vertexColors: true,
     transparent: true,
     opacity: _isMobileRenderTier() ? 0.5 : 1.0,
@@ -7057,6 +7130,8 @@ galaxyStarsGeometry.setAttribute('color', new THREE.Float32BufferAttribute(galax
 
 const galaxyStarsMaterial = new THREE.PointsMaterial({
     size: 1.0,
+    map: getPointSprite(),              // round star, not a square pixel block
+    depthWrite: false,
     transparent: true,
     opacity: _isMobileRenderTier() ? 0.5 : 0.8,
     vertexColors: true,
@@ -7198,6 +7273,8 @@ if (typeof galaxyStarsToAdd !== 'undefined') {
                     
                     const clusterMaterial = new THREE.PointsMaterial({
                         size: 1.0,
+                        map: getPointSprite(),   // round star, not a square block
+                        depthWrite: false,
                         transparent: true,
                         opacity: 0.8,
                         vertexColors: true,
@@ -7638,11 +7715,18 @@ function createClusteredNebulas() {
 
         const nebulaMaterial = new THREE.PointsMaterial({
             size: 2.5,
+            // Soft round puff instead of a hard axis-aligned square. Without a
+            // map the fragment stage never reads gl_PointCoord and WebGL fills
+            // the whole gl_PointSize quad flat — 5,000 grey blocks per cloud.
+            map: getPointSprite(),
             vertexColors: true,
             transparent: true,
             opacity: 0.65,
             blending: THREE.AdditiveBlending,
             sizeAttenuation: true,
+            // Required with the sprite: the quad's transparent corners must not
+            // punch a square hole in the depth buffer for everything behind.
+            depthWrite: false,
             fog: false // preserve the cloud's own core->rim gradient; scene fog would flatten it
         });
         
@@ -7925,11 +8009,18 @@ function createDistantNebulas() {
         // MATCHED TO GALAXY-FORMATION: Same particle material settings
         const nebulaMaterial = new THREE.PointsMaterial({
             size: 2.5,
+            // Soft round puff instead of a hard axis-aligned square. Without a
+            // map the fragment stage never reads gl_PointCoord and WebGL fills
+            // the whole gl_PointSize quad flat — 5,000 grey blocks per cloud.
+            map: getPointSprite(),
             vertexColors: true,
             transparent: true,
             opacity: 0.65,
             blending: THREE.AdditiveBlending,
             sizeAttenuation: true,
+            // Required with the sprite: the quad's transparent corners must not
+            // punch a square hole in the depth buffer for everything behind.
+            depthWrite: false,
             fog: false // preserve the cloud's own core->rim gradient; scene fog would flatten it
         });
 
@@ -8111,11 +8202,18 @@ function createExoticCoreNebulas() {
         // MATCHED TO GALAXY-FORMATION: Same particle material settings
         const nebulaMaterial = new THREE.PointsMaterial({
             size: 2.5,
+            // Soft round puff instead of a hard axis-aligned square. Without a
+            // map the fragment stage never reads gl_PointCoord and WebGL fills
+            // the whole gl_PointSize quad flat — 5,000 grey blocks per cloud.
+            map: getPointSprite(),
             vertexColors: true,
             transparent: true,
             opacity: 0.65,
             blending: THREE.AdditiveBlending,
             sizeAttenuation: true,
+            // Required with the sprite: the quad's transparent corners must not
+            // punch a square hole in the depth buffer for everything behind.
+            depthWrite: false,
             fog: false // preserve the cloud's own core->rim gradient; scene fog would flatten it
         });
 
@@ -15498,7 +15596,8 @@ function _createWormholeMouth(position, colorNum) {
     }
     particleGeometry.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
     const particles = new THREE.Points(particleGeometry, new THREE.PointsMaterial({
-        color: colorNum, size: 4.5, transparent: true, opacity: 0.6
+        color: colorNum, size: 4.5, transparent: true, opacity: 0.6,
+        map: getPointSprite(), depthWrite: false   // soft dust motes, not 4.5px squares
     }));
     particles.frustumCulled = false;
     group.add(particles);
@@ -15616,6 +15715,8 @@ function createAmbientSpaceDebris() {
 
     const debrisMaterial = new THREE.PointsMaterial({
         size: 2,
+        map: getPointSprite(),          // soft round grit, not a square
+        depthWrite: false,
         vertexColors: true,
         transparent: true,
         opacity: 0.6,
@@ -15773,6 +15874,7 @@ function createEnhancedComets() {
         tailGeometry.setAttribute('color', new THREE.Float32BufferAttribute(tailColors, 3));
         const tailMaterial = new THREE.PointsMaterial({
             size: 2.4,
+            map: getPointSprite(),      // soft round tail grain, not a square
             transparent: true,
             opacity: 0.85,
             vertexColors: true,
@@ -16089,11 +16191,18 @@ function createNebulas() {
         
         const nebulaMaterial = new THREE.PointsMaterial({
             size: 2.5,
+            // Soft round puff instead of a hard axis-aligned square. Without a
+            // map the fragment stage never reads gl_PointCoord and WebGL fills
+            // the whole gl_PointSize quad flat — 5,000 grey blocks per cloud.
+            map: getPointSprite(),
             vertexColors: true,
             transparent: true,
             opacity: 0.65,
             blending: THREE.AdditiveBlending,
             sizeAttenuation: true,
+            // Required with the sprite: the quad's transparent corners must not
+            // punch a square hole in the depth buffer for everything behind.
+            depthWrite: false,
             fog: false // preserve the cloud's own core->rim gradient; scene fog would flatten it
         });
         

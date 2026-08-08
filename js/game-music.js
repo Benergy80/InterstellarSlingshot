@@ -228,6 +228,15 @@
       stuckSince: 0,       // ms timestamp currentTime was first seen frozen
       stalled: false,      // true once frozen past LIVENESS_STALL_MS
       recovering: false,   // a same-element play() retry is in flight
+      escaping: false,     // true from the moment we hand off to a fallback
+                            // key until THAT key proves itself — shortens the
+                            // sample/stall windows so a track we just landed
+                            // on as an escape hop doesn't sit through the
+                            // full slow baseline before we notice it's dead
+                            // too. Cleared on success (the `advanced` branch)
+                            // — NOT in livenessRearm(), which runs on every
+                            // ordinary key switch and would wipe it before
+                            // the escape hop ever gets sampled.
       confirmed: false,    // true once lastKeyWatched has advanced at least once
       // Ring of recently-confirmed-healthy tracks: [{key, at}, ...], oldest
       // first, capped at 4. See pushGoodKey()/pickFallbackKey() below for
@@ -1494,6 +1503,13 @@
     const liv = st.liveness;
     const target = livenessTarget();
     const el = target.el, key = target.key;
+    // While escaping (we just handed off to a fallback track), watch it on
+    // a fast clock instead of the normal slow baseline — that baseline
+    // exists to tolerate ordinary decoder jitter on a track we're settled
+    // on, but a track we just landed on AS an escape needs to prove itself
+    // quickly so a second dead track doesn't cost a full extra cycle.
+    const sampleMs = liv.escaping ? 350 : LIVENESS_SAMPLE_MS;
+    const stallMs = liv.escaping ? 500 : LIVENESS_STALL_MS;
 
     // Nothing to watch, or the mix is legitimately silent — a stall check
     // is meaningless there, so just re-arm the baseline.
@@ -1505,7 +1521,7 @@
     // us — the old currentTime baseline means nothing across that switch.
     if (liv.lastKeyWatched !== key) { livenessRearm(now, key, el.currentTime); return; }
 
-    if (now - liv.lastSampleAt < LIVENESS_SAMPLE_MS) return;
+    if (now - liv.lastSampleAt < sampleMs) return;
 
     const t = el.currentTime;
     // A one-shot/looping track wrapping back toward 0 is real playback,
@@ -1518,20 +1534,24 @@
       liv.stuckSince = 0;
       liv.stalled = false;
       liv.recovering = false;
+      liv.escaping = false;
       liv.confirmed = true;
       pushGoodKey(key, now);
       return;
     }
 
     if (!liv.stuckSince) liv.stuckSince = now;
-    if (now - liv.stuckSince < LIVENESS_STALL_MS) return;
+    if (now - liv.stuckSince < stallMs) return;
 
     liv.stalled = true;
 
-    if (!liv.recovering) {
+    if (!liv.recovering && !liv.escaping) {
       // First failure: nudge the SAME element. Most stalls are a decoder
       // hiccup on a track that is otherwise correctly armed, not a dead
-      // source — re-issuing play() is the cheapest fix.
+      // source — re-issuing play() is the cheapest fix. Skipped entirely
+      // while escaping: this element is a fallback we JUST called play()
+      // on as an escape hop, so a same-element retry can never help — go
+      // straight to demoting it and walking to the next candidate instead.
       liv.recovering = true;
       console.warn('🎵 Soundtrack: liveness stall — "' + key + '" frozen at ' +
                     t.toFixed(2) + 's, re-issuing play()');
@@ -1563,6 +1583,7 @@
     liv.recovering = false;
     liv.stalled = false;
     if (fallbackTarget) {
+      liv.escaping = true;
       play(fallbackTarget);
     } else {
       // No known-good track yet (this stalled on the very first track of
@@ -2160,6 +2181,7 @@
         watching: liv.lastKeyWatched,
         stalled: liv.stalled,
         recovering: liv.recovering,
+        escaping: liv.escaping,
         stuckMs: liv.stuckSince ? (Date.now() - liv.stuckSince) : 0,
         // Ring of recently-confirmed-healthy keys (newest last), plus what
         // the second-failure rung would actually pick right now.

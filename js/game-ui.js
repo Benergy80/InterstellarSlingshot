@@ -2537,6 +2537,23 @@ const MAP_CLUSTER_CELL_PX = 5;
 // pathological spread (many cells, each lightly occupied) that would
 // otherwise still blow the budget.
 const MAP_CLUSTER_NODE_BUDGET = 250;
+// Scenery (dotPriority <= 60: planets, asteroids, dysons, whales,
+// ringworlds, storms, quiet civilian traffic) already gets visually
+// demoted to near-invisible ink by renderIndividualMapDot — 3px, no glow,
+// 45% opacity — yet an untouched asteroid field was still spending one
+// full DOM node (plus a permanent stalk child) per rock, competing with
+// hostiles for the shared MAP_CLUSTER_NODE_BUDGET. Scenery gets its own
+// small, fixed-grid budget instead: coarser than the adaptive tactical
+// cell (so a scattered field collapses hard) and never widened by how
+// crowded the frame is.
+const MAP_SCENERY_CELL_PX = 14;
+const MAP_SCENERY_NODE_BUDGET = 24;
+// A `must`-individual contact (hostile / current target / active lock)
+// never gets bucketed away — but two of them landing within this many px
+// of each other on screen render as one indistinguishable smear anyway.
+// The one-pass separation below nudges such pairs apart just enough to
+// stay individually countable.
+const MAP_HOSTILE_SEPARATION_PX = 7;
 
 // #rrggbb -> 'rgba(r,g,b,alpha)', for the 35%-alpha elevation stalks (which
 // reuse each blip's own dotColor rather than a fixed palette entry).
@@ -2616,39 +2633,94 @@ function _ensureMapDepthBar(galaxyMap) {
 }
 
 function renderClusteredMapDots(candidates) {
+    // Three-way split, not two: scenery no longer competes with real
+    // tactical contacts for the shared node budget at all — it gets its
+    // own small fixed allowance below. `must` bypasses bucketing entirely
+    // (a hostile/current-target/lock can't be allowed to vanish into an
+    // aggregate); `tactical` is the adaptive-cell bucket that used to be
+    // the whole "loose" set.
     const must = [];
-    const loose = [];
+    const tactical = [];
+    const scenery = [];
     for (let i = 0; i < candidates.length; i++) {
-        // A hostile/critical contact (enemy, boss, borg drone, civilian in
-        // distress — dotPriority >= 90) must never be swallowed into an
-        // aggregate blob alongside the scenery cluttering its cell: the
-        // player needs to see it every frame, not just when it happens to
-        // be the current target/lock.
         const c = candidates[i];
-        (c.mustIndividual || c.dotPriority >= 90 ? must : loose).push(c);
+        if (c.mustIndividual || c.dotPriority >= 90) must.push(c);
+        else if (c.dotPriority > 60) tactical.push(c);
+        else scenery.push(c);
     }
 
-    // Bucket into screen-space cells, widening the cell (fewer, bigger
-    // buckets) only if the first pass would still blow the node budget.
+    // ── Scenery: fixed coarse grid, ALWAYS one aggregate per cell, no
+    // individuals — an asteroid field becomes one quiet blob instead of
+    // one DOM node (+ stalk) per rock. Widen the grid, same as the
+    // tactical pass below, only if it still produces more distinct cells
+    // than the scenery budget allows.
+    let sceneryCellPx = MAP_SCENERY_CELL_PX;
+    let sceneryGroups;
+    for (let attempt = 0; attempt < 4; attempt++) {
+        sceneryGroups = new Map(); // cellKey -> array of candidates
+        for (let i = 0; i < scenery.length; i++) {
+            const c = scenery[i];
+            const ck = Math.floor(c.px / sceneryCellPx) + '_' + Math.floor(c.py / sceneryCellPx);
+            let g = sceneryGroups.get(ck);
+            if (!g) { g = []; sceneryGroups.set(ck, g); }
+            g.push(c);
+        }
+        if (sceneryGroups.size <= MAP_SCENERY_NODE_BUDGET || attempt === 3) break;
+        sceneryCellPx *= 1.7;
+    }
+
+    // ── Tactical: same adaptive-cell bucketing as before (a lightly
+    // occupied cell still renders its members individually), but sized to
+    // whatever's left of the 250 budget once `must` and scenery have
+    // taken their share — scenery no longer eats into this at all beyond
+    // the node count its own aggregates claim.
     let cellPx = MAP_CLUSTER_CELL_PX;
     let groups;
+    const tacticalBudget = Math.max(0, MAP_CLUSTER_NODE_BUDGET - must.length - sceneryGroups.size);
     for (let attempt = 0; attempt < 4; attempt++) {
         groups = new Map(); // cellKey -> array of candidates
-        for (let i = 0; i < loose.length; i++) {
-            const c = loose[i];
+        for (let i = 0; i < tactical.length; i++) {
+            const c = tactical[i];
             const ck = Math.floor(c.px / cellPx) + '_' + Math.floor(c.py / cellPx);
             let g = groups.get(ck);
             if (!g) { g = []; groups.set(ck, g); }
             g.push(c);
         }
-        let total = must.length;
+        let total = 0;
         groups.forEach(g => { total += g.length <= 2 ? g.length : 1; });
-        if (total <= MAP_CLUSTER_NODE_BUDGET || attempt === 3) break;
+        if (total <= tacticalBudget || attempt === 3) break;
         cellPx *= 1.7;
     }
 
-    // Must-individual contacts (current target / active lock) always get
-    // their own dot, raised above anything sharing its cell.
+    // ── Must: never bucketed — but rendering an unbucketed pile of
+    // hostiles exactly as-is is what fused a dense arc into one
+    // uncountable caterpillar (two dots whose screen positions land
+    // within their own render diameter overlap into a smear). One
+    // separation pass: any pair closer than MAP_HOSTILE_SEPARATION_PX
+    // apart gets nudged apart along their connecting vector, just enough
+    // to stay visually distinct. Cosmetic only — perturbs this blip's
+    // render-space px/py, never the underlying world position.
+    for (let i = 0; i < must.length; i++) {
+        for (let j = i + 1; j < must.length; j++) {
+            const a = must[i], b = must[j];
+            let dx = b.px - a.px, dy = b.py - a.py;
+            let dist = Math.sqrt(dx * dx + dy * dy);
+            if (dist >= MAP_HOSTILE_SEPARATION_PX) continue;
+            if (dist < 0.01) {
+                // Exact overlap: no direction to push along. Pick one
+                // deterministically from the pair's indices so it doesn't
+                // jitter frame to frame while the overlap persists.
+                const ang = (i * 2.399963 + j * 0.618034) % (Math.PI * 2);
+                dx = Math.cos(ang); dy = Math.sin(ang); dist = 1;
+            }
+            const push = (MAP_HOSTILE_SEPARATION_PX - dist) / 2;
+            const ux = dx / dist, uy = dy / dist;
+            a.px -= ux * push; a.py -= uy * push;
+            b.px += ux * push; b.py += uy * push;
+        }
+    }
+    // Must-individual contacts (current target / active lock / hostiles)
+    // always get their own dot, raised above anything sharing its cell.
     for (let i = 0; i < must.length; i++) renderIndividualMapDot(must[i], true);
 
     groups.forEach((g, cellKey) => {
@@ -2657,6 +2729,13 @@ function renderClusteredMapDots(candidates) {
         } else {
             renderAggregateMapDot(cellKey, g, cellPx);
         }
+    });
+
+    // Scenery cell keys are prefixed so they can never collide with a
+    // tactical aggregate's pool key even when the raw grid coordinates
+    // happen to match (different, unrelated grid pitches).
+    sceneryGroups.forEach((g, cellKey) => {
+        renderAggregateMapDot('scenery:' + cellKey, g, sceneryCellPx);
     });
 }
 

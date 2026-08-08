@@ -1040,6 +1040,29 @@ function createEnemyMeshWithModel(regionId, fallbackGeometry, material, scaleOve
         // Nose-flip models authored +Z-forward so they fly nose-first
         _applyNoseFlip(model, regionId);
 
+        // VULCAN PATROL RANGE FLOOR (regionId 8 only). Measured (critic,
+        // wave-5): at 900u the Vulcan Patrol's own hull footprint is a
+        // 35x14px sliver — "no ship" — while its engine plume+glow covers
+        // 6.92x that screen area. Every other class in this function
+        // already clears the luminance bar without a geometric floor, so
+        // this is scoped tight to regionId 8 rather than applied to the
+        // shared path: growing a hull that already reads fine would just
+        // blur it against its formation-mates for no readability gain.
+        //
+        // Wrapped in a fresh group rather than scaling `model` (or its
+        // scale) directly: callers add a hitbox as a CHILD of whatever
+        // this function returns (or, for the Vulcan Patrol's own local
+        // spawner in game-objects.js, of an outer wrapper built around
+        // this return value) — either way the hitbox never ends up nested
+        // inside this new group, so the range floor's per-frame scale
+        // changes never touch hit-detection size.
+        if (regionId === 8 && typeof THREE !== 'undefined') {
+            const vulcanHullGroup = new THREE.Group();
+            model.children.slice().forEach((c) => vulcanHullGroup.add(c));
+            model.add(vulcanHullGroup);
+            _installHullScreenFloor(vulcanHullGroup, 60, 2.5);
+        }
+
         return model;
     } else {
         // Fallback to procedural geometry — log loudly so it's visible
@@ -1407,6 +1430,167 @@ if (typeof window !== 'undefined') {
 }
 
 // =============================================================================
+// SCREEN-SPACE HULL PRESENCE FLOOR
+// =============================================================================
+// Root-cause note (critic, wave-5 gap): js/game-controls.js already gives
+// the engine PLUME an angular-size floor — _PLUME_MIN_PX / _plumePxPerUnit,
+// widening the plume in world space whenever its natural screen width drops
+// under 7px, capped at _PLUME_MAX_WIDEN (3.4x). Nothing analogous existed
+// for the HULL, so as range grows the FX grows and the ship's own geometry
+// keeps shrinking underneath it — measured at 900u the plume+glow covered
+// 4.95x the UFO's hull screen-area (86.9% of hull pixels overpainted) and
+// 6.92x the Vulcan Patrol's. Every readability lever anyone reached for was
+// an additive OVERLAY; past ~300u a contact reads as a fireball with a
+// label, not a ship.
+//
+// This is the missing symmetric floor, applied to the HULL GEOMETRY itself
+// (never the plume — that stays exactly as sized elsewhere) so contrast at
+// range comes back from the ship, not from another glow layer stacked on
+// top of it. Scoped to the two classes that still need it (installed below
+// on the UFO hull group and, in createEnemyMeshWithModel, on Vulcan
+// Patrol/regionId 8 only) — every other class already clears the
+// luminance bar without this, and inflating a hull that already reads fine
+// would just blur it against its formation-mates for no readability gain.
+//
+// MECHANISM. A THREE.Group has no geometry/material of its own, so the
+// renderer never calls onBeforeRender on a group directly — only on the
+// renderable (Mesh) objects under it. Attaching the callback to every mesh
+// inside `group` and having it drive `group.scale` gets a genuine per-frame,
+// per-camera hook with ZERO extra work in the game's own update loop and
+// zero touches to game-controls.js: it fires exactly when and however the
+// scene is actually rendered (same rig the critic's own paused-world
+// readback uses — a paused game still calls renderer.render() every frame).
+//
+// `renderer.info.render.frame` (an integer WebGLRenderer already bumps once
+// per render() call) dedupes so a group with several mesh children only
+// recomputes its scale once per real frame, not once per mesh.
+//
+// MEASURING APPARENT SIZE CORRECTLY — WHY NOT JUST "LENGTH x px-per-unit".
+// A single world-space length (hull max dimension, or _plumeHullLen the way
+// game-controls.js's own plume floor reads it) times a distance-only scalar
+// is what the plume floor uses, and it is a fair approximation FOR THE
+// PLUME because a billboard quad always faces the camera — it has no
+// foreshortening to get wrong. A HULL does. Measured live: the Vulcan
+// Patrol's true nose-to-tail world length projects to ~98px by that scalar
+// math at 900u, but the critic's actual 3/4-attitude screen capture at the
+// same range measured 35x14px — the ship's long axis was pointed enough
+// toward the camera that its on-screen footprint was far smaller than its
+// world length would suggest. A scalar floor keyed on world length would
+// have stayed dormant in exactly the case it exists to catch.
+//
+// So this floor projects the hull's actual bounding-box CORNERS through the
+// live camera each frame (Vector3.project) and measures the resulting 2-D
+// screen bbox — foreshortening included, whichever attitude the ship is
+// actually in — instead of inferring apparent size from world-space length
+// and distance alone.
+//
+// The 8 corners are captured ONCE at install time, in `group.parent`'s
+// local space (not the group's own) — every frame just re-transforms them
+// through `group.parent.matrixWorld`. That sidesteps a chicken-and-egg
+// problem: the corners have to represent the hull at boost=1 (baseScale),
+// but `group.scale` is exactly what this function drives every frame, so
+// measuring "the group's current world box" each frame would measure its
+// own last-applied boost, not the true baseline, and the floor would never
+// settle. Parent-relative corners captured before any boost is ever applied
+// stay a fixed boost=1 baseline forever; only `group.scale` changes.
+//
+// The 60px target matches _PLUME_MIN_PX's own units (vertical FOV against
+// the DRAWING BUFFER height, i.e. render-pixels, not CSS px) so it's read
+// on the same ruler as the plume floor it's meant to counterbalance.
+//
+// Reparenting into `group` (see both call sites below) preserves each
+// child's LOCAL transform (Object3D.add doesn't touch it), so wrapping is a
+// pure "insert one more identity-transform node" op with no position/
+// rotation/hitbox side effect — same pattern the UFO's static SCALE
+// CORRECTION group already used one section down, just made distance- and
+// attitude-aware.
+function _installHullScreenFloor(group, minPx, maxBoost) {
+    if (!group || !group.parent || typeof THREE === 'undefined') return;
+    minPx = minPx !== undefined ? minPx : 60;
+    maxBoost = maxBoost !== undefined ? maxBoost : 2.5;
+
+    const baseScale = group.scale.x || 1;
+    const parent = group.parent;
+    let localCorners = null;
+    try {
+        parent.updateWorldMatrix(true, false);
+        group.updateWorldMatrix(true, true);
+        const box = new THREE.Box3().setFromObject(group);
+        if (box.isEmpty()) return;
+        const invParent = new THREE.Matrix4().copy(parent.matrixWorld).invert();
+        localCorners = [];
+        for (let i = 0; i < 8; i++) {
+            const c = new THREE.Vector3(
+                (i & 1) ? box.max.x : box.min.x,
+                (i & 2) ? box.max.y : box.min.y,
+                (i & 4) ? box.max.z : box.min.z
+            );
+            c.applyMatrix4(invParent); // -> parent-local, boost=1 baseline
+            localCorners.push(c);
+        }
+    } catch (e) {
+        return; // no measurable geometry yet — leave the group untouched
+    }
+    if (!localCorners) return;
+
+    const _tmp = new THREE.Vector3();
+
+    const applyFloor = function (renderer, scene, camera) {
+        if (!renderer || !camera || !camera.isPerspectiveCamera) return;
+        const frame = (renderer.info && renderer.info.render) ? renderer.info.render.frame : null;
+        if (frame !== null) {
+            if (group.userData._hullFloorFrame === frame) return;
+            group.userData._hullFloorFrame = frame;
+        }
+        if (!group.parent) return; // detached (destroyed) since install
+
+        let w = renderer.domElement ? (renderer.domElement.width || renderer.domElement.clientWidth) : 0;
+        let h = renderer.domElement ? (renderer.domElement.height || renderer.domElement.clientHeight) : 0;
+        if (!w || !h) return;
+
+        group.parent.updateWorldMatrix(true, false);
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        let anyBehindCamera = false;
+        for (let i = 0; i < localCorners.length; i++) {
+            _tmp.copy(localCorners[i]).applyMatrix4(group.parent.matrixWorld);
+            const camDist = _tmp.distanceTo(camera.position);
+            _tmp.project(camera); // -> NDC [-1, 1], z<-1 behind camera near plane
+            if (_tmp.z < -1 || _tmp.z > 1 || camDist <= 0) { anyBehindCamera = true; continue; }
+            const sx = (_tmp.x * 0.5 + 0.5) * w;
+            const sy = (1 - (_tmp.y * 0.5 + 0.5)) * h;
+            if (sx < minX) minX = sx; if (sx > maxX) maxX = sx;
+            if (sy < minY) minY = sy; if (sy > maxY) maxY = sy;
+        }
+        // If some corners project behind/outside the camera's near plane
+        // (extreme close range — the camera is effectively inside the
+        // hull), leave the floor alone: a partially-off-screen box is not
+        // a "too small" reading, and boosting off an unreliable partial
+        // bbox risks a runaway zoom right when the ship is already huge.
+        if (anyBehindCamera || !isFinite(minX) || !isFinite(maxX)) {
+            group.scale.setScalar(baseScale);
+            return;
+        }
+
+        const rawPx = Math.max(maxX - minX, maxY - minY);
+        let boost = 1;
+        if (rawPx > 0 && rawPx < minPx) {
+            boost = Math.min(maxBoost, minPx / rawPx);
+        }
+        group.scale.setScalar(baseScale * boost);
+        group.updateMatrixWorld(true); // land the new scale before the
+        // renderer reads THIS mesh's matrixWorld a moment later in the
+        // same renderObject() call — updateMatrixWorld(true) also
+        // refreshes every sibling mesh under `group`, so later mesh
+        // children hit the frame-dedupe above with an already-correct
+        // matrixWorld this frame.
+    };
+
+    group.traverse((child) => {
+        if (child.isMesh) child.onBeforeRender = applyFloor;
+    });
+}
+
+// =============================================================================
 // UFO ("Unknown Craft") HULL PRESENCE FLOOR
 // =============================================================================
 // createUFOEnemy (game-objects.js) never went through createFactionHullMaterial
@@ -1536,13 +1720,27 @@ function _applyUFOHullPresenceFloor(ufo) {
         hullChildren.forEach((c) => hullBox.expandByObject(c));
         const hullSize = hullBox.getSize(new THREE.Vector3());
         const maxDim = Math.max(hullSize.x, hullSize.y, hullSize.z);
-        if (maxDim > TARGET_MAX_DIM * 1.15 || maxDim < TARGET_MAX_DIM * 0.4) {
-            const correction = TARGET_MAX_DIM / Math.max(1, maxDim);
-            const hullGroup = new THREE.Group();
-            hullChildren.forEach((c) => hullGroup.add(c));
-            hullGroup.scale.setScalar(correction);
-            ufo.add(hullGroup);
-        }
+        const needsResize = (maxDim > TARGET_MAX_DIM * 1.15 || maxDim < TARGET_MAX_DIM * 0.4);
+        const correction = needsResize ? (TARGET_MAX_DIM / Math.max(1, maxDim)) : 1.0;
+        // Always wrap, even when no static resize is needed: the range
+        // floor below (_installHullScreenFloor) needs a group of its own
+        // to drive — one that holds only hull content, never the hitbox
+        // (which the caller in game-objects.js adds directly to `ufo`
+        // AFTER this function returns, so it stays a sibling of this
+        // group and is never touched by the scale this group carries).
+        const hullGroup = new THREE.Group();
+        hullChildren.forEach((c) => hullGroup.add(c));
+        hullGroup.scale.setScalar(correction);
+        ufo.add(hullGroup);
+
+        // RANGE FLOOR. Measured (critic, wave-5): at 900u the UFO hull's
+        // own screen footprint is 78x29px while the plume+glow FX around
+        // it covers 4.95x that area — 86.9% of hull pixels overpainted.
+        // 60px/2.5x mirrors the fix note's own numbers (same order as the
+        // Vulcan Patrol floor below) so a distant "Unknown Craft" grows
+        // back into a readable saucer instead of staying a fireball with
+        // a text label.
+        _installHullScreenFloor(hullGroup, 60, 2.5);
     }
 
     return ufo;

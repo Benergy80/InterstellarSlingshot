@@ -1808,6 +1808,75 @@ function warpExitBeat(blackHole, refSpeed) {
     } catch (e) {}
 }
 
+// ── JUMP EXIT BEAT (synthetic exitRamp arm) ─────────────────────────────────
+// The tactical Jump (W-double-tap) end-of-boost branch in game-physics.js
+// only sets `emergencyWarp.autoBraking = true` when the boost timer runs
+// out — unlike the O-key emergency warp and the slingshot glide, it never
+// arms an `exitRamp` record and never calls `_fireWarpExitBeat()`. Since
+// every warp DEMO MODE performs is a Jump (see game-physics.js's
+// `keys.wDoubleTap` branch), warpExitBeat()/`_exitFovT0`/`_wsf.draining`/
+// `gameState._warpExitT` were all dead on the one path a stranger actually
+// sees — the visible arrival was pure 0.985^frame exponential decay (2.3s,
+// no punctuation) instead of the punctuated, lockstepped drop-out the O-warp
+// path gets.
+//
+// This file only owns camera-system.js/visual-flair.js, so the fix can't
+// edit game-physics.js's Jump branch directly. But `_applyWarpExitRamp()`
+// there (game-physics.js) already drives ANY `exitRamp` record it finds on
+// `gameState.emergencyWarp` unconditionally, every frame, before position
+// integration — it has no idea who armed it. So this arms it from here,
+// purely as shared-state data (never touching game-physics.js), mirroring
+// exactly the record the O-warp branch writes at its own drop-out
+// (game-physics.js:3219-3226): same clamp-into-cruise-band math, same
+// `_fireWarpExitBeat` call (inlined here as a direct `warpExitBeat()` call,
+// since that function lives in THIS file). Only the duration differs — 550ms
+// instead of 1000ms — so the short tactical dash still reads shorter/
+// snappier than a real warp drop-out, per spec.
+//
+// Runs once per frame from updateVisualFlair() (below), which is itself
+// called every animation frame — so the edges below are detected on the
+// same frame game-physics.js flips them (one rAF tick of latency vs a
+// native call, since this runs after the physics pass; negligible against
+// the 550ms ramp).
+let _jumpExitEntrySpeed = null;
+let _jumpExitWasIsJump = false;
+let _jumpExitWasActive = false;
+function _checkJumpExitBeat() {
+    if (typeof gameState === 'undefined' || !gameState.emergencyWarp) return;
+    const ew = gameState.emergencyWarp;
+    // Capture the ship's speed the instant a Jump is flagged (isJump goes
+    // true synchronously at the W-double-tap keypress, game-physics.js:3018)
+    // — this is BEFORE the boost's setTimeout overwrites velocityVector with
+    // the jump speed several frames later, so it is the true pre-jump
+    // cruise speed: the same quantity the O-warp branch captures as
+    // `entrySpeed` at ITS trigger keypress (game-physics.js:3097).
+    if (ew.isJump && !_jumpExitWasIsJump) {
+        _jumpExitEntrySpeed = (gameState.velocityVector) ? gameState.velocityVector.length() : 0;
+    }
+    if (!ew.isJump) _jumpExitEntrySpeed = null;
+    // Falling edge of `active` while `isJump` is still set: the exact frame
+    // the boost timer ran out and game-physics.js flipped autoBraking on
+    // (game-physics.js:3177-3186). Guarded against re-arming an already-live
+    // ramp so this can only fire once per Jump.
+    if (_jumpExitWasActive && !ew.active && ew.isJump && !(ew.exitRamp && ew.exitRamp.active)) {
+        const minV = (typeof gameState.minVelocity === 'number') ? gameState.minVelocity : 0.4;
+        const maxV = (typeof gameState.maxVelocity === 'number') ? gameState.maxVelocity : 4.0;
+        const rawEntry = (_jumpExitEntrySpeed && _jumpExitEntrySpeed > 0) ? _jumpExitEntrySpeed : minV;
+        const toSpeed = Math.min(Math.max(rawEntry, minV * 2), maxV);
+        const fromSpeed = gameState.velocityVector ? gameState.velocityVector.length() : toSpeed;
+        ew.exitRamp = {
+            active: toSpeed < fromSpeed,
+            t0: Date.now(),
+            dur: 550,
+            fromSpeed: fromSpeed,
+            toSpeed: toSpeed
+        };
+        warpExitBeat(false, toSpeed);
+    }
+    _jumpExitWasIsJump = ew.isJump;
+    _jumpExitWasActive = ew.active;
+}
+
 const _wsfUp = (typeof THREE !== 'undefined') ? new THREE.Vector3(0, 1, 0) : null;
 const _wsfZero = (typeof THREE !== 'undefined') ? new THREE.Vector3(0, 0, 0) : null;
 const _wsfAxisZ = (typeof THREE !== 'undefined') ? new THREE.Vector3(0, 0, 1) : null;
@@ -3071,6 +3140,7 @@ function updateVisualFlair() {
     // try { _updatePlayerTrail(); } catch (e) {}
     try { _updateLaserCharge(); } catch (e) {}
     try { if (window.arcade) window.arcade.update(); } catch (e) {}
+    try { _checkJumpExitBeat(); } catch (e) {}
     try { _updateWarpStreaks(); } catch (e) {}
     try { _updateWarpTunnel(); } catch (e) {}
     try { _updateWarpDebris(); } catch (e) {}

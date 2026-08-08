@@ -818,14 +818,87 @@ const _HULL_READ_DIST = 4200;
 // angular-size floor is doing all the work.
 const _HULL_LAMP_FADE_LO = 1800;
 const _HULL_LAMP_FADE_HI = 3000;
-// Lamp diameter in hull-lengths, and its on-screen floor in framebuffer px.
-// The floor is what makes a nose-on fighter at 900u a contact instead of a
-// smudge; it is deliberately smaller than the plume's old footprint at the
-// same range (the old spear was 125x53 px there) because this one is
-// centred on the ship and occluded by it, so it reads as the ship glowing
-// rather than as a separate object flying in formation.
-const _HULL_LAMP_K = 0.95;
-const _HULL_LAMP_MIN_PX = 46;
+// Lamp extent along the hull's long axis and across it, in hull-lengths /
+// hull-widths, plus the on-screen floor in framebuffer px.
+//
+// ROUND 4 — THE FLOOR WAS THE WHOLE CONTACT. A px floor divided by
+// px-per-unit is a WORLD size proportional to distance, so `minWorld / d` is
+// a constant and a floored lamp has a FIXED apparent size at every range.
+// Measured on the previous build: with the plume hidden, an 83.6u hull and a
+// 113.7u hull both rendered 84x84 px / ~5,400 lit px at 700u, 900u, 1,200u
+// AND 1,600u — four ranges, two hull sizes, one number. The lamp was not
+// helping the contact read, it WAS the contact, and it was isotropic, so a
+// 180-degree flip of a hostile at fighting range changed literally zero
+// pixels (IoU 1.000). The real Blender hull under it was 373 px.
+//
+// Three changes, in the order they matter:
+//   1. The floor is capped at _HULL_LAMP_FLOOR_MAX hull-lengths, so the halo
+//      can never out-grow the ship it belongs to, and the raw floor drops
+//      46 -> 14 px. Inside the fighting envelope the floor is now INERT on
+//      standard hulls (a 83.6u hull's natural lamp is already 63u/29 px at
+//      900u) and only binds for the 42-48u wingman-class hulls it was
+//      written for. Distance therefore shrinks the contact again.
+//   2. Far-range presence moves to OPACITY (see _HULL_LAMP_FAR_LIFT), which
+//      is the channel that does not lie about size.
+//   3. The lamp stops being an isotropic Sprite. It is now a quad
+//      billboarded ABOUT the hull's own long axis — the same axis-aligned
+//      billboard the plume streak uses — scaled to the hull's PROJECTED
+//      length x width, so broadside is an elongated smear and nose-on
+//      collapses to a compact dot.
+const _HULL_LAMP_K = 0.95;          // lamp length, in hull-lengths
+const _HULL_LAMP_W_K = 0.85;        // lamp width, in hull-widths
+const _HULL_LAMP_MIN_PX = 14;
+const _HULL_LAMP_FLOOR_MAX = 1.6;   // hard cap on the floor, in hull-lengths
+// The lamp sits aft of the hull centre by this fraction of the hull's local
+// Z span. It is the ship's own reactor/engine glow, not a marker pinned to
+// its centroid, and putting it aft is a second aspect cue for free: the lamp
+// is depth-TESTED, so a hostile charging you occludes its own glow with its
+// own hull, while one running away shows you all of it.
+const _HULL_LAMP_AFT = 0.28;
+// NOSE-HEMISPHERE GATE. Both of these attenuate the lamp — and ONLY over
+// the last ~40 degrees before dead ahead, so broadside and astern are
+// untouched — because the lamp is engine and reactor light and a ship
+// pointing its nose at you is showing you the end with no engines on it.
+// This is the same contract the plume's own `nearGate` keeps, for the same
+// reason, and it is what finally makes charging and fleeing DIFFERENT
+// PIXELS rather than the same disc at two brightnesses: dead ahead and dead
+// astern are both foreshortened to a circle, so brightness alone cannot
+// separate them (measured: opacity-only gave IoU 0.79 at 900u, bar 0.55).
+//   _NOSE_K      = size floor    -> charging is a TIGHTER contact
+//   _HULL_LAMP_ASPECT = opacity floor -> and a dimmer one
+// Neither goes near zero: a hostile bearing down on you must still be
+// findable, it just must not look like one that is running away.
+const _HULL_LAMP_NOSE_K = 0.56;
+const _HULL_LAMP_ASPECT = 0.42;
+const _HULL_LAMP_NOSE_LO = -0.80, _HULL_LAMP_NOSE_HI = -0.15;
+// ...and the mirror of it. Dead astern you are looking straight into the
+// engine bells, so the lamp grows. Nose gate and tail bonus together are
+// what put clear daylight between charging and fleeing: both aspects
+// foreshorten to a circle, so the ONLY thing that can separate them is how
+// big and how bright that circle is.
+const _HULL_LAMP_TAIL = 0.18;
+// The telegraph OVERRIDES the nose gate. A hostile winding up to shoot you
+// is almost always pointing at you — the one aspect the gate dims — so the
+// wind-up walks the gate back off. This is what keeps "about to fire"
+// hue-separable head-on, which is the only time the player needs it.
+const _HULL_LAMP_CHG_RELIEF = 0.85;
+// Thrust relieves it too, but only a little. A ship burning hard at you does
+// light up — reactor, wing roots, the glow spilling round the hull — and
+// without this the head-on thrust cue is 215 px, which is no cue at all.
+// It is CAPPED because the charge-vs-flee test is taken with both ships at
+// FULL thrust, so every point of head-on thrust gain is a point of aspect
+// separation spent. Measured at 900u on an 84u hull: 0.20 -> head-on thrust
+// delta 408 px / IoU 0.345; 0.45 -> 1,138 px / IoU 0.44; 0.60 -> IoU 0.56,
+// over the bar. 0.45 is the most head-on thrust the aspect budget will pay
+// for. Head-on the thrust cue is honestly brightness-dominated: a whole
+// charging contact is only ~1,600 px at 900u, so a 2,500 px CHANGE there
+// would mean re-inflating the halo to twice the ship — the exact defect
+// this round removed.
+const _HULL_LAMP_THR_RELIEF = 0.45;
+// Extra opacity out at range, so the contact keeps its presence while its
+// FOOTPRINT is allowed to shrink with distance the way a real object's does.
+const _HULL_LAMP_FAR_LIFT = 0.95;
+const _HULL_LAMP_FAR_LO = 600, _HULL_LAMP_FAR_HI = 2000;
 // Rim shell scale and how many hull meshes get one.
 const _HULL_RIM_SCALE = 1.075;
 const _HULL_RIM_MAX = 2;
@@ -853,8 +926,25 @@ function _hullLampTex() {
     _HULL_LAMP_TEX = t; return t;
 }
 
+// ONE shared unit quad for every hull lamp in the game: 1x1 in the XY plane,
+// +Y is the hull's long axis. Orientation and non-uniform scale are solved
+// per-frame in _updateHullReadout.
+let _HULL_LAMP_GEO = null;
+function _hullLampGeo() {
+    if (!_HULL_LAMP_GEO) _HULL_LAMP_GEO = new THREE.PlaneGeometry(1, 1);
+    return _HULL_LAMP_GEO;
+}
+
 const _hrC = new THREE.Vector3();
 const _hrV = new THREE.Vector3();
+// Scratch for the lamp's per-frame axis-aligned billboard.
+const _hlInv  = new THREE.Matrix4();
+const _hlMat  = new THREE.Matrix4();
+const _hlCam  = new THREE.Vector3();
+const _hlAxis = new THREE.Vector3();
+const _hlView = new THREE.Vector3();
+const _hlY    = new THREE.Vector3();
+const _hlX    = new THREE.Vector3();
 
 function _ensureHullReadout(ship, color) {
     if (!ship || !ship.userData || ship.userData._hullRead) return;
@@ -962,25 +1052,42 @@ function _ensureHullReadout(ship, color) {
     });
 
     // ── LAMP ─────────────────────────────────────────────────────────────
+    // A QUAD, not a Sprite. A Sprite has no orientation — it is the same
+    // circle whichever way the ship is pointing — which is why the previous
+    // build's charging-vs-fleeing IoU was exactly 1.000: the lamp was most
+    // of the contact and the lamp could not tell the two apart. This quad is
+    // billboarded ABOUT the hull's long axis (solved every frame below) and
+    // scaled to the hull's PROJECTED length x width, so it is an elongated
+    // smear broadside and a compact dot nose-on, exactly like the object it
+    // is supposed to be describing.
+    //
     // depthTest stays TRUE: the hull occludes the middle of its own glow, so
     // this can never wash the silhouette out into a blob — it is a halo with
     // a ship-shaped hole in it. renderOrder 4 puts it after the hull in the
     // transparent pass so that occlusion actually happens.
-    const lampMat = new THREE.SpriteMaterial({
+    const lampMat = new THREE.MeshBasicMaterial({
         color: fac.clone().lerp(new THREE.Color(0xffffff), 0.22),
         map: _hullLampTex(), transparent: true, opacity: 0.35,
-        blending: THREE.AdditiveBlending, depthWrite: false
+        blending: THREE.AdditiveBlending, depthWrite: false,
+        depthTest: true, side: THREE.DoubleSide
     });
-    const lamp = new THREE.Sprite(lampMat);
-    lamp.position.set(cx, cy, cz);
-    const lampD = hullLen * _HULL_LAMP_K / sx;
-    lamp.scale.set(lampD, lampD, 1);
+    const lamp = new THREE.Mesh(_hullLampGeo(), lampMat);
+    // Aft of the hull centre — see _HULL_LAMP_AFT.
+    lamp.position.set(cx, cy, cz + spanZ * _HULL_LAMP_AFT);
+    const lampL0 = hullLen * _HULL_LAMP_K / sx;
+    lamp.scale.set(lampL0, lampL0, 1);
     lamp.renderOrder = 4;
     lamp.userData._isHullRead = true;
     lamp.userData._lampBaseCol = lampMat.color.clone();
     _plumeExemptFromDrawBudget(lamp);
     ship.add(lamp);
     rig.lamp = { mesh: lamp, mat: lampMat };
+
+    // Across-axis hull size in WORLD units — the other half of the lamp's
+    // aspect ratio. Wingspan or fin height, whichever is larger, because
+    // that is what a broadside actually shows you.
+    rig.hullWid = Math.max(1e-3,
+        Math.max(lb.maxx - lb.minx, lb.maxy - lb.miny) * sx);
 
     ship.userData._hullRead = rig;
 }
@@ -1017,26 +1124,92 @@ function _updateHullReadout(ship, dist, tN, chg) {
     const ppu = _plumePxPerUnit(d);
     const alarmCol = _plumeAlarmColor();
 
-    // LAMP. Angular-size floor, same idea as the plume's, so a nose-on
-    // hostile at 900u is a contact and not a smudge — but capped by `fade`
-    // so it cannot grow into a fake nebula out at survey range.
+    // ── LAMP ─────────────────────────────────────────────────────────────
+    // Natural size first: the hull's own length and width, in world units.
+    // The angular-size floor then applies to the SMALL axis only (width is
+    // what disappears first) and is capped at _HULL_LAMP_FLOOR_MAX
+    // hull-lengths, so the halo can never out-grow the ship. That cap is the
+    // whole fix for the range-invariance: an uncapped px floor is a world
+    // size proportional to distance, which pins the lamp's apparent size at
+    // every range and hides the fact that the contact is closing.
     const lamp = rig.lamp;
-    let lampD = rig.hullLen * _HULL_LAMP_K;
+    let lampW = (rig.hullWid || rig.hullLen * 0.45) * _HULL_LAMP_W_K;
+    let lampL = Math.max(rig.hullLen * _HULL_LAMP_K, lampW);
     if (ppu > 0 && fade > 0) {
-        const minWorld = (_HULL_LAMP_MIN_PX * fade) / ppu;
-        if (minWorld > lampD) lampD = minWorld;
+        const minWorld = Math.min((_HULL_LAMP_MIN_PX * fade) / ppu,
+                                  rig.hullLen * _HULL_LAMP_FLOOR_MAX);
+        if (minWorld > lampW) lampW = minWorld;
+        if (lampW > lampL) lampL = lampW;
     }
-    // THRUST SWELLS IT. This is the aspect-independent half of the
+    // THRUST STRETCHES IT AFT. This is the aspect-independent half of the
     // idle-vs-full cue, and it is the half that survives a nose-on attack
     // run: measured at 900u, the plume's own contribution to a charging
     // hostile's thrust delta is 0 px (the aspect gate is holding the
     // exhaust down, correctly), so if the hull does not carry the cue there
-    // is no cue. A 1.30x swell plus the opacity lift below moves the whole
-    // lamp disc, not a dim skirt around it.
-    lampD *= (1 + 0.30 * t + 0.10 * cQ);
-    const lampLocal = lampD / rig.sx;
-    lamp.mesh.scale.set(lampLocal, lampLocal, 1);
-    lamp.mat.opacity = Math.min(1, (0.28 + 0.52 * t + 0.22 * cQ) * fade);
+    // is no cue. It goes mostly into LENGTH rather than into diameter so
+    // that a hard-burning ship reads as a lit hull with a wake, not as a
+    // bigger ball of light — the ball of light is what this round is
+    // deleting.
+    lampL *= (1 + 1.15 * t + 0.18 * cQ);
+    lampW *= (1 + 0.62 * t + 0.12 * cQ);
+
+    // AXIS-ALIGNED BILLBOARD + PROJECTED FORESHORTENING. Solve the quad's
+    // frame in the ship's LOCAL space (that is where the quad lives):
+    //   +Z = the direction to the camera        -> the quad faces the viewer
+    //   +Y = the hull's long axis with its      -> the smear lies along the
+    //        view-direction component removed      ship on screen
+    //   +X = +Y x +Z
+    // Then scale +Y by the hull axis's PROJECTED length, which is
+    // lampL * sin(angle between the hull axis and the view direction), with
+    // a floor of lampW so that dead nose-on and dead astern collapse to a
+    // round dot instead of to a line.
+    let axialC = 0;
+    const _lcam = (typeof camera !== 'undefined' && camera) ? camera : window.camera;
+    if (_lcam) {
+        _hlInv.copy(ship.matrixWorld).invert();
+        _hlCam.setFromMatrixPosition(_lcam.matrixWorld).applyMatrix4(_hlInv);
+        _hlView.copy(_hlCam).sub(lamp.mesh.position);
+        if (_hlView.lengthSq() < 1e-12) _hlView.set(0, 0, 1);
+        _hlView.normalize();
+        _hlAxis.set(0, 0, 1);
+        axialC = _hlAxis.dot(_hlView);       // +1 dead astern, -1 dead ahead
+        _hlY.copy(_hlAxis).addScaledVector(_hlView, -axialC);
+        if (_hlY.lengthSq() < 1e-8) {
+            // Staring straight down the hull axis: any perpendicular will do.
+            _hlY.set(_hlView.y, -_hlView.x, 0);
+            if (_hlY.lengthSq() < 1e-8) _hlY.set(1, 0, 0);
+        }
+        _hlY.normalize();
+        _hlX.crossVectors(_hlY, _hlView).normalize();
+        _hlMat.makeBasis(_hlX, _hlY, _hlView);
+        lamp.mesh.quaternion.setFromRotationMatrix(_hlMat);
+    }
+    // Nose-hemisphere gate: 0 dead ahead, 1 from ~halfway to broadside on
+    // round to dead astern, walked back off by the telegraph. Drives BOTH
+    // the lamp's size and its opacity.
+    const noseF0 = THREE.MathUtils.smoothstep(axialC, _HULL_LAMP_NOSE_LO, _HULL_LAMP_NOSE_HI);
+    const noseF = noseF0 + (1 - noseF0) *
+        Math.min(1, _HULL_LAMP_CHG_RELIEF * cQ + _HULL_LAMP_THR_RELIEF * t);
+    const tailF = THREE.MathUtils.smoothstep(axialC, 0.15, 0.80);
+    const sizeGain = (_HULL_LAMP_NOSE_K + (1 - _HULL_LAMP_NOSE_K) * noseF)
+                   * (1 + _HULL_LAMP_TAIL * tailF);
+    lampW *= sizeGain; lampL *= sizeGain;
+
+    const sinA = Math.sqrt(Math.max(0, 1 - axialC * axialC));
+    const projL = Math.max(lampW, lampL * sinA);
+    lamp.mesh.scale.set(lampW / rig.sx, projL / rig.sx, 1);
+
+    // PRESENCE LIVES IN OPACITY, NOT IN SIZE. `far` walks the lamp up to
+    // ~1.9x brightness by 2,000u so a distant hostile still registers while
+    // its FOOTPRINT keeps shrinking the way a real object's does — the range
+    // cue the fixed-size lamp had deleted.
+    const far = Math.min(1, Math.max(0, (d - _HULL_LAMP_FAR_LO) /
+                                        (_HULL_LAMP_FAR_HI - _HULL_LAMP_FAR_LO)));
+    // ASPECT GAIN. Same nose-hemisphere gate as the size, so the two cues
+    // reinforce instead of cancelling.
+    const aGain = (1 - _HULL_LAMP_ASPECT) + _HULL_LAMP_ASPECT * noseF;
+    lamp.mat.opacity = Math.min(0.97,
+        (0.28 + 0.52 * t + 0.22 * cQ) * (1 + _HULL_LAMP_FAR_LIFT * far) * aGain * fade);
     if (c > 0.02) lamp.mat.color.copy(lamp.mesh.userData._lampBaseCol).lerp(alarmCol, 0.92 * cQ);
     else lamp.mat.color.copy(lamp.mesh.userData._lampBaseCol);
 
